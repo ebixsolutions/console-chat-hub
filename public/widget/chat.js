@@ -363,6 +363,7 @@
         state.thinkingStartTime = null;
         lastMessageId = null;
         seenIds = {};
+        state.messages = [];
         stopPolling();
 
         var inp = document.getElementById('nexus-input');
