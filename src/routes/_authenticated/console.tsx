@@ -1,19 +1,22 @@
 import { createFileRoute, Outlet, Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { SidebarProvider, Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuItem, SidebarMenuButton, SidebarTrigger, SidebarHeader, SidebarFooter } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
-import { MessageSquare, LayoutDashboard, Settings, Users, LogOut, Eye } from "lucide-react";
+import { MessageSquare, LayoutDashboard, Settings, Users, LogOut, Code } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 
 export const Route = createFileRoute("/_authenticated/console")({
   component: ConsoleLayout,
 });
 
-const items = [
+const navItems = [
   { title: "Overview", url: "/console", icon: LayoutDashboard },
   { title: "Conversations", url: "/console/conversations", icon: MessageSquare },
   { title: "Agents", url: "/console/agents", icon: Users },
-  { title: "Widget Preview", url: "/console/widget-preview", icon: Eye },
   { title: "Settings", url: "/console/settings", icon: Settings },
+];
+
+const widgetItems = [
+  { title: "Widget Preview", url: "/console/widget-preview", icon: Code },
 ];
 
 function ConsoleLayout() {
