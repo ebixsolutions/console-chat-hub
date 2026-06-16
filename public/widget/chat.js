@@ -307,6 +307,7 @@
       state.conversationId = data.conversation_id;
       lastMessageId = null;
       seenIds = {};
+      state.messages = [];
       saveSessionToStorage();
       if (msgsEl) msgsEl.innerHTML = '';
       var welcome = config && config.widget_config && config.widget_config.welcome_message;
