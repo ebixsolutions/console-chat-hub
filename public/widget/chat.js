@@ -62,6 +62,7 @@
     pollInterval: null,
     thinkingStartTime: null,
     fallbackShownForConversation: false,
+    messages: [],
   };
 
   // ---------- Styles ----------
