@@ -62,6 +62,7 @@
     pollInterval: null,
     thinkingStartTime: null,
     fallbackShownForConversation: false,
+    messages: [],
   };
 
   // ---------- Styles ----------
@@ -188,6 +189,15 @@
   }
 
   function appendMessageObj(m) {
+    // state.messages is the source of truth (exclude welcome fake message)
+    if (m && m.id && m.id !== 'welcome') {
+      var idx = -1;
+      for (var i = 0; i < state.messages.length; i++) {
+        if (state.messages[i].id === m.id) { idx = i; break; }
+      }
+      if (idx >= 0) state.messages[idx] = m;
+      else state.messages.push(m);
+    }
     appendMessage(m.role, m.content, m.id);
   }
 
@@ -221,10 +231,34 @@
           state.conversationId = null;
           lastMessageId = null;
           seenIds = {};
+          state.messages = [];
         }
         return;
       }
       var d = res.body.data;
+
+      if (d.conversation_status === 'resolved') {
+        hideTyping();
+        stopPolling();
+        // Merge state.messages (already rendered) + d.messages (latest from poll)
+        var newMessages = d.messages || [];
+        newMessages.forEach(function (msg) {
+          var alreadyInState = state.messages.some(function (m) { return m.id === msg.id; });
+          if (!alreadyInState) state.messages.push(msg);
+        });
+        // Deduplicate + exclude __THINKING__ + sort by time
+        var mergedMessages = state.messages
+          .filter(function (msg) { return msg.content !== '__THINKING__'; })
+          .filter(function (msg, index, arr) {
+            return arr.findIndex(function (m) { return m.id === msg.id; }) === index;
+          })
+          .sort(function (a, b) {
+            return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+          });
+        showResolvedBanner(mergedMessages);
+        return;
+      }
+
       (d.messages || []).forEach(function (m) {
         appendMessageObj(m);
         lastMessageId = m.id;
@@ -273,6 +307,7 @@
       state.conversationId = data.conversation_id;
       lastMessageId = null;
       seenIds = {};
+      state.messages = [];
       saveSessionToStorage();
       if (msgsEl) msgsEl.innerHTML = '';
       var welcome = config && config.widget_config && config.widget_config.welcome_message;
@@ -328,6 +363,7 @@
         state.thinkingStartTime = null;
         lastMessageId = null;
         seenIds = {};
+        state.messages = [];
         stopPolling();
 
         var inp = document.getElementById('nexus-input');
@@ -359,6 +395,7 @@
       state.conversationId = stored.conversationId;
       lastMessageId = null;
       seenIds = {};
+      state.messages = [];
       if (msgsEl) msgsEl.innerHTML = '';
 
       var d = res.body.data;
