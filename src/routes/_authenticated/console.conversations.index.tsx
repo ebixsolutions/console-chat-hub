@@ -13,8 +13,8 @@ type Conv = {
   id: string;
   status: string;
   priority: string | null;
-  updated_at: string;
-  created_at: string;
+  updated_at: string | null;
+  created_at: string | null;
   assigned_agent_id: string | null;
   assigned_agent_name: string;
   channel_config: { name: string } | null;

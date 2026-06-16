@@ -15,6 +15,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedConsoleRouteImport } from './routes/_authenticated/console'
 import { Route as AuthenticatedConsoleIndexRouteImport } from './routes/_authenticated/console.index'
 import { Route as AuthenticatedConsoleWidgetPreviewRouteImport } from './routes/_authenticated/console.widget-preview'
+import { Route as AuthenticatedConsoleConversationsIndexRouteImport } from './routes/_authenticated/console.conversations.index'
 
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
@@ -47,6 +48,12 @@ const AuthenticatedConsoleWidgetPreviewRoute =
     path: '/widget-preview',
     getParentRoute: () => AuthenticatedConsoleRoute,
   } as any)
+const AuthenticatedConsoleConversationsIndexRoute =
+  AuthenticatedConsoleConversationsIndexRouteImport.update({
+    id: '/conversations/',
+    path: '/conversations/',
+    getParentRoute: () => AuthenticatedConsoleRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -54,12 +61,14 @@ export interface FileRoutesByFullPath {
   '/console': typeof AuthenticatedConsoleRouteWithChildren
   '/console/widget-preview': typeof AuthenticatedConsoleWidgetPreviewRoute
   '/console/': typeof AuthenticatedConsoleIndexRoute
+  '/console/conversations/': typeof AuthenticatedConsoleConversationsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/console/widget-preview': typeof AuthenticatedConsoleWidgetPreviewRoute
   '/console': typeof AuthenticatedConsoleIndexRoute
+  '/console/conversations': typeof AuthenticatedConsoleConversationsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -69,6 +78,7 @@ export interface FileRoutesById {
   '/_authenticated/console': typeof AuthenticatedConsoleRouteWithChildren
   '/_authenticated/console/widget-preview': typeof AuthenticatedConsoleWidgetPreviewRoute
   '/_authenticated/console/': typeof AuthenticatedConsoleIndexRoute
+  '/_authenticated/console/conversations/': typeof AuthenticatedConsoleConversationsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -78,8 +88,14 @@ export interface FileRouteTypes {
     | '/console'
     | '/console/widget-preview'
     | '/console/'
+    | '/console/conversations/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/login' | '/console/widget-preview' | '/console'
+  to:
+    | '/'
+    | '/login'
+    | '/console/widget-preview'
+    | '/console'
+    | '/console/conversations'
   id:
     | '__root__'
     | '/'
@@ -88,6 +104,7 @@ export interface FileRouteTypes {
     | '/_authenticated/console'
     | '/_authenticated/console/widget-preview'
     | '/_authenticated/console/'
+    | '/_authenticated/console/conversations/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -140,18 +157,28 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedConsoleWidgetPreviewRouteImport
       parentRoute: typeof AuthenticatedConsoleRoute
     }
+    '/_authenticated/console/conversations/': {
+      id: '/_authenticated/console/conversations/'
+      path: '/conversations'
+      fullPath: '/console/conversations/'
+      preLoaderRoute: typeof AuthenticatedConsoleConversationsIndexRouteImport
+      parentRoute: typeof AuthenticatedConsoleRoute
+    }
   }
 }
 
 interface AuthenticatedConsoleRouteChildren {
   AuthenticatedConsoleWidgetPreviewRoute: typeof AuthenticatedConsoleWidgetPreviewRoute
   AuthenticatedConsoleIndexRoute: typeof AuthenticatedConsoleIndexRoute
+  AuthenticatedConsoleConversationsIndexRoute: typeof AuthenticatedConsoleConversationsIndexRoute
 }
 
 const AuthenticatedConsoleRouteChildren: AuthenticatedConsoleRouteChildren = {
   AuthenticatedConsoleWidgetPreviewRoute:
     AuthenticatedConsoleWidgetPreviewRoute,
   AuthenticatedConsoleIndexRoute: AuthenticatedConsoleIndexRoute,
+  AuthenticatedConsoleConversationsIndexRoute:
+    AuthenticatedConsoleConversationsIndexRoute,
 }
 
 const AuthenticatedConsoleRouteWithChildren =
