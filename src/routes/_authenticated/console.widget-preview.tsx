@@ -118,9 +118,9 @@ function WidgetPreview() {
             </div>
             <pre className="overflow-x-auto p-4 text-xs">{embedCode}</pre>
           </div>
-          {!apiBase && (
-            <p className="text-sm text-destructive">
-              VITE_SUPABASE_FUNCTIONS_URL is not set and could not be derived.
+          {!envFunctionsUrl && (
+            <p className="text-sm text-amber-600">
+              Set VITE_SUPABASE_FUNCTIONS_URL in environment variables
             </p>
           )}
         </TabsContent>
