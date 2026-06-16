@@ -19,7 +19,7 @@ export const Route = createFileRoute("/login")({
   beforeLoad: async ({ search }) => {
     const { data } = await supabase.auth.getUser();
     if (data.user) {
-      throw redirect({ to: search.redirect ?? "/console/widget-preview" });
+      throw redirect({ to: search.redirect ?? "/console" });
     }
   },
   component: LoginPage,
@@ -48,7 +48,7 @@ function LoginPage() {
         });
         if (error) throw error;
       }
-      navigate({ to: search.redirect ?? "/console/widget-preview" });
+      navigate({ to: search.redirect ?? "/console" });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Authentication failed");
     } finally {
@@ -67,7 +67,7 @@ function LoginPage() {
       return;
     }
     if (result.redirected) return;
-    navigate({ to: search.redirect ?? "/console/widget-preview" });
+    navigate({ to: search.redirect ?? "/console" });
   };
 
   return (
