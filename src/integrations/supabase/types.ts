@@ -14,7 +14,753 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      agent_profile: {
+        Row: {
+          avatar_url: string | null
+          created_at: string | null
+          display_name: string
+          email: string
+          id: string
+          role: string
+          status: string | null
+          updated_at: string | null
+          user_id: string | null
+        }
+        Insert: {
+          avatar_url?: string | null
+          created_at?: string | null
+          display_name: string
+          email: string
+          id?: string
+          role?: string
+          status?: string | null
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          avatar_url?: string | null
+          created_at?: string | null
+          display_name?: string
+          email?: string
+          id?: string
+          role?: string
+          status?: string | null
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
+      ai_reply_draft: {
+        Row: {
+          confidence_score: number | null
+          conversation_id: string
+          created_at: string | null
+          draft_content: string
+          draft_status: string | null
+          id: string
+          message_id: string | null
+          model_used: string | null
+          prompt_version_id: string | null
+          rag_sources: Json | null
+        }
+        Insert: {
+          confidence_score?: number | null
+          conversation_id: string
+          created_at?: string | null
+          draft_content: string
+          draft_status?: string | null
+          id?: string
+          message_id?: string | null
+          model_used?: string | null
+          prompt_version_id?: string | null
+          rag_sources?: Json | null
+        }
+        Update: {
+          confidence_score?: number | null
+          conversation_id?: string
+          created_at?: string | null
+          draft_content?: string
+          draft_status?: string | null
+          id?: string
+          message_id?: string | null
+          model_used?: string | null
+          prompt_version_id?: string | null
+          rag_sources?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_reply_draft_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_reply_draft_message_id_fkey"
+            columns: ["message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      audit_log: {
+        Row: {
+          action: string
+          actor_id: string | null
+          actor_type: string | null
+          created_at: string | null
+          diff: Json | null
+          id: string
+          ip_address: string | null
+          resource_id: string | null
+          resource_type: string
+        }
+        Insert: {
+          action: string
+          actor_id?: string | null
+          actor_type?: string | null
+          created_at?: string | null
+          diff?: Json | null
+          id?: string
+          ip_address?: string | null
+          resource_id?: string | null
+          resource_type: string
+        }
+        Update: {
+          action?: string
+          actor_id?: string | null
+          actor_type?: string | null
+          created_at?: string | null
+          diff?: Json | null
+          id?: string
+          ip_address?: string | null
+          resource_id?: string | null
+          resource_type?: string
+        }
+        Relationships: []
+      }
+      channel_config: {
+        Row: {
+          allowed_origins: string[] | null
+          channel_type: string
+          created_at: string | null
+          id: string
+          is_active: boolean | null
+          name: string
+          updated_at: string | null
+          widget_config_id: string | null
+        }
+        Insert: {
+          allowed_origins?: string[] | null
+          channel_type?: string
+          created_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          name: string
+          updated_at?: string | null
+          widget_config_id?: string | null
+        }
+        Update: {
+          allowed_origins?: string[] | null
+          channel_type?: string
+          created_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          name?: string
+          updated_at?: string | null
+          widget_config_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "channel_config_widget_config_id_fkey"
+            columns: ["widget_config_id"]
+            isOneToOne: false
+            referencedRelation: "widget_config"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      conversation_assignment: {
+        Row: {
+          agent_id: string
+          assigned_at: string | null
+          assigned_by: string | null
+          conversation_id: string
+          id: string
+          is_active: boolean | null
+          unassigned_at: string | null
+        }
+        Insert: {
+          agent_id: string
+          assigned_at?: string | null
+          assigned_by?: string | null
+          conversation_id: string
+          id?: string
+          is_active?: boolean | null
+          unassigned_at?: string | null
+        }
+        Update: {
+          agent_id?: string
+          assigned_at?: string | null
+          assigned_by?: string | null
+          conversation_id?: string
+          id?: string
+          is_active?: boolean | null
+          unassigned_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "conversation_assignment_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "agent_profile"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "conversation_assignment_assigned_by_fkey"
+            columns: ["assigned_by"]
+            isOneToOne: false
+            referencedRelation: "agent_profile"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "conversation_assignment_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      conversation_status_log: {
+        Row: {
+          changed_by: string | null
+          changed_by_type: string | null
+          conversation_id: string
+          created_at: string | null
+          id: string
+          new_status: string
+          old_status: string | null
+          reason: string | null
+        }
+        Insert: {
+          changed_by?: string | null
+          changed_by_type?: string | null
+          conversation_id: string
+          created_at?: string | null
+          id?: string
+          new_status: string
+          old_status?: string | null
+          reason?: string | null
+        }
+        Update: {
+          changed_by?: string | null
+          changed_by_type?: string | null
+          conversation_id?: string
+          created_at?: string | null
+          id?: string
+          new_status?: string
+          old_status?: string | null
+          reason?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "conversation_status_log_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      conversations: {
+        Row: {
+          assigned_agent_id: string | null
+          channel_config_id: string | null
+          created_at: string | null
+          id: string
+          priority: string | null
+          resolved_at: string | null
+          status: string
+          tags: string[] | null
+          updated_at: string | null
+          visitor_session_id: string | null
+        }
+        Insert: {
+          assigned_agent_id?: string | null
+          channel_config_id?: string | null
+          created_at?: string | null
+          id?: string
+          priority?: string | null
+          resolved_at?: string | null
+          status?: string
+          tags?: string[] | null
+          updated_at?: string | null
+          visitor_session_id?: string | null
+        }
+        Update: {
+          assigned_agent_id?: string | null
+          channel_config_id?: string | null
+          created_at?: string | null
+          id?: string
+          priority?: string | null
+          resolved_at?: string | null
+          status?: string
+          tags?: string[] | null
+          updated_at?: string | null
+          visitor_session_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "conversations_channel_config_id_fkey"
+            columns: ["channel_config_id"]
+            isOneToOne: false
+            referencedRelation: "channel_config"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "conversations_visitor_session_id_fkey"
+            columns: ["visitor_session_id"]
+            isOneToOne: false
+            referencedRelation: "visitor_session"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      feedback_automation_config: {
+        Row: {
+          config: Json | null
+          created_at: string | null
+          delay_minutes: number | null
+          id: string
+          is_active: boolean | null
+          name: string
+          trigger_event: string
+          updated_at: string | null
+        }
+        Insert: {
+          config?: Json | null
+          created_at?: string | null
+          delay_minutes?: number | null
+          id?: string
+          is_active?: boolean | null
+          name: string
+          trigger_event: string
+          updated_at?: string | null
+        }
+        Update: {
+          config?: Json | null
+          created_at?: string | null
+          delay_minutes?: number | null
+          id?: string
+          is_active?: boolean | null
+          name?: string
+          trigger_event?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      feedback_request: {
+        Row: {
+          conversation_id: string
+          feedback_text: string | null
+          id: string
+          rating: number | null
+          request_type: string | null
+          responded_at: string | null
+          sent_at: string | null
+          status: string | null
+          visitor_session_id: string | null
+        }
+        Insert: {
+          conversation_id: string
+          feedback_text?: string | null
+          id?: string
+          rating?: number | null
+          request_type?: string | null
+          responded_at?: string | null
+          sent_at?: string | null
+          status?: string | null
+          visitor_session_id?: string | null
+        }
+        Update: {
+          conversation_id?: string
+          feedback_text?: string | null
+          id?: string
+          rating?: number | null
+          request_type?: string | null
+          responded_at?: string | null
+          sent_at?: string | null
+          status?: string | null
+          visitor_session_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "feedback_request_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "feedback_request_visitor_session_id_fkey"
+            columns: ["visitor_session_id"]
+            isOneToOne: false
+            referencedRelation: "visitor_session"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      final_prompt_trace: {
+        Row: {
+          conversation_id: string | null
+          created_at: string | null
+          id: string
+          latency_ms: number | null
+          message_id: string | null
+          model_used: string | null
+          rag_context: Json | null
+          system_prompt_snapshot: string | null
+          token_input: number | null
+          token_output: number | null
+          tool_calls: Json | null
+          user_message: string | null
+        }
+        Insert: {
+          conversation_id?: string | null
+          created_at?: string | null
+          id?: string
+          latency_ms?: number | null
+          message_id?: string | null
+          model_used?: string | null
+          rag_context?: Json | null
+          system_prompt_snapshot?: string | null
+          token_input?: number | null
+          token_output?: number | null
+          tool_calls?: Json | null
+          user_message?: string | null
+        }
+        Update: {
+          conversation_id?: string | null
+          created_at?: string | null
+          id?: string
+          latency_ms?: number | null
+          message_id?: string | null
+          model_used?: string | null
+          rag_context?: Json | null
+          system_prompt_snapshot?: string | null
+          token_input?: number | null
+          token_output?: number | null
+          tool_calls?: Json | null
+          user_message?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "final_prompt_trace_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "final_prompt_trace_message_id_fkey"
+            columns: ["message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      handoff_event: {
+        Row: {
+          ai_summary: string | null
+          conversation_id: string
+          created_at: string | null
+          from_agent_id: string | null
+          handoff_reason: string
+          handoff_type: string
+          id: string
+          to_agent_id: string | null
+        }
+        Insert: {
+          ai_summary?: string | null
+          conversation_id: string
+          created_at?: string | null
+          from_agent_id?: string | null
+          handoff_reason: string
+          handoff_type: string
+          id?: string
+          to_agent_id?: string | null
+        }
+        Update: {
+          ai_summary?: string | null
+          conversation_id?: string
+          created_at?: string | null
+          from_agent_id?: string | null
+          handoff_reason?: string
+          handoff_type?: string
+          id?: string
+          to_agent_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "handoff_event_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      messages: {
+        Row: {
+          content: string
+          content_type: string | null
+          conversation_id: string
+          created_at: string | null
+          id: string
+          is_recalled: boolean | null
+          metadata: Json | null
+          role: string
+          status: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          content: string
+          content_type?: string | null
+          conversation_id: string
+          created_at?: string | null
+          id?: string
+          is_recalled?: boolean | null
+          metadata?: Json | null
+          role: string
+          status?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          content?: string
+          content_type?: string | null
+          conversation_id?: string
+          created_at?: string | null
+          id?: string
+          is_recalled?: boolean | null
+          metadata?: Json | null
+          role?: string
+          status?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "messages_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      rag_trace: {
+        Row: {
+          conversation_id: string | null
+          created_at: string | null
+          id: string
+          kb_source: string | null
+          message_id: string | null
+          query_sent: string | null
+          retrieved_chunks: Json | null
+          top_score: number | null
+        }
+        Insert: {
+          conversation_id?: string | null
+          created_at?: string | null
+          id?: string
+          kb_source?: string | null
+          message_id?: string | null
+          query_sent?: string | null
+          retrieved_chunks?: Json | null
+          top_score?: number | null
+        }
+        Update: {
+          conversation_id?: string | null
+          created_at?: string | null
+          id?: string
+          kb_source?: string | null
+          message_id?: string | null
+          query_sent?: string | null
+          retrieved_chunks?: Json | null
+          top_score?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "rag_trace_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "rag_trace_message_id_fkey"
+            columns: ["message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      upstream_call_log: {
+        Row: {
+          conversation_id: string | null
+          created_at: string | null
+          error_message: string | null
+          id: string
+          request_payload: Json | null
+          response_latency_ms: number | null
+          response_status: number | null
+          upstream_service: string
+        }
+        Insert: {
+          conversation_id?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          id?: string
+          request_payload?: Json | null
+          response_latency_ms?: number | null
+          response_status?: number | null
+          upstream_service: string
+        }
+        Update: {
+          conversation_id?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          id?: string
+          request_payload?: Json | null
+          response_latency_ms?: number | null
+          response_status?: number | null
+          upstream_service?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "upstream_call_log_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      visitor_session: {
+        Row: {
+          channel_config_id: string | null
+          created_at: string | null
+          id: string
+          last_seen_at: string | null
+          session_token: string
+          visitor_fingerprint: string | null
+          visitor_metadata: Json | null
+        }
+        Insert: {
+          channel_config_id?: string | null
+          created_at?: string | null
+          id?: string
+          last_seen_at?: string | null
+          session_token?: string
+          visitor_fingerprint?: string | null
+          visitor_metadata?: Json | null
+        }
+        Update: {
+          channel_config_id?: string | null
+          created_at?: string | null
+          id?: string
+          last_seen_at?: string | null
+          session_token?: string
+          visitor_fingerprint?: string | null
+          visitor_metadata?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "visitor_session_channel_config_id_fkey"
+            columns: ["channel_config_id"]
+            isOneToOne: false
+            referencedRelation: "channel_config"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      widget_config: {
+        Row: {
+          created_at: string | null
+          header_title: string
+          id: string
+          is_active: boolean | null
+          logo_url: string | null
+          name: string
+          placeholder_text: string | null
+          primary_color: string | null
+          updated_at: string | null
+          welcome_message: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          header_title?: string
+          id?: string
+          is_active?: boolean | null
+          logo_url?: string | null
+          name: string
+          placeholder_text?: string | null
+          primary_color?: string | null
+          updated_at?: string | null
+          welcome_message?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          header_title?: string
+          id?: string
+          is_active?: boolean | null
+          logo_url?: string | null
+          name?: string
+          placeholder_text?: string | null
+          primary_color?: string | null
+          updated_at?: string | null
+          welcome_message?: string | null
+        }
+        Relationships: []
+      }
+      widget_session_event: {
+        Row: {
+          created_at: string | null
+          event_data: Json | null
+          event_type: string
+          id: string
+          page_url: string | null
+          visitor_session_id: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          event_data?: Json | null
+          event_type: string
+          id?: string
+          page_url?: string | null
+          visitor_session_id?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          event_data?: Json | null
+          event_type?: string
+          id?: string
+          page_url?: string | null
+          visitor_session_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "widget_session_event_visitor_session_id_fkey"
+            columns: ["visitor_session_id"]
+            isOneToOne: false
+            referencedRelation: "visitor_session"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
