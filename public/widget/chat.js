@@ -189,6 +189,15 @@
   }
 
   function appendMessageObj(m) {
+    // state.messages is the source of truth (exclude welcome fake message)
+    if (m && m.id && m.id !== 'welcome') {
+      var idx = -1;
+      for (var i = 0; i < state.messages.length; i++) {
+        if (state.messages[i].id === m.id) { idx = i; break; }
+      }
+      if (idx >= 0) state.messages[idx] = m;
+      else state.messages.push(m);
+    }
     appendMessage(m.role, m.content, m.id);
   }
 
