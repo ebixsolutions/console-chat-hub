@@ -286,6 +286,66 @@
     });
   }
 
+  function showResolvedBanner(messages) {
+    messages = messages || [];
+    var container = document.getElementById('nexus-messages');
+    if (!container) return;
+    stopPolling();
+    container.innerHTML = '';
+    seenIds = {};
+    lastMessageId = null;
+    messages.forEach(function (m) {
+      appendMessageObj(m);
+      lastMessageId = m.id;
+    });
+
+    var primary = (config && config.widget_config && config.widget_config.primary_color) || "#6B5CE7";
+    var banner = document.createElement('div');
+    banner.id = 'nexus-resolved-banner';
+    banner.style.cssText = 'text-align:center;padding:16px;margin:12px 0;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;font-size:13px;color:#166534;';
+    banner.innerHTML =
+      '<div>✅ This conversation has been resolved.</div>' +
+      '<button id="nexus-new-chat" type="button" style="margin-top:10px;background:' + primary + ';color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:13px;cursor:pointer;">Start new conversation</button>';
+    container.appendChild(banner);
+    container.scrollTop = container.scrollHeight;
+
+    var input = document.getElementById('nexus-input');
+    var sendBtnEl = document.getElementById('nexus-send');
+    if (input) {
+      input.disabled = true;
+      input.placeholder = 'Conversation resolved.';
+    }
+    if (sendBtnEl) sendBtnEl.disabled = true;
+
+    var newChatBtn = document.getElementById('nexus-new-chat');
+    if (newChatBtn) {
+      newChatBtn.addEventListener('click', function () {
+        clearSessionFromStorage();
+        state.sessionToken = null;
+        state.sessionId = null;
+        state.conversationId = null;
+        state.fallbackShownForConversation = false;
+        state.thinkingStartTime = null;
+        lastMessageId = null;
+        seenIds = {};
+        stopPolling();
+
+        var inp = document.getElementById('nexus-input');
+        var snd = document.getElementById('nexus-send');
+        var placeholder = (config && config.widget_config && config.widget_config.placeholder_text) || 'Type a message…';
+        if (inp) {
+          inp.disabled = false;
+          inp.placeholder = placeholder;
+        }
+        if (snd) snd.disabled = false;
+
+        startFreshSession();
+      });
+    }
+  }
+
+
+
   function resumeSession(stored) {
     if (msgsEl) {
       msgsEl.innerHTML = '<div style="text-align:center;color:#9ca3af;padding:20px;font-size:13px;">Resuming conversation…</div>';
