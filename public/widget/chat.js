@@ -14,7 +14,9 @@
     return;
   }
 
-  // ---------- Session persistence (localStorage) ----------
+  // Session token is not a Supabase auth token, but it is a visitor-scoped bearer token
+  // that can access one visitor conversation. Treat as low-sensitivity.
+  // localStorage keys are scoped per CHANNEL_ID to prevent cross-widget conflicts.
   var STORAGE_PREFIX = "nexus_widget_" + CHANNEL_ID;
   var STORAGE_KEY_SESSION_TOKEN   = STORAGE_PREFIX + "_session_token";
   var STORAGE_KEY_SESSION_ID      = STORAGE_PREFIX + "_session_id";
@@ -127,10 +129,10 @@
         '<span>' + escapeHtml(title) + '</span>' +
         '<button class="nx-close" type="button" aria-label="Close">×</button>' +
       '</div>' +
-      '<div class="nx-msgs"></div>' +
+      '<div class="nx-msgs" id="nexus-messages"></div>' +
       '<div class="nx-input">' +
-        '<textarea placeholder="' + escapeHtml(placeholder) + '" rows="1"></textarea>' +
-        '<button class="nx-send" type="button" style="background:' + primary + '">Send</button>' +
+        '<textarea id="nexus-input" placeholder="' + escapeHtml(placeholder) + '" rows="1"></textarea>' +
+        '<button class="nx-send" id="nexus-send" type="button" style="background:' + primary + '">Send</button>' +
       '</div>' +
       '<div class="nx-footer">Powered by NexusAI</div>';
     root.appendChild(panel);
@@ -284,6 +286,66 @@
     });
   }
 
+  function showResolvedBanner(messages) {
+    messages = messages || [];
+    var container = document.getElementById('nexus-messages');
+    if (!container) return;
+    stopPolling();
+    container.innerHTML = '';
+    seenIds = {};
+    lastMessageId = null;
+    messages.forEach(function (m) {
+      appendMessageObj(m);
+      lastMessageId = m.id;
+    });
+
+    var primary = (config && config.widget_config && config.widget_config.primary_color) || "#6B5CE7";
+    var banner = document.createElement('div');
+    banner.id = 'nexus-resolved-banner';
+    banner.style.cssText = 'text-align:center;padding:16px;margin:12px 0;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;font-size:13px;color:#166534;';
+    banner.innerHTML =
+      '<div>✅ This conversation has been resolved.</div>' +
+      '<button id="nexus-new-chat" type="button" style="margin-top:10px;background:' + primary + ';color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:13px;cursor:pointer;">Start new conversation</button>';
+    container.appendChild(banner);
+    container.scrollTop = container.scrollHeight;
+
+    var input = document.getElementById('nexus-input');
+    var sendBtnEl = document.getElementById('nexus-send');
+    if (input) {
+      input.disabled = true;
+      input.placeholder = 'Conversation resolved.';
+    }
+    if (sendBtnEl) sendBtnEl.disabled = true;
+
+    var newChatBtn = document.getElementById('nexus-new-chat');
+    if (newChatBtn) {
+      newChatBtn.addEventListener('click', function () {
+        clearSessionFromStorage();
+        state.sessionToken = null;
+        state.sessionId = null;
+        state.conversationId = null;
+        state.fallbackShownForConversation = false;
+        state.thinkingStartTime = null;
+        lastMessageId = null;
+        seenIds = {};
+        stopPolling();
+
+        var inp = document.getElementById('nexus-input');
+        var snd = document.getElementById('nexus-send');
+        var placeholder = (config && config.widget_config && config.widget_config.placeholder_text) || 'Type a message…';
+        if (inp) {
+          inp.disabled = false;
+          inp.placeholder = placeholder;
+        }
+        if (snd) snd.disabled = false;
+
+        startFreshSession();
+      });
+    }
+  }
+
+
+
   function resumeSession(stored) {
     if (msgsEl) {
       msgsEl.innerHTML = '<div style="text-align:center;color:#9ca3af;padding:20px;font-size:13px;">Resuming conversation…</div>';
@@ -303,10 +365,8 @@
       var messages = d.messages || [];
 
       if (d.conversation_status === 'resolved') {
-        var banner = document.createElement('div');
-        banner.className = 'nx-status';
-        banner.textContent = 'This conversation has been resolved.';
-        msgsEl.appendChild(banner);
+        showResolvedBanner(messages);
+        return;
       }
 
       if (messages.length === 0) {
