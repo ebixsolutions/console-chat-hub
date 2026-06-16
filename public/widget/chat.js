@@ -231,6 +231,7 @@
           state.conversationId = null;
           lastMessageId = null;
           seenIds = {};
+          state.messages = [];
         }
         return;
       }
