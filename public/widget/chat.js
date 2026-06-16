@@ -7,11 +7,47 @@
     var s = document.getElementsByTagName("script");
     return s[s.length - 1];
   })();
-  var channelId = script.getAttribute("data-channel-id");
+  var CHANNEL_ID = script.getAttribute("data-channel-id");
   var apiBase = (script.getAttribute("data-api-base") || "").replace(/\/$/, "");
-  if (!channelId || !apiBase) {
+  if (!CHANNEL_ID || !apiBase) {
     console.error("[NexusAI] data-channel-id and data-api-base are required");
     return;
+  }
+
+  // ---------- Session persistence (localStorage) ----------
+  var STORAGE_PREFIX = "nexus_widget_" + CHANNEL_ID;
+  var STORAGE_KEY_SESSION_TOKEN   = STORAGE_PREFIX + "_session_token";
+  var STORAGE_KEY_SESSION_ID      = STORAGE_PREFIX + "_session_id";
+  var STORAGE_KEY_CONVERSATION_ID = STORAGE_PREFIX + "_conversation_id";
+  var STORAGE_KEY_CHANNEL_ID      = STORAGE_PREFIX + "_channel_id";
+
+  function saveSessionToStorage() {
+    try {
+      if (state.sessionToken) localStorage.setItem(STORAGE_KEY_SESSION_TOKEN, state.sessionToken);
+      if (state.sessionId) localStorage.setItem(STORAGE_KEY_SESSION_ID, state.sessionId);
+      if (state.conversationId) localStorage.setItem(STORAGE_KEY_CONVERSATION_ID, state.conversationId);
+      localStorage.setItem(STORAGE_KEY_CHANNEL_ID, CHANNEL_ID);
+    } catch (e) {}
+  }
+  function clearSessionFromStorage() {
+    try {
+      localStorage.removeItem(STORAGE_KEY_SESSION_TOKEN);
+      localStorage.removeItem(STORAGE_KEY_SESSION_ID);
+      localStorage.removeItem(STORAGE_KEY_CONVERSATION_ID);
+      localStorage.removeItem(STORAGE_KEY_CHANNEL_ID);
+    } catch (e) {}
+  }
+  function loadSessionFromStorage() {
+    try {
+      return {
+        sessionToken: localStorage.getItem(STORAGE_KEY_SESSION_TOKEN),
+        sessionId: localStorage.getItem(STORAGE_KEY_SESSION_ID),
+        conversationId: localStorage.getItem(STORAGE_KEY_CONVERSATION_ID),
+        channelId: localStorage.getItem(STORAGE_KEY_CHANNEL_ID),
+      };
+    } catch (e) {
+      return { sessionToken: null, sessionId: null, conversationId: null, channelId: null };
+    }
   }
 
   var config = null;
@@ -19,6 +55,7 @@
   var seenIds = {};
   var state = {
     sessionToken: null,
+    sessionId: null,
     conversationId: null,
     pollInterval: null,
     thinkingStartTime: null,
@@ -48,6 +85,7 @@
     ".nx-input textarea:focus{border-color:#9ca3af}",
     ".nx-send{border:none;color:#fff;padding:0 14px;border-radius:8px;cursor:pointer;font-weight:600;font-size:14px}",
     ".nx-send:disabled{opacity:.5;cursor:not-allowed}",
+    ".nx-status{padding:8px 12px;background:#f0fdf4;border-bottom:1px solid #bbf7d0;color:#15803d;font-size:12px;text-align:center}",
     ".nx-footer{text-align:center;padding:6px;font-size:11px;color:#9ca3af;background:#fff;border-top:1px solid #f3f4f6}",
   ].join("");
   document.head.appendChild(style);
@@ -171,7 +209,19 @@
              "&session_token=" + encodeURIComponent(state.sessionToken) +
              (lastMessageId ? "&after_message_id=" + encodeURIComponent(lastMessageId) : "");
     api("/widget-poll-messages" + qs, { method: "GET" }).then(function (res) {
-      if (!res.ok || !res.body || !res.body.success) return;
+      if (!res.ok || !res.body || !res.body.success) {
+        if (res.status === 401 || res.status === 404) {
+          // Stored session no longer valid — clear and restart fresh
+          stopPolling();
+          clearSessionFromStorage();
+          state.sessionToken = null;
+          state.sessionId = null;
+          state.conversationId = null;
+          lastMessageId = null;
+          seenIds = {};
+        }
+        return;
+      }
       var d = res.body.data;
       (d.messages || []).forEach(function (m) {
         appendMessageObj(m);
@@ -198,11 +248,90 @@
     }).catch(function () {});
   }
 
+  function createSession() {
+    return api("/create-visitor-session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channel_id: CHANNEL_ID }),
+    }).then(function (s) {
+      if (!s.ok || !s.body || !s.body.success) {
+        throw new Error((s.body && s.body.error) || "Failed to create session");
+      }
+      return s.body.data;
+    });
+  }
+
+  function startFreshSession() {
+    if (msgsEl) {
+      msgsEl.innerHTML = '<div style="text-align:center;color:#9ca3af;padding:20px;font-size:13px;">Connecting…</div>';
+    }
+    return createSession().then(function (data) {
+      state.sessionToken = data.session_token;
+      state.sessionId = data.session_id || null;
+      state.conversationId = data.conversation_id;
+      lastMessageId = null;
+      seenIds = {};
+      saveSessionToStorage();
+      if (msgsEl) msgsEl.innerHTML = '';
+      var welcome = config && config.widget_config && config.widget_config.welcome_message;
+      if (welcome) appendMessage("assistant", welcome, "welcome");
+      startPolling();
+    }).catch(function (err) {
+      if (msgsEl) {
+        msgsEl.innerHTML = '<div style="text-align:center;color:#ef4444;padding:20px;font-size:13px;">Connection failed. Please try again.</div>';
+      }
+      console.error("[NexusAI] Session error:", err);
+    });
+  }
+
+  function resumeSession(stored) {
+    if (msgsEl) {
+      msgsEl.innerHTML = '<div style="text-align:center;color:#9ca3af;padding:20px;font-size:13px;">Resuming conversation…</div>';
+    }
+    var qs = "?conversation_id=" + encodeURIComponent(stored.conversationId) +
+             "&session_token=" + encodeURIComponent(stored.sessionToken);
+    return api("/widget-poll-messages" + qs, { method: "GET" }).then(function (res) {
+      if (!res.ok || !res.body || !res.body.success) throw new Error("Session invalid");
+      state.sessionToken = stored.sessionToken;
+      state.sessionId = stored.sessionId;
+      state.conversationId = stored.conversationId;
+      lastMessageId = null;
+      seenIds = {};
+      if (msgsEl) msgsEl.innerHTML = '';
+
+      var d = res.body.data;
+      var messages = d.messages || [];
+
+      if (d.conversation_status === 'resolved') {
+        var banner = document.createElement('div');
+        banner.className = 'nx-status';
+        banner.textContent = 'This conversation has been resolved.';
+        msgsEl.appendChild(banner);
+      }
+
+      if (messages.length === 0) {
+        var welcome = config && config.widget_config && config.widget_config.welcome_message;
+        if (welcome) appendMessage("assistant", welcome, "welcome");
+      } else {
+        messages.forEach(function (m) {
+          appendMessageObj(m);
+          lastMessageId = m.id;
+        });
+      }
+      startPolling();
+    });
+  }
 
   function openPanel() {
-    if (panel) { panel.style.display = "flex"; startPolling(); return; }
+    if (panel) {
+      panel.style.display = "flex";
+      if (state.sessionToken && state.conversationId) {
+        startPolling();
+        return;
+      }
+    }
 
-    api("/get-public-widget-config?channel_id=" + encodeURIComponent(channelId), { method: "GET" })
+    api("/get-public-widget-config?channel_id=" + encodeURIComponent(CHANNEL_ID), { method: "GET" })
       .then(function (res) {
         if (!res.ok || !res.body || !res.body.success) {
           alert("Chat unavailable.");
@@ -210,25 +339,22 @@
         }
         config = res.body.data;
         applyColor((config.widget_config && config.widget_config.primary_color) || "#111827");
-        buildPanel();
+        if (!panel) buildPanel();
 
-        return api("/create-visitor-session", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ channel_id: channelId }),
-        }).then(function (s) {
-          if (!s.ok || !s.body || !s.body.success) {
-            appendMessage("system", "Unable to start chat session.");
-            return;
-          }
-          state.sessionToken = s.body.data.session_token;
-          state.conversationId = s.body.data.conversation_id;
-
-          var welcome = config.widget_config && config.widget_config.welcome_message;
-          if (welcome) appendMessage("assistant", welcome);
-
+        // Already have an in-memory session (e.g., panel was just closed)
+        if (state.sessionToken && state.conversationId) {
           startPolling();
-        });
+          return;
+        }
+
+        var stored = loadSessionFromStorage();
+        if (stored.sessionToken && stored.conversationId && stored.channelId === CHANNEL_ID) {
+          return resumeSession(stored).catch(function () {
+            clearSessionFromStorage();
+            return startFreshSession();
+          });
+        }
+        return startFreshSession();
       })
       .catch(function () { alert("Chat unavailable."); });
   }
@@ -272,7 +398,7 @@
   });
 
   // Fetch config early just to color the bubble
-  fetch(apiBase + "/get-public-widget-config?channel_id=" + encodeURIComponent(channelId))
+  fetch(apiBase + "/get-public-widget-config?channel_id=" + encodeURIComponent(CHANNEL_ID))
     .then(function (r) { return r.json(); })
     .then(function (j) {
       if (j && j.success && j.data && j.data.widget_config && j.data.widget_config.primary_color) {
