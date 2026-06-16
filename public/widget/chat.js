@@ -221,8 +221,8 @@
             appendMessage("system", "Unable to start chat session.");
             return;
           }
-          sessionToken = s.body.data.session_token;
-          conversationId = s.body.data.conversation_id;
+          state.sessionToken = s.body.data.session_token;
+          state.conversationId = s.body.data.conversation_id;
 
           var welcome = config.widget_config && config.widget_config.welcome_message;
           if (welcome) appendMessage("assistant", welcome);
