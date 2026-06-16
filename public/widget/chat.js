@@ -15,13 +15,15 @@
   }
 
   var config = null;
-  var sessionToken = null;
-  var conversationId = null;
   var lastMessageId = null;
-  var pollInterval = null;
-  var thinkingSince = null;
-  var fallbackShownForConversation = false;
   var seenIds = {};
+  var state = {
+    sessionToken: null,
+    conversationId: null,
+    pollInterval: null,
+    thinkingStartTime: null,
+    fallbackShownForConversation: false,
+  };
 
   // ---------- Styles ----------
   var style = document.createElement("style");
