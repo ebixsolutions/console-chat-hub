@@ -183,7 +183,7 @@ function ConversationsList() {
             </div>
             <div className="text-right text-xs text-muted-foreground">
               <div>{c.assigned_agent_name}</div>
-              <div>{relTime(c.updated_at)}</div>
+              <div>{c.updated_at ? relTime(c.updated_at) : "—"}</div>
             </div>
           </Link>
         ))}
