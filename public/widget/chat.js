@@ -305,10 +305,8 @@
       var messages = d.messages || [];
 
       if (d.conversation_status === 'resolved') {
-        var banner = document.createElement('div');
-        banner.className = 'nx-status';
-        banner.textContent = 'This conversation has been resolved.';
-        msgsEl.appendChild(banner);
+        showResolvedBanner(messages);
+        return;
       }
 
       if (messages.length === 0) {
