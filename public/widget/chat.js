@@ -158,45 +158,46 @@
   }
 
   function startPolling() {
-    if (pollInterval) return;
-    pollInterval = setInterval(poll, 2500);
+    if (state.pollInterval) return;
+    state.pollInterval = setInterval(poll, 2500);
   }
   function stopPolling() {
-    if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+    if (state.pollInterval) { clearInterval(state.pollInterval); state.pollInterval = null; }
   }
 
   function poll() {
-    if (!conversationId || !sessionToken) return;
-    var qs = "?conversation_id=" + encodeURIComponent(conversationId) +
-             "&session_token=" + encodeURIComponent(sessionToken) +
+    if (!state.conversationId || !state.sessionToken) return;
+    var qs = "?conversation_id=" + encodeURIComponent(state.conversationId) +
+             "&session_token=" + encodeURIComponent(state.sessionToken) +
              (lastMessageId ? "&after_message_id=" + encodeURIComponent(lastMessageId) : "");
     api("/widget-poll-messages" + qs, { method: "GET" }).then(function (res) {
       if (!res.ok || !res.body || !res.body.success) return;
       var d = res.body.data;
       (d.messages || []).forEach(function (m) {
-        appendMessage(m.role, m.content, m.id);
+        appendMessageObj(m);
         lastMessageId = m.id;
       });
 
-      if (d.ai_generating) {
-        if (!thinkingSince) thinkingSince = Date.now();
-        if (!fallbackShownForConversation) {
-          if (Date.now() - thinkingSince >= 60000) {
-            showTyping(false);
-            fallbackShownForConversation = true;
-            appendMessage("assistant", "Your message was received. AI reply not available in this phase.");
-          } else {
-            showTyping(true);
+      var ai_generating = d.ai_generating;
+      if (ai_generating) {
+        if (!state.fallbackShownForConversation) {
+          if (!state.thinkingStartTime) state.thinkingStartTime = Date.now();
+          if (!document.getElementById('nexus-typing-indicator')) showTyping();
+          if (Date.now() - state.thinkingStartTime > 60000) {
+            hideTyping();
+            state.thinkingStartTime = null;
+            state.fallbackShownForConversation = true;
+            appendMessage('assistant', 'Your message was received. AI reply not available yet. [L2 dev mode]', 'fallback-' + Date.now());
           }
-        } else {
-          showTyping(false);
         }
       } else {
-        thinkingSince = null;
-        showTyping(false);
+        state.thinkingStartTime = null;
+        state.fallbackShownForConversation = false;
+        hideTyping();
       }
     }).catch(function () {});
   }
+
 
   function openPanel() {
     if (panel) { panel.style.display = "flex"; startPolling(); return; }
