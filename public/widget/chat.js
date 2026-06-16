@@ -14,7 +14,9 @@
     return;
   }
 
-  // ---------- Session persistence (localStorage) ----------
+  // Session token is not a Supabase auth token, but it is a visitor-scoped bearer token
+  // that can access one visitor conversation. Treat as low-sensitivity.
+  // localStorage keys are scoped per CHANNEL_ID to prevent cross-widget conflicts.
   var STORAGE_PREFIX = "nexus_widget_" + CHANNEL_ID;
   var STORAGE_KEY_SESSION_TOKEN   = STORAGE_PREFIX + "_session_token";
   var STORAGE_KEY_SESSION_ID      = STORAGE_PREFIX + "_session_id";
