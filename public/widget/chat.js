@@ -395,6 +395,7 @@
       state.conversationId = stored.conversationId;
       lastMessageId = null;
       seenIds = {};
+      state.messages = [];
       if (msgsEl) msgsEl.innerHTML = '';
 
       var d = res.body.data;
