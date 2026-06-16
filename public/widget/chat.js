@@ -241,30 +241,28 @@
   function handleSend() {
     if (!inputEl) return;
     var text = inputEl.value.trim();
-    if (!text || !conversationId || !sessionToken) return;
+    if (!text || !state.conversationId || !state.sessionToken) return;
     if (text.length > 2000) { alert("Message too long (max 2000)."); return; }
 
     sendBtn.disabled = true;
     inputEl.value = "";
     appendMessage("visitor", text);
-    fallbackShownForConversation = false;
 
     api("/receive-widget-message", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ conversation_id: conversationId, session_token: sessionToken, content: text }),
+      body: JSON.stringify({ conversation_id: state.conversationId, session_token: state.sessionToken, content: text }),
     }).then(function (res) {
-      sendBtn.disabled = false;
       if (!res.ok || !res.body || !res.body.success) {
         appendMessage("system", (res.body && res.body.error) || "Failed to send.");
-        return;
       }
-      thinkingSince = Date.now();
-      showTyping(true);
-      if (!pollInterval) startPolling();
     }).catch(function () {
-      sendBtn.disabled = false;
       appendMessage("system", "Network error.");
+    }).then(function () {
+      sendBtn.disabled = false;
+      state.fallbackShownForConversation = false;
+      state.thinkingStartTime = null;
+      if (!state.pollInterval && state.conversationId) startPolling();
     });
   }
 
