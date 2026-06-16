@@ -15,13 +15,15 @@
   }
 
   var config = null;
-  var sessionToken = null;
-  var conversationId = null;
   var lastMessageId = null;
-  var pollInterval = null;
-  var thinkingSince = null;
-  var fallbackShownForConversation = false;
   var seenIds = {};
+  var state = {
+    sessionToken: null,
+    conversationId: null,
+    pollInterval: null,
+    thinkingStartTime: null,
+    fallbackShownForConversation: false,
+  };
 
   // ---------- Styles ----------
   var style = document.createElement("style");
@@ -129,20 +131,24 @@
     msgsEl.scrollTop = msgsEl.scrollHeight;
   }
 
-  function showTyping(show) {
-    if (show) {
-      if (!typingEl) {
-        typingEl = document.createElement("div");
-        typingEl.className = "nx-typing";
-        typingEl.innerHTML = "<span></span><span></span><span></span>";
-      }
-      if (typingEl.parentNode !== msgsEl) {
-        msgsEl.appendChild(typingEl);
-        msgsEl.scrollTop = msgsEl.scrollHeight;
-      }
-    } else if (typingEl && typingEl.parentNode === msgsEl) {
-      msgsEl.removeChild(typingEl);
+  function showTyping() {
+    if (!typingEl) {
+      typingEl = document.createElement("div");
+      typingEl.className = "nx-typing";
+      typingEl.id = "nexus-typing-indicator";
+      typingEl.innerHTML = "<span></span><span></span><span></span>";
     }
+    if (typingEl.parentNode !== msgsEl) {
+      msgsEl.appendChild(typingEl);
+      msgsEl.scrollTop = msgsEl.scrollHeight;
+    }
+  }
+  function hideTyping() {
+    if (typingEl && typingEl.parentNode === msgsEl) msgsEl.removeChild(typingEl);
+  }
+
+  function appendMessageObj(m) {
+    appendMessage(m.role, m.content, m.id);
   }
 
   function api(path, opts) {
@@ -152,45 +158,46 @@
   }
 
   function startPolling() {
-    if (pollInterval) return;
-    pollInterval = setInterval(poll, 2500);
+    if (state.pollInterval) return;
+    state.pollInterval = setInterval(poll, 2500);
   }
   function stopPolling() {
-    if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+    if (state.pollInterval) { clearInterval(state.pollInterval); state.pollInterval = null; }
   }
 
   function poll() {
-    if (!conversationId || !sessionToken) return;
-    var qs = "?conversation_id=" + encodeURIComponent(conversationId) +
-             "&session_token=" + encodeURIComponent(sessionToken) +
+    if (!state.conversationId || !state.sessionToken) return;
+    var qs = "?conversation_id=" + encodeURIComponent(state.conversationId) +
+             "&session_token=" + encodeURIComponent(state.sessionToken) +
              (lastMessageId ? "&after_message_id=" + encodeURIComponent(lastMessageId) : "");
     api("/widget-poll-messages" + qs, { method: "GET" }).then(function (res) {
       if (!res.ok || !res.body || !res.body.success) return;
       var d = res.body.data;
       (d.messages || []).forEach(function (m) {
-        appendMessage(m.role, m.content, m.id);
+        appendMessageObj(m);
         lastMessageId = m.id;
       });
 
-      if (d.ai_generating) {
-        if (!thinkingSince) thinkingSince = Date.now();
-        if (!fallbackShownForConversation) {
-          if (Date.now() - thinkingSince >= 60000) {
-            showTyping(false);
-            fallbackShownForConversation = true;
-            appendMessage("assistant", "Your message was received. AI reply not available in this phase.");
-          } else {
-            showTyping(true);
+      var ai_generating = d.ai_generating;
+      if (ai_generating) {
+        if (!state.fallbackShownForConversation) {
+          if (!state.thinkingStartTime) state.thinkingStartTime = Date.now();
+          if (!document.getElementById('nexus-typing-indicator')) showTyping();
+          if (Date.now() - state.thinkingStartTime > 60000) {
+            hideTyping();
+            state.thinkingStartTime = null;
+            state.fallbackShownForConversation = true;
+            appendMessage('assistant', 'Your message was received. AI reply not available yet. [L2 dev mode]', 'fallback-' + Date.now());
           }
-        } else {
-          showTyping(false);
         }
       } else {
-        thinkingSince = null;
-        showTyping(false);
+        state.thinkingStartTime = null;
+        state.fallbackShownForConversation = false;
+        hideTyping();
       }
     }).catch(function () {});
   }
+
 
   function openPanel() {
     if (panel) { panel.style.display = "flex"; startPolling(); return; }
@@ -214,8 +221,8 @@
             appendMessage("system", "Unable to start chat session.");
             return;
           }
-          sessionToken = s.body.data.session_token;
-          conversationId = s.body.data.conversation_id;
+          state.sessionToken = s.body.data.session_token;
+          state.conversationId = s.body.data.conversation_id;
 
           var welcome = config.widget_config && config.widget_config.welcome_message;
           if (welcome) appendMessage("assistant", welcome);
@@ -234,30 +241,28 @@
   function handleSend() {
     if (!inputEl) return;
     var text = inputEl.value.trim();
-    if (!text || !conversationId || !sessionToken) return;
+    if (!text || !state.conversationId || !state.sessionToken) return;
     if (text.length > 2000) { alert("Message too long (max 2000)."); return; }
 
     sendBtn.disabled = true;
     inputEl.value = "";
     appendMessage("visitor", text);
-    fallbackShownForConversation = false;
 
     api("/receive-widget-message", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ conversation_id: conversationId, session_token: sessionToken, content: text }),
+      body: JSON.stringify({ conversation_id: state.conversationId, session_token: state.sessionToken, content: text }),
     }).then(function (res) {
-      sendBtn.disabled = false;
       if (!res.ok || !res.body || !res.body.success) {
         appendMessage("system", (res.body && res.body.error) || "Failed to send.");
-        return;
       }
-      thinkingSince = Date.now();
-      showTyping(true);
-      if (!pollInterval) startPolling();
     }).catch(function () {
-      sendBtn.disabled = false;
       appendMessage("system", "Network error.");
+    }).then(function () {
+      sendBtn.disabled = false;
+      state.fallbackShownForConversation = false;
+      state.thinkingStartTime = null;
+      if (!state.pollInterval && state.conversationId) startPolling();
     });
   }
 
