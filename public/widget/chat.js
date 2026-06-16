@@ -127,10 +127,10 @@
         '<span>' + escapeHtml(title) + '</span>' +
         '<button class="nx-close" type="button" aria-label="Close">×</button>' +
       '</div>' +
-      '<div class="nx-msgs"></div>' +
+      '<div class="nx-msgs" id="nexus-messages"></div>' +
       '<div class="nx-input">' +
-        '<textarea placeholder="' + escapeHtml(placeholder) + '" rows="1"></textarea>' +
-        '<button class="nx-send" type="button" style="background:' + primary + '">Send</button>' +
+        '<textarea id="nexus-input" placeholder="' + escapeHtml(placeholder) + '" rows="1"></textarea>' +
+        '<button class="nx-send" id="nexus-send" type="button" style="background:' + primary + '">Send</button>' +
       '</div>' +
       '<div class="nx-footer">Powered by NexusAI</div>';
     root.appendChild(panel);
