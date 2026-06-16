@@ -23,7 +23,10 @@ Deno.serve(async (req) => {
       .eq("channel_type", "web_widget")
       .maybeSingle();
     if (chErr) return json({ success: false, error: chErr.message }, 500);
-    if (!channel) return json({ success: false, error: "Channel not found" }, 404);
+    if (!channel) return json({ success: false, error: "Channel not found, inactive, or not a web widget channel" }, 404);
+
+    // TODO L2.1: Uncomment below to enforce allowed_origins before production
+    // Origin validation skeleton — currently dev-bypassed
 
     const origin = req.headers.get("origin") || req.headers.get("referer") || null;
     const userAgent = req.headers.get("user-agent") || null;

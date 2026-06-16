@@ -17,9 +17,10 @@ function WidgetPreview() {
   const [selectedId, setSelectedId] = useState<string>("");
   const [copied, setCopied] = useState(false);
 
+  const envFunctionsUrl = import.meta.env.VITE_SUPABASE_FUNCTIONS_URL as string | undefined;
   const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID as string;
   const apiBase =
-    (import.meta.env.VITE_SUPABASE_FUNCTIONS_URL as string | undefined) ||
+    envFunctionsUrl ||
     (projectId ? `https://${projectId}.supabase.co/functions/v1` : "");
 
   useEffect(() => {
@@ -117,9 +118,9 @@ function WidgetPreview() {
             </div>
             <pre className="overflow-x-auto p-4 text-xs">{embedCode}</pre>
           </div>
-          {!apiBase && (
-            <p className="text-sm text-destructive">
-              VITE_SUPABASE_FUNCTIONS_URL is not set and could not be derived.
+          {!envFunctionsUrl && (
+            <p className="text-sm text-amber-600">
+              Set VITE_SUPABASE_FUNCTIONS_URL in environment variables
             </p>
           )}
         </TabsContent>
