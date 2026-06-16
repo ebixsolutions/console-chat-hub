@@ -131,20 +131,24 @@
     msgsEl.scrollTop = msgsEl.scrollHeight;
   }
 
-  function showTyping(show) {
-    if (show) {
-      if (!typingEl) {
-        typingEl = document.createElement("div");
-        typingEl.className = "nx-typing";
-        typingEl.innerHTML = "<span></span><span></span><span></span>";
-      }
-      if (typingEl.parentNode !== msgsEl) {
-        msgsEl.appendChild(typingEl);
-        msgsEl.scrollTop = msgsEl.scrollHeight;
-      }
-    } else if (typingEl && typingEl.parentNode === msgsEl) {
-      msgsEl.removeChild(typingEl);
+  function showTyping() {
+    if (!typingEl) {
+      typingEl = document.createElement("div");
+      typingEl.className = "nx-typing";
+      typingEl.id = "nexus-typing-indicator";
+      typingEl.innerHTML = "<span></span><span></span><span></span>";
     }
+    if (typingEl.parentNode !== msgsEl) {
+      msgsEl.appendChild(typingEl);
+      msgsEl.scrollTop = msgsEl.scrollHeight;
+    }
+  }
+  function hideTyping() {
+    if (typingEl && typingEl.parentNode === msgsEl) msgsEl.removeChild(typingEl);
+  }
+
+  function appendMessageObj(m) {
+    appendMessage(m.role, m.content, m.id);
   }
 
   function api(path, opts) {
