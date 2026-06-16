@@ -1,1 +1,13 @@
 project_id = "hvmtoqiwdqvgnjepxwrc"
+
+[functions.get-public-widget-config]
+verify_jwt = false
+
+[functions.create-visitor-session]
+verify_jwt = false
+
+[functions.receive-widget-message]
+verify_jwt = false
+
+[functions.widget-poll-messages]
+verify_jwt = false
