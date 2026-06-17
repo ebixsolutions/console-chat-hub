@@ -1,5 +1,3 @@
-/* NexusAI Customer Support Widget — Widget v1.2
-   v1.1 + Draggable + Resizable + Plus Menu + Emoji + File Sim */
 (function () {
   if (window.__nexusChatLoaded) return;
   window.__nexusChatLoaded = true;
@@ -114,7 +112,7 @@
 
   function getPrimary(){ return (config&&config.widget_config&&config.widget_config.primary_color)||"#6B5CE7"; }
   function applyColor(c){ bubble.style.background=c; }
-  function esc(s){ return String(s).replace(/[&<>"']/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
+  function esc(s){ return String(s).replace(/[&<>"']/g,function(c){return{"&":"&","<":"<",">":">","'":"'"}[c];}); }
   function getTicketNo(){ return state.conversationId?state.conversationId.substring(0,7):"-------"; }
   function getSuggested(){ var d=["Track my order","Shipping fee and delivery?","Cancel order & refund","What's the return policy?","Contact human support"]; if(!config||!config.widget_config) return d; var sq=config.widget_config.suggested_questions; return (Array.isArray(sq)&&sq.length>0)?sq:d; }
 
@@ -127,27 +125,35 @@
 
     panel=document.createElement("div"); panel.className="nx-panel";
     panel.innerHTML=
-      '<div class="nx-header" id="nx-header" style="background:'+primary+'">' +
-        '<div class="nx-header-left">' +
-          '<div class="nx-header-title">'+esc(title)+'</div>' +
-          '<div class="nx-header-sub"><span class="nx-online-dot" style="background:'+(online?"#4ade80":"#9ca3af")+'"></span>'+(online?"Online":"Offline")+' &nbsp;&middot;&nbsp; Chat #<span id="nx-ticket-no">'+getTicketNo()+'</span></div>' +
-        '</div>' +
-        '<div class="nx-header-actions">' +
-          '<button class="nx-header-btn" id="nx-my-tickets-btn" title="My Tickets" aria-label="My Tickets">&#9783;</button>' +
-          '<button class="nx-header-btn" id="nx-close-btn" title="Close" aria-label="Close">&times;</button>' +
-        '</div>' +
-      '</div>' +
-      '<div id="nx-tags-area" class="nx-tags" style="display:none"></div>' +
-      '<div class="nx-msgs" id="nx-msgs"></div>' +
-      '<div class="nx-input-area" id="nx-input-area">' +
-        '<div id="nx-file-preview" class="nx-file-preview" style="display:none"></div>' +
-        '<div class="nx-input-row">' +
-          '<div class="nx-plus-wrap"><button class="nx-plus-btn" id="nx-plus-btn" title="More options" aria-label="More options">+</button></div>' +
-          '<button class="nx-emoji-btn" id="nx-emoji-btn" title="Emoji" aria-label="Emoji">&#128522;</button>' +
-          '<textarea id="nx-input" placeholder="'+esc(ph)+'" rows="1"></textarea>' +
-          '<button class="nx-send" id="nx-send" type="button" style="background:'+primary+'">Send</button>' +
-        '</div>' +
-      '</div>' +
+      '<div id="nx-header" class="nx-header" style="background:'+primary+'">\n' +
+        '<div class="nx-header-left">\n' +
+          '<span class="nx-header-title">'+esc(title)+'</span>\n' +
+          '<span class="nx-header-sub">\n' +
+            '<span class="nx-online-dot" style="background:'+(online?"#22c55e":"#9ca3af")+'"></span>'+(online?"Online":"Offline")+'  \u00b7  Chat #'+getTicketNo()+'\n' +
+          '</span>\n' +
+        '</div>\n' +
+        '<div class="nx-header-actions">\n' +
+          '<button id="nx-my-tickets-btn" class="nx-header-btn" title="My Tickets">\u2637</button>\n' +
+          '<button id="nx-close-btn" class="nx-header-btn" title="Close">\u00d7</button>\n' +
+        '</div>\n' +
+      '</div>\n' +
+      '<div id="nx-tags-area" class="nx-tags" style="display:none"></div>\n' +
+      '<div id="nx-msgs" class="nx-msgs"></div>\n' +
+      '<div id="nx-file-preview" class="nx-file-preview" style="display:none">\n' +
+        '<span class="nx-file-preview-icon" id="nx-file-icon"></span>\n' +
+        '<span class="nx-file-preview-name" id="nx-file-name"></span>\n' +
+        '<button id="nx-file-remove-btn" class="nx-file-remove">\u00d7</button>\n' +
+      '</div>\n' +
+      '<div id="nx-input-area" class="nx-input-area">\n' +
+        '<div class="nx-input-row">\n' +
+          '<div class="nx-plus-wrap">\n' +
+            '<button id="nx-plus-btn" class="nx-plus-btn" title="More">\n+\n</button>\n' +
+          '</div>\n' +
+          '<button id="nx-emoji-btn" class="nx-emoji-btn" title="Emoji">\u263a</button>\n' +
+          '<textarea id="nx-input" placeholder="'+esc(ph)+'" rows="1"></textarea>\n' +
+          '<button id="nx-send" class="nx-send" style="background:'+primary+'">Send</button>\n' +
+        '</div>\n' +
+      '</div>\n' +
       '<div class="nx-footer">Powered by NexusAI</div>';
     root.appendChild(panel);
 
@@ -194,9 +200,9 @@
     var inputArea=panel.querySelector("#nx-input-area");
     plusMenuEl=document.createElement("div"); plusMenuEl.className="nx-plus-menu";
     plusMenuEl.innerHTML=
-      '<div class="nx-plus-item" id="nx-menu-img">&#128247; Upload Image</div>' +
-      '<div class="nx-plus-item" id="nx-menu-vid">&#127916; Upload Video</div>' +
-      '<div class="nx-plus-item'+( state.handoffRequested?" disabled":"")+'" id="nx-menu-human">&#128100; Request Human Support</div>';
+      '<div id="nx-menu-img" class="nx-plus-item">\n  <span>\ud83d\udcf7</span> Upload Image\n</div>\n' +
+      '<div id="nx-menu-vid" class="nx-plus-item">\n  <span>\ud83c\udfac</span> Upload Video\n</div>\n' +
+      '<div id="nx-menu-human" class="nx-plus-item" '+(state.handoffRequested?'disabled style="opacity:.5;cursor:not-allowed"':'')+'>\n  <span>\ud83d\udc64</span> Request Human Support\n</div>';
     inputArea.querySelector(".nx-plus-wrap").appendChild(plusMenuEl);
     plusMenuEl.querySelector("#nx-menu-img").addEventListener("click",function(e){ e.stopPropagation(); closePlusMenu(); document.getElementById("nx-img-input").click(); });
     plusMenuEl.querySelector("#nx-menu-vid").addEventListener("click",function(e){ e.stopPropagation(); closePlusMenu(); document.getElementById("nx-vid-input").click(); });
@@ -240,7 +246,8 @@
     var icon=type==="image"?"📷":"🎬";
     if(filePreviewEl){
       filePreviewEl.style.display="flex";
-      filePreviewEl.innerHTML='<span style="font-size:16px">'+icon+'</span><span class="nx-file-preview-name">'+esc(file.name)+'</span><button class="nx-file-remove" id="nx-file-remove-btn">×</button>';
+      filePreviewEl.querySelector("#nx-file-icon").textContent=icon;
+      filePreviewEl.querySelector("#nx-file-name").textContent=file.name;
       filePreviewEl.querySelector("#nx-file-remove-btn").addEventListener("click",clearPendingFile);
     }
     inp.value="";
@@ -283,11 +290,11 @@
     var handle=document.createElement("div"); handle.className="nx-resize-handle";
     panel.style.position="fixed"; // ensure
     panel.appendChild(handle);
-    var resizing=false,startX=0,startY=0,startW=0,startH=0;
+    var resizing=false,startX=0,startY=0,startW=0,startH=0,startRight=0;
     function isMobile(){ return window.innerWidth<=480; }
     handle.style.cssText="position:absolute;bottom:0;left:0;width:20px;height:20px;cursor:sw-resize;z-index:10;";
     // Visual grip dots
-    handle.innerHTML='<svg width="12" height="12" viewBox="0 0 12 12" style="position:absolute;bottom:4px;left:4px;opacity:.3"><circle cx="2" cy="10" r="1.5" fill="#666"/><circle cx="6" cy="10" r="1.5" fill="#666"/><circle cx="10" cy="10" r="1.5" fill="#666"/><circle cx="2" cy="6" r="1.5" fill="#666"/><circle cx="6" cy="6" r="1.5" fill="#666"/><circle cx="2" cy="2" r="1.5" fill="#666"/></svg>';
+    handle.innerHTML='<svg width="20" height="20" viewBox="0 0 20 20" style="opacity:.6"><circle cx="5" cy="15" r="1.5" fill="rgba(0,0,0,0.45)"/><circle cx="10" cy="15" r="1.5" fill="rgba(0,0,0,0.45)"/><circle cx="15" cy="15" r="1.5" fill="rgba(0,0,0,0.45)"/><circle cx="10" cy="10" r="1.5" fill="rgba(0,0,0,0.45)"/><circle cx="15" cy="10" r="1.5" fill="rgba(0,0,0,0.45)"/><circle cx="15" cy="5" r="1.5" fill="rgba(0,0,0,0.45)"/></svg>';
     handle.style.opacity="1";
 
     handle.addEventListener("mousedown",function(e){
@@ -299,6 +306,7 @@
       panel.style.left=r.left+"px"; panel.style.top=r.top+"px";
       startX=e.clientX; startY=e.clientY;
       startW=r.width; startH=r.height;
+      startRight=r.right; // Fix: store right anchor so left edge can move correctly
       e.preventDefault(); e.stopPropagation();
     });
     document.addEventListener("mousemove",function(e){
@@ -307,10 +315,9 @@
       var nw=Math.max(300,Math.min(startW+dw,800));
       var nh=Math.max(400,Math.min(startH+dh,window.innerHeight*0.9));
       panel.style.width=nw+"px"; panel.style.height=nh+"px";
-      // adjust left when dragging left edge + viewport boundary
-      var r=panel.getBoundingClientRect();
-      var newLeft=r.right-nw;
-      if(newLeft<0) newLeft=0; // Fix 1b: clamp to viewport left edge
+      // Fix: use startRight (fixed right anchor) so left edge moves as user drags left
+      var newLeft=startRight-nw;
+      if(newLeft<0) newLeft=0; // clamp to viewport left edge
       panel.style.left=newLeft+"px";
     });
     document.addEventListener("mouseup",function(){ resizing=false; });
@@ -344,11 +351,11 @@
     var primary=getPrimary();
     var page=document.createElement("div"); page.className="nx-tickets-page";
     var tickets=getTickets();
-    var listHtml=tickets.length===0?'<div class="nx-tickets-empty">&#128203; No previous tickets</div>':tickets.map(function(t){
+    var listHtml=tickets.length===0?'<div class="nx-tickets-empty">\n  <div style="font-size:32px;margin-bottom:8px">\ud83d\udccb</div>\n  <div>No previous tickets</div>\n</div>':tickets.map(function(t){
       var sl=t.status==="resolved"?"Resolved":t.status==="human_needed"?"Waiting":"Open";
-      return '<div class="nx-ticket-item" data-conv="'+esc(t.conversation_id)+'" data-token="'+esc(t.session_token)+'"><div class="nx-ticket-row"><span class="nx-ticket-no">Chat #'+esc(t.ticket_no)+'</span><span class="nx-ticket-status '+esc(t.status)+'">'+sl+'</span></div><div class="nx-ticket-preview">'+esc(t.last_message||"(no messages yet)")+'</div><div class="nx-ticket-time">'+new Date(t.updated_at).toLocaleDateString()+'</div></div>';
+      return '<div class="nx-ticket-item" data-conv="'+esc(t.conversation_id)+'" data-token="'+esc(t.session_token)+'">\n<div class="nx-ticket-row">\n  <span class="nx-ticket-no">Chat #'+esc(t.ticket_no)+'</span>\n  <span class="nx-ticket-status '+t.status+'">'+sl+'</span>\n</div>\n<div class="nx-ticket-preview">'+esc(t.last_message||"(no messages yet)")+'</div>\n<div class="nx-ticket-time">'+new Date(t.updated_at).toLocaleDateString()+'</div>\n</div>';
     }).join("");
-    page.innerHTML='<div class="nx-tickets-header" style="background:'+primary+'"><button class="nx-tickets-back" id="nx-tix-back">&larr;</button>My Tickets</div><div class="nx-tickets-list">'+listHtml+'</div><button class="nx-tickets-new" id="nx-tix-new">+ Start New Conversation</button>';
+    page.innerHTML='<div class="nx-tickets-header" style="background:'+primary+'">\n  <button id="nx-tix-back" class="nx-tickets-back">\u2190</button>\n  <span>My Tickets</span>\n</div>\n<div class="nx-tickets-list">'+listHtml+'</div>\n<button id="nx-tix-new" class="nx-tickets-new">+ Start New Conversation</button>';
     panel.appendChild(page);
     page.querySelector("#nx-tix-back").addEventListener("click",function(){ page.remove(); });
     page.querySelector("#nx-tix-new").addEventListener("click",function(){ page.remove(); resetAndFresh(); });
@@ -389,7 +396,7 @@
     msgsEl.innerHTML=""; seenIds={}; state.messages=[]; lastMessageId=null; state.firstMessageSent=true; hideTags();
     (messages||[]).forEach(function(m){appendMessageObj(m);});
     var b=document.createElement("div"); b.className="nx-resolved";
-    b.innerHTML="\u2705 This conversation has been resolved.<br><button class=\"nx-new-chat\">Start new conversation</button>";
+    b.innerHTML="\u2705 This conversation has been resolved.\n<br>\n<button class=\"nx-new-chat\">Start new conversation</button>";
     msgsEl.appendChild(b); msgsEl.scrollTop=msgsEl.scrollHeight;
     if(inputEl){inputEl.disabled=true;inputEl.placeholder="Conversation resolved.";}
     if(sendBtn)sendBtn.disabled=true;
@@ -427,18 +434,18 @@
 
   // --- Session ---
   function startFreshSession(){
-    if(msgsEl)msgsEl.innerHTML='<div style="text-align:center;color:#9ca3af;padding:20px;font-size:13px;">Connecting\u2026</div>';
+    if(msgsEl)msgsEl.innerHTML='<div style="text-align:center;padding:40px 20px;color:#9ca3af">\n  <div style="font-size:32px;margin-bottom:8px">\u231b</div>\n  <div>Connecting\u2026</div>\n</div>';
     state.messages=[];seenIds={};lastMessageId=null;
     api("/create-visitor-session",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({channel_id:channelId})}).then(function(s){
-      if(!s.ok||!s.body||!s.body.success){if(msgsEl)msgsEl.innerHTML='<div style="text-align:center;color:#ef4444;padding:20px;font-size:13px;">Unable to start session.</div>';return;}
+      if(!s.ok||!s.body||!s.body.success){if(msgsEl)msgsEl.innerHTML='<div style="text-align:center;padding:40px 20px;color:#9ca3af">\n  <div style="font-size:32px;margin-bottom:8px">\u26a0</div>\n  <div>Unable to start session.</div>\n</div>';return;}
       state.sessionToken=s.body.data.session_token; state.conversationId=s.body.data.conversation_id;
       saveSession(); saveTicket(state.conversationId,state.sessionToken); updateHeader();
       if(msgsEl)msgsEl.innerHTML=""; state.online=isOnline(); appendWelcome(); showSuggestedQuestions(); startPolling();
-    }).catch(function(){if(msgsEl)msgsEl.innerHTML='<div style="text-align:center;color:#ef4444;padding:20px;font-size:13px;">Connection failed.</div>';});
+    }).catch(function(){if(msgsEl)msgsEl.innerHTML='<div style="text-align:center;padding:40px 20px;color:#9ca3af">\n  <div style="font-size:32px;margin-bottom:8px">\u26a0</div>\n  <div>Connection failed.</div>\n</div>';});
   }
 
   function tryRestoreSession(stored){
-    if(msgsEl)msgsEl.innerHTML='<div style="text-align:center;color:#9ca3af;padding:20px;font-size:13px;">Resuming\u2026</div>';
+    if(msgsEl)msgsEl.innerHTML='<div style="text-align:center;padding:40px 20px;color:#9ca3af">\n  <div style="font-size:32px;margin-bottom:8px">\u231b</div>\n  <div>Resuming\u2026</div>\n</div>';
     hideTags();
     api("/widget-poll-messages?conversation_id="+encodeURIComponent(stored.convId)+"&session_token="+encodeURIComponent(stored.token),{method:"GET"}).then(function(res){
       if(!res.ok||!res.body||!res.body.success) throw new Error("fail");
@@ -457,7 +464,7 @@
     if(panel&&panel.style.display!=="none") return;
     if(panel&&state.sessionToken){panel.style.display="flex";startPolling();return;}
     var cp=config?Promise.resolve():api("/get-public-widget-config?channel_id="+encodeURIComponent(channelId),{method:"GET"}).then(function(res){if(!res.ok||!res.body||!res.body.success)throw new Error("fail");config=res.body.data;state.online=isOnline();applyColor(getPrimary());});
-    cp.then(function(){if(!panel)buildPanel();panel.style.display="flex";var s=loadSession();if(s.token&&s.convId&&s.channel===channelId)tryRestoreSession(s);else startFreshSession();}).catch(function(){if(msgsEl)msgsEl.innerHTML='<div style="text-align:center;color:#ef4444;padding:20px;font-size:13px;">Chat unavailable.</div>';});
+    cp.then(function(){if(!panel)buildPanel();panel.style.display="flex";var s=loadSession();if(s.token&&s.convId&&s.channel===channelId)tryRestoreSession(s);else startFreshSession();}).catch(function(){if(msgsEl)msgsEl.innerHTML='<div style="text-align:center;padding:40px 20px;color:#9ca3af">\n  <div style="font-size:32px;margin-bottom:8px">\u26a0</div>\n  <div>Chat unavailable.</div>\n</div>';});
   }
   function closePanel(){ if(panel)panel.style.display="none"; stopPolling(); closePlusMenu(); closeEmojiPanel(); }
 
@@ -478,6 +485,6 @@
   bubble.addEventListener("click",function(){if(panel&&panel.style.display!=="none")closePanel();else openPanel();});
   api("/get-public-widget-config?channel_id="+encodeURIComponent(channelId),{method:"GET"}).then(function(res){if(res.ok&&res.body&&res.body.success&&res.body.data&&res.body.data.widget_config){config=res.body.data;state.online=isOnline();applyColor(getPrimary());}}).catch(function(){});
 
-  console.log("[NexusAI widget] Widget v1.2 final loaded, channel:", channelId);
+  console.log("[NexusAI widget] Widget v1.2.1 loaded (resize fix), channel:", channelId);
   console.log("[NexusAI widget] NOTE: File upload is simulated only (Widget MVP). No real upload to server.");
 })();
