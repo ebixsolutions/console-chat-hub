@@ -383,7 +383,6 @@
     if (text.length > 2000) { alert("Message too long (max 2000)."); return; }
     sendBtn.disabled = true;
     inputEl.value = "";
-    appendMessageObj({ id: "opt-" + Date.now(), role: "visitor", content: text, created_at: new Date().toISOString() });
     api("/receive-widget-message", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
