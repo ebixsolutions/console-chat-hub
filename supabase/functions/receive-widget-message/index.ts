@@ -61,9 +61,26 @@ Deno.serve(async (req) => {
     });
 
     await supabase
+      .from("conversations")
+      .update({ ai_generating: true })
+      .eq("id", conversation_id);
+
+    await supabase
       .from("visitor_session")
       .update({ last_seen_at: new Date().toISOString() })
       .eq("id", session.id);
+
+    // Fire-and-forget: invoke generate-reply asynchronously
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+    fetch(`${supabaseUrl}/functions/v1/generate-reply`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${serviceKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ conversation_id }),
+    }).catch((err) => console.error("[NexusAI] generate-reply invoke error:", err));
 
     return json({ success: true, data: { message_id: msg.id, ai_reply_pending: true } });
   } catch (e) {
