@@ -1,4 +1,4 @@
-/* NexusAI embeddable chat widget — vanilla JS, zero deps — L2.1 session persistence */
+/* NexusAI embeddable chat widget — vanilla JS, zero deps — L2.1 + no-duplicate */
 (function () {
   if (window.__nexusChatLoaded) return;
   window.__nexusChatLoaded = true;
@@ -14,6 +14,7 @@
     return;
   }
 
+  // ---------- L2.1 localStorage (channel-scoped) ----------
   var STORAGE_PREFIX = "nexus_widget_" + channelId;
   var SK_TOKEN   = STORAGE_PREFIX + "_session_token";
   var SK_CONV    = STORAGE_PREFIX + "_conversation_id";
@@ -43,6 +44,7 @@
     } catch (e) { return {}; }
   }
 
+  // ---------- State ----------
   var config = null;
   var lastMessageId = null;
   var seenIds = {};
@@ -55,6 +57,7 @@
     messages: [],
   };
 
+  // ---------- Styles ----------
   var style = document.createElement("style");
   style.textContent = [
     ".nx-root *{box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}",
@@ -67,7 +70,7 @@
     ".nx-msgs{flex:1;overflow-y:auto;padding:14px;background:#f7f8fa;display:flex;flex-direction:column;gap:8px}",
     ".nx-msg{max-width:80%;padding:8px 12px;border-radius:12px;font-size:14px;line-height:1.4;white-space:pre-wrap;word-wrap:break-word}",
     ".nx-msg.visitor{align-self:flex-end;color:#fff;border-bottom-right-radius:4px}",
-    ".nx-msg.assistant,.nx-msg.ai,.nx-msg.system,.nx-msg.agent,.nx-msg.human_agent{align-self:flex-start;background:#fff;color:#111;border:1px solid #e5e7eb;border-bottom-left-radius:4px}",
+    ".nx-msg.assistant,.nx-msg.ai,.nx-msg.human_agent,.nx-msg.system,.nx-msg.agent{align-self:flex-start;background:#fff;color:#111;border:1px solid #e5e7eb;border-bottom-left-radius:4px}",
     ".nx-recalled{align-self:flex-start;font-size:13px;color:#9ca3af;font-style:italic;padding:4px 8px}",
     ".nx-typing{align-self:flex-start;background:#fff;border:1px solid #e5e7eb;padding:10px 14px;border-radius:12px;display:flex;gap:4px}",
     ".nx-typing span{width:6px;height:6px;background:#9ca3af;border-radius:9999px;animation:nxBounce 1.2s infinite ease-in-out}",
@@ -76,14 +79,16 @@
     ".nx-input{border-top:1px solid #e5e7eb;padding:10px;display:flex;gap:8px;background:#fff}",
     ".nx-input textarea{flex:1;resize:none;border:1px solid #e5e7eb;border-radius:8px;padding:8px 10px;font-size:14px;outline:none;height:38px;max-height:100px;font-family:inherit}",
     ".nx-input textarea:focus{border-color:#9ca3af}",
-    ".nx-send{border:none;color:#fff;padding:0 14px;border-radius:8px;cursor:pointer;font-weight:600;font-size:14px}",
+    ".nx-send{border:none;color:#fff;padding:0 14px;border-radius:8px;cursor:pointer;font-weight:600;font-size:14px;min-width:60px}",
     ".nx-send:disabled{opacity:.5;cursor:not-allowed}",
     ".nx-footer{text-align:center;padding:6px;font-size:11px;color:#9ca3af;background:#fff;border-top:1px solid #f3f4f6}",
     ".nx-resolved{margin:12px;padding:14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;text-align:center;font-size:13px;color:#166534}",
     ".nx-new-chat{margin-top:10px;background:#6B5CE7;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:13px;cursor:pointer;font-family:inherit}",
+    ".nx-sending{align-self:flex-end;font-size:12px;color:#9ca3af;padding:2px 4px}",
   ].join("");
   document.head.appendChild(style);
 
+  // ---------- DOM ----------
   var root = document.createElement("div");
   root.className = "nx-root";
   document.body.appendChild(root);
@@ -105,7 +110,7 @@
 
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, function (c) {
-      return {"&":"&amp;","<":"&lt;","&gt;":"&gt;","'":"&#39;"}[c];
+      return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
     });
   }
 
@@ -137,6 +142,7 @@
     });
   }
 
+  // ---------- Message rendering ----------
   function renderMsg(m) {
     if (m.is_recalled) {
       var el = document.createElement("div");
@@ -190,6 +196,7 @@
     if (typingEl && typingEl.parentNode) typingEl.parentNode.removeChild(typingEl);
   }
 
+  // ---------- Resolved banner ----------
   function showResolvedBanner(messages) {
     if (!msgsEl) return;
     msgsEl.innerHTML = "";
@@ -221,12 +228,14 @@
     });
   }
 
+  // ---------- API ----------
   function api(path, opts) {
     return fetch(apiBase + path, opts).then(function (r) {
       return r.json().then(function (j) { return { ok: r.ok, status: r.status, body: j }; });
     });
   }
 
+  // ---------- Polling ----------
   function startPolling() {
     if (state.pollInterval) return;
     state.pollInterval = setInterval(poll, 2500);
@@ -243,6 +252,8 @@
     api("/widget-poll-messages" + qs, { method: "GET" }).then(function (res) {
       if (!res.ok || !res.body || !res.body.success) return;
       var d = res.body.data;
+
+      // Handle Console resolve
       if (d.conversation_status === "resolved") {
         hideTyping();
         stopPolling();
@@ -258,7 +269,9 @@
         showResolvedBanner(merged);
         return;
       }
+
       (d.messages || []).forEach(function (m) { appendMessageObj(m); });
+
       var ai_generating = d.ai_generating;
       if (ai_generating) {
         if (!state.fallbackShownForConversation) {
@@ -269,7 +282,7 @@
             state.thinkingStartTime = null;
             state.fallbackShownForConversation = true;
             appendMessageObj({ id: "fallback-" + Date.now(), role: "assistant",
-              content: "Your message was received. AI reply not available yet. [L2 dev mode]",
+              content: "Your message was received. AI reply not available yet.",
               created_at: new Date().toISOString() });
           }
         }
@@ -281,10 +294,9 @@
     }).catch(function () {});
   }
 
+  // ---------- Session ----------
   function startFreshSession() {
-    if (msgsEl) {
-      msgsEl.innerHTML = '<div style="text-align:center;color:#9ca3af;padding:20px;font-size:13px;">Connecting…</div>';
-    }
+    if (msgsEl) msgsEl.innerHTML = '<div style="text-align:center;color:#9ca3af;padding:20px;font-size:13px;">Connecting…</div>';
     state.messages = [];
     seenIds = {};
     lastMessageId = null;
@@ -294,7 +306,7 @@
       body: JSON.stringify({ channel_id: channelId }),
     }).then(function (s) {
       if (!s.ok || !s.body || !s.body.success) {
-        if (msgsEl) msgsEl.innerHTML = '<div style="text-align:center;color:#ef4444;padding:20px;font-size:13px;">Unable to start chat session.</div>';
+        if (msgsEl) msgsEl.innerHTML = '<div style="text-align:center;color:#ef4444;padding:20px;font-size:13px;">Unable to start session.</div>';
         return;
       }
       state.sessionToken   = s.body.data.session_token;
@@ -309,9 +321,7 @@
   }
 
   function tryRestoreSession(stored) {
-    if (msgsEl) {
-      msgsEl.innerHTML = '<div style="text-align:center;color:#9ca3af;padding:20px;font-size:13px;">Resuming conversation…</div>';
-    }
+    if (msgsEl) msgsEl.innerHTML = '<div style="text-align:center;color:#9ca3af;padding:20px;font-size:13px;">Resuming…</div>';
     var qs = "?conversation_id=" + encodeURIComponent(stored.convId) +
              "&session_token=" + encodeURIComponent(stored.token);
     api("/widget-poll-messages" + qs, { method: "GET" }).then(function(res) {
@@ -327,11 +337,8 @@
         showResolvedBanner(d.messages || []);
       } else {
         var msgs = d.messages || [];
-        if (msgs.length === 0) {
-          appendWelcome();
-        } else {
-          msgs.forEach(function(m){ appendMessageObj(m); });
-        }
+        if (msgs.length === 0) { appendWelcome(); }
+        else { msgs.forEach(function(m){ appendMessageObj(m); }); }
         startPolling();
       }
     }).catch(function() {
@@ -342,15 +349,11 @@
     });
   }
 
+  // ---------- Open / Close ----------
   function openPanel() {
     if (panel && panel.style.display !== "none") return;
-    if (panel && state.sessionToken) {
-      panel.style.display = "flex";
-      startPolling();
-      return;
-    }
-    var configPromise = config
-      ? Promise.resolve()
+    if (panel && state.sessionToken) { panel.style.display = "flex"; startPolling(); return; }
+    var configPromise = config ? Promise.resolve()
       : api("/get-public-widget-config?channel_id=" + encodeURIComponent(channelId), { method: "GET" })
           .then(function (res) {
             if (!res.ok || !res.body || !res.body.success) throw new Error("config failed");
@@ -376,36 +379,45 @@
     stopPolling();
   }
 
+  // ---------- Send (NO optimistic — poll delivers message) ----------
   function handleSend() {
     if (!inputEl) return;
     var text = inputEl.value.trim();
     if (!text || !state.conversationId || !state.sessionToken) return;
     if (text.length > 2000) { alert("Message too long (max 2000)."); return; }
     sendBtn.disabled = true;
+    sendBtn.textContent = "…";
     inputEl.value = "";
+    // NO optimistic append — message appears via poll within 2.5s (no duplicate)
     api("/receive-widget-message", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ conversation_id: state.conversationId, session_token: state.sessionToken, content: text }),
     }).then(function (res) {
       if (!res.ok || !res.body || !res.body.success) {
-        appendMessageObj({ id: "err-" + Date.now(), role: "system", content: (res.body && res.body.error) || "Failed to send.", created_at: new Date().toISOString() });
+        appendMessageObj({ id: "err-" + Date.now(), role: "system",
+          content: (res.body && res.body.error) || "Failed to send.",
+          created_at: new Date().toISOString() });
       }
     }).catch(function () {
-      appendMessageObj({ id: "err-" + Date.now(), role: "system", content: "Network error.", created_at: new Date().toISOString() });
+      appendMessageObj({ id: "err-" + Date.now(), role: "system",
+        content: "Network error.", created_at: new Date().toISOString() });
     }).then(function () {
       sendBtn.disabled = false;
+      sendBtn.textContent = "Send";
       state.fallbackShownForConversation = false;
       state.thinkingStartTime = null;
       if (!state.pollInterval && state.conversationId) startPolling();
     });
   }
 
+  // ---------- Bubble ----------
   bubble.addEventListener("click", function () {
     if (panel && panel.style.display !== "none") closePanel();
     else openPanel();
   });
 
+  // Pre-load config to colour bubble
   api("/get-public-widget-config?channel_id=" + encodeURIComponent(channelId), { method: "GET" })
     .then(function (res) {
       if (res.ok && res.body && res.body.success && res.body.data && res.body.data.widget_config) {
