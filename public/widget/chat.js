@@ -2,6 +2,8 @@
 (function () {
   if (window.__nexusChatLoaded) return;
   window.__nexusChatLoaded = true;
+  console.log("[NexusAI widget] v2.1 session-persistence loaded, channel:", channelId);
+
 
   var script = document.currentScript || (function () {
     var s = document.getElementsByTagName("script");
