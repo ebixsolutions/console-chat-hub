@@ -11,3 +11,6 @@ verify_jwt = false
 
 [functions.widget-poll-messages]
 verify_jwt = false
+
+[functions.generate-reply]
+verify_jwt = false
