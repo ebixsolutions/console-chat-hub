@@ -1,6 +1,5 @@
-/* NexusAI Customer Support Widget — Widget MVP v1.1
-   Features: Session Persistence + Ticket No + Suggested Questions
-             + Online/Offline + Human Support + My Tickets + Upload placeholder */
+/* NexusAI Customer Support Widget — Widget v1.2
+   v1.1 + Draggable + Resizable + Plus Menu + Emoji + File Sim */
 (function () {
   if (window.__nexusChatLoaded) return;
   window.__nexusChatLoaded = true;
@@ -11,134 +10,41 @@
   })();
   var channelId = script.getAttribute("data-channel-id");
   var apiBase = (script.getAttribute("data-api-base") || "").replace(/\/$/, "");
-  if (!channelId || !apiBase) {
-    console.error("[NexusAI] data-channel-id and data-api-base are required");
-    return;
-  }
+  if (!channelId || !apiBase) { console.error("[NexusAI] data-channel-id and data-api-base are required"); return; }
 
-  // ---------- L2.1 localStorage (channel-scoped) ----------
-  var STORAGE_PREFIX    = "nexus_widget_" + channelId;
-  var SK_TOKEN          = STORAGE_PREFIX + "_session_token";
-  var SK_CONV           = STORAGE_PREFIX + "_conversation_id";
-  var SK_CHANNEL        = STORAGE_PREFIX + "_channel_id";
-  var SK_TICKETS        = STORAGE_PREFIX + "_tickets";
+  // --- Storage ---
+  var P = "nexus_widget_" + channelId;
+  var SK_TOKEN = P + "_session_token", SK_CONV = P + "_conversation_id",
+      SK_CHANNEL = P + "_channel_id", SK_TICKETS = P + "_tickets";
 
-  function saveSession() {
-    try {
-      localStorage.setItem(SK_TOKEN,   state.sessionToken);
-      localStorage.setItem(SK_CONV,    state.conversationId);
-      localStorage.setItem(SK_CHANNEL, channelId);
-    } catch (e) {}
-  }
-  function clearSession() {
-    try {
-      localStorage.removeItem(SK_TOKEN);
-      localStorage.removeItem(SK_CONV);
-      localStorage.removeItem(SK_CHANNEL);
-    } catch (e) {}
-  }
-  function loadSession() {
-    try {
-      return {
-        token:   localStorage.getItem(SK_TOKEN),
-        convId:  localStorage.getItem(SK_CONV),
-        channel: localStorage.getItem(SK_CHANNEL)
-      };
-    } catch (e) { return {}; }
-  }
+  function saveSession() { try { localStorage.setItem(SK_TOKEN,state.sessionToken); localStorage.setItem(SK_CONV,state.conversationId); localStorage.setItem(SK_CHANNEL,channelId); } catch(e){} }
+  function clearSession() { try { localStorage.removeItem(SK_TOKEN); localStorage.removeItem(SK_CONV); localStorage.removeItem(SK_CHANNEL); } catch(e){} }
+  function loadSession() { try { return { token:localStorage.getItem(SK_TOKEN), convId:localStorage.getItem(SK_CONV), channel:localStorage.getItem(SK_CHANNEL) }; } catch(e){ return {}; } }
+  function saveTicket(cid,tok){ try { var t=JSON.parse(localStorage.getItem(SK_TICKETS)||"[]"); if(!t.some(function(x){return x.conversation_id===cid;})){ t.unshift({ticket_no:cid.substring(0,7),conversation_id:cid,session_token:tok,status:"open",last_message:"",created_at:new Date().toISOString(),updated_at:new Date().toISOString()}); localStorage.setItem(SK_TICKETS,JSON.stringify(t.slice(0,20)));}} catch(e){} }
+  function updateTicket(cid,status,msg){ try { var t=JSON.parse(localStorage.getItem(SK_TICKETS)||"[]"),i=t.findIndex(function(x){return x.conversation_id===cid;}); if(i>=0){if(status)t[i].status=status; if(msg)t[i].last_message=msg; t[i].updated_at=new Date().toISOString(); localStorage.setItem(SK_TICKETS,JSON.stringify(t));}} catch(e){} }
+  function getTickets(){ try{return JSON.parse(localStorage.getItem(SK_TICKETS)||"[]");}catch(e){return [];} }
 
-  // ---------- Ticket History (My Tickets) ----------
-  function saveTicketToHistory(conversationId, sessionToken) {
-    try {
-      var tickets = JSON.parse(localStorage.getItem(SK_TICKETS) || "[]");
-      var exists = tickets.some(function(t){ return t.conversation_id === conversationId; });
-      if (!exists) {
-        tickets.unshift({
-          ticket_no: conversationId.substring(0, 7),
-          conversation_id: conversationId,
-          session_token: sessionToken,
-          status: "open",
-          last_message: "",
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        });
-        localStorage.setItem(SK_TICKETS, JSON.stringify(tickets.slice(0, 20)));
-      }
-    } catch (e) {}
-  }
-  function updateTicketInHistory(conversationId, status, lastMessage) {
-    try {
-      var tickets = JSON.parse(localStorage.getItem(SK_TICKETS) || "[]");
-      var idx = tickets.findIndex(function(t){ return t.conversation_id === conversationId; });
-      if (idx >= 0) {
-        tickets[idx].status = status || tickets[idx].status;
-        if (lastMessage) tickets[idx].last_message = lastMessage;
-        tickets[idx].updated_at = new Date().toISOString();
-        localStorage.setItem(SK_TICKETS, JSON.stringify(tickets));
-      }
-    } catch (e) {}
-  }
-  function getTicketHistory() {
-    try { return JSON.parse(localStorage.getItem(SK_TICKETS) || "[]"); }
-    catch (e) { return []; }
-  }
+  // --- Online check ---
+  function isOnline(){ var cfg=config&&config.widget_config; if(!cfg||!cfg.business_hours||!cfg.business_hours.schedule) return true; try{ var tz=cfg.business_hours.timezone||"UTC",now=new Date(),ls=now.toLocaleString("en-US",{timeZone:tz,hour12:false,weekday:"short",hour:"2-digit",minute:"2-digit"}),p=ls.split(", "),dm={Sun:0,Mon:1,Tue:2,Wed:3,Thu:4,Fri:5,Sat:6},d=dm[p[0]]!==undefined?dm[p[0]]:now.getDay(),tp=p[1].split(":"),cm=parseInt(tp[0])*60+parseInt(tp[1]); for(var i=0;i<cfg.business_hours.schedule.length;i++){var s=cfg.business_hours.schedule[i]; if(s.days&&s.days.indexOf(d)!==-1){var o=s.open.split(":").reduce(function(h,m){return parseInt(h)*60+parseInt(m);}),c=s.close.split(":").reduce(function(h,m){return parseInt(h)*60+parseInt(m);}); if(cm>=o&&cm<c)return true;}} return false;} catch(e){return true;} }
 
-  // ---------- Online/Offline ----------
-  function isOnline() {
-    var cfg = config && config.widget_config;
-    if (!cfg || !cfg.business_hours || !cfg.business_hours.schedule) return true;
-    var tz = cfg.business_hours.timezone || "UTC";
-    var schedule = cfg.business_hours.schedule;
-    try {
-      var now = new Date();
-      var localStr = now.toLocaleString("en-US", { timeZone: tz, hour12: false,
-        weekday: "short", hour: "2-digit", minute: "2-digit" });
-      var parts = localStr.split(", ");
-      var dayMap = { Sun:0, Mon:1, Tue:2, Wed:3, Thu:4, Fri:5, Sat:6 };
-      var todayNum = dayMap[parts[0]] !== undefined ? dayMap[parts[0]] : now.getDay();
-      var timeParts = parts[1].split(":");
-      var currentMins = parseInt(timeParts[0]) * 60 + parseInt(timeParts[1]);
-      for (var i = 0; i < schedule.length; i++) {
-        var s = schedule[i];
-        if (s.days && s.days.indexOf(todayNum) !== -1) {
-          var open  = s.open.split(":").reduce(function(h,m){ return parseInt(h)*60+parseInt(m); });
-          var close = s.close.split(":").reduce(function(h,m){ return parseInt(h)*60+parseInt(m); });
-          if (currentMins >= open && currentMins < close) return true;
-        }
-      }
-      return false;
-    } catch (e) { return true; }
-  }
+  // --- State ---
+  var config=null,lastMessageId=null,seenIds={};
+  var state={sessionToken:null,conversationId:null,pollInterval:null,thinkingStartTime:null,fallbackShownForConversation:false,handoffRequested:false,firstMessageSent:false,messages:[],online:true};
 
-  // ---------- State ----------
-  var config = null;
-  var lastMessageId = null;
-  var seenIds = {};
-  var state = {
-    sessionToken: null,
-    conversationId: null,
-    pollInterval: null,
-    thinkingStartTime: null,
-    fallbackShownForConversation: false,
-    handoffRequested: false,
-    firstMessageSent: false,
-    messages: [],
-    online: true
-  };
-
-  // ---------- Styles ----------
-  var style = document.createElement("style");
-  style.textContent = [
+  // --- Styles ---
+  var style=document.createElement("style");
+  style.textContent=[
     ".nx-root *{box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}",
-    ".nx-bubble{position:fixed;right:20px;bottom:20px;width:56px;height:56px;border-radius:9999px;border:none;color:#fff;font-size:26px;cursor:pointer;box-shadow:0 10px 25px rgba(0,0,0,.25);z-index:2147483646;display:flex;align-items:center;justify-content:center;transition:transform .15s ease}",
+    ".nx-bubble{position:fixed;right:20px;bottom:20px;width:56px;height:56px;border-radius:9999px;border:none;color:#fff;font-size:26px;cursor:pointer;box-shadow:0 10px 25px rgba(0,0,0,.25);z-index:2147483646;display:flex;align-items:center;justify-content:center;transition:transform .15s ease;background:#6B5CE7}",
     ".nx-bubble:hover{transform:scale(1.06)}",
-    ".nx-panel{position:fixed;right:20px;bottom:88px;width:360px;height:560px;background:#fff;border-radius:14px;box-shadow:0 20px 50px rgba(0,0,0,.25);z-index:2147483647;display:flex;flex-direction:column;overflow:hidden;transform-origin:bottom right;animation:nxIn .18s ease-out}",
+    ".nx-panel{position:fixed;right:20px;bottom:88px;width:360px;height:560px;min-width:300px;min-height:400px;max-width:80vw;max-height:90vh;background:#fff;border-radius:14px;box-shadow:0 20px 50px rgba(0,0,0,.25);z-index:2147483647;display:flex;flex-direction:column;overflow:hidden;transform-origin:bottom right;animation:nxIn .18s ease-out}",
     "@keyframes nxIn{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}",
-    ".nx-header{padding:10px 14px;color:#fff;display:flex;align-items:center;justify-content:space-between;font-weight:600;min-height:52px}",
-    ".nx-header-left{display:flex;flex-direction:column;gap:2px}",
+    ".nx-header{padding:10px 14px;color:#fff;display:flex;align-items:center;justify-content:space-between;font-weight:600;min-height:52px;cursor:grab;user-select:none}",
+    ".nx-header.dragging{cursor:grabbing}",
+    ".nx-header-left{display:flex;flex-direction:column;gap:2px;pointer-events:none}",
     ".nx-header-title{font-size:15px;font-weight:700}",
     ".nx-header-sub{font-size:11px;font-weight:400;opacity:.85;display:flex;align-items:center;gap:5px}",
-    ".nx-online-dot{width:7px;height:7px;border-radius:9999px;display:inline-block}",
+    ".nx-online-dot{width:7px;height:7px;border-radius:9999px;display:inline-block;flex-shrink:0}",
     ".nx-header-actions{display:flex;align-items:center;gap:6px}",
     ".nx-header-btn{background:rgba(255,255,255,.2);border:none;color:#fff;width:28px;height:28px;border-radius:6px;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center}",
     ".nx-header-btn:hover{background:rgba(255,255,255,.35)}",
@@ -155,22 +61,32 @@
     ".nx-typing span{width:6px;height:6px;background:#9ca3af;border-radius:9999px;animation:nxBounce 1.2s infinite ease-in-out}",
     ".nx-typing span:nth-child(2){animation-delay:.15s}.nx-typing span:nth-child(3){animation-delay:.3s}",
     "@keyframes nxBounce{0%,80%,100%{transform:translateY(0);opacity:.5}40%{transform:translateY(-4px);opacity:1}}",
-    ".nx-input-area{border-top:1px solid #e5e7eb;background:#fff}",
-    ".nx-input-row{padding:8px 10px;display:flex;gap:6px;align-items:center}",
-    ".nx-input-icon{background:none;border:none;color:#9ca3af;cursor:pointer;font-size:18px;padding:4px;border-radius:6px;display:flex;align-items:center;justify-content:center}",
-    ".nx-input-icon:hover{background:#f3f4f6;color:#6b7280}",
-    ".nx-input-icon:disabled{opacity:.4;cursor:not-allowed}",
-    ".nx-input-row textarea{flex:1;resize:none;border:1px solid #e5e7eb;border-radius:8px;padding:7px 10px;font-size:14px;outline:none;height:36px;max-height:100px;font-family:inherit}",
+    ".nx-input-area{border-top:1px solid #e5e7eb;background:#fff;position:relative}",
+    ".nx-input-row{padding:8px 10px;display:flex;gap:6px;align-items:flex-end}",
+    ".nx-plus-wrap{position:relative}",
+    ".nx-plus-btn{background:none;border:1px solid #e5e7eb;border-radius:8px;color:#6b7280;cursor:pointer;font-size:18px;font-weight:300;width:32px;height:36px;display:flex;align-items:center;justify-content:center;transition:all .15s}",
+    ".nx-plus-btn:hover{background:#f3f4f6;color:#374151;border-color:#9ca3af}",
+    ".nx-plus-menu{position:absolute;bottom:44px;left:0;background:#fff;border:1px solid #e5e7eb;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.12);min-width:180px;overflow:hidden;z-index:100}",
+    ".nx-plus-item{padding:10px 14px;font-size:13px;color:#374151;cursor:pointer;display:flex;align-items:center;gap:8px;white-space:nowrap}",
+    ".nx-plus-item:hover{background:#f5f3ff;color:#5b21b6}",
+    ".nx-plus-item:disabled,.nx-plus-item.disabled{opacity:.5;cursor:not-allowed;pointer-events:none}",
+    ".nx-emoji-btn{background:none;border:none;color:#9ca3af;cursor:pointer;font-size:18px;padding:4px;height:36px;width:30px;display:flex;align-items:center;justify-content:center;border-radius:6px}",
+    ".nx-emoji-btn:hover{background:#f3f4f6}",
+    ".nx-emoji-panel{position:absolute;bottom:52px;left:42px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.12);padding:8px;display:grid;grid-template-columns:repeat(8,28px);gap:2px;z-index:100}",
+    ".nx-emoji-item{width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-size:16px;cursor:pointer;border-radius:6px;border:none;background:none}",
+    ".nx-emoji-item:hover{background:#f3f4f6}",
+    ".nx-input-row textarea{flex:1;resize:none;border:1px solid #e5e7eb;border-radius:8px;padding:7px 10px;font-size:14px;outline:none;height:36px;max-height:120px;font-family:inherit;overflow-y:auto}",
     ".nx-input-row textarea:focus{border-color:#9ca3af}",
     ".nx-send{border:none;color:#fff;padding:0 14px;border-radius:8px;cursor:pointer;font-weight:600;font-size:14px;height:36px;min-width:56px}",
     ".nx-send:disabled{opacity:.5;cursor:not-allowed}",
-    ".nx-human-btn{width:100%;background:none;border:none;border-top:1px solid #f3f4f6;padding:8px;color:#6b7280;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px}",
-    ".nx-human-btn:hover{background:#f9fafb;color:#374151}",
-    ".nx-human-btn:disabled{opacity:.4;cursor:not-allowed}",
     ".nx-footer{text-align:center;padding:5px;font-size:11px;color:#d1d5db;background:#fff;border-top:1px solid #f3f4f6}",
     ".nx-resolved{margin:12px;padding:14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;text-align:center;font-size:13px;color:#166534}",
     ".nx-new-chat{margin-top:10px;background:#6B5CE7;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:13px;cursor:pointer;font-family:inherit}",
-    ".nx-tickets-page{position:absolute;top:0;left:0;right:0;bottom:0;background:#fff;display:flex;flex-direction:column;z-index:10}",
+    ".nx-file-preview{display:flex;align-items:center;gap:6px;padding:6px 10px;background:#f3f4f6;border-top:1px solid #e5e7eb;font-size:12px;color:#374151}",
+    ".nx-file-preview-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+    ".nx-file-remove{background:none;border:none;color:#9ca3af;cursor:pointer;font-size:14px;padding:0 4px}",
+    ".nx-resize-handle{position:absolute;bottom:0;left:0;width:16px;height:16px;cursor:nw-resize;z-index:10;opacity:0}",
+    ".nx-tickets-page{position:absolute;top:0;left:0;right:0;bottom:0;background:#fff;display:flex;flex-direction:column;z-index:10;border-radius:14px;overflow:hidden}",
     ".nx-tickets-header{padding:12px 14px;color:#fff;display:flex;align-items:center;gap:10px;font-weight:600;font-size:15px}",
     ".nx-tickets-back{background:rgba(255,255,255,.2);border:none;color:#fff;width:28px;height:28px;border-radius:6px;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center}",
     ".nx-tickets-list{flex:1;overflow-y:auto;padding:8px}",
@@ -186,67 +102,35 @@
     ".nx-ticket-time{font-size:11px;color:#9ca3af;margin-top:4px}",
     ".nx-tickets-empty{text-align:center;padding:40px 20px;color:#9ca3af;font-size:14px}",
     ".nx-tickets-new{margin:12px;padding:10px;background:#6B5CE7;color:#fff;border:none;border-radius:8px;font-size:14px;cursor:pointer;width:calc(100% - 24px);font-family:inherit}",
-    "@media(max-width:420px){.nx-panel{right:8px;left:8px;width:auto;height:min(560px,calc(100dvh - 96px));bottom:80px} .nx-bubble{right:16px;bottom:16px}}",
+    "@media(max-width:480px){.nx-panel{right:0!important;left:0!important;bottom:0!important;top:auto!important;width:100%!important;height:85vh!important;border-radius:16px 16px 0 0;max-width:100%;resize:none!important} .nx-bubble{right:16px;bottom:16px} .nx-resize-handle{display:none!important}}",
   ].join("");
   document.head.appendChild(style);
 
-  // ---------- DOM ----------
-  var root = document.createElement("div");
-  root.className = "nx-root";
-  document.body.appendChild(root);
+  // --- DOM ---
+  var root=document.createElement("div"); root.className="nx-root"; document.body.appendChild(root);
+  var bubble=document.createElement("button"); bubble.className="nx-bubble"; bubble.type="button"; bubble.setAttribute("aria-label","Open chat"); bubble.innerHTML="💬"; root.appendChild(bubble);
+  var panel=null,msgsEl,inputEl,sendBtn,tagsEl,typingEl,filePreviewEl,pendingFile=null;
+  var emojiPanelEl=null,plusMenuEl=null;
 
-  var bubble = document.createElement("button");
-  bubble.className = "nx-bubble";
-  bubble.type = "button";
-  bubble.setAttribute("aria-label", "Open chat");
-  bubble.innerHTML = "💬";
-  bubble.style.background = "#6B5CE7"; // default until config loads
-  root.appendChild(bubble);
+  function getPrimary(){ return (config&&config.widget_config&&config.widget_config.primary_color)||"#6B5CE7"; }
+  function applyColor(c){ bubble.style.background=c; }
+  function esc(s){ return String(s).replace(/[&<>"']/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
+  function getTicketNo(){ return state.conversationId?state.conversationId.substring(0,7):"-------"; }
+  function getSuggested(){ var d=["Track my order","Shipping fee and delivery?","Cancel order & refund","What's the return policy?","Contact human support"]; if(!config||!config.widget_config) return d; var sq=config.widget_config.suggested_questions; return (Array.isArray(sq)&&sq.length>0)?sq:d; }
 
-  var panel = null;
-  var msgsEl, inputEl, sendBtn, typingEl, tagsEl, humanBtn;
+  // --- Build Panel ---
+  function buildPanel(){
+    var primary=getPrimary();
+    var title=(config&&config.widget_config&&config.widget_config.header_title)||"Customer Support";
+    var ph=(config&&config.widget_config&&config.widget_config.placeholder_text)||"Type a message\u2026";
+    var online=state.online;
 
-  function getPrimary() {
-    return (config && config.widget_config && config.widget_config.primary_color) || "#6B5CE7";
-  }
-  function applyColor(color) { bubble.style.background = color; }
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, function(c){
-      return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
-    });
-  }
-  function getTicketNo() {
-    return state.conversationId ? state.conversationId.substring(0,7) : "-------";
-  }
-  function getSuggestedQuestions() {
-    var defaults = ["Track my order","Shipping fee and delivery?","Cancel order & refund","What's the return policy?","Contact human support"];
-    if (!config || !config.widget_config) return defaults;
-    var sq = config.widget_config.suggested_questions;
-    return (Array.isArray(sq) && sq.length > 0) ? sq : defaults;
-  }
-  function getOfflineMessage() {
-    if (config && config.widget_config && config.widget_config.offline_message)
-      return config.widget_config.offline_message;
-    return "Our team is currently offline.\nWe\u2019ll reply during office hours.";
-  }
-
-  function buildPanel() {
-    var primary = getPrimary();
-    var title   = (config && config.widget_config && config.widget_config.header_title) || "Customer Support";
-    var placeholder = (config && config.widget_config && config.widget_config.placeholder_text) || "Type a message\u2026";
-    var online  = state.online;
-
-    panel = document.createElement("div");
-    panel.className = "nx-panel";
-    panel.innerHTML =
-      '<div class="nx-header" style="background:' + primary + '">' +
+    panel=document.createElement("div"); panel.className="nx-panel";
+    panel.innerHTML=
+      '<div class="nx-header" id="nx-header" style="background:'+primary+'">' +
         '<div class="nx-header-left">' +
-          '<div class="nx-header-title">' + escapeHtml(title) + '</div>' +
-          '<div class="nx-header-sub">' +
-            '<span class="nx-online-dot" style="background:' + (online ? "#4ade80" : "#9ca3af") + '"></span>' +
-            (online ? "Online" : "Offline") +
-            ' &nbsp;&middot;&nbsp; Chat #<span id="nx-ticket-no">' + getTicketNo() + '</span>' +
-          '</div>' +
+          '<div class="nx-header-title">'+esc(title)+'</div>' +
+          '<div class="nx-header-sub"><span class="nx-online-dot" style="background:'+(online?"#4ade80":"#9ca3af")+'"></span>'+(online?"Online":"Offline")+' &nbsp;&middot;&nbsp; Chat #<span id="nx-ticket-no">'+getTicketNo()+'</span></div>' +
         '</div>' +
         '<div class="nx-header-actions">' +
           '<button class="nx-header-btn" id="nx-my-tickets-btn" title="My Tickets" aria-label="My Tickets">&#9783;</button>' +
@@ -254,494 +138,346 @@
         '</div>' +
       '</div>' +
       '<div id="nx-tags-area" class="nx-tags" style="display:none"></div>' +
-      '<div class="nx-msgs"></div>' +
-      '<div class="nx-input-area">' +
+      '<div class="nx-msgs" id="nx-msgs"></div>' +
+      '<div class="nx-input-area" id="nx-input-area">' +
+        '<div id="nx-file-preview" class="nx-file-preview" style="display:none"></div>' +
         '<div class="nx-input-row">' +
-          '<button class="nx-input-icon" id="nx-upload-btn" title="Attach file (coming soon)" disabled>&#128206;</button>' +
-          '<textarea id="nx-input" placeholder="' + escapeHtml(placeholder) + '" rows="1"></textarea>' +
-          '<button class="nx-send" id="nx-send" type="button" style="background:' + primary + '">Send</button>' +
+          '<div class="nx-plus-wrap"><button class="nx-plus-btn" id="nx-plus-btn" title="More options" aria-label="More options">+</button></div>' +
+          '<button class="nx-emoji-btn" id="nx-emoji-btn" title="Emoji" aria-label="Emoji">&#128522;</button>' +
+          '<textarea id="nx-input" placeholder="'+esc(ph)+'" rows="1"></textarea>' +
+          '<button class="nx-send" id="nx-send" type="button" style="background:'+primary+'">Send</button>' +
         '</div>' +
-        '<button class="nx-human-btn" id="nx-human-btn">&#128100; Request Human Support</button>' +
       '</div>' +
       '<div class="nx-footer">Powered by NexusAI</div>';
     root.appendChild(panel);
 
-    msgsEl   = panel.querySelector(".nx-msgs");
-    inputEl  = panel.querySelector("#nx-input");
-    sendBtn  = panel.querySelector("#nx-send");
-    tagsEl   = panel.querySelector("#nx-tags-area");
-    humanBtn = panel.querySelector("#nx-human-btn");
+    msgsEl=panel.querySelector("#nx-msgs");
+    inputEl=panel.querySelector("#nx-input");
+    sendBtn=panel.querySelector("#nx-send");
+    tagsEl=panel.querySelector("#nx-tags-area");
+    filePreviewEl=panel.querySelector("#nx-file-preview");
 
-    panel.querySelector("#nx-close-btn").addEventListener("click", closePanel);
-    panel.querySelector("#nx-my-tickets-btn").addEventListener("click", showMyTicketsPage);
-    panel.querySelector("#nx-upload-btn").addEventListener("click", function() {
-      alert("File upload coming soon.");
-    });
-    sendBtn.addEventListener("click", handleSend);
-    inputEl.addEventListener("keydown", function(e) {
-      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
-    });
-    humanBtn.addEventListener("click", handleHumanSupportRequest);
+    // Hidden file inputs
+    var imgInput=document.createElement("input"); imgInput.type="file"; imgInput.accept="image/*"; imgInput.style.display="none"; imgInput.id="nx-img-input"; document.body.appendChild(imgInput);
+    var vidInput=document.createElement("input"); vidInput.type="file"; vidInput.accept="video/*"; vidInput.style.display="none"; vidInput.id="nx-vid-input"; document.body.appendChild(vidInput);
+    imgInput.addEventListener("change",function(){ handleFileSelect(imgInput,"image"); });
+    vidInput.addEventListener("change",function(){ handleFileSelect(vidInput,"video"); });
+
+    panel.querySelector("#nx-close-btn").addEventListener("click",closePanel);
+    panel.querySelector("#nx-my-tickets-btn").addEventListener("click",showMyTickets);
+    sendBtn.addEventListener("click",handleSend);
+    inputEl.addEventListener("keydown",function(e){ if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();handleSend();} });
+    inputEl.addEventListener("input",function(){ inputEl.style.height="36px"; inputEl.style.height=Math.min(inputEl.scrollHeight,120)+"px"; });
+
+    // Plus menu
+    var plusBtn=panel.querySelector("#nx-plus-btn");
+    plusBtn.addEventListener("click",function(e){ e.stopPropagation(); togglePlusMenu(); });
+
+    // Emoji button
+    var emojiBtn=panel.querySelector("#nx-emoji-btn");
+    emojiBtn.addEventListener("click",function(e){ e.stopPropagation(); toggleEmojiPanel(); });
+
+    // Close menus on outside click
+    document.addEventListener("click",function(){ closePlusMenu(); closeEmojiPanel(); });
+
+    // Drag + Resize
+    initDrag();
+    initResize();
 
     showSuggestedQuestions();
   }
 
-  function updateHeader() {
-    if (!panel) return;
-    var no = panel.querySelector("#nx-ticket-no");
-    if (no) no.textContent = getTicketNo();
-  }
-
-  // ---------- Suggested Questions ----------
-  function showSuggestedQuestions() {
-    if (!tagsEl || state.firstMessageSent) return;
-    var questions = getSuggestedQuestions();
-    if (!questions.length) return;
-    tagsEl.innerHTML = "";
-    questions.forEach(function(q) {
-      var btn = document.createElement("button");
-      btn.className = "nx-tag";
-      btn.textContent = q;
-      btn.addEventListener("click", function() {
-        if (inputEl) { inputEl.value = q; }
-        hideSuggestedQuestions();
-        handleSend();
-      });
-      tagsEl.appendChild(btn);
-    });
-    tagsEl.style.display = "flex";
-  }
-  function hideSuggestedQuestions() {
-    if (tagsEl) tagsEl.style.display = "none";
-    state.firstMessageSent = true;
-  }
-
-  // ---------- Request Human Support ----------
-  function handleHumanSupportRequest() {
-    if (!state.sessionToken || !state.conversationId) return;
-    if (state.handoffRequested) return;
-    state.handoffRequested = true;
-    humanBtn.disabled = true;
-
-    // MVP-A: use existing receive-widget-message (no new EF needed)
-    api("/receive-widget-message", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        conversation_id: state.conversationId,
-        session_token: state.sessionToken,
-        content: "I\u2019d like to speak with a human agent."
-      })
-    }).catch(function() {});
-
-    // Show waiting message in UI immediately
-    appendMessageObj({
-      id: "system-handoff-" + Date.now(),
-      role: "system",
-      content: "We\u2019re connecting you to a team member.\nEstimated wait time: 2\u20135 minutes.",
-      created_at: new Date().toISOString()
-    });
-  }
-
-  // ---------- My Tickets Page ----------
-  function showMyTicketsPage() {
-    if (!panel) return;
-    var primary = getPrimary();
-    var page = document.createElement("div");
-    page.className = "nx-tickets-page";
-    page.id = "nx-tickets-page";
-
-    var tickets = getTicketHistory();
-    var listHtml = "";
-    if (tickets.length === 0) {
-      listHtml = '<div class="nx-tickets-empty">&#128203; No previous tickets</div>';
-    } else {
-      tickets.forEach(function(t) {
-        var statusLabel = t.status === "resolved" ? "Resolved"
-          : t.status === "human_needed" ? "Waiting" : "Open";
-        listHtml +=
-          '<div class="nx-ticket-item" data-conv="' + escapeHtml(t.conversation_id) + '" data-token="' + escapeHtml(t.session_token) + '">' +
-            '<div class="nx-ticket-row">' +
-              '<span class="nx-ticket-no">Chat #' + escapeHtml(t.ticket_no) + '</span>' +
-              '<span class="nx-ticket-status ' + escapeHtml(t.status) + '">' + statusLabel + '</span>' +
-            '</div>' +
-            '<div class="nx-ticket-preview">' + escapeHtml(t.last_message || "(no messages yet)") + '</div>' +
-            '<div class="nx-ticket-time">' + new Date(t.updated_at).toLocaleDateString() + '</div>' +
-          '</div>';
-      });
+  // --- Plus Menu ---
+  function togglePlusMenu(){
+    if(plusMenuEl){ closePlusMenu(); return; }
+    closeEmojiPanel();
+    var inputArea=panel.querySelector("#nx-input-area");
+    plusMenuEl=document.createElement("div"); plusMenuEl.className="nx-plus-menu";
+    plusMenuEl.innerHTML=
+      '<div class="nx-plus-item" id="nx-menu-img">&#128247; Upload Image</div>' +
+      '<div class="nx-plus-item" id="nx-menu-vid">&#127916; Upload Video</div>' +
+      '<div class="nx-plus-item'+( state.handoffRequested?" disabled":"")+'" id="nx-menu-human">&#128100; Request Human Support</div>';
+    inputArea.querySelector(".nx-plus-wrap").appendChild(plusMenuEl);
+    plusMenuEl.querySelector("#nx-menu-img").addEventListener("click",function(e){ e.stopPropagation(); closePlusMenu(); document.getElementById("nx-img-input").click(); });
+    plusMenuEl.querySelector("#nx-menu-vid").addEventListener("click",function(e){ e.stopPropagation(); closePlusMenu(); document.getElementById("nx-vid-input").click(); });
+    var humanItem=plusMenuEl.querySelector("#nx-menu-human");
+    if(!state.handoffRequested){
+      humanItem.addEventListener("click",function(e){ e.stopPropagation(); closePlusMenu(); handleHumanSupport(); });
     }
+  }
+  function closePlusMenu(){ if(plusMenuEl&&plusMenuEl.parentNode){ plusMenuEl.parentNode.removeChild(plusMenuEl); } plusMenuEl=null; }
 
-    page.innerHTML =
-      '<div class="nx-tickets-header" style="background:' + primary + '">' +
-        '<button class="nx-tickets-back" id="nx-tickets-back">&larr;</button>' +
-        'My Tickets' +
-      '</div>' +
-      '<div class="nx-tickets-list">' + listHtml + '</div>' +
-      '<button class="nx-tickets-new" id="nx-tickets-new">+ Start New Conversation</button>';
+  // --- Emoji Panel ---
+  var EMOJIS=["😊","😂","🙏","👍","❤️","🎉","😅","😭","🔥","✅","👋","😍","🤔","😢","😎","🙌","💪","😁","🥰","🤩","😴","😡","👀","💯"];
+  function toggleEmojiPanel(){
+    if(emojiPanelEl){ closeEmojiPanel(); return; }
+    closePlusMenu();
+    var inputArea=panel.querySelector("#nx-input-area");
+    emojiPanelEl=document.createElement("div"); emojiPanelEl.className="nx-emoji-panel";
+    EMOJIS.forEach(function(em){
+      var btn=document.createElement("button"); btn.className="nx-emoji-item"; btn.textContent=em; btn.type="button";
+      btn.addEventListener("click",function(e){ e.stopPropagation(); insertEmoji(em); });
+      emojiPanelEl.appendChild(btn);
+    });
+    inputArea.appendChild(emojiPanelEl);
+  }
+  function closeEmojiPanel(){ if(emojiPanelEl&&emojiPanelEl.parentNode){ emojiPanelEl.parentNode.removeChild(emojiPanelEl); } emojiPanelEl=null; }
+  function insertEmoji(em){
+    if(!inputEl) return;
+    var s=inputEl.selectionStart||inputEl.value.length, e=inputEl.selectionEnd||inputEl.value.length;
+    inputEl.value=inputEl.value.substring(0,s)+em+inputEl.value.substring(e);
+    inputEl.selectionStart=inputEl.selectionEnd=s+em.length;
+    inputEl.focus();
+  }
 
+  // --- File Select Simulation ---
+  // Fix 3: Upload is SIMULATED ONLY — no file is uploaded to server in Widget MVP
+  function handleFileSelect(inp,type){
+    if(!inp.files||!inp.files[0]) return;
+    var file=inp.files[0];
+    console.log("[NexusAI] File selected (simulated, not uploaded):", file.name, type);
+    pendingFile={name:file.name,type:type,size:file.size};
+    var icon=type==="image"?"📷":"🎬";
+    if(filePreviewEl){
+      filePreviewEl.style.display="flex";
+      filePreviewEl.innerHTML='<span style="font-size:16px">'+icon+'</span><span class="nx-file-preview-name">'+esc(file.name)+'</span><button class="nx-file-remove" id="nx-file-remove-btn">×</button>';
+      filePreviewEl.querySelector("#nx-file-remove-btn").addEventListener("click",clearPendingFile);
+    }
+    inp.value="";
+  }
+  function clearPendingFile(){ pendingFile=null; if(filePreviewEl) filePreviewEl.style.display="none"; }
+
+  // --- Drag (Desktop only) ---
+  function initDrag(){
+    var hdr=panel.querySelector("#nx-header");
+    if(!hdr) return;
+    var dragging=false,ox=0,oy=0;
+    function isMobile(){ return window.innerWidth<=480; }
+    hdr.addEventListener("mousedown",function(e){
+      if(isMobile()) return;
+      if(e.target.closest("button")||e.target.closest(".nx-header-actions")) return;
+      dragging=true;
+      var r=panel.getBoundingClientRect();
+      ox=e.clientX-r.left; oy=e.clientY-r.top;
+      panel.style.right="auto"; panel.style.bottom="auto";
+      panel.style.left=r.left+"px"; panel.style.top=r.top+"px";
+      hdr.classList.add("dragging");
+      e.preventDefault();
+    });
+    document.addEventListener("mousemove",function(e){
+      if(!dragging) return;
+      var nl=e.clientX-ox, nt=e.clientY-oy;
+      var r=panel.getBoundingClientRect();
+      nl=Math.max(0,Math.min(nl,window.innerWidth-r.width));
+      nt=Math.max(0,Math.min(nt,window.innerHeight-r.height));
+      panel.style.left=nl+"px"; panel.style.top=nt+"px";
+    });
+    document.addEventListener("mouseup",function(){
+      dragging=false;
+      if(hdr) hdr.classList.remove("dragging");
+    });
+  }
+
+  // --- Resize (Desktop only, bottom-left corner handle) ---
+  function initResize(){
+    var handle=document.createElement("div"); handle.className="nx-resize-handle";
+    panel.style.position="fixed"; // ensure
+    panel.appendChild(handle);
+    var resizing=false,startX=0,startY=0,startW=0,startH=0;
+    function isMobile(){ return window.innerWidth<=480; }
+    handle.style.cssText="position:absolute;bottom:0;left:0;width:20px;height:20px;cursor:sw-resize;z-index:10;";
+    // Visual grip dots
+    handle.innerHTML='<svg width="12" height="12" viewBox="0 0 12 12" style="position:absolute;bottom:4px;left:4px;opacity:.3"><circle cx="2" cy="10" r="1.5" fill="#666"/><circle cx="6" cy="10" r="1.5" fill="#666"/><circle cx="10" cy="10" r="1.5" fill="#666"/><circle cx="2" cy="6" r="1.5" fill="#666"/><circle cx="6" cy="6" r="1.5" fill="#666"/><circle cx="2" cy="2" r="1.5" fill="#666"/></svg>';
+    handle.style.opacity="1";
+
+    handle.addEventListener("mousedown",function(e){
+      if(isMobile()) return;
+      resizing=true;
+      // Fix 1: Convert from right/bottom to left/top before resizing to avoid jump
+      var r=panel.getBoundingClientRect();
+      panel.style.right="auto"; panel.style.bottom="auto";
+      panel.style.left=r.left+"px"; panel.style.top=r.top+"px";
+      startX=e.clientX; startY=e.clientY;
+      startW=r.width; startH=r.height;
+      e.preventDefault(); e.stopPropagation();
+    });
+    document.addEventListener("mousemove",function(e){
+      if(!resizing) return;
+      var dw=startX-e.clientX, dh=e.clientY-startY;
+      var nw=Math.max(300,Math.min(startW+dw,800));
+      var nh=Math.max(400,Math.min(startH+dh,window.innerHeight*0.9));
+      panel.style.width=nw+"px"; panel.style.height=nh+"px";
+      // adjust left when dragging left edge + viewport boundary
+      var r=panel.getBoundingClientRect();
+      var newLeft=r.right-nw;
+      if(newLeft<0) newLeft=0; // Fix 1b: clamp to viewport left edge
+      panel.style.left=newLeft+"px";
+    });
+    document.addEventListener("mouseup",function(){ resizing=false; });
+  }
+
+  // --- Human Support ---
+  function handleHumanSupport(){
+    if(!state.sessionToken||!state.conversationId||state.handoffRequested) return;
+    state.handoffRequested=true;
+    api("/receive-widget-message",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({conversation_id:state.conversationId,session_token:state.sessionToken,content:"I\u2019d like to speak with a human agent."})}).catch(function(){});
+    appendMessageObj({id:"system-handoff-"+Date.now(),role:"system",content:"We\u2019re connecting you to a team member.\nEstimated wait time: 2\u20135 minutes.",created_at:new Date().toISOString()});
+  }
+
+  // --- Suggested Questions ---
+  function showSuggestedQuestions(){
+    if(!tagsEl||state.firstMessageSent) return;
+    var qs=getSuggested(); if(!qs.length) return;
+    tagsEl.innerHTML="";
+    qs.forEach(function(q){
+      var b=document.createElement("button"); b.className="nx-tag"; b.textContent=q;
+      b.addEventListener("click",function(){ if(inputEl)inputEl.value=q; hideTags(); handleSend(); });
+      tagsEl.appendChild(b);
+    });
+    tagsEl.style.display="flex";
+  }
+  function hideTags(){ if(tagsEl)tagsEl.style.display="none"; state.firstMessageSent=true; }
+
+  // --- My Tickets ---
+  function showMyTickets(){
+    if(!panel) return;
+    var primary=getPrimary();
+    var page=document.createElement("div"); page.className="nx-tickets-page";
+    var tickets=getTickets();
+    var listHtml=tickets.length===0?'<div class="nx-tickets-empty">&#128203; No previous tickets</div>':tickets.map(function(t){
+      var sl=t.status==="resolved"?"Resolved":t.status==="human_needed"?"Waiting":"Open";
+      return '<div class="nx-ticket-item" data-conv="'+esc(t.conversation_id)+'" data-token="'+esc(t.session_token)+'"><div class="nx-ticket-row"><span class="nx-ticket-no">Chat #'+esc(t.ticket_no)+'</span><span class="nx-ticket-status '+esc(t.status)+'">'+sl+'</span></div><div class="nx-ticket-preview">'+esc(t.last_message||"(no messages yet)")+'</div><div class="nx-ticket-time">'+new Date(t.updated_at).toLocaleDateString()+'</div></div>';
+    }).join("");
+    page.innerHTML='<div class="nx-tickets-header" style="background:'+primary+'"><button class="nx-tickets-back" id="nx-tix-back">&larr;</button>My Tickets</div><div class="nx-tickets-list">'+listHtml+'</div><button class="nx-tickets-new" id="nx-tix-new">+ Start New Conversation</button>';
     panel.appendChild(page);
-
-    page.querySelector("#nx-tickets-back").addEventListener("click", function() {
-      page.remove();
-    });
-    page.querySelector("#nx-tickets-new").addEventListener("click", function() {
-      page.remove();
-      clearSession();
-      state.sessionToken = null;
-      state.conversationId = null;
-      state.messages = [];
-      state.handoffRequested = false;
-      state.firstMessageSent = false;
-      state.fallbackShownForConversation = false;
-      state.thinkingStartTime = null;
-      seenIds = {};
-      lastMessageId = null;
-      stopPolling();
-      if (inputEl) { inputEl.disabled = false; }
-      if (sendBtn) sendBtn.disabled = false;
-      if (humanBtn) humanBtn.disabled = false;
-      startFreshSession();
-    });
-
-    page.querySelectorAll(".nx-ticket-item").forEach(function(item) {
-      item.addEventListener("click", function() {
-        var convId = item.getAttribute("data-conv");
-        var token  = item.getAttribute("data-token");
-        page.remove();
-        tryRestoreSession({ convId: convId, token: token });
-      });
-    });
+    page.querySelector("#nx-tix-back").addEventListener("click",function(){ page.remove(); });
+    page.querySelector("#nx-tix-new").addEventListener("click",function(){ page.remove(); resetAndFresh(); });
+    page.querySelectorAll(".nx-ticket-item").forEach(function(item){ item.addEventListener("click",function(){ page.remove(); tryRestoreSession({convId:item.getAttribute("data-conv"),token:item.getAttribute("data-token")}); }); });
   }
 
-  // ---------- Message rendering ----------
-  function renderMsg(m) {
-    if (m.is_recalled) {
-      var el = document.createElement("div");
-      el.className = "nx-recalled";
-      el.textContent = "[\u8a0a\u606f\u5df2\u64a4\u56de]";
-      return el;
+  // --- Messages ---
+  function isLocalId(id){ var s=String(id||""); return s.indexOf("system-")===0||s.indexOf("fallback-")===0||s==="welcome"; }
+  function renderMsg(m){
+    if(m.is_recalled){ var el=document.createElement("div"); el.className="nx-recalled"; el.textContent="[\u8a0a\u606f\u5df2\u64a4\u56de]"; return el; }
+    var el=document.createElement("div"); el.className="nx-msg "+(m.role||"assistant");
+    if(m.role==="visitor") el.style.background=getPrimary();
+    el.textContent=m.content; return el;
+  }
+  function appendMessageObj(m){
+    if(!msgsEl||m.content==="__THINKING__"||seenIds[m.id]) return;
+    seenIds[m.id]=true;
+    var idx=state.messages.findIndex(function(x){return x.id===m.id;}); if(idx>=0) state.messages[idx]=m; else state.messages.push(m);
+    var el=renderMsg(m);
+    if(typingEl&&typingEl.parentNode===msgsEl) msgsEl.insertBefore(el,typingEl); else msgsEl.appendChild(el);
+    if(!isLocalId(m.id)){ lastMessageId=m.id; if(m.role!=="system") updateTicket(state.conversationId,null,m.content.substring(0,80)); }
+    msgsEl.scrollTop=msgsEl.scrollHeight;
+  }
+  function appendWelcome(){
+    var w=config&&config.widget_config&&config.widget_config.welcome_message;
+    if(!w&&!state.online){
+      // Fix 2: use config.offline_message if set, else fallback
+      w=(config&&config.widget_config&&config.widget_config.offline_message)||"Our team is currently offline. Please leave a message.";
     }
-    var el = document.createElement("div");
-    el.className = "nx-msg " + (m.role || "assistant");
-    if (m.role === "visitor") el.style.background = getPrimary();
-    el.textContent = m.content;
-    return el;
+    if(w) appendMessageObj({id:"welcome",role:"assistant",content:w});
+  }
+  function updateHeader(){ var no=panel&&panel.querySelector("#nx-ticket-no"); if(no) no.textContent=getTicketNo(); }
+  function showTyping(){ if(!typingEl){typingEl=document.createElement("div");typingEl.className="nx-typing";typingEl.id="nexus-typing-indicator";typingEl.innerHTML="<span></span><span></span><span></span>";} if(msgsEl&&typingEl.parentNode!==msgsEl){msgsEl.appendChild(typingEl);msgsEl.scrollTop=msgsEl.scrollHeight;} }
+  function hideTyping(){ if(typingEl&&typingEl.parentNode) typingEl.parentNode.removeChild(typingEl); }
+
+  function showResolvedBanner(messages){
+    if(!msgsEl) return;
+    msgsEl.innerHTML=""; seenIds={}; state.messages=[]; lastMessageId=null; state.firstMessageSent=true; hideTags();
+    (messages||[]).forEach(function(m){appendMessageObj(m);});
+    var b=document.createElement("div"); b.className="nx-resolved";
+    b.innerHTML="\u2705 This conversation has been resolved.<br><button class=\"nx-new-chat\">Start new conversation</button>";
+    msgsEl.appendChild(b); msgsEl.scrollTop=msgsEl.scrollHeight;
+    if(inputEl){inputEl.disabled=true;inputEl.placeholder="Conversation resolved.";}
+    if(sendBtn)sendBtn.disabled=true;
+    updateTicket(state.conversationId,"resolved",null);
+    b.querySelector(".nx-new-chat").addEventListener("click",function(){ resetAndFresh(); });
   }
 
-  function isLocalMessageId(id) {
-    var s = String(id || "");
-    return s.indexOf("system-") === 0 || s.indexOf("fallback-") === 0 || s === "welcome";
+  function resetAndFresh(){
+    clearSession(); state.sessionToken=null; state.conversationId=null; state.messages=[]; state.handoffRequested=false; state.firstMessageSent=false; state.fallbackShownForConversation=false; state.thinkingStartTime=null; seenIds={}; lastMessageId=null; stopPolling(); clearPendingFile();
+    if(inputEl){inputEl.disabled=false;inputEl.placeholder=(config&&config.widget_config&&config.widget_config.placeholder_text)||"Type a message\u2026";}
+    if(sendBtn)sendBtn.disabled=false;
+    startFreshSession();
   }
 
-    function appendMessageObj(m) {
-    if (!msgsEl) return;
-    if (m.content === "__THINKING__") return;
-    if (seenIds[m.id]) return;
-    seenIds[m.id] = true;
-    var idx = state.messages.findIndex(function(x){ return x.id === m.id; });
-    if (idx >= 0) state.messages[idx] = m;
-    else state.messages.push(m);
-    var el = renderMsg(m);
-    if (typingEl && typingEl.parentNode === msgsEl) {
-      msgsEl.insertBefore(el, typingEl);
-    } else {
-      msgsEl.appendChild(el);
-    }
-    if (!isLocalMessageId(m.id)) {
-      lastMessageId = m.id;
-      // Update last_message in ticket history
-      if (m.role !== "system") {
-        updateTicketInHistory(state.conversationId, null, m.content.substring(0, 80));
-      }
-    }
-    msgsEl.scrollTop = msgsEl.scrollHeight;
+  // --- API ---
+  function api(path,opts){ return fetch(apiBase+path,opts).then(function(r){return r.json().then(function(j){return{ok:r.ok,status:r.status,body:j};});}); }
+
+  // --- Poll ---
+  function startPolling(){ if(state.pollInterval)return; state.pollInterval=setInterval(poll,2500); }
+  function stopPolling(){ if(state.pollInterval){clearInterval(state.pollInterval);state.pollInterval=null;} }
+  function poll(){
+    if(!state.conversationId||!state.sessionToken) return;
+    var qs="?conversation_id="+encodeURIComponent(state.conversationId)+"&session_token="+encodeURIComponent(state.sessionToken)+(lastMessageId?"&after_message_id="+encodeURIComponent(lastMessageId):"");
+    api("/widget-poll-messages"+qs,{method:"GET"}).then(function(res){
+      if(!res.ok||!res.body||!res.body.success) return;
+      var d=res.body.data;
+      if(d.conversation_status==="resolved"){ hideTyping(); stopPolling(); var nm=d.messages||[]; nm.forEach(function(m){if(!state.messages.some(function(x){return x.id===m.id;}))state.messages.push(m);}); var merged=state.messages.filter(function(m){return m.content!=="__THINKING__";}).filter(function(m,i,a){return a.findIndex(function(x){return x.id===m.id;})===i;}).sort(function(a,b){return new Date(a.created_at)-new Date(b.created_at);}); showResolvedBanner(merged); return; }
+      (d.messages||[]).forEach(function(m){appendMessageObj(m);if(m.role==="visitor")hideTags();});
+      var ag=d.ai_generating;
+      if(ag&&state.handoffRequested){hideTyping();state.thinkingStartTime=null;state.fallbackShownForConversation=true;return;}
+      if(ag){if(!state.fallbackShownForConversation){if(!state.thinkingStartTime)state.thinkingStartTime=Date.now(); if(!document.getElementById("nexus-typing-indicator"))showTyping(); if(Date.now()-state.thinkingStartTime>60000){hideTyping();state.thinkingStartTime=null;state.fallbackShownForConversation=true;appendMessageObj({id:"fallback-"+Date.now(),role:"system",content:"Your message was received. Our team will reply shortly.",created_at:new Date().toISOString()});}}}
+      else{state.thinkingStartTime=null;state.fallbackShownForConversation=false;hideTyping();}
+    }).catch(function(){});
   }
 
-  function appendWelcome() {
-    var w = config && config.widget_config && config.widget_config.welcome_message;
-    if (!w && !state.online) w = getOfflineMessage();
-    if (w) appendMessageObj({ id: "welcome", role: "assistant", content: w });
+  // --- Session ---
+  function startFreshSession(){
+    if(msgsEl)msgsEl.innerHTML='<div style="text-align:center;color:#9ca3af;padding:20px;font-size:13px;">Connecting\u2026</div>';
+    state.messages=[];seenIds={};lastMessageId=null;
+    api("/create-visitor-session",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({channel_id:channelId})}).then(function(s){
+      if(!s.ok||!s.body||!s.body.success){if(msgsEl)msgsEl.innerHTML='<div style="text-align:center;color:#ef4444;padding:20px;font-size:13px;">Unable to start session.</div>';return;}
+      state.sessionToken=s.body.data.session_token; state.conversationId=s.body.data.conversation_id;
+      saveSession(); saveTicket(state.conversationId,state.sessionToken); updateHeader();
+      if(msgsEl)msgsEl.innerHTML=""; state.online=isOnline(); appendWelcome(); showSuggestedQuestions(); startPolling();
+    }).catch(function(){if(msgsEl)msgsEl.innerHTML='<div style="text-align:center;color:#ef4444;padding:20px;font-size:13px;">Connection failed.</div>';});
   }
 
-  function showTyping() {
-    if (!typingEl) {
-      typingEl = document.createElement("div");
-      typingEl.className = "nx-typing";
-      typingEl.id = "nexus-typing-indicator";
-      typingEl.innerHTML = "<span></span><span></span><span></span>";
-    }
-    if (msgsEl && typingEl.parentNode !== msgsEl) {
-      msgsEl.appendChild(typingEl);
-      msgsEl.scrollTop = msgsEl.scrollHeight;
-    }
-  }
-  function hideTyping() {
-    if (typingEl && typingEl.parentNode) typingEl.parentNode.removeChild(typingEl);
-  }
-
-  // ---------- Resolved banner ----------
-  function showResolvedBanner(messages) {
-    if (!msgsEl) return;
-    msgsEl.innerHTML = "";
-    seenIds = {};
-    state.messages = [];
-    lastMessageId = null;
-    state.firstMessageSent = true;
-    hideSuggestedQuestions();
-
-    (messages || []).forEach(function(m) { appendMessageObj(m); });
-
-    var banner = document.createElement("div");
-    banner.className = "nx-resolved";
-    banner.innerHTML = "\u2705 This conversation has been resolved.<br>" +
-      '<button class="nx-new-chat">Start new conversation</button>';
-    msgsEl.appendChild(banner);
-    msgsEl.scrollTop = msgsEl.scrollHeight;
-
-    if (inputEl) { inputEl.disabled = true; inputEl.placeholder = "Conversation resolved."; }
-    if (sendBtn) sendBtn.disabled = true;
-    if (humanBtn) humanBtn.disabled = true;
-
-    updateTicketInHistory(state.conversationId, "resolved", null);
-
-    banner.querySelector(".nx-new-chat").addEventListener("click", function() {
-      clearSession();
-      state.sessionToken = null;
-      state.conversationId = null;
-      state.messages = [];
-      state.handoffRequested = false;
-      state.firstMessageSent = false;
-      state.fallbackShownForConversation = false;
-      state.thinkingStartTime = null;
-      seenIds = {};
-      lastMessageId = null;
-      stopPolling();
-      if (inputEl) { inputEl.disabled = false; inputEl.placeholder = (config && config.widget_config && config.widget_config.placeholder_text) || "Type a message\u2026"; }
-      if (sendBtn) sendBtn.disabled = false;
-      if (humanBtn) { humanBtn.disabled = false; state.handoffRequested = false; }
-      startFreshSession();
-    });
+  function tryRestoreSession(stored){
+    if(msgsEl)msgsEl.innerHTML='<div style="text-align:center;color:#9ca3af;padding:20px;font-size:13px;">Resuming\u2026</div>';
+    hideTags();
+    api("/widget-poll-messages?conversation_id="+encodeURIComponent(stored.convId)+"&session_token="+encodeURIComponent(stored.token),{method:"GET"}).then(function(res){
+      if(!res.ok||!res.body||!res.body.success) throw new Error("fail");
+      var d=res.body.data;
+      state.sessionToken=stored.token; state.conversationId=stored.convId;
+      saveSession(); saveTicket(state.conversationId,state.sessionToken);
+      state.messages=[];seenIds={};lastMessageId=null;
+      if(msgsEl)msgsEl.innerHTML=""; updateHeader();
+      if(d.conversation_status==="resolved"){showResolvedBanner(d.messages||[]);}
+      else{var msgs=d.messages||[]; if(msgs.length===0){appendWelcome();showSuggestedQuestions();}else{msgs.forEach(function(m){appendMessageObj(m);});state.firstMessageSent=true;} startPolling();}
+    }).catch(function(){clearSession();state.sessionToken=null;state.conversationId=null;startFreshSession();});
   }
 
-  // ---------- API ----------
-  function api(path, opts) {
-    return fetch(apiBase + path, opts).then(function(r) {
-      return r.json().then(function(j) { return { ok: r.ok, status: r.status, body: j }; });
-    });
+  // --- Open/Close ---
+  function openPanel(){
+    if(panel&&panel.style.display!=="none") return;
+    if(panel&&state.sessionToken){panel.style.display="flex";startPolling();return;}
+    var cp=config?Promise.resolve():api("/get-public-widget-config?channel_id="+encodeURIComponent(channelId),{method:"GET"}).then(function(res){if(!res.ok||!res.body||!res.body.success)throw new Error("fail");config=res.body.data;state.online=isOnline();applyColor(getPrimary());});
+    cp.then(function(){if(!panel)buildPanel();panel.style.display="flex";var s=loadSession();if(s.token&&s.convId&&s.channel===channelId)tryRestoreSession(s);else startFreshSession();}).catch(function(){if(msgsEl)msgsEl.innerHTML='<div style="text-align:center;color:#ef4444;padding:20px;font-size:13px;">Chat unavailable.</div>';});
+  }
+  function closePanel(){ if(panel)panel.style.display="none"; stopPolling(); closePlusMenu(); closeEmojiPanel(); }
+
+  // --- Send ---
+  function handleSend(){
+    if(!inputEl) return;
+    var text=inputEl.value.trim();
+    var fileMsg=pendingFile?"["+( pendingFile.type==="image"?"Image":"Video")+": "+pendingFile.name+" - Upload pending]":"";
+    var fullText=(text+(fileMsg?"\n"+fileMsg:"")).trim();
+    if(!fullText||!state.conversationId||!state.sessionToken) return;
+    if(fullText.length>2000){alert("Message too long (max 2000).");return;}
+    hideTags(); clearPendingFile();
+    sendBtn.disabled=true; sendBtn.textContent="\u2026"; inputEl.value=""; inputEl.style.height="36px";
+    api("/receive-widget-message",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({conversation_id:state.conversationId,session_token:state.sessionToken,content:fullText})}).then(function(res){if(!res.ok||!res.body||!res.body.success)appendMessageObj({id:"err-"+Date.now(),role:"system",content:(res.body&&res.body.error)||"Failed to send.",created_at:new Date().toISOString()});}).catch(function(){appendMessageObj({id:"err-"+Date.now(),role:"system",content:"Network error.",created_at:new Date().toISOString()});}).then(function(){sendBtn.disabled=false;sendBtn.textContent="Send";state.fallbackShownForConversation=false;state.thinkingStartTime=null;if(!state.pollInterval&&state.conversationId)startPolling();});
   }
 
-  // ---------- Polling ----------
-  function startPolling() {
-    if (state.pollInterval) return;
-    state.pollInterval = setInterval(poll, 2500);
-  }
-  function stopPolling() {
-    if (state.pollInterval) { clearInterval(state.pollInterval); state.pollInterval = null; }
-  }
+  // --- Bubble ---
+  bubble.addEventListener("click",function(){if(panel&&panel.style.display!=="none")closePanel();else openPanel();});
+  api("/get-public-widget-config?channel_id="+encodeURIComponent(channelId),{method:"GET"}).then(function(res){if(res.ok&&res.body&&res.body.success&&res.body.data&&res.body.data.widget_config){config=res.body.data;state.online=isOnline();applyColor(getPrimary());}}).catch(function(){});
 
-  function poll() {
-    if (!state.conversationId || !state.sessionToken) return;
-    var qs = "?conversation_id=" + encodeURIComponent(state.conversationId) +
-             "&session_token=" + encodeURIComponent(state.sessionToken) +
-             (lastMessageId ? "&after_message_id=" + encodeURIComponent(lastMessageId) : "");
-    api("/widget-poll-messages" + qs, { method: "GET" }).then(function(res) {
-      if (!res.ok || !res.body || !res.body.success) return;
-      var d = res.body.data;
-
-      // Handle resolved
-      if (d.conversation_status === "resolved") {
-        hideTyping();
-        stopPolling();
-        var newMsgs = d.messages || [];
-        newMsgs.forEach(function(m) {
-          if (!state.messages.some(function(x){ return x.id === m.id; })) state.messages.push(m);
-        });
-        var merged = state.messages
-          .filter(function(m){ return m.content !== "__THINKING__"; })
-          .filter(function(m, i, arr){ return arr.findIndex(function(x){ return x.id === m.id; }) === i; })
-          .sort(function(a,b){ return new Date(a.created_at) - new Date(b.created_at); });
-        showResolvedBanner(merged);
-        return;
-      }
-
-      (d.messages || []).forEach(function(m) {
-        appendMessageObj(m);
-        if (m.role === "visitor") hideSuggestedQuestions();
-      });
-
-      var ai_generating = d.ai_generating;
-      // Fix 1: suppress AI typing when human support was requested
-      if (ai_generating && state.handoffRequested) {
-        hideTyping();
-        state.thinkingStartTime = null;
-        state.fallbackShownForConversation = true;
-        return;
-      }
-      if (ai_generating) {
-        if (!state.fallbackShownForConversation) {
-          if (!state.thinkingStartTime) state.thinkingStartTime = Date.now();
-          if (!document.getElementById("nexus-typing-indicator")) showTyping();
-          if (Date.now() - state.thinkingStartTime > 60000) {
-            hideTyping();
-            state.thinkingStartTime = null;
-            state.fallbackShownForConversation = true;
-            appendMessageObj({ id: "fallback-" + Date.now(), role: "system",
-              content: "Your message was received. Our team will reply shortly.",
-              created_at: new Date().toISOString() });
-          }
-        }
-      } else {
-        state.thinkingStartTime = null;
-        state.fallbackShownForConversation = false;
-        hideTyping();
-      }
-    }).catch(function() {});
-  }
-
-  // ---------- Session ----------
-  function startFreshSession() {
-    if (msgsEl) msgsEl.innerHTML = '<div style="text-align:center;color:#9ca3af;padding:20px;font-size:13px;">Connecting\u2026</div>';
-    state.messages = [];
-    seenIds = {};
-    lastMessageId = null;
-    api("/create-visitor-session", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ channel_id: channelId })
-    }).then(function(s) {
-      if (!s.ok || !s.body || !s.body.success) {
-        if (msgsEl) msgsEl.innerHTML = '<div style="text-align:center;color:#ef4444;padding:20px;font-size:13px;">Unable to start session.</div>';
-        return;
-      }
-      state.sessionToken   = s.body.data.session_token;
-      state.conversationId = s.body.data.conversation_id;
-      saveSession();
-      saveTicketToHistory(state.conversationId, state.sessionToken);
-      updateHeader();
-      if (msgsEl) msgsEl.innerHTML = "";
-      state.online = isOnline();
-      appendWelcome();
-      showSuggestedQuestions();
-      startPolling();
-    }).catch(function() {
-      if (msgsEl) msgsEl.innerHTML = '<div style="text-align:center;color:#ef4444;padding:20px;font-size:13px;">Connection failed.</div>';
-    });
-  }
-
-  function tryRestoreSession(stored) {
-    if (msgsEl) msgsEl.innerHTML = '<div style="text-align:center;color:#9ca3af;padding:20px;font-size:13px;">Resuming\u2026</div>';
-    hideSuggestedQuestions();
-    var qs = "?conversation_id=" + encodeURIComponent(stored.convId) +
-             "&session_token=" + encodeURIComponent(stored.token);
-    api("/widget-poll-messages" + qs, { method: "GET" }).then(function(res) {
-      if (!res.ok || !res.body || !res.body.success) throw new Error("restore failed");
-      var d = res.body.data;
-      state.sessionToken   = stored.token;
-      state.conversationId = stored.convId;
-      saveSession(); // Fix 3: persist restored session so refresh returns here
-      saveTicketToHistory(state.conversationId, state.sessionToken);
-      state.messages = [];
-      seenIds = {};
-      lastMessageId = null;
-      if (msgsEl) msgsEl.innerHTML = "";
-      updateHeader();
-      if (d.conversation_status === "resolved") {
-        showResolvedBanner(d.messages || []);
-      } else {
-        var msgs = d.messages || [];
-        if (msgs.length === 0) { appendWelcome(); showSuggestedQuestions(); }
-        else {
-          msgs.forEach(function(m){ appendMessageObj(m); });
-          state.firstMessageSent = true;
-        }
-        startPolling();
-      }
-    }).catch(function() {
-      clearSession();
-      state.sessionToken = null;
-      state.conversationId = null;
-      startFreshSession();
-    });
-  }
-
-  // ---------- Open / Close ----------
-  function openPanel() {
-    if (panel && panel.style.display !== "none") return;
-    if (panel && state.sessionToken) { panel.style.display = "flex"; startPolling(); return; }
-    var configPromise = config ? Promise.resolve()
-      : api("/get-public-widget-config?channel_id=" + encodeURIComponent(channelId), { method: "GET" })
-          .then(function(res) {
-            if (!res.ok || !res.body || !res.body.success) throw new Error("config failed");
-            config = res.body.data;
-            state.online = isOnline();
-            applyColor(getPrimary());
-          });
-    configPromise.then(function() {
-      if (!panel) buildPanel();
-      panel.style.display = "flex";
-      var stored = loadSession();
-      if (stored.token && stored.convId && stored.channel === channelId) {
-        tryRestoreSession(stored);
-      } else {
-        startFreshSession();
-      }
-    }).catch(function() {
-      if (msgsEl) msgsEl.innerHTML = '<div style="text-align:center;color:#ef4444;padding:20px;font-size:13px;">Chat unavailable.</div>';
-    });
-  }
-
-  function closePanel() {
-    if (panel) panel.style.display = "none";
-    stopPolling();
-  }
-
-  // ---------- Send ----------
-  function handleSend() {
-    if (!inputEl) return;
-    var text = inputEl.value.trim();
-    if (!text || !state.conversationId || !state.sessionToken) return;
-    if (text.length > 2000) { alert("Message too long (max 2000 characters)."); return; }
-    hideSuggestedQuestions();
-    sendBtn.disabled = true;
-    sendBtn.textContent = "\u2026";
-    inputEl.value = "";
-    api("/receive-widget-message", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ conversation_id: state.conversationId, session_token: state.sessionToken, content: text })
-    }).then(function(res) {
-      if (!res.ok || !res.body || !res.body.success) {
-        appendMessageObj({ id: "err-" + Date.now(), role: "system",
-          content: (res.body && res.body.error) || "Failed to send.",
-          created_at: new Date().toISOString() });
-      }
-    }).catch(function() {
-      appendMessageObj({ id: "err-" + Date.now(), role: "system",
-        content: "Network error.", created_at: new Date().toISOString() });
-    }).then(function() {
-      sendBtn.disabled = false;
-      sendBtn.textContent = "Send";
-      state.fallbackShownForConversation = false;
-      state.thinkingStartTime = null;
-      if (!state.pollInterval && state.conversationId) startPolling();
-    });
-  }
-
-  // ---------- Bubble ----------
-  bubble.addEventListener("click", function() {
-    if (panel && panel.style.display !== "none") closePanel();
-    else openPanel();
-  });
-
-  // Pre-load config to colour bubble
-  api("/get-public-widget-config?channel_id=" + encodeURIComponent(channelId), { method: "GET" })
-    .then(function(res) {
-      if (res.ok && res.body && res.body.success && res.body.data && res.body.data.widget_config) {
-        config = res.body.data;
-        state.online = isOnline();
-        applyColor(getPrimary());
-      }
-    }).catch(function() {});
-
-  console.log("[NexusAI widget] Widget MVP v1.1 loaded, channel:", channelId);
+  console.log("[NexusAI widget] Widget v1.2 final loaded, channel:", channelId);
+  console.log("[NexusAI widget] NOTE: File upload is simulated only (Widget MVP). No real upload to server.");
 })();
