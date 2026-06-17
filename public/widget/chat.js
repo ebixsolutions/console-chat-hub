@@ -1,63 +1,59 @@
-/* NexusAI embeddable chat widget — vanilla JS, zero deps */
+/* NexusAI embeddable chat widget — vanilla JS, zero deps — L2.1 session persistence */
 (function () {
   if (window.__nexusChatLoaded) return;
   window.__nexusChatLoaded = true;
 
-  var script = document.currentScript || (function () {
-    var s = document.getElementsByTagName("script");
-    return s[s.length - 1];
-  })();
-  var CHANNEL_ID = script.getAttribute("data-channel-id");
+  var script =
+    document.currentScript ||
+    (function () {
+      var s = document.getElementsByTagName("script");
+      return s[s.length - 1];
+    })();
+  var channelId = script.getAttribute("data-channel-id");
   var apiBase = (script.getAttribute("data-api-base") || "").replace(/\/$/, "");
-  if (!CHANNEL_ID || !apiBase) {
+  if (!channelId || !apiBase) {
     console.error("[NexusAI] data-channel-id and data-api-base are required");
     return;
   }
 
-  // Session token is not a Supabase auth token, but it is a visitor-scoped bearer token
-  // that can access one visitor conversation. Treat as low-sensitivity.
-  // localStorage keys are scoped per CHANNEL_ID to prevent cross-widget conflicts.
-  var STORAGE_PREFIX = "nexus_widget_" + CHANNEL_ID;
-  var STORAGE_KEY_SESSION_TOKEN   = STORAGE_PREFIX + "_session_token";
-  var STORAGE_KEY_SESSION_ID      = STORAGE_PREFIX + "_session_id";
-  var STORAGE_KEY_CONVERSATION_ID = STORAGE_PREFIX + "_conversation_id";
-  var STORAGE_KEY_CHANNEL_ID      = STORAGE_PREFIX + "_channel_id";
+  // ---------- L2.1 localStorage keys (channel-scoped) ----------
+  var STORAGE_PREFIX = "nexus_widget_" + channelId;
+  var SK_TOKEN = STORAGE_PREFIX + "_session_token";
+  var SK_CONV = STORAGE_PREFIX + "_conversation_id";
+  var SK_CHANNEL = STORAGE_PREFIX + "_channel_id";
 
-  function saveSessionToStorage() {
+  function saveSession() {
     try {
-      if (state.sessionToken) localStorage.setItem(STORAGE_KEY_SESSION_TOKEN, state.sessionToken);
-      if (state.sessionId) localStorage.setItem(STORAGE_KEY_SESSION_ID, state.sessionId);
-      if (state.conversationId) localStorage.setItem(STORAGE_KEY_CONVERSATION_ID, state.conversationId);
-      localStorage.setItem(STORAGE_KEY_CHANNEL_ID, CHANNEL_ID);
+      localStorage.setItem(SK_TOKEN, state.sessionToken);
+      localStorage.setItem(SK_CONV, state.conversationId);
+      localStorage.setItem(SK_CHANNEL, channelId);
     } catch (e) {}
   }
-  function clearSessionFromStorage() {
+  function clearSession() {
     try {
-      localStorage.removeItem(STORAGE_KEY_SESSION_TOKEN);
-      localStorage.removeItem(STORAGE_KEY_SESSION_ID);
-      localStorage.removeItem(STORAGE_KEY_CONVERSATION_ID);
-      localStorage.removeItem(STORAGE_KEY_CHANNEL_ID);
+      localStorage.removeItem(SK_TOKEN);
+      localStorage.removeItem(SK_CONV);
+      localStorage.removeItem(SK_CHANNEL);
     } catch (e) {}
   }
-  function loadSessionFromStorage() {
+  function loadSession() {
     try {
       return {
-        sessionToken: localStorage.getItem(STORAGE_KEY_SESSION_TOKEN),
-        sessionId: localStorage.getItem(STORAGE_KEY_SESSION_ID),
-        conversationId: localStorage.getItem(STORAGE_KEY_CONVERSATION_ID),
-        channelId: localStorage.getItem(STORAGE_KEY_CHANNEL_ID),
+        token: localStorage.getItem(SK_TOKEN),
+        convId: localStorage.getItem(SK_CONV),
+        channel: localStorage.getItem(SK_CHANNEL),
       };
     } catch (e) {
-      return { sessionToken: null, sessionId: null, conversationId: null, channelId: null };
+      return {};
     }
   }
 
+  // ---------- State ----------
   var config = null;
   var lastMessageId = null;
   var seenIds = {};
   var state = {
     sessionToken: null,
-    sessionId: null,
     conversationId: null,
     pollInterval: null,
     thinkingStartTime: null,
@@ -79,6 +75,7 @@
     ".nx-msg{max-width:80%;padding:8px 12px;border-radius:12px;font-size:14px;line-height:1.4;white-space:pre-wrap;word-wrap:break-word}",
     ".nx-msg.visitor{align-self:flex-end;color:#fff;border-bottom-right-radius:4px}",
     ".nx-msg.assistant,.nx-msg.system,.nx-msg.agent{align-self:flex-start;background:#fff;color:#111;border:1px solid #e5e7eb;border-bottom-left-radius:4px}",
+    ".nx-recalled{align-self:flex-start;font-size:13px;color:#9ca3af;font-style:italic;padding:4px 8px}",
     ".nx-typing{align-self:flex-start;background:#fff;border:1px solid #e5e7eb;padding:10px 14px;border-radius:12px;display:flex;gap:4px}",
     ".nx-typing span{width:6px;height:6px;background:#9ca3af;border-radius:9999px;animation:nxBounce 1.2s infinite ease-in-out}",
     ".nx-typing span:nth-child(2){animation-delay:.15s}.nx-typing span:nth-child(3){animation-delay:.3s}",
@@ -88,8 +85,9 @@
     ".nx-input textarea:focus{border-color:#9ca3af}",
     ".nx-send{border:none;color:#fff;padding:0 14px;border-radius:8px;cursor:pointer;font-weight:600;font-size:14px}",
     ".nx-send:disabled{opacity:.5;cursor:not-allowed}",
-    ".nx-status{padding:8px 12px;background:#f0fdf4;border-bottom:1px solid #bbf7d0;color:#15803d;font-size:12px;text-align:center}",
     ".nx-footer{text-align:center;padding:6px;font-size:11px;color:#9ca3af;background:#fff;border-top:1px solid #f3f4f6}",
+    ".nx-resolved{margin:12px;padding:14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;text-align:center;font-size:13px;color:#166534}",
+    ".nx-new-chat{margin-top:10px;background:#6B5CE7;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:13px;cursor:pointer;font-family:inherit}",
   ].join("");
   document.head.appendChild(style);
 
@@ -108,6 +106,9 @@
   var panel = null;
   var msgsEl, inputEl, sendBtn, typingEl;
 
+  function getPrimary() {
+    return (config && config.widget_config && config.widget_config.primary_color) || "#6B5CE7";
+  }
   function applyColor(color) {
     bubble.style.background = color;
   }
@@ -119,22 +120,30 @@
   }
 
   function buildPanel() {
-    var primary = (config && config.widget_config && config.widget_config.primary_color) || "#111827";
-    var title = (config && config.widget_config && config.widget_config.header_title) || "Chat";
+    var primary = getPrimary();
+    var title = (config && config.widget_config && config.widget_config.header_title) || "Customer Support";
     var placeholder = (config && config.widget_config && config.widget_config.placeholder_text) || "Type a message…";
 
     panel = document.createElement("div");
     panel.className = "nx-panel";
     panel.innerHTML =
-      '<div class="nx-header" style="background:' + primary + '">' +
-        '<span>' + escapeHtml(title) + '</span>' +
-        '<button class="nx-close" type="button" aria-label="Close">×</button>' +
-      '</div>' +
-      '<div class="nx-msgs" id="nexus-messages"></div>' +
+      '<div class="nx-header" style="background:' +
+      primary +
+      '">' +
+      "<span>" +
+      escapeHtml(title) +
+      "</span>" +
+      '<button class="nx-close" type="button" aria-label="Close">×</button>' +
+      "</div>" +
+      '<div class="nx-msgs"></div>' +
       '<div class="nx-input">' +
-        '<textarea id="nexus-input" placeholder="' + escapeHtml(placeholder) + '" rows="1"></textarea>' +
-        '<button class="nx-send" id="nexus-send" type="button" style="background:' + primary + '">Send</button>' +
-      '</div>' +
+      '<textarea placeholder="' +
+      escapeHtml(placeholder) +
+      '" rows="1"></textarea>' +
+      '<button class="nx-send" type="button" style="background:' +
+      primary +
+      '">Send</button>' +
+      "</div>" +
       '<div class="nx-footer">Powered by NexusAI</div>';
     root.appendChild(panel);
 
@@ -152,24 +161,46 @@
     });
   }
 
-  function appendMessage(role, content, id) {
-    if (id) {
-      if (seenIds[id]) return;
-      seenIds[id] = true;
+  // ---------- Message rendering ----------
+  function renderMsg(m) {
+    if (m.is_recalled) {
+      var el = document.createElement("div");
+      el.className = "nx-recalled";
+      el.textContent = "[訊息已撤回]";
+      return el;
     }
     var el = document.createElement("div");
-    el.className = "nx-msg " + role;
-    if (role === "visitor") {
-      var primary = (config && config.widget_config && config.widget_config.primary_color) || "#111827";
-      el.style.background = primary;
-    }
-    el.textContent = content;
+    el.className = "nx-msg " + (m.role || "assistant");
+    if (m.role === "visitor") el.style.background = getPrimary();
+    el.textContent = m.content;
+    return el;
+  }
+
+  function appendMessageObj(m) {
+    if (!msgsEl) return;
+    if (m.content === "__THINKING__") return;
+    if (seenIds[m.id]) return;
+    seenIds[m.id] = true;
+
+    var idx = state.messages.findIndex(function (x) {
+      return x.id === m.id;
+    });
+    if (idx >= 0) state.messages[idx] = m;
+    else state.messages.push(m);
+
+    var el = renderMsg(m);
     if (typingEl && typingEl.parentNode === msgsEl) {
       msgsEl.insertBefore(el, typingEl);
     } else {
       msgsEl.appendChild(el);
     }
+    if (m.id !== "welcome") lastMessageId = m.id;
     msgsEl.scrollTop = msgsEl.scrollHeight;
+  }
+
+  function appendWelcome() {
+    var welcome = config && config.widget_config && config.widget_config.welcome_message;
+    if (welcome) appendMessageObj({ id: "welcome", role: "assistant", content: welcome });
   }
 
   function showTyping() {
@@ -179,281 +210,265 @@
       typingEl.id = "nexus-typing-indicator";
       typingEl.innerHTML = "<span></span><span></span><span></span>";
     }
-    if (typingEl.parentNode !== msgsEl) {
+    if (msgsEl && typingEl.parentNode !== msgsEl) {
       msgsEl.appendChild(typingEl);
       msgsEl.scrollTop = msgsEl.scrollHeight;
     }
   }
   function hideTyping() {
-    if (typingEl && typingEl.parentNode === msgsEl) msgsEl.removeChild(typingEl);
+    if (typingEl && typingEl.parentNode) typingEl.parentNode.removeChild(typingEl);
   }
 
-  function appendMessageObj(m) {
-    // state.messages is the source of truth (exclude welcome fake message)
-    if (m && m.id && m.id !== 'welcome') {
-      var idx = -1;
-      for (var i = 0; i < state.messages.length; i++) {
-        if (state.messages[i].id === m.id) { idx = i; break; }
-      }
-      if (idx >= 0) state.messages[idx] = m;
-      else state.messages.push(m);
+  // ---------- Resolved banner ----------
+  function showResolvedBanner(messages) {
+    if (!msgsEl) return;
+    msgsEl.innerHTML = "";
+    seenIds = {};
+    state.messages = [];
+    lastMessageId = null;
+
+    (messages || []).forEach(function (m) {
+      appendMessageObj(m);
+    });
+
+    var banner = document.createElement("div");
+    banner.className = "nx-resolved";
+    banner.innerHTML =
+      "✅ This conversation has been resolved.<br>" + '<button class="nx-new-chat">Start new conversation</button>';
+    msgsEl.appendChild(banner);
+    msgsEl.scrollTop = msgsEl.scrollHeight;
+
+    if (inputEl) {
+      inputEl.disabled = true;
+      inputEl.placeholder = "Conversation resolved.";
     }
-    appendMessage(m.role, m.content, m.id);
-  }
+    if (sendBtn) sendBtn.disabled = true;
 
-  function api(path, opts) {
-    return fetch(apiBase + path, opts).then(function (r) {
-      return r.json().then(function (j) { return { ok: r.ok, status: r.status, body: j }; });
+    banner.querySelector(".nx-new-chat").addEventListener("click", function () {
+      clearSession();
+      state.sessionToken = null;
+      state.conversationId = null;
+      state.messages = [];
+      state.fallbackShownForConversation = false;
+      state.thinkingStartTime = null;
+      seenIds = {};
+      lastMessageId = null;
+      stopPolling();
+      if (inputEl) {
+        inputEl.disabled = false;
+        inputEl.placeholder =
+          (config && config.widget_config && config.widget_config.placeholder_text) || "Type a message…";
+      }
+      if (sendBtn) sendBtn.disabled = false;
+      startFreshSession();
     });
   }
 
+  // ---------- API ----------
+  function api(path, opts) {
+    return fetch(apiBase + path, opts).then(function (r) {
+      return r.json().then(function (j) {
+        return { ok: r.ok, status: r.status, body: j };
+      });
+    });
+  }
+
+  // ---------- Polling ----------
   function startPolling() {
     if (state.pollInterval) return;
     state.pollInterval = setInterval(poll, 2500);
   }
   function stopPolling() {
-    if (state.pollInterval) { clearInterval(state.pollInterval); state.pollInterval = null; }
+    if (state.pollInterval) {
+      clearInterval(state.pollInterval);
+      state.pollInterval = null;
+    }
   }
 
   function poll() {
     if (!state.conversationId || !state.sessionToken) return;
-    var qs = "?conversation_id=" + encodeURIComponent(state.conversationId) +
-             "&session_token=" + encodeURIComponent(state.sessionToken) +
-             (lastMessageId ? "&after_message_id=" + encodeURIComponent(lastMessageId) : "");
-    api("/widget-poll-messages" + qs, { method: "GET" }).then(function (res) {
-      if (!res.ok || !res.body || !res.body.success) {
-        if (res.status === 401 || res.status === 404) {
-          // Stored session no longer valid — clear and restart fresh
+    var qs =
+      "?conversation_id=" +
+      encodeURIComponent(state.conversationId) +
+      "&session_token=" +
+      encodeURIComponent(state.sessionToken) +
+      (lastMessageId ? "&after_message_id=" + encodeURIComponent(lastMessageId) : "");
+    api("/widget-poll-messages" + qs, { method: "GET" })
+      .then(function (res) {
+        if (!res.ok || !res.body || !res.body.success) return;
+        var d = res.body.data;
+
+        if (d.conversation_status === "resolved") {
+          hideTyping();
           stopPolling();
-          clearSessionFromStorage();
-          state.sessionToken = null;
-          state.sessionId = null;
-          state.conversationId = null;
-          lastMessageId = null;
-          seenIds = {};
-          state.messages = [];
-        }
-        return;
-      }
-      var d = res.body.data;
-
-      if (d.conversation_status === 'resolved') {
-        hideTyping();
-        stopPolling();
-        // Merge state.messages (already rendered) + d.messages (latest from poll)
-        var newMessages = d.messages || [];
-        newMessages.forEach(function (msg) {
-          var alreadyInState = state.messages.some(function (m) { return m.id === msg.id; });
-          if (!alreadyInState) state.messages.push(msg);
-        });
-        // Deduplicate + exclude __THINKING__ + sort by time
-        var mergedMessages = state.messages
-          .filter(function (msg) { return msg.content !== '__THINKING__'; })
-          .filter(function (msg, index, arr) {
-            return arr.findIndex(function (m) { return m.id === msg.id; }) === index;
-          })
-          .sort(function (a, b) {
-            return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+          var newMsgs = d.messages || [];
+          newMsgs.forEach(function (m) {
+            var exists = state.messages.some(function (x) {
+              return x.id === m.id;
+            });
+            if (!exists) state.messages.push(m);
           });
-        showResolvedBanner(mergedMessages);
-        return;
-      }
-
-      (d.messages || []).forEach(function (m) {
-        appendMessageObj(m);
-        lastMessageId = m.id;
-      });
-
-      var ai_generating = d.ai_generating;
-      if (ai_generating) {
-        if (!state.fallbackShownForConversation) {
-          if (!state.thinkingStartTime) state.thinkingStartTime = Date.now();
-          if (!document.getElementById('nexus-typing-indicator')) showTyping();
-          if (Date.now() - state.thinkingStartTime > 60000) {
-            hideTyping();
-            state.thinkingStartTime = null;
-            state.fallbackShownForConversation = true;
-            appendMessage('assistant', 'Your message was received. AI reply not available yet. [L2 dev mode]', 'fallback-' + Date.now());
-          }
+          var merged = state.messages
+            .filter(function (m) {
+              return m.content !== "__THINKING__";
+            })
+            .filter(function (m, i, arr) {
+              return (
+                arr.findIndex(function (x) {
+                  return x.id === m.id;
+                }) === i
+              );
+            })
+            .sort(function (a, b) {
+              return new Date(a.created_at) - new Date(b.created_at);
+            });
+          showResolvedBanner(merged);
+          return;
         }
-      } else {
-        state.thinkingStartTime = null;
-        state.fallbackShownForConversation = false;
-        hideTyping();
-      }
-    }).catch(function () {});
+
+        (d.messages || []).forEach(function (m) {
+          appendMessageObj(m);
+        });
+
+        var ai_generating = d.ai_generating;
+        if (ai_generating) {
+          if (!state.fallbackShownForConversation) {
+            if (!state.thinkingStartTime) state.thinkingStartTime = Date.now();
+            if (!document.getElementById("nexus-typing-indicator")) showTyping();
+            if (Date.now() - state.thinkingStartTime > 60000) {
+              hideTyping();
+              state.thinkingStartTime = null;
+              state.fallbackShownForConversation = true;
+              appendMessageObj({
+                id: "fallback-" + Date.now(),
+                role: "assistant",
+                content: "Your message was received. AI reply not available yet. [L2 dev mode]",
+                created_at: new Date().toISOString(),
+              });
+            }
+          }
+        } else {
+          state.thinkingStartTime = null;
+          state.fallbackShownForConversation = false;
+          hideTyping();
+        }
+      })
+      .catch(function () {});
   }
 
-  function createSession() {
-    return api("/create-visitor-session", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ channel_id: CHANNEL_ID }),
-    }).then(function (s) {
-      if (!s.ok || !s.body || !s.body.success) {
-        throw new Error((s.body && s.body.error) || "Failed to create session");
-      }
-      return s.body.data;
-    });
-  }
-
+  // ---------- Session management ----------
   function startFreshSession() {
     if (msgsEl) {
       msgsEl.innerHTML = '<div style="text-align:center;color:#9ca3af;padding:20px;font-size:13px;">Connecting…</div>';
     }
-    return createSession().then(function (data) {
-      state.sessionToken = data.session_token;
-      state.sessionId = data.session_id || null;
-      state.conversationId = data.conversation_id;
-      lastMessageId = null;
-      seenIds = {};
-      state.messages = [];
-      saveSessionToStorage();
-      if (msgsEl) msgsEl.innerHTML = '';
-      var welcome = config && config.widget_config && config.widget_config.welcome_message;
-      if (welcome) appendMessage("assistant", welcome, "welcome");
-      startPolling();
-    }).catch(function (err) {
-      if (msgsEl) {
-        msgsEl.innerHTML = '<div style="text-align:center;color:#ef4444;padding:20px;font-size:13px;">Connection failed. Please try again.</div>';
-      }
-      console.error("[NexusAI] Session error:", err);
-    });
-  }
-
-  function showResolvedBanner(messages) {
-    messages = messages || [];
-    var container = document.getElementById('nexus-messages');
-    if (!container) return;
-    stopPolling();
-    container.innerHTML = '';
+    state.messages = [];
     seenIds = {};
     lastMessageId = null;
-    messages.forEach(function (m) {
-      appendMessageObj(m);
-      lastMessageId = m.id;
-    });
 
-    var primary = (config && config.widget_config && config.widget_config.primary_color) || "#6B5CE7";
-    var banner = document.createElement('div');
-    banner.id = 'nexus-resolved-banner';
-    banner.style.cssText = 'text-align:center;padding:16px;margin:12px 0;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;font-size:13px;color:#166534;';
-    banner.innerHTML =
-      '<div>✅ This conversation has been resolved.</div>' +
-      '<button id="nexus-new-chat" type="button" style="margin-top:10px;background:' + primary + ';color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:13px;cursor:pointer;">Start new conversation</button>';
-    container.appendChild(banner);
-    container.scrollTop = container.scrollHeight;
-
-    var input = document.getElementById('nexus-input');
-    var sendBtnEl = document.getElementById('nexus-send');
-    if (input) {
-      input.disabled = true;
-      input.placeholder = 'Conversation resolved.';
-    }
-    if (sendBtnEl) sendBtnEl.disabled = true;
-
-    var newChatBtn = document.getElementById('nexus-new-chat');
-    if (newChatBtn) {
-      newChatBtn.addEventListener('click', function () {
-        clearSessionFromStorage();
-        state.sessionToken = null;
-        state.sessionId = null;
-        state.conversationId = null;
-        state.fallbackShownForConversation = false;
-        state.thinkingStartTime = null;
-        lastMessageId = null;
-        seenIds = {};
-        state.messages = [];
-        stopPolling();
-
-        var inp = document.getElementById('nexus-input');
-        var snd = document.getElementById('nexus-send');
-        var placeholder = (config && config.widget_config && config.widget_config.placeholder_text) || 'Type a message…';
-        if (inp) {
-          inp.disabled = false;
-          inp.placeholder = placeholder;
+    api("/create-visitor-session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channel_id: channelId }),
+    })
+      .then(function (s) {
+        if (!s.ok || !s.body || !s.body.success) {
+          if (msgsEl)
+            msgsEl.innerHTML =
+              '<div style="text-align:center;color:#ef4444;padding:20px;font-size:13px;">Unable to start chat session.</div>';
+          return;
         }
-        if (snd) snd.disabled = false;
+        state.sessionToken = s.body.data.session_token;
+        state.conversationId = s.body.data.conversation_id;
+        saveSession();
+        if (msgsEl) msgsEl.innerHTML = "";
+        appendWelcome();
+        startPolling();
+      })
+      .catch(function () {
+        if (msgsEl)
+          msgsEl.innerHTML =
+            '<div style="text-align:center;color:#ef4444;padding:20px;font-size:13px;">Connection failed.</div>';
+      });
+  }
 
+  function tryRestoreSession(stored) {
+    if (msgsEl) {
+      msgsEl.innerHTML =
+        '<div style="text-align:center;color:#9ca3af;padding:20px;font-size:13px;">Resuming conversation…</div>';
+    }
+    var qs =
+      "?conversation_id=" + encodeURIComponent(stored.convId) + "&session_token=" + encodeURIComponent(stored.token);
+    api("/widget-poll-messages" + qs, { method: "GET" })
+      .then(function (res) {
+        if (!res.ok || !res.body || !res.body.success) throw new Error("restore failed");
+
+        var d = res.body.data;
+        state.sessionToken = stored.token;
+        state.conversationId = stored.convId;
+        state.messages = [];
+        seenIds = {};
+        lastMessageId = null;
+        if (msgsEl) msgsEl.innerHTML = "";
+
+        if (d.conversation_status === "resolved") {
+          showResolvedBanner(d.messages || []);
+        } else {
+          var msgs = d.messages || [];
+          if (msgs.length === 0) {
+            appendWelcome();
+          } else {
+            msgs.forEach(function (m) {
+              appendMessageObj(m);
+            });
+          }
+          startPolling();
+        }
+      })
+      .catch(function () {
+        clearSession();
+        state.sessionToken = null;
+        state.conversationId = null;
         startFreshSession();
       });
-    }
   }
 
-
-
-  function resumeSession(stored) {
-    if (msgsEl) {
-      msgsEl.innerHTML = '<div style="text-align:center;color:#9ca3af;padding:20px;font-size:13px;">Resuming conversation…</div>';
-    }
-    var qs = "?conversation_id=" + encodeURIComponent(stored.conversationId) +
-             "&session_token=" + encodeURIComponent(stored.sessionToken);
-    return api("/widget-poll-messages" + qs, { method: "GET" }).then(function (res) {
-      if (!res.ok || !res.body || !res.body.success) throw new Error("Session invalid");
-      state.sessionToken = stored.sessionToken;
-      state.sessionId = stored.sessionId;
-      state.conversationId = stored.conversationId;
-      lastMessageId = null;
-      seenIds = {};
-      state.messages = [];
-      if (msgsEl) msgsEl.innerHTML = '';
-
-      var d = res.body.data;
-      var messages = d.messages || [];
-
-      if (d.conversation_status === 'resolved') {
-        showResolvedBanner(messages);
-        return;
-      }
-
-      if (messages.length === 0) {
-        var welcome = config && config.widget_config && config.widget_config.welcome_message;
-        if (welcome) appendMessage("assistant", welcome, "welcome");
-      } else {
-        messages.forEach(function (m) {
-          appendMessageObj(m);
-          lastMessageId = m.id;
-        });
-      }
-      startPolling();
-    });
-  }
-
+  // ---------- Open / Close ----------
   function openPanel() {
-    if (panel) {
+    if (panel && panel.style.display !== "none") return;
+
+    if (panel && state.sessionToken) {
       panel.style.display = "flex";
-      if (state.sessionToken && state.conversationId) {
-        startPolling();
-        return;
-      }
+      startPolling();
+      return;
     }
 
-    api("/get-public-widget-config?channel_id=" + encodeURIComponent(CHANNEL_ID), { method: "GET" })
-      .then(function (res) {
-        if (!res.ok || !res.body || !res.body.success) {
-          alert("Chat unavailable.");
-          return;
-        }
-        config = res.body.data;
-        applyColor((config.widget_config && config.widget_config.primary_color) || "#111827");
+    var configPromise = config
+      ? Promise.resolve()
+      : api("/get-public-widget-config?channel_id=" + encodeURIComponent(channelId), { method: "GET" }).then(
+          function (res) {
+            if (!res.ok || !res.body || !res.body.success) throw new Error("config failed");
+            config = res.body.data;
+            applyColor(getPrimary());
+          },
+        );
+
+    configPromise
+      .then(function () {
         if (!panel) buildPanel();
+        panel.style.display = "flex";
 
-        // Already have an in-memory session (e.g., panel was just closed)
-        if (state.sessionToken && state.conversationId) {
-          startPolling();
-          return;
+        var stored = loadSession();
+        if (stored.token && stored.convId && stored.channel === channelId) {
+          tryRestoreSession(stored);
+        } else {
+          startFreshSession();
         }
-
-        var stored = loadSessionFromStorage();
-        if (stored.sessionToken && stored.conversationId && stored.channelId === CHANNEL_ID) {
-          return resumeSession(stored).catch(function () {
-            clearSessionFromStorage();
-            return startFreshSession();
-          });
-        }
-        return startFreshSession();
       })
-      .catch(function () { alert("Chat unavailable."); });
+      .catch(function () {
+        if (msgsEl)
+          msgsEl.innerHTML =
+            '<div style="text-align:center;color:#ef4444;padding:20px;font-size:13px;">Chat unavailable.</div>';
+      });
   }
 
   function closePanel() {
@@ -461,45 +476,63 @@
     stopPolling();
   }
 
+  // ---------- Send ----------
   function handleSend() {
     if (!inputEl) return;
     var text = inputEl.value.trim();
     if (!text || !state.conversationId || !state.sessionToken) return;
-    if (text.length > 2000) { alert("Message too long (max 2000)."); return; }
+    if (text.length > 2000) {
+      alert("Message too long (max 2000).");
+      return;
+    }
 
     sendBtn.disabled = true;
     inputEl.value = "";
-    appendMessage("visitor", text);
+    appendMessageObj({ id: "opt-" + Date.now(), role: "visitor", content: text, created_at: new Date().toISOString() });
 
     api("/receive-widget-message", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ conversation_id: state.conversationId, session_token: state.sessionToken, content: text }),
-    }).then(function (res) {
-      if (!res.ok || !res.body || !res.body.success) {
-        appendMessage("system", (res.body && res.body.error) || "Failed to send.");
-      }
-    }).catch(function () {
-      appendMessage("system", "Network error.");
-    }).then(function () {
-      sendBtn.disabled = false;
-      state.fallbackShownForConversation = false;
-      state.thinkingStartTime = null;
-      if (!state.pollInterval && state.conversationId) startPolling();
-    });
+    })
+      .then(function (res) {
+        if (!res.ok || !res.body || !res.body.success) {
+          appendMessageObj({
+            id: "err-" + Date.now(),
+            role: "system",
+            content: (res.body && res.body.error) || "Failed to send.",
+            created_at: new Date().toISOString(),
+          });
+        }
+      })
+      .catch(function () {
+        appendMessageObj({
+          id: "err-" + Date.now(),
+          role: "system",
+          content: "Network error.",
+          created_at: new Date().toISOString(),
+        });
+      })
+      .then(function () {
+        sendBtn.disabled = false;
+        state.fallbackShownForConversation = false;
+        state.thinkingStartTime = null;
+        if (!state.pollInterval && state.conversationId) startPolling();
+      });
   }
 
+  // ---------- Bubble ----------
   bubble.addEventListener("click", function () {
     if (panel && panel.style.display !== "none") closePanel();
     else openPanel();
   });
 
-  // Fetch config early just to color the bubble
-  fetch(apiBase + "/get-public-widget-config?channel_id=" + encodeURIComponent(CHANNEL_ID))
-    .then(function (r) { return r.json(); })
-    .then(function (j) {
-      if (j && j.success && j.data && j.data.widget_config && j.data.widget_config.primary_color) {
-        applyColor(j.data.widget_config.primary_color);
+  // Pre-load config to colour bubble
+  api("/get-public-widget-config?channel_id=" + encodeURIComponent(channelId), { method: "GET" })
+    .then(function (res) {
+      if (res.ok && res.body && res.body.success && res.body.data && res.body.data.widget_config) {
+        applyColor(res.body.data.widget_config.primary_color || "#6B5CE7");
       }
-    }).catch(function () {});
+    })
+    .catch(function () {});
 })();
