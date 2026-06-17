@@ -140,7 +140,7 @@ Respond in the same language the customer is using.`,
         conversation_id: conversation_id,
         role: 'assistant',
         content: aiReplyContent,
-        status: 'sent',
+        status: 'delivered',
         is_recalled: false
       });
 
