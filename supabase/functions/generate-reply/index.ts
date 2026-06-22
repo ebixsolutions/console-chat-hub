@@ -841,3 +841,319 @@ export function handleGateDecision(decision: GateDecision): GateDecision {
       };
   }
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// L5d — 7 Tools Registration / Safe Stubs / Permission Wiring (Gate A).
+//
+// Source of truth: Contract 07 §3 FROZEN + Contract 03 §1.1 + Contract 08.
+//
+// ⚠️ L5d GATE A INVARIANTS:
+//   1. TOOL_DEFINITIONS is CODE-DEFINED ONLY. It is attached to the Anthropic
+//      request body ONLY inside the `if (flags.ENABLE_TOOL_EXEC)` guard in
+//      orchestrationGenerateReply(). With ENABLE_TOOL_EXECUTOR=false (Gate A),
+//      that branch is unreachable and `tools` does NOT appear in the request.
+//   2. handleToolCall() is CODE-DEFINED ONLY. It is NOT invoked anywhere in
+//      the runtime path in Gate A. Future wiring (Gate B / L5e) would call it
+//      ONLY after toolExecutorGate() returns ALLOW or DOWNGRADE_TO_DRAFT.
+//      DENY / ESCALATE decisions MUST NOT call handleToolCall().
+//   3. Stub handlers return safe internal-only placeholders. They MUST NOT:
+//        - call any real KB / Customer360 / Order / ERP API
+//        - write handoff_event / conversations.status / ai_reply_draft / audit_log
+//        - return real customer PII / order data
+//        - be fed back to the LLM in Gate A runtime
+//        - be treated as customer-facing factual truth
+//   4. final_prompt_trace.tools_invoked is NOT written in Gate A. The mapping
+//      is comment-only below. Any runtime append is deferred to Director-
+//      approved Gate B (schema must be inspected first; no new column/migration).
+//   5. schedule_feedback_request is EXCLUDED — handled by resolve-conversation
+//      EF, not by the LLM. Gate (Step 1) DENYs it; it is absent from
+//      TOOL_DEFINITIONS by design.
+//   6. get_customer_context / get_order_summary / create_handoff_summary input
+//      schemas do NOT include customer_ref / order_id / conversation_id. Any
+//      LLM-provided value for those fields is IGNORED — server-side resolution
+//      only (see buildSafeDedupeKey for get_order_summary).
+// ────────────────────────────────────────────────────────────────────────────
+
+// 7 tool function schemas registered to the LLM only when
+// ENABLE_TOOL_EXECUTOR=true (guarded code path in orchestrationGenerateReply).
+const TOOL_DEFINITIONS = [
+  {
+    name: 'kb_search',
+    description:
+      'Search the knowledge base for policy, FAQ, or product information to answer customer questions.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        // ⚠️ query must be PII-redacted before any stub log or trace write.
+        query: {
+          type: 'string',
+          description:
+            'Search query extracted from customer message (must be PII-redacted before stub log or trace).',
+        },
+        industry: {
+          type: 'string',
+          description: 'Industry context (optional, inferred from conversation).',
+        },
+        top_k: {
+          type: 'number',
+          description: 'Number of results to return (default 5, max 10).',
+        },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'escalate_to_human',
+    description: 'Escalate conversation to a human agent when AI cannot resolve the issue.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        reason: { type: 'string', description: 'Reason for escalation (sanitized, no PII).' },
+        summary: {
+          type: 'string',
+          description: 'Brief conversation summary (sanitized, max 500 chars, no PII).',
+        },
+      },
+      required: ['reason', 'summary'],
+    },
+  },
+  {
+    name: 'get_customer_context',
+    description:
+      'Get customer context (tier, sentiment, language preference) to personalize response tone.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        fields: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Requested fields (advisory only — server enforces masking level allowlist).',
+        },
+      },
+      required: [],
+      // ⚠️ customer_ref NOT in LLM input — server-side resolved from conversation.
+    },
+  },
+  {
+    name: 'get_order_summary',
+    description: 'Get order status summary for delivery, return, or refund inquiries.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        inquiry_type: {
+          type: 'string',
+          enum: ['delivery_status', 'return_request', 'refund_inquiry', 'order_general'],
+          description: 'Type of order inquiry.',
+        },
+      },
+      required: ['inquiry_type'],
+      // ⚠️ customer_ref and order_id NOT in LLM input — server-side resolved.
+      // ⚠️ LLM-provided customer_ref / order_id are IGNORED (security requirement).
+    },
+  },
+  {
+    name: 'create_handoff_summary',
+    description:
+      'Generate a conversation summary for the human agent who will take over this conversation.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        summary_focus: {
+          type: 'string',
+          description:
+            "Optional focus area for the summary (e.g. 'refund concern', 'delivery issue').",
+        },
+      },
+      required: [],
+      // ⚠️ conversation_id NOT in LLM input — server-side resolved from ExecutionContext.
+      // ⚠️ If LLM provides conversation_id, IGNORE/STRIP it before processing.
+    },
+  },
+  {
+    name: 'mark_unresolved',
+    description:
+      'Mark conversation as unresolved for follow-up. Only available in console suggest mode.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        reason: { type: 'string', description: 'Reason conversation is unresolved (sanitized).' },
+        follow_up_at: {
+          type: 'string',
+          description:
+            'Suggested follow-up datetime (ISO 8601, optional — advisory only in L5d, not written/scheduled).',
+        },
+      },
+      required: ['reason'],
+      // ⚠️ follow_up_at is advisory only in L5d — do NOT schedule, write, or persist it.
+    },
+  },
+  {
+    name: 'suggest_reply',
+    description:
+      'Generate a suggested reply for the customer based on KB findings and context.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        context_summary: {
+          type: 'string',
+          description:
+            'Summary of context assembled by generate-reply (sanitized, max 500 chars, no PII).',
+          // ⚠️ Must be sanitized before use — if raw/too long/PII-like: truncate/redact or DENY.
+        },
+        sources: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Citation labels from KB results.',
+        },
+      },
+      required: ['context_summary'],
+    },
+  },
+];
+// EXCLUDED tool (must DENY if LLM attempts):
+//   schedule_feedback_request → handled by resolve-conversation EF, not LLM.
+
+// Tool result envelope. result_classification is always 'internal_only' in
+// L5d; stub results must NEVER be surfaced as customer-facing truth.
+interface ToolResult {
+  tool_name: string;
+  status: 'stub' | 'denied';
+  result_classification: 'internal_only';
+  [k: string]: unknown;
+}
+
+// Safe stub handler — CODE-DEFINED ONLY in L5d Gate A.
+// ⚠️ Not invoked at runtime while ENABLE_TOOL_EXECUTOR=false.
+// ⚠️ Must only be called by an L5d/L5e wiring path AFTER toolExecutorGate()
+//    returned ALLOW or DOWNGRADE_TO_DRAFT. DENY/ESCALATE must NOT reach here.
+// ⚠️ Step 5 logs (if any) are metadata-only:
+//      allowed:  tool_name, request_id, timestamp
+//      forbidden: raw tool_input, customer_ref, order_id, email, phone, PII,
+//                 prompt content, KB content
+export async function handleToolCall(
+  tool_name: string,
+  _tool_input: Record<string, unknown>,
+  _context: ExecutionContext,
+): Promise<ToolResult> {
+  switch (tool_name) {
+    case 'kb_search':
+      // Real KB call deferred to Gate B (ENABLE_KB_ADAPTER=true + Director approval).
+      return {
+        tool_name: 'kb_search',
+        status: 'stub',
+        result_classification: 'internal_only',
+        retrieval_quality: 'failed',
+        no_answer: true,
+        handoff_required: true,
+        results: [],
+        stub_note: 'KB adapter not yet enabled (L5d stub)',
+      };
+
+    case 'escalate_to_human':
+      // ❌ Do NOT write handoff_event in L5d stub.
+      // ❌ Do NOT update conversations.status in L5d stub.
+      return {
+        tool_name: 'escalate_to_human',
+        status: 'stub',
+        result_classification: 'internal_only',
+        escalated: false,
+        stub_note: 'Escalation workflow deferred to L5e — no state changes in L5d',
+      };
+
+    case 'get_customer_context':
+      // ❌ Do NOT call customer360_adapter in L5d stub.
+      // ❌ Do NOT return any real PII.
+      // ⚠️ tier='Standard' is a safe fallback placeholder, NOT verified Customer360 truth.
+      return {
+        tool_name: 'get_customer_context',
+        status: 'stub',
+        result_classification: 'internal_only',
+        customer_context: {
+          tier: 'Standard',
+          language_preference: 'en',
+          sentiment: 'neutral',
+        },
+        stub_note:
+          'Customer360 adapter not yet enabled (L5d stub) — using safe defaults',
+      };
+
+    case 'get_order_summary':
+      // ❌ Do NOT call any order/ERP API.
+      // ❌ Do NOT return any real order data / payment data.
+      // ⚠️ LLM-provided customer_ref / order_id are ignored — stub does not use them.
+      return {
+        tool_name: 'get_order_summary',
+        status: 'stub',
+        result_classification: 'internal_only',
+        order_available: false,
+        stub_note: 'Order adapter not yet enabled (L5d stub)',
+      };
+
+    case 'create_handoff_summary':
+      // conversation_id is server-side resolved — LLM-provided value ignored/stripped.
+      // This tool is return-only (Contract 07 §3.5 Gap 6 Plan A).
+      return {
+        tool_name: 'create_handoff_summary',
+        status: 'stub',
+        result_classification: 'internal_only',
+        summary: '[Handoff summary not yet available — L5d stub]',
+        stub_note:
+          'Handoff summary generation deferred to L5e; conversation_id server-side only',
+      };
+
+    case 'mark_unresolved':
+      // ❌ Do NOT update conversations.status in L5d stub.
+      // ❌ Do NOT write conversation_status_log / audit_log in L5d stub.
+      return {
+        tool_name: 'mark_unresolved',
+        status: 'stub',
+        result_classification: 'internal_only',
+        marked: false,
+        stub_note:
+          'mark_unresolved write action deferred to L5e — no state changes in L5d',
+      };
+
+    case 'suggest_reply':
+      // ❌ Do NOT write ai_reply_draft in L5d stub.
+      // ❌ Do NOT auto-send anything in L5d stub.
+      return {
+        tool_name: 'suggest_reply',
+        status: 'stub',
+        result_classification: 'internal_only',
+        draft_content: '',
+        confidence: 0,
+        recommended_action: 'human_review',
+        stub_note:
+          'suggest_reply draft write deferred to L5e — no state changes in L5d',
+      };
+
+    default:
+      return {
+        tool_name,
+        status: 'denied',
+        result_classification: 'internal_only',
+        error: 'tool not available in current context',
+      };
+  }
+}
+
+// ── Future Gate B wiring (NOT implemented in L5d Gate A) ──────────────────
+// The flow below is documented for reference only. No runtime code path
+// executes it while ENABLE_TOOL_EXECUTOR=false.
+//
+//   LLM emits tool_call (only possible when TOOL_DEFINITIONS is attached,
+//                        which requires ENABLE_TOOL_EXECUTOR=true)
+//     ↓
+//   const decision = handleGateDecision(toolExecutorGate(req, ctx));
+//     ↓
+//   if (decision.decision === 'ALLOW' || decision.decision === 'DOWNGRADE_TO_DRAFT') {
+//     const result = await handleToolCall(req.tool_name, req.input, ctx);
+//     // TODO Gate B (Director approval + schema inspection):
+//     //   append to final_prompt_trace.tools_invoked:
+//     //     { tool_name, request_id, status, summary(≤200 sanitized),
+//     //       auto_executed, caller_mode, result_classification }
+//     //   ❌ No raw input / output / PII / KB content in summary.
+//     //   ❌ No new column — use existing jsonb field (inspect-first).
+//   }
+//   // DENY / ESCALATE → handleToolCall() is NOT called.
