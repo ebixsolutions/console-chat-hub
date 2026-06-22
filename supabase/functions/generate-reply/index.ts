@@ -578,3 +578,254 @@ async function callKBAdapter(_conversation_id: string, _message: string): Promis
   // TODO L5c: POST to kb-adapter with KB_INTERNAL_SERVICE_TOKEN.
   return { success: false, no_answer: true, retrieval_quality: 'failed' };
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// L5c Tool Executor Gate — deterministic decision layer (Gate A).
+//
+// Source of truth: Contract 07 §2.1 + Contract 03 §1.1 + Contract 08.
+//
+// ⚠️ L5c GATE A INVARIANTS:
+//   1. This gate returns DECISIONS ONLY. It does NOT execute tools, create
+//      stub tool results, feed any result back to the LLM, write
+//      handoff_event, or write final_prompt_trace.tools_invoked.
+//   2. It is UNREACHABLE at runtime in Gate A because:
+//        (a) all flags default false → legacy path taken,
+//        (b) even with ENABLE_TOOL_EXECUTOR=true, Step 5 above does NOT
+//            attach any tool schema to the LLM, so no tool_use can occur.
+//   3. Live wiring (actual execution / handoff / draft enforcement / trace)
+//      is deferred to L5d / L5e after Director approval.
+//   4. LLM cannot override gate decisions. tool_call requests are SUGGESTIONS.
+// ────────────────────────────────────────────────────────────────────────────
+
+type GateDecisionKind = 'ALLOW' | 'DENY' | 'DOWNGRADE_TO_DRAFT' | 'ESCALATE';
+
+interface GateDecision {
+  decision: GateDecisionKind;
+  reason?: string;
+  execution_allowed?: boolean;
+  force_draft?: boolean;
+  handoff_required?: boolean;
+  execution_deferred_to?: 'L5d';
+  draft_enforcement_deferred_to?: 'L5e';
+  action_deferred_to?: 'L5e';
+  message_to_llm?: string;
+}
+
+interface ToolRequest {
+  tool_name: string;
+  input: Record<string, unknown>;
+}
+
+interface ExecutionContext {
+  conversation: { id: string; status: string };
+  caller_mode: 'system_auto' | 'human_agent' | 'ai_assist';
+  risk_level: 'low' | 'medium' | 'high';
+  privacy_flags?: { do_not_profile?: boolean; consent_status?: 'granted' | 'withdrawn' | 'unknown' };
+  turn_tool_calls: Set<string>;
+  turn_budget: { total: number; kb_search: number; c360: number };
+  server_resolved_customer_ref?: string | null; // opaque, server-side only
+}
+
+const ALLOWED_TOOLS = [
+  'kb_search',
+  'escalate_to_human',
+  'get_customer_context',
+  'get_order_summary',
+  'create_handoff_summary',
+  'mark_unresolved',
+  'suggest_reply',
+] as const;
+
+const READ_ONLY_TOOLS = ['kb_search', 'get_customer_context', 'get_order_summary'] as const;
+const HIGH_RISK_ALLOWED = ['kb_search', 'get_customer_context', 'escalate_to_human', 'create_handoff_summary'] as const;
+const OFFLINE_BOT_ALLOWED = ['kb_search', 'escalate_to_human'] as const;
+
+const MAX_TOOL_CALLS = 10;
+const MAX_KB_SEARCH = 3;
+const MAX_C360_CALLS = 2;
+
+// Build a PII-safe dedupe key. NEVER includes raw customer_ref / order_id /
+// email / phone / address. For get_order_summary, ignores LLM-provided
+// customer_ref / order_id entirely and uses the server-resolved opaque ref.
+function buildSafeDedupeKey(
+  tool_name: string,
+  input: Record<string, unknown>,
+  server_resolved_customer_ref?: string | null,
+): string | null {
+  if (tool_name === 'get_order_summary') {
+    if (!server_resolved_customer_ref) return null; // caller must DENY(SERVER_REFERENCE_REQUIRED)
+    return `get_order_summary:${server_resolved_customer_ref}`;
+  }
+  // Allowlist of safe fields per tool. Unknown fields are dropped.
+  const SAFE_FIELDS: Record<string, string[]> = {
+    kb_search: ['query_norm', 'locale'],
+    get_customer_context: [], // no LLM-provided params honored
+    escalate_to_human: ['reason_code'],
+    create_handoff_summary: ['reason_code'],
+    mark_unresolved: ['reason_code'],
+    suggest_reply: ['intent_code'],
+  };
+  const allowed = SAFE_FIELDS[tool_name] ?? [];
+  const safe: Record<string, unknown> = {};
+  for (const k of allowed) {
+    if (input[k] !== undefined && typeof input[k] !== 'object') {
+      safe[k] = String(input[k]).slice(0, 200);
+    }
+  }
+  return `${tool_name}:${JSON.stringify(safe)}`;
+}
+
+// Deterministic Tool Executor Gate — 7 steps in fixed order.
+// Pure function: no I/O, no DB writes, no LLM calls, no trace writes.
+export function toolExecutorGate(
+  toolRequest: ToolRequest,
+  context: ExecutionContext,
+): GateDecision {
+  const { tool_name, input } = toolRequest;
+  const {
+    conversation,
+    caller_mode,
+    risk_level,
+    privacy_flags,
+    turn_tool_calls,
+    turn_budget,
+    server_resolved_customer_ref,
+  } = context;
+
+  // Step 1: Tool name validation
+  if (tool_name === 'schedule_feedback_request') {
+    return { decision: 'DENY', reason: 'TOOL_EXCLUDED' };
+  }
+  if (!(ALLOWED_TOOLS as readonly string[]).includes(tool_name)) {
+    return { decision: 'DENY', reason: 'TOOL_NOT_REGISTERED' };
+  }
+
+  // Step 2: Status guard (Contract 07 §2.2)
+  const status = conversation.status;
+  if (status === 'resolved' || status === 'closed') {
+    return { decision: 'DENY', reason: 'CONV_RESOLVED_OR_CLOSED' };
+  }
+  if ((status === 'human_needed' || status === 'human_control')
+      && !(READ_ONLY_TOOLS as readonly string[]).includes(tool_name)) {
+    return { decision: 'DENY', reason: 'TOOL_NOT_ALLOWED_IN_STATUS' };
+  }
+  if (status === 'offline_bot'
+      && !(OFFLINE_BOT_ALLOWED as readonly string[]).includes(tool_name)) {
+    return { decision: 'DENY', reason: 'TOOL_NOT_ALLOWED_OFFLINE' };
+  }
+
+  // Step 3: Risk guard
+  if (risk_level === 'high'
+      && !(HIGH_RISK_ALLOWED as readonly string[]).includes(tool_name)) {
+    return { decision: 'ESCALATE', reason: 'HIGH_RISK_TOOL_BLOCKED' };
+  }
+
+  // Step 4: Permission guard (Contract 02)
+  if (tool_name === 'mark_unresolved' && caller_mode === 'system_auto') {
+    return { decision: 'DENY', reason: 'MARK_UNRESOLVED_REQUIRES_HUMAN' };
+  }
+
+  // Step 5: Privacy guard (Contract 06 §3)
+  if (privacy_flags?.do_not_profile === true
+      || privacy_flags?.consent_status === 'withdrawn') {
+    if (tool_name === 'get_customer_context') {
+      return { decision: 'DENY', reason: 'PRIVACY_DO_NOT_PROFILE' };
+    }
+  }
+
+  // Step 6: Idempotency check (Contract 07 Hard Constraint #9)
+  // For get_order_summary: server-resolved opaque ref REQUIRED.
+  const dedupe_key = buildSafeDedupeKey(tool_name, input, server_resolved_customer_ref);
+  if (dedupe_key === null) {
+    // Risk-policy escalation belongs to L5e — Gate returns DENY only.
+    return { decision: 'DENY', reason: 'SERVER_REFERENCE_REQUIRED' };
+  }
+  if (turn_tool_calls.has(dedupe_key)) {
+    return { decision: 'DENY', reason: 'DUPLICATE_TOOL_CALL_IN_TURN' };
+  }
+  turn_tool_calls.add(dedupe_key);
+
+  // Step 7: Budget guard (Contract 07 Hard Constraint #10)
+  if (turn_budget.total >= MAX_TOOL_CALLS) {
+    return { decision: 'DENY', reason: 'TOOL_BUDGET_EXCEEDED' };
+  }
+  if (tool_name === 'kb_search' && turn_budget.kb_search >= MAX_KB_SEARCH) {
+    return { decision: 'DENY', reason: 'KB_SEARCH_BUDGET_EXCEEDED' };
+  }
+  if (tool_name === 'get_customer_context' && turn_budget.c360 >= MAX_C360_CALLS) {
+    return { decision: 'DENY', reason: 'C360_BUDGET_EXCEEDED' };
+  }
+
+  // All guards passed → ALLOW or status-driven DOWNGRADE
+  if (status === 'ai_draft_only' || status === 'unresolved') {
+    return {
+      decision: 'DOWNGRADE_TO_DRAFT',
+      reason: 'STATUS_DRAFT_ONLY',
+      execution_allowed: true,
+      force_draft: true,
+      execution_deferred_to: 'L5d',
+      draft_enforcement_deferred_to: 'L5e',
+    };
+  }
+  if (status === 'escalation_risk') {
+    return {
+      decision: 'DOWNGRADE_TO_DRAFT',
+      reason: 'ESCALATION_RISK_DOWNGRADE',
+      execution_allowed: true,
+      force_draft: true,
+      execution_deferred_to: 'L5d',
+      draft_enforcement_deferred_to: 'L5e',
+    };
+  }
+
+  return {
+    decision: 'ALLOW',
+    reason: 'GATE_PASSED',
+    execution_allowed: true,
+    execution_deferred_to: 'L5d',
+  };
+}
+
+// Decision dispatcher — shapes the GateDecision into the canonical response
+// envelope per Contract 07 §2.1. L5c returns the envelope only; it does NOT:
+//   - create stub tool results
+//   - feed any result back to the LLM
+//   - write handoff_event
+//   - write final_prompt_trace.tools_invoked
+// TODO L5d/L5e: append to final_prompt_trace.tools_invoked after Director approval.
+//   Schema (inspect-first): { tool_name, request_id, status, summary(≤200),
+//   auto_executed, caller_mode, result_classification }.
+//   ❌ Not: full input / full output / PII / KB content.
+export function handleGateDecision(decision: GateDecision): GateDecision {
+  switch (decision.decision) {
+    case 'ALLOW':
+      return {
+        decision: 'ALLOW',
+        reason: decision.reason ?? 'GATE_PASSED',
+        execution_allowed: true,
+        execution_deferred_to: 'L5d',
+      };
+    case 'DENY':
+      return {
+        decision: 'DENY',
+        reason: decision.reason,
+        message_to_llm: 'tool not available in current context',
+      };
+    case 'DOWNGRADE_TO_DRAFT':
+      return {
+        decision: 'DOWNGRADE_TO_DRAFT',
+        reason: decision.reason,
+        execution_allowed: true,
+        force_draft: true,
+        execution_deferred_to: 'L5d',
+        draft_enforcement_deferred_to: 'L5e',
+      };
+    case 'ESCALATE':
+      return {
+        decision: 'ESCALATE',
+        reason: decision.reason,
+        handoff_required: true,
+        action_deferred_to: 'L5e',
+      };
+  }
+}
