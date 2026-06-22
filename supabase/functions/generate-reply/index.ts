@@ -388,6 +388,24 @@ async function orchestrationGenerateReply(
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
 
+  // L5d: TOOL_DEFINITIONS attachment is a GUARDED code path.
+  // ⚠️ With ENABLE_TOOL_EXECUTOR=false (Gate A), `tools` is NOT included in
+  //    the Anthropic request body. The conditional spread below is the only
+  //    place tools could ever be attached, and only when the flag is true.
+  //    No LLM tool_call is possible while the flag is false.
+  const anthropicRequestBody: Record<string, unknown> = {
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 500,
+    system: finalSystemPrompt,
+    messages: claudeMessages,
+  };
+  if (flags.ENABLE_TOOL_EXEC) {
+    // Guarded code path — unreachable at runtime in Gate A (flag=false).
+    // L5d code-proof: when Director enables the flag in a future Gate B,
+    // TOOL_DEFINITIONS would be attached here.
+    anthropicRequestBody.tools = TOOL_DEFINITIONS;
+  }
+
   const claudeResponse = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -395,13 +413,7 @@ async function orchestrationGenerateReply(
       'x-api-key': anthropicKey,
       'anthropic-version': '2023-06-01',
     },
-    body: JSON.stringify({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 500,
-      system: finalSystemPrompt,
-      messages: claudeMessages,
-      // ❌ NO tools / functions attached in L5b (regardless of flags).
-    }),
+    body: JSON.stringify(anthropicRequestBody),
   });
 
   if (!claudeResponse.ok) {
