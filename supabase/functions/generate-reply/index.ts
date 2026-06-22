@@ -1157,3 +1157,309 @@ export async function handleToolCall(
 //     //   ❌ No new column — use existing jsonb field (inspect-first).
 //   }
 //   // DENY / ESCALATE → handleToolCall() is NOT called.
+
+// ─────────────────────────────────────────────────────────────────────────────
+// L5e — Draft / Handoff / Auto-Send Policy (Gate A: CODE PREPARATION ONLY)
+// ─────────────────────────────────────────────────────────────────────────────
+// ⚠️ Gate A scope:
+//   - All functions below are CODE-DEFINED ONLY.
+//   - NONE are invoked at runtime while ENABLE_TOOL_EXECUTOR=false.
+//   - No DB writes are executed in Gate A — write bodies are TODO comments
+//     deferred to Gate B (after Director approval + live schema confirmation).
+//   - No public response shape changes.
+//   - legacyGenerateReply() / toolExecutorGate() / handleGateDecision() /
+//     TOOL_DEFINITIONS are unchanged.
+// Source of truth: Contract 03 §1.1 + Contract 07 §3 + Contract 11 §3.1.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── L5e types (local to L5e block; no public API shape change) ──────────────
+type L5eOutputAction = 'auto_send' | 'draft_only' | 'refuse';
+
+interface L5eOutputMode {
+  action: L5eOutputAction;
+  reason: string;
+}
+
+interface L5eGuardrailResult {
+  pass: boolean;
+  reason: string;
+}
+
+interface L5eToolResult {
+  tool_name: string;
+  result_classification?: 'public_safe' | 'draft_only' | 'supervisor_only' | 'internal_only';
+  handoff_required?: boolean;
+  citation_required?: boolean;
+  has_valid_citation?: boolean;
+}
+
+interface L5eRagResult {
+  no_answer?: boolean;
+  conflict_detected?: boolean;
+  retrieval_quality?: 'high' | 'medium' | 'low';
+  policy_gap?: boolean;
+  source_scope?: 'customer_answer' | 'internal_only' | string;
+}
+
+type L5eCallerMode = 'system_auto' | 'console_suggest';
+
+// ── Status matrix (Contract 03 §1.1) ────────────────────────────────────────
+// ⚠️ Code-only. Not invoked at runtime in Gate A. Pure function, no I/O.
+export function determineOutputMode(
+  conversationStatus: string,
+  toolResults: L5eToolResult[],
+  ragResult: L5eRagResult | null,
+  mode: L5eCallerMode,
+): L5eOutputMode {
+  switch (conversationStatus) {
+    case 'resolved':
+    case 'closed':
+      return { action: 'refuse', reason: 'CONV_RESOLVED_OR_CLOSED' };
+
+    case 'ai_handling':
+      break; // fall through to guardrail check
+
+    case 'ai_draft_only':
+      return { action: 'draft_only', reason: 'STATUS_AI_DRAFT_ONLY' };
+
+    case 'human_needed':
+    case 'human_control':
+      return { action: 'draft_only', reason: 'STATUS_HUMAN_CONTROL' };
+
+    case 'escalation_risk':
+      return { action: 'draft_only', reason: 'STATUS_ESCALATION_RISK' };
+
+    case 'unresolved':
+      return { action: 'draft_only', reason: 'STATUS_UNRESOLVED' };
+
+    case 'offline_bot':
+      // Use draft_only; offline_safe action is not added to the type in Gate A.
+      return { action: 'draft_only', reason: 'STATUS_OFFLINE_BOT' };
+
+    case 'reopened':
+      return { action: 'draft_only', reason: 'STATUS_REOPENED_TRANSITIONAL' };
+
+    default:
+      return { action: 'draft_only', reason: 'STATUS_UNKNOWN_SAFE_FALLBACK' };
+  }
+
+  // Only ai_handling reaches here — check guardrails for auto-send.
+  const guardrailsPass = checkGuardrails(toolResults, ragResult, mode);
+  if (!guardrailsPass.pass) {
+    return { action: 'draft_only', reason: guardrailsPass.reason };
+  }
+  return { action: 'auto_send', reason: 'GUARDRAILS_PASSED' };
+}
+
+export function checkGuardrails(
+  toolResults: L5eToolResult[],
+  ragResult: L5eRagResult | null,
+  mode: L5eCallerMode,
+): L5eGuardrailResult {
+  // console_suggest mode is always draft only (agent reviews before sending).
+  if (mode === 'console_suggest') {
+    return { pass: false, reason: 'CONSOLE_SUGGEST_ALWAYS_DRAFT' };
+  }
+
+  // RAG result flags (KB adapter — Gate B; ENABLE_KB_ADAPTER=false in Gate A).
+  if (ragResult) {
+    if (ragResult.no_answer) return { pass: false, reason: 'KB_NO_ANSWER' };
+    if (ragResult.conflict_detected) return { pass: false, reason: 'KB_CONFLICT' };
+    if (ragResult.retrieval_quality === 'low') return { pass: false, reason: 'KB_LOW_QUALITY' };
+    if (ragResult.policy_gap) return { pass: false, reason: 'KB_POLICY_GAP' };
+    if (ragResult.source_scope !== 'customer_answer') {
+      return { pass: false, reason: 'KB_SCOPE_NOT_CUSTOMER_ANSWER' };
+    }
+  }
+
+  // Tool result classifications.
+  for (const result of toolResults) {
+    if (result.result_classification === 'draft_only') {
+      return { pass: false, reason: 'TOOL_RESULT_DRAFT_ONLY' };
+    }
+    if (result.result_classification === 'supervisor_only') {
+      return { pass: false, reason: 'TOOL_RESULT_SUPERVISOR_ONLY' };
+    }
+  }
+
+  // suggest_reply citation_required (Contract 07 §3.7).
+  const suggestResult = toolResults.find((r) => r.tool_name === 'suggest_reply');
+  if (suggestResult?.citation_required && !suggestResult?.has_valid_citation) {
+    return { pass: false, reason: 'SUGGEST_REPLY_MISSING_CITATION' };
+  }
+
+  // Handoff required by any adapter.
+  if (toolResults.some((r) => r.handoff_required)) {
+    return { pass: false, reason: 'HANDOFF_REQUIRED_BY_TOOL' };
+  }
+
+  return { pass: true, reason: 'ALL_GUARDRAILS_PASSED' };
+}
+
+// ── Write wrappers — GUARDED, unreachable while ENABLE_TOOL_EXECUTOR=false ──
+// Loose input shapes intentionally (Gate B will refine against confirmed schema).
+interface L5eExecutionContextLike {
+  flags: { ENABLE_TOOL_EXEC: boolean; [k: string]: unknown };
+  llm_generated_content?: string;
+  handoff_summary_from_tool?: string;
+  [k: string]: unknown;
+}
+
+interface L5eSuggestReplyInput { [k: string]: unknown; }
+interface L5eEscalateInput { reason?: string; summary?: string; [k: string]: unknown; }
+interface L5eMarkUnresolvedInput { reason?: string; follow_up_at?: string; [k: string]: unknown; }
+
+interface L5eDeferredResult {
+  deferred: boolean;
+  reason: string;
+  auto_sent?: boolean;
+  escalated?: boolean;
+  marked?: boolean;
+}
+
+// PII-safe sanitizer (local, no external deps). Strips emails, phones,
+// long digit runs (card/order-like), and truncates. Used for code-proof only.
+function l5eSanitize(
+  input: string | undefined | null,
+  opts: { maxChars: number; noPII: boolean },
+): string {
+  if (!input) return '';
+  let s = String(input);
+  if (opts.noPII) {
+    s = s.replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, '[email]');
+    s = s.replace(/\+?\d[\d\s\-().]{7,}\d/g, '[phone]');
+    s = s.replace(/\b\d{9,}\b/g, '[digits]');
+  }
+  if (s.length > opts.maxChars) s = s.slice(0, opts.maxChars);
+  return s;
+}
+
+// ⚠️ GUARDED WRITE WRAPPER — Gate A: unreachable while ENABLE_TOOL_EXECUTOR=false.
+// Runtime invocation deferred to Gate B after Director approval.
+// CONCEPTUAL MAPPING ONLY — no live schema inspection performed in Gate A.
+export async function executeSuggestReply(
+  _input: L5eSuggestReplyInput,
+  context: L5eExecutionContextLike,
+  outputMode: L5eOutputMode,
+): Promise<L5eDeferredResult> {
+  // Guard: must never execute while flags false.
+  if (!context.flags.ENABLE_TOOL_EXEC) {
+    return { auto_sent: false, deferred: true, reason: 'TOOL_EXEC_DISABLED' };
+  }
+
+  // Conceptual draft record (mapping comments only; do not persist in Gate A).
+  // const _draft_content = context.llm_generated_content;
+  // const _draftRecord = {
+  //   // [concept] conversation_id
+  //   // [concept] workspace_id / tenant_id
+  //   // [concept] content → sanitized draft_content (no PII / raw customer_ref)
+  //   // [concept] confidence
+  //   // [concept] recommended_action → 'auto_send' | 'human_review'
+  //   // [concept] sources → citation labels only (not full KB content)
+  //   // [concept] created_by → existing enum value for 'ai' (inspect-first)
+  //   // ❌ Never: full prompt / full KB chunks / PII / raw customer_ref
+  // };
+
+  // ⚠️ Gate A: no executable DB writes below — all deferred to Gate B.
+  // TODO Gate B (after Director approval + schema confirmation):
+  //   if (outputMode.action === 'auto_send') {
+  //     await insertMessage({ role: existingAiRoleValue, ... }); // schema-confirmed
+  //     return { auto_sent: true, deferred: false, reason: 'AUTO_SENT' };
+  //   } else {
+  //     await insertAiReplyDraft(_draftRecord); // schema-confirmed
+  //     return { auto_sent: false, deferred: false, reason: 'DRAFT_PERSISTED' };
+  //   }
+  void outputMode;
+  return { deferred: true, reason: 'GATE_B_REQUIRED' };
+}
+
+// ⚠️ GUARDED WRITE WRAPPER — Gate A: unreachable while ENABLE_TOOL_EXECUTOR=false.
+export async function executeEscalateToHuman(
+  input: L5eEscalateInput,
+  context: L5eExecutionContextLike,
+): Promise<L5eDeferredResult> {
+  // Input sanitization (PII-safe). Computed even when guard returns, to prove
+  // sanitization path exists; no I/O is performed.
+  const _reason = l5eSanitize(input.reason, { maxChars: 500, noPII: true });
+  const _summary = l5eSanitize(input.summary, { maxChars: 500, noPII: true });
+  // Contract 07 §3.5 Gap 6 Plan A: prefer create_handoff_summary output if available.
+  const _handoffSummary = context.handoff_summary_from_tool || _summary;
+  void _reason; void _handoffSummary;
+
+  // Guard: must never execute while flags false.
+  if (!context.flags.ENABLE_TOOL_EXEC) {
+    return { escalated: false, deferred: true, reason: 'TOOL_EXEC_DISABLED' };
+  }
+
+  // ⚠️ Gate A: no executable DB writes below — all deferred to Gate B.
+  // TODO Gate B (after Director approval + schema confirmation):
+  //   await db.transaction(async (tx) => {
+  //     // 1. UPDATE conversations.status = 'human_needed'
+  //     // 2. INSERT handoff_event (reason/summary sanitized, no PII, schema-confirmed)
+  //     // 3. INSERT conversation_status_log (schema-confirmed)
+  //     // 4. INSERT audit_log (details no PII, schema-confirmed)
+  //   });
+  //   return { escalated: true, deferred: false, reason: 'ESCALATED' };
+  //
+  // SAFETY RULES (enforced at Gate B implementation time):
+  // ❌ Do NOT execute if status = resolved / closed
+  // ❌ reason / summary must be sanitized (no PII)
+  // ❌ Transaction must be atomic — rollback all on any failure
+  // ❌ handoff_event.summary must not contain full KB content / full prompt body
+  return { deferred: true, reason: 'GATE_B_REQUIRED' };
+}
+
+// ⚠️ GUARDED WRITE WRAPPER — Gate A: unreachable while ENABLE_TOOL_EXECUTOR=false.
+// system_auto: Tool Gate already DENY(MARK_UNRESOLVED_REQUIRES_HUMAN) in L5c.
+// Only console_suggest mode can reach this (after Gate B approval).
+export async function executeMarkUnresolved(
+  input: L5eMarkUnresolvedInput,
+  context: L5eExecutionContextLike,
+): Promise<L5eDeferredResult> {
+  // Guard: must never execute while flags false.
+  if (!context.flags.ENABLE_TOOL_EXEC) {
+    return { marked: false, deferred: true, reason: 'TOOL_EXEC_DISABLED' };
+  }
+
+  // ⚠️ Gate A: no executable DB writes below — all deferred to Gate B.
+  // TODO Gate B (after Director approval + schema confirmation):
+  //   const _reason = l5eSanitize(input.reason, { maxChars: 500, noPII: true });
+  //   // follow_up_at advisory only — validate, do not schedule/persist
+  //   await db.transaction(async (tx) => {
+  //     // 1. UPDATE conversations.status = 'unresolved'
+  //     // 2. INSERT conversation_status_log (schema-confirmed)
+  //     // 3. INSERT audit_log (details no PII, schema-confirmed)
+  //   });
+  //   return { marked: true, deferred: false, reason: 'MARKED_UNRESOLVED' };
+  //
+  // SAFETY RULES:
+  // ❌ system_auto mode must NEVER reach this function (L5c Gate blocks it)
+  // ❌ Transaction must be atomic
+  // ❌ audit_log details must not contain PII
+  void input;
+  return { deferred: true, reason: 'GATE_B_REQUIRED' };
+}
+
+// ── Widget response rule (code proof, Contract 03 §2.3 小修3) ───────────────
+// ⚠️ Public API response shape is UNCHANGED in Gate A.
+// Intended future behavior (Gate B; code proof in Gate A):
+//   auto_sent=true  → existing response shape with ai_reply content
+//   auto_sent=false → existing response shape WITHOUT draft content
+//                     (only { pending: true } or equivalent in existing shape)
+// Draft content is NEVER returned to the Widget when not auto-sent.
+
+// ── Future Gate B wiring (NOT implemented in L5e Gate A) ────────────────────
+// LLM emits tool_call (requires ENABLE_TOOL_EXECUTOR=true → TOOL_DEFINITIONS attached)
+//   ↓
+// const decision = handleGateDecision(toolExecutorGate(req, ctx));
+//   ↓
+// if (decision.decision === 'ALLOW' || decision.decision === 'DOWNGRADE_TO_DRAFT') {
+//   const result = await handleToolCall(req.tool_name, req.input, ctx);
+//   const outputMode = determineOutputMode(conv.status, allToolResults, ragResult, callerMode);
+//   switch (req.tool_name) {
+//     case 'suggest_reply':       await executeSuggestReply(req.input, ctx, outputMode); break;
+//     case 'escalate_to_human':   await executeEscalateToHuman(req.input, ctx);          break;
+//     case 'mark_unresolved':     await executeMarkUnresolved(req.input, ctx);           break;
+//   }
+// }
+// DENY / ESCALATE → write wrappers are NOT called.
