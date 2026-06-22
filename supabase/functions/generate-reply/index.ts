@@ -323,13 +323,17 @@ async function orchestrationGenerateReply(
     }
   }
 
-  // Step 5: Tool registration — NOT in L5b.
-  // ⚠️ Do NOT attach tools/functions schema to the LLM request in L5b.
-  //   ENABLE_TOOL_EXECUTOR=false means NO tools attached at all (not "attached but not executed").
-  // TODO L5c: attach Tool Executor Gate and tool definitions here.
+  // Step 5: Tool registration — NOT in L5c Gate A.
+  // ⚠️ ENABLE_TOOL_EXECUTOR=false → DO NOT attach any tools/functions schema to LLM.
+  //   Even when ENABLE_TOOL_EXECUTOR=true, L5c Gate A does NOT attach tools.
+  //   Tool registration (definitions + JSON schemas) is L5d scope.
+  // L5c provides only the deterministic Tool Executor Gate (toolExecutorGate below).
+  // Because no tools are attached, the LLM cannot emit tool_use blocks, so the Gate
+  // is never invoked at runtime in L5c Gate A. It exists as code only and is
+  // unit-reachable via direct call (code-proof) for future L5d wiring.
   if (flags.ENABLE_TOOL_EXEC) {
-    // Placeholder only — L5c will populate. Still no tools attached in L5b.
-    console.log('[generate-reply] ENABLE_TOOL_EXECUTOR=true but L5b does not attach tools');
+    // Placeholder only — L5d will register tools. L5c still attaches NO tools.
+    console.log('[generate-reply] ENABLE_TOOL_EXECUTOR=true: Gate present, tools NOT attached (L5d scope)');
   }
 
   // Step 7: LLM Generate.
