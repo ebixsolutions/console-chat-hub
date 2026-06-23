@@ -15,7 +15,15 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedConsoleRouteImport } from './routes/_authenticated/console'
 import { Route as AuthenticatedConsoleIndexRouteImport } from './routes/_authenticated/console.index'
 import { Route as AuthenticatedConsoleWidgetPreviewRouteImport } from './routes/_authenticated/console.widget-preview'
+import { Route as AuthenticatedConsoleTrainingCandidatesRouteImport } from './routes/_authenticated/console.training-candidates'
+import { Route as AuthenticatedConsoleKbGapsRouteImport } from './routes/_authenticated/console.kb-gaps'
+import { Route as AuthenticatedConsoleFeedbackSettingsRouteImport } from './routes/_authenticated/console.feedback-settings'
+import { Route as AuthenticatedConsoleCustomer360RouteImport } from './routes/_authenticated/console.customer360'
+import { Route as AuthenticatedConsoleChannelSettingsRouteImport } from './routes/_authenticated/console.channel-settings'
+import { Route as AuthenticatedConsoleAnalyticsRouteImport } from './routes/_authenticated/console.analytics'
+import { Route as AuthenticatedConsoleAgentSettingsRouteImport } from './routes/_authenticated/console.agent-settings'
 import { Route as AuthenticatedConsoleConversationsIndexRouteImport } from './routes/_authenticated/console.conversations.index'
+import { Route as AuthenticatedConsoleSettingsLlmRuntimeRouteImport } from './routes/_authenticated/console.settings.llm-runtime'
 import { Route as AuthenticatedConsoleConversationsIdRouteImport } from './routes/_authenticated/console.conversations.$id'
 
 const LoginRoute = LoginRouteImport.update({
@@ -49,10 +57,58 @@ const AuthenticatedConsoleWidgetPreviewRoute =
     path: '/widget-preview',
     getParentRoute: () => AuthenticatedConsoleRoute,
   } as any)
+const AuthenticatedConsoleTrainingCandidatesRoute =
+  AuthenticatedConsoleTrainingCandidatesRouteImport.update({
+    id: '/training-candidates',
+    path: '/training-candidates',
+    getParentRoute: () => AuthenticatedConsoleRoute,
+  } as any)
+const AuthenticatedConsoleKbGapsRoute =
+  AuthenticatedConsoleKbGapsRouteImport.update({
+    id: '/kb-gaps',
+    path: '/kb-gaps',
+    getParentRoute: () => AuthenticatedConsoleRoute,
+  } as any)
+const AuthenticatedConsoleFeedbackSettingsRoute =
+  AuthenticatedConsoleFeedbackSettingsRouteImport.update({
+    id: '/feedback-settings',
+    path: '/feedback-settings',
+    getParentRoute: () => AuthenticatedConsoleRoute,
+  } as any)
+const AuthenticatedConsoleCustomer360Route =
+  AuthenticatedConsoleCustomer360RouteImport.update({
+    id: '/customer360',
+    path: '/customer360',
+    getParentRoute: () => AuthenticatedConsoleRoute,
+  } as any)
+const AuthenticatedConsoleChannelSettingsRoute =
+  AuthenticatedConsoleChannelSettingsRouteImport.update({
+    id: '/channel-settings',
+    path: '/channel-settings',
+    getParentRoute: () => AuthenticatedConsoleRoute,
+  } as any)
+const AuthenticatedConsoleAnalyticsRoute =
+  AuthenticatedConsoleAnalyticsRouteImport.update({
+    id: '/analytics',
+    path: '/analytics',
+    getParentRoute: () => AuthenticatedConsoleRoute,
+  } as any)
+const AuthenticatedConsoleAgentSettingsRoute =
+  AuthenticatedConsoleAgentSettingsRouteImport.update({
+    id: '/agent-settings',
+    path: '/agent-settings',
+    getParentRoute: () => AuthenticatedConsoleRoute,
+  } as any)
 const AuthenticatedConsoleConversationsIndexRoute =
   AuthenticatedConsoleConversationsIndexRouteImport.update({
     id: '/conversations/',
     path: '/conversations/',
+    getParentRoute: () => AuthenticatedConsoleRoute,
+  } as any)
+const AuthenticatedConsoleSettingsLlmRuntimeRoute =
+  AuthenticatedConsoleSettingsLlmRuntimeRouteImport.update({
+    id: '/settings/llm-runtime',
+    path: '/settings/llm-runtime',
     getParentRoute: () => AuthenticatedConsoleRoute,
   } as any)
 const AuthenticatedConsoleConversationsIdRoute =
@@ -66,17 +122,33 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/console': typeof AuthenticatedConsoleRouteWithChildren
+  '/console/agent-settings': typeof AuthenticatedConsoleAgentSettingsRoute
+  '/console/analytics': typeof AuthenticatedConsoleAnalyticsRoute
+  '/console/channel-settings': typeof AuthenticatedConsoleChannelSettingsRoute
+  '/console/customer360': typeof AuthenticatedConsoleCustomer360Route
+  '/console/feedback-settings': typeof AuthenticatedConsoleFeedbackSettingsRoute
+  '/console/kb-gaps': typeof AuthenticatedConsoleKbGapsRoute
+  '/console/training-candidates': typeof AuthenticatedConsoleTrainingCandidatesRoute
   '/console/widget-preview': typeof AuthenticatedConsoleWidgetPreviewRoute
   '/console/': typeof AuthenticatedConsoleIndexRoute
   '/console/conversations/$id': typeof AuthenticatedConsoleConversationsIdRoute
+  '/console/settings/llm-runtime': typeof AuthenticatedConsoleSettingsLlmRuntimeRoute
   '/console/conversations/': typeof AuthenticatedConsoleConversationsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/console/agent-settings': typeof AuthenticatedConsoleAgentSettingsRoute
+  '/console/analytics': typeof AuthenticatedConsoleAnalyticsRoute
+  '/console/channel-settings': typeof AuthenticatedConsoleChannelSettingsRoute
+  '/console/customer360': typeof AuthenticatedConsoleCustomer360Route
+  '/console/feedback-settings': typeof AuthenticatedConsoleFeedbackSettingsRoute
+  '/console/kb-gaps': typeof AuthenticatedConsoleKbGapsRoute
+  '/console/training-candidates': typeof AuthenticatedConsoleTrainingCandidatesRoute
   '/console/widget-preview': typeof AuthenticatedConsoleWidgetPreviewRoute
   '/console': typeof AuthenticatedConsoleIndexRoute
   '/console/conversations/$id': typeof AuthenticatedConsoleConversationsIdRoute
+  '/console/settings/llm-runtime': typeof AuthenticatedConsoleSettingsLlmRuntimeRoute
   '/console/conversations': typeof AuthenticatedConsoleConversationsIndexRoute
 }
 export interface FileRoutesById {
@@ -85,9 +157,17 @@ export interface FileRoutesById {
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/login': typeof LoginRoute
   '/_authenticated/console': typeof AuthenticatedConsoleRouteWithChildren
+  '/_authenticated/console/agent-settings': typeof AuthenticatedConsoleAgentSettingsRoute
+  '/_authenticated/console/analytics': typeof AuthenticatedConsoleAnalyticsRoute
+  '/_authenticated/console/channel-settings': typeof AuthenticatedConsoleChannelSettingsRoute
+  '/_authenticated/console/customer360': typeof AuthenticatedConsoleCustomer360Route
+  '/_authenticated/console/feedback-settings': typeof AuthenticatedConsoleFeedbackSettingsRoute
+  '/_authenticated/console/kb-gaps': typeof AuthenticatedConsoleKbGapsRoute
+  '/_authenticated/console/training-candidates': typeof AuthenticatedConsoleTrainingCandidatesRoute
   '/_authenticated/console/widget-preview': typeof AuthenticatedConsoleWidgetPreviewRoute
   '/_authenticated/console/': typeof AuthenticatedConsoleIndexRoute
   '/_authenticated/console/conversations/$id': typeof AuthenticatedConsoleConversationsIdRoute
+  '/_authenticated/console/settings/llm-runtime': typeof AuthenticatedConsoleSettingsLlmRuntimeRoute
   '/_authenticated/console/conversations/': typeof AuthenticatedConsoleConversationsIndexRoute
 }
 export interface FileRouteTypes {
@@ -96,17 +176,33 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/console'
+    | '/console/agent-settings'
+    | '/console/analytics'
+    | '/console/channel-settings'
+    | '/console/customer360'
+    | '/console/feedback-settings'
+    | '/console/kb-gaps'
+    | '/console/training-candidates'
     | '/console/widget-preview'
     | '/console/'
     | '/console/conversations/$id'
+    | '/console/settings/llm-runtime'
     | '/console/conversations/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/login'
+    | '/console/agent-settings'
+    | '/console/analytics'
+    | '/console/channel-settings'
+    | '/console/customer360'
+    | '/console/feedback-settings'
+    | '/console/kb-gaps'
+    | '/console/training-candidates'
     | '/console/widget-preview'
     | '/console'
     | '/console/conversations/$id'
+    | '/console/settings/llm-runtime'
     | '/console/conversations'
   id:
     | '__root__'
@@ -114,9 +210,17 @@ export interface FileRouteTypes {
     | '/_authenticated'
     | '/login'
     | '/_authenticated/console'
+    | '/_authenticated/console/agent-settings'
+    | '/_authenticated/console/analytics'
+    | '/_authenticated/console/channel-settings'
+    | '/_authenticated/console/customer360'
+    | '/_authenticated/console/feedback-settings'
+    | '/_authenticated/console/kb-gaps'
+    | '/_authenticated/console/training-candidates'
     | '/_authenticated/console/widget-preview'
     | '/_authenticated/console/'
     | '/_authenticated/console/conversations/$id'
+    | '/_authenticated/console/settings/llm-runtime'
     | '/_authenticated/console/conversations/'
   fileRoutesById: FileRoutesById
 }
@@ -170,11 +274,67 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedConsoleWidgetPreviewRouteImport
       parentRoute: typeof AuthenticatedConsoleRoute
     }
+    '/_authenticated/console/training-candidates': {
+      id: '/_authenticated/console/training-candidates'
+      path: '/training-candidates'
+      fullPath: '/console/training-candidates'
+      preLoaderRoute: typeof AuthenticatedConsoleTrainingCandidatesRouteImport
+      parentRoute: typeof AuthenticatedConsoleRoute
+    }
+    '/_authenticated/console/kb-gaps': {
+      id: '/_authenticated/console/kb-gaps'
+      path: '/kb-gaps'
+      fullPath: '/console/kb-gaps'
+      preLoaderRoute: typeof AuthenticatedConsoleKbGapsRouteImport
+      parentRoute: typeof AuthenticatedConsoleRoute
+    }
+    '/_authenticated/console/feedback-settings': {
+      id: '/_authenticated/console/feedback-settings'
+      path: '/feedback-settings'
+      fullPath: '/console/feedback-settings'
+      preLoaderRoute: typeof AuthenticatedConsoleFeedbackSettingsRouteImport
+      parentRoute: typeof AuthenticatedConsoleRoute
+    }
+    '/_authenticated/console/customer360': {
+      id: '/_authenticated/console/customer360'
+      path: '/customer360'
+      fullPath: '/console/customer360'
+      preLoaderRoute: typeof AuthenticatedConsoleCustomer360RouteImport
+      parentRoute: typeof AuthenticatedConsoleRoute
+    }
+    '/_authenticated/console/channel-settings': {
+      id: '/_authenticated/console/channel-settings'
+      path: '/channel-settings'
+      fullPath: '/console/channel-settings'
+      preLoaderRoute: typeof AuthenticatedConsoleChannelSettingsRouteImport
+      parentRoute: typeof AuthenticatedConsoleRoute
+    }
+    '/_authenticated/console/analytics': {
+      id: '/_authenticated/console/analytics'
+      path: '/analytics'
+      fullPath: '/console/analytics'
+      preLoaderRoute: typeof AuthenticatedConsoleAnalyticsRouteImport
+      parentRoute: typeof AuthenticatedConsoleRoute
+    }
+    '/_authenticated/console/agent-settings': {
+      id: '/_authenticated/console/agent-settings'
+      path: '/agent-settings'
+      fullPath: '/console/agent-settings'
+      preLoaderRoute: typeof AuthenticatedConsoleAgentSettingsRouteImport
+      parentRoute: typeof AuthenticatedConsoleRoute
+    }
     '/_authenticated/console/conversations/': {
       id: '/_authenticated/console/conversations/'
       path: '/conversations'
       fullPath: '/console/conversations/'
       preLoaderRoute: typeof AuthenticatedConsoleConversationsIndexRouteImport
+      parentRoute: typeof AuthenticatedConsoleRoute
+    }
+    '/_authenticated/console/settings/llm-runtime': {
+      id: '/_authenticated/console/settings/llm-runtime'
+      path: '/settings/llm-runtime'
+      fullPath: '/console/settings/llm-runtime'
+      preLoaderRoute: typeof AuthenticatedConsoleSettingsLlmRuntimeRouteImport
       parentRoute: typeof AuthenticatedConsoleRoute
     }
     '/_authenticated/console/conversations/$id': {
@@ -188,18 +348,39 @@ declare module '@tanstack/react-router' {
 }
 
 interface AuthenticatedConsoleRouteChildren {
+  AuthenticatedConsoleAgentSettingsRoute: typeof AuthenticatedConsoleAgentSettingsRoute
+  AuthenticatedConsoleAnalyticsRoute: typeof AuthenticatedConsoleAnalyticsRoute
+  AuthenticatedConsoleChannelSettingsRoute: typeof AuthenticatedConsoleChannelSettingsRoute
+  AuthenticatedConsoleCustomer360Route: typeof AuthenticatedConsoleCustomer360Route
+  AuthenticatedConsoleFeedbackSettingsRoute: typeof AuthenticatedConsoleFeedbackSettingsRoute
+  AuthenticatedConsoleKbGapsRoute: typeof AuthenticatedConsoleKbGapsRoute
+  AuthenticatedConsoleTrainingCandidatesRoute: typeof AuthenticatedConsoleTrainingCandidatesRoute
   AuthenticatedConsoleWidgetPreviewRoute: typeof AuthenticatedConsoleWidgetPreviewRoute
   AuthenticatedConsoleIndexRoute: typeof AuthenticatedConsoleIndexRoute
   AuthenticatedConsoleConversationsIdRoute: typeof AuthenticatedConsoleConversationsIdRoute
+  AuthenticatedConsoleSettingsLlmRuntimeRoute: typeof AuthenticatedConsoleSettingsLlmRuntimeRoute
   AuthenticatedConsoleConversationsIndexRoute: typeof AuthenticatedConsoleConversationsIndexRoute
 }
 
 const AuthenticatedConsoleRouteChildren: AuthenticatedConsoleRouteChildren = {
+  AuthenticatedConsoleAgentSettingsRoute:
+    AuthenticatedConsoleAgentSettingsRoute,
+  AuthenticatedConsoleAnalyticsRoute: AuthenticatedConsoleAnalyticsRoute,
+  AuthenticatedConsoleChannelSettingsRoute:
+    AuthenticatedConsoleChannelSettingsRoute,
+  AuthenticatedConsoleCustomer360Route: AuthenticatedConsoleCustomer360Route,
+  AuthenticatedConsoleFeedbackSettingsRoute:
+    AuthenticatedConsoleFeedbackSettingsRoute,
+  AuthenticatedConsoleKbGapsRoute: AuthenticatedConsoleKbGapsRoute,
+  AuthenticatedConsoleTrainingCandidatesRoute:
+    AuthenticatedConsoleTrainingCandidatesRoute,
   AuthenticatedConsoleWidgetPreviewRoute:
     AuthenticatedConsoleWidgetPreviewRoute,
   AuthenticatedConsoleIndexRoute: AuthenticatedConsoleIndexRoute,
   AuthenticatedConsoleConversationsIdRoute:
     AuthenticatedConsoleConversationsIdRoute,
+  AuthenticatedConsoleSettingsLlmRuntimeRoute:
+    AuthenticatedConsoleSettingsLlmRuntimeRoute,
   AuthenticatedConsoleConversationsIndexRoute:
     AuthenticatedConsoleConversationsIndexRoute,
 }
