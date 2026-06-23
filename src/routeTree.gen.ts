@@ -22,6 +22,7 @@ import { Route as AuthenticatedConsoleCustomer360RouteImport } from './routes/_a
 import { Route as AuthenticatedConsoleChannelSettingsRouteImport } from './routes/_authenticated/console.channel-settings'
 import { Route as AuthenticatedConsoleAnalyticsRouteImport } from './routes/_authenticated/console.analytics'
 import { Route as AuthenticatedConsoleAgentSettingsRouteImport } from './routes/_authenticated/console.agent-settings'
+import { Route as AuthenticatedConsoleSplatRouteImport } from './routes/_authenticated/console.$'
 import { Route as AuthenticatedConsoleConversationsIndexRouteImport } from './routes/_authenticated/console.conversations.index'
 import { Route as AuthenticatedConsoleSettingsLlmRuntimeRouteImport } from './routes/_authenticated/console.settings.llm-runtime'
 import { Route as AuthenticatedConsoleConversationsIdRouteImport } from './routes/_authenticated/console.conversations.$id'
@@ -99,6 +100,12 @@ const AuthenticatedConsoleAgentSettingsRoute =
     path: '/agent-settings',
     getParentRoute: () => AuthenticatedConsoleRoute,
   } as any)
+const AuthenticatedConsoleSplatRoute =
+  AuthenticatedConsoleSplatRouteImport.update({
+    id: '/$',
+    path: '/$',
+    getParentRoute: () => AuthenticatedConsoleRoute,
+  } as any)
 const AuthenticatedConsoleConversationsIndexRoute =
   AuthenticatedConsoleConversationsIndexRouteImport.update({
     id: '/conversations/',
@@ -122,6 +129,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/console': typeof AuthenticatedConsoleRouteWithChildren
+  '/console/$': typeof AuthenticatedConsoleSplatRoute
   '/console/agent-settings': typeof AuthenticatedConsoleAgentSettingsRoute
   '/console/analytics': typeof AuthenticatedConsoleAnalyticsRoute
   '/console/channel-settings': typeof AuthenticatedConsoleChannelSettingsRoute
@@ -138,6 +146,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/console/$': typeof AuthenticatedConsoleSplatRoute
   '/console/agent-settings': typeof AuthenticatedConsoleAgentSettingsRoute
   '/console/analytics': typeof AuthenticatedConsoleAnalyticsRoute
   '/console/channel-settings': typeof AuthenticatedConsoleChannelSettingsRoute
@@ -157,6 +166,7 @@ export interface FileRoutesById {
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/login': typeof LoginRoute
   '/_authenticated/console': typeof AuthenticatedConsoleRouteWithChildren
+  '/_authenticated/console/$': typeof AuthenticatedConsoleSplatRoute
   '/_authenticated/console/agent-settings': typeof AuthenticatedConsoleAgentSettingsRoute
   '/_authenticated/console/analytics': typeof AuthenticatedConsoleAnalyticsRoute
   '/_authenticated/console/channel-settings': typeof AuthenticatedConsoleChannelSettingsRoute
@@ -176,6 +186,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/console'
+    | '/console/$'
     | '/console/agent-settings'
     | '/console/analytics'
     | '/console/channel-settings'
@@ -192,6 +203,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/login'
+    | '/console/$'
     | '/console/agent-settings'
     | '/console/analytics'
     | '/console/channel-settings'
@@ -210,6 +222,7 @@ export interface FileRouteTypes {
     | '/_authenticated'
     | '/login'
     | '/_authenticated/console'
+    | '/_authenticated/console/$'
     | '/_authenticated/console/agent-settings'
     | '/_authenticated/console/analytics'
     | '/_authenticated/console/channel-settings'
@@ -323,6 +336,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedConsoleAgentSettingsRouteImport
       parentRoute: typeof AuthenticatedConsoleRoute
     }
+    '/_authenticated/console/$': {
+      id: '/_authenticated/console/$'
+      path: '/$'
+      fullPath: '/console/$'
+      preLoaderRoute: typeof AuthenticatedConsoleSplatRouteImport
+      parentRoute: typeof AuthenticatedConsoleRoute
+    }
     '/_authenticated/console/conversations/': {
       id: '/_authenticated/console/conversations/'
       path: '/conversations'
@@ -348,6 +368,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface AuthenticatedConsoleRouteChildren {
+  AuthenticatedConsoleSplatRoute: typeof AuthenticatedConsoleSplatRoute
   AuthenticatedConsoleAgentSettingsRoute: typeof AuthenticatedConsoleAgentSettingsRoute
   AuthenticatedConsoleAnalyticsRoute: typeof AuthenticatedConsoleAnalyticsRoute
   AuthenticatedConsoleChannelSettingsRoute: typeof AuthenticatedConsoleChannelSettingsRoute
@@ -363,6 +384,7 @@ interface AuthenticatedConsoleRouteChildren {
 }
 
 const AuthenticatedConsoleRouteChildren: AuthenticatedConsoleRouteChildren = {
+  AuthenticatedConsoleSplatRoute: AuthenticatedConsoleSplatRoute,
   AuthenticatedConsoleAgentSettingsRoute:
     AuthenticatedConsoleAgentSettingsRoute,
   AuthenticatedConsoleAnalyticsRoute: AuthenticatedConsoleAnalyticsRoute,
