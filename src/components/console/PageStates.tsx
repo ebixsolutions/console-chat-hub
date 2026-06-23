@@ -27,16 +27,36 @@ export function ErrorState({ message = "Something went wrong." }: { message?: st
   );
 }
 
-export function PermissionDenied() {
+export function PermissionDenied({ message }: { message?: string } = {}) {
   return (
     <Card>
       <CardContent className="py-10 text-center">
         <div className="text-lg font-semibold">Permission denied</div>
         <div className="mt-2 text-sm text-muted-foreground">
-          You don't have access to this page.
+          {message ?? "You don't have access to this page."}
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+export function DegradedState({ message }: { message: string }) {
+  return (
+    <Card>
+      <CardContent className="py-10 text-center text-sm text-muted-foreground">
+        <div className="font-medium text-foreground mb-1">Service degraded</div>
+        {message}
+      </CardContent>
+    </Card>
+  );
+}
+
+export function MaskedField({ label }: { label: string }) {
+  return (
+    <div className="flex items-center justify-between py-1.5 text-sm">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="font-mono tracking-wider">••••••</span>
+    </div>
   );
 }
 

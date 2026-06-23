@@ -7,6 +7,7 @@ import { Download } from "lucide-react";
 import { analyticsService } from "@/lib/api/config.service";
 import { useCurrentRole } from "@/hooks/useCurrentRole";
 import { LoadingState, EmptyState, ErrorState, PermissionDenied, PageHeader } from "@/components/console/PageStates";
+import { MSG_EN } from "@/lib/i18n/message-keys";
 
 export const Route = createFileRoute("/_authenticated/console/analytics")({
   component: AnalyticsPage,
@@ -29,7 +30,7 @@ function AnalyticsPage() {
   if (roleLoading || loading) return <LoadingState />;
   if (!role) return <PermissionDenied />;
   const canExport = role === "admin";
-  const scopeLabel = role === "agent" ? "Showing your own data only." : null;
+  const scopeLabel = role === "agent" ? MSG_EN.ANALYTICS_AGENT_SCOPE : null;
 
   return (
     <div className="space-y-6">
@@ -37,6 +38,11 @@ function AnalyticsPage() {
         title="Analytics"
         description={scopeLabel ?? "Operational KPIs across conversations and agents."}
       />
+      {role === "agent" && (
+        <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+          {MSG_EN.ANALYTICS_AGENT_SCOPE}
+        </div>
+      )}
       <div className="flex justify-end">
         <TooltipProvider>
           <Tooltip>
@@ -48,7 +54,7 @@ function AnalyticsPage() {
                 </Button>
               </span>
             </TooltipTrigger>
-            {!canExport && <TooltipContent>Admin only.</TooltipContent>}
+            {!canExport && <TooltipContent>{MSG_EN.ANALYTICS_EXPORT_ADMIN_ONLY}</TooltipContent>}
           </Tooltip>
         </TooltipProvider>
       </div>
