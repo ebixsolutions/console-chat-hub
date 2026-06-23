@@ -795,6 +795,44 @@ export type Database = {
         Returns: boolean
       }
       is_staff: { Args: { _user_id: string }; Returns: boolean }
+      rpc_update_agent_profile: {
+        Args: {
+          p_agent_id: string
+          p_avatar_url?: string
+          p_display_name?: string
+        }
+        Returns: Json
+      }
+      rpc_update_channel_config: {
+        Args: {
+          p_allowed_origins?: string[]
+          p_channel_config_id: string
+          p_is_active?: boolean
+        }
+        Returns: Json
+      }
+      rpc_update_feedback_config: {
+        Args: {
+          p_config?: Json
+          p_delay_minutes?: number
+          p_feedback_config_id: string
+          p_is_active?: boolean
+        }
+        Returns: Json
+      }
+      rpc_update_widget_config: {
+        Args: {
+          p_header_title?: string
+          p_is_active?: boolean
+          p_logo_url?: string
+          p_name?: string
+          p_placeholder_text?: string
+          p_primary_color?: string
+          p_welcome_message?: string
+          p_widget_config_id: string
+        }
+        Returns: Json
+      }
     }
     Enums: {
       app_role: "admin" | "supervisor" | "agent"
