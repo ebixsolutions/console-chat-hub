@@ -111,7 +111,7 @@ function ConsoleLayout() {
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const { role } = useCurrentRole();
-  const [demoRole, setDemoRole] = useState(role || 'supervisor');
+  const [demoRole, setDemoRole] = useState<string>(role || 'supervisor');
   const [lang, setLang] = useState('en');
   const [collapsed, setCollapsed] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
