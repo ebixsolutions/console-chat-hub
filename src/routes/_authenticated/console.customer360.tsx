@@ -203,10 +203,11 @@ const CUSTOMERS = [
   },
 ];
 
-const TABS = ['profile', 'conversations', 'orders', 'products', 'payments', 'emotion'];
+const TABS = ['profile', 'conversations', 'orders', 'products', 'payments', 'emotion', 'trust', 'followup', 'predictions'];
 const TAB_LABELS: Record<string, string> = {
   profile: 'Profile', conversations: 'Conversations', orders: 'Orders', products: 'Products Bought',
   payments: 'Payments', emotion: 'Emotion Journey',
+  trust: 'Trust Score', followup: 'Follow-up Plan', predictions: 'Predictions',
 };
 
 const orderStatusColor = (s: string) => {
