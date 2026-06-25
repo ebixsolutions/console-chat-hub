@@ -225,7 +225,7 @@ function ConsoleLayout() {
                       <span style={{ fontSize: 10, color: '#aaa', marginLeft: 4 }}>{groupCollapsed ? '∨' : '∧'}</span>
                     </div>
                   )}
-                  {!groupCollapsed && g.items.filter(item => !item.adminOnly || showSettingsGroup).map(item => {
+                  {!groupCollapsed && g.items.filter(item => !(item as any).adminOnly || showSettingsGroup).map(item => {
                     const active = pathname === item.path || (item.path === '/console' && isConvDetail);
                     return (
                       <Link key={item.path} to={item.path as any} title={collapsed ? t(item.navKey) : ''}
@@ -241,7 +241,7 @@ function ConsoleLayout() {
                         {!collapsed && (
                           <span style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t(item.navKey)}</span>
                         )}
-                        {!collapsed && item.alertBadge && (
+                        {!collapsed && (item as any).alertBadge && (
                           <span style={{ background: '#ef4444', color: '#fff', fontSize: 9.5, fontWeight: 700, borderRadius: 20, padding: '1px 6px', flexShrink: 0 }}>3</span>
                         )}
                       </Link>
