@@ -835,6 +835,9 @@ function Customer360Page() {
             {activeTab === 'products' && <ProductsTab cust={selected} />}
             {activeTab === 'payments' && <PaymentsTab cust={selected} />}
             {activeTab === 'emotion' && <EmotionJourneyTab cust={selected} />}
+            {activeTab === 'trust' && <TrustScoreTab cust={selected} />}
+            {activeTab === 'followup' && <FollowUpPlanTab key={selectedId} cust={selected} />}
+            {activeTab === 'predictions' && <PredictionsTab cust={selected} />}
           </div>
         </div>
       </div>
