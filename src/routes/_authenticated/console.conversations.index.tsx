@@ -149,6 +149,11 @@ function ConversationsList() {
 
   return (
     <div className="space-y-4">
+      <div style={{ display: 'flex', gap: 16, padding: '8px 0', fontSize: 12, color: '#555' }}>
+        <span><b style={{ color: '#2563eb' }}>{conversations?.filter(c => c.status === 'open').length || 0}</b> Open</span>
+        <span><b style={{ color: '#dc2626' }}>{humanNeededCount}</b> Human Needed</span>
+        <span><b style={{ color: '#6b7280' }}>{conversations?.filter(c => c.status === 'resolved').length || 0}</b> Resolved</span>
+      </div>
       <div>
         <h1 className="text-2xl font-semibold">Conversations</h1>
         <p className="text-sm text-muted-foreground">Inbox of recent visitor conversations.</p>
