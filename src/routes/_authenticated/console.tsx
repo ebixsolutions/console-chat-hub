@@ -63,7 +63,7 @@ const GROUPS = [
   {
     key: 'inbox', labelKey: 'groupInbox', color: '#dc2626', bgColor: '#fee2e2',
     items: [
-      { path: '/console', icon: '💬', navKey: 'navInbox', alertBadge: true },
+      { path: '/console/conversations', icon: '💬', navKey: 'navInbox', alertBadge: true },
       { path: '/console/analytics', icon: '📊', navKey: 'navAnalytics' },
       { path: '/console/customer360', icon: '👥', navKey: 'navCustomer360' },
     ],
@@ -226,7 +226,7 @@ function ConsoleLayout() {
                     </div>
                   )}
                   {!groupCollapsed && g.items.filter(item => !(item as any).adminOnly || showSettingsGroup).map(item => {
-                    const active = pathname === item.path || (item.path === '/console' && isConvDetail);
+                    const active = pathname === item.path || pathname.startsWith(item.path + '/');
                     return (
                       <Link key={item.path} to={item.path as any} title={collapsed ? t(item.navKey) : ''}
                         style={{
