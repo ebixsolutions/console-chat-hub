@@ -307,20 +307,163 @@ async function orchestrationGenerateReply(
     }
   }
 
-  // Step 4: KB Adapter (ENABLE_KB).
+  // Step 4: KB Adapter (ENABLE_KB) + L5 Safety Checks.
+  // L5 RAG Answer Safety Contract v1.1b — Demo Implementation.
+  // v1.2: company_id / industry from env (schema has no these fields).
   let ragResult: {
     success: boolean;
     no_answer?: boolean;
     retrieval_quality?: 'high' | 'medium' | 'low' | 'failed';
-    chunks?: Array<{ id?: string; source?: string; score?: number; short_snippet?: string }>;
-    query_text_redacted?: string;
+    chunks?: Array<{
+      doc_id?: string;
+      chunk_id?: string;
+      title?: string;
+      content?: string;
+      score?: number;
+      industry?: string;
+      company_id?: number;
+      language?: string;
+      status?: string;
+      source_type?: string;
+      published_at?: string;
+      updated_at?: string;
+    }>;
+    query_text_preview?: string;
+    trace_metadata?: Record<string, unknown>;
   } | null = null;
+
   if (flags.ENABLE_KB) {
-    ragResult = await callKBAdapter(conversation_id, /* message */ '');
-    if (!ragResult.success || ragResult.no_answer) {
-      // Fallback per Contract 04 §3: no_answer=true → handoff path (L5e wires it).
-      console.warn('[generate-reply] kb_adapter no_answer/fallback', { conversation_id, code: 'F-01' });
+    // Resolve scope from env (Demo: schema has no company_id/industry fields)
+    const demoCompanyIdStr = Deno.env.get('KB_DEMO_COMPANY_ID');
+    const demoIndustry = Deno.env.get('KB_DEMO_INDUSTRY');
+    const demoLanguage = Deno.env.get('KB_DEMO_LANGUAGE') ?? 'zh-TW';
+
+    const widgetCompanyId = demoCompanyIdStr ? parseInt(demoCompanyIdStr, 10) : null;
+    const widgetIndustry = demoIndustry ?? null;
+
+    // L5 Scope Gate: if scope unavailable, cannot safely query → handoff
+    if (widgetCompanyId === null || isNaN(widgetCompanyId) || !widgetIndustry) {
+      console.warn('[generate-reply] KB scope env vars not set', {
+        conversation_id,
+        hasCompanyId: widgetCompanyId !== null && !isNaN(widgetCompanyId),
+        hasIndustry: !!widgetIndustry,
+      });
+      await supabaseAdmin
+        .from('conversations')
+        .update({ ai_generating: false })
+        .eq('id', conversation_id);
+      return new Response(JSON.stringify({
+        success: true,
+        reply: '很抱歉，系統暫時無法查詢知識庫。讓我為您轉接客服人員。',
+        no_answer: true,
+        handoff_required: true,
+        trace_metadata: { rag_api_status: 'scope_unavailable' },
+      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
+
+    // Get the latest user message for RAG query
+    const { data: latestMsgs } = await supabaseAdmin
+      .from('messages')
+      .select('content')
+      .eq('conversation_id', conversation_id)
+      .eq('role', 'user')
+      .order('created_at', { ascending: false })
+      .limit(1);
+    const userQuery = latestMsgs?.[0]?.content ?? '';
+
+    if (!userQuery) {
+      ragResult = { success: true, no_answer: true, retrieval_quality: 'failed', chunks: [] };
+    } else {
+      ragResult = await callKBAdapter(conversation_id, userQuery, {
+        company_id: widgetCompanyId,
+        industry: widgetIndustry,
+        language: demoLanguage,
+      });
+    }
+
+    // — L5 Safety Checks (Demo-only, inline) —
+    if (!ragResult || !ragResult.success) {
+      console.error('[CRITICAL] KB RAG API failure', { conversation_id, code: 'KB_API_FAIL' });
+      await supabaseAdmin
+        .from('conversations')
+        .update({ ai_generating: false })
+        .eq('id', conversation_id);
+      return new Response(JSON.stringify({
+        success: true,
+        reply: '系統暫時無法查詢知識庫，讓我為您轉接客服人員。',
+        no_answer: true,
+        handoff_required: true,
+        trace_metadata: { rag_api_status: 'failure' },
+      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    if (ragResult.no_answer || !ragResult.chunks || ragResult.chunks.length === 0) {
+      console.warn('[generate-reply] KB no results', { conversation_id, code: 'KB_EMPTY' });
+      await supabaseAdmin
+        .from('conversations')
+        .update({ ai_generating: false })
+        .eq('id', conversation_id);
+      return new Response(JSON.stringify({
+        success: true,
+        reply: '很抱歉，我目前無法確定答案。讓我為您轉接客服人員，以提供更準確的協助。',
+        no_answer: true,
+        handoff_required: true,
+        trace_metadata: { rag_api_status: 'success_empty' },
+      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    // L5 Score threshold + scope filter (client-side double-check)
+    const HIGH_RISK_KEYWORDS = ['退款','退貨','賠償','補償','refund','return','compensation',
+      '法律','合約','條款','legal','contract','terms',
+      '醫療','藥品','治療','medical','medicine','treatment',
+      '隱私','個資','資料保護','privacy','personal data','GDPR',
+      '投資','理財','金融','investment','financial','finance'];
+    const isHighRisk = HIGH_RISK_KEYWORDS.some(kw => userQuery.toLowerCase().includes(kw.toLowerCase()));
+    const minScore = isHighRisk ? 0.85 : 0.75;
+
+    const usableChunks = ragResult.chunks.filter(c => {
+      if (!c.score || c.score < minScore) return false;
+      if (c.status && c.status !== 'published') return false;
+      if (c.company_id !== undefined && c.company_id !== widgetCompanyId) return false;
+      if (c.industry && c.industry !== widgetIndustry) return false;
+      return true;
+    });
+
+    const traceMetadata = {
+      rag_api_status: 'success',
+      total_results: ragResult.chunks.length,
+      filtered_results: usableChunks.length,
+      min_score_used: usableChunks.length > 0 ? Math.min(...usableChunks.map(c => c.score ?? 0)) : null,
+      max_score_used: usableChunks.length > 0 ? Math.max(...usableChunks.map(c => c.score ?? 0)) : null,
+      high_risk_topic: isHighRisk,
+      min_threshold: minScore,
+      citations: usableChunks.map(c => ({
+        doc_id: c.doc_id, chunk_id: c.chunk_id, title: c.title, score: c.score, source_type: c.source_type,
+      })),
+    };
+    ragResult.trace_metadata = traceMetadata;
+
+    if (usableChunks.length === 0) {
+      console.warn('[generate-reply] KB all results below threshold', {
+        conversation_id, minScore, isHighRisk, code: 'KB_LOW_SCORE',
+      });
+      await supabaseAdmin
+        .from('conversations')
+        .update({ ai_generating: false })
+        .eq('id', conversation_id);
+      return new Response(JSON.stringify({
+        success: true,
+        reply: isHighRisk
+          ? '這個問題涉及重要政策，為確保您獲得準確資訊，讓我為您轉接客服人員。'
+          : '很抱歉，我目前無法確定答案。讓我為您轉接客服人員，以提供更準確的協助。',
+        no_answer: true,
+        handoff_required: true,
+        trace_metadata: traceMetadata,
+      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    ragResult.chunks = usableChunks;
+    ragResult.no_answer = false;
   }
 
   // Step 5: Tool registration — NOT in L5c Gate A.
@@ -536,13 +679,26 @@ function buildMaskedContextBlock(
 }
 
 function buildRagBlock(
-  ragResult: { success: boolean; chunks?: Array<{ short_snippet?: string }> } | null,
+  ragResult: {
+    success: boolean;
+    chunks?: Array<{
+      title?: string;
+      content?: string;
+      score?: number;
+      source_type?: string;
+      short_snippet?: string;
+    }>;
+  } | null,
 ): string {
   if (!ragResult || !ragResult.success || !ragResult.chunks?.length) return '';
   const snippets = ragResult.chunks
-    .map((c, i) => `[${i + 1}] ${(c.short_snippet ?? '').slice(0, 300)}`)
-    .join('\n');
-  return `Knowledge base context:\n${snippets}`;
+    .map((c, i) => {
+      const text = c.content ?? c.short_snippet ?? '';
+      const source = c.title ? `[Source: ${c.title}]` : `[${i + 1}]`;
+      return `${source}\n${text.slice(0, 500)}`;
+    })
+    .join('\n\n');
+  return `You MUST answer ONLY based on the following knowledge base evidence.\nDo NOT add information not present in the evidence.\nIf the evidence does not fully answer the question, say so and offer to connect to a human agent.\n\nEvidence:\n${snippets}`;
 }
 
 // Pseudonymize an opaque customer_ref for prompt/log use. Not cryptographic;
@@ -580,15 +736,96 @@ async function callCustomer360Adapter(_conversation_id: string): Promise<{
   return { success: false };
 }
 
-async function callKBAdapter(_conversation_id: string, _message: string): Promise<{
+async function callKBAdapter(
+  _conversation_id: string,
+  userMessage: string,
+  scope: { company_id: number; industry: string; language: string },
+): Promise<{
   success: boolean;
   no_answer?: boolean;
   retrieval_quality?: 'high' | 'medium' | 'low' | 'failed';
-  chunks?: Array<{ id?: string; source?: string; score?: number; short_snippet?: string }>;
-  query_text_redacted?: string;
+  chunks?: Array<{
+    doc_id?: string;
+    chunk_id?: string;
+    title?: string;
+    content?: string;
+    score?: number;
+    industry?: string;
+    company_id?: number;
+    language?: string;
+    status?: string;
+    source_type?: string;
+    published_at?: string;
+    updated_at?: string;
+  }>;
+  query_text_preview?: string;
 }> {
-  // TODO L5c: POST to kb-adapter with KB_INTERNAL_SERVICE_TOKEN.
-  return { success: false, no_answer: true, retrieval_quality: 'failed' };
+  const KB_RAG_ENDPOINT = Deno.env.get('KB_RAG_ENDPOINT');
+  const KB_RAG_TOKEN = Deno.env.get('KB_RAG_TOKEN');
+
+  if (!KB_RAG_ENDPOINT || !KB_RAG_TOKEN) {
+    console.error('[CRITICAL] KB_RAG_ENDPOINT or KB_RAG_TOKEN not set');
+    return { success: false, no_answer: true, retrieval_quality: 'failed' };
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+    const response = await fetch(`${KB_RAG_ENDPOINT}/api/kb/rag-search`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${KB_RAG_TOKEN}`,
+      },
+      body: JSON.stringify({
+        query: userMessage,
+        company_id: scope.company_id,
+        industry: scope.industry,
+        language: scope.language,
+        status: 'published',
+        top_k: 5,
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      console.error('[CRITICAL] KB RAG API HTTP error', { status: response.status });
+      return { success: false, no_answer: true, retrieval_quality: 'failed' };
+    }
+
+    const data = await response.json();
+
+    if (!data.ok || !data.results || data.results.length === 0) {
+      return {
+        success: true,
+        no_answer: true,
+        retrieval_quality: 'failed',
+        chunks: [],
+        query_text_preview: userMessage.slice(0, 100),
+      };
+    }
+
+    return {
+      success: true,
+      no_answer: false,
+      retrieval_quality: 'high',
+      chunks: data.results,
+      query_text_preview: userMessage.slice(0, 100),
+    };
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      console.error('[CRITICAL] KB RAG API timeout', { code: 'KB_TIMEOUT' });
+    } else {
+      console.error('[CRITICAL] KB RAG API failure', {
+        code: 'KB_FETCH_ERROR',
+        name: error instanceof Error ? error.name : 'UnknownError',
+      });
+    }
+    return { success: false, no_answer: true, retrieval_quality: 'failed' };
+  }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
