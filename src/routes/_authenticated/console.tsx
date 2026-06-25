@@ -198,7 +198,7 @@ function ConsoleLayout() {
               </div>
               <div style={{ padding: '7px 12px 9px', borderBottom: '0.5px solid #e8e6e0', display: 'flex', gap: 4, flexWrap: 'wrap', background: '#ffffff', flexShrink: 0 }}>
                 {ROLES.map(r => (
-                  <button key={r.key} onClick={() => setDemoRole(r.key)}
+                  <button key={r.key} onClick={() => setDemoRole(r.key as string)}
                     style={{
                       fontSize: 10, fontWeight: demoRole === r.key ? 700 : 600,
                       padding: '3px 9px', borderRadius: 20, border: 'none', cursor: 'pointer', transition: 'all 0.15s',
