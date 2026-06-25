@@ -772,7 +772,7 @@ async function callKBAdapter(
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 15000);
 
-    const response = await fetch(`${KB_RAG_ENDPOINT}/api/kb/rag-search`, {
+    const response = await fetch(`${KB_RAG_ENDPOINT}/kb/rag-search`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
