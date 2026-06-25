@@ -22,15 +22,27 @@ type Conv = {
   latest_preview: string;
 };
 
-const STATUS_TABS = ["all", "open", "pending", "unresolved", "resolved"] as const;
+const STATUS_TABS = ["all", "open", "human_needed", "pending", "unresolved", "resolved"] as const;
 type StatusTab = (typeof STATUS_TABS)[number];
 
 const STATUS_COLORS: Record<string, string> = {
   open: "bg-blue-500/15 text-blue-700 dark:text-blue-300",
+  human_needed: "bg-red-500/15 text-red-700 dark:text-red-300",
   pending: "bg-yellow-500/15 text-yellow-700 dark:text-yellow-300",
   unresolved: "bg-red-500/15 text-red-700 dark:text-red-300",
   resolved: "bg-gray-500/15 text-gray-700 dark:text-gray-300",
 };
+
+const HANDOFF_KEYWORDS = [
+  'human', 'handoff', 'agent', 'operator', 'staff', 'support',
+  'speak with', 'talk to', '人工', '轉人工', '真人', '客服', '職員', '專員',
+];
+
+function isHumanNeeded(c: Conv): boolean {
+  if (['pending', 'unresolved', 'human_needed'].includes(c.status)) return true;
+  const preview = (c.latest_preview || '').toLowerCase();
+  return HANDOFF_KEYWORDS.some(kw => preview.includes(kw.toLowerCase()));
+}
 
 function relTime(iso: string) {
   const diff = Date.now() - new Date(iso).getTime();
@@ -123,14 +135,25 @@ function ConversationsList() {
     return () => clearInterval(t);
   }, []);
 
+  const humanNeededCount = useMemo(() => {
+    if (!conversations) return 0;
+    return conversations.filter(c => isHumanNeeded(c)).length;
+  }, [conversations]);
+
   const filtered = useMemo(() => {
     if (!conversations) return null;
     if (tab === "all") return conversations;
+    if (tab === "human_needed") return conversations.filter(c => isHumanNeeded(c));
     return conversations.filter((c) => c.status === tab);
   }, [conversations, tab]);
 
   return (
     <div className="space-y-4">
+      <div style={{ display: 'flex', gap: 16, padding: '8px 0', fontSize: 12, color: '#555' }}>
+        <span><b style={{ color: '#2563eb' }}>{conversations?.filter(c => c.status === 'open').length || 0}</b> Open</span>
+        <span><b style={{ color: '#dc2626' }}>{humanNeededCount}</b> Human Needed</span>
+        <span><b style={{ color: '#6b7280' }}>{conversations?.filter(c => c.status === 'resolved').length || 0}</b> Resolved</span>
+      </div>
       <div>
         <h1 className="text-2xl font-semibold">Conversations</h1>
         <p className="text-sm text-muted-foreground">Inbox of recent visitor conversations.</p>
@@ -173,6 +196,11 @@ function ConversationsList() {
             <Badge className={STATUS_COLORS[c.status] || ""} variant="secondary">
               {c.status}
             </Badge>
+            {isHumanNeeded(c) && c.status !== 'human_needed' && (
+              <Badge className="bg-red-500/15 text-red-700" variant="secondary">
+                🔴 Human Needed
+              </Badge>
+            )}
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 text-sm font-medium">
                 <span>#{(c.visitor_session?.id || c.id).slice(0, 8)}</span>
