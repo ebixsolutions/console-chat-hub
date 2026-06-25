@@ -203,10 +203,11 @@ const CUSTOMERS = [
   },
 ];
 
-const TABS = ['profile', 'conversations', 'orders', 'products', 'payments', 'emotion'];
+const TABS = ['profile', 'conversations', 'orders', 'products', 'payments', 'emotion', 'trust', 'followup', 'predictions'];
 const TAB_LABELS: Record<string, string> = {
   profile: 'Profile', conversations: 'Conversations', orders: 'Orders', products: 'Products Bought',
   payments: 'Payments', emotion: 'Emotion Journey',
+  trust: 'Trust Score', followup: 'Follow-up Plan', predictions: 'Predictions',
 };
 
 const orderStatusColor = (s: string) => {
@@ -529,6 +530,131 @@ function EmotionJourneyTab({ cust }: { cust: typeof CUSTOMERS[0] }) {
   );
 }
 
+function TrustScoreTab({ cust }: { cust: typeof CUSTOMERS[0] }) {
+  const ts = cust.trust;
+  const history = cust.trustHistory || [];
+  const events = cust.trustEvents || [];
+  const score = ts.trust_score ?? 0;
+  const scoreColor = score >= 75 ? '#16a34a' : score >= 50 ? '#d97706' : '#dc2626';
+  const eventTypeStyle: Record<string, { bg: string; color: string; label: string }> = {
+    'human_takeover': { bg: '#dbeafe', color: '#2563eb', label: '↗ Human Takeover' },
+    'resolution_success': { bg: '#dcfce7', color: '#16a34a', label: '✓ Resolution' },
+    'escalation': { bg: '#fee2e2', color: '#dc2626', label: '× Policy Error' },
+  };
+  const eventBorderColor: Record<string, string> = { 'human_takeover': '#2563eb', 'resolution_success': '#16a34a', 'escalation': '#dc2626' };
+  return (
+    <div>
+      <SummaryBar items={[
+        { label: 'Current Trust Score', value: score, color: scoreColor },
+        { label: 'Total Interactions', value: ts.total_interactions ?? 0 },
+        { label: 'Resolved Without Human', value: `${ts.resolved_without_human ?? 0}%` },
+        { label: 'Score Change', value: `${(ts.score_change ?? 0) >= 0 ? '+' : ''}${ts.score_change ?? 0} pts`, color: (ts.score_change ?? 0) >= 0 ? '#16a34a' : '#dc2626' },
+      ]} />
+      <div style={{ background: '#fff', borderRadius: 12, padding: '16px 20px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)', marginBottom: 12 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: '#0f172a', marginBottom: 12 }}>Trust Score History</div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', height: 80 }}>
+          {history.map((h: { date: string; score: number }, i: number) => (
+            <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+              <div style={{ width: '100%', background: h.score >= 75 ? '#16a34a' : h.score >= 50 ? '#d97706' : '#dc2626', borderRadius: 3, height: `${h.score * 0.7}%`, minHeight: 4 }} />
+              <div style={{ fontSize: 9, color: '#94a3b8', whiteSpace: 'nowrap' as const }}>{h.date}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div style={{ fontSize: 12, fontWeight: 600, color: '#0f172a', marginBottom: 8 }}>Trust Score Events <span style={{ background: '#f1f5f9', color: '#64748b', fontSize: 11, padding: '2px 7px', borderRadius: 4 }}>{events.length}</span></div>
+      {events.length === 0
+        ? <div style={{ textAlign: 'center', padding: '40px', color: '#94a3b8', fontSize: 13 }}>📭 No trust score events.</div>
+        : events.map((ev: { date: string; type: string; desc: string; from: number; to: number; delta: number; qa: number; status: string }, i: number) => {
+          const et = eventTypeStyle[ev.type] || { bg: '#f1f5f9', color: '#64748b', label: ev.type };
+          return (
+            <div key={i} style={{ background: '#fff', borderRadius: 12, padding: '14px 16px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)', marginBottom: 12, borderLeft: `3px solid ${eventBorderColor[ev.type] || '#94a3b8'}` }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 4 }}>{ev.date}</div>
+                  <div style={{ fontSize: 13, color: '#0f172a', marginBottom: 8 }}>{ev.desc}</div>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' as const }}>
+                    <span style={{ background: et.bg, color: et.color, fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 4 }}>{et.label}</span>
+                    <span style={{ fontSize: 10, color: '#64748b' }}>QA: <b style={{ color: ev.qa >= 75 ? '#16a34a' : ev.qa >= 60 ? '#d97706' : '#dc2626' }}>{ev.qa}</b></span>
+                    <span style={{ background: ev.status === 'AI resolved' ? '#dcfce7' : '#dbeafe', color: ev.status === 'AI resolved' ? '#16a34a' : '#2563eb', fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 4 }}>{ev.status}</span>
+                  </div>
+                </div>
+                <div style={{ textAlign: 'right', minWidth: 80, marginLeft: 16 }}>
+                  <div style={{ fontSize: 12, color: '#64748b' }}><span style={{ fontWeight: 600, color: '#0f172a' }}>{ev.from}</span> → <span style={{ fontWeight: 700, color: ev.delta < 0 ? '#dc2626' : '#16a34a' }}>{ev.to}</span></div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: ev.delta < 0 ? '#dc2626' : '#16a34a' }}>{ev.delta >= 0 ? '+' : ''}{ev.delta}</div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+    </div>
+  );
+}
+
+function FollowUpPlanTab({ cust }: { cust: typeof CUSTOMERS[0] }) {
+  const [filter, setFilter] = useState('All');
+  const [plans, setPlans] = useState(cust.followups || []);
+  const pending = plans.filter((p: { status: string }) => p.status === 'Pending').length;
+  const filtered = filter === 'All' ? plans : plans.filter((p: { status: string }) => p.status === filter);
+  const markDone = (id: string) => setPlans((prev: typeof plans) => prev.map((p: { id: string; status: string }) => p.id === id ? { ...p, status: 'Completed' } : p));
+  const tagStyle: Record<string, { bg: string; color: string }> = { 'Retain VIP': { bg: '#dbeafe', color: '#2563eb' }, 'Escalation': { bg: '#fee2e2', color: '#dc2626' } };
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 14, fontWeight: 700, color: '#0f172a' }}>Follow-up Plan</span>
+          <span style={{ background: '#fef3c7', color: '#d97706', fontSize: 11, fontWeight: 700, padding: '2px 9px', borderRadius: 999 }}>{pending} pending</span>
+        </div>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {['All', 'Pending', 'Completed'].map(f => <button key={f} onClick={() => setFilter(f)} style={{ fontSize: 12, fontWeight: 600, padding: '5px 12px', borderRadius: 6, border: 'none', cursor: 'pointer', background: filter === f ? '#0f172a' : '#f1f5f9', color: filter === f ? '#fff' : '#64748b' }}>{f}</button>)}
+        </div>
+      </div>
+      {filtered.length === 0
+        ? <div style={{ textAlign: 'center', padding: '40px', color: '#94a3b8', fontSize: 13 }}>📭 No follow-up plans.</div>
+        : filtered.map((plan: { id: string; tag: string; status: string; action: string; timing: string }) => {
+          const ts = tagStyle[plan.tag] || { bg: '#f1f5f9', color: '#64748b' };
+          const statusStyle = plan.status === 'Completed' ? { bg: '#dcfce7', color: '#16a34a' } : { bg: '#fef3c7', color: '#d97706' };
+          return (
+            <div key={plan.id} style={{ background: '#fff', borderRadius: 12, padding: '16px 20px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)', marginBottom: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <span style={{ background: ts.bg, color: ts.color, fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 4 }}>{plan.tag}</span>
+                <span style={{ background: statusStyle.bg, color: statusStyle.color, fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 4 }}>{plan.status}</span>
+              </div>
+              <div style={{ fontSize: 13, color: plan.status === 'Completed' ? '#94a3b8' : '#0f172a', marginBottom: 6, textDecoration: plan.status === 'Completed' ? 'line-through' : 'none' }}>{plan.action}</div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: 12, color: '#64748b' }}>⏱ {plan.timing}</span>
+                {plan.status === 'Pending' && <button onClick={() => markDone(plan.id)} style={{ fontSize: 12, fontWeight: 500, padding: '4px 12px', borderRadius: 6, border: '1px solid #e8e6e0', background: '#fff', color: '#0f172a', cursor: 'pointer' }}>Mark done</button>}
+              </div>
+            </div>
+          );
+        })}
+    </div>
+  );
+}
+
+function PredictionsTab({ cust }: { cust: typeof CUSTOMERS[0] }) {
+  const preds = cust.predictions || [];
+  return (
+    <div>
+      {preds.length === 0
+        ? <div style={{ textAlign: 'center', padding: '40px', color: '#94a3b8', fontSize: 13 }}>📭 No predictions available.</div>
+        : preds.map((p: { type: string; status: string; desc: string; churn: string; channel: string; scheduled: string }, i: number) => (
+          <div key={i} style={{ background: '#fff', borderRadius: 12, padding: '16px 20px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)', marginBottom: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <span style={{ fontSize: 14, fontWeight: 700, color: '#0f172a' }}>{p.type}</span>
+              <span style={{ background: '#fef3c7', color: '#d97706', fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 4 }}>{p.status}</span>
+            </div>
+            <div style={{ fontSize: 13, color: '#475569', marginBottom: 10 }}>{p.desc}</div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' as const }}>
+              <span style={{ background: '#fee2e2', color: '#dc2626', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 4 }}>Churn: {p.churn}</span>
+              <span style={{ background: '#f3e8ff', color: '#7c3aed', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 4 }}>{p.channel}</span>
+              <span style={{ fontSize: 11, color: '#64748b' }}>📅 {p.scheduled}</span>
+            </div>
+          </div>
+        ))}
+    </div>
+  );
+}
+
 // ─── Main Page ───────────────────────────────────────────────────────────────
 function Customer360Page() {
   const [selectedId, setSelectedId] = useState('cust-001');
@@ -709,6 +835,9 @@ function Customer360Page() {
             {activeTab === 'products' && <ProductsTab cust={selected} />}
             {activeTab === 'payments' && <PaymentsTab cust={selected} />}
             {activeTab === 'emotion' && <EmotionJourneyTab cust={selected} />}
+            {activeTab === 'trust' && <TrustScoreTab cust={selected} />}
+            {activeTab === 'followup' && <FollowUpPlanTab key={selectedId} cust={selected} />}
+            {activeTab === 'predictions' && <PredictionsTab cust={selected} />}
           </div>
         </div>
       </div>
