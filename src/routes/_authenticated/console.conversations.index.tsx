@@ -196,6 +196,11 @@ function ConversationsList() {
             <Badge className={STATUS_COLORS[c.status] || ""} variant="secondary">
               {c.status}
             </Badge>
+            {isHumanNeeded(c) && c.status !== 'human_needed' && (
+              <Badge className="bg-red-500/15 text-red-700" variant="secondary">
+                🔴 Human Needed
+              </Badge>
+            )}
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 text-sm font-medium">
                 <span>#{(c.visitor_session?.id || c.id).slice(0, 8)}</span>
