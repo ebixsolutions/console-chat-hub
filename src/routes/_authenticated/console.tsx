@@ -226,7 +226,7 @@ function ConsoleLayout() {
                     </div>
                   )}
                   {!groupCollapsed && g.items.filter(item => !(item as any).adminOnly || showSettingsGroup).map(item => {
-                    const active = pathname === item.path || (item.path === '/console' && isConvDetail);
+                    const active = pathname === item.path || pathname.startsWith(item.path + '/');
                     return (
                       <Link key={item.path} to={item.path as any} title={collapsed ? t(item.navKey) : ''}
                         style={{
