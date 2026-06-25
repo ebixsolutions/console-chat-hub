@@ -135,9 +135,15 @@ function ConversationsList() {
     return () => clearInterval(t);
   }, []);
 
+  const humanNeededCount = useMemo(() => {
+    if (!conversations) return 0;
+    return conversations.filter(c => isHumanNeeded(c)).length;
+  }, [conversations]);
+
   const filtered = useMemo(() => {
     if (!conversations) return null;
     if (tab === "all") return conversations;
+    if (tab === "human_needed") return conversations.filter(c => isHumanNeeded(c));
     return conversations.filter((c) => c.status === tab);
   }, [conversations, tab]);
 
