@@ -16,7 +16,7 @@ type Conv = {
   assigned_agent_id: string | null;
   assigned_agent_name: string;
   channel_config: { name: string } | null;
-  visitor_session: { id: string } | null;
+  visitor_session: { id: string; visitor_metadata?: unknown | null } | null;
   latest_preview: string;
 };
 
