@@ -103,7 +103,7 @@ function ConversationsList() {
       .select(`
         id, status, priority, updated_at, created_at, assigned_agent_id,
         channel_config:channel_config_id(name),
-        visitor_session:visitor_session_id(id)
+        visitor_session:visitor_session_id(id, visitor_metadata)
       `)
       .order("updated_at", { ascending: false })
       .limit(50);
