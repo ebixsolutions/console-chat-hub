@@ -167,6 +167,7 @@ function ConversationsList() {
     if (search.trim()) {
       const q = search.toLowerCase();
       list = list.filter(c =>
+        getVisitorLabel(c).toLowerCase().includes(q) ||
         (c.visitor_session?.id || c.id).toLowerCase().includes(q) ||
         c.latest_preview.toLowerCase().includes(q) ||
         (c.channel_config?.name || '').toLowerCase().includes(q)
