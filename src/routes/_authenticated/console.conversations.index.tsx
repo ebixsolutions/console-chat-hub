@@ -16,7 +16,7 @@ type Conv = {
   assigned_agent_id: string | null;
   assigned_agent_name: string;
   channel_config: { name: string } | null;
-  visitor_session: { id: string } | null;
+  visitor_session: { id: string; visitor_metadata?: unknown | null } | null;
   latest_preview: string;
 };
 
@@ -51,6 +51,21 @@ function relTime(iso: string) {
   const h = Math.floor(m / 60);
   if (h < 24) return `${h}h ago`;
   return `${Math.floor(h / 24)}d ago`;
+}
+
+function getVisitorLabel(c: Conv): string {
+  const rawMeta = c.visitor_session?.visitor_metadata;
+  const meta =
+    rawMeta && typeof rawMeta === 'object' && !Array.isArray(rawMeta)
+      ? (rawMeta as Record<string, unknown>)
+      : {};
+  const name = typeof meta.name === 'string' ? meta.name.trim() : '';
+  const email = typeof meta.email === 'string' ? meta.email.trim() : '';
+  const shortId = (c.visitor_session?.id || c.id).slice(0, 8);
+  const channel = c.channel_config?.name || 'Visitor';
+  if (name) return name;
+  if (email) return email;
+  return `${channel} Visitor #${shortId}`;
 }
 
 // ─── Status badge mapping (Base44 aligned) ───────────────────────────────────
@@ -88,7 +103,7 @@ function ConversationsList() {
       .select(`
         id, status, priority, updated_at, created_at, assigned_agent_id,
         channel_config:channel_config_id(name),
-        visitor_session:visitor_session_id(id)
+        visitor_session:visitor_session_id(id, visitor_metadata)
       `)
       .order("updated_at", { ascending: false })
       .limit(50);
@@ -152,6 +167,7 @@ function ConversationsList() {
     if (search.trim()) {
       const q = search.toLowerCase();
       list = list.filter(c =>
+        getVisitorLabel(c).toLowerCase().includes(q) ||
         (c.visitor_session?.id || c.id).toLowerCase().includes(q) ||
         c.latest_preview.toLowerCase().includes(q) ||
         (c.channel_config?.name || '').toLowerCase().includes(q)
@@ -261,7 +277,7 @@ function ConversationsList() {
                 {/* Row 1: customer id + time */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
                   <span style={{ fontSize: 12, fontWeight: 600, color: active ? '#fff' : '#1a1a1a' }}>
-                    #{(c.visitor_session?.id || c.id).slice(0, 8)}
+                    {getVisitorLabel(c)}
                   </span>
                   <span style={{ fontSize: 10, color: slaBreached ? '#ef4444' : (active ? 'rgba(255,255,255,0.5)' : '#888'), fontWeight: slaBreached ? 600 : 400 }}>
                     {c.updated_at ? relTime(c.updated_at) : '—'}
