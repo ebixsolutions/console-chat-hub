@@ -53,6 +53,7 @@ function relTime(iso: string) {
   return `${Math.floor(h / 24)}d ago`;
 }
 
+
 function getVisitorLabel(c: Conv): string {
   const rawMeta = c.visitor_session?.visitor_metadata;
   const meta =
@@ -96,7 +97,7 @@ function ConversationsList() {
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  // ── Data fetching (preserved from original) ──────────────────────────
+  // ── Data fetching (100% preserved from original) ──────────────────────────
   async function load() {
     const { data: convs, error: cErr } = await supabase
       .from("conversations")
@@ -190,130 +191,172 @@ function ConversationsList() {
     whiteSpace: 'nowrap' as const,
   });
 
-  // ─── Render ───────────────────────────────────────────────────────────────
+  // ─── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", background: '#fff' }}>
+    <div style={{ display: 'flex', height: '100%', overflow: 'hidden', background: '#f5f4f0', fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}>
 
-      {/* Stats bar — Base44 QueuePanel style */}
-      <div style={{ padding: '10px 12px', borderBottom: '0.5px solid #e8e6e0', flexShrink: 0 }}>
-        <div style={{ display: 'flex', gap: 12, fontSize: 10.5, color: '#555' }}>
-          <span><b style={{ color: '#991b1b' }}>{stats.pending_human}</b> Pending</span>
-          <span><b style={{ color: '#92400e' }}>{stats.high_priority}</b> High</span>
-          <span><b style={{ color: '#6d28d9' }}>{stats.human_control}</b> Human</span>
-          <span><b style={{ color: '#065f46' }}>{stats.ai_handling}</b> AI</span>
+      {/* LEFT COLUMN: Live QueuePanel — all Phase-1 logic preserved */}
+      <div style={{ width: 320, flexShrink: 0, background: '#fff', borderRight: '0.5px solid #e8e6e0', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+
+        {/* Stats bar */}
+        <div style={{ padding: '10px 12px', borderBottom: '0.5px solid #e8e6e0', flexShrink: 0 }}>
+          <div style={{ display: 'flex', gap: 12, fontSize: 10.5, color: '#555' }}>
+            <span><b style={{ color: '#991b1b' }}>{stats.pending_human}</b> Pending</span>
+            <span><b style={{ color: '#92400e' }}>{stats.high_priority}</b> High</span>
+            <span><b style={{ color: '#6d28d9' }}>{stats.human_control}</b> Human</span>
+            <span><b style={{ color: '#065f46' }}>{stats.ai_handling}</b> AI</span>
+          </div>
         </div>
-      </div>
 
-      {/* Search */}
-      <div style={{ padding: '8px 12px', borderBottom: '0.5px solid #e8e6e0', flexShrink: 0 }}>
-        <input
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="🔍 Search conversations..."
-          style={{ width: '100%', fontSize: 11.5, padding: '6px 9px', borderRadius: 8, border: '0.5px solid #e8e6e0', background: '#f5f4f0', outline: 'none', boxSizing: 'border-box' }}
-        />
-      </div>
-
-      {/* Filter chips — Base44 QueuePanel aligned */}
-      <div style={{ padding: '8px 12px', borderBottom: '0.5px solid #e8e6e0', display: 'flex', flexWrap: 'wrap', gap: 4, flexShrink: 0 }}>
-        {FILTERS.map(f => (
-          <button
-            key={f.label}
-            onClick={() => setFilter(f.key)}
-            style={chipStyle(filter === f.key, f.key === 'unresolved')}
-          >
-            {f.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Count */}
-      <div style={{ padding: '5px 12px', fontSize: 10, color: '#888', borderBottom: '0.5px solid #e8e6e0', flexShrink: 0 }}>
-        Showing {filtered?.length ?? 0} conversation{filtered?.length !== 1 ? 's' : ''}
-      </div>
-
-      {/* Error */}
-      {error && (
-        <div style={{ margin: '8px 12px', padding: '8px 10px', background: '#fee2e2', border: '0.5px solid #fca5a5', borderRadius: 8, fontSize: 11, color: '#991b1b', flexShrink: 0 }}>
-          {error}
+        {/* Search */}
+        <div style={{ padding: '8px 12px', borderBottom: '0.5px solid #e8e6e0', flexShrink: 0 }}>
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="🔍 Search conversations..."
+            style={{ width: '100%', fontSize: 11.5, padding: '6px 9px', borderRadius: 8, border: '0.5px solid #e8e6e0', background: '#f5f4f0', outline: 'none', boxSizing: 'border-box' as const }}
+          />
         </div>
-      )}
 
-      {/* Conversation list */}
-      <div style={{ flex: 1, overflowY: 'auto' }}>
-        {filtered === null && (
-          <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {Array.from({ length: 5 }).map((_, i) => (
-              <div key={i} style={{ height: 64, borderRadius: 8, background: '#f1f5f9', animation: 'pulse 1.5s infinite' }} />
-            ))}
+        {/* Filter chips */}
+        <div style={{ padding: '8px 12px', borderBottom: '0.5px solid #e8e6e0', display: 'flex', flexWrap: 'wrap' as const, gap: 4, flexShrink: 0 }}>
+          {FILTERS.map(f => (
+            <button
+              key={f.label}
+              onClick={() => setFilter(f.key)}
+              style={chipStyle(filter === f.key, f.key === 'unresolved')}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Count */}
+        <div style={{ padding: '5px 12px', fontSize: 10, color: '#888', borderBottom: '0.5px solid #e8e6e0', flexShrink: 0 }}>
+          Showing {filtered?.length ?? 0} conversation{filtered?.length !== 1 ? 's' : ''}
+        </div>
+
+        {/* Error */}
+        {error && (
+          <div style={{ margin: '8px 12px', padding: '8px 10px', background: '#fee2e2', border: '0.5px solid #fca5a5', borderRadius: 8, fontSize: 11, color: '#991b1b', flexShrink: 0 }}>
+            {error}
           </div>
         )}
-        {filtered && filtered.length === 0 && (
-          <div style={{ padding: 40, textAlign: 'center', fontSize: 12, color: '#888' }}>No conversations found</div>
-        )}
-        {filtered?.map(c => {
-          const active = c.id === selectedId;
-          const humanNeeded = isHumanNeeded(c);
-          const slaBreached = c.priority === 'high' && humanNeeded;
-          return (
-            <Link
-              key={c.id}
-              to="/console/conversations/$id"
-              params={{ id: c.id }}
-              onClick={() => setSelectedId(c.id)}
-              style={{ textDecoration: 'none', display: 'block' }}
-            >
-              <div
-                style={{
-                  padding: '10px 12px',
-                  borderBottom: '0.5px solid #e8e6e0',
-                  cursor: 'pointer',
-                  background: active ? '#1a1a1a' : '#fff',
-                  transition: 'background 0.1s',
-                }}
-                onMouseEnter={e => { if (!active) (e.currentTarget as HTMLDivElement).style.background = '#f5f4f0'; }}
-                onMouseLeave={e => { if (!active) (e.currentTarget as HTMLDivElement).style.background = '#fff'; }}
+
+        {/* Conversation list */}
+        <div style={{ flex: 1, overflowY: 'auto' }}>
+          {filtered === null && (
+            <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} style={{ height: 64, borderRadius: 8, background: '#f1f5f9' }} />
+              ))}
+            </div>
+          )}
+          {filtered && filtered.length === 0 && (
+            <div style={{ padding: 40, textAlign: 'center', fontSize: 12, color: '#888' }}>No conversations found</div>
+          )}
+          {filtered?.map(c => {
+            const active = c.id === selectedId;
+            const humanNeeded = isHumanNeeded(c);
+            const slaBreached = c.priority === 'high' && humanNeeded;
+            return (
+              <Link
+                key={c.id}
+                to="/console/conversations/$id"
+                params={{ id: c.id }}
+                onClick={() => setSelectedId(c.id)}
+                style={{ textDecoration: 'none', display: 'block' }}
               >
-                {/* Row 1: customer id + time */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
-                  <span style={{ fontSize: 12, fontWeight: 600, color: active ? '#fff' : '#1a1a1a' }}>
-                    {getVisitorLabel(c)}
-                  </span>
-                  <span style={{ fontSize: 10, color: slaBreached ? '#ef4444' : (active ? 'rgba(255,255,255,0.5)' : '#888'), fontWeight: slaBreached ? 600 : 400 }}>
-                    {c.updated_at ? relTime(c.updated_at) : '—'}
-                    {slaBreached && ' ⚠ SLA'}
-                  </span>
-                </div>
-
-                {/* Row 2: preview */}
-                <div style={{ fontSize: 11, marginBottom: 5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: active ? 'rgba(255,255,255,0.6)' : '#555' }}>
-                  {c.latest_preview}
-                </div>
-
-                {/* Row 3: badges */}
-                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-                  <StatusBadge status={c.status} />
-                  {humanNeeded && c.status !== 'human_needed' && (
-                    <span style={{ background: active ? 'rgba(239,68,68,0.3)' : '#fee2e2', color: active ? '#fca5a5' : '#991b1b', fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 20 }}>
-                      🔴 Human Needed
+                <div
+                  style={{
+                    padding: '10px 12px',
+                    borderBottom: '0.5px solid #e8e6e0',
+                    cursor: 'pointer',
+                    background: active ? '#1a1a1a' : '#fff',
+                    transition: 'background 0.1s',
+                  }}
+                  onMouseEnter={e => { if (!active) (e.currentTarget as HTMLDivElement).style.background = '#f5f4f0'; }}
+                  onMouseLeave={e => { if (!active) (e.currentTarget as HTMLDivElement).style.background = '#fff'; }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: active ? '#fff' : '#1a1a1a' }}>
+                      {getVisitorLabel(c)}
                     </span>
-                  )}
-                  {c.channel_config?.name && (
-                    <span style={{ background: active ? 'rgba(255,255,255,0.15)' : '#f0efe9', color: active ? '#fff' : '#555', fontSize: 10, padding: '2px 8px', borderRadius: 20 }}>
-                      {c.channel_config.name}
+                    <span style={{ fontSize: 10, color: slaBreached ? '#ef4444' : (active ? 'rgba(255,255,255,0.5)' : '#888'), fontWeight: slaBreached ? 600 : 400 }}>
+                      {c.updated_at ? relTime(c.updated_at) : '—'}
+                      {slaBreached && ' ⚠ SLA'}
                     </span>
-                  )}
+                  </div>
+                  <div style={{ fontSize: 11, marginBottom: 5, whiteSpace: 'nowrap' as const, overflow: 'hidden', textOverflow: 'ellipsis', color: active ? 'rgba(255,255,255,0.6)' : '#555' }}>
+                    {c.latest_preview}
+                  </div>
+                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' as const, alignItems: 'center' }}>
+                    <StatusBadge status={c.status} />
+                    {humanNeeded && c.status !== 'human_needed' && (
+                      <span style={{ background: active ? 'rgba(239,68,68,0.3)' : '#fee2e2', color: active ? '#fca5a5' : '#991b1b', fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 20 }}>
+                        🔴 Human Needed
+                      </span>
+                    )}
+                    {c.channel_config?.name && (
+                      <span style={{ background: active ? 'rgba(255,255,255,0.15)' : '#f0efe9', color: active ? '#fff' : '#555', fontSize: 10, padding: '2px 8px', borderRadius: 20 }}>
+                        {c.channel_config.name}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ marginTop: 4, fontSize: 10, color: active ? 'rgba(255,255,255,0.4)' : '#92400e' }}>
+                    {c.assigned_agent_name === 'Unassigned' ? '— Unassigned' : `👤 ${c.assigned_agent_name}`}
+                  </div>
                 </div>
-
-                {/* Row 4: assigned agent */}
-                <div style={{ marginTop: 4, fontSize: 10, color: active ? 'rgba(255,255,255,0.4)' : '#92400e' }}>
-                  {c.assigned_agent_name === 'Unassigned' ? '— Unassigned' : `👤 ${c.assigned_agent_name}`}
-                </div>
-              </div>
-            </Link>
-          );
-        })}
+              </Link>
+            );
+          })}
+        </div>
       </div>
+
+      {/* MIDDLE COLUMN: Select conversation placeholder */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#fff', borderRight: '0.5px solid #e8e6e0' }}>
+        {selectedId ? (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, color: '#888' }}>
+            <div style={{ fontSize: 32 }}>💬</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>Opening conversation...</div>
+            <div style={{ fontSize: 11, color: '#9ca3af' }}>
+              <Link to="/console/conversations/$id" params={{ id: selectedId }} style={{ color: '#6366f1', fontWeight: 600, textDecoration: 'none' }}>
+                Click here if not redirected →
+              </Link>
+            </div>
+          </div>
+        ) : (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, color: '#888' }}>
+            <div style={{ fontSize: 40 }}>💬</div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: '#374151' }}>Select a conversation</div>
+            <div style={{ fontSize: 11, color: '#9ca3af', textAlign: 'center', maxWidth: 240 }}>
+              Choose a conversation from the left panel to view messages and reply
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* RIGHT COLUMN: Context placeholder */}
+      <div style={{ width: 300, flexShrink: 0, background: '#fff', borderLeft: '0.5px solid #e8e6e0', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ padding: '8px 12px', borderBottom: '0.5px solid #e8e6e0', fontSize: 10, color: '#888', flexShrink: 0 }}>
+          <div>Context Panel Placeholder</div>
+          <div>Live integrations disabled for demo</div>
+        </div>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 20, textAlign: 'center' as const }}>
+          <div style={{ fontSize: 28 }}>👤</div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: '#94a3b8' }}>Customer Context</div>
+          <div style={{ fontSize: 10, color: '#cbd5e1', lineHeight: 1.6 }}>
+            Select a conversation to view customer context.<br />Full CRM panel coming in Phase-2C.
+          </div>
+          <Link
+            to="/console/customer360"
+            style={{ marginTop: 8, fontSize: 11, fontWeight: 600, color: '#6366f1', textDecoration: 'none', background: '#ede9fe', padding: '4px 10px', borderRadius: 6 }}
+          >
+            ↗ Open Customer 360
+          </Link>
+        </div>
+      </div>
+
     </div>
   );
 }
