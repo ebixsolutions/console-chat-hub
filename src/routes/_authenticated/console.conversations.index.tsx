@@ -277,7 +277,7 @@ function ConversationsList() {
                 {/* Row 1: customer id + time */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
                   <span style={{ fontSize: 12, fontWeight: 600, color: active ? '#fff' : '#1a1a1a' }}>
-                    #{(c.visitor_session?.id || c.id).slice(0, 8)}
+                    {getVisitorLabel(c)}
                   </span>
                   <span style={{ fontSize: 10, color: slaBreached ? '#ef4444' : (active ? 'rgba(255,255,255,0.5)' : '#888'), fontWeight: slaBreached ? 600 : 400 }}>
                     {c.updated_at ? relTime(c.updated_at) : '—'}
