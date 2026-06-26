@@ -53,6 +53,21 @@ function relTime(iso: string) {
   return `${Math.floor(h / 24)}d ago`;
 }
 
+function getVisitorLabel(c: Conv): string {
+  const rawMeta = c.visitor_session?.visitor_metadata;
+  const meta =
+    rawMeta && typeof rawMeta === 'object' && !Array.isArray(rawMeta)
+      ? (rawMeta as Record<string, unknown>)
+      : {};
+  const name = typeof meta.name === 'string' ? meta.name.trim() : '';
+  const email = typeof meta.email === 'string' ? meta.email.trim() : '';
+  const shortId = (c.visitor_session?.id || c.id).slice(0, 8);
+  const channel = c.channel_config?.name || 'Visitor';
+  if (name) return name;
+  if (email) return email;
+  return `${channel} Visitor #${shortId}`;
+}
+
 // ─── Status badge mapping (Base44 aligned) ───────────────────────────────────
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { bg: string; color: string; label: string }> = {
