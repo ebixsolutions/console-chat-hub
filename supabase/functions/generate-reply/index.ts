@@ -21,6 +21,8 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+const TASK_A1A_BUILD_ID = "task-a1a-2026-06-29-runtime-refresh-01";
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -139,6 +141,7 @@ Deno.serve(async (req) => {
 // Task A.1A: deterministic handoff branch added ONLY (before anthropicKey check).
 // ────────────────────────────────────────────────────────────────────────────
 async function legacyGenerateReply(conversation_id: string): Promise<Response> {
+  console.log("[generate-reply] build:", TASK_A1A_BUILD_ID);
   const supabaseAdmin = createClient(
     Deno.env.get("SUPABASE_URL") ?? "",
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
