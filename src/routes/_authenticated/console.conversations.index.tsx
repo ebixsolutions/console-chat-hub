@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState, useRef, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
@@ -7,7 +7,6 @@ import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
 
 export const Route = createFileRoute("/_authenticated/console/conversations/")({
   component: SinglePageInbox,
@@ -26,7 +25,6 @@ type Conv = {
   visitor_session: { id: string; visitor_metadata?: unknown | null } | null;
   latest_preview: string;
 };
-
 type Msg = {
   id: string;
   role: string;
@@ -36,7 +34,6 @@ type Msg = {
   metadata: Record<string, unknown> | null;
   created_at: string | null;
 };
-
 type AgentLite = { id: string; display_name: string; role: string; status: string };
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -49,7 +46,6 @@ const FILTERS: { key: string | null; label: string }[] = [
   { key: "unresolved", label: "Unresolved" },
   { key: "resolved", label: "Resolved" },
 ];
-
 const HANDOFF_KEYWORDS = [
   "human",
   "handoff",
@@ -66,17 +62,110 @@ const HANDOFF_KEYWORDS = [
   "職員",
   "專員",
 ];
-
 const ELEVATED = new Set(["manager", "admin", "super_admin"]);
 const ADMIN_ONLY = new Set(["admin", "super_admin"]);
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-function isHumanNeeded(c: Conv): boolean {
-  if (["pending", "unresolved", "human_needed"].includes(c.status)) return true;
-  const preview = (c.latest_preview || "").toLowerCase();
-  return HANDOFF_KEYWORDS.some((kw) => preview.includes(kw.toLowerCase()));
-}
+// ─── Mock CRM data (aligned to Base44 mockC360Panel) ─────────────────────────
+const MOCK_C360: Record<
+  string,
+  {
+    customer_name: string;
+    tier: string;
+    ltv: number;
+    total_orders: number;
+    sentiment: string;
+    emotion_trajectory: string;
+    churn_risk: string;
+    buying_intent_score: number;
+    escalation_probability: number;
+    risk_level: string;
+    intervention_type: string;
+    time_to_escalation_mins: number;
+    trust_score: number;
+    trust_level: string;
+    resolved_without_human: number;
+    satisfaction_trend: string;
+    next_action_type: string;
+    estimated_revenue_impact: number;
+    next_action_channel: string;
+    optimal_send_time: string;
+    overall_csat: number;
+    nps_score: number;
+    customer_effort_score: number;
+    memory_version: number;
+    memory_size_kb: number;
+    staleness_score: number;
+    gdpr_status: string;
+    expires_at: string;
+    loyalty_points: number;
+    pending_returns: number;
+  }
+> = {
+  default: {
+    customer_name: "Visitor",
+    tier: "Standard",
+    ltv: 0,
+    total_orders: 0,
+    sentiment: "Neutral",
+    emotion_trajectory: "Stable",
+    churn_risk: "Low",
+    buying_intent_score: 50,
+    escalation_probability: 0,
+    risk_level: "",
+    intervention_type: "",
+    time_to_escalation_mins: 0,
+    trust_score: 70,
+    trust_level: "Medium",
+    resolved_without_human: 80,
+    satisfaction_trend: "Stable",
+    next_action_type: "Follow Up",
+    estimated_revenue_impact: 0,
+    next_action_channel: "Web Chat",
+    optimal_send_time: "Soon",
+    overall_csat: 4.0,
+    nps_score: 7,
+    customer_effort_score: 3.0,
+    memory_version: 1,
+    memory_size_kb: 0.5,
+    staleness_score: 5,
+    gdpr_status: "Compliant",
+    expires_at: "2026-12-31",
+    loyalty_points: 0,
+    pending_returns: 0,
+  },
+};
 
+// Mock AI suggestions
+const MOCK_SUGGESTIONS = [
+  {
+    id: "s1",
+    option_label: "Option A — Fast Resolution",
+    option_tag: "blue",
+    suggested_reply:
+      "I sincerely apologise for the inconvenience. I'll arrange an immediate resolution for you. Please allow me a moment to process this.",
+    rag_sources: [
+      { title: "VIP Benefits Manual v2", confidence: 92 },
+      { title: "Return & Exchange Policy", confidence: 87 },
+    ],
+  },
+  {
+    id: "s2",
+    option_label: "Option B — Empathy First",
+    option_tag: "green",
+    suggested_reply:
+      "I completely understand your frustration. This is not the experience we want for you. Let me personally take care of this right away.",
+    rag_sources: [
+      { title: "Sentiment Handling Guide", confidence: 94 },
+      { title: "VIP Benefits Manual v2", confidence: 92 },
+    ],
+  },
+];
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+function isHumanNeeded(c: Conv) {
+  if (["pending", "unresolved", "human_needed"].includes(c.status)) return true;
+  return HANDOFF_KEYWORDS.some((kw) => (c.latest_preview || "").toLowerCase().includes(kw.toLowerCase()));
+}
 function relTime(iso: string) {
   const diff = Date.now() - new Date(iso).getTime();
   const m = Math.floor(diff / 60000);
@@ -86,8 +175,7 @@ function relTime(iso: string) {
   if (h < 24) return `${h}h ago`;
   return `${Math.floor(h / 24)}d ago`;
 }
-
-function getVisitorLabel(c: Conv): string {
+function getVisitorLabel(c: Conv) {
   const rawMeta = c.visitor_session?.visitor_metadata;
   const meta =
     rawMeta && typeof rawMeta === "object" && !Array.isArray(rawMeta) ? (rawMeta as Record<string, unknown>) : {};
@@ -98,6 +186,14 @@ function getVisitorLabel(c: Conv): string {
   if (name) return name;
   if (email) return email;
   return `${channel} Visitor #${shortId}`;
+}
+function getInitials(label: string) {
+  return label
+    .split(" ")
+    .map((w) => w[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
 }
 
 // ─── StatusBadge ─────────────────────────────────────────────────────────────
@@ -131,20 +227,770 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+// ─── HandoffBanner (aligned to Base44 HandoffBanner.jsx) ─────────────────────
+function HandoffBanner({ conv, messages, onResolve }: { conv: Conv; messages: Msg[]; onResolve?: () => void }) {
+  const isHumanControl = conv.status === "human_control";
+  const isHandoff = ["human_needed", "human_control", "escalation_risk"].includes(conv.status);
+  if (!isHandoff) return null;
+
+  const borderColor = isHumanControl ? "#a78bfa" : "#ef4444";
+  const headerBg = isHumanControl ? "#ede9fe" : "#fee2e2";
+  const headerColor = isHumanControl ? "#6d28d9" : "#991b1b";
+
+  // Derive summary from real conversation data
+  const visitorMsgs = messages.filter((m) => m.role === "visitor");
+  const lastVisitorMsg = visitorMsgs[visitorMsgs.length - 1]?.content || "—";
+  const aiMsgs = messages.filter((m) => m.role === "assistant");
+  const aiCount = aiMsgs.length;
+
+  return (
+    <div
+      style={{
+        margin: "8px 10px 0",
+        background: "#fff",
+        borderRadius: 10,
+        overflow: "hidden",
+        flexShrink: 0,
+        border: `1px solid ${borderColor}`,
+      }}
+    >
+      <div style={{ padding: "9px 12px", display: "flex", alignItems: "center", gap: 8, background: headerBg }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: headerColor }}>
+          {isHumanControl
+            ? "🟣 Human Control Active — Knowledge Helper available for internal reference only"
+            : "🔴 AI Handoff Summary — Human Action Required"}
+        </span>
+      </div>
+      <div style={{ padding: "10px 12px", display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, fontSize: 12 }}>
+        <div>
+          <div
+            style={{
+              fontSize: 10,
+              fontWeight: 700,
+              color: "#888",
+              textTransform: "uppercase" as const,
+              marginBottom: 5,
+            }}
+          >
+            Customer
+          </div>
+          <div style={{ lineHeight: 1.5 }}>
+            {getVisitorLabel(conv)} · {conv.channel_config?.name || "Web"}
+          </div>
+        </div>
+        <div>
+          <div
+            style={{
+              fontSize: 10,
+              fontWeight: 700,
+              color: "#888",
+              textTransform: "uppercase" as const,
+              marginBottom: 5,
+            }}
+          >
+            What Happened
+          </div>
+          <div style={{ lineHeight: 1.5, fontSize: 11 }}>
+            {lastVisitorMsg.slice(0, 80)}
+            {lastVisitorMsg.length > 80 ? "…" : ""}
+          </div>
+        </div>
+        <div>
+          <div
+            style={{
+              fontSize: 10,
+              fontWeight: 700,
+              color: "#888",
+              textTransform: "uppercase" as const,
+              marginBottom: 5,
+            }}
+          >
+            Why AI Transferred
+          </div>
+          <div style={{ lineHeight: 1.5, marginBottom: 6, fontSize: 11 }}>
+            <div>⚡ AI confidence: low</div>
+            <div>⚡ Human escalation signal</div>
+            <div>⚡ {aiCount} AI messages sent</div>
+          </div>
+          <div
+            style={{
+              fontSize: 10,
+              fontWeight: 700,
+              color: "#888",
+              textTransform: "uppercase" as const,
+              marginBottom: 3,
+            }}
+          >
+            Recommended Action
+          </div>
+          <div style={{ fontSize: 11 }}>✓ Review conversation</div>
+          <div style={{ fontSize: 11 }}>✓ Reply directly to customer</div>
+        </div>
+      </div>
+      <div
+        style={{
+          padding: "8px 12px",
+          borderTop: "0.5px solid #e8e6e0",
+          display: "flex",
+          gap: 6,
+          background: isHumanControl ? "#ede9fe" : "#fff",
+          alignItems: "center",
+          flexWrap: "wrap" as const,
+        }}
+      >
+        {isHumanControl ? (
+          <>
+            <span style={{ fontSize: 11, color: "#6d28d9", marginRight: "auto" }}>
+              🟣 AI will not reply directly. Knowledge Helper remains available for internal reference only.
+            </span>
+            <BannerBtn label="↩ Return to AI (Mock)" onClick={() => toast("Return to AI — mock only")} />
+            <BannerBtn label="Keep Human Control (Mock)" onClick={() => toast("Keep Human Control — mock only")} />
+            <BannerBtn label="✓ Resolve Ticket" bg="#2d7d4f" color="#fff" onClick={onResolve} />
+          </>
+        ) : (
+          <>
+            <BannerBtn
+              label="🤝 Take Over Now (Mock)"
+              bg="#ef4444"
+              color="#fff"
+              onClick={() => toast("Take Over Now — mock only")}
+            />
+            <BannerBtn label="Assign to Me (Mock)" onClick={() => toast("Assign to Me — mock only")} />
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+function BannerBtn({
+  label,
+  bg = "#fff",
+  color = "#1a1a1a",
+  onClick,
+}: {
+  label: string;
+  bg?: string;
+  color?: string;
+  onClick?: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        fontSize: 11,
+        fontWeight: 600,
+        padding: "5px 11px",
+        borderRadius: 8,
+        border: bg === "#fff" ? "0.5px solid #e8e6e0" : "none",
+        background: bg,
+        color,
+        cursor: "pointer",
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+// ─── CRMPanel (aligned to Base44 CRMPanel.jsx) ───────────────────────────────
+function CRMPanel({
+  conv,
+  visitorLabel,
+  onInsert,
+  onResolve,
+}: {
+  conv: Conv | null;
+  visitorLabel: string;
+  onInsert: (text: string) => void;
+  onResolve: () => void;
+}) {
+  const [tab, setTab] = useState("customer");
+  const [kbQuery, setKbQuery] = useState("");
+  const [kbResults, setKbResults] = useState<null | { title: string; snippet: string; confidence: number }[]>(null);
+
+  useEffect(() => {
+    setTab("customer");
+    setKbQuery("");
+    setKbResults(null);
+  }, [conv?.id]);
+
+  const c360 = MOCK_C360.default;
+  const initials = getInitials(visitorLabel);
+
+  const sectionTitle: CSSProperties = {
+    fontSize: 10,
+    fontWeight: 700,
+    color: "#888",
+    textTransform: "uppercase",
+    marginBottom: 6,
+  };
+
+  const TABS = [
+    { key: "customer", label: "Customer" },
+    { key: "knowledge", label: "Knowledge" },
+    { key: "suggestion", label: "AI Suggestion" },
+    { key: "policy", label: "Policy" },
+  ];
+
+  const doSearch = () => {
+    const q = kbQuery.toLowerCase();
+    if (q.includes("vip") || q.includes("exchange") || q.includes("refund")) {
+      setKbResults([
+        {
+          title: "VIP Benefits Manual v2",
+          snippet: "Gold VIP members are entitled to express exchange without photo review within 30 days.",
+          confidence: 92,
+        },
+        {
+          title: "Return & Exchange Policy",
+          snippet: "All exchange requests must be submitted within 30 days of delivery.",
+          confidence: 87,
+        },
+      ]);
+    } else {
+      setKbResults([]);
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+      {/* Panel header */}
+      <div
+        style={{ padding: "8px 12px", borderBottom: "0.5px solid #e8e6e0", fontSize: 10, color: "#888", flexShrink: 0 }}
+      >
+        <div>Mock Context Panel</div>
+        <div>Live integrations disabled for demo</div>
+      </div>
+      {/* Tab bar */}
+      <div style={{ display: "flex", borderBottom: "0.5px solid #e8e6e0", overflowX: "auto" as const, flexShrink: 0 }}>
+        {TABS.map((tb) => (
+          <button
+            key={tb.key}
+            onClick={() => setTab(tb.key)}
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              padding: "8px 10px",
+              border: "none",
+              cursor: "pointer",
+              background: "transparent",
+              whiteSpace: "nowrap" as const,
+              color: tab === tb.key ? "#1a1a1a" : "#888",
+              borderBottom: tab === tb.key ? "2px solid #1a1a1a" : "2px solid transparent",
+            }}
+          >
+            {tb.label}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
+        {/* CUSTOMER TAB */}
+        {tab === "customer" && (
+          <>
+            {/* Header */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: "50%",
+                    background: "#fef3c7",
+                    color: "#92400e",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: 12,
+                    fontWeight: 700,
+                    flexShrink: 0,
+                  }}
+                >
+                  {initials}
+                </div>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700 }}>{visitorLabel}</div>
+                  <span
+                    style={{
+                      background: "#fef3c7",
+                      color: "#92400e",
+                      fontSize: 9.5,
+                      fontWeight: 600,
+                      padding: "1px 7px",
+                      borderRadius: 20,
+                    }}
+                  >
+                    {c360.tier}
+                  </span>
+                </div>
+              </div>
+              <Link
+                to="/console/customer360"
+                style={{
+                  fontSize: 10,
+                  fontWeight: 600,
+                  color: "#6366f1",
+                  textDecoration: "none",
+                  background: "#ede9fe",
+                  padding: "3px 8px",
+                  borderRadius: 6,
+                }}
+              >
+                ↗ Full C360
+              </Link>
+            </div>
+
+            {/* Stats 2×2 */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5, marginBottom: 10 }}>
+              {[
+                [c360.total_orders, "Orders"],
+                [`HK$${c360.ltv.toLocaleString()}`, "LTV"],
+                [`${c360.loyalty_points} pts`, "Points"],
+                [c360.pending_returns, "Pending Returns"],
+              ].map(([v, l]) => (
+                <div
+                  key={String(l)}
+                  style={{ background: "#f5f4f0", borderRadius: 7, padding: "6px 8px", textAlign: "center" as const }}
+                >
+                  <div style={{ fontSize: 12, fontWeight: 700 }}>{v}</div>
+                  <div style={{ fontSize: 9.5, color: "#888" }}>{l}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Sentiment & Risk */}
+            <div style={{ ...sectionTitle, marginBottom: 4 }}>Sentiment & Risk</div>
+            <div style={{ background: "#f0efe9", borderRadius: 20, height: 7, marginBottom: 3, overflow: "hidden" }}>
+              <div style={{ height: "100%", borderRadius: 20, width: "75%", background: "#ef4444" }} />
+            </div>
+            <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4, color: "#991b1b" }}>
+              {c360.sentiment} · Trajectory: {c360.emotion_trajectory}
+            </div>
+            <div style={{ fontSize: 10.5, color: "#888", marginBottom: 10 }}>
+              Churn: <span style={{ color: "#dc2626", fontWeight: 600 }}>🔴 {c360.churn_risk}</span> &nbsp;·&nbsp;
+              Buying Intent: {c360.buying_intent_score}% &nbsp;·&nbsp; Scam: ✅ None
+            </div>
+
+            {/* Escalation Risk */}
+            {c360.risk_level && (
+              <div
+                style={{
+                  background: "#fee2e2",
+                  border: "0.5px solid #fca5a5",
+                  borderRadius: 8,
+                  padding: "7px 10px",
+                  marginBottom: 10,
+                }}
+              >
+                <div style={{ fontSize: 10.5, fontWeight: 700, color: "#dc2626", marginBottom: 2 }}>
+                  🔴 {c360.risk_level} — {c360.intervention_type}
+                </div>
+                <div style={{ fontSize: 10, color: "#991b1b" }}>
+                  Prob: {Math.round(c360.escalation_probability * 100)}% · ETA: ~{c360.time_to_escalation_mins} min
+                </div>
+              </div>
+            )}
+
+            {/* AI Trust Score */}
+            <div style={{ ...sectionTitle, marginBottom: 4 }}>AI Trust Score</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
+              <div style={{ flex: 1, background: "#e8e6e0", borderRadius: 20, height: 7, overflow: "hidden" }}>
+                <div
+                  style={{
+                    width: `${c360.trust_score}%`,
+                    height: "100%",
+                    background: c360.trust_score >= 75 ? "#16a34a" : "#d97706",
+                    borderRadius: 20,
+                  }}
+                />
+              </div>
+              <span style={{ fontSize: 11, fontWeight: 700 }}>{c360.trust_score}/100</span>
+              <span
+                style={{ fontSize: 9.5, color: "#888", background: "#f0efe9", padding: "1px 6px", borderRadius: 4 }}
+              >
+                {c360.trust_level}
+              </span>
+            </div>
+            <div style={{ fontSize: 10.5, color: "#888", marginBottom: 10 }}>
+              Trend: {c360.satisfaction_trend} ↓ · {c360.resolved_without_human}% resolved w/o human
+            </div>
+
+            {/* Next Best Action */}
+            <div style={{ ...sectionTitle, marginBottom: 4 }}>Next Best Action</div>
+            <div
+              style={{
+                background: "#f0fdf4",
+                border: "0.5px solid #86efac",
+                borderRadius: 8,
+                padding: "7px 10px",
+                marginBottom: 10,
+              }}
+            >
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#065f46", marginBottom: 2 }}>
+                💎 {c360.next_action_type}
+              </div>
+              <div style={{ fontSize: 10, color: "#065f46" }}>
+                Revenue: ~HK${c360.estimated_revenue_impact.toLocaleString()} · {c360.next_action_channel}
+              </div>
+              <div style={{ fontSize: 10, color: "#888", marginTop: 1 }}>{c360.optimal_send_time}</div>
+            </div>
+
+            {/* Last Feedback */}
+            <div style={{ ...sectionTitle, marginBottom: 4 }}>Last Feedback</div>
+            <div style={{ fontSize: 10.5, color: "#555", marginBottom: 10 }}>
+              CSAT: ★ {c360.overall_csat} · NPS: {c360.nps_score} · CES: {c360.customer_effort_score}
+              <br />
+              <span style={{ color: "#888" }}>Submitted: 2026-05-15</span>
+            </div>
+
+            {/* Memory Status */}
+            <div style={{ ...sectionTitle, marginBottom: 4 }}>
+              Memory Status <span style={{ fontWeight: 400, color: "#aaa", fontSize: 9 }}>[Phase 2]</span>
+            </div>
+            <div style={{ fontSize: 10.5, color: "#555", marginBottom: 12 }}>
+              v{c360.memory_version} · {c360.memory_size_kb}KB · Staleness: {c360.staleness_score}%<br />
+              GDPR: ✅ {c360.gdpr_status} · Expires: {c360.expires_at}
+            </div>
+
+            {/* Quick Actions */}
+            <div style={sectionTitle}>Quick Actions</div>
+            {["View Orders (Mock)", "Initiate Exchange (Mock)", "Create Ticket Note (Mock)"].map((a) => (
+              <button
+                key={a}
+                onClick={() => toast(`${a}`)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  textAlign: "left" as const,
+                  fontSize: 11.5,
+                  fontWeight: 500,
+                  padding: "7px 11px",
+                  borderRadius: 8,
+                  border: "0.5px solid #e8e6e0",
+                  background: "#fff",
+                  cursor: "pointer",
+                  marginBottom: 5,
+                  color: "#1a1a1a",
+                }}
+              >
+                {a}
+              </button>
+            ))}
+            <button
+              onClick={onResolve}
+              style={{
+                display: "block",
+                width: "100%",
+                textAlign: "left" as const,
+                fontSize: 11.5,
+                fontWeight: 500,
+                padding: "7px 11px",
+                borderRadius: 8,
+                border: "0.5px solid #e8e6e0",
+                background: "#fff",
+                cursor: "pointer",
+                marginBottom: 5,
+                color: "#ef4444",
+              }}
+            >
+              Resolve Ticket
+            </button>
+            <Link
+              to="/console/customer360"
+              style={{
+                display: "block",
+                width: "100%",
+                textAlign: "center" as const,
+                fontSize: 11.5,
+                fontWeight: 600,
+                padding: "8px 11px",
+                borderRadius: 8,
+                border: "0.5px solid #6366f1",
+                background: "#ede9fe",
+                color: "#6366f1",
+                textDecoration: "none",
+                marginTop: 4,
+                boxSizing: "border-box" as const,
+              }}
+            >
+              ↗ Open Full Customer 360
+            </Link>
+          </>
+        )}
+
+        {/* KNOWLEDGE TAB */}
+        {tab === "knowledge" && (
+          <>
+            <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+              <input
+                value={kbQuery}
+                onChange={(e) => setKbQuery(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && doSearch()}
+                placeholder="🔍 Search Knowledge Base..."
+                style={{
+                  flex: 1,
+                  fontSize: 11.5,
+                  padding: "6px 9px",
+                  borderRadius: 8,
+                  border: "0.5px solid #e8e6e0",
+                  background: "#f5f4f0",
+                  outline: "none",
+                }}
+              />
+              <button
+                onClick={doSearch}
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  padding: "6px 12px",
+                  borderRadius: 8,
+                  border: "none",
+                  background: "#1a1a1a",
+                  color: "#fff",
+                  cursor: "pointer",
+                }}
+              >
+                Search
+              </button>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+              <span style={sectionTitle}>Relevant Answers</span>
+              <span
+                style={{
+                  background: "#fef3c7",
+                  color: "#92400e",
+                  fontSize: 9,
+                  fontWeight: 700,
+                  padding: "1px 6px",
+                  borderRadius: 4,
+                }}
+              >
+                Mock
+              </span>
+            </div>
+            {kbResults === null && (
+              <div style={{ fontSize: 11, color: "#888" }}>
+                Try: "gold vip exchange policy" or "shipping delay refund"
+              </div>
+            )}
+            {kbResults !== null && kbResults.length === 0 && (
+              <div
+                style={{
+                  background: "#fff7ed",
+                  border: "0.5px solid #fdba74",
+                  color: "#9a3412",
+                  fontSize: 11,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                }}
+              >
+                No KB match — handoff suggested
+              </div>
+            )}
+            {kbResults !== null &&
+              kbResults.map((r, i) => (
+                <div
+                  key={i}
+                  style={{
+                    border: "0.5px solid #e8e6e0",
+                    borderRadius: 9,
+                    padding: 10,
+                    marginBottom: 8,
+                    background: "#fff",
+                  }}
+                >
+                  <div style={{ fontSize: 11.5, fontWeight: 600 }}>📄 {r.title}</div>
+                  <div style={{ fontSize: 10, color: "#888", margin: "2px 0 5px" }}>Confidence: {r.confidence}%</div>
+                  <div style={{ fontSize: 11, color: "#555", lineHeight: 1.5, marginBottom: 7 }}>
+                    {r.snippet.slice(0, 80)}
+                    {r.snippet.length > 80 ? "…" : ""}
+                  </div>
+                  <div style={{ display: "flex", gap: 5 }}>
+                    <SmBtn
+                      label="Copy"
+                      onClick={() => {
+                        navigator.clipboard.writeText(r.snippet);
+                        toast.success("Copied");
+                      }}
+                    />
+                    <SmBtn
+                      label="Insert to Reply"
+                      dark
+                      onClick={() => {
+                        onInsert(r.snippet);
+                        toast.success("Inserted into reply");
+                      }}
+                    />
+                  </div>
+                </div>
+              ))}
+            <div
+              style={{
+                background: "#fffbeb",
+                border: "0.5px solid #fbbf24",
+                borderRadius: 9,
+                padding: 10,
+                marginTop: 10,
+              }}
+            >
+              <div style={{ fontSize: 11.5, fontWeight: 700, color: "#92400e", marginBottom: 3 }}>
+                ⚠ KB Gap Detected
+              </div>
+              <div style={{ fontSize: 11, color: "#92400e", marginBottom: 7 }}>
+                VIP express exchange rule not clearly linked to returns flow.
+              </div>
+              <SmBtn label="Create KB Gap Task" dark onClick={() => toast.success("KB Gap task created (Mock)")} />
+            </div>
+          </>
+        )}
+
+        {/* AI SUGGESTION TAB */}
+        {tab === "suggestion" && (
+          <>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+              <span style={sectionTitle}>AI Suggested Reply</span>
+              <span
+                style={{
+                  background: "#fef3c7",
+                  color: "#92400e",
+                  fontSize: 9,
+                  fontWeight: 700,
+                  padding: "1px 6px",
+                  borderRadius: 4,
+                }}
+              >
+                Mock
+              </span>
+            </div>
+            <div style={{ fontSize: 10, color: "#888", marginBottom: 10 }}>Phase 2: Real LLM + RAG</div>
+            <div style={{ background: "#f5f4f0", borderRadius: 9, padding: 10, marginBottom: 10 }}>
+              <div
+                style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  color: "#888",
+                  textTransform: "uppercase" as const,
+                  marginBottom: 4,
+                }}
+              >
+                Based On
+              </div>
+              <div style={{ fontSize: 11, lineHeight: 1.7 }}>
+                👑 Gold VIP &nbsp; 😠 Angry
+                <br />
+                📦 12 orders &nbsp; 💰 HK$8,240 LTV
+                <br />
+                📚 2 KB sources retrieved
+              </div>
+            </div>
+            {MOCK_SUGGESTIONS.map((s) => (
+              <div
+                key={s.id}
+                style={{
+                  border: `0.5px solid ${s.option_tag === "blue" ? "#3b82f6" : "#2d7d4f"}`,
+                  borderRadius: 9,
+                  padding: 10,
+                  marginBottom: 10,
+                  background: "#fff",
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 11.5,
+                    fontWeight: 700,
+                    color: s.option_tag === "blue" ? "#1d4ed8" : "#065f46",
+                    marginBottom: 5,
+                  }}
+                >
+                  {s.option_label}
+                </div>
+                <div style={{ fontSize: 11, lineHeight: 1.55, color: "#333", marginBottom: 6 }}>
+                  "{s.suggested_reply}"
+                </div>
+                <div style={{ fontSize: 10, color: "#888", marginBottom: 7 }}>
+                  Sources: {s.rag_sources.map((r) => `${r.title} (${r.confidence}%)`).join(" · ")}
+                </div>
+                <div style={{ display: "flex", gap: 5, flexWrap: "wrap" as const }}>
+                  <SmBtn
+                    label="Copy"
+                    onClick={() => {
+                      navigator.clipboard.writeText(s.suggested_reply);
+                      toast.success("Copied");
+                    }}
+                  />
+                  <SmBtn
+                    label="Insert & Edit"
+                    dark
+                    onClick={() => {
+                      onInsert(s.suggested_reply);
+                      toast.success("Inserted — edit before sending");
+                    }}
+                  />
+                  <SmBtn label="Regenerate (Mock)" onClick={() => toast("Regenerate — Phase 2: Real LLM")} />
+                  <SmBtn label="👎 Bad Suggestion" onClick={() => toast.success("Feedback recorded")} />
+                </div>
+              </div>
+            ))}
+          </>
+        )}
+
+        {/* POLICY TAB */}
+        {tab === "policy" && (
+          <>
+            <div style={sectionTitle}>Policy Check</div>
+            <div
+              style={{
+                fontSize: 11.5,
+                lineHeight: 1.6,
+                background: "#f0fdf4",
+                border: "0.5px solid #86efac",
+                borderRadius: 9,
+                padding: 10,
+                color: "#065f46",
+              }}
+            >
+              ✓ Gold VIP exchange: no photo required
+              <br />
+              ✓ Risk level: Low
+              <br />✓ No abuse pattern detected
+            </div>
+            <div style={{ marginTop: 10 }}>
+              <SmBtn label="Open Policy" onClick={() => toast("Open Policy (Mock)")} />
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+function SmBtn({ label, dark, onClick }: { label: string; dark?: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        fontSize: 10,
+        fontWeight: 600,
+        padding: "3px 9px",
+        borderRadius: 6,
+        cursor: "pointer",
+        border: dark ? "none" : "0.5px solid #e8e6e0",
+        background: dark ? "#1a1a1a" : "#fff",
+        color: dark ? "#fff" : "#555",
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 function SinglePageInbox() {
   const { user } = useAuth();
-
-  // ── Left panel state ──────────────────────────────────────────────────────
   const [conversations, setConversations] = useState<Conv[] | null>(null);
   const [filter, setFilter] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
-
-  // ── Selection state (Base44 selectedId pattern) ───────────────────────────
   const [selectedId, setSelectedId] = useState<string | null>(null);
-
-  // ── Middle panel state ────────────────────────────────────────────────────
   const [messages, setMessages] = useState<Msg[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [reply, setReply] = useState("");
@@ -153,40 +999,32 @@ function SinglePageInbox() {
   const [myAgent, setMyAgent] = useState<AgentLite | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // ─── LEFT PANEL: Conversation list query (Phase-1 preserved) ─────────────
   async function loadConversations() {
     const { data: convs, error: cErr } = await supabase
       .from("conversations")
       .select(
-        `
-        id, status, priority, updated_at, created_at, assigned_agent_id,
-        channel_config:channel_config_id(name),
-        visitor_session:visitor_session_id(id, visitor_metadata)
-      `,
+        `id,status,priority,updated_at,created_at,assigned_agent_id,channel_config:channel_config_id(name),visitor_session:visitor_session_id(id,visitor_metadata)`,
       )
       .order("updated_at", { ascending: false })
       .limit(50);
-
     if (cErr) {
       setError(cErr.message);
       return;
     }
     const list = convs ?? [];
-
     const agentIds = [...new Set(list.filter((c) => c.assigned_agent_id).map((c) => c.assigned_agent_id as string))];
     const agentMap: Record<string, string> = {};
     if (agentIds.length > 0) {
-      const { data: ags } = await supabase.from("agent_profile").select("id, display_name").in("id", agentIds);
+      const { data: ags } = await supabase.from("agent_profile").select("id,display_name").in("id", agentIds);
       ags?.forEach((a) => {
         agentMap[a.id] = a.display_name;
       });
     }
-
     const previews: Record<string, string> = {};
     if (list.length > 0) {
       const { data: recent } = await supabase
         .from("messages")
-        .select("conversation_id, content, created_at, is_recalled")
+        .select("conversation_id,content,created_at,is_recalled")
         .in(
           "conversation_id",
           list.map((c) => c.id),
@@ -195,12 +1033,10 @@ function SinglePageInbox() {
         .order("created_at", { ascending: false })
         .limit(500);
       recent?.forEach((m) => {
-        if (!previews[m.conversation_id]) {
+        if (!previews[m.conversation_id])
           previews[m.conversation_id] = m.is_recalled ? "[訊息已撤回]" : (m.content as string).slice(0, 80);
-        }
       });
     }
-
     setConversations(
       list.map((c) => ({
         ...c,
@@ -211,12 +1047,11 @@ function SinglePageInbox() {
     setError(null);
   }
 
-  // ─── MIDDLE PANEL: Messages query (from $id.tsx pattern) ─────────────────
   const loadMessages = useCallback(async (convId: string, showLoading = false) => {
     if (showLoading) setLoadingMessages(true);
     const { data } = await supabase
       .from("messages")
-      .select("id, role, content, status, is_recalled, metadata, created_at")
+      .select("id,role,content,status,is_recalled,metadata,created_at")
       .eq("conversation_id", convId)
       .neq("content", "__THINKING__")
       .order("created_at", { ascending: true });
@@ -225,36 +1060,28 @@ function SinglePageInbox() {
     setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
   }, []);
 
-  // ─── Agents query (from $id.tsx pattern) ─────────────────────────────────
   const loadAgents = useCallback(async () => {
-    const { data } = await supabase
-      .from("agent_profile")
-      .select("id, display_name, role, status")
-      .eq("status", "active");
+    const { data } = await supabase.from("agent_profile").select("id,display_name,role,status").eq("status", "active");
     setAgents((data as AgentLite[]) ?? []);
   }, []);
 
-  // ─── myAgent query (from $id.tsx pattern) ────────────────────────────────
   useEffect(() => {
     if (!user) return;
     (async () => {
       const { data } = await supabase
         .from("agent_profile")
-        .select("id, display_name, role, status")
+        .select("id,display_name,role,status")
         .eq("user_id", user.id)
         .maybeSingle();
       setMyAgent((data as AgentLite | null) ?? null);
     })();
   }, [user]);
-
-  // ─── Polling: conversation list (5s) + messages (3s when selected) ────────
   useEffect(() => {
     loadConversations();
     loadAgents();
     const t = setInterval(loadConversations, 5000);
     return () => clearInterval(t);
   }, [loadAgents]);
-
   useEffect(() => {
     if (!selectedId) {
       setMessages([]);
@@ -266,9 +1093,6 @@ function SinglePageInbox() {
     return () => clearInterval(t);
   }, [selectedId, loadMessages]);
 
-  // ─── Edge Function caller (from $id.tsx — same pattern) ──────────────────
-  // Edge functions used: agent-send-reply, resolve-conversation, mark-unresolved,
-  // assign-conversation, transfer-conversation, recall-message
   async function callEF(name: string, body: Record<string, unknown>) {
     const { data, error: efErr } = await supabase.functions.invoke(name, { body });
     if (efErr) {
@@ -281,7 +1105,6 @@ function SinglePageInbox() {
     }
     return true;
   }
-
   async function sendReply() {
     if (!selectedId || !reply.trim()) return;
     setSending(true);
@@ -293,7 +1116,6 @@ function SinglePageInbox() {
       loadMessages(selectedId);
     }
   }
-
   async function handleResolve() {
     if (!selectedId) return;
     if (await callEF("resolve-conversation", { conversation_id: selectedId })) {
@@ -301,7 +1123,6 @@ function SinglePageInbox() {
       loadConversations();
     }
   }
-
   async function handleUnresolve() {
     if (!selectedId) return;
     if (await callEF("mark-unresolved", { conversation_id: selectedId })) {
@@ -309,7 +1130,6 @@ function SinglePageInbox() {
       loadConversations();
     }
   }
-
   async function handleAssign(targetId: string) {
     if (!selectedId) return;
     if (await callEF("assign-conversation", { conversation_id: selectedId, target_agent_id: targetId })) {
@@ -317,7 +1137,6 @@ function SinglePageInbox() {
       loadConversations();
     }
   }
-
   async function handleTransfer(targetId: string) {
     if (!selectedId) return;
     if (await callEF("transfer-conversation", { conversation_id: selectedId, to_agent_id: targetId })) {
@@ -326,7 +1145,6 @@ function SinglePageInbox() {
       loadMessages(selectedId);
     }
   }
-
   async function handleRecall(messageId: string, role: string) {
     if (!myAgent) return;
     if (role === "visitor" && !ADMIN_ONLY.has(myAgent.role)) {
@@ -339,7 +1157,6 @@ function SinglePageInbox() {
     }
   }
 
-  // ─── Derived state ────────────────────────────────────────────────────────
   const stats = useMemo(() => {
     if (!conversations) return { pending_human: 0, high_priority: 0, human_control: 0, ai_handling: 0 };
     return {
@@ -365,9 +1182,8 @@ function SinglePageInbox() {
     }
     if (filter === null) return list;
     if (filter === "human_needed") return list.filter((c) => isHumanNeeded(c));
-    if (filter === "ai_handling") {
+    if (filter === "ai_handling")
       return list.filter((c) => c.status === "ai_handling" || (!isHumanNeeded(c) && c.status === "open"));
-    }
     return list.filter((c) => c.status === filter);
   }, [conversations, filter, search]);
 
@@ -375,6 +1191,7 @@ function SinglePageInbox() {
     () => conversations?.find((c) => c.id === selectedId) ?? null,
     [conversations, selectedId],
   );
+  const visitorLabel = selectedConv ? getVisitorLabel(selectedConv) : "";
   const assignedName = agents.find((a) => a.id === selectedConv?.assigned_agent_id)?.display_name || "Unassigned";
   const isElevated = myAgent ? ELEVATED.has(myAgent.role) : false;
   const transferableAgents = agents.filter((a) => a.id !== myAgent?.id);
@@ -391,7 +1208,8 @@ function SinglePageInbox() {
     whiteSpace: "nowrap" as const,
   });
 
-  // ─── Render ───────────────────────────────────────────────────────────────
+  const isHumanControl = selectedConv?.status === "human_control";
+
   return (
     <div
       style={{
@@ -399,10 +1217,10 @@ function SinglePageInbox() {
         height: "100%",
         overflow: "hidden",
         background: "#f5f4f0",
-        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+        fontFamily: "-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",
       }}
     >
-      {/* ── LEFT: QueuePanel (320px) ───────────────────────────────────────── */}
+      {/* ── LEFT: QueuePanel (320px) ── */}
       <div
         style={{
           width: 320,
@@ -414,7 +1232,6 @@ function SinglePageInbox() {
           overflow: "hidden",
         }}
       >
-        {/* Stats bar */}
         <div style={{ padding: "10px 12px", borderBottom: "0.5px solid #e8e6e0", flexShrink: 0 }}>
           <div style={{ display: "flex", gap: 12, fontSize: 10.5, color: "#555" }}>
             <span>
@@ -431,8 +1248,6 @@ function SinglePageInbox() {
             </span>
           </div>
         </div>
-
-        {/* Search */}
         <div style={{ padding: "8px 12px", borderBottom: "0.5px solid #e8e6e0", flexShrink: 0 }}>
           <input
             value={search}
@@ -450,8 +1265,6 @@ function SinglePageInbox() {
             }}
           />
         </div>
-
-        {/* Filter chips */}
         <div
           style={{
             padding: "8px 12px",
@@ -472,8 +1285,6 @@ function SinglePageInbox() {
             </button>
           ))}
         </div>
-
-        {/* Count */}
         <div
           style={{
             padding: "5px 12px",
@@ -485,7 +1296,6 @@ function SinglePageInbox() {
         >
           Showing {filtered?.length ?? 0} conversation{filtered?.length !== 1 ? "s" : ""}
         </div>
-
         {error && (
           <div
             style={{
@@ -502,8 +1312,6 @@ function SinglePageInbox() {
             {error}
           </div>
         )}
-
-        {/* Conversation list — click sets selectedId, NO Link navigation */}
         <div style={{ flex: 1, overflowY: "auto" }}>
           {filtered === null && (
             <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 8 }}>
@@ -604,7 +1412,7 @@ function SinglePageInbox() {
         </div>
       </div>
 
-      {/* ── MIDDLE: ChatPanel (flex) ────────────────────────────────────────── */}
+      {/* ── MIDDLE: ChatPanel (flex) ── */}
       <div
         style={{
           flex: 1,
@@ -628,60 +1436,75 @@ function SinglePageInbox() {
           >
             <div style={{ fontSize: 40 }}>💬</div>
             <div style={{ fontSize: 14, fontWeight: 600, color: "#374151" }}>Select a conversation</div>
-            <div style={{ fontSize: 11, color: "#9ca3af", textAlign: "center", maxWidth: 240 }}>
+            <div style={{ fontSize: 11, color: "#9ca3af", textAlign: "center" as const, maxWidth: 240 }}>
               Choose a conversation from the left panel to view messages and reply
             </div>
           </div>
         ) : (
           <>
-            {/* Chat Header */}
+            {/* Chat Header (aligned to Base44 ChatPanel header) */}
             <div
               style={{ background: "#fff", borderBottom: "0.5px solid #e8e6e0", padding: "8px 12px", flexShrink: 0 }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" as const }}>
                 <div
                   style={{
-                    width: 28,
-                    height: 28,
+                    width: 32,
+                    height: 32,
                     borderRadius: "50%",
                     background: "#fef3c7",
                     color: "#92400e",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    fontSize: 10,
+                    fontSize: 11,
                     fontWeight: 700,
                     flexShrink: 0,
                   }}
                 >
-                  {selectedConv ? getVisitorLabel(selectedConv).slice(0, 2).toUpperCase() : "??"}
+                  {getInitials(visitorLabel)}
                 </div>
-                <span style={{ fontSize: 12.5, fontWeight: 600 }}>
-                  {selectedConv ? getVisitorLabel(selectedConv) : "—"}
-                </span>
-                <span style={{ fontSize: 10, color: "#888" }}>#{selectedId.slice(0, 8)}</span>
-                {selectedConv && (
-                  <Badge variant="secondary" className="capitalize">
-                    {selectedConv.status}
-                  </Badge>
+                <span style={{ fontSize: 12.5, fontWeight: 600 }}>{visitorLabel}</span>
+                <span style={{ fontSize: 10.5, color: "#888" }}>#{selectedId.slice(0, 8)}</span>
+                {selectedConv?.assigned_agent_id ? (
+                  <span style={{ fontSize: 10.5, color: "#555" }}>👤 {assignedName}</span>
+                ) : (
+                  <span style={{ fontSize: 10.5, color: "#92400e" }}>Unassigned</span>
                 )}
-                <span style={{ fontSize: 10.5, color: selectedConv?.assigned_agent_id ? "#555" : "#92400e" }}>
-                  {selectedConv?.assigned_agent_id ? `👤 ${assignedName}` : "Unassigned"}
-                </span>
+                {selectedConv && <StatusBadge status={selectedConv.status} />}
+                {isHumanControl && (
+                  <span
+                    style={{
+                      background: "#ede9fe",
+                      color: "#6d28d9",
+                      fontSize: 10,
+                      fontWeight: 600,
+                      padding: "2px 8px",
+                      borderRadius: 20,
+                    }}
+                  >
+                    Human Control Active
+                  </span>
+                )}
                 <div style={{ marginLeft: "auto", display: "flex", gap: 6, flexWrap: "wrap" as const }}>
-                  {selectedConv?.status !== "resolved" && (
-                    <Button size="sm" variant="outline" onClick={handleResolve}>
-                      Resolve
-                    </Button>
-                  )}
-                  {selectedConv?.status !== "unresolved" && (
-                    <Button size="sm" variant="outline" onClick={handleUnresolve}>
-                      Mark Unresolved
-                    </Button>
-                  )}
+                  <button
+                    onClick={() => toast("Take Over Now — mock only")}
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 600,
+                      padding: "4px 10px",
+                      borderRadius: 8,
+                      border: "none",
+                      background: "#ef4444",
+                      color: "#fff",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Take Over Now (Mock)
+                  </button>
                   {isElevated && (
                     <Select onValueChange={handleAssign}>
-                      <SelectTrigger className="h-7 text-xs w-28">
+                      <SelectTrigger className="h-7 text-xs w-24">
                         <SelectValue placeholder="Assign to" />
                       </SelectTrigger>
                       <SelectContent>
@@ -692,6 +1515,11 @@ function SinglePageInbox() {
                         ))}
                       </SelectContent>
                     </Select>
+                  )}
+                  {selectedConv?.status !== "unresolved" && (
+                    <Button size="sm" variant="outline" onClick={handleUnresolve}>
+                      Mark Unresolved
+                    </Button>
                   )}
                   <Select onValueChange={handleTransfer}>
                     <SelectTrigger className="h-7 text-xs w-28">
@@ -705,9 +1533,34 @@ function SinglePageInbox() {
                       ))}
                     </SelectContent>
                   </Select>
+                  {selectedConv?.status !== "resolved" && (
+                    <Button size="sm" variant="outline" onClick={handleResolve}>
+                      Resolve
+                    </Button>
+                  )}
+                  {(myAgent?.role === "admin" || myAgent?.role === "supervisor") && (
+                    <button
+                      onClick={() => toast("Audit Log (Mock)")}
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 600,
+                        padding: "4px 10px",
+                        borderRadius: 8,
+                        border: "0.5px solid #e8e6e0",
+                        background: "#fff",
+                        color: "#1a1a1a",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Audit Log
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
+
+            {/* HandoffBanner (aligned to Base44 HandoffBanner) */}
+            {selectedConv && <HandoffBanner conv={selectedConv} messages={messages} onResolve={handleResolve} />}
 
             {/* Messages */}
             <div style={{ flex: 1, overflowY: "auto", padding: "12px 16px" }}>
@@ -720,44 +1573,150 @@ function SinglePageInbox() {
                 <div className="text-sm text-muted-foreground text-center py-8">No messages yet.</div>
               )}
               {messages.map((m) => {
-                const isVisitor = m.role === "visitor";
-                const isAgent = m.role === "agent";
-                const isAssistant = m.role === "assistant";
-                const bubbleClass = isVisitor
-                  ? "ml-auto bg-muted text-foreground"
-                  : isAgent
-                    ? "bg-blue-500/15 text-blue-900 dark:text-blue-100"
-                    : isAssistant
-                      ? "bg-purple-500/15 text-purple-900 dark:text-purple-100"
-                      : "bg-muted";
+                const isVisitor = m.role === "visitor",
+                  isAgent = m.role === "agent",
+                  isAssistant = m.role === "assistant";
+                const isLowConf =
+                  isAssistant &&
+                  (m.metadata as { confidence_score?: number } | null)?.confidence_score != null &&
+                  (m.metadata as { confidence_score: number }).confidence_score < 40;
+                let bubbleStyle: CSSProperties;
+                if (isVisitor)
+                  bubbleStyle = {
+                    maxWidth: "78%",
+                    padding: "8px 11px",
+                    borderRadius: 9,
+                    fontSize: 12,
+                    lineHeight: 1.55,
+                    background: "#1a1a1a",
+                    color: "#fff",
+                    borderBottomRightRadius: 3,
+                    marginLeft: "auto",
+                  };
+                else if (isAssistant && isLowConf)
+                  bubbleStyle = {
+                    maxWidth: "78%",
+                    padding: "8px 11px",
+                    borderRadius: 9,
+                    fontSize: 12,
+                    lineHeight: 1.55,
+                    background: "#fff4f4",
+                    border: "0.5px solid #fca5a5",
+                    borderBottomLeftRadius: 3,
+                    color: "#991b1b",
+                  };
+                else if (isAssistant)
+                  bubbleStyle = {
+                    maxWidth: "78%",
+                    padding: "8px 11px",
+                    borderRadius: 9,
+                    fontSize: 12,
+                    lineHeight: 1.55,
+                    background: "#fff",
+                    border: "0.5px solid #e8e6e0",
+                    borderBottomLeftRadius: 3,
+                  };
+                else
+                  bubbleStyle = {
+                    maxWidth: "78%",
+                    padding: "8px 11px",
+                    borderRadius: 9,
+                    fontSize: 12,
+                    lineHeight: 1.55,
+                    background: "#d1fae5",
+                    borderBottomLeftRadius: 3,
+                    color: "#065f46",
+                  };
                 const agentName = (m.metadata as { agent_name?: string } | null)?.agent_name;
+                const confScore = (m.metadata as { confidence_score?: number } | null)?.confidence_score;
                 return (
-                  <div key={m.id} className={`group mb-2 max-w-[80%] rounded-lg px-3 py-2 text-sm ${bubbleClass}`}>
-                    {isAgent && agentName && <div className="text-[10px] font-medium opacity-70">{agentName}</div>}
-                    {isAssistant && <div className="text-[10px] font-medium opacity-70">AI</div>}
-                    {m.is_recalled ? (
-                      <div className="italic text-muted-foreground">[訊息已撤回]</div>
-                    ) : (
-                      <div className="whitespace-pre-wrap">{m.content}</div>
-                    )}
-                    {!m.is_recalled &&
-                      (isAgent || isAssistant || (isVisitor && myAgent && ADMIN_ONLY.has(myAgent.role))) && (
-                        <button
-                          onClick={() => handleRecall(m.id, m.role)}
-                          className="mt-1 hidden text-[10px] text-destructive underline group-hover:inline"
-                        >
-                          Recall
-                        </button>
+                  <div
+                    key={m.id}
+                    style={{
+                      marginBottom: 10,
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: isVisitor ? "flex-end" : "flex-start",
+                    }}
+                  >
+                    <div
+                      style={{
+                        marginBottom: 2,
+                        fontSize: 10,
+                        color: isVisitor ? "#888" : isAgent ? "#2d7d4f" : isLowConf ? "#ef4444" : "#3b82f6",
+                      }}
+                    >
+                      {isVisitor
+                        ? "Customer"
+                        : isAgent
+                          ? `Human Agent · ${agentName || "You"}`
+                          : isLowConf
+                            ? `AI (low confidence ${confScore}%)`
+                            : "AI"}
+                    </div>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 4,
+                        maxWidth: "100%",
+                        flexDirection: isVisitor ? "row-reverse" : "row",
+                        alignSelf: isVisitor ? "flex-end" : "flex-start",
+                        width: "100%",
+                      }}
+                    >
+                      {m.is_recalled ? (
+                        <div style={{ fontSize: 12, color: "#888", fontStyle: "italic", padding: "8px 11px" }}>
+                          [訊息已撤回]
+                        </div>
+                      ) : (
+                        <div style={bubbleStyle}>
+                          <div className="whitespace-pre-wrap">{m.content}</div>
+                        </div>
                       )}
+                      {!m.is_recalled &&
+                        (isAgent || isAssistant || (isVisitor && myAgent && ADMIN_ONLY.has(myAgent.role))) && (
+                          <button
+                            onClick={() => handleRecall(m.id, m.role)}
+                            style={{
+                              border: "none",
+                              background: "transparent",
+                              cursor: "pointer",
+                              color: "#888",
+                              fontSize: 14,
+                              padding: "0 4px",
+                            }}
+                          >
+                            ⋯
+                          </button>
+                        )}
+                    </div>
                   </div>
                 );
               })}
+              {isHumanControl && (
+                <div style={{ textAlign: "center" as const, padding: "6px 0" }}>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      background: "#ede9fe",
+                      color: "#7c3aed",
+                      borderRadius: 20,
+                      padding: "3px 10px",
+                    }}
+                  >
+                    🟣 Human Control Active — AI is assisting only
+                  </span>
+                </div>
+              )}
               <div ref={messagesEndRef} />
             </div>
 
             {/* Composer */}
             <div style={{ background: "#fff", borderTop: "0.5px solid #e8e6e0", padding: "8px 12px", flexShrink: 0 }}>
-              <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+              <div
+                style={{ display: "flex", gap: 6, marginBottom: 8, alignItems: "center", flexWrap: "wrap" as const }}
+              >
                 <button
                   onClick={() => toast("Policy check (Mock)")}
                   style={{
@@ -803,6 +1762,11 @@ function SinglePageInbox() {
                 >
                   Grammar Check
                 </button>
+                {isHumanControl && (
+                  <span style={{ fontSize: 10, color: "#7c3aed", marginLeft: "auto" }}>
+                    🟣 Knowledge Helper available for internal reference only
+                  </span>
+                )}
               </div>
               <Textarea
                 value={reply}
@@ -832,136 +1796,14 @@ function SinglePageInbox() {
         )}
       </div>
 
-      {/* ── RIGHT: CRMPanel placeholder (300px) ────────────────────────────── */}
-      <div
-        style={{
-          width: 300,
-          flexShrink: 0,
-          background: "#fff",
-          borderLeft: "0.5px solid #e8e6e0",
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-        }}
-      >
-        <div
-          style={{
-            padding: "8px 12px",
-            borderBottom: "0.5px solid #e8e6e0",
-            fontSize: 10,
-            color: "#888",
-            flexShrink: 0,
-          }}
-        >
-          <div>Context Panel Placeholder</div>
-          <div>Live integrations disabled for demo</div>
-        </div>
-        {selectedConv ? (
-          <div style={{ padding: 12, overflowY: "auto", flex: 1 }}>
-            {/* Visitor header */}
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-              <div
-                style={{
-                  width: 32,
-                  height: 32,
-                  borderRadius: "50%",
-                  background: "#fef3c7",
-                  color: "#92400e",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: 11,
-                  fontWeight: 700,
-                }}
-              >
-                {getVisitorLabel(selectedConv).slice(0, 2).toUpperCase()}
-              </div>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 700 }}>{getVisitorLabel(selectedConv)}</div>
-                <div style={{ fontSize: 10, color: "#888" }}>{selectedConv.channel_config?.name || "—"}</div>
-              </div>
-            </div>
-            {/* Basic info */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12, fontSize: 11 }}>
-              {[
-                ["Status", selectedConv.status],
-                ["Channel", selectedConv.channel_config?.name || "—"],
-                ["Assigned", assignedName],
-              ].map(([l, v]) => (
-                <div key={l} style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span style={{ color: "#888" }}>{l}</span>
-                  <span style={{ fontWeight: 500, color: "#1a1a1a" }}>{v}</span>
-                </div>
-              ))}
-            </div>
-            {/* CRM placeholder */}
-            <div
-              style={{
-                background: "#f5f4f0",
-                borderRadius: 8,
-                padding: "10px 12px",
-                fontSize: 10,
-                color: "#888",
-                lineHeight: 1.6,
-                marginBottom: 12,
-              }}
-            >
-              📊 Customer / Knowledge / AI Suggestion / Policy tabs coming in Phase-2C
-            </div>
-            <Link
-              to="/console/customer360"
-              style={{
-                display: "block",
-                textAlign: "center",
-                fontSize: 11,
-                fontWeight: 600,
-                color: "#6366f1",
-                textDecoration: "none",
-                background: "#ede9fe",
-                padding: "6px 12px",
-                borderRadius: 6,
-              }}
-            >
-              ↗ Open Full Customer 360
-            </Link>
-          </div>
-        ) : (
-          <div
-            style={{
-              flex: 1,
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 8,
-              padding: 20,
-              textAlign: "center" as const,
-            }}
-          >
-            <div style={{ fontSize: 28 }}>👤</div>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "#94a3b8" }}>Customer Context</div>
-            <div style={{ fontSize: 10, color: "#cbd5e1", lineHeight: 1.6 }}>
-              Select a conversation to view customer context.
-              <br />
-              Full CRM panel coming in Phase-2C.
-            </div>
-            <Link
-              to="/console/customer360"
-              style={{
-                marginTop: 8,
-                fontSize: 11,
-                fontWeight: 600,
-                color: "#6366f1",
-                textDecoration: "none",
-                background: "#ede9fe",
-                padding: "4px 10px",
-                borderRadius: 6,
-              }}
-            >
-              ↗ Open Customer 360
-            </Link>
-          </div>
-        )}
+      {/* ── RIGHT: CRMPanel (300px) ── */}
+      <div style={{ width: 300, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <CRMPanel
+          conv={selectedConv}
+          visitorLabel={visitorLabel || "Visitor"}
+          onInsert={(text) => setReply((prev) => (prev ? `${prev}\n${text}` : text))}
+          onResolve={handleResolve}
+        />
       </div>
     </div>
   );
