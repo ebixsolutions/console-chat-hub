@@ -237,32 +237,75 @@ function HandoffBanner({ conv, messages, onResolve }: { conv: Conv; messages: Ms
   const headerBg = isHumanControl ? "#ede9fe" : "#fee2e2";
   const headerColor = isHumanControl ? "#6d28d9" : "#991b1b";
 
-  // Derive real AI Summary from conversation messages
+  // Derive precise AI Summary from all conversation messages
   const visitorMsgs = messages.filter((m) => m.role === "visitor");
   const aiMsgs = messages.filter((m) => m.role === "assistant");
-  const lastVisitorMsg = visitorMsgs[visitorMsgs.length - 1]?.content || "—";
-  const lastAiMsg = aiMsgs[aiMsgs.length - 1]?.content || "—";
   const aiCount = aiMsgs.length;
   const visitorCount = visitorMsgs.length;
-  // Detect escalation signals from visitor messages
   const allVisitorText = visitorMsgs
     .map((m) => m.content)
     .join(" ")
     .toLowerCase();
+  const allAiText = aiMsgs
+    .map((m) => m.content)
+    .join(" ")
+    .toLowerCase();
+
+  // Detect signals from full conversation
   const hasRefund = allVisitorText.includes("退款") || allVisitorText.includes("refund");
+  const hasDamaged =
+    allVisitorText.includes("損壞") ||
+    allVisitorText.includes("损坏") ||
+    allVisitorText.includes("damaged") ||
+    allVisitorText.includes("破損");
+  const hasUrgent =
+    allVisitorText.includes("急") ||
+    allVisitorText.includes("urgent") ||
+    allVisitorText.includes("今天") ||
+    allVisitorText.includes("today");
   const hasAngry =
-    allVisitorText.includes("unacceptable") ||
     allVisitorText.includes("angry") ||
+    allVisitorText.includes("😡") ||
     allVisitorText.includes("不滿") ||
-    allVisitorText.includes("投訴");
+    allVisitorText.includes("失去預算") ||
+    allVisitorText.includes("unacceptable");
   const hasHuman =
-    allVisitorText.includes("human") || allVisitorText.includes("真人") || allVisitorText.includes("人工");
-  const escalationReasons = [
-    hasAngry && "⚡ Customer sentiment: escalated",
-    hasRefund && "⚡ Refund / policy dispute detected",
-    hasHuman && "⚡ Customer requested human agent",
-    !hasAngry && !hasRefund && !hasHuman && "⚡ AI confidence threshold triggered",
-  ].filter(Boolean);
+    allVisitorText.includes("真人") ||
+    allVisitorText.includes("人工") ||
+    allVisitorText.includes("human") ||
+    allVisitorText.includes("轉接") ||
+    allVisitorText.includes("transfer");
+  const hasBudget =
+    allVisitorText.includes("預算") ||
+    allVisitorText.includes("budget") ||
+    allVisitorText.includes("失去") ||
+    allVisitorText.includes("超支");
+
+  // Build narrative summary from detected signals
+  const summaryParts: string[] = [];
+  if (hasRefund) summaryParts.push("requested a refund");
+  if (hasDamaged) summaryParts.push("reported damaged goods after delivery");
+  if (hasUrgent) summaryParts.push("said the item was urgently needed today");
+  if (hasAngry || hasBudget) summaryParts.push("became upset about the budget impact");
+  if (hasHuman) summaryParts.push("requested human support");
+  if (summaryParts.length === 0) summaryParts.push("escalated the conversation");
+  const summaryText = "Customer " + summaryParts.join(", ") + ".";
+
+  // Why AI transferred
+  const whyReasons: string[] = [];
+  if (hasAngry) whyReasons.push("✓ Angry sentiment detected");
+  if (hasRefund) whyReasons.push("✓ Refund / policy issue");
+  if (hasDamaged) whyReasons.push("✓ Damaged item after delivery");
+  if (hasUrgent) whyReasons.push("✓ Urgent need today");
+  if (hasHuman) whyReasons.push("✓ Human support requested");
+  if (whyReasons.length === 0) whyReasons.push("✓ AI confidence threshold triggered");
+
+  // Dynamic recommended actions
+  const actions: string[] = ["✓ Prioritize human takeover", "✓ Review full conversation"];
+  if (hasRefund || hasDamaged) actions.push("✓ Ask for order number");
+  if (hasDamaged) actions.push("✓ Request damage photos");
+  if (hasHuman) actions.push("✓ Confirm contact method");
+  if (hasRefund || hasDamaged) actions.push("✓ Review refund / replacement policy");
 
   return (
     <div
@@ -296,8 +339,8 @@ function HandoffBanner({ conv, messages, onResolve }: { conv: Conv; messages: Ms
             Customer
           </div>
           <div style={{ lineHeight: 1.5, fontSize: 11 }}>{getVisitorLabel(conv)}</div>
-          <div style={{ fontSize: 10, color: "#888" }}>
-            {conv.channel_config?.name || "Web"} · {visitorCount} messages
+          <div style={{ fontSize: 10, color: "#888", marginTop: 2 }}>
+            {conv.channel_config?.name || "Web"} · {visitorCount} msg · AI replied {aiCount}×
           </div>
         </div>
         <div>
@@ -312,18 +355,7 @@ function HandoffBanner({ conv, messages, onResolve }: { conv: Conv; messages: Ms
           >
             AI Summary
           </div>
-          <div style={{ lineHeight: 1.5, fontSize: 11, marginBottom: 4 }}>
-            <b>Last customer message:</b>
-            <br />
-            {lastVisitorMsg.slice(0, 100)}
-            {lastVisitorMsg.length > 100 ? "…" : ""}
-          </div>
-          <div style={{ lineHeight: 1.5, fontSize: 11, color: "#6d28d9" }}>
-            <b>Last AI reply:</b>
-            <br />
-            {lastAiMsg.slice(0, 80)}
-            {lastAiMsg.length > 80 ? "…" : ""}
-          </div>
+          <div style={{ lineHeight: 1.6, fontSize: 11, color: "#1a1a1a" }}>{summaryText}</div>
         </div>
         <div>
           <div
@@ -332,16 +364,15 @@ function HandoffBanner({ conv, messages, onResolve }: { conv: Conv; messages: Ms
               fontWeight: 700,
               color: "#888",
               textTransform: "uppercase" as const,
-              marginBottom: 5,
+              marginBottom: 4,
             }}
           >
             Why AI Transferred
           </div>
-          <div style={{ lineHeight: 1.5, marginBottom: 6, fontSize: 11 }}>
-            {escalationReasons.map((r, i) => (
+          <div style={{ lineHeight: 1.7, marginBottom: 6, fontSize: 11 }}>
+            {whyReasons.map((r, i) => (
               <div key={i}>{r}</div>
             ))}
-            <div style={{ color: "#888", marginTop: 2 }}>AI replied {aiCount} times</div>
           </div>
           <div
             style={{
@@ -349,14 +380,16 @@ function HandoffBanner({ conv, messages, onResolve }: { conv: Conv; messages: Ms
               fontWeight: 700,
               color: "#888",
               textTransform: "uppercase" as const,
-              marginBottom: 3,
+              marginBottom: 4,
             }}
           >
             Recommended Action
           </div>
-          <div style={{ fontSize: 11 }}>✓ Review full conversation</div>
-          <div style={{ fontSize: 11 }}>✓ Reply directly to customer</div>
-          {hasRefund && <div style={{ fontSize: 11 }}>✓ Check refund policy</div>}
+          <div style={{ fontSize: 11 }}>
+            {actions.map((a, i) => (
+              <div key={i}>{a}</div>
+            ))}
+          </div>
         </div>
       </div>
       <div
