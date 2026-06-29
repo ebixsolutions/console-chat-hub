@@ -230,18 +230,39 @@ function StatusBadge({ status }: { status: string }) {
 // ─── HandoffBanner (aligned to Base44 HandoffBanner.jsx) ─────────────────────
 function HandoffBanner({ conv, messages, onResolve }: { conv: Conv; messages: Msg[]; onResolve?: () => void }) {
   const isHumanControl = conv.status === "human_control";
-  const isHandoff = ["human_needed", "human_control", "escalation_risk"].includes(conv.status);
+  const isHandoff = isHumanControl || conv.status === "escalation_risk" || isHumanNeeded(conv);
   if (!isHandoff) return null;
 
   const borderColor = isHumanControl ? "#a78bfa" : "#ef4444";
   const headerBg = isHumanControl ? "#ede9fe" : "#fee2e2";
   const headerColor = isHumanControl ? "#6d28d9" : "#991b1b";
 
-  // Derive summary from real conversation data
+  // Derive real AI Summary from conversation messages
   const visitorMsgs = messages.filter((m) => m.role === "visitor");
-  const lastVisitorMsg = visitorMsgs[visitorMsgs.length - 1]?.content || "—";
   const aiMsgs = messages.filter((m) => m.role === "assistant");
+  const lastVisitorMsg = visitorMsgs[visitorMsgs.length - 1]?.content || "—";
+  const lastAiMsg = aiMsgs[aiMsgs.length - 1]?.content || "—";
   const aiCount = aiMsgs.length;
+  const visitorCount = visitorMsgs.length;
+  // Detect escalation signals from visitor messages
+  const allVisitorText = visitorMsgs
+    .map((m) => m.content)
+    .join(" ")
+    .toLowerCase();
+  const hasRefund = allVisitorText.includes("退款") || allVisitorText.includes("refund");
+  const hasAngry =
+    allVisitorText.includes("unacceptable") ||
+    allVisitorText.includes("angry") ||
+    allVisitorText.includes("不滿") ||
+    allVisitorText.includes("投訴");
+  const hasHuman =
+    allVisitorText.includes("human") || allVisitorText.includes("真人") || allVisitorText.includes("人工");
+  const escalationReasons = [
+    hasAngry && "⚡ Customer sentiment: escalated",
+    hasRefund && "⚡ Refund / policy dispute detected",
+    hasHuman && "⚡ Customer requested human agent",
+    !hasAngry && !hasRefund && !hasHuman && "⚡ AI confidence threshold triggered",
+  ].filter(Boolean);
 
   return (
     <div
@@ -274,8 +295,9 @@ function HandoffBanner({ conv, messages, onResolve }: { conv: Conv; messages: Ms
           >
             Customer
           </div>
-          <div style={{ lineHeight: 1.5 }}>
-            {getVisitorLabel(conv)} · {conv.channel_config?.name || "Web"}
+          <div style={{ lineHeight: 1.5, fontSize: 11 }}>{getVisitorLabel(conv)}</div>
+          <div style={{ fontSize: 10, color: "#888" }}>
+            {conv.channel_config?.name || "Web"} · {visitorCount} messages
           </div>
         </div>
         <div>
@@ -288,11 +310,19 @@ function HandoffBanner({ conv, messages, onResolve }: { conv: Conv; messages: Ms
               marginBottom: 5,
             }}
           >
-            What Happened
+            AI Summary
           </div>
-          <div style={{ lineHeight: 1.5, fontSize: 11 }}>
-            {lastVisitorMsg.slice(0, 80)}
-            {lastVisitorMsg.length > 80 ? "…" : ""}
+          <div style={{ lineHeight: 1.5, fontSize: 11, marginBottom: 4 }}>
+            <b>Last customer message:</b>
+            <br />
+            {lastVisitorMsg.slice(0, 100)}
+            {lastVisitorMsg.length > 100 ? "…" : ""}
+          </div>
+          <div style={{ lineHeight: 1.5, fontSize: 11, color: "#6d28d9" }}>
+            <b>Last AI reply:</b>
+            <br />
+            {lastAiMsg.slice(0, 80)}
+            {lastAiMsg.length > 80 ? "…" : ""}
           </div>
         </div>
         <div>
@@ -308,9 +338,10 @@ function HandoffBanner({ conv, messages, onResolve }: { conv: Conv; messages: Ms
             Why AI Transferred
           </div>
           <div style={{ lineHeight: 1.5, marginBottom: 6, fontSize: 11 }}>
-            <div>⚡ AI confidence: low</div>
-            <div>⚡ Human escalation signal</div>
-            <div>⚡ {aiCount} AI messages sent</div>
+            {escalationReasons.map((r, i) => (
+              <div key={i}>{r}</div>
+            ))}
+            <div style={{ color: "#888", marginTop: 2 }}>AI replied {aiCount} times</div>
           </div>
           <div
             style={{
@@ -323,8 +354,9 @@ function HandoffBanner({ conv, messages, onResolve }: { conv: Conv; messages: Ms
           >
             Recommended Action
           </div>
-          <div style={{ fontSize: 11 }}>✓ Review conversation</div>
+          <div style={{ fontSize: 11 }}>✓ Review full conversation</div>
           <div style={{ fontSize: 11 }}>✓ Reply directly to customer</div>
+          {hasRefund && <div style={{ fontSize: 11 }}>✓ Check refund policy</div>}
         </div>
       </div>
       <div
@@ -1113,7 +1145,7 @@ function SinglePageInbox() {
     setError(null);
   }
 
-  const loadMessages = useCallback(async (convId: string, showLoading = false) => {
+  const loadMessages = useCallback(async (convId: string, showLoading = false, scrollToBottom = false) => {
     if (showLoading) setLoadingMessages(true);
     const { data } = await supabase
       .from("messages")
@@ -1123,7 +1155,10 @@ function SinglePageInbox() {
       .order("created_at", { ascending: true });
     setMessages((data as Msg[]) ?? []);
     if (showLoading) setLoadingMessages(false);
-    setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+    // Only scroll to bottom on first load or explicit scroll request (not on polling)
+    if (showLoading || scrollToBottom) {
+      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+    }
   }, []);
 
   const loadAgents = useCallback(async () => {
@@ -1179,7 +1214,7 @@ function SinglePageInbox() {
     if (ok) {
       setReply("");
       toast.success("Reply sent");
-      loadMessages(selectedId);
+      loadMessages(selectedId, false, true);
     }
   }
   async function handleResolve() {
@@ -1208,7 +1243,7 @@ function SinglePageInbox() {
     if (await callEF("transfer-conversation", { conversation_id: selectedId, to_agent_id: targetId })) {
       toast.success("Transferred");
       loadConversations();
-      loadMessages(selectedId);
+      loadMessages(selectedId, false, true);
     }
   }
   async function handleRecall(messageId: string, role: string) {
@@ -1219,7 +1254,7 @@ function SinglePageInbox() {
     }
     if (await callEF("recall-message", { message_id: messageId })) {
       toast.success("Message recalled");
-      loadMessages(selectedId!);
+      loadMessages(selectedId!, false, true);
     }
   }
 
