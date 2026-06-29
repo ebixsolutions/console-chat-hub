@@ -453,16 +453,24 @@ function CRMPanel({
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", background: "#fff" }}>
       {/* Panel header */}
       <div
-        style={{ padding: "8px 12px", borderBottom: "0.5px solid #e8e6e0", fontSize: 10, color: "#888", flexShrink: 0 }}
+        style={{ padding: "8px 12px", borderBottom: "0.5px solid #e8e6e0", fontSize: 10, color: "#555", flexShrink: 0 }}
       >
-        <div>Mock Context Panel</div>
-        <div>Live integrations disabled for demo</div>
+        <div>AI Context: Demo Mode</div>
+        <div>Knowledge Base: Disabled for demo</div>
       </div>
       {/* Tab bar */}
-      <div style={{ display: "flex", borderBottom: "0.5px solid #e8e6e0", overflowX: "auto" as const, flexShrink: 0 }}>
+      <div
+        style={{
+          display: "flex",
+          borderBottom: "0.5px solid #e8e6e0",
+          overflowX: "auto" as const,
+          flexShrink: 0,
+          background: "#fff",
+        }}
+      >
         {TABS.map((tb) => (
           <button
             key={tb.key}
@@ -470,13 +478,14 @@ function CRMPanel({
             style={{
               fontSize: 11,
               fontWeight: 600,
-              padding: "8px 10px",
+              padding: "9px 12px",
               border: "none",
               cursor: "pointer",
-              background: "transparent",
+              background: "#fff",
               whiteSpace: "nowrap" as const,
               color: tab === tb.key ? "#1a1a1a" : "#888",
               borderBottom: tab === tb.key ? "2px solid #1a1a1a" : "2px solid transparent",
+              flexShrink: 0,
             }}
           >
             {tb.label}
@@ -484,7 +493,7 @@ function CRMPanel({
         ))}
       </div>
 
-      <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
+      <div style={{ flex: 1, overflowY: "auto", padding: "14px 14px", background: "#fff" }}>
         {/* CUSTOMER TAB */}
         {tab === "customer" && (
           <>
@@ -541,7 +550,7 @@ function CRMPanel({
             </div>
 
             {/* Stats 2×2 */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5, marginBottom: 10 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 12 }}>
               {[
                 [c360.total_orders, "Orders"],
                 [`HK$${c360.ltv.toLocaleString()}`, "LTV"],
@@ -578,8 +587,8 @@ function CRMPanel({
                   background: "#fee2e2",
                   border: "0.5px solid #fca5a5",
                   borderRadius: 8,
-                  padding: "7px 10px",
-                  marginBottom: 10,
+                  padding: "8px 10px",
+                  marginBottom: 12,
                 }}
               >
                 <div style={{ fontSize: 10.5, fontWeight: 700, color: "#dc2626", marginBottom: 2 }}>
@@ -621,9 +630,9 @@ function CRMPanel({
               style={{
                 background: "#f0fdf4",
                 border: "0.5px solid #86efac",
-                borderRadius: 8,
-                padding: "7px 10px",
-                marginBottom: 10,
+                borderRadius: 9,
+                padding: "8px 11px",
+                marginBottom: 12,
               }}
             >
               <div style={{ fontSize: 11, fontWeight: 700, color: "#065f46", marginBottom: 2 }}>
@@ -664,12 +673,12 @@ function CRMPanel({
                   textAlign: "left" as const,
                   fontSize: 11.5,
                   fontWeight: 500,
-                  padding: "7px 11px",
+                  padding: "8px 12px",
                   borderRadius: 8,
                   border: "0.5px solid #e8e6e0",
                   background: "#fff",
                   cursor: "pointer",
-                  marginBottom: 5,
+                  marginBottom: 6,
                   color: "#1a1a1a",
                 }}
               >
@@ -684,12 +693,12 @@ function CRMPanel({
                 textAlign: "left" as const,
                 fontSize: 11.5,
                 fontWeight: 500,
-                padding: "7px 11px",
+                padding: "8px 12px",
                 borderRadius: 8,
                 border: "0.5px solid #e8e6e0",
                 background: "#fff",
                 cursor: "pointer",
-                marginBottom: 5,
+                marginBottom: 6,
                 color: "#ef4444",
               }}
             >
@@ -703,13 +712,13 @@ function CRMPanel({
                 textAlign: "center" as const,
                 fontSize: 11.5,
                 fontWeight: 600,
-                padding: "8px 11px",
+                padding: "9px 11px",
                 borderRadius: 8,
                 border: "0.5px solid #6366f1",
                 background: "#ede9fe",
                 color: "#6366f1",
                 textDecoration: "none",
-                marginTop: 4,
+                marginTop: 6,
                 boxSizing: "border-box" as const,
               }}
             >
@@ -794,9 +803,10 @@ function CRMPanel({
                   style={{
                     border: "0.5px solid #e8e6e0",
                     borderRadius: 9,
-                    padding: 10,
+                    padding: "10px 11px",
                     marginBottom: 8,
                     background: "#fff",
+                    boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
                   }}
                 >
                   <div style={{ fontSize: 11.5, fontWeight: 600 }}>📄 {r.title}</div>
@@ -887,9 +897,9 @@ function CRMPanel({
               <div
                 key={s.id}
                 style={{
-                  border: `0.5px solid ${s.option_tag === "blue" ? "#3b82f6" : "#2d7d4f"}`,
+                  border: `1px solid ${s.option_tag === "blue" ? "#3b82f6" : "#2d7d4f"}`,
                   borderRadius: 9,
-                  padding: 10,
+                  padding: "11px 12px",
                   marginBottom: 10,
                   background: "#fff",
                 }}
@@ -945,7 +955,7 @@ function CRMPanel({
                 background: "#f0fdf4",
                 border: "0.5px solid #86efac",
                 borderRadius: 9,
-                padding: 10,
+                padding: "10px 12px",
                 color: "#065f46",
               }}
             >
@@ -1796,8 +1806,8 @@ function SinglePageInbox() {
         )}
       </div>
 
-      {/* ── RIGHT: CRMPanel (300px) ── */}
-      <div style={{ width: 300, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      {/* ── RIGHT: CRMPanel (360px) ── */}
+      <div style={{ width: 360, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <CRMPanel
           conv={selectedConv}
           visitorLabel={visitorLabel || "Visitor"}
