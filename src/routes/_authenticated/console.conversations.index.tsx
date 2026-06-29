@@ -144,8 +144,8 @@ const MOCK_SUGGESTIONS = [
     suggested_reply:
       "I sincerely apologise for the inconvenience. I'll arrange an immediate resolution for you. Please allow me a moment to process this.",
     rag_sources: [
-      { title: "VIP Benefits Manual v2", confidence: 92 },
-      { title: "Return & Exchange Policy", confidence: 87 },
+      { title: "Customer Policy Guide (Demo)", confidence: 92 },
+      { title: "Service Guidelines (Demo)", confidence: 87 },
     ],
   },
   {
@@ -155,8 +155,8 @@ const MOCK_SUGGESTIONS = [
     suggested_reply:
       "I completely understand your frustration. This is not the experience we want for you. Let me personally take care of this right away.",
     rag_sources: [
-      { title: "Sentiment Handling Guide", confidence: 94 },
-      { title: "VIP Benefits Manual v2", confidence: 92 },
+      { title: "Sentiment Handling Guide (Demo)", confidence: 94 },
+      { title: "Customer Policy Guide (Demo)", confidence: 92 },
     ],
   },
 ];
@@ -392,7 +392,7 @@ function BannerBtn({
   );
 }
 
-// ─── CRMPanel (aligned to Base44 CRMPanel.jsx) ───────────────────────────────
+// ─── CRMPanel — exact Base44 style alignment ─────────────────────────────────
 function CRMPanel({
   conv,
   visitorLabel,
@@ -414,9 +414,43 @@ function CRMPanel({
     setKbResults(null);
   }, [conv?.id]);
 
-  const c360 = MOCK_C360.default;
+  // Safe demo profile — not real customer data
+  const c360 = {
+    tier: "Demo Profile",
+    total_orders: 0,
+    ltv: 0,
+    loyalty_points: 0,
+    pending_returns: 0,
+    sentiment_current: "Neutral",
+    emotion_trajectory: "Stable",
+    churn_risk: "Low",
+    buying_intent_score: 50,
+    scam_risk_flag: false,
+    escalation_probability: 0,
+    risk_level: "",
+    intervention_type: "",
+    time_to_escalation_mins: 0,
+    trust_score: 70,
+    trust_level: "Medium",
+    resolved_without_human: 80,
+    satisfaction_trend: "Stable",
+    next_action_type: "Follow Up",
+    estimated_revenue_impact: 0,
+    next_action_channel: "Web Chat",
+    optimal_send_time: "Soon",
+    overall_csat: 4.0,
+    nps_score: 7,
+    customer_effort_score: 3.0,
+    memory_version: 1,
+    memory_size_kb: 0.5,
+    staleness_score: 5,
+    gdpr_status: "Compliant",
+    expires_at: "2026-12-31",
+  };
+
   const initials = getInitials(visitorLabel);
 
+  // Base44 exact sectionTitle style
   const sectionTitle: CSSProperties = {
     fontSize: 10,
     fontWeight: 700,
@@ -434,16 +468,16 @@ function CRMPanel({
 
   const doSearch = () => {
     const q = kbQuery.toLowerCase();
-    if (q.includes("vip") || q.includes("exchange") || q.includes("refund")) {
+    if (q.length > 2) {
       setKbResults([
         {
-          title: "VIP Benefits Manual v2",
-          snippet: "Gold VIP members are entitled to express exchange without photo review within 30 days.",
+          title: "Customer Policy Guide (Demo)",
+          snippet: "Demo sample: Customer eligibility rules require live KB connection for accurate policy lookup.",
           confidence: 92,
         },
         {
-          title: "Return & Exchange Policy",
-          snippet: "All exchange requests must be submitted within 30 days of delivery.",
+          title: "Return & Exchange Policy (Demo)",
+          snippet: "Demo sample: Exchange and return policies are available when Knowledge Base is connected.",
           confidence: 87,
         },
       ]);
@@ -452,16 +486,49 @@ function CRMPanel({
     }
   };
 
+  const MOCK_SUGGESTIONS = [
+    {
+      id: "s1",
+      option_label: "Option A — Fast Resolution",
+      option_tag: "blue",
+      suggested_reply:
+        "Hi, I understand the issue and I'm sorry for the inconvenience. I'll review your case and help arrange the next appropriate step for you as quickly as possible.",
+      rag_sources: [
+        { title: "Customer Policy Guide (Demo)", confidence: 92 },
+        { title: "Service Guidelines (Demo)", confidence: 87 },
+      ],
+    },
+    {
+      id: "s2",
+      option_label: "Option B — Empathy First",
+      option_tag: "green",
+      suggested_reply:
+        "Hi, I completely understand your frustration and I'm truly sorry for this experience. Let me personally look into this right away and ensure we take the right steps to resolve your issue promptly.",
+      rag_sources: [
+        { title: "Sentiment Handling Guide (Demo)", confidence: 94 },
+        { title: "Customer Policy Guide (Demo)", confidence: 92 },
+      ],
+    },
+  ];
+
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", background: "#fff" }}>
-      {/* Panel header */}
+      {/* Connection status — Base44 exact style but demo wording */}
       <div
-        style={{ padding: "8px 12px", borderBottom: "0.5px solid #e8e6e0", fontSize: 10, color: "#555", flexShrink: 0 }}
+        style={{
+          padding: "8px 12px",
+          borderBottom: "0.5px solid #e8e6e0",
+          fontSize: 10,
+          color: "#555",
+          flexShrink: 0,
+          background: "#fff",
+        }}
       >
         <div>AI Context: Demo Mode</div>
         <div>Knowledge Base: Disabled for demo</div>
       </div>
-      {/* Tab bar */}
+
+      {/* Tabs — Base44 exact */}
       <div
         style={{
           display: "flex",
@@ -478,7 +545,7 @@ function CRMPanel({
             style={{
               fontSize: 11,
               fontWeight: 600,
-              padding: "9px 12px",
+              padding: "8px 10px",
               border: "none",
               cursor: "pointer",
               background: "#fff",
@@ -493,9 +560,10 @@ function CRMPanel({
         ))}
       </div>
 
-      <div style={{ flex: 1, overflowY: "auto", padding: "14px 14px", background: "#fff" }}>
-        {/* CUSTOMER TAB */}
-        {tab === "customer" && (
+      {/* Content — Base44 exact padding: 12 */}
+      <div style={{ flex: 1, overflowY: "auto", padding: 12, background: "#fff" }}>
+        {/* CUSTOMER TAB — Base44 exact */}
+        {tab === "customer" && conv && (
           <>
             {/* Header */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
@@ -521,8 +589,8 @@ function CRMPanel({
                   <div style={{ fontSize: 13, fontWeight: 700 }}>{visitorLabel}</div>
                   <span
                     style={{
-                      background: "#fef3c7",
-                      color: "#92400e",
+                      background: "#f1f5f9",
+                      color: "#475569",
                       fontSize: 9.5,
                       fontWeight: 600,
                       padding: "1px 7px",
@@ -549,8 +617,8 @@ function CRMPanel({
               </Link>
             </div>
 
-            {/* Stats 2×2 */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 12 }}>
+            {/* Stats 2×2 — Base44 exact */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5, marginBottom: 10 }}>
               {[
                 [c360.total_orders, "Orders"],
                 [`HK$${c360.ltv.toLocaleString()}`, "LTV"],
@@ -567,28 +635,28 @@ function CRMPanel({
               ))}
             </div>
 
-            {/* Sentiment & Risk */}
+            {/* Sentiment & Risk — Base44 exact */}
             <div style={{ ...sectionTitle, marginBottom: 4 }}>Sentiment & Risk</div>
             <div style={{ background: "#f0efe9", borderRadius: 20, height: 7, marginBottom: 3, overflow: "hidden" }}>
-              <div style={{ height: "100%", borderRadius: 20, width: "75%", background: "#ef4444" }} />
+              <div style={{ height: "100%", borderRadius: 20, width: "45%", background: "#94a3b8" }} />
             </div>
-            <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4, color: "#991b1b" }}>
-              {c360.sentiment} · Trajectory: {c360.emotion_trajectory}
+            <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4, color: "#475569" }}>
+              {c360.sentiment_current} · Trajectory: {c360.emotion_trajectory}
             </div>
             <div style={{ fontSize: 10.5, color: "#888", marginBottom: 10 }}>
               Churn: <span style={{ color: "#dc2626", fontWeight: 600 }}>🔴 {c360.churn_risk}</span> &nbsp;·&nbsp;
-              Buying Intent: {c360.buying_intent_score}% &nbsp;·&nbsp; Scam: ✅ None
+              Buying Intent: {c360.buying_intent_score}% &nbsp;·&nbsp; Scam: {c360.scam_risk_flag ? "⚠️" : "✅ None"}
             </div>
 
-            {/* Escalation Risk */}
+            {/* Escalation Risk — Base44 exact */}
             {c360.risk_level && (
               <div
                 style={{
                   background: "#fee2e2",
                   border: "0.5px solid #fca5a5",
                   borderRadius: 8,
-                  padding: "8px 10px",
-                  marginBottom: 12,
+                  padding: "7px 10px",
+                  marginBottom: 10,
                 }}
               >
                 <div style={{ fontSize: 10.5, fontWeight: 700, color: "#dc2626", marginBottom: 2 }}>
@@ -600,7 +668,7 @@ function CRMPanel({
               </div>
             )}
 
-            {/* AI Trust Score */}
+            {/* AI Trust Score — Base44 exact */}
             <div style={{ ...sectionTitle, marginBottom: 4 }}>AI Trust Score</div>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
               <div style={{ flex: 1, background: "#e8e6e0", borderRadius: 20, height: 7, overflow: "hidden" }}>
@@ -624,27 +692,25 @@ function CRMPanel({
               Trend: {c360.satisfaction_trend} ↓ · {c360.resolved_without_human}% resolved w/o human
             </div>
 
-            {/* Next Best Action */}
+            {/* Next Best Action — Base44 exact */}
             <div style={{ ...sectionTitle, marginBottom: 4 }}>Next Best Action</div>
             <div
               style={{
                 background: "#f0fdf4",
                 border: "0.5px solid #86efac",
-                borderRadius: 9,
-                padding: "8px 11px",
-                marginBottom: 12,
+                borderRadius: 8,
+                padding: "7px 10px",
+                marginBottom: 10,
               }}
             >
               <div style={{ fontSize: 11, fontWeight: 700, color: "#065f46", marginBottom: 2 }}>
                 💎 {c360.next_action_type}
               </div>
-              <div style={{ fontSize: 10, color: "#065f46" }}>
-                Revenue: ~HK${c360.estimated_revenue_impact.toLocaleString()} · {c360.next_action_channel}
-              </div>
+              <div style={{ fontSize: 10, color: "#065f46" }}>Channel: {c360.next_action_channel}</div>
               <div style={{ fontSize: 10, color: "#888", marginTop: 1 }}>{c360.optimal_send_time}</div>
             </div>
 
-            {/* Last Feedback */}
+            {/* Last Feedback — Base44 exact */}
             <div style={{ ...sectionTitle, marginBottom: 4 }}>Last Feedback</div>
             <div style={{ fontSize: 10.5, color: "#555", marginBottom: 10 }}>
               CSAT: ★ {c360.overall_csat} · NPS: {c360.nps_score} · CES: {c360.customer_effort_score}
@@ -652,7 +718,7 @@ function CRMPanel({
               <span style={{ color: "#888" }}>Submitted: 2026-05-15</span>
             </div>
 
-            {/* Memory Status */}
+            {/* Memory Status — Base44 exact */}
             <div style={{ ...sectionTitle, marginBottom: 4 }}>
               Memory Status <span style={{ fontWeight: 400, color: "#aaa", fontSize: 9 }}>[Phase 2]</span>
             </div>
@@ -661,49 +727,43 @@ function CRMPanel({
               GDPR: ✅ {c360.gdpr_status} · Expires: {c360.expires_at}
             </div>
 
-            {/* Quick Actions */}
+            {/* Quick Actions — Base44 exact (Resolve wired to real EF) */}
             <div style={sectionTitle}>Quick Actions</div>
-            {["View Orders (Mock)", "Initiate Exchange (Mock)", "Create Ticket Note (Mock)"].map((a) => (
+            {[
+              { label: "View Orders (Mock)", color: "#1a1a1a", onClick: () => toast("View Orders — mock only") },
+              {
+                label: "Initiate Exchange (Mock)",
+                color: "#1a1a1a",
+                onClick: () => toast("Initiate Exchange — mock only"),
+              },
+              {
+                label: "Create Ticket Note (Mock)",
+                color: "#1a1a1a",
+                onClick: () => toast("Create Ticket Note — mock only"),
+              },
+              { label: "Resolve Ticket", color: "#ef4444", onClick: onResolve },
+            ].map((a) => (
               <button
-                key={a}
-                onClick={() => toast(`${a}`)}
+                key={a.label}
+                onClick={a.onClick}
                 style={{
                   display: "block",
                   width: "100%",
                   textAlign: "left" as const,
                   fontSize: 11.5,
                   fontWeight: 500,
-                  padding: "8px 12px",
+                  padding: "7px 11px",
                   borderRadius: 8,
                   border: "0.5px solid #e8e6e0",
                   background: "#fff",
                   cursor: "pointer",
-                  marginBottom: 6,
-                  color: "#1a1a1a",
+                  marginBottom: 5,
+                  color: a.color,
                 }}
               >
-                {a}
+                {a.label}
               </button>
             ))}
-            <button
-              onClick={onResolve}
-              style={{
-                display: "block",
-                width: "100%",
-                textAlign: "left" as const,
-                fontSize: 11.5,
-                fontWeight: 500,
-                padding: "8px 12px",
-                borderRadius: 8,
-                border: "0.5px solid #e8e6e0",
-                background: "#fff",
-                cursor: "pointer",
-                marginBottom: 6,
-                color: "#ef4444",
-              }}
-            >
-              Resolve Ticket
-            </button>
             <Link
               to="/console/customer360"
               style={{
@@ -712,13 +772,14 @@ function CRMPanel({
                 textAlign: "center" as const,
                 fontSize: 11.5,
                 fontWeight: 600,
-                padding: "9px 11px",
+                padding: "8px 11px",
                 borderRadius: 8,
                 border: "0.5px solid #6366f1",
                 background: "#ede9fe",
                 color: "#6366f1",
                 textDecoration: "none",
-                marginTop: 6,
+                marginBottom: 5,
+                marginTop: 4,
                 boxSizing: "border-box" as const,
               }}
             >
@@ -727,7 +788,7 @@ function CRMPanel({
           </>
         )}
 
-        {/* KNOWLEDGE TAB */}
+        {/* KNOWLEDGE TAB — Base44 exact */}
         {tab === "knowledge" && (
           <>
             <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
@@ -768,19 +829,19 @@ function CRMPanel({
                 style={{
                   background: "#fef3c7",
                   color: "#92400e",
-                  fontSize: 9,
+                  fontSize: 9.5,
                   fontWeight: 700,
-                  padding: "1px 6px",
-                  borderRadius: 4,
+                  padding: "1px 7px",
+                  borderRadius: 20,
+                  border: "0.5px solid #fbbf24",
+                  whiteSpace: "nowrap" as const,
                 }}
               >
                 Mock
               </span>
             </div>
             {kbResults === null && (
-              <div style={{ fontSize: 11, color: "#888" }}>
-                Try: "gold vip exchange policy" or "shipping delay refund"
-              </div>
+              <div style={{ fontSize: 11, color: "#888" }}>Try: "return policy" or "shipping delay refund"</div>
             )}
             {kbResults !== null && kbResults.length === 0 && (
               <div
@@ -797,16 +858,16 @@ function CRMPanel({
               </div>
             )}
             {kbResults !== null &&
+              kbResults.length > 0 &&
               kbResults.map((r, i) => (
                 <div
                   key={i}
                   style={{
                     border: "0.5px solid #e8e6e0",
                     borderRadius: 9,
-                    padding: "10px 11px",
+                    padding: 10,
                     marginBottom: 8,
                     background: "#fff",
-                    boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
                   }}
                 >
                   <div style={{ fontSize: 11.5, fontWeight: 600 }}>📄 {r.title}</div>
@@ -828,9 +889,10 @@ function CRMPanel({
                       dark
                       onClick={() => {
                         onInsert(r.snippet);
-                        toast.success("Inserted into reply");
+                        toast.success("KB source inserted into reply");
                       }}
                     />
+                    <SmBtn label="View Source" onClick={() => toast("View source (Mock)")} />
                   </div>
                 </div>
               ))}
@@ -847,14 +909,14 @@ function CRMPanel({
                 ⚠ KB Gap Detected
               </div>
               <div style={{ fontSize: 11, color: "#92400e", marginBottom: 7 }}>
-                VIP express exchange rule not clearly linked to returns flow.
+                Demo: KB Gap detection requires live Knowledge Base connection.
               </div>
               <SmBtn label="Create KB Gap Task" dark onClick={() => toast.success("KB Gap task created (Mock)")} />
             </div>
           </>
         )}
 
-        {/* AI SUGGESTION TAB */}
+        {/* AI SUGGESTION TAB — Base44 exact (no Send button) */}
         {tab === "suggestion" && (
           <>
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
@@ -863,10 +925,12 @@ function CRMPanel({
                 style={{
                   background: "#fef3c7",
                   color: "#92400e",
-                  fontSize: 9,
+                  fontSize: 9.5,
                   fontWeight: 700,
-                  padding: "1px 6px",
-                  borderRadius: 4,
+                  padding: "1px 7px",
+                  borderRadius: 20,
+                  border: "0.5px solid #fbbf24",
+                  whiteSpace: "nowrap" as const,
                 }}
               >
                 Mock
@@ -874,32 +938,22 @@ function CRMPanel({
             </div>
             <div style={{ fontSize: 10, color: "#888", marginBottom: 10 }}>Phase 2: Real LLM + RAG</div>
             <div style={{ background: "#f5f4f0", borderRadius: 9, padding: 10, marginBottom: 10 }}>
-              <div
-                style={{
-                  fontSize: 10,
-                  fontWeight: 700,
-                  color: "#888",
-                  textTransform: "uppercase" as const,
-                  marginBottom: 4,
-                }}
-              >
-                Based On
-              </div>
+              <div style={{ ...sectionTitle, marginBottom: 4 }}>Based On</div>
               <div style={{ fontSize: 11, lineHeight: 1.7 }}>
-                👑 Gold VIP &nbsp; 😠 Angry
+                👤 {visitorLabel}
                 <br />
-                📦 12 orders &nbsp; 💰 HK$8,240 LTV
+                📋 Demo CRM Profile &nbsp; 💬 Current Conversation
                 <br />
-                📚 2 KB sources retrieved
+                📚 2 KB sources retrieved (Mock)
               </div>
             </div>
             {MOCK_SUGGESTIONS.map((s) => (
               <div
                 key={s.id}
                 style={{
-                  border: `1px solid ${s.option_tag === "blue" ? "#3b82f6" : "#2d7d4f"}`,
+                  border: `0.5px solid ${s.option_tag === "blue" ? "#3b82f6" : "#2d7d4f"}`,
                   borderRadius: 9,
-                  padding: "11px 12px",
+                  padding: 10,
                   marginBottom: 10,
                   background: "#fff",
                 }}
@@ -944,7 +998,7 @@ function CRMPanel({
           </>
         )}
 
-        {/* POLICY TAB */}
+        {/* POLICY TAB — Base44 exact */}
         {tab === "policy" && (
           <>
             <div style={sectionTitle}>Policy Check</div>
@@ -955,14 +1009,15 @@ function CRMPanel({
                 background: "#f0fdf4",
                 border: "0.5px solid #86efac",
                 borderRadius: 9,
-                padding: "10px 12px",
+                padding: 10,
                 color: "#065f46",
               }}
             >
-              ✓ Gold VIP exchange: no photo required
+              ℹ️ Policy check is disabled for demo
               <br />
-              ✓ Risk level: Low
-              <br />✓ No abuse pattern detected
+              Live policy lookup requires KB connection
+              <br />
+              Connect live Knowledge Base for real policy data
             </div>
             <div style={{ marginTop: 10 }}>
               <SmBtn label="Open Policy" onClick={() => toast("Open Policy (Mock)")} />
@@ -973,6 +1028,7 @@ function CRMPanel({
     </div>
   );
 }
+
 function SmBtn({ label, dark, onClick }: { label: string; dark?: boolean; onClick: () => void }) {
   return (
     <button
