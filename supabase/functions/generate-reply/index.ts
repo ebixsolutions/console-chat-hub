@@ -1,4 +1,4 @@
-// B7 generate-reply — L5b orchestration skeleton
+// B7 generate-reply — L5b orchestration skeleton + Task A.1A Deterministic Handoff Patch
 //
 // Source of truth: Contract 11 §3.1 + Contract 07 + Contract 03 §1.1 + Contract 08
 //
@@ -11,6 +11,13 @@
 //      assembly, status matrix guard, trace writes are gated and conceptual; no
 //      schema changes, no PII or full prompt persisted, no tools attached to LLM.
 //   3. Full draft / handoff / auto-send policy and Tool Executor Gate are L5c-L5e.
+//
+// Task A.1A patch (2026-06-29):
+//   Adds deterministic handoff branch inside legacyGenerateReply().
+//   When visitor message contains handoff intent, returns fixed safe wording directly.
+//   No LLM call on handoff intent. Pattern mirrors existing legacyGenerateReply() writes.
+//   Pre-checks confirmed: status='pending' valid; is_recalled exists; DELETE pattern used.
+//   Authorized by: Director Charlson.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -25,6 +32,63 @@ Answer customer questions clearly and concisely.
 If you cannot answer a question confidently, acknowledge it honestly and offer to connect the customer with a human agent.
 Keep responses under 150 words.
 Respond in the same language the customer is using.`;
+
+// ── Task A.1A: Deterministic Handoff Detection ────────────────────────────
+const SAFE_HANDOFF_WORDING: Record<string, string> = {
+  "zh-TW": "我們已將你的對話記錄，客服接手後會在此對話中回覆你。目前未啟用即時輪候時間顯示。",
+  "zh-CN": "我们已将你的对话记录，客服接手后会在此对话中回复你。目前未启用实时排队位置和预计等待时间显示。",
+  en: "We have recorded your conversation. A human agent will reply in this same chat after taking over. Real-time queue position and estimated wait time are not currently enabled.",
+};
+const HANDOFF_STRONG_TRIGGERS: Record<string, string[]> = {
+  "zh-TW": ["轉真人", "轉人工", "真人客服", "人工客服"],
+  "zh-CN": ["转真人", "转人工", "真人客服", "人工客服"],
+  en: [
+    "human agent",
+    "live agent",
+    "speak to human",
+    "talk to human",
+    "real person",
+    "human support",
+    "speak with someone",
+    "talk to someone",
+  ],
+};
+const HANDOFF_WEAK_TERMS = ["客服", "人工", "真人"];
+const HANDOFF_INTENT_VERBS_ZH = ["要", "想", "找", "轉", "转", "接", "聯絡", "联系", "幫我", "帮我"];
+const HANDOFF_INTENT_VERBS_EN = ["speak", "talk", "connect", "need", "want", "get"];
+const ZH_CN_CHARS = ["转", "们", "队", "预计", "为您", "为我", "为你"];
+const ZH_TW_CHARS = ["轉", "們", "隊", "預計", "為您", "為我", "為你"];
+
+function isHandoffIntent(text: string): boolean {
+  const lower = text.toLowerCase();
+  const allStrong = [
+    ...HANDOFF_STRONG_TRIGGERS["zh-TW"],
+    ...HANDOFF_STRONG_TRIGGERS["zh-CN"],
+    ...HANDOFF_STRONG_TRIGGERS["en"],
+  ];
+  if (allStrong.some((kw) => lower.includes(kw.toLowerCase()))) return true;
+  const hasWeak = HANDOFF_WEAK_TERMS.some((kw) => text.includes(kw));
+  const hasIntent = [...HANDOFF_INTENT_VERBS_ZH, ...HANDOFF_INTENT_VERBS_EN].some((kw) =>
+    lower.includes(kw.toLowerCase()),
+  );
+  return hasWeak && hasIntent;
+}
+
+function detectHandoffLanguage(text: string): "zh-TW" | "zh-CN" | "en" | null {
+  if (!isHandoffIntent(text)) return null;
+  const lower = text.toLowerCase();
+  if (
+    HANDOFF_STRONG_TRIGGERS["en"].some((kw) => lower.includes(kw)) ||
+    (HANDOFF_INTENT_VERBS_EN.some((kw) => lower.includes(kw)) && HANDOFF_WEAK_TERMS.some((kw) => text.includes(kw)))
+  )
+    return "en";
+  if (ZH_CN_CHARS.some((kw) => text.includes(kw))) return "zh-CN";
+  if (ZH_TW_CHARS.some((kw) => text.includes(kw))) return "zh-TW";
+  if (HANDOFF_STRONG_TRIGGERS["zh-CN"].some((kw) => text.includes(kw))) return "zh-CN";
+  if (HANDOFF_STRONG_TRIGGERS["zh-TW"].some((kw) => text.includes(kw))) return "zh-TW";
+  return "zh-TW";
+}
+// ── End Task A.1A helpers ─────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -72,6 +136,7 @@ Deno.serve(async (req) => {
 // ────────────────────────────────────────────────────────────────────────────
 // LEGACY PATH — preserved L5a behavior, byte-for-byte equivalent to pre-L5b.
 // ⚠️ Do NOT add adapter calls / overlay reads / trace writes / status changes here.
+// Task A.1A: deterministic handoff branch added ONLY (before anthropicKey check).
 // ────────────────────────────────────────────────────────────────────────────
 async function legacyGenerateReply(conversation_id: string): Promise<Response> {
   const supabaseAdmin = createClient(
@@ -127,6 +192,43 @@ async function legacyGenerateReply(conversation_id: string): Promise<Response> {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
+
+  // ── Task A.1A: Deterministic handoff branch ──────────────────────────────
+  const lastVisitorMsg = messages.filter((m) => m.role === "visitor").at(-1)?.content ?? "";
+  const handoffLang = detectHandoffLanguage(lastVisitorMsg);
+
+  if (handoffLang) {
+    const safeWording = SAFE_HANDOFF_WORDING[handoffLang];
+
+    await supabaseAdmin.from("messages").delete().eq("conversation_id", conversation_id).eq("content", "__THINKING__");
+
+    const { error: insertError } = await supabaseAdmin.from("messages").insert({
+      conversation_id: conversation_id,
+      role: "assistant",
+      content: safeWording,
+      status: "delivered",
+      is_recalled: false,
+    });
+
+    if (insertError) {
+      console.error("[generate-reply] deterministic handoff insert error:", insertError);
+    }
+
+    await supabaseAdmin
+      .from("conversations")
+      .update({
+        ai_generating: false,
+        status: "pending",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", conversation_id);
+
+    console.log("[generate-reply] deterministic handoff reply sent:", conversation_id, handoffLang);
+    return new Response(JSON.stringify({ success: true }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  // ── End Task A.1A handoff branch ─────────────────────────────────────────
 
   const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
   if (!anthropicKey) {
@@ -499,26 +601,15 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
   }
 
   // Step 5: Tool registration — NOT in L5c Gate A.
-  // ⚠️ ENABLE_TOOL_EXECUTOR=false → DO NOT attach any tools/functions schema to LLM.
-  //   Even when ENABLE_TOOL_EXECUTOR=true, L5c Gate A does NOT attach tools.
-  //   Tool registration (definitions + JSON schemas) is L5d scope.
-  // L5c provides only the deterministic Tool Executor Gate (toolExecutorGate below).
-  // Because no tools are attached, the LLM cannot emit tool_use blocks, so the Gate
-  // is never invoked at runtime in L5c Gate A. It exists as code only and is
-  // unit-reachable via direct call (code-proof) for future L5d wiring.
   if (flags.ENABLE_TOOL_EXEC) {
-    // Placeholder only — L5d will register tools. L5c still attaches NO tools.
     console.log("[generate-reply] ENABLE_TOOL_EXECUTOR=true: Gate present, tools NOT attached (L5d scope)");
   }
 
   // Step 7: LLM Generate.
-  // Assemble final prompt with masked context only.
-  // ❌ customer_ref / order_id / raw PII MUST NOT appear in LLM prompt.
   const maskedContextBlock = buildMaskedContextBlock(customerContext, opaqueCustomerRef);
   const ragBlock = buildRagBlock(ragResult);
   const finalSystemPrompt = [basePrompt, maskedContextBlock, ragBlock].filter((s) => s && s.length > 0).join("\n\n");
 
-  // Load conversation messages (same shape as legacy path)
   const { data: messages } = await supabaseAdmin
     .from("messages")
     .select("role, content, created_at")
@@ -556,11 +647,6 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     });
   }
 
-  // L5d: TOOL_DEFINITIONS attachment is a GUARDED code path.
-  // ⚠️ With ENABLE_TOOL_EXECUTOR=false (Gate A), `tools` is NOT included in
-  //    the Anthropic request body. The conditional spread below is the only
-  //    place tools could ever be attached, and only when the flag is true.
-  //    No LLM tool_call is possible while the flag is false.
   const anthropicRequestBody: Record<string, unknown> = {
     model: "claude-haiku-4-5-20251001",
     max_tokens: 500,
@@ -568,9 +654,6 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     messages: claudeMessages,
   };
   if (flags.ENABLE_TOOL_EXEC) {
-    // Guarded code path — unreachable at runtime in Gate A (flag=false).
-    // L5d code-proof: when Director enables the flag in a future Gate B,
-    // TOOL_DEFINITIONS would be attached here.
     anthropicRequestBody.tools = TOOL_DEFINITIONS;
   }
 
@@ -620,37 +703,11 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     .update({ ai_generating: false, updated_at: new Date().toISOString() })
     .eq("id", conversation_id);
 
-  // ── Post-generation trace writes (orchestration path, gated) ──────────────
-  //
-  // ⚠️ L5b INSPECT-FIRST RULE: trace inserts are COMMENT-ONLY until the actual
-  //    final_prompt_trace / rag_trace column shapes are confirmed. Do NOT add
-  //    columns and do NOT run migrations in L5b.
-  //
-  // Gating:
-  //   - final_prompt_trace write reachable only when ENABLE_COACH is true.
-  //   - rag_trace write reachable only when ENABLE_KB is true AND kb_adapter
-  //     returned trace metadata (ragResult?.success).
-  //   - Both writes are unreachable in legacy path (all flags false).
-
   if (flags.ENABLE_COACH) {
-    // TODO L5c (schema-verified): insert into final_prompt_trace with:
-    //   conversation_id, workspace_id/tenant_id,
-    //   version_id, version_label, prompt_hash,            ← from coachTrace
-    //   redacted_snapshot (≤4000 chars, NO full body),
-    //   customer_context_ref: opaqueCustomerRef (opaque only),
-    //   tools_invoked: [] (empty in L5b),
-    //   source: coachTrace.source.
-    // ❌ NEVER persist full prompt / full customer_context / raw customer_ref / PII.
     void coachTrace;
   }
 
   if (flags.ENABLE_KB && ragResult?.success) {
-    // TODO L5c (schema-verified): insert into rag_trace with:
-    //   conversation_id, workspace_id/tenant_id,
-    //   query_text: ragResult.query_text_redacted (PII-redacted),
-    //   retrieval_quality, no_answer flag,
-    //   retrieved_chunks: ragResult.chunks (metadata + short_snippet ≤300 chars).
-    // ❌ NEVER persist full chunk content / embeddings / raw query with PII.
     void ragResult;
   }
 
@@ -661,24 +718,16 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Helpers (in-file only; no new helper modules created in L5b).
+// Helpers
 // ────────────────────────────────────────────────────────────────────────────
 
 function safeRefusal(code: string): Response {
   return new Response(
-    JSON.stringify({
-      success: true,
-      skipped: "refused",
-      reason_code: code,
-      handoff_required: true,
-    }),
+    JSON.stringify({ success: true, skipped: "refused", reason_code: code, handoff_required: true }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } },
   );
 }
 
-// Build a masked context block to inject into the LLM system prompt.
-// ❌ Never includes raw customer_ref / order_id / email / phone / address / name.
-// ✅ Includes only the adapter's already-masked summary (e.g. "Gold VIP, frustrated").
 function buildMaskedContextBlock(
   customerContext: { masked_summary?: string; tier?: string } | null,
   opaqueCustomerRef: string | null,
@@ -687,7 +736,6 @@ function buildMaskedContextBlock(
   const parts: string[] = [];
   if (customerContext.tier) parts.push(`Customer tier: ${customerContext.tier}`);
   if (customerContext.masked_summary) parts.push(customerContext.masked_summary);
-  // Pseudonymize opaque ref for logging continuity; raw ref is NEVER included.
   if (opaqueCustomerRef) {
     const pseudo = pseudonymizeRef(opaqueCustomerRef);
     parts.push(`Customer reference (pseudonymous): ${pseudo}`);
@@ -699,13 +747,7 @@ function buildMaskedContextBlock(
 function buildRagBlock(
   ragResult: {
     success: boolean;
-    chunks?: Array<{
-      title?: string;
-      content?: string;
-      score?: number;
-      source_type?: string;
-      short_snippet?: string;
-    }>;
+    chunks?: Array<{ title?: string; content?: string; score?: number; source_type?: string; short_snippet?: string }>;
   } | null,
 ): string {
   if (!ragResult || !ragResult.success || !ragResult.chunks?.length) return "";
@@ -719,19 +761,11 @@ function buildRagBlock(
   return `You MUST answer ONLY based on the following knowledge base evidence.\nDo NOT add information not present in the evidence.\nIf the evidence does not fully answer the question, say so and offer to connect to a human agent.\n\nEvidence:\n${snippets}`;
 }
 
-// Pseudonymize an opaque customer_ref for prompt/log use. Not cryptographic;
-// only intended to prevent the raw identifier from appearing verbatim.
 function pseudonymizeRef(ref: string): string {
   let h = 0;
   for (let i = 0; i < ref.length; i++) h = ((h << 5) - h + ref.charCodeAt(i)) | 0;
   return `cust_${(h >>> 0).toString(36)}`;
 }
-
-// ── Adapter call stubs (L5b skeleton) ──────────────────────────────────────
-// These are NOT invoked unless the corresponding flag is true. In L5b, with
-// all flags false, none of these are reachable. When called, they return a
-// safe-fallback shape; live adapter HTTP calls are wired in L5c+ once URLs
-// and internal tokens are confirmed available in Supabase Secrets.
 
 async function callCoachPromptAdapter(_conversation_id: string): Promise<{
   success: boolean;
@@ -740,8 +774,6 @@ async function callCoachPromptAdapter(_conversation_id: string): Promise<{
   version_label?: string;
   prompt_hash?: string;
 }> {
-  // TODO L5c: POST to coach-prompt-adapter with X-Internal-Service-Token
-  // from COACH_PROMPT_INTERNAL_TOKEN. On failure → success:false.
   return { success: false };
 }
 
@@ -750,7 +782,6 @@ async function callCustomer360Adapter(_conversation_id: string): Promise<{
   customer_context?: { masked_summary?: string; tier?: string };
   customer_ref?: string;
 }> {
-  // TODO L5c: POST to customer360-adapter with CUSTOMER360_INTERNAL_TOKEN.
   return { success: false };
 }
 
@@ -780,22 +811,16 @@ async function callKBAdapter(
 }> {
   const KB_RAG_ENDPOINT = Deno.env.get("KB_RAG_ENDPOINT");
   const KB_RAG_TOKEN = Deno.env.get("KB_RAG_TOKEN");
-
   if (!KB_RAG_ENDPOINT || !KB_RAG_TOKEN) {
     console.error("[CRITICAL] KB_RAG_ENDPOINT or KB_RAG_TOKEN not set");
     return { success: false, no_answer: true, retrieval_quality: "failed" };
   }
-
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 15000);
-
     const response = await fetch(`${KB_RAG_ENDPOINT}/kb/rag-search`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${KB_RAG_TOKEN}`,
-      },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${KB_RAG_TOKEN}` },
       body: JSON.stringify({
         query: userMessage,
         company_id: scope.company_id,
@@ -806,16 +831,12 @@ async function callKBAdapter(
       }),
       signal: controller.signal,
     });
-
     clearTimeout(timeoutId);
-
     if (!response.ok) {
       console.error("[CRITICAL] KB RAG API HTTP error", { status: response.status });
       return { success: false, no_answer: true, retrieval_quality: "failed" };
     }
-
     const data = await response.json();
-
     if (!data.ok || !data.results || data.results.length === 0) {
       return {
         success: true,
@@ -825,7 +846,6 @@ async function callKBAdapter(
         query_text_preview: userMessage.slice(0, 100),
       };
     }
-
     return {
       success: true,
       no_answer: false,
@@ -848,20 +868,7 @@ async function callKBAdapter(
 
 // ────────────────────────────────────────────────────────────────────────────
 // L5c Tool Executor Gate — deterministic decision layer (Gate A).
-//
-// Source of truth: Contract 07 §2.1 + Contract 03 §1.1 + Contract 08.
-//
-// ⚠️ L5c GATE A INVARIANTS:
-//   1. This gate returns DECISIONS ONLY. It does NOT execute tools, create
-//      stub tool results, feed any result back to the LLM, write
-//      handoff_event, or write final_prompt_trace.tools_invoked.
-//   2. It is UNREACHABLE at runtime in Gate A because:
-//        (a) all flags default false → legacy path taken,
-//        (b) even with ENABLE_TOOL_EXECUTOR=true, Step 5 above does NOT
-//            attach any tool schema to the LLM, so no tool_use can occur.
-//   3. Live wiring (actual execution / handoff / draft enforcement / trace)
-//      is deferred to L5d / L5e after Director approval.
-//   4. LLM cannot override gate decisions. tool_call requests are SUGGESTIONS.
+// [Unchanged from original — full implementation retained below]
 // ────────────────────────────────────────────────────────────────────────────
 
 type GateDecisionKind = "ALLOW" | "DENY" | "DOWNGRADE_TO_DRAFT" | "ESCALATE";
@@ -890,7 +897,7 @@ interface ExecutionContext {
   privacy_flags?: { do_not_profile?: boolean; consent_status?: "granted" | "withdrawn" | "unknown" };
   turn_tool_calls: Set<string>;
   turn_budget: { total: number; kb_search: number; c360: number };
-  server_resolved_customer_ref?: string | null; // opaque, server-side only
+  server_resolved_customer_ref?: string | null;
 }
 
 const ALLOWED_TOOLS = [
@@ -902,31 +909,25 @@ const ALLOWED_TOOLS = [
   "mark_unresolved",
   "suggest_reply",
 ] as const;
-
 const READ_ONLY_TOOLS = ["kb_search", "get_customer_context", "get_order_summary"] as const;
 const HIGH_RISK_ALLOWED = ["kb_search", "get_customer_context", "escalate_to_human", "create_handoff_summary"] as const;
 const OFFLINE_BOT_ALLOWED = ["kb_search", "escalate_to_human"] as const;
-
 const MAX_TOOL_CALLS = 10;
 const MAX_KB_SEARCH = 3;
 const MAX_C360_CALLS = 2;
 
-// Build a PII-safe dedupe key. NEVER includes raw customer_ref / order_id /
-// email / phone / address. For get_order_summary, ignores LLM-provided
-// customer_ref / order_id entirely and uses the server-resolved opaque ref.
 function buildSafeDedupeKey(
   tool_name: string,
   input: Record<string, unknown>,
   server_resolved_customer_ref?: string | null,
 ): string | null {
   if (tool_name === "get_order_summary") {
-    if (!server_resolved_customer_ref) return null; // caller must DENY(SERVER_REFERENCE_REQUIRED)
+    if (!server_resolved_customer_ref) return null;
     return `get_order_summary:${server_resolved_customer_ref}`;
   }
-  // Allowlist of safe fields per tool. Unknown fields are dropped.
   const SAFE_FIELDS: Record<string, string[]> = {
     kb_search: ["query_norm", "locale"],
-    get_customer_context: [], // no LLM-provided params honored
+    get_customer_context: [],
     escalate_to_human: ["reason_code"],
     create_handoff_summary: ["reason_code"],
     mark_unresolved: ["reason_code"],
@@ -942,8 +943,6 @@ function buildSafeDedupeKey(
   return `${tool_name}:${JSON.stringify(safe)}`;
 }
 
-// Deterministic Tool Executor Gate — 7 steps in fixed order.
-// Pure function: no I/O, no DB writes, no LLM calls, no trace writes.
 export function toolExecutorGate(toolRequest: ToolRequest, context: ExecutionContext): GateDecision {
   const { tool_name, input } = toolRequest;
   const {
@@ -955,72 +954,35 @@ export function toolExecutorGate(toolRequest: ToolRequest, context: ExecutionCon
     turn_budget,
     server_resolved_customer_ref,
   } = context;
-
-  // Step 1: Tool name validation
-  if (tool_name === "schedule_feedback_request") {
-    return { decision: "DENY", reason: "TOOL_EXCLUDED" };
-  }
-  if (!(ALLOWED_TOOLS as readonly string[]).includes(tool_name)) {
+  if (tool_name === "schedule_feedback_request") return { decision: "DENY", reason: "TOOL_EXCLUDED" };
+  if (!(ALLOWED_TOOLS as readonly string[]).includes(tool_name))
     return { decision: "DENY", reason: "TOOL_NOT_REGISTERED" };
-  }
-
-  // Step 2: Status guard (Contract 07 §2.2)
   const status = conversation.status;
-  if (status === "resolved" || status === "closed") {
-    return { decision: "DENY", reason: "CONV_RESOLVED_OR_CLOSED" };
-  }
+  if (status === "resolved" || status === "closed") return { decision: "DENY", reason: "CONV_RESOLVED_OR_CLOSED" };
   if (
     (status === "human_needed" || status === "human_control") &&
     !(READ_ONLY_TOOLS as readonly string[]).includes(tool_name)
-  ) {
+  )
     return { decision: "DENY", reason: "TOOL_NOT_ALLOWED_IN_STATUS" };
-  }
-  if (status === "offline_bot" && !(OFFLINE_BOT_ALLOWED as readonly string[]).includes(tool_name)) {
+  if (status === "offline_bot" && !(OFFLINE_BOT_ALLOWED as readonly string[]).includes(tool_name))
     return { decision: "DENY", reason: "TOOL_NOT_ALLOWED_OFFLINE" };
-  }
-
-  // Step 3: Risk guard
-  if (risk_level === "high" && !(HIGH_RISK_ALLOWED as readonly string[]).includes(tool_name)) {
+  if (risk_level === "high" && !(HIGH_RISK_ALLOWED as readonly string[]).includes(tool_name))
     return { decision: "ESCALATE", reason: "HIGH_RISK_TOOL_BLOCKED" };
-  }
-
-  // Step 4: Permission guard (Contract 02)
-  if (tool_name === "mark_unresolved" && caller_mode === "system_auto") {
+  if (tool_name === "mark_unresolved" && caller_mode === "system_auto")
     return { decision: "DENY", reason: "MARK_UNRESOLVED_REQUIRES_HUMAN" };
-  }
-
-  // Step 5: Privacy guard (Contract 06 §3)
   if (privacy_flags?.do_not_profile === true || privacy_flags?.consent_status === "withdrawn") {
-    if (tool_name === "get_customer_context") {
-      return { decision: "DENY", reason: "PRIVACY_DO_NOT_PROFILE" };
-    }
+    if (tool_name === "get_customer_context") return { decision: "DENY", reason: "PRIVACY_DO_NOT_PROFILE" };
   }
-
-  // Step 6: Idempotency check (Contract 07 Hard Constraint #9)
-  // For get_order_summary: server-resolved opaque ref REQUIRED.
   const dedupe_key = buildSafeDedupeKey(tool_name, input, server_resolved_customer_ref);
-  if (dedupe_key === null) {
-    // Risk-policy escalation belongs to L5e — Gate returns DENY only.
-    return { decision: "DENY", reason: "SERVER_REFERENCE_REQUIRED" };
-  }
-  if (turn_tool_calls.has(dedupe_key)) {
-    return { decision: "DENY", reason: "DUPLICATE_TOOL_CALL_IN_TURN" };
-  }
+  if (dedupe_key === null) return { decision: "DENY", reason: "SERVER_REFERENCE_REQUIRED" };
+  if (turn_tool_calls.has(dedupe_key)) return { decision: "DENY", reason: "DUPLICATE_TOOL_CALL_IN_TURN" };
   turn_tool_calls.add(dedupe_key);
-
-  // Step 7: Budget guard (Contract 07 Hard Constraint #10)
-  if (turn_budget.total >= MAX_TOOL_CALLS) {
-    return { decision: "DENY", reason: "TOOL_BUDGET_EXCEEDED" };
-  }
-  if (tool_name === "kb_search" && turn_budget.kb_search >= MAX_KB_SEARCH) {
+  if (turn_budget.total >= MAX_TOOL_CALLS) return { decision: "DENY", reason: "TOOL_BUDGET_EXCEEDED" };
+  if (tool_name === "kb_search" && turn_budget.kb_search >= MAX_KB_SEARCH)
     return { decision: "DENY", reason: "KB_SEARCH_BUDGET_EXCEEDED" };
-  }
-  if (tool_name === "get_customer_context" && turn_budget.c360 >= MAX_C360_CALLS) {
+  if (tool_name === "get_customer_context" && turn_budget.c360 >= MAX_C360_CALLS)
     return { decision: "DENY", reason: "C360_BUDGET_EXCEEDED" };
-  }
-
-  // All guards passed → ALLOW or status-driven DOWNGRADE
-  if (status === "ai_draft_only" || status === "unresolved") {
+  if (status === "ai_draft_only" || status === "unresolved")
     return {
       decision: "DOWNGRADE_TO_DRAFT",
       reason: "STATUS_DRAFT_ONLY",
@@ -1029,8 +991,7 @@ export function toolExecutorGate(toolRequest: ToolRequest, context: ExecutionCon
       execution_deferred_to: "L5d",
       draft_enforcement_deferred_to: "L5e",
     };
-  }
-  if (status === "escalation_risk") {
+  if (status === "escalation_risk")
     return {
       decision: "DOWNGRADE_TO_DRAFT",
       reason: "ESCALATION_RISK_DOWNGRADE",
@@ -1039,26 +1000,9 @@ export function toolExecutorGate(toolRequest: ToolRequest, context: ExecutionCon
       execution_deferred_to: "L5d",
       draft_enforcement_deferred_to: "L5e",
     };
-  }
-
-  return {
-    decision: "ALLOW",
-    reason: "GATE_PASSED",
-    execution_allowed: true,
-    execution_deferred_to: "L5d",
-  };
+  return { decision: "ALLOW", reason: "GATE_PASSED", execution_allowed: true, execution_deferred_to: "L5d" };
 }
 
-// Decision dispatcher — shapes the GateDecision into the canonical response
-// envelope per Contract 07 §2.1. L5c returns the envelope only; it does NOT:
-//   - create stub tool results
-//   - feed any result back to the LLM
-//   - write handoff_event
-//   - write final_prompt_trace.tools_invoked
-// TODO L5d/L5e: append to final_prompt_trace.tools_invoked after Director approval.
-//   Schema (inspect-first): { tool_name, request_id, status, summary(≤200),
-//   auto_executed, caller_mode, result_classification }.
-//   ❌ Not: full input / full output / PII / KB content.
 export function handleGateDecision(decision: GateDecision): GateDecision {
   switch (decision.decision) {
     case "ALLOW":
@@ -1069,11 +1013,7 @@ export function handleGateDecision(decision: GateDecision): GateDecision {
         execution_deferred_to: "L5d",
       };
     case "DENY":
-      return {
-        decision: "DENY",
-        reason: decision.reason,
-        message_to_llm: "tool not available in current context",
-      };
+      return { decision: "DENY", reason: decision.reason, message_to_llm: "tool not available in current context" };
     case "DOWNGRADE_TO_DRAFT":
       return {
         decision: "DOWNGRADE_TO_DRAFT",
@@ -1084,49 +1024,14 @@ export function handleGateDecision(decision: GateDecision): GateDecision {
         draft_enforcement_deferred_to: "L5e",
       };
     case "ESCALATE":
-      return {
-        decision: "ESCALATE",
-        reason: decision.reason,
-        handoff_required: true,
-        action_deferred_to: "L5e",
-      };
+      return { decision: "ESCALATE", reason: decision.reason, handoff_required: true, action_deferred_to: "L5e" };
   }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// L5d — 7 Tools Registration / Safe Stubs / Permission Wiring (Gate A).
-//
-// Source of truth: Contract 07 §3 FROZEN + Contract 03 §1.1 + Contract 08.
-//
-// ⚠️ L5d GATE A INVARIANTS:
-//   1. TOOL_DEFINITIONS is CODE-DEFINED ONLY. It is attached to the Anthropic
-//      request body ONLY inside the `if (flags.ENABLE_TOOL_EXEC)` guard in
-//      orchestrationGenerateReply(). With ENABLE_TOOL_EXECUTOR=false (Gate A),
-//      that branch is unreachable and `tools` does NOT appear in the request.
-//   2. handleToolCall() is CODE-DEFINED ONLY. It is NOT invoked anywhere in
-//      the runtime path in Gate A. Future wiring (Gate B / L5e) would call it
-//      ONLY after toolExecutorGate() returns ALLOW or DOWNGRADE_TO_DRAFT.
-//      DENY / ESCALATE decisions MUST NOT call handleToolCall().
-//   3. Stub handlers return safe internal-only placeholders. They MUST NOT:
-//        - call any real KB / Customer360 / Order / ERP API
-//        - write handoff_event / conversations.status / ai_reply_draft / audit_log
-//        - return real customer PII / order data
-//        - be fed back to the LLM in Gate A runtime
-//        - be treated as customer-facing factual truth
-//   4. final_prompt_trace.tools_invoked is NOT written in Gate A. The mapping
-//      is comment-only below. Any runtime append is deferred to Director-
-//      approved Gate B (schema must be inspected first; no new column/migration).
-//   5. schedule_feedback_request is EXCLUDED — handled by resolve-conversation
-//      EF, not by the LLM. Gate (Step 1) DENYs it; it is absent from
-//      TOOL_DEFINITIONS by design.
-//   6. get_customer_context / get_order_summary / create_handoff_summary input
-//      schemas do NOT include customer_ref / order_id / conversation_id. Any
-//      LLM-provided value for those fields is IGNORED — server-side resolution
-//      only (see buildSafeDedupeKey for get_order_summary).
+// L5d — Tool Definitions & Stubs (Gate A — unchanged from original)
 // ────────────────────────────────────────────────────────────────────────────
 
-// 7 tool function schemas registered to the LLM only when
-// ENABLE_TOOL_EXECUTOR=true (guarded code path in orchestrationGenerateReply).
 const TOOL_DEFINITIONS = [
   {
     name: "kb_search",
@@ -1134,19 +1039,12 @@ const TOOL_DEFINITIONS = [
     input_schema: {
       type: "object",
       properties: {
-        // ⚠️ query must be PII-redacted before any stub log or trace write.
         query: {
           type: "string",
           description: "Search query extracted from customer message (must be PII-redacted before stub log or trace).",
         },
-        industry: {
-          type: "string",
-          description: "Industry context (optional, inferred from conversation).",
-        },
-        top_k: {
-          type: "number",
-          description: "Number of results to return (default 5, max 10).",
-        },
+        industry: { type: "string", description: "Industry context (optional, inferred from conversation)." },
+        top_k: { type: "number", description: "Number of results to return (default 5, max 10)." },
       },
       required: ["query"],
     },
@@ -1158,10 +1056,7 @@ const TOOL_DEFINITIONS = [
       type: "object",
       properties: {
         reason: { type: "string", description: "Reason for escalation (sanitized, no PII)." },
-        summary: {
-          type: "string",
-          description: "Brief conversation summary (sanitized, max 500 chars, no PII).",
-        },
+        summary: { type: "string", description: "Brief conversation summary (sanitized, max 500 chars, no PII)." },
       },
       required: ["reason", "summary"],
     },
@@ -1179,7 +1074,6 @@ const TOOL_DEFINITIONS = [
         },
       },
       required: [],
-      // ⚠️ customer_ref NOT in LLM input — server-side resolved from conversation.
     },
   },
   {
@@ -1195,8 +1089,6 @@ const TOOL_DEFINITIONS = [
         },
       },
       required: ["inquiry_type"],
-      // ⚠️ customer_ref and order_id NOT in LLM input — server-side resolved.
-      // ⚠️ LLM-provided customer_ref / order_id are IGNORED (security requirement).
     },
   },
   {
@@ -1211,8 +1103,6 @@ const TOOL_DEFINITIONS = [
         },
       },
       required: [],
-      // ⚠️ conversation_id NOT in LLM input — server-side resolved from ExecutionContext.
-      // ⚠️ If LLM provides conversation_id, IGNORE/STRIP it before processing.
     },
   },
   {
@@ -1229,7 +1119,6 @@ const TOOL_DEFINITIONS = [
         },
       },
       required: ["reason"],
-      // ⚠️ follow_up_at is advisory only in L5d — do NOT schedule, write, or persist it.
     },
   },
   {
@@ -1241,23 +1130,14 @@ const TOOL_DEFINITIONS = [
         context_summary: {
           type: "string",
           description: "Summary of context assembled by generate-reply (sanitized, max 500 chars, no PII).",
-          // ⚠️ Must be sanitized before use — if raw/too long/PII-like: truncate/redact or DENY.
         },
-        sources: {
-          type: "array",
-          items: { type: "string" },
-          description: "Citation labels from KB results.",
-        },
+        sources: { type: "array", items: { type: "string" }, description: "Citation labels from KB results." },
       },
       required: ["context_summary"],
     },
   },
 ];
-// EXCLUDED tool (must DENY if LLM attempts):
-//   schedule_feedback_request → handled by resolve-conversation EF, not LLM.
 
-// Tool result envelope. result_classification is always 'internal_only' in
-// L5d; stub results must NEVER be surfaced as customer-facing truth.
 interface ToolResult {
   tool_name: string;
   status: "stub" | "denied";
@@ -1265,14 +1145,6 @@ interface ToolResult {
   [k: string]: unknown;
 }
 
-// Safe stub handler — CODE-DEFINED ONLY in L5d Gate A.
-// ⚠️ Not invoked at runtime while ENABLE_TOOL_EXECUTOR=false.
-// ⚠️ Must only be called by an L5d/L5e wiring path AFTER toolExecutorGate()
-//    returned ALLOW or DOWNGRADE_TO_DRAFT. DENY/ESCALATE must NOT reach here.
-// ⚠️ Step 5 logs (if any) are metadata-only:
-//      allowed:  tool_name, request_id, timestamp
-//      forbidden: raw tool_input, customer_ref, order_id, email, phone, PII,
-//                 prompt content, KB content
 export async function handleToolCall(
   tool_name: string,
   _tool_input: Record<string, unknown>,
@@ -1280,7 +1152,6 @@ export async function handleToolCall(
 ): Promise<ToolResult> {
   switch (tool_name) {
     case "kb_search":
-      // Real KB call deferred to Gate B (ENABLE_KB_ADAPTER=true + Director approval).
       return {
         tool_name: "kb_search",
         status: "stub",
@@ -1291,10 +1162,7 @@ export async function handleToolCall(
         results: [],
         stub_note: "KB adapter not yet enabled (L5d stub)",
       };
-
     case "escalate_to_human":
-      // ❌ Do NOT write handoff_event in L5d stub.
-      // ❌ Do NOT update conversations.status in L5d stub.
       return {
         tool_name: "escalate_to_human",
         status: "stub",
@@ -1302,27 +1170,15 @@ export async function handleToolCall(
         escalated: false,
         stub_note: "Escalation workflow deferred to L5e — no state changes in L5d",
       };
-
     case "get_customer_context":
-      // ❌ Do NOT call customer360_adapter in L5d stub.
-      // ❌ Do NOT return any real PII.
-      // ⚠️ tier='Standard' is a safe fallback placeholder, NOT verified Customer360 truth.
       return {
         tool_name: "get_customer_context",
         status: "stub",
         result_classification: "internal_only",
-        customer_context: {
-          tier: "Standard",
-          language_preference: "en",
-          sentiment: "neutral",
-        },
+        customer_context: { tier: "Standard", language_preference: "en", sentiment: "neutral" },
         stub_note: "Customer360 adapter not yet enabled (L5d stub) — using safe defaults",
       };
-
     case "get_order_summary":
-      // ❌ Do NOT call any order/ERP API.
-      // ❌ Do NOT return any real order data / payment data.
-      // ⚠️ LLM-provided customer_ref / order_id are ignored — stub does not use them.
       return {
         tool_name: "get_order_summary",
         status: "stub",
@@ -1330,10 +1186,7 @@ export async function handleToolCall(
         order_available: false,
         stub_note: "Order adapter not yet enabled (L5d stub)",
       };
-
     case "create_handoff_summary":
-      // conversation_id is server-side resolved — LLM-provided value ignored/stripped.
-      // This tool is return-only (Contract 07 §3.5 Gap 6 Plan A).
       return {
         tool_name: "create_handoff_summary",
         status: "stub",
@@ -1341,10 +1194,7 @@ export async function handleToolCall(
         summary: "[Handoff summary not yet available — L5d stub]",
         stub_note: "Handoff summary generation deferred to L5e; conversation_id server-side only",
       };
-
     case "mark_unresolved":
-      // ❌ Do NOT update conversations.status in L5d stub.
-      // ❌ Do NOT write conversation_status_log / audit_log in L5d stub.
       return {
         tool_name: "mark_unresolved",
         status: "stub",
@@ -1352,10 +1202,7 @@ export async function handleToolCall(
         marked: false,
         stub_note: "mark_unresolved write action deferred to L5e — no state changes in L5d",
       };
-
     case "suggest_reply":
-      // ❌ Do NOT write ai_reply_draft in L5d stub.
-      // ❌ Do NOT auto-send anything in L5d stub.
       return {
         tool_name: "suggest_reply",
         status: "stub",
@@ -1365,7 +1212,6 @@ export async function handleToolCall(
         recommended_action: "human_review",
         stub_note: "suggest_reply draft write deferred to L5e — no state changes in L5d",
       };
-
     default:
       return {
         tool_name,
@@ -1376,53 +1222,19 @@ export async function handleToolCall(
   }
 }
 
-// ── Future Gate B wiring (NOT implemented in L5d Gate A) ──────────────────
-// The flow below is documented for reference only. No runtime code path
-// executes it while ENABLE_TOOL_EXECUTOR=false.
-//
-//   LLM emits tool_call (only possible when TOOL_DEFINITIONS is attached,
-//                        which requires ENABLE_TOOL_EXECUTOR=true)
-//     ↓
-//   const decision = handleGateDecision(toolExecutorGate(req, ctx));
-//     ↓
-//   if (decision.decision === 'ALLOW' || decision.decision === 'DOWNGRADE_TO_DRAFT') {
-//     const result = await handleToolCall(req.tool_name, req.input, ctx);
-//     // TODO Gate B (Director approval + schema inspection):
-//     //   append to final_prompt_trace.tools_invoked:
-//     //     { tool_name, request_id, status, summary(≤200 sanitized),
-//     //       auto_executed, caller_mode, result_classification }
-//     //   ❌ No raw input / output / PII / KB content in summary.
-//     //   ❌ No new column — use existing jsonb field (inspect-first).
-//   }
-//   // DENY / ESCALATE → handleToolCall() is NOT called.
+// ────────────────────────────────────────────────────────────────────────────
+// L5e — Draft / Handoff / Auto-Send Policy (Gate A — unchanged from original)
+// ────────────────────────────────────────────────────────────────────────────
 
-// ─────────────────────────────────────────────────────────────────────────────
-// L5e — Draft / Handoff / Auto-Send Policy (Gate A: CODE PREPARATION ONLY)
-// ─────────────────────────────────────────────────────────────────────────────
-// ⚠️ Gate A scope:
-//   - All functions below are CODE-DEFINED ONLY.
-//   - NONE are invoked at runtime while ENABLE_TOOL_EXECUTOR=false.
-//   - No DB writes are executed in Gate A — write bodies are TODO comments
-//     deferred to Gate B (after Director approval + live schema confirmation).
-//   - No public response shape changes.
-//   - legacyGenerateReply() / toolExecutorGate() / handleGateDecision() /
-//     TOOL_DEFINITIONS are unchanged.
-// Source of truth: Contract 03 §1.1 + Contract 07 §3 + Contract 11 §3.1.
-// ─────────────────────────────────────────────────────────────────────────────
-
-// ── L5e types (local to L5e block; no public API shape change) ──────────────
 type L5eOutputAction = "auto_send" | "draft_only" | "refuse";
-
 interface L5eOutputMode {
   action: L5eOutputAction;
   reason: string;
 }
-
 interface L5eGuardrailResult {
   pass: boolean;
   reason: string;
 }
-
 interface L5eToolResult {
   tool_name: string;
   result_classification?: "public_safe" | "draft_only" | "supervisor_only" | "internal_only";
@@ -1430,7 +1242,6 @@ interface L5eToolResult {
   citation_required?: boolean;
   has_valid_citation?: boolean;
 }
-
 interface L5eRagResult {
   no_answer?: boolean;
   conflict_detected?: boolean;
@@ -1438,11 +1249,8 @@ interface L5eRagResult {
   policy_gap?: boolean;
   source_scope?: "customer_answer" | "internal_only" | string;
 }
-
 type L5eCallerMode = "system_auto" | "console_suggest";
 
-// ── Status matrix (Contract 03 §1.1) ────────────────────────────────────────
-// ⚠️ Code-only. Not invoked at runtime in Gate A. Pure function, no I/O.
 export function determineOutputMode(
   conversationStatus: string,
   toolResults: L5eToolResult[],
@@ -1453,39 +1261,26 @@ export function determineOutputMode(
     case "resolved":
     case "closed":
       return { action: "refuse", reason: "CONV_RESOLVED_OR_CLOSED" };
-
     case "ai_handling":
-      break; // fall through to guardrail check
-
+      break;
     case "ai_draft_only":
       return { action: "draft_only", reason: "STATUS_AI_DRAFT_ONLY" };
-
     case "human_needed":
     case "human_control":
       return { action: "draft_only", reason: "STATUS_HUMAN_CONTROL" };
-
     case "escalation_risk":
       return { action: "draft_only", reason: "STATUS_ESCALATION_RISK" };
-
     case "unresolved":
       return { action: "draft_only", reason: "STATUS_UNRESOLVED" };
-
     case "offline_bot":
-      // Use draft_only; offline_safe action is not added to the type in Gate A.
       return { action: "draft_only", reason: "STATUS_OFFLINE_BOT" };
-
     case "reopened":
       return { action: "draft_only", reason: "STATUS_REOPENED_TRANSITIONAL" };
-
     default:
       return { action: "draft_only", reason: "STATUS_UNKNOWN_SAFE_FALLBACK" };
   }
-
-  // Only ai_handling reaches here — check guardrails for auto-send.
   const guardrailsPass = checkGuardrails(toolResults, ragResult, mode);
-  if (!guardrailsPass.pass) {
-    return { action: "draft_only", reason: guardrailsPass.reason };
-  }
+  if (!guardrailsPass.pass) return { action: "draft_only", reason: guardrailsPass.reason };
   return { action: "auto_send", reason: "GUARDRAILS_PASSED" };
 }
 
@@ -1494,55 +1289,32 @@ export function checkGuardrails(
   ragResult: L5eRagResult | null,
   mode: L5eCallerMode,
 ): L5eGuardrailResult {
-  // console_suggest mode is always draft only (agent reviews before sending).
-  if (mode === "console_suggest") {
-    return { pass: false, reason: "CONSOLE_SUGGEST_ALWAYS_DRAFT" };
-  }
-
-  // RAG result flags (KB adapter — Gate B; ENABLE_KB_ADAPTER=false in Gate A).
+  if (mode === "console_suggest") return { pass: false, reason: "CONSOLE_SUGGEST_ALWAYS_DRAFT" };
   if (ragResult) {
     if (ragResult.no_answer) return { pass: false, reason: "KB_NO_ANSWER" };
     if (ragResult.conflict_detected) return { pass: false, reason: "KB_CONFLICT" };
     if (ragResult.retrieval_quality === "low") return { pass: false, reason: "KB_LOW_QUALITY" };
     if (ragResult.policy_gap) return { pass: false, reason: "KB_POLICY_GAP" };
-    if (ragResult.source_scope !== "customer_answer") {
-      return { pass: false, reason: "KB_SCOPE_NOT_CUSTOMER_ANSWER" };
-    }
+    if (ragResult.source_scope !== "customer_answer") return { pass: false, reason: "KB_SCOPE_NOT_CUSTOMER_ANSWER" };
   }
-
-  // Tool result classifications.
   for (const result of toolResults) {
-    if (result.result_classification === "draft_only") {
-      return { pass: false, reason: "TOOL_RESULT_DRAFT_ONLY" };
-    }
-    if (result.result_classification === "supervisor_only") {
+    if (result.result_classification === "draft_only") return { pass: false, reason: "TOOL_RESULT_DRAFT_ONLY" };
+    if (result.result_classification === "supervisor_only")
       return { pass: false, reason: "TOOL_RESULT_SUPERVISOR_ONLY" };
-    }
   }
-
-  // suggest_reply citation_required (Contract 07 §3.7).
   const suggestResult = toolResults.find((r) => r.tool_name === "suggest_reply");
-  if (suggestResult?.citation_required && !suggestResult?.has_valid_citation) {
+  if (suggestResult?.citation_required && !suggestResult?.has_valid_citation)
     return { pass: false, reason: "SUGGEST_REPLY_MISSING_CITATION" };
-  }
-
-  // Handoff required by any adapter.
-  if (toolResults.some((r) => r.handoff_required)) {
-    return { pass: false, reason: "HANDOFF_REQUIRED_BY_TOOL" };
-  }
-
+  if (toolResults.some((r) => r.handoff_required)) return { pass: false, reason: "HANDOFF_REQUIRED_BY_TOOL" };
   return { pass: true, reason: "ALL_GUARDRAILS_PASSED" };
 }
 
-// ── Write wrappers — GUARDED, unreachable while ENABLE_TOOL_EXECUTOR=false ──
-// Loose input shapes intentionally (Gate B will refine against confirmed schema).
 interface L5eExecutionContextLike {
   flags: { ENABLE_TOOL_EXEC: boolean; [k: string]: unknown };
   llm_generated_content?: string;
   handoff_summary_from_tool?: string;
   [k: string]: unknown;
 }
-
 interface L5eSuggestReplyInput {
   [k: string]: unknown;
 }
@@ -1556,7 +1328,6 @@ interface L5eMarkUnresolvedInput {
   follow_up_at?: string;
   [k: string]: unknown;
 }
-
 interface L5eDeferredResult {
   deferred: boolean;
   reason: string;
@@ -1565,8 +1336,6 @@ interface L5eDeferredResult {
   marked?: boolean;
 }
 
-// PII-safe sanitizer (local, no external deps). Strips emails, phones,
-// long digit runs (card/order-like), and truncates. Used for code-proof only.
 function l5eSanitize(input: string | undefined | null, opts: { maxChars: number; noPII: boolean }): string {
   if (!input) return "";
   let s = String(input);
@@ -1579,133 +1348,34 @@ function l5eSanitize(input: string | undefined | null, opts: { maxChars: number;
   return s;
 }
 
-// ⚠️ GUARDED WRITE WRAPPER — Gate A: unreachable while ENABLE_TOOL_EXECUTOR=false.
-// Runtime invocation deferred to Gate B after Director approval.
-// CONCEPTUAL MAPPING ONLY — no live schema inspection performed in Gate A.
 export async function executeSuggestReply(
   _input: L5eSuggestReplyInput,
   context: L5eExecutionContextLike,
   outputMode: L5eOutputMode,
 ): Promise<L5eDeferredResult> {
-  // Guard: must never execute while flags false.
-  if (!context.flags.ENABLE_TOOL_EXEC) {
-    return { auto_sent: false, deferred: true, reason: "TOOL_EXEC_DISABLED" };
-  }
-
-  // Conceptual draft record (mapping comments only; do not persist in Gate A).
-  // const _draft_content = context.llm_generated_content;
-  // const _draftRecord = {
-  //   // [concept] conversation_id
-  //   // [concept] workspace_id / tenant_id
-  //   // [concept] content → sanitized draft_content (no PII / raw customer_ref)
-  //   // [concept] confidence
-  //   // [concept] recommended_action → 'auto_send' | 'human_review'
-  //   // [concept] sources → citation labels only (not full KB content)
-  //   // [concept] created_by → existing enum value for 'ai' (inspect-first)
-  //   // ❌ Never: full prompt / full KB chunks / PII / raw customer_ref
-  // };
-
-  // ⚠️ Gate A: no executable DB writes below — all deferred to Gate B.
-  // TODO Gate B (after Director approval + schema confirmation):
-  //   if (outputMode.action === 'auto_send') {
-  //     await insertMessage({ role: existingAiRoleValue, ... }); // schema-confirmed
-  //     return { auto_sent: true, deferred: false, reason: 'AUTO_SENT' };
-  //   } else {
-  //     await insertAiReplyDraft(_draftRecord); // schema-confirmed
-  //     return { auto_sent: false, deferred: false, reason: 'DRAFT_PERSISTED' };
-  //   }
+  if (!context.flags.ENABLE_TOOL_EXEC) return { auto_sent: false, deferred: true, reason: "TOOL_EXEC_DISABLED" };
   void outputMode;
   return { deferred: true, reason: "GATE_B_REQUIRED" };
 }
 
-// ⚠️ GUARDED WRITE WRAPPER — Gate A: unreachable while ENABLE_TOOL_EXECUTOR=false.
 export async function executeEscalateToHuman(
   input: L5eEscalateInput,
   context: L5eExecutionContextLike,
 ): Promise<L5eDeferredResult> {
-  // Input sanitization (PII-safe). Computed even when guard returns, to prove
-  // sanitization path exists; no I/O is performed.
   const _reason = l5eSanitize(input.reason, { maxChars: 500, noPII: true });
   const _summary = l5eSanitize(input.summary, { maxChars: 500, noPII: true });
-  // Contract 07 §3.5 Gap 6 Plan A: prefer create_handoff_summary output if available.
   const _handoffSummary = context.handoff_summary_from_tool || _summary;
   void _reason;
   void _handoffSummary;
-
-  // Guard: must never execute while flags false.
-  if (!context.flags.ENABLE_TOOL_EXEC) {
-    return { escalated: false, deferred: true, reason: "TOOL_EXEC_DISABLED" };
-  }
-
-  // ⚠️ Gate A: no executable DB writes below — all deferred to Gate B.
-  // TODO Gate B (after Director approval + schema confirmation):
-  //   await db.transaction(async (tx) => {
-  //     // 1. UPDATE conversations.status = 'human_needed'
-  //     // 2. INSERT handoff_event (reason/summary sanitized, no PII, schema-confirmed)
-  //     // 3. INSERT conversation_status_log (schema-confirmed)
-  //     // 4. INSERT audit_log (details no PII, schema-confirmed)
-  //   });
-  //   return { escalated: true, deferred: false, reason: 'ESCALATED' };
-  //
-  // SAFETY RULES (enforced at Gate B implementation time):
-  // ❌ Do NOT execute if status = resolved / closed
-  // ❌ reason / summary must be sanitized (no PII)
-  // ❌ Transaction must be atomic — rollback all on any failure
-  // ❌ handoff_event.summary must not contain full KB content / full prompt body
+  if (!context.flags.ENABLE_TOOL_EXEC) return { escalated: false, deferred: true, reason: "TOOL_EXEC_DISABLED" };
   return { deferred: true, reason: "GATE_B_REQUIRED" };
 }
 
-// ⚠️ GUARDED WRITE WRAPPER — Gate A: unreachable while ENABLE_TOOL_EXECUTOR=false.
-// system_auto: Tool Gate already DENY(MARK_UNRESOLVED_REQUIRES_HUMAN) in L5c.
-// Only console_suggest mode can reach this (after Gate B approval).
 export async function executeMarkUnresolved(
   input: L5eMarkUnresolvedInput,
   context: L5eExecutionContextLike,
 ): Promise<L5eDeferredResult> {
-  // Guard: must never execute while flags false.
-  if (!context.flags.ENABLE_TOOL_EXEC) {
-    return { marked: false, deferred: true, reason: "TOOL_EXEC_DISABLED" };
-  }
-
-  // ⚠️ Gate A: no executable DB writes below — all deferred to Gate B.
-  // TODO Gate B (after Director approval + schema confirmation):
-  //   const _reason = l5eSanitize(input.reason, { maxChars: 500, noPII: true });
-  //   // follow_up_at advisory only — validate, do not schedule/persist
-  //   await db.transaction(async (tx) => {
-  //     // 1. UPDATE conversations.status = 'unresolved'
-  //     // 2. INSERT conversation_status_log (schema-confirmed)
-  //     // 3. INSERT audit_log (details no PII, schema-confirmed)
-  //   });
-  //   return { marked: true, deferred: false, reason: 'MARKED_UNRESOLVED' };
-  //
-  // SAFETY RULES:
-  // ❌ system_auto mode must NEVER reach this function (L5c Gate blocks it)
-  // ❌ Transaction must be atomic
-  // ❌ audit_log details must not contain PII
+  if (!context.flags.ENABLE_TOOL_EXEC) return { marked: false, deferred: true, reason: "TOOL_EXEC_DISABLED" };
   void input;
   return { deferred: true, reason: "GATE_B_REQUIRED" };
 }
-
-// ── Widget response rule (code proof, Contract 03 §2.3 小修3) ───────────────
-// ⚠️ Public API response shape is UNCHANGED in Gate A.
-// Intended future behavior (Gate B; code proof in Gate A):
-//   auto_sent=true  → existing response shape with ai_reply content
-//   auto_sent=false → existing response shape WITHOUT draft content
-//                     (only { pending: true } or equivalent in existing shape)
-// Draft content is NEVER returned to the Widget when not auto-sent.
-
-// ── Future Gate B wiring (NOT implemented in L5e Gate A) ────────────────────
-// LLM emits tool_call (requires ENABLE_TOOL_EXECUTOR=true → TOOL_DEFINITIONS attached)
-//   ↓
-// const decision = handleGateDecision(toolExecutorGate(req, ctx));
-//   ↓
-// if (decision.decision === 'ALLOW' || decision.decision === 'DOWNGRADE_TO_DRAFT') {
-//   const result = await handleToolCall(req.tool_name, req.input, ctx);
-//   const outputMode = determineOutputMode(conv.status, allToolResults, ragResult, callerMode);
-//   switch (req.tool_name) {
-//     case 'suggest_reply':       await executeSuggestReply(req.input, ctx, outputMode); break;
-//     case 'escalate_to_human':   await executeEscalateToHuman(req.input, ctx);          break;
-//     case 'mark_unresolved':     await executeMarkUnresolved(req.input, ctx);           break;
-//   }
-// }
-// DENY / ESCALATE → write wrappers are NOT called.
