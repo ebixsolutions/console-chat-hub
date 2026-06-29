@@ -12,11 +12,11 @@
 //      schema changes, no PII or full prompt persisted, no tools attached to LLM.
 //   3. Full draft / handoff / auto-send policy and Tool Executor Gate are L5c-L5e.
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
 // Contract 05 §5 — minimal safe fallback prompt (in-memory only, never persisted).
@@ -27,23 +27,25 @@ Keep responses under 150 words.
 Respond in the same language the customer is using.`;
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
   }
 
   try {
     const body = await req.json();
     const { conversation_id } = body ?? {};
     if (!conversation_id) {
-      return new Response(JSON.stringify({ error: 'conversation_id required' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      return new Response(JSON.stringify({ error: "conversation_id required" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
     // ── Feature flags (read at request time so they can be toggled per deploy) ──
-    const ENABLE_KB        = Deno.env.get('ENABLE_KB_ADAPTER') === 'true';
-    const ENABLE_COACH     = Deno.env.get('ENABLE_COACH_PROMPT_ADAPTER') === 'true';
-    const ENABLE_C360      = Deno.env.get('ENABLE_CUSTOMER360_ADAPTER') === 'true';
-    const ENABLE_TOOL_EXEC = Deno.env.get('ENABLE_TOOL_EXECUTOR') === 'true';
+    const ENABLE_KB = Deno.env.get("ENABLE_KB_ADAPTER") === "true";
+    const ENABLE_COACH = Deno.env.get("ENABLE_COACH_PROMPT_ADAPTER") === "true";
+    const ENABLE_C360 = Deno.env.get("ENABLE_CUSTOMER360_ADAPTER") === "true";
+    const ENABLE_TOOL_EXEC = Deno.env.get("ENABLE_TOOL_EXECUTOR") === "true";
 
     // ⚠️ LEGACY GATE — MUST be checked FIRST, before any other logic.
     // All flags false → behavior 100% identical to L5a.
@@ -53,12 +55,17 @@ Deno.serve(async (req) => {
 
     // ── ORCHESTRATION PATH (only reached when at least one flag is true) ──────
     return await orchestrationGenerateReply(conversation_id, {
-      ENABLE_KB, ENABLE_COACH, ENABLE_C360, ENABLE_TOOL_EXEC,
+      ENABLE_KB,
+      ENABLE_COACH,
+      ENABLE_C360,
+      ENABLE_TOOL_EXEC,
     });
   } catch (error) {
-    console.error('[generate-reply] unexpected error:', error);
-    return new Response(JSON.stringify({ error: 'Internal server error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    console.error("[generate-reply] unexpected error:", error);
+    return new Response(JSON.stringify({ error: "Internal server error" }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 });
 
@@ -68,147 +75,136 @@ Deno.serve(async (req) => {
 // ────────────────────────────────────────────────────────────────────────────
 async function legacyGenerateReply(conversation_id: string): Promise<Response> {
   const supabaseAdmin = createClient(
-    Deno.env.get('SUPABASE_URL') ?? '',
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    Deno.env.get("SUPABASE_URL") ?? "",
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
   );
 
   const { data: conversation, error: convError } = await supabaseAdmin
-    .from('conversations')
-    .select('id, status')
-    .eq('id', conversation_id)
+    .from("conversations")
+    .select("id, status")
+    .eq("id", conversation_id)
     .single();
 
   if (convError || !conversation) {
-    console.error('[generate-reply] conversation not found:', conversation_id);
-    return new Response(JSON.stringify({ error: 'Conversation not found' }),
-      { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    console.error("[generate-reply] conversation not found:", conversation_id);
+    return new Response(JSON.stringify({ error: "Conversation not found" }), {
+      status: 404,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 
-  if (conversation.status === 'resolved') {
-    await supabaseAdmin
-      .from('conversations')
-      .update({ ai_generating: false })
-      .eq('id', conversation_id);
-    return new Response(JSON.stringify({ success: true, skipped: 'resolved' }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  if (conversation.status === "resolved") {
+    await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
+    return new Response(JSON.stringify({ success: true, skipped: "resolved" }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 
   const { data: messages } = await supabaseAdmin
-    .from('messages')
-    .select('role, content, created_at')
-    .eq('conversation_id', conversation_id)
-    .neq('content', '__THINKING__')
-    .eq('is_recalled', false)
-    .order('created_at', { ascending: true })
+    .from("messages")
+    .select("role, content, created_at")
+    .eq("conversation_id", conversation_id)
+    .neq("content", "__THINKING__")
+    .eq("is_recalled", false)
+    .order("created_at", { ascending: true })
     .limit(10);
 
   if (!messages || messages.length === 0) {
-    await supabaseAdmin
-      .from('conversations')
-      .update({ ai_generating: false })
-      .eq('id', conversation_id);
-    return new Response(JSON.stringify({ success: true, skipped: 'no messages' }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
+    return new Response(JSON.stringify({ success: true, skipped: "no messages" }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 
-  const claudeMessages = messages.map(m => ({
-    role: (m.role === 'visitor') ? 'user' : 'assistant',
-    content: m.content
+  const claudeMessages = messages.map((m) => ({
+    role: m.role === "visitor" ? "user" : "assistant",
+    content: m.content,
   }));
 
-  if (claudeMessages[claudeMessages.length - 1].role === 'assistant') {
-    await supabaseAdmin
-      .from('conversations')
-      .update({ ai_generating: false })
-      .eq('id', conversation_id);
-    return new Response(JSON.stringify({ success: true, skipped: 'last message is assistant' }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  if (claudeMessages[claudeMessages.length - 1].role === "assistant") {
+    await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
+    return new Response(JSON.stringify({ success: true, skipped: "last message is assistant" }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 
-  const anthropicKey = Deno.env.get('ANTHROPIC_API_KEY');
+  const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
   if (!anthropicKey) {
-    console.error('[generate-reply] ANTHROPIC_API_KEY not set');
-    await supabaseAdmin
-      .from('conversations')
-      .update({ ai_generating: false })
-      .eq('id', conversation_id);
-    return new Response(JSON.stringify({ error: 'AI service not configured' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    console.error("[generate-reply] ANTHROPIC_API_KEY not set");
+    await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
+    return new Response(JSON.stringify({ error: "AI service not configured" }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 
-  const claudeResponse = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
+  const claudeResponse = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
     headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': anthropicKey,
-      'anthropic-version': '2023-06-01'
+      "Content-Type": "application/json",
+      "x-api-key": anthropicKey,
+      "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
-      model: 'claude-haiku-4-5-20251001',
+      model: "claude-haiku-4-5-20251001",
       max_tokens: 500,
       system: `You are a professional and friendly customer service assistant. 
 Answer customer questions clearly and concisely. 
 If you cannot answer a question confidently, acknowledge it honestly and offer to connect the customer with a human agent.
 Keep responses under 150 words.
-Respond in the same language the customer is using.`,
-      messages: claudeMessages
-    })
+Respond in the same language and script the customer is using.
+When the customer explicitly requests a human agent, or when you transfer to a human agent, include a short safe handoff status message in the same language and script as the customer. The message must state that the conversation has been recorded and that a human agent will reply in this same chat after taking over. If the customer is using Traditional Chinese, use: "我們已將你的對話記錄，客服接手後會在此對話中回覆你。目前未啟用即時輪候時間顯示。" If the customer is using Simplified Chinese, use: "我们已将你的对话记录，客服接手后会在此对话中回复你。目前未启用实时排队位置和预计等待时间显示。" If the customer is using English, use: "We have recorded your conversation. A human agent will reply in this same chat after taking over. Real-time queue position and estimated wait time are not currently enabled." Do NOT invent estimated wait times, response-time promises, or queue positions.`,
+      messages: claudeMessages,
+    }),
   });
 
   if (!claudeResponse.ok) {
     const errText = await claudeResponse.text();
-    console.error('[generate-reply] Claude API error:', claudeResponse.status, errText);
-    await supabaseAdmin
-      .from('conversations')
-      .update({ ai_generating: false })
-      .eq('id', conversation_id);
-    return new Response(JSON.stringify({ error: 'AI service error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    console.error("[generate-reply] Claude API error:", claudeResponse.status, errText);
+    await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
+    return new Response(JSON.stringify({ error: "AI service error" }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 
   const claudeData = await claudeResponse.json();
-  const aiReplyContent = claudeData.content?.[0]?.text ?? '';
+  const aiReplyContent = claudeData.content?.[0]?.text ?? "";
 
   if (!aiReplyContent) {
-    await supabaseAdmin
-      .from('conversations')
-      .update({ ai_generating: false })
-      .eq('id', conversation_id);
-    return new Response(JSON.stringify({ error: 'Empty AI response' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
+    return new Response(JSON.stringify({ error: "Empty AI response" }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 
-  await supabaseAdmin
-    .from('messages')
-    .delete()
-    .eq('conversation_id', conversation_id)
-    .eq('content', '__THINKING__');
+  await supabaseAdmin.from("messages").delete().eq("conversation_id", conversation_id).eq("content", "__THINKING__");
 
-  const { error: insertError } = await supabaseAdmin
-    .from('messages')
-    .insert({
-      conversation_id: conversation_id,
-      role: 'assistant',
-      content: aiReplyContent,
-      status: 'delivered',
-      is_recalled: false
-    });
+  const { error: insertError } = await supabaseAdmin.from("messages").insert({
+    conversation_id: conversation_id,
+    role: "assistant",
+    content: aiReplyContent,
+    status: "delivered",
+    is_recalled: false,
+  });
 
   if (insertError) {
-    console.error('[generate-reply] insert error:', insertError);
+    console.error("[generate-reply] insert error:", insertError);
   }
 
   await supabaseAdmin
-    .from('conversations')
+    .from("conversations")
     .update({
       ai_generating: false,
-      updated_at: new Date().toISOString()
+      updated_at: new Date().toISOString(),
     })
-    .eq('id', conversation_id);
+    .eq("id", conversation_id);
 
-  console.log('[generate-reply] AI reply sent for conversation:', conversation_id);
-  return new Response(JSON.stringify({ success: true }),
-    { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  console.log("[generate-reply] AI reply sent for conversation:", conversation_id);
+  return new Response(JSON.stringify({ success: true }), {
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -227,35 +223,31 @@ type FlagSet = {
   ENABLE_TOOL_EXEC: boolean;
 };
 
-async function orchestrationGenerateReply(
-  conversation_id: string,
-  flags: FlagSet,
-): Promise<Response> {
+async function orchestrationGenerateReply(conversation_id: string, flags: FlagSet): Promise<Response> {
   const supabaseAdmin = createClient(
-    Deno.env.get('SUPABASE_URL') ?? '',
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    Deno.env.get("SUPABASE_URL") ?? "",
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
   );
 
   // Load conversation
   const { data: conversation, error: convError } = await supabaseAdmin
-    .from('conversations')
-    .select('id, status')
-    .eq('id', conversation_id)
+    .from("conversations")
+    .select("id, status")
+    .eq("id", conversation_id)
     .single();
 
   if (convError || !conversation) {
-    return new Response(JSON.stringify({ error: 'Conversation not found' }),
-      { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    return new Response(JSON.stringify({ error: "Conversation not found" }), {
+      status: 404,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 
   // Step 6 (early): Status Matrix Skeleton Guard — orchestration path ONLY.
   // L5b skeleton: only resolved/closed are refused. Full policy is L5e.
-  if (conversation.status === 'resolved' || conversation.status === 'closed') {
-    await supabaseAdmin
-      .from('conversations')
-      .update({ ai_generating: false })
-      .eq('id', conversation_id);
-    return safeRefusal('CONV_RESOLVED_OR_CLOSED');
+  if (conversation.status === "resolved" || conversation.status === "closed") {
+    await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
+    return safeRefusal("CONV_RESOLVED_OR_CLOSED");
   }
 
   // Step 0: Budget check (orchestration path only).
@@ -265,8 +257,13 @@ async function orchestrationGenerateReply(
   // Step 1: Coach Prompt Adapter (ENABLE_COACH).
   // In-memory only — base_prompt body is NEVER persisted.
   let basePrompt = MINIMAL_SAFE_FALLBACK_PROMPT;
-  let coachTrace: { version_id?: string; version_label?: string; prompt_hash?: string; source: 'upstream' | 'minimal_fallback' } = {
-    source: 'minimal_fallback',
+  let coachTrace: {
+    version_id?: string;
+    version_label?: string;
+    prompt_hash?: string;
+    source: "upstream" | "minimal_fallback";
+  } = {
+    source: "minimal_fallback",
   };
   if (flags.ENABLE_COACH) {
     const promptResult = await callCoachPromptAdapter(conversation_id);
@@ -276,12 +273,12 @@ async function orchestrationGenerateReply(
         version_id: promptResult.version_id,
         version_label: promptResult.version_label,
         prompt_hash: promptResult.prompt_hash,
-        source: 'upstream',
+        source: "upstream",
       };
     } else {
       // Fallback: keep MINIMAL_SAFE_FALLBACK_PROMPT.
       // upstream_call_log is written by the adapter; do NOT duplicate here.
-      console.warn('[generate-reply] coach_prompt_adapter fallback', { conversation_id, code: 'F-02' });
+      console.warn("[generate-reply] coach_prompt_adapter fallback", { conversation_id, code: "F-02" });
     }
   }
 
@@ -303,7 +300,7 @@ async function orchestrationGenerateReply(
     } else {
       // Fallback per Contract 06 §5: null context, default Standard tier.
       customerContext = null;
-      console.warn('[generate-reply] customer360_adapter fallback', { conversation_id, code: 'F-04' });
+      console.warn("[generate-reply] customer360_adapter fallback", { conversation_id, code: "F-04" });
     }
   }
 
@@ -313,7 +310,7 @@ async function orchestrationGenerateReply(
   let ragResult: {
     success: boolean;
     no_answer?: boolean;
-    retrieval_quality?: 'high' | 'medium' | 'low' | 'failed';
+    retrieval_quality?: "high" | "medium" | "low" | "failed";
     chunks?: Array<{
       doc_id?: string;
       chunk_id?: string;
@@ -334,45 +331,45 @@ async function orchestrationGenerateReply(
 
   if (flags.ENABLE_KB) {
     // Resolve scope from env (Demo: schema has no company_id/industry fields)
-    const demoCompanyIdStr = Deno.env.get('KB_DEMO_COMPANY_ID');
-    const demoIndustry = Deno.env.get('KB_DEMO_INDUSTRY');
-    const demoLanguage = Deno.env.get('KB_DEMO_LANGUAGE') ?? 'zh-TW';
+    const demoCompanyIdStr = Deno.env.get("KB_DEMO_COMPANY_ID");
+    const demoIndustry = Deno.env.get("KB_DEMO_INDUSTRY");
+    const demoLanguage = Deno.env.get("KB_DEMO_LANGUAGE") ?? "zh-TW";
 
     const widgetCompanyId = demoCompanyIdStr ? parseInt(demoCompanyIdStr, 10) : null;
     const widgetIndustry = demoIndustry ?? null;
 
     // L5 Scope Gate: if scope unavailable, cannot safely query → handoff
     if (widgetCompanyId === null || isNaN(widgetCompanyId) || !widgetIndustry) {
-      console.warn('[generate-reply] KB scope env vars not set', {
+      console.warn("[generate-reply] KB scope env vars not set", {
         conversation_id,
         hasCompanyId: widgetCompanyId !== null && !isNaN(widgetCompanyId),
         hasIndustry: !!widgetIndustry,
       });
-      await supabaseAdmin
-        .from('conversations')
-        .update({ ai_generating: false })
-        .eq('id', conversation_id);
-      return new Response(JSON.stringify({
-        success: true,
-        reply: '很抱歉，系統暫時無法查詢知識庫。讓我為您轉接客服人員。',
-        no_answer: true,
-        handoff_required: true,
-        trace_metadata: { rag_api_status: 'scope_unavailable' },
-      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
+      return new Response(
+        JSON.stringify({
+          success: true,
+          reply: "很抱歉，系統暫時無法查詢知識庫。讓我為您轉接客服人員。",
+          no_answer: true,
+          handoff_required: true,
+          trace_metadata: { rag_api_status: "scope_unavailable" },
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
     }
 
     // Get the latest user message for RAG query
     const { data: latestMsgs } = await supabaseAdmin
-      .from('messages')
-      .select('content')
-      .eq('conversation_id', conversation_id)
-      .eq('role', 'user')
-      .order('created_at', { ascending: false })
+      .from("messages")
+      .select("content")
+      .eq("conversation_id", conversation_id)
+      .eq("role", "user")
+      .order("created_at", { ascending: false })
       .limit(1);
-    const userQuery = latestMsgs?.[0]?.content ?? '';
+    const userQuery = latestMsgs?.[0]?.content ?? "";
 
     if (!userQuery) {
-      ragResult = { success: true, no_answer: true, retrieval_quality: 'failed', chunks: [] };
+      ragResult = { success: true, no_answer: true, retrieval_quality: "failed", chunks: [] };
     } else {
       ragResult = await callKBAdapter(conversation_id, userQuery, {
         company_id: widgetCompanyId,
@@ -383,83 +380,118 @@ async function orchestrationGenerateReply(
 
     // — L5 Safety Checks (Demo-only, inline) —
     if (!ragResult || !ragResult.success) {
-      console.error('[CRITICAL] KB RAG API failure', { conversation_id, code: 'KB_API_FAIL' });
-      await supabaseAdmin
-        .from('conversations')
-        .update({ ai_generating: false })
-        .eq('id', conversation_id);
-      return new Response(JSON.stringify({
-        success: true,
-        reply: '系統暫時無法查詢知識庫，讓我為您轉接客服人員。',
-        no_answer: true,
-        handoff_required: true,
-        trace_metadata: { rag_api_status: 'failure' },
-      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      console.error("[CRITICAL] KB RAG API failure", { conversation_id, code: "KB_API_FAIL" });
+      await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
+      return new Response(
+        JSON.stringify({
+          success: true,
+          reply: "系統暫時無法查詢知識庫，讓我為您轉接客服人員。",
+          no_answer: true,
+          handoff_required: true,
+          trace_metadata: { rag_api_status: "failure" },
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
     }
 
     if (ragResult.no_answer || !ragResult.chunks || ragResult.chunks.length === 0) {
-      console.warn('[generate-reply] KB no results', { conversation_id, code: 'KB_EMPTY' });
-      await supabaseAdmin
-        .from('conversations')
-        .update({ ai_generating: false })
-        .eq('id', conversation_id);
-      return new Response(JSON.stringify({
-        success: true,
-        reply: '很抱歉，我目前無法確定答案。讓我為您轉接客服人員，以提供更準確的協助。',
-        no_answer: true,
-        handoff_required: true,
-        trace_metadata: { rag_api_status: 'success_empty' },
-      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      console.warn("[generate-reply] KB no results", { conversation_id, code: "KB_EMPTY" });
+      await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
+      return new Response(
+        JSON.stringify({
+          success: true,
+          reply: "很抱歉，我目前無法確定答案。讓我為您轉接客服人員，以提供更準確的協助。",
+          no_answer: true,
+          handoff_required: true,
+          trace_metadata: { rag_api_status: "success_empty" },
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
     }
 
     // L5 Score threshold + scope filter (client-side double-check)
-    const HIGH_RISK_KEYWORDS = ['退款','退貨','賠償','補償','refund','return','compensation',
-      '法律','合約','條款','legal','contract','terms',
-      '醫療','藥品','治療','medical','medicine','treatment',
-      '隱私','個資','資料保護','privacy','personal data','GDPR',
-      '投資','理財','金融','investment','financial','finance'];
-    const isHighRisk = HIGH_RISK_KEYWORDS.some(kw => userQuery.toLowerCase().includes(kw.toLowerCase()));
+    const HIGH_RISK_KEYWORDS = [
+      "退款",
+      "退貨",
+      "賠償",
+      "補償",
+      "refund",
+      "return",
+      "compensation",
+      "法律",
+      "合約",
+      "條款",
+      "legal",
+      "contract",
+      "terms",
+      "醫療",
+      "藥品",
+      "治療",
+      "medical",
+      "medicine",
+      "treatment",
+      "隱私",
+      "個資",
+      "資料保護",
+      "privacy",
+      "personal data",
+      "GDPR",
+      "投資",
+      "理財",
+      "金融",
+      "investment",
+      "financial",
+      "finance",
+    ];
+    const isHighRisk = HIGH_RISK_KEYWORDS.some((kw) => userQuery.toLowerCase().includes(kw.toLowerCase()));
     const minScore = isHighRisk ? 0.85 : 0.75;
 
-    const usableChunks = ragResult.chunks.filter(c => {
+    const usableChunks = ragResult.chunks.filter((c) => {
       if (!c.score || c.score < minScore) return false;
-      if (c.status && c.status !== 'published') return false;
+      if (c.status && c.status !== "published") return false;
       if (c.company_id !== undefined && c.company_id !== widgetCompanyId) return false;
       if (c.industry && c.industry !== widgetIndustry) return false;
       return true;
     });
 
     const traceMetadata = {
-      rag_api_status: 'success',
+      rag_api_status: "success",
       total_results: ragResult.chunks.length,
       filtered_results: usableChunks.length,
-      min_score_used: usableChunks.length > 0 ? Math.min(...usableChunks.map(c => c.score ?? 0)) : null,
-      max_score_used: usableChunks.length > 0 ? Math.max(...usableChunks.map(c => c.score ?? 0)) : null,
+      min_score_used: usableChunks.length > 0 ? Math.min(...usableChunks.map((c) => c.score ?? 0)) : null,
+      max_score_used: usableChunks.length > 0 ? Math.max(...usableChunks.map((c) => c.score ?? 0)) : null,
       high_risk_topic: isHighRisk,
       min_threshold: minScore,
-      citations: usableChunks.map(c => ({
-        doc_id: c.doc_id, chunk_id: c.chunk_id, title: c.title, score: c.score, source_type: c.source_type,
+      citations: usableChunks.map((c) => ({
+        doc_id: c.doc_id,
+        chunk_id: c.chunk_id,
+        title: c.title,
+        score: c.score,
+        source_type: c.source_type,
       })),
     };
     ragResult.trace_metadata = traceMetadata;
 
     if (usableChunks.length === 0) {
-      console.warn('[generate-reply] KB all results below threshold', {
-        conversation_id, minScore, isHighRisk, code: 'KB_LOW_SCORE',
+      console.warn("[generate-reply] KB all results below threshold", {
+        conversation_id,
+        minScore,
+        isHighRisk,
+        code: "KB_LOW_SCORE",
       });
-      await supabaseAdmin
-        .from('conversations')
-        .update({ ai_generating: false })
-        .eq('id', conversation_id);
-      return new Response(JSON.stringify({
-        success: true,
-        reply: isHighRisk
-          ? '這個問題涉及重要政策，為確保您獲得準確資訊，讓我為您轉接客服人員。'
-          : '很抱歉，我目前無法確定答案。讓我為您轉接客服人員，以提供更準確的協助。',
-        no_answer: true,
-        handoff_required: true,
-        trace_metadata: traceMetadata,
-      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
+      return new Response(
+        JSON.stringify({
+          success: true,
+          reply: isHighRisk
+            ? "這個問題涉及重要政策，為確保您獲得準確資訊，讓我為您轉接客服人員。"
+            : "很抱歉，我目前無法確定答案。讓我為您轉接客服人員，以提供更準確的協助。",
+          no_answer: true,
+          handoff_required: true,
+          trace_metadata: traceMetadata,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
     }
 
     ragResult.chunks = usableChunks;
@@ -476,7 +508,7 @@ async function orchestrationGenerateReply(
   // unit-reachable via direct call (code-proof) for future L5d wiring.
   if (flags.ENABLE_TOOL_EXEC) {
     // Placeholder only — L5d will register tools. L5c still attaches NO tools.
-    console.log('[generate-reply] ENABLE_TOOL_EXECUTOR=true: Gate present, tools NOT attached (L5d scope)');
+    console.log("[generate-reply] ENABLE_TOOL_EXECUTOR=true: Gate present, tools NOT attached (L5d scope)");
   }
 
   // Step 7: LLM Generate.
@@ -484,51 +516,44 @@ async function orchestrationGenerateReply(
   // ❌ customer_ref / order_id / raw PII MUST NOT appear in LLM prompt.
   const maskedContextBlock = buildMaskedContextBlock(customerContext, opaqueCustomerRef);
   const ragBlock = buildRagBlock(ragResult);
-  const finalSystemPrompt = [basePrompt, maskedContextBlock, ragBlock]
-    .filter((s) => s && s.length > 0)
-    .join('\n\n');
+  const finalSystemPrompt = [basePrompt, maskedContextBlock, ragBlock].filter((s) => s && s.length > 0).join("\n\n");
 
   // Load conversation messages (same shape as legacy path)
   const { data: messages } = await supabaseAdmin
-    .from('messages')
-    .select('role, content, created_at')
-    .eq('conversation_id', conversation_id)
-    .neq('content', '__THINKING__')
-    .eq('is_recalled', false)
-    .order('created_at', { ascending: true })
+    .from("messages")
+    .select("role, content, created_at")
+    .eq("conversation_id", conversation_id)
+    .neq("content", "__THINKING__")
+    .eq("is_recalled", false)
+    .order("created_at", { ascending: true })
     .limit(10);
 
   if (!messages || messages.length === 0) {
-    await supabaseAdmin
-      .from('conversations')
-      .update({ ai_generating: false })
-      .eq('id', conversation_id);
-    return new Response(JSON.stringify({ success: true, skipped: 'no messages' }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
+    return new Response(JSON.stringify({ success: true, skipped: "no messages" }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 
   const claudeMessages = messages.map((m) => ({
-    role: (m.role === 'visitor') ? 'user' : 'assistant',
+    role: m.role === "visitor" ? "user" : "assistant",
     content: m.content,
   }));
 
-  if (claudeMessages[claudeMessages.length - 1].role === 'assistant') {
-    await supabaseAdmin
-      .from('conversations')
-      .update({ ai_generating: false })
-      .eq('id', conversation_id);
-    return new Response(JSON.stringify({ success: true, skipped: 'last message is assistant' }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  if (claudeMessages[claudeMessages.length - 1].role === "assistant") {
+    await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
+    return new Response(JSON.stringify({ success: true, skipped: "last message is assistant" }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 
-  const anthropicKey = Deno.env.get('ANTHROPIC_API_KEY');
+  const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
   if (!anthropicKey) {
-    await supabaseAdmin
-      .from('conversations')
-      .update({ ai_generating: false })
-      .eq('id', conversation_id);
-    return new Response(JSON.stringify({ error: 'AI service not configured' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
+    return new Response(JSON.stringify({ error: "AI service not configured" }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 
   // L5d: TOOL_DEFINITIONS attachment is a GUARDED code path.
@@ -537,7 +562,7 @@ async function orchestrationGenerateReply(
   //    place tools could ever be attached, and only when the flag is true.
   //    No LLM tool_call is possible while the flag is false.
   const anthropicRequestBody: Record<string, unknown> = {
-    model: 'claude-haiku-4-5-20251001',
+    model: "claude-haiku-4-5-20251001",
     max_tokens: 500,
     system: finalSystemPrompt,
     messages: claudeMessages,
@@ -549,59 +574,51 @@ async function orchestrationGenerateReply(
     anthropicRequestBody.tools = TOOL_DEFINITIONS;
   }
 
-  const claudeResponse = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
+  const claudeResponse = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
     headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': anthropicKey,
-      'anthropic-version': '2023-06-01',
+      "Content-Type": "application/json",
+      "x-api-key": anthropicKey,
+      "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify(anthropicRequestBody),
   });
 
   if (!claudeResponse.ok) {
     const errText = await claudeResponse.text();
-    console.error('[generate-reply] Claude API error:', claudeResponse.status, errText);
-    await supabaseAdmin
-      .from('conversations')
-      .update({ ai_generating: false })
-      .eq('id', conversation_id);
-    return new Response(JSON.stringify({ error: 'AI service error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    console.error("[generate-reply] Claude API error:", claudeResponse.status, errText);
+    await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
+    return new Response(JSON.stringify({ error: "AI service error" }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 
   const claudeData = await claudeResponse.json();
-  const aiReplyContent = claudeData.content?.[0]?.text ?? '';
+  const aiReplyContent = claudeData.content?.[0]?.text ?? "";
 
   if (!aiReplyContent) {
-    await supabaseAdmin
-      .from('conversations')
-      .update({ ai_generating: false })
-      .eq('id', conversation_id);
-    return new Response(JSON.stringify({ error: 'Empty AI response' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
+    return new Response(JSON.stringify({ error: "Empty AI response" }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 
-  await supabaseAdmin
-    .from('messages')
-    .delete()
-    .eq('conversation_id', conversation_id)
-    .eq('content', '__THINKING__');
+  await supabaseAdmin.from("messages").delete().eq("conversation_id", conversation_id).eq("content", "__THINKING__");
+
+  await supabaseAdmin.from("messages").insert({
+    conversation_id,
+    role: "assistant",
+    content: aiReplyContent,
+    status: "delivered",
+    is_recalled: false,
+  });
 
   await supabaseAdmin
-    .from('messages')
-    .insert({
-      conversation_id,
-      role: 'assistant',
-      content: aiReplyContent,
-      status: 'delivered',
-      is_recalled: false,
-    });
-
-  await supabaseAdmin
-    .from('conversations')
+    .from("conversations")
     .update({ ai_generating: false, updated_at: new Date().toISOString() })
-    .eq('id', conversation_id);
+    .eq("id", conversation_id);
 
   // ── Post-generation trace writes (orchestration path, gated) ──────────────
   //
@@ -637,9 +654,10 @@ async function orchestrationGenerateReply(
     void ragResult;
   }
 
-  console.log('[generate-reply] AI reply sent (orchestration path) for conversation:', conversation_id);
-  return new Response(JSON.stringify({ success: true }),
-    { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  console.log("[generate-reply] AI reply sent (orchestration path) for conversation:", conversation_id);
+  return new Response(JSON.stringify({ success: true }), {
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -650,11 +668,11 @@ function safeRefusal(code: string): Response {
   return new Response(
     JSON.stringify({
       success: true,
-      skipped: 'refused',
+      skipped: "refused",
       reason_code: code,
       handoff_required: true,
     }),
-    { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } },
   );
 }
 
@@ -665,7 +683,7 @@ function buildMaskedContextBlock(
   customerContext: { masked_summary?: string; tier?: string } | null,
   opaqueCustomerRef: string | null,
 ): string {
-  if (!customerContext) return '';
+  if (!customerContext) return "";
   const parts: string[] = [];
   if (customerContext.tier) parts.push(`Customer tier: ${customerContext.tier}`);
   if (customerContext.masked_summary) parts.push(customerContext.masked_summary);
@@ -674,8 +692,8 @@ function buildMaskedContextBlock(
     const pseudo = pseudonymizeRef(opaqueCustomerRef);
     parts.push(`Customer reference (pseudonymous): ${pseudo}`);
   }
-  if (parts.length === 0) return '';
-  return `Customer context (masked):\n${parts.join('\n')}`;
+  if (parts.length === 0) return "";
+  return `Customer context (masked):\n${parts.join("\n")}`;
 }
 
 function buildRagBlock(
@@ -690,14 +708,14 @@ function buildRagBlock(
     }>;
   } | null,
 ): string {
-  if (!ragResult || !ragResult.success || !ragResult.chunks?.length) return '';
+  if (!ragResult || !ragResult.success || !ragResult.chunks?.length) return "";
   const snippets = ragResult.chunks
     .map((c, i) => {
-      const text = c.content ?? c.short_snippet ?? '';
+      const text = c.content ?? c.short_snippet ?? "";
       const source = c.title ? `[Source: ${c.title}]` : `[${i + 1}]`;
       return `${source}\n${text.slice(0, 500)}`;
     })
-    .join('\n\n');
+    .join("\n\n");
   return `You MUST answer ONLY based on the following knowledge base evidence.\nDo NOT add information not present in the evidence.\nIf the evidence does not fully answer the question, say so and offer to connect to a human agent.\n\nEvidence:\n${snippets}`;
 }
 
@@ -743,7 +761,7 @@ async function callKBAdapter(
 ): Promise<{
   success: boolean;
   no_answer?: boolean;
-  retrieval_quality?: 'high' | 'medium' | 'low' | 'failed';
+  retrieval_quality?: "high" | "medium" | "low" | "failed";
   chunks?: Array<{
     doc_id?: string;
     chunk_id?: string;
@@ -760,12 +778,12 @@ async function callKBAdapter(
   }>;
   query_text_preview?: string;
 }> {
-  const KB_RAG_ENDPOINT = Deno.env.get('KB_RAG_ENDPOINT');
-  const KB_RAG_TOKEN = Deno.env.get('KB_RAG_TOKEN');
+  const KB_RAG_ENDPOINT = Deno.env.get("KB_RAG_ENDPOINT");
+  const KB_RAG_TOKEN = Deno.env.get("KB_RAG_TOKEN");
 
   if (!KB_RAG_ENDPOINT || !KB_RAG_TOKEN) {
-    console.error('[CRITICAL] KB_RAG_ENDPOINT or KB_RAG_TOKEN not set');
-    return { success: false, no_answer: true, retrieval_quality: 'failed' };
+    console.error("[CRITICAL] KB_RAG_ENDPOINT or KB_RAG_TOKEN not set");
+    return { success: false, no_answer: true, retrieval_quality: "failed" };
   }
 
   try {
@@ -773,17 +791,17 @@ async function callKBAdapter(
     const timeoutId = setTimeout(() => controller.abort(), 15000);
 
     const response = await fetch(`${KB_RAG_ENDPOINT}/kb/rag-search`, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${KB_RAG_TOKEN}`,
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${KB_RAG_TOKEN}`,
       },
       body: JSON.stringify({
         query: userMessage,
         company_id: scope.company_id,
         industry: scope.industry,
         language: scope.language,
-        status: 'published',
+        status: "published",
         top_k: 5,
       }),
       signal: controller.signal,
@@ -792,8 +810,8 @@ async function callKBAdapter(
     clearTimeout(timeoutId);
 
     if (!response.ok) {
-      console.error('[CRITICAL] KB RAG API HTTP error', { status: response.status });
-      return { success: false, no_answer: true, retrieval_quality: 'failed' };
+      console.error("[CRITICAL] KB RAG API HTTP error", { status: response.status });
+      return { success: false, no_answer: true, retrieval_quality: "failed" };
     }
 
     const data = await response.json();
@@ -802,7 +820,7 @@ async function callKBAdapter(
       return {
         success: true,
         no_answer: true,
-        retrieval_quality: 'failed',
+        retrieval_quality: "failed",
         chunks: [],
         query_text_preview: userMessage.slice(0, 100),
       };
@@ -811,20 +829,20 @@ async function callKBAdapter(
     return {
       success: true,
       no_answer: false,
-      retrieval_quality: 'high',
+      retrieval_quality: "high",
       chunks: data.results,
       query_text_preview: userMessage.slice(0, 100),
     };
   } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') {
-      console.error('[CRITICAL] KB RAG API timeout', { code: 'KB_TIMEOUT' });
+    if (error instanceof DOMException && error.name === "AbortError") {
+      console.error("[CRITICAL] KB RAG API timeout", { code: "KB_TIMEOUT" });
     } else {
-      console.error('[CRITICAL] KB RAG API failure', {
-        code: 'KB_FETCH_ERROR',
-        name: error instanceof Error ? error.name : 'UnknownError',
+      console.error("[CRITICAL] KB RAG API failure", {
+        code: "KB_FETCH_ERROR",
+        name: error instanceof Error ? error.name : "UnknownError",
       });
     }
-    return { success: false, no_answer: true, retrieval_quality: 'failed' };
+    return { success: false, no_answer: true, retrieval_quality: "failed" };
   }
 }
 
@@ -846,7 +864,7 @@ async function callKBAdapter(
 //   4. LLM cannot override gate decisions. tool_call requests are SUGGESTIONS.
 // ────────────────────────────────────────────────────────────────────────────
 
-type GateDecisionKind = 'ALLOW' | 'DENY' | 'DOWNGRADE_TO_DRAFT' | 'ESCALATE';
+type GateDecisionKind = "ALLOW" | "DENY" | "DOWNGRADE_TO_DRAFT" | "ESCALATE";
 
 interface GateDecision {
   decision: GateDecisionKind;
@@ -854,9 +872,9 @@ interface GateDecision {
   execution_allowed?: boolean;
   force_draft?: boolean;
   handoff_required?: boolean;
-  execution_deferred_to?: 'L5d';
-  draft_enforcement_deferred_to?: 'L5e';
-  action_deferred_to?: 'L5e';
+  execution_deferred_to?: "L5d";
+  draft_enforcement_deferred_to?: "L5e";
+  action_deferred_to?: "L5e";
   message_to_llm?: string;
 }
 
@@ -867,27 +885,27 @@ interface ToolRequest {
 
 interface ExecutionContext {
   conversation: { id: string; status: string };
-  caller_mode: 'system_auto' | 'human_agent' | 'ai_assist';
-  risk_level: 'low' | 'medium' | 'high';
-  privacy_flags?: { do_not_profile?: boolean; consent_status?: 'granted' | 'withdrawn' | 'unknown' };
+  caller_mode: "system_auto" | "human_agent" | "ai_assist";
+  risk_level: "low" | "medium" | "high";
+  privacy_flags?: { do_not_profile?: boolean; consent_status?: "granted" | "withdrawn" | "unknown" };
   turn_tool_calls: Set<string>;
   turn_budget: { total: number; kb_search: number; c360: number };
   server_resolved_customer_ref?: string | null; // opaque, server-side only
 }
 
 const ALLOWED_TOOLS = [
-  'kb_search',
-  'escalate_to_human',
-  'get_customer_context',
-  'get_order_summary',
-  'create_handoff_summary',
-  'mark_unresolved',
-  'suggest_reply',
+  "kb_search",
+  "escalate_to_human",
+  "get_customer_context",
+  "get_order_summary",
+  "create_handoff_summary",
+  "mark_unresolved",
+  "suggest_reply",
 ] as const;
 
-const READ_ONLY_TOOLS = ['kb_search', 'get_customer_context', 'get_order_summary'] as const;
-const HIGH_RISK_ALLOWED = ['kb_search', 'get_customer_context', 'escalate_to_human', 'create_handoff_summary'] as const;
-const OFFLINE_BOT_ALLOWED = ['kb_search', 'escalate_to_human'] as const;
+const READ_ONLY_TOOLS = ["kb_search", "get_customer_context", "get_order_summary"] as const;
+const HIGH_RISK_ALLOWED = ["kb_search", "get_customer_context", "escalate_to_human", "create_handoff_summary"] as const;
+const OFFLINE_BOT_ALLOWED = ["kb_search", "escalate_to_human"] as const;
 
 const MAX_TOOL_CALLS = 10;
 const MAX_KB_SEARCH = 3;
@@ -901,23 +919,23 @@ function buildSafeDedupeKey(
   input: Record<string, unknown>,
   server_resolved_customer_ref?: string | null,
 ): string | null {
-  if (tool_name === 'get_order_summary') {
+  if (tool_name === "get_order_summary") {
     if (!server_resolved_customer_ref) return null; // caller must DENY(SERVER_REFERENCE_REQUIRED)
     return `get_order_summary:${server_resolved_customer_ref}`;
   }
   // Allowlist of safe fields per tool. Unknown fields are dropped.
   const SAFE_FIELDS: Record<string, string[]> = {
-    kb_search: ['query_norm', 'locale'],
+    kb_search: ["query_norm", "locale"],
     get_customer_context: [], // no LLM-provided params honored
-    escalate_to_human: ['reason_code'],
-    create_handoff_summary: ['reason_code'],
-    mark_unresolved: ['reason_code'],
-    suggest_reply: ['intent_code'],
+    escalate_to_human: ["reason_code"],
+    create_handoff_summary: ["reason_code"],
+    mark_unresolved: ["reason_code"],
+    suggest_reply: ["intent_code"],
   };
   const allowed = SAFE_FIELDS[tool_name] ?? [];
   const safe: Record<string, unknown> = {};
   for (const k of allowed) {
-    if (input[k] !== undefined && typeof input[k] !== 'object') {
+    if (input[k] !== undefined && typeof input[k] !== "object") {
       safe[k] = String(input[k]).slice(0, 200);
     }
   }
@@ -926,10 +944,7 @@ function buildSafeDedupeKey(
 
 // Deterministic Tool Executor Gate — 7 steps in fixed order.
 // Pure function: no I/O, no DB writes, no LLM calls, no trace writes.
-export function toolExecutorGate(
-  toolRequest: ToolRequest,
-  context: ExecutionContext,
-): GateDecision {
+export function toolExecutorGate(toolRequest: ToolRequest, context: ExecutionContext): GateDecision {
   const { tool_name, input } = toolRequest;
   const {
     conversation,
@@ -942,43 +957,42 @@ export function toolExecutorGate(
   } = context;
 
   // Step 1: Tool name validation
-  if (tool_name === 'schedule_feedback_request') {
-    return { decision: 'DENY', reason: 'TOOL_EXCLUDED' };
+  if (tool_name === "schedule_feedback_request") {
+    return { decision: "DENY", reason: "TOOL_EXCLUDED" };
   }
   if (!(ALLOWED_TOOLS as readonly string[]).includes(tool_name)) {
-    return { decision: 'DENY', reason: 'TOOL_NOT_REGISTERED' };
+    return { decision: "DENY", reason: "TOOL_NOT_REGISTERED" };
   }
 
   // Step 2: Status guard (Contract 07 §2.2)
   const status = conversation.status;
-  if (status === 'resolved' || status === 'closed') {
-    return { decision: 'DENY', reason: 'CONV_RESOLVED_OR_CLOSED' };
+  if (status === "resolved" || status === "closed") {
+    return { decision: "DENY", reason: "CONV_RESOLVED_OR_CLOSED" };
   }
-  if ((status === 'human_needed' || status === 'human_control')
-      && !(READ_ONLY_TOOLS as readonly string[]).includes(tool_name)) {
-    return { decision: 'DENY', reason: 'TOOL_NOT_ALLOWED_IN_STATUS' };
+  if (
+    (status === "human_needed" || status === "human_control") &&
+    !(READ_ONLY_TOOLS as readonly string[]).includes(tool_name)
+  ) {
+    return { decision: "DENY", reason: "TOOL_NOT_ALLOWED_IN_STATUS" };
   }
-  if (status === 'offline_bot'
-      && !(OFFLINE_BOT_ALLOWED as readonly string[]).includes(tool_name)) {
-    return { decision: 'DENY', reason: 'TOOL_NOT_ALLOWED_OFFLINE' };
+  if (status === "offline_bot" && !(OFFLINE_BOT_ALLOWED as readonly string[]).includes(tool_name)) {
+    return { decision: "DENY", reason: "TOOL_NOT_ALLOWED_OFFLINE" };
   }
 
   // Step 3: Risk guard
-  if (risk_level === 'high'
-      && !(HIGH_RISK_ALLOWED as readonly string[]).includes(tool_name)) {
-    return { decision: 'ESCALATE', reason: 'HIGH_RISK_TOOL_BLOCKED' };
+  if (risk_level === "high" && !(HIGH_RISK_ALLOWED as readonly string[]).includes(tool_name)) {
+    return { decision: "ESCALATE", reason: "HIGH_RISK_TOOL_BLOCKED" };
   }
 
   // Step 4: Permission guard (Contract 02)
-  if (tool_name === 'mark_unresolved' && caller_mode === 'system_auto') {
-    return { decision: 'DENY', reason: 'MARK_UNRESOLVED_REQUIRES_HUMAN' };
+  if (tool_name === "mark_unresolved" && caller_mode === "system_auto") {
+    return { decision: "DENY", reason: "MARK_UNRESOLVED_REQUIRES_HUMAN" };
   }
 
   // Step 5: Privacy guard (Contract 06 §3)
-  if (privacy_flags?.do_not_profile === true
-      || privacy_flags?.consent_status === 'withdrawn') {
-    if (tool_name === 'get_customer_context') {
-      return { decision: 'DENY', reason: 'PRIVACY_DO_NOT_PROFILE' };
+  if (privacy_flags?.do_not_profile === true || privacy_flags?.consent_status === "withdrawn") {
+    if (tool_name === "get_customer_context") {
+      return { decision: "DENY", reason: "PRIVACY_DO_NOT_PROFILE" };
     }
   }
 
@@ -987,51 +1001,51 @@ export function toolExecutorGate(
   const dedupe_key = buildSafeDedupeKey(tool_name, input, server_resolved_customer_ref);
   if (dedupe_key === null) {
     // Risk-policy escalation belongs to L5e — Gate returns DENY only.
-    return { decision: 'DENY', reason: 'SERVER_REFERENCE_REQUIRED' };
+    return { decision: "DENY", reason: "SERVER_REFERENCE_REQUIRED" };
   }
   if (turn_tool_calls.has(dedupe_key)) {
-    return { decision: 'DENY', reason: 'DUPLICATE_TOOL_CALL_IN_TURN' };
+    return { decision: "DENY", reason: "DUPLICATE_TOOL_CALL_IN_TURN" };
   }
   turn_tool_calls.add(dedupe_key);
 
   // Step 7: Budget guard (Contract 07 Hard Constraint #10)
   if (turn_budget.total >= MAX_TOOL_CALLS) {
-    return { decision: 'DENY', reason: 'TOOL_BUDGET_EXCEEDED' };
+    return { decision: "DENY", reason: "TOOL_BUDGET_EXCEEDED" };
   }
-  if (tool_name === 'kb_search' && turn_budget.kb_search >= MAX_KB_SEARCH) {
-    return { decision: 'DENY', reason: 'KB_SEARCH_BUDGET_EXCEEDED' };
+  if (tool_name === "kb_search" && turn_budget.kb_search >= MAX_KB_SEARCH) {
+    return { decision: "DENY", reason: "KB_SEARCH_BUDGET_EXCEEDED" };
   }
-  if (tool_name === 'get_customer_context' && turn_budget.c360 >= MAX_C360_CALLS) {
-    return { decision: 'DENY', reason: 'C360_BUDGET_EXCEEDED' };
+  if (tool_name === "get_customer_context" && turn_budget.c360 >= MAX_C360_CALLS) {
+    return { decision: "DENY", reason: "C360_BUDGET_EXCEEDED" };
   }
 
   // All guards passed → ALLOW or status-driven DOWNGRADE
-  if (status === 'ai_draft_only' || status === 'unresolved') {
+  if (status === "ai_draft_only" || status === "unresolved") {
     return {
-      decision: 'DOWNGRADE_TO_DRAFT',
-      reason: 'STATUS_DRAFT_ONLY',
+      decision: "DOWNGRADE_TO_DRAFT",
+      reason: "STATUS_DRAFT_ONLY",
       execution_allowed: true,
       force_draft: true,
-      execution_deferred_to: 'L5d',
-      draft_enforcement_deferred_to: 'L5e',
+      execution_deferred_to: "L5d",
+      draft_enforcement_deferred_to: "L5e",
     };
   }
-  if (status === 'escalation_risk') {
+  if (status === "escalation_risk") {
     return {
-      decision: 'DOWNGRADE_TO_DRAFT',
-      reason: 'ESCALATION_RISK_DOWNGRADE',
+      decision: "DOWNGRADE_TO_DRAFT",
+      reason: "ESCALATION_RISK_DOWNGRADE",
       execution_allowed: true,
       force_draft: true,
-      execution_deferred_to: 'L5d',
-      draft_enforcement_deferred_to: 'L5e',
+      execution_deferred_to: "L5d",
+      draft_enforcement_deferred_to: "L5e",
     };
   }
 
   return {
-    decision: 'ALLOW',
-    reason: 'GATE_PASSED',
+    decision: "ALLOW",
+    reason: "GATE_PASSED",
     execution_allowed: true,
-    execution_deferred_to: 'L5d',
+    execution_deferred_to: "L5d",
   };
 }
 
@@ -1047,34 +1061,34 @@ export function toolExecutorGate(
 //   ❌ Not: full input / full output / PII / KB content.
 export function handleGateDecision(decision: GateDecision): GateDecision {
   switch (decision.decision) {
-    case 'ALLOW':
+    case "ALLOW":
       return {
-        decision: 'ALLOW',
-        reason: decision.reason ?? 'GATE_PASSED',
+        decision: "ALLOW",
+        reason: decision.reason ?? "GATE_PASSED",
         execution_allowed: true,
-        execution_deferred_to: 'L5d',
+        execution_deferred_to: "L5d",
       };
-    case 'DENY':
+    case "DENY":
       return {
-        decision: 'DENY',
+        decision: "DENY",
         reason: decision.reason,
-        message_to_llm: 'tool not available in current context',
+        message_to_llm: "tool not available in current context",
       };
-    case 'DOWNGRADE_TO_DRAFT':
+    case "DOWNGRADE_TO_DRAFT":
       return {
-        decision: 'DOWNGRADE_TO_DRAFT',
+        decision: "DOWNGRADE_TO_DRAFT",
         reason: decision.reason,
         execution_allowed: true,
         force_draft: true,
-        execution_deferred_to: 'L5d',
-        draft_enforcement_deferred_to: 'L5e',
+        execution_deferred_to: "L5d",
+        draft_enforcement_deferred_to: "L5e",
       };
-    case 'ESCALATE':
+    case "ESCALATE":
       return {
-        decision: 'ESCALATE',
+        decision: "ESCALATE",
         reason: decision.reason,
         handoff_required: true,
-        action_deferred_to: 'L5e',
+        action_deferred_to: "L5e",
       };
   }
 }
@@ -1115,57 +1129,53 @@ export function handleGateDecision(decision: GateDecision): GateDecision {
 // ENABLE_TOOL_EXECUTOR=true (guarded code path in orchestrationGenerateReply).
 const TOOL_DEFINITIONS = [
   {
-    name: 'kb_search',
-    description:
-      'Search the knowledge base for policy, FAQ, or product information to answer customer questions.',
+    name: "kb_search",
+    description: "Search the knowledge base for policy, FAQ, or product information to answer customer questions.",
     input_schema: {
-      type: 'object',
+      type: "object",
       properties: {
         // ⚠️ query must be PII-redacted before any stub log or trace write.
         query: {
-          type: 'string',
-          description:
-            'Search query extracted from customer message (must be PII-redacted before stub log or trace).',
+          type: "string",
+          description: "Search query extracted from customer message (must be PII-redacted before stub log or trace).",
         },
         industry: {
-          type: 'string',
-          description: 'Industry context (optional, inferred from conversation).',
+          type: "string",
+          description: "Industry context (optional, inferred from conversation).",
         },
         top_k: {
-          type: 'number',
-          description: 'Number of results to return (default 5, max 10).',
+          type: "number",
+          description: "Number of results to return (default 5, max 10).",
         },
       },
-      required: ['query'],
+      required: ["query"],
     },
   },
   {
-    name: 'escalate_to_human',
-    description: 'Escalate conversation to a human agent when AI cannot resolve the issue.',
+    name: "escalate_to_human",
+    description: "Escalate conversation to a human agent when AI cannot resolve the issue.",
     input_schema: {
-      type: 'object',
+      type: "object",
       properties: {
-        reason: { type: 'string', description: 'Reason for escalation (sanitized, no PII).' },
+        reason: { type: "string", description: "Reason for escalation (sanitized, no PII)." },
         summary: {
-          type: 'string',
-          description: 'Brief conversation summary (sanitized, max 500 chars, no PII).',
+          type: "string",
+          description: "Brief conversation summary (sanitized, max 500 chars, no PII).",
         },
       },
-      required: ['reason', 'summary'],
+      required: ["reason", "summary"],
     },
   },
   {
-    name: 'get_customer_context',
-    description:
-      'Get customer context (tier, sentiment, language preference) to personalize response tone.',
+    name: "get_customer_context",
+    description: "Get customer context (tier, sentiment, language preference) to personalize response tone.",
     input_schema: {
-      type: 'object',
+      type: "object",
       properties: {
         fields: {
-          type: 'array',
-          items: { type: 'string' },
-          description:
-            'Requested fields (advisory only — server enforces masking level allowlist).',
+          type: "array",
+          items: { type: "string" },
+          description: "Requested fields (advisory only — server enforces masking level allowlist).",
         },
       },
       required: [],
@@ -1173,33 +1183,31 @@ const TOOL_DEFINITIONS = [
     },
   },
   {
-    name: 'get_order_summary',
-    description: 'Get order status summary for delivery, return, or refund inquiries.',
+    name: "get_order_summary",
+    description: "Get order status summary for delivery, return, or refund inquiries.",
     input_schema: {
-      type: 'object',
+      type: "object",
       properties: {
         inquiry_type: {
-          type: 'string',
-          enum: ['delivery_status', 'return_request', 'refund_inquiry', 'order_general'],
-          description: 'Type of order inquiry.',
+          type: "string",
+          enum: ["delivery_status", "return_request", "refund_inquiry", "order_general"],
+          description: "Type of order inquiry.",
         },
       },
-      required: ['inquiry_type'],
+      required: ["inquiry_type"],
       // ⚠️ customer_ref and order_id NOT in LLM input — server-side resolved.
       // ⚠️ LLM-provided customer_ref / order_id are IGNORED (security requirement).
     },
   },
   {
-    name: 'create_handoff_summary',
-    description:
-      'Generate a conversation summary for the human agent who will take over this conversation.',
+    name: "create_handoff_summary",
+    description: "Generate a conversation summary for the human agent who will take over this conversation.",
     input_schema: {
-      type: 'object',
+      type: "object",
       properties: {
         summary_focus: {
-          type: 'string',
-          description:
-            "Optional focus area for the summary (e.g. 'refund concern', 'delivery issue').",
+          type: "string",
+          description: "Optional focus area for the summary (e.g. 'refund concern', 'delivery issue').",
         },
       },
       required: [],
@@ -1208,43 +1216,40 @@ const TOOL_DEFINITIONS = [
     },
   },
   {
-    name: 'mark_unresolved',
-    description:
-      'Mark conversation as unresolved for follow-up. Only available in console suggest mode.',
+    name: "mark_unresolved",
+    description: "Mark conversation as unresolved for follow-up. Only available in console suggest mode.",
     input_schema: {
-      type: 'object',
+      type: "object",
       properties: {
-        reason: { type: 'string', description: 'Reason conversation is unresolved (sanitized).' },
+        reason: { type: "string", description: "Reason conversation is unresolved (sanitized)." },
         follow_up_at: {
-          type: 'string',
+          type: "string",
           description:
-            'Suggested follow-up datetime (ISO 8601, optional — advisory only in L5d, not written/scheduled).',
+            "Suggested follow-up datetime (ISO 8601, optional — advisory only in L5d, not written/scheduled).",
         },
       },
-      required: ['reason'],
+      required: ["reason"],
       // ⚠️ follow_up_at is advisory only in L5d — do NOT schedule, write, or persist it.
     },
   },
   {
-    name: 'suggest_reply',
-    description:
-      'Generate a suggested reply for the customer based on KB findings and context.',
+    name: "suggest_reply",
+    description: "Generate a suggested reply for the customer based on KB findings and context.",
     input_schema: {
-      type: 'object',
+      type: "object",
       properties: {
         context_summary: {
-          type: 'string',
-          description:
-            'Summary of context assembled by generate-reply (sanitized, max 500 chars, no PII).',
+          type: "string",
+          description: "Summary of context assembled by generate-reply (sanitized, max 500 chars, no PII).",
           // ⚠️ Must be sanitized before use — if raw/too long/PII-like: truncate/redact or DENY.
         },
         sources: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Citation labels from KB results.',
+          type: "array",
+          items: { type: "string" },
+          description: "Citation labels from KB results.",
         },
       },
-      required: ['context_summary'],
+      required: ["context_summary"],
     },
   },
 ];
@@ -1255,8 +1260,8 @@ const TOOL_DEFINITIONS = [
 // L5d; stub results must NEVER be surfaced as customer-facing truth.
 interface ToolResult {
   tool_name: string;
-  status: 'stub' | 'denied';
-  result_classification: 'internal_only';
+  status: "stub" | "denied";
+  result_classification: "internal_only";
   [k: string]: unknown;
 }
 
@@ -1274,103 +1279,99 @@ export async function handleToolCall(
   _context: ExecutionContext,
 ): Promise<ToolResult> {
   switch (tool_name) {
-    case 'kb_search':
+    case "kb_search":
       // Real KB call deferred to Gate B (ENABLE_KB_ADAPTER=true + Director approval).
       return {
-        tool_name: 'kb_search',
-        status: 'stub',
-        result_classification: 'internal_only',
-        retrieval_quality: 'failed',
+        tool_name: "kb_search",
+        status: "stub",
+        result_classification: "internal_only",
+        retrieval_quality: "failed",
         no_answer: true,
         handoff_required: true,
         results: [],
-        stub_note: 'KB adapter not yet enabled (L5d stub)',
+        stub_note: "KB adapter not yet enabled (L5d stub)",
       };
 
-    case 'escalate_to_human':
+    case "escalate_to_human":
       // ❌ Do NOT write handoff_event in L5d stub.
       // ❌ Do NOT update conversations.status in L5d stub.
       return {
-        tool_name: 'escalate_to_human',
-        status: 'stub',
-        result_classification: 'internal_only',
+        tool_name: "escalate_to_human",
+        status: "stub",
+        result_classification: "internal_only",
         escalated: false,
-        stub_note: 'Escalation workflow deferred to L5e — no state changes in L5d',
+        stub_note: "Escalation workflow deferred to L5e — no state changes in L5d",
       };
 
-    case 'get_customer_context':
+    case "get_customer_context":
       // ❌ Do NOT call customer360_adapter in L5d stub.
       // ❌ Do NOT return any real PII.
       // ⚠️ tier='Standard' is a safe fallback placeholder, NOT verified Customer360 truth.
       return {
-        tool_name: 'get_customer_context',
-        status: 'stub',
-        result_classification: 'internal_only',
+        tool_name: "get_customer_context",
+        status: "stub",
+        result_classification: "internal_only",
         customer_context: {
-          tier: 'Standard',
-          language_preference: 'en',
-          sentiment: 'neutral',
+          tier: "Standard",
+          language_preference: "en",
+          sentiment: "neutral",
         },
-        stub_note:
-          'Customer360 adapter not yet enabled (L5d stub) — using safe defaults',
+        stub_note: "Customer360 adapter not yet enabled (L5d stub) — using safe defaults",
       };
 
-    case 'get_order_summary':
+    case "get_order_summary":
       // ❌ Do NOT call any order/ERP API.
       // ❌ Do NOT return any real order data / payment data.
       // ⚠️ LLM-provided customer_ref / order_id are ignored — stub does not use them.
       return {
-        tool_name: 'get_order_summary',
-        status: 'stub',
-        result_classification: 'internal_only',
+        tool_name: "get_order_summary",
+        status: "stub",
+        result_classification: "internal_only",
         order_available: false,
-        stub_note: 'Order adapter not yet enabled (L5d stub)',
+        stub_note: "Order adapter not yet enabled (L5d stub)",
       };
 
-    case 'create_handoff_summary':
+    case "create_handoff_summary":
       // conversation_id is server-side resolved — LLM-provided value ignored/stripped.
       // This tool is return-only (Contract 07 §3.5 Gap 6 Plan A).
       return {
-        tool_name: 'create_handoff_summary',
-        status: 'stub',
-        result_classification: 'internal_only',
-        summary: '[Handoff summary not yet available — L5d stub]',
-        stub_note:
-          'Handoff summary generation deferred to L5e; conversation_id server-side only',
+        tool_name: "create_handoff_summary",
+        status: "stub",
+        result_classification: "internal_only",
+        summary: "[Handoff summary not yet available — L5d stub]",
+        stub_note: "Handoff summary generation deferred to L5e; conversation_id server-side only",
       };
 
-    case 'mark_unresolved':
+    case "mark_unresolved":
       // ❌ Do NOT update conversations.status in L5d stub.
       // ❌ Do NOT write conversation_status_log / audit_log in L5d stub.
       return {
-        tool_name: 'mark_unresolved',
-        status: 'stub',
-        result_classification: 'internal_only',
+        tool_name: "mark_unresolved",
+        status: "stub",
+        result_classification: "internal_only",
         marked: false,
-        stub_note:
-          'mark_unresolved write action deferred to L5e — no state changes in L5d',
+        stub_note: "mark_unresolved write action deferred to L5e — no state changes in L5d",
       };
 
-    case 'suggest_reply':
+    case "suggest_reply":
       // ❌ Do NOT write ai_reply_draft in L5d stub.
       // ❌ Do NOT auto-send anything in L5d stub.
       return {
-        tool_name: 'suggest_reply',
-        status: 'stub',
-        result_classification: 'internal_only',
-        draft_content: '',
+        tool_name: "suggest_reply",
+        status: "stub",
+        result_classification: "internal_only",
+        draft_content: "",
         confidence: 0,
-        recommended_action: 'human_review',
-        stub_note:
-          'suggest_reply draft write deferred to L5e — no state changes in L5d',
+        recommended_action: "human_review",
+        stub_note: "suggest_reply draft write deferred to L5e — no state changes in L5d",
       };
 
     default:
       return {
         tool_name,
-        status: 'denied',
-        result_classification: 'internal_only',
-        error: 'tool not available in current context',
+        status: "denied",
+        result_classification: "internal_only",
+        error: "tool not available in current context",
       };
   }
 }
@@ -1410,7 +1411,7 @@ export async function handleToolCall(
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── L5e types (local to L5e block; no public API shape change) ──────────────
-type L5eOutputAction = 'auto_send' | 'draft_only' | 'refuse';
+type L5eOutputAction = "auto_send" | "draft_only" | "refuse";
 
 interface L5eOutputMode {
   action: L5eOutputAction;
@@ -1424,7 +1425,7 @@ interface L5eGuardrailResult {
 
 interface L5eToolResult {
   tool_name: string;
-  result_classification?: 'public_safe' | 'draft_only' | 'supervisor_only' | 'internal_only';
+  result_classification?: "public_safe" | "draft_only" | "supervisor_only" | "internal_only";
   handoff_required?: boolean;
   citation_required?: boolean;
   has_valid_citation?: boolean;
@@ -1433,12 +1434,12 @@ interface L5eToolResult {
 interface L5eRagResult {
   no_answer?: boolean;
   conflict_detected?: boolean;
-  retrieval_quality?: 'high' | 'medium' | 'low';
+  retrieval_quality?: "high" | "medium" | "low";
   policy_gap?: boolean;
-  source_scope?: 'customer_answer' | 'internal_only' | string;
+  source_scope?: "customer_answer" | "internal_only" | string;
 }
 
-type L5eCallerMode = 'system_auto' | 'console_suggest';
+type L5eCallerMode = "system_auto" | "console_suggest";
 
 // ── Status matrix (Contract 03 §1.1) ────────────────────────────────────────
 // ⚠️ Code-only. Not invoked at runtime in Gate A. Pure function, no I/O.
@@ -1449,43 +1450,43 @@ export function determineOutputMode(
   mode: L5eCallerMode,
 ): L5eOutputMode {
   switch (conversationStatus) {
-    case 'resolved':
-    case 'closed':
-      return { action: 'refuse', reason: 'CONV_RESOLVED_OR_CLOSED' };
+    case "resolved":
+    case "closed":
+      return { action: "refuse", reason: "CONV_RESOLVED_OR_CLOSED" };
 
-    case 'ai_handling':
+    case "ai_handling":
       break; // fall through to guardrail check
 
-    case 'ai_draft_only':
-      return { action: 'draft_only', reason: 'STATUS_AI_DRAFT_ONLY' };
+    case "ai_draft_only":
+      return { action: "draft_only", reason: "STATUS_AI_DRAFT_ONLY" };
 
-    case 'human_needed':
-    case 'human_control':
-      return { action: 'draft_only', reason: 'STATUS_HUMAN_CONTROL' };
+    case "human_needed":
+    case "human_control":
+      return { action: "draft_only", reason: "STATUS_HUMAN_CONTROL" };
 
-    case 'escalation_risk':
-      return { action: 'draft_only', reason: 'STATUS_ESCALATION_RISK' };
+    case "escalation_risk":
+      return { action: "draft_only", reason: "STATUS_ESCALATION_RISK" };
 
-    case 'unresolved':
-      return { action: 'draft_only', reason: 'STATUS_UNRESOLVED' };
+    case "unresolved":
+      return { action: "draft_only", reason: "STATUS_UNRESOLVED" };
 
-    case 'offline_bot':
+    case "offline_bot":
       // Use draft_only; offline_safe action is not added to the type in Gate A.
-      return { action: 'draft_only', reason: 'STATUS_OFFLINE_BOT' };
+      return { action: "draft_only", reason: "STATUS_OFFLINE_BOT" };
 
-    case 'reopened':
-      return { action: 'draft_only', reason: 'STATUS_REOPENED_TRANSITIONAL' };
+    case "reopened":
+      return { action: "draft_only", reason: "STATUS_REOPENED_TRANSITIONAL" };
 
     default:
-      return { action: 'draft_only', reason: 'STATUS_UNKNOWN_SAFE_FALLBACK' };
+      return { action: "draft_only", reason: "STATUS_UNKNOWN_SAFE_FALLBACK" };
   }
 
   // Only ai_handling reaches here — check guardrails for auto-send.
   const guardrailsPass = checkGuardrails(toolResults, ragResult, mode);
   if (!guardrailsPass.pass) {
-    return { action: 'draft_only', reason: guardrailsPass.reason };
+    return { action: "draft_only", reason: guardrailsPass.reason };
   }
-  return { action: 'auto_send', reason: 'GUARDRAILS_PASSED' };
+  return { action: "auto_send", reason: "GUARDRAILS_PASSED" };
 }
 
 export function checkGuardrails(
@@ -1494,43 +1495,43 @@ export function checkGuardrails(
   mode: L5eCallerMode,
 ): L5eGuardrailResult {
   // console_suggest mode is always draft only (agent reviews before sending).
-  if (mode === 'console_suggest') {
-    return { pass: false, reason: 'CONSOLE_SUGGEST_ALWAYS_DRAFT' };
+  if (mode === "console_suggest") {
+    return { pass: false, reason: "CONSOLE_SUGGEST_ALWAYS_DRAFT" };
   }
 
   // RAG result flags (KB adapter — Gate B; ENABLE_KB_ADAPTER=false in Gate A).
   if (ragResult) {
-    if (ragResult.no_answer) return { pass: false, reason: 'KB_NO_ANSWER' };
-    if (ragResult.conflict_detected) return { pass: false, reason: 'KB_CONFLICT' };
-    if (ragResult.retrieval_quality === 'low') return { pass: false, reason: 'KB_LOW_QUALITY' };
-    if (ragResult.policy_gap) return { pass: false, reason: 'KB_POLICY_GAP' };
-    if (ragResult.source_scope !== 'customer_answer') {
-      return { pass: false, reason: 'KB_SCOPE_NOT_CUSTOMER_ANSWER' };
+    if (ragResult.no_answer) return { pass: false, reason: "KB_NO_ANSWER" };
+    if (ragResult.conflict_detected) return { pass: false, reason: "KB_CONFLICT" };
+    if (ragResult.retrieval_quality === "low") return { pass: false, reason: "KB_LOW_QUALITY" };
+    if (ragResult.policy_gap) return { pass: false, reason: "KB_POLICY_GAP" };
+    if (ragResult.source_scope !== "customer_answer") {
+      return { pass: false, reason: "KB_SCOPE_NOT_CUSTOMER_ANSWER" };
     }
   }
 
   // Tool result classifications.
   for (const result of toolResults) {
-    if (result.result_classification === 'draft_only') {
-      return { pass: false, reason: 'TOOL_RESULT_DRAFT_ONLY' };
+    if (result.result_classification === "draft_only") {
+      return { pass: false, reason: "TOOL_RESULT_DRAFT_ONLY" };
     }
-    if (result.result_classification === 'supervisor_only') {
-      return { pass: false, reason: 'TOOL_RESULT_SUPERVISOR_ONLY' };
+    if (result.result_classification === "supervisor_only") {
+      return { pass: false, reason: "TOOL_RESULT_SUPERVISOR_ONLY" };
     }
   }
 
   // suggest_reply citation_required (Contract 07 §3.7).
-  const suggestResult = toolResults.find((r) => r.tool_name === 'suggest_reply');
+  const suggestResult = toolResults.find((r) => r.tool_name === "suggest_reply");
   if (suggestResult?.citation_required && !suggestResult?.has_valid_citation) {
-    return { pass: false, reason: 'SUGGEST_REPLY_MISSING_CITATION' };
+    return { pass: false, reason: "SUGGEST_REPLY_MISSING_CITATION" };
   }
 
   // Handoff required by any adapter.
   if (toolResults.some((r) => r.handoff_required)) {
-    return { pass: false, reason: 'HANDOFF_REQUIRED_BY_TOOL' };
+    return { pass: false, reason: "HANDOFF_REQUIRED_BY_TOOL" };
   }
 
-  return { pass: true, reason: 'ALL_GUARDRAILS_PASSED' };
+  return { pass: true, reason: "ALL_GUARDRAILS_PASSED" };
 }
 
 // ── Write wrappers — GUARDED, unreachable while ENABLE_TOOL_EXECUTOR=false ──
@@ -1542,9 +1543,19 @@ interface L5eExecutionContextLike {
   [k: string]: unknown;
 }
 
-interface L5eSuggestReplyInput { [k: string]: unknown; }
-interface L5eEscalateInput { reason?: string; summary?: string; [k: string]: unknown; }
-interface L5eMarkUnresolvedInput { reason?: string; follow_up_at?: string; [k: string]: unknown; }
+interface L5eSuggestReplyInput {
+  [k: string]: unknown;
+}
+interface L5eEscalateInput {
+  reason?: string;
+  summary?: string;
+  [k: string]: unknown;
+}
+interface L5eMarkUnresolvedInput {
+  reason?: string;
+  follow_up_at?: string;
+  [k: string]: unknown;
+}
 
 interface L5eDeferredResult {
   deferred: boolean;
@@ -1556,16 +1567,13 @@ interface L5eDeferredResult {
 
 // PII-safe sanitizer (local, no external deps). Strips emails, phones,
 // long digit runs (card/order-like), and truncates. Used for code-proof only.
-function l5eSanitize(
-  input: string | undefined | null,
-  opts: { maxChars: number; noPII: boolean },
-): string {
-  if (!input) return '';
+function l5eSanitize(input: string | undefined | null, opts: { maxChars: number; noPII: boolean }): string {
+  if (!input) return "";
   let s = String(input);
   if (opts.noPII) {
-    s = s.replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, '[email]');
-    s = s.replace(/\+?\d[\d\s\-().]{7,}\d/g, '[phone]');
-    s = s.replace(/\b\d{9,}\b/g, '[digits]');
+    s = s.replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, "[email]");
+    s = s.replace(/\+?\d[\d\s\-().]{7,}\d/g, "[phone]");
+    s = s.replace(/\b\d{9,}\b/g, "[digits]");
   }
   if (s.length > opts.maxChars) s = s.slice(0, opts.maxChars);
   return s;
@@ -1581,7 +1589,7 @@ export async function executeSuggestReply(
 ): Promise<L5eDeferredResult> {
   // Guard: must never execute while flags false.
   if (!context.flags.ENABLE_TOOL_EXEC) {
-    return { auto_sent: false, deferred: true, reason: 'TOOL_EXEC_DISABLED' };
+    return { auto_sent: false, deferred: true, reason: "TOOL_EXEC_DISABLED" };
   }
 
   // Conceptual draft record (mapping comments only; do not persist in Gate A).
@@ -1607,7 +1615,7 @@ export async function executeSuggestReply(
   //     return { auto_sent: false, deferred: false, reason: 'DRAFT_PERSISTED' };
   //   }
   void outputMode;
-  return { deferred: true, reason: 'GATE_B_REQUIRED' };
+  return { deferred: true, reason: "GATE_B_REQUIRED" };
 }
 
 // ⚠️ GUARDED WRITE WRAPPER — Gate A: unreachable while ENABLE_TOOL_EXECUTOR=false.
@@ -1621,11 +1629,12 @@ export async function executeEscalateToHuman(
   const _summary = l5eSanitize(input.summary, { maxChars: 500, noPII: true });
   // Contract 07 §3.5 Gap 6 Plan A: prefer create_handoff_summary output if available.
   const _handoffSummary = context.handoff_summary_from_tool || _summary;
-  void _reason; void _handoffSummary;
+  void _reason;
+  void _handoffSummary;
 
   // Guard: must never execute while flags false.
   if (!context.flags.ENABLE_TOOL_EXEC) {
-    return { escalated: false, deferred: true, reason: 'TOOL_EXEC_DISABLED' };
+    return { escalated: false, deferred: true, reason: "TOOL_EXEC_DISABLED" };
   }
 
   // ⚠️ Gate A: no executable DB writes below — all deferred to Gate B.
@@ -1643,7 +1652,7 @@ export async function executeEscalateToHuman(
   // ❌ reason / summary must be sanitized (no PII)
   // ❌ Transaction must be atomic — rollback all on any failure
   // ❌ handoff_event.summary must not contain full KB content / full prompt body
-  return { deferred: true, reason: 'GATE_B_REQUIRED' };
+  return { deferred: true, reason: "GATE_B_REQUIRED" };
 }
 
 // ⚠️ GUARDED WRITE WRAPPER — Gate A: unreachable while ENABLE_TOOL_EXECUTOR=false.
@@ -1655,7 +1664,7 @@ export async function executeMarkUnresolved(
 ): Promise<L5eDeferredResult> {
   // Guard: must never execute while flags false.
   if (!context.flags.ENABLE_TOOL_EXEC) {
-    return { marked: false, deferred: true, reason: 'TOOL_EXEC_DISABLED' };
+    return { marked: false, deferred: true, reason: "TOOL_EXEC_DISABLED" };
   }
 
   // ⚠️ Gate A: no executable DB writes below — all deferred to Gate B.
@@ -1674,7 +1683,7 @@ export async function executeMarkUnresolved(
   // ❌ Transaction must be atomic
   // ❌ audit_log details must not contain PII
   void input;
-  return { deferred: true, reason: 'GATE_B_REQUIRED' };
+  return { deferred: true, reason: "GATE_B_REQUIRED" };
 }
 
 // ── Widget response rule (code proof, Contract 03 §2.3 小修3) ───────────────
