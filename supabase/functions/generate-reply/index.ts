@@ -447,13 +447,11 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
         hasCompanyId: widgetCompanyId !== null && !isNaN(widgetCompanyId),
         hasIndustry: !!widgetIndustry,
       });
-      // Task B fix: write reply to messages table before returning (was missing → widget poll never received reply)
-      const scopeReply = "很抱歉，系統暫時無法查詢知識庫。讓我為您轉接客服人員。";
-      await writeOrchestrationReplyAndClearGenerating(supabaseAdmin, conversation_id, scopeReply, "KB_SCOPE_GATE");
+      await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
       return new Response(
         JSON.stringify({
           success: true,
-          reply: scopeReply,
+          reply: "很抱歉，系統暫時無法查詢知識庫。讓我為您轉接客服人員。",
           no_answer: true,
           handoff_required: true,
           trace_metadata: { rag_api_status: "scope_unavailable" },
@@ -485,13 +483,11 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     // — L5 Safety Checks (Demo-only, inline) —
     if (!ragResult || !ragResult.success) {
       console.error("[CRITICAL] KB RAG API failure", { conversation_id, code: "KB_API_FAIL" });
-      // Task B fix: write reply to messages table before returning
-      const apiFailReply = "系統暫時無法查詢知識庫，讓我為您轉接客服人員。";
-      await writeOrchestrationReplyAndClearGenerating(supabaseAdmin, conversation_id, apiFailReply, "KB_API_FAIL");
+      await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
       return new Response(
         JSON.stringify({
           success: true,
-          reply: apiFailReply,
+          reply: "系統暫時無法查詢知識庫，讓我為您轉接客服人員。",
           no_answer: true,
           handoff_required: true,
           trace_metadata: { rag_api_status: "failure" },
@@ -502,13 +498,11 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
 
     if (ragResult.no_answer || !ragResult.chunks || ragResult.chunks.length === 0) {
       console.warn("[generate-reply] KB no results", { conversation_id, code: "KB_EMPTY" });
-      // Task B fix: write reply to messages table before returning
-      const emptyReply = "很抱歉，我目前無法確定答案。讓我為您轉接客服人員，以提供更準確的協助。";
-      await writeOrchestrationReplyAndClearGenerating(supabaseAdmin, conversation_id, emptyReply, "KB_EMPTY");
+      await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
       return new Response(
         JSON.stringify({
           success: true,
-          reply: emptyReply,
+          reply: "很抱歉，我目前無法確定答案。讓我為您轉接客服人員，以提供更準確的協助。",
           no_answer: true,
           handoff_required: true,
           trace_metadata: { rag_api_status: "success_empty" },
@@ -587,20 +581,13 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
         isHighRisk,
         code: "KB_LOW_SCORE",
       });
-      // Task B fix: write reply to messages table before returning (2 reply variants: high-risk vs normal)
-      const lowScoreReply = isHighRisk
-        ? "這個問題涉及重要政策，為確保您獲得準確資訊，讓我為您轉接客服人員。"
-        : "很抱歉，我目前無法確定答案。讓我為您轉接客服人員，以提供更準確的協助。";
-      await writeOrchestrationReplyAndClearGenerating(
-        supabaseAdmin,
-        conversation_id,
-        lowScoreReply,
-        isHighRisk ? "KB_LOW_SCORE_HIGH_RISK" : "KB_LOW_SCORE_STANDARD",
-      );
+      await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
       return new Response(
         JSON.stringify({
           success: true,
-          reply: lowScoreReply,
+          reply: isHighRisk
+            ? "這個問題涉及重要政策，為確保您獲得準確資訊，讓我為您轉接客服人員。"
+            : "很抱歉，我目前無法確定答案。讓我為您轉接客服人員，以提供更準確的協助。",
           no_answer: true,
           handoff_required: true,
           trace_metadata: traceMetadata,
@@ -734,46 +721,6 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
 // Helpers
 // ────────────────────────────────────────────────────────────────────────────
 
-// ── Task B: Helper — write orchestration reply to messages + clear ai_generating ──
-// Mirrors legacyGenerateReply() write pattern:
-//   DELETE __THINKING__ → INSERT message → UPDATE conversations
-// Must be called in every Step 4 early-return branch BEFORE returning HTTP Response,
-// so that widget-poll-messages can pick up the reply.
-async function writeOrchestrationReplyAndClearGenerating(
-  supabaseAdmin: ReturnType<typeof createClient>,
-  conversation_id: string,
-  replyContent: string,
-  logTag: string,
-): Promise<void> {
-  // 1. Delete __THINKING__ placeholder (same as legacy pattern)
-  await supabaseAdmin.from("messages").delete().eq("conversation_id", conversation_id).eq("content", "__THINKING__");
-
-  // 2. Insert the reply message (same fields as legacy pattern)
-  const { error: insertError } = await supabaseAdmin.from("messages").insert({
-    conversation_id: conversation_id,
-    role: "assistant",
-    content: replyContent,
-    status: "delivered",
-    is_recalled: false,
-  });
-
-  if (insertError) {
-    console.error(`[generate-reply] ${logTag} message insert error:`, insertError);
-  }
-
-  // 3. Clear ai_generating + refresh updated_at (do NOT change conversation status — out of Task B scope)
-  await supabaseAdmin
-    .from("conversations")
-    .update({
-      ai_generating: false,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", conversation_id);
-
-  console.log("[generate-reply] Task B: KB fallback reply written for:", conversation_id, "branch:", logTag);
-}
-// ── End Task B helper ─────────────────────────────────────────────────────
-
 function safeRefusal(code: string): Response {
   return new Response(
     JSON.stringify({ success: true, skipped: "refused", reason_code: code, handoff_required: true }),
@@ -820,15 +767,122 @@ function pseudonymizeRef(ref: string): string {
   return `cust_${(h >>> 0).toString(36)}`;
 }
 
-async function callCoachPromptAdapter(_conversation_id: string): Promise<{
+// ── C0: Coach Prompt Adapter (adapter-ready, no real API until C1) ──────────
+async function callCoachPromptAdapter(conversation_id: string): Promise<{
   success: boolean;
   content?: string;
   version_id?: string;
   version_label?: string;
   prompt_hash?: string;
+  error_type?: string;
 }> {
-  return { success: false };
+  const FAIL = (error_type: string) => ({ success: false as const, error_type });
+  const endpoint = Deno.env.get("COACH_PROMPT_ENDPOINT");
+  const token = Deno.env.get("COACH_PROMPT_INTERNAL_TOKEN");
+  const timeoutMs = parseInt(Deno.env.get("COACH_AI_TIMEOUT_MS") || "3000");
+
+  // Gate 1: endpoint not configured (expected in C0 — SU CoachAI API not yet built)
+  if (!endpoint) {
+    console.log("[generate-reply] COACH_API_NOT_CONFIGURED", { conversation_id });
+    return FAIL("COACH_API_NOT_CONFIGURED");
+  }
+
+  // Gate 2: token not configured
+  if (!token) {
+    console.warn("[generate-reply] COACH_TOKEN_MISSING", { conversation_id });
+    return FAIL("COACH_TOKEN_MISSING");
+  }
+
+  // Gate 3: actual API call (C1 scope — executes when endpoint + token are both set)
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "x-coach-internal-token": token,
+        "x-coach-runtime": "C0",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ include_content: true }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+      console.warn("[generate-reply] COACH_API_ERROR", { conversation_id, status: response.status });
+      return FAIL("COACH_API_ERROR");
+    }
+
+    let data;
+    try {
+      data = await response.json();
+    } catch {
+      console.warn("[generate-reply] COACH_JSON_INVALID", { conversation_id });
+      return FAIL("COACH_JSON_INVALID");
+    }
+
+    if (!data.ok || !data.data?.content) {
+      console.warn("[generate-reply] COACH_NO_ACTIVE_PROMPT", { conversation_id });
+      return FAIL("COACH_NO_ACTIVE_PROMPT");
+    }
+
+    const content = data.data.content;
+    const validationError = validateCoachPromptContent(content);
+    if (validationError) {
+      console.warn(`[generate-reply] ${validationError}`, { conversation_id, len: content?.length });
+      return FAIL(validationError);
+    }
+
+    const versionId = data.data.id || "";
+    const promptHash = await computePromptHash(content, versionId, conversation_id);
+
+    console.log("[generate-reply] Coach prompt fetched:", {
+      conversation_id,
+      version_label: data.data.label || "",
+      prompt_hash: promptHash,
+      source: "upstream",
+    });
+
+    return {
+      success: true,
+      content,
+      version_id: versionId,
+      version_label: data.data.label || "",
+      prompt_hash: promptHash,
+    };
+  } catch (err) {
+    clearTimeout(timeout);
+    if (err instanceof DOMException && err.name === "AbortError") {
+      console.warn("[generate-reply] COACH_API_TIMEOUT", { conversation_id, timeoutMs });
+      return FAIL("COACH_API_TIMEOUT");
+    }
+    console.warn("[generate-reply] COACH_API_EXCEPTION", { conversation_id, error: String(err) });
+    return FAIL("COACH_API_EXCEPTION");
+  }
 }
+
+// ── C0: Validate coach prompt content ───────────────────────────────────────
+function validateCoachPromptContent(content: unknown): string | null {
+  if (typeof content !== "string") return "COACH_SCHEMA_INVALID";
+  if (content.length === 0) return "COACH_CONTENT_EMPTY";
+  if (content.length > 20000) return "COACH_CONTENT_TOO_LONG";
+  if (/sk-ant-[a-zA-Z0-9]+/.test(content)) return "COACH_SCHEMA_INVALID";
+  if (/service_role/.test(content)) return "COACH_SCHEMA_INVALID";
+  return null;
+}
+
+// ── C0: Compute prompt hash — SHA-256(content + version_id + conversation_id) first 12 hex ──
+async function computePromptHash(content: string, versionId: string, conversationId: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const hashInput = content + "|" + versionId + "|" + conversationId;
+  const hashBuffer = await crypto.subtle.digest("SHA-256", encoder.encode(hashInput));
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const hashHex = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+  return hashHex.substring(0, 12);
+}
+// ── End C0 additions ────────────────────────────────────────────────────────
 
 async function callCustomer360Adapter(_conversation_id: string): Promise<{
   success: boolean;
