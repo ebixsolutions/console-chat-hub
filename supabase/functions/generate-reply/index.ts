@@ -21,8 +21,6 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const TASK_A1A_BUILD_ID = "task-a1a-2026-06-29-runtime-refresh-01";
-
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -141,7 +139,6 @@ Deno.serve(async (req) => {
 // Task A.1A: deterministic handoff branch added ONLY (before anthropicKey check).
 // ────────────────────────────────────────────────────────────────────────────
 async function legacyGenerateReply(conversation_id: string): Promise<Response> {
-  console.log("[generate-reply] build:", TASK_A1A_BUILD_ID);
   const supabaseAdmin = createClient(
     Deno.env.get("SUPABASE_URL") ?? "",
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
@@ -450,11 +447,13 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
         hasCompanyId: widgetCompanyId !== null && !isNaN(widgetCompanyId),
         hasIndustry: !!widgetIndustry,
       });
-      await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
+      // Task B fix: write reply to messages table before returning (was missing → widget poll never received reply)
+      const scopeReply = "很抱歉，系統暫時無法查詢知識庫。讓我為您轉接客服人員。";
+      await writeOrchestrationReplyAndClearGenerating(supabaseAdmin, conversation_id, scopeReply, "KB_SCOPE_GATE");
       return new Response(
         JSON.stringify({
           success: true,
-          reply: "很抱歉，系統暫時無法查詢知識庫。讓我為您轉接客服人員。",
+          reply: scopeReply,
           no_answer: true,
           handoff_required: true,
           trace_metadata: { rag_api_status: "scope_unavailable" },
@@ -486,11 +485,13 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     // — L5 Safety Checks (Demo-only, inline) —
     if (!ragResult || !ragResult.success) {
       console.error("[CRITICAL] KB RAG API failure", { conversation_id, code: "KB_API_FAIL" });
-      await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
+      // Task B fix: write reply to messages table before returning
+      const apiFailReply = "系統暫時無法查詢知識庫，讓我為您轉接客服人員。";
+      await writeOrchestrationReplyAndClearGenerating(supabaseAdmin, conversation_id, apiFailReply, "KB_API_FAIL");
       return new Response(
         JSON.stringify({
           success: true,
-          reply: "系統暫時無法查詢知識庫，讓我為您轉接客服人員。",
+          reply: apiFailReply,
           no_answer: true,
           handoff_required: true,
           trace_metadata: { rag_api_status: "failure" },
@@ -501,11 +502,13 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
 
     if (ragResult.no_answer || !ragResult.chunks || ragResult.chunks.length === 0) {
       console.warn("[generate-reply] KB no results", { conversation_id, code: "KB_EMPTY" });
-      await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
+      // Task B fix: write reply to messages table before returning
+      const emptyReply = "很抱歉，我目前無法確定答案。讓我為您轉接客服人員，以提供更準確的協助。";
+      await writeOrchestrationReplyAndClearGenerating(supabaseAdmin, conversation_id, emptyReply, "KB_EMPTY");
       return new Response(
         JSON.stringify({
           success: true,
-          reply: "很抱歉，我目前無法確定答案。讓我為您轉接客服人員，以提供更準確的協助。",
+          reply: emptyReply,
           no_answer: true,
           handoff_required: true,
           trace_metadata: { rag_api_status: "success_empty" },
@@ -584,13 +587,20 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
         isHighRisk,
         code: "KB_LOW_SCORE",
       });
-      await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
+      // Task B fix: write reply to messages table before returning (2 reply variants: high-risk vs normal)
+      const lowScoreReply = isHighRisk
+        ? "這個問題涉及重要政策，為確保您獲得準確資訊，讓我為您轉接客服人員。"
+        : "很抱歉，我目前無法確定答案。讓我為您轉接客服人員，以提供更準確的協助。";
+      await writeOrchestrationReplyAndClearGenerating(
+        supabaseAdmin,
+        conversation_id,
+        lowScoreReply,
+        isHighRisk ? "KB_LOW_SCORE_HIGH_RISK" : "KB_LOW_SCORE_STANDARD",
+      );
       return new Response(
         JSON.stringify({
           success: true,
-          reply: isHighRisk
-            ? "這個問題涉及重要政策，為確保您獲得準確資訊，讓我為您轉接客服人員。"
-            : "很抱歉，我目前無法確定答案。讓我為您轉接客服人員，以提供更準確的協助。",
+          reply: lowScoreReply,
           no_answer: true,
           handoff_required: true,
           trace_metadata: traceMetadata,
@@ -723,6 +733,46 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
 // ────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ────────────────────────────────────────────────────────────────────────────
+
+// ── Task B: Helper — write orchestration reply to messages + clear ai_generating ──
+// Mirrors legacyGenerateReply() write pattern:
+//   DELETE __THINKING__ → INSERT message → UPDATE conversations
+// Must be called in every Step 4 early-return branch BEFORE returning HTTP Response,
+// so that widget-poll-messages can pick up the reply.
+async function writeOrchestrationReplyAndClearGenerating(
+  supabaseAdmin: ReturnType<typeof createClient>,
+  conversation_id: string,
+  replyContent: string,
+  logTag: string,
+): Promise<void> {
+  // 1. Delete __THINKING__ placeholder (same as legacy pattern)
+  await supabaseAdmin.from("messages").delete().eq("conversation_id", conversation_id).eq("content", "__THINKING__");
+
+  // 2. Insert the reply message (same fields as legacy pattern)
+  const { error: insertError } = await supabaseAdmin.from("messages").insert({
+    conversation_id: conversation_id,
+    role: "assistant",
+    content: replyContent,
+    status: "delivered",
+    is_recalled: false,
+  });
+
+  if (insertError) {
+    console.error(`[generate-reply] ${logTag} message insert error:`, insertError);
+  }
+
+  // 3. Clear ai_generating + refresh updated_at (do NOT change conversation status — out of Task B scope)
+  await supabaseAdmin
+    .from("conversations")
+    .update({
+      ai_generating: false,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", conversation_id);
+
+  console.log("[generate-reply] Task B: KB fallback reply written for:", conversation_id, "branch:", logTag);
+}
+// ── End Task B helper ─────────────────────────────────────────────────────
 
 function safeRefusal(code: string): Response {
   return new Response(
