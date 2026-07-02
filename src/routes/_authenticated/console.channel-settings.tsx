@@ -1,115 +1,307 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { toast } from "sonner";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/switch";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { configService } from "@/lib/api/config.service";
-import { useCurrentRole } from "@/hooks/useCurrentRole";
-import { LoadingState, PermissionDenied, PageHeader } from "@/components/console/PageStates";
+import { useEffect, useState } from 'react';
+import type { CSSProperties } from 'react';
+import { useCurrentRole } from '@/hooks/useCurrentRole';
+import {
+  aiChatbotSettingsService,
+  type ChannelConfig,
+} from '@/services/aiChatbotSettingsService';
 
 export const Route = createFileRoute("/_authenticated/console/channel-settings")({
-  component: ChannelSettingsPage,
+  component: ConsoleChannelSettings,
 });
 
-function ChannelSettingsPage() {
-  const { role, loading } = useCurrentRole();
-  if (loading) return <LoadingState />;
-  if (!role) return <PermissionDenied />;
+const ICONS: Record<string, string> = {
+  website_widget: '💬',
+  whatsapp: '📱',
+  email: '✉️',
+  line: '🟩',
+};
 
-  const readonly = role === "agent";
+const cardStyle: CSSProperties = {
+  background: '#fff',
+  border: '0.5px solid #e8e6e0',
+  borderRadius: 11,
+  padding: 14,
+};
 
-  const handleChannelSave = async () => {
-    const res = await configService.updateChannelConfig({});
-    if ("deferred" in res && res.deferred) {
-      toast.message("Channel config save available after L7B.");
-    }
-  };
+function MockBadge({ label = 'Mock' }: { label?: string }) {
+  return (
+    <span
+      style={{
+        background: '#fef3c7',
+        color: '#92400e',
+        fontSize: 9.5,
+        fontWeight: 700,
+        padding: '1px 7px',
+        borderRadius: 20,
+        border: '0.5px solid #fbbf24',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {label}
+    </span>
+  );
+}
 
-  const handleWidgetSave = async () => {
-    const res = await configService.updateWidgetConfig({});
-    if ("deferred" in res && res.deferred) {
-      toast.message("Widget config save available after L7B.");
-    }
-  };
+function ComingSoonBadge() {
+  return (
+    <span
+      style={{
+        background: '#f0efe9',
+        color: '#555',
+        fontSize: 9.5,
+        fontWeight: 700,
+        padding: '1px 7px',
+        borderRadius: 20,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      Coming Soon
+    </span>
+  );
+}
+
+function PermissionDeniedBlock() {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '80px 20px',
+        textAlign: 'center',
+      }}
+    >
+      <div style={{ fontSize: 40, marginBottom: 14 }}>🔒</div>
+      <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>
+        Permission Denied
+      </div>
+      <div style={{ fontSize: 12, color: '#888', maxWidth: 320 }}>
+        You do not have permission to manage channel settings.
+      </div>
+    </div>
+  );
+}
+
+function ConsoleChannelSettings() {
+  const roleState = useCurrentRole();
+  const role = (roleState as { role?: string })?.role;
+
+  const [channels, setChannels] = useState<ChannelConfig[]>([]);
+  const [previewChannelId, setPreviewChannelId] = useState<string | null>(null);
+
+  useEffect(() => {
+    aiChatbotSettingsService.getChannelConfigs().then(setChannels);
+  }, []);
+
+  // Director D6 Conditional A + Guardrail C (v1.1) — PC-3 Case 3:
+  // Repo role shape is 'admin' | 'supervisor' | 'agent'. Map CS → 'agent'.
+  // Also accept 'cs' / 'customer_service' defensively.
+  const isCustomerServiceRole =
+    role === 'agent' || role === 'cs' || role === 'customer_service';
+  if (isCustomerServiceRole) {
+    return <PermissionDeniedBlock />;
+  }
+
+  const previewChannel = channels.find((c) => c.id === previewChannelId);
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Channel Settings"
-        description="Manage messaging channels."
-        badge={readonly ? <Badge variant="secondary">View Only</Badge> : undefined}
-      />
+    <div style={{ maxWidth: 900 }}>
+      <div
+        style={{
+          background: '#fffbeb',
+          border: '0.5px solid #fbbf24',
+          borderRadius: 11,
+          padding: '12px 14px',
+          marginBottom: 14,
+          color: '#92400e',
+          fontSize: 12,
+          lineHeight: 1.6,
+        }}
+      >
+        <b>ℹ️ PHASE 1 — MOCK MODE</b>
+        <br />
+        Channel integration is not active. No real messages received.
+        <br />
+        Phase 2: Website Widget · Phase 3: WhatsApp, LINE, Email
+      </div>
 
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle>Website Widget</CardTitle>
-              <CardDescription>Live chat widget on your website.</CardDescription>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(380px, 1fr))',
+          gap: 12,
+        }}
+      >
+        {channels.map((ch) => (
+          <div key={ch.id} style={cardStyle}>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                marginBottom: 8,
+              }}
+            >
+              <span style={{ fontSize: 18 }}>{ICONS[ch.channel_type]}</span>
+              <span style={{ fontSize: 13, fontWeight: 700, flex: 1 }}>
+                {ch.channel_name}
+              </span>
+              {ch.status === 'mock_preview' ? (
+                <MockBadge label="Mock Preview" />
+              ) : (
+                <ComingSoonBadge />
+              )}
             </div>
-            <Switch disabled={readonly} onCheckedChange={handleChannelSave} />
+            <div style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>
+              {ch.phase}
+            </div>
+            <div
+              title={
+                !ch.recall_supported
+                  ? 'Message Recall not available. Correction Message will be used instead.'
+                  : undefined
+              }
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                padding: '6px 10px',
+                borderRadius: 8,
+                marginBottom: 8,
+                background: ch.recall_supported ? '#d1fae5' : '#f0efe9',
+                color: ch.recall_supported ? '#065f46' : '#555',
+              }}
+            >
+              {ch.recall_supported
+                ? `✅ Recall Supported (${ch.recall_time_limit_minutes} min)`
+                : ch.channel_type === 'email'
+                ? '❌ Correction only'
+                : '❌ Recall not guaranteed'}
+            </div>
+            {ch.notes && (
+              <div style={{ fontSize: 10.5, color: '#888', marginBottom: 8 }}>
+                {ch.notes}
+              </div>
+            )}
+            {ch.channel_type === 'website_widget' && (
+              <button
+                onClick={() => setPreviewChannelId(ch.id)}
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  padding: '5px 12px',
+                  borderRadius: 8,
+                  border: 'none',
+                  background: '#1a1a1a',
+                  color: '#fff',
+                  cursor: 'pointer',
+                  marginTop: 4,
+                }}
+              >
+                Configure (Preview)
+              </button>
+            )}
           </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label>Allowed origins</Label>
-            <Input placeholder="https://example.com" disabled={readonly} onBlur={handleChannelSave} />
-          </div>
+        ))}
+      </div>
 
-          <Tabs defaultValue="settings">
-            <TabsList>
-              <TabsTrigger value="settings">Settings</TabsTrigger>
-              <TabsTrigger value="agent">AI Agent</TabsTrigger>
-              <TabsTrigger value="embed">Embed Code</TabsTrigger>
-              <TabsTrigger value="guides">Platform Guides</TabsTrigger>
-            </TabsList>
-            <TabsContent value="settings" className="space-y-3 pt-3">
-              <div className="space-y-2">
-                <Label>Header title</Label>
-                <Input placeholder="Support" disabled={readonly} />
+      {previewChannel && (
+        <div
+          onClick={() => setPreviewChannelId(null)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.45)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 100,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#fff',
+              borderRadius: 12,
+              padding: 24,
+              maxWidth: 480,
+              width: '90%',
+              boxShadow: '0 20px 40px rgba(0,0,0,0.2)',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                marginBottom: 12,
+              }}
+            >
+              <div style={{ fontSize: 15, fontWeight: 700 }}>
+                {previewChannel.channel_name} — Preview Only
               </div>
-              <div className="space-y-2">
-                <Label>Welcome message</Label>
-                <Input placeholder="How can we help?" disabled={readonly} />
+              <MockBadge label="Phase 1 Preview" />
+            </div>
+            <div
+              style={{
+                background: '#fffbeb',
+                border: '0.5px solid #fbbf24',
+                borderRadius: 8,
+                padding: '10px 12px',
+                marginBottom: 14,
+                color: '#92400e',
+                fontSize: 11,
+                lineHeight: 1.6,
+              }}
+            >
+              This is a Phase 1 mock preview. Widget configuration, embed code,
+              AI Agent instructions, and platform guides will be available in
+              Phase 2.
+            </div>
+            <div
+              style={{
+                fontSize: 12,
+                color: '#555',
+                lineHeight: 1.7,
+                marginBottom: 16,
+              }}
+            >
+              <div style={{ marginBottom: 6 }}>
+                <b>Channel:</b> {previewChannel.channel_name}
               </div>
-              <div className="space-y-2">
-                <Label>Primary color</Label>
-                <Input placeholder="#000000" disabled={readonly} />
+              <div style={{ marginBottom: 6 }}>
+                <b>Phase:</b> {previewChannel.phase}
               </div>
-              <Button size="sm" disabled={readonly} onClick={handleWidgetSave}>Save</Button>
-            </TabsContent>
-            <TabsContent value="agent" className="pt-3 text-sm text-muted-foreground">
-              AI Agent configuration placeholder.
-            </TabsContent>
-            <TabsContent value="embed" className="pt-3">
-              <pre className="rounded-md bg-muted p-3 text-xs overflow-x-auto">
-{`<script src="https://example.com/widget/chat.js" data-embed-key="••••••"></script>`}
-              </pre>
-            </TabsContent>
-            <TabsContent value="guides" className="pt-3 text-sm text-muted-foreground">
-              Platform integration guides placeholder.
-            </TabsContent>
-          </Tabs>
-        </CardContent>
-      </Card>
-
-      {(["WhatsApp", "LINE", "Email"] as const).map((c) => (
-        <Card key={c} className="opacity-75">
-          <CardHeader>
-            <div className="flex items-center justify-between">
+              <div style={{ marginBottom: 6 }}>
+                <b>Recall:</b>{' '}
+                {previewChannel.recall_supported
+                  ? `Supported (${previewChannel.recall_time_limit_minutes} min window)`
+                  : 'Not available in Phase 1'}
+              </div>
               <div>
-                <CardTitle>{c}</CardTitle>
-                <CardDescription>Multi-channel messaging.</CardDescription>
+                <b>Status:</b> Mock Preview — no real messages sent or received
               </div>
-              <Badge>Coming soon — Phase 3</Badge>
             </div>
-          </CardHeader>
-        </Card>
-      ))}
+            <button
+              onClick={() => setPreviewChannelId(null)}
+              style={{
+                fontSize: 12,
+                fontWeight: 600,
+                padding: '7px 18px',
+                borderRadius: 8,
+                border: 'none',
+                background: '#1a1a1a',
+                color: '#fff',
+                cursor: 'pointer',
+              }}
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
