@@ -66,14 +66,14 @@ const GROUPS = [
       { path: '/console/conversations', icon: '💬', navKey: 'navInbox', alertBadge: true },
       { path: '/console/analytics', icon: '📊', navKey: 'navAnalytics' },
       { path: '/console/customer360', icon: '👥', navKey: 'navCustomer360' },
+      { path: '/console/channel-settings', icon: '📡', navKey: 'navChannelSettings' },
+      { path: '/console/feedback-settings', icon: '⭐', navKey: 'navFeedbackSettings' },
     ],
   },
   {
     key: 'operations', labelKey: 'groupOperations', color: '#2563eb', bgColor: '#dbeafe',
     items: [
       { path: '/console/agent-settings', icon: '👤', navKey: 'navAgentSettings' },
-      { path: '/console/channel-settings', icon: '📡', navKey: 'navChannelSettings' },
-      { path: '/console/feedback-settings', icon: '⭐', navKey: 'navFeedbackSettings' },
     ],
   },
   {
@@ -91,8 +91,8 @@ const GROUP_BADGE: Record<string, { label: string; bg: string; color: string }> 
   '/console/customer360': { label: 'LIVE INBOX', bg: '#fee2e2', color: '#dc2626' },
   '/console/conversations': { label: 'LIVE INBOX', bg: '#fee2e2', color: '#dc2626' },
   '/console/agent-settings': { label: 'AGENT OPERATIONS', bg: '#dbeafe', color: '#2563eb' },
-  '/console/channel-settings': { label: 'AGENT OPERATIONS', bg: '#dbeafe', color: '#2563eb' },
-  '/console/feedback-settings': { label: 'AGENT OPERATIONS', bg: '#dbeafe', color: '#2563eb' },
+  '/console/channel-settings': { label: 'LIVE INBOX', bg: '#fee2e2', color: '#dc2626' },
+  '/console/feedback-settings': { label: 'LIVE INBOX', bg: '#fee2e2', color: '#dc2626' },
   '/console/settings/llm-runtime': { label: 'SETTINGS', bg: '#ede9fe', color: '#6d28d9' },
   '/console/widget-preview': { label: 'WIDGET', bg: '#f0fdf4', color: '#16a34a' },
 };
