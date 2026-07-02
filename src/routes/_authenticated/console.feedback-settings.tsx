@@ -1,82 +1,708 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
-import { toast } from "sonner";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/switch";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { configService } from "@/lib/api/config.service";
-import { useCurrentRole } from "@/hooks/useCurrentRole";
-import { LoadingState, EmptyState, PermissionDenied, PageHeader } from "@/components/console/PageStates";
+import { useEffect, useState } from 'react';
+import type { CSSProperties } from 'react';
+import { toast } from 'sonner';
+import { useCurrentRole } from '@/hooks/useCurrentRole';
+import {
+  aiChatbotSettingsService,
+  type FeedbackAutomationConfig,
+  type FeedbackRequest,
+} from '@/services/aiChatbotSettingsService';
+import {
+  FEEDBACK_CHANNELS,
+  RATING_TYPES,
+  TEMPLATE_TABS,
+  DEFAULT_TEMPLATES,
+  DEFAULT_SURVEY_QUESTIONS,
+  type RatingType,
+  type MessageTemplate,
+  type SurveyQuestion,
+} from '@/mock/aiChatbotSettingsMock';
 
 export const Route = createFileRoute("/_authenticated/console/feedback-settings")({
-  component: FeedbackSettingsPage,
+  component: ConsoleFeedbackAutomation,
 });
 
-function FeedbackSettingsPage() {
-  const { role, loading } = useCurrentRole();
-  const [days, setDays] = useState(1);
+const cardStyle: CSSProperties = {
+  background: '#fff',
+  border: '0.5px solid #e8e6e0',
+  borderRadius: 11,
+  padding: 14,
+  marginBottom: 12,
+};
 
-  if (loading) return <LoadingState />;
-  if (!role) return <PermissionDenied />;
+const sectionTitleStyle: CSSProperties = {
+  fontSize: 10,
+  fontWeight: 700,
+  color: '#888',
+  textTransform: 'uppercase',
+  marginBottom: 8,
+};
 
-  const readonly = role === "agent";
+const labelUpperStyle = (colour: string): CSSProperties => ({
+  fontSize: 10.5,
+  fontWeight: 600,
+  color: colour,
+  marginBottom: 4,
+  textTransform: 'uppercase',
+  letterSpacing: '0.05em',
+});
+
+const inputStyle: CSSProperties = {
+  width: '100%',
+  fontSize: 12,
+  padding: '6px 9px',
+  border: '0.5px solid #e8e6e0',
+  borderRadius: 8,
+  boxSizing: 'border-box',
+  marginBottom: 10,
+};
+
+const textareaStyle: CSSProperties = {
+  width: '100%',
+  fontSize: 12,
+  padding: '6px 9px',
+  border: '0.5px solid #e8e6e0',
+  borderRadius: 8,
+  resize: 'vertical',
+  marginBottom: 10,
+  boxSizing: 'border-box',
+};
+
+function MockBadge({ label = 'Mock' }: { label?: string }) {
+  return (
+    <span
+      style={{
+        background: '#fef3c7',
+        color: '#92400e',
+        fontSize: 9.5,
+        fontWeight: 700,
+        padding: '1px 7px',
+        borderRadius: 20,
+        border: '0.5px solid #fbbf24',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {label}
+    </span>
+  );
+}
+
+function ComingSoonBadge() {
+  return (
+    <span
+      style={{
+        background: '#f0efe9',
+        color: '#555',
+        fontSize: 9.5,
+        fontWeight: 700,
+        padding: '1px 7px',
+        borderRadius: 20,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      Coming Soon
+    </span>
+  );
+}
+
+function PermissionDeniedBlock() {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '80px 20px',
+        textAlign: 'center',
+      }}
+    >
+      <div style={{ fontSize: 40, marginBottom: 14 }}>🔒</div>
+      <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>
+        Permission Denied
+      </div>
+      <div style={{ fontSize: 12, color: '#888', maxWidth: 320 }}>
+        You do not have permission to manage feedback automation.
+      </div>
+    </div>
+  );
+}
+
+function ConsoleFeedbackAutomation() {
+  const roleState = useCurrentRole();
+  const role = (roleState as { role?: string })?.role;
+
+  const [config, setConfig] = useState<FeedbackAutomationConfig | null>(null);
+  const [requests, setRequests] = useState<FeedbackRequest[]>([]);
+  const [templateTab, setTemplateTab] = useState<RatingType>('stars_1_5');
+  const [templates, setTemplates] = useState<Record<RatingType, MessageTemplate>>(
+    DEFAULT_TEMPLATES
+  );
+  const [surveyQuestions, setSurveyQuestions] = useState<SurveyQuestion[]>(
+    DEFAULT_SURVEY_QUESTIONS
+  );
+  const [previewMode, setPreviewMode] = useState<'email' | 'widget'>('email');
+
+  useEffect(() => {
+    aiChatbotSettingsService.getFeedbackAutomationConfig().then(setConfig);
+    aiChatbotSettingsService.getFeedbackRequests().then(setRequests);
+  }, []);
+
+  // Director D6 Conditional A + Guardrail C (v1.1) — PC-3 Case 3:
+  // Repo role shape is 'admin' | 'supervisor' | 'agent'. Map CS → 'agent'.
+  // No 'qa' role exists in this repo; predicate defensively still checks it.
+  const isRestrictedRole =
+    role === 'agent' ||
+    role === 'cs' ||
+    role === 'customer_service' ||
+    role === 'qa' ||
+    role === 'qa_reviewer';
+  if (isRestrictedRole) {
+    return <PermissionDeniedBlock />;
+  }
+
+  if (!config) return null;
+
+  const tpl = templates[templateTab] || templates.stars_1_5;
+
+  const updateTpl = (key: keyof MessageTemplate, val: string) => {
+    setTemplates((prev) => ({
+      ...prev,
+      [templateTab]: { ...prev[templateTab], [key]: val },
+    }));
+  };
 
   const handleSave = async () => {
-    const res = await configService.updateFeedbackConfig({ delay_minutes: days * 24 * 60 });
-    if ("deferred" in res && res.deferred) {
-      toast.message("Feedback config save available after L7B.");
-    }
+    await aiChatbotSettingsService.saveFeedbackAutomationConfig(config);
+    toast.success('Settings saved (Mock)');
   };
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Feedback Settings"
-        description="Automate post-conversation feedback requests."
-        badge={readonly ? <Badge variant="secondary">View Only</Badge> : undefined}
-      />
+    <div style={{ maxWidth: 680 }}>
+      <div style={cardStyle}>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 2 }}>
+          Post-Resolution Feedback Automation
+        </div>
+        <div style={{ fontSize: 11, color: '#888', marginBottom: 12 }}>
+          對話結案後自動發送客戶評分請求
+        </div>
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            fontSize: 12,
+            fontWeight: 600,
+            cursor: 'pointer',
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={config.is_enabled}
+            onChange={(e) =>
+              setConfig({ ...config, is_enabled: e.target.checked })
+            }
+          />
+          Enable Feedback Automation
+        </label>
+      </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Feedback automation</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center justify-between">
-            <Label>Active</Label>
-            <Switch disabled={readonly} />
-          </div>
-          <div className="space-y-2">
-            <Label>Delay (days)</Label>
-            <Input
-              type="number"
-              min={1}
-              max={30}
-              value={days}
-              disabled={readonly}
-              onChange={(e) => setDays(Math.min(30, Math.max(1, Number(e.target.value) || 1)))}
+      <div style={cardStyle}>
+        <div style={sectionTitleStyle}>Send Timing</div>
+        <div style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+          Send after (days):
+          <select
+            value={config.send_after_days}
+            onChange={(e) =>
+              setConfig({
+                ...config,
+                send_after_days: Number(e.target.value) as 1 | 3 | 7,
+              })
+            }
+            style={{
+              fontSize: 12,
+              padding: '4px 8px',
+              border: '0.5px solid #e8e6e0',
+              borderRadius: 8,
+            }}
+          >
+            <option value={1}>1 day</option>
+            <option value={3}>3 days</option>
+            <option value={7}>7 days</option>
+          </select>
+          after resolved
+        </div>
+      </div>
+
+      <div style={cardStyle}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+          <span style={sectionTitleStyle}>Channels</span>
+          <MockBadge label="Phase 1 Mock" />
+        </div>
+        {FEEDBACK_CHANNELS.map((ch) => (
+          <label
+            key={ch.key}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              fontSize: 12,
+              marginBottom: 6,
+              cursor: 'pointer',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={config.channels_enabled.includes(ch.key)}
+              onChange={(e) =>
+                setConfig({
+                  ...config,
+                  channels_enabled: e.target.checked
+                    ? [...config.channels_enabled, ch.key]
+                    : config.channels_enabled.filter((c) => c !== ch.key),
+                })
+              }
             />
-          </div>
-          <div className="space-y-2">
-            <Label>Trigger event</Label>
-            <div className="text-sm text-muted-foreground">conversation_resolved (display only)</div>
-          </div>
-          <div className="space-y-2">
-            <Label>Config (JSON)</Label>
-            <Input placeholder='{"channel":"email"}' disabled={readonly} />
-          </div>
-          <Button size="sm" disabled={readonly} onClick={handleSave}>Save</Button>
-        </CardContent>
-      </Card>
+            {ch.label}
+            <ComingSoonBadge />
+            <span style={{ fontSize: 10, color: '#888' }}>{ch.phase}</span>
+          </label>
+        ))}
+      </div>
 
-      <Card>
-        <CardHeader><CardTitle>Feedback results</CardTitle></CardHeader>
-        <CardContent>
-          <EmptyState message="No feedback results yet." />
-        </CardContent>
-      </Card>
+      <div style={cardStyle}>
+        <div style={sectionTitleStyle}>Rating Type</div>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          {RATING_TYPES.map((r) => (
+            <label
+              key={r.key}
+              style={{
+                fontSize: 12,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 5,
+                cursor: 'pointer',
+              }}
+              title={r.tooltip || ''}
+            >
+              <input
+                type="radio"
+                name="rating"
+                checked={config.rating_type === r.key}
+                onChange={() => {
+                  setConfig({ ...config, rating_type: r.key });
+                  setTemplateTab(r.key);
+                }}
+              />
+              {r.label}
+              {r.suffix && r.suffixStyle === 'plain' && (
+                <span style={{ fontSize: 9, color: '#888' }}>{r.suffix}</span>
+              )}
+              {r.suffix && r.suffixStyle === 'badge_blue' && (
+                <span
+                  style={{
+                    fontSize: 9,
+                    background: '#dbeafe',
+                    color: '#2563eb',
+                    padding: '1px 5px',
+                    borderRadius: 3,
+                  }}
+                >
+                  {r.suffix}
+                </span>
+              )}
+            </label>
+          ))}
+        </div>
+      </div>
+
+      <div style={cardStyle}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+          <span style={sectionTitleStyle}>Message Template</span>
+          <MockBadge label="Preview Only" />
+        </div>
+
+        <div
+          style={{
+            display: 'flex',
+            gap: 0,
+            borderBottom: '0.5px solid #e8e6e0',
+            marginBottom: 14,
+            overflowX: 'auto',
+          }}
+        >
+          {TEMPLATE_TABS.map((tb) => (
+            <button
+              key={tb.key}
+              onClick={() => setTemplateTab(tb.key)}
+              style={{
+                padding: '7px 12px',
+                fontSize: 11,
+                fontWeight: templateTab === tb.key ? 700 : 400,
+                color: templateTab === tb.key ? '#1a1a1a' : '#888',
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                borderBottom:
+                  templateTab === tb.key
+                    ? '2px solid #1a1a1a'
+                    : '2px solid transparent',
+                marginBottom: -1,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {tb.label}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+          <div>
+            <div style={labelUpperStyle('#555')}>Email Subject</div>
+            <input
+              value={tpl.subject}
+              onChange={(e) => updateTpl('subject', e.target.value)}
+              style={inputStyle}
+            />
+            <div style={labelUpperStyle('#555')}>Message Body (EN)</div>
+            <textarea
+              value={tpl.bodyEn}
+              onChange={(e) => updateTpl('bodyEn', e.target.value)}
+              rows={2}
+              style={textareaStyle}
+            />
+            <div style={labelUpperStyle('#555')}>Message Body (繁中)</div>
+            <textarea
+              value={tpl.bodyZh}
+              onChange={(e) => updateTpl('bodyZh', e.target.value)}
+              rows={2}
+              style={textareaStyle}
+            />
+            <div style={labelUpperStyle('#555')}>CTA Button Text</div>
+            <input
+              value={tpl.ctaEn}
+              onChange={(e) => updateTpl('ctaEn', e.target.value)}
+              style={inputStyle}
+            />
+            <div style={labelUpperStyle('#555')}>Thank You Message (EN)</div>
+            <textarea
+              value={tpl.thankEn}
+              onChange={(e) => updateTpl('thankEn', e.target.value)}
+              rows={2}
+              style={textareaStyle}
+            />
+            <div style={labelUpperStyle('#555')}>Thank You Message (繁中)</div>
+            <textarea
+              value={tpl.thankZh}
+              onChange={(e) => updateTpl('thankZh', e.target.value)}
+              rows={2}
+              style={textareaStyle}
+            />
+            <div style={labelUpperStyle('#dc2626')}>Low Rating Follow-up (EN)</div>
+            <textarea
+              value={tpl.lowRatingEn}
+              onChange={(e) => updateTpl('lowRatingEn', e.target.value)}
+              rows={2}
+              style={textareaStyle}
+            />
+            <div style={labelUpperStyle('#dc2626')}>Low Rating Follow-up (繁中)</div>
+            <textarea
+              value={tpl.lowRatingZh}
+              onChange={(e) => updateTpl('lowRatingZh', e.target.value)}
+              rows={2}
+              style={{ ...textareaStyle, marginBottom: 0 }}
+            />
+
+            {templateTab === 'survey' && (
+              <div style={{ marginTop: 14 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#1a1a1a', marginBottom: 10 }}>
+                  Survey Questions (max 5)
+                </div>
+                {surveyQuestions.map((q, i) => (
+                  <div
+                    key={q.id}
+                    style={{
+                      display: 'flex',
+                      gap: 6,
+                      alignItems: 'center',
+                      marginBottom: 8,
+                    }}
+                  >
+                    <span style={{ fontSize: 10, color: '#888', width: 20 }}>
+                      Q{i + 1}
+                    </span>
+                    {q.fixed ? (
+                      <div
+                        style={{
+                          flex: 1,
+                          fontSize: 11.5,
+                          color: '#555',
+                          background: '#f5f4f0',
+                          padding: '5px 9px',
+                          borderRadius: 7,
+                          border: '0.5px solid #e8e6e0',
+                        }}
+                      >
+                        {q.text}{' '}
+                        <span style={{ fontSize: 9.5, color: '#888' }}>
+                          ({q.type}) — fixed
+                        </span>
+                      </div>
+                    ) : (
+                      <>
+                        <input
+                          value={q.text}
+                          onChange={(e) =>
+                            setSurveyQuestions((prev) =>
+                              prev.map((sq, si) =>
+                                si === i ? { ...sq, text: e.target.value } : sq
+                              )
+                            )
+                          }
+                          placeholder="Custom question..."
+                          style={{
+                            flex: 1,
+                            fontSize: 11.5,
+                            padding: '5px 9px',
+                            border: '0.5px solid #e8e6e0',
+                            borderRadius: 7,
+                          }}
+                        />
+                        <select
+                          value={q.type}
+                          onChange={(e) =>
+                            setSurveyQuestions((prev) =>
+                              prev.map((sq, si) =>
+                                si === i
+                                  ? {
+                                      ...sq,
+                                      type: e.target.value as SurveyQuestion['type'],
+                                    }
+                                  : sq
+                              )
+                            )
+                          }
+                          style={{
+                            fontSize: 11,
+                            padding: '5px 8px',
+                            border: '0.5px solid #e8e6e0',
+                            borderRadius: 7,
+                          }}
+                        >
+                          <option value="text">Open text</option>
+                          <option value="yes_no">Yes/No</option>
+                          <option value="rating">Rating 1-5</option>
+                        </select>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+              {(['email', 'widget'] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setPreviewMode(m)}
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 600,
+                    padding: '4px 10px',
+                    borderRadius: 6,
+                    border: previewMode === m ? 'none' : '0.5px solid #e8e6e0',
+                    background: previewMode === m ? '#1a1a1a' : '#fff',
+                    color: previewMode === m ? '#fff' : '#555',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Preview: {m === 'email' ? 'Email' : 'Chat Widget'}
+                </button>
+              ))}
+              <span
+                style={{
+                  fontSize: 9.5,
+                  color: '#92400e',
+                  background: '#fef3c7',
+                  padding: '2px 7px',
+                  borderRadius: 4,
+                  fontWeight: 600,
+                }}
+              >
+                Phase 1
+              </span>
+            </div>
+            {previewMode === 'email' ? (
+              <div
+                style={{
+                  border: '0.5px solid #e8e6e0',
+                  borderRadius: 10,
+                  overflow: 'hidden',
+                  background: '#fff',
+                }}
+              >
+                <div
+                  style={{
+                    background: '#f5f4f0',
+                    padding: '8px 12px',
+                    fontSize: 10,
+                    color: '#555',
+                    borderBottom: '0.5px solid #e8e6e0',
+                  }}
+                >
+                  <div>From: Customer Support &lt;support@brand.com&gt;</div>
+                  <div>
+                    Subject: <b>{tpl.subject}</b>
+                  </div>
+                </div>
+                <div style={{ padding: '12px 14px' }}>
+                  <div style={{ fontSize: 12, color: '#1a1a1a', marginBottom: 10 }}>
+                    Hi Frankie,
+                  </div>
+                  <div style={{ fontSize: 12, color: '#555', lineHeight: 1.6, marginBottom: 14 }}>
+                    {tpl.bodyEn}
+                  </div>
+                  <div
+                    style={{
+                      display: 'inline-block',
+                      background: '#1a1a1a',
+                      color: '#fff',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      padding: '7px 18px',
+                      borderRadius: 6,
+                    }}
+                  >
+                    {tpl.ctaEn} ▶
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div
+                style={{
+                  border: '0.5px solid #e8e6e0',
+                  borderRadius: 10,
+                  overflow: 'hidden',
+                  background: '#fff',
+                  maxWidth: 260,
+                }}
+              >
+                <div
+                  style={{
+                    background: '#1a1a1a',
+                    padding: '8px 12px',
+                    fontSize: 11,
+                    color: '#fff',
+                    fontWeight: 600,
+                  }}
+                >
+                  🤖 NexusAI
+                </div>
+                <div style={{ padding: '12px 14px' }}>
+                  <div style={{ fontSize: 12, marginBottom: 10 }}>
+                    How was your experience?
+                  </div>
+                  <div style={{ fontSize: 16, marginBottom: 10 }}>★ ★ ★ ★ ☆</div>
+                  <input
+                    placeholder="Share your feedback..."
+                    style={{
+                      width: '100%',
+                      fontSize: 11,
+                      padding: '6px 9px',
+                      border: '0.5px solid #e8e6e0',
+                      borderRadius: 7,
+                      boxSizing: 'border-box',
+                      marginBottom: 8,
+                    }}
+                    readOnly
+                  />
+                  <div
+                    style={{
+                      background: '#1a1a1a',
+                      color: '#fff',
+                      fontSize: 11,
+                      fontWeight: 600,
+                      padding: '5px 0',
+                      borderRadius: 6,
+                      textAlign: 'center',
+                    }}
+                  >
+                    Submit
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div style={cardStyle}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+          <span style={sectionTitleStyle}>Recent Requests</span>
+          <MockBadge label="Mock Data" />
+        </div>
+        {requests.map((r) => (
+          <div
+            key={r.id}
+            style={{
+              fontSize: 11.5,
+              display: 'flex',
+              gap: 12,
+              padding: '6px 0',
+              borderBottom: '0.5px solid #e8e6e0',
+            }}
+          >
+            <b>{r.customer_name}</b>
+            <span style={{ color: '#888' }}>{r.conversation_id}</span>
+            <span>{r.channel_sent}</span>
+            <span
+              style={{
+                background: '#f0efe9',
+                color: '#555',
+                fontSize: 10,
+                fontWeight: 600,
+                padding: '1px 8px',
+                borderRadius: 20,
+              }}
+            >
+              {r.status}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      <div
+        style={{
+          background: '#fffbeb',
+          border: '0.5px solid #fbbf24',
+          borderRadius: 11,
+          padding: '10px 14px',
+          marginBottom: 12,
+          color: '#92400e',
+          fontSize: 11.5,
+        }}
+      >
+        ⚠️ Phase 1: Settings UI only. Real email/SMS sending requires Phase 2 backend.
+      </div>
+
+      <button
+        onClick={handleSave}
+        style={{
+          fontSize: 12,
+          fontWeight: 600,
+          padding: '8px 20px',
+          borderRadius: 8,
+          border: 'none',
+          background: '#1a1a1a',
+          color: '#fff',
+          cursor: 'pointer',
+        }}
+      >
+        Save Settings
+      </button>
     </div>
   );
 }
