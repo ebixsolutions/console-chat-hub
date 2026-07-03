@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { useEffectiveRole } from '@/hooks/useEffectiveRole';
+import { PermissionDenied } from '@/components/console/PageStates';
 import {
   aiChatbotSettingsService,
   type ChannelConfig,
