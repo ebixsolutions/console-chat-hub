@@ -71,8 +71,13 @@ export const getFeedbackConfigFn = createServerFn({ method: "GET" })
 const updateFeedbackInput = z.object({
   is_active: z.boolean().optional(),
   delay_minutes: z.number().int().min(1440).max(43200).optional(),
-  config: z.record(z.string(), z.unknown()).optional(),
+  config: z.record(z.string(), z.any()).optional(),
 });
+export type UpdateFeedbackInput = {
+  is_active?: boolean;
+  delay_minutes?: number;
+  config?: JsonRecord;
+};
 
 export const updateFeedbackConfigFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
