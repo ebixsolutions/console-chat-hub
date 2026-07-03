@@ -107,28 +107,6 @@ function ComingSoonBadge() {
   );
 }
 
-function PermissionDeniedBlock() {
-  return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '80px 20px',
-        textAlign: 'center',
-      }}
-    >
-      <div style={{ fontSize: 40, marginBottom: 14 }}>🔒</div>
-      <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>
-        Permission Denied
-      </div>
-      <div style={{ fontSize: 12, color: '#888', maxWidth: 320 }}>
-        You do not have permission to manage feedback automation.
-      </div>
-    </div>
-  );
-}
 
 function ConsoleFeedbackAutomation() {
   const roleState = useEffectiveRole();
