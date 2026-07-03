@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from 'react';
 import type { CSSProperties } from 'react';
-import { useCurrentRole } from '@/hooks/useCurrentRole';
+import { useEffectiveRole } from '@/hooks/useEffectiveRole';
 import {
   aiChatbotSettingsService,
   type ChannelConfig,
@@ -86,7 +86,7 @@ function PermissionDeniedBlock() {
 }
 
 function ConsoleChannelSettings() {
-  const roleState = useCurrentRole();
+  const roleState = useEffectiveRole();
   const role = (roleState as { role?: string })?.role;
 
   const [channels, setChannels] = useState<ChannelConfig[]>([]);
@@ -96,12 +96,8 @@ function ConsoleChannelSettings() {
     aiChatbotSettingsService.getChannelConfigs().then(setChannels);
   }, []);
 
-  // Director D6 Conditional A + Guardrail C (v1.1) — PC-3 Case 3:
-  // Repo role shape is 'admin' | 'supervisor' | 'agent'. Map CS → 'agent'.
-  // Also accept 'cs' / 'customer_service' defensively.
-  const isCustomerServiceRole =
-    role === 'agent' || role === 'cs' || role === 'customer_service';
-  if (isCustomerServiceRole) {
+  // P1 Rescue Director-approved predicate: agent/qa/null → restricted.
+  if (role === 'agent' || role === 'qa' || !role) {
     return <PermissionDeniedBlock />;
   }
 

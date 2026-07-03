@@ -307,7 +307,9 @@ function ConsoleLayout() {
           </div>
 
           <main style={{ flex: 1, padding: noPadding ? 0 : 16, overflowY: 'auto', background: '#f5f4f0' }}>
-            <Outlet />
+            <EffectiveRoleProvider value={effectiveRoleContext}>
+              <Outlet />
+            </EffectiveRoleProvider>
           </main>
         </div>
       </div>

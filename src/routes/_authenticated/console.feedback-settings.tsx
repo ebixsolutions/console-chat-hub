@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { toast } from 'sonner';
-import { useCurrentRole } from '@/hooks/useCurrentRole';
+import { useEffectiveRole } from '@/hooks/useEffectiveRole';
 import {
   aiChatbotSettingsService,
   type FeedbackAutomationConfig,
