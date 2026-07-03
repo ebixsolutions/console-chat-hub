@@ -171,6 +171,22 @@ function ConsoleFeedbackAutomation() {
 
   return (
     <div style={{ maxWidth: 680 }}>
+      {source === 'mock_fallback' && (
+        <div
+          style={{
+            background: '#fffbeb',
+            border: '0.5px solid #fbbf24',
+            borderRadius: 11,
+            padding: '10px 14px',
+            marginBottom: 12,
+            color: '#92400e',
+            fontSize: 11.5,
+          }}
+        >
+          ⚠️ Backend unavailable — showing default values.{' '}
+          {loadError ? <span style={{ opacity: 0.75 }}>({loadError})</span> : null}
+        </div>
+      )}
       <div style={cardStyle}>
         <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 2 }}>
           Post-Resolution Feedback Automation
