@@ -90,6 +90,22 @@ function ConsoleChannelSettings() {
 
   return (
     <div style={{ maxWidth: 900 }}>
+      {source === 'mock_fallback' && (
+        <div
+          style={{
+            background: '#fef2f2',
+            border: '0.5px solid #fca5a5',
+            borderRadius: 11,
+            padding: '10px 14px',
+            marginBottom: 12,
+            color: '#991b1b',
+            fontSize: 11.5,
+          }}
+        >
+          ⚠️ Backend unavailable — showing default channel list.{' '}
+          {loadError ? <span style={{ opacity: 0.75 }}>({loadError})</span> : null}
+        </div>
+      )}
       <div
         style={{
           background: '#fffbeb',
