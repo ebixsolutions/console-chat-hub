@@ -77,7 +77,7 @@ function ConsoleChannelSettings() {
 
   // P1 Rescue Director-approved predicate: agent/qa/null → restricted.
   if (role === 'agent' || role === 'qa' || !role) {
-    return <PermissionDeniedBlock />;
+    return <PermissionDenied message="You do not have permission to manage channel settings." />;
   }
 
   const previewChannel = channels.find((c) => c.id === previewChannelId);
