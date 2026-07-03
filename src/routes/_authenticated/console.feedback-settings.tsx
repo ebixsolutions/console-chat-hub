@@ -117,6 +117,11 @@ function ConsoleFeedbackAutomation() {
   const [source, setSource] = useState<'live' | 'mock_fallback' | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<
+    | { kind: 'idle' }
+    | { kind: 'success'; message: string }
+    | { kind: 'error'; message: string }
+  >({ kind: 'idle' });
   const [templateTab, setTemplateTab] = useState<RatingType>('stars_1_5');
   const [templates, setTemplates] = useState<Record<RatingType, MessageTemplate>>(
     DEFAULT_TEMPLATES
@@ -159,12 +164,22 @@ function ConsoleFeedbackAutomation() {
 
   const handleSave = async () => {
     setSaving(true);
+    setSaveStatus({ kind: 'idle' });
     const res = await aiChatbotSettingsService.saveFeedbackAutomationConfig(config);
     setSaving(false);
     if (res.ok) {
-      toast.success('Settings saved');
-      reload();
+      // Persistence confirmed by server-side re-SELECT; hydrate state from returned row.
+      setConfig(res.data);
+      setSource('live');
+      setLoadError(null);
+      const msg = `Settings saved (Enable=${res.data.is_enabled ? 'ON' : 'OFF'}, ${res.data.send_after_days}d)`;
+      setSaveStatus({ kind: 'success', message: msg });
+      toast.success(msg);
+      window.setTimeout(() => {
+        setSaveStatus((s) => (s.kind === 'success' ? { kind: 'idle' } : s));
+      }, 5000);
     } else {
+      setSaveStatus({ kind: 'error', message: res.error });
       toast.error(`Failed to save: ${res.error}`);
     }
   };
@@ -712,6 +727,38 @@ function ConsoleFeedbackAutomation() {
       >
         {saving ? 'Saving…' : 'Save Settings'}
       </button>
+      {saveStatus.kind === 'success' && (
+        <div
+          style={{
+            marginTop: 10,
+            fontSize: 11.5,
+            color: '#166534',
+            background: '#f0fdf4',
+            border: '0.5px solid #86efac',
+            borderRadius: 8,
+            padding: '7px 12px',
+            display: 'inline-block',
+          }}
+        >
+          ✅ {saveStatus.message}
+        </div>
+      )}
+      {saveStatus.kind === 'error' && (
+        <div
+          style={{
+            marginTop: 10,
+            fontSize: 11.5,
+            color: '#991b1b',
+            background: '#fef2f2',
+            border: '0.5px solid #fca5a5',
+            borderRadius: 8,
+            padding: '7px 12px',
+            display: 'inline-block',
+          }}
+        >
+          ❌ Failed to save: {saveStatus.message}
+        </div>
+      )}
     </div>
   );
 }
