@@ -132,7 +132,7 @@ function ConsoleFeedbackAutomation() {
   const isRestrictedRole =
     role === 'agent' || role === 'qa' || !role;
   if (isRestrictedRole) {
-    return <PermissionDeniedBlock />;
+    return <PermissionDenied message="You do not have permission to manage feedback automation." />;
   }
 
   if (!config) return null;
