@@ -69,10 +69,16 @@ function ConsoleChannelSettings() {
   const role = (roleState as { role?: string })?.role;
 
   const [channels, setChannels] = useState<ChannelConfig[]>([]);
+  const [source, setSource] = useState<'live' | 'mock_fallback' | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [previewChannelId, setPreviewChannelId] = useState<string | null>(null);
 
   useEffect(() => {
-    aiChatbotSettingsService.getChannelConfigs().then(setChannels);
+    aiChatbotSettingsService.loadChannelConfigs().then((r) => {
+      setChannels(r.data);
+      setSource(r.source);
+      setLoadError(r.error ?? null);
+    });
   }, []);
 
   // P1 Rescue Director-approved predicate: agent/qa/null → restricted.
