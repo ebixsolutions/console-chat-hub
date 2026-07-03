@@ -697,6 +697,7 @@ function ConsoleFeedbackAutomation() {
 
       <button
         onClick={handleSave}
+        disabled={saving}
         style={{
           fontSize: 12,
           fontWeight: 600,
@@ -705,10 +706,11 @@ function ConsoleFeedbackAutomation() {
           border: 'none',
           background: '#1a1a1a',
           color: '#fff',
-          cursor: 'pointer',
+          cursor: saving ? 'wait' : 'pointer',
+          opacity: saving ? 0.6 : 1,
         }}
       >
-        Save Settings
+        {saving ? 'Saving…' : 'Save Settings'}
       </button>
     </div>
   );
