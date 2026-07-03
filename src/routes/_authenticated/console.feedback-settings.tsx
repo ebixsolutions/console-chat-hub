@@ -114,6 +114,9 @@ function ConsoleFeedbackAutomation() {
 
   const [config, setConfig] = useState<FeedbackAutomationConfig | null>(null);
   const [requests, setRequests] = useState<FeedbackRequest[]>([]);
+  const [source, setSource] = useState<'live' | 'mock_fallback' | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const [templateTab, setTemplateTab] = useState<RatingType>('stars_1_5');
   const [templates, setTemplates] = useState<Record<RatingType, MessageTemplate>>(
     DEFAULT_TEMPLATES
@@ -123,9 +126,17 @@ function ConsoleFeedbackAutomation() {
   );
   const [previewMode, setPreviewMode] = useState<'email' | 'widget'>('email');
 
-  useEffect(() => {
-    aiChatbotSettingsService.getFeedbackAutomationConfig().then(setConfig);
+  const reload = () => {
+    aiChatbotSettingsService.loadFeedbackAutomationConfig().then((r) => {
+      setConfig(r.data);
+      setSource(r.source);
+      setLoadError(r.error ?? null);
+    });
     aiChatbotSettingsService.getFeedbackRequests().then(setRequests);
+  };
+
+  useEffect(() => {
+    reload();
   }, []);
 
   // P1 Rescue Director-approved predicate: agent/qa/null → restricted.
@@ -135,7 +146,7 @@ function ConsoleFeedbackAutomation() {
     return <PermissionDenied message="You do not have permission to manage feedback automation." />;
   }
 
-  if (!config) return null;
+  if (!config) return <div style={{ padding: 24, fontSize: 12, color: '#555' }}>Loading feedback automation…</div>;
 
   const tpl = templates[templateTab] || templates.stars_1_5;
 
@@ -147,12 +158,35 @@ function ConsoleFeedbackAutomation() {
   };
 
   const handleSave = async () => {
-    await aiChatbotSettingsService.saveFeedbackAutomationConfig(config);
-    toast.success('Settings saved (Mock)');
+    setSaving(true);
+    const res = await aiChatbotSettingsService.saveFeedbackAutomationConfig(config);
+    setSaving(false);
+    if (res.ok) {
+      toast.success('Settings saved');
+      reload();
+    } else {
+      toast.error(`Failed to save: ${res.error}`);
+    }
   };
 
   return (
     <div style={{ maxWidth: 680 }}>
+      {source === 'mock_fallback' && (
+        <div
+          style={{
+            background: '#fffbeb',
+            border: '0.5px solid #fbbf24',
+            borderRadius: 11,
+            padding: '10px 14px',
+            marginBottom: 12,
+            color: '#92400e',
+            fontSize: 11.5,
+          }}
+        >
+          ⚠️ Backend unavailable — showing default values.{' '}
+          {loadError ? <span style={{ opacity: 0.75 }}>({loadError})</span> : null}
+        </div>
+      )}
       <div style={cardStyle}>
         <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 2 }}>
           Post-Resolution Feedback Automation
@@ -663,6 +697,7 @@ function ConsoleFeedbackAutomation() {
 
       <button
         onClick={handleSave}
+        disabled={saving}
         style={{
           fontSize: 12,
           fontWeight: 600,
@@ -671,10 +706,11 @@ function ConsoleFeedbackAutomation() {
           border: 'none',
           background: '#1a1a1a',
           color: '#fff',
-          cursor: 'pointer',
+          cursor: saving ? 'wait' : 'pointer',
+          opacity: saving ? 0.6 : 1,
         }}
       >
-        Save Settings
+        {saving ? 'Saving…' : 'Save Settings'}
       </button>
     </div>
   );

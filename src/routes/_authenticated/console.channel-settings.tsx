@@ -69,10 +69,16 @@ function ConsoleChannelSettings() {
   const role = (roleState as { role?: string })?.role;
 
   const [channels, setChannels] = useState<ChannelConfig[]>([]);
+  const [source, setSource] = useState<'live' | 'mock_fallback' | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [previewChannelId, setPreviewChannelId] = useState<string | null>(null);
 
   useEffect(() => {
-    aiChatbotSettingsService.getChannelConfigs().then(setChannels);
+    aiChatbotSettingsService.loadChannelConfigs().then((r) => {
+      setChannels(r.data);
+      setSource(r.source);
+      setLoadError(r.error ?? null);
+    });
   }, []);
 
   // P1 Rescue Director-approved predicate: agent/qa/null → restricted.
@@ -84,6 +90,22 @@ function ConsoleChannelSettings() {
 
   return (
     <div style={{ maxWidth: 900 }}>
+      {source === 'mock_fallback' && (
+        <div
+          style={{
+            background: '#fef2f2',
+            border: '0.5px solid #fca5a5',
+            borderRadius: 11,
+            padding: '10px 14px',
+            marginBottom: 12,
+            color: '#991b1b',
+            fontSize: 11.5,
+          }}
+        >
+          ⚠️ Backend unavailable — showing default channel list.{' '}
+          {loadError ? <span style={{ opacity: 0.75 }}>({loadError})</span> : null}
+        </div>
+      )}
       <div
         style={{
           background: '#fffbeb',
