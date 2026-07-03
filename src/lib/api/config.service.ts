@@ -82,7 +82,7 @@ export type UpdateFeedbackInput = {
 export const updateFeedbackConfigFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator(updateFeedbackInput)
-  .handler(async ({ data, context }): Promise<ServerResult<{ id: string }>> => {
+  .handler(async ({ data, context }): Promise<ServerResult<LiveFeedbackConfigRow>> => {
     // Try to find existing row
     const { data: existing, error: readErr } = await context.supabase
       .from("feedback_automation_config")
@@ -90,10 +90,12 @@ export const updateFeedbackConfigFn = createServerFn({ method: "POST" })
       .order("created_at", { ascending: true })
       .limit(1)
       .maybeSingle();
-    if (readErr) return { ok: false, error: readErr.message };
+    if (readErr) return { ok: false, error: `read_before_write_failed: ${readErr.message}` };
+
+    let targetId: string;
 
     if (!existing) {
-      // Seed a row (admin-only per RLS). No migration; a single default row.
+      // Seed a row (admin-only per RLS). Single default row model.
       const { data: inserted, error: insertErr } = await context.supabase
         .from("feedback_automation_config")
         .insert({
@@ -105,26 +107,40 @@ export const updateFeedbackConfigFn = createServerFn({ method: "POST" })
         })
         .select("id")
         .single();
-      if (insertErr) return { ok: false, error: insertErr.message };
-      return { ok: true, data: { id: inserted.id } };
+      if (insertErr) return { ok: false, error: `insert_failed: ${insertErr.message}` };
+      targetId = inserted.id;
+    } else {
+      // Existing row: route through the audited RPC (SECURITY DEFINER + has_role).
+      const { data: rpcResp, error: rpcErr } = await context.supabase.rpc(
+        "rpc_update_feedback_config",
+        {
+          p_feedback_config_id: existing.id,
+          p_is_active: data.is_active,
+          p_delay_minutes: data.delay_minutes,
+          p_config: data.config as never,
+        },
+      );
+      if (rpcErr) return { ok: false, error: `rpc_transport_failed: ${rpcErr.message}` };
+      const resp = rpcResp as
+        | { ok: boolean; error_code?: string; message_safe?: string }
+        | null;
+      if (!resp?.ok) {
+        const code = resp?.error_code ?? "UNKNOWN";
+        const msg = resp?.message_safe ?? "Update failed";
+        return { ok: false, error: `${code}: ${msg}` };
+      }
+      targetId = existing.id;
     }
 
-    // Existing row: route through the audited RPC (SECURITY DEFINER + has_role).
-    const { data: rpcResp, error: rpcErr } = await context.supabase.rpc(
-      "rpc_update_feedback_config",
-      {
-        p_feedback_config_id: existing.id,
-        p_is_active: data.is_active,
-        p_delay_minutes: data.delay_minutes,
-        p_config: data.config as never,
-      },
-    );
-    if (rpcErr) return { ok: false, error: rpcErr.message };
-    const resp = rpcResp as { ok: boolean; message_safe?: string } | null;
-    if (!resp?.ok) {
-      return { ok: false, error: resp?.message_safe ?? "Update failed" };
-    }
-    return { ok: true, data: { id: existing.id } };
+    // Verify persistence by re-SELECTing the row we just wrote.
+    const { data: verified, error: verifyErr } = await context.supabase
+      .from("feedback_automation_config")
+      .select("id, name, is_active, delay_minutes, trigger_event, config")
+      .eq("id", targetId)
+      .maybeSingle();
+    if (verifyErr) return { ok: false, error: `verify_read_failed: ${verifyErr.message}` };
+    if (!verified) return { ok: false, error: "verify_read_failed: row missing after write" };
+    return { ok: true, data: verified as LiveFeedbackConfigRow };
   });
 
 // ---------------------------------------------------------------------------
