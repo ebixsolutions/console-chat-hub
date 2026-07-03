@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { ExternalLink } from "lucide-react";
-import { useCurrentRole } from "@/hooks/useCurrentRole";
+import { useEffectiveRole } from "@/hooks/useEffectiveRole";
 import { LoadingState, PermissionDenied, PageHeader, EmptyState } from "@/components/console/PageStates";
 
 export const Route = createFileRoute("/_authenticated/console/settings/llm-runtime")({
@@ -12,9 +12,9 @@ export const Route = createFileRoute("/_authenticated/console/settings/llm-runti
 });
 
 function LlmRuntimePage() {
-  const { role, loading } = useCurrentRole();
+  const { role, loading } = useEffectiveRole();
   if (loading) return <LoadingState />;
-  if (!role || role === "agent") return <PermissionDenied />;
+  if (role === "agent" || role === "qa" || !role) return <PermissionDenied />;
 
   const readonly = role === "supervisor";
 

@@ -3,6 +3,8 @@ import { useState } from "react";
 import { LogOut } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentRole } from "@/hooks/useCurrentRole";
+import { mapDemoRoleToEffective, type ConsoleOutletContext } from "@/types/demoRole";
+import { EffectiveRoleProvider } from "@/hooks/useEffectiveRole";
 
 export const Route = createFileRoute("/_authenticated/console")({
   component: ConsoleLayout,
@@ -112,6 +114,8 @@ function ConsoleLayout() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const { role } = useCurrentRole();
   const [demoRole, setDemoRole] = useState<string>(role || 'supervisor');
+  const effectiveRole = mapDemoRoleToEffective(demoRole);
+  const effectiveRoleContext: ConsoleOutletContext = { effectiveRole, demoRole };
   const [lang, setLang] = useState('en');
   const [collapsed, setCollapsed] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
@@ -303,7 +307,9 @@ function ConsoleLayout() {
           </div>
 
           <main style={{ flex: 1, padding: noPadding ? 0 : 16, overflowY: 'auto', background: '#f5f4f0' }}>
-            <Outlet />
+            <EffectiveRoleProvider value={effectiveRoleContext}>
+              <Outlet />
+            </EffectiveRoleProvider>
           </main>
         </div>
       </div>

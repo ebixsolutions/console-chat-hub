@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { toast } from 'sonner';
-import { useCurrentRole } from '@/hooks/useCurrentRole';
+import { useEffectiveRole } from '@/hooks/useEffectiveRole';
 import {
   aiChatbotSettingsService,
   type FeedbackAutomationConfig,
@@ -130,7 +130,7 @@ function PermissionDeniedBlock() {
 }
 
 function ConsoleFeedbackAutomation() {
-  const roleState = useCurrentRole();
+  const roleState = useEffectiveRole();
   const role = (roleState as { role?: string })?.role;
 
   const [config, setConfig] = useState<FeedbackAutomationConfig | null>(null);
@@ -149,15 +149,9 @@ function ConsoleFeedbackAutomation() {
     aiChatbotSettingsService.getFeedbackRequests().then(setRequests);
   }, []);
 
-  // Director D6 Conditional A + Guardrail C (v1.1) — PC-3 Case 3:
-  // Repo role shape is 'admin' | 'supervisor' | 'agent'. Map CS → 'agent'.
-  // No 'qa' role exists in this repo; predicate defensively still checks it.
+  // P1 Rescue Director-approved predicate: agent/qa/null → restricted.
   const isRestrictedRole =
-    role === 'agent' ||
-    role === 'cs' ||
-    role === 'customer_service' ||
-    role === 'qa' ||
-    role === 'qa_reviewer';
+    role === 'agent' || role === 'qa' || !role;
   if (isRestrictedRole) {
     return <PermissionDeniedBlock />;
   }
