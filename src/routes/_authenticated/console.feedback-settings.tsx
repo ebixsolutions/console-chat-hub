@@ -727,6 +727,38 @@ function ConsoleFeedbackAutomation() {
       >
         {saving ? 'Saving…' : 'Save Settings'}
       </button>
+      {saveStatus.kind === 'success' && (
+        <div
+          style={{
+            marginTop: 10,
+            fontSize: 11.5,
+            color: '#166534',
+            background: '#f0fdf4',
+            border: '0.5px solid #86efac',
+            borderRadius: 8,
+            padding: '7px 12px',
+            display: 'inline-block',
+          }}
+        >
+          ✅ {saveStatus.message}
+        </div>
+      )}
+      {saveStatus.kind === 'error' && (
+        <div
+          style={{
+            marginTop: 10,
+            fontSize: 11.5,
+            color: '#991b1b',
+            background: '#fef2f2',
+            border: '0.5px solid #fca5a5',
+            borderRadius: 8,
+            padding: '7px 12px',
+            display: 'inline-block',
+          }}
+        >
+          ❌ Failed to save: {saveStatus.message}
+        </div>
+      )}
     </div>
   );
 }
