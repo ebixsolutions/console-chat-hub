@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { toast } from 'sonner';
 import { useEffectiveRole } from '@/hooks/useEffectiveRole';
+import { PermissionDenied } from '@/components/console/PageStates';
 import {
   aiChatbotSettingsService,
   type FeedbackAutomationConfig,
