@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { useEffectiveRole } from '@/hooks/useEffectiveRole';
+import { PermissionDenied } from '@/components/console/PageStates';
 import {
   aiChatbotSettingsService,
   type ChannelConfig,
@@ -62,28 +63,6 @@ function ComingSoonBadge() {
   );
 }
 
-function PermissionDeniedBlock() {
-  return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '80px 20px',
-        textAlign: 'center',
-      }}
-    >
-      <div style={{ fontSize: 40, marginBottom: 14 }}>🔒</div>
-      <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>
-        Permission Denied
-      </div>
-      <div style={{ fontSize: 12, color: '#888', maxWidth: 320 }}>
-        You do not have permission to manage channel settings.
-      </div>
-    </div>
-  );
-}
 
 function ConsoleChannelSettings() {
   const roleState = useEffectiveRole();
@@ -98,7 +77,7 @@ function ConsoleChannelSettings() {
 
   // P1 Rescue Director-approved predicate: agent/qa/null → restricted.
   if (role === 'agent' || role === 'qa' || !role) {
-    return <PermissionDeniedBlock />;
+    return <PermissionDenied message="You do not have permission to manage channel settings." />;
   }
 
   const previewChannel = channels.find((c) => c.id === previewChannelId);
