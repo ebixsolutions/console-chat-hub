@@ -19,13 +19,16 @@ export interface LiveChannelConfigRow {
   is_active: boolean;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type JsonRecord = Record<string, any>;
+
 export interface LiveFeedbackConfigRow {
   id: string;
   name: string;
   is_active: boolean;
   delay_minutes: number | null;
   trigger_event: string;
-  config: Record<string, unknown> | null;
+  config: JsonRecord | null;
 }
 
 export interface ServerResult<T> {
