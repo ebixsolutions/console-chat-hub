@@ -205,7 +205,10 @@ export const aiChatbotSettingsService = {
 
   async saveFeedbackAutomationConfig(
     config: FeedbackAutomationConfig,
-  ): Promise<{ ok: true } | { ok: false; error: string }> {
+  ): Promise<
+    | { ok: true; data: FeedbackAutomationConfig }
+    | { ok: false; error: string }
+  > {
     const delayMinutes = config.send_after_days * 1440;
     const cfgJson: Record<string, unknown> = {
       channels_enabled: config.channels_enabled,
@@ -222,8 +225,8 @@ export const aiChatbotSettingsService = {
         delay_minutes: delayMinutes,
         config: cfgJson,
       });
-      if (!res.ok) return { ok: false, error: res.error ?? 'Save failed' };
-      return { ok: true };
+      if (!res.ok || !res.data) return { ok: false, error: res.error ?? 'Save failed' };
+      return { ok: true, data: mapFeedbackRow(res.data as LiveFeedbackConfigRow) };
     } catch (e) {
       return { ok: false, error: (e as Error).message };
     }
