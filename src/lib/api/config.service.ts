@@ -114,9 +114,9 @@ export const updateFeedbackConfigFn = createServerFn({ method: "POST" })
       "rpc_update_feedback_config",
       {
         p_feedback_config_id: existing.id,
-        p_is_active: data.is_active ?? null,
-        p_delay_minutes: data.delay_minutes ?? null,
-        p_config: (data.config ?? null) as never,
+        p_is_active: data.is_active,
+        p_delay_minutes: data.delay_minutes,
+        p_config: data.config as never,
       },
     );
     if (rpcErr) return { ok: false, error: rpcErr.message };
