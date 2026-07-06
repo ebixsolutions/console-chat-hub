@@ -46,16 +46,7 @@ export type ScheduleFeedbackResult =
 
 // Internal helper — replicates config.service.ts getFeedbackConfigFn query
 // logic without cross-calling it (per spec §5.2).
-async function readFeedbackConfig(
-  // Use the same inferred type pattern as context.supabase in other server fns.
-  supabase: Parameters<
-    Parameters<typeof requireSupabaseAuth.server>[0]
-  >[0] extends { context: infer C }
-    ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      any
-    : // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      any,
-) {
+async function readFeedbackConfig(supabase: AuthedSupabase) {
   const { data, error } = await supabase
     .from("feedback_automation_config")
     .select("id, name, is_active, delay_minutes, trigger_event, config")
