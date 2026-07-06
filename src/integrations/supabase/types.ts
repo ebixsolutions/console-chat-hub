@@ -373,9 +373,13 @@ export type Database = {
           rating_type: string
           request_type: string | null
           responded_at: string | null
+          response_token_hash: string | null
           scheduled_at: string | null
           sent_at: string | null
           status: string | null
+          token_created_at: string | null
+          token_expires_at: string | null
+          token_used_at: string | null
           updated_at: string
           visitor_session_id: string | null
         }
@@ -390,9 +394,13 @@ export type Database = {
           rating_type?: string
           request_type?: string | null
           responded_at?: string | null
+          response_token_hash?: string | null
           scheduled_at?: string | null
           sent_at?: string | null
           status?: string | null
+          token_created_at?: string | null
+          token_expires_at?: string | null
+          token_used_at?: string | null
           updated_at?: string
           visitor_session_id?: string | null
         }
@@ -407,9 +415,13 @@ export type Database = {
           rating_type?: string
           request_type?: string | null
           responded_at?: string | null
+          response_token_hash?: string | null
           scheduled_at?: string | null
           sent_at?: string | null
           status?: string | null
+          token_created_at?: string | null
+          token_expires_at?: string | null
+          token_used_at?: string | null
           updated_at?: string
           visitor_session_id?: string | null
         }
