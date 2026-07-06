@@ -171,7 +171,6 @@ export const scheduleFeedbackRequestFn = createServerFn({ method: "POST" })
           scheduled_at: scheduledAt,
           rating_type: ratingType,
           config_version_id: row.id,
-          request_type: "post_resolution",
         } as never)
         .select("id")
         .single();
