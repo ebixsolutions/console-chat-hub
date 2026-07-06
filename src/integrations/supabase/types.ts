@@ -363,36 +363,54 @@ export type Database = {
       }
       feedback_request: {
         Row: {
+          channel: string | null
+          config_version_id: string | null
           conversation_id: string
+          created_at: string
           feedback_text: string | null
           id: string
           rating: number | null
+          rating_type: string
           request_type: string | null
           responded_at: string | null
+          scheduled_at: string | null
           sent_at: string | null
           status: string | null
+          updated_at: string
           visitor_session_id: string | null
         }
         Insert: {
+          channel?: string | null
+          config_version_id?: string | null
           conversation_id: string
+          created_at?: string
           feedback_text?: string | null
           id?: string
           rating?: number | null
+          rating_type?: string
           request_type?: string | null
           responded_at?: string | null
+          scheduled_at?: string | null
           sent_at?: string | null
           status?: string | null
+          updated_at?: string
           visitor_session_id?: string | null
         }
         Update: {
+          channel?: string | null
+          config_version_id?: string | null
           conversation_id?: string
+          created_at?: string
           feedback_text?: string | null
           id?: string
           rating?: number | null
+          rating_type?: string
           request_type?: string | null
           responded_at?: string | null
+          scheduled_at?: string | null
           sent_at?: string | null
           status?: string | null
+          updated_at?: string
           visitor_session_id?: string | null
         }
         Relationships: [
