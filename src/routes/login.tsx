@@ -19,7 +19,11 @@ export const Route = createFileRoute("/login")({
   beforeLoad: async ({ search }) => {
     const { data } = await supabase.auth.getUser();
     if (data.user) {
-      throw redirect({ to: search.redirect ?? "/console" });
+      const target = search.redirect;
+      if (typeof target === "string" && target.startsWith("/") && !target.startsWith("//")) {
+        throw redirect({ href: target });
+      }
+      throw redirect({ to: "/console" });
     }
   },
   component: LoginPage,
