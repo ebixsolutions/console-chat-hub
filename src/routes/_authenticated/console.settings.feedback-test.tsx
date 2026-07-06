@@ -4,17 +4,11 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useEffectiveRole } from "@/hooks/useEffectiveRole";
-import {
-  LoadingState,
-  PermissionDenied,
-  PageHeader,
-} from "@/components/console/PageStates";
+import { LoadingState, PermissionDenied, PageHeader } from "@/components/console/PageStates";
 import { supabase } from "@/integrations/supabase/client";
 import { feedbackService } from "@/lib/api/feedback.service";
 
-export const Route = createFileRoute(
-  "/_authenticated/console/settings/feedback-test",
-)({
+export const Route = createFileRoute("/_authenticated/console/settings/feedback-test")({
   component: FeedbackTestPage,
 });
 
@@ -30,6 +24,18 @@ type PendingRow = {
 type RecordResult = {
   ok: boolean;
   data?: Record<string, unknown>;
+  error_type?: string;
+  message?: string;
+};
+
+type TokenResult = {
+  ok: boolean;
+  data?: {
+    feedback_request_id?: string;
+    feedback_link?: string;
+    token_expires_at?: string;
+    previous_token_invalidated?: boolean;
+  };
   error_type?: string;
   message?: string;
 };
@@ -60,15 +66,52 @@ function FeedbackTestContent() {
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<RecordResult | null>(null);
 
+  // S3a: Token generation state
+  const [tokenGenerating, setTokenGenerating] = useState(false);
+  const [tokenResult, setTokenResult] = useState<TokenResult | null>(null);
+  const [feedbackLink, setFeedbackLink] = useState<string | null>(null);
+
+  function clearTokenLink() {
+    setFeedbackLink(null);
+    setTokenResult(null);
+  }
+
+  async function handleGenerateToken(forceRegenerate: boolean) {
+    if (!selectedId) return;
+    setTokenGenerating(true);
+    setTokenResult(null);
+    setFeedbackLink(null);
+    try {
+      const res = await feedbackService.generateFeedbackToken({
+        feedback_request_id: selectedId,
+        force_regenerate: forceRegenerate,
+      });
+      const typed = res as TokenResult;
+      setTokenResult(typed);
+      if (typed.ok && typed.data?.feedback_link) {
+        setFeedbackLink(typed.data.feedback_link);
+      }
+      if (typed.ok) {
+        loadPending();
+      }
+    } catch (e: unknown) {
+      setTokenResult({
+        ok: false,
+        error_type: "network_error",
+        message: e instanceof Error ? e.message : "Unknown error",
+      });
+    } finally {
+      setTokenGenerating(false);
+    }
+  }
+
   async function loadPending() {
     setListLoading(true);
     setListError(null);
     try {
       const { data, error } = await supabase
         .from("feedback_request")
-        .select(
-          "id, conversation_id, channel, scheduled_at, rating_type, status",
-        )
+        .select("id, conversation_id, channel, scheduled_at, rating_type, status")
         .eq("status", "pending")
         .order("created_at", { ascending: false })
         .limit(50);
@@ -87,9 +130,7 @@ function FeedbackTestContent() {
 
       setRows(data as PendingRow[]);
     } catch (e: unknown) {
-      setListError(
-        `Exception: ${e instanceof Error ? e.message : "Unknown error"}`,
-      );
+      setListError(`Exception: ${e instanceof Error ? e.message : "Unknown error"}`);
       setRows([]);
     } finally {
       setListLoading(false);
@@ -147,11 +188,9 @@ function FeedbackTestContent() {
           color: "#92400e",
         }}
       >
-        ⚠️ <strong>Internal test tool only.</strong> Not customer-facing. Not
-        production customer feedback UI. Used only to validate backend response
-        capture path (pending → responded). Admin role only.
-        This route is intentionally not linked in the sidebar. Admin manual URL
-        access only: <code>/console/settings/feedback-test</code>
+        ⚠️ <strong>Internal test tool only.</strong> Not customer-facing. Not production customer feedback UI. Used only
+        to validate backend response capture path (pending → responded). Admin role only. This route is intentionally
+        not linked in the sidebar. Admin manual URL access only: <code>/console/settings/feedback-test</code>
       </div>
 
       {/* Pending List */}
@@ -164,9 +203,7 @@ function FeedbackTestContent() {
             </Button>
           </div>
 
-          {listLoading && (
-            <p className="text-sm text-gray-500">Loading pending requests...</p>
-          )}
+          {listLoading && <p className="text-sm text-gray-500">Loading pending requests...</p>}
 
           {listError && (
             <div
@@ -185,8 +222,7 @@ function FeedbackTestContent() {
 
           {!listLoading && !listError && rows.length === 0 && (
             <p className="text-sm text-gray-400">
-              No pending feedback requests found. Resolve a conversation with
-              Feedback Automation enabled to create one.
+              No pending feedback requests found. Resolve a conversation with Feedback Automation enabled to create one.
             </p>
           )}
 
@@ -210,25 +246,13 @@ function FeedbackTestContent() {
                     onClick={() => setSelectedId(r.id)}
                   >
                     <td className="py-1 pr-2">
-                      <input
-                        type="radio"
-                        checked={selectedId === r.id}
-                        onChange={() => setSelectedId(r.id)}
-                      />
+                      <input type="radio" checked={selectedId === r.id} onChange={() => setSelectedId(r.id)} />
                     </td>
-                    <td className="py-1 pr-2 font-mono">
-                      {r.id.slice(0, 8)}…
-                    </td>
-                    <td className="py-1 pr-2 font-mono">
-                      {r.conversation_id.slice(0, 8)}…
-                    </td>
+                    <td className="py-1 pr-2 font-mono">{r.id.slice(0, 8)}…</td>
+                    <td className="py-1 pr-2 font-mono">{r.conversation_id.slice(0, 8)}…</td>
                     <td className="py-1 pr-2">{r.channel ?? "—"}</td>
                     <td className="py-1 pr-2">{r.rating_type ?? "—"}</td>
-                    <td className="py-1 pr-2">
-                      {r.scheduled_at
-                        ? new Date(r.scheduled_at).toLocaleString()
-                        : "—"}
-                    </td>
+                    <td className="py-1 pr-2">{r.scheduled_at ? new Date(r.scheduled_at).toLocaleString() : "—"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -243,9 +267,7 @@ function FeedbackTestContent() {
           <h3 className="font-semibold text-sm mb-3">Record Response</h3>
 
           {!selectedId && (
-            <p className="text-sm text-gray-400">
-              Select a pending feedback request above to record a response.
-            </p>
+            <p className="text-sm text-gray-400">Select a pending feedback request above to record a response.</p>
           )}
 
           {selectedId && (
@@ -255,9 +277,7 @@ function FeedbackTestContent() {
               </div>
 
               <div>
-                <label className="block text-xs font-medium mb-1">
-                  Rating (1–5)
-                </label>
+                <label className="block text-xs font-medium mb-1">Rating (1–5)</label>
                 <div className="flex gap-2">
                   {[1, 2, 3, 4, 5].map((v) => (
                     <button
@@ -276,9 +296,7 @@ function FeedbackTestContent() {
               </div>
 
               <div>
-                <label className="block text-xs font-medium mb-1">
-                  Feedback Text (optional, max 2000 chars)
-                </label>
+                <label className="block text-xs font-medium mb-1">Feedback Text (optional, max 2000 chars)</label>
                 <textarea
                   value={feedbackText}
                   onChange={(e) => setFeedbackText(e.target.value)}
@@ -287,9 +305,7 @@ function FeedbackTestContent() {
                   className="w-full border rounded px-3 py-2 text-sm"
                   placeholder="Optional customer feedback text..."
                 />
-                <div className="text-xs text-gray-400 text-right">
-                  {feedbackText.length}/2000
-                </div>
+                <div className="text-xs text-gray-400 text-right">{feedbackText.length}/2000</div>
               </div>
 
               <Button onClick={handleSubmit} disabled={submitting} size="sm">
@@ -298,7 +314,7 @@ function FeedbackTestContent() {
             </div>
           )}
 
-          {/* Result Display */}
+          {/* Record Result Display */}
           {result && (
             <div
               className="mt-3"
@@ -310,12 +326,119 @@ function FeedbackTestContent() {
                 fontSize: 12,
               }}
             >
-              <div className="font-bold mb-1">
-                {result.ok ? "✅ Success" : "❌ Failed"}
+              <div className="font-bold mb-1">{result.ok ? "✅ Success" : "❌ Failed"}</div>
+              <pre className="whitespace-pre-wrap text-xs">{JSON.stringify(result, null, 2)}</pre>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* S3a: Manual Token Generation Test */}
+      <Card>
+        <CardContent className="p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <h3 className="font-semibold text-sm">S3a — Manual Token Generation Test</h3>
+            <Badge variant="outline" className="text-xs">
+              Token Only
+            </Badge>
+          </div>
+
+          <div
+            style={{
+              background: "#eff6ff",
+              border: "1px solid #3b82f6",
+              borderRadius: 6,
+              padding: "8px 12px",
+              fontSize: 11,
+              color: "#1e40af",
+              marginBottom: 12,
+            }}
+          >
+            ℹ️ This section does NOT submit feedback. This section does NOT validate public submission. This section
+            only generates a test delivery token and shows the feedback link once. The link will not be retrievable
+            after page refresh.
+          </div>
+
+          {!selectedId && (
+            <p className="text-sm text-gray-400">
+              Select a pending feedback request from the list above, then use this section to generate a token.
+            </p>
+          )}
+
+          {selectedId && (
+            <div className="space-y-3">
+              <div className="text-xs text-gray-500">
+                Target: <span className="font-mono">{selectedId}</span>
               </div>
-              <pre className="whitespace-pre-wrap text-xs">
-                {JSON.stringify(result, null, 2)}
-              </pre>
+
+              <div className="flex gap-2">
+                <Button size="sm" onClick={() => handleGenerateToken(false)} disabled={tokenGenerating}>
+                  {tokenGenerating ? "Generating..." : "Generate Token"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => handleGenerateToken(true)}
+                  disabled={tokenGenerating}
+                >
+                  Regenerate (invalidates previous)
+                </Button>
+              </div>
+
+              {/* Feedback Link Display */}
+              {feedbackLink && (
+                <div
+                  style={{
+                    background: "#f0fdf4",
+                    border: "1px solid #22c55e",
+                    borderRadius: 6,
+                    padding: "10px 14px",
+                    fontSize: 12,
+                  }}
+                >
+                  <div className="font-bold text-green-800 mb-1">🔗 Feedback Link (shown once only)</div>
+                  <div
+                    className="font-mono text-xs bg-white border rounded p-2 break-all select-all"
+                    style={{ userSelect: "all" }}
+                  >
+                    {feedbackLink}
+                  </div>
+                  <div className="flex gap-2 mt-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        navigator.clipboard.writeText(feedbackLink);
+                      }}
+                    >
+                      Copy Link
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={clearTokenLink}>
+                      Clear Link
+                    </Button>
+                  </div>
+                  <p className="text-xs text-amber-700 mt-2">
+                    ⚠️ This link will not be shown again after page refresh or regeneration. Copy it now if needed for
+                    testing.
+                  </p>
+                </div>
+              )}
+
+              {/* Token Result Display (error only — success shows link above) */}
+              {tokenResult && !feedbackLink && (
+                <div
+                  style={{
+                    background: tokenResult.ok ? "#f0fdf4" : "#fef2f2",
+                    border: `1px solid ${tokenResult.ok ? "#22c55e" : "#ef4444"}`,
+                    borderRadius: 6,
+                    padding: "10px 14px",
+                    fontSize: 12,
+                  }}
+                >
+                  <div className="font-bold mb-1">{tokenResult.ok ? "✅ Success" : "❌ Failed"}</div>
+                  <pre className="whitespace-pre-wrap text-xs">{JSON.stringify(tokenResult, null, 2)}</pre>
+                </div>
+              )}
             </div>
           )}
         </CardContent>
