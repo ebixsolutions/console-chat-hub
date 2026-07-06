@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { ArrowLeft, Loader2 } from "lucide-react";
+import { feedbackService } from "@/lib/api/feedback.service";
 
 export const Route = createFileRoute("/_authenticated/console/conversations/$id")({
   component: ConversationDetail,
