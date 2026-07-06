@@ -138,6 +138,15 @@ function ConversationDetail() {
   async function handleResolve() {
     if (await callEF("resolve-conversation", { conversation_id: id })) {
       toast.success("Marked resolved");
+      // P3-FB: Schedule feedback request BEFORE reload (non-blocking)
+      try {
+        const schedResult = await feedbackService.scheduleFeedbackRequest(id);
+        if (schedResult && !schedResult.ok) {
+          toast.warning("Conversation resolved, but feedback scheduling failed.");
+        }
+      } catch {
+        toast.warning("Conversation resolved, but feedback scheduling failed.");
+      }
       loadConv();
     }
   }
