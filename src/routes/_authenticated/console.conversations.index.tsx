@@ -7,6 +7,7 @@ import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { feedbackService } from "@/lib/api/feedback.service";
 
 export const Route = createFileRoute("/_authenticated/console/conversations/")({
   component: SinglePageInbox,
@@ -1251,9 +1252,19 @@ function SinglePageInbox() {
     }
   }
   async function handleResolve() {
-    if (!selectedId) return;
-    if (await callEF("resolve-conversation", { conversation_id: selectedId })) {
+    const conversationId = selectedId; // Capture stable reference
+    if (!conversationId) return;
+    if (await callEF("resolve-conversation", { conversation_id: conversationId })) {
       toast.success("Marked resolved");
+      // P3-FB: Schedule feedback request BEFORE reload (non-blocking)
+      try {
+        const schedResult = await feedbackService.scheduleFeedbackRequest(conversationId);
+        if (schedResult && !schedResult.ok) {
+          toast.warning("Conversation resolved, but feedback scheduling failed.");
+        }
+      } catch {
+        toast.warning("Conversation resolved, but feedback scheduling failed.");
+      }
       loadConversations();
     }
   }
