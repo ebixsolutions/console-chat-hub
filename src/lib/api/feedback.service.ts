@@ -145,7 +145,7 @@ export const scheduleFeedbackRequestFn = createServerFn({ method: "POST" })
         .select("id")
         .eq("conversation_id", conversation_id)
         .eq("channel", channel as AllowedChannel)
-        .in("status", ["scheduled", "sent"])
+        .eq("status", "pending")
         .limit(1)
         .maybeSingle();
       if (selErr) {
@@ -167,7 +167,7 @@ export const scheduleFeedbackRequestFn = createServerFn({ method: "POST" })
         .insert({
           conversation_id,
           channel,
-          status: "scheduled",
+          status: "pending",
           scheduled_at: scheduledAt,
           rating_type: ratingType,
           config_version_id: row.id,
