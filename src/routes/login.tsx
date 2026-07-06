@@ -33,6 +33,18 @@ function LoginPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // Only allow same-origin relative redirect targets.
+  const safeRedirect = (() => {
+    const r = search.redirect;
+    if (typeof r === "string" && r.startsWith("/") && !r.startsWith("//")) return r;
+    return null;
+  })();
+  const postAuthTarget = safeRedirect ?? "/console";
+  const oauthRedirectUri =
+    typeof window !== "undefined"
+      ? `${window.location.origin}${safeRedirect ?? ""}`
+      : undefined;
+
   const handleEmail = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -44,11 +56,11 @@ function LoginPage() {
         const { error } = await supabase.auth.signUp({
           email,
           password,
-          options: { emailRedirectTo: window.location.origin },
+          options: { emailRedirectTo: oauthRedirectUri },
         });
         if (error) throw error;
       }
-      navigate({ to: search.redirect ?? "/console" });
+      navigate({ to: postAuthTarget });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Authentication failed");
     } finally {
@@ -59,7 +71,7 @@ function LoginPage() {
   const handleGoogle = async () => {
     setLoading(true);
     const result = await lovable.auth.signInWithOAuth("google", {
-      redirect_uri: window.location.origin,
+      redirect_uri: oauthRedirectUri,
     });
     if (result.error) {
       toast.error("Google sign-in failed");
@@ -67,8 +79,9 @@ function LoginPage() {
       return;
     }
     if (result.redirected) return;
-    navigate({ to: search.redirect ?? "/console" });
+    navigate({ to: postAuthTarget });
   };
+
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-muted/40 p-4">
