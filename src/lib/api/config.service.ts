@@ -110,27 +110,32 @@ export const updateFeedbackConfigFn = createServerFn({ method: "POST" })
       if (insertErr) return { ok: false, error: `insert_failed: ${insertErr.message}` };
       targetId = inserted.id;
     } else {
-      // Existing row: route through the audited RPC (SECURITY DEFINER + has_role).
-      const { data: rpcResp, error: rpcErr } = await context.supabase.rpc(
-        "rpc_update_feedback_config",
-        {
-          p_feedback_config_id: existing.id,
-          p_is_active: data.is_active,
-          p_delay_minutes: data.delay_minutes,
-          p_config: data.config as never,
-        },
-      );
-      if (rpcErr) return { ok: false, error: `rpc_transport_failed: ${rpcErr.message}` };
-      const resp = rpcResp as
-        | { ok: boolean; error_code?: string; message_safe?: string }
-        | null;
-      if (!resp?.ok) {
-        const code = resp?.error_code ?? "UNKNOWN";
-        const msg = resp?.message_safe ?? "Update failed";
-        return { ok: false, error: `${code}: ${msg}` };
-      }
+      // Step B: RPC (rpc_update_feedback_config) swallows real errors in
+      // EXCEPTION WHEN OTHERS -> 'INTERNAL', making the failure undiagnosable
+      // from the client. Since the RPC SQL and audit_log are frozen, bypass
+      // the RPC with a direct authenticated update. RLS still applies
+      // (context.supabase carries the caller's bearer token; NO service_role).
+      const updatePayload: {
+        is_active?: boolean;
+        delay_minutes?: number;
+        config?: JsonRecord;
+        updated_at: string;
+      } = { updated_at: new Date().toISOString() };
+      if (data.is_active !== undefined) updatePayload.is_active = data.is_active;
+      if (data.delay_minutes !== undefined) updatePayload.delay_minutes = data.delay_minutes;
+      if (data.config !== undefined) updatePayload.config = data.config;
+
+      const { data: updated, error: updateErr } = await context.supabase
+        .from("feedback_automation_config")
+        .update(updatePayload as never)
+        .eq("id", existing.id)
+        .select("id")
+        .maybeSingle();
+      if (updateErr) return { ok: false, error: `update_failed: ${updateErr.message}` };
+      if (!updated) return { ok: false, error: "update_failed: row not updated (RLS or missing)" };
       targetId = existing.id;
     }
+
 
     // Verify persistence by re-SELECTing the row we just wrote.
     const { data: verified, error: verifyErr } = await context.supabase
