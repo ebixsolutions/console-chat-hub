@@ -197,7 +197,144 @@ export const scheduleFeedbackRequestFn = createServerFn({ method: "POST" })
     return { ok: true, data: { created, deduped } };
   });
 
+// ---------------------------------------------------------------------------
+// P4-FB-A0: Record Feedback Response
+// Protected server function. Validates input, ensures the target
+// feedback_request is 'pending', then UPDATEs it to 'responded' with the
+// caller-supplied rating + optional feedback_text. RLS enforced (admin-only
+// UPDATE per current policies). No service_role.
+// ---------------------------------------------------------------------------
+
+export type RecordFeedbackResponseSuccess = {
+  ok: true;
+  data: {
+    id: string;
+    conversation_id: string;
+    rating: number | null;
+    feedback_text: string | null;
+    responded_at: string | null;
+    status: string | null;
+    updated_at: string;
+  };
+};
+
+export type RecordFeedbackResponseFailure = {
+  ok: false;
+  error_type:
+    | "validation_failed"
+    | "select_failed"
+    | "request_not_found"
+    | "request_not_pending"
+    | "update_failed";
+  message: string;
+};
+
+export type RecordFeedbackResponseResult =
+  | RecordFeedbackResponseSuccess
+  | RecordFeedbackResponseFailure;
+
+const recordInputSchema = z.object({
+  feedback_request_id: z.string().uuid(),
+  rating: z.number().int().min(1).max(5),
+  feedback_text: z.string().optional(),
+});
+
+export const recordFeedbackResponseFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => recordInputSchema.parse(input))
+  .handler(async ({ data, context }): Promise<RecordFeedbackResponseResult> => {
+    const { feedback_request_id, rating } = data;
+
+    // Normalize feedback_text: undefined/null/empty-after-trim → null,
+    // otherwise trimmed and capped at 2000 chars.
+    let feedbackText: string | null = null;
+    if (typeof data.feedback_text === "string") {
+      const trimmed = data.feedback_text.trim();
+      if (trimmed.length > 0) {
+        if (trimmed.length > 2000) {
+          return {
+            ok: false,
+            error_type: "validation_failed",
+            message: "feedback_text exceeds 2000 characters",
+          };
+        }
+        feedbackText = trimmed;
+      }
+    }
+
+    // 1. SELECT existing row
+    const { data: existing, error: selErr } = await context.supabase
+      .from("feedback_request")
+      .select("id, status")
+      .eq("id", feedback_request_id)
+      .maybeSingle();
+    if (selErr) {
+      return {
+        ok: false,
+        error_type: "select_failed",
+        message: selErr.message,
+      };
+    }
+    if (!existing) {
+      return {
+        ok: false,
+        error_type: "request_not_found",
+        message: "No feedback request found with this ID",
+      };
+    }
+    if (existing.status !== "pending") {
+      return {
+        ok: false,
+        error_type: "request_not_pending",
+        message: `Current status: ${existing.status}`,
+      };
+    }
+
+    // 2. UPDATE
+    const nowIso = new Date().toISOString();
+    const { data: updated, error: updErr } = await context.supabase
+      .from("feedback_request")
+      .update({
+        rating,
+        feedback_text: feedbackText,
+        responded_at: nowIso,
+        status: "responded",
+        updated_at: nowIso,
+      })
+      .eq("id", feedback_request_id)
+      .select(
+        "id, conversation_id, rating, feedback_text, responded_at, status, updated_at",
+      )
+      .single();
+    if (updErr || !updated) {
+      return {
+        ok: false,
+        error_type: "update_failed",
+        message: updErr?.message ?? "Update returned no row",
+      };
+    }
+
+    return {
+      ok: true,
+      data: {
+        id: updated.id,
+        conversation_id: updated.conversation_id,
+        rating: updated.rating,
+        feedback_text: updated.feedback_text,
+        responded_at: updated.responded_at,
+        status: updated.status,
+        updated_at: updated.updated_at,
+      },
+    };
+  });
+
 export const feedbackService = {
   scheduleFeedbackRequest: (conversation_id: string) =>
     scheduleFeedbackRequestFn({ data: { conversation_id } }),
+  recordFeedbackResponse: (params: {
+    feedback_request_id: string;
+    rating: number;
+    feedback_text?: string;
+  }) => recordFeedbackResponseFn({ data: params }),
 };
+
