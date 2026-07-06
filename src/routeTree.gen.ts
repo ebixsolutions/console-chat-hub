@@ -30,6 +30,7 @@ import { Route as Char91DotmcpChar93InvokeToolToolRouteImport } from './routes/[
 import { Route as DotlovableOauthConsentRouteImport } from './routes/[.]lovable.oauth.consent'
 import { Route as AuthenticatedConsoleConversationsIndexRouteImport } from './routes/_authenticated/console.conversations.index'
 import { Route as AuthenticatedConsoleSettingsLlmRuntimeRouteImport } from './routes/_authenticated/console.settings.llm-runtime'
+import { Route as AuthenticatedConsoleSettingsFeedbackTestRouteImport } from './routes/_authenticated/console.settings.feedback-test'
 import { Route as AuthenticatedConsoleConversationsIdRouteImport } from './routes/_authenticated/console.conversations.$id'
 
 const McpRoute = McpRouteImport.update({
@@ -151,6 +152,12 @@ const AuthenticatedConsoleSettingsLlmRuntimeRoute =
     path: '/settings/llm-runtime',
     getParentRoute: () => AuthenticatedConsoleRoute,
   } as any)
+const AuthenticatedConsoleSettingsFeedbackTestRoute =
+  AuthenticatedConsoleSettingsFeedbackTestRouteImport.update({
+    id: '/settings/feedback-test',
+    path: '/settings/feedback-test',
+    getParentRoute: () => AuthenticatedConsoleRoute,
+  } as any)
 const AuthenticatedConsoleConversationsIdRoute =
   AuthenticatedConsoleConversationsIdRouteImport.update({
     id: '/conversations/$id',
@@ -178,6 +185,7 @@ export interface FileRoutesByFullPath {
   '/console/widget-preview': typeof AuthenticatedConsoleWidgetPreviewRoute
   '/console/': typeof AuthenticatedConsoleIndexRoute
   '/console/conversations/$id': typeof AuthenticatedConsoleConversationsIdRoute
+  '/console/settings/feedback-test': typeof AuthenticatedConsoleSettingsFeedbackTestRoute
   '/console/settings/llm-runtime': typeof AuthenticatedConsoleSettingsLlmRuntimeRoute
   '/console/conversations/': typeof AuthenticatedConsoleConversationsIndexRoute
 }
@@ -200,6 +208,7 @@ export interface FileRoutesByTo {
   '/console/widget-preview': typeof AuthenticatedConsoleWidgetPreviewRoute
   '/console': typeof AuthenticatedConsoleIndexRoute
   '/console/conversations/$id': typeof AuthenticatedConsoleConversationsIdRoute
+  '/console/settings/feedback-test': typeof AuthenticatedConsoleSettingsFeedbackTestRoute
   '/console/settings/llm-runtime': typeof AuthenticatedConsoleSettingsLlmRuntimeRoute
   '/console/conversations': typeof AuthenticatedConsoleConversationsIndexRoute
 }
@@ -225,6 +234,7 @@ export interface FileRoutesById {
   '/_authenticated/console/widget-preview': typeof AuthenticatedConsoleWidgetPreviewRoute
   '/_authenticated/console/': typeof AuthenticatedConsoleIndexRoute
   '/_authenticated/console/conversations/$id': typeof AuthenticatedConsoleConversationsIdRoute
+  '/_authenticated/console/settings/feedback-test': typeof AuthenticatedConsoleSettingsFeedbackTestRoute
   '/_authenticated/console/settings/llm-runtime': typeof AuthenticatedConsoleSettingsLlmRuntimeRoute
   '/_authenticated/console/conversations/': typeof AuthenticatedConsoleConversationsIndexRoute
 }
@@ -250,6 +260,7 @@ export interface FileRouteTypes {
     | '/console/widget-preview'
     | '/console/'
     | '/console/conversations/$id'
+    | '/console/settings/feedback-test'
     | '/console/settings/llm-runtime'
     | '/console/conversations/'
   fileRoutesByTo: FileRoutesByTo
@@ -272,6 +283,7 @@ export interface FileRouteTypes {
     | '/console/widget-preview'
     | '/console'
     | '/console/conversations/$id'
+    | '/console/settings/feedback-test'
     | '/console/settings/llm-runtime'
     | '/console/conversations'
   id:
@@ -296,6 +308,7 @@ export interface FileRouteTypes {
     | '/_authenticated/console/widget-preview'
     | '/_authenticated/console/'
     | '/_authenticated/console/conversations/$id'
+    | '/_authenticated/console/settings/feedback-test'
     | '/_authenticated/console/settings/llm-runtime'
     | '/_authenticated/console/conversations/'
   fileRoutesById: FileRoutesById
@@ -460,6 +473,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedConsoleSettingsLlmRuntimeRouteImport
       parentRoute: typeof AuthenticatedConsoleRoute
     }
+    '/_authenticated/console/settings/feedback-test': {
+      id: '/_authenticated/console/settings/feedback-test'
+      path: '/settings/feedback-test'
+      fullPath: '/console/settings/feedback-test'
+      preLoaderRoute: typeof AuthenticatedConsoleSettingsFeedbackTestRouteImport
+      parentRoute: typeof AuthenticatedConsoleRoute
+    }
     '/_authenticated/console/conversations/$id': {
       id: '/_authenticated/console/conversations/$id'
       path: '/conversations/$id'
@@ -482,6 +502,7 @@ interface AuthenticatedConsoleRouteChildren {
   AuthenticatedConsoleWidgetPreviewRoute: typeof AuthenticatedConsoleWidgetPreviewRoute
   AuthenticatedConsoleIndexRoute: typeof AuthenticatedConsoleIndexRoute
   AuthenticatedConsoleConversationsIdRoute: typeof AuthenticatedConsoleConversationsIdRoute
+  AuthenticatedConsoleSettingsFeedbackTestRoute: typeof AuthenticatedConsoleSettingsFeedbackTestRoute
   AuthenticatedConsoleSettingsLlmRuntimeRoute: typeof AuthenticatedConsoleSettingsLlmRuntimeRoute
   AuthenticatedConsoleConversationsIndexRoute: typeof AuthenticatedConsoleConversationsIndexRoute
 }
@@ -504,6 +525,8 @@ const AuthenticatedConsoleRouteChildren: AuthenticatedConsoleRouteChildren = {
   AuthenticatedConsoleIndexRoute: AuthenticatedConsoleIndexRoute,
   AuthenticatedConsoleConversationsIdRoute:
     AuthenticatedConsoleConversationsIdRoute,
+  AuthenticatedConsoleSettingsFeedbackTestRoute:
+    AuthenticatedConsoleSettingsFeedbackTestRoute,
   AuthenticatedConsoleSettingsLlmRuntimeRoute:
     AuthenticatedConsoleSettingsLlmRuntimeRoute,
   AuthenticatedConsoleConversationsIndexRoute:
