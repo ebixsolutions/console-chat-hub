@@ -228,7 +228,6 @@ export const recordFeedbackResponseFn = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => input as z.infer<typeof recordInputSchema>)
   .handler(async ({ data, context }): Promise<RecordFeedbackResponseResult> => {
     // P4-FB-A0.1: Validate inside handler for structured error responses.
-    // inputValidator is permissive — zod validation happens here.
     const parsed = recordInputSchema.safeParse(data);
     if (!parsed.success) {
       const firstIssue = parsed.error.issues[0];
@@ -241,8 +240,7 @@ export const recordFeedbackResponseFn = createServerFn({ method: "POST" })
 
     const { feedback_request_id, rating } = parsed.data;
 
-    // Normalize feedback_text: undefined/null/empty-after-trim → null,
-    // otherwise trimmed and capped at 2000 chars.
+    // Normalize feedback_text
     let feedbackText: string | null = null;
     if (typeof parsed.data.feedback_text === "string") {
       const trimmed = parsed.data.feedback_text.trim();
@@ -265,25 +263,13 @@ export const recordFeedbackResponseFn = createServerFn({ method: "POST" })
       .eq("id", feedback_request_id)
       .maybeSingle();
     if (selErr) {
-      return {
-        ok: false,
-        error_type: "select_failed",
-        message: selErr.message,
-      };
+      return { ok: false, error_type: "select_failed", message: selErr.message };
     }
     if (!existing) {
-      return {
-        ok: false,
-        error_type: "request_not_found",
-        message: "No feedback request found with this ID",
-      };
+      return { ok: false, error_type: "request_not_found", message: "No feedback request found with this ID" };
     }
     if (existing.status !== "pending") {
-      return {
-        ok: false,
-        error_type: "request_not_pending",
-        message: `Current status: ${existing.status}`,
-      };
+      return { ok: false, error_type: "request_not_pending", message: `Current status: ${existing.status}` };
     }
 
     // 2. UPDATE
@@ -301,11 +287,7 @@ export const recordFeedbackResponseFn = createServerFn({ method: "POST" })
       .select("id, conversation_id, rating, feedback_text, responded_at, status, updated_at")
       .single();
     if (updErr || !updated) {
-      return {
-        ok: false,
-        error_type: "update_failed",
-        message: updErr?.message ?? "Update returned no row",
-      };
+      return { ok: false, error_type: "update_failed", message: updErr?.message ?? "Update returned no row" };
     }
 
     return {
@@ -322,8 +304,171 @@ export const recordFeedbackResponseFn = createServerFn({ method: "POST" })
     };
   });
 
+// ---------------------------------------------------------------------------
+// P5-S3a: Generate Feedback Token (Admin Manual Test)
+// Generates a 256-bit crypto-random token, stores SHA-256 hash + expiry on
+// feedback_request. Returns raw token only inside a feedback_link URL, once.
+// Raw token is NEVER stored in DB, NEVER logged.
+//
+// SECURITY: This function relies on existing feedback_request UPDATE RLS.
+// Only admin should be able to update token columns. Non-admin direct calls
+// must fail at RLS/update layer. Do not introduce new role hook or profile
+// lookup — RLS enforcement is sufficient.
+// ---------------------------------------------------------------------------
+
+async function sha256Hex(input: string): Promise<string> {
+  const buf = new TextEncoder().encode(input);
+  const digest = await crypto.subtle.digest("SHA-256", buf);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function generateRawToken(): string {
+  const bytes = new Uint8Array(32); // 256 bits
+  crypto.getRandomValues(bytes);
+  const binary = Array.from(bytes, (b) => String.fromCharCode(b)).join("");
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+const TOKEN_EXPIRY_DAYS = 7;
+
+// S3a test-only base URL. Must be replaced by configured public app base URL
+// before S1/S2/P5 production deployment.
+const FEEDBACK_BASE_URL = "https://console-chat-hub.lovable.app";
+
+export type GenerateTokenSuccess = {
+  ok: true;
+  data: {
+    feedback_request_id: string;
+    feedback_link: string;
+    token_expires_at: string;
+    previous_token_invalidated: boolean;
+  };
+};
+
+export type GenerateTokenFailure = {
+  ok: false;
+  error_type:
+    | "validation_failed"
+    | "request_not_found"
+    | "request_not_pending"
+    | "token_already_active"
+    | "token_already_used"
+    | "token_update_failed"
+    | "internal_error";
+  message: string;
+};
+
+export type GenerateTokenResult = GenerateTokenSuccess | GenerateTokenFailure;
+
+const generateTokenInput = z.object({
+  feedback_request_id: z.string().uuid(),
+  force_regenerate: z.boolean().optional(),
+});
+
+export const generateFeedbackTokenFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => input as z.infer<typeof generateTokenInput>)
+  .handler(async ({ data, context }): Promise<GenerateTokenResult> => {
+    // Validate inside handler for structured errors
+    const parsed = generateTokenInput.safeParse(data);
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0];
+      return {
+        ok: false,
+        error_type: "validation_failed",
+        message: issue ? `${issue.path.join(".")}: ${issue.message}` : "Invalid input",
+      };
+    }
+
+    const { feedback_request_id, force_regenerate } = parsed.data;
+
+    // 1. SELECT existing row
+    const { data: row, error: selErr } = await context.supabase
+      .from("feedback_request")
+      .select("id, status, response_token_hash, token_expires_at, token_used_at")
+      .eq("id", feedback_request_id)
+      .maybeSingle();
+
+    if (selErr) {
+      return { ok: false, error_type: "internal_error", message: selErr.message };
+    }
+    if (!row) {
+      return { ok: false, error_type: "request_not_found", message: "No feedback request found with this ID" };
+    }
+    if (row.status !== "pending") {
+      return { ok: false, error_type: "request_not_pending", message: `Current status: ${row.status}` };
+    }
+    if (row.token_used_at) {
+      return { ok: false, error_type: "token_already_used", message: "Token was already used for a response" };
+    }
+
+    // 2. Check for active token
+    const hasActiveToken =
+      row.response_token_hash && row.token_expires_at && new Date(row.token_expires_at) > new Date();
+
+    if (hasActiveToken && !force_regenerate) {
+      return {
+        ok: false,
+        error_type: "token_already_active",
+        message: `Active token exists (expires ${row.token_expires_at}). Use force_regenerate to invalidate and create new token.`,
+      };
+    }
+
+    const previousTokenInvalidated = !!hasActiveToken && !!force_regenerate;
+
+    // 3. Generate token — SECURITY: rawToken must not be logged or stored
+    const rawToken = generateRawToken();
+    const tokenHash = await sha256Hex(rawToken);
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
+
+    // 4. UPDATE — guarded: re-check status + token_used_at to prevent race condition
+    // Store hash only, never raw token
+    const { data: updatedRow, error: updErr } = await context.supabase
+      .from("feedback_request")
+      .update({
+        response_token_hash: tokenHash,
+        token_created_at: now.toISOString(),
+        token_expires_at: expiresAt.toISOString(),
+        token_used_at: null,
+        updated_at: now.toISOString(),
+      } as never)
+      .eq("id", feedback_request_id)
+      .eq("status", "pending")
+      .is("token_used_at", null)
+      .select("id")
+      .maybeSingle();
+
+    if (updErr) {
+      return { ok: false, error_type: "token_update_failed", message: updErr.message };
+    }
+    if (!updatedRow) {
+      return { ok: false, error_type: "token_update_failed", message: "Token update failed or request state changed" };
+    }
+
+    // 5. Construct feedback link with raw token
+    // SECURITY: rawToken leaves server only inside this response, once
+    // S3a test-only. Must be replaced by configured public app base URL
+    // before S1/S2/P5 production.
+    const feedbackLink = `${FEEDBACK_BASE_URL}/feedback?token=${encodeURIComponent(rawToken)}`;
+
+    return {
+      ok: true,
+      data: {
+        feedback_request_id,
+        feedback_link: feedbackLink,
+        token_expires_at: expiresAt.toISOString(),
+        previous_token_invalidated: previousTokenInvalidated,
+      },
+    };
+  });
+
 export const feedbackService = {
   scheduleFeedbackRequest: (conversation_id: string) => scheduleFeedbackRequestFn({ data: { conversation_id } }),
   recordFeedbackResponse: (params: { feedback_request_id: string; rating: number; feedback_text?: string }) =>
     recordFeedbackResponseFn({ data: params }),
+  generateFeedbackToken: (params: { feedback_request_id: string; force_regenerate?: boolean }) =>
+    generateFeedbackTokenFn({ data: params }),
 };
