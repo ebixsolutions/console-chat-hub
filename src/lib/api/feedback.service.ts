@@ -28,10 +28,7 @@ export type ScheduleFeedbackSuccess = {
 
 export type ScheduleFeedbackFailure = {
   ok: false;
-  error_type:
-    | "config_read_failed"
-    | "invalid_feedback_config"
-    | "partial_or_full_scheduling_failure";
+  error_type: "config_read_failed" | "invalid_feedback_config" | "partial_or_full_scheduling_failure";
   message: string;
   data?: {
     created: string[];
@@ -40,9 +37,7 @@ export type ScheduleFeedbackFailure = {
   };
 };
 
-export type ScheduleFeedbackResult =
-  | ScheduleFeedbackSuccess
-  | ScheduleFeedbackFailure;
+export type ScheduleFeedbackResult = ScheduleFeedbackSuccess | ScheduleFeedbackFailure;
 
 // Internal helper — replicates config.service.ts getFeedbackConfigFn query
 // logic without cross-calling it (per spec §5.2).
@@ -83,11 +78,7 @@ export const scheduleFeedbackRequestFn = createServerFn({ method: "POST" })
     const row = cfg.data;
 
     // 2. Config not active / wrong trigger → normal skip
-    if (
-      !row ||
-      !row.is_active ||
-      row.trigger_event !== "conversation_resolved"
-    ) {
+    if (!row || !row.is_active || row.trigger_event !== "conversation_resolved") {
       return {
         ok: true,
         data: { created: [], skipped_reason: "not_active" },
@@ -113,13 +104,8 @@ export const scheduleFeedbackRequestFn = createServerFn({ method: "POST" })
 
     // 4. Validate channels
     const channels = channelsRaw.map((c) => String(c));
-    const scheduledAt = new Date(
-      Date.now() + (row.delay_minutes ?? 1440) * 60_000,
-    ).toISOString();
-    const ratingType =
-      typeof cfgJson.rating_type === "string"
-        ? (cfgJson.rating_type as string)
-        : "stars_1_5";
+    const scheduledAt = new Date(Date.now() + (row.delay_minutes ?? 1440) * 60_000).toISOString();
+    const ratingType = typeof cfgJson.rating_type === "string" ? (cfgJson.rating_type as string) : "stars_1_5";
 
     const created: string[] = [];
     const deduped: string[] = [];
@@ -197,7 +183,147 @@ export const scheduleFeedbackRequestFn = createServerFn({ method: "POST" })
     return { ok: true, data: { created, deduped } };
   });
 
+// ---------------------------------------------------------------------------
+// P4-FB-A0: Record Feedback Response
+// Protected server function. Validates input, ensures the target
+// feedback_request is 'pending', then UPDATEs it to 'responded' with the
+// caller-supplied rating + optional feedback_text. RLS enforced (admin-only
+// UPDATE per current policies). No service_role.
+//
+// P4-FB-A0.1 fix: All validation is done inside the handler to guarantee
+// structured { ok:false, error_type:"validation_failed", message } responses.
+// The inputValidator is permissive (accepts unknown) so zod never throws
+// before the handler runs.
+// ---------------------------------------------------------------------------
+
+export type RecordFeedbackResponseSuccess = {
+  ok: true;
+  data: {
+    id: string;
+    conversation_id: string;
+    rating: number | null;
+    feedback_text: string | null;
+    responded_at: string | null;
+    status: string | null;
+    updated_at: string;
+  };
+};
+
+export type RecordFeedbackResponseFailure = {
+  ok: false;
+  error_type: "validation_failed" | "select_failed" | "request_not_found" | "request_not_pending" | "update_failed";
+  message: string;
+};
+
+export type RecordFeedbackResponseResult = RecordFeedbackResponseSuccess | RecordFeedbackResponseFailure;
+
+const recordInputSchema = z.object({
+  feedback_request_id: z.string().uuid(),
+  rating: z.number().int().min(1).max(5),
+  feedback_text: z.string().optional(),
+});
+
+export const recordFeedbackResponseFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => input as z.infer<typeof recordInputSchema>)
+  .handler(async ({ data, context }): Promise<RecordFeedbackResponseResult> => {
+    // P4-FB-A0.1: Validate inside handler for structured error responses.
+    // inputValidator is permissive — zod validation happens here.
+    const parsed = recordInputSchema.safeParse(data);
+    if (!parsed.success) {
+      const firstIssue = parsed.error.issues[0];
+      return {
+        ok: false,
+        error_type: "validation_failed",
+        message: firstIssue ? `${firstIssue.path.join(".")}: ${firstIssue.message}` : "Invalid input",
+      };
+    }
+
+    const { feedback_request_id, rating } = parsed.data;
+
+    // Normalize feedback_text: undefined/null/empty-after-trim → null,
+    // otherwise trimmed and capped at 2000 chars.
+    let feedbackText: string | null = null;
+    if (typeof parsed.data.feedback_text === "string") {
+      const trimmed = parsed.data.feedback_text.trim();
+      if (trimmed.length > 0) {
+        if (trimmed.length > 2000) {
+          return {
+            ok: false,
+            error_type: "validation_failed",
+            message: "feedback_text exceeds 2000 characters",
+          };
+        }
+        feedbackText = trimmed;
+      }
+    }
+
+    // 1. SELECT existing row
+    const { data: existing, error: selErr } = await context.supabase
+      .from("feedback_request")
+      .select("id, status")
+      .eq("id", feedback_request_id)
+      .maybeSingle();
+    if (selErr) {
+      return {
+        ok: false,
+        error_type: "select_failed",
+        message: selErr.message,
+      };
+    }
+    if (!existing) {
+      return {
+        ok: false,
+        error_type: "request_not_found",
+        message: "No feedback request found with this ID",
+      };
+    }
+    if (existing.status !== "pending") {
+      return {
+        ok: false,
+        error_type: "request_not_pending",
+        message: `Current status: ${existing.status}`,
+      };
+    }
+
+    // 2. UPDATE
+    const nowIso = new Date().toISOString();
+    const { data: updated, error: updErr } = await context.supabase
+      .from("feedback_request")
+      .update({
+        rating,
+        feedback_text: feedbackText,
+        responded_at: nowIso,
+        status: "responded",
+        updated_at: nowIso,
+      })
+      .eq("id", feedback_request_id)
+      .select("id, conversation_id, rating, feedback_text, responded_at, status, updated_at")
+      .single();
+    if (updErr || !updated) {
+      return {
+        ok: false,
+        error_type: "update_failed",
+        message: updErr?.message ?? "Update returned no row",
+      };
+    }
+
+    return {
+      ok: true,
+      data: {
+        id: updated.id,
+        conversation_id: updated.conversation_id,
+        rating: updated.rating,
+        feedback_text: updated.feedback_text,
+        responded_at: updated.responded_at,
+        status: updated.status,
+        updated_at: updated.updated_at,
+      },
+    };
+  });
+
 export const feedbackService = {
-  scheduleFeedbackRequest: (conversation_id: string) =>
-    scheduleFeedbackRequestFn({ data: { conversation_id } }),
+  scheduleFeedbackRequest: (conversation_id: string) => scheduleFeedbackRequestFn({ data: { conversation_id } }),
+  recordFeedbackResponse: (params: { feedback_request_id: string; rating: number; feedback_text?: string }) =>
+    recordFeedbackResponseFn({ data: params }),
 };
