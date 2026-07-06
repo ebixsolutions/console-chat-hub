@@ -6,7 +6,11 @@
 
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import type { Database } from "@/integrations/supabase/types";
+
+type AuthedSupabase = SupabaseClient<Database>;
 
 // Allowed P3-FB channels. Anything outside this list is reported as a
 // per-channel failure (never silently skipped).
