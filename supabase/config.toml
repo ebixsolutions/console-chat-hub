@@ -17,3 +17,6 @@ verify_jwt = false
 
 [functions.health-check]
 verify_jwt = false
+
+[functions.submit-feedback-response]
+verify_jwt = false
