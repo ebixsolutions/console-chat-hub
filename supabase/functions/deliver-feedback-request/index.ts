@@ -83,10 +83,8 @@ function buildEmailHtml(feedbackLink: string): string {
 
 // ── Main handler ────────────────────────────────────────────────────────────
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS")
-    return new Response(null, { headers: corsHeaders });
-  if (req.method !== "POST")
-    return json({ ok: false, error_type: "method_not_allowed", message: "POST only" }, 405);
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  if (req.method !== "POST") return json({ ok: false, error_type: "method_not_allowed", message: "POST only" }, 405);
 
   try {
     // ── ENV check ───────────────────────────────────────────────────────
@@ -119,7 +117,10 @@ Deno.serve(async (req) => {
     const supabaseUser = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
       global: { headers: { Authorization: authHeader } },
     });
-    const { data: { user }, error: userErr } = await supabaseUser.auth.getUser();
+    const {
+      data: { user },
+      error: userErr,
+    } = await supabaseUser.auth.getUser();
     if (userErr || !user) {
       return json({ ok: false, error_type: "unauthorized", message: "Invalid or expired token" }, 401);
     }
@@ -163,7 +164,9 @@ Deno.serve(async (req) => {
     // ── Read feedback_request ───────────────────────────────────────────
     const { data: row, error: selErr } = await supabaseAdmin
       .from("feedback_request")
-      .select("id, status, channel, recipient_email, response_token_hash, token_expires_at, token_used_at, rating_type, sent_at")
+      .select(
+        "id, status, channel, recipient_email, response_token_hash, token_expires_at, token_used_at, rating_type, sent_at",
+      )
       .eq("id", feedback_request_id)
       .maybeSingle();
 
@@ -184,26 +187,26 @@ Deno.serve(async (req) => {
 
     // Validate recipient_email from DB
     const recipientEmail = (row.recipient_email ?? "").trim();
-    if (
-      recipientEmail.length === 0 ||
-      recipientEmail.length > MAX_EMAIL_LENGTH ||
-      !EMAIL_RE.test(recipientEmail)
-    ) {
-      return json({ ok: false, error_type: "invalid_recipient_email", message: "Recipient email is missing or invalid" }, 400);
+    if (recipientEmail.length === 0 || recipientEmail.length > MAX_EMAIL_LENGTH || !EMAIL_RE.test(recipientEmail)) {
+      return json(
+        { ok: false, error_type: "invalid_recipient_email", message: "Recipient email is missing or invalid" },
+        400,
+      );
     }
 
     // ── Resend guard ────────────────────────────────────────────────────
     const hasActiveToken =
-      row.response_token_hash &&
-      row.token_expires_at &&
-      new Date(row.token_expires_at) > new Date();
+      row.response_token_hash && row.token_expires_at && new Date(row.token_expires_at) > new Date();
 
     if (row.sent_at && hasActiveToken && !forceResend) {
-      return json({
-        ok: false,
-        error_type: "already_sent",
-        message: "Email already sent and token still active. Use force_resend=true to resend with new token.",
-      }, 400);
+      return json(
+        {
+          ok: false,
+          error_type: "already_sent",
+          message: "Email already sent and token still active. Use force_resend=true to resend with new token.",
+        },
+        400,
+      );
     }
 
     // Compute was_resend before mutations
@@ -257,12 +260,36 @@ Deno.serve(async (req) => {
     });
 
     if (!resendResponse.ok) {
-      console.error("[deliver-feedback-request] Resend API error:", resendResponse.status);
-      return json({
-        ok: false,
-        error_type: "email_send_failed",
-        message: "Email delivery failed. Token is stored; you may retry.",
-      }, 502);
+      const status = resendResponse.status;
+
+      const categoryMap: Record<number, string> = {
+        400: "resend_validation_error",
+        401: "resend_auth_error",
+        403: "resend_auth_error",
+        422: "resend_validation_error",
+        429: "resend_rate_limited",
+      };
+      const errorType = categoryMap[status] ?? "email_send_failed";
+
+      const hintMap: Record<string, string> = {
+        resend_auth_error: "Email provider authentication failed. Check API key configuration.",
+        resend_validation_error: "Email provider rejected the request. Check sender address and domain verification.",
+        resend_rate_limited: "Email provider rate limit reached. Wait and retry later.",
+        email_send_failed: "Email provider returned an unexpected error. Retry or check provider status.",
+      };
+      const resendHint = hintMap[errorType] ?? hintMap["email_send_failed"];
+
+      console.error("[deliver-feedback-request] Resend error:", status, errorType);
+
+      return json(
+        {
+          ok: false,
+          error_type: errorType,
+          message: "Email delivery failed. Token is stored; you may retry.",
+          resend_hint: resendHint,
+        },
+        status === 429 ? 429 : 502,
+      );
     }
 
     // ── Update sent_at (verify row updated) ─────────────────────────────
@@ -278,11 +305,14 @@ Deno.serve(async (req) => {
 
     if (sentErr || !sentRow) {
       console.error("[deliver-feedback-request] sent_at update failed");
-      return json({
-        ok: false,
-        error_type: "email_sent_but_tracking_failed",
-        message: "Email may have been sent, but delivery tracking failed. Manual review required.",
-      }, 500);
+      return json(
+        {
+          ok: false,
+          error_type: "email_sent_but_tracking_failed",
+          message: "Email may have been sent, but delivery tracking failed. Manual review required.",
+        },
+        500,
+      );
     }
 
     // ── Success ─────────────────────────────────────────────────────────
@@ -291,7 +321,6 @@ Deno.serve(async (req) => {
       delivered_to_masked: maskEmail(recipientEmail),
       was_resend: wasResend,
     });
-
   } catch {
     return json({ ok: false, error_type: "internal_error", message: "Unexpected error" }, 500);
   }
