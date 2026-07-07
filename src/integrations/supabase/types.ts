@@ -371,6 +371,7 @@ export type Database = {
           id: string
           rating: number | null
           rating_type: string
+          recipient_email: string | null
           request_type: string | null
           responded_at: string | null
           response_token_hash: string | null
@@ -392,6 +393,7 @@ export type Database = {
           id?: string
           rating?: number | null
           rating_type?: string
+          recipient_email?: string | null
           request_type?: string | null
           responded_at?: string | null
           response_token_hash?: string | null
@@ -413,6 +415,7 @@ export type Database = {
           id?: string
           rating?: number | null
           rating_type?: string
+          recipient_email?: string | null
           request_type?: string | null
           responded_at?: string | null
           response_token_hash?: string | null
