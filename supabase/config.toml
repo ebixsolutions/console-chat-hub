@@ -20,3 +20,6 @@ verify_jwt = false
 
 [functions.submit-feedback-response]
 verify_jwt = false
+
+[functions.deliver-feedback-request]
+verify_jwt = true
