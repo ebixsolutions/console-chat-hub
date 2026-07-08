@@ -188,6 +188,23 @@ Deno.serve(async (req) => {
     // Validate recipient_email from DB
     const recipientEmail = (row.recipient_email ?? "").trim();
     if (recipientEmail.length === 0 || recipientEmail.length > MAX_EMAIL_LENGTH || !EMAIL_RE.test(recipientEmail)) {
+      // H4: Persist missing/invalid recipient as delivery failure
+      const { error: recipientStatusErr } = await supabaseAdmin
+        .from("feedback_request")
+        .update({
+          delivery_status: "delivery_failed",
+          delivery_error_type: "missing_recipient_email",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", feedback_request_id);
+
+      if (recipientStatusErr) {
+        console.warn(
+          "[deliver-feedback-request] Failed to persist delivery_status for missing recipient:",
+          recipientStatusErr.message,
+        );
+      }
+
       return json(
         { ok: false, error_type: "invalid_recipient_email", message: "Recipient email is missing or invalid" },
         400,
@@ -227,6 +244,7 @@ Deno.serve(async (req) => {
         token_expires_at: expiresAt.toISOString(),
         token_used_at: null,
         updated_at: now.toISOString(),
+        delivery_status: "token_generated",
       })
       .eq("id", feedback_request_id)
       .eq("status", "pending")
@@ -281,6 +299,20 @@ Deno.serve(async (req) => {
 
       console.error("[deliver-feedback-request] Resend error:", status, errorType);
 
+      // H4: Persist delivery failure in DB for observability
+      const { error: deliveryStatusErr } = await supabaseAdmin
+        .from("feedback_request")
+        .update({
+          delivery_status: "delivery_failed",
+          delivery_error_type: errorType,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", feedback_request_id);
+
+      if (deliveryStatusErr) {
+        console.warn("[deliver-feedback-request] Failed to persist delivery_status:", deliveryStatusErr.message);
+      }
+
       return json(
         {
           ok: false,
@@ -298,6 +330,8 @@ Deno.serve(async (req) => {
       .update({
         sent_at: now.toISOString(),
         updated_at: now.toISOString(),
+        delivery_status: "sent",
+        delivery_error_type: null,
       })
       .eq("id", feedback_request_id)
       .select("id")
