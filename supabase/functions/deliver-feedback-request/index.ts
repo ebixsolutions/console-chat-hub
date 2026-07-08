@@ -91,18 +91,23 @@ Deno.serve(async (req) => {
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
     const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY");
     const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-    const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
+    const MAILGUN_API_KEY = Deno.env.get("MAILGUN_API_KEY");
+    const MAILGUN_DOMAIN = Deno.env.get("MAILGUN_DOMAIN");
+    const MAILGUN_REGION = (Deno.env.get("MAILGUN_REGION") || "us").toLowerCase();
     const SENDER_EMAIL = Deno.env.get("FEEDBACK_SENDER_EMAIL");
     const BASE_URL = Deno.env.get("FEEDBACK_BASE_URL");
+
+    // Mailgun region → API base URL (C5: explicit mapping)
+    const mailgunBaseUrl = MAILGUN_REGION === "eu" ? "https://api.eu.mailgun.net" : "https://api.mailgun.net";
 
     if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !SERVICE_ROLE_KEY) {
       return json({ ok: false, error_type: "internal_error", message: "Server configuration error" }, 500);
     }
-    if (!RESEND_API_KEY) {
-      return json({ ok: false, error_type: "resend_not_configured", message: "Email service not configured" }, 503);
+    if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
+      return json({ ok: false, error_type: "config_error", message: "Email service not configured" }, 500);
     }
     if (!SENDER_EMAIL) {
-      return json({ ok: false, error_type: "resend_not_configured", message: "Sender email not configured" }, 503);
+      return json({ ok: false, error_type: "config_error", message: "Sender email not configured" }, 500);
     }
     if (!BASE_URL || !BASE_URL.startsWith("https://")) {
       return json({ ok: false, error_type: "internal_error", message: "Feedback base URL not configured" }, 500);
@@ -194,6 +199,7 @@ Deno.serve(async (req) => {
         .update({
           delivery_status: "delivery_failed",
           delivery_error_type: "missing_recipient_email",
+          email_provider: "mailgun",
           updated_at: new Date().toISOString(),
         })
         .eq("id", feedback_request_id);
@@ -262,55 +268,66 @@ Deno.serve(async (req) => {
     const subject = buildEmailSubject(ratingType);
     const html = buildEmailHtml(feedbackLink);
 
-    // ── Send via Resend ─────────────────────────────────────────────────
-    const resendResponse = await fetch("https://api.resend.com/emails", {
+    // ── Send via Mailgun ────────────────────────────────────────────────
+    const mailgunUrl = `${mailgunBaseUrl}/v3/${MAILGUN_DOMAIN}/messages`;
+
+    const formData = new FormData();
+    formData.append("from", SENDER_EMAIL);
+    formData.append("to", recipientEmail);
+    formData.append("subject", subject);
+    formData.append("html", html);
+    formData.append("o:tag", "feedback-request");
+    formData.append("v:feedback_request_id", feedback_request_id);
+
+    // Mailgun Basic Auth: api:<key> (btoa confirmed available — used in generateRawToken line 15)
+    const mailgunAuth = btoa(`api:${MAILGUN_API_KEY}`);
+
+    const emailResponse = await fetch(mailgunUrl, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${RESEND_API_KEY}`,
-        "Content-Type": "application/json",
+        Authorization: `Basic ${mailgunAuth}`,
       },
-      body: JSON.stringify({
-        from: SENDER_EMAIL,
-        to: [recipientEmail],
-        subject,
-        html,
-      }),
+      body: formData,
     });
 
-    if (!resendResponse.ok) {
-      const status = resendResponse.status;
+    // ── Error handling ──────────────────────────────────────────────────
+    if (!emailResponse.ok) {
+      const httpStatus = emailResponse.status;
 
-      const categoryMap: Record<number, string> = {
-        400: "resend_validation_error",
-        401: "resend_auth_error",
-        403: "resend_auth_error",
-        422: "resend_validation_error",
-        429: "resend_rate_limited",
-      };
-      const errorType = categoryMap[status] ?? "email_send_failed";
+      // B4: Map both 400 and 422 to provider_validation_error
+      let errorType = "provider_send_failed";
+      if (httpStatus === 401 || httpStatus === 403) {
+        errorType = "provider_auth_error";
+      } else if (httpStatus === 400 || httpStatus === 422) {
+        errorType = "provider_validation_error";
+      } else if (httpStatus === 429) {
+        errorType = "provider_rate_limited";
+      }
 
+      // Provider-neutral hints (C2: resend_hint field name retained, content provider-neutral)
       const hintMap: Record<string, string> = {
-        resend_auth_error: "Email provider authentication failed. Check API key configuration.",
-        resend_validation_error: "Email provider rejected the request. Check sender address and domain verification.",
-        resend_rate_limited: "Email provider rate limit reached. Wait and retry later.",
-        email_send_failed: "Email provider returned an unexpected error. Retry or check provider status.",
+        provider_auth_error: "Email provider authentication failed. Check API key configuration.",
+        provider_validation_error: "Email provider rejected the request. Check sender address and domain verification.",
+        provider_rate_limited: "Email provider rate limit reached. Wait and retry later.",
+        provider_send_failed: "Email provider returned an unexpected error. Retry or check provider status.",
       };
-      const resendHint = hintMap[errorType] ?? hintMap["email_send_failed"];
+      const hint = hintMap[errorType] ?? hintMap["provider_send_failed"];
 
-      console.error("[deliver-feedback-request] Resend error:", status, errorType);
+      console.error("[deliver-feedback-request] Mailgun error:", httpStatus, errorType);
 
-      // H4: Persist delivery failure in DB for observability
-      const { error: deliveryStatusErr } = await supabaseAdmin
-        .from("feedback_request")
-        .update({
-          delivery_status: "delivery_failed",
-          delivery_error_type: errorType,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", feedback_request_id);
-
-      if (deliveryStatusErr) {
-        console.warn("[deliver-feedback-request] Failed to persist delivery_status:", deliveryStatusErr.message);
+      // H4: Persist delivery failure
+      try {
+        await supabaseAdmin
+          .from("feedback_request")
+          .update({
+            delivery_status: "delivery_failed",
+            delivery_error_type: errorType,
+            email_provider: "mailgun",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", feedback_request_id);
+      } catch (dbErr) {
+        console.warn("[deliver-feedback-request] Failed to persist delivery_status:", dbErr);
       }
 
       return json(
@@ -318,13 +335,24 @@ Deno.serve(async (req) => {
           ok: false,
           error_type: errorType,
           message: "Email delivery failed. Token is stored; you may retry.",
-          resend_hint: resendHint,
+          resend_hint: hint,
         },
-        status === 429 ? 429 : 502,
+        httpStatus === 429 ? 429 : 502,
       );
     }
 
-    // ── Update sent_at (verify row updated) ─────────────────────────────
+    // ── Success: parse Mailgun response safely (B3) ─────────────────────
+    let providerMessageId: string | null = null;
+    try {
+      const emailResult = await emailResponse.json();
+      // Mailgun success: { id: "<message-id@domain>", message: "Queued. Thank you." }
+      providerMessageId = typeof emailResult?.id === "string" ? emailResult.id : null;
+    } catch {
+      // Non-JSON response — still treat as success since HTTP was 2xx
+      console.warn("[deliver-feedback-request] Mailgun returned non-JSON success response");
+    }
+
+    // ── Update sent_at + provider tracking ──────────────────────────────
     const { data: sentRow, error: sentErr } = await supabaseAdmin
       .from("feedback_request")
       .update({
@@ -332,6 +360,8 @@ Deno.serve(async (req) => {
         updated_at: now.toISOString(),
         delivery_status: "sent",
         delivery_error_type: null,
+        email_provider: "mailgun",
+        email_provider_message_id: providerMessageId,
       })
       .eq("id", feedback_request_id)
       .select("id")
@@ -349,7 +379,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    // ── Success ─────────────────────────────────────────────────────────
+    // ── Success (P5-S5B contract — FROZEN) ──────────────────────────────
     return json({
       ok: true,
       delivered_to_masked: maskEmail(recipientEmail),
