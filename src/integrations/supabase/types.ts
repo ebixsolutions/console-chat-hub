@@ -367,6 +367,8 @@ export type Database = {
           config_version_id: string | null
           conversation_id: string
           created_at: string
+          delivery_error_type: string | null
+          delivery_status: string | null
           feedback_text: string | null
           id: string
           rating: number | null
@@ -389,6 +391,8 @@ export type Database = {
           config_version_id?: string | null
           conversation_id: string
           created_at?: string
+          delivery_error_type?: string | null
+          delivery_status?: string | null
           feedback_text?: string | null
           id?: string
           rating?: number | null
@@ -411,6 +415,8 @@ export type Database = {
           config_version_id?: string | null
           conversation_id?: string
           created_at?: string
+          delivery_error_type?: string | null
+          delivery_status?: string | null
           feedback_text?: string | null
           id?: string
           rating?: number | null
