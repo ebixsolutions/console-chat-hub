@@ -368,7 +368,10 @@ export type Database = {
           conversation_id: string
           created_at: string
           delivery_error_type: string | null
+          delivery_event_received_at: string | null
           delivery_status: string | null
+          email_provider: string | null
+          email_provider_message_id: string | null
           feedback_text: string | null
           id: string
           rating: number | null
@@ -392,7 +395,10 @@ export type Database = {
           conversation_id: string
           created_at?: string
           delivery_error_type?: string | null
+          delivery_event_received_at?: string | null
           delivery_status?: string | null
+          email_provider?: string | null
+          email_provider_message_id?: string | null
           feedback_text?: string | null
           id?: string
           rating?: number | null
@@ -416,7 +422,10 @@ export type Database = {
           conversation_id?: string
           created_at?: string
           delivery_error_type?: string | null
+          delivery_event_received_at?: string | null
           delivery_status?: string | null
+          email_provider?: string | null
+          email_provider_message_id?: string | null
           feedback_text?: string | null
           id?: string
           rating?: number | null
