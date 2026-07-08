@@ -13,13 +13,13 @@ import {
   type FeedbackAutomationConfig,
   type FeedbackRequest,
   type RatingType,
-} from '@/mock/aiChatbotSettingsMock';
-import { configService, type LiveChannelConfigRow, type LiveFeedbackConfigRow } from '@/lib/api/config.service';
+} from "@/mock/aiChatbotSettingsMock";
+import { configService, type LiveChannelConfigRow, type LiveFeedbackConfigRow } from "@/lib/api/config.service";
 
 // Result envelope that pages can use to render backend/fallback badges.
 export interface LoadResult<T> {
   data: T;
-  source: 'live' | 'mock_fallback';
+  source: "live" | "mock_fallback";
   error?: string;
 }
 
@@ -31,70 +31,68 @@ function deriveChannel(row: LiveChannelConfigRow): ChannelConfig {
   const rawType = row.channel_type;
   // Normalise legacy 'web_widget' → 'website_widget' for UI mapping.
   const type: ChannelType =
-    rawType === 'web_widget' || rawType === 'website_widget'
-      ? 'website_widget'
-      : (rawType as ChannelType);
+    rawType === "web_widget" || rawType === "website_widget" ? "website_widget" : (rawType as ChannelType);
 
   switch (type) {
-    case 'website_widget':
+    case "website_widget":
       return {
         id: row.id,
-        channel_type: 'website_widget',
-        channel_name: row.name || 'Website Live Chat',
-        status: 'mock_preview',
+        channel_type: "website_widget",
+        channel_name: row.name || "Website Live Chat",
+        status: "mock_preview",
         is_active: !!row.is_active,
-        phase: 'Phase 1 Mock',
+        phase: "Phase 1 Mock",
         recall_supported: true,
         recall_time_limit_minutes: 10,
-        notes: 'Mock mode — no real messages received',
+        notes: "Mock mode — no real messages received",
       };
-    case 'whatsapp':
+    case "whatsapp":
       return {
         id: row.id,
-        channel_type: 'whatsapp',
-        channel_name: row.name || 'WhatsApp Business',
-        status: 'coming_soon',
+        channel_type: "whatsapp",
+        channel_name: row.name || "WhatsApp Business",
+        status: "coming_soon",
         is_active: !!row.is_active,
-        phase: 'Phase 3',
+        phase: "Phase 3",
         recall_supported: false,
         recall_time_limit_minutes: 0,
-        notes: 'WhatsApp does not guarantee message recall',
+        notes: "WhatsApp does not guarantee message recall",
       };
-    case 'email':
+    case "email":
       return {
         id: row.id,
-        channel_type: 'email',
-        channel_name: row.name || 'Email Support',
-        status: 'coming_soon',
+        channel_type: "email",
+        channel_name: row.name || "Email Support",
+        status: "coming_soon",
         is_active: !!row.is_active,
-        phase: 'Phase 3',
+        phase: "Phase 3",
         recall_supported: false,
         recall_time_limit_minutes: 0,
-        notes: 'Email cannot be truly recalled — correction message only',
+        notes: "Email cannot be truly recalled — correction message only",
       };
-    case 'line':
+    case "line":
       return {
         id: row.id,
-        channel_type: 'line',
-        channel_name: row.name || 'LINE Official',
-        status: 'coming_soon',
+        channel_type: "line",
+        channel_name: row.name || "LINE Official",
+        status: "coming_soon",
         is_active: !!row.is_active,
-        phase: 'Phase 3',
+        phase: "Phase 3",
         recall_supported: false,
         recall_time_limit_minutes: 0,
-        notes: 'LINE does not guarantee message recall',
+        notes: "LINE does not guarantee message recall",
       };
     default:
       return {
         id: row.id,
-        channel_type: 'website_widget',
+        channel_type: "website_widget",
         channel_name: row.name || rawType,
-        status: 'coming_soon',
+        status: "coming_soon",
         is_active: !!row.is_active,
-        phase: 'Phase 3',
+        phase: "Phase 3",
         recall_supported: false,
         recall_time_limit_minutes: 0,
-        notes: '',
+        notes: "",
       };
   }
 }
@@ -115,27 +113,17 @@ function mapFeedbackRow(row: LiveFeedbackConfigRow): FeedbackAutomationConfig {
   return {
     is_enabled: !!row.is_active,
     send_after_days: daysFromMinutes(row.delay_minutes),
-    channels_enabled:
-      (cfg.channels_enabled as string[] | undefined) ??
-      mockFeedbackAutomationConfig.channels_enabled,
-    rating_type:
-      (cfg.rating_type as RatingType | undefined) ??
-      mockFeedbackAutomationConfig.rating_type,
+    channels_enabled: (cfg.channels_enabled as string[] | undefined) ?? mockFeedbackAutomationConfig.channels_enabled,
+    rating_type: (cfg.rating_type as RatingType | undefined) ?? mockFeedbackAutomationConfig.rating_type,
     message_template_zh:
-      (cfg.message_template_zh as string | undefined) ??
-      mockFeedbackAutomationConfig.message_template_zh,
+      (cfg.message_template_zh as string | undefined) ?? mockFeedbackAutomationConfig.message_template_zh,
     message_template_en:
-      (cfg.message_template_en as string | undefined) ??
-      mockFeedbackAutomationConfig.message_template_en,
+      (cfg.message_template_en as string | undefined) ?? mockFeedbackAutomationConfig.message_template_en,
     skip_if_negative_sentiment:
       (cfg.skip_if_negative_sentiment as boolean | undefined) ??
       mockFeedbackAutomationConfig.skip_if_negative_sentiment,
-    updated_by:
-      (cfg.updated_by as string | undefined) ??
-      mockFeedbackAutomationConfig.updated_by,
-    updated_at:
-      (cfg.updated_at as string | undefined) ??
-      mockFeedbackAutomationConfig.updated_at,
+    updated_by: (cfg.updated_by as string | undefined) ?? "System",
+    updated_at: (cfg.updated_at as string | undefined) ?? mockFeedbackAutomationConfig.updated_at,
   };
 }
 
@@ -153,17 +141,17 @@ export const aiChatbotSettingsService = {
     try {
       const res = await configService.listChannelConfigs();
       if (!res.ok || !res.data) {
-        return { data: mockChannelConfigs, source: 'mock_fallback', error: res.error };
+        return { data: mockChannelConfigs, source: "mock_fallback", error: res.error };
       }
       const derived = res.data.map(deriveChannel);
       // Ensure the 3 Phase-3 rows always appear even if backend only has web widget.
       const seenTypes = new Set(derived.map((c) => c.channel_type));
       const filler = mockChannelConfigs.filter((m) => !seenTypes.has(m.channel_type));
-      return { data: [...derived, ...filler], source: 'live' };
+      return { data: [...derived, ...filler], source: "live" };
     } catch (e) {
       return {
         data: mockChannelConfigs,
-        source: 'mock_fallback',
+        source: "mock_fallback",
         error: (e as Error).message,
       };
     }
@@ -180,19 +168,19 @@ export const aiChatbotSettingsService = {
       if (!res.ok) {
         return {
           data: mockFeedbackAutomationConfig,
-          source: 'mock_fallback',
+          source: "mock_fallback",
           error: res.error,
         };
       }
       if (!res.data) {
         // No row yet — surface defaults; first save will seed the row.
-        return { data: mockFeedbackAutomationConfig, source: 'live' };
+        return { data: mockFeedbackAutomationConfig, source: "live" };
       }
-      return { data: mapFeedbackRow(res.data), source: 'live' };
+      return { data: mapFeedbackRow(res.data), source: "live" };
     } catch (e) {
       return {
         data: mockFeedbackAutomationConfig,
-        source: 'mock_fallback',
+        source: "mock_fallback",
         error: (e as Error).message,
       };
     }
@@ -205,10 +193,7 @@ export const aiChatbotSettingsService = {
 
   async saveFeedbackAutomationConfig(
     config: FeedbackAutomationConfig,
-  ): Promise<
-    | { ok: true; data: FeedbackAutomationConfig }
-    | { ok: false; error: string }
-  > {
+  ): Promise<{ ok: true; data: FeedbackAutomationConfig } | { ok: false; error: string }> {
     const delayMinutes = config.send_after_days * 1440;
     const cfgJson: Record<string, unknown> = {
       channels_enabled: config.channels_enabled,
@@ -225,7 +210,7 @@ export const aiChatbotSettingsService = {
         delay_minutes: delayMinutes,
         config: cfgJson,
       });
-      if (!res.ok || !res.data) return { ok: false, error: res.error ?? 'Save failed' };
+      if (!res.ok || !res.data) return { ok: false, error: res.error ?? "Save failed" };
       return { ok: true, data: mapFeedbackRow(res.data as LiveFeedbackConfigRow) };
     } catch (e) {
       return { ok: false, error: (e as Error).message };
@@ -233,8 +218,4 @@ export const aiChatbotSettingsService = {
   },
 };
 
-export type {
-  ChannelConfig,
-  FeedbackAutomationConfig,
-  FeedbackRequest,
-} from '@/mock/aiChatbotSettingsMock';
+export type { ChannelConfig, FeedbackAutomationConfig, FeedbackRequest } from "@/mock/aiChatbotSettingsMock";
