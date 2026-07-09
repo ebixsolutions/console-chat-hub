@@ -83,10 +83,6 @@ Deno.serve(async (req) => {
       status: "sending",
     });
 
-    await supabase
-      .from("conversations")
-      .update({ ai_generating: true })
-      .eq("id", conversation_id);
 
     await supabase
       .from("visitor_session")
