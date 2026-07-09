@@ -285,14 +285,17 @@ async function legacyGenerateReply(conversation_id: string): Promise<Response> {
       console.error("[generate-reply] deterministic handoff insert error:", insertError);
     }
 
-    await supabaseAdmin
+    const { error: pendingUpdateErr } = await supabaseAdmin
       .from("conversations")
       .update({
-        ai_generating: false,
         status: "pending",
         updated_at: new Date().toISOString(),
       })
       .eq("id", conversation_id);
+
+    if (pendingUpdateErr) {
+      console.error("[generate-reply] CRITICAL: failed to mark conversation pending after handoff:", pendingUpdateErr.message, conversation_id);
+    }
 
     console.log("[generate-reply] deterministic handoff reply sent:", conversation_id, handoffLang);
     return new Response(JSON.stringify({ success: true }), {
