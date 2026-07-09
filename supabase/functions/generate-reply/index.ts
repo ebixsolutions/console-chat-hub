@@ -121,12 +121,15 @@ async function writeTraces(
 ): Promise<void> {
   try {
     await supabaseAdmin.from("upstream_call_log").insert({
-      upstream_service: "anthropic",
+      upstream_service: "llm",
       conversation_id: params.conversation_id,
       response_status: params.response_status,
       response_latency_ms: params.response_latency_ms,
       error_message: params.error_message,
-      request_payload: params.request_payload,
+      request_payload: {
+        ...params.request_payload,
+        provider: "anthropic",
+      },
     });
   } catch (e) {
     console.error("[generate-reply] upstream_call_log insert failed (non-blocking):", e);
