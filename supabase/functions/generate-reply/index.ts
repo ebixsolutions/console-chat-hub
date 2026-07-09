@@ -300,30 +300,81 @@ async function legacyGenerateReply(conversation_id: string): Promise<Response> {
     });
   }
 
-  const claudeResponse = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": anthropicKey,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 500,
-      system: `You are a professional and friendly customer service assistant. 
+  const requestPayload = {
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 500,
+    system: `You are a professional and friendly customer service assistant. 
 Answer customer questions clearly and concisely. 
 If you cannot answer a question confidently, acknowledge it honestly and offer to connect the customer with a human agent.
 Keep responses under 150 words.
 Respond in the same language and script the customer is using.
 When the customer explicitly requests a human agent, or when you transfer to a human agent, include a short safe handoff status message in the same language and script as the customer. The message must state that the conversation has been recorded and that a human agent will reply in this same chat after taking over. If the customer is using Traditional Chinese, use: "我們已將你的對話記錄，客服接手後會在此對話中回覆你。目前未啟用即時輪候時間顯示。" If the customer is using Simplified Chinese, use: "我们已将你的对话记录，客服接手后会在此对话中回复你。目前未启用实时排队位置和预计等待时间显示。" If the customer is using English, use: "We have recorded your conversation. A human agent will reply in this same chat after taking over. Real-time queue position and estimated wait time are not currently enabled." Do NOT invent estimated wait times, response-time promises, or queue positions.`,
-      messages: claudeMessages,
-    }),
-  });
+    messages: claudeMessages,
+  };
+
+  const requestTimestamp = Date.now();
+  let claudeResponse: Response | null = null;
+  let fetchThrew = false;
+  try {
+    claudeResponse = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": anthropicKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify(requestPayload),
+    });
+  } catch (e) {
+    fetchThrew = true;
+    console.error("[generate-reply] Anthropic fetch threw:", e);
+  }
+  const responseTimestamp = Date.now();
+  const responseLatencyMs = responseTimestamp - requestTimestamp;
+
+  const tracePayloadRedacted = {
+    model: requestPayload.model,
+    max_tokens: requestPayload.max_tokens,
+    system_prompt_ref: "[legacy_inline_cs_prompt_v1]",
+    message_count: claudeMessages.length,
+  };
+
+  if (fetchThrew || !claudeResponse) {
+    await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
+    await writeTraces(supabaseAdmin, {
+      conversation_id,
+      message_id: null,
+      user_message_raw: lastVisitorMsg,
+      response_status: null,
+      response_latency_ms: responseLatencyMs,
+      error_message: "api_exception",
+      request_payload: tracePayloadRedacted,
+      token_input: null,
+      token_output: null,
+      ai_reply_content: "",
+    });
+    return new Response(JSON.stringify({ error: "AI service error" }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
 
   if (!claudeResponse.ok) {
     const errText = await claudeResponse.text();
     console.error("[generate-reply] Claude API error:", claudeResponse.status, errText);
     await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
+    await writeTraces(supabaseAdmin, {
+      conversation_id,
+      message_id: null,
+      user_message_raw: lastVisitorMsg,
+      response_status: claudeResponse.status,
+      response_latency_ms: responseLatencyMs,
+      error_message: `api_error_${claudeResponse.status}`,
+      request_payload: tracePayloadRedacted,
+      token_input: null,
+      token_output: null,
+      ai_reply_content: "",
+    });
     return new Response(JSON.stringify({ error: "AI service error" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -332,9 +383,23 @@ When the customer explicitly requests a human agent, or when you transfer to a h
 
   const claudeData = await claudeResponse.json();
   const aiReplyContent = claudeData.content?.[0]?.text ?? "";
+  const tokenInput = claudeData.usage?.input_tokens ?? null;
+  const tokenOutput = claudeData.usage?.output_tokens ?? null;
 
   if (!aiReplyContent) {
     await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
+    await writeTraces(supabaseAdmin, {
+      conversation_id,
+      message_id: null,
+      user_message_raw: lastVisitorMsg,
+      response_status: claudeResponse.status,
+      response_latency_ms: responseLatencyMs,
+      error_message: "empty_response",
+      request_payload: tracePayloadRedacted,
+      token_input: tokenInput,
+      token_output: tokenOutput,
+      ai_reply_content: "",
+    });
     return new Response(JSON.stringify({ error: "Empty AI response" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -343,13 +408,17 @@ When the customer explicitly requests a human agent, or when you transfer to a h
 
   await supabaseAdmin.from("messages").delete().eq("conversation_id", conversation_id).eq("content", "__THINKING__");
 
-  const { error: insertError } = await supabaseAdmin.from("messages").insert({
-    conversation_id: conversation_id,
-    role: "assistant",
-    content: aiReplyContent,
-    status: "delivered",
-    is_recalled: false,
-  });
+  const { data: insertedMsg, error: insertError } = await supabaseAdmin
+    .from("messages")
+    .insert({
+      conversation_id: conversation_id,
+      role: "assistant",
+      content: aiReplyContent,
+      status: "delivered",
+      is_recalled: false,
+    })
+    .select("id")
+    .maybeSingle();
 
   if (insertError) {
     console.error("[generate-reply] insert error:", insertError);
@@ -362,6 +431,19 @@ When the customer explicitly requests a human agent, or when you transfer to a h
       updated_at: new Date().toISOString(),
     })
     .eq("id", conversation_id);
+
+  await writeTraces(supabaseAdmin, {
+    conversation_id,
+    message_id: insertedMsg?.id ?? null,
+    user_message_raw: lastVisitorMsg,
+    response_status: claudeResponse.status,
+    response_latency_ms: responseLatencyMs,
+    error_message: null,
+    request_payload: tracePayloadRedacted,
+    token_input: tokenInput,
+    token_output: tokenOutput,
+    ai_reply_content: aiReplyContent,
+  });
 
   console.log("[generate-reply] AI reply sent for conversation:", conversation_id);
   return new Response(JSON.stringify({ success: true }), {
