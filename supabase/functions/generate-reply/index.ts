@@ -222,7 +222,6 @@ async function legacyGenerateReply(conversation_id: string): Promise<Response> {
   }
 
   if (conversation.status === "resolved") {
-    await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
     return new Response(JSON.stringify({ success: true, skipped: "resolved" }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
@@ -232,7 +231,6 @@ async function legacyGenerateReply(conversation_id: string): Promise<Response> {
   // When status is 'pending' or 'transferred', a human agent is handling.
   // Do not call LLM. Clear ai_generating flag and return.
   if (conversation.status === "pending" || conversation.status === "transferred") {
-    await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
     console.log("[generate-reply] human-handling guard: skipping LLM for status:", conversation.status, conversation_id);
     return new Response(JSON.stringify({ success: true, skipped: "human_handling" }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -250,7 +248,6 @@ async function legacyGenerateReply(conversation_id: string): Promise<Response> {
     .limit(10);
 
   if (!messages || messages.length === 0) {
-    await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
     return new Response(JSON.stringify({ success: true, skipped: "no messages" }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
@@ -262,7 +259,6 @@ async function legacyGenerateReply(conversation_id: string): Promise<Response> {
   }));
 
   if (claudeMessages[claudeMessages.length - 1].role === "assistant") {
-    await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
     return new Response(JSON.stringify({ success: true, skipped: "last message is assistant" }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
@@ -308,7 +304,6 @@ async function legacyGenerateReply(conversation_id: string): Promise<Response> {
   const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
   if (!anthropicKey) {
     console.error("[generate-reply] ANTHROPIC_API_KEY not set");
-    await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
     return new Response(JSON.stringify({ error: "AI service not configured" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -355,7 +350,6 @@ When the customer explicitly requests a human agent, or when you transfer to a h
   };
 
   if (fetchThrew || !claudeResponse) {
-    await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
     await writeTraces(supabaseAdmin, {
       conversation_id,
       message_id: null,
@@ -377,7 +371,6 @@ When the customer explicitly requests a human agent, or when you transfer to a h
   if (!claudeResponse.ok) {
     const errText = await claudeResponse.text();
     console.error("[generate-reply] Claude API error:", claudeResponse.status, errText);
-    await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
     await writeTraces(supabaseAdmin, {
       conversation_id,
       message_id: null,
@@ -402,7 +395,6 @@ When the customer explicitly requests a human agent, or when you transfer to a h
   const tokenOutput = claudeData.usage?.output_tokens ?? null;
 
   if (!aiReplyContent) {
-    await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
     await writeTraces(supabaseAdmin, {
       conversation_id,
       message_id: null,
@@ -505,7 +497,6 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
   // Step 6 (early): Status Matrix Skeleton Guard — orchestration path ONLY.
   // L5b skeleton: only resolved/closed are refused. Full policy is L5e.
   if (conversation.status === "resolved" || conversation.status === "closed") {
-    await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
     return safeRefusal("CONV_RESOLVED_OR_CLOSED");
   }
 
@@ -514,7 +505,6 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
   // and skipped:"refused" which are semantically incorrect for human_handling.
   // Human-handling guard must not generate any AI/assistant message or suggest handoff.
   if (conversation.status === "pending" || conversation.status === "transferred") {
-    await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
     console.log("[generate-reply] orchestration human-handling guard:", conversation.status, conversation_id);
     return new Response(JSON.stringify({ success: true, skipped: "human_handling" }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -617,7 +607,6 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
         hasCompanyId: widgetCompanyId !== null && !isNaN(widgetCompanyId),
         hasIndustry: !!widgetIndustry,
       });
-      await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
       return new Response(
         JSON.stringify({
           success: true,
@@ -653,7 +642,6 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     // — L5 Safety Checks (Demo-only, inline) —
     if (!ragResult || !ragResult.success) {
       console.error("[CRITICAL] KB RAG API failure", { conversation_id, code: "KB_API_FAIL" });
-      await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
       return new Response(
         JSON.stringify({
           success: true,
@@ -668,7 +656,6 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
 
     if (ragResult.no_answer || !ragResult.chunks || ragResult.chunks.length === 0) {
       console.warn("[generate-reply] KB no results", { conversation_id, code: "KB_EMPTY" });
-      await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
       return new Response(
         JSON.stringify({
           success: true,
@@ -751,7 +738,6 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
         isHighRisk,
         code: "KB_LOW_SCORE",
       });
-      await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
       return new Response(
         JSON.stringify({
           success: true,
@@ -790,7 +776,6 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     .limit(10);
 
   if (!messages || messages.length === 0) {
-    await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
     return new Response(JSON.stringify({ success: true, skipped: "no messages" }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
@@ -802,7 +787,6 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
   }));
 
   if (claudeMessages[claudeMessages.length - 1].role === "assistant") {
-    await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
     return new Response(JSON.stringify({ success: true, skipped: "last message is assistant" }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
@@ -810,7 +794,6 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
 
   const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
   if (!anthropicKey) {
-    await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
     return new Response(JSON.stringify({ error: "AI service not configured" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -840,7 +823,6 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
   if (!claudeResponse.ok) {
     const errText = await claudeResponse.text();
     console.error("[generate-reply] Claude API error:", claudeResponse.status, errText);
-    await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
     return new Response(JSON.stringify({ error: "AI service error" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -851,7 +833,6 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
   const aiReplyContent = claudeData.content?.[0]?.text ?? "";
 
   if (!aiReplyContent) {
-    await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
     return new Response(JSON.stringify({ error: "Empty AI response" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
