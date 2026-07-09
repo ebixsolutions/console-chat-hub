@@ -64,6 +64,7 @@ const HANDOFF_KEYWORDS = [
   "專員",
 ];
 const ELEVATED = new Set(["manager", "admin", "super_admin", "supervisor"]);
+const ADMIN_ONLY = new Set(["admin", "super_admin"]);
 
 // ─── Mock CRM data (aligned to Base44 mockC360Panel) ─────────────────────────
 const MOCK_C360: Record<
@@ -228,7 +229,19 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 // ─── HandoffBanner (aligned to Base44 HandoffBanner.jsx) ─────────────────────
-function HandoffBanner({ conv, messages, onResolve, onTakeOver, onReturnToAi }: { conv: Conv; messages: Msg[]; onResolve?: () => void; onTakeOver: () => void; onReturnToAi: () => void }) {
+function HandoffBanner({
+  conv,
+  messages,
+  onResolve,
+  onTakeOver,
+  onReturnToAi,
+}: {
+  conv: Conv;
+  messages: Msg[];
+  onResolve?: () => void;
+  onTakeOver: () => void;
+  onReturnToAi: () => void;
+}) {
   const isHumanControl = conv.status === "pending" && Boolean(conv.assigned_agent_id);
   const isHandoff = isHumanControl || conv.status === "escalation_risk" || isHumanNeeded(conv);
   if (!isHandoff) return null;
@@ -414,12 +427,7 @@ function HandoffBanner({ conv, messages, onResolve, onTakeOver, onReturnToAi }: 
           </>
         ) : (
           <>
-            <<BannerBtn
-              label="🤝 Take Over"
-              bg="#ef4444"
-              color="#fff"
-              onClick={onTakeOver}
-            />
+            <BannerBtn label="🤝 Take Over" bg="#ef4444" color="#fff" onClick={onTakeOver} />
             <BannerBtn label="Assign to Me" onClick={onTakeOver} />
           </>
         )}
@@ -1322,7 +1330,7 @@ function SinglePageInbox() {
     return {
       pending_human: conversations.filter((c) => isHumanNeeded(c)).length,
       high_priority: conversations.filter((c) => c.priority === "high").length,
-     human_control: conversations.filter((c) => c.status === "pending" && Boolean(c.assigned_agent_id)).length,
+      human_control: conversations.filter((c) => c.status === "pending" && Boolean(c.assigned_agent_id)).length,
       ai_handling: conversations.filter((c) => c.status === "ai_handling" || (!isHumanNeeded(c) && c.status === "open"))
         .length,
     };
@@ -1368,8 +1376,7 @@ function SinglePageInbox() {
     whiteSpace: "nowrap" as const,
   });
 
- const isHumanControlConv = (c: Conv | null | undefined) =>
-    c?.status === "pending" && Boolean(c?.assigned_agent_id);
+  const isHumanControlConv = (c: Conv | null | undefined) => c?.status === "pending" && Boolean(c?.assigned_agent_id);
   const isHumanControl = isHumanControlConv(selectedConv);
 
   return (
@@ -1741,7 +1748,15 @@ function SinglePageInbox() {
             </div>
 
             {/* HandoffBanner (aligned to Base44 HandoffBanner) */}
-           {selectedConv && <HandoffBanner conv={selectedConv} messages={messages} onResolve={handleResolve} onTakeOver={handleTakeOver} onReturnToAi={handleReturnToAi} />}
+            {selectedConv && (
+              <HandoffBanner
+                conv={selectedConv}
+                messages={messages}
+                onResolve={handleResolve}
+                onTakeOver={handleTakeOver}
+                onReturnToAi={handleReturnToAi}
+              />
+            )}
 
             {/* Messages */}
             <div style={{ flex: 1, overflowY: "auto", padding: "12px 16px" }}>
