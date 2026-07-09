@@ -90,6 +90,66 @@ function detectHandoffLanguage(text: string): "zh-TW" | "zh-CN" | "en" | null {
 }
 // ── End Task A.1A helpers ─────────────────────────────────────────────────
 
+// ── Dev19a: PII-safe user_message sanitizer + best-effort trace writer ────
+function sanitizeUserMessage(text: string): string {
+  if (!text) return "";
+  let s = text;
+  // redact email
+  s = s.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "[redacted_email]");
+  // redact phone-like sequences with separators
+  s = s.replace(/\+?\d[\d\s().-]{6,}\d/g, "[redacted_phone]");
+  // redact any remaining long digit runs (7+)
+  s = s.replace(/\d{7,}/g, "[redacted_digits]");
+  if (s.length > 300) s = s.slice(0, 300);
+  return s;
+}
+
+async function writeTraces(
+  supabaseAdmin: ReturnType<typeof createClient>,
+  params: {
+    conversation_id: string;
+    message_id: string | null;
+    user_message_raw: string;
+    response_status: number | null;
+    response_latency_ms: number;
+    error_message: string | null;
+    request_payload: Record<string, unknown>;
+    token_input: number | null;
+    token_output: number | null;
+    ai_reply_content: string;
+  },
+): Promise<void> {
+  try {
+    await supabaseAdmin.from("upstream_call_log").insert({
+      upstream_service: "anthropic",
+      conversation_id: params.conversation_id,
+      response_status: params.response_status,
+      response_latency_ms: params.response_latency_ms,
+      error_message: params.error_message,
+      request_payload: params.request_payload,
+    });
+  } catch (e) {
+    console.error("[generate-reply] upstream_call_log insert failed (non-blocking):", e);
+  }
+  try {
+    await supabaseAdmin.from("final_prompt_trace").insert({
+      conversation_id: params.conversation_id,
+      message_id: params.message_id,
+      model_used: "claude-haiku-4-5-20251001",
+      system_prompt_snapshot: "[legacy_inline_cs_prompt_v1]",
+      token_input: params.token_input,
+      token_output: params.token_output,
+      latency_ms: params.response_latency_ms,
+      rag_context: null,
+      tool_calls: null,
+      user_message: sanitizeUserMessage(params.user_message_raw),
+    });
+  } catch (e) {
+    console.error("[generate-reply] final_prompt_trace insert failed (non-blocking):", e);
+  }
+}
+// ── End Dev19a helpers ────────────────────────────────────────────────────
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
