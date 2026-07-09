@@ -437,7 +437,6 @@ When the customer explicitly requests a human agent, or when you transfer to a h
   await supabaseAdmin
     .from("conversations")
     .update({
-      ai_generating: false,
       updated_at: new Date().toISOString(),
     })
     .eq("id", conversation_id);
