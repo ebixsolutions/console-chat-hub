@@ -63,8 +63,7 @@ const HANDOFF_KEYWORDS = [
   "職員",
   "專員",
 ];
-const ELEVATED = new Set(["manager", "admin", "super_admin"]);
-const ADMIN_ONLY = new Set(["admin", "super_admin"]);
+const ELEVATED = new Set(["manager", "admin", "super_admin", "supervisor"]);
 
 // ─── Mock CRM data (aligned to Base44 mockC360Panel) ─────────────────────────
 const MOCK_C360: Record<
@@ -229,8 +228,8 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 // ─── HandoffBanner (aligned to Base44 HandoffBanner.jsx) ─────────────────────
-function HandoffBanner({ conv, messages, onResolve }: { conv: Conv; messages: Msg[]; onResolve?: () => void }) {
-  const isHumanControl = conv.status === "human_control";
+function HandoffBanner({ conv, messages, onResolve, onTakeOver, onReturnToAi }: { conv: Conv; messages: Msg[]; onResolve?: () => void; onTakeOver: () => void; onReturnToAi: () => void }) {
+  const isHumanControl = conv.status === "pending" && Boolean(conv.assigned_agent_id);
   const isHandoff = isHumanControl || conv.status === "escalation_risk" || isHumanNeeded(conv);
   if (!isHandoff) return null;
 
@@ -409,19 +408,19 @@ function HandoffBanner({ conv, messages, onResolve }: { conv: Conv; messages: Ms
             <span style={{ fontSize: 11, color: "#6d28d9", marginRight: "auto" }}>
               🟣 AI will not reply directly. Knowledge Helper remains available for internal reference only.
             </span>
-            <BannerBtn label="↩ Return to AI (Mock)" onClick={() => toast("Return to AI — mock only")} />
-            <BannerBtn label="Keep Human Control (Mock)" onClick={() => toast("Keep Human Control — mock only")} />
+            <BannerBtn label="↩ Return to AI" onClick={onReturnToAi} />
+            <BannerBtn label="Keep Human Control" onClick={() => toast.info("Human control maintained")} />
             <BannerBtn label="✓ Resolve Ticket" bg="#2d7d4f" color="#fff" onClick={onResolve} />
           </>
         ) : (
           <>
-            <BannerBtn
-              label="🤝 Take Over Now (Mock)"
+            <<BannerBtn
+              label="🤝 Take Over"
               bg="#ef4444"
               color="#fff"
-              onClick={() => toast("Take Over Now — mock only")}
+              onClick={onTakeOver}
             />
-            <BannerBtn label="Assign to Me (Mock)" onClick={() => toast("Assign to Me — mock only")} />
+            <BannerBtn label="Assign to Me" onClick={onTakeOver} />
           </>
         )}
       </div>
@@ -1301,13 +1300,29 @@ function SinglePageInbox() {
       loadMessages(selectedId!, false, true);
     }
   }
+  async function handleTakeOver() {
+    if (!selectedId) return;
+    if (await callEF("take-over-conversation", { conversation_id: selectedId })) {
+      toast.success("Conversation taken over");
+      loadConversations();
+      loadMessages(selectedId, false, true);
+    }
+  }
+  async function handleReturnToAi() {
+    if (!selectedId) return;
+    if (await callEF("return-to-ai", { conversation_id: selectedId })) {
+      toast.success("Returned to AI");
+      loadConversations();
+      loadMessages(selectedId, false, true);
+    }
+  }
 
   const stats = useMemo(() => {
     if (!conversations) return { pending_human: 0, high_priority: 0, human_control: 0, ai_handling: 0 };
     return {
       pending_human: conversations.filter((c) => isHumanNeeded(c)).length,
       high_priority: conversations.filter((c) => c.priority === "high").length,
-      human_control: conversations.filter((c) => c.status === "human_control").length,
+     human_control: conversations.filter((c) => c.status === "pending" && Boolean(c.assigned_agent_id)).length,
       ai_handling: conversations.filter((c) => c.status === "ai_handling" || (!isHumanNeeded(c) && c.status === "open"))
         .length,
     };
@@ -1353,7 +1368,9 @@ function SinglePageInbox() {
     whiteSpace: "nowrap" as const,
   });
 
-  const isHumanControl = selectedConv?.status === "human_control";
+ const isHumanControlConv = (c: Conv | null | undefined) =>
+    c?.status === "pending" && Boolean(c?.assigned_agent_id);
+  const isHumanControl = isHumanControlConv(selectedConv);
 
   return (
     <div
@@ -1632,21 +1649,40 @@ function SinglePageInbox() {
                   </span>
                 )}
                 <div style={{ marginLeft: "auto", display: "flex", gap: 6, flexWrap: "wrap" as const }}>
-                  <button
-                    onClick={() => toast("Take Over Now — mock only")}
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 600,
-                      padding: "4px 10px",
-                      borderRadius: 8,
-                      border: "none",
-                      background: "#ef4444",
-                      color: "#fff",
-                      cursor: "pointer",
-                    }}
-                  >
-                    Take Over Now (Mock)
-                  </button>
+                  {isHumanControl ? (
+                    <button
+                      onClick={handleReturnToAi}
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 600,
+                        padding: "4px 10px",
+                        borderRadius: 8,
+                        border: "none",
+                        background: "#7c3aed",
+                        color: "#fff",
+                        cursor: "pointer",
+                      }}
+                    >
+                      ↩ Return to AI
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handleTakeOver}
+                      disabled={selectedConv?.status === "resolved"}
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 600,
+                        padding: "4px 10px",
+                        borderRadius: 8,
+                        border: "none",
+                        background: selectedConv?.status === "resolved" ? "#d1d5db" : "#ef4444",
+                        color: "#fff",
+                        cursor: selectedConv?.status === "resolved" ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      Take Over
+                    </button>
+                  )}
                   {isElevated && (
                     <Select onValueChange={handleAssign}>
                       <SelectTrigger className="h-7 text-xs w-24">
@@ -1705,7 +1741,7 @@ function SinglePageInbox() {
             </div>
 
             {/* HandoffBanner (aligned to Base44 HandoffBanner) */}
-            {selectedConv && <HandoffBanner conv={selectedConv} messages={messages} onResolve={handleResolve} />}
+           {selectedConv && <HandoffBanner conv={selectedConv} messages={messages} onResolve={handleResolve} onTakeOver={handleTakeOver} onReturnToAi={handleReturnToAi} />}
 
             {/* Messages */}
             <div style={{ flex: 1, overflowY: "auto", padding: "12px 16px" }}>
