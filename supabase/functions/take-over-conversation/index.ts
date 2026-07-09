@@ -74,13 +74,19 @@ Deno.serve(async (req) => {
       });
     }
 
-    await supabaseAdmin.from("handoff_event").insert({
+    const { error: handoffErr } = await supabaseAdmin.from("handoff_event").insert({
       conversation_id,
-      handoff_type: "agent_takeover",
+      handoff_type: "agent_to_agent",
       from_agent_id: conversation.assigned_agent_id || null,
       to_agent_id: agent.id,
       handoff_reason: "Agent takeover",
     });
+
+    if (handoffErr) {
+      console.error("[take-over-conversation] CRITICAL: handoff_event insert failed:", handoffErr.message, conversation_id);
+      return json({ error: "Failed to write handoff event" }, 500);
+    }
+
 
     await writeAudit(
       supabaseAdmin,
