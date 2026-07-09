@@ -7,6 +7,7 @@ import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { feedbackService } from "@/lib/api/feedback.service";
 
 export const Route = createFileRoute("/_authenticated/console/conversations/")({
@@ -36,6 +37,13 @@ type Msg = {
   created_at: string | null;
 };
 type AgentLite = { id: string; display_name: string; role: string; status: string };
+type ActivityEvent = {
+  ts: string;
+  kind: "status" | "assignment" | "handoff";
+  label: string;
+  detail: string;
+  actor: string;
+};
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 const FILTERS: { key: string | null; label: string }[] = [
@@ -1136,6 +1144,9 @@ function SinglePageInbox() {
   const [sending, setSending] = useState(false);
   const [agents, setAgents] = useState<AgentLite[]>([]);
   const [myAgent, setMyAgent] = useState<AgentLite | null>(null);
+  const [activityOpen, setActivityOpen] = useState(false);
+  const [activityLoading, setActivityLoading] = useState(false);
+  const [activityRows, setActivityRows] = useState<ActivityEvent[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   async function loadConversations() {
@@ -1323,6 +1334,91 @@ function SinglePageInbox() {
       loadConversations();
       loadMessages(selectedId, false, true);
     }
+  }
+
+  // Dev21b Phase 1: Conversation Activity Timeline (status_log + assignment + handoff_event)
+  async function loadActivity(convId: string) {
+    setActivityLoading(true);
+    setActivityRows([]);
+    try {
+      const [statusRes, assignRes, handoffRes] = await Promise.all([
+        supabase
+          .from("conversation_status_log")
+          .select("created_at,old_status,new_status,reason,changed_by")
+          .eq("conversation_id", convId),
+        supabase
+          .from("conversation_assignment")
+          .select("assigned_at,unassigned_at,is_active,agent_id,assigned_by")
+          .eq("conversation_id", convId),
+        supabase
+          .from("handoff_event")
+          .select("created_at,handoff_type,handoff_reason,from_agent_id,to_agent_id")
+          .eq("conversation_id", convId),
+      ]);
+
+      // Correction 1+2: check each query's error; never treat a failed query as empty.
+      if (statusRes.error || assignRes.error || handoffRes.error) {
+        if (statusRes.error) console.error("[activity] conversation_status_log:", statusRes.error.message);
+        if (assignRes.error) console.error("[activity] conversation_assignment:", assignRes.error.message);
+        if (handoffRes.error) console.error("[activity] handoff_event:", handoffRes.error.message);
+        toast.error("Failed to load conversation activity");
+        setActivityRows([]);
+        return;
+      }
+
+      const nameOf = (id: string | null) =>
+        id ? agents.find((a) => a.id === id)?.display_name || id.slice(0, 8) : "—";
+      const events: ActivityEvent[] = [];
+      (statusRes.data ?? []).forEach((r) => {
+        events.push({
+          ts: r.created_at || "",
+          kind: "status",
+          label: `Status: ${r.old_status ?? "?"} → ${r.new_status}`,
+          detail: r.reason || "",
+          actor: nameOf(r.changed_by),
+        });
+      });
+      (assignRes.data ?? []).forEach((r) => {
+        events.push({
+          ts: r.assigned_at || "",
+          kind: "assignment",
+          label: `Assignment created → ${nameOf(r.agent_id)}`,
+          detail: r.assigned_by ? `by ${nameOf(r.assigned_by)}` : "",
+          actor: nameOf(r.assigned_by),
+        });
+        if (r.unassigned_at) {
+          events.push({
+            ts: r.unassigned_at,
+            kind: "assignment",
+            label: `Assignment ended (${nameOf(r.agent_id)})`,
+            detail: r.is_active ? "still active" : "",
+            actor: nameOf(r.assigned_by),
+          });
+        }
+      });
+      (handoffRes.data ?? []).forEach((r) => {
+        events.push({
+          ts: r.created_at || "",
+          kind: "handoff",
+          label: `Handoff (${r.handoff_type}): ${nameOf(r.from_agent_id)} → ${nameOf(r.to_agent_id)}`,
+          detail: r.handoff_reason || "",
+          actor: nameOf(r.from_agent_id),
+        });
+      });
+      events.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
+      setActivityRows(events);
+    } catch (err) {
+      console.error("[activity] unexpected error:", err);
+      toast.error("Failed to load conversation activity");
+      setActivityRows([]);
+    } finally {
+      setActivityLoading(false);
+    }
+  }
+  function openActivity() {
+    if (!selectedId) return;
+    setActivityOpen(true);
+    loadActivity(selectedId);
   }
 
   const stats = useMemo(() => {
@@ -1726,9 +1822,9 @@ function SinglePageInbox() {
                       Resolve
                     </Button>
                   )}
-                  {(myAgent?.role === "admin" || myAgent?.role === "supervisor") && (
+                  {(myAgent?.role === "admin" || myAgent?.role === "supervisor" || myAgent?.role === "super_admin") && (
                     <button
-                      onClick={() => toast("Audit Log (Mock)")}
+                      onClick={openActivity}
                       style={{
                         fontSize: 11,
                         fontWeight: 600,
@@ -1740,7 +1836,7 @@ function SinglePageInbox() {
                         cursor: "pointer",
                       }}
                     >
-                      Audit Log
+                      Activity
                     </button>
                   )}
                 </div>
@@ -2001,6 +2097,64 @@ function SinglePageInbox() {
           onResolve={handleResolve}
         />
       </div>
+
+      {/* Dev21b Phase 1: Conversation Activity Timeline */}
+      <Dialog open={activityOpen} onOpenChange={setActivityOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Conversation Activity Timeline</DialogTitle>
+            <DialogDescription>
+              Showing status, assignment, and handoff events. Full audit_log is reserved for admin audit view.
+            </DialogDescription>
+          </DialogHeader>
+          <div style={{ maxHeight: "60vh", overflowY: "auto" }}>
+            {activityLoading && (
+              <div style={{ display: "flex", justifyContent: "center", padding: 24 }}>
+                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+              </div>
+            )}
+            {!activityLoading && activityRows.length === 0 && (
+              <div style={{ padding: 24, textAlign: "center", fontSize: 13, color: "#888" }}>
+                No status, assignment, or handoff activity recorded for this conversation.
+              </div>
+            )}
+            {!activityLoading &&
+              activityRows.map((e, i) => {
+                const dot = e.kind === "status" ? "#2563eb" : e.kind === "assignment" ? "#16a34a" : "#7c3aed";
+                return (
+                  <div
+                    key={i}
+                    style={{
+                      display: "flex",
+                      gap: 10,
+                      padding: "8px 4px",
+                      borderBottom: "0.5px solid #f0efe9",
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: "50%",
+                        background: dot,
+                        marginTop: 5,
+                        flexShrink: 0,
+                      }}
+                    />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 600, color: "#1a1a1a" }}>{e.label}</div>
+                      {e.detail && <div style={{ fontSize: 11, color: "#555", marginTop: 1 }}>{e.detail}</div>}
+                      <div style={{ fontSize: 10.5, color: "#888", marginTop: 2 }}>
+                        {e.actor !== "—" ? `${e.actor} · ` : ""}
+                        {e.ts ? new Date(e.ts).toLocaleString() : ""}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
