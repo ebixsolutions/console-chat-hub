@@ -23,3 +23,9 @@ verify_jwt = false
 
 [functions.deliver-feedback-request]
 verify_jwt = true
+
+[functions.take-over-conversation]
+verify_jwt = false
+
+[functions.return-to-ai]
+verify_jwt = false
