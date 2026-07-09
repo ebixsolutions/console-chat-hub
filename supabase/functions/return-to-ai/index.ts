@@ -62,6 +62,20 @@ Deno.serve(async (req) => {
       reason: "Return to AI",
     });
 
+    const { error: handoffErr } = await supabaseAdmin.from("handoff_event").insert({
+      conversation_id,
+      handoff_type: "agent_to_agent",
+      from_agent_id: conversation.assigned_agent_id || null,
+      to_agent_id: null,
+      handoff_reason: "Return to AI",
+    });
+
+    if (handoffErr) {
+      console.error("[return-to-ai] CRITICAL: handoff_event insert failed:", handoffErr.message, conversation_id);
+      return json({ error: "Failed to write handoff event" }, 500);
+    }
+
+
     await writeAudit(
       supabaseAdmin,
       agent.id,
