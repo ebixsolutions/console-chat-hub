@@ -228,6 +228,18 @@ async function legacyGenerateReply(conversation_id: string): Promise<Response> {
     });
   }
 
+  // ── Dev21 Batch 1: Human-handling defense-in-depth guard ────────────
+  // When status is 'pending' or 'transferred', a human agent is handling.
+  // Do not call LLM. Clear ai_generating flag and return.
+  if (conversation.status === "pending" || conversation.status === "transferred") {
+    await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
+    console.log("[generate-reply] human-handling guard: skipping LLM for status:", conversation.status, conversation_id);
+    return new Response(JSON.stringify({ success: true, skipped: "human_handling" }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  // ── End Dev21 Batch 1 guard ─────────────────────────────────────────
+
   const { data: messages } = await supabaseAdmin
     .from("messages")
     .select("role, content, created_at")
@@ -496,6 +508,19 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
     return safeRefusal("CONV_RESOLVED_OR_CLOSED");
   }
+
+  // ── Dev21 Batch 1: Human-handling defense-in-depth guard ────────────
+  // Do NOT use safeRefusal() here — its response includes handoff_required:true
+  // and skipped:"refused" which are semantically incorrect for human_handling.
+  // Human-handling guard must not generate any AI/assistant message or suggest handoff.
+  if (conversation.status === "pending" || conversation.status === "transferred") {
+    await supabaseAdmin.from("conversations").update({ ai_generating: false }).eq("id", conversation_id);
+    console.log("[generate-reply] orchestration human-handling guard:", conversation.status, conversation_id);
+    return new Response(JSON.stringify({ success: true, skipped: "human_handling" }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  // ── End Dev21 Batch 1 guard ─────────────────────────────────────────
 
   // Step 0: Budget check (orchestration path only).
   // TODO L5e: enforce per-conversation LLM/tool budget; on exceed → handoff.
