@@ -65,7 +65,6 @@ Deno.serve(async (req) => {
       await supabase
         .from("conversations")
         .update({
-          ai_generating: false,
           updated_at: new Date().toISOString(),
         })
         .eq("id", conversation_id);
