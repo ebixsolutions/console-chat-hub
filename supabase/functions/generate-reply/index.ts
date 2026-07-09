@@ -853,7 +853,7 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
 
   await supabaseAdmin
     .from("conversations")
-    .update({ ai_generating: false, updated_at: new Date().toISOString() })
+    .update({ updated_at: new Date().toISOString() })
     .eq("id", conversation_id);
 
   if (flags.ENABLE_COACH) {
