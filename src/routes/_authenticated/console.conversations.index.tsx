@@ -919,7 +919,6 @@ function CRMPanel({
             >
               Knowledge Base is not connected. Search results will appear when KB integration is enabled.
             </div>
-            </div>
           </>
         )}
 
