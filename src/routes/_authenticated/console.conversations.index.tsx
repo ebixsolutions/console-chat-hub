@@ -1029,21 +1029,14 @@ function CRMPanel({
               style={{
                 fontSize: 11.5,
                 lineHeight: 1.6,
-                background: "#f0fdf4",
-                border: "0.5px solid #86efac",
+                background: "#f5f4f0",
                 borderRadius: 9,
-                padding: 10,
-                color: "#065f46",
+                padding: "12px 14px",
+                color: "#555",
               }}
             >
-              ℹ️ Policy check is disabled for demo
-              <br />
-              Live policy lookup requires KB connection
-              <br />
-              Connect live Knowledge Base for real policy data
-            </div>
-            <div style={{ marginTop: 10 }}>
-              <SmBtn label="Open Policy" onClick={() => toast("Open Policy (Mock)")} />
+              Policy lookup requires Knowledge Base connection. Connect KB to enable real-time policy checks during
+              conversations.
             </div>
           </>
         )}
@@ -1952,46 +1945,55 @@ function SinglePageInbox() {
                 style={{ display: "flex", gap: 6, marginBottom: 8, alignItems: "center", flexWrap: "wrap" as const }}
               >
                 <button
-                  onClick={() => toast("Policy check (Mock)")}
+                  disabled
+                  type="button"
+                  title="Requires KB connection"
                   style={{
                     fontSize: 10.5,
                     fontWeight: 600,
                     padding: "4px 10px",
                     borderRadius: 8,
                     border: "none",
-                    background: "#1a1a1a",
-                    color: "#fff",
-                    cursor: "pointer",
+                    background: "#d1d5db",
+                    color: "#9ca3af",
+                    cursor: "not-allowed",
+                    opacity: 0.6,
                   }}
                 >
                   Check Policy
                 </button>
                 <button
-                  onClick={() => toast("Translate (Mock)")}
+                  disabled
+                  type="button"
+                  title="Coming soon"
                   style={{
                     fontSize: 10.5,
                     fontWeight: 600,
                     padding: "4px 10px",
                     borderRadius: 8,
                     border: "none",
-                    background: "#3b82f6",
-                    color: "#fff",
-                    cursor: "pointer",
+                    background: "#d1d5db",
+                    color: "#9ca3af",
+                    cursor: "not-allowed",
+                    opacity: 0.6,
                   }}
                 >
-                  Translate ▼
+                  Translate
                 </button>
                 <button
-                  onClick={() => toast("Grammar check (Mock)")}
+                  disabled
+                  type="button"
+                  title="Coming soon"
                   style={{
                     fontSize: 10.5,
                     fontWeight: 600,
                     padding: "4px 10px",
                     borderRadius: 8,
                     border: "none",
-                    background: "#6366f1",
-                    color: "#fff",
-                    cursor: "pointer",
+                    background: "#d1d5db",
+                    color: "#9ca3af",
+                    cursor: "not-allowed",
+                    opacity: 0.6,
                   }}
                 >
                   Grammar Check
