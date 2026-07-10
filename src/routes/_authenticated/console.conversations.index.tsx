@@ -641,6 +641,7 @@ function SinglePageInbox() {
   const [agents, setAgents] = useState<AgentLite[]>([]);
   const [myAgent, setMyAgent] = useState<AgentLite | null>(null);
   const [activityOpen, setActivityOpen] = useState(false);
+  const [sendGuardOpen, setSendGuardOpen] = useState(false);
   const [activityLoading, setActivityLoading] = useState(false);
   const [activityRows, setActivityRows] = useState<ActivityEvent[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -761,6 +762,43 @@ function SinglePageInbox() {
     if (ok) {
       setReply("");
       toast.success("Reply sent");
+      loadMessages(selectedId, false, true);
+    }
+  }
+  function handleSendClick() {
+    if (!selectedId || !reply.trim()) return;
+    const conv = conversations?.find((c) => c.id === selectedId);
+    if (!conv) return;
+    // Resolved: block send entirely
+    if (conv.status === "resolved") {
+      toast.warning("This conversation is resolved. Mark unresolved before replying.");
+      return;
+    }
+    // Human-controlled AND assigned to current agent: send directly
+    if (conv.status === "pending" && conv.assigned_agent_id === myAgent?.id) {
+      sendReply();
+      return;
+    }
+    // All other cases: AI-handled, open, unassigned, or assigned to another agent
+    setSendGuardOpen(true);
+  }
+  async function handleTakeOverAndSend() {
+    if (!selectedId) return;
+    setSending(true);
+    const takeOverOk = await callEF("take-over-conversation", { conversation_id: selectedId });
+    if (!takeOverOk) {
+      setSending(false);
+      setSendGuardOpen(false);
+      toast.error("Take over failed. Message not sent.");
+      return;
+    }
+    const sendOk = await callEF("agent-send-reply", { conversation_id: selectedId, content: reply.trim() });
+    setSending(false);
+    setSendGuardOpen(false);
+    if (sendOk) {
+      setReply("");
+      toast.success("Took over and sent reply");
+      loadConversations();
       loadMessages(selectedId, false, true);
     }
   }
@@ -1574,7 +1612,7 @@ function SinglePageInbox() {
                 <span style={{ fontSize: 14, cursor: "pointer" }}>😊</span>
                 <span style={{ fontSize: 14, cursor: "pointer" }}>🖼️</span>
                 <span style={{ fontSize: 14, cursor: "pointer" }}>📎</span>
-                <Button onClick={sendReply} disabled={sending || !reply.trim()} className="ml-auto">
+                <Button onClick={handleSendClick} disabled={sending || !reply.trim()} className="ml-auto">
                   {sending ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -1594,6 +1632,33 @@ function SinglePageInbox() {
       <div style={{ width: 360, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <CRMPanel conv={selectedConv} visitorLabel={visitorLabel || "Visitor"} onResolve={handleResolve} />
       </div>
+
+      {/* Dev22-A2.3: Send Guard — Take Over Confirmation */}
+      <Dialog open={sendGuardOpen} onOpenChange={setSendGuardOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Take Over Conversation?</DialogTitle>
+            <DialogDescription>
+              This conversation is not currently under your control. Take over before sending this message?
+            </DialogDescription>
+          </DialogHeader>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
+            <Button variant="outline" size="sm" onClick={() => setSendGuardOpen(false)} disabled={sending}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={handleTakeOverAndSend} disabled={sending}>
+              {sending ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Processing…
+                </>
+              ) : (
+                "Take Over & Send"
+              )}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Dev21b Phase 1: Conversation Activity Timeline */}
       <Dialog open={activityOpen} onOpenChange={setActivityOpen}>
