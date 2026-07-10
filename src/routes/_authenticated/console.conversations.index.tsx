@@ -312,7 +312,7 @@ function HandoffBanner({
   if (summaryParts.length === 0) summaryParts.push("escalated the conversation");
   const summaryText = "Customer " + summaryParts.join(", ") + ".";
 
-  // Why AI transferred
+  // Detected Signals (keyword-based)
   const whyReasons: string[] = [];
   if (hasAngry) whyReasons.push("✓ Angry sentiment detected");
   if (hasRefund) whyReasons.push("✓ Refund / policy issue");
@@ -388,7 +388,7 @@ function HandoffBanner({
               marginBottom: 4,
             }}
           >
-            Why AI Transferred
+            Detected Signals (keyword-based)
           </div>
           <div style={{ lineHeight: 1.7, marginBottom: 6, fontSize: 11 }}>
             {whyReasons.map((r, i) => (
@@ -605,8 +605,8 @@ function CRMPanel({
           background: "#fff",
         }}
       >
-        <div>AI Context: Demo Mode</div>
-        <div>Knowledge Base: Disabled for demo</div>
+        <div>AI Context: Not connected</div>
+        <div>Knowledge Base: Not connected</div>
       </div>
 
       {/* Tabs — Base44 exact */}
@@ -874,31 +874,33 @@ function CRMPanel({
           <>
             <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
               <input
-                value={kbQuery}
-                onChange={(e) => setKbQuery(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && doSearch()}
-                placeholder="🔍 Search Knowledge Base..."
+                disabled
+                value=""
+                placeholder="🔍 Knowledge Base not connected"
                 style={{
                   flex: 1,
                   fontSize: 11.5,
                   padding: "6px 9px",
                   borderRadius: 8,
                   border: "0.5px solid #e8e6e0",
-                  background: "#f5f4f0",
+                  background: "#f0efe9",
                   outline: "none",
+                  cursor: "not-allowed",
+                  opacity: 0.6,
                 }}
               />
               <button
-                onClick={doSearch}
+                disabled
                 style={{
                   fontSize: 11,
                   fontWeight: 600,
                   padding: "6px 12px",
                   borderRadius: 8,
                   border: "none",
-                  background: "#1a1a1a",
-                  color: "#fff",
-                  cursor: "pointer",
+                  background: "#d1d5db",
+                  color: "#9ca3af",
+                  cursor: "not-allowed",
+                  opacity: 0.6,
                 }}
               >
                 Search
@@ -1000,82 +1002,22 @@ function CRMPanel({
         {/* AI SUGGESTION TAB — Base44 exact (no Send button) */}
         {tab === "suggestion" && (
           <>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+            <div style={{ marginBottom: 6 }}>
               <span style={sectionTitle}>AI Suggested Reply</span>
-              <span
-                style={{
-                  background: "#fef3c7",
-                  color: "#92400e",
-                  fontSize: 9.5,
-                  fontWeight: 700,
-                  padding: "1px 7px",
-                  borderRadius: 20,
-                  border: "0.5px solid #fbbf24",
-                  whiteSpace: "nowrap" as const,
-                }}
-              >
-                Mock
-              </span>
             </div>
-            <div style={{ fontSize: 10, color: "#888", marginBottom: 10 }}>Phase 2: Real LLM + RAG</div>
-            <div style={{ background: "#f5f4f0", borderRadius: 9, padding: 10, marginBottom: 10 }}>
-              <div style={{ ...sectionTitle, marginBottom: 4 }}>Based On</div>
-              <div style={{ fontSize: 11, lineHeight: 1.7 }}>
-                👤 {visitorLabel}
-                <br />
-                📋 Demo CRM Profile &nbsp; 💬 Current Conversation
-                <br />
-                📚 2 KB sources retrieved (Mock)
-              </div>
+            <div
+              style={{
+                background: "#f5f4f0",
+                borderRadius: 9,
+                padding: "12px 14px",
+                fontSize: 11,
+                color: "#555",
+                lineHeight: 1.6,
+              }}
+            >
+              AI Suggestions require LLM and Knowledge Base connections. Suggested replies will appear here when both
+              integrations are enabled.
             </div>
-            {MOCK_SUGGESTIONS.map((s) => (
-              <div
-                key={s.id}
-                style={{
-                  border: `0.5px solid ${s.option_tag === "blue" ? "#3b82f6" : "#2d7d4f"}`,
-                  borderRadius: 9,
-                  padding: 10,
-                  marginBottom: 10,
-                  background: "#fff",
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: 11.5,
-                    fontWeight: 700,
-                    color: s.option_tag === "blue" ? "#1d4ed8" : "#065f46",
-                    marginBottom: 5,
-                  }}
-                >
-                  {s.option_label}
-                </div>
-                <div style={{ fontSize: 11, lineHeight: 1.55, color: "#333", marginBottom: 6 }}>
-                  "{s.suggested_reply}"
-                </div>
-                <div style={{ fontSize: 10, color: "#888", marginBottom: 7 }}>
-                  Sources: {s.rag_sources.map((r) => `${r.title} (${r.confidence}%)`).join(" · ")}
-                </div>
-                <div style={{ display: "flex", gap: 5, flexWrap: "wrap" as const }}>
-                  <SmBtn
-                    label="Copy"
-                    onClick={() => {
-                      navigator.clipboard.writeText(s.suggested_reply);
-                      toast.success("Copied");
-                    }}
-                  />
-                  <SmBtn
-                    label="Insert & Edit"
-                    dark
-                    onClick={() => {
-                      onInsert(s.suggested_reply);
-                      toast.success("Inserted — edit before sending");
-                    }}
-                  />
-                  <SmBtn label="Regenerate (Mock)" onClick={() => toast("Regenerate — Phase 2: Real LLM")} />
-                  <SmBtn label="👎 Bad Suggestion" onClick={() => toast.success("Feedback recorded")} />
-                </div>
-              </div>
-            ))}
           </>
         )}
 
