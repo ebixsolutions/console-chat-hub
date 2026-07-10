@@ -906,95 +906,19 @@ function CRMPanel({
                 Search
               </button>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
-              <span style={sectionTitle}>Relevant Answers</span>
-              <span
-                style={{
-                  background: "#fef3c7",
-                  color: "#92400e",
-                  fontSize: 9.5,
-                  fontWeight: 700,
-                  padding: "1px 7px",
-                  borderRadius: 20,
-                  border: "0.5px solid #fbbf24",
-                  whiteSpace: "nowrap" as const,
-                }}
-              >
-                Mock
-              </span>
-            </div>
-            {kbResults === null && (
-              <div style={{ fontSize: 11, color: "#888" }}>Try: "return policy" or "shipping delay refund"</div>
-            )}
-            {kbResults !== null && kbResults.length === 0 && (
-              <div
-                style={{
-                  background: "#fff7ed",
-                  border: "0.5px solid #fdba74",
-                  color: "#9a3412",
-                  fontSize: 11,
-                  padding: "8px 10px",
-                  borderRadius: 8,
-                }}
-              >
-                No KB match — handoff suggested
-              </div>
-            )}
-            {kbResults !== null &&
-              kbResults.length > 0 &&
-              kbResults.map((r, i) => (
-                <div
-                  key={i}
-                  style={{
-                    border: "0.5px solid #e8e6e0",
-                    borderRadius: 9,
-                    padding: 10,
-                    marginBottom: 8,
-                    background: "#fff",
-                  }}
-                >
-                  <div style={{ fontSize: 11.5, fontWeight: 600 }}>📄 {r.title}</div>
-                  <div style={{ fontSize: 10, color: "#888", margin: "2px 0 5px" }}>Confidence: {r.confidence}%</div>
-                  <div style={{ fontSize: 11, color: "#555", lineHeight: 1.5, marginBottom: 7 }}>
-                    {r.snippet.slice(0, 80)}
-                    {r.snippet.length > 80 ? "…" : ""}
-                  </div>
-                  <div style={{ display: "flex", gap: 5 }}>
-                    <SmBtn
-                      label="Copy"
-                      onClick={() => {
-                        navigator.clipboard.writeText(r.snippet);
-                        toast.success("Copied");
-                      }}
-                    />
-                    <SmBtn
-                      label="Insert to Reply"
-                      dark
-                      onClick={() => {
-                        onInsert(r.snippet);
-                        toast.success("KB source inserted into reply");
-                      }}
-                    />
-                    <SmBtn label="View Source" onClick={() => toast("View source (Mock)")} />
-                  </div>
-                </div>
-              ))}
             <div
               style={{
-                background: "#fffbeb",
-                border: "0.5px solid #fbbf24",
+                background: "#f5f4f0",
                 borderRadius: 9,
-                padding: 10,
-                marginTop: 10,
+                padding: "12px 14px",
+                marginTop: 8,
+                fontSize: 11,
+                color: "#555",
+                lineHeight: 1.6,
               }}
             >
-              <div style={{ fontSize: 11.5, fontWeight: 700, color: "#92400e", marginBottom: 3 }}>
-                ⚠ KB Gap Detected
-              </div>
-              <div style={{ fontSize: 11, color: "#92400e", marginBottom: 7 }}>
-                Demo: KB Gap detection requires live Knowledge Base connection.
-              </div>
-              <SmBtn label="Create KB Gap Task" dark onClick={() => toast.success("KB Gap task created (Mock)")} />
+              Knowledge Base is not connected. Search results will appear when KB integration is enabled.
+            </div>
             </div>
           </>
         )}
