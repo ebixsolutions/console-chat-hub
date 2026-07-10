@@ -24,7 +24,22 @@ Deno.serve(async (req) => {
       .eq("id", conversation_id)
       .single();
     if (convErr || !conv) return json({ error: "Conversation not found" }, 404);
-    if (conv.status === "resolved") return json({ error: "Conversation is resolved" }, 409);
+    // ── Dev22-F1: Strict ownership enforcement ──────────────────────────
+    // Director contract: agent may send ONLY when status=pending AND
+    // assigned_agent_id=current agent. No elevated-role bypass.
+    if (conv.status === "resolved") {
+      return json({ error: "Conversation is resolved", error_type: "conversation_resolved" }, 409);
+    }
+    if (!conv.assigned_agent_id) {
+      return json({ error: "Take over this conversation before sending", error_type: "takeover_required" }, 409);
+    }
+    if (conv.assigned_agent_id !== agent.id) {
+      return json({ error: "This conversation is assigned to another agent", error_type: "conversation_owned_by_another_agent" }, 403);
+    }
+    if (conv.status !== "pending") {
+      return json({ error: "Conversation is not under human control", error_type: "human_control_required" }, 409);
+    }
+    // ── End Dev22-F1 ────────────────────────────────────────────────────
 
     const { data: msg, error: mErr } = await supabaseAdmin
       .from("messages")
