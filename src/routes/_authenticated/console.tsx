@@ -102,6 +102,7 @@ const pageMeta: Record<string, { zh: string; en: string; sub?: { zh: string; en:
 };
 
 /* ── Nav groups (Base44 structure) ── */
+/* Dev22-A1: Removed analytics + customer360 from inbox group (mock pages hidden from nav) */
 const GROUPS = [
   {
     key: "inbox",
@@ -110,8 +111,6 @@ const GROUPS = [
     bgColor: "#fee2e2",
     items: [
       { path: "/console/conversations", icon: "💬", navKey: "navInbox", alertBadge: true },
-      { path: "/console/analytics", icon: "📊", navKey: "navAnalytics" },
-      { path: "/console/customer360", icon: "👥", navKey: "navCustomer360" },
       { path: "/console/channel-settings", icon: "📡", navKey: "navChannelSettings" },
       { path: "/console/feedback-settings", icon: "⭐", navKey: "navFeedbackSettings" },
     ],
