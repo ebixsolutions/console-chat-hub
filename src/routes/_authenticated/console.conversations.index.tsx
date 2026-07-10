@@ -642,6 +642,7 @@ function SinglePageInbox() {
   const [myAgent, setMyAgent] = useState<AgentLite | null>(null);
   const [activityOpen, setActivityOpen] = useState(false);
   const [sendGuardOpen, setSendGuardOpen] = useState(false);
+  const [resolvedWarningOpen, setResolvedWarningOpen] = useState(false);
   const [activityLoading, setActivityLoading] = useState(false);
   const [activityRows, setActivityRows] = useState<ActivityEvent[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -771,7 +772,7 @@ function SinglePageInbox() {
     if (!conv) return;
     // Resolved: block send entirely
     if (conv.status === "resolved") {
-      window.alert("This conversation is resolved. Mark unresolved before replying.");
+      setResolvedWarningOpen(true);
       return;
     }
     // Human-controlled AND assigned to current agent: send directly
@@ -1633,6 +1634,22 @@ function SinglePageInbox() {
         <CRMPanel conv={selectedConv} visitorLabel={visitorLabel || "Visitor"} onResolve={handleResolve} />
       </div>
 
+      {/* Dev22-A2.3: Resolved Warning */}
+      <Dialog open={resolvedWarningOpen} onOpenChange={setResolvedWarningOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Conversation Resolved</DialogTitle>
+            <DialogDescription>
+              This conversation is resolved. Please mark it as unresolved before replying.
+            </DialogDescription>
+          </DialogHeader>
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
+            <Button size="sm" onClick={() => setResolvedWarningOpen(false)}>
+              OK
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
       {/* Dev22-A2.3: Send Guard — Take Over Confirmation */}
       <Dialog open={sendGuardOpen} onOpenChange={setSendGuardOpen}>
         <DialogContent className="max-w-sm">
