@@ -688,7 +688,18 @@ function SinglePageInbox() {
     setConversations(
       list.map((c) => ({
         ...c,
-        assigned_agent_name: c.assigned_agent_id ? agentMap[c.assigned_agent_id] || "Unknown" : "Unassigned",
+        assigned_agent_name: c.assigned_agent_id
+          ? agentMap[c.assigned_agent_id] || "Unknown"
+          : c.status === "pending" ||
+              c.status === "unresolved" ||
+              c.status === "human_needed" ||
+              c.status === "escalation_risk"
+            ? "Needs assignment"
+            : c.status === "open" || c.status === "ai_handling"
+              ? "AI Chatbot"
+              : c.status === "resolved"
+                ? "—"
+                : "Unassigned",
         latest_preview: previews[c.id] || "(no messages yet)",
       })) as Conv[],
     );
@@ -1201,7 +1212,15 @@ function SinglePageInbox() {
                   )}
                 </div>
                 <div style={{ marginTop: 4, fontSize: 10, color: active ? "rgba(255,255,255,0.4)" : "#92400e" }}>
-                  {c.assigned_agent_name === "Unassigned" ? "— Unassigned" : `👤 ${c.assigned_agent_name}`}
+                  {c.assigned_agent_name === "AI Chatbot"
+                    ? "🤖 AI Chatbot"
+                    : c.assigned_agent_name === "Needs assignment"
+                      ? "⚠ Needs assignment"
+                      : c.assigned_agent_name === "—"
+                        ? ""
+                        : c.assigned_agent_name === "Unassigned"
+                          ? "— Unassigned"
+                          : `👤 ${c.assigned_agent_name}`}
                 </div>
               </div>
             );
@@ -1610,9 +1629,15 @@ function SinglePageInbox() {
                 className="mb-2 text-sm"
               />
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 14, cursor: "pointer" }}>😊</span>
-                <span style={{ fontSize: 14, cursor: "pointer" }}>🖼️</span>
-                <span style={{ fontSize: 14, cursor: "pointer" }}>📎</span>
+                <span style={{ fontSize: 14, cursor: "default", opacity: 0.35 }} title="Emoji — coming soon">
+                  😊
+                </span>
+                <span style={{ fontSize: 14, cursor: "default", opacity: 0.35 }} title="Image upload — coming soon">
+                  🖼️
+                </span>
+                <span style={{ fontSize: 14, cursor: "default", opacity: 0.35 }} title="File attach — coming soon">
+                  📎
+                </span>
                 <Button onClick={handleSendClick} disabled={sending || !reply.trim()} className="ml-auto">
                   {sending ? (
                     <>
