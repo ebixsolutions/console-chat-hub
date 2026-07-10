@@ -771,7 +771,7 @@ function SinglePageInbox() {
     if (!conv) return;
     // Resolved: block send entirely
     if (conv.status === "resolved") {
-      toast.error("This conversation is resolved. Mark unresolved before replying.");
+      toast("This conversation is resolved. Mark unresolved before replying.");
       return;
     }
     // Human-controlled AND assigned to current agent: send directly
