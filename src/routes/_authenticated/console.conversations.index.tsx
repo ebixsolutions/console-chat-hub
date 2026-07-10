@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -73,102 +73,6 @@ const HANDOFF_KEYWORDS = [
 ];
 const ELEVATED = new Set(["manager", "admin", "super_admin", "supervisor"]);
 const ADMIN_ONLY = new Set(["admin", "super_admin"]);
-
-// ─── Mock CRM data (aligned to Base44 mockC360Panel) ─────────────────────────
-const MOCK_C360: Record<
-  string,
-  {
-    customer_name: string;
-    tier: string;
-    ltv: number;
-    total_orders: number;
-    sentiment: string;
-    emotion_trajectory: string;
-    churn_risk: string;
-    buying_intent_score: number;
-    escalation_probability: number;
-    risk_level: string;
-    intervention_type: string;
-    time_to_escalation_mins: number;
-    trust_score: number;
-    trust_level: string;
-    resolved_without_human: number;
-    satisfaction_trend: string;
-    next_action_type: string;
-    estimated_revenue_impact: number;
-    next_action_channel: string;
-    optimal_send_time: string;
-    overall_csat: number;
-    nps_score: number;
-    customer_effort_score: number;
-    memory_version: number;
-    memory_size_kb: number;
-    staleness_score: number;
-    gdpr_status: string;
-    expires_at: string;
-    loyalty_points: number;
-    pending_returns: number;
-  }
-> = {
-  default: {
-    customer_name: "Visitor",
-    tier: "Standard",
-    ltv: 0,
-    total_orders: 0,
-    sentiment: "Neutral",
-    emotion_trajectory: "Stable",
-    churn_risk: "Low",
-    buying_intent_score: 50,
-    escalation_probability: 0,
-    risk_level: "",
-    intervention_type: "",
-    time_to_escalation_mins: 0,
-    trust_score: 70,
-    trust_level: "Medium",
-    resolved_without_human: 80,
-    satisfaction_trend: "Stable",
-    next_action_type: "Follow Up",
-    estimated_revenue_impact: 0,
-    next_action_channel: "Web Chat",
-    optimal_send_time: "Soon",
-    overall_csat: 4.0,
-    nps_score: 7,
-    customer_effort_score: 3.0,
-    memory_version: 1,
-    memory_size_kb: 0.5,
-    staleness_score: 5,
-    gdpr_status: "Compliant",
-    expires_at: "2026-12-31",
-    loyalty_points: 0,
-    pending_returns: 0,
-  },
-};
-
-// Mock AI suggestions
-const MOCK_SUGGESTIONS = [
-  {
-    id: "s1",
-    option_label: "Option A — Fast Resolution",
-    option_tag: "blue",
-    suggested_reply:
-      "I sincerely apologise for the inconvenience. I'll arrange an immediate resolution for you. Please allow me a moment to process this.",
-    rag_sources: [
-      { title: "Customer Policy Guide (Demo)", confidence: 92 },
-      { title: "Service Guidelines (Demo)", confidence: 87 },
-    ],
-  },
-  {
-    id: "s2",
-    option_label: "Option B — Empathy First",
-    option_tag: "green",
-    suggested_reply:
-      "I completely understand your frustration. This is not the experience we want for you. Let me personally take care of this right away.",
-    rag_sources: [
-      { title: "Sentiment Handling Guide (Demo)", confidence: 94 },
-      { title: "Customer Policy Guide (Demo)", confidence: 92 },
-    ],
-  },
-];
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function isHumanNeeded(c: Conv) {
@@ -264,10 +168,6 @@ function HandoffBanner({
   const aiCount = aiMsgs.length;
   const visitorCount = visitorMsgs.length;
   const allVisitorText = visitorMsgs
-    .map((m) => m.content)
-    .join(" ")
-    .toLowerCase();
-  const allAiText = aiMsgs
     .map((m) => m.content)
     .join(" ")
     .toLowerCase();
@@ -473,65 +373,24 @@ function BannerBtn({
   );
 }
 
-// ─── CRMPanel — exact Base44 style alignment ─────────────────────────────────
+// ─── CRMPanel ────────────────────────────────────────────────────────────────
 function CRMPanel({
   conv,
   visitorLabel,
-  onInsert,
   onResolve,
 }: {
   conv: Conv | null;
   visitorLabel: string;
-  onInsert: (text: string) => void;
   onResolve: () => void;
 }) {
   const [tab, setTab] = useState("customer");
-  const [kbQuery, setKbQuery] = useState("");
-  const [kbResults, setKbResults] = useState<null | { title: string; snippet: string; confidence: number }[]>(null);
 
   useEffect(() => {
     setTab("customer");
-    setKbQuery("");
-    setKbResults(null);
   }, [conv?.id]);
-
-  // Safe demo profile — not real customer data
-  const c360 = {
-    tier: "Demo Profile",
-    total_orders: 0,
-    ltv: 0,
-    loyalty_points: 0,
-    pending_returns: 0,
-    sentiment_current: "Neutral",
-    emotion_trajectory: "Stable",
-    churn_risk: "Low",
-    buying_intent_score: 50,
-    scam_risk_flag: false,
-    escalation_probability: 0,
-    risk_level: "",
-    intervention_type: "",
-    time_to_escalation_mins: 0,
-    trust_score: 70,
-    trust_level: "Medium",
-    resolved_without_human: 80,
-    satisfaction_trend: "Stable",
-    next_action_type: "Follow Up",
-    estimated_revenue_impact: 0,
-    next_action_channel: "Web Chat",
-    optimal_send_time: "Soon",
-    overall_csat: 4.0,
-    nps_score: 7,
-    customer_effort_score: 3.0,
-    memory_version: 1,
-    memory_size_kb: 0.5,
-    staleness_score: 5,
-    gdpr_status: "Compliant",
-    expires_at: "2026-12-31",
-  };
 
   const initials = getInitials(visitorLabel);
 
-  // Base44 exact sectionTitle style
   const sectionTitle: CSSProperties = {
     fontSize: 10,
     fontWeight: 700,
@@ -547,54 +406,9 @@ function CRMPanel({
     { key: "policy", label: "Policy" },
   ];
 
-  const doSearch = () => {
-    const q = kbQuery.toLowerCase();
-    if (q.length > 2) {
-      setKbResults([
-        {
-          title: "Customer Policy Guide (Demo)",
-          snippet: "Demo sample: Customer eligibility rules require live KB connection for accurate policy lookup.",
-          confidence: 92,
-        },
-        {
-          title: "Return & Exchange Policy (Demo)",
-          snippet: "Demo sample: Exchange and return policies are available when Knowledge Base is connected.",
-          confidence: 87,
-        },
-      ]);
-    } else {
-      setKbResults([]);
-    }
-  };
-
-  const MOCK_SUGGESTIONS = [
-    {
-      id: "s1",
-      option_label: "Option A — Fast Resolution",
-      option_tag: "blue",
-      suggested_reply:
-        "Hi, I understand the issue and I'm sorry for the inconvenience. I'll review your case and help arrange the next appropriate step for you as quickly as possible.",
-      rag_sources: [
-        { title: "Customer Policy Guide (Demo)", confidence: 92 },
-        { title: "Service Guidelines (Demo)", confidence: 87 },
-      ],
-    },
-    {
-      id: "s2",
-      option_label: "Option B — Empathy First",
-      option_tag: "green",
-      suggested_reply:
-        "Hi, I completely understand your frustration and I'm truly sorry for this experience. Let me personally look into this right away and ensure we take the right steps to resolve your issue promptly.",
-      rag_sources: [
-        { title: "Sentiment Handling Guide (Demo)", confidence: 94 },
-        { title: "Customer Policy Guide (Demo)", confidence: 92 },
-      ],
-    },
-  ];
-
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", background: "#fff" }}>
-      {/* Connection status — Base44 exact style but demo wording */}
+      {/* Connection status */}
       <div
         style={{
           padding: "8px 12px",
@@ -609,7 +423,7 @@ function CRMPanel({
         <div>Knowledge Base: Not connected</div>
       </div>
 
-      {/* Tabs — Base44 exact */}
+      {/* Tabs */}
       <div
         style={{
           display: "flex",
@@ -641,12 +455,11 @@ function CRMPanel({
         ))}
       </div>
 
-      {/* Content — Base44 exact padding: 12 */}
+      {/* Content */}
       <div style={{ flex: 1, overflowY: "auto", padding: 12, background: "#fff" }}>
-        {/* CUSTOMER TAB — Base44 exact */}
+        {/* CUSTOMER TAB — Dev22-A2.2: real visitor data + CRM not connected */}
         {tab === "customer" && conv && (
           <>
-            {/* Header */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <div
@@ -668,208 +481,53 @@ function CRMPanel({
                 </div>
                 <div>
                   <div style={{ fontSize: 13, fontWeight: 700 }}>{visitorLabel}</div>
-                  <span
-                    style={{
-                      background: "#f1f5f9",
-                      color: "#475569",
-                      fontSize: 9.5,
-                      fontWeight: 600,
-                      padding: "1px 7px",
-                      borderRadius: 20,
-                    }}
-                  >
-                    {c360.tier}
-                  </span>
+                  <div style={{ fontSize: 10.5, color: "#888" }}>
+                    {conv.channel_config?.name || "Web"} · #{conv.id.slice(0, 8)}
+                  </div>
                 </div>
               </div>
-              <Link
-                to="/console/customer360"
-                style={{
-                  fontSize: 10,
-                  fontWeight: 600,
-                  color: "#6366f1",
-                  textDecoration: "none",
-                  background: "#ede9fe",
-                  padding: "3px 8px",
-                  borderRadius: 6,
-                }}
-              >
-                ↗ Full C360
-              </Link>
             </div>
 
-            {/* Stats 2×2 — Base44 exact */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5, marginBottom: 10 }}>
-              {[
-                [c360.total_orders, "Orders"],
-                [`HK$${c360.ltv.toLocaleString()}`, "LTV"],
-                [`${c360.loyalty_points} pts`, "Points"],
-                [c360.pending_returns, "Pending Returns"],
-              ].map(([v, l]) => (
-                <div
-                  key={String(l)}
-                  style={{ background: "#f5f4f0", borderRadius: 7, padding: "6px 8px", textAlign: "center" as const }}
-                >
-                  <div style={{ fontSize: 12, fontWeight: 700 }}>{v}</div>
-                  <div style={{ fontSize: 9.5, color: "#888" }}>{l}</div>
-                </div>
-              ))}
-            </div>
-
-            {/* Sentiment & Risk — Base44 exact */}
-            <div style={{ ...sectionTitle, marginBottom: 4 }}>Sentiment & Risk</div>
-            <div style={{ background: "#f0efe9", borderRadius: 20, height: 7, marginBottom: 3, overflow: "hidden" }}>
-              <div style={{ height: "100%", borderRadius: 20, width: "45%", background: "#94a3b8" }} />
-            </div>
-            <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4, color: "#475569" }}>
-              {c360.sentiment_current} · Trajectory: {c360.emotion_trajectory}
-            </div>
-            <div style={{ fontSize: 10.5, color: "#888", marginBottom: 10 }}>
-              Churn: <span style={{ color: "#dc2626", fontWeight: 600 }}>🔴 {c360.churn_risk}</span> &nbsp;·&nbsp;
-              Buying Intent: {c360.buying_intent_score}% &nbsp;·&nbsp; Scam: {c360.scam_risk_flag ? "⚠️" : "✅ None"}
-            </div>
-
-            {/* Escalation Risk — Base44 exact */}
-            {c360.risk_level && (
-              <div
-                style={{
-                  background: "#fee2e2",
-                  border: "0.5px solid #fca5a5",
-                  borderRadius: 8,
-                  padding: "7px 10px",
-                  marginBottom: 10,
-                }}
-              >
-                <div style={{ fontSize: 10.5, fontWeight: 700, color: "#dc2626", marginBottom: 2 }}>
-                  🔴 {c360.risk_level} — {c360.intervention_type}
-                </div>
-                <div style={{ fontSize: 10, color: "#991b1b" }}>
-                  Prob: {Math.round(c360.escalation_probability * 100)}% · ETA: ~{c360.time_to_escalation_mins} min
-                </div>
-              </div>
-            )}
-
-            {/* AI Trust Score — Base44 exact */}
-            <div style={{ ...sectionTitle, marginBottom: 4 }}>AI Trust Score</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
-              <div style={{ flex: 1, background: "#e8e6e0", borderRadius: 20, height: 7, overflow: "hidden" }}>
-                <div
-                  style={{
-                    width: `${c360.trust_score}%`,
-                    height: "100%",
-                    background: c360.trust_score >= 75 ? "#16a34a" : "#d97706",
-                    borderRadius: 20,
-                  }}
-                />
-              </div>
-              <span style={{ fontSize: 11, fontWeight: 700 }}>{c360.trust_score}/100</span>
-              <span
-                style={{ fontSize: 9.5, color: "#888", background: "#f0efe9", padding: "1px 6px", borderRadius: 4 }}
-              >
-                {c360.trust_level}
-              </span>
-            </div>
-            <div style={{ fontSize: 10.5, color: "#888", marginBottom: 10 }}>
-              Trend: {c360.satisfaction_trend} ↓ · {c360.resolved_without_human}% resolved w/o human
-            </div>
-
-            {/* Next Best Action — Base44 exact */}
-            <div style={{ ...sectionTitle, marginBottom: 4 }}>Next Best Action</div>
             <div
               style={{
-                background: "#f0fdf4",
-                border: "0.5px solid #86efac",
-                borderRadius: 8,
-                padding: "7px 10px",
-                marginBottom: 10,
+                background: "#f5f4f0",
+                borderRadius: 9,
+                padding: "12px 14px",
+                marginBottom: 12,
+                fontSize: 11,
+                color: "#555",
+                lineHeight: 1.6,
               }}
             >
-              <div style={{ fontSize: 11, fontWeight: 700, color: "#065f46", marginBottom: 2 }}>
-                💎 {c360.next_action_type}
-              </div>
-              <div style={{ fontSize: 10, color: "#065f46" }}>Channel: {c360.next_action_channel}</div>
-              <div style={{ fontSize: 10, color: "#888", marginTop: 1 }}>{c360.optimal_send_time}</div>
+              Customer profile data requires CRM integration. Connect your CRM to view order history, loyalty status,
+              sentiment analysis, and trust scores.
             </div>
 
-            {/* Last Feedback — Base44 exact */}
-            <div style={{ ...sectionTitle, marginBottom: 4 }}>Last Feedback</div>
-            <div style={{ fontSize: 10.5, color: "#555", marginBottom: 10 }}>
-              CSAT: ★ {c360.overall_csat} · NPS: {c360.nps_score} · CES: {c360.customer_effort_score}
-              <br />
-              <span style={{ color: "#888" }}>Submitted: 2026-05-15</span>
-            </div>
-
-            {/* Memory Status — Base44 exact */}
-            <div style={{ ...sectionTitle, marginBottom: 4 }}>
-              Memory Status <span style={{ fontWeight: 400, color: "#aaa", fontSize: 9 }}>[Phase 2]</span>
-            </div>
-            <div style={{ fontSize: 10.5, color: "#555", marginBottom: 12 }}>
-              v{c360.memory_version} · {c360.memory_size_kb}KB · Staleness: {c360.staleness_score}%<br />
-              GDPR: ✅ {c360.gdpr_status} · Expires: {c360.expires_at}
-            </div>
-
-            {/* Quick Actions — Base44 exact (Resolve wired to real EF) */}
             <div style={sectionTitle}>Quick Actions</div>
-            {[
-              { label: "View Orders (Mock)", color: "#1a1a1a", onClick: () => toast("View Orders — mock only") },
-              {
-                label: "Initiate Exchange (Mock)",
-                color: "#1a1a1a",
-                onClick: () => toast("Initiate Exchange — mock only"),
-              },
-              {
-                label: "Create Ticket Note (Mock)",
-                color: "#1a1a1a",
-                onClick: () => toast("Create Ticket Note — mock only"),
-              },
-              { label: "Resolve Ticket", color: "#ef4444", onClick: onResolve },
-            ].map((a) => (
-              <button
-                key={a.label}
-                onClick={a.onClick}
-                style={{
-                  display: "block",
-                  width: "100%",
-                  textAlign: "left" as const,
-                  fontSize: 11.5,
-                  fontWeight: 500,
-                  padding: "7px 11px",
-                  borderRadius: 8,
-                  border: "0.5px solid #e8e6e0",
-                  background: "#fff",
-                  cursor: "pointer",
-                  marginBottom: 5,
-                  color: a.color,
-                }}
-              >
-                {a.label}
-              </button>
-            ))}
-            <Link
-              to="/console/customer360"
+            <button
+              type="button"
+              onClick={onResolve}
               style={{
                 display: "block",
                 width: "100%",
-                textAlign: "center" as const,
+                textAlign: "left" as const,
                 fontSize: 11.5,
-                fontWeight: 600,
-                padding: "8px 11px",
+                fontWeight: 500,
+                padding: "7px 11px",
                 borderRadius: 8,
-                border: "0.5px solid #6366f1",
-                background: "#ede9fe",
-                color: "#6366f1",
-                textDecoration: "none",
+                border: "0.5px solid #e8e6e0",
+                background: "#fff",
+                cursor: "pointer",
                 marginBottom: 5,
-                marginTop: 4,
-                boxSizing: "border-box" as const,
+                color: "#ef4444",
               }}
             >
-              ↗ Open Full Customer 360
-            </Link>
+              Resolve Ticket
+            </button>
           </>
         )}
 
-        {/* KNOWLEDGE TAB — Base44 exact */}
+        {/* KNOWLEDGE TAB — Dev22-A2.1a: KB not connected */}
         {tab === "knowledge" && (
           <>
             <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
@@ -922,7 +580,7 @@ function CRMPanel({
           </>
         )}
 
-        {/* AI SUGGESTION TAB — Base44 exact (no Send button) */}
+        {/* AI SUGGESTION TAB — Dev22-A2.1: LLM + KB required */}
         {tab === "suggestion" && (
           <>
             <div style={{ marginBottom: 6 }}>
@@ -944,7 +602,7 @@ function CRMPanel({
           </>
         )}
 
-        {/* POLICY TAB — Base44 exact */}
+        {/* POLICY TAB — Dev22-A2.1: KB required */}
         {tab === "policy" && (
           <>
             <div style={sectionTitle}>Policy Check</div>
@@ -965,26 +623,6 @@ function CRMPanel({
         )}
       </div>
     </div>
-  );
-}
-
-function SmBtn({ label, dark, onClick }: { label: string; dark?: boolean; onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        fontSize: 10,
-        fontWeight: 600,
-        padding: "3px 9px",
-        borderRadius: 6,
-        cursor: "pointer",
-        border: dark ? "none" : "0.5px solid #e8e6e0",
-        background: dark ? "#1a1a1a" : "#fff",
-        color: dark ? "#fff" : "#555",
-      }}
-    >
-      {label}
-    </button>
   );
 }
 
@@ -1065,7 +703,6 @@ function SinglePageInbox() {
       .order("created_at", { ascending: true });
     setMessages((data as Msg[]) ?? []);
     if (showLoading) setLoadingMessages(false);
-    // Only scroll to bottom on first load or explicit scroll request (not on polling)
     if (showLoading || scrollToBottom) {
       setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
     }
@@ -1128,11 +765,10 @@ function SinglePageInbox() {
     }
   }
   async function handleResolve() {
-    const conversationId = selectedId; // Capture stable reference
+    const conversationId = selectedId;
     if (!conversationId) return;
     if (await callEF("resolve-conversation", { conversation_id: conversationId })) {
       toast.success("Marked resolved");
-      // P3-FB: Schedule feedback request BEFORE reload (non-blocking)
       try {
         const schedResult = await feedbackService.scheduleFeedbackRequest(conversationId);
         if (schedResult && !schedResult.ok) {
@@ -1194,7 +830,7 @@ function SinglePageInbox() {
     }
   }
 
-  // Dev21b Phase 1: Conversation Activity Timeline (status_log + assignment + handoff_event)
+  // Dev21b Phase 1: Conversation Activity Timeline
   async function loadActivity(convId: string) {
     setActivityLoading(true);
     setActivityRows([]);
@@ -1214,7 +850,6 @@ function SinglePageInbox() {
           .eq("conversation_id", convId),
       ]);
 
-      // Correction 1+2: check each query's error; never treat a failed query as empty.
       if (statusRes.error || assignRes.error || handoffRes.error) {
         if (statusRes.error) console.error("[activity] conversation_status_log:", statusRes.error.message);
         if (assignRes.error) console.error("[activity] conversation_assignment:", assignRes.error.message);
@@ -1565,7 +1200,7 @@ function SinglePageInbox() {
           </div>
         ) : (
           <>
-            {/* Chat Header (aligned to Base44 ChatPanel header) */}
+            {/* Chat Header */}
             <div
               style={{ background: "#fff", borderBottom: "0.5px solid #e8e6e0", padding: "8px 12px", flexShrink: 0 }}
             >
@@ -1701,7 +1336,7 @@ function SinglePageInbox() {
               </div>
             </div>
 
-            {/* HandoffBanner (aligned to Base44 HandoffBanner) */}
+            {/* HandoffBanner */}
             {selectedConv && (
               <HandoffBanner
                 conv={selectedConv}
@@ -1957,12 +1592,7 @@ function SinglePageInbox() {
 
       {/* ── RIGHT: CRMPanel (360px) ── */}
       <div style={{ width: 360, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <CRMPanel
-          conv={selectedConv}
-          visitorLabel={visitorLabel || "Visitor"}
-          onInsert={(text) => setReply((prev) => (prev ? `${prev}\n${text}` : text))}
-          onResolve={handleResolve}
-        />
+        <CRMPanel conv={selectedConv} visitorLabel={visitorLabel || "Visitor"} onResolve={handleResolve} />
       </div>
 
       {/* Dev21b Phase 1: Conversation Activity Timeline */}
