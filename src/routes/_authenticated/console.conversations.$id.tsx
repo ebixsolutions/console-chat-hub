@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { ArrowLeft, Loader2 } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { feedbackService } from "@/lib/api/feedback.service";
 
 export const Route = createFileRoute("/_authenticated/console/conversations/$id")({
@@ -53,6 +54,8 @@ function ConversationDetail() {
   const [reply, setReply] = useState("");
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [sendGuardOpen, setSendGuardOpen] = useState(false);
+  const [resolvedWarningOpen, setResolvedWarningOpen] = useState(false);
 
   const loadConv = useCallback(async () => {
     const { data } = await supabase
@@ -134,6 +137,54 @@ function ConversationDetail() {
       loadMessages();
     }
   }
+
+  // ── Dev22-F2: Send Guard — aligned with index route ───────────────
+  function handleSendClick() {
+    if (!reply.trim()) return;
+    if (!conv) return;
+    if (!myAgent) {
+      toast.error("Agent profile is not available. Please refresh and try again.");
+      return;
+    }
+    if (conv.status === "resolved") {
+      setResolvedWarningOpen(true);
+      return;
+    }
+    if (conv.status === "pending" && conv.assigned_agent_id === myAgent?.id) {
+      sendReply();
+      return;
+    }
+    setSendGuardOpen(true);
+  }
+
+  async function handleTakeOverAndSend() {
+    const content = reply.trim();
+    if (!content) {
+      setSendGuardOpen(false);
+      return;
+    }
+    setSending(true);
+    const takeOverOk = await callEF("take-over-conversation", { conversation_id: id });
+    if (!takeOverOk) {
+      setSending(false);
+      setSendGuardOpen(false);
+      toast.error("Take over failed. Message not sent.");
+      return;
+    }
+    const sendOk = await callEF("agent-send-reply", { conversation_id: id, content });
+    setSending(false);
+    setSendGuardOpen(false);
+    if (sendOk) {
+      setReply("");
+      toast.success("Took over and sent reply");
+      loadConv();
+      loadMessages();
+    } else {
+      toast.info("Conversation taken over, but message was not sent. Please re-send.");
+      loadConv();
+    }
+  }
+  // ── End Dev22-F2 ──────────────────────────────────────────────────
 
   async function handleResolve() {
     if (await callEF("resolve-conversation", { conversation_id: id })) {
@@ -305,7 +356,7 @@ function ConversationDetail() {
                   rows={4}
                   maxLength={4000}
                 />
-                <Button onClick={sendReply} disabled={sending || !reply.trim()} className="w-full">
+                <Button onClick={handleSendClick} disabled={sending || !reply.trim()} className="w-full">
                   {sending ? "Sending…" : "Send reply"}
                 </Button>
               </div>
@@ -361,12 +412,9 @@ function ConversationDetail() {
           <div style={{ fontSize: 10, color: '#cbd5e1', lineHeight: 1.6 }}>
             Full CRM panel coming in Phase-2C.<br />No CRM data connected.
           </div>
-          <Link
-            to="/console/customer360"
-            style={{ marginTop: 8, fontSize: 11, fontWeight: 600, color: '#6366f1', textDecoration: 'none', background: '#ede9fe', padding: '4px 10px', borderRadius: 6 }}
-          >
-            ↗ Open Customer 360
-          </Link>
+          <div style={{ marginTop: 8, fontSize: 10, color: '#cbd5e1' }}>
+            CRM integration required
+          </div>
         </div>
       </div>
 
