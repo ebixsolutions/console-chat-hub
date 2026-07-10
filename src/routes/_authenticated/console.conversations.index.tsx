@@ -258,7 +258,7 @@ function HandoffBanner({
   const headerBg = isHumanControl ? "#ede9fe" : "#fee2e2";
   const headerColor = isHumanControl ? "#6d28d9" : "#991b1b";
 
-  // Derive precise AI Summary from all conversation messages
+  // Derive precise Detected Issues from all conversation messages
   const visitorMsgs = messages.filter((m) => m.role === "visitor");
   const aiMsgs = messages.filter((m) => m.role === "assistant");
   const aiCount = aiMsgs.length;
@@ -374,7 +374,7 @@ function HandoffBanner({
               marginBottom: 5,
             }}
           >
-            AI Summary
+            Detected Issues
           </div>
           <div style={{ lineHeight: 1.6, fontSize: 11, color: "#1a1a1a" }}>{summaryText}</div>
         </div>
