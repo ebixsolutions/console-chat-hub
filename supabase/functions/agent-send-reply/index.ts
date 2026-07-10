@@ -20,7 +20,7 @@ Deno.serve(async (req) => {
 
     const { data: conv, error: convErr } = await supabaseAdmin
       .from("conversations")
-      .select("id, status")
+      .select("id, status, assigned_agent_id")
       .eq("id", conversation_id)
       .single();
     if (convErr || !conv) return json({ error: "Conversation not found" }, 404);
