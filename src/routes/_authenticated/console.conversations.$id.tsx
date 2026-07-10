@@ -418,6 +418,43 @@ function ConversationDetail() {
         </div>
       </div>
 
+      {/* Dev22-F2: Resolved Warning */}
+      <Dialog open={resolvedWarningOpen} onOpenChange={setResolvedWarningOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Conversation Resolved</DialogTitle>
+            <DialogDescription>
+              This conversation is resolved. Please mark it as unresolved before replying.
+            </DialogDescription>
+          </DialogHeader>
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
+            <Button size="sm" onClick={() => setResolvedWarningOpen(false)}>
+              OK
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dev22-F2: Send Guard — Take Over Confirmation */}
+      <Dialog open={sendGuardOpen} onOpenChange={setSendGuardOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Take Over Conversation?</DialogTitle>
+            <DialogDescription>
+              This conversation is not currently under your control. Take over before sending this message?
+            </DialogDescription>
+          </DialogHeader>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
+            <Button variant="outline" size="sm" onClick={() => setSendGuardOpen(false)} disabled={sending}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={handleTakeOverAndSend} disabled={sending}>
+              {sending ? "Processing…" : "Take Over & Send"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
     </div>
   );
 }
