@@ -22,6 +22,7 @@ import { Route as AuthenticatedConsoleWidgetPreviewRouteImport } from './routes/
 import { Route as AuthenticatedConsoleTrainingCandidatesRouteImport } from './routes/_authenticated/console.training-candidates'
 import { Route as AuthenticatedConsoleKbGapsRouteImport } from './routes/_authenticated/console.kb-gaps'
 import { Route as AuthenticatedConsoleFeedbackSettingsRouteImport } from './routes/_authenticated/console.feedback-settings'
+import { Route as AuthenticatedConsoleFeedbackResponsesRouteImport } from './routes/_authenticated/console.feedback-responses'
 import { Route as AuthenticatedConsoleCustomer360RouteImport } from './routes/_authenticated/console.customer360'
 import { Route as AuthenticatedConsoleChannelSettingsRouteImport } from './routes/_authenticated/console.channel-settings'
 import { Route as AuthenticatedConsoleAnalyticsRouteImport } from './routes/_authenticated/console.analytics'
@@ -105,6 +106,12 @@ const AuthenticatedConsoleFeedbackSettingsRoute =
     path: '/feedback-settings',
     getParentRoute: () => AuthenticatedConsoleRoute,
   } as any)
+const AuthenticatedConsoleFeedbackResponsesRoute =
+  AuthenticatedConsoleFeedbackResponsesRouteImport.update({
+    id: '/feedback-responses',
+    path: '/feedback-responses',
+    getParentRoute: () => AuthenticatedConsoleRoute,
+  } as any)
 const AuthenticatedConsoleCustomer360Route =
   AuthenticatedConsoleCustomer360RouteImport.update({
     id: '/customer360',
@@ -186,6 +193,7 @@ export interface FileRoutesByFullPath {
   '/console/analytics': typeof AuthenticatedConsoleAnalyticsRoute
   '/console/channel-settings': typeof AuthenticatedConsoleChannelSettingsRoute
   '/console/customer360': typeof AuthenticatedConsoleCustomer360Route
+  '/console/feedback-responses': typeof AuthenticatedConsoleFeedbackResponsesRoute
   '/console/feedback-settings': typeof AuthenticatedConsoleFeedbackSettingsRoute
   '/console/kb-gaps': typeof AuthenticatedConsoleKbGapsRoute
   '/console/training-candidates': typeof AuthenticatedConsoleTrainingCandidatesRoute
@@ -210,6 +218,7 @@ export interface FileRoutesByTo {
   '/console/analytics': typeof AuthenticatedConsoleAnalyticsRoute
   '/console/channel-settings': typeof AuthenticatedConsoleChannelSettingsRoute
   '/console/customer360': typeof AuthenticatedConsoleCustomer360Route
+  '/console/feedback-responses': typeof AuthenticatedConsoleFeedbackResponsesRoute
   '/console/feedback-settings': typeof AuthenticatedConsoleFeedbackSettingsRoute
   '/console/kb-gaps': typeof AuthenticatedConsoleKbGapsRoute
   '/console/training-candidates': typeof AuthenticatedConsoleTrainingCandidatesRoute
@@ -237,6 +246,7 @@ export interface FileRoutesById {
   '/_authenticated/console/analytics': typeof AuthenticatedConsoleAnalyticsRoute
   '/_authenticated/console/channel-settings': typeof AuthenticatedConsoleChannelSettingsRoute
   '/_authenticated/console/customer360': typeof AuthenticatedConsoleCustomer360Route
+  '/_authenticated/console/feedback-responses': typeof AuthenticatedConsoleFeedbackResponsesRoute
   '/_authenticated/console/feedback-settings': typeof AuthenticatedConsoleFeedbackSettingsRoute
   '/_authenticated/console/kb-gaps': typeof AuthenticatedConsoleKbGapsRoute
   '/_authenticated/console/training-candidates': typeof AuthenticatedConsoleTrainingCandidatesRoute
@@ -264,6 +274,7 @@ export interface FileRouteTypes {
     | '/console/analytics'
     | '/console/channel-settings'
     | '/console/customer360'
+    | '/console/feedback-responses'
     | '/console/feedback-settings'
     | '/console/kb-gaps'
     | '/console/training-candidates'
@@ -288,6 +299,7 @@ export interface FileRouteTypes {
     | '/console/analytics'
     | '/console/channel-settings'
     | '/console/customer360'
+    | '/console/feedback-responses'
     | '/console/feedback-settings'
     | '/console/kb-gaps'
     | '/console/training-candidates'
@@ -314,6 +326,7 @@ export interface FileRouteTypes {
     | '/_authenticated/console/analytics'
     | '/_authenticated/console/channel-settings'
     | '/_authenticated/console/customer360'
+    | '/_authenticated/console/feedback-responses'
     | '/_authenticated/console/feedback-settings'
     | '/_authenticated/console/kb-gaps'
     | '/_authenticated/console/training-candidates'
@@ -430,6 +443,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedConsoleFeedbackSettingsRouteImport
       parentRoute: typeof AuthenticatedConsoleRoute
     }
+    '/_authenticated/console/feedback-responses': {
+      id: '/_authenticated/console/feedback-responses'
+      path: '/feedback-responses'
+      fullPath: '/console/feedback-responses'
+      preLoaderRoute: typeof AuthenticatedConsoleFeedbackResponsesRouteImport
+      parentRoute: typeof AuthenticatedConsoleRoute
+    }
     '/_authenticated/console/customer360': {
       id: '/_authenticated/console/customer360'
       path: '/customer360'
@@ -516,6 +536,7 @@ interface AuthenticatedConsoleRouteChildren {
   AuthenticatedConsoleAnalyticsRoute: typeof AuthenticatedConsoleAnalyticsRoute
   AuthenticatedConsoleChannelSettingsRoute: typeof AuthenticatedConsoleChannelSettingsRoute
   AuthenticatedConsoleCustomer360Route: typeof AuthenticatedConsoleCustomer360Route
+  AuthenticatedConsoleFeedbackResponsesRoute: typeof AuthenticatedConsoleFeedbackResponsesRoute
   AuthenticatedConsoleFeedbackSettingsRoute: typeof AuthenticatedConsoleFeedbackSettingsRoute
   AuthenticatedConsoleKbGapsRoute: typeof AuthenticatedConsoleKbGapsRoute
   AuthenticatedConsoleTrainingCandidatesRoute: typeof AuthenticatedConsoleTrainingCandidatesRoute
@@ -535,6 +556,8 @@ const AuthenticatedConsoleRouteChildren: AuthenticatedConsoleRouteChildren = {
   AuthenticatedConsoleChannelSettingsRoute:
     AuthenticatedConsoleChannelSettingsRoute,
   AuthenticatedConsoleCustomer360Route: AuthenticatedConsoleCustomer360Route,
+  AuthenticatedConsoleFeedbackResponsesRoute:
+    AuthenticatedConsoleFeedbackResponsesRoute,
   AuthenticatedConsoleFeedbackSettingsRoute:
     AuthenticatedConsoleFeedbackSettingsRoute,
   AuthenticatedConsoleKbGapsRoute: AuthenticatedConsoleKbGapsRoute,
