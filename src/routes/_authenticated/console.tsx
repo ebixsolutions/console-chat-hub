@@ -33,6 +33,7 @@ const translations: Record<string, Record<string, string>> = {
     navCustomer360: "Customer 360",
     navLLMRuntime: "LLM Runtime",
     navWidgetPreview: "Widget Preview",
+    navFeedbackResponses: "Feedback Responses",
   },
   zh: {
     appName: "AI 智能客服",
@@ -47,6 +48,7 @@ const translations: Record<string, Record<string, string>> = {
     navCustomer360: "客戶全景",
     navLLMRuntime: "LLM 模型設定",
     navWidgetPreview: "Widget 預覽",
+    navFeedbackResponses: "客戶回饋",
   },
 };
 
@@ -72,9 +74,15 @@ const pageMeta: Record<string, { zh: string; en: string; sub?: { zh: string; en:
     sub: { zh: "接入渠道配置", en: "Channel integration config" },
   },
   "/console/feedback-settings": {
+    "/console/feedback-responses": { label: "LIVE INBOX", bg: "#fee2e2", color: "#dc2626" },
     zh: "評分自動化",
     en: "Feedback Automation",
     sub: { zh: "對話結案後自動發送客戶評分請求", en: "Auto-send customer rating requests after resolution" },
+  },
+  "/console/feedback-responses": {
+    zh: "客戶回饋",
+    en: "Feedback Responses",
+    sub: { zh: "查看客戶提交的評分與回饋意見", en: "View customer-submitted ratings and feedback" },
   },
   "/console/customer360": {
     zh: "客戶全景",
@@ -113,6 +121,7 @@ const GROUPS = [
       { path: "/console/conversations", icon: "💬", navKey: "navInbox", alertBadge: true },
       { path: "/console/channel-settings", icon: "📡", navKey: "navChannelSettings" },
       { path: "/console/feedback-settings", icon: "⭐", navKey: "navFeedbackSettings" },
+      { path: "/console/feedback-responses", icon: "📋", navKey: "navFeedbackResponses" },
     ],
   },
   {
