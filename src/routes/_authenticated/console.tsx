@@ -175,7 +175,6 @@ function ConsoleLayout() {
   const { role, loading: roleLoading } = useCurrentRole();
   const [demoRole, setDemoRole] = useState<string>("supervisor");
   const effectiveRole = mapDemoRoleToEffective(demoRole);
-  const effectiveRoleContext: ConsoleOutletContext = { effectiveRole, demoRole, lang };
 
   // C3: Sync demoRole from resolved auth role exactly once.
   // After initial sync, manual demo switcher clicks are preserved.
@@ -232,6 +231,8 @@ function ConsoleLayout() {
   const [lang, setLang] = useState<"en" | "zh">("en");
   const [collapsed, setCollapsed] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+
+  const effectiveRoleContext: ConsoleOutletContext = { effectiveRole, demoRole, lang };
 
   const t = (key: string) => translations[lang]?.[key] ?? translations.en[key] ?? key;
   const toggleGroup = (key: string) => setCollapsedGroups((prev) => ({ ...prev, [key]: !prev[key] }));
