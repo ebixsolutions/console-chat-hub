@@ -881,6 +881,15 @@ export type Database = {
         }
         Returns: Json
       }
+      takeover_conversation_tx: {
+        Args: {
+          p_agent_id: string
+          p_conversation_id: string
+          p_expected_owner?: string
+          p_expected_status: string
+        }
+        Returns: Json
+      }
     }
     Enums: {
       app_role: "admin" | "supervisor" | "agent"
