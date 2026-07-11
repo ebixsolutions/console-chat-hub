@@ -74,7 +74,6 @@ const pageMeta: Record<string, { zh: string; en: string; sub?: { zh: string; en:
     sub: { zh: "接入渠道配置", en: "Channel integration config" },
   },
   "/console/feedback-settings": {
-    "/console/feedback-responses": { label: "LIVE INBOX", bg: "#fee2e2", color: "#dc2626" },
     zh: "評分自動化",
     en: "Feedback Automation",
     sub: { zh: "對話結案後自動發送客戶評分請求", en: "Auto-send customer rating requests after resolution" },
@@ -149,6 +148,7 @@ const GROUP_BADGE: Record<string, { label: string; bg: string; color: string }> 
   "/console/agent-settings": { label: "AGENT OPERATIONS", bg: "#dbeafe", color: "#2563eb" },
   "/console/channel-settings": { label: "LIVE INBOX", bg: "#fee2e2", color: "#dc2626" },
   "/console/feedback-settings": { label: "LIVE INBOX", bg: "#fee2e2", color: "#dc2626" },
+  "/console/feedback-responses": { label: "LIVE INBOX", bg: "#fee2e2", color: "#dc2626" },
   "/console/settings/llm-runtime": { label: "SETTINGS", bg: "#ede9fe", color: "#6d28d9" },
   "/console/widget-preview": { label: "WIDGET", bg: "#f0fdf4", color: "#16a34a" },
 };
