@@ -2,8 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import { toast } from "sonner";
-import { useEffectiveRole } from "@/hooks/useEffectiveRole";
-import { PermissionDenied } from "@/components/console/PageStates";
+import { useCurrentRole } from "@/hooks/useCurrentRole";
+import { LoadingState, PermissionDenied } from "@/components/console/PageStates";
 import { supabase } from "@/integrations/supabase/client";
 import {
   aiChatbotSettingsService,
@@ -109,15 +109,26 @@ function ComingSoonBadge() {
 }
 
 function ConsoleFeedbackAutomation() {
-  const roleState = useEffectiveRole();
-  const role = (roleState as { role?: string })?.role;
+  const { role: productionRole, loading: roleLoading } = useCurrentRole();
 
+  if (roleLoading) return <LoadingState />;
+
+  // Authorization uses production DB role only (defense in depth).
+  const canView = productionRole === "admin" || productionRole === "supervisor";
+  if (!canView) {
+    return <PermissionDenied message="You do not have permission to manage feedback automation." />;
+  }
+
+  return <FeedbackAutomationContent />;
+}
+
+function FeedbackAutomationContent() {
   const [config, setConfig] = useState<FeedbackAutomationConfig | null>(null);
   const [requests, setRequests] = useState<FeedbackRequest[]>([]);
   const [source, setSource] = useState<"live" | "mock_fallback" | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [saveStatus, setSaveStatus] = useState<
+  const [saveStatus, setSaveStatus] = useState
     { kind: "idle" } | { kind: "success"; message: string } | { kind: "error"; message: string }
   >({ kind: "idle" });
   const [templateTab, setTemplateTab] = useState<RatingType>("stars_1_5");
@@ -137,12 +148,6 @@ function ConsoleFeedbackAutomation() {
   useEffect(() => {
     reload();
   }, []);
-
-  // P1 Rescue Director-approved predicate: agent/qa/null → restricted.
-  const isRestrictedRole = role === "agent" || role === "qa" || !role;
-  if (isRestrictedRole) {
-    return <PermissionDenied message="You do not have permission to manage feedback automation." />;
-  }
 
   if (!config) return <div style={{ padding: 24, fontSize: 12, color: "#555" }}>Loading feedback automation…</div>;
 
