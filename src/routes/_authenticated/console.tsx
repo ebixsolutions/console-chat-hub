@@ -5,18 +5,6 @@ import { supabase } from "@/integrations/supabase/client";
 import { useCurrentRole } from "@/hooks/useCurrentRole";
 import { mapDemoRoleToEffective, type ConsoleOutletContext } from "@/types/demoRole";
 import { EffectiveRoleProvider } from "@/hooks/useEffectiveRole";
-
-// --- DEV22-G RLS UAT Probe type (temporary, remove after RLS UAT) ---
-declare global {
-  interface Window {
-    __DEV22_G_RLS_PROBE__?: () => Promise<{
-      status: "allowed_rows" | "empty" | "denied" | "error";
-      rowCount: number;
-      safeErrorCode: string | null;
-    }>;
-  }
-}
-
 export const Route = createFileRoute("/_authenticated/console")({
   component: ConsoleLayout,
 });
@@ -245,50 +233,6 @@ function ConsoleLayout() {
 
     return () => {
       cancelled = true;
-    };
-  }, []);
-
-  // --- DEV22-G RLS UAT Probe (temporary, remove after RLS UAT) ---
-  useEffect(() => {
-    delete window.__DEV22_G_RLS_PROBE__;
-
-    const isUatHost = window.location.hostname === "console-chat-hub.lovable.app";
-    const isUatFlag = sessionStorage.getItem("DEV22_G_RLS_UAT_ENABLED") === "true";
-    const isUatParam = new URLSearchParams(window.location.search).get("dev22_rls_uat") === "1";
-
-    if (isUatHost && isUatFlag && isUatParam) {
-      window.__DEV22_G_RLS_PROBE__ = async () => {
-        try {
-          const { data, error } = await supabase.from("feedback_request").select("id").limit(5);
-
-          if (error) {
-            const isPermissionDenied = error.code === "42501";
-
-            return {
-              status: isPermissionDenied ? ("denied" as const) : ("error" as const),
-              rowCount: 0,
-              safeErrorCode: error.code ?? "unknown_error",
-            };
-          }
-
-          const count = data?.length ?? 0;
-          return {
-            status: count > 0 ? ("allowed_rows" as const) : ("empty" as const),
-            rowCount: count,
-            safeErrorCode: null,
-          };
-        } catch {
-          return {
-            status: "error" as const,
-            rowCount: 0,
-            safeErrorCode: "exception",
-          };
-        }
-      };
-    }
-
-    return () => {
-      delete window.__DEV22_G_RLS_PROBE__;
     };
   }, []);
 
