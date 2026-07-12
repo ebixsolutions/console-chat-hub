@@ -29,20 +29,18 @@
 
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState, useCallback, useRef } from "react";
-import { useEffectiveRole, useConsoleLang } from "@/hooks/useEffectiveRole";
+import { useConsoleLang } from "@/hooks/useEffectiveRole";
+import { useCurrentRole } from "@/hooks/useCurrentRole";
 import { LoadingState, PermissionDenied } from "@/components/console/PageStates";
 import { supabase } from "@/integrations/supabase/client";
 
-export const Route = createFileRoute(
-  "/_authenticated/console/feedback-responses"
-)({
+export const Route = createFileRoute("/_authenticated/console/feedback-responses")({
   component: FeedbackResponsesPage,
 });
 
 const PAGE_SIZE = 20;
 
-const UUID_REGEX =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function isValidUuid(value: string): boolean {
   return UUID_REGEX.test(value.trim());
@@ -133,7 +131,8 @@ const COPY: Record<"en" | "zh", CopyBlock> = {
     loadError: "\u7121\u6CD5\u8F09\u5165\u56DE\u994B\u8CC7\u6599\uFF0C\u8ACB\u91CD\u8A66\u3002",
     emptyTitle: "\u672A\u627E\u5230\u7B26\u5408\u689D\u4EF6\u7684\u56DE\u994B",
     emptyFilterHint: "\u8ACB\u5617\u8A66\u8ABF\u6574\u7BE9\u9078\u689D\u4EF6\u3002",
-    emptyDefaultHint: "\u5BA2\u6236\u63D0\u4EA4\u8A55\u5206\u5F8C\uFF0C\u56DE\u994B\u8CC7\u6599\u5C07\u986F\u793A\u5728\u6B64\u9801\u9762\u3002",
+    emptyDefaultHint:
+      "\u5BA2\u6236\u63D0\u4EA4\u8A55\u5206\u5F8C\uFF0C\u56DE\u994B\u8CC7\u6599\u5C07\u986F\u793A\u5728\u6B64\u9801\u9762\u3002",
     permissionDenied: "\u60A8\u6C92\u6709\u6B0A\u9650\u67E5\u770B\u5BA2\u6236\u56DE\u994B\u3002",
     showing: "\u986F\u793A",
     of: "\u5171",
@@ -154,7 +153,8 @@ const COPY: Record<"en" | "zh", CopyBlock> = {
     uuidPlaceholder: "\u8F38\u5165\u5B8C\u6574 UUID\u2026",
     uuidInvalid: "\u8ACB\u8F38\u5165\u6709\u6548\u7684 UUID\u3002",
     uuidStaleWarning: "\u7121\u6548 UUID\u3002\u76EE\u524D\u641C\u5C0B\u4ECD\u70BA\u4E0A\u4E00\u6B21\u7D50\u679C\u3002",
-    dateRangeInvalid: "\u300C\u958B\u59CB\u65E5\u671F\u300D\u4E0D\u53EF\u665A\u65BC\u300C\u7D50\u675F\u65E5\u671F\u300D\u3002",
+    dateRangeInvalid:
+      "\u300C\u958B\u59CB\u65E5\u671F\u300D\u4E0D\u53EF\u665A\u65BC\u300C\u7D50\u675F\u65E5\u671F\u300D\u3002",
     colId: "ID",
     colConversation: "\u5C0D\u8A71",
     colChannel: "\u6E20\u9053",
@@ -198,36 +198,48 @@ type ConvIdErrorCode = "invalid" | "stale" | null;
 function useLocaleFormatter(): (iso: string | null) => string {
   const lang = useConsoleLang();
   const locale = lang === "zh" ? "zh-HK" : "en-US";
-  return (iso: string | null) =>
-    iso ? new Date(iso).toLocaleString(locale) : "";
+  return (iso: string | null) => (iso ? new Date(iso).toLocaleString(locale) : "");
 }
 
 // ── Inline styles ──
 
 const cardStyle: React.CSSProperties = {
-  background: "#fff", border: "0.5px solid #e8e6e0",
-  borderRadius: 11, padding: 14, marginBottom: 12,
+  background: "#fff",
+  border: "0.5px solid #e8e6e0",
+  borderRadius: 11,
+  padding: 14,
+  marginBottom: 12,
 };
 const selectStyle: React.CSSProperties = {
-  fontSize: 11.5, padding: "5px 8px",
-  border: "0.5px solid #e8e6e0", borderRadius: 7,
-  background: "#fff", color: "#1a1a1a",
+  fontSize: 11.5,
+  padding: "5px 8px",
+  border: "0.5px solid #e8e6e0",
+  borderRadius: 7,
+  background: "#fff",
+  color: "#1a1a1a",
 };
 const inputStyle: React.CSSProperties = {
-  fontSize: 11.5, padding: "5px 8px",
-  border: "0.5px solid #e8e6e0", borderRadius: 7,
-  background: "#fff", color: "#1a1a1a",
+  fontSize: 11.5,
+  padding: "5px 8px",
+  border: "0.5px solid #e8e6e0",
+  borderRadius: 7,
+  background: "#fff",
+  color: "#1a1a1a",
   boxSizing: "border-box" as const,
 };
 const thStyle: React.CSSProperties = {
-  fontSize: 10.5, fontWeight: 700, color: "#888",
+  fontSize: 10.5,
+  fontWeight: 700,
+  color: "#888",
   textTransform: "uppercase" as const,
-  padding: "6px 8px", textAlign: "left" as const,
+  padding: "6px 8px",
+  textAlign: "left" as const,
   borderBottom: "0.5px solid #e8e6e0",
   whiteSpace: "nowrap" as const,
 };
 const tdStyle: React.CSSProperties = {
-  fontSize: 11.5, padding: "8px 8px",
+  fontSize: 11.5,
+  padding: "8px 8px",
   borderBottom: "0.5px solid #f0efe9",
   verticalAlign: "top" as const,
 };
@@ -238,7 +250,11 @@ function RatingStars({ rating, noValue }: { rating: number | null; noValue: stri
   if (rating == null) return <span style={{ color: "#ccc", fontSize: 11 }}>{noValue}</span>;
   const stars = [];
   for (let i = 1; i <= 5; i++) {
-    stars.push(<span key={i} style={{ color: i <= rating ? "#f59e0b" : "#e5e7eb", fontSize: 13 }}>{"\u2605"}</span>);
+    stars.push(
+      <span key={i} style={{ color: i <= rating ? "#f59e0b" : "#e5e7eb", fontSize: 13 }}>
+        {"\u2605"}
+      </span>,
+    );
   }
   return <span>{stars}</span>;
 }
@@ -253,13 +269,31 @@ function StatusBadge({ value, label, noValue }: { value: string | null; label: s
   };
   const c = colorMap[value] || { bg: "#f0efe9", color: "#555" };
   return (
-    <span style={{ background: c.bg, color: c.color, fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 20, whiteSpace: "nowrap" }}>
+    <span
+      style={{
+        background: c.bg,
+        color: c.color,
+        fontSize: 10,
+        fontWeight: 600,
+        padding: "2px 8px",
+        borderRadius: 20,
+        whiteSpace: "nowrap",
+      }}
+    >
       {label}
     </span>
   );
 }
 
-function FeedbackTextCell({ text, moreLabel, lessLabel }: { text: string | null; moreLabel: string; lessLabel: string }) {
+function FeedbackTextCell({
+  text,
+  moreLabel,
+  lessLabel,
+}: {
+  text: string | null;
+  moreLabel: string;
+  lessLabel: string;
+}) {
   const [expanded, setExpanded] = useState(false);
   if (!text) return <span style={{ color: "#ccc", fontSize: 11 }}>{"\u2014"}</span>;
   const truncated = text.length > 80 ? text.slice(0, 80) + "\u2026" : text;
@@ -268,8 +302,21 @@ function FeedbackTextCell({ text, moreLabel, lessLabel }: { text: string | null;
       <span>
         <span style={{ fontSize: 11.5, color: "#555" }}>{truncated}</span>
         {text.length > 80 && (
-          <button type="button" onClick={() => setExpanded(true)} aria-expanded={false}
-            style={{ background: "none", border: "none", color: "#2563eb", fontSize: 10, cursor: "pointer", marginLeft: 4, padding: 0, textDecoration: "underline" }}>
+          <button
+            type="button"
+            onClick={() => setExpanded(true)}
+            aria-expanded={false}
+            style={{
+              background: "none",
+              border: "none",
+              color: "#2563eb",
+              fontSize: 10,
+              cursor: "pointer",
+              marginLeft: 4,
+              padding: 0,
+              textDecoration: "underline",
+            }}
+          >
             {moreLabel}
           </button>
         )}
@@ -278,11 +325,37 @@ function FeedbackTextCell({ text, moreLabel, lessLabel }: { text: string | null;
   }
   return (
     <div>
-      <div style={{ fontSize: 11.5, color: "#555", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 120, overflowY: "auto", background: "#f9f9f7", padding: "6px 8px", borderRadius: 6, border: "0.5px solid #e8e6e0" }}>
+      <div
+        style={{
+          fontSize: 11.5,
+          color: "#555",
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-word",
+          maxHeight: 120,
+          overflowY: "auto",
+          background: "#f9f9f7",
+          padding: "6px 8px",
+          borderRadius: 6,
+          border: "0.5px solid #e8e6e0",
+        }}
+      >
         {text}
       </div>
-      <button type="button" onClick={() => setExpanded(false)} aria-expanded={true}
-        style={{ background: "none", border: "none", color: "#2563eb", fontSize: 10, cursor: "pointer", marginTop: 2, padding: 0, textDecoration: "underline" }}>
+      <button
+        type="button"
+        onClick={() => setExpanded(false)}
+        aria-expanded={true}
+        style={{
+          background: "none",
+          border: "none",
+          color: "#2563eb",
+          fontSize: 10,
+          cursor: "pointer",
+          marginTop: 2,
+          padding: 0,
+          textDecoration: "underline",
+        }}
+      >
         {lessLabel}
       </button>
     </div>
@@ -292,12 +365,15 @@ function FeedbackTextCell({ text, moreLabel, lessLabel }: { text: string | null;
 // ── Main ──
 
 function FeedbackResponsesPage() {
-  const { role, loading: roleLoading } = useEffectiveRole();
+  const { role: productionRole, loading: roleLoading } = useCurrentRole();
   const copy = useCopy();
 
   if (roleLoading) return <LoadingState />;
 
-  const canView = role === "admin" || role === "supervisor" || role === "agent";
+  // Authorization uses production DB role only (defense in depth).
+  // Demo Role Switcher may affect UI display but cannot grant access.
+  const canView = productionRole === "admin" || productionRole === "supervisor" || productionRole === "agent";
+
   if (!canView) return <PermissionDenied message={copy.permissionDenied} />;
 
   return <FeedbackResponsesContent />;
@@ -358,10 +434,9 @@ function FeedbackResponsesContent() {
     try {
       let query = supabase
         .from("feedback_request")
-        .select(
-          "id,conversation_id,channel,status,rating,feedback_text,responded_at,delivery_status,created_at",
-          { count: "exact" },
-        );
+        .select("id,conversation_id,channel,status,rating,feedback_text,responded_at,delivery_status,created_at", {
+          count: "exact",
+        });
 
       if (filterStatus) query = query.eq("status", filterStatus);
       if (filterDeliveryStatus) query = query.eq("delivery_status", filterDeliveryStatus);
@@ -406,39 +481,63 @@ function FeedbackResponsesContent() {
         setLoading(false);
       }
     }
-  }, [filterStatus, filterDeliveryStatus, filterChannel, filterRating, activeConvFilter, dateFrom, dateTo, page, dateRangeValid]);
+  }, [
+    filterStatus,
+    filterDeliveryStatus,
+    filterChannel,
+    filterRating,
+    activeConvFilter,
+    dateFrom,
+    dateTo,
+    page,
+    dateRangeValid,
+  ]);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   const handleConvSearch = () => {
     const trimmed = convIdInput.trim();
-    if (!trimmed) { setConvIdError(null); setActiveConvFilter(""); setPage(0); return; }
+    if (!trimmed) {
+      setConvIdError(null);
+      setActiveConvFilter("");
+      setPage(0);
+      return;
+    }
     if (!isValidUuid(trimmed)) {
       setConvIdError(activeConvFilter ? "stale" : "invalid");
       return;
     }
-    setConvIdError(null); setActiveConvFilter(trimmed); setPage(0);
+    setConvIdError(null);
+    setActiveConvFilter(trimmed);
+    setPage(0);
   };
 
   const handleClearConvSearch = () => {
-    setConvIdInput(""); setConvIdError(null); setActiveConvFilter(""); setPage(0);
+    setConvIdInput("");
+    setConvIdError(null);
+    setActiveConvFilter("");
+    setPage(0);
   };
 
-  const handleFilterChange = (setter: React.Dispatch<React.SetStateAction<string>>) =>
-    (e: React.ChangeEvent<HTMLSelectElement | HTMLInputElement>) => { setter(e.target.value); setPage(0); };
+  const handleFilterChange =
+    (setter: React.Dispatch<React.SetStateAction<string>>) =>
+    (e: React.ChangeEvent<HTMLSelectElement | HTMLInputElement>) => {
+      setter(e.target.value);
+      setPage(0);
+    };
 
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
   const showFrom = totalCount === 0 ? 0 : page * PAGE_SIZE + 1;
   const showTo = Math.min((page + 1) * PAGE_SIZE, totalCount);
-  const hasActiveFilters = activeConvFilter || filterStatus || filterDeliveryStatus || filterChannel || filterRating || dateFrom || dateTo;
+  const hasActiveFilters =
+    activeConvFilter || filterStatus || filterDeliveryStatus || filterChannel || filterRating || dateFrom || dateTo;
   const showResults = dateRangeValid;
 
   // Render UUID error from code (Correction 2: language-sync safe)
-  const convIdErrorText = convIdError === "stale"
-    ? copy.uuidStaleWarning
-    : convIdError === "invalid"
-      ? copy.uuidInvalid
-      : null;
+  const convIdErrorText =
+    convIdError === "stale" ? copy.uuidStaleWarning : convIdError === "invalid" ? copy.uuidInvalid : null;
 
   return (
     <div style={{ maxWidth: 1100 }}>
@@ -454,7 +553,11 @@ function FeedbackResponsesContent() {
           </div>
           <div>
             <div style={{ fontSize: 10, fontWeight: 600, color: "#888", marginBottom: 3 }}>{copy.filterDelivery}</div>
-            <select value={filterDeliveryStatus} onChange={handleFilterChange(setFilterDeliveryStatus)} style={selectStyle}>
+            <select
+              value={filterDeliveryStatus}
+              onChange={handleFilterChange(setFilterDeliveryStatus)}
+              style={selectStyle}
+            >
               <option value="">{copy.deliveryAll}</option>
               <option value="pending">{copy.deliveryPending}</option>
               <option value="sent">{copy.deliverySent}</option>
@@ -473,40 +576,81 @@ function FeedbackResponsesContent() {
             <div style={{ fontSize: 10, fontWeight: 600, color: "#888", marginBottom: 3 }}>{copy.filterRating}</div>
             <select value={filterRating} onChange={handleFilterChange(setFilterRating)} style={selectStyle}>
               <option value="">{copy.ratingAll}</option>
-              <option value="1">1 {"\u2605"}</option><option value="2">2 {"\u2605"}</option>
-              <option value="3">3 {"\u2605"}</option><option value="4">4 {"\u2605"}</option>
+              <option value="1">1 {"\u2605"}</option>
+              <option value="2">2 {"\u2605"}</option>
+              <option value="3">3 {"\u2605"}</option>
+              <option value="4">4 {"\u2605"}</option>
               <option value="5">5 {"\u2605"}</option>
               <option value="none">{copy.ratingNone}</option>
             </select>
           </div>
           <div>
             <div style={{ fontSize: 10, fontWeight: 600, color: "#888", marginBottom: 3 }}>{copy.filterFrom}</div>
-            <input type="date" value={dateFrom} onChange={handleFilterChange(setDateFrom)} style={{ ...inputStyle, width: 130 }} />
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={handleFilterChange(setDateFrom)}
+              style={{ ...inputStyle, width: 130 }}
+            />
           </div>
           <div>
             <div style={{ fontSize: 10, fontWeight: 600, color: "#888", marginBottom: 3 }}>{copy.filterTo}</div>
-            <input type="date" value={dateTo} onChange={handleFilterChange(setDateTo)} style={{ ...inputStyle, width: 130 }} />
+            <input
+              type="date"
+              value={dateTo}
+              onChange={handleFilterChange(setDateTo)}
+              style={{ ...inputStyle, width: 130 }}
+            />
           </div>
         </div>
 
-        {!dateRangeValid && (
-          <div style={{ marginTop: 6, fontSize: 11, color: "#dc2626" }}>{copy.dateRangeInvalid}</div>
-        )}
+        {!dateRangeValid && <div style={{ marginTop: 6, fontSize: 11, color: "#dc2626" }}>{copy.dateRangeInvalid}</div>}
 
         <div style={{ marginTop: 10, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <div style={{ fontSize: 10, fontWeight: 600, color: "#888", flexShrink: 0 }}>{copy.filterConvId}</div>
-          <input type="text" value={convIdInput}
-            onChange={(e) => { setConvIdInput(e.target.value); if (convIdError) setConvIdError(null); }}
-            onKeyDown={(e) => { if (e.key === "Enter") handleConvSearch(); }}
+          <input
+            type="text"
+            value={convIdInput}
+            onChange={(e) => {
+              setConvIdInput(e.target.value);
+              if (convIdError) setConvIdError(null);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleConvSearch();
+            }}
             placeholder={copy.uuidPlaceholder}
-            style={{ ...inputStyle, width: 300, fontFamily: "monospace", fontSize: 11 }} />
-          <button type="button" onClick={handleConvSearch}
-            style={{ fontSize: 11, fontWeight: 600, padding: "5px 12px", borderRadius: 7, border: "none", background: "#1a1a1a", color: "#fff", cursor: "pointer" }}>
+            style={{ ...inputStyle, width: 300, fontFamily: "monospace", fontSize: 11 }}
+          />
+          <button
+            type="button"
+            onClick={handleConvSearch}
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              padding: "5px 12px",
+              borderRadius: 7,
+              border: "none",
+              background: "#1a1a1a",
+              color: "#fff",
+              cursor: "pointer",
+            }}
+          >
             {copy.searchBtn}
           </button>
           {activeConvFilter && (
-            <button type="button" onClick={handleClearConvSearch}
-              style={{ fontSize: 11, padding: "5px 10px", borderRadius: 7, border: "0.5px solid #e8e6e0", background: "#fff", color: "#555", cursor: "pointer" }}>
+            <button
+              type="button"
+              onClick={handleClearConvSearch}
+              style={{
+                fontSize: 11,
+                padding: "5px 10px",
+                borderRadius: 7,
+                border: "0.5px solid #e8e6e0",
+                background: "#fff",
+                color: "#555",
+                cursor: "pointer",
+              }}
+            >
               {copy.clearBtn}
             </button>
           )}
@@ -517,10 +661,35 @@ function FeedbackResponsesContent() {
       {showResults && (
         <>
           {hasError && (
-            <div style={{ background: "#fef2f2", border: "0.5px solid #fca5a5", borderRadius: 11, padding: "12px 16px", marginBottom: 12, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <span style={{ fontSize: 12, color: "#991b1b" }}>{"\u274C"} {copy.loadError}</span>
-              <button type="button" onClick={loadData}
-                style={{ fontSize: 11, fontWeight: 600, padding: "4px 12px", borderRadius: 6, border: "0.5px solid #fca5a5", background: "#fff", color: "#991b1b", cursor: "pointer" }}>
+            <div
+              style={{
+                background: "#fef2f2",
+                border: "0.5px solid #fca5a5",
+                borderRadius: 11,
+                padding: "12px 16px",
+                marginBottom: 12,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
+              <span style={{ fontSize: 12, color: "#991b1b" }}>
+                {"\u274C"} {copy.loadError}
+              </span>
+              <button
+                type="button"
+                onClick={loadData}
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  padding: "4px 12px",
+                  borderRadius: 6,
+                  border: "0.5px solid #fca5a5",
+                  background: "#fff",
+                  color: "#991b1b",
+                  cursor: "pointer",
+                }}
+              >
                 {copy.retryBtn}
               </button>
             </div>
@@ -557,25 +726,49 @@ function FeedbackResponsesContent() {
                     {rows.map((row) => {
                       const channelLabel = row.channel ? (channelLabels[row.channel] ?? row.channel) : copy.noValue;
                       const statusLabel = row.status ? (statusLabels[row.status] ?? row.status) : copy.noValue;
-                      const deliveryLabel = row.delivery_status ? (deliveryLabels[row.delivery_status] ?? row.delivery_status) : copy.noValue;
+                      const deliveryLabel = row.delivery_status
+                        ? (deliveryLabels[row.delivery_status] ?? row.delivery_status)
+                        : copy.noValue;
 
                       return (
                         <tr key={row.id}>
                           <td style={{ ...tdStyle, fontFamily: "monospace", fontSize: 10.5, color: "#888" }}>
-                            {row.id.slice(0, 8)}{"\u2026"}
+                            {row.id.slice(0, 8)}
+                            {"\u2026"}
                           </td>
                           <td style={tdStyle}>
-                            <Link to="/console/conversations/$id" params={{ id: row.conversation_id }}
-                              style={{ fontFamily: "monospace", fontSize: 10.5, color: "#2563eb", textDecoration: "none" }}>
-                              {row.conversation_id.slice(0, 8)}{"\u2026"}
+                            <Link
+                              to="/console/conversations/$id"
+                              params={{ id: row.conversation_id }}
+                              style={{
+                                fontFamily: "monospace",
+                                fontSize: 10.5,
+                                color: "#2563eb",
+                                textDecoration: "none",
+                              }}
+                            >
+                              {row.conversation_id.slice(0, 8)}
+                              {"\u2026"}
                             </Link>
                           </td>
-                          <td style={tdStyle}><span style={{ fontSize: 11, color: "#555" }}>{channelLabel}</span></td>
-                          <td style={tdStyle}><StatusBadge value={row.status} label={statusLabel} noValue={copy.noValue} /></td>
-                          <td style={tdStyle}><StatusBadge value={row.delivery_status} label={deliveryLabel} noValue={copy.noValue} /></td>
-                          <td style={tdStyle}><RatingStars rating={row.rating} noValue={copy.noValue} /></td>
+                          <td style={tdStyle}>
+                            <span style={{ fontSize: 11, color: "#555" }}>{channelLabel}</span>
+                          </td>
+                          <td style={tdStyle}>
+                            <StatusBadge value={row.status} label={statusLabel} noValue={copy.noValue} />
+                          </td>
+                          <td style={tdStyle}>
+                            <StatusBadge value={row.delivery_status} label={deliveryLabel} noValue={copy.noValue} />
+                          </td>
+                          <td style={tdStyle}>
+                            <RatingStars rating={row.rating} noValue={copy.noValue} />
+                          </td>
                           <td style={{ ...tdStyle, maxWidth: 220 }}>
-                            <FeedbackTextCell text={row.feedback_text} moreLabel={copy.expandMore} lessLabel={copy.expandLess} />
+                            <FeedbackTextCell
+                              text={row.feedback_text}
+                              moreLabel={copy.expandMore}
+                              lessLabel={copy.expandLess}
+                            />
                           </td>
                           <td style={{ ...tdStyle, fontSize: 11, color: "#555", whiteSpace: "nowrap" }}>
                             {row.responded_at ? fmtDate(row.responded_at) : copy.noValue}
@@ -589,16 +782,57 @@ function FeedbackResponsesContent() {
                   </tbody>
                 </table>
               </div>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderTop: "0.5px solid #e8e6e0", background: "#fafaf8" }}>
-                <span style={{ fontSize: 11, color: "#888" }}>{copy.showing} {showFrom}{"\u2013"}{showTo} {copy.of} {totalCount}</span>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "10px 14px",
+                  borderTop: "0.5px solid #e8e6e0",
+                  background: "#fafaf8",
+                }}
+              >
+                <span style={{ fontSize: 11, color: "#888" }}>
+                  {copy.showing} {showFrom}
+                  {"\u2013"}
+                  {showTo} {copy.of} {totalCount}
+                </span>
                 <div style={{ display: "flex", gap: 6 }}>
-                  <button type="button" onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0}
-                    style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, border: "0.5px solid #e8e6e0", background: page === 0 ? "#f5f4f0" : "#fff", color: page === 0 ? "#ccc" : "#555", cursor: page === 0 ? "default" : "pointer" }}>
+                  <button
+                    type="button"
+                    onClick={() => setPage((p) => Math.max(0, p - 1))}
+                    disabled={page === 0}
+                    style={{
+                      fontSize: 11,
+                      padding: "4px 10px",
+                      borderRadius: 6,
+                      border: "0.5px solid #e8e6e0",
+                      background: page === 0 ? "#f5f4f0" : "#fff",
+                      color: page === 0 ? "#ccc" : "#555",
+                      cursor: page === 0 ? "default" : "pointer",
+                    }}
+                  >
                     {copy.prev}
                   </button>
-                  <span style={{ fontSize: 11, color: "#555", padding: "4px 8px", display: "flex", alignItems: "center" }}>{page + 1} / {totalPages}</span>
-                  <button type="button" onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1}
-                    style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, border: "0.5px solid #e8e6e0", background: page >= totalPages - 1 ? "#f5f4f0" : "#fff", color: page >= totalPages - 1 ? "#ccc" : "#555", cursor: page >= totalPages - 1 ? "default" : "pointer" }}>
+                  <span
+                    style={{ fontSize: 11, color: "#555", padding: "4px 8px", display: "flex", alignItems: "center" }}
+                  >
+                    {page + 1} / {totalPages}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                    disabled={page >= totalPages - 1}
+                    style={{
+                      fontSize: 11,
+                      padding: "4px 10px",
+                      borderRadius: 6,
+                      border: "0.5px solid #e8e6e0",
+                      background: page >= totalPages - 1 ? "#f5f4f0" : "#fff",
+                      color: page >= totalPages - 1 ? "#ccc" : "#555",
+                      cursor: page >= totalPages - 1 ? "default" : "pointer",
+                    }}
+                  >
                     {copy.next}
                   </button>
                 </div>
