@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { useEffectiveRole } from "@/hooks/useEffectiveRole";
+import { useCurrentRole } from "@/hooks/useCurrentRole";
 import { LoadingState, PermissionDenied, PageHeader } from "@/components/console/PageStates";
 
 export const Route = createFileRoute("/_authenticated/console/settings/llm-runtime")({
@@ -9,9 +9,12 @@ export const Route = createFileRoute("/_authenticated/console/settings/llm-runti
 });
 
 function LlmRuntimePage() {
-  const { role, loading } = useEffectiveRole();
+  const { role: productionRole, loading } = useCurrentRole();
   if (loading) return <LoadingState />;
-  if (role === "agent" || role === "qa" || !role) return <PermissionDenied />;
+
+  // Authorization uses production DB role only (defense in depth).
+  const canView = productionRole === "admin" || productionRole === "supervisor";
+  if (!canView) return <PermissionDenied />;
 
   return (
     <div className="space-y-6">
