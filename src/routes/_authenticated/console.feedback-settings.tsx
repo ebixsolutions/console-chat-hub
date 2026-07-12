@@ -128,7 +128,7 @@ function FeedbackAutomationContent() {
   const [source, setSource] = useState<"live" | "mock_fallback" | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [saveStatus, setSaveStatus] = useState
+  const [saveStatus, setSaveStatus] = useState<
     { kind: "idle" } | { kind: "success"; message: string } | { kind: "error"; message: string }
   >({ kind: "idle" });
   const [templateTab, setTemplateTab] = useState<RatingType>("stars_1_5");
