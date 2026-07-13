@@ -98,7 +98,7 @@ const pageMeta: Record<string, { zh: string; en: string; sub?: { zh: string; en:
   "/console/widget-preview": {
     zh: "Widget 預覽",
     en: "Widget Preview",
-    sub: { zh: "嵌入式聊天元件測試", en: "Embed and test your chat widget" },
+    sub: { zh: "管理獲授權的 Widget 安裝代碼", en: "Manage authorized widget installation code" },
   },
   "/console/conversations": {
     zh: "對話列表",
