@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { feedbackService } from "@/lib/api/feedback.service";
 
-eexport const Route = createFileRoute("/_authenticated/console/conversations/")({
+export const Route = createFileRoute("/_authenticated/console/conversations/")({
   component: SinglePageInbox,
 });
 
