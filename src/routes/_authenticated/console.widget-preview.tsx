@@ -9,7 +9,7 @@
 //   - Zero localStorage reads/writes by simulated widget
 //   - All messages stored in React useState only — lost on unmount
 //   - Simulated "AI reply" via local setTimeout (1.5s) with canned text
-//   - useCurrentRole() guard: admin + supervisor + super_admin (carried from I2-A)
+//   - useCurrentRole() guard: admin + supervisor (super_admin removed — AppRole does not include it; see Dev22-M)
 //
 // Fixes incorporated (v1.0 rejection → v1.1):
 //   1. Subtitle: "simulated" wording, no "disabled"
@@ -102,8 +102,7 @@ function WidgetPreviewGuard() {
   const lang = useConsoleLang();
 
   if (loading) return <LoadingState />;
-  if (role !== "admin" && role !== "supervisor" && role !== "super_admin")
-    return <PermissionDenied message={COPY[lang].permissionDenied} />;
+  if (role !== "admin" && role !== "supervisor") return <PermissionDenied message={COPY[lang].permissionDenied} />;
 
   return <WidgetPreviewContent />;
 }
