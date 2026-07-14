@@ -10,10 +10,23 @@ import { toast } from "sonner";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { feedbackService } from "@/lib/api/feedback.service";
+import { useCurrentRole } from "@/hooks/useCurrentRole";
+import { LoadingState, PermissionDenied } from "@/components/console/PageStates";
 
 export const Route = createFileRoute("/_authenticated/console/conversations/$id")({
-  component: ConversationDetail,
+  component: ConversationDetailGuard,
 });
+
+function ConversationDetailGuard() {
+  const { role, loading } = useCurrentRole();
+  if (loading) return <LoadingState />;
+  if (role !== "admin" && role !== "supervisor" && role !== "agent") {
+    return (
+      <PermissionDenied message="您沒有權限查看此對話詳情。 / You do not have permission to access this conversation." />
+    );
+  }
+  return <ConversationDetailContent />;
+}
 
 type Msg = {
   id: string;
@@ -38,7 +51,7 @@ type AgentLite = { id: string; display_name: string; role: string; status: strin
 const ELEVATED = new Set(["manager", "admin", "super_admin"]);
 const ADMIN_ONLY = new Set(["admin", "super_admin"]);
 
-function ConversationDetail() {
+function ConversationDetailContent() {
   const { id } = Route.useParams();
   const { user } = useAuth();
   const [conv, setConv] = useState<Conversation | null>(null);
