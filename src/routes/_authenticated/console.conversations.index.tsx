@@ -2,8 +2,6 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
-import { useCurrentRole } from "@/hooks/useCurrentRole";
-import { LoadingState, PermissionDenied } from "@/components/console/PageStates";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -12,26 +10,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { feedbackService } from "@/lib/api/feedback.service";
 
-export const Route = createFileRoute("/_authenticated/console/conversations/")({
-  component: ConversationsInboxGuard,
+eexport const Route = createFileRoute("/_authenticated/console/conversations/")({
+  component: SinglePageInbox,
 });
-
-// ── Dev22-L1: Guard component (route-level production-role guard) ──
-// admin / supervisor / agent allowed. qa (unsupported by AppRole) and
-// roleless are denied automatically by useCurrentRole() returning null.
-function ConversationsInboxGuard() {
-  const { role, loading } = useCurrentRole();
-
-  if (loading) return <LoadingState />;
-
-  if (role !== "admin" && role !== "supervisor" && role !== "agent") {
-    return (
-      <PermissionDenied message="您沒有權限查看客服對話收件匣。 / You do not have permission to access the conversation inbox." />
-    );
-  }
-
-  return <SinglePageInbox />;
-}
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 type Conv = {
