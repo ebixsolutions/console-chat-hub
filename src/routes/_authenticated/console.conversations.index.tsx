@@ -162,7 +162,6 @@ function HandoffBanner({
   const headerBg = isHumanControl ? "#ede9fe" : "#fee2e2";
   const headerColor = isHumanControl ? "#6d28d9" : "#991b1b";
 
-  // Derive precise Detected Issues from all conversation messages
   const visitorMsgs = messages.filter((m) => m.role === "visitor");
   const aiMsgs = messages.filter((m) => m.role === "assistant");
   const aiCount = aiMsgs.length;
@@ -172,7 +171,6 @@ function HandoffBanner({
     .join(" ")
     .toLowerCase();
 
-  // Detect signals from full conversation
   const hasRefund = allVisitorText.includes("退款") || allVisitorText.includes("refund");
   const hasDamaged =
     allVisitorText.includes("損壞") ||
@@ -202,7 +200,6 @@ function HandoffBanner({
     allVisitorText.includes("失去") ||
     allVisitorText.includes("超支");
 
-  // Build narrative summary from detected signals
   const summaryParts: string[] = [];
   if (hasRefund) summaryParts.push("requested a refund");
   if (hasDamaged) summaryParts.push("reported damaged goods after delivery");
@@ -212,7 +209,6 @@ function HandoffBanner({
   if (summaryParts.length === 0) summaryParts.push("escalated the conversation");
   const summaryText = "Customer " + summaryParts.join(", ") + ".";
 
-  // Detected Signals (keyword-based)
   const whyReasons: string[] = [];
   if (hasAngry) whyReasons.push("✓ Angry sentiment detected");
   if (hasRefund) whyReasons.push("✓ Refund / policy issue");
@@ -221,7 +217,6 @@ function HandoffBanner({
   if (hasHuman) whyReasons.push("✓ Human support requested");
   if (whyReasons.length === 0) whyReasons.push("✓ AI confidence threshold triggered");
 
-  // Dynamic recommended actions
   const actions: string[] = ["✓ Prioritize human takeover", "✓ Review full conversation"];
   if (hasRefund || hasDamaged) actions.push("✓ Ask for order number");
   if (hasDamaged) actions.push("✓ Request damage photos");
@@ -408,7 +403,6 @@ function CRMPanel({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", background: "#fff" }}>
-      {/* Connection status */}
       <div
         style={{
           padding: "8px 12px",
@@ -422,8 +416,6 @@ function CRMPanel({
         <div>AI Context: Not connected</div>
         <div>Knowledge Base: Not connected</div>
       </div>
-
-      {/* Tabs */}
       <div
         style={{
           display: "flex",
@@ -454,10 +446,7 @@ function CRMPanel({
           </button>
         ))}
       </div>
-
-      {/* Content */}
       <div style={{ flex: 1, overflowY: "auto", padding: 12, background: "#fff" }}>
-        {/* CUSTOMER TAB — Dev22-A2.2: real visitor data + CRM not connected */}
         {tab === "customer" && conv && (
           <>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
@@ -487,7 +476,6 @@ function CRMPanel({
                 </div>
               </div>
             </div>
-
             <div
               style={{
                 background: "#f5f4f0",
@@ -502,7 +490,6 @@ function CRMPanel({
               Customer profile data requires CRM integration. Connect your CRM to view order history, loyalty status,
               sentiment analysis, and trust scores.
             </div>
-
             <div style={sectionTitle}>Quick Actions</div>
             <button
               type="button"
@@ -526,8 +513,6 @@ function CRMPanel({
             </button>
           </>
         )}
-
-        {/* KNOWLEDGE TAB — Dev22-A2.1a: KB not connected */}
         {tab === "knowledge" && (
           <>
             <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
@@ -579,8 +564,6 @@ function CRMPanel({
             </div>
           </>
         )}
-
-        {/* AI SUGGESTION TAB — Dev22-A2.1: LLM + KB required */}
         {tab === "suggestion" && (
           <>
             <div style={{ marginBottom: 6 }}>
@@ -601,8 +584,6 @@ function CRMPanel({
             </div>
           </>
         )}
-
-        {/* POLICY TAB — Dev22-A2.1: KB required */}
         {tab === "policy" && (
           <>
             <div style={sectionTitle}>Policy Check</div>
@@ -726,6 +707,46 @@ function SinglePageInbox() {
     setAgents((data as AgentLite[]) ?? []);
   }, []);
 
+  // ── J1: Realtime infrastructure ──
+  const selectedIdRef = useRef<string | null>(null);
+  const realtimeConnectedRef = useRef(true);
+  const fallbackTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const convDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function debouncedLoadConversations() {
+    if (convDebounceRef.current) clearTimeout(convDebounceRef.current);
+    convDebounceRef.current = setTimeout(() => {
+      loadConversations();
+    }, 1000);
+  }
+  function startFallbackPolling() {
+    if (fallbackTimerRef.current) return;
+    fallbackTimerRef.current = setInterval(() => {
+      loadConversations();
+      const sid = selectedIdRef.current;
+      if (sid) loadMessages(sid, false);
+    }, 20000);
+  }
+  function stopFallbackPolling() {
+    if (!fallbackTimerRef.current) return; // No fallback running — skip catch-up
+    clearInterval(fallbackTimerRef.current);
+    fallbackTimerRef.current = null;
+    // Catch-up fetch only after actual disconnection recovery
+    loadConversations();
+    const sid = selectedIdRef.current;
+    if (sid) loadMessages(sid, false);
+  }
+  function handleSubscribeStatus(status: string) {
+    if (status === "SUBSCRIBED") {
+      realtimeConnectedRef.current = true;
+      stopFallbackPolling();
+    }
+    if (status === "TIMED_OUT" || status === "CLOSED" || status === "CHANNEL_ERROR") {
+      realtimeConnectedRef.current = false;
+      startFallbackPolling();
+    }
+  }
+
   useEffect(() => {
     if (!user) return;
     (async () => {
@@ -740,9 +761,35 @@ function SinglePageInbox() {
   useEffect(() => {
     loadConversations();
     loadAgents();
-    const t = setInterval(loadConversations, 5000);
-    return () => clearInterval(t);
+
+    const convChannel = supabase
+      .channel("console-conversations")
+      .on("postgres_changes", { event: "*", schema: "public", table: "conversations" }, () => {
+        debouncedLoadConversations();
+      })
+      .subscribe(handleSubscribeStatus);
+
+    const allMsgChannel = supabase
+      .channel("console-all-messages")
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, (payload) => {
+        if ((payload.new as { content?: string })?.content === "__THINKING__") return;
+        debouncedLoadConversations();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(convChannel);
+      supabase.removeChannel(allMsgChannel);
+      if (fallbackTimerRef.current) clearInterval(fallbackTimerRef.current);
+      if (convDebounceRef.current) clearTimeout(convDebounceRef.current);
+    };
   }, [loadAgents]);
+
+  // ── J1: Keep selectedIdRef in sync for fallback polling ──
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
+
   useEffect(() => {
     if (!selectedId) {
       setMessages([]);
@@ -750,9 +797,42 @@ function SinglePageInbox() {
       return;
     }
     loadMessages(selectedId, true);
-    const t = setInterval(() => loadMessages(selectedId, false), 3000);
-    return () => clearInterval(t);
+
+    const msgChannel = supabase
+      .channel(`console-messages-${selectedId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "messages",
+          filter: `conversation_id=eq.${selectedId}`,
+        },
+        (payload) => {
+          if (payload.eventType === "INSERT" && (payload.new as { content?: string })?.content === "__THINKING__")
+            return;
+          loadMessages(selectedId, false, payload.eventType === "INSERT");
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(msgChannel);
+    };
   }, [selectedId, loadMessages]);
+
+  // ── J1: Visibility catch-up ──
+  useEffect(() => {
+    function handleVisibility() {
+      if (!document.hidden) {
+        loadConversations();
+        const sid = selectedIdRef.current;
+        if (sid) loadMessages(sid, false);
+      }
+    }
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [loadMessages]);
 
   async function callEF(name: string, body: Record<string, unknown>) {
     const { data, error: efErr } = await supabase.functions.invoke(name, { body });
@@ -781,17 +861,14 @@ function SinglePageInbox() {
     if (!selectedId || !reply.trim()) return;
     const conv = conversations?.find((c) => c.id === selectedId);
     if (!conv) return;
-    // Resolved: block send entirely
     if (conv.status === "resolved") {
       setResolvedWarningOpen(true);
       return;
     }
-    // Human-controlled AND assigned to current agent: send directly
     if (conv.status === "pending" && conv.assigned_agent_id === myAgent?.id) {
       sendReply();
       return;
     }
-    // All other cases: AI-handled, open, unassigned, or assigned to another agent
     setSendGuardOpen(true);
   }
   async function handleTakeOverAndSend() {
@@ -899,7 +976,6 @@ function SinglePageInbox() {
           .select("created_at,handoff_type,handoff_reason,from_agent_id,to_agent_id")
           .eq("conversation_id", convId),
       ]);
-
       if (statusRes.error || assignRes.error || handoffRes.error) {
         if (statusRes.error) console.error("[activity] conversation_status_log:", statusRes.error.message);
         if (assignRes.error) console.error("[activity] conversation_assignment:", assignRes.error.message);
@@ -908,7 +984,6 @@ function SinglePageInbox() {
         setActivityRows([]);
         return;
       }
-
       const nameOf = (id: string | null) =>
         id ? agents.find((a) => a.id === id)?.display_name || id.slice(0, 8) : "—";
       const events: ActivityEvent[] = [];
@@ -1258,7 +1333,6 @@ function SinglePageInbox() {
           </div>
         ) : (
           <>
-            {/* Chat Header */}
             <div
               style={{ background: "#fff", borderBottom: "0.5px solid #e8e6e0", padding: "8px 12px", flexShrink: 0 }}
             >
@@ -1393,8 +1467,6 @@ function SinglePageInbox() {
                 </div>
               </div>
             </div>
-
-            {/* HandoffBanner */}
             {selectedConv && (
               <HandoffBanner
                 conv={selectedConv}
@@ -1404,8 +1476,6 @@ function SinglePageInbox() {
                 onReturnToAi={handleReturnToAi}
               />
             )}
-
-            {/* Messages */}
             <div style={{ flex: 1, overflowY: "auto", padding: "12px 16px" }}>
               {loadingMessages && (
                 <div style={{ display: "flex", justifyContent: "center", padding: 20 }}>
@@ -1554,8 +1624,6 @@ function SinglePageInbox() {
               )}
               <div ref={messagesEndRef} />
             </div>
-
-            {/* Composer */}
             <div style={{ background: "#fff", borderTop: "0.5px solid #e8e6e0", padding: "8px 12px", flexShrink: 0 }}>
               <div
                 style={{ display: "flex", gap: 6, marginBottom: 8, alignItems: "center", flexWrap: "wrap" as const }}
@@ -1659,7 +1727,6 @@ function SinglePageInbox() {
         <CRMPanel conv={selectedConv} visitorLabel={visitorLabel || "Visitor"} onResolve={handleResolve} />
       </div>
 
-      {/* Dev22-A2.3: Resolved Warning */}
       <Dialog open={resolvedWarningOpen} onOpenChange={setResolvedWarningOpen}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
@@ -1675,7 +1742,6 @@ function SinglePageInbox() {
           </div>
         </DialogContent>
       </Dialog>
-      {/* Dev22-A2.3: Send Guard — Take Over Confirmation */}
       <Dialog open={sendGuardOpen} onOpenChange={setSendGuardOpen}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
@@ -1701,8 +1767,6 @@ function SinglePageInbox() {
           </div>
         </DialogContent>
       </Dialog>
-
-      {/* Dev21b Phase 1: Conversation Activity Timeline */}
       <Dialog open={activityOpen} onOpenChange={setActivityOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
@@ -1728,22 +1792,10 @@ function SinglePageInbox() {
                 return (
                   <div
                     key={i}
-                    style={{
-                      display: "flex",
-                      gap: 10,
-                      padding: "8px 4px",
-                      borderBottom: "0.5px solid #f0efe9",
-                    }}
+                    style={{ display: "flex", gap: 10, padding: "8px 4px", borderBottom: "0.5px solid #f0efe9" }}
                   >
                     <div
-                      style={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: "50%",
-                        background: dot,
-                        marginTop: 5,
-                        flexShrink: 0,
-                      }}
+                      style={{ width: 8, height: 8, borderRadius: "50%", background: dot, marginTop: 5, flexShrink: 0 }}
                     />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 12.5, fontWeight: 600, color: "#1a1a1a" }}>{e.label}</div>
