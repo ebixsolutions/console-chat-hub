@@ -613,17 +613,7 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
         hasCompanyId: widgetCompanyId !== null && !isNaN(widgetCompanyId),
         hasIndustry: !!widgetIndustry,
       });
-      return new Response(
-        JSON.stringify({
-          success: true,
-          reply: "很抱歉，系統暫時無法查詢知識庫。讓我為您轉接客服人員。",
-          no_answer: true,
-          handoff_required: true,
-          trace_metadata: { rag_api_status: "scope_unavailable" },
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    }
+      return await handleKBFallback(supabaseAdmin, conversation_id, "KB_SCOPE_GATE", source_message_id, { rag_api_status: "scope_unavailable" });
 
     // Get the latest user message for RAG query
     const { data: latestMsgs } = await supabaseAdmin
