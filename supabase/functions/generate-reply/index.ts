@@ -645,16 +645,7 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
 
     if (ragResult.no_answer || !ragResult.chunks || ragResult.chunks.length === 0) {
       console.warn("[generate-reply] KB no results", { conversation_id, code: "KB_EMPTY" });
-      return new Response(
-        JSON.stringify({
-          success: true,
-          reply: "很抱歉，我目前無法確定答案。讓我為您轉接客服人員，以提供更準確的協助。",
-          no_answer: true,
-          handoff_required: true,
-          trace_metadata: { rag_api_status: "success_empty" },
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+      return await handleKBFallback(supabaseAdmin, conversation_id, "KB_EMPTY", source_message_id, { rag_api_status: "success_empty" });
     }
 
     // L5 Score threshold + scope filter (client-side double-check)
