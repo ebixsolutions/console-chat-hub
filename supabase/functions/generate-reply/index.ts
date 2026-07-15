@@ -614,6 +614,8 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
         hasIndustry: !!widgetIndustry,
       });
       return await handleKBFallback(supabaseAdmin, conversation_id, "KB_SCOPE_GATE", source_message_id, { rag_api_status: "scope_unavailable" });
+    }
+
 
     // Get the latest user message for RAG query
     const { data: latestMsgs } = await supabaseAdmin
