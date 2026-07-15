@@ -160,7 +160,7 @@ Deno.serve(async (req) => {
 
   try {
     const body = await req.json();
-    const { conversation_id } = body ?? {};
+    const { conversation_id, source_message_id } = body ?? {};
     if (!conversation_id) {
       return new Response(JSON.stringify({ error: "conversation_id required" }), {
         status: 400,
@@ -186,7 +186,7 @@ Deno.serve(async (req) => {
       ENABLE_COACH,
       ENABLE_C360,
       ENABLE_TOOL_EXEC,
-    });
+    }, source_message_id ?? null);
   } catch (error) {
     console.error("[generate-reply] unexpected error:", error);
     return new Response(JSON.stringify({ error: "Internal server error" }), {
@@ -476,7 +476,11 @@ type FlagSet = {
   ENABLE_TOOL_EXEC: boolean;
 };
 
-async function orchestrationGenerateReply(conversation_id: string, flags: FlagSet): Promise<Response> {
+const KB_FALLBACK_SAFE_TEXT: Record<string, string> = { KB_SCOPE_GATE: "很抱歉，系統暫時無法查詢知識庫。讓我為您轉接客服人員。", KB_API_FAIL: "系統暫時無法查詢知識庫，讓我為您轉接客服人員。", KB_EMPTY: "很抱歉，我目前無法確定答案。讓我為您轉接客服人員，以提供更準確的協助。", KB_LOW_SCORE_HIGH_RISK: "這個問題涉及重要政策，為確保您獲得準確資訊，讓我為您轉接客服人員。", KB_LOW_SCORE_STANDARD: "很抱歉，我目前無法確定答案。讓我為您轉接客服人員，以提供更準確的協助。" };
+type KBFallbackRpcResult = 'success' | 'already_handled' | 'already_resolved' | 'already_under_human_control' | 'invalid_source_message' | 'invalid_branch' | 'not_found';
+async function handleKBFallback(supabaseAdmin: ReturnType<typeof createClient>, conversation_id: string, branchTag: string, source_message_id: string | null, traceMetadata: Record<string, unknown>): Promise<Response> { const safeText = KB_FALLBACK_SAFE_TEXT[branchTag]; if (!safeText) { console.error(`[generate-reply] CRITICAL unknown branch: ${branchTag}`, conversation_id); return new Response(JSON.stringify({ success: false, error: "kb_fallback_unknown_branch", no_answer: true, handoff_required: true, handoff_persisted: false, trace_metadata: { ...traceMetadata, branch: branchTag, handoff_persisted: false } }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }); } if (!source_message_id) { console.error(`[generate-reply] CRITICAL source_message_id missing`, conversation_id); return new Response(JSON.stringify({ success: false, error: "kb_fallback_missing_source_id", reply: safeText, no_answer: true, handoff_required: true, handoff_persisted: false, trace_metadata: { ...traceMetadata, handoff_persisted: false } }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }); } const { data: rpcData, error: rpcErr } = await supabaseAdmin.rpc('kb_fallback_handoff_tx', { p_conversation_id: conversation_id, p_safe_reply_content: safeText, p_branch_tag: branchTag, p_source_message_id: source_message_id }); if (rpcErr) { console.error(`[generate-reply] CRITICAL RPC failed [${branchTag}]:`, rpcErr.message, conversation_id); return new Response(JSON.stringify({ success: false, error: "kb_fallback_persistence_failed", reply: safeText, no_answer: true, handoff_required: true, handoff_persisted: false, trace_metadata: { ...traceMetadata, handoff_persisted: false } }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }); } const result: string = rpcData?.result ?? 'unknown'; switch (result as KBFallbackRpcResult | 'unknown') { case 'success': console.log(`[generate-reply] KB fallback persisted [${branchTag}]:`, conversation_id); return new Response(JSON.stringify({ success: true, reply: safeText, no_answer: true, handoff_required: true, handoff_persisted: true, trace_metadata: { ...traceMetadata, rpc_result: 'success', handoff_persisted: true } }), { headers: { ...corsHeaders, "Content-Type": "application/json" } }); case 'already_handled': console.log(`[generate-reply] KB fallback idempotent [${branchTag}]:`, conversation_id, 'existing:', rpcData?.existing_branch, 'requested:', rpcData?.requested_branch); return new Response(JSON.stringify({ success: true, reply: null, no_answer: true, handoff_required: false, handoff_persisted: true, trace_metadata: { ...traceMetadata, rpc_result: 'already_handled', handoff_persisted: true, existing_branch: rpcData?.existing_branch, requested_branch: rpcData?.requested_branch } }), { headers: { ...corsHeaders, "Content-Type": "application/json" } }); case 'already_resolved': console.log(`[generate-reply] KB skipped resolved [${branchTag}]:`, conversation_id); return new Response(JSON.stringify({ success: false, error: "conversation_resolved", reply: null, no_answer: false, handoff_required: false, handoff_persisted: false, trace_metadata: { ...traceMetadata, rpc_result: 'already_resolved', handoff_persisted: false } }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }); case 'already_under_human_control': console.log(`[generate-reply] KB skipped human control [${branchTag}]:`, conversation_id); return new Response(JSON.stringify({ success: true, reply: null, no_answer: false, handoff_required: false, handoff_persisted: false, trace_metadata: { ...traceMetadata, rpc_result: 'already_under_human_control', handoff_persisted: false } }), { headers: { ...corsHeaders, "Content-Type": "application/json" } }); case 'invalid_source_message': console.error(`[generate-reply] invalid source_message [${branchTag}]:`, conversation_id); return new Response(JSON.stringify({ success: false, error: "kb_fallback_invalid_source", reply: safeText, no_answer: true, handoff_required: true, handoff_persisted: false, trace_metadata: { ...traceMetadata, handoff_persisted: false } }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }); case 'invalid_branch': console.error(`[generate-reply] invalid branch from RPC [${branchTag}]:`, conversation_id); return new Response(JSON.stringify({ success: false, error: "kb_fallback_invalid_branch", no_answer: true, handoff_required: true, handoff_persisted: false, trace_metadata: { ...traceMetadata, handoff_persisted: false } }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }); case 'not_found': console.error(`[generate-reply] conversation not found [${branchTag}]:`, conversation_id); return new Response(JSON.stringify({ success: false, error: "kb_fallback_conversation_not_found", no_answer: true, handoff_required: true, handoff_persisted: false, trace_metadata: { ...traceMetadata, handoff_persisted: false } }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }); default: console.error(`[generate-reply] unexpected RPC result [${branchTag}]:`, result, conversation_id); return new Response(JSON.stringify({ success: false, error: "kb_fallback_unexpected_result", reply: safeText, no_answer: true, handoff_required: true, handoff_persisted: false, trace_metadata: { ...traceMetadata, handoff_persisted: false } }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }); } }
+
+async function orchestrationGenerateReply(conversation_id: string, flags: FlagSet, source_message_id: string | null): Promise<Response> {
   const supabaseAdmin = createClient(
     Deno.env.get("SUPABASE_URL") ?? "",
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
@@ -609,17 +613,9 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
         hasCompanyId: widgetCompanyId !== null && !isNaN(widgetCompanyId),
         hasIndustry: !!widgetIndustry,
       });
-      return new Response(
-        JSON.stringify({
-          success: true,
-          reply: "很抱歉，系統暫時無法查詢知識庫。讓我為您轉接客服人員。",
-          no_answer: true,
-          handoff_required: true,
-          trace_metadata: { rag_api_status: "scope_unavailable" },
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+      return await handleKBFallback(supabaseAdmin, conversation_id, "KB_SCOPE_GATE", source_message_id, { rag_api_status: "scope_unavailable" });
     }
+
 
     // Get the latest user message for RAG query
     const { data: latestMsgs } = await supabaseAdmin
@@ -644,30 +640,12 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     // — L5 Safety Checks (Demo-only, inline) —
     if (!ragResult || !ragResult.success) {
       console.error("[CRITICAL] KB RAG API failure", { conversation_id, code: "KB_API_FAIL" });
-      return new Response(
-        JSON.stringify({
-          success: true,
-          reply: "系統暫時無法查詢知識庫，讓我為您轉接客服人員。",
-          no_answer: true,
-          handoff_required: true,
-          trace_metadata: { rag_api_status: "failure" },
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+      return await handleKBFallback(supabaseAdmin, conversation_id, "KB_API_FAIL", source_message_id, { rag_api_status: "failure" });
     }
 
     if (ragResult.no_answer || !ragResult.chunks || ragResult.chunks.length === 0) {
       console.warn("[generate-reply] KB no results", { conversation_id, code: "KB_EMPTY" });
-      return new Response(
-        JSON.stringify({
-          success: true,
-          reply: "很抱歉，我目前無法確定答案。讓我為您轉接客服人員，以提供更準確的協助。",
-          no_answer: true,
-          handoff_required: true,
-          trace_metadata: { rag_api_status: "success_empty" },
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+      return await handleKBFallback(supabaseAdmin, conversation_id, "KB_EMPTY", source_message_id, { rag_api_status: "success_empty" });
     }
 
     // L5 Score threshold + scope filter (client-side double-check)
@@ -734,24 +712,15 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     ragResult.trace_metadata = traceMetadata;
 
     if (usableChunks.length === 0) {
+      const lowScoreBranch = isHighRisk ? "KB_LOW_SCORE_HIGH_RISK" : "KB_LOW_SCORE_STANDARD";
       console.warn("[generate-reply] KB all results below threshold", {
         conversation_id,
         minScore,
         isHighRisk,
         code: "KB_LOW_SCORE",
+        branch: lowScoreBranch,
       });
-      return new Response(
-        JSON.stringify({
-          success: true,
-          reply: isHighRisk
-            ? "這個問題涉及重要政策，為確保您獲得準確資訊，讓我為您轉接客服人員。"
-            : "很抱歉，我目前無法確定答案。讓我為您轉接客服人員，以提供更準確的協助。",
-          no_answer: true,
-          handoff_required: true,
-          trace_metadata: traceMetadata,
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+      return await handleKBFallback(supabaseAdmin, conversation_id, lowScoreBranch, source_message_id, traceMetadata);
     }
 
     ragResult.chunks = usableChunks;
