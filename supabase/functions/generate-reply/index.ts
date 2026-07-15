@@ -640,16 +640,7 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     // — L5 Safety Checks (Demo-only, inline) —
     if (!ragResult || !ragResult.success) {
       console.error("[CRITICAL] KB RAG API failure", { conversation_id, code: "KB_API_FAIL" });
-      return new Response(
-        JSON.stringify({
-          success: true,
-          reply: "系統暫時無法查詢知識庫，讓我為您轉接客服人員。",
-          no_answer: true,
-          handoff_required: true,
-          trace_metadata: { rag_api_status: "failure" },
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+      return await handleKBFallback(supabaseAdmin, conversation_id, "KB_API_FAIL", source_message_id, { rag_api_status: "failure" });
     }
 
     if (ragResult.no_answer || !ragResult.chunks || ragResult.chunks.length === 0) {
