@@ -712,24 +712,15 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     ragResult.trace_metadata = traceMetadata;
 
     if (usableChunks.length === 0) {
+      const lowScoreBranch = isHighRisk ? "KB_LOW_SCORE_HIGH_RISK" : "KB_LOW_SCORE_STANDARD";
       console.warn("[generate-reply] KB all results below threshold", {
         conversation_id,
         minScore,
         isHighRisk,
         code: "KB_LOW_SCORE",
+        branch: lowScoreBranch,
       });
-      return new Response(
-        JSON.stringify({
-          success: true,
-          reply: isHighRisk
-            ? "這個問題涉及重要政策，為確保您獲得準確資訊，讓我為您轉接客服人員。"
-            : "很抱歉，我目前無法確定答案。讓我為您轉接客服人員，以提供更準確的協助。",
-          no_answer: true,
-          handoff_required: true,
-          trace_metadata: traceMetadata,
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+      return await handleKBFallback(supabaseAdmin, conversation_id, lowScoreBranch, source_message_id, traceMetadata);
     }
 
     ragResult.chunks = usableChunks;
