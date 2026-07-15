@@ -843,6 +843,15 @@ export type Database = {
         Returns: boolean
       }
       is_staff: { Args: { _user_id: string }; Returns: boolean }
+      kb_fallback_handoff_tx: {
+        Args: {
+          p_branch_tag: string
+          p_conversation_id: string
+          p_safe_reply_content: string
+          p_source_message_id: string
+        }
+        Returns: Json
+      }
       rpc_update_agent_profile: {
         Args: {
           p_agent_id: string
