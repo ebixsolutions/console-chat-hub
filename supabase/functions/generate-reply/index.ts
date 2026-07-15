@@ -160,7 +160,7 @@ Deno.serve(async (req) => {
 
   try {
     const body = await req.json();
-    const { conversation_id } = body ?? {};
+    const { conversation_id, source_message_id } = body ?? {};
     if (!conversation_id) {
       return new Response(JSON.stringify({ error: "conversation_id required" }), {
         status: 400,
