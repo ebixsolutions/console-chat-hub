@@ -186,7 +186,7 @@ Deno.serve(async (req) => {
       ENABLE_COACH,
       ENABLE_C360,
       ENABLE_TOOL_EXEC,
-    });
+    }, source_message_id ?? null);
   } catch (error) {
     console.error("[generate-reply] unexpected error:", error);
     return new Response(JSON.stringify({ error: "Internal server error" }), {
