@@ -29,3 +29,6 @@ verify_jwt = false
 
 [functions.return-to-ai]
 verify_jwt = false
+
+[functions.kb-search-proxy]
+verify_jwt = true
