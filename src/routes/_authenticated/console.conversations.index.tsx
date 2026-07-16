@@ -1654,69 +1654,6 @@ function SinglePageInbox() {
               <div ref={messagesEndRef} />
             </div>
             <div style={{ background: "#fff", borderTop: "0.5px solid #e8e6e0", padding: "8px 12px", flexShrink: 0 }}>
-              <div
-                style={{ display: "flex", gap: 6, marginBottom: 8, alignItems: "center", flexWrap: "wrap" as const }}
-              >
-                <button
-                  disabled
-                  type="button"
-                  title="Requires KB connection"
-                  style={{
-                    fontSize: 10.5,
-                    fontWeight: 600,
-                    padding: "4px 10px",
-                    borderRadius: 8,
-                    border: "none",
-                    background: "#d1d5db",
-                    color: "#9ca3af",
-                    cursor: "not-allowed",
-                    opacity: 0.6,
-                  }}
-                >
-                  Check Policy
-                </button>
-                <button
-                  disabled
-                  type="button"
-                  title="Coming soon"
-                  style={{
-                    fontSize: 10.5,
-                    fontWeight: 600,
-                    padding: "4px 10px",
-                    borderRadius: 8,
-                    border: "none",
-                    background: "#d1d5db",
-                    color: "#9ca3af",
-                    cursor: "not-allowed",
-                    opacity: 0.6,
-                  }}
-                >
-                  Translate
-                </button>
-                <button
-                  disabled
-                  type="button"
-                  title="Coming soon"
-                  style={{
-                    fontSize: 10.5,
-                    fontWeight: 600,
-                    padding: "4px 10px",
-                    borderRadius: 8,
-                    border: "none",
-                    background: "#d1d5db",
-                    color: "#9ca3af",
-                    cursor: "not-allowed",
-                    opacity: 0.6,
-                  }}
-                >
-                  Grammar Check
-                </button>
-                {isHumanControl && (
-                  <span style={{ fontSize: 10, color: "#7c3aed", marginLeft: "auto" }}>
-                    🟣 Knowledge Helper available for internal reference only
-                  </span>
-                )}
-              </div>
               <Textarea
                 value={reply}
                 onChange={(e) => setReply(e.target.value)}
