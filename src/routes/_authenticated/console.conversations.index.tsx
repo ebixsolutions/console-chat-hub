@@ -648,6 +648,10 @@ function SinglePageInbox() {
   const [activityLoading, setActivityLoading] = useState(false);
   const [activityRows, setActivityRows] = useState<ActivityEvent[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const lang = useConsoleLang();
+  const [selectedMessage, setSelectedMessage] = useState<{ id: string; role: string; content: string } | null>(null);
+  const [useConfirmOpen, setUseConfirmOpen] = useState(false);
+  const [pendingUseText, setPendingUseText] = useState("");
 
   async function loadConversations() {
     const { data: convs, error: cErr } = await supabase
