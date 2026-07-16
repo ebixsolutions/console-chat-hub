@@ -225,6 +225,10 @@
     ".nx-tickets-empty{text-align:center;padding:40px 20px;color:#9ca3af;font-size:14px}",
     ".nx-tickets-new{margin:12px;padding:10px;background:#6B5CE7;color:#fff;border:none;border-radius:8px;font-size:14px;cursor:pointer;width:calc(100% - 24px);font-family:inherit}",
     "@media(max-width:480px){.nx-panel{right:0!important;left:0!important;bottom:0!important;top:auto!important;width:100%!important;height:85vh!important;border-radius:16px 16px 0 0;max-width:100%;resize:none!important} .nx-bubble{right:16px;bottom:16px} .nx-resize-handle{display:none!important}}",
+    ".nx-citations{margin-top:6px;padding-top:6px;border-top:1px solid #f3f4f6;display:flex;flex-direction:column;gap:3px}",
+    ".nx-citations-title{font-size:10px;color:#9ca3af;font-weight:600;letter-spacing:.3px}",
+    ".nx-cite-item{font-size:11px;color:#6b7280;display:flex;align-items:center;gap:4px;line-height:1.3}",
+    ".nx-cite-badge{font-size:9px;background:#ede9fe;color:#6366f1;padding:1px 5px;border-radius:8px;font-weight:600;flex-shrink:0}",
   ].join("");
   document.head.appendChild(style);
 
@@ -738,6 +742,38 @@
     el.className = "nx-msg " + (m.role || "assistant");
     if (m.role === "visitor") el.style.background = getPrimary();
     el.textContent = m.content;
+    if (
+      (m.role === "assistant" || m.role === "ai") &&
+      m.metadata &&
+      Array.isArray(m.metadata.citations) &&
+      m.metadata.citations.length > 0
+    ) {
+      var citeWrap = document.createElement("div");
+      citeWrap.className = "nx-citations";
+      var citeTitle = document.createElement("div");
+      citeTitle.className = "nx-citations-title";
+      citeTitle.textContent = "Sources / \u8cc7\u6599\u4f86\u6e90";
+      citeWrap.appendChild(citeTitle);
+      var shown = 0;
+      for (var ci = 0; ci < m.metadata.citations.length && shown < 3; ci++) {
+        var cite = m.metadata.citations[ci];
+        if (!cite || typeof cite.label !== "string" || !cite.label.trim()) continue;
+        var item = document.createElement("div");
+        item.className = "nx-cite-item";
+        if (cite.source_type && typeof cite.source_type === "string") {
+          var badge = document.createElement("span");
+          badge.className = "nx-cite-badge";
+          badge.textContent = cite.source_type;
+          item.appendChild(badge);
+        }
+        var labelSpan = document.createElement("span");
+        labelSpan.textContent = cite.label.slice(0, 120);
+        item.appendChild(labelSpan);
+        citeWrap.appendChild(item);
+        shown++;
+      }
+      if (shown > 0) el.appendChild(citeWrap);
+    }
     return el;
   }
   function appendMessageObj(m) {
