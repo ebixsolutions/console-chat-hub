@@ -595,6 +595,8 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     }
   }
 
+  // W5: Track chunks actually used in the final LLM prompt (post all safety/scope/score filtering)
+  let finalPromptChunks: Array<{ title?: string; score?: number; source_type?: string }> = [];
   // Step 4: KB Adapter (ENABLE_KB) + L5 Safety Checks.
   // L5 RAG Answer Safety Contract v1.1b — Demo Implementation.
   // v1.2: company_id / industry from env (schema has no these fields).
