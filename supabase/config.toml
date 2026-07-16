@@ -36,3 +36,6 @@ verify_jwt = true
 [functions.visitor-analytics]
 verify_jwt = true
 
+[functions.agent-assist]
+verify_jwt = true
+
