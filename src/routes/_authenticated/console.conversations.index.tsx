@@ -11,6 +11,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { feedbackService } from "@/lib/api/feedback.service";
+import { AgentToolPanel } from "@/components/console/AgentToolPanel";
+import { useConsoleLang } from "@/hooks/useEffectiveRole";
 
 export const Route = createFileRoute("/_authenticated/console/conversations/")({
   component: ConversationsInboxGuard,
@@ -646,6 +648,10 @@ function SinglePageInbox() {
   const [activityLoading, setActivityLoading] = useState(false);
   const [activityRows, setActivityRows] = useState<ActivityEvent[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const lang = useConsoleLang();
+  const [selectedMessage, setSelectedMessage] = useState<{ id: string; role: string; content: string } | null>(null);
+  const [useConfirmOpen, setUseConfirmOpen] = useState(false);
+  const [pendingUseText, setPendingUseText] = useState("");
 
   async function loadConversations() {
     const { data: convs, error: cErr } = await supabase
@@ -810,6 +816,7 @@ function SinglePageInbox() {
   }, [selectedId]);
 
   useEffect(() => {
+    setSelectedMessage(null);
     if (!selectedId) {
       setMessages([]);
       setReply("");
@@ -1602,7 +1609,10 @@ function SinglePageInbox() {
                           [訊息已撤回]
                         </div>
                       ) : (
-                        <div style={bubbleStyle}>
+                        <div
+                          onClick={() => !m.is_recalled && setSelectedMessage({ id: m.id, role: m.role, content: m.content })}
+                          style={{ ...bubbleStyle, cursor: m.is_recalled ? "default" : "pointer", outline: selectedMessage?.id === m.id ? "2px solid #8b5cf6" : "none", outlineOffset: 2 }}
+                        >
                           <div className="whitespace-pre-wrap">{m.content}</div>
                         </div>
                       )}
@@ -1644,69 +1654,6 @@ function SinglePageInbox() {
               <div ref={messagesEndRef} />
             </div>
             <div style={{ background: "#fff", borderTop: "0.5px solid #e8e6e0", padding: "8px 12px", flexShrink: 0 }}>
-              <div
-                style={{ display: "flex", gap: 6, marginBottom: 8, alignItems: "center", flexWrap: "wrap" as const }}
-              >
-                <button
-                  disabled
-                  type="button"
-                  title="Requires KB connection"
-                  style={{
-                    fontSize: 10.5,
-                    fontWeight: 600,
-                    padding: "4px 10px",
-                    borderRadius: 8,
-                    border: "none",
-                    background: "#d1d5db",
-                    color: "#9ca3af",
-                    cursor: "not-allowed",
-                    opacity: 0.6,
-                  }}
-                >
-                  Check Policy
-                </button>
-                <button
-                  disabled
-                  type="button"
-                  title="Coming soon"
-                  style={{
-                    fontSize: 10.5,
-                    fontWeight: 600,
-                    padding: "4px 10px",
-                    borderRadius: 8,
-                    border: "none",
-                    background: "#d1d5db",
-                    color: "#9ca3af",
-                    cursor: "not-allowed",
-                    opacity: 0.6,
-                  }}
-                >
-                  Translate
-                </button>
-                <button
-                  disabled
-                  type="button"
-                  title="Coming soon"
-                  style={{
-                    fontSize: 10.5,
-                    fontWeight: 600,
-                    padding: "4px 10px",
-                    borderRadius: 8,
-                    border: "none",
-                    background: "#d1d5db",
-                    color: "#9ca3af",
-                    cursor: "not-allowed",
-                    opacity: 0.6,
-                  }}
-                >
-                  Grammar Check
-                </button>
-                {isHumanControl && (
-                  <span style={{ fontSize: 10, color: "#7c3aed", marginLeft: "auto" }}>
-                    🟣 Knowledge Helper available for internal reference only
-                  </span>
-                )}
-              </div>
               <Textarea
                 value={reply}
                 onChange={(e) => setReply(e.target.value)}
@@ -1741,10 +1688,52 @@ function SinglePageInbox() {
         )}
       </div>
 
-      {/* ── RIGHT: CRMPanel (360px) ── */}
+      {/* ── RIGHT: CRMPanel + AgentToolPanel ── */}
       <div style={{ width: 360, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <CRMPanel conv={selectedConv} visitorLabel={visitorLabel || "Visitor"} onResolve={handleResolve} />
+        <div style={{ flex: 1, overflow: "hidden", borderBottom: "0.5px solid #e8e6e0" }}>
+          <CRMPanel conv={selectedConv} visitorLabel={visitorLabel || "Visitor"} onResolve={handleResolve} />
+        </div>
+        {selectedId && selectedConv && (
+          <div style={{ flex: 1, overflow: "hidden" }}>
+            <AgentToolPanel
+              conversationId={selectedId}
+              convStatus={selectedConv.status}
+              draftText={reply}
+              selectedMessage={selectedMessage}
+              onClearSelection={() => setSelectedMessage(null)}
+              onUseDraft={(text) => {
+                if (reply.trim() && reply.trim() !== text.trim()) {
+                  setPendingUseText(text);
+                  setUseConfirmOpen(true);
+                } else {
+                  setReply(text);
+                }
+              }}
+            />
+          </div>
+        )}
       </div>
+
+      <Dialog open={useConfirmOpen} onOpenChange={setUseConfirmOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{lang === "zh" ? "取代草稿？" : "Replace Draft?"}</DialogTitle>
+            <DialogDescription>
+              {lang === "zh"
+                ? "目前的草稿將被工具結果取代，此操作無法復原。"
+                : "Your current draft will be replaced with the tool result."}
+            </DialogDescription>
+          </DialogHeader>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
+            <Button variant="outline" size="sm" onClick={() => { setUseConfirmOpen(false); setPendingUseText(""); }}>
+              {lang === "zh" ? "取消" : "Cancel"}
+            </Button>
+            <Button size="sm" onClick={() => { setReply(pendingUseText); setUseConfirmOpen(false); setPendingUseText(""); }}>
+              {lang === "zh" ? "取代" : "Replace"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={resolvedWarningOpen} onOpenChange={setResolvedWarningOpen}>
         <DialogContent className="max-w-sm">
