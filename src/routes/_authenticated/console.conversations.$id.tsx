@@ -13,6 +13,7 @@ import { feedbackService } from "@/lib/api/feedback.service";
 import { useCurrentRole } from "@/hooks/useCurrentRole";
 import { LoadingState, PermissionDenied } from "@/components/console/PageStates";
 import { useConsoleLang } from "@/hooks/useEffectiveRole";
+import { AgentToolPanel } from "@/components/console/AgentToolPanel";
 
 export const Route = createFileRoute("/_authenticated/console/conversations/$id")({
   component: ConversationDetailGuard,
