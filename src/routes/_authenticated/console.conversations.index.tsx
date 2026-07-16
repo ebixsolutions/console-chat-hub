@@ -1720,7 +1720,7 @@ function SinglePageInbox() {
             <DialogTitle>{lang === "zh" ? "取代草稿？" : "Replace Draft?"}</DialogTitle>
             <DialogDescription>
               {lang === "zh"
-                ? "目前的草稿將被工具結果取代,此操作無法復原。"
+                ? "目前的草稿將被工具結果取代，此操作無法復原。"
                 : "Your current draft will be replaced with the tool result."}
             </DialogDescription>
           </DialogHeader>
