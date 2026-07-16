@@ -1688,10 +1688,52 @@ function SinglePageInbox() {
         )}
       </div>
 
-      {/* ── RIGHT: CRMPanel (360px) ── */}
+      {/* ── RIGHT: CRMPanel + AgentToolPanel ── */}
       <div style={{ width: 360, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <CRMPanel conv={selectedConv} visitorLabel={visitorLabel || "Visitor"} onResolve={handleResolve} />
+        <div style={{ flex: 1, overflow: "hidden", borderBottom: "0.5px solid #e8e6e0" }}>
+          <CRMPanel conv={selectedConv} visitorLabel={visitorLabel || "Visitor"} onResolve={handleResolve} />
+        </div>
+        {selectedId && selectedConv && (
+          <div style={{ flex: 1, overflow: "hidden" }}>
+            <AgentToolPanel
+              conversationId={selectedId}
+              convStatus={selectedConv.status}
+              draftText={reply}
+              selectedMessage={selectedMessage}
+              onClearSelection={() => setSelectedMessage(null)}
+              onUseDraft={(text) => {
+                if (reply.trim() && reply.trim() !== text.trim()) {
+                  setPendingUseText(text);
+                  setUseConfirmOpen(true);
+                } else {
+                  setReply(text);
+                }
+              }}
+            />
+          </div>
+        )}
       </div>
+
+      <Dialog open={useConfirmOpen} onOpenChange={setUseConfirmOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{lang === "zh" ? "取代草稿？" : "Replace Draft?"}</DialogTitle>
+            <DialogDescription>
+              {lang === "zh"
+                ? "目前的草稿將被工具結果取代,此操作無法復原。"
+                : "Your current draft will be replaced with the tool result."}
+            </DialogDescription>
+          </DialogHeader>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
+            <Button variant="outline" size="sm" onClick={() => { setUseConfirmOpen(false); setPendingUseText(""); }}>
+              {lang === "zh" ? "取消" : "Cancel"}
+            </Button>
+            <Button size="sm" onClick={() => { setReply(pendingUseText); setUseConfirmOpen(false); setPendingUseText(""); }}>
+              {lang === "zh" ? "取代" : "Replace"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={resolvedWarningOpen} onOpenChange={setResolvedWarningOpen}>
         <DialogContent className="max-w-sm">
