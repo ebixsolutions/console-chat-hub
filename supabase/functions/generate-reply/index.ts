@@ -750,6 +750,7 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
 
     ragResult.chunks = usableChunks;
     ragResult.no_answer = false;
+    finalPromptChunks = usableChunks; // W5: same variable used by buildRagBlock → LLM prompt
   }
 
   // Step 5: Tool registration — NOT in L5c Gate A.
