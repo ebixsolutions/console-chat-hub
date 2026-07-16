@@ -469,6 +469,29 @@ When the customer explicitly requests a human agent, or when you transfer to a h
 // and trace writes are placeholders with safe fallbacks; live adapter
 // invocations and trace inserts are deferred to L5c+ once schema is verified.
 // ────────────────────────────────────────────────────────────────────────────
+// ── W5: Citation metadata builder (orchestration path only) ──────────────
+function buildCitationMetadata(
+  chunks: Array<{ title?: string; score?: number; source_type?: string }>
+): { citations: Array<{ label: string; source_type: string; relevance?: string }> } | null {
+  const seen = new Set<string>();
+  const citations: Array<{ label: string; source_type: string; relevance?: string }> = [];
+  for (const c of chunks) {
+    if (citations.length >= 3) break;
+    const label = (typeof c.title === "string" ? c.title : "").trim().slice(0, 120);
+    if (!label) continue;
+    const dedupeKey = label.toLowerCase();
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+    const rawSt = typeof c.source_type === "string" ? c.source_type.trim().slice(0, 40) : "";
+    const source_type = rawSt || "unknown";
+    const relevance = typeof c.score === "number"
+      ? (c.score >= 0.85 ? "high" : "medium")
+      : undefined;
+    citations.push({ label, source_type, ...(relevance ? { relevance } : {}) });
+  }
+  return citations.length > 0 ? { citations } : null;
+}
+// ── End W5 helper ────────────────────────────────────────────────────────
 type FlagSet = {
   ENABLE_KB: boolean;
   ENABLE_COACH: boolean;
@@ -572,6 +595,8 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     }
   }
 
+  // W5: Track chunks actually used in the final LLM prompt (post all safety/scope/score filtering)
+  let finalPromptChunks: Array<{ title?: string; score?: number; source_type?: string }> = [];
   // Step 4: KB Adapter (ENABLE_KB) + L5 Safety Checks.
   // L5 RAG Answer Safety Contract v1.1b — Demo Implementation.
   // v1.2: company_id / industry from env (schema has no these fields).
@@ -725,6 +750,7 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
 
     ragResult.chunks = usableChunks;
     ragResult.no_answer = false;
+    finalPromptChunks = usableChunks; // W5: same variable used by buildRagBlock → LLM prompt
   }
 
   // Step 5: Tool registration — NOT in L5c Gate A.
@@ -812,12 +838,18 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
 
   await supabaseAdmin.from("messages").delete().eq("conversation_id", conversation_id).eq("content", "__THINKING__");
 
+  // W5: Build citation metadata from the exact chunks used in the LLM prompt
+  const citationMeta = finalPromptChunks.length > 0
+    ? buildCitationMetadata(finalPromptChunks)
+    : null;
+
   await supabaseAdmin.from("messages").insert({
     conversation_id,
     role: "assistant",
     content: aiReplyContent,
     status: "delivered",
     is_recalled: false,
+    metadata: citationMeta,
   });
 
   await supabaseAdmin
