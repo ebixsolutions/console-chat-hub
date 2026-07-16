@@ -816,6 +816,7 @@ function SinglePageInbox() {
   }, [selectedId]);
 
   useEffect(() => {
+    setSelectedMessage(null);
     if (!selectedId) {
       setMessages([]);
       setReply("");
