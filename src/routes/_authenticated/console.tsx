@@ -153,7 +153,6 @@ const GROUPS = [
 const GROUP_BADGE: Record<string, { label: string; bg: string; color: string }> = {
   "/console": { label: "LIVE INBOX", bg: "#fee2e2", color: "#dc2626" },
   "/console/analytics": { label: "LIVE INBOX", bg: "#fee2e2", color: "#dc2626" },
-  "/console/customer360": { label: "LIVE INBOX", bg: "#fee2e2", color: "#dc2626" },
   "/console/conversations": { label: "LIVE INBOX", bg: "#fee2e2", color: "#dc2626" },
   "/console/agent-settings": { label: "AGENT OPERATIONS", bg: "#dbeafe", color: "#2563eb" },
   "/console/channel-settings": { label: "LIVE INBOX", bg: "#fee2e2", color: "#dc2626" },
