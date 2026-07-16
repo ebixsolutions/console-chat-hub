@@ -1609,7 +1609,10 @@ function SinglePageInbox() {
                           [訊息已撤回]
                         </div>
                       ) : (
-                        <div style={bubbleStyle}>
+                        <div
+                          onClick={() => !m.is_recalled && setSelectedMessage({ id: m.id, role: m.role, content: m.content })}
+                          style={{ ...bubbleStyle, cursor: m.is_recalled ? "default" : "pointer", outline: selectedMessage?.id === m.id ? "2px solid #8b5cf6" : "none", outlineOffset: 2 }}
+                        >
                           <div className="whitespace-pre-wrap">{m.content}</div>
                         </div>
                       )}
