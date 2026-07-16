@@ -33,6 +33,7 @@ const translations: Record<string, Record<string, string>> = {
     navLLMRuntime: "LLM Runtime",
     navWidgetPreview: "Widget Preview",
     navFeedbackResponses: "Feedback Responses",
+    navKbHelper: "Knowledge Helper",
   },
   zh: {
     appName: "AI 智能客服",
@@ -48,6 +49,7 @@ const translations: Record<string, Record<string, string>> = {
     navLLMRuntime: "LLM 模型設定",
     navWidgetPreview: "Widget 預覽",
     navFeedbackResponses: "客戶回饋",
+    navKbHelper: "知識庫搜尋",
   },
 };
 
@@ -105,6 +107,11 @@ const pageMeta: Record<string, { zh: string; en: string; sub?: { zh: string; en:
     en: "Conversations",
     sub: { zh: "所有對話記錄", en: "All conversation records" },
   },
+  "/console/kb-gaps": {
+    zh: "知識庫搜尋",
+    en: "Knowledge Helper",
+    sub: { zh: "搜尋知識庫中的相關文章與文件", en: "Search the Knowledge Base for relevant articles" },
+  },
 };
 
 /* ── Nav groups (Base44 structure) ── */
@@ -127,7 +134,10 @@ const GROUPS = [
     labelKey: "groupOperations",
     color: "#2563eb",
     bgColor: "#dbeafe",
-    items: [{ path: "/console/agent-settings", icon: "👤", navKey: "navAgentSettings" }],
+    items: [
+      { path: "/console/agent-settings", icon: "👤", navKey: "navAgentSettings" },
+      { path: "/console/kb-gaps", icon: "📚", navKey: "navKbHelper", adminOnly: true },
+    ],
   },
   {
     key: "settings",
@@ -150,6 +160,7 @@ const GROUP_BADGE: Record<string, { label: string; bg: string; color: string }> 
   "/console/feedback-responses": { label: "LIVE INBOX", bg: "#fee2e2", color: "#dc2626" },
   "/console/settings/llm-runtime": { label: "SETTINGS", bg: "#ede9fe", color: "#6d28d9" },
   "/console/widget-preview": { label: "WIDGET", bg: "#f0fdf4", color: "#16a34a" },
+  "/console/kb-gaps": { label: "KNOWLEDGE", bg: "#ede9fe", color: "#6d28d9" },
 };
 
 const ROLES = [
