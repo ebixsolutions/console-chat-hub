@@ -29,7 +29,7 @@ const translations: Record<string, Record<string, string>> = {
     navAgentSettings: "Agent Settings",
     navChannelSettings: "Channel Settings",
     navFeedbackSettings: "Feedback Automation",
-    navCustomer360: "Customer 360",
+    navCustomer360: "Visitor Analytics",
     navLLMRuntime: "LLM Runtime",
     navWidgetPreview: "Widget Preview",
     navFeedbackResponses: "Feedback Responses",
@@ -45,7 +45,7 @@ const translations: Record<string, Record<string, string>> = {
     navAgentSettings: "客服設定",
     navChannelSettings: "Channel 設定",
     navFeedbackSettings: "評分自動化",
-    navCustomer360: "客戶全景",
+    navCustomer360: "訪客分析",
     navLLMRuntime: "LLM 模型設定",
     navWidgetPreview: "Widget 預覽",
     navFeedbackResponses: "客戶回饋",
@@ -85,9 +85,9 @@ const pageMeta: Record<string, { zh: string; en: string; sub?: { zh: string; en:
     sub: { zh: "查看客戶提交的評分與回饋意見", en: "View customer-submitted ratings and feedback" },
   },
   "/console/customer360": {
-    zh: "客戶全景",
-    en: "Customer 360",
-    sub: { zh: "完整客戶畫像", en: "Full customer profile" },
+    zh: "訪客分析",
+    en: "Visitor Analytics",
+    sub: { zh: "匿名訪客工作階段分析", en: "Anonymous visitor session analytics" },
   },
   "/console/settings/llm-runtime": {
     zh: "LLM 模型設定",
@@ -137,6 +137,7 @@ const GROUPS = [
     items: [
       { path: "/console/agent-settings", icon: "👤", navKey: "navAgentSettings" },
       { path: "/console/kb-gaps", icon: "📚", navKey: "navKbHelper", adminOnly: true },
+      { path: "/console/customer360", icon: "📊", navKey: "navCustomer360", adminOnly: true },
     ],
   },
   {
@@ -161,6 +162,7 @@ const GROUP_BADGE: Record<string, { label: string; bg: string; color: string }> 
   "/console/settings/llm-runtime": { label: "SETTINGS", bg: "#ede9fe", color: "#6d28d9" },
   "/console/widget-preview": { label: "WIDGET", bg: "#f0fdf4", color: "#16a34a" },
   "/console/kb-gaps": { label: "KNOWLEDGE", bg: "#ede9fe", color: "#6d28d9" },
+  "/console/customer360": { label: "ANALYTICS", bg: "#dbeafe", color: "#2563eb" },
 };
 
 const ROLES = [
