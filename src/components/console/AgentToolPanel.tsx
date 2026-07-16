@@ -167,13 +167,11 @@ export function AgentToolPanel({
         if (!valid) {
           kbFailed = true;
         } else
-          pctx = valid
-            .slice(0, 3)
-            .map((r) => ({
-              label: r.display_label.slice(0, 120),
-              content: r.content.slice(0, 800),
-              source_type: r.source_type.slice(0, 40),
-            }));
+          pctx = valid.slice(0, 3).map((r) => ({
+            label: r.display_label.slice(0, 120),
+            content: r.content.slice(0, 800),
+            source_type: r.source_type.slice(0, 40),
+          }));
       }
     } catch {
       kbFailed = true;
@@ -212,7 +210,8 @@ export function AgentToolPanel({
   return (
     <div
       style={{
-        width: 280,
+        width: "100%",
+        minWidth: 0,
         flexShrink: 0,
         background: "#fff",
         borderLeft: "0.5px solid #e8e6e0",
@@ -225,7 +224,7 @@ export function AgentToolPanel({
         style={{
           padding: "8px 12px",
           borderBottom: "0.5px solid #e8e6e0",
-          fontSize: 11,
+          fontSize: 12,
           fontWeight: 600,
           color: "#374151",
           flexShrink: 0,
@@ -234,13 +233,13 @@ export function AgentToolPanel({
         {tc("panelTitle")}
       </div>
       {isResolved ? (
-        <div style={{ padding: "20px 10px", textAlign: "center", color: "#9ca3af", fontSize: 11 }}>
+        <div style={{ padding: "20px 10px", textAlign: "center", color: "#9ca3af", fontSize: 11.5 }}>
           {tc("resolved")}
         </div>
       ) : (
         <>
-          <div style={{ padding: "6px 10px", borderBottom: "0.5px solid #f3f4f6", flexShrink: 0, fontSize: 10 }}>
-            <div style={{ display: "flex", gap: 3, marginBottom: 4 }}>
+          <div style={{ padding: "6px 10px", borderBottom: "0.5px solid #f3f4f6", flexShrink: 0, fontSize: 11 }}>
+            <div style={{ display: "flex", gap: 4, marginBottom: 5, flexWrap: "wrap" }}>
               {[
                 { k: "draft" as const, l: tc("useDraft"), d: !draftText.trim() },
                 { k: "selected" as const, l: tc("useSelected"), d: !selectedMessage },
@@ -250,9 +249,9 @@ export function AgentToolPanel({
                   key={s.k}
                   onClick={() => !s.d && setCs(s.k)}
                   style={{
-                    fontSize: 8,
-                    padding: "2px 5px",
-                    borderRadius: 3,
+                    fontSize: 10,
+                    padding: "3px 7px",
+                    borderRadius: 4,
                     border: cs === s.k ? "1px solid #8b5cf6" : "1px solid #e5e7eb",
                     background: cs === s.k ? "#faf5ff" : s.d ? "#f9fafb" : "#fff",
                     color: s.d ? "#d1d5db" : cs === s.k ? "#7c3aed" : "#555",
@@ -267,12 +266,12 @@ export function AgentToolPanel({
             {cs === "draft" && (
               <div
                 style={{
-                  fontSize: 9,
+                  fontSize: 10.5,
                   color: draftText.trim() ? "#555" : "#d1d5db",
                   background: "#f9fafb",
-                  borderRadius: 3,
-                  padding: "3px 5px",
-                  maxHeight: 40,
+                  borderRadius: 4,
+                  padding: "4px 6px",
+                  maxHeight: 44,
                   overflow: "hidden",
                 }}
               >
@@ -282,11 +281,11 @@ export function AgentToolPanel({
             {cs === "selected" && (
               <div
                 style={{
-                  fontSize: 9,
+                  fontSize: 10.5,
                   background: "#f9fafb",
-                  borderRadius: 3,
-                  padding: "3px 5px",
-                  maxHeight: 40,
+                  borderRadius: 4,
+                  padding: "4px 6px",
+                  maxHeight: 44,
                   overflow: "hidden",
                 }}
               >
@@ -299,8 +298,8 @@ export function AgentToolPanel({
                     <button
                       onClick={onClearSelection}
                       style={{
-                        marginLeft: 3,
-                        fontSize: 8,
+                        marginLeft: 4,
+                        fontSize: 10,
                         color: "#ef4444",
                         background: "none",
                         border: "none",
@@ -322,26 +321,26 @@ export function AgentToolPanel({
                 placeholder={tc("customPh")}
                 style={{
                   width: "100%",
-                  fontSize: 9,
+                  fontSize: 11,
                   border: "1px solid #e5e7eb",
-                  borderRadius: 3,
-                  padding: "3px 5px",
+                  borderRadius: 4,
+                  padding: "4px 6px",
                   resize: "vertical",
-                  minHeight: 30,
-                  maxHeight: 70,
+                  minHeight: 34,
+                  maxHeight: 76,
                   fontFamily: "inherit",
                   boxSizing: "border-box",
                 }}
               />
             )}
-            {tooLong && <div style={{ fontSize: 8, color: "#ef4444", marginTop: 2 }}>{tc("tooLong")}</div>}
+            {tooLong && <div style={{ fontSize: 10, color: "#ef4444", marginTop: 2 }}>{tc("tooLong")}</div>}
           </div>
           <div
             style={{
-              padding: "5px 10px",
+              padding: "6px 10px",
               display: "flex",
               flexWrap: "wrap",
-              gap: 3,
+              gap: 4,
               borderBottom: "0.5px solid #f3f4f6",
               flexShrink: 0,
             }}
@@ -352,9 +351,9 @@ export function AgentToolPanel({
                 onClick={t.a}
                 disabled={dis}
                 style={{
-                  fontSize: 9,
-                  padding: "3px 6px",
-                  borderRadius: 4,
+                  fontSize: 10.5,
+                  padding: "4px 8px",
+                  borderRadius: 5,
                   border: "1px solid #e5e7eb",
                   background: dis ? "#f9fafb" : "#fff",
                   cursor: dis ? "not-allowed" : "pointer",
@@ -362,7 +361,7 @@ export function AgentToolPanel({
                   fontWeight: 500,
                   display: "flex",
                   alignItems: "center",
-                  gap: 2,
+                  gap: 3,
                 }}
               >
                 <span>{t.i}</span>
@@ -372,33 +371,33 @@ export function AgentToolPanel({
           </div>
         </>
       )}
-      <div style={{ flex: 1, overflowY: "auto", padding: "6px 10px", fontSize: 10 }}>
+      <div style={{ flex: 1, overflowY: "auto", padding: "8px 12px", fontSize: 11 }}>
         {(tl || kl) && <div style={{ textAlign: "center", color: "#888", padding: 14 }}>{tc("processing")}</div>}
         {te && <div style={{ color: "#ef4444", padding: "4px 0" }}>{te}</div>}
         {ke && <div style={{ color: "#ef4444", padding: "4px 0" }}>{ke}</div>}
         {kr.length > 0 && (
           <div>
-            <div style={{ fontSize: 9, fontWeight: 600, color: "#6366f1", marginBottom: 3 }}>{tc("kbResult")}</div>
+            <div style={{ fontSize: 10.5, fontWeight: 600, color: "#6366f1", marginBottom: 4 }}>{tc("kbResult")}</div>
             {kr.map((r, i) => (
               <div
                 key={i}
                 style={{
                   background: "#f9fafb",
                   border: "1px solid #e8e6e0",
-                  borderRadius: 4,
-                  padding: "4px 6px",
-                  marginBottom: 3,
+                  borderRadius: 5,
+                  padding: "5px 7px",
+                  marginBottom: 4,
                 }}
               >
-                <div style={{ fontWeight: 600, fontSize: 9 }}>{r.display_label}</div>
-                <div style={{ fontSize: 9, color: "#555", lineHeight: 1.4 }}>{r.content.slice(0, 150)}</div>
+                <div style={{ fontWeight: 600, fontSize: 10.5 }}>{r.display_label}</div>
+                <div style={{ fontSize: 10.5, color: "#555", lineHeight: 1.5 }}>{r.content.slice(0, 150)}</div>
                 {r.source_type && (
                   <span
                     style={{
-                      fontSize: 8,
+                      fontSize: 9,
                       background: "#ede9fe",
                       color: "#6366f1",
-                      padding: "1px 4px",
+                      padding: "1px 5px",
                       borderRadius: 6,
                     }}
                   >
@@ -411,14 +410,16 @@ export function AgentToolPanel({
         )}
         {tr?.type === "translate" && (
           <div>
-            <div style={{ fontSize: 9, fontWeight: 600, color: "#2563eb", marginBottom: 3 }}>{tc("transResult")}</div>
+            <div style={{ fontSize: 10.5, fontWeight: 600, color: "#2563eb", marginBottom: 4 }}>
+              {tc("transResult")}
+            </div>
             <div
               style={{
                 background: "#f0f9ff",
                 border: "1px solid #bae6fd",
-                borderRadius: 4,
-                padding: "5px",
-                lineHeight: 1.4,
+                borderRadius: 5,
+                padding: "6px",
+                lineHeight: 1.5,
               }}
             >
               {String(tr.data.translated_text)}
@@ -426,10 +427,10 @@ export function AgentToolPanel({
             <button
               onClick={() => onUseDraft(String(tr.data.translated_text))}
               style={{
-                marginTop: 3,
-                fontSize: 9,
-                padding: "2px 7px",
-                borderRadius: 3,
+                marginTop: 4,
+                fontSize: 10.5,
+                padding: "3px 9px",
+                borderRadius: 4,
                 border: "1px solid #2563eb",
                 background: "#eff6ff",
                 color: "#2563eb",
@@ -443,28 +444,28 @@ export function AgentToolPanel({
         )}
         {tr?.type === "grammar" && (
           <div>
-            <div style={{ fontSize: 9, fontWeight: 600, color: "#16a34a", marginBottom: 3 }}>{tc("gramResult")}</div>
+            <div style={{ fontSize: 10.5, fontWeight: 600, color: "#16a34a", marginBottom: 4 }}>{tc("gramResult")}</div>
             <div
               style={{
                 background: "#f0fdf4",
                 border: "1px solid #bbf7d0",
-                borderRadius: 4,
-                padding: "5px",
-                lineHeight: 1.4,
+                borderRadius: 5,
+                padding: "6px",
+                lineHeight: 1.5,
               }}
             >
               {String(tr.data.corrected_text)}
             </div>
-            <div style={{ fontSize: 8, color: "#888", marginTop: 2 }}>
+            <div style={{ fontSize: 10, color: "#888", marginTop: 3 }}>
               {String(tr.data.summary)} · {String(tr.data.tone_assessment)}
             </div>
             <button
               onClick={() => onUseDraft(String(tr.data.corrected_text))}
               style={{
-                marginTop: 3,
-                fontSize: 9,
-                padding: "2px 7px",
-                borderRadius: 3,
+                marginTop: 4,
+                fontSize: 10.5,
+                padding: "3px 9px",
+                borderRadius: 4,
                 border: "1px solid #16a34a",
                 background: "#f0fdf4",
                 color: "#16a34a",
@@ -478,7 +479,7 @@ export function AgentToolPanel({
         )}
         {tr?.type === "check_policy" && (
           <div>
-            <div style={{ fontSize: 9, fontWeight: 600, color: "#f59e0b", marginBottom: 3 }}>{tc("polResult")}</div>
+            <div style={{ fontSize: 10.5, fontWeight: 600, color: "#f59e0b", marginBottom: 4 }}>{tc("polResult")}</div>
             <div
               style={{
                 background:
@@ -494,24 +495,26 @@ export function AgentToolPanel({
                     : tr.data.status === "insufficient_evidence"
                       ? "#e5e7eb"
                       : "#fde68a"),
-                borderRadius: 4,
-                padding: "5px",
+                borderRadius: 5,
+                padding: "6px",
               }}
             >
-              <div style={{ fontWeight: 600, fontSize: 9, textTransform: "uppercase" }}>{String(tr.data.status)}</div>
-              <div style={{ fontSize: 9, lineHeight: 1.4 }}>{String(tr.data.summary)}</div>
+              <div style={{ fontWeight: 600, fontSize: 10.5, textTransform: "uppercase" }}>
+                {String(tr.data.status)}
+              </div>
+              <div style={{ fontSize: 10.5, lineHeight: 1.5 }}>{String(tr.data.summary)}</div>
             </div>
-            <div style={{ fontSize: 8, color: "#888", marginTop: 2, fontStyle: "italic" }}>{tc("basedOn")}</div>
+            <div style={{ fontSize: 9.5, color: "#888", marginTop: 3, fontStyle: "italic" }}>{tc("basedOn")}</div>
             {Array.isArray(tr.data.issues) &&
               (tr.data.issues as Array<Record<string, string>>).map((iss, i) => (
                 <div
                   key={i}
                   style={{
-                    marginTop: 2,
-                    fontSize: 8,
-                    padding: "2px 4px",
+                    marginTop: 3,
+                    fontSize: 10,
+                    padding: "3px 5px",
                     background: iss.severity === "violation" ? "#fef2f2" : "#fffbeb",
-                    borderRadius: 3,
+                    borderRadius: 4,
                   }}
                 >
                   <span style={{ fontWeight: 600 }}>{iss.severity}:</span> {iss.excerpt}{" "}
@@ -522,8 +525,8 @@ export function AgentToolPanel({
         )}
         {tr?.type === "suggest_reply" && (
           <div>
-            <div style={{ fontSize: 9, fontWeight: 600, color: "#8b5cf6", marginBottom: 3 }}>{tc("sugResult")}</div>
-            <div style={{ fontSize: 8, color: "#888", marginBottom: 3, fontStyle: "italic" }}>{tc("draftOnly")}</div>
+            <div style={{ fontSize: 10.5, fontWeight: 600, color: "#8b5cf6", marginBottom: 4 }}>{tc("sugResult")}</div>
+            <div style={{ fontSize: 10, color: "#888", marginBottom: 4, fontStyle: "italic" }}>{tc("draftOnly")}</div>
             {Array.isArray(tr.data.suggestions) &&
               (tr.data.suggestions as Array<{ content: string; tone_label: string }>).map((s, i) => (
                 <div
@@ -531,18 +534,18 @@ export function AgentToolPanel({
                   style={{
                     background: "#faf5ff",
                     border: "1px solid #e9d5ff",
-                    borderRadius: 4,
-                    padding: "5px",
-                    marginBottom: 3,
+                    borderRadius: 5,
+                    padding: "6px",
+                    marginBottom: 4,
                   }}
                 >
-                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
                     <span
                       style={{
-                        fontSize: 8,
+                        fontSize: 9.5,
                         background: "#ede9fe",
                         color: "#6366f1",
-                        padding: "1px 4px",
+                        padding: "1px 5px",
                         borderRadius: 6,
                         fontWeight: 600,
                       }}
@@ -552,9 +555,9 @@ export function AgentToolPanel({
                     <button
                       onClick={() => onUseDraft(s.content)}
                       style={{
-                        fontSize: 8,
-                        padding: "1px 6px",
-                        borderRadius: 3,
+                        fontSize: 10,
+                        padding: "2px 7px",
+                        borderRadius: 4,
                         border: "1px solid #8b5cf6",
                         background: "#faf5ff",
                         color: "#8b5cf6",
@@ -565,14 +568,14 @@ export function AgentToolPanel({
                       {tc("use")}
                     </button>
                   </div>
-                  <div style={{ fontSize: 9, lineHeight: 1.4 }}>{s.content}</div>
+                  <div style={{ fontSize: 10.5, lineHeight: 1.5 }}>{s.content}</div>
                 </div>
               ))}
           </div>
         )}
         {!tl && !te && !tr && kr.length === 0 && !ke && !isResolved && (
-          <div style={{ padding: "16px 10px", textAlign: "center", color: "#cbd5e1", fontSize: 9 }}>
-            <div style={{ fontSize: 16, marginBottom: 4 }}>🛠️</div>
+          <div style={{ padding: "16px 10px", textAlign: "center", color: "#cbd5e1", fontSize: 10.5 }}>
+            <div style={{ fontSize: 18, marginBottom: 4 }}>🛠️</div>
             {tc(hc ? "toolHint" : "noContent")}
           </div>
         )}
