@@ -838,12 +838,18 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
 
   await supabaseAdmin.from("messages").delete().eq("conversation_id", conversation_id).eq("content", "__THINKING__");
 
+  // W5: Build citation metadata from the exact chunks used in the LLM prompt
+  const citationMeta = finalPromptChunks.length > 0
+    ? buildCitationMetadata(finalPromptChunks)
+    : null;
+
   await supabaseAdmin.from("messages").insert({
     conversation_id,
     role: "assistant",
     content: aiReplyContent,
     status: "delivered",
     is_recalled: false,
+    metadata: citationMeta,
   });
 
   await supabaseAdmin
