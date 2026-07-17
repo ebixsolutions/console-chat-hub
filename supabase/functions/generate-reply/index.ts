@@ -921,7 +921,7 @@ async function orchestrationGenerateReply(
       "finance",
     ];
     const isHighRisk = HIGH_RISK_KEYWORDS.some((kw) => userQuery.toLowerCase().includes(kw.toLowerCase()));
-    const minScore = isHighRisk ? 0.85 : 0.75;
+    const minScore = isHighRisk ? 0.78 : 0.7;
 
     const usableChunks = ragResult.chunks.filter((c) => {
       if (!c.score || c.score < minScore) return false;
