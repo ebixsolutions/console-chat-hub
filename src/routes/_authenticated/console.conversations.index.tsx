@@ -175,6 +175,7 @@ function HandoffBanner({
   onTakeOver: () => void;
   onReturnToAi: () => void;
 }) {
+  const lang = useConsoleLang();
   const isHumanControl = conv.status === "pending" && Boolean(conv.assigned_agent_id);
   const isHandoff = isHumanControl || conv.status === "escalation_risk" || isHumanNeeded(conv);
   if (!isHandoff) return null;
@@ -236,7 +237,8 @@ function HandoffBanner({
   if (hasDamaged) whyReasons.push("✓ Damaged item after delivery");
   if (hasUrgent) whyReasons.push("✓ Urgent need today");
   if (hasHuman) whyReasons.push("✓ Human support requested");
-  if (whyReasons.length === 0) whyReasons.push("✓ AI confidence threshold triggered");
+  if (whyReasons.length === 0)
+    whyReasons.push(lang === "zh" ? "✓ 此對話已標記供人工檢視" : "✓ Conversation flagged for review");
 
   const actions: string[] = ["✓ Prioritize human takeover", "✓ Review full conversation"];
   if (hasRefund || hasDamaged) actions.push("✓ Ask for order number");
@@ -1610,8 +1612,15 @@ function SinglePageInbox() {
                         </div>
                       ) : (
                         <div
-                          onClick={() => !m.is_recalled && setSelectedMessage({ id: m.id, role: m.role, content: m.content })}
-                          style={{ ...bubbleStyle, cursor: m.is_recalled ? "default" : "pointer", outline: selectedMessage?.id === m.id ? "2px solid #8b5cf6" : "none", outlineOffset: 2 }}
+                          onClick={() =>
+                            !m.is_recalled && setSelectedMessage({ id: m.id, role: m.role, content: m.content })
+                          }
+                          style={{
+                            ...bubbleStyle,
+                            cursor: m.is_recalled ? "default" : "pointer",
+                            outline: selectedMessage?.id === m.id ? "2px solid #8b5cf6" : "none",
+                            outlineOffset: 2,
+                          }}
                         >
                           <div className="whitespace-pre-wrap">{m.content}</div>
                         </div>
@@ -1725,10 +1734,24 @@ function SinglePageInbox() {
             </DialogDescription>
           </DialogHeader>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
-            <Button variant="outline" size="sm" onClick={() => { setUseConfirmOpen(false); setPendingUseText(""); }}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setUseConfirmOpen(false);
+                setPendingUseText("");
+              }}
+            >
               {lang === "zh" ? "取消" : "Cancel"}
             </Button>
-            <Button size="sm" onClick={() => { setReply(pendingUseText); setUseConfirmOpen(false); setPendingUseText(""); }}>
+            <Button
+              size="sm"
+              onClick={() => {
+                setReply(pendingUseText);
+                setUseConfirmOpen(false);
+                setPendingUseText("");
+              }}
+            >
               {lang === "zh" ? "取代" : "Replace"}
             </Button>
           </div>
