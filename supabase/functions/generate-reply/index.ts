@@ -181,12 +181,16 @@ Deno.serve(async (req) => {
     }
 
     // ── ORCHESTRATION PATH (only reached when at least one flag is true) ──────
-    return await orchestrationGenerateReply(conversation_id, {
-      ENABLE_KB,
-      ENABLE_COACH,
-      ENABLE_C360,
-      ENABLE_TOOL_EXEC,
-    }, source_message_id ?? null);
+    return await orchestrationGenerateReply(
+      conversation_id,
+      {
+        ENABLE_KB,
+        ENABLE_COACH,
+        ENABLE_C360,
+        ENABLE_TOOL_EXEC,
+      },
+      source_message_id ?? null,
+    );
   } catch (error) {
     console.error("[generate-reply] unexpected error:", error);
     return new Response(JSON.stringify({ error: "Internal server error" }), {
@@ -231,7 +235,11 @@ async function legacyGenerateReply(conversation_id: string): Promise<Response> {
   // When status is 'pending' or 'transferred', a human agent is handling.
   // Do not call LLM. Clear ai_generating flag and return.
   if (conversation.status === "pending" || conversation.status === "transferred") {
-    console.log("[generate-reply] human-handling guard: skipping LLM for status:", conversation.status, conversation_id);
+    console.log(
+      "[generate-reply] human-handling guard: skipping LLM for status:",
+      conversation.status,
+      conversation_id,
+    );
     return new Response(JSON.stringify({ success: true, skipped: "human_handling" }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
@@ -294,7 +302,11 @@ async function legacyGenerateReply(conversation_id: string): Promise<Response> {
       .eq("id", conversation_id);
 
     if (pendingUpdateErr) {
-      console.error("[generate-reply] CRITICAL: failed to mark conversation pending after handoff:", pendingUpdateErr.message, conversation_id);
+      console.error(
+        "[generate-reply] CRITICAL: failed to mark conversation pending after handoff:",
+        pendingUpdateErr.message,
+        conversation_id,
+      );
     }
 
     console.log("[generate-reply] deterministic handoff reply sent:", conversation_id, handoffLang);
@@ -471,7 +483,7 @@ When the customer explicitly requests a human agent, or when you transfer to a h
 // ────────────────────────────────────────────────────────────────────────────
 // ── W5: Citation metadata builder (orchestration path only) ──────────────
 function buildCitationMetadata(
-  chunks: Array<{ title?: string; score?: number; source_type?: string }>
+  chunks: Array<{ title?: string; score?: number; source_type?: string }>,
 ): { citations: Array<{ label: string; source_type: string; relevance?: string }> } | null {
   const seen = new Set<string>();
   const citations: Array<{ label: string; source_type: string; relevance?: string }> = [];
@@ -484,9 +496,7 @@ function buildCitationMetadata(
     seen.add(dedupeKey);
     const rawSt = typeof c.source_type === "string" ? c.source_type.trim().slice(0, 40) : "";
     const source_type = rawSt || "unknown";
-    const relevance = typeof c.score === "number"
-      ? (c.score >= 0.85 ? "high" : "medium")
-      : undefined;
+    const relevance = typeof c.score === "number" ? (c.score >= 0.85 ? "high" : "medium") : undefined;
     citations.push({ label, source_type, ...(relevance ? { relevance } : {}) });
   }
   return citations.length > 0 ? { citations } : null;
@@ -499,11 +509,209 @@ type FlagSet = {
   ENABLE_TOOL_EXEC: boolean;
 };
 
-const KB_FALLBACK_SAFE_TEXT: Record<string, string> = { KB_SCOPE_GATE: "很抱歉，系統暫時無法查詢知識庫。讓我為您轉接客服人員。", KB_API_FAIL: "系統暫時無法查詢知識庫，讓我為您轉接客服人員。", KB_EMPTY: "很抱歉，我目前無法確定答案。讓我為您轉接客服人員，以提供更準確的協助。", KB_LOW_SCORE_HIGH_RISK: "這個問題涉及重要政策，為確保您獲得準確資訊，讓我為您轉接客服人員。", KB_LOW_SCORE_STANDARD: "很抱歉，我目前無法確定答案。讓我為您轉接客服人員，以提供更準確的協助。" };
-type KBFallbackRpcResult = 'success' | 'already_handled' | 'already_resolved' | 'already_under_human_control' | 'invalid_source_message' | 'invalid_branch' | 'not_found';
-async function handleKBFallback(supabaseAdmin: ReturnType<typeof createClient>, conversation_id: string, branchTag: string, source_message_id: string | null, traceMetadata: Record<string, unknown>): Promise<Response> { const safeText = KB_FALLBACK_SAFE_TEXT[branchTag]; if (!safeText) { console.error(`[generate-reply] CRITICAL unknown branch: ${branchTag}`, conversation_id); return new Response(JSON.stringify({ success: false, error: "kb_fallback_unknown_branch", no_answer: true, handoff_required: true, handoff_persisted: false, trace_metadata: { ...traceMetadata, branch: branchTag, handoff_persisted: false } }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }); } if (!source_message_id) { console.error(`[generate-reply] CRITICAL source_message_id missing`, conversation_id); return new Response(JSON.stringify({ success: false, error: "kb_fallback_missing_source_id", reply: safeText, no_answer: true, handoff_required: true, handoff_persisted: false, trace_metadata: { ...traceMetadata, handoff_persisted: false } }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }); } const { data: rpcData, error: rpcErr } = await supabaseAdmin.rpc('kb_fallback_handoff_tx', { p_conversation_id: conversation_id, p_safe_reply_content: safeText, p_branch_tag: branchTag, p_source_message_id: source_message_id }); if (rpcErr) { console.error(`[generate-reply] CRITICAL RPC failed [${branchTag}]:`, rpcErr.message, conversation_id); return new Response(JSON.stringify({ success: false, error: "kb_fallback_persistence_failed", reply: safeText, no_answer: true, handoff_required: true, handoff_persisted: false, trace_metadata: { ...traceMetadata, handoff_persisted: false } }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }); } const result: string = rpcData?.result ?? 'unknown'; switch (result as KBFallbackRpcResult | 'unknown') { case 'success': console.log(`[generate-reply] KB fallback persisted [${branchTag}]:`, conversation_id); return new Response(JSON.stringify({ success: true, reply: safeText, no_answer: true, handoff_required: true, handoff_persisted: true, trace_metadata: { ...traceMetadata, rpc_result: 'success', handoff_persisted: true } }), { headers: { ...corsHeaders, "Content-Type": "application/json" } }); case 'already_handled': console.log(`[generate-reply] KB fallback idempotent [${branchTag}]:`, conversation_id, 'existing:', rpcData?.existing_branch, 'requested:', rpcData?.requested_branch); return new Response(JSON.stringify({ success: true, reply: null, no_answer: true, handoff_required: false, handoff_persisted: true, trace_metadata: { ...traceMetadata, rpc_result: 'already_handled', handoff_persisted: true, existing_branch: rpcData?.existing_branch, requested_branch: rpcData?.requested_branch } }), { headers: { ...corsHeaders, "Content-Type": "application/json" } }); case 'already_resolved': console.log(`[generate-reply] KB skipped resolved [${branchTag}]:`, conversation_id); return new Response(JSON.stringify({ success: false, error: "conversation_resolved", reply: null, no_answer: false, handoff_required: false, handoff_persisted: false, trace_metadata: { ...traceMetadata, rpc_result: 'already_resolved', handoff_persisted: false } }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }); case 'already_under_human_control': console.log(`[generate-reply] KB skipped human control [${branchTag}]:`, conversation_id); return new Response(JSON.stringify({ success: true, reply: null, no_answer: false, handoff_required: false, handoff_persisted: false, trace_metadata: { ...traceMetadata, rpc_result: 'already_under_human_control', handoff_persisted: false } }), { headers: { ...corsHeaders, "Content-Type": "application/json" } }); case 'invalid_source_message': console.error(`[generate-reply] invalid source_message [${branchTag}]:`, conversation_id); return new Response(JSON.stringify({ success: false, error: "kb_fallback_invalid_source", reply: safeText, no_answer: true, handoff_required: true, handoff_persisted: false, trace_metadata: { ...traceMetadata, handoff_persisted: false } }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }); case 'invalid_branch': console.error(`[generate-reply] invalid branch from RPC [${branchTag}]:`, conversation_id); return new Response(JSON.stringify({ success: false, error: "kb_fallback_invalid_branch", no_answer: true, handoff_required: true, handoff_persisted: false, trace_metadata: { ...traceMetadata, handoff_persisted: false } }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }); case 'not_found': console.error(`[generate-reply] conversation not found [${branchTag}]:`, conversation_id); return new Response(JSON.stringify({ success: false, error: "kb_fallback_conversation_not_found", no_answer: true, handoff_required: true, handoff_persisted: false, trace_metadata: { ...traceMetadata, handoff_persisted: false } }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }); default: console.error(`[generate-reply] unexpected RPC result [${branchTag}]:`, result, conversation_id); return new Response(JSON.stringify({ success: false, error: "kb_fallback_unexpected_result", reply: safeText, no_answer: true, handoff_required: true, handoff_persisted: false, trace_metadata: { ...traceMetadata, handoff_persisted: false } }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }); } }
+const KB_FALLBACK_SAFE_TEXT: Record<string, string> = {
+  KB_SCOPE_GATE: "很抱歉，系統暫時無法查詢知識庫。讓我為您轉接客服人員。",
+  KB_API_FAIL: "系統暫時無法查詢知識庫，讓我為您轉接客服人員。",
+  KB_EMPTY: "很抱歉，我目前無法確定答案。讓我為您轉接客服人員，以提供更準確的協助。",
+  KB_LOW_SCORE_HIGH_RISK: "這個問題涉及重要政策，為確保您獲得準確資訊，讓我為您轉接客服人員。",
+  KB_LOW_SCORE_STANDARD: "很抱歉，我目前無法確定答案。讓我為您轉接客服人員，以提供更準確的協助。",
+};
+type KBFallbackRpcResult =
+  | "success"
+  | "already_handled"
+  | "already_resolved"
+  | "already_under_human_control"
+  | "invalid_source_message"
+  | "invalid_branch"
+  | "not_found";
+async function handleKBFallback(
+  supabaseAdmin: ReturnType<typeof createClient>,
+  conversation_id: string,
+  branchTag: string,
+  source_message_id: string | null,
+  traceMetadata: Record<string, unknown>,
+): Promise<Response> {
+  const safeText = KB_FALLBACK_SAFE_TEXT[branchTag];
+  if (!safeText) {
+    console.error(`[generate-reply] CRITICAL unknown branch: ${branchTag}`, conversation_id);
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: "kb_fallback_unknown_branch",
+        no_answer: true,
+        handoff_required: true,
+        handoff_persisted: false,
+        trace_metadata: { ...traceMetadata, branch: branchTag, handoff_persisted: false },
+      }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+  if (!source_message_id) {
+    console.error(`[generate-reply] CRITICAL source_message_id missing`, conversation_id);
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: "kb_fallback_missing_source_id",
+        reply: safeText,
+        no_answer: true,
+        handoff_required: true,
+        handoff_persisted: false,
+        trace_metadata: { ...traceMetadata, handoff_persisted: false },
+      }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+  const { data: rpcData, error: rpcErr } = await supabaseAdmin.rpc("kb_fallback_handoff_tx", {
+    p_conversation_id: conversation_id,
+    p_safe_reply_content: safeText,
+    p_branch_tag: branchTag,
+    p_source_message_id: source_message_id,
+  });
+  if (rpcErr) {
+    console.error(`[generate-reply] CRITICAL RPC failed [${branchTag}]:`, rpcErr.message, conversation_id);
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: "kb_fallback_persistence_failed",
+        reply: safeText,
+        no_answer: true,
+        handoff_required: true,
+        handoff_persisted: false,
+        trace_metadata: { ...traceMetadata, handoff_persisted: false },
+      }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+  const result: string = rpcData?.result ?? "unknown";
+  switch (result as KBFallbackRpcResult | "unknown") {
+    case "success":
+      console.log(`[generate-reply] KB fallback persisted [${branchTag}]:`, conversation_id);
+      return new Response(
+        JSON.stringify({
+          success: true,
+          reply: safeText,
+          no_answer: true,
+          handoff_required: true,
+          handoff_persisted: true,
+          trace_metadata: { ...traceMetadata, rpc_result: "success", handoff_persisted: true },
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    case "already_handled":
+      console.log(
+        `[generate-reply] KB fallback idempotent [${branchTag}]:`,
+        conversation_id,
+        "existing:",
+        rpcData?.existing_branch,
+        "requested:",
+        rpcData?.requested_branch,
+      );
+      return new Response(
+        JSON.stringify({
+          success: true,
+          reply: null,
+          no_answer: true,
+          handoff_required: false,
+          handoff_persisted: true,
+          trace_metadata: {
+            ...traceMetadata,
+            rpc_result: "already_handled",
+            handoff_persisted: true,
+            existing_branch: rpcData?.existing_branch,
+            requested_branch: rpcData?.requested_branch,
+          },
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    case "already_resolved":
+      console.log(`[generate-reply] KB skipped resolved [${branchTag}]:`, conversation_id);
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "conversation_resolved",
+          reply: null,
+          no_answer: false,
+          handoff_required: false,
+          handoff_persisted: false,
+          trace_metadata: { ...traceMetadata, rpc_result: "already_resolved", handoff_persisted: false },
+        }),
+        { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    case "already_under_human_control":
+      console.log(`[generate-reply] KB skipped human control [${branchTag}]:`, conversation_id);
+      return new Response(
+        JSON.stringify({
+          success: true,
+          reply: null,
+          no_answer: false,
+          handoff_required: false,
+          handoff_persisted: false,
+          trace_metadata: { ...traceMetadata, rpc_result: "already_under_human_control", handoff_persisted: false },
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    case "invalid_source_message":
+      console.error(`[generate-reply] invalid source_message [${branchTag}]:`, conversation_id);
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "kb_fallback_invalid_source",
+          reply: safeText,
+          no_answer: true,
+          handoff_required: true,
+          handoff_persisted: false,
+          trace_metadata: { ...traceMetadata, handoff_persisted: false },
+        }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    case "invalid_branch":
+      console.error(`[generate-reply] invalid branch from RPC [${branchTag}]:`, conversation_id);
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "kb_fallback_invalid_branch",
+          no_answer: true,
+          handoff_required: true,
+          handoff_persisted: false,
+          trace_metadata: { ...traceMetadata, handoff_persisted: false },
+        }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    case "not_found":
+      console.error(`[generate-reply] conversation not found [${branchTag}]:`, conversation_id);
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "kb_fallback_conversation_not_found",
+          no_answer: true,
+          handoff_required: true,
+          handoff_persisted: false,
+          trace_metadata: { ...traceMetadata, handoff_persisted: false },
+        }),
+        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    default:
+      console.error(`[generate-reply] unexpected RPC result [${branchTag}]:`, result, conversation_id);
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "kb_fallback_unexpected_result",
+          reply: safeText,
+          no_answer: true,
+          handoff_required: true,
+          handoff_persisted: false,
+          trace_metadata: { ...traceMetadata, handoff_persisted: false },
+        }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+  }
+}
 
-async function orchestrationGenerateReply(conversation_id: string, flags: FlagSet, source_message_id: string | null): Promise<Response> {
+async function orchestrationGenerateReply(
+  conversation_id: string,
+  flags: FlagSet,
+  source_message_id: string | null,
+): Promise<Response> {
   const supabaseAdmin = createClient(
     Deno.env.get("SUPABASE_URL") ?? "",
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
@@ -638,16 +846,17 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
         hasCompanyId: widgetCompanyId !== null && !isNaN(widgetCompanyId),
         hasIndustry: !!widgetIndustry,
       });
-      return await handleKBFallback(supabaseAdmin, conversation_id, "KB_SCOPE_GATE", source_message_id, { rag_api_status: "scope_unavailable" });
+      return await handleKBFallback(supabaseAdmin, conversation_id, "KB_SCOPE_GATE", source_message_id, {
+        rag_api_status: "scope_unavailable",
+      });
     }
-
 
     // Get the latest user message for RAG query
     const { data: latestMsgs } = await supabaseAdmin
       .from("messages")
       .select("content")
       .eq("conversation_id", conversation_id)
-      .eq("role", "user")
+      .eq("role", "visitor")
       .order("created_at", { ascending: false })
       .limit(1);
     const userQuery = latestMsgs?.[0]?.content ?? "";
@@ -665,12 +874,16 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     // — L5 Safety Checks (Demo-only, inline) —
     if (!ragResult || !ragResult.success) {
       console.error("[CRITICAL] KB RAG API failure", { conversation_id, code: "KB_API_FAIL" });
-      return await handleKBFallback(supabaseAdmin, conversation_id, "KB_API_FAIL", source_message_id, { rag_api_status: "failure" });
+      return await handleKBFallback(supabaseAdmin, conversation_id, "KB_API_FAIL", source_message_id, {
+        rag_api_status: "failure",
+      });
     }
 
     if (ragResult.no_answer || !ragResult.chunks || ragResult.chunks.length === 0) {
       console.warn("[generate-reply] KB no results", { conversation_id, code: "KB_EMPTY" });
-      return await handleKBFallback(supabaseAdmin, conversation_id, "KB_EMPTY", source_message_id, { rag_api_status: "success_empty" });
+      return await handleKBFallback(supabaseAdmin, conversation_id, "KB_EMPTY", source_message_id, {
+        rag_api_status: "success_empty",
+      });
     }
 
     // L5 Score threshold + scope filter (client-side double-check)
@@ -839,9 +1052,7 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
   await supabaseAdmin.from("messages").delete().eq("conversation_id", conversation_id).eq("content", "__THINKING__");
 
   // W5: Build citation metadata from the exact chunks used in the LLM prompt
-  const citationMeta = finalPromptChunks.length > 0
-    ? buildCitationMetadata(finalPromptChunks)
-    : null;
+  const citationMeta = finalPromptChunks.length > 0 ? buildCitationMetadata(finalPromptChunks) : null;
 
   await supabaseAdmin.from("messages").insert({
     conversation_id,
@@ -852,10 +1063,7 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     metadata: citationMeta,
   });
 
-  await supabaseAdmin
-    .from("conversations")
-    .update({ updated_at: new Date().toISOString() })
-    .eq("id", conversation_id);
+  await supabaseAdmin.from("conversations").update({ updated_at: new Date().toISOString() }).eq("id", conversation_id);
 
   if (flags.ENABLE_COACH) {
     void coachTrace;
