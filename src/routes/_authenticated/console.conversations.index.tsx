@@ -18,20 +18,14 @@ export const Route = createFileRoute("/_authenticated/console/conversations/")({
   component: ConversationsInboxGuard,
 });
 
-// ── Dev22-L1: Guard component (route-level production-role guard) ──
-// admin / supervisor / agent allowed. qa (unsupported by AppRole) and
-// roleless are denied automatically by useCurrentRole() returning null.
 function ConversationsInboxGuard() {
   const { role, loading } = useCurrentRole();
-
   if (loading) return <LoadingState />;
-
   if (role !== "admin" && role !== "supervisor" && role !== "agent") {
     return (
       <PermissionDenied message="您沒有權限查看客服對話收件匣。 / You do not have permission to access the conversation inbox." />
     );
   }
-
   return <SinglePageInbox />;
 }
 
@@ -94,6 +88,48 @@ const HANDOFF_KEYWORDS = [
 ];
 const ELEVATED = new Set(["manager", "admin", "super_admin", "supervisor"]);
 const ADMIN_ONLY = new Set(["admin", "super_admin"]);
+
+// ── Phase 2A: Right-side Knowledge/Policy types & bilingual copy ──
+type KBResult = { display_label: string; content: string; score: number; source_type: string };
+type PolicyResult = {
+  status: string;
+  summary: string;
+  issues: Array<{ excerpt: string; policy_label: string; severity: string }>;
+};
+type KBConnState = "idle" | "loading" | "connected" | "empty" | "denied" | "unavailable";
+
+const RIGHT_COPY = {
+  kbSearch: { en: "Search knowledge base...", zh: "搜尋知識庫..." },
+  kbSearchBtn: { en: "Search", zh: "搜尋" },
+  kbRefresh: { en: "Refresh", zh: "重新整理" },
+  kbCopy: { en: "Copy", zh: "複製" },
+  kbInsert: { en: "Insert into Draft", zh: "插入草稿" },
+  kbLoading: { en: "Searching knowledge base...", zh: "搜尋知識庫中..." },
+  kbEmpty: { en: "No relevant knowledge found", zh: "未找到相關知識" },
+  kbEmptySub: { en: "Try a different search or select a conversation", zh: "請嘗試其他搜尋或選取對話" },
+  kbError: { en: "Knowledge base unavailable", zh: "知識庫無法存取" },
+  kbDenied: { en: "Requires Admin or Supervisor role", zh: "需要 Admin 或 Supervisor 角色" },
+  kbNoConv: { en: "Select a conversation to see recommendations", zh: "選取對話以查看推薦" },
+  kbScore: { en: "Relevance", zh: "相關度" },
+  polCheckConv: { en: "Check Conversation", zh: "檢查對話" },
+  polCheckDraft: { en: "Check Draft", zh: "檢查草稿" },
+  polLoading: { en: "Checking policy...", zh: "檢查政策中..." },
+  polError: { en: "Policy check failed", zh: "政策檢查失敗" },
+  polDenied: { en: "Requires Admin or Supervisor role", zh: "需要 Admin 或 Supervisor 角色" },
+  polNoContent: { en: "Select a conversation or enter a draft to check", zh: "選取對話或輸入草稿以檢查" },
+  polSrcNote: { en: "Based on provided policy sources only", zh: "僅基於所提供的政策來源" },
+  polDraftEmpty: { en: "Draft is empty", zh: "草稿為空" },
+  polCopySummary: { en: "Copy Summary", zh: "複製摘要" },
+  polInsufficient: {
+    en: "No matching policy sources found — cannot assess compliance",
+    zh: "未找到相符政策來源 — 無法評估合規性",
+  },
+  copied: { en: "Copied to clipboard", zh: "已複製到剪貼簿" },
+  copyFailed: { en: "Copy failed", zh: "複製失敗" },
+  inserted: { en: "Inserted into draft", zh: "已插入草稿" },
+} as const;
+type RCK = keyof typeof RIGHT_COPY;
+// ── End Phase 2A types & copy ──
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function isHumanNeeded(c: Conv) {
@@ -161,7 +197,7 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-// ─── HandoffBanner (aligned to Base44 HandoffBanner.jsx) ─────────────────────
+// ─── HandoffBanner ───────────────────────────────────────────────────────────
 function HandoffBanner({
   conv,
   messages,
@@ -179,11 +215,9 @@ function HandoffBanner({
   const isHumanControl = conv.status === "pending" && Boolean(conv.assigned_agent_id);
   const isHandoff = isHumanControl || conv.status === "escalation_risk" || isHumanNeeded(conv);
   if (!isHandoff) return null;
-
   const borderColor = isHumanControl ? "#a78bfa" : "#ef4444";
   const headerBg = isHumanControl ? "#ede9fe" : "#fee2e2";
   const headerColor = isHumanControl ? "#6d28d9" : "#991b1b";
-
   const visitorMsgs = messages.filter((m) => m.role === "visitor");
   const aiMsgs = messages.filter((m) => m.role === "assistant");
   const aiCount = aiMsgs.length;
@@ -192,7 +226,6 @@ function HandoffBanner({
     .map((m) => m.content)
     .join(" ")
     .toLowerCase();
-
   const hasRefund = allVisitorText.includes("退款") || allVisitorText.includes("refund");
   const hasDamaged =
     allVisitorText.includes("損壞") ||
@@ -221,7 +254,6 @@ function HandoffBanner({
     allVisitorText.includes("budget") ||
     allVisitorText.includes("失去") ||
     allVisitorText.includes("超支");
-
   const summaryParts: string[] = [];
   if (hasRefund) summaryParts.push("requested a refund");
   if (hasDamaged) summaryParts.push("reported damaged goods after delivery");
@@ -230,7 +262,6 @@ function HandoffBanner({
   if (hasHuman) summaryParts.push("requested human support");
   if (summaryParts.length === 0) summaryParts.push("escalated the conversation");
   const summaryText = "Customer " + summaryParts.join(", ") + ".";
-
   const whyReasons: string[] = [];
   if (hasAngry) whyReasons.push("✓ Angry sentiment detected");
   if (hasRefund) whyReasons.push("✓ Refund / policy issue");
@@ -239,13 +270,11 @@ function HandoffBanner({
   if (hasHuman) whyReasons.push("✓ Human support requested");
   if (whyReasons.length === 0)
     whyReasons.push(lang === "zh" ? "✓ 此對話已標記供人工檢視" : "✓ Conversation flagged for review");
-
   const actions: string[] = ["✓ Prioritize human takeover", "✓ Review full conversation"];
   if (hasRefund || hasDamaged) actions.push("✓ Ask for order number");
   if (hasDamaged) actions.push("✓ Request damage photos");
   if (hasHuman) actions.push("✓ Confirm contact method");
   if (hasRefund || hasDamaged) actions.push("✓ Review refund / replacement policy");
-
   return (
     <div
       style={{
@@ -391,24 +420,184 @@ function BannerBtn({
   );
 }
 
-// ─── CRMPanel ────────────────────────────────────────────────────────────────
+// ─── CRMPanel (Phase 2A: functional Knowledge + Policy) ──────────────────────
 function CRMPanel({
   conv,
   visitorLabel,
   onResolve,
+  latestVisitorMsg,
+  latestVisitorMsgId,
+  draftText,
+  currentRole,
+  onInsertDraft,
 }: {
   conv: Conv | null;
   visitorLabel: string;
   onResolve: () => void;
+  latestVisitorMsg: string;
+  latestVisitorMsgId: string;
+  draftText: string;
+  currentRole: string | null;
+  onInsertDraft: (t: string) => void;
 }) {
+  const lang = useConsoleLang();
+  const rc = (k: RCK) => RIGHT_COPY[k]?.[lang] ?? RIGHT_COPY[k]?.en ?? k;
   const [tab, setTab] = useState("customer");
-
+  // Knowledge state
+  const [kbResults, setKbResults] = useState<KBResult[]>([]);
+  const [kbConnState, setKbConnState] = useState<KBConnState>("idle");
+  const [kbError, setKbError] = useState("");
+  const [kbQuery, setKbQuery] = useState("");
+  const kbReqIdRef = useRef(0);
+  const lastAutoQueryRef = useRef("");
+  // Policy state
+  const [polResult, setPolResult] = useState<PolicyResult | null>(null);
+  const [polLoading, setPolLoading] = useState(false);
+  const [polError, setPolError] = useState("");
+  const [polMode, setPolMode] = useState<"conv" | "draft">("conv");
+  const polReqIdRef = useRef(0);
+  // Permission: mirrors EF ALLOWED_ROLES = ["admin", "supervisor"]
+  const canAccessKb = currentRole === "admin" || currentRole === "supervisor";
+  // Reset on conversation change
   useEffect(() => {
     setTab("customer");
+    setKbResults([]);
+    setKbConnState("idle");
+    setKbError("");
+    setKbQuery("");
+    setPolResult(null);
+    setPolLoading(false);
+    setPolError("");
+    setPolMode("conv");
+    kbReqIdRef.current++;
+    polReqIdRef.current++;
+    lastAutoQueryRef.current = "";
   }, [conv?.id]);
+  // Auto-query Knowledge
+  useEffect(() => {
+    if (!conv || !latestVisitorMsg || !canAccessKb) return;
+    if (lastAutoQueryRef.current === latestVisitorMsgId) return;
+    lastAutoQueryRef.current = latestVisitorMsgId;
+    const reqId = ++kbReqIdRef.current;
+    runKbSearch(latestVisitorMsg, reqId);
+  }, [conv?.id, latestVisitorMsgId, canAccessKb]);
 
+  async function runKbSearch(query: string, reqId: number) {
+    if (!query.trim()) return;
+    setKbConnState("loading");
+    setKbError("");
+    setKbResults([]);
+    try {
+      const { data, error } = await supabase.functions.invoke("kb-search-proxy", {
+        body: { query: query.trim().slice(0, 500), top_k: 3 },
+      });
+      if (kbReqIdRef.current !== reqId) return;
+      if (error) {
+        setKbConnState("unavailable");
+        setKbError(rc("kbError"));
+        return;
+      }
+      if (data?.error === "forbidden") {
+        setKbConnState("denied");
+        setKbError(rc("kbDenied"));
+        return;
+      }
+      if (!data?.success || !Array.isArray(data.results)) {
+        setKbConnState("unavailable");
+        setKbError(rc("kbError"));
+        return;
+      }
+      const results = data.results as KBResult[];
+      setKbResults(results);
+      setKbConnState(results.length > 0 ? "connected" : "empty");
+    } catch {
+      if (kbReqIdRef.current !== reqId) return;
+      setKbConnState("unavailable");
+      setKbError(rc("kbError"));
+    }
+  }
+  function handleKbKeywordSearch() {
+    if (!kbQuery.trim() || !canAccessKb) return;
+    const reqId = ++kbReqIdRef.current;
+    runKbSearch(kbQuery, reqId);
+  }
+  function handleKbRefresh() {
+    if (!canAccessKb) return;
+    const q = kbQuery.trim() || latestVisitorMsg;
+    if (!q) return;
+    const reqId = ++kbReqIdRef.current;
+    runKbSearch(q, reqId);
+  }
+  async function runPolicyCheck(content: string, reqId: number) {
+    if (!content.trim() || !canAccessKb) return;
+    setPolLoading(true);
+    setPolError("");
+    setPolResult(null);
+    let pctx: Array<{ label: string; content: string; source_type: string }> = [];
+    let kbDenied = false;
+    try {
+      const { data, error } = await supabase.functions.invoke("kb-search-proxy", {
+        body: { query: content.trim().slice(0, 500), top_k: 3 },
+      });
+      if (polReqIdRef.current !== reqId) return;
+      if (data?.error === "forbidden") {
+        kbDenied = true;
+      } else if (error) {
+        setPolError(rc("polError"));
+        setPolLoading(false);
+        return;
+      } else if (data?.success && Array.isArray(data.results)) {
+        pctx = (data.results as KBResult[])
+          .slice(0, 3)
+          .map((r) => ({
+            label: r.display_label.slice(0, 120),
+            content: r.content.slice(0, 800),
+            source_type: r.source_type.slice(0, 40),
+          }));
+      }
+    } catch {
+      if (polReqIdRef.current !== reqId) return;
+      setPolError(rc("polError"));
+      setPolLoading(false);
+      return;
+    }
+    if (kbDenied) {
+      setPolError(rc("polDenied"));
+      setPolLoading(false);
+      return;
+    }
+    if (pctx.length === 0) {
+      setPolResult({ status: "insufficient_evidence", summary: rc("polInsufficient"), issues: [] });
+      setPolLoading(false);
+      return;
+    }
+    try {
+      const body: Record<string, unknown> = {
+        tool_type: "check_policy",
+        conversation_id: conv?.id ?? "",
+        content: content.trim().slice(0, 2000),
+        policy_context: pctx,
+      };
+      const { data, error } = await supabase.functions.invoke("agent-assist", { body });
+      if (polReqIdRef.current !== reqId) return;
+      if (error || !data?.success) {
+        setPolError(rc("polError"));
+      } else {
+        setPolResult(data.result as PolicyResult);
+      }
+    } catch {
+      if (polReqIdRef.current !== reqId) return;
+      setPolError(rc("polError"));
+    }
+    if (polReqIdRef.current === reqId) setPolLoading(false);
+  }
+  function handleCopy(text: string) {
+    navigator.clipboard
+      .writeText(text)
+      .then(() => toast.success(rc("copied")))
+      .catch(() => toast.error(rc("copyFailed")));
+  }
   const initials = getInitials(visitorLabel);
-
   const sectionTitle: CSSProperties = {
     fontSize: 10,
     fontWeight: 700,
@@ -416,34 +605,62 @@ function CRMPanel({
     textTransform: "uppercase",
     marginBottom: 6,
   };
-
   const TABS = [
     { key: "customer", label: "Customer" },
-    { key: "knowledge", label: "Knowledge" },
-    { key: "suggestion", label: "AI Suggestion" },
-    { key: "policy", label: "Policy" },
+    { key: "knowledge", label: lang === "zh" ? "知識" : "Knowledge" },
+    { key: "policy", label: lang === "zh" ? "政策" : "Policy" },
   ];
-
+  const cardStyle: CSSProperties = {
+    background: "#f9fafb",
+    border: "1px solid #e8e6e0",
+    borderRadius: 6,
+    padding: "6px 8px",
+    marginBottom: 5,
+  };
+  const btnSm: CSSProperties = {
+    fontSize: 10,
+    padding: "2px 7px",
+    borderRadius: 4,
+    border: "1px solid #e5e7eb",
+    background: "#fff",
+    cursor: "pointer",
+    fontWeight: 500,
+  };
+  const kbStatusLabel = !canAccessKb
+    ? lang === "zh"
+      ? "權限不足"
+      : "Permission denied"
+    : kbConnState === "idle"
+      ? lang === "zh"
+        ? "就緒"
+        : "Ready"
+      : kbConnState === "loading"
+        ? lang === "zh"
+          ? "載入中"
+          : "Loading"
+        : kbConnState === "connected" || kbConnState === "empty"
+          ? lang === "zh"
+            ? "已連線"
+            : "Connected"
+          : kbConnState === "denied"
+            ? lang === "zh"
+              ? "權限不足"
+              : "Permission denied"
+            : lang === "zh"
+              ? "無法存取"
+              : "Unavailable";
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", background: "#fff" }}>
       <div
-        style={{
-          padding: "8px 12px",
-          borderBottom: "0.5px solid #e8e6e0",
-          fontSize: 10,
-          color: "#555",
-          flexShrink: 0,
-          background: "#fff",
-        }}
+        style={{ padding: "8px 12px", borderBottom: "0.5px solid #e8e6e0", fontSize: 10, color: "#555", flexShrink: 0 }}
       >
-        <div>AI Context: Not connected</div>
-        <div>Knowledge Base: Not connected</div>
+        <div>Knowledge Base: {kbStatusLabel}</div>
       </div>
       <div
         style={{
           display: "flex",
           borderBottom: "0.5px solid #e8e6e0",
-          overflowX: "auto" as const,
+          overflowX: "auto",
           flexShrink: 0,
           background: "#fff",
         }}
@@ -459,7 +676,7 @@ function CRMPanel({
               border: "none",
               cursor: "pointer",
               background: "#fff",
-              whiteSpace: "nowrap" as const,
+              whiteSpace: "nowrap",
               color: tab === tb.key ? "#1a1a1a" : "#888",
               borderBottom: tab === tb.key ? "2px solid #1a1a1a" : "2px solid transparent",
               flexShrink: 0,
@@ -470,6 +687,7 @@ function CRMPanel({
         ))}
       </div>
       <div style={{ flex: 1, overflowY: "auto", padding: 12, background: "#fff" }}>
+        {/* Customer tab */}
         {tab === "customer" && conv && (
           <>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
@@ -520,7 +738,7 @@ function CRMPanel({
               style={{
                 display: "block",
                 width: "100%",
-                textAlign: "left" as const,
+                textAlign: "left",
                 fontSize: 11.5,
                 fontWeight: 500,
                 padding: "7px 11px",
@@ -536,95 +754,260 @@ function CRMPanel({
             </button>
           </>
         )}
-        {tab === "knowledge" && (
-          <>
-            <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
-              <input
-                disabled
-                value=""
-                placeholder="🔍 Knowledge Base not connected"
-                style={{
-                  flex: 1,
-                  fontSize: 11.5,
-                  padding: "6px 9px",
-                  borderRadius: 8,
-                  border: "0.5px solid #e8e6e0",
-                  background: "#f0efe9",
-                  outline: "none",
-                  cursor: "not-allowed",
-                  opacity: 0.6,
-                }}
-              />
-              <button
-                disabled
-                style={{
-                  fontSize: 11,
-                  fontWeight: 600,
-                  padding: "6px 12px",
-                  borderRadius: 8,
-                  border: "none",
-                  background: "#d1d5db",
-                  color: "#9ca3af",
-                  cursor: "not-allowed",
-                  opacity: 0.6,
-                }}
-              >
-                Search
-              </button>
+        {/* Knowledge tab */}
+        {tab === "knowledge" &&
+          (!canAccessKb ? (
+            <div style={{ padding: "24px 10px", textAlign: "center" }}>
+              <div style={{ fontSize: 20, marginBottom: 6 }}>🔒</div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 4 }}>{rc("kbDenied")}</div>
             </div>
-            <div
-              style={{
-                background: "#f5f4f0",
-                borderRadius: 9,
-                padding: "12px 14px",
-                marginTop: 8,
-                fontSize: 11,
-                color: "#555",
-                lineHeight: 1.6,
-              }}
-            >
-              Knowledge Base is not connected. Search results will appear when KB integration is enabled.
+          ) : !conv ? (
+            <div style={{ padding: "24px 10px", textAlign: "center", color: "#9ca3af", fontSize: 11.5 }}>
+              {rc("kbNoConv")}
             </div>
-          </>
-        )}
-        {tab === "suggestion" && (
-          <>
-            <div style={{ marginBottom: 6 }}>
-              <span style={sectionTitle}>AI Suggested Reply</span>
+          ) : (
+            <>
+              <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
+                <input
+                  value={kbQuery}
+                  onChange={(e) => setKbQuery(e.target.value)}
+                  placeholder={rc("kbSearch")}
+                  onKeyDown={(e) => e.key === "Enter" && handleKbKeywordSearch()}
+                  style={{
+                    flex: 1,
+                    fontSize: 11.5,
+                    padding: "5px 8px",
+                    borderRadius: 6,
+                    border: "0.5px solid #e8e6e0",
+                    background: "#fff",
+                    outline: "none",
+                    boxSizing: "border-box",
+                  }}
+                />
+                <button
+                  onClick={handleKbKeywordSearch}
+                  disabled={kbConnState === "loading" || !kbQuery.trim()}
+                  style={{
+                    ...btnSm,
+                    color: kbConnState === "loading" || !kbQuery.trim() ? "#d1d5db" : "#374151",
+                    cursor: kbConnState === "loading" || !kbQuery.trim() ? "not-allowed" : "pointer",
+                  }}
+                >
+                  {rc("kbSearchBtn")}
+                </button>
+                <button
+                  onClick={handleKbRefresh}
+                  disabled={kbConnState === "loading"}
+                  style={{
+                    ...btnSm,
+                    color: kbConnState === "loading" ? "#d1d5db" : "#374151",
+                    cursor: kbConnState === "loading" ? "not-allowed" : "pointer",
+                  }}
+                >
+                  ↻
+                </button>
+              </div>
+              {kbConnState === "loading" && (
+                <div style={{ textAlign: "center", color: "#888", padding: 16, fontSize: 11.5 }}>{rc("kbLoading")}</div>
+              )}
+              {kbConnState !== "loading" && kbError && (
+                <div style={{ color: "#ef4444", padding: "6px 0", fontSize: 11.5 }}>{kbError}</div>
+              )}
+              {kbConnState === "empty" && !kbError && (
+                <div style={{ padding: "20px 10px", textAlign: "center" }}>
+                  <div style={{ fontSize: 18, marginBottom: 4 }}>📚</div>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>{rc("kbEmpty")}</div>
+                  <div style={{ fontSize: 10.5, color: "#9ca3af", marginTop: 3 }}>{rc("kbEmptySub")}</div>
+                </div>
+              )}
+              {kbConnState === "idle" && !kbError && (
+                <div style={{ padding: "20px 10px", textAlign: "center", color: "#9ca3af", fontSize: 11.5 }}>
+                  {rc("kbNoConv")}
+                </div>
+              )}
+              {kbResults.map((r, i) => (
+                <div key={i} style={cardStyle}>
+                  <div
+                    style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginBottom: 3 }}
+                  >
+                    <div style={{ fontWeight: 600, fontSize: 11, color: "#1a1a1a", flex: 1 }}>{r.display_label}</div>
+                    <span
+                      style={{
+                        fontSize: 9,
+                        background: "#ede9fe",
+                        color: "#6366f1",
+                        padding: "1px 5px",
+                        borderRadius: 6,
+                        flexShrink: 0,
+                        marginLeft: 4,
+                      }}
+                    >
+                      {r.source_type}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 10.5, color: "#555", lineHeight: 1.5, marginBottom: 4 }}>
+                    {r.content.slice(0, 200)}
+                    {r.content.length > 200 ? "..." : ""}
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontSize: 9.5, color: "#888" }}>
+                      {rc("kbScore")}: {(r.score * 100).toFixed(0)}%
+                    </span>
+                    <div style={{ display: "flex", gap: 3 }}>
+                      <button onClick={() => handleCopy(r.content)} style={btnSm}>
+                        {rc("kbCopy")}
+                      </button>
+                      <button
+                        onClick={() => onInsertDraft(r.content)}
+                        style={{ ...btnSm, color: "#2563eb", borderColor: "#2563eb" }}
+                      >
+                        {rc("kbInsert")}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </>
+          ))}
+        {/* Policy tab */}
+        {tab === "policy" &&
+          (!canAccessKb ? (
+            <div style={{ padding: "24px 10px", textAlign: "center" }}>
+              <div style={{ fontSize: 20, marginBottom: 6 }}>🔒</div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 4 }}>{rc("polDenied")}</div>
             </div>
-            <div
-              style={{
-                background: "#f5f4f0",
-                borderRadius: 9,
-                padding: "12px 14px",
-                fontSize: 11,
-                color: "#555",
-                lineHeight: 1.6,
-              }}
-            >
-              AI Suggestions require LLM and Knowledge Base connections. Suggested replies will appear here when both
-              integrations are enabled.
+          ) : !conv ? (
+            <div style={{ padding: "24px 10px", textAlign: "center", color: "#9ca3af", fontSize: 11.5 }}>
+              {rc("polNoContent")}
             </div>
-          </>
-        )}
-        {tab === "policy" && (
-          <>
-            <div style={sectionTitle}>Policy Check</div>
-            <div
-              style={{
-                fontSize: 11.5,
-                lineHeight: 1.6,
-                background: "#f5f4f0",
-                borderRadius: 9,
-                padding: "12px 14px",
-                color: "#555",
-              }}
-            >
-              Policy lookup requires Knowledge Base connection. Connect KB to enable real-time policy checks during
-              conversations.
-            </div>
-          </>
-        )}
+          ) : (
+            <>
+              <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
+                <button
+                  onClick={() => {
+                    setPolMode("conv");
+                    if (latestVisitorMsg.trim()) {
+                      const rid = ++polReqIdRef.current;
+                      runPolicyCheck(latestVisitorMsg, rid);
+                    }
+                  }}
+                  disabled={polLoading || !latestVisitorMsg.trim()}
+                  style={{
+                    ...btnSm,
+                    background: polMode === "conv" ? "#faf5ff" : "#fff",
+                    borderColor: polMode === "conv" ? "#8b5cf6" : "#e5e7eb",
+                    color: polLoading || !latestVisitorMsg.trim() ? "#d1d5db" : "#374151",
+                    cursor: polLoading || !latestVisitorMsg.trim() ? "not-allowed" : "pointer",
+                  }}
+                >
+                  {rc("polCheckConv")}
+                </button>
+                <button
+                  onClick={() => {
+                    setPolMode("draft");
+                    if (!draftText.trim()) {
+                      setPolError(rc("polDraftEmpty"));
+                      return;
+                    }
+                    const rid = ++polReqIdRef.current;
+                    runPolicyCheck(draftText, rid);
+                  }}
+                  disabled={polLoading}
+                  style={{
+                    ...btnSm,
+                    background: polMode === "draft" ? "#faf5ff" : "#fff",
+                    borderColor: polMode === "draft" ? "#8b5cf6" : "#e5e7eb",
+                    color: polLoading ? "#d1d5db" : "#374151",
+                    cursor: polLoading ? "not-allowed" : "pointer",
+                  }}
+                >
+                  {rc("polCheckDraft")}
+                </button>
+              </div>
+              {polLoading && (
+                <div style={{ textAlign: "center", color: "#888", padding: 16, fontSize: 11.5 }}>
+                  {rc("polLoading")}
+                </div>
+              )}
+              {!polLoading && polError && (
+                <div style={{ color: "#ef4444", padding: "6px 0", fontSize: 11.5 }}>{polError}</div>
+              )}
+              {!polLoading && !polError && !polResult && (
+                <div style={{ padding: "20px 10px", textAlign: "center" }}>
+                  <div style={{ fontSize: 18, marginBottom: 4 }}>📋</div>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>
+                    {lang === "zh" ? "政策檢查" : "Policy Check"}
+                  </div>
+                  <div style={{ fontSize: 10.5, color: "#9ca3af", marginTop: 3 }}>{rc("polNoContent")}</div>
+                </div>
+              )}
+              {polResult && (
+                <div>
+                  <div
+                    style={{
+                      background:
+                        polResult.status === "compliant"
+                          ? "#f0fdf4"
+                          : polResult.status === "insufficient_evidence"
+                            ? "#f9fafb"
+                            : "#fef3c7",
+                      border:
+                        "1px solid " +
+                        (polResult.status === "compliant"
+                          ? "#bbf7d0"
+                          : polResult.status === "insufficient_evidence"
+                            ? "#e5e7eb"
+                            : "#fde68a"),
+                      borderRadius: 6,
+                      padding: "8px 10px",
+                      marginBottom: 6,
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontWeight: 600,
+                        fontSize: 11,
+                        textTransform: "uppercase",
+                        marginBottom: 3,
+                        color:
+                          polResult.status === "compliant"
+                            ? "#166534"
+                            : polResult.status === "violation"
+                              ? "#991b1b"
+                              : "#92400e",
+                      }}
+                    >
+                      {polResult.status}
+                    </div>
+                    <div style={{ fontSize: 11, lineHeight: 1.5, color: "#374151" }}>{polResult.summary}</div>
+                  </div>
+                  {polResult.status !== "insufficient_evidence" && (
+                    <div style={{ fontSize: 9.5, color: "#888", fontStyle: "italic", marginBottom: 4 }}>
+                      {rc("polSrcNote")}
+                    </div>
+                  )}
+                  {polResult.issues.map((iss, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        marginBottom: 3,
+                        fontSize: 10.5,
+                        padding: "3px 6px",
+                        background: iss.severity === "violation" ? "#fef2f2" : "#fffbeb",
+                        borderRadius: 4,
+                      }}
+                    >
+                      <span style={{ fontWeight: 600 }}>{iss.severity}:</span> {iss.excerpt}{" "}
+                      <span style={{ color: "#888" }}>({iss.policy_label})</span>
+                    </div>
+                  ))}
+                  <button onClick={() => handleCopy(polResult.summary)} style={{ ...btnSm, marginTop: 4 }}>
+                    {rc("polCopySummary")}
+                  </button>
+                </div>
+              )}
+            </>
+          ))}
       </div>
     </div>
   );
@@ -651,6 +1034,7 @@ function SinglePageInbox() {
   const [activityRows, setActivityRows] = useState<ActivityEvent[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const lang = useConsoleLang();
+  const { role: currentRole } = useCurrentRole();
   const [selectedMessage, setSelectedMessage] = useState<{ id: string; role: string; content: string } | null>(null);
   const [useConfirmOpen, setUseConfirmOpen] = useState(false);
   const [pendingUseText, setPendingUseText] = useState("");
@@ -755,10 +1139,9 @@ function SinglePageInbox() {
     }, 20000);
   }
   function stopFallbackPolling() {
-    if (!fallbackTimerRef.current) return; // No fallback running — skip catch-up
+    if (!fallbackTimerRef.current) return;
     clearInterval(fallbackTimerRef.current);
     fallbackTimerRef.current = null;
-    // Catch-up fetch only after actual disconnection recovery
     loadConversations();
     const sid = selectedIdRef.current;
     if (sid) loadMessages(sid, false);
@@ -788,14 +1171,12 @@ function SinglePageInbox() {
   useEffect(() => {
     loadConversations();
     loadAgents();
-
     const convChannel = supabase
       .channel("console-conversations")
       .on("postgres_changes", { event: "*", schema: "public", table: "conversations" }, () => {
         debouncedLoadConversations();
       })
       .subscribe(handleSubscribeStatus);
-
     const allMsgChannel = supabase
       .channel("console-all-messages")
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, (payload) => {
@@ -803,7 +1184,6 @@ function SinglePageInbox() {
         debouncedLoadConversations();
       })
       .subscribe();
-
     return () => {
       supabase.removeChannel(convChannel);
       supabase.removeChannel(allMsgChannel);
@@ -812,7 +1192,6 @@ function SinglePageInbox() {
     };
   }, [loadAgents]);
 
-  // ── J1: Keep selectedIdRef in sync for fallback polling ──
   useEffect(() => {
     selectedIdRef.current = selectedId;
   }, [selectedId]);
@@ -825,17 +1204,11 @@ function SinglePageInbox() {
       return;
     }
     loadMessages(selectedId, true);
-
     const msgChannel = supabase
       .channel(`console-messages-${selectedId}`)
       .on(
         "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "messages",
-          filter: `conversation_id=eq.${selectedId}`,
-        },
+        { event: "*", schema: "public", table: "messages", filter: `conversation_id=eq.${selectedId}` },
         (payload) => {
           if (payload.eventType === "INSERT" && (payload.new as { content?: string })?.content === "__THINKING__")
             return;
@@ -843,13 +1216,11 @@ function SinglePageInbox() {
         },
       )
       .subscribe();
-
     return () => {
       supabase.removeChannel(msgChannel);
     };
   }, [selectedId, loadMessages]);
 
-  // ── J1: Visibility catch-up ──
   useEffect(() => {
     function handleVisibility() {
       if (!document.hidden) {
@@ -1105,7 +1476,6 @@ function SinglePageInbox() {
   const assignedName = agents.find((a) => a.id === selectedConv?.assigned_agent_id)?.display_name || "Unassigned";
   const isElevated = myAgent ? ELEVATED.has(myAgent.role) : false;
   const transferableAgents = agents.filter((a) => a.id !== myAgent?.id);
-
   const chipStyle = (active: boolean, special?: boolean): CSSProperties => ({
     fontSize: 10,
     fontWeight: 600,
@@ -1117,7 +1487,6 @@ function SinglePageInbox() {
     color: active ? "#fff" : special ? "#92400e" : "#555",
     whiteSpace: "nowrap" as const,
   });
-
   const isHumanControlConv = (c: Conv | null | undefined) => c?.status === "pending" && Boolean(c?.assigned_agent_id);
   const isHumanControl = isHumanControlConv(selectedConv);
 
@@ -1131,7 +1500,7 @@ function SinglePageInbox() {
         fontFamily: "-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",
       }}
     >
-      {/* ── LEFT: QueuePanel (320px) ── */}
+      {/* ── LEFT: QueuePanel ── */}
       <div
         style={{
           width: 320,
@@ -1331,7 +1700,7 @@ function SinglePageInbox() {
         </div>
       </div>
 
-      {/* ── MIDDLE: ChatPanel (flex) ── */}
+      {/* ── MIDDLE: ChatPanel ── */}
       <div
         style={{
           flex: 1,
@@ -1700,7 +2069,24 @@ function SinglePageInbox() {
       {/* ── RIGHT: CRMPanel + AgentToolPanel ── */}
       <div style={{ width: 360, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <div style={{ flex: 1, overflow: "hidden", borderBottom: "0.5px solid #e8e6e0" }}>
-          <CRMPanel conv={selectedConv} visitorLabel={visitorLabel || "Visitor"} onResolve={handleResolve} />
+          <CRMPanel
+            conv={selectedConv}
+            visitorLabel={visitorLabel || "Visitor"}
+            onResolve={handleResolve}
+            latestVisitorMsg={messages.filter((m) => m.role === "visitor").at(-1)?.content ?? ""}
+            latestVisitorMsgId={messages.filter((m) => m.role === "visitor").at(-1)?.id ?? ""}
+            draftText={reply}
+            currentRole={currentRole}
+            onInsertDraft={(text) => {
+              if (reply.trim() && reply.trim() !== text.trim()) {
+                setPendingUseText(text);
+                setUseConfirmOpen(true);
+              } else {
+                setReply(text);
+                toast.success(RIGHT_COPY.inserted[lang] ?? "Inserted");
+              }
+            }}
+          />
         </div>
         {selectedId && selectedConv && (
           <div style={{ flex: 1, overflow: "hidden" }}>
@@ -1757,7 +2143,6 @@ function SinglePageInbox() {
           </div>
         </DialogContent>
       </Dialog>
-
       <Dialog open={resolvedWarningOpen} onOpenChange={setResolvedWarningOpen}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
