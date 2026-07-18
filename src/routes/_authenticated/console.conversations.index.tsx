@@ -1198,8 +1198,8 @@ function SinglePageInbox() {
 
   useEffect(() => {
     setSelectedMessage(null);
+    setMessages([]);
     if (!selectedId) {
-      setMessages([]);
       setReply("");
       return;
     }
