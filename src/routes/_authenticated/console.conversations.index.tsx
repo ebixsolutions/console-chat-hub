@@ -1022,6 +1022,7 @@ function SinglePageInbox() {
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Msg[]>([]);
+  const [messagesConversationId, setMessagesConversationId] = useState<string | null>(null);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [reply, setReply] = useState("");
   const [sending, setSending] = useState(false);
@@ -1099,7 +1100,10 @@ function SinglePageInbox() {
   }
 
   const loadMessages = useCallback(async (convId: string, showLoading = false, scrollToBottom = false) => {
-    if (showLoading) setLoadingMessages(true);
+    if (showLoading) {
+      setLoadingMessages(true);
+      setMessagesConversationId(null);
+    }
     const { data } = await supabase
       .from("messages")
       .select("id,role,content,status,is_recalled,metadata,created_at")
@@ -1107,6 +1111,7 @@ function SinglePageInbox() {
       .neq("content", "__THINKING__")
       .order("created_at", { ascending: true });
     setMessages((data as Msg[]) ?? []);
+    setMessagesConversationId(convId);
     if (showLoading) setLoadingMessages(false);
     if (showLoading || scrollToBottom) {
       setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
@@ -1198,8 +1203,9 @@ function SinglePageInbox() {
 
   useEffect(() => {
     setSelectedMessage(null);
-    setMessages([]);
     if (!selectedId) {
+      setMessages([]);
+      setMessagesConversationId(null);
       setReply("");
       return;
     }
@@ -2073,8 +2079,16 @@ function SinglePageInbox() {
             conv={selectedConv}
             visitorLabel={visitorLabel || "Visitor"}
             onResolve={handleResolve}
-            latestVisitorMsg={messages.filter((m) => m.role === "visitor").at(-1)?.content ?? ""}
-            latestVisitorMsgId={messages.filter((m) => m.role === "visitor").at(-1)?.id ?? ""}
+            latestVisitorMsg={
+              messagesConversationId === selectedId
+                ? (messages.filter((m) => m.role === "visitor").at(-1)?.content ?? "")
+                : ""
+            }
+            latestVisitorMsgId={
+              messagesConversationId === selectedId
+                ? (messages.filter((m) => m.role === "visitor").at(-1)?.id ?? "")
+                : ""
+            }
             draftText={reply}
             currentRole={currentRole}
             onInsertDraft={(text) => {
