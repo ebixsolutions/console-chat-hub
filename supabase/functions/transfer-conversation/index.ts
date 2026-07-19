@@ -28,12 +28,14 @@ Deno.serve(async (req) => {
       .single();
     if (convErr || !conversation) return json({ error: "Conversation not found" }, 404);
 
+    // AM-D0: Block transfer of resolved conversations
+    if (conversation.status === "resolved") {
+      return json({ error: "Cannot transfer a resolved conversation" }, 400);
+    }
+
     // MicroPatch 2: plain agent can only transfer own conversations
     if (!ELEVATED.has(agent.role) && conversation.assigned_agent_id !== agent.id) {
-      return json(
-        { error: "You can only transfer conversations assigned to you" },
-        403,
-      );
+      return json({ error: "You can only transfer conversations assigned to you" }, 403);
     }
 
     const { data: target, error: tErr } = await supabaseAdmin
