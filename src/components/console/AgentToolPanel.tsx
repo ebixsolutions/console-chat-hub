@@ -12,8 +12,6 @@ const TOOL_COPY = {
   customPh: { en: "Paste or type...", zh: "貼上或輸入..." },
   translate: { en: "Translate", zh: "翻譯" },
   grammar: { en: "Grammar", zh: "文法" },
-  policy: { en: "Policy", zh: "政策" },
-  knowledge: { en: "Knowledge", zh: "知識" },
   suggest: { en: "Suggest", zh: "建議" },
   processing: { en: "Processing...", zh: "處理中..." },
   useInDraft: { en: "Use in Draft", zh: "套用至草稿" },
@@ -24,41 +22,16 @@ const TOOL_COPY = {
   noSel: { en: "No selection", zh: "未選取" },
   clear: { en: "Clear", zh: "清除" },
   selPrev: { en: "Selected:", zh: "已選：" },
-  kbUnavail: { en: "KB unavailable", zh: "知識庫無法存取" },
-  kbNoResults: { en: "No relevant sources", zh: "無相關來源" },
-  kbDenied: { en: "Access denied", zh: "存取被拒" },
-  polSrcUnavail: { en: "Policy source unavailable", zh: "政策來源無法取得" },
   toolHint: { en: "Enter text, then select a tool.", zh: "輸入文字後選取工具。" },
-  basedOn: { en: "Based on provided policy sources only", zh: "僅基於所提供的政策來源" },
   resolved: { en: "Conversation resolved — tools disabled", zh: "對話已解決 — 工具已停用" },
   reqFailed: { en: "Request failed", zh: "請求失敗" },
   netError: { en: "Network error", zh: "網路錯誤" },
-  polFailed: { en: "Policy check failed", zh: "政策檢查失敗" },
   transResult: { en: "Translation", zh: "翻譯結果" },
   gramResult: { en: "Grammar Check", zh: "文法檢查" },
-  polResult: { en: "Policy Check", zh: "政策檢查" },
-  kbResult: { en: "Knowledge", zh: "知識" },
   sugResult: { en: "Suggested Replies", zh: "建議回覆" },
   tooLong: { en: "Content exceeds 2,000 characters", zh: "內容超過 2,000 字元" },
 } as const;
 type TCK = keyof typeof TOOL_COPY;
-
-function validateKbResults(
-  data: unknown,
-): Array<{ display_label: string; content: string; source_type: string }> | null {
-  if (!data || typeof data !== "object") return null;
-  const d = data as Record<string, unknown>;
-  if (d.success !== true || !Array.isArray(d.results)) return null;
-  const out: Array<{ display_label: string; content: string; source_type: string }> = [];
-  for (const r of d.results) {
-    if (!r || typeof r !== "object") return null;
-    const o = r as Record<string, unknown>;
-    if (typeof o.display_label !== "string" || typeof o.content !== "string" || typeof o.source_type !== "string")
-      return null;
-    out.push({ display_label: o.display_label, content: o.content, source_type: o.source_type });
-  }
-  return out;
-}
 
 export function AgentToolPanel({
   conversationId,
@@ -82,9 +55,6 @@ export function AgentToolPanel({
   const [tr, setTr] = useState<{ type: string; data: Record<string, unknown> } | null>(null);
   const [tl, setTl] = useState(false);
   const [te, setTe] = useState("");
-  const [kr, setKr] = useState<Array<{ display_label: string; content: string; source_type: string }>>([]);
-  const [kl, setKl] = useState(false);
-  const [ke, setKe] = useState("");
 
   const gc = (): string => {
     if (cs === "draft") return draftText.trim();
@@ -115,85 +85,7 @@ export function AgentToolPanel({
     setTl(false);
   }
 
-  async function runKb() {
-    if (!hc || isResolved) return;
-    setKl(true);
-    setKr([]);
-    setKe("");
-    try {
-      const { data, error } = await supabase.functions.invoke("kb-search-proxy", { body: { query: ac, top_k: 3 } });
-      if (error) {
-        setKe(tc("kbUnavail"));
-        setKl(false);
-        return;
-      }
-      const valid = validateKbResults(data);
-      if (!valid) {
-        setKe(
-          data?.error === "forbidden"
-            ? tc("kbDenied")
-            : data?.results?.length === 0
-              ? tc("kbNoResults")
-              : tc("kbUnavail"),
-        );
-        setKl(false);
-        return;
-      }
-      if (valid.length === 0) {
-        setKe(tc("kbNoResults"));
-        setKl(false);
-        return;
-      }
-      setKr(valid);
-    } catch {
-      setKe(tc("kbUnavail"));
-    }
-    setKl(false);
-  }
-
-  async function runPol() {
-    if (!hc || isResolved) return;
-    setTl(true);
-    setTe("");
-    setTr(null);
-    let pctx: Array<{ label: string; content: string; source_type: string }> = [];
-    let kbFailed = false;
-    try {
-      const { data, error } = await supabase.functions.invoke("kb-search-proxy", { body: { query: ac, top_k: 3 } });
-      if (error) {
-        kbFailed = true;
-      } else {
-        const valid = validateKbResults(data);
-        if (!valid) {
-          kbFailed = true;
-        } else
-          pctx = valid.slice(0, 3).map((r) => ({
-            label: r.display_label.slice(0, 120),
-            content: r.content.slice(0, 800),
-            source_type: r.source_type.slice(0, 40),
-          }));
-      }
-    } catch {
-      kbFailed = true;
-    }
-    if (kbFailed) {
-      setTe(tc("polSrcUnavail"));
-      setTl(false);
-      return;
-    }
-    try {
-      const body: Record<string, unknown> = { tool_type: "check_policy", conversation_id: conversationId, content: ac };
-      if (pctx.length > 0) body.policy_context = pctx;
-      const { data, error } = await supabase.functions.invoke("agent-assist", { body });
-      if (error || !data?.success) setTe(tc("polFailed"));
-      else setTr({ type: "check_policy", data: data.result });
-    } catch {
-      setTe(tc("netError"));
-    }
-    setTl(false);
-  }
-
-  const dis = tl || kl || !hc || isResolved;
+  const dis = tl || !hc || isResolved;
   const TOOLS = [
     {
       k: "translate",
@@ -202,8 +94,6 @@ export function AgentToolPanel({
       a: () => runTool("translate", { target_language: lang === "zh" ? "en" : "zh-TW" }),
     },
     { k: "grammar", l: tc("grammar"), i: "✏️", a: () => runTool("grammar") },
-    { k: "check_policy", l: tc("policy"), i: "📋", a: runPol },
-    { k: "knowledge", l: tc("knowledge"), i: "📚", a: runKb },
     { k: "suggest_reply", l: tc("suggest"), i: "💡", a: () => runTool("suggest_reply") },
   ];
 
@@ -372,42 +262,8 @@ export function AgentToolPanel({
         </>
       )}
       <div style={{ flex: 1, overflowY: "auto", padding: "8px 12px", fontSize: 11 }}>
-        {(tl || kl) && <div style={{ textAlign: "center", color: "#888", padding: 14 }}>{tc("processing")}</div>}
+        {tl && <div style={{ textAlign: "center", color: "#888", padding: 14 }}>{tc("processing")}</div>}
         {te && <div style={{ color: "#ef4444", padding: "4px 0" }}>{te}</div>}
-        {ke && <div style={{ color: "#ef4444", padding: "4px 0" }}>{ke}</div>}
-        {kr.length > 0 && (
-          <div>
-            <div style={{ fontSize: 10.5, fontWeight: 600, color: "#6366f1", marginBottom: 4 }}>{tc("kbResult")}</div>
-            {kr.map((r, i) => (
-              <div
-                key={i}
-                style={{
-                  background: "#f9fafb",
-                  border: "1px solid #e8e6e0",
-                  borderRadius: 5,
-                  padding: "5px 7px",
-                  marginBottom: 4,
-                }}
-              >
-                <div style={{ fontWeight: 600, fontSize: 10.5 }}>{r.display_label}</div>
-                <div style={{ fontSize: 10.5, color: "#555", lineHeight: 1.5 }}>{r.content.slice(0, 150)}</div>
-                {r.source_type && (
-                  <span
-                    style={{
-                      fontSize: 9,
-                      background: "#ede9fe",
-                      color: "#6366f1",
-                      padding: "1px 5px",
-                      borderRadius: 6,
-                    }}
-                  >
-                    {r.source_type}
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
         {tr?.type === "translate" && (
           <div>
             <div style={{ fontSize: 10.5, fontWeight: 600, color: "#2563eb", marginBottom: 4 }}>
@@ -477,52 +333,6 @@ export function AgentToolPanel({
             </button>
           </div>
         )}
-        {tr?.type === "check_policy" && (
-          <div>
-            <div style={{ fontSize: 10.5, fontWeight: 600, color: "#f59e0b", marginBottom: 4 }}>{tc("polResult")}</div>
-            <div
-              style={{
-                background:
-                  tr.data.status === "compliant"
-                    ? "#f0fdf4"
-                    : tr.data.status === "insufficient_evidence"
-                      ? "#f9fafb"
-                      : "#fef3c7",
-                border:
-                  "1px solid " +
-                  (tr.data.status === "compliant"
-                    ? "#bbf7d0"
-                    : tr.data.status === "insufficient_evidence"
-                      ? "#e5e7eb"
-                      : "#fde68a"),
-                borderRadius: 5,
-                padding: "6px",
-              }}
-            >
-              <div style={{ fontWeight: 600, fontSize: 10.5, textTransform: "uppercase" }}>
-                {String(tr.data.status)}
-              </div>
-              <div style={{ fontSize: 10.5, lineHeight: 1.5 }}>{String(tr.data.summary)}</div>
-            </div>
-            <div style={{ fontSize: 9.5, color: "#888", marginTop: 3, fontStyle: "italic" }}>{tc("basedOn")}</div>
-            {Array.isArray(tr.data.issues) &&
-              (tr.data.issues as Array<Record<string, string>>).map((iss, i) => (
-                <div
-                  key={i}
-                  style={{
-                    marginTop: 3,
-                    fontSize: 10,
-                    padding: "3px 5px",
-                    background: iss.severity === "violation" ? "#fef2f2" : "#fffbeb",
-                    borderRadius: 4,
-                  }}
-                >
-                  <span style={{ fontWeight: 600 }}>{iss.severity}:</span> {iss.excerpt}{" "}
-                  <span style={{ color: "#888" }}>({iss.policy_label})</span>
-                </div>
-              ))}
-          </div>
-        )}
         {tr?.type === "suggest_reply" && (
           <div>
             <div style={{ fontSize: 10.5, fontWeight: 600, color: "#8b5cf6", marginBottom: 4 }}>{tc("sugResult")}</div>
@@ -573,7 +383,7 @@ export function AgentToolPanel({
               ))}
           </div>
         )}
-        {!tl && !te && !tr && kr.length === 0 && !ke && !isResolved && (
+        {!tl && !te && !tr && !isResolved && (
           <div style={{ padding: "16px 10px", textAlign: "center", color: "#cbd5e1", fontSize: 10.5 }}>
             <div style={{ fontSize: 18, marginBottom: 4 }}>🛠️</div>
             {tc(hc ? "toolHint" : "noContent")}
