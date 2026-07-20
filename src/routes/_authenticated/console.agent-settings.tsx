@@ -13,13 +13,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
@@ -168,32 +162,53 @@ async function callAgentMgmt<T = unknown>(
   action: string,
   payload: Record<string, unknown> = {},
 ): Promise<EfResponse<T>> {
-  const { data, error } = await supabase.functions.invoke("agent-management", {
-    body: { action, ...payload },
-  });
-  if (error) {
-    // FunctionsHttpError carries context; return as failure shape
-    const body = (data as EfResponse<T> | null) ?? {
-      success: false,
-      error: error.message || "Request failed",
-      error_type: "server_error",
-    };
-    return body;
+  try {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      return { success: false, error: "Not authenticated", error_type: "unauthorized" };
+    }
+    const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/agent-management`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.access_token}`,
+        apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+      },
+      body: JSON.stringify({ action, ...payload }),
+    });
+    try {
+      return (await res.json()) as EfResponse<T>;
+    } catch {
+      return { success: false, error: `HTTP ${res.status}`, error_type: "server_error" };
+    }
+  } catch (e) {
+    return { success: false, error: (e as Error).message || "Network error", error_type: "server_error" };
   }
-  return data as EfResponse<T>;
+}
+
+const KNOWN_ERRORS: Record<string, Record<Lang, string>> = {
+  unlinked_profile: {
+    en: "This legacy agent profile is not linked to a login account and cannot be reactivated. Add the user again using their email address.",
+    zh: "此舊版 Agent 資料未連結登入帳戶，因此無法重新啟用。請使用其電郵地址重新新增 Agent。",
+  },
+  not_found: { en: "Agent not found.", zh: "找不到 Agent。" },
+  forbidden: { en: "Permission denied.", zh: "權限不足。" },
+  insufficient_privilege: { en: "Permission denied.", zh: "權限不足。" },
+};
+
+function getEfErrorMessage(res: EfResponse, lang: Lang): string {
+  const c = COPY[lang];
+  if (!res.error && !res.error_type) return c.tGeneric as string;
+  if (res.error_type === "unauthorized") return c.tSessionExpired as string;
+  const known = KNOWN_ERRORS[res.error_type || ""];
+  if (known) return known[lang];
+  return res.error || (c.tGeneric as string);
 }
 
 function handleEfError(res: EfResponse, lang: Lang) {
-  const c = COPY[lang];
-  if (!res.error) {
-    toast.error(c.tGeneric);
-    return;
-  }
-  if (res.error_type === "unauthorized") {
-    toast.error(c.tSessionExpired);
-    return;
-  }
-  toast.error(res.error);
+  toast.error(getEfErrorMessage(res, lang));
 }
 
 function initials(name: string): string {
@@ -351,11 +366,7 @@ function AgentSettingsContent({ currentRole }: { currentRole: "admin" | "supervi
         <div style={{ display: "grid", gap: 12 }}>
           {agents.map((a) => {
             const isSelf = currentUserId !== null && a.user_id === currentUserId;
-            const canManage =
-              !isSelf &&
-              (isAdmin
-                ? a.role !== "super_admin"
-                : a.role === "agent");
+            const canManage = !isSelf && (isAdmin ? a.role !== "super_admin" : a.role === "agent");
             const canChangeRole = isAdmin && !isSelf && a.role !== "super_admin" && a.user_id !== null;
             const st = statusBadge(a.status, lang);
 
@@ -426,13 +437,7 @@ function AgentSettingsContent({ currentRole }: { currentRole: "admin" | "supervi
       </div>
 
       {/* Dialogs */}
-      <AddAgentDialog
-        open={addOpen}
-        onOpenChange={setAddOpen}
-        isAdmin={isAdmin}
-        lang={lang}
-        onDone={loadData}
-      />
+      <AddAgentDialog open={addOpen} onOpenChange={setAddOpen} isAdmin={isAdmin} lang={lang} onDone={loadData} />
       <DisableDialog
         target={disableTarget}
         onOpenChange={(v) => !v && setDisableTarget(null)}
@@ -555,23 +560,15 @@ function AddAgentDialog({
             </div>
           </div>
 
-          {found && !found.found && (
-            <div style={{ fontSize: 12, color: "#991b1b" }}>{c.userNotFound}</div>
-          )}
-          {found?.found && found.has_profile && (
-            <div style={{ fontSize: 12, color: "#92400e" }}>{c.profileExists}</div>
-          )}
+          {found && !found.found && <div style={{ fontSize: 12, color: "#991b1b" }}>{c.userNotFound}</div>}
+          {found?.found && found.has_profile && <div style={{ fontSize: 12, color: "#92400e" }}>{c.profileExists}</div>}
 
           {canShowStep2 && (
             <>
               <div style={{ fontSize: 12, color: "#166534" }}>✓ {c.userFound}</div>
               <div>
                 <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>{c.displayNameLabel}</div>
-                <Input
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
-                  disabled={addLoading}
-                />
+                <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} disabled={addLoading} />
               </div>
               <div>
                 <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>{c.roleLabel}</div>
@@ -593,9 +590,7 @@ function AddAgentDialog({
             </>
           )}
 
-          {dialogError && (
-            <div style={{ fontSize: 12, color: "#991b1b" }}>{dialogError}</div>
-          )}
+          {dialogError && <div style={{ fontSize: 12, color: "#991b1b" }}>{dialogError}</div>}
         </div>
 
         <DialogFooter>
@@ -628,17 +623,23 @@ function DisableDialog({
 }) {
   const c = COPY[lang];
   const [loading, setLoading] = useState(false);
+  const [dialogError, setDialogError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (target) setDialogError(null);
+  }, [target]);
 
   const confirm = async () => {
     if (!target) return;
     setLoading(true);
-    const res = await callAgentMgmt<{ unassigned_count?: number }>("deactivate", { agent_id: target.id });
+    setDialogError(null);
+    const res = await callAgentMgmt<{ conversations_unassigned?: number }>("deactivate", { agent_id: target.id });
     setLoading(false);
     if (!res.success) {
-      handleEfError(res, lang);
+      setDialogError(getEfErrorMessage(res, lang));
       return;
     }
-    const n = res.data?.unassigned_count;
+    const n = res.data?.conversations_unassigned;
     toast.success(typeof n === "number" && n > 0 ? `${c.tDeactivated} ${c.unassigned(n)}` : c.tDeactivated);
     onOpenChange(false);
     onDone();
@@ -654,6 +655,20 @@ function DisableDialog({
         {target && (
           <div style={{ fontSize: 12, color: "#374151" }}>
             {target.display_name} · {target.email}
+          </div>
+        )}
+        {dialogError && (
+          <div
+            style={{
+              fontSize: 12,
+              color: "#991b1b",
+              background: "#fef2f2",
+              border: "1px solid #fca5a5",
+              borderRadius: 6,
+              padding: "8px 10px",
+            }}
+          >
+            {dialogError}
           </div>
         )}
         <DialogFooter>
@@ -687,21 +702,26 @@ function ReactivateDialog({
   const c = COPY[lang];
   const [role, setRole] = useState<string>("agent");
   const [loading, setLoading] = useState(false);
+  const [dialogError, setDialogError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (target) setRole(isAdmin ? target.role || "agent" : "agent");
+    if (target) {
+      setRole(isAdmin ? target.role || "agent" : "agent");
+      setDialogError(null);
+    }
   }, [target, isAdmin]);
 
   const confirm = async () => {
     if (!target) return;
     setLoading(true);
+    setDialogError(null);
     const res = await callAgentMgmt("reactivate", {
       agent_id: target.id,
       app_role: isAdmin ? role : "agent",
     });
     setLoading(false);
     if (!res.success) {
-      handleEfError(res, lang);
+      setDialogError(getEfErrorMessage(res, lang));
       return;
     }
     toast.success(c.tReactivated);
@@ -719,6 +739,20 @@ function ReactivateDialog({
         {target && (
           <div style={{ fontSize: 12, color: "#374151", marginBottom: 4 }}>
             {target.display_name} · {target.email}
+          </div>
+        )}
+        {dialogError && (
+          <div
+            style={{
+              fontSize: 12,
+              color: "#991b1b",
+              background: "#fef2f2",
+              border: "1px solid #fca5a5",
+              borderRadius: 6,
+              padding: "8px 10px",
+            }}
+          >
+            {dialogError}
           </div>
         )}
         <div>
@@ -767,21 +801,26 @@ function ChangeRoleDialog({
   const c = COPY[lang];
   const [role, setRole] = useState<string>("agent");
   const [loading, setLoading] = useState(false);
+  const [dialogError, setDialogError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (target) setRole(target.role || "agent");
+    if (target) {
+      setRole(target.role || "agent");
+      setDialogError(null);
+    }
   }, [target]);
 
   const confirm = async () => {
     if (!target || !target.user_id) return;
     setLoading(true);
+    setDialogError(null);
     const res = await callAgentMgmt("change_role", {
       target_user_id: target.user_id,
       new_role: role,
     });
     setLoading(false);
     if (!res.success) {
-      handleEfError(res, lang);
+      setDialogError(getEfErrorMessage(res, lang));
       return;
     }
     toast.success(c.tRoleChanged);
@@ -799,6 +838,20 @@ function ChangeRoleDialog({
         {target && (
           <div style={{ fontSize: 12, color: "#374151", marginBottom: 4 }}>
             {target.display_name} · {target.email}
+          </div>
+        )}
+        {dialogError && (
+          <div
+            style={{
+              fontSize: 12,
+              color: "#991b1b",
+              background: "#fef2f2",
+              border: "1px solid #fca5a5",
+              borderRadius: 6,
+              padding: "8px 10px",
+            }}
+          >
+            {dialogError}
           </div>
         )}
         <Select value={role} onValueChange={setRole} disabled={loading}>
