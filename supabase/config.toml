@@ -39,3 +39,6 @@ verify_jwt = true
 [functions.agent-assist]
 verify_jwt = true
 
+
+[functions.agent-management]
+verify_jwt = true
