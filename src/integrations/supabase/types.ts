@@ -899,6 +899,16 @@ export type Database = {
         }
         Returns: Json
       }
+      transfer_conversation_tx: {
+        Args: {
+          p_conversation_id: string
+          p_expected_assigned_agent_id: string
+          p_from_agent_id: string
+          p_reason?: string
+          p_to_agent_id: string
+        }
+        Returns: Json
+      }
     }
     Enums: {
       app_role: "admin" | "supervisor" | "agent"
