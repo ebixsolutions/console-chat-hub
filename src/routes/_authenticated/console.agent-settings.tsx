@@ -1,46 +1,28 @@
-// ===========================================================================
-// DEV22-I1: Agent Settings — Live Data Replacement v1.2.4
-//
-// File: src/routes/_authenticated/console.agent-settings.tsx
-// Action: FULL FILE REPLACEMENT (paste entire content, overwrite existing)
-//
-// v1.2.3 → v1.2.4 changelog:
-//   1. Schema: email + status (was availability_status — does not exist)
-//   2. useConsoleLang: import from @/hooks/useEffectiveRole (was self-built)
-//   3. useCurrentRole: destructure { role, loading } properly (was type cast)
-//   4. LoadingState/PermissionDenied: import from PageStates (was inline)
-//   5. Linked + no prod role: show legacy label with profile.role
-//   6. Email displayed in UI
-//   7. Status label = "Account status:" (uses verified `status` column)
-//   8. Zero type assertions — no `as`, no `!` non-null assertions
-//   9. All hooks called unconditionally at component top (React rules)
-//  10. setUserRoles([]) on retry to prevent stale role badge display
-//  11. roleError hides entire Admin role section (no false "No production role")
-//  12. Unlinked profiles show legacy label (non-authoritative)
-//  13. Removed unused linkedNoProdRole variable
-//
-// Scope:
-//   - Guard: admin + supervisor → view; agent / roleless → PermissionDenied
-//   - Data: live agent_profile from Supabase (no hardcoded mock)
-//   - Admin: sees production role badges from user_roles
-//   - Supervisor: no production role column (RLS: self-only)
-//   - Bilingual: EN / 繁體中文 via useConsoleLang() from useEffectiveRole
-//   - No Edit button (no CRUD backend in I1)
-//   - No avatar_url in UI (column exists in schema but design excludes it)
-//   - Status null → "Unknown" (not "active")
-//
-// Option A scope limitation:
-//   UI access: admin + supervisor only
-//   Underlying agent_profile SELECT RLS: staff (admin + supervisor + agent)
-//   This task does NOT restrict agent API-level directory access
-// ===========================================================================
-
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState, useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useCurrentRole } from "@/hooks/useCurrentRole";
 import { useConsoleLang } from "@/hooks/useEffectiveRole";
 import { LoadingState, PermissionDenied } from "@/components/console/PageStates";
 import { supabase } from "@/integrations/supabase/client";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import { toast } from "sonner";
+import { Loader2 } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/console/agent-settings")({
   component: AgentSettingsGuard,
@@ -48,74 +30,170 @@ export const Route = createFileRoute("/_authenticated/console/agent-settings")({
 
 // ── Bilingual copy ──
 
-type CopyBlock = {
-  permissionDenied: string;
-  loadError: string;
-  retry: string;
-  emptyTitle: string;
-  emptyHint: string;
-  supervisorBanner: string;
-  roleQueryFailed: string;
-  linked: string;
-  unlinked: string;
-  noProductionRole: string;
-  multipleRoles: string;
-  legacyDiffers: string;
-  profileLabel: string;
-  nonAuthoritative: string;
-  accountStatus: string;
-  statusUnknown: string;
-  agentCount: (n: number) => string;
-};
+type Lang = "en" | "zh";
 
-const COPY: Record<"en" | "zh", CopyBlock> = {
+const COPY = {
   en: {
     permissionDenied: "You do not have permission to view agent settings.",
-    loadError: "Unable to load agent profiles. Please try again.",
+    title: "Agent Settings",
+    addAgent: "Add Agent",
+    refresh: "Refresh",
+    loadError: "Unable to load agents.",
     retry: "Retry",
-    emptyTitle: "No agent profiles found",
-    emptyHint: "Agent profiles will appear here once created in the system.",
-    supervisorBanner:
-      "You are viewing agent profiles as a Supervisor. Production role assignments are only visible to Admins.",
-    roleQueryFailed: "Unable to load production roles.",
-    linked: "Linked",
-    unlinked: "Unlinked — no authenticated user",
-    noProductionRole: "No production role assigned",
-    multipleRoles: "Multiple roles",
-    legacyDiffers: "Legacy profile role differs from production role — production role is authoritative",
-    profileLabel: "Profile label (non-authoritative):",
-    nonAuthoritative: "non-authoritative",
-    accountStatus: "Account status:",
-    statusUnknown: "Unknown",
+    emptyTitle: "No agents found",
     agentCount: (n: number) => `${n} agent${n === 1 ? "" : "s"}`,
+    statusActive: "Active",
+    statusInactive: "Inactive",
+    statusUnknown: "Unknown",
+    disable: "Disable",
+    reactivate: "Reactivate",
+    changeRole: "Change role",
+    confirm: "Confirm",
+    cancel: "Cancel",
+    close: "Close",
+    // Add Agent dialog
+    addTitle: "Add Agent",
+    addDesc: "Look up an existing authenticated user by email, then assign a role.",
+    emailLabel: "Email",
+    lookup: "Look up",
+    userFound: "User found",
+    userNotFound: "No user with that email",
+    profileExists: "This user already has an agent profile.",
+    displayNameLabel: "Display name",
+    roleLabel: "Role",
+    roleAdmin: "Admin",
+    roleSupervisor: "Supervisor",
+    roleAgent: "Agent",
+    supervisorRoleOnly: "Role: Agent",
+    // Disable dialog
+    disableTitle: "Disable agent?",
+    disableDesc:
+      "This will deactivate the agent and unassign their conversations. They will no longer be able to sign in as an agent.",
+    // Reactivate dialog
+    reactivateTitle: "Reactivate agent",
+    reactivateDesc: "Choose the role to restore.",
+    // Change role dialog
+    changeTitle: "Change role",
+    changeDesc: "Select a new role for this agent.",
+    // Toasts
+    tSessionExpired: "Session expired, please log in again.",
+    tGeneric: "Something went wrong.",
+    tAdded: "Agent added.",
+    tRoleChanged: "Role updated.",
+    tDeactivated: "Agent deactivated.",
+    tReactivated: "Agent reactivated.",
+    unassigned: (n: number) => `${n} conversation${n === 1 ? "" : "s"} unassigned.`,
+    cannotSelf: "You cannot perform this action on your own account.",
   },
   zh: {
     permissionDenied: "您沒有權限查看客服設定。",
-    loadError: "無法載入客服人員資料，請重試。",
+    title: "客服設定",
+    addAgent: "新增客服",
+    refresh: "重新載入",
+    loadError: "無法載入客服人員資料。",
     retry: "重試",
-    emptyTitle: "尚無客服人員資料",
-    emptyHint: "系統建立客服人員資料後將顯示於此。",
-    supervisorBanner: "您正以 Supervisor 身份查看客服人員資料。正式角色指派僅 Admin 可見。",
-    roleQueryFailed: "無法載入正式角色資料。",
-    linked: "已連結",
-    unlinked: "未連結 — 無對應認證帳號",
-    noProductionRole: "尚未指派正式角色",
-    multipleRoles: "多重角色",
-    legacyDiffers: "舊版 profile 角色與正式角色不同 — 以正式角色為準",
-    profileLabel: "Profile 標籤（僅供參考）：",
-    nonAuthoritative: "僅供參考",
-    accountStatus: "帳號狀態：",
-    statusUnknown: "未知",
+    emptyTitle: "尚無客服人員",
     agentCount: (n: number) => `${n} 位客服人員`,
+    statusActive: "啟用中",
+    statusInactive: "已停用",
+    statusUnknown: "未知",
+    disable: "停用",
+    reactivate: "重新啟用",
+    changeRole: "變更角色",
+    confirm: "確認",
+    cancel: "取消",
+    close: "關閉",
+    addTitle: "新增客服",
+    addDesc: "以電子郵件查找已註冊使用者，然後指派角色。",
+    emailLabel: "電子郵件",
+    lookup: "查找",
+    userFound: "已找到使用者",
+    userNotFound: "找不到此電子郵件的使用者",
+    profileExists: "此使用者已有客服檔案。",
+    displayNameLabel: "顯示名稱",
+    roleLabel: "角色",
+    roleAdmin: "管理員",
+    roleSupervisor: "主管",
+    roleAgent: "客服",
+    supervisorRoleOnly: "角色：客服",
+    disableTitle: "確定要停用此客服？",
+    disableDesc: "此操作將停用該客服，並取消其負責的對話。停用後無法以客服身份登入。",
+    reactivateTitle: "重新啟用客服",
+    reactivateDesc: "請選擇欲恢復的角色。",
+    changeTitle: "變更角色",
+    changeDesc: "請選擇此客服的新角色。",
+    tSessionExpired: "登入已過期，請重新登入。",
+    tGeneric: "發生錯誤。",
+    tAdded: "已新增客服。",
+    tRoleChanged: "已變更角色。",
+    tDeactivated: "已停用客服。",
+    tReactivated: "已重新啟用客服。",
+    unassigned: (n: number) => `已釋出 ${n} 個對話。`,
+    cannotSelf: "無法對自己執行此操作。",
   },
-};
+} satisfies Record<Lang, Record<string, unknown>>;
+
+// ── Types ──
+
+interface AgentRow {
+  id: string;
+  user_id: string | null;
+  display_name: string;
+  email: string;
+  role: string;
+  status: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+interface FindUserResult {
+  found?: boolean;
+  user_id?: string;
+  email?: string;
+  has_profile?: boolean;
+  profile_status?: string | null;
+  [k: string]: unknown;
+}
+
+interface EfResponse<T = unknown> {
+  success: boolean;
+  data?: T;
+  error?: string;
+  error_type?: string;
+}
 
 // ── Helpers ──
 
-function formatStatus(status: string | null, unknownLabel: string): string {
-  const value = status?.trim();
-  if (!value) return unknownLabel;
-  return value.charAt(0).toUpperCase() + value.slice(1);
+async function callAgentMgmt<T = unknown>(
+  action: string,
+  payload: Record<string, unknown> = {},
+): Promise<EfResponse<T>> {
+  const { data, error } = await supabase.functions.invoke("agent-management", {
+    body: { action, ...payload },
+  });
+  if (error) {
+    // FunctionsHttpError carries context; return as failure shape
+    const body = (data as EfResponse<T> | null) ?? {
+      success: false,
+      error: error.message || "Request failed",
+      error_type: "server_error",
+    };
+    return body;
+  }
+  return data as EfResponse<T>;
+}
+
+function handleEfError(res: EfResponse, lang: Lang) {
+  const c = COPY[lang];
+  if (!res.error) {
+    toast.error(c.tGeneric);
+    return;
+  }
+  if (res.error_type === "unauthorized") {
+    toast.error(c.tSessionExpired);
+    return;
+  }
+  toast.error(res.error);
 }
 
 function initials(name: string): string {
@@ -127,244 +205,173 @@ function initials(name: string): string {
     .slice(0, 2);
 }
 
-// ── Types (matches verified Supabase types.ts agent_profile Row) ──
-
-interface AgentProfile {
-  id: string;
-  display_name: string;
-  email: string;
-  role: string;
-  status: string | null;
-  user_id: string | null;
+function roleBadgeStyle(role: string): React.CSSProperties {
+  const map: Record<string, { bg: string; fg: string }> = {
+    admin: { bg: "#fee2e2", fg: "#991b1b" },
+    super_admin: { bg: "#fee2e2", fg: "#991b1b" },
+    supervisor: { bg: "#dbeafe", fg: "#1d4ed8" },
+    agent: { bg: "#dcfce7", fg: "#166534" },
+  };
+  const c = map[role] || { bg: "#f3f4f6", fg: "#374151" };
+  return {
+    background: c.bg,
+    color: c.fg,
+    fontSize: 10,
+    fontWeight: 600,
+    padding: "2px 8px",
+    borderRadius: 20,
+  };
 }
 
-interface UserRole {
-  user_id: string;
-  role: string;
+function statusBadge(status: string | null, lang: Lang): { label: string; style: React.CSSProperties } {
+  const c = COPY[lang];
+  if (status === "active") {
+    return {
+      label: c.statusActive,
+      style: {
+        background: "#dcfce7",
+        color: "#166534",
+        fontSize: 10,
+        fontWeight: 600,
+        padding: "2px 8px",
+        borderRadius: 20,
+      },
+    };
+  }
+  if (status === "inactive") {
+    return {
+      label: c.statusInactive,
+      style: {
+        background: "#e5e7eb",
+        color: "#374151",
+        fontSize: 10,
+        fontWeight: 600,
+        padding: "2px 8px",
+        borderRadius: 20,
+      },
+    };
+  }
+  return {
+    label: c.statusUnknown,
+    style: {
+      background: "#f3f4f6",
+      color: "#6b7280",
+      fontSize: 10,
+      fontWeight: 600,
+      padding: "2px 8px",
+      borderRadius: 20,
+    },
+  };
 }
 
-// ── Guard component ──
-// All hooks called unconditionally at top (React rules of hooks).
+// ── Guard ──
 
 function AgentSettingsGuard() {
   const { role, loading } = useCurrentRole();
   const lang = useConsoleLang();
 
-  if (loading) {
-    return <LoadingState />;
-  }
-
-  // Fail-closed: only admin and supervisor allowed
+  if (loading) return <LoadingState />;
   if (role !== "admin" && role !== "supervisor") {
     return <PermissionDenied message={COPY[lang].permissionDenied} />;
   }
-
   return <AgentSettingsContent currentRole={role} />;
 }
 
-// ── Content component ──
+// ── Content ──
 
 function AgentSettingsContent({ currentRole }: { currentRole: "admin" | "supervisor" }) {
   const lang = useConsoleLang();
-  const copy = COPY[lang];
+  const c = COPY[lang];
   const isAdmin = currentRole === "admin";
 
-  const [agents, setAgents] = useState<AgentProfile[]>([]);
-  const [userRoles, setUserRoles] = useState<UserRole[]>([]);
+  const [agents, setAgents] = useState<AgentRow[]>([]);
   const [loadingData, setLoadingData] = useState(true);
   const [error, setError] = useState(false);
-  const [roleError, setRoleError] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+
+  const [addOpen, setAddOpen] = useState(false);
+  const [disableTarget, setDisableTarget] = useState<AgentRow | null>(null);
+  const [reactivateTarget, setReactivateTarget] = useState<AgentRow | null>(null);
+  const [changeTarget, setChangeTarget] = useState<AgentRow | null>(null);
 
   const loadData = useCallback(async () => {
     setLoadingData(true);
     setError(false);
-    setRoleError(false);
-    setUserRoles([]);
-
-    try {
-      // 1. Load agent profiles (verified schema columns)
-      const { data: profileData, error: profileErr } = await supabase
-        .from("agent_profile")
-        .select("id, user_id, display_name, email, role, status")
-        .order("display_name", { ascending: true });
-
-      if (profileErr) {
-        setError(true);
-        setLoadingData(false);
-        return;
-      }
-
-      setAgents(profileData || []);
-
-      // 2. Admin: also load production roles from user_roles
-      if (isAdmin) {
-        // Deduplicate user_ids
-        const linkedUserIds = [
-          ...new Set((profileData || []).map((a) => a.user_id).filter((uid): uid is string => uid !== null)),
-        ];
-
-        if (linkedUserIds.length > 0) {
-          const { data: rolesData, error: rolesErr } = await supabase
-            .from("user_roles")
-            .select("user_id, role")
-            .in("user_id", linkedUserIds);
-
-          if (rolesErr) {
-            setRoleError(true);
-          } else {
-            setUserRoles(rolesData || []);
-          }
-        }
-      }
-    } catch {
+    const res = await callAgentMgmt<{ agents: AgentRow[] }>("list_agents");
+    if (!res.success) {
       setError(true);
-    } finally {
       setLoadingData(false);
+      handleEfError(res, lang);
+      return;
     }
-  }, [isAdmin]);
+    setAgents(res.data?.agents ?? []);
+    setLoadingData(false);
+  }, [lang]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
 
-  // ── Loading state ──
-  if (loadingData) {
-    return <LoadingState />;
-  }
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => setCurrentUserId(data.user?.id ?? null));
+  }, []);
 
-  // ── Error state ──
+  if (loadingData) return <LoadingState />;
+
   if (error) {
     return (
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: "80px 20px",
-          textAlign: "center",
-        }}
-      >
-        <div style={{ fontSize: 40, marginBottom: 14 }}>⚠️</div>
-        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>{copy.loadError}</div>
-        <button
-          onClick={loadData}
-          style={{
-            fontSize: 12,
-            fontWeight: 600,
-            padding: "6px 16px",
-            borderRadius: 8,
-            border: "0.5px solid #e8e6e0",
-            background: "#fff",
-            cursor: "pointer",
-            marginTop: 8,
-          }}
-        >
-          {copy.retry}
-        </button>
+      <div style={{ padding: 40, textAlign: "center" }}>
+        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>{c.loadError}</div>
+        <Button size="sm" onClick={loadData}>
+          {c.retry}
+        </Button>
       </div>
     );
-  }
-
-  // ── Empty state ──
-  if (agents.length === 0) {
-    return (
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: "80px 20px",
-          textAlign: "center",
-        }}
-      >
-        <div style={{ fontSize: 40, marginBottom: 14 }}>📋</div>
-        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>{copy.emptyTitle}</div>
-        <div style={{ fontSize: 12, color: "#888", maxWidth: 320 }}>{copy.emptyHint}</div>
-      </div>
-    );
-  }
-
-  // ── Build role lookup (admin only) ──
-  const roleMap = new Map<string, string[]>();
-  if (isAdmin) {
-    for (const ur of userRoles) {
-      const existing = roleMap.get(ur.user_id) || [];
-      existing.push(ur.role);
-      roleMap.set(ur.user_id, existing);
-    }
   }
 
   return (
-    <div style={{ maxWidth: 900, padding: 4 }}>
-      {/* Supervisor info banner */}
-      {!isAdmin && (
-        <div
-          style={{
-            background: "#fffbeb",
-            border: "0.5px solid #fbbf24",
-            borderRadius: 8,
-            padding: "8px 12px",
-            fontSize: 11,
-            color: "#92400e",
-            marginBottom: 12,
-          }}
-        >
-          ℹ️ {copy.supervisorBanner}
+    <div style={{ maxWidth: 960, padding: 4 }}>
+      {/* Header */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <h1 style={{ fontSize: 20, fontWeight: 700 }}>{c.title}</h1>
+        <div style={{ display: "flex", gap: 8 }}>
+          <Button variant="outline" size="sm" onClick={loadData}>
+            {c.refresh}
+          </Button>
+          <Button size="sm" onClick={() => setAddOpen(true)}>
+            {c.addAgent}
+          </Button>
         </div>
-      )}
+      </div>
 
-      {/* Role query error warning (admin only) */}
-      {isAdmin && roleError && (
-        <div
-          style={{
-            background: "#fef2f2",
-            border: "0.5px solid #fca5a5",
-            borderRadius: 8,
-            padding: "8px 12px",
-            fontSize: 11,
-            color: "#991b1b",
-            marginBottom: 12,
-          }}
-        >
-          ⚠️ {copy.roleQueryFailed}
-        </div>
-      )}
+      {/* Empty */}
+      {agents.length === 0 ? (
+        <div style={{ padding: 60, textAlign: "center", color: "#666", fontSize: 13 }}>{c.emptyTitle}</div>
+      ) : (
+        <div style={{ display: "grid", gap: 12 }}>
+          {agents.map((a) => {
+            const isSelf = currentUserId !== null && a.user_id === currentUserId;
+            const canManage =
+              !isSelf &&
+              (isAdmin
+                ? a.role !== "super_admin"
+                : a.role === "agent");
+            const canChangeRole = isAdmin && !isSelf && a.role !== "super_admin" && a.user_id !== null;
+            const st = statusBadge(a.status, lang);
 
-      {/* Agent cards */}
-      <div style={{ display: "grid", gap: 12 }}>
-        {agents.map((a) => {
-          const userId = a.user_id;
-          const isLinked = userId !== null;
-          const prodRoles = isAdmin && isLinked ? roleMap.get(userId) : undefined;
-          const prodRoleList = prodRoles || [];
-          const hasProdRole = prodRoleList.length > 0;
-          const legacyRole = a.role;
-
-          const legacyDiffersFromProd =
-            isAdmin && !roleError && isLinked && hasProdRole && !prodRoleList.includes(legacyRole);
-
-          return (
-            <div
-              key={a.id}
-              style={{
-                background: "#fff",
-                border: "0.5px solid #e8e6e0",
-                borderRadius: 11,
-                padding: 14,
-              }}
-            >
-              {/* Top row: avatar + name + details */}
+            return (
               <div
+                key={a.id}
                 style={{
+                  background: "#fff",
+                  border: "0.5px solid #e8e6e0",
+                  borderRadius: 11,
+                  padding: 14,
                   display: "flex",
                   gap: 12,
                   alignItems: "flex-start",
-                  marginBottom: 8,
                 }}
               >
-                {/* Avatar initials */}
                 <div
                   style={{
                     width: 40,
@@ -383,145 +390,436 @@ function AgentSettingsContent({ currentRole }: { currentRole: "admin" | "supervi
                 </div>
 
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  {/* Name */}
                   <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 2 }}>{a.display_name}</div>
-
-                  {/* Email */}
-                  <div style={{ fontSize: 11, color: "#666", marginBottom: 4 }}>{a.email}</div>
-
-                  {/* Link status */}
-                  <div style={{ fontSize: 10.5, marginBottom: 4 }}>
-                    {isLinked ? (
-                      <span style={{ color: "#2d7d4f", fontWeight: 600 }}>🔗 {copy.linked}</span>
-                    ) : (
-                      <span style={{ color: "#dc2626", fontWeight: 600 }}>⚠️ {copy.unlinked}</span>
-                    )}
+                  <div style={{ fontSize: 11, color: "#666", marginBottom: 6 }}>{a.email}</div>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                    <span style={roleBadgeStyle(a.role)}>{a.role}</span>
+                    <span style={st.style}>{st.label}</span>
                   </div>
+                </div>
 
-                  {/* Account status */}
-                  <div style={{ fontSize: 11, color: "#666" }}>
-                    {copy.accountStatus} {formatStatus(a.status, copy.statusUnknown)}
-                  </div>
+                <div style={{ display: "flex", gap: 6, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                  {canChangeRole && a.status === "active" && (
+                    <Button variant="outline" size="sm" onClick={() => setChangeTarget(a)}>
+                      {c.changeRole}
+                    </Button>
+                  )}
+                  {canManage && a.status === "active" && (
+                    <Button variant="outline" size="sm" onClick={() => setDisableTarget(a)}>
+                      {c.disable}
+                    </Button>
+                  )}
+                  {canManage && a.status === "inactive" && (
+                    <Button variant="outline" size="sm" onClick={() => setReactivateTarget(a)}>
+                      {c.reactivate}
+                    </Button>
+                  )}
                 </div>
               </div>
+            );
+          })}
+        </div>
+      )}
 
-              {/* Admin-only: production role badges + legacy warnings */}
-              {/* Hidden entirely when roleError — avoids false "No production role" */}
-              {isAdmin && !roleError && (
-                <div style={{ marginTop: 6 }}>
-                  {!isLinked ? (
-                    /* Unlinked: show legacy label only */
-                    legacyRole ? (
-                      <div style={{ fontSize: 10, color: "#666" }}>
-                        {copy.profileLabel} <span style={{ fontWeight: 600 }}>{legacyRole}</span>{" "}
-                        <span style={{ color: "#888" }}>({copy.nonAuthoritative})</span>
-                      </div>
-                    ) : null
-                  ) : !hasProdRole ? (
-                    /* Case B: linked but no production role */
-                    <div>
-                      <span
-                        style={{
-                          fontSize: 10,
-                          color: "#92400e",
-                          background: "#fef3c7",
-                          padding: "2px 8px",
-                          borderRadius: 20,
-                          fontWeight: 600,
-                        }}
-                      >
-                        {copy.noProductionRole}
-                      </span>
-                      {/* Show legacy label as non-authoritative */}
-                      {legacyRole && (
-                        <div
-                          style={{
-                            fontSize: 10,
-                            color: "#666",
-                            marginTop: 4,
-                          }}
-                        >
-                          {copy.profileLabel} <span style={{ fontWeight: 600 }}>{legacyRole}</span>{" "}
-                          <span style={{ color: "#888" }}>({copy.nonAuthoritative})</span>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    /* Case A: has production role(s) */
-                    <div
-                      style={{
-                        display: "flex",
-                        gap: 4,
-                        flexWrap: "wrap",
-                        alignItems: "center",
-                      }}
-                    >
-                      {prodRoleList.map((r) => (
-                        <span
-                          key={r}
-                          style={{
-                            fontSize: 10,
-                            fontWeight: 600,
-                            color: "#1d4ed8",
-                            background: "#dbeafe",
-                            padding: "2px 8px",
-                            borderRadius: 20,
-                          }}
-                        >
-                          {r}
-                        </span>
-                      ))}
-                      {prodRoleList.length > 1 && (
-                        <span
-                          style={{
-                            fontSize: 10,
-                            color: "#92400e",
-                            fontWeight: 600,
-                          }}
-                        >
-                          ({copy.multipleRoles})
-                        </span>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Legacy role differs from production role warning */}
-                  {legacyDiffersFromProd && (
-                    <div
-                      style={{
-                        fontSize: 10,
-                        color: "#92400e",
-                        background: "#fffbeb",
-                        border: "0.5px solid #fbbf24",
-                        borderRadius: 6,
-                        padding: "4px 8px",
-                        marginTop: 6,
-                      }}
-                    >
-                      ⚠️ {copy.legacyDiffers}
-                      <br />
-                      {copy.profileLabel} <span style={{ fontWeight: 600 }}>{legacyRole}</span>{" "}
-                      <span style={{ color: "#888" }}>({copy.nonAuthoritative})</span>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
+      <div style={{ fontSize: 10, color: "#aaa", marginTop: 12, textAlign: "right" }}>
+        {c.agentCount(agents.length)}
       </div>
 
-      {/* Footer */}
-      <div
-        style={{
-          fontSize: 10,
-          color: "#aaa",
-          marginTop: 12,
-          textAlign: "right",
-        }}
-      >
-        {copy.agentCount(agents.length)}
-      </div>
+      {/* Dialogs */}
+      <AddAgentDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        isAdmin={isAdmin}
+        lang={lang}
+        onDone={loadData}
+      />
+      <DisableDialog
+        target={disableTarget}
+        onOpenChange={(v) => !v && setDisableTarget(null)}
+        lang={lang}
+        onDone={loadData}
+      />
+      <ReactivateDialog
+        target={reactivateTarget}
+        onOpenChange={(v) => !v && setReactivateTarget(null)}
+        isAdmin={isAdmin}
+        lang={lang}
+        onDone={loadData}
+      />
+      <ChangeRoleDialog
+        target={changeTarget}
+        onOpenChange={(v) => !v && setChangeTarget(null)}
+        lang={lang}
+        onDone={loadData}
+      />
     </div>
+  );
+}
+
+// ── Add Agent Dialog ──
+
+function AddAgentDialog({
+  open,
+  onOpenChange,
+  isAdmin,
+  lang,
+  onDone,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  isAdmin: boolean;
+  lang: Lang;
+  onDone: () => void;
+}) {
+  const c = COPY[lang];
+  const [email, setEmail] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [appRole, setAppRole] = useState<string>("agent");
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [addLoading, setAddLoading] = useState(false);
+  const [found, setFound] = useState<FindUserResult | null>(null);
+  const [dialogError, setDialogError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      setEmail("");
+      setDisplayName("");
+      setAppRole("agent");
+      setFound(null);
+      setDialogError(null);
+      setLookupLoading(false);
+      setAddLoading(false);
+    }
+  }, [open]);
+
+  const doLookup = async () => {
+    setDialogError(null);
+    setFound(null);
+    if (!email.trim() || !email.includes("@")) {
+      setDialogError(c.emailLabel);
+      return;
+    }
+    setLookupLoading(true);
+    const res = await callAgentMgmt<FindUserResult>("find_user", { email: email.trim() });
+    setLookupLoading(false);
+    if (!res.success) {
+      setDialogError(res.error || c.tGeneric);
+      return;
+    }
+    setFound(res.data ?? { found: false });
+  };
+
+  const doAdd = async () => {
+    if (!found?.user_id) return;
+    setAddLoading(true);
+    setDialogError(null);
+    const res = await callAgentMgmt("add_agent", {
+      target_user_id: found.user_id,
+      app_role: isAdmin ? appRole : "agent",
+      display_name: displayName.trim() || null,
+    });
+    setAddLoading(false);
+    if (!res.success) {
+      setDialogError(res.error || c.tGeneric);
+      return;
+    }
+    toast.success(c.tAdded);
+    onOpenChange(false);
+    onDone();
+  };
+
+  const canShowStep2 = found?.found && found.user_id && !found.has_profile;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{c.addTitle}</DialogTitle>
+          <DialogDescription>{c.addDesc}</DialogDescription>
+        </DialogHeader>
+
+        <div style={{ display: "grid", gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>{c.emailLabel}</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <Input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="name@company.com"
+                disabled={lookupLoading || addLoading}
+              />
+              <Button onClick={doLookup} disabled={lookupLoading || addLoading} size="sm">
+                {lookupLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : c.lookup}
+              </Button>
+            </div>
+          </div>
+
+          {found && !found.found && (
+            <div style={{ fontSize: 12, color: "#991b1b" }}>{c.userNotFound}</div>
+          )}
+          {found?.found && found.has_profile && (
+            <div style={{ fontSize: 12, color: "#92400e" }}>{c.profileExists}</div>
+          )}
+
+          {canShowStep2 && (
+            <>
+              <div style={{ fontSize: 12, color: "#166534" }}>✓ {c.userFound}</div>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>{c.displayNameLabel}</div>
+                <Input
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  disabled={addLoading}
+                />
+              </div>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>{c.roleLabel}</div>
+                {isAdmin ? (
+                  <Select value={appRole} onValueChange={setAppRole} disabled={addLoading}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="admin">{c.roleAdmin}</SelectItem>
+                      <SelectItem value="supervisor">{c.roleSupervisor}</SelectItem>
+                      <SelectItem value="agent">{c.roleAgent}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <div style={{ fontSize: 12, color: "#374151" }}>{c.supervisorRoleOnly}</div>
+                )}
+              </div>
+            </>
+          )}
+
+          {dialogError && (
+            <div style={{ fontSize: 12, color: "#991b1b" }}>{dialogError}</div>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={addLoading}>
+            {c.cancel}
+          </Button>
+          {canShowStep2 && (
+            <Button onClick={doAdd} disabled={addLoading}>
+              {addLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : c.addAgent}
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Disable Dialog ──
+
+function DisableDialog({
+  target,
+  onOpenChange,
+  lang,
+  onDone,
+}: {
+  target: AgentRow | null;
+  onOpenChange: (v: boolean) => void;
+  lang: Lang;
+  onDone: () => void;
+}) {
+  const c = COPY[lang];
+  const [loading, setLoading] = useState(false);
+
+  const confirm = async () => {
+    if (!target) return;
+    setLoading(true);
+    const res = await callAgentMgmt<{ unassigned_count?: number }>("deactivate", { agent_id: target.id });
+    setLoading(false);
+    if (!res.success) {
+      handleEfError(res, lang);
+      return;
+    }
+    const n = res.data?.unassigned_count;
+    toast.success(typeof n === "number" && n > 0 ? `${c.tDeactivated} ${c.unassigned(n)}` : c.tDeactivated);
+    onOpenChange(false);
+    onDone();
+  };
+
+  return (
+    <Dialog open={!!target} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{c.disableTitle}</DialogTitle>
+          <DialogDescription>{c.disableDesc}</DialogDescription>
+        </DialogHeader>
+        {target && (
+          <div style={{ fontSize: 12, color: "#374151" }}>
+            {target.display_name} · {target.email}
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
+            {c.cancel}
+          </Button>
+          <Button variant="destructive" onClick={confirm} disabled={loading}>
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : c.disable}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Reactivate Dialog ──
+
+function ReactivateDialog({
+  target,
+  onOpenChange,
+  isAdmin,
+  lang,
+  onDone,
+}: {
+  target: AgentRow | null;
+  onOpenChange: (v: boolean) => void;
+  isAdmin: boolean;
+  lang: Lang;
+  onDone: () => void;
+}) {
+  const c = COPY[lang];
+  const [role, setRole] = useState<string>("agent");
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (target) setRole(isAdmin ? target.role || "agent" : "agent");
+  }, [target, isAdmin]);
+
+  const confirm = async () => {
+    if (!target) return;
+    setLoading(true);
+    const res = await callAgentMgmt("reactivate", {
+      agent_id: target.id,
+      app_role: isAdmin ? role : "agent",
+    });
+    setLoading(false);
+    if (!res.success) {
+      handleEfError(res, lang);
+      return;
+    }
+    toast.success(c.tReactivated);
+    onOpenChange(false);
+    onDone();
+  };
+
+  return (
+    <Dialog open={!!target} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{c.reactivateTitle}</DialogTitle>
+          <DialogDescription>{c.reactivateDesc}</DialogDescription>
+        </DialogHeader>
+        {target && (
+          <div style={{ fontSize: 12, color: "#374151", marginBottom: 4 }}>
+            {target.display_name} · {target.email}
+          </div>
+        )}
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>{c.roleLabel}</div>
+          {isAdmin ? (
+            <Select value={role} onValueChange={setRole} disabled={loading}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="admin">{c.roleAdmin}</SelectItem>
+                <SelectItem value="supervisor">{c.roleSupervisor}</SelectItem>
+                <SelectItem value="agent">{c.roleAgent}</SelectItem>
+              </SelectContent>
+            </Select>
+          ) : (
+            <div style={{ fontSize: 12 }}>{c.supervisorRoleOnly}</div>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
+            {c.cancel}
+          </Button>
+          <Button onClick={confirm} disabled={loading}>
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : c.reactivate}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Change Role Dialog ──
+
+function ChangeRoleDialog({
+  target,
+  onOpenChange,
+  lang,
+  onDone,
+}: {
+  target: AgentRow | null;
+  onOpenChange: (v: boolean) => void;
+  lang: Lang;
+  onDone: () => void;
+}) {
+  const c = COPY[lang];
+  const [role, setRole] = useState<string>("agent");
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (target) setRole(target.role || "agent");
+  }, [target]);
+
+  const confirm = async () => {
+    if (!target || !target.user_id) return;
+    setLoading(true);
+    const res = await callAgentMgmt("change_role", {
+      target_user_id: target.user_id,
+      new_role: role,
+    });
+    setLoading(false);
+    if (!res.success) {
+      handleEfError(res, lang);
+      return;
+    }
+    toast.success(c.tRoleChanged);
+    onOpenChange(false);
+    onDone();
+  };
+
+  return (
+    <Dialog open={!!target} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{c.changeTitle}</DialogTitle>
+          <DialogDescription>{c.changeDesc}</DialogDescription>
+        </DialogHeader>
+        {target && (
+          <div style={{ fontSize: 12, color: "#374151", marginBottom: 4 }}>
+            {target.display_name} · {target.email}
+          </div>
+        )}
+        <Select value={role} onValueChange={setRole} disabled={loading}>
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="admin">{c.roleAdmin}</SelectItem>
+            <SelectItem value="supervisor">{c.roleSupervisor}</SelectItem>
+            <SelectItem value="agent">{c.roleAgent}</SelectItem>
+          </SelectContent>
+        </Select>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
+            {c.cancel}
+          </Button>
+          <Button onClick={confirm} disabled={loading}>
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : c.confirm}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
