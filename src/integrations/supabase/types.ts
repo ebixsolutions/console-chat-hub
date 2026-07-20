@@ -835,6 +835,11 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      check_conv_assignment_invariant: {
+        Args: { p_conv_id: string }
+        Returns: undefined
+      }
+      find_auth_user_by_email: { Args: { p_email: string }; Returns: Json }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -887,6 +892,35 @@ export type Database = {
           p_primary_color?: string
           p_welcome_message?: string
           p_widget_config_id: string
+        }
+        Returns: Json
+      }
+      safe_add_agent: {
+        Args: {
+          p_app_role: Database["public"]["Enums"]["app_role"]
+          p_caller_id: string
+          p_display_name: string
+          p_target_user_id: string
+        }
+        Returns: Json
+      }
+      safe_change_role: {
+        Args: {
+          p_caller_id: string
+          p_new_app_role: Database["public"]["Enums"]["app_role"]
+          p_target_user_id: string
+        }
+        Returns: Json
+      }
+      safe_deactivate_agent: {
+        Args: { p_caller_id: string; p_target_agent_id: string }
+        Returns: Json
+      }
+      safe_reactivate_agent: {
+        Args: {
+          p_app_role: Database["public"]["Enums"]["app_role"]
+          p_caller_id: string
+          p_target_agent_id: string
         }
         Returns: Json
       }
