@@ -767,6 +767,50 @@ async function orchestrationGenerateReply(
   }
   // ── End S-1 (orchestration) ────────────────────────────────────────
 
+  // ── H-1: Deterministic handoff detection (orchestration path) ──────
+  const { data: _h1VisitorMsgs } = await supabaseAdmin
+    .from("messages")
+    .select("content")
+    .eq("conversation_id", conversation_id)
+    .eq("role", "visitor")
+    .eq("is_recalled", false)
+    .order("created_at", { ascending: false })
+    .limit(1);
+  const _h1LastMsg = _h1VisitorMsgs?.[0]?.content ?? "";
+  const _h1HandoffLang = detectHandoffLanguage(_h1LastMsg);
+
+  if (_h1HandoffLang) {
+    const safeWording = SAFE_HANDOFF_WORDING[_h1HandoffLang];
+    await supabaseAdmin.from("messages").delete()
+      .eq("conversation_id", conversation_id)
+      .eq("content", "__THINKING__");
+    await supabaseAdmin.from("messages").insert({
+      conversation_id,
+      role: "assistant",
+      content: safeWording,
+      status: "delivered",
+      is_recalled: false,
+    });
+    await supabaseAdmin.from("conversations").update({
+      status: "pending",
+      updated_at: new Date().toISOString(),
+    }).eq("id", conversation_id);
+    console.log("[generate-reply] H-1 orchestration handoff:", conversation_id, _h1HandoffLang);
+    return new Response(JSON.stringify({ success: true }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  // ── End H-1 ────────────────────────────────────────────────────────
+
+  // ── G-1: Greeting/trivial bypass — skip KB for simple greetings ────
+  const _g1GreetingRe = /^(hi|hello|hey|你好|嗨|哈囉|早安|午安|晚安|good\s*(morning|afternoon|evening)|thanks|thank you|ok|okay|謝謝|好的|嗯)[\s!！。.？?，,]*$/i;
+  let _g1SkipKB = false;
+  if (_g1GreetingRe.test(_h1LastMsg.trim())) {
+    console.log("[generate-reply] G-1 greeting bypass, skipping KB:", conversation_id);
+    _g1SkipKB = true;
+  }
+  // ── End G-1 ────────────────────────────────────────────────────────
+
   // Step 0: Budget check (orchestration path only).
   // TODO L5e: enforce per-conversation LLM/tool budget; on exceed → handoff.
   //   if (await budgetExceeded(conversation_id)) { return safeRefusal('BUDGET_EXCEEDED'); }
