@@ -213,7 +213,7 @@ async function legacyGenerateReply(conversation_id: string): Promise<Response> {
 
   const { data: conversation, error: convError } = await supabaseAdmin
     .from("conversations")
-    .select("id, status")
+    .select("id, status, assigned_agent_id")
     .eq("id", conversation_id)
     .single();
 
@@ -720,7 +720,7 @@ async function orchestrationGenerateReply(
   // Load conversation
   const { data: conversation, error: convError } = await supabaseAdmin
     .from("conversations")
-    .select("id, status")
+    .select("id, status, assigned_agent_id")
     .eq("id", conversation_id)
     .single();
 
