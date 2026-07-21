@@ -892,7 +892,7 @@ async function orchestrationGenerateReply(
     trace_metadata?: Record<string, unknown>;
   } | null = null;
 
-  if (flags.ENABLE_KB) {
+  if (flags.ENABLE_KB && !_g1SkipKB) {
     // Resolve scope from env (Demo: schema has no company_id/industry fields)
     const demoCompanyIdStr = Deno.env.get("KB_DEMO_COMPANY_ID");
     const demoIndustry = Deno.env.get("KB_DEMO_INDUSTRY");
