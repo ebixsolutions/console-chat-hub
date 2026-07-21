@@ -26,6 +26,9 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// F-1: Explicit Anthropic timeout (25s) — applies to both legacy and orchestration paths.
+const ANTHROPIC_TIMEOUT_MS = 25000;
+
 // Contract 05 §5 — minimal safe fallback prompt (in-memory only, never persisted).
 const MINIMAL_SAFE_FALLBACK_PROMPT = `You are a professional and friendly customer service assistant. 
 Answer customer questions clearly and concisely. 
@@ -347,6 +350,9 @@ When the customer explicitly requests a human agent, or when you transfer to a h
 
   const requestTimestamp = Date.now();
   let claudeResponse: Response | null = null;
+  // F-1: Explicit timeout guard
+  const _legacyAbortCtrl = new AbortController();
+  const _legacyTimeout = setTimeout(() => _legacyAbortCtrl.abort(), ANTHROPIC_TIMEOUT_MS);
   let fetchThrew = false;
   try {
     claudeResponse = await fetch("https://api.anthropic.com/v1/messages", {
@@ -357,11 +363,25 @@ When the customer explicitly requests a human agent, or when you transfer to a h
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify(requestPayload),
+      signal: _legacyAbortCtrl.signal,
     });
   } catch (e) {
     fetchThrew = true;
-    console.error("[generate-reply] Anthropic fetch threw:", e);
+    if (e instanceof DOMException && e.name === "AbortError") {
+      console.error("[generate-reply] F-1 Anthropic timeout after 25s:", conversation_id);
+      // Clean up __THINKING__ to stop Widget typing indicator
+      await supabaseAdmin
+        .from("messages")
+        .delete()
+        .eq("conversation_id", conversation_id)
+        .eq("content", "__THINKING__");
+    } else {
+      console.error("[generate-reply] Anthropic fetch threw:", e);
+    }
+  } finally {
+    clearTimeout(_legacyTimeout);
   }
+
   const responseTimestamp = Date.now();
   const responseLatencyMs = responseTimestamp - requestTimestamp;
 
@@ -517,13 +537,44 @@ type FlagSet = {
   ENABLE_TOOL_EXEC: boolean;
 };
 
-const KB_FALLBACK_SAFE_TEXT: Record<string, string> = {
-  KB_SCOPE_GATE: "很抱歉，系統暫時無法查詢知識庫。讓我為您轉接客服人員。",
-  KB_API_FAIL: "系統暫時無法查詢知識庫，讓我為您轉接客服人員。",
-  KB_EMPTY: "很抱歉，我目前無法確定答案。讓我為您轉接客服人員，以提供更準確的協助。",
-  KB_LOW_SCORE_HIGH_RISK: "這個問題涉及重要政策，為確保您獲得準確資訊，讓我為您轉接客服人員。",
-  KB_LOW_SCORE_STANDARD: "很抱歉，我目前無法確定答案。讓我為您轉接客服人員，以提供更準確的協助。",
+// F-2: Multilingual KB fallback safe text
+const KB_FALLBACK_SAFE_TEXT: Record<string, Record<string, string>> = {
+  KB_SCOPE_GATE: {
+    "zh-TW": "很抱歉，系統暫時無法查詢知識庫。讓我為您轉接客服人員。",
+    "zh-CN": "很抱歉，系统暂时无法查询知识库。让我为您转接客服人员。",
+    en: "Sorry, the knowledge base is temporarily unavailable. Let me connect you with a human agent.",
+  },
+  KB_API_FAIL: {
+    "zh-TW": "系統暫時無法查詢知識庫，讓我為您轉接客服人員。",
+    "zh-CN": "系统暂时无法查询知识库，让我为您转接客服人员。",
+    en: "The knowledge base is temporarily unavailable. Let me connect you with a human agent.",
+  },
+  KB_EMPTY: {
+    "zh-TW": "很抱歉，我目前無法確定答案。讓我為您轉接客服人員，以提供更準確的協助。",
+    "zh-CN": "很抱歉，我目前无法确定答案。让我为您转接客服人员，以提供更准确的协助。",
+    en: "Sorry, I'm unable to find a definitive answer. Let me connect you with a human agent for more accurate assistance.",
+  },
+  KB_LOW_SCORE_HIGH_RISK: {
+    "zh-TW": "這個問題涉及重要政策，為確保您獲得準確資訊，讓我為您轉接客服人員。",
+    "zh-CN": "这个问题涉及重要政策，为确保您获得准确信息，让我为您转接客服人员。",
+    en: "This question involves important policy matters. To ensure you receive accurate information, let me connect you with a human agent.",
+  },
+  KB_LOW_SCORE_STANDARD: {
+    "zh-TW": "很抱歉，我目前無法確定答案。讓我為您轉接客服人員，以提供更準確的協助。",
+    "zh-CN": "很抱歉，我目前无法确定答案。让我为您转接客服人员，以提供更准确的协助。",
+    en: "Sorry, I'm unable to find a definitive answer. Let me connect you with a human agent for more accurate assistance.",
+  },
 };
+
+// F-2: Detect visitor language from message content
+function detectVisitorLanguage(text: string): "zh-TW" | "zh-CN" | "en" {
+  if (!text) return "zh-TW";
+  const hasChinese = /[\u4e00-\u9fff]/.test(text);
+  if (!hasChinese) return "en";
+  const zhCnIndicators = ["转", "们", "队", "预计", "为您", "为我", "为你", "请", "这", "没"];
+  if (zhCnIndicators.some((c) => text.includes(c))) return "zh-CN";
+  return "zh-TW";
+}
 type KBFallbackRpcResult =
   | "success"
   | "already_handled"
@@ -538,8 +589,10 @@ async function handleKBFallback(
   branchTag: string,
   source_message_id: string | null,
   traceMetadata: Record<string, unknown>,
+  visitorLang: "zh-TW" | "zh-CN" | "en" = "zh-TW",
 ): Promise<Response> {
-  const safeText = KB_FALLBACK_SAFE_TEXT[branchTag];
+  const _branchTexts = KB_FALLBACK_SAFE_TEXT[branchTag];
+  const safeText = _branchTexts ? (_branchTexts[visitorLang] ?? _branchTexts["zh-TW"]) : undefined;
   if (!safeText) {
     console.error(`[generate-reply] CRITICAL unknown branch: ${branchTag}`, conversation_id);
     return new Response(
@@ -803,14 +856,19 @@ async function orchestrationGenerateReply(
   // ── End H-1 ────────────────────────────────────────────────────────
 
   // ── G-1: Greeting/trivial bypass — skip KB for simple greetings ────
+  // F-4: Normalize input + support repeated greetings
+  const _g1Normalized = _h1LastMsg.trim().replace(/\s+/g, " ").toLowerCase();
   const _g1GreetingRe =
-    /^(hi|hello|hey|你好|嗨|哈囉|早安|午安|晚安|good\s*(morning|afternoon|evening)|thanks|thank you|ok|okay|謝謝|好的|嗯)[\s!！。.？?，,]*$/i;
+    /^((hi|hello|hey|你好|嗨|哈囉|早安|午安|晚安|good\s*(morning|afternoon|evening)|thanks|thank you|ok|okay|謝謝|好的|嗯)\s*[!！。.？?，,]*\s*)+$/i;
   let _g1SkipKB = false;
-  if (_g1GreetingRe.test(_h1LastMsg.trim())) {
+  if (_g1GreetingRe.test(_g1Normalized)) {
     console.log("[generate-reply] G-1 greeting bypass, skipping KB:", conversation_id);
     _g1SkipKB = true;
   }
   // ── End G-1 ────────────────────────────────────────────────────────
+
+  // F-2: Detect visitor language for KB fallback messages
+  const _visitorLang = detectVisitorLanguage(_h1LastMsg);
   // Step 0: Budget check (orchestration path only).
   // TODO L5e: enforce per-conversation LLM/tool budget; on exceed → handoff.
   //   if (await budgetExceeded(conversation_id)) { return safeRefusal('BUDGET_EXCEEDED'); }
@@ -908,9 +966,16 @@ async function orchestrationGenerateReply(
         hasCompanyId: widgetCompanyId !== null && !isNaN(widgetCompanyId),
         hasIndustry: !!widgetIndustry,
       });
-      return await handleKBFallback(supabaseAdmin, conversation_id, "KB_SCOPE_GATE", source_message_id, {
-        rag_api_status: "scope_unavailable",
-      });
+      return await handleKBFallback(
+        supabaseAdmin,
+        conversation_id,
+        "KB_SCOPE_GATE",
+        source_message_id,
+        {
+          rag_api_status: "scope_unavailable",
+        },
+        _visitorLang,
+      );
     }
 
     // Get the latest user message for RAG query
@@ -936,53 +1001,88 @@ async function orchestrationGenerateReply(
     // — L5 Safety Checks (Demo-only, inline) —
     if (!ragResult || !ragResult.success) {
       console.error("[CRITICAL] KB RAG API failure", { conversation_id, code: "KB_API_FAIL" });
-      return await handleKBFallback(supabaseAdmin, conversation_id, "KB_API_FAIL", source_message_id, {
-        rag_api_status: "failure",
-      });
+      return await handleKBFallback(
+        supabaseAdmin,
+        conversation_id,
+        "KB_API_FAIL",
+        source_message_id,
+        {
+          rag_api_status: "failure",
+        },
+        _visitorLang,
+      );
     }
 
     if (ragResult.no_answer || !ragResult.chunks || ragResult.chunks.length === 0) {
       console.warn("[generate-reply] KB no results", { conversation_id, code: "KB_EMPTY" });
-      return await handleKBFallback(supabaseAdmin, conversation_id, "KB_EMPTY", source_message_id, {
-        rag_api_status: "success_empty",
-      });
+      return await handleKBFallback(
+        supabaseAdmin,
+        conversation_id,
+        "KB_EMPTY",
+        source_message_id,
+        {
+          rag_api_status: "success_empty",
+        },
+        _visitorLang,
+      );
     }
 
     // L5 Score threshold + scope filter (client-side double-check)
-    const HIGH_RISK_KEYWORDS = [
-      "退款",
-      "退貨",
-      "賠償",
-      "補償",
-      "refund",
-      "return",
-      "compensation",
-      "法律",
-      "合約",
-      "條款",
-      "legal",
-      "contract",
-      "terms",
-      "醫療",
-      "藥品",
-      "治療",
-      "medical",
-      "medicine",
-      "treatment",
-      "隱私",
-      "個資",
-      "資料保護",
-      "privacy",
-      "personal data",
-      "GDPR",
-      "投資",
-      "理財",
-      "金融",
-      "investment",
-      "financial",
-      "finance",
+    // F-3: Distinguish transactional requests (high risk) from information queries
+    const _f3Lower = userQuery.toLowerCase();
+    const HIGH_RISK_TRANSACTIONAL = [
+      /退[款貨]/,
+      /要退/,
+      /申請退/,
+      /我要.*退/,
+      /refund\s*(my|this|the)/i,
+      /return\s*(my|this|the)/i,
+      /i\s*want\s*(a\s*)?refund/i,
+      /i\s*want\s*to\s*return/i,
+      /賠償/,
+      /補償/,
+      /compensation/i,
+      /法律行動/,
+      /legal\s*action/i,
+      /起訴/,
     ];
-    const isHighRisk = HIGH_RISK_KEYWORDS.some((kw) => userQuery.toLowerCase().includes(kw.toLowerCase()));
+    const INFO_QUERY_OVERRIDE = [
+      /policy/i,
+      /政策/,
+      /規定/,
+      /條款/,
+      /what\s*(is|are)/i,
+      /how\s*(do|does|to)/i,
+      /tell\s*me\s*about/i,
+      /請問/,
+      /想了解/,
+      /介紹/,
+      /說明/,
+    ];
+    const ALWAYS_HIGH_RISK_TOPICS = [
+      /醫療/,
+      /藥品/,
+      /治療/,
+      /medical/i,
+      /medicine/i,
+      /treatment/i,
+      /隱私/,
+      /個資/,
+      /資料保護/,
+      /privacy/i,
+      /personal\s*data/i,
+      /gdpr/i,
+      /投資/,
+      /理財/,
+      /金融/,
+      /investment/i,
+      /financial/i,
+      /finance/i,
+    ];
+    const matchesTransactional = HIGH_RISK_TRANSACTIONAL.some((re) => re.test(userQuery));
+    const matchesInfoOverride = INFO_QUERY_OVERRIDE.some((re) => re.test(userQuery));
+    const matchesAlwaysHigh = ALWAYS_HIGH_RISK_TOPICS.some((re) => re.test(userQuery));
+    const isHighRisk = matchesAlwaysHigh || (matchesTransactional && !matchesInfoOverride);
     const minScore = isHighRisk ? 0.78 : 0.7;
 
     const usableChunks = ragResult.chunks.filter((c) => {
@@ -1020,7 +1120,14 @@ async function orchestrationGenerateReply(
         code: "KB_LOW_SCORE",
         branch: lowScoreBranch,
       });
-      return await handleKBFallback(supabaseAdmin, conversation_id, lowScoreBranch, source_message_id, traceMetadata);
+      return await handleKBFallback(
+        supabaseAdmin,
+        conversation_id,
+        lowScoreBranch,
+        source_message_id,
+        traceMetadata,
+        _visitorLang,
+      );
     }
 
     ragResult.chunks = usableChunks;
@@ -1082,15 +1189,39 @@ async function orchestrationGenerateReply(
     anthropicRequestBody.tools = TOOL_DEFINITIONS;
   }
 
-  const claudeResponse = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": anthropicKey,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify(anthropicRequestBody),
-  });
+  // F-1: Explicit timeout guard (orchestration)
+  const _orchAbortCtrl = new AbortController();
+  const _orchTimeout = setTimeout(() => _orchAbortCtrl.abort(), ANTHROPIC_TIMEOUT_MS);
+  let claudeResponse: Response;
+  try {
+    claudeResponse = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": anthropicKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify(anthropicRequestBody),
+      signal: _orchAbortCtrl.signal,
+    });
+  } catch (e) {
+    clearTimeout(_orchTimeout);
+    if (e instanceof DOMException && e.name === "AbortError") {
+      console.error("[generate-reply] F-1 orchestration Anthropic timeout:", conversation_id);
+      await supabaseAdmin
+        .from("messages")
+        .delete()
+        .eq("conversation_id", conversation_id)
+        .eq("content", "__THINKING__");
+    } else {
+      console.error("[generate-reply] orchestration Anthropic fetch error:", e);
+    }
+    return new Response(JSON.stringify({ error: "AI service timeout" }), {
+      status: 504,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  clearTimeout(_orchTimeout);
 
   if (!claudeResponse.ok) {
     const errText = await claudeResponse.text();
