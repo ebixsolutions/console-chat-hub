@@ -246,6 +246,15 @@ async function legacyGenerateReply(conversation_id: string): Promise<Response> {
   }
   // ── End Dev21 Batch 1 guard ─────────────────────────────────────────
 
+  // ── S-1: assigned_agent_id defense-in-depth guard ──────────────────
+  if (conversation.assigned_agent_id) {
+    console.log("[generate-reply] S-1 assigned_agent_id guard (legacy):", conversation_id);
+    return new Response(JSON.stringify({ success: true, skipped: "assigned_to_agent" }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  // ── End S-1 (legacy) ───────────────────────────────────────────────
+
   const { data: messages } = await supabaseAdmin
     .from("messages")
     .select("role, content, created_at")
