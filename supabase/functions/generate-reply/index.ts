@@ -758,6 +758,15 @@ async function orchestrationGenerateReply(
   }
   // ── End Dev21 Batch 1 guard ─────────────────────────────────────────
 
+  // ── S-1: assigned_agent_id defense-in-depth guard ──────────────────
+  if (conversation.assigned_agent_id) {
+    console.log("[generate-reply] S-1 assigned_agent_id guard (orchestration):", conversation_id);
+    return new Response(JSON.stringify({ success: true, skipped: "assigned_to_agent" }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  // ── End S-1 (orchestration) ────────────────────────────────────────
+
   // Step 0: Budget check (orchestration path only).
   // TODO L5e: enforce per-conversation LLM/tool budget; on exceed → handoff.
   //   if (await budgetExceeded(conversation_id)) { return safeRefusal('BUDGET_EXCEEDED'); }
