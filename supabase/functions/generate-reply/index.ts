@@ -182,6 +182,31 @@ async function cleanupThinking(
 }
 // ── End DEFECT-1 helper ──────────────────────────────────────────────────
 
+// ── ESC-MVP R1: Explicit Handoff Classifier ──────────────────────────────
+// Per-trigger-span evaluation. R1 = explicit handoff request.
+// Reuses isHandoffIntent() + detectHandoffLanguage() for R1-only.
+// Future R2–R4 rules will extend this classifier without changing R1 logic.
+interface EscClassifierResult {
+  rule: "R1" | null;
+  confidence: number;
+  trigger_span: string;
+  language: "zh-TW" | "zh-CN" | "en";
+}
+
+function classifyExplicitHandoff(text: string): EscClassifierResult {
+  const lang = detectHandoffLanguage(text);
+  if (lang) {
+    return {
+      rule: "R1",
+      confidence: 1.0,
+      trigger_span: text.slice(0, 100),
+      language: lang,
+    };
+  }
+  return { rule: null, confidence: 0, trigger_span: "", language: "zh-TW" };
+}
+// ── End ESC-MVP R1 classifier ────────────────────────────────────────────
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
