@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useConsoleLang } from "@/hooks/useEffectiveRole";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -55,6 +55,21 @@ export function AgentToolPanel({
   const [tr, setTr] = useState<{ type: string; data: Record<string, unknown> } | null>(null);
   const [tl, setTl] = useState(false);
   const [te, setTe] = useState("");
+
+  // AUTO-HEIGHT: textarea ref + resize logic
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const adjustHeight = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    const sh = el.scrollHeight;
+    const cap = 150;
+    el.style.height = Math.min(sh, cap) + "px";
+    el.style.overflowY = sh > cap ? "auto" : "hidden";
+  }, []);
+  useEffect(() => {
+    if (cs === "custom") adjustHeight();
+  }, [ci, cs, adjustHeight]);
 
   const gc = (): string => {
     if (cs === "draft") return draftText.trim();
@@ -161,8 +176,8 @@ export function AgentToolPanel({
                   background: "#f9fafb",
                   borderRadius: 4,
                   padding: "4px 6px",
-                  maxHeight: 44,
-                  overflow: "hidden",
+                  maxHeight: 150,
+                  overflowY: "auto",
                 }}
               >
                 {draftText.trim() || tc("draftEmpty")}
@@ -175,8 +190,8 @@ export function AgentToolPanel({
                   background: "#f9fafb",
                   borderRadius: 4,
                   padding: "4px 6px",
-                  maxHeight: 44,
-                  overflow: "hidden",
+                  maxHeight: 150,
+                  overflowY: "auto",
                 }}
               >
                 {selectedMessage ? (
@@ -206,6 +221,7 @@ export function AgentToolPanel({
             )}
             {cs === "custom" && (
               <textarea
+                ref={textareaRef}
                 value={ci}
                 onChange={(e) => setCi(e.target.value)}
                 placeholder={tc("customPh")}
@@ -215,9 +231,10 @@ export function AgentToolPanel({
                   border: "1px solid #e5e7eb",
                   borderRadius: 4,
                   padding: "4px 6px",
-                  resize: "vertical",
+                  resize: "none",
                   minHeight: 34,
-                  maxHeight: 76,
+                  maxHeight: 150,
+                  overflowY: "hidden",
                   fontFamily: "inherit",
                   boxSizing: "border-box",
                 }}
