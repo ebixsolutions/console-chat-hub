@@ -397,13 +397,10 @@ When the customer explicitly requests a human agent, or when you transfer to a h
     if (e instanceof DOMException && e.name === "AbortError") {
       console.error("[generate-reply] F-1 Anthropic timeout after 25s:", conversation_id);
       // Clean up __THINKING__ to stop Widget typing indicator
-      await supabaseAdmin
-        .from("messages")
-        .delete()
-        .eq("conversation_id", conversation_id)
-        .eq("content", "__THINKING__");
+      await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     } else {
       console.error("[generate-reply] Anthropic fetch threw:", e);
+      await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     }
   } finally {
     clearTimeout(_legacyTimeout);
