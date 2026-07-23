@@ -182,6 +182,31 @@ async function cleanupThinking(
 }
 // ── End DEFECT-1 helper ──────────────────────────────────────────────────
 
+// ── ESC-MVP R1: Explicit Handoff Classifier ──────────────────────────────
+// Per-trigger-span evaluation. R1 = explicit handoff request.
+// Reuses isHandoffIntent() + detectHandoffLanguage() for R1-only.
+// Future R2–R4 rules will extend this classifier without changing R1 logic.
+interface EscClassifierResult {
+  rule: "R1" | null;
+  confidence: number;
+  trigger_span: string;
+  language: "zh-TW" | "zh-CN" | "en";
+}
+
+function classifyExplicitHandoff(text: string): EscClassifierResult {
+  const lang = detectHandoffLanguage(text);
+  if (lang) {
+    return {
+      rule: "R1",
+      confidence: 1.0,
+      trigger_span: text.slice(0, 100),
+      language: lang,
+    };
+  }
+  return { rule: null, confidence: 0, trigger_span: "", language: "zh-TW" };
+}
+// ── End ESC-MVP R1 classifier ────────────────────────────────────────────
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -860,7 +885,154 @@ async function orchestrationGenerateReply(
   const _h1LastMsg = _h1VisitorMsgs?.[0]?.content ?? "";
   const _h1HandoffLang = detectHandoffLanguage(_h1LastMsg);
 
-  if (_h1HandoffLang) {
+  // ── ESC-MVP R1: Classifier invocation (orchestration only) ─────────
+  // When enabled, RPC is the SOLE write path for handoff. All RPC results
+  // handled explicitly — NO H-1 fallback after any RPC attempt or when
+  // ESC block determines R1 intent. H-1 only when flag is disabled.
+  const _escMvpEnabled = Deno.env.get("ESC_MVP_FEATURE_FLAG") === "true";
+  let _escHandled = false;
+
+  if (_escMvpEnabled && _h1HandoffLang) {
+    const _escResult = classifyExplicitHandoff(_h1LastMsg);
+
+    if (_escResult.rule === "R1") {
+      // ESC block claims this handoff — H-1 must not run regardless of outcome
+      _escHandled = true;
+
+      if (!source_message_id) {
+        // No source_message_id — cannot call RPC safely. Do not fall back to H-1
+        // because H-1 would also lack a valid source for cleanupThinking.
+        console.error(
+          "[generate-reply] ESC-MVP R1: missing source_message_id, no fallback:",
+          conversation_id,
+        );
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "esc_missing_source_message_id",
+            escalation_rule: "R1",
+            handoff_persisted: false,
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+
+      await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+      const _escSafeWording = SAFE_HANDOFF_WORDING[_escResult.language];
+
+      const { data: _escRpcData, error: _escRpcErr } = await supabaseAdmin.rpc(
+        "explicit_handoff_tx",
+        {
+          p_conversation_id: conversation_id,
+          p_safe_reply_content: _escSafeWording,
+          p_source_message_id: source_message_id,
+        },
+      );
+
+      if (_escRpcErr) {
+        // Transport/network error — outcome uncertain. No H-1 fallback.
+        console.error(
+          "[generate-reply] ESC-MVP R1 RPC transport error (no fallback):",
+          _escRpcErr.message,
+          conversation_id,
+        );
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "esc_rpc_transport_error",
+            escalation_rule: "R1",
+            handoff_persisted: false,
+            handoff_uncertain: true,
+          }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+
+      const _escRpcResult: string = _escRpcData?.result ?? "unknown";
+
+      switch (_escRpcResult) {
+        case "success":
+          console.log("[generate-reply] ESC-MVP R1 handoff:", conversation_id, _escResult.language);
+          return new Response(
+            JSON.stringify({
+              success: true,
+              escalation_rule: "R1",
+              handoff_persisted: true,
+              rpc_result: "success",
+            }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+
+        case "already_handled":
+          console.log("[generate-reply] ESC-MVP R1 idempotent:", conversation_id,
+            "existing:", _escRpcData?.existing_branch);
+          return new Response(
+            JSON.stringify({
+              success: true,
+              escalation_rule: "R1",
+              handoff_persisted: true,
+              rpc_result: "already_handled",
+            }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+
+        case "already_resolved":
+          console.log("[generate-reply] ESC-MVP R1 skipped (resolved/closed):", conversation_id);
+          return new Response(
+            JSON.stringify({
+              success: true,
+              skipped: "resolved",
+              escalation_rule: "R1",
+              handoff_persisted: false,
+            }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+
+        case "already_under_human_control":
+          console.log("[generate-reply] ESC-MVP R1 skipped (human_control):", conversation_id);
+          return new Response(
+            JSON.stringify({
+              success: true,
+              skipped: "human_handling",
+              escalation_rule: "R1",
+              handoff_persisted: false,
+            }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+
+        case "not_found":
+          console.error("[generate-reply] ESC-MVP R1 conversation not found:", conversation_id);
+          return new Response(
+            JSON.stringify({ success: false, error: "esc_conversation_not_found", escalation_rule: "R1" }),
+            { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+
+        case "invalid_source_message":
+          console.error("[generate-reply] ESC-MVP R1 invalid source_message:", conversation_id);
+          return new Response(
+            JSON.stringify({ success: false, error: "esc_invalid_source_message", escalation_rule: "R1" }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+
+        default:
+          console.error("[generate-reply] ESC-MVP R1 unknown RPC result:", _escRpcResult, conversation_id);
+          return new Response(
+            JSON.stringify({
+              success: false,
+              error: "esc_rpc_unknown_result",
+              escalation_rule: "R1",
+              rpc_result: _escRpcResult,
+            }),
+            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+      }
+    }
+  }
+  // ── End ESC-MVP R1 invocation ──────────────────────────────────────
+
+  // H-1: only reachable when ESC feature flag is disabled (_escHandled=false).
+  // When ESC is enabled, all handoff-intent paths return above.
+  if (_h1HandoffLang && !_escHandled) {
     const safeWording = SAFE_HANDOFF_WORDING[_h1HandoffLang];
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     await supabaseAdmin.from("messages").insert({
@@ -970,6 +1142,8 @@ async function orchestrationGenerateReply(
   // Step 4: KB Adapter (ENABLE_KB) + L5 Safety Checks.
   // L5 RAG Answer Safety Contract v1.1b — Demo Implementation.
   // v1.2: company_id / industry from env (schema has no these fields).
+  // ESC-MVP: _kbDone flag prevents null-access fall-through (4 runtime defects)
+  let _kbDone = false;
   let ragResult: {
     success: boolean;
     no_answer?: boolean;
@@ -1175,6 +1349,22 @@ async function orchestrationGenerateReply(
     ragResult.chunks = usableChunks;
     ragResult.no_answer = false;
     finalPromptChunks = usableChunks; // W5: same variable used by buildRagBlock → LLM prompt
+    _kbDone = true;
+  }
+
+  // ESC-MVP: mark done when KB intentionally skipped
+  if (!flags.ENABLE_KB || _g1SkipKB) {
+    _kbDone = true;
+  }
+
+  // ESC-MVP: safety check — KB was supposed to run but fell through without completion
+  if (flags.ENABLE_KB && !_g1SkipKB && !_kbDone) {
+    console.error("[generate-reply] CRITICAL: KB block fell through without completion", conversation_id);
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+    return new Response(JSON.stringify({ error: "Internal KB processing error" }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 
   // Step 5: Tool registration — NOT in L5c Gate A.
