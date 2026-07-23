@@ -463,6 +463,7 @@ When the customer explicitly requests a human agent, or when you transfer to a h
   const tokenOutput = claudeData.usage?.output_tokens ?? null;
 
   if (!aiReplyContent) {
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     await writeTraces(supabaseAdmin, {
       conversation_id,
       message_id: null,
