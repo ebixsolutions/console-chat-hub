@@ -482,7 +482,7 @@ When the customer explicitly requests a human agent, or when you transfer to a h
     });
   }
 
-  await supabaseAdmin.from("messages").delete().eq("conversation_id", conversation_id).eq("content", "__THINKING__");
+  await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
 
   const { data: insertedMsg, error: insertError } = await supabaseAdmin
     .from("messages")
