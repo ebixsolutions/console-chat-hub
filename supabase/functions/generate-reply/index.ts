@@ -862,7 +862,7 @@ async function orchestrationGenerateReply(
 
   if (_h1HandoffLang) {
     const safeWording = SAFE_HANDOFF_WORDING[_h1HandoffLang];
-    await supabaseAdmin.from("messages").delete().eq("conversation_id", conversation_id).eq("content", "__THINKING__");
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     await supabaseAdmin.from("messages").insert({
       conversation_id,
       role: "assistant",
