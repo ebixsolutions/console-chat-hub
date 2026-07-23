@@ -1142,6 +1142,8 @@ async function orchestrationGenerateReply(
   // Step 4: KB Adapter (ENABLE_KB) + L5 Safety Checks.
   // L5 RAG Answer Safety Contract v1.1b — Demo Implementation.
   // v1.2: company_id / industry from env (schema has no these fields).
+  // ESC-MVP: _kbDone flag prevents null-access fall-through (4 runtime defects)
+  let _kbDone = false;
   let ragResult: {
     success: boolean;
     no_answer?: boolean;
