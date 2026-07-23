@@ -1125,7 +1125,7 @@ async function orchestrationGenerateReply(
     const matchesInfoOverride = INFO_QUERY_OVERRIDE.some((re) => re.test(userQuery));
     const matchesAlwaysHigh = ALWAYS_HIGH_RISK_TOPICS.some((re) => re.test(userQuery));
     const isHighRisk = matchesAlwaysHigh || (matchesTransactional && !matchesInfoOverride);
-    const minScore = isHighRisk ? 0.78 : 0.7;
+    const minScore = isHighRisk ? 0.78 : 0.55;
 
     const usableChunks = ragResult.chunks.filter((c) => {
       if (!c.score || c.score < minScore) return false;
