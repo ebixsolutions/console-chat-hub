@@ -831,6 +831,7 @@ async function orchestrationGenerateReply(
   // Human-handling guard must not generate any AI/assistant message or suggest handoff.
   if (conversation.status === "pending" || conversation.status === "transferred") {
     console.log("[generate-reply] orchestration human-handling guard:", conversation.status, conversation_id);
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return new Response(JSON.stringify({ success: true, skipped: "human_handling" }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
