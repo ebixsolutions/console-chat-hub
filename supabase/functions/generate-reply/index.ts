@@ -885,7 +885,154 @@ async function orchestrationGenerateReply(
   const _h1LastMsg = _h1VisitorMsgs?.[0]?.content ?? "";
   const _h1HandoffLang = detectHandoffLanguage(_h1LastMsg);
 
-  if (_h1HandoffLang) {
+  // ── ESC-MVP R1: Classifier invocation (orchestration only) ─────────
+  // When enabled, RPC is the SOLE write path for handoff. All RPC results
+  // handled explicitly — NO H-1 fallback after any RPC attempt or when
+  // ESC block determines R1 intent. H-1 only when flag is disabled.
+  const _escMvpEnabled = Deno.env.get("ESC_MVP_FEATURE_FLAG") === "true";
+  let _escHandled = false;
+
+  if (_escMvpEnabled && _h1HandoffLang) {
+    const _escResult = classifyExplicitHandoff(_h1LastMsg);
+
+    if (_escResult.rule === "R1") {
+      // ESC block claims this handoff — H-1 must not run regardless of outcome
+      _escHandled = true;
+
+      if (!source_message_id) {
+        // No source_message_id — cannot call RPC safely. Do not fall back to H-1
+        // because H-1 would also lack a valid source for cleanupThinking.
+        console.error(
+          "[generate-reply] ESC-MVP R1: missing source_message_id, no fallback:",
+          conversation_id,
+        );
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "esc_missing_source_message_id",
+            escalation_rule: "R1",
+            handoff_persisted: false,
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+
+      await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+      const _escSafeWording = SAFE_HANDOFF_WORDING[_escResult.language];
+
+      const { data: _escRpcData, error: _escRpcErr } = await supabaseAdmin.rpc(
+        "explicit_handoff_tx",
+        {
+          p_conversation_id: conversation_id,
+          p_safe_reply_content: _escSafeWording,
+          p_source_message_id: source_message_id,
+        },
+      );
+
+      if (_escRpcErr) {
+        // Transport/network error — outcome uncertain. No H-1 fallback.
+        console.error(
+          "[generate-reply] ESC-MVP R1 RPC transport error (no fallback):",
+          _escRpcErr.message,
+          conversation_id,
+        );
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "esc_rpc_transport_error",
+            escalation_rule: "R1",
+            handoff_persisted: false,
+            handoff_uncertain: true,
+          }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+
+      const _escRpcResult: string = _escRpcData?.result ?? "unknown";
+
+      switch (_escRpcResult) {
+        case "success":
+          console.log("[generate-reply] ESC-MVP R1 handoff:", conversation_id, _escResult.language);
+          return new Response(
+            JSON.stringify({
+              success: true,
+              escalation_rule: "R1",
+              handoff_persisted: true,
+              rpc_result: "success",
+            }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+
+        case "already_handled":
+          console.log("[generate-reply] ESC-MVP R1 idempotent:", conversation_id,
+            "existing:", _escRpcData?.existing_branch);
+          return new Response(
+            JSON.stringify({
+              success: true,
+              escalation_rule: "R1",
+              handoff_persisted: true,
+              rpc_result: "already_handled",
+            }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+
+        case "already_resolved":
+          console.log("[generate-reply] ESC-MVP R1 skipped (resolved/closed):", conversation_id);
+          return new Response(
+            JSON.stringify({
+              success: true,
+              skipped: "resolved",
+              escalation_rule: "R1",
+              handoff_persisted: false,
+            }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+
+        case "already_under_human_control":
+          console.log("[generate-reply] ESC-MVP R1 skipped (human_control):", conversation_id);
+          return new Response(
+            JSON.stringify({
+              success: true,
+              skipped: "human_handling",
+              escalation_rule: "R1",
+              handoff_persisted: false,
+            }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+
+        case "not_found":
+          console.error("[generate-reply] ESC-MVP R1 conversation not found:", conversation_id);
+          return new Response(
+            JSON.stringify({ success: false, error: "esc_conversation_not_found", escalation_rule: "R1" }),
+            { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+
+        case "invalid_source_message":
+          console.error("[generate-reply] ESC-MVP R1 invalid source_message:", conversation_id);
+          return new Response(
+            JSON.stringify({ success: false, error: "esc_invalid_source_message", escalation_rule: "R1" }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+
+        default:
+          console.error("[generate-reply] ESC-MVP R1 unknown RPC result:", _escRpcResult, conversation_id);
+          return new Response(
+            JSON.stringify({
+              success: false,
+              error: "esc_rpc_unknown_result",
+              escalation_rule: "R1",
+              rpc_result: _escRpcResult,
+            }),
+            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+      }
+    }
+  }
+  // ── End ESC-MVP R1 invocation ──────────────────────────────────────
+
+  // H-1: only reachable when ESC feature flag is disabled (_escHandled=false).
+  // When ESC is enabled, all handoff-intent paths return above.
+  if (_h1HandoffLang && !_escHandled) {
     const safeWording = SAFE_HANDOFF_WORDING[_h1HandoffLang];
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     await supabaseAdmin.from("messages").insert({
