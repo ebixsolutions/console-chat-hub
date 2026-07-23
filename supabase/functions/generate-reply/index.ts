@@ -886,11 +886,24 @@ async function orchestrationGenerateReply(
 
   // ── G-1: Greeting/trivial bypass — skip KB for simple greetings ────
   // F-4: Normalize input + support repeated greetings
+  // DEFECT-2 v1.1: separate EN/ZH compound patterns
   const _g1Normalized = _h1LastMsg.trim().replace(/\s+/g, " ").toLowerCase();
+  const _g1Raw = _h1LastMsg.trim();
   const _g1GreetingRe =
     /^((hi|hello|hey|你好|嗨|哈囉|早安|午安|晚安|good\s*(morning|afternoon|evening)|thanks|thank you|ok|okay|謝謝|好的|嗯)\s*[!！。.？?，,]*\s*)+$/i;
+  // G-1b EN: greeting + space + filler word (there/everyone/guys/all) + optional trailing punct
+  const _g1CompoundEnRe =
+    /^(hi|hello|hey)\s+(there|everyone|guys|all)[!！。.？?，,\s]*$/i;
+  // G-1b ZH: greeting + optional punct/space + filler (呀/啊/大家好) + optional trailing punct
+  // Uses _g1Raw (not lowercased) since Chinese chars are case-insensitive
+  const _g1CompoundZhRe =
+    /^(你好|嗨|哈囉|早安|午安|晚安)[，,、\s]*(呀|啊|大家好?|各位好?)[!！。.？?\s]*$/;
   let _g1SkipKB = false;
-  if (_g1GreetingRe.test(_g1Normalized)) {
+  if (
+    _g1GreetingRe.test(_g1Normalized) ||
+    _g1CompoundEnRe.test(_g1Normalized) ||
+    _g1CompoundZhRe.test(_g1Raw)
+  ) {
     console.log("[generate-reply] G-1 greeting bypass, skipping KB:", conversation_id);
     _g1SkipKB = true;
   }
