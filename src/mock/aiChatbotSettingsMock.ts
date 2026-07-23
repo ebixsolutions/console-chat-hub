@@ -82,6 +82,7 @@ export interface FeedbackAutomationConfig {
   skip_if_negative_sentiment: boolean;
   updated_by: string;
   updated_at: string;
+  message_templates?: Record<RatingType, MessageTemplate>;
 }
 
 export const mockFeedbackAutomationConfig: FeedbackAutomationConfig = {
