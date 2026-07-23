@@ -156,6 +156,32 @@ async function writeTraces(
 }
 // ── End Dev19a helpers ────────────────────────────────────────────────────
 
+// ── DEFECT-1 fix: scoped __THINKING__ cleanup helper ─────────────────────
+async function cleanupThinking(
+  supabaseAdmin: ReturnType<typeof createClient>,
+  conversation_id: string,
+  source_message_id: string | null,
+): Promise<void> {
+  if (!source_message_id) {
+    console.error(
+      "[generate-reply] cleanupThinking skipped: missing source_message_id",
+      conversation_id,
+    );
+    return;
+  }
+  try {
+    await supabaseAdmin
+      .from("messages")
+      .delete()
+      .eq("conversation_id", conversation_id)
+      .eq("content", "__THINKING__")
+      .filter("metadata->>source_message_id", "eq", source_message_id);
+  } catch (e) {
+    console.error("[generate-reply] cleanupThinking failed (non-blocking):", e);
+  }
+}
+// ── End DEFECT-1 helper ──────────────────────────────────────────────────
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
