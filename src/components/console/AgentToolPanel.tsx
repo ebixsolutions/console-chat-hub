@@ -199,7 +199,7 @@ export function AgentToolPanel({
                     <span style={{ color: "#8b5cf6", fontWeight: 600 }}>
                       {tc("selPrev")}[{selectedMessage.role}]
                     </span>{" "}
-                    {selectedMessage.content.slice(0, 60)}
+                    {selectedMessage.content}
                     <button
                       onClick={onClearSelection}
                       style={{
