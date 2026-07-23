@@ -156,6 +156,32 @@ async function writeTraces(
 }
 // ── End Dev19a helpers ────────────────────────────────────────────────────
 
+// ── DEFECT-1 fix: scoped __THINKING__ cleanup helper ─────────────────────
+async function cleanupThinking(
+  supabaseAdmin: ReturnType<typeof createClient>,
+  conversation_id: string,
+  source_message_id: string | null,
+): Promise<void> {
+  if (!source_message_id) {
+    console.error(
+      "[generate-reply] cleanupThinking skipped: missing source_message_id",
+      conversation_id,
+    );
+    return;
+  }
+  try {
+    await supabaseAdmin
+      .from("messages")
+      .delete()
+      .eq("conversation_id", conversation_id)
+      .eq("content", "__THINKING__")
+      .filter("metadata->>source_message_id", "eq", source_message_id);
+  } catch (e) {
+    console.error("[generate-reply] cleanupThinking failed (non-blocking):", e);
+  }
+}
+// ── End DEFECT-1 helper ──────────────────────────────────────────────────
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -180,7 +206,7 @@ Deno.serve(async (req) => {
     // ⚠️ LEGACY GATE — MUST be checked FIRST, before any other logic.
     // All flags false → behavior 100% identical to L5a.
     if (!ENABLE_KB && !ENABLE_COACH && !ENABLE_C360 && !ENABLE_TOOL_EXEC) {
-      return await legacyGenerateReply(conversation_id);
+      return await legacyGenerateReply(conversation_id, source_message_id ?? null);
     }
 
     // ── ORCHESTRATION PATH (only reached when at least one flag is true) ──────
@@ -208,7 +234,7 @@ Deno.serve(async (req) => {
 // ⚠️ Do NOT add adapter calls / overlay reads / trace writes / status changes here.
 // Task A.1A: deterministic handoff branch added ONLY (before anthropicKey check).
 // ────────────────────────────────────────────────────────────────────────────
-async function legacyGenerateReply(conversation_id: string): Promise<Response> {
+async function legacyGenerateReply(conversation_id: string, source_message_id: string | null): Promise<Response> {
   const supabaseAdmin = createClient(
     Deno.env.get("SUPABASE_URL") ?? "",
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
@@ -290,7 +316,7 @@ async function legacyGenerateReply(conversation_id: string): Promise<Response> {
   if (handoffLang) {
     const safeWording = SAFE_HANDOFF_WORDING[handoffLang];
 
-    await supabaseAdmin.from("messages").delete().eq("conversation_id", conversation_id).eq("content", "__THINKING__");
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
 
     const { error: insertError } = await supabaseAdmin.from("messages").insert({
       conversation_id: conversation_id,
@@ -330,6 +356,7 @@ async function legacyGenerateReply(conversation_id: string): Promise<Response> {
   const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
   if (!anthropicKey) {
     console.error("[generate-reply] ANTHROPIC_API_KEY not set");
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return new Response(JSON.stringify({ error: "AI service not configured" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -370,13 +397,10 @@ When the customer explicitly requests a human agent, or when you transfer to a h
     if (e instanceof DOMException && e.name === "AbortError") {
       console.error("[generate-reply] F-1 Anthropic timeout after 25s:", conversation_id);
       // Clean up __THINKING__ to stop Widget typing indicator
-      await supabaseAdmin
-        .from("messages")
-        .delete()
-        .eq("conversation_id", conversation_id)
-        .eq("content", "__THINKING__");
+      await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     } else {
       console.error("[generate-reply] Anthropic fetch threw:", e);
+      await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     }
   } finally {
     clearTimeout(_legacyTimeout);
@@ -414,6 +438,7 @@ When the customer explicitly requests a human agent, or when you transfer to a h
   if (!claudeResponse.ok) {
     const errText = await claudeResponse.text();
     console.error("[generate-reply] Claude API error:", claudeResponse.status, errText);
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     await writeTraces(supabaseAdmin, {
       conversation_id,
       message_id: null,
@@ -438,6 +463,7 @@ When the customer explicitly requests a human agent, or when you transfer to a h
   const tokenOutput = claudeData.usage?.output_tokens ?? null;
 
   if (!aiReplyContent) {
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     await writeTraces(supabaseAdmin, {
       conversation_id,
       message_id: null,
@@ -456,7 +482,7 @@ When the customer explicitly requests a human agent, or when you transfer to a h
     });
   }
 
-  await supabaseAdmin.from("messages").delete().eq("conversation_id", conversation_id).eq("content", "__THINKING__");
+  await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
 
   const { data: insertedMsg, error: insertError } = await supabaseAdmin
     .from("messages")
@@ -795,6 +821,7 @@ async function orchestrationGenerateReply(
   // Step 6 (early): Status Matrix Skeleton Guard — orchestration path ONLY.
   // L5b skeleton: only resolved/closed are refused. Full policy is L5e.
   if (conversation.status === "resolved" || conversation.status === "closed") {
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return safeRefusal("CONV_RESOLVED_OR_CLOSED");
   }
 
@@ -804,6 +831,7 @@ async function orchestrationGenerateReply(
   // Human-handling guard must not generate any AI/assistant message or suggest handoff.
   if (conversation.status === "pending" || conversation.status === "transferred") {
     console.log("[generate-reply] orchestration human-handling guard:", conversation.status, conversation_id);
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return new Response(JSON.stringify({ success: true, skipped: "human_handling" }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
@@ -813,6 +841,7 @@ async function orchestrationGenerateReply(
   // ── S-1: assigned_agent_id defense-in-depth guard ──────────────────
   if (conversation.assigned_agent_id) {
     console.log("[generate-reply] S-1 assigned_agent_id guard (orchestration):", conversation_id);
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return new Response(JSON.stringify({ success: true, skipped: "assigned_to_agent" }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
@@ -833,7 +862,7 @@ async function orchestrationGenerateReply(
 
   if (_h1HandoffLang) {
     const safeWording = SAFE_HANDOFF_WORDING[_h1HandoffLang];
-    await supabaseAdmin.from("messages").delete().eq("conversation_id", conversation_id).eq("content", "__THINKING__");
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     await supabaseAdmin.from("messages").insert({
       conversation_id,
       role: "assistant",
@@ -857,11 +886,24 @@ async function orchestrationGenerateReply(
 
   // ── G-1: Greeting/trivial bypass — skip KB for simple greetings ────
   // F-4: Normalize input + support repeated greetings
+  // DEFECT-2 v1.1: separate EN/ZH compound patterns
   const _g1Normalized = _h1LastMsg.trim().replace(/\s+/g, " ").toLowerCase();
+  const _g1Raw = _h1LastMsg.trim();
   const _g1GreetingRe =
     /^((hi|hello|hey|你好|嗨|哈囉|早安|午安|晚安|good\s*(morning|afternoon|evening)|thanks|thank you|ok|okay|謝謝|好的|嗯)\s*[!！。.？?，,]*\s*)+$/i;
+  // G-1b EN: greeting + space + filler word (there/everyone/guys/all) + optional trailing punct
+  const _g1CompoundEnRe =
+    /^(hi|hello|hey)\s+(there|everyone|guys|all)[!！。.？?，,\s]*$/i;
+  // G-1b ZH: greeting + optional punct/space + filler (呀/啊/大家好) + optional trailing punct
+  // Uses _g1Raw (not lowercased) since Chinese chars are case-insensitive
+  const _g1CompoundZhRe =
+    /^(你好|嗨|哈囉|早安|午安|晚安)[，,、\s]*(呀|啊|大家好?|各位好?)[!！。.？?\s]*$/;
   let _g1SkipKB = false;
-  if (_g1GreetingRe.test(_g1Normalized)) {
+  if (
+    _g1GreetingRe.test(_g1Normalized) ||
+    _g1CompoundEnRe.test(_g1Normalized) ||
+    _g1CompoundZhRe.test(_g1Raw)
+  ) {
     console.log("[generate-reply] G-1 greeting bypass, skipping KB:", conversation_id);
     _g1SkipKB = true;
   }
@@ -1083,7 +1125,7 @@ async function orchestrationGenerateReply(
     const matchesInfoOverride = INFO_QUERY_OVERRIDE.some((re) => re.test(userQuery));
     const matchesAlwaysHigh = ALWAYS_HIGH_RISK_TOPICS.some((re) => re.test(userQuery));
     const isHighRisk = matchesAlwaysHigh || (matchesTransactional && !matchesInfoOverride);
-    const minScore = isHighRisk ? 0.78 : 0.7;
+    const minScore = isHighRisk ? 0.78 : 0.55;
 
     const usableChunks = ragResult.chunks.filter((c) => {
       if (!c.score || c.score < minScore) return false;
@@ -1155,6 +1197,7 @@ async function orchestrationGenerateReply(
     .limit(10);
 
   if (!messages || messages.length === 0) {
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return new Response(JSON.stringify({ success: true, skipped: "no messages" }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
@@ -1166,6 +1209,7 @@ async function orchestrationGenerateReply(
   }));
 
   if (claudeMessages[claudeMessages.length - 1].role === "assistant") {
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return new Response(JSON.stringify({ success: true, skipped: "last message is assistant" }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
@@ -1173,6 +1217,7 @@ async function orchestrationGenerateReply(
 
   const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
   if (!anthropicKey) {
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return new Response(JSON.stringify({ error: "AI service not configured" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -1208,13 +1253,10 @@ async function orchestrationGenerateReply(
     clearTimeout(_orchTimeout);
     if (e instanceof DOMException && e.name === "AbortError") {
       console.error("[generate-reply] F-1 orchestration Anthropic timeout:", conversation_id);
-      await supabaseAdmin
-        .from("messages")
-        .delete()
-        .eq("conversation_id", conversation_id)
-        .eq("content", "__THINKING__");
+      await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     } else {
       console.error("[generate-reply] orchestration Anthropic fetch error:", e);
+      await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     }
     return new Response(JSON.stringify({ error: "AI service timeout" }), {
       status: 504,
@@ -1226,6 +1268,7 @@ async function orchestrationGenerateReply(
   if (!claudeResponse.ok) {
     const errText = await claudeResponse.text();
     console.error("[generate-reply] Claude API error:", claudeResponse.status, errText);
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return new Response(JSON.stringify({ error: "AI service error" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -1236,13 +1279,14 @@ async function orchestrationGenerateReply(
   const aiReplyContent = claudeData.content?.[0]?.text ?? "";
 
   if (!aiReplyContent) {
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return new Response(JSON.stringify({ error: "Empty AI response" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 
-  await supabaseAdmin.from("messages").delete().eq("conversation_id", conversation_id).eq("content", "__THINKING__");
+  await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
 
   // W5: Build citation metadata from the exact chunks used in the LLM prompt
   const citationMeta = finalPromptChunks.length > 0 ? buildCitationMetadata(finalPromptChunks) : null;
