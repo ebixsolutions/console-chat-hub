@@ -166,6 +166,48 @@ function getInitials(label: string) {
     .toUpperCase();
 }
 
+// ── RIGHT-CRM-KB-CONTEXT-1: Deterministic bounded conversational context ──
+const MAX_CONTEXT_MESSAGES = 5;
+const CONTEXT_SEPARATOR = " / ";
+const EFFECTIVE_QUERY_CAP = 500;
+
+function buildBoundedContext(messages: Msg[]): string {
+  const eligible = messages.filter(
+    (m) => m.role === "visitor" && !m.is_recalled && m.content.trim().length > 0 && m.content !== "__THINKING__",
+  );
+  if (eligible.length === 0) return "";
+  const recent = eligible.slice(-MAX_CONTEXT_MESSAGES);
+  // Enforce character cap with separator budget
+  while (recent.length > 1) {
+    const totalLen =
+      recent.reduce((s, m) => s + m.content.trim().length, 0) + (recent.length - 1) * CONTEXT_SEPARATOR.length;
+    if (totalLen <= EFFECTIVE_QUERY_CAP) break;
+    recent.shift();
+  }
+  // Head-tail truncation for single message exceeding cap
+  if (recent.length === 1 && recent[0].content.trim().length > EFFECTIVE_QUERY_CAP) {
+    const text = recent[0].content.trim();
+    const headBudget = Math.floor(EFFECTIVE_QUERY_CAP * 0.4);
+    const tailBudget = EFFECTIVE_QUERY_CAP - headBudget - 5;
+    return text.slice(0, headBudget) + " ... " + text.slice(-tailBudget);
+  }
+  return recent.map((m) => m.content.trim()).join(CONTEXT_SEPARATOR);
+}
+
+function computeContextRevisionKey(conversationId: string, messages: Msg[]): string {
+  const eligible = messages
+    .filter(
+      (m) => m.role === "visitor" && !m.is_recalled && m.content.trim().length > 0 && m.content !== "__THINKING__",
+    )
+    .slice(-MAX_CONTEXT_MESSAGES);
+  if (eligible.length === 0) return conversationId + ":empty";
+  const fingerprint = eligible
+    .map((m) => [m.id, m.created_at ?? "", m.status ?? "", String(m.is_recalled), m.content.trim()].join("|"))
+    .join("~");
+  return conversationId + ":" + fingerprint;
+}
+// ── End RIGHT-CRM-KB-CONTEXT-1 helpers ──
+
 // ─── StatusBadge ─────────────────────────────────────────────────────────────
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { bg: string; color: string; label: string }> = {
@@ -425,8 +467,8 @@ function CRMPanel({
   conv,
   visitorLabel,
   onResolve,
-  latestVisitorMsg,
-  latestVisitorMsgId,
+  boundedContext,
+  contextRevisionKey,
   draftText,
   currentRole,
   onInsertDraft,
@@ -434,8 +476,8 @@ function CRMPanel({
   conv: Conv | null;
   visitorLabel: string;
   onResolve: () => void;
-  latestVisitorMsg: string;
-  latestVisitorMsgId: string;
+  boundedContext: string;
+  contextRevisionKey: string;
   draftText: string;
   currentRole: string | null;
   onInsertDraft: (t: string) => void;
@@ -473,14 +515,14 @@ function CRMPanel({
     polReqIdRef.current++;
     lastAutoQueryRef.current = "";
   }, [conv?.id]);
-  // Auto-query Knowledge
+  // Auto-query Knowledge (RIGHT-CRM-KB-CONTEXT-1: bounded context)
   useEffect(() => {
-    if (!conv || !latestVisitorMsg || !canAccessKb) return;
-    if (lastAutoQueryRef.current === latestVisitorMsgId) return;
-    lastAutoQueryRef.current = latestVisitorMsgId;
+    if (!conv || !boundedContext || !canAccessKb) return;
+    if (lastAutoQueryRef.current === contextRevisionKey) return;
+    lastAutoQueryRef.current = contextRevisionKey;
     const reqId = ++kbReqIdRef.current;
-    runKbSearch(latestVisitorMsg, reqId);
-  }, [conv?.id, latestVisitorMsgId, canAccessKb]);
+    runKbSearch(boundedContext, reqId);
+  }, [conv?.id, boundedContext, contextRevisionKey, canAccessKb]);
 
   async function runKbSearch(query: string, reqId: number) {
     if (!query.trim()) return;
@@ -523,7 +565,7 @@ function CRMPanel({
   }
   function handleKbRefresh() {
     if (!canAccessKb) return;
-    const q = kbQuery.trim() || latestVisitorMsg;
+    const q = kbQuery.trim() || boundedContext;
     if (!q) return;
     const reqId = ++kbReqIdRef.current;
     runKbSearch(q, reqId);
@@ -547,13 +589,11 @@ function CRMPanel({
         setPolLoading(false);
         return;
       } else if (data?.success && Array.isArray(data.results)) {
-        pctx = (data.results as KBResult[])
-          .slice(0, 3)
-          .map((r) => ({
-            label: r.display_label.slice(0, 120),
-            content: r.content.slice(0, 800),
-            source_type: r.source_type.slice(0, 40),
-          }));
+        pctx = (data.results as KBResult[]).slice(0, 3).map((r) => ({
+          label: r.display_label.slice(0, 120),
+          content: r.content.slice(0, 800),
+          source_type: r.source_type.slice(0, 40),
+        }));
       }
     } catch {
       if (polReqIdRef.current !== reqId) return;
@@ -886,18 +926,18 @@ function CRMPanel({
                 <button
                   onClick={() => {
                     setPolMode("conv");
-                    if (latestVisitorMsg.trim()) {
+                    if (boundedContext.trim()) {
                       const rid = ++polReqIdRef.current;
-                      runPolicyCheck(latestVisitorMsg, rid);
+                      runPolicyCheck(boundedContext, rid);
                     }
                   }}
-                  disabled={polLoading || !latestVisitorMsg.trim()}
+                  disabled={polLoading || !boundedContext.trim()}
                   style={{
                     ...btnSm,
                     background: polMode === "conv" ? "#faf5ff" : "#fff",
                     borderColor: polMode === "conv" ? "#8b5cf6" : "#e5e7eb",
-                    color: polLoading || !latestVisitorMsg.trim() ? "#d1d5db" : "#374151",
-                    cursor: polLoading || !latestVisitorMsg.trim() ? "not-allowed" : "pointer",
+                    color: polLoading || !boundedContext.trim() ? "#d1d5db" : "#374151",
+                    cursor: polLoading || !boundedContext.trim() ? "not-allowed" : "pointer",
                   }}
                 >
                   {rc("polCheckConv")}
@@ -1496,6 +1536,17 @@ function SinglePageInbox() {
   const isHumanControlConv = (c: Conv | null | undefined) => c?.status === "pending" && Boolean(c?.assigned_agent_id);
   const isHumanControl = isHumanControlConv(selectedConv);
 
+  // RIGHT-CRM-KB-CONTEXT-1: compute bounded context in SinglePageInbox, pass as props
+  const boundedContext = useMemo(
+    () => (messagesConversationId === selectedId ? buildBoundedContext(messages) : ""),
+    [messages, messagesConversationId, selectedId],
+  );
+
+  const contextRevisionKey = useMemo(
+    () => (messagesConversationId === selectedId ? computeContextRevisionKey(selectedId ?? "", messages) : ""),
+    [messages, messagesConversationId, selectedId],
+  );
+
   return (
     <div
       style={{
@@ -2079,16 +2130,8 @@ function SinglePageInbox() {
             conv={selectedConv}
             visitorLabel={visitorLabel || "Visitor"}
             onResolve={handleResolve}
-            latestVisitorMsg={
-              messagesConversationId === selectedId
-                ? (messages.filter((m) => m.role === "visitor").at(-1)?.content ?? "")
-                : ""
-            }
-            latestVisitorMsgId={
-              messagesConversationId === selectedId
-                ? (messages.filter((m) => m.role === "visitor").at(-1)?.id ?? "")
-                : ""
-            }
+            boundedContext={boundedContext}
+            contextRevisionKey={contextRevisionKey}
             draftText={reply}
             currentRole={currentRole}
             onInsertDraft={(text) => {
