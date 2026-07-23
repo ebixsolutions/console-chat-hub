@@ -523,32 +523,44 @@ export type Database = {
       handoff_event: {
         Row: {
           ai_summary: string | null
+          branch_tag: string | null
           conversation_id: string
           created_at: string | null
+          escalation_rule: string | null
           from_agent_id: string | null
           handoff_reason: string
           handoff_type: string
           id: string
+          safe_reply_content: string | null
+          source_message_id: string | null
           to_agent_id: string | null
         }
         Insert: {
           ai_summary?: string | null
+          branch_tag?: string | null
           conversation_id: string
           created_at?: string | null
+          escalation_rule?: string | null
           from_agent_id?: string | null
           handoff_reason: string
           handoff_type: string
           id?: string
+          safe_reply_content?: string | null
+          source_message_id?: string | null
           to_agent_id?: string | null
         }
         Update: {
           ai_summary?: string | null
+          branch_tag?: string | null
           conversation_id?: string
           created_at?: string | null
+          escalation_rule?: string | null
           from_agent_id?: string | null
           handoff_reason?: string
           handoff_type?: string
           id?: string
+          safe_reply_content?: string | null
+          source_message_id?: string | null
           to_agent_id?: string | null
         }
         Relationships: [
@@ -838,6 +850,14 @@ export type Database = {
       check_conv_assignment_invariant: {
         Args: { p_conv_id: string }
         Returns: undefined
+      }
+      explicit_handoff_tx: {
+        Args: {
+          p_conversation_id: string
+          p_safe_reply_content: string
+          p_source_message_id: string
+        }
+        Returns: Json
       }
       find_auth_user_by_email: { Args: { p_email: string }; Returns: Json }
       has_role: {
