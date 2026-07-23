@@ -316,7 +316,7 @@ async function legacyGenerateReply(conversation_id: string, source_message_id: s
   if (handoffLang) {
     const safeWording = SAFE_HANDOFF_WORDING[handoffLang];
 
-    await supabaseAdmin.from("messages").delete().eq("conversation_id", conversation_id).eq("content", "__THINKING__");
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
 
     const { error: insertError } = await supabaseAdmin.from("messages").insert({
       conversation_id: conversation_id,
