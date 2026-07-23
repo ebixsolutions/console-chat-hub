@@ -438,6 +438,7 @@ When the customer explicitly requests a human agent, or when you transfer to a h
   if (!claudeResponse.ok) {
     const errText = await claudeResponse.text();
     console.error("[generate-reply] Claude API error:", claudeResponse.status, errText);
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     await writeTraces(supabaseAdmin, {
       conversation_id,
       message_id: null,
