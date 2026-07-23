@@ -1349,6 +1349,22 @@ async function orchestrationGenerateReply(
     ragResult.chunks = usableChunks;
     ragResult.no_answer = false;
     finalPromptChunks = usableChunks; // W5: same variable used by buildRagBlock → LLM prompt
+    _kbDone = true;
+  }
+
+  // ESC-MVP: mark done when KB intentionally skipped
+  if (!flags.ENABLE_KB || _g1SkipKB) {
+    _kbDone = true;
+  }
+
+  // ESC-MVP: safety check — KB was supposed to run but fell through without completion
+  if (flags.ENABLE_KB && !_g1SkipKB && !_kbDone) {
+    console.error("[generate-reply] CRITICAL: KB block fell through without completion", conversation_id);
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+    return new Response(JSON.stringify({ error: "Internal KB processing error" }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 
   // Step 5: Tool registration — NOT in L5c Gate A.
