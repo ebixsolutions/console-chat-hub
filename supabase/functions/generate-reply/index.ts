@@ -841,6 +841,7 @@ async function orchestrationGenerateReply(
   // ── S-1: assigned_agent_id defense-in-depth guard ──────────────────
   if (conversation.assigned_agent_id) {
     console.log("[generate-reply] S-1 assigned_agent_id guard (orchestration):", conversation_id);
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return new Response(JSON.stringify({ success: true, skipped: "assigned_to_agent" }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
