@@ -1197,6 +1197,7 @@ async function orchestrationGenerateReply(
     .limit(10);
 
   if (!messages || messages.length === 0) {
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return new Response(JSON.stringify({ success: true, skipped: "no messages" }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
@@ -1208,6 +1209,7 @@ async function orchestrationGenerateReply(
   }));
 
   if (claudeMessages[claudeMessages.length - 1].role === "assistant") {
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return new Response(JSON.stringify({ success: true, skipped: "last message is assistant" }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
@@ -1215,6 +1217,7 @@ async function orchestrationGenerateReply(
 
   const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
   if (!anthropicKey) {
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return new Response(JSON.stringify({ error: "AI service not configured" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -1250,13 +1253,10 @@ async function orchestrationGenerateReply(
     clearTimeout(_orchTimeout);
     if (e instanceof DOMException && e.name === "AbortError") {
       console.error("[generate-reply] F-1 orchestration Anthropic timeout:", conversation_id);
-      await supabaseAdmin
-        .from("messages")
-        .delete()
-        .eq("conversation_id", conversation_id)
-        .eq("content", "__THINKING__");
+      await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     } else {
       console.error("[generate-reply] orchestration Anthropic fetch error:", e);
+      await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     }
     return new Response(JSON.stringify({ error: "AI service timeout" }), {
       status: 504,
@@ -1268,6 +1268,7 @@ async function orchestrationGenerateReply(
   if (!claudeResponse.ok) {
     const errText = await claudeResponse.text();
     console.error("[generate-reply] Claude API error:", claudeResponse.status, errText);
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return new Response(JSON.stringify({ error: "AI service error" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -1278,13 +1279,14 @@ async function orchestrationGenerateReply(
   const aiReplyContent = claudeData.content?.[0]?.text ?? "";
 
   if (!aiReplyContent) {
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return new Response(JSON.stringify({ error: "Empty AI response" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 
-  await supabaseAdmin.from("messages").delete().eq("conversation_id", conversation_id).eq("content", "__THINKING__");
+  await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
 
   // W5: Build citation metadata from the exact chunks used in the LLM prompt
   const citationMeta = finalPromptChunks.length > 0 ? buildCitationMetadata(finalPromptChunks) : null;
