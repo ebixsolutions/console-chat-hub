@@ -234,7 +234,7 @@ Deno.serve(async (req) => {
 // ⚠️ Do NOT add adapter calls / overlay reads / trace writes / status changes here.
 // Task A.1A: deterministic handoff branch added ONLY (before anthropicKey check).
 // ────────────────────────────────────────────────────────────────────────────
-async function legacyGenerateReply(conversation_id: string): Promise<Response> {
+async function legacyGenerateReply(conversation_id: string, source_message_id: string | null): Promise<Response> {
   const supabaseAdmin = createClient(
     Deno.env.get("SUPABASE_URL") ?? "",
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
