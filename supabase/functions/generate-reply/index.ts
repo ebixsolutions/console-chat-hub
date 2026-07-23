@@ -206,7 +206,7 @@ Deno.serve(async (req) => {
     // ⚠️ LEGACY GATE — MUST be checked FIRST, before any other logic.
     // All flags false → behavior 100% identical to L5a.
     if (!ENABLE_KB && !ENABLE_COACH && !ENABLE_C360 && !ENABLE_TOOL_EXEC) {
-      return await legacyGenerateReply(conversation_id);
+      return await legacyGenerateReply(conversation_id, source_message_id ?? null);
     }
 
     // ── ORCHESTRATION PATH (only reached when at least one flag is true) ──────
