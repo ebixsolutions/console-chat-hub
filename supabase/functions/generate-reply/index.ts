@@ -821,6 +821,7 @@ async function orchestrationGenerateReply(
   // Step 6 (early): Status Matrix Skeleton Guard — orchestration path ONLY.
   // L5b skeleton: only resolved/closed are refused. Full policy is L5e.
   if (conversation.status === "resolved" || conversation.status === "closed") {
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return safeRefusal("CONV_RESOLVED_OR_CLOSED");
   }
 
