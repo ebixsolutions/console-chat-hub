@@ -356,6 +356,7 @@ async function legacyGenerateReply(conversation_id: string, source_message_id: s
   const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
   if (!anthropicKey) {
     console.error("[generate-reply] ANTHROPIC_API_KEY not set");
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return new Response(JSON.stringify({ error: "AI service not configured" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
