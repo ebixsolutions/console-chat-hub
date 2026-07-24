@@ -269,8 +269,10 @@ Deno.serve(async (req) => {
         console.error("[agent-assist] AA_TRANSLATE_OUTPUT_INVALID");
         return jsonRes({ success: false, error: "translate_parse_failed" }, 502, req);
       }
-      if (p.target_language !== targetLang) {
-        console.error("[agent-assist] AA_TRANSLATE_OUTPUT_INVALID");
+      const normalizedReturnedTarget = String(p.target_language ?? "").trim().toLowerCase();
+      const normalizedRequestedTarget = String(targetLang ?? "").trim().toLowerCase();
+      if (normalizedReturnedTarget !== normalizedRequestedTarget) {
+        console.error("[agent-assist] AA_TRANSLATE_OUTPUT_INVALID", "returned:", p.target_language, "requested:", targetLang);
         return jsonRes({ success: false, error: "translate_parse_failed" }, 502, req);
       }
       return jsonRes(
@@ -303,8 +305,9 @@ Deno.serve(async (req) => {
         console.error("[agent-assist] AA_GRAMMAR_OUTPUT_INVALID");
         return jsonRes({ success: false, error: "grammar_parse_failed" }, 502, req);
       }
-      if (!VALID_TONES.has(String(p.tone_assessment))) {
-        console.error("[agent-assist] AA_GRAMMAR_OUTPUT_INVALID");
+      const normalizedTone = String(p.tone_assessment ?? "").trim().toLowerCase();
+      if (!VALID_TONES.has(normalizedTone)) {
+        console.error("[agent-assist] AA_GRAMMAR_OUTPUT_INVALID", "raw:", p.tone_assessment);
         return jsonRes({ success: false, error: "grammar_parse_failed" }, 502, req);
       }
       return jsonRes(
@@ -314,7 +317,7 @@ Deno.serve(async (req) => {
           result: {
             corrected_text: String(p.corrected_text).slice(0, 2000),
             summary: String(p.summary).slice(0, 300),
-            tone_assessment: String(p.tone_assessment),
+            tone_assessment: normalizedTone,
           },
         },
         200,
