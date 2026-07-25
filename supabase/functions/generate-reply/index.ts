@@ -163,10 +163,7 @@ async function cleanupThinking(
   source_message_id: string | null,
 ): Promise<void> {
   if (!source_message_id) {
-    console.error(
-      "[generate-reply] cleanupThinking skipped: missing source_message_id",
-      conversation_id,
-    );
+    console.error("[generate-reply] cleanupThinking skipped: missing source_message_id", conversation_id);
     return;
   }
   try {
@@ -617,6 +614,14 @@ const KB_FALLBACK_SAFE_TEXT: Record<string, Record<string, string>> = {
   },
 };
 
+// ── S0: LLM failure safe wording (D-5 approved — exact frozen text) ─────
+const S0_LLM_FAILURE_SAFE_TEXT: Record<string, string> = {
+  "zh-TW": "系統暫時無法完成回覆，我已為你轉交客服人員跟進。",
+  "zh-CN": "系统暂时无法完成回复，我已为你转交客服人员跟进。",
+  en: "The system is temporarily unable to complete a response. I\u2019ve handed this conversation to a support agent for follow-up.",
+};
+// ── End S0 safe wording ─────────────────────────────────────────────────
+
 // F-2: Detect visitor language from message content
 function detectVisitorLanguage(text: string): "zh-TW" | "zh-CN" | "en" {
   if (!text) return "zh-TW";
@@ -819,6 +824,177 @@ async function handleKBFallback(
   }
 }
 
+// ── S0: System-failure handoff handler ───────────────────────────────────
+// Routes 6 failure types to s0_handoff_tx RPC.
+// D-2b(i) STRICT:
+//   - NO cleanupThinking before RPC
+//   - cleanupThinking ONLY inside "success" branch
+//   - All non-success branches: ZERO mutation (no cleanup)
+//   - RPC transport error: ZERO mutation (handoff state uncertain)
+//   - Pre-RPC validation failures: ZERO mutation
+// D-5: KB failures use KB_FALLBACK_SAFE_TEXT; LLM failures use S0_LLM_FAILURE_SAFE_TEXT.
+async function handleS0Handoff(
+  supabaseAdmin: ReturnType<typeof createClient>,
+  conversation_id: string,
+  source_message_id: string | null,
+  failure_type: string,
+  visitorLang: "zh-TW" | "zh-CN" | "en",
+): Promise<Response> {
+  // Determine safe reply: KB failures → existing KB text; LLM failures → D-5 text
+  const isKBFailure = failure_type === "KB_SCOPE_GATE" || failure_type === "KB_API_FAIL";
+  let safeReply: string;
+  if (isKBFailure) {
+    const branchTexts = KB_FALLBACK_SAFE_TEXT[failure_type];
+    safeReply = branchTexts?.[visitorLang] ?? branchTexts?.["zh-TW"] ?? "";
+  } else {
+    safeReply = S0_LLM_FAILURE_SAFE_TEXT[visitorLang] ?? S0_LLM_FAILURE_SAFE_TEXT["zh-TW"];
+  }
+
+  if (!safeReply) {
+    // Pre-RPC config failure — ZERO mutation per D-2b(i)
+    console.error(`[generate-reply] S0: no safe reply for failure_type=${failure_type}`, conversation_id);
+    return new Response(JSON.stringify({ success: false, error: "s0_no_safe_reply", failure_type }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  if (!source_message_id) {
+    // Pre-RPC validation failure — ZERO mutation per D-2b(i)
+    console.error(`[generate-reply] S0: missing source_message_id for ${failure_type}`, conversation_id);
+    return new Response(JSON.stringify({ success: false, error: "s0_missing_source_message_id", failure_type }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  // D-2b(i): NO cleanupThinking before RPC
+  const { data: rpcData, error: rpcErr } = await supabaseAdmin.rpc("s0_handoff_tx", {
+    p_conversation_id: conversation_id,
+    p_safe_reply_content: safeReply,
+    p_source_message_id: source_message_id,
+    p_failure_type: failure_type,
+  });
+
+  // D-2b(i): NO shared cleanup here — cleanup ONLY inside "success" branch below
+
+  if (rpcErr) {
+    // RPC transport error — handoff state UNCERTAIN
+    // DB transaction may have committed; client disconnected during response
+    // ZERO mutation: no cleanup, no retry, no fallback
+    console.error(`[generate-reply] S0 RPC transport error [${failure_type}]:`, rpcErr.message, conversation_id);
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: "s0_rpc_transport_error",
+        failure_type,
+        handoff_persisted: false,
+        handoff_uncertain: true,
+      }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+
+  const _s0Result: string = rpcData?.result ?? "unknown";
+  switch (_s0Result) {
+    case "success":
+      // D-2b(i): cleanup ONLY here — RPC confirmed committed
+      await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+      console.log(`[generate-reply] S0 handoff [${failure_type}]:`, conversation_id);
+      return new Response(
+        JSON.stringify({
+          success: true,
+          escalation_rule: "S0",
+          failure_type,
+          handoff_persisted: true,
+          rpc_result: "success",
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    case "already_handled":
+      // Non-success per frozen contract — ZERO cleanup
+      console.log(`[generate-reply] S0 idempotent [${failure_type}]:`, conversation_id);
+      return new Response(
+        JSON.stringify({
+          success: true,
+          escalation_rule: "S0",
+          failure_type,
+          handoff_persisted: true,
+          rpc_result: "already_handled",
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    case "already_resolved":
+      // Non-success — ZERO cleanup
+      console.log(`[generate-reply] S0 skipped resolved [${failure_type}]:`, conversation_id);
+      return new Response(
+        JSON.stringify({
+          success: true,
+          skipped: "resolved",
+          escalation_rule: "S0",
+          failure_type,
+          handoff_persisted: false,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    case "already_under_human_control":
+      // Non-success — ZERO cleanup
+      console.log(`[generate-reply] S0 skipped human_control [${failure_type}]:`, conversation_id);
+      return new Response(
+        JSON.stringify({
+          success: true,
+          skipped: "human_handling",
+          escalation_rule: "S0",
+          failure_type,
+          handoff_persisted: false,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    case "invalid_source_message":
+      // Non-success — ZERO cleanup
+      console.error(`[generate-reply] S0 invalid source [${failure_type}]:`, conversation_id);
+      return new Response(
+        JSON.stringify({ success: false, error: "s0_invalid_source_message", escalation_rule: "S0", failure_type }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    case "invalid_input":
+      // Non-success — ZERO cleanup
+      console.error(`[generate-reply] S0 invalid input [${failure_type}]:`, conversation_id);
+      return new Response(
+        JSON.stringify({ success: false, error: "s0_invalid_input", escalation_rule: "S0", failure_type }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    case "invalid_failure_type":
+      // Non-success — ZERO cleanup
+      console.error(`[generate-reply] S0 invalid failure_type [${failure_type}]:`, conversation_id);
+      return new Response(
+        JSON.stringify({ success: false, error: "s0_invalid_failure_type", escalation_rule: "S0", failure_type }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    case "not_found":
+      // Non-success — ZERO cleanup
+      console.error(`[generate-reply] S0 conversation not found [${failure_type}]:`, conversation_id);
+      return new Response(
+        JSON.stringify({ success: false, error: "s0_conversation_not_found", escalation_rule: "S0", failure_type }),
+        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    default:
+      // Unknown result — ZERO cleanup
+      console.error(`[generate-reply] S0 unknown result [${failure_type}]:`, _s0Result, conversation_id);
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "s0_rpc_unknown_result",
+          escalation_rule: "S0",
+          failure_type,
+          rpc_result: _s0Result,
+        }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+  }
+}
+// ── End S0 handler ───────────────────────────────────────────────────────
+
 async function orchestrationGenerateReply(
   conversation_id: string,
   flags: FlagSet,
@@ -902,10 +1078,7 @@ async function orchestrationGenerateReply(
       if (!source_message_id) {
         // No source_message_id — cannot call RPC safely. Do not fall back to H-1
         // because H-1 would also lack a valid source for cleanupThinking.
-        console.error(
-          "[generate-reply] ESC-MVP R1: missing source_message_id, no fallback:",
-          conversation_id,
-        );
+        console.error("[generate-reply] ESC-MVP R1: missing source_message_id, no fallback:", conversation_id);
         return new Response(
           JSON.stringify({
             success: false,
@@ -920,14 +1093,11 @@ async function orchestrationGenerateReply(
       await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
       const _escSafeWording = SAFE_HANDOFF_WORDING[_escResult.language];
 
-      const { data: _escRpcData, error: _escRpcErr } = await supabaseAdmin.rpc(
-        "explicit_handoff_tx",
-        {
-          p_conversation_id: conversation_id,
-          p_safe_reply_content: _escSafeWording,
-          p_source_message_id: source_message_id,
-        },
-      );
+      const { data: _escRpcData, error: _escRpcErr } = await supabaseAdmin.rpc("explicit_handoff_tx", {
+        p_conversation_id: conversation_id,
+        p_safe_reply_content: _escSafeWording,
+        p_source_message_id: source_message_id,
+      });
 
       if (_escRpcErr) {
         // Transport/network error — outcome uncertain. No H-1 fallback.
@@ -964,8 +1134,12 @@ async function orchestrationGenerateReply(
           );
 
         case "already_handled":
-          console.log("[generate-reply] ESC-MVP R1 idempotent:", conversation_id,
-            "existing:", _escRpcData?.existing_branch);
+          console.log(
+            "[generate-reply] ESC-MVP R1 idempotent:",
+            conversation_id,
+            "existing:",
+            _escRpcData?.existing_branch,
+          );
           return new Response(
             JSON.stringify({
               success: true,
@@ -1064,18 +1238,12 @@ async function orchestrationGenerateReply(
   const _g1GreetingRe =
     /^((hi|hello|hey|你好|嗨|哈囉|早安|午安|晚安|good\s*(morning|afternoon|evening)|thanks|thank you|ok|okay|謝謝|好的|嗯)\s*[!！。.？?，,]*\s*)+$/i;
   // G-1b EN: greeting + space + filler word (there/everyone/guys/all) + optional trailing punct
-  const _g1CompoundEnRe =
-    /^(hi|hello|hey)\s+(there|everyone|guys|all)[!！。.？?，,\s]*$/i;
+  const _g1CompoundEnRe = /^(hi|hello|hey)\s+(there|everyone|guys|all)[!！。.？?，,\s]*$/i;
   // G-1b ZH: greeting + optional punct/space + filler (呀/啊/大家好) + optional trailing punct
   // Uses _g1Raw (not lowercased) since Chinese chars are case-insensitive
-  const _g1CompoundZhRe =
-    /^(你好|嗨|哈囉|早安|午安|晚安)[，,、\s]*(呀|啊|大家好?|各位好?)[!！。.？?\s]*$/;
+  const _g1CompoundZhRe = /^(你好|嗨|哈囉|早安|午安|晚安)[，,、\s]*(呀|啊|大家好?|各位好?)[!！。.？?\s]*$/;
   let _g1SkipKB = false;
-  if (
-    _g1GreetingRe.test(_g1Normalized) ||
-    _g1CompoundEnRe.test(_g1Normalized) ||
-    _g1CompoundZhRe.test(_g1Raw)
-  ) {
+  if (_g1GreetingRe.test(_g1Normalized) || _g1CompoundEnRe.test(_g1Normalized) || _g1CompoundZhRe.test(_g1Raw)) {
     console.log("[generate-reply] G-1 greeting bypass, skipping KB:", conversation_id);
     _g1SkipKB = true;
   }
@@ -1083,6 +1251,11 @@ async function orchestrationGenerateReply(
 
   // F-2: Detect visitor language for KB fallback messages
   const _visitorLang = detectVisitorLanguage(_h1LastMsg);
+
+  // ── S0: Feature flag (absent env = disabled) ───────────────────────────
+  const _escEnableS0 = Deno.env.get("ESC_ENABLE_S0") === "true";
+  // ── End S0 flag ────────────────────────────────────────────────────────
+
   // Step 0: Budget check (orchestration path only).
   // TODO L5e: enforce per-conversation LLM/tool budget; on exceed → handoff.
   //   if (await budgetExceeded(conversation_id)) { return safeRefusal('BUDGET_EXCEEDED'); }
@@ -1182,6 +1355,10 @@ async function orchestrationGenerateReply(
         hasCompanyId: widgetCompanyId !== null && !isNaN(widgetCompanyId),
         hasIndustry: !!widgetIndustry,
       });
+      // S0: route to s0_handoff_tx when enabled; else existing KB fallback
+      if (_escEnableS0) {
+        return await handleS0Handoff(supabaseAdmin, conversation_id, source_message_id, "KB_SCOPE_GATE", _visitorLang);
+      }
       return await handleKBFallback(
         supabaseAdmin,
         conversation_id,
@@ -1217,6 +1394,10 @@ async function orchestrationGenerateReply(
     // — L5 Safety Checks (Demo-only, inline) —
     if (!ragResult || !ragResult.success) {
       console.error("[CRITICAL] KB RAG API failure", { conversation_id, code: "KB_API_FAIL" });
+      // S0: route to s0_handoff_tx when enabled; else existing KB fallback
+      if (_escEnableS0) {
+        return await handleS0Handoff(supabaseAdmin, conversation_id, source_message_id, "KB_API_FAIL", _visitorLang);
+      }
       return await handleKBFallback(
         supabaseAdmin,
         conversation_id,
@@ -1443,9 +1624,23 @@ async function orchestrationGenerateReply(
     clearTimeout(_orchTimeout);
     if (e instanceof DOMException && e.name === "AbortError") {
       console.error("[generate-reply] F-1 orchestration Anthropic timeout:", conversation_id);
+      // S0: route to s0_handoff_tx when enabled
+      if (_escEnableS0) {
+        return await handleS0Handoff(supabaseAdmin, conversation_id, source_message_id, "LLM_TIMEOUT", _visitorLang);
+      }
       await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     } else {
       console.error("[generate-reply] orchestration Anthropic fetch error:", e);
+      // S0: route to s0_handoff_tx when enabled
+      if (_escEnableS0) {
+        return await handleS0Handoff(
+          supabaseAdmin,
+          conversation_id,
+          source_message_id,
+          "LLM_NETWORK_ERROR",
+          _visitorLang,
+        );
+      }
       await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     }
     return new Response(JSON.stringify({ error: "AI service timeout" }), {
@@ -1458,6 +1653,10 @@ async function orchestrationGenerateReply(
   if (!claudeResponse.ok) {
     const errText = await claudeResponse.text();
     console.error("[generate-reply] Claude API error:", claudeResponse.status, errText);
+    // S0: route to s0_handoff_tx when enabled
+    if (_escEnableS0) {
+      return await handleS0Handoff(supabaseAdmin, conversation_id, source_message_id, "LLM_NON_2XX", _visitorLang);
+    }
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return new Response(JSON.stringify({ error: "AI service error" }), {
       status: 500,
@@ -1469,6 +1668,16 @@ async function orchestrationGenerateReply(
   const aiReplyContent = claudeData.content?.[0]?.text ?? "";
 
   if (!aiReplyContent) {
+    // S0: route to s0_handoff_tx when enabled
+    if (_escEnableS0) {
+      return await handleS0Handoff(
+        supabaseAdmin,
+        conversation_id,
+        source_message_id,
+        "LLM_EMPTY_RESPONSE",
+        _visitorLang,
+      );
+    }
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return new Response(JSON.stringify({ error: "Empty AI response" }), {
       status: 500,
