@@ -915,6 +915,15 @@ export type Database = {
         }
         Returns: Json
       }
+      s0_handoff_tx: {
+        Args: {
+          p_conversation_id: string
+          p_failure_type: string
+          p_safe_reply_content: string
+          p_source_message_id: string
+        }
+        Returns: Json
+      }
       safe_add_agent: {
         Args: {
           p_app_role: Database["public"]["Enums"]["app_role"]
