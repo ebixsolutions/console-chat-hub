@@ -48,6 +48,7 @@ Deno.serve(async (req) => {
         role: "agent",
         content,
         status: "delivered",
+        sender_id: agent.id,
         metadata: { agent_id: agent.id, agent_name: agent.display_name },
       })
       .select("id")
