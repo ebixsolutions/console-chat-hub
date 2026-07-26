@@ -140,6 +140,24 @@ export type Database = {
         }
         Relationships: []
       }
+      ce_feature_flags: {
+        Row: {
+          enabled: boolean
+          key: string
+          updated_at: string
+        }
+        Insert: {
+          enabled?: boolean
+          key: string
+          updated_at?: string
+        }
+        Update: {
+          enabled?: boolean
+          key?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       channel_config: {
         Row: {
           allowed_origins: string[] | null
@@ -229,6 +247,205 @@ export type Database = {
             columns: ["conversation_id"]
             isOneToOne: false
             referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      conversation_evaluation: {
+        Row: {
+          accuracy_score: number
+          attempt_id: string
+          context_score: number
+          conversation_id: string
+          created_at: string
+          evaluated_by: string
+          evaluation_contract_version: string
+          hallucination_quality_score: number
+          hallucination_risk_score: number
+          has_verified_human_response: boolean
+          id: string
+          input_snapshot_hash: string
+          kb_snapshot_id: string
+          model_version: string
+          overall_score: number
+          policy_score: number
+          policy_snapshot_id: string
+          prompt_version: string
+          sales_score: number
+          severity: string
+          source_deployment: string
+          tone_score: number
+          training_eligible: boolean
+        }
+        Insert: {
+          accuracy_score: number
+          attempt_id: string
+          context_score: number
+          conversation_id: string
+          created_at?: string
+          evaluated_by: string
+          evaluation_contract_version: string
+          hallucination_quality_score?: number
+          hallucination_risk_score: number
+          has_verified_human_response?: boolean
+          id?: string
+          input_snapshot_hash: string
+          kb_snapshot_id: string
+          model_version: string
+          overall_score: number
+          policy_score: number
+          policy_snapshot_id: string
+          prompt_version: string
+          sales_score: number
+          severity: string
+          source_deployment: string
+          tone_score: number
+          training_eligible?: boolean
+        }
+        Update: {
+          accuracy_score?: number
+          attempt_id?: string
+          context_score?: number
+          conversation_id?: string
+          created_at?: string
+          evaluated_by?: string
+          evaluation_contract_version?: string
+          hallucination_quality_score?: number
+          hallucination_risk_score?: number
+          has_verified_human_response?: boolean
+          id?: string
+          input_snapshot_hash?: string
+          kb_snapshot_id?: string
+          model_version?: string
+          overall_score?: number
+          policy_score?: number
+          policy_snapshot_id?: string
+          prompt_version?: string
+          sales_score?: number
+          severity?: string
+          source_deployment?: string
+          tone_score?: number
+          training_eligible?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "conversation_evaluation_attempt_id_fkey"
+            columns: ["attempt_id"]
+            isOneToOne: true
+            referencedRelation: "conversation_evaluation_attempt"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "conversation_evaluation_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      conversation_evaluation_attempt: {
+        Row: {
+          conversation_id: string
+          created_at: string
+          error_message: string | null
+          evaluation_contract_version: string
+          id: string
+          initiated_by: string
+          input_snapshot_hash: string
+          kb_snapshot_id: string
+          model_version: string
+          pipeline_run_id: string
+          policy_snapshot_id: string
+          prompt_version: string
+          source_deployment: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          conversation_id: string
+          created_at?: string
+          error_message?: string | null
+          evaluation_contract_version?: string
+          id?: string
+          initiated_by: string
+          input_snapshot_hash: string
+          kb_snapshot_id: string
+          model_version: string
+          pipeline_run_id?: string
+          policy_snapshot_id: string
+          prompt_version: string
+          source_deployment: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          conversation_id?: string
+          created_at?: string
+          error_message?: string | null
+          evaluation_contract_version?: string
+          id?: string
+          initiated_by?: string
+          input_snapshot_hash?: string
+          kb_snapshot_id?: string
+          model_version?: string
+          pipeline_run_id?: string
+          policy_snapshot_id?: string
+          prompt_version?: string
+          source_deployment?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "conversation_evaluation_attempt_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      conversation_evaluation_detail: {
+        Row: {
+          created_at: string
+          evaluation_id: string
+          evaluator_type: string
+          id: string
+          justification: string | null
+          raw_llm_response: Json | null
+          raw_score: number
+          weight: number
+          weighted_score: number
+        }
+        Insert: {
+          created_at?: string
+          evaluation_id: string
+          evaluator_type: string
+          id?: string
+          justification?: string | null
+          raw_llm_response?: Json | null
+          raw_score: number
+          weight: number
+          weighted_score: number
+        }
+        Update: {
+          created_at?: string
+          evaluation_id?: string
+          evaluator_type?: string
+          id?: string
+          justification?: string | null
+          raw_llm_response?: Json | null
+          raw_score?: number
+          weight?: number
+          weighted_score?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "conversation_evaluation_detail_evaluation_id_fkey"
+            columns: ["evaluation_id"]
+            isOneToOne: false
+            referencedRelation: "conversation_evaluation"
             referencedColumns: ["id"]
           },
         ]
@@ -324,6 +541,62 @@ export type Database = {
             columns: ["visitor_session_id"]
             isOneToOne: false
             referencedRelation: "visitor_session"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      evaluation_training_outbox: {
+        Row: {
+          created_at: string
+          delivered_at: string | null
+          delivery_attempts: number
+          delivery_idempotency_key: string
+          evaluation_contract_version: string
+          evaluation_id: string
+          id: string
+          last_attempt_at: string | null
+          last_error: string | null
+          max_attempts: number
+          source_app: string
+          source_deployment: string
+          status: string
+        }
+        Insert: {
+          created_at?: string
+          delivered_at?: string | null
+          delivery_attempts?: number
+          delivery_idempotency_key: string
+          evaluation_contract_version: string
+          evaluation_id: string
+          id?: string
+          last_attempt_at?: string | null
+          last_error?: string | null
+          max_attempts?: number
+          source_app?: string
+          source_deployment: string
+          status?: string
+        }
+        Update: {
+          created_at?: string
+          delivered_at?: string | null
+          delivery_attempts?: number
+          delivery_idempotency_key?: string
+          evaluation_contract_version?: string
+          evaluation_id?: string
+          id?: string
+          last_attempt_at?: string | null
+          last_error?: string | null
+          max_attempts?: number
+          source_app?: string
+          source_deployment?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "evaluation_training_outbox_evaluation_id_fkey"
+            columns: ["evaluation_id"]
+            isOneToOne: false
+            referencedRelation: "conversation_evaluation"
             referencedColumns: ["id"]
           },
         ]
@@ -583,6 +856,9 @@ export type Database = {
           is_recalled: boolean | null
           metadata: Json | null
           role: string
+          sender_id: string | null
+          sender_identity_source: string | null
+          sender_identity_verified_at: string | null
           status: string | null
           updated_at: string | null
         }
@@ -595,6 +871,9 @@ export type Database = {
           is_recalled?: boolean | null
           metadata?: Json | null
           role: string
+          sender_id?: string | null
+          sender_identity_source?: string | null
+          sender_identity_verified_at?: string | null
           status?: string | null
           updated_at?: string | null
         }
@@ -607,6 +886,9 @@ export type Database = {
           is_recalled?: boolean | null
           metadata?: Json | null
           role?: string
+          sender_id?: string | null
+          sender_identity_source?: string | null
+          sender_identity_verified_at?: string | null
           status?: string | null
           updated_at?: string | null
         }
@@ -616,6 +898,13 @@ export type Database = {
             columns: ["conversation_id"]
             isOneToOne: false
             referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "messages_sender_id_fkey"
+            columns: ["sender_id"]
+            isOneToOne: false
+            referencedRelation: "agent_profile"
             referencedColumns: ["id"]
           },
         ]
@@ -847,9 +1136,14 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      ce_is_flag_enabled: { Args: { p_key: string }; Returns: boolean }
       check_conv_assignment_invariant: {
         Args: { p_conv_id: string }
         Returns: undefined
+      }
+      complete_evaluation: {
+        Args: { p_attempt_id: string; p_scores: Json }
+        Returns: Json
       }
       explicit_handoff_tx: {
         Args: {
@@ -859,6 +1153,10 @@ export type Database = {
         }
         Returns: Json
       }
+      fail_evaluation: {
+        Args: { p_attempt_id: string; p_error: string }
+        Returns: Json
+      }
       find_auth_user_by_email: { Args: { p_email: string }; Returns: Json }
       has_role: {
         Args: {
@@ -866,6 +1164,20 @@ export type Database = {
           _user_id: string
         }
         Returns: boolean
+      }
+      initiate_evaluation: {
+        Args: {
+          p_contract_version: string
+          p_conversation_id: string
+          p_initiated_by: string
+          p_input_snapshot_hash: string
+          p_kb_snapshot_id: string
+          p_model_version: string
+          p_policy_snapshot_id: string
+          p_prompt_version: string
+          p_source_deployment: string
+        }
+        Returns: Json
       }
       is_staff: { Args: { _user_id: string }; Returns: boolean }
       kb_fallback_handoff_tx: {
@@ -972,9 +1284,13 @@ export type Database = {
         }
         Returns: Json
       }
+      verified_human_response: {
+        Args: { p_conversation_id: string }
+        Returns: boolean
+      }
     }
     Enums: {
-      app_role: "admin" | "supervisor" | "agent"
+      app_role: "admin" | "supervisor" | "agent" | "qa"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1102,7 +1418,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
-      app_role: ["admin", "supervisor", "agent"],
+      app_role: ["admin", "supervisor", "agent", "qa"],
     },
   },
 } as const
