@@ -9,13 +9,13 @@ SELECT 'COLUMN|'||c.relname||'|'||a.attname||'|'||format_type(a.atttypid,a.attty
   LEFT JOIN pg_attrdef d ON d.adrelid=c.oid AND d.adnum=a.attnum
  WHERE n.nspname='public' AND c.relkind IN ('r','v');
 
-SELECT 'RELATION|'||c.relkind||'|'||c.relname||'|rls='||c.relrowsecurity
+SELECT 'RELATION|'||c.relkind::text||'|'||c.relname||'|rls='||c.relrowsecurity
        ||'|acl='||coalesce(array_to_string(c.relacl::text[],','),'-')
        ||'|owner='||pg_get_userbyid(c.relowner)
   FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
  WHERE n.nspname='public' AND c.relkind IN ('r','v','i');
 
-SELECT 'POLICY|'||c.relname||'|'||p.polname||'|'||p.polpermissive||'|'||p.polcmd
+SELECT 'POLICY|'||c.relname||'|'||p.polname||'|'||p.polpermissive||'|'||p.polcmd::text
        ||'|'||coalesce(pg_get_expr(p.polqual,p.polrelid),'-')
        ||'|'||coalesce(pg_get_expr(p.polwithcheck,p.polrelid),'-')
   FROM pg_policy p JOIN pg_class c ON c.oid=p.polrelid
