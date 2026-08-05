@@ -42,8 +42,44 @@ BEGIN
   END IF;
 
   ---------------------------------------------------------------------------
+  -- 0b. Revert exactly the rows this migration seeded (and nothing else).
+  --     Anything else in these tables is user data and makes the rollback
+  --     fail closed in step 1 below.
+  ---------------------------------------------------------------------------
+  FOR r IN
+    SELECT split_part(object_identity, ':', 1) AS obj,
+           split_part(object_identity, ':', 2) AS seed
+      FROM public.ce_migration_provenance
+     WHERE migration_key = v_key AND created_by_migration AND object_type = 'seed'
+  LOOP
+    IF r.obj = 'public.company_member' AND to_regclass(r.obj) IS NOT NULL THEN
+      DELETE FROM public.company_member WHERE company_id = r.seed::uuid;
+    ELSIF r.obj = 'public.company' AND to_regclass(r.obj) IS NOT NULL THEN
+      IF to_regclass('public.upstream_call_log') IS NOT NULL
+         AND EXISTS (SELECT 1 FROM information_schema.columns
+                      WHERE table_schema='public' AND table_name='upstream_call_log'
+                        AND column_name='company_id') THEN
+        UPDATE public.upstream_call_log SET company_id = NULL WHERE company_id = r.seed::uuid;
+      END IF;
+      IF EXISTS (SELECT 1 FROM information_schema.columns
+                  WHERE table_schema='public' AND table_name='conversations'
+                    AND column_name='company_id') THEN
+        UPDATE public.conversations SET company_id = NULL WHERE company_id = r.seed::uuid;
+      END IF;
+      IF EXISTS (SELECT 1 FROM information_schema.columns
+                  WHERE table_schema='public' AND table_name='channel_config'
+                    AND column_name='company_id') THEN
+        UPDATE public.channel_config SET company_id = NULL WHERE company_id = r.seed::uuid;
+      END IF;
+      DELETE FROM public.company_member WHERE company_id = r.seed::uuid;
+      DELETE FROM public.company WHERE id = r.seed::uuid;
+    END IF;
+  END LOOP;
+
+  ---------------------------------------------------------------------------
   -- 1. Fail closed on production-like data in objects this migration created
   ---------------------------------------------------------------------------
+
   FOR r IN
     SELECT object_identity FROM public.ce_migration_provenance
      WHERE migration_key = v_key AND created_by_migration AND object_type = 'table'
