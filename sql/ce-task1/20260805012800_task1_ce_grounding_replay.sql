@@ -619,8 +619,9 @@ ON CONFLICT DO NOTHING;
 --    in the CE surface.
 -- ---------------------------------------------------------------------------
 DROP POLICY IF EXISTS company_staff_read ON public.company;
-
+DROP POLICY IF EXISTS company_member_read ON public.company;
 CREATE POLICY company_member_read ON public.company
+
   FOR SELECT TO authenticated
   USING (public.is_staff(auth.uid()) AND public.ce_is_company_member(auth.uid(), id));
 
