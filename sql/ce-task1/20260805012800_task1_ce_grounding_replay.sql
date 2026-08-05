@@ -281,20 +281,71 @@ GRANT SELECT ON public.ce_grounding_violation TO authenticated;
 GRANT ALL    ON public.ce_grounding_violation TO service_role;
 ALTER TABLE public.ce_grounding_violation ENABLE ROW LEVEL SECURITY;
 
--- Immutability: append-only
+-- Immutability: append-only, except the retention purge path which may only
+-- clear raw payload / raw transcript text. Every audit field is frozen.
 CREATE OR REPLACE FUNCTION public.ce_block_mutation()
 RETURNS trigger LANGUAGE plpgsql SET search_path = '' AS $fn$
 BEGIN
   RAISE EXCEPTION 'CE_IMMUTABLE: % rows cannot be modified', TG_TABLE_NAME;
 END $fn$;
 
+CREATE OR REPLACE FUNCTION public.ce_guard_replay_bundle_immutable()
+RETURNS trigger LANGUAGE plpgsql SET search_path = '' AS $fn$
+BEGIN
+  IF (NEW.id, NEW.evaluation_id, NEW.attempt_id, NEW.conversation_id, NEW.company_id,
+      NEW.workspace_id, NEW.tenant_id, NEW.bundle_version, NEW.evaluated_reply_message_id,
+      NEW.human_response_message_id, NEW.truncation_manifest, NEW.evaluation_contract_version,
+      NEW.model_version, NEW.prompt_version, NEW.kb_snapshot_id, NEW.policy_snapshot_id,
+      NEW.snapshot_hash, NEW.retention_expires_at, NEW.created_at)
+     IS DISTINCT FROM
+     (OLD.id, OLD.evaluation_id, OLD.attempt_id, OLD.conversation_id, OLD.company_id,
+      OLD.workspace_id, OLD.tenant_id, OLD.bundle_version, OLD.evaluated_reply_message_id,
+      OLD.human_response_message_id, OLD.truncation_manifest, OLD.evaluation_contract_version,
+      OLD.model_version, OLD.prompt_version, OLD.kb_snapshot_id, OLD.policy_snapshot_id,
+      OLD.snapshot_hash, OLD.retention_expires_at, OLD.created_at) THEN
+    RAISE EXCEPTION 'CE_IMMUTABLE: ce_replay_bundle audit fields cannot be modified';
+  END IF;
+
+  -- only the purge may touch the remaining columns, and only to clear them
+  IF NEW.purged_at IS NULL
+     OR OLD.purged_at IS NOT NULL
+     OR OLD.retention_expires_at >= now()
+     OR NEW.raw_evaluator_payload IS NOT NULL
+     OR NEW.transcript_redacted <> '[]'::jsonb THEN
+    RAISE EXCEPTION 'CE_IMMUTABLE: ce_replay_bundle rows cannot be modified';
+  END IF;
+  RETURN NEW;
+END $fn$;
+
+CREATE OR REPLACE FUNCTION public.ce_guard_replay_chunk_immutable()
+RETURNS trigger LANGUAGE plpgsql SET search_path = '' AS $fn$
+BEGIN
+  IF (NEW.id, NEW.bundle_id, NEW.chunk_id, NEW.company_id, NEW.workspace_id,
+      NEW.tenant_id, NEW.content_hash, NEW.score, NEW.source_ref, NEW.created_at)
+     IS DISTINCT FROM
+     (OLD.id, OLD.bundle_id, OLD.chunk_id, OLD.company_id, OLD.workspace_id,
+      OLD.tenant_id, OLD.content_hash, OLD.score, OLD.source_ref, OLD.created_at) THEN
+    RAISE EXCEPTION 'CE_IMMUTABLE: ce_replay_chunk audit fields cannot be modified';
+  END IF;
+  IF NEW.chunk_text_redacted <> ''
+     OR NOT EXISTS (SELECT 1 FROM public.ce_replay_bundle b
+                     WHERE b.id = OLD.bundle_id AND b.purged_at IS NOT NULL) THEN
+    RAISE EXCEPTION 'CE_IMMUTABLE: ce_replay_chunk rows cannot be modified';
+  END IF;
+  RETURN NEW;
+END $fn$;
+
 DROP TRIGGER IF EXISTS trg_ce_replay_bundle_immutable ON public.ce_replay_bundle;
 CREATE TRIGGER trg_ce_replay_bundle_immutable BEFORE UPDATE ON public.ce_replay_bundle
+  FOR EACH ROW EXECUTE FUNCTION public.ce_guard_replay_bundle_immutable();
+
+DROP TRIGGER IF EXISTS trg_ce_replay_bundle_no_delete ON public.ce_replay_bundle;
+CREATE TRIGGER trg_ce_replay_bundle_no_delete BEFORE DELETE ON public.ce_replay_bundle
   FOR EACH ROW EXECUTE FUNCTION public.ce_block_mutation();
 
 DROP TRIGGER IF EXISTS trg_ce_replay_chunk_immutable ON public.ce_replay_chunk;
 CREATE TRIGGER trg_ce_replay_chunk_immutable BEFORE UPDATE ON public.ce_replay_chunk
-  FOR EACH ROW EXECUTE FUNCTION public.ce_block_mutation();
+  FOR EACH ROW EXECUTE FUNCTION public.ce_guard_replay_chunk_immutable();
 
 -- Raw evaluator payload lives on ce_replay_bundle, whose SELECT policy is
 -- admin-only. QA/agent read the sanitized view instead.
