@@ -246,12 +246,17 @@ $rb$;
 -- The ledger itself was created by this migration; drop it only when no other
 -- migration still depends on it (exact pre-state restoration).
 DO $rb2$
+DECLARE v_left bigint;
 BEGIN
-  IF to_regclass('public.ce_migration_provenance') IS NOT NULL
-     AND NOT EXISTS (SELECT 1 FROM public.ce_migration_provenance) THEN
-    DROP TABLE public.ce_migration_provenance;
+  -- nested IF: a single IF would plan the subquery even when the table is gone
+  IF to_regclass('public.ce_migration_provenance') IS NOT NULL THEN
+    EXECUTE 'SELECT count(*) FROM public.ce_migration_provenance' INTO v_left;
+    IF v_left = 0 THEN
+      DROP TABLE public.ce_migration_provenance;
+    END IF;
   END IF;
 END
 $rb2$;
+
 
 COMMIT;
