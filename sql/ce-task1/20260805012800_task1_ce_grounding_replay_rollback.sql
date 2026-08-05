@@ -42,6 +42,17 @@ BEGIN
   END IF;
 
   ---------------------------------------------------------------------------
+  -- 0a. Drop the triggers THIS migration created before touching seeded rows,
+  --     so scope-consistency enforcement cannot block its own reversion.
+  ---------------------------------------------------------------------------
+  FOR r IN SELECT object_identity FROM public.ce_migration_provenance
+            WHERE migration_key = v_key AND created_by_migration AND object_type = 'trigger' LOOP
+    IF to_regclass('public.' || split_part(r.object_identity, ':', 1)) IS NULL THEN CONTINUE; END IF;
+    EXECUTE format('DROP TRIGGER IF EXISTS %I ON public.%I',
+                   split_part(r.object_identity, ':', 2), split_part(r.object_identity, ':', 1));
+  END LOOP;
+
+  ---------------------------------------------------------------------------
   -- 0b. Revert exactly the rows this migration seeded (and nothing else).
   --     Anything else in these tables is user data and makes the rollback
   --     fail closed in step 1 below.
@@ -122,12 +133,6 @@ BEGIN
                    split_part(r.object_identity, ':', 1));
   END LOOP;
 
-  FOR r IN SELECT object_identity FROM public.ce_migration_provenance
-            WHERE migration_key = v_key AND created_by_migration AND object_type = 'trigger' LOOP
-    IF to_regclass('public.' || split_part(r.object_identity, ':', 1)) IS NULL THEN CONTINUE; END IF;
-    EXECUTE format('DROP TRIGGER IF EXISTS %I ON public.%I',
-                   split_part(r.object_identity, ':', 2), split_part(r.object_identity, ':', 1));
-  END LOOP;
 
   FOR r IN SELECT object_identity FROM public.ce_migration_provenance
             WHERE migration_key = v_key AND created_by_migration AND object_type = 'view' LOOP
