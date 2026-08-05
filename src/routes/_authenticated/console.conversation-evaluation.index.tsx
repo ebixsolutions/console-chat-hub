@@ -93,7 +93,7 @@ function ConversationEvaluationList() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const allowed = role === "admin" || role === "supervisor" || role === "qa_reviewer";
+  const allowed = role === "admin" || role === "supervisor" || role === "qa";
 
   useEffect(() => {
     if (!allowed) return;
