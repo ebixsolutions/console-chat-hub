@@ -649,44 +649,54 @@ CREATE POLICY ce_grounding_violation_staff_read ON public.ce_grounding_violation
 DROP POLICY IF EXISTS ce_tenant_scope_conversations ON public.conversations;
 CREATE POLICY ce_tenant_scope_conversations AS RESTRICTIVE ON public.conversations
   FOR ALL TO authenticated
-  USING (public.ce_is_company_member(auth.uid(), company_id))
-  WITH CHECK (public.ce_is_company_member(auth.uid(), company_id));
+  USING (NOT public.ce_tenant_enforced()
+         OR public.ce_is_company_member(auth.uid(), company_id))
+  WITH CHECK (NOT public.ce_tenant_enforced()
+         OR public.ce_is_company_member(auth.uid(), company_id));
 
 DROP POLICY IF EXISTS ce_tenant_scope_messages ON public.messages;
 CREATE POLICY ce_tenant_scope_messages AS RESTRICTIVE ON public.messages
   FOR ALL TO authenticated
-  USING (public.ce_is_company_member(auth.uid(),
-          public.ce_conversation_company(conversation_id)))
-  WITH CHECK (public.ce_is_company_member(auth.uid(),
-          public.ce_conversation_company(conversation_id)));
+  USING (NOT public.ce_tenant_enforced()
+         OR public.ce_is_company_member(auth.uid(),
+              public.ce_conversation_company(conversation_id)))
+  WITH CHECK (NOT public.ce_tenant_enforced()
+         OR public.ce_is_company_member(auth.uid(),
+              public.ce_conversation_company(conversation_id)));
 
 DROP POLICY IF EXISTS ce_tenant_scope_evaluation ON public.conversation_evaluation;
 CREATE POLICY ce_tenant_scope_evaluation AS RESTRICTIVE ON public.conversation_evaluation
   FOR ALL TO authenticated
-  USING (public.ce_is_company_member(auth.uid(),
-          public.ce_conversation_company(conversation_id)))
-  WITH CHECK (public.ce_is_company_member(auth.uid(),
-          public.ce_conversation_company(conversation_id)));
+  USING (NOT public.ce_tenant_enforced()
+         OR public.ce_is_company_member(auth.uid(),
+              public.ce_conversation_company(conversation_id)))
+  WITH CHECK (NOT public.ce_tenant_enforced()
+         OR public.ce_is_company_member(auth.uid(),
+              public.ce_conversation_company(conversation_id)));
 
 DROP POLICY IF EXISTS ce_tenant_scope_attempt ON public.conversation_evaluation_attempt;
 CREATE POLICY ce_tenant_scope_attempt AS RESTRICTIVE ON public.conversation_evaluation_attempt
   FOR ALL TO authenticated
-  USING (public.ce_is_company_member(auth.uid(),
-          public.ce_conversation_company(conversation_id)))
-  WITH CHECK (public.ce_is_company_member(auth.uid(),
-          public.ce_conversation_company(conversation_id)));
+  USING (NOT public.ce_tenant_enforced()
+         OR public.ce_is_company_member(auth.uid(),
+              public.ce_conversation_company(conversation_id)))
+  WITH CHECK (NOT public.ce_tenant_enforced()
+         OR public.ce_is_company_member(auth.uid(),
+              public.ce_conversation_company(conversation_id)));
 
 DROP POLICY IF EXISTS ce_tenant_scope_detail ON public.conversation_evaluation_detail;
 CREATE POLICY ce_tenant_scope_detail AS RESTRICTIVE ON public.conversation_evaluation_detail
   FOR ALL TO authenticated
-  USING (EXISTS (SELECT 1 FROM public.conversation_evaluation e
-                  WHERE e.id = evaluation_id
-                    AND public.ce_is_company_member(auth.uid(),
-                          public.ce_conversation_company(e.conversation_id))))
-  WITH CHECK (EXISTS (SELECT 1 FROM public.conversation_evaluation e
-                  WHERE e.id = evaluation_id
-                    AND public.ce_is_company_member(auth.uid(),
-                          public.ce_conversation_company(e.conversation_id))));
+  USING (NOT public.ce_tenant_enforced()
+         OR EXISTS (SELECT 1 FROM public.conversation_evaluation e
+                     WHERE e.id = evaluation_id
+                       AND public.ce_is_company_member(auth.uid(),
+                             public.ce_conversation_company(e.conversation_id))))
+  WITH CHECK (NOT public.ce_tenant_enforced()
+         OR EXISTS (SELECT 1 FROM public.conversation_evaluation e
+                     WHERE e.id = evaluation_id
+                       AND public.ce_is_company_member(auth.uid(),
+                             public.ce_conversation_company(e.conversation_id))));
 
 DROP POLICY IF EXISTS ce_raw_llm_admin_only_detail ON public.conversation_evaluation_detail;
 CREATE POLICY ce_raw_llm_admin_only_detail AS RESTRICTIVE ON public.conversation_evaluation_detail
@@ -697,14 +707,17 @@ CREATE POLICY ce_raw_llm_admin_only_detail AS RESTRICTIVE ON public.conversation
 DROP POLICY IF EXISTS ce_tenant_scope_outbox ON public.evaluation_training_outbox;
 CREATE POLICY ce_tenant_scope_outbox AS RESTRICTIVE ON public.evaluation_training_outbox
   FOR ALL TO authenticated
-  USING (EXISTS (SELECT 1 FROM public.conversation_evaluation e
-                  WHERE e.id = evaluation_id
-                    AND public.ce_is_company_member(auth.uid(),
-                          public.ce_conversation_company(e.conversation_id))))
-  WITH CHECK (EXISTS (SELECT 1 FROM public.conversation_evaluation e
-                  WHERE e.id = evaluation_id
-                    AND public.ce_is_company_member(auth.uid(),
-                          public.ce_conversation_company(e.conversation_id))));
+  USING (NOT public.ce_tenant_enforced()
+         OR EXISTS (SELECT 1 FROM public.conversation_evaluation e
+                     WHERE e.id = evaluation_id
+                       AND public.ce_is_company_member(auth.uid(),
+                             public.ce_conversation_company(e.conversation_id))))
+  WITH CHECK (NOT public.ce_tenant_enforced()
+         OR EXISTS (SELECT 1 FROM public.conversation_evaluation e
+                     WHERE e.id = evaluation_id
+                       AND public.ce_is_company_member(auth.uid(),
+                             public.ce_conversation_company(e.conversation_id))));
+
 
 INSERT INTO public.ce_migration_provenance
   (migration_key, object_type, object_identity, created_by_migration)
