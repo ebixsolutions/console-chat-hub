@@ -17,14 +17,14 @@ FWD="$SQLDIR/20260805012800_task1_ce_grounding_replay.sql"
 RBK="$SQLDIR/20260805012800_task1_ce_grounding_replay_rollback.sql"
 RUN="${CE_HARNESS_DIR:-/tmp/ce-harness}"
 
-# PostgreSQL refuses to run as root: drop to a dedicated unprivileged user.
+# PostgreSQL refuses to run as root: drop to a dedicated unprivileged uid.
 if [ "$(id -u)" = 0 ]; then
-  id -u ceharness >/dev/null 2>&1 || \
-    { command -v useradd >/dev/null && useradd -m -s /bin/bash ceharness; } || \
+  rm -rf "$RUN"; mkdir -p "$RUN"; chown -R 4242:4242 "$RUN"
+  grep -q '^ceharness:' /etc/passwd 2>/dev/null || \
     echo "ceharness:x:4242:4242::$RUN:/bin/bash" >> /etc/passwd
-  rm -rf "$RUN"; mkdir -p "$RUN"; chown -R ceharness "$RUN"
-  exec su ceharness -s /bin/bash -c \
-    "CE_HARNESS_DIR='$RUN' HOME='$RUN' bash '${BASH_SOURCE[0]}'"
+  exec setpriv --reuid=4242 --regid=4242 --clear-groups \
+    env CE_HARNESS_DIR="$RUN" HOME="$RUN" USER=ceharness LOGNAME=ceharness \
+        PATH="$PATH" bash "${BASH_SOURCE[0]}"
 fi
 
 PGDATA="$RUN/pgdata"
