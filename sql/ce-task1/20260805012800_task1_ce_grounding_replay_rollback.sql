@@ -42,11 +42,80 @@ BEGIN
   END IF;
 
   ---------------------------------------------------------------------------
+  -- 0a. Drop the triggers THIS migration created before touching seeded rows,
+  --     so scope-consistency enforcement cannot block its own reversion.
+  ---------------------------------------------------------------------------
+  FOR r IN SELECT object_identity FROM public.ce_migration_provenance
+            WHERE migration_key = v_key AND created_by_migration AND object_type = 'trigger' LOOP
+    IF to_regclass('public.' || split_part(r.object_identity, ':', 1)) IS NULL THEN CONTINUE; END IF;
+    EXECUTE format('DROP TRIGGER IF EXISTS %I ON public.%I',
+                   split_part(r.object_identity, ':', 2), split_part(r.object_identity, ':', 1));
+  END LOOP;
+
+  ---------------------------------------------------------------------------
   -- 1. Fail closed on production-like data in objects this migration created
+  ---------------------------------------------------------------------------
+
+  FOR r IN
+    SELECT object_identity FROM public.ce_migration_provenance
+     WHERE migration_key = v_key AND created_by_migration AND object_type = 'table'
+  LOOP
+    IF to_regclass(r.object_identity) IS NULL THEN CONTINUE; END IF;
+    -- tenant-root tables are seeded BY this migration; they are re-checked in
+    -- step 1c after the seeded rows have been reverted.
+    IF r.object_identity IN ('public.company', 'public.company_member') THEN
+      CONTINUE;
+    END IF;
+    EXECUTE format('SELECT count(*) FROM %s', r.object_identity) INTO v_rows;
+    IF v_rows > 0 THEN
+      RAISE EXCEPTION 'CE_ROLLBACK_BLOCKED: % holds % row(s); refusing destructive rollback',
+        r.object_identity, v_rows;
+    END IF;
+  END LOOP;
+
+  ---------------------------------------------------------------------------
+  -- 1b. Revert exactly the rows this migration seeded (and nothing else).
+  --     Anything else in these tables is user data and makes the rollback
+  --     fail closed in step 1 below.
+  ---------------------------------------------------------------------------
+  FOR r IN
+    SELECT split_part(object_identity, ':', 1) AS obj,
+           split_part(object_identity, ':', 2) AS seed
+      FROM public.ce_migration_provenance
+     WHERE migration_key = v_key AND created_by_migration AND object_type = 'seed'
+  LOOP
+    IF r.obj = 'public.company_member' AND to_regclass(r.obj) IS NOT NULL THEN
+      DELETE FROM public.company_member WHERE company_id = r.seed::uuid;
+    ELSIF r.obj = 'public.company' AND to_regclass(r.obj) IS NOT NULL THEN
+      IF to_regclass('public.upstream_call_log') IS NOT NULL
+         AND EXISTS (SELECT 1 FROM information_schema.columns
+                      WHERE table_schema='public' AND table_name='upstream_call_log'
+                        AND column_name='company_id') THEN
+        UPDATE public.upstream_call_log SET company_id = NULL WHERE company_id = r.seed::uuid;
+      END IF;
+      IF EXISTS (SELECT 1 FROM information_schema.columns
+                  WHERE table_schema='public' AND table_name='conversations'
+                    AND column_name='company_id') THEN
+        UPDATE public.conversations SET company_id = NULL WHERE company_id = r.seed::uuid;
+      END IF;
+      IF EXISTS (SELECT 1 FROM information_schema.columns
+                  WHERE table_schema='public' AND table_name='channel_config'
+                    AND column_name='company_id') THEN
+        UPDATE public.channel_config SET company_id = NULL WHERE company_id = r.seed::uuid;
+      END IF;
+      DELETE FROM public.company_member WHERE company_id = r.seed::uuid;
+      DELETE FROM public.company WHERE id = r.seed::uuid;
+    END IF;
+  END LOOP;
+
+  ---------------------------------------------------------------------------
+  -- 1c. Tenant-root tables must now hold ONLY pre-existing/user rows: any row
+  --     left after seed reversion is user data and blocks the rollback.
   ---------------------------------------------------------------------------
   FOR r IN
     SELECT object_identity FROM public.ce_migration_provenance
      WHERE migration_key = v_key AND created_by_migration AND object_type = 'table'
+       AND object_identity IN ('public.company', 'public.company_member')
   LOOP
     IF to_regclass(r.object_identity) IS NULL THEN CONTINUE; END IF;
     EXECUTE format('SELECT count(*) FROM %s', r.object_identity) INTO v_rows;
@@ -86,12 +155,6 @@ BEGIN
                    split_part(r.object_identity, ':', 1));
   END LOOP;
 
-  FOR r IN SELECT object_identity FROM public.ce_migration_provenance
-            WHERE migration_key = v_key AND created_by_migration AND object_type = 'trigger' LOOP
-    IF to_regclass('public.' || split_part(r.object_identity, ':', 1)) IS NULL THEN CONTINUE; END IF;
-    EXECUTE format('DROP TRIGGER IF EXISTS %I ON public.%I',
-                   split_part(r.object_identity, ':', 2), split_part(r.object_identity, ':', 1));
-  END LOOP;
 
   FOR r IN SELECT object_identity FROM public.ce_migration_provenance
             WHERE migration_key = v_key AND created_by_migration AND object_type = 'view' LOOP
@@ -205,12 +268,17 @@ $rb$;
 -- The ledger itself was created by this migration; drop it only when no other
 -- migration still depends on it (exact pre-state restoration).
 DO $rb2$
+DECLARE v_left bigint;
 BEGIN
-  IF to_regclass('public.ce_migration_provenance') IS NOT NULL
-     AND NOT EXISTS (SELECT 1 FROM public.ce_migration_provenance) THEN
-    DROP TABLE public.ce_migration_provenance;
+  -- nested IF: a single IF would plan the subquery even when the table is gone
+  IF to_regclass('public.ce_migration_provenance') IS NOT NULL THEN
+    EXECUTE 'SELECT count(*) FROM public.ce_migration_provenance' INTO v_left;
+    IF v_left = 0 THEN
+      DROP TABLE public.ce_migration_provenance;
+    END IF;
   END IF;
 END
 $rb2$;
+
 
 COMMIT;
