@@ -272,7 +272,7 @@ function ConversationEvaluationContent({
               .from("conversations")
               .select("id, company_id, status, priority, channel_config_id, tags, created_at, updated_at, resolved_at")
               .eq("channel_config_id", channel)
-          ).data?.map((c) => c.id) ?? [],
+          ).data?.map((c: { id: string }) => c.id) ?? [],
         );
         list = list.filter((r) => ids.has(r.conversation_id));
       }
