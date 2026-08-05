@@ -19,7 +19,9 @@ RUN="${CE_HARNESS_DIR:-/tmp/ce-harness}"
 
 # PostgreSQL refuses to run as root: drop to a dedicated unprivileged user.
 if [ "$(id -u)" = 0 ]; then
-  id -u ceharness >/dev/null 2>&1 || useradd -m -s /bin/bash ceharness
+  id -u ceharness >/dev/null 2>&1 || \
+    { command -v useradd >/dev/null && useradd -m -s /bin/bash ceharness; } || \
+    echo "ceharness:x:4242:4242::$RUN:/bin/bash" >> /etc/passwd
   rm -rf "$RUN"; mkdir -p "$RUN"; chown -R ceharness "$RUN"
   exec su ceharness -s /bin/bash -c \
     "CE_HARNESS_DIR='$RUN' HOME='$RUN' bash '${BASH_SOURCE[0]}'"
