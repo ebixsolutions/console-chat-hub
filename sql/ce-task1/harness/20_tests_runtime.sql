@@ -19,9 +19,9 @@ INSERT INTO public.conversations (id, channel_config_id, company_id, status) VAL
   ('c3000000-0000-4000-8000-0000000000b1','c1000000-0000-4000-8000-0000000000b1',
    '0e51e0c0-0000-4000-8000-ce00000000b1','open');
 INSERT INTO public.messages (conversation_id, role, content) VALUES
-  ('c3000000-0000-4000-8000-0000000000b1','visitor','Tenant B question');
+  ('c3000000-0000-4000-8000-0000000000b1','visitor','Tenant v_conv_b question');
 
--- admin_b belongs to tenant B only (the migration backfill enrolls every
+-- admin_b belongs to tenant v_conv_b only (the migration backfill enrolls every
 -- existing staff user into the provisioned default company; a real second
 -- tenant is separated by removing that default membership).
 DELETE FROM public.company_member
@@ -36,8 +36,8 @@ UPDATE public.ce_feature_flags SET enabled = true
 -- ---------------------------------------------------------------------------
 DO $t$
 DECLARE
-  A uuid := 'c3000000-0000-4000-8000-00000000000a';
-  B uuid := 'c3000000-0000-4000-8000-0000000000b1';
+  v_conv_a uuid := 'c3000000-0000-4000-8000-00000000000a';
+  v_conv_b uuid := 'c3000000-0000-4000-8000-0000000000b1';
   ADMIN_A text := '11111111-1111-4111-8111-111111111111';
   QA_A    text := '22222222-2222-4222-8222-222222222222';
   AGENT_A text := '33333333-3333-4333-8333-333333333333';
@@ -50,7 +50,7 @@ BEGIN
   SET LOCAL ROLE authenticated;
   SELECT count(*) INTO n FROM public.conversations;
   IF n <> 1 THEN RAISE EXCEPTION 'S4: admin_a should see exactly its own tenant conversation, saw %', n; END IF;
-  SELECT count(*) INTO n FROM public.conversations WHERE id = B;
+  SELECT count(*) INTO n FROM public.conversations WHERE id = v_conv_b;
   IF n <> 0 THEN RAISE EXCEPTION 'S4: admin_a saw cross-tenant conversation'; END IF;
   RESET ROLE;
   RAISE NOTICE 'CE_TEST_OK S4 admin_a scoped to own tenant';
@@ -59,8 +59,8 @@ BEGIN
   SET LOCAL ROLE authenticated;
   SELECT count(*) INTO n FROM public.conversations;
   IF n <> 1 THEN RAISE EXCEPTION 'S4: admin_b visibility wrong: %', n; END IF;
-  SELECT count(*) INTO n FROM public.conversations WHERE id = A;
-  IF n <> 0 THEN RAISE EXCEPTION 'S4: admin_b saw tenant A conversation'; END IF;
+  SELECT count(*) INTO n FROM public.conversations WHERE id = v_conv_a;
+  IF n <> 0 THEN RAISE EXCEPTION 'S4: admin_b saw tenant v_conv_a conversation'; END IF;
   SELECT count(*) INTO n FROM public.messages;
   IF n <> 1 THEN RAISE EXCEPTION 'S4: admin_b message visibility wrong: %', n; END IF;
   RESET ROLE;
@@ -76,12 +76,12 @@ BEGIN
   ---------------------------------------------------- S4b cross-tenant writes
   PERFORM set_config('request.jwt.claim.sub', ADMIN_B, true);
   SET LOCAL ROLE authenticated;
-  UPDATE public.conversations SET status = 'tampered' WHERE id = A;
+  UPDATE public.conversations SET status = 'tampered' WHERE id = v_conv_a;
   GET DIAGNOSTICS n = ROW_COUNT;
   IF n <> 0 THEN RAISE EXCEPTION 'S4b: cross-tenant UPDATE affected % row(s)', n; END IF;
   BEGIN
     INSERT INTO public.messages (conversation_id, role, content)
-    VALUES (A, 'agent', 'cross tenant injection');
+    VALUES (v_conv_a, 'agent', 'cross tenant injection');
     RAISE EXCEPTION 'S4b: cross-tenant INSERT was allowed';
   EXCEPTION WHEN insufficient_privilege THEN NULL;
   END;
@@ -92,7 +92,7 @@ BEGIN
   PERFORM set_config('request.jwt.claim.sub', ADMIN_B, true);
   SET LOCAL ROLE authenticated;
   BEGIN
-    PERFORM public.ce_assert_scope(A, 'qa');
+    PERFORM public.ce_assert_scope(v_conv_a, 'qa');
     RAISE EXCEPTION 'S5: cross-tenant ce_assert_scope succeeded';
   EXCEPTION WHEN raise_exception THEN
     IF SQLERRM NOT LIKE '%CE_CROSS_TENANT_DENIED%' THEN RAISE; END IF;
@@ -103,7 +103,7 @@ BEGIN
   PERFORM set_config('request.jwt.claim.sub', AGENT_A, true);
   SET LOCAL ROLE authenticated;
   BEGIN
-    PERFORM public.ce_assert_scope(A, 'qa');
+    PERFORM public.ce_assert_scope(v_conv_a, 'qa');
     RAISE EXCEPTION 'S5: agent passed the qa gate';
   EXCEPTION WHEN raise_exception THEN
     IF SQLERRM NOT LIKE '%CE_FORBIDDEN%' THEN RAISE; END IF;
@@ -113,7 +113,7 @@ BEGIN
 
   PERFORM set_config('request.jwt.claim.sub', QA_A, true);
   SET LOCAL ROLE authenticated;
-  IF public.ce_assert_scope(A, 'qa') IS NULL THEN RAISE EXCEPTION 'S5: qa denied own tenant'; END IF;
+  IF public.ce_assert_scope(v_conv_a, 'qa') IS NULL THEN RAISE EXCEPTION 'S5: qa denied own tenant'; END IF;
   RESET ROLE;
   RAISE NOTICE 'CE_TEST_OK S5 qa role accepted for own tenant';
 END $t$;
@@ -164,7 +164,7 @@ END $t$;
 -- ------------------------------------- S7 canonical initiate/complete pipeline
 DO $t$
 DECLARE
-  A uuid := 'c3000000-0000-4000-8000-00000000000a';
+  v_conv_a uuid := 'c3000000-0000-4000-8000-00000000000a';
   QA_A text := '22222222-2222-4222-8222-222222222222';
   h text := 'snap-hash-aaa';
   r1 jsonb; r2 jsonb; att uuid; ev uuid; e record;
@@ -172,8 +172,8 @@ BEGIN
   PERFORM set_config('request.jwt.claim.sub', QA_A, true);
   SET LOCAL ROLE authenticated;
 
-  r1 := public.ce_initiate_evaluation(A,'v1','kb-1','pol-1','model-1','prompt-1',h,'harness');
-  r2 := public.ce_initiate_evaluation(A,'v1','kb-1','pol-1','model-1','prompt-1',h,'harness');
+  r1 := public.ce_initiate_evaluation(v_conv_a,'v1','kb-1','pol-1','model-1','prompt-1',h,'harness');
+  r2 := public.ce_initiate_evaluation(v_conv_a,'v1','kb-1','pol-1','model-1','prompt-1',h,'harness');
   IF r1->>'attempt_id' <> r2->>'attempt_id' THEN RAISE EXCEPTION 'S7: initiate not idempotent'; END IF;
   att := (r1->>'attempt_id')::uuid;
   RAISE NOTICE 'CE_TEST_OK S7 initiate_evaluation idempotent + concurrency locked';
@@ -253,8 +253,8 @@ END $t$;
 -- ------------------------------------------- S9 replay bundle + grounding
 DO $t$
 DECLARE
-  A uuid := 'c3000000-0000-4000-8000-00000000000a';
-  SEED uuid := '0e51e0c0-0000-4000-8000-ce0000000001';
+  v_conv_a uuid := 'c3000000-0000-4000-8000-00000000000a';
+  v_seed uuid := '0e51e0c0-0000-4000-8000-ce0000000001';
   ADMIN_A text := '11111111-1111-4111-8111-111111111111';
   QA_A    text := '22222222-2222-4222-8222-222222222222';
   ADMIN_B text := '44444444-4444-4444-8444-444444444444';
@@ -263,14 +263,14 @@ BEGIN
   SELECT a.id, e.id INTO att, ev
     FROM public.conversation_evaluation_attempt a
     JOIN public.conversation_evaluation e ON e.attempt_id = a.id
-   WHERE a.conversation_id = A LIMIT 1;
+   WHERE a.conversation_id = v_conv_a LIMIT 1;
 
   INSERT INTO public.ce_replay_bundle (
     evaluation_id, attempt_id, conversation_id, company_id, workspace_id, tenant_id,
     transcript_redacted, evaluated_reply_message_id, human_response_message_id,
     evaluation_contract_version, model_version, prompt_version,
     kb_snapshot_id, policy_snapshot_id, snapshot_hash, raw_evaluator_payload)
-  VALUES (ev, att, A, SEED, SEED, SEED,
+  VALUES (ev, att, v_conv_a, v_seed, v_seed, v_seed,
     jsonb_build_array(
       jsonb_build_object('role','visitor','content','Do you ship to Taiwan and what is the refund window?'),
       jsonb_build_object('role','assistant','content','We ship worldwide and refunds are always unlimited.'),
@@ -282,8 +282,8 @@ BEGIN
 
   INSERT INTO public.ce_replay_chunk (bundle_id, chunk_id, company_id, workspace_id, tenant_id,
                                       content_hash, chunk_text_redacted, score, source_ref)
-  VALUES (b,'kb-chunk-1',SEED,SEED,SEED,'h1','Refunds accepted within 30 days of delivery.',0.9210,'policy/refunds#1'),
-         (b,'kb-chunk-2',SEED,SEED,SEED,'h2','International shipping available to Taiwan.',0.8734,'policy/shipping#3');
+  VALUES (b,'kb-chunk-1',v_seed,v_seed,v_seed,'h1','Refunds accepted within 30 days of delivery.',0.9210,'policy/refunds#1'),
+         (b,'kb-chunk-2',v_seed,v_seed,v_seed,'h2','International shipping available to Taiwan.',0.8734,'policy/shipping#3');
 
   -- qa: sanitized replay with real transcript + grounding, no raw payload
   PERFORM set_config('request.jwt.claim.sub', QA_A, true);
@@ -346,14 +346,14 @@ END $t$;
 -- ------------------------------------------------------- S10 retention purge
 DO $t$
 DECLARE
-  A uuid := 'c3000000-0000-4000-8000-00000000000a';
-  SEED uuid := '0e51e0c0-0000-4000-8000-ce0000000001';
+  v_conv_a uuid := 'c3000000-0000-4000-8000-00000000000a';
+  v_seed uuid := '0e51e0c0-0000-4000-8000-ce0000000001';
   att uuid; b uuid; n integer; rec record;
 BEGIN
   INSERT INTO public.conversation_evaluation_attempt (
     conversation_id, input_snapshot_hash, initiated_by, kb_snapshot_id, policy_snapshot_id,
     model_version, prompt_version, source_deployment)
-  VALUES (A,'snap-expired','11111111-1111-4111-8111-111111111111','kb-1','pol-1',
+  VALUES (v_conv_a,'snap-expired','11111111-1111-4111-8111-111111111111','kb-1','pol-1',
           'model-1','prompt-1','harness')
   RETURNING id INTO att;
 
@@ -362,13 +362,13 @@ BEGIN
     evaluation_contract_version, model_version, prompt_version,
     kb_snapshot_id, policy_snapshot_id, snapshot_hash,
     raw_evaluator_payload, retention_expires_at)
-  VALUES (att, A, SEED,
+  VALUES (att, v_conv_a, v_seed,
     jsonb_build_array(jsonb_build_object('role','visitor','content','PII: john@example.test')),
     'v1','model-1','prompt-1','kb-1','pol-1','snap-expired',
     jsonb_build_object('provider_raw','expired'), now() - interval '1 day')
   RETURNING id INTO b;
   INSERT INTO public.ce_replay_chunk (bundle_id, chunk_id, company_id, content_hash, chunk_text_redacted)
-  VALUES (b,'kb-chunk-9',SEED,'h9','raw chunk text with PII');
+  VALUES (b,'kb-chunk-9',v_seed,'h9','raw chunk text with PII');
 
   SELECT public.ce_purge_expired_replays() INTO n;
   IF n < 1 THEN RAISE EXCEPTION 'S10: purge did not process the expired bundle'; END IF;
