@@ -53,7 +53,23 @@ BEGIN
   END LOOP;
 
   ---------------------------------------------------------------------------
-  -- 0b. Revert exactly the rows this migration seeded (and nothing else).
+  -- 1. Fail closed on production-like data in objects this migration created
+  ---------------------------------------------------------------------------
+
+  FOR r IN
+    SELECT object_identity FROM public.ce_migration_provenance
+     WHERE migration_key = v_key AND created_by_migration AND object_type = 'table'
+  LOOP
+    IF to_regclass(r.object_identity) IS NULL THEN CONTINUE; END IF;
+    EXECUTE format('SELECT count(*) FROM %s', r.object_identity) INTO v_rows;
+    IF v_rows > 0 THEN
+      RAISE EXCEPTION 'CE_ROLLBACK_BLOCKED: % holds % row(s); refusing destructive rollback',
+        r.object_identity, v_rows;
+    END IF;
+  END LOOP;
+
+  ---------------------------------------------------------------------------
+  -- 1b. Revert exactly the rows this migration seeded (and nothing else).
   --     Anything else in these tables is user data and makes the rollback
   --     fail closed in step 1 below.
   ---------------------------------------------------------------------------
@@ -84,22 +100,6 @@ BEGIN
       END IF;
       DELETE FROM public.company_member WHERE company_id = r.seed::uuid;
       DELETE FROM public.company WHERE id = r.seed::uuid;
-    END IF;
-  END LOOP;
-
-  ---------------------------------------------------------------------------
-  -- 1. Fail closed on production-like data in objects this migration created
-  ---------------------------------------------------------------------------
-
-  FOR r IN
-    SELECT object_identity FROM public.ce_migration_provenance
-     WHERE migration_key = v_key AND created_by_migration AND object_type = 'table'
-  LOOP
-    IF to_regclass(r.object_identity) IS NULL THEN CONTINUE; END IF;
-    EXECUTE format('SELECT count(*) FROM %s', r.object_identity) INTO v_rows;
-    IF v_rows > 0 THEN
-      RAISE EXCEPTION 'CE_ROLLBACK_BLOCKED: % holds % row(s); refusing destructive rollback',
-        r.object_identity, v_rows;
     END IF;
   END LOOP;
 
