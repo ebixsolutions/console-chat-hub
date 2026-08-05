@@ -34,6 +34,8 @@ const translations: Record<string, Record<string, string>> = {
     navWidgetPreview: "Widget Preview",
     navFeedbackResponses: "Feedback Responses",
     navKbHelper: "Knowledge Helper",
+    navConversationEvaluation: "Conversation Evaluation",
+    groupEvaluation: "CONVERSATION EVALUATION",
   },
   zh: {
     appName: "AI 智能客服",
@@ -50,6 +52,8 @@ const translations: Record<string, Record<string, string>> = {
     navWidgetPreview: "Widget 預覽",
     navFeedbackResponses: "客戶回饋",
     navKbHelper: "知識庫搜尋",
+    navConversationEvaluation: "對話評估",
+    groupEvaluation: "對話評估",
   },
 };
 
@@ -107,6 +111,11 @@ const pageMeta: Record<string, { zh: string; en: string; sub?: { zh: string; en:
     en: "Conversations",
     sub: { zh: "所有對話記錄", en: "All conversation records" },
   },
+  "/console/conversation-evaluation": {
+    zh: "對話評估",
+    en: "Conversation Evaluation",
+    sub: { zh: "AI 對話評分、覆核與訓練狀態", en: "AI conversation scoring, review & training state" },
+  },
   "/console/kb-gaps": {
     zh: "知識庫搜尋",
     en: "Knowledge Helper",
@@ -128,6 +137,13 @@ const GROUPS = [
       { path: "/console/feedback-settings", icon: "⭐", navKey: "navFeedbackSettings" },
       { path: "/console/feedback-responses", icon: "📋", navKey: "navFeedbackResponses" },
     ],
+  },
+  {
+    key: "evaluation",
+    labelKey: "groupEvaluation",
+    color: "#7c3aed",
+    bgColor: "#ede9fe",
+    items: [{ path: "/console/conversation-evaluation", icon: "🧪", navKey: "navConversationEvaluation" }],
   },
   {
     key: "operations",
@@ -160,6 +176,7 @@ const GROUP_BADGE: Record<string, { label: string; bg: string; color: string }> 
   "/console/feedback-responses": { label: "LIVE INBOX", bg: "#fee2e2", color: "#dc2626" },
   "/console/settings/llm-runtime": { label: "SETTINGS", bg: "#ede9fe", color: "#6d28d9" },
   "/console/widget-preview": { label: "WIDGET", bg: "#f0fdf4", color: "#16a34a" },
+  "/console/conversation-evaluation": { label: "CONVERSATION EVALUATION", bg: "#ede9fe", color: "#6d28d9" },
   "/console/kb-gaps": { label: "KNOWLEDGE", bg: "#ede9fe", color: "#6d28d9" },
   "/console/customer360": { label: "ANALYTICS", bg: "#dbeafe", color: "#2563eb" },
 };
