@@ -224,28 +224,6 @@ function ConversationEvaluationContent({
     if (from) q = q.gte("created_at", new Date(from).toISOString());
     if (to) q = q.lte("created_at", new Date(`${to}T23:59:59.999Z`).toISOString());
 
-    // Training Ready vs Trained: post-filter using outbox and training link state
-    if (view === "trained" || view === "trainingReady") {
-      const evalIds = (data ?? []).map((r: { id: string }) => r.id);
-      if (evalIds.length > 0) {
-        const { data: outboxRows } = await ceClient.from("evaluation_training_outbox")
-          .select("evaluation_id, status").in("evaluation_id", evalIds);
-        const { data: linkRows } = await ceClient.from("ce_training_link")
-          .select("evaluation_id, improved_state").in("evaluation_id", evalIds)
-          .eq("link_kind", "training_candidate");
-        const delivered = new Set(
-          (outboxRows ?? []).filter((o: { status: string }) => o.status === "delivered").map((o: { evaluation_id: string }) => o.evaluation_id),
-        );
-        const improved = new Set(
-          (linkRows ?? []).filter((l: { improved_state: string }) => l.improved_state === "received").map((l: { evaluation_id: string }) => l.evaluation_id),
-        );
-        if (view === "trained") {
-          list = list.filter((r) => delivered.has(r.id) || improved.has(r.id));
-        } else {
-          list = list.filter((r) => !delivered.has(r.id) && !improved.has(r.id));
-        }
-      }
-    }
 
     const term = search.trim();
     if (UUID_RE.test(term)) q = q.or(`id.eq.${term},conversation_id.eq.${term}`);
@@ -257,6 +235,35 @@ function ConversationEvaluationContent({
       setTotal(0);
     } else {
       let list = (data ?? []) as ConversationEvaluationRow[];
+      // Training Ready vs Trained: post-filter using outbox and training link state
+      if (view === "trained" || view === "trainingReady") {
+        const evalIds = list.map((r) => r.id);
+        if (evalIds.length > 0) {
+          const { data: outboxRows } = await ceClient
+            .from("evaluation_training_outbox")
+            .select("evaluation_id, status")
+            .in("evaluation_id", evalIds);
+          const { data: linkRows } = await ceClient
+            .from("ce_training_link")
+            .select("evaluation_id, improved_state")
+            .in("evaluation_id", evalIds)
+            .eq("link_kind", "training_candidate");
+          const delivered = new Set(
+            (outboxRows ?? [])
+              .filter((o: { status: string }) => o.status === "delivered")
+              .map((o: { evaluation_id: string }) => o.evaluation_id),
+          );
+          const improved = new Set(
+            (linkRows ?? [])
+              .filter((l: { improved_state: string }) => l.improved_state === "received")
+              .map((l: { evaluation_id: string }) => l.evaluation_id),
+          );
+          list =
+            view === "trained"
+              ? list.filter((r) => delivered.has(r.id) || improved.has(r.id))
+              : list.filter((r) => !delivered.has(r.id) && !improved.has(r.id));
+        }
+      }
       // channel lives on the conversation, so it is applied after the page loads
       if (channel !== "any") {
         const ids = new Set(
