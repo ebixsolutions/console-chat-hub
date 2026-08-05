@@ -61,6 +61,11 @@ BEGIN
      WHERE migration_key = v_key AND created_by_migration AND object_type = 'table'
   LOOP
     IF to_regclass(r.object_identity) IS NULL THEN CONTINUE; END IF;
+    -- tenant-root tables are seeded BY this migration; they are re-checked in
+    -- step 1c after the seeded rows have been reverted.
+    IF r.object_identity IN ('public.company', 'public.company_member') THEN
+      CONTINUE;
+    END IF;
     EXECUTE format('SELECT count(*) FROM %s', r.object_identity) INTO v_rows;
     IF v_rows > 0 THEN
       RAISE EXCEPTION 'CE_ROLLBACK_BLOCKED: % holds % row(s); refusing destructive rollback',
@@ -100,6 +105,23 @@ BEGIN
       END IF;
       DELETE FROM public.company_member WHERE company_id = r.seed::uuid;
       DELETE FROM public.company WHERE id = r.seed::uuid;
+    END IF;
+  END LOOP;
+
+  ---------------------------------------------------------------------------
+  -- 1c. Tenant-root tables must now hold ONLY pre-existing/user rows: any row
+  --     left after seed reversion is user data and blocks the rollback.
+  ---------------------------------------------------------------------------
+  FOR r IN
+    SELECT object_identity FROM public.ce_migration_provenance
+     WHERE migration_key = v_key AND created_by_migration AND object_type = 'table'
+       AND object_identity IN ('public.company', 'public.company_member')
+  LOOP
+    IF to_regclass(r.object_identity) IS NULL THEN CONTINUE; END IF;
+    EXECUTE format('SELECT count(*) FROM %s', r.object_identity) INTO v_rows;
+    IF v_rows > 0 THEN
+      RAISE EXCEPTION 'CE_ROLLBACK_BLOCKED: % holds % row(s); refusing destructive rollback',
+        r.object_identity, v_rows;
     END IF;
   END LOOP;
 
