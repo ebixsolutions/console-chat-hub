@@ -23,7 +23,7 @@ export const Route = createFileRoute("/_authenticated/console/conversation-evalu
       { name: "twitter:card", content: "summary" },
     ],
   }),
-  component: EvaluationDetail;
+  component: EvaluationDetail,
 });
 
 const TABS = ["overview", "evaluation", "emotion", "next_steps", "replay"] as const;
