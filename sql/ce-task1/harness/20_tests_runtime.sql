@@ -21,6 +21,15 @@ INSERT INTO public.conversations (id, channel_config_id, company_id, status) VAL
 INSERT INTO public.messages (conversation_id, role, content) VALUES
   ('c3000000-0000-4000-8000-0000000000b1','visitor','Tenant B question');
 
+-- admin_b belongs to tenant B only (the migration backfill enrolls every
+-- existing staff user into the provisioned default company; a real second
+-- tenant is separated by removing that default membership).
+DELETE FROM public.company_member
+ WHERE user_id = '44444444-4444-4444-8444-444444444444'
+   AND company_id = '0e51e0c0-0000-4000-8000-ce0000000001';
+DELETE FROM public.company_member
+ WHERE user_id = '55555555-5555-4555-8555-555555555555';
+
 UPDATE public.ce_feature_flags SET enabled = true
  WHERE key = 'ce_grounding_fail_closed_enabled';
 
@@ -35,8 +44,6 @@ DECLARE
   ADMIN_B text := '44444444-4444-4444-8444-444444444444';
   QA_NONE text := '55555555-5555-4555-8555-555555555555';
   n integer; ok boolean; msg text;
-
-  PROCEDURE_PLACEHOLDER int;
 BEGIN
   ---------------------------------------------------------------- S4 matrix
   PERFORM set_config('request.jwt.claim.sub', ADMIN_A, true);
