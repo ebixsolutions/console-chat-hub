@@ -79,15 +79,15 @@ async function transcriptHash(messages: MessageRow[]): Promise<string | null> {
   if (!globalThis.crypto?.subtle) return null;
   const digest = async (s: string) => {
     const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
-    return Array.from(new Uint8Array(d)).map((b) => b.toString(16).padStart(2, "0")).join("");
+    return Array.from(new Uint8Array(d))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
   };
   const kept = messages
     .filter((m) => !m.is_recalled && m.content !== THINKING_SENTINEL)
     .slice()
     .sort((a, b) =>
-      a.created_at !== b.created_at
-        ? a.created_at < b.created_at ? -1 : 1
-        : a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
+      a.created_at !== b.created_at ? (a.created_at < b.created_at ? -1 : 1) : a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
     );
   const lines: string[] = [];
   for (const m of kept) {
@@ -134,9 +134,9 @@ function useErrorText() {
   );
 }
 
-async function invokeCe(body: Record<string, unknown>): Promise<
-  { ok: true; data: Record<string, unknown> } | { ok: false; code: string }
-> {
+async function invokeCe(
+  body: Record<string, unknown>,
+): Promise<{ ok: true; data: Record<string, unknown> } | { ok: false; code: string }> {
   const { data, error } = await supabase.functions.invoke("conversation-evaluate", { body });
   if (error) {
     // The Edge Function's fixed error contract travels in the response body.
@@ -144,7 +144,8 @@ async function invokeCe(body: Record<string, unknown>): Promise<
     let code = "unknown";
     try {
       const parsed = typeof ctx?.body === "string" ? JSON.parse(ctx.body) : ctx?.body;
-      if (parsed && typeof parsed === "object" && "error" in parsed) code = String((parsed as { error: unknown }).error);
+      if (parsed && typeof parsed === "object" && "error" in parsed)
+        code = String((parsed as { error: unknown }).error);
     } catch {
       /* keep unknown */
     }
@@ -224,6 +225,36 @@ function ConversationEvaluationContent({
     if (from) q = q.gte("created_at", new Date(from).toISOString());
     if (to) q = q.lte("created_at", new Date(`${to}T23:59:59.999Z`).toISOString());
 
+    // Training Ready vs Trained: post-filter using outbox and training link state
+    if (view === "trained" || view === "trainingReady") {
+      const evalIds = (data ?? []).map((r: { id: string }) => r.id);
+      if (evalIds.length > 0) {
+        const { data: outboxRows } = await ceClient
+          .from("evaluation_training_outbox")
+          .select("evaluation_id, status")
+          .in("evaluation_id", evalIds);
+        const { data: linkRows } = await ceClient
+          .from("ce_training_link")
+          .select("evaluation_id, improved_state")
+          .in("evaluation_id", evalIds)
+          .eq("link_kind", "training_candidate");
+        const delivered = new Set(
+          (outboxRows ?? [])
+            .filter((o: { status: string }) => o.status === "delivered")
+            .map((o: { evaluation_id: string }) => o.evaluation_id),
+        );
+        const improved = new Set(
+          (linkRows ?? [])
+            .filter((l: { improved_state: string }) => l.improved_state === "received")
+            .map((l: { evaluation_id: string }) => l.evaluation_id),
+        );
+        if (view === "trained") {
+          list = list.filter((r) => delivered.has(r.id) || improved.has(r.id));
+        } else {
+          list = list.filter((r) => !delivered.has(r.id) && !improved.has(r.id));
+        }
+      }
+    }
 
     const term = search.trim();
     if (UUID_RE.test(term)) q = q.or(`id.eq.${term},conversation_id.eq.${term}`);
@@ -235,35 +266,6 @@ function ConversationEvaluationContent({
       setTotal(0);
     } else {
       let list = (data ?? []) as ConversationEvaluationRow[];
-      // Training Ready vs Trained: post-filter using outbox and training link state
-      if (view === "trained" || view === "trainingReady") {
-        const evalIds = list.map((r) => r.id);
-        if (evalIds.length > 0) {
-          const { data: outboxRows } = await ceClient
-            .from("evaluation_training_outbox")
-            .select("evaluation_id, status")
-            .in("evaluation_id", evalIds);
-          const { data: linkRows } = await ceClient
-            .from("ce_training_link")
-            .select("evaluation_id, improved_state")
-            .in("evaluation_id", evalIds)
-            .eq("link_kind", "training_candidate");
-          const delivered = new Set(
-            (outboxRows ?? [])
-              .filter((o: { status: string }) => o.status === "delivered")
-              .map((o: { evaluation_id: string }) => o.evaluation_id),
-          );
-          const improved = new Set(
-            (linkRows ?? [])
-              .filter((l: { improved_state: string }) => l.improved_state === "received")
-              .map((l: { evaluation_id: string }) => l.evaluation_id),
-          );
-          list =
-            view === "trained"
-              ? list.filter((r) => delivered.has(r.id) || improved.has(r.id))
-              : list.filter((r) => !delivered.has(r.id) && !improved.has(r.id));
-        }
-      }
       // channel lives on the conversation, so it is applied after the page loads
       if (channel !== "any") {
         const ids = new Set(
@@ -272,7 +274,7 @@ function ConversationEvaluationContent({
               .from("conversations")
               .select("id, company_id, status, priority, channel_config_id, tags, created_at, updated_at, resolved_at")
               .eq("channel_config_id", channel)
-          ).data?.map((c: { id: string }) => c.id) ?? [],
+          ).data?.map((c) => c.id) ?? [],
         );
         list = list.filter((r) => ids.has(r.conversation_id));
       }
@@ -336,7 +338,13 @@ function ConversationEvaluationContent({
         badge={<Badge variant="outline">{total}</Badge>}
       />
 
-      <Tabs value={view} onValueChange={(v) => { setView(v as ViewKey); setPage(0); }}>
+      <Tabs
+        value={view}
+        onValueChange={(v) => {
+          setView(v as ViewKey);
+          setPage(0);
+        }}
+      >
         <TabsList>
           <TabsTrigger value="all">{t(COPY.ce.views.all)}</TabsTrigger>
           <TabsTrigger value="needsReview">{t(COPY.ce.views.needsReview)}</TabsTrigger>
@@ -369,33 +377,86 @@ function ConversationEvaluationContent({
         <CardContent className="flex flex-wrap items-end gap-2 py-4">
           <Input
             value={search}
-            onChange={(e) => { setSearch(e.target.value); setPage(0); }}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(0);
+            }}
             placeholder={t(COPY.ce.search)}
             className="max-w-xs font-mono text-xs"
           />
           <FilterSelect
             label={t(COPY.ce.filters.severity)}
             value={severity}
-            onChange={(v) => { setSeverity(v as "any" | Severity); setPage(0); }}
-            options={[["any", t(COPY.ce.filters.any)], ["critical", "critical"], ["high", "high"], ["medium", "medium"], ["low", "low"]]}
+            onChange={(v) => {
+              setSeverity(v as "any" | Severity);
+              setPage(0);
+            }}
+            options={[
+              ["any", t(COPY.ce.filters.any)],
+              ["critical", "critical"],
+              ["high", "high"],
+              ["medium", "medium"],
+              ["low", "low"],
+            ]}
           />
           <FilterSelect
             label={t(COPY.ce.filters.review)}
             value={review}
-            onChange={(v) => { setReview(v as "any" | ReviewStatus); setPage(0); }}
-            options={[["any", t(COPY.ce.filters.any)], ["pending", "pending"], ["accepted", "accepted"], ["rejected", "rejected"]]}
+            onChange={(v) => {
+              setReview(v as "any" | ReviewStatus);
+              setPage(0);
+            }}
+            options={[
+              ["any", t(COPY.ce.filters.any)],
+              ["pending", "pending"],
+              ["accepted", "accepted"],
+              ["rejected", "rejected"],
+            ]}
           />
           <FilterSelect
             label={t(COPY.ce.filters.channel)}
             value={channel}
-            onChange={(v) => { setChannel(v); setPage(0); }}
+            onChange={(v) => {
+              setChannel(v);
+              setPage(0);
+            }}
             options={[["any", t(COPY.ce.filters.any)], ...channels.map((c) => [c.id, c.name] as [string, string])]}
           />
-          <NumberFilter label={t(COPY.ce.filters.minScore)} value={minScore} onChange={(v) => { setMinScore(v); setPage(0); }} />
-          <NumberFilter label={t(COPY.ce.filters.maxScore)} value={maxScore} onChange={(v) => { setMaxScore(v); setPage(0); }} />
-          <DateFilter label={t(COPY.ce.filters.from)} value={from} onChange={(v) => { setFrom(v); setPage(0); }} />
-          <DateFilter label={t(COPY.ce.filters.to)} value={to} onChange={(v) => { setTo(v); setPage(0); }} />
-          <Button variant="ghost" size="sm" onClick={clearFilters}>{t(COPY.ce.filters.clear)}</Button>
+          <NumberFilter
+            label={t(COPY.ce.filters.minScore)}
+            value={minScore}
+            onChange={(v) => {
+              setMinScore(v);
+              setPage(0);
+            }}
+          />
+          <NumberFilter
+            label={t(COPY.ce.filters.maxScore)}
+            value={maxScore}
+            onChange={(v) => {
+              setMaxScore(v);
+              setPage(0);
+            }}
+          />
+          <DateFilter
+            label={t(COPY.ce.filters.from)}
+            value={from}
+            onChange={(v) => {
+              setFrom(v);
+              setPage(0);
+            }}
+          />
+          <DateFilter
+            label={t(COPY.ce.filters.to)}
+            value={to}
+            onChange={(v) => {
+              setTo(v);
+              setPage(0);
+            }}
+          />
+          <Button variant="ghost" size="sm" onClick={clearFilters}>
+            {t(COPY.ce.filters.clear)}
+          </Button>
         </CardContent>
       </Card>
 
@@ -427,12 +488,18 @@ function ConversationEvaluationContent({
                     <td className="px-3 py-2 font-mono text-xs">{r.conversation_id.slice(0, 8)}…</td>
                     <td className="px-3 py-2 text-right font-medium">{Number(r.overall_score).toFixed(2)}</td>
                     <td className="px-3 py-2">
-                      <span className={`rounded px-2 py-0.5 text-xs font-medium ${SEVERITY_STYLE[r.severity]}`}>{r.severity}</span>
+                      <span className={`rounded px-2 py-0.5 text-xs font-medium ${SEVERITY_STYLE[r.severity]}`}>
+                        {r.severity}
+                      </span>
                     </td>
                     <td className="px-3 py-2">
-                      <span className={`rounded px-2 py-0.5 text-xs font-medium ${REVIEW_STYLE[r.review_status]}`}>{r.review_status}</span>
+                      <span className={`rounded px-2 py-0.5 text-xs font-medium ${REVIEW_STYLE[r.review_status]}`}>
+                        {r.review_status}
+                      </span>
                     </td>
-                    <td className="px-3 py-2 text-xs text-muted-foreground">{r.training_eligible ? "eligible" : "—"}</td>
+                    <td className="px-3 py-2 text-xs text-muted-foreground">
+                      {r.training_eligible ? "eligible" : "—"}
+                    </td>
                     <td className="px-3 py-2 text-right">
                       <Button
                         variant={selectedId === r.id ? "default" : "outline"}
@@ -454,7 +521,9 @@ function ConversationEvaluationContent({
         <Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
           {t(COPY.ce.table.prev)}
         </Button>
-        <span>{t(COPY.ce.table.page)} {page + 1} / {pageCount}</span>
+        <span>
+          {t(COPY.ce.table.page)} {page + 1} / {pageCount}
+        </span>
         <Button variant="outline" size="sm" disabled={page + 1 >= pageCount} onClick={() => setPage((p) => p + 1)}>
           {t(COPY.ce.table.next)}
         </Button>
@@ -480,15 +549,29 @@ function ConversationEvaluationContent({
 }
 
 function FilterSelect({
-  label, value, onChange, options,
-}: { label: string; value: string; onChange: (v: string) => void; options: Array<[string, string]> }) {
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: Array<[string, string]>;
+}) {
   return (
     <div className="flex flex-col gap-1">
       <span className="text-[11px] text-muted-foreground">{label}</span>
       <Select value={value} onValueChange={onChange}>
-        <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+        <SelectTrigger className="w-40">
+          <SelectValue />
+        </SelectTrigger>
         <SelectContent>
-          {options.map(([v, l]) => <SelectItem key={v} value={v}>{l}</SelectItem>)}
+          {options.map(([v, l]) => (
+            <SelectItem key={v} value={v}>
+              {l}
+            </SelectItem>
+          ))}
         </SelectContent>
       </Select>
     </div>
@@ -499,7 +582,14 @@ function NumberFilter({ label, value, onChange }: { label: string; value: string
   return (
     <div className="flex flex-col gap-1">
       <span className="text-[11px] text-muted-foreground">{label}</span>
-      <Input type="number" min={0} max={100} value={value} onChange={(e) => onChange(e.target.value)} className="w-24" />
+      <Input
+        type="number"
+        min={0}
+        max={100}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-24"
+      />
     </div>
   );
 }
@@ -518,7 +608,12 @@ function DateFilter({ label, value, onChange }: { label: string; value: string; 
 /* ------------------------------------------------------------------ */
 
 function EvaluationDetail({
-  evaluation, canReview, canSeeDelivery, canRun, onChanged, onRetry,
+  evaluation,
+  canReview,
+  canSeeDelivery,
+  canRun,
+  onChanged,
+  onRetry,
 }: {
   evaluation: ConversationEvaluationRow;
   canReview: boolean;
@@ -587,26 +682,73 @@ function EvaluationDetail({
           .select("id, conversation_id, role, content, created_at, is_recalled, sender_id, sender_identity_verified_at")
           .eq("conversation_id", evaluation.conversation_id)
           .order("created_at", { ascending: true }),
-        ceClient.from("conversation_evaluation_attempt").select(ATTEMPT_COLUMNS)
-          .eq("conversation_id", evaluation.conversation_id).order("created_at", { ascending: false }),
-        ceClient.from("audit_log").select("id, actor_id, action, resource_type, resource_id, diff, created_at")
-          .eq("resource_type", "conversation_evaluation").eq("resource_id", evaluation.id)
+        ceClient
+          .from("conversation_evaluation_attempt")
+          .select(ATTEMPT_COLUMNS)
+          .eq("conversation_id", evaluation.conversation_id)
+          .order("created_at", { ascending: false }),
+        ceClient
+          .from("audit_log")
+          .select("id, actor_id, action, resource_type, resource_id, diff, created_at")
+          .eq("resource_type", "conversation_evaluation")
+          .eq("resource_id", evaluation.id)
           .order("created_at", { ascending: false }),
         canSeeDelivery
           ? ceClient.from("evaluation_training_outbox").select(OUTBOX_COLUMNS).eq("evaluation_id", evaluation.id)
           : Promise.resolve({ data: [], error: null }),
-        ceClient.from("ce_bundle_snapshot").select(SNAPSHOT_COLUMNS).eq("attempt_id", evaluation.attempt_id).maybeSingle(),
-        ceClient.from("ce_emotion_point").select(EMOTION_COLUMNS).eq("evaluation_id", evaluation.id).order("turn_index", { ascending: true }),
-        ceClient.from("ce_next_step").select(NEXT_STEP_COLUMNS).eq("evaluation_id", evaluation.id).order("ordinal", { ascending: true }),
+        ceClient
+          .from("ce_bundle_snapshot")
+          .select(SNAPSHOT_COLUMNS)
+          .eq("attempt_id", evaluation.attempt_id)
+          .maybeSingle(),
+        ceClient
+          .from("ce_emotion_point")
+          .select(EMOTION_COLUMNS)
+          .eq("evaluation_id", evaluation.id)
+          .order("turn_index", { ascending: true }),
+        ceClient
+          .from("ce_next_step")
+          .select(NEXT_STEP_COLUMNS)
+          .eq("evaluation_id", evaluation.id)
+          .order("ordinal", { ascending: true }),
         ceClient.from("ce_discrepancy").select(DISCREPANCY_COLUMNS).eq("evaluation_id", evaluation.id),
-        canSeeDelivery ? ceClient.from("ce_root_cause").select(ROOT_CAUSE_COLUMNS).eq("evaluation_id", evaluation.id).order("created_at", { ascending: false }) : Promise.resolve({ data: [], error: null }),
-        canSeeDelivery ? ceClient.from("ce_qa_case").select(QA_CASE_COLUMNS).eq("evaluation_id", evaluation.id).order("created_at", { ascending: false }) : Promise.resolve({ data: [], error: null }),
-        canSeeDelivery ? ceClient.from("ce_kb_publish_state").select(KB_PUBLISH_COLUMNS).eq("evaluation_id", evaluation.id).order("created_at", { ascending: false }) : Promise.resolve({ data: [], error: null }),
+        canSeeDelivery
+          ? ceClient
+              .from("ce_root_cause")
+              .select(ROOT_CAUSE_COLUMNS)
+              .eq("evaluation_id", evaluation.id)
+              .order("created_at", { ascending: false })
+          : Promise.resolve({ data: [], error: null }),
+        canSeeDelivery
+          ? ceClient
+              .from("ce_qa_case")
+              .select(QA_CASE_COLUMNS)
+              .eq("evaluation_id", evaluation.id)
+              .order("created_at", { ascending: false })
+          : Promise.resolve({ data: [], error: null }),
+        canSeeDelivery
+          ? ceClient
+              .from("ce_kb_publish_state")
+              .select(KB_PUBLISH_COLUMNS)
+              .eq("evaluation_id", evaluation.id)
+              .order("created_at", { ascending: false })
+          : Promise.resolve({ data: [], error: null }),
         ceClient.from("ce_training_link").select(TRAINING_LINK_COLUMNS).eq("evaluation_id", evaluation.id),
       ]);
       if (cancelled) return;
-      const firstError = d.error ?? m.error ?? a.error ?? au.error ?? ob.error ??
-        em.error ?? ns.error ?? dc.error ?? rc.error ?? qc.error ?? kb.error ?? tl.error;
+      const firstError =
+        d.error ??
+        m.error ??
+        a.error ??
+        au.error ??
+        ob.error ??
+        em.error ??
+        ns.error ??
+        dc.error ??
+        rc.error ??
+        qc.error ??
+        kb.error ??
+        tl.error;
       if (firstError) {
         setError(firstError.message);
       } else {
@@ -629,13 +771,23 @@ function EvaluationDetail({
       }
       setLoading(false);
     })();
-    return () => { cancelled = true; };
-  }, [evaluation.id, evaluation.attempt_id, evaluation.conversation_id, evaluation.input_snapshot_hash, canSeeDelivery, reloadKey]);
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    evaluation.id,
+    evaluation.attempt_id,
+    evaluation.conversation_id,
+    evaluation.input_snapshot_hash,
+    canSeeDelivery,
+    reloadKey,
+  ]);
 
   const ordered = useMemo(
-    () => [...details].sort(
-      (a, b) => EVALUATOR_ORDER.indexOf(a.evaluator_type) - EVALUATOR_ORDER.indexOf(b.evaluator_type),
-    ),
+    () =>
+      [...details].sort(
+        (a, b) => EVALUATOR_ORDER.indexOf(a.evaluator_type) - EVALUATOR_ORDER.indexOf(b.evaluator_type),
+      ),
     [details],
   );
 
@@ -645,8 +797,13 @@ function EvaluationDetail({
   );
   const aiReply = useMemo(() => [...visible].reverse().find((m) => m.role === "assistant") ?? null, [visible]);
   const humanReply = useMemo(
-    () => visible.find((m) => m.sender_id !== null && m.sender_identity_verified_at !== null &&
-      (!aiReply || m.created_at > aiReply.created_at)) ?? null,
+    () =>
+      visible.find(
+        (m) =>
+          m.sender_id !== null &&
+          m.sender_identity_verified_at !== null &&
+          (!aiReply || m.created_at > aiReply.created_at),
+      ) ?? null,
     [visible, aiReply],
   );
 
@@ -710,11 +867,15 @@ function EvaluationDetail({
 
             <div className="grid gap-4 lg:grid-cols-2">
               <Card>
-                <CardHeader className="pb-2"><CardTitle className="text-sm">{t(COPY.ce.overview.aiReply)}</CardTitle></CardHeader>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm">{t(COPY.ce.overview.aiReply)}</CardTitle>
+                </CardHeader>
                 <CardContent>
                   {aiReply ? (
                     <>
-                      <div className="text-[11px] text-muted-foreground">{new Date(aiReply.created_at).toLocaleString()}</div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {new Date(aiReply.created_at).toLocaleString()}
+                      </div>
                       <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed">{aiReply.content}</p>
                     </>
                   ) : (
@@ -723,11 +884,15 @@ function EvaluationDetail({
                 </CardContent>
               </Card>
               <Card>
-                <CardHeader className="pb-2"><CardTitle className="text-sm">{t(COPY.ce.overview.humanReply)}</CardTitle></CardHeader>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm">{t(COPY.ce.overview.humanReply)}</CardTitle>
+                </CardHeader>
                 <CardContent>
                   {humanReply ? (
                     <>
-                      <div className="text-[11px] text-muted-foreground">{new Date(humanReply.created_at).toLocaleString()}</div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {new Date(humanReply.created_at).toLocaleString()}
+                      </div>
                       <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed">{humanReply.content}</p>
                     </>
                   ) : (
@@ -738,7 +903,9 @@ function EvaluationDetail({
             </div>
 
             <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm">{t(COPY.ce.overview.transcript)}</CardTitle></CardHeader>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">{t(COPY.ce.overview.transcript)}</CardTitle>
+              </CardHeader>
               <CardContent>
                 <p className="mb-2 text-[11px] text-muted-foreground">{t(COPY.ce.overview.liveWarning)}</p>
                 <div className="max-h-[360px] space-y-2 overflow-y-auto pr-1">
@@ -759,7 +926,9 @@ function EvaluationDetail({
           {/* ---------------- Evaluation ---------------- */}
           <TabsContent value="evaluation" className="space-y-4 pt-4">
             <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm">{t(COPY.ce.detail.breakdown)}</CardTitle></CardHeader>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">{t(COPY.ce.detail.breakdown)}</CardTitle>
+              </CardHeader>
               <CardContent className="space-y-3">
                 {ordered.length === 0 ? (
                   <EmptyState message={t(COPY.ce.detail.noDetails)} />
@@ -775,9 +944,15 @@ function EvaluationDetail({
                           </span>
                         </span>
                       </div>
-                      <div className="mt-2 text-[11px] uppercase text-muted-foreground">{t(COPY.ce.detail.justification)}</div>
-                      <p className="text-xs leading-relaxed text-muted-foreground">{d.justification ?? t(COPY.ce.detail.none)}</p>
-                      <div className="mt-2 text-[11px] uppercase text-muted-foreground">{t(COPY.ce.detail.correction)}</div>
+                      <div className="mt-2 text-[11px] uppercase text-muted-foreground">
+                        {t(COPY.ce.detail.justification)}
+                      </div>
+                      <p className="text-xs leading-relaxed text-muted-foreground">
+                        {d.justification ?? t(COPY.ce.detail.none)}
+                      </p>
+                      <div className="mt-2 text-[11px] uppercase text-muted-foreground">
+                        {t(COPY.ce.detail.correction)}
+                      </div>
                       <p className="text-xs leading-relaxed text-muted-foreground">
                         {d.recommended_correction && d.recommended_correction.length > 0
                           ? d.recommended_correction
@@ -785,11 +960,15 @@ function EvaluationDetail({
                       </p>
                       <div className="mt-2 flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
                         <span className="uppercase">{t(COPY.ce.detail.refs)}</span>
-                        {(d.grounding_refs ?? []).length === 0
-                          ? <span>{t(COPY.ce.detail.none)}</span>
-                          : (d.grounding_refs ?? []).map((r) => (
-                              <span key={r} className="rounded bg-muted px-1.5 py-0.5 font-mono">{r}</span>
-                            ))}
+                        {(d.grounding_refs ?? []).length === 0 ? (
+                          <span>{t(COPY.ce.detail.none)}</span>
+                        ) : (
+                          (d.grounding_refs ?? []).map((r) => (
+                            <span key={r} className="rounded bg-muted px-1.5 py-0.5 font-mono">
+                              {r}
+                            </span>
+                          ))
+                        )}
                         <span className="ml-auto font-mono">
                           {d.evaluator_model_version ?? "—"} · {d.evaluator_prompt_version ?? "—"}
                         </span>
@@ -810,7 +989,9 @@ function EvaluationDetail({
                   <Prov label={t(COPY.ce.provenance.bundle)} value={evaluation.bundle_hash ?? "—"} />
                   <Prov
                     label={t(COPY.ce.provenance.verifiedHuman)}
-                    value={evaluation.has_verified_human_response ? t(COPY.ce.provenance.yes) : t(COPY.ce.provenance.no)}
+                    value={
+                      evaluation.has_verified_human_response ? t(COPY.ce.provenance.yes) : t(COPY.ce.provenance.no)
+                    }
                   />
                   <Prov
                     label={t(COPY.ce.provenance.trainingEligible)}
@@ -821,14 +1002,18 @@ function EvaluationDetail({
             </Card>
 
             <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm">{t(COPY.ce.review.title)}</CardTitle></CardHeader>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">{t(COPY.ce.review.title)}</CardTitle>
+              </CardHeader>
               <CardContent className="space-y-3">
                 <div className="flex items-center gap-2 text-xs">
                   <span className="text-muted-foreground">{t(COPY.ce.review.current)}:</span>
                   <span className={`rounded px-2 py-0.5 font-medium ${REVIEW_STYLE[evaluation.review_status]}`}>
                     {evaluation.review_status}
                   </span>
-                  {evaluation.reviewed_at && <span className="text-muted-foreground">{new Date(evaluation.reviewed_at).toLocaleString()}</span>}
+                  {evaluation.reviewed_at && (
+                    <span className="text-muted-foreground">{new Date(evaluation.reviewed_at).toLocaleString()}</span>
+                  )}
                 </div>
                 {evaluation.review_note && (
                   <p className="rounded bg-muted/40 p-2 text-xs text-muted-foreground">{evaluation.review_note}</p>
@@ -846,13 +1031,27 @@ function EvaluationDetail({
                       rows={3}
                     />
                     <div className="flex flex-wrap gap-2">
-                      <Button size="sm" disabled={submitting || evaluation.review_status !== "pending"} onClick={() => void submitReview("accept")}>
+                      <Button
+                        size="sm"
+                        disabled={submitting || evaluation.review_status !== "pending"}
+                        onClick={() => void submitReview("accept")}
+                      >
                         {evaluation.training_eligible ? t(COPY.ce.delivery.sendToTraining) : t(COPY.ce.review.accept)}
                       </Button>
-                      <Button size="sm" variant="destructive" disabled={submitting || evaluation.review_status !== "pending"} onClick={() => void submitReview("reject")}>
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        disabled={submitting || evaluation.review_status !== "pending"}
+                        onClick={() => void submitReview("reject")}
+                      >
                         {t(COPY.ce.review.reject)}
                       </Button>
-                      <Button size="sm" variant="outline" disabled={submitting || evaluation.review_status === "pending"} onClick={() => void submitReview("reopen")}>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={submitting || evaluation.review_status === "pending"}
+                        onClick={() => void submitReview("reopen")}
+                      >
                         {t(COPY.ce.review.reopen)}
                       </Button>
                     </div>
@@ -870,10 +1069,19 @@ function EvaluationDetail({
               attempts.map((a) => (
                 <div key={a.id} className="flex flex-wrap items-center gap-3 rounded border p-2 text-xs">
                   <span className="font-mono">{a.id.slice(0, 8)}…</span>
-                  <span><span className="text-muted-foreground">{t(COPY.ce.attempts.status)}: </span>{a.status}</span>
-                  <span><span className="text-muted-foreground">{t(COPY.ce.attempts.started)}: </span>{new Date(a.created_at).toLocaleString()}</span>
+                  <span>
+                    <span className="text-muted-foreground">{t(COPY.ce.attempts.status)}: </span>
+                    {a.status}
+                  </span>
+                  <span>
+                    <span className="text-muted-foreground">{t(COPY.ce.attempts.started)}: </span>
+                    {new Date(a.created_at).toLocaleString()}
+                  </span>
                   {a.error_message && (
-                    <span className="text-destructive"><span className="text-muted-foreground">{t(COPY.ce.attempts.error)}: </span>{a.error_message}</span>
+                    <span className="text-destructive">
+                      <span className="text-muted-foreground">{t(COPY.ce.attempts.error)}: </span>
+                      {a.error_message}
+                    </span>
                   )}
                 </div>
               ))
@@ -896,20 +1104,31 @@ function EvaluationDetail({
                 <div key={o.id} className="flex flex-wrap items-center gap-3 rounded border p-2 text-xs">
                   <span className="font-mono">{o.id.slice(0, 8)}…</span>
                   <span>{o.status}</span>
-                  <span><span className="text-muted-foreground">{t(COPY.ce.delivery.attempts)}: </span>{o.delivery_attempts}/{o.max_attempts}</span>
-                  {o.delivered_at && <span><span className="text-muted-foreground">{t(COPY.ce.delivery.delivered)}: </span>{new Date(o.delivered_at).toLocaleString()}</span>}
+                  <span>
+                    <span className="text-muted-foreground">{t(COPY.ce.delivery.attempts)}: </span>
+                    {o.delivery_attempts}/{o.max_attempts}
+                  </span>
+                  {o.delivered_at && (
+                    <span>
+                      <span className="text-muted-foreground">{t(COPY.ce.delivery.delivered)}: </span>
+                      {new Date(o.delivered_at).toLocaleString()}
+                    </span>
+                  )}
                 </div>
               ))
             )}
           </TabsContent>
 
-
           {/* ---------------- Signals ---------------- */}
           <TabsContent value="signals" className="space-y-4 pt-4">
             <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm">{t(COPY.ce.signals.emotion)}</CardTitle></CardHeader>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">{t(COPY.ce.signals.emotion)}</CardTitle>
+              </CardHeader>
               <CardContent>
-                {emotion.length === 0 ? <EmptyState message={t(COPY.ce.signals.emotionEmpty)} /> : (
+                {emotion.length === 0 ? (
+                  <EmptyState message={t(COPY.ce.signals.emotionEmpty)} />
+                ) : (
                   <div className="space-y-1">
                     {emotion.map((e) => {
                       const pct = Math.max(0, Math.min(100, (Number(e.sentiment_score) + 100) / 2));
@@ -923,7 +1142,9 @@ function EvaluationDetail({
                             />
                           </div>
                           <span className="w-28 shrink-0">{e.sentiment}</span>
-                          <span className="w-16 shrink-0 text-right font-mono">{Number(e.sentiment_score).toFixed(0)}</span>
+                          <span className="w-16 shrink-0 text-right font-mono">
+                            {Number(e.sentiment_score).toFixed(0)}
+                          </span>
                           <span className="flex-1 truncate text-muted-foreground">
                             {e.trigger_label ? `${t(COPY.ce.signals.trigger)}: ${e.trigger_label}` : ""}
                           </span>
@@ -935,14 +1156,20 @@ function EvaluationDetail({
               </CardContent>
             </Card>
             <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm">{t(COPY.ce.signals.nextSteps)}</CardTitle></CardHeader>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">{t(COPY.ce.signals.nextSteps)}</CardTitle>
+              </CardHeader>
               <CardContent>
-                {nextSteps.length === 0 ? <EmptyState message={t(COPY.ce.signals.nextStepsEmpty)} /> : (
+                {nextSteps.length === 0 ? (
+                  <EmptyState message={t(COPY.ce.signals.nextStepsEmpty)} />
+                ) : (
                   <ol className="space-y-2">
                     {nextSteps.map((n) => (
                       <li key={n.id} className="rounded border p-2 text-xs">
                         <div className="flex items-center justify-between">
-                          <span className="font-medium">{n.ordinal + 1}. {n.title}</span>
+                          <span className="font-medium">
+                            {n.ordinal + 1}. {n.title}
+                          </span>
                           <span className="text-muted-foreground">
                             {t(COPY.ce.signals.owner)}: {n.owner_role ?? "—"} · {n.status}
                           </span>
@@ -959,18 +1186,26 @@ function EvaluationDetail({
           {/* ---------------- Analysis ---------------- */}
           <TabsContent value="analysis" className="space-y-4 pt-4">
             <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm">{t(COPY.ce.analysis.discrepancy)}</CardTitle></CardHeader>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">{t(COPY.ce.analysis.discrepancy)}</CardTitle>
+              </CardHeader>
               <CardContent className="space-y-2">
-                {discrepancies.length === 0 ? <EmptyState message={t(COPY.ce.analysis.discrepancyEmpty)} /> : (
+                {discrepancies.length === 0 ? (
+                  <EmptyState message={t(COPY.ce.analysis.discrepancyEmpty)} />
+                ) : (
                   discrepancies.map((d) => (
                     <div key={d.id} className="rounded border p-2 text-xs">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-medium">{d.dimension}</span>
-                        <span className={`rounded px-2 py-0.5 font-medium ${SEVERITY_STYLE[d.severity]}`}>{d.severity}</span>
+                        <span className={`rounded px-2 py-0.5 font-medium ${SEVERITY_STYLE[d.severity]}`}>
+                          {d.severity}
+                        </span>
                         <span className="text-muted-foreground">{d.divergence_kind}</span>
                         <span className="ml-auto flex gap-1">
                           {(d.grounding_refs ?? []).map((r) => (
-                            <span key={r} className="rounded bg-muted px-1.5 py-0.5 font-mono">{r}</span>
+                            <span key={r} className="rounded bg-muted px-1.5 py-0.5 font-mono">
+                              {r}
+                            </span>
                           ))}
                         </span>
                       </div>
@@ -986,11 +1221,17 @@ function EvaluationDetail({
             </Card>
 
             <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm">{t(COPY.ce.analysis.rootCause)}</CardTitle></CardHeader>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">{t(COPY.ce.analysis.rootCause)}</CardTitle>
+              </CardHeader>
               <CardContent className="space-y-2">
-                {!canSeeDelivery ? <p className="text-xs text-muted-foreground">{t(COPY.ce.delivery.restricted)}</p> : (
+                {!canSeeDelivery ? (
+                  <p className="text-xs text-muted-foreground">{t(COPY.ce.delivery.restricted)}</p>
+                ) : (
                   <>
-                    {rootCauses.length === 0 ? <EmptyState message={t(COPY.ce.analysis.rootCauseEmpty)} /> : (
+                    {rootCauses.length === 0 ? (
+                      <EmptyState message={t(COPY.ce.analysis.rootCauseEmpty)} />
+                    ) : (
                       rootCauses.map((r) => (
                         <div key={r.id} className="rounded border p-2 text-xs">
                           <div className="flex items-center gap-2">
@@ -1005,21 +1246,49 @@ function EvaluationDetail({
                     )}
                     <div className="flex flex-wrap items-end gap-2">
                       <Select value={rcCategory} onValueChange={setRcCategory}>
-                        <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+                        <SelectTrigger className="w-48">
+                          <SelectValue />
+                        </SelectTrigger>
                         <SelectContent>
-                          {["kb_gap","kb_stale","policy_gap","prompt_defect","model_limitation","routing_error","human_error","unknown"].map((c) => (
-                            <SelectItem key={c} value={c}>{c}</SelectItem>
+                          {[
+                            "kb_gap",
+                            "kb_stale",
+                            "policy_gap",
+                            "prompt_defect",
+                            "model_limitation",
+                            "routing_error",
+                            "human_error",
+                            "unknown",
+                          ].map((c) => (
+                            <SelectItem key={c} value={c}>
+                              {c}
+                            </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
-                      <Input value={rcSummary} onChange={(e) => setRcSummary(e.target.value)}
-                             placeholder={t(COPY.ce.analysis.summary)} className="max-w-md" />
-                      <Button size="sm" disabled={submitting || rcSummary.trim().length === 0}
-                        onClick={() => void callRpc("ce_record_root_cause", {
-                          p_evaluation_id: evaluation.id,
-                          p_expected_conversation_id: evaluation.conversation_id,
-                          p_category: rcCategory, p_summary: rcSummary.trim(), p_evidence: [],
-                        }, t(COPY.ce.integration.recorded))}>
+                      <Input
+                        value={rcSummary}
+                        onChange={(e) => setRcSummary(e.target.value)}
+                        placeholder={t(COPY.ce.analysis.summary)}
+                        className="max-w-md"
+                      />
+                      <Button
+                        size="sm"
+                        disabled={submitting || rcSummary.trim().length === 0}
+                        onClick={() =>
+                          void callRpc(
+                            "ce_record_root_cause",
+                            {
+                              p_evaluation_id: evaluation.id,
+                              p_expected_conversation_id: evaluation.conversation_id,
+                              p_category: rcCategory,
+                              p_summary: rcSummary.trim(),
+                              p_evidence: [],
+                            },
+                            t(COPY.ce.integration.recorded),
+                          )
+                        }
+                      >
                         {t(COPY.ce.analysis.record)}
                       </Button>
                     </div>
@@ -1029,11 +1298,17 @@ function EvaluationDetail({
             </Card>
 
             <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm">{t(COPY.ce.analysis.qaCase)}</CardTitle></CardHeader>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">{t(COPY.ce.analysis.qaCase)}</CardTitle>
+              </CardHeader>
               <CardContent className="space-y-2">
-                {!canSeeDelivery ? <p className="text-xs text-muted-foreground">{t(COPY.ce.delivery.restricted)}</p> : (
+                {!canSeeDelivery ? (
+                  <p className="text-xs text-muted-foreground">{t(COPY.ce.delivery.restricted)}</p>
+                ) : (
                   <>
-                    {qaCases.length === 0 ? <EmptyState message={t(COPY.ce.analysis.qaCaseEmpty)} /> : (
+                    {qaCases.length === 0 ? (
+                      <EmptyState message={t(COPY.ce.analysis.qaCaseEmpty)} />
+                    ) : (
                       qaCases.map((q) => (
                         <div key={q.id} className="flex flex-wrap items-center gap-3 rounded border p-2 text-xs">
                           <span className="font-mono">{q.case_number}</span>
@@ -1047,14 +1322,29 @@ function EvaluationDetail({
                       ))
                     )}
                     <div className="flex flex-wrap items-end gap-2">
-                      <Input value={qaTitle} onChange={(e) => setQaTitle(e.target.value)}
-                             placeholder={t(COPY.ce.analysis.qaTitle)} className="max-w-md" />
-                      <Button size="sm" disabled={submitting || qaTitle.trim().length === 0}
-                        onClick={() => void callRpc("ce_create_qa_case", {
-                          p_evaluation_id: evaluation.id,
-                          p_expected_conversation_id: evaluation.conversation_id,
-                          p_title: qaTitle.trim(), p_description: null, p_priority: "medium",
-                        }, t(COPY.ce.integration.recorded))}>
+                      <Input
+                        value={qaTitle}
+                        onChange={(e) => setQaTitle(e.target.value)}
+                        placeholder={t(COPY.ce.analysis.qaTitle)}
+                        className="max-w-md"
+                      />
+                      <Button
+                        size="sm"
+                        disabled={submitting || qaTitle.trim().length === 0}
+                        onClick={() =>
+                          void callRpc(
+                            "ce_create_qa_case",
+                            {
+                              p_evaluation_id: evaluation.id,
+                              p_expected_conversation_id: evaluation.conversation_id,
+                              p_title: qaTitle.trim(),
+                              p_description: null,
+                              p_priority: "medium",
+                            },
+                            t(COPY.ce.integration.recorded),
+                          )
+                        }
+                      >
                         {t(COPY.ce.analysis.createCase)}
                       </Button>
                     </div>
@@ -1067,9 +1357,13 @@ function EvaluationDetail({
           {/* ---------------- Integration ---------------- */}
           <TabsContent value="integration" className="space-y-4 pt-4">
             <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm">{t(COPY.ce.integration.replayTitle)}</CardTitle></CardHeader>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">{t(COPY.ce.integration.replayTitle)}</CardTitle>
+              </CardHeader>
               <CardContent>
-                {!snapshot ? <EmptyState message={t(COPY.ce.integration.replayEmpty)} /> : (
+                {!snapshot ? (
+                  <EmptyState message={t(COPY.ce.integration.replayEmpty)} />
+                ) : (
                   <>
                     <p className="text-[11px] text-muted-foreground">{t(COPY.ce.integration.replayHint)}</p>
                     <div className="mt-1 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
@@ -1079,7 +1373,10 @@ function EvaluationDetail({
                       <Prov label={t(COPY.ce.provenance.prompt)} value={snapshot.prompt_version} />
                       <Prov label={t(COPY.ce.provenance.kbSnapshot)} value={snapshot.kb_snapshot_id} />
                       <Prov label={t(COPY.ce.provenance.policySnapshot)} value={snapshot.policy_snapshot_id} />
-                      <Prov label={t(COPY.ce.integration.retention)} value={new Date(snapshot.retention_expires_at).toLocaleDateString()} />
+                      <Prov
+                        label={t(COPY.ce.integration.retention)}
+                        value={new Date(snapshot.retention_expires_at).toLocaleDateString()}
+                      />
                     </div>
                     <Tabs defaultValue="transcript" className="mt-3">
                       <TabsList>
@@ -1101,16 +1398,22 @@ function EvaluationDetail({
                         </div>
                       </TabsContent>
                       <TabsContent value="canonical" className="mt-2">
-                        <pre className="max-h-[320px] overflow-auto rounded bg-muted/40 p-3 text-xs leading-relaxed whitespace-pre-wrap font-mono">{snapshot.canonical_input}</pre>
+                        <pre className="max-h-[320px] overflow-auto rounded bg-muted/40 p-3 text-xs leading-relaxed whitespace-pre-wrap font-mono">
+                          {snapshot.canonical_input}
+                        </pre>
                       </TabsContent>
                       <TabsContent value="grounding" className="mt-2 space-y-3">
                         <div>
                           <div className="text-[11px] uppercase text-muted-foreground mb-1">KB Evidence</div>
-                          <pre className="max-h-[200px] overflow-auto rounded bg-muted/40 p-3 text-xs whitespace-pre-wrap font-mono">{snapshot.grounding_evidence?.kb_block || ""}</pre>
+                          <pre className="max-h-[200px] overflow-auto rounded bg-muted/40 p-3 text-xs whitespace-pre-wrap font-mono">
+                            {snapshot.grounding_evidence?.kb_block || ""}
+                          </pre>
                         </div>
                         <div>
                           <div className="text-[11px] uppercase text-muted-foreground mb-1">Policy Evidence</div>
-                          <pre className="max-h-[200px] overflow-auto rounded bg-muted/40 p-3 text-xs whitespace-pre-wrap font-mono">{snapshot.grounding_evidence?.policy_block || ""}</pre>
+                          <pre className="max-h-[200px] overflow-auto rounded bg-muted/40 p-3 text-xs whitespace-pre-wrap font-mono">
+                            {snapshot.grounding_evidence?.policy_block || ""}
+                          </pre>
                         </div>
                       </TabsContent>
                     </Tabs>
@@ -1120,14 +1423,20 @@ function EvaluationDetail({
             </Card>
 
             <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm">{t(COPY.ce.integration.training)}</CardTitle></CardHeader>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">{t(COPY.ce.integration.training)}</CardTitle>
+              </CardHeader>
               <CardContent className="space-y-2">
-                {links.length === 0 ? <EmptyState message={t(COPY.ce.delivery.empty)} /> : (
+                {links.length === 0 ? (
+                  <EmptyState message={t(COPY.ce.delivery.empty)} />
+                ) : (
                   links.map((l) => (
                     <div key={l.id} className="rounded border p-2 text-xs">
                       <div className="flex flex-wrap items-center gap-3">
                         <span className="font-medium">
-                          {l.link_kind === "training_candidate" ? t(COPY.ce.integration.training) : t(COPY.ce.integration.kbGap)}
+                          {l.link_kind === "training_candidate"
+                            ? t(COPY.ce.integration.training)
+                            : t(COPY.ce.integration.kbGap)}
                         </span>
                         <span>{l.local_state}</span>
                         <span className="ml-auto text-muted-foreground">
@@ -1136,9 +1445,11 @@ function EvaluationDetail({
                       </div>
                       <div className="mt-1 text-muted-foreground">
                         <span className="uppercase">{t(COPY.ce.integration.improved)}: </span>
-                        {l.improved_state === "received" && l.improved_result
-                          ? <span className="font-mono">{JSON.stringify(l.improved_result)}</span>
-                          : <span>{t(COPY.ce.integration.improvedPending)}</span>}
+                        {l.improved_state === "received" && l.improved_result ? (
+                          <span className="font-mono">{JSON.stringify(l.improved_result)}</span>
+                        ) : (
+                          <span>{t(COPY.ce.integration.improvedPending)}</span>
+                        )}
                       </div>
                     </div>
                   ))
@@ -1148,11 +1459,17 @@ function EvaluationDetail({
             </Card>
 
             <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm">{t(COPY.ce.integration.kbPublish)}</CardTitle></CardHeader>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">{t(COPY.ce.integration.kbPublish)}</CardTitle>
+              </CardHeader>
               <CardContent className="space-y-2">
-                {!canSeeDelivery ? <p className="text-xs text-muted-foreground">{t(COPY.ce.delivery.restricted)}</p> : (
+                {!canSeeDelivery ? (
+                  <p className="text-xs text-muted-foreground">{t(COPY.ce.delivery.restricted)}</p>
+                ) : (
                   <>
-                    {kbStates.length === 0 ? <EmptyState message={t(COPY.ce.integration.kbPublishEmpty)} /> : (
+                    {kbStates.length === 0 ? (
+                      <EmptyState message={t(COPY.ce.integration.kbPublishEmpty)} />
+                    ) : (
                       kbStates.map((k) => (
                         <div key={k.id} className="flex flex-wrap items-center gap-3 rounded border p-2 text-xs">
                           <span className="font-mono">{k.kb_document_ref}</span>
@@ -1166,22 +1483,50 @@ function EvaluationDetail({
                       ))
                     )}
                     <div className="flex flex-wrap items-end gap-2">
-                      <Input value={kbRef} onChange={(e) => setKbRef(e.target.value)}
-                             placeholder={t(COPY.ce.integration.docRef)} className="max-w-md font-mono text-xs" />
-                      <Button size="sm" variant="outline" disabled={submitting || kbRef.trim().length === 0}
-                        onClick={() => void callRpc("ce_set_kb_publish_state", {
-                          p_evaluation_id: evaluation.id,
-                          p_expected_conversation_id: evaluation.conversation_id,
-                          p_kb_document_ref: kbRef.trim(), p_action: "publish", p_state: "requested",
-                        }, t(COPY.ce.integration.recorded))}>
+                      <Input
+                        value={kbRef}
+                        onChange={(e) => setKbRef(e.target.value)}
+                        placeholder={t(COPY.ce.integration.docRef)}
+                        className="max-w-md font-mono text-xs"
+                      />
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={submitting || kbRef.trim().length === 0}
+                        onClick={() =>
+                          void callRpc(
+                            "ce_set_kb_publish_state",
+                            {
+                              p_evaluation_id: evaluation.id,
+                              p_expected_conversation_id: evaluation.conversation_id,
+                              p_kb_document_ref: kbRef.trim(),
+                              p_action: "publish",
+                              p_state: "requested",
+                            },
+                            t(COPY.ce.integration.recorded),
+                          )
+                        }
+                      >
                         {t(COPY.ce.integration.publish)}
                       </Button>
-                      <Button size="sm" variant="outline" disabled={submitting || kbRef.trim().length === 0}
-                        onClick={() => void callRpc("ce_set_kb_publish_state", {
-                          p_evaluation_id: evaluation.id,
-                          p_expected_conversation_id: evaluation.conversation_id,
-                          p_kb_document_ref: kbRef.trim(), p_action: "rollback", p_state: "requested",
-                        }, t(COPY.ce.integration.recorded))}>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={submitting || kbRef.trim().length === 0}
+                        onClick={() =>
+                          void callRpc(
+                            "ce_set_kb_publish_state",
+                            {
+                              p_evaluation_id: evaluation.id,
+                              p_expected_conversation_id: evaluation.conversation_id,
+                              p_kb_document_ref: kbRef.trim(),
+                              p_action: "rollback",
+                              p_state: "requested",
+                            },
+                            t(COPY.ce.integration.recorded),
+                          )
+                        }
+                      >
                         {t(COPY.ce.integration.rollback)}
                       </Button>
                     </div>
@@ -1199,7 +1544,10 @@ function EvaluationDetail({
               audit.map((a) => (
                 <div key={a.id} className="rounded border p-2 text-xs">
                   <div className="flex flex-wrap items-center gap-3">
-                    <span><span className="text-muted-foreground">{t(COPY.ce.audit.action)}: </span>{a.action}</span>
+                    <span>
+                      <span className="text-muted-foreground">{t(COPY.ce.audit.action)}: </span>
+                      {a.action}
+                    </span>
                     <span className="font-mono">{(a.actor_id ?? "—").slice(0, 8)}…</span>
                     <span className="ml-auto text-muted-foreground">{new Date(a.created_at).toLocaleString()}</span>
                   </div>
@@ -1231,7 +1579,9 @@ function Prov({ label, value }: { label: string; value: string }) {
   return (
     <>
       <span className="text-muted-foreground">{label}</span>
-      <span className="truncate font-mono" title={value}>{value}</span>
+      <span className="truncate font-mono" title={value}>
+        {value}
+      </span>
     </>
   );
 }
