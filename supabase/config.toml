@@ -42,3 +42,6 @@ verify_jwt = true
 
 [functions.agent-management]
 verify_jwt = true
+
+[functions.conversation-evaluate]
+verify_jwt = true
