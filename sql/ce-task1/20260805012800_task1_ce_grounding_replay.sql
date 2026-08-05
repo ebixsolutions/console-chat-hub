@@ -243,6 +243,7 @@ CREATE TABLE IF NOT EXISTS public.ce_replay_bundle (
   snapshot_hash               text NOT NULL,
   raw_evaluator_payload       jsonb,           -- admin-only, see policies below
   retention_expires_at        timestamptz NOT NULL DEFAULT (now() + interval '180 days'),
+  purged_at                   timestamptz,
   created_at                  timestamptz NOT NULL DEFAULT now(),
   UNIQUE (attempt_id, bundle_version)
 );
@@ -383,6 +384,9 @@ VALUES
   ('20260805012800_task1_ce_grounding_replay','table','public.ce_replay_chunk',true),
   ('20260805012800_task1_ce_grounding_replay','table','public.ce_grounding_violation',true),
   ('20260805012800_task1_ce_grounding_replay','function','public.ce_block_mutation()',true),
+  ('20260805012800_task1_ce_grounding_replay','function','public.ce_guard_replay_bundle_immutable()',true),
+  ('20260805012800_task1_ce_grounding_replay','function','public.ce_guard_replay_chunk_immutable()',true),
+  ('20260805012800_task1_ce_grounding_replay','trigger','ce_replay_bundle:trg_ce_replay_bundle_no_delete',true),
   ('20260805012800_task1_ce_grounding_replay','trigger','ce_replay_bundle:trg_ce_replay_bundle_immutable',true),
   ('20260805012800_task1_ce_grounding_replay','trigger','ce_replay_chunk:trg_ce_replay_chunk_immutable',true),
   ('20260805012800_task1_ce_grounding_replay','view','public.ce_replay_bundle_sanitized_v',true)
@@ -502,12 +506,6 @@ BEGIN
       (migration_key, object_type, object_identity, created_by_migration)
     VALUES (v_key,'table','public.company_member',true) ON CONFLICT DO NOTHING;
   END IF;
-
-  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                  WHERE table_schema='public' AND table_name='ce_replay_bundle'
-                    AND column_name='purged_at') THEN
-    ALTER TABLE public.ce_replay_bundle ADD COLUMN purged_at timestamptz;
-  END IF;
 END
 $mig$;
 
@@ -547,7 +545,6 @@ GRANT EXECUTE ON FUNCTION public.ce_conversation_company(uuid) TO authenticated,
 INSERT INTO public.ce_migration_provenance
   (migration_key, object_type, object_identity, created_by_migration)
 VALUES
-  ('20260805012800_task1_ce_grounding_replay','column','public.ce_replay_bundle.purged_at',true),
   ('20260805012800_task1_ce_grounding_replay','index','public.idx_company_member_user',true),
   ('20260805012800_task1_ce_grounding_replay','function','public.ce_member_company_ids(uuid)',true),
   ('20260805012800_task1_ce_grounding_replay','function','public.ce_is_company_member(uuid,uuid)',true),
