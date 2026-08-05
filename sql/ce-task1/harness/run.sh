@@ -16,13 +16,23 @@ SQLDIR="$(cd "$HERE/.." && pwd)"
 FWD="$SQLDIR/20260805012800_task1_ce_grounding_replay.sql"
 RBK="$SQLDIR/20260805012800_task1_ce_grounding_replay_rollback.sql"
 RUN="${CE_HARNESS_DIR:-/tmp/ce-harness}"
+
+# PostgreSQL refuses to run as root: drop to a dedicated unprivileged user.
+if [ "$(id -u)" = 0 ]; then
+  id -u ceharness >/dev/null 2>&1 || useradd -m -s /bin/bash ceharness
+  rm -rf "$RUN"; mkdir -p "$RUN"; chown -R ceharness "$RUN"
+  exec su ceharness -s /bin/bash -c \
+    "CE_HARNESS_DIR='$RUN' HOME='$RUN' bash '${BASH_SOURCE[0]}'"
+fi
+
 PGDATA="$RUN/pgdata"
 SOCK="$RUN/sock"
 LOGS="$RUN/logs"
 export PGHOST="$SOCK" PGPORT=55432 PGUSER="$(id -un)" PGDATABASE=postgres
 unset PGPASSWORD PGSERVICE || true
 
-rm -rf "$RUN"; mkdir -p "$PGDATA" "$SOCK" "$LOGS"
+rm -rf "$PGDATA" "$SOCK" "$LOGS"; mkdir -p "$PGDATA" "$SOCK" "$LOGS"
+
 
 PASS=0
 ok(){ PASS=$((PASS+1)); printf 'PASS  %s\n' "$1"; }
