@@ -124,7 +124,6 @@ newdb ce_rt
 f ce_rt "$FWD" >"$LOGS/s4.log" 2>&1 || die "S4 migration failed"
 f ce_rt "$HERE/20_tests_runtime.sql" >"$LOGS/s4t.log" 2>&1 || {
   tail -40 "$LOGS/s4t.log" >&2; die "S4-S8 runtime assertions failed (see $LOGS/s4t.log)"; }
-grep -c '^CE_TEST_OK' "$LOGS/s4t.log" >/dev/null
 N=$(grep -c 'CE_TEST_OK' "$LOGS/s4t.log")
 ok "S4-S8 $N executed runtime assertions passed (tenant matrix, cross-tenant denial, grounding, replay + hash mismatch, admin-only raw data, retention purge, immutability, canonical status)"
 
