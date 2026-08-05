@@ -5,7 +5,12 @@
  *  - canonical status comes from public.ce_conversation_status_v (never
  *    re-derived on the client)
  *  - replay bundles are read from ce_replay_bundle_sanitized_v for staff;
- *    raw evaluator payload is admin-only and requested explicitly
+ *    raw evaluator payload is admin-only and never selected here
+ *
+ * The CE views/tables are introduced by the staged migration in
+ * sql/ce-task1/. Until that migration is applied and Supabase types are
+ * regenerated, those relations are reached through an untyped view of the
+ * authenticated client (`loose`) — RLS still applies as the caller.
  */
 
 import { createServerFn } from "@tanstack/react-start";
@@ -13,6 +18,11 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 
 export type CeResult<T> = { ok: boolean; data?: T; error?: string };
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+type LooseClient = {
+  from: (relation: string) => any;
+};
 
 const listInput = z.object({
   tab: z.enum(["all", "needs_review", "training_ready", "trained"]).default("all"),
@@ -26,11 +36,9 @@ const listInput = z.object({
 export const listCeEvaluationsFn = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .inputValidator(listInput)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   .handler(async ({ data, context }): Promise<CeResult<any[]>> => {
-    let q = context.supabase
-      // @ts-expect-error — view is added by the staged CE migration; generated
-      // types are refreshed when that migration is applied.
+    const loose = context.supabase as unknown as LooseClient;
+    let q = loose
       .from("ce_conversation_status_v")
       .select("*")
       .order("evaluated_at", { ascending: false })
@@ -44,14 +52,12 @@ export const listCeEvaluationsFn = createServerFn({ method: "GET" })
 
     const { data: rows, error } = await q;
     if (error) return { ok: false, error: error.message };
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return { ok: true, data: (rows ?? []) as any[] };
   });
 
 export const getCeEvaluationFn = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .inputValidator(z.object({ evaluationId: z.string().uuid() }))
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   .handler(async ({ data, context }): Promise<CeResult<any>> => {
     const { data: evaluation, error } = await context.supabase
       .from("conversation_evaluation")
@@ -73,10 +79,10 @@ export const getCeEvaluationFn = createServerFn({ method: "GET" })
 export const getCeReplayBundleFn = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .inputValidator(z.object({ attemptId: z.string().uuid() }))
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   .handler(async ({ data, context }): Promise<CeResult<any>> => {
-    const { data: bundle, error } = await context.supabase
-      // @ts-expect-error — view added by the staged CE migration.
+    const loose = context.supabase as unknown as LooseClient;
+
+    const { data: bundle, error } = await loose
       .from("ce_replay_bundle_sanitized_v")
       .select("*")
       .eq("attempt_id", data.attemptId)
@@ -86,11 +92,9 @@ export const getCeReplayBundleFn = createServerFn({ method: "GET" })
     if (error) return { ok: false, error: error.message };
     if (!bundle) return { ok: false, error: "replay_bundle_unavailable" };
 
-    const { data: chunks } = await context.supabase
-      // @ts-expect-error — table added by the staged CE migration.
+    const { data: chunks } = await loose
       .from("ce_replay_chunk")
       .select("chunk_id, workspace_id, tenant_id, company_id, content_hash, chunk_text_redacted, score, source_ref")
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .eq("bundle_id", (bundle as any).id);
 
     return { ok: true, data: { bundle, chunks: chunks ?? [] } };
