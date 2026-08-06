@@ -13,13 +13,6 @@
 
 import type { AppRole } from "@/lib/api/config.service";
 
-/**
- * Console-side role vocabulary. Extends the persisted AppRole with "qa",
- * which the capability matrix references but the app_role enum does not
- * yet declare.
- */
-export type ConsoleRole = AppRole | "qa";
-
 export type ConsoleCapability =
   /** Reach the Conversation Evaluation route at all. */
   | "ce.route.view"
@@ -34,7 +27,7 @@ export type ConsoleCapability =
   /** Push an evaluation into the training pipeline. */
   | "ce.training.dispatch";
 
-const MATRIX: Record<ConsoleCapability, readonly ConsoleRole[]> = {
+const MATRIX: Record<ConsoleCapability, readonly AppRole[]> = {
   "ce.route.view": ["admin", "supervisor", "qa", "agent"],
   "ce.evaluation.read_sanitized": ["admin", "supervisor", "qa", "agent"],
   "ce.evaluation.read_raw": ["admin"],
@@ -44,19 +37,19 @@ const MATRIX: Record<ConsoleCapability, readonly ConsoleRole[]> = {
 };
 
 /** True only when at least one held role is explicitly listed for the capability. */
-export function can(roles: readonly (ConsoleRole | null | undefined)[], capability: ConsoleCapability): boolean {
+export function can(roles: readonly (AppRole | null | undefined)[], capability: ConsoleCapability): boolean {
   const allowed = MATRIX[capability];
   if (!allowed) return false;
-  return roles.some((r): r is ConsoleRole => !!r && allowed.includes(r));
+  return roles.some((r): r is AppRole => !!r && allowed.includes(r));
 }
 
 /** Convenience for the common single-role case. */
-export function roleCan(role: ConsoleRole | null | undefined, capability: ConsoleCapability): boolean {
+export function roleCan(role: AppRole | null | undefined, capability: ConsoleCapability): boolean {
   return can([role], capability);
 }
 
 /** Exposed for tests and for rendering an explain-why panel. */
-export function allowedRolesFor(capability: ConsoleCapability): readonly ConsoleRole[] {
+export function allowedRolesFor(capability: ConsoleCapability): readonly AppRole[] {
   return MATRIX[capability] ?? [];
 }
 

@@ -1,6 +1,7 @@
 import { createFileRoute, Link, useParams } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useConsoleLang, useEffectiveRole } from "@/hooks/useEffectiveRole";
+import { useCurrentRole } from "@/hooks/useCurrentRole";
+import { useConsoleLang } from "@/hooks/useEffectiveRole";
 import {
   getCeEvaluationFn,
   getCeReplayBundleFn,
@@ -162,7 +163,7 @@ function Badge({ text, color, bg }: { text: string; color: string; bg: string })
 
 function EvaluationDetail() {
   const { evaluationId } = useParams({ from: "/_authenticated/console/conversation-evaluation/$evaluationId" });
-  const { role, loading: roleLoading } = useEffectiveRole();
+  const { role, loading: roleLoading } = useCurrentRole();
   const lang = useConsoleLang();
   const t = T[lang];
 

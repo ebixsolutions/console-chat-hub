@@ -1,0 +1,33 @@
+{
+  "contract_id": "CE-T2-C20-EVIDENCE-CLOSURE-v1.0",
+  "package_version": "nexusai-3task-current-27",
+  "task_run_id": "e8059ae5-a101-4a57-8c62-119d39a8bc9f",
+  "generated_at": "2026-08-06T08:11:33Z",
+  "environment": {
+    "docker": "unavailable"
+  },
+  "command": "bash scripts/ce-task2-edge-contract.sh",
+  "exit_code": 2,
+  "pass": 0,
+  "fail": 0,
+  "skip": 0,
+  "blocked": 55,
+  "blocker": {
+    "resource": "Docker/Supabase local runtime",
+    "command_attempted": "docker info",
+    "stderr": "docker: command not found",
+    "responsible_owner": "Director / CI owner",
+    "owner_command": "cd repo && supabase start && supabase db reset && supabase functions serve --env-file .env.test & bash scripts/ce-task2-edge-contract.sh"
+  },
+  "tested_source_hashes": {
+    "supabase/functions/conversation-evaluate/index.ts": "10e22f090e34da54cb94aff7a3e81f4382d69b5ad0ef5d675d574ccccd32515e",
+    "supabase/functions/_shared/ce-contract.ts": "518510249743122330b6bd2994a8bf6be4b3ae4ea35f846045df514751ed9b38",
+    "supabase/functions/_shared/ce-grounding.ts": "f70197635a55b5feac64abfdecf11ed8fe7b27293e460a9e55c3a5f9b304ec7c",
+    "supabase/functions/_shared/llm-router.ts": "7f1612d6003ae8838b64f224a7548ec71f373ba692134bcb2f6651f357a31c13",
+    "supabase/functions/_shared/cors.ts": "cedcf3f2d9173c86e0eb97b62bdcf394f1a73134d829c9084ea09df91b923313",
+    "supabase/functions/deno.json": "aec9c8902433a25e9572022bab3a5b572babf44ecab034ba69a706fe98ae7d7b",
+    "tests/stubs/llm-stub-server.ts": "d10d4a69010f6f022fc4225425a6e5956f9a30a8cd60ecaba14d300907d90ae9",
+    "tests/edge/ce-edge-contract-runtime.py": "bc393494ea4a69679275cc5178db15674584bc6b1b1ffdf1ece514ca9769e78b"
+  },
+  "status": "BLOCKED"
+}

@@ -42,7 +42,12 @@ export const DIMENSION_TO_EVALUATOR_TYPE: Record<CeDimension, string> = {
 };
 
 export const DIMENSION_WEIGHT: Record<CeDimension, number> = {
-  accuracy: 0.25, policy: 0.2, tone: 0.2, sales: 0.15, context: 0.1, hallucination_risk: 0.1,
+  accuracy: 0.25,
+  policy: 0.2,
+  tone: 0.2,
+  sales: 0.15,
+  context: 0.1,
+  hallucination_risk: 0.1,
 };
 
 /* ------------------------------------------------------------------ */
@@ -124,8 +129,14 @@ export interface CanonicalBundle {
   bundle_hash: string;
   transcript_hash: string;
   transcript: TranscriptEntry[];
-  evaluated_ai_reply: { id: string; created_at: string; content_sha256: string } | null;
-  verified_human_response: { id: string; created_at: string; content_sha256: string } | null;
+  evaluated_ai_reply:
+    | { id: string; created_at: string; content_sha256: string }
+    | null;
+  verified_human_response: {
+    id: string;
+    created_at: string;
+    content_sha256: string;
+  } | null;
   truncation: {
     messages_returned: number;
     messages_included: number;
@@ -136,8 +147,13 @@ export interface CanonicalBundle {
 }
 
 export async function sha256Hex(input: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
-  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(input),
+  );
+  return Array.from(new Uint8Array(digest)).map((b) =>
+    b.toString(16).padStart(2, "0")
+  ).join("");
 }
 
 /* ------------------------------------------------------------------ */
@@ -163,7 +179,9 @@ export async function buildCanonicalBundle(args: {
     .filter((m) => !m.is_recalled && m.content !== THINKING_SENTINEL)
     .slice()
     .sort((a, b) => {
-      if (a.created_at !== b.created_at) return a.created_at < b.created_at ? -1 : 1;
+      if (a.created_at !== b.created_at) {
+        return a.created_at < b.created_at ? -1 : 1;
+      }
       return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
     });
 
@@ -179,13 +197,24 @@ export async function buildCanonicalBundle(args: {
     let drop: string | null = null;
 
     if (i >= MAX_TRANSCRIPT_MESSAGES) {
-      included = false; drop = "message_limit"; body = "";
+      included = false;
+      drop = "message_limit";
+      body = "";
     } else {
-      if (body.length > MAX_MESSAGE_CHARS) { body = body.slice(0, MAX_MESSAGE_CHARS); drop = "message_truncated"; }
+      if (body.length > MAX_MESSAGE_CHARS) {
+        body = body.slice(0, MAX_MESSAGE_CHARS);
+        drop = "message_truncated";
+      }
       if (used + body.length > MAX_TRANSCRIPT_CHARS) {
         const room = MAX_TRANSCRIPT_CHARS - used;
-        if (room <= 0) { included = false; drop = "transcript_limit"; body = ""; }
-        else { body = body.slice(0, room); drop = "transcript_truncated"; }
+        if (room <= 0) {
+          included = false;
+          drop = "transcript_limit";
+          body = "";
+        } else {
+          body = body.slice(0, room);
+          drop = "transcript_truncated";
+        }
       }
       if (included) used += body.length;
     }
@@ -201,7 +230,8 @@ export async function buildCanonicalBundle(args: {
       used_chars: body.length,
       included,
       drop_reason: drop,
-      verified_human: role === "human_agent" && m.sender_id !== null && m.sender_identity_verified_at !== null,
+      verified_human: role === "human_agent" && m.sender_id !== null &&
+        m.sender_identity_verified_at !== null,
     });
   }
 
@@ -215,7 +245,9 @@ export async function buildCanonicalBundle(args: {
   // The verified human response is the first identity-verified human turn that
   // occurs after that AI reply.
   const humanAfter = evaluatedAi
-    ? kept.find((e) => e.verified_human && e.created_at > evaluatedAi.created_at)
+    ? kept.find((e) =>
+      e.verified_human && e.created_at > evaluatedAi.created_at
+    )
     : kept.find((e) => e.verified_human);
 
   const lines: string[] = [];
@@ -261,7 +293,9 @@ export async function buildCanonicalBundle(args: {
   lines.push(grounding.kb_block);
   lines.push("## policy_evidence");
   lines.push(`policy_snapshot_id=${grounding.policy_snapshot_id}`);
-  lines.push(`policy_chunks_included=${grounding.manifest.policy.chunks_included}`);
+  lines.push(
+    `policy_chunks_included=${grounding.manifest.policy.chunks_included}`,
+  );
   lines.push(grounding.policy_block);
   lines.push("## truncation_manifest");
   lines.push(
@@ -271,7 +305,10 @@ export async function buildCanonicalBundle(args: {
         messages_included: kept.length,
         messages_dropped: entries.length - kept.length,
         chars_used: used,
-        dropped: entries.filter((e) => e.drop_reason).map((e) => ({ id: e.id, reason: e.drop_reason })),
+        dropped: entries.filter((e) => e.drop_reason).map((e) => ({
+          id: e.id,
+          reason: e.drop_reason,
+        })),
       },
       kb: grounding.manifest.kb.entries,
       policy: grounding.manifest.policy.entries,
@@ -280,7 +317,9 @@ export async function buildCanonicalBundle(args: {
   lines.push("## end");
 
   const text = lines.join("\n") + "\n";
-  const transcriptHash = await sha256Hex(kept.map((e) => `${e.id}:${e.content_sha256}`).join("\n") + "\n");
+  const transcriptHash = await sha256Hex(
+    kept.map((e) => `${e.id}:${e.content_sha256}`).join("\n") + "\n",
+  );
 
   return {
     text,
@@ -288,10 +327,18 @@ export async function buildCanonicalBundle(args: {
     transcript_hash: transcriptHash,
     transcript: entries,
     evaluated_ai_reply: evaluatedAi
-      ? { id: evaluatedAi.id, created_at: evaluatedAi.created_at, content_sha256: evaluatedAi.content_sha256 }
+      ? {
+        id: evaluatedAi.id,
+        created_at: evaluatedAi.created_at,
+        content_sha256: evaluatedAi.content_sha256,
+      }
       : null,
     verified_human_response: humanAfter
-      ? { id: humanAfter.id, created_at: humanAfter.created_at, content_sha256: humanAfter.content_sha256 }
+      ? {
+        id: humanAfter.id,
+        created_at: humanAfter.created_at,
+        content_sha256: humanAfter.content_sha256,
+      }
       : null,
     truncation: {
       messages_returned: entries.length,
@@ -308,7 +355,7 @@ export async function buildCanonicalBundle(args: {
 /* ------------------------------------------------------------------ */
 
 const OUTPUT_RULE =
-  'Return ONLY a JSON object, no prose and no code fences, of exactly this shape: ' +
+  "Return ONLY a JSON object, no prose and no code fences, of exactly this shape: " +
   '{"score": <number 0-100, at most 2 decimals>, "justification": "<80-800 characters>", ' +
   '"grounding_refs": ["<chunk_id copied from the evidence blocks>", ...], ' +
   '"evidence": ["<verbatim excerpt from the bundle>", ...], ' +
@@ -329,7 +376,8 @@ export const EVALUATOR_SYSTEM_PROMPT: Record<CeDimension, string> = {
     "You are an independent POLICY COMPLIANCE evaluator. Judge the evaluated AI reply ONLY against the rules " +
     "stated in the policy_evidence section. Do not invent policy. If the policy evidence does not cover the " +
     "situation, say so in the justification and score 50. 100 means fully compliant with the cited policy; 0 " +
-    "means a clear violation of a cited rule. grounding_refs must cite the policy chunks you applied. " + OUTPUT_RULE,
+    "means a clear violation of a cited rule. grounding_refs must cite the policy chunks you applied. " +
+    OUTPUT_RULE,
   tone:
     "You are an independent TONE evaluator. Judge professionalism, empathy and register of the evaluated AI reply " +
     "against the customer's state in the transcript. 100 means consistently professional and appropriately " +
@@ -337,11 +385,13 @@ export const EVALUATOR_SYSTEM_PROMPT: Record<CeDimension, string> = {
   sales:
     "You are an independent SALES EFFECTIVENESS evaluator. Judge whether the evaluated AI reply handled commercial " +
     "opportunity well: relevant needs identified, appropriate options offered, no pressure. A pure support " +
-    "exchange with no commercial content scores 50 with that stated. " + OUTPUT_RULE,
+    "exchange with no commercial content scores 50 with that stated. " +
+    OUTPUT_RULE,
   context:
     "You are an independent CONTEXT RETENTION evaluator. Judge whether the evaluated AI reply respected what the " +
     "customer already said earlier in the transcript: no re-asking answered questions, no contradicting earlier " +
-    "turns. 100 means perfect retention; 0 means the thread was repeatedly lost. " + OUTPUT_RULE,
+    "turns. 100 means perfect retention; 0 means the thread was repeatedly lost. " +
+    OUTPUT_RULE,
   hallucination_risk:
     "You are an independent HALLUCINATION RISK evaluator. Score RISK, where higher is WORSE. Any specific claim in " +
     "the evaluated AI reply — price, policy, availability, timeline, identifier — that is not grounded in the " +
@@ -372,18 +422,24 @@ export function validateEvaluatorOutput(
   if (rawScore < 0 || rawScore > 100) return null;
   const score = Math.round(rawScore * 100) / 100;
 
-  const justification = typeof parsed.justification === "string" ? parsed.justification.trim() : "";
+  const justification = typeof parsed.justification === "string"
+    ? parsed.justification.trim()
+    : "";
   if (justification.length < 20 || justification.length > 2000) return null;
 
   const evidenceRaw = Array.isArray(parsed.evidence) ? parsed.evidence : null;
-  if (!evidenceRaw || evidenceRaw.length === 0 || evidenceRaw.length > 3) return null;
+  if (!evidenceRaw || evidenceRaw.length === 0 || evidenceRaw.length > 3) {
+    return null;
+  }
   const evidence: string[] = [];
   for (const e of evidenceRaw) {
     if (typeof e !== "string" || e.trim().length === 0) return null;
     evidence.push(e.trim().slice(0, 500));
   }
 
-  const refsRaw = Array.isArray(parsed.grounding_refs) ? parsed.grounding_refs : null;
+  const refsRaw = Array.isArray(parsed.grounding_refs)
+    ? parsed.grounding_refs
+    : null;
   if (!refsRaw) return null;
   if (refsRaw.length > 10) return null;
   const grounding_refs: string[] = [];
@@ -400,14 +456,26 @@ export function validateEvaluatorOutput(
   if (typeof correctionRaw !== "string") return null;
   const recommended_correction = correctionRaw.trim().slice(0, 4000);
 
-  return { score, justification: justification.slice(0, 2000), evidence, grounding_refs, recommended_correction };
+  return {
+    score,
+    justification: justification.slice(0, 2000),
+    evidence,
+    grounding_refs,
+    recommended_correction,
+  };
 }
 
 /* ------------------------------------------------------------------ */
 /* Conversation signals — emotion journey and next steps               */
 /* ------------------------------------------------------------------ */
 
-export const SENTIMENTS = ["very_negative", "negative", "neutral", "positive", "very_positive"] as const;
+export const SENTIMENTS = [
+  "very_negative",
+  "negative",
+  "neutral",
+  "positive",
+  "very_positive",
+] as const;
 export type Sentiment = (typeof SENTIMENTS)[number];
 
 export const SIGNALS_SYSTEM_PROMPT =
@@ -415,7 +483,7 @@ export const SIGNALS_SYSTEM_PROMPT =
   "First, an emotion journey: one entry per CUSTOMER turn in the transcript, in order, giving the " +
   "customer's emotional state at that turn. Second, the concrete next steps a supervisor should take " +
   "after reading this evaluation. " +
-  'Return ONLY a JSON object, no prose and no code fences, of exactly this shape: ' +
+  "Return ONLY a JSON object, no prose and no code fences, of exactly this shape: " +
   '{"emotion": [{"message_id": "<id copied from the transcript>", "turn_index": <integer from 0>, ' +
   '"sentiment": "very_negative|negative|neutral|positive|very_positive", ' +
   '"sentiment_score": <number -100..100, negative is worse>, "trigger_label": "<short cause, may be empty>"}], ' +
@@ -458,7 +526,9 @@ export function validateSignalsOutput(
 ): SignalsOutput | null {
   if (!parsed) return null;
 
-  const byId = new Map(transcript.filter((e) => e.included).map((e) => [e.id, e]));
+  const byId = new Map(
+    transcript.filter((e) => e.included).map((e) => [e.id, e]),
+  );
 
   const rawEmotion = Array.isArray(parsed.emotion) ? parsed.emotion : null;
   if (!rawEmotion || rawEmotion.length > 40) return null;
@@ -473,18 +543,29 @@ export function validateSignalsOutput(
     if (entry.role !== "customer") return null;
     if (seen.has(id)) return null;
     seen.add(id);
-    const turn = typeof e.turn_index === "number" && Number.isInteger(e.turn_index) && e.turn_index >= 0
-      ? e.turn_index : null;
+    const turn =
+      typeof e.turn_index === "number" && Number.isInteger(e.turn_index) &&
+        e.turn_index >= 0
+        ? e.turn_index
+        : null;
     if (turn === null) return null;
     const sentiment = typeof e.sentiment === "string" ? e.sentiment : "";
     if (!(SENTIMENTS as readonly string[]).includes(sentiment)) return null;
-    const score = typeof e.sentiment_score === "number" && Number.isFinite(e.sentiment_score)
-      ? Math.round(e.sentiment_score * 100) / 100 : null;
+    const score = typeof e.sentiment_score === "number" &&
+        Number.isFinite(e.sentiment_score)
+      ? Math.round(e.sentiment_score * 100) / 100
+      : null;
     if (score === null || score < -100 || score > 100) return null;
-    const trigger = typeof e.trigger_label === "string" ? e.trigger_label.trim().slice(0, 200) : "";
+    const trigger = typeof e.trigger_label === "string"
+      ? e.trigger_label.trim().slice(0, 200)
+      : "";
     emotion.push({
-      message_id: id, turn_index: turn, occurred_at: entry.created_at,
-      sentiment: sentiment as Sentiment, sentiment_score: score, trigger_label: trigger,
+      message_id: id,
+      turn_index: turn,
+      occurred_at: entry.created_at,
+      sentiment: sentiment as Sentiment,
+      sentiment_score: score,
+      trigger_label: trigger,
     });
   }
 
@@ -495,12 +576,18 @@ export function validateSignalsOutput(
   for (const item of rawSteps) {
     if (!item || typeof item !== "object") return null;
     const n = item as Record<string, unknown>;
-    const ordinal = typeof n.ordinal === "number" && Number.isInteger(n.ordinal) && n.ordinal >= 0 ? n.ordinal : null;
+    const ordinal =
+      typeof n.ordinal === "number" && Number.isInteger(n.ordinal) &&
+        n.ordinal >= 0
+        ? n.ordinal
+        : null;
     if (ordinal === null || ordinals.has(ordinal)) return null;
     ordinals.add(ordinal);
     const title = typeof n.title === "string" ? n.title.trim() : "";
     if (title.length === 0 || title.length > 200) return null;
-    const detail = typeof n.detail === "string" ? n.detail.trim().slice(0, 1000) : "";
+    const detail = typeof n.detail === "string"
+      ? n.detail.trim().slice(0, 1000)
+      : "";
     const owner = typeof n.owner_role === "string" ? n.owner_role.trim() : "";
     if (owner.length > 0 && !OWNER_ROLES.has(owner)) return null;
     next_steps.push({ ordinal, title, detail, owner_role: owner });
@@ -518,21 +605,30 @@ export interface Discrepancy {
   ai_claim: string;
   human_claim: string;
   grounded_claim: string;
-  divergence_kind: "contradiction" | "omission" | "overreach" | "unsupported" | "style";
+  divergence_kind:
+    | "contradiction"
+    | "omission"
+    | "overreach"
+    | "unsupported"
+    | "style";
   severity: "critical" | "high" | "medium" | "low";
   grounding_refs: string[];
 }
 
-const DIVERGENCE_BY_DIMENSION: Record<string, Discrepancy["divergence_kind"]> = {
-  accuracy: "contradiction",
-  policy: "overreach",
-  tone: "style",
-  sales: "omission",
-  context: "omission",
-  hallucination: "unsupported",
-};
+const DIVERGENCE_BY_DIMENSION: Record<string, Discrepancy["divergence_kind"]> =
+  {
+    accuracy: "contradiction",
+    policy: "overreach",
+    tone: "style",
+    sales: "omission",
+    context: "omission",
+    hallucination: "unsupported",
+  };
 
-function severityForScore(dimension: string, score: number): Discrepancy["severity"] {
+function severityForScore(
+  dimension: string,
+  score: number,
+): Discrepancy["severity"] {
   // hallucination is a risk score, so it is inverted before banding.
   const quality = dimension === "hallucination" ? 100 - score : score;
   if (quality < 40) return "critical";
@@ -550,7 +646,14 @@ function severityForScore(dimension: string, score: number): Discrepancy["severi
 export function deriveDiscrepancies(args: {
   evaluatedAiReply: string;
   verifiedHumanResponse: string;
-  perDimension: Array<{ evaluatorType: string; score: number; recommendedCorrection: string; groundingRefs: string[] }>;
+  perDimension: Array<
+    {
+      evaluatorType: string;
+      score: number;
+      recommendedCorrection: string;
+      groundingRefs: string[];
+    }
+  >;
 }): Discrepancy[] {
   const out: Discrepancy[] = [];
   for (const d of args.perDimension) {
@@ -561,7 +664,8 @@ export function deriveDiscrepancies(args: {
       ai_claim: args.evaluatedAiReply.slice(0, 4000),
       human_claim: args.verifiedHumanResponse.slice(0, 4000),
       grounded_claim: correction.slice(0, 4000),
-      divergence_kind: DIVERGENCE_BY_DIMENSION[d.evaluatorType] ?? "unsupported",
+      divergence_kind: DIVERGENCE_BY_DIMENSION[d.evaluatorType] ??
+        "unsupported",
       severity: severityForScore(d.evaluatorType, d.score),
       grounding_refs: d.groundingRefs,
     });

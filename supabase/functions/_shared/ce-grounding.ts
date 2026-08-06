@@ -69,7 +69,11 @@ export interface GroundingManifest {
   workspace_id: string;
   tenant_id: string;
   company_id: string;
-  limits: { max_chunk_chars: number; max_block_chars: number; max_chunks_per_class: number };
+  limits: {
+    max_chunk_chars: number;
+    max_block_chars: number;
+    max_chunks_per_class: number;
+  };
   kb: ManifestClass;
   policy: ManifestClass;
 }
@@ -114,12 +118,19 @@ const MAX_CHUNKS_PER_CLASS = 8;
 const CALL_TIMEOUT_MS = 12000;
 
 export async function sha256Hex(input: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
-  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(input),
+  );
+  return Array.from(new Uint8Array(digest)).map((b) =>
+    b.toString(16).padStart(2, "0")
+  ).join("");
 }
 
 /** Deterministic order: score descending, then chunk_id ascending as the tiebreak. */
-function orderChunks<T extends { score: number; chunk_id: string }>(chunks: T[]): T[] {
+function orderChunks<T extends { score: number; chunk_id: string }>(
+  chunks: T[],
+): T[] {
   return chunks.slice().sort((a, b) => {
     if (a.score !== b.score) return b.score - a.score;
     return a.chunk_id < b.chunk_id ? -1 : a.chunk_id > b.chunk_id ? 1 : 0;
@@ -128,7 +139,14 @@ function orderChunks<T extends { score: number; chunk_id: string }>(chunks: T[])
 
 async function buildClass(
   raw: Array<Record<string, unknown>>,
-): Promise<{ chunks: GroundingChunk[]; block: string; snapshotId: string; cls: ManifestClass }> {
+): Promise<
+  {
+    chunks: GroundingChunk[];
+    block: string;
+    snapshotId: string;
+    cls: ManifestClass;
+  }
+> {
   const normalised = raw.map((c) => ({
     chunk_id: String(c.chunk_id ?? ""),
     document_id: String(c.document_id ?? ""),
@@ -138,7 +156,9 @@ async function buildClass(
     source_scope: String(c.source_scope ?? ""),
     score: Number(c.score ?? 0),
     version: c.version == null ? null : String(c.version),
-    last_updated_at: c.last_updated_at == null ? null : String(c.last_updated_at),
+    last_updated_at: c.last_updated_at == null
+      ? null
+      : String(c.last_updated_at),
     freshness_status: String(c.freshness_status ?? "fresh"),
     content: String(c.content ?? ""),
   }));
@@ -194,11 +214,15 @@ async function buildClass(
 
   const includedChunks = out.filter((c) => c.included);
   const block = includedChunks
-    .map((c) => `[${c.citation_label}|${c.chunk_id}|v${c.version ?? "0"}]\n${c.content}`)
+    .map((c) =>
+      `[${c.citation_label}|${c.chunk_id}|v${c.version ?? "0"}]\n${c.content}`
+    )
     .join("\n\n");
 
   // The snapshot id is derived from the evidence itself.
-  const canonical = includedChunks.map((c) => `${c.chunk_id}:${c.content_sha256}`).join("\n");
+  const canonical = includedChunks.map((c) =>
+    `${c.chunk_id}:${c.content_sha256}`
+  ).join("\n");
   const snapshotId = `sha256:${await sha256Hex(canonical)}`;
 
   const cls: ManifestClass = {
@@ -250,8 +274,20 @@ export function joinChunks(
   const traceById = new Map<string, Record<string, unknown>>();
   for (const t of trace) {
     const id = idOf(t);
-    if (id === null) return { ok: false, code: "GROUNDING_IDENTITY_INVALID", detail: "trace_missing_chunk_id" };
-    if (traceById.has(id)) return { ok: false, code: "GROUNDING_IDENTITY_INVALID", detail: "trace_duplicate_chunk_id" };
+    if (id === null) {
+      return {
+        ok: false,
+        code: "GROUNDING_IDENTITY_INVALID",
+        detail: "trace_missing_chunk_id",
+      };
+    }
+    if (traceById.has(id)) {
+      return {
+        ok: false,
+        code: "GROUNDING_IDENTITY_INVALID",
+        detail: "trace_duplicate_chunk_id",
+      };
+    }
     traceById.set(id, t);
   }
 
@@ -260,26 +296,56 @@ export function joinChunks(
 
   for (const c of forLlm) {
     const id = idOf(c);
-    if (id === null) return { ok: false, code: "GROUNDING_IDENTITY_INVALID", detail: "content_missing_chunk_id" };
-    if (seen.has(id)) return { ok: false, code: "GROUNDING_IDENTITY_INVALID", detail: "content_duplicate_chunk_id" };
+    if (id === null) {
+      return {
+        ok: false,
+        code: "GROUNDING_IDENTITY_INVALID",
+        detail: "content_missing_chunk_id",
+      };
+    }
+    if (seen.has(id)) {
+      return {
+        ok: false,
+        code: "GROUNDING_IDENTITY_INVALID",
+        detail: "content_duplicate_chunk_id",
+      };
+    }
     seen.add(id);
 
     const t = traceById.get(id);
-    if (!t) return { ok: false, code: "GROUNDING_IDENTITY_INVALID", detail: "content_without_trace" };
+    if (!t) {
+      return {
+        ok: false,
+        code: "GROUNDING_IDENTITY_INVALID",
+        detail: "content_without_trace",
+      };
+    }
 
     // Identity fields must agree across both arrays.
     for (const field of ["document_id", "source_type"]) {
       const a = c[field] == null ? null : String(c[field]);
       const b = t[field] == null ? null : String(t[field]);
       if (a !== null && b !== null && a !== b) {
-        return { ok: false, code: "GROUNDING_IDENTITY_INVALID", detail: `field_conflict:${field}` };
+        return {
+          ok: false,
+          code: "GROUNDING_IDENTITY_INVALID",
+          detail: `field_conflict:${field}`,
+        };
       }
     }
     if (typeof c.content !== "string" || c.content.length === 0) {
-      return { ok: false, code: "GROUNDING_IDENTITY_INVALID", detail: "content_missing_body" };
+      return {
+        ok: false,
+        code: "GROUNDING_IDENTITY_INVALID",
+        detail: "content_missing_body",
+      };
     }
     if (String(t.document_id ?? c.document_id ?? "").trim().length === 0) {
-      return { ok: false, code: "GROUNDING_IDENTITY_INVALID", detail: "missing_document_id" };
+      return {
+        ok: false,
+        code: "GROUNDING_IDENTITY_INVALID",
+        detail: "missing_document_id",
+      };
     }
 
     out.push({ ...t, ...c, chunk_id: id });
@@ -288,7 +354,13 @@ export function joinChunks(
   // A trace entry with no content counterpart is an extra chunk the adapter
   // reported but did not supply; the evidence set would be incomplete.
   for (const id of traceById.keys()) {
-    if (!seen.has(id)) return { ok: false, code: "GROUNDING_IDENTITY_INVALID", detail: "trace_without_content" };
+    if (!seen.has(id)) {
+      return {
+        ok: false,
+        code: "GROUNDING_IDENTITY_INVALID",
+        detail: "trace_without_content",
+      };
+    }
   }
 
   return { ok: true, chunks: out };
@@ -317,7 +389,10 @@ export async function fetchGrounding(args: {
     try {
       res = await fetch(`${base}/functions/v1/kb-adapter`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-Internal-Service-Token": token },
+        headers: {
+          "Content-Type": "application/json",
+          "X-Internal-Service-Token": token,
+        },
         body: JSON.stringify({
           conversation_id: args.conversationId,
           message_id: args.messageId,
@@ -334,23 +409,41 @@ export async function fetchGrounding(args: {
     } catch {
       return { ok: false, code: "GROUNDING_UNREACHABLE" };
     }
-    if (!res.ok) return { ok: false, code: "GROUNDING_REJECTED", detail: String(res.status) };
+    if (!res.ok) {
+      return {
+        ok: false,
+        code: "GROUNDING_REJECTED",
+        detail: String(res.status),
+      };
+    }
     payload = (await res.json().catch(() => null)) as Record<string, unknown>;
-    if (!payload || typeof payload !== "object") return { ok: false, code: "GROUNDING_BAD_RESPONSE" };
+    if (!payload || typeof payload !== "object") {
+      return { ok: false, code: "GROUNDING_BAD_RESPONSE" };
+    }
   } finally {
     clearTimeout(timer);
   }
 
   if (payload.error) {
     const err = payload.error as { error_code?: string };
-    return { ok: false, code: "GROUNDING_REJECTED", detail: String(err?.error_code ?? "unknown") };
+    return {
+      ok: false,
+      code: "GROUNDING_REJECTED",
+      detail: String(err?.error_code ?? "unknown"),
+    };
   }
 
-  const forLlm = Array.isArray(payload.chunks_for_llm) ? (payload.chunks_for_llm as Array<Record<string, unknown>>) : [];
-  const trace = Array.isArray(payload.trace_chunks) ? (payload.trace_chunks as Array<Record<string, unknown>>) : [];
+  const forLlm = Array.isArray(payload.chunks_for_llm)
+    ? (payload.chunks_for_llm as Array<Record<string, unknown>>)
+    : [];
+  const trace = Array.isArray(payload.trace_chunks)
+    ? (payload.trace_chunks as Array<Record<string, unknown>>)
+    : [];
 
   const joined = joinChunks(forLlm, trace);
-  if (!joined.ok) return { ok: false, code: joined.code, detail: joined.detail };
+  if (!joined.ok) {
+    return { ok: false, code: joined.code, detail: joined.detail };
+  }
   const merged = joined.chunks;
   if (merged.length === 0) return { ok: false, code: "GROUNDING_EMPTY" };
 
@@ -358,40 +451,79 @@ export async function fetchGrounding(args: {
   // embedding_model is 'placeholder'. A chunk that reached the adapter without
   // real embedding is a pipeline integrity failure, not usable evidence.
   for (const c of merged) {
-    const eStatus = c.embedding_status == null ? null : String(c.embedding_status);
+    const eStatus = c.embedding_status == null
+      ? null
+      : String(c.embedding_status);
     const eModel = c.embedding_model == null ? null : String(c.embedding_model);
     if (eStatus !== null && eStatus !== "indexed") {
-      return { ok: false, code: "GROUNDING_IDENTITY_INVALID", detail: "chunk_not_indexed" };
+      return {
+        ok: false,
+        code: "GROUNDING_IDENTITY_INVALID",
+        detail: "chunk_not_indexed",
+      };
     }
-    if (eModel !== null && (eModel === "placeholder" || eModel === "simulated")) {
-      return { ok: false, code: "GROUNDING_IDENTITY_INVALID", detail: "chunk_simulated_embedding" };
+    if (
+      eModel !== null && (eModel === "placeholder" || eModel === "simulated")
+    ) {
+      return {
+        ok: false,
+        code: "GROUNDING_IDENTITY_INVALID",
+        detail: "chunk_simulated_embedding",
+      };
     }
   }
 
   // Response-level scope echo is MANDATORY. A missing echo means the adapter
   // did not confirm which tenant it answered for, and the evidence is untrusted.
-  const echoedWorkspace = payload.workspace_id == null ? null : String(payload.workspace_id);
-  const echoedTenant = payload.tenant_id == null ? null : String(payload.tenant_id);
+  const echoedWorkspace = payload.workspace_id == null
+    ? null
+    : String(payload.workspace_id);
+  const echoedTenant = payload.tenant_id == null
+    ? null
+    : String(payload.tenant_id);
   if (echoedWorkspace === null || echoedTenant === null) {
-    return { ok: false, code: "GROUNDING_TENANT_MISMATCH", detail: "missing_scope_echo" };
+    return {
+      ok: false,
+      code: "GROUNDING_TENANT_MISMATCH",
+      detail: "missing_scope_echo",
+    };
   }
-  if (echoedWorkspace !== args.company.external_workspace_id ||
-      echoedTenant !== args.company.external_tenant_id) {
-    return { ok: false, code: "GROUNDING_TENANT_MISMATCH", detail: "scope_echo" };
+  if (
+    echoedWorkspace !== args.company.external_workspace_id ||
+    echoedTenant !== args.company.external_tenant_id
+  ) {
+    return {
+      ok: false,
+      code: "GROUNDING_TENANT_MISMATCH",
+      detail: "scope_echo",
+    };
   }
   // Every included chunk must also carry matching scope fields.
   for (const c of merged) {
     const cw = c.workspace_id == null ? null : String(c.workspace_id);
     const ct = c.tenant_id == null ? null : String(c.tenant_id);
     if (cw === null || ct === null) {
-      return { ok: false, code: "GROUNDING_TENANT_MISMATCH", detail: "chunk_missing_scope" };
+      return {
+        ok: false,
+        code: "GROUNDING_TENANT_MISMATCH",
+        detail: "chunk_missing_scope",
+      };
     }
-    if (cw !== args.company.external_workspace_id || ct !== args.company.external_tenant_id) {
-      return { ok: false, code: "GROUNDING_TENANT_MISMATCH", detail: "chunk_scope" };
+    if (
+      cw !== args.company.external_workspace_id ||
+      ct !== args.company.external_tenant_id
+    ) {
+      return {
+        ok: false,
+        code: "GROUNDING_TENANT_MISMATCH",
+        detail: "chunk_scope",
+      };
     }
   }
 
-  const policyRaw = merged.filter((c) => String(c.source_type ?? "") === "policy");
+  const policyRaw = merged.filter((c) =>
+    String(c.source_type ?? "") === "policy"
+  );
   const kbRaw = merged.filter((c) => String(c.source_type ?? "") !== "policy");
 
   if (args.requirePolicyEvidence && policyRaw.length === 0) {
@@ -412,7 +544,9 @@ export async function fetchGrounding(args: {
       policy_snapshot_id: policy.snapshotId,
       manifest: {
         adapter: "kb-adapter",
-        request_id: payload.request_id == null ? null : String(payload.request_id),
+        request_id: payload.request_id == null
+          ? null
+          : String(payload.request_id),
         retrieval_quality: String(payload.retrieval_quality ?? "unknown"),
         no_answer: Boolean(payload.no_answer),
         kb_gap_detected: Boolean(payload.kb_gap_detected),

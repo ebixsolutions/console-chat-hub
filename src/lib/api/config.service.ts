@@ -136,6 +136,7 @@ export const updateFeedbackConfigFn = createServerFn({ method: "POST" })
       targetId = existing.id;
     }
 
+
     // Verify persistence by re-SELECTing the row we just wrote.
     const { data: verified, error: verifyErr } = await context.supabase
       .from("feedback_automation_config")
@@ -154,7 +155,8 @@ export const updateFeedbackConfigFn = createServerFn({ method: "POST" })
 export const configService = {
   listChannelConfigs: () => listChannelConfigsFn(),
   getFeedbackConfig: () => getFeedbackConfigFn(),
-  updateFeedbackConfig: (params: z.infer<typeof updateFeedbackInput>) => updateFeedbackConfigFn({ data: params }),
+  updateFeedbackConfig: (params: z.infer<typeof updateFeedbackInput>) =>
+    updateFeedbackConfigFn({ data: params }),
 
   // P2 out-of-scope stubs preserved for future work.
   updateWidgetConfig: async (_p: unknown): Promise<ServerResult<never>> => ({
@@ -213,7 +215,10 @@ export const authService = {
     const { data: sessionData } = await supabase.auth.getSession();
     const userId = sessionData.session?.user?.id;
     if (!userId) return null;
-    const { data, error } = await supabase.from("user_roles").select("role").eq("user_id", userId);
+    const { data, error } = await supabase
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", userId);
     if (error || !data || data.length === 0) return null;
     const roles = data.map((r) => r.role as AppRole);
     for (const candidate of ROLE_PRECEDENCE) {
@@ -227,7 +232,10 @@ export const authService = {
     const { data: sessionData } = await supabase.auth.getSession();
     const userId = sessionData.session?.user?.id;
     if (!userId) return [];
-    const { data, error } = await supabase.from("user_roles").select("role").eq("user_id", userId);
+    const { data, error } = await supabase
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", userId);
     if (error || !data) return [];
     return data.map((r) => r.role as AppRole);
   },

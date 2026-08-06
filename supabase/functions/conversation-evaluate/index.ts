@@ -19,22 +19,30 @@
  *   - stale running attempts are reaped opportunistically
  */
 
-import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
-import { callModel, parseJsonObject, toCeErrorCode, redact } from "../_shared/llm-router.ts";
-import { fetchGrounding, type GroundingBundle } from "../_shared/ce-grounding.ts";
+import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2.45.0";
+import {
+  callModel,
+  parseJsonObject,
+  redact,
+  toCeErrorCode,
+} from "../_shared/llm-router.ts";
+import {
+  fetchGrounding,
+  type GroundingBundle,
+} from "../_shared/ce-grounding.ts";
 import {
   buildCanonicalBundle,
-  validateEvaluatorOutput,
   CE_DIMENSIONS,
-  DIMENSION_TO_EVALUATOR_TYPE,
-  EVALUATOR_SYSTEM_PROMPT,
-  EVALUATOR_PROMPT_VERSION,
-  SIGNALS_SYSTEM_PROMPT,
-  validateSignalsOutput,
-  deriveDiscrepancies,
   type CeDimension,
+  deriveDiscrepancies,
+  DIMENSION_TO_EVALUATOR_TYPE,
+  EVALUATOR_PROMPT_VERSION,
+  EVALUATOR_SYSTEM_PROMPT,
+  SIGNALS_SYSTEM_PROMPT,
   type SnapshotConversation,
   type SnapshotMessage,
+  validateEvaluatorOutput,
+  validateSignalsOutput,
 } from "../_shared/ce-contract.ts";
 
 /* ------------------------------------------------------------------ */
@@ -57,7 +65,13 @@ const STALE_ATTEMPT_MINUTES = 15;
 
 const ALLOWED_FIELDS: Record<string, Set<string>> = {
   evaluate: new Set(["action", "conversation_id"]),
-  review: new Set(["action", "evaluation_id", "conversation_id", "decision", "note"]),
+  review: new Set([
+    "action",
+    "evaluation_id",
+    "conversation_id",
+    "decision",
+    "note",
+  ]),
 };
 
 /** The complete public error vocabulary. Nothing else may reach a caller. */
@@ -83,14 +97,21 @@ const REQUIRED_ENV = ["CE_CONTRACT_VERSION", "CE_SOURCE_DEPLOYMENT"] as const;
 function corsFor(req: Request): Record<string, string> {
   const origin = req.headers.get("Origin") ?? "";
   return {
-    "Access-Control-Allow-Origin": CONSOLE_ORIGINS.includes(origin) ? origin : "",
-    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Origin": CONSOLE_ORIGINS.includes(origin)
+      ? origin
+      : "",
+    "Access-Control-Allow-Headers":
+      "authorization, x-client-info, apikey, content-type",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     Vary: "Origin",
   };
 }
 
-function ok(body: Record<string, unknown>, req: Request, operationId: string): Response {
+function ok(
+  body: Record<string, unknown>,
+  req: Request,
+  operationId: string,
+): Response {
   return new Response(JSON.stringify({ ...body, operation_id: operationId }), {
     status: 200,
     headers: { ...corsFor(req), "Content-Type": "application/json" },
@@ -101,15 +122,28 @@ function ok(body: Record<string, unknown>, req: Request, operationId: string): R
  * The only error emitter. `detail` is a stable machine token from a closed set,
  * never a message from a dependency.
  */
-function fail(error: PublicError, req: Request, operationId: string, detail?: string): Response {
-  return new Response(JSON.stringify({ error, detail: detail ?? null, operation_id: operationId }), {
-    status: PUBLIC_ERRORS[error],
-    headers: { ...corsFor(req), "Content-Type": "application/json" },
-  });
+function fail(
+  error: PublicError,
+  req: Request,
+  operationId: string,
+  detail?: string,
+): Response {
+  return new Response(
+    JSON.stringify({
+      error,
+      detail: detail ?? null,
+      operation_id: operationId,
+    }),
+    {
+      status: PUBLIC_ERRORS[error],
+      headers: { ...corsFor(req), "Content-Type": "application/json" },
+    },
+  );
 }
 
 function isUuid(v: unknown): v is string {
-  return typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+  return typeof v === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 }
 
 /** Exact Bearer parsing: one scheme, one space, a non-empty opaque token. */
@@ -122,11 +156,22 @@ function parseBearer(header: string | null): string | null {
   return token;
 }
 
-async function readBoundedJson(req: Request): Promise<{ ok: true; value: unknown } | { ok: false; reason: "too_large" | "unparsable" }> {
+async function readBoundedJson(
+  req: Request,
+): Promise<
+  { ok: true; value: unknown } | {
+    ok: false;
+    reason: "too_large" | "unparsable";
+  }
+> {
   const declared = req.headers.get("content-length");
-  if (declared && Number(declared) > MAX_BODY_BYTES) return { ok: false, reason: "too_large" };
+  if (declared && Number(declared) > MAX_BODY_BYTES) {
+    return { ok: false, reason: "too_large" };
+  }
   const raw = await req.text();
-  if (new TextEncoder().encode(raw).length > MAX_BODY_BYTES) return { ok: false, reason: "too_large" };
+  if (new TextEncoder().encode(raw).length > MAX_BODY_BYTES) {
+    return { ok: false, reason: "too_large" };
+  }
   try {
     return { ok: true, value: JSON.parse(raw) };
   } catch {
@@ -135,7 +180,13 @@ async function readBoundedJson(req: Request): Promise<{ ok: true; value: unknown
 }
 
 function log(fields: Record<string, unknown>): void {
-  console.log(JSON.stringify({ component: "conversation-evaluate", ts: new Date().toISOString(), ...fields }));
+  console.log(
+    JSON.stringify({
+      component: "conversation-evaluate",
+      ts: new Date().toISOString(),
+      ...fields,
+    }),
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -144,7 +195,11 @@ function log(fields: Record<string, unknown>): void {
 
 interface TenantContext {
   conversation: SnapshotConversation;
-  company: { company_id: string; external_workspace_id: string; external_tenant_id: string };
+  company: {
+    company_id: string;
+    external_workspace_id: string;
+    external_tenant_id: string;
+  };
   roles: string[];
 }
 
@@ -152,23 +207,49 @@ async function resolveTenant(
   admin: SupabaseClient,
   conversationId: string,
   userId: string,
-): Promise<{ ok: true; ctx: TenantContext } | { ok: false; error: PublicError; detail: string }> {
+): Promise<
+  { ok: true; ctx: TenantContext } | {
+    ok: false;
+    error: PublicError;
+    detail: string;
+  }
+> {
   const { data: conv, error: convErr } = await admin
     .from("conversations")
-    .select("id, company_id, status, priority, channel_config_id, created_at, resolved_at")
+    .select(
+      "id, company_id, status, priority, channel_config_id, created_at, resolved_at",
+    )
     .eq("id", conversationId)
     .maybeSingle();
-  if (convErr) return { ok: false, error: "internal_error", detail: "conversation_lookup_failed" };
-  if (!conv) return { ok: false, error: "not_found", detail: "conversation_not_found" };
-  if (!conv.company_id) return { ok: false, error: "conflict", detail: "tenant_unresolved" };
+  if (convErr) {
+    return {
+      ok: false,
+      error: "internal_error",
+      detail: "conversation_lookup_failed",
+    };
+  }
+  if (!conv) {
+    return { ok: false, error: "not_found", detail: "conversation_not_found" };
+  }
+  if (!conv.company_id) {
+    return { ok: false, error: "conflict", detail: "tenant_unresolved" };
+  }
 
   const { data: company, error: coErr } = await admin
     .from("company")
     .select("id, external_workspace_id, external_tenant_id, is_active")
     .eq("id", conv.company_id)
     .maybeSingle();
-  if (coErr) return { ok: false, error: "internal_error", detail: "company_lookup_failed" };
-  if (!company || !company.is_active) return { ok: false, error: "forbidden", detail: "company_inactive" };
+  if (coErr) {
+    return {
+      ok: false,
+      error: "internal_error",
+      detail: "company_lookup_failed",
+    };
+  }
+  if (!company || !company.is_active) {
+    return { ok: false, error: "forbidden", detail: "company_inactive" };
+  }
 
   const { data: members, error: memErr } = await admin
     .from("company_membership")
@@ -176,8 +257,16 @@ async function resolveTenant(
     .eq("company_id", conv.company_id)
     .eq("user_id", userId)
     .eq("is_active", true);
-  if (memErr) return { ok: false, error: "internal_error", detail: "membership_lookup_failed" };
-  if (!members || members.length === 0) return { ok: false, error: "forbidden", detail: "not_a_member" };
+  if (memErr) {
+    return {
+      ok: false,
+      error: "internal_error",
+      detail: "membership_lookup_failed",
+    };
+  }
+  if (!members || members.length === 0) {
+    return { ok: false, error: "forbidden", detail: "not_a_member" };
+  }
 
   return {
     ok: true,
@@ -205,7 +294,16 @@ async function runEvaluator(
   companyId: string,
   conversationId: string,
 ): Promise<
-  | { ok: true; score: number; justification: string; evidence: string[]; grounding_refs: string[]; recommended_correction: string; model: string; raw: Record<string, unknown> }
+  | {
+    ok: true;
+    score: number;
+    justification: string;
+    evidence: string[];
+    grounding_refs: string[];
+    recommended_correction: string;
+    model: string;
+    raw: Record<string, unknown>;
+  }
   | { ok: false; code: string }
 > {
   const res = await callModel({
@@ -224,11 +322,20 @@ async function runEvaluator(
   const parsed = parseJsonObject(res.text);
   const validated = validateEvaluatorOutput(parsed, knownChunkIds);
   if (!validated) {
-    log({ event: "evaluator_output_invalid", dimension, operation_id: operationId });
+    log({
+      event: "evaluator_output_invalid",
+      dimension,
+      operation_id: operationId,
+    });
     return { ok: false, code: "CE_PROVIDER_INVALID_OUTPUT" };
   }
 
-  return { ok: true, ...validated, model: res.model, raw: parsed as Record<string, unknown> };
+  return {
+    ok: true,
+    ...validated,
+    model: res.model,
+    raw: parsed as Record<string, unknown>,
+  };
 }
 
 /** Signals are best-effort: a failure must not discard a completed evaluation. */
@@ -250,7 +357,11 @@ async function runSignals(
     tag: "ce:signals",
   });
   if (!res.ok) {
-    log({ event: "signals_unavailable", code: res.code, operation_id: operationId });
+    log({
+      event: "signals_unavailable",
+      code: res.code,
+      operation_id: operationId,
+    });
     return null;
   }
   const signals = validateSignalsOutput(parseJsonObject(res.text), transcript);
@@ -262,13 +373,28 @@ async function runSignals(
 /* Evaluate                                                            */
 /* ------------------------------------------------------------------ */
 
-async function terminateAttempt(admin: SupabaseClient, attemptId: string, code: string, operationId: string): Promise<void> {
-  const { data, error } = await admin.rpc("fail_evaluation", { p_attempt_id: attemptId, p_error: code });
+async function terminateAttempt(
+  admin: SupabaseClient,
+  attemptId: string,
+  code: string,
+  operationId: string,
+): Promise<void> {
+  const { data, error } = await admin.rpc("fail_evaluation", {
+    p_attempt_id: attemptId,
+    p_error: code,
+  });
   const result = String(((data ?? {}) as Record<string, unknown>).result ?? "");
   if (error || result !== "failed") {
     // The attempt may still be running. Reap it so no zombie survives this request.
-    log({ event: "fail_rpc_unconfirmed", attempt_id: attemptId, result, operation_id: operationId });
-    await admin.rpc("reap_stale_evaluation_attempts", { p_older_than: "0 minutes" }).then(
+    log({
+      event: "fail_rpc_unconfirmed",
+      attempt_id: attemptId,
+      result,
+      operation_id: operationId,
+    });
+    await admin.rpc("reap_stale_evaluation_attempts", {
+      p_older_than: "0 minutes",
+    }).then(
       () => undefined,
       () => undefined,
     );
@@ -287,7 +413,7 @@ async function readBackEvaluation(
     )
     .eq("attempt_id", attemptId)
     .maybeSingle();
-  return (data as Record<string, unknown>) ?? null;
+  return (data as unknown as Record<string, unknown>) ?? null;
 }
 
 async function handleEvaluate(
@@ -310,25 +436,38 @@ async function handleEvaluate(
 
   // Opportunistic zombie cleanup before opening a new attempt.
   await admin
-    .rpc("reap_stale_evaluation_attempts", { p_older_than: `${STALE_ATTEMPT_MINUTES} minutes` })
+    .rpc("reap_stale_evaluation_attempts", {
+      p_older_than: `${STALE_ATTEMPT_MINUTES} minutes`,
+    })
     .then(() => undefined, () => undefined);
 
   const { data: msgs, error: msgErr } = await admin
     .from("messages")
-    .select("id, role, content, created_at, is_recalled, sender_id, sender_identity_verified_at")
+    .select(
+      "id, role, content, created_at, is_recalled, sender_id, sender_identity_verified_at",
+    )
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: true })
     .order("id", { ascending: true })
     .limit(MAX_MESSAGES + 1);
-  if (msgErr) return fail("internal_error", req, operationId, "messages_lookup_failed");
-  if (!msgs || msgs.length === 0) return fail("conflict", req, operationId, "conversation_empty");
-  if (msgs.length > MAX_MESSAGES) return fail("payload_too_large", req, operationId, "conversation_too_long");
+  if (msgErr) {
+    return fail("internal_error", req, operationId, "messages_lookup_failed");
+  }
+  if (!msgs || msgs.length === 0) {
+    return fail("conflict", req, operationId, "conversation_empty");
+  }
+  if (msgs.length > MAX_MESSAGES) {
+    return fail("payload_too_large", req, operationId, "conversation_too_long");
+  }
 
   // Grounding is fetched BEFORE any attempt row exists, so a grounding failure
   // can never leave a running attempt behind.
   const lastCustomer = [...(msgs as SnapshotMessage[])]
     .reverse()
-    .find((m) => !m.is_recalled && ["visitor", "customer", "user"].includes(m.role.toLowerCase()));
+    .find((m) =>
+      !m.is_recalled &&
+      ["visitor", "customer", "user"].includes(m.role.toLowerCase())
+    );
 
   const grounding = await fetchGrounding({
     conversationId,
@@ -339,7 +478,11 @@ async function handleEvaluate(
     requirePolicyEvidence: true,
   });
   if (!grounding.ok) {
-    log({ event: "grounding_failed", code: grounding.code, operation_id: operationId });
+    log({
+      event: "grounding_failed",
+      code: grounding.code,
+      operation_id: operationId,
+    });
     return fail("unavailable", req, operationId, "grounding_unavailable");
   }
   const bundleGrounding: GroundingBundle = grounding.bundle;
@@ -357,19 +500,22 @@ async function handleEvaluate(
     return fail("forbidden", req, operationId, "tenant_mismatch");
   }
 
-  const { data: initRaw, error: initErr } = await admin.rpc("initiate_evaluation_v2", {
-    p_conversation_id: conversationId,
-    p_contract_version: contractVersion,
-    p_kb_snapshot_id: bundleGrounding.kb_snapshot_id,
-    p_policy_snapshot_id: bundleGrounding.policy_snapshot_id,
-    p_model_version: Deno.env.get("LLM_MODEL_EVALUATION") ?? "",
-    p_prompt_version: EVALUATOR_PROMPT_VERSION,
-    p_input_snapshot_hash: bundle.transcript_hash,
-    p_bundle_hash: bundle.bundle_hash,
-    p_grounding_manifest: bundleGrounding.manifest,
-    p_initiated_by: userId,
-    p_source_deployment: sourceDeployment,
-  });
+  const { data: initRaw, error: initErr } = await admin.rpc(
+    "initiate_evaluation_v2",
+    {
+      p_conversation_id: conversationId,
+      p_contract_version: contractVersion,
+      p_kb_snapshot_id: bundleGrounding.kb_snapshot_id,
+      p_policy_snapshot_id: bundleGrounding.policy_snapshot_id,
+      p_model_version: Deno.env.get("LLM_MODEL_EVALUATION") ?? "",
+      p_prompt_version: EVALUATOR_PROMPT_VERSION,
+      p_input_snapshot_hash: bundle.transcript_hash,
+      p_bundle_hash: bundle.bundle_hash,
+      p_grounding_manifest: bundleGrounding.manifest,
+      p_initiated_by: userId,
+      p_source_deployment: sourceDeployment,
+    },
+  );
   if (initErr) {
     log({ event: "initiate_rpc_error", operation_id: operationId });
     return fail("internal_error", req, operationId, "initiate_failed");
@@ -386,12 +532,24 @@ async function handleEvaluate(
       )
       .eq("id", String(init.evaluation_id ?? ""))
       .maybeSingle();
-    return ok({ status: "already_evaluated", evaluation: existing ?? null }, req, operationId);
+    return ok(
+      { status: "already_evaluated", evaluation: existing ?? null },
+      req,
+      operationId,
+    );
   }
-  if (initResult === "already_in_progress") return fail("conflict", req, operationId, "already_in_progress");
-  if (initResult === "feature_disabled") return fail("unavailable", req, operationId, "feature_disabled");
-  if (initResult === "tenant_unresolved") return fail("conflict", req, operationId, "tenant_unresolved");
-  if (initResult === "tenant_forbidden") return fail("forbidden", req, operationId, "tenant_forbidden");
+  if (initResult === "already_in_progress") {
+    return fail("conflict", req, operationId, "already_in_progress");
+  }
+  if (initResult === "feature_disabled") {
+    return fail("unavailable", req, operationId, "feature_disabled");
+  }
+  if (initResult === "tenant_unresolved") {
+    return fail("conflict", req, operationId, "tenant_unresolved");
+  }
+  if (initResult === "tenant_forbidden") {
+    return fail("forbidden", req, operationId, "tenant_forbidden");
+  }
   if (initResult !== "initiated" || !isUuid(init.attempt_id)) {
     return fail("conflict", req, operationId, "initiate_rejected");
   }
@@ -405,11 +563,20 @@ async function handleEvaluate(
 
   const settled = await Promise.all(
     CE_DIMENSIONS.map((d) =>
-      runEvaluator(d, bundle.text, knownChunkIds, operationId, company.company_id, conversationId),
+      runEvaluator(
+        d,
+        bundle.text,
+        knownChunkIds,
+        operationId,
+        company.company_id,
+        conversationId,
+      )
     ),
   );
 
-  const firstFailure = settled.find((r) => !r.ok) as { ok: false; code: string } | undefined;
+  const firstFailure = settled.find((r) => !r.ok) as
+    | { ok: false; code: string }
+    | undefined;
   if (firstFailure) {
     await terminateAttempt(admin, attemptId, firstFailure.code, operationId);
     return fail("provider_failed", req, operationId, firstFailure.code);
@@ -418,7 +585,10 @@ async function handleEvaluate(
   const scores: Record<string, number> = {};
   const details: Record<string, unknown> = {};
   CE_DIMENSIONS.forEach((dimension, i) => {
-    const r = settled[i] as Extract<Awaited<ReturnType<typeof runEvaluator>>, { ok: true }>;
+    const r = settled[i] as Extract<
+      Awaited<ReturnType<typeof runEvaluator>>,
+      { ok: true }
+    >;
     scores[dimension] = r.score;
     details[DIMENSION_TO_EVALUATOR_TYPE[dimension]] = {
       justification: r.justification,
@@ -437,21 +607,31 @@ async function handleEvaluate(
   });
 
   const signals = await runSignals(
-    bundle.text, bundle.transcript, operationId, company.company_id, conversationId,
+    bundle.text,
+    bundle.transcript,
+    operationId,
+    company.company_id,
+    conversationId,
   );
 
   const aiText = bundle.evaluated_ai_reply
-    ? (bundle.transcript.find((e) => e.id === bundle.evaluated_ai_reply!.id)?.content ?? "")
+    ? (bundle.transcript.find((e) => e.id === bundle.evaluated_ai_reply!.id)
+      ?.content ?? "")
     : "";
   const humanText = bundle.verified_human_response
-    ? (bundle.transcript.find((e) => e.id === bundle.verified_human_response!.id)?.content ?? "")
+    ? (bundle.transcript.find((e) =>
+      e.id === bundle.verified_human_response!.id
+    )?.content ?? "")
     : "";
 
   const discrepancies = deriveDiscrepancies({
     evaluatedAiReply: aiText,
     verifiedHumanResponse: humanText,
     perDimension: CE_DIMENSIONS.map((dimension, i) => {
-      const r = settled[i] as Extract<Awaited<ReturnType<typeof runEvaluator>>, { ok: true }>;
+      const r = settled[i] as Extract<
+        Awaited<ReturnType<typeof runEvaluator>>,
+        { ok: true }
+      >;
       return {
         evaluatorType: DIMENSION_TO_EVALUATOR_TYPE[dimension],
         score: r.score,
@@ -503,35 +683,65 @@ async function handleEvaluate(
     discrepancies,
   };
 
-  const { data: doneRaw, error: doneErr } = await admin.rpc("complete_evaluation_v2", {
-    p_attempt_id: attemptId,
-    p_scores: scores,
-    p_details: details,
-    p_bundle_hash: bundle.bundle_hash,
-    p_snapshot: snapshot,
-    p_derived: derived,
-  });
+  const { data: doneRaw, error: doneErr } = await admin.rpc(
+    "complete_evaluation_v2",
+    {
+      p_attempt_id: attemptId,
+      p_scores: scores,
+      p_details: details,
+      p_bundle_hash: bundle.bundle_hash,
+      p_snapshot: snapshot,
+      p_derived: derived,
+    },
+  );
 
   // Completion ambiguity: a transport error does not tell us whether the
   // transaction committed. Read back before deciding.
   if (doneErr) {
     const readBack = await readBackEvaluation(admin, attemptId);
-    if (readBack) return ok({ status: "completed", evaluation: readBack }, req, operationId);
-    await terminateAttempt(admin, attemptId, "CE_PERSISTENCE_RPC_ERROR", operationId);
+    if (readBack) {
+      return ok(
+        { status: "completed", evaluation: readBack },
+        req,
+        operationId,
+      );
+    }
+    await terminateAttempt(
+      admin,
+      attemptId,
+      "CE_PERSISTENCE_RPC_ERROR",
+      operationId,
+    );
     return fail("internal_error", req, operationId, "persist_failed");
   }
 
   const done = (doneRaw ?? {}) as Record<string, unknown>;
   if (String(done.result ?? "") !== "success") {
     const readBack = await readBackEvaluation(admin, attemptId);
-    if (readBack) return ok({ status: "completed", evaluation: readBack }, req, operationId);
-    await terminateAttempt(admin, attemptId, "CE_PERSISTENCE_ERROR", operationId);
+    if (readBack) {
+      return ok(
+        { status: "completed", evaluation: readBack },
+        req,
+        operationId,
+      );
+    }
+    await terminateAttempt(
+      admin,
+      attemptId,
+      "CE_PERSISTENCE_ERROR",
+      operationId,
+    );
     return fail("conflict", req, operationId, "persist_rejected");
   }
 
   const evaluation = await readBackEvaluation(admin, attemptId);
   if (!evaluation) {
-    await terminateAttempt(admin, attemptId, "CE_PERSISTENCE_ERROR", operationId);
+    await terminateAttempt(
+      admin,
+      attemptId,
+      "CE_PERSISTENCE_ERROR",
+      operationId,
+    );
     return fail("internal_error", req, operationId, "persist_unverified");
   }
 
@@ -568,20 +778,33 @@ async function handleReview(
   const conversationId = body.conversation_id;
   const decision = body.decision;
 
-  if (!isUuid(evaluationId)) return fail("invalid_request", req, operationId, "evaluation_id");
-  if (!isUuid(conversationId)) return fail("invalid_request", req, operationId, "conversation_id");
-  if (typeof decision !== "string" || !["accept", "reject", "reopen"].includes(decision)) {
+  if (!isUuid(evaluationId)) {
+    return fail("invalid_request", req, operationId, "evaluation_id");
+  }
+  if (!isUuid(conversationId)) {
+    return fail("invalid_request", req, operationId, "conversation_id");
+  }
+  if (
+    typeof decision !== "string" ||
+    !["accept", "reject", "reopen"].includes(decision)
+  ) {
     return fail("invalid_request", req, operationId, "decision");
   }
 
   let note: string | null = null;
   if (body.note !== undefined && body.note !== null) {
-    if (typeof body.note !== "string") return fail("invalid_request", req, operationId, "note");
+    if (typeof body.note !== "string") {
+      return fail("invalid_request", req, operationId, "note");
+    }
     const trimmed = body.note.trim();
-    if (trimmed.length > MAX_NOTE_CHARS) return fail("invalid_request", req, operationId, "note_too_long");
+    if (trimmed.length > MAX_NOTE_CHARS) {
+      return fail("invalid_request", req, operationId, "note_too_long");
+    }
     note = trimmed.length > 0 ? trimmed : null;
   }
-  if (decision === "reject" && !note) return fail("invalid_request", req, operationId, "note_required");
+  if (decision === "reject" && !note) {
+    return fail("invalid_request", req, operationId, "note_required");
+  }
 
   const tenant = await resolveTenant(admin, conversationId as string, userId);
   if (!tenant.ok) return fail(tenant.error, req, operationId, tenant.detail);
@@ -618,12 +841,24 @@ async function handleReview(
       operationId,
     );
   }
-  if (result === "not_found") return fail("not_found", req, operationId, "not_found");
-  if (result === "scope_mismatch") return fail("conflict", req, operationId, "scope_mismatch");
-  if (result === "invalid_transition") return fail("conflict", req, operationId, "invalid_transition");
-  if (result === "forbidden") return fail("forbidden", req, operationId, "role_not_permitted");
-  if (result === "tenant_unresolved") return fail("conflict", req, operationId, "tenant_unresolved");
-  if (result === "note_required") return fail("invalid_request", req, operationId, "note_required");
+  if (result === "not_found") {
+    return fail("not_found", req, operationId, "not_found");
+  }
+  if (result === "scope_mismatch") {
+    return fail("conflict", req, operationId, "scope_mismatch");
+  }
+  if (result === "invalid_transition") {
+    return fail("conflict", req, operationId, "invalid_transition");
+  }
+  if (result === "forbidden") {
+    return fail("forbidden", req, operationId, "role_not_permitted");
+  }
+  if (result === "tenant_unresolved") {
+    return fail("conflict", req, operationId, "tenant_unresolved");
+  }
+  if (result === "note_required") {
+    return fail("invalid_request", req, operationId, "note_required");
+  }
   return fail("conflict", req, operationId, "review_rejected");
 }
 
@@ -636,15 +871,26 @@ Deno.serve(async (req) => {
   const origin = req.headers.get("Origin") ?? "";
 
   if (req.method === "OPTIONS") {
-    if (!CONSOLE_ORIGINS.includes(origin)) return new Response(null, { status: 403 });
+    if (!CONSOLE_ORIGINS.includes(origin)) {
+      return new Response(null, { status: 403 });
+    }
     return new Response(null, { headers: corsFor(req) });
   }
-  if (req.method !== "POST") return fail("invalid_request", req, operationId, "method_not_allowed");
+  if (req.method !== "POST") {
+    return fail("invalid_request", req, operationId, "method_not_allowed");
+  }
   if (origin && !CONSOLE_ORIGINS.includes(origin)) {
-    return new Response(JSON.stringify({ error: "forbidden", detail: "origin", operation_id: operationId }), {
-      status: 403,
-      headers: { "Content-Type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({
+        error: "forbidden",
+        detail: "origin",
+        operation_id: operationId,
+      }),
+      {
+        status: 403,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
   }
 
   try {
@@ -656,19 +902,33 @@ Deno.serve(async (req) => {
         return fail("unavailable", req, operationId, "not_configured");
       }
     }
-    if (!/^[A-Za-z0-9._:-]{1,128}$/.test(Deno.env.get("CE_SOURCE_DEPLOYMENT")!)) {
-      log({ event: "config_invalid", key: "CE_SOURCE_DEPLOYMENT", operation_id: operationId });
+    if (
+      !/^[A-Za-z0-9._:-]{1,128}$/.test(Deno.env.get("CE_SOURCE_DEPLOYMENT")!)
+    ) {
+      log({
+        event: "config_invalid",
+        key: "CE_SOURCE_DEPLOYMENT",
+        operation_id: operationId,
+      });
       return fail("unavailable", req, operationId, "not_configured");
     }
 
     const bearer = parseBearer(req.headers.get("Authorization"));
-    if (!bearer) return fail("unauthorized", req, operationId, "bearer_malformed");
+    if (!bearer) {
+      return fail("unauthorized", req, operationId, "bearer_malformed");
+    }
 
-    const caller = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!, {
-      global: { headers: { Authorization: `Bearer ${bearer}` } },
-    });
+    const caller = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_ANON_KEY")!,
+      {
+        global: { headers: { Authorization: `Bearer ${bearer}` } },
+      },
+    );
     const { data: userData, error: authErr } = await caller.auth.getUser();
-    if (authErr || !userData?.user) return fail("unauthorized", req, operationId, "invalid_token");
+    if (authErr || !userData?.user) {
+      return fail("unauthorized", req, operationId, "invalid_token");
+    }
     const userId = userData.user.id;
 
     const parsedBody = await readBoundedJson(req);
@@ -683,22 +943,41 @@ Deno.serve(async (req) => {
     }
     const record = body as Record<string, unknown>;
 
-    const action = typeof record.action === "string" ? record.action : "evaluate";
+    const action = typeof record.action === "string"
+      ? record.action
+      : "evaluate";
     const allowed = ALLOWED_FIELDS[action];
     if (!allowed) return fail("invalid_request", req, operationId, "action");
     for (const key of Object.keys(record)) {
-      if (!allowed.has(key)) return fail("invalid_request", req, operationId, "unknown_field");
+      if (!allowed.has(key)) {
+        return fail("invalid_request", req, operationId, "unknown_field");
+      }
     }
 
-    const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const admin = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    );
 
     if (action === "evaluate") {
-      if (!isUuid(record.conversation_id)) return fail("invalid_request", req, operationId, "conversation_id");
-      return await handleEvaluate(req, admin, userId, record.conversation_id as string, operationId);
+      if (!isUuid(record.conversation_id)) {
+        return fail("invalid_request", req, operationId, "conversation_id");
+      }
+      return await handleEvaluate(
+        req,
+        admin,
+        userId,
+        record.conversation_id as string,
+        operationId,
+      );
     }
     return await handleReview(req, admin, caller, userId, record, operationId);
   } catch (e) {
-    log({ event: "unhandled", name: (e as Error).name, operation_id: operationId });
+    log({
+      event: "unhandled",
+      name: (e as Error).name,
+      operation_id: operationId,
+    });
     return fail("internal_error", req, operationId, "internal_error");
   }
 });
