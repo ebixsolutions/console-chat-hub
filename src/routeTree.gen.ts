@@ -9,43 +9,42 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as McpRouteImport } from './routes/mcp'
-import { Route as LoginRouteImport } from './routes/login'
-import { Route as FeedbackRouteImport } from './routes/feedback'
-import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as AuthenticatedConsoleRouteImport } from './routes/_authenticated/console'
-import { Route as Char91DotwellKnownChar93OauthProtectedResourceRouteImport } from './routes/[.well-known]/oauth-protected-resource'
+import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
+import { Route as FeedbackRouteImport } from './routes/feedback'
+import { Route as LoginRouteImport } from './routes/login'
+import { Route as McpRouteImport } from './routes/mcp'
 import { Route as Char91DotmcpChar93ListToolsRouteImport } from './routes/[.mcp]/list-tools'
-import { Route as AuthenticatedConsoleIndexRouteImport } from './routes/_authenticated/console.index'
-import { Route as AuthenticatedConsoleWidgetPreviewRouteImport } from './routes/_authenticated/console.widget-preview'
-import { Route as AuthenticatedConsoleTrainingCandidatesRouteImport } from './routes/_authenticated/console.training-candidates'
-import { Route as AuthenticatedConsoleKbGapsRouteImport } from './routes/_authenticated/console.kb-gaps'
-import { Route as AuthenticatedConsoleFeedbackSettingsRouteImport } from './routes/_authenticated/console.feedback-settings'
-import { Route as AuthenticatedConsoleFeedbackResponsesRouteImport } from './routes/_authenticated/console.feedback-responses'
-import { Route as AuthenticatedConsoleCustomer360RouteImport } from './routes/_authenticated/console.customer360'
-import { Route as AuthenticatedConsoleConversationEvaluationRouteImport } from './routes/_authenticated/console.conversation-evaluation'
-import { Route as AuthenticatedConsoleChannelSettingsRouteImport } from './routes/_authenticated/console.channel-settings'
-import { Route as AuthenticatedConsoleAnalyticsRouteImport } from './routes/_authenticated/console.analytics'
-import { Route as AuthenticatedConsoleAgentSettingsRouteImport } from './routes/_authenticated/console.agent-settings'
-import { Route as AuthenticatedConsoleSplatRouteImport } from './routes/_authenticated/console.$'
-import { Route as Char91DotmcpChar93InvokeToolToolRouteImport } from './routes/[.mcp]/invoke-tool/$tool'
+import { Route as Char91DotwellKnownChar93OauthProtectedResourceRouteImport } from './routes/[.well-known]/oauth-protected-resource'
+import { Route as AuthenticatedConsoleRouteImport } from './routes/_authenticated/console'
 import { Route as DotlovableOauthConsentRouteImport } from './routes/[.]lovable.oauth.consent'
-import { Route as AuthenticatedConsoleConversationsIndexRouteImport } from './routes/_authenticated/console.conversations.index'
+import { Route as Char91DotmcpChar93InvokeToolToolRouteImport } from './routes/[.mcp]/invoke-tool/$tool'
+import { Route as AuthenticatedConsoleIndexRouteImport } from './routes/_authenticated/console.index'
+import { Route as AuthenticatedConsoleSplatRouteImport } from './routes/_authenticated/console.$'
+import { Route as AuthenticatedConsoleAgentSettingsRouteImport } from './routes/_authenticated/console.agent-settings'
+import { Route as AuthenticatedConsoleAnalyticsRouteImport } from './routes/_authenticated/console.analytics'
+import { Route as AuthenticatedConsoleChannelSettingsRouteImport } from './routes/_authenticated/console.channel-settings'
+import { Route as AuthenticatedConsoleConversationEvaluationRouteImport } from './routes/_authenticated/console.conversation-evaluation'
+import { Route as AuthenticatedConsoleCustomer360RouteImport } from './routes/_authenticated/console.customer360'
+import { Route as AuthenticatedConsoleFeedbackResponsesRouteImport } from './routes/_authenticated/console.feedback-responses'
+import { Route as AuthenticatedConsoleFeedbackSettingsRouteImport } from './routes/_authenticated/console.feedback-settings'
+import { Route as AuthenticatedConsoleKbGapsRouteImport } from './routes/_authenticated/console.kb-gaps'
+import { Route as AuthenticatedConsoleTrainingCandidatesRouteImport } from './routes/_authenticated/console.training-candidates'
+import { Route as AuthenticatedConsoleWidgetPreviewRouteImport } from './routes/_authenticated/console.widget-preview'
 import { Route as AuthenticatedConsoleConversationEvaluationIndexRouteImport } from './routes/_authenticated/console.conversation-evaluation.index'
-import { Route as AuthenticatedConsoleSettingsLlmRuntimeRouteImport } from './routes/_authenticated/console.settings.llm-runtime'
-import { Route as AuthenticatedConsoleSettingsFeedbackTestRouteImport } from './routes/_authenticated/console.settings.feedback-test'
-import { Route as AuthenticatedConsoleConversationsIdRouteImport } from './routes/_authenticated/console.conversations.$id'
 import { Route as AuthenticatedConsoleConversationEvaluationEvaluationIdRouteImport } from './routes/_authenticated/console.conversation-evaluation.$evaluationId'
+import { Route as AuthenticatedConsoleConversationsIndexRouteImport } from './routes/_authenticated/console.conversations.index'
+import { Route as AuthenticatedConsoleConversationsIdRouteImport } from './routes/_authenticated/console.conversations.$id'
+import { Route as AuthenticatedConsoleSettingsFeedbackTestRouteImport } from './routes/_authenticated/console.settings.feedback-test'
+import { Route as AuthenticatedConsoleSettingsLlmRuntimeRouteImport } from './routes/_authenticated/console.settings.llm-runtime'
 
-const McpRoute = McpRouteImport.update({
-  id: '/mcp',
-  path: '/mcp',
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const LoginRoute = LoginRouteImport.update({
-  id: '/login',
-  path: '/login',
+const AuthenticatedRouteRoute = AuthenticatedRouteRouteImport.update({
+  id: '/_authenticated',
   getParentRoute: () => rootRouteImport,
 } as any)
 const FeedbackRoute = FeedbackRouteImport.update({
@@ -53,30 +52,42 @@ const FeedbackRoute = FeedbackRouteImport.update({
   path: '/feedback',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AuthenticatedRouteRoute = AuthenticatedRouteRouteImport.update({
-  id: '/_authenticated',
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const McpRoute = McpRouteImport.update({
+  id: '/mcp',
+  path: '/mcp',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AuthenticatedConsoleRoute = AuthenticatedConsoleRouteImport.update({
-  id: '/console',
-  path: '/console',
-  getParentRoute: () => AuthenticatedRouteRoute,
-} as any)
+const Char91DotmcpChar93ListToolsRoute =
+  Char91DotmcpChar93ListToolsRouteImport.update({
+    id: '/.mcp/list-tools',
+    path: '/.mcp/list-tools',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const Char91DotwellKnownChar93OauthProtectedResourceRoute =
   Char91DotwellKnownChar93OauthProtectedResourceRouteImport.update({
     id: '/.well-known/oauth-protected-resource',
     path: '/.well-known/oauth-protected-resource',
     getParentRoute: () => rootRouteImport,
   } as any)
-const Char91DotmcpChar93ListToolsRoute =
-  Char91DotmcpChar93ListToolsRouteImport.update({
-    id: '/.mcp/list-tools',
-    path: '/.mcp/list-tools',
+const AuthenticatedConsoleRoute = AuthenticatedConsoleRouteImport.update({
+  id: '/console',
+  path: '/console',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const DotlovableOauthConsentRoute = DotlovableOauthConsentRouteImport.update({
+  id: '/.lovable/oauth/consent',
+  path: '/.lovable/oauth/consent',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const Char91DotmcpChar93InvokeToolToolRoute =
+  Char91DotmcpChar93InvokeToolToolRouteImport.update({
+    id: '/.mcp/invoke-tool/$tool',
+    path: '/.mcp/invoke-tool/$tool',
     getParentRoute: () => rootRouteImport,
   } as any)
 const AuthenticatedConsoleIndexRoute =
@@ -85,58 +96,10 @@ const AuthenticatedConsoleIndexRoute =
     path: '/',
     getParentRoute: () => AuthenticatedConsoleRoute,
   } as any)
-const AuthenticatedConsoleWidgetPreviewRoute =
-  AuthenticatedConsoleWidgetPreviewRouteImport.update({
-    id: '/widget-preview',
-    path: '/widget-preview',
-    getParentRoute: () => AuthenticatedConsoleRoute,
-  } as any)
-const AuthenticatedConsoleTrainingCandidatesRoute =
-  AuthenticatedConsoleTrainingCandidatesRouteImport.update({
-    id: '/training-candidates',
-    path: '/training-candidates',
-    getParentRoute: () => AuthenticatedConsoleRoute,
-  } as any)
-const AuthenticatedConsoleKbGapsRoute =
-  AuthenticatedConsoleKbGapsRouteImport.update({
-    id: '/kb-gaps',
-    path: '/kb-gaps',
-    getParentRoute: () => AuthenticatedConsoleRoute,
-  } as any)
-const AuthenticatedConsoleFeedbackSettingsRoute =
-  AuthenticatedConsoleFeedbackSettingsRouteImport.update({
-    id: '/feedback-settings',
-    path: '/feedback-settings',
-    getParentRoute: () => AuthenticatedConsoleRoute,
-  } as any)
-const AuthenticatedConsoleFeedbackResponsesRoute =
-  AuthenticatedConsoleFeedbackResponsesRouteImport.update({
-    id: '/feedback-responses',
-    path: '/feedback-responses',
-    getParentRoute: () => AuthenticatedConsoleRoute,
-  } as any)
-const AuthenticatedConsoleCustomer360Route =
-  AuthenticatedConsoleCustomer360RouteImport.update({
-    id: '/customer360',
-    path: '/customer360',
-    getParentRoute: () => AuthenticatedConsoleRoute,
-  } as any)
-const AuthenticatedConsoleConversationEvaluationRoute =
-  AuthenticatedConsoleConversationEvaluationRouteImport.update({
-    id: '/conversation-evaluation',
-    path: '/conversation-evaluation',
-    getParentRoute: () => AuthenticatedConsoleRoute,
-  } as any)
-const AuthenticatedConsoleChannelSettingsRoute =
-  AuthenticatedConsoleChannelSettingsRouteImport.update({
-    id: '/channel-settings',
-    path: '/channel-settings',
-    getParentRoute: () => AuthenticatedConsoleRoute,
-  } as any)
-const AuthenticatedConsoleAnalyticsRoute =
-  AuthenticatedConsoleAnalyticsRouteImport.update({
-    id: '/analytics',
-    path: '/analytics',
+const AuthenticatedConsoleSplatRoute =
+  AuthenticatedConsoleSplatRouteImport.update({
+    id: '/$',
+    path: '/$',
     getParentRoute: () => AuthenticatedConsoleRoute,
   } as any)
 const AuthenticatedConsoleAgentSettingsRoute =
@@ -145,27 +108,58 @@ const AuthenticatedConsoleAgentSettingsRoute =
     path: '/agent-settings',
     getParentRoute: () => AuthenticatedConsoleRoute,
   } as any)
-const AuthenticatedConsoleSplatRoute =
-  AuthenticatedConsoleSplatRouteImport.update({
-    id: '/$',
-    path: '/$',
+const AuthenticatedConsoleAnalyticsRoute =
+  AuthenticatedConsoleAnalyticsRouteImport.update({
+    id: '/analytics',
+    path: '/analytics',
     getParentRoute: () => AuthenticatedConsoleRoute,
   } as any)
-const Char91DotmcpChar93InvokeToolToolRoute =
-  Char91DotmcpChar93InvokeToolToolRouteImport.update({
-    id: '/.mcp/invoke-tool/$tool',
-    path: '/.mcp/invoke-tool/$tool',
-    getParentRoute: () => rootRouteImport,
+const AuthenticatedConsoleChannelSettingsRoute =
+  AuthenticatedConsoleChannelSettingsRouteImport.update({
+    id: '/channel-settings',
+    path: '/channel-settings',
+    getParentRoute: () => AuthenticatedConsoleRoute,
   } as any)
-const DotlovableOauthConsentRoute = DotlovableOauthConsentRouteImport.update({
-  id: '/.lovable/oauth/consent',
-  path: '/.lovable/oauth/consent',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AuthenticatedConsoleConversationsIndexRoute =
-  AuthenticatedConsoleConversationsIndexRouteImport.update({
-    id: '/conversations/',
-    path: '/conversations/',
+const AuthenticatedConsoleConversationEvaluationRoute =
+  AuthenticatedConsoleConversationEvaluationRouteImport.update({
+    id: '/conversation-evaluation',
+    path: '/conversation-evaluation',
+    getParentRoute: () => AuthenticatedConsoleRoute,
+  } as any)
+const AuthenticatedConsoleCustomer360Route =
+  AuthenticatedConsoleCustomer360RouteImport.update({
+    id: '/customer360',
+    path: '/customer360',
+    getParentRoute: () => AuthenticatedConsoleRoute,
+  } as any)
+const AuthenticatedConsoleFeedbackResponsesRoute =
+  AuthenticatedConsoleFeedbackResponsesRouteImport.update({
+    id: '/feedback-responses',
+    path: '/feedback-responses',
+    getParentRoute: () => AuthenticatedConsoleRoute,
+  } as any)
+const AuthenticatedConsoleFeedbackSettingsRoute =
+  AuthenticatedConsoleFeedbackSettingsRouteImport.update({
+    id: '/feedback-settings',
+    path: '/feedback-settings',
+    getParentRoute: () => AuthenticatedConsoleRoute,
+  } as any)
+const AuthenticatedConsoleKbGapsRoute =
+  AuthenticatedConsoleKbGapsRouteImport.update({
+    id: '/kb-gaps',
+    path: '/kb-gaps',
+    getParentRoute: () => AuthenticatedConsoleRoute,
+  } as any)
+const AuthenticatedConsoleTrainingCandidatesRoute =
+  AuthenticatedConsoleTrainingCandidatesRouteImport.update({
+    id: '/training-candidates',
+    path: '/training-candidates',
+    getParentRoute: () => AuthenticatedConsoleRoute,
+  } as any)
+const AuthenticatedConsoleWidgetPreviewRoute =
+  AuthenticatedConsoleWidgetPreviewRouteImport.update({
+    id: '/widget-preview',
+    path: '/widget-preview',
     getParentRoute: () => AuthenticatedConsoleRoute,
   } as any)
 const AuthenticatedConsoleConversationEvaluationIndexRoute =
@@ -174,16 +168,16 @@ const AuthenticatedConsoleConversationEvaluationIndexRoute =
     path: '/',
     getParentRoute: () => AuthenticatedConsoleConversationEvaluationRoute,
   } as any)
-const AuthenticatedConsoleSettingsLlmRuntimeRoute =
-  AuthenticatedConsoleSettingsLlmRuntimeRouteImport.update({
-    id: '/settings/llm-runtime',
-    path: '/settings/llm-runtime',
-    getParentRoute: () => AuthenticatedConsoleRoute,
+const AuthenticatedConsoleConversationEvaluationEvaluationIdRoute =
+  AuthenticatedConsoleConversationEvaluationEvaluationIdRouteImport.update({
+    id: '/$evaluationId',
+    path: '/$evaluationId',
+    getParentRoute: () => AuthenticatedConsoleConversationEvaluationRoute,
   } as any)
-const AuthenticatedConsoleSettingsFeedbackTestRoute =
-  AuthenticatedConsoleSettingsFeedbackTestRouteImport.update({
-    id: '/settings/feedback-test',
-    path: '/settings/feedback-test',
+const AuthenticatedConsoleConversationsIndexRoute =
+  AuthenticatedConsoleConversationsIndexRouteImport.update({
+    id: '/conversations/',
+    path: '/conversations/',
     getParentRoute: () => AuthenticatedConsoleRoute,
   } as any)
 const AuthenticatedConsoleConversationsIdRoute =
@@ -192,11 +186,17 @@ const AuthenticatedConsoleConversationsIdRoute =
     path: '/conversations/$id',
     getParentRoute: () => AuthenticatedConsoleRoute,
   } as any)
-const AuthenticatedConsoleConversationEvaluationEvaluationIdRoute =
-  AuthenticatedConsoleConversationEvaluationEvaluationIdRouteImport.update({
-    id: '/$evaluationId',
-    path: '/$evaluationId',
-    getParentRoute: () => AuthenticatedConsoleConversationEvaluationRoute,
+const AuthenticatedConsoleSettingsFeedbackTestRoute =
+  AuthenticatedConsoleSettingsFeedbackTestRouteImport.update({
+    id: '/settings/feedback-test',
+    path: '/settings/feedback-test',
+    getParentRoute: () => AuthenticatedConsoleRoute,
+  } as any)
+const AuthenticatedConsoleSettingsLlmRuntimeRoute =
+  AuthenticatedConsoleSettingsLlmRuntimeRouteImport.update({
+    id: '/settings/llm-runtime',
+    path: '/settings/llm-runtime',
+    getParentRoute: () => AuthenticatedConsoleRoute,
   } as any)
 
 export interface FileRoutesByFullPath {
@@ -389,25 +389,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/mcp': {
-      id: '/mcp'
-      path: '/mcp'
-      fullPath: '/mcp'
-      preLoaderRoute: typeof McpRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/login': {
-      id: '/login'
-      path: '/login'
-      fullPath: '/login'
-      preLoaderRoute: typeof LoginRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/feedback': {
-      id: '/feedback'
-      path: '/feedback'
-      fullPath: '/feedback'
-      preLoaderRoute: typeof FeedbackRouteImport
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_authenticated': {
@@ -417,25 +403,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedRouteRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/feedback': {
+      id: '/feedback'
+      path: '/feedback'
+      fullPath: '/feedback'
+      preLoaderRoute: typeof FeedbackRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/_authenticated/console': {
-      id: '/_authenticated/console'
-      path: '/console'
-      fullPath: '/console'
-      preLoaderRoute: typeof AuthenticatedConsoleRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
     }
-    '/.well-known/oauth-protected-resource': {
-      id: '/.well-known/oauth-protected-resource'
-      path: '/.well-known/oauth-protected-resource'
-      fullPath: '/.well-known/oauth-protected-resource'
-      preLoaderRoute: typeof Char91DotwellKnownChar93OauthProtectedResourceRouteImport
+    '/mcp': {
+      id: '/mcp'
+      path: '/mcp'
+      fullPath: '/mcp'
+      preLoaderRoute: typeof McpRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/.mcp/list-tools': {
@@ -445,81 +431,39 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof Char91DotmcpChar93ListToolsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/.well-known/oauth-protected-resource': {
+      id: '/.well-known/oauth-protected-resource'
+      path: '/.well-known/oauth-protected-resource'
+      fullPath: '/.well-known/oauth-protected-resource'
+      preLoaderRoute: typeof Char91DotwellKnownChar93OauthProtectedResourceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_authenticated/console': {
+      id: '/_authenticated/console'
+      path: '/console'
+      fullPath: '/console'
+      preLoaderRoute: typeof AuthenticatedConsoleRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/.lovable/oauth/consent': {
+      id: '/.lovable/oauth/consent'
+      path: '/.lovable/oauth/consent'
+      fullPath: '/.lovable/oauth/consent'
+      preLoaderRoute: typeof DotlovableOauthConsentRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/.mcp/invoke-tool/$tool': {
+      id: '/.mcp/invoke-tool/$tool'
+      path: '/.mcp/invoke-tool/$tool'
+      fullPath: '/.mcp/invoke-tool/$tool'
+      preLoaderRoute: typeof Char91DotmcpChar93InvokeToolToolRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_authenticated/console/': {
       id: '/_authenticated/console/'
       path: '/'
       fullPath: '/console/'
       preLoaderRoute: typeof AuthenticatedConsoleIndexRouteImport
-      parentRoute: typeof AuthenticatedConsoleRoute
-    }
-    '/_authenticated/console/widget-preview': {
-      id: '/_authenticated/console/widget-preview'
-      path: '/widget-preview'
-      fullPath: '/console/widget-preview'
-      preLoaderRoute: typeof AuthenticatedConsoleWidgetPreviewRouteImport
-      parentRoute: typeof AuthenticatedConsoleRoute
-    }
-    '/_authenticated/console/training-candidates': {
-      id: '/_authenticated/console/training-candidates'
-      path: '/training-candidates'
-      fullPath: '/console/training-candidates'
-      preLoaderRoute: typeof AuthenticatedConsoleTrainingCandidatesRouteImport
-      parentRoute: typeof AuthenticatedConsoleRoute
-    }
-    '/_authenticated/console/kb-gaps': {
-      id: '/_authenticated/console/kb-gaps'
-      path: '/kb-gaps'
-      fullPath: '/console/kb-gaps'
-      preLoaderRoute: typeof AuthenticatedConsoleKbGapsRouteImport
-      parentRoute: typeof AuthenticatedConsoleRoute
-    }
-    '/_authenticated/console/feedback-settings': {
-      id: '/_authenticated/console/feedback-settings'
-      path: '/feedback-settings'
-      fullPath: '/console/feedback-settings'
-      preLoaderRoute: typeof AuthenticatedConsoleFeedbackSettingsRouteImport
-      parentRoute: typeof AuthenticatedConsoleRoute
-    }
-    '/_authenticated/console/feedback-responses': {
-      id: '/_authenticated/console/feedback-responses'
-      path: '/feedback-responses'
-      fullPath: '/console/feedback-responses'
-      preLoaderRoute: typeof AuthenticatedConsoleFeedbackResponsesRouteImport
-      parentRoute: typeof AuthenticatedConsoleRoute
-    }
-    '/_authenticated/console/customer360': {
-      id: '/_authenticated/console/customer360'
-      path: '/customer360'
-      fullPath: '/console/customer360'
-      preLoaderRoute: typeof AuthenticatedConsoleCustomer360RouteImport
-      parentRoute: typeof AuthenticatedConsoleRoute
-    }
-    '/_authenticated/console/conversation-evaluation': {
-      id: '/_authenticated/console/conversation-evaluation'
-      path: '/conversation-evaluation'
-      fullPath: '/console/conversation-evaluation'
-      preLoaderRoute: typeof AuthenticatedConsoleConversationEvaluationRouteImport
-      parentRoute: typeof AuthenticatedConsoleRoute
-    }
-    '/_authenticated/console/channel-settings': {
-      id: '/_authenticated/console/channel-settings'
-      path: '/channel-settings'
-      fullPath: '/console/channel-settings'
-      preLoaderRoute: typeof AuthenticatedConsoleChannelSettingsRouteImport
-      parentRoute: typeof AuthenticatedConsoleRoute
-    }
-    '/_authenticated/console/analytics': {
-      id: '/_authenticated/console/analytics'
-      path: '/analytics'
-      fullPath: '/console/analytics'
-      preLoaderRoute: typeof AuthenticatedConsoleAnalyticsRouteImport
-      parentRoute: typeof AuthenticatedConsoleRoute
-    }
-    '/_authenticated/console/agent-settings': {
-      id: '/_authenticated/console/agent-settings'
-      path: '/agent-settings'
-      fullPath: '/console/agent-settings'
-      preLoaderRoute: typeof AuthenticatedConsoleAgentSettingsRouteImport
       parentRoute: typeof AuthenticatedConsoleRoute
     }
     '/_authenticated/console/$': {
@@ -529,25 +473,74 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedConsoleSplatRouteImport
       parentRoute: typeof AuthenticatedConsoleRoute
     }
-    '/.mcp/invoke-tool/$tool': {
-      id: '/.mcp/invoke-tool/$tool'
-      path: '/.mcp/invoke-tool/$tool'
-      fullPath: '/.mcp/invoke-tool/$tool'
-      preLoaderRoute: typeof Char91DotmcpChar93InvokeToolToolRouteImport
-      parentRoute: typeof rootRouteImport
+    '/_authenticated/console/agent-settings': {
+      id: '/_authenticated/console/agent-settings'
+      path: '/agent-settings'
+      fullPath: '/console/agent-settings'
+      preLoaderRoute: typeof AuthenticatedConsoleAgentSettingsRouteImport
+      parentRoute: typeof AuthenticatedConsoleRoute
     }
-    '/.lovable/oauth/consent': {
-      id: '/.lovable/oauth/consent'
-      path: '/.lovable/oauth/consent'
-      fullPath: '/.lovable/oauth/consent'
-      preLoaderRoute: typeof DotlovableOauthConsentRouteImport
-      parentRoute: typeof rootRouteImport
+    '/_authenticated/console/analytics': {
+      id: '/_authenticated/console/analytics'
+      path: '/analytics'
+      fullPath: '/console/analytics'
+      preLoaderRoute: typeof AuthenticatedConsoleAnalyticsRouteImport
+      parentRoute: typeof AuthenticatedConsoleRoute
     }
-    '/_authenticated/console/conversations/': {
-      id: '/_authenticated/console/conversations/'
-      path: '/conversations'
-      fullPath: '/console/conversations/'
-      preLoaderRoute: typeof AuthenticatedConsoleConversationsIndexRouteImport
+    '/_authenticated/console/channel-settings': {
+      id: '/_authenticated/console/channel-settings'
+      path: '/channel-settings'
+      fullPath: '/console/channel-settings'
+      preLoaderRoute: typeof AuthenticatedConsoleChannelSettingsRouteImport
+      parentRoute: typeof AuthenticatedConsoleRoute
+    }
+    '/_authenticated/console/conversation-evaluation': {
+      id: '/_authenticated/console/conversation-evaluation'
+      path: '/conversation-evaluation'
+      fullPath: '/console/conversation-evaluation'
+      preLoaderRoute: typeof AuthenticatedConsoleConversationEvaluationRouteImport
+      parentRoute: typeof AuthenticatedConsoleRoute
+    }
+    '/_authenticated/console/customer360': {
+      id: '/_authenticated/console/customer360'
+      path: '/customer360'
+      fullPath: '/console/customer360'
+      preLoaderRoute: typeof AuthenticatedConsoleCustomer360RouteImport
+      parentRoute: typeof AuthenticatedConsoleRoute
+    }
+    '/_authenticated/console/feedback-responses': {
+      id: '/_authenticated/console/feedback-responses'
+      path: '/feedback-responses'
+      fullPath: '/console/feedback-responses'
+      preLoaderRoute: typeof AuthenticatedConsoleFeedbackResponsesRouteImport
+      parentRoute: typeof AuthenticatedConsoleRoute
+    }
+    '/_authenticated/console/feedback-settings': {
+      id: '/_authenticated/console/feedback-settings'
+      path: '/feedback-settings'
+      fullPath: '/console/feedback-settings'
+      preLoaderRoute: typeof AuthenticatedConsoleFeedbackSettingsRouteImport
+      parentRoute: typeof AuthenticatedConsoleRoute
+    }
+    '/_authenticated/console/kb-gaps': {
+      id: '/_authenticated/console/kb-gaps'
+      path: '/kb-gaps'
+      fullPath: '/console/kb-gaps'
+      preLoaderRoute: typeof AuthenticatedConsoleKbGapsRouteImport
+      parentRoute: typeof AuthenticatedConsoleRoute
+    }
+    '/_authenticated/console/training-candidates': {
+      id: '/_authenticated/console/training-candidates'
+      path: '/training-candidates'
+      fullPath: '/console/training-candidates'
+      preLoaderRoute: typeof AuthenticatedConsoleTrainingCandidatesRouteImport
+      parentRoute: typeof AuthenticatedConsoleRoute
+    }
+    '/_authenticated/console/widget-preview': {
+      id: '/_authenticated/console/widget-preview'
+      path: '/widget-preview'
+      fullPath: '/console/widget-preview'
+      preLoaderRoute: typeof AuthenticatedConsoleWidgetPreviewRouteImport
       parentRoute: typeof AuthenticatedConsoleRoute
     }
     '/_authenticated/console/conversation-evaluation/': {
@@ -557,18 +550,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedConsoleConversationEvaluationIndexRouteImport
       parentRoute: typeof AuthenticatedConsoleConversationEvaluationRoute
     }
-    '/_authenticated/console/settings/llm-runtime': {
-      id: '/_authenticated/console/settings/llm-runtime'
-      path: '/settings/llm-runtime'
-      fullPath: '/console/settings/llm-runtime'
-      preLoaderRoute: typeof AuthenticatedConsoleSettingsLlmRuntimeRouteImport
-      parentRoute: typeof AuthenticatedConsoleRoute
+    '/_authenticated/console/conversation-evaluation/$evaluationId': {
+      id: '/_authenticated/console/conversation-evaluation/$evaluationId'
+      path: '/$evaluationId'
+      fullPath: '/console/conversation-evaluation/$evaluationId'
+      preLoaderRoute: typeof AuthenticatedConsoleConversationEvaluationEvaluationIdRouteImport
+      parentRoute: typeof AuthenticatedConsoleConversationEvaluationRoute
     }
-    '/_authenticated/console/settings/feedback-test': {
-      id: '/_authenticated/console/settings/feedback-test'
-      path: '/settings/feedback-test'
-      fullPath: '/console/settings/feedback-test'
-      preLoaderRoute: typeof AuthenticatedConsoleSettingsFeedbackTestRouteImport
+    '/_authenticated/console/conversations/': {
+      id: '/_authenticated/console/conversations/'
+      path: '/conversations'
+      fullPath: '/console/conversations/'
+      preLoaderRoute: typeof AuthenticatedConsoleConversationsIndexRouteImport
       parentRoute: typeof AuthenticatedConsoleRoute
     }
     '/_authenticated/console/conversations/$id': {
@@ -578,12 +571,19 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedConsoleConversationsIdRouteImport
       parentRoute: typeof AuthenticatedConsoleRoute
     }
-    '/_authenticated/console/conversation-evaluation/$evaluationId': {
-      id: '/_authenticated/console/conversation-evaluation/$evaluationId'
-      path: '/$evaluationId'
-      fullPath: '/console/conversation-evaluation/$evaluationId'
-      preLoaderRoute: typeof AuthenticatedConsoleConversationEvaluationEvaluationIdRouteImport
-      parentRoute: typeof AuthenticatedConsoleConversationEvaluationRoute
+    '/_authenticated/console/settings/feedback-test': {
+      id: '/_authenticated/console/settings/feedback-test'
+      path: '/settings/feedback-test'
+      fullPath: '/console/settings/feedback-test'
+      preLoaderRoute: typeof AuthenticatedConsoleSettingsFeedbackTestRouteImport
+      parentRoute: typeof AuthenticatedConsoleRoute
+    }
+    '/_authenticated/console/settings/llm-runtime': {
+      id: '/_authenticated/console/settings/llm-runtime'
+      path: '/settings/llm-runtime'
+      fullPath: '/console/settings/llm-runtime'
+      preLoaderRoute: typeof AuthenticatedConsoleSettingsLlmRuntimeRouteImport
+      parentRoute: typeof AuthenticatedConsoleRoute
     }
   }
 }

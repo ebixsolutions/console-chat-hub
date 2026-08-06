@@ -1,0 +1,45 @@
+{
+  "contract_id": "CE-T2-C20-EVIDENCE-CLOSURE-v1.0",
+  "frozen_files": [
+    {
+      "path": "supabase/migrations/20260728093000_ce_task1.sql",
+      "sha256": "2f381ee9e14dc2d59622f0ee77bfd15d8629f537d7d55f948ac3f7eb93244f39"
+    },
+    {
+      "path": "supabase/migrations/20260805090000_ce_task2_feature_flags.sql",
+      "sha256": "8297fd652ef353e22d0428845a6f5593e33567a228c4f9563cc99e2510f2e1f4"
+    },
+    {
+      "path": "supabase/migrations/20260805100000_ce_task2_v2_rpcs.sql",
+      "sha256": "62b3a867c9597fc8f67d43a9ba8bf751c09002a3b4eef6d57221d7f8642cc52e"
+    },
+    {
+      "path": "supabase/migrations/rollback/20260728093000_ce_task1.rollback.sql",
+      "sha256": "9b538cf0c7a5a453560dfaa50e7a3e086db35f88c9bc9c8d3984320f8a58b7d3"
+    },
+    {
+      "path": "supabase/migrations/rollback/20260805090000_ce_task2_feature_flags.rollback.sql",
+      "sha256": "db95aa44b51a9e9472d05012a9e7c2c5db4c0ca2aa0093066bcf684978b45da1"
+    },
+    {
+      "path": "supabase/migrations/rollback/20260805100000_ce_task2_v2_rpcs.rollback.sql",
+      "sha256": "6ea7581e0d1e9bd72571943ac0e0cf9a9295c35f3bd9ae5175c6dc3e94108959"
+    },
+    {
+      "path": "package.json",
+      "sha256": "64dac938f001e917723c2e4d6de2729adcd9ec0f27d460ccf942272af90e757a"
+    },
+    {
+      "path": "package-lock.json",
+      "sha256": "6b7aa245bc04d3e71bbe4d02a409de189deeea7f333a3e8bf0bbb628bfb703f0"
+    },
+    {
+      "path": "supabase/config.toml",
+      "sha256": "6a5667cf3c875ef3342b60bbb926b0a7207ae676367aebd2463160a8e8a5c26b"
+    },
+    {
+      "path": "supabase/functions/deno.lock",
+      "sha256": "8c3b254ef5b3b861e0bc81e0f22ad5b1e5e8c399a1add126c00d83ca0305cb5f"
+    }
+  ]
+}

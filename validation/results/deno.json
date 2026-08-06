@@ -1,0 +1,29 @@
+{
+  "contract_id": "CE-T2-C20-EVIDENCE-CLOSURE-v1.0",
+  "package_version": "nexusai-3task-current-27",
+  "task_run_id": "e8059ae5-a101-4a57-8c62-119d39a8bc9f",
+  "generated_at": "2026-08-06T08:11:32Z",
+  "environment": {
+    "deno": "2.9.4",
+    "typescript": "6.0.3"
+  },
+  "command": "deno fmt --check && deno check conversation-evaluate/index.ts",
+  "exit_code": 0,
+  "pass": 2,
+  "fail": 0,
+  "skip": 0,
+  "blocked": 0,
+  "tested_source_hashes": {
+    "supabase/functions/conversation-evaluate/index.ts": "10e22f090e34da54cb94aff7a3e81f4382d69b5ad0ef5d675d574ccccd32515e",
+    "supabase/functions/_shared/ce-contract.ts": "518510249743122330b6bd2994a8bf6be4b3ae4ea35f846045df514751ed9b38",
+    "supabase/functions/_shared/ce-grounding.ts": "f70197635a55b5feac64abfdecf11ed8fe7b27293e460a9e55c3a5f9b304ec7c",
+    "supabase/functions/_shared/llm-router.ts": "7f1612d6003ae8838b64f224a7548ec71f373ba692134bcb2f6651f357a31c13",
+    "supabase/functions/_shared/cors.ts": "cedcf3f2d9173c86e0eb97b62bdcf394f1a73134d829c9084ea09df91b923313",
+    "supabase/functions/deno.json": "aec9c8902433a25e9572022bab3a5b572babf44ecab034ba69a706fe98ae7d7b"
+  },
+  "status": "PASS",
+  "evidence_reuse": {
+    "from_package": "nexusai-3task-current-26",
+    "reason": "frozen tested source hashes unchanged; gate not reopened"
+  }
+}

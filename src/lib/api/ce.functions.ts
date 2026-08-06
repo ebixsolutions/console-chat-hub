@@ -70,10 +70,10 @@ export const getCeEvaluationFn = createServerFn({ method: "GET" })
       .from("conversation_evaluation")
       .select(
         "id, conversation_id, attempt_id, company_id, evaluation_contract_version, input_snapshot_hash, bundle_hash, " +
-          "accuracy_score, policy_score, tone_score, sales_score, context_score, hallucination_risk_score, " +
-          "hallucination_quality_score, overall_score, severity, has_verified_human_response, training_eligible, " +
-          "model_version, prompt_version, kb_snapshot_id, policy_snapshot_id, source_deployment, " +
-          "review_status, review_note, reviewed_by, reviewed_at, grounding_manifest, created_at",
+        "accuracy_score, policy_score, tone_score, sales_score, context_score, hallucination_risk_score, " +
+        "hallucination_quality_score, overall_score, severity, has_verified_human_response, training_eligible, " +
+        "model_version, prompt_version, kb_snapshot_id, policy_snapshot_id, source_deployment, " +
+        "review_status, review_note, reviewed_by, reviewed_at, grounding_manifest, created_at"
       )
       .eq("id", data.evaluationId)
       .maybeSingle();
@@ -85,7 +85,7 @@ export const getCeEvaluationFn = createServerFn({ method: "GET" })
       .from("conversation_evaluation_detail")
       .select(
         "evaluator_type, raw_score, weight, weighted_score, justification, " +
-          "recommended_correction, evaluator_model_version, evaluator_prompt_version, grounding_refs",
+        "recommended_correction, evaluator_model_version, evaluator_prompt_version, grounding_refs"
       )
       .eq("evaluation_id", data.evaluationId);
 
@@ -135,43 +135,33 @@ export const getCeEvaluationFn = createServerFn({ method: "GET" })
     // Discrepancies
     const { data: discrepancies } = await loose
       .from("ce_discrepancy")
-      .select(
-        "id, evaluation_id, dimension, ai_claim, human_claim, grounded_claim, divergence_kind, severity, grounding_refs",
-      )
+      .select("id, evaluation_id, dimension, ai_claim, human_claim, grounded_claim, divergence_kind, severity, grounding_refs")
       .eq("evaluation_id", data.evaluationId);
 
     // Root causes (admin/supervisor only — RLS enforced)
     const { data: rootCauses } = await loose
       .from("ce_root_cause")
-      .select(
-        "id, evaluation_id, category, summary, evidence_refs, recorded_by, remote_sync_state, remote_ref, created_at",
-      )
+      .select("id, evaluation_id, category, summary, evidence_refs, recorded_by, remote_sync_state, remote_ref, created_at")
       .eq("evaluation_id", data.evaluationId)
       .order("created_at", { ascending: false });
 
     // QA cases (admin/supervisor only — RLS enforced)
     const { data: qaCases } = await loose
       .from("ce_qa_case")
-      .select(
-        "id, evaluation_id, case_number, title, description, status, priority, remote_sync_state, remote_ref, created_at",
-      )
+      .select("id, evaluation_id, case_number, title, description, status, priority, remote_sync_state, remote_ref, created_at")
       .eq("evaluation_id", data.evaluationId)
       .order("created_at", { ascending: false });
 
     // Training links
     const { data: trainingLinks } = await loose
       .from("ce_training_link")
-      .select(
-        "id, evaluation_id, link_kind, local_state, payload, improved_result, improved_state, remote_sync_state, remote_ref, updated_at",
-      )
+      .select("id, evaluation_id, link_kind, local_state, payload, improved_result, improved_state, remote_sync_state, remote_ref, updated_at")
       .eq("evaluation_id", data.evaluationId);
 
     // KB publish state (admin/supervisor only — RLS enforced)
     const { data: kbPublish } = await loose
       .from("ce_kb_publish_state")
-      .select(
-        "id, evaluation_id, kb_document_ref, action, state, remote_sync_state, remote_ref, last_error, created_at",
-      )
+      .select("id, evaluation_id, kb_document_ref, action, state, remote_sync_state, remote_ref, last_error, created_at")
       .eq("evaluation_id", data.evaluationId)
       .order("created_at", { ascending: false });
 
@@ -207,10 +197,10 @@ export const getCeReplayBundleFn = createServerFn({ method: "GET" })
       .from("ce_bundle_snapshot")
       .select(
         "id, attempt_id, conversation_id, company_id, bundle_hash, transcript_hash, " +
-          "evaluation_contract_version, model_version, prompt_version, kb_snapshot_id, policy_snapshot_id, " +
-          "canonical_input, normalized_transcript, evaluated_ai_reply, verified_human_response, " +
-          "grounding_evidence, grounding_manifest, truncation_manifest, redaction_applied, " +
-          "retention_expires_at, created_at",
+        "evaluation_contract_version, model_version, prompt_version, kb_snapshot_id, policy_snapshot_id, " +
+        "canonical_input, normalized_transcript, evaluated_ai_reply, verified_human_response, " +
+        "grounding_evidence, grounding_manifest, truncation_manifest, redaction_applied, " +
+        "retention_expires_at, created_at"
       )
       .eq("attempt_id", data.attemptId)
       .maybeSingle();
@@ -290,14 +280,8 @@ export const recordCeRootCauseFn = createServerFn({ method: "POST" })
       evaluationId: z.string().uuid(),
       conversationId: z.string().uuid(),
       category: z.enum([
-        "kb_gap",
-        "kb_stale",
-        "policy_gap",
-        "prompt_defect",
-        "model_limitation",
-        "routing_error",
-        "human_error",
-        "unknown",
+        "kb_gap", "kb_stale", "policy_gap", "prompt_defect",
+        "model_limitation", "routing_error", "human_error", "unknown",
       ]),
       summary: z.string().min(1).max(2000),
     }),

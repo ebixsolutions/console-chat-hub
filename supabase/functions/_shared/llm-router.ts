@@ -14,7 +14,7 @@
  *   safe errors      stable codes out, provider text never surfaced to callers
  */
 
-import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2.45.0";
 
 export type LlmFailureCode =
   | "LLM_CONFIG_MISSING"
@@ -32,8 +32,20 @@ export interface LlmUsage {
 }
 
 export type LlmResult =
-  | { ok: true; text: string; model: string; usage: LlmUsage; request_id: string }
-  | { ok: false; code: LlmFailureCode; status?: number; request_id: string; usage: LlmUsage };
+  | {
+    ok: true;
+    text: string;
+    model: string;
+    usage: LlmUsage;
+    request_id: string;
+  }
+  | {
+    ok: false;
+    code: LlmFailureCode;
+    status?: number;
+    request_id: string;
+    usage: LlmUsage;
+  };
 
 export type ModelPurpose = "evaluation" | "assist" | "generation";
 
@@ -67,7 +79,10 @@ const REDACTIONS: Array<[RegExp, string]> = [
   [/[\w.+-]+@[\w-]+\.[\w.-]+/g, "[EMAIL]"],
   [/\+?\d[\d\s\-()]{6,}\d/g, "[PHONE]"],
   [/\b(?:\d[ -]*?){13,19}\b/g, "[CARD]"],
-  [/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "[UUID]"],
+  [
+    /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
+    "[UUID]",
+  ],
   [/\bsk-[A-Za-z0-9_-]{10,}\b/g, "[SECRET]"],
   [/\bBearer\s+[A-Za-z0-9._-]{10,}\b/gi, "[SECRET]"],
 ];
@@ -87,11 +102,21 @@ export function looksLikeInjection(input: string): boolean {
 }
 
 function serviceClient(): SupabaseClient {
-  return createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  return createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+  );
 }
 
 function log(tag: string, fields: Record<string, unknown>): void {
-  console.log(JSON.stringify({ component: "llm-router", tag, ts: new Date().toISOString(), ...fields }));
+  console.log(
+    JSON.stringify({
+      component: "llm-router",
+      tag,
+      ts: new Date().toISOString(),
+      ...fields,
+    }),
+  );
 }
 
 async function recordUsage(
@@ -136,25 +161,53 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export async function callModel(call: LlmCall): Promise<LlmResult> {
   const started = Date.now();
-  const usage: LlmUsage = { input_tokens: 0, output_tokens: 0, latency_ms: 0, attempts: 0 };
+  const usage: LlmUsage = {
+    input_tokens: 0,
+    output_tokens: 0,
+    latency_ms: 0,
+    attempts: 0,
+  };
   const requestId = call.operationId;
 
   const key = Deno.env.get("ANTHROPIC_API_KEY");
   const model = Deno.env.get(MODEL_ENV[call.purpose]);
-  const timeoutMs = Number(Deno.env.get("LLM_TIMEOUT_MS") ?? DEFAULT_TIMEOUT_MS);
+  const timeoutMs = Number(
+    Deno.env.get("LLM_TIMEOUT_MS") ?? DEFAULT_TIMEOUT_MS,
+  );
 
   if (!key || key.trim().length === 0 || !model || model.trim().length === 0) {
     usage.latency_ms = Date.now() - started;
-    log(call.tag, { event: "config_missing", request_id: requestId, purpose: call.purpose });
-    await recordUsage(call, model ?? "unset", "failed", 0, usage, "LLM_CONFIG_MISSING");
-    return { ok: false, code: "LLM_CONFIG_MISSING", request_id: requestId, usage };
+    log(call.tag, {
+      event: "config_missing",
+      request_id: requestId,
+      purpose: call.purpose,
+    });
+    await recordUsage(
+      call,
+      model ?? "unset",
+      "failed",
+      0,
+      usage,
+      "LLM_CONFIG_MISSING",
+    );
+    return {
+      ok: false,
+      code: "LLM_CONFIG_MISSING",
+      request_id: requestId,
+      usage,
+    };
   }
 
   if (looksLikeInjection(call.user)) {
     usage.latency_ms = Date.now() - started;
     log(call.tag, { event: "input_blocked", request_id: requestId });
     await recordUsage(call, model, "blocked", 0, usage, "LLM_INPUT_BLOCKED");
-    return { ok: false, code: "LLM_INPUT_BLOCKED", request_id: requestId, usage };
+    return {
+      ok: false,
+      code: "LLM_INPUT_BLOCKED",
+      request_id: requestId,
+      usage,
+    };
   }
 
   const safeUser = redact(call.user);
@@ -191,24 +244,43 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
         const aborted = e instanceof Error && e.name === "AbortError";
         lastCode = aborted ? "LLM_TIMEOUT" : "LLM_NETWORK";
         log(call.tag, {
-          event: "attempt_failed", request_id: requestId, attempt,
-          code: lastCode, ms: Date.now() - attemptStart,
+          event: "attempt_failed",
+          request_id: requestId,
+          attempt,
+          code: lastCode,
+          ms: Date.now() - attemptStart,
         });
-        if (attempt < MAX_ATTEMPTS) { await sleep(BASE_BACKOFF_MS * 2 ** (attempt - 1)); continue; }
+        if (attempt < MAX_ATTEMPTS) {
+          await sleep(BASE_BACKOFF_MS * 2 ** (attempt - 1));
+          continue;
+        }
         break;
       }
 
       if (res.status === 429 || res.status >= 500) {
         lastCode = "LLM_NON_2XX";
         lastStatus = res.status;
-        log(call.tag, { event: "attempt_retryable", request_id: requestId, attempt, status: res.status });
-        if (attempt < MAX_ATTEMPTS) { await sleep(BASE_BACKOFF_MS * 2 ** (attempt - 1)); continue; }
+        log(call.tag, {
+          event: "attempt_retryable",
+          request_id: requestId,
+          attempt,
+          status: res.status,
+        });
+        if (attempt < MAX_ATTEMPTS) {
+          await sleep(BASE_BACKOFF_MS * 2 ** (attempt - 1));
+          continue;
+        }
         break;
       }
       if (!res.ok) {
         lastCode = "LLM_NON_2XX";
         lastStatus = res.status;
-        log(call.tag, { event: "attempt_fatal", request_id: requestId, attempt, status: res.status });
+        log(call.tag, {
+          event: "attempt_fatal",
+          request_id: requestId,
+          attempt,
+          status: res.status,
+        });
         break;
       }
 
@@ -217,7 +289,11 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
         body = await res.json();
       } catch {
         lastCode = "LLM_INVALID_OUTPUT";
-        log(call.tag, { event: "parse_failed", request_id: requestId, attempt });
+        log(call.tag, {
+          event: "parse_failed",
+          request_id: requestId,
+          attempt,
+        });
         break;
       }
 
@@ -229,20 +305,31 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
       usage.output_tokens = Number(obj.usage?.output_tokens ?? 0);
 
       const text = Array.isArray(obj.content)
-        ? obj.content.filter((b) => b?.type === "text" && typeof b.text === "string")
-            .map((b) => b.text as string).join("").trim()
+        ? obj.content.filter((b) =>
+          b?.type === "text" && typeof b.text === "string"
+        )
+          .map((b) => b.text as string).join("").trim()
         : "";
 
       if (!text) {
         lastCode = "LLM_INVALID_OUTPUT";
-        log(call.tag, { event: "empty_output", request_id: requestId, attempt });
+        log(call.tag, {
+          event: "empty_output",
+          request_id: requestId,
+          attempt,
+        });
         break;
       }
 
       usage.latency_ms = Date.now() - started;
       log(call.tag, {
-        event: "success", request_id: requestId, attempt, model,
-        input_tokens: usage.input_tokens, output_tokens: usage.output_tokens, ms: usage.latency_ms,
+        event: "success",
+        request_id: requestId,
+        attempt,
+        model,
+        input_tokens: usage.input_tokens,
+        output_tokens: usage.output_tokens,
+        ms: usage.latency_ms,
       });
       await recordUsage(call, model, "success", res.status, usage);
       return { ok: true, text, model, usage, request_id: requestId };
@@ -252,13 +339,27 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
   }
 
   usage.latency_ms = Date.now() - started;
-  log(call.tag, { event: "exhausted", request_id: requestId, code: lastCode, attempts: usage.attempts });
+  log(call.tag, {
+    event: "exhausted",
+    request_id: requestId,
+    code: lastCode,
+    attempts: usage.attempts,
+  });
   await recordUsage(
-    call, model,
+    call,
+    model,
     lastCode === "LLM_TIMEOUT" ? "timeout" : "failed",
-    lastStatus ?? 0, usage, lastCode,
+    lastStatus ?? 0,
+    usage,
+    lastCode,
   );
-  return { ok: false, code: lastCode, status: lastStatus, request_id: requestId, usage };
+  return {
+    ok: false,
+    code: lastCode,
+    status: lastStatus,
+    request_id: requestId,
+    usage,
+  };
 }
 
 /** Strip optional fences and parse a JSON object. */
@@ -277,11 +378,17 @@ export function parseJsonObject(raw: string): Record<string, unknown> | null {
 /** Map a router failure onto the CE attempt error vocabulary. */
 export function toCeErrorCode(code: LlmFailureCode): string {
   switch (code) {
-    case "LLM_TIMEOUT": return "CE_PROVIDER_TIMEOUT";
-    case "LLM_NETWORK": return "CE_PROVIDER_NETWORK_ERROR";
-    case "LLM_NON_2XX": return "CE_PROVIDER_NON_2XX";
-    case "LLM_INVALID_OUTPUT": return "CE_PROVIDER_INVALID_OUTPUT";
-    case "LLM_INPUT_BLOCKED": return "CE_PROVIDER_INVALID_OUTPUT";
-    case "LLM_CONFIG_MISSING": return "CE_PROVIDER_CONFIG_ERROR";
+    case "LLM_TIMEOUT":
+      return "CE_PROVIDER_TIMEOUT";
+    case "LLM_NETWORK":
+      return "CE_PROVIDER_NETWORK_ERROR";
+    case "LLM_NON_2XX":
+      return "CE_PROVIDER_NON_2XX";
+    case "LLM_INVALID_OUTPUT":
+      return "CE_PROVIDER_INVALID_OUTPUT";
+    case "LLM_INPUT_BLOCKED":
+      return "CE_PROVIDER_INVALID_OUTPUT";
+    case "LLM_CONFIG_MISSING":
+      return "CE_PROVIDER_CONFIG_ERROR";
   }
 }
