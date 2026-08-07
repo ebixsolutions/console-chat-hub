@@ -558,60 +558,91 @@ function ConversationDetailContent() {
                 )}
               </div>
 
-              {isElevated && (
-                <div className="space-y-1">
-                  <div className="text-xs text-muted-foreground">Assign to</div>
-                  <Select onValueChange={handleAssign}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select agent" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {agents.map((a) => (
-                        <SelectItem key={a.id} value={a.id}>
-                          {a.display_name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+              {/* Contextual Assign OR Transfer - never both */}
+              {conv.status !== "resolved" && (
+                <>
+                  {!conv.assigned_agent_id && isElevated && (
+                    <div className="space-y-1">
+                      <div className="text-xs text-muted-foreground">Assign to</div>
+                      <Select onValueChange={handleAssign}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select agent" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {agents.map((a) => (
+                            <SelectItem key={a.id} value={a.id}>
+                              {a.display_name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                  {conv.assigned_agent_id && (
+                    <div className="space-y-1">
+                      <div className="text-xs text-muted-foreground">Transfer to</div>
+                      <Select onValueChange={handleTransfer}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select agent" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {transferableAgents.map((a) => (
+                            <SelectItem key={a.id} value={a.id}>
+                              {a.display_name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                </>
               )}
-
-              <div className="space-y-1">
-                <div className="text-xs text-muted-foreground">Transfer to</div>
-                <Select onValueChange={handleTransfer}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select agent" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {transferableAgents.map((a) => (
-                      <SelectItem key={a.id} value={a.id}>
-                        {a.display_name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* RIGHT: Agent Assist Tool Panel */}
-      <AgentToolPanel
-        conversationId={id}
-        convStatus={conv.status}
-        draftText={reply}
-        selectedMessage={selectedMessage}
-        onClearSelection={() => setSelectedMessage(null)}
-        onUseDraft={(text) => {
-          if (reply.trim() && reply.trim() !== text.trim()) {
-            setPendingUseText(text);
-            setUseConfirmOpen(true);
-          } else {
-            setReply(text);
-          }
-        }}
-      />
+      {/* RIGHT: CRMPanel + AgentToolPanel */}
+      <div style={{ width: 360, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <div style={{ flex: 1, overflow: "hidden", borderBottom: "0.5px solid #e8e6e0" }}>
+          <CRMPanel
+            conv={{ id: conv.id, status: conv.status, channel_config: conv.channel_config }}
+            visitorLabel={visitorShortId}
+            onResolve={handleResolve}
+            boundedContext={boundedContext}
+            contextRevisionKey={contextRevisionKey}
+            draftText={reply}
+            currentRole={currentRole}
+            onInsertDraft={(text) => {
+              if (reply.trim() && reply.trim() !== text.trim()) {
+                setPendingUseText(text);
+                setUseConfirmOpen(true);
+              } else {
+                setReply(text);
+                toast.success(RIGHT_COPY.inserted[lang] ?? "Inserted");
+              }
+            }}
+          />
+        </div>
+        <div style={{ flex: 1, overflow: "hidden" }}>
+          <AgentToolPanel
+            conversationId={id}
+            convStatus={conv.status}
+            draftText={reply}
+            selectedMessage={selectedMessage}
+            onClearSelection={() => setSelectedMessage(null)}
+            onUseDraft={(text) => {
+              if (reply.trim() && reply.trim() !== text.trim()) {
+                setPendingUseText(text);
+                setUseConfirmOpen(true);
+              } else {
+                setReply(text);
+              }
+            }}
+          />
+        </div>
+      </div>
+
 
       {/* Dev22-F2: Resolved Warning */}
       <Dialog open={resolvedWarningOpen} onOpenChange={setResolvedWarningOpen}>
