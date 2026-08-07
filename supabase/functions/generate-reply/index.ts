@@ -1471,8 +1471,8 @@ async function orchestrationGenerateReply(
     const usableChunks = ragResult.chunks.filter((c) => {
       if (!c.score || c.score < minScore) return false;
       if (c.status && c.status !== "published") return false;
-      if (c.company_id !== undefined && c.company_id !== widgetCompanyId) return false;
-      if (c.industry && c.industry !== widgetIndustry) return false;
+      if (c.company_id !== undefined && c.company_id !== _kbTenantResult.scope.kbCompanyId) return false;
+      if (c.industry && c.industry !== _kbTenantResult.scope.industry) return false;
       return true;
     });
 
