@@ -13,6 +13,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { feedbackService } from "@/lib/api/feedback.service";
 import { AgentToolPanel } from "@/components/console/AgentToolPanel";
 import { useConsoleLang } from "@/hooks/useEffectiveRole";
+import {
+  CRMPanel,
+  RIGHT_COPY,
+  buildBoundedContext,
+  computeContextRevisionKey,
+} from "@/components/console/CRMPanel";
 
 export const Route = createFileRoute("/_authenticated/console/conversations/")({
   component: ConversationsInboxGuard,
