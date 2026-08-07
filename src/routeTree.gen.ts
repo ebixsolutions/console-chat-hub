@@ -19,6 +19,7 @@ import { Route as Char91DotwellKnownChar93OauthProtectedResourceRouteImport } fr
 import { Route as Char91DotmcpChar93ListToolsRouteImport } from './routes/[.mcp]/list-tools'
 import { Route as AuthenticatedConsoleIndexRouteImport } from './routes/_authenticated/console.index'
 import { Route as AuthenticatedConsoleWidgetPreviewRouteImport } from './routes/_authenticated/console.widget-preview'
+import { Route as AuthenticatedConsoleVisitorAnalyticsRouteImport } from './routes/_authenticated/console.visitor-analytics'
 import { Route as AuthenticatedConsoleTrainingCandidatesRouteImport } from './routes/_authenticated/console.training-candidates'
 import { Route as AuthenticatedConsoleKbGapsRouteImport } from './routes/_authenticated/console.kb-gaps'
 import { Route as AuthenticatedConsoleFeedbackSettingsRouteImport } from './routes/_authenticated/console.feedback-settings'
@@ -89,6 +90,12 @@ const AuthenticatedConsoleWidgetPreviewRoute =
   AuthenticatedConsoleWidgetPreviewRouteImport.update({
     id: '/widget-preview',
     path: '/widget-preview',
+    getParentRoute: () => AuthenticatedConsoleRoute,
+  } as any)
+const AuthenticatedConsoleVisitorAnalyticsRoute =
+  AuthenticatedConsoleVisitorAnalyticsRouteImport.update({
+    id: '/visitor-analytics',
+    path: '/visitor-analytics',
     getParentRoute: () => AuthenticatedConsoleRoute,
   } as any)
 const AuthenticatedConsoleTrainingCandidatesRoute =
@@ -219,6 +226,7 @@ export interface FileRoutesByFullPath {
   '/console/feedback-settings': typeof AuthenticatedConsoleFeedbackSettingsRoute
   '/console/kb-gaps': typeof AuthenticatedConsoleKbGapsRoute
   '/console/training-candidates': typeof AuthenticatedConsoleTrainingCandidatesRoute
+  '/console/visitor-analytics': typeof AuthenticatedConsoleVisitorAnalyticsRoute
   '/console/widget-preview': typeof AuthenticatedConsoleWidgetPreviewRoute
   '/console/': typeof AuthenticatedConsoleIndexRoute
   '/console/conversation-evaluation/$evaluationId': typeof AuthenticatedConsoleConversationEvaluationEvaluationIdRoute
@@ -246,6 +254,7 @@ export interface FileRoutesByTo {
   '/console/feedback-settings': typeof AuthenticatedConsoleFeedbackSettingsRoute
   '/console/kb-gaps': typeof AuthenticatedConsoleKbGapsRoute
   '/console/training-candidates': typeof AuthenticatedConsoleTrainingCandidatesRoute
+  '/console/visitor-analytics': typeof AuthenticatedConsoleVisitorAnalyticsRoute
   '/console/widget-preview': typeof AuthenticatedConsoleWidgetPreviewRoute
   '/console': typeof AuthenticatedConsoleIndexRoute
   '/console/conversation-evaluation/$evaluationId': typeof AuthenticatedConsoleConversationEvaluationEvaluationIdRoute
@@ -277,6 +286,7 @@ export interface FileRoutesById {
   '/_authenticated/console/feedback-settings': typeof AuthenticatedConsoleFeedbackSettingsRoute
   '/_authenticated/console/kb-gaps': typeof AuthenticatedConsoleKbGapsRoute
   '/_authenticated/console/training-candidates': typeof AuthenticatedConsoleTrainingCandidatesRoute
+  '/_authenticated/console/visitor-analytics': typeof AuthenticatedConsoleVisitorAnalyticsRoute
   '/_authenticated/console/widget-preview': typeof AuthenticatedConsoleWidgetPreviewRoute
   '/_authenticated/console/': typeof AuthenticatedConsoleIndexRoute
   '/_authenticated/console/conversation-evaluation/$evaluationId': typeof AuthenticatedConsoleConversationEvaluationEvaluationIdRoute
@@ -308,6 +318,7 @@ export interface FileRouteTypes {
     | '/console/feedback-settings'
     | '/console/kb-gaps'
     | '/console/training-candidates'
+    | '/console/visitor-analytics'
     | '/console/widget-preview'
     | '/console/'
     | '/console/conversation-evaluation/$evaluationId'
@@ -335,6 +346,7 @@ export interface FileRouteTypes {
     | '/console/feedback-settings'
     | '/console/kb-gaps'
     | '/console/training-candidates'
+    | '/console/visitor-analytics'
     | '/console/widget-preview'
     | '/console'
     | '/console/conversation-evaluation/$evaluationId'
@@ -365,6 +377,7 @@ export interface FileRouteTypes {
     | '/_authenticated/console/feedback-settings'
     | '/_authenticated/console/kb-gaps'
     | '/_authenticated/console/training-candidates'
+    | '/_authenticated/console/visitor-analytics'
     | '/_authenticated/console/widget-preview'
     | '/_authenticated/console/'
     | '/_authenticated/console/conversation-evaluation/$evaluationId'
@@ -457,6 +470,13 @@ declare module '@tanstack/react-router' {
       path: '/widget-preview'
       fullPath: '/console/widget-preview'
       preLoaderRoute: typeof AuthenticatedConsoleWidgetPreviewRouteImport
+      parentRoute: typeof AuthenticatedConsoleRoute
+    }
+    '/_authenticated/console/visitor-analytics': {
+      id: '/_authenticated/console/visitor-analytics'
+      path: '/visitor-analytics'
+      fullPath: '/console/visitor-analytics'
+      preLoaderRoute: typeof AuthenticatedConsoleVisitorAnalyticsRouteImport
       parentRoute: typeof AuthenticatedConsoleRoute
     }
     '/_authenticated/console/training-candidates': {
@@ -617,6 +637,7 @@ interface AuthenticatedConsoleRouteChildren {
   AuthenticatedConsoleFeedbackSettingsRoute: typeof AuthenticatedConsoleFeedbackSettingsRoute
   AuthenticatedConsoleKbGapsRoute: typeof AuthenticatedConsoleKbGapsRoute
   AuthenticatedConsoleTrainingCandidatesRoute: typeof AuthenticatedConsoleTrainingCandidatesRoute
+  AuthenticatedConsoleVisitorAnalyticsRoute: typeof AuthenticatedConsoleVisitorAnalyticsRoute
   AuthenticatedConsoleWidgetPreviewRoute: typeof AuthenticatedConsoleWidgetPreviewRoute
   AuthenticatedConsoleIndexRoute: typeof AuthenticatedConsoleIndexRoute
   AuthenticatedConsoleConversationsIdRoute: typeof AuthenticatedConsoleConversationsIdRoute
@@ -642,6 +663,8 @@ const AuthenticatedConsoleRouteChildren: AuthenticatedConsoleRouteChildren = {
   AuthenticatedConsoleKbGapsRoute: AuthenticatedConsoleKbGapsRoute,
   AuthenticatedConsoleTrainingCandidatesRoute:
     AuthenticatedConsoleTrainingCandidatesRoute,
+  AuthenticatedConsoleVisitorAnalyticsRoute:
+    AuthenticatedConsoleVisitorAnalyticsRoute,
   AuthenticatedConsoleWidgetPreviewRoute:
     AuthenticatedConsoleWidgetPreviewRoute,
   AuthenticatedConsoleIndexRoute: AuthenticatedConsoleIndexRoute,

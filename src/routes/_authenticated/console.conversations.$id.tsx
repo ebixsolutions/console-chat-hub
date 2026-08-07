@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,12 @@ import { useCurrentRole } from "@/hooks/useCurrentRole";
 import { LoadingState, PermissionDenied } from "@/components/console/PageStates";
 import { useConsoleLang } from "@/hooks/useEffectiveRole";
 import { AgentToolPanel } from "@/components/console/AgentToolPanel";
+import {
+  CRMPanel,
+  RIGHT_COPY,
+  buildBoundedContext,
+  computeContextRevisionKey,
+} from "@/components/console/CRMPanel";
 
 export const Route = createFileRoute("/_authenticated/console/conversations/$id")({
   component: ConversationDetailGuard,
@@ -56,6 +62,8 @@ const ADMIN_ONLY = new Set(["admin", "super_admin"]);
 function ConversationDetailContent() {
   const { id } = Route.useParams();
   const { user } = useAuth();
+  const { role: currentRole } = useCurrentRole();
+  const lang = useConsoleLang();
   const [conv, setConv] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [agents, setAgents] = useState<AgentLite[]>([]);
@@ -68,6 +76,12 @@ function ConversationDetailContent() {
   const [selectedMessage, setSelectedMessage] = useState<{ id: string; role: string; content: string } | null>(null);
   const [useConfirmOpen, setUseConfirmOpen] = useState(false);
   const [pendingUseText, setPendingUseText] = useState("");
+
+  // ── RIGHT-CRM-KB-CONTEXT-1: bounded context scoped to this conversation ──
+  const boundedContext = useMemo(() => buildBoundedContext(messages), [messages]);
+  const contextRevisionKey = useMemo(() => computeContextRevisionKey(id, messages), [id, messages]);
+
+
 
   // ── J1: Realtime infrastructure ──
   const realtimeConnectedRef = useRef(true);
@@ -333,7 +347,6 @@ function ConversationDetailContent() {
     return <div className="text-sm text-muted-foreground">Conversation not found.</div>;
   }
 
-  const lang = useConsoleLang();
   const assignedName = agents.find((a) => a.id === conv.assigned_agent_id)?.display_name || "Unassigned";
   const isElevated = myAgent ? ELEVATED.has(myAgent.role) : false;
   const transferableAgents = agents.filter((a) => a.id !== myAgent?.id);
@@ -545,60 +558,91 @@ function ConversationDetailContent() {
                 )}
               </div>
 
-              {isElevated && (
-                <div className="space-y-1">
-                  <div className="text-xs text-muted-foreground">Assign to</div>
-                  <Select onValueChange={handleAssign}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select agent" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {agents.map((a) => (
-                        <SelectItem key={a.id} value={a.id}>
-                          {a.display_name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+              {/* Contextual Assign OR Transfer - never both */}
+              {conv.status !== "resolved" && (
+                <>
+                  {!conv.assigned_agent_id && isElevated && (
+                    <div className="space-y-1">
+                      <div className="text-xs text-muted-foreground">Assign to</div>
+                      <Select onValueChange={handleAssign}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select agent" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {agents.map((a) => (
+                            <SelectItem key={a.id} value={a.id}>
+                              {a.display_name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                  {conv.assigned_agent_id && (
+                    <div className="space-y-1">
+                      <div className="text-xs text-muted-foreground">Transfer to</div>
+                      <Select onValueChange={handleTransfer}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select agent" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {transferableAgents.map((a) => (
+                            <SelectItem key={a.id} value={a.id}>
+                              {a.display_name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                </>
               )}
-
-              <div className="space-y-1">
-                <div className="text-xs text-muted-foreground">Transfer to</div>
-                <Select onValueChange={handleTransfer}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select agent" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {transferableAgents.map((a) => (
-                      <SelectItem key={a.id} value={a.id}>
-                        {a.display_name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* RIGHT: Agent Assist Tool Panel */}
-      <AgentToolPanel
-        conversationId={id}
-        convStatus={conv.status}
-        draftText={reply}
-        selectedMessage={selectedMessage}
-        onClearSelection={() => setSelectedMessage(null)}
-        onUseDraft={(text) => {
-          if (reply.trim() && reply.trim() !== text.trim()) {
-            setPendingUseText(text);
-            setUseConfirmOpen(true);
-          } else {
-            setReply(text);
-          }
-        }}
-      />
+      {/* RIGHT: CRMPanel + AgentToolPanel */}
+      <div style={{ width: 360, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <div style={{ flex: 1, overflow: "hidden", borderBottom: "0.5px solid #e8e6e0" }}>
+          <CRMPanel
+            conv={{ id: conv.id, status: conv.status, channel_config: conv.channel_config }}
+            visitorLabel={visitorShortId}
+            onResolve={handleResolve}
+            boundedContext={boundedContext}
+            contextRevisionKey={contextRevisionKey}
+            draftText={reply}
+            currentRole={currentRole}
+            onInsertDraft={(text) => {
+              if (reply.trim() && reply.trim() !== text.trim()) {
+                setPendingUseText(text);
+                setUseConfirmOpen(true);
+              } else {
+                setReply(text);
+                toast.success(RIGHT_COPY.inserted[lang] ?? "Inserted");
+              }
+            }}
+          />
+        </div>
+        <div style={{ flex: 1, overflow: "hidden" }}>
+          <AgentToolPanel
+            conversationId={id}
+            convStatus={conv.status}
+            draftText={reply}
+            selectedMessage={selectedMessage}
+            onClearSelection={() => setSelectedMessage(null)}
+            onUseDraft={(text) => {
+              if (reply.trim() && reply.trim() !== text.trim()) {
+                setPendingUseText(text);
+                setUseConfirmOpen(true);
+              } else {
+                setReply(text);
+              }
+            }}
+          />
+        </div>
+      </div>
+
 
       {/* Dev22-F2: Resolved Warning */}
       <Dialog open={resolvedWarningOpen} onOpenChange={setResolvedWarningOpen}>
