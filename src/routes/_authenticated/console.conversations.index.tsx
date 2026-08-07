@@ -166,47 +166,6 @@ function getInitials(label: string) {
     .toUpperCase();
 }
 
-// ── RIGHT-CRM-KB-CONTEXT-1: Deterministic bounded conversational context ──
-const MAX_CONTEXT_MESSAGES = 5;
-const CONTEXT_SEPARATOR = " / ";
-const EFFECTIVE_QUERY_CAP = 500;
-
-function buildBoundedContext(messages: Msg[]): string {
-  const eligible = messages.filter(
-    (m) => m.role === "visitor" && !m.is_recalled && m.content.trim().length > 0 && m.content !== "__THINKING__",
-  );
-  if (eligible.length === 0) return "";
-  const recent = eligible.slice(-MAX_CONTEXT_MESSAGES);
-  // Enforce character cap with separator budget
-  while (recent.length > 1) {
-    const totalLen =
-      recent.reduce((s, m) => s + m.content.trim().length, 0) + (recent.length - 1) * CONTEXT_SEPARATOR.length;
-    if (totalLen <= EFFECTIVE_QUERY_CAP) break;
-    recent.shift();
-  }
-  // Head-tail truncation for single message exceeding cap
-  if (recent.length === 1 && recent[0].content.trim().length > EFFECTIVE_QUERY_CAP) {
-    const text = recent[0].content.trim();
-    const headBudget = Math.floor(EFFECTIVE_QUERY_CAP * 0.4);
-    const tailBudget = EFFECTIVE_QUERY_CAP - headBudget - 5;
-    return text.slice(0, headBudget) + " ... " + text.slice(-tailBudget);
-  }
-  return recent.map((m) => m.content.trim()).join(CONTEXT_SEPARATOR);
-}
-
-function computeContextRevisionKey(conversationId: string, messages: Msg[]): string {
-  const eligible = messages
-    .filter(
-      (m) => m.role === "visitor" && !m.is_recalled && m.content.trim().length > 0 && m.content !== "__THINKING__",
-    )
-    .slice(-MAX_CONTEXT_MESSAGES);
-  if (eligible.length === 0) return conversationId + ":empty";
-  const fingerprint = eligible
-    .map((m) => [m.id, m.created_at ?? "", m.status ?? "", String(m.is_recalled), m.content.trim()].join("|"))
-    .join("~");
-  return conversationId + ":" + fingerprint;
-}
-// ── End RIGHT-CRM-KB-CONTEXT-1 helpers ──
 
 // ─── StatusBadge ─────────────────────────────────────────────────────────────
 function StatusBadge({ status }: { status: string }) {
