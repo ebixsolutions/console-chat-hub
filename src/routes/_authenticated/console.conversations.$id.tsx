@@ -77,6 +77,12 @@ function ConversationDetailContent() {
   const [useConfirmOpen, setUseConfirmOpen] = useState(false);
   const [pendingUseText, setPendingUseText] = useState("");
 
+  // ── RIGHT-CRM-KB-CONTEXT-1: bounded context scoped to this conversation ──
+  const boundedContext = useMemo(() => buildBoundedContext(messages), [messages]);
+  const contextRevisionKey = useMemo(() => computeContextRevisionKey(id, messages), [id, messages]);
+
+
+
   // ── J1: Realtime infrastructure ──
   const realtimeConnectedRef = useRef(true);
   const fallbackTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
