@@ -1341,21 +1341,10 @@ async function orchestrationGenerateReply(
   } | null = null;
 
   if (flags.ENABLE_KB && !_g1SkipKB) {
-    // Resolve scope from env (Demo: schema has no company_id/industry fields)
-    const demoCompanyIdStr = Deno.env.get("KB_DEMO_COMPANY_ID");
-    const demoIndustry = Deno.env.get("KB_DEMO_INDUSTRY");
-    const demoLanguage = Deno.env.get("KB_DEMO_LANGUAGE") ?? "zh-TW";
-
-    const widgetCompanyId = demoCompanyIdStr ? parseInt(demoCompanyIdStr, 10) : null;
-    const widgetIndustry = demoIndustry ?? null;
-
-    // L5 Scope Gate: if scope unavailable, cannot safely query → handoff
-    if (widgetCompanyId === null || isNaN(widgetCompanyId) || !widgetIndustry) {
-      console.warn("[generate-reply] KB scope env vars not set", {
-        conversation_id,
-        hasCompanyId: widgetCompanyId !== null && !isNaN(widgetCompanyId),
-        hasIndustry: !!widgetIndustry,
-      });
+    // Canonical tenant scope resolution (shared with kb-search-proxy)
+    const _kbTenantResult = await resolveTenantScope(conversation_id);
+    if (!_kbTenantResult.resolved) {
+      console.warn("[generate-reply] KB tenant scope unresolved:", _kbTenantResult.reason, { conversation_id });
       // S0: route to s0_handoff_tx when enabled; else existing KB fallback
       if (_escEnableS0) {
         return await handleS0Handoff(supabaseAdmin, conversation_id, source_message_id, "KB_SCOPE_GATE", _visitorLang);
