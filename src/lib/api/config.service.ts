@@ -189,26 +189,7 @@ export const analyticsService = {
   getSummary: async (): Promise<{ data: null; error: null }> => ({ data: null, error: null }),
 };
 
-// ---------------------------------------------------------------------------
-// Production role model
-// ---------------------------------------------------------------------------
-// 'qa' is part of the production role model. The database app_role enum is
-// admin | supervisor | agent | qa and the CE RLS policies already grant qa
-// SELECT on conversation_evaluation, conversation_evaluation_detail and
-// conversation_evaluation_attempt. Excluding qa here made a qa-only account
-// resolve to null and be rejected before any route rendered.
-//
-// Widening this union does NOT widen permissions. Every route and every action
-// is gated by the deny-by-default matrix in src/lib/authz/consoleCapabilities.ts;
-// a role that is not explicitly listed for a capability is denied.
-export type AppRole = "admin" | "supervisor" | "agent" | "qa";
-
-/**
- * Precedence when an account carries several roles. Highest first.
- * qa sits below agent so that an agent+qa account keeps its agent surface and
- * gains nothing implicitly; the capability matrix decides the rest.
- */
-const ROLE_PRECEDENCE: AppRole[] = ["admin", "supervisor", "agent", "qa"];
+export type AppRole = "admin" | "supervisor" | "agent";
 
 export const authService = {
   getCurrentUserRole: async (): Promise<AppRole | null> => {
@@ -221,22 +202,9 @@ export const authService = {
       .eq("user_id", userId);
     if (error || !data || data.length === 0) return null;
     const roles = data.map((r) => r.role as AppRole);
-    for (const candidate of ROLE_PRECEDENCE) {
-      if (roles.includes(candidate)) return candidate;
-    }
+    if (roles.includes("admin")) return "admin";
+    if (roles.includes("supervisor")) return "supervisor";
+    if (roles.includes("agent")) return "agent";
     return null;
-  },
-
-  /** All roles held by the current account, unordered. Needed by capability checks. */
-  getCurrentUserRoles: async (): Promise<AppRole[]> => {
-    const { data: sessionData } = await supabase.auth.getSession();
-    const userId = sessionData.session?.user?.id;
-    if (!userId) return [];
-    const { data, error } = await supabase
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", userId);
-    if (error || !data) return [];
-    return data.map((r) => r.role as AppRole);
   },
 };

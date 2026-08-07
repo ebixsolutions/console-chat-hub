@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { useCurrentRole } from "@/hooks/useCurrentRole";
+import { useEffectiveRole } from "@/hooks/useEffectiveRole";
 import { LoadingState, PermissionDenied, PageHeader } from "@/components/console/PageStates";
 import { supabase } from "@/integrations/supabase/client";
 import { feedbackService } from "@/lib/api/feedback.service";
@@ -41,7 +41,7 @@ type TokenResult = {
 };
 
 function FeedbackTestPage() {
-  const { role, loading: roleLoading } = useCurrentRole();
+  const { role, loading: roleLoading } = useEffectiveRole();
 
   // ── Strict admin-only guard ──
   // Supervisor, agent, qa, and unknown roles are ALL blocked.

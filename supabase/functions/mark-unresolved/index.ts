@@ -1,10 +1,6 @@
 import { corsHeaders, json } from "../_shared/cors.ts";
 import { validateAgent, writeAudit } from "../_shared/agent.ts";
 
-const ELEVATED = new Set(["manager", "admin", "super_admin", "supervisor"]);
-
-
-
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
@@ -21,21 +17,10 @@ Deno.serve(async (req) => {
 
     const { data: conv, error: convErr } = await supabaseAdmin
       .from("conversations")
-      .select("id, status, assigned_agent_id")
+      .select("id, status")
       .eq("id", conversation_id)
       .single();
     if (convErr || !conv) return json({ error: "Conversation not found" }, 404);
-
-    if (!ELEVATED.has(agent.role)) {
-      if (conv.assigned_agent_id !== agent.id) {
-        return json(
-          { error: "You can only mark unresolved conversations assigned to you", error_type: "not_conversation_owner" },
-          403,
-        );
-      }
-    }
-
-
 
     const now = new Date().toISOString();
     const { error: uErr } = await supabaseAdmin

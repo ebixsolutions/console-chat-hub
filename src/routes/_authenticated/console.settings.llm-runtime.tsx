@@ -1,36 +1,61 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { useCurrentRole } from "@/hooks/useCurrentRole";
-import { LoadingState, PermissionDenied, PageHeader } from "@/components/console/PageStates";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
+import { ExternalLink } from "lucide-react";
+import { useEffectiveRole } from "@/hooks/useEffectiveRole";
+import { LoadingState, PermissionDenied, PageHeader, EmptyState } from "@/components/console/PageStates";
 
 export const Route = createFileRoute("/_authenticated/console/settings/llm-runtime")({
   component: LlmRuntimePage,
 });
 
 function LlmRuntimePage() {
-  const { role: productionRole, loading } = useCurrentRole();
+  const { role, loading } = useEffectiveRole();
   if (loading) return <LoadingState />;
+  if (role === "agent" || role === "qa" || !role) return <PermissionDenied />;
 
-  // Authorization uses production DB role only (defense in depth).
-  const canView = productionRole === "admin" || productionRole === "supervisor";
-  if (!canView) return <PermissionDenied />;
+  const readonly = role === "supervisor";
 
   return (
     <div className="space-y-6">
-      <PageHeader title="LLM Runtime" description="Runtime configuration for the AI reply pipeline." />
+      <PageHeader
+        title="LLM Runtime"
+        description="Runtime configuration for the AI reply pipeline."
+        badge={readonly ? <Badge variant="secondary">Read Only</Badge> : undefined}
+      />
 
-      <Card>
-        <CardContent className="py-8 text-sm text-muted-foreground text-center">
-          <div className="text-3xl mb-3">🤖</div>
-          <div className="font-semibold text-foreground mb-2">LLM Runtime — Not Configured</div>
-          <div className="max-w-sm mx-auto leading-relaxed">
-            LLM provider, routing, prompt source, and guardrail configuration will be available when the AI pipeline
-            configuration interface is connected. The AI reply pipeline is currently using the default Anthropic Claude
-            Haiku provider.
-          </div>
-        </CardContent>
-      </Card>
+      <Tabs defaultValue="provider">
+        <TabsList className="flex-wrap">
+          <TabsTrigger value="provider">LLM Provider</TabsTrigger>
+          <TabsTrigger value="routing">Routing Policy</TabsTrigger>
+          <TabsTrigger value="credit">Credit Budget</TabsTrigger>
+          <TabsTrigger value="prompt-src">Prompt Source</TabsTrigger>
+          <TabsTrigger value="prompt-prev">Prompt Preview</TabsTrigger>
+          <TabsTrigger value="runtime-logs">Runtime Logs</TabsTrigger>
+          <TabsTrigger value="task-log">Task Log</TabsTrigger>
+          <TabsTrigger value="guardrails">Guardrails</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="provider"><Card><CardContent className="py-6 text-sm text-muted-foreground">LLM provider configuration placeholder.</CardContent></Card></TabsContent>
+        <TabsContent value="routing"><Card><CardContent className="py-6 text-sm text-muted-foreground">{readonly ? "Admin only." : "Routing policy placeholder."}</CardContent></Card></TabsContent>
+        <TabsContent value="credit"><Card><CardContent className="py-6 text-sm text-muted-foreground">{readonly ? "Admin only." : "Credit budget placeholder."}</CardContent></Card></TabsContent>
+        <TabsContent value="prompt-src">
+          <Card>
+            <CardContent className="space-y-3 py-6 text-sm text-muted-foreground">
+              <div>Prompt source metadata placeholder.</div>
+              <Button size="sm" variant="outline" asChild>
+                <a href="#"><ExternalLink className="mr-2 h-4 w-4" />Open in SU Coach AI</a>
+              </Button>
+            </CardContent>
+          </Card>
+        </TabsContent>
+        <TabsContent value="prompt-prev"><Card><CardContent className="py-6 text-sm text-muted-foreground">Prompt preview placeholder.</CardContent></Card></TabsContent>
+        <TabsContent value="runtime-logs"><EmptyState message="No runtime logs yet." /></TabsContent>
+        <TabsContent value="task-log"><EmptyState message="No tasks yet." /></TabsContent>
+        <TabsContent value="guardrails"><Card><CardContent className="py-6 text-sm text-muted-foreground">Guardrails placeholder.</CardContent></Card></TabsContent>
+      </Tabs>
     </div>
   );
 }

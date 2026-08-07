@@ -124,9 +124,6 @@ function mapFeedbackRow(row: LiveFeedbackConfigRow): FeedbackAutomationConfig {
       mockFeedbackAutomationConfig.skip_if_negative_sentiment,
     updated_by: (cfg.updated_by as string | undefined) ?? "System",
     updated_at: (cfg.updated_at as string | undefined) ?? mockFeedbackAutomationConfig.updated_at,
-    message_templates: (cfg.message_templates as Record<string, unknown> | undefined)
-      ? (cfg.message_templates as FeedbackAutomationConfig["message_templates"])
-      : undefined,
   };
 }
 
@@ -206,7 +203,6 @@ export const aiChatbotSettingsService = {
       skip_if_negative_sentiment: config.skip_if_negative_sentiment,
       updated_by: config.updated_by,
       updated_at: new Date().toISOString(),
-      message_templates: config.message_templates ?? undefined,
     };
     try {
       const res = await configService.updateFeedbackConfig({

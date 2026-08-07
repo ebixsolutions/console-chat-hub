@@ -1,5 +1,5 @@
 import { corsHeaders, json } from "../_shared/cors.ts";
-import { validateAgent } from "../_shared/agent.ts";
+import { validateAgent, writeAudit } from "../_shared/agent.ts";
 
 const ELEVATED = new Set(["manager", "admin", "super_admin", "supervisor"]);
 
@@ -36,42 +36,73 @@ Deno.serve(async (req) => {
       }
     }
 
-    const { data: rpcResult, error: rpcErr } = await supabaseAdmin.rpc(
-      "takeover_conversation_tx",
+    const now = new Date().toISOString();
+
+    await supabaseAdmin
+      .from("conversation_assignment")
+      .update({ is_active: false, unassigned_at: now })
+      .eq("conversation_id", conversation_id)
+      .eq("is_active", true);
+
+    await supabaseAdmin.from("conversation_assignment").insert({
+      conversation_id,
+      agent_id: agent.id,
+      assigned_by: agent.id,
+      is_active: true,
+    });
+
+    const { error: updateErr } = await supabaseAdmin
+      .from("conversations")
+      .update({ assigned_agent_id: agent.id, status: "pending", updated_at: now })
+      .eq("id", conversation_id);
+    if (updateErr) {
+      console.error(
+        "[take-over-conversation] CRITICAL: conversation update failed:",
+        updateErr.message,
+        conversation_id,
+      );
+    }
+
+    if (conversation.status !== "pending") {
+      await supabaseAdmin.from("conversation_status_log").insert({
+        conversation_id,
+        old_status: conversation.status,
+        new_status: "pending",
+        changed_by: agent.id,
+        changed_by_type: "agent",
+        reason: "Agent takeover",
+      });
+    }
+
+    const { error: handoffErr } = await supabaseAdmin.from("handoff_event").insert({
+      conversation_id,
+      handoff_type: "agent_to_agent",
+      from_agent_id: conversation.assigned_agent_id || null,
+      to_agent_id: agent.id,
+      handoff_reason: "Agent takeover",
+    });
+
+    if (handoffErr) {
+      console.error("[take-over-conversation] CRITICAL: handoff_event insert failed:", handoffErr.message, conversation_id);
+      return json({ error: "Failed to write handoff event" }, 500);
+    }
+
+
+    await writeAudit(
+      supabaseAdmin,
+      agent.id,
+      "take_over_conversation",
+      "conversations",
+      conversation_id,
       {
-        p_conversation_id: conversation_id,
-        p_agent_id: agent.id,
-        p_expected_status: conversation.status,
-        p_expected_owner: conversation.assigned_agent_id,
+        old_status: conversation.status,
+        new_status: "pending",
+        old_agent_id: conversation.assigned_agent_id,
+        new_agent_id: agent.id,
       },
     );
 
-    if (rpcErr) {
-      console.error("[take-over-conversation] RPC error:", rpcErr.message, conversation_id);
-      return json({ error: "Internal error" }, 500);
-    }
-
-    const rpcResultVal = rpcResult?.result ?? rpcResult;
-
-    switch (rpcResultVal) {
-      case "not_found":
-        return json({ error: "Conversation not found" }, 404);
-      case "resolved":
-        return json({ error: "Cannot take over a resolved conversation" }, 400);
-      case "already_owner":
-        return json({ success: true, already_owner: true, conversation_id }, 200);
-      case "race_conflict":
-        return json({
-          success: false,
-          error: "Conversation was modified by another operation. Please refresh.",
-          error_type: "race_conflict",
-        }, 409);
-      case "success":
-        return json({ success: true, assigned_to: agent.display_name }, 200);
-      default:
-        console.error("[take-over-conversation] unexpected RPC result:", rpcResultVal);
-        return json({ error: "Unexpected result" }, 500);
-    }
+    return json({ success: true, assigned_to: agent.display_name });
   } catch (e) {
     return json({ error: (e as Error).message }, 500);
   }
