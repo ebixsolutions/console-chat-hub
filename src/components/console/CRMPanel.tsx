@@ -2,12 +2,14 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties } from "re
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useConsoleLang } from "@/hooks/useEffectiveRole";
+import { useCustomerContext } from "@/lib/customer360/useCustomerContext";
 
 // ─── Shared types ────────────────────────────────────────────────────────────
 export type CRMConv = {
   id: string;
   status: string;
   channel_config: { name: string } | null;
+  visitor_session_id: string | null;
 };
 
 export type CtxMsg = {
@@ -147,6 +149,8 @@ export function CRMPanel({
   const polReqIdRef = useRef(0);
   // Permission: mirrors EF ALLOWED_ROLES = ["admin", "supervisor"]
   const canAccessKb = currentRole === "admin" || currentRole === "supervisor";
+  // ONE canonical local Customer context loader — shared with standalone Customer360 page.
+  const custCtx = useCustomerContext(conv?.visitor_session_id ?? null);
 
   const runKbSearch = useCallback(
     async (query: string, reqId: number) => {
@@ -410,6 +414,49 @@ export function CRMPanel({
                 </div>
               </div>
             </div>
+            {custCtx.status === "loading" && (
+              <div style={{ fontSize: 11, color: "#9ca3af", padding: "6px 0" }}>Loading…</div>
+            )}
+            {custCtx.status === "error" && (
+              <div style={{ fontSize: 11, color: "#ef4444", padding: "6px 0" }}>Customer context unavailable.</div>
+            )}
+            {custCtx.status === "empty" && (
+              <div style={{ fontSize: 11, color: "#9ca3af", padding: "6px 0" }}>No customer context available.</div>
+            )}
+            {custCtx.status === "success" && (
+              <>
+                {custCtx.data.evaluations.find((e) => e.conversation_id === conv.id) && (
+                  <div style={cardStyle}>
+                    {(() => {
+                      const ev = custCtx.data.evaluations.find((e) => e.conversation_id === conv.id)!;
+                      return (
+                        <div style={{ fontSize: 10.5, fontWeight: 600 }}>
+                          Evaluation: {ev.overall_score} · {ev.severity} · {ev.review_status}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+                {custCtx.data.feedback.find((f) => f.conversation_id === conv.id && f.rating !== null) && (
+                  <div style={cardStyle}>
+                    {(() => {
+                      const fb = custCtx.data.feedback.find((f) => f.conversation_id === conv.id && f.rating !== null)!;
+                      return (
+                        <div style={{ fontSize: 10.5 }}>
+                          {"★".repeat(fb.rating!)}
+                          {"☆".repeat(5 - fb.rating!)} {fb.rating}/5{fb.feedback_text ? " — " + fb.feedback_text : ""}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+                {custCtx.data.conversations.length > 1 && (
+                  <div style={{ fontSize: 10, color: "#888", marginBottom: 8 }}>
+                    {custCtx.data.conversations.length} total conversations from this visitor
+                  </div>
+                )}
+              </>
+            )}
             <div
               style={{
                 background: "#f5f4f0",
@@ -421,8 +468,8 @@ export function CRMPanel({
                 lineHeight: 1.6,
               }}
             >
-              Customer profile data requires CRM integration. Connect your CRM to view order history, loyalty status,
-              sentiment analysis, and trust scores.
+              Order history, loyalty status, and CRM trust score require an external CRM integration. No authoritative
+              source currently exists in this repository.
             </div>
             <div style={sectionTitle}>Quick Actions</div>
             <button
