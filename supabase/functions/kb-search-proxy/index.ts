@@ -1,3 +1,4 @@
+import { resolveKBConfig, fetchKBRag } from "../_shared/kb-client.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
 const ALLOWED_ROLES = new Set(["admin", "supervisor"]);
@@ -100,87 +101,23 @@ Deno.serve(async (req) => {
     }
     const topK = Math.max(1, Math.min(MAX_TOP_K, parseInt(String(body?.top_k), 10) || 3));
 
-    const kbEndpoint = Deno.env.get("KB_RAG_ENDPOINT");
-    const kbToken = Deno.env.get("KB_RAG_TOKEN");
-    const companyIdStr = Deno.env.get("KB_DEMO_COMPANY_ID");
-    const industryEnv = Deno.env.get("KB_DEMO_INDUSTRY");
-    const language = Deno.env.get("KB_DEMO_LANGUAGE") ?? "zh-TW";
-
-    if (!kbEndpoint || !kbToken || !companyIdStr || !industryEnv) {
+    const kbConfig = resolveKBConfig();
+    if (!kbConfig) {
       console.error("[kb-search-proxy] KB config missing — fail closed");
       return jsonResponse({ error: "kb_config_missing" }, 500, req);
     }
-    const companyId = parseInt(companyIdStr, 10);
-    if (isNaN(companyId)) {
-      console.error("[kb-search-proxy] KB_DEMO_COMPANY_ID not valid integer");
-      return jsonResponse({ error: "kb_config_missing" }, 500, req);
-    }
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), KB_TIMEOUT_MS);
-    let kbResponse: Response;
-    try {
-      kbResponse = await fetch(`${kbEndpoint}/kb/rag-search`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${kbToken}`,
-        },
-        body: JSON.stringify({
-          query,
-          company_id: companyId,
-          industry: industryEnv,
-          language,
-          status: "published",
-          top_k: topK,
-        }),
-        signal: controller.signal,
-      });
-    } catch (err) {
-      clearTimeout(timeout);
-      if (err instanceof DOMException && err.name === "AbortError") {
+    const kbResult = await fetchKBRag({ query, top_k: topK }, kbConfig);
+    if (!kbResult.success) {
+      if (kbResult.error_code === "KB_TIMEOUT") {
         console.error("[kb-search-proxy] KB API timeout");
         return jsonResponse({ error: "kb_api_timeout" }, 504, req);
       }
-      console.error("[kb-search-proxy] KB API fetch error:", (err as Error).name);
-      return jsonResponse({ error: "kb_api_error" }, 502, req);
-    }
-    clearTimeout(timeout);
-
-    if (!kbResponse.ok) {
-      console.error("[kb-search-proxy] KB API HTTP error:", kbResponse.status);
+      console.error("[kb-search-proxy] KB API error:", kbResult.error_code);
       return jsonResponse({ error: "kb_api_error" }, 502, req);
     }
 
-    let kbData: { ok?: boolean; results?: Array<Record<string, unknown>> };
-    try {
-      kbData = await kbResponse.json();
-    } catch {
-      console.error("[kb-search-proxy] KB API invalid JSON");
-      return jsonResponse({ error: "kb_api_error" }, 502, req);
-    }
-
-    if (!kbData.ok || !kbData.results) {
-      return jsonResponse({ success: true, results: [] }, 200, req);
-    }
-
-    const sanitised = kbData.results
-      .filter((r: Record<string, unknown>) => {
-        if (r.company_id === undefined || r.company_id === null) return false;
-        if (r.industry === undefined || r.industry === null) return false;
-        if (r.company_id !== companyId) return false;
-        if (r.industry !== industryEnv) return false;
-        return true;
-      })
-      .slice(0, topK)
-      .map((r: Record<string, unknown>) => ({
-        display_label: typeof r.title === "string" ? (r.title as string).slice(0, 200) : "KB document",
-        content: typeof r.content === "string" ? (r.content as string).slice(0, 500) : "",
-        score: typeof r.score === "number" ? r.score : 0,
-        source_type: typeof r.source_type === "string" ? r.source_type : "unknown",
-      }));
-
-    return jsonResponse({ success: true, results: sanitised }, 200, req);
+    return jsonResponse({ success: true, results: kbResult.citations }, 200, req);
   } catch (e) {
     console.error("[kb-search-proxy] unexpected error:", (e as Error).name);
     return jsonResponse({ error: "internal_error" }, 500, req);
