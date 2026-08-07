@@ -13,12 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { feedbackService } from "@/lib/api/feedback.service";
 import { AgentToolPanel } from "@/components/console/AgentToolPanel";
 import { useConsoleLang } from "@/hooks/useEffectiveRole";
-import {
-  CRMPanel,
-  RIGHT_COPY,
-  buildBoundedContext,
-  computeContextRevisionKey,
-} from "@/components/console/CRMPanel";
+import { CRMPanel, RIGHT_COPY, buildBoundedContext, computeContextRevisionKey } from "@/components/console/CRMPanel";
 
 export const Route = createFileRoute("/_authenticated/console/conversations/")({
   component: ConversationsInboxGuard,
@@ -95,7 +90,6 @@ const HANDOFF_KEYWORDS = [
 const ELEVATED = new Set(["manager", "admin", "super_admin", "supervisor"]);
 const ADMIN_ONLY = new Set(["admin", "super_admin"]);
 
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function isHumanNeeded(c: Conv) {
   if (["pending", "unresolved", "human_needed"].includes(c.status)) return true;
@@ -130,7 +124,6 @@ function getInitials(label: string) {
     .slice(0, 2)
     .toUpperCase();
 }
-
 
 // ─── StatusBadge ─────────────────────────────────────────────────────────────
 function StatusBadge({ status }: { status: string }) {
@@ -385,7 +378,6 @@ function BannerBtn({
     </button>
   );
 }
-
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 function SinglePageInbox() {
@@ -1461,7 +1453,16 @@ function SinglePageInbox() {
       <div style={{ width: 360, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <div style={{ flex: 1, overflow: "hidden", borderBottom: "0.5px solid #e8e6e0" }}>
           <CRMPanel
-            conv={selectedConv}
+            conv={
+              selectedConv
+                ? {
+                    id: selectedConv.id,
+                    status: selectedConv.status,
+                    channel_config: selectedConv.channel_config,
+                    visitor_session_id: selectedConv.visitor_session?.id ?? null,
+                  }
+                : null
+            }
             visitorLabel={visitorLabel || "Visitor"}
             onResolve={handleResolve}
             boundedContext={boundedContext}
