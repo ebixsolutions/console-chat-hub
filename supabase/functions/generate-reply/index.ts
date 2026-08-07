@@ -19,7 +19,7 @@
 //   Pre-checks confirmed: status='pending' valid; is_recalled exists; DELETE pattern used.
 //   Authorized by: Director Charlson.
 
-import { resolveKBConfig, fetchKBRag, type KBFullChunk } from "../_shared/kb-client.ts";
+import { resolveKBEndpoint, resolveTenantScope, fetchKBRag, type KBFullChunk } from "../_shared/kb-client.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -1341,21 +1341,10 @@ async function orchestrationGenerateReply(
   } | null = null;
 
   if (flags.ENABLE_KB && !_g1SkipKB) {
-    // Resolve scope from env (Demo: schema has no company_id/industry fields)
-    const demoCompanyIdStr = Deno.env.get("KB_DEMO_COMPANY_ID");
-    const demoIndustry = Deno.env.get("KB_DEMO_INDUSTRY");
-    const demoLanguage = Deno.env.get("KB_DEMO_LANGUAGE") ?? "zh-TW";
-
-    const widgetCompanyId = demoCompanyIdStr ? parseInt(demoCompanyIdStr, 10) : null;
-    const widgetIndustry = demoIndustry ?? null;
-
-    // L5 Scope Gate: if scope unavailable, cannot safely query → handoff
-    if (widgetCompanyId === null || isNaN(widgetCompanyId) || !widgetIndustry) {
-      console.warn("[generate-reply] KB scope env vars not set", {
-        conversation_id,
-        hasCompanyId: widgetCompanyId !== null && !isNaN(widgetCompanyId),
-        hasIndustry: !!widgetIndustry,
-      });
+    // Canonical tenant scope resolution (shared with kb-search-proxy)
+    const _kbTenantResult = await resolveTenantScope(conversation_id);
+    if (!_kbTenantResult.resolved) {
+      console.warn("[generate-reply] KB tenant scope unresolved:", _kbTenantResult.reason, { conversation_id });
       // S0: route to s0_handoff_tx when enabled; else existing KB fallback
       if (_escEnableS0) {
         return await handleS0Handoff(supabaseAdmin, conversation_id, source_message_id, "KB_SCOPE_GATE", _visitorLang);
@@ -1385,11 +1374,7 @@ async function orchestrationGenerateReply(
     if (!userQuery) {
       ragResult = { success: true, no_answer: true, retrieval_quality: "failed", chunks: [] };
     } else {
-      ragResult = await callKBAdapter(conversation_id, userQuery, {
-        company_id: widgetCompanyId,
-        industry: widgetIndustry,
-        language: demoLanguage,
-      });
+      ragResult = await callKBAdapter(conversation_id, userQuery, _kbTenantResult.scope);
     }
 
     // — L5 Safety Checks (Demo-only, inline) —
@@ -1486,8 +1471,8 @@ async function orchestrationGenerateReply(
     const usableChunks = ragResult.chunks.filter((c) => {
       if (!c.score || c.score < minScore) return false;
       if (c.status && c.status !== "published") return false;
-      if (c.company_id !== undefined && c.company_id !== widgetCompanyId) return false;
-      if (c.industry && c.industry !== widgetIndustry) return false;
+      if (c.company_id !== undefined && c.company_id !== _kbTenantResult.scope.kbCompanyId) return false;
+      if (c.industry && c.industry !== _kbTenantResult.scope.industry) return false;
       return true;
     });
 
@@ -1894,7 +1879,7 @@ async function callCustomer360Adapter(_conversation_id: string): Promise<{
 async function callKBAdapter(
   _conversation_id: string,
   userMessage: string,
-  scope: { company_id: number; industry: string; language: string },
+  scope: { kbCompanyId: number; industry: string; language: string },
 ): Promise<{
   success: boolean;
   no_answer?: boolean;
@@ -1902,23 +1887,19 @@ async function callKBAdapter(
   chunks?: KBFullChunk[];
   query_text_preview?: string;
 }> {
-  const kbConfig = resolveKBConfig();
-  if (!kbConfig) {
-    console.error("[CRITICAL] KB config not available");
+  const endpointCfg = resolveKBEndpoint();
+  if (!endpointCfg) {
+    console.error("[CRITICAL] KB endpoint config not available");
     return { success: false, no_answer: true, retrieval_quality: "failed" };
   }
 
   const result = await fetchKBRag(
-    {
-      query: userMessage,
-      top_k: 5,
-      company_id: scope.company_id,
-      industry: scope.industry,
-      language: scope.language,
-    },
-    kbConfig,
+    { query: userMessage, top_k: 5 },
+    scope,
+    endpointCfg,
     { timeoutMs: 15000 },
   );
+
 
   if (!result.success) {
     console.error("[CRITICAL] KB RAG API failure", { code: result.error_code });
