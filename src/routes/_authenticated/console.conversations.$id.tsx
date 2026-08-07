@@ -62,6 +62,8 @@ const ADMIN_ONLY = new Set(["admin", "super_admin"]);
 function ConversationDetailContent() {
   const { id } = Route.useParams();
   const { user } = useAuth();
+  const { role: currentRole } = useCurrentRole();
+  const lang = useConsoleLang();
   const [conv, setConv] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [agents, setAgents] = useState<AgentLite[]>([]);
