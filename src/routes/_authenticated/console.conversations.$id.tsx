@@ -341,7 +341,6 @@ function ConversationDetailContent() {
     return <div className="text-sm text-muted-foreground">Conversation not found.</div>;
   }
 
-  const lang = useConsoleLang();
   const assignedName = agents.find((a) => a.id === conv.assigned_agent_id)?.display_name || "Unassigned";
   const isElevated = myAgent ? ELEVATED.has(myAgent.role) : false;
   const transferableAgents = agents.filter((a) => a.id !== myAgent?.id);
