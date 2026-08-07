@@ -236,7 +236,7 @@ export function CRMPanel({
     let kbDenied = false;
     try {
       const { data, error } = await supabase.functions.invoke("kb-search-proxy", {
-        body: { query: content.trim().slice(0, 500), top_k: 3 },
+        body: { query: content.trim().slice(0, 500), top_k: 3, conversation_id: conv?.id },
       });
       if (polReqIdRef.current !== reqId) return;
       if (data?.error === "forbidden") {
