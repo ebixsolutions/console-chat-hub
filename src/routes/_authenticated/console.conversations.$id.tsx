@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,12 @@ import { useCurrentRole } from "@/hooks/useCurrentRole";
 import { LoadingState, PermissionDenied } from "@/components/console/PageStates";
 import { useConsoleLang } from "@/hooks/useEffectiveRole";
 import { AgentToolPanel } from "@/components/console/AgentToolPanel";
+import {
+  CRMPanel,
+  RIGHT_COPY,
+  buildBoundedContext,
+  computeContextRevisionKey,
+} from "@/components/console/CRMPanel";
 
 export const Route = createFileRoute("/_authenticated/console/conversations/$id")({
   component: ConversationDetailGuard,
