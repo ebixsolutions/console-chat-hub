@@ -2,8 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import { toast } from "sonner";
-import { useEffectiveRole } from "@/hooks/useEffectiveRole";
-import { PermissionDenied } from "@/components/console/PageStates";
+import { useCurrentRole } from "@/hooks/useCurrentRole";
+import { LoadingState, PermissionDenied } from "@/components/console/PageStates";
 import { supabase } from "@/integrations/supabase/client";
 import {
   aiChatbotSettingsService,
@@ -109,9 +109,20 @@ function ComingSoonBadge() {
 }
 
 function ConsoleFeedbackAutomation() {
-  const roleState = useEffectiveRole();
-  const role = (roleState as { role?: string })?.role;
+  const { role: productionRole, loading: roleLoading } = useCurrentRole();
 
+  if (roleLoading) return <LoadingState />;
+
+  // Authorization uses production DB role only (defense in depth).
+  const canView = productionRole === "admin" || productionRole === "supervisor";
+  if (!canView) {
+    return <PermissionDenied message="You do not have permission to manage feedback automation." />;
+  }
+
+  return <FeedbackAutomationContent />;
+}
+
+function FeedbackAutomationContent() {
   const [config, setConfig] = useState<FeedbackAutomationConfig | null>(null);
   const [requests, setRequests] = useState<FeedbackRequest[]>([]);
   const [source, setSource] = useState<"live" | "mock_fallback" | null>(null);
@@ -130,6 +141,40 @@ function ConsoleFeedbackAutomation() {
       setConfig(r.data);
       setSource(r.source);
       setLoadError(r.error ?? null);
+      if (r.data.message_templates && typeof r.data.message_templates === "object") {
+        const VALID_KEYS: RatingType[] = ["stars_1_5", "csat", "nps", "thumbs", "ces", "survey"];
+        const VALID_FIELDS: (keyof MessageTemplate)[] = [
+          "subject",
+          "bodyEn",
+          "bodyZh",
+          "ctaEn",
+          "thankEn",
+          "thankZh",
+          "lowRatingEn",
+          "lowRatingZh",
+        ];
+        const merged = {
+          stars_1_5: { ...DEFAULT_TEMPLATES.stars_1_5 },
+          csat: { ...DEFAULT_TEMPLATES.csat },
+          nps: { ...DEFAULT_TEMPLATES.nps },
+          thumbs: { ...DEFAULT_TEMPLATES.thumbs },
+          ces: { ...DEFAULT_TEMPLATES.ces },
+          survey: { ...DEFAULT_TEMPLATES.survey },
+        };
+        const saved = r.data.message_templates as Record<string, unknown>;
+        for (const key of VALID_KEYS) {
+          const s = saved[key];
+          if (s && typeof s === "object" && !Array.isArray(s)) {
+            const normalized = { ...DEFAULT_TEMPLATES[key] };
+            const rec = s as Record<string, unknown>;
+            for (const f of VALID_FIELDS) {
+              if (typeof rec[f] === "string") normalized[f] = rec[f] as string;
+            }
+            merged[key] = normalized;
+          }
+        }
+        setTemplates(merged);
+      }
     });
     aiChatbotSettingsService.getFeedbackRequests().then(setRequests);
   };
@@ -137,12 +182,6 @@ function ConsoleFeedbackAutomation() {
   useEffect(() => {
     reload();
   }, []);
-
-  // P1 Rescue Director-approved predicate: agent/qa/null → restricted.
-  const isRestrictedRole = role === "agent" || role === "qa" || !role;
-  if (isRestrictedRole) {
-    return <PermissionDenied message="You do not have permission to manage feedback automation." />;
-  }
 
   if (!config) return <div style={{ padding: 24, fontSize: 12, color: "#555" }}>Loading feedback automation…</div>;
 
@@ -184,7 +223,7 @@ function ConsoleFeedbackAutomation() {
     } catch {
       // Auth/profile query failed — 'System' is safe default
     }
-    const configToSave = { ...config, updated_by: realUpdatedBy };
+    const configToSave = { ...config, updated_by: realUpdatedBy, message_templates: templates };
     const res = await aiChatbotSettingsService.saveFeedbackAutomationConfig(configToSave);
     setSaving(false);
     if (res.ok) {

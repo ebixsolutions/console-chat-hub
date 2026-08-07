@@ -14,18 +14,14 @@
  */
 
 /** Values emitted by the ConsoleLayout demo role switcher UI. */
-export type DemoRole =
-  | 'admin'
-  | 'supervisor'
-  | 'customer_service'
-  | 'qa_reviewer';
+export type DemoRole = "admin" | "supervisor" | "customer_service" | "qa_reviewer";
 
 /**
  * Canonical role model used by console permission guards.
  * Superset of production AppRole; 'qa' is reachable only via demo override
  * in this round and does NOT enter production auth.
  */
-export type EffectiveRole = 'admin' | 'supervisor' | 'agent' | 'qa';
+export type EffectiveRole = "admin" | "supervisor" | "agent" | "qa";
 
 /**
  * Map a demo switcher value to the effective console role.
@@ -33,21 +29,21 @@ export type EffectiveRole = 'admin' | 'supervisor' | 'agent' | 'qa';
  */
 export function mapDemoRoleToEffective(demoRole: string): EffectiveRole {
   switch (demoRole) {
-    case 'admin':
-      return 'admin';
-    case 'supervisor':
-      return 'supervisor';
-    case 'customer_service':
-      return 'agent';
-    case 'qa_reviewer':
-      return 'qa';
+    case "admin":
+      return "admin";
+    case "supervisor":
+      return "supervisor";
+    case "customer_service":
+      return "agent";
+    case "qa_reviewer":
+      return "qa";
     // Pass-through for values that are already effective roles
-    case 'agent':
-      return 'agent';
-    case 'qa':
-      return 'qa';
+    case "agent":
+      return "agent";
+    case "qa":
+      return "qa";
     default:
-      return 'agent';
+      return "agent";
   }
 }
 
@@ -59,4 +55,5 @@ export function mapDemoRoleToEffective(demoRole: string): EffectiveRole {
 export type ConsoleOutletContext = {
   effectiveRole: EffectiveRole;
   demoRole: string;
+  lang: "en" | "zh";
 };

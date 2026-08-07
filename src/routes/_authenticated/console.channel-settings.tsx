@@ -1,43 +1,40 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from 'react';
-import type { CSSProperties } from 'react';
-import { useEffectiveRole } from '@/hooks/useEffectiveRole';
-import { PermissionDenied } from '@/components/console/PageStates';
-import {
-  aiChatbotSettingsService,
-  type ChannelConfig,
-} from '@/services/aiChatbotSettingsService';
+import { useEffect, useState } from "react";
+import type { CSSProperties } from "react";
+import { useCurrentRole } from "@/hooks/useCurrentRole";
+import { LoadingState, PermissionDenied } from "@/components/console/PageStates";
+import { aiChatbotSettingsService, type ChannelConfig } from "@/services/aiChatbotSettingsService";
 
 export const Route = createFileRoute("/_authenticated/console/channel-settings")({
   component: ConsoleChannelSettings,
 });
 
 const ICONS: Record<string, string> = {
-  website_widget: '💬',
-  whatsapp: '📱',
-  email: '✉️',
-  line: '🟩',
+  website_widget: "💬",
+  whatsapp: "📱",
+  email: "✉️",
+  line: "🟩",
 };
 
 const cardStyle: CSSProperties = {
-  background: '#fff',
-  border: '0.5px solid #e8e6e0',
+  background: "#fff",
+  border: "0.5px solid #e8e6e0",
   borderRadius: 11,
   padding: 14,
 };
 
-function MockBadge({ label = 'Mock' }: { label?: string }) {
+function MockBadge({ label = "Mock" }: { label?: string }) {
   return (
     <span
       style={{
-        background: '#fef3c7',
-        color: '#92400e',
+        background: "#fef3c7",
+        color: "#92400e",
         fontSize: 9.5,
         fontWeight: 700,
-        padding: '1px 7px',
+        padding: "1px 7px",
         borderRadius: 20,
-        border: '0.5px solid #fbbf24',
-        whiteSpace: 'nowrap',
+        border: "0.5px solid #fbbf24",
+        whiteSpace: "nowrap",
       }}
     >
       {label}
@@ -49,13 +46,13 @@ function ComingSoonBadge() {
   return (
     <span
       style={{
-        background: '#f0efe9',
-        color: '#555',
+        background: "#f0efe9",
+        color: "#555",
         fontSize: 9.5,
         fontWeight: 700,
-        padding: '1px 7px',
+        padding: "1px 7px",
         borderRadius: 20,
-        whiteSpace: 'nowrap',
+        whiteSpace: "nowrap",
       }}
     >
       Coming Soon
@@ -63,13 +60,23 @@ function ComingSoonBadge() {
   );
 }
 
-
 function ConsoleChannelSettings() {
-  const roleState = useEffectiveRole();
-  const role = (roleState as { role?: string })?.role;
+  const { role: productionRole, loading: roleLoading } = useCurrentRole();
 
+  if (roleLoading) return <LoadingState />;
+
+  // Authorization uses production DB role only (defense in depth).
+  const canView = productionRole === "admin" || productionRole === "supervisor";
+  if (!canView) {
+    return <PermissionDenied message="You do not have permission to manage channel settings." />;
+  }
+
+  return <ChannelSettingsContent />;
+}
+
+function ChannelSettingsContent() {
   const [channels, setChannels] = useState<ChannelConfig[]>([]);
-  const [source, setSource] = useState<'live' | 'mock_fallback' | null>(null);
+  const [source, setSource] = useState<"live" | "mock_fallback" | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [previewChannelId, setPreviewChannelId] = useState<string | null>(null);
 
@@ -81,39 +88,34 @@ function ConsoleChannelSettings() {
     });
   }, []);
 
-  // P1 Rescue Director-approved predicate: agent/qa/null → restricted.
-  if (role === 'agent' || role === 'qa' || !role) {
-    return <PermissionDenied message="You do not have permission to manage channel settings." />;
-  }
-
   const previewChannel = channels.find((c) => c.id === previewChannelId);
 
   return (
     <div style={{ maxWidth: 900 }}>
-      {source === 'mock_fallback' && (
+      {source === "mock_fallback" && (
         <div
           style={{
-            background: '#fef2f2',
-            border: '0.5px solid #fca5a5',
+            background: "#fef2f2",
+            border: "0.5px solid #fca5a5",
             borderRadius: 11,
-            padding: '10px 14px',
+            padding: "10px 14px",
             marginBottom: 12,
-            color: '#991b1b',
+            color: "#991b1b",
             fontSize: 11.5,
           }}
         >
-          ⚠️ Backend unavailable — showing default channel list.{' '}
+          ⚠️ Backend unavailable — showing default channel list.{" "}
           {loadError ? <span style={{ opacity: 0.75 }}>({loadError})</span> : null}
         </div>
       )}
       <div
         style={{
-          background: '#fffbeb',
-          border: '0.5px solid #fbbf24',
+          background: "#fffbeb",
+          border: "0.5px solid #fbbf24",
           borderRadius: 11,
-          padding: '12px 14px',
+          padding: "12px 14px",
           marginBottom: 14,
-          color: '#92400e',
+          color: "#92400e",
           fontSize: 12,
           lineHeight: 1.6,
         }}
@@ -127,8 +129,8 @@ function ConsoleChannelSettings() {
 
       <div
         style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(380px, 1fr))',
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(380px, 1fr))",
           gap: 12,
         }}
       >
@@ -136,64 +138,52 @@ function ConsoleChannelSettings() {
           <div key={ch.id} style={cardStyle}>
             <div
               style={{
-                display: 'flex',
-                alignItems: 'center',
+                display: "flex",
+                alignItems: "center",
                 gap: 8,
                 marginBottom: 8,
               }}
             >
               <span style={{ fontSize: 18 }}>{ICONS[ch.channel_type]}</span>
-              <span style={{ fontSize: 13, fontWeight: 700, flex: 1 }}>
-                {ch.channel_name}
-              </span>
-              {ch.status === 'mock_preview' ? (
-                <MockBadge label="Mock Preview" />
-              ) : (
-                <ComingSoonBadge />
-              )}
+              <span style={{ fontSize: 13, fontWeight: 700, flex: 1 }}>{ch.channel_name}</span>
+              {ch.status === "mock_preview" ? <MockBadge label="Mock Preview" /> : <ComingSoonBadge />}
             </div>
-            <div style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>
-              {ch.phase}
-            </div>
+            <div style={{ fontSize: 11, color: "#888", marginBottom: 8 }}>{ch.phase}</div>
             <div
               title={
                 !ch.recall_supported
-                  ? 'Message Recall not available. Correction Message will be used instead.'
+                  ? "Message Recall not available. Correction Message will be used instead."
                   : undefined
               }
               style={{
                 fontSize: 11,
                 fontWeight: 600,
-                padding: '6px 10px',
+                padding: "6px 10px",
                 borderRadius: 8,
                 marginBottom: 8,
-                background: ch.recall_supported ? '#d1fae5' : '#f0efe9',
-                color: ch.recall_supported ? '#065f46' : '#555',
+                background: ch.recall_supported ? "#d1fae5" : "#f0efe9",
+                color: ch.recall_supported ? "#065f46" : "#555",
               }}
             >
               {ch.recall_supported
                 ? `✅ Recall Supported (${ch.recall_time_limit_minutes} min)`
-                : ch.channel_type === 'email'
-                ? '❌ Correction only'
-                : '❌ Recall not guaranteed'}
+                : ch.channel_type === "email"
+                  ? "❌ Correction only"
+                  : "❌ Recall not guaranteed"}
             </div>
-            {ch.notes && (
-              <div style={{ fontSize: 10.5, color: '#888', marginBottom: 8 }}>
-                {ch.notes}
-              </div>
-            )}
-            {ch.channel_type === 'website_widget' && (
+            {ch.notes && <div style={{ fontSize: 10.5, color: "#888", marginBottom: 8 }}>{ch.notes}</div>}
+            {ch.channel_type === "website_widget" && (
               <button
                 onClick={() => setPreviewChannelId(ch.id)}
                 style={{
                   fontSize: 11,
                   fontWeight: 600,
-                  padding: '5px 12px',
+                  padding: "5px 12px",
                   borderRadius: 8,
-                  border: 'none',
-                  background: '#1a1a1a',
-                  color: '#fff',
-                  cursor: 'pointer',
+                  border: "none",
+                  background: "#1a1a1a",
+                  color: "#fff",
+                  cursor: "pointer",
                   marginTop: 4,
                 }}
               >
@@ -208,59 +198,56 @@ function ConsoleChannelSettings() {
         <div
           onClick={() => setPreviewChannelId(null)}
           style={{
-            position: 'fixed',
+            position: "fixed",
             inset: 0,
-            background: 'rgba(0,0,0,0.45)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
+            background: "rgba(0,0,0,0.45)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
             zIndex: 100,
           }}
         >
           <div
             onClick={(e) => e.stopPropagation()}
             style={{
-              background: '#fff',
+              background: "#fff",
               borderRadius: 12,
               padding: 24,
               maxWidth: 480,
-              width: '90%',
-              boxShadow: '0 20px 40px rgba(0,0,0,0.2)',
+              width: "90%",
+              boxShadow: "0 20px 40px rgba(0,0,0,0.2)",
             }}
           >
             <div
               style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
                 marginBottom: 12,
               }}
             >
-              <div style={{ fontSize: 15, fontWeight: 700 }}>
-                {previewChannel.channel_name} — Preview Only
-              </div>
+              <div style={{ fontSize: 15, fontWeight: 700 }}>{previewChannel.channel_name} — Preview Only</div>
               <MockBadge label="Phase 1 Preview" />
             </div>
             <div
               style={{
-                background: '#fffbeb',
-                border: '0.5px solid #fbbf24',
+                background: "#fffbeb",
+                border: "0.5px solid #fbbf24",
                 borderRadius: 8,
-                padding: '10px 12px',
+                padding: "10px 12px",
                 marginBottom: 14,
-                color: '#92400e',
+                color: "#92400e",
                 fontSize: 11,
                 lineHeight: 1.6,
               }}
             >
-              This is a Phase 1 mock preview. Widget configuration, embed code,
-              AI Agent instructions, and platform guides will be available in
-              Phase 2.
+              This is a Phase 1 mock preview. Widget configuration, embed code, AI Agent instructions, and platform
+              guides will be available in Phase 2.
             </div>
             <div
               style={{
                 fontSize: 12,
-                color: '#555',
+                color: "#555",
                 lineHeight: 1.7,
                 marginBottom: 16,
               }}
@@ -272,10 +259,10 @@ function ConsoleChannelSettings() {
                 <b>Phase:</b> {previewChannel.phase}
               </div>
               <div style={{ marginBottom: 6 }}>
-                <b>Recall:</b>{' '}
+                <b>Recall:</b>{" "}
                 {previewChannel.recall_supported
                   ? `Supported (${previewChannel.recall_time_limit_minutes} min window)`
-                  : 'Not available in Phase 1'}
+                  : "Not available in Phase 1"}
               </div>
               <div>
                 <b>Status:</b> Mock Preview — no real messages sent or received
@@ -286,12 +273,12 @@ function ConsoleChannelSettings() {
               style={{
                 fontSize: 12,
                 fontWeight: 600,
-                padding: '7px 18px',
+                padding: "7px 18px",
                 borderRadius: 8,
-                border: 'none',
-                background: '#1a1a1a',
-                color: '#fff',
-                cursor: 'pointer',
+                border: "none",
+                background: "#1a1a1a",
+                color: "#fff",
+                cursor: "pointer",
               }}
             >
               Close

@@ -3,9 +3,8 @@ import { useEffect, useRef, useState } from "react";
 import { LogOut } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentRole } from "@/hooks/useCurrentRole";
-import { mapDemoRoleToEffective, type ConsoleOutletContext } from "@/types/demoRole";
+import { mapDemoRoleToEffective, type ConsoleOutletContext, type EffectiveRole } from "@/types/demoRole";
 import { EffectiveRoleProvider } from "@/hooks/useEffectiveRole";
-
 export const Route = createFileRoute("/_authenticated/console")({
   component: ConsoleLayout,
 });
@@ -31,8 +30,13 @@ const translations: Record<string, Record<string, string>> = {
     navChannelSettings: "Channel Settings",
     navFeedbackSettings: "Feedback Automation",
     navCustomer360: "Customer 360",
+    navVisitorAnalytics: "Visitor Analytics",
     navLLMRuntime: "LLM Runtime",
     navWidgetPreview: "Widget Preview",
+    navFeedbackResponses: "Feedback Responses",
+    navKbHelper: "Knowledge Helper",
+    navConversationEvaluation: "Conversation Evaluation",
+    groupEvaluation: "CONVERSATION EVALUATION",
   },
   zh: {
     appName: "AI 智能客服",
@@ -45,8 +49,13 @@ const translations: Record<string, Record<string, string>> = {
     navChannelSettings: "Channel 設定",
     navFeedbackSettings: "評分自動化",
     navCustomer360: "客戶全景",
+    navVisitorAnalytics: "訪客分析",
     navLLMRuntime: "LLM 模型設定",
     navWidgetPreview: "Widget 預覽",
+    navFeedbackResponses: "客戶回饋",
+    navKbHelper: "知識庫搜尋",
+    navConversationEvaluation: "對話評估",
+    groupEvaluation: "對話評估",
   },
 };
 
@@ -76,10 +85,20 @@ const pageMeta: Record<string, { zh: string; en: string; sub?: { zh: string; en:
     en: "Feedback Automation",
     sub: { zh: "對話結案後自動發送客戶評分請求", en: "Auto-send customer rating requests after resolution" },
   },
+  "/console/feedback-responses": {
+    zh: "客戶回饋",
+    en: "Feedback Responses",
+    sub: { zh: "查看客戶提交的評分與回饋意見", en: "View customer-submitted ratings and feedback" },
+  },
   "/console/customer360": {
     zh: "客戶全景",
     en: "Customer 360",
-    sub: { zh: "完整客戶畫像", en: "Full customer profile" },
+    sub: { zh: "客戶/訪客上下文概覽", en: "Customer/visitor context overview" },
+  },
+  "/console/visitor-analytics": {
+    zh: "訪客分析",
+    en: "Visitor Analytics",
+    sub: { zh: "匿名訪客工作階段分析", en: "Anonymous visitor session analytics" },
   },
   "/console/settings/llm-runtime": {
     zh: "LLM 模型設定",
@@ -92,16 +111,27 @@ const pageMeta: Record<string, { zh: string; en: string; sub?: { zh: string; en:
   "/console/widget-preview": {
     zh: "Widget 預覽",
     en: "Widget Preview",
-    sub: { zh: "嵌入式聊天元件測試", en: "Embed and test your chat widget" },
+    sub: { zh: "管理獲授權的 Widget 安裝代碼", en: "Manage authorized widget installation code" },
   },
   "/console/conversations": {
     zh: "對話列表",
     en: "Conversations",
     sub: { zh: "所有對話記錄", en: "All conversation records" },
   },
+  "/console/conversation-evaluation": {
+    zh: "對話評估",
+    en: "Conversation Evaluation",
+    sub: { zh: "AI 對話評分、覆核與訓練狀態", en: "AI conversation scoring, review & training state" },
+  },
+  "/console/kb-gaps": {
+    zh: "知識庫搜尋",
+    en: "Knowledge Helper",
+    sub: { zh: "搜尋知識庫中的相關文章與文件", en: "Search the Knowledge Base for relevant articles" },
+  },
 };
 
 /* ── Nav groups (Base44 structure) ── */
+/* Dev22-A1: Removed analytics + customer360 from inbox group (mock pages hidden from nav) */
 const GROUPS = [
   {
     key: "inbox",
@@ -109,19 +139,30 @@ const GROUPS = [
     color: "#dc2626",
     bgColor: "#fee2e2",
     items: [
-      { path: "/console/conversations", icon: "💬", navKey: "navInbox", alertBadge: true },
-      { path: "/console/analytics", icon: "📊", navKey: "navAnalytics" },
-      { path: "/console/customer360", icon: "👥", navKey: "navCustomer360" },
+      { path: "/console/conversations", icon: "💬", navKey: "navInbox" },
       { path: "/console/channel-settings", icon: "📡", navKey: "navChannelSettings" },
       { path: "/console/feedback-settings", icon: "⭐", navKey: "navFeedbackSettings" },
+      { path: "/console/feedback-responses", icon: "📋", navKey: "navFeedbackResponses" },
     ],
+  },
+  {
+    key: "evaluation",
+    labelKey: "groupEvaluation",
+    color: "#7c3aed",
+    bgColor: "#ede9fe",
+    items: [{ path: "/console/conversation-evaluation", icon: "🧪", navKey: "navConversationEvaluation" }],
   },
   {
     key: "operations",
     labelKey: "groupOperations",
     color: "#2563eb",
     bgColor: "#dbeafe",
-    items: [{ path: "/console/agent-settings", icon: "👤", navKey: "navAgentSettings" }],
+    items: [
+      { path: "/console/agent-settings", icon: "👤", navKey: "navAgentSettings" },
+      { path: "/console/kb-gaps", icon: "📚", navKey: "navKbHelper", adminOnly: true },
+      { path: "/console/customer360", icon: "👤", navKey: "navCustomer360", adminOnly: true },
+      { path: "/console/visitor-analytics", icon: "📊", navKey: "navVisitorAnalytics", adminOnly: true },
+    ],
   },
   {
     key: "settings",
@@ -136,13 +177,17 @@ const GROUPS = [
 const GROUP_BADGE: Record<string, { label: string; bg: string; color: string }> = {
   "/console": { label: "LIVE INBOX", bg: "#fee2e2", color: "#dc2626" },
   "/console/analytics": { label: "LIVE INBOX", bg: "#fee2e2", color: "#dc2626" },
-  "/console/customer360": { label: "LIVE INBOX", bg: "#fee2e2", color: "#dc2626" },
   "/console/conversations": { label: "LIVE INBOX", bg: "#fee2e2", color: "#dc2626" },
   "/console/agent-settings": { label: "AGENT OPERATIONS", bg: "#dbeafe", color: "#2563eb" },
   "/console/channel-settings": { label: "LIVE INBOX", bg: "#fee2e2", color: "#dc2626" },
   "/console/feedback-settings": { label: "LIVE INBOX", bg: "#fee2e2", color: "#dc2626" },
+  "/console/feedback-responses": { label: "LIVE INBOX", bg: "#fee2e2", color: "#dc2626" },
   "/console/settings/llm-runtime": { label: "SETTINGS", bg: "#ede9fe", color: "#6d28d9" },
   "/console/widget-preview": { label: "WIDGET", bg: "#f0fdf4", color: "#16a34a" },
+  "/console/conversation-evaluation": { label: "CONVERSATION EVALUATION", bg: "#ede9fe", color: "#6d28d9" },
+  "/console/kb-gaps": { label: "KNOWLEDGE", bg: "#ede9fe", color: "#6d28d9" },
+  "/console/customer360": { label: "CUSTOMER", bg: "#dbeafe", color: "#2563eb" },
+  "/console/visitor-analytics": { label: "ANALYTICS", bg: "#dbeafe", color: "#2563eb" },
 };
 
 const ROLES = [
@@ -175,8 +220,6 @@ function ConsoleLayout() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const { role, loading: roleLoading } = useCurrentRole();
   const [demoRole, setDemoRole] = useState<string>("supervisor");
-  const effectiveRole = mapDemoRoleToEffective(demoRole);
-  const effectiveRoleContext: ConsoleOutletContext = { effectiveRole, demoRole };
 
   // C3: Sync demoRole from resolved auth role exactly once.
   // After initial sync, manual demo switcher clicks are preserved.
@@ -230,14 +273,26 @@ function ConsoleLayout() {
     };
   }, []);
 
-  const [lang, setLang] = useState("en");
+  const [lang, setLang] = useState<"en" | "zh">("en");
   const [collapsed, setCollapsed] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
 
+  // Production: sidebar + context use real DB role (normalized by authService).
+  // Development: uses demoRole for switcher testing.
+  const sidebarRole: string | null = import.meta.env.DEV ? demoRole : (role ?? null);
+
+  const effectiveRoleForContext: EffectiveRole | null = sidebarRole ? mapDemoRoleToEffective(sidebarRole) : null;
+  const effectiveRoleContext: ConsoleOutletContext | null =
+    effectiveRoleForContext && sidebarRole
+      ? { effectiveRole: effectiveRoleForContext, demoRole: sidebarRole, lang }
+      : null;
+
   const t = (key: string) => translations[lang]?.[key] ?? translations.en[key] ?? key;
   const toggleGroup = (key: string) => setCollapsedGroups((prev) => ({ ...prev, [key]: !prev[key] }));
-  const showSettingsGroup = demoRole === "admin" || demoRole === "supervisor";
-  const currentRoleMeta = ROLES.find((r) => r.key === demoRole) || ROLES[1];
+  const showSettingsGroup = sidebarRole === "admin" || sidebarRole === "supervisor";
+  // Map production "agent" to display key "customer_service" for ROLES lookup
+  const roleDisplayKey: string | null = sidebarRole === "agent" ? "customer_service" : sidebarRole;
+  const currentRoleMeta = roleDisplayKey ? ROLES.find((r) => r.key === roleDisplayKey) : null;
   const sidebarW = collapsed ? SIDEBAR_COLLAPSED : SIDEBAR_EXPANDED;
 
   const isConvDetail = pathname.startsWith("/console/conversations/");
@@ -447,48 +502,54 @@ function ConsoleLayout() {
                   >
                     {userDisplayName}
                   </div>
-                  <div style={{ fontSize: 11, color: currentRoleMeta.color, fontWeight: 500 }}>
-                    {currentRoleMeta.short === "Sup"
-                      ? "Supervisor"
-                      : currentRoleMeta.short === "CS"
-                        ? "Customer Service"
-                        : currentRoleMeta.short === "QA"
-                          ? "QA Reviewer"
-                          : "Admin"}
+                  <div style={{ fontSize: 11, color: currentRoleMeta?.color ?? "#888", fontWeight: 500 }}>
+                    {roleLoading
+                      ? "Loading…"
+                      : !currentRoleMeta
+                        ? "No assigned role"
+                        : currentRoleMeta.short === "Sup"
+                          ? "Supervisor"
+                          : currentRoleMeta.short === "CS"
+                            ? "Customer Service"
+                            : currentRoleMeta.short === "QA"
+                              ? "QA Reviewer"
+                              : "Admin"}
                   </div>
                 </div>
               </div>
-              <div
-                style={{
-                  padding: "7px 12px 9px",
-                  borderBottom: "0.5px solid #e8e6e0",
-                  display: "flex",
-                  gap: 4,
-                  flexWrap: "wrap",
-                  background: "#ffffff",
-                  flexShrink: 0,
-                }}
-              >
-                {ROLES.map((r) => (
-                  <button
-                    key={r.key}
-                    onClick={() => setDemoRole(r.key as string)}
-                    style={{
-                      fontSize: 10,
-                      fontWeight: demoRole === r.key ? 700 : 600,
-                      padding: "3px 9px",
-                      borderRadius: 20,
-                      border: "none",
-                      cursor: "pointer",
-                      transition: "all 0.15s",
-                      background: demoRole === r.key ? "#1a1a1a" : "#f0efe9",
-                      color: demoRole === r.key ? "#ffffff" : "#555",
-                    }}
-                  >
-                    {r.short}
-                  </button>
-                ))}
-              </div>
+              {import.meta.env.DEV && (
+                <div
+                  style={{
+                    padding: "7px 12px 9px",
+                    borderBottom: "0.5px solid #e8e6e0",
+                    display: "flex",
+                    gap: 4,
+                    flexWrap: "wrap",
+                    background: "#ffffff",
+                    flexShrink: 0,
+                  }}
+                >
+                  {ROLES.map((r) => (
+                    <button
+                      key={r.key}
+                      onClick={() => setDemoRole(r.key as string)}
+                      style={{
+                        fontSize: 10,
+                        fontWeight: demoRole === r.key ? 700 : 600,
+                        padding: "3px 9px",
+                        borderRadius: 20,
+                        border: "none",
+                        cursor: "pointer",
+                        transition: "all 0.15s",
+                        background: demoRole === r.key ? "#1a1a1a" : "#f0efe9",
+                        color: demoRole === r.key ? "#ffffff" : "#555",
+                      }}
+                    >
+                      {r.short}
+                    </button>
+                  ))}
+                </div>
+              )}
             </>
           )}
 
@@ -557,21 +618,6 @@ function ConsoleLayout() {
                                 style={{ flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
                               >
                                 {t(item.navKey)}
-                              </span>
-                            )}
-                            {!collapsed && (item as any).alertBadge && (
-                              <span
-                                style={{
-                                  background: "#ef4444",
-                                  color: "#fff",
-                                  fontSize: 9.5,
-                                  fontWeight: 700,
-                                  borderRadius: 20,
-                                  padding: "1px 6px",
-                                  flexShrink: 0,
-                                }}
-                              >
-                                3
                               </span>
                             )}
                           </Link>
@@ -713,9 +759,43 @@ function ConsoleLayout() {
           </div>
 
           <main style={{ flex: 1, padding: noPadding ? 0 : 16, overflowY: "auto", background: "#f5f4f0" }}>
-            <EffectiveRoleProvider value={effectiveRoleContext}>
-              <Outlet />
-            </EffectiveRoleProvider>
+            {roleLoading ? (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  height: "100%",
+                  color: "#888",
+                  fontSize: 13,
+                }}
+              >
+                Loading…
+              </div>
+            ) : effectiveRoleContext ? (
+              <EffectiveRoleProvider value={effectiveRoleContext}>
+                <Outlet />
+              </EffectiveRoleProvider>
+            ) : (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  height: "100%",
+                  gap: 8,
+                }}
+              >
+                <div style={{ fontSize: 32 }}>🔒</div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: "#374151" }}>No Assigned Role</div>
+                <div style={{ fontSize: 12, color: "#888", textAlign: "center", maxWidth: 280 }}>
+                  {lang === "zh"
+                    ? "您的帳號尚未被指派角色。請聯繫管理員以取得存取權限。"
+                    : "Your account does not have an assigned role. Please contact an administrator for access."}
+                </div>
+              </div>
+            )}
           </main>
         </div>
       </div>

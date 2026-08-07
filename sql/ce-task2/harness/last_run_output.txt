@@ -1,0 +1,162 @@
+PG: 16.14 (Ubuntu 16.14-0ubuntu0.24.04.1)
+Sources:
+  8297fd652ef353e2 20260805090000_ce_task2_feature_flags.sql
+  62b3a867c9597fc8 20260805100000_ce_task2_v2_rpcs.sql
+  ebd0fff3eadd9a96 20260805110000_ce_task2_rls_acl_cleanup.sql
+  db95aa44b51a9e94 20260805090000_ce_task2_feature_flags.rollback.sql
+  6ea7581e0d1e9bd7 20260805100000_ce_task2_v2_rpcs.rollback.sql
+  c63974e6d21293a4 20260805110000_ce_task2_rls_acl_cleanup.rollback.sql
+PASS  PG started
+== S1: migration chain formal verification ==
+NOTICE:  database "s1" does not exist, skipping
+PASS  S1 migration chain: all 5 RPCs + view + flags exist
+== S2: rerun exact no-op ==
+PASS  S2 catalog hash unchanged after rerun
+== S3: functional score computation ==
+PASS  S3 functional: initiate→complete→score=74.25, 6 details, model from attempt
+== S3b-i: input validation + review ==
+PASS  S3b review: reject persists note, reopen clears
+PASS  S3c failed attempt blocked from completion
+PASS  S3d bundle hash mismatch rejected
+PASS  S3e missing score key rejected
+PASS  S3f extra score key rejected
+PASS  S3h string score value rejected
+PASS  S3i array scores rejected
+== S4: authenticated RBAC with SET ROLE authenticated ==
+PASS  S4.1 CompA admin review (authenticated role)
+PASS  S4.2 CompA supervisor review (authenticated role)
+PASS  S4.3 CompA qa denied (authenticated role)
+PASS  S4.4 CompA agent denied (authenticated role)
+PASS  S4.5 inactive supervisor denied (authenticated role)
+PASS  S4.6 non-member denied (authenticated role)
+PASS  S4.7 CompB admin → CompA denied (authenticated role)
+PASS  S4.8 global-sup+CompA-agent denied (authenticated role)
+PASS  S4.9 scope mismatch denied (authenticated role)
+PASS  S4.10 tenant mismatch denied (authenticated role)
+== S4-RLS: authenticated RLS tenant read matrix ==
+PASS  S4-RLS.1 CompA member reads CompA attempts (4)
+PASS  S4-RLS.2 non-staff CO2 member cannot read CompA attempts
+PASS  S4-RLS.3 non-staff non-member reads 0 attempts
+PASS  S4-RLS.4 CompA member reads CompA evaluations (1)
+PASS  S4-RLS.5 non-staff CO2 member cannot read CompA evaluations
+PASS  S4-RLS.6 CompA admin reads outbox (1)
+PASS  S4-RLS.7 CompA supervisor reads outbox (1)
+PASS  S4-RLS.8 CompA qa outbox=0 (denied)
+PASS  S4-RLS.9 CompA agent outbox=0 (denied)
+PASS  S4-RLS.10 non-staff CO2 member cannot read CompA outbox
+INSERT 0 1
+PASS  S4-RLS.11 CompA admin reads raw_output (1)
+PASS  S4-RLS.12 CompA supervisor raw_output=0 (denied)
+PASS  S4-RLS.13 CompA qa raw_output=0 (denied)
+PASS  S4-RLS.14 non-staff CO2 admin raw_output=0 (denied)
+== S5: real parallel concurrency (background psql processes) ==
+  S5A session1: "result": "initiated"
+  S5A session2: "result": "already_in_progress"
+PASS  S5.1 exactly 1 initiated (same snapshot)
+PASS  S5.2 exactly 1 already_in_progress (same snapshot)
+PASS  S5.3 exactly 1 running attempt
+PASS  S5.4 no zombie attempts (total=1)
+  S5B session3: "result": "initiated"
+  S5B session4: "result": "already_in_progress"
+PASS  S5.5 exactly 1 initiated (different snapshot)
+PASS  S5.6 exactly 1 running (ScenarioB)
+PASS  S5.7 no zombie (ScenarioB total=1)
+PASS  S5.8 no unique_violation leaked
+== S6: complete five-RPC + view rollback ==
+NOTICE:  database "s6" does not exist, skipping
+NOTICE:  function public.review_evaluation(uuid,uuid,text,text) does not exist, skipping
+  pre-fn=becc32a2f632e9ed45378ede850cfe57  pre-vw=317351478328f08b41a1b68e37e68f44
+PASS  S6.1 fail_evaluation replaced by Task 2
+PASS  S6.2 fail_evaluation restored
+PASS  S6.3 reap restored
+PASS  S6.4 review restored
+PASS  S6.5 initiate_v2 restored
+PASS  S6.6 complete_v2 restored
+PASS  S6.7 unrelated overload survived
+PASS  S6.8 view restored (has improved_result_state column)
+  post-fn=becc32a2f632e9ed45378ede850cfe57  post-vw=317351478328f08b41a1b68e37e68f44
+PASS  S6.9 function snapshot exact match after rollback
+PASS  S6.10 view snapshot exact match after rollback
+PASS  S6.11 provenance table dropped
+== S7: feature flag rollback (created table) ==
+NOTICE:  database "s7" does not exist, skipping
+PASS  S7.1 table dropped
+PASS  S7.2 provenance dropped
+== S8: feature flag rollback (pre-existing table + diverse ACL) ==
+NOTICE:  database "s8" does not exist, skipping
+PASS  S8.1 pre-existing key preserved
+PASS  S8.2 canonical keys removed
+PASS  S8.3 table ACL/owner/RLS exact match after rollback
+PASS  S8.4 flags provenance dropped
+PASS  S8.5 pre-existing policy/ACL fully restored
+== S9: drift detection fail-closed ==
+NOTICE:  database "s9" does not exist, skipping
+PASS  S9.1 flags rollback blocked on external data
+PASS  S9.2 table preserved after blocked rollback
+== S10: pre-existing v2 RPCs restored after rollback ==
+NOTICE:  database "s10" does not exist, skipping
+PASS  S10.1 initiate_v2 pre-existing restored
+PASS  S10.2 complete_v2 pre-existing restored
+PASS  S10.3 created view dropped
+PASS  S10.4 provenance dropped
+== S11: deliberate failure atomicity — multiple injection points ==
+NOTICE:  database "s11" does not exist, skipping
+PASS  S11.1 sabotage table preserved
+PASS  S11.2 no v2 function leaked
+NOTICE:  database "s11b" does not exist, skipping
+PASS  S11.3 injected failure aborted transaction
+PASS  S11.4 no provenance residue
+PASS  S11.5 pre-existing function def unchanged
+PASS  S11.6 view not created after atomic failure
+== S12: protected data unchanged ==
+PASS  S12.1 score intact
+PASS  S12.2 detail rows intact
+PASS  S12.3 attempt status intact
+
+============================================================
+S13: Cleanup rollback — Scenario A: all policies pre-existing
+============================================================
+NOTICE:  database "s13" does not exist, skipping
+PASS  S13.1 all 4 policies restored — exact pre-state match
+PASS  S13.2 provenance dropped
+
+============================================================
+S14: Cleanup rollback — Scenario B: no policies pre-existing
+============================================================
+NOTICE:  database "s14" does not exist, skipping
+PASS  S14.1 no policies created by rollback (existed_before=false)
+PASS  S14.2 provenance dropped
+
+============================================================
+S15: Cleanup rollback — Scenario C: raw-output SELECT pre-existing
+============================================================
+NOTICE:  database "s15" does not exist, skipping
+PASS  S15.1 pre-existing SELECT preserved — ACL exact match
+
+============================================================
+S16: Cleanup rollback — Scenario D: raw-output SELECT added by migration
+============================================================
+NOTICE:  database "s16" does not exist, skipping
+PASS  S16.1 migration-added SELECT revoked — authenticated has no SELECT
+
+============================================================
+S17: Cleanup rollback — Scenario E: mixed state
+============================================================
+NOTICE:  database "s17" does not exist, skipping
+PASS  S17.1 mixed state: each policy restored to its exact pre-state
+
+============================================================
+S18: Cleanup rollback — Scenario F: drift detection
+============================================================
+NOTICE:  database "s18" does not exist, skipping
+PASS  S18.1 drift detected — rollback blocked
+PASS  S18.2 provenance preserved after blocked rollback
+NOTICE:  database "s18i" does not exist, skipping
+PASS  S18.3 rerun is exact no-op — provenance unchanged
+
+============================================================
+HARNESS SUMMARY
+============================================================
+Total: 86  Pass: 86  Fail: 0
+ALL TASK 2 HARNESS CHECKS PASSED (86/86)
+exit 0

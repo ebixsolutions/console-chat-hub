@@ -29,3 +29,19 @@ verify_jwt = false
 
 [functions.return-to-ai]
 verify_jwt = false
+
+[functions.kb-search-proxy]
+verify_jwt = true
+
+[functions.visitor-analytics]
+verify_jwt = true
+
+[functions.agent-assist]
+verify_jwt = true
+
+
+[functions.agent-management]
+verify_jwt = true
+
+[functions.conversation-evaluate]
+verify_jwt = true

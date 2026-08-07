@@ -1,0 +1,26 @@
+{
+  "contract_id": "CE-T2-C20-EVIDENCE-CLOSURE-v1.0",
+  "package_version": "nexusai-3task-current-27",
+  "task_run_id": "e8059ae5-a101-4a57-8c62-119d39a8bc9f",
+  "generated_at": "2026-08-06T08:12:50Z",
+  "environment": {
+    "mode": "evidence-schema-review"
+  },
+  "command": "QA-Agent evidence schema review",
+  "exit_code": 0,
+  "pass": 7,
+  "fail": 0,
+  "skip": 0,
+  "blocked": 0,
+  "failures": [],
+  "tested_source_hashes": {
+    "validation/results/database.json": "d18515aba22465a913bb07e40987447b25baeffb448b058766ac6fef2b3968a0",
+    "validation/results/deno.json": "6b3eb4093e48523372fc316a111cc05ef7377ef5757f2799bb60c635b9f253e6",
+    "validation/results/edge-contract.json": "bc89bc12c472bd10fb2879a0ca131fed8ef210799bf57136820b09c12a6badfc",
+    "validation/results/frontend-build.json": "04528e42695ed81275644416845cd809234237c215299c3c6fdbb84f71b60b47",
+    "validation/results/frontend-smoke.json": "13ac95d1f9f99cf24cc232db6ed0abe1fcde4533048e81614eb4e5059ea81cca",
+    "validation/results/qa-frozen-regression.json": "bda473f4414312df14390308d3bfead5db52530131d74157142b9a188f59f8c5",
+    "validation/results/qa-source-contract.json": "005079e87d44db34208408a41f858e18dffdcc8e815f09fbb99c29ba7d71512a"
+  },
+  "status": "PASS"
+}

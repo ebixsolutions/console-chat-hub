@@ -81,6 +81,7 @@ Deno.serve(async (req) => {
       role: "assistant",
       content: "__THINKING__",
       status: "sending",
+      metadata: { source_message_id: msg.id },
     });
 
 
@@ -98,7 +99,7 @@ Deno.serve(async (req) => {
         "Authorization": `Bearer ${serviceKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ conversation_id }),
+      body: JSON.stringify({ conversation_id, source_message_id: msg.id }),
     }).catch((err) => console.error("[NexusAI] generate-reply invoke error:", err));
 
     return json({ success: true, data: { message_id: msg.id, ai_reply_pending: true } });
