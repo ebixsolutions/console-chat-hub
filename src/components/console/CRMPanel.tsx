@@ -160,7 +160,7 @@ export function CRMPanel({
       setKbResults([]);
       try {
         const { data, error } = await supabase.functions.invoke("kb-search-proxy", {
-          body: { query: query.trim().slice(0, 500), top_k: 3 },
+          body: { query: query.trim().slice(0, 500), top_k: 3, conversation_id: conv?.id },
         });
         if (kbReqIdRef.current !== reqId) return;
         if (error) {
