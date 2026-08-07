@@ -89,47 +89,6 @@ const HANDOFF_KEYWORDS = [
 const ELEVATED = new Set(["manager", "admin", "super_admin", "supervisor"]);
 const ADMIN_ONLY = new Set(["admin", "super_admin"]);
 
-// ── Phase 2A: Right-side Knowledge/Policy types & bilingual copy ──
-type KBResult = { display_label: string; content: string; score: number; source_type: string };
-type PolicyResult = {
-  status: string;
-  summary: string;
-  issues: Array<{ excerpt: string; policy_label: string; severity: string }>;
-};
-type KBConnState = "idle" | "loading" | "connected" | "empty" | "denied" | "unavailable";
-
-const RIGHT_COPY = {
-  kbSearch: { en: "Search knowledge base...", zh: "搜尋知識庫..." },
-  kbSearchBtn: { en: "Search", zh: "搜尋" },
-  kbRefresh: { en: "Refresh", zh: "重新整理" },
-  kbCopy: { en: "Copy", zh: "複製" },
-  kbInsert: { en: "Insert into Draft", zh: "插入草稿" },
-  kbLoading: { en: "Searching knowledge base...", zh: "搜尋知識庫中..." },
-  kbEmpty: { en: "No relevant knowledge found", zh: "未找到相關知識" },
-  kbEmptySub: { en: "Try a different search or select a conversation", zh: "請嘗試其他搜尋或選取對話" },
-  kbError: { en: "Knowledge base unavailable", zh: "知識庫無法存取" },
-  kbDenied: { en: "Requires Admin or Supervisor role", zh: "需要 Admin 或 Supervisor 角色" },
-  kbNoConv: { en: "Select a conversation to see recommendations", zh: "選取對話以查看推薦" },
-  kbScore: { en: "Relevance", zh: "相關度" },
-  polCheckConv: { en: "Check Conversation", zh: "檢查對話" },
-  polCheckDraft: { en: "Check Draft", zh: "檢查草稿" },
-  polLoading: { en: "Checking policy...", zh: "檢查政策中..." },
-  polError: { en: "Policy check failed", zh: "政策檢查失敗" },
-  polDenied: { en: "Requires Admin or Supervisor role", zh: "需要 Admin 或 Supervisor 角色" },
-  polNoContent: { en: "Select a conversation or enter a draft to check", zh: "選取對話或輸入草稿以檢查" },
-  polSrcNote: { en: "Based on provided policy sources only", zh: "僅基於所提供的政策來源" },
-  polDraftEmpty: { en: "Draft is empty", zh: "草稿為空" },
-  polCopySummary: { en: "Copy Summary", zh: "複製摘要" },
-  polInsufficient: {
-    en: "No matching policy sources found — cannot assess compliance",
-    zh: "未找到相符政策來源 — 無法評估合規性",
-  },
-  copied: { en: "Copied to clipboard", zh: "已複製到剪貼簿" },
-  copyFailed: { en: "Copy failed", zh: "複製失敗" },
-  inserted: { en: "Inserted into draft", zh: "已插入草稿" },
-} as const;
-type RCK = keyof typeof RIGHT_COPY;
-// ── End Phase 2A types & copy ──
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function isHumanNeeded(c: Conv) {
