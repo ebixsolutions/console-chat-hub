@@ -1898,77 +1898,49 @@ async function callKBAdapter(
   success: boolean;
   no_answer?: boolean;
   retrieval_quality?: "high" | "medium" | "low" | "failed";
-  chunks?: Array<{
-    doc_id?: string;
-    chunk_id?: string;
-    title?: string;
-    content?: string;
-    score?: number;
-    industry?: string;
-    company_id?: number;
-    language?: string;
-    status?: string;
-    source_type?: string;
-    published_at?: string;
-    updated_at?: string;
-  }>;
+  chunks?: KBFullChunk[];
   query_text_preview?: string;
 }> {
-  const KB_RAG_ENDPOINT = Deno.env.get("KB_RAG_ENDPOINT");
-  const KB_RAG_TOKEN = Deno.env.get("KB_RAG_TOKEN");
-  if (!KB_RAG_ENDPOINT || !KB_RAG_TOKEN) {
-    console.error("[CRITICAL] KB_RAG_ENDPOINT or KB_RAG_TOKEN not set");
+  const kbConfig = resolveKBConfig();
+  if (!kbConfig) {
+    console.error("[CRITICAL] KB config not available");
     return { success: false, no_answer: true, retrieval_quality: "failed" };
   }
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
-    const response = await fetch(`${KB_RAG_ENDPOINT}/kb/rag-search`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${KB_RAG_TOKEN}` },
-      body: JSON.stringify({
-        query: userMessage,
-        company_id: scope.company_id,
-        industry: scope.industry,
-        language: scope.language,
-        status: "published",
-        top_k: 5,
-      }),
-      signal: controller.signal,
-    });
-    clearTimeout(timeoutId);
-    if (!response.ok) {
-      console.error("[CRITICAL] KB RAG API HTTP error", { status: response.status });
-      return { success: false, no_answer: true, retrieval_quality: "failed" };
-    }
-    const data = await response.json();
-    if (!data.ok || !data.results || data.results.length === 0) {
-      return {
-        success: true,
-        no_answer: true,
-        retrieval_quality: "failed",
-        chunks: [],
-        query_text_preview: userMessage.slice(0, 100),
-      };
-    }
+
+  const result = await fetchKBRag(
+    {
+      query: userMessage,
+      top_k: 5,
+      company_id: scope.company_id,
+      industry: scope.industry,
+      language: scope.language,
+    },
+    kbConfig,
+    { timeoutMs: 15000 },
+  );
+
+  if (!result.success) {
+    console.error("[CRITICAL] KB RAG API failure", { code: result.error_code });
+    return { success: false, no_answer: true, retrieval_quality: "failed" };
+  }
+
+  if (result.chunks.length === 0) {
     return {
       success: true,
-      no_answer: false,
-      retrieval_quality: "high",
-      chunks: data.results,
+      no_answer: true,
+      retrieval_quality: "failed",
+      chunks: [],
       query_text_preview: userMessage.slice(0, 100),
     };
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
-      console.error("[CRITICAL] KB RAG API timeout", { code: "KB_TIMEOUT" });
-    } else {
-      console.error("[CRITICAL] KB RAG API failure", {
-        code: "KB_FETCH_ERROR",
-        name: error instanceof Error ? error.name : "UnknownError",
-      });
-    }
-    return { success: false, no_answer: true, retrieval_quality: "failed" };
   }
+
+  return {
+    success: true,
+    no_answer: false,
+    retrieval_quality: "high",
+    chunks: result.chunks,
+    query_text_preview: userMessage.slice(0, 100),
+  };
 }
 
 // ────────────────────────────────────────────────────────────────────────────
