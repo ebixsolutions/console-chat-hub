@@ -14,12 +14,7 @@ import { useCurrentRole } from "@/hooks/useCurrentRole";
 import { LoadingState, PermissionDenied } from "@/components/console/PageStates";
 import { useConsoleLang } from "@/hooks/useEffectiveRole";
 import { AgentToolPanel } from "@/components/console/AgentToolPanel";
-import {
-  CRMPanel,
-  RIGHT_COPY,
-  buildBoundedContext,
-  computeContextRevisionKey,
-} from "@/components/console/CRMPanel";
+import { CRMPanel, RIGHT_COPY, buildBoundedContext, computeContextRevisionKey } from "@/components/console/CRMPanel";
 
 export const Route = createFileRoute("/_authenticated/console/conversations/$id")({
   component: ConversationDetailGuard,
@@ -80,8 +75,6 @@ function ConversationDetailContent() {
   // ── RIGHT-CRM-KB-CONTEXT-1: bounded context scoped to this conversation ──
   const boundedContext = useMemo(() => buildBoundedContext(messages), [messages]);
   const contextRevisionKey = useMemo(() => computeContextRevisionKey(id, messages), [id, messages]);
-
-
 
   // ── J1: Realtime infrastructure ──
   const realtimeConnectedRef = useRef(true);
@@ -606,7 +599,12 @@ function ConversationDetailContent() {
       <div style={{ width: 360, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <div style={{ flex: 1, overflow: "hidden", borderBottom: "0.5px solid #e8e6e0" }}>
           <CRMPanel
-            conv={{ id: conv.id, status: conv.status, channel_config: conv.channel_config }}
+            conv={{
+              id: conv.id,
+              status: conv.status,
+              channel_config: conv.channel_config,
+              visitor_session_id: conv.visitor_session?.id ?? null,
+            }}
             visitorLabel={visitorShortId}
             onResolve={handleResolve}
             boundedContext={boundedContext}
@@ -642,7 +640,6 @@ function ConversationDetailContent() {
           />
         </div>
       </div>
-
 
       {/* Dev22-F2: Resolved Warning */}
       <Dialog open={resolvedWarningOpen} onOpenChange={setResolvedWarningOpen}>
