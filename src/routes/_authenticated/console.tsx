@@ -91,6 +91,11 @@ const pageMeta: Record<string, { zh: string; en: string; sub?: { zh: string; en:
     sub: { zh: "查看客戶提交的評分與回饋意見", en: "View customer-submitted ratings and feedback" },
   },
   "/console/customer360": {
+    zh: "客戶全景",
+    en: "Customer 360",
+    sub: { zh: "客戶/訪客上下文概覽", en: "Customer/visitor context overview" },
+  },
+  "/console/visitor-analytics": {
     zh: "訪客分析",
     en: "Visitor Analytics",
     sub: { zh: "匿名訪客工作階段分析", en: "Anonymous visitor session analytics" },
