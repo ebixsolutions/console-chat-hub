@@ -160,7 +160,8 @@ const GROUPS = [
     items: [
       { path: "/console/agent-settings", icon: "👤", navKey: "navAgentSettings" },
       { path: "/console/kb-gaps", icon: "📚", navKey: "navKbHelper", adminOnly: true },
-      { path: "/console/customer360", icon: "📊", navKey: "navCustomer360", adminOnly: true },
+      { path: "/console/customer360", icon: "👤", navKey: "navCustomer360", adminOnly: true },
+      { path: "/console/visitor-analytics", icon: "📊", navKey: "navVisitorAnalytics", adminOnly: true },
     ],
   },
   {
