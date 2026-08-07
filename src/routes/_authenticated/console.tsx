@@ -186,7 +186,8 @@ const GROUP_BADGE: Record<string, { label: string; bg: string; color: string }> 
   "/console/widget-preview": { label: "WIDGET", bg: "#f0fdf4", color: "#16a34a" },
   "/console/conversation-evaluation": { label: "CONVERSATION EVALUATION", bg: "#ede9fe", color: "#6d28d9" },
   "/console/kb-gaps": { label: "KNOWLEDGE", bg: "#ede9fe", color: "#6d28d9" },
-  "/console/customer360": { label: "ANALYTICS", bg: "#dbeafe", color: "#2563eb" },
+  "/console/customer360": { label: "CUSTOMER", bg: "#dbeafe", color: "#2563eb" },
+  "/console/visitor-analytics": { label: "ANALYTICS", bg: "#dbeafe", color: "#2563eb" },
 };
 
 const ROLES = [
