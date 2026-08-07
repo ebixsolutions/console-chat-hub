@@ -1191,37 +1191,43 @@ function SinglePageInbox() {
                       Take Over
                     </button>
                   )}
-                  {isElevated && (
-                    <Select onValueChange={handleAssign}>
-                      <SelectTrigger className="h-7 text-xs w-24">
-                        <SelectValue placeholder="Assign to" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {agents.map((a) => (
-                          <SelectItem key={a.id} value={a.id}>
-                            {a.display_name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                  {selectedConv?.status !== "resolved" && (
+                    <>
+                      {!selectedConv?.assigned_agent_id && isElevated && (
+                        <Select onValueChange={handleAssign}>
+                          <SelectTrigger className="h-7 text-xs w-24">
+                            <SelectValue placeholder="Assign to" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {agents.map((a) => (
+                              <SelectItem key={a.id} value={a.id}>
+                                {a.display_name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
+                      {selectedConv?.assigned_agent_id && (
+                        <Select onValueChange={handleTransfer}>
+                          <SelectTrigger className="h-7 text-xs w-28">
+                            <SelectValue placeholder="Transfer to" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {transferableAgents.map((a) => (
+                              <SelectItem key={a.id} value={a.id}>
+                                {a.display_name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
+                    </>
                   )}
                   {selectedConv?.status !== "unresolved" && (
                     <Button size="sm" variant="outline" onClick={handleUnresolve}>
                       Mark Unresolved
                     </Button>
                   )}
-                  <Select onValueChange={handleTransfer}>
-                    <SelectTrigger className="h-7 text-xs w-28">
-                      <SelectValue placeholder="Transfer to" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {transferableAgents.map((a) => (
-                        <SelectItem key={a.id} value={a.id}>
-                          {a.display_name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
                   {selectedConv?.status !== "resolved" && (
                     <Button size="sm" variant="outline" onClick={handleResolve}>
                       Resolve
