@@ -1879,7 +1879,7 @@ async function callCustomer360Adapter(_conversation_id: string): Promise<{
 async function callKBAdapter(
   _conversation_id: string,
   userMessage: string,
-  scope: { company_id: number; industry: string; language: string },
+  scope: { kbCompanyId: number; industry: string; language: string },
 ): Promise<{
   success: boolean;
   no_answer?: boolean;
@@ -1887,23 +1887,19 @@ async function callKBAdapter(
   chunks?: KBFullChunk[];
   query_text_preview?: string;
 }> {
-  const kbConfig = resolveKBConfig();
-  if (!kbConfig) {
-    console.error("[CRITICAL] KB config not available");
+  const endpointCfg = resolveKBEndpoint();
+  if (!endpointCfg) {
+    console.error("[CRITICAL] KB endpoint config not available");
     return { success: false, no_answer: true, retrieval_quality: "failed" };
   }
 
   const result = await fetchKBRag(
-    {
-      query: userMessage,
-      top_k: 5,
-      company_id: scope.company_id,
-      industry: scope.industry,
-      language: scope.language,
-    },
-    kbConfig,
+    { query: userMessage, top_k: 5 },
+    scope,
+    endpointCfg,
     { timeoutMs: 15000 },
   );
+
 
   if (!result.success) {
     console.error("[CRITICAL] KB RAG API failure", { code: result.error_code });
