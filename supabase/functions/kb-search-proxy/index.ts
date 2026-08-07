@@ -1,10 +1,9 @@
-import { resolveKBConfig, fetchKBRag } from "../_shared/kb-client.ts";
+import { resolveKBEndpoint, resolveTenantScope, fetchKBRag } from "../_shared/kb-client.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
 const ALLOWED_ROLES = new Set(["admin", "supervisor"]);
 const MAX_QUERY_LENGTH = 500;
 const MAX_TOP_K = 3;
-const KB_TIMEOUT_MS = 12000;
 
 const CONSOLE_ORIGINS = [
   "https://console-chat-hub.lovable.app",
@@ -29,6 +28,10 @@ function jsonResponse(body: unknown, status: number, req: Request): Response {
   });
 }
 
+function isUuid(v: unknown): v is string {
+  return typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     const optOrigin = req.headers.get("Origin") ?? "";
@@ -51,6 +54,7 @@ Deno.serve(async (req) => {
   }
 
   try {
+    // Auth layer 1: JWT
     const supabaseAuth = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_ANON_KEY")!,
@@ -61,6 +65,7 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: "unauthorized" }, 401, req);
     }
 
+    // Auth layer 2: role check
     const supabaseAdmin = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
@@ -72,22 +77,22 @@ Deno.serve(async (req) => {
     if (roleErr || !userRoles || userRoles.length === 0) {
       return jsonResponse({ error: "forbidden" }, 403, req);
     }
-    const hasAllowedRole = userRoles.some(
-      (r: { role: string }) => ALLOWED_ROLES.has(r.role),
-    );
-    if (!hasAllowedRole) {
+    if (!userRoles.some((r: { role: string }) => ALLOWED_ROLES.has(r.role))) {
       return jsonResponse({ error: "forbidden" }, 403, req);
     }
 
+    // Parse body
     const body = await req.json().catch(() => ({}));
 
-    if (body?.company_id !== undefined || body?.industry !== undefined) {
+    // REJECT frontend tenant spoofing
+    if (body?.company_id !== undefined || body?.industry !== undefined || body?.language !== undefined) {
       return jsonResponse(
-        { error: "invalid_request", detail: "company_id and industry must not be provided by client" },
+        { error: "invalid_request", detail: "company_id, industry, and language must not be provided by client" },
         400, req,
       );
     }
 
+    // Validate query
     const rawQuery = body?.query;
     if (typeof rawQuery !== "string") {
       return jsonResponse({ error: "invalid_request", detail: "query required" }, 400, req);
@@ -101,13 +106,28 @@ Deno.serve(async (req) => {
     }
     const topK = Math.max(1, Math.min(MAX_TOP_K, parseInt(String(body?.top_k), 10) || 3));
 
-    const kbConfig = resolveKBConfig();
-    if (!kbConfig) {
-      console.error("[kb-search-proxy] KB config missing — fail closed");
+    // Validate conversation_id (optional but used for tenant resolution)
+    const conversationId = body?.conversation_id;
+    if (conversationId !== undefined && !isUuid(conversationId)) {
+      return jsonResponse({ error: "invalid_request", detail: "invalid conversation_id" }, 400, req);
+    }
+
+    // Resolve KB endpoint config
+    const endpointCfg = resolveKBEndpoint();
+    if (!endpointCfg) {
+      console.error("[kb-search-proxy] KB endpoint config missing — fail closed");
       return jsonResponse({ error: "kb_config_missing" }, 500, req);
     }
 
-    const kbResult = await fetchKBRag({ query, top_k: topK }, kbConfig);
+    // Canonical tenant scope resolution
+    const tenantResult = await resolveTenantScope(conversationId ?? null);
+    if (!tenantResult.resolved) {
+      console.error("[kb-search-proxy] tenant scope unresolved:", tenantResult.reason);
+      return jsonResponse({ error: "kb_tenant_unresolved", detail: tenantResult.reason }, 503, req);
+    }
+
+    // Canonical KB fetch
+    const kbResult = await fetchKBRag({ query, top_k: topK }, tenantResult.scope, endpointCfg);
     if (!kbResult.success) {
       if (kbResult.error_code === "KB_TIMEOUT") {
         console.error("[kb-search-proxy] KB API timeout");
