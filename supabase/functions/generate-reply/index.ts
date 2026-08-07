@@ -1374,11 +1374,7 @@ async function orchestrationGenerateReply(
     if (!userQuery) {
       ragResult = { success: true, no_answer: true, retrieval_quality: "failed", chunks: [] };
     } else {
-      ragResult = await callKBAdapter(conversation_id, userQuery, {
-        company_id: widgetCompanyId,
-        industry: widgetIndustry,
-        language: demoLanguage,
-      });
+      ragResult = await callKBAdapter(conversation_id, userQuery, _kbTenantResult.scope);
     }
 
     // — L5 Safety Checks (Demo-only, inline) —
