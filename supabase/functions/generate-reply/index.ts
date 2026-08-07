@@ -19,7 +19,7 @@
 //   Pre-checks confirmed: status='pending' valid; is_recalled exists; DELETE pattern used.
 //   Authorized by: Director Charlson.
 
-import { resolveKBEndpoint, resolveTenantScope, fetchKBRag, type KBFullChunk } from "../_shared/kb-client.ts";
+import { resolveKBEndpoint, resolveTenantScope, fetchKBRag, type KBFullChunk, type KBResolvedScope } from "../_shared/kb-client.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -1879,7 +1879,7 @@ async function callCustomer360Adapter(_conversation_id: string): Promise<{
 async function callKBAdapter(
   _conversation_id: string,
   userMessage: string,
-  scope: { kbCompanyId: number; industry: string; language: string },
+  scope: KBResolvedScope,
 ): Promise<{
   success: boolean;
   no_answer?: boolean;
