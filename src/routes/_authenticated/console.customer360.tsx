@@ -4,6 +4,7 @@ import { useCurrentRole } from "@/hooks/useCurrentRole";
 import { useConsoleLang } from "@/hooks/useEffectiveRole";
 import { supabase } from "@/integrations/supabase/client";
 import { AlertCircle, Loader2 } from "lucide-react";
+import { useCustomerContext } from "@/lib/customer360/useCustomerContext";
 
 export const Route = createFileRoute("/_authenticated/console/customer360")({
   component: Customer360Guard,
@@ -47,11 +48,19 @@ const COPY = {
   firstSeen: { en: "First Seen", zh: "首次出現" },
   lastSeen: { en: "Last Seen", zh: "最近出現" },
   sessionRef: { en: "Session Reference", zh: "工作階段參照" },
+  customerRefLabel: { en: "Customer Reference", zh: "客戶參照" },
+  customerRefUnresolved: {
+    en: "Unresolved — no CRM identity mapping available for this visitor",
+    zh: "未解析 — 此訪客沒有可用的 CRM 身份對應",
+  },
   identityNote: {
     en: "Fields below are shown only if the visitor voluntarily provided them via the widget form.",
     zh: "以下欄位僅在訪客透過 Widget 表單主動提供時顯示。",
   },
   noIdentity: { en: "No visitor-provided identity data", zh: "訪客未提供身份資料" },
+  fieldName: { en: "Name", zh: "姓名" },
+  fieldEmail: { en: "Email", zh: "電子郵件" },
+  fieldPhone: { en: "Phone", zh: "電話" },
   resolutionRate: { en: "Resolution Rate", zh: "解決率" },
   escalationRate: { en: "Escalation Rate", zh: "升級率" },
   avgFeedback: { en: "Avg Feedback", zh: "平均回饋" },
@@ -76,28 +85,28 @@ const COPY = {
   noFollowup: { en: "No follow-up plans.", zh: "沒有跟進計畫。" },
   noPredictions: { en: "No predictions available.", zh: "沒有可用的預測。" },
   ordersUnavailable: {
-    en: "Order history requires an external commerce/CRM integration that is not yet connected.",
-    zh: "訂單紀錄需要尚未連接的外部商務／CRM 整合。",
+    en: "Order history requires an external commerce/CRM integration. No authoritative local or external source currently exists in this repository.",
+    zh: "訂單紀錄需要外部商務／CRM 整合。目前此系統中沒有可用的本地或外部資料來源。",
   },
   productsUnavailable: {
-    en: "Product purchase history requires an external commerce integration that is not yet connected.",
-    zh: "產品購買紀錄需要尚未連接的外部商務整合。",
+    en: "Product purchase history requires an external commerce integration. No authoritative source currently exists in this repository.",
+    zh: "產品購買紀錄需要外部商務整合。目前此系統中沒有可用的資料來源。",
   },
   paymentsUnavailable: {
-    en: "Payment and lifetime value data require an external payment/CRM integration that is not yet connected.",
-    zh: "付款與終身價值資料需要尚未連接的外部付款／CRM 整合。",
+    en: "Payment and lifetime value data require an external payment/CRM integration. No authoritative source currently exists in this repository.",
+    zh: "付款與終身價值資料需要外部付款／CRM 整合。目前此系統中沒有可用的資料來源。",
   },
   trustUnavailable: {
-    en: "AI trust scoring engine is not yet implemented. This tab will populate once a real trust-scoring pipeline is connected.",
-    zh: "AI 信任分數引擎尚未實作。待真實信任評分管線接上後，本頁將自動顯示資料。",
+    en: "No real AI trust-scoring engine currently exists in this repository. This tab will populate once a real trust-scoring pipeline is connected — it will not display estimated or fabricated values before then.",
+    zh: "此系統目前沒有真實的 AI 信任評分引擎。待真實信任評分管線接上後，本頁才會顯示資料 — 在此之前不會顯示估計或虛構數值。",
   },
   followupUnavailable: {
-    en: "Follow-up plan workflow is not yet implemented.",
-    zh: "跟進計畫工作流程尚未實作。",
+    en: "No follow-up task/workflow system currently exists in this repository.",
+    zh: "此系統目前沒有跟進任務／工作流程系統。",
   },
   predictionsUnavailable: {
-    en: "Predictive analytics (churn risk, retention offers) are not yet implemented.",
-    zh: "預測分析（流失風險、挽留優惠）尚未實作。",
+    en: "No predictive analytics (churn risk, retention offers) service currently exists in this repository.",
+    zh: "此系統目前沒有預測分析（流失風險、挽留優惠）服務。",
   },
   lifetimeValue: { en: "Lifetime Value", zh: "終身價值" },
   filter_all: { en: "All", zh: "全部" },
@@ -113,10 +122,7 @@ const COPY = {
 type CopyKey = keyof typeof COPY;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-function getVisitorLabel(meta: unknown, sessionId: string): string {
-  const m = meta && typeof meta === "object" && !Array.isArray(meta) ? (meta as Record<string, unknown>) : {};
-  const name = typeof m.name === "string" ? m.name.trim() : "";
-  const email = typeof m.email === "string" ? m.email.trim() : "";
+function getVisitorLabel(name: string | undefined, email: string | undefined, sessionId: string): string {
   if (name) return name;
   if (email) return email;
   return `Visitor #${sessionId.slice(0, 8)}`;
@@ -218,8 +224,6 @@ function SummaryBar({ items }: { items: { label: string; value: string | number;
     </div>
   );
 }
-
-// ─── Empty-state (reused pattern from confirmed UI) ──────────────────────────
 function EmptyState({ text }: { text: string }) {
   return <div style={{ textAlign: "center", padding: "40px", color: "#94a3b8" }}>📭 {text}</div>;
 }
@@ -291,48 +295,14 @@ function Customer360Guard() {
 }
 
 // ─── Types ───────────────────────────────────────────────────────────────────
-type VisitorRow = {
+type VisitorListRow = {
   id: string;
   created_at: string | null;
   last_seen_at: string | null;
-  visitor_metadata: unknown;
+  name?: string;
+  email?: string;
   channel_name: string | null;
   conv_count: number;
-};
-type ConvRow = {
-  id: string;
-  status: string;
-  priority: string | null;
-  created_at: string | null;
-  channel_name: string | null;
-  assigned_agent_name: string | null;
-  eval_score: number | null;
-};
-type FeedbackRow = { id: string; rating: number | null; created_at: string };
-type EvalRow = {
-  id: string;
-  conversation_id: string;
-  overall_score: number;
-  severity: string;
-  review_status: string;
-  created_at: string;
-};
-type EmotionRow = {
-  id: string;
-  conversation_id: string;
-  turn_index: number;
-  sentiment: string;
-  sentiment_score: number;
-  trigger_label: string | null;
-  occurred_at: string;
-};
-
-const SENTIMENT_COLOR: Record<string, string> = {
-  very_negative: "#dc2626",
-  negative: "#f97316",
-  neutral: "#94a3b8",
-  positive: "#22c55e",
-  very_positive: "#16a34a",
 };
 
 // ─── Main content ──────────────────────────────────────────────────────────
@@ -340,21 +310,19 @@ function Customer360Content() {
   const lang = useConsoleLang();
   const t = (key: CopyKey) => COPY[key]?.[lang] ?? COPY[key]?.en ?? key;
 
-  const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
-  const [visitors, setVisitors] = useState<VisitorRow[]>([]);
+  const [listStatus, setListStatus] = useState<"loading" | "success" | "error">("loading");
+  const [visitors, setVisitors] = useState<VisitorListRow[]>([]);
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>("profile");
   const [bannerVisible, setBannerVisible] = useState(true);
   const [followupFilter, setFollowupFilter] = useState<"all" | "pending" | "completed">("all");
 
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [detailConvs, setDetailConvs] = useState<ConvRow[]>([]);
-  const [detailFeedback, setDetailFeedback] = useState<FeedbackRow[]>([]);
-  const [detailEval, setDetailEval] = useState<EvalRow[]>([]);
-  const [detailEmotion, setDetailEmotion] = useState<EmotionRow[]>([]);
+  // ONE canonical local Customer context loader — shared with CRMPanel.
+  const ctx = useCustomerContext(selectedId);
 
-  // ── Load visitor list ──
+  // ── Directory/list query — a different concern (browsing many visitors),
+  // intentionally kept separate from the per-visitor context hook. ──
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -366,7 +334,7 @@ function Customer360Content() {
           .limit(50);
         if (cancelled) return;
         if (error) {
-          setStatus("error");
+          setListStatus("error");
           return;
         }
         const raw = (data ?? []) as Array<{
@@ -379,10 +347,15 @@ function Customer360Content() {
         const ids = raw.map((v) => v.id);
         let countMap: Record<string, number> = {};
         if (ids.length > 0) {
-          const { data: convRows } = await supabase
+          const { data: convRows, error: convCountErr } = await supabase
             .from("conversations")
             .select("visitor_session_id")
             .in("visitor_session_id", ids);
+          if (cancelled) return;
+          if (convCountErr) {
+            setListStatus("error");
+            return;
+          }
           countMap = (convRows ?? []).reduce(
             (acc: Record<string, number>, r: { visitor_session_id: string | null }) => {
               if (r.visitor_session_id) acc[r.visitor_session_id] = (acc[r.visitor_session_id] ?? 0) + 1;
@@ -392,19 +365,26 @@ function Customer360Content() {
           );
         }
         if (cancelled) return;
-        const mapped = raw.map((v) => ({
-          id: v.id,
-          created_at: v.created_at,
-          last_seen_at: v.last_seen_at,
-          visitor_metadata: v.visitor_metadata,
-          channel_name: v.channel_config?.name ?? null,
-          conv_count: countMap[v.id] ?? 0,
-        }));
+        const mapped: VisitorListRow[] = raw.map((v) => {
+          const meta = v.visitor_metadata;
+          const m = meta && typeof meta === "object" && !Array.isArray(meta) ? (meta as Record<string, unknown>) : {};
+          const name = typeof m.name === "string" && m.name.trim() ? m.name.trim() : undefined;
+          const email = typeof m.email === "string" && m.email.trim() ? m.email.trim() : undefined;
+          return {
+            id: v.id,
+            created_at: v.created_at,
+            last_seen_at: v.last_seen_at,
+            name,
+            email,
+            channel_name: v.channel_config?.name ?? null,
+            conv_count: countMap[v.id] ?? 0,
+          };
+        });
         setVisitors(mapped);
         if (mapped.length > 0) setSelectedId(mapped[0].id);
-        setStatus("success");
+        setListStatus("success");
       } catch {
-        if (!cancelled) setStatus("error");
+        if (!cancelled) setListStatus("error");
       }
     })();
     return () => {
@@ -412,155 +392,43 @@ function Customer360Content() {
     };
   }, []);
 
-  // ── Load selected visitor detail ──
   useEffect(() => {
-    if (!selectedId) {
-      setDetailConvs([]);
-      setDetailFeedback([]);
-      setDetailEval([]);
-      setDetailEmotion([]);
-      return;
-    }
-    let cancelled = false;
-    setDetailLoading(true);
     setActiveTab("profile");
-    (async () => {
-      try {
-        const { data: convData } = await supabase
-          .from("conversations")
-          .select("id, status, priority, created_at, channel_config:channel_config_id(name), assigned_agent_id")
-          .eq("visitor_session_id", selectedId)
-          .order("created_at", { ascending: false });
-        if (cancelled) return;
-        const rows = (convData ?? []) as Array<{
-          id: string;
-          status: string;
-          priority: string | null;
-          created_at: string | null;
-          channel_config: { name: string } | null;
-          assigned_agent_id: string | null;
-        }>;
-        const agentIds = [
-          ...new Set(rows.filter((r) => r.assigned_agent_id).map((r) => r.assigned_agent_id as string)),
-        ];
-        let agentMap: Record<string, string> = {};
-        if (agentIds.length > 0) {
-          const { data: agents } = await supabase.from("agent_profile").select("id, display_name").in("id", agentIds);
-          agentMap = (agents ?? []).reduce((acc: Record<string, string>, a: { id: string; display_name: string }) => {
-            acc[a.id] = a.display_name;
-            return acc;
-          }, {});
-        }
-        const convIds = rows.map((r) => r.id);
-
-        const [fbRes, evalRes] = await Promise.all([
-          supabase
-            .from("feedback_request")
-            .select("id, rating, created_at")
-            .eq("visitor_session_id", selectedId)
-            .order("created_at", { ascending: false }),
-          convIds.length > 0
-            ? supabase
-                .from("conversation_evaluation")
-                .select("id, conversation_id, overall_score, severity, review_status, created_at")
-                .in("conversation_id", convIds)
-                .order("created_at", { ascending: false })
-            : Promise.resolve({ data: [] as EvalRow[] }),
-        ]);
-        if (cancelled) return;
-        const evalRows = (evalRes.data ?? []) as EvalRow[];
-        const evalByConv: Record<string, number> = {};
-        evalRows.forEach((e) => {
-          evalByConv[e.conversation_id] = e.overall_score;
-        });
-
-        setDetailConvs(
-          rows.map((r) => ({
-            id: r.id,
-            status: r.status,
-            priority: r.priority,
-            created_at: r.created_at,
-            channel_name: r.channel_config?.name ?? null,
-            assigned_agent_name: r.assigned_agent_id ? (agentMap[r.assigned_agent_id] ?? null) : null,
-            eval_score: evalByConv[r.id] ?? null,
-          })),
-        );
-        setDetailFeedback((fbRes.data ?? []) as FeedbackRow[]);
-        setDetailEval(evalRows);
-
-        const evalIds = evalRows.map((e) => e.id);
-        if (evalIds.length > 0) {
-          const { data: emoData } = await supabase
-            .from("ce_emotion_point")
-            .select("id, evaluation_id, turn_index, sentiment, sentiment_score, trigger_label, occurred_at")
-            .in("evaluation_id", evalIds)
-            .order("turn_index", { ascending: true });
-          if (cancelled) return;
-          const evalToConv: Record<string, string> = {};
-          evalRows.forEach((e) => {
-            evalToConv[e.id] = e.conversation_id;
-          });
-          setDetailEmotion(
-            (
-              (emoData ?? []) as Array<{
-                id: string;
-                evaluation_id: string;
-                turn_index: number;
-                sentiment: string;
-                sentiment_score: number;
-                trigger_label: string | null;
-                occurred_at: string;
-              }>
-            ).map((e) => ({
-              id: e.id,
-              conversation_id: evalToConv[e.evaluation_id] ?? "",
-              turn_index: e.turn_index,
-              sentiment: e.sentiment,
-              sentiment_score: e.sentiment_score,
-              trigger_label: e.trigger_label,
-              occurred_at: e.occurred_at,
-            })),
-          );
-        } else {
-          setDetailEmotion([]);
-        }
-      } finally {
-        if (!cancelled) setDetailLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
   }, [selectedId]);
 
   const filteredVisitors = useMemo(() => {
     if (!search.trim()) return visitors;
     const q = search.toLowerCase();
     return visitors.filter((v) => {
-      const label = getVisitorLabel(v.visitor_metadata, v.id).toLowerCase();
+      const label = getVisitorLabel(v.name, v.email, v.id).toLowerCase();
       return label.includes(q) || v.id.toLowerCase().includes(q) || (v.channel_name || "").toLowerCase().includes(q);
     });
   }, [visitors, search]);
 
-  const selected = visitors.find((v) => v.id === selectedId) ?? null;
-  const selectedLabel = selected ? getVisitorLabel(selected.visitor_metadata, selected.id) : "";
+  const selectedListRow = visitors.find((v) => v.id === selectedId) ?? null;
+  const selectedLabel = selectedListRow
+    ? getVisitorLabel(selectedListRow.name, selectedListRow.email, selectedListRow.id)
+    : "";
 
-  // Real derived metrics (per selected visitor)
+  const data = ctx.status === "success" ? ctx.data : null;
+
   const resolutionRate =
-    detailConvs.length > 0
-      ? Math.round((detailConvs.filter((c) => c.status === "resolved").length / detailConvs.length) * 100)
+    data && data.conversations.length > 0
+      ? Math.round((data.conversations.filter((c) => c.status === "resolved").length / data.conversations.length) * 100)
       : null;
   const escalationRate =
-    detailConvs.length > 0
-      ? Math.round((detailConvs.filter((c) => c.priority === "high").length / detailConvs.length) * 100)
+    data && data.conversations.length > 0
+      ? Math.round((data.conversations.filter((c) => c.priority === "high").length / data.conversations.length) * 100)
       : null;
-  const ratedFeedback = detailFeedback.filter((f) => f.rating !== null);
+  const ratedFeedback = data ? data.feedback.filter((f) => f.rating !== null) : [];
   const avgFeedbackPct =
     ratedFeedback.length > 0
       ? Math.round((ratedFeedback.reduce((s, f) => s + (f.rating ?? 0), 0) / ratedFeedback.length / 5) * 100)
       : null;
   const avgEvalScore =
-    detailEval.length > 0 ? Math.round(detailEval.reduce((s, e) => s + e.overall_score, 0) / detailEval.length) : null;
+    data && data.evaluations.length > 0
+      ? Math.round(data.evaluations.reduce((s, e) => s + e.overall_score, 0) / data.evaluations.length)
+      : null;
 
   const chipStyle = (): CSSProperties => ({
     fontSize: 9,
@@ -573,7 +441,7 @@ function Customer360Content() {
     cursor: "not-allowed",
   });
 
-  if (status === "loading") {
+  if (listStatus === "loading") {
     return (
       <div
         style={{
@@ -590,7 +458,7 @@ function Customer360Content() {
       </div>
     );
   }
-  if (status === "error") {
+  if (listStatus === "error") {
     return (
       <div
         style={{
@@ -609,13 +477,6 @@ function Customer360Content() {
     );
   }
 
-  const identityFields = (() => {
-    if (!selected) return [];
-    const m = selected.visitor_metadata;
-    if (!m || typeof m !== "object" || Array.isArray(m)) return [];
-    return Object.entries(m as Record<string, unknown>).filter(([, v]) => v !== null && v !== undefined && v !== "");
-  })();
-
   return (
     <div
       style={{
@@ -627,7 +488,6 @@ function Customer360Content() {
         background: "#f8fafc",
       }}
     >
-      {/* Info Banner */}
       {bannerVisible && (
         <div
           style={{
@@ -659,9 +519,8 @@ function Customer360Content() {
         </div>
       )}
 
-      {/* Two-column layout */}
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-        {/* LEFT: Visitor List */}
+        {/* LEFT: Visitor directory list */}
         <div
           style={{
             flex: "0 0 30%",
@@ -742,7 +601,7 @@ function Customer360Content() {
               <div style={{ textAlign: "center", color: "#94a3b8", fontSize: 12, padding: 20 }}>{t("noVisitors")}</div>
             ) : (
               filteredVisitors.map((v) => {
-                const label = getVisitorLabel(v.visitor_metadata, v.id);
+                const label = getVisitorLabel(v.name, v.email, v.id);
                 const isActive = v.id === selectedId;
                 return (
                   <button
@@ -802,7 +661,7 @@ function Customer360Content() {
           </div>
         </div>
 
-        {/* RIGHT: Detail */}
+        {/* RIGHT: Detail — driven entirely by useCustomerContext(selectedId) */}
         <div
           style={{
             flex: "0 0 70%",
@@ -813,7 +672,7 @@ function Customer360Content() {
             overflow: "hidden",
           }}
         >
-          {!selected ? (
+          {!selectedListRow ? (
             <div
               style={{
                 flex: 1,
@@ -828,7 +687,6 @@ function Customer360Content() {
             </div>
           ) : (
             <>
-              {/* Header */}
               <div
                 style={{
                   background: "#fff",
@@ -860,15 +718,13 @@ function Customer360Content() {
                 </div>
                 <div>
                   <div style={{ fontSize: 15, fontWeight: 700, color: "#0f172a" }}>{selectedLabel}</div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ fontSize: 11, color: "#94a3b8" }}>{selected.channel_name || "—"}</span>
-                  </div>
+                  <div style={{ fontSize: 11, color: "#94a3b8" }}>{selectedListRow.channel_name || "—"}</div>
                 </div>
                 <div style={{ width: 1, height: 32, background: "#e5e7eb", flexShrink: 0 }} />
                 <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap" }}>
                   {[
                     [t("ltv"), "—", "#94a3b8"],
-                    [t("since"), fmtDate(selected.created_at), "#0f172a"],
+                    [t("since"), fmtDate(data?.createdAt ?? selectedListRow.created_at), "#0f172a"],
                     [t("orders"), "—", "#94a3b8"],
                     [t("trust"), "—", "#94a3b8"],
                     [t("memory"), "—", "#94a3b8"],
@@ -895,7 +751,6 @@ function Customer360Content() {
                 </div>
               </div>
 
-              {/* Tab Bar */}
               <div style={{ padding: "12px 20px 0", flexShrink: 0 }}>
                 <div
                   style={{
@@ -931,13 +786,16 @@ function Customer360Content() {
                 </div>
               </div>
 
-              {/* Tab Content */}
               <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
-                {detailLoading ? (
+                {ctx.status === "loading" ? (
                   <div style={{ display: "flex", justifyContent: "center", padding: 40 }}>
                     <Loader2 size={20} className="animate-spin" style={{ color: "#94a3b8" }} />
                   </div>
-                ) : (
+                ) : ctx.status === "error" ? (
+                  <div style={{ textAlign: "center", padding: 40, color: "#ef4444", fontSize: 13 }}>{t("error")}</div>
+                ) : ctx.status === "empty" ? (
+                  <EmptyState text={t("noData")} />
+                ) : !data ? null : (
                   <>
                     {activeTab === "profile" && (
                       <div style={{ display: "grid", gridTemplateColumns: "55% 45%", gap: 16 }}>
@@ -955,10 +813,11 @@ function Customer360Content() {
                             {t("coreProfile")}
                           </div>
                           {[
-                            [t("channel"), selected.channel_name || "—"],
-                            [t("firstSeen"), fmtDateTime(selected.created_at)],
-                            [t("lastSeen"), fmtDateTime(selected.last_seen_at)],
-                            [t("sessionRef"), selected.id],
+                            [t("channel"), data.channelName || "—"],
+                            [t("firstSeen"), fmtDateTime(data.createdAt)],
+                            [t("lastSeen"), fmtDateTime(data.lastSeenAt)],
+                            [t("sessionRef"), data.visitorSessionId],
+                            [t("customerRefLabel"), t("customerRefUnresolved")],
                           ].map(([label, val]) => (
                             <div
                               key={label}
@@ -975,10 +834,12 @@ function Customer360Content() {
                               <span
                                 style={{
                                   fontSize: 12,
-                                  color: "#0f172a",
+                                  color: label === t("customerRefLabel") ? "#94a3b8" : "#0f172a",
+                                  fontStyle: label === t("customerRefLabel") ? "italic" : "normal",
                                   fontWeight: 500,
                                   textAlign: "right",
                                   fontFamily: label === t("sessionRef") ? "monospace" : "inherit",
+                                  maxWidth: "60%",
                                 }}
                               >
                                 {val}
@@ -988,24 +849,52 @@ function Customer360Content() {
                           <div style={{ marginTop: 10, fontSize: 10, color: "#cbd5e1", lineHeight: 1.5 }}>
                             {t("identityNote")}
                           </div>
-                          {identityFields.length > 0 &&
-                            identityFields.map(([k, v]) => (
-                              <div
-                                key={k}
-                                style={{
-                                  display: "flex",
-                                  justifyContent: "space-between",
-                                  padding: "6px 0",
-                                  borderBottom: "1px solid #f1f5f9",
-                                }}
-                              >
-                                <span style={{ fontSize: 12, color: "#64748b", textTransform: "capitalize" }}>
-                                  {k.replace(/_/g, " ")}
-                                </span>
-                                <span style={{ fontSize: 12, color: "#0f172a", fontWeight: 500 }}>{String(v)}</span>
-                              </div>
-                            ))}
-                          {identityFields.length === 0 && (
+                          {data.identity.name && (
+                            <div
+                              style={{
+                                display: "flex",
+                                justifyContent: "space-between",
+                                padding: "6px 0",
+                                borderBottom: "1px solid #f1f5f9",
+                              }}
+                            >
+                              <span style={{ fontSize: 12, color: "#64748b" }}>{t("fieldName")}</span>
+                              <span style={{ fontSize: 12, color: "#0f172a", fontWeight: 500 }}>
+                                {data.identity.name}
+                              </span>
+                            </div>
+                          )}
+                          {data.identity.email && (
+                            <div
+                              style={{
+                                display: "flex",
+                                justifyContent: "space-between",
+                                padding: "6px 0",
+                                borderBottom: "1px solid #f1f5f9",
+                              }}
+                            >
+                              <span style={{ fontSize: 12, color: "#64748b" }}>{t("fieldEmail")}</span>
+                              <span style={{ fontSize: 12, color: "#0f172a", fontWeight: 500 }}>
+                                {data.identity.email}
+                              </span>
+                            </div>
+                          )}
+                          {data.identity.phone && (
+                            <div
+                              style={{
+                                display: "flex",
+                                justifyContent: "space-between",
+                                padding: "6px 0",
+                                borderBottom: "1px solid #f1f5f9",
+                              }}
+                            >
+                              <span style={{ fontSize: 12, color: "#64748b" }}>{t("fieldPhone")}</span>
+                              <span style={{ fontSize: 12, color: "#0f172a", fontWeight: 500 }}>
+                                {data.identity.phone}
+                              </span>
+                            </div>
+                          )}
+                          {!data.identity.name && !data.identity.email && !data.identity.phone && (
                             <div style={{ fontSize: 11, color: "#cbd5e1", marginTop: 6 }}>{t("noIdentity")}</div>
                           )}
                         </div>
@@ -1059,11 +948,14 @@ function Customer360Content() {
                       <div>
                         <SummaryBar
                           items={[
-                            { label: t("total"), value: detailConvs.length },
-                            { label: t("escalations"), value: detailConvs.filter((c) => c.priority === "high").length },
+                            { label: t("total"), value: data.conversations.length },
+                            {
+                              label: t("escalations"),
+                              value: data.conversations.filter((c) => c.priority === "high").length,
+                            },
                             {
                               label: t("needsReview"),
-                              value: detailEval.filter((e) => e.review_status === "pending").length,
+                              value: data.evaluations.filter((e) => e.review_status === "pending").length,
                             },
                             {
                               label: t("avgScore"),
@@ -1072,7 +964,7 @@ function Customer360Content() {
                             },
                           ]}
                         />
-                        {detailConvs.length === 0 ? (
+                        {data.conversations.length === 0 ? (
                           <EmptyState text={t("noConversations")} />
                         ) : (
                           <div style={{ ...card, padding: 0, overflow: "hidden" }}>
@@ -1106,8 +998,9 @@ function Customer360Content() {
                                 </tr>
                               </thead>
                               <tbody>
-                                {detailConvs.map((c, i) => {
+                                {data.conversations.map((c, i) => {
                                   const sc = statusColor(c.status);
+                                  const ev = data.evaluations.find((e) => e.conversation_id === c.id);
                                   return (
                                     <tr key={c.id} style={{ background: i % 2 === 0 ? "#fff" : "#fafafa" }}>
                                       <td style={{ padding: "10px 12px", fontSize: 12, color: "#475569" }}>
@@ -1152,10 +1045,10 @@ function Customer360Content() {
                                           padding: "10px 12px",
                                           fontSize: 13,
                                           fontWeight: 700,
-                                          color: c.eval_score !== null ? evalScoreColor(c.eval_score) : "#cbd5e1",
+                                          color: ev ? evalScoreColor(ev.overall_score) : "#cbd5e1",
                                         }}
                                       >
-                                        {c.eval_score ?? "—"}
+                                        {ev ? ev.overall_score : "—"}
                                       </td>
                                       <td style={{ padding: "10px 12px", fontSize: 11 }}>
                                         <Link
@@ -1182,14 +1075,12 @@ function Customer360Content() {
                         <EmptyState text={t("noOrders")} />
                       </div>
                     )}
-
                     {activeTab === "products" && (
                       <div>
                         <NotAvailableNotice text={t("productsUnavailable")} />
                         <EmptyState text={t("noProducts")} />
                       </div>
                     )}
-
                     {activeTab === "payments" && (
                       <div>
                         <div
@@ -1221,11 +1112,11 @@ function Customer360Content() {
 
                     {activeTab === "emotion" && (
                       <div>
-                        {detailEmotion.length === 0 ? (
+                        {data.emotionPoints.length === 0 ? (
                           <EmptyState text={t("noEmotion")} />
                         ) : (
                           Object.entries(
-                            detailEmotion.reduce((acc: Record<string, EmotionRow[]>, e) => {
+                            data.emotionPoints.reduce((acc: Record<string, typeof data.emotionPoints>, e) => {
                               (acc[e.conversation_id] ??= []).push(e);
                               return acc;
                             }, {}),
@@ -1248,7 +1139,7 @@ function Customer360Content() {
                                   #{convId.slice(0, 8)}
                                 </Link>
                                 {points.map((p, si, arr) => (
-                                  <span key={p.id} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                                  <span key={si} style={{ display: "flex", alignItems: "center", gap: 4 }}>
                                     <span
                                       style={{
                                         fontSize: 10,
@@ -1256,7 +1147,7 @@ function Customer360Content() {
                                         padding: "2px 7px",
                                         borderRadius: 10,
                                         background: "#f1f5f9",
-                                        color: SENTIMENT_COLOR[p.sentiment] || "#64748b",
+                                        color: "#64748b",
                                       }}
                                     >
                                       {p.sentiment}
