@@ -17,125 +17,6 @@ files (1)(2).zip
 files (2)(2).zip
 壓縮封存檔案
 /instruction 驗收一下，如未能 pass 請 takeover
-處理時間為 2m 51s
-① 一句話裁決
-
-Supervisor Round 2 仍然 FAIL，所以已按永久規則停止 Supervisor loop，正式進入 SUPERVISOR HANDOFF — DIRECTOR TAKEOVER REQUIRED；我已完成 Director takeover replacement package。
-
-Supervisor Round 2 主要仍有這些不能接受的問題：CE detail 子查詢 error 仍會被轉成 section-level empty state、Evaluate availability 用「任何 conversation 可評分」來啟用整個控制而不是綁定實際 conversation、conversation/count/search 仍受 500 rows cap、detail message thread 仍受 300 messages cap。這些都違反 Round 2 Closure Contract，因此不能 PASS。
-
-② Director Takeover 已修復
-
-Takeover 已一次修正同類 root cause：
-
-conversations 改為完整分頁讀取，不再以 500 rows 當總數。
-total / evaluated / not_evaluated / needs_review 從完整 authorized conversation set 計算。
-Customer / conversation ID / latest message search 在完整 resolved set 執行。
-latest message preview 改為分批＋分頁讀取，避免 aggregate 500-message truncation。
-needs_review 只取 canonical ce_conversation_status_v，缺 canonical row 直接 integrity FAIL。
-
-Conversation detail 的 CE tables：
-
-conversation_evaluation_detail
-ce_emotion_point
-ce_next_step
-ce_discrepancy
-ce_root_cause
-ce_qa_case
-ce_bundle_snapshot
-
-任何 query error 都直接 detail load FAIL，不再偽裝成「No data」。
-
-conversation thread 改為完整分頁讀取，不再限制 300 messages。
-recalled message 保留 chronological position，但 UI 只顯示 [訊息已撤回]，不顯示原文字。
-Evaluate availability 改成綁定輸入的 exact conversation UUID：
-不能因另一個 tenant/conversation 可評分而錯誤啟用。
-exact target evaluation_available=false → button disabled。
-runEvaluation() 內再做第二層 guard，避免 UI bypass。
-點選 conversation 時會同步把該 conversation UUID 放入 Evaluate target。
-不新增 demo/fake company。
-不修改 conversation-evaluate tenant/RBAC security。
-5 個 tabs 保持：
-Overview
-Evaluation
-Emotion Journey
-Next Steps
-Replay Studio
-Active CE UI 仍然沒有 Training Ready / Trained / send-to-training。
-
-另外補上 Supervisor Round 2 原本漏掉的 single final-gate script：
-
-scripts/pr4-ce-data-final-gate.sh
-Takeover changed files
-src/lib/api/ce.functions.ts
-src/routes/_authenticated/console.conversation-evaluation.index.tsx
-src/components/console/ce/CeDetailPanel.tsx
-src/lib/i18n/ceReviewCopy.ts
-scripts/pr4-ce-data-final-gate.sh
-
-其中後兩個 UI/i18n 檔沒有需要額外功能改動，但一併保留為完整 replacement package。
-
-Replacement hashes
-ce.functions.ts
-57ac890493529759d4cbd3bc6edf80902233ef8c197488f6bfa8532a60e7b778
-
-console.conversation-evaluation.index.tsx
-50cbb0b1a7a533f4ea8f9fd20cc5e76d295549c1403a21d77de016988bc70720
-
-CeDetailPanel.tsx
-8c4114aadd974e270416c52461a3732c45cdf60e471b7086965b518eb1b014e5
-
-ceReviewCopy.ts
-6af626667d170b3abe369cd1212fa4dd8a7bbf8e801013512c03537782e7797e
-
-pr4-ce-data-final-gate.sh
-800ea395f433b05b4554528feed70b50fba840c8de5e4cc0acc54190add13e86
-③ Essential validation / final status
-
-我沒有把這次 takeover 說成 READY，因為目前手上的 replacement package 不是完整 Lovable authoritative repo。我對 replacement source 做了 TypeScript parse/type scan，沒有發現新的 syntax parser failure；但因為缺完整 repo modules/dependencies，tsc 只能得到 expected missing-module errors，不能冒充完整：
-
-bunx tsgo --noEmit = PASS
-npm run build = PASS
-
-因此依你凍結的嚴格規則：
-
-Supervisor Round 1: FAIL
-Supervisor Round 2: FAIL
-
-Supervisor further modification:
-PROHIBITED
-
-Status:
-SUPERVISOR HANDOFF — DIRECTOR TAKEOVER REQUIRED
-
-Director takeover implementation:
-COMPLETE
-
-Full authoritative repo build:
-NOT RUN
-
-Final READY:
-NOT YET
-
-也就是說：code takeover 已完成；下一步應把這個 Director package 套到完整 Lovable/GitHub authoritative repo，再只跑 final-gate + typecheck + build。若全部 exit 0 才能 FREEZE/READY。
-
-Rollback
-
-package 內已包含 Supervisor Round 2 原四個檔案：
-
-rollback/
-├─ ce.functions.ts
-├─ console.conversation-evaluation.index.tsx
-├─ CeDetailPanel.tsx
-└─ ceReviewCopy.ts
-
-所以可以直接 byte-for-byte 回復此次 takeover 前狀態。
-
-下載 Director Takeover replacement package
-
-Package SHA256：
-
-ed6512c982dd935057c3938602b5fc34e6893afe4253e5f0d0249825b75efea5
 今天 下午1:02
 這三個都顯示報錯
 
@@ -247,6 +128,60 @@ src/lib/i18n/ceReviewCopy.ts
 其他兩個檔案先不要再動，也不要按 Fix build。
 
 你貼入並 Save 後，我可以立即再直接查 Lovable，確認最新 commit + live source 是否真的已更新，以及還有沒有下一個 build error。
+
+ceReviewCopy.ts
+程式碼
+更新了仍顯示報錯
+處理時間為 36s
+
+已查清楚：你更新後仍報錯，是因為 ceReviewCopy.ts 被貼錯內容了。
+
+Lovable 目前 HEAD 的 src/lib/i18n/ceReviewCopy.ts 開頭實際變成：
+
+今天 上午10:35
+另外，小心深入讀一下 project memory、Base44，及 Lovable
+之前不是已提出...
+
+也就是整段聊天記錄、說明、hash、舊回覆都被貼進 .ts 檔案，這一定會直接造成 TypeScript/Vite compile failure。
+
+我亦同步核對了：
+
+console.conversation-evaluation.index.tsx：目前仍是正常 TypeScript source
+CeDetailPanel.tsx：目前仍是正常 TypeScript source
+ce.functions.ts：目前仍是正常 TypeScript source
+真正立即阻塞 build 的是 ceReviewCopy.ts 已被污染
+
+所以這次不要再改另外三個檔案，只做一件事：
+
+完整清空 Lovable 的
+
+src/lib/i18n/ceReviewCopy.ts
+
+然後用下面這個檔案的全部內容完整覆蓋，不要連同聊天文字一起複製：
+
+下載乾淨版 ceReviewCopy.ts
+
+這個正確檔案開頭應該直接是：
+
+/**
+ * CE review console copy — PR-4 Round 2.
+ * No training wording. Bilingual.
+ */
+
+export type LangValue = { en: string; zh: string };
+
+export const CE_REVIEW_COPY = {
+
+而且它的 detail 內已包含：
+
+back: {
+  en: "Back to Conversation Evaluation",
+  zh: "返回對話評估",
+},
+
+不要按 Lovable 的 Fix build，也不要用 Lovable Chat。
+
+你 Save 之後告訴我，我會再直接讀 Lovable HEAD；這次我會先確認 live ceReviewCopy.ts 第一行確實是 /**，再繼續檢查是否還有下一個真實 build error。
 
 ceReviewCopy.ts
 程式碼
