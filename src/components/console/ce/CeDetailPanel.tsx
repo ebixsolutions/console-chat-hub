@@ -63,12 +63,12 @@ function scoreClass(score: number): string {
 
 function Panel({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <section className="rounded-lg border bg-card p-3.5">
+    <section className="rounded-[10px] border border-[#e8e6e0] bg-white p-3">
       <div className="mb-2 flex items-center justify-between gap-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</h3>
+        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{title}</h3>
         {action}
       </div>
-      <div className="text-[13px] leading-relaxed text-foreground">{children}</div>
+      <div className="text-[12px] leading-relaxed text-slate-700">{children}</div>
     </section>
   );
 }
@@ -76,7 +76,7 @@ function Panel({ title, action, children }: { title: string; action?: React.Reac
 function Prov({ label, value }: { label: string; value: string | null | undefined }) {
   return (
     <div className="flex items-start justify-between gap-3 py-0.5">
-      <span className="text-xs text-muted-foreground">{label}</span>
+      <span className="text-[11px] text-slate-500">{label}</span>
       <span className="max-w-[60%] break-all text-right font-mono text-[11px]">{value || "—"}</span>
     </div>
   );
@@ -84,12 +84,13 @@ function Prov({ label, value }: { label: string; value: string | null | undefine
 
 function MetaCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-md border bg-muted/30 px-3 py-2">
-      <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{label}</div>
-      <div className="mt-0.5 truncate text-[13px] font-medium">{value}</div>
+    <div className="rounded-lg bg-[#f5f4f0] px-[10px] py-2">
+      <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400">{label}</div>
+      <div className="mt-0.5 truncate text-[12px] font-semibold text-slate-700">{value}</div>
     </div>
   );
 }
+
 
 export function CeDetailPanel({
   evaluationId,
