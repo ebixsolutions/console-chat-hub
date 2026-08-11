@@ -1,5 +1,5 @@
 import { corsHeaders, json } from "../_shared/cors.ts";
-import { validateAgent, writeAudit } from "../_shared/agent.ts";
+import { validateAgent } from "../_shared/agent.ts";
 
 const ELEVATED = new Set(["manager", "admin", "super_admin"]);
 
@@ -19,65 +19,60 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const conversation_id = body?.conversation_id;
     const target_agent_id = body?.target_agent_id;
+
     if (!conversation_id || !target_agent_id) {
       return json({ error: "conversation_id and target_agent_id required" }, 400);
     }
 
-    // MicroPatch 2: fetch conversation explicitly
     const { data: conversation, error: convErr } = await supabaseAdmin
       .from("conversations")
       .select("id, status, assigned_agent_id")
       .eq("id", conversation_id)
       .single();
+
     if (convErr || !conversation) return json({ error: "Conversation not found" }, 404);
 
-    const { data: target, error: tErr } = await supabaseAdmin
-      .from("agent_profile")
-      .select("id, status")
-      .eq("id", target_agent_id)
-      .single();
-    if (tErr || !target) return json({ error: "Target agent not found" }, 404);
-    if (target.status !== "active") return json({ error: "Target agent is not active" }, 400);
+    const { data: rpcResult, error: rpcErr } = await supabaseAdmin.rpc("assign_conversation_tx", {
+      p_conversation_id: conversation_id,
+      p_target_agent_id: target_agent_id,
+      p_actor_agent_id: agent.id,
+      p_expected_status: conversation.status,
+      p_expected_owner: conversation.assigned_agent_id,
+    });
 
-    const now = new Date().toISOString();
+    if (rpcErr) {
+      console.error("[assign-conversation] RPC error:", rpcErr.message, conversation_id);
+      return json({ error: "Internal error" }, 500);
+    }
 
-    await supabaseAdmin
-      .from("conversation_assignment")
-      .update({ is_active: false, unassigned_at: now })
-      .eq("conversation_id", conversation_id)
-      .eq("is_active", true);
+    const resultValue = rpcResult?.result ?? rpcResult;
 
-    const { data: newAssign, error: aErr } = await supabaseAdmin
-      .from("conversation_assignment")
-      .insert({
-        conversation_id,
-        agent_id: target_agent_id,
-        assigned_by: agent.id,
-        is_active: true,
-      })
-      .select("id")
-      .single();
-    if (aErr || !newAssign) return json({ error: aErr?.message || "assignment failed" }, 500);
-
-    await supabaseAdmin
-      .from("conversations")
-      .update({ assigned_agent_id: target_agent_id, updated_at: now })
-      .eq("id", conversation_id);
-
-    await writeAudit(
-      supabaseAdmin,
-      agent.id,
-      "assign_conversation",
-      "conversation_assignment",
-      newAssign.id,
-      {
-        conversation_id,
-        from_agent_id: conversation.assigned_agent_id,
-        to_agent_id: target_agent_id,
-      },
-    );
-
-    return json({ success: true });
+    switch (resultValue) {
+      case "not_found":
+        return json({ error: "Conversation not found" }, 404);
+      case "resolved":
+        return json({ error: "Cannot assign a resolved conversation" }, 400);
+      case "target_not_found":
+        return json({ error: "Target agent not found" }, 404);
+      case "target_inactive":
+        return json({ error: "Target agent is not active" }, 400);
+      case "stale_state":
+        return json(
+          {
+            success: false,
+            error: "Conversation was modified by another operation. Please refresh and try again.",
+            error_type: "stale_state",
+          },
+          409,
+        );
+      case "already_assigned":
+        return json({ success: true, already_assigned: true, conversation_id }, 200);
+      case "success":
+        return json({ success: true, assignment_id: rpcResult?.assignment_id ?? null }, 200);
+      default:
+        console.error("[assign-conversation] unexpected RPC result:", resultValue, conversation_id);
+        return json({ error: "Unexpected result" }, 500);
+    }
   } catch (e) {
     return json({ error: (e as Error).message }, 500);
   }
