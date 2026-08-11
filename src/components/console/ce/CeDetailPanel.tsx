@@ -61,14 +61,22 @@ function scoreClass(score: number): string {
   return "bg-emerald-50 text-emerald-700 border-emerald-200";
 }
 
+/** Base44 plain bold colored score text (used in the header score badge). */
+function scoreTextClass(score: number): string {
+  if (score < 60) return "text-red-600";
+  if (score < 80) return "text-amber-600";
+  return "text-emerald-600";
+}
+
+
 function Panel({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <section className="rounded-lg border bg-card p-3.5">
+    <section className="rounded-[10px] border border-[#e8e6e0] bg-white p-3">
       <div className="mb-2 flex items-center justify-between gap-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</h3>
+        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{title}</h3>
         {action}
       </div>
-      <div className="text-[13px] leading-relaxed text-foreground">{children}</div>
+      <div className="text-[12px] leading-relaxed text-slate-700">{children}</div>
     </section>
   );
 }
@@ -76,7 +84,7 @@ function Panel({ title, action, children }: { title: string; action?: React.Reac
 function Prov({ label, value }: { label: string; value: string | null | undefined }) {
   return (
     <div className="flex items-start justify-between gap-3 py-0.5">
-      <span className="text-xs text-muted-foreground">{label}</span>
+      <span className="text-[11px] text-slate-500">{label}</span>
       <span className="max-w-[60%] break-all text-right font-mono text-[11px]">{value || "—"}</span>
     </div>
   );
@@ -84,12 +92,13 @@ function Prov({ label, value }: { label: string; value: string | null | undefine
 
 function MetaCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-md border bg-muted/30 px-3 py-2">
-      <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{label}</div>
-      <div className="mt-0.5 truncate text-[13px] font-medium">{value}</div>
+    <div className="rounded-lg bg-[#f5f4f0] px-[10px] py-2">
+      <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400">{label}</div>
+      <div className="mt-0.5 truncate text-[12px] font-semibold text-slate-700">{value}</div>
     </div>
   );
 }
+
 
 export function CeDetailPanel({
   evaluationId,
@@ -288,58 +297,66 @@ export function CeDetailPanel({
   const overall = Number(ev.overall_score);
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      {/* Header */}
-      <div className="flex flex-wrap items-center gap-2 border-b px-4 py-3">
+    <div className="flex h-full min-h-0 flex-col bg-white">
+      {/* Header — Base44 ConversationReview: indigo mono id + pale warm score badge */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-[#f0efe9] px-4 py-3">
         <div className="min-w-0">
-          <div className="truncate font-mono text-[13px] font-semibold">{ev.conversation_id}</div>
-          <div className="truncate font-mono text-[11px] text-muted-foreground">{ev.id}</div>
+          <div className="truncate font-mono text-[13px] font-semibold text-indigo-600">{ev.conversation_id}</div>
+          <div className="truncate font-mono text-[11px] text-slate-400">{ev.id}</div>
         </div>
-        <div className="ml-auto flex items-center gap-2">
-          {headerExtra}
-          <div className={cn("rounded-md border px-3 py-1 text-right", scoreClass(overall))}>
-            <div className="text-[10px] font-medium uppercase tracking-wide">{t(C.detail.qaScore)}</div>
-            <div className="text-lg font-bold leading-none">{overall.toFixed(1)}</div>
-          </div>
-        </div>
+        <span
+          className={cn(
+            "rounded-md bg-[#f5f4f0] px-2 py-1 text-[13px] font-bold",
+            scoreTextClass(overall),
+          )}
+        >
+          {overall.toFixed(1)}
+        </span>
+        <div className="ml-auto flex items-center gap-2">{headerExtra}</div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex flex-wrap gap-1 border-b px-3">
+      {/* Rounded pill tabs (no underline tabs) */}
+      <div className="flex flex-wrap gap-1.5 border-b border-[#f0efe9] px-3 py-2">
         {TAB_ORDER.map((k) => (
           <button
             key={k}
             type="button"
             onClick={() => setTab(k)}
             className={cn(
-              "border-b-2 px-2.5 py-2 text-xs transition-colors",
+              "rounded-full border px-3 py-[4px] text-[11px] font-medium transition-colors",
               tab === k
-                ? "border-primary font-semibold text-foreground"
-                : "border-transparent font-medium text-muted-foreground hover:text-foreground",
+                ? "border-slate-900 bg-slate-900 text-white"
+                : "border-[#e8e6e0] bg-white text-slate-600 hover:bg-[#fafaf8]",
             )}
           >
-            {t(C.tabs[k])}
+            {k === "replay" ? `▶ ${t(C.tabs[k])}` : t(C.tabs[k])}
           </button>
         ))}
       </div>
 
-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-[#fdfdfb] p-4">
+
         {/* ── Overview ── */}
         {tab === "overview" && (
           <>
-            <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-sm font-semibold">
-                {t(C.overview.customer)} · {String(ev.conversation_id).slice(0, 8)}…
-              </h2>
-              <Badge variant="outline" className={cn("text-[11px]", REVIEW_CLASS[ev.review_status] ?? "")}>
-                {ev.review_status}
-              </Badge>
-              <Badge variant="outline" className="text-[11px]">
-                {channelLabel || t(C.meta.unavailable)}
-              </Badge>
-              <Badge variant="outline" className={cn("text-[11px]", SEVERITY_CLASS[ev.severity] ?? "")}>
-                {ev.severity}
-              </Badge>
+            <div className="flex flex-wrap items-start gap-2">
+              <div className="min-w-0">
+                <h2 className="truncate text-[15px] font-bold text-slate-800">{t(C.overview.customer)}</h2>
+                <div className="mt-0.5 truncate font-mono text-[11px] text-slate-400">
+                  {ev.conversation_id} · {t(C.meta.unavailable)}
+                </div>
+              </div>
+              <div className="ml-auto flex flex-wrap items-center gap-1.5">
+                <Badge variant="outline" className={cn("text-[10px]", REVIEW_CLASS[ev.review_status] ?? "")}>
+                  {ev.review_status}
+                </Badge>
+                <Badge variant="outline" className="border-sky-200 bg-sky-50 text-[10px] text-sky-700">
+                  {channelLabel || t(C.meta.unavailable)}
+                </Badge>
+                <Badge variant="outline" className={cn("text-[10px]", SEVERITY_CLASS[ev.severity] ?? "")}>
+                  {ev.severity}
+                </Badge>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
@@ -352,37 +369,43 @@ export function CeDetailPanel({
             <Panel title={t(C.overview.thread)}>
               <p className="mb-2 text-[11px] text-amber-600">{t(C.overview.liveNote)}</p>
               {messages.length === 0 ? (
-                <span className="text-muted-foreground">{t(C.overview.noThread)}</span>
+                <span className="text-slate-500">{t(C.overview.noThread)}</span>
               ) : (
                 <div className="space-y-2">
                   {messages.map((m: any) => {
                     const isAi = m.role === "assistant";
                     const isEvaluated = aiReply && m.id === aiReply.id;
                     return (
-                      <div key={m.id} className="space-y-1">
+                      <div key={m.id} className="space-y-0">
                         <div
                           className={cn(
-                            "rounded-md border p-2.5",
-                            isAi ? "bg-muted/40" : "bg-background",
+                            "rounded-lg p-2.5",
+                            isAi
+                              ? "border border-[#e8e6e0] bg-[#f5f4f0]"
+                              : "border-l-[3px] border-l-[#cbd5e1] bg-[#F0F4F8]",
+                            isEvaluated && qaFinding && "rounded-b-none",
                           )}
                         >
-                          <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                            <span className="font-semibold uppercase">
+                          <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500">
+                            <span className="flex items-center gap-1.5 font-semibold uppercase">
                               {isAi ? t(C.overview.aiResponse) : t(C.overview.customer)}
-                            </span>
-                            <span className="flex items-center gap-2">
                               {isEvaluated && (
-                                <span className={cn("rounded border px-1.5 py-0.5 font-semibold", scoreClass(overall))}>
+                                <span
+                                  className={cn(
+                                    "rounded-full bg-white px-1.5 py-[1px] text-[10px] font-bold",
+                                    scoreTextClass(overall),
+                                  )}
+                                >
                                   {overall.toFixed(1)}
                                 </span>
                               )}
-                              {new Date(m.created_at).toLocaleString()}
                             </span>
+                            <span>{new Date(m.created_at).toLocaleString()}</span>
                           </div>
-                          <p className="mt-1 whitespace-pre-wrap">{m.content}</p>
+                          <p className="mt-1 whitespace-pre-wrap text-slate-700">{m.content}</p>
                         </div>
                         {isEvaluated && qaFinding && (
-                          <div className="rounded-md border border-amber-200 bg-amber-50 p-2.5 text-[12px] text-amber-900">
+                          <div className="rounded-b-lg border border-t-0 border-[#fcd34d] bg-[#fffbeb] p-2.5 text-[12px] text-amber-900">
                             <div className="text-[10px] font-semibold uppercase tracking-wide">
                               {t(C.overview.qaFinding)} · {qaFinding.evaluator_type}
                             </div>
@@ -401,17 +424,18 @@ export function CeDetailPanel({
               )}
 
               {humanReply && (
-                <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 p-2.5 text-[12px] text-emerald-900">
+                <div className="mt-3 rounded-lg border border-[#a7d88a] bg-[#EAF3DE] p-2.5 text-[12px] text-emerald-900">
                   <div className="text-[10px] font-semibold uppercase tracking-wide">
                     {t(C.overview.humanCorrection)}
                   </div>
                   <div className="mt-1 whitespace-pre-wrap">{humanReply.content}</div>
                   <div className="mt-1 text-[10px] opacity-70">
-                    {new Date(humanReply.created_at).toLocaleString()}
+                    {new Date(humanReply.created_at).toLocaleString()} · {t(C.evaluation.correction)}
                   </div>
                 </div>
               )}
             </Panel>
+
 
             {/* QA Cases */}
             <Panel title={t(C.overview.qaCases)}>

@@ -26,11 +26,11 @@ export const CE_REVIEW_COPY = {
     intent: { en: "Intent", zh: "意圖" },
     more: { en: "More filters", zh: "更多篩選" },
     less: { en: "Fewer filters", zh: "收起篩選" },
-    any: { en: "Any", zh: "全部" },
+    any: { en: "All", zh: "全部" },
     from: { en: "From", zh: "起始日" },
     to: { en: "To", zh: "結束日" },
     clear: { en: "Clear", zh: "清除" },
-    unavailable: { en: "No source available", zh: "無可用來源" },
+    unavailable: { en: "Unavailable", zh: "無資料" },
   },
   scoreBands: {
     low: { en: "< 60", zh: "< 60" },
@@ -38,13 +38,17 @@ export const CE_REVIEW_COPY = {
     high: { en: "80 +", zh: "80 +" },
   },
   columns: {
+    id: { en: "ID", zh: "ID" },
     conversation: { en: "Conversation", zh: "對話" },
     customer: { en: "Customer", zh: "客戶" },
     date: { en: "Date", zh: "日期" },
     channel: { en: "Channel", zh: "渠道" },
     qaScore: { en: "QA Score", zh: "QA 分數" },
+    urgency: { en: "Urgency", zh: "嚴重度" },
+    status: { en: "Status", zh: "狀態" },
     state: { en: "State", zh: "狀態" },
   },
+
   list: {
     empty: { en: "No evaluations match the current filters.", zh: "沒有符合目前篩選條件的評估。" },
     loadFailed: { en: "The evaluation list could not be loaded.", zh: "無法載入評估清單。" },
