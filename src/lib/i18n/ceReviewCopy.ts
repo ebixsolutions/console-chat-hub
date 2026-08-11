@@ -15,7 +15,9 @@ export const CE_REVIEW_COPY = {
     needsReview: { en: "Needs Review", zh: "待覆核" },
   },
   count: { en: "shown", zh: "顯示" },
+  countUnavailable: { en: "Counts unavailable", zh: "數量無法取得" },
   searchPlaceholder: { en: "Search conversation or evaluation id", zh: "搜尋對話或評估 ID" },
+
   filters: {
     status: { en: "Status", zh: "覆核狀態" },
     urgency: { en: "Urgency", zh: "嚴重度" },
@@ -37,6 +39,7 @@ export const CE_REVIEW_COPY = {
   },
   columns: {
     conversation: { en: "Conversation", zh: "對話" },
+    customer: { en: "Customer", zh: "客戶" },
     date: { en: "Date", zh: "日期" },
     channel: { en: "Channel", zh: "渠道" },
     qaScore: { en: "QA Score", zh: "QA 分數" },
@@ -54,6 +57,8 @@ export const CE_REVIEW_COPY = {
     running: { en: "Evaluating…", zh: "評估中…" },
     placeholder: { en: "Conversation ID (UUID)", zh: "對話 ID（UUID）" },
     invalidId: { en: "Enter a valid conversation id (UUID).", zh: "請輸入有效的對話 ID（UUID）。" },
+    completed: { en: "Evaluation completed.", zh: "評估已完成。" },
+    alreadyEvaluated: { en: "This conversation was already evaluated.", zh: "此對話先前已評估過。" },
   },
   detail: {
     selectPrompt: { en: "Select a conversation to review its evaluation.", zh: "請選擇一筆對話以檢視其評估。" },

@@ -195,10 +195,12 @@ export function CeDetailPanel({
     return worst;
   }, [details]);
 
-  const intentLabel = useMemo(() => {
-    const tags = (d?.conversationTags ?? []) as string[];
-    return tags.length > 0 ? tags.join(", ") : t(C.meta.unavailable);
-  }, [d?.conversationTags, t]);
+  /**
+   * Intent has no canonical field in the CE evaluation contract, so the slot is
+   * rendered truthfully as unavailable. It must not be derived from tags.
+   */
+  const intentLabel = t(C.meta.unavailable);
+
 
   const submitReview = async (decision: "accept" | "reject" | "reopen") => {
     if (!ev) return;
