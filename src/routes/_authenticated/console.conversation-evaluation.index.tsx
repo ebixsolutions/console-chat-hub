@@ -1,7 +1,6 @@
 /**
- * Conversation Evaluation console — PR-4 Round 2.
- * Conversations-first. Server counts. Disabled evaluate when company absent.
- * No training UI. Search on customer/id/preview.
+ * Conversation Evaluation console — PR-4 Director Functional Closure.
+ * Existing UI preserved. Exact-conversation evaluation readiness only.
  */
 
 import { createFileRoute } from "@tanstack/react-router";
@@ -182,9 +181,6 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
 
   const reload = useCallback(() => setReloadKey((k) => k + 1), []);
 
-  // Check if ANY conversation has evaluation available (for the evaluate control)
-  const anyEvaluationAvailable = useMemo(() => rows.some((r) => r.evaluation_available), [rows]);
-
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -192,12 +188,11 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
       try {
         const res = await listConversationsForCeFn({
           data: {
-            pill: pill as any,
+            pill,
             search: search.trim() || undefined,
             severity: severity !== "any" ? (severity as any) : undefined,
             fromDate: fromDate || undefined,
             toDate: toDate || undefined,
-            limit: 500,
           },
         });
         if (cancelled) return;
@@ -232,7 +227,6 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
     return [...set].sort();
   }, [rows]);
 
-  // Client-side filters (score band, review status, channel) on already-fetched rows
   const filtered = useMemo(() => {
     return rows.filter((r) => {
       if (scoreBand !== "any") {
@@ -256,8 +250,24 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
 
   useEffect(() => {
-    if (!selected && pageRows.length > 0) setSelected(pageRows[0].conversation_id);
+    if (!selected && pageRows.length > 0) {
+      setSelected(pageRows[0].conversation_id);
+      setRunId(pageRows[0].conversation_id);
+    }
   }, [selected, pageRows]);
+
+  const targetRow = useMemo(() => {
+    const id = runId.trim().toLowerCase();
+    if (!UUID_RE.test(id)) return null;
+    return rows.find((r) => r.conversation_id.toLowerCase() === id) ?? null;
+  }, [rows, runId]);
+
+  const targetEvaluationAvailable = targetRow?.evaluation_available === true;
+
+  const selectConversation = (conversationId: string) => {
+    setSelected(conversationId);
+    setRunId(conversationId);
+  };
 
   const runEvaluation = async () => {
     const id = runId.trim();
@@ -265,6 +275,13 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
       toast.error(t(C.run.invalidId));
       return;
     }
+
+    const exact = rows.find((r) => r.conversation_id.toLowerCase() === id.toLowerCase());
+    if (!exact || !exact.evaluation_available) {
+      toast.error(t(C.run.disabled));
+      return;
+    }
+
     setRunning(true);
     try {
       const res = await invokeCe({ action: "evaluate", conversation_id: id });
@@ -276,7 +293,6 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
       const status = String(res.data.status ?? "");
       if (status === "already_evaluated") toast.info(t(C.run.alreadyEvaluated));
       else toast.success(t(C.run.completed));
-      setRunId("");
       reload();
     } finally {
       setRunning(false);
@@ -296,9 +312,7 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
   return (
     <div className="h-[calc(100vh-4rem)] min-h-0 bg-[#f7f6f2] p-4">
       <div className="flex h-full min-h-0 flex-col gap-4 lg:flex-row">
-        {/* ─── LEFT 40% ─── */}
         <div className="flex min-h-0 flex-col gap-3 overflow-y-auto lg:basis-[40%]">
-          {/* Pills with server counts (R7) */}
           <div className="flex flex-wrap items-center gap-2">
             <TabPill
               label={t(C.pills.all)}
@@ -335,7 +349,6 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
             </span>
           </div>
 
-          {/* Search + filters */}
           <div className="space-y-2.5 rounded-[10px] border border-[#e8e6e0] bg-white p-3">
             <div className="relative">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
@@ -347,7 +360,6 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
               />
             </div>
 
-            {/* Evaluate control (R3: disabled when no evaluation_available) */}
             {canRun && (
               <div className="space-y-1">
                 <div className="flex items-center gap-1.5">
@@ -355,19 +367,18 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
                     value={runId}
                     onChange={(e) => setRunId(e.target.value)}
                     placeholder={t(C.run.placeholder)}
-                    disabled={!anyEvaluationAvailable}
-                    className="h-7 min-w-0 flex-1 rounded-md border border-[#e8e6e0] bg-white px-2 font-mono text-[11px] text-slate-700 outline-none placeholder:text-slate-400 focus:border-slate-300 disabled:bg-[#f5f4f0] disabled:text-slate-400"
+                    className="h-7 min-w-0 flex-1 rounded-md border border-[#e8e6e0] bg-white px-2 font-mono text-[11px] text-slate-700 outline-none placeholder:text-slate-400 focus:border-slate-300"
                   />
                   <button
                     type="button"
-                    disabled={running || !anyEvaluationAvailable}
+                    disabled={running || !targetEvaluationAvailable}
                     onClick={() => void runEvaluation()}
                     className="h-7 shrink-0 rounded-md bg-slate-900 px-2.5 text-[11px] font-medium text-white disabled:opacity-50"
                   >
                     {running ? t(C.run.running) : t(C.run.action)}
                   </button>
                 </div>
-                {!anyEvaluationAvailable && (
+                {!targetEvaluationAvailable && (
                   <div className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-[10px] text-amber-800">
                     {t(C.run.disabled)}
                   </div>
@@ -385,6 +396,7 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
                 <Chip key={o.v} label={o.l} active={reviewStatus === o.v} onClick={() => setReviewStatus(o.v)} />
               ))}
             </ChipRow>
+
             <ChipRow label={t(C.filters.urgency)}>
               {[
                 { v: "any", l: t(C.filters.any) },
@@ -396,6 +408,7 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
                 <Chip key={o.v} label={o.l} active={severity === o.v} onClick={() => setSeverity(o.v)} />
               ))}
             </ChipRow>
+
             <ChipRow label={t(C.filters.score)}>
               {[
                 { v: "any", l: t(C.filters.any) },
@@ -406,15 +419,18 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
                 <Chip key={o.v} label={o.l} active={scoreBand === o.v} onClick={() => setScoreBand(o.v)} />
               ))}
             </ChipRow>
+
             <ChipRow label={t(C.filters.channel)}>
               <Chip label={t(C.filters.any)} active={channel === "any"} onClick={() => setChannel("any")} />
               {channelOptions.map((c) => (
                 <Chip key={c} label={c} active={channel === c} onClick={() => setChannel(c)} />
               ))}
             </ChipRow>
+
             <ChipRow label={t(C.filters.intent)}>
               <Chip label={t(C.filters.unavailable)} disabled />
             </ChipRow>
+
             <div className="flex items-center gap-3 pt-0.5">
               <button
                 type="button"
@@ -431,6 +447,7 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
                 {t(C.filters.clear)}
               </button>
             </div>
+
             {showMore && (
               <div className="flex flex-wrap items-center gap-2">
                 <label className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-slate-400">
@@ -455,7 +472,6 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
             )}
           </div>
 
-          {/* Table */}
           <div className="overflow-hidden rounded-[10px] border border-[#e8e6e0] bg-white">
             {error ? (
               <div className="m-3 rounded-md border border-red-200 bg-red-50 p-3 text-[12px] text-red-700">
@@ -487,7 +503,7 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
                       return (
                         <tr
                           key={r.conversation_id}
-                          onClick={() => setSelected(r.conversation_id)}
+                          onClick={() => selectConversation(r.conversation_id)}
                           className={cn(
                             "h-[44px] cursor-pointer border-t border-[#f0efe9] transition-colors",
                             sel ? "bg-[#f0f9ff]" : "hover:bg-[#fafaf8]",
@@ -566,6 +582,7 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
                 </table>
               </div>
             )}
+
             {pageCount > 1 && (
               <div className="flex items-center justify-between gap-2 border-t border-[#f0efe9] px-3 py-1.5 text-[11px]">
                 <button
@@ -592,7 +609,6 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
           </div>
         </div>
 
-        {/* ─── RIGHT 59% ─── */}
         <div className="min-h-0 overflow-hidden rounded-[11px] border border-[#e8e6e0] bg-white lg:basis-[59%]">
           {selected ? (
             <CeDetailPanel key={selected} conversationId={selected} canReview={canReview} onChanged={reload} />
