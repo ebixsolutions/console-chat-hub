@@ -1,24 +1,18 @@
 /**
- * CE detail panel — SU CoachAI /review parity surface.
- *
- * Renders one canonical conversation evaluation inside the right-hand detail
- * panel of the Conversation Evaluation console. All data comes from the
- * canonical CE server functions (RLS applies as the caller); nothing is
- * fabricated and query failures surface as errors, never as empty success.
- *
- * Training ownership belongs to SU CoachAI: this panel intentionally exposes
- * no training eligibility, no training candidate state and no outbox/delivery
- * UI, and the accept action is plain "Accept".
+ * CE detail panel — PR-4 Round 2.
+ * Conversation-first. Recalled messages show placeholder.
+ * Section errors surfaced. evaluation_available from server.
+ * No training UI. 5 tabs always visible.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import {
-  getCeEvaluationFn,
-  getCeReplayBundleFn,
+  getCeConversationDetailFn,
   submitCeReviewFn,
   createCeQaCaseFn,
   recordCeRootCauseFn,
+  type CeDetailSectionError,
 } from "@/lib/api/ce.functions";
 import { CE_REVIEW_COPY as C } from "@/lib/i18n/ceReviewCopy";
 import { useConsoleLang } from "@/lib/i18n/consoleLang";
@@ -33,10 +27,15 @@ import { toast } from "sonner";
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 const EVALUATOR_ORDER = ["accuracy", "policy", "tone", "sales", "context", "hallucination"] as const;
-
 const ROOT_CAUSE_CATEGORIES = [
-  "kb_gap", "kb_stale", "policy_gap", "prompt_defect",
-  "model_limitation", "routing_error", "human_error", "unknown",
+  "kb_gap",
+  "kb_stale",
+  "policy_gap",
+  "prompt_defect",
+  "model_limitation",
+  "routing_error",
+  "human_error",
+  "unknown",
 ] as const;
 
 const SEVERITY_CLASS: Record<string, string> = {
@@ -52,35 +51,22 @@ const REVIEW_CLASS: Record<string, string> = {
 };
 
 export type CeDetailTab = "overview" | "evaluation" | "emotion" | "nextSteps" | "replay";
-
 const TAB_ORDER: CeDetailTab[] = ["overview", "evaluation", "emotion", "nextSteps", "replay"];
 
-function scoreClass(score: number): string {
-  if (score < 60) return "bg-red-50 text-red-700 border-red-200";
-  if (score < 80) return "bg-amber-50 text-amber-700 border-amber-200";
-  return "bg-emerald-50 text-emerald-700 border-emerald-200";
+function scoreTextClass(s: number): string {
+  return s < 60 ? "text-red-600" : s < 80 ? "text-amber-600" : "text-emerald-600";
 }
 
-/** Base44 plain bold colored score text (used in the header score badge). */
-function scoreTextClass(score: number): string {
-  if (score < 60) return "text-red-600";
-  if (score < 80) return "text-amber-600";
-  return "text-emerald-600";
-}
-
-
-function Panel({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
+function Panel({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="rounded-[10px] border border-[#e8e6e0] bg-white p-3">
-      <div className="mb-2 flex items-center justify-between gap-2">
+      <div className="mb-2">
         <h3 className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{title}</h3>
-        {action}
       </div>
       <div className="text-[12px] leading-relaxed text-slate-700">{children}</div>
     </section>
   );
 }
-
 function Prov({ label, value }: { label: string; value: string | null | undefined }) {
   return (
     <div className="flex items-start justify-between gap-3 py-0.5">
@@ -89,7 +75,6 @@ function Prov({ label, value }: { label: string; value: string | null | undefine
     </div>
   );
 }
-
 function MetaCard({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg bg-[#f5f4f0] px-[10px] py-2">
@@ -98,31 +83,26 @@ function MetaCard({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
-
+function SectionError({ message }: { message: string }) {
+  return <div className="rounded-md border border-red-200 bg-red-50 p-2 text-[11px] text-red-700">{message}</div>;
+}
 
 export function CeDetailPanel({
-  evaluationId,
+  conversationId,
   canReview,
-  channelLabel,
   onChanged,
-  headerExtra,
 }: {
-  evaluationId: string;
+  conversationId: string;
   canReview: boolean;
-  channelLabel?: string | null;
   onChanged?: () => void;
-  headerExtra?: React.ReactNode;
 }) {
   const { t } = useConsoleLang();
-
   const [tab, setTab] = useState<CeDetailTab>("overview");
   const [d, setD] = useState<Record<string, any> | null>(null);
-  const [snapshot, setSnapshot] = useState<Record<string, any> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [submitting, setSubmitting] = useState(false);
-
   const [reviewNote, setReviewNote] = useState("");
   const [qaTitle, setQaTitle] = useState("");
   const [rcCategory, setRcCategory] = useState<string>("kb_gap");
@@ -130,21 +110,19 @@ export function CeDetailPanel({
   const [replaySub, setReplaySub] = useState<"transcript" | "canonical" | "grounding">("transcript");
 
   const reload = useCallback(() => setReloadKey((k) => k + 1), []);
-
   useEffect(() => {
     setTab("overview");
     setReviewNote("");
     setQaTitle("");
     setRcSummary("");
-  }, [evaluationId]);
+  }, [conversationId]);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    setSnapshot(null);
     void (async () => {
       try {
-        const res = await getCeEvaluationFn({ data: { evaluationId } });
+        const res = await getCeConversationDetailFn({ data: { conversationId } });
         if (cancelled) return;
         if (!res.ok) {
           setError(res.error ?? "load_failed");
@@ -153,11 +131,6 @@ export function CeDetailPanel({
         }
         setError(null);
         setD(res.data as Record<string, any>);
-        const attemptId = (res.data as any)?.evaluation?.attempt_id;
-        if (attemptId) {
-          const snap = await getCeReplayBundleFn({ data: { attemptId } });
-          if (!cancelled && snap.ok) setSnapshot((snap.data as any)?.snapshot ?? null);
-        }
       } catch (e: unknown) {
         if (!cancelled) {
           setError(e instanceof Error ? e.message : "load_failed");
@@ -170,46 +143,47 @@ export function CeDetailPanel({
     return () => {
       cancelled = true;
     };
-  }, [evaluationId, reloadKey]);
+  }, [conversationId, reloadKey]);
 
+  const conv = d?.conversation ?? null;
   const ev = d?.evaluation ?? null;
+  const hasEval = ev !== null;
+  const snapshot = d?.snapshot ?? null;
+  const evaluationAvailable = d?.evaluation_available === true;
+  const sectionErrors: CeDetailSectionError[] = d?.sectionErrors ?? [];
+  const sectionErr = (section: string) => sectionErrors.find((e) => e.section === section);
 
   const details = useMemo(
     () =>
       [...(d?.details ?? [])].sort(
-        (a: any, b: any) =>
-          EVALUATOR_ORDER.indexOf(a.evaluator_type) - EVALUATOR_ORDER.indexOf(b.evaluator_type),
+        (a: any, b: any) => EVALUATOR_ORDER.indexOf(a.evaluator_type) - EVALUATOR_ORDER.indexOf(b.evaluator_type),
       ),
     [d?.details],
   );
-
-  const messages = useMemo(
-    () => (d?.messages ?? []).filter((m: any) => !m.is_recalled && m.content !== "__THINKING__"),
-    [d?.messages],
+  const messages = useMemo(() => (d?.messages ?? []) as any[], [d?.messages]);
+  const aiReply = useMemo(
+    () =>
+      [...messages]
+        .filter((m: any) => !m.is_recalled)
+        .reverse()
+        .find((m: any) => m.role === "assistant"),
+    [messages],
   );
-  const aiReply = useMemo(() => [...messages].reverse().find((m: any) => m.role === "assistant"), [messages]);
   const humanReply = useMemo(
     () =>
-      messages.find(
-        (m: any) => m.sender_id && m.sender_identity_verified_at && (!aiReply || m.created_at > aiReply.created_at),
-      ),
+      messages
+        .filter((m: any) => !m.is_recalled)
+        .find(
+          (m: any) => m.sender_id && m.sender_identity_verified_at && (!aiReply || m.created_at > aiReply.created_at),
+        ),
     [messages, aiReply],
   );
-
-  /** QA finding = canonical evaluator justification for the weakest dimension. */
   const qaFinding = useMemo(() => {
     if (details.length === 0) return null;
     const worst = [...details].sort((a: any, b: any) => Number(a.raw_score) - Number(b.raw_score))[0] as any;
     if (!worst?.justification && !worst?.recommended_correction) return null;
     return worst;
   }, [details]);
-
-  /**
-   * Intent has no canonical field in the CE evaluation contract, so the slot is
-   * rendered truthfully as unavailable. It must not be derived from tags.
-   */
-  const intentLabel = t(C.meta.unavailable);
-
 
   const submitReview = async (decision: "accept" | "reject" | "reopen") => {
     if (!ev) return;
@@ -220,102 +194,90 @@ export function CeDetailPanel({
     setSubmitting(true);
     try {
       const res = await submitCeReviewFn({
-        data: {
-          evaluationId,
-          conversationId: ev.conversation_id,
-          decision,
-          note: reviewNote.trim() || undefined,
-        },
+        data: { evaluationId: ev.id, conversationId, decision, note: reviewNote.trim() || undefined },
       });
       if (res.ok) {
         setReviewNote("");
         reload();
         onChanged?.();
-      } else {
-        toast.error(res.error ?? "review_failed");
-      }
+      } else toast.error(res.error ?? "review_failed");
     } finally {
       setSubmitting(false);
     }
   };
-
   const createQaCase = async () => {
     if (!ev || !qaTitle.trim()) return;
     setSubmitting(true);
     try {
-      const res = await createCeQaCaseFn({
-        data: { evaluationId, conversationId: ev.conversation_id, title: qaTitle.trim() },
-      });
+      const res = await createCeQaCaseFn({ data: { evaluationId: ev.id, conversationId, title: qaTitle.trim() } });
       if (res.ok) {
         setQaTitle("");
         reload();
-      } else {
-        toast.error(res.error ?? "create_failed");
-      }
+      } else toast.error(res.error ?? "create_failed");
     } finally {
       setSubmitting(false);
     }
   };
-
   const recordRootCause = async () => {
     if (!ev || !rcSummary.trim()) return;
     setSubmitting(true);
     try {
       const res = await recordCeRootCauseFn({
-        data: {
-          evaluationId,
-          conversationId: ev.conversation_id,
-          category: rcCategory as any,
-          summary: rcSummary.trim(),
-        },
+        data: { evaluationId: ev.id, conversationId, category: rcCategory as any, summary: rcSummary.trim() },
       });
       if (res.ok) {
         setRcSummary("");
         reload();
-      } else {
-        toast.error(res.error ?? "record_failed");
-      }
+      } else toast.error(res.error ?? "record_failed");
     } finally {
       setSubmitting(false);
     }
   };
 
-  if (loading && !d) {
-    return <div className="p-6 text-sm text-muted-foreground">{t(C.detail.loading)}</div>;
-  }
-  if (error) {
+  if (loading && !d) return <div className="p-6 text-sm text-muted-foreground">{t(C.detail.loading)}</div>;
+  if (error)
     return (
       <div className="m-4 rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
         {t(C.detail.loadFailed)} <span className="font-mono text-xs">{error}</span>
       </div>
     );
-  }
-  if (!ev) {
-    return <div className="p-6 text-sm text-muted-foreground">{t(C.detail.selectPrompt)}</div>;
-  }
+  if (!conv) return <div className="p-6 text-sm text-muted-foreground">{t(C.detail.selectPrompt)}</div>;
 
-  const overall = Number(ev.overall_score);
+  const overall = hasEval ? Number(ev.overall_score) : null;
+  const customerLabel = conv.customer_label || "—";
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-white">
-      {/* Header — Base44 ConversationReview: indigo mono id + pale warm score badge */}
+      {/* Header */}
       <div className="flex flex-wrap items-center gap-2 border-b border-[#f0efe9] px-4 py-3">
         <div className="min-w-0">
-          <div className="truncate font-mono text-[13px] font-semibold text-indigo-600">{ev.conversation_id}</div>
-          <div className="truncate font-mono text-[11px] text-slate-400">{ev.id}</div>
+          <div className="truncate text-[13px] font-semibold text-slate-800">{customerLabel}</div>
+          <div className="truncate font-mono text-[11px] text-slate-400">
+            {conversationId} · {conv.channel_name || "—"} · {conv.status}
+          </div>
         </div>
-        <span
-          className={cn(
-            "rounded-md bg-[#f5f4f0] px-2 py-1 text-[13px] font-bold",
-            scoreTextClass(overall),
-          )}
-        >
-          {overall.toFixed(1)}
-        </span>
-        <div className="ml-auto flex items-center gap-2">{headerExtra}</div>
+        {hasEval && overall !== null ? (
+          <span className={cn("rounded-md bg-[#f5f4f0] px-2 py-1 text-[13px] font-bold", scoreTextClass(overall))}>
+            {overall.toFixed(1)}
+          </span>
+        ) : (
+          <span className="rounded-md bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-500">
+            {t(C.detail.notEvaluated)}
+          </span>
+        )}
+        {hasEval && (
+          <div className="ml-auto flex items-center gap-1.5">
+            <Badge variant="outline" className={cn("text-[10px]", REVIEW_CLASS[ev.review_status] ?? "")}>
+              {ev.review_status}
+            </Badge>
+            <Badge variant="outline" className={cn("text-[10px]", SEVERITY_CLASS[ev.severity] ?? "")}>
+              {ev.severity}
+            </Badge>
+          </div>
+        )}
       </div>
 
-      {/* Rounded pill tabs (no underline tabs) */}
+      {/* 5 tabs always visible */}
       <div className="flex flex-wrap gap-1.5 border-b border-[#f0efe9] px-3 py-2">
         {TAB_ORDER.map((k) => (
           <button
@@ -335,46 +297,70 @@ export function CeDetailPanel({
       </div>
 
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-[#fdfdfb] p-4">
-
         {/* ── Overview ── */}
         {tab === "overview" && (
           <>
             <div className="flex flex-wrap items-start gap-2">
               <div className="min-w-0">
-                <h2 className="truncate text-[15px] font-bold text-slate-800">{t(C.overview.customer)}</h2>
+                <h2 className="truncate text-[15px] font-bold text-slate-800">{customerLabel}</h2>
                 <div className="mt-0.5 truncate font-mono text-[11px] text-slate-400">
-                  {ev.conversation_id} · {t(C.meta.unavailable)}
+                  {conversationId} · {conv.channel_name || "—"} · {conv.status} · {conv.priority || "—"}
                 </div>
               </div>
               <div className="ml-auto flex flex-wrap items-center gap-1.5">
-                <Badge variant="outline" className={cn("text-[10px]", REVIEW_CLASS[ev.review_status] ?? "")}>
-                  {ev.review_status}
-                </Badge>
+                {hasEval && (
+                  <>
+                    <Badge variant="outline" className={cn("text-[10px]", REVIEW_CLASS[ev.review_status] ?? "")}>
+                      {ev.review_status}
+                    </Badge>
+                    <Badge variant="outline" className={cn("text-[10px]", SEVERITY_CLASS[ev.severity] ?? "")}>
+                      {ev.severity}
+                    </Badge>
+                  </>
+                )}
                 <Badge variant="outline" className="border-sky-200 bg-sky-50 text-[10px] text-sky-700">
-                  {channelLabel || t(C.meta.unavailable)}
-                </Badge>
-                <Badge variant="outline" className={cn("text-[10px]", SEVERITY_CLASS[ev.severity] ?? "")}>
-                  {ev.severity}
+                  {conv.channel_name || t(C.meta.unavailable)}
                 </Badge>
               </div>
             </div>
-
             <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-              <MetaCard label={t(C.meta.date)} value={new Date(ev.created_at).toLocaleString()} />
+              <MetaCard
+                label={t(C.meta.date)}
+                value={conv.created_at ? new Date(conv.created_at).toLocaleString() : "—"}
+              />
               <MetaCard label={t(C.meta.tier)} value={t(C.meta.unavailable)} />
-              <MetaCard label={t(C.meta.intent)} value={intentLabel} />
+              <MetaCard label={t(C.meta.intent)} value={t(C.meta.unavailable)} />
               <MetaCard label={t(C.meta.language)} value={t(C.meta.unavailable)} />
             </div>
-
+            {/* R3: evaluation unavailable notice */}
+            {!evaluationAvailable && (
+              <div className="rounded-md border border-amber-200 bg-amber-50 p-2.5 text-[11px] text-amber-800">
+                {t(C.detail.evaluateUnavailable)}
+              </div>
+            )}
             <Panel title={t(C.overview.thread)}>
-              <p className="mb-2 text-[11px] text-amber-600">{t(C.overview.liveNote)}</p>
+              {hasEval && <p className="mb-2 text-[11px] text-amber-600">{t(C.overview.liveNote)}</p>}
               {messages.length === 0 ? (
                 <span className="text-slate-500">{t(C.overview.noThread)}</span>
               ) : (
                 <div className="space-y-2">
                   {messages.map((m: any) => {
+                    // R6: recalled messages show placeholder
+                    if (m.is_recalled) {
+                      return (
+                        <div key={m.id} className="rounded-lg border-l-[3px] border-l-slate-200 bg-slate-50 p-2.5">
+                          <div className="text-[11px] italic text-slate-400">{t(C.detail.recalled)}</div>
+                        </div>
+                      );
+                    }
                     const isAi = m.role === "assistant";
-                    const isEvaluated = aiReply && m.id === aiReply.id;
+                    const isAgent = m.role === "agent";
+                    const isEvaluated = hasEval && aiReply && m.id === aiReply.id;
+                    const roleLabel = isAi
+                      ? t(C.overview.aiResponse)
+                      : isAgent
+                        ? t(C.overview.humanAgent)
+                        : t(C.overview.customer);
                     return (
                       <div key={m.id} className="space-y-0">
                         <div
@@ -382,14 +368,16 @@ export function CeDetailPanel({
                             "rounded-lg p-2.5",
                             isAi
                               ? "border border-[#e8e6e0] bg-[#f5f4f0]"
-                              : "border-l-[3px] border-l-[#cbd5e1] bg-[#F0F4F8]",
+                              : isAgent
+                                ? "border-l-[3px] border-l-emerald-300 bg-emerald-50"
+                                : "border-l-[3px] border-l-[#cbd5e1] bg-[#F0F4F8]",
                             isEvaluated && qaFinding && "rounded-b-none",
                           )}
                         >
                           <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500">
                             <span className="flex items-center gap-1.5 font-semibold uppercase">
-                              {isAi ? t(C.overview.aiResponse) : t(C.overview.customer)}
-                              {isEvaluated && (
+                              {roleLabel}
+                              {isEvaluated && overall !== null && (
                                 <span
                                   className={cn(
                                     "rounded-full bg-white px-1.5 py-[1px] text-[10px] font-bold",
@@ -400,7 +388,7 @@ export function CeDetailPanel({
                                 </span>
                               )}
                             </span>
-                            <span>{new Date(m.created_at).toLocaleString()}</span>
+                            <span>{m.created_at ? new Date(m.created_at).toLocaleString() : ""}</span>
                           </div>
                           <p className="mt-1 whitespace-pre-wrap text-slate-700">{m.content}</p>
                         </div>
@@ -422,24 +410,22 @@ export function CeDetailPanel({
                   })}
                 </div>
               )}
-
               {humanReply && (
                 <div className="mt-3 rounded-lg border border-[#a7d88a] bg-[#EAF3DE] p-2.5 text-[12px] text-emerald-900">
                   <div className="text-[10px] font-semibold uppercase tracking-wide">
                     {t(C.overview.humanCorrection)}
                   </div>
                   <div className="mt-1 whitespace-pre-wrap">{humanReply.content}</div>
-                  <div className="mt-1 text-[10px] opacity-70">
-                    {new Date(humanReply.created_at).toLocaleString()} · {t(C.evaluation.correction)}
-                  </div>
                 </div>
               )}
             </Panel>
-
-
             {/* QA Cases */}
             <Panel title={t(C.overview.qaCases)}>
-              {(d?.qaCases ?? []).length === 0 ? (
+              {sectionErr("qaCases") ? (
+                <SectionError message={sectionErr("qaCases")!.message} />
+              ) : !hasEval ? (
+                <span className="text-muted-foreground">{t(C.detail.notEvaluatedYet)}</span>
+              ) : (d?.qaCases ?? []).length === 0 ? (
                 <span className="text-muted-foreground">{t(C.overview.qaCasesEmpty)}</span>
               ) : (
                 <div className="flex flex-wrap gap-2">
@@ -451,12 +437,11 @@ export function CeDetailPanel({
                       <span className="font-mono">{q.case_number}</span>
                       <span className="font-medium">{q.title}</span>
                       <span className="text-muted-foreground">{q.status}</span>
-                      <span className="text-muted-foreground">{q.priority}</span>
                     </span>
                   ))}
                 </div>
               )}
-              {canReview && (
+              {canReview && hasEval && (
                 <div className="mt-2 flex items-center gap-2">
                   <Input
                     value={qaTitle}
@@ -464,16 +449,24 @@ export function CeDetailPanel({
                     placeholder={t(C.overview.qaCaseTitle)}
                     className="h-8 text-xs"
                   />
-                  <Button size="sm" variant="outline" disabled={submitting || !qaTitle.trim()} onClick={() => void createQaCase()}>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={submitting || !qaTitle.trim()}
+                    onClick={() => void createQaCase()}
+                  >
                     {t(C.overview.createQaCase)}
                   </Button>
                 </div>
               )}
             </Panel>
-
             {/* Discrepancy */}
             <Panel title={t(C.overview.discrepancy)}>
-              {(d?.discrepancies ?? []).length === 0 ? (
+              {sectionErr("discrepancies") ? (
+                <SectionError message={sectionErr("discrepancies")!.message} />
+              ) : !hasEval ? (
+                <span className="text-muted-foreground">{t(C.detail.notEvaluatedYet)}</span>
+              ) : (d?.discrepancies ?? []).length === 0 ? (
                 <span className="text-muted-foreground">{t(C.overview.discrepancyEmpty)}</span>
               ) : (
                 <div className="space-y-2">
@@ -484,10 +477,6 @@ export function CeDetailPanel({
                         <Badge variant="outline" className={cn("text-[10px]", SEVERITY_CLASS[disc.severity] ?? "")}>
                           {disc.severity}
                         </Badge>
-                        <span className="text-[11px] text-muted-foreground">{disc.divergence_kind}</span>
-                        {(disc.grounding_refs ?? []).map((r: string) => (
-                          <span key={r} className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">{r}</span>
-                        ))}
                       </div>
                       <div className="mt-2 grid gap-2 md:grid-cols-3">
                         <div className="rounded bg-red-50 p-2">
@@ -499,7 +488,9 @@ export function CeDetailPanel({
                           <div className="mt-0.5 text-[12px]">{disc.human_claim || "—"}</div>
                         </div>
                         <div className="rounded bg-blue-50 p-2">
-                          <div className="text-[10px] uppercase text-muted-foreground">{t(C.overview.groundedClaim)}</div>
+                          <div className="text-[10px] uppercase text-muted-foreground">
+                            {t(C.overview.groundedClaim)}
+                          </div>
                           <div className="mt-0.5 text-[12px]">{disc.grounded_claim || "—"}</div>
                         </div>
                       </div>
@@ -508,10 +499,13 @@ export function CeDetailPanel({
                 </div>
               )}
             </Panel>
-
             {/* Root cause */}
             <Panel title={t(C.overview.rootCause)}>
-              {(d?.rootCauses ?? []).length === 0 ? (
+              {sectionErr("rootCauses") ? (
+                <SectionError message={sectionErr("rootCauses")!.message} />
+              ) : !hasEval ? (
+                <span className="text-muted-foreground">{t(C.detail.notEvaluatedYet)}</span>
+              ) : (d?.rootCauses ?? []).length === 0 ? (
                 <span className="text-muted-foreground">{t(C.overview.rootCauseEmpty)}</span>
               ) : (
                 <div className="space-y-2">
@@ -528,13 +522,17 @@ export function CeDetailPanel({
                   ))}
                 </div>
               )}
-              {canReview && (
+              {canReview && hasEval && (
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <Select value={rcCategory} onValueChange={setRcCategory}>
-                    <SelectTrigger className="h-8 w-44 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="h-8 w-44 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
                     <SelectContent>
                       {ROOT_CAUSE_CATEGORIES.map((c) => (
-                        <SelectItem key={c} value={c}>{c}</SelectItem>
+                        <SelectItem key={c} value={c}>
+                          {c}
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -544,7 +542,12 @@ export function CeDetailPanel({
                     placeholder={t(C.overview.rootCauseSummary)}
                     className="h-8 flex-1 text-xs"
                   />
-                  <Button size="sm" variant="outline" disabled={submitting || !rcSummary.trim()} onClick={() => void recordRootCause()}>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={submitting || !rcSummary.trim()}
+                    onClick={() => void recordRootCause()}
+                  >
                     {t(C.overview.recordRootCause)}
                   </Button>
                 </div>
@@ -554,124 +557,137 @@ export function CeDetailPanel({
         )}
 
         {/* ── Evaluation ── */}
-        {tab === "evaluation" && (
-          <>
+        {tab === "evaluation" &&
+          (!hasEval ? (
             <Panel title={t(C.evaluation.breakdown)}>
-              {details.length === 0 ? (
-                <span className="text-muted-foreground">{t(C.evaluation.noDetails)}</span>
-              ) : (
-                <div className="space-y-2">
-                  {details.map((dd: any) => (
-                    <div key={dd.evaluator_type} className="rounded-md border p-2.5">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-semibold capitalize">{dd.evaluator_type}</span>
-                        <span className="font-mono text-[11px]">
-                          {Number(dd.raw_score).toFixed(2)} × {Number(dd.weight).toFixed(2)} ={" "}
-                          {Number(dd.weighted_score).toFixed(2)}
-                        </span>
-                      </div>
-                      <div className="mt-1.5 space-y-1 text-[12px] text-muted-foreground">
-                        <div>
-                          <strong>{t(C.evaluation.justification)}:</strong> {dd.justification || t(C.evaluation.none)}
-                        </div>
-                        {dd.recommended_correction && (
-                          <div>
-                            <strong>{t(C.evaluation.correction)}:</strong> {dd.recommended_correction}
-                          </div>
-                        )}
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <strong>{t(C.evaluation.refs)}:</strong>
-                          {(dd.grounding_refs ?? []).length === 0 ? (
-                            <span>{t(C.evaluation.none)}</span>
-                          ) : (
-                            (dd.grounding_refs ?? []).map((r: string) => (
-                              <span key={r} className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">{r}</span>
-                            ))
-                          )}
-                          <span className="ml-auto font-mono text-[10px]">
-                            {dd.evaluator_model_version ?? ""} · {dd.evaluator_prompt_version ?? ""}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </Panel>
-
-            <Panel title={t(C.evaluation.provenance)}>
-              <Prov label={t(C.evaluation.contract)} value={ev.evaluation_contract_version} />
-              <Prov label={t(C.evaluation.model)} value={ev.model_version} />
-              <Prov label={t(C.evaluation.prompt)} value={ev.prompt_version} />
-              <Prov label={t(C.evaluation.deployment)} value={ev.source_deployment} />
-              <Prov label={t(C.evaluation.kb)} value={ev.kb_snapshot_id} />
-              <Prov label={t(C.evaluation.policy)} value={ev.policy_snapshot_id} />
-              <Prov label={t(C.evaluation.bundle)} value={ev.bundle_hash} />
-              <Prov label={t(C.evaluation.snapshot)} value={ev.input_snapshot_hash} />
-            </Panel>
-
-            <Panel title={t(C.evaluation.review)}>
-              <div className="mb-2 flex flex-wrap items-center gap-2">
-                <span className="text-xs text-muted-foreground">{t(C.evaluation.current)}:</span>
-                <Badge variant="outline" className={cn("text-[11px]", REVIEW_CLASS[ev.review_status] ?? "")}>
-                  {ev.review_status ?? "pending"}
-                </Badge>
-                {ev.reviewed_at && (
-                  <span className="text-[11px] text-muted-foreground">
-                    {new Date(ev.reviewed_at).toLocaleString()}
-                  </span>
+              <div className="space-y-2">
+                <span className="text-muted-foreground">{t(C.detail.notEvaluatedYet)}</span>
+                {!evaluationAvailable && (
+                  <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-[12px] text-amber-800">
+                    {t(C.detail.evaluateUnavailable)}
+                  </div>
                 )}
               </div>
-              {ev.review_note && (
-                <div className="mb-2 rounded bg-muted/50 p-2 text-[12px]">{ev.review_note}</div>
-              )}
-              {!canReview ? (
-                <div className="text-muted-foreground">{t(C.evaluation.readOnly)}</div>
-              ) : (
-                <>
-                  <Textarea
-                    value={reviewNote}
-                    onChange={(e) => setReviewNote(e.target.value)}
-                    placeholder={t(C.evaluation.note)}
-                    maxLength={1000}
-                    rows={3}
-                    className="text-xs"
-                  />
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <Button
-                      size="sm"
-                      disabled={submitting || ev.review_status !== "pending"}
-                      onClick={() => void submitReview("accept")}
-                    >
-                      {t(C.evaluation.accept)}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={submitting || ev.review_status !== "pending"}
-                      onClick={() => void submitReview("reject")}
-                    >
-                      {t(C.evaluation.reject)}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={submitting || ev.review_status === "pending"}
-                      onClick={() => void submitReview("reopen")}
-                    >
-                      {t(C.evaluation.reopen)}
-                    </Button>
-                  </div>
-                </>
-              )}
             </Panel>
-          </>
-        )}
+          ) : (
+            <>
+              <Panel title={t(C.evaluation.breakdown)}>
+                {sectionErr("details") ? (
+                  <SectionError message={sectionErr("details")!.message} />
+                ) : details.length === 0 ? (
+                  <span className="text-muted-foreground">{t(C.evaluation.noDetails)}</span>
+                ) : (
+                  <div className="space-y-2">
+                    {details.map((dd: any) => (
+                      <div key={dd.evaluator_type} className="rounded-md border p-2.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-semibold capitalize">{dd.evaluator_type}</span>
+                          <span className="font-mono text-[11px]">
+                            {Number(dd.raw_score).toFixed(2)} × {Number(dd.weight).toFixed(2)} ={" "}
+                            {Number(dd.weighted_score).toFixed(2)}
+                          </span>
+                        </div>
+                        <div className="mt-1.5 space-y-1 text-[12px] text-muted-foreground">
+                          <div>
+                            <strong>{t(C.evaluation.justification)}:</strong> {dd.justification || t(C.evaluation.none)}
+                          </div>
+                          {dd.recommended_correction && (
+                            <div>
+                              <strong>{t(C.evaluation.correction)}:</strong> {dd.recommended_correction}
+                            </div>
+                          )}
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <strong>{t(C.evaluation.refs)}:</strong>
+                            {(dd.grounding_refs ?? []).length === 0 ? (
+                              <span>{t(C.evaluation.none)}</span>
+                            ) : (
+                              (dd.grounding_refs ?? []).map((r: string) => (
+                                <span key={r} className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">
+                                  {r}
+                                </span>
+                              ))
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Panel>
+              <Panel title={t(C.evaluation.provenance)}>
+                <Prov label={t(C.evaluation.contract)} value={ev.evaluation_contract_version} />
+                <Prov label={t(C.evaluation.model)} value={ev.model_version} />
+                <Prov label={t(C.evaluation.prompt)} value={ev.prompt_version} />
+                <Prov label={t(C.evaluation.deployment)} value={ev.source_deployment} />
+                <Prov label={t(C.evaluation.kb)} value={ev.kb_snapshot_id} />
+                <Prov label={t(C.evaluation.policy)} value={ev.policy_snapshot_id} />
+                <Prov label={t(C.evaluation.bundle)} value={ev.bundle_hash} />
+                <Prov label={t(C.evaluation.snapshot)} value={ev.input_snapshot_hash} />
+              </Panel>
+              <Panel title={t(C.evaluation.review)}>
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-muted-foreground">{t(C.evaluation.current)}:</span>
+                  <Badge variant="outline" className={cn("text-[11px]", REVIEW_CLASS[ev.review_status] ?? "")}>
+                    {ev.review_status ?? "pending"}
+                  </Badge>
+                  {ev.reviewed_at && (
+                    <span className="text-[11px] text-muted-foreground">
+                      {new Date(ev.reviewed_at).toLocaleString()}
+                    </span>
+                  )}
+                </div>
+                {ev.review_note && <div className="mb-2 rounded bg-muted/50 p-2 text-[12px]">{ev.review_note}</div>}
+                {!canReview ? (
+                  <div className="text-muted-foreground">{t(C.evaluation.readOnly)}</div>
+                ) : (
+                  <>
+                    <Textarea
+                      value={reviewNote}
+                      onChange={(e) => setReviewNote(e.target.value)}
+                      placeholder={t(C.evaluation.note)}
+                      maxLength={1000}
+                      rows={3}
+                      className="text-xs"
+                    />
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <Button
+                        size="sm"
+                        disabled={submitting || ev.review_status !== "pending"}
+                        onClick={() => void submitReview("accept")}
+                      >
+                        {t(C.evaluation.accept)}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={submitting || ev.review_status !== "pending"}
+                        onClick={() => void submitReview("reject")}
+                      >
+                        {t(C.evaluation.reject)}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={submitting || ev.review_status === "pending"}
+                        onClick={() => void submitReview("reopen")}
+                      >
+                        {t(C.evaluation.reopen)}
+                      </Button>
+                    </div>
+                  </>
+                )}
+              </Panel>
+            </>
+          ))}
 
         {/* ── Emotion Journey ── */}
         {tab === "emotion" && (
           <Panel title={t(C.tabs.emotion)}>
-            {(d?.emotion ?? []).length === 0 ? (
+            {sectionErr("emotion") ? (
+              <SectionError message={sectionErr("emotion")!.message} />
+            ) : !hasEval ? (
+              <span className="text-muted-foreground">{t(C.detail.notEvaluatedYet)}</span>
+            ) : (d?.emotion ?? []).length === 0 ? (
               <span className="text-muted-foreground">{t(C.emotion.empty)}</span>
             ) : (
               <div className="space-y-1.5">
@@ -705,7 +721,11 @@ export function CeDetailPanel({
         {/* ── Next Steps ── */}
         {tab === "nextSteps" && (
           <Panel title={t(C.tabs.nextSteps)}>
-            {(d?.nextSteps ?? []).length === 0 ? (
+            {sectionErr("nextSteps") ? (
+              <SectionError message={sectionErr("nextSteps")!.message} />
+            ) : !hasEval ? (
+              <span className="text-muted-foreground">{t(C.detail.notEvaluatedYet)}</span>
+            ) : (d?.nextSteps ?? []).length === 0 ? (
               <span className="text-muted-foreground">{t(C.nextSteps.empty)}</span>
             ) : (
               <div className="space-y-2">
@@ -730,7 +750,11 @@ export function CeDetailPanel({
         {/* ── Replay Studio ── */}
         {tab === "replay" && (
           <Panel title={t(C.tabs.replay)}>
-            {!snapshot ? (
+            {sectionErr("replay") ? (
+              <SectionError message={sectionErr("replay")!.message} />
+            ) : !hasEval ? (
+              <span className="text-muted-foreground">{t(C.detail.replayUnavailable)}</span>
+            ) : !snapshot ? (
               <span className="text-muted-foreground">{t(C.replay.unavailable)}</span>
             ) : (
               <>
