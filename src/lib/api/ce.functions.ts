@@ -1,13 +1,13 @@
 /**
- * CE read/write server functions — PR-4 Round 2.
+ * CE read/write server functions — PR-4 Director Functional Closure.
  *
- * R1: Every query checks error explicitly; query error never becomes empty.
- * R2: needs_review from canonical ce_conversation_status_v, not re-derived.
- * R3: evaluation_available server-derived from conversation.company_id.
- * R4: Search on resolved customer_label + conversation_id + latest_preview.
- * R5: Active path has zero training references.
- * R6: Recalled messages preserved with is_recalled flag.
- * R7: Counts from full authorized result set.
+ * Active CE path:
+ * - conversations-first, complete authorized result set
+ * - no hard row caps in list/detail readers
+ * - canonical needs_review only
+ * - CE child-query failures fail closed
+ * - evaluation availability resolved server-side against company + membership
+ * - no training fields in active CE list/detail contracts
  */
 
 import { createServerFn } from "@tanstack/react-start";
@@ -22,7 +22,30 @@ type LooseClient = {
   rpc: (name: string, params: Record<string, unknown>) => any;
 };
 
-// ─── Shared customer label resolver (Inbox semantics) ────────────────────────
+const PAGE_SIZE = 500;
+const IN_CHUNK = 100;
+
+function chunk<T>(items: T[], size = IN_CHUNK): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+async function fetchAllPages(
+  buildQuery: (from: number, to: number) => PromiseLike<{ data: any[] | null; error: any }>,
+  label: string,
+): Promise<{ ok: true; rows: any[] } | { ok: false; error: string }> {
+  const rows: any[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const to = from + PAGE_SIZE - 1;
+    const { data, error } = await buildQuery(from, to);
+    if (error) return { ok: false, error: `${label}: ${error.message}` };
+    if (!data) return { ok: false, error: `${label}: null response` };
+    rows.push(...data);
+    if (data.length < PAGE_SIZE) break;
+  }
+  return { ok: true, rows };
+}
 
 function resolveCustomerLabel(
   visitorSession: { id: string; visitor_metadata?: unknown } | null,
@@ -41,7 +64,39 @@ function resolveCustomerLabel(
   return `${channel} Visitor #${shortId}`;
 }
 
-// ─── Active CE list row ─────────────────────────────────────────────────────
+async function resolveEvaluationAvailability(
+  loose: LooseClient,
+  userId: string,
+  companyId: string | null | undefined,
+): Promise<{ available: boolean; reason: string | null } | { error: string }> {
+  if (!companyId) {
+    return { available: false, reason: "platform_company_identity_unresolved" };
+  }
+
+  const { data: company, error: companyErr } = await loose
+    .from("company")
+    .select("id, is_active")
+    .eq("id", companyId)
+    .maybeSingle();
+  if (companyErr) return { error: `company: ${companyErr.message}` };
+  if (!company || company.is_active !== true) {
+    return { available: false, reason: "platform_company_identity_unresolved" };
+  }
+
+  const { data: membership, error: membershipErr } = await loose
+    .from("company_membership")
+    .select("id, is_active")
+    .eq("company_id", companyId)
+    .eq("user_id", userId)
+    .eq("is_active", true)
+    .maybeSingle();
+  if (membershipErr) return { error: `company_membership: ${membershipErr.message}` };
+  if (!membership) {
+    return { available: false, reason: "company_membership_unresolved" };
+  }
+
+  return { available: true, reason: null };
+}
 
 export interface CeConversationRow {
   conversation_id: string;
@@ -74,15 +129,15 @@ export interface CeListResult {
   counts: CeListCounts;
 }
 
-// ─── Active CE list: conversations-first ─────────────────────────────────────
-
 const listConvInput = z.object({
   pill: z.enum(["all", "evaluated", "not_evaluated", "needs_review"]).default("all"),
   search: z.string().trim().max(200).optional(),
   severity: z.enum(["critical", "high", "medium", "low"]).optional(),
   fromDate: z.string().optional(),
   toDate: z.string().optional(),
-  limit: z.number().int().min(1).max(500).default(200),
+  // Kept for backward compatibility with callers. Active CE reads the full
+  // authorized result set before applying UI pagination.
+  limit: z.number().int().min(1).max(500).optional(),
 });
 
 export const listConversationsForCeFn = createServerFn({ method: "GET" })
@@ -90,123 +145,142 @@ export const listConversationsForCeFn = createServerFn({ method: "GET" })
   .inputValidator(listConvInput)
   .handler(async ({ data, context }): Promise<CeResult<CeListResult>> => {
     const loose = context.supabase as unknown as LooseClient;
+    const userId = String(context.userId);
 
-    // ── Step 1: conversations (REQUIRED — error = whole list FAIL)
-    let q = loose
-      .from("conversations")
-      .select(
-        "id, status, priority, created_at, updated_at, company_id, " +
-          "channel_config:channel_config_id(name), " +
-          "visitor_session:visitor_session_id(id, visitor_metadata)",
-      )
-      .order("updated_at", { ascending: false })
-      .limit(data.limit);
+    const convResult = await fetchAllPages(async (from, to) => {
+      let q = loose
+        .from("conversations")
+        .select(
+          "id, status, priority, created_at, updated_at, company_id, " +
+            "channel_config:channel_config_id(name), " +
+            "visitor_session:visitor_session_id(id, visitor_metadata)",
+        )
+        .order("updated_at", { ascending: false })
+        .range(from, to);
+      if (data.fromDate) q = q.gte("created_at", data.fromDate);
+      if (data.toDate) q = q.lte("created_at", data.toDate);
+      return q;
+    }, "conversations");
+    if (!convResult.ok) return { ok: false, error: convResult.error };
 
-    if (data.fromDate) q = q.gte("created_at", data.fromDate);
-    if (data.toDate) q = q.lte("created_at", data.toDate);
+    const convRows = convResult.rows;
+    const convIds = convRows.map((c) => String(c.id));
 
-    const { data: convs, error: convErr } = await q;
-    if (convErr) return { ok: false, error: `conversations: ${convErr.message}` };
-    if (!convs) return { ok: false, error: "conversations: null response" };
-
-    const convRows = convs as any[];
-    const convIds = convRows.map((c) => c.id as string);
-
-    // ── Step 2: evaluations (REQUIRED — error = whole list FAIL)
-    let evalMap: Record<string, any> = {};
-    if (convIds.length > 0) {
-      const { data: evals, error: evalErr } = await loose
-        .from("conversation_evaluation")
-        .select("id, conversation_id, overall_score, severity, review_status, created_at")
-        .in("conversation_id", convIds)
-        .order("created_at", { ascending: false });
-      if (evalErr) return { ok: false, error: `conversation_evaluation: ${evalErr.message}` };
-      if (!evals) return { ok: false, error: "conversation_evaluation: null response" };
-      for (const ev of evals as any[]) {
+    const evalMap: Record<string, any> = {};
+    for (const ids of chunk(convIds)) {
+      const result = await fetchAllPages(
+        (from, to) =>
+          loose
+            .from("conversation_evaluation")
+            .select("id, conversation_id, overall_score, severity, review_status, created_at")
+            .in("conversation_id", ids)
+            .order("created_at", { ascending: false })
+            .range(from, to),
+        "conversation_evaluation",
+      );
+      if (!result.ok) return { ok: false, error: result.error };
+      for (const ev of result.rows) {
         if (!evalMap[ev.conversation_id]) evalMap[ev.conversation_id] = ev;
       }
     }
 
-    // ── Step 3: canonical needs_review from ce_conversation_status_v (REQUIRED for evaluated)
-    const evalIds = Object.values(evalMap).map((ev: any) => ev.id as string);
-    let canonicalNeedsReview: Record<string, boolean> = {};
-    if (evalIds.length > 0) {
-      const { data: statusRows, error: statusErr } = await loose
-        .from("ce_conversation_status_v")
-        .select("evaluation_id, needs_review")
-        .in("evaluation_id", evalIds);
-      if (statusErr) return { ok: false, error: `ce_conversation_status_v: ${statusErr.message}` };
-      if (!statusRows) return { ok: false, error: "ce_conversation_status_v: null response" };
-      for (const s of statusRows as any[]) {
-        canonicalNeedsReview[s.evaluation_id] = Boolean(s.needs_review);
+    const evalIds = Object.values(evalMap).map((ev: any) => String(ev.id));
+    const canonicalNeedsReview: Record<string, boolean> = {};
+    for (const ids of chunk(evalIds)) {
+      const result = await fetchAllPages(
+        (from, to) =>
+          loose
+            .from("ce_conversation_status_v")
+            .select("evaluation_id, needs_review")
+            .in("evaluation_id", ids)
+            .range(from, to),
+        "ce_conversation_status_v",
+      );
+      if (!result.ok) return { ok: false, error: result.error };
+      for (const row of result.rows) {
+        canonicalNeedsReview[String(row.evaluation_id)] = Boolean(row.needs_review);
       }
-      // If canonical status row missing for an existing evaluation → integrity error
-      for (const eid of evalIds) {
-        if (!(eid in canonicalNeedsReview)) {
-          return { ok: false, error: `ce_status_integrity: evaluation ${eid.slice(0, 8)} has no canonical status row` };
+    }
+    for (const evaluationId of evalIds) {
+      if (!(evaluationId in canonicalNeedsReview)) {
+        return {
+          ok: false,
+          error: `ce_status_integrity: evaluation ${evaluationId.slice(0, 8)} has no canonical status row`,
+        };
+      }
+    }
+
+    const previewMap: Record<string, string> = {};
+    for (const ids of chunk(convIds)) {
+      const result = await fetchAllPages(
+        (from, to) =>
+          loose
+            .from("messages")
+            .select("conversation_id, content, is_recalled, created_at")
+            .in("conversation_id", ids)
+            .neq("content", "__THINKING__")
+            .order("created_at", { ascending: false })
+            .range(from, to),
+        "messages_preview",
+      );
+      if (!result.ok) return { ok: false, error: result.error };
+      for (const message of result.rows) {
+        const cid = String(message.conversation_id);
+        if (!(cid in previewMap)) {
+          previewMap[cid] = message.is_recalled ? "[訊息已撤回]" : String(message.content ?? "").slice(0, 80);
         }
       }
     }
 
-    // ── Step 4: latest message preview (REQUIRED — error = whole list FAIL)
-    let previewMap: Record<string, string> = {};
-    if (convIds.length > 0) {
-      const { data: msgs, error: msgsErr } = await loose
-        .from("messages")
-        .select("conversation_id, content, is_recalled")
-        .in("conversation_id", convIds)
-        .neq("content", "__THINKING__")
-        .order("created_at", { ascending: false })
-        .limit(500);
-      if (msgsErr) return { ok: false, error: `messages_preview: ${msgsErr.message}` };
-      if (!msgs) return { ok: false, error: "messages_preview: null response" };
-      for (const m of msgs as any[]) {
-        if (!previewMap[m.conversation_id]) {
-          previewMap[m.conversation_id] = m.is_recalled ? "[訊息已撤回]" : String(m.content).slice(0, 80);
-        }
-      }
-    }
+    const availabilityByCompany = new Map<string, { available: boolean; reason: string | null }>();
+    const rows: CeConversationRow[] = [];
 
-    // ── Step 5: Build resolved list
-    const allRows: CeConversationRow[] = convRows.map((c: any) => {
+    for (const c of convRows) {
       const ev = evalMap[c.id] ?? null;
       const channelName = (c.channel_config as { name: string } | null)?.name ?? null;
-      const customerLabel = resolveCustomerLabel(
-        c.visitor_session as { id: string; visitor_metadata?: unknown } | null,
-        c.id,
-        channelName,
-      );
-      const hasCompanyId = c.company_id !== null && c.company_id !== undefined;
-      return {
-        conversation_id: c.id,
-        conversation_status: c.status,
-        priority: c.priority,
-        created_at: c.created_at,
-        updated_at: c.updated_at,
+      const companyId = c.company_id ? String(c.company_id) : null;
+      const availabilityKey = companyId ?? "__null__";
+
+      let availability = availabilityByCompany.get(availabilityKey);
+      if (!availability) {
+        const resolved = await resolveEvaluationAvailability(loose, userId, companyId);
+        if ("error" in resolved) return { ok: false, error: resolved.error };
+        availability = resolved;
+        availabilityByCompany.set(availabilityKey, availability);
+      }
+
+      rows.push({
+        conversation_id: String(c.id),
+        conversation_status: String(c.status),
+        priority: c.priority ?? null,
+        created_at: c.created_at ?? null,
+        updated_at: c.updated_at ?? null,
         channel_name: channelName,
-        customer_label: customerLabel,
-        latest_preview: previewMap[c.id] || "(no messages)",
+        customer_label: resolveCustomerLabel(
+          c.visitor_session as { id: string; visitor_metadata?: unknown } | null,
+          String(c.id),
+          channelName,
+        ),
+        latest_preview: previewMap[String(c.id)] || "(no messages)",
         evaluation_id: ev?.id ?? null,
         overall_score: ev ? Number(ev.overall_score) : null,
         severity: ev?.severity ?? null,
         review_status: ev?.review_status ?? null,
         evaluated_at: ev?.created_at ?? null,
-        needs_review: ev ? (canonicalNeedsReview[ev.id] ?? false) : false,
-        evaluation_available: hasCompanyId,
-        evaluation_unavailable_reason: hasCompanyId ? null : "platform_company_identity_unresolved",
-      };
-    });
+        needs_review: ev ? canonicalNeedsReview[String(ev.id)] : false,
+        evaluation_available: availability.available,
+        evaluation_unavailable_reason: availability.reason,
+      });
+    }
 
-    // ── Step 6: Counts from FULL resolved set (before search/pill/severity filter)
     const counts: CeListCounts = {
-      total: allRows.length,
-      evaluated: allRows.filter((r) => r.evaluation_id !== null).length,
-      not_evaluated: allRows.filter((r) => r.evaluation_id === null).length,
-      needs_review: allRows.filter((r) => r.needs_review).length,
+      total: rows.length,
+      evaluated: rows.filter((r) => r.evaluation_id !== null).length,
+      not_evaluated: rows.filter((r) => r.evaluation_id === null).length,
+      needs_review: rows.filter((r) => r.needs_review).length,
     };
 
-    // ── Step 7: Apply search on resolved fields (R4)
-    let filtered = allRows;
+    let filtered = rows;
     const searchLower = (data.search ?? "").trim().toLowerCase();
     if (searchLower) {
       filtered = filtered.filter(
@@ -217,18 +291,13 @@ export const listConversationsForCeFn = createServerFn({ method: "GET" })
       );
     }
 
-    // ── Step 8: Apply pill filter
     if (data.pill === "evaluated") filtered = filtered.filter((r) => r.evaluation_id !== null);
     if (data.pill === "not_evaluated") filtered = filtered.filter((r) => r.evaluation_id === null);
     if (data.pill === "needs_review") filtered = filtered.filter((r) => r.needs_review);
-
-    // ── Step 9: Apply severity filter
     if (data.severity) filtered = filtered.filter((r) => r.severity === data.severity);
 
     return { ok: true, data: { rows: filtered, counts } };
   });
-
-// ─── Active CE detail: conversation-first ────────────────────────────────────
 
 export interface CeDetailSectionError {
   section: string;
@@ -240,8 +309,8 @@ export const getCeConversationDetailFn = createServerFn({ method: "GET" })
   .inputValidator(z.object({ conversationId: z.string().uuid() }))
   .handler(async ({ data, context }): Promise<CeResult<any>> => {
     const loose = context.supabase as unknown as LooseClient;
+    const userId = String(context.userId);
 
-    // ── Conversation (REQUIRED)
     const { data: conv, error: convErr } = await loose
       .from("conversations")
       .select(
@@ -260,20 +329,27 @@ export const getCeConversationDetailFn = createServerFn({ method: "GET" })
       data.conversationId,
       channelName,
     );
-    const hasCompanyId = (conv as any).company_id !== null && (conv as any).company_id !== undefined;
 
-    // ── Messages (REQUIRED — includes recalled with is_recalled flag, R6)
-    const { data: messages, error: msgsErr } = await loose
-      .from("messages")
-      .select("id, role, content, created_at, is_recalled, metadata, sender_id, sender_identity_verified_at")
-      .eq("conversation_id", data.conversationId)
-      .neq("content", "__THINKING__")
-      .order("created_at", { ascending: true })
-      .limit(300);
-    if (msgsErr) return { ok: false, error: `messages: ${msgsErr.message}` };
-    if (!messages) return { ok: false, error: "messages: null response" };
+    const availability = await resolveEvaluationAvailability(
+      loose,
+      userId,
+      (conv as any).company_id ? String((conv as any).company_id) : null,
+    );
+    if ("error" in availability) return { ok: false, error: availability.error };
 
-    // ── Evaluation (REQUIRED — to distinguish not-evaluated from error)
+    const messageResult = await fetchAllPages(
+      (from, to) =>
+        loose
+          .from("messages")
+          .select("id, role, content, created_at, is_recalled, metadata, sender_id, sender_identity_verified_at")
+          .eq("conversation_id", data.conversationId)
+          .neq("content", "__THINKING__")
+          .order("created_at", { ascending: true })
+          .range(from, to),
+      "messages",
+    );
+    if (!messageResult.ok) return { ok: false, error: messageResult.error };
+
     const { data: evals, error: evalErr } = await loose
       .from("conversation_evaluation")
       .select(
@@ -290,10 +366,8 @@ export const getCeConversationDetailFn = createServerFn({ method: "GET" })
     if (!evals) return { ok: false, error: "conversation_evaluation: null response" };
 
     const evaluation = evals.length > 0 ? evals[0] : null;
-    const evaluationId = (evaluation as any)?.id ?? null;
+    const evaluationId = evaluation?.id ? String(evaluation.id) : null;
 
-    // ── CE detail tables (only when evaluation exists; each error tracked)
-    const sectionErrors: CeDetailSectionError[] = [];
     let details: any[] = [];
     let emotion: any[] = [];
     let nextSteps: any[] = [];
@@ -303,63 +377,92 @@ export const getCeConversationDetailFn = createServerFn({ method: "GET" })
     let snapshot: any = null;
 
     if (evaluationId) {
-      const { data: d1, error: e1 } = await loose
-        .from("conversation_evaluation_detail")
-        .select(
-          "evaluator_type, raw_score, weight, weighted_score, justification, " +
-            "recommended_correction, evaluator_model_version, evaluator_prompt_version, grounding_refs",
-        )
-        .eq("evaluation_id", evaluationId);
-      if (e1) sectionErrors.push({ section: "details", message: e1.message });
-      else details = d1 ?? [];
+      const detailResult = await fetchAllPages(
+        (from, to) =>
+          loose
+            .from("conversation_evaluation_detail")
+            .select(
+              "evaluator_type, raw_score, weight, weighted_score, justification, " +
+                "recommended_correction, evaluator_model_version, evaluator_prompt_version, grounding_refs",
+            )
+            .eq("evaluation_id", evaluationId)
+            .range(from, to),
+        "conversation_evaluation_detail",
+      );
+      if (!detailResult.ok) return { ok: false, error: detailResult.error };
+      details = detailResult.rows;
 
-      const { data: d2, error: e2 } = await loose
-        .from("ce_emotion_point")
-        .select("id, evaluation_id, message_id, turn_index, occurred_at, sentiment, sentiment_score, trigger_label")
-        .eq("evaluation_id", evaluationId)
-        .order("turn_index", { ascending: true });
-      if (e2) sectionErrors.push({ section: "emotion", message: e2.message });
-      else emotion = d2 ?? [];
+      const emotionResult = await fetchAllPages(
+        (from, to) =>
+          loose
+            .from("ce_emotion_point")
+            .select("id, evaluation_id, message_id, turn_index, occurred_at, sentiment, sentiment_score, trigger_label")
+            .eq("evaluation_id", evaluationId)
+            .order("turn_index", { ascending: true })
+            .range(from, to),
+        "ce_emotion_point",
+      );
+      if (!emotionResult.ok) return { ok: false, error: emotionResult.error };
+      emotion = emotionResult.rows;
 
-      const { data: d3, error: e3 } = await loose
-        .from("ce_next_step")
-        .select("id, evaluation_id, ordinal, title, detail, owner_role, status")
-        .eq("evaluation_id", evaluationId)
-        .order("ordinal", { ascending: true });
-      if (e3) sectionErrors.push({ section: "nextSteps", message: e3.message });
-      else nextSteps = d3 ?? [];
+      const nextResult = await fetchAllPages(
+        (from, to) =>
+          loose
+            .from("ce_next_step")
+            .select("id, evaluation_id, ordinal, title, detail, owner_role, status")
+            .eq("evaluation_id", evaluationId)
+            .order("ordinal", { ascending: true })
+            .range(from, to),
+        "ce_next_step",
+      );
+      if (!nextResult.ok) return { ok: false, error: nextResult.error };
+      nextSteps = nextResult.rows;
 
-      const { data: d4, error: e4 } = await loose
-        .from("ce_discrepancy")
-        .select(
-          "id, evaluation_id, dimension, ai_claim, human_claim, grounded_claim, divergence_kind, severity, grounding_refs",
-        )
-        .eq("evaluation_id", evaluationId);
-      if (e4) sectionErrors.push({ section: "discrepancies", message: e4.message });
-      else discrepancies = d4 ?? [];
+      const discrepancyResult = await fetchAllPages(
+        (from, to) =>
+          loose
+            .from("ce_discrepancy")
+            .select(
+              "id, evaluation_id, dimension, ai_claim, human_claim, grounded_claim, divergence_kind, severity, grounding_refs",
+            )
+            .eq("evaluation_id", evaluationId)
+            .range(from, to),
+        "ce_discrepancy",
+      );
+      if (!discrepancyResult.ok) return { ok: false, error: discrepancyResult.error };
+      discrepancies = discrepancyResult.rows;
 
-      const { data: d5, error: e5 } = await loose
-        .from("ce_root_cause")
-        .select(
-          "id, evaluation_id, category, summary, evidence_refs, recorded_by, remote_sync_state, remote_ref, created_at",
-        )
-        .eq("evaluation_id", evaluationId)
-        .order("created_at", { ascending: false });
-      if (e5) sectionErrors.push({ section: "rootCauses", message: e5.message });
-      else rootCauses = d5 ?? [];
+      const rootResult = await fetchAllPages(
+        (from, to) =>
+          loose
+            .from("ce_root_cause")
+            .select(
+              "id, evaluation_id, category, summary, evidence_refs, recorded_by, remote_sync_state, remote_ref, created_at",
+            )
+            .eq("evaluation_id", evaluationId)
+            .order("created_at", { ascending: false })
+            .range(from, to),
+        "ce_root_cause",
+      );
+      if (!rootResult.ok) return { ok: false, error: rootResult.error };
+      rootCauses = rootResult.rows;
 
-      const { data: d6, error: e6 } = await loose
-        .from("ce_qa_case")
-        .select(
-          "id, evaluation_id, case_number, title, description, status, priority, remote_sync_state, remote_ref, created_at",
-        )
-        .eq("evaluation_id", evaluationId)
-        .order("created_at", { ascending: false });
-      if (e6) sectionErrors.push({ section: "qaCases", message: e6.message });
-      else qaCases = d6 ?? [];
+      const qaResult = await fetchAllPages(
+        (from, to) =>
+          loose
+            .from("ce_qa_case")
+            .select(
+              "id, evaluation_id, case_number, title, description, status, priority, remote_sync_state, remote_ref, created_at",
+            )
+            .eq("evaluation_id", evaluationId)
+            .order("created_at", { ascending: false })
+            .range(from, to),
+        "ce_qa_case",
+      );
+      if (!qaResult.ok) return { ok: false, error: qaResult.error };
+      qaCases = qaResult.rows;
 
-      // Replay bundle
-      const attemptId = (evaluation as any)?.attempt_id;
+      const attemptId = evaluation?.attempt_id;
       if (attemptId) {
         const { data: snap, error: snapErr } = await loose
           .from("ce_bundle_snapshot")
@@ -372,8 +475,8 @@ export const getCeConversationDetailFn = createServerFn({ method: "GET" })
           )
           .eq("attempt_id", attemptId)
           .maybeSingle();
-        if (snapErr) sectionErrors.push({ section: "replay", message: snapErr.message });
-        else snapshot = snap;
+        if (snapErr) return { ok: false, error: `ce_bundle_snapshot: ${snapErr.message}` };
+        snapshot = snap;
       }
     }
 
@@ -391,24 +494,24 @@ export const getCeConversationDetailFn = createServerFn({ method: "GET" })
           customer_label: customerLabel,
         },
         evaluation,
-        evaluation_available: hasCompanyId,
-        evaluation_unavailable_reason: hasCompanyId ? null : "platform_company_identity_unresolved",
+        evaluation_available: availability.available,
+        evaluation_unavailable_reason: availability.reason,
         details,
-        messages: messages as any[],
+        messages: messageResult.rows,
         emotion,
         nextSteps,
         discrepancies,
         rootCauses,
         qaCases,
         snapshot,
-        sectionErrors,
+        sectionErrors: [] as CeDetailSectionError[],
       },
     };
   });
 
-// ─── Legacy functions (kept for backward compatibility — NOT used by active CE route) ──
+// Legacy exports retained only for existing deep links/backward compatibility.
+// Active Conversation Evaluation route uses the conversation-first functions above.
 
-/** @deprecated Use listConversationsForCeFn instead. */
 export const listCeEvaluationsFn = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .inputValidator(
@@ -438,7 +541,6 @@ export const listCeEvaluationsFn = createServerFn({ method: "GET" })
     return { ok: true, data: (rows ?? []) as any[] };
   });
 
-/** @deprecated Use getCeConversationDetailFn instead. */
 export const getCeEvaluationFn = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .inputValidator(z.object({ evaluationId: z.string().uuid() }))
@@ -457,62 +559,7 @@ export const getCeEvaluationFn = createServerFn({ method: "GET" })
       .maybeSingle();
     if (error) return { ok: false, error: error.message };
     if (!evaluation) return { ok: false, error: "not_found" };
-    const { data: details } = await loose
-      .from("conversation_evaluation_detail")
-      .select(
-        "evaluator_type, raw_score, weight, weighted_score, justification, " +
-          "recommended_correction, evaluator_model_version, evaluator_prompt_version, grounding_refs",
-      )
-      .eq("evaluation_id", data.evaluationId);
-    const { data: messages } = await loose
-      .from("messages")
-      .select("id, role, content, created_at, is_recalled, sender_id, sender_identity_verified_at")
-      .eq("conversation_id", (evaluation as any).conversation_id)
-      .order("created_at", { ascending: true })
-      .limit(300);
-    const { data: emotion } = await loose
-      .from("ce_emotion_point")
-      .select("id, evaluation_id, message_id, turn_index, occurred_at, sentiment, sentiment_score, trigger_label")
-      .eq("evaluation_id", data.evaluationId)
-      .order("turn_index", { ascending: true });
-    const { data: nextSteps } = await loose
-      .from("ce_next_step")
-      .select("id, evaluation_id, ordinal, title, detail, owner_role, status")
-      .eq("evaluation_id", data.evaluationId)
-      .order("ordinal", { ascending: true });
-    const { data: discrepancies } = await loose
-      .from("ce_discrepancy")
-      .select(
-        "id, evaluation_id, dimension, ai_claim, human_claim, grounded_claim, divergence_kind, severity, grounding_refs",
-      )
-      .eq("evaluation_id", data.evaluationId);
-    const { data: rootCauses } = await loose
-      .from("ce_root_cause")
-      .select(
-        "id, evaluation_id, category, summary, evidence_refs, recorded_by, remote_sync_state, remote_ref, created_at",
-      )
-      .eq("evaluation_id", data.evaluationId)
-      .order("created_at", { ascending: false });
-    const { data: qaCases } = await loose
-      .from("ce_qa_case")
-      .select(
-        "id, evaluation_id, case_number, title, description, status, priority, remote_sync_state, remote_ref, created_at",
-      )
-      .eq("evaluation_id", data.evaluationId)
-      .order("created_at", { ascending: false });
-    return {
-      ok: true,
-      data: {
-        evaluation,
-        details: details ?? [],
-        messages: messages ?? [],
-        emotion: emotion ?? [],
-        nextSteps: nextSteps ?? [],
-        discrepancies: discrepancies ?? [],
-        rootCauses: rootCauses ?? [],
-        qaCases: qaCases ?? [],
-      },
-    };
+    return { ok: true, data: { evaluation } };
   });
 
 export const getCeReplayBundleFn = createServerFn({ method: "GET" })
