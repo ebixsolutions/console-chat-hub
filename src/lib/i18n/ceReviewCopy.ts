@@ -15,7 +15,9 @@ export const CE_REVIEW_COPY = {
     needsReview: { en: "Needs Review", zh: "待覆核" },
   },
   count: { en: "shown", zh: "顯示" },
+  countUnavailable: { en: "Counts unavailable", zh: "數量無法取得" },
   searchPlaceholder: { en: "Search conversation or evaluation id", zh: "搜尋對話或評估 ID" },
+
   filters: {
     status: { en: "Status", zh: "覆核狀態" },
     urgency: { en: "Urgency", zh: "嚴重度" },
