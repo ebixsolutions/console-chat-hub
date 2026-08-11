@@ -2063,6 +2063,16 @@ export type Database = {
         Returns: undefined
       }
       _ce_rls: { Args: { p_table: string }; Returns: boolean }
+      assign_conversation_tx: {
+        Args: {
+          p_actor_agent_id: string
+          p_conversation_id: string
+          p_expected_owner?: string
+          p_expected_status: string
+          p_target_agent_id: string
+        }
+        Returns: Json
+      }
       ce_company_elevated: { Args: { p_company_id: string }; Returns: boolean }
       ce_company_read: { Args: { p_company_id: string }; Returns: boolean }
       ce_is_flag_enabled: { Args: { p_key: string }; Returns: boolean }
@@ -2160,6 +2170,15 @@ export type Database = {
       }
       reap_stale_evaluation_attempts: {
         Args: { p_older_than?: string }
+        Returns: Json
+      }
+      return_to_ai_tx: {
+        Args: {
+          p_actor_agent_id: string
+          p_conversation_id: string
+          p_expected_owner?: string
+          p_expected_status: string
+        }
         Returns: Json
       }
       review_evaluation: {
