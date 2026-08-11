@@ -289,42 +289,45 @@ export function CeDetailPanel({
   const overall = Number(ev.overall_score);
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      {/* Header */}
-      <div className="flex flex-wrap items-center gap-2 border-b px-4 py-3">
+    <div className="flex h-full min-h-0 flex-col bg-white">
+      {/* Header — Base44 ConversationReview: indigo mono id + pale warm score badge */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-[#f0efe9] px-4 py-3">
         <div className="min-w-0">
-          <div className="truncate font-mono text-[13px] font-semibold">{ev.conversation_id}</div>
-          <div className="truncate font-mono text-[11px] text-muted-foreground">{ev.id}</div>
+          <div className="truncate font-mono text-[13px] font-semibold text-indigo-600">{ev.conversation_id}</div>
+          <div className="truncate font-mono text-[11px] text-slate-400">{ev.id}</div>
         </div>
-        <div className="ml-auto flex items-center gap-2">
-          {headerExtra}
-          <div className={cn("rounded-md border px-3 py-1 text-right", scoreClass(overall))}>
-            <div className="text-[10px] font-medium uppercase tracking-wide">{t(C.detail.qaScore)}</div>
-            <div className="text-lg font-bold leading-none">{overall.toFixed(1)}</div>
-          </div>
-        </div>
+        <span
+          className={cn(
+            "rounded-md bg-[#f5f4f0] px-2 py-1 text-[13px] font-bold",
+            scoreTextClass(overall),
+          )}
+        >
+          {overall.toFixed(1)}
+        </span>
+        <div className="ml-auto flex items-center gap-2">{headerExtra}</div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex flex-wrap gap-1 border-b px-3">
+      {/* Rounded pill tabs (no underline tabs) */}
+      <div className="flex flex-wrap gap-1.5 border-b border-[#f0efe9] px-3 py-2">
         {TAB_ORDER.map((k) => (
           <button
             key={k}
             type="button"
             onClick={() => setTab(k)}
             className={cn(
-              "border-b-2 px-2.5 py-2 text-xs transition-colors",
+              "rounded-full border px-3 py-[4px] text-[11px] font-medium transition-colors",
               tab === k
-                ? "border-primary font-semibold text-foreground"
-                : "border-transparent font-medium text-muted-foreground hover:text-foreground",
+                ? "border-slate-900 bg-slate-900 text-white"
+                : "border-[#e8e6e0] bg-white text-slate-600 hover:bg-[#fafaf8]",
             )}
           >
-            {t(C.tabs[k])}
+            {k === "replay" ? `▶ ${t(C.tabs[k])}` : t(C.tabs[k])}
           </button>
         ))}
       </div>
 
-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-[#fdfdfb] p-4">
+
         {/* ── Overview ── */}
         {tab === "overview" && (
           <>
