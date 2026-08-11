@@ -1,10 +1,6 @@
 /**
- * CE review console copy (SU CoachAI /review parity surface).
- *
- * Bilingual strings for the two-column Conversation Evaluation console.
- * Training-related wording is deliberately absent: AI Chatbot does not own
- * training decisions, so no "training ready" / "trained" / "send to training"
- * copy may be declared here.
+ * CE review console copy — PR-4 Round 2.
+ * No training wording. Bilingual.
  */
 
 export type LangValue = { en: string; zh: string };
@@ -13,13 +9,14 @@ export const CE_REVIEW_COPY = {
   pills: {
     all: { en: "All Conversations", zh: "全部對話" },
     needsReview: { en: "Needs Review", zh: "待覆核" },
+    evaluated: { en: "Evaluated", zh: "已評估" },
+    notEvaluated: { en: "Not Evaluated", zh: "未評估" },
   },
   count: { en: "shown", zh: "顯示" },
   countUnavailable: { en: "Counts unavailable", zh: "數量無法取得" },
-  searchPlaceholder: { en: "Search conversation or evaluation id", zh: "搜尋對話或評估 ID" },
-
+  searchPlaceholder: { en: "Search customer, conversation ID, or message", zh: "搜尋客戶、對話 ID 或訊息" },
   filters: {
-    status: { en: "Status", zh: "覆核狀態" },
+    status: { en: "Review", zh: "覆核狀態" },
     urgency: { en: "Urgency", zh: "嚴重度" },
     score: { en: "Score", zh: "分數" },
     channel: { en: "Channel", zh: "渠道" },
@@ -39,19 +36,17 @@ export const CE_REVIEW_COPY = {
   },
   columns: {
     id: { en: "ID", zh: "ID" },
-    conversation: { en: "Conversation", zh: "對話" },
     customer: { en: "Customer", zh: "客戶" },
     date: { en: "Date", zh: "日期" },
     channel: { en: "Channel", zh: "渠道" },
+    convStatus: { en: "Conv.", zh: "對話" },
     qaScore: { en: "QA Score", zh: "QA 分數" },
     urgency: { en: "Urgency", zh: "嚴重度" },
     status: { en: "Status", zh: "狀態" },
-    state: { en: "State", zh: "狀態" },
   },
-
   list: {
-    empty: { en: "No evaluations match the current filters.", zh: "沒有符合目前篩選條件的評估。" },
-    loadFailed: { en: "The evaluation list could not be loaded.", zh: "無法載入評估清單。" },
+    empty: { en: "No conversations match the current filters.", zh: "沒有符合目前篩選條件的對話。" },
+    loadFailed: { en: "The conversation list could not be loaded.", zh: "無法載入對話清單。" },
     prev: { en: "Previous", zh: "上一頁" },
     next: { en: "Next", zh: "下一頁" },
     page: { en: "Page", zh: "頁次" },
@@ -63,14 +58,24 @@ export const CE_REVIEW_COPY = {
     invalidId: { en: "Enter a valid conversation id (UUID).", zh: "請輸入有效的對話 ID（UUID）。" },
     completed: { en: "Evaluation completed.", zh: "評估已完成。" },
     alreadyEvaluated: { en: "This conversation was already evaluated.", zh: "此對話先前已評估過。" },
+    disabled: {
+      en: "Evaluation unavailable until SU Platform company identity is connected.",
+      zh: "在 SU 平台企業身份連接前，評估功能暫時無法使用。",
+    },
   },
   detail: {
-    selectPrompt: { en: "Select a conversation to review its evaluation.", zh: "請選擇一筆對話以檢視其評估。" },
+    selectPrompt: { en: "Select a conversation to review.", zh: "請選擇一筆對話以進行檢視。" },
     loading: { en: "Loading…", zh: "載入中…" },
-    loadFailed: { en: "This evaluation could not be loaded.", zh: "無法載入此評估。" },
-    qaScore: { en: "QA Score", zh: "QA 分數" },
-    openFull: { en: "Open full page", zh: "開啟完整頁面" },
-    back: { en: "Back to Conversation Evaluation", zh: "返回對話評估" },
+    loadFailed: { en: "This conversation could not be loaded.", zh: "無法載入此對話。" },
+    sectionLoadFailed: { en: "This section could not be loaded.", zh: "無法載入此區段。" },
+    notEvaluated: { en: "Not Evaluated", zh: "未評估" },
+    notEvaluatedYet: { en: "Not evaluated yet.", zh: "尚未評估。" },
+    evaluateUnavailable: {
+      en: "Evaluation unavailable until SU Platform company identity is connected.",
+      zh: "在 SU 平台企業身份連接前，評估功能暫時無法使用。",
+    },
+    replayUnavailable: { en: "Replay unavailable until evaluation is completed.", zh: "完成評估後才可使用重播功能。" },
+    recalled: { en: "[Message recalled]", zh: "[訊息已撤回]" },
   },
   tabs: {
     overview: { en: "Overview", zh: "總覽" },
@@ -90,6 +95,7 @@ export const CE_REVIEW_COPY = {
     thread: { en: "Conversation Thread", zh: "對話內容" },
     customer: { en: "Customer", zh: "客戶" },
     aiResponse: { en: "AI Response", zh: "AI 回覆" },
+    humanAgent: { en: "Human Agent", zh: "人工客服" },
     qaFinding: { en: "QA Finding", zh: "QA 發現" },
     humanCorrection: { en: "Verified Human Correction", zh: "已驗證人工修正" },
     noThread: { en: "No messages available for this conversation.", zh: "此對話沒有可顯示的訊息。" },
