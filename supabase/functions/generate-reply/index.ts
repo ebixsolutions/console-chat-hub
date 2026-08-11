@@ -19,7 +19,14 @@
 //   Pre-checks confirmed: status='pending' valid; is_recalled exists; DELETE pattern used.
 //   Authorized by: Director Charlson.
 
-import { resolveKBEndpoint, resolveTenantScope, fetchKBRag, type KBFullChunk, type KBResolvedScope } from "../_shared/kb-client.ts";
+import {
+  resolveKBEndpoint,
+  resolveTenantScope,
+  fetchKBRag,
+  type KBFullChunk,
+  type KBResolvedScope,
+} from "../_shared/kb-client.ts";
+import { evaluateEscalationShadow } from "../_shared/escalation-shadow.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -27,17 +34,14 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// F-1: Explicit Anthropic timeout (25s) — applies to both legacy and orchestration paths.
 const ANTHROPIC_TIMEOUT_MS = 25000;
 
-// Contract 05 §5 — minimal safe fallback prompt (in-memory only, never persisted).
 const MINIMAL_SAFE_FALLBACK_PROMPT = `You are a professional and friendly customer service assistant. 
 Answer customer questions clearly and concisely. 
 If you cannot answer a question confidently, acknowledge it honestly and offer to connect the customer with a human agent.
 Keep responses under 150 words.
 Respond in the same language the customer is using.`;
 
-// ── Task A.1A: Deterministic Handoff Detection ────────────────────────────
 const SAFE_HANDOFF_WORDING: Record<string, string> = {
   "zh-TW": "我們已將你的對話記錄，客服接手後會在此對話中回覆你。目前未啟用即時輪候時間顯示。",
   "zh-CN": "我们已将你的对话记录，客服接手后会在此对话中回复你。目前未启用实时排队位置和预计等待时间显示。",
@@ -92,17 +96,12 @@ function detectHandoffLanguage(text: string): "zh-TW" | "zh-CN" | "en" | null {
   if (HANDOFF_STRONG_TRIGGERS["zh-TW"].some((kw) => text.includes(kw))) return "zh-TW";
   return "zh-TW";
 }
-// ── End Task A.1A helpers ─────────────────────────────────────────────────
 
-// ── Dev19a: PII-safe user_message sanitizer + best-effort trace writer ────
 function sanitizeUserMessage(text: string): string {
   if (!text) return "";
   let s = text;
-  // redact email
   s = s.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "[redacted_email]");
-  // redact phone-like sequences with separators
   s = s.replace(/\+?\d[\d\s().-]{6,}\d/g, "[redacted_phone]");
-  // redact any remaining long digit runs (7+)
   s = s.replace(/\d{7,}/g, "[redacted_digits]");
   if (s.length > 300) s = s.slice(0, 300);
   return s;
@@ -130,10 +129,7 @@ async function writeTraces(
       response_status: params.response_status,
       response_latency_ms: params.response_latency_ms,
       error_message: params.error_message,
-      request_payload: {
-        ...params.request_payload,
-        provider: "anthropic",
-      },
+      request_payload: { ...params.request_payload, provider: "anthropic" },
     });
   } catch (e) {
     console.error("[generate-reply] upstream_call_log insert failed (non-blocking):", e);
@@ -155,9 +151,7 @@ async function writeTraces(
     console.error("[generate-reply] final_prompt_trace insert failed (non-blocking):", e);
   }
 }
-// ── End Dev19a helpers ────────────────────────────────────────────────────
 
-// ── DEFECT-1 fix: scoped __THINKING__ cleanup helper ─────────────────────
 async function cleanupThinking(
   supabaseAdmin: ReturnType<typeof createClient>,
   conversation_id: string,
@@ -178,12 +172,7 @@ async function cleanupThinking(
     console.error("[generate-reply] cleanupThinking failed (non-blocking):", e);
   }
 }
-// ── End DEFECT-1 helper ──────────────────────────────────────────────────
 
-// ── ESC-MVP R1: Explicit Handoff Classifier ──────────────────────────────
-// Per-trigger-span evaluation. R1 = explicit handoff request.
-// Reuses isHandoffIntent() + detectHandoffLanguage() for R1-only.
-// Future R2–R4 rules will extend this classifier without changing R1 logic.
 interface EscClassifierResult {
   rule: "R1" | null;
   confidence: number;
@@ -193,22 +182,12 @@ interface EscClassifierResult {
 
 function classifyExplicitHandoff(text: string): EscClassifierResult {
   const lang = detectHandoffLanguage(text);
-  if (lang) {
-    return {
-      rule: "R1",
-      confidence: 1.0,
-      trigger_span: text.slice(0, 100),
-      language: lang,
-    };
-  }
+  if (lang) return { rule: "R1", confidence: 1.0, trigger_span: text.slice(0, 100), language: lang };
   return { rule: null, confidence: 0, trigger_span: "", language: "zh-TW" };
 }
-// ── End ESC-MVP R1 classifier ────────────────────────────────────────────
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
     const body = await req.json();
@@ -220,27 +199,18 @@ Deno.serve(async (req) => {
       });
     }
 
-    // ── Feature flags (read at request time so they can be toggled per deploy) ──
     const ENABLE_KB = Deno.env.get("ENABLE_KB_ADAPTER") === "true";
     const ENABLE_COACH = Deno.env.get("ENABLE_COACH_PROMPT_ADAPTER") === "true";
     const ENABLE_C360 = Deno.env.get("ENABLE_CUSTOMER360_ADAPTER") === "true";
     const ENABLE_TOOL_EXEC = Deno.env.get("ENABLE_TOOL_EXECUTOR") === "true";
 
-    // ⚠️ LEGACY GATE — MUST be checked FIRST, before any other logic.
-    // All flags false → behavior 100% identical to L5a.
     if (!ENABLE_KB && !ENABLE_COACH && !ENABLE_C360 && !ENABLE_TOOL_EXEC) {
       return await legacyGenerateReply(conversation_id, source_message_id ?? null);
     }
 
-    // ── ORCHESTRATION PATH (only reached when at least one flag is true) ──────
     return await orchestrationGenerateReply(
       conversation_id,
-      {
-        ENABLE_KB,
-        ENABLE_COACH,
-        ENABLE_C360,
-        ENABLE_TOOL_EXEC,
-      },
+      { ENABLE_KB, ENABLE_COACH, ENABLE_C360, ENABLE_TOOL_EXEC },
       source_message_id ?? null,
     );
   } catch (error) {
@@ -252,11 +222,6 @@ Deno.serve(async (req) => {
   }
 });
 
-// ────────────────────────────────────────────────────────────────────────────
-// LEGACY PATH — preserved L5a behavior, byte-for-byte equivalent to pre-L5b.
-// ⚠️ Do NOT add adapter calls / overlay reads / trace writes / status changes here.
-// Task A.1A: deterministic handoff branch added ONLY (before anthropicKey check).
-// ────────────────────────────────────────────────────────────────────────────
 async function legacyGenerateReply(conversation_id: string, source_message_id: string | null): Promise<Response> {
   const supabaseAdmin = createClient(
     Deno.env.get("SUPABASE_URL") ?? "",
@@ -277,15 +242,11 @@ async function legacyGenerateReply(conversation_id: string, source_message_id: s
     });
   }
 
-  if (conversation.status === "resolved") {
+  if (conversation.status === "resolved")
     return new Response(JSON.stringify({ success: true, skipped: "resolved" }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
-  }
 
-  // ── Dev21 Batch 1: Human-handling defense-in-depth guard ────────────
-  // When status is 'pending' or 'transferred', a human agent is handling.
-  // Do not call LLM. Clear ai_generating flag and return.
   if (conversation.status === "pending" || conversation.status === "transferred") {
     console.log(
       "[generate-reply] human-handling guard: skipping LLM for status:",
@@ -296,16 +257,14 @@ async function legacyGenerateReply(conversation_id: string, source_message_id: s
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
-  // ── End Dev21 Batch 1 guard ─────────────────────────────────────────
 
-  // ── S-1: assigned_agent_id defense-in-depth guard ──────────────────
   if (conversation.assigned_agent_id) {
     console.log("[generate-reply] S-1 assigned_agent_id guard (legacy):", conversation_id);
     return new Response(JSON.stringify({ success: true, skipped: "assigned_to_agent" }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
-  // ── End S-1 (legacy) ───────────────────────────────────────────────
+
   const { data: messages } = await supabaseAdmin
     .from("messages")
     .select("role, content, created_at")
@@ -315,66 +274,45 @@ async function legacyGenerateReply(conversation_id: string, source_message_id: s
     .order("created_at", { ascending: true })
     .limit(10);
 
-  if (!messages || messages.length === 0) {
+  if (!messages || messages.length === 0)
     return new Response(JSON.stringify({ success: true, skipped: "no messages" }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
-  }
 
   const claudeMessages = messages.map((m) => ({
     role: m.role === "visitor" ? "user" : "assistant",
     content: m.content,
   }));
-
-  if (claudeMessages[claudeMessages.length - 1].role === "assistant") {
+  if (claudeMessages[claudeMessages.length - 1].role === "assistant")
     return new Response(JSON.stringify({ success: true, skipped: "last message is assistant" }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
-  }
 
-  // ── Task A.1A: Deterministic handoff branch ──────────────────────────────
   const lastVisitorMsg = messages.filter((m) => m.role === "visitor").at(-1)?.content ?? "";
   const handoffLang = detectHandoffLanguage(lastVisitorMsg);
 
   if (handoffLang) {
     const safeWording = SAFE_HANDOFF_WORDING[handoffLang];
-
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-
-    const { error: insertError } = await supabaseAdmin.from("messages").insert({
-      conversation_id: conversation_id,
-      role: "assistant",
-      content: safeWording,
-      status: "delivered",
-      is_recalled: false,
-    });
-
-    if (insertError) {
-      console.error("[generate-reply] deterministic handoff insert error:", insertError);
-    }
-
+    const { error: insertError } = await supabaseAdmin
+      .from("messages")
+      .insert({ conversation_id, role: "assistant", content: safeWording, status: "delivered", is_recalled: false });
+    if (insertError) console.error("[generate-reply] deterministic handoff insert error:", insertError);
     const { error: pendingUpdateErr } = await supabaseAdmin
       .from("conversations")
-      .update({
-        status: "pending",
-        updated_at: new Date().toISOString(),
-      })
+      .update({ status: "pending", updated_at: new Date().toISOString() })
       .eq("id", conversation_id);
-
-    if (pendingUpdateErr) {
+    if (pendingUpdateErr)
       console.error(
         "[generate-reply] CRITICAL: failed to mark conversation pending after handoff:",
         pendingUpdateErr.message,
         conversation_id,
       );
-    }
-
     console.log("[generate-reply] deterministic handoff reply sent:", conversation_id, handoffLang);
     return new Response(JSON.stringify({ success: true }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
-  // ── End Task A.1A handoff branch ─────────────────────────────────────────
 
   const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
   if (!anthropicKey) {
@@ -400,18 +338,13 @@ When the customer explicitly requests a human agent, or when you transfer to a h
 
   const requestTimestamp = Date.now();
   let claudeResponse: Response | null = null;
-  // F-1: Explicit timeout guard
   const _legacyAbortCtrl = new AbortController();
   const _legacyTimeout = setTimeout(() => _legacyAbortCtrl.abort(), ANTHROPIC_TIMEOUT_MS);
   let fetchThrew = false;
   try {
     claudeResponse = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": anthropicKey,
-        "anthropic-version": "2023-06-01",
-      },
+      headers: { "Content-Type": "application/json", "x-api-key": anthropicKey, "anthropic-version": "2023-06-01" },
       body: JSON.stringify(requestPayload),
       signal: _legacyAbortCtrl.signal,
     });
@@ -419,7 +352,6 @@ When the customer explicitly requests a human agent, or when you transfer to a h
     fetchThrew = true;
     if (e instanceof DOMException && e.name === "AbortError") {
       console.error("[generate-reply] F-1 Anthropic timeout after 25s:", conversation_id);
-      // Clean up __THINKING__ to stop Widget typing indicator
       await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     } else {
       console.error("[generate-reply] Anthropic fetch threw:", e);
@@ -429,9 +361,7 @@ When the customer explicitly requests a human agent, or when you transfer to a h
     clearTimeout(_legacyTimeout);
   }
 
-  const responseTimestamp = Date.now();
-  const responseLatencyMs = responseTimestamp - requestTimestamp;
-
+  const responseLatencyMs = Date.now() - requestTimestamp;
   const tracePayloadRedacted = {
     model: requestPayload.model,
     max_tokens: requestPayload.max_tokens,
@@ -484,7 +414,6 @@ When the customer explicitly requests a human agent, or when you transfer to a h
   const aiReplyContent = claudeData.content?.[0]?.text ?? "";
   const tokenInput = claudeData.usage?.input_tokens ?? null;
   const tokenOutput = claudeData.usage?.output_tokens ?? null;
-
   if (!aiReplyContent) {
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     await writeTraces(supabaseAdmin, {
@@ -506,30 +435,13 @@ When the customer explicitly requests a human agent, or when you transfer to a h
   }
 
   await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-
   const { data: insertedMsg, error: insertError } = await supabaseAdmin
     .from("messages")
-    .insert({
-      conversation_id: conversation_id,
-      role: "assistant",
-      content: aiReplyContent,
-      status: "delivered",
-      is_recalled: false,
-    })
+    .insert({ conversation_id, role: "assistant", content: aiReplyContent, status: "delivered", is_recalled: false })
     .select("id")
     .maybeSingle();
-
-  if (insertError) {
-    console.error("[generate-reply] insert error:", insertError);
-  }
-
-  await supabaseAdmin
-    .from("conversations")
-    .update({
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", conversation_id);
-
+  if (insertError) console.error("[generate-reply] insert error:", insertError);
+  await supabaseAdmin.from("conversations").update({ updated_at: new Date().toISOString() }).eq("id", conversation_id);
   await writeTraces(supabaseAdmin, {
     conversation_id,
     message_id: insertedMsg?.id ?? null,
@@ -542,23 +454,12 @@ When the customer explicitly requests a human agent, or when you transfer to a h
     token_output: tokenOutput,
     ai_reply_content: aiReplyContent,
   });
-
   console.log("[generate-reply] AI reply sent for conversation:", conversation_id);
   return new Response(JSON.stringify({ success: true }), {
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// ORCHESTRATION PATH — 7-step skeleton per Contract 11 §3.1.
-// Each adapter step is independently flag-gated. With all flags false this
-// function is unreachable (legacyGenerateReply() is called instead).
-//
-// NOTE: This skeleton is intentionally non-executing in L5b. Adapter calls
-// and trace writes are placeholders with safe fallbacks; live adapter
-// invocations and trace inserts are deferred to L5c+ once schema is verified.
-// ────────────────────────────────────────────────────────────────────────────
-// ── W5: Citation metadata builder (orchestration path only) ──────────────
 function buildCitationMetadata(
   chunks: Array<{ title?: string; score?: number; source_type?: string }>,
 ): { citations: Array<{ label: string; source_type: string; relevance?: string }> } | null {
@@ -578,15 +479,9 @@ function buildCitationMetadata(
   }
   return citations.length > 0 ? { citations } : null;
 }
-// ── End W5 helper ────────────────────────────────────────────────────────
-type FlagSet = {
-  ENABLE_KB: boolean;
-  ENABLE_COACH: boolean;
-  ENABLE_C360: boolean;
-  ENABLE_TOOL_EXEC: boolean;
-};
 
-// F-2: Multilingual KB fallback safe text
+type FlagSet = { ENABLE_KB: boolean; ENABLE_COACH: boolean; ENABLE_C360: boolean; ENABLE_TOOL_EXEC: boolean };
+
 const KB_FALLBACK_SAFE_TEXT: Record<string, Record<string, string>> = {
   KB_SCOPE_GATE: {
     "zh-TW": "很抱歉，系統暫時無法查詢知識庫。讓我為您轉接客服人員。",
@@ -615,23 +510,20 @@ const KB_FALLBACK_SAFE_TEXT: Record<string, Record<string, string>> = {
   },
 };
 
-// ── S0: LLM failure safe wording (D-5 approved — exact frozen text) ─────
 const S0_LLM_FAILURE_SAFE_TEXT: Record<string, string> = {
   "zh-TW": "系統暫時無法完成回覆，我已為你轉交客服人員跟進。",
   "zh-CN": "系统暂时无法完成回复，我已为你转交客服人员跟进。",
   en: "The system is temporarily unable to complete a response. I\u2019ve handed this conversation to a support agent for follow-up.",
 };
-// ── End S0 safe wording ─────────────────────────────────────────────────
 
-// F-2: Detect visitor language from message content
 function detectVisitorLanguage(text: string): "zh-TW" | "zh-CN" | "en" {
   if (!text) return "zh-TW";
-  const hasChinese = /[\u4e00-\u9fff]/.test(text);
-  if (!hasChinese) return "en";
+  if (!/[\u4e00-\u9fff]/.test(text)) return "en";
   const zhCnIndicators = ["转", "们", "队", "预计", "为您", "为我", "为你", "请", "这", "没"];
   if (zhCnIndicators.some((c) => text.includes(c))) return "zh-CN";
   return "zh-TW";
 }
+
 type KBFallbackRpcResult =
   | "success"
   | "already_handled"
@@ -640,6 +532,7 @@ type KBFallbackRpcResult =
   | "invalid_source_message"
   | "invalid_branch"
   | "not_found";
+
 async function handleKBFallback(
   supabaseAdmin: ReturnType<typeof createClient>,
   conversation_id: string,
@@ -650,8 +543,7 @@ async function handleKBFallback(
 ): Promise<Response> {
   const _branchTexts = KB_FALLBACK_SAFE_TEXT[branchTag];
   const safeText = _branchTexts ? (_branchTexts[visitorLang] ?? _branchTexts["zh-TW"]) : undefined;
-  if (!safeText) {
-    console.error(`[generate-reply] CRITICAL unknown branch: ${branchTag}`, conversation_id);
+  if (!safeText)
     return new Response(
       JSON.stringify({
         success: false,
@@ -663,9 +555,7 @@ async function handleKBFallback(
       }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
-  }
-  if (!source_message_id) {
-    console.error(`[generate-reply] CRITICAL source_message_id missing`, conversation_id);
+  if (!source_message_id)
     return new Response(
       JSON.stringify({
         success: false,
@@ -678,15 +568,14 @@ async function handleKBFallback(
       }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
-  }
+
   const { data: rpcData, error: rpcErr } = await supabaseAdmin.rpc("kb_fallback_handoff_tx", {
     p_conversation_id: conversation_id,
     p_safe_reply_content: safeText,
     p_branch_tag: branchTag,
     p_source_message_id: source_message_id,
   });
-  if (rpcErr) {
-    console.error(`[generate-reply] CRITICAL RPC failed [${branchTag}]:`, rpcErr.message, conversation_id);
+  if (rpcErr)
     return new Response(
       JSON.stringify({
         success: false,
@@ -699,11 +588,9 @@ async function handleKBFallback(
       }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
-  }
   const result: string = rpcData?.result ?? "unknown";
   switch (result as KBFallbackRpcResult | "unknown") {
     case "success":
-      console.log(`[generate-reply] KB fallback persisted [${branchTag}]:`, conversation_id);
       return new Response(
         JSON.stringify({
           success: true,
@@ -716,14 +603,6 @@ async function handleKBFallback(
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     case "already_handled":
-      console.log(
-        `[generate-reply] KB fallback idempotent [${branchTag}]:`,
-        conversation_id,
-        "existing:",
-        rpcData?.existing_branch,
-        "requested:",
-        rpcData?.requested_branch,
-      );
       return new Response(
         JSON.stringify({
           success: true,
@@ -742,7 +621,6 @@ async function handleKBFallback(
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     case "already_resolved":
-      console.log(`[generate-reply] KB skipped resolved [${branchTag}]:`, conversation_id);
       return new Response(
         JSON.stringify({
           success: false,
@@ -756,7 +634,6 @@ async function handleKBFallback(
         { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     case "already_under_human_control":
-      console.log(`[generate-reply] KB skipped human control [${branchTag}]:`, conversation_id);
       return new Response(
         JSON.stringify({
           success: true,
@@ -769,7 +646,6 @@ async function handleKBFallback(
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     case "invalid_source_message":
-      console.error(`[generate-reply] invalid source_message [${branchTag}]:`, conversation_id);
       return new Response(
         JSON.stringify({
           success: false,
@@ -783,7 +659,6 @@ async function handleKBFallback(
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     case "invalid_branch":
-      console.error(`[generate-reply] invalid branch from RPC [${branchTag}]:`, conversation_id);
       return new Response(
         JSON.stringify({
           success: false,
@@ -796,7 +671,6 @@ async function handleKBFallback(
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     case "not_found":
-      console.error(`[generate-reply] conversation not found [${branchTag}]:`, conversation_id);
       return new Response(
         JSON.stringify({
           success: false,
@@ -809,7 +683,6 @@ async function handleKBFallback(
         { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     default:
-      console.error(`[generate-reply] unexpected RPC result [${branchTag}]:`, result, conversation_id);
       return new Response(
         JSON.stringify({
           success: false,
@@ -825,15 +698,6 @@ async function handleKBFallback(
   }
 }
 
-// ── S0: System-failure handoff handler ───────────────────────────────────
-// Routes 6 failure types to s0_handoff_tx RPC.
-// D-2b(i) STRICT:
-//   - NO cleanupThinking before RPC
-//   - cleanupThinking ONLY inside "success" branch
-//   - All non-success branches: ZERO mutation (no cleanup)
-//   - RPC transport error: ZERO mutation (handoff state uncertain)
-//   - Pre-RPC validation failures: ZERO mutation
-// D-5: KB failures use KB_FALLBACK_SAFE_TEXT; LLM failures use S0_LLM_FAILURE_SAFE_TEXT.
 async function handleS0Handoff(
   supabaseAdmin: ReturnType<typeof createClient>,
   conversation_id: string,
@@ -841,49 +705,31 @@ async function handleS0Handoff(
   failure_type: string,
   visitorLang: "zh-TW" | "zh-CN" | "en",
 ): Promise<Response> {
-  // Determine safe reply: KB failures → existing KB text; LLM failures → D-5 text
   const isKBFailure = failure_type === "KB_SCOPE_GATE" || failure_type === "KB_API_FAIL";
   let safeReply: string;
   if (isKBFailure) {
     const branchTexts = KB_FALLBACK_SAFE_TEXT[failure_type];
     safeReply = branchTexts?.[visitorLang] ?? branchTexts?.["zh-TW"] ?? "";
-  } else {
-    safeReply = S0_LLM_FAILURE_SAFE_TEXT[visitorLang] ?? S0_LLM_FAILURE_SAFE_TEXT["zh-TW"];
-  }
+  } else safeReply = S0_LLM_FAILURE_SAFE_TEXT[visitorLang] ?? S0_LLM_FAILURE_SAFE_TEXT["zh-TW"];
 
-  if (!safeReply) {
-    // Pre-RPC config failure — ZERO mutation per D-2b(i)
-    console.error(`[generate-reply] S0: no safe reply for failure_type=${failure_type}`, conversation_id);
+  if (!safeReply)
     return new Response(JSON.stringify({ success: false, error: "s0_no_safe_reply", failure_type }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
-  }
-
-  if (!source_message_id) {
-    // Pre-RPC validation failure — ZERO mutation per D-2b(i)
-    console.error(`[generate-reply] S0: missing source_message_id for ${failure_type}`, conversation_id);
+  if (!source_message_id)
     return new Response(JSON.stringify({ success: false, error: "s0_missing_source_message_id", failure_type }), {
       status: 400,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
-  }
 
-  // D-2b(i): NO cleanupThinking before RPC
   const { data: rpcData, error: rpcErr } = await supabaseAdmin.rpc("s0_handoff_tx", {
     p_conversation_id: conversation_id,
     p_safe_reply_content: safeReply,
     p_source_message_id: source_message_id,
     p_failure_type: failure_type,
   });
-
-  // D-2b(i): NO shared cleanup here — cleanup ONLY inside "success" branch below
-
-  if (rpcErr) {
-    // RPC transport error — handoff state UNCERTAIN
-    // DB transaction may have committed; client disconnected during response
-    // ZERO mutation: no cleanup, no retry, no fallback
-    console.error(`[generate-reply] S0 RPC transport error [${failure_type}]:`, rpcErr.message, conversation_id);
+  if (rpcErr)
     return new Response(
       JSON.stringify({
         success: false,
@@ -894,14 +740,11 @@ async function handleS0Handoff(
       }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
-  }
 
   const _s0Result: string = rpcData?.result ?? "unknown";
   switch (_s0Result) {
     case "success":
-      // D-2b(i): cleanup ONLY here — RPC confirmed committed
       await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-      console.log(`[generate-reply] S0 handoff [${failure_type}]:`, conversation_id);
       return new Response(
         JSON.stringify({
           success: true,
@@ -913,8 +756,6 @@ async function handleS0Handoff(
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     case "already_handled":
-      // Non-success per frozen contract — ZERO cleanup
-      console.log(`[generate-reply] S0 idempotent [${failure_type}]:`, conversation_id);
       return new Response(
         JSON.stringify({
           success: true,
@@ -926,8 +767,6 @@ async function handleS0Handoff(
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     case "already_resolved":
-      // Non-success — ZERO cleanup
-      console.log(`[generate-reply] S0 skipped resolved [${failure_type}]:`, conversation_id);
       return new Response(
         JSON.stringify({
           success: true,
@@ -939,8 +778,6 @@ async function handleS0Handoff(
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     case "already_under_human_control":
-      // Non-success — ZERO cleanup
-      console.log(`[generate-reply] S0 skipped human_control [${failure_type}]:`, conversation_id);
       return new Response(
         JSON.stringify({
           success: true,
@@ -952,36 +789,26 @@ async function handleS0Handoff(
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     case "invalid_source_message":
-      // Non-success — ZERO cleanup
-      console.error(`[generate-reply] S0 invalid source [${failure_type}]:`, conversation_id);
       return new Response(
         JSON.stringify({ success: false, error: "s0_invalid_source_message", escalation_rule: "S0", failure_type }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     case "invalid_input":
-      // Non-success — ZERO cleanup
-      console.error(`[generate-reply] S0 invalid input [${failure_type}]:`, conversation_id);
       return new Response(
         JSON.stringify({ success: false, error: "s0_invalid_input", escalation_rule: "S0", failure_type }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     case "invalid_failure_type":
-      // Non-success — ZERO cleanup
-      console.error(`[generate-reply] S0 invalid failure_type [${failure_type}]:`, conversation_id);
       return new Response(
         JSON.stringify({ success: false, error: "s0_invalid_failure_type", escalation_rule: "S0", failure_type }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     case "not_found":
-      // Non-success — ZERO cleanup
-      console.error(`[generate-reply] S0 conversation not found [${failure_type}]:`, conversation_id);
       return new Response(
         JSON.stringify({ success: false, error: "s0_conversation_not_found", escalation_rule: "S0", failure_type }),
         { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     default:
-      // Unknown result — ZERO cleanup
-      console.error(`[generate-reply] S0 unknown result [${failure_type}]:`, _s0Result, conversation_id);
       return new Response(
         JSON.stringify({
           success: false,
@@ -994,7 +821,6 @@ async function handleS0Handoff(
       );
   }
 }
-// ── End S0 handler ───────────────────────────────────────────────────────
 
 async function orchestrationGenerateReply(
   conversation_id: string,
@@ -1005,32 +831,21 @@ async function orchestrationGenerateReply(
     Deno.env.get("SUPABASE_URL") ?? "",
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
   );
-
-  // Load conversation
   const { data: conversation, error: convError } = await supabaseAdmin
     .from("conversations")
     .select("id, status, assigned_agent_id")
     .eq("id", conversation_id)
     .single();
-
-  if (convError || !conversation) {
+  if (convError || !conversation)
     return new Response(JSON.stringify({ error: "Conversation not found" }), {
       status: 404,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
-  }
 
-  // Step 6 (early): Status Matrix Skeleton Guard — orchestration path ONLY.
-  // L5b skeleton: only resolved/closed are refused. Full policy is L5e.
   if (conversation.status === "resolved" || conversation.status === "closed") {
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return safeRefusal("CONV_RESOLVED_OR_CLOSED");
   }
-
-  // ── Dev21 Batch 1: Human-handling defense-in-depth guard ────────────
-  // Do NOT use safeRefusal() here — its response includes handoff_required:true
-  // and skipped:"refused" which are semantically incorrect for human_handling.
-  // Human-handling guard must not generate any AI/assistant message or suggest handoff.
   if (conversation.status === "pending" || conversation.status === "transferred") {
     console.log("[generate-reply] orchestration human-handling guard:", conversation.status, conversation_id);
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
@@ -1038,9 +853,6 @@ async function orchestrationGenerateReply(
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
-  // ── End Dev21 Batch 1 guard ─────────────────────────────────────────
-
-  // ── S-1: assigned_agent_id defense-in-depth guard ──────────────────
   if (conversation.assigned_agent_id) {
     console.log("[generate-reply] S-1 assigned_agent_id guard (orchestration):", conversation_id);
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
@@ -1048,9 +860,7 @@ async function orchestrationGenerateReply(
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
-  // ── End S-1 (orchestration) ────────────────────────────────────────
 
-  // ── H-1: Deterministic handoff detection (orchestration path) ──────
   const { data: _h1VisitorMsgs } = await supabaseAdmin
     .from("messages")
     .select("content")
@@ -1062,24 +872,40 @@ async function orchestrationGenerateReply(
   const _h1LastMsg = _h1VisitorMsgs?.[0]?.content ?? "";
   const _h1HandoffLang = detectHandoffLanguage(_h1LastMsg);
 
-  // ── ESC-MVP R1: Classifier invocation (orchestration only) ─────────
-  // When enabled, RPC is the SOLE write path for handoff. All RPC results
-  // handled explicitly — NO H-1 fallback after any RPC attempt or when
-  // ESC block determines R1 intent. H-1 only when flag is disabled.
+  // ── PR-5 Task 3: full escalation SHADOW ONLY ───────────────────────
+  // Default OFF. No writes, no RPCs, no routing changes.
+  // Only signals already verified at this point are bound.
+  const _pr5Shadow = evaluateEscalationShadow(
+    {
+      conversation_id,
+      source_message_id,
+      latest_message_content: _h1LastMsg,
+      conversation_status: conversation.status,
+      assigned_agent_id: conversation.assigned_agent_id ?? null,
+      explicit_request: isHandoffIntent(_h1LastMsg),
+    },
+    Deno.env,
+  );
+
+  if (_pr5Shadow) {
+    console.log("[generate-reply] PR-5 escalation shadow:", {
+      conversation_id,
+      matched_rule: _pr5Shadow.matched_rule,
+      decision: _pr5Shadow.decision,
+      reason_code: _pr5Shadow.reason_code,
+      signal_gaps: _pr5Shadow.signal_gaps,
+      provider_warnings: _pr5Shadow.provider_warnings,
+    });
+  }
+  // ── End PR-5 Task 3 shadow ─────────────────────────────────────────
+
   const _escMvpEnabled = Deno.env.get("ESC_MVP_FEATURE_FLAG") === "true";
   let _escHandled = false;
-
   if (_escMvpEnabled && _h1HandoffLang) {
     const _escResult = classifyExplicitHandoff(_h1LastMsg);
-
     if (_escResult.rule === "R1") {
-      // ESC block claims this handoff — H-1 must not run regardless of outcome
       _escHandled = true;
-
-      if (!source_message_id) {
-        // No source_message_id — cannot call RPC safely. Do not fall back to H-1
-        // because H-1 would also lack a valid source for cleanupThinking.
-        console.error("[generate-reply] ESC-MVP R1: missing source_message_id, no fallback:", conversation_id);
+      if (!source_message_id)
         return new Response(
           JSON.stringify({
             success: false,
@@ -1089,24 +915,14 @@ async function orchestrationGenerateReply(
           }),
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
-      }
-
       await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
       const _escSafeWording = SAFE_HANDOFF_WORDING[_escResult.language];
-
       const { data: _escRpcData, error: _escRpcErr } = await supabaseAdmin.rpc("explicit_handoff_tx", {
         p_conversation_id: conversation_id,
         p_safe_reply_content: _escSafeWording,
         p_source_message_id: source_message_id,
       });
-
-      if (_escRpcErr) {
-        // Transport/network error — outcome uncertain. No H-1 fallback.
-        console.error(
-          "[generate-reply] ESC-MVP R1 RPC transport error (no fallback):",
-          _escRpcErr.message,
-          conversation_id,
-        );
+      if (_escRpcErr)
         return new Response(
           JSON.stringify({
             success: false,
@@ -1117,30 +933,14 @@ async function orchestrationGenerateReply(
           }),
           { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
-      }
-
       const _escRpcResult: string = _escRpcData?.result ?? "unknown";
-
       switch (_escRpcResult) {
         case "success":
-          console.log("[generate-reply] ESC-MVP R1 handoff:", conversation_id, _escResult.language);
           return new Response(
-            JSON.stringify({
-              success: true,
-              escalation_rule: "R1",
-              handoff_persisted: true,
-              rpc_result: "success",
-            }),
+            JSON.stringify({ success: true, escalation_rule: "R1", handoff_persisted: true, rpc_result: "success" }),
             { headers: { ...corsHeaders, "Content-Type": "application/json" } },
           );
-
         case "already_handled":
-          console.log(
-            "[generate-reply] ESC-MVP R1 idempotent:",
-            conversation_id,
-            "existing:",
-            _escRpcData?.existing_branch,
-          );
           return new Response(
             JSON.stringify({
               success: true,
@@ -1150,21 +950,12 @@ async function orchestrationGenerateReply(
             }),
             { headers: { ...corsHeaders, "Content-Type": "application/json" } },
           );
-
         case "already_resolved":
-          console.log("[generate-reply] ESC-MVP R1 skipped (resolved/closed):", conversation_id);
           return new Response(
-            JSON.stringify({
-              success: true,
-              skipped: "resolved",
-              escalation_rule: "R1",
-              handoff_persisted: false,
-            }),
+            JSON.stringify({ success: true, skipped: "resolved", escalation_rule: "R1", handoff_persisted: false }),
             { headers: { ...corsHeaders, "Content-Type": "application/json" } },
           );
-
         case "already_under_human_control":
-          console.log("[generate-reply] ESC-MVP R1 skipped (human_control):", conversation_id);
           return new Response(
             JSON.stringify({
               success: true,
@@ -1174,23 +965,17 @@ async function orchestrationGenerateReply(
             }),
             { headers: { ...corsHeaders, "Content-Type": "application/json" } },
           );
-
         case "not_found":
-          console.error("[generate-reply] ESC-MVP R1 conversation not found:", conversation_id);
           return new Response(
             JSON.stringify({ success: false, error: "esc_conversation_not_found", escalation_rule: "R1" }),
             { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
           );
-
         case "invalid_source_message":
-          console.error("[generate-reply] ESC-MVP R1 invalid source_message:", conversation_id);
           return new Response(
             JSON.stringify({ success: false, error: "esc_invalid_source_message", escalation_rule: "R1" }),
             { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
           );
-
         default:
-          console.error("[generate-reply] ESC-MVP R1 unknown RPC result:", _escRpcResult, conversation_id);
           return new Response(
             JSON.stringify({
               success: false,
@@ -1203,120 +988,66 @@ async function orchestrationGenerateReply(
       }
     }
   }
-  // ── End ESC-MVP R1 invocation ──────────────────────────────────────
 
-  // H-1: only reachable when ESC feature flag is disabled (_escHandled=false).
-  // When ESC is enabled, all handoff-intent paths return above.
   if (_h1HandoffLang && !_escHandled) {
     const safeWording = SAFE_HANDOFF_WORDING[_h1HandoffLang];
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-    await supabaseAdmin.from("messages").insert({
-      conversation_id,
-      role: "assistant",
-      content: safeWording,
-      status: "delivered",
-      is_recalled: false,
-    });
+    await supabaseAdmin
+      .from("messages")
+      .insert({ conversation_id, role: "assistant", content: safeWording, status: "delivered", is_recalled: false });
     await supabaseAdmin
       .from("conversations")
-      .update({
-        status: "pending",
-        updated_at: new Date().toISOString(),
-      })
+      .update({ status: "pending", updated_at: new Date().toISOString() })
       .eq("id", conversation_id);
-    console.log("[generate-reply] H-1 orchestration handoff:", conversation_id, _h1HandoffLang);
     return new Response(JSON.stringify({ success: true }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
-  // ── End H-1 ────────────────────────────────────────────────────────
 
-  // ── G-1: Greeting/trivial bypass — skip KB for simple greetings ────
-  // F-4: Normalize input + support repeated greetings
-  // DEFECT-2 v1.1: separate EN/ZH compound patterns
   const _g1Normalized = _h1LastMsg.trim().replace(/\s+/g, " ").toLowerCase();
   const _g1Raw = _h1LastMsg.trim();
   const _g1GreetingRe =
     /^((hi|hello|hey|你好|嗨|哈囉|早安|午安|晚安|good\s*(morning|afternoon|evening)|thanks|thank you|ok|okay|謝謝|好的|嗯)\s*[!！。.？?，,]*\s*)+$/i;
-  // G-1b EN: greeting + space + filler word (there/everyone/guys/all) + optional trailing punct
   const _g1CompoundEnRe = /^(hi|hello|hey)\s+(there|everyone|guys|all)[!！。.？?，,\s]*$/i;
-  // G-1b ZH: greeting + optional punct/space + filler (呀/啊/大家好) + optional trailing punct
-  // Uses _g1Raw (not lowercased) since Chinese chars are case-insensitive
   const _g1CompoundZhRe = /^(你好|嗨|哈囉|早安|午安|晚安)[，,、\s]*(呀|啊|大家好?|各位好?)[!！。.？?\s]*$/;
   let _g1SkipKB = false;
-  if (_g1GreetingRe.test(_g1Normalized) || _g1CompoundEnRe.test(_g1Normalized) || _g1CompoundZhRe.test(_g1Raw)) {
-    console.log("[generate-reply] G-1 greeting bypass, skipping KB:", conversation_id);
+  if (_g1GreetingRe.test(_g1Normalized) || _g1CompoundEnRe.test(_g1Normalized) || _g1CompoundZhRe.test(_g1Raw))
     _g1SkipKB = true;
-  }
-  // ── End G-1 ────────────────────────────────────────────────────────
 
-  // F-2: Detect visitor language for KB fallback messages
   const _visitorLang = detectVisitorLanguage(_h1LastMsg);
-
-  // ── S0: Feature flag (absent env = disabled) ───────────────────────────
   const _escEnableS0 = Deno.env.get("ESC_ENABLE_S0") === "true";
-  // ── End S0 flag ────────────────────────────────────────────────────────
 
-  // Step 0: Budget check (orchestration path only).
-  // TODO L5e: enforce per-conversation LLM/tool budget; on exceed → handoff.
-  //   if (await budgetExceeded(conversation_id)) { return safeRefusal('BUDGET_EXCEEDED'); }
-
-  // Step 1: Coach Prompt Adapter (ENABLE_COACH).
-  // In-memory only — base_prompt body is NEVER persisted.
   let basePrompt = MINIMAL_SAFE_FALLBACK_PROMPT;
   let coachTrace: {
     version_id?: string;
     version_label?: string;
     prompt_hash?: string;
     source: "upstream" | "minimal_fallback";
-  } = {
-    source: "minimal_fallback",
-  };
+  } = { source: "minimal_fallback" };
   if (flags.ENABLE_COACH) {
     const promptResult = await callCoachPromptAdapter(conversation_id);
     if (promptResult.success && promptResult.content) {
-      basePrompt = promptResult.content; // in-memory only
+      basePrompt = promptResult.content;
       coachTrace = {
         version_id: promptResult.version_id,
         version_label: promptResult.version_label,
         prompt_hash: promptResult.prompt_hash,
         source: "upstream",
       };
-    } else {
-      // Fallback: keep MINIMAL_SAFE_FALLBACK_PROMPT.
-      // upstream_call_log is written by the adapter; do NOT duplicate here.
-      console.warn("[generate-reply] coach_prompt_adapter fallback", { conversation_id, code: "F-02" });
     }
   }
 
-  // Step 2: prompt_overlay (orchestration path only; NO separate flag).
-  // ⚠️ Schema unverified in L5b — comment-only. Future hook:
-  //   const overlay = await loadPromptOverlay(conversation_id);
-  //   basePrompt = mergeOverlay(basePrompt, overlay);  // in-memory only
-
-  // Step 3: Customer360 Adapter (ENABLE_C360).
-  // customer_context lives in memory only; full PII is never persisted or sent to LLM.
   let customerContext: { masked_summary?: string; tier?: string } | null = null;
   let opaqueCustomerRef: string | null = null;
   if (flags.ENABLE_C360) {
     const c360Result = await callCustomer360Adapter(conversation_id);
     if (c360Result.success && c360Result.customer_context) {
-      // Adapter is expected to return masked/summarised data only.
       customerContext = c360Result.customer_context;
-      opaqueCustomerRef = c360Result.customer_ref ?? null; // opaque cus_* / uuid only
-    } else {
-      // Fallback per Contract 06 §5: null context, default Standard tier.
-      customerContext = null;
-      console.warn("[generate-reply] customer360_adapter fallback", { conversation_id, code: "F-04" });
+      opaqueCustomerRef = c360Result.customer_ref ?? null;
     }
   }
 
-  // W5: Track chunks actually used in the final LLM prompt (post all safety/scope/score filtering)
   let finalPromptChunks: Array<{ title?: string; score?: number; source_type?: string }> = [];
-  // Step 4: KB Adapter (ENABLE_KB) + L5 Safety Checks.
-  // L5 RAG Answer Safety Contract v1.1b — Demo Implementation.
-  // v1.2: company_id / industry from env (schema has no these fields).
-  // ESC-MVP: _kbDone flag prevents null-access fall-through (4 runtime defects)
   let _kbDone = false;
   let ragResult: {
     success: boolean;
@@ -1341,27 +1072,19 @@ async function orchestrationGenerateReply(
   } | null = null;
 
   if (flags.ENABLE_KB && !_g1SkipKB) {
-    // Canonical tenant scope resolution (shared with kb-search-proxy)
     const _kbTenantResult = await resolveTenantScope(conversation_id);
     if (!_kbTenantResult.resolved) {
-      console.warn("[generate-reply] KB tenant scope unresolved:", _kbTenantResult.reason, { conversation_id });
-      // S0: route to s0_handoff_tx when enabled; else existing KB fallback
-      if (_escEnableS0) {
+      if (_escEnableS0)
         return await handleS0Handoff(supabaseAdmin, conversation_id, source_message_id, "KB_SCOPE_GATE", _visitorLang);
-      }
       return await handleKBFallback(
         supabaseAdmin,
         conversation_id,
         "KB_SCOPE_GATE",
         source_message_id,
-        {
-          rag_api_status: "scope_unavailable",
-        },
+        { rag_api_status: "scope_unavailable" },
         _visitorLang,
       );
     }
-
-    // Get the latest user message for RAG query
     const { data: latestMsgs } = await supabaseAdmin
       .from("messages")
       .select("content")
@@ -1370,49 +1093,31 @@ async function orchestrationGenerateReply(
       .order("created_at", { ascending: false })
       .limit(1);
     const userQuery = latestMsgs?.[0]?.content ?? "";
-
-    if (!userQuery) {
-      ragResult = { success: true, no_answer: true, retrieval_quality: "failed", chunks: [] };
-    } else {
-      ragResult = await callKBAdapter(conversation_id, userQuery, _kbTenantResult.scope);
-    }
-
-    // — L5 Safety Checks (Demo-only, inline) —
+    ragResult = !userQuery
+      ? { success: true, no_answer: true, retrieval_quality: "failed", chunks: [] }
+      : await callKBAdapter(conversation_id, userQuery, _kbTenantResult.scope);
     if (!ragResult || !ragResult.success) {
-      console.error("[CRITICAL] KB RAG API failure", { conversation_id, code: "KB_API_FAIL" });
-      // S0: route to s0_handoff_tx when enabled; else existing KB fallback
-      if (_escEnableS0) {
+      if (_escEnableS0)
         return await handleS0Handoff(supabaseAdmin, conversation_id, source_message_id, "KB_API_FAIL", _visitorLang);
-      }
       return await handleKBFallback(
         supabaseAdmin,
         conversation_id,
         "KB_API_FAIL",
         source_message_id,
-        {
-          rag_api_status: "failure",
-        },
+        { rag_api_status: "failure" },
         _visitorLang,
       );
     }
-
-    if (ragResult.no_answer || !ragResult.chunks || ragResult.chunks.length === 0) {
-      console.warn("[generate-reply] KB no results", { conversation_id, code: "KB_EMPTY" });
+    if (ragResult.no_answer || !ragResult.chunks || ragResult.chunks.length === 0)
       return await handleKBFallback(
         supabaseAdmin,
         conversation_id,
         "KB_EMPTY",
         source_message_id,
-        {
-          rag_api_status: "success_empty",
-        },
+        { rag_api_status: "success_empty" },
         _visitorLang,
       );
-    }
 
-    // L5 Score threshold + scope filter (client-side double-check)
-    // F-3: Distinguish transactional requests (high risk) from information queries
-    const _f3Lower = userQuery.toLowerCase();
     const HIGH_RISK_TRANSACTIONAL = [
       /退[款貨]/,
       /要退/,
@@ -1467,15 +1172,14 @@ async function orchestrationGenerateReply(
     const matchesAlwaysHigh = ALWAYS_HIGH_RISK_TOPICS.some((re) => re.test(userQuery));
     const isHighRisk = matchesAlwaysHigh || (matchesTransactional && !matchesInfoOverride);
     const minScore = isHighRisk ? 0.78 : 0.55;
-
-    const usableChunks = ragResult.chunks.filter((c) => {
-      if (!c.score || c.score < minScore) return false;
-      if (c.status && c.status !== "published") return false;
-      if (c.company_id !== undefined && c.company_id !== _kbTenantResult.scope.kbCompanyId) return false;
-      if (c.industry && c.industry !== _kbTenantResult.scope.industry) return false;
-      return true;
-    });
-
+    const usableChunks = ragResult.chunks.filter(
+      (c) =>
+        c.score &&
+        c.score >= minScore &&
+        (!c.status || c.status === "published") &&
+        (c.company_id === undefined || c.company_id === _kbTenantResult.scope.kbCompanyId) &&
+        (!c.industry || c.industry === _kbTenantResult.scope.industry),
+    );
     const traceMetadata = {
       rag_api_status: "success",
       total_results: ragResult.chunks.length,
@@ -1493,40 +1197,22 @@ async function orchestrationGenerateReply(
       })),
     };
     ragResult.trace_metadata = traceMetadata;
-
-    if (usableChunks.length === 0) {
-      const lowScoreBranch = isHighRisk ? "KB_LOW_SCORE_HIGH_RISK" : "KB_LOW_SCORE_STANDARD";
-      console.warn("[generate-reply] KB all results below threshold", {
-        conversation_id,
-        minScore,
-        isHighRisk,
-        code: "KB_LOW_SCORE",
-        branch: lowScoreBranch,
-      });
+    if (usableChunks.length === 0)
       return await handleKBFallback(
         supabaseAdmin,
         conversation_id,
-        lowScoreBranch,
+        isHighRisk ? "KB_LOW_SCORE_HIGH_RISK" : "KB_LOW_SCORE_STANDARD",
         source_message_id,
         traceMetadata,
         _visitorLang,
       );
-    }
-
     ragResult.chunks = usableChunks;
     ragResult.no_answer = false;
-    finalPromptChunks = usableChunks; // W5: same variable used by buildRagBlock → LLM prompt
+    finalPromptChunks = usableChunks;
     _kbDone = true;
   }
-
-  // ESC-MVP: mark done when KB intentionally skipped
-  if (!flags.ENABLE_KB || _g1SkipKB) {
-    _kbDone = true;
-  }
-
-  // ESC-MVP: safety check — KB was supposed to run but fell through without completion
+  if (!flags.ENABLE_KB || _g1SkipKB) _kbDone = true;
   if (flags.ENABLE_KB && !_g1SkipKB && !_kbDone) {
-    console.error("[generate-reply] CRITICAL: KB block fell through without completion", conversation_id);
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return new Response(JSON.stringify({ error: "Internal KB processing error" }), {
       status: 500,
@@ -1534,16 +1220,16 @@ async function orchestrationGenerateReply(
     });
   }
 
-  // Step 5: Tool registration — NOT in L5c Gate A.
-  if (flags.ENABLE_TOOL_EXEC) {
+  if (flags.ENABLE_TOOL_EXEC)
     console.log("[generate-reply] ENABLE_TOOL_EXECUTOR=true: Gate present, tools NOT attached (L5d scope)");
-  }
 
-  // Step 7: LLM Generate.
-  const maskedContextBlock = buildMaskedContextBlock(customerContext, opaqueCustomerRef);
-  const ragBlock = buildRagBlock(ragResult);
-  const finalSystemPrompt = [basePrompt, maskedContextBlock, ragBlock].filter((s) => s && s.length > 0).join("\n\n");
-
+  const finalSystemPrompt = [
+    basePrompt,
+    buildMaskedContextBlock(customerContext, opaqueCustomerRef),
+    buildRagBlock(ragResult),
+  ]
+    .filter((s) => s && s.length > 0)
+    .join("\n\n");
   const { data: messages } = await supabaseAdmin
     .from("messages")
     .select("role, content, created_at")
@@ -1552,19 +1238,16 @@ async function orchestrationGenerateReply(
     .eq("is_recalled", false)
     .order("created_at", { ascending: true })
     .limit(10);
-
   if (!messages || messages.length === 0) {
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return new Response(JSON.stringify({ success: true, skipped: "no messages" }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
-
   const claudeMessages = messages.map((m) => ({
     role: m.role === "visitor" ? "user" : "assistant",
     content: m.content,
   }));
-
   if (claudeMessages[claudeMessages.length - 1].role === "assistant") {
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return new Response(JSON.stringify({ success: true, skipped: "last message is assistant" }), {
@@ -1580,45 +1263,31 @@ async function orchestrationGenerateReply(
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
-
   const anthropicRequestBody: Record<string, unknown> = {
     model: "claude-haiku-4-5-20251001",
     max_tokens: 500,
     system: finalSystemPrompt,
     messages: claudeMessages,
   };
-  if (flags.ENABLE_TOOL_EXEC) {
-    anthropicRequestBody.tools = TOOL_DEFINITIONS;
-  }
-
-  // F-1: Explicit timeout guard (orchestration)
+  if (flags.ENABLE_TOOL_EXEC) anthropicRequestBody.tools = TOOL_DEFINITIONS;
   const _orchAbortCtrl = new AbortController();
   const _orchTimeout = setTimeout(() => _orchAbortCtrl.abort(), ANTHROPIC_TIMEOUT_MS);
   let claudeResponse: Response;
   try {
     claudeResponse = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": anthropicKey,
-        "anthropic-version": "2023-06-01",
-      },
+      headers: { "Content-Type": "application/json", "x-api-key": anthropicKey, "anthropic-version": "2023-06-01" },
       body: JSON.stringify(anthropicRequestBody),
       signal: _orchAbortCtrl.signal,
     });
   } catch (e) {
     clearTimeout(_orchTimeout);
     if (e instanceof DOMException && e.name === "AbortError") {
-      console.error("[generate-reply] F-1 orchestration Anthropic timeout:", conversation_id);
-      // S0: route to s0_handoff_tx when enabled
-      if (_escEnableS0) {
+      if (_escEnableS0)
         return await handleS0Handoff(supabaseAdmin, conversation_id, source_message_id, "LLM_TIMEOUT", _visitorLang);
-      }
       await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     } else {
-      console.error("[generate-reply] orchestration Anthropic fetch error:", e);
-      // S0: route to s0_handoff_tx when enabled
-      if (_escEnableS0) {
+      if (_escEnableS0)
         return await handleS0Handoff(
           supabaseAdmin,
           conversation_id,
@@ -1626,7 +1295,6 @@ async function orchestrationGenerateReply(
           "LLM_NETWORK_ERROR",
           _visitorLang,
         );
-      }
       await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     }
     return new Response(JSON.stringify({ error: "AI service timeout" }), {
@@ -1635,27 +1303,21 @@ async function orchestrationGenerateReply(
     });
   }
   clearTimeout(_orchTimeout);
-
   if (!claudeResponse.ok) {
     const errText = await claudeResponse.text();
     console.error("[generate-reply] Claude API error:", claudeResponse.status, errText);
-    // S0: route to s0_handoff_tx when enabled
-    if (_escEnableS0) {
+    if (_escEnableS0)
       return await handleS0Handoff(supabaseAdmin, conversation_id, source_message_id, "LLM_NON_2XX", _visitorLang);
-    }
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return new Response(JSON.stringify({ error: "AI service error" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
-
   const claudeData = await claudeResponse.json();
   const aiReplyContent = claudeData.content?.[0]?.text ?? "";
-
   if (!aiReplyContent) {
-    // S0: route to s0_handoff_tx when enabled
-    if (_escEnableS0) {
+    if (_escEnableS0)
       return await handleS0Handoff(
         supabaseAdmin,
         conversation_id,
@@ -1663,47 +1325,32 @@ async function orchestrationGenerateReply(
         "LLM_EMPTY_RESPONSE",
         _visitorLang,
       );
-    }
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return new Response(JSON.stringify({ error: "Empty AI response" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
-
   await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-
-  // W5: Build citation metadata from the exact chunks used in the LLM prompt
   const citationMeta = finalPromptChunks.length > 0 ? buildCitationMetadata(finalPromptChunks) : null;
-
-  await supabaseAdmin.from("messages").insert({
-    conversation_id,
-    role: "assistant",
-    content: aiReplyContent,
-    status: "delivered",
-    is_recalled: false,
-    metadata: citationMeta,
-  });
-
+  await supabaseAdmin
+    .from("messages")
+    .insert({
+      conversation_id,
+      role: "assistant",
+      content: aiReplyContent,
+      status: "delivered",
+      is_recalled: false,
+      metadata: citationMeta,
+    });
   await supabaseAdmin.from("conversations").update({ updated_at: new Date().toISOString() }).eq("id", conversation_id);
-
-  if (flags.ENABLE_COACH) {
-    void coachTrace;
-  }
-
-  if (flags.ENABLE_KB && ragResult?.success) {
-    void ragResult;
-  }
-
+  if (flags.ENABLE_COACH) void coachTrace;
+  if (flags.ENABLE_KB && ragResult?.success) void ragResult;
   console.log("[generate-reply] AI reply sent (orchestration path) for conversation:", conversation_id);
   return new Response(JSON.stringify({ success: true }), {
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ────────────────────────────────────────────────────────────────────────────
 
 function safeRefusal(code: string): Response {
   return new Response(
@@ -1720,12 +1367,8 @@ function buildMaskedContextBlock(
   const parts: string[] = [];
   if (customerContext.tier) parts.push(`Customer tier: ${customerContext.tier}`);
   if (customerContext.masked_summary) parts.push(customerContext.masked_summary);
-  if (opaqueCustomerRef) {
-    const pseudo = pseudonymizeRef(opaqueCustomerRef);
-    parts.push(`Customer reference (pseudonymous): ${pseudo}`);
-  }
-  if (parts.length === 0) return "";
-  return `Customer context (masked):\n${parts.join("\n")}`;
+  if (opaqueCustomerRef) parts.push(`Customer reference (pseudonymous): ${pseudonymizeRef(opaqueCustomerRef)}`);
+  return parts.length === 0 ? "" : `Customer context (masked):\n${parts.join("\n")}`;
 }
 
 function buildRagBlock(
@@ -1736,11 +1379,10 @@ function buildRagBlock(
 ): string {
   if (!ragResult || !ragResult.success || !ragResult.chunks?.length) return "";
   const snippets = ragResult.chunks
-    .map((c, i) => {
-      const text = c.content ?? c.short_snippet ?? "";
-      const source = c.title ? `[Source: ${c.title}]` : `[${i + 1}]`;
-      return `${source}\n${text.slice(0, 500)}`;
-    })
+    .map(
+      (c, i) =>
+        `${c.title ? `[Source: ${c.title}]` : `[${i + 1}]`}\n${(c.content ?? c.short_snippet ?? "").slice(0, 500)}`,
+    )
     .join("\n\n");
   return `You MUST answer ONLY based on the following knowledge base evidence.\nDo NOT add information not present in the evidence.\nIf the evidence does not fully answer the question, say so and offer to connect to a human agent.\n\nEvidence:\n${snippets}`;
 }
@@ -1751,8 +1393,9 @@ function pseudonymizeRef(ref: string): string {
   return `cust_${(h >>> 0).toString(36)}`;
 }
 
-// ── C0: Coach Prompt Adapter (adapter-ready, no real API until C1) ──────────
-async function callCoachPromptAdapter(conversation_id: string): Promise<{
+async function callCoachPromptAdapter(
+  conversation_id: string,
+): Promise<{
   success: boolean;
   content?: string;
   version_id?: string;
@@ -1764,71 +1407,31 @@ async function callCoachPromptAdapter(conversation_id: string): Promise<{
   const endpoint = Deno.env.get("COACH_PROMPT_ENDPOINT");
   const token = Deno.env.get("COACH_PROMPT_INTERNAL_TOKEN");
   const timeoutMs = parseInt(Deno.env.get("COACH_AI_TIMEOUT_MS") || "3000");
-
-  // Gate 1: endpoint not configured (expected in C0 — SU CoachAI API not yet built)
-  if (!endpoint) {
-    console.log("[generate-reply] COACH_API_NOT_CONFIGURED", { conversation_id });
-    return FAIL("COACH_API_NOT_CONFIGURED");
-  }
-
-  // Gate 2: token not configured
-  if (!token) {
-    console.warn("[generate-reply] COACH_TOKEN_MISSING", { conversation_id });
-    return FAIL("COACH_TOKEN_MISSING");
-  }
-
-  // Gate 3: actual API call (C1 scope — executes when endpoint + token are both set)
+  if (!endpoint) return FAIL("COACH_API_NOT_CONFIGURED");
+  if (!token) return FAIL("COACH_TOKEN_MISSING");
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
   try {
     const response = await fetch(endpoint, {
       method: "POST",
-      headers: {
-        "x-coach-internal-token": token,
-        "x-coach-runtime": "C0",
-        "Content-Type": "application/json",
-      },
+      headers: { "x-coach-internal-token": token, "x-coach-runtime": "C0", "Content-Type": "application/json" },
       body: JSON.stringify({ include_content: true }),
       signal: controller.signal,
     });
     clearTimeout(timeout);
-
-    if (!response.ok) {
-      console.warn("[generate-reply] COACH_API_ERROR", { conversation_id, status: response.status });
-      return FAIL("COACH_API_ERROR");
-    }
-
+    if (!response.ok) return FAIL("COACH_API_ERROR");
     let data;
     try {
       data = await response.json();
     } catch {
-      console.warn("[generate-reply] COACH_JSON_INVALID", { conversation_id });
       return FAIL("COACH_JSON_INVALID");
     }
-
-    if (!data.ok || !data.data?.content) {
-      console.warn("[generate-reply] COACH_NO_ACTIVE_PROMPT", { conversation_id });
-      return FAIL("COACH_NO_ACTIVE_PROMPT");
-    }
-
+    if (!data.ok || !data.data?.content) return FAIL("COACH_NO_ACTIVE_PROMPT");
     const content = data.data.content;
     const validationError = validateCoachPromptContent(content);
-    if (validationError) {
-      console.warn(`[generate-reply] ${validationError}`, { conversation_id, len: content?.length });
-      return FAIL(validationError);
-    }
-
+    if (validationError) return FAIL(validationError);
     const versionId = data.data.id || "";
     const promptHash = await computePromptHash(content, versionId, conversation_id);
-
-    console.log("[generate-reply] Coach prompt fetched:", {
-      conversation_id,
-      version_label: data.data.label || "",
-      prompt_hash: promptHash,
-      source: "upstream",
-    });
-
     return {
       success: true,
       content,
@@ -1838,41 +1441,33 @@ async function callCoachPromptAdapter(conversation_id: string): Promise<{
     };
   } catch (err) {
     clearTimeout(timeout);
-    if (err instanceof DOMException && err.name === "AbortError") {
-      console.warn("[generate-reply] COACH_API_TIMEOUT", { conversation_id, timeoutMs });
-      return FAIL("COACH_API_TIMEOUT");
-    }
-    console.warn("[generate-reply] COACH_API_EXCEPTION", { conversation_id, error: String(err) });
+    if (err instanceof DOMException && err.name === "AbortError") return FAIL("COACH_API_TIMEOUT");
     return FAIL("COACH_API_EXCEPTION");
   }
 }
 
-// ── C0: Validate coach prompt content ───────────────────────────────────────
 function validateCoachPromptContent(content: unknown): string | null {
   if (typeof content !== "string") return "COACH_SCHEMA_INVALID";
   if (content.length === 0) return "COACH_CONTENT_EMPTY";
   if (content.length > 20000) return "COACH_CONTENT_TOO_LONG";
-  if (/sk-ant-[a-zA-Z0-9]+/.test(content)) return "COACH_SCHEMA_INVALID";
-  if (/service_role/.test(content)) return "COACH_SCHEMA_INVALID";
+  if (/sk-ant-[a-zA-Z0-9]+/.test(content) || /service_role/.test(content)) return "COACH_SCHEMA_INVALID";
   return null;
 }
 
-// ── C0: Compute prompt hash — SHA-256(content + version_id + conversation_id) first 12 hex ──
 async function computePromptHash(content: string, versionId: string, conversationId: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const hashInput = content + "|" + versionId + "|" + conversationId;
-  const hashBuffer = await crypto.subtle.digest("SHA-256", encoder.encode(hashInput));
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  const hashHex = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
-  return hashHex.substring(0, 12);
+  const hashBuffer = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(content + "|" + versionId + "|" + conversationId),
+  );
+  return Array.from(new Uint8Array(hashBuffer))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")
+    .substring(0, 12);
 }
-// ── End C0 additions ────────────────────────────────────────────────────────
 
-async function callCustomer360Adapter(_conversation_id: string): Promise<{
-  success: boolean;
-  customer_context?: { masked_summary?: string; tier?: string };
-  customer_ref?: string;
-}> {
+async function callCustomer360Adapter(
+  _conversation_id: string,
+): Promise<{ success: boolean; customer_context?: { masked_summary?: string; tier?: string }; customer_ref?: string }> {
   return { success: false };
 }
 
@@ -1888,25 +1483,10 @@ async function callKBAdapter(
   query_text_preview?: string;
 }> {
   const endpointCfg = resolveKBEndpoint();
-  if (!endpointCfg) {
-    console.error("[CRITICAL] KB endpoint config not available");
-    return { success: false, no_answer: true, retrieval_quality: "failed" };
-  }
-
-  const result = await fetchKBRag(
-    { query: userMessage, top_k: 5 },
-    scope,
-    endpointCfg,
-    { timeoutMs: 15000 },
-  );
-
-
-  if (!result.success) {
-    console.error("[CRITICAL] KB RAG API failure", { code: result.error_code });
-    return { success: false, no_answer: true, retrieval_quality: "failed" };
-  }
-
-  if (result.chunks.length === 0) {
+  if (!endpointCfg) return { success: false, no_answer: true, retrieval_quality: "failed" };
+  const result = await fetchKBRag({ query: userMessage, top_k: 5 }, scope, endpointCfg, { timeoutMs: 15000 });
+  if (!result.success) return { success: false, no_answer: true, retrieval_quality: "failed" };
+  if (result.chunks.length === 0)
     return {
       success: true,
       no_answer: true,
@@ -1914,8 +1494,6 @@ async function callKBAdapter(
       chunks: [],
       query_text_preview: userMessage.slice(0, 100),
     };
-  }
-
   return {
     success: true,
     no_answer: false,
@@ -1925,13 +1503,7 @@ async function callKBAdapter(
   };
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// L5c Tool Executor Gate — deterministic decision layer (Gate A).
-// [Unchanged from original — full implementation retained below]
-// ────────────────────────────────────────────────────────────────────────────
-
 type GateDecisionKind = "ALLOW" | "DENY" | "DOWNGRADE_TO_DRAFT" | "ESCALATE";
-
 interface GateDecision {
   decision: GateDecisionKind;
   reason?: string;
@@ -1943,12 +1515,10 @@ interface GateDecision {
   action_deferred_to?: "L5e";
   message_to_llm?: string;
 }
-
 interface ToolRequest {
   tool_name: string;
   input: Record<string, unknown>;
 }
-
 interface ExecutionContext {
   conversation: { id: string; status: string };
   caller_mode: "system_auto" | "human_agent" | "ai_assist";
@@ -1958,7 +1528,6 @@ interface ExecutionContext {
   turn_budget: { total: number; kb_search: number; c360: number };
   server_resolved_customer_ref?: string | null;
 }
-
 const ALLOWED_TOOLS = [
   "kb_search",
   "escalate_to_human",
@@ -1971,19 +1540,17 @@ const ALLOWED_TOOLS = [
 const READ_ONLY_TOOLS = ["kb_search", "get_customer_context", "get_order_summary"] as const;
 const HIGH_RISK_ALLOWED = ["kb_search", "get_customer_context", "escalate_to_human", "create_handoff_summary"] as const;
 const OFFLINE_BOT_ALLOWED = ["kb_search", "escalate_to_human"] as const;
-const MAX_TOOL_CALLS = 10;
-const MAX_KB_SEARCH = 3;
-const MAX_C360_CALLS = 2;
+const MAX_TOOL_CALLS = 10,
+  MAX_KB_SEARCH = 3,
+  MAX_C360_CALLS = 2;
 
 function buildSafeDedupeKey(
   tool_name: string,
   input: Record<string, unknown>,
   server_resolved_customer_ref?: string | null,
 ): string | null {
-  if (tool_name === "get_order_summary") {
-    if (!server_resolved_customer_ref) return null;
-    return `get_order_summary:${server_resolved_customer_ref}`;
-  }
+  if (tool_name === "get_order_summary")
+    return server_resolved_customer_ref ? `get_order_summary:${server_resolved_customer_ref}` : null;
   const SAFE_FIELDS: Record<string, string[]> = {
     kb_search: ["query_norm", "locale"],
     get_customer_context: [],
@@ -1992,13 +1559,9 @@ function buildSafeDedupeKey(
     mark_unresolved: ["reason_code"],
     suggest_reply: ["intent_code"],
   };
-  const allowed = SAFE_FIELDS[tool_name] ?? [];
   const safe: Record<string, unknown> = {};
-  for (const k of allowed) {
-    if (input[k] !== undefined && typeof input[k] !== "object") {
-      safe[k] = String(input[k]).slice(0, 200);
-    }
-  }
+  for (const k of SAFE_FIELDS[tool_name] ?? [])
+    if (input[k] !== undefined && typeof input[k] !== "object") safe[k] = String(input[k]).slice(0, 200);
   return `${tool_name}:${JSON.stringify(safe)}`;
 }
 
@@ -2029,9 +1592,11 @@ export function toolExecutorGate(toolRequest: ToolRequest, context: ExecutionCon
     return { decision: "ESCALATE", reason: "HIGH_RISK_TOOL_BLOCKED" };
   if (tool_name === "mark_unresolved" && caller_mode === "system_auto")
     return { decision: "DENY", reason: "MARK_UNRESOLVED_REQUIRES_HUMAN" };
-  if (privacy_flags?.do_not_profile === true || privacy_flags?.consent_status === "withdrawn") {
-    if (tool_name === "get_customer_context") return { decision: "DENY", reason: "PRIVACY_DO_NOT_PROFILE" };
-  }
+  if (
+    (privacy_flags?.do_not_profile === true || privacy_flags?.consent_status === "withdrawn") &&
+    tool_name === "get_customer_context"
+  )
+    return { decision: "DENY", reason: "PRIVACY_DO_NOT_PROFILE" };
   const dedupe_key = buildSafeDedupeKey(tool_name, input, server_resolved_customer_ref);
   if (dedupe_key === null) return { decision: "DENY", reason: "SERVER_REFERENCE_REQUIRED" };
   if (turn_tool_calls.has(dedupe_key)) return { decision: "DENY", reason: "DUPLICATE_TOOL_CALL_IN_TURN" };
@@ -2086,10 +1651,6 @@ export function handleGateDecision(decision: GateDecision): GateDecision {
       return { decision: "ESCALATE", reason: decision.reason, handoff_required: true, action_deferred_to: "L5e" };
   }
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// L5d — Tool Definitions & Stubs (Gate A — unchanged from original)
-// ────────────────────────────────────────────────────────────────────────────
 
 const TOOL_DEFINITIONS = [
   {
@@ -2203,7 +1764,6 @@ interface ToolResult {
   result_classification: "internal_only";
   [k: string]: unknown;
 }
-
 export async function handleToolCall(
   tool_name: string,
   _tool_input: Record<string, unknown>,
@@ -2212,7 +1772,7 @@ export async function handleToolCall(
   switch (tool_name) {
     case "kb_search":
       return {
-        tool_name: "kb_search",
+        tool_name,
         status: "stub",
         result_classification: "internal_only",
         retrieval_quality: "failed",
@@ -2223,7 +1783,7 @@ export async function handleToolCall(
       };
     case "escalate_to_human":
       return {
-        tool_name: "escalate_to_human",
+        tool_name,
         status: "stub",
         result_classification: "internal_only",
         escalated: false,
@@ -2231,7 +1791,7 @@ export async function handleToolCall(
       };
     case "get_customer_context":
       return {
-        tool_name: "get_customer_context",
+        tool_name,
         status: "stub",
         result_classification: "internal_only",
         customer_context: { tier: "Standard", language_preference: "en", sentiment: "neutral" },
@@ -2239,7 +1799,7 @@ export async function handleToolCall(
       };
     case "get_order_summary":
       return {
-        tool_name: "get_order_summary",
+        tool_name,
         status: "stub",
         result_classification: "internal_only",
         order_available: false,
@@ -2247,7 +1807,7 @@ export async function handleToolCall(
       };
     case "create_handoff_summary":
       return {
-        tool_name: "create_handoff_summary",
+        tool_name,
         status: "stub",
         result_classification: "internal_only",
         summary: "[Handoff summary not yet available — L5d stub]",
@@ -2255,7 +1815,7 @@ export async function handleToolCall(
       };
     case "mark_unresolved":
       return {
-        tool_name: "mark_unresolved",
+        tool_name,
         status: "stub",
         result_classification: "internal_only",
         marked: false,
@@ -2263,7 +1823,7 @@ export async function handleToolCall(
       };
     case "suggest_reply":
       return {
-        tool_name: "suggest_reply",
+        tool_name,
         status: "stub",
         result_classification: "internal_only",
         draft_content: "",
@@ -2280,10 +1840,6 @@ export async function handleToolCall(
       };
   }
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// L5e — Draft / Handoff / Auto-Send Policy (Gate A — unchanged from original)
-// ────────────────────────────────────────────────────────────────────────────
 
 type L5eOutputAction = "auto_send" | "draft_only" | "refuse";
 interface L5eOutputMode {
@@ -2339,8 +1895,9 @@ export function determineOutputMode(
       return { action: "draft_only", reason: "STATUS_UNKNOWN_SAFE_FALLBACK" };
   }
   const guardrailsPass = checkGuardrails(toolResults, ragResult, mode);
-  if (!guardrailsPass.pass) return { action: "draft_only", reason: guardrailsPass.reason };
-  return { action: "auto_send", reason: "GUARDRAILS_PASSED" };
+  return guardrailsPass.pass
+    ? { action: "auto_send", reason: "GUARDRAILS_PASSED" }
+    : { action: "draft_only", reason: guardrailsPass.reason };
 }
 
 export function checkGuardrails(
@@ -2394,7 +1951,6 @@ interface L5eDeferredResult {
   escalated?: boolean;
   marked?: boolean;
 }
-
 function l5eSanitize(input: string | undefined | null, opts: { maxChars: number; noPII: boolean }): string {
   if (!input) return "";
   let s = String(input);
@@ -2403,10 +1959,8 @@ function l5eSanitize(input: string | undefined | null, opts: { maxChars: number;
     s = s.replace(/\+?\d[\d\s\-().]{7,}\d/g, "[phone]");
     s = s.replace(/\b\d{9,}\b/g, "[digits]");
   }
-  if (s.length > opts.maxChars) s = s.slice(0, opts.maxChars);
-  return s;
+  return s.length > opts.maxChars ? s.slice(0, opts.maxChars) : s;
 }
-
 export async function executeSuggestReply(
   _input: L5eSuggestReplyInput,
   context: L5eExecutionContextLike,
@@ -2416,7 +1970,6 @@ export async function executeSuggestReply(
   void outputMode;
   return { deferred: true, reason: "GATE_B_REQUIRED" };
 }
-
 export async function executeEscalateToHuman(
   input: L5eEscalateInput,
   context: L5eExecutionContextLike,
@@ -2429,7 +1982,6 @@ export async function executeEscalateToHuman(
   if (!context.flags.ENABLE_TOOL_EXEC) return { escalated: false, deferred: true, reason: "TOOL_EXEC_DISABLED" };
   return { deferred: true, reason: "GATE_B_REQUIRED" };
 }
-
 export async function executeMarkUnresolved(
   input: L5eMarkUnresolvedInput,
   context: L5eExecutionContextLike,
