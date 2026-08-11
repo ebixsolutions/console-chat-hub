@@ -39,6 +39,7 @@ export const CE_REVIEW_COPY = {
   },
   columns: {
     conversation: { en: "Conversation", zh: "對話" },
+    customer: { en: "Customer", zh: "客戶" },
     date: { en: "Date", zh: "日期" },
     channel: { en: "Channel", zh: "渠道" },
     qaScore: { en: "QA Score", zh: "QA 分數" },
