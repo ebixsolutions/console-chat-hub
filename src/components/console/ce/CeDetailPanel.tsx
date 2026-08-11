@@ -339,19 +339,24 @@ export function CeDetailPanel({
         {/* ── Overview ── */}
         {tab === "overview" && (
           <>
-            <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-sm font-semibold">
-                {t(C.overview.customer)} · {String(ev.conversation_id).slice(0, 8)}…
-              </h2>
-              <Badge variant="outline" className={cn("text-[11px]", REVIEW_CLASS[ev.review_status] ?? "")}>
-                {ev.review_status}
-              </Badge>
-              <Badge variant="outline" className="text-[11px]">
-                {channelLabel || t(C.meta.unavailable)}
-              </Badge>
-              <Badge variant="outline" className={cn("text-[11px]", SEVERITY_CLASS[ev.severity] ?? "")}>
-                {ev.severity}
-              </Badge>
+            <div className="flex flex-wrap items-start gap-2">
+              <div className="min-w-0">
+                <h2 className="truncate text-[15px] font-bold text-slate-800">{t(C.overview.customer)}</h2>
+                <div className="mt-0.5 truncate font-mono text-[11px] text-slate-400">
+                  {ev.conversation_id} · {t(C.meta.unavailable)}
+                </div>
+              </div>
+              <div className="ml-auto flex flex-wrap items-center gap-1.5">
+                <Badge variant="outline" className={cn("text-[10px]", REVIEW_CLASS[ev.review_status] ?? "")}>
+                  {ev.review_status}
+                </Badge>
+                <Badge variant="outline" className="border-sky-200 bg-sky-50 text-[10px] text-sky-700">
+                  {channelLabel || t(C.meta.unavailable)}
+                </Badge>
+                <Badge variant="outline" className={cn("text-[10px]", SEVERITY_CLASS[ev.severity] ?? "")}>
+                  {ev.severity}
+                </Badge>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
@@ -364,37 +369,43 @@ export function CeDetailPanel({
             <Panel title={t(C.overview.thread)}>
               <p className="mb-2 text-[11px] text-amber-600">{t(C.overview.liveNote)}</p>
               {messages.length === 0 ? (
-                <span className="text-muted-foreground">{t(C.overview.noThread)}</span>
+                <span className="text-slate-500">{t(C.overview.noThread)}</span>
               ) : (
                 <div className="space-y-2">
                   {messages.map((m: any) => {
                     const isAi = m.role === "assistant";
                     const isEvaluated = aiReply && m.id === aiReply.id;
                     return (
-                      <div key={m.id} className="space-y-1">
+                      <div key={m.id} className="space-y-0">
                         <div
                           className={cn(
-                            "rounded-md border p-2.5",
-                            isAi ? "bg-muted/40" : "bg-background",
+                            "rounded-lg p-2.5",
+                            isAi
+                              ? "border border-[#e8e6e0] bg-[#f5f4f0]"
+                              : "border-l-[3px] border-l-[#cbd5e1] bg-[#F0F4F8]",
+                            isEvaluated && qaFinding && "rounded-b-none",
                           )}
                         >
-                          <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                            <span className="font-semibold uppercase">
+                          <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500">
+                            <span className="flex items-center gap-1.5 font-semibold uppercase">
                               {isAi ? t(C.overview.aiResponse) : t(C.overview.customer)}
-                            </span>
-                            <span className="flex items-center gap-2">
                               {isEvaluated && (
-                                <span className={cn("rounded border px-1.5 py-0.5 font-semibold", scoreClass(overall))}>
+                                <span
+                                  className={cn(
+                                    "rounded-full bg-white px-1.5 py-[1px] text-[10px] font-bold",
+                                    scoreTextClass(overall),
+                                  )}
+                                >
                                   {overall.toFixed(1)}
                                 </span>
                               )}
-                              {new Date(m.created_at).toLocaleString()}
                             </span>
+                            <span>{new Date(m.created_at).toLocaleString()}</span>
                           </div>
-                          <p className="mt-1 whitespace-pre-wrap">{m.content}</p>
+                          <p className="mt-1 whitespace-pre-wrap text-slate-700">{m.content}</p>
                         </div>
                         {isEvaluated && qaFinding && (
-                          <div className="rounded-md border border-amber-200 bg-amber-50 p-2.5 text-[12px] text-amber-900">
+                          <div className="rounded-b-lg border border-t-0 border-[#fcd34d] bg-[#fffbeb] p-2.5 text-[12px] text-amber-900">
                             <div className="text-[10px] font-semibold uppercase tracking-wide">
                               {t(C.overview.qaFinding)} · {qaFinding.evaluator_type}
                             </div>
@@ -413,17 +424,18 @@ export function CeDetailPanel({
               )}
 
               {humanReply && (
-                <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 p-2.5 text-[12px] text-emerald-900">
+                <div className="mt-3 rounded-lg border border-[#a7d88a] bg-[#EAF3DE] p-2.5 text-[12px] text-emerald-900">
                   <div className="text-[10px] font-semibold uppercase tracking-wide">
                     {t(C.overview.humanCorrection)}
                   </div>
                   <div className="mt-1 whitespace-pre-wrap">{humanReply.content}</div>
                   <div className="mt-1 text-[10px] opacity-70">
-                    {new Date(humanReply.created_at).toLocaleString()}
+                    {new Date(humanReply.created_at).toLocaleString()} · {t(C.evaluation.correction)}
                   </div>
                 </div>
               )}
             </Panel>
+
 
             {/* QA Cases */}
             <Panel title={t(C.overview.qaCases)}>
