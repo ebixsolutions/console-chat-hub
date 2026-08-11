@@ -1,11 +1,14 @@
 /**
- * Conversation Evaluation console — SU CoachAI /review parity layout.
+ * Conversation Evaluation console — Base44 SU CoachAI /review layout parity.
  *
- * Two-column shell: filterable conversation list on the left (~40%), canonical
- * evaluation detail on the right (~59%). Status/severity/score all come from
- * public.ce_conversation_status_v via the CE server functions; the client never
- * re-derives them, and a failed query is surfaced as an error, never as an
- * empty success.
+ * Hierarchy mirrors the authoritative source (ConversationReview.jsx + ConvList.jsx):
+ * ALL conversation-list controls (tabs, search, filter chips, table) live INSIDE
+ * the LEFT 40% column; the RIGHT 59% detail panel starts at the same vertical top.
+ * There is deliberately no full-width toolbar spanning both columns.
+ *
+ * Status/severity/score all come from public.ce_conversation_status_v via the CE
+ * server functions; the client never re-derives them, and a failed query is
+ * surfaced as an error, never as an empty success.
  *
  * Training is owned by SU CoachAI. This route deliberately exposes no training
  * eligibility, no training-candidate queue and no outbox/delivery surface.
@@ -13,6 +16,7 @@
 
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Search } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentRole } from "@/hooks/useCurrentRole";
 import { roleCan } from "@/lib/authz/consoleCapabilities";
@@ -22,10 +26,6 @@ import { listCeEvaluationsFn } from "@/lib/api/ce.functions";
 import { ceClient } from "@/integrations/supabase/ce-schema";
 import { CeDetailPanel } from "@/components/console/ce/CeDetailPanel";
 import { LoadingState, PermissionDenied } from "@/components/console/PageStates";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -34,11 +34,17 @@ import { toast } from "sonner";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PAGE_SIZE = 25;
 
-const SEVERITY_STYLE: Record<string, string> = {
+const SEVERITY_PILL: Record<string, string> = {
   critical: "bg-red-100 text-red-700 border-red-200",
   high: "bg-orange-100 text-orange-700 border-orange-200",
   medium: "bg-amber-100 text-amber-700 border-amber-200",
   low: "bg-emerald-100 text-emerald-700 border-emerald-200",
+};
+
+const STATUS_PILL: Record<string, string> = {
+  pending: "bg-slate-100 text-slate-700 border-slate-200",
+  accepted: "bg-emerald-100 text-emerald-700 border-emerald-200",
+  rejected: "bg-red-100 text-red-700 border-red-200",
 };
 
 export const Route = createFileRoute("/_authenticated/console/conversation-evaluation/")({
@@ -61,10 +67,11 @@ function ConversationEvaluationIndex() {
   );
 }
 
-function scoreClass(score: number): string {
-  if (score < 60) return "bg-red-50 text-red-700 border-red-200";
-  if (score < 80) return "bg-amber-50 text-amber-700 border-amber-200";
-  return "bg-emerald-50 text-emerald-700 border-emerald-200";
+/** Base44 plain bold colored score number (no bordered badge). */
+function scoreTextClass(score: number): string {
+  if (score < 60) return "text-red-600";
+  if (score < 80) return "text-amber-600";
+  return "text-emerald-600";
 }
 
 /** Invokes the deployed conversation-evaluate Edge Function; contract unchanged. */
@@ -87,6 +94,49 @@ async function invokeCe(
   const payload = (data ?? {}) as Record<string, unknown>;
   if (payload.error) return { ok: false, code: String(payload.error) };
   return { ok: true, data: payload };
+}
+
+/** Compact Base44-style chip button used for every left-column filter row. */
+function Chip({
+  label,
+  active,
+  onClick,
+  disabled,
+}: {
+  label: string;
+  active?: boolean;
+  onClick?: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      aria-disabled={disabled ? "true" : undefined}
+      onClick={onClick}
+      className={cn(
+        "rounded-full border px-2.5 py-[3px] text-[11px] leading-none transition-colors",
+        disabled
+          ? "cursor-default border-[#e8e6e0] bg-[#f5f4f0] text-slate-400"
+          : active
+            ? "border-slate-900 bg-slate-900 text-white"
+            : "border-[#e8e6e0] bg-white text-slate-600 hover:bg-[#fafaf8]",
+      )}
+    >
+      {label}
+    </button>
+  );
+}
+
+function ChipRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-start gap-2">
+      <span className="mt-[5px] w-[64px] shrink-0 text-[10px] font-medium uppercase tracking-wide text-slate-400">
+        {label}
+      </span>
+      <div className="flex flex-wrap gap-1.5">{children}</div>
+    </div>
+  );
 }
 
 function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: boolean }) {
@@ -275,242 +325,270 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
   }, [rows, selected, convChannel, channelById]);
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] min-h-0 flex-col gap-3 p-3">
-      {/* Toolbar */}
-      <div className="space-y-2 rounded-lg border bg-card px-3.5 py-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <PillButton
-            label={t(C.pills.all)}
-            count={error ? null : allCount}
-            active={pill === "all"}
-            onClick={() => setPill("all")}
-          />
-          <PillButton
-            label={t(C.pills.needsReview)}
-            count={error ? null : needsReviewCount}
-            active={pill === "needs_review"}
-            onClick={() => setPill("needs_review")}
-          />
-          <span className="ml-1 text-xs text-muted-foreground">
-            {error ? (
-              t(C.countUnavailable)
-            ) : (
-              <>
-                {filtered.length} / {allCount} {t(C.count)}
-              </>
-            )}
-          </span>
-          {canRun && (
-            <div className="ml-auto flex flex-wrap items-center gap-2">
-              <Input
-                value={runId}
-                onChange={(e) => setRunId(e.target.value)}
-                placeholder={t(C.run.placeholder)}
-                className="h-8 w-64 font-mono text-xs"
-              />
-              <Button size="sm" disabled={running} onClick={() => void runEvaluation()}>
-                {running ? t(C.run.running) : t(C.run.action)}
-              </Button>
-            </div>
-          )}
-        </div>
-
-        {/* Core filters — always visible, matching the SU review density */}
-        <div className="flex flex-wrap items-end gap-2">
-          <div>
-            <div className="mb-1 text-[10px] uppercase text-muted-foreground">{t(C.searchPlaceholder)}</div>
-            <Input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder={t(C.searchPlaceholder)}
-              className="h-8 w-56 text-xs"
+    <div className="h-[calc(100vh-4rem)] min-h-0 bg-[#f7f6f2] p-4">
+      {/* Single horizontal body: LEFT 40% list column, RIGHT 59% detail panel.
+          No toolbar spans both columns — all list controls live on the left. */}
+      <div className="flex h-full min-h-0 flex-col gap-4 lg:flex-row">
+        {/* ───────────────── LEFT COLUMN (40%) ───────────────── */}
+        <div className="flex min-h-0 flex-col gap-3 overflow-y-auto lg:basis-[40%]">
+          {/* Tabs + compact evaluate control */}
+          <div className="flex flex-wrap items-center gap-2">
+            <TabPill
+              label={t(C.pills.all)}
+              count={error ? null : allCount}
+              active={pill === "all"}
+              onClick={() => setPill("all")}
             />
+            <TabPill
+              label={t(C.pills.needsReview)}
+              count={error ? null : needsReviewCount}
+              active={pill === "needs_review"}
+              onClick={() => setPill("needs_review")}
+            />
+            <span className="text-[11px] text-slate-500">
+              {error ? (
+                t(C.countUnavailable)
+              ) : (
+                <>
+                  {filtered.length} / {allCount} {t(C.count)}
+                </>
+              )}
+            </span>
           </div>
-          <FilterSelect
-            label={t(C.filters.status)}
-            value={reviewStatus}
-            onChange={setReviewStatus}
-            options={[
-              { v: "any", l: t(C.filters.any) },
-              { v: "pending", l: "pending" },
-              { v: "accepted", l: "accepted" },
-              { v: "rejected", l: "rejected" },
-            ]}
-          />
-          <FilterSelect
-            label={t(C.filters.urgency)}
-            value={severity}
-            onChange={setSeverity}
-            options={[
-              { v: "any", l: t(C.filters.any) },
-              { v: "critical", l: "critical" },
-              { v: "high", l: "high" },
-              { v: "medium", l: "medium" },
-              { v: "low", l: "low" },
-            ]}
-          />
-          <FilterSelect
-            label={t(C.filters.score)}
-            value={scoreBand}
-            onChange={setScoreBand}
-            options={[
-              { v: "any", l: t(C.filters.any) },
-              { v: "low", l: t(C.scoreBands.low) },
-              { v: "mid", l: t(C.scoreBands.mid) },
-              { v: "high", l: t(C.scoreBands.high) },
-            ]}
-          />
-          <FilterSelect
-            label={t(C.filters.channel)}
-            value={channel}
-            onChange={setChannel}
-            options={[
-              { v: "any", l: t(C.filters.any) },
-              ...channelOptions.map((c) => ({ v: c.id, l: c.name })),
-            ]}
-          />
-          {/* Intent has no canonical CE field: slot preserved, honestly disabled. */}
-          <div>
-            <div className="mb-1 text-[10px] uppercase text-muted-foreground">{t(C.filters.intent)}</div>
-            <div
-              aria-disabled="true"
-              className="flex h-8 w-36 items-center rounded-md border bg-muted/40 px-2 text-[11px] text-muted-foreground"
-            >
-              {t(C.filters.unavailable)}
-            </div>
-          </div>
-          <Button size="sm" variant="ghost" onClick={() => setShowMore((s) => !s)}>
-            {showMore ? t(C.filters.less) : t(C.filters.more)}
-          </Button>
-          <Button size="sm" variant="ghost" onClick={clearFilters}>
-            {t(C.filters.clear)}
-          </Button>
-        </div>
 
-        {showMore && (
-          <div className="flex flex-wrap items-end gap-2">
-            <div>
-              <div className="mb-1 text-[10px] uppercase text-muted-foreground">{t(C.filters.from)}</div>
-              <Input
-                type="date"
-                value={fromDate}
-                onChange={(e) => setFromDate(e.target.value)}
-                className="h-8 w-36 text-xs"
+          {/* Search + filter chips card */}
+          <div className="space-y-2.5 rounded-[10px] border border-[#e8e6e0] bg-white p-3">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder={t(C.searchPlaceholder)}
+                className="h-8 w-full rounded-md border border-[#e8e6e0] bg-white pl-8 pr-2 text-[12px] text-slate-700 outline-none placeholder:text-slate-400 focus:border-slate-300"
               />
             </div>
-            <div>
-              <div className="mb-1 text-[10px] uppercase text-muted-foreground">{t(C.filters.to)}</div>
-              <Input
-                type="date"
-                value={toDate}
-                onChange={(e) => setToDate(e.target.value)}
-                className="h-8 w-36 text-xs"
-              />
-            </div>
-          </div>
-        )}
-      </div>
 
-      {/* Two-column body: ~40% / ~59% with a ~1% gap */}
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[40%_1fr]">
-        {/* Left panel */}
-        <div className="flex min-h-0 flex-col overflow-hidden rounded-lg border bg-card">
-          <div className="grid grid-cols-[1.4fr_1fr_0.9fr_1fr_0.7fr] gap-2 border-b bg-muted/40 px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            <span>{t(C.columns.conversation)}</span>
-            <span>{t(C.columns.customer)}</span>
-            <span>{t(C.columns.date)}</span>
-            <span>{t(C.columns.channel)}</span>
-            <span className="text-right">{t(C.columns.qaScore)}</span>
+            {canRun && (
+              <div className="flex items-center gap-1.5">
+                <input
+                  value={runId}
+                  onChange={(e) => setRunId(e.target.value)}
+                  placeholder={t(C.run.placeholder)}
+                  className="h-7 min-w-0 flex-1 rounded-md border border-[#e8e6e0] bg-white px-2 font-mono text-[11px] text-slate-700 outline-none placeholder:text-slate-400 focus:border-slate-300"
+                />
+                <button
+                  type="button"
+                  disabled={running}
+                  onClick={() => void runEvaluation()}
+                  className="h-7 shrink-0 rounded-md bg-slate-900 px-2.5 text-[11px] font-medium text-white disabled:opacity-50"
+                >
+                  {running ? t(C.run.running) : t(C.run.action)}
+                </button>
+              </div>
+            )}
+
+            <ChipRow label={t(C.filters.status)}>
+              {[
+                { v: "any", l: t(C.filters.any) },
+                { v: "pending", l: "pending" },
+                { v: "accepted", l: "accepted" },
+                { v: "rejected", l: "rejected" },
+              ].map((o) => (
+                <Chip key={o.v} label={o.l} active={reviewStatus === o.v} onClick={() => setReviewStatus(o.v)} />
+              ))}
+            </ChipRow>
+
+            <ChipRow label={t(C.filters.urgency)}>
+              {[
+                { v: "any", l: t(C.filters.any) },
+                { v: "critical", l: "Critical" },
+                { v: "high", l: "High" },
+                { v: "medium", l: "Medium" },
+                { v: "low", l: "Low" },
+              ].map((o) => (
+                <Chip key={o.v} label={o.l} active={severity === o.v} onClick={() => setSeverity(o.v)} />
+              ))}
+            </ChipRow>
+
+            <ChipRow label={t(C.filters.score)}>
+              {[
+                { v: "any", l: t(C.filters.any) },
+                { v: "low", l: t(C.scoreBands.low) },
+                { v: "mid", l: t(C.scoreBands.mid) },
+                { v: "high", l: t(C.scoreBands.high) },
+              ].map((o) => (
+                <Chip key={o.v} label={o.l} active={scoreBand === o.v} onClick={() => setScoreBand(o.v)} />
+              ))}
+            </ChipRow>
+
+            <ChipRow label={t(C.filters.channel)}>
+              <Chip label={t(C.filters.any)} active={channel === "any"} onClick={() => setChannel("any")} />
+              {channelOptions.map((c) => (
+                <Chip key={c.id} label={c.name} active={channel === c.id} onClick={() => setChannel(c.id)} />
+              ))}
+            </ChipRow>
+
+            {/* Intent has no canonical CE field: slot preserved, honestly disabled. */}
+            <ChipRow label={t(C.filters.intent)}>
+              <Chip label={t(C.filters.unavailable)} disabled />
+            </ChipRow>
+
+            <div className="flex items-center gap-3 pt-0.5">
+              <button
+                type="button"
+                onClick={() => setShowMore((s) => !s)}
+                className="text-[11px] font-medium text-slate-500 hover:text-slate-800"
+              >
+                {showMore ? t(C.filters.less) : t(C.filters.more)}
+              </button>
+              <button
+                type="button"
+                onClick={clearFilters}
+                className="text-[11px] font-medium text-slate-500 hover:text-slate-800"
+              >
+                {t(C.filters.clear)}
+              </button>
+            </div>
+
+            {showMore && (
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-slate-400">
+                  {t(C.filters.from)}
+                  <input
+                    type="date"
+                    value={fromDate}
+                    onChange={(e) => setFromDate(e.target.value)}
+                    className="h-7 rounded-md border border-[#e8e6e0] bg-white px-1.5 text-[11px] text-slate-700 outline-none"
+                  />
+                </label>
+                <label className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-slate-400">
+                  {t(C.filters.to)}
+                  <input
+                    type="date"
+                    value={toDate}
+                    onChange={(e) => setToDate(e.target.value)}
+                    className="h-7 rounded-md border border-[#e8e6e0] bg-white px-1.5 text-[11px] text-slate-700 outline-none"
+                  />
+                </label>
+              </div>
+            )}
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto">
+
+          {/* Table card */}
+          <div className="overflow-hidden rounded-[10px] border border-[#e8e6e0] bg-white">
             {error ? (
-              <div className="m-3 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
+              <div className="m-3 rounded-md border border-red-200 bg-red-50 p-3 text-[12px] text-red-700">
                 {t(C.list.loadFailed)} <span className="font-mono">{error}</span>
               </div>
             ) : loading ? (
-              <div className="p-4 text-xs text-muted-foreground">{t(C.detail.loading)}</div>
+              <div className="p-4 text-[12px] text-slate-500">{t(C.detail.loading)}</div>
             ) : pageRows.length === 0 ? (
-              <div className="p-4 text-xs text-muted-foreground">{t(C.list.empty)}</div>
+              <div className="p-4 text-[12px] text-slate-500">{t(C.list.empty)}</div>
             ) : (
-              <ul className="divide-y">
-                {pageRows.map((r) => {
-                  const chId = convChannel[r.conversation_id];
-                  const chName = chId ? channelById[chId] : null;
-                  const score = Number(r.overall_score);
-                  const isSelected = selected === r.evaluation_id;
-                  return (
-                    <li key={r.evaluation_id}>
-                      <button
-                        type="button"
-                        onClick={() => setSelected(r.evaluation_id)}
-                        className={cn(
-                          "w-full px-3 py-2.5 text-left transition-colors hover:bg-muted/50",
-                          isSelected && "border-l-2 border-l-primary bg-primary/5",
-                        )}
-                      >
-                        <div className="grid grid-cols-[1.4fr_1fr_0.9fr_1fr_0.7fr] items-center gap-2">
-                          <span className="truncate font-mono text-[12px] font-semibold">
-                            {String(r.conversation_id).slice(0, 8)}…
-                          </span>
-                          {/* No authoritative customer source in canonical CE data. */}
-                          <span className="truncate text-[11px] text-muted-foreground">—</span>
-                          <span className="truncate text-[11px] text-muted-foreground">
-                            {new Date(r.evaluated_at).toLocaleDateString()}
-                          </span>
-                          <span className="truncate text-[11px] text-muted-foreground">
-                            {chName ?? t(C.meta.unavailable)}
-                          </span>
-                          <span
-                            className={cn(
-                              "justify-self-end rounded border px-1.5 py-0.5 text-[11px] font-semibold",
-                              scoreClass(score),
-                            )}
-                          >
-                            {score.toFixed(1)}
-                          </span>
-                        </div>
-                        <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                          <Badge
-                            variant="outline"
-                            className={cn("text-[10px]", SEVERITY_STYLE[r.severity] ?? "")}
-                          >
-                            {r.severity}
-                          </Badge>
-                          {r.needs_review && (
-                            <Badge variant="outline" className="text-[10px]">
-                              {t(C.pills.needsReview)}
-                            </Badge>
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse text-left">
+                  <thead className="bg-[#f5f4f0]">
+                    <tr className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                      <th className="px-3 py-2 font-semibold">{t(C.columns.id)}</th>
+                      <th className="px-2 py-2 font-semibold">{t(C.columns.customer)}</th>
+                      <th className="px-2 py-2 font-semibold">{t(C.columns.date)}</th>
+                      <th className="px-2 py-2 font-semibold">{t(C.columns.channel)}</th>
+                      <th className="px-2 py-2 font-semibold">{t(C.columns.qaScore)}</th>
+                      <th className="px-2 py-2 font-semibold">{t(C.columns.urgency)}</th>
+                      <th className="px-3 py-2 font-semibold">{t(C.columns.status)}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pageRows.map((r) => {
+                      const chId = convChannel[r.conversation_id];
+                      const chName = chId ? channelById[chId] : null;
+                      const score = Number(r.overall_score);
+                      const isSelected = selected === r.evaluation_id;
+                      const status = reviewById[r.evaluation_id] ?? "pending";
+                      return (
+                        <tr
+                          key={r.evaluation_id}
+                          onClick={() => setSelected(r.evaluation_id)}
+                          className={cn(
+                            "h-[44px] cursor-pointer border-t border-[#f0efe9] transition-colors",
+                            isSelected ? "bg-[#f0f9ff]" : "hover:bg-[#fafaf8]",
                           )}
-                        </div>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
+                        >
+                          <td className="whitespace-nowrap px-3 py-2 font-mono text-[11px] font-semibold text-indigo-600">
+                            {String(r.conversation_id).slice(0, 8)}…
+                          </td>
+                          {/* No authoritative customer source in canonical CE data. */}
+                          <td className="px-2 py-2 text-[11px] text-slate-400">—</td>
+                          <td className="whitespace-nowrap px-2 py-2 text-[11px] text-slate-500">
+                            {new Date(r.evaluated_at).toLocaleDateString()}
+                          </td>
+                          <td className="px-2 py-2">
+                            {chName ? (
+                              <span className="inline-block max-w-[110px] truncate rounded border border-sky-200 bg-sky-50 px-1.5 py-[2px] text-[10px] font-medium text-sky-700">
+                                {chName}
+                              </span>
+                            ) : (
+                              <span className="text-[11px] text-slate-400">{t(C.meta.unavailable)}</span>
+                            )}
+                          </td>
+                          <td className={cn("px-2 py-2 text-[12px] font-bold", scoreTextClass(score))}>
+                            {score.toFixed(1)}
+                          </td>
+                          <td className="px-2 py-2">
+                            <span
+                              className={cn(
+                                "inline-block rounded-full border px-1.5 py-[2px] text-[10px] font-medium capitalize",
+                                SEVERITY_PILL[r.severity] ?? "border-[#e8e6e0] bg-[#f5f4f0] text-slate-600",
+                              )}
+                            >
+                              {r.severity}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2">
+                            <span
+                              className={cn(
+                                "inline-block rounded-full border px-1.5 py-[2px] text-[10px] font-medium",
+                                STATUS_PILL[status] ?? "border-[#e8e6e0] bg-[#f5f4f0] text-slate-600",
+                              )}
+                            >
+                              {r.needs_review ? t(C.pills.needsReview) : status}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {pageCount > 1 && (
+              <div className="flex items-center justify-between gap-2 border-t border-[#f0efe9] px-3 py-1.5 text-[11px]">
+                <button
+                  type="button"
+                  disabled={page === 0}
+                  onClick={() => setPage((p) => p - 1)}
+                  className="text-slate-500 disabled:opacity-40"
+                >
+                  {t(C.list.prev)}
+                </button>
+                <span className="text-slate-400">
+                  {t(C.list.page)} {page + 1} / {pageCount}
+                </span>
+                <button
+                  type="button"
+                  disabled={page + 1 >= pageCount}
+                  onClick={() => setPage((p) => p + 1)}
+                  className="text-slate-500 disabled:opacity-40"
+                >
+                  {t(C.list.next)}
+                </button>
+              </div>
             )}
           </div>
-          {pageCount > 1 && (
-            <div className="flex items-center justify-between gap-2 border-t px-3 py-1.5 text-xs">
-              <Button size="sm" variant="ghost" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
-                {t(C.list.prev)}
-              </Button>
-              <span className="text-muted-foreground">
-                {t(C.list.page)} {page + 1} / {pageCount}
-              </span>
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={page + 1 >= pageCount}
-                onClick={() => setPage((p) => p + 1)}
-              >
-                {t(C.list.next)}
-              </Button>
-            </div>
-          )}
         </div>
 
-        {/* Right panel */}
-        <div className="min-h-0 overflow-hidden rounded-lg border bg-card">
+        {/* ───────────────── RIGHT COLUMN (59%) ───────────────── */}
+        <div className="min-h-0 overflow-hidden rounded-[11px] border border-[#e8e6e0] bg-white lg:basis-[59%]">
           {selected ? (
             <CeDetailPanel
               key={selected}
@@ -520,7 +598,7 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
               onChanged={reload}
             />
           ) : (
-            <div className="p-6 text-sm text-muted-foreground">{t(C.detail.selectPrompt)}</div>
+            <div className="p-6 text-[13px] text-slate-500">{t(C.detail.selectPrompt)}</div>
           )}
         </div>
       </div>
@@ -528,7 +606,7 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
   );
 }
 
-function PillButton({
+function TabPill({
   label,
   count,
   active,
@@ -544,51 +622,21 @@ function PillButton({
       type="button"
       onClick={onClick}
       className={cn(
-        "flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+        "flex items-center gap-1.5 rounded-full border px-3 py-[5px] text-[11px] font-medium transition-colors",
         active
-          ? "border-primary bg-primary text-primary-foreground"
-          : "bg-background text-muted-foreground hover:text-foreground",
+          ? "border-slate-900 bg-slate-900 text-white"
+          : "border-[#e8e6e0] bg-white text-slate-600 hover:bg-[#fafaf8]",
       )}
     >
       {label}
       <span
         className={cn(
-          "rounded-full px-1.5 py-0.5 text-[10px] font-semibold",
-          active ? "bg-primary-foreground/20" : "bg-muted",
+          "rounded-full px-1.5 text-[10px] font-semibold leading-[16px]",
+          active ? "bg-white/20 text-white" : "bg-[#f5f4f0] text-slate-500",
         )}
       >
         {count === null ? "—" : count}
       </span>
     </button>
-  );
-}
-
-function FilterSelect({
-  label,
-  value,
-  onChange,
-  options,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  options: { v: string; l: string }[];
-}) {
-  return (
-    <div>
-      <div className="mb-1 text-[10px] uppercase text-muted-foreground">{label}</div>
-      <Select value={value} onValueChange={onChange}>
-        <SelectTrigger className="h-8 w-36 text-xs">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {options.map((o) => (
-            <SelectItem key={o.v} value={o.v}>
-              {o.l}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
   );
 }
