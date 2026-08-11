@@ -69,13 +69,13 @@ export const CE_REVIEW_COPY = {
     loading: { en: "Loading…", zh: "載入中…" },
     loadFailed: { en: "This conversation could not be loaded.", zh: "無法載入此對話。" },
     sectionLoadFailed: { en: "This section could not be loaded.", zh: "無法載入此區段。" },
-    notEvaluated: { en: "Not Evaluated", zh: "未評估" },
-    notEvaluatedYet: { en: "Not evaluated yet.", zh: "尚未評估。" },
+    notEvaluated: { en: "No Data", zh: "無資料" },
+    notEvaluatedYet: { en: "No Data", zh: "無資料" },
     evaluateUnavailable: {
       en: "Evaluation unavailable until SU Platform company identity is connected.",
       zh: "在 SU 平台企業身份連接前，評估功能暫時無法使用。",
     },
-    replayUnavailable: { en: "Replay unavailable until evaluation is completed.", zh: "完成評估後才可使用重播功能。" },
+    replayUnavailable: { en: "No Data", zh: "無資料" },
     recalled: { en: "[Message recalled]", zh: "[訊息已撤回]" },
   },
   tabs: {
