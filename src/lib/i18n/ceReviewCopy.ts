@@ -57,6 +57,8 @@ export const CE_REVIEW_COPY = {
     running: { en: "Evaluating…", zh: "評估中…" },
     placeholder: { en: "Conversation ID (UUID)", zh: "對話 ID（UUID）" },
     invalidId: { en: "Enter a valid conversation id (UUID).", zh: "請輸入有效的對話 ID（UUID）。" },
+    completed: { en: "Evaluation completed.", zh: "評估已完成。" },
+    alreadyEvaluated: { en: "This conversation was already evaluated.", zh: "此對話先前已評估過。" },
   },
   detail: {
     selectPrompt: { en: "Select a conversation to review its evaluation.", zh: "請選擇一筆對話以檢視其評估。" },
