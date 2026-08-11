@@ -11,7 +11,7 @@ export const Route = createFileRoute("/_authenticated/console/conversation-evalu
       {
         name: "description",
         content:
-          "Evaluate chatbot conversations with six-dimension scoring, review, and training outbox.",
+          "Review chatbot conversations with six-dimension scoring, replay evidence and QA findings.",
       },
     ],
   }),
