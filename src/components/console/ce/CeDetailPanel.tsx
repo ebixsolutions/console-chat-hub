@@ -61,6 +61,14 @@ function scoreClass(score: number): string {
   return "bg-emerald-50 text-emerald-700 border-emerald-200";
 }
 
+/** Base44 plain bold colored score text (used in the header score badge). */
+function scoreTextClass(score: number): string {
+  if (score < 60) return "text-red-600";
+  if (score < 80) return "text-amber-600";
+  return "text-emerald-600";
+}
+
+
 function Panel({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
     <section className="rounded-[10px] border border-[#e8e6e0] bg-white p-3">
