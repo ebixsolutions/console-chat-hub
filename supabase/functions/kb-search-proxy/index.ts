@@ -29,13 +29,16 @@ function jsonResponse(body: unknown, status: number, req: Request): Response {
 }
 
 function isUuid(v: unknown): v is string {
-  return typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+  return typeof v === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 }
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     const optOrigin = req.headers.get("Origin") ?? "";
-    if (!CONSOLE_ORIGINS.includes(optOrigin)) return new Response(null, { status: 403 });
+    if (!CONSOLE_ORIGINS.includes(optOrigin)) {
+      return new Response(null, { status: 403 });
+    }
     return new Response(null, { headers: getCorsHeaders(req) });
   }
 
@@ -62,7 +65,9 @@ Deno.serve(async (req) => {
     }
 
     const supabaseAuth = createClient(supabaseUrl, anonKey, {
-      global: { headers: { Authorization: req.headers.get("Authorization") ?? "" } },
+      global: {
+        headers: { Authorization: req.headers.get("Authorization") ?? "" },
+      },
     });
 
     const {
@@ -100,7 +105,8 @@ Deno.serve(async (req) => {
       return jsonResponse(
         {
           error: "invalid_request",
-          detail: "tenant/company/industry/language/workspace scope must not be provided by client",
+          detail:
+            "tenant/company/industry/language/workspace scope must not be provided by client",
         },
         400,
         req,
@@ -109,24 +115,46 @@ Deno.serve(async (req) => {
 
     const rawQuery = body?.query;
     if (typeof rawQuery !== "string") {
-      return jsonResponse({ error: "invalid_request", detail: "query required" }, 400, req);
+      return jsonResponse(
+        { error: "invalid_request", detail: "query required" },
+        400,
+        req,
+      );
     }
 
     const query = rawQuery.trim();
     if (query.length === 0) {
-      return jsonResponse({ error: "invalid_request", detail: "query empty" }, 400, req);
+      return jsonResponse(
+        { error: "invalid_request", detail: "query empty" },
+        400,
+        req,
+      );
     }
 
     if (query.length > MAX_QUERY_LENGTH) {
-      return jsonResponse({ error: "invalid_request", detail: "query too long (max 500)" }, 400, req);
+      return jsonResponse(
+        { error: "invalid_request", detail: "query too long (max 500)" },
+        400,
+        req,
+      );
     }
 
-    const topK = Math.max(1, Math.min(MAX_TOP_K, Number.parseInt(String(body?.top_k), 10) || 3));
+    const topK = Math.max(
+      1,
+      Math.min(
+        MAX_TOP_K,
+        Number.parseInt(String(body?.top_k), 10) || 3,
+      ),
+    );
 
     // Production console KB is conversation-scoped: required, never optional.
     const conversationId = body?.conversation_id;
     if (!isUuid(conversationId)) {
-      return jsonResponse({ error: "invalid_request", detail: "valid conversation_id required" }, 400, req);
+      return jsonResponse(
+        { error: "invalid_request", detail: "valid conversation_id required" },
+        400,
+        req,
+      );
     }
 
     const { data: conversation, error: conversationErr } = await supabaseAdmin
@@ -149,7 +177,10 @@ Deno.serve(async (req) => {
 
     if (!conversation.company_id) {
       return jsonResponse(
-        { error: "kb_tenant_unresolved", detail: "conversation has no authoritative company_id" },
+        {
+          error: "kb_tenant_unresolved",
+          detail: "conversation has no authoritative company_id",
+        },
         503,
         req,
       );
@@ -157,10 +188,11 @@ Deno.serve(async (req) => {
 
     // Authoritative membership helper checks:
     // company_id + user_id + membership.is_active + company.is_active.
-    const { data: isMember, error: membershipErr } = await supabaseAdmin.rpc("is_company_member", {
-      p_company_id: conversation.company_id,
-      p_user_id: user.id,
-    });
+    const { data: isMember, error: membershipErr } =
+      await supabaseAdmin.rpc("is_company_member", {
+        p_company_id: conversation.company_id,
+        p_user_id: user.id,
+      });
 
     if (membershipErr) {
       console.error("[kb-search-proxy] company membership check failed", {
@@ -187,20 +219,64 @@ Deno.serve(async (req) => {
         conversation_id: conversationId,
         reason: tenantResult.reason,
       });
-      return jsonResponse({ error: "kb_tenant_unresolved", detail: tenantResult.reason }, 503, req);
+      return jsonResponse(
+        { error: "kb_tenant_unresolved", detail: tenantResult.reason },
+        503,
+        req,
+      );
     }
 
-    const kbResult = await fetchKBRag({ query, top_k: topK }, tenantResult.scope, endpointCfg);
+    const kbResult = await fetchKBRag(
+      { query, top_k: topK },
+      tenantResult.scope,
+      endpointCfg,
+    );
 
     if (!kbResult.success) {
       if (kbResult.error_code === "KB_TIMEOUT") {
         return jsonResponse({ error: "kb_api_timeout" }, 504, req);
       }
-      console.error("[kb-search-proxy] KB API error", { code: kbResult.error_code });
+      console.error("[kb-search-proxy] KB API error", {
+        code: kbResult.error_code,
+      });
       return jsonResponse({ error: "kb_api_error" }, 502, req);
     }
 
-    return jsonResponse({ success: true, results: kbResult.citations }, 200, req);
+    // Defense in depth: every returned citation must belong to the same
+    // selected document as the structured LLM context. A mismatch is treated
+    // as an upstream contract failure, never silently mixed.
+    const selectedDocumentId =
+      kbResult.llm_context?.selected_document_id ??
+      kbResult.selected_document_id;
+
+    if (selectedDocumentId) {
+      const crossDocument = kbResult.citations.some(
+        (citation) =>
+          citation.document_id !== undefined &&
+          citation.document_id !== selectedDocumentId,
+      );
+      if (crossDocument) {
+        console.error("[kb-search-proxy] cross-document aggregation mismatch", {
+          conversation_id: conversationId,
+          selected_document_id: selectedDocumentId,
+        });
+        return jsonResponse({ error: "kb_contract_mismatch" }, 502, req);
+      }
+    }
+
+    return jsonResponse(
+      {
+        success: true,
+        // Backward-compatible flattened result list for current console UI.
+        results: kbResult.citations,
+        // Canonical v2 structured context for all new callers.
+        llm_context: kbResult.llm_context ?? null,
+        meta: kbResult.meta ?? null,
+        selected_document_id: selectedDocumentId ?? null,
+      },
+      200,
+      req,
+    );
   } catch (e) {
     console.error("[kb-search-proxy] unexpected error", (e as Error).name);
     return jsonResponse({ error: "internal_error" }, 500, req);
