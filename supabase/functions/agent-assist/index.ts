@@ -9,17 +9,15 @@ const TOOL_TYPES = new Set(["translate", "grammar", "suggest_reply", "check_poli
 const ELEVATED_ROLES = new Set(["admin", "supervisor"]);
 const ALLOWED_LANGS = new Set(["en", "zh-TW"]);
 const MAX_CONTENT = 2000;
-const MAX_POLICY_ITEMS = 3;
-const MAX_POLICY_CONTENT = 800;
+const MAX_POLICY_EVIDENCE = 3;
 const CLAUDE_TIMEOUT_MS = 15000;
 
 const TOOL_ALLOWED_FIELDS: Record<string, Set<string>> = {
   translate: new Set(["tool_type", "conversation_id", "content", "target_language"]),
   grammar: new Set(["tool_type", "conversation_id", "content"]),
   suggest_reply: new Set(["tool_type", "conversation_id", "content"]),
-  check_policy: new Set(["tool_type", "conversation_id", "content", "policy_context"]),
+  check_policy: new Set(["tool_type", "conversation_id", "content"]),
 };
-const POLICY_ITEM_KEYS = new Set(["label", "content", "source_type"]);
 const VALID_TONES = new Set(["professional", "casual", "empathetic", "needs_improvement"]);
 const VALID_SUG_TONES = new Set(["Empathetic", "Informative", "Neutral"]);
 const VALID_POL_ST = new Set(["compliant", "warning", "violation", "insufficient_evidence"]);
@@ -193,41 +191,6 @@ Deno.serve(async (req) => {
     if (toolType === "translate") {
       if (!body.target_language || !ALLOWED_LANGS.has(body.target_language)) {
         return jsonRes({ error: "invalid_request", detail: "target_language required (en or zh-TW)" }, 400, req);
-      }
-    }
-
-    // Policy context validation
-    let policyContext: Array<{ label: string; content: string; source_type: string }> | null = null;
-    if (toolType === "check_policy" && body.policy_context !== undefined) {
-      if (!Array.isArray(body.policy_context) || body.policy_context.length > MAX_POLICY_ITEMS) {
-        return jsonRes({ error: "invalid_request", detail: "policy_context max 3 items" }, 400, req);
-      }
-      policyContext = [];
-      for (const p of body.policy_context) {
-        if (!p || typeof p !== "object") {
-          return jsonRes({ error: "invalid_request", detail: "invalid policy item" }, 400, req);
-        }
-        for (const pk of Object.keys(p)) {
-          if (!POLICY_ITEM_KEYS.has(pk)) {
-            return jsonRes({ error: "invalid_request", detail: "unknown policy field: " + pk }, 400, req);
-          }
-        }
-        if (typeof p.label !== "string" || typeof p.content !== "string" || typeof p.source_type !== "string") {
-          return jsonRes({ error: "invalid_request", detail: "policy items need string fields" }, 400, req);
-        }
-        const label = p.label.trim();
-        const pc = p.content.trim();
-        const st = p.source_type.trim();
-        if (label.length < 1 || label.length > 120) {
-          return jsonRes({ error: "invalid_request", detail: "policy label 1-120 chars" }, 400, req);
-        }
-        if (pc.length < 1 || pc.length > MAX_POLICY_CONTENT) {
-          return jsonRes({ error: "invalid_request", detail: "policy content 1-800 chars" }, 400, req);
-        }
-        if (st.length < 1 || st.length > 40) {
-          return jsonRes({ error: "invalid_request", detail: "policy source_type 1-40 chars" }, 400, req);
-        }
-        policyContext.push({ label, content: pc, source_type: st });
       }
     }
 
@@ -478,14 +441,80 @@ ${groundingBlock}`,
     }
 
     if (toolType === "check_policy") {
-      if (!policyContext || policyContext.length === 0) {
+      // PR-KB: policy evidence is server-owned. The browser may provide only
+      // conversation_id + content; it cannot inject policy_context.
+      const endpointCfg = resolveKBEndpoint();
+      if (!endpointCfg) {
+        console.error("[agent-assist] AA_POLICY_KB_CONFIG_MISSING");
+        return jsonRes(
+          { success: false, error: "policy_kb_unavailable" },
+          503,
+          req,
+        );
+      }
+
+      const tenantResult = await resolveTenantScope(conversationId);
+      if (!tenantResult.resolved) {
+        console.error("[agent-assist] AA_POLICY_KB_TENANT_UNRESOLVED", {
+          conversation_id: conversationId,
+          reason: tenantResult.reason,
+        });
+        return jsonRes(
+          {
+            success: false,
+            error: "policy_kb_tenant_unresolved",
+            detail: tenantResult.reason,
+          },
+          503,
+          req,
+        );
+      }
+
+      const kbResult = await fetchKBRag(
+        { query: content.slice(0, 500), top_k: 3 },
+        tenantResult.scope,
+        endpointCfg,
+      );
+
+      if (!kbResult.success) {
+        console.error("[agent-assist] AA_POLICY_KB_FETCH_FAILED", {
+          code: kbResult.error_code,
+        });
+        return jsonRes(
+          { success: false, error: "policy_kb_unavailable" },
+          kbResult.error_code === "KB_TIMEOUT" ? 504 : 502,
+          req,
+        );
+      }
+
+      const policyContext =
+        kbResult.llm_context?.full_content_evidence
+          ?.filter(
+            (item) =>
+              typeof item.content === "string" &&
+              item.content.trim().length > 0 &&
+              typeof item.source_type === "string" &&
+              item.source_type.toLowerCase().includes("policy"),
+          )
+          .slice(0, MAX_POLICY_EVIDENCE)
+          .map((item, index) => ({
+            label: `Policy evidence ${index + 1}`,
+            content: item.content.slice(0, 800),
+            source_type: item.source_type.slice(0, 40),
+          })) ?? [];
+
+      if (policyContext.length === 0) {
         return jsonRes(
           {
             success: true,
             tool_type: "check_policy",
+            knowledge_grounded: true,
+            selected_document_id:
+              kbResult.llm_context?.selected_document_id ?? null,
             result: {
               status: "insufficient_evidence",
-              summary: "No policy sources provided. Cannot assess compliance without policy evidence.",
+              summary:
+                "No matching full-content policy evidence found. Cannot assess compliance.",
               issues: [],
             },
           },
@@ -493,10 +522,13 @@ ${groundingBlock}`,
           req,
         );
       }
-      const block = policyContext.map((p) => `[${p.label}]\n${p.content}`).join("\n\n");
+
+      const block = policyContext
+        .map((p) => `[${p.label}]\n${p.content}`)
+        .join("\n\n");
       const r = await callClaude(
-        `Assess policy compliance based ONLY on the provided sources. Do NOT invent rules not in the sources. If sources lack relevant policy, set status to "insufficient_evidence". Return ONLY JSON: {"status":"compliant|warning|violation|insufficient_evidence","summary":"Based on provided policy sources, ...","issues":[{"excerpt":"...","policy_label":"...","severity":"warning|violation"}]}. Max 3 issues.`,
-        `Text to check:\n${content}\n\nPolicy sources:\n${block}`,
+        `Assess policy compliance based ONLY on the provided full-content policy evidence. Do NOT invent rules not in the evidence. The RAG summary is never policy evidence. If the provided full-content evidence does not support a conclusion, set status to "insufficient_evidence". Return ONLY JSON: {"status":"compliant|warning|violation|insufficient_evidence","summary":"Based on verified policy evidence, ...","issues":[{"excerpt":"...","policy_label":"...","severity":"warning|violation"}]}. Max 3 issues.`,
+        `Text to check:\n${content}\n\nVerified full-content policy evidence:\n${block}`,
       );
       if (!r.ok || !r.text) return jsonRes({ success: false, error: "policy_check_failed" }, 502, req);
       const p = parseJson(r.text);
@@ -531,6 +563,9 @@ ${groundingBlock}`,
         {
           success: true,
           tool_type: "check_policy",
+          knowledge_grounded: true,
+          selected_document_id:
+            kbResult.llm_context?.selected_document_id ?? null,
           result: {
             status: p.status,
             summary: String(p.summary).slice(0, 500),

@@ -232,66 +232,13 @@ export function CRMPanel({
     setPolLoading(true);
     setPolError("");
     setPolResult(null);
-    let pctx: Array<{ label: string; content: string; source_type: string }> = [];
-    let kbDenied = false;
     try {
-      const { data, error } = await supabase.functions.invoke("kb-search-proxy", {
-        body: { query: content.trim().slice(0, 500), top_k: 3, conversation_id: conv?.id },
-      });
-      if (polReqIdRef.current !== reqId) return;
-      if (data?.error === "forbidden") {
-        kbDenied = true;
-      } else if (error) {
-        setPolError(rc("polError"));
-        setPolLoading(false);
-        return;
-      } else if (data?.success && Array.isArray(data.policy_evidence)) {
-        pctx = (
-          data.policy_evidence as Array<{
-            label: string;
-            content: string;
-            source_type: string;
-            document_id: string;
-            chunk_id?: string;
-            score: number;
-          }>
-        )
-          .filter(
-            (item) =>
-              typeof item.content === "string" &&
-              item.content.trim().length > 0 &&
-              typeof item.source_type === "string" &&
-              item.source_type.toLowerCase().includes("policy"),
-          )
-          .slice(0, 3)
-          .map((item) => ({
-            label: item.label.slice(0, 120),
-            content: item.content.slice(0, 800),
-            source_type: item.source_type.slice(0, 40),
-          }));
-      }
-    } catch {
-      if (polReqIdRef.current !== reqId) return;
-      setPolError(rc("polError"));
-      setPolLoading(false);
-      return;
-    }
-    if (kbDenied) {
-      setPolError(rc("polDenied"));
-      setPolLoading(false);
-      return;
-    }
-    if (pctx.length === 0) {
-      setPolResult({ status: "insufficient_evidence", summary: rc("polInsufficient"), issues: [] });
-      setPolLoading(false);
-      return;
-    }
-    try {
+      // Policy retrieval is server-owned. The browser sends only the
+      // conversation identity and text to assess.
       const body: Record<string, unknown> = {
         tool_type: "check_policy",
         conversation_id: conv?.id ?? "",
         content: content.trim().slice(0, 2000),
-        policy_context: pctx,
       };
       const { data, error } = await supabase.functions.invoke("agent-assist", { body });
       if (polReqIdRef.current !== reqId) return;
