@@ -1,4 +1,9 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import {
+  fetchKBRag,
+  resolveKBEndpoint,
+  resolveTenantScope,
+} from "../_shared/kb-client.ts";
 
 const TOOL_TYPES = new Set(["translate", "grammar", "suggest_reply", "check_policy"]);
 const ELEVATED_ROLES = new Set(["admin", "supervisor"]);
@@ -326,16 +331,115 @@ Deno.serve(async (req) => {
     }
 
     if (toolType === "suggest_reply") {
-      const r = await callClaude(
-        `Generate up to 3 customer service reply drafts with different tones. Return ONLY JSON: {"suggestions":[{"content":"...","tone_label":"Empathetic|Informative|Neutral"}]}. These are DRAFTS ONLY. Respond in the customer's language.`,
-        content,
+      // PR-KB: Suggest Reply must be grounded in the same authoritative,
+      // conversation-scoped KB contract used by generate-reply.
+      const endpointCfg = resolveKBEndpoint();
+      if (!endpointCfg) {
+        console.error("[agent-assist] AA_SUGGEST_KB_CONFIG_MISSING");
+        return jsonRes(
+          { success: false, error: "suggest_kb_unavailable" },
+          503,
+          req,
+        );
+      }
+
+      const tenantResult = await resolveTenantScope(conversationId);
+      if (!tenantResult.resolved) {
+        console.error("[agent-assist] AA_SUGGEST_KB_TENANT_UNRESOLVED", {
+          conversation_id: conversationId,
+          reason: tenantResult.reason,
+        });
+        return jsonRes(
+          {
+            success: false,
+            error: "suggest_kb_tenant_unresolved",
+            detail: tenantResult.reason,
+          },
+          503,
+          req,
+        );
+      }
+
+      const kbResult = await fetchKBRag(
+        { query: content.slice(0, 500), top_k: 3 },
+        tenantResult.scope,
+        endpointCfg,
       );
-      if (!r.ok || !r.text) return jsonRes({ success: false, error: "suggest_failed" }, 502, req);
+
+      if (!kbResult.success) {
+        console.error("[agent-assist] AA_SUGGEST_KB_FETCH_FAILED", {
+          code: kbResult.error_code,
+        });
+        return jsonRes(
+          { success: false, error: "suggest_kb_unavailable" },
+          kbResult.error_code === "KB_TIMEOUT" ? 504 : 502,
+          req,
+        );
+      }
+
+      const fullEvidence =
+        kbResult.llm_context?.full_content_evidence
+          ?.filter(
+            (item) =>
+              typeof item.content === "string" &&
+              item.content.trim().length > 0,
+          )
+          .slice(0, 3) ?? [];
+
+      if (fullEvidence.length === 0) {
+        return jsonRes(
+          { success: false, error: "suggest_insufficient_evidence" },
+          422,
+          req,
+        );
+      }
+
+      const orientation = kbResult.llm_context?.orientation_summary?.trim() ?? "";
+      const evidenceBlock = fullEvidence
+        .map(
+          (item, index) =>
+            `[Full Content Evidence ${index + 1}]
+${item.content.slice(0, 1200)}`,
+        )
+        .join("
+
+");
+
+      const groundingBlock = [
+        orientation
+          ? `Orientation Summary (context only; not sufficient by itself for exact facts):
+${orientation.slice(0, 1200)}`
+          : "",
+        `Full Content Evidence:
+${evidenceBlock}`,
+      ]
+        .filter(Boolean)
+        .join("
+
+");
+
+      const r = await callClaude(
+        `Generate up to 3 customer service reply drafts with different tones. Return ONLY JSON: {"suggestions":[{"content":"...","tone_label":"Empathetic|Informative|Neutral"}]}. These are DRAFTS ONLY. Respond in the customer's language. Ground factual claims ONLY in Full Content Evidence. The Orientation Summary is context only and cannot independently support prices, dates, dimensions, policy conditions, procedures, limits, availability, warranty, refund or other exact facts. If the evidence does not support a factual claim, do not invent it.`,
+        `Customer message:
+${content}
+
+Knowledge Base grounding:
+${groundingBlock}`,
+      );
+      if (!r.ok || !r.text) {
+        return jsonRes({ success: false, error: "suggest_failed" }, 502, req);
+      }
+
       const p = parseJson(r.text);
       if (!p?.suggestions || !Array.isArray(p.suggestions)) {
         console.error("[agent-assist] AA_SUGGEST_OUTPUT_INVALID");
-        return jsonRes({ success: false, error: "suggest_parse_failed" }, 502, req);
+        return jsonRes(
+          { success: false, error: "suggest_parse_failed" },
+          502,
+          req,
+        );
       }
+
       const safe = (p.suggestions as Array<Record<string, unknown>>)
         .filter(
           (s) =>
@@ -344,13 +448,30 @@ Deno.serve(async (req) => {
             VALID_SUG_TONES.has(String(s.tone_label)),
         )
         .slice(0, 3)
-        .map((s) => ({ content: String(s.content).slice(0, 1000), tone_label: String(s.tone_label) }));
+        .map((s) => ({
+          content: String(s.content).slice(0, 1000),
+          tone_label: String(s.tone_label),
+        }));
+
       if (safe.length === 0) {
         console.error("[agent-assist] AA_SUGGEST_OUTPUT_INVALID");
-        return jsonRes({ success: false, error: "suggest_parse_failed" }, 502, req);
+        return jsonRes(
+          { success: false, error: "suggest_parse_failed" },
+          502,
+          req,
+        );
       }
+
       return jsonRes(
-        { success: true, tool_type: "suggest_reply", draft_only: true, result: { suggestions: safe } },
+        {
+          success: true,
+          tool_type: "suggest_reply",
+          draft_only: true,
+          knowledge_grounded: true,
+          selected_document_id:
+            kbResult.llm_context?.selected_document_id ?? null,
+          result: { suggestions: safe },
+        },
         200,
         req,
       );
