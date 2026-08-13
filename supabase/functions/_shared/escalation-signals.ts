@@ -17,11 +17,26 @@
 export const ESCALATION_SIGNAL_CONTRACT_VERSION = "SU-CoachAI-Escalation-Signals-v1.0" as const;
 export const ESCALATION_RULESET_VERSION = "SU-CoachAI-Escalation-Ruleset-v1.6" as const;
 
-export const ESCALATION_FIRST_MATCH_ORDER = ["E2", "E1", "R1", "S0", "R2", "R3", "P2", "R4", "P1"] as const;
+export const ESCALATION_FIRST_MATCH_ORDER = [
+  "E2",
+  "E1",
+  "R1",
+  "S0",
+  "R2",
+  "R3",
+  "P2",
+  "R4",
+  "P1",
+] as const;
 
 export type EscalationRuleId = (typeof ESCALATION_FIRST_MATCH_ORDER)[number];
 
-export type SignalAvailability = "available" | "not_checked" | "unavailable" | "invalid" | "stale";
+export type SignalAvailability =
+  | "available"
+  | "not_checked"
+  | "unavailable"
+  | "invalid"
+  | "stale";
 
 export type SignalSource =
   | "local_classifier"
@@ -190,7 +205,9 @@ export interface EscalationFeatureFlags {
  * Existing R1/S0 flags stay owned by generate-reply and are intentionally not
  * duplicated here.
  */
-export function escalationFeatureFlagsFromEnv(env: { get(name: string): string | undefined }): EscalationFeatureFlags {
+export function escalationFeatureFlagsFromEnv(
+  env: { get(name: string): string | undefined },
+): EscalationFeatureFlags {
   const on = (name: string) => env.get(name) === "true";
   return {
     enable_full_ruleset: on("ESC_ENABLE_FULL_RULESET"),
@@ -205,7 +222,10 @@ export function escalationFeatureFlagsFromEnv(env: { get(name: string): string |
   };
 }
 
-export function unavailableSignal<T>(source: SignalSource, reason: string): SignalValue<T> {
+export function unavailableSignal<T>(
+  source: SignalSource,
+  reason: string,
+): SignalValue<T> {
   return {
     value: null,
     provenance: {
@@ -216,7 +236,10 @@ export function unavailableSignal<T>(source: SignalSource, reason: string): Sign
   };
 }
 
-export function notCheckedSignal<T>(source: SignalSource, reason?: string): SignalValue<T> {
+export function notCheckedSignal<T>(
+  source: SignalSource,
+  reason?: string,
+): SignalValue<T> {
   return {
     value: null,
     provenance: {
@@ -260,7 +283,9 @@ export interface EscalationContextValidation {
  * - missing required signal => rule non-match + signal gap (Task 2 consumes gaps)
  * - unavailable is NOT equivalent to false/no_match
  */
-export function validateEscalationContext(context: EscalationContext): EscalationContextValidation {
+export function validateEscalationContext(
+  context: EscalationContext,
+): EscalationContextValidation {
   const errors: string[] = [];
   const warnings: string[] = [];
   const signalGaps: string[] = [];
@@ -281,7 +306,10 @@ export function validateEscalationContext(context: EscalationContext): Escalatio
   }
 
   const entries = Object.entries(context).filter(
-    ([, value]) => value && typeof value === "object" && "provenance" in (value as Record<string, unknown>),
+    ([, value]) =>
+      value &&
+      typeof value === "object" &&
+      "provenance" in (value as Record<string, unknown>),
   ) as Array<[string, SignalValue<unknown>]>;
 
   for (const [name, signal] of entries) {
@@ -321,7 +349,10 @@ export function validateEscalationContext(context: EscalationContext): Escalatio
   validateNonNegativeNumber(context.conversation_duration_sec, "conversation_duration_sec", errors);
 
   const providerIntegrityFailure = errors.some(
-    (e) => e === "signal_contract_version_mismatch" || e === "cross_tenant_provider_response" || e.endsWith(":stale"),
+    (e) =>
+      e === "signal_contract_version_mismatch" ||
+      e === "cross_tenant_provider_response" ||
+      e.endsWith(":stale"),
   );
 
   return {
@@ -333,7 +364,11 @@ export function validateEscalationContext(context: EscalationContext): Escalatio
   };
 }
 
-function validateUnitInterval(signal: SignalValue<number>, name: string, errors: string[]): void {
+function validateUnitInterval(
+  signal: SignalValue<number>,
+  name: string,
+  errors: string[],
+): void {
   validateBoundedScore(signal, name, 0, 1, errors);
 }
 
@@ -345,21 +380,42 @@ function validateBoundedScore(
   errors: string[],
 ): void {
   if (signal.provenance.availability !== "available") return;
-  if (signal.value === null || !Number.isFinite(signal.value) || signal.value < min || signal.value > max) {
+  if (
+    signal.value === null ||
+    !Number.isFinite(signal.value) ||
+    signal.value < min ||
+    signal.value > max
+  ) {
     errors.push(`${name}:out_of_range`);
   }
 }
 
-function validateNonNegativeInteger(signal: SignalValue<number>, name: string, errors: string[]): void {
+function validateNonNegativeInteger(
+  signal: SignalValue<number>,
+  name: string,
+  errors: string[],
+): void {
   if (signal.provenance.availability !== "available") return;
-  if (signal.value === null || !Number.isInteger(signal.value) || signal.value < 0) {
+  if (
+    signal.value === null ||
+    !Number.isInteger(signal.value) ||
+    signal.value < 0
+  ) {
     errors.push(`${name}:invalid_non_negative_integer`);
   }
 }
 
-function validateNonNegativeNumber(signal: SignalValue<number>, name: string, errors: string[]): void {
+function validateNonNegativeNumber(
+  signal: SignalValue<number>,
+  name: string,
+  errors: string[],
+): void {
   if (signal.provenance.availability !== "available") return;
-  if (signal.value === null || !Number.isFinite(signal.value) || signal.value < 0) {
+  if (
+    signal.value === null ||
+    !Number.isFinite(signal.value) ||
+    signal.value < 0
+  ) {
     errors.push(`${name}:invalid_non_negative_number`);
   }
 }
@@ -385,13 +441,19 @@ export function createEscalationContextBase(input: {
     greeting_or_trivial: notCheckedSignal("local_classifier"),
     pure_handoff_negation: notCheckedSignal("local_classifier"),
     clarification_attempts: notCheckedSignal("conversation_history"),
-    sentiment_recovered_same_turn: unavailableSignal("coach_ai", "provider_contract_unverified"),
+    sentiment_recovered_same_turn: unavailableSignal(
+      "coach_ai",
+      "provider_contract_unverified",
+    ),
     verified_local_risk_classification: notCheckedSignal("local_classifier"),
 
     upstream_failure_count: notCheckedSignal("runtime"),
     failure_type: notCheckedSignal("runtime"),
 
-    explicit_request: availableSignal(input.explicit_request, "local_classifier"),
+    explicit_request: availableSignal(
+      input.explicit_request,
+      "local_classifier",
+    ),
 
     sentiment_score: unavailableSignal("conversation_evaluation", "no_current_evaluation_data"),
     anger_score: unavailableSignal("coach_ai", "provider_contract_unverified"),
@@ -404,24 +466,39 @@ export function createEscalationContextBase(input: {
     threat_flag: unavailableSignal("coach_ai", "provider_contract_unverified"),
     confidence_score: unavailableSignal("coach_ai", "provider_contract_unverified"),
 
-    compliance_jurisdiction_requires_human_review: unavailableSignal("tenant_config", "provider_contract_unverified"),
+    compliance_jurisdiction_requires_human_review: unavailableSignal(
+      "tenant_config",
+      "provider_contract_unverified",
+    ),
 
     unresolved_turns: notCheckedSignal("conversation_history"),
     consecutive_no_answer: notCheckedSignal("conversation_history"),
-    same_intent_repeated: unavailableSignal("conversation_history", "detected_intent_unavailable"),
+    same_intent_repeated: unavailableSignal(
+      "conversation_history",
+      "detected_intent_unavailable",
+    ),
     turn_count: notCheckedSignal("conversation_history"),
     conversation_duration_sec: notCheckedSignal("conversation_history"),
 
     rag_match_state: unavailableSignal("kb_rag", "kb_contract_unverified"),
-    policy_match_state: unavailableSignal("policy_engine", "provider_contract_unverified"),
-    policy_match_confidence: unavailableSignal("policy_engine", "provider_contract_unverified"),
+    policy_match_state: unavailableSignal(
+      "policy_engine",
+      "provider_contract_unverified",
+    ),
+    policy_match_confidence: unavailableSignal(
+      "policy_engine",
+      "provider_contract_unverified",
+    ),
 
     topic_risk_level: notCheckedSignal("local_classifier"),
 
     customer_tier: unavailableSignal("customer360", "provider_contract_unverified"),
     order_value: unavailableSignal("customer360", "provider_contract_unverified"),
     currency: unavailableSignal("customer360", "provider_contract_unverified"),
-    high_value_order: unavailableSignal("customer360", "provider_contract_unverified"),
+    high_value_order: unavailableSignal(
+      "customer360",
+      "provider_contract_unverified",
+    ),
 
     tenant_config: null,
 
@@ -442,13 +519,17 @@ export function evaluateE2SignalContract(context: EscalationContext): {
   signal_gap: boolean;
 } {
   const threat = context.threat_flag;
-  const jurisdiction = context.compliance_jurisdiction_requires_human_review;
+  const jurisdiction =
+    context.compliance_jurisdiction_requires_human_review;
 
   const threatKnown = threat.provenance.availability === "available";
-  const jurisdictionKnown = jurisdiction.provenance.availability === "available";
+  const jurisdictionKnown =
+    jurisdiction.provenance.availability === "available";
 
   return {
-    match: (threatKnown && threat.value === true) || (jurisdictionKnown && jurisdiction.value === true),
+    match:
+      (threatKnown && threat.value === true) ||
+      (jurisdictionKnown && jurisdiction.value === true),
     signal_gap: !threatKnown || !jurisdictionKnown,
   };
 }

@@ -18,27 +18,13 @@
 //   Pre-checks confirmed: status='pending' valid; is_recalled exists; DELETE pattern used.
 //   Authorized by: Director Charlson.
 
-import {
-  resolveKBEndpoint,
-  resolveTenantScope,
-  fetchKBRag,
-  type KBFullChunk,
-  type KBResolvedScope,
-} from "../_shared/kb-client.ts";
+import { resolveKBEndpoint, resolveTenantScope, fetchKBRag, type KBFullChunk, type KBResolvedScope } from "../_shared/kb-client.ts";
 import { evaluateEscalationShadow } from "../_shared/escalation-shadow.ts";
 import {
   persistRequiredEscalationClarification,
   persistRequiredEscalationHandoff,
 } from "../_shared/escalation-live.ts";
-import {
-  availableSignal,
-  createEscalationContextBase,
-  escalationFeatureFlagsFromEnv,
-  type EscalationContext,
-  type EscalationRuleId,
-  type RagMatchState,
-  type TopicRiskLevel,
-} from "../_shared/escalation-signals.ts";
+import { availableSignal, createEscalationContextBase, escalationFeatureFlagsFromEnv, type EscalationContext, type EscalationRuleId, type RagMatchState, type TopicRiskLevel } from "../_shared/escalation-signals.ts";
 import { evaluateFullEscalationRuleset } from "../_shared/escalation-rules.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -61,7 +47,10 @@ const SAFE_HANDOFF_WORDING: Record<string, string> = {
   en: "We have recorded your conversation. A human agent will reply in this same chat after taking over. Real-time queue position and estimated wait time are not currently enabled.",
 };
 
-const REQUIRED_ESCALATION_SAFE_WORDING: Record<"E2" | "E1" | "R2", Record<"zh-TW" | "zh-CN" | "en", string>> = {
+const REQUIRED_ESCALATION_SAFE_WORDING: Record<
+  "E2" | "E1" | "R2",
+  Record<"zh-TW" | "zh-CN" | "en", string>
+> = {
   E2: {
     "zh-TW": "這個問題需要由客服人員進一步處理。我已將對話轉交客服跟進。",
     "zh-CN": "这个问题需要由客服人员进一步处理。我已将对话转交客服跟进。",
@@ -88,16 +77,7 @@ const R2_CLARIFICATION_SAFE_WORDING: Record<"zh-TW" | "zh-CN" | "en", string> = 
 const HANDOFF_STRONG_TRIGGERS: Record<string, string[]> = {
   "zh-TW": ["轉真人", "轉人工", "真人客服", "人工客服"],
   "zh-CN": ["转真人", "转人工", "真人客服", "人工客服"],
-  en: [
-    "human agent",
-    "live agent",
-    "speak to human",
-    "talk to human",
-    "real person",
-    "human support",
-    "speak with someone",
-    "talk to someone",
-  ],
+  en: ["human agent", "live agent", "speak to human", "talk to human", "real person", "human support", "speak with someone", "talk to someone"],
 };
 const HANDOFF_WEAK_TERMS = ["客服", "人工", "真人"];
 const HANDOFF_INTENT_VERBS_ZH = ["要", "想", "找", "轉", "转", "接", "聯絡", "联系", "幫我", "帮我"];
@@ -107,16 +87,10 @@ const ZH_TW_CHARS = ["轉", "們", "隊", "預計", "為您", "為我", "為你"
 
 function isHandoffIntent(text: string): boolean {
   const lower = text.toLowerCase();
-  const allStrong = [
-    ...HANDOFF_STRONG_TRIGGERS["zh-TW"],
-    ...HANDOFF_STRONG_TRIGGERS["zh-CN"],
-    ...HANDOFF_STRONG_TRIGGERS["en"],
-  ];
+  const allStrong = [...HANDOFF_STRONG_TRIGGERS["zh-TW"], ...HANDOFF_STRONG_TRIGGERS["zh-CN"], ...HANDOFF_STRONG_TRIGGERS["en"]];
   if (allStrong.some((kw) => lower.includes(kw.toLowerCase()))) return true;
   const hasWeak = HANDOFF_WEAK_TERMS.some((kw) => text.includes(kw));
-  const hasIntent = [...HANDOFF_INTENT_VERBS_ZH, ...HANDOFF_INTENT_VERBS_EN].some((kw) =>
-    lower.includes(kw.toLowerCase()),
-  );
+  const hasIntent = [...HANDOFF_INTENT_VERBS_ZH, ...HANDOFF_INTENT_VERBS_EN].some((kw) => lower.includes(kw.toLowerCase()));
   return hasWeak && hasIntent;
 }
 
@@ -126,8 +100,7 @@ function detectHandoffLanguage(text: string): "zh-TW" | "zh-CN" | "en" | null {
   if (
     HANDOFF_STRONG_TRIGGERS["en"].some((kw) => lower.includes(kw)) ||
     (HANDOFF_INTENT_VERBS_EN.some((kw) => lower.includes(kw)) && HANDOFF_WEAK_TERMS.some((kw) => text.includes(kw)))
-  )
-    return "en";
+  ) return "en";
   if (ZH_CN_CHARS.some((kw) => text.includes(kw))) return "zh-CN";
   if (ZH_TW_CHARS.some((kw) => text.includes(kw))) return "zh-TW";
   if (HANDOFF_STRONG_TRIGGERS["zh-CN"].some((kw) => text.includes(kw))) return "zh-CN";
@@ -200,12 +173,7 @@ async function cleanupThinking(
     return;
   }
   try {
-    await supabaseAdmin
-      .from("messages")
-      .delete()
-      .eq("conversation_id", conversation_id)
-      .eq("content", "__THINKING__")
-      .filter("metadata->>source_message_id", "eq", source_message_id);
+    await supabaseAdmin.from("messages").delete().eq("conversation_id", conversation_id).eq("content", "__THINKING__").filter("metadata->>source_message_id", "eq", source_message_id);
   } catch (e) {
     console.error("[generate-reply] cleanupThinking failed (non-blocking):", e);
   }
@@ -224,6 +192,7 @@ function classifyExplicitHandoff(text: string): EscClassifierResult {
   return { rule: null, confidence: 0, trigger_span: "", language: "zh-TW" };
 }
 
+
 function isGreetingOrTrivial(text: string): boolean {
   const normalized = text.trim().replace(/\s+/g, " ").toLowerCase();
   const raw = text.trim();
@@ -234,15 +203,14 @@ function isGreetingOrTrivial(text: string): boolean {
   return greetingRe.test(normalized) || compoundEnRe.test(normalized) || compoundZhRe.test(raw);
 }
 
+
 const E2_LOCAL_THREAT_CLASSIFIER_VERSION = "e2-local-threat-v1.0" as const;
 
-function classifyAuthoritativeThreat(text: string):
-  | {
-      value: true;
-      reason: string;
-      provider_version: string;
-    }
-  | undefined {
+function classifyAuthoritativeThreat(text: string): {
+  value: true;
+  reason: string;
+  provider_version: string;
+} | undefined {
   const normalized = text.trim().replace(/\s+/g, " ");
   const lower = normalized.toLowerCase();
 
@@ -258,8 +226,8 @@ function classifyAuthoritativeThreat(text: string):
     /(?:我有炸彈|我有炸弹)/,
   ];
 
-  const matched =
-    explicitEnglishThreats.some((re) => re.test(lower)) || explicitChineseThreats.some((re) => re.test(normalized));
+  const matched = explicitEnglishThreats.some((re) => re.test(lower)) ||
+    explicitChineseThreats.some((re) => re.test(normalized));
 
   if (!matched) return undefined;
 
@@ -313,53 +281,20 @@ function resolveAuthoritativeComplianceReview(
 
 function classifyLocalTopicRisk(text: string): { level: "high"; verified: true } | undefined {
   const transactional = [
-    /退[款貨]/,
-    /要退/,
-    /申請退/,
-    /我要.*退/,
-    /refund\s*(my|this|the)/i,
-    /return\s*(my|this|the)/i,
-    /i\s*want\s*(a\s*)?refund/i,
-    /i\s*want\s*to\s*return/i,
-    /賠償/,
-    /補償/,
-    /compensation/i,
-    /法律行動/,
-    /legal\s*action/i,
-    /起訴/,
+    /退[款貨]/, /要退/, /申請退/, /我要.*退/,
+    /refund\s*(my|this|the)/i, /return\s*(my|this|the)/i,
+    /i\s*want\s*(a\s*)?refund/i, /i\s*want\s*to\s*return/i,
+    /賠償/, /補償/, /compensation/i, /法律行動/, /legal\s*action/i, /起訴/,
   ];
   const informationOnly = [
-    /policy/i,
-    /政策/,
-    /規定/,
-    /條款/,
-    /what\s*(is|are)/i,
-    /how\s*(do|does|to)/i,
-    /tell\s*me\s*about/i,
-    /請問/,
-    /想了解/,
-    /介紹/,
-    /說明/,
+    /policy/i, /政策/, /規定/, /條款/,
+    /what\s*(is|are)/i, /how\s*(do|does|to)/i, /tell\s*me\s*about/i,
+    /請問/, /想了解/, /介紹/, /說明/,
   ];
   const alwaysHigh = [
-    /醫療/,
-    /藥品/,
-    /治療/,
-    /medical/i,
-    /medicine/i,
-    /treatment/i,
-    /隱私/,
-    /個資/,
-    /資料保護/,
-    /privacy/i,
-    /personal\s*data/i,
-    /gdpr/i,
-    /投資/,
-    /理財/,
-    /金融/,
-    /investment/i,
-    /financial/i,
-    /finance/i,
+    /醫療/, /藥品/, /治療/, /medical/i, /medicine/i, /treatment/i,
+    /隱私/, /個資/, /資料保護/, /privacy/i, /personal\s*data/i, /gdpr/i,
+    /投資/, /理財/, /金融/, /investment/i, /financial/i, /finance/i,
   ];
 
   const matchesTransactional = transactional.some((re) => re.test(text));
@@ -370,6 +305,8 @@ function classifyLocalTopicRisk(text: string): { level: "high"; verified: true }
   if (!highRisk) return undefined;
   return { level: "high", verified: true };
 }
+
+
 
 interface R3SentimentSignals {
   anger_flag?: true;
@@ -387,9 +324,8 @@ function isFiniteScore(value: unknown): boolean {
 
 function explicitAngerLabel(value: unknown): boolean {
   if (typeof value !== "string") return false;
-  return ["angry", "anger", "furious", "rage", "irate", "憤怒", "愤怒", "生氣", "生气"].includes(
-    value.trim().toLowerCase(),
-  );
+  return ["angry","anger","furious","rage","irate","憤怒","愤怒","生氣","生气"]
+    .includes(value.trim().toLowerCase());
 }
 
 async function loadAuthoritativeR3SentimentSignals(
@@ -418,22 +354,24 @@ async function loadAuthoritativeR3SentimentSignals(
     .limit(20);
   if (pointsError || !points || points.length === 0) return undefined;
 
-  const usable = points
-    .map((p) => ({
-      turn_index: typeof p.turn_index === "number" ? p.turn_index : -1,
-      score: isFiniteScore(p.sentiment_score) ? Number(p.sentiment_score) : undefined,
-      sentiment: p.sentiment,
-      trigger_label: p.trigger_label,
-    }))
-    .filter((p) => p.score !== undefined || explicitAngerLabel(p.sentiment) || explicitAngerLabel(p.trigger_label));
+  const usable = points.map((p) => ({
+    turn_index: typeof p.turn_index === "number" ? p.turn_index : -1,
+    score: isFiniteScore(p.sentiment_score) ? Number(p.sentiment_score) : undefined,
+    sentiment: p.sentiment,
+    trigger_label: p.trigger_label,
+  })).filter((p) =>
+    p.score !== undefined ||
+    explicitAngerLabel(p.sentiment) ||
+    explicitAngerLabel(p.trigger_label)
+  );
   if (usable.length === 0) return undefined;
 
   const scoreSeries = usable
     .filter((p) => typeof p.score === "number")
-    .sort((a, b) => a.turn_index - b.turn_index)
+    .sort((a,b) => a.turn_index - b.turn_index)
     .map((p) => p.score as number);
 
-  const latest = [...usable].sort((a, b) => b.turn_index - a.turn_index)[0];
+  const latest = [...usable].sort((a,b) => b.turn_index - a.turn_index)[0];
   const latestScore = typeof latest?.score === "number" ? latest.score : undefined;
   const anger = explicitAngerLabel(latest?.sentiment) || explicitAngerLabel(latest?.trigger_label);
 
@@ -476,7 +414,9 @@ function deriveConversationHistorySignals(
   exactVisitorTurnCount: number,
   exactClarificationCount: number,
 ): ConversationHistorySignals {
-  const usable = newestFirstMessages.filter((m) => m.content !== "__THINKING__" && typeof m.role === "string");
+  const usable = newestFirstMessages.filter(
+    (m) => m.content !== "__THINKING__" && typeof m.role === "string",
+  );
 
   const recentVisitorMessages = usable.filter((m) => m.role === "visitor");
   let consecutiveNoAnswer = 0;
@@ -528,17 +468,28 @@ function buildVerifiedTenantEscalationConfig(): EscalationContext["tenant_config
       ? parsedSentimentThreshold
       : undefined;
 
-  if (maxConsecutiveNoAnswer === undefined && maxClarifications === undefined && sentimentScoreThreshold === undefined)
-    return null;
+  if (
+    maxConsecutiveNoAnswer === undefined &&
+    maxClarifications === undefined &&
+    sentimentScoreThreshold === undefined
+  ) return null;
 
   return {
-    ...(maxConsecutiveNoAnswer !== undefined ? { max_consecutive_no_answer: maxConsecutiveNoAnswer } : {}),
-    ...(maxClarifications !== undefined ? { max_clarifications: Math.min(1, maxClarifications) } : {}),
-    ...(sentimentScoreThreshold !== undefined ? { sentiment_score_threshold: sentimentScoreThreshold } : {}),
+    ...(maxConsecutiveNoAnswer !== undefined
+      ? { max_consecutive_no_answer: maxConsecutiveNoAnswer }
+      : {}),
+    ...(maxClarifications !== undefined
+      ? { max_clarifications: Math.min(1, maxClarifications) }
+      : {}),
+    ...(sentimentScoreThreshold !== undefined
+      ? { sentiment_score_threshold: sentimentScoreThreshold }
+      : {}),
   };
 }
 
-function requiredRuleActivationFromEnv(env: { get(name: string): string | undefined }): ReadonlySet<EscalationRuleId> {
+function requiredRuleActivationFromEnv(
+  env: { get(name: string): string | undefined },
+): ReadonlySet<EscalationRuleId> {
   const flags = escalationFeatureFlagsFromEnv(env);
   const enabled = new Set<EscalationRuleId>();
   if (flags.enable_full_ruleset || flags.enable_e2) enabled.add("E2");
@@ -627,12 +578,16 @@ async function evaluateAndPersistRequiredRulesLive(
   }
   if (params.compliance_jurisdiction_requires_human_review !== undefined) {
     const compliance = params.compliance_jurisdiction_requires_human_review;
-    context.compliance_jurisdiction_requires_human_review = availableSignal(compliance.value, "tenant_config", {
-      provider_version: compliance.provider_version,
-      observed_at: new Date().toISOString(),
-      reason: compliance.reason,
-      ...(params.expected_tenant_id ? { tenant_id: params.expected_tenant_id } : {}),
-    });
+    context.compliance_jurisdiction_requires_human_review = availableSignal(
+      compliance.value,
+      "tenant_config",
+      {
+        provider_version: compliance.provider_version,
+        observed_at: new Date().toISOString(),
+        reason: compliance.reason,
+        ...(params.expected_tenant_id ? { tenant_id: params.expected_tenant_id } : {}),
+      },
+    );
   }
 
   if (params.rag_match_state !== undefined) {
@@ -648,16 +603,25 @@ async function evaluateAndPersistRequiredRulesLive(
     );
   }
   if (params.conversation_duration_sec !== undefined) {
-    context.conversation_duration_sec = availableSignal(params.conversation_duration_sec, "conversation_history");
+    context.conversation_duration_sec = availableSignal(
+      params.conversation_duration_sec,
+      "conversation_history",
+    );
   }
   if (params.turn_count !== undefined) {
     context.turn_count = availableSignal(params.turn_count, "conversation_history");
   }
   if (params.consecutive_no_answer !== undefined) {
-    context.consecutive_no_answer = availableSignal(params.consecutive_no_answer, "conversation_history");
+    context.consecutive_no_answer = availableSignal(
+      params.consecutive_no_answer,
+      "conversation_history",
+    );
   }
   if (params.clarification_attempts !== undefined) {
-    context.clarification_attempts = availableSignal(params.clarification_attempts, "conversation_history");
+    context.clarification_attempts = availableSignal(
+      params.clarification_attempts,
+      "conversation_history",
+    );
   }
   if (params.exact_same_intent_repeated === true) {
     context.same_intent_repeated = availableSignal(true, "conversation_history", {
@@ -740,7 +704,11 @@ async function evaluateAndPersistRequiredRulesLive(
     );
   }
 
-  if (decision.decision !== "handoff" || decision.matched_rule === null || !enabled.has(decision.matched_rule)) {
+  if (
+    decision.decision !== "handoff" ||
+    decision.matched_rule === null ||
+    !enabled.has(decision.matched_rule)
+  ) {
     console.log("[generate-reply] required-rules live no-match:", {
       conversation_id: params.conversation_id,
       matched_rule: decision.matched_rule,
@@ -751,9 +719,14 @@ async function evaluateAndPersistRequiredRulesLive(
     return null;
   }
 
-  if (decision.matched_rule !== "E2" && decision.matched_rule !== "E1" && decision.matched_rule !== "R2") return null;
+  if (
+    decision.matched_rule !== "E2" &&
+    decision.matched_rule !== "E1" &&
+    decision.matched_rule !== "R2"
+  ) return null;
 
-  const safeReply = REQUIRED_ESCALATION_SAFE_WORDING[decision.matched_rule][params.visitor_language];
+  const safeReply =
+    REQUIRED_ESCALATION_SAFE_WORDING[decision.matched_rule][params.visitor_language];
 
   const persisted = await persistRequiredEscalationHandoff(supabaseAdmin, {
     conversation_id: params.conversation_id,
@@ -871,7 +844,13 @@ Deno.serve(async (req) => {
       Deno.env.get("ESC_SHADOW_MODE") === "true" ||
       Deno.env.get("ESC_ENABLE_REQUIRED_RULES_LIVE") === "true";
 
-    if (!ENABLE_KB && !ENABLE_COACH && !ENABLE_C360 && !ENABLE_TOOL_EXEC && !ENABLE_PR5_ESCALATION_RUNTIME) {
+    if (
+      !ENABLE_KB &&
+      !ENABLE_COACH &&
+      !ENABLE_C360 &&
+      !ENABLE_TOOL_EXEC &&
+      !ENABLE_PR5_ESCALATION_RUNTIME
+    ) {
       return await legacyGenerateReply(conversation_id, source_message_id ?? null);
     }
 
@@ -890,70 +869,34 @@ Deno.serve(async (req) => {
 });
 
 async function legacyGenerateReply(conversation_id: string, source_message_id: string | null): Promise<Response> {
-  const supabaseAdmin = createClient(
-    Deno.env.get("SUPABASE_URL") ?? "",
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
-  );
+  const supabaseAdmin = createClient(Deno.env.get("SUPABASE_URL") ?? "", Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "");
 
   const { data: conversation, error: convError } = await supabaseAdmin
-    .from("conversations")
-    .select("id, status, assigned_agent_id, created_at, company_id")
-    .eq("id", conversation_id)
-    .single();
+    .from("conversations").select("id, status, assigned_agent_id, created_at, company_id").eq("id", conversation_id).single();
 
   if (convError || !conversation) {
     console.error("[generate-reply] conversation not found:", conversation_id);
-    return new Response(JSON.stringify({ error: "Conversation not found" }), {
-      status: 404,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return new Response(JSON.stringify({ error: "Conversation not found" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 
-  if (conversation.status === "resolved")
-    return new Response(JSON.stringify({ success: true, skipped: "resolved" }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+  if (conversation.status === "resolved") return new Response(JSON.stringify({ success: true, skipped: "resolved" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   if (conversation.status === "transferred" || (conversation.status === "pending" && conversation.assigned_agent_id)) {
-    console.log(
-      "[generate-reply] human-handling guard: skipping LLM for status:",
-      conversation.status,
-      conversation_id,
-    );
-    return new Response(JSON.stringify({ success: true, skipped: "human_handling" }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    console.log("[generate-reply] human-handling guard: skipping LLM for status:", conversation.status, conversation_id);
+    return new Response(JSON.stringify({ success: true, skipped: "human_handling" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 
   if (conversation.assigned_agent_id) {
     console.log("[generate-reply] S-1 assigned_agent_id guard (legacy):", conversation_id);
-    return new Response(JSON.stringify({ success: true, skipped: "assigned_to_agent" }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return new Response(JSON.stringify({ success: true, skipped: "assigned_to_agent" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 
-  const { data: messages } = await supabaseAdmin
-    .from("messages")
-    .select("role, content, created_at")
-    .eq("conversation_id", conversation_id)
-    .neq("content", "__THINKING__")
-    .eq("is_recalled", false)
-    .order("created_at", { ascending: true })
-    .limit(10);
+  const { data: messages } = await supabaseAdmin.from("messages").select("role, content, created_at").eq("conversation_id", conversation_id).neq("content", "__THINKING__").eq("is_recalled", false).order("created_at", { ascending: true }).limit(10);
 
-  if (!messages || messages.length === 0)
-    return new Response(JSON.stringify({ success: true, skipped: "no messages" }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+  if (!messages || messages.length === 0) return new Response(JSON.stringify({ success: true, skipped: "no messages" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-  const claudeMessages = messages.map((m) => ({
-    role: m.role === "visitor" ? "user" : "assistant",
-    content: m.content,
-  }));
-  if (claudeMessages[claudeMessages.length - 1].role === "assistant")
-    return new Response(JSON.stringify({ success: true, skipped: "last message is assistant" }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+  const claudeMessages = messages.map((m) => ({ role: m.role === "visitor" ? "user" : "assistant", content: m.content }));
+  if (claudeMessages[claudeMessages.length - 1].role === "assistant") return new Response(JSON.stringify({ success: true, skipped: "last message is assistant" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   const lastVisitorMsg = messages.filter((m) => m.role === "visitor").at(-1)?.content ?? "";
   const handoffLang = detectHandoffLanguage(lastVisitorMsg);
@@ -961,34 +904,19 @@ async function legacyGenerateReply(conversation_id: string, source_message_id: s
   if (handoffLang) {
     const safeWording = SAFE_HANDOFF_WORDING[handoffLang];
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-    const { error: insertError } = await supabaseAdmin
-      .from("messages")
-      .insert({ conversation_id, role: "assistant", content: safeWording, status: "delivered", is_recalled: false });
+    const { error: insertError } = await supabaseAdmin.from("messages").insert({ conversation_id, role: "assistant", content: safeWording, status: "delivered", is_recalled: false });
     if (insertError) console.error("[generate-reply] deterministic handoff insert error:", insertError);
-    const { error: pendingUpdateErr } = await supabaseAdmin
-      .from("conversations")
-      .update({ status: "pending", updated_at: new Date().toISOString() })
-      .eq("id", conversation_id);
-    if (pendingUpdateErr)
-      console.error(
-        "[generate-reply] CRITICAL: failed to mark conversation pending after handoff:",
-        pendingUpdateErr.message,
-        conversation_id,
-      );
+    const { error: pendingUpdateErr } = await supabaseAdmin.from("conversations").update({ status: "pending", updated_at: new Date().toISOString() }).eq("id", conversation_id);
+    if (pendingUpdateErr) console.error("[generate-reply] CRITICAL: failed to mark conversation pending after handoff:", pendingUpdateErr.message, conversation_id);
     console.log("[generate-reply] deterministic handoff reply sent:", conversation_id, handoffLang);
-    return new Response(JSON.stringify({ success: true }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return new Response(JSON.stringify({ success: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 
   const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
   if (!anthropicKey) {
     console.error("[generate-reply] ANTHROPIC_API_KEY not set");
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-    return new Response(JSON.stringify({ error: "AI service not configured" }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return new Response(JSON.stringify({ error: "AI service not configured" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 
   const requestPayload = {
@@ -1024,57 +952,22 @@ When the customer explicitly requests a human agent, or when you transfer to a h
       console.error("[generate-reply] Anthropic fetch threw:", e);
       await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     }
-  } finally {
-    clearTimeout(_legacyTimeout);
-  }
+  } finally { clearTimeout(_legacyTimeout); }
 
   const responseLatencyMs = Date.now() - requestTimestamp;
-  const tracePayloadRedacted = {
-    model: requestPayload.model,
-    max_tokens: requestPayload.max_tokens,
-    system_prompt_ref: "[legacy_inline_cs_prompt_v1]",
-    message_count: claudeMessages.length,
-  };
+  const tracePayloadRedacted = { model: requestPayload.model, max_tokens: requestPayload.max_tokens, system_prompt_ref: "[legacy_inline_cs_prompt_v1]", message_count: claudeMessages.length };
 
   if (fetchThrew || !claudeResponse) {
-    await writeTraces(supabaseAdmin, {
-      conversation_id,
-      message_id: null,
-      user_message_raw: lastVisitorMsg,
-      response_status: null,
-      response_latency_ms: responseLatencyMs,
-      error_message: "api_exception",
-      request_payload: tracePayloadRedacted,
-      token_input: null,
-      token_output: null,
-      ai_reply_content: "",
-    });
-    return new Response(JSON.stringify({ error: "AI service error" }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    await writeTraces(supabaseAdmin, { conversation_id, message_id: null, user_message_raw: lastVisitorMsg, response_status: null, response_latency_ms: responseLatencyMs, error_message: "api_exception", request_payload: tracePayloadRedacted, token_input: null, token_output: null, ai_reply_content: "" });
+    return new Response(JSON.stringify({ error: "AI service error" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 
   if (!claudeResponse.ok) {
     const errText = await claudeResponse.text();
     console.error("[generate-reply] Claude API error:", claudeResponse.status, errText);
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-    await writeTraces(supabaseAdmin, {
-      conversation_id,
-      message_id: null,
-      user_message_raw: lastVisitorMsg,
-      response_status: claudeResponse.status,
-      response_latency_ms: responseLatencyMs,
-      error_message: `api_error_${claudeResponse.status}`,
-      request_payload: tracePayloadRedacted,
-      token_input: null,
-      token_output: null,
-      ai_reply_content: "",
-    });
-    return new Response(JSON.stringify({ error: "AI service error" }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    await writeTraces(supabaseAdmin, { conversation_id, message_id: null, user_message_raw: lastVisitorMsg, response_status: claudeResponse.status, response_latency_ms: responseLatencyMs, error_message: `api_error_${claudeResponse.status}`, request_payload: tracePayloadRedacted, token_input: null, token_output: null, ai_reply_content: "" });
+    return new Response(JSON.stringify({ error: "AI service error" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 
   const claudeData = await claudeResponse.json();
@@ -1083,53 +976,20 @@ When the customer explicitly requests a human agent, or when you transfer to a h
   const tokenOutput = claudeData.usage?.output_tokens ?? null;
   if (!aiReplyContent) {
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-    await writeTraces(supabaseAdmin, {
-      conversation_id,
-      message_id: null,
-      user_message_raw: lastVisitorMsg,
-      response_status: claudeResponse.status,
-      response_latency_ms: responseLatencyMs,
-      error_message: "empty_response",
-      request_payload: tracePayloadRedacted,
-      token_input: tokenInput,
-      token_output: tokenOutput,
-      ai_reply_content: "",
-    });
-    return new Response(JSON.stringify({ error: "Empty AI response" }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    await writeTraces(supabaseAdmin, { conversation_id, message_id: null, user_message_raw: lastVisitorMsg, response_status: claudeResponse.status, response_latency_ms: responseLatencyMs, error_message: "empty_response", request_payload: tracePayloadRedacted, token_input: tokenInput, token_output: tokenOutput, ai_reply_content: "" });
+    return new Response(JSON.stringify({ error: "Empty AI response" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 
   await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-  const { data: insertedMsg, error: insertError } = await supabaseAdmin
-    .from("messages")
-    .insert({ conversation_id, role: "assistant", content: aiReplyContent, status: "delivered", is_recalled: false })
-    .select("id")
-    .maybeSingle();
+  const { data: insertedMsg, error: insertError } = await supabaseAdmin.from("messages").insert({ conversation_id, role: "assistant", content: aiReplyContent, status: "delivered", is_recalled: false }).select("id").maybeSingle();
   if (insertError) console.error("[generate-reply] insert error:", insertError);
   await supabaseAdmin.from("conversations").update({ updated_at: new Date().toISOString() }).eq("id", conversation_id);
-  await writeTraces(supabaseAdmin, {
-    conversation_id,
-    message_id: insertedMsg?.id ?? null,
-    user_message_raw: lastVisitorMsg,
-    response_status: claudeResponse.status,
-    response_latency_ms: responseLatencyMs,
-    error_message: null,
-    request_payload: tracePayloadRedacted,
-    token_input: tokenInput,
-    token_output: tokenOutput,
-    ai_reply_content: aiReplyContent,
-  });
+  await writeTraces(supabaseAdmin, { conversation_id, message_id: insertedMsg?.id ?? null, user_message_raw: lastVisitorMsg, response_status: claudeResponse.status, response_latency_ms: responseLatencyMs, error_message: null, request_payload: tracePayloadRedacted, token_input: tokenInput, token_output: tokenOutput, ai_reply_content: aiReplyContent });
   console.log("[generate-reply] AI reply sent for conversation:", conversation_id);
-  return new Response(JSON.stringify({ success: true }), {
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
-  });
+  return new Response(JSON.stringify({ success: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
-function buildCitationMetadata(
-  chunks: Array<{ title?: string; score?: number; source_type?: string }>,
-): { citations: Array<{ label: string; source_type: string; relevance?: string }> } | null {
+function buildCitationMetadata(chunks: Array<{ title?: string; score?: number; source_type?: string }>): { citations: Array<{ label: string; source_type: string; relevance?: string }> } | null {
   const seen = new Set<string>();
   const citations: Array<{ label: string; source_type: string; relevance?: string }> = [];
   for (const c of chunks) {
@@ -1150,31 +1010,11 @@ function buildCitationMetadata(
 type FlagSet = { ENABLE_KB: boolean; ENABLE_COACH: boolean; ENABLE_C360: boolean; ENABLE_TOOL_EXEC: boolean };
 
 const KB_FALLBACK_SAFE_TEXT: Record<string, Record<string, string>> = {
-  KB_SCOPE_GATE: {
-    "zh-TW": "很抱歉，系統暫時無法查詢知識庫。讓我為您轉接客服人員。",
-    "zh-CN": "很抱歉，系统暂时无法查询知识库。让我为您转接客服人员。",
-    en: "Sorry, the knowledge base is temporarily unavailable. Let me connect you with a human agent.",
-  },
-  KB_API_FAIL: {
-    "zh-TW": "系統暫時無法查詢知識庫，讓我為您轉接客服人員。",
-    "zh-CN": "系统暂时无法查询知识库，让我为您转接客服人员。",
-    en: "The knowledge base is temporarily unavailable. Let me connect you with a human agent.",
-  },
-  KB_EMPTY: {
-    "zh-TW": "很抱歉，我目前無法確定答案。讓我為您轉接客服人員，以提供更準確的協助。",
-    "zh-CN": "很抱歉，我目前无法确定答案。让我为您转接客服人员，以提供更准确的协助。",
-    en: "Sorry, I'm unable to find a definitive answer. Let me connect you with a human agent for more accurate assistance.",
-  },
-  KB_LOW_SCORE_HIGH_RISK: {
-    "zh-TW": "這個問題涉及重要政策，為確保您獲得準確資訊，讓我為您轉接客服人員。",
-    "zh-CN": "这个问题涉及重要政策，为确保您获得准确信息，让我为您转接客服人员。",
-    en: "This question involves important policy matters. To ensure you receive accurate information, let me connect you with a human agent.",
-  },
-  KB_LOW_SCORE_STANDARD: {
-    "zh-TW": "很抱歉，我目前無法確定答案。讓我為您轉接客服人員，以提供更準確的協助。",
-    "zh-CN": "很抱歉，我目前无法确定答案。让我为您转接客服人员，以提供更准确的协助。",
-    en: "Sorry, I'm unable to find a definitive answer. Let me connect you with a human agent for more accurate assistance.",
-  },
+  KB_SCOPE_GATE: { "zh-TW": "很抱歉，系統暫時無法查詢知識庫。讓我為您轉接客服人員。", "zh-CN": "很抱歉，系统暂时无法查询知识库。让我为您转接客服人员。", en: "Sorry, the knowledge base is temporarily unavailable. Let me connect you with a human agent." },
+  KB_API_FAIL: { "zh-TW": "系統暫時無法查詢知識庫，讓我為您轉接客服人員。", "zh-CN": "系统暂时无法查询知识库，让我为您转接客服人员。", en: "The knowledge base is temporarily unavailable. Let me connect you with a human agent." },
+  KB_EMPTY: { "zh-TW": "很抱歉，我目前無法確定答案。讓我為您轉接客服人員，以提供更準確的協助。", "zh-CN": "很抱歉，我目前无法确定答案。让我为您转接客服人员，以提供更准确的协助。", en: "Sorry, I'm unable to find a definitive answer. Let me connect you with a human agent for more accurate assistance." },
+  KB_LOW_SCORE_HIGH_RISK: { "zh-TW": "這個問題涉及重要政策，為確保您獲得準確資訊，讓我為您轉接客服人員。", "zh-CN": "这个问题涉及重要政策，为确保您获得准确信息，让我为您转接客服人员。", en: "This question involves important policy matters. To ensure you receive accurate information, let me connect you with a human agent." },
+  KB_LOW_SCORE_STANDARD: { "zh-TW": "很抱歉，我目前無法確定答案。讓我為您轉接客服人員，以提供更準確的協助。", "zh-CN": "很抱歉，我目前无法确定答案。让我为您转接客服人员，以提供更准确的协助。", en: "Sorry, I'm unable to find a definitive answer. Let me connect you with a human agent for more accurate assistance." },
 };
 
 const S0_LLM_FAILURE_SAFE_TEXT: Record<string, string> = {
@@ -1191,186 +1031,35 @@ function detectVisitorLanguage(text: string): "zh-TW" | "zh-CN" | "en" {
   return "zh-TW";
 }
 
-type KBFallbackRpcResult =
-  | "success"
-  | "already_handled"
-  | "already_resolved"
-  | "already_under_human_control"
-  | "invalid_source_message"
-  | "invalid_branch"
-  | "not_found";
+type KBFallbackRpcResult = "success" | "already_handled" | "already_resolved" | "already_under_human_control" | "invalid_source_message" | "invalid_branch" | "not_found";
 
 async function handleKBFallback(
-  supabaseAdmin: ReturnType<typeof createClient>,
-  conversation_id: string,
-  branchTag: string,
-  source_message_id: string | null,
-  traceMetadata: Record<string, unknown>,
-  visitorLang: "zh-TW" | "zh-CN" | "en" = "zh-TW",
+  supabaseAdmin: ReturnType<typeof createClient>, conversation_id: string, branchTag: string,
+  source_message_id: string | null, traceMetadata: Record<string, unknown>, visitorLang: "zh-TW" | "zh-CN" | "en" = "zh-TW",
 ): Promise<Response> {
   const _branchTexts = KB_FALLBACK_SAFE_TEXT[branchTag];
   const safeText = _branchTexts ? (_branchTexts[visitorLang] ?? _branchTexts["zh-TW"]) : undefined;
-  if (!safeText)
-    return new Response(
-      JSON.stringify({
-        success: false,
-        error: "kb_fallback_unknown_branch",
-        no_answer: true,
-        handoff_required: true,
-        handoff_persisted: false,
-        trace_metadata: { ...traceMetadata, branch: branchTag, handoff_persisted: false },
-      }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
-  if (!source_message_id)
-    return new Response(
-      JSON.stringify({
-        success: false,
-        error: "kb_fallback_missing_source_id",
-        reply: safeText,
-        no_answer: true,
-        handoff_required: true,
-        handoff_persisted: false,
-        trace_metadata: { ...traceMetadata, handoff_persisted: false },
-      }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
+  if (!safeText) return new Response(JSON.stringify({ success: false, error: "kb_fallback_unknown_branch", no_answer: true, handoff_required: true, handoff_persisted: false, trace_metadata: { ...traceMetadata, branch: branchTag, handoff_persisted: false } }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  if (!source_message_id) return new Response(JSON.stringify({ success: false, error: "kb_fallback_missing_source_id", reply: safeText, no_answer: true, handoff_required: true, handoff_persisted: false, trace_metadata: { ...traceMetadata, handoff_persisted: false } }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-  const { data: rpcData, error: rpcErr } = await supabaseAdmin.rpc("kb_fallback_handoff_tx", {
-    p_conversation_id: conversation_id,
-    p_safe_reply_content: safeText,
-    p_branch_tag: branchTag,
-    p_source_message_id: source_message_id,
-  });
-  if (rpcErr)
-    return new Response(
-      JSON.stringify({
-        success: false,
-        error: "kb_fallback_persistence_failed",
-        reply: safeText,
-        no_answer: true,
-        handoff_required: true,
-        handoff_persisted: false,
-        trace_metadata: { ...traceMetadata, handoff_persisted: false },
-      }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
+  const { data: rpcData, error: rpcErr } = await supabaseAdmin.rpc("kb_fallback_handoff_tx", { p_conversation_id: conversation_id, p_safe_reply_content: safeText, p_branch_tag: branchTag, p_source_message_id: source_message_id });
+  if (rpcErr) return new Response(JSON.stringify({ success: false, error: "kb_fallback_persistence_failed", reply: safeText, no_answer: true, handoff_required: true, handoff_persisted: false, trace_metadata: { ...traceMetadata, handoff_persisted: false } }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   const result: string = rpcData?.result ?? "unknown";
   switch (result as KBFallbackRpcResult | "unknown") {
-    case "success":
-      return new Response(
-        JSON.stringify({
-          success: true,
-          reply: safeText,
-          no_answer: true,
-          handoff_required: true,
-          handoff_persisted: true,
-          trace_metadata: { ...traceMetadata, rpc_result: "success", handoff_persisted: true },
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    case "already_handled":
-      return new Response(
-        JSON.stringify({
-          success: true,
-          reply: null,
-          no_answer: true,
-          handoff_required: false,
-          handoff_persisted: true,
-          trace_metadata: {
-            ...traceMetadata,
-            rpc_result: "already_handled",
-            handoff_persisted: true,
-            existing_branch: rpcData?.existing_branch,
-            requested_branch: rpcData?.requested_branch,
-          },
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    case "already_resolved":
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: "conversation_resolved",
-          reply: null,
-          no_answer: false,
-          handoff_required: false,
-          handoff_persisted: false,
-          trace_metadata: { ...traceMetadata, rpc_result: "already_resolved", handoff_persisted: false },
-        }),
-        { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    case "already_under_human_control":
-      return new Response(
-        JSON.stringify({
-          success: true,
-          reply: null,
-          no_answer: false,
-          handoff_required: false,
-          handoff_persisted: false,
-          trace_metadata: { ...traceMetadata, rpc_result: "already_under_human_control", handoff_persisted: false },
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    case "invalid_source_message":
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: "kb_fallback_invalid_source",
-          reply: safeText,
-          no_answer: true,
-          handoff_required: true,
-          handoff_persisted: false,
-          trace_metadata: { ...traceMetadata, handoff_persisted: false },
-        }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    case "invalid_branch":
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: "kb_fallback_invalid_branch",
-          no_answer: true,
-          handoff_required: true,
-          handoff_persisted: false,
-          trace_metadata: { ...traceMetadata, handoff_persisted: false },
-        }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    case "not_found":
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: "kb_fallback_conversation_not_found",
-          no_answer: true,
-          handoff_required: true,
-          handoff_persisted: false,
-          trace_metadata: { ...traceMetadata, handoff_persisted: false },
-        }),
-        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    default:
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: "kb_fallback_unexpected_result",
-          reply: safeText,
-          no_answer: true,
-          handoff_required: true,
-          handoff_persisted: false,
-          trace_metadata: { ...traceMetadata, handoff_persisted: false },
-        }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+    case "success": return new Response(JSON.stringify({ success: true, reply: safeText, no_answer: true, handoff_required: true, handoff_persisted: true, trace_metadata: { ...traceMetadata, rpc_result: "success", handoff_persisted: true } }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    case "already_handled": return new Response(JSON.stringify({ success: true, reply: null, no_answer: true, handoff_required: false, handoff_persisted: true, trace_metadata: { ...traceMetadata, rpc_result: "already_handled", handoff_persisted: true, existing_branch: rpcData?.existing_branch, requested_branch: rpcData?.requested_branch } }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    case "already_resolved": return new Response(JSON.stringify({ success: false, error: "conversation_resolved", reply: null, no_answer: false, handoff_required: false, handoff_persisted: false, trace_metadata: { ...traceMetadata, rpc_result: "already_resolved", handoff_persisted: false } }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    case "already_under_human_control": return new Response(JSON.stringify({ success: true, reply: null, no_answer: false, handoff_required: false, handoff_persisted: false, trace_metadata: { ...traceMetadata, rpc_result: "already_under_human_control", handoff_persisted: false } }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    case "invalid_source_message": return new Response(JSON.stringify({ success: false, error: "kb_fallback_invalid_source", reply: safeText, no_answer: true, handoff_required: true, handoff_persisted: false, trace_metadata: { ...traceMetadata, handoff_persisted: false } }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    case "invalid_branch": return new Response(JSON.stringify({ success: false, error: "kb_fallback_invalid_branch", no_answer: true, handoff_required: true, handoff_persisted: false, trace_metadata: { ...traceMetadata, handoff_persisted: false } }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    case "not_found": return new Response(JSON.stringify({ success: false, error: "kb_fallback_conversation_not_found", no_answer: true, handoff_required: true, handoff_persisted: false, trace_metadata: { ...traceMetadata, handoff_persisted: false } }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    default: return new Response(JSON.stringify({ success: false, error: "kb_fallback_unexpected_result", reply: safeText, no_answer: true, handoff_required: true, handoff_persisted: false, trace_metadata: { ...traceMetadata, handoff_persisted: false } }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 }
 
 async function handleS0Handoff(
-  supabaseAdmin: ReturnType<typeof createClient>,
-  conversation_id: string,
-  source_message_id: string | null,
-  failure_type: string,
-  visitorLang: "zh-TW" | "zh-CN" | "en",
+  supabaseAdmin: ReturnType<typeof createClient>, conversation_id: string, source_message_id: string | null,
+  failure_type: string, visitorLang: "zh-TW" | "zh-CN" | "en",
 ): Promise<Response> {
   const isKBFailure = failure_type === "KB_SCOPE_GATE" || failure_type === "KB_API_FAIL";
   let safeReply: string;
@@ -1379,113 +1068,23 @@ async function handleS0Handoff(
     safeReply = branchTexts?.[visitorLang] ?? branchTexts?.["zh-TW"] ?? "";
   } else safeReply = S0_LLM_FAILURE_SAFE_TEXT[visitorLang] ?? S0_LLM_FAILURE_SAFE_TEXT["zh-TW"];
 
-  if (!safeReply)
-    return new Response(JSON.stringify({ success: false, error: "s0_no_safe_reply", failure_type }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  if (!source_message_id)
-    return new Response(JSON.stringify({ success: false, error: "s0_missing_source_message_id", failure_type }), {
-      status: 400,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+  if (!safeReply) return new Response(JSON.stringify({ success: false, error: "s0_no_safe_reply", failure_type }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  if (!source_message_id) return new Response(JSON.stringify({ success: false, error: "s0_missing_source_message_id", failure_type }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-  const { data: rpcData, error: rpcErr } = await supabaseAdmin.rpc("s0_handoff_tx", {
-    p_conversation_id: conversation_id,
-    p_safe_reply_content: safeReply,
-    p_source_message_id: source_message_id,
-    p_failure_type: failure_type,
-  });
-  if (rpcErr)
-    return new Response(
-      JSON.stringify({
-        success: false,
-        error: "s0_rpc_transport_error",
-        failure_type,
-        handoff_persisted: false,
-        handoff_uncertain: true,
-      }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
+  const { data: rpcData, error: rpcErr } = await supabaseAdmin.rpc("s0_handoff_tx", { p_conversation_id: conversation_id, p_safe_reply_content: safeReply, p_source_message_id: source_message_id, p_failure_type: failure_type });
+  if (rpcErr) return new Response(JSON.stringify({ success: false, error: "s0_rpc_transport_error", failure_type, handoff_persisted: false, handoff_uncertain: true }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   const _s0Result: string = rpcData?.result ?? "unknown";
   switch (_s0Result) {
-    case "success":
-      await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-      return new Response(
-        JSON.stringify({
-          success: true,
-          escalation_rule: "S0",
-          failure_type,
-          handoff_persisted: true,
-          rpc_result: "success",
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    case "already_handled":
-      return new Response(
-        JSON.stringify({
-          success: true,
-          escalation_rule: "S0",
-          failure_type,
-          handoff_persisted: true,
-          rpc_result: "already_handled",
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    case "already_resolved":
-      return new Response(
-        JSON.stringify({
-          success: true,
-          skipped: "resolved",
-          escalation_rule: "S0",
-          failure_type,
-          handoff_persisted: false,
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    case "already_under_human_control":
-      return new Response(
-        JSON.stringify({
-          success: true,
-          skipped: "human_handling",
-          escalation_rule: "S0",
-          failure_type,
-          handoff_persisted: false,
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    case "invalid_source_message":
-      return new Response(
-        JSON.stringify({ success: false, error: "s0_invalid_source_message", escalation_rule: "S0", failure_type }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    case "invalid_input":
-      return new Response(
-        JSON.stringify({ success: false, error: "s0_invalid_input", escalation_rule: "S0", failure_type }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    case "invalid_failure_type":
-      return new Response(
-        JSON.stringify({ success: false, error: "s0_invalid_failure_type", escalation_rule: "S0", failure_type }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    case "not_found":
-      return new Response(
-        JSON.stringify({ success: false, error: "s0_conversation_not_found", escalation_rule: "S0", failure_type }),
-        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    default:
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: "s0_rpc_unknown_result",
-          escalation_rule: "S0",
-          failure_type,
-          rpc_result: _s0Result,
-        }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+    case "success": await cleanupThinking(supabaseAdmin, conversation_id, source_message_id); return new Response(JSON.stringify({ success: true, escalation_rule: "S0", failure_type, handoff_persisted: true, rpc_result: "success" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    case "already_handled": return new Response(JSON.stringify({ success: true, escalation_rule: "S0", failure_type, handoff_persisted: true, rpc_result: "already_handled" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    case "already_resolved": return new Response(JSON.stringify({ success: true, skipped: "resolved", escalation_rule: "S0", failure_type, handoff_persisted: false }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    case "already_under_human_control": return new Response(JSON.stringify({ success: true, skipped: "human_handling", escalation_rule: "S0", failure_type, handoff_persisted: false }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    case "invalid_source_message": return new Response(JSON.stringify({ success: false, error: "s0_invalid_source_message", escalation_rule: "S0", failure_type }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    case "invalid_input": return new Response(JSON.stringify({ success: false, error: "s0_invalid_input", escalation_rule: "S0", failure_type }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    case "invalid_failure_type": return new Response(JSON.stringify({ success: false, error: "s0_invalid_failure_type", escalation_rule: "S0", failure_type }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    case "not_found": return new Response(JSON.stringify({ success: false, error: "s0_conversation_not_found", escalation_rule: "S0", failure_type }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    default: return new Response(JSON.stringify({ success: false, error: "s0_rpc_unknown_result", escalation_rule: "S0", failure_type, rpc_result: _s0Result }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 }
 
@@ -1498,15 +1097,12 @@ async function persistExplicitR1IfRequested(
   const classified = classifyExplicitHandoff(latestMessage);
   if (classified.rule !== "R1") return null;
   if (!source_message_id) {
-    return new Response(
-      JSON.stringify({
-        success: false,
-        error: "esc_missing_source_message_id",
-        escalation_rule: "R1",
-        handoff_persisted: false,
-      }),
-      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
+    return new Response(JSON.stringify({
+      success: false,
+      error: "esc_missing_source_message_id",
+      escalation_rule: "R1",
+      handoff_persisted: false,
+    }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 
   const { data, error } = await supabaseAdmin.rpc("explicit_handoff_tx", {
@@ -1515,83 +1111,39 @@ async function persistExplicitR1IfRequested(
     p_source_message_id: source_message_id,
   });
   if (error) {
-    return new Response(
-      JSON.stringify({
-        success: false,
-        error: "esc_rpc_transport_error",
-        escalation_rule: "R1",
-        handoff_persisted: false,
-        handoff_uncertain: true,
-      }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
+    return new Response(JSON.stringify({
+      success: false,
+      error: "esc_rpc_transport_error",
+      escalation_rule: "R1",
+      handoff_persisted: false,
+      handoff_uncertain: true,
+    }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 
   const result: string = data?.result ?? "unknown";
   switch (result) {
     case "success":
       await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-      return new Response(
-        JSON.stringify({ success: true, escalation_rule: "R1", handoff_persisted: true, rpc_result: "success" }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+      return new Response(JSON.stringify({ success:true, escalation_rule:"R1", handoff_persisted:true, rpc_result:"success" }), { headers:{...corsHeaders,"Content-Type":"application/json"} });
     case "already_handled":
-      return new Response(
-        JSON.stringify({
-          success: true,
-          escalation_rule: "R1",
-          handoff_persisted: true,
-          rpc_result: "already_handled",
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+      return new Response(JSON.stringify({ success:true, escalation_rule:"R1", handoff_persisted:true, rpc_result:"already_handled" }), { headers:{...corsHeaders,"Content-Type":"application/json"} });
     case "already_resolved":
-      return new Response(
-        JSON.stringify({ success: true, skipped: "resolved", escalation_rule: "R1", handoff_persisted: false }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+      return new Response(JSON.stringify({ success:true, skipped:"resolved", escalation_rule:"R1", handoff_persisted:false }), { headers:{...corsHeaders,"Content-Type":"application/json"} });
     case "already_under_human_control":
-      return new Response(
-        JSON.stringify({ success: true, skipped: "human_handling", escalation_rule: "R1", handoff_persisted: false }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+      return new Response(JSON.stringify({ success:true, skipped:"human_handling", escalation_rule:"R1", handoff_persisted:false }), { headers:{...corsHeaders,"Content-Type":"application/json"} });
     case "not_found":
-      return new Response(
-        JSON.stringify({ success: false, error: "esc_conversation_not_found", escalation_rule: "R1" }),
-        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+      return new Response(JSON.stringify({ success:false, error:"esc_conversation_not_found", escalation_rule:"R1" }), { status:404, headers:{...corsHeaders,"Content-Type":"application/json"} });
     case "invalid_source_message":
-      return new Response(
-        JSON.stringify({ success: false, error: "esc_invalid_source_message", escalation_rule: "R1" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+      return new Response(JSON.stringify({ success:false, error:"esc_invalid_source_message", escalation_rule:"R1" }), { status:400, headers:{...corsHeaders,"Content-Type":"application/json"} });
     default:
-      return new Response(
-        JSON.stringify({ success: false, error: "esc_rpc_unknown_result", escalation_rule: "R1", rpc_result: result }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+      return new Response(JSON.stringify({ success:false, error:"esc_rpc_unknown_result", escalation_rule:"R1", rpc_result:result }), { status:500, headers:{...corsHeaders,"Content-Type":"application/json"} });
   }
 }
 
-async function orchestrationGenerateReply(
-  conversation_id: string,
-  flags: FlagSet,
-  source_message_id: string | null,
-): Promise<Response> {
-  const supabaseAdmin = createClient(
-    Deno.env.get("SUPABASE_URL") ?? "",
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
-  );
-  const { data: conversation, error: convError } = await supabaseAdmin
-    .from("conversations")
-    .select("id, status, assigned_agent_id, created_at, company_id")
-    .eq("id", conversation_id)
-    .single();
-  if (convError || !conversation)
-    return new Response(JSON.stringify({ error: "Conversation not found" }), {
-      status: 404,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+async function orchestrationGenerateReply(conversation_id: string, flags: FlagSet, source_message_id: string | null): Promise<Response> {
+  const supabaseAdmin = createClient(Deno.env.get("SUPABASE_URL") ?? "", Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "");
+  const { data: conversation, error: convError } = await supabaseAdmin.from("conversations").select("id, status, assigned_agent_id, created_at, company_id").eq("id", conversation_id).single();
+  if (convError || !conversation) return new Response(JSON.stringify({ error: "Conversation not found" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   if (conversation.status === "resolved" || conversation.status === "closed") {
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
@@ -1600,55 +1152,47 @@ async function orchestrationGenerateReply(
   if (conversation.status === "transferred" || (conversation.status === "pending" && conversation.assigned_agent_id)) {
     console.log("[generate-reply] orchestration human-handling guard:", conversation.status, conversation_id);
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-    return new Response(JSON.stringify({ success: true, skipped: "human_handling" }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return new Response(JSON.stringify({ success: true, skipped: "human_handling" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
   if (conversation.assigned_agent_id) {
     console.log("[generate-reply] S-1 assigned_agent_id guard (orchestration):", conversation_id);
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-    return new Response(JSON.stringify({ success: true, skipped: "assigned_to_agent" }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return new Response(JSON.stringify({ success: true, skipped: "assigned_to_agent" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 
-  const { data: _h1VisitorMsgs } = await supabaseAdmin
-    .from("messages")
-    .select("content")
-    .eq("conversation_id", conversation_id)
-    .eq("role", "visitor")
-    .eq("is_recalled", false)
-    .order("created_at", { ascending: false })
-    .limit(1);
+  const { data: _h1VisitorMsgs } = await supabaseAdmin.from("messages").select("content").eq("conversation_id", conversation_id).eq("role", "visitor").eq("is_recalled", false).order("created_at", { ascending: false }).limit(1);
   const _h1LastMsg = _h1VisitorMsgs?.[0]?.content ?? "";
   const _h1HandoffLang = detectHandoffLanguage(_h1LastMsg);
 
-  const [{ data: _pr5HistoryRows }, { count: _pr5VisitorTurnCount }, { count: _pr5ClarificationCount }] =
-    await Promise.all([
-      supabaseAdmin
-        .from("messages")
-        .select("role, content, created_at")
-        .eq("conversation_id", conversation_id)
-        .eq("is_recalled", false)
-        .neq("content", "__THINKING__")
-        .order("created_at", { ascending: false })
-        .limit(50),
-      supabaseAdmin
-        .from("messages")
-        .select("id", { count: "exact", head: true })
-        .eq("conversation_id", conversation_id)
-        .eq("role", "visitor")
-        .eq("is_recalled", false)
-        .neq("content", "__THINKING__"),
-      supabaseAdmin
-        .from("messages")
-        .select("id", { count: "exact", head: true })
-        .eq("conversation_id", conversation_id)
-        .eq("role", "assistant")
-        .eq("is_recalled", false)
-        .filter("metadata->>escalation_rule", "eq", "R2")
-        .filter("metadata->>escalation_action", "eq", "clarification"),
-    ]);
+  const [
+    { data: _pr5HistoryRows },
+    { count: _pr5VisitorTurnCount },
+    { count: _pr5ClarificationCount },
+  ] = await Promise.all([
+    supabaseAdmin
+      .from("messages")
+      .select("role, content, created_at")
+      .eq("conversation_id", conversation_id)
+      .eq("is_recalled", false)
+      .neq("content", "__THINKING__")
+      .order("created_at", { ascending: false })
+      .limit(50),
+    supabaseAdmin
+      .from("messages")
+      .select("id", { count: "exact", head: true })
+      .eq("conversation_id", conversation_id)
+      .eq("role", "visitor")
+      .eq("is_recalled", false)
+      .neq("content", "__THINKING__"),
+    supabaseAdmin
+      .from("messages")
+      .select("id", { count: "exact", head: true })
+      .eq("conversation_id", conversation_id)
+      .eq("role", "assistant")
+      .eq("is_recalled", false)
+      .filter("metadata->>escalation_rule", "eq", "R2")
+      .filter("metadata->>escalation_action", "eq", "clarification"),
+  ]);
 
   const _pr5History = deriveConversationHistorySignals(
     _pr5HistoryRows ?? [],
@@ -1730,43 +1274,34 @@ async function orchestrationGenerateReply(
   }
 
   const _deferR1ForE1 =
-    isE1LiveActivationEnabled(Deno.env) && _pr5LocalRisk?.level === "high" && flags.ENABLE_KB && !_pr5GreetingOrTrivial;
+    isE1LiveActivationEnabled(Deno.env) &&
+    _pr5LocalRisk?.level === "high" &&
+    flags.ENABLE_KB &&
+    !_pr5GreetingOrTrivial;
 
   if (!_deferR1ForE1) {
     const r1Response = await persistExplicitR1IfRequested(
-      supabaseAdmin,
-      conversation_id,
-      source_message_id,
-      _h1LastMsg,
+      supabaseAdmin, conversation_id, source_message_id, _h1LastMsg,
     );
     if (r1Response) return r1Response;
   }
 
   const _g1SkipKB = _pr5GreetingOrTrivial;
 
-  const _pr5ConversationDurationSec = conversation.created_at
-    ? Math.max(0, Math.floor((Date.now() - new Date(conversation.created_at).getTime()) / 1000))
-    : undefined;
+  const _pr5ConversationDurationSec =
+    conversation.created_at
+      ? Math.max(0, Math.floor((Date.now() - new Date(conversation.created_at).getTime()) / 1000))
+      : undefined;
   let _pr5RagMatchState: RagMatchState | undefined;
   const _escEnableS0 = Deno.env.get("ESC_ENABLE_S0") === "true";
 
   let basePrompt = MINIMAL_SAFE_FALLBACK_PROMPT;
-  let coachTrace: {
-    version_id?: string;
-    version_label?: string;
-    prompt_hash?: string;
-    source: "upstream" | "minimal_fallback";
-  } = { source: "minimal_fallback" };
+  let coachTrace: { version_id?: string; version_label?: string; prompt_hash?: string; source: "upstream" | "minimal_fallback" } = { source: "minimal_fallback" };
   if (flags.ENABLE_COACH) {
     const promptResult = await callCoachPromptAdapter(conversation_id);
     if (promptResult.success && promptResult.content) {
       basePrompt = promptResult.content;
-      coachTrace = {
-        version_id: promptResult.version_id,
-        version_label: promptResult.version_label,
-        prompt_hash: promptResult.prompt_hash,
-        source: "upstream",
-      };
+      coachTrace = { version_id: promptResult.version_id, version_label: promptResult.version_label, prompt_hash: promptResult.prompt_hash, source: "upstream" };
     }
   }
 
@@ -1774,90 +1309,33 @@ async function orchestrationGenerateReply(
   let opaqueCustomerRef: string | null = null;
   if (flags.ENABLE_C360) {
     const c360Result = await callCustomer360Adapter(conversation_id);
-    if (c360Result.success && c360Result.customer_context) {
-      customerContext = c360Result.customer_context;
-      opaqueCustomerRef = c360Result.customer_ref ?? null;
-    }
+    if (c360Result.success && c360Result.customer_context) { customerContext = c360Result.customer_context; opaqueCustomerRef = c360Result.customer_ref ?? null; }
   }
 
   let finalPromptChunks: Array<{ title?: string; score?: number; source_type?: string }> = [];
   let _kbDone = false;
-  let ragResult: {
-    success: boolean;
-    no_answer?: boolean;
-    retrieval_quality?: "high" | "medium" | "low" | "failed";
-    chunks?: Array<{
-      doc_id?: string;
-      chunk_id?: string;
-      title?: string;
-      content?: string;
-      score?: number;
-      industry?: string;
-      company_id?: number;
-      language?: string;
-      status?: string;
-      source_type?: string;
-      published_at?: string;
-      updated_at?: string;
-    }>;
-    query_text_preview?: string;
-    trace_metadata?: Record<string, unknown>;
-  } | null = null;
+  let ragResult: { success: boolean; no_answer?: boolean; retrieval_quality?: "high" | "medium" | "low" | "failed"; chunks?: Array<{ doc_id?: string; chunk_id?: string; title?: string; content?: string; score?: number; industry?: string; company_id?: number; language?: string; status?: string; source_type?: string; published_at?: string; updated_at?: string }>; query_text_preview?: string; trace_metadata?: Record<string, unknown> } | null = null;
 
   if (flags.ENABLE_KB && !_g1SkipKB) {
     const _kbTenantResult = await resolveTenantScope(conversation_id);
     if (!_kbTenantResult.resolved) {
       if (_deferR1ForE1) {
-        const r1Response = await persistExplicitR1IfRequested(
-          supabaseAdmin,
-          conversation_id,
-          source_message_id,
-          _h1LastMsg,
-        );
+        const r1Response = await persistExplicitR1IfRequested(supabaseAdmin, conversation_id, source_message_id, _h1LastMsg);
         if (r1Response) return r1Response;
       }
-      if (_escEnableS0)
-        return await handleS0Handoff(supabaseAdmin, conversation_id, source_message_id, "KB_SCOPE_GATE", _visitorLang);
-      return await handleKBFallback(
-        supabaseAdmin,
-        conversation_id,
-        "KB_SCOPE_GATE",
-        source_message_id,
-        { rag_api_status: "scope_unavailable" },
-        _visitorLang,
-      );
+      if (_escEnableS0) return await handleS0Handoff(supabaseAdmin, conversation_id, source_message_id, "KB_SCOPE_GATE", _visitorLang);
+      return await handleKBFallback(supabaseAdmin, conversation_id, "KB_SCOPE_GATE", source_message_id, { rag_api_status: "scope_unavailable" }, _visitorLang);
     }
-    const { data: latestMsgs } = await supabaseAdmin
-      .from("messages")
-      .select("content")
-      .eq("conversation_id", conversation_id)
-      .eq("role", "visitor")
-      .order("created_at", { ascending: false })
-      .limit(1);
+    const { data: latestMsgs } = await supabaseAdmin.from("messages").select("content").eq("conversation_id", conversation_id).eq("role", "visitor").order("created_at", { ascending: false }).limit(1);
     const userQuery = latestMsgs?.[0]?.content ?? "";
-    ragResult = !userQuery
-      ? { success: true, no_answer: true, retrieval_quality: "failed", chunks: [] }
-      : await callKBAdapter(conversation_id, userQuery, _kbTenantResult.scope);
+    ragResult = !userQuery ? { success: true, no_answer: true, retrieval_quality: "failed", chunks: [] } : await callKBAdapter(conversation_id, userQuery, _kbTenantResult.scope);
     if (!ragResult || !ragResult.success) {
       if (_deferR1ForE1) {
-        const r1Response = await persistExplicitR1IfRequested(
-          supabaseAdmin,
-          conversation_id,
-          source_message_id,
-          _h1LastMsg,
-        );
+        const r1Response = await persistExplicitR1IfRequested(supabaseAdmin, conversation_id, source_message_id, _h1LastMsg);
         if (r1Response) return r1Response;
       }
-      if (_escEnableS0)
-        return await handleS0Handoff(supabaseAdmin, conversation_id, source_message_id, "KB_API_FAIL", _visitorLang);
-      return await handleKBFallback(
-        supabaseAdmin,
-        conversation_id,
-        "KB_API_FAIL",
-        source_message_id,
-        { rag_api_status: "failure" },
-        _visitorLang,
-      );
+      if (_escEnableS0) return await handleS0Handoff(supabaseAdmin, conversation_id, source_message_id, "KB_API_FAIL", _visitorLang);
+      return await handleKBFallback(supabaseAdmin, conversation_id, "KB_API_FAIL", source_message_id, { rag_api_status: "failure" }, _visitorLang);
     }
     if (ragResult.no_answer || !ragResult.chunks || ragResult.chunks.length === 0) {
       _pr5RagMatchState = "no_match";
@@ -1883,12 +1361,7 @@ async function orchestrationGenerateReply(
       });
       if (requiredResponse) return requiredResponse;
       if (_deferR1ForE1) {
-        const r1Response = await persistExplicitR1IfRequested(
-          supabaseAdmin,
-          conversation_id,
-          source_message_id,
-          _h1LastMsg,
-        );
+        const r1Response = await persistExplicitR1IfRequested(supabaseAdmin, conversation_id, source_message_id, _h1LastMsg);
         if (r1Response) return r1Response;
       }
       return await handleKBFallback(
@@ -1903,30 +1376,8 @@ async function orchestrationGenerateReply(
 
     const isHighRisk = _pr5LocalRisk?.level === "high";
     const minScore = isHighRisk ? 0.78 : 0.55;
-    const usableChunks = ragResult.chunks.filter(
-      (c) =>
-        c.score &&
-        c.score >= minScore &&
-        (!c.status || c.status === "published") &&
-        (c.company_id === undefined || c.company_id === _kbTenantResult.scope.kbCompanyId) &&
-        (!c.industry || c.industry === _kbTenantResult.scope.industry),
-    );
-    const traceMetadata = {
-      rag_api_status: "success",
-      total_results: ragResult.chunks.length,
-      filtered_results: usableChunks.length,
-      min_score_used: usableChunks.length > 0 ? Math.min(...usableChunks.map((c) => c.score ?? 0)) : null,
-      max_score_used: usableChunks.length > 0 ? Math.max(...usableChunks.map((c) => c.score ?? 0)) : null,
-      high_risk_topic: isHighRisk,
-      min_threshold: minScore,
-      citations: usableChunks.map((c) => ({
-        doc_id: c.doc_id,
-        chunk_id: c.chunk_id,
-        title: c.title,
-        score: c.score,
-        source_type: c.source_type,
-      })),
-    };
+    const usableChunks = ragResult.chunks.filter((c) => c.score && c.score >= minScore && (!c.status || c.status === "published") && (c.company_id === undefined || c.company_id === _kbTenantResult.scope.kbCompanyId) && (!c.industry || c.industry === _kbTenantResult.scope.industry));
+    const traceMetadata = { rag_api_status: "success", total_results: ragResult.chunks.length, filtered_results: usableChunks.length, min_score_used: usableChunks.length > 0 ? Math.min(...usableChunks.map((c) => c.score ?? 0)) : null, max_score_used: usableChunks.length > 0 ? Math.max(...usableChunks.map((c) => c.score ?? 0)) : null, high_risk_topic: isHighRisk, min_threshold: minScore, citations: usableChunks.map((c) => ({ doc_id: c.doc_id, chunk_id: c.chunk_id, title: c.title, score: c.score, source_type: c.source_type })) };
     ragResult.trace_metadata = traceMetadata;
     if (usableChunks.length === 0) {
       _pr5RagMatchState = "partial_match";
@@ -1952,12 +1403,7 @@ async function orchestrationGenerateReply(
       });
       if (requiredResponse) return requiredResponse;
       if (_deferR1ForE1) {
-        const r1Response = await persistExplicitR1IfRequested(
-          supabaseAdmin,
-          conversation_id,
-          source_message_id,
-          _h1LastMsg,
-        );
+        const r1Response = await persistExplicitR1IfRequested(supabaseAdmin, conversation_id, source_message_id, _h1LastMsg);
         if (r1Response) return r1Response;
       }
       return await handleKBFallback(
@@ -1978,31 +1424,25 @@ async function orchestrationGenerateReply(
   if (!flags.ENABLE_KB || _g1SkipKB) _kbDone = true;
   if (flags.ENABLE_KB && !_g1SkipKB && !_kbDone) {
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-    return new Response(JSON.stringify({ error: "Internal KB processing error" }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return new Response(JSON.stringify({ error: "Internal KB processing error" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 
   if (Deno.env.get("ESC_SHADOW_MODE") === "true" && _pr5LocalRisk?.level === "high") {
-    const e1Shadow = evaluateEscalationShadow(
-      {
-        conversation_id,
-        source_message_id,
-        latest_message_content: _h1LastMsg,
-        conversation_status: conversation.status,
-        assigned_agent_id: conversation.assigned_agent_id ?? null,
-        explicit_request: isHandoffIntent(_h1LastMsg),
-        greeting_or_trivial: _pr5GreetingOrTrivial,
-        expected_tenant_id: _pr5ExpectedTenantId,
-        threat_flag: _pr5ThreatSignal,
-        compliance_jurisdiction_requires_human_review: _pr5ComplianceSignal,
-        rag_match_state: _pr5RagMatchState,
-        topic_risk_level: _pr5LocalRisk.level,
-        verified_local_risk_classification: _pr5LocalRisk.verified,
-      },
-      Deno.env,
-    );
+    const e1Shadow = evaluateEscalationShadow({
+      conversation_id,
+      source_message_id,
+      latest_message_content: _h1LastMsg,
+      conversation_status: conversation.status,
+      assigned_agent_id: conversation.assigned_agent_id ?? null,
+      explicit_request: isHandoffIntent(_h1LastMsg),
+      greeting_or_trivial: _pr5GreetingOrTrivial,
+      expected_tenant_id: _pr5ExpectedTenantId,
+      threat_flag: _pr5ThreatSignal,
+      compliance_jurisdiction_requires_human_review: _pr5ComplianceSignal,
+      rag_match_state: _pr5RagMatchState,
+      topic_risk_level: _pr5LocalRisk.level,
+      verified_local_risk_classification: _pr5LocalRisk.verified,
+    }, Deno.env);
     if (e1Shadow) {
       console.log("[generate-reply] PR-5 E1 post-KB shadow:", {
         conversation_id,
@@ -2037,35 +1477,27 @@ async function orchestrationGenerateReply(
   if (_pr5RequiredLiveResponse) return _pr5RequiredLiveResponse;
 
   if (_deferR1ForE1) {
-    const r1Response = await persistExplicitR1IfRequested(
-      supabaseAdmin,
-      conversation_id,
-      source_message_id,
-      _h1LastMsg,
-    );
+    const r1Response = await persistExplicitR1IfRequested(supabaseAdmin, conversation_id, source_message_id, _h1LastMsg);
     if (r1Response) return r1Response;
   }
 
   if (Deno.env.get("ESC_SHADOW_MODE") === "true" && _pr5R3Sentiment) {
-    const r3Shadow = evaluateEscalationShadow(
-      {
-        conversation_id,
-        source_message_id,
-        latest_message_content: _h1LastMsg,
-        conversation_status: conversation.status,
-        assigned_agent_id: conversation.assigned_agent_id ?? null,
-        explicit_request: isHandoffIntent(_h1LastMsg),
-        greeting_or_trivial: _pr5GreetingOrTrivial,
-        expected_tenant_id: _pr5ExpectedTenantId,
-        anger_flag: _pr5R3Sentiment.anger_flag,
-        sentiment_score: _pr5R3Sentiment.sentiment_score,
-        sentiment_trend: _pr5R3Sentiment.sentiment_trend,
-        sentiment_recovered_same_turn: _pr5R3Sentiment.sentiment_recovered_same_turn,
-        sentiment_provider_version: _pr5R3Sentiment.provider_version,
-        sentiment_evaluation_id: _pr5R3Sentiment.evaluation_id,
-      },
-      Deno.env,
-    );
+    const r3Shadow = evaluateEscalationShadow({
+      conversation_id,
+      source_message_id,
+      latest_message_content: _h1LastMsg,
+      conversation_status: conversation.status,
+      assigned_agent_id: conversation.assigned_agent_id ?? null,
+      explicit_request: isHandoffIntent(_h1LastMsg),
+      greeting_or_trivial: _pr5GreetingOrTrivial,
+      expected_tenant_id: _pr5ExpectedTenantId,
+      anger_flag: _pr5R3Sentiment.anger_flag,
+      sentiment_score: _pr5R3Sentiment.sentiment_score,
+      sentiment_trend: _pr5R3Sentiment.sentiment_trend,
+      sentiment_recovered_same_turn: _pr5R3Sentiment.sentiment_recovered_same_turn,
+      sentiment_provider_version: _pr5R3Sentiment.provider_version,
+      sentiment_evaluation_id: _pr5R3Sentiment.evaluation_id,
+    }, Deno.env);
     if (r3Shadow) {
       console.log("[generate-reply] PR-5 R3 sentiment shadow:", {
         conversation_id,
@@ -2078,149 +1510,63 @@ async function orchestrationGenerateReply(
     }
   }
 
-  if (flags.ENABLE_TOOL_EXEC)
-    console.log("[generate-reply] ENABLE_TOOL_EXECUTOR=true: Gate present, tools NOT attached (L5d scope)");
+  if (flags.ENABLE_TOOL_EXEC) console.log("[generate-reply] ENABLE_TOOL_EXECUTOR=true: Gate present, tools NOT attached (L5d scope)");
 
-  const finalSystemPrompt = [
-    basePrompt,
-    buildMaskedContextBlock(customerContext, opaqueCustomerRef),
-    buildRagBlock(ragResult),
-  ]
-    .filter((s) => s && s.length > 0)
-    .join("\n\n");
-  const { data: messages } = await supabaseAdmin
-    .from("messages")
-    .select("role, content, created_at")
-    .eq("conversation_id", conversation_id)
-    .neq("content", "__THINKING__")
-    .eq("is_recalled", false)
-    .order("created_at", { ascending: true })
-    .limit(10);
-  if (!messages || messages.length === 0) {
-    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-    return new Response(JSON.stringify({ success: true, skipped: "no messages" }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-  const claudeMessages = messages.map((m) => ({
-    role: m.role === "visitor" ? "user" : "assistant",
-    content: m.content,
-  }));
-  if (claudeMessages[claudeMessages.length - 1].role === "assistant") {
-    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-    return new Response(JSON.stringify({ success: true, skipped: "last message is assistant" }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
+  const finalSystemPrompt = [basePrompt, buildMaskedContextBlock(customerContext, opaqueCustomerRef), buildRagBlock(ragResult)].filter((s) => s && s.length > 0).join("\n\n");
+  const { data: messages } = await supabaseAdmin.from("messages").select("role, content, created_at").eq("conversation_id", conversation_id).neq("content", "__THINKING__").eq("is_recalled", false).order("created_at", { ascending: true }).limit(10);
+  if (!messages || messages.length === 0) { await cleanupThinking(supabaseAdmin, conversation_id, source_message_id); return new Response(JSON.stringify({ success: true, skipped: "no messages" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
+  const claudeMessages = messages.map((m) => ({ role: m.role === "visitor" ? "user" : "assistant", content: m.content }));
+  if (claudeMessages[claudeMessages.length - 1].role === "assistant") { await cleanupThinking(supabaseAdmin, conversation_id, source_message_id); return new Response(JSON.stringify({ success: true, skipped: "last message is assistant" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
 
   const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
-  if (!anthropicKey) {
-    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-    return new Response(JSON.stringify({ error: "AI service not configured" }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-  const anthropicRequestBody: Record<string, unknown> = {
-    model: "claude-haiku-4-5-20251001",
-    max_tokens: 500,
-    system: finalSystemPrompt,
-    messages: claudeMessages,
-  };
+  if (!anthropicKey) { await cleanupThinking(supabaseAdmin, conversation_id, source_message_id); return new Response(JSON.stringify({ error: "AI service not configured" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
+  const anthropicRequestBody: Record<string, unknown> = { model: "claude-haiku-4-5-20251001", max_tokens: 500, system: finalSystemPrompt, messages: claudeMessages };
   if (flags.ENABLE_TOOL_EXEC) anthropicRequestBody.tools = TOOL_DEFINITIONS;
   const _orchAbortCtrl = new AbortController();
   const _orchTimeout = setTimeout(() => _orchAbortCtrl.abort(), ANTHROPIC_TIMEOUT_MS);
   let claudeResponse: Response;
   try {
-    claudeResponse = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": anthropicKey, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify(anthropicRequestBody),
-      signal: _orchAbortCtrl.signal,
-    });
+    claudeResponse = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "Content-Type": "application/json", "x-api-key": anthropicKey, "anthropic-version": "2023-06-01" }, body: JSON.stringify(anthropicRequestBody), signal: _orchAbortCtrl.signal });
   } catch (e) {
     clearTimeout(_orchTimeout);
     if (e instanceof DOMException && e.name === "AbortError") {
-      if (_escEnableS0)
-        return await handleS0Handoff(supabaseAdmin, conversation_id, source_message_id, "LLM_TIMEOUT", _visitorLang);
+      if (_escEnableS0) return await handleS0Handoff(supabaseAdmin, conversation_id, source_message_id, "LLM_TIMEOUT", _visitorLang);
       await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     } else {
-      if (_escEnableS0)
-        return await handleS0Handoff(
-          supabaseAdmin,
-          conversation_id,
-          source_message_id,
-          "LLM_NETWORK_ERROR",
-          _visitorLang,
-        );
+      if (_escEnableS0) return await handleS0Handoff(supabaseAdmin, conversation_id, source_message_id, "LLM_NETWORK_ERROR", _visitorLang);
       await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     }
-    return new Response(JSON.stringify({ error: "AI service timeout" }), {
-      status: 504,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return new Response(JSON.stringify({ error: "AI service timeout" }), { status: 504, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
   clearTimeout(_orchTimeout);
   if (!claudeResponse.ok) {
-    const errText = await claudeResponse.text();
-    console.error("[generate-reply] Claude API error:", claudeResponse.status, errText);
-    if (_escEnableS0)
-      return await handleS0Handoff(supabaseAdmin, conversation_id, source_message_id, "LLM_NON_2XX", _visitorLang);
+    const errText = await claudeResponse.text(); console.error("[generate-reply] Claude API error:", claudeResponse.status, errText);
+    if (_escEnableS0) return await handleS0Handoff(supabaseAdmin, conversation_id, source_message_id, "LLM_NON_2XX", _visitorLang);
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-    return new Response(JSON.stringify({ error: "AI service error" }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return new Response(JSON.stringify({ error: "AI service error" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
   const claudeData = await claudeResponse.json();
   const aiReplyContent = claudeData.content?.[0]?.text ?? "";
   if (!aiReplyContent) {
-    if (_escEnableS0)
-      return await handleS0Handoff(
-        supabaseAdmin,
-        conversation_id,
-        source_message_id,
-        "LLM_EMPTY_RESPONSE",
-        _visitorLang,
-      );
+    if (_escEnableS0) return await handleS0Handoff(supabaseAdmin, conversation_id, source_message_id, "LLM_EMPTY_RESPONSE", _visitorLang);
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-    return new Response(JSON.stringify({ error: "Empty AI response" }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return new Response(JSON.stringify({ error: "Empty AI response" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
   await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
   const citationMeta = finalPromptChunks.length > 0 ? buildCitationMetadata(finalPromptChunks) : null;
-  await supabaseAdmin
-    .from("messages")
-    .insert({
-      conversation_id,
-      role: "assistant",
-      content: aiReplyContent,
-      status: "delivered",
-      is_recalled: false,
-      metadata: citationMeta,
-    });
+  await supabaseAdmin.from("messages").insert({ conversation_id, role: "assistant", content: aiReplyContent, status: "delivered", is_recalled: false, metadata: citationMeta });
   await supabaseAdmin.from("conversations").update({ updated_at: new Date().toISOString() }).eq("id", conversation_id);
   if (flags.ENABLE_COACH) void coachTrace;
   if (flags.ENABLE_KB && ragResult?.success) void ragResult;
   console.log("[generate-reply] AI reply sent (orchestration path) for conversation:", conversation_id);
-  return new Response(JSON.stringify({ success: true }), {
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
-  });
+  return new Response(JSON.stringify({ success: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
 function safeRefusal(code: string): Response {
-  return new Response(
-    JSON.stringify({ success: true, skipped: "refused", reason_code: code, handoff_required: true }),
-    { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-  );
+  return new Response(JSON.stringify({ success: true, skipped: "refused", reason_code: code, handoff_required: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
-function buildMaskedContextBlock(
-  customerContext: { masked_summary?: string; tier?: string } | null,
-  opaqueCustomerRef: string | null,
-): string {
+function buildMaskedContextBlock(customerContext: { masked_summary?: string; tier?: string } | null, opaqueCustomerRef: string | null): string {
   if (!customerContext) return "";
   const parts: string[] = [];
   if (customerContext.tier) parts.push(`Customer tier: ${customerContext.tier}`);
@@ -2229,19 +1575,9 @@ function buildMaskedContextBlock(
   return parts.length === 0 ? "" : `Customer context (masked):\n${parts.join("\n")}`;
 }
 
-function buildRagBlock(
-  ragResult: {
-    success: boolean;
-    chunks?: Array<{ title?: string; content?: string; score?: number; source_type?: string; short_snippet?: string }>;
-  } | null,
-): string {
+function buildRagBlock(ragResult: { success: boolean; chunks?: Array<{ title?: string; content?: string; score?: number; source_type?: string; short_snippet?: string }> } | null): string {
   if (!ragResult || !ragResult.success || !ragResult.chunks?.length) return "";
-  const snippets = ragResult.chunks
-    .map(
-      (c, i) =>
-        `${c.title ? `[Source: ${c.title}]` : `[${i + 1}]`}\n${(c.content ?? c.short_snippet ?? "").slice(0, 500)}`,
-    )
-    .join("\n\n");
+  const snippets = ragResult.chunks.map((c, i) => `${c.title ? `[Source: ${c.title}]` : `[${i + 1}]`}\n${(c.content ?? c.short_snippet ?? "").slice(0, 500)}`).join("\n\n");
   return `You MUST answer ONLY based on the following knowledge base evidence.\nDo NOT add information not present in the evidence.\nIf the evidence does not fully answer the question, say so and offer to connect to a human agent.\n\nEvidence:\n${snippets}`;
 }
 
@@ -2251,16 +1587,7 @@ function pseudonymizeRef(ref: string): string {
   return `cust_${(h >>> 0).toString(36)}`;
 }
 
-async function callCoachPromptAdapter(
-  conversation_id: string,
-): Promise<{
-  success: boolean;
-  content?: string;
-  version_id?: string;
-  version_label?: string;
-  prompt_hash?: string;
-  error_type?: string;
-}> {
+async function callCoachPromptAdapter(conversation_id: string): Promise<{ success: boolean; content?: string; version_id?: string; version_label?: string; prompt_hash?: string; error_type?: string }> {
   const FAIL = (error_type: string) => ({ success: false as const, error_type });
   const endpoint = Deno.env.get("COACH_PROMPT_ENDPOINT");
   const token = Deno.env.get("COACH_PROMPT_INTERNAL_TOKEN");
@@ -2270,33 +1597,17 @@ async function callCoachPromptAdapter(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { "x-coach-internal-token": token, "x-coach-runtime": "C0", "Content-Type": "application/json" },
-      body: JSON.stringify({ include_content: true }),
-      signal: controller.signal,
-    });
+    const response = await fetch(endpoint, { method: "POST", headers: { "x-coach-internal-token": token, "x-coach-runtime": "C0", "Content-Type": "application/json" }, body: JSON.stringify({ include_content: true }), signal: controller.signal });
     clearTimeout(timeout);
     if (!response.ok) return FAIL("COACH_API_ERROR");
-    let data;
-    try {
-      data = await response.json();
-    } catch {
-      return FAIL("COACH_JSON_INVALID");
-    }
+    let data; try { data = await response.json(); } catch { return FAIL("COACH_JSON_INVALID"); }
     if (!data.ok || !data.data?.content) return FAIL("COACH_NO_ACTIVE_PROMPT");
     const content = data.data.content;
     const validationError = validateCoachPromptContent(content);
     if (validationError) return FAIL(validationError);
     const versionId = data.data.id || "";
     const promptHash = await computePromptHash(content, versionId, conversation_id);
-    return {
-      success: true,
-      content,
-      version_id: versionId,
-      version_label: data.data.label || "",
-      prompt_hash: promptHash,
-    };
+    return { success: true, content, version_id: versionId, version_label: data.data.label || "", prompt_hash: promptHash };
   } catch (err) {
     clearTimeout(timeout);
     if (err instanceof DOMException && err.name === "AbortError") return FAIL("COACH_API_TIMEOUT");
@@ -2313,456 +1624,119 @@ function validateCoachPromptContent(content: unknown): string | null {
 }
 
 async function computePromptHash(content: string, versionId: string, conversationId: string): Promise<string> {
-  const hashBuffer = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(content + "|" + versionId + "|" + conversationId),
-  );
-  return Array.from(new Uint8Array(hashBuffer))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("")
-    .substring(0, 12);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(content + "|" + versionId + "|" + conversationId));
+  return Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, "0")).join("").substring(0, 12);
 }
 
-async function callCustomer360Adapter(
-  _conversation_id: string,
-): Promise<{ success: boolean; customer_context?: { masked_summary?: string; tier?: string }; customer_ref?: string }> {
-  return { success: false };
-}
+async function callCustomer360Adapter(_conversation_id: string): Promise<{ success: boolean; customer_context?: { masked_summary?: string; tier?: string }; customer_ref?: string }> { return { success: false }; }
 
-async function callKBAdapter(
-  _conversation_id: string,
-  userMessage: string,
-  scope: KBResolvedScope,
-): Promise<{
-  success: boolean;
-  no_answer?: boolean;
-  retrieval_quality?: "high" | "medium" | "low" | "failed";
-  chunks?: KBFullChunk[];
-  query_text_preview?: string;
-}> {
+async function callKBAdapter(_conversation_id: string, userMessage: string, scope: KBResolvedScope): Promise<{ success: boolean; no_answer?: boolean; retrieval_quality?: "high" | "medium" | "low" | "failed"; chunks?: KBFullChunk[]; query_text_preview?: string }> {
   const endpointCfg = resolveKBEndpoint();
   if (!endpointCfg) return { success: false, no_answer: true, retrieval_quality: "failed" };
   const result = await fetchKBRag({ query: userMessage, top_k: 5 }, scope, endpointCfg, { timeoutMs: 15000 });
   if (!result.success) return { success: false, no_answer: true, retrieval_quality: "failed" };
-  if (result.chunks.length === 0)
-    return {
-      success: true,
-      no_answer: true,
-      retrieval_quality: "failed",
-      chunks: [],
-      query_text_preview: userMessage.slice(0, 100),
-    };
-  return {
-    success: true,
-    no_answer: false,
-    retrieval_quality: "high",
-    chunks: result.chunks,
-    query_text_preview: userMessage.slice(0, 100),
-  };
+  if (result.chunks.length === 0) return { success: true, no_answer: true, retrieval_quality: "failed", chunks: [], query_text_preview: userMessage.slice(0, 100) };
+  return { success: true, no_answer: false, retrieval_quality: "high", chunks: result.chunks, query_text_preview: userMessage.slice(0, 100) };
 }
 
 type GateDecisionKind = "ALLOW" | "DENY" | "DOWNGRADE_TO_DRAFT" | "ESCALATE";
-interface GateDecision {
-  decision: GateDecisionKind;
-  reason?: string;
-  execution_allowed?: boolean;
-  force_draft?: boolean;
-  handoff_required?: boolean;
-  execution_deferred_to?: "L5d";
-  draft_enforcement_deferred_to?: "L5e";
-  action_deferred_to?: "L5e";
-  message_to_llm?: string;
-}
-interface ToolRequest {
-  tool_name: string;
-  input: Record<string, unknown>;
-}
-interface ExecutionContext {
-  conversation: { id: string; status: string };
-  caller_mode: "system_auto" | "human_agent" | "ai_assist";
-  risk_level: "low" | "medium" | "high";
-  privacy_flags?: { do_not_profile?: boolean; consent_status?: "granted" | "withdrawn" | "unknown" };
-  turn_tool_calls: Set<string>;
-  turn_budget: { total: number; kb_search: number; c360: number };
-  server_resolved_customer_ref?: string | null;
-}
-const ALLOWED_TOOLS = [
-  "kb_search",
-  "escalate_to_human",
-  "get_customer_context",
-  "get_order_summary",
-  "create_handoff_summary",
-  "mark_unresolved",
-  "suggest_reply",
-] as const;
+interface GateDecision { decision: GateDecisionKind; reason?: string; execution_allowed?: boolean; force_draft?: boolean; handoff_required?: boolean; execution_deferred_to?: "L5d"; draft_enforcement_deferred_to?: "L5e"; action_deferred_to?: "L5e"; message_to_llm?: string; }
+interface ToolRequest { tool_name: string; input: Record<string, unknown>; }
+interface ExecutionContext { conversation: { id: string; status: string }; caller_mode: "system_auto" | "human_agent" | "ai_assist"; risk_level: "low" | "medium" | "high"; privacy_flags?: { do_not_profile?: boolean; consent_status?: "granted" | "withdrawn" | "unknown" }; turn_tool_calls: Set<string>; turn_budget: { total: number; kb_search: number; c360: number }; server_resolved_customer_ref?: string | null; }
+const ALLOWED_TOOLS = ["kb_search", "escalate_to_human", "get_customer_context", "get_order_summary", "create_handoff_summary", "mark_unresolved", "suggest_reply"] as const;
 const READ_ONLY_TOOLS = ["kb_search", "get_customer_context", "get_order_summary"] as const;
 const HIGH_RISK_ALLOWED = ["kb_search", "get_customer_context", "escalate_to_human", "create_handoff_summary"] as const;
 const OFFLINE_BOT_ALLOWED = ["kb_search", "escalate_to_human"] as const;
-const MAX_TOOL_CALLS = 10,
-  MAX_KB_SEARCH = 3,
-  MAX_C360_CALLS = 2;
+const MAX_TOOL_CALLS = 10, MAX_KB_SEARCH = 3, MAX_C360_CALLS = 2;
 
-function buildSafeDedupeKey(
-  tool_name: string,
-  input: Record<string, unknown>,
-  server_resolved_customer_ref?: string | null,
-): string | null {
-  if (tool_name === "get_order_summary")
-    return server_resolved_customer_ref ? `get_order_summary:${server_resolved_customer_ref}` : null;
-  const SAFE_FIELDS: Record<string, string[]> = {
-    kb_search: ["query_norm", "locale"],
-    get_customer_context: [],
-    escalate_to_human: ["reason_code"],
-    create_handoff_summary: ["reason_code"],
-    mark_unresolved: ["reason_code"],
-    suggest_reply: ["intent_code"],
-  };
+function buildSafeDedupeKey(tool_name: string, input: Record<string, unknown>, server_resolved_customer_ref?: string | null): string | null {
+  if (tool_name === "get_order_summary") return server_resolved_customer_ref ? `get_order_summary:${server_resolved_customer_ref}` : null;
+  const SAFE_FIELDS: Record<string, string[]> = { kb_search: ["query_norm", "locale"], get_customer_context: [], escalate_to_human: ["reason_code"], create_handoff_summary: ["reason_code"], mark_unresolved: ["reason_code"], suggest_reply: ["intent_code"] };
   const safe: Record<string, unknown> = {};
-  for (const k of SAFE_FIELDS[tool_name] ?? [])
-    if (input[k] !== undefined && typeof input[k] !== "object") safe[k] = String(input[k]).slice(0, 200);
+  for (const k of SAFE_FIELDS[tool_name] ?? []) if (input[k] !== undefined && typeof input[k] !== "object") safe[k] = String(input[k]).slice(0, 200);
   return `${tool_name}:${JSON.stringify(safe)}`;
 }
 
 export function toolExecutorGate(toolRequest: ToolRequest, context: ExecutionContext): GateDecision {
-  const { tool_name, input } = toolRequest;
-  const {
-    conversation,
-    caller_mode,
-    risk_level,
-    privacy_flags,
-    turn_tool_calls,
-    turn_budget,
-    server_resolved_customer_ref,
-  } = context;
+  const { tool_name, input } = toolRequest; const { conversation, caller_mode, risk_level, privacy_flags, turn_tool_calls, turn_budget, server_resolved_customer_ref } = context;
   if (tool_name === "schedule_feedback_request") return { decision: "DENY", reason: "TOOL_EXCLUDED" };
-  if (!(ALLOWED_TOOLS as readonly string[]).includes(tool_name))
-    return { decision: "DENY", reason: "TOOL_NOT_REGISTERED" };
+  if (!(ALLOWED_TOOLS as readonly string[]).includes(tool_name)) return { decision: "DENY", reason: "TOOL_NOT_REGISTERED" };
   const status = conversation.status;
   if (status === "resolved" || status === "closed") return { decision: "DENY", reason: "CONV_RESOLVED_OR_CLOSED" };
-  if (
-    (status === "human_needed" || status === "human_control") &&
-    !(READ_ONLY_TOOLS as readonly string[]).includes(tool_name)
-  )
-    return { decision: "DENY", reason: "TOOL_NOT_ALLOWED_IN_STATUS" };
-  if (status === "offline_bot" && !(OFFLINE_BOT_ALLOWED as readonly string[]).includes(tool_name))
-    return { decision: "DENY", reason: "TOOL_NOT_ALLOWED_OFFLINE" };
-  if (risk_level === "high" && !(HIGH_RISK_ALLOWED as readonly string[]).includes(tool_name))
-    return { decision: "ESCALATE", reason: "HIGH_RISK_TOOL_BLOCKED" };
-  if (tool_name === "mark_unresolved" && caller_mode === "system_auto")
-    return { decision: "DENY", reason: "MARK_UNRESOLVED_REQUIRES_HUMAN" };
-  if (
-    (privacy_flags?.do_not_profile === true || privacy_flags?.consent_status === "withdrawn") &&
-    tool_name === "get_customer_context"
-  )
-    return { decision: "DENY", reason: "PRIVACY_DO_NOT_PROFILE" };
+  if ((status === "human_needed" || status === "human_control") && !(READ_ONLY_TOOLS as readonly string[]).includes(tool_name)) return { decision: "DENY", reason: "TOOL_NOT_ALLOWED_IN_STATUS" };
+  if (status === "offline_bot" && !(OFFLINE_BOT_ALLOWED as readonly string[]).includes(tool_name)) return { decision: "DENY", reason: "TOOL_NOT_ALLOWED_OFFLINE" };
+  if (risk_level === "high" && !(HIGH_RISK_ALLOWED as readonly string[]).includes(tool_name)) return { decision: "ESCALATE", reason: "HIGH_RISK_TOOL_BLOCKED" };
+  if (tool_name === "mark_unresolved" && caller_mode === "system_auto") return { decision: "DENY", reason: "MARK_UNRESOLVED_REQUIRES_HUMAN" };
+  if ((privacy_flags?.do_not_profile === true || privacy_flags?.consent_status === "withdrawn") && tool_name === "get_customer_context") return { decision: "DENY", reason: "PRIVACY_DO_NOT_PROFILE" };
   const dedupe_key = buildSafeDedupeKey(tool_name, input, server_resolved_customer_ref);
   if (dedupe_key === null) return { decision: "DENY", reason: "SERVER_REFERENCE_REQUIRED" };
   if (turn_tool_calls.has(dedupe_key)) return { decision: "DENY", reason: "DUPLICATE_TOOL_CALL_IN_TURN" };
   turn_tool_calls.add(dedupe_key);
   if (turn_budget.total >= MAX_TOOL_CALLS) return { decision: "DENY", reason: "TOOL_BUDGET_EXCEEDED" };
-  if (tool_name === "kb_search" && turn_budget.kb_search >= MAX_KB_SEARCH)
-    return { decision: "DENY", reason: "KB_SEARCH_BUDGET_EXCEEDED" };
-  if (tool_name === "get_customer_context" && turn_budget.c360 >= MAX_C360_CALLS)
-    return { decision: "DENY", reason: "C360_BUDGET_EXCEEDED" };
-  if (status === "ai_draft_only" || status === "unresolved")
-    return {
-      decision: "DOWNGRADE_TO_DRAFT",
-      reason: "STATUS_DRAFT_ONLY",
-      execution_allowed: true,
-      force_draft: true,
-      execution_deferred_to: "L5d",
-      draft_enforcement_deferred_to: "L5e",
-    };
-  if (status === "escalation_risk")
-    return {
-      decision: "DOWNGRADE_TO_DRAFT",
-      reason: "ESCALATION_RISK_DOWNGRADE",
-      execution_allowed: true,
-      force_draft: true,
-      execution_deferred_to: "L5d",
-      draft_enforcement_deferred_to: "L5e",
-    };
+  if (tool_name === "kb_search" && turn_budget.kb_search >= MAX_KB_SEARCH) return { decision: "DENY", reason: "KB_SEARCH_BUDGET_EXCEEDED" };
+  if (tool_name === "get_customer_context" && turn_budget.c360 >= MAX_C360_CALLS) return { decision: "DENY", reason: "C360_BUDGET_EXCEEDED" };
+  if (status === "ai_draft_only" || status === "unresolved") return { decision: "DOWNGRADE_TO_DRAFT", reason: "STATUS_DRAFT_ONLY", execution_allowed: true, force_draft: true, execution_deferred_to: "L5d", draft_enforcement_deferred_to: "L5e" };
+  if (status === "escalation_risk") return { decision: "DOWNGRADE_TO_DRAFT", reason: "ESCALATION_RISK_DOWNGRADE", execution_allowed: true, force_draft: true, execution_deferred_to: "L5d", draft_enforcement_deferred_to: "L5e" };
   return { decision: "ALLOW", reason: "GATE_PASSED", execution_allowed: true, execution_deferred_to: "L5d" };
 }
 
 export function handleGateDecision(decision: GateDecision): GateDecision {
   switch (decision.decision) {
-    case "ALLOW":
-      return {
-        decision: "ALLOW",
-        reason: decision.reason ?? "GATE_PASSED",
-        execution_allowed: true,
-        execution_deferred_to: "L5d",
-      };
-    case "DENY":
-      return { decision: "DENY", reason: decision.reason, message_to_llm: "tool not available in current context" };
-    case "DOWNGRADE_TO_DRAFT":
-      return {
-        decision: "DOWNGRADE_TO_DRAFT",
-        reason: decision.reason,
-        execution_allowed: true,
-        force_draft: true,
-        execution_deferred_to: "L5d",
-        draft_enforcement_deferred_to: "L5e",
-      };
-    case "ESCALATE":
-      return { decision: "ESCALATE", reason: decision.reason, handoff_required: true, action_deferred_to: "L5e" };
+    case "ALLOW": return { decision: "ALLOW", reason: decision.reason ?? "GATE_PASSED", execution_allowed: true, execution_deferred_to: "L5d" };
+    case "DENY": return { decision: "DENY", reason: decision.reason, message_to_llm: "tool not available in current context" };
+    case "DOWNGRADE_TO_DRAFT": return { decision: "DOWNGRADE_TO_DRAFT", reason: decision.reason, execution_allowed: true, force_draft: true, execution_deferred_to: "L5d", draft_enforcement_deferred_to: "L5e" };
+    case "ESCALATE": return { decision: "ESCALATE", reason: decision.reason, handoff_required: true, action_deferred_to: "L5e" };
   }
 }
 
 const TOOL_DEFINITIONS = [
-  {
-    name: "kb_search",
-    description: "Search the knowledge base for policy, FAQ, or product information to answer customer questions.",
-    input_schema: {
-      type: "object",
-      properties: {
-        query: {
-          type: "string",
-          description: "Search query extracted from customer message (must be PII-redacted before stub log or trace).",
-        },
-        industry: { type: "string", description: "Industry context (optional, inferred from conversation)." },
-        top_k: { type: "number", description: "Number of results to return (default 5, max 10)." },
-      },
-      required: ["query"],
-    },
-  },
-  {
-    name: "escalate_to_human",
-    description: "Escalate conversation to a human agent when AI cannot resolve the issue.",
-    input_schema: {
-      type: "object",
-      properties: {
-        reason: { type: "string", description: "Reason for escalation (sanitized, no PII)." },
-        summary: { type: "string", description: "Brief conversation summary (sanitized, max 500 chars, no PII)." },
-      },
-      required: ["reason", "summary"],
-    },
-  },
-  {
-    name: "get_customer_context",
-    description: "Get customer context (tier, sentiment, language preference) to personalize response tone.",
-    input_schema: {
-      type: "object",
-      properties: {
-        fields: {
-          type: "array",
-          items: { type: "string" },
-          description: "Requested fields (advisory only — server enforces masking level allowlist).",
-        },
-      },
-      required: [],
-    },
-  },
-  {
-    name: "get_order_summary",
-    description: "Get order status summary for delivery, return, or refund inquiries.",
-    input_schema: {
-      type: "object",
-      properties: {
-        inquiry_type: {
-          type: "string",
-          enum: ["delivery_status", "return_request", "refund_inquiry", "order_general"],
-          description: "Type of order inquiry.",
-        },
-      },
-      required: ["inquiry_type"],
-    },
-  },
-  {
-    name: "create_handoff_summary",
-    description: "Generate a conversation summary for the human agent who will take over this conversation.",
-    input_schema: {
-      type: "object",
-      properties: {
-        summary_focus: {
-          type: "string",
-          description: "Optional focus area for the summary (e.g. 'refund concern', 'delivery issue').",
-        },
-      },
-      required: [],
-    },
-  },
-  {
-    name: "mark_unresolved",
-    description: "Mark conversation as unresolved for follow-up. Only available in console suggest mode.",
-    input_schema: {
-      type: "object",
-      properties: {
-        reason: { type: "string", description: "Reason conversation is unresolved (sanitized)." },
-        follow_up_at: {
-          type: "string",
-          description:
-            "Suggested follow-up datetime (ISO 8601, optional — advisory only in L5d, not written/scheduled).",
-        },
-      },
-      required: ["reason"],
-    },
-  },
-  {
-    name: "suggest_reply",
-    description: "Generate a suggested reply for the customer based on KB findings and context.",
-    input_schema: {
-      type: "object",
-      properties: {
-        context_summary: {
-          type: "string",
-          description: "Summary of context assembled by generate-reply (sanitized, max 500 chars, no PII).",
-        },
-        sources: { type: "array", items: { type: "string" }, description: "Citation labels from KB results." },
-      },
-      required: ["context_summary"],
-    },
-  },
+  { name: "kb_search", description: "Search the knowledge base for policy, FAQ, or product information to answer customer questions.", input_schema: { type: "object", properties: { query: { type: "string", description: "Search query extracted from customer message (must be PII-redacted before stub log or trace)." }, industry: { type: "string", description: "Industry context (optional, inferred from conversation)." }, top_k: { type: "number", description: "Number of results to return (default 5, max 10)." } }, required: ["query"] } },
+  { name: "escalate_to_human", description: "Escalate conversation to a human agent when AI cannot resolve the issue.", input_schema: { type: "object", properties: { reason: { type: "string", description: "Reason for escalation (sanitized, no PII)." }, summary: { type: "string", description: "Brief conversation summary (sanitized, max 500 chars, no PII)." } }, required: ["reason", "summary"] } },
+  { name: "get_customer_context", description: "Get customer context (tier, sentiment, language preference) to personalize response tone.", input_schema: { type: "object", properties: { fields: { type: "array", items: { type: "string" }, description: "Requested fields (advisory only — server enforces masking level allowlist)." } }, required: [] } },
+  { name: "get_order_summary", description: "Get order status summary for delivery, return, or refund inquiries.", input_schema: { type: "object", properties: { inquiry_type: { type: "string", enum: ["delivery_status", "return_request", "refund_inquiry", "order_general"], description: "Type of order inquiry." } }, required: ["inquiry_type"] } },
+  { name: "create_handoff_summary", description: "Generate a conversation summary for the human agent who will take over this conversation.", input_schema: { type: "object", properties: { summary_focus: { type: "string", description: "Optional focus area for the summary (e.g. 'refund concern', 'delivery issue')." } }, required: [] } },
+  { name: "mark_unresolved", description: "Mark conversation as unresolved for follow-up. Only available in console suggest mode.", input_schema: { type: "object", properties: { reason: { type: "string", description: "Reason conversation is unresolved (sanitized)." }, follow_up_at: { type: "string", description: "Suggested follow-up datetime (ISO 8601, optional — advisory only in L5d, not written/scheduled)." } }, required: ["reason"] } },
+  { name: "suggest_reply", description: "Generate a suggested reply for the customer based on KB findings and context.", input_schema: { type: "object", properties: { context_summary: { type: "string", description: "Summary of context assembled by generate-reply (sanitized, max 500 chars, no PII)." }, sources: { type: "array", items: { type: "string" }, description: "Citation labels from KB results." } }, required: ["context_summary"] } },
 ];
 
-interface ToolResult {
-  tool_name: string;
-  status: "stub" | "denied";
-  result_classification: "internal_only";
-  [k: string]: unknown;
-}
-export async function handleToolCall(
-  tool_name: string,
-  _tool_input: Record<string, unknown>,
-  _context: ExecutionContext,
-): Promise<ToolResult> {
+interface ToolResult { tool_name: string; status: "stub" | "denied"; result_classification: "internal_only"; [k: string]: unknown; }
+export async function handleToolCall(tool_name: string, _tool_input: Record<string, unknown>, _context: ExecutionContext): Promise<ToolResult> {
   switch (tool_name) {
-    case "kb_search":
-      return {
-        tool_name,
-        status: "stub",
-        result_classification: "internal_only",
-        retrieval_quality: "failed",
-        no_answer: true,
-        handoff_required: true,
-        results: [],
-        stub_note: "KB adapter not yet enabled (L5d stub)",
-      };
-    case "escalate_to_human":
-      return {
-        tool_name,
-        status: "stub",
-        result_classification: "internal_only",
-        escalated: false,
-        stub_note: "Escalation workflow deferred to L5e — no state changes in L5d",
-      };
-    case "get_customer_context":
-      return {
-        tool_name,
-        status: "stub",
-        result_classification: "internal_only",
-        customer_context: { tier: "Standard", language_preference: "en", sentiment: "neutral" },
-        stub_note: "Customer360 adapter not yet enabled (L5d stub) — using safe defaults",
-      };
-    case "get_order_summary":
-      return {
-        tool_name,
-        status: "stub",
-        result_classification: "internal_only",
-        order_available: false,
-        stub_note: "Order adapter not yet enabled (L5d stub)",
-      };
-    case "create_handoff_summary":
-      return {
-        tool_name,
-        status: "stub",
-        result_classification: "internal_only",
-        summary: "[Handoff summary not yet available — L5d stub]",
-        stub_note: "Handoff summary generation deferred to L5e; conversation_id server-side only",
-      };
-    case "mark_unresolved":
-      return {
-        tool_name,
-        status: "stub",
-        result_classification: "internal_only",
-        marked: false,
-        stub_note: "mark_unresolved write action deferred to L5e — no state changes in L5d",
-      };
-    case "suggest_reply":
-      return {
-        tool_name,
-        status: "stub",
-        result_classification: "internal_only",
-        draft_content: "",
-        confidence: 0,
-        recommended_action: "human_review",
-        stub_note: "suggest_reply draft write deferred to L5e — no state changes in L5d",
-      };
-    default:
-      return {
-        tool_name,
-        status: "denied",
-        result_classification: "internal_only",
-        error: "tool not available in current context",
-      };
+    case "kb_search": return { tool_name, status: "stub", result_classification: "internal_only", retrieval_quality: "failed", no_answer: true, handoff_required: true, results: [], stub_note: "KB adapter not yet enabled (L5d stub)" };
+    case "escalate_to_human": return { tool_name, status: "stub", result_classification: "internal_only", escalated: false, stub_note: "Escalation workflow deferred to L5e — no state changes in L5d" };
+    case "get_customer_context": return { tool_name, status: "stub", result_classification: "internal_only", customer_context: { tier: "Standard", language_preference: "en", sentiment: "neutral" }, stub_note: "Customer360 adapter not yet enabled (L5d stub) — using safe defaults" };
+    case "get_order_summary": return { tool_name, status: "stub", result_classification: "internal_only", order_available: false, stub_note: "Order adapter not yet enabled (L5d stub)" };
+    case "create_handoff_summary": return { tool_name, status: "stub", result_classification: "internal_only", summary: "[Handoff summary not yet available — L5d stub]", stub_note: "Handoff summary generation deferred to L5e; conversation_id server-side only" };
+    case "mark_unresolved": return { tool_name, status: "stub", result_classification: "internal_only", marked: false, stub_note: "mark_unresolved write action deferred to L5e — no state changes in L5d" };
+    case "suggest_reply": return { tool_name, status: "stub", result_classification: "internal_only", draft_content: "", confidence: 0, recommended_action: "human_review", stub_note: "suggest_reply draft write deferred to L5e — no state changes in L5d" };
+    default: return { tool_name, status: "denied", result_classification: "internal_only", error: "tool not available in current context" };
   }
 }
 
 type L5eOutputAction = "auto_send" | "draft_only" | "refuse";
-interface L5eOutputMode {
-  action: L5eOutputAction;
-  reason: string;
-}
-interface L5eGuardrailResult {
-  pass: boolean;
-  reason: string;
-}
-interface L5eToolResult {
-  tool_name: string;
-  result_classification?: "public_safe" | "draft_only" | "supervisor_only" | "internal_only";
-  handoff_required?: boolean;
-  citation_required?: boolean;
-  has_valid_citation?: boolean;
-}
-interface L5eRagResult {
-  no_answer?: boolean;
-  conflict_detected?: boolean;
-  retrieval_quality?: "high" | "medium" | "low";
-  policy_gap?: boolean;
-  source_scope?: "customer_answer" | "internal_only" | string;
-}
+interface L5eOutputMode { action: L5eOutputAction; reason: string; }
+interface L5eGuardrailResult { pass: boolean; reason: string; }
+interface L5eToolResult { tool_name: string; result_classification?: "public_safe" | "draft_only" | "supervisor_only" | "internal_only"; handoff_required?: boolean; citation_required?: boolean; has_valid_citation?: boolean; }
+interface L5eRagResult { no_answer?: boolean; conflict_detected?: boolean; retrieval_quality?: "high" | "medium" | "low"; policy_gap?: boolean; source_scope?: "customer_answer" | "internal_only" | string; }
 type L5eCallerMode = "system_auto" | "console_suggest";
 
-export function determineOutputMode(
-  conversationStatus: string,
-  toolResults: L5eToolResult[],
-  ragResult: L5eRagResult | null,
-  mode: L5eCallerMode,
-): L5eOutputMode {
+export function determineOutputMode(conversationStatus: string, toolResults: L5eToolResult[], ragResult: L5eRagResult | null, mode: L5eCallerMode): L5eOutputMode {
   switch (conversationStatus) {
-    case "resolved":
-    case "closed":
-      return { action: "refuse", reason: "CONV_RESOLVED_OR_CLOSED" };
-    case "ai_handling":
-      break;
-    case "ai_draft_only":
-      return { action: "draft_only", reason: "STATUS_AI_DRAFT_ONLY" };
-    case "human_needed":
-    case "human_control":
-      return { action: "draft_only", reason: "STATUS_HUMAN_CONTROL" };
-    case "escalation_risk":
-      return { action: "draft_only", reason: "STATUS_ESCALATION_RISK" };
-    case "unresolved":
-      return { action: "draft_only", reason: "STATUS_UNRESOLVED" };
-    case "offline_bot":
-      return { action: "draft_only", reason: "STATUS_OFFLINE_BOT" };
-    case "reopened":
-      return { action: "draft_only", reason: "STATUS_REOPENED_TRANSITIONAL" };
-    default:
-      return { action: "draft_only", reason: "STATUS_UNKNOWN_SAFE_FALLBACK" };
+    case "resolved": case "closed": return { action: "refuse", reason: "CONV_RESOLVED_OR_CLOSED" };
+    case "ai_handling": break;
+    case "ai_draft_only": return { action: "draft_only", reason: "STATUS_AI_DRAFT_ONLY" };
+    case "human_needed": case "human_control": return { action: "draft_only", reason: "STATUS_HUMAN_CONTROL" };
+    case "escalation_risk": return { action: "draft_only", reason: "STATUS_ESCALATION_RISK" };
+    case "unresolved": return { action: "draft_only", reason: "STATUS_UNRESOLVED" };
+    case "offline_bot": return { action: "draft_only", reason: "STATUS_OFFLINE_BOT" };
+    case "reopened": return { action: "draft_only", reason: "STATUS_REOPENED_TRANSITIONAL" };
+    default: return { action: "draft_only", reason: "STATUS_UNKNOWN_SAFE_FALLBACK" };
   }
   const guardrailsPass = checkGuardrails(toolResults, ragResult, mode);
-  return guardrailsPass.pass
-    ? { action: "auto_send", reason: "GUARDRAILS_PASSED" }
-    : { action: "draft_only", reason: guardrailsPass.reason };
+  return guardrailsPass.pass ? { action: "auto_send", reason: "GUARDRAILS_PASSED" } : { action: "draft_only", reason: guardrailsPass.reason };
 }
 
-export function checkGuardrails(
-  toolResults: L5eToolResult[],
-  ragResult: L5eRagResult | null,
-  mode: L5eCallerMode,
-): L5eGuardrailResult {
+export function checkGuardrails(toolResults: L5eToolResult[], ragResult: L5eRagResult | null, mode: L5eCallerMode): L5eGuardrailResult {
   if (mode === "console_suggest") return { pass: false, reason: "CONSOLE_SUGGEST_ALWAYS_DRAFT" };
   if (ragResult) {
     if (ragResult.no_answer) return { pass: false, reason: "KB_NO_ANSWER" };
@@ -2773,78 +1747,24 @@ export function checkGuardrails(
   }
   for (const result of toolResults) {
     if (result.result_classification === "draft_only") return { pass: false, reason: "TOOL_RESULT_DRAFT_ONLY" };
-    if (result.result_classification === "supervisor_only")
-      return { pass: false, reason: "TOOL_RESULT_SUPERVISOR_ONLY" };
+    if (result.result_classification === "supervisor_only") return { pass: false, reason: "TOOL_RESULT_SUPERVISOR_ONLY" };
   }
   const suggestResult = toolResults.find((r) => r.tool_name === "suggest_reply");
-  if (suggestResult?.citation_required && !suggestResult?.has_valid_citation)
-    return { pass: false, reason: "SUGGEST_REPLY_MISSING_CITATION" };
+  if (suggestResult?.citation_required && !suggestResult?.has_valid_citation) return { pass: false, reason: "SUGGEST_REPLY_MISSING_CITATION" };
   if (toolResults.some((r) => r.handoff_required)) return { pass: false, reason: "HANDOFF_REQUIRED_BY_TOOL" };
   return { pass: true, reason: "ALL_GUARDRAILS_PASSED" };
 }
 
-interface L5eExecutionContextLike {
-  flags: { ENABLE_TOOL_EXEC: boolean; [k: string]: unknown };
-  llm_generated_content?: string;
-  handoff_summary_from_tool?: string;
-  [k: string]: unknown;
-}
-interface L5eSuggestReplyInput {
-  [k: string]: unknown;
-}
-interface L5eEscalateInput {
-  reason?: string;
-  summary?: string;
-  [k: string]: unknown;
-}
-interface L5eMarkUnresolvedInput {
-  reason?: string;
-  follow_up_at?: string;
-  [k: string]: unknown;
-}
-interface L5eDeferredResult {
-  deferred: boolean;
-  reason: string;
-  auto_sent?: boolean;
-  escalated?: boolean;
-  marked?: boolean;
-}
+interface L5eExecutionContextLike { flags: { ENABLE_TOOL_EXEC: boolean; [k: string]: unknown }; llm_generated_content?: string; handoff_summary_from_tool?: string; [k: string]: unknown; }
+interface L5eSuggestReplyInput { [k: string]: unknown; }
+interface L5eEscalateInput { reason?: string; summary?: string; [k: string]: unknown; }
+interface L5eMarkUnresolvedInput { reason?: string; follow_up_at?: string; [k: string]: unknown; }
+interface L5eDeferredResult { deferred: boolean; reason: string; auto_sent?: boolean; escalated?: boolean; marked?: boolean; }
 function l5eSanitize(input: string | undefined | null, opts: { maxChars: number; noPII: boolean }): string {
-  if (!input) return "";
-  let s = String(input);
-  if (opts.noPII) {
-    s = s.replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, "[email]");
-    s = s.replace(/\+?\d[\d\s\-().]{7,}\d/g, "[phone]");
-    s = s.replace(/\b\d{9,}\b/g, "[digits]");
-  }
+  if (!input) return ""; let s = String(input);
+  if (opts.noPII) { s = s.replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, "[email]"); s = s.replace(/\+?\d[\d\s\-().]{7,}\d/g, "[phone]"); s = s.replace(/\b\d{9,}\b/g, "[digits]"); }
   return s.length > opts.maxChars ? s.slice(0, opts.maxChars) : s;
 }
-export async function executeSuggestReply(
-  _input: L5eSuggestReplyInput,
-  context: L5eExecutionContextLike,
-  outputMode: L5eOutputMode,
-): Promise<L5eDeferredResult> {
-  if (!context.flags.ENABLE_TOOL_EXEC) return { auto_sent: false, deferred: true, reason: "TOOL_EXEC_DISABLED" };
-  void outputMode;
-  return { deferred: true, reason: "GATE_B_REQUIRED" };
-}
-export async function executeEscalateToHuman(
-  input: L5eEscalateInput,
-  context: L5eExecutionContextLike,
-): Promise<L5eDeferredResult> {
-  const _reason = l5eSanitize(input.reason, { maxChars: 500, noPII: true });
-  const _summary = l5eSanitize(input.summary, { maxChars: 500, noPII: true });
-  const _handoffSummary = context.handoff_summary_from_tool || _summary;
-  void _reason;
-  void _handoffSummary;
-  if (!context.flags.ENABLE_TOOL_EXEC) return { escalated: false, deferred: true, reason: "TOOL_EXEC_DISABLED" };
-  return { deferred: true, reason: "GATE_B_REQUIRED" };
-}
-export async function executeMarkUnresolved(
-  input: L5eMarkUnresolvedInput,
-  context: L5eExecutionContextLike,
-): Promise<L5eDeferredResult> {
-  if (!context.flags.ENABLE_TOOL_EXEC) return { marked: false, deferred: true, reason: "TOOL_EXEC_DISABLED" };
-  void input;
-  return { deferred: true, reason: "GATE_B_REQUIRED" };
-}
+export async function executeSuggestReply(_input: L5eSuggestReplyInput, context: L5eExecutionContextLike, outputMode: L5eOutputMode): Promise<L5eDeferredResult> { if (!context.flags.ENABLE_TOOL_EXEC) return { auto_sent: false, deferred: true, reason: "TOOL_EXEC_DISABLED" }; void outputMode; return { deferred: true, reason: "GATE_B_REQUIRED" }; }
+export async function executeEscalateToHuman(input: L5eEscalateInput, context: L5eExecutionContextLike): Promise<L5eDeferredResult> { const _reason = l5eSanitize(input.reason, { maxChars: 500, noPII: true }); const _summary = l5eSanitize(input.summary, { maxChars: 500, noPII: true }); const _handoffSummary = context.handoff_summary_from_tool || _summary; void _reason; void _handoffSummary; if (!context.flags.ENABLE_TOOL_EXEC) return { escalated: false, deferred: true, reason: "TOOL_EXEC_DISABLED" }; return { deferred: true, reason: "GATE_B_REQUIRED" }; }
+export async function executeMarkUnresolved(input: L5eMarkUnresolvedInput, context: L5eExecutionContextLike): Promise<L5eDeferredResult> { if (!context.flags.ENABLE_TOOL_EXEC) return { marked: false, deferred: true, reason: "TOOL_EXEC_DISABLED" }; void input; return { deferred: true, reason: "GATE_B_REQUIRED" }; }

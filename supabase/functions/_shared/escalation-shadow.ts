@@ -92,10 +92,19 @@ export function evaluateEscalationShadow(
   });
 
   // Only bind signals already known by current generate-reply.
-  context.conversation_status = availableSignal(input.conversation_status, "conversation_history");
-  context.assigned_agent_id = availableSignal(input.assigned_agent_id, "conversation_history");
+  context.conversation_status = availableSignal(
+    input.conversation_status,
+    "conversation_history",
+  );
+  context.assigned_agent_id = availableSignal(
+    input.assigned_agent_id,
+    "conversation_history",
+  );
   if (typeof input.greeting_or_trivial === "boolean") {
-    context.greeting_or_trivial = availableSignal(input.greeting_or_trivial, "local_classifier");
+    context.greeting_or_trivial = availableSignal(
+      input.greeting_or_trivial,
+      "local_classifier",
+    );
   }
 
   if (input.threat_flag) {
@@ -108,15 +117,22 @@ export function evaluateEscalationShadow(
 
   if (input.compliance_jurisdiction_requires_human_review) {
     const compliance = input.compliance_jurisdiction_requires_human_review;
-    context.compliance_jurisdiction_requires_human_review = availableSignal(compliance.value, "tenant_config", {
-      provider_version: compliance.provider_version,
-      reason: compliance.reason,
-      ...(input.expected_tenant_id ? { tenant_id: input.expected_tenant_id } : {}),
-    });
+    context.compliance_jurisdiction_requires_human_review = availableSignal(
+      compliance.value,
+      "tenant_config",
+      {
+        provider_version: compliance.provider_version,
+        reason: compliance.reason,
+        ...(input.expected_tenant_id ? { tenant_id: input.expected_tenant_id } : {}),
+      },
+    );
   }
 
   if (input.rag_match_state) {
-    context.rag_match_state = availableSignal(input.rag_match_state, "kb_rag");
+    context.rag_match_state = availableSignal(
+      input.rag_match_state,
+      "kb_rag",
+    );
   }
 
   if (input.topic_risk_level === "high") {
@@ -152,15 +168,16 @@ export function evaluateEscalationShadow(
   if (input.sentiment_recovered_same_turn === true) {
     context.sentiment_recovered_same_turn = availableSignal(true, "conversation_evaluation", {
       provider_version: input.sentiment_provider_version,
-      reason: input.sentiment_evaluation_id
-        ? `evaluation_id:${input.sentiment_evaluation_id}`
-        : "ce_emotion_point_recovery",
+      reason: input.sentiment_evaluation_id ? `evaluation_id:${input.sentiment_evaluation_id}` : "ce_emotion_point_recovery",
       ...(input.expected_tenant_id ? { tenant_id: input.expected_tenant_id } : {}),
     });
   }
 
   if (input.failure_type) {
-    context.failure_type = availableSignal(input.failure_type, "runtime");
+    context.failure_type = availableSignal(
+      input.failure_type,
+      "runtime",
+    );
   }
 
   const enabled = new Set<EscalationRuleId>();
