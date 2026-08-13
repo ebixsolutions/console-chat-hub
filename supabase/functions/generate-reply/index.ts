@@ -467,11 +467,23 @@ function buildVerifiedTenantEscalationConfig(): EscalationContext["tenant_config
     typeof parsedSentimentThreshold === "number" && Number.isFinite(parsedSentimentThreshold)
       ? parsedSentimentThreshold
       : undefined;
+  const slaWarningRaw = Deno.env.get("ESC_SLA_WARNING_SEC");
+  const parsedSlaWarning =
+    slaWarningRaw !== undefined && slaWarningRaw.trim() !== ""
+      ? Number(slaWarningRaw)
+      : undefined;
+  const slaWarningSec =
+    typeof parsedSlaWarning === "number" &&
+    Number.isInteger(parsedSlaWarning) &&
+    parsedSlaWarning >= 0
+      ? parsedSlaWarning
+      : undefined;
 
   if (
     maxConsecutiveNoAnswer === undefined &&
     maxClarifications === undefined &&
-    sentimentScoreThreshold === undefined
+    sentimentScoreThreshold === undefined &&
+    slaWarningSec === undefined
   ) return null;
 
   return {
@@ -483,6 +495,9 @@ function buildVerifiedTenantEscalationConfig(): EscalationContext["tenant_config
       : {}),
     ...(sentimentScoreThreshold !== undefined
       ? { sentiment_score_threshold: sentimentScoreThreshold }
+      : {}),
+    ...(slaWarningSec !== undefined
+      ? { sla_warning_sec: slaWarningSec }
       : {}),
   };
 }
@@ -1213,6 +1228,11 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     conversation_id,
     _pr5ExpectedTenantId,
   );
+  const _pr5ConversationDurationSec =
+    conversation.created_at
+      ? Math.max(0, Math.floor((Date.now() - new Date(conversation.created_at).getTime()) / 1000))
+      : undefined;
+  const _pr5VerifiedTenantConfig = buildVerifiedTenantEscalationConfig();
 
   // ── PR-5 canonical greeting signal + shadow/live evaluation ───────────
   const _pr5GreetingOrTrivial = isGreetingOrTrivial(_h1LastMsg);
@@ -1235,6 +1255,8 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
       sentiment_recovered_same_turn: _pr5R3Sentiment?.sentiment_recovered_same_turn,
       sentiment_provider_version: _pr5R3Sentiment?.provider_version,
       sentiment_evaluation_id: _pr5R3Sentiment?.evaluation_id,
+      conversation_duration_sec: _pr5ConversationDurationSec,
+      tenant_config: _pr5VerifiedTenantConfig,
     },
     Deno.env,
   );
@@ -1288,10 +1310,6 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
 
   const _g1SkipKB = _pr5GreetingOrTrivial;
 
-  const _pr5ConversationDurationSec =
-    conversation.created_at
-      ? Math.max(0, Math.floor((Date.now() - new Date(conversation.created_at).getTime()) / 1000))
-      : undefined;
   let _pr5RagMatchState: RagMatchState | undefined;
   const _escEnableS0 = Deno.env.get("ESC_ENABLE_S0") === "true";
 
@@ -1497,6 +1515,8 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
       sentiment_recovered_same_turn: _pr5R3Sentiment.sentiment_recovered_same_turn,
       sentiment_provider_version: _pr5R3Sentiment.provider_version,
       sentiment_evaluation_id: _pr5R3Sentiment.evaluation_id,
+      conversation_duration_sec: _pr5ConversationDurationSec,
+      tenant_config: _pr5VerifiedTenantConfig,
     }, Deno.env);
     if (r3Shadow) {
       console.log("[generate-reply] PR-5 R3 sentiment shadow:", {

@@ -47,6 +47,8 @@ export interface EscalationShadowInput {
   sentiment_recovered_same_turn?: true;
   sentiment_provider_version?: string;
   sentiment_evaluation_id?: string;
+  conversation_duration_sec?: number;
+  tenant_config?: EscalationContext["tenant_config"];
 }
 
 export interface EscalationShadowResult {
@@ -171,6 +173,21 @@ export function evaluateEscalationShadow(
       reason: input.sentiment_evaluation_id ? `evaluation_id:${input.sentiment_evaluation_id}` : "ce_emotion_point_recovery",
       ...(input.expected_tenant_id ? { tenant_id: input.expected_tenant_id } : {}),
     });
+  }
+
+  if (typeof input.conversation_duration_sec === "number" && Number.isFinite(input.conversation_duration_sec)) {
+    context.conversation_duration_sec = availableSignal(
+      input.conversation_duration_sec,
+      "conversation_history",
+      {
+        ...(input.expected_tenant_id ? { tenant_id: input.expected_tenant_id } : {}),
+        reason: "conversation_created_at_elapsed_seconds",
+      },
+    );
+  }
+
+  if (input.tenant_config) {
+    context.tenant_config = input.tenant_config;
   }
 
   if (input.failure_type) {

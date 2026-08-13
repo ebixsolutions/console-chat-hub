@@ -442,8 +442,8 @@ export function createEscalationContextBase(input: {
     pure_handoff_negation: notCheckedSignal("local_classifier"),
     clarification_attempts: notCheckedSignal("conversation_history"),
     sentiment_recovered_same_turn: unavailableSignal(
-      "coach_ai",
-      "provider_contract_unverified",
+      "conversation_evaluation",
+      "no_current_evaluation_data",
     ),
     verified_local_risk_classification: notCheckedSignal("local_classifier"),
 
