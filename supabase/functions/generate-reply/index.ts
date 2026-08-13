@@ -1595,22 +1595,26 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
   const _pr5ShadowFlags = escalationFeatureFlagsFromEnv(Deno.env);
   if (
     _pr5ShadowFlags.shadow_mode &&
-    (_pr5ShadowFlags.enable_full_ruleset || _pr5ShadowFlags.enable_r4) &&
-    finalPromptChunks.length > 0
+    (_pr5ShadowFlags.enable_full_ruleset || _pr5ShadowFlags.enable_r4)
   ) {
-    const policyEvidence = finalPromptChunks
-      .filter((chunk) =>
-        typeof chunk.source_type === "string" &&
-        chunk.source_type.toLowerCase().includes("policy") &&
-        typeof chunk.content === "string" &&
-        chunk.content.trim().length > 0
-      )
-      .slice(0, 3)
-      .map((chunk) => ({
-        label: (chunk.title ?? "Policy source").slice(0, 120),
-        content: String(chunk.content).slice(0, 800),
-        source_type: String(chunk.source_type).slice(0, 40),
-      }));
+    // R4 policy assessment is exact-policy evidence only.
+    // rag_summary is orientation-only and MUST NOT independently drive
+    // a policy conflict / partial-match decision.
+    const structuredPolicyEvidence =
+      ragResult?.llm_context?.full_content_evidence
+        ?.filter((item) =>
+          typeof item.source_type === "string" &&
+          item.source_type.toLowerCase().includes("policy") &&
+          typeof item.content === "string" &&
+          item.content.trim().length > 0
+        )
+        .slice(0, 3) ?? [];
+
+    const policyEvidence = structuredPolicyEvidence.map((item, index) => ({
+      label: `Policy evidence ${index + 1}`,
+      content: item.content.slice(0, 800),
+      source_type: item.source_type.slice(0, 40),
+    }));
 
     if (policyEvidence.length > 0) {
       _pr5R4Policy = await assessPolicyEvidenceForR4(
