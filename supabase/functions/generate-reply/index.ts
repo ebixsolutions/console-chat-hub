@@ -1514,7 +1514,11 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
 
     const isHighRisk = _pr5LocalRisk?.level === "high";
     const minScore = isHighRisk ? 0.78 : 0.55;
-    const usableChunks = ragResult.chunks.filter((c) => c.score && c.score >= minScore && (!c.status || c.status === "published") && (c.company_id === undefined || c.company_id === _kbTenantResult.scope.kbCompanyId) && (!c.industry || c.industry === _kbTenantResult.scope.industry));
+    // Singapore tenant/company isolation is owned by the verified Bearer JWT
+    // inside _shared/kb-client.ts. Do not reapply retired body-scope fields here.
+    const usableChunks = ragResult.chunks.filter(
+      (c) => c.score && c.score >= minScore && (!c.status || c.status === "published"),
+    );
     const traceMetadata = { rag_api_status: "success", total_results: ragResult.chunks.length, filtered_results: usableChunks.length, min_score_used: usableChunks.length > 0 ? Math.min(...usableChunks.map((c) => c.score ?? 0)) : null, max_score_used: usableChunks.length > 0 ? Math.max(...usableChunks.map((c) => c.score ?? 0)) : null, high_risk_topic: isHighRisk, min_threshold: minScore, citations: usableChunks.map((c) => ({ doc_id: c.doc_id, chunk_id: c.chunk_id, title: c.title, score: c.score, source_type: c.source_type })) };
     ragResult.trace_metadata = traceMetadata;
     if (usableChunks.length === 0) {
