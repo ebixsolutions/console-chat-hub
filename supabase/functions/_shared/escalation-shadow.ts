@@ -41,6 +41,12 @@ export interface EscalationShadowInput {
   };
   topic_risk_level?: "high";
   verified_local_risk_classification?: true;
+  anger_flag?: true;
+  sentiment_score?: number;
+  sentiment_trend?: number[];
+  sentiment_recovered_same_turn?: true;
+  sentiment_provider_version?: string;
+  sentiment_evaluation_id?: string;
 }
 
 export interface EscalationShadowResult {
@@ -120,6 +126,37 @@ export function evaluateEscalationShadow(
   }
   if (input.verified_local_risk_classification === true) {
     context.verified_local_risk_classification = availableSignal(true, "local_classifier");
+  }
+
+  if (input.anger_flag === true) {
+    context.anger_flag = availableSignal(true, "conversation_evaluation", {
+      provider_version: input.sentiment_provider_version,
+      reason: input.sentiment_evaluation_id ? `evaluation_id:${input.sentiment_evaluation_id}` : "ce_emotion_point",
+      ...(input.expected_tenant_id ? { tenant_id: input.expected_tenant_id } : {}),
+    });
+  }
+  if (typeof input.sentiment_score === "number" && Number.isFinite(input.sentiment_score)) {
+    context.sentiment_score = availableSignal(input.sentiment_score, "conversation_evaluation", {
+      provider_version: input.sentiment_provider_version,
+      reason: input.sentiment_evaluation_id ? `evaluation_id:${input.sentiment_evaluation_id}` : "ce_emotion_point",
+      ...(input.expected_tenant_id ? { tenant_id: input.expected_tenant_id } : {}),
+    });
+  }
+  if (Array.isArray(input.sentiment_trend) && input.sentiment_trend.length >= 2) {
+    context.sentiment_trend = availableSignal(input.sentiment_trend, "conversation_evaluation", {
+      provider_version: input.sentiment_provider_version,
+      reason: input.sentiment_evaluation_id ? `evaluation_id:${input.sentiment_evaluation_id}` : "ce_emotion_point",
+      ...(input.expected_tenant_id ? { tenant_id: input.expected_tenant_id } : {}),
+    });
+  }
+  if (input.sentiment_recovered_same_turn === true) {
+    context.sentiment_recovered_same_turn = availableSignal(true, "conversation_evaluation", {
+      provider_version: input.sentiment_provider_version,
+      reason: input.sentiment_evaluation_id
+        ? `evaluation_id:${input.sentiment_evaluation_id}`
+        : "ce_emotion_point_recovery",
+      ...(input.expected_tenant_id ? { tenant_id: input.expected_tenant_id } : {}),
+    });
   }
 
   if (input.failure_type) {
