@@ -26,7 +26,10 @@ import {
   type KBResolvedScope,
 } from "../_shared/kb-client.ts";
 import { evaluateEscalationShadow } from "../_shared/escalation-shadow.ts";
-import { persistRequiredEscalationHandoff } from "../_shared/escalation-live.ts";
+import {
+  persistRequiredEscalationClarification,
+  persistRequiredEscalationHandoff,
+} from "../_shared/escalation-live.ts";
 import {
   availableSignal,
   createEscalationContextBase,
@@ -74,6 +77,12 @@ const REQUIRED_ESCALATION_SAFE_WORDING: Record<"E2" | "E1" | "R2", Record<"zh-TW
     "zh-CN": "我目前未能可靠解决这个问题，已将对话转交客服人员跟进。",
     en: "I’m not able to resolve this reliably, so I’ve handed the conversation to a support agent for follow-up.",
   },
+};
+
+const R2_CLARIFICATION_SAFE_WORDING: Record<"zh-TW" | "zh-CN" | "en", string> = {
+  "zh-TW": "我想再確認一次，才能更準確地幫你。請補充這個問題中最重要的細節，例如你希望處理的項目或目前遇到的情況。",
+  "zh-CN": "我想再确认一次，才能更准确地帮你。请补充这个问题中最重要的细节，例如你希望处理的项目或目前遇到的情况。",
+  en: "I’d like to clarify one detail so I can help more accurately. Please add the most important detail about what you want handled or what is happening now.",
 };
 
 const HANDOFF_STRONG_TRIGGERS: Record<string, string[]> = {
@@ -289,6 +298,7 @@ function classifyLocalTopicRisk(text: string): { level: TopicRiskLevel; verified
 interface ConversationHistorySignals {
   turn_count: number;
   consecutive_no_answer: number;
+  clarification_attempts: number;
   exact_same_intent_repeated?: true;
 }
 
@@ -304,6 +314,7 @@ function normalizeIntentText(text: string): string {
 function deriveConversationHistorySignals(
   newestFirstMessages: Array<{ role?: string; content?: string | null }>,
   exactVisitorTurnCount: number,
+  exactClarificationCount: number,
 ): ConversationHistorySignals {
   const usable = newestFirstMessages.filter((m) => m.content !== "__THINKING__" && typeof m.role === "string");
 
@@ -331,6 +342,7 @@ function deriveConversationHistorySignals(
   return {
     turn_count: exactVisitorTurnCount,
     consecutive_no_answer: consecutiveNoAnswer,
+    clarification_attempts: exactClarificationCount,
     exact_same_intent_repeated: exactSameIntentRepeated,
   };
 }
@@ -381,6 +393,7 @@ async function evaluateAndPersistRequiredRulesLive(
     conversation_duration_sec?: number;
     turn_count?: number;
     consecutive_no_answer?: number;
+    clarification_attempts?: number;
     exact_same_intent_repeated?: true;
   },
 ): Promise<Response | null> {
@@ -435,6 +448,9 @@ async function evaluateAndPersistRequiredRulesLive(
   if (params.consecutive_no_answer !== undefined) {
     context.consecutive_no_answer = availableSignal(params.consecutive_no_answer, "conversation_history");
   }
+  if (params.clarification_attempts !== undefined) {
+    context.clarification_attempts = availableSignal(params.clarification_attempts, "conversation_history");
+  }
   if (params.exact_same_intent_repeated === true) {
     context.same_intent_repeated = availableSignal(true, "conversation_history", {
       reason: "exact_normalized_repeat",
@@ -450,6 +466,69 @@ async function evaluateAndPersistRequiredRulesLive(
   const decision = evaluateFullEscalationRuleset(context, {
     activation: { enabled },
   });
+
+  if (decision.decision === "clarify" && decision.matched_rule === "R2" && enabled.has("R2")) {
+    const clarification = R2_CLARIFICATION_SAFE_WORDING[params.visitor_language];
+    const persisted = await persistRequiredEscalationClarification(supabaseAdmin, {
+      conversation_id: params.conversation_id,
+      source_message_id: params.source_message_id,
+      decision,
+      safe_reply_content: clarification,
+    });
+
+    if (persisted.ok) {
+      await cleanupThinking(supabaseAdmin, params.conversation_id, params.source_message_id);
+      return new Response(
+        JSON.stringify({
+          success: true,
+          escalation_rule: "R2",
+          escalation_action: "clarification",
+          clarification_persisted: true,
+          rpc_result: persisted.result,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    if (persisted.result === "already_resolved") {
+      return new Response(JSON.stringify({ success: true, skipped: "resolved", escalation_rule: "R2" }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    if (persisted.result === "already_under_human_control") {
+      return new Response(JSON.stringify({ success: true, skipped: "human_handling", escalation_rule: "R2" }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    if (persisted.result === "max_clarifications_reached") {
+      console.log("[generate-reply] R2 clarification capped at one", {
+        conversation_id: params.conversation_id,
+      });
+      return null;
+    }
+
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: `required_escalation_clarification_${persisted.result}`,
+        escalation_rule: "R2",
+        clarification_persisted: false,
+        ...(persisted.result === "rpc_transport_error" ? { handoff_uncertain: true } : {}),
+      }),
+      {
+        status:
+          persisted.result === "invalid_source_message" ||
+          persisted.result === "invalid_input" ||
+          persisted.result === "invalid_rule" ||
+          persisted.result === "invalid_clarification"
+            ? 400
+            : 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
+  }
 
   if (decision.decision !== "handoff" || decision.matched_rule === null || !enabled.has(decision.matched_rule)) {
     console.log("[generate-reply] required-rules live no-match:", {
@@ -1240,25 +1319,38 @@ async function orchestrationGenerateReply(
   const _h1LastMsg = _h1VisitorMsgs?.[0]?.content ?? "";
   const _h1HandoffLang = detectHandoffLanguage(_h1LastMsg);
 
-  const [{ data: _pr5HistoryRows }, { count: _pr5VisitorTurnCount }] = await Promise.all([
-    supabaseAdmin
-      .from("messages")
-      .select("role, content, created_at")
-      .eq("conversation_id", conversation_id)
-      .eq("is_recalled", false)
-      .neq("content", "__THINKING__")
-      .order("created_at", { ascending: false })
-      .limit(50),
-    supabaseAdmin
-      .from("messages")
-      .select("id", { count: "exact", head: true })
-      .eq("conversation_id", conversation_id)
-      .eq("role", "visitor")
-      .eq("is_recalled", false)
-      .neq("content", "__THINKING__"),
-  ]);
+  const [{ data: _pr5HistoryRows }, { count: _pr5VisitorTurnCount }, { count: _pr5ClarificationCount }] =
+    await Promise.all([
+      supabaseAdmin
+        .from("messages")
+        .select("role, content, created_at")
+        .eq("conversation_id", conversation_id)
+        .eq("is_recalled", false)
+        .neq("content", "__THINKING__")
+        .order("created_at", { ascending: false })
+        .limit(50),
+      supabaseAdmin
+        .from("messages")
+        .select("id", { count: "exact", head: true })
+        .eq("conversation_id", conversation_id)
+        .eq("role", "visitor")
+        .eq("is_recalled", false)
+        .neq("content", "__THINKING__"),
+      supabaseAdmin
+        .from("messages")
+        .select("id", { count: "exact", head: true })
+        .eq("conversation_id", conversation_id)
+        .eq("role", "assistant")
+        .eq("is_recalled", false)
+        .filter("metadata->>escalation_rule", "eq", "R2")
+        .filter("metadata->>escalation_action", "eq", "clarification"),
+    ]);
 
-  const _pr5History = deriveConversationHistorySignals(_pr5HistoryRows ?? [], _pr5VisitorTurnCount ?? 0);
+  const _pr5History = deriveConversationHistorySignals(
+    _pr5HistoryRows ?? [],
+    _pr5VisitorTurnCount ?? 0,
+    _pr5ClarificationCount ?? 0,
+  );
 
   // ── PR-5 canonical greeting signal + shadow/live evaluation ───────────
   const _pr5GreetingOrTrivial = isGreetingOrTrivial(_h1LastMsg);
@@ -1516,6 +1608,7 @@ async function orchestrationGenerateReply(
         conversation_duration_sec: _pr5ConversationDurationSec,
         turn_count: _pr5History.turn_count,
         consecutive_no_answer: _pr5History.consecutive_no_answer,
+        clarification_attempts: _pr5History.clarification_attempts,
         exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
       });
       if (requiredResponse) return requiredResponse;
@@ -1573,6 +1666,7 @@ async function orchestrationGenerateReply(
         conversation_duration_sec: _pr5ConversationDurationSec,
         turn_count: _pr5History.turn_count,
         consecutive_no_answer: _pr5History.consecutive_no_answer,
+        clarification_attempts: _pr5History.clarification_attempts,
         exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
       });
       if (requiredResponse) return requiredResponse;
@@ -1615,6 +1709,7 @@ async function orchestrationGenerateReply(
     conversation_duration_sec: _pr5ConversationDurationSec,
     turn_count: _pr5History.turn_count,
     consecutive_no_answer: _pr5History.consecutive_no_answer,
+    clarification_attempts: _pr5History.clarification_attempts,
     exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
   });
   if (_pr5RequiredLiveResponse) return _pr5RequiredLiveResponse;
