@@ -27,6 +27,15 @@ import {
   type KBResolvedScope,
 } from "../_shared/kb-client.ts";
 import { evaluateEscalationShadow } from "../_shared/escalation-shadow.ts";
+import { persistRequiredEscalationHandoff } from "../_shared/escalation-live.ts";
+import {
+  availableSignal,
+  createEscalationContextBase,
+  escalationFeatureFlagsFromEnv,
+  type EscalationContext,
+  type EscalationRuleId,
+} from "../_shared/escalation-signals.ts";
+import { evaluateFullEscalationRuleset } from "../_shared/escalation-rules.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -47,6 +56,25 @@ const SAFE_HANDOFF_WORDING: Record<string, string> = {
   "zh-CN": "我们已将你的对话记录，客服接手后会在此对话中回复你。目前未启用实时排队位置和预计等待时间显示。",
   en: "We have recorded your conversation. A human agent will reply in this same chat after taking over. Real-time queue position and estimated wait time are not currently enabled.",
 };
+
+const REQUIRED_ESCALATION_SAFE_WORDING: Record<"E2" | "E1" | "R2", Record<"zh-TW" | "zh-CN" | "en", string>> = {
+  E2: {
+    "zh-TW": "這個問題需要由客服人員進一步處理。我已將對話轉交客服跟進。",
+    "zh-CN": "这个问题需要由客服人员进一步处理。我已将对话转交客服跟进。",
+    en: "This issue requires human review. I’ve handed the conversation to a support agent for follow-up.",
+  },
+  E1: {
+    "zh-TW": "這個問題涉及重要風險或政策內容，為確保資訊準確，我已轉交客服人員跟進。",
+    "zh-CN": "这个问题涉及重要风险或政策内容，为确保信息准确，我已转交客服人员跟进。",
+    en: "This issue involves important risk or policy considerations. I’ve handed it to a support agent for accurate follow-up.",
+  },
+  R2: {
+    "zh-TW": "我目前未能可靠解決這個問題，已將對話轉交客服人員跟進。",
+    "zh-CN": "我目前未能可靠解决这个问题，已将对话转交客服人员跟进。",
+    en: "I’m not able to resolve this reliably, so I’ve handed the conversation to a support agent for follow-up.",
+  },
+};
+
 const HANDOFF_STRONG_TRIGGERS: Record<string, string[]> = {
   "zh-TW": ["轉真人", "轉人工", "真人客服", "人工客服"],
   "zh-CN": ["转真人", "转人工", "真人客服", "人工客服"],
@@ -186,6 +214,166 @@ function classifyExplicitHandoff(text: string): EscClassifierResult {
   return { rule: null, confidence: 0, trigger_span: "", language: "zh-TW" };
 }
 
+function isGreetingOrTrivial(text: string): boolean {
+  const normalized = text.trim().replace(/\s+/g, " ").toLowerCase();
+  const raw = text.trim();
+  const greetingRe =
+    /^((hi|hello|hey|你好|嗨|哈囉|早安|午安|晚安|good\s*(morning|afternoon|evening)|thanks|thank you|ok|okay|謝謝|好的|嗯)\s*[!！。.？?，,]*\s*)+$/i;
+  const compoundEnRe = /^(hi|hello|hey)\s+(there|everyone|guys|all)[!！。.？?，,\s]*$/i;
+  const compoundZhRe = /^(你好|嗨|哈囉|早安|午安|晚安)[，,、\s]*(呀|啊|大家好?|各位好?)[!！。.？?\s]*$/;
+  return greetingRe.test(normalized) || compoundEnRe.test(normalized) || compoundZhRe.test(raw);
+}
+
+function requiredRuleActivationFromEnv(env: { get(name: string): string | undefined }): ReadonlySet<EscalationRuleId> {
+  const flags = escalationFeatureFlagsFromEnv(env);
+  const enabled = new Set<EscalationRuleId>();
+  if (flags.enable_full_ruleset || flags.enable_e2) enabled.add("E2");
+  if (flags.enable_full_ruleset || flags.enable_e1) enabled.add("E1");
+  if (flags.enable_full_ruleset || flags.enable_r2) enabled.add("R2");
+  return enabled;
+}
+
+async function evaluateAndPersistRequiredRulesLive(
+  supabaseAdmin: ReturnType<typeof createClient>,
+  params: {
+    conversation_id: string;
+    source_message_id: string | null;
+    latest_message_content: string;
+    conversation_status: string;
+    assigned_agent_id: string | null;
+    greeting_or_trivial: boolean;
+    visitor_language: "zh-TW" | "zh-CN" | "en";
+  },
+): Promise<Response | null> {
+  // Master write gate: individual rule flags alone can never cause persistence.
+  if (Deno.env.get("ESC_ENABLE_REQUIRED_RULES_LIVE") !== "true") return null;
+
+  const enabled = requiredRuleActivationFromEnv(Deno.env);
+  if (enabled.size === 0) return null;
+
+  if (!params.source_message_id) {
+    console.error("[generate-reply] required-rules live blocked: missing source_message_id", params.conversation_id);
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: "required_escalation_missing_source_message_id",
+        handoff_persisted: false,
+      }),
+      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+
+  const context: EscalationContext = createEscalationContextBase({
+    conversation_id: params.conversation_id,
+    source_message_id: params.source_message_id,
+    latest_message_content: params.latest_message_content,
+    explicit_request: isHandoffIntent(params.latest_message_content),
+  });
+
+  context.conversation_status = availableSignal(params.conversation_status, "conversation_history");
+  context.assigned_agent_id = availableSignal(params.assigned_agent_id, "conversation_history");
+  context.greeting_or_trivial = availableSignal(params.greeting_or_trivial, "local_classifier");
+
+  // E2/E1/R2 provider-backed signals remain unavailable until authoritative
+  // CoachAI / Policy / KB integrations are verified. No mock false/0/no_match.
+  const decision = evaluateFullEscalationRuleset(context, {
+    activation: { enabled },
+  });
+
+  if (decision.decision !== "handoff" || decision.matched_rule === null || !enabled.has(decision.matched_rule)) {
+    console.log("[generate-reply] required-rules live no-match:", {
+      conversation_id: params.conversation_id,
+      matched_rule: decision.matched_rule,
+      decision: decision.decision,
+      reason_code: decision.reason_code,
+      signal_gaps: decision.signal_gaps,
+    });
+    return null;
+  }
+
+  if (decision.matched_rule !== "E2" && decision.matched_rule !== "E1" && decision.matched_rule !== "R2") return null;
+
+  const safeReply = REQUIRED_ESCALATION_SAFE_WORDING[decision.matched_rule][params.visitor_language];
+
+  const persisted = await persistRequiredEscalationHandoff(supabaseAdmin, {
+    conversation_id: params.conversation_id,
+    source_message_id: params.source_message_id,
+    decision,
+    safe_reply_content: safeReply,
+  });
+
+  if (persisted.ok) {
+    await cleanupThinking(supabaseAdmin, params.conversation_id, params.source_message_id);
+    return new Response(
+      JSON.stringify({
+        success: true,
+        escalation_rule: decision.matched_rule,
+        handoff_persisted: true,
+        rpc_result: persisted.result,
+      }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+
+  switch (persisted.result) {
+    case "already_resolved":
+      return new Response(
+        JSON.stringify({
+          success: true,
+          skipped: "resolved",
+          escalation_rule: decision.matched_rule,
+          handoff_persisted: false,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    case "already_under_human_control":
+      return new Response(
+        JSON.stringify({
+          success: true,
+          skipped: "human_handling",
+          escalation_rule: decision.matched_rule,
+          handoff_persisted: false,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    case "invalid_source_message":
+    case "invalid_input":
+    case "invalid_rule":
+    case "invalid_priority":
+    case "invalid_safe_reply":
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: `required_escalation_${persisted.result}`,
+          escalation_rule: decision.matched_rule,
+          handoff_persisted: false,
+        }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    case "rpc_transport_error":
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "required_escalation_rpc_transport_error",
+          escalation_rule: decision.matched_rule,
+          handoff_persisted: false,
+          handoff_uncertain: true,
+        }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    default:
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "required_escalation_unexpected_result",
+          escalation_rule: decision.matched_rule,
+          handoff_persisted: false,
+        }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -247,7 +435,7 @@ async function legacyGenerateReply(conversation_id: string, source_message_id: s
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
 
-  if (conversation.status === "pending" || conversation.status === "transferred") {
+  if (conversation.status === "transferred" || (conversation.status === "pending" && conversation.assigned_agent_id)) {
     console.log(
       "[generate-reply] human-handling guard: skipping LLM for status:",
       conversation.status,
@@ -846,7 +1034,7 @@ async function orchestrationGenerateReply(
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return safeRefusal("CONV_RESOLVED_OR_CLOSED");
   }
-  if (conversation.status === "pending" || conversation.status === "transferred") {
+  if (conversation.status === "transferred" || (conversation.status === "pending" && conversation.assigned_agent_id)) {
     console.log("[generate-reply] orchestration human-handling guard:", conversation.status, conversation_id);
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return new Response(JSON.stringify({ success: true, skipped: "human_handling" }), {
@@ -872,9 +1060,9 @@ async function orchestrationGenerateReply(
   const _h1LastMsg = _h1VisitorMsgs?.[0]?.content ?? "";
   const _h1HandoffLang = detectHandoffLanguage(_h1LastMsg);
 
-  // ── PR-5 Task 3: full escalation SHADOW ONLY ───────────────────────
-  // Default OFF. No writes, no RPCs, no routing changes.
-  // Only signals already verified at this point are bound.
+  // ── PR-5 canonical greeting signal + shadow/live evaluation ───────────
+  const _pr5GreetingOrTrivial = isGreetingOrTrivial(_h1LastMsg);
+
   const _pr5Shadow = evaluateEscalationShadow(
     {
       conversation_id,
@@ -883,6 +1071,7 @@ async function orchestrationGenerateReply(
       conversation_status: conversation.status,
       assigned_agent_id: conversation.assigned_agent_id ?? null,
       explicit_request: isHandoffIntent(_h1LastMsg),
+      greeting_or_trivial: _pr5GreetingOrTrivial,
     },
     Deno.env,
   );
@@ -897,7 +1086,19 @@ async function orchestrationGenerateReply(
       provider_warnings: _pr5Shadow.provider_warnings,
     });
   }
-  // ── End PR-5 Task 3 shadow ─────────────────────────────────────────
+
+  const _pr5RequiredLiveResponse = await evaluateAndPersistRequiredRulesLive(supabaseAdmin, {
+    conversation_id,
+    source_message_id,
+    latest_message_content: _h1LastMsg,
+    conversation_status: conversation.status,
+    assigned_agent_id: conversation.assigned_agent_id ?? null,
+    greeting_or_trivial: _pr5GreetingOrTrivial,
+    visitor_language: detectVisitorLanguage(_h1LastMsg),
+  });
+
+  if (_pr5RequiredLiveResponse) return _pr5RequiredLiveResponse;
+  // ── End PR-5 canonical escalation evaluation ──────────────────────────
 
   const _escMvpEnabled = Deno.env.get("ESC_MVP_FEATURE_FLAG") === "true";
   let _escHandled = false;
@@ -1004,15 +1205,7 @@ async function orchestrationGenerateReply(
     });
   }
 
-  const _g1Normalized = _h1LastMsg.trim().replace(/\s+/g, " ").toLowerCase();
-  const _g1Raw = _h1LastMsg.trim();
-  const _g1GreetingRe =
-    /^((hi|hello|hey|你好|嗨|哈囉|早安|午安|晚安|good\s*(morning|afternoon|evening)|thanks|thank you|ok|okay|謝謝|好的|嗯)\s*[!！。.？?，,]*\s*)+$/i;
-  const _g1CompoundEnRe = /^(hi|hello|hey)\s+(there|everyone|guys|all)[!！。.？?，,\s]*$/i;
-  const _g1CompoundZhRe = /^(你好|嗨|哈囉|早安|午安|晚安)[，,、\s]*(呀|啊|大家好?|各位好?)[!！。.？?\s]*$/;
-  let _g1SkipKB = false;
-  if (_g1GreetingRe.test(_g1Normalized) || _g1CompoundEnRe.test(_g1Normalized) || _g1CompoundZhRe.test(_g1Raw))
-    _g1SkipKB = true;
+  const _g1SkipKB = _pr5GreetingOrTrivial;
 
   const _visitorLang = detectVisitorLanguage(_h1LastMsg);
   const _escEnableS0 = Deno.env.get("ESC_ENABLE_S0") === "true";
