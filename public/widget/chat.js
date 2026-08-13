@@ -232,6 +232,7 @@
     ".nx-citations-title{font-size:10px;color:#9ca3af;font-weight:600;letter-spacing:.3px}",
     ".nx-cite-item{font-size:11px;color:#6b7280;display:flex;align-items:center;gap:4px;line-height:1.3}",
     ".nx-cite-badge{font-size:9px;background:#ede9fe;color:#6366f1;padding:1px 5px;border-radius:8px;font-weight:600;flex-shrink:0}",
+    ".nx-feedback-cta{display:inline-flex;margin-top:8px;padding:7px 11px;border-radius:8px;color:#fff!important;text-decoration:none;font-size:12px;font-weight:700}",
   ].join("");
   document.head.appendChild(style);
 
@@ -792,6 +793,27 @@
         shown++;
       }
       if (shown > 0) el.appendChild(citeWrap);
+    }
+
+    if (
+      m.role === "system" &&
+      m.metadata &&
+      m.metadata.feedback_request === true &&
+      typeof m.metadata.feedback_link === "string"
+    ) {
+      try {
+        var feedbackUrl = new URL(m.metadata.feedback_link);
+        if (feedbackUrl.protocol === "https:") {
+          var feedbackCta = document.createElement("a");
+          feedbackCta.className = "nx-feedback-cta";
+          feedbackCta.href = feedbackUrl.toString();
+          feedbackCta.target = "_blank";
+          feedbackCta.rel = "noopener noreferrer";
+          feedbackCta.style.background = getPrimary();
+          feedbackCta.textContent = "Rate your experience";
+          el.appendChild(feedbackCta);
+        }
+      } catch (e) {}
     }
     return el;
   }
