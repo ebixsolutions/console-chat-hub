@@ -30,12 +30,38 @@ export interface KBCitationChunk {
   chunk_type?: string;
 }
 
+export interface KBLLMContextEvidence {
+  document_id: string;
+  chunk_id?: string;
+  content: string;
+  score: number;
+  source_type: string;
+}
+
+export interface KBLLMContext {
+  selected_document_id: string;
+  orientation_summary: string | null;
+  full_content_evidence: KBLLMContextEvidence[];
+}
+
+export interface KBRagMeta {
+  document_score: number;
+  highest_chunk_score: number;
+  second_highest_chunk_score: number;
+  returned_summary_count: number;
+  returned_full_content_count: number;
+  dropped_without_document_id: number;
+  dropped_without_content: number;
+}
+
 export type KBFullChunk = KBAggregatedChunk;
 
 export interface KBRagResponse {
   success: boolean;
   chunks: KBFullChunk[];
   citations: KBCitationChunk[];
+  llm_context?: KBLLMContext;
+  meta?: KBRagMeta;
   selected_document_id?: string;
   dropped_without_document_id?: number;
   dropped_without_content?: number;
@@ -288,10 +314,48 @@ export async function fetchKBRag(
     chunk_type: c.chunk_type,
   }));
 
+  const summary = aggregated.chunks.find((c) => c.chunk_type === "rag_summary");
+  const fullContent = aggregated.chunks.filter(
+    (c) => c.chunk_type === "full_content",
+  );
+
+  const llmContext: KBLLMContext | undefined =
+    aggregated.document_id
+      ? {
+          selected_document_id: aggregated.document_id,
+          orientation_summary: summary?.content ?? null,
+          full_content_evidence: fullContent.map((c) => ({
+            document_id: c.document_id,
+            ...(c.chunk_id ? { chunk_id: c.chunk_id } : {}),
+            content: c.content,
+            score: c.score,
+            source_type:
+              typeof c.source_type === "string" ? c.source_type : "unknown",
+          })),
+        }
+      : undefined;
+
+  const meta: KBRagMeta | undefined =
+    aggregated.document_score !== null &&
+    aggregated.highest_chunk_score !== null &&
+    aggregated.second_highest_chunk_score !== null
+      ? {
+          document_score: aggregated.document_score,
+          highest_chunk_score: aggregated.highest_chunk_score,
+          second_highest_chunk_score: aggregated.second_highest_chunk_score,
+          returned_summary_count: summary ? 1 : 0,
+          returned_full_content_count: fullContent.length,
+          dropped_without_document_id: aggregated.dropped_without_document_id,
+          dropped_without_content: aggregated.dropped_without_content,
+        }
+      : undefined;
+
   return {
     success: true,
     chunks: aggregated.chunks,
     citations,
+    ...(llmContext ? { llm_context: llmContext } : {}),
+    ...(meta ? { meta } : {}),
     ...(aggregated.document_id
       ? { selected_document_id: aggregated.document_id }
       : {}),

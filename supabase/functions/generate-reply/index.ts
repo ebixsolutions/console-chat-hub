@@ -1410,7 +1410,49 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
 
   let finalPromptChunks: Array<{ title?: string; score?: number; source_type?: string }> = [];
   let _kbDone = false;
-  let ragResult: { success: boolean; no_answer?: boolean; retrieval_quality?: "high" | "medium" | "low" | "failed"; chunks?: Array<{ doc_id?: string; chunk_id?: string; title?: string; content?: string; score?: number; industry?: string; company_id?: number; language?: string; status?: string; source_type?: string; published_at?: string; updated_at?: string }>; query_text_preview?: string; trace_metadata?: Record<string, unknown> } | null = null;
+  let ragResult: {
+    success: boolean;
+    no_answer?: boolean;
+    retrieval_quality?: "high" | "medium" | "low" | "failed";
+    chunks?: Array<{
+      document_id?: string;
+      doc_id?: string;
+      chunk_id?: string;
+      title?: string;
+      content?: string;
+      score?: number;
+      chunk_type?: string;
+      industry?: string;
+      company_id?: number;
+      language?: string;
+      status?: string;
+      source_type?: string;
+      published_at?: string;
+      updated_at?: string;
+    }>;
+    llm_context?: {
+      selected_document_id: string;
+      orientation_summary: string | null;
+      full_content_evidence: Array<{
+        document_id: string;
+        chunk_id?: string;
+        content: string;
+        score: number;
+        source_type: string;
+      }>;
+    };
+    meta?: {
+      document_score: number;
+      highest_chunk_score: number;
+      second_highest_chunk_score: number;
+      returned_summary_count: number;
+      returned_full_content_count: number;
+      dropped_without_document_id: number;
+      dropped_without_content: number;
+    };
+    query_text_preview?: string;
+    trace_metadata?: Record<string, unknown>;
+  } | null = null;
 
   if (flags.ENABLE_KB && !_g1SkipKB) {
     const _kbTenantResult = await resolveTenantScope(conversation_id);
@@ -1514,6 +1556,29 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     _pr5RagMatchState = "confident_match";
     ragResult.chunks = usableChunks;
     ragResult.no_answer = false;
+
+    const usableSummary = usableChunks.find((c) => c.chunk_type === "rag_summary");
+    const usableFullContent = usableChunks
+      .filter((c) => c.chunk_type === "full_content")
+      .slice(0, 3);
+    const selectedDocumentId =
+      usableChunks[0]?.document_id ?? usableChunks[0]?.doc_id;
+
+    ragResult.llm_context =
+      selectedDocumentId
+        ? {
+            selected_document_id: selectedDocumentId,
+            orientation_summary: usableSummary?.content ?? null,
+            full_content_evidence: usableFullContent.map((c) => ({
+              document_id: c.document_id ?? c.doc_id ?? selectedDocumentId,
+              ...(c.chunk_id ? { chunk_id: c.chunk_id } : {}),
+              content: c.content ?? "",
+              score: c.score ?? 0,
+              source_type: c.source_type ?? "unknown",
+            })),
+          }
+        : undefined;
+
     finalPromptChunks = usableChunks;
     _kbDone = true;
   }
@@ -1727,10 +1792,94 @@ function buildMaskedContextBlock(
   return parts.length === 0 ? "" : `Customer context (masked):\n${parts.join("\n")}`;
 }
 
-function buildRagBlock(ragResult: { success: boolean; chunks?: Array<{ title?: string; content?: string; score?: number; source_type?: string; short_snippet?: string }> } | null): string {
-  if (!ragResult || !ragResult.success || !ragResult.chunks?.length) return "";
-  const snippets = ragResult.chunks.map((c, i) => `${c.title ? `[Source: ${c.title}]` : `[${i + 1}]`}\n${(c.content ?? c.short_snippet ?? "").slice(0, 500)}`).join("\n\n");
-  return `You MUST answer ONLY based on the following knowledge base evidence.\nDo NOT add information not present in the evidence.\nIf the evidence does not fully answer the question, say so and offer to connect to a human agent.\n\nEvidence:\n${snippets}`;
+function buildRagBlock(
+  ragResult: {
+    success: boolean;
+    chunks?: Array<{
+      title?: string;
+      content?: string;
+      score?: number;
+      source_type?: string;
+      chunk_type?: string;
+      short_snippet?: string;
+    }>;
+    llm_context?: {
+      selected_document_id: string;
+      orientation_summary: string | null;
+      full_content_evidence: Array<{
+        document_id: string;
+        chunk_id?: string;
+        content: string;
+        score: number;
+        source_type: string;
+      }>;
+    };
+  } | null,
+): string {
+  if (!ragResult || !ragResult.success) return "";
+
+  const context = ragResult.llm_context;
+  if (context) {
+    const sections: string[] = [
+      "Knowledge Base grounding rules:",
+      "- Answer ONLY from the evidence below.",
+      "- The RAG summary is orientation only; never use it alone for exact facts.",
+      "- Prices, dates, dimensions, policy conditions, procedures, limits, and other exact facts MUST be supported by Full Content Evidence.",
+      "- If Full Content Evidence does not support an exact claim, state that the knowledge base does not provide enough evidence and offer human assistance.",
+      `Selected document: ${context.selected_document_id}`,
+    ];
+
+    if (context.orientation_summary) {
+      sections.push(
+        `Orientation Summary (not sufficient by itself for exact facts):\n${context.orientation_summary.slice(0, 1200)}`,
+      );
+    }
+
+    if (context.full_content_evidence.length > 0) {
+      const evidence = context.full_content_evidence
+        .slice(0, 3)
+        .map((item, index) =>
+          `[Full Content Evidence ${index + 1}]` +
+          `${item.chunk_id ? ` [chunk:${item.chunk_id}]` : ""}\n` +
+          item.content.slice(0, 1200)
+        )
+        .join("\n\n");
+      sections.push(`Full Content Evidence:\n${evidence}`);
+    } else {
+      sections.push(
+        "Full Content Evidence: none. Do not assert exact facts from the summary.",
+      );
+    }
+
+    return sections.join("\n\n");
+  }
+
+  // Legacy-safe fallback during staggered deployment. Still distinguishes
+  // summary from full-content evidence when chunk_type is available.
+  if (!ragResult.chunks?.length) return "";
+
+  const summaries = ragResult.chunks
+    .filter((c) => c.chunk_type === "rag_summary")
+    .slice(0, 1);
+  const evidence = ragResult.chunks
+    .filter((c) => c.chunk_type === "full_content")
+    .slice(0, 3);
+
+  if (summaries.length === 0 && evidence.length === 0) return "";
+
+  return [
+    "Knowledge Base grounding rules:",
+    "- Answer ONLY from the evidence below.",
+    "- Summary is orientation only and cannot independently support exact facts.",
+    summaries[0]?.content
+      ? `Orientation Summary:\n${summaries[0].content.slice(0, 1200)}`
+      : "",
+    evidence.length > 0
+      ? `Full Content Evidence:\n${evidence
+          .map((c, i) => `[${i + 1}]\n${(c.content ?? c.short_snippet ?? "").slice(0, 1200)}`)
+          .join("\n\n")}`
+      : "Full Content Evidence: none. Do not assert exact facts.",
+  ].filter(Boolean).join("\n\n");
 }
 
 function pseudonymizeRef(ref: string): string {
@@ -1797,13 +1946,51 @@ async function callCustomer360Adapter(_conversation_id: string): Promise<{
   return { success: false };
 }
 
-async function callKBAdapter(_conversation_id: string, userMessage: string, scope: KBResolvedScope): Promise<{ success: boolean; no_answer?: boolean; retrieval_quality?: "high" | "medium" | "low" | "failed"; chunks?: KBFullChunk[]; query_text_preview?: string }> {
+async function callKBAdapter(
+  _conversation_id: string,
+  userMessage: string,
+  scope: KBResolvedScope,
+): Promise<{
+  success: boolean;
+  no_answer?: boolean;
+  retrieval_quality?: "high" | "medium" | "low" | "failed";
+  chunks?: KBFullChunk[];
+  llm_context?: {
+    selected_document_id: string;
+    orientation_summary: string | null;
+    full_content_evidence: Array<{
+      document_id: string;
+      chunk_id?: string;
+      content: string;
+      score: number;
+      source_type: string;
+    }>;
+  };
+  meta?: {
+    document_score: number;
+    highest_chunk_score: number;
+    second_highest_chunk_score: number;
+    returned_summary_count: number;
+    returned_full_content_count: number;
+    dropped_without_document_id: number;
+    dropped_without_content: number;
+  };
+  query_text_preview?: string;
+}> {
   const endpointCfg = resolveKBEndpoint();
   if (!endpointCfg) return { success: false, no_answer: true, retrieval_quality: "failed" };
   const result = await fetchKBRag({ query: userMessage, top_k: 5 }, scope, endpointCfg, { timeoutMs: 15000 });
   if (!result.success) return { success: false, no_answer: true, retrieval_quality: "failed" };
   if (result.chunks.length === 0) return { success: true, no_answer: true, retrieval_quality: "failed", chunks: [], query_text_preview: userMessage.slice(0, 100) };
-  return { success: true, no_answer: false, retrieval_quality: "high", chunks: result.chunks, query_text_preview: userMessage.slice(0, 100) };
+  return {
+    success: true,
+    no_answer: false,
+    retrieval_quality: "high",
+    chunks: result.chunks,
+    ...(result.llm_context ? { llm_context: result.llm_context } : {}),
+    ...(result.meta ? { meta: result.meta } : {}),
+    query_text_preview: userMessage.slice(0, 100),
+  };
 }
 
 type GateDecisionKind = "ALLOW" | "DENY" | "DOWNGRADE_TO_DRAFT" | "ESCALATE";

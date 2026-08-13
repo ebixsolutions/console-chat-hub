@@ -59,6 +59,9 @@ export interface KBAggregatedChunk {
 
 export interface KBAggregationResult {
   document_id: string | null;
+  document_score: number | null;
+  highest_chunk_score: number | null;
+  second_highest_chunk_score: number | null;
   chunks: KBAggregatedChunk[];
   dropped_without_document_id: number;
   dropped_without_content: number;
@@ -123,8 +126,8 @@ function normalizeCandidate(
  * Selects exactly one best document.
  *
  * Ranking:
- * 1. highest candidate score in the document
- * 2. highest rag_summary score
+ * 1. document_score = highest_chunk_score + 0.2 * second_highest_chunk_score
+ * 2. highest candidate score
  * 3. deterministic lexical document_id tie-break
  *
  * Output:
@@ -162,6 +165,9 @@ export function aggregateKBRagByDocument(
   if (normalized.length === 0) {
     return {
       document_id: null,
+      document_score: null,
+      highest_chunk_score: null,
+      second_highest_chunk_score: null,
       chunks: [],
       dropped_without_document_id: droppedWithoutDocumentId,
       dropped_without_content: droppedWithoutContent,
@@ -177,18 +183,23 @@ export function aggregateKBRagByDocument(
 
   const rankedDocuments = [...groups.entries()]
     .map(([documentId, chunks]) => {
-      const maxScore = Math.max(...chunks.map((c) => c.score));
-      const summaryMax = Math.max(
-        0,
-        ...chunks
-          .filter((c) => c.chunk_type === "rag_summary")
-          .map((c) => c.score),
-      );
-      return { documentId, chunks, maxScore, summaryMax };
+      const scores = chunks
+        .map((c) => c.score)
+        .sort((a, b) => b - a);
+      const highestScore = scores[0] ?? 0;
+      const secondHighestScore = scores[1] ?? 0;
+      const documentScore = highestScore + 0.2 * secondHighestScore;
+      return {
+        documentId,
+        chunks,
+        highestScore,
+        secondHighestScore,
+        documentScore,
+      };
     })
     .sort((a, b) =>
-      b.maxScore - a.maxScore ||
-      b.summaryMax - a.summaryMax ||
+      b.documentScore - a.documentScore ||
+      b.highestScore - a.highestScore ||
       a.documentId.localeCompare(b.documentId)
     );
 
@@ -206,6 +217,9 @@ export function aggregateKBRagByDocument(
 
   return {
     document_id: best.documentId,
+    document_score: best.documentScore,
+    highest_chunk_score: best.highestScore,
+    second_highest_chunk_score: best.secondHighestScore,
     chunks: [...summaries, ...fullContent],
     dropped_without_document_id: droppedWithoutDocumentId,
     dropped_without_content: droppedWithoutContent,
