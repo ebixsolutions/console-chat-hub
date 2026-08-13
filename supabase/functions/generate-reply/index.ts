@@ -311,7 +311,7 @@ function resolveAuthoritativeComplianceReview(
   };
 }
 
-function classifyLocalTopicRisk(text: string): { level: TopicRiskLevel; verified: boolean } {
+function classifyLocalTopicRisk(text: string): { level: "high"; verified: true } | undefined {
   const transactional = [
     /退[款貨]/,
     /要退/,
@@ -366,10 +366,9 @@ function classifyLocalTopicRisk(text: string): { level: TopicRiskLevel; verified
   const matchesInformationOnly = informationOnly.some((re) => re.test(text));
   const matchesAlwaysHigh = alwaysHigh.some((re) => re.test(text));
 
-  return {
-    level: matchesAlwaysHigh || (matchesTransactional && !matchesInformationOnly) ? "high" : "low",
-    verified: true,
-  };
+  const highRisk = matchesAlwaysHigh || (matchesTransactional && !matchesInformationOnly);
+  if (!highRisk) return undefined;
+  return { level: "high", verified: true };
 }
 
 interface ConversationHistorySignals {
@@ -449,6 +448,7 @@ function requiredRuleActivationFromEnv(env: { get(name: string): string | undefi
   const enabled = new Set<EscalationRuleId>();
   if (flags.enable_full_ruleset || flags.enable_e2) enabled.add("E2");
   if (flags.enable_full_ruleset || flags.enable_e1) enabled.add("E1");
+  enabled.add("R1");
   if (flags.enable_full_ruleset || flags.enable_r2) enabled.add("R2");
   return enabled;
 }
@@ -457,6 +457,12 @@ function isE2LiveActivationEnabled(env: { get(name: string): string | undefined 
   if (env.get("ESC_ENABLE_REQUIRED_RULES_LIVE") !== "true") return false;
   const flags = escalationFeatureFlagsFromEnv(env);
   return flags.enable_full_ruleset || flags.enable_e2;
+}
+
+function isE1LiveActivationEnabled(env: { get(name: string): string | undefined }): boolean {
+  if (env.get("ESC_ENABLE_REQUIRED_RULES_LIVE") !== "true") return false;
+  const flags = escalationFeatureFlagsFromEnv(env);
+  return flags.enable_full_ruleset || flags.enable_e1;
 }
 
 async function evaluateAndPersistRequiredRulesLive(
@@ -1388,6 +1394,90 @@ async function handleS0Handoff(
   }
 }
 
+async function persistExplicitR1IfRequested(
+  supabaseAdmin: ReturnType<typeof createClient>,
+  conversation_id: string,
+  source_message_id: string | null,
+  latestMessage: string,
+): Promise<Response | null> {
+  const classified = classifyExplicitHandoff(latestMessage);
+  if (classified.rule !== "R1") return null;
+  if (!source_message_id) {
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: "esc_missing_source_message_id",
+        escalation_rule: "R1",
+        handoff_persisted: false,
+      }),
+      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+
+  const { data, error } = await supabaseAdmin.rpc("explicit_handoff_tx", {
+    p_conversation_id: conversation_id,
+    p_safe_reply_content: SAFE_HANDOFF_WORDING[classified.language],
+    p_source_message_id: source_message_id,
+  });
+  if (error) {
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: "esc_rpc_transport_error",
+        escalation_rule: "R1",
+        handoff_persisted: false,
+        handoff_uncertain: true,
+      }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+
+  const result: string = data?.result ?? "unknown";
+  switch (result) {
+    case "success":
+      await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+      return new Response(
+        JSON.stringify({ success: true, escalation_rule: "R1", handoff_persisted: true, rpc_result: "success" }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    case "already_handled":
+      return new Response(
+        JSON.stringify({
+          success: true,
+          escalation_rule: "R1",
+          handoff_persisted: true,
+          rpc_result: "already_handled",
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    case "already_resolved":
+      return new Response(
+        JSON.stringify({ success: true, skipped: "resolved", escalation_rule: "R1", handoff_persisted: false }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    case "already_under_human_control":
+      return new Response(
+        JSON.stringify({ success: true, skipped: "human_handling", escalation_rule: "R1", handoff_persisted: false }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    case "not_found":
+      return new Response(
+        JSON.stringify({ success: false, error: "esc_conversation_not_found", escalation_rule: "R1" }),
+        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    case "invalid_source_message":
+      return new Response(
+        JSON.stringify({ success: false, error: "esc_invalid_source_message", escalation_rule: "R1" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    default:
+      return new Response(
+        JSON.stringify({ success: false, error: "esc_rpc_unknown_result", escalation_rule: "R1", rpc_result: result }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+  }
+}
+
 async function orchestrationGenerateReply(
   conversation_id: string,
   flags: FlagSet,
@@ -1478,6 +1568,7 @@ async function orchestrationGenerateReply(
       : undefined;
   const _pr5ThreatSignal = classifyAuthoritativeThreat(_h1LastMsg);
   const _pr5ComplianceSignal = resolveAuthoritativeComplianceReview(_pr5ExpectedTenantId);
+  const _pr5LocalRisk = classifyLocalTopicRisk(_h1LastMsg);
 
   // ── PR-5 canonical greeting signal + shadow/live evaluation ───────────
   const _pr5GreetingOrTrivial = isGreetingOrTrivial(_h1LastMsg);
@@ -1532,114 +1623,21 @@ async function orchestrationGenerateReply(
     if (_pr5E2PreflightResponse) return _pr5E2PreflightResponse;
   }
 
-  const _escMvpEnabled = Deno.env.get("ESC_MVP_FEATURE_FLAG") === "true";
-  let _escHandled = false;
-  if (_escMvpEnabled && _h1HandoffLang) {
-    const _escResult = classifyExplicitHandoff(_h1LastMsg);
-    if (_escResult.rule === "R1") {
-      _escHandled = true;
-      if (!source_message_id)
-        return new Response(
-          JSON.stringify({
-            success: false,
-            error: "esc_missing_source_message_id",
-            escalation_rule: "R1",
-            handoff_persisted: false,
-          }),
-          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-        );
-      await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-      const _escSafeWording = SAFE_HANDOFF_WORDING[_escResult.language];
-      const { data: _escRpcData, error: _escRpcErr } = await supabaseAdmin.rpc("explicit_handoff_tx", {
-        p_conversation_id: conversation_id,
-        p_safe_reply_content: _escSafeWording,
-        p_source_message_id: source_message_id,
-      });
-      if (_escRpcErr)
-        return new Response(
-          JSON.stringify({
-            success: false,
-            error: "esc_rpc_transport_error",
-            escalation_rule: "R1",
-            handoff_persisted: false,
-            handoff_uncertain: true,
-          }),
-          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-        );
-      const _escRpcResult: string = _escRpcData?.result ?? "unknown";
-      switch (_escRpcResult) {
-        case "success":
-          return new Response(
-            JSON.stringify({ success: true, escalation_rule: "R1", handoff_persisted: true, rpc_result: "success" }),
-            { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-          );
-        case "already_handled":
-          return new Response(
-            JSON.stringify({
-              success: true,
-              escalation_rule: "R1",
-              handoff_persisted: true,
-              rpc_result: "already_handled",
-            }),
-            { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-          );
-        case "already_resolved":
-          return new Response(
-            JSON.stringify({ success: true, skipped: "resolved", escalation_rule: "R1", handoff_persisted: false }),
-            { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-          );
-        case "already_under_human_control":
-          return new Response(
-            JSON.stringify({
-              success: true,
-              skipped: "human_handling",
-              escalation_rule: "R1",
-              handoff_persisted: false,
-            }),
-            { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-          );
-        case "not_found":
-          return new Response(
-            JSON.stringify({ success: false, error: "esc_conversation_not_found", escalation_rule: "R1" }),
-            { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-          );
-        case "invalid_source_message":
-          return new Response(
-            JSON.stringify({ success: false, error: "esc_invalid_source_message", escalation_rule: "R1" }),
-            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-          );
-        default:
-          return new Response(
-            JSON.stringify({
-              success: false,
-              error: "esc_rpc_unknown_result",
-              escalation_rule: "R1",
-              rpc_result: _escRpcResult,
-            }),
-            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-          );
-      }
-    }
-  }
+  const _deferR1ForE1 =
+    isE1LiveActivationEnabled(Deno.env) && _pr5LocalRisk?.level === "high" && flags.ENABLE_KB && !_pr5GreetingOrTrivial;
 
-  if (_h1HandoffLang && !_escHandled) {
-    const safeWording = SAFE_HANDOFF_WORDING[_h1HandoffLang];
-    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-    await supabaseAdmin
-      .from("messages")
-      .insert({ conversation_id, role: "assistant", content: safeWording, status: "delivered", is_recalled: false });
-    await supabaseAdmin
-      .from("conversations")
-      .update({ status: "pending", updated_at: new Date().toISOString() })
-      .eq("id", conversation_id);
-    return new Response(JSON.stringify({ success: true }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+  if (!_deferR1ForE1) {
+    const r1Response = await persistExplicitR1IfRequested(
+      supabaseAdmin,
+      conversation_id,
+      source_message_id,
+      _h1LastMsg,
+    );
+    if (r1Response) return r1Response;
   }
 
   const _g1SkipKB = _pr5GreetingOrTrivial;
 
-  const _pr5LocalRisk = classifyLocalTopicRisk(_h1LastMsg);
   const _pr5ConversationDurationSec = conversation.created_at
     ? Math.max(0, Math.floor((Date.now() - new Date(conversation.created_at).getTime()) / 1000))
     : undefined;
@@ -1703,6 +1701,15 @@ async function orchestrationGenerateReply(
   if (flags.ENABLE_KB && !_g1SkipKB) {
     const _kbTenantResult = await resolveTenantScope(conversation_id);
     if (!_kbTenantResult.resolved) {
+      if (_deferR1ForE1) {
+        const r1Response = await persistExplicitR1IfRequested(
+          supabaseAdmin,
+          conversation_id,
+          source_message_id,
+          _h1LastMsg,
+        );
+        if (r1Response) return r1Response;
+      }
       if (_escEnableS0)
         return await handleS0Handoff(supabaseAdmin, conversation_id, source_message_id, "KB_SCOPE_GATE", _visitorLang);
       return await handleKBFallback(
@@ -1726,6 +1733,15 @@ async function orchestrationGenerateReply(
       ? { success: true, no_answer: true, retrieval_quality: "failed", chunks: [] }
       : await callKBAdapter(conversation_id, userQuery, _kbTenantResult.scope);
     if (!ragResult || !ragResult.success) {
+      if (_deferR1ForE1) {
+        const r1Response = await persistExplicitR1IfRequested(
+          supabaseAdmin,
+          conversation_id,
+          source_message_id,
+          _h1LastMsg,
+        );
+        if (r1Response) return r1Response;
+      }
       if (_escEnableS0)
         return await handleS0Handoff(supabaseAdmin, conversation_id, source_message_id, "KB_API_FAIL", _visitorLang);
       return await handleKBFallback(
@@ -1749,8 +1765,8 @@ async function orchestrationGenerateReply(
         visitor_language: _visitorLang,
         expected_tenant_id: _pr5ExpectedTenantId,
         rag_match_state: _pr5RagMatchState,
-        topic_risk_level: _pr5LocalRisk.level,
-        verified_local_risk_classification: _pr5LocalRisk.verified,
+        topic_risk_level: _pr5LocalRisk?.level,
+        verified_local_risk_classification: _pr5LocalRisk?.verified,
         conversation_duration_sec: _pr5ConversationDurationSec,
         turn_count: _pr5History.turn_count,
         consecutive_no_answer: _pr5History.consecutive_no_answer,
@@ -1760,6 +1776,15 @@ async function orchestrationGenerateReply(
         compliance_jurisdiction_requires_human_review: _pr5ComplianceSignal,
       });
       if (requiredResponse) return requiredResponse;
+      if (_deferR1ForE1) {
+        const r1Response = await persistExplicitR1IfRequested(
+          supabaseAdmin,
+          conversation_id,
+          source_message_id,
+          _h1LastMsg,
+        );
+        if (r1Response) return r1Response;
+      }
       return await handleKBFallback(
         supabaseAdmin,
         conversation_id,
@@ -1770,7 +1795,7 @@ async function orchestrationGenerateReply(
       );
     }
 
-    const isHighRisk = _pr5LocalRisk.level === "high";
+    const isHighRisk = _pr5LocalRisk?.level === "high";
     const minScore = isHighRisk ? 0.78 : 0.55;
     const usableChunks = ragResult.chunks.filter(
       (c) =>
@@ -1809,8 +1834,8 @@ async function orchestrationGenerateReply(
         visitor_language: _visitorLang,
         expected_tenant_id: _pr5ExpectedTenantId,
         rag_match_state: _pr5RagMatchState,
-        topic_risk_level: _pr5LocalRisk.level,
-        verified_local_risk_classification: _pr5LocalRisk.verified,
+        topic_risk_level: _pr5LocalRisk?.level,
+        verified_local_risk_classification: _pr5LocalRisk?.verified,
         conversation_duration_sec: _pr5ConversationDurationSec,
         turn_count: _pr5History.turn_count,
         consecutive_no_answer: _pr5History.consecutive_no_answer,
@@ -1820,6 +1845,15 @@ async function orchestrationGenerateReply(
         compliance_jurisdiction_requires_human_review: _pr5ComplianceSignal,
       });
       if (requiredResponse) return requiredResponse;
+      if (_deferR1ForE1) {
+        const r1Response = await persistExplicitR1IfRequested(
+          supabaseAdmin,
+          conversation_id,
+          source_message_id,
+          _h1LastMsg,
+        );
+        if (r1Response) return r1Response;
+      }
       return await handleKBFallback(
         supabaseAdmin,
         conversation_id,
@@ -1844,6 +1878,36 @@ async function orchestrationGenerateReply(
     });
   }
 
+  if (Deno.env.get("ESC_SHADOW_MODE") === "true" && _pr5LocalRisk?.level === "high") {
+    const e1Shadow = evaluateEscalationShadow(
+      {
+        conversation_id,
+        source_message_id,
+        latest_message_content: _h1LastMsg,
+        conversation_status: conversation.status,
+        assigned_agent_id: conversation.assigned_agent_id ?? null,
+        explicit_request: isHandoffIntent(_h1LastMsg),
+        greeting_or_trivial: _pr5GreetingOrTrivial,
+        expected_tenant_id: _pr5ExpectedTenantId,
+        threat_flag: _pr5ThreatSignal,
+        compliance_jurisdiction_requires_human_review: _pr5ComplianceSignal,
+        rag_match_state: _pr5RagMatchState,
+        topic_risk_level: _pr5LocalRisk.level,
+        verified_local_risk_classification: _pr5LocalRisk.verified,
+      },
+      Deno.env,
+    );
+    if (e1Shadow) {
+      console.log("[generate-reply] PR-5 E1 post-KB shadow:", {
+        conversation_id,
+        matched_rule: e1Shadow.matched_rule,
+        decision: e1Shadow.decision,
+        reason_code: e1Shadow.reason_code,
+        signal_gaps: e1Shadow.signal_gaps,
+      });
+    }
+  }
+
   const _pr5RequiredLiveResponse = await evaluateAndPersistRequiredRulesLive(supabaseAdmin, {
     conversation_id,
     source_message_id,
@@ -1854,8 +1918,8 @@ async function orchestrationGenerateReply(
     visitor_language: _visitorLang,
     expected_tenant_id: _pr5ExpectedTenantId,
     rag_match_state: _pr5RagMatchState,
-    topic_risk_level: _pr5LocalRisk.level,
-    verified_local_risk_classification: _pr5LocalRisk.verified,
+    topic_risk_level: _pr5LocalRisk?.level,
+    verified_local_risk_classification: _pr5LocalRisk?.verified,
     conversation_duration_sec: _pr5ConversationDurationSec,
     turn_count: _pr5History.turn_count,
     consecutive_no_answer: _pr5History.consecutive_no_answer,
@@ -1865,6 +1929,16 @@ async function orchestrationGenerateReply(
     compliance_jurisdiction_requires_human_review: _pr5ComplianceSignal,
   });
   if (_pr5RequiredLiveResponse) return _pr5RequiredLiveResponse;
+
+  if (_deferR1ForE1) {
+    const r1Response = await persistExplicitR1IfRequested(
+      supabaseAdmin,
+      conversation_id,
+      source_message_id,
+      _h1LastMsg,
+    );
+    if (r1Response) return r1Response;
+  }
 
   if (flags.ENABLE_TOOL_EXEC)
     console.log("[generate-reply] ENABLE_TOOL_EXECUTOR=true: Gate present, tools NOT attached (L5d scope)");
