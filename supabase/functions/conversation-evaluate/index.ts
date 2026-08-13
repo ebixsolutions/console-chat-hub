@@ -231,14 +231,40 @@ async function resolveTenant(
   if (!conv) {
     return { ok: false, error: "not_found", detail: "conversation_not_found" };
   }
-  if (!conv.company_id) {
+  let channelCompanyId: string | null = null;
+  if (conv.channel_config_id) {
+    const { data: channel, error: channelErr } = await admin
+      .from("channel_config")
+      .select("company_id")
+      .eq("id", conv.channel_config_id)
+      .maybeSingle();
+    if (channelErr) {
+      return {
+        ok: false,
+        error: "internal_error",
+        detail: "channel_company_lookup_failed",
+      };
+    }
+    channelCompanyId = channel?.company_id ? String(channel.company_id) : null;
+  }
+
+  const conversationCompanyId = conv.company_id ? String(conv.company_id) : null;
+  if (
+    conversationCompanyId &&
+    channelCompanyId &&
+    conversationCompanyId !== channelCompanyId
+  ) {
+    return { ok: false, error: "conflict", detail: "tenant_identity_conflict" };
+  }
+  const resolvedCompanyId = conversationCompanyId ?? channelCompanyId;
+  if (!resolvedCompanyId) {
     return { ok: false, error: "conflict", detail: "tenant_unresolved" };
   }
 
   const { data: company, error: coErr } = await admin
     .from("company")
     .select("id, external_workspace_id, external_tenant_id, is_active")
-    .eq("id", conv.company_id)
+    .eq("id", resolvedCompanyId)
     .maybeSingle();
   if (coErr) {
     return {
@@ -271,7 +297,7 @@ async function resolveTenant(
   return {
     ok: true,
     ctx: {
-      conversation: conv as SnapshotConversation,
+      conversation: { ...conv, company_id: resolvedCompanyId } as SnapshotConversation,
       company: {
         company_id: company.id,
         external_workspace_id: company.external_workspace_id,

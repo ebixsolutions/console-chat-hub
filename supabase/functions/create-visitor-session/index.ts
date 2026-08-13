@@ -17,13 +17,28 @@ Deno.serve(async (req) => {
 
     const { data: channel, error: chErr } = await supabase
       .from("channel_config")
-      .select("id, is_active, channel_type")
+      .select("id, is_active, channel_type, company_id")
       .eq("id", channel_id)
       .eq("is_active", true)
       .eq("channel_type", "web_widget")
       .maybeSingle();
     if (chErr) return json({ success: false, error: chErr.message }, 500);
     if (!channel) return json({ success: false, error: "Channel not found, inactive, or not a web widget channel" }, 404);
+
+    // Tenant/company identity is channel-owned for public widget traffic.
+    // Never create an unscoped conversation.
+    if (!channel.company_id) {
+      return json({ success: false, error: "Channel company scope not configured" }, 409);
+    }
+    const { data: company, error: companyErr } = await supabase
+      .from("company")
+      .select("id, is_active")
+      .eq("id", channel.company_id)
+      .maybeSingle();
+    if (companyErr) return json({ success: false, error: "Company lookup failed" }, 500);
+    if (!company || company.is_active !== true) {
+      return json({ success: false, error: "Channel company is inactive or unavailable" }, 409);
+    }
 
     // TODO L2.1: Uncomment below to enforce allowed_origins before production
     // Origin validation skeleton — currently dev-bypassed
@@ -52,6 +67,7 @@ Deno.serve(async (req) => {
       .insert({
         visitor_session_id: session.id,
         channel_config_id: channel_id,
+        company_id: channel.company_id,
         status: "open",
       })
       .select("id")

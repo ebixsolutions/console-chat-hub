@@ -64,6 +64,24 @@ function resolveCustomerLabel(
   return `${channel} Visitor #${shortId}`;
 }
 
+function resolveConversationCompanyIdentity(
+  conversationCompanyId: unknown,
+  channelCompanyId: unknown,
+): { companyId: string | null; error?: string } {
+  const direct =
+    typeof conversationCompanyId === "string" && conversationCompanyId.trim()
+      ? conversationCompanyId.trim()
+      : null;
+  const channel =
+    typeof channelCompanyId === "string" && channelCompanyId.trim()
+      ? channelCompanyId.trim()
+      : null;
+  if (direct && channel && direct !== channel) {
+    return { companyId: null, error: "tenant_identity_conflict" };
+  }
+  return { companyId: direct ?? channel };
+}
+
 async function resolveEvaluationAvailability(
   loose: LooseClient,
   userId: string,
@@ -152,7 +170,7 @@ export const listConversationsForCeFn = createServerFn({ method: "GET" })
         .from("conversations")
         .select(
           "id, status, priority, created_at, updated_at, company_id, " +
-            "channel_config:channel_config_id(name), " +
+            "channel_config:channel_config_id(name, company_id), " +
             "visitor_session:visitor_session_id(id, visitor_metadata)",
         )
         .order("updated_at", { ascending: false })
@@ -237,8 +255,15 @@ export const listConversationsForCeFn = createServerFn({ method: "GET" })
 
     for (const c of convRows) {
       const ev = evalMap[c.id] ?? null;
-      const channelName = (c.channel_config as { name: string } | null)?.name ?? null;
-      const companyId = c.company_id ? String(c.company_id) : null;
+      const channel =
+        c.channel_config as { name: string; company_id?: string | null } | null;
+      const channelName = channel?.name ?? null;
+      const identity = resolveConversationCompanyIdentity(
+        c.company_id,
+        channel?.company_id,
+      );
+      if (identity.error) return { ok: false, error: identity.error };
+      const companyId = identity.companyId;
       const availabilityKey = companyId ?? "__null__";
 
       let availability = availabilityByCompany.get(availabilityKey);
@@ -315,7 +340,7 @@ export const getCeConversationDetailFn = createServerFn({ method: "GET" })
       .from("conversations")
       .select(
         "id, status, priority, created_at, updated_at, company_id, " +
-          "channel_config:channel_config_id(name), " +
+          "channel_config:channel_config_id(name, company_id), " +
           "visitor_session:visitor_session_id(id, visitor_metadata)",
       )
       .eq("id", data.conversationId)
@@ -323,17 +348,24 @@ export const getCeConversationDetailFn = createServerFn({ method: "GET" })
     if (convErr) return { ok: false, error: `conversation: ${convErr.message}` };
     if (!conv) return { ok: false, error: "conversation_not_found" };
 
-    const channelName = ((conv as any).channel_config as { name: string } | null)?.name ?? null;
+    const detailChannel =
+      (conv as any).channel_config as { name: string; company_id?: string | null } | null;
+    const channelName = detailChannel?.name ?? null;
     const customerLabel = resolveCustomerLabel(
       (conv as any).visitor_session as { id: string; visitor_metadata?: unknown } | null,
       data.conversationId,
       channelName,
     );
+    const detailIdentity = resolveConversationCompanyIdentity(
+      (conv as any).company_id,
+      detailChannel?.company_id,
+    );
+    if (detailIdentity.error) return { ok: false, error: detailIdentity.error };
 
     const availability = await resolveEvaluationAvailability(
       loose,
       userId,
-      (conv as any).company_id ? String((conv as any).company_id) : null,
+      detailIdentity.companyId,
     );
     if ("error" in availability) return { ok: false, error: availability.error };
 
@@ -489,7 +521,7 @@ export const getCeConversationDetailFn = createServerFn({ method: "GET" })
           priority: (conv as any).priority,
           created_at: (conv as any).created_at,
           updated_at: (conv as any).updated_at,
-          company_id: (conv as any).company_id,
+          company_id: detailIdentity.companyId,
           channel_name: channelName,
           customer_label: customerLabel,
         },

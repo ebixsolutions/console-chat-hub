@@ -175,29 +175,32 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: "conversation_not_found" }, 404, req);
     }
 
-    if (!conversation.company_id) {
+    const tenantResult = await resolveTenantScope(conversationId);
+    if (!tenantResult.resolved) {
+      console.error("[kb-search-proxy] tenant scope unresolved", {
+        conversation_id: conversationId,
+        reason: tenantResult.reason,
+      });
       return jsonResponse(
-        {
-          error: "kb_tenant_unresolved",
-          detail: "conversation has no authoritative company_id",
-        },
+        { error: "kb_tenant_unresolved", detail: tenantResult.reason },
         503,
         req,
       );
     }
+    const resolvedCompanyId = tenantResult.scope.aiCompanyId;
 
     // Authoritative membership helper checks:
     // company_id + user_id + membership.is_active + company.is_active.
     const { data: isMember, error: membershipErr } =
       await supabaseAdmin.rpc("is_company_member", {
-        p_company_id: conversation.company_id,
+        p_company_id: resolvedCompanyId,
         p_user_id: user.id,
       });
 
     if (membershipErr) {
       console.error("[kb-search-proxy] company membership check failed", {
         conversation_id: conversationId,
-        company_id: conversation.company_id,
+        company_id: resolvedCompanyId,
         code: membershipErr.code,
       });
       return jsonResponse({ error: "tenant_authorization_failed" }, 500, req);
@@ -211,19 +214,6 @@ Deno.serve(async (req) => {
     if (!endpointCfg) {
       console.error("[kb-search-proxy] KB endpoint config missing — fail closed");
       return jsonResponse({ error: "kb_config_missing" }, 500, req);
-    }
-
-    const tenantResult = await resolveTenantScope(conversationId);
-    if (!tenantResult.resolved) {
-      console.error("[kb-search-proxy] tenant scope unresolved", {
-        conversation_id: conversationId,
-        reason: tenantResult.reason,
-      });
-      return jsonResponse(
-        { error: "kb_tenant_unresolved", detail: tenantResult.reason },
-        503,
-        req,
-      );
     }
 
     const kbResult = await fetchKBRag(

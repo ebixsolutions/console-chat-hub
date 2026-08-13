@@ -186,6 +186,7 @@ export type TenantResolutionResult =
         | "KB_CONVERSATION_NOT_FOUND"
         | "KB_TENANT_MAPPING_CONFIG_INVALID"
         | "KB_TENANT_MAPPING_UNRESOLVED"
+        | "KB_TENANT_IDENTITY_CONFLICT"
         | "KB_DEMO_DISABLED"
         | "KB_DEMO_CONFIG_MISSING";
     };
@@ -203,7 +204,7 @@ export async function resolveTenantScope(
     const sb = createClient(supabaseUrl, serviceRoleKey);
     const { data: conv, error: convErr } = await sb
       .from("conversations")
-      .select("company_id")
+      .select("company_id, channel_config_id")
       .eq("id", conversationId)
       .maybeSingle();
 
@@ -215,14 +216,42 @@ export async function resolveTenantScope(
       return { resolved: false, reason: "KB_CONVERSATION_LOOKUP_FAILED" };
     }
     if (!conv) return { resolved: false, reason: "KB_CONVERSATION_NOT_FOUND" };
-    if (!conv.company_id) {
+
+    let channelCompanyId: string | null = null;
+    if (conv.channel_config_id) {
+      const { data: channel, error: channelErr } = await sb
+        .from("channel_config")
+        .select("company_id")
+        .eq("id", conv.channel_config_id)
+        .maybeSingle();
+      if (channelErr) {
+        console.error("[kb-client] channel company lookup failed", {
+          conversation_id: conversationId,
+          channel_config_id: conv.channel_config_id,
+          code: channelErr.code,
+        });
+        return { resolved: false, reason: "KB_CONVERSATION_LOOKUP_FAILED" };
+      }
+      channelCompanyId = channel?.company_id ? String(channel.company_id) : null;
+    }
+
+    const conversationCompanyId = conv.company_id ? String(conv.company_id) : null;
+    if (
+      conversationCompanyId &&
+      channelCompanyId &&
+      conversationCompanyId !== channelCompanyId
+    ) {
+      return { resolved: false, reason: "KB_TENANT_IDENTITY_CONFLICT" };
+    }
+    const resolvedCompanyId = conversationCompanyId ?? channelCompanyId;
+    if (!resolvedCompanyId) {
       return { resolved: false, reason: "KB_TENANT_MAPPING_UNRESOLVED" };
     }
 
     const { data: company, error: companyErr } = await sb
       .from("company")
       .select("id, is_active")
-      .eq("id", conv.company_id)
+      .eq("id", resolvedCompanyId)
       .maybeSingle();
 
     if (companyErr) {
