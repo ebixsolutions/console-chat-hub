@@ -23,17 +23,17 @@ const cardStyle: CSSProperties = {
   padding: 14,
 };
 
-function MockBadge({ label = "Mock" }: { label?: string }) {
+function LiveBadge({ label = "Live" }: { label?: string }) {
   return (
     <span
       style={{
-        background: "#fef3c7",
-        color: "#92400e",
+        background: "#dcfce7",
+        color: "#166534",
         fontSize: 9.5,
         fontWeight: 700,
         padding: "1px 7px",
         borderRadius: 20,
-        border: "0.5px solid #fbbf24",
+        border: "0.5px solid #86efac",
         whiteSpace: "nowrap",
       }}
     >
@@ -76,7 +76,7 @@ function ConsoleChannelSettings() {
 
 function ChannelSettingsContent() {
   const [channels, setChannels] = useState<ChannelConfig[]>([]);
-  const [source, setSource] = useState<"live" | "mock_fallback" | null>(null);
+  const [source, setSource] = useState<"live" | "error" | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [previewChannelId, setPreviewChannelId] = useState<string | null>(null);
   const [bindingChannelId, setBindingChannelId] = useState<string | null>(null);
@@ -84,7 +84,7 @@ function ChannelSettingsContent() {
 
   useEffect(() => {
     aiChatbotSettingsService.loadChannelConfigs().then((r) => {
-      setChannels(r.data);
+      setChannels(r.data ?? []);
       setSource(r.source);
       setLoadError(r.error ?? null);
     });
@@ -102,7 +102,7 @@ function ChannelSettingsContent() {
         return;
       }
       const refreshed = await aiChatbotSettingsService.loadChannelConfigs();
-      setChannels(refreshed.data);
+      setChannels(refreshed.data ?? []);
       setSource(refreshed.source);
       setLoadError(refreshed.error ?? null);
     } finally {
@@ -112,7 +112,7 @@ function ChannelSettingsContent() {
 
   return (
     <div style={{ maxWidth: 900 }}>
-      {source === "mock_fallback" && (
+      {source === "error" && (
         <div
           style={{
             background: "#fef2f2",
@@ -124,7 +124,7 @@ function ChannelSettingsContent() {
             fontSize: 11.5,
           }}
         >
-          ⚠️ Backend unavailable — showing default channel list.{" "}
+          ⚠️ Channel configuration unavailable. No fallback data is shown.{" "}
           {loadError ? <span style={{ opacity: 0.75 }}>({loadError})</span> : null}
         </div>
       )}
@@ -145,21 +145,20 @@ function ChannelSettingsContent() {
       )}
       <div
         style={{
-          background: "#fffbeb",
-          border: "0.5px solid #fbbf24",
+          background: "#eff6ff",
+          border: "0.5px solid #bfdbfe",
           borderRadius: 11,
           padding: "12px 14px",
           marginBottom: 14,
-          color: "#92400e",
+          color: "#1e40af",
           fontSize: 12,
           lineHeight: 1.6,
         }}
       >
-        <b>ℹ️ PHASE 1 — MOCK MODE</b>
+        <b>Live channel configuration</b>
         <br />
-        Channel integration is not active. No real messages received.
-        <br />
-        Phase 2: Website Widget · Phase 3: WhatsApp, LINE, Email
+        Only channels returned by the production backend are shown. Website Widget is live;
+        unsupported channel types remain explicitly marked Coming Soon.
       </div>
 
       <div
@@ -181,7 +180,7 @@ function ChannelSettingsContent() {
             >
               <span style={{ fontSize: 18 }}>{ICONS[ch.channel_type]}</span>
               <span style={{ fontSize: 13, fontWeight: 700, flex: 1 }}>{ch.channel_name}</span>
-              {ch.status === "mock_preview" ? <MockBadge label="Mock Preview" /> : <ComingSoonBadge />}
+              {ch.status === "live" ? <LiveBadge /> : <ComingSoonBadge />}
             </div>
             <div style={{ fontSize: 11, color: "#888", marginBottom: 8 }}>{ch.phase}</div>
             <div
@@ -261,7 +260,7 @@ function ChannelSettingsContent() {
                   marginTop: 4,
                 }}
               >
-                Configure (Preview)
+                Channel Details
               </button>
             )}
           </div>
@@ -300,8 +299,8 @@ function ChannelSettingsContent() {
                 marginBottom: 12,
               }}
             >
-              <div style={{ fontSize: 15, fontWeight: 700 }}>{previewChannel.channel_name} — Preview Only</div>
-              <MockBadge label="Phase 1 Preview" />
+              <div style={{ fontSize: 15, fontWeight: 700 }}>{previewChannel.channel_name} — Channel Details</div>
+              <LiveBadge label={previewChannel.status === "live" ? "Live" : "Configured"} />
             </div>
             <div
               style={{
@@ -315,8 +314,8 @@ function ChannelSettingsContent() {
                 lineHeight: 1.6,
               }}
             >
-              This is a Phase 1 mock preview. Widget configuration, embed code, AI Agent instructions, and platform
-              guides will be available in Phase 2.
+              This panel reflects the current production channel row. It does not fabricate
+              unavailable channel capabilities or preview traffic.
             </div>
             <div
               style={{
@@ -339,7 +338,7 @@ function ChannelSettingsContent() {
                   : "Not available in Phase 1"}
               </div>
               <div>
-                <b>Status:</b> Mock Preview — no real messages sent or received
+                <b>Status:</b> {previewChannel.status === "live" ? "Live" : "Coming Soon"}
               </div>
             </div>
             <button

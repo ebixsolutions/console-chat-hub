@@ -125,7 +125,7 @@ function ConsoleFeedbackAutomation() {
 function FeedbackAutomationContent() {
   const [config, setConfig] = useState<FeedbackAutomationConfig | null>(null);
   const [requests, setRequests] = useState<FeedbackRequest[]>([]);
-  const [source, setSource] = useState<"live" | "mock_fallback" | null>(null);
+  const [source, setSource] = useState<"live" | "unconfigured" | "error" | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<
@@ -141,7 +141,7 @@ function FeedbackAutomationContent() {
       setConfig(r.data);
       setSource(r.source);
       setLoadError(r.error ?? null);
-      if (r.data.message_templates && typeof r.data.message_templates === "object") {
+      if (r.data?.message_templates && typeof r.data.message_templates === "object") {
         const VALID_KEYS: RatingType[] = ["stars_1_5", "csat", "nps", "thumbs", "ces", "survey"];
         const VALID_FIELDS: (keyof MessageTemplate)[] = [
           "subject",
@@ -176,14 +176,29 @@ function FeedbackAutomationContent() {
         setTemplates(merged);
       }
     });
-    aiChatbotSettingsService.getFeedbackRequests().then(setRequests);
+    aiChatbotSettingsService.loadFeedbackRequests().then((r) => {
+      setRequests(r.data ?? []);
+      if (r.source === "error") {
+        setLoadError((prev) => prev ?? r.error ?? "feedback_request_load_failed");
+      }
+    });
   };
 
   useEffect(() => {
     reload();
   }, []);
 
-  if (!config) return <div style={{ padding: 24, fontSize: 12, color: "#555" }}>Loading feedback automation…</div>;
+  if (source === null) {
+    return <div style={{ padding: 24, fontSize: 12, color: "#555" }}>Loading feedback automation…</div>;
+  }
+  if (source === "error" || !config) {
+    return (
+      <div style={{ padding: 24, fontSize: 12, color: "#991b1b" }}>
+        Feedback configuration unavailable. No fallback data is shown.
+        {loadError ? ` (${loadError})` : ""}
+      </div>
+    );
+  }
 
   const tpl = templates[templateTab] || templates.stars_1_5;
 
@@ -245,7 +260,7 @@ function FeedbackAutomationContent() {
 
   return (
     <div style={{ maxWidth: 680 }}>
-      {source === "mock_fallback" && (
+      {source === "unconfigured" && (
         <div
           style={{
             background: "#fffbeb",
@@ -257,7 +272,7 @@ function FeedbackAutomationContent() {
             fontSize: 11.5,
           }}
         >
-          ⚠️ Backend unavailable — showing default values.{" "}
+          ℹ️ No saved feedback configuration exists yet. These disabled defaults become active only after Save.{" "}
           {loadError ? <span style={{ opacity: 0.75 }}>({loadError})</span> : null}
         </div>
       )}
@@ -313,9 +328,11 @@ function FeedbackAutomationContent() {
       <div style={cardStyle}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
           <span style={sectionTitleStyle}>Channels</span>
-          <MockBadge label="Phase 1 Mock" />
+          <span style={{ fontSize: 10, color: "#166534", fontWeight: 700 }}>Production</span>
         </div>
-        {FEEDBACK_CHANNELS.map((ch) => (
+        {FEEDBACK_CHANNELS.filter((ch) =>
+          ch.key === "website_widget" || ch.key === "email"
+        ).map((ch) => (
           <label
             key={ch.key}
             style={{
@@ -340,8 +357,9 @@ function FeedbackAutomationContent() {
               }
             />
             {ch.label}
-            <ComingSoonBadge />
-            <span style={{ fontSize: 10, color: "#888" }}>{ch.phase}</span>
+            <span style={{ fontSize: 10, color: "#888" }}>
+              {ch.key === "website_widget" ? "Available" : "Email provider required"}
+            </span>
           </label>
         ))}
       </div>
@@ -691,8 +709,13 @@ function FeedbackAutomationContent() {
       <div style={cardStyle}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
           <span style={sectionTitleStyle}>Recent Requests</span>
-          <MockBadge label="Mock Data" />
+          <span style={{ fontSize: 10, color: "#166534", fontWeight: 700 }}>Live</span>
         </div>
+        {requests.length === 0 && (
+          <div style={{ fontSize: 11.5, color: "#888", padding: "6px 0" }}>
+            No feedback requests yet.
+          </div>
+        )}
         {requests.map((r) => (
           <div
             key={r.id}
@@ -704,8 +727,9 @@ function FeedbackAutomationContent() {
               borderBottom: "0.5px solid #e8e6e0",
             }}
           >
-            <b>{r.customer_name}</b>
-            <span style={{ color: "#888" }}>{r.conversation_id}</span>
+            <span style={{ color: "#888", fontFamily: "monospace" }}>
+              {r.conversation_id.slice(0, 8)}…
+            </span>
             <span>{r.channel_sent}</span>
             <span
               style={{
@@ -717,7 +741,7 @@ function FeedbackAutomationContent() {
                 borderRadius: 20,
               }}
             >
-              {r.status}
+              {r.request_status} / {r.delivery_status}
             </span>
           </div>
         ))}
@@ -734,7 +758,8 @@ function FeedbackAutomationContent() {
           fontSize: 11.5,
         }}
       >
-        ⚠️ Phase 1: Settings UI only. Real email/SMS sending requires Phase 2 backend.
+        Website Widget feedback delivery is implemented. Email remains unavailable until a verified
+        email provider contract is configured; unsupported channels are not offered for scheduling.
       </div>
 
       <button
