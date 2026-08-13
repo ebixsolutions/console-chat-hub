@@ -3,10 +3,9 @@
 // Source of truth: Contract 11 §3.1 + Contract 07 + Contract 03 §1.1 + Contract 08
 //
 // CRITICAL SAFETY INVARIANTS (L5b):
-//   1. All adapter flags default to FALSE. When ALL flags are false, the function
-//      enters legacyGenerateReply() immediately and behaves 100% identically to L5a.
-//      No new budget check, no prompt_overlay read, no adapter calls, no extra trace
-//      writes, no status guard changes, no response shape change.
+//   1. Adapter flags default to FALSE. Legacy mode is used only when all adapter
+//      flags AND all PR-5 escalation runtime gates are disabled. When an explicit
+//      PR-5 runtime gate is enabled, orchestration owns canonical escalation routing.
 //   2. Orchestration path (any flag true) is SKELETON ONLY. Adapter calls, prompt
 //      assembly, status matrix guard, trace writes are gated and conceptual; no
 //      schema changes, no PII or full prompt persisted, no tools attached to LLM.
@@ -564,7 +563,16 @@ Deno.serve(async (req) => {
     const ENABLE_C360 = Deno.env.get("ENABLE_CUSTOMER360_ADAPTER") === "true";
     const ENABLE_TOOL_EXEC = Deno.env.get("ENABLE_TOOL_EXECUTOR") === "true";
 
-    if (!ENABLE_KB && !ENABLE_COACH && !ENABLE_C360 && !ENABLE_TOOL_EXEC) {
+    // PR-5 runtime must not be hidden behind unrelated adapter flags.
+    // If any escalation runtime gate is explicitly enabled, route through the
+    // orchestration path so canonical R1/S0/shadow/required-rule logic executes.
+    const ENABLE_PR5_ESCALATION_RUNTIME =
+      Deno.env.get("ESC_MVP_FEATURE_FLAG") === "true" ||
+      Deno.env.get("ESC_ENABLE_S0") === "true" ||
+      Deno.env.get("ESC_SHADOW_MODE") === "true" ||
+      Deno.env.get("ESC_ENABLE_REQUIRED_RULES_LIVE") === "true";
+
+    if (!ENABLE_KB && !ENABLE_COACH && !ENABLE_C360 && !ENABLE_TOOL_EXEC && !ENABLE_PR5_ESCALATION_RUNTIME) {
       return await legacyGenerateReply(conversation_id, source_message_id ?? null);
     }
 
