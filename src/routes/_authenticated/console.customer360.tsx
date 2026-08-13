@@ -321,72 +321,53 @@ function Customer360Content() {
   // ONE canonical local Customer context loader — shared with CRMPanel.
   const ctx = useCustomerContext(selectedId);
 
-  // ── Directory/list query — a different concern (browsing many visitors),
-  // intentionally kept separate from the per-visitor context hook. ──
+  // Tenant-scoped directory. Ownership is proved server-side from
+  // conversations.company_id before any visitor_session row is returned.
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    void (async () => {
       try {
-        const { data, error } = await supabase
-          .from("visitor_session")
-          .select("id, created_at, last_seen_at, visitor_metadata, channel_config:channel_config_id(name)")
-          .order("last_seen_at", { ascending: false })
-          .limit(50);
+        const { data, error } = await supabase.functions.invoke(
+          "customer360-local",
+          { body: { mode: "directory" } },
+        );
         if (cancelled) return;
-        if (error) {
+        if (error || !data?.success) {
           setListStatus("error");
           return;
         }
-        const raw = (data ?? []) as Array<{
-          id: string;
-          created_at: string | null;
-          last_seen_at: string | null;
-          visitor_metadata: unknown;
-          channel_config: { name: string } | null;
-        }>;
-        const ids = raw.map((v) => v.id);
-        let countMap: Record<string, number> = {};
-        if (ids.length > 0) {
-          const { data: convRows, error: convCountErr } = await supabase
-            .from("conversations")
-            .select("visitor_session_id")
-            .in("visitor_session_id", ids);
-          if (cancelled) return;
-          if (convCountErr) {
-            setListStatus("error");
-            return;
-          }
-          countMap = (convRows ?? []).reduce(
-            (acc: Record<string, number>, r: { visitor_session_id: string | null }) => {
-              if (r.visitor_session_id) acc[r.visitor_session_id] = (acc[r.visitor_session_id] ?? 0) + 1;
-              return acc;
-            },
-            {},
-          );
-        }
-        if (cancelled) return;
-        const mapped: VisitorListRow[] = raw.map((v) => {
-          const meta = v.visitor_metadata;
-          const m = meta && typeof meta === "object" && !Array.isArray(meta) ? (meta as Record<string, unknown>) : {};
-          const name = typeof m.name === "string" && m.name.trim() ? m.name.trim() : undefined;
-          const email = typeof m.email === "string" && m.email.trim() ? m.email.trim() : undefined;
-          return {
-            id: v.id,
-            created_at: v.created_at,
-            last_seen_at: v.last_seen_at,
-            name,
-            email,
-            channel_name: v.channel_config?.name ?? null,
-            conv_count: countMap[v.id] ?? 0,
-          };
-        });
+
+        const mapped: VisitorListRow[] = (
+          (data.visitors ?? []) as Array<{
+            id: string;
+            created_at: string | null;
+            last_seen_at: string | null;
+            identity?: { name?: string; email?: string };
+            channel_name: string | null;
+            conversation_count: number;
+          }>
+        ).map((v) => ({
+          id: v.id,
+          created_at: v.created_at,
+          last_seen_at: v.last_seen_at,
+          name: v.identity?.name,
+          email: v.identity?.email,
+          channel_name: v.channel_name,
+          conv_count: v.conversation_count,
+        }));
+
         setVisitors(mapped);
-        if (mapped.length > 0) setSelectedId(mapped[0].id);
+        setSelectedId((current) =>
+          current && mapped.some((visitor) => visitor.id === current)
+            ? current
+            : (mapped[0]?.id ?? null),
+        );
         setListStatus("success");
       } catch {
         if (!cancelled) setListStatus("error");
       }
     })();
+
     return () => {
       cancelled = true;
     };
