@@ -41,12 +41,14 @@ export type ScheduleFeedbackResult = ScheduleFeedbackSuccess | ScheduleFeedbackF
 
 // Internal helper — replicates config.service.ts getFeedbackConfigFn query
 // logic without cross-calling it (per spec §5.2).
-async function readFeedbackConfig(supabase: AuthedSupabase) {
+async function readFeedbackConfig(
+  supabase: AuthedSupabase,
+  companyId: string,
+) {
   const { data, error } = await supabase
     .from("feedback_automation_config")
-    .select("id, name, is_active, delay_minutes, trigger_event, config")
-    .order("created_at", { ascending: true })
-    .limit(1)
+    .select("id, name, is_active, delay_minutes, trigger_event, config, company_id")
+    .eq("company_id", companyId)
     .maybeSingle();
   if (error) {
     return {
@@ -65,9 +67,36 @@ export const scheduleFeedbackRequestFn = createServerFn({ method: "POST" })
   .inputValidator(inputSchema)
   .handler(async ({ data, context }): Promise<ScheduleFeedbackResult> => {
     const { conversation_id } = data;
+    const userId = String(context.userId);
 
-    // 1. Read config
-    const cfg = await readFeedbackConfig(context.supabase);
+    // Resolve company from the actual conversation, then verify membership.
+    // A multi-company user is safe because the conversation determines scope.
+    const { data: conversation, error: conversationErr } = await context.supabase
+      .from("conversations")
+      .select("id, company_id")
+      .eq("id", conversation_id)
+      .maybeSingle();
+    if (conversationErr) {
+      return { ok: false, error_type: "config_read_failed", message: "conversation_lookup_failed" };
+    }
+    if (!conversation?.company_id) {
+      return { ok: false, error_type: "config_read_failed", message: "conversation_company_unresolved" };
+    }
+
+    const companyId = String(conversation.company_id);
+    const { data: membership, error: membershipErr } = await context.supabase
+      .from("company_membership")
+      .select("id")
+      .eq("company_id", companyId)
+      .eq("user_id", userId)
+      .eq("is_active", true)
+      .maybeSingle();
+    if (membershipErr || !membership) {
+      return { ok: false, error_type: "config_read_failed", message: "company_membership_required" };
+    }
+
+    // 1. Read only this conversation company's config.
+    const cfg = await readFeedbackConfig(context.supabase, companyId);
     if (!cfg.ok) {
       return {
         ok: false,

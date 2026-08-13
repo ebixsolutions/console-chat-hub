@@ -1430,6 +1430,7 @@ export type Database = {
       }
       feedback_automation_config: {
         Row: {
+          company_id: string | null
           config: Json | null
           created_at: string | null
           delay_minutes: number | null
@@ -1440,6 +1441,7 @@ export type Database = {
           updated_at: string | null
         }
         Insert: {
+          company_id?: string | null
           config?: Json | null
           created_at?: string | null
           delay_minutes?: number | null
@@ -1450,6 +1452,7 @@ export type Database = {
           updated_at?: string | null
         }
         Update: {
+          company_id?: string | null
           config?: Json | null
           created_at?: string | null
           delay_minutes?: number | null
@@ -1459,7 +1462,15 @@ export type Database = {
           trigger_event?: string
           updated_at?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "feedback_automation_config_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "company"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       feedback_request: {
         Row: {

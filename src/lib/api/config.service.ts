@@ -30,6 +30,7 @@ export interface LiveFeedbackConfigRow {
   delay_minutes: number | null;
   trigger_event: string;
   config: JsonRecord | null;
+  company_id: string;
 }
 
 export interface ServerResult<T> {
@@ -41,6 +42,39 @@ export interface ServerResult<T> {
 // ---------------------------------------------------------------------------
 // Server functions
 // ---------------------------------------------------------------------------
+
+async function resolveSingleActiveCompany(context: {
+  supabase: any;
+  userId: string;
+}): Promise<ServerResult<string>> {
+  const userId = String(context.userId);
+  const { data: memberships, error: membershipErr } = await context.supabase
+    .from("company_membership")
+    .select("company_id, is_active")
+    .eq("user_id", userId)
+    .eq("is_active", true);
+
+  if (membershipErr) return { ok: false, error: "company_membership_lookup_failed" };
+
+  const companyIds = [
+    ...new Set((memberships ?? []).map((m: { company_id: string }) => String(m.company_id))),
+  ];
+
+  if (companyIds.length === 0) return { ok: false, error: "company_membership_unresolved" };
+  if (companyIds.length !== 1) return { ok: false, error: "company_membership_ambiguous" };
+
+  const companyId = companyIds[0];
+  const { data: company, error: companyErr } = await context.supabase
+    .from("company")
+    .select("id, is_active")
+    .eq("id", companyId)
+    .maybeSingle();
+
+  if (companyErr) return { ok: false, error: "company_lookup_failed" };
+  if (!company || company.is_active !== true) return { ok: false, error: "company_inactive" };
+
+  return { ok: true, data: companyId };
+}
 
 export const listChannelConfigsFn = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
@@ -130,11 +164,16 @@ export const bindChannelToCurrentCompanyFn = createServerFn({ method: "POST" })
 export const getFeedbackConfigFn = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }): Promise<ServerResult<LiveFeedbackConfigRow | null>> => {
+    const company = await resolveSingleActiveCompany({
+      supabase: context.supabase,
+      userId: String(context.userId),
+    });
+    if (!company.ok || !company.data) return { ok: false, error: company.error };
+
     const { data, error } = await context.supabase
       .from("feedback_automation_config")
-      .select("id, name, is_active, delay_minutes, trigger_event, config")
-      .order("created_at", { ascending: true })
-      .limit(1)
+      .select("id, name, is_active, delay_minutes, trigger_event, config, company_id")
+      .eq("company_id", company.data)
       .maybeSingle();
     if (error) return { ok: false, error: error.message };
     return {
@@ -158,19 +197,24 @@ export const updateFeedbackConfigFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator(updateFeedbackInput)
   .handler(async ({ data, context }): Promise<ServerResult<LiveFeedbackConfigRow>> => {
-    // Try to find existing row
+    const company = await resolveSingleActiveCompany({
+      supabase: context.supabase,
+      userId: String(context.userId),
+    });
+    if (!company.ok || !company.data) return { ok: false, error: company.error };
+    const companyId = company.data;
+
+    // Try to find the current company's row only. Legacy NULL rows remain inert.
     const { data: existing, error: readErr } = await context.supabase
       .from("feedback_automation_config")
       .select("id")
-      .order("created_at", { ascending: true })
-      .limit(1)
+      .eq("company_id", companyId)
       .maybeSingle();
     if (readErr) return { ok: false, error: `read_before_write_failed: ${readErr.message}` };
 
     let targetId: string;
 
     if (!existing) {
-      // Seed a row (admin-only per RLS). Single default row model.
       const { data: inserted, error: insertErr } = await context.supabase
         .from("feedback_automation_config")
         .insert({
@@ -179,7 +223,8 @@ export const updateFeedbackConfigFn = createServerFn({ method: "POST" })
           is_active: data.is_active ?? false,
           delay_minutes: data.delay_minutes ?? 1440,
           config: (data.config ?? {}) as never,
-        })
+          company_id: companyId,
+        } as never)
         .select("id")
         .single();
       if (insertErr) return { ok: false, error: `insert_failed: ${insertErr.message}` };
@@ -204,6 +249,7 @@ export const updateFeedbackConfigFn = createServerFn({ method: "POST" })
         .from("feedback_automation_config")
         .update(updatePayload as never)
         .eq("id", existing.id)
+        .eq("company_id", companyId)
         .select("id")
         .maybeSingle();
       if (updateErr) return { ok: false, error: `update_failed: ${updateErr.message}` };
@@ -215,8 +261,9 @@ export const updateFeedbackConfigFn = createServerFn({ method: "POST" })
     // Verify persistence by re-SELECTing the row we just wrote.
     const { data: verified, error: verifyErr } = await context.supabase
       .from("feedback_automation_config")
-      .select("id, name, is_active, delay_minutes, trigger_event, config")
+      .select("id, name, is_active, delay_minutes, trigger_event, config, company_id")
       .eq("id", targetId)
+      .eq("company_id", companyId)
       .maybeSingle();
     if (verifyErr) return { ok: false, error: `verify_read_failed: ${verifyErr.message}` };
     if (!verified) return { ok: false, error: "verify_read_failed: row missing after write" };
