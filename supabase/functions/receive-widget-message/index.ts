@@ -1,6 +1,14 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { corsHeaders, json } from "../_shared/cors.ts";
 
+const HUMAN_HANDLING_STATUSES = new Set([
+  "pending",
+  "transferred",
+  "human_needed",
+  "escalation_risk",
+  "unresolved",
+]);
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   if (req.method !== "POST") return json({ success: false, error: "Method not allowed" }, 405);
@@ -60,7 +68,7 @@ Deno.serve(async (req) => {
     // invoke generate-reply. The human agent will see the new message via
     // normal polling. Update conversations.updated_at so Console queue
     // refreshes and shows new activity. Clear ai_generating as safety.
-    if (conv.status === "pending" || conv.status === "transferred") {
+    if (HUMAN_HANDLING_STATUSES.has(conv.status)) {
       console.log("[receive-widget-message] human-handling guard: skipping AI for status:", conv.status, conversation_id);
       await supabase
         .from("conversations")

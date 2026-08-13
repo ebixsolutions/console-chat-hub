@@ -28,7 +28,7 @@ Deno.serve(async (req) => {
 
     const { data: conv } = await supabase
       .from("conversations")
-      .select("id, status, visitor_session_id")
+      .select("id, status, visitor_session_id, assigned_agent_id")
       .eq("id", conversation_id)
       .maybeSingle();
     if (!conv || conv.visitor_session_id !== session.id) {
@@ -65,12 +65,27 @@ Deno.serve(async (req) => {
     const { data: messages, error: mErr } = await query;
     if (mErr) return json({ success: false, error: mErr.message }, 500);
 
+    const humanStatuses = new Set([
+      "pending",
+      "transferred",
+      "human_needed",
+      "escalation_risk",
+      "unresolved",
+    ]);
+    const humanSupportState = humanStatuses.has(conv.status)
+      ? (conv.assigned_agent_id ? "assigned" : "waiting")
+      : "none";
+
     return json({
       success: true,
       data: {
         messages: messages ?? [],
         conversation_status: conv.status,
         ai_generating,
+        human_support: {
+          state: humanSupportState,
+          agent_assigned: Boolean(conv.assigned_agent_id),
+        },
       },
     });
   } catch (e) {

@@ -203,6 +203,9 @@
     ".nx-send:disabled{opacity:.5;cursor:not-allowed}",
     ".nx-footer{text-align:center;padding:5px;font-size:11px;color:#d1d5db;background:#fff;border-top:1px solid #f3f4f6}",
     ".nx-resolved{margin:12px;padding:14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;text-align:center;font-size:13px;color:#166534}",
+    ".nx-human-state{margin:2px 12px 8px;padding:9px 11px;border-radius:9px;font-size:12px;line-height:1.4;display:none}",
+    ".nx-human-state.waiting{display:block;background:#fffbeb;border:1px solid #fde68a;color:#92400e}",
+    ".nx-human-state.assigned{display:block;background:#f5f3ff;border:1px solid #ddd6fe;color:#6d28d9}",
     ".nx-new-chat{margin-top:10px;background:#6B5CE7;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:13px;cursor:pointer;font-family:inherit}",
     ".nx-file-preview{display:flex;align-items:center;gap:6px;padding:6px 10px;background:#f3f4f6;border-top:1px solid #e5e7eb;font-size:12px;color:#374151}",
     ".nx-file-preview-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
@@ -314,6 +317,7 @@
       "</div>\n" +
       '<div id="nx-tags-area" class="nx-tags" style="display:none"></div>\n' +
       '<div id="nx-msgs" class="nx-msgs"></div>\n' +
+      '<div id="nx-human-state" class="nx-human-state" role="status" aria-live="polite"></div>\n' +
       '<div id="nx-file-preview" class="nx-file-preview" style="display:none">\n' +
       '<span class="nx-file-preview-icon" id="nx-file-icon"></span>\n' +
       '<span class="nx-file-preview-name" id="nx-file-name"></span>\n' +
@@ -630,7 +634,6 @@
   // --- Human Support ---
   function handleHumanSupport() {
     if (!state.sessionToken || !state.conversationId || state.handoffRequested) return;
-    state.handoffRequested = true;
     api("/receive-widget-message", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -639,13 +642,29 @@
         session_token: state.sessionToken,
         content: "I\u2019d like to speak with a human agent.",
       }),
-    }).catch(function () {});
-    appendMessageObj({
-      id: "system-handoff-" + Date.now(),
-      role: "system",
-      content: "We\u2019re connecting you to a team member.\nEstimated wait time: 2\u20135 minutes.",
-      created_at: new Date().toISOString(),
-    });
+    })
+      .then(function (res) {
+        if (!res.ok || !res.body || !res.body.success) {
+          appendMessageObj({
+            id: "system-handoff-error-" + Date.now(),
+            role: "system",
+            content: "Human support request could not be sent. Please try again.",
+            created_at: new Date().toISOString(),
+          });
+          return;
+        }
+        pollStep = 0;
+        if (pollActive) executePoll();
+        else startPolling();
+      })
+      .catch(function () {
+        appendMessageObj({
+          id: "system-handoff-error-" + Date.now(),
+          role: "system",
+          content: "Human support request could not be sent. Please try again.",
+          created_at: new Date().toISOString(),
+        });
+      });
   }
 
   // --- Suggested Questions ---
@@ -823,6 +842,46 @@
     if (typingEl && typingEl.parentNode) typingEl.parentNode.removeChild(typingEl);
   }
 
+  function applyHumanSupportState(humanSupport) {
+    if (!panel) return;
+    var el = panel.querySelector("#nx-human-state");
+    if (!el) return;
+
+    var stateValue =
+      humanSupport && typeof humanSupport.state === "string"
+        ? humanSupport.state
+        : "none";
+
+    el.className = "nx-human-state";
+    el.textContent = "";
+
+    if (stateValue === "waiting") {
+      state.handoffRequested = true;
+      hideTyping();
+      state.thinkingStartTime = null;
+      state.fallbackShownForConversation = true;
+      el.classList.add("waiting");
+      el.textContent =
+        "Human support requested. You are waiting for a team member. You can continue sending messages here.";
+      updateTicket(state.conversationId, "human_needed", null);
+      return;
+    }
+
+    if (stateValue === "assigned") {
+      state.handoffRequested = true;
+      hideTyping();
+      state.thinkingStartTime = null;
+      state.fallbackShownForConversation = true;
+      el.classList.add("assigned");
+      el.textContent =
+        "A human support agent is connected. AI replies are paused while the agent handles this conversation.";
+      updateTicket(state.conversationId, "human_needed", null);
+      return;
+    }
+
+    state.handoffRequested = false;
+  }
+
   function showResolvedBanner(messages) {
     if (!msgsEl) return;
     msgsEl.innerHTML = "";
@@ -858,6 +917,13 @@
     state.conversationId = null;
     state.messages = [];
     state.handoffRequested = false;
+    if (panel) {
+      var humanStateEl = panel.querySelector("#nx-human-state");
+      if (humanStateEl) {
+        humanStateEl.className = "nx-human-state";
+        humanStateEl.textContent = "";
+      }
+    }
     state.firstMessageSent = false;
     state.fallbackShownForConversation = false;
     state.thinkingStartTime = null;
@@ -986,6 +1052,7 @@
         } else if (pollStep < POLL_STEPS.length - 1) {
           pollStep++;
         }
+        applyHumanSupportState(d.human_support);
         var ag = d.ai_generating;
         if (ag && state.handoffRequested) {
           hideTyping();
@@ -1106,6 +1173,7 @@
         if (d.conversation_status === "resolved") {
           showResolvedBanner(d.messages || []);
         } else {
+          applyHumanSupportState(d.human_support);
           var msgs = d.messages || [];
           if (msgs.length === 0) {
             appendWelcome();
