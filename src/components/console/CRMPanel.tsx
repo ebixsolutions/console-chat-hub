@@ -46,6 +46,14 @@ export const RIGHT_COPY = {
   polCheckDraft: { en: "Check Draft", zh: "檢查草稿" },
   polLoading: { en: "Checking policy...", zh: "檢查政策中..." },
   polError: { en: "Policy check failed", zh: "政策檢查失敗" },
+  polKbUnavailable: {
+    en: "Knowledge base unavailable — policy check not performed",
+    zh: "知識庫目前無法使用 — 未執行政策檢查",
+  },
+  polKbTenantUnresolved: {
+    en: "Knowledge scope is not configured for this conversation",
+    zh: "此對話尚未設定可驗證的知識庫租戶範圍",
+  },
   polDenied: { en: "Requires Admin or Supervisor role", zh: "需要 Admin 或 Supervisor 角色" },
   polNoContent: { en: "Select a conversation or enter a draft to check", zh: "選取對話或輸入草稿以檢查" },
   polSrcNote: { en: "Based on provided policy sources only", zh: "僅基於所提供的政策來源" },
@@ -243,7 +251,13 @@ export function CRMPanel({
       const { data, error } = await supabase.functions.invoke("agent-assist", { body });
       if (polReqIdRef.current !== reqId) return;
       if (error || !data?.success) {
-        setPolError(rc("polError"));
+        if (data?.error === "policy_kb_tenant_unresolved") {
+          setPolError(rc("polKbTenantUnresolved"));
+        } else if (data?.error === "policy_kb_unavailable") {
+          setPolError(rc("polKbUnavailable"));
+        } else {
+          setPolError(rc("polError"));
+        }
       } else {
         setPolResult(data.result as PolicyResult);
       }
