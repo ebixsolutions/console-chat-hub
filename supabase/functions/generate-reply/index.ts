@@ -371,6 +371,90 @@ function classifyLocalTopicRisk(text: string): { level: "high"; verified: true }
   return { level: "high", verified: true };
 }
 
+interface R3SentimentSignals {
+  anger_flag?: true;
+  sentiment_score?: number;
+  sentiment_trend?: number[];
+  sentiment_recovered_same_turn?: true;
+  evaluation_id: string;
+  provider_version: string;
+}
+
+function isFiniteScore(value: unknown): boolean {
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n);
+}
+
+function explicitAngerLabel(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  return ["angry", "anger", "furious", "rage", "irate", "憤怒", "愤怒", "生氣", "生气"].includes(
+    value.trim().toLowerCase(),
+  );
+}
+
+async function loadAuthoritativeR3SentimentSignals(
+  supabaseAdmin: ReturnType<typeof createClient>,
+  conversation_id: string,
+  expected_tenant_id: string | undefined,
+): Promise<R3SentimentSignals | undefined> {
+  if (!expected_tenant_id) return undefined;
+
+  const { data: evaluation, error: evaluationError } = await supabaseAdmin
+    .from("conversation_evaluation")
+    .select("id, company_id, created_at")
+    .eq("conversation_id", conversation_id)
+    .eq("company_id", expected_tenant_id)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (evaluationError || !evaluation?.id) return undefined;
+
+  const { data: points, error: pointsError } = await supabaseAdmin
+    .from("ce_emotion_point")
+    .select("turn_index, sentiment, sentiment_score, trigger_label, occurred_at")
+    .eq("evaluation_id", evaluation.id)
+    .eq("company_id", expected_tenant_id)
+    .order("turn_index", { ascending: true })
+    .limit(20);
+  if (pointsError || !points || points.length === 0) return undefined;
+
+  const usable = points
+    .map((p) => ({
+      turn_index: typeof p.turn_index === "number" ? p.turn_index : -1,
+      score: isFiniteScore(p.sentiment_score) ? Number(p.sentiment_score) : undefined,
+      sentiment: p.sentiment,
+      trigger_label: p.trigger_label,
+    }))
+    .filter((p) => p.score !== undefined || explicitAngerLabel(p.sentiment) || explicitAngerLabel(p.trigger_label));
+  if (usable.length === 0) return undefined;
+
+  const scoreSeries = usable
+    .filter((p) => typeof p.score === "number")
+    .sort((a, b) => a.turn_index - b.turn_index)
+    .map((p) => p.score as number);
+
+  const latest = [...usable].sort((a, b) => b.turn_index - a.turn_index)[0];
+  const latestScore = typeof latest?.score === "number" ? latest.score : undefined;
+  const anger = explicitAngerLabel(latest?.sentiment) || explicitAngerLabel(latest?.trigger_label);
+
+  // G4 positive-only recovery. Never invent false when the evidence is insufficient.
+  let recovered: true | undefined;
+  if (scoreSeries.length >= 2) {
+    const previous = scoreSeries[scoreSeries.length - 2];
+    const current = scoreSeries[scoreSeries.length - 1];
+    if (previous < -0.2 && current >= 0 && current - previous >= 0.3) recovered = true;
+  }
+
+  return {
+    ...(anger ? { anger_flag: true as const } : {}),
+    ...(latestScore !== undefined ? { sentiment_score: latestScore } : {}),
+    ...(scoreSeries.length >= 2 ? { sentiment_trend: scoreSeries.slice(-5) } : {}),
+    ...(recovered ? { sentiment_recovered_same_turn: true as const } : {}),
+    evaluation_id: evaluation.id,
+    provider_version: "ce-emotion-point-v1.0",
+  };
+}
+
 interface ConversationHistorySignals {
   turn_count: number;
   consecutive_no_answer: number;
@@ -434,12 +518,23 @@ function readPositiveIntegerEnv(name: string): number | undefined {
 function buildVerifiedTenantEscalationConfig(): EscalationContext["tenant_config"] {
   const maxConsecutiveNoAnswer = readPositiveIntegerEnv("ESC_MAX_CONSECUTIVE_NO_ANSWER");
   const maxClarifications = readPositiveIntegerEnv("ESC_MAX_CLARIFICATIONS");
+  const sentimentThresholdRaw = Deno.env.get("ESC_SENTIMENT_SCORE_THRESHOLD");
+  const parsedSentimentThreshold =
+    sentimentThresholdRaw !== undefined && sentimentThresholdRaw.trim() !== ""
+      ? Number(sentimentThresholdRaw)
+      : undefined;
+  const sentimentScoreThreshold =
+    typeof parsedSentimentThreshold === "number" && Number.isFinite(parsedSentimentThreshold)
+      ? parsedSentimentThreshold
+      : undefined;
 
-  if (maxConsecutiveNoAnswer === undefined && maxClarifications === undefined) return null;
+  if (maxConsecutiveNoAnswer === undefined && maxClarifications === undefined && sentimentScoreThreshold === undefined)
+    return null;
 
   return {
     ...(maxConsecutiveNoAnswer !== undefined ? { max_consecutive_no_answer: maxConsecutiveNoAnswer } : {}),
     ...(maxClarifications !== undefined ? { max_clarifications: Math.min(1, maxClarifications) } : {}),
+    ...(sentimentScoreThreshold !== undefined ? { sentiment_score_threshold: sentimentScoreThreshold } : {}),
   };
 }
 
@@ -1569,6 +1664,11 @@ async function orchestrationGenerateReply(
   const _pr5ThreatSignal = classifyAuthoritativeThreat(_h1LastMsg);
   const _pr5ComplianceSignal = resolveAuthoritativeComplianceReview(_pr5ExpectedTenantId);
   const _pr5LocalRisk = classifyLocalTopicRisk(_h1LastMsg);
+  const _pr5R3Sentiment = await loadAuthoritativeR3SentimentSignals(
+    supabaseAdmin,
+    conversation_id,
+    _pr5ExpectedTenantId,
+  );
 
   // ── PR-5 canonical greeting signal + shadow/live evaluation ───────────
   const _pr5GreetingOrTrivial = isGreetingOrTrivial(_h1LastMsg);
@@ -1585,6 +1685,12 @@ async function orchestrationGenerateReply(
       expected_tenant_id: _pr5ExpectedTenantId,
       threat_flag: _pr5ThreatSignal,
       compliance_jurisdiction_requires_human_review: _pr5ComplianceSignal,
+      anger_flag: _pr5R3Sentiment?.anger_flag,
+      sentiment_score: _pr5R3Sentiment?.sentiment_score,
+      sentiment_trend: _pr5R3Sentiment?.sentiment_trend,
+      sentiment_recovered_same_turn: _pr5R3Sentiment?.sentiment_recovered_same_turn,
+      sentiment_provider_version: _pr5R3Sentiment?.provider_version,
+      sentiment_evaluation_id: _pr5R3Sentiment?.evaluation_id,
     },
     Deno.env,
   );
@@ -1938,6 +2044,38 @@ async function orchestrationGenerateReply(
       _h1LastMsg,
     );
     if (r1Response) return r1Response;
+  }
+
+  if (Deno.env.get("ESC_SHADOW_MODE") === "true" && _pr5R3Sentiment) {
+    const r3Shadow = evaluateEscalationShadow(
+      {
+        conversation_id,
+        source_message_id,
+        latest_message_content: _h1LastMsg,
+        conversation_status: conversation.status,
+        assigned_agent_id: conversation.assigned_agent_id ?? null,
+        explicit_request: isHandoffIntent(_h1LastMsg),
+        greeting_or_trivial: _pr5GreetingOrTrivial,
+        expected_tenant_id: _pr5ExpectedTenantId,
+        anger_flag: _pr5R3Sentiment.anger_flag,
+        sentiment_score: _pr5R3Sentiment.sentiment_score,
+        sentiment_trend: _pr5R3Sentiment.sentiment_trend,
+        sentiment_recovered_same_turn: _pr5R3Sentiment.sentiment_recovered_same_turn,
+        sentiment_provider_version: _pr5R3Sentiment.provider_version,
+        sentiment_evaluation_id: _pr5R3Sentiment.evaluation_id,
+      },
+      Deno.env,
+    );
+    if (r3Shadow) {
+      console.log("[generate-reply] PR-5 R3 sentiment shadow:", {
+        conversation_id,
+        matched_rule: r3Shadow.matched_rule,
+        decision: r3Shadow.decision,
+        reason_code: r3Shadow.reason_code,
+        signal_gaps: r3Shadow.signal_gaps,
+        sentiment_evaluation_id: _pr5R3Sentiment.evaluation_id,
+      });
+    }
   }
 
   if (flags.ENABLE_TOOL_EXEC)
