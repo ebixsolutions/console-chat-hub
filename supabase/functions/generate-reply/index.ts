@@ -1623,12 +1623,12 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
       explicit_request: isHandoffIntent(_h1LastMsg),
       greeting_or_trivial: _pr5GreetingOrTrivial,
       expected_tenant_id: _pr5ExpectedTenantId,
-      anger_flag: _pr5R3Sentiment.anger_flag,
-      sentiment_score: _pr5R3Sentiment.sentiment_score,
-      sentiment_trend: _pr5R3Sentiment.sentiment_trend,
-      sentiment_recovered_same_turn: _pr5R3Sentiment.sentiment_recovered_same_turn,
-      sentiment_provider_version: _pr5R3Sentiment.provider_version,
-      sentiment_evaluation_id: _pr5R3Sentiment.evaluation_id,
+      anger_flag: _pr5R3Sentiment?.anger_flag,
+      sentiment_score: _pr5R3Sentiment?.sentiment_score,
+      sentiment_trend: _pr5R3Sentiment?.sentiment_trend,
+      sentiment_recovered_same_turn: _pr5R3Sentiment?.sentiment_recovered_same_turn,
+      sentiment_provider_version: _pr5R3Sentiment?.provider_version,
+      sentiment_evaluation_id: _pr5R3Sentiment?.evaluation_id,
       conversation_duration_sec: _pr5ConversationDurationSec,
       tenant_config: _pr5VerifiedTenantConfig,
       policy_match_state: _pr5R4Policy?.match_state,
@@ -1871,7 +1871,7 @@ export async function handleToolCall(tool_name: string, _tool_input: Record<stri
   switch (tool_name) {
     case "kb_search": return { tool_name, status: "stub", result_classification: "internal_only", retrieval_quality: "failed", no_answer: true, handoff_required: true, results: [], stub_note: "KB adapter not yet enabled (L5d stub)" };
     case "escalate_to_human": return { tool_name, status: "stub", result_classification: "internal_only", escalated: false, stub_note: "Escalation workflow deferred to L5e — no state changes in L5d" };
-    case "get_customer_context": return { tool_name, status: "stub", result_classification: "internal_only", customer_context: { tier: "Standard", language_preference: "en", sentiment: "neutral" }, stub_note: "Customer360 adapter not yet enabled (L5d stub) — using safe defaults" };
+    case "get_customer_context": return { tool_name, status: "stub", result_classification: "internal_only", customer_context: null, context_available: false, stub_note: "Customer360 adapter not enabled; no customer context returned" };
     case "get_order_summary": return { tool_name, status: "stub", result_classification: "internal_only", order_available: false, stub_note: "Order adapter not yet enabled (L5d stub)" };
     case "create_handoff_summary": return { tool_name, status: "stub", result_classification: "internal_only", summary: "[Handoff summary not yet available — L5d stub]", stub_note: "Handoff summary generation deferred to L5e; conversation_id server-side only" };
     case "mark_unresolved": return { tool_name, status: "stub", result_classification: "internal_only", marked: false, stub_note: "mark_unresolved write action deferred to L5e — no state changes in L5d" };
