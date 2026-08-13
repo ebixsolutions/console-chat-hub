@@ -34,6 +34,8 @@ import {
   escalationFeatureFlagsFromEnv,
   type EscalationContext,
   type EscalationRuleId,
+  type RagMatchState,
+  type TopicRiskLevel,
 } from "../_shared/escalation-signals.ts";
 import { evaluateFullEscalationRuleset } from "../_shared/escalation-rules.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -224,6 +226,67 @@ function isGreetingOrTrivial(text: string): boolean {
   return greetingRe.test(normalized) || compoundEnRe.test(normalized) || compoundZhRe.test(raw);
 }
 
+function classifyLocalTopicRisk(text: string): { level: TopicRiskLevel; verified: boolean } {
+  const transactional = [
+    /退[款貨]/,
+    /要退/,
+    /申請退/,
+    /我要.*退/,
+    /refund\s*(my|this|the)/i,
+    /return\s*(my|this|the)/i,
+    /i\s*want\s*(a\s*)?refund/i,
+    /i\s*want\s*to\s*return/i,
+    /賠償/,
+    /補償/,
+    /compensation/i,
+    /法律行動/,
+    /legal\s*action/i,
+    /起訴/,
+  ];
+  const informationOnly = [
+    /policy/i,
+    /政策/,
+    /規定/,
+    /條款/,
+    /what\s*(is|are)/i,
+    /how\s*(do|does|to)/i,
+    /tell\s*me\s*about/i,
+    /請問/,
+    /想了解/,
+    /介紹/,
+    /說明/,
+  ];
+  const alwaysHigh = [
+    /醫療/,
+    /藥品/,
+    /治療/,
+    /medical/i,
+    /medicine/i,
+    /treatment/i,
+    /隱私/,
+    /個資/,
+    /資料保護/,
+    /privacy/i,
+    /personal\s*data/i,
+    /gdpr/i,
+    /投資/,
+    /理財/,
+    /金融/,
+    /investment/i,
+    /financial/i,
+    /finance/i,
+  ];
+
+  const matchesTransactional = transactional.some((re) => re.test(text));
+  const matchesInformationOnly = informationOnly.some((re) => re.test(text));
+  const matchesAlwaysHigh = alwaysHigh.some((re) => re.test(text));
+
+  return {
+    level: matchesAlwaysHigh || (matchesTransactional && !matchesInformationOnly) ? "high" : "low",
+    verified: true,
+  };
+}
+
 function requiredRuleActivationFromEnv(env: { get(name: string): string | undefined }): ReadonlySet<EscalationRuleId> {
   const flags = escalationFeatureFlagsFromEnv(env);
   const enabled = new Set<EscalationRuleId>();
@@ -243,6 +306,11 @@ async function evaluateAndPersistRequiredRulesLive(
     assigned_agent_id: string | null;
     greeting_or_trivial: boolean;
     visitor_language: "zh-TW" | "zh-CN" | "en";
+    expected_tenant_id?: string;
+    rag_match_state?: RagMatchState;
+    topic_risk_level?: TopicRiskLevel;
+    verified_local_risk_classification?: boolean;
+    conversation_duration_sec?: number;
   },
 ): Promise<Response | null> {
   // Master write gate: individual rule flags alone can never cause persistence.
@@ -268,14 +336,31 @@ async function evaluateAndPersistRequiredRulesLive(
     source_message_id: params.source_message_id,
     latest_message_content: params.latest_message_content,
     explicit_request: isHandoffIntent(params.latest_message_content),
+    expected_tenant_id: params.expected_tenant_id,
   });
 
   context.conversation_status = availableSignal(params.conversation_status, "conversation_history");
   context.assigned_agent_id = availableSignal(params.assigned_agent_id, "conversation_history");
   context.greeting_or_trivial = availableSignal(params.greeting_or_trivial, "local_classifier");
 
-  // E2/E1/R2 provider-backed signals remain unavailable until authoritative
-  // CoachAI / Policy / KB integrations are verified. No mock false/0/no_match.
+  if (params.rag_match_state !== undefined) {
+    context.rag_match_state = availableSignal(params.rag_match_state, "kb_rag");
+  }
+  if (params.topic_risk_level !== undefined) {
+    context.topic_risk_level = availableSignal(params.topic_risk_level, "local_classifier");
+  }
+  if (params.verified_local_risk_classification !== undefined) {
+    context.verified_local_risk_classification = availableSignal(
+      params.verified_local_risk_classification,
+      "local_classifier",
+    );
+  }
+  if (params.conversation_duration_sec !== undefined) {
+    context.conversation_duration_sec = availableSignal(params.conversation_duration_sec, "conversation_history");
+  }
+
+  // CoachAI / Policy / compliance / repeated-intent signals remain unavailable
+  // until their authoritative providers/contracts are verified. No mock values.
   const decision = evaluateFullEscalationRuleset(context, {
     activation: { enabled },
   });
@@ -418,7 +503,7 @@ async function legacyGenerateReply(conversation_id: string, source_message_id: s
 
   const { data: conversation, error: convError } = await supabaseAdmin
     .from("conversations")
-    .select("id, status, assigned_agent_id")
+    .select("id, status, assigned_agent_id, created_at, company_id")
     .eq("id", conversation_id)
     .single();
 
@@ -1021,7 +1106,7 @@ async function orchestrationGenerateReply(
   );
   const { data: conversation, error: convError } = await supabaseAdmin
     .from("conversations")
-    .select("id, status, assigned_agent_id")
+    .select("id, status, assigned_agent_id, created_at, company_id")
     .eq("id", conversation_id)
     .single();
   if (convError || !conversation)
@@ -1087,17 +1172,6 @@ async function orchestrationGenerateReply(
     });
   }
 
-  const _pr5RequiredLiveResponse = await evaluateAndPersistRequiredRulesLive(supabaseAdmin, {
-    conversation_id,
-    source_message_id,
-    latest_message_content: _h1LastMsg,
-    conversation_status: conversation.status,
-    assigned_agent_id: conversation.assigned_agent_id ?? null,
-    greeting_or_trivial: _pr5GreetingOrTrivial,
-    visitor_language: detectVisitorLanguage(_h1LastMsg),
-  });
-
-  if (_pr5RequiredLiveResponse) return _pr5RequiredLiveResponse;
   // ── End PR-5 canonical escalation evaluation ──────────────────────────
 
   const _escMvpEnabled = Deno.env.get("ESC_MVP_FEATURE_FLAG") === "true";
@@ -1208,6 +1282,15 @@ async function orchestrationGenerateReply(
   const _g1SkipKB = _pr5GreetingOrTrivial;
 
   const _visitorLang = detectVisitorLanguage(_h1LastMsg);
+  const _pr5LocalRisk = classifyLocalTopicRisk(_h1LastMsg);
+  const _pr5ExpectedTenantId =
+    typeof conversation.company_id === "string" && conversation.company_id.length > 0
+      ? conversation.company_id
+      : undefined;
+  const _pr5ConversationDurationSec = conversation.created_at
+    ? Math.max(0, Math.floor((Date.now() - new Date(conversation.created_at).getTime()) / 1000))
+    : undefined;
+  let _pr5RagMatchState: RagMatchState | undefined;
   const _escEnableS0 = Deno.env.get("ESC_ENABLE_S0") === "true";
 
   let basePrompt = MINIMAL_SAFE_FALLBACK_PROMPT;
@@ -1301,7 +1384,23 @@ async function orchestrationGenerateReply(
         _visitorLang,
       );
     }
-    if (ragResult.no_answer || !ragResult.chunks || ragResult.chunks.length === 0)
+    if (ragResult.no_answer || !ragResult.chunks || ragResult.chunks.length === 0) {
+      _pr5RagMatchState = "no_match";
+      const requiredResponse = await evaluateAndPersistRequiredRulesLive(supabaseAdmin, {
+        conversation_id,
+        source_message_id,
+        latest_message_content: _h1LastMsg,
+        conversation_status: conversation.status,
+        assigned_agent_id: conversation.assigned_agent_id ?? null,
+        greeting_or_trivial: _pr5GreetingOrTrivial,
+        visitor_language: _visitorLang,
+        expected_tenant_id: _pr5ExpectedTenantId,
+        rag_match_state: _pr5RagMatchState,
+        topic_risk_level: _pr5LocalRisk.level,
+        verified_local_risk_classification: _pr5LocalRisk.verified,
+        conversation_duration_sec: _pr5ConversationDurationSec,
+      });
+      if (requiredResponse) return requiredResponse;
       return await handleKBFallback(
         supabaseAdmin,
         conversation_id,
@@ -1310,60 +1409,9 @@ async function orchestrationGenerateReply(
         { rag_api_status: "success_empty" },
         _visitorLang,
       );
+    }
 
-    const HIGH_RISK_TRANSACTIONAL = [
-      /退[款貨]/,
-      /要退/,
-      /申請退/,
-      /我要.*退/,
-      /refund\s*(my|this|the)/i,
-      /return\s*(my|this|the)/i,
-      /i\s*want\s*(a\s*)?refund/i,
-      /i\s*want\s*to\s*return/i,
-      /賠償/,
-      /補償/,
-      /compensation/i,
-      /法律行動/,
-      /legal\s*action/i,
-      /起訴/,
-    ];
-    const INFO_QUERY_OVERRIDE = [
-      /policy/i,
-      /政策/,
-      /規定/,
-      /條款/,
-      /what\s*(is|are)/i,
-      /how\s*(do|does|to)/i,
-      /tell\s*me\s*about/i,
-      /請問/,
-      /想了解/,
-      /介紹/,
-      /說明/,
-    ];
-    const ALWAYS_HIGH_RISK_TOPICS = [
-      /醫療/,
-      /藥品/,
-      /治療/,
-      /medical/i,
-      /medicine/i,
-      /treatment/i,
-      /隱私/,
-      /個資/,
-      /資料保護/,
-      /privacy/i,
-      /personal\s*data/i,
-      /gdpr/i,
-      /投資/,
-      /理財/,
-      /金融/,
-      /investment/i,
-      /financial/i,
-      /finance/i,
-    ];
-    const matchesTransactional = HIGH_RISK_TRANSACTIONAL.some((re) => re.test(userQuery));
-    const matchesInfoOverride = INFO_QUERY_OVERRIDE.some((re) => re.test(userQuery));
-    const matchesAlwaysHigh = ALWAYS_HIGH_RISK_TOPICS.some((re) => re.test(userQuery));
-    const isHighRisk = matchesAlwaysHigh || (matchesTransactional && !matchesInfoOverride);
+    const isHighRisk = _pr5LocalRisk.level === "high";
     const minScore = isHighRisk ? 0.78 : 0.55;
     const usableChunks = ragResult.chunks.filter(
       (c) =>
@@ -1390,7 +1438,23 @@ async function orchestrationGenerateReply(
       })),
     };
     ragResult.trace_metadata = traceMetadata;
-    if (usableChunks.length === 0)
+    if (usableChunks.length === 0) {
+      _pr5RagMatchState = "partial_match";
+      const requiredResponse = await evaluateAndPersistRequiredRulesLive(supabaseAdmin, {
+        conversation_id,
+        source_message_id,
+        latest_message_content: _h1LastMsg,
+        conversation_status: conversation.status,
+        assigned_agent_id: conversation.assigned_agent_id ?? null,
+        greeting_or_trivial: _pr5GreetingOrTrivial,
+        visitor_language: _visitorLang,
+        expected_tenant_id: _pr5ExpectedTenantId,
+        rag_match_state: _pr5RagMatchState,
+        topic_risk_level: _pr5LocalRisk.level,
+        verified_local_risk_classification: _pr5LocalRisk.verified,
+        conversation_duration_sec: _pr5ConversationDurationSec,
+      });
+      if (requiredResponse) return requiredResponse;
       return await handleKBFallback(
         supabaseAdmin,
         conversation_id,
@@ -1399,6 +1463,8 @@ async function orchestrationGenerateReply(
         traceMetadata,
         _visitorLang,
       );
+    }
+    _pr5RagMatchState = "confident_match";
     ragResult.chunks = usableChunks;
     ragResult.no_answer = false;
     finalPromptChunks = usableChunks;
@@ -1412,6 +1478,22 @@ async function orchestrationGenerateReply(
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
+
+  const _pr5RequiredLiveResponse = await evaluateAndPersistRequiredRulesLive(supabaseAdmin, {
+    conversation_id,
+    source_message_id,
+    latest_message_content: _h1LastMsg,
+    conversation_status: conversation.status,
+    assigned_agent_id: conversation.assigned_agent_id ?? null,
+    greeting_or_trivial: _pr5GreetingOrTrivial,
+    visitor_language: _visitorLang,
+    expected_tenant_id: _pr5ExpectedTenantId,
+    rag_match_state: _pr5RagMatchState,
+    topic_risk_level: _pr5LocalRisk.level,
+    verified_local_risk_classification: _pr5LocalRisk.verified,
+    conversation_duration_sec: _pr5ConversationDurationSec,
+  });
+  if (_pr5RequiredLiveResponse) return _pr5RequiredLiveResponse;
 
   if (flags.ENABLE_TOOL_EXEC)
     console.log("[generate-reply] ENABLE_TOOL_EXECUTOR=true: Gate present, tools NOT attached (L5d scope)");
