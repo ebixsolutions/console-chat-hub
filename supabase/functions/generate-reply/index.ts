@@ -1584,13 +1584,60 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
   const _escEnableS0 = Deno.env.get("ESC_ENABLE_S0") === "true";
 
   let basePrompt = MINIMAL_SAFE_FALLBACK_PROMPT;
-  let coachTrace: { version_id?: string; version_label?: string; prompt_hash?: string; source: "upstream" | "minimal_fallback" } = { source: "minimal_fallback" };
+  let coachTrace: {
+    version_id?: string;
+    version_label?: string;
+    prompt_hash?: string;
+    source: "upstream" | "minimal_fallback";
+  } = { source: "minimal_fallback" };
+
   if (flags.ENABLE_COACH) {
     const promptResult = await callCoachPromptAdapter(conversation_id);
-    if (promptResult.success && promptResult.content) {
-      basePrompt = promptResult.content;
-      coachTrace = { version_id: promptResult.version_id, version_label: promptResult.version_label, prompt_hash: promptResult.prompt_hash, source: "upstream" };
+
+    // PR-7 production closure:
+    // An explicitly enabled Coach prompt adapter is a required dependency,
+    // not an optional enhancement. Silent fallback would make production look
+    // healthy while the configured Coach contract is actually unavailable.
+    if (!promptResult.success || !promptResult.content) {
+      console.error("[generate-reply] COACH_PROMPT_REQUIRED_UNAVAILABLE", {
+        conversation_id,
+        error_type: promptResult.error_type ?? "COACH_UNKNOWN_FAILURE",
+      });
+
+      await cleanupThinking(
+        supabaseAdmin,
+        conversation_id,
+        source_message_id,
+      );
+
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "coach_prompt_required_unavailable",
+          error_type:
+            promptResult.error_type ?? "COACH_UNKNOWN_FAILURE",
+          retryable:
+            promptResult.error_type === "COACH_API_TIMEOUT" ||
+            promptResult.error_type === "COACH_API_ERROR" ||
+            promptResult.error_type === "COACH_API_EXCEPTION",
+        }),
+        {
+          status: 503,
+          headers: {
+            ...corsHeaders,
+            "Content-Type": "application/json",
+          },
+        },
+      );
     }
+
+    basePrompt = promptResult.content;
+    coachTrace = {
+      version_id: promptResult.version_id,
+      version_label: promptResult.version_label,
+      prompt_hash: promptResult.prompt_hash,
+      source: "upstream",
+    };
   }
 
   let customerContext: {
