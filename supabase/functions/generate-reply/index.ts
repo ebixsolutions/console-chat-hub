@@ -287,6 +287,75 @@ function classifyLocalTopicRisk(text: string): { level: TopicRiskLevel; verified
   };
 }
 
+interface ConversationHistorySignals {
+  turn_count: number;
+  consecutive_no_answer: number;
+  exact_same_intent_repeated?: true;
+}
+
+function normalizeIntentText(text: string): string {
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/[!！。.？?，,、:：;；"'“”‘’()[\]{}<>《》]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function deriveConversationHistorySignals(
+  newestFirstMessages: Array<{ role?: string; content?: string | null }>,
+  exactVisitorTurnCount: number,
+): ConversationHistorySignals {
+  const usable = newestFirstMessages.filter((m) => m.content !== "__THINKING__" && typeof m.role === "string");
+
+  const recentVisitorMessages = usable.filter((m) => m.role === "visitor");
+  let consecutiveNoAnswer = 0;
+
+  // Rows are newest-first. Count visitor messages only until the most recent
+  // assistant/agent reply. This is exact for the current unanswered streak.
+  for (const message of usable) {
+    const role = message.role;
+    if (role === "visitor") {
+      consecutiveNoAnswer += 1;
+      continue;
+    }
+    if (role === "assistant" || role === "agent") break;
+  }
+
+  let exactSameIntentRepeated: true | undefined;
+  if (recentVisitorMessages.length >= 2) {
+    const last = normalizeIntentText(String(recentVisitorMessages[0]?.content ?? ""));
+    const previous = normalizeIntentText(String(recentVisitorMessages[1]?.content ?? ""));
+    if (last.length > 0 && last === previous) exactSameIntentRepeated = true;
+  }
+
+  return {
+    turn_count: exactVisitorTurnCount,
+    consecutive_no_answer: consecutiveNoAnswer,
+    exact_same_intent_repeated: exactSameIntentRepeated,
+  };
+}
+
+function readPositiveIntegerEnv(name: string): number | undefined {
+  const raw = Deno.env.get(name);
+  if (!raw) return undefined;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 0) return undefined;
+  return parsed;
+}
+
+function buildVerifiedTenantEscalationConfig(): EscalationContext["tenant_config"] {
+  const maxConsecutiveNoAnswer = readPositiveIntegerEnv("ESC_MAX_CONSECUTIVE_NO_ANSWER");
+  const maxClarifications = readPositiveIntegerEnv("ESC_MAX_CLARIFICATIONS");
+
+  if (maxConsecutiveNoAnswer === undefined && maxClarifications === undefined) return null;
+
+  return {
+    ...(maxConsecutiveNoAnswer !== undefined ? { max_consecutive_no_answer: maxConsecutiveNoAnswer } : {}),
+    ...(maxClarifications !== undefined ? { max_clarifications: Math.min(1, maxClarifications) } : {}),
+  };
+}
+
 function requiredRuleActivationFromEnv(env: { get(name: string): string | undefined }): ReadonlySet<EscalationRuleId> {
   const flags = escalationFeatureFlagsFromEnv(env);
   const enabled = new Set<EscalationRuleId>();
@@ -311,6 +380,9 @@ async function evaluateAndPersistRequiredRulesLive(
     topic_risk_level?: TopicRiskLevel;
     verified_local_risk_classification?: boolean;
     conversation_duration_sec?: number;
+    turn_count?: number;
+    consecutive_no_answer?: number;
+    exact_same_intent_repeated?: true;
   },
 ): Promise<Response | null> {
   // Master write gate: individual rule flags alone can never cause persistence.
@@ -358,8 +430,23 @@ async function evaluateAndPersistRequiredRulesLive(
   if (params.conversation_duration_sec !== undefined) {
     context.conversation_duration_sec = availableSignal(params.conversation_duration_sec, "conversation_history");
   }
+  if (params.turn_count !== undefined) {
+    context.turn_count = availableSignal(params.turn_count, "conversation_history");
+  }
+  if (params.consecutive_no_answer !== undefined) {
+    context.consecutive_no_answer = availableSignal(params.consecutive_no_answer, "conversation_history");
+  }
+  if (params.exact_same_intent_repeated === true) {
+    context.same_intent_repeated = availableSignal(true, "conversation_history", {
+      reason: "exact_normalized_repeat",
+    });
+  }
 
-  // CoachAI / Policy / compliance / repeated-intent signals remain unavailable
+  context.tenant_config = buildVerifiedTenantEscalationConfig();
+
+  // CoachAI / Policy / compliance signals remain unavailable until their
+  // authoritative providers/contracts are verified. Non-identical visitor
+  // wording does not force same_intent_repeated=false.
   // until their authoritative providers/contracts are verified. No mock values.
   const decision = evaluateFullEscalationRuleset(context, {
     activation: { enabled },
@@ -1145,6 +1232,26 @@ async function orchestrationGenerateReply(
   const _h1LastMsg = _h1VisitorMsgs?.[0]?.content ?? "";
   const _h1HandoffLang = detectHandoffLanguage(_h1LastMsg);
 
+  const [{ data: _pr5HistoryRows }, { count: _pr5VisitorTurnCount }] = await Promise.all([
+    supabaseAdmin
+      .from("messages")
+      .select("role, content, created_at")
+      .eq("conversation_id", conversation_id)
+      .eq("is_recalled", false)
+      .neq("content", "__THINKING__")
+      .order("created_at", { ascending: false })
+      .limit(50),
+    supabaseAdmin
+      .from("messages")
+      .select("id", { count: "exact", head: true })
+      .eq("conversation_id", conversation_id)
+      .eq("role", "visitor")
+      .eq("is_recalled", false)
+      .neq("content", "__THINKING__"),
+  ]);
+
+  const _pr5History = deriveConversationHistorySignals(_pr5HistoryRows ?? [], _pr5VisitorTurnCount ?? 0);
+
   // ── PR-5 canonical greeting signal + shadow/live evaluation ───────────
   const _pr5GreetingOrTrivial = isGreetingOrTrivial(_h1LastMsg);
 
@@ -1399,6 +1506,9 @@ async function orchestrationGenerateReply(
         topic_risk_level: _pr5LocalRisk.level,
         verified_local_risk_classification: _pr5LocalRisk.verified,
         conversation_duration_sec: _pr5ConversationDurationSec,
+        turn_count: _pr5History.turn_count,
+        consecutive_no_answer: _pr5History.consecutive_no_answer,
+        exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
       });
       if (requiredResponse) return requiredResponse;
       return await handleKBFallback(
@@ -1453,6 +1563,9 @@ async function orchestrationGenerateReply(
         topic_risk_level: _pr5LocalRisk.level,
         verified_local_risk_classification: _pr5LocalRisk.verified,
         conversation_duration_sec: _pr5ConversationDurationSec,
+        turn_count: _pr5History.turn_count,
+        consecutive_no_answer: _pr5History.consecutive_no_answer,
+        exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
       });
       if (requiredResponse) return requiredResponse;
       return await handleKBFallback(
@@ -1492,6 +1605,9 @@ async function orchestrationGenerateReply(
     topic_risk_level: _pr5LocalRisk.level,
     verified_local_risk_classification: _pr5LocalRisk.verified,
     conversation_duration_sec: _pr5ConversationDurationSec,
+    turn_count: _pr5History.turn_count,
+    consecutive_no_answer: _pr5History.consecutive_no_answer,
+    exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
   });
   if (_pr5RequiredLiveResponse) return _pr5RequiredLiveResponse;
 
