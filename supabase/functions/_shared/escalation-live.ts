@@ -47,6 +47,7 @@ export type RequiredHandoffResult =
         | "invalid_source_message"
         | "invalid_input"
         | "invalid_rule"
+        | "not_found"
         | "rpc_transport_error"
         | "unexpected_result";
       detail?: string;
@@ -106,6 +107,8 @@ export async function persistRequiredEscalationHandoff(
     case "invalid_source_message":
     case "invalid_input":
     case "invalid_rule":
+    case "invalid_priority":
+    case "not_found":
       return { ok: false, result, data: payload };
     default:
       return {
@@ -143,6 +146,7 @@ export type RequiredClarificationResult =
         | "invalid_source_message"
         | "invalid_input"
         | "invalid_rule"
+        | "not_found"
         | "rpc_transport_error"
         | "unexpected_result";
       detail?: string;
@@ -187,6 +191,7 @@ export async function persistRequiredEscalationClarification(
     case "invalid_source_message":
     case "invalid_input":
     case "invalid_rule":
+    case "not_found":
       return { ok: false, result, data: payload };
     default:
       return { ok: false, result: "unexpected_result", detail: result, data: payload };
