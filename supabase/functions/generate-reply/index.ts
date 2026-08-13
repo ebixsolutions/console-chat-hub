@@ -519,12 +519,14 @@ async function evaluateAndPersistRequiredRulesLive(
       }),
       {
         status:
-          persisted.result === "invalid_source_message" ||
-          persisted.result === "invalid_input" ||
-          persisted.result === "invalid_rule" ||
-          persisted.result === "invalid_clarification"
-            ? 400
-            : 500,
+          persisted.result === "not_found"
+            ? 404
+            : persisted.result === "invalid_source_message" ||
+                persisted.result === "invalid_input" ||
+                persisted.result === "invalid_rule" ||
+                persisted.result === "invalid_clarification"
+              ? 400
+              : 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       },
     );
@@ -610,6 +612,16 @@ async function evaluateAndPersistRequiredRulesLive(
           handoff_uncertain: true,
         }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    case "not_found":
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "required_escalation_conversation_not_found",
+          escalation_rule: decision.matched_rule,
+          handoff_persisted: false,
+        }),
+        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     default:
       return new Response(
