@@ -83,6 +83,8 @@ export interface KBRagResponse {
 export interface KBEndpointConfig {
   baseUrl: string;
   ragUrl: string;
+  signingSecret?: string;
+  jwtTtlSec: number;
   defaultToken?: string;
   tenantTokens: Record<string, string>;
 }
@@ -149,8 +151,29 @@ export function resolveKBEndpoint(): KBEndpointConfig | null {
   const tenantTokens = parseStringMapEnv("KB_RAG_TENANT_TOKENS_JSON");
   if (tenantTokens === null) return null;
 
+  // Preferred production auth: short-lived backend-to-backend HS256 JWT,
+  // signed at request time. The secret is runtime-only and MUST NOT be stored
+  // in source, browser code, logs, request bodies or database rows.
+  const signingSecret =
+    Deno.env.get("KB_SINGAPORE_JWT_SECRET")?.trim() || undefined;
+  const ttlRaw = Number.parseInt(
+    Deno.env.get("KB_SINGAPORE_JWT_TTL_SEC") ?? "300",
+    10,
+  );
+  const jwtTtlSec =
+    Number.isInteger(ttlRaw) && ttlRaw >= 60 && ttlRaw <= 900 ? ttlRaw : 300;
+
+  // Compatibility fallback only. Existing static tokens remain accepted while
+  // operators migrate secrets; newly configured production should prefer
+  // KB_SINGAPORE_JWT_SECRET.
   const defaultToken = Deno.env.get("KB_RAG_TOKEN")?.trim() || undefined;
-  return { ...normalized, defaultToken, tenantTokens };
+  return {
+    ...normalized,
+    signingSecret,
+    jwtTtlSec,
+    defaultToken,
+    tenantTokens,
+  };
 }
 
 export type TenantResolutionResult =
@@ -264,16 +287,70 @@ function decodeJwtPayload(token: string): Record<string, unknown> | null {
   }
 }
 
-function resolveTenantToken(
+function base64UrlEncode(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function base64UrlJson(value: Record<string, unknown>): string {
+  return base64UrlEncode(new TextEncoder().encode(JSON.stringify(value)));
+}
+
+async function mintSingaporeTenantJwt(
   scope: KBResolvedScope,
   cfg: KBEndpointConfig,
-): { ok: true; token: string } | { ok: false; error_code: string } {
-  const token = cfg.tenantTokens[scope.singaporeTenantId] ?? cfg.defaultToken;
+): Promise<string | null> {
+  if (!cfg.signingSecret) return null;
+
+  const now = Math.floor(Date.now() / 1000);
+  const header = base64UrlJson({ alg: "HS256", typ: "JWT" });
+  const payload = base64UrlJson({
+    // Singapore auth accepts sub/user_id/uid and scopes RAG from tenant_id.
+    // company_id is intentionally omitted: AI Chatbot company IDs are UUIDs,
+    // while Singapore company_id is numeric. Never fabricate that mapping.
+    sub: `ai-chatbot:${scope.aiCompanyId}`,
+    tenant_id: scope.singaporeTenantId,
+    role: "service",
+    iat: now,
+    exp: now + cfg.jwtTtlSec,
+  });
+  const signingInput = `${header}.${payload}`;
+
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(cfg.signingSecret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(signingInput),
+  );
+  return `${signingInput}.${base64UrlEncode(new Uint8Array(signature))}`;
+}
+
+async function resolveTenantToken(
+  scope: KBResolvedScope,
+  cfg: KBEndpointConfig,
+): Promise<{ ok: true; token: string } | { ok: false; error_code: string }> {
+  // Preferred path: mint a short-lived server-to-server JWT from the shared
+  // Singapore signing secret. No static bearer token needs to be stored.
+  const minted = await mintSingaporeTenantJwt(scope, cfg);
+  const token =
+    minted ??
+    cfg.tenantTokens[scope.singaporeTenantId] ??
+    cfg.defaultToken;
   if (!token) return { ok: false, error_code: "KB_AUTH_TOKEN_MISSING" };
 
   // Defense in depth only. Signature is authoritatively verified by Singapore KB.
-  // Here we ensure the configured token advertises the same tenant we resolved
-  // from the explicit AI-company → Singapore-tenant mapping.
+  // Here we ensure the token advertises the same tenant we resolved from the
+  // explicit AI-company → Singapore-tenant mapping.
   const claims = decodeJwtPayload(token);
   if (!claims) return { ok: false, error_code: "KB_AUTH_TOKEN_INVALID" };
   const tokenTenant = claims.tenant_id ?? claims.sub;
@@ -411,7 +488,7 @@ export async function fetchKBRag(
     return { success: true, chunks: [], citations: [] };
   }
 
-  const auth = resolveTenantToken(scope, endpointCfg);
+  const auth = await resolveTenantToken(scope, endpointCfg);
   if (!auth.ok) {
     return {
       success: false,
