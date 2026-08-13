@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { corsHeaders, json } from "../_shared/cors.ts";
+import { validateWidgetOrigin } from "../_shared/widget-origin.ts";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -38,9 +39,45 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
-    // Single transaction validates the bearer session, locks the conversation,
-    // rejects resolved state, inserts the visitor message, updates last_seen,
-    // and (only when AI owns control) creates the source-scoped THINKING claim.
+    const { data: sessionScope, error: sessionScopeError } = await supabase
+      .from("visitor_session")
+      .select(
+        "id, channel_config:channel_config_id(id, is_active, channel_type, allowed_origins)",
+      )
+      .eq("session_token", session_token)
+      .maybeSingle();
+
+    if (sessionScopeError) {
+      console.error(
+        "[receive-widget-message] session origin scope lookup failed",
+        sessionScopeError.code,
+      );
+      return json({ success: false, error: "session_scope_lookup_failed" }, 500);
+    }
+    if (!sessionScope) {
+      return json({ success: false, error: "Invalid session" }, 401);
+    }
+
+    const channel = sessionScope.channel_config as {
+      id?: string;
+      is_active?: boolean;
+      channel_type?: string;
+      allowed_origins?: string[] | null;
+    } | null;
+
+    if (
+      !channel ||
+      channel.is_active !== true ||
+      channel.channel_type !== "web_widget"
+    ) {
+      return json({ success: false, error: "widget_channel_unavailable" }, 403);
+    }
+
+    const originCheck = validateWidgetOrigin(req, channel.allowed_origins);
+    if (!originCheck.ok) {
+      return json({ success: false, error: originCheck.error }, 403);
+    }
+
     const { data: txData, error: txError } = await supabase.rpc(
       "receive_widget_message_tx",
       {
@@ -74,29 +111,15 @@ Deno.serve(async (req) => {
       return json({ success: false, error: "Conversation not found" }, 404);
     }
     if (result === "resolved") {
-      return json(
-        { success: false, error: "Conversation is resolved" },
-        403,
-      );
+      return json({ success: false, error: "Conversation is resolved" }, 403);
     }
     if (result !== "success" && result !== "human_control") {
-      console.error(
-        "[receive-widget-message] unexpected tx result",
-        result,
-        conversation_id,
-      );
-      return json(
-        { success: false, error: "widget_message_rejected" },
-        409,
-      );
+      return json({ success: false, error: "widget_message_rejected" }, 409);
     }
 
     const messageId = String(txData?.message_id ?? "");
     if (!messageId) {
-      return json(
-        { success: false, error: "widget_message_missing_id" },
-        500,
-      );
+      return json({ success: false, error: "widget_message_missing_id" }, 500);
     }
 
     if (result === "human_control") {
@@ -110,8 +133,6 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Fire-and-forget only after the DB transaction has atomically established
-    // the source-scoped AI control claim.
     const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 

@@ -1019,13 +1019,15 @@
     }
     var request = { id: ++pollRequestSeq, generation: pollGeneration };
     activePollRequest = request;
-    var qs =
-      "?conversation_id=" +
-      encodeURIComponent(state.conversationId) +
-      "&session_token=" +
-      encodeURIComponent(state.sessionToken) +
-      (lastMessageId ? "&after_message_id=" + encodeURIComponent(lastMessageId) : "");
-    api("/widget-poll-messages" + qs, { method: "GET" })
+    api("/widget-poll-messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        conversation_id: state.conversationId,
+        session_token: state.sessionToken,
+        after_message_id: lastMessageId || null,
+      }),
+    })
       .then(function (res) {
         if (request.generation !== pollGeneration) return;
         if (!res.ok || !res.body || !res.body.success) {
@@ -1173,13 +1175,15 @@
       msgsEl.innerHTML =
         '<div style="text-align:center;padding:40px 20px;color:#9ca3af">\n  <div style="font-size:32px;margin-bottom:8px">\u231b</div>\n  <div>Resuming\u2026</div>\n</div>';
     hideTags();
-    api(
-      "/widget-poll-messages?conversation_id=" +
-        encodeURIComponent(stored.convId) +
-        "&session_token=" +
-        encodeURIComponent(stored.token),
-      { method: "GET" },
-    )
+    api("/widget-poll-messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        conversation_id: stored.convId,
+        session_token: stored.token,
+        after_message_id: null,
+      }),
+    })
       .then(function (res) {
         if (!res.ok || !res.body || !res.body.success) throw new Error("fail");
         var d = res.body.data;
