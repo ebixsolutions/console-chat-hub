@@ -207,9 +207,6 @@
     ".nx-human-state.waiting{display:block;background:#fffbeb;border:1px solid #fde68a;color:#92400e}",
     ".nx-human-state.assigned{display:block;background:#f5f3ff;border:1px solid #ddd6fe;color:#6d28d9}",
     ".nx-new-chat{margin-top:10px;background:#6B5CE7;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:13px;cursor:pointer;font-family:inherit}",
-    ".nx-file-preview{display:flex;align-items:center;gap:6px;padding:6px 10px;background:#f3f4f6;border-top:1px solid #e5e7eb;font-size:12px;color:#374151}",
-    ".nx-file-preview-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
-    ".nx-file-remove{background:none;border:none;color:#9ca3af;cursor:pointer;font-size:14px;padding:0 4px}",
     ".nx-resize-handle{position:absolute;bottom:0;left:0;width:16px;height:16px;cursor:nw-resize;z-index:10;opacity:0}",
     ".nx-tickets-page{position:absolute;top:0;left:0;right:0;bottom:0;background:#fff;display:flex;flex-direction:column;z-index:10;border-radius:14px;overflow:hidden}",
     ".nx-tickets-header{padding:12px 14px;color:#fff;display:flex;align-items:center;gap:10px;font-weight:600;font-size:15px}",
@@ -251,9 +248,7 @@
     inputEl,
     sendBtn,
     tagsEl,
-    typingEl,
-    filePreviewEl,
-    pendingFile = null;
+    typingEl;
   var emojiPanelEl = null,
     plusMenuEl = null;
 
@@ -319,11 +314,6 @@
       '<div id="nx-tags-area" class="nx-tags" style="display:none"></div>\n' +
       '<div id="nx-msgs" class="nx-msgs"></div>\n' +
       '<div id="nx-human-state" class="nx-human-state" role="status" aria-live="polite"></div>\n' +
-      '<div id="nx-file-preview" class="nx-file-preview" style="display:none">\n' +
-      '<span class="nx-file-preview-icon" id="nx-file-icon"></span>\n' +
-      '<span class="nx-file-preview-name" id="nx-file-name"></span>\n' +
-      '<button id="nx-file-remove-btn" class="nx-file-remove">\u00d7</button>\n' +
-      "</div>\n" +
       '<div id="nx-input-area" class="nx-input-area">\n' +
       '<div class="nx-input-row">\n' +
       '<div class="nx-plus-wrap">\n' +
@@ -345,28 +335,6 @@
     inputEl = panel.querySelector("#nx-input");
     sendBtn = panel.querySelector("#nx-send");
     tagsEl = panel.querySelector("#nx-tags-area");
-    filePreviewEl = panel.querySelector("#nx-file-preview");
-
-    // Hidden file inputs
-    var imgInput = document.createElement("input");
-    imgInput.type = "file";
-    imgInput.accept = "image/*";
-    imgInput.style.display = "none";
-    imgInput.id = "nx-img-input";
-    document.body.appendChild(imgInput);
-    var vidInput = document.createElement("input");
-    vidInput.type = "file";
-    vidInput.accept = "video/*";
-    vidInput.style.display = "none";
-    vidInput.id = "nx-vid-input";
-    document.body.appendChild(vidInput);
-    imgInput.addEventListener("change", function () {
-      handleFileSelect(imgInput, "image");
-    });
-    vidInput.addEventListener("change", function () {
-      handleFileSelect(vidInput, "video");
-    });
-
     panel.querySelector("#nx-close-btn").addEventListener("click", closePanel);
     panel.querySelector("#nx-my-tickets-btn").addEventListener("click", showMyTickets);
     sendBtn.addEventListener("click", handleSend);
@@ -419,22 +387,12 @@
     plusMenuEl = document.createElement("div");
     plusMenuEl.className = "nx-plus-menu";
     plusMenuEl.innerHTML =
-      '<div id="nx-menu-img" class="nx-plus-item">\n  <span>\ud83d\udcf7</span> Upload Image\n</div>\n' +
-      '<div id="nx-menu-vid" class="nx-plus-item">\n  <span>\ud83c\udfac</span> Upload Video\n</div>\n' +
       '<div id="nx-menu-human" class="nx-plus-item" ' +
-      (state.handoffRequested ? 'disabled style="opacity:.5;cursor:not-allowed"' : "") +
-      ">\n  <span>\ud83d\udc64</span> Request Human Support\n</div>";
+      (state.handoffRequested
+        ? 'disabled style="opacity:.5;cursor:not-allowed"'
+        : "") +
+      '>\n  <span>👤</span> Request Human Support\n</div>';
     inputArea.querySelector(".nx-plus-wrap").appendChild(plusMenuEl);
-    plusMenuEl.querySelector("#nx-menu-img").addEventListener("click", function (e) {
-      e.stopPropagation();
-      closePlusMenu();
-      document.getElementById("nx-img-input").click();
-    });
-    plusMenuEl.querySelector("#nx-menu-vid").addEventListener("click", function (e) {
-      e.stopPropagation();
-      closePlusMenu();
-      document.getElementById("nx-vid-input").click();
-    });
     var humanItem = plusMenuEl.querySelector("#nx-menu-human");
     if (!state.handoffRequested) {
       humanItem.addEventListener("click", function (e) {
@@ -515,26 +473,7 @@
     inputEl.focus();
   }
 
-  // --- File Select Simulation ---
-  // Fix 3: Upload is SIMULATED ONLY — no file is uploaded to server in Widget MVP
-  function handleFileSelect(inp, type) {
-    if (!inp.files || !inp.files[0]) return;
-    var file = inp.files[0];
-    console.log("[NexusAI] File selected (simulated, not uploaded):", file.name, type);
-    pendingFile = { name: file.name, type: type, size: file.size };
-    var icon = type === "image" ? "\ud83d\udcf7" : "\ud83c\udfac";
-    if (filePreviewEl) {
-      filePreviewEl.style.display = "flex";
-      filePreviewEl.querySelector("#nx-file-icon").textContent = icon;
-      filePreviewEl.querySelector("#nx-file-name").textContent = file.name;
-      filePreviewEl.querySelector("#nx-file-remove-btn").addEventListener("click", clearPendingFile);
-    }
-    inp.value = "";
-  }
-  function clearPendingFile() {
-    pendingFile = null;
-    if (filePreviewEl) filePreviewEl.style.display = "none";
-  }
+  // File upload is intentionally hidden until a real backend exists.
 
   // --- Drag (Desktop only) ---
   function initDrag() {
@@ -951,7 +890,6 @@
     state.thinkingStartTime = null;
     seenIds = {};
     lastMessageId = null;
-    clearPendingFile();
     if (inputEl) {
       inputEl.disabled = false;
       inputEl.placeholder =
@@ -1262,17 +1200,13 @@
   function handleSend() {
     if (!inputEl) return;
     var text = inputEl.value.trim();
-    var fileMsg = pendingFile
-      ? "[" + (pendingFile.type === "image" ? "Image" : "Video") + ": " + pendingFile.name + " - Upload pending]"
-      : "";
-    var fullText = (text + (fileMsg ? "\n" + fileMsg : "")).trim();
+    var fullText = text;
     if (!fullText || !state.conversationId || !state.sessionToken) return;
     if (fullText.length > 2000) {
       alert("Message too long (max 2000).");
       return;
     }
     hideTags();
-    clearPendingFile();
     sendBtn.disabled = true;
     sendBtn.textContent = "\u2026";
     inputEl.value = "";
@@ -1349,5 +1283,5 @@
     .catch(function () {});
 
   console.log("[NexusAI widget] Widget v1.3.0 loaded (J2 adaptive polling), channel:", channelId);
-  console.log("[NexusAI widget] NOTE: File upload is simulated only (Widget MVP). No real upload to server.");
+  console.log("[NexusAI widget] File upload hidden until real backend support is available.");
 })();
