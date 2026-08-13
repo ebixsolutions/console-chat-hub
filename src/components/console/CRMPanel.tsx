@@ -245,12 +245,30 @@ export function CRMPanel({
         setPolError(rc("polError"));
         setPolLoading(false);
         return;
-      } else if (data?.success && Array.isArray(data.results)) {
-        pctx = (data.results as KBResult[]).slice(0, 3).map((r) => ({
-          label: r.display_label.slice(0, 120),
-          content: r.content.slice(0, 800),
-          source_type: r.source_type.slice(0, 40),
-        }));
+      } else if (data?.success && Array.isArray(data.policy_evidence)) {
+        pctx = (
+          data.policy_evidence as Array<{
+            label: string;
+            content: string;
+            source_type: string;
+            document_id: string;
+            chunk_id?: string;
+            score: number;
+          }>
+        )
+          .filter(
+            (item) =>
+              typeof item.content === "string" &&
+              item.content.trim().length > 0 &&
+              typeof item.source_type === "string" &&
+              item.source_type.toLowerCase().includes("policy"),
+          )
+          .slice(0, 3)
+          .map((item) => ({
+            label: item.label.slice(0, 120),
+            content: item.content.slice(0, 800),
+            source_type: item.source_type.slice(0, 40),
+          }));
       }
     } catch {
       if (polReqIdRef.current !== reqId) return;
