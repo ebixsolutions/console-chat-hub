@@ -234,6 +234,79 @@ function isGreetingOrTrivial(text: string): boolean {
   return greetingRe.test(normalized) || compoundEnRe.test(normalized) || compoundZhRe.test(raw);
 }
 
+const E2_LOCAL_THREAT_CLASSIFIER_VERSION = "e2-local-threat-v1.0" as const;
+
+function classifyAuthoritativeThreat(text: string): {
+  value: boolean;
+  reason: string;
+  provider_version: string;
+} {
+  const normalized = text.trim().replace(/\s+/g, " ");
+  const lower = normalized.toLowerCase();
+
+  const explicitEnglishThreats = [
+    /\b(?:i(?:'ll| will| am going to| am gonna| gonna| plan to| intend to)\s+)?(?:kill|shoot|stab|hurt|attack)\s+(?:you|him|her|them|someone|people|staff|agent|employee)\b/i,
+    /\b(?:i(?:'ll| will| am going to| gonna)\s+)?bomb\s+(?:you|this place|the office|the store|the shop|your office|your store)\b/i,
+    /\b(?:bomb threat|i have (?:a )?bomb)\b/i,
+  ];
+  const explicitChineseThreats = [
+    /(?:我要|我會|我会|我想|我準備|我准备|我打算|等我|信不信我).{0,8}(?:殺|杀|弄死|砍|刺|打死|傷害|伤害|襲擊|袭击).{0,8}(?:你|你們|你们|他|她|他們|他们|客服|員工|员工|店員|店员|人)/,
+    /(?:殺了你|杀了你|弄死你|打死你|砍死你|刺死你)/,
+    /(?:我要|我會|我会|我打算).{0,8}(?:炸掉|炸了|放炸彈|放炸弹|引爆).{0,8}(?:你們|你们|你|公司|店|辦公室|办公室|門市|门市)/,
+    /(?:我有炸彈|我有炸弹)/,
+  ];
+
+  const matched =
+    explicitEnglishThreats.some((re) => re.test(lower)) || explicitChineseThreats.some((re) => re.test(normalized));
+
+  return {
+    value: matched,
+    reason: matched ? "explicit_violence_or_harm_threat" : "no_explicit_threat_match",
+    provider_version: E2_LOCAL_THREAT_CLASSIFIER_VERSION,
+  };
+}
+
+interface ComplianceReviewSignal {
+  value: boolean;
+  reason: string;
+  provider_version: string;
+}
+
+function resolveAuthoritativeComplianceReview(
+  expectedTenantId: string | undefined,
+): ComplianceReviewSignal | undefined {
+  if (!expectedTenantId) return undefined;
+  const raw = Deno.env.get("ESC_E2_COMPLIANCE_REVIEW_BY_TENANT_JSON");
+  if (!raw) return undefined;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    console.error("[generate-reply] invalid ESC_E2_COMPLIANCE_REVIEW_BY_TENANT_JSON JSON");
+    return undefined;
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    console.error("[generate-reply] compliance tenant map must be a JSON object");
+    return undefined;
+  }
+
+  const tenantMap = parsed as Record<string, unknown>;
+  if (!(expectedTenantId in tenantMap)) return undefined;
+  const value = tenantMap[expectedTenantId];
+  if (typeof value !== "boolean") {
+    console.error("[generate-reply] compliance tenant value must be boolean", expectedTenantId);
+    return undefined;
+  }
+
+  return {
+    value,
+    reason: value ? "tenant_jurisdiction_requires_human_review" : "tenant_jurisdiction_review_not_required",
+    provider_version: "e2-tenant-compliance-map-v1.0",
+  };
+}
+
 function classifyLocalTopicRisk(text: string): { level: TopicRiskLevel; verified: boolean } {
   const transactional = [
     /退[款貨]/,
@@ -395,6 +468,12 @@ async function evaluateAndPersistRequiredRulesLive(
     consecutive_no_answer?: number;
     clarification_attempts?: number;
     exact_same_intent_repeated?: true;
+    threat_flag?: { value: boolean; reason: string; provider_version: string };
+    compliance_jurisdiction_requires_human_review?: {
+      value: boolean;
+      reason: string;
+      provider_version: string;
+    };
   },
 ): Promise<Response | null> {
   // Master write gate: individual rule flags alone can never cause persistence.
@@ -426,6 +505,24 @@ async function evaluateAndPersistRequiredRulesLive(
   context.conversation_status = availableSignal(params.conversation_status, "conversation_history");
   context.assigned_agent_id = availableSignal(params.assigned_agent_id, "conversation_history");
   context.greeting_or_trivial = availableSignal(params.greeting_or_trivial, "local_classifier");
+
+  if (params.threat_flag !== undefined) {
+    context.threat_flag = availableSignal(params.threat_flag.value, "local_classifier", {
+      provider_version: params.threat_flag.provider_version,
+      observed_at: new Date().toISOString(),
+      reason: params.threat_flag.reason,
+      ...(params.expected_tenant_id ? { tenant_id: params.expected_tenant_id } : {}),
+    });
+  }
+  if (params.compliance_jurisdiction_requires_human_review !== undefined) {
+    const compliance = params.compliance_jurisdiction_requires_human_review;
+    context.compliance_jurisdiction_requires_human_review = availableSignal(compliance.value, "tenant_config", {
+      provider_version: compliance.provider_version,
+      observed_at: new Date().toISOString(),
+      reason: compliance.reason,
+      ...(params.expected_tenant_id ? { tenant_id: params.expected_tenant_id } : {}),
+    });
+  }
 
   if (params.rag_match_state !== undefined) {
     context.rag_match_state = availableSignal(params.rag_match_state, "kb_rag");
@@ -1364,6 +1461,14 @@ async function orchestrationGenerateReply(
     _pr5ClarificationCount ?? 0,
   );
 
+  const _visitorLang = detectVisitorLanguage(_h1LastMsg);
+  const _pr5ExpectedTenantId =
+    typeof conversation.company_id === "string" && conversation.company_id.length > 0
+      ? conversation.company_id
+      : undefined;
+  const _pr5ThreatSignal = classifyAuthoritativeThreat(_h1LastMsg);
+  const _pr5ComplianceSignal = resolveAuthoritativeComplianceReview(_pr5ExpectedTenantId);
+
   // ── PR-5 canonical greeting signal + shadow/live evaluation ───────────
   const _pr5GreetingOrTrivial = isGreetingOrTrivial(_h1LastMsg);
 
@@ -1376,6 +1481,9 @@ async function orchestrationGenerateReply(
       assigned_agent_id: conversation.assigned_agent_id ?? null,
       explicit_request: isHandoffIntent(_h1LastMsg),
       greeting_or_trivial: _pr5GreetingOrTrivial,
+      expected_tenant_id: _pr5ExpectedTenantId,
+      threat_flag: _pr5ThreatSignal,
+      compliance_jurisdiction_requires_human_review: _pr5ComplianceSignal,
     },
     Deno.env,
   );
@@ -1392,6 +1500,25 @@ async function orchestrationGenerateReply(
   }
 
   // ── End PR-5 canonical escalation evaluation ──────────────────────────
+
+  // E2 MUST run before R1 to preserve authoritative first-match order.
+  const _pr5E2PreflightResponse = await evaluateAndPersistRequiredRulesLive(supabaseAdmin, {
+    conversation_id,
+    source_message_id,
+    latest_message_content: _h1LastMsg,
+    conversation_status: conversation.status,
+    assigned_agent_id: conversation.assigned_agent_id ?? null,
+    greeting_or_trivial: _pr5GreetingOrTrivial,
+    visitor_language: _visitorLang,
+    expected_tenant_id: _pr5ExpectedTenantId,
+    turn_count: _pr5History.turn_count,
+    consecutive_no_answer: _pr5History.consecutive_no_answer,
+    clarification_attempts: _pr5History.clarification_attempts,
+    exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
+    threat_flag: _pr5ThreatSignal,
+    compliance_jurisdiction_requires_human_review: _pr5ComplianceSignal,
+  });
+  if (_pr5E2PreflightResponse) return _pr5E2PreflightResponse;
 
   const _escMvpEnabled = Deno.env.get("ESC_MVP_FEATURE_FLAG") === "true";
   let _escHandled = false;
@@ -1500,12 +1627,7 @@ async function orchestrationGenerateReply(
 
   const _g1SkipKB = _pr5GreetingOrTrivial;
 
-  const _visitorLang = detectVisitorLanguage(_h1LastMsg);
   const _pr5LocalRisk = classifyLocalTopicRisk(_h1LastMsg);
-  const _pr5ExpectedTenantId =
-    typeof conversation.company_id === "string" && conversation.company_id.length > 0
-      ? conversation.company_id
-      : undefined;
   const _pr5ConversationDurationSec = conversation.created_at
     ? Math.max(0, Math.floor((Date.now() - new Date(conversation.created_at).getTime()) / 1000))
     : undefined;
@@ -1622,6 +1744,8 @@ async function orchestrationGenerateReply(
         consecutive_no_answer: _pr5History.consecutive_no_answer,
         clarification_attempts: _pr5History.clarification_attempts,
         exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
+        threat_flag: _pr5ThreatSignal,
+        compliance_jurisdiction_requires_human_review: _pr5ComplianceSignal,
       });
       if (requiredResponse) return requiredResponse;
       return await handleKBFallback(
@@ -1680,6 +1804,8 @@ async function orchestrationGenerateReply(
         consecutive_no_answer: _pr5History.consecutive_no_answer,
         clarification_attempts: _pr5History.clarification_attempts,
         exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
+        threat_flag: _pr5ThreatSignal,
+        compliance_jurisdiction_requires_human_review: _pr5ComplianceSignal,
       });
       if (requiredResponse) return requiredResponse;
       return await handleKBFallback(
@@ -1723,6 +1849,8 @@ async function orchestrationGenerateReply(
     consecutive_no_answer: _pr5History.consecutive_no_answer,
     clarification_attempts: _pr5History.clarification_attempts,
     exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
+    threat_flag: _pr5ThreatSignal,
+    compliance_jurisdiction_requires_human_review: _pr5ComplianceSignal,
   });
   if (_pr5RequiredLiveResponse) return _pr5RequiredLiveResponse;
 
