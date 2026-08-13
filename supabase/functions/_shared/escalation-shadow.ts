@@ -53,6 +53,11 @@ export interface EscalationShadowInput {
   policy_match_state?: PolicyMatchState;
   policy_provider_version?: string;
   policy_provider_reason?: string;
+  predicted_csat?: number;
+  churn_risk?: number;
+  escalation_score?: number;
+  p1_provider_version?: string;
+  p1_provider_source?: "customer360" | "risk_engine";
 }
 
 export interface EscalationShadowResult {
@@ -198,6 +203,33 @@ export function evaluateEscalationShadow(
     context.policy_match_state = availableSignal(input.policy_match_state, "policy_engine", {
       provider_version: input.policy_provider_version,
       reason: input.policy_provider_reason ?? "agent_assist_policy_contract",
+      ...(input.expected_tenant_id ? { tenant_id: input.expected_tenant_id } : {}),
+    });
+  }
+
+  const p1Source =
+    input.p1_provider_source === "risk_engine"
+      ? "scoring_engine"
+      : "customer360";
+
+  if (typeof input.predicted_csat === "number" && Number.isFinite(input.predicted_csat)) {
+    context.predicted_csat = availableSignal(input.predicted_csat, p1Source, {
+      provider_version: input.p1_provider_version,
+      reason: "authoritative_predicted_csat",
+      ...(input.expected_tenant_id ? { tenant_id: input.expected_tenant_id } : {}),
+    });
+  }
+  if (typeof input.churn_risk === "number" && Number.isFinite(input.churn_risk)) {
+    context.churn_risk = availableSignal(input.churn_risk, p1Source, {
+      provider_version: input.p1_provider_version,
+      reason: "authoritative_churn_risk",
+      ...(input.expected_tenant_id ? { tenant_id: input.expected_tenant_id } : {}),
+    });
+  }
+  if (typeof input.escalation_score === "number" && Number.isFinite(input.escalation_score)) {
+    context.escalation_score = availableSignal(input.escalation_score, p1Source, {
+      provider_version: input.p1_provider_version,
+      reason: "authoritative_escalation_score",
       ...(input.expected_tenant_id ? { tenant_id: input.expected_tenant_id } : {}),
     });
   }

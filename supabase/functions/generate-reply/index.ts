@@ -27,6 +27,7 @@ import {
 import { availableSignal, createEscalationContextBase, escalationFeatureFlagsFromEnv, type EscalationContext, type EscalationRuleId, type RagMatchState, type TopicRiskLevel } from "../_shared/escalation-signals.ts";
 import { evaluateFullEscalationRuleset } from "../_shared/escalation-rules.ts";
 import { assessPolicyEvidenceForR4 } from "../_shared/escalation-policy.ts";
+import { validateP1PredictionSignals, type P1PredictionInput } from "../_shared/escalation-p1.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -480,11 +481,53 @@ function buildVerifiedTenantEscalationConfig(): EscalationContext["tenant_config
       ? parsedSlaWarning
       : undefined;
 
+  const predictedCsatRaw = Deno.env.get("ESC_PREDICTED_CSAT_THRESHOLD");
+  const parsedPredictedCsat =
+    predictedCsatRaw !== undefined && predictedCsatRaw.trim() !== ""
+      ? Number(predictedCsatRaw)
+      : undefined;
+  const predictedCsatThreshold =
+    typeof parsedPredictedCsat === "number" &&
+    Number.isFinite(parsedPredictedCsat) &&
+    parsedPredictedCsat >= 1 &&
+    parsedPredictedCsat <= 5
+      ? parsedPredictedCsat
+      : undefined;
+
+  const churnRiskRaw = Deno.env.get("ESC_CHURN_RISK_THRESHOLD");
+  const parsedChurnRisk =
+    churnRiskRaw !== undefined && churnRiskRaw.trim() !== ""
+      ? Number(churnRiskRaw)
+      : undefined;
+  const churnRiskThreshold =
+    typeof parsedChurnRisk === "number" &&
+    Number.isFinite(parsedChurnRisk) &&
+    parsedChurnRisk >= 0 &&
+    parsedChurnRisk <= 1
+      ? parsedChurnRisk
+      : undefined;
+
+  const escalationScoreRaw = Deno.env.get("ESC_ESCALATION_SCORE_THRESHOLD");
+  const parsedEscalationScore =
+    escalationScoreRaw !== undefined && escalationScoreRaw.trim() !== ""
+      ? Number(escalationScoreRaw)
+      : undefined;
+  const escalationScoreThreshold =
+    typeof parsedEscalationScore === "number" &&
+    Number.isFinite(parsedEscalationScore) &&
+    parsedEscalationScore >= 0 &&
+    parsedEscalationScore <= 1
+      ? parsedEscalationScore
+      : undefined;
+
   if (
     maxConsecutiveNoAnswer === undefined &&
     maxClarifications === undefined &&
     sentimentScoreThreshold === undefined &&
-    slaWarningSec === undefined
+    slaWarningSec === undefined &&
+    predictedCsatThreshold === undefined &&
+    churnRiskThreshold === undefined &&
+    escalationScoreThreshold === undefined
   ) return null;
 
   return {
@@ -499,6 +542,15 @@ function buildVerifiedTenantEscalationConfig(): EscalationContext["tenant_config
       : {}),
     ...(slaWarningSec !== undefined
       ? { sla_warning_sec: slaWarningSec }
+      : {}),
+    ...(predictedCsatThreshold !== undefined
+      ? { predicted_csat_threshold: predictedCsatThreshold }
+      : {}),
+    ...(churnRiskThreshold !== undefined
+      ? { churn_risk_threshold: churnRiskThreshold }
+      : {}),
+    ...(escalationScoreThreshold !== undefined
+      ? { escalation_score_threshold: escalationScoreThreshold }
       : {}),
   };
 }
@@ -1324,12 +1376,37 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     }
   }
 
-  let customerContext: { masked_summary?: string; tier?: string } | null = null;
+  let customerContext: {
+    masked_summary?: string;
+    tier?: string;
+    predicted_csat?: number;
+    churn_risk?: number;
+    escalation_score?: number;
+    p1_provider_version?: string;
+  } | null = null;
   let opaqueCustomerRef: string | null = null;
   if (flags.ENABLE_C360) {
     const c360Result = await callCustomer360Adapter(conversation_id);
-    if (c360Result.success && c360Result.customer_context) { customerContext = c360Result.customer_context; opaqueCustomerRef = c360Result.customer_ref ?? null; }
+    if (c360Result.success && c360Result.customer_context) {
+      customerContext = c360Result.customer_context;
+      opaqueCustomerRef = c360Result.customer_ref ?? null;
+    }
   }
+
+  // P1 is prediction-only. Current Customer360 Gate A returns no profile and
+  // therefore produces no P1 signals. Observed feedback_request.rating is NOT
+  // mapped into predicted_csat.
+  const _pr5P1Input: P1PredictionInput | undefined =
+    customerContext?.p1_provider_version
+      ? {
+          predicted_csat: customerContext.predicted_csat,
+          churn_risk: customerContext.churn_risk,
+          escalation_score: customerContext.escalation_score,
+          provider_version: customerContext.p1_provider_version,
+          provider_source: "customer360",
+        }
+      : undefined;
+  const _pr5P1Signals = validateP1PredictionSignals(_pr5P1Input);
 
   let finalPromptChunks: Array<{ title?: string; score?: number; source_type?: string }> = [];
   let _kbDone = false;
@@ -1557,6 +1634,11 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
       policy_match_state: _pr5R4Policy?.match_state,
       policy_provider_version: _pr5R4Policy?.provider_version,
       policy_provider_reason: _pr5R4Policy?.reason,
+      predicted_csat: _pr5P1Signals?.predicted_csat,
+      churn_risk: _pr5P1Signals?.churn_risk,
+      escalation_score: _pr5P1Signals?.escalation_score,
+      p1_provider_version: _pr5P1Signals?.provider_version,
+      p1_provider_source: _pr5P1Signals?.provider_source,
     }, Deno.env);
     if (r3Shadow) {
       console.log("[generate-reply] PR-5 advisory post-KB shadow:", {
@@ -1626,7 +1708,17 @@ function safeRefusal(code: string): Response {
   return new Response(JSON.stringify({ success: true, skipped: "refused", reason_code: code, handoff_required: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
-function buildMaskedContextBlock(customerContext: { masked_summary?: string; tier?: string } | null, opaqueCustomerRef: string | null): string {
+function buildMaskedContextBlock(
+  customerContext: {
+    masked_summary?: string;
+    tier?: string;
+    predicted_csat?: number;
+    churn_risk?: number;
+    escalation_score?: number;
+    p1_provider_version?: string;
+  } | null,
+  opaqueCustomerRef: string | null,
+): string {
   if (!customerContext) return "";
   const parts: string[] = [];
   if (customerContext.tier) parts.push(`Customer tier: ${customerContext.tier}`);
@@ -1688,7 +1780,22 @@ async function computePromptHash(content: string, versionId: string, conversatio
   return Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, "0")).join("").substring(0, 12);
 }
 
-async function callCustomer360Adapter(_conversation_id: string): Promise<{ success: boolean; customer_context?: { masked_summary?: string; tier?: string }; customer_ref?: string }> { return { success: false }; }
+async function callCustomer360Adapter(_conversation_id: string): Promise<{
+  success: boolean;
+  customer_context?: {
+    masked_summary?: string;
+    tier?: string;
+    predicted_csat?: number;
+    churn_risk?: number;
+    escalation_score?: number;
+    p1_provider_version?: string;
+  };
+  customer_ref?: string;
+}> {
+  // Current C360 Gate A is fail-closed: no authoritative customer identity /
+  // upstream profile binding, therefore no P1 prediction values are returned.
+  return { success: false };
+}
 
 async function callKBAdapter(_conversation_id: string, userMessage: string, scope: KBResolvedScope): Promise<{ success: boolean; no_answer?: boolean; retrieval_quality?: "high" | "medium" | "low" | "failed"; chunks?: KBFullChunk[]; query_text_preview?: string }> {
   const endpointCfg = resolveKBEndpoint();

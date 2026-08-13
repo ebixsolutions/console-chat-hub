@@ -46,6 +46,7 @@ export type SignalSource =
   | "policy_engine"
   | "coach_ai"
   | "customer360"
+  | "scoring_engine"
   | "tenant_config"
   | "runtime"
   | "unknown";
@@ -460,9 +461,9 @@ export function createEscalationContextBase(input: {
     anger_flag: unavailableSignal("conversation_evaluation", "no_current_evaluation_data"),
     sentiment_trend: unavailableSignal("conversation_evaluation", "no_current_evaluation_data"),
     detected_intent: unavailableSignal("coach_ai", "provider_contract_unverified"),
-    predicted_csat: unavailableSignal("coach_ai", "provider_contract_unverified"),
-    escalation_score: unavailableSignal("coach_ai", "provider_contract_unverified"),
-    churn_risk: unavailableSignal("coach_ai", "provider_contract_unverified"),
+    predicted_csat: unavailableSignal("scoring_engine", "prediction_provider_unavailable"),
+    escalation_score: unavailableSignal("scoring_engine", "prediction_provider_unavailable"),
+    churn_risk: unavailableSignal("customer360", "customer360_gate_b_unavailable"),
     threat_flag: unavailableSignal("coach_ai", "provider_contract_unverified"),
     confidence_score: unavailableSignal("coach_ai", "provider_contract_unverified"),
 
