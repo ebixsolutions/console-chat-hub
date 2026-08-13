@@ -181,6 +181,72 @@ async function cleanupThinking(
   }
 }
 
+async function commitAiReplyWithControlGate(
+  supabaseAdmin: ReturnType<typeof createClient>,
+  conversation_id: string,
+  source_message_id: string | null,
+  content: string,
+  metadata: Record<string, unknown> | null = null,
+): Promise<
+  | { ok: true; message_id: string | null; idempotent: boolean }
+  | {
+      ok: false;
+      result:
+        | "human_control"
+        | "resolved"
+        | "invalid_source_message"
+        | "invalid_content"
+        | "source_already_replied"
+        | "not_found"
+        | "rpc_error"
+        | "unexpected_result";
+    }
+> {
+  if (!source_message_id) return { ok: false, result: "invalid_source_message" };
+
+  const { data, error } = await supabaseAdmin.rpc("commit_ai_reply_tx", {
+    p_conversation_id: conversation_id,
+    p_source_message_id: source_message_id,
+    p_content: content,
+    p_metadata: metadata,
+  });
+
+  if (error) {
+    console.error("[generate-reply] commit_ai_reply_tx RPC error:", {
+      conversation_id,
+      code: error.code,
+    });
+    return { ok: false, result: "rpc_error" };
+  }
+
+  const payload = data ?? {};
+  const result = String(payload.result ?? data ?? "unexpected_result");
+
+  switch (result) {
+    case "success":
+      return {
+        ok: true,
+        message_id: typeof payload.message_id === "string" ? payload.message_id : null,
+        idempotent: false,
+      };
+    case "idempotent":
+      return {
+        ok: true,
+        message_id: typeof payload.message_id === "string" ? payload.message_id : null,
+        idempotent: true,
+      };
+    case "human_control":
+    case "resolved":
+    case "invalid_source_message":
+    case "invalid_content":
+    case "source_already_replied":
+    case "not_found":
+      return { ok: false, result };
+    default:
+      return { ok: false, result: "unexpected_result" };
+  }
+}
+
 interface EscClassifierResult {
   rule: "R1" | null;
   confidence: number;
@@ -1048,13 +1114,34 @@ When the customer explicitly requests a human agent, or when you transfer to a h
     return new Response(JSON.stringify({ error: "Empty AI response" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 
-  await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-  const { data: insertedMsg, error: insertError } = await supabaseAdmin.from("messages").insert({ conversation_id, role: "assistant", content: aiReplyContent, status: "delivered", is_recalled: false }).select("id").maybeSingle();
-  if (insertError) console.error("[generate-reply] insert error:", insertError);
-  await supabaseAdmin.from("conversations").update({ updated_at: new Date().toISOString() }).eq("id", conversation_id);
-  await writeTraces(supabaseAdmin, { conversation_id, message_id: insertedMsg?.id ?? null, user_message_raw: lastVisitorMsg, response_status: claudeResponse.status, response_latency_ms: responseLatencyMs, error_message: null, request_payload: tracePayloadRedacted, token_input: tokenInput, token_output: tokenOutput, ai_reply_content: aiReplyContent });
-  console.log("[generate-reply] AI reply sent for conversation:", conversation_id);
-  return new Response(JSON.stringify({ success: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  const committed = await commitAiReplyWithControlGate(
+    supabaseAdmin,
+    conversation_id,
+    source_message_id,
+    aiReplyContent,
+    null,
+  );
+  if (!committed.ok) {
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+    if (committed.result === "human_control" || committed.result === "resolved") {
+      console.log("[generate-reply] stale AI reply suppressed by control gate:", {
+        conversation_id,
+        result: committed.result,
+      });
+      return new Response(
+        JSON.stringify({ success: true, skipped: committed.result }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    return new Response(
+      JSON.stringify({ success: false, error: `ai_reply_commit_${committed.result}` }),
+      { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+
+  await writeTraces(supabaseAdmin, { conversation_id, message_id: committed.message_id, user_message_raw: lastVisitorMsg, response_status: claudeResponse.status, response_latency_ms: responseLatencyMs, error_message: null, request_payload: tracePayloadRedacted, token_input: tokenInput, token_output: tokenOutput, ai_reply_content: aiReplyContent });
+  console.log("[generate-reply] AI reply committed for conversation:", conversation_id);
+  return new Response(JSON.stringify({ success: true, idempotent: committed.idempotent }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
 function buildCitationMetadata(chunks: Array<{ title?: string; score?: number; source_type?: string }>): { citations: Array<{ label: string; source_type: string; relevance?: string }> } | null {
@@ -1767,14 +1854,35 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return new Response(JSON.stringify({ error: "Empty AI response" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
-  await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
   const citationMeta = finalPromptChunks.length > 0 ? buildCitationMetadata(finalPromptChunks) : null;
-  await supabaseAdmin.from("messages").insert({ conversation_id, role: "assistant", content: aiReplyContent, status: "delivered", is_recalled: false, metadata: citationMeta });
-  await supabaseAdmin.from("conversations").update({ updated_at: new Date().toISOString() }).eq("id", conversation_id);
+  const committed = await commitAiReplyWithControlGate(
+    supabaseAdmin,
+    conversation_id,
+    source_message_id,
+    aiReplyContent,
+    citationMeta,
+  );
+  if (!committed.ok) {
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+    if (committed.result === "human_control" || committed.result === "resolved") {
+      console.log("[generate-reply] stale orchestration reply suppressed:", {
+        conversation_id,
+        result: committed.result,
+      });
+      return new Response(
+        JSON.stringify({ success: true, skipped: committed.result }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    return new Response(
+      JSON.stringify({ success: false, error: `ai_reply_commit_${committed.result}` }),
+      { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
   if (flags.ENABLE_COACH) void coachTrace;
   if (flags.ENABLE_KB && ragResult?.success) void ragResult;
-  console.log("[generate-reply] AI reply sent (orchestration path) for conversation:", conversation_id);
-  return new Response(JSON.stringify({ success: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  console.log("[generate-reply] AI reply committed (orchestration path) for conversation:", conversation_id);
+  return new Response(JSON.stringify({ success: true, idempotent: committed.idempotent }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
 function safeRefusal(code: string): Response {

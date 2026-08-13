@@ -61,37 +61,56 @@ Deno.serve(async (req) => {
       .single();
     if (mErr || !msg) return json({ success: false, error: mErr?.message || "insert failed" }, 500);
 
-    // ── Dev21 Batch 1: Human-handling guard ──────────────────────────────
-    // When status is 'pending' or 'transferred', a human agent is handling
-    // this conversation. Accept the visitor message (inserted above) but do
-    // NOT insert __THINKING__, do NOT set ai_generating=true, and do NOT
-    // invoke generate-reply. The human agent will see the new message via
-    // normal polling. Update conversations.updated_at so Console queue
-    // refreshes and shows new activity. Clear ai_generating as safety.
-    if (HUMAN_HANDLING_STATUSES.has(conv.status)) {
-      console.log("[receive-widget-message] human-handling guard: skipping AI for status:", conv.status, conversation_id);
+    // PR-3 control race guard: claim AI control under a conversation row lock.
+    const { data: beginData, error: beginErr } = await supabase.rpc(
+      "begin_ai_reply_tx",
+      {
+        p_conversation_id: conversation_id,
+        p_source_message_id: msg.id,
+      },
+    );
+
+    if (beginErr) {
+      console.error("[receive-widget-message] begin_ai_reply_tx failed:", beginErr.message, conversation_id);
+      await supabase
+        .from("visitor_session")
+        .update({ last_seen_at: new Date().toISOString() })
+        .eq("id", session.id);
+      return json({
+        success: false,
+        error: "AI control check failed",
+        data: { message_id: msg.id, ai_reply_pending: false },
+      }, 503);
+    }
+
+    const beginResult = String(beginData?.result ?? beginData ?? "unknown");
+    if (beginResult === "human_control" || beginResult === "resolved") {
       await supabase
         .from("conversations")
-        .update({
-          updated_at: new Date().toISOString(),
-        })
+        .update({ updated_at: new Date().toISOString() })
         .eq("id", conversation_id);
       await supabase
         .from("visitor_session")
         .update({ last_seen_at: new Date().toISOString() })
         .eq("id", session.id);
-      return json({ success: true, data: { message_id: msg.id, ai_reply_pending: false } });
+      return json({
+        success: true,
+        data: {
+          message_id: msg.id,
+          ai_reply_pending: false,
+          control_state: beginResult,
+        },
+      });
     }
-    // ── End Dev21 Batch 1 guard ─────────────────────────────────────────
 
-    await supabase.from("messages").insert({
-      conversation_id,
-      role: "assistant",
-      content: "__THINKING__",
-      status: "sending",
-      metadata: { source_message_id: msg.id },
-    });
-
+    if (beginResult !== "success") {
+      console.error("[receive-widget-message] begin_ai_reply_tx rejected:", beginResult, conversation_id);
+      return json({
+        success: false,
+        error: "AI control claim rejected",
+        data: { message_id: msg.id, ai_reply_pending: false },
+      }, 409);
+    }
 
     await supabase
       .from("visitor_session")
