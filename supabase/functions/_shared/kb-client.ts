@@ -1,7 +1,12 @@
 // supabase/functions/_shared/kb-client.ts
-// PR-2 Task 1 Director Takeover — canonical KB upstream adapter.
+// PR-KB — canonical KB upstream adapter + v2 document-centric aggregation.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import {
+  aggregateKBRagByDocument,
+  type KBRagCandidate,
+  type KBAggregatedChunk,
+} from "./kb-rag-aggregate.ts";
 
 export interface KBQueryInput {
   query: string;
@@ -14,34 +19,26 @@ export interface KBResolvedScope {
   language: string;
 }
 
-export interface KBUpstreamChunk {
-  doc_id?: string;
-  chunk_id?: string;
-  title?: string;
-  content?: string;
-  score?: number;
-  industry?: string;
-  company_id?: number;
-  language?: string;
-  status?: string;
-  source_type?: string;
-  published_at?: string;
-  updated_at?: string;
-}
+export interface KBUpstreamChunk extends KBRagCandidate {}
 
 export interface KBCitationChunk {
   display_label: string;
   content: string;
   score: number;
   source_type: string;
+  document_id?: string;
+  chunk_type?: string;
 }
 
-export type KBFullChunk = KBUpstreamChunk;
+export type KBFullChunk = KBAggregatedChunk;
 
 export interface KBRagResponse {
   success: boolean;
   chunks: KBFullChunk[];
   citations: KBCitationChunk[];
+  selected_document_id?: string;
+  dropped_without_document_id?: number;
+  dropped_without_content?: number;
   error_code?: string;
 }
 
@@ -71,7 +68,9 @@ export type TenantResolutionResult =
         | "KB_DEMO_COMPANY_ID_INVALID";
     };
 
-export async function resolveTenantScope(conversationId: string | null): Promise<TenantResolutionResult> {
+export async function resolveTenantScope(
+  conversationId: string | null,
+): Promise<TenantResolutionResult> {
   if (conversationId) {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -121,9 +120,9 @@ export async function resolveTenantScope(conversationId: string | null): Promise
       return { resolved: false, reason: "KB_TENANT_MAPPING_UNRESOLVED" };
     }
 
-    // No authoritative KB numeric company_id + industry mapping exists in
-    // the current schema. Do not reinterpret external_tenant_id or
-    // external_workspace_id as KB identity.
+    // KB v2 authoritative source currently has no tenant/company identity
+    // field on KBDocument or KBVectorChunk. Never reinterpret external tenant
+    // identifiers as KB ownership without a frozen mapping contract.
     return { resolved: false, reason: "KB_TENANT_MAPPING_UNRESOLVED" };
   }
 
@@ -177,42 +176,79 @@ export async function fetchKBRag(
         industry: scope.industry,
         language: scope.language,
         status: "published",
-        top_k: queryInput.top_k,
+        // Request a wider candidate pool; local frozen aggregation selects
+        // one document + max 1 summary + max 3 full_content.
+        top_k: Math.max(queryInput.top_k, 12),
       }),
       signal: controller.signal,
     });
   } catch (err) {
     clearTimeout(timeout);
     if (err instanceof DOMException && err.name === "AbortError") {
-      return { success: false, chunks: [], citations: [], error_code: "KB_TIMEOUT" };
+      return {
+        success: false,
+        chunks: [],
+        citations: [],
+        error_code: "KB_TIMEOUT",
+      };
     }
-    return { success: false, chunks: [], citations: [], error_code: "KB_FETCH_ERROR" };
+    return {
+      success: false,
+      chunks: [],
+      citations: [],
+      error_code: "KB_FETCH_ERROR",
+    };
   }
 
   clearTimeout(timeout);
 
   if (!response.ok) {
-    return { success: false, chunks: [], citations: [], error_code: `KB_HTTP_${response.status}` };
+    return {
+      success: false,
+      chunks: [],
+      citations: [],
+      error_code: `KB_HTTP_${response.status}`,
+    };
   }
 
   let data: unknown;
   try {
     data = await response.json();
   } catch {
-    return { success: false, chunks: [], citations: [], error_code: "KB_INVALID_JSON" };
+    return {
+      success: false,
+      chunks: [],
+      citations: [],
+      error_code: "KB_INVALID_JSON",
+    };
   }
 
   if (!data || typeof data !== "object") {
-    return { success: false, chunks: [], citations: [], error_code: "KB_SCHEMA_INVALID" };
+    return {
+      success: false,
+      chunks: [],
+      citations: [],
+      error_code: "KB_SCHEMA_INVALID",
+    };
   }
 
   const d = data as Record<string, unknown>;
   if (d.ok !== true) {
-    return { success: false, chunks: [], citations: [], error_code: "KB_UPSTREAM_REJECTED" };
+    return {
+      success: false,
+      chunks: [],
+      citations: [],
+      error_code: "KB_UPSTREAM_REJECTED",
+    };
   }
 
   if (!Array.isArray(d.results)) {
-    return { success: false, chunks: [], citations: [], error_code: "KB_SCHEMA_INVALID" };
+    return {
+      success: false,
+      chunks: [],
+      citations: [],
+      error_code: "KB_SCHEMA_INVALID",
+    };
   }
 
   const results = d.results as KBUpstreamChunk[];
@@ -220,19 +256,46 @@ export async function fetchKBRag(
     return { success: true, chunks: [], citations: [] };
   }
 
-  const scopedChunks = results.filter((c) => {
-    if (c.company_id !== undefined && c.company_id !== null && c.company_id !== scope.kbCompanyId) return false;
-    if (c.industry !== undefined && c.industry !== null && c.industry !== scope.industry) return false;
+  // Preserve existing tenant/industry defense-in-depth when the upstream
+  // response includes those fields. Absence is not reinterpreted as identity.
+  const scopedCandidates = results.filter((c) => {
+    if (
+      c.company_id !== undefined &&
+      c.company_id !== null &&
+      c.company_id !== scope.kbCompanyId
+    ) return false;
+    if (
+      c.industry !== undefined &&
+      c.industry !== null &&
+      c.industry !== scope.industry
+    ) return false;
+    if (c.status !== undefined && c.status !== null && c.status !== "published") {
+      return false;
+    }
     return true;
   });
 
-  const chunks: KBFullChunk[] = scopedChunks.slice(0, queryInput.top_k);
-  const citations: KBCitationChunk[] = chunks.map((c) => ({
-    display_label: typeof c.title === "string" ? c.title.slice(0, 200) : "KB document",
-    content: typeof c.content === "string" ? c.content.slice(0, 500) : "",
-    score: typeof c.score === "number" ? c.score : 0,
-    source_type: typeof c.source_type === "string" ? c.source_type : "unknown",
+  const aggregated = aggregateKBRagByDocument(scopedCandidates);
+
+  const citations: KBCitationChunk[] = aggregated.chunks.map((c) => ({
+    display_label:
+      typeof c.title === "string" ? c.title.slice(0, 200) : "KB document",
+    content: c.content.slice(0, 500),
+    score: c.score,
+    source_type:
+      typeof c.source_type === "string" ? c.source_type : "unknown",
+    document_id: c.document_id,
+    chunk_type: c.chunk_type,
   }));
 
-  return { success: true, chunks, citations };
+  return {
+    success: true,
+    chunks: aggregated.chunks,
+    citations,
+    ...(aggregated.document_id
+      ? { selected_document_id: aggregated.document_id }
+      : {}),
+    dropped_without_document_id: aggregated.dropped_without_document_id,
+    dropped_without_content: aggregated.dropped_without_content,
+  };
 }
