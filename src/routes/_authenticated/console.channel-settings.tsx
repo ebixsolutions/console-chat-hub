@@ -79,6 +79,8 @@ function ChannelSettingsContent() {
   const [source, setSource] = useState<"live" | "mock_fallback" | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [previewChannelId, setPreviewChannelId] = useState<string | null>(null);
+  const [bindingChannelId, setBindingChannelId] = useState<string | null>(null);
+  const [bindError, setBindError] = useState<string | null>(null);
 
   useEffect(() => {
     aiChatbotSettingsService.loadChannelConfigs().then((r) => {
@@ -89,6 +91,24 @@ function ChannelSettingsContent() {
   }, []);
 
   const previewChannel = channels.find((c) => c.id === previewChannelId);
+
+  const bindCompany = async (channelId: string) => {
+    setBindingChannelId(channelId);
+    setBindError(null);
+    try {
+      const result = await aiChatbotSettingsService.bindChannelToCurrentCompany(channelId);
+      if (!result.ok) {
+        setBindError(result.error);
+        return;
+      }
+      const refreshed = await aiChatbotSettingsService.loadChannelConfigs();
+      setChannels(refreshed.data);
+      setSource(refreshed.source);
+      setLoadError(refreshed.error ?? null);
+    } finally {
+      setBindingChannelId(null);
+    }
+  };
 
   return (
     <div style={{ maxWidth: 900 }}>
@@ -106,6 +126,21 @@ function ChannelSettingsContent() {
         >
           ⚠️ Backend unavailable — showing default channel list.{" "}
           {loadError ? <span style={{ opacity: 0.75 }}>({loadError})</span> : null}
+        </div>
+      )}
+      {bindError && (
+        <div
+          style={{
+            background: "#fef2f2",
+            border: "0.5px solid #fca5a5",
+            borderRadius: 11,
+            padding: "10px 14px",
+            marginBottom: 12,
+            color: "#991b1b",
+            fontSize: 11.5,
+          }}
+        >
+          Company binding failed: {bindError}
         </div>
       )}
       <div
@@ -170,6 +205,45 @@ function ChannelSettingsContent() {
                 : ch.channel_type === "email"
                   ? "❌ Correction only"
                   : "❌ Recall not guaranteed"}
+            </div>
+            <div
+              style={{
+                fontSize: 10.5,
+                padding: "7px 9px",
+                borderRadius: 8,
+                marginBottom: 8,
+                background: ch.company_id ? "#ecfdf5" : "#fef2f2",
+                color: ch.company_id ? "#065f46" : "#991b1b",
+                border: ch.company_id ? "0.5px solid #a7f3d0" : "0.5px solid #fecaca",
+              }}
+            >
+              <div style={{ fontWeight: 700, marginBottom: ch.company_id ? 0 : 6 }}>
+                {ch.company_id ? "✅ Company identity bound" : "⚠️ Company identity required"}
+              </div>
+              {ch.company_id ? (
+                <div style={{ fontFamily: "monospace", opacity: 0.8 }}>
+                  {ch.company_id}
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  disabled={bindingChannelId === ch.id || source !== "live"}
+                  onClick={() => void bindCompany(ch.id)}
+                  style={{
+                    fontSize: 10.5,
+                    fontWeight: 700,
+                    padding: "5px 9px",
+                    borderRadius: 7,
+                    border: "none",
+                    background: "#991b1b",
+                    color: "#fff",
+                    cursor: bindingChannelId === ch.id ? "wait" : "pointer",
+                    opacity: source !== "live" ? 0.5 : 1,
+                  }}
+                >
+                  {bindingChannelId === ch.id ? "Binding…" : "Bind to my company"}
+                </button>
+              )}
             </div>
             {ch.notes && <div style={{ fontSize: 10.5, color: "#888", marginBottom: 8 }}>{ch.notes}</div>}
             {ch.channel_type === "website_widget" && (

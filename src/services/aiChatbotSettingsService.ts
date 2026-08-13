@@ -37,6 +37,7 @@ function deriveChannel(row: LiveChannelConfigRow): ChannelConfig {
     case "website_widget":
       return {
         id: row.id,
+        company_id: row.company_id,
         channel_type: "website_widget",
         channel_name: row.name || "Website Live Chat",
         status: "mock_preview",
@@ -49,6 +50,7 @@ function deriveChannel(row: LiveChannelConfigRow): ChannelConfig {
     case "whatsapp":
       return {
         id: row.id,
+        company_id: row.company_id,
         channel_type: "whatsapp",
         channel_name: row.name || "WhatsApp Business",
         status: "coming_soon",
@@ -61,6 +63,7 @@ function deriveChannel(row: LiveChannelConfigRow): ChannelConfig {
     case "email":
       return {
         id: row.id,
+        company_id: row.company_id,
         channel_type: "email",
         channel_name: row.name || "Email Support",
         status: "coming_soon",
@@ -73,6 +76,7 @@ function deriveChannel(row: LiveChannelConfigRow): ChannelConfig {
     case "line":
       return {
         id: row.id,
+        company_id: row.company_id,
         channel_type: "line",
         channel_name: row.name || "LINE Official",
         status: "coming_soon",
@@ -85,6 +89,7 @@ function deriveChannel(row: LiveChannelConfigRow): ChannelConfig {
     default:
       return {
         id: row.id,
+        company_id: row.company_id,
         channel_type: "website_widget",
         channel_name: row.name || rawType,
         status: "coming_soon",
@@ -157,6 +162,20 @@ export const aiChatbotSettingsService = {
         source: "mock_fallback",
         error: (e as Error).message,
       };
+    }
+  },
+
+  async bindChannelToCurrentCompany(
+    channelId: string,
+  ): Promise<{ ok: true; company_id: string } | { ok: false; error: string }> {
+    try {
+      const res = await configService.bindChannelToCurrentCompany(channelId);
+      if (!res.ok || !res.data?.company_id) {
+        return { ok: false, error: res.error ?? "Channel company binding failed" };
+      }
+      return { ok: true, company_id: String(res.data.company_id) };
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
     }
   },
 

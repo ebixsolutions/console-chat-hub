@@ -17,6 +17,7 @@ export interface LiveChannelConfigRow {
   name: string;
   channel_type: string;
   is_active: boolean;
+  company_id: string | null;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -46,10 +47,84 @@ export const listChannelConfigsFn = createServerFn({ method: "GET" })
   .handler(async ({ context }): Promise<ServerResult<LiveChannelConfigRow[]>> => {
     const { data, error } = await context.supabase
       .from("channel_config")
-      .select("id, name, channel_type, is_active")
+      .select("id, name, channel_type, is_active, company_id")
       .order("channel_type", { ascending: true });
     if (error) return { ok: false, error: error.message };
     return { ok: true, data: (data ?? []) as LiveChannelConfigRow[] };
+  });
+
+const bindChannelCompanyInput = z.object({
+  channel_id: z.string().uuid(),
+});
+
+export const bindChannelToCurrentCompanyFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator(bindChannelCompanyInput)
+  .handler(async ({ data, context }): Promise<ServerResult<LiveChannelConfigRow>> => {
+    const userId = String(context.userId);
+
+    const { data: globalRoles, error: roleErr } = await context.supabase
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", userId);
+    if (roleErr) return { ok: false, error: "role_lookup_failed" };
+    if (!globalRoles?.some((r) => r.role === "admin")) {
+      return { ok: false, error: "forbidden" };
+    }
+
+    const { data: memberships, error: membershipErr } = await context.supabase
+      .from("company_membership")
+      .select("company_id, role, is_active")
+      .eq("user_id", userId)
+      .eq("role", "admin")
+      .eq("is_active", true);
+    if (membershipErr) return { ok: false, error: "company_membership_lookup_failed" };
+
+    const companyIds = [...new Set((memberships ?? []).map((m) => String(m.company_id)))];
+    if (companyIds.length === 0) {
+      return { ok: false, error: "company_membership_unresolved" };
+    }
+    if (companyIds.length !== 1) {
+      return { ok: false, error: "company_membership_ambiguous" };
+    }
+    const companyId = companyIds[0];
+
+    const { data: company, error: companyErr } = await context.supabase
+      .from("company")
+      .select("id, is_active")
+      .eq("id", companyId)
+      .maybeSingle();
+    if (companyErr) return { ok: false, error: "company_lookup_failed" };
+    if (!company || company.is_active !== true) {
+      return { ok: false, error: "company_inactive" };
+    }
+
+    const { data: channel, error: channelReadErr } = await context.supabase
+      .from("channel_config")
+      .select("id, name, channel_type, is_active, company_id")
+      .eq("id", data.channel_id)
+      .maybeSingle();
+    if (channelReadErr) return { ok: false, error: "channel_lookup_failed" };
+    if (!channel) return { ok: false, error: "channel_not_found" };
+
+    if (channel.company_id && String(channel.company_id) !== companyId) {
+      return { ok: false, error: "channel_company_conflict" };
+    }
+
+    if (!channel.company_id) {
+      const { data: updated, error: updateErr } = await context.supabase
+        .from("channel_config")
+        .update({ company_id: companyId })
+        .eq("id", data.channel_id)
+        .is("company_id", null)
+        .select("id, name, channel_type, is_active, company_id")
+        .maybeSingle();
+      if (updateErr) return { ok: false, error: "channel_company_update_failed" };
+      if (!updated) return { ok: false, error: "channel_company_update_conflict" };
+      return { ok: true, data: updated as LiveChannelConfigRow };
+    }
+
+    return { ok: true, data: channel as LiveChannelConfigRow };
   });
 
 export const getFeedbackConfigFn = createServerFn({ method: "GET" })
@@ -154,6 +229,8 @@ export const updateFeedbackConfigFn = createServerFn({ method: "POST" })
 
 export const configService = {
   listChannelConfigs: () => listChannelConfigsFn(),
+  bindChannelToCurrentCompany: (channelId: string) =>
+    bindChannelToCurrentCompanyFn({ data: { channel_id: channelId } }),
   getFeedbackConfig: () => getFeedbackConfigFn(),
   updateFeedbackConfig: (params: z.infer<typeof updateFeedbackInput>) =>
     updateFeedbackConfigFn({ data: params }),
