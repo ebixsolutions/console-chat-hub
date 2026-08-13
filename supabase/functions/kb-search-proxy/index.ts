@@ -264,15 +264,36 @@ Deno.serve(async (req) => {
       }
     }
 
+    const policyEvidence =
+      kbResult.llm_context?.full_content_evidence
+        ?.filter((item) =>
+          typeof item.source_type === "string" &&
+          item.source_type.toLowerCase().includes("policy") &&
+          typeof item.content === "string" &&
+          item.content.trim().length > 0
+        )
+        .slice(0, 3)
+        .map((item, index) => ({
+          label: `Policy evidence ${index + 1}`,
+          content: item.content.slice(0, 800),
+          source_type: item.source_type.slice(0, 40),
+          document_id: item.document_id,
+          ...(item.chunk_id ? { chunk_id: item.chunk_id } : {}),
+          score: item.score,
+        })) ?? [];
+
     return jsonResponse(
       {
         success: true,
-        // Backward-compatible flattened result list for current console UI.
+        // Backward-compatible flattened result list for current Knowledge UI.
         results: kbResult.citations,
         // Canonical v2 structured context for all new callers.
         llm_context: kbResult.llm_context ?? null,
         meta: kbResult.meta ?? null,
         selected_document_id: selectedDocumentId ?? null,
+        // Policy caller contract: exact full-content policy evidence only.
+        // rag_summary is intentionally excluded from compliance decisions.
+        policy_evidence: policyEvidence,
       },
       200,
       req,
