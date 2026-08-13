@@ -1952,8 +1952,27 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
 
   const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
   if (!anthropicKey) { await cleanupThinking(supabaseAdmin, conversation_id, source_message_id); return new Response(JSON.stringify({ error: "AI service not configured" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
-  const anthropicRequestBody: Record<string, unknown> = { model: "claude-haiku-4-5-20251001", max_tokens: 500, system: finalSystemPrompt, messages: claudeMessages };
-  if (flags.ENABLE_TOOL_EXEC) anthropicRequestBody.tools = TOOL_DEFINITIONS;
+  const anthropicRequestBody: Record<string, unknown> = {
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 500,
+    system: finalSystemPrompt,
+    messages: claudeMessages,
+  };
+
+  // PR-7 production closure:
+  // ENABLE_TOOL_EXECUTOR is a gate only until the Tool Executor has a real
+  // end-to-end execution loop. handleToolCall() is still stub-only and this
+  // generate-reply path does not consume Anthropic tool_use blocks.
+  //
+  // Therefore NEVER attach TOOL_DEFINITIONS to a production LLM request yet.
+  // Keeping the flag true may route through orchestration and exercise the
+  // safety gate, but it cannot expose half-implemented tools to the model.
+  if (flags.ENABLE_TOOL_EXEC) {
+    console.warn(
+      "[generate-reply] TOOL_EXECUTOR_NOT_READY: tools withheld from Anthropic request",
+      { conversation_id },
+    );
+  }
   const _orchAbortCtrl = new AbortController();
   const _orchTimeout = setTimeout(() => _orchAbortCtrl.abort(), ANTHROPIC_TIMEOUT_MS);
   let claudeResponse: Response;
