@@ -33,7 +33,7 @@ export interface EscalationShadowInput {
   rag_match_state?: RagMatchState;
   failure_type?: string | null;
   expected_tenant_id?: string;
-  threat_flag?: { value: boolean; reason: string; provider_version: string };
+  threat_flag?: { value: true; reason: string; provider_version: string };
   compliance_jurisdiction_requires_human_review?: {
     value: boolean;
     reason: string;
