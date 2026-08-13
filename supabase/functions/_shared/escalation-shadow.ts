@@ -33,6 +33,12 @@ export interface EscalationShadowInput {
   rag_match_state?: RagMatchState;
   failure_type?: string | null;
   expected_tenant_id?: string;
+  threat_flag?: { value: boolean; reason: string; provider_version: string };
+  compliance_jurisdiction_requires_human_review?: {
+    value: boolean;
+    reason: string;
+    provider_version: string;
+  };
 }
 
 export interface EscalationShadowResult {
@@ -78,33 +84,35 @@ export function evaluateEscalationShadow(
   });
 
   // Only bind signals already known by current generate-reply.
-  context.conversation_status = availableSignal(
-    input.conversation_status,
-    "conversation_history",
-  );
-  context.assigned_agent_id = availableSignal(
-    input.assigned_agent_id,
-    "conversation_history",
-  );
+  context.conversation_status = availableSignal(input.conversation_status, "conversation_history");
+  context.assigned_agent_id = availableSignal(input.assigned_agent_id, "conversation_history");
   if (typeof input.greeting_or_trivial === "boolean") {
-    context.greeting_or_trivial = availableSignal(
-      input.greeting_or_trivial,
-      "local_classifier",
-    );
+    context.greeting_or_trivial = availableSignal(input.greeting_or_trivial, "local_classifier");
+  }
+
+  if (input.threat_flag) {
+    context.threat_flag = availableSignal(input.threat_flag.value, "local_classifier", {
+      provider_version: input.threat_flag.provider_version,
+      reason: input.threat_flag.reason,
+      ...(input.expected_tenant_id ? { tenant_id: input.expected_tenant_id } : {}),
+    });
+  }
+
+  if (input.compliance_jurisdiction_requires_human_review) {
+    const compliance = input.compliance_jurisdiction_requires_human_review;
+    context.compliance_jurisdiction_requires_human_review = availableSignal(compliance.value, "tenant_config", {
+      provider_version: compliance.provider_version,
+      reason: compliance.reason,
+      ...(input.expected_tenant_id ? { tenant_id: input.expected_tenant_id } : {}),
+    });
   }
 
   if (input.rag_match_state) {
-    context.rag_match_state = availableSignal(
-      input.rag_match_state,
-      "kb_rag",
-    );
+    context.rag_match_state = availableSignal(input.rag_match_state, "kb_rag");
   }
 
   if (input.failure_type) {
-    context.failure_type = availableSignal(
-      input.failure_type,
-      "runtime",
-    );
+    context.failure_type = availableSignal(input.failure_type, "runtime");
   }
 
   const enabled = new Set<EscalationRuleId>();
