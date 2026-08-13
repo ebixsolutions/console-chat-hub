@@ -1036,14 +1036,144 @@ async function legacyGenerateReply(conversation_id: string, source_message_id: s
   const handoffLang = detectHandoffLanguage(lastVisitorMsg);
 
   if (handoffLang) {
-    const safeWording = SAFE_HANDOFF_WORDING[handoffLang];
-    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-    const { error: insertError } = await supabaseAdmin.from("messages").insert({ conversation_id, role: "assistant", content: safeWording, status: "delivered", is_recalled: false });
-    if (insertError) console.error("[generate-reply] deterministic handoff insert error:", insertError);
-    const { error: pendingUpdateErr } = await supabaseAdmin.from("conversations").update({ status: "pending", updated_at: new Date().toISOString() }).eq("id", conversation_id);
-    if (pendingUpdateErr) console.error("[generate-reply] CRITICAL: failed to mark conversation pending after handoff:", pendingUpdateErr.message, conversation_id);
-    console.log("[generate-reply] deterministic handoff reply sent:", conversation_id, handoffLang);
-    return new Response(JSON.stringify({ success: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    // PR-7 closure: legacy explicit handoff must use the same atomic
+    // explicit_handoff_tx contract as orchestration.
+    if (!source_message_id) {
+      await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "legacy_handoff_missing_source_message_id",
+          escalation_rule: "R1",
+          handoff_persisted: false,
+        }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
+      );
+    }
+
+    const { data: handoffData, error: handoffError } = await supabaseAdmin.rpc(
+      "explicit_handoff_tx",
+      {
+        p_conversation_id: conversation_id,
+        p_safe_reply_content: SAFE_HANDOFF_WORDING[handoffLang],
+        p_source_message_id: source_message_id,
+      },
+    );
+
+    if (handoffError) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "legacy_handoff_rpc_transport_error",
+          escalation_rule: "R1",
+          handoff_persisted: false,
+          handoff_uncertain: true,
+        }),
+        {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
+      );
+    }
+
+    const handoffResult = String(handoffData?.result ?? "unknown");
+    switch (handoffResult) {
+      case "success":
+        await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+        return new Response(
+          JSON.stringify({
+            success: true,
+            escalation_rule: "R1",
+            handoff_persisted: true,
+            rpc_result: "success",
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+
+      case "already_handled":
+        await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+        return new Response(
+          JSON.stringify({
+            success: true,
+            escalation_rule: "R1",
+            handoff_persisted: true,
+            rpc_result: "already_handled",
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+
+      case "already_resolved":
+        await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+        return new Response(
+          JSON.stringify({
+            success: true,
+            skipped: "resolved",
+            escalation_rule: "R1",
+            handoff_persisted: false,
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+
+      case "already_under_human_control":
+        await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+        return new Response(
+          JSON.stringify({
+            success: true,
+            skipped: "human_handling",
+            escalation_rule: "R1",
+            handoff_persisted: false,
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+
+      case "invalid_source_message":
+        await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "legacy_handoff_invalid_source_message",
+            escalation_rule: "R1",
+            handoff_persisted: false,
+          }),
+          {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          },
+        );
+
+      case "not_found":
+        await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "legacy_handoff_conversation_not_found",
+            escalation_rule: "R1",
+            handoff_persisted: false,
+          }),
+          {
+            status: 404,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          },
+        );
+
+      default:
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "legacy_handoff_unexpected_result",
+            escalation_rule: "R1",
+            handoff_persisted: false,
+            rpc_result: handoffResult,
+          }),
+          {
+            status: 500,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          },
+        );
+    }
   }
 
   const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
