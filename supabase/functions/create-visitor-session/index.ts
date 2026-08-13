@@ -1,95 +1,128 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { corsHeaders, json } from "../_shared/cors.ts";
+import { validateWidgetOrigin } from "../_shared/widget-origin.ts";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
-  if (req.method !== "POST") return json({ success: false, error: "Method not allowed" }, 405);
+  if (req.method !== "POST") {
+    return json({ success: false, error: "Method not allowed" }, 405);
+  }
 
   try {
     const body = await req.json().catch(() => ({}));
     const { channel_id, visitor_fingerprint, visitor_metadata } = body ?? {};
-    if (!channel_id) return json({ success: false, error: "channel_id required" }, 400);
+
+    if (
+      typeof channel_id !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        channel_id,
+      )
+    ) {
+      return json({ success: false, error: "invalid_channel_id" }, 400);
+    }
+
+    if (
+      visitor_metadata != null &&
+      (
+        typeof visitor_metadata !== "object" ||
+        Array.isArray(visitor_metadata)
+      )
+    ) {
+      return json({ success: false, error: "invalid_visitor_metadata" }, 400);
+    }
 
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
+    // Preflight public embed policy. The atomic RPC revalidates channel/company
+    // state inside the transaction before creating any row.
     const { data: channel, error: chErr } = await supabase
       .from("channel_config")
-      .select("id, is_active, channel_type, company_id")
+      .select("id, is_active, channel_type, company_id, allowed_origins")
       .eq("id", channel_id)
       .eq("is_active", true)
       .eq("channel_type", "web_widget")
       .maybeSingle();
-    if (chErr) return json({ success: false, error: chErr.message }, 500);
-    if (!channel) return json({ success: false, error: "Channel not found, inactive, or not a web widget channel" }, 404);
 
-    // Tenant/company identity is channel-owned for public widget traffic.
-    // Never create an unscoped conversation.
+    if (chErr) {
+      console.error("[create-visitor-session] channel lookup failed", chErr.code);
+      return json({ success: false, error: "channel_lookup_failed" }, 500);
+    }
+    if (!channel) {
+      return json({ success: false, error: "channel_not_found" }, 404);
+    }
     if (!channel.company_id) {
-      return json({ success: false, error: "Channel company scope not configured" }, 409);
-    }
-    const { data: company, error: companyErr } = await supabase
-      .from("company")
-      .select("id, is_active")
-      .eq("id", channel.company_id)
-      .maybeSingle();
-    if (companyErr) return json({ success: false, error: "Company lookup failed" }, 500);
-    if (!company || company.is_active !== true) {
-      return json({ success: false, error: "Channel company is inactive or unavailable" }, 409);
+      return json({ success: false, error: "channel_company_scope_not_configured" }, 409);
     }
 
-    // TODO L2.1: Uncomment below to enforce allowed_origins before production
-    // Origin validation skeleton — currently dev-bypassed
+    const originCheck = validateWidgetOrigin(req, channel.allowed_origins);
+    if (!originCheck.ok) {
+      return json({ success: false, error: originCheck.error }, 403);
+    }
 
-    const origin = req.headers.get("origin") || req.headers.get("referer") || null;
+    const sessionToken =
+      crypto.randomUUID() + "." + crypto.randomUUID().replace(/-/g, "");
+
     const userAgent = req.headers.get("user-agent") || null;
-    const metadata = { ...(visitor_metadata || {}), origin, user_agent: userAgent };
+    const metadata = {
+      ...(visitor_metadata ?? {}),
+      origin: originCheck.origin,
+      user_agent: userAgent,
+    };
 
-    const sessionToken = crypto.randomUUID() + "." + crypto.randomUUID().replace(/-/g, "");
+    const { data: result, error: txError } = await supabase.rpc(
+      "create_widget_session_tx",
+      {
+        p_channel_id: channel_id,
+        p_session_token: sessionToken,
+        p_visitor_fingerprint:
+          typeof visitor_fingerprint === "string"
+            ? visitor_fingerprint.slice(0, 512)
+            : null,
+        p_visitor_metadata: metadata,
+        p_page_url: originCheck.origin,
+      },
+    );
 
-    const { data: session, error: sErr } = await supabase
-      .from("visitor_session")
-      .insert({
-        session_token: sessionToken,
-        channel_config_id: channel_id,
-        visitor_fingerprint: visitor_fingerprint ?? null,
-        visitor_metadata: metadata,
-        last_seen_at: new Date().toISOString(),
-      })
-      .select("id, session_token")
-      .single();
-    if (sErr || !session) return json({ success: false, error: sErr?.message || "session failed" }, 500);
+    if (txError) {
+      console.error(
+        "[create-visitor-session] create_widget_session_tx failed",
+        txError.code,
+      );
+      return json({ success: false, error: "widget_session_create_failed" }, 500);
+    }
 
-    const { data: conv, error: cErr } = await supabase
-      .from("conversations")
-      .insert({
-        visitor_session_id: session.id,
-        channel_config_id: channel_id,
-        company_id: channel.company_id,
-        status: "open",
-      })
-      .select("id")
-      .single();
-    if (cErr || !conv) return json({ success: false, error: cErr?.message || "conversation failed" }, 500);
+    const txResult = String(result?.result ?? "unknown");
+    if (txResult !== "success") {
+      const status =
+        txResult === "channel_not_found"
+          ? 404
+          : txResult === "channel_company_unresolved" ||
+              txResult === "company_inactive"
+            ? 409
+            : 400;
 
-    await supabase.from("widget_session_event").insert({
-      visitor_session_id: session.id,
-      event_type: "widget_open",
-      event_data: { conversation_id: conv.id },
-      page_url: origin,
-    });
+      return json(
+        {
+          success: false,
+          error: `widget_session_${txResult}`,
+        },
+        status,
+      );
+    }
 
     return json({
       success: true,
       data: {
-        session_token: session.session_token,
-        session_id: session.id,
-        conversation_id: conv.id,
+        session_token: sessionToken,
+        session_id: result.session_id,
+        conversation_id: result.conversation_id,
       },
     });
   } catch (e) {
-    return json({ success: false, error: (e as Error).message }, 500);
+    console.error("[create-visitor-session] unexpected", (e as Error).name);
+    return json({ success: false, error: "internal_error" }, 500);
   }
 });
