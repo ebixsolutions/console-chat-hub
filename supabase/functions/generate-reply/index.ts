@@ -236,11 +236,13 @@ function isGreetingOrTrivial(text: string): boolean {
 
 const E2_LOCAL_THREAT_CLASSIFIER_VERSION = "e2-local-threat-v1.0" as const;
 
-function classifyAuthoritativeThreat(text: string): {
-  value: boolean;
-  reason: string;
-  provider_version: string;
-} {
+function classifyAuthoritativeThreat(text: string):
+  | {
+      value: true;
+      reason: string;
+      provider_version: string;
+    }
+  | undefined {
   const normalized = text.trim().replace(/\s+/g, " ");
   const lower = normalized.toLowerCase();
 
@@ -259,9 +261,11 @@ function classifyAuthoritativeThreat(text: string): {
   const matched =
     explicitEnglishThreats.some((re) => re.test(lower)) || explicitChineseThreats.some((re) => re.test(normalized));
 
+  if (!matched) return undefined;
+
   return {
-    value: matched,
-    reason: matched ? "explicit_violence_or_harm_threat" : "no_explicit_threat_match",
+    value: true,
+    reason: "explicit_violence_or_harm_threat",
     provider_version: E2_LOCAL_THREAT_CLASSIFIER_VERSION,
   };
 }
@@ -449,6 +453,12 @@ function requiredRuleActivationFromEnv(env: { get(name: string): string | undefi
   return enabled;
 }
 
+function isE2LiveActivationEnabled(env: { get(name: string): string | undefined }): boolean {
+  if (env.get("ESC_ENABLE_REQUIRED_RULES_LIVE") !== "true") return false;
+  const flags = escalationFeatureFlagsFromEnv(env);
+  return flags.enable_full_ruleset || flags.enable_e2;
+}
+
 async function evaluateAndPersistRequiredRulesLive(
   supabaseAdmin: ReturnType<typeof createClient>,
   params: {
@@ -468,7 +478,7 @@ async function evaluateAndPersistRequiredRulesLive(
     consecutive_no_answer?: number;
     clarification_attempts?: number;
     exact_same_intent_repeated?: true;
-    threat_flag?: { value: boolean; reason: string; provider_version: string };
+    threat_flag?: { value: true; reason: string; provider_version: string };
     compliance_jurisdiction_requires_human_review?: {
       value: boolean;
       reason: string;
@@ -556,10 +566,10 @@ async function evaluateAndPersistRequiredRulesLive(
 
   context.tenant_config = buildVerifiedTenantEscalationConfig();
 
-  // CoachAI / Policy / compliance signals remain unavailable until their
-  // authoritative providers/contracts are verified. Non-identical visitor
-  // wording does not force same_intent_repeated=false.
-  // until their authoritative providers/contracts are verified. No mock values.
+  // CoachAI / Policy signals remain unavailable until their authoritative
+  // provider contracts are verified. E2 compliance is bound only from an
+  // explicit tenant-id mapping; absent/invalid mapping remains unavailable.
+  // Non-identical visitor wording does not force same_intent_repeated=false.
   const decision = evaluateFullEscalationRuleset(context, {
     activation: { enabled },
   });
@@ -1502,23 +1512,25 @@ async function orchestrationGenerateReply(
   // ── End PR-5 canonical escalation evaluation ──────────────────────────
 
   // E2 MUST run before R1 to preserve authoritative first-match order.
-  const _pr5E2PreflightResponse = await evaluateAndPersistRequiredRulesLive(supabaseAdmin, {
-    conversation_id,
-    source_message_id,
-    latest_message_content: _h1LastMsg,
-    conversation_status: conversation.status,
-    assigned_agent_id: conversation.assigned_agent_id ?? null,
-    greeting_or_trivial: _pr5GreetingOrTrivial,
-    visitor_language: _visitorLang,
-    expected_tenant_id: _pr5ExpectedTenantId,
-    turn_count: _pr5History.turn_count,
-    consecutive_no_answer: _pr5History.consecutive_no_answer,
-    clarification_attempts: _pr5History.clarification_attempts,
-    exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
-    threat_flag: _pr5ThreatSignal,
-    compliance_jurisdiction_requires_human_review: _pr5ComplianceSignal,
-  });
-  if (_pr5E2PreflightResponse) return _pr5E2PreflightResponse;
+  if (isE2LiveActivationEnabled(Deno.env)) {
+    const _pr5E2PreflightResponse = await evaluateAndPersistRequiredRulesLive(supabaseAdmin, {
+      conversation_id,
+      source_message_id,
+      latest_message_content: _h1LastMsg,
+      conversation_status: conversation.status,
+      assigned_agent_id: conversation.assigned_agent_id ?? null,
+      greeting_or_trivial: _pr5GreetingOrTrivial,
+      visitor_language: _visitorLang,
+      expected_tenant_id: _pr5ExpectedTenantId,
+      turn_count: _pr5History.turn_count,
+      consecutive_no_answer: _pr5History.consecutive_no_answer,
+      clarification_attempts: _pr5History.clarification_attempts,
+      exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
+      threat_flag: _pr5ThreatSignal,
+      compliance_jurisdiction_requires_human_review: _pr5ComplianceSignal,
+    });
+    if (_pr5E2PreflightResponse) return _pr5E2PreflightResponse;
+  }
 
   const _escMvpEnabled = Deno.env.get("ESC_MVP_FEATURE_FLAG") === "true";
   let _escHandled = false;
