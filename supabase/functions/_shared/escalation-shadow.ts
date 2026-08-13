@@ -39,6 +39,8 @@ export interface EscalationShadowInput {
     reason: string;
     provider_version: string;
   };
+  topic_risk_level?: "high";
+  verified_local_risk_classification?: true;
 }
 
 export interface EscalationShadowResult {
@@ -109,6 +111,15 @@ export function evaluateEscalationShadow(
 
   if (input.rag_match_state) {
     context.rag_match_state = availableSignal(input.rag_match_state, "kb_rag");
+  }
+
+  if (input.topic_risk_level === "high") {
+    context.topic_risk_level = availableSignal("high", "local_classifier", {
+      reason: "verified_high_risk_topic",
+    });
+  }
+  if (input.verified_local_risk_classification === true) {
+    context.verified_local_risk_classification = availableSignal(true, "local_classifier");
   }
 
   if (input.failure_type) {
