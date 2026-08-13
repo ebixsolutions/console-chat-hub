@@ -240,15 +240,25 @@ function evaluateR2(context: EscalationContext, gaps: Set<string>, warnings: str
   if (maxNoAnswer === null) return null;
 
   const repeated = isAvailable(context.same_intent_repeated) && context.same_intent_repeated.value === true;
-  const noAnswerCount = isAvailable(context.consecutive_no_answer)
-    ? context.consecutive_no_answer.value
-    : null;
+  const noAnswerCount = isAvailable(context.consecutive_no_answer) ? context.consecutive_no_answer.value : null;
   const ragGap = context.rag_match_state.value === "no_match" || context.rag_match_state.value === "partial_match";
 
   if (!repeated || noAnswerCount === null || !ragGap) return null;
 
+  const clarificationAttempts = isAvailable(context.clarification_attempts)
+    ? context.clarification_attempts.value
+    : null;
+  const clarificationCap = maxClarifications(context);
+
   if (noAnswerCount < maxNoAnswer && shouldClarify(context, gaps)) {
     return decision("R2", "clarify", null, "clarification_required_before_r2", gaps, warnings);
+  }
+
+  // G2 closure: after the one allowed clarification, an exact repeated intent
+  // with the same unresolved RAG gap must not loop back to AI merely because
+  // the assistant clarification reset consecutive_no_answer.
+  if (clarificationAttempts !== null && clarificationCap > 0 && clarificationAttempts >= clarificationCap) {
+    return decision("R2", "handoff", "high", "repeated_after_clarification", gaps, warnings);
   }
 
   if (noAnswerCount < maxNoAnswer) return null;
@@ -259,10 +269,7 @@ function evaluateR2(context: EscalationContext, gaps: Set<string>, warnings: str
 function evaluateR3(context: EscalationContext, gaps: Set<string>, warnings: string[]): EscalationDecision | null {
   if (greetingSuppressesNonCritical(context)) return null; // G-1
 
-  if (
-    isAvailable(context.sentiment_recovered_same_turn) &&
-    context.sentiment_recovered_same_turn.value === true
-  ) {
+  if (isAvailable(context.sentiment_recovered_same_turn) && context.sentiment_recovered_same_turn.value === true) {
     return null; // G-4
   }
 
@@ -277,8 +284,7 @@ function evaluateR3(context: EscalationContext, gaps: Set<string>, warnings: str
     sentimentThreshold !== null &&
     isAvailable(context.sentiment_score) &&
     context.sentiment_score.value < sentimentThreshold;
-  const falling =
-    isAvailable(context.sentiment_trend) && trendHasTwoConsecutiveDrops(context.sentiment_trend.value);
+  const falling = isAvailable(context.sentiment_trend) && trendHasTwoConsecutiveDrops(context.sentiment_trend.value);
 
   if (!(anger || lowSentiment || falling)) return null;
 
@@ -298,9 +304,7 @@ function evaluateP2(context: EscalationContext, gaps: Set<string>, warnings: str
     context.conversation_duration_sec.value > slaWarning;
 
   const turnsMatch =
-    maxUnresolved !== null &&
-    isAvailable(context.unresolved_turns) &&
-    context.unresolved_turns.value > maxUnresolved;
+    maxUnresolved !== null && isAvailable(context.unresolved_turns) && context.unresolved_turns.value > maxUnresolved;
 
   if (!(durationMatch || turnsMatch)) return null;
 
@@ -348,14 +352,10 @@ function evaluateP1(context: EscalationContext, gaps: Set<string>, warnings: str
   const escalationThreshold = threshold(context, "escalation_score_threshold", gaps);
 
   const lowCsat =
-    csatThreshold !== null &&
-    isAvailable(context.predicted_csat) &&
-    context.predicted_csat.value < csatThreshold;
+    csatThreshold !== null && isAvailable(context.predicted_csat) && context.predicted_csat.value < csatThreshold;
 
   const highChurn =
-    churnThreshold !== null &&
-    isAvailable(context.churn_risk) &&
-    context.churn_risk.value > churnThreshold;
+    churnThreshold !== null && isAvailable(context.churn_risk) && context.churn_risk.value > churnThreshold;
 
   const highEscalation =
     escalationThreshold !== null &&
