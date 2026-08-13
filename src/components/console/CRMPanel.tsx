@@ -21,7 +21,14 @@ export type CtxMsg = {
   created_at: string | null;
 };
 
-export type KBResult = { display_label: string; content: string; score: number; source_type: string };
+export type KBResult = {
+  display_label: string;
+  content: string;
+  score: number;
+  source_type: string;
+  document_id?: string;
+  chunk_type?: "rag_summary" | "full_content" | "faq_pair" | "section" | "unknown";
+};
 export type PolicyResult = {
   status: string;
   summary: string;
@@ -35,6 +42,10 @@ export const RIGHT_COPY = {
   kbRefresh: { en: "Refresh", zh: "重新整理" },
   kbCopy: { en: "Copy", zh: "複製" },
   kbInsert: { en: "Insert into Draft", zh: "插入草稿" },
+  kbSummaryOnly: {
+    en: "Summary only — use full content for draft insertion",
+    zh: "僅供摘要參考 — 插入草稿請使用完整內容",
+  },
   kbLoading: { en: "Searching knowledge base...", zh: "搜尋知識庫中..." },
   kbEmpty: { en: "No relevant knowledge found", zh: "未找到相關知識" },
   kbEmptySub: { en: "Try a different search or select a conversation", zh: "請嘗試其他搜尋或選取對話" },
@@ -561,7 +572,11 @@ export function CRMPanel({
                         marginLeft: 4,
                       }}
                     >
-                      {r.source_type}
+                      {r.chunk_type === "rag_summary"
+                        ? "summary"
+                        : r.chunk_type === "full_content"
+                          ? "full content"
+                          : r.source_type}
                     </span>
                   </div>
                   <div style={{ fontSize: 10.5, color: "#555", lineHeight: 1.5, marginBottom: 4 }}>
@@ -576,12 +591,21 @@ export function CRMPanel({
                       <button onClick={() => handleCopy(r.content)} style={btnSm}>
                         {rc("kbCopy")}
                       </button>
-                      <button
-                        onClick={() => onInsertDraft(r.content)}
-                        style={{ ...btnSm, color: "#2563eb", borderColor: "#2563eb" }}
-                      >
-                        {rc("kbInsert")}
-                      </button>
+                      {r.chunk_type === "full_content" ? (
+                        <button
+                          onClick={() => onInsertDraft(r.content)}
+                          style={{ ...btnSm, color: "#2563eb", borderColor: "#2563eb" }}
+                        >
+                          {rc("kbInsert")}
+                        </button>
+                      ) : r.chunk_type === "rag_summary" ? (
+                        <span
+                          title={rc("kbSummaryOnly")}
+                          style={{ fontSize: 9.5, color: "#9ca3af", fontStyle: "italic" }}
+                        >
+                          {rc("kbSummaryOnly")}
+                        </span>
+                      ) : null}
                     </div>
                   </div>
                 </div>
