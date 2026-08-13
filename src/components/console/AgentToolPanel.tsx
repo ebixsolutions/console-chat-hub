@@ -25,6 +25,18 @@ const TOOL_COPY = {
   toolHint: { en: "Enter text, then select a tool.", zh: "輸入文字後選取工具。" },
   resolved: { en: "Conversation resolved — tools disabled", zh: "對話已解決 — 工具已停用" },
   reqFailed: { en: "Request failed", zh: "請求失敗" },
+  kbUnavailable: {
+    en: "Knowledge base unavailable — suggestion not generated",
+    zh: "知識庫目前無法使用 — 未產生建議回覆",
+  },
+  kbTenantUnresolved: {
+    en: "Knowledge scope is not configured for this conversation",
+    zh: "此對話尚未設定可驗證的知識庫租戶範圍",
+  },
+  kbInsufficientEvidence: {
+    en: "Not enough verified knowledge to generate a grounded reply",
+    zh: "沒有足夠已驗證知識可產生有依據的建議回覆",
+  },
   netError: { en: "Network error", zh: "網路錯誤" },
   transResult: { en: "Translation", zh: "翻譯結果" },
   gramResult: { en: "Grammar Check", zh: "文法檢查" },
@@ -91,9 +103,29 @@ export function AgentToolPanel({
         body: { tool_type: tt, conversation_id: conversationId, content: ac, ...extra },
       });
       if (error || !data?.success) {
-        if (data?.result?.status === "insufficient_evidence") setTr({ type: tt, data: data.result });
-        else setTe(tc("reqFailed"));
-      } else setTr({ type: tt, data: data.result });
+        if (data?.result?.status === "insufficient_evidence") {
+          setTr({ type: tt, data: data.result });
+        } else if (
+          tt === "suggest_reply" &&
+          data?.error === "suggest_kb_tenant_unresolved"
+        ) {
+          setTe(tc("kbTenantUnresolved"));
+        } else if (
+          tt === "suggest_reply" &&
+          data?.error === "suggest_insufficient_evidence"
+        ) {
+          setTe(tc("kbInsufficientEvidence"));
+        } else if (
+          tt === "suggest_reply" &&
+          data?.error === "suggest_kb_unavailable"
+        ) {
+          setTe(tc("kbUnavailable"));
+        } else {
+          setTe(tc("reqFailed"));
+        }
+      } else {
+        setTr({ type: tt, data: data.result });
+      }
     } catch {
       setTe(tc("netError"));
     }
