@@ -1613,8 +1613,8 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     if (r1Response) return r1Response;
   }
 
-  if (Deno.env.get("ESC_SHADOW_MODE") === "true" && _pr5R3Sentiment) {
-    const r3Shadow = evaluateEscalationShadow({
+  if (Deno.env.get("ESC_SHADOW_MODE") === "true") {
+    const advisoryShadow = evaluateEscalationShadow({
       conversation_id,
       source_message_id,
       latest_message_content: _h1LastMsg,
@@ -1640,14 +1640,14 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
       p1_provider_version: _pr5P1Signals?.provider_version,
       p1_provider_source: _pr5P1Signals?.provider_source,
     }, Deno.env);
-    if (r3Shadow) {
+    if (advisoryShadow) {
       console.log("[generate-reply] PR-5 advisory post-KB shadow:", {
         conversation_id,
-        matched_rule: r3Shadow.matched_rule,
-        decision: r3Shadow.decision,
-        reason_code: r3Shadow.reason_code,
-        signal_gaps: r3Shadow.signal_gaps,
-        sentiment_evaluation_id: _pr5R3Sentiment.evaluation_id,
+        matched_rule: advisoryShadow.matched_rule,
+        decision: advisoryShadow.decision,
+        reason_code: advisoryShadow.reason_code,
+        signal_gaps: advisoryShadow.signal_gaps,
+        sentiment_evaluation_id: _pr5R3Sentiment?.evaluation_id,
       });
     }
   }
