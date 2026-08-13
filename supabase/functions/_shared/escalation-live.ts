@@ -116,3 +116,79 @@ export async function persistRequiredEscalationHandoff(
       };
   }
 }
+
+export interface RequiredClarificationRpcClient {
+  rpc(
+    fn: "required_escalation_clarification_tx",
+    args: {
+      p_conversation_id: string;
+      p_source_message_id: string;
+      p_escalation_rule: "R2";
+      p_clarification_content: string;
+      p_reason_code: string;
+    },
+  ): Promise<{ data: Record<string, unknown> | null; error: { message?: string } | null }>;
+}
+
+export type RequiredClarificationResult =
+  | { ok: true; result: "success" | "already_handled"; data: Record<string, unknown> }
+  | {
+      ok: false;
+      result:
+        | "not_r2_clarification"
+        | "invalid_clarification"
+        | "already_resolved"
+        | "already_under_human_control"
+        | "max_clarifications_reached"
+        | "invalid_source_message"
+        | "invalid_input"
+        | "invalid_rule"
+        | "rpc_transport_error"
+        | "unexpected_result";
+      detail?: string;
+      data?: Record<string, unknown>;
+    };
+
+export async function persistRequiredEscalationClarification(
+  client: RequiredClarificationRpcClient,
+  input: PersistRequiredHandoffInput,
+): Promise<RequiredClarificationResult> {
+  if (input.decision.decision !== "clarify" || input.decision.matched_rule !== "R2") {
+    return { ok: false, result: "not_r2_clarification" };
+  }
+
+  const clarification = input.safe_reply_content.trim();
+  if (!clarification || clarification === "__THINKING__" || clarification.length > 1200) {
+    return { ok: false, result: "invalid_clarification" };
+  }
+
+  const { data, error } = await client.rpc("required_escalation_clarification_tx", {
+    p_conversation_id: input.conversation_id,
+    p_source_message_id: input.source_message_id,
+    p_escalation_rule: "R2",
+    p_clarification_content: clarification,
+    p_reason_code: input.decision.reason_code,
+  });
+
+  if (error) {
+    return { ok: false, result: "rpc_transport_error", detail: error.message ?? "rpc_error" };
+  }
+
+  const payload = data ?? {};
+  const result = String(payload.result ?? "unexpected_result");
+
+  switch (result) {
+    case "success":
+    case "already_handled":
+      return { ok: true, result, data: payload };
+    case "already_resolved":
+    case "already_under_human_control":
+    case "max_clarifications_reached":
+    case "invalid_source_message":
+    case "invalid_input":
+    case "invalid_rule":
+      return { ok: false, result, data: payload };
+    default:
+      return { ok: false, result: "unexpected_result", detail: result, data: payload };
+  }
+}
