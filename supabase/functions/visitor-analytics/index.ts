@@ -36,6 +36,56 @@ function toSessionRef(uuid: string): string {
   return "vs_" + clean.slice(0, 4) + "..." + clean.slice(-4);
 }
 
+async function resolveSingleCompany(
+  admin: ReturnType<typeof createClient>,
+  userId: string,
+): Promise<
+  | { ok: true; companyId: string }
+  | { ok: false; code: string; status: number }
+> {
+  const { data: memberships, error } = await admin
+    .from("company_membership")
+    .select("company_id, is_active")
+    .eq("user_id", userId)
+    .eq("is_active", true);
+
+  if (error) {
+    console.error("[visitor-analytics] company membership lookup failed", error.code);
+    return { ok: false, code: "company_membership_lookup_failed", status: 500 };
+  }
+
+  const companyIds = [
+    ...new Set(
+      (memberships ?? [])
+        .map((row: { company_id: string | null }) => row.company_id)
+        .filter((id: string | null): id is string => Boolean(id)),
+    ),
+  ];
+
+  if (companyIds.length === 0) {
+    return { ok: false, code: "company_membership_unresolved", status: 403 };
+  }
+  if (companyIds.length !== 1) {
+    // Analytics must never merge tenants or guess which company is intended.
+    return { ok: false, code: "company_membership_ambiguous", status: 409 };
+  }
+
+  const { data: company, error: companyError } = await admin
+    .from("company")
+    .select("id, is_active")
+    .eq("id", companyIds[0])
+    .maybeSingle();
+
+  if (companyError) {
+    return { ok: false, code: "company_lookup_failed", status: 500 };
+  }
+  if (!company || company.is_active !== true) {
+    return { ok: false, code: "company_inactive", status: 403 };
+  }
+
+  return { ok: true, companyId: String(company.id) };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     const optOrigin = req.headers.get("Origin") ?? "";
@@ -58,237 +108,382 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const supabaseAuth = createClient(
+    const auth = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_ANON_KEY")!,
-      { global: { headers: { Authorization: req.headers.get("Authorization") ?? "" } } },
+      {
+        global: {
+          headers: { Authorization: req.headers.get("Authorization") ?? "" },
+        },
+      },
     );
-    const { data: { user }, error: authErr } = await supabaseAuth.auth.getUser();
-    if (authErr || !user) {
+    const {
+      data: { user },
+      error: authError,
+    } = await auth.auth.getUser();
+    if (authError || !user) {
       return jsonResponse({ error: "unauthorized" }, 401, req);
     }
 
-    const supabaseAdmin = createClient(
+    const admin = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
-    const { data: userRoles, error: roleErr } = await supabaseAdmin
+
+    const { data: userRoles, error: roleError } = await admin
       .from("user_roles")
       .select("role")
       .eq("user_id", user.id);
-    if (roleErr || !userRoles || userRoles.length === 0) {
+    if (
+      roleError ||
+      !userRoles?.some((row: { role: string }) => ALLOWED_ROLES.has(row.role))
+    ) {
       return jsonResponse({ error: "forbidden" }, 403, req);
     }
-    if (!userRoles.some((r: { role: string }) => ALLOWED_ROLES.has(r.role))) {
-      return jsonResponse({ error: "forbidden" }, 403, req);
+
+    const company = await resolveSingleCompany(admin, user.id);
+    if (!company.ok) {
+      return jsonResponse({ error: company.code }, company.status, req);
     }
+    const companyId = company.companyId;
 
     const body = await req.json().catch(() => null);
     if (!body || typeof body !== "object") {
-      return jsonResponse({ error: "invalid_request", detail: "JSON body required" }, 400, req);
+      return jsonResponse(
+        { error: "invalid_request", detail: "JSON body required" },
+        400,
+        req,
+      );
     }
 
-    const bodyKeys = Object.keys(body);
-    const mode = body.mode;
-    const visitorSessionId = body.visitor_session_id;
-
     const allowedKeys = new Set(["mode", "visitor_session_id"]);
-    for (const k of bodyKeys) {
-      if (!allowedKeys.has(k)) {
-        return jsonResponse({ error: "invalid_request", detail: "unknown field" }, 400, req);
+    for (const key of Object.keys(body)) {
+      if (!allowedKeys.has(key)) {
+        return jsonResponse(
+          { error: "invalid_request", detail: "unknown field" },
+          400,
+          req,
+        );
       }
     }
 
+    const mode = body.mode;
+    const visitorSessionId = body.visitor_session_id;
     const hasMode = mode !== undefined;
-    const hasVsId = visitorSessionId !== undefined;
+    const hasVisitor = visitorSessionId !== undefined;
 
-    if (hasMode && hasVsId) {
-      return jsonResponse({ error: "invalid_request", detail: "provide mode or visitor_session_id, not both" }, 400, req);
+    if (hasMode === hasVisitor) {
+      return jsonResponse(
+        {
+          error: "invalid_request",
+          detail: "provide exactly one of mode or visitor_session_id",
+        },
+        400,
+        req,
+      );
     }
-    if (!hasMode && !hasVsId) {
-      return jsonResponse({ error: "invalid_request", detail: "provide mode:'summary' or visitor_session_id" }, 400, req);
-    }
+
     if (hasMode && mode !== "summary") {
-      return jsonResponse({ error: "invalid_request", detail: "mode must be 'summary'" }, 400, req);
+      return jsonResponse(
+        { error: "invalid_request", detail: "mode must be 'summary'" },
+        400,
+        req,
+      );
     }
 
     if (mode === "summary") {
-      const { count: totalSessions, error: e1 } = await supabaseAdmin
-        .from("visitor_session")
-        .select("id", { count: "exact", head: true });
-      if (e1) {
-        console.error("[visitor-analytics] sessions_count failed");
+      // Tenant boundary is conversations.company_id. Every downstream metric is
+      // derived exclusively from this scoped conversation set.
+      const { data: conversations, error: conversationError } = await admin
+        .from("conversations")
+        .select(
+          "id, visitor_session_id, status, created_at, updated_at, resolved_at",
+        )
+        .eq("company_id", companyId);
+
+      if (conversationError) {
+        console.error(
+          "[visitor-analytics] scoped conversations query failed",
+          conversationError.code,
+        );
         return jsonResponse({ error: "analytics_query_failed" }, 500, req);
       }
 
-      const { data: convRows, error: e2 } = await supabaseAdmin
-        .from("conversations")
-        .select("id, status");
-      if (e2) {
-        console.error("[visitor-analytics] conversations_query failed");
-        return jsonResponse({ error: "analytics_query_failed" }, 500, req);
-      }
-      const totalConversations = convRows?.length ?? 0;
+      const convRows = conversations ?? [];
+      const conversationIds = convRows.map((row) => String(row.id));
+      const sessionIds = [
+        ...new Set(
+          convRows
+            .map((row) =>
+              row.visitor_session_id ? String(row.visitor_session_id) : null
+            )
+            .filter((id): id is string => Boolean(id)),
+        ),
+      ];
+
       const statusCounts: Record<string, number> = {};
-      (convRows ?? []).forEach((c: { status: string }) => {
-        statusCounts[c.status] = (statusCounts[c.status] || 0) + 1;
-      });
-
-      const { count: msgCount, error: e3 } = await supabaseAdmin
-        .from("messages")
-        .select("id", { count: "exact", head: true })
-        .neq("content", "__THINKING__")
-        .eq("is_recalled", false);
-      if (e3) {
-        console.error("[visitor-analytics] message_count failed");
-        return jsonResponse({ error: "analytics_query_failed" }, 500, req);
+      for (const row of convRows) {
+        statusCounts[String(row.status)] =
+          (statusCounts[String(row.status)] ?? 0) + 1;
       }
 
-      const { data: fbRows, error: e4 } = await supabaseAdmin
-        .from("feedback_request")
-        .select("rating")
-        .not("rating", "is", null);
-      if (e4) {
-        console.error("[visitor-analytics] feedback_query failed");
-        return jsonResponse({ error: "analytics_query_failed" }, 500, req);
-      }
-      const feedbackCount = fbRows?.length ?? 0;
-      let avgRating: number | null = null;
-      if (feedbackCount > 0) {
-        const sum = (fbRows ?? []).reduce((a: number, r: { rating: number | null }) => a + (r.rating ?? 0), 0);
-        avgRating = Math.round((sum / feedbackCount) * 10) / 10;
-      }
+      let totalMessages = 0;
+      let feedbackRows: Array<{ conversation_id: string; rating: number | null }> =
+        [];
 
-      const { data: recentSessions, error: e5 } = await supabaseAdmin
-        .from("visitor_session")
-        .select("id, created_at, last_seen_at")
-        .order("last_seen_at", { ascending: false })
-        .limit(MAX_RECENT);
-      if (e5) {
-        console.error("[visitor-analytics] recent_sessions failed");
-        return jsonResponse({ error: "analytics_query_failed" }, 500, req);
-      }
-
-      const recentList = [];
-      for (const vs of (recentSessions ?? [])) {
-        const { count: convCount, error: e6 } = await supabaseAdmin
-          .from("conversations")
-          .select("id", { count: "exact", head: true })
-          .eq("visitor_session_id", vs.id);
-        if (e6) {
-          console.error("[visitor-analytics] session_conv_count failed");
-          return jsonResponse({ error: "analytics_query_failed" }, 500, req);
-        }
-        const { data: lastConv, error: e7 } = await supabaseAdmin
-          .from("conversations")
-          .select("status")
-          .eq("visitor_session_id", vs.id)
-          .order("updated_at", { ascending: false })
-          .limit(1);
-        if (e7) {
-          console.error("[visitor-analytics] last_conv_query failed");
-          return jsonResponse({ error: "analytics_query_failed" }, 500, req);
-        }
-        recentList.push({
-          session_ref: toSessionRef(vs.id),
-          first_seen: vs.created_at,
-          last_seen: vs.last_seen_at,
-          conversation_count: convCount ?? 0,
-          last_status: lastConv?.[0]?.status ?? "unknown",
-        });
-      }
-
-      return jsonResponse({
-        success: true,
-        summary: {
-          total_sessions: totalSessions ?? 0,
-          total_conversations: totalConversations,
-          status_counts: statusCounts,
-          total_messages: msgCount ?? 0,
-          feedback_count: feedbackCount,
-          average_rating: avgRating,
-          recent_sessions: recentList,
-        },
-      }, 200, req);
-    }
-
-    if (hasVsId) {
-      if (!isUuid(visitorSessionId)) {
-        return jsonResponse({ error: "invalid_request", detail: "visitor_session_id must be valid UUID" }, 400, req);
-      }
-
-      const { data: vs, error: eVs } = await supabaseAdmin
-        .from("visitor_session")
-        .select("id, created_at, last_seen_at")
-        .eq("id", visitorSessionId)
-        .maybeSingle();
-      if (eVs) {
-        console.error("[visitor-analytics] session_lookup failed");
-        return jsonResponse({ error: "analytics_query_failed" }, 500, req);
-      }
-      if (!vs) {
-        return jsonResponse({ error: "not_found" }, 404, req);
-      }
-
-      const { data: convs, error: eConvs } = await supabaseAdmin
-        .from("conversations")
-        .select("id, status, created_at, resolved_at, updated_at")
-        .eq("visitor_session_id", vs.id)
-        .order("created_at", { ascending: false });
-      if (eConvs) {
-        console.error("[visitor-analytics] visitor_convs failed");
-        return jsonResponse({ error: "analytics_query_failed" }, 500, req);
-      }
-
-      const convList = [];
-      for (const c of (convs ?? [])) {
-        const { count: cMsgCount, error: eMc } = await supabaseAdmin
+      if (conversationIds.length > 0) {
+        const { count, error } = await admin
           .from("messages")
           .select("id", { count: "exact", head: true })
-          .eq("conversation_id", c.id)
+          .in("conversation_id", conversationIds)
           .neq("content", "__THINKING__")
           .eq("is_recalled", false);
-        if (eMc) {
-          console.error("[visitor-analytics] detail_msg_count failed");
+        if (error) {
           return jsonResponse({ error: "analytics_query_failed" }, 500, req);
         }
+        totalMessages = count ?? 0;
 
-        const { data: fb, error: eFb } = await supabaseAdmin
+        const { data, error: feedbackError } = await admin
           .from("feedback_request")
-          .select("rating")
-          .eq("conversation_id", c.id)
-          .not("rating", "is", null)
-          .limit(1);
-        if (eFb) {
-          console.error("[visitor-analytics] detail_feedback failed");
+          .select("conversation_id, rating")
+          .in("conversation_id", conversationIds)
+          .not("rating", "is", null);
+        if (feedbackError) {
           return jsonResponse({ error: "analytics_query_failed" }, 500, req);
         }
-
-        convList.push({
-          status: c.status,
-          created_at: c.created_at,
-          resolved_at: c.resolved_at,
-          message_count: cMsgCount ?? 0,
-          has_feedback: (fb?.length ?? 0) > 0,
-          rating: fb?.[0]?.rating ?? null,
-        });
+        feedbackRows = (data ?? []) as Array<{
+          conversation_id: string;
+          rating: number | null;
+        }>;
       }
 
-      return jsonResponse({
-        success: true,
-        visitor: {
-          session_ref: toSessionRef(vs.id),
-          first_seen: vs.created_at,
-          last_seen: vs.last_seen_at,
-          conversations: convList,
+      const feedbackCount = feedbackRows.length;
+      const averageRating =
+        feedbackCount > 0
+          ? Math.round(
+              (feedbackRows.reduce(
+                (sum, row) => sum + Number(row.rating ?? 0),
+                0,
+              ) /
+                feedbackCount) *
+                10,
+            ) / 10
+          : null;
+
+      const sessionsById = new Map<
+        string,
+        {
+          id: string;
+          firstSeen: string | null;
+          lastSeen: string | null;
+          conversationCount: number;
+          lastStatus: string;
+          lastUpdatedAt: string | null;
+        }
+      >();
+
+      for (const row of convRows) {
+        if (!row.visitor_session_id) continue;
+        const sessionId = String(row.visitor_session_id);
+        const existing = sessionsById.get(sessionId);
+        const createdAt = row.created_at ? String(row.created_at) : null;
+        const updatedAt = row.updated_at ? String(row.updated_at) : createdAt;
+
+        if (!existing) {
+          sessionsById.set(sessionId, {
+            id: sessionId,
+            firstSeen: createdAt,
+            lastSeen: updatedAt,
+            conversationCount: 1,
+            lastStatus: String(row.status),
+            lastUpdatedAt: updatedAt,
+          });
+          continue;
+        }
+
+        existing.conversationCount += 1;
+        if (
+          createdAt &&
+          (!existing.firstSeen ||
+            new Date(createdAt).getTime() <
+              new Date(existing.firstSeen).getTime())
+        ) {
+          existing.firstSeen = createdAt;
+        }
+        if (
+          updatedAt &&
+          (!existing.lastUpdatedAt ||
+            new Date(updatedAt).getTime() >
+              new Date(existing.lastUpdatedAt).getTime())
+        ) {
+          existing.lastSeen = updatedAt;
+          existing.lastUpdatedAt = updatedAt;
+          existing.lastStatus = String(row.status);
+        }
+      }
+
+      // Session timestamps are metadata only. Read only sessions proven to
+      // belong to this company by the scoped conversation relationship.
+      const sessionMeta = new Map<
+        string,
+        { created_at: string | null; last_seen_at: string | null }
+      >();
+      if (sessionIds.length > 0) {
+        const { data, error } = await admin
+          .from("visitor_session")
+          .select("id, created_at, last_seen_at")
+          .in("id", sessionIds);
+        if (error) {
+          return jsonResponse({ error: "analytics_query_failed" }, 500, req);
+        }
+        for (const row of data ?? []) {
+          sessionMeta.set(String(row.id), {
+            created_at: row.created_at ? String(row.created_at) : null,
+            last_seen_at: row.last_seen_at ? String(row.last_seen_at) : null,
+          });
+        }
+      }
+
+      const recentSessions = [...sessionsById.values()]
+        .map((session) => {
+          const meta = sessionMeta.get(session.id);
+          return {
+            session_ref: toSessionRef(session.id),
+            first_seen: meta?.created_at ?? session.firstSeen,
+            last_seen: meta?.last_seen_at ?? session.lastSeen,
+            conversation_count: session.conversationCount,
+            last_status: session.lastStatus,
+          };
+        })
+        .sort((a, b) => {
+          const at = a.last_seen ? new Date(a.last_seen).getTime() : 0;
+          const bt = b.last_seen ? new Date(b.last_seen).getTime() : 0;
+          return bt - at;
+        })
+        .slice(0, MAX_RECENT);
+
+      return jsonResponse(
+        {
+          success: true,
+          scope: { company_id: companyId },
+          summary: {
+            total_sessions: sessionIds.length,
+            total_conversations: convRows.length,
+            status_counts: statusCounts,
+            total_messages: totalMessages,
+            feedback_count: feedbackCount,
+            average_rating: averageRating,
+            recent_sessions: recentSessions,
+          },
         },
-      }, 200, req);
+        200,
+        req,
+      );
     }
 
-    return jsonResponse({ error: "invalid_request", detail: "provide mode:'summary' or visitor_session_id" }, 400, req);
+    if (!isUuid(visitorSessionId)) {
+      return jsonResponse(
+        {
+          error: "invalid_request",
+          detail: "visitor_session_id must be valid UUID",
+        },
+        400,
+        req,
+      );
+    }
 
-  } catch (e) {
-    console.error("[visitor-analytics] unexpected error:", (e as Error).name);
+    // Cross-tenant protection: a visitor session is visible only if it has at
+    // least one conversation owned by the resolved company.
+    const { data: scopedConversations, error: scopedError } = await admin
+      .from("conversations")
+      .select("id, status, created_at, resolved_at, updated_at")
+      .eq("company_id", companyId)
+      .eq("visitor_session_id", visitorSessionId)
+      .order("created_at", { ascending: false });
+
+    if (scopedError) {
+      return jsonResponse({ error: "analytics_query_failed" }, 500, req);
+    }
+    if (!scopedConversations || scopedConversations.length === 0) {
+      // Return 404 rather than revealing that the session may exist elsewhere.
+      return jsonResponse({ error: "not_found" }, 404, req);
+    }
+
+    const { data: visitor, error: visitorError } = await admin
+      .from("visitor_session")
+      .select("id, created_at, last_seen_at")
+      .eq("id", visitorSessionId)
+      .maybeSingle();
+
+    if (visitorError || !visitor) {
+      return jsonResponse({ error: "not_found" }, 404, req);
+    }
+
+    const conversationIds = scopedConversations.map((row) => String(row.id));
+    const { data: messages, error: messageError } = await admin
+      .from("messages")
+      .select("conversation_id, id, content, is_recalled")
+      .in("conversation_id", conversationIds)
+      .neq("content", "__THINKING__")
+      .eq("is_recalled", false);
+
+    if (messageError) {
+      return jsonResponse({ error: "analytics_query_failed" }, 500, req);
+    }
+
+    const { data: feedback, error: feedbackError } = await admin
+      .from("feedback_request")
+      .select("conversation_id, rating")
+      .in("conversation_id", conversationIds)
+      .not("rating", "is", null);
+
+    if (feedbackError) {
+      return jsonResponse({ error: "analytics_query_failed" }, 500, req);
+    }
+
+    const messageCount = new Map<string, number>();
+    for (const row of messages ?? []) {
+      const id = String(row.conversation_id);
+      messageCount.set(id, (messageCount.get(id) ?? 0) + 1);
+    }
+
+    const ratingByConversation = new Map<string, number>();
+    for (const row of feedback ?? []) {
+      const id = String(row.conversation_id);
+      if (!ratingByConversation.has(id) && row.rating != null) {
+        ratingByConversation.set(id, Number(row.rating));
+      }
+    }
+
+    return jsonResponse(
+      {
+        success: true,
+        scope: { company_id: companyId },
+        visitor: {
+          session_ref: toSessionRef(String(visitor.id)),
+          first_seen: visitor.created_at,
+          last_seen: visitor.last_seen_at,
+          conversations: scopedConversations.map((conversation) => {
+            const id = String(conversation.id);
+            return {
+              status: conversation.status,
+              created_at: conversation.created_at,
+              resolved_at: conversation.resolved_at,
+              message_count: messageCount.get(id) ?? 0,
+              has_feedback: ratingByConversation.has(id),
+              rating: ratingByConversation.get(id) ?? null,
+            };
+          }),
+        },
+      },
+      200,
+      req,
+    );
+  } catch (error) {
+    console.error(
+      "[visitor-analytics] unexpected error:",
+      (error as Error).name,
+    );
     return jsonResponse({ error: "internal_error" }, 500, req);
   }
 });
