@@ -106,6 +106,7 @@ Deno.serve(async(req)=>{
   const decision=text((c.payload as Record<string,unknown>|undefined)?.decision);
   const kb=(improved.kb_update||{}) as Record<string,unknown>;
   const documentId=text(kb.document_id), expectedHash=text(kb.expected_content_hash), newContent=typeof kb.new_raw_content==="string"?kb.new_raw_content:"";
+  const verificationQuery=text(kb.verification_query);
   const changeSummary=text(kb.change_summary)||`SU CoachAI training merge ${evaluationId}`;
 
   async function fail(code:string,remoteRef:string|null=null){
@@ -116,6 +117,9 @@ Deno.serve(async(req)=>{
   if(decision!=="trained") return fail("training_decision_not_trained");
   if(!documentId||!/^[0-9a-fA-F-]{8,64}$/.test(documentId)||!/^[0-9a-f]{64}$/i.test(expectedHash)) return fail("kb_update_contract_invalid");
   if(!newContent.trim()||new TextEncoder().encode(newContent).byteLength>MAX_CONTENT_BYTES) return fail("kb_update_content_invalid");
+  // Read-back validation must use an explicit semantic query supplied by the
+  // training result; never derive one heuristically from arbitrary content.
+  if(!verificationQuery||verificationQuery.length>500) return fail("kb_verification_query_invalid");
 
   const tenantId=tenantMap[companyId]; if(!tenantId) return fail("kb_tenant_mapping_unresolved");
   const token=await mintJwt(jwtSecret,companyId,tenantId);
