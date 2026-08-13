@@ -26,6 +26,7 @@ import {
 } from "../_shared/escalation-live.ts";
 import { availableSignal, createEscalationContextBase, escalationFeatureFlagsFromEnv, type EscalationContext, type EscalationRuleId, type RagMatchState, type TopicRiskLevel } from "../_shared/escalation-signals.ts";
 import { evaluateFullEscalationRuleset } from "../_shared/escalation-rules.ts";
+import { assessPolicyEvidenceForR4 } from "../_shared/escalation-policy.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -1445,6 +1446,42 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     return new Response(JSON.stringify({ error: "Internal KB processing error" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 
+  let _pr5R4Policy:
+    | { match_state: "confident_match" | "partial_match" | "conflict" | "no_match" | "unavailable"; provider_version: string; reason: string }
+    | undefined;
+
+  const _pr5ShadowFlags = escalationFeatureFlagsFromEnv(Deno.env);
+  if (
+    _pr5ShadowFlags.shadow_mode &&
+    (_pr5ShadowFlags.enable_full_ruleset || _pr5ShadowFlags.enable_r4) &&
+    finalPromptChunks.length > 0
+  ) {
+    const policyEvidence = finalPromptChunks
+      .filter((chunk) =>
+        typeof chunk.source_type === "string" &&
+        chunk.source_type.toLowerCase().includes("policy") &&
+        typeof chunk.content === "string" &&
+        chunk.content.trim().length > 0
+      )
+      .slice(0, 3)
+      .map((chunk) => ({
+        label: (chunk.title ?? "Policy source").slice(0, 120),
+        content: String(chunk.content).slice(0, 800),
+        source_type: String(chunk.source_type).slice(0, 40),
+      }));
+
+    if (policyEvidence.length > 0) {
+      _pr5R4Policy = await assessPolicyEvidenceForR4(
+        _h1LastMsg,
+        policyEvidence,
+        {
+          anthropic_api_key: Deno.env.get("ANTHROPIC_API_KEY"),
+          timeout_ms: 15000,
+        },
+      );
+    }
+  }
+
   if (Deno.env.get("ESC_SHADOW_MODE") === "true" && _pr5LocalRisk?.level === "high") {
     const e1Shadow = evaluateEscalationShadow({
       conversation_id,
@@ -1517,9 +1554,12 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
       sentiment_evaluation_id: _pr5R3Sentiment.evaluation_id,
       conversation_duration_sec: _pr5ConversationDurationSec,
       tenant_config: _pr5VerifiedTenantConfig,
+      policy_match_state: _pr5R4Policy?.match_state,
+      policy_provider_version: _pr5R4Policy?.provider_version,
+      policy_provider_reason: _pr5R4Policy?.reason,
     }, Deno.env);
     if (r3Shadow) {
-      console.log("[generate-reply] PR-5 R3 sentiment shadow:", {
+      console.log("[generate-reply] PR-5 advisory post-KB shadow:", {
         conversation_id,
         matched_rule: r3Shadow.matched_rule,
         decision: r3Shadow.decision,

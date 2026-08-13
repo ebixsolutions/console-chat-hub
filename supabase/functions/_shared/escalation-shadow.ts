@@ -19,6 +19,7 @@ import {
   type EscalationContext,
   type EscalationRuleId,
   type RagMatchState,
+  type PolicyMatchState,
 } from "./escalation-signals.ts";
 import { evaluateFullEscalationRuleset } from "./escalation-rules.ts";
 
@@ -49,6 +50,9 @@ export interface EscalationShadowInput {
   sentiment_evaluation_id?: string;
   conversation_duration_sec?: number;
   tenant_config?: EscalationContext["tenant_config"];
+  policy_match_state?: PolicyMatchState;
+  policy_provider_version?: string;
+  policy_provider_reason?: string;
 }
 
 export interface EscalationShadowResult {
@@ -188,6 +192,14 @@ export function evaluateEscalationShadow(
 
   if (input.tenant_config) {
     context.tenant_config = input.tenant_config;
+  }
+
+  if (input.policy_match_state) {
+    context.policy_match_state = availableSignal(input.policy_match_state, "policy_engine", {
+      provider_version: input.policy_provider_version,
+      reason: input.policy_provider_reason ?? "agent_assist_policy_contract",
+      ...(input.expected_tenant_id ? { tenant_id: input.expected_tenant_id } : {}),
+    });
   }
 
   if (input.failure_type) {
