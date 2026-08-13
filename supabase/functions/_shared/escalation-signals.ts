@@ -26,6 +26,7 @@ export type SignalAvailability = "available" | "not_checked" | "unavailable" | "
 export type SignalSource =
   | "local_classifier"
   | "conversation_history"
+  | "conversation_evaluation"
   | "kb_rag"
   | "policy_engine"
   | "coach_ai"
@@ -392,10 +393,10 @@ export function createEscalationContextBase(input: {
 
     explicit_request: availableSignal(input.explicit_request, "local_classifier"),
 
-    sentiment_score: unavailableSignal("coach_ai", "provider_contract_unverified"),
+    sentiment_score: unavailableSignal("conversation_evaluation", "no_current_evaluation_data"),
     anger_score: unavailableSignal("coach_ai", "provider_contract_unverified"),
-    anger_flag: unavailableSignal("coach_ai", "provider_contract_unverified"),
-    sentiment_trend: unavailableSignal("coach_ai", "provider_contract_unverified"),
+    anger_flag: unavailableSignal("conversation_evaluation", "no_current_evaluation_data"),
+    sentiment_trend: unavailableSignal("conversation_evaluation", "no_current_evaluation_data"),
     detected_intent: unavailableSignal("coach_ai", "provider_contract_unverified"),
     predicted_csat: unavailableSignal("coach_ai", "provider_contract_unverified"),
     escalation_score: unavailableSignal("coach_ai", "provider_contract_unverified"),
