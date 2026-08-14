@@ -90,6 +90,15 @@ BEGIN
   ) THEN RAISE EXCEPTION 'membership bootstrap has incomplete run'; END IF;
   IF NOT EXISTS (SELECT 1 FROM public.company_membership WHERE company_id=cid AND is_active=true) THEN RAISE EXCEPTION 'canonical company has no active membership'; END IF;
   IF EXISTS (
+    SELECT 1 FROM public.channel_config
+    WHERE company_id IS NULL OR company_id<>cid
+  ) THEN RAISE EXCEPTION 'channel ownership is not canonical'; END IF;
+  IF EXISTS (
+    SELECT 1 FROM public.pr7_channel_ownership_run
+    WHERE company_id=cid AND completed_at IS NULL
+  ) THEN RAISE EXCEPTION 'channel ownership has incomplete run'; END IF;
+
+  IF EXISTS (
     SELECT company_id,user_id FROM public.company_membership
     GROUP BY company_id,user_id HAVING count(*)>1
   ) THEN RAISE EXCEPTION 'duplicate canonical company/user membership rows'; END IF;

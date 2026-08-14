@@ -56,6 +56,10 @@ for f in \
   scripts/pr7-company-membership-bootstrap.sh \
   scripts/pr7-company-membership-bootstrap-rollback.sh \
   scripts/pr7-company-foundation-lifecycle-gate.sh \
+  sql/pr7/pr7_channel_ownership_foundation.sql \
+  sql/pr7/pr7_channel_ownership_foundation.rollback.sql \
+  scripts/pr7-channel-ownership-bootstrap.sh \
+  scripts/pr7-channel-ownership-bootstrap-rollback.sh \
   sql/pr7/pr7_core_rls_tenant_isolation.sql \
   sql/pr7/pr7_feedback_config_tenant_scope.sql \
   sql/pr7/pr7_feedback_widget_delivery_atomic.sql \
@@ -194,6 +198,17 @@ else
   echo "FAIL Workflow 2 company foundation lifecycle"
   fail=1
 fi
+
+
+# Workflow 3 / Task 3.1 — channel-only canonical ownership.
+must_have scripts/pr7-channel-ownership-bootstrap.sh "foreign company channel exists" "channel backfill fails closed on foreign company"
+must_have scripts/pr7-channel-ownership-bootstrap.sh "conversation ownership already started" "channel backfill ordering guard"
+must_have scripts/pr7-channel-ownership-bootstrap.sh "No conversation.company_id was modified." "Task 3.1 channel-only scope"
+must_not_have scripts/pr7-channel-ownership-bootstrap.sh "UPDATE public.conversations" "Task 3.1 does not backfill conversations"
+must_have scripts/pr7-channel-ownership-bootstrap-rollback.sh "downstream conversation ownership exists" "channel rollback protects Task 3.2 lineage"
+must_have scripts/pr7-channel-ownership-bootstrap-rollback.sh "channel ownership changed after bootstrap" "channel ownership drift blocks rollback"
+must_have scripts/pr7-channel-ownership-bootstrap.sh "idempotent no-op" "channel bootstrap same-run no-op"
+must_have scripts/pr7-channel-ownership-bootstrap-rollback.sh "already rolled back (idempotent no-op)" "channel rollback repeat no-op"
 
 echo "== BUILD =="
 if npm run build; then echo "PASS npm run build"; else echo "FAIL npm run build"; fail=1; fi

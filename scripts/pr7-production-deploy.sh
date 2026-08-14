@@ -22,6 +22,7 @@ fail(){ echo "FAIL: $1"; exit 1; }
 [ -n "${PR7_CANONICAL_COMPANY_UUID:-}" ] || stop "canonical company UUID missing"
 [ -n "${PR7_CANONICAL_PLATFORM_COMPANY_ID:-}" ] || stop "canonical platform integer company id missing"
 [ -n "${PR7_MEMBERSHIP_BOOTSTRAP_RUN_ID:-}" ] || stop "membership bootstrap run id missing"
+[ -n "${PR7_CHANNEL_OWNERSHIP_RUN_ID:-}" ] || stop "channel ownership run id missing"
 
 [ -d "$REPO/.git" ] || stop "repo not found"
 cd "$REPO" || stop "cannot enter repo"
@@ -95,6 +96,35 @@ if ! bash scripts/pr7-company-membership-bootstrap.sh; then
   bash scripts/pr7-canonical-company-bootstrap-rollback.sh || true
   [ "$identity_applied" -eq 1 ] && rollback_identity || true
   fail "membership bootstrap failed"
+fi
+
+CHANNEL_FORWARD="sql/pr7/pr7_channel_ownership_foundation.sql"
+CHANNEL_ROLLBACK="sql/pr7/pr7_channel_ownership_foundation.rollback.sql"
+[ -s "$CHANNEL_FORWARD" ] || stop "channel ownership foundation SQL missing"
+[ -s "$CHANNEL_ROLLBACK" ] || stop "channel ownership foundation rollback SQL missing"
+channel_applied=0
+rollback_channel_schema(){ psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$CHANNEL_ROLLBACK"; }
+rollback_channel_bootstrap(){ bash scripts/pr7-channel-ownership-bootstrap-rollback.sh; }
+
+echo "== APPLY CHANNEL OWNERSHIP FOUNDATION =="
+if psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$CHANNEL_FORWARD"; then
+  channel_applied=1
+else
+  rollback_membership_bootstrap || true
+  [ "$membership_applied" -eq 1 ] && rollback_membership_schema || true
+  rollback_bootstrap || true
+  [ "$identity_applied" -eq 1 ] && rollback_identity || true
+  fail "channel ownership foundation failed"
+fi
+
+echo "== CANONICAL CHANNEL OWNERSHIP BOOTSTRAP =="
+if ! bash scripts/pr7-channel-ownership-bootstrap.sh; then
+  [ "$channel_applied" -eq 1 ] && rollback_channel_schema || true
+  rollback_membership_bootstrap || true
+  [ "$membership_applied" -eq 1 ] && rollback_membership_schema || true
+  rollback_bootstrap || true
+  [ "$identity_applied" -eq 1 ] && rollback_identity || true
+  fail "channel ownership bootstrap failed"
 fi
 
 SQL_FORWARD=(
@@ -223,7 +253,7 @@ rollback_functions(){
   return "$rc"
 }
 rollback_bootstrap(){ bash scripts/pr7-canonical-company-bootstrap-rollback.sh; }
-rollback_all(){ set +e; rollback_functions; rollback_sql; rollback_membership_bootstrap; [ "$membership_applied" -eq 1 ] && rollback_membership_schema; rollback_bootstrap; [ "$identity_applied" -eq 1 ] && rollback_identity; set -e; }
+rollback_all(){ set +e; rollback_functions; rollback_sql; rollback_channel_bootstrap; [ "$channel_applied" -eq 1 ] && rollback_channel_schema; rollback_membership_bootstrap; [ "$membership_applied" -eq 1 ] && rollback_membership_schema; rollback_bootstrap; [ "$identity_applied" -eq 1 ] && rollback_identity; set -e; }
 
 echo "== APPLY PR7 SQL =="
 for i in "${!SQL_FORWARD[@]}"; do
@@ -232,6 +262,8 @@ for i in "${!SQL_FORWARD[@]}"; do
     sql_applied+=("$i")
   else
     rollback_sql
+    rollback_channel_bootstrap || true
+    [ "$channel_applied" -eq 1 ] && rollback_channel_schema || true
     rollback_membership_bootstrap || true
     [ "$membership_applied" -eq 1 ] && rollback_membership_schema || true
     rollback_bootstrap || true
