@@ -108,8 +108,7 @@ Deno.serve(async (req) => {
       .eq("conversation_id", conversation_id)
       .eq("is_recalled", false)
       .neq("content", "__THINKING__")
-      .order("created_at", { ascending: true })
-      .order("id", { ascending: true });
+      .order("created_at", { ascending: true });
 
     if (after_message_id) {
       const { data: anchor, error: anchorError } = await supabase
@@ -123,12 +122,7 @@ Deno.serve(async (req) => {
         return json({ success: false, error: "anchor_lookup_failed" }, 500);
       }
       if (anchor?.created_at) {
-        // Inclusive timestamp boundary is intentional. Multiple messages can
-        // share the exact same created_at value; using gt(created_at) can
-        // permanently skip siblings created at the anchor timestamp. Returning
-        // the anchor timestamp bucket again is safe because the widget dedupes
-        // by message id, and the secondary id ordering makes the batch stable.
-        query = query.gte("created_at", anchor.created_at);
+        query = query.gt("created_at", anchor.created_at);
       }
     }
 
