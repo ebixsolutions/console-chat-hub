@@ -136,40 +136,19 @@ Deno.serve(async (req) => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
-    const generateReplyTask = fetch(
-      `${supabaseUrl}/functions/v1/generate-reply`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${serviceKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          conversation_id,
-          source_message_id: messageId,
-        }),
+    fetch(`${supabaseUrl}/functions/v1/generate-reply`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${serviceKey}`,
+        "Content-Type": "application/json",
       },
-    )
-      .then((response) => {
-        if (!response.ok) {
-          console.error(
-            "[receive-widget-message] generate-reply returned non-success",
-            response.status,
-            conversation_id,
-            messageId,
-          );
-        }
-      })
-      .catch((err) => {
-        console.error(
-          "[receive-widget-message] generate-reply invoke error",
-          err instanceof Error ? err.name : "unknown_error",
-          conversation_id,
-          messageId,
-        );
-      });
-
-    EdgeRuntime.waitUntil(generateReplyTask);
+      body: JSON.stringify({
+        conversation_id,
+        source_message_id: messageId,
+      }),
+    }).catch((err) =>
+      console.error("[receive-widget-message] generate-reply invoke error", err),
+    );
 
     return json({
       success: true,
