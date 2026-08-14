@@ -66,6 +66,8 @@ for f in \
   scripts/pr8-ce-runtime-smoke-source-gate.sh \
   src/lib/api/config.service.ts \
   scripts/pr8-preview-role-acceptance-source-gate.sh \
+  scripts/pr8-ce-review-training-handoff-runtime-smoke.sh \
+  scripts/pr8-ce-review-training-handoff-source-gate.sh \
   scripts/pr7-console-role-runtime-acceptance.sh \
   src/routes/_authenticated/console.feedback-responses.tsx \
   src/routes/_authenticated/console.agent-settings.tsx \
@@ -412,6 +414,14 @@ if bash scripts/pr8-preview-role-acceptance-source-gate.sh; then
   echo "PASS Preview/UAT admin role bridge safety contract"
 else
   echo "FAIL Preview/UAT admin role bridge safety contract"
+  fail=1
+fi
+
+echo "== CE REVIEW/TRAINING HANDOFF SOURCE GATE =="
+if bash scripts/pr8-ce-review-training-handoff-source-gate.sh; then
+  echo "PASS CE review/training handoff source contract"
+else
+  echo "FAIL CE review/training handoff source contract"
   fail=1
 fi
 

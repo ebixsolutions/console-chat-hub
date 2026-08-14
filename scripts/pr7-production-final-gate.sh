@@ -24,6 +24,9 @@ bash scripts/pr8-ce-production-activation-gate.sh || stop "CE production activat
 echo "== CE RUNTIME SMOKE + IDEMPOTENCY =="
 bash scripts/pr8-ce-runtime-smoke.sh || stop "CE runtime smoke/idempotency failed"
 
+echo "== CE REVIEW → SU COACHAI TRAINING HANDOFF =="
+bash scripts/pr8-ce-review-training-handoff-runtime-smoke.sh || stop "CE review/training handoff runtime failed"
+
 echo "== PRODUCTION ATOMIC ROLLBACK SOURCE CONTRACT =="
 bash scripts/pr7-production-atomic-rollback-source-gate.sh || stop "production rollback source contract failed"
 

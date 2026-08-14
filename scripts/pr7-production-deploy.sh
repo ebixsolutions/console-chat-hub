@@ -52,6 +52,9 @@ bash scripts/pr8-ce-runtime-smoke-source-gate.sh || stop "CE runtime smoke sourc
 echo "== PREVIEW ROLE ACCEPTANCE BRIDGE SAFETY =="
 bash scripts/pr8-preview-role-acceptance-source-gate.sh || stop "Preview role bridge safety contract failed"
 
+echo "== CE REVIEW/TRAINING HANDOFF SOURCE CONTRACT =="
+bash scripts/pr8-ce-review-training-handoff-source-gate.sh || stop "CE review/training handoff source contract failed"
+
 echo "== PRODUCTION RUNTIME CONFIG CONTRACT =="
 bash scripts/pr7-production-runtime-config-gate.sh || stop "production runtime configuration incomplete"
 

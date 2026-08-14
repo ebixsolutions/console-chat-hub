@@ -115,6 +115,8 @@ require_nonempty SU_COACHAI_AUTH_VALUE
 require_minlen SU_COACHAI_AUTH_VALUE 16
 require_nonempty TRAINING_OUTBOX_INTERNAL_TOKEN
 require_minlen TRAINING_OUTBOX_INTERNAL_TOKEN 24
+require_nonempty SU_COACHAI_RESULT_TOKEN
+require_minlen SU_COACHAI_RESULT_TOKEN 24
 
 # Production project must already contain every required Edge runtime variable
 # before SQL/data mutation starts. This is read-only; values are never printed.
@@ -145,6 +147,7 @@ required_remote=(
   SU_COACHAI_AUTH_HEADER
   SU_COACHAI_AUTH_VALUE
   TRAINING_OUTBOX_INTERNAL_TOKEN
+  SU_COACHAI_RESULT_TOKEN
 )
 
 for n in "${required_remote[@]}"; do
