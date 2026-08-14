@@ -1,13 +1,5 @@
 /**
  * Conversation Evaluation grounding adapter — Singapore KB canonical path.
- *
- * PR-4 / PR-KB integration closure:
- * - CE no longer calls the retired kb-adapter Edge Function.
- * - Tenant scope is resolved by the canonical _shared/kb-client.ts.
- * - Singapore RAG is called server-side with JWT-owned tenant isolation.
- * - rag_summary is orientation only and is never evaluation evidence.
- * - only full_content is persisted into the CE grounding snapshot.
- * - policy evaluation remains fail-closed when no full-content policy evidence exists.
  */
 
 import {
@@ -147,9 +139,7 @@ async function buildClass(
     source_scope: String(c.source_scope ?? ""),
     score: Number(c.score ?? 0),
     version: c.version == null ? null : String(c.version),
-    last_updated_at: c.last_updated_at == null
-      ? null
-      : String(c.last_updated_at),
+    last_updated_at: c.last_updated_at == null ? null : String(c.last_updated_at),
     freshness_status: String(c.freshness_status ?? "fresh"),
     content: String(c.content ?? ""),
   }));
@@ -165,11 +155,7 @@ async function buildClass(
     let dropReason: string | null = null;
     let body = c.content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 
-    if (
-      !c.chunk_id.trim() ||
-      !c.document_id.trim() ||
-      !Number.isFinite(c.score)
-    ) {
+    if (!c.chunk_id.trim() || !c.document_id.trim() || !Number.isFinite(c.score)) {
       included = false;
       dropReason = "identity_invalid";
       body = "";
@@ -217,7 +203,6 @@ async function buildClass(
       `[${c.citation_label}|${c.chunk_id}|v${c.version ?? "0"}]\n${c.content}`
     )
     .join("\n\n");
-
   const canonical = includedChunks.map((c) =>
     `${c.chunk_id}:${c.content_sha256}`
   ).join("\n");
@@ -310,13 +295,12 @@ async function runRag(
       ok: true;
       result: KBRagResponse;
       tenantId: string;
+      aiCompanyId: string;
     }
   | { ok: false; code: GroundingFailure; detail?: string }
 > {
   const endpoint = resolveKBEndpoint();
-  if (!endpoint) {
-    return { ok: false, code: "GROUNDING_CONFIG_MISSING" };
-  }
+  if (!endpoint) return { ok: false, code: "GROUNDING_CONFIG_MISSING" };
 
   const tenant = await resolveTenantScope(conversationId);
   if (!tenant.resolved) {
@@ -351,6 +335,7 @@ async function runRag(
     ok: true,
     result,
     tenantId: tenant.scope.singaporeTenantId,
+    aiCompanyId: tenant.scope.aiCompanyId,
   };
 }
 
@@ -371,10 +356,26 @@ export async function fetchGrounding(args: {
 
   const query = args.query.trim();
   if (!query) return { ok: false, code: "GROUNDING_EMPTY" };
+  if (!args.company.company_id) {
+    return {
+      ok: false,
+      code: "GROUNDING_TENANT_MISMATCH",
+      detail: "company_id_missing",
+    };
+  }
 
-  // Primary retrieval supplies the canonical customer-answer grounding.
   const primary = await runRag(query, args.conversationId);
   if (!primary.ok) return primary;
+
+  // CE resolves company ownership independently from the KB client. Evidence is
+  // admissible only when both independent resolvers agree on the same AI company.
+  if (primary.aiCompanyId !== args.company.company_id) {
+    return {
+      ok: false,
+      code: "GROUNDING_TENANT_MISMATCH",
+      detail: "ce_kb_company_mismatch",
+    };
+  }
 
   let evidence = evidenceRows(primary.result);
   let selectedDocumentIds = [
@@ -383,11 +384,6 @@ export async function fetchGrounding(args: {
       "",
   ].filter(Boolean);
 
-  // Policy is a separate evidence class. The Singapore API selects one best
-  // document per request, so a general product/FAQ document must not cause us
-  // to falsely conclude that no policy exists. When required and the primary
-  // result has no full-content policy evidence, perform one bounded policy-
-  // focused retrieval. It remains tenant-scoped by the same canonical client.
   let secondaryResult: KBRagResponse | null = null;
   if (
     args.requirePolicyEvidence &&
@@ -397,6 +393,16 @@ export async function fetchGrounding(args: {
       `Applicable customer-service policy, rules, conditions, limits and procedures for: ${query}`;
     const secondary = await runRag(policyQuery, args.conversationId);
     if (!secondary.ok) return secondary;
+    if (
+      secondary.aiCompanyId !== primary.aiCompanyId ||
+      secondary.tenantId !== primary.tenantId
+    ) {
+      return {
+        ok: false,
+        code: "GROUNDING_TENANT_MISMATCH",
+        detail: "kb_resolution_changed_within_request",
+      };
+    }
     secondaryResult = secondary.result;
     evidence = mergeEvidence(evidence, evidenceRows(secondary.result));
     const secondaryId =
@@ -406,20 +412,7 @@ export async function fetchGrounding(args: {
     if (secondaryId) selectedDocumentIds.push(secondaryId);
   }
 
-  if (evidence.length === 0) {
-    return { ok: false, code: "GROUNDING_EMPTY" };
-  }
-
-  // Tenant identity is resolved independently from the CE company object.
-  // The caller-provided external_workspace_id/external_tenant_id are legacy
-  // Base44 fields and are deliberately NOT trusted as Singapore ownership.
-  if (!args.company.company_id) {
-    return {
-      ok: false,
-      code: "GROUNDING_TENANT_MISMATCH",
-      detail: "company_id_missing",
-    };
-  }
+  if (evidence.length === 0) return { ok: false, code: "GROUNDING_EMPTY" };
 
   const policyRaw = evidence.filter((c) =>
     isPolicySource(String(c.source_type ?? ""))
@@ -449,9 +442,7 @@ export async function fetchGrounding(args: {
   const includedCount =
     kb.chunks.filter((c) => c.included).length +
     policy.chunks.filter((c) => c.included).length;
-  if (includedCount === 0) {
-    return { ok: false, code: "GROUNDING_EMPTY" };
-  }
+  if (includedCount === 0) return { ok: false, code: "GROUNDING_EMPTY" };
 
   selectedDocumentIds = [...new Set(selectedDocumentIds)];
   const allResults = [primary.result, secondaryResult].filter(
@@ -480,7 +471,7 @@ export async function fetchGrounding(args: {
         conflict_detected: false,
         policy_gap: policy.chunks.filter((c) => c.included).length === 0,
         singapore_tenant_id: primary.tenantId,
-        company_id: args.company.company_id,
+        company_id: primary.aiCompanyId,
         selected_document_ids: selectedDocumentIds,
         limits: {
           max_chunk_chars: MAX_CHUNK_CHARS,

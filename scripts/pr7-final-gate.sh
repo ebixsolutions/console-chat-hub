@@ -20,6 +20,9 @@ for f in \
   supabase/functions/health-check/index.ts \
   supabase/functions/visitor-analytics/index.ts \
   supabase/functions/conversation-evaluate/index.ts \
+  supabase/functions/_shared/ce-contract.ts \
+  supabase/functions/_shared/ce-grounding.ts \
+  tests/edge/ce-canonical-bundle-regression.mjs \
   supabase/functions/customer360-local/index.ts \
   public/widget/chat.js \
   src/routes/_authenticated/console.tsx \
@@ -115,6 +118,26 @@ must_have sql/pr7/pr7_ce_tenant_resolution_hardening.sql 'v_resolved_company_id 
 must_have sql/pr7/pr7_ce_tenant_resolution_hardening.sql "tenant_identity_conflict" "CE RPC fails closed on ownership conflict"
 must_have sql/pr7/pr7_ce_tenant_resolution_hardening.sql 'p_grounding_manifest,v_resolved_company_id' "CE attempt persists resolved company"
 must_have sql/pr7/pr7_ce_tenant_resolution_hardening.rollback.sql 'SELECT id, company_id INTO v_conv FROM public.conversations' "CE rollback restores prior tenant behavior"
+
+
+# CE full call-chain regression: Singapore identity + deterministic human correction ordering.
+must_have supabase/functions/_shared/ce-contract.ts 'singapore_tenant_id=${grounding.manifest.singapore_tenant_id}' "CE bundle uses Singapore tenant identity"
+must_not_have supabase/functions/_shared/ce-contract.ts 'workspace_id=${grounding.manifest.workspace_id}' "retired CE workspace identity removed"
+must_not_have supabase/functions/_shared/ce-contract.ts 'tenant_id=${grounding.manifest.tenant_id}' "retired CE tenant identity removed"
+must_have supabase/functions/_shared/ce-contract.ts "BUNDLE_GROUNDING_COMPANY_MISMATCH" "CE bundle rejects KB company mismatch"
+must_have supabase/functions/_shared/ce-contract.ts "isStrictlyAfterMessage(e, evaluatedAi)" "verified human uses deterministic message ordering"
+must_have supabase/functions/_shared/ce-contract.ts 'human_agent: "human_agent"' "canonical human_agent role preserved"
+must_have supabase/functions/_shared/ce-grounding.ts "aiCompanyId: tenant.scope.aiCompanyId" "CE grounding carries resolved AI company"
+must_have supabase/functions/_shared/ce-grounding.ts 'detail: "ce_kb_company_mismatch"' "CE grounding rejects independent resolver mismatch"
+must_have supabase/functions/_shared/ce-grounding.ts 'detail: "kb_resolution_changed_within_request"' "CE grounding rejects policy retrieval scope drift"
+
+echo "== CE CANONICAL BUNDLE RUNTIME REGRESSION =="
+if node tests/edge/ce-canonical-bundle-regression.mjs; then
+  echo "PASS CE canonical bundle runtime regression"
+else
+  echo "FAIL CE canonical bundle runtime regression"
+  fail=1
+fi
 
 echo "== BUILD =="
 if npm run build; then echo "PASS npm run build"; else echo "FAIL npm run build"; fail=1; fi

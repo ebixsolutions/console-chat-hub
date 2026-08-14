@@ -3,18 +3,6 @@
  *
  * What is hashed is what is evaluated. The bundle text produced here is the
  * exact byte sequence handed to every evaluator, and bundle_hash is its SHA-256.
- *
- * The bundle carries, in a fixed order:
- *   company authorization      which tenant this evaluation belongs to and who ran it
- *   role normalization         raw message roles collapsed to a closed vocabulary
- *   evaluated AI reply         the exact assistant turn under evaluation, by id and hash
- *   verified human response    the exact human turn that supersedes it, by id and hash
- *   transcript                 deterministically ordered, filtered, truncated
- *   KB evidence                real chunk content with per-chunk hashes
- *   POLICY evidence            real policy chunk content with per-chunk hashes
- *   truncation manifest        what was dropped and why
- *
- * Nothing in the bundle is a label standing in for content.
  */
 
 import type { GroundingBundle } from "./ce-grounding.ts";
@@ -50,10 +38,6 @@ export const DIMENSION_WEIGHT: Record<CeDimension, number> = {
   hallucination_risk: 0.1,
 };
 
-/* ------------------------------------------------------------------ */
-/* Role normalization                                                  */
-/* ------------------------------------------------------------------ */
-
 export type NormalizedRole = "customer" | "ai" | "human_agent" | "system";
 
 const ROLE_MAP: Record<string, NormalizedRole> = {
@@ -65,19 +49,15 @@ const ROLE_MAP: Record<string, NormalizedRole> = {
   bot: "ai",
   agent: "human_agent",
   human: "human_agent",
+  human_agent: "human_agent",
   supervisor: "human_agent",
   system: "system",
   tool: "system",
 };
 
-/** Unknown roles collapse to system rather than being guessed into a party. */
 export function normalizeRole(raw: string): NormalizedRole {
   return ROLE_MAP[raw.trim().toLowerCase()] ?? "system";
 }
-
-/* ------------------------------------------------------------------ */
-/* Inputs                                                              */
-/* ------------------------------------------------------------------ */
 
 export const THINKING_SENTINEL = "__THINKING__";
 export const MAX_TRANSCRIPT_MESSAGES = 200;
@@ -156,9 +136,22 @@ export async function sha256Hex(input: string): Promise<string> {
   ).join("");
 }
 
-/* ------------------------------------------------------------------ */
-/* Bundle construction                                                 */
-/* ------------------------------------------------------------------ */
+export function compareMessageOrder(
+  a: Pick<SnapshotMessage | TranscriptEntry, "created_at" | "id">,
+  b: Pick<SnapshotMessage | TranscriptEntry, "created_at" | "id">,
+): number {
+  if (a.created_at !== b.created_at) {
+    return a.created_at < b.created_at ? -1 : 1;
+  }
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+export function isStrictlyAfterMessage(
+  candidate: Pick<SnapshotMessage | TranscriptEntry, "created_at" | "id">,
+  reference: Pick<SnapshotMessage | TranscriptEntry, "created_at" | "id">,
+): boolean {
+  return compareMessageOrder(candidate, reference) > 0;
+}
 
 export async function buildCanonicalBundle(args: {
   conversation: SnapshotConversation;
@@ -170,20 +163,22 @@ export async function buildCanonicalBundle(args: {
   const { conversation, messages, actor, grounding, contractVersion } = args;
 
   if (actor.company_id !== conversation.company_id) {
-    // Defence in depth: the Edge Function checks this first, the RPC checks it
-    // again, and the bundle refuses to exist across a tenant boundary.
     throw new Error("BUNDLE_TENANT_MISMATCH");
+  }
+
+  // Singapore KB is independently tenant-resolved. It must resolve back to the
+  // exact same AI Chatbot company before its evidence can enter the CE bundle.
+  if (grounding.manifest.company_id !== conversation.company_id) {
+    throw new Error("BUNDLE_GROUNDING_COMPANY_MISMATCH");
+  }
+  if (!grounding.manifest.singapore_tenant_id.trim()) {
+    throw new Error("BUNDLE_GROUNDING_TENANT_UNRESOLVED");
   }
 
   const ordered = messages
     .filter((m) => !m.is_recalled && m.content !== THINKING_SENTINEL)
     .slice()
-    .sort((a, b) => {
-      if (a.created_at !== b.created_at) {
-        return a.created_at < b.created_at ? -1 : 1;
-      }
-      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-    });
+    .sort(compareMessageOrder);
 
   const entries: TranscriptEntry[] = [];
   let used = 0;
@@ -236,17 +231,15 @@ export async function buildCanonicalBundle(args: {
   }
 
   const kept = entries.filter((e) => e.included);
-
-  // The evaluated AI reply is the last AI turn that is not followed by a later AI
-  // turn: the reply a human would have been correcting.
   const aiTurns = kept.filter((e) => e.role === "ai");
   const evaluatedAi = aiTurns.length > 0 ? aiTurns[aiTurns.length - 1] : null;
 
-  // The verified human response is the first identity-verified human turn that
-  // occurs after that AI reply.
+  // Use the SAME deterministic (created_at,id) ordering used by the transcript.
+  // A verified human correction sharing the same timestamp as the AI reply is
+  // still "after" it when its id sorts after the AI id.
   const humanAfter = evaluatedAi
     ? kept.find((e) =>
-      e.verified_human && e.created_at > evaluatedAi.created_at
+      e.verified_human && isStrictlyAfterMessage(e, evaluatedAi)
     )
     : kept.find((e) => e.verified_human);
 
@@ -254,8 +247,7 @@ export async function buildCanonicalBundle(args: {
   lines.push(`CE-BUNDLE/${contractVersion}`);
   lines.push("## authorization");
   lines.push(`company_id=${conversation.company_id}`);
-  lines.push(`workspace_id=${grounding.manifest.workspace_id}`);
-  lines.push(`tenant_id=${grounding.manifest.tenant_id}`);
+  lines.push(`singapore_tenant_id=${grounding.manifest.singapore_tenant_id}`);
   lines.push(`actor_user_id=${actor.user_id}`);
   lines.push(`actor_roles=${[...actor.roles].sort().join("|")}`);
   lines.push("## conversation");
@@ -350,10 +342,6 @@ export async function buildCanonicalBundle(args: {
   };
 }
 
-/* ------------------------------------------------------------------ */
-/* Evaluator prompts                                                   */
-/* ------------------------------------------------------------------ */
-
 const OUTPUT_RULE =
   "Return ONLY a JSON object, no prose and no code fences, of exactly this shape: " +
   '{"score": <number 0-100, at most 2 decimals>, "justification": "<80-800 characters>", ' +
@@ -399,10 +387,6 @@ export const EVALUATOR_SYSTEM_PROMPT: Record<CeDimension, string> = {
     "means the reply repeatedly asserted ungrounded specifics. " + OUTPUT_RULE,
 };
 
-/* ------------------------------------------------------------------ */
-/* Evaluator output validation                                         */
-/* ------------------------------------------------------------------ */
-
 export interface EvaluatorOutput {
   score: number;
   justification: string;
@@ -416,7 +400,6 @@ export function validateEvaluatorOutput(
   knownChunkIds: ReadonlySet<string>,
 ): EvaluatorOutput | null {
   if (!parsed) return null;
-
   const rawScore = parsed.score;
   if (typeof rawScore !== "number" || !Number.isFinite(rawScore)) return null;
   if (rawScore < 0 || rawScore > 100) return null;
@@ -440,34 +423,25 @@ export function validateEvaluatorOutput(
   const refsRaw = Array.isArray(parsed.grounding_refs)
     ? parsed.grounding_refs
     : null;
-  if (!refsRaw) return null;
-  if (refsRaw.length > 10) return null;
+  if (!refsRaw || refsRaw.length > 10) return null;
   const grounding_refs: string[] = [];
   for (const r of refsRaw) {
     if (typeof r !== "string") return null;
     const id = r.trim();
-    if (id.length === 0) return null;
-    // A citation that does not correspond to supplied evidence is a fabrication.
-    if (!knownChunkIds.has(id)) return null;
+    if (id.length === 0 || !knownChunkIds.has(id)) return null;
     grounding_refs.push(id);
   }
 
   const correctionRaw = parsed.recommended_correction;
   if (typeof correctionRaw !== "string") return null;
-  const recommended_correction = correctionRaw.trim().slice(0, 4000);
-
   return {
     score,
     justification: justification.slice(0, 2000),
     evidence,
     grounding_refs,
-    recommended_correction,
+    recommended_correction: correctionRaw.trim().slice(0, 4000),
   };
 }
-
-/* ------------------------------------------------------------------ */
-/* Conversation signals — emotion journey and next steps               */
-/* ------------------------------------------------------------------ */
 
 export const SENTIMENTS = [
   "very_negative",
@@ -500,14 +474,12 @@ export interface EmotionPoint {
   sentiment_score: number;
   trigger_label: string;
 }
-
 export interface NextStep {
   ordinal: number;
   title: string;
   detail: string;
   owner_role: string;
 }
-
 export interface SignalsOutput {
   emotion: EmotionPoint[];
   next_steps: NextStep[];
@@ -515,17 +487,11 @@ export interface SignalsOutput {
 
 const OWNER_ROLES = new Set(["admin", "supervisor", "agent", "qa"]);
 
-/**
- * Validate the signals payload against the bundle itself. Every message_id must
- * be a customer turn that is actually present, so a fabricated id cannot create
- * an emotion point for a message that was never evaluated.
- */
 export function validateSignalsOutput(
   parsed: Record<string, unknown> | null,
   transcript: TranscriptEntry[],
 ): SignalsOutput | null {
   if (!parsed) return null;
-
   const byId = new Map(
     transcript.filter((e) => e.included).map((e) => [e.id, e]),
   );
@@ -539,13 +505,11 @@ export function validateSignalsOutput(
     const e = item as Record<string, unknown>;
     const id = typeof e.message_id === "string" ? e.message_id.trim() : "";
     const entry = byId.get(id);
-    if (!entry) return null;
-    if (entry.role !== "customer") return null;
-    if (seen.has(id)) return null;
+    if (!entry || entry.role !== "customer" || seen.has(id)) return null;
     seen.add(id);
     const turn =
       typeof e.turn_index === "number" && Number.isInteger(e.turn_index) &&
-        e.turn_index >= 0
+          e.turn_index >= 0
         ? e.turn_index
         : null;
     if (turn === null) return null;
@@ -556,16 +520,15 @@ export function validateSignalsOutput(
       ? Math.round(e.sentiment_score * 100) / 100
       : null;
     if (score === null || score < -100 || score > 100) return null;
-    const trigger = typeof e.trigger_label === "string"
-      ? e.trigger_label.trim().slice(0, 200)
-      : "";
     emotion.push({
       message_id: id,
       turn_index: turn,
       occurred_at: entry.created_at,
       sentiment: sentiment as Sentiment,
       sentiment_score: score,
-      trigger_label: trigger,
+      trigger_label: typeof e.trigger_label === "string"
+        ? e.trigger_label.trim().slice(0, 200)
+        : "",
     });
   }
 
@@ -578,7 +541,7 @@ export function validateSignalsOutput(
     const n = item as Record<string, unknown>;
     const ordinal =
       typeof n.ordinal === "number" && Number.isInteger(n.ordinal) &&
-        n.ordinal >= 0
+          n.ordinal >= 0
         ? n.ordinal
         : null;
     if (ordinal === null || ordinals.has(ordinal)) return null;
@@ -592,13 +555,8 @@ export function validateSignalsOutput(
     if (owner.length > 0 && !OWNER_ROLES.has(owner)) return null;
     next_steps.push({ ordinal, title, detail, owner_role: owner });
   }
-
   return { emotion, next_steps };
 }
-
-/* ------------------------------------------------------------------ */
-/* Discrepancies — derived deterministically, not asked for again      */
-/* ------------------------------------------------------------------ */
 
 export interface Discrepancy {
   dimension: string;
@@ -615,21 +573,19 @@ export interface Discrepancy {
   grounding_refs: string[];
 }
 
-const DIVERGENCE_BY_DIMENSION: Record<string, Discrepancy["divergence_kind"]> =
-  {
-    accuracy: "contradiction",
-    policy: "overreach",
-    tone: "style",
-    sales: "omission",
-    context: "omission",
-    hallucination: "unsupported",
-  };
+const DIVERGENCE_BY_DIMENSION: Record<string, Discrepancy["divergence_kind"]> = {
+  accuracy: "contradiction",
+  policy: "overreach",
+  tone: "style",
+  sales: "omission",
+  context: "omission",
+  hallucination: "unsupported",
+};
 
 function severityForScore(
   dimension: string,
   score: number,
 ): Discrepancy["severity"] {
-  // hallucination is a risk score, so it is inverted before banding.
   const quality = dimension === "hallucination" ? 100 - score : score;
   if (quality < 40) return "critical";
   if (quality < 60) return "high";
@@ -637,23 +593,15 @@ function severityForScore(
   return "low";
 }
 
-/**
- * A discrepancy exists where an evaluator proposed a correction. The AI claim is
- * the evaluated reply, the human claim is the verified human response when one
- * exists, and the grounded claim is the correction the evaluator derived from
- * the evidence it cited.
- */
 export function deriveDiscrepancies(args: {
   evaluatedAiReply: string;
   verifiedHumanResponse: string;
-  perDimension: Array<
-    {
-      evaluatorType: string;
-      score: number;
-      recommendedCorrection: string;
-      groundingRefs: string[];
-    }
-  >;
+  perDimension: Array<{
+    evaluatorType: string;
+    score: number;
+    recommendedCorrection: string;
+    groundingRefs: string[];
+  }>;
 }): Discrepancy[] {
   const out: Discrepancy[] = [];
   for (const d of args.perDimension) {
@@ -664,8 +612,7 @@ export function deriveDiscrepancies(args: {
       ai_claim: args.evaluatedAiReply.slice(0, 4000),
       human_claim: args.verifiedHumanResponse.slice(0, 4000),
       grounded_claim: correction.slice(0, 4000),
-      divergence_kind: DIVERGENCE_BY_DIMENSION[d.evaluatorType] ??
-        "unsupported",
+      divergence_kind: DIVERGENCE_BY_DIMENSION[d.evaluatorType] ?? "unsupported",
       severity: severityForScore(d.evaluatorType, d.score),
       grounding_refs: d.groundingRefs,
     });
