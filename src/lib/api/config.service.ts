@@ -97,15 +97,8 @@ export const bindChannelToCurrentCompanyFn = createServerFn({ method: "POST" })
   .handler(async ({ data, context }): Promise<ServerResult<LiveChannelConfigRow>> => {
     const userId = String(context.userId);
 
-    const { data: globalRoles, error: roleErr } = await context.supabase
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", userId);
-    if (roleErr) return { ok: false, error: "role_lookup_failed" };
-    if (!globalRoles?.some((r) => r.role === "admin")) {
-      return { ok: false, error: "forbidden" };
-    }
-
+    // Company-scoped RBAC is authoritative. A global user_roles row must never
+    // grant or deny a tenant action independently of active membership.
     const { data: memberships, error: membershipErr } = await context.supabase
       .from("company_membership")
       .select("company_id, role, is_active")
@@ -204,7 +197,6 @@ export const updateFeedbackConfigFn = createServerFn({ method: "POST" })
     if (!company.ok || !company.data) return { ok: false, error: company.error };
     const companyId = company.data;
 
-    // Try to find the current company's row only. Legacy NULL rows remain inert.
     const { data: existing, error: readErr } = await context.supabase
       .from("feedback_automation_config")
       .select("id")
@@ -230,11 +222,6 @@ export const updateFeedbackConfigFn = createServerFn({ method: "POST" })
       if (insertErr) return { ok: false, error: `insert_failed: ${insertErr.message}` };
       targetId = inserted.id;
     } else {
-      // Step B: RPC (rpc_update_feedback_config) swallows real errors in
-      // EXCEPTION WHEN OTHERS -> 'INTERNAL', making the failure undiagnosable
-      // from the client. Since the RPC SQL and audit_log are frozen, bypass
-      // the RPC with a direct authenticated update. RLS still applies
-      // (context.supabase carries the caller's bearer token; NO service_role).
       const updatePayload: {
         is_active?: boolean;
         delay_minutes?: number;
@@ -257,8 +244,6 @@ export const updateFeedbackConfigFn = createServerFn({ method: "POST" })
       targetId = existing.id;
     }
 
-
-    // Verify persistence by re-SELECTing the row we just wrote.
     const { data: verified, error: verifyErr } = await context.supabase
       .from("feedback_automation_config")
       .select("id, name, is_active, delay_minutes, trigger_event, config, company_id")
@@ -316,51 +301,58 @@ export const analyticsService = {
 // ---------------------------------------------------------------------------
 // Production role model
 // ---------------------------------------------------------------------------
-// 'qa' is part of the production role model. The database app_role enum is
-// admin | supervisor | agent | qa and the CE RLS policies already grant qa
-// SELECT on conversation_evaluation, conversation_evaluation_detail and
-// conversation_evaluation_attempt. Excluding qa here made a qa-only account
-// resolve to null and be rejected before any route rendered.
-//
-// Widening this union does NOT widen permissions. Every route and every action
-// is gated by the deny-by-default matrix in src/lib/authz/consoleCapabilities.ts;
-// a role that is not explicitly listed for a capability is denied.
 export type AppRole = "admin" | "supervisor" | "agent" | "qa";
 
-/**
- * Precedence when an account carries several roles. Highest first.
- * qa sits below agent so that an agent+qa account keeps its agent surface and
- * gains nothing implicitly; the capability matrix decides the rest.
- */
 const ROLE_PRECEDENCE: AppRole[] = ["admin", "supervisor", "agent", "qa"];
+
+async function getCurrentCompanyRoles(): Promise<AppRole[]> {
+  const { data: sessionData } = await supabase.auth.getSession();
+  const userId = sessionData.session?.user?.id;
+  if (!userId) return [];
+
+  // Role authority is the active membership in exactly one active company.
+  // Ambiguous multi-company sessions fail closed until an explicit company
+  // selector/context contract exists.
+  const { data: memberships, error: membershipErr } = await supabase
+    .from("company_membership")
+    .select("company_id, role, is_active")
+    .eq("user_id", userId)
+    .eq("is_active", true);
+  if (membershipErr || !memberships || memberships.length === 0) return [];
+
+  const companyIds = [
+    ...new Set(memberships.map((m) => String(m.company_id))),
+  ];
+  if (companyIds.length !== 1) return [];
+
+  const companyId = companyIds[0];
+  const { data: company, error: companyErr } = await supabase
+    .from("company")
+    .select("id, is_active")
+    .eq("id", companyId)
+    .maybeSingle();
+  if (companyErr || !company || company.is_active !== true) return [];
+
+  const valid = new Set<AppRole>(["admin", "supervisor", "agent", "qa"]);
+  return [
+    ...new Set(
+      memberships
+        .map((m) => String(m.role) as AppRole)
+        .filter((role): role is AppRole => valid.has(role)),
+    ),
+  ];
+}
 
 export const authService = {
   getCurrentUserRole: async (): Promise<AppRole | null> => {
-    const { data: sessionData } = await supabase.auth.getSession();
-    const userId = sessionData.session?.user?.id;
-    if (!userId) return null;
-    const { data, error } = await supabase
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", userId);
-    if (error || !data || data.length === 0) return null;
-    const roles = data.map((r) => r.role as AppRole);
+    const roles = await getCurrentCompanyRoles();
     for (const candidate of ROLE_PRECEDENCE) {
       if (roles.includes(candidate)) return candidate;
     }
     return null;
   },
 
-  /** All roles held by the current account, unordered. Needed by capability checks. */
-  getCurrentUserRoles: async (): Promise<AppRole[]> => {
-    const { data: sessionData } = await supabase.auth.getSession();
-    const userId = sessionData.session?.user?.id;
-    if (!userId) return [];
-    const { data, error } = await supabase
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", userId);
-    if (error || !data) return [];
-    return data.map((r) => r.role as AppRole);
-  },
+  /** All roles held inside the current unique active company, unordered. */
+  getCurrentUserRoles: async (): Promise<AppRole[]> =>
+    getCurrentCompanyRoles(),
 };
