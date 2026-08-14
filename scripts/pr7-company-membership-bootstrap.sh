@@ -16,6 +16,32 @@ stop(){ echo "STOP: $1"; exit 2; }
 [ -n "$PLATFORM_COMPANY_ID" ] || stop "PR7_CANONICAL_PLATFORM_COMPANY_ID missing"
 command -v psql >/dev/null 2>&1 || stop "psql missing"
 
+# Fast idempotency preflight: same run + same canonical company + completed +
+# not rolled back is already complete and must be a no-op.
+EXISTING_RUN="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -Atq \
+  -v run_id="$RUN_ID" -v company_uuid="$COMPANY_UUID" <<'SQL'
+SELECT CASE
+  WHEN EXISTS (
+    SELECT 1 FROM public.pr7_membership_bootstrap_run
+    WHERE run_id=:'run_id'::uuid
+      AND company_id=:'company_uuid'::uuid
+      AND completed_at IS NOT NULL
+      AND rolled_back_at IS NULL
+  ) THEN 'exact'
+  WHEN EXISTS (
+    SELECT 1 FROM public.pr7_membership_bootstrap_run
+    WHERE run_id=:'run_id'::uuid
+  ) THEN 'conflict'
+  ELSE 'missing'
+END;
+SQL
+)"
+if [ "$EXISTING_RUN" = "exact" ]; then
+  echo "PASS: canonical company memberships already bootstrapped (idempotent no-op)"
+  exit 0
+fi
+[ "$EXISTING_RUN" != "conflict" ] || stop "membership bootstrap run_id conflict or already rolled back"
+
 psql "$DB_URL" -v ON_ERROR_STOP=1 \
   -v run_id="$RUN_ID" \
   -v company_uuid="$COMPANY_UUID" \

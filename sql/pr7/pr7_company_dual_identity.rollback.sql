@@ -4,9 +4,12 @@ BEGIN;
 
 DO $guard$
 BEGIN
-  IF EXISTS (SELECT 1 FROM public.pr7_company_identity_bootstrap_run) THEN
+  IF EXISTS (
+    SELECT 1 FROM public.pr7_company_identity_bootstrap_run
+    WHERE rolled_back_at IS NULL
+  ) THEN
     RAISE EXCEPTION
-      'PR7_COMPANY_IDENTITY_ROLLBACK_BLOCKED: bootstrap provenance still exists';
+      'PR7_COMPANY_IDENTITY_ROLLBACK_BLOCKED: active bootstrap run still exists';
   END IF;
 
   IF EXISTS (SELECT 1 FROM public.company) THEN

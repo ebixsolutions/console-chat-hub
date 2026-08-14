@@ -78,6 +78,16 @@ BEGIN
     SELECT 1 FROM public.company
     WHERE id=cid AND platform_company_id=pid AND is_active=true
   ) THEN RAISE EXCEPTION 'canonical company UUID/integer identity mismatch'; END IF;
+  IF EXISTS (
+    SELECT 1 FROM public.pr7_company_identity_bootstrap_run
+    WHERE company_uuid=cid
+      AND completed_at IS NULL
+  ) THEN RAISE EXCEPTION 'canonical company bootstrap has incomplete run'; END IF;
+  IF EXISTS (
+    SELECT 1 FROM public.pr7_membership_bootstrap_run
+    WHERE company_id=cid
+      AND completed_at IS NULL
+  ) THEN RAISE EXCEPTION 'membership bootstrap has incomplete run'; END IF;
   IF NOT EXISTS (SELECT 1 FROM public.company_membership WHERE company_id=cid AND is_active=true) THEN RAISE EXCEPTION 'canonical company has no active membership'; END IF;
   IF EXISTS (
     SELECT company_id,user_id FROM public.company_membership

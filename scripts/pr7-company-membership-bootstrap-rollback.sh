@@ -14,6 +14,37 @@ stop(){ echo "STOP: $1"; exit 2; }
 [ -n "$COMPANY_UUID" ] || stop "PR7_CANONICAL_COMPANY_UUID missing"
 command -v psql >/dev/null 2>&1 || stop "psql missing"
 
+ROLLBACK_STATE="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -Atq \
+  -v run_id="$RUN_ID" -v company_uuid="$COMPANY_UUID" <<'SQL'
+SELECT CASE
+  WHEN EXISTS (
+    SELECT 1 FROM public.pr7_membership_bootstrap_run
+    WHERE run_id=:'run_id'::uuid
+      AND company_id=:'company_uuid'::uuid
+      AND completed_at IS NOT NULL
+      AND rolled_back_at IS NOT NULL
+  ) THEN 'rolled'
+  WHEN EXISTS (
+    SELECT 1 FROM public.pr7_membership_bootstrap_run
+    WHERE run_id=:'run_id'::uuid
+      AND company_id=:'company_uuid'::uuid
+      AND completed_at IS NOT NULL
+      AND rolled_back_at IS NULL
+  ) THEN 'active'
+  WHEN EXISTS (
+    SELECT 1 FROM public.pr7_membership_bootstrap_run
+    WHERE run_id=:'run_id'::uuid
+  ) THEN 'conflict'
+  ELSE 'missing'
+END;
+SQL
+)"
+if [ "$ROLLBACK_STATE" = "rolled" ]; then
+  echo "PASS: canonical membership bootstrap already rolled back (idempotent no-op)"
+  exit 0
+fi
+[ "$ROLLBACK_STATE" = "active" ] || stop "membership rollback provenance missing or identity mismatch"
+
 psql "$DB_URL" -v ON_ERROR_STOP=1 \
   -v run_id="$RUN_ID" \
   -v company_uuid="$COMPANY_UUID" <<'SQL'
@@ -63,9 +94,8 @@ WHERE p.run_id=current_setting('pr7.membership_run_id')::uuid
   AND p.created_by_run=true
   AND cm.id=p.membership_id;
 
-DELETE FROM public.pr7_membership_bootstrap_row
-WHERE run_id=current_setting('pr7.membership_run_id')::uuid;
-DELETE FROM public.pr7_membership_bootstrap_run
+UPDATE public.pr7_membership_bootstrap_run
+SET rolled_back_at=now()
 WHERE run_id=current_setting('pr7.membership_run_id')::uuid;
 
 COMMIT;

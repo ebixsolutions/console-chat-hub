@@ -4,8 +4,11 @@ BEGIN;
 
 DO $guard$
 BEGIN
-  IF EXISTS (SELECT 1 FROM public.pr7_membership_bootstrap_run) THEN
-    RAISE EXCEPTION 'PR7_MEMBERSHIP_SCHEMA_ROLLBACK_BLOCKED: bootstrap provenance still exists';
+  IF EXISTS (
+    SELECT 1 FROM public.pr7_membership_bootstrap_run
+    WHERE rolled_back_at IS NULL
+  ) THEN
+    RAISE EXCEPTION 'PR7_MEMBERSHIP_SCHEMA_ROLLBACK_BLOCKED: active bootstrap run still exists';
   END IF;
 END
 $guard$;

@@ -16,6 +16,39 @@ stop(){ echo "STOP: $1"; exit 2; }
 [ -n "$PLATFORM_COMPANY_ID" ] || stop "PR7_CANONICAL_PLATFORM_COMPANY_ID missing"
 command -v psql >/dev/null 2>&1 || stop "psql missing"
 
+ROLLBACK_STATE="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -Atq \
+  -v run_id="$RUN_ID" -v company_uuid="$COMPANY_UUID" -v platform_company_id="$PLATFORM_COMPANY_ID" <<'SQL'
+SELECT CASE
+  WHEN EXISTS (
+    SELECT 1 FROM public.pr7_company_identity_bootstrap_run
+    WHERE run_id=:'run_id'::uuid
+      AND company_uuid=:'company_uuid'::uuid
+      AND platform_company_id=:'platform_company_id'::bigint
+      AND completed_at IS NOT NULL
+      AND rolled_back_at IS NOT NULL
+  ) THEN 'rolled'
+  WHEN EXISTS (
+    SELECT 1 FROM public.pr7_company_identity_bootstrap_run
+    WHERE run_id=:'run_id'::uuid
+      AND company_uuid=:'company_uuid'::uuid
+      AND platform_company_id=:'platform_company_id'::bigint
+      AND completed_at IS NOT NULL
+      AND rolled_back_at IS NULL
+  ) THEN 'active'
+  WHEN EXISTS (
+    SELECT 1 FROM public.pr7_company_identity_bootstrap_run
+    WHERE run_id=:'run_id'::uuid
+  ) THEN 'conflict'
+  ELSE 'missing'
+END;
+SQL
+)"
+if [ "$ROLLBACK_STATE" = "rolled" ]; then
+  echo "PASS: Task 2.1 canonical company bootstrap already rolled back (idempotent no-op)"
+  exit 0
+fi
+[ "$ROLLBACK_STATE" = "active" ] || stop "bootstrap rollback provenance missing or identity mismatch"
+
 psql "$DB_URL" -v ON_ERROR_STOP=1 \
   -v run_id="$RUN_ID" \
   -v company_uuid="$COMPANY_UUID" \
@@ -33,17 +66,23 @@ DECLARE
   cuid uuid:=current_setting('pr7.company_uuid')::uuid;
   pid bigint:=current_setting('pr7.platform_company_id')::bigint;
   v_created boolean;
+  v_rolled timestamptz;
 BEGIN
-  SELECT created_company INTO v_created
+  SELECT created_company,rolled_back_at
+    INTO v_created,v_rolled
   FROM public.pr7_company_identity_bootstrap_run
   WHERE run_id=rid
     AND company_uuid=cuid
     AND platform_company_id=pid
-    AND completed_at IS NOT NULL
-    AND rolled_back_at IS NULL;
+    AND completed_at IS NOT NULL;
 
   IF NOT FOUND THEN
     RAISE EXCEPTION 'bootstrap rollback provenance missing or identity mismatch';
+  END IF;
+
+  IF v_rolled IS NOT NULL THEN
+    -- Repeated rollback of the exact same run is a true no-op.
+    RETURN;
   END IF;
 
   IF v_created THEN
@@ -56,7 +95,9 @@ BEGIN
     END IF;
   END IF;
 
-  DELETE FROM public.pr7_company_identity_bootstrap_run WHERE run_id=rid;
+  UPDATE public.pr7_company_identity_bootstrap_run
+  SET rolled_back_at=now()
+  WHERE run_id=rid;
 END
 $rollback$;
 

@@ -26,6 +26,31 @@ stop(){ echo "STOP: $1"; exit 2; }
 [[ "$PLATFORM_COMPANY_ID" =~ ^[0-9]+$ ]] || stop "canonical platform company id must be an integer"
 command -v psql >/dev/null 2>&1 || stop "psql missing"
 
+EXISTING_RUN="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -Atq \
+  -v run_id="$RUN_ID" -v company_uuid="$COMPANY_UUID" -v platform_company_id="$PLATFORM_COMPANY_ID" <<'SQL'
+SELECT CASE
+  WHEN EXISTS (
+    SELECT 1 FROM public.pr7_company_identity_bootstrap_run
+    WHERE run_id=:'run_id'::uuid
+      AND company_uuid=:'company_uuid'::uuid
+      AND platform_company_id=:'platform_company_id'::bigint
+      AND completed_at IS NOT NULL
+      AND rolled_back_at IS NULL
+  ) THEN 'exact'
+  WHEN EXISTS (
+    SELECT 1 FROM public.pr7_company_identity_bootstrap_run
+    WHERE run_id=:'run_id'::uuid
+  ) THEN 'conflict'
+  ELSE 'missing'
+END;
+SQL
+)"
+if [ "$EXISTING_RUN" = "exact" ]; then
+  echo "PASS: canonical SU Platform company identity already bootstrapped (idempotent no-op)"
+  exit 0
+fi
+[ "$EXISTING_RUN" != "conflict" ] || stop "bootstrap run_id conflict or already rolled back"
+
 psql "$DB_URL" -v ON_ERROR_STOP=1 \
   -v run_id="$RUN_ID" \
   -v company_uuid="$COMPANY_UUID" \

@@ -56,6 +56,9 @@ IDENTITY_ROLLBACK="sql/pr7/pr7_company_dual_identity.rollback.sql"
 identity_applied=0
 rollback_identity(){ psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$IDENTITY_ROLLBACK"; }
 
+echo "== COMPANY FOUNDATION LIFECYCLE SOURCE GATE =="
+bash scripts/pr7-company-foundation-lifecycle-gate.sh || stop "company foundation lifecycle gate failed"
+
 echo "== APPLY CANONICAL COMPANY IDENTITY SCHEMA =="
 if psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$IDENTITY_FORWARD"; then
   identity_applied=1

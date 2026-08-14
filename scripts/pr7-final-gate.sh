@@ -55,6 +55,7 @@ for f in \
   sql/pr7/pr7_company_membership_foundation.rollback.sql \
   scripts/pr7-company-membership-bootstrap.sh \
   scripts/pr7-company-membership-bootstrap-rollback.sh \
+  scripts/pr7-company-foundation-lifecycle-gate.sh \
   sql/pr7/pr7_core_rls_tenant_isolation.sql \
   sql/pr7/pr7_feedback_config_tenant_scope.sql \
   sql/pr7/pr7_feedback_widget_delivery_atomic.sql \
@@ -184,6 +185,15 @@ must_have scripts/pr7-company-membership-bootstrap.sh "active cross-company memb
 must_have scripts/pr7-company-membership-bootstrap.sh "created_by_run" "membership rollback provenance"
 must_not_have scripts/pr7-company-membership-bootstrap.sh "UPDATE public.conversations" "Task 2.2 does not backfill conversations"
 must_not_have scripts/pr7-company-membership-bootstrap.sh "UPDATE public.channel_config" "Task 2.2 does not backfill channels"
+
+
+echo "== WORKFLOW 2 FOUNDATION LIFECYCLE GATE =="
+if bash scripts/pr7-company-foundation-lifecycle-gate.sh; then
+  echo "PASS Workflow 2 company foundation lifecycle"
+else
+  echo "FAIL Workflow 2 company foundation lifecycle"
+  fail=1
+fi
 
 echo "== BUILD =="
 if npm run build; then echo "PASS npm run build"; else echo "FAIL npm run build"; fail=1; fi
