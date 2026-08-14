@@ -102,6 +102,19 @@ BEGIN
     JOIN public.channel_config ch ON ch.id=c.channel_config_id
     WHERE c.company_id<>ch.company_id
   ) THEN RAISE EXCEPTION 'conversation/channel company lineage mismatch'; END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgrelid='public.conversations'::regclass
+      AND tgname='trg_pr7_conversation_tenant_lineage'
+      AND NOT tgisinternal
+  ) THEN RAISE EXCEPTION 'conversation tenant lineage trigger missing'; END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgrelid='public.feedback_request'::regclass
+      AND tgname='trg_pr7_feedback_tenant_lineage'
+      AND NOT tgisinternal
+  ) THEN RAISE EXCEPTION 'feedback tenant lineage trigger missing'; END IF;
+
   IF EXISTS (
     SELECT 1 FROM public.upstream_call_log u
     JOIN public.conversations c ON c.id=u.conversation_id

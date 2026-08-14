@@ -64,6 +64,8 @@ for f in \
   sql/pr7/pr7_conversation_lineage_foundation.rollback.sql \
   scripts/pr7-conversation-lineage-bootstrap.sh \
   scripts/pr7-conversation-lineage-bootstrap-rollback.sh \
+  sql/pr7/pr7_tenant_ownership_consistency.sql \
+  sql/pr7/pr7_tenant_ownership_consistency.rollback.sql \
   sql/pr7/pr7_core_rls_tenant_isolation.sql \
   sql/pr7/pr7_feedback_config_tenant_scope.sql \
   sql/pr7/pr7_feedback_widget_delivery_atomic.sql \
@@ -225,6 +227,13 @@ must_have scripts/pr7-conversation-lineage-bootstrap.sh "idempotent no-op" "conv
 must_have scripts/pr7-conversation-lineage-bootstrap-rollback.sh "downstream CE lineage exists" "conversation rollback protects CE lineage"
 must_have scripts/pr7-conversation-lineage-bootstrap-rollback.sh "already rolled back (idempotent no-op)" "conversation rollback repeat no-op"
 
+
+# Workflow 3 / Task 3.3 — runtime tenant ownership consistency guards.
+must_have sql/pr7/pr7_tenant_ownership_consistency.sql "TENANT_LINEAGE_CONVERSATION_CHANNEL_MISMATCH" "conversation/channel mismatch rejected"
+must_have sql/pr7/pr7_tenant_ownership_consistency.sql "TENANT_LINEAGE_CONVERSATION_VISITOR_CHANNEL_MISMATCH" "conversation/visitor channel mismatch rejected"
+must_have sql/pr7/pr7_tenant_ownership_consistency.sql "TENANT_LINEAGE_FEEDBACK_VISITOR_MISMATCH" "feedback visitor mismatch rejected"
+must_have sql/pr7/pr7_tenant_ownership_consistency.sql "trg_pr7_conversation_tenant_lineage" "conversation tenant lineage trigger"
+must_have sql/pr7/pr7_tenant_ownership_consistency.sql "trg_pr7_feedback_tenant_lineage" "feedback tenant lineage trigger"
 echo "== BUILD =="
 if npm run build; then echo "PASS npm run build"; else echo "FAIL npm run build"; fail=1; fi
 if [ "$fail" -ne 0 ]; then echo "FINAL STATUS: FAIL"; exit 1; fi

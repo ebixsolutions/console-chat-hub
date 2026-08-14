@@ -163,6 +163,7 @@ if ! bash scripts/pr7-conversation-lineage-bootstrap.sh; then
 fi
 
 SQL_FORWARD=(
+  "sql/pr7/pr7_tenant_ownership_consistency.sql"
   "sql/pr7/pr7_feedback_config_tenant_scope.sql"
   "sql/pr7/pr7_agent_management_tenant_isolation.sql"
   "sql/pr7/pr7_ai_reply_source_message_atomic_guard.sql"
@@ -178,6 +179,7 @@ SQL_FORWARD=(
   "sql/pr7/pr7_security_definer_acl_hardening.sql"
 )
 SQL_ROLLBACK=(
+  "sql/pr7/pr7_tenant_ownership_consistency.rollback.sql"
   "sql/pr7/pr7_feedback_config_tenant_scope.rollback.sql"
   "sql/pr7/pr7_agent_management_tenant_isolation.rollback.sql"
   "sql/pr7/pr7_ai_reply_source_message_atomic_guard.rollback.sql"
