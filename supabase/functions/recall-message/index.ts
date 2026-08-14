@@ -1,8 +1,12 @@
 import { corsHeaders, json } from "../_shared/cors.ts";
-import { validateAgent, writeAudit } from "../_shared/agent.ts";
+import {
+  resolveAgentCompanyScope,
+  validateAgent,
+  writeAudit,
+} from "../_shared/agent.ts";
 
-const ELEVATED = new Set(["manager", "admin", "super_admin"]);
-const ADMIN_ONLY = new Set(["admin", "super_admin"]);
+const ELEVATED = new Set(["admin", "supervisor"]);
+const ADMIN_ONLY = new Set(["admin"]);
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -13,6 +17,9 @@ Deno.serve(async (req) => {
     if (result instanceof Response) return result;
     const { agent, supabaseAdmin } = result;
 
+    const scope = await resolveAgentCompanyScope(supabaseAdmin, agent);
+    if (scope instanceof Response) return scope;
+
     const body = await req.json().catch(() => ({}));
     const message_id = body?.message_id;
     const reason = body?.reason || null;
@@ -22,22 +29,31 @@ Deno.serve(async (req) => {
       .from("messages")
       .select("id, role, metadata, conversation_id")
       .eq("id", message_id)
-      .single();
-    if (mErr || !message) return json({ error: "Message not found" }, 404);
+      .maybeSingle();
+    if (mErr) return json({ error: "Message lookup failed" }, 500);
+    if (!message) return json({ error: "Message not found" }, 404);
 
-    // Permission matrix
+    const { data: scopedConversation, error: convErr } = await supabaseAdmin
+      .from("conversations")
+      .select("id")
+      .eq("id", message.conversation_id)
+      .eq("company_id", scope.companyId)
+      .maybeSingle();
+    if (convErr) return json({ error: "Conversation lookup failed" }, 500);
+    if (!scopedConversation) return json({ error: "Message not found" }, 404);
+
     if (message.role === "visitor") {
-      if (!ADMIN_ONLY.has(agent.role)) {
-        return json({ error: "Only admins can recall visitor messages" }, 403);
+      if (!ADMIN_ONLY.has(scope.companyRole)) {
+        return json({ error: "Only company admins can recall visitor messages" }, 403);
       }
     } else if (message.role === "agent") {
       const ownerId = (message.metadata as Record<string, unknown> | null)?.agent_id;
       const isOwn = ownerId === agent.id;
-      if (!isOwn && !ELEVATED.has(agent.role)) {
+      if (!isOwn && !ELEVATED.has(scope.companyRole)) {
         return json({ error: "Cannot recall another agent's message" }, 403);
       }
     }
-    // assistant role: any active agent allowed
+    // assistant role: any active agent in the same company is allowed.
 
     const existingMeta = (message.metadata as Record<string, unknown> | null) || {};
     const { error: uErr } = await supabaseAdmin
@@ -53,12 +69,14 @@ Deno.serve(async (req) => {
           original_content_preserved: true,
         },
       })
-      .eq("id", message_id);
+      .eq("id", message_id)
+      .eq("conversation_id", message.conversation_id);
     if (uErr) return json({ error: uErr.message }, 500);
 
     await writeAudit(supabaseAdmin, agent.id, "recall_message", "messages", message_id, {
       role: message.role,
       reason,
+      company_id: scope.companyId,
     });
 
     return json({ success: true });

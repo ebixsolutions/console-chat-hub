@@ -1,5 +1,5 @@
 import { corsHeaders, json } from "../_shared/cors.ts";
-import { validateAgent } from "../_shared/agent.ts";
+import { resolveAgentCompanyScope, validateAgent } from "../_shared/agent.ts";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -10,6 +10,9 @@ Deno.serve(async (req) => {
     if (result instanceof Response) return result;
     const { agent, supabaseAdmin } = result;
 
+    const scope = await resolveAgentCompanyScope(supabaseAdmin, agent);
+    if (scope instanceof Response) return scope;
+
     const body = await req.json().catch(() => ({}));
     const conversation_id = body?.conversation_id;
     const content = typeof body?.content === "string" ? body.content.trim() : "";
@@ -17,6 +20,17 @@ Deno.serve(async (req) => {
     if (!conversation_id) return json({ error: "conversation_id required" }, 400);
     if (!content) return json({ error: "Message content is required" }, 400);
     if (content.length > 4000) return json({ error: "Message too long (max 4000 chars)" }, 400);
+
+    // Tenant boundary must be checked before the service-role RPC is invoked.
+    const { data: scopedConversation, error: scopeError } = await supabaseAdmin
+      .from("conversations")
+      .select("id")
+      .eq("id", conversation_id)
+      .eq("company_id", scope.companyId)
+      .maybeSingle();
+
+    if (scopeError) return json({ error: "Conversation lookup failed" }, 500);
+    if (!scopedConversation) return json({ error: "Conversation not found" }, 404);
 
     // PR-3: customer-visible human reply is committed atomically with a fresh
     // conversation row lock. This prevents a stale ownership/status pre-read

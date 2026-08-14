@@ -1,7 +1,11 @@
 import { corsHeaders, json } from "../_shared/cors.ts";
-import { validateAgent } from "../_shared/agent.ts";
+import {
+  resolveAgentCompanyScope,
+  validateAgent,
+  validateTargetAgentInCompany,
+} from "../_shared/agent.ts";
 
-const ELEVATED = new Set(["manager", "admin", "super_admin"]);
+const ELEVATED = new Set(["admin", "supervisor"]);
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -12,8 +16,11 @@ Deno.serve(async (req) => {
     if (result instanceof Response) return result;
     const { agent, supabaseAdmin } = result;
 
-    if (!ELEVATED.has(agent.role)) {
-      return json({ error: "Insufficient permissions. Manager or above required." }, 403);
+    const scope = await resolveAgentCompanyScope(supabaseAdmin, agent);
+    if (scope instanceof Response) return scope;
+
+    if (!ELEVATED.has(scope.companyRole)) {
+      return json({ error: "Insufficient permissions. Supervisor or admin required." }, 403);
     }
 
     const body = await req.json().catch(() => ({}));
@@ -28,9 +35,18 @@ Deno.serve(async (req) => {
       .from("conversations")
       .select("id, status, assigned_agent_id")
       .eq("id", conversation_id)
-      .single();
+      .eq("company_id", scope.companyId)
+      .maybeSingle();
 
-    if (convErr || !conversation) return json({ error: "Conversation not found" }, 404);
+    if (convErr) return json({ error: "Conversation lookup failed" }, 500);
+    if (!conversation) return json({ error: "Conversation not found" }, 404);
+
+    const target = await validateTargetAgentInCompany(
+      supabaseAdmin,
+      String(target_agent_id),
+      scope.companyId,
+    );
+    if (target instanceof Response) return target;
 
     const { data: rpcResult, error: rpcErr } = await supabaseAdmin.rpc("assign_conversation_tx", {
       p_conversation_id: conversation_id,

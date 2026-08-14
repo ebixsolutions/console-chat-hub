@@ -1,7 +1,7 @@
 import { corsHeaders, json } from "../_shared/cors.ts";
-import { validateAgent } from "../_shared/agent.ts";
+import { resolveAgentCompanyScope, validateAgent } from "../_shared/agent.ts";
 
-const ELEVATED = new Set(["manager", "admin", "super_admin", "supervisor"]);
+const ELEVATED = new Set(["admin", "supervisor"]);
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -12,6 +12,9 @@ Deno.serve(async (req) => {
     if (result instanceof Response) return result;
     const { agent, supabaseAdmin } = result;
 
+    const scope = await resolveAgentCompanyScope(supabaseAdmin, agent);
+    if (scope instanceof Response) return scope;
+
     const body = await req.json().catch(() => ({}));
     const conversation_id = body?.conversation_id;
     if (!conversation_id) return json({ error: "conversation_id required" }, 400);
@@ -20,14 +23,16 @@ Deno.serve(async (req) => {
       .from("conversations")
       .select("id, status, assigned_agent_id")
       .eq("id", conversation_id)
-      .single();
-    if (convErr || !conversation) return json({ error: "Conversation not found" }, 404);
+      .eq("company_id", scope.companyId)
+      .maybeSingle();
+    if (convErr) return json({ error: "Conversation lookup failed" }, 500);
+    if (!conversation) return json({ error: "Conversation not found" }, 404);
 
     if (conversation.status === "resolved") {
       return json({ error: "Cannot take over a resolved conversation" }, 400);
     }
 
-    if (!ELEVATED.has(agent.role)) {
+    if (!ELEVATED.has(scope.companyRole)) {
       if (conversation.assigned_agent_id && conversation.assigned_agent_id !== agent.id) {
         return json(
           { error: "You can only take over unassigned conversations or those assigned to you" },

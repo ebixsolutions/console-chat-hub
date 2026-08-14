@@ -1,9 +1,5 @@
 import { corsHeaders, json } from "../_shared/cors.ts";
-import { validateAgent, writeAudit } from "../_shared/agent.ts";
-
-const ELEVATED = new Set(["manager", "admin", "super_admin", "supervisor"]);
-
-
+import { resolveAgentCompanyScope, validateAgent } from "../_shared/agent.ts";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -14,49 +10,55 @@ Deno.serve(async (req) => {
     if (result instanceof Response) return result;
     const { agent, supabaseAdmin } = result;
 
+    const scope = await resolveAgentCompanyScope(supabaseAdmin, agent);
+    if (scope instanceof Response) return scope;
+
     const body = await req.json().catch(() => ({}));
     const conversation_id = body?.conversation_id;
     if (!conversation_id) return json({ error: "conversation_id required" }, 400);
 
-    const { data: conv, error: convErr } = await supabaseAdmin
-      .from("conversations")
-      .select("id, status, assigned_agent_id")
-      .eq("id", conversation_id)
-      .single();
-    if (convErr || !conv) return json({ error: "Conversation not found" }, 404);
+    const { data: rpcData, error: rpcErr } = await supabaseAdmin.rpc(
+      "set_conversation_resolution_tx",
+      {
+        p_conversation_id: conversation_id,
+        p_company_id: scope.companyId,
+        p_actor_user_id: agent.user_id,
+        p_actor_agent_id: agent.id,
+        p_target_state: "resolved",
+        p_reason: null,
+      },
+    );
 
-    if (!ELEVATED.has(agent.role)) {
-      if (conv.assigned_agent_id !== agent.id) {
+    if (rpcErr) {
+      console.error("[resolve-conversation] RPC error", {
+        conversation_id,
+        code: rpcErr.code,
+      });
+      return json({ error: "Internal error" }, 500);
+    }
+
+    const resultValue = String(rpcData?.result ?? rpcData ?? "unknown");
+    switch (resultValue) {
+      case "success":
+      case "already_in_state":
+        return json({ success: true, already_resolved: resultValue === "already_in_state" });
+      case "not_found":
+        return json({ error: "Conversation not found" }, 404);
+      case "not_conversation_owner":
         return json(
           { error: "You can only resolve conversations assigned to you", error_type: "not_conversation_owner" },
           403,
         );
-      }
+      case "tenant_forbidden":
+        return json({ error: "Conversation not found" }, 404);
+      case "actor_not_found":
+        return json({ error: "Agent account is inactive or unavailable" }, 403);
+      case "invalid_target_state":
+        return json({ error: "Invalid state transition" }, 400);
+      default:
+        console.error("[resolve-conversation] unexpected RPC result", resultValue);
+        return json({ error: "Unexpected result" }, 500);
     }
-
-
-
-    const now = new Date().toISOString();
-    const { error: uErr } = await supabaseAdmin
-      .from("conversations")
-      .update({ status: "resolved", resolved_at: now, updated_at: now })
-      .eq("id", conversation_id);
-    if (uErr) return json({ error: uErr.message }, 500);
-
-    await supabaseAdmin.from("conversation_status_log").insert({
-      conversation_id,
-      old_status: conv.status,
-      new_status: "resolved",
-      changed_by: agent.id,
-      changed_by_type: "agent",
-    });
-
-    await writeAudit(supabaseAdmin, agent.id, "resolve_conversation", "conversations", conversation_id, {
-      old_status: conv.status,
-      new_status: "resolved",
-    });
-
-    return json({ success: true });
   } catch (e) {
     return json({ error: (e as Error).message }, 500);
   }

@@ -1,7 +1,11 @@
 import { corsHeaders, json } from "../_shared/cors.ts";
-import { validateAgent } from "../_shared/agent.ts";
+import {
+  resolveAgentCompanyScope,
+  validateAgent,
+  validateTargetAgentInCompany,
+} from "../_shared/agent.ts";
 
-const ELEVATED = new Set(["manager", "admin", "super_admin"]);
+const ELEVATED = new Set(["admin", "supervisor"]);
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -12,6 +16,9 @@ Deno.serve(async (req) => {
     if (result instanceof Response) return result;
     const { agent, supabaseAdmin } = result;
 
+    const scope = await resolveAgentCompanyScope(supabaseAdmin, agent);
+    if (scope instanceof Response) return scope;
+
     const body = await req.json().catch(() => ({}));
     const conversation_id = body?.conversation_id;
     const to_agent_id = body?.to_agent_id;
@@ -20,25 +27,30 @@ Deno.serve(async (req) => {
       return json({ error: "conversation_id and to_agent_id required" }, 400);
     }
 
-    // Pre-RPC fetch for ownership check (EF-level auth guard)
     const { data: conversation, error: convErr } = await supabaseAdmin
       .from("conversations")
       .select("id, status, assigned_agent_id")
       .eq("id", conversation_id)
-      .single();
-    if (convErr || !conversation) return json({ error: "Conversation not found" }, 404);
+      .eq("company_id", scope.companyId)
+      .maybeSingle();
+    if (convErr) return json({ error: "Conversation lookup failed" }, 500);
+    if (!conversation) return json({ error: "Conversation not found" }, 404);
 
-    // AM-D0: Block transfer of resolved conversations
     if (conversation.status === "resolved") {
       return json({ error: "Cannot transfer a resolved conversation" }, 400);
     }
 
-    // Ownership check: plain agent can only transfer own conversations
-    if (!ELEVATED.has(agent.role) && conversation.assigned_agent_id !== agent.id) {
+    if (!ELEVATED.has(scope.companyRole) && conversation.assigned_agent_id !== agent.id) {
       return json({ error: "You can only transfer conversations assigned to you" }, 403);
     }
 
-    // Atomic RPC: all writes in one transaction
+    const target = await validateTargetAgentInCompany(
+      supabaseAdmin,
+      String(to_agent_id),
+      scope.companyId,
+    );
+    if (target instanceof Response) return target;
+
     const { data: rpcResult, error: rpcErr } = await supabaseAdmin.rpc(
       "transfer_conversation_tx",
       {
@@ -77,7 +89,7 @@ Deno.serve(async (req) => {
       case "success":
         return json({ success: true });
       default:
-        console.error("[transfer-conversation] unexpected RPC result:", rpcResultVal);
+        console.error("[transfer-conversation] unexpected RPC result:", rpcResultVal, conversation_id);
         return json({ error: "Unexpected result" }, 500);
     }
   } catch (e) {
