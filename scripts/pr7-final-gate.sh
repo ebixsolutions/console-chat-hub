@@ -27,6 +27,8 @@ for f in \
   scripts/pr7-singapore-kb-auth-env-gate.sh \
   scripts/pr7-singapore-kb-auth-source-gate.sh \
   scripts/pr7-singapore-kb-jwt-contract-test.sh \
+  scripts/pr7-singapore-kb-callchain-gate.sh \
+  scripts/pr7-singapore-kb-runtime-smoke.sh \
   tests/edge/ce-canonical-bundle-regression.mjs \
   supabase/functions/customer360-local/index.ts \
   public/widget/chat.js \
@@ -264,6 +266,16 @@ if bash scripts/pr7-singapore-kb-jwt-contract-test.sh; then
   echo "PASS Singapore KB JWT contract"
 else
   echo "FAIL Singapore KB JWT contract"
+  fail=1
+fi
+
+
+# Workflow 4 / Task 4.3 — Singapore KB full call-chain contract.
+echo "== SINGAPORE KB FULL CALL-CHAIN GATE =="
+if bash scripts/pr7-singapore-kb-callchain-gate.sh; then
+  echo "PASS Singapore KB full call-chain source contract"
+else
+  echo "FAIL Singapore KB full call-chain source contract"
   fail=1
 fi
 

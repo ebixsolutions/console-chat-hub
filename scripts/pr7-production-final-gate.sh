@@ -76,6 +76,12 @@ bash scripts/pr7-singapore-kb-auth-source-gate.sh || stop "Singapore KB auth sou
 bash scripts/pr7-singapore-kb-auth-env-gate.sh || stop "Singapore KB production auth env invalid"
 bash scripts/pr7-singapore-kb-jwt-contract-test.sh || stop "Singapore KB JWT contract test failed"
 
+echo "== SINGAPORE KB FULL CALL-CHAIN =="
+bash scripts/pr7-singapore-kb-callchain-gate.sh || stop "Singapore KB full call-chain contract failed"
+
+echo "== SINGAPORE KB AUTHENTICATED RUNTIME SMOKE =="
+bash scripts/pr7-singapore-kb-runtime-smoke.sh || stop "Singapore KB authenticated runtime smoke failed"
+
 psql "$DB_URL" -v ON_ERROR_STOP=1 -v company_id="$CANONICAL_COMPANY" -v platform_company_id="$CANONICAL_PLATFORM_COMPANY" <<'SQL'
 SELECT set_config('pr7.company_id', :'company_id', false);
 SELECT set_config('pr7.platform_company_id', :'platform_company_id', false);
