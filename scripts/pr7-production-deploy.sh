@@ -40,6 +40,9 @@ command -v python3 >/dev/null 2>&1 || stop "python3 missing"
 [ -s scripts/pr7-canonical-company-bootstrap.sh ] || stop "bootstrap missing"
 [ -s scripts/pr7-canonical-company-bootstrap-rollback.sh ] || stop "bootstrap rollback missing"
 
+echo "== PRODUCTION RUNTIME CONFIG CONTRACT =="
+bash scripts/pr7-production-runtime-config-gate.sh || stop "production runtime configuration incomplete"
+
 export PR7_BOOTSTRAP_RUN_ID="${PR7_BOOTSTRAP_RUN_ID:-$(python3 - <<'PY'
 import uuid
 print(uuid.uuid4())

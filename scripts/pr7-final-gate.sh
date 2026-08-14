@@ -57,6 +57,8 @@ for f in \
   src/routes/_authenticated/console.widget-preview.tsx \
   scripts/pr7-widget-theme-selector-director-gate.sh \
   scripts/pr7-production-activation-source-gate.sh \
+  scripts/pr7-production-runtime-config-gate.sh \
+  scripts/pr7-production-runtime-config-source-gate.sh \
   scripts/pr7-console-role-runtime-acceptance.sh \
   src/routes/_authenticated/console.feedback-responses.tsx \
   src/routes/_authenticated/console.agent-settings.tsx \
@@ -363,6 +365,14 @@ if bash scripts/pr7-production-activation-source-gate.sh; then
   echo "PASS production activation Edge inventory/gateway contract"
 else
   echo "FAIL production activation Edge inventory/gateway contract"
+  fail=1
+fi
+
+echo "== PRODUCTION RUNTIME CONFIG SOURCE GATE =="
+if bash scripts/pr7-production-runtime-config-source-gate.sh; then
+  echo "PASS production runtime configuration source contract"
+else
+  echo "FAIL production runtime configuration source contract"
   fail=1
 fi
 

@@ -15,7 +15,10 @@ TEST_USER_B="${PR7_TEST_USER_B:-}"
 TEST_COMPANY_B="${PR7_TEST_COMPANY_B:-}"
 FUNCTIONS_URL="${PR7_FUNCTIONS_URL:-https://${EXPECTED_PROJECT_REF}.supabase.co/functions/v1}"
 
-stop(){ echo "STOP: $1"; exit 2; }
+stop(){ echo "== PRODUCTION RUNTIME CONFIG CONTRACT =="
+bash scripts/pr7-production-runtime-config-gate.sh || stop "production runtime configuration incomplete"
+
+echo "STOP: $1"; exit 2; }
 fail(){ echo "FAIL: $1"; exit 1; }
 
 [ "$PROJECT_REF" = "$EXPECTED_PROJECT_REF" ] || stop "project ref mismatch"
