@@ -7,7 +7,8 @@ EXPECTED_PROJECT_REF="hvmtoqiwdqvgnjepxwrc"
 PROJECT_REF="${PR7_PROJECT_REF:-}"
 DB_URL="${SUPABASE_DB_URL:-}"
 ACCESS_TOKEN="${SUPABASE_ACCESS_TOKEN:-}"
-CANONICAL_COMPANY="${PR7_CANONICAL_COMPANY_ID:-}"
+CANONICAL_COMPANY="${PR7_CANONICAL_COMPANY_UUID:-}"
+CANONICAL_PLATFORM_COMPANY="${PR7_CANONICAL_PLATFORM_COMPANY_ID:-}"
 TEST_USER_A="${PR7_TEST_USER_A:-}"
 TEST_COMPANY_A="${PR7_TEST_COMPANY_A:-}"
 TEST_USER_B="${PR7_TEST_USER_B:-}"
@@ -20,7 +21,8 @@ fail(){ echo "FAIL: $1"; exit 1; }
 [ "$PROJECT_REF" = "$EXPECTED_PROJECT_REF" ] || stop "project ref mismatch"
 [ -n "$DB_URL" ] || stop "SUPABASE_DB_URL missing"
 [ -n "$ACCESS_TOKEN" ] || stop "SUPABASE_ACCESS_TOKEN missing"
-[ -n "$CANONICAL_COMPANY" ] || stop "canonical company id missing"
+[ -n "$CANONICAL_COMPANY" ] || stop "canonical company UUID missing"
+[ -n "$CANONICAL_PLATFORM_COMPANY" ] || stop "canonical platform integer company id missing"
 [ -d "$REPO/.git" ] || stop "repo not found"
 cd "$REPO" || stop "cannot enter repo"
 command -v psql >/dev/null 2>&1 || stop "psql missing"
@@ -64,12 +66,18 @@ echo "PASS health-check runtime"
 
 # Canonical DB/RLS assertions.
 echo "== CANONICAL OWNERSHIP ASSERTIONS =="
-psql "$DB_URL" -v ON_ERROR_STOP=1 -v company_id="$CANONICAL_COMPANY" <<'SQL'
+psql "$DB_URL" -v ON_ERROR_STOP=1 -v company_id="$CANONICAL_COMPANY" -v platform_company_id="$CANONICAL_PLATFORM_COMPANY" <<'SQL'
 SELECT set_config('pr7.company_id', :'company_id', false);
+SELECT set_config('pr7.platform_company_id', :'platform_company_id', false);
 DO $$
 DECLARE cid uuid:=current_setting('pr7.company_id')::uuid;
+        pid bigint:=current_setting('pr7.platform_company_id')::bigint;
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM public.company WHERE id=cid AND is_active=true) THEN RAISE EXCEPTION 'canonical company missing/inactive'; END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.company
+    WHERE id=cid AND platform_company_id=pid AND is_active=true
+  ) THEN RAISE EXCEPTION 'canonical company UUID/integer identity mismatch'; END IF;
   IF NOT EXISTS (SELECT 1 FROM public.company_membership WHERE company_id=cid AND is_active=true) THEN RAISE EXCEPTION 'canonical company has no active membership'; END IF;
   IF EXISTS (SELECT 1 FROM public.channel_config WHERE company_id IS NULL OR company_id<>cid) THEN RAISE EXCEPTION 'invalid channel ownership'; END IF;
   IF EXISTS (SELECT 1 FROM public.conversations WHERE company_id IS NULL OR company_id<>cid) THEN RAISE EXCEPTION 'invalid conversation ownership'; END IF;

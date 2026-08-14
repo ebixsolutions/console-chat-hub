@@ -19,7 +19,8 @@ fail(){ echo "FAIL: $1"; exit 1; }
 [ -n "$ACCESS_TOKEN" ] || stop "SUPABASE_ACCESS_TOKEN missing"
 [ -n "$ROLLBACK_COMMIT" ] || stop "PR7_ROLLBACK_COMMIT missing"
 [ "${PR7_LEGACY_DATA_IS_SINGLE_COMPANY:-}" = "YES" ] || stop "legacy single-company confirmation missing"
-[ -n "${PR7_CANONICAL_COMPANY_ID:-}" ] || stop "canonical company id missing"
+[ -n "${PR7_CANONICAL_COMPANY_UUID:-}" ] || stop "canonical company UUID missing"
+[ -n "${PR7_CANONICAL_PLATFORM_COMPANY_ID:-}" ] || stop "canonical platform integer company id missing"
 
 [ -d "$REPO/.git" ] || stop "repo not found"
 cd "$REPO" || stop "cannot enter repo"
@@ -46,8 +47,26 @@ SOURCE_RC=$?
 set -e
 [ "$SOURCE_RC" -eq 2 ] || fail "source final-gate must exit 2, got $SOURCE_RC"
 
+IDENTITY_FORWARD="sql/pr7/pr7_company_dual_identity.sql"
+IDENTITY_ROLLBACK="sql/pr7/pr7_company_dual_identity.rollback.sql"
+[ -s "$IDENTITY_FORWARD" ] || stop "company identity SQL missing"
+[ -s "$IDENTITY_ROLLBACK" ] || stop "company identity rollback SQL missing"
+
+identity_applied=0
+rollback_identity(){ psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$IDENTITY_ROLLBACK"; }
+
+echo "== APPLY CANONICAL COMPANY IDENTITY SCHEMA =="
+if psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$IDENTITY_FORWARD"; then
+  identity_applied=1
+else
+  fail "canonical company identity schema failed"
+fi
+
 echo "== CANONICAL COMPANY BOOTSTRAP =="
-bash scripts/pr7-canonical-company-bootstrap.sh || fail "canonical company bootstrap failed"
+if ! bash scripts/pr7-canonical-company-bootstrap.sh; then
+  [ "$identity_applied" -eq 1 ] && rollback_identity || true
+  fail "canonical company bootstrap failed"
+fi
 
 SQL_FORWARD=(
   "sql/pr7/pr7_feedback_config_tenant_scope.sql"
@@ -175,7 +194,7 @@ rollback_functions(){
   return "$rc"
 }
 rollback_bootstrap(){ bash scripts/pr7-canonical-company-bootstrap-rollback.sh; }
-rollback_all(){ set +e; rollback_functions; rollback_sql; rollback_bootstrap; set -e; }
+rollback_all(){ set +e; rollback_functions; rollback_sql; rollback_bootstrap; [ "$identity_applied" -eq 1 ] && rollback_identity; set -e; }
 
 echo "== APPLY PR7 SQL =="
 for i in "${!SQL_FORWARD[@]}"; do
@@ -185,12 +204,13 @@ for i in "${!SQL_FORWARD[@]}"; do
   else
     rollback_sql
     rollback_bootstrap || true
+    [ "$identity_applied" -eq 1 ] && rollback_identity || true
     fail "SQL deployment failed: $f"
   fi
 done
 
 echo "== BIND LEGACY FEEDBACK CONFIG =="
-psql "$DB_URL" -v ON_ERROR_STOP=1 -v company_id="${PR7_CANONICAL_COMPANY_ID}" <<'SQL' || { rollback_all; fail "feedback config binding failed"; }
+psql "$DB_URL" -v ON_ERROR_STOP=1 -v company_id="${PR7_CANONICAL_COMPANY_UUID}" <<'SQL' || { rollback_all; fail "feedback config binding failed"; }
 BEGIN;
 SELECT set_config('pr7.company_id', :'company_id', false);
 DO $$

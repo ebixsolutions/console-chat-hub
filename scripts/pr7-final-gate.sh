@@ -47,6 +47,10 @@ for f in \
   sql/pr6/pr6_canonical_evaluation_outbox.rollback.sql \
   sql/pr7/pr7_ce_lineage_closure.sql \
   sql/pr7/pr7_ce_lineage_closure.rollback.sql \
+  sql/pr7/pr7_company_dual_identity.sql \
+  sql/pr7/pr7_company_dual_identity.rollback.sql \
+  scripts/pr7-canonical-company-bootstrap.sh \
+  scripts/pr7-canonical-company-bootstrap-rollback.sh \
   sql/pr7/pr7_core_rls_tenant_isolation.sql \
   sql/pr7/pr7_feedback_config_tenant_scope.sql \
   sql/pr7/pr7_feedback_widget_delivery_atomic.sql \
@@ -155,6 +159,17 @@ must_have sql/pr7/pr7_ce_lineage_closure.sql "CE_LINEAGE_OUTBOX_MISMATCH" "CE tr
 must_have sql/pr7/pr7_ce_lineage_closure.sql "trg_pr7_ce_evaluation_lineage" "CE evaluation lineage trigger exists"
 must_have sql/pr7/pr7_ce_lineage_closure.sql "trg_pr7_ce_snapshot_lineage" "CE snapshot lineage trigger exists"
 must_have sql/pr7/pr7_ce_lineage_closure.sql "trg_pr7_ce_outbox_lineage" "CE outbox lineage trigger exists"
+
+
+# Workflow 2 / Task 2.1 — canonical SU Platform dual company identity.
+must_have sql/pr7/pr7_company_dual_identity.sql "platform_company_id bigint" "canonical platform integer company id column"
+must_have sql/pr7/pr7_company_dual_identity.sql "company.id must remain UUID" "canonical UUID company id preserved"
+must_have sql/pr7/pr7_company_dual_identity.sql "uq_company_platform_company_id" "platform integer company id unique"
+must_have scripts/pr7-canonical-company-bootstrap.sh "PR7_CANONICAL_COMPANY_UUID" "bootstrap requires canonical SU Platform UUID"
+must_have scripts/pr7-canonical-company-bootstrap.sh "PR7_CANONICAL_PLATFORM_COMPANY_ID" "bootstrap requires canonical SU Platform integer id"
+must_not_have scripts/pr7-canonical-company-bootstrap.sh "INSERT INTO public.company_membership" "Task 2.1 does not create membership"
+must_not_have scripts/pr7-canonical-company-bootstrap.sh "UPDATE public.conversations" "Task 2.1 does not backfill conversations"
+must_not_have scripts/pr7-canonical-company-bootstrap.sh "UPDATE public.channel_config" "Task 2.1 does not backfill channels"
 
 echo "== BUILD =="
 if npm run build; then echo "PASS npm run build"; else echo "FAIL npm run build"; fail=1; fi
