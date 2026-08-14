@@ -22,6 +22,7 @@ export interface LiveWidgetConfigRow {
   primary_color: string | null;
   logo_url: string | null;
   is_active: boolean | null;
+  appearance_theme: "modern" | "classic";
 }
 
 export type JsonRecord = Record<string, any>;
@@ -255,7 +256,7 @@ export const getWidgetConfigFn = createServerFn({ method: "POST" })
 
     const { data: widget, error } = await context.supabase
       .from("widget_config")
-      .select("id, name, header_title, welcome_message, placeholder_text, primary_color, logo_url, is_active")
+      .select("id, name, header_title, welcome_message, placeholder_text, primary_color, logo_url, is_active, appearance_theme")
       .eq("id", owned.data.widgetId)
       .maybeSingle();
 
@@ -272,6 +273,7 @@ const updateWidgetInput = z.object({
   primary_color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).nullable().optional(),
   logo_url: z.string().url().max(2048).nullable().optional(),
   is_active: z.boolean().optional(),
+  appearance_theme: z.enum(["modern", "classic"]).optional(),
 });
 
 export const updateWidgetConfigFn = createServerFn({ method: "POST" })
@@ -306,6 +308,7 @@ export const updateWidgetConfigFn = createServerFn({ method: "POST" })
       "primary_color",
       "logo_url",
       "is_active",
+      "appearance_theme",
     ] as const) {
       if (data[key] !== undefined) patch[key] = data[key];
     }
@@ -314,7 +317,7 @@ export const updateWidgetConfigFn = createServerFn({ method: "POST" })
       .from("widget_config")
       .update(patch)
       .eq("id", owned.data.widgetId)
-      .select("id, name, header_title, welcome_message, placeholder_text, primary_color, logo_url, is_active")
+      .select("id, name, header_title, welcome_message, placeholder_text, primary_color, logo_url, is_active, appearance_theme")
       .maybeSingle();
 
     if (error) return { ok: false, error: "widget_update_failed" };

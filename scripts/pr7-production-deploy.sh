@@ -87,6 +87,9 @@ bash scripts/pr7-widget-theme-contract-source-gate.sh || stop "widget theme cont
 echo "== WIDGET MODERN ASSISTANT RUNTIME PREFLIGHT =="
 bash scripts/pr7-widget-modern-runtime-source-gate.sh || stop "widget modern runtime source failed"
 
+echo "== WIDGET THEME SELECTOR DIRECTOR PREFLIGHT =="
+bash scripts/pr7-widget-theme-selector-director-gate.sh || stop "widget theme selector Director gate failed"
+
 echo "== COMPANY FOUNDATION LIFECYCLE SOURCE GATE =="
 bash scripts/pr7-company-foundation-lifecycle-gate.sh || stop "company foundation lifecycle gate failed"
 
