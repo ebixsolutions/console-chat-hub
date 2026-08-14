@@ -23,6 +23,8 @@ fail(){ echo "FAIL: $1"; exit 1; }
 [ -n "${PR7_CANONICAL_PLATFORM_COMPANY_ID:-}" ] || stop "canonical platform integer company id missing"
 [ -n "${PR7_MEMBERSHIP_BOOTSTRAP_RUN_ID:-}" ] || stop "membership bootstrap run id missing"
 [ -n "${PR7_CHANNEL_OWNERSHIP_RUN_ID:-}" ] || stop "channel ownership run id missing"
+[ -n "${PR7_CONVERSATION_LINEAGE_RUN_ID:-}" ] || stop "conversation lineage run id missing"
+[ "${PR7_LEGACY_ORPHAN_CONVERSATIONS_BELONG_TO_CANONICAL_COMPANY:-}" = "YES" ] || stop "orphan conversation ownership confirmation missing"
 
 [ -d "$REPO/.git" ] || stop "repo not found"
 cd "$REPO" || stop "cannot enter repo"
@@ -125,6 +127,39 @@ if ! bash scripts/pr7-channel-ownership-bootstrap.sh; then
   rollback_bootstrap || true
   [ "$identity_applied" -eq 1 ] && rollback_identity || true
   fail "channel ownership bootstrap failed"
+fi
+
+CONVERSATION_FORWARD="sql/pr7/pr7_conversation_lineage_foundation.sql"
+CONVERSATION_ROLLBACK="sql/pr7/pr7_conversation_lineage_foundation.rollback.sql"
+[ -s "$CONVERSATION_FORWARD" ] || stop "conversation lineage foundation SQL missing"
+[ -s "$CONVERSATION_ROLLBACK" ] || stop "conversation lineage foundation rollback SQL missing"
+conversation_applied=0
+rollback_conversation_schema(){ psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$CONVERSATION_ROLLBACK"; }
+rollback_conversation_bootstrap(){ bash scripts/pr7-conversation-lineage-bootstrap-rollback.sh; }
+
+echo "== APPLY CONVERSATION LINEAGE FOUNDATION =="
+if psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$CONVERSATION_FORWARD"; then
+  conversation_applied=1
+else
+  rollback_channel_bootstrap || true
+  [ "$channel_applied" -eq 1 ] && rollback_channel_schema || true
+  rollback_membership_bootstrap || true
+  [ "$membership_applied" -eq 1 ] && rollback_membership_schema || true
+  rollback_bootstrap || true
+  [ "$identity_applied" -eq 1 ] && rollback_identity || true
+  fail "conversation lineage foundation failed"
+fi
+
+echo "== CANONICAL CONVERSATION/DIRECT LINEAGE BACKFILL =="
+if ! bash scripts/pr7-conversation-lineage-bootstrap.sh; then
+  [ "$conversation_applied" -eq 1 ] && rollback_conversation_schema || true
+  rollback_channel_bootstrap || true
+  [ "$channel_applied" -eq 1 ] && rollback_channel_schema || true
+  rollback_membership_bootstrap || true
+  [ "$membership_applied" -eq 1 ] && rollback_membership_schema || true
+  rollback_bootstrap || true
+  [ "$identity_applied" -eq 1 ] && rollback_identity || true
+  fail "conversation lineage bootstrap failed"
 fi
 
 SQL_FORWARD=(
@@ -253,7 +288,7 @@ rollback_functions(){
   return "$rc"
 }
 rollback_bootstrap(){ bash scripts/pr7-canonical-company-bootstrap-rollback.sh; }
-rollback_all(){ set +e; rollback_functions; rollback_sql; rollback_channel_bootstrap; [ "$channel_applied" -eq 1 ] && rollback_channel_schema; rollback_membership_bootstrap; [ "$membership_applied" -eq 1 ] && rollback_membership_schema; rollback_bootstrap; [ "$identity_applied" -eq 1 ] && rollback_identity; set -e; }
+rollback_all(){ set +e; rollback_functions; rollback_sql; rollback_conversation_bootstrap; [ "$conversation_applied" -eq 1 ] && rollback_conversation_schema; rollback_channel_bootstrap; [ "$channel_applied" -eq 1 ] && rollback_channel_schema; rollback_membership_bootstrap; [ "$membership_applied" -eq 1 ] && rollback_membership_schema; rollback_bootstrap; [ "$identity_applied" -eq 1 ] && rollback_identity; set -e; }
 
 echo "== APPLY PR7 SQL =="
 for i in "${!SQL_FORWARD[@]}"; do
@@ -262,6 +297,8 @@ for i in "${!SQL_FORWARD[@]}"; do
     sql_applied+=("$i")
   else
     rollback_sql
+    rollback_conversation_bootstrap || true
+    [ "$conversation_applied" -eq 1 ] && rollback_conversation_schema || true
     rollback_channel_bootstrap || true
     [ "$channel_applied" -eq 1 ] && rollback_channel_schema || true
     rollback_membership_bootstrap || true

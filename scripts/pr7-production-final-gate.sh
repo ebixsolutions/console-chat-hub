@@ -94,6 +94,21 @@ BEGIN
     WHERE company_id IS NULL OR company_id<>cid
   ) THEN RAISE EXCEPTION 'channel ownership is not canonical'; END IF;
   IF EXISTS (
+    SELECT 1 FROM public.conversations
+    WHERE company_id IS NULL OR company_id<>cid
+  ) THEN RAISE EXCEPTION 'conversation ownership is not canonical'; END IF;
+  IF EXISTS (
+    SELECT 1 FROM public.conversations c
+    JOIN public.channel_config ch ON ch.id=c.channel_config_id
+    WHERE c.company_id<>ch.company_id
+  ) THEN RAISE EXCEPTION 'conversation/channel company lineage mismatch'; END IF;
+  IF EXISTS (
+    SELECT 1 FROM public.upstream_call_log u
+    JOIN public.conversations c ON c.id=u.conversation_id
+    WHERE u.company_id IS DISTINCT FROM c.company_id
+  ) THEN RAISE EXCEPTION 'upstream-call/conversation company lineage mismatch'; END IF;
+
+  IF EXISTS (
     SELECT 1 FROM public.pr7_channel_ownership_run
     WHERE company_id=cid AND completed_at IS NULL
   ) THEN RAISE EXCEPTION 'channel ownership has incomplete run'; END IF;

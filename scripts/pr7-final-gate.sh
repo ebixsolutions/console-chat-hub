@@ -60,6 +60,10 @@ for f in \
   sql/pr7/pr7_channel_ownership_foundation.rollback.sql \
   scripts/pr7-channel-ownership-bootstrap.sh \
   scripts/pr7-channel-ownership-bootstrap-rollback.sh \
+  sql/pr7/pr7_conversation_lineage_foundation.sql \
+  sql/pr7/pr7_conversation_lineage_foundation.rollback.sql \
+  scripts/pr7-conversation-lineage-bootstrap.sh \
+  scripts/pr7-conversation-lineage-bootstrap-rollback.sh \
   sql/pr7/pr7_core_rls_tenant_isolation.sql \
   sql/pr7/pr7_feedback_config_tenant_scope.sql \
   sql/pr7/pr7_feedback_widget_delivery_atomic.sql \
@@ -209,6 +213,17 @@ must_have scripts/pr7-channel-ownership-bootstrap-rollback.sh "downstream conver
 must_have scripts/pr7-channel-ownership-bootstrap-rollback.sh "channel ownership changed after bootstrap" "channel ownership drift blocks rollback"
 must_have scripts/pr7-channel-ownership-bootstrap.sh "idempotent no-op" "channel bootstrap same-run no-op"
 must_have scripts/pr7-channel-ownership-bootstrap-rollback.sh "already rolled back (idempotent no-op)" "channel rollback repeat no-op"
+
+
+# Workflow 3 / Task 3.2 — conversation/direct-lineage backfill.
+must_have scripts/pr7-conversation-lineage-bootstrap.sh "Task 3.1 channel ownership incomplete/conflicting" "conversation lineage requires canonical channels"
+must_have scripts/pr7-conversation-lineage-bootstrap.sh "PR7_LEGACY_ORPHAN_CONVERSATIONS_BELONG_TO_CANONICAL_COMPANY" "orphan conversation ownership requires explicit confirmation"
+must_have scripts/pr7-conversation-lineage-bootstrap.sh "explicit_orphan_confirmation" "orphan provenance is explicit"
+must_have scripts/pr7-conversation-lineage-bootstrap.sh "UPDATE public.upstream_call_log" "upstream logs derive from conversation lineage"
+must_have scripts/pr7-conversation-lineage-bootstrap.sh "unexpected noncanonical CE lineage" "CE lineage fail-closed assertion"
+must_have scripts/pr7-conversation-lineage-bootstrap.sh "idempotent no-op" "conversation lineage same-run no-op"
+must_have scripts/pr7-conversation-lineage-bootstrap-rollback.sh "downstream CE lineage exists" "conversation rollback protects CE lineage"
+must_have scripts/pr7-conversation-lineage-bootstrap-rollback.sh "already rolled back (idempotent no-op)" "conversation rollback repeat no-op"
 
 echo "== BUILD =="
 if npm run build; then echo "PASS npm run build"; else echo "FAIL npm run build"; fail=1; fi
