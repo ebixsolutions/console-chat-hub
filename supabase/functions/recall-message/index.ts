@@ -1,12 +1,5 @@
 import { corsHeaders, json } from "../_shared/cors.ts";
-import {
-  resolveAgentCompanyScope,
-  validateAgent,
-  writeAudit,
-} from "../_shared/agent.ts";
-
-const ELEVATED = new Set(["admin", "supervisor"]);
-const ADMIN_ONLY = new Set(["admin"]);
+import { resolveAgentCompanyScope, validateAgent } from "../_shared/agent.ts";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -22,64 +15,54 @@ Deno.serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     const message_id = body?.message_id;
-    const reason = body?.reason || null;
+    const reason =
+      typeof body?.reason === "string" ? body.reason.trim().slice(0, 1000) : null;
+
     if (!message_id) return json({ error: "message_id required" }, 400);
 
-    const { data: message, error: mErr } = await supabaseAdmin
-      .from("messages")
-      .select("id, role, metadata, conversation_id")
-      .eq("id", message_id)
-      .maybeSingle();
-    if (mErr) return json({ error: "Message lookup failed" }, 500);
-    if (!message) return json({ error: "Message not found" }, 404);
+    const { data: rpcData, error: rpcErr } = await supabaseAdmin.rpc(
+      "recall_message_tx",
+      {
+        p_message_id: message_id,
+        p_company_id: scope.companyId,
+        p_actor_user_id: agent.user_id,
+        p_actor_agent_id: agent.id,
+        p_reason: reason || null,
+      },
+    );
 
-    const { data: scopedConversation, error: convErr } = await supabaseAdmin
-      .from("conversations")
-      .select("id")
-      .eq("id", message.conversation_id)
-      .eq("company_id", scope.companyId)
-      .maybeSingle();
-    if (convErr) return json({ error: "Conversation lookup failed" }, 500);
-    if (!scopedConversation) return json({ error: "Message not found" }, 404);
-
-    if (message.role === "visitor") {
-      if (!ADMIN_ONLY.has(scope.companyRole)) {
-        return json({ error: "Only company admins can recall visitor messages" }, 403);
-      }
-    } else if (message.role === "agent") {
-      const ownerId = (message.metadata as Record<string, unknown> | null)?.agent_id;
-      const isOwn = ownerId === agent.id;
-      if (!isOwn && !ELEVATED.has(scope.companyRole)) {
-        return json({ error: "Cannot recall another agent's message" }, 403);
-      }
+    if (rpcErr) {
+      console.error("[recall-message] RPC error", {
+        message_id,
+        code: rpcErr.code,
+      });
+      return json({ error: "Internal error" }, 500);
     }
-    // assistant role: any active agent in the same company is allowed.
 
-    const existingMeta = (message.metadata as Record<string, unknown> | null) || {};
-    const { error: uErr } = await supabaseAdmin
-      .from("messages")
-      .update({
-        is_recalled: true,
-        status: "recalled",
-        metadata: {
-          ...existingMeta,
-          recalled_by: agent.id,
-          recalled_at: new Date().toISOString(),
-          recall_reason: reason,
-          original_content_preserved: true,
-        },
-      })
-      .eq("id", message_id)
-      .eq("conversation_id", message.conversation_id);
-    if (uErr) return json({ error: uErr.message }, 500);
+    const resultValue = String(rpcData?.result ?? rpcData ?? "unknown");
 
-    await writeAudit(supabaseAdmin, agent.id, "recall_message", "messages", message_id, {
-      role: message.role,
-      reason,
-      company_id: scope.companyId,
-    });
-
-    return json({ success: true });
+    switch (resultValue) {
+      case "success":
+      case "already_recalled":
+        return json({
+          success: true,
+          already_recalled: resultValue === "already_recalled",
+        });
+      case "not_found":
+      case "tenant_forbidden":
+        return json({ error: "Message not found" }, 404);
+      case "visitor_admin_required":
+        return json({ error: "Only company admins can recall visitor messages" }, 403);
+      case "not_message_owner":
+        return json({ error: "Cannot recall another agent's message" }, 403);
+      case "actor_not_found":
+        return json({ error: "Agent account is inactive or unavailable" }, 403);
+      case "unsupported_role":
+        return json({ error: "Message role cannot be recalled" }, 400);
+      default:
+        console.error("[recall-message] unexpected RPC result", resultValue);
+        return json({ error: "Unexpected result" }, 500);
+    }
   } catch (e) {
     return json({ error: (e as Error).message }, 500);
   }
