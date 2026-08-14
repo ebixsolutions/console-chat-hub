@@ -1,111 +1,83 @@
-// ============================================================================
-// C3 Customer360 Adapter — L4c Gate A (shell only)
-// Source of truth: Contract 06 v1.1 FROZEN + Contract 03 §4.1 + Contract 08 F-04/F-05
-//
-// HARD CONSTRAINTS enforced in this file:
-//  - INTERNAL-ONLY. Fail-closed unless X-Internal-Service-Token matches
-//    Supabase secret CUSTOMER360_INTERNAL_TOKEN. No CORS. Browser/widget/console
-//    direct calls return 401.
-//  - No customer profile / PII / order / payment data is persisted by this
-//    adapter. upstream_call_log writes contain only sanitized metadata
-//    (request_id, latency, status, generic error_code). No PII in error_message.
-//  - No conversations.customer_ref write in Gate A.
-//  - No final_prompt_trace write in Gate A (only conceptual mapping in comments).
-//  - No new tables / columns / enums / migrations.
-//  - caller_type / caller_role / masking_level from request body are stripped
-//    before processing and never logged, echoed, or used for any decision.
-//    masking_level is server-side derived ONLY (internal token → system_auto).
-//  - customer_ref must match an approved opaque format. Email / phone / address /
-//    order_id-like values are REJECTED (never hashed-and-stored as customer_ref).
-//  - Missing CUSTOMER360_API_URL / TOKEN → safe degraded response. No fetch.
-//    No env / secret names in any client-facing message or log.
-//  - NEVER-RETURN fields (payment card/token, raw IP, device fingerprint,
-//    auth identifiers) are filtered before any response.
-//  - ENABLE_CUSTOMER360_ADAPTER feature flag default false; no in-app callers.
-//  - No hardcoded upstream URLs. URL solely from Deno.env.get.
-// ============================================================================
-
-// deno-lint-ignore-file no-explicit-any
-// @ts-nocheck — runs in Deno/Edge runtime; types resolved at deploy
+// Customer360 canonical upstream adapter — Workflow 5 / Task 5.1
+// INTERNAL ONLY. No CORS. Read-only upstream fetch. No raw PII persistence.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
-// ----------------------------------------------------------------------------
-// Types
-// ----------------------------------------------------------------------------
+type MaskingLevel = "minimal";
 
-interface Customer360AdapterInput {
-  customer_ref: string;
-  workspace_id: string;
-  tenant_id: string;
-  conversation_id: string;
-  fields_requested?: string[];
-  // Any caller_type / caller_role / masking_level keys in body are STRIPPED.
-}
+type MinimalCustomerContext = {
+  customer_ref?: string;
+  tier?: string;
+  language_preference?: string;
+  sentiment?: string;
+  sentiment_trend?: string;
+  trust_score?: string;
+  churn_risk?: string;
+  sensitive_to?: string[];
+  privacy_flags?: Record<string, boolean>;
+  context_quality?: string;
+  masked_summary?: string;
+  predicted_csat?: number;
+  escalation_score?: number;
+  p1_provider_version?: string;
+};
 
-type MaskingLevel = "minimal" | "masked" | "full";
-
-interface Customer360AdapterOutput {
-  success: boolean;
-  source: "upstream" | "fallback";
+type AdapterSuccess = {
+  success: true;
+  source: "upstream";
   masking_level: MaskingLevel;
-  customer_context: null; // Gate A: always null (no upstream, no mock data)
-  handoff_required: boolean;
-  customer_context_degraded: boolean;
+  customer_context: MinimalCustomerContext;
+  customer_ref: string;
   customer_context_ref: string;
+  customer_context_degraded: false;
+  handoff_required: false;
   request_id: string;
-  error?: {
+};
+
+type AdapterFailure = {
+  success: false;
+  source: "fallback";
+  masking_level: MaskingLevel;
+  customer_context: null;
+  customer_ref?: string;
+  customer_context_ref: string;
+  customer_context_degraded: true;
+  handoff_required: boolean;
+  request_id: string;
+  error: {
     error_code: string;
     message_safe: string;
     retryable: boolean;
   };
-}
+};
 
-// ----------------------------------------------------------------------------
-// Allowlists (reference, Gate B/C enforcement)
-// ----------------------------------------------------------------------------
+const MASKING_LEVEL: MaskingLevel = "minimal";
+const MAX_FIELDS = 20;
+const MAX_RESPONSE_BYTES = 256_000;
+const DEFAULT_TIMEOUT_MS = 5000;
 
-const MASKING_ALLOWLIST: Record<MaskingLevel, readonly string[]> = {
-  minimal: [
-    "customer_ref",
-    "tier",
-    "language_preference",
-    "sentiment",
-    "sentiment_trend",
-    "trust_score",
-    "churn_risk",
-    "sensitive_to",
-    "privacy_flags",
-    "context_quality",
-  ],
-  masked: [
-    "customer_ref",
-    "tier",
-    "language_preference",
-    "sentiment",
-    "sentiment_trend",
-    "trust_score",
-    "churn_risk",
-    "sensitive_to",
-    "privacy_flags",
-    "context_quality",
-    "masked_name",
-    "masked_email",
-    "masked_phone",
-    "tier_since",
-    "masked_order_summary",
-    "preferences_sanitized",
-    "past_complaints_sanitized",
-    "emotion_stage",
-    "follow_up_plan_sanitized",
-  ],
-  full: [
-    // Gate B/C only — enumerated by Contract 06 §2
-  ],
-} as const;
+const MINIMAL_ALLOWLIST = new Set([
+  "customer_ref",
+  "tier",
+  "language_preference",
+  "sentiment",
+  "sentiment_trend",
+  "trust_score",
+  "churn_risk",
+  "sensitive_to",
+  "privacy_flags",
+  "context_quality",
+  "masked_summary",
+  "predicted_csat",
+  "escalation_score",
+  "p1_provider_version",
+]);
 
-// NEVER returned to any caller at any masking level (incl. admin/supervisor)
-const NEVER_RETURN: readonly string[] = [
+const NEVER_RETURN = new Set([
+  "name",
+  "email",
+  "phone",
+  "address",
   "payment_card",
   "payment_token",
   "raw_ip",
@@ -113,130 +85,141 @@ const NEVER_RETURN: readonly string[] = [
   "auth_identifiers",
   "password_hash",
   "session_token",
-];
-
-// Request-body keys that must be stripped before processing
-const CALLER_BODY_KEYS_FORBIDDEN: readonly string[] = [
-  "caller_type",
-  "caller_role",
-  "masking_level",
-];
-
-// ----------------------------------------------------------------------------
-// Helpers
-// ----------------------------------------------------------------------------
+  "order_id",
+  "orders",
+  "payments",
+]);
 
 function jsonNoCors(status: number, body: unknown): Response {
-  // Intentionally NO Access-Control-Allow-Origin. POST-only, internal-only.
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store",
+    },
   });
 }
 
-function newRequestId(): string {
-  return (globalThis.crypto?.randomUUID?.() ??
-    `req_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`);
+function requestId(): string {
+  return crypto.randomUUID();
 }
 
-function isUuid(v: unknown): v is string {
-  return typeof v === "string" &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+function isUuid(value: unknown): value is string {
+  return typeof value === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 }
 
-/**
- * customer_ref opaque validation (Blocker 4).
- * Reject anything that looks like email/phone/address/order_id/raw external ID.
- * Only allow an approved opaque format:
- *   - "cus_" + 16..64 url-safe chars, OR
- *   - bare uuid
- * Rejected values are NEVER hashed-and-stored as conversations.customer_ref.
- */
 function isApprovedOpaqueCustomerRef(raw: unknown): raw is string {
   if (typeof raw !== "string") return false;
-  const v = raw.trim();
-  if (v.length === 0 || v.length > 128) return false;
-
-  // Reject email-like
-  if (/@/.test(v)) return false;
-  // Reject phone-like (digits / + / spaces / dashes / parens, mostly digits)
-  const digitCount = (v.match(/\d/g) ?? []).length;
-  if (/^[+()\-\s\d]+$/.test(v) && digitCount >= 6) return false;
-  // Reject address-like (whitespace inside, or street keywords)
-  if (/\s/.test(v)) return false;
-  if (/\b(street|st|road|rd|ave|avenue|lane|blvd|floor|room|district)\b/i.test(v)) {
-    return false;
-  }
-  // Reject order_id-like (e.g. "ORD-1234", "#12345", "order_...")
-  if (/^#?\d+$/.test(v)) return false;
-  if (/^(ord|order|inv|invoice|po)[-_]/i.test(v)) return false;
-
-  // Approved opaque forms
-  if (/^cus_[A-Za-z0-9_-]{16,64}$/.test(v)) return true;
-  if (isUuid(v)) return true;
-
-  return false;
+  const value = raw.trim();
+  if (!value || value.length > 128) return false;
+  if (/@/.test(value)) return false;
+  const digitCount = (value.match(/\d/g) ?? []).length;
+  if (/^[+()\-\s\d]+$/.test(value) && digitCount >= 6) return false;
+  if (/\s/.test(value)) return false;
+  if (/^#?\d+$/.test(value)) return false;
+  if (/^(ord|order|inv|invoice|po)[-_]/i.test(value)) return false;
+  return /^cus_[A-Za-z0-9_-]{16,64}$/.test(value) || isUuid(value);
 }
 
-/**
- * Strip the forbidden caller-* keys from request body BEFORE processing.
- * Stripped keys are not logged, not echoed, not used for any decision.
- */
-function stripForbiddenCallerKeys(body: Record<string, unknown>): {
-  cleaned: Record<string, unknown>;
-  stripped: boolean;
-} {
-  let stripped = false;
-  const cleaned: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(body)) {
-    if (CALLER_BODY_KEYS_FORBIDDEN.includes(k)) {
-      stripped = true;
-      continue;
-    }
-    cleaned[k] = v;
-  }
-  return { cleaned, stripped };
-}
-
-/** Intersect requested fields with masking allowlist; drop unknown silently. */
-function filterFieldsRequested(
-  fields: unknown,
-  level: MaskingLevel,
-): string[] {
-  if (!Array.isArray(fields)) return [];
-  const allow = new Set(MASKING_ALLOWLIST[level]);
-  const out: string[] = [];
-  for (const f of fields) {
-    if (typeof f !== "string") continue;
-    if (NEVER_RETURN.includes(f)) continue;
-    if (allow.has(f)) out.push(f);
-  }
-  return out;
-}
-
-/**
- * Strip NEVER_RETURN + privileged keys from any object before returning to caller.
- * (Defense-in-depth: nothing in Gate A produces such an object, but the
- * function is the single output choke point for Gate B/C reuse.)
- */
-function applyNeverReturnFilter<T extends Record<string, unknown> | null>(
-  ctx: T,
-): T {
-  if (!ctx) return ctx;
-  for (const k of NEVER_RETURN) {
-    if (k in (ctx as Record<string, unknown>)) {
-      delete (ctx as Record<string, unknown>)[k];
-    }
-  }
-  return ctx;
-}
-
-function safeErrorMessage(_code: string): string {
-  // Single generic phrase. No env names, no secret names, no stack info.
+function safeMessage(): string {
   return "Customer information temporarily unavailable.";
 }
 
-function getServiceClient() {
+function failure(
+  id: string,
+  code: string,
+  retryable: boolean,
+  customerRef = "",
+  status = 200,
+): Response {
+  const out: AdapterFailure = {
+    success: false,
+    source: "fallback",
+    masking_level: MASKING_LEVEL,
+    customer_context: null,
+    ...(customerRef ? { customer_ref: customerRef } : {}),
+    customer_context_ref: customerRef,
+    customer_context_degraded: true,
+    handoff_required: code !== "C360_IDENTITY_UNRESOLVED",
+    request_id: id,
+    error: {
+      error_code: code,
+      message_safe: safeMessage(),
+      retryable,
+    },
+  };
+  return jsonNoCors(status, out);
+}
+
+function parseTimeout(): number {
+  const raw = Number.parseInt(Deno.env.get("CUSTOMER360_TIMEOUT_MS") ?? "", 10);
+  return Number.isInteger(raw) && raw >= 1000 && raw <= 15000
+    ? raw
+    : DEFAULT_TIMEOUT_MS;
+}
+
+function selectRequestedFields(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [...MINIMAL_ALLOWLIST];
+  const out: string[] = [];
+  for (const value of raw) {
+    if (typeof value !== "string") continue;
+    if (!MINIMAL_ALLOWLIST.has(value) || NEVER_RETURN.has(value)) continue;
+    if (!out.includes(value)) out.push(value);
+    if (out.length >= MAX_FIELDS) break;
+  }
+  return out.length ? out : [...MINIMAL_ALLOWLIST];
+}
+
+function sanitizeCustomerContext(raw: unknown): MinimalCustomerContext | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const input = raw as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+
+  for (const key of MINIMAL_ALLOWLIST) {
+    if (!(key in input) || NEVER_RETURN.has(key)) continue;
+    const value = input[key];
+
+    if (["tier", "language_preference", "sentiment", "sentiment_trend",
+         "trust_score", "churn_risk", "context_quality", "masked_summary",
+         "p1_provider_version"].includes(key)) {
+      if (typeof value === "string" && value.trim()) {
+        out[key] = value.trim().slice(0, key === "masked_summary" ? 1000 : 200);
+      }
+      continue;
+    }
+
+    if (["predicted_csat", "escalation_score"].includes(key)) {
+      if (typeof value === "number" && Number.isFinite(value)) out[key] = value;
+      continue;
+    }
+
+    if (key === "sensitive_to") {
+      if (Array.isArray(value)) {
+        out[key] = value
+          .filter((v): v is string => typeof v === "string" && Boolean(v.trim()))
+          .slice(0, 10)
+          .map((v) => v.trim().slice(0, 100));
+      }
+      continue;
+    }
+
+    if (key === "privacy_flags") {
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        const flags: Record<string, boolean> = {};
+        for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+          if (typeof v === "boolean" && k.length <= 64) flags[k] = v;
+        }
+        out[key] = flags;
+      }
+      continue;
+    }
+  }
+
+  return out as MinimalCustomerContext;
+}
+
+function serviceClient() {
   const url = Deno.env.get("SUPABASE_URL");
   const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!url || !key) return null;
@@ -245,227 +228,302 @@ function getServiceClient() {
   });
 }
 
-/**
- * upstream_call_log write — sanitized metadata ONLY.
- * Existing columns only (no new enum / no schema change). No PII. No customer_ref.
- */
-async function writeUpstreamLog(params: {
-  conversation_id: string | null;
-  request_id: string;
+async function writeSanitizedLog(args: {
+  conversationId: string;
+  companyId: string | null;
+  requestId: string;
   status: number;
-  latency_ms: number;
-  error_code: string | null;
+  latencyMs: number;
+  errorCode: string | null;
 }): Promise<void> {
   try {
-    const sb = getServiceClient();
+    const sb = serviceClient();
     if (!sb) return;
-    if (!isUuid(params.conversation_id)) {
-      // upstream_call_log.conversation_id is uuid; skip when not a real uuid
-      // (e.g. unauthorized calls have no conversation context).
-      return;
-    }
     await sb.from("upstream_call_log").insert({
-      conversation_id: params.conversation_id,
+      conversation_id: args.conversationId,
+      company_id: args.companyId,
       upstream_service: "customer360",
-      // request_payload: sanitized metadata only — NO PII, NO customer_ref,
-      // NO fields_requested raw values.
       request_payload: {
-        request_id: params.request_id,
-        ts: new Date().toISOString(),
+        request_id: args.requestId,
+        operation: "read_customer_context",
       },
-      response_status: params.status,
-      response_latency_ms: params.latency_ms,
-      error_message: params.error_code
-        ? safeErrorMessage(params.error_code)
-        : null,
+      response_status: args.status,
+      response_latency_ms: args.latencyMs,
+      error_message: args.errorCode ? "Customer360 request failed." : null,
     });
   } catch {
-    // best-effort; never throw to caller
+    // Secondary telemetry only. Never expose or override primary result.
   }
 }
 
-// ============================================================================
-// CONCEPTUAL — Gate B/C ONLY. NOT executed in Gate A.
-//
-// final_prompt_trace mapping (when L5/B7 integrates this adapter):
-//   {
-//     // customer_context_ref: <opaque customer_ref> (NEVER raw email/phone/order_id)
-//     // masking_level: 'minimal' | 'masked' | 'full'
-//     // customer_context_degraded: boolean
-//     // request_id: <link to upstream_call_log.request_payload.request_id>
-//     // ❌ NEVER store: full customer_context JSON / name / email / phone /
-//     //                 address / order details / payment data
-//   }
-//
-// LLM redaction rule (L5 scope, NOT wired here):
-//   - customer_ref / order_id → replace with [CUSTOMER_REF] / [ORDER_ID]
-//   - trust_score / churn_risk → tone hints only, never numeric in prompt
-//   - full PII → never in prompt, even for admin callers
-// ============================================================================
-
-// ----------------------------------------------------------------------------
-// Handler
-// ----------------------------------------------------------------------------
-
 Deno.serve(async (req: Request) => {
-  const startedAt = Date.now();
-  const requestId = newRequestId();
+  const started = Date.now();
+  const id = requestId();
 
-  // Method gate — POST only. No OPTIONS handler (no CORS).
   if (req.method !== "POST") {
     return jsonNoCors(405, {
       success: false,
-      error: {
-        error_code: "METHOD_NOT_ALLOWED",
-        message_safe: safeErrorMessage("METHOD_NOT_ALLOWED"),
-        retryable: false,
-      },
-      request_id: requestId,
+      error: { error_code: "METHOD_NOT_ALLOWED", message_safe: "Unauthorized.", retryable: false },
+      request_id: id,
     });
   }
 
-  // ── Fail-closed internal auth ──────────────────────────────────────────────
-  const presentedToken = req.headers.get("X-Internal-Service-Token");
-  const expectedToken = Deno.env.get("CUSTOMER360_INTERNAL_TOKEN");
-  if (!expectedToken || !presentedToken || presentedToken !== expectedToken) {
-    // No business-table writes on unauthorized.
-    // Log only sanitized metadata; no IP, no headers, no body, no PII.
-    console.warn(
-      JSON.stringify({
-        request_id: requestId,
-        ts: new Date().toISOString(),
-        reason: "unauthorized_internal_adapter_call",
-      }),
-    );
+  const expectedInternalToken = Deno.env.get("CUSTOMER360_INTERNAL_TOKEN");
+  const presentedInternalToken = req.headers.get("X-Internal-Service-Token");
+  if (!expectedInternalToken || !presentedInternalToken ||
+      presentedInternalToken !== expectedInternalToken) {
     return jsonNoCors(401, {
       success: false,
-      error: {
-        error_code: "UNAUTHORIZED",
-        message_safe: "Unauthorized.",
-        retryable: false,
-      },
-      request_id: requestId,
+      error: { error_code: "UNAUTHORIZED", message_safe: "Unauthorized.", retryable: false },
+      request_id: id,
     });
   }
 
-  // ── Parse + strip forbidden caller-* keys BEFORE any processing ────────────
-  let rawBody: Record<string, unknown> = {};
+  let body: Record<string, unknown>;
   try {
-    rawBody = (await req.json()) as Record<string, unknown>;
-    if (!rawBody || typeof rawBody !== "object") rawBody = {};
+    const parsed = await req.json();
+    body = parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
   } catch {
-    rawBody = {};
+    return failure(id, "C360_INVALID_REQUEST", false, "", 400);
   }
-  const { cleaned: body } = stripForbiddenCallerKeys(rawBody);
 
-  // ── Server-side derive masking_level ────────────────────────────────────────
-  // Internal token caller → system_auto = "minimal".
-  // Authenticated agent session would be resolved here in Gate B/C and may
-  // promote to "masked" / "full" based on current_agent().role server-side.
-  // body.masking_level is NEVER consulted.
-  const maskingLevel: MaskingLevel = "minimal";
+  // Caller may identify ONLY the AI Chatbot conversation and requested safe
+  // fields. Company, tenant, customer_ref, role and masking level are resolved
+  // server-side and cannot be supplied by the caller.
+  for (const forbidden of [
+    "company_id",
+    "tenant_id",
+    "workspace_id",
+    "customer_ref",
+    "caller_type",
+    "caller_role",
+    "masking_level",
+  ]) {
+    if (forbidden in body) {
+      return failure(id, "C360_CALLER_SCOPE_FORBIDDEN", false, "", 400);
+    }
+  }
 
-  const conversationId = typeof body.conversation_id === "string"
-    ? body.conversation_id
-    : null;
+  const conversationId = body.conversation_id;
+  if (!isUuid(conversationId)) {
+    return failure(id, "C360_INVALID_CONVERSATION", false, "", 400);
+  }
 
-  // ── Validate customer_ref against approved opaque format ──────────────────
-  const customerRefRaw = (body as Customer360AdapterInput).customer_ref;
+  const sb = serviceClient();
+  if (!sb) return failure(id, "C360_SERVER_CONFIG_MISSING", true);
+
+  const { data: conversation, error: convErr } = await sb
+    .from("conversations")
+    .select("id, company_id, visitor_session_id")
+    .eq("id", conversationId)
+    .maybeSingle();
+
+  if (convErr) {
+    await writeSanitizedLog({
+      conversationId,
+      companyId: null,
+      requestId: id,
+      status: 500,
+      latencyMs: Date.now() - started,
+      errorCode: "C360_CONVERSATION_LOOKUP_FAILED",
+    });
+    return failure(id, "C360_CONVERSATION_LOOKUP_FAILED", true);
+  }
+
+  if (!conversation?.company_id || !conversation.visitor_session_id) {
+    return failure(id, "C360_IDENTITY_UNRESOLVED", false);
+  }
+
+  const companyId = String(conversation.company_id);
+  const { data: company, error: companyErr } = await sb
+    .from("company")
+    .select("id, is_active")
+    .eq("id", companyId)
+    .maybeSingle();
+
+  if (companyErr || !company || company.is_active !== true) {
+    return failure(id, "C360_COMPANY_UNRESOLVED", false);
+  }
+
+  const { data: visitor, error: visitorErr } = await sb
+    .from("visitor_session")
+    .select("id, visitor_metadata")
+    .eq("id", conversation.visitor_session_id)
+    .maybeSingle();
+
+  if (visitorErr || !visitor) {
+    return failure(id, "C360_IDENTITY_UNRESOLVED", false);
+  }
+
+  const metadata =
+    visitor.visitor_metadata &&
+    typeof visitor.visitor_metadata === "object" &&
+    !Array.isArray(visitor.visitor_metadata)
+      ? visitor.visitor_metadata as Record<string, unknown>
+      : {};
+
+  const customerRefRaw = metadata.customer_ref;
   if (!isApprovedOpaqueCustomerRef(customerRefRaw)) {
-    // Reject. Do NOT hash and store. Do NOT write conversations.customer_ref.
-    await writeUpstreamLog({
-      conversation_id: conversationId,
-      request_id: requestId,
-      status: 400,
-      latency_ms: Date.now() - startedAt,
-      error_code: "C360_INVALID_CUSTOMER_REF",
+    await writeSanitizedLog({
+      conversationId,
+      companyId,
+      requestId: id,
+      status: 422,
+      latencyMs: Date.now() - started,
+      errorCode: "C360_IDENTITY_UNRESOLVED",
     });
-    const out: Customer360AdapterOutput = {
-      success: false,
-      source: "fallback",
-      masking_level: maskingLevel,
-      customer_context: null,
-      handoff_required: true,
-      customer_context_degraded: true,
-      customer_context_ref: "",
-      request_id: requestId,
-      error: {
-        error_code: "C360_INVALID_CUSTOMER_REF",
-        message_safe: safeErrorMessage("C360_INVALID_CUSTOMER_REF"),
-        retryable: false,
-      },
-    };
-    return jsonNoCors(400, out);
+    return failure(id, "C360_IDENTITY_UNRESOLVED", false);
   }
-  const customerRef = (customerRefRaw as string).trim();
+  const customerRef = customerRefRaw.trim();
 
-  // Validate fields_requested against allowlist (raw value never logged/echoed).
-  const _allowedFields = filterFieldsRequested(
-    (body as Customer360AdapterInput).fields_requested,
-    maskingLevel,
-  );
+  const enabled =
+    (Deno.env.get("ENABLE_CUSTOMER360_ADAPTER") ?? "false").toLowerCase() === "true";
+  const upstreamUrl = Deno.env.get("CUSTOMER360_API_URL")?.trim();
+  const upstreamToken = Deno.env.get("CUSTOMER360_API_TOKEN")?.trim();
 
-  // ── Feature flag short-circuit ─────────────────────────────────────────────
-  const enabled = (Deno.env.get("ENABLE_CUSTOMER360_ADAPTER") ?? "false")
-    .toLowerCase() === "true";
-
-  // ── Config-missing short-circuit (Gate A primary path) ────────────────────
-  // URL solely from env. No hardcoded Base44 / upstream host anywhere.
-  const c360Url = Deno.env.get("CUSTOMER360_API_URL");
-  const c360Token = Deno.env.get("CUSTOMER360_API_TOKEN");
-
-  if (!enabled || !c360Url || !c360Token) {
-    // No fetch() attempted. No env / secret names in response.
-    await writeUpstreamLog({
-      conversation_id: conversationId,
-      request_id: requestId,
+  if (!enabled || !upstreamUrl || !upstreamToken) {
+    await writeSanitizedLog({
+      conversationId,
+      companyId,
+      requestId: id,
       status: 503,
-      latency_ms: Date.now() - startedAt,
-      error_code: "C360_CONFIG_MISSING",
+      latencyMs: Date.now() - started,
+      errorCode: "C360_CONFIG_MISSING",
     });
-    const out: Customer360AdapterOutput = applyNeverReturnFilter({
-      success: false,
-      source: "fallback",
-      masking_level: maskingLevel,
-      customer_context: null, // Gate A: never a real profile
-      handoff_required: true,
-      customer_context_degraded: true,
-      customer_context_ref: customerRef, // opaque ref only
-      request_id: requestId,
-      error: {
-        error_code: "C360_CONFIG_MISSING",
-        message_safe: safeErrorMessage("C360_CONFIG_MISSING"),
-        retryable: true,
-      },
-    }) as Customer360AdapterOutput;
-    return jsonNoCors(200, out);
+    return failure(id, "C360_CONFIG_MISSING", true, customerRef);
   }
 
-  // ── Gate B/C placeholder ───────────────────────────────────────────────────
-  // Actual upstream Customer360 fetch + masking is implemented in Gate B.
-  // For Gate A defense-in-depth (should be unreachable while flag is false
-  // and URL/token unset) return a safe fallback without performing a fetch.
-  await writeUpstreamLog({
-    conversation_id: conversationId,
-    request_id: requestId,
-    status: 501,
-    latency_ms: Date.now() - startedAt,
-    error_code: "C360_NOT_IMPLEMENTED_GATE_A",
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(upstreamUrl);
+    const local = parsedUrl.hostname === "localhost" || parsedUrl.hostname === "127.0.0.1";
+    if (parsedUrl.protocol !== "https:" && !local) {
+      return failure(id, "C360_CONFIG_INVALID", false, customerRef);
+    }
+  } catch {
+    return failure(id, "C360_CONFIG_INVALID", false, customerRef);
+  }
+
+  const fieldsRequested = selectRequestedFields(body.fields_requested);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), parseTimeout());
+
+  let response: Response;
+  try {
+    response = await fetch(parsedUrl.toString(), {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${upstreamToken}`,
+        "Content-Type": "application/json",
+        "X-AI-Company-ID": companyId,
+        "X-Request-ID": id,
+      },
+      body: JSON.stringify({
+        operation: "read_customer_context",
+        customer_ref: customerRef,
+        fields_requested: fieldsRequested,
+      }),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    clearTimeout(timeout);
+    const code =
+      error instanceof DOMException && error.name === "AbortError"
+        ? "C360_TIMEOUT"
+        : "C360_UPSTREAM_UNREACHABLE";
+    await writeSanitizedLog({
+      conversationId,
+      companyId,
+      requestId: id,
+      status: code === "C360_TIMEOUT" ? 504 : 502,
+      latencyMs: Date.now() - started,
+      errorCode: code,
+    });
+    return failure(id, code, true, customerRef);
+  }
+  clearTimeout(timeout);
+
+  if (!response.ok) {
+    const status = response.status;
+    await writeSanitizedLog({
+      conversationId,
+      companyId,
+      requestId: id,
+      status,
+      latencyMs: Date.now() - started,
+      errorCode: "C360_UPSTREAM_NON_2XX",
+    });
+    return failure(
+      id,
+      "C360_UPSTREAM_NON_2XX",
+      status === 429 || status >= 500,
+      customerRef,
+    );
+  }
+
+  const contentLength = Number(response.headers.get("content-length") ?? "0");
+  if (Number.isFinite(contentLength) && contentLength > MAX_RESPONSE_BYTES) {
+    return failure(id, "C360_RESPONSE_TOO_LARGE", false, customerRef);
+  }
+
+  let raw: unknown;
+  try {
+    raw = await response.json();
+  } catch {
+    return failure(id, "C360_RESPONSE_INVALID_JSON", false, customerRef);
+  }
+
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return failure(id, "C360_RESPONSE_SCHEMA_INVALID", false, customerRef);
+  }
+
+  const upstream = raw as Record<string, unknown>;
+  if (upstream.success !== true) {
+    return failure(id, "C360_UPSTREAM_REJECTED", false, customerRef);
+  }
+
+  if (
+    typeof upstream.customer_ref !== "string" ||
+    upstream.customer_ref.trim() !== customerRef
+  ) {
+    return failure(id, "C360_CUSTOMER_IDENTITY_MISMATCH", false, customerRef);
+  }
+
+  if (
+    upstream.ai_company_id !== undefined &&
+    String(upstream.ai_company_id) !== companyId
+  ) {
+    return failure(id, "C360_TENANT_IDENTITY_MISMATCH", false, customerRef);
+  }
+
+  const context = sanitizeCustomerContext(upstream.customer_context);
+  if (!context) {
+    return failure(id, "C360_RESPONSE_SCHEMA_INVALID", false, customerRef);
+  }
+
+  context.customer_ref = customerRef;
+
+  await writeSanitizedLog({
+    conversationId,
+    companyId,
+    requestId: id,
+    status: 200,
+    latencyMs: Date.now() - started,
+    errorCode: null,
   });
-  const fallback: Customer360AdapterOutput = applyNeverReturnFilter({
-    success: false,
-    source: "fallback",
-    masking_level: maskingLevel,
-    customer_context: null,
-    handoff_required: true,
-    customer_context_degraded: true,
+
+  const out: AdapterSuccess = {
+    success: true,
+    source: "upstream",
+    masking_level: MASKING_LEVEL,
+    customer_context: context,
+    customer_ref: customerRef,
     customer_context_ref: customerRef,
-    request_id: requestId,
-    error: {
-      error_code: "C360_NOT_IMPLEMENTED_GATE_A",
-      message_safe: safeErrorMessage("C360_NOT_IMPLEMENTED_GATE_A"),
-      retryable: true,
-    },
-  }) as Customer360AdapterOutput;
-  return jsonNoCors(200, fallback);
+    customer_context_degraded: false,
+    handoff_required: false,
+    request_id: id,
+  };
+  return jsonNoCors(200, out);
 });

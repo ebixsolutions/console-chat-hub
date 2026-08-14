@@ -31,6 +31,9 @@ for f in \
   scripts/pr7-singapore-kb-runtime-smoke.sh \
   tests/edge/ce-canonical-bundle-regression.mjs \
   supabase/functions/customer360-local/index.ts \
+  supabase/functions/customer360-adapter/index.ts \
+  scripts/pr7-customer360-adapter-source-gate.sh \
+  scripts/pr7-customer360-runtime-readiness-gate.sh \
   public/widget/chat.js \
   src/routes/_authenticated/console.tsx \
   src/lib/api/config.service.ts \
@@ -276,6 +279,16 @@ if bash scripts/pr7-singapore-kb-callchain-gate.sh; then
   echo "PASS Singapore KB full call-chain source contract"
 else
   echo "FAIL Singapore KB full call-chain source contract"
+  fail=1
+fi
+
+
+# Workflow 5 / Task 5.1 — Customer360 canonical read-only upstream adapter.
+echo "== CUSTOMER360 UPSTREAM ADAPTER SOURCE GATE =="
+if bash scripts/pr7-customer360-adapter-source-gate.sh; then
+  echo "PASS Customer360 upstream adapter source contract"
+else
+  echo "FAIL Customer360 upstream adapter source contract"
   fail=1
 fi
 

@@ -72,6 +72,9 @@ bash scripts/pr7-singapore-kb-jwt-contract-test.sh || stop "Singapore KB JWT con
 echo "== SINGAPORE KB FULL CALL-CHAIN PREFLIGHT =="
 bash scripts/pr7-singapore-kb-callchain-gate.sh || stop "Singapore KB full call-chain contract failed"
 
+echo "== CUSTOMER360 UPSTREAM ADAPTER PREFLIGHT =="
+bash scripts/pr7-customer360-adapter-source-gate.sh || stop "Customer360 upstream adapter source contract failed"
+
 echo "== COMPANY FOUNDATION LIFECYCLE SOURCE GATE =="
 bash scripts/pr7-company-foundation-lifecycle-gate.sh || stop "company foundation lifecycle gate failed"
 
