@@ -60,6 +60,8 @@ for f in \
   scripts/pr7-production-runtime-config-gate.sh \
   scripts/pr7-production-runtime-config-source-gate.sh \
   scripts/pr7-production-atomic-rollback-source-gate.sh \
+  scripts/pr8-ce-production-activation-gate.sh \
+  scripts/pr8-ce-production-activation-source-gate.sh \
   scripts/pr7-console-role-runtime-acceptance.sh \
   src/routes/_authenticated/console.feedback-responses.tsx \
   src/routes/_authenticated/console.agent-settings.tsx \
@@ -382,6 +384,14 @@ if bash scripts/pr7-production-atomic-rollback-source-gate.sh; then
   echo "PASS production atomic rollback contract"
 else
   echo "FAIL production atomic rollback contract"
+  fail=1
+fi
+
+echo "== CE PRODUCTION ACTIVATION SOURCE GATE =="
+if bash scripts/pr8-ce-production-activation-source-gate.sh; then
+  echo "PASS CE production activation source contract"
+else
+  echo "FAIL CE production activation source contract"
   fail=1
 fi
 

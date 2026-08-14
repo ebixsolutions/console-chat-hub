@@ -102,6 +102,15 @@ require_nonempty COACH_C360_SYNC_API_TOKEN
 require_minlen COACH_C360_SYNC_API_TOKEN 16
 require_nonempty C360_COACH_SYNC_CONTRACT_VERSION
 
+# CE -> SU CoachAI training handoff runtime.
+require_nonempty SU_COACHAI_EVALUATION_ENDPOINT
+require_https SU_COACHAI_EVALUATION_ENDPOINT
+require_nonempty SU_COACHAI_AUTH_HEADER
+require_nonempty SU_COACHAI_AUTH_VALUE
+require_minlen SU_COACHAI_AUTH_VALUE 16
+require_nonempty TRAINING_OUTBOX_INTERNAL_TOKEN
+require_minlen TRAINING_OUTBOX_INTERNAL_TOKEN 24
+
 # Production project must already contain every required Edge runtime variable
 # before SQL/data mutation starts. This is read-only; values are never printed.
 export SUPABASE_ACCESS_TOKEN="$ACCESS_TOKEN"
@@ -124,6 +133,10 @@ required_remote=(
   COACH_C360_SYNC_API_URL
   COACH_C360_SYNC_API_TOKEN
   C360_COACH_SYNC_CONTRACT_VERSION
+  SU_COACHAI_EVALUATION_ENDPOINT
+  SU_COACHAI_AUTH_HEADER
+  SU_COACHAI_AUTH_VALUE
+  TRAINING_OUTBOX_INTERNAL_TOKEN
 )
 
 for n in "${required_remote[@]}"; do
