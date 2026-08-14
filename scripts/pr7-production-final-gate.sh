@@ -85,6 +85,15 @@ bash scripts/pr7-singapore-kb-runtime-smoke.sh || stop "Singapore KB authenticat
 echo "== CUSTOMER360 UPSTREAM ADAPTER SOURCE =="
 bash scripts/pr7-customer360-adapter-source-gate.sh || stop "Customer360 upstream adapter source contract failed"
 
+echo "== CUSTOMER360 CALLER SOURCE =="
+bash scripts/pr7-customer360-caller-source-gate.sh || stop "Customer360 caller source contract failed"
+
+echo "== CUSTOMER360 RUNTIME READINESS =="
+bash scripts/pr7-customer360-runtime-readiness-gate.sh || stop "Customer360 runtime readiness failed"
+
+echo "== CUSTOMER360 RUNTIME SMOKE =="
+bash scripts/pr7-customer360-runtime-smoke.sh || stop "Customer360 runtime smoke failed"
+
 psql "$DB_URL" -v ON_ERROR_STOP=1 -v company_id="$CANONICAL_COMPANY" -v platform_company_id="$CANONICAL_PLATFORM_COMPANY" <<'SQL'
 SELECT set_config('pr7.company_id', :'company_id', false);
 SELECT set_config('pr7.platform_company_id', :'platform_company_id', false);

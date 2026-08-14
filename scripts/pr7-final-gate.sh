@@ -34,6 +34,8 @@ for f in \
   supabase/functions/customer360-adapter/index.ts \
   scripts/pr7-customer360-adapter-source-gate.sh \
   scripts/pr7-customer360-runtime-readiness-gate.sh \
+  scripts/pr7-customer360-caller-source-gate.sh \
+  scripts/pr7-customer360-runtime-smoke.sh \
   public/widget/chat.js \
   src/routes/_authenticated/console.tsx \
   src/lib/api/config.service.ts \
@@ -289,6 +291,16 @@ if bash scripts/pr7-customer360-adapter-source-gate.sh; then
   echo "PASS Customer360 upstream adapter source contract"
 else
   echo "FAIL Customer360 upstream adapter source contract"
+  fail=1
+fi
+
+
+# Workflow 5 / Task 5.2 — Customer360 caller integration.
+echo "== CUSTOMER360 CALLER SOURCE GATE =="
+if bash scripts/pr7-customer360-caller-source-gate.sh; then
+  echo "PASS Customer360 caller source contract"
+else
+  echo "FAIL Customer360 caller source contract"
   fail=1
 fi
 

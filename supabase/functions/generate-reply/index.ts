@@ -2350,7 +2350,7 @@ async function computePromptHash(content: string, versionId: string, conversatio
   return Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, "0")).join("").substring(0, 12);
 }
 
-async function callCustomer360Adapter(_conversation_id: string): Promise<{
+async function callCustomer360Adapter(conversation_id: string): Promise<{
   success: boolean;
   customer_context?: {
     masked_summary?: string;
@@ -2361,10 +2361,165 @@ async function callCustomer360Adapter(_conversation_id: string): Promise<{
     p1_provider_version?: string;
   };
   customer_ref?: string;
+  error_type?: string;
 }> {
-  // Current C360 Gate A is fail-closed: no authoritative customer identity /
-  // upstream profile binding, therefore no P1 prediction values are returned.
-  return { success: false };
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const internalToken = Deno.env.get("CUSTOMER360_INTERNAL_TOKEN");
+  const timeoutRaw = Number.parseInt(
+    Deno.env.get("CUSTOMER360_CALLER_TIMEOUT_MS") ?? "6000",
+    10,
+  );
+  const timeoutMs =
+    Number.isInteger(timeoutRaw) && timeoutRaw >= 1000 && timeoutRaw <= 15000
+      ? timeoutRaw
+      : 6000;
+
+  if (!supabaseUrl || !internalToken) {
+    console.error("[generate-reply] C360_CALLER_CONFIG_MISSING");
+    return { success: false, error_type: "C360_CALLER_CONFIG_MISSING" };
+  }
+
+  const endpoint = `${supabaseUrl.replace(/\/+$/, "")}/functions/v1/customer360-adapter`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  let response: Response;
+  try {
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Internal-Service-Token": internalToken,
+      },
+      body: JSON.stringify({
+        conversation_id,
+        fields_requested: [
+          "masked_summary",
+          "tier",
+          "predicted_csat",
+          "churn_risk",
+          "escalation_score",
+          "p1_provider_version",
+          "privacy_flags",
+          "context_quality",
+        ],
+      }),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    clearTimeout(timeout);
+    const errorType =
+      error instanceof DOMException && error.name === "AbortError"
+        ? "C360_CALLER_TIMEOUT"
+        : "C360_CALLER_FETCH_EXCEPTION";
+    console.error("[generate-reply] Customer360 caller failed", {
+      conversation_id,
+      error_type: errorType,
+    });
+    return { success: false, error_type: errorType };
+  }
+  clearTimeout(timeout);
+
+  if (!response.ok) {
+    console.error("[generate-reply] Customer360 caller non-2xx", {
+      conversation_id,
+      status: response.status,
+    });
+    return {
+      success: false,
+      error_type: `C360_CALLER_HTTP_${response.status}`,
+    };
+  }
+
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return { success: false, error_type: "C360_CALLER_INVALID_JSON" };
+  }
+
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return { success: false, error_type: "C360_CALLER_INVALID_SCHEMA" };
+  }
+
+  const data = payload as Record<string, unknown>;
+  if (data.success !== true) {
+    const errorObj =
+      data.error && typeof data.error === "object" && !Array.isArray(data.error)
+        ? data.error as Record<string, unknown>
+        : null;
+    const code =
+      errorObj && typeof errorObj.error_code === "string"
+        ? errorObj.error_code.slice(0, 80)
+        : "C360_UPSTREAM_DEGRADED";
+    return { success: false, error_type: code };
+  }
+
+  const context =
+    data.customer_context &&
+    typeof data.customer_context === "object" &&
+    !Array.isArray(data.customer_context)
+      ? data.customer_context as Record<string, unknown>
+      : null;
+
+  const customerRef =
+    typeof data.customer_ref === "string" &&
+    /^cus_[A-Za-z0-9_-]{16,64}$|^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      data.customer_ref,
+    )
+      ? data.customer_ref
+      : undefined;
+
+  if (!context || !customerRef) {
+    return { success: false, error_type: "C360_CALLER_INVALID_SCHEMA" };
+  }
+
+  const safeContext: {
+    masked_summary?: string;
+    tier?: string;
+    predicted_csat?: number;
+    churn_risk?: number;
+    escalation_score?: number;
+    p1_provider_version?: string;
+  } = {};
+
+  if (typeof context.masked_summary === "string" && context.masked_summary.trim()) {
+    safeContext.masked_summary = context.masked_summary.trim().slice(0, 1000);
+  }
+  if (typeof context.tier === "string" && context.tier.trim()) {
+    safeContext.tier = context.tier.trim().slice(0, 100);
+  }
+  if (
+    typeof context.predicted_csat === "number" &&
+    Number.isFinite(context.predicted_csat)
+  ) {
+    safeContext.predicted_csat = context.predicted_csat;
+  }
+  if (
+    typeof context.churn_risk === "number" &&
+    Number.isFinite(context.churn_risk)
+  ) {
+    safeContext.churn_risk = context.churn_risk;
+  }
+  if (
+    typeof context.escalation_score === "number" &&
+    Number.isFinite(context.escalation_score)
+  ) {
+    safeContext.escalation_score = context.escalation_score;
+  }
+  if (
+    typeof context.p1_provider_version === "string" &&
+    context.p1_provider_version.trim()
+  ) {
+    safeContext.p1_provider_version =
+      context.p1_provider_version.trim().slice(0, 120);
+  }
+
+  return {
+    success: true,
+    customer_context: safeContext,
+    customer_ref: customerRef,
+  };
 }
 
 async function callKBAdapter(
