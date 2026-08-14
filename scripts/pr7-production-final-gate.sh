@@ -18,6 +18,9 @@ FUNCTIONS_URL="${PR7_FUNCTIONS_URL:-https://${EXPECTED_PROJECT_REF}.supabase.co/
 stop(){ echo "== CE PRODUCTION ACTIVATION RUNTIME GATE =="
 bash scripts/pr8-ce-production-activation-gate.sh || stop "CE production activation runtime gate failed"
 
+echo "== CE RUNTIME SMOKE + IDEMPOTENCY =="
+bash scripts/pr8-ce-runtime-smoke.sh || stop "CE runtime smoke/idempotency failed"
+
 echo "== PRODUCTION ATOMIC ROLLBACK SOURCE CONTRACT =="
 bash scripts/pr7-production-atomic-rollback-source-gate.sh || stop "production rollback source contract failed"
 

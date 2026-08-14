@@ -46,6 +46,9 @@ bash scripts/pr7-production-atomic-rollback-source-gate.sh || stop "production r
 echo "== CE PRODUCTION ACTIVATION SOURCE CONTRACT =="
 bash scripts/pr8-ce-production-activation-source-gate.sh || stop "CE production activation source contract failed"
 
+echo "== CE RUNTIME SMOKE SOURCE CONTRACT =="
+bash scripts/pr8-ce-runtime-smoke-source-gate.sh || stop "CE runtime smoke source contract failed"
+
 echo "== PRODUCTION RUNTIME CONFIG CONTRACT =="
 bash scripts/pr7-production-runtime-config-gate.sh || stop "production runtime configuration incomplete"
 
