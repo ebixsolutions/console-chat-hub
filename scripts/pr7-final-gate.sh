@@ -51,6 +51,10 @@ for f in \
   sql/pr7/pr7_company_dual_identity.rollback.sql \
   scripts/pr7-canonical-company-bootstrap.sh \
   scripts/pr7-canonical-company-bootstrap-rollback.sh \
+  sql/pr7/pr7_company_membership_foundation.sql \
+  sql/pr7/pr7_company_membership_foundation.rollback.sql \
+  scripts/pr7-company-membership-bootstrap.sh \
+  scripts/pr7-company-membership-bootstrap-rollback.sh \
   sql/pr7/pr7_core_rls_tenant_isolation.sql \
   sql/pr7/pr7_feedback_config_tenant_scope.sql \
   sql/pr7/pr7_feedback_widget_delivery_atomic.sql \
@@ -170,6 +174,16 @@ must_have scripts/pr7-canonical-company-bootstrap.sh "PR7_CANONICAL_PLATFORM_COM
 must_not_have scripts/pr7-canonical-company-bootstrap.sh "INSERT INTO public.company_membership" "Task 2.1 does not create membership"
 must_not_have scripts/pr7-canonical-company-bootstrap.sh "UPDATE public.conversations" "Task 2.1 does not backfill conversations"
 must_not_have scripts/pr7-canonical-company-bootstrap.sh "UPDATE public.channel_config" "Task 2.1 does not backfill channels"
+
+
+# Workflow 2 / Task 2.2 — canonical company membership bootstrap.
+must_have sql/pr7/pr7_company_membership_foundation.sql "uq_company_membership_company_user" "one canonical membership row per company/user"
+must_have scripts/pr7-company-membership-bootstrap.sh "profile_role IS DISTINCT FROM legacy_role" "legacy role mirrors must reconcile"
+must_have scripts/pr7-company-membership-bootstrap.sh "at least one active canonical admin is required" "membership bootstrap requires admin"
+must_have scripts/pr7-company-membership-bootstrap.sh "active cross-company membership conflict" "cross-company membership fail closed"
+must_have scripts/pr7-company-membership-bootstrap.sh "created_by_run" "membership rollback provenance"
+must_not_have scripts/pr7-company-membership-bootstrap.sh "UPDATE public.conversations" "Task 2.2 does not backfill conversations"
+must_not_have scripts/pr7-company-membership-bootstrap.sh "UPDATE public.channel_config" "Task 2.2 does not backfill channels"
 
 echo "== BUILD =="
 if npm run build; then echo "PASS npm run build"; else echo "FAIL npm run build"; fail=1; fi

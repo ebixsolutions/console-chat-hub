@@ -79,6 +79,29 @@ BEGIN
     WHERE id=cid AND platform_company_id=pid AND is_active=true
   ) THEN RAISE EXCEPTION 'canonical company UUID/integer identity mismatch'; END IF;
   IF NOT EXISTS (SELECT 1 FROM public.company_membership WHERE company_id=cid AND is_active=true) THEN RAISE EXCEPTION 'canonical company has no active membership'; END IF;
+  IF EXISTS (
+    SELECT company_id,user_id FROM public.company_membership
+    GROUP BY company_id,user_id HAVING count(*)>1
+  ) THEN RAISE EXCEPTION 'duplicate canonical company/user membership rows'; END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.company_membership
+    WHERE company_id=cid AND role='admin'::public.app_role AND is_active=true
+  ) THEN RAISE EXCEPTION 'canonical company has no active admin'; END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM public.company_membership cm
+    JOIN public.agent_profile ap ON ap.user_id=cm.user_id
+    LEFT JOIN public.user_roles ur ON ur.user_id=cm.user_id
+    WHERE cm.company_id=cid AND cm.is_active=true
+      AND (
+        CASE ap.role
+          WHEN 'super_admin' THEN 'admin'
+          ELSE ap.role
+        END IS DISTINCT FROM cm.role::text
+        OR ur.role IS DISTINCT FROM cm.role
+      )
+  ) THEN RAISE EXCEPTION 'canonical membership role mirror mismatch'; END IF;
+
   IF EXISTS (SELECT 1 FROM public.channel_config WHERE company_id IS NULL OR company_id<>cid) THEN RAISE EXCEPTION 'invalid channel ownership'; END IF;
   IF EXISTS (SELECT 1 FROM public.conversations WHERE company_id IS NULL OR company_id<>cid) THEN RAISE EXCEPTION 'invalid conversation ownership'; END IF;
   IF EXISTS (SELECT 1 FROM public.upstream_call_log WHERE conversation_id IS NOT NULL AND (company_id IS NULL OR company_id<>cid)) THEN RAISE EXCEPTION 'invalid upstream log ownership'; END IF;

@@ -21,6 +21,7 @@ fail(){ echo "FAIL: $1"; exit 1; }
 [ "${PR7_LEGACY_DATA_IS_SINGLE_COMPANY:-}" = "YES" ] || stop "legacy single-company confirmation missing"
 [ -n "${PR7_CANONICAL_COMPANY_UUID:-}" ] || stop "canonical company UUID missing"
 [ -n "${PR7_CANONICAL_PLATFORM_COMPANY_ID:-}" ] || stop "canonical platform integer company id missing"
+[ -n "${PR7_MEMBERSHIP_BOOTSTRAP_RUN_ID:-}" ] || stop "membership bootstrap run id missing"
 
 [ -d "$REPO/.git" ] || stop "repo not found"
 cd "$REPO" || stop "cannot enter repo"
@@ -66,6 +67,31 @@ echo "== CANONICAL COMPANY BOOTSTRAP =="
 if ! bash scripts/pr7-canonical-company-bootstrap.sh; then
   [ "$identity_applied" -eq 1 ] && rollback_identity || true
   fail "canonical company bootstrap failed"
+fi
+
+MEMBERSHIP_FORWARD="sql/pr7/pr7_company_membership_foundation.sql"
+MEMBERSHIP_ROLLBACK="sql/pr7/pr7_company_membership_foundation.rollback.sql"
+[ -s "$MEMBERSHIP_FORWARD" ] || stop "membership foundation SQL missing"
+[ -s "$MEMBERSHIP_ROLLBACK" ] || stop "membership foundation rollback SQL missing"
+membership_applied=0
+rollback_membership_schema(){ psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$MEMBERSHIP_ROLLBACK"; }
+rollback_membership_bootstrap(){ bash scripts/pr7-company-membership-bootstrap-rollback.sh; }
+
+echo "== APPLY CANONICAL MEMBERSHIP FOUNDATION =="
+if psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$MEMBERSHIP_FORWARD"; then
+  membership_applied=1
+else
+  bash scripts/pr7-canonical-company-bootstrap-rollback.sh || true
+  [ "$identity_applied" -eq 1 ] && rollback_identity || true
+  fail "membership foundation schema failed"
+fi
+
+echo "== CANONICAL MEMBERSHIP BOOTSTRAP =="
+if ! bash scripts/pr7-company-membership-bootstrap.sh; then
+  [ "$membership_applied" -eq 1 ] && rollback_membership_schema || true
+  bash scripts/pr7-canonical-company-bootstrap-rollback.sh || true
+  [ "$identity_applied" -eq 1 ] && rollback_identity || true
+  fail "membership bootstrap failed"
 fi
 
 SQL_FORWARD=(
@@ -194,7 +220,7 @@ rollback_functions(){
   return "$rc"
 }
 rollback_bootstrap(){ bash scripts/pr7-canonical-company-bootstrap-rollback.sh; }
-rollback_all(){ set +e; rollback_functions; rollback_sql; rollback_bootstrap; [ "$identity_applied" -eq 1 ] && rollback_identity; set -e; }
+rollback_all(){ set +e; rollback_functions; rollback_sql; rollback_membership_bootstrap; [ "$membership_applied" -eq 1 ] && rollback_membership_schema; rollback_bootstrap; [ "$identity_applied" -eq 1 ] && rollback_identity; set -e; }
 
 echo "== APPLY PR7 SQL =="
 for i in "${!SQL_FORWARD[@]}"; do
@@ -203,6 +229,8 @@ for i in "${!SQL_FORWARD[@]}"; do
     sql_applied+=("$i")
   else
     rollback_sql
+    rollback_membership_bootstrap || true
+    [ "$membership_applied" -eq 1 ] && rollback_membership_schema || true
     rollback_bootstrap || true
     [ "$identity_applied" -eq 1 ] && rollback_identity || true
     fail "SQL deployment failed: $f"
