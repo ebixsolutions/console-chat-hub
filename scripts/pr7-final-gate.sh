@@ -24,6 +24,9 @@ for f in \
   supabase/functions/_shared/ce-grounding.ts \
   scripts/pr7-singapore-kb-tenant-mapping-gate.sh \
   scripts/pr7-singapore-kb-mapping-source-gate.sh \
+  scripts/pr7-singapore-kb-auth-env-gate.sh \
+  scripts/pr7-singapore-kb-auth-source-gate.sh \
+  scripts/pr7-singapore-kb-jwt-contract-test.sh \
   tests/edge/ce-canonical-bundle-regression.mjs \
   supabase/functions/customer360-local/index.ts \
   public/widget/chat.js \
@@ -243,6 +246,24 @@ if bash scripts/pr7-singapore-kb-mapping-source-gate.sh; then
   echo "PASS Singapore KB mapping source contract"
 else
   echo "FAIL Singapore KB mapping source contract"
+  fail=1
+fi
+
+
+# Workflow 4 / Task 4.2 — Singapore KB backend JWT authentication.
+echo "== SINGAPORE KB AUTH SOURCE GATE =="
+if bash scripts/pr7-singapore-kb-auth-source-gate.sh; then
+  echo "PASS Singapore KB auth source contract"
+else
+  echo "FAIL Singapore KB auth source contract"
+  fail=1
+fi
+
+echo "== SINGAPORE KB JWT CONTRACT TEST =="
+if bash scripts/pr7-singapore-kb-jwt-contract-test.sh; then
+  echo "PASS Singapore KB JWT contract"
+else
+  echo "FAIL Singapore KB JWT contract"
   fail=1
 fi
 

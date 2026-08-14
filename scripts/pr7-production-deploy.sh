@@ -64,6 +64,11 @@ echo "== SINGAPORE KB TENANT MAPPING PREFLIGHT =="
 bash scripts/pr7-singapore-kb-mapping-source-gate.sh || stop "Singapore KB mapping source contract failed"
 bash scripts/pr7-singapore-kb-tenant-mapping-gate.sh || stop "Singapore KB tenant mapping invalid"
 
+echo "== SINGAPORE KB BACKEND JWT AUTH PREFLIGHT =="
+bash scripts/pr7-singapore-kb-auth-source-gate.sh || stop "Singapore KB auth source contract failed"
+bash scripts/pr7-singapore-kb-auth-env-gate.sh || stop "Singapore KB production auth env invalid"
+bash scripts/pr7-singapore-kb-jwt-contract-test.sh || stop "Singapore KB JWT contract test failed"
+
 echo "== COMPANY FOUNDATION LIFECYCLE SOURCE GATE =="
 bash scripts/pr7-company-foundation-lifecycle-gate.sh || stop "company foundation lifecycle gate failed"
 
