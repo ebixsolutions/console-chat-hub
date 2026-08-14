@@ -1,12 +1,14 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import {
   fetchKBRag,
   resolveKBEndpoint,
   resolveTenantScope,
 } from "../_shared/kb-client.ts";
+import {
+  resolveAgentCompanyScope,
+  validateAgent,
+} from "../_shared/agent.ts";
 
 const TOOL_TYPES = new Set(["translate", "grammar", "suggest_reply", "check_policy"]);
-const ELEVATED_ROLES = new Set(["admin", "supervisor"]);
 const ALLOWED_LANGS = new Set(["en", "zh-TW"]);
 const MAX_CONTENT = 2000;
 const MAX_POLICY_EVIDENCE = 3;
@@ -133,28 +135,21 @@ Deno.serve(async (req) => {
   }
 
   try {
-    // Auth layer 1: JWT
-    const supabaseAuth = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!, {
-      global: { headers: { Authorization: req.headers.get("Authorization") ?? "" } },
-    });
-    const {
-      data: { user },
-      error: authErr,
-    } = await supabaseAuth.auth.getUser();
-    if (authErr || !user) return jsonRes({ error: "unauthorized" }, 401, req);
+    // PR7 tenant boundary: identity + active agent + single active company
+    // are resolved server-side. Browser-supplied company/tenant scope is not accepted.
+    const validated = await validateAgent(req);
+    if (validated instanceof Response) return validated;
+    const { agent, supabaseAdmin } = validated;
 
-    // Auth layer 2: roles
-    const supabaseAdmin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-    const { data: userRoles, error: roleErr } = await supabaseAdmin
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", user.id);
-    if (roleErr || !userRoles?.length) return jsonRes({ error: "forbidden" }, 403, req);
+    const scope = await resolveAgentCompanyScope(supabaseAdmin, agent);
+    if (scope instanceof Response) return scope;
 
-    // Multi-role: elevated priority
-    const isElevated = userRoles.some((r: { role: string }) => ELEVATED_ROLES.has(r.role));
-    const isAgent = userRoles.some((r: { role: string }) => r.role === "agent");
-    if (!isElevated && !isAgent) return jsonRes({ error: "forbidden" }, 403, req);
+    const isElevated =
+      scope.companyRole === "admin" || scope.companyRole === "supervisor";
+    const isAgent = scope.companyRole === "agent";
+    if (!isElevated && !isAgent) {
+      return jsonRes({ error: "forbidden" }, 403, req);
+    }
 
     // Parse and validate body
     const body = await req.json().catch(() => null);
@@ -194,29 +189,24 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Conversation guard
+    // Conversation guard: service-role lookup is always followed by an exact
+    // company boundary check before any provider or KB call.
     const { data: conv, error: convErr } = await supabaseAdmin
       .from("conversations")
-      .select("id, status, assigned_agent_id")
+      .select("id, company_id, status, assigned_agent_id")
       .eq("id", conversationId)
       .maybeSingle();
     if (convErr) return jsonRes({ error: "conversation_lookup_failed" }, 500, req);
-    if (!conv) return jsonRes({ error: "conversation_not_found" }, 404, req);
+    if (!conv || !conv.company_id || conv.company_id !== scope.companyId) {
+      // Deliberately 404 to avoid cross-tenant conversation enumeration.
+      return jsonRes({ error: "conversation_not_found" }, 404, req);
+    }
     if (conv.status === "resolved") return jsonRes({ error: "conversation_resolved" }, 409, req);
 
-    // Agent ownership guard (elevated bypasses)
-    if (!isElevated) {
-      const { data: ap, error: apErr } = await supabaseAdmin
-        .from("agent_profile")
-        .select("id")
-        .eq("user_id", user.id)
-        .maybeSingle();
-      if (apErr || !ap) {
-        return jsonRes({ error: "forbidden", detail: "agent_profile_not_found" }, 403, req);
-      }
-      if (conv.assigned_agent_id !== ap.id) {
-        return jsonRes({ error: "forbidden", detail: "not_assigned_to_conversation" }, 403, req);
-      }
+    // Ordinary agents may use Agent Assist only for their own active assignment.
+    // Elevated authority is company-scoped by resolveAgentCompanyScope above.
+    if (!isElevated && conv.assigned_agent_id !== agent.id) {
+      return jsonRes({ error: "forbidden", detail: "not_assigned_to_conversation" }, 403, req);
     }
 
     // Tool execution
@@ -323,6 +313,19 @@ Deno.serve(async (req) => {
         );
       }
 
+      // Defense-in-depth: KB resolver must agree with the authenticated
+      // company boundary already established for this conversation.
+      if (tenantResult.scope.aiCompanyId !== scope.companyId) {
+        console.error("[agent-assist] AA_SUGGEST_KB_TENANT_MISMATCH", {
+          conversation_id: conversationId,
+        });
+        return jsonRes(
+          { success: false, error: "suggest_kb_tenant_unresolved" },
+          503,
+          req,
+        );
+      }
+
       const kbResult = await fetchKBRag(
         { query: content.slice(0, 500), top_k: 3 },
         tenantResult.scope,
@@ -364,9 +367,7 @@ Deno.serve(async (req) => {
             `[Full Content Evidence ${index + 1}]
 ${item.content.slice(0, 1200)}`,
         )
-        .join("
-
-");
+        .join("\n\n");
 
       const groundingBlock = [
         orientation
@@ -377,9 +378,7 @@ ${orientation.slice(0, 1200)}`
 ${evidenceBlock}`,
       ]
         .filter(Boolean)
-        .join("
-
-");
+        .join("\n\n");
 
       const r = await callClaude(
         `Generate up to 3 customer service reply drafts with different tones. Return ONLY JSON: {"suggestions":[{"content":"...","tone_label":"Empathetic|Informative|Neutral"}]}. These are DRAFTS ONLY. Respond in the customer's language. Ground factual claims ONLY in Full Content Evidence. The Orientation Summary is context only and cannot independently support prices, dates, dimensions, policy conditions, procedures, limits, availability, warranty, refund or other exact facts. If the evidence does not support a factual claim, do not invent it.`,
@@ -465,6 +464,17 @@ ${groundingBlock}`,
             error: "policy_kb_tenant_unresolved",
             detail: tenantResult.reason,
           },
+          503,
+          req,
+        );
+      }
+
+      if (tenantResult.scope.aiCompanyId !== scope.companyId) {
+        console.error("[agent-assist] AA_POLICY_KB_TENANT_MISMATCH", {
+          conversation_id: conversationId,
+        });
+        return jsonRes(
+          { success: false, error: "policy_kb_tenant_unresolved" },
           503,
           req,
         );
