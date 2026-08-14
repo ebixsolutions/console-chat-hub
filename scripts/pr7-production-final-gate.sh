@@ -15,7 +15,10 @@ TEST_USER_B="${PR7_TEST_USER_B:-}"
 TEST_COMPANY_B="${PR7_TEST_COMPANY_B:-}"
 FUNCTIONS_URL="${PR7_FUNCTIONS_URL:-https://${EXPECTED_PROJECT_REF}.supabase.co/functions/v1}"
 
-stop(){ echo "== PRODUCTION RUNTIME CONFIG CONTRACT =="
+stop(){ echo "== PRODUCTION ATOMIC ROLLBACK SOURCE CONTRACT =="
+bash scripts/pr7-production-atomic-rollback-source-gate.sh || stop "production rollback source contract failed"
+
+echo "== PRODUCTION RUNTIME CONFIG CONTRACT =="
 bash scripts/pr7-production-runtime-config-gate.sh || stop "production runtime configuration incomplete"
 
 echo "STOP: $1"; exit 2; }

@@ -40,6 +40,9 @@ command -v python3 >/dev/null 2>&1 || stop "python3 missing"
 [ -s scripts/pr7-canonical-company-bootstrap.sh ] || stop "bootstrap missing"
 [ -s scripts/pr7-canonical-company-bootstrap-rollback.sh ] || stop "bootstrap rollback missing"
 
+echo "== PRODUCTION ATOMIC ROLLBACK CONTRACT =="
+bash scripts/pr7-production-atomic-rollback-source-gate.sh || stop "production rollback source contract failed"
+
 echo "== PRODUCTION RUNTIME CONFIG CONTRACT =="
 bash scripts/pr7-production-runtime-config-gate.sh || stop "production runtime configuration incomplete"
 
@@ -62,6 +65,7 @@ IDENTITY_ROLLBACK="sql/pr7/pr7_company_dual_identity.rollback.sql"
 
 identity_applied=0
 rollback_identity(){ psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$IDENTITY_ROLLBACK"; }
+rollback_bootstrap(){ bash scripts/pr7-canonical-company-bootstrap-rollback.sh; }
 
 echo "== SINGAPORE KB TENANT MAPPING PREFLIGHT =="
 bash scripts/pr7-singapore-kb-mapping-source-gate.sh || stop "Singapore KB mapping source contract failed"
@@ -218,10 +222,10 @@ SQL_FORWARD=(
   "sql/pr7/pr7_secondary_rls_tenant_isolation.sql"
   "sql/pr7/pr7_security_definer_acl_hardening.sql"
 )
-SQL_ROLLBACK=(
+SQL_ROLLBACK_FOR_FORWARD=(
   "sql/pr7/pr7_tenant_ownership_consistency.rollback.sql"
-  "sql/pr7/pr7_widget_theme_default_modern.rollback.sql"
   "sql/pr7/pr7_widget_theme_contract.rollback.sql"
+  "sql/pr7/pr7_widget_theme_default_modern.rollback.sql"
   "sql/pr7/pr7_customer360_coach_sync_state.rollback.sql"
   "sql/pr7/pr7_feedback_config_tenant_scope.rollback.sql"
   "sql/pr7/pr7_agent_management_tenant_isolation.rollback.sql"
@@ -237,7 +241,7 @@ SQL_ROLLBACK=(
   "sql/pr7/pr7_secondary_rls_tenant_isolation.rollback.sql"
   "sql/pr7/pr7_security_definer_acl_hardening.rollback.sql"
 )
-for f in "${SQL_FORWARD[@]}" "${SQL_ROLLBACK[@]}"; do [ -s "$f" ] || stop "required SQL missing/empty: $f"; done
+for f in "${SQL_FORWARD[@]}" "${SQL_ROLLBACK_FOR_FORWARD[@]}"; do [ -s "$f" ] || stop "required SQL missing/empty: $f"; done
 
 # Complete Product-ready Edge inventory. Every source below is physically
 # required before any SQL/data mutation begins.
@@ -301,14 +305,16 @@ for fn in "${FUNCTIONS[@]}"; do
   [ -s "supabase/functions/$fn/index.ts" ] || stop "required Edge source missing/empty: $fn"
 done
 
-sql_applied=()
+sql_rollback_stack=()
 functions_deployed=()
 
 rollback_sql(){
   set +e
-  for ((i=${#sql_applied[@]}-1; i>=0; i--)); do
-    idx="${sql_applied[$i]}"
-    psql "$DB_URL" -v ON_ERROR_STOP=1 -f "${SQL_ROLLBACK[$idx]}" || true
+  local i rb
+  for ((i=${#sql_rollback_stack[@]}-1; i>=0; i--)); do
+    rb="${sql_rollback_stack[$i]}"
+    [ -s "$rb" ] || { echo "ROLLBACK ERROR missing SQL rollback: $rb"; continue; }
+    psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$rb" || true
   done
   set -e
 }
@@ -322,7 +328,9 @@ rollback_functions(){
   (
     cd "$WT" || exit 1
     export SUPABASE_ACCESS_TOKEN="$ACCESS_TOKEN"
-    for fn in "${functions_deployed[@]}"; do
+    local_i=0
+    for ((local_i=${#functions_deployed[@]}-1; local_i>=0; local_i--)); do
+      fn="${functions_deployed[$local_i]}"
       [ -s "supabase/functions/$fn/index.ts" ] || exit 1
       if is_false "$fn" "${VERIFY_JWT_FALSE[@]}"; then
         npx supabase functions deploy "$fn" --project-ref "$PROJECT_REF" --no-verify-jwt || exit 1
@@ -336,14 +344,15 @@ rollback_functions(){
   rm -rf "$WT" 2>/dev/null || true
   return "$rc"
 }
-rollback_bootstrap(){ bash scripts/pr7-canonical-company-bootstrap-rollback.sh; }
 rollback_all(){ set +e; rollback_functions; rollback_sql; rollback_conversation_bootstrap; [ "$conversation_applied" -eq 1 ] && rollback_conversation_schema; rollback_channel_bootstrap; [ "$channel_applied" -eq 1 ] && rollback_channel_schema; rollback_membership_bootstrap; [ "$membership_applied" -eq 1 ] && rollback_membership_schema; rollback_bootstrap; [ "$identity_applied" -eq 1 ] && rollback_identity; set -e; }
 
 echo "== APPLY PR7 SQL =="
+[ "${#SQL_FORWARD[@]}" -eq "${#SQL_ROLLBACK_FOR_FORWARD[@]}" ] || fail "SQL forward/rollback inventory length mismatch"
 for i in "${!SQL_FORWARD[@]}"; do
   f="${SQL_FORWARD[$i]}"
+  rb="${SQL_ROLLBACK_FOR_FORWARD[$i]}"
   if psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$f"; then
-    sql_applied+=("$i")
+    sql_rollback_stack+=("$rb")
   else
     rollback_sql
     rollback_conversation_bootstrap || true
