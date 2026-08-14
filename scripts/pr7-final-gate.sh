@@ -43,6 +43,10 @@ for f in \
   sql/pr7/pr7_conversation_resolution_atomic_tx.sql \
   sql/pr7/pr7_ce_tenant_resolution_hardening.sql \
   sql/pr7/pr7_ce_tenant_resolution_hardening.rollback.sql \
+  sql/pr6/pr6_canonical_evaluation_outbox.sql \
+  sql/pr6/pr6_canonical_evaluation_outbox.rollback.sql \
+  sql/pr7/pr7_ce_lineage_closure.sql \
+  sql/pr7/pr7_ce_lineage_closure.rollback.sql \
   sql/pr7/pr7_core_rls_tenant_isolation.sql \
   sql/pr7/pr7_feedback_config_tenant_scope.sql \
   sql/pr7/pr7_feedback_widget_delivery_atomic.sql \
@@ -138,6 +142,19 @@ else
   echo "FAIL CE canonical bundle runtime regression"
   fail=1
 fi
+
+
+# Workflow 1 / Task 1.3 — CE persisted lineage + downstream outbox closure.
+must_have sql/pr6/pr6_canonical_evaluation_outbox.sql "CREATE CONSTRAINT TRIGGER trg_pr6_enqueue_canonical_evaluation" "PR6 canonical outbox uses constraint trigger"
+must_have sql/pr6/pr6_canonical_evaluation_outbox.sql "DEFERRABLE INITIALLY DEFERRED" "PR6 outbox waits for snapshot in same transaction"
+must_have sql/pr6/pr6_canonical_evaluation_outbox.sql "PR6_CANONICAL_SNAPSHOT_MISSING" "PR6 outbox requires canonical snapshot"
+must_have sql/pr7/pr7_ce_lineage_closure.sql "CE_LINEAGE_TENANT_IDENTITY_CONFLICT" "CE lineage fails closed on conversation/channel conflict"
+must_have sql/pr7/pr7_ce_lineage_closure.sql "CE_LINEAGE_ATTEMPT_EVALUATION_MISMATCH" "CE attempt/evaluation lineage enforced"
+must_have sql/pr7/pr7_ce_lineage_closure.sql "CE_LINEAGE_SNAPSHOT_MISMATCH" "CE snapshot lineage enforced"
+must_have sql/pr7/pr7_ce_lineage_closure.sql "CE_LINEAGE_OUTBOX_MISMATCH" "CE training outbox lineage enforced"
+must_have sql/pr7/pr7_ce_lineage_closure.sql "trg_pr7_ce_evaluation_lineage" "CE evaluation lineage trigger exists"
+must_have sql/pr7/pr7_ce_lineage_closure.sql "trg_pr7_ce_snapshot_lineage" "CE snapshot lineage trigger exists"
+must_have sql/pr7/pr7_ce_lineage_closure.sql "trg_pr7_ce_outbox_lineage" "CE outbox lineage trigger exists"
 
 echo "== BUILD =="
 if npm run build; then echo "PASS npm run build"; else echo "FAIL npm run build"; fail=1; fi
