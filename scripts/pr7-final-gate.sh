@@ -22,6 +22,8 @@ for f in \
   supabase/functions/conversation-evaluate/index.ts \
   supabase/functions/_shared/ce-contract.ts \
   supabase/functions/_shared/ce-grounding.ts \
+  scripts/pr7-singapore-kb-tenant-mapping-gate.sh \
+  scripts/pr7-singapore-kb-mapping-source-gate.sh \
   tests/edge/ce-canonical-bundle-regression.mjs \
   supabase/functions/customer360-local/index.ts \
   public/widget/chat.js \
@@ -234,6 +236,16 @@ must_have sql/pr7/pr7_tenant_ownership_consistency.sql "TENANT_LINEAGE_CONVERSAT
 must_have sql/pr7/pr7_tenant_ownership_consistency.sql "TENANT_LINEAGE_FEEDBACK_VISITOR_MISMATCH" "feedback visitor mismatch rejected"
 must_have sql/pr7/pr7_tenant_ownership_consistency.sql "trg_pr7_conversation_tenant_lineage" "conversation tenant lineage trigger"
 must_have sql/pr7/pr7_tenant_ownership_consistency.sql "trg_pr7_feedback_tenant_lineage" "feedback tenant lineage trigger"
+
+# Workflow 4 / Task 4.1 — Singapore KB explicit tenant mapping.
+echo "== SINGAPORE KB MAPPING SOURCE GATE =="
+if bash scripts/pr7-singapore-kb-mapping-source-gate.sh; then
+  echo "PASS Singapore KB mapping source contract"
+else
+  echo "FAIL Singapore KB mapping source contract"
+  fail=1
+fi
+
 echo "== BUILD =="
 if npm run build; then echo "PASS npm run build"; else echo "FAIL npm run build"; fail=1; fi
 if [ "$fail" -ne 0 ]; then echo "FINAL STATUS: FAIL"; exit 1; fi

@@ -21,6 +21,7 @@ fail(){ echo "FAIL: $1"; exit 1; }
 [ "${PR7_LEGACY_DATA_IS_SINGLE_COMPANY:-}" = "YES" ] || stop "legacy single-company confirmation missing"
 [ -n "${PR7_CANONICAL_COMPANY_UUID:-}" ] || stop "canonical company UUID missing"
 [ -n "${PR7_CANONICAL_PLATFORM_COMPANY_ID:-}" ] || stop "canonical platform integer company id missing"
+[ -n "${KB_SINGAPORE_TENANT_MAP_JSON:-}" ] || stop "Singapore KB tenant mapping missing"
 [ -n "${PR7_MEMBERSHIP_BOOTSTRAP_RUN_ID:-}" ] || stop "membership bootstrap run id missing"
 [ -n "${PR7_CHANNEL_OWNERSHIP_RUN_ID:-}" ] || stop "channel ownership run id missing"
 [ -n "${PR7_CONVERSATION_LINEAGE_RUN_ID:-}" ] || stop "conversation lineage run id missing"
@@ -58,6 +59,10 @@ IDENTITY_ROLLBACK="sql/pr7/pr7_company_dual_identity.rollback.sql"
 
 identity_applied=0
 rollback_identity(){ psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$IDENTITY_ROLLBACK"; }
+
+echo "== SINGAPORE KB TENANT MAPPING PREFLIGHT =="
+bash scripts/pr7-singapore-kb-mapping-source-gate.sh || stop "Singapore KB mapping source contract failed"
+bash scripts/pr7-singapore-kb-tenant-mapping-gate.sh || stop "Singapore KB tenant mapping invalid"
 
 echo "== COMPANY FOUNDATION LIFECYCLE SOURCE GATE =="
 bash scripts/pr7-company-foundation-lifecycle-gate.sh || stop "company foundation lifecycle gate failed"

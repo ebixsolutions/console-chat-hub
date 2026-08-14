@@ -22,6 +22,7 @@ fail(){ echo "FAIL: $1"; exit 1; }
 [ -n "$DB_URL" ] || stop "SUPABASE_DB_URL missing"
 [ -n "$ACCESS_TOKEN" ] || stop "SUPABASE_ACCESS_TOKEN missing"
 [ -n "$CANONICAL_COMPANY" ] || stop "canonical company UUID missing"
+[ -n "${KB_SINGAPORE_TENANT_MAP_JSON:-}" ] || stop "Singapore KB tenant mapping missing"
 [ -n "$CANONICAL_PLATFORM_COMPANY" ] || stop "canonical platform integer company id missing"
 [ -d "$REPO/.git" ] || stop "repo not found"
 cd "$REPO" || stop "cannot enter repo"
@@ -66,6 +67,10 @@ echo "PASS health-check runtime"
 
 # Canonical DB/RLS assertions.
 echo "== CANONICAL OWNERSHIP ASSERTIONS =="
+echo "== SINGAPORE KB TENANT MAPPING =="
+bash scripts/pr7-singapore-kb-mapping-source-gate.sh || stop "Singapore KB mapping source contract failed"
+bash scripts/pr7-singapore-kb-tenant-mapping-gate.sh || stop "Singapore KB tenant mapping invalid"
+
 psql "$DB_URL" -v ON_ERROR_STOP=1 -v company_id="$CANONICAL_COMPANY" -v platform_company_id="$CANONICAL_PLATFORM_COMPANY" <<'SQL'
 SELECT set_config('pr7.company_id', :'company_id', false);
 SELECT set_config('pr7.platform_company_id', :'platform_company_id', false);
