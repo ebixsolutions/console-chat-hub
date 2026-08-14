@@ -36,6 +36,11 @@ for f in \
   scripts/pr7-customer360-runtime-readiness-gate.sh \
   scripts/pr7-customer360-caller-source-gate.sh \
   scripts/pr7-customer360-runtime-smoke.sh \
+  supabase/functions/customer360-coach-sync/index.ts \
+  sql/pr7/pr7_customer360_coach_sync_state.sql \
+  sql/pr7/pr7_customer360_coach_sync_state.rollback.sql \
+  scripts/pr7-customer360-coach-sync-source-gate.sh \
+  scripts/pr7-customer360-coach-sync-runtime-smoke.sh \
   public/widget/chat.js \
   src/routes/_authenticated/console.tsx \
   src/lib/api/config.service.ts \
@@ -301,6 +306,16 @@ if bash scripts/pr7-customer360-caller-source-gate.sh; then
   echo "PASS Customer360 caller source contract"
 else
   echo "FAIL Customer360 caller source contract"
+  fail=1
+fi
+
+
+# Workflow 5 / Task 5.3 — Customer360 ↔ SU CoachAI sync consistency.
+echo "== CUSTOMER360 ↔ COACH SYNC SOURCE GATE =="
+if bash scripts/pr7-customer360-coach-sync-source-gate.sh; then
+  echo "PASS Customer360 ↔ Coach sync source contract"
+else
+  echo "FAIL Customer360 ↔ Coach sync source contract"
   fail=1
 fi
 

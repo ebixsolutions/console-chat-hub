@@ -12,7 +12,7 @@ type MinimalCustomerContext = {
   sentiment?: string;
   sentiment_trend?: string;
   trust_score?: string;
-  churn_risk?: string;
+  churn_risk?: number;
   sensitive_to?: string[];
   privacy_flags?: Record<string, boolean>;
   context_quality?: string;
@@ -181,7 +181,7 @@ function sanitizeCustomerContext(raw: unknown): MinimalCustomerContext | null {
     const value = input[key];
 
     if (["tier", "language_preference", "sentiment", "sentiment_trend",
-         "trust_score", "churn_risk", "context_quality", "masked_summary",
+         "trust_score", "context_quality", "masked_summary",
          "p1_provider_version"].includes(key)) {
       if (typeof value === "string" && value.trim()) {
         out[key] = value.trim().slice(0, key === "masked_summary" ? 1000 : 200);
@@ -189,8 +189,19 @@ function sanitizeCustomerContext(raw: unknown): MinimalCustomerContext | null {
       continue;
     }
 
-    if (["predicted_csat", "escalation_score"].includes(key)) {
-      if (typeof value === "number" && Number.isFinite(value)) out[key] = value;
+    if (key === "predicted_csat") {
+      if (typeof value === "number" && Number.isFinite(value) &&
+          value >= 1 && value <= 5) {
+        out[key] = value;
+      }
+      continue;
+    }
+
+    if (key === "churn_risk" || key === "escalation_score") {
+      if (typeof value === "number" && Number.isFinite(value) &&
+          value >= 0 && value <= 1) {
+        out[key] = value;
+      }
       continue;
     }
 

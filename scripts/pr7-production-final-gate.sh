@@ -94,6 +94,12 @@ bash scripts/pr7-customer360-runtime-readiness-gate.sh || stop "Customer360 runt
 echo "== CUSTOMER360 RUNTIME SMOKE =="
 bash scripts/pr7-customer360-runtime-smoke.sh || stop "Customer360 runtime smoke failed"
 
+echo "== CUSTOMER360 ↔ COACH SYNC SOURCE =="
+bash scripts/pr7-customer360-coach-sync-source-gate.sh || stop "Customer360 ↔ Coach sync source contract failed"
+
+echo "== CUSTOMER360 ↔ COACH SYNC RUNTIME =="
+bash scripts/pr7-customer360-coach-sync-runtime-smoke.sh || stop "Customer360 ↔ Coach sync runtime failed"
+
 psql "$DB_URL" -v ON_ERROR_STOP=1 -v company_id="$CANONICAL_COMPANY" -v platform_company_id="$CANONICAL_PLATFORM_COMPANY" <<'SQL'
 SELECT set_config('pr7.company_id', :'company_id', false);
 SELECT set_config('pr7.platform_company_id', :'platform_company_id', false);
@@ -148,6 +154,19 @@ BEGIN
     JOIN public.conversations c ON c.id=u.conversation_id
     WHERE u.company_id IS DISTINCT FROM c.company_id
   ) THEN RAISE EXCEPTION 'upstream-call/conversation company lineage mismatch'; END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM public.customer360_coach_sync_state s
+    LEFT JOIN public.company c ON c.id=s.company_id
+    WHERE c.id IS NULL OR c.is_active IS DISTINCT FROM true
+  ) THEN RAISE EXCEPTION 'Customer360 Coach sync references invalid/inactive company'; END IF;
+  IF EXISTS (
+    SELECT company_id,customer_ref_sha256
+    FROM public.customer360_coach_sync_state
+    GROUP BY company_id,customer_ref_sha256
+    HAVING count(*)<>1
+  ) THEN RAISE EXCEPTION 'Customer360 Coach sync duplicate company/customer identity'; END IF;
+
 
   IF EXISTS (
     SELECT 1 FROM public.pr7_channel_ownership_run
