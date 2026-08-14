@@ -688,7 +688,7 @@
   // --- Messages ---
   function isLocalId(id) {
     var s = String(id || "");
-    return s.indexOf("system-") === 0 || s.indexOf("fallback-") === 0 || s === "welcome";
+    return s.indexOf("system-") === 0 || s === "welcome";
   }
   function renderMsg(m) {
     if (m.is_recalled) {
@@ -1023,21 +1023,12 @@
           return;
         }
         if (ag) {
-          if (!state.fallbackShownForConversation) {
-            if (!state.thinkingStartTime) state.thinkingStartTime = Date.now();
-            if (!document.getElementById("nexus-typing-indicator")) showTyping();
-            if (Date.now() - state.thinkingStartTime > 60000) {
-              hideTyping();
-              state.thinkingStartTime = null;
-              state.fallbackShownForConversation = true;
-              appendMessageObj({
-                id: "fallback-" + Date.now(),
-                role: "system",
-                content: "Your message was received. Our team will reply shortly.",
-                created_at: new Date().toISOString(),
-              });
-            }
-          }
+          // ai_generating is server-authoritative. Keep the typing indicator
+          // visible while that state remains true. Never fabricate a local
+          // message or imply that a human/team reply is guaranteed.
+          if (!state.thinkingStartTime) state.thinkingStartTime = Date.now();
+          state.fallbackShownForConversation = false;
+          if (!document.getElementById("nexus-typing-indicator")) showTyping();
         } else {
           state.thinkingStartTime = null;
           state.fallbackShownForConversation = false;
