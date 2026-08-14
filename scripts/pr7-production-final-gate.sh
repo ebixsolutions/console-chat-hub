@@ -81,6 +81,8 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND policyname='conversations_company_select') THEN RAISE EXCEPTION 'core conversation RLS missing'; END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND policyname='visitor_session_company_select') THEN RAISE EXCEPTION 'secondary visitor RLS missing'; END IF;
   IF has_function_privilege('authenticated','public.ce_purge_expired_snapshots()','EXECUTE') THEN RAISE EXCEPTION 'authenticated can still purge CE snapshots'; END IF;
+  IF position('channel_config' in pg_get_functiondef('public.initiate_evaluation_v2(uuid,text,text,text,text,text,text,text,jsonb,uuid,text)'::regprocedure))=0 THEN RAISE EXCEPTION 'CE tenant hardening missing channel resolution'; END IF;
+  IF position('tenant_identity_conflict' in pg_get_functiondef('public.initiate_evaluation_v2(uuid,text,text,text,text,text,text,text,jsonb,uuid,text)'::regprocedure))=0 THEN RAISE EXCEPTION 'CE tenant hardening missing conflict guard'; END IF;
 END $$;
 SQL
 echo "PASS canonical ownership / objects / ACL"

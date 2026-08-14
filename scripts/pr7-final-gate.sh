@@ -38,6 +38,8 @@ for f in \
   sql/pr7/pr7_ai_reply_source_message_atomic_guard.sql \
   sql/pr7/pr7_config_rpc_tenant_guard.sql \
   sql/pr7/pr7_conversation_resolution_atomic_tx.sql \
+  sql/pr7/pr7_ce_tenant_resolution_hardening.sql \
+  sql/pr7/pr7_ce_tenant_resolution_hardening.rollback.sql \
   sql/pr7/pr7_core_rls_tenant_isolation.sql \
   sql/pr7/pr7_feedback_config_tenant_scope.sql \
   sql/pr7/pr7_feedback_widget_delivery_atomic.sql \
@@ -102,6 +104,16 @@ must_not_have src/lib/api/config.service.ts "analyticsService" "dead analyticsSe
 must_have src/routes/_authenticated/console.agent-settings.tsx 'functions/v1/agent-management' "Agent Settings uses live agent-management Edge Function"
 must_have src/routes/_authenticated/console.analytics.tsx 'supabase.functions.invoke(' "Analytics uses live Edge invocation"
 must_have src/routes/_authenticated/console.analytics.tsx '"visitor-analytics"' "Analytics uses visitor-analytics Edge Function"
+
+
+# Workflow 1 / Task 1.1 — CE canonical tenant resolution hardening.
+must_have supabase/functions/conversation-evaluate/index.ts '.eq("company_id", resolvedCompanyId)' "CE membership uses canonical resolved company"
+must_not_have supabase/functions/conversation-evaluate/index.ts '.eq("company_id", conv.company_id)' "CE nullable legacy company membership lookup removed"
+must_have supabase/functions/conversation-evaluate/index.ts 'tenant_identity_conflict' "CE Edge handles conversation/channel identity conflict"
+must_have sql/pr7/pr7_ce_tenant_resolution_hardening.sql 'LEFT JOIN public.channel_config ch ON ch.id = c.channel_config_id' "CE RPC resolves channel ownership"
+must_have sql/pr7/pr7_ce_tenant_resolution_hardening.sql 'v_resolved_company_id := COALESCE(' "CE RPC canonical company resolution"
+must_have sql/pr7/pr7_ce_tenant_resolution_hardening.sql 'p_grounding_manifest,v_resolved_company_id' "CE attempt persists resolved company"
+must_have sql/pr7/pr7_ce_tenant_resolution_hardening.rollback.sql 'SELECT id, company_id INTO v_conv FROM public.conversations' "CE rollback restores prior tenant behavior"
 
 echo "== BUILD =="
 if npm run build; then echo "PASS npm run build"; else echo "FAIL npm run build"; fail=1; fi
