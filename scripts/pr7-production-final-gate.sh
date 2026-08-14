@@ -31,59 +31,45 @@ cat /tmp/pr7-source-gate.log
 
 echo "== CANONICAL OWNERSHIP ASSERTIONS =="
 psql "$DB_URL" -v ON_ERROR_STOP=1 -v company_id="$CANONICAL_COMPANY" <<'SQL'
+SELECT set_config('pr7.company_id', :'company_id', false);
 DO $$
+DECLARE cid uuid:=current_setting('pr7.company_id')::uuid;
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM public.company
-    WHERE id=:'company_id'::uuid AND is_active=true
-  ) THEN RAISE EXCEPTION 'canonical company missing/inactive'; END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM public.company_membership
-    WHERE company_id=:'company_id'::uuid AND is_active=true
-  ) THEN RAISE EXCEPTION 'canonical company has no active membership'; END IF;
-
-  IF EXISTS (SELECT 1 FROM public.channel_config WHERE company_id IS NULL) THEN
-    RAISE EXCEPTION 'unbound channel_config rows remain';
-  END IF;
-  IF EXISTS (SELECT 1 FROM public.conversations WHERE company_id IS NULL) THEN
-    RAISE EXCEPTION 'unbound conversations remain';
-  END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.company WHERE id=cid AND is_active=true) THEN
+    RAISE EXCEPTION 'canonical company missing/inactive'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.company_membership WHERE company_id=cid AND is_active=true) THEN
+    RAISE EXCEPTION 'canonical company has no active membership'; END IF;
+  IF EXISTS (SELECT 1 FROM public.channel_config WHERE company_id IS NULL OR company_id<>cid) THEN
+    RAISE EXCEPTION 'invalid channel ownership'; END IF;
+  IF EXISTS (SELECT 1 FROM public.conversations WHERE company_id IS NULL OR company_id<>cid) THEN
+    RAISE EXCEPTION 'invalid conversation ownership'; END IF;
   IF EXISTS (
     SELECT 1 FROM public.upstream_call_log
-    WHERE conversation_id IS NOT NULL AND company_id IS NULL
-  ) THEN RAISE EXCEPTION 'unbound upstream logs remain'; END IF;
-  IF EXISTS (SELECT 1 FROM public.feedback_automation_config WHERE company_id IS NULL) THEN
-    RAISE EXCEPTION 'unbound feedback config remains'; END IF;
+    WHERE conversation_id IS NOT NULL AND (company_id IS NULL OR company_id<>cid)
+  ) THEN RAISE EXCEPTION 'invalid upstream log ownership'; END IF;
+  IF EXISTS (SELECT 1 FROM public.feedback_automation_config WHERE company_id IS NULL OR company_id<>cid) THEN
+    RAISE EXCEPTION 'invalid feedback config ownership'; END IF;
 
   IF to_regprocedure('public.tenant_safe_add_agent(uuid,uuid,uuid,public.app_role,text)') IS NULL THEN
-    RAISE EXCEPTION 'missing tenant_safe_add_agent';
-  END IF;
+    RAISE EXCEPTION 'missing tenant_safe_add_agent'; END IF;
   IF to_regprocedure('public.commit_ai_reply_tx(uuid,uuid,text,jsonb)') IS NULL THEN
-    RAISE EXCEPTION 'missing commit_ai_reply_tx';
-  END IF;
+    RAISE EXCEPTION 'missing commit_ai_reply_tx'; END IF;
   IF to_regprocedure('public.recall_message_tx(uuid,uuid,uuid,uuid,text)') IS NULL THEN
-    RAISE EXCEPTION 'missing recall_message_tx';
-  END IF;
+    RAISE EXCEPTION 'missing recall_message_tx'; END IF;
   IF NOT EXISTS (
-    SELECT 1 FROM pg_policies
-    WHERE schemaname='public' AND policyname='conversations_company_select'
+    SELECT 1 FROM pg_policies WHERE schemaname='public' AND policyname='conversations_company_select'
   ) THEN RAISE EXCEPTION 'core conversation RLS missing'; END IF;
   IF NOT EXISTS (
-    SELECT 1 FROM pg_policies
-    WHERE schemaname='public' AND policyname='visitor_session_company_select'
+    SELECT 1 FROM pg_policies WHERE schemaname='public' AND policyname='visitor_session_company_select'
   ) THEN RAISE EXCEPTION 'secondary visitor RLS missing'; END IF;
   IF has_function_privilege('authenticated','public.ce_purge_expired_snapshots()','EXECUTE') THEN
-    RAISE EXCEPTION 'authenticated can still purge CE snapshots';
-  END IF;
+    RAISE EXCEPTION 'authenticated can still purge CE snapshots'; END IF;
 END $$;
 SQL
 
 echo "PASS canonical ownership / objects / ACL"
 
-# Two-tenant runtime isolation is a P0 gate. If the production owner has not
-# provided two real active tenant fixtures, deployment may be source-correct but
-# cannot be declared READY.
+# Mandatory P0 two-tenant runtime fixtures.
 [ -n "$TEST_USER_A" ] || stop "two-tenant fixture A user missing"
 [ -n "$TEST_COMPANY_A" ] || stop "two-tenant fixture A company missing"
 [ -n "$TEST_USER_B" ] || stop "two-tenant fixture B user missing"
@@ -93,9 +79,16 @@ echo "PASS canonical ownership / objects / ACL"
 psql "$DB_URL" -v ON_ERROR_STOP=1 \
   -v user_a="$TEST_USER_A" -v company_a="$TEST_COMPANY_A" \
   -v user_b="$TEST_USER_B" -v company_b="$TEST_COMPANY_B" <<'SQL'
+SELECT set_config('pr7.user_a', :'user_a', false);
+SELECT set_config('pr7.company_a', :'company_a', false);
+SELECT set_config('pr7.user_b', :'user_b', false);
+SELECT set_config('pr7.company_b', :'company_b', false);
+
 DO $$
-DECLARE ua uuid:=:'user_a'::uuid; ca uuid:=:'company_a'::uuid;
-        ub uuid:=:'user_b'::uuid; cb uuid:=:'company_b'::uuid;
+DECLARE ua uuid:=current_setting('pr7.user_a')::uuid;
+        ca uuid:=current_setting('pr7.company_a')::uuid;
+        ub uuid:=current_setting('pr7.user_b')::uuid;
+        cb uuid:=current_setting('pr7.company_b')::uuid;
 BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM public.company_membership cm
@@ -111,24 +104,34 @@ END $$;
 
 BEGIN;
 SET LOCAL ROLE authenticated;
-SELECT set_config('request.jwt.claim.sub', :'user_a', true);
-SELECT set_config('request.jwt.claims', json_build_object('sub',:'user_a','role','authenticated')::text,true);
+SELECT set_config('request.jwt.claim.sub', current_setting('pr7.user_a'), true);
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub',current_setting('pr7.user_a'),'role','authenticated')::text,
+  true
+);
 DO $$
-DECLARE cb uuid:=:'company_b'::uuid; n int;
+DECLARE cb uuid:=current_setting('pr7.company_b')::uuid; n int;
 BEGIN
   SELECT count(*) INTO n FROM public.conversations WHERE company_id=cb;
   IF n<>0 THEN RAISE EXCEPTION 'RLS FAIL A->B conversations: %',n; END IF;
-  SELECT count(*) INTO n FROM public.messages m JOIN public.conversations c ON c.id=m.conversation_id WHERE c.company_id=cb;
+  SELECT count(*) INTO n
+  FROM public.messages m JOIN public.conversations c ON c.id=m.conversation_id
+  WHERE c.company_id=cb;
   IF n<>0 THEN RAISE EXCEPTION 'RLS FAIL A->B messages: %',n; END IF;
 END $$;
 ROLLBACK;
 
 BEGIN;
 SET LOCAL ROLE authenticated;
-SELECT set_config('request.jwt.claim.sub', :'user_b', true);
-SELECT set_config('request.jwt.claims', json_build_object('sub',:'user_b','role','authenticated')::text,true);
+SELECT set_config('request.jwt.claim.sub', current_setting('pr7.user_b'), true);
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub',current_setting('pr7.user_b'),'role','authenticated')::text,
+  true
+);
 DO $$
-DECLARE ca uuid:=:'company_a'::uuid; n int;
+DECLARE ca uuid:=current_setting('pr7.company_a')::uuid; n int;
 BEGIN
   SELECT count(*) INTO n FROM public.conversations WHERE company_id=ca;
   IF n<>0 THEN RAISE EXCEPTION 'RLS FAIL B->A conversations: %',n; END IF;

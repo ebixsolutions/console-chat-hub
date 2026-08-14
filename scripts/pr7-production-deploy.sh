@@ -27,10 +27,18 @@ cd "$REPO" || stop "cannot enter repo"
 git diff --quiet || stop "repo has unstaged changes"
 git diff --cached --quiet || stop "repo has staged changes"
 git cat-file -e "$ROLLBACK_COMMIT^{commit}" 2>/dev/null || stop "rollback commit invalid"
-
 command -v psql >/dev/null 2>&1 || stop "psql missing"
 command -v npx >/dev/null 2>&1 || stop "npx missing"
-[ -s scripts/pr7-canonical-company-bootstrap.sh ] || stop "canonical company bootstrap missing"
+
+[ -s scripts/pr7-canonical-company-bootstrap.sh ] || stop "bootstrap missing"
+[ -s scripts/pr7-canonical-company-bootstrap-rollback.sh ] || stop "bootstrap rollback missing"
+
+# Fresh run id is deployment-local provenance. uuidgen is not required.
+export PR7_BOOTSTRAP_RUN_ID="${PR7_BOOTSTRAP_RUN_ID:-$(python3 - <<'PY'
+import uuid
+print(uuid.uuid4())
+PY
+)}"
 
 set +e
 bash scripts/pr7-final-gate.sh
@@ -38,9 +46,9 @@ SOURCE_RC=$?
 set -e
 [ "$SOURCE_RC" -eq 2 ] || fail "source final-gate must exit 2, got $SOURCE_RC"
 
-# Bootstrap legacy production ownership BEFORE tenant RLS/config migrations.
 echo "== CANONICAL COMPANY BOOTSTRAP =="
 bash scripts/pr7-canonical-company-bootstrap.sh || fail "canonical company bootstrap failed"
+bootstrap_done=1
 
 SQL_FORWARD=(
   "sql/pr7/pr7_feedback_config_tenant_scope.sql"
@@ -74,11 +82,15 @@ FUNCTIONS=(
   "transfer-conversation" "return-to-ai" "resolve-conversation"
   "mark-unresolved" "recall-message" "deliver-feedback-request"
   "agent-management" "agent-assist"
+  "training-outbox-worker" "training-result-receiver"
+  "training-kb-sync" "training-kb-finalize"
 )
 VERIFY_JWT_FALSE=(
   "widget-poll-messages" "receive-widget-message" "agent-send-reply"
   "assign-conversation" "take-over-conversation" "transfer-conversation"
   "return-to-ai" "resolve-conversation" "mark-unresolved" "recall-message"
+  "training-outbox-worker" "training-result-receiver"
+  "training-kb-sync" "training-kb-finalize"
 )
 
 sql_applied=()
@@ -118,7 +130,15 @@ PY
   rm -rf "$WT" 2>/dev/null || true
   return "$rc"
 }
-rollback_all(){ set +e; rollback_functions; rollback_sql; set -e; }
+rollback_bootstrap(){ bash scripts/pr7-canonical-company-bootstrap-rollback.sh; }
+
+rollback_all(){
+  set +e
+  rollback_functions
+  rollback_sql
+  rollback_bootstrap
+  set -e
+}
 
 echo "== APPLY PR7 SQL =="
 for i in "${!SQL_FORWARD[@]}"; do
@@ -127,25 +147,23 @@ for i in "${!SQL_FORWARD[@]}"; do
     sql_applied+=("$i")
   else
     rollback_sql
+    rollback_bootstrap || true
     fail "SQL deployment failed: $f"
   fi
 done
 
 echo "== BIND LEGACY FEEDBACK CONFIG =="
-# company_id column now exists. Preserve the single verified legacy config row
-# instead of making it invisible after RLS.
 psql "$DB_URL" -v ON_ERROR_STOP=1 -v company_id="${PR7_CANONICAL_COMPANY_ID}" <<'SQL' || { rollback_all; fail "feedback config binding failed"; }
 BEGIN;
+SELECT set_config('pr7.company_id', :'company_id', false);
 DO $$
 DECLARE v_rows int;
 BEGIN
   SELECT count(*) INTO v_rows FROM public.feedback_automation_config;
-  IF v_rows > 1 THEN
-    RAISE EXCEPTION 'legacy feedback config binding refused: more than one row';
-  END IF;
+  IF v_rows > 1 THEN RAISE EXCEPTION 'legacy feedback config binding refused: more than one row'; END IF;
 END $$;
 UPDATE public.feedback_automation_config
-SET company_id = :'company_id'::uuid
+SET company_id=current_setting('pr7.company_id')::uuid
 WHERE company_id IS NULL;
 COMMIT;
 SQL
@@ -153,6 +171,7 @@ SQL
 echo "== DEPLOY PR7 EDGE FUNCTIONS =="
 export SUPABASE_ACCESS_TOKEN="$ACCESS_TOKEN"
 is_false(){ local n="$1"; shift; local x; for x in "$@"; do [ "$x" = "$n" ] && return 0; done; return 1; }
+
 for fn in "${FUNCTIONS[@]}"; do
   if is_false "$fn" "${VERIFY_JWT_FALSE[@]}"; then
     npx supabase functions deploy "$fn" --project-ref "$PROJECT_REF" --no-verify-jwt || { rollback_all; fail "Edge deploy failed: $fn"; }
