@@ -18,6 +18,8 @@ fail(){ echo "FAIL: $1"; exit 1; }
 [ -n "$DB_URL" ] || stop "SUPABASE_DB_URL missing"
 [ -n "$ACCESS_TOKEN" ] || stop "SUPABASE_ACCESS_TOKEN missing"
 [ -n "$ROLLBACK_COMMIT" ] || stop "PR7_ROLLBACK_COMMIT missing"
+[ "${PR7_LEGACY_DATA_IS_SINGLE_COMPANY:-}" = "YES" ] || stop "legacy single-company confirmation missing"
+[ -n "${PR7_CANONICAL_COMPANY_ID:-}" ] || stop "canonical company id missing"
 
 [ -d "$REPO/.git" ] || stop "repo not found"
 cd "$REPO" || stop "cannot enter repo"
@@ -28,13 +30,17 @@ git cat-file -e "$ROLLBACK_COMMIT^{commit}" 2>/dev/null || stop "rollback commit
 
 command -v psql >/dev/null 2>&1 || stop "psql missing"
 command -v npx >/dev/null 2>&1 || stop "npx missing"
+[ -s scripts/pr7-canonical-company-bootstrap.sh ] || stop "canonical company bootstrap missing"
 
-# Source gate must be PASS but PRODUCTION STOP (exit 2).
 set +e
 bash scripts/pr7-final-gate.sh
 SOURCE_RC=$?
 set -e
-[ "$SOURCE_RC" -eq 2 ] || fail "source final-gate must exit 2 (SOURCE PASS / PRODUCTION STOP), got $SOURCE_RC"
+[ "$SOURCE_RC" -eq 2 ] || fail "source final-gate must exit 2, got $SOURCE_RC"
+
+# Bootstrap legacy production ownership BEFORE tenant RLS/config migrations.
+echo "== CANONICAL COMPANY BOOTSTRAP =="
+bash scripts/pr7-canonical-company-bootstrap.sh || fail "canonical company bootstrap failed"
 
 SQL_FORWARD=(
   "sql/pr7/pr7_feedback_config_tenant_scope.sql"
@@ -48,7 +54,6 @@ SQL_FORWARD=(
   "sql/pr7/pr7_secondary_rls_tenant_isolation.sql"
   "sql/pr7/pr7_security_definer_acl_hardening.sql"
 )
-
 SQL_ROLLBACK=(
   "sql/pr7/pr7_feedback_config_tenant_scope.rollback.sql"
   "sql/pr7/pr7_agent_management_tenant_isolation.rollback.sql"
@@ -61,64 +66,33 @@ SQL_ROLLBACK=(
   "sql/pr7/pr7_secondary_rls_tenant_isolation.rollback.sql"
   "sql/pr7/pr7_security_definer_acl_hardening.rollback.sql"
 )
-
-for f in "${SQL_FORWARD[@]}" "${SQL_ROLLBACK[@]}"; do
-  [ -s "$f" ] || stop "required SQL missing/empty: $f"
-done
+for f in "${SQL_FORWARD[@]}" "${SQL_ROLLBACK[@]}"; do [ -s "$f" ] || stop "required SQL missing/empty: $f"; done
 
 FUNCTIONS=(
-  "widget-poll-messages"
-  "receive-widget-message"
-  "generate-reply"
-  "agent-send-reply"
-  "assign-conversation"
-  "take-over-conversation"
-  "transfer-conversation"
-  "return-to-ai"
-  "resolve-conversation"
-  "mark-unresolved"
-  "recall-message"
-  "deliver-feedback-request"
-  "agent-management"
-  "agent-assist"
-)
-
-# Gateway mode must match frozen config.
-VERIFY_JWT_TRUE=(
-  "generate-reply"
-  "deliver-feedback-request"
-  "agent-management"
-  "agent-assist"
+  "widget-poll-messages" "receive-widget-message" "generate-reply"
+  "agent-send-reply" "assign-conversation" "take-over-conversation"
+  "transfer-conversation" "return-to-ai" "resolve-conversation"
+  "mark-unresolved" "recall-message" "deliver-feedback-request"
+  "agent-management" "agent-assist"
 )
 VERIFY_JWT_FALSE=(
-  "widget-poll-messages"
-  "receive-widget-message"
-  "agent-send-reply"
-  "assign-conversation"
-  "take-over-conversation"
-  "transfer-conversation"
-  "return-to-ai"
-  "resolve-conversation"
-  "mark-unresolved"
-  "recall-message"
+  "widget-poll-messages" "receive-widget-message" "agent-send-reply"
+  "assign-conversation" "take-over-conversation" "transfer-conversation"
+  "return-to-ai" "resolve-conversation" "mark-unresolved" "recall-message"
 )
 
 sql_applied=()
 functions_deployed=()
 
-rollback_sql() {
-  echo "ROLLBACK: SQL in reverse order"
-  local i
+rollback_sql(){
+  set +e
   for ((i=${#sql_applied[@]}-1; i>=0; i--)); do
-    local idx="${sql_applied[$i]}"
-    local rb="${SQL_ROLLBACK[$idx]}"
-    echo "ROLLBACK SQL: $rb"
-    psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$rb" || echo "ROLLBACK WARNING: $rb failed"
+    idx="${sql_applied[$i]}"
+    psql "$DB_URL" -v ON_ERROR_STOP=1 -f "${SQL_ROLLBACK[$idx]}" || true
   done
+  set -e
 }
-
-rollback_functions() {
-  echo "ROLLBACK: redeploy functions from $ROLLBACK_COMMIT"
+rollback_functions(){
   local WT
   WT="$(mktemp -d "${TMPDIR:-/tmp}/pr7-rollback.XXXXXX")" || return 1
   git worktree add --detach "$WT" "$ROLLBACK_COMMIT" >/dev/null 2>&1 || { rm -rf "$WT"; return 1; }
@@ -126,13 +100,10 @@ rollback_functions() {
     cd "$WT" || exit 1
     export SUPABASE_ACCESS_TOKEN="$ACCESS_TOKEN"
     for fn in "${functions_deployed[@]}"; do
-      echo "ROLLBACK FUNCTION: $fn"
-      # Restore the old gateway semantics from rollback commit's config when possible.
       if python3 - "$fn" <<'PY'
-import sys, pathlib, re
-fn=sys.argv[1]
-t=pathlib.Path("supabase/config.toml").read_text()
-m=re.search(rf'\[functions\.{re.escape(fn)}\]\s*\nverify_jwt\s*=\s*(true|false)', t)
+import sys,pathlib,re
+fn=sys.argv[1]; t=pathlib.Path("supabase/config.toml").read_text()
+m=re.search(rf'\[functions\.{re.escape(fn)}\]\s*\nverify_jwt\s*=\s*(true|false)',t)
 sys.exit(0 if m and m.group(1)=="false" else 1)
 PY
       then
@@ -142,23 +113,16 @@ PY
       fi
     done
   )
-  local rc=$?
+  rc=$?
   git worktree remove --force "$WT" >/dev/null 2>&1 || true
   rm -rf "$WT" 2>/dev/null || true
   return "$rc"
 }
-
-rollback_all() {
-  set +e
-  rollback_functions
-  rollback_sql
-  set -e
-}
+rollback_all(){ set +e; rollback_functions; rollback_sql; set -e; }
 
 echo "== APPLY PR7 SQL =="
 for i in "${!SQL_FORWARD[@]}"; do
   f="${SQL_FORWARD[$i]}"
-  echo "APPLY SQL: $f"
   if psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$f"; then
     sql_applied+=("$i")
   else
@@ -167,37 +131,38 @@ for i in "${!SQL_FORWARD[@]}"; do
   fi
 done
 
+echo "== BIND LEGACY FEEDBACK CONFIG =="
+# company_id column now exists. Preserve the single verified legacy config row
+# instead of making it invisible after RLS.
+psql "$DB_URL" -v ON_ERROR_STOP=1 -v company_id="${PR7_CANONICAL_COMPANY_ID}" <<'SQL' || { rollback_all; fail "feedback config binding failed"; }
+BEGIN;
+DO $$
+DECLARE v_rows int;
+BEGIN
+  SELECT count(*) INTO v_rows FROM public.feedback_automation_config;
+  IF v_rows > 1 THEN
+    RAISE EXCEPTION 'legacy feedback config binding refused: more than one row';
+  END IF;
+END $$;
+UPDATE public.feedback_automation_config
+SET company_id = :'company_id'::uuid
+WHERE company_id IS NULL;
+COMMIT;
+SQL
+
 echo "== DEPLOY PR7 EDGE FUNCTIONS =="
 export SUPABASE_ACCESS_TOKEN="$ACCESS_TOKEN"
-
-is_in() {
-  local needle="$1"; shift
-  local x
-  for x in "$@"; do [ "$x" = "$needle" ] && return 0; done
-  return 1
-}
-
+is_false(){ local n="$1"; shift; local x; for x in "$@"; do [ "$x" = "$n" ] && return 0; done; return 1; }
 for fn in "${FUNCTIONS[@]}"; do
-  echo "DEPLOY FUNCTION: $fn"
-  if is_in "$fn" "${VERIFY_JWT_FALSE[@]}"; then
-    if ! npx supabase functions deploy "$fn" --project-ref "$PROJECT_REF" --no-verify-jwt; then
-      rollback_all
-      fail "Edge deploy failed: $fn"
-    fi
+  if is_false "$fn" "${VERIFY_JWT_FALSE[@]}"; then
+    npx supabase functions deploy "$fn" --project-ref "$PROJECT_REF" --no-verify-jwt || { rollback_all; fail "Edge deploy failed: $fn"; }
   else
-    if ! npx supabase functions deploy "$fn" --project-ref "$PROJECT_REF"; then
-      rollback_all
-      fail "Edge deploy failed: $fn"
-    fi
+    npx supabase functions deploy "$fn" --project-ref "$PROJECT_REF" || { rollback_all; fail "Edge deploy failed: $fn"; }
   fi
   functions_deployed+=("$fn")
 done
 
 echo "== PRODUCTION FINAL GATE =="
-if ! bash scripts/pr7-production-final-gate.sh; then
-  rollback_all
-  fail "production final-gate failed; rollback attempted"
-fi
+bash scripts/pr7-production-final-gate.sh || { rollback_all; fail "production final-gate failed; rollback attempted"; }
 
 echo "FINAL STATUS: READY"
-exit 0
