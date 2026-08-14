@@ -29,11 +29,11 @@ git diff --cached --quiet || stop "repo has staged changes"
 git cat-file -e "$ROLLBACK_COMMIT^{commit}" 2>/dev/null || stop "rollback commit invalid"
 command -v psql >/dev/null 2>&1 || stop "psql missing"
 command -v npx >/dev/null 2>&1 || stop "npx missing"
+command -v python3 >/dev/null 2>&1 || stop "python3 missing"
 
 [ -s scripts/pr7-canonical-company-bootstrap.sh ] || stop "bootstrap missing"
 [ -s scripts/pr7-canonical-company-bootstrap-rollback.sh ] || stop "bootstrap rollback missing"
 
-# Fresh run id is deployment-local provenance. uuidgen is not required.
 export PR7_BOOTSTRAP_RUN_ID="${PR7_BOOTSTRAP_RUN_ID:-$(python3 - <<'PY'
 import uuid
 print(uuid.uuid4())
@@ -48,7 +48,6 @@ set -e
 
 echo "== CANONICAL COMPANY BOOTSTRAP =="
 bash scripts/pr7-canonical-company-bootstrap.sh || fail "canonical company bootstrap failed"
-bootstrap_done=1
 
 SQL_FORWARD=(
   "sql/pr7/pr7_feedback_config_tenant_scope.sql"
@@ -76,22 +75,63 @@ SQL_ROLLBACK=(
 )
 for f in "${SQL_FORWARD[@]}" "${SQL_ROLLBACK[@]}"; do [ -s "$f" ] || stop "required SQL missing/empty: $f"; done
 
+# Complete Product-ready Edge inventory. Every source below is physically
+# required before any SQL/data mutation begins.
 FUNCTIONS=(
-  "widget-poll-messages" "receive-widget-message" "generate-reply"
-  "agent-send-reply" "assign-conversation" "take-over-conversation"
-  "transfer-conversation" "return-to-ai" "resolve-conversation"
-  "mark-unresolved" "recall-message" "deliver-feedback-request"
-  "agent-management" "agent-assist"
-  "training-outbox-worker" "training-result-receiver"
-  "training-kb-sync" "training-kb-finalize"
+  "get-public-widget-config"
+  "create-visitor-session"
+  "receive-widget-message"
+  "widget-poll-messages"
+  "generate-reply"
+  "health-check"
+  "submit-feedback-response"
+  "deliver-feedback-request"
+  "agent-send-reply"
+  "assign-conversation"
+  "take-over-conversation"
+  "transfer-conversation"
+  "return-to-ai"
+  "resolve-conversation"
+  "mark-unresolved"
+  "recall-message"
+  "kb-search-proxy"
+  "visitor-analytics"
+  "agent-assist"
+  "agent-management"
+  "conversation-evaluate"
+  "customer360-local"
+  "training-outbox-worker"
+  "training-result-receiver"
+  "training-kb-sync"
+  "training-kb-finalize"
 )
+
+# Explicit gateway modes. Functions absent from config.toml retain their frozen
+# custom in-function auth model only when explicitly listed here.
 VERIFY_JWT_FALSE=(
-  "widget-poll-messages" "receive-widget-message" "agent-send-reply"
-  "assign-conversation" "take-over-conversation" "transfer-conversation"
-  "return-to-ai" "resolve-conversation" "mark-unresolved" "recall-message"
-  "training-outbox-worker" "training-result-receiver"
-  "training-kb-sync" "training-kb-finalize"
+  "get-public-widget-config"
+  "create-visitor-session"
+  "receive-widget-message"
+  "widget-poll-messages"
+  "health-check"
+  "submit-feedback-response"
+  "agent-send-reply"
+  "assign-conversation"
+  "take-over-conversation"
+  "transfer-conversation"
+  "return-to-ai"
+  "resolve-conversation"
+  "mark-unresolved"
+  "recall-message"
+  "training-outbox-worker"
+  "training-result-receiver"
+  "training-kb-sync"
+  "training-kb-finalize"
 )
+
+for fn in "${FUNCTIONS[@]}"; do
+  [ -s "supabase/functions/$fn/index.ts" ] || stop "required Edge source missing/empty: $fn"
+done
 
 sql_applied=()
 functions_deployed=()
@@ -104,6 +144,9 @@ rollback_sql(){
   done
   set -e
 }
+
+is_false(){ local n="$1"; shift; local x; for x in "$@"; do [ "$x" = "$n" ] && return 0; done; return 1; }
+
 rollback_functions(){
   local WT
   WT="$(mktemp -d "${TMPDIR:-/tmp}/pr7-rollback.XXXXXX")" || return 1
@@ -112,13 +155,8 @@ rollback_functions(){
     cd "$WT" || exit 1
     export SUPABASE_ACCESS_TOKEN="$ACCESS_TOKEN"
     for fn in "${functions_deployed[@]}"; do
-      if python3 - "$fn" <<'PY'
-import sys,pathlib,re
-fn=sys.argv[1]; t=pathlib.Path("supabase/config.toml").read_text()
-m=re.search(rf'\[functions\.{re.escape(fn)}\]\s*\nverify_jwt\s*=\s*(true|false)',t)
-sys.exit(0 if m and m.group(1)=="false" else 1)
-PY
-      then
+      [ -s "supabase/functions/$fn/index.ts" ] || exit 1
+      if is_false "$fn" "${VERIFY_JWT_FALSE[@]}"; then
         npx supabase functions deploy "$fn" --project-ref "$PROJECT_REF" --no-verify-jwt || exit 1
       else
         npx supabase functions deploy "$fn" --project-ref "$PROJECT_REF" || exit 1
@@ -131,14 +169,7 @@ PY
   return "$rc"
 }
 rollback_bootstrap(){ bash scripts/pr7-canonical-company-bootstrap-rollback.sh; }
-
-rollback_all(){
-  set +e
-  rollback_functions
-  rollback_sql
-  rollback_bootstrap
-  set -e
-}
+rollback_all(){ set +e; rollback_functions; rollback_sql; rollback_bootstrap; set -e; }
 
 echo "== APPLY PR7 SQL =="
 for i in "${!SQL_FORWARD[@]}"; do
@@ -168,10 +199,8 @@ WHERE company_id IS NULL;
 COMMIT;
 SQL
 
-echo "== DEPLOY PR7 EDGE FUNCTIONS =="
+echo "== DEPLOY COMPLETE PRODUCT-READY EDGE INVENTORY =="
 export SUPABASE_ACCESS_TOKEN="$ACCESS_TOKEN"
-is_false(){ local n="$1"; shift; local x; for x in "$@"; do [ "$x" = "$n" ] && return 0; done; return 1; }
-
 for fn in "${FUNCTIONS[@]}"; do
   if is_false "$fn" "${VERIFY_JWT_FALSE[@]}"; then
     npx supabase functions deploy "$fn" --project-ref "$PROJECT_REF" --no-verify-jwt || { rollback_all; fail "Edge deploy failed: $fn"; }
