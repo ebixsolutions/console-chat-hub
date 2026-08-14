@@ -1,27 +1,22 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
-export const Route = createFileRoute("/_authenticated/console/training-candidates")({
-  component: TrainingCandidatesPage,
+/**
+ * Legacy compatibility route only.
+ *
+ * AI Chatbot owns canonical Conversation Evaluation. Training workflows are
+ * owned by SU CoachAI and must not be rendered inside the AI Chatbot Console.
+ * Keep this route as a redirect so old bookmarks do not expose a stale
+ * Training Candidates surface while route-tree compatibility is preserved.
+ */
+export const Route = createFileRoute(
+  "/_authenticated/console/training-candidates",
+)({
+  beforeLoad: () => {
+    throw redirect({ to: "/console/conversation-evaluation" });
+  },
+  component: LegacyTrainingCandidatesRedirect,
 });
 
-function TrainingCandidatesPage() {
-  return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        height: "60vh",
-        gap: 12,
-      }}
-    >
-      <div style={{ fontSize: 40 }}>🎓</div>
-      <div style={{ fontSize: 16, fontWeight: 600, color: "#374151" }}>Training Candidates</div>
-      <div style={{ fontSize: 12, color: "#9ca3af", textAlign: "center", maxWidth: 360, lineHeight: 1.6 }}>
-        Training candidates are managed in SU Coach AI. When the training pipeline is connected, candidates will be
-        surfaced here.
-      </div>
-    </div>
-  );
+function LegacyTrainingCandidatesRedirect() {
+  return null;
 }

@@ -9,6 +9,10 @@
  * It is a convenience layer only: the database RLS policies and the Edge
  * Function role checks remain the enforcing boundary. Nothing here may be
  * treated as a security control on its own.
+ *
+ * Training is intentionally NOT a Console capability. AI Chatbot owns
+ * canonical Conversation Evaluation; SU CoachAI owns training workflows.
+ * Backend training outbox/handoff functions remain integration plumbing only.
  */
 
 import type { AppRole } from "@/lib/api/config.service";
@@ -23,9 +27,7 @@ export type ConsoleCapability =
   /** Start a new evaluation run. */
   | "ce.evaluation.run"
   /** Record accept / reject / reopen. */
-  | "ce.review.decide"
-  /** Push an evaluation into the training pipeline. */
-  | "ce.training.dispatch";
+  | "ce.review.decide";
 
 const MATRIX: Record<ConsoleCapability, readonly AppRole[]> = {
   "ce.route.view": ["admin", "supervisor", "qa", "agent"],
@@ -33,23 +35,30 @@ const MATRIX: Record<ConsoleCapability, readonly AppRole[]> = {
   "ce.evaluation.read_raw": ["admin"],
   "ce.evaluation.run": ["admin", "supervisor", "qa"],
   "ce.review.decide": ["admin", "supervisor"],
-  "ce.training.dispatch": ["admin", "supervisor"],
 };
 
 /** True only when at least one held role is explicitly listed for the capability. */
-export function can(roles: readonly (AppRole | null | undefined)[], capability: ConsoleCapability): boolean {
+export function can(
+  roles: readonly (AppRole | null | undefined)[],
+  capability: ConsoleCapability,
+): boolean {
   const allowed = MATRIX[capability];
   if (!allowed) return false;
   return roles.some((r): r is AppRole => !!r && allowed.includes(r));
 }
 
 /** Convenience for the common single-role case. */
-export function roleCan(role: AppRole | null | undefined, capability: ConsoleCapability): boolean {
+export function roleCan(
+  role: AppRole | null | undefined,
+  capability: ConsoleCapability,
+): boolean {
   return can([role], capability);
 }
 
 /** Exposed for tests and for rendering an explain-why panel. */
-export function allowedRolesFor(capability: ConsoleCapability): readonly AppRole[] {
+export function allowedRolesFor(
+  capability: ConsoleCapability,
+): readonly AppRole[] {
   return MATRIX[capability] ?? [];
 }
 

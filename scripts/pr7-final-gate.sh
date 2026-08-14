@@ -20,7 +20,6 @@ must_not_have() {
 
 echo "== PR7 SOURCE FINAL GATE =="
 
-# Frozen + post-freeze authoritative source files.
 for f in \
   supabase/config.toml \
   supabase/functions/_shared/agent.ts \
@@ -37,6 +36,9 @@ for f in \
   public/widget/chat.js \
   src/routes/_authenticated/console.tsx \
   src/lib/api/config.service.ts \
+  src/lib/authz/consoleCapabilities.ts \
+  src/routes/_authenticated/console.training-candidates.tsx \
+  src/routes/_authenticated/console.settings.llm-runtime.tsx \
   sql/pr7/pr7_agent_management_tenant_isolation.sql \
   sql/pr7/pr7_agent_management_tenant_isolation.rollback.sql \
   sql/pr7/pr7_ai_reply_source_message_atomic_guard.sql \
@@ -59,7 +61,6 @@ for f in \
   sql/pr7/pr7_security_definer_acl_hardening.rollback.sql
 do check_file "$f"; done
 
-# Gateway contract.
 must_have supabase/config.toml $'[functions.generate-reply]\nverify_jwt = true' "generate-reply gateway JWT"
 must_have supabase/config.toml $'[functions.kb-search-proxy]\nverify_jwt = true' "KB proxy gateway JWT"
 must_have supabase/config.toml $'[functions.visitor-analytics]\nverify_jwt = true' "visitor analytics gateway JWT"
@@ -68,7 +69,6 @@ for fn in training-outbox-worker training-result-receiver training-kb-sync train
   must_have supabase/config.toml "[functions.$fn]" "$fn config block"
 done
 
-# Frozen PR7 markers.
 must_have supabase/functions/agent-assist/index.ts "resolveAgentCompanyScope" "Agent Assist company resolver"
 must_have supabase/functions/agent-assist/index.ts 'conv.company_id !== scope.companyId' "Agent Assist cross-tenant guard"
 must_not_have supabase/functions/agent-assist/index.ts '.from("user_roles")' "Agent Assist global-role bypass removed"
@@ -88,7 +88,6 @@ must_have sql/pr7/pr7_core_rls_tenant_isolation.sql "conversations_company_selec
 must_have sql/pr7/pr7_secondary_rls_tenant_isolation.sql "visitor_session_company_select" "secondary visitor tenant RLS"
 must_have sql/pr7/pr7_security_definer_acl_hardening.sql "ce_purge_expired_snapshots" "security-definer ACL hardening"
 
-# Post-freeze integration markers.
 must_have supabase/functions/kb-search-proxy/index.ts '.from("company_membership")' "KB company membership authority"
 must_have supabase/functions/kb-search-proxy/index.ts "company_membership_ambiguous" "KB standalone ambiguity fail-closed"
 must_have supabase/functions/kb-search-proxy/index.ts "KB_SINGAPORE_TENANT_MAP_JSON" "KB frozen tenant map"
@@ -99,7 +98,18 @@ must_have src/lib/api/config.service.ts "async function getCurrentCompanyRoles()
 must_have src/lib/api/config.service.ts '.from("company_membership")' "Console membership source"
 must_not_have src/lib/api/config.service.ts '.from("user_roles")' "Console global role source removed"
 
-# Build must pass in full authoritative repo.
+# AI Chatbot owns CE; training UI belongs to SU CoachAI.
+must_not_have src/lib/authz/consoleCapabilities.ts "ce.training.dispatch" "AI Chatbot training capability removed"
+must_have src/routes/_authenticated/console.training-candidates.tsx 'redirect({ to: "/console/conversation-evaluation" })' "legacy training route redirects to CE"
+must_not_have src/routes/_authenticated/console.training-candidates.tsx "Training Candidates</div>" "training candidates UI removed"
+
+# LLM Runtime must be live telemetry, not fabricated config/provider claims.
+must_have src/routes/_authenticated/console.settings.llm-runtime.tsx '.from("upstream_call_log")' "LLM runtime uses persisted telemetry"
+must_have src/routes/_authenticated/console.settings.llm-runtime.tsx '.eq("company_id", scope.companyId)' "LLM runtime explicit tenant scope"
+must_have src/routes/_authenticated/console.settings.llm-runtime.tsx '.eq("upstream_service", "llm")' "LLM runtime restricts to LLM calls"
+must_not_have src/routes/_authenticated/console.settings.llm-runtime.tsx "Claude Haiku" "hard-coded provider/model claim removed"
+must_not_have src/routes/_authenticated/console.settings.llm-runtime.tsx "Not Configured" "fake not-configured state removed"
+
 echo "== BUILD =="
 if npm run build; then echo "PASS npm run build"; else echo "FAIL npm run build"; fail=1; fi
 
