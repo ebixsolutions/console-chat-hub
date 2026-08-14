@@ -1,9 +1,3 @@
-// P3-FB: Feedback Request Scheduling.
-// Called from the Inbox after a conversation is resolved. Reads
-// feedback_automation_config, then INSERTs one feedback_request row per
-// enabled channel (deduped). All access uses the caller's bearer token — RLS
-// enforced by policies added in the P3-FB migration. No service_role.
-
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -11,9 +5,6 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Database } from "@/integrations/supabase/types";
 
 type AuthedSupabase = SupabaseClient<Database>;
-
-// Allowed P3-FB channels. Anything outside this list is reported as a
-// per-channel failure (never silently skipped).
 const ALLOWED_CHANNELS = ["email", "website_widget"] as const;
 type AllowedChannel = (typeof ALLOWED_CHANNELS)[number];
 
@@ -25,10 +16,12 @@ export type ScheduleFeedbackSuccess = {
     skipped_reason?: "not_active" | "no_channels";
   };
 };
-
 export type ScheduleFeedbackFailure = {
   ok: false;
-  error_type: "config_read_failed" | "invalid_feedback_config" | "partial_or_full_scheduling_failure";
+  error_type:
+    | "config_read_failed"
+    | "invalid_feedback_config"
+    | "partial_or_full_scheduling_failure";
   message: string;
   data?: {
     created: string[];
@@ -36,11 +29,10 @@ export type ScheduleFeedbackFailure = {
     failed: Array<{ channel: string; error_type: string; message?: string }>;
   };
 };
+export type ScheduleFeedbackResult =
+  | ScheduleFeedbackSuccess
+  | ScheduleFeedbackFailure;
 
-export type ScheduleFeedbackResult = ScheduleFeedbackSuccess | ScheduleFeedbackFailure;
-
-// Internal helper — replicates config.service.ts getFeedbackConfigFn query
-// logic without cross-calling it (per spec §5.2).
 async function readFeedbackConfig(
   supabase: AuthedSupabase,
   companyId: string,
@@ -50,6 +42,7 @@ async function readFeedbackConfig(
     .select("id, name, is_active, delay_minutes, trigger_event, config, company_id")
     .eq("company_id", companyId)
     .maybeSingle();
+
   if (error) {
     return {
       ok: false as const,
@@ -60,42 +53,55 @@ async function readFeedbackConfig(
   return { ok: true as const, data };
 }
 
-const inputSchema = z.object({ conversation_id: z.string().uuid() });
+const scheduleInput = z.object({ conversation_id: z.string().uuid() });
 
 export const scheduleFeedbackRequestFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator(inputSchema)
+  .inputValidator(scheduleInput)
   .handler(async ({ data, context }): Promise<ScheduleFeedbackResult> => {
-    const { conversation_id } = data;
+    const conversationId = data.conversation_id;
     const userId = String(context.userId);
 
-    // Resolve company from the actual conversation, then verify membership.
-    // A multi-company user is safe because the conversation determines scope.
-    const { data: conversation, error: conversationErr } = await context.supabase
-      .from("conversations")
-      .select("id, company_id")
-      .eq("id", conversation_id)
-      .maybeSingle();
+    const { data: conversation, error: conversationErr } =
+      await context.supabase
+        .from("conversations")
+        .select("id, company_id")
+        .eq("id", conversationId)
+        .maybeSingle();
+
     if (conversationErr) {
-      return { ok: false, error_type: "config_read_failed", message: "conversation_lookup_failed" };
+      return {
+        ok: false,
+        error_type: "config_read_failed",
+        message: "conversation_lookup_failed",
+      };
     }
     if (!conversation?.company_id) {
-      return { ok: false, error_type: "config_read_failed", message: "conversation_company_unresolved" };
+      return {
+        ok: false,
+        error_type: "config_read_failed",
+        message: "conversation_company_unresolved",
+      };
     }
 
     const companyId = String(conversation.company_id);
-    const { data: membership, error: membershipErr } = await context.supabase
-      .from("company_membership")
-      .select("id")
-      .eq("company_id", companyId)
-      .eq("user_id", userId)
-      .eq("is_active", true)
-      .maybeSingle();
+    const { data: membership, error: membershipErr } =
+      await context.supabase
+        .from("company_membership")
+        .select("id")
+        .eq("company_id", companyId)
+        .eq("user_id", userId)
+        .eq("is_active", true)
+        .maybeSingle();
+
     if (membershipErr || !membership) {
-      return { ok: false, error_type: "config_read_failed", message: "company_membership_required" };
+      return {
+        ok: false,
+        error_type: "config_read_failed",
+        message: "company_membership_required",
+      };
     }
 
-    // 1. Read only this conversation company's config.
     const cfg = await readFeedbackConfig(context.supabase, companyId);
     if (!cfg.ok) {
       return {
@@ -104,17 +110,19 @@ export const scheduleFeedbackRequestFn = createServerFn({ method: "POST" })
         message: cfg.message,
       };
     }
-    const row = cfg.data;
 
-    // 2. Config not active / wrong trigger → normal skip
-    if (!row || !row.is_active || row.trigger_event !== "conversation_resolved") {
+    const row = cfg.data;
+    if (
+      !row ||
+      !row.is_active ||
+      row.trigger_event !== "conversation_resolved"
+    ) {
       return {
         ok: true,
         data: { created: [], skipped_reason: "not_active" },
       };
     }
 
-    // 3. Extract channels_enabled (defensive)
     const cfgJson = (row.config ?? {}) as Record<string, unknown>;
     const channelsRaw = cfgJson.channels_enabled;
     if (!Array.isArray(channelsRaw)) {
@@ -131,10 +139,14 @@ export const scheduleFeedbackRequestFn = createServerFn({ method: "POST" })
       };
     }
 
-    // 4. Validate channels
-    const channels = channelsRaw.map((c) => String(c));
-    const scheduledAt = new Date(Date.now() + (row.delay_minutes ?? 1440) * 60_000).toISOString();
-    const ratingType = typeof cfgJson.rating_type === "string" ? (cfgJson.rating_type as string) : "stars_1_5";
+    const channels = channelsRaw.map(String);
+    const scheduledAt = new Date(
+      Date.now() + (row.delay_minutes ?? 1440) * 60_000,
+    ).toISOString();
+    const ratingType =
+      typeof cfgJson.rating_type === "string"
+        ? cfgJson.rating_type
+        : "stars_1_5";
 
     const created: string[] = [];
     const deduped: string[] = [];
@@ -149,25 +161,26 @@ export const scheduleFeedbackRequestFn = createServerFn({ method: "POST" })
         failed.push({
           channel,
           error_type: "unsupported_feedback_channel",
-          message: `Channel '${channel}' is not supported in P3-FB`,
+          message: `Channel '${channel}' is not supported`,
         });
         continue;
       }
 
-      // 6a. Dedupe check
-      const { data: existing, error: selErr } = await context.supabase
-        .from("feedback_request")
-        .select("id")
-        .eq("conversation_id", conversation_id)
-        .eq("channel", channel as AllowedChannel)
-        .eq("status", "pending")
-        .limit(1)
-        .maybeSingle();
-      if (selErr) {
+      const { data: existing, error: selectError } =
+        await context.supabase
+          .from("feedback_request")
+          .select("id")
+          .eq("conversation_id", conversationId)
+          .eq("channel", channel as AllowedChannel)
+          .eq("status", "pending")
+          .limit(1)
+          .maybeSingle();
+
+      if (selectError) {
         failed.push({
           channel,
           error_type: "dedupe_select_failed",
-          message: selErr.message,
+          message: selectError.message,
         });
         continue;
       }
@@ -176,24 +189,22 @@ export const scheduleFeedbackRequestFn = createServerFn({ method: "POST" })
         continue;
       }
 
-      // 6b. Insert
-      const { error: insErr } = await context.supabase
+      const { error: insertError } = await context.supabase
         .from("feedback_request")
         .insert({
-          conversation_id,
+          conversation_id: conversationId,
           channel,
           status: "pending",
           scheduled_at: scheduledAt,
           rating_type: ratingType,
           config_version_id: row.id,
-        } as never)
-        .select("id")
-        .single();
-      if (insErr) {
+        } as never);
+
+      if (insertError) {
         failed.push({
           channel,
           error_type: "insert_failed",
-          message: insErr.message,
+          message: insertError.message,
         });
         continue;
       }
@@ -212,292 +223,153 @@ export const scheduleFeedbackRequestFn = createServerFn({ method: "POST" })
     return { ok: true, data: { created, deduped } };
   });
 
-// ---------------------------------------------------------------------------
-// P4-FB-A0: Record Feedback Response
-// Protected server function. Validates input, ensures the target
-// feedback_request is 'pending', then UPDATEs it to 'responded' with the
-// caller-supplied rating + optional feedback_text. RLS enforced (admin-only
-// UPDATE per current policies). No service_role.
-//
-// P4-FB-A0.1 fix: All validation is done inside the handler to guarantee
-// structured { ok:false, error_type:"validation_failed", message } responses.
-// The inputValidator is permissive (accepts unknown) so zod never throws
-// before the handler runs.
-// ---------------------------------------------------------------------------
-
-export type RecordFeedbackResponseSuccess = {
-  ok: true;
-  data: {
-    id: string;
-    conversation_id: string;
-    rating: number | null;
-    feedback_text: string | null;
-    responded_at: string | null;
-    status: string | null;
-    updated_at: string;
-  };
+export type FeedbackResponseRow = {
+  id: string;
+  conversation_id: string;
+  channel: string | null;
+  status: string | null;
+  rating: number | null;
+  feedback_text: string | null;
+  responded_at: string | null;
+  delivery_status: string | null;
+  scheduled_at: string | null;
+  rating_type: string | null;
+  created_at: string;
 };
 
-export type RecordFeedbackResponseFailure = {
-  ok: false;
-  error_type: "validation_failed" | "select_failed" | "request_not_found" | "request_not_pending" | "update_failed";
-  message: string;
+export type FeedbackResponsePage = {
+  rows: FeedbackResponseRow[];
+  total: number;
 };
 
-export type RecordFeedbackResponseResult = RecordFeedbackResponseSuccess | RecordFeedbackResponseFailure;
-
-const recordInputSchema = z.object({
-  feedback_request_id: z.string().uuid(),
-  rating: z.number().int().min(1).max(5),
-  feedback_text: z.string().optional(),
+const listInput = z.object({
+  status: z.enum(["pending", "responded"]).optional(),
+  delivery_status: z.enum(["pending", "sent", "delivery_failed"]).optional(),
+  channel: z.enum(["email", "website_widget"]).optional(),
+  rating: z.union([z.number().int().min(1).max(5), z.literal("none")]).optional(),
+  conversation_id: z.string().uuid().optional(),
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  page: z.number().int().min(0).default(0),
+  page_size: z.number().int().min(1).max(50).default(20),
 });
 
-export const recordFeedbackResponseFn = createServerFn({ method: "POST" })
+function nextDayUtc(date: string): string {
+  const d = new Date(`${date}T00:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString();
+}
+
+export const listFeedbackResponsesFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: unknown) => input as z.infer<typeof recordInputSchema>)
-  .handler(async ({ data, context }): Promise<RecordFeedbackResponseResult> => {
-    // P4-FB-A0.1: Validate inside handler for structured error responses.
-    const parsed = recordInputSchema.safeParse(data);
-    if (!parsed.success) {
-      const firstIssue = parsed.error.issues[0];
-      return {
-        ok: false,
-        error_type: "validation_failed",
-        message: firstIssue ? `${firstIssue.path.join(".")}: ${firstIssue.message}` : "Invalid input",
-      };
+  .inputValidator(listInput)
+  .handler(async ({ data, context }): Promise<
+    | { ok: true; data: FeedbackResponsePage }
+    | { ok: false; error: string }
+  > => {
+    const userId = String(context.userId);
+
+    const { data: memberships, error: membershipError } =
+      await context.supabase
+        .from("company_membership")
+        .select("company_id, role")
+        .eq("user_id", userId)
+        .eq("is_active", true);
+
+    if (membershipError) {
+      return { ok: false, error: "company_membership_lookup_failed" };
     }
 
-    const { feedback_request_id, rating } = parsed.data;
-
-    // Normalize feedback_text
-    let feedbackText: string | null = null;
-    if (typeof parsed.data.feedback_text === "string") {
-      const trimmed = parsed.data.feedback_text.trim();
-      if (trimmed.length > 0) {
-        if (trimmed.length > 2000) {
-          return {
-            ok: false,
-            error_type: "validation_failed",
-            message: "feedback_text exceeds 2000 characters",
-          };
-        }
-        feedbackText = trimmed;
-      }
+    const companyIds = [
+      ...new Set((memberships ?? []).map((m) => String(m.company_id))),
+    ];
+    if (companyIds.length === 0) {
+      return { ok: false, error: "company_membership_unresolved" };
+    }
+    if (companyIds.length !== 1) {
+      return { ok: false, error: "company_membership_ambiguous" };
     }
 
-    // 1. SELECT existing row
-    const { data: existing, error: selErr } = await context.supabase
+    const roles = new Set((memberships ?? []).map((m) => String(m.role)));
+    if (
+      !["admin", "supervisor", "agent"].some((role) => roles.has(role))
+    ) {
+      return { ok: false, error: "forbidden" };
+    }
+
+    const companyId = companyIds[0];
+    const { data: company, error: companyError } =
+      await context.supabase
+        .from("company")
+        .select("id, is_active")
+        .eq("id", companyId)
+        .maybeSingle();
+
+    if (companyError) return { ok: false, error: "company_lookup_failed" };
+    if (!company || company.is_active !== true) {
+      return { ok: false, error: "company_inactive" };
+    }
+
+    if (data.from && data.to && data.from > data.to) {
+      return { ok: false, error: "invalid_date_range" };
+    }
+
+    let query = context.supabase
       .from("feedback_request")
-      .select("id, status")
-      .eq("id", feedback_request_id)
-      .maybeSingle();
-    if (selErr) {
-      return { ok: false, error_type: "select_failed", message: selErr.message };
-    }
-    if (!existing) {
-      return { ok: false, error_type: "request_not_found", message: "No feedback request found with this ID" };
-    }
-    if (existing.status !== "pending") {
-      return { ok: false, error_type: "request_not_pending", message: `Current status: ${existing.status}` };
-    }
+      .select(
+        "id, conversation_id, channel, status, rating, feedback_text, responded_at, delivery_status, scheduled_at, rating_type, created_at, conversations!inner(company_id)",
+        { count: "exact" },
+      )
+      .eq("conversations.company_id", companyId);
 
-    // 2. UPDATE
-    const nowIso = new Date().toISOString();
-    const { data: updated, error: updErr } = await context.supabase
-      .from("feedback_request")
-      .update({
-        rating,
-        feedback_text: feedbackText,
-        responded_at: nowIso,
-        status: "responded",
-        updated_at: nowIso,
-      })
-      .eq("id", feedback_request_id)
-      .select("id, conversation_id, rating, feedback_text, responded_at, status, updated_at")
-      .single();
-    if (updErr || !updated) {
-      return { ok: false, error_type: "update_failed", message: updErr?.message ?? "Update returned no row" };
+    if (data.status) query = query.eq("status", data.status);
+    if (data.delivery_status) {
+      query = query.eq("delivery_status", data.delivery_status);
     }
+    if (data.channel) query = query.eq("channel", data.channel);
+    if (data.rating === "none") query = query.is("rating", null);
+    if (typeof data.rating === "number") query = query.eq("rating", data.rating);
+    if (data.conversation_id) {
+      query = query.eq("conversation_id", data.conversation_id);
+    }
+    if (data.from) {
+      query = query.gte("created_at", `${data.from}T00:00:00.000Z`);
+    }
+    if (data.to) query = query.lt("created_at", nextDayUtc(data.to));
+
+    const offset = data.page * data.page_size;
+    const { data: rows, error, count } = await query
+      .order("created_at", { ascending: false })
+      .range(offset, offset + data.page_size - 1);
+
+    if (error) return { ok: false, error: "feedback_response_load_failed" };
+
+    const normalized: FeedbackResponseRow[] = (rows ?? []).map((row: any) => ({
+      id: String(row.id),
+      conversation_id: String(row.conversation_id),
+      channel: row.channel ? String(row.channel) : null,
+      status: row.status ? String(row.status) : null,
+      rating: typeof row.rating === "number" ? row.rating : null,
+      feedback_text:
+        typeof row.feedback_text === "string" ? row.feedback_text : null,
+      responded_at: row.responded_at ? String(row.responded_at) : null,
+      delivery_status: row.delivery_status
+        ? String(row.delivery_status)
+        : null,
+      scheduled_at: row.scheduled_at ? String(row.scheduled_at) : null,
+      rating_type: row.rating_type ? String(row.rating_type) : null,
+      created_at: String(row.created_at),
+    }));
 
     return {
       ok: true,
-      data: {
-        id: updated.id,
-        conversation_id: updated.conversation_id,
-        rating: updated.rating,
-        feedback_text: updated.feedback_text,
-        responded_at: updated.responded_at,
-        status: updated.status,
-        updated_at: updated.updated_at,
-      },
-    };
-  });
-
-// ---------------------------------------------------------------------------
-// P5-S3a: Generate Feedback Token (Admin Manual Test)
-// Generates a 256-bit crypto-random token, stores SHA-256 hash + expiry on
-// feedback_request. Returns raw token only inside a feedback_link URL, once.
-// Raw token is NEVER stored in DB, NEVER logged.
-//
-// SECURITY: This function relies on existing feedback_request UPDATE RLS.
-// Only admin should be able to update token columns. Non-admin direct calls
-// must fail at RLS/update layer. Do not introduce new role hook or profile
-// lookup — RLS enforcement is sufficient.
-// ---------------------------------------------------------------------------
-
-async function sha256Hex(input: string): Promise<string> {
-  const buf = new TextEncoder().encode(input);
-  const digest = await crypto.subtle.digest("SHA-256", buf);
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-function generateRawToken(): string {
-  const bytes = new Uint8Array(32); // 256 bits
-  crypto.getRandomValues(bytes);
-  const binary = Array.from(bytes, (b) => String.fromCharCode(b)).join("");
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-const TOKEN_EXPIRY_DAYS = 7;
-
-// S3a test-only base URL. Must be replaced by configured public app base URL
-// before S1/S2/P5 production deployment.
-const FEEDBACK_BASE_URL = "https://console-chat-hub.lovable.app";
-
-export type GenerateTokenSuccess = {
-  ok: true;
-  data: {
-    feedback_request_id: string;
-    feedback_link: string;
-    token_expires_at: string;
-    previous_token_invalidated: boolean;
-  };
-};
-
-export type GenerateTokenFailure = {
-  ok: false;
-  error_type:
-    | "validation_failed"
-    | "request_not_found"
-    | "request_not_pending"
-    | "token_already_active"
-    | "token_already_used"
-    | "token_update_failed"
-    | "internal_error";
-  message: string;
-};
-
-export type GenerateTokenResult = GenerateTokenSuccess | GenerateTokenFailure;
-
-const generateTokenInput = z.object({
-  feedback_request_id: z.string().uuid(),
-  force_regenerate: z.boolean().optional(),
-});
-
-export const generateFeedbackTokenFn = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .inputValidator((input: unknown) => input as z.infer<typeof generateTokenInput>)
-  .handler(async ({ data, context }): Promise<GenerateTokenResult> => {
-    // Validate inside handler for structured errors
-    const parsed = generateTokenInput.safeParse(data);
-    if (!parsed.success) {
-      const issue = parsed.error.issues[0];
-      return {
-        ok: false,
-        error_type: "validation_failed",
-        message: issue ? `${issue.path.join(".")}: ${issue.message}` : "Invalid input",
-      };
-    }
-
-    const { feedback_request_id, force_regenerate } = parsed.data;
-
-    // 1. SELECT existing row
-    const { data: row, error: selErr } = await context.supabase
-      .from("feedback_request")
-      .select("id, status, response_token_hash, token_expires_at, token_used_at")
-      .eq("id", feedback_request_id)
-      .maybeSingle();
-
-    if (selErr) {
-      return { ok: false, error_type: "internal_error", message: selErr.message };
-    }
-    if (!row) {
-      return { ok: false, error_type: "request_not_found", message: "No feedback request found with this ID" };
-    }
-    if (row.status !== "pending") {
-      return { ok: false, error_type: "request_not_pending", message: `Current status: ${row.status}` };
-    }
-    if (row.token_used_at) {
-      return { ok: false, error_type: "token_already_used", message: "Token was already used for a response" };
-    }
-
-    // 2. Check for active token
-    const hasActiveToken =
-      row.response_token_hash && row.token_expires_at && new Date(row.token_expires_at) > new Date();
-
-    if (hasActiveToken && !force_regenerate) {
-      return {
-        ok: false,
-        error_type: "token_already_active",
-        message: `Active token exists (expires ${row.token_expires_at}). Use force_regenerate to invalidate and create new token.`,
-      };
-    }
-
-    const previousTokenInvalidated = !!hasActiveToken && !!force_regenerate;
-
-    // 3. Generate token — SECURITY: rawToken must not be logged or stored
-    const rawToken = generateRawToken();
-    const tokenHash = await sha256Hex(rawToken);
-    const now = new Date();
-    const expiresAt = new Date(now.getTime() + TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
-
-    // 4. UPDATE — guarded: re-check status + token_used_at to prevent race condition
-    // Store hash only, never raw token
-    const { data: updatedRow, error: updErr } = await context.supabase
-      .from("feedback_request")
-      .update({
-        response_token_hash: tokenHash,
-        token_created_at: now.toISOString(),
-        token_expires_at: expiresAt.toISOString(),
-        token_used_at: null,
-        updated_at: now.toISOString(),
-      } as never)
-      .eq("id", feedback_request_id)
-      .eq("status", "pending")
-      .is("token_used_at", null)
-      .select("id")
-      .maybeSingle();
-
-    if (updErr) {
-      return { ok: false, error_type: "token_update_failed", message: updErr.message };
-    }
-    if (!updatedRow) {
-      return { ok: false, error_type: "token_update_failed", message: "Token update failed or request state changed" };
-    }
-
-    // 5. Construct feedback link with raw token
-    // SECURITY: rawToken leaves server only inside this response, once
-    // S3a test-only. Must be replaced by configured public app base URL
-    // before S1/S2/P5 production.
-    const feedbackLink = `${FEEDBACK_BASE_URL}/feedback?token=${encodeURIComponent(rawToken)}`;
-
-    return {
-      ok: true,
-      data: {
-        feedback_request_id,
-        feedback_link: feedbackLink,
-        token_expires_at: expiresAt.toISOString(),
-        previous_token_invalidated: previousTokenInvalidated,
-      },
+      data: { rows: normalized, total: count ?? 0 },
     };
   });
 
 export const feedbackService = {
-  scheduleFeedbackRequest: (conversation_id: string) => scheduleFeedbackRequestFn({ data: { conversation_id } }),
-  recordFeedbackResponse: (params: { feedback_request_id: string; rating: number; feedback_text?: string }) =>
-    recordFeedbackResponseFn({ data: params }),
-  generateFeedbackToken: (params: { feedback_request_id: string; force_regenerate?: boolean }) =>
-    generateFeedbackTokenFn({ data: params }),
+  scheduleFeedbackRequest: (conversation_id: string) =>
+    scheduleFeedbackRequestFn({ data: { conversation_id } }),
+  listFeedbackResponses: (params: z.infer<typeof listInput>) =>
+    listFeedbackResponsesFn({ data: params }),
 };

@@ -28,6 +28,10 @@ for f in \
   src/routes/_authenticated/console.training-candidates.tsx \
   src/routes/_authenticated/console.settings.llm-runtime.tsx \
   src/routes/_authenticated/console.widget-preview.tsx \
+  src/routes/_authenticated/console.feedback-responses.tsx \
+  src/routes/_authenticated/console.settings.feedback-test.tsx \
+  src/lib/api/feedback.service.ts \
+  src/services/aiChatbotSettingsService.ts \
   sql/pr7/pr7_agent_management_tenant_isolation.sql \
   sql/pr7/pr7_ai_reply_source_message_atomic_guard.sql \
   sql/pr7/pr7_config_rpc_tenant_guard.sql \
@@ -73,6 +77,20 @@ must_have src/lib/api/config.service.ts "widget_shared_or_unbound" "widget owner
 must_have src/lib/api/config.service.ts "updateAgentProfileFn" "self profile update implemented"
 must_not_have src/routes/_authenticated/console.widget-preview.tsx '.from("channel_config")' "Widget Preview direct global DB read removed"
 must_have src/routes/_authenticated/console.widget-preview.tsx "configService.listChannelConfigs()" "Widget Preview uses tenant-scoped service"
+
+
+# Feedback production boundary.
+must_have src/lib/api/config.service.ts '["admin", "supervisor"]' "feedback config write role enforcement"
+must_have src/lib/api/feedback.service.ts "listFeedbackResponsesFn" "tenant-scoped feedback response server function"
+must_have src/lib/api/feedback.service.ts 'conversations!inner(company_id)' "feedback response company join"
+must_have src/lib/api/feedback.service.ts '.eq("conversations.company_id", companyId)' "feedback response explicit company scope"
+must_not_have src/lib/api/feedback.service.ts "generateFeedbackTokenFn" "test-only token generator removed"
+must_not_have src/lib/api/feedback.service.ts "recordFeedbackResponseFn" "internal authenticated feedback mutation removed"
+must_not_have src/lib/api/feedback.service.ts "console-chat-hub.lovable.app" "test-only feedback base URL removed"
+must_have src/routes/_authenticated/console.settings.feedback-test.tsx 'redirect({ to: "/console/feedback-responses" })' "internal feedback test route disabled"
+must_not_have src/routes/_authenticated/console.feedback-responses.tsx '.from("feedback_request")' "Feedback Responses direct DB read removed"
+must_have src/routes/_authenticated/console.feedback-responses.tsx "feedbackService.listFeedbackResponses" "Feedback Responses uses scoped server API"
+must_have src/services/aiChatbotSettingsService.ts "feedbackService.listFeedbackResponses" "Feedback settings recent requests use scoped server API"
 
 echo "== BUILD =="
 if npm run build; then echo "PASS npm run build"; else echo "FAIL npm run build"; fail=1; fi

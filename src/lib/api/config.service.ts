@@ -388,12 +388,15 @@ export const updateFeedbackConfigFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator(updateFeedbackInput)
   .handler(async ({ data, context }): Promise<ServerResult<LiveFeedbackConfigRow>> => {
-    const company = await resolveSingleActiveCompany({
-      supabase: context.supabase,
-      userId: String(context.userId),
-    });
-    if (!company.ok || !company.data) return { ok: false, error: company.error };
-    const companyId = company.data;
+    const scope = requireRole(
+      await resolveCompanyScope({
+        supabase: context.supabase,
+        userId: String(context.userId),
+      }),
+      ["admin", "supervisor"],
+    );
+    if (!scope.ok || !scope.data) return { ok: false, error: scope.error };
+    const companyId = scope.data.companyId;
 
     const { data: existing, error: readErr } = await context.supabase
       .from("feedback_automation_config")
