@@ -197,13 +197,10 @@ const ROLES = [
   { key: "qa_reviewer", short: "QA", color: "#d97706" },
 ] as const;
 
-// Safe initials: handles empty, multi-space, email local-parts, non-English
 function safeInitials(name: string): string {
   const trimmed = name.trim();
   if (!trimmed) return "U";
-  // If it looks like an email local-part (no spaces), take first 2 chars
   if (!trimmed.includes(" ")) return trimmed.slice(0, 2).toUpperCase();
-  // Split by whitespace, take first char of first two non-empty words
   const parts = trimmed.split(/\s+/).filter(Boolean);
   return (
     parts
@@ -214,15 +211,14 @@ function safeInitials(name: string): string {
   );
 }
 
-/* ── Main Layout ── */
+type HealthStatus = "checking" | "reachable" | "unavailable";
+
 function ConsoleLayout() {
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const { role, loading: roleLoading } = useCurrentRole();
   const [demoRole, setDemoRole] = useState<string>("supervisor");
 
-  // C3: Sync demoRole from resolved auth role exactly once.
-  // After initial sync, manual demo switcher clicks are preserved.
   const hasSyncedRole = useRef(false);
   useEffect(() => {
     if (!roleLoading && role && !hasSyncedRole.current) {
@@ -231,7 +227,6 @@ function ConsoleLayout() {
     }
   }, [role, roleLoading]);
 
-  // C1: Runtime identity from agent_profile with unmount guard + try/catch
   const [userDisplayName, setUserDisplayName] = useState("System");
   const [userInitials, setUserInitials] = useState("U");
 
@@ -245,7 +240,6 @@ function ConsoleLayout() {
         if (cancelled || !authUser) return;
 
         const email = authUser.email || "";
-
         const { data: profile } = await supabase
           .from("agent_profile")
           .select("display_name")
@@ -262,9 +256,8 @@ function ConsoleLayout() {
           setUserDisplayName(localPart);
           setUserInitials(safeInitials(localPart));
         }
-        // If neither available, defaults remain: 'System' / 'U'
       } catch {
-        // Auth/profile query failed — keep safe defaults, never Sarah Chen
+        // Auth/profile query failed — keep safe defaults.
       }
     })();
 
@@ -276,11 +269,49 @@ function ConsoleLayout() {
   const [lang, setLang] = useState<"en" | "zh">("en");
   const [collapsed, setCollapsed] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+  const [healthStatus, setHealthStatus] = useState<HealthStatus>("checking");
 
-  // Production: sidebar + context use real DB role (normalized by authService).
-  // Development: uses demoRole for switcher testing.
+  useEffect(() => {
+    let cancelled = false;
+
+    const checkHealth = async () => {
+      try {
+        const { data, error } = await supabase.functions.invoke("health-check", {
+          body: {},
+        });
+
+        if (cancelled) return;
+        setHealthStatus(
+          !error &&
+            data?.ok === true &&
+            data?.source === "health-check"
+            ? "reachable"
+            : "unavailable",
+        );
+      } catch {
+        if (!cancelled) setHealthStatus("unavailable");
+      }
+    };
+
+    void checkHealth();
+    const timer = window.setInterval(() => void checkHealth(), 30_000);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        setHealthStatus("checking");
+        void checkHealth();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, []);
+
   const sidebarRole: string | null = import.meta.env.DEV ? demoRole : (role ?? null);
-
   const effectiveRoleForContext: EffectiveRole | null = sidebarRole ? mapDemoRoleToEffective(sidebarRole) : null;
   const effectiveRoleContext: ConsoleOutletContext | null =
     effectiveRoleForContext && sidebarRole
@@ -290,7 +321,6 @@ function ConsoleLayout() {
   const t = (key: string) => translations[lang]?.[key] ?? translations.en[key] ?? key;
   const toggleGroup = (key: string) => setCollapsedGroups((prev) => ({ ...prev, [key]: !prev[key] }));
   const showSettingsGroup = sidebarRole === "admin" || sidebarRole === "supervisor";
-  // Map production "agent" to display key "customer_service" for ROLES lookup
   const roleDisplayKey: string | null = sidebarRole === "agent" ? "customer_service" : sidebarRole;
   const currentRoleMeta = roleDisplayKey ? ROLES.find((r) => r.key === roleDisplayKey) : null;
   const sidebarW = collapsed ? SIDEBAR_COLLAPSED : SIDEBAR_EXPANDED;
@@ -304,6 +334,25 @@ function ConsoleLayout() {
     .sort((a, b) => b.length - a.length)
     .find((k) => pathname === k || pathname.startsWith(k + "/"));
   const badge = badgePath ? GROUP_BADGE[badgePath] : null;
+
+  const healthUi =
+    healthStatus === "reachable"
+      ? {
+          label: lang === "zh" ? "API 可連線" : "API Reachable",
+          background: "#dcfce7",
+          color: "#16a34a",
+        }
+      : healthStatus === "unavailable"
+        ? {
+            label: lang === "zh" ? "服務無法連線" : "Service Unavailable",
+            background: "#fee2e2",
+            color: "#dc2626",
+          }
+        : {
+            label: lang === "zh" ? "檢查服務中…" : "Checking service…",
+            background: "#fef3c7",
+            color: "#d97706",
+          };
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
@@ -322,7 +371,6 @@ function ConsoleLayout() {
         color: "#1a1a1a",
       }}
     >
-      {/* ── LangBar ── */}
       <div
         style={{
           height: LANGBAR_H,
@@ -396,9 +444,7 @@ function ConsoleLayout() {
         ))}
       </div>
 
-      {/* ── Body: Sidebar + Main ── */}
       <div style={{ height: `calc(100vh - ${LANGBAR_H}px)`, display: "flex", overflow: "hidden" }}>
-        {/* ── Sidebar ── */}
         <aside
           style={{
             width: sidebarW,
@@ -412,7 +458,6 @@ function ConsoleLayout() {
             transition: "width 0.2s ease",
           }}
         >
-          {/* App name row */}
           <div
             style={{
               height: 44,
@@ -460,7 +505,6 @@ function ConsoleLayout() {
             </button>
           </div>
 
-          {/* User + Role */}
           {!collapsed && (
             <>
               <div
@@ -553,7 +597,6 @@ function ConsoleLayout() {
             </>
           )}
 
-          {/* Nav groups */}
           <div style={{ padding: collapsed ? "8px 4px" : "10px 8px", flex: 1, background: "#ffffff" }}>
             {GROUPS.filter((g) => !g.adminOnly || showSettingsGroup).map((g) => {
               const groupCollapsed = collapsedGroups[g.key];
@@ -614,9 +657,7 @@ function ConsoleLayout() {
                           >
                             <span style={{ fontSize: 14, flexShrink: 0 }}>{item.icon}</span>
                             {!collapsed && (
-                              <span
-                                style={{ flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
-                              >
+                              <span style={{ flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                                 {t(item.navKey)}
                               </span>
                             )}
@@ -627,7 +668,6 @@ function ConsoleLayout() {
               );
             })}
 
-            {/* Widget Preview (always visible) */}
             {!collapsed && (
               <div style={{ marginTop: 8, borderTop: "0.5px solid #e8e6e0", paddingTop: 8 }}>
                 <span
@@ -668,7 +708,6 @@ function ConsoleLayout() {
             </Link>
           </div>
 
-          {/* Sign out */}
           <div style={{ padding: "8px 10px", borderTop: "0.5px solid #e8e6e0", flexShrink: 0 }}>
             <button
               onClick={handleSignOut}
@@ -697,7 +736,6 @@ function ConsoleLayout() {
           </div>
         </aside>
 
-        {/* ── TopBar + Main ── */}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
           <div
             style={{
@@ -744,16 +782,21 @@ function ConsoleLayout() {
             </div>
             <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
               <span
+                title={
+                  healthStatus === "reachable"
+                    ? (lang === "zh" ? "Edge health-check 已回應；不代表所有外部依賴均正常" : "Edge health-check responded; this does not assert all external dependencies are healthy")
+                    : undefined
+                }
                 style={{
                   fontSize: 10,
-                  background: "#dcfce7",
-                  color: "#16a34a",
+                  background: healthUi.background,
+                  color: healthUi.color,
                   padding: "3px 10px",
                   borderRadius: 20,
                   fontWeight: 600,
                 }}
               >
-                ● System Operational
+                ● {healthUi.label}
               </span>
             </div>
           </div>
