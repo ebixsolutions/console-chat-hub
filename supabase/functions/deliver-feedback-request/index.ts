@@ -133,72 +133,49 @@ Deno.serve(async (req) => {
     const expires = new Date(now.getTime() + TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000);
     const feedbackLink = `${baseUrl}/feedback?token=${encodeURIComponent(rawToken)}`;
 
-    const { data: message, error: messageError } = await admin
-      .from("messages")
-      .insert({
-        conversation_id: conversationId,
-        role: "system",
-        content: "How was your support experience?",
-        status: "delivered",
-        is_recalled: false,
-        metadata: {
-          feedback_request: true,
-          feedback_request_id: feedbackRequestId,
-          feedback_link: feedbackLink,
-          rating_type: ratingType,
-          contract_version: CONTRACT,
-        },
-      })
-      .select("id")
-      .single();
-
-    if (messageError || !message) {
-      await admin.rpc("finish_feedback_delivery_tx", {
+    // Atomic DB commit: the customer-visible widget message and the
+    // feedback_request token/delivery state are created together or not at all.
+    const { data: completed, error: completeError } = await admin.rpc(
+      "complete_widget_feedback_delivery_tx",
+      {
         p_feedback_request_id: feedbackRequestId,
-        p_outcome: "pending",
-        p_delivery_error_type: "widget_message_insert_failed",
-        p_token_hash: null,
-        p_token_created_at: null,
-        p_token_expires_at: null,
-        p_sent_at: null,
+        p_conversation_id: conversationId,
+        p_company_id: companyId,
+        p_token_hash: tokenHash,
+        p_token_created_at: now.toISOString(),
+        p_token_expires_at: expires.toISOString(),
+        p_sent_at: now.toISOString(),
+        p_feedback_link: feedbackLink,
+        p_rating_type: ratingType,
+        p_contract_version: CONTRACT,
+      },
+    );
+
+    if (completeError) {
+      console.error("[deliver-feedback-request] atomic completion failed", {
+        feedback_request_id: feedbackRequestId,
+        code: completeError.code,
       });
       summary.failed++;
       continue;
     }
 
-    const { data: finished, error: finishError } = await admin.rpc(
-      "finish_feedback_delivery_tx",
-      {
-        p_feedback_request_id: feedbackRequestId,
-        p_outcome: "sent",
-        p_delivery_error_type: null,
-        p_token_hash: tokenHash,
-        p_token_created_at: now.toISOString(),
-        p_token_expires_at: expires.toISOString(),
-        p_sent_at: now.toISOString(),
-      },
-    );
-
-    if (finishError || String(finished?.result ?? finished) !== "success") {
-      await admin
-        .from("messages")
-        .update({
-          is_recalled: true,
-          status: "failed",
-          metadata: {
-            feedback_request: true,
-            feedback_request_id: feedbackRequestId,
-            invalidated: true,
-            invalidated_reason: "delivery_state_commit_failed",
-          },
-        })
-        .eq("id", message.id);
-
-      summary.failed++;
+    const completeResult = String(completed?.result ?? completed ?? "unknown");
+    if (completeResult === "success" || completeResult === "already_sent") {
+      summary.delivered++;
       continue;
     }
 
-    summary.delivered++;
+    if (completeResult === "stale_claim" || completeResult === "request_not_pending") {
+      summary.skipped++;
+      continue;
+    }
+
+    console.error("[deliver-feedback-request] unexpected completion result", {
+      feedback_request_id: feedbackRequestId,
+      result: completeResult,
+    });
+    summary.failed++;
   }
 
   return json({ success: true, contract_version: CONTRACT, ...summary });
