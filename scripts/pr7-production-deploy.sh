@@ -81,6 +81,9 @@ bash scripts/pr7-customer360-caller-source-gate.sh || stop "Customer360 caller s
 echo "== CUSTOMER360 ↔ COACH SYNC PREFLIGHT =="
 bash scripts/pr7-customer360-coach-sync-source-gate.sh || stop "Customer360 ↔ Coach sync source contract failed"
 
+echo "== WIDGET THEME CONTRACT PREFLIGHT =="
+bash scripts/pr7-widget-theme-contract-source-gate.sh || stop "widget theme contract source failed"
+
 echo "== COMPANY FOUNDATION LIFECYCLE SOURCE GATE =="
 bash scripts/pr7-company-foundation-lifecycle-gate.sh || stop "company foundation lifecycle gate failed"
 
@@ -186,6 +189,7 @@ fi
 
 SQL_FORWARD=(
   "sql/pr7/pr7_tenant_ownership_consistency.sql"
+  "sql/pr7/pr7_widget_theme_contract.sql"
   "sql/pr7/pr7_customer360_coach_sync_state.sql"
   "sql/pr7/pr7_feedback_config_tenant_scope.sql"
   "sql/pr7/pr7_agent_management_tenant_isolation.sql"
@@ -203,6 +207,7 @@ SQL_FORWARD=(
 )
 SQL_ROLLBACK=(
   "sql/pr7/pr7_tenant_ownership_consistency.rollback.sql"
+  "sql/pr7/pr7_widget_theme_contract.rollback.sql"
   "sql/pr7/pr7_customer360_coach_sync_state.rollback.sql"
   "sql/pr7/pr7_feedback_config_tenant_scope.rollback.sql"
   "sql/pr7/pr7_agent_management_tenant_isolation.rollback.sql"

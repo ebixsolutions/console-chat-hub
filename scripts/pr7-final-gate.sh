@@ -41,6 +41,9 @@ for f in \
   sql/pr7/pr7_customer360_coach_sync_state.rollback.sql \
   scripts/pr7-customer360-coach-sync-source-gate.sh \
   scripts/pr7-customer360-coach-sync-runtime-smoke.sh \
+  sql/pr7/pr7_widget_theme_contract.sql \
+  sql/pr7/pr7_widget_theme_contract.rollback.sql \
+  scripts/pr7-widget-theme-contract-source-gate.sh \
   public/widget/chat.js \
   src/routes/_authenticated/console.tsx \
   src/lib/api/config.service.ts \
@@ -316,6 +319,15 @@ if bash scripts/pr7-customer360-coach-sync-source-gate.sh; then
   echo "PASS Customer360 ↔ Coach sync source contract"
 else
   echo "FAIL Customer360 ↔ Coach sync source contract"
+  fail=1
+fi
+
+# Workflow 6 / Task 6.1 — Widget theme persistence contract.
+echo "== WIDGET THEME CONTRACT SOURCE GATE =="
+if bash scripts/pr7-widget-theme-contract-source-gate.sh; then
+  echo "PASS widget theme persistence contract"
+else
+  echo "FAIL widget theme persistence contract"
   fail=1
 fi
 

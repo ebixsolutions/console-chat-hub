@@ -100,6 +100,9 @@ bash scripts/pr7-customer360-coach-sync-source-gate.sh || stop "Customer360 ↔ 
 echo "== CUSTOMER360 ↔ COACH SYNC RUNTIME =="
 bash scripts/pr7-customer360-coach-sync-runtime-smoke.sh || stop "Customer360 ↔ Coach sync runtime failed"
 
+echo "== WIDGET THEME CONTRACT SOURCE =="
+bash scripts/pr7-widget-theme-contract-source-gate.sh || stop "widget theme contract source failed"
+
 psql "$DB_URL" -v ON_ERROR_STOP=1 -v company_id="$CANONICAL_COMPANY" -v platform_company_id="$CANONICAL_PLATFORM_COMPANY" <<'SQL'
 SELECT set_config('pr7.company_id', :'company_id', false);
 SELECT set_config('pr7.platform_company_id', :'platform_company_id', false);
@@ -127,6 +130,15 @@ BEGIN
     SELECT 1 FROM public.channel_config
     WHERE company_id IS NULL OR company_id<>cid
   ) THEN RAISE EXCEPTION 'channel ownership is not canonical'; END IF;
+  IF EXISTS (
+    SELECT 1 FROM public.widget_config
+    WHERE appearance_theme NOT IN ('classic','modern')
+  ) THEN RAISE EXCEPTION 'widget appearance theme invalid'; END IF;
+  IF EXISTS (
+    SELECT 1 FROM public.widget_config
+    WHERE appearance_theme IS NULL
+  ) THEN RAISE EXCEPTION 'widget appearance theme unresolved'; END IF;
+
   IF EXISTS (
     SELECT 1 FROM public.conversations
     WHERE company_id IS NULL OR company_id<>cid
