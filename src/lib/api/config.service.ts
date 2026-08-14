@@ -468,6 +468,39 @@ export const configService = {
     updateFeedbackConfigFn({ data: params }),
 };
 
+const PREVIEW_ADMIN_EMAILS = new Set([
+  "frankien.ng@gmail.com",
+  "frankien.mega001@gmail.com",
+]);
+
+/**
+ * FRONTEND ACCEPTANCE ONLY.
+ *
+ * The canonical production authority remains company_membership. This bridge is
+ * intentionally reachable only on Lovable's isolated id-preview hostname (or
+ * localhost) and only for explicitly named UAT admin accounts. It never writes
+ * company/company_membership and never changes server-side RBAC/RLS.
+ *
+ * Product-ready integration must provide the real SU Platform company UUID/int;
+ * once canonical membership exists this bridge is irrelevant because the
+ * canonical role is returned first.
+ */
+async function resolvePreviewAcceptanceRole(): Promise<AppRole | null> {
+  if (typeof window === "undefined") return null;
+
+  const host = window.location.hostname.toLowerCase();
+  const isLovableIdPreview =
+    host.startsWith("id-preview--") && host.endsWith(".lovable.app");
+  const isLocalhost = host === "localhost" || host === "127.0.0.1";
+  if (!isLovableIdPreview && !isLocalhost) return null;
+
+  const { data, error } = await supabase.auth.getUser();
+  if (error || !data?.user?.email) return null;
+
+  const email = data.user.email.trim().toLowerCase();
+  return PREVIEW_ADMIN_EMAILS.has(email) ? "admin" : null;
+}
+
 async function getCurrentCompanyRoles(): Promise<AppRole[]> {
   const { data: sessionData } = await supabase.auth.getSession();
   const userId = sessionData.session?.user?.id;
@@ -506,7 +539,15 @@ export const authService = {
     for (const candidate of ROLE_PRECEDENCE) {
       if (roles.includes(candidate)) return candidate;
     }
-    return null;
+
+    // Frontend acceptance bridge only. Never use this result for server writes,
+    // RLS, tenant resolution, or production authorization.
+    return await resolvePreviewAcceptanceRole();
   },
-  getCurrentUserRoles: async (): Promise<AppRole[]> => getCurrentCompanyRoles(),
+  getCurrentUserRoles: async (): Promise<AppRole[]> => {
+    const roles = await getCurrentCompanyRoles();
+    if (roles.length > 0) return roles;
+    const previewRole = await resolvePreviewAcceptanceRole();
+    return previewRole ? [previewRole] : [];
+  },
 };

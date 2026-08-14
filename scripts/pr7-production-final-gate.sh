@@ -15,7 +15,10 @@ TEST_USER_B="${PR7_TEST_USER_B:-}"
 TEST_COMPANY_B="${PR7_TEST_COMPANY_B:-}"
 FUNCTIONS_URL="${PR7_FUNCTIONS_URL:-https://${EXPECTED_PROJECT_REF}.supabase.co/functions/v1}"
 
-stop(){ echo "== CE PRODUCTION ACTIVATION RUNTIME GATE =="
+stop(){ echo "== PREVIEW ROLE ACCEPTANCE BRIDGE SAFETY =="
+bash scripts/pr8-preview-role-acceptance-source-gate.sh || stop "Preview role bridge safety contract failed"
+
+echo "== CE PRODUCTION ACTIVATION RUNTIME GATE =="
 bash scripts/pr8-ce-production-activation-gate.sh || stop "CE production activation runtime gate failed"
 
 echo "== CE RUNTIME SMOKE + IDEMPOTENCY =="
