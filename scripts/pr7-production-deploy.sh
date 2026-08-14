@@ -90,6 +90,9 @@ bash scripts/pr7-widget-modern-runtime-source-gate.sh || stop "widget modern run
 echo "== WIDGET THEME SELECTOR DIRECTOR PREFLIGHT =="
 bash scripts/pr7-widget-theme-selector-director-gate.sh || stop "widget theme selector Director gate failed"
 
+echo "== PRODUCTION ACTIVATION SOURCE GATE =="
+bash scripts/pr7-production-activation-source-gate.sh || stop "production activation source contract failed"
+
 echo "== COMPANY FOUNDATION LIFECYCLE SOURCE GATE =="
 bash scripts/pr7-company-foundation-lifecycle-gate.sh || stop "company foundation lifecycle gate failed"
 
@@ -258,6 +261,8 @@ FUNCTIONS=(
   "agent-management"
   "conversation-evaluate"
   "customer360-local"
+  "customer360-adapter"
+  "customer360-coach-sync"
   "training-outbox-worker"
   "training-result-receiver"
   "training-kb-sync"
@@ -272,6 +277,8 @@ VERIFY_JWT_FALSE=(
   "receive-widget-message"
   "widget-poll-messages"
   "health-check"
+  "customer360-adapter"
+  "customer360-coach-sync"
   "submit-feedback-response"
   "agent-send-reply"
   "assign-conversation"

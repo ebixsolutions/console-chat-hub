@@ -56,6 +56,8 @@ for f in \
   src/routes/_authenticated/console.settings.llm-runtime.tsx \
   src/routes/_authenticated/console.widget-preview.tsx \
   scripts/pr7-widget-theme-selector-director-gate.sh \
+  scripts/pr7-production-activation-source-gate.sh \
+  scripts/pr7-console-role-runtime-acceptance.sh \
   src/routes/_authenticated/console.feedback-responses.tsx \
   src/routes/_authenticated/console.agent-settings.tsx \
   src/routes/_authenticated/console.analytics.tsx \
@@ -351,6 +353,16 @@ if bash scripts/pr7-widget-theme-selector-director-gate.sh; then
   echo "PASS Widget Theme Selector Director takeover"
 else
   echo "FAIL Widget Theme Selector Director takeover"
+  fail=1
+fi
+
+
+# Workflow 7 / Task 7.1 — Production activation orchestrator.
+echo "== PRODUCTION ACTIVATION SOURCE GATE =="
+if bash scripts/pr7-production-activation-source-gate.sh; then
+  echo "PASS production activation Edge inventory/gateway contract"
+else
+  echo "FAIL production activation Edge inventory/gateway contract"
   fail=1
 fi
 

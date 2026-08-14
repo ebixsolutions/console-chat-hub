@@ -45,7 +45,8 @@ REQUIRED_FUNCTIONS=(
   take-over-conversation transfer-conversation return-to-ai
   resolve-conversation mark-unresolved recall-message kb-search-proxy
   visitor-analytics agent-assist agent-management conversation-evaluate
-  customer360-local training-outbox-worker training-result-receiver
+  customer360-local customer360-adapter customer360-coach-sync
+  training-outbox-worker training-result-receiver
   training-kb-sync training-kb-finalize
 )
 
@@ -290,4 +291,7 @@ ROLLBACK;
 SQL
 
 echo "PASS two-tenant RLS runtime smoke"
+echo "== CONSOLE CANONICAL ROLE RUNTIME ACCEPTANCE =="
+bash scripts/pr7-console-role-runtime-acceptance.sh || stop "Console canonical role runtime acceptance failed"
+
 echo "FINAL STATUS: READY"
