@@ -465,20 +465,6 @@ export const configService = {
     updateFeedbackConfigFn({ data: params }),
 };
 
-export const DEFERRED_RESPONSE = {
-  ok: false as const,
-  deferred: true as const,
-  message: "Config save available after L7B binding.",
-};
-export type DeferredResponse = typeof DEFERRED_RESPONSE;
-
-export const agentService = {
-  listAgents: async (): Promise<{ data: unknown[]; error: null }> => ({ data: [], error: null }),
-};
-export const analyticsService = {
-  getSummary: async (): Promise<{ data: null; error: null }> => ({ data: null, error: null }),
-};
-
 async function getCurrentCompanyRoles(): Promise<AppRole[]> {
   const { data: sessionData } = await supabase.auth.getSession();
   const userId = sessionData.session?.user?.id;

@@ -29,6 +29,8 @@ for f in \
   src/routes/_authenticated/console.settings.llm-runtime.tsx \
   src/routes/_authenticated/console.widget-preview.tsx \
   src/routes/_authenticated/console.feedback-responses.tsx \
+  src/routes/_authenticated/console.agent-settings.tsx \
+  src/routes/_authenticated/console.analytics.tsx \
   src/routes/_authenticated/console.settings.feedback-test.tsx \
   src/lib/api/feedback.service.ts \
   src/services/aiChatbotSettingsService.ts \
@@ -91,6 +93,15 @@ must_have src/routes/_authenticated/console.settings.feedback-test.tsx 'redirect
 must_not_have src/routes/_authenticated/console.feedback-responses.tsx '.from("feedback_request")' "Feedback Responses direct DB read removed"
 must_have src/routes/_authenticated/console.feedback-responses.tsx "feedbackService.listFeedbackResponses" "Feedback Responses uses scoped server API"
 must_have src/services/aiChatbotSettingsService.ts "feedbackService.listFeedbackResponses" "Feedback settings recent requests use scoped server API"
+
+
+# Final source closure: no dead runtime stubs / transitional write placeholders.
+must_not_have src/lib/api/config.service.ts "DEFERRED_RESPONSE" "transitional deferred config stub removed"
+must_not_have src/lib/api/config.service.ts "agentService" "dead agentService stub removed"
+must_not_have src/lib/api/config.service.ts "analyticsService" "dead analyticsService stub removed"
+must_have src/routes/_authenticated/console.agent-settings.tsx 'functions/v1/agent-management' "Agent Settings uses live agent-management Edge Function"
+must_have src/routes/_authenticated/console.analytics.tsx 'supabase.functions.invoke(' "Analytics uses live Edge invocation"
+must_have src/routes/_authenticated/console.analytics.tsx '"visitor-analytics"' "Analytics uses visitor-analytics Edge Function"
 
 echo "== BUILD =="
 if npm run build; then echo "PASS npm run build"; else echo "FAIL npm run build"; fail=1; fi
