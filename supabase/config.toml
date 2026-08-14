@@ -13,7 +13,7 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.generate-reply]
-verify_jwt = false
+verify_jwt = true
 
 [functions.health-check]
 verify_jwt = false
