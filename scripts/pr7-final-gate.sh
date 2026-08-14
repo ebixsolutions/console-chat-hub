@@ -112,6 +112,7 @@ must_not_have supabase/functions/conversation-evaluate/index.ts '.eq("company_id
 must_have supabase/functions/conversation-evaluate/index.ts 'tenant_identity_conflict' "CE Edge handles conversation/channel identity conflict"
 must_have sql/pr7/pr7_ce_tenant_resolution_hardening.sql 'LEFT JOIN public.channel_config ch ON ch.id = c.channel_config_id' "CE RPC resolves channel ownership"
 must_have sql/pr7/pr7_ce_tenant_resolution_hardening.sql 'v_resolved_company_id := COALESCE(' "CE RPC canonical company resolution"
+must_have sql/pr7/pr7_ce_tenant_resolution_hardening.sql "tenant_identity_conflict" "CE RPC fails closed on ownership conflict"
 must_have sql/pr7/pr7_ce_tenant_resolution_hardening.sql 'p_grounding_manifest,v_resolved_company_id' "CE attempt persists resolved company"
 must_have sql/pr7/pr7_ce_tenant_resolution_hardening.rollback.sql 'SELECT id, company_id INTO v_conv FROM public.conversations' "CE rollback restores prior tenant behavior"
 
