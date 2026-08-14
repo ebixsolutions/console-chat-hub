@@ -39,9 +39,20 @@ verify_jwt = true
 [functions.agent-assist]
 verify_jwt = true
 
-
 [functions.agent-management]
 verify_jwt = true
 
 [functions.conversation-evaluate]
 verify_jwt = true
+
+[functions.training-outbox-worker]
+verify_jwt = false
+
+[functions.training-result-receiver]
+verify_jwt = false
+
+[functions.training-kb-sync]
+verify_jwt = false
+
+[functions.training-kb-finalize]
+verify_jwt = false
