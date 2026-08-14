@@ -45,6 +45,10 @@ for f in \
   sql/pr7/pr7_widget_theme_contract.rollback.sql \
   scripts/pr7-widget-theme-contract-source-gate.sh \
   public/widget/chat.js \
+  sql/pr7/pr7_widget_theme_default_modern.sql \
+  sql/pr7/pr7_widget_theme_default_modern.rollback.sql \
+  scripts/pr7-widget-modern-runtime-source-gate.sh \
+  public/widget/chat.js \
   src/routes/_authenticated/console.tsx \
   src/lib/api/config.service.ts \
   src/lib/authz/consoleCapabilities.ts \
@@ -328,6 +332,15 @@ if bash scripts/pr7-widget-theme-contract-source-gate.sh; then
   echo "PASS widget theme persistence contract"
 else
   echo "FAIL widget theme persistence contract"
+  fail=1
+fi
+
+# Workflow 6 / Task 6.2 — shared modern assistant panel runtime.
+echo "== WIDGET MODERN ASSISTANT RUNTIME GATE =="
+if bash scripts/pr7-widget-modern-runtime-source-gate.sh; then
+  echo "PASS widget modern assistant runtime"
+else
+  echo "FAIL widget modern assistant runtime"
   fail=1
 fi
 

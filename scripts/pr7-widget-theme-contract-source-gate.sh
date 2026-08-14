@@ -35,8 +35,12 @@ must_have "$PUB" 'validateWidgetOrigin(req, data.allowed_origins)' "origin guard
 
 # Authoritative runtime remains chat.js. Task 6.1 deliberately does not alter
 # either runtime file; Task 6.2 will add presentation switching to chat.js only.
-must_have "$CHAT" "Widget v1.3.0 loaded" "authoritative chat.js baseline preserved"
+must_have "$CHAT" "[NexusAI widget]" "authoritative chat.js runtime preserved"
+must_have "$CHAT" 'window.__nexusChatLoaded' "single-load authoritative widget guard preserved"
+must_have "$CHAT" 'data-channel-id' "authoritative widget channel contract preserved"
+must_have "$CHAT" 'data-api-base' "authoritative widget API-base contract preserved"
 must_have "$LEGACY" "fallback-" "legacy chat-v2 still identifiable as non-authoritative"
+must_not_have "$CHAT" 'chat-v2.js' "authoritative chat.js does not depend on legacy v2"
 must_not_have "$FWD" "channel_config" "theme migration does not alter channel ownership"
 
 if [ "$fail" -ne 0 ]; then

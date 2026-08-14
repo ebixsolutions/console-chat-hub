@@ -103,6 +103,9 @@ bash scripts/pr7-customer360-coach-sync-runtime-smoke.sh || stop "Customer360 â†
 echo "== WIDGET THEME CONTRACT SOURCE =="
 bash scripts/pr7-widget-theme-contract-source-gate.sh || stop "widget theme contract source failed"
 
+echo "== WIDGET MODERN ASSISTANT RUNTIME SOURCE =="
+bash scripts/pr7-widget-modern-runtime-source-gate.sh || stop "widget modern runtime source failed"
+
 psql "$DB_URL" -v ON_ERROR_STOP=1 -v company_id="$CANONICAL_COMPANY" -v platform_company_id="$CANONICAL_PLATFORM_COMPANY" <<'SQL'
 SELECT set_config('pr7.company_id', :'company_id', false);
 SELECT set_config('pr7.platform_company_id', :'platform_company_id', false);
@@ -138,6 +141,16 @@ BEGIN
     SELECT 1 FROM public.widget_config
     WHERE appearance_theme IS NULL
   ) THEN RAISE EXCEPTION 'widget appearance theme unresolved'; END IF;
+  IF (
+    SELECT column_default
+    FROM information_schema.columns
+    WHERE table_schema='public'
+      AND table_name='widget_config'
+      AND column_name='appearance_theme'
+  ) NOT LIKE '%modern%' THEN
+    RAISE EXCEPTION 'widget appearance theme default is not modern';
+  END IF;
+
 
   IF EXISTS (
     SELECT 1 FROM public.conversations
