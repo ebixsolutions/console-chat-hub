@@ -688,7 +688,7 @@
   // --- Messages ---
   function isLocalId(id) {
     var s = String(id || "");
-    return s.indexOf("system-") === 0 || s === "welcome";
+    return s.indexOf("system-") === 0 || s.indexOf("err-") === 0 || s === "welcome";
   }
   function renderMsg(m) {
     if (m.is_recalled) {
