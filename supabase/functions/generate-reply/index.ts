@@ -181,6 +181,66 @@ async function cleanupThinking(
   }
 }
 
+interface SourceVisitorMessage {
+  id: string;
+  content: string;
+  created_at: string;
+}
+
+async function loadSourceVisitorMessage(
+  supabaseAdmin: ReturnType<typeof createClient>,
+  conversation_id: string,
+  source_message_id: string | null,
+): Promise<
+  | { ok: true; message: SourceVisitorMessage }
+  | { ok: false; error: "source_message_id_required" | "source_message_lookup_failed" | "invalid_source_message" }
+> {
+  if (
+    !source_message_id ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(source_message_id)
+  ) {
+    return { ok: false, error: "source_message_id_required" };
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from("messages")
+    .select("id, content, created_at")
+    .eq("id", source_message_id)
+    .eq("conversation_id", conversation_id)
+    .eq("role", "visitor")
+    .eq("is_recalled", false)
+    .neq("content", "__THINKING__")
+    .maybeSingle();
+
+  if (error) return { ok: false, error: "source_message_lookup_failed" };
+  if (!data?.id || typeof data.content !== "string" || !data.created_at) {
+    return { ok: false, error: "invalid_source_message" };
+  }
+
+  return {
+    ok: true,
+    message: {
+      id: data.id,
+      content: data.content,
+      created_at: data.created_at,
+    },
+  };
+}
+
+function sourceBoundaryFilter(source: SourceVisitorMessage): string {
+  return `created_at.lt.${source.created_at},and(created_at.eq.${source.created_at},id.lte.${source.id})`;
+}
+
+function sourceMessageErrorResponse(
+  result: { ok: false; error: "source_message_id_required" | "source_message_lookup_failed" | "invalid_source_message" },
+): Response {
+  const status = result.error === "source_message_lookup_failed" ? 500 : 400;
+  return new Response(JSON.stringify({ success: false, error: result.error }), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
 async function commitAiReplyWithControlGate(
   supabaseAdmin: ReturnType<typeof createClient>,
   conversation_id: string,
@@ -197,6 +257,7 @@ async function commitAiReplyWithControlGate(
         | "invalid_source_message"
         | "invalid_content"
         | "source_already_replied"
+        | "superseded_source"
         | "not_found"
         | "rpc_error"
         | "unexpected_result";
@@ -240,6 +301,7 @@ async function commitAiReplyWithControlGate(
     case "invalid_source_message":
     case "invalid_content":
     case "source_already_replied":
+    case "superseded_source":
     case "not_found":
       return { ok: false, result };
     default:
@@ -1025,14 +1087,32 @@ async function legacyGenerateReply(conversation_id: string, source_message_id: s
     return new Response(JSON.stringify({ success: true, skipped: "assigned_to_agent" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 
-  const { data: messages } = await supabaseAdmin.from("messages").select("role, content, created_at").eq("conversation_id", conversation_id).neq("content", "__THINKING__").eq("is_recalled", false).order("created_at", { ascending: true }).limit(10);
+  const sourceResult = await loadSourceVisitorMessage(
+    supabaseAdmin,
+    conversation_id,
+    source_message_id,
+  );
+  if (!sourceResult.ok) return sourceMessageErrorResponse(sourceResult);
+  const sourceVisitorMessage = sourceResult.message;
 
-  if (!messages || messages.length === 0) return new Response(JSON.stringify({ success: true, skipped: "no messages" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  const { data: newestMessages } = await supabaseAdmin
+    .from("messages")
+    .select("id, role, content, created_at")
+    .eq("conversation_id", conversation_id)
+    .neq("content", "__THINKING__")
+    .eq("is_recalled", false)
+    .or(sourceBoundaryFilter(sourceVisitorMessage))
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(10);
 
+  if (!newestMessages || newestMessages.length === 0) return new Response(JSON.stringify({ success: true, skipped: "no messages" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+  const messages = [...newestMessages].reverse();
   const claudeMessages = messages.map((m) => ({ role: m.role === "visitor" ? "user" : "assistant", content: m.content }));
   if (claudeMessages[claudeMessages.length - 1].role === "assistant") return new Response(JSON.stringify({ success: true, skipped: "last message is assistant" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-  const lastVisitorMsg = messages.filter((m) => m.role === "visitor").at(-1)?.content ?? "";
+  const lastVisitorMsg = sourceVisitorMessage.content;
   const handoffLang = detectHandoffLanguage(lastVisitorMsg);
 
   if (handoffLang) {
@@ -1253,7 +1333,11 @@ When the customer explicitly requests a human agent, or when you transfer to a h
   );
   if (!committed.ok) {
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-    if (committed.result === "human_control" || committed.result === "resolved") {
+    if (
+      committed.result === "human_control" ||
+      committed.result === "resolved" ||
+      committed.result === "superseded_source"
+    ) {
       console.log("[generate-reply] stale AI reply suppressed by control gate:", {
         conversation_id,
         result: committed.result,
@@ -1445,9 +1529,17 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     return new Response(JSON.stringify({ success: true, skipped: "assigned_to_agent" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 
-  const { data: _h1VisitorMsgs } = await supabaseAdmin.from("messages").select("content").eq("conversation_id", conversation_id).eq("role", "visitor").eq("is_recalled", false).order("created_at", { ascending: false }).limit(1);
-  const _h1LastMsg = _h1VisitorMsgs?.[0]?.content ?? "";
-  const _h1HandoffLang = detectHandoffLanguage(_h1LastMsg);
+  const sourceResult = await loadSourceVisitorMessage(
+    supabaseAdmin,
+    conversation_id,
+    source_message_id,
+  );
+  if (!sourceResult.ok) {
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+    return sourceMessageErrorResponse(sourceResult);
+  }
+  const sourceVisitorMessage = sourceResult.message;
+  const _h1LastMsg = sourceVisitorMessage.content;
 
   const [
     { data: _pr5HistoryRows },
@@ -1460,7 +1552,9 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
       .eq("conversation_id", conversation_id)
       .eq("is_recalled", false)
       .neq("content", "__THINKING__")
+      .or(sourceBoundaryFilter(sourceVisitorMessage))
       .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
       .limit(50),
     supabaseAdmin
       .from("messages")
@@ -1468,13 +1562,15 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
       .eq("conversation_id", conversation_id)
       .eq("role", "visitor")
       .eq("is_recalled", false)
-      .neq("content", "__THINKING__"),
+      .neq("content", "__THINKING__")
+      .or(sourceBoundaryFilter(sourceVisitorMessage)),
     supabaseAdmin
       .from("messages")
       .select("id", { count: "exact", head: true })
       .eq("conversation_id", conversation_id)
       .eq("role", "assistant")
       .eq("is_recalled", false)
+      .or(sourceBoundaryFilter(sourceVisitorMessage))
       .filter("metadata->>escalation_rule", "eq", "R2")
       .filter("metadata->>escalation_action", "eq", "clarification"),
   ]);
@@ -1728,8 +1824,7 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
       if (_escEnableS0) return await handleS0Handoff(supabaseAdmin, conversation_id, source_message_id, "KB_SCOPE_GATE", _visitorLang);
       return await handleKBFallback(supabaseAdmin, conversation_id, "KB_SCOPE_GATE", source_message_id, { rag_api_status: "scope_unavailable" }, _visitorLang);
     }
-    const { data: latestMsgs } = await supabaseAdmin.from("messages").select("content").eq("conversation_id", conversation_id).eq("role", "visitor").order("created_at", { ascending: false }).limit(1);
-    const userQuery = latestMsgs?.[0]?.content ?? "";
+    const userQuery = _h1LastMsg;
     ragResult = !userQuery ? { success: true, no_answer: true, retrieval_quality: "failed", chunks: [] } : await callKBAdapter(conversation_id, userQuery, _kbTenantResult.scope);
     if (!ragResult || !ragResult.success) {
       if (_deferR1ForE1) {
@@ -1992,8 +2087,18 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
   if (flags.ENABLE_TOOL_EXEC) console.log("[generate-reply] ENABLE_TOOL_EXECUTOR=true: Gate present, tools NOT attached (L5d scope)");
 
   const finalSystemPrompt = [basePrompt, buildMaskedContextBlock(customerContext, opaqueCustomerRef), buildRagBlock(ragResult)].filter((s) => s && s.length > 0).join("\n\n");
-  const { data: messages } = await supabaseAdmin.from("messages").select("role, content, created_at").eq("conversation_id", conversation_id).neq("content", "__THINKING__").eq("is_recalled", false).order("created_at", { ascending: true }).limit(10);
-  if (!messages || messages.length === 0) { await cleanupThinking(supabaseAdmin, conversation_id, source_message_id); return new Response(JSON.stringify({ success: true, skipped: "no messages" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
+  const { data: newestMessages } = await supabaseAdmin
+    .from("messages")
+    .select("id, role, content, created_at")
+    .eq("conversation_id", conversation_id)
+    .neq("content", "__THINKING__")
+    .eq("is_recalled", false)
+    .or(sourceBoundaryFilter(sourceVisitorMessage))
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(10);
+  if (!newestMessages || newestMessages.length === 0) { await cleanupThinking(supabaseAdmin, conversation_id, source_message_id); return new Response(JSON.stringify({ success: true, skipped: "no messages" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
+  const messages = [...newestMessages].reverse();
   const claudeMessages = messages.map((m) => ({ role: m.role === "visitor" ? "user" : "assistant", content: m.content }));
   if (claudeMessages[claudeMessages.length - 1].role === "assistant") { await cleanupThinking(supabaseAdmin, conversation_id, source_message_id); return new Response(JSON.stringify({ success: true, skipped: "last message is assistant" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
 
@@ -2060,7 +2165,11 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
   );
   if (!committed.ok) {
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-    if (committed.result === "human_control" || committed.result === "resolved") {
+    if (
+      committed.result === "human_control" ||
+      committed.result === "resolved" ||
+      committed.result === "superseded_source"
+    ) {
       console.log("[generate-reply] stale orchestration reply suppressed:", {
         conversation_id,
         result: committed.result,
