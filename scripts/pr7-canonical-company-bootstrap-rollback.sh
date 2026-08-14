@@ -78,11 +78,34 @@ WHERE p.run_id=current_setting('pr7.run_id')::uuid
   AND c.id=p.company_id
   AND c.id=current_setting('pr7.company_id')::uuid;
 
-UPDATE public.pr7_canonical_bootstrap_run
-SET rolled_back_at=now()
+-- Exact rollback requires removing bootstrap-only governance artifacts too.
+-- Delete this run's provenance first, then drop the four bootstrap tables only
+-- when no other run exists. In the supported deployment flow there is exactly
+-- one run; if another run is present, fail closed rather than destroy evidence.
+DELETE FROM public.pr7_canonical_bootstrap_membership
 WHERE run_id=current_setting('pr7.run_id')::uuid;
+DELETE FROM public.pr7_canonical_bootstrap_row
+WHERE run_id=current_setting('pr7.run_id')::uuid;
+DELETE FROM public.pr7_canonical_bootstrap_company
+WHERE run_id=current_setting('pr7.run_id')::uuid;
+DELETE FROM public.pr7_canonical_bootstrap_run
+WHERE run_id=current_setting('pr7.run_id')::uuid;
+
+DO $$
+DECLARE v_remaining int;
+BEGIN
+  SELECT count(*) INTO v_remaining FROM public.pr7_canonical_bootstrap_run;
+  IF v_remaining<>0 THEN
+    RAISE EXCEPTION 'exact rollback refused: % other bootstrap runs remain',v_remaining;
+  END IF;
+END $$;
+
+DROP TABLE public.pr7_canonical_bootstrap_membership;
+DROP TABLE public.pr7_canonical_bootstrap_row;
+DROP TABLE public.pr7_canonical_bootstrap_company;
+DROP TABLE public.pr7_canonical_bootstrap_run;
 
 COMMIT;
 SQL
 
-echo "PASS: canonical bootstrap rollback complete"
+echo "PASS: canonical bootstrap exact rollback complete"

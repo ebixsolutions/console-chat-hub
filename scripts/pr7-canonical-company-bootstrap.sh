@@ -213,23 +213,48 @@ FROM public.agent_profile ap
 JOIN auth.users au ON au.id=ap.user_id
 WHERE ap.status::text='active' AND ap.user_id IS NOT NULL;
 
--- Deactivate stale alternate roles on idempotent retries.
-UPDATE public.company_membership cm
-SET is_active=false
-FROM pr7_desired_membership d
-WHERE cm.company_id=current_setting('pr7.company_id')::uuid
-  AND cm.user_id=d.user_id
-  AND cm.role<>d.role
-  AND cm.is_active=true;
+-- Membership handling is intentionally asymmetric:
+-- * pre_tenant: create the canonical memberships and record every inserted row;
+-- * already_bound: VERIFY ONLY. Never mutate existing membership state during
+--   an idempotent retry because an exact rollback would otherwise require a
+--   second layer of membership-state provenance.
+DO $$
+DECLARE cid uuid:=current_setting('pr7.company_id')::uuid;
+        bad_count int;
+BEGIN
+  IF current_setting('pr7.state_before')='already_bound' THEN
+    SELECT count(*) INTO bad_count
+    FROM pr7_desired_membership d
+    LEFT JOIN public.company_membership cm
+      ON cm.company_id=cid
+     AND cm.user_id=d.user_id
+     AND cm.role=d.role
+     AND cm.is_active=true
+    WHERE cm.id IS NULL;
+    IF bad_count<>0 THEN
+      RAISE EXCEPTION 'already-bound membership mismatch: % desired active memberships missing',bad_count;
+    END IF;
+
+    SELECT count(*) INTO bad_count
+    FROM public.company_membership cm
+    JOIN pr7_desired_membership d ON d.user_id=cm.user_id
+    WHERE cm.company_id=cid
+      AND cm.is_active=true
+      AND cm.role<>d.role;
+    IF bad_count<>0 THEN
+      RAISE EXCEPTION 'already-bound membership mismatch: % conflicting active roles',bad_count;
+    END IF;
+  END IF;
+END $$;
 
 INSERT INTO public.company_membership(company_id,user_id,role,is_active)
 SELECT current_setting('pr7.company_id')::uuid,d.user_id,d.role,true
 FROM pr7_desired_membership d
-ON CONFLICT (company_id,user_id,role)
-DO UPDATE SET is_active=true;
+WHERE current_setting('pr7.state_before')='pre_tenant'
+ON CONFLICT (company_id,user_id,role) DO NOTHING;
 
--- Record memberships created by first bootstrap. Pre-tenant guarantees there
--- were zero memberships beforehand.
+-- Record memberships created by first bootstrap. Pre-tenant guarantees zero
+-- prior memberships, so every canonical membership is owned by this run.
 INSERT INTO public.pr7_canonical_bootstrap_membership(run_id,membership_id)
 SELECT current_setting('pr7.run_id')::uuid,cm.id
 FROM public.company_membership cm
