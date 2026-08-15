@@ -64,6 +64,9 @@ bash scripts/pr10-two-tenant-security-source-gate.sh || stop "two-tenant securit
 echo "== CROSS-TENANT EDGE/API SOURCE CONTRACT =="
 bash scripts/pr10-cross-tenant-edge-api-source-gate.sh || stop "cross-tenant Edge/API source contract failed"
 
+echo "== CROSS-TENANT MUTATION/WRITE SOURCE CONTRACT =="
+bash scripts/pr10-cross-tenant-mutation-write-source-gate.sh || stop "cross-tenant mutation/write source contract failed"
+
 echo "== PRODUCTION RUNTIME CONFIG CONTRACT =="
 bash scripts/pr7-production-runtime-config-gate.sh || stop "production runtime configuration incomplete"
 

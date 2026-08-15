@@ -74,6 +74,8 @@ for f in \
   scripts/pr10-two-tenant-security-source-gate.sh \
   scripts/pr10-cross-tenant-edge-api-runtime-smoke.sh \
   scripts/pr10-cross-tenant-edge-api-source-gate.sh \
+  scripts/pr10-cross-tenant-mutation-write-runtime-smoke.sh \
+  scripts/pr10-cross-tenant-mutation-write-source-gate.sh \
   scripts/pr7-console-role-runtime-acceptance.sh \
   src/routes/_authenticated/console.feedback-responses.tsx \
   src/routes/_authenticated/console.agent-settings.tsx \
@@ -452,6 +454,14 @@ if bash scripts/pr10-cross-tenant-edge-api-source-gate.sh; then
   echo "PASS cross-tenant Edge/API source contract"
 else
   echo "FAIL cross-tenant Edge/API source contract"
+  fail=1
+fi
+
+echo "== CROSS-TENANT MUTATION/WRITE SOURCE GATE =="
+if bash scripts/pr10-cross-tenant-mutation-write-source-gate.sh; then
+  echo "PASS cross-tenant mutation/write source contract"
+else
+  echo "FAIL cross-tenant mutation/write source contract"
   fail=1
 fi
 

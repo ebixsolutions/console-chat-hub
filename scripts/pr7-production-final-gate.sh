@@ -36,6 +36,9 @@ bash scripts/pr10-two-tenant-security-runtime-smoke.sh || stop "two-tenant secur
 echo "== CROSS-TENANT EDGE/API RUNTIME =="
 bash scripts/pr10-cross-tenant-edge-api-runtime-smoke.sh || stop "cross-tenant Edge/API runtime failed"
 
+echo "== CROSS-TENANT MUTATION/WRITE RUNTIME =="
+bash scripts/pr10-cross-tenant-mutation-write-runtime-smoke.sh || stop "cross-tenant mutation/write runtime failed"
+
 echo "== PRODUCTION ATOMIC ROLLBACK SOURCE CONTRACT =="
 bash scripts/pr7-production-atomic-rollback-source-gate.sh || stop "production rollback source contract failed"
 
