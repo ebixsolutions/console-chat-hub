@@ -15,8 +15,38 @@ TEST_USER_B="${PR7_TEST_USER_B:-}"
 TEST_COMPANY_B="${PR7_TEST_COMPANY_B:-}"
 FUNCTIONS_URL="${PR7_FUNCTIONS_URL:-https://${EXPECTED_PROJECT_REF}.supabase.co/functions/v1}"
 
-stop(){ echo "== PREVIEW ROLE ACCEPTANCE BRIDGE SAFETY =="
+stop(){ echo "STOP: $1"; exit 2; }
+fail(){ echo "FAIL: $1"; exit 1; }
+
+[ "$PROJECT_REF" = "$EXPECTED_PROJECT_REF" ] || stop "project ref mismatch"
+[ -n "$DB_URL" ] || stop "SUPABASE_DB_URL missing"
+[ -n "$ACCESS_TOKEN" ] || stop "SUPABASE_ACCESS_TOKEN missing"
+[ -n "$CANONICAL_COMPANY" ] || stop "canonical company UUID missing"
+[ -n "${KB_SINGAPORE_TENANT_MAP_JSON:-}" ] || stop "Singapore KB tenant mapping missing"
+[ -n "$CANONICAL_PLATFORM_COMPANY" ] || stop "canonical platform integer company id missing"
+[ -d "$REPO/.git" ] || stop "repo not found"
+cd "$REPO" || stop "cannot enter repo"
+command -v psql >/dev/null 2>&1 || stop "psql missing"
+command -v npx >/dev/null 2>&1 || stop "npx missing"
+command -v curl >/dev/null 2>&1 || stop "curl missing"
+
+set +e
+bash scripts/pr7-final-gate.sh >/tmp/pr7-source-gate.log 2>&1
+SOURCE_RC=$?
+set -e
+cat /tmp/pr7-source-gate.log
+[ "$SOURCE_RC" -eq 2 ] || fail "source gate failed, rc=$SOURCE_RC"
+
+# Production prerequisites and runtime acceptance must execute in the normal
+# main flow. STOP is immediate and never owns/re-enters any gate.
+echo "== PREVIEW ROLE ACCEPTANCE BRIDGE SAFETY =="
 bash scripts/pr8-preview-role-acceptance-source-gate.sh || stop "Preview role bridge safety contract failed"
+
+echo "== PRODUCTION ATOMIC ROLLBACK SOURCE CONTRACT =="
+bash scripts/pr7-production-atomic-rollback-source-gate.sh || stop "production rollback source contract failed"
+
+echo "== PRODUCTION RUNTIME CONFIG CONTRACT =="
+bash scripts/pr7-production-runtime-config-gate.sh || stop "production runtime configuration incomplete"
 
 echo "== CE PRODUCTION ACTIVATION RUNTIME GATE =="
 bash scripts/pr8-ce-production-activation-gate.sh || stop "CE production activation runtime gate failed"
@@ -38,34 +68,6 @@ bash scripts/pr10-cross-tenant-edge-api-runtime-smoke.sh || stop "cross-tenant E
 
 echo "== CROSS-TENANT MUTATION/WRITE RUNTIME =="
 bash scripts/pr10-cross-tenant-mutation-write-runtime-smoke.sh || stop "cross-tenant mutation/write runtime failed"
-
-echo "== PRODUCTION ATOMIC ROLLBACK SOURCE CONTRACT =="
-bash scripts/pr7-production-atomic-rollback-source-gate.sh || stop "production rollback source contract failed"
-
-echo "== PRODUCTION RUNTIME CONFIG CONTRACT =="
-bash scripts/pr7-production-runtime-config-gate.sh || stop "production runtime configuration incomplete"
-
-echo "STOP: $1"; exit 2; }
-fail(){ echo "FAIL: $1"; exit 1; }
-
-[ "$PROJECT_REF" = "$EXPECTED_PROJECT_REF" ] || stop "project ref mismatch"
-[ -n "$DB_URL" ] || stop "SUPABASE_DB_URL missing"
-[ -n "$ACCESS_TOKEN" ] || stop "SUPABASE_ACCESS_TOKEN missing"
-[ -n "$CANONICAL_COMPANY" ] || stop "canonical company UUID missing"
-[ -n "${KB_SINGAPORE_TENANT_MAP_JSON:-}" ] || stop "Singapore KB tenant mapping missing"
-[ -n "$CANONICAL_PLATFORM_COMPANY" ] || stop "canonical platform integer company id missing"
-[ -d "$REPO/.git" ] || stop "repo not found"
-cd "$REPO" || stop "cannot enter repo"
-command -v psql >/dev/null 2>&1 || stop "psql missing"
-command -v npx >/dev/null 2>&1 || stop "npx missing"
-command -v curl >/dev/null 2>&1 || stop "curl missing"
-
-set +e
-bash scripts/pr7-final-gate.sh >/tmp/pr7-source-gate.log 2>&1
-SOURCE_RC=$?
-set -e
-cat /tmp/pr7-source-gate.log
-[ "$SOURCE_RC" -eq 2 ] || fail "source gate failed, rc=$SOURCE_RC"
 
 # Verify complete deployed function inventory through Supabase control plane.
 REQUIRED_FUNCTIONS=(
