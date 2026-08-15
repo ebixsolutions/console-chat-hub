@@ -86,6 +86,10 @@ for f in \
   scripts/pr11-final-integration-source-lock-source-gate.sh \
   scripts/pr7-singapore-kb-tenant-mapping-gate.sh \
   scripts/pr12-singapore-kb-production-mapping-source-gate.sh \
+  scripts/pr12-product-ready-activation-loader.py \
+  scripts/pr12-product-ready-activate.command \
+  config/pr12-production-activation.example.json \
+  scripts/pr12-activation-parameter-contract-source-gate.sh \
   scripts/pr7-console-role-runtime-acceptance.sh \
   src/routes/_authenticated/console.feedback-responses.tsx \
   src/routes/_authenticated/console.agent-settings.tsx \
@@ -504,6 +508,14 @@ if bash scripts/pr12-singapore-kb-production-mapping-source-gate.sh; then
   echo "PASS Singapore KB production mapping compatibility"
 else
   echo "FAIL Singapore KB production mapping compatibility"
+  fail=1
+fi
+
+echo "== ACTIVATION PARAMETER CONTRACT =="
+if bash scripts/pr12-activation-parameter-contract-source-gate.sh; then
+  echo "PASS activation parameter contract"
+else
+  echo "FAIL activation parameter contract"
   fail=1
 fi
 

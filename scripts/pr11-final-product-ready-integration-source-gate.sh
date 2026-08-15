@@ -49,6 +49,9 @@ has "$DEPLOY" 'scripts/pr7-channel-ownership-bootstrap.sh' "atomic deploy owns c
 has "$DEPLOY" 'scripts/pr7-conversation-lineage-bootstrap.sh' "atomic deploy owns conversation lineage binding"
 has "$DEPLOY" 'scripts/pr7-production-final-gate.sh' "atomic deploy owns production final acceptance"
 has "scripts/pr7-production-runtime-config-gate.sh" 'two-tenant Singapore mappings missing or not distinct' "final integration runtime config supports two-tenant Singapore mappings"
+has "scripts/pr12-product-ready-activation-loader.py" 'PR7_TEST_USER_A","PR10_TENANT_A_USER_UUID' "activation contract unifies legacy/final two-tenant fixtures"
+has "scripts/pr12-product-ready-activate.command" 'pr12-product-ready-activation-loader.py' "one-command activation wrapper present"
+
 
 if [ "$fail" -ne 0 ]; then
   echo "TASK 11.2 FINAL PRODUCT-READY INTEGRATION SOURCE STATUS: FAIL"

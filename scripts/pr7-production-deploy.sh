@@ -79,6 +79,9 @@ bash scripts/pr11-final-product-ready-integration-source-gate.sh || stop "final 
 echo "== SINGAPORE KB PRODUCTION MAPPING COMPATIBILITY =="
 bash scripts/pr12-singapore-kb-production-mapping-source-gate.sh || stop "Singapore KB production mapping compatibility failed"
 
+echo "== ACTIVATION PARAMETER CONTRACT SOURCE =="
+bash scripts/pr12-activation-parameter-contract-source-gate.sh || stop "activation parameter contract source failed"
+
 echo "== PRODUCTION RUNTIME CONFIG CONTRACT =="
 bash scripts/pr7-production-runtime-config-gate.sh || stop "production runtime configuration incomplete"
 
