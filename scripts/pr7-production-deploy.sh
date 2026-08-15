@@ -55,6 +55,9 @@ bash scripts/pr8-preview-role-acceptance-source-gate.sh || stop "Preview role br
 echo "== CE REVIEW/TRAINING HANDOFF SOURCE CONTRACT =="
 bash scripts/pr8-ce-review-training-handoff-source-gate.sh || stop "CE review/training handoff source contract failed"
 
+echo "== SINGAPORE KB AUTHENTICATED RUNTIME SOURCE CONTRACT =="
+bash scripts/pr9-singapore-kb-authenticated-runtime-source-gate.sh || stop "Singapore KB authenticated runtime source contract failed"
+
 echo "== PRODUCTION RUNTIME CONFIG CONTRACT =="
 bash scripts/pr7-production-runtime-config-gate.sh || stop "production runtime configuration incomplete"
 

@@ -68,6 +68,8 @@ for f in \
   scripts/pr8-preview-role-acceptance-source-gate.sh \
   scripts/pr8-ce-review-training-handoff-runtime-smoke.sh \
   scripts/pr8-ce-review-training-handoff-source-gate.sh \
+  scripts/pr9-singapore-kb-authenticated-runtime-smoke.sh \
+  scripts/pr9-singapore-kb-authenticated-runtime-source-gate.sh \
   scripts/pr7-console-role-runtime-acceptance.sh \
   src/routes/_authenticated/console.feedback-responses.tsx \
   src/routes/_authenticated/console.agent-settings.tsx \
@@ -422,6 +424,14 @@ if bash scripts/pr8-ce-review-training-handoff-source-gate.sh; then
   echo "PASS CE review/training handoff source contract"
 else
   echo "FAIL CE review/training handoff source contract"
+  fail=1
+fi
+
+echo "== SINGAPORE KB AUTHENTICATED RUNTIME SOURCE GATE =="
+if bash scripts/pr9-singapore-kb-authenticated-runtime-source-gate.sh; then
+  echo "PASS Singapore KB authenticated runtime source contract"
+else
+  echo "FAIL Singapore KB authenticated runtime source contract"
   fail=1
 fi
 

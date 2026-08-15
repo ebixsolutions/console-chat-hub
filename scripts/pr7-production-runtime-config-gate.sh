@@ -70,12 +70,12 @@ k,v=next(iter(obj.items()))
 if not isinstance(k,str) or not k.strip() or not isinstance(v,str) or not v.strip() or k.strip()==v.strip():
     print("STOP: Singapore KB mapping invalid"); raise SystemExit(2)
 print("PASS Singapore KB production mapping shape")
-ttl=os.environ.get("KB_SINGAPORE_JWT_TTL_SECONDS","300").strip()
+ttl=os.environ.get("KB_SINGAPORE_JWT_TTL_SEC","300").strip()
 try: n=int(ttl)
 except Exception:
-    print("STOP: KB_SINGAPORE_JWT_TTL_SECONDS invalid"); raise SystemExit(2)
+    print("STOP: KB_SINGAPORE_JWT_TTL_SEC invalid"); raise SystemExit(2)
 if n<60 or n>900:
-    print("STOP: KB_SINGAPORE_JWT_TTL_SECONDS must be 60..900"); raise SystemExit(2)
+    print("STOP: KB_SINGAPORE_JWT_TTL_SEC must be 60..900"); raise SystemExit(2)
 print("PASS Singapore KB JWT TTL")
 PY
 
@@ -159,10 +159,10 @@ for n in "${required_remote[@]}"; do
 done
 
 # Optional remote TTL: if present locally as an override, require remote presence.
-if [ -n "${KB_SINGAPORE_JWT_TTL_SECONDS:-}" ]; then
-  printf '%s\n' "$SECRET_LIST" | awk '{print $1}' | grep -Fxq "KB_SINGAPORE_JWT_TTL_SECONDS" \
-    || stop "production Edge runtime name missing: KB_SINGAPORE_JWT_TTL_SECONDS"
-  pass "production Edge runtime name present: KB_SINGAPORE_JWT_TTL_SECONDS"
+if [ -n "${KB_SINGAPORE_JWT_TTL_SEC:-}" ]; then
+  printf '%s\n' "$SECRET_LIST" | awk '{print $1}' | grep -Fxq "KB_SINGAPORE_JWT_TTL_SEC" \
+    || stop "production Edge runtime name missing: KB_SINGAPORE_JWT_TTL_SEC"
+  pass "production Edge runtime name present: KB_SINGAPORE_JWT_TTL_SEC"
 fi
 
 echo "TASK 7.2 PRODUCTION RUNTIME CONFIG STATUS: PASS"

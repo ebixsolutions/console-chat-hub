@@ -27,6 +27,9 @@ bash scripts/pr8-ce-runtime-smoke.sh || stop "CE runtime smoke/idempotency faile
 echo "== CE REVIEW → SU COACHAI TRAINING HANDOFF =="
 bash scripts/pr8-ce-review-training-handoff-runtime-smoke.sh || stop "CE review/training handoff runtime failed"
 
+echo "== SINGAPORE KB AUTHENTICATED RUNTIME =="
+bash scripts/pr9-singapore-kb-authenticated-runtime-smoke.sh || stop "Singapore KB authenticated runtime smoke failed"
+
 echo "== PRODUCTION ATOMIC ROLLBACK SOURCE CONTRACT =="
 bash scripts/pr7-production-atomic-rollback-source-gate.sh || stop "production rollback source contract failed"
 
