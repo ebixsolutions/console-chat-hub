@@ -386,20 +386,26 @@ export const getCeConversationDetailFn = createServerFn({ method: "GET" })
 
     if (evaluationId) {
       if (isLocal) {
-        const [detailRes, emotionRes, nextRes, discRes] = await Promise.all([
+        const [detailRes, emotionRes, nextRes, discRes, rootRes, qaRes] = await Promise.all([
           loose.from("ce_local_evaluation_detail").select("*").eq("evaluation_id", evaluationId),
           loose.from("ce_local_emotion_point").select("*").eq("evaluation_id", evaluationId).order("turn_index"),
           loose.from("ce_local_next_step").select("*").eq("evaluation_id", evaluationId).order("ordinal"),
           loose.from("ce_local_discrepancy").select("*").eq("evaluation_id", evaluationId),
+          loose.from("ce_local_root_cause").select("*").eq("evaluation_id", evaluationId).order("created_at", { ascending: false }),
+          loose.from("ce_local_qa_case").select("*").eq("evaluation_id", evaluationId).order("created_at", { ascending: false }),
         ]);
         if (detailRes.error) return { ok: false, error: `ce_local_evaluation_detail: ${detailRes.error.message}` };
         if (emotionRes.error) return { ok: false, error: `ce_local_emotion_point: ${emotionRes.error.message}` };
         if (nextRes.error) return { ok: false, error: `ce_local_next_step: ${nextRes.error.message}` };
         if (discRes.error) return { ok: false, error: `ce_local_discrepancy: ${discRes.error.message}` };
+        if (rootRes.error) return { ok: false, error: `ce_local_root_cause: ${rootRes.error.message}` };
+        if (qaRes.error) return { ok: false, error: `ce_local_qa_case: ${qaRes.error.message}` };
         details = detailRes.data ?? [];
         emotion = emotionRes.data ?? [];
         nextSteps = nextRes.data ?? [];
         discrepancies = discRes.data ?? [];
+        rootCauses = rootRes.data ?? [];
+        qaCases = qaRes.data ?? [];
 
         const { data: snap, error: snapErr } = await loose
           .from("ce_local_bundle_snapshot")
@@ -642,7 +648,20 @@ export const createCeQaCaseFn = createServerFn({ method: "POST" })
       .select("id")
       .eq("id", data.evaluationId)
       .maybeSingle();
-    if (local) return { ok: false, error: "conversation_local_qa_pending_task2" };
+    if (local) {
+      const { data: result, error } = await loose.rpc("ce_create_local_qa_case_v1", {
+        p_evaluation_id: data.evaluationId,
+        p_expected_conversation_id: data.conversationId,
+        p_title: data.title,
+        p_description: data.description ?? null,
+        p_priority: data.priority,
+      });
+      if (error) return { ok: false, error: error.message };
+      const out = (result ?? {}) as Record<string, unknown>;
+      return ["success", "already_exists"].includes(String(out.result ?? ""))
+        ? { ok: true, data: out }
+        : { ok: false, error: String(out.result ?? "create_failed") };
+    }
 
     const { data: result, error } = await loose.rpc("ce_create_qa_case", {
       p_evaluation_id: data.evaluationId,
@@ -684,7 +703,20 @@ export const recordCeRootCauseFn = createServerFn({ method: "POST" })
       .select("id")
       .eq("id", data.evaluationId)
       .maybeSingle();
-    if (local) return { ok: false, error: "conversation_local_root_cause_pending_task2" };
+    if (local) {
+      const { data: result, error } = await loose.rpc("ce_record_local_root_cause_v1", {
+        p_evaluation_id: data.evaluationId,
+        p_expected_conversation_id: data.conversationId,
+        p_category: data.category,
+        p_summary: data.summary,
+        p_evidence: [],
+      });
+      if (error) return { ok: false, error: error.message };
+      const out = (result ?? {}) as Record<string, unknown>;
+      return String(out.result ?? "") === "success"
+        ? { ok: true, data: out }
+        : { ok: false, error: String(out.result ?? "record_failed") };
+    }
 
     const { data: result, error } = await loose.rpc("ce_record_root_cause", {
       p_evaluation_id: data.evaluationId,

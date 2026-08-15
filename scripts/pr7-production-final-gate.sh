@@ -362,4 +362,7 @@ bash scripts/pr17-preview-role-host-authority-source-gate.sh || stop "PR17 Previ
 echo "== PR18 TASK1 CONVERSATION-FIRST EVALUATION RECHECK =="
 bash scripts/pr18-task1-conversation-first-evaluation-source-gate.sh || stop "PR18 Task1 source contract failed"
 
+echo "== PR19 TASK2 FULL CE DETAIL WORKFLOW RECHECK =="
+bash scripts/pr19-task2-full-ce-detail-workflow-source-gate.sh || stop "PR19 Task2 source contract failed"
+
 echo "FINAL STATUS: READY"

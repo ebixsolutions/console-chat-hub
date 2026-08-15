@@ -593,6 +593,14 @@ else
   fail=1
 fi
 
+echo "== PR19 TASK2 FULL CE DETAIL WORKFLOW =="
+if bash scripts/pr19-task2-full-ce-detail-workflow-source-gate.sh; then
+  echo "PASS PR19 Task2 full CE detail workflow"
+else
+  echo "FAIL PR19 Task2 full CE detail workflow"
+  fail=1
+fi
+
 echo "== BUILD =="
 if npm run build; then echo "PASS npm run build"; else echo "FAIL npm run build"; fail=1; fi
 if [ "$fail" -ne 0 ]; then echo "FINAL STATUS: FAIL"; exit 1; fi
