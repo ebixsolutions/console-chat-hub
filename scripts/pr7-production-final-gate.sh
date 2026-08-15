@@ -30,6 +30,9 @@ bash scripts/pr8-ce-review-training-handoff-runtime-smoke.sh || stop "CE review/
 echo "== SINGAPORE KB AUTHENTICATED RUNTIME =="
 bash scripts/pr9-singapore-kb-authenticated-runtime-smoke.sh || stop "Singapore KB authenticated runtime smoke failed"
 
+echo "== TWO-TENANT SECURITY RUNTIME =="
+bash scripts/pr10-two-tenant-security-runtime-smoke.sh || stop "two-tenant security runtime failed"
+
 echo "== PRODUCTION ATOMIC ROLLBACK SOURCE CONTRACT =="
 bash scripts/pr7-production-atomic-rollback-source-gate.sh || stop "production rollback source contract failed"
 

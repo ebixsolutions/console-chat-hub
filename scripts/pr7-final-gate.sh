@@ -70,6 +70,8 @@ for f in \
   scripts/pr8-ce-review-training-handoff-source-gate.sh \
   scripts/pr9-singapore-kb-authenticated-runtime-smoke.sh \
   scripts/pr9-singapore-kb-authenticated-runtime-source-gate.sh \
+  scripts/pr10-two-tenant-security-runtime-smoke.sh \
+  scripts/pr10-two-tenant-security-source-gate.sh \
   scripts/pr7-console-role-runtime-acceptance.sh \
   src/routes/_authenticated/console.feedback-responses.tsx \
   src/routes/_authenticated/console.agent-settings.tsx \
@@ -432,6 +434,14 @@ if bash scripts/pr9-singapore-kb-authenticated-runtime-source-gate.sh; then
   echo "PASS Singapore KB authenticated runtime source contract"
 else
   echo "FAIL Singapore KB authenticated runtime source contract"
+  fail=1
+fi
+
+echo "== TWO-TENANT SECURITY SOURCE GATE =="
+if bash scripts/pr10-two-tenant-security-source-gate.sh; then
+  echo "PASS two-tenant security source contract"
+else
+  echo "FAIL two-tenant security source contract"
   fail=1
 fi
 

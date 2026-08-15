@@ -58,6 +58,9 @@ bash scripts/pr8-ce-review-training-handoff-source-gate.sh || stop "CE review/tr
 echo "== SINGAPORE KB AUTHENTICATED RUNTIME SOURCE CONTRACT =="
 bash scripts/pr9-singapore-kb-authenticated-runtime-source-gate.sh || stop "Singapore KB authenticated runtime source contract failed"
 
+echo "== TWO-TENANT SECURITY SOURCE CONTRACT =="
+bash scripts/pr10-two-tenant-security-source-gate.sh || stop "two-tenant security source contract failed"
+
 echo "== PRODUCTION RUNTIME CONFIG CONTRACT =="
 bash scripts/pr7-production-runtime-config-gate.sh || stop "production runtime configuration incomplete"
 
