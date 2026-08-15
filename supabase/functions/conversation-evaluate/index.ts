@@ -41,6 +41,7 @@ import {
   validateSignalsOutput,
 } from "../_shared/ce-contract.ts";
 
+const CE_EDGE_RUNTIME_VERSION = "ce-conversation-first-1.0.0";
 const PREVIEW_PROJECT_ID = "4dbf593e-577e-4af4-a553-460441c34473";
 const PUBLISHED_CONSOLE_ORIGIN = "https://console-chat-hub.lovable.app";
 
@@ -103,13 +104,13 @@ function corsFor(req: Request): Record<string, string> {
   };
 }
 function ok(body: Record<string, unknown>, req: Request, operationId: string): Response {
-  return new Response(JSON.stringify({ ...body, operation_id: operationId }), {
+  return new Response(JSON.stringify({ ...body, operation_id: operationId, runtime_version: CE_EDGE_RUNTIME_VERSION }), {
     status: 200,
     headers: { ...corsFor(req), "Content-Type": "application/json" },
   });
 }
 function fail(error: PublicError, req: Request, operationId: string, detail?: string): Response {
-  return new Response(JSON.stringify({ error, detail: detail ?? null, operation_id: operationId }), {
+  return new Response(JSON.stringify({ error, detail: detail ?? null, operation_id: operationId, runtime_version: CE_EDGE_RUNTIME_VERSION }), {
     status: PUBLIC_ERRORS[error],
     headers: { ...corsFor(req), "Content-Type": "application/json" },
   });
@@ -733,7 +734,7 @@ async function handleEvaluate(
         bundle.text,
         knownChunkIds,
         operationId,
-        company?.company_id ?? "conversation-local",
+        company?.company_id ?? null,
         conversationId,
         mode === "conversation_local" ? LOCAL_EVALUATOR_SYSTEM_PROMPT[d] : undefined,
       )
@@ -791,7 +792,7 @@ async function handleEvaluate(
     bundle.text,
     bundle.transcript,
     operationId,
-    company?.company_id ?? "conversation-local",
+    company?.company_id ?? null,
     conversationId,
   );
 
@@ -974,7 +975,12 @@ Deno.serve(async (req) => {
   }
   if (req.method !== "POST") return fail("invalid_request", req, operationId, "method_not_allowed");
   if (origin && !isApprovedConsoleOrigin(origin)) {
-    return new Response(JSON.stringify({ error: "forbidden", detail: "origin", operation_id: operationId }), {
+    return new Response(JSON.stringify({
+      error: "forbidden",
+      detail: "origin",
+      operation_id: operationId,
+      runtime_version: CE_EDGE_RUNTIME_VERSION,
+    }), {
       status: 403,
       headers: { "Content-Type": "application/json" },
     });
