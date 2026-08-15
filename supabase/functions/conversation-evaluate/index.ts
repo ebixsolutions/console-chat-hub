@@ -485,7 +485,7 @@ async function runEvaluator(
   bundleText: string,
   knownChunkIds: ReadonlySet<string>,
   operationId: string,
-  companyId: string,
+  companyId: string | null,
   conversationId: string,
   systemOverride?: string,
 ): Promise<
@@ -516,7 +516,7 @@ async function runSignals(
   bundleText: string,
   transcript: Parameters<typeof validateSignalsOutput>[1],
   operationId: string,
-  companyId: string,
+  companyId: string | null,
   conversationId: string,
 ): Promise<ReturnType<typeof validateSignalsOutput>> {
   const res = await callModel({
