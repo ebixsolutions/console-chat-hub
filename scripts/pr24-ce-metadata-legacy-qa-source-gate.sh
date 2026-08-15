@@ -4,6 +4,7 @@ F="src/lib/api/ce.functions.ts"
 S="sql/pr24/pr24_ce_metadata_legacy_qa.sql"
 R="sql/pr24/pr24_ce_metadata_legacy_qa.rollback.sql"
 C="supabase/functions/_shared/ce-contract.ts"
+UI="src/components/console/ce/CeDetailPanel.tsx"
 
 fail=0
 pass(){ echo "PASS $1"; }
@@ -11,7 +12,7 @@ bad(){ echo "FAIL $1"; fail=1; }
 has(){ grep -Fq "$2" "$1" && pass "$3" || bad "$3"; }
 not_has(){ grep -Fq "$2" "$1" && bad "$3" || pass "$3"; }
 
-for f in "$F" "$S" "$R" "$C"; do
+for f in "$F" "$S" "$R" "$C" "$UI"; do
   [ -s "$f" ] || { echo "FAIL missing/empty $f"; exit 1; }
 done
 
@@ -57,6 +58,20 @@ has "$S" 'CE_LEGACY_QA_COMPANY_MISMATCH' "Legacy QA tenant lineage guard"
 has "$R" 'PR24_ROLLBACK_BLOCKED_METADATA_EXISTS' "Rollback protects real metadata"
 not_has "$S" 'UPDATE public.conversations' "No metadata values invented/backfilled by migration"
 not_has "$S" 'INSERT INTO public.ce_legacy_qa_metric' "No fake legacy QA rows created"
+
+
+has "$UI" 'const tier = conv.customer_tier || unavailable;' "Tier card reads server metadata"
+has "$UI" 'const intent = conv.intent || unavailable;' "Intent card reads server metadata"
+has "$UI" 'const language = conv.language || unavailable;' "Language card reads server metadata"
+has "$UI" 'source={conv.metadata_sources?.customer_tier}' "Tier provenance reaches UI"
+has "$UI" 'source={conv.metadata_sources?.intent}' "Intent provenance reaches UI"
+has "$UI" 'source={conv.metadata_sources?.language}' "Language provenance reaches UI"
+has "$UI" 'const legacyQa = d?.legacyQaMetric ?? null;' "Legacy QA remains separate optional UI metric"
+has "$UI" 'Legacy QA Quality Score' "Legacy QA has explicit separate label"
+has "$UI" 'SU Coach compatibility metric · separate from Evaluation Overall Score' "Legacy QA cannot masquerade as canonical score"
+not_has "$UI" '<MetaCard label={t(C.meta.tier)} value={t(C.meta.unavailable)} />' "Tier is no longer hard-coded unavailable"
+not_has "$UI" '<MetaCard label={t(C.meta.intent)} value={t(C.meta.unavailable)} />' "Intent is no longer hard-coded unavailable"
+not_has "$UI" '<MetaCard label={t(C.meta.language)} value={t(C.meta.unavailable)} />' "Language is no longer hard-coded unavailable"
 
 if [ "$fail" -ne 0 ]; then
   echo "PR24 TASK3 METADATA / LEGACY QA STATUS: FAIL"

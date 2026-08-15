@@ -1,7 +1,6 @@
 /**
- * CE detail panel — PR-4 Round 2.
- * Conversation-first. Recalled messages show placeholder.
- * Section errors surfaced. evaluation_available from server.
+ * CE detail panel — Conversation-first full detail workflow.
+ * PR24 Task3: truthful metadata + separate legacy QA compatibility metric.
  * No training UI. 5 tabs always visible.
  */
 
@@ -75,9 +74,17 @@ function Prov({ label, value }: { label: string; value: string | null | undefine
     </div>
   );
 }
-function MetaCard({ label, value }: { label: string; value: string }) {
+function MetaCard({
+  label,
+  value,
+  source,
+}: {
+  label: string;
+  value: string;
+  source?: string | null;
+}) {
   return (
-    <div className="rounded-lg bg-[#f5f4f0] px-[10px] py-2">
+    <div className="rounded-lg bg-[#f5f4f0] px-[10px] py-2" title={source || undefined}>
       <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400">{label}</div>
       <div className="mt-0.5 truncate text-[12px] font-semibold text-slate-700">{value}</div>
     </div>
@@ -147,6 +154,7 @@ export function CeDetailPanel({
 
   const conv = d?.conversation ?? null;
   const ev = d?.evaluation ?? null;
+  const legacyQa = d?.legacyQaMetric ?? null;
   const hasEval = ev !== null;
   const snapshot = d?.snapshot ?? null;
   const evaluationAvailable = d?.evaluation_available === true;
@@ -245,10 +253,13 @@ export function CeDetailPanel({
 
   const overall = hasEval ? Number(ev.overall_score) : null;
   const customerLabel = conv.customer_label || "—";
+  const unavailable = t(C.meta.unavailable);
+  const tier = conv.customer_tier || unavailable;
+  const intent = conv.intent || unavailable;
+  const language = conv.language || unavailable;
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-white">
-      {/* Header */}
       <div className="flex flex-wrap items-center gap-2 border-b border-[#f0efe9] px-4 py-3">
         <div className="min-w-0">
           <div className="truncate text-[13px] font-semibold text-slate-800">{customerLabel}</div>
@@ -277,7 +288,6 @@ export function CeDetailPanel({
         )}
       </div>
 
-      {/* 5 tabs always visible */}
       <div className="flex flex-wrap gap-1.5 border-b border-[#f0efe9] px-3 py-2">
         {TAB_ORDER.map((k) => (
           <button
@@ -297,7 +307,6 @@ export function CeDetailPanel({
       </div>
 
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-[#fdfdfb] p-4">
-        {/* ── Overview ── */}
         {tab === "overview" && (
           <>
             <div className="flex flex-wrap items-start gap-2">
@@ -319,25 +328,39 @@ export function CeDetailPanel({
                   </>
                 )}
                 <Badge variant="outline" className="border-sky-200 bg-sky-50 text-[10px] text-sky-700">
-                  {conv.channel_name || t(C.meta.unavailable)}
+                  {conv.channel_name || unavailable}
                 </Badge>
               </div>
             </div>
+
             <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
               <MetaCard
                 label={t(C.meta.date)}
                 value={conv.created_at ? new Date(conv.created_at).toLocaleString() : "—"}
               />
-              <MetaCard label={t(C.meta.tier)} value={t(C.meta.unavailable)} />
-              <MetaCard label={t(C.meta.intent)} value={t(C.meta.unavailable)} />
-              <MetaCard label={t(C.meta.language)} value={t(C.meta.unavailable)} />
+              <MetaCard
+                label={t(C.meta.tier)}
+                value={tier}
+                source={conv.metadata_sources?.customer_tier}
+              />
+              <MetaCard
+                label={t(C.meta.intent)}
+                value={intent}
+                source={conv.metadata_sources?.intent}
+              />
+              <MetaCard
+                label={t(C.meta.language)}
+                value={language}
+                source={conv.metadata_sources?.language}
+              />
             </div>
-            {/* R3: evaluation unavailable notice */}
+
             {!evaluationAvailable && (
               <div className="rounded-md border border-amber-200 bg-amber-50 p-2.5 text-[11px] text-amber-800">
                 {t(C.detail.evaluateUnavailable)}
               </div>
             )}
+
             <Panel title={t(C.overview.thread)}>
               {hasEval && <p className="mb-2 text-[11px] text-amber-600">{t(C.overview.liveNote)}</p>}
               {messages.length === 0 ? (
@@ -345,7 +368,6 @@ export function CeDetailPanel({
               ) : (
                 <div className="space-y-2">
                   {messages.map((m: any) => {
-                    // R6: recalled messages show placeholder
                     if (m.is_recalled) {
                       return (
                         <div key={m.id} className="rounded-lg border-l-[3px] border-l-slate-200 bg-slate-50 p-2.5">
@@ -378,12 +400,7 @@ export function CeDetailPanel({
                             <span className="flex items-center gap-1.5 font-semibold uppercase">
                               {roleLabel}
                               {isEvaluated && overall !== null && (
-                                <span
-                                  className={cn(
-                                    "rounded-full bg-white px-1.5 py-[1px] text-[10px] font-bold",
-                                    scoreTextClass(overall),
-                                  )}
-                                >
+                                <span className={cn("rounded-full bg-white px-1.5 py-[1px] text-[10px] font-bold", scoreTextClass(overall))}>
                                   {overall.toFixed(1)}
                                 </span>
                               )}
@@ -419,7 +436,7 @@ export function CeDetailPanel({
                 </div>
               )}
             </Panel>
-            {/* QA Cases */}
+
             <Panel title={t(C.overview.qaCases)}>
               {sectionErr("qaCases") ? (
                 <SectionError message={sectionErr("qaCases")!.message} />
@@ -460,7 +477,7 @@ export function CeDetailPanel({
                 </div>
               )}
             </Panel>
-            {/* Discrepancy */}
+
             <Panel title={t(C.overview.discrepancy)}>
               {sectionErr("discrepancies") ? (
                 <SectionError message={sectionErr("discrepancies")!.message} />
@@ -488,9 +505,7 @@ export function CeDetailPanel({
                           <div className="mt-0.5 text-[12px]">{disc.human_claim || "—"}</div>
                         </div>
                         <div className="rounded bg-blue-50 p-2">
-                          <div className="text-[10px] uppercase text-muted-foreground">
-                            {t(C.overview.groundedClaim)}
-                          </div>
+                          <div className="text-[10px] uppercase text-muted-foreground">{t(C.overview.groundedClaim)}</div>
                           <div className="mt-0.5 text-[12px]">{disc.grounded_claim || "—"}</div>
                         </div>
                       </div>
@@ -499,7 +514,7 @@ export function CeDetailPanel({
                 </div>
               )}
             </Panel>
-            {/* Root cause */}
+
             <Panel title={t(C.overview.rootCause)}>
               {sectionErr("rootCauses") ? (
                 <SectionError message={sectionErr("rootCauses")!.message} />
@@ -556,7 +571,6 @@ export function CeDetailPanel({
           </>
         )}
 
-        {/* ── Evaluation ── */}
         {tab === "evaluation" &&
           (!hasEval ? (
             <Panel title={t(C.evaluation.breakdown)}>
@@ -614,6 +628,33 @@ export function CeDetailPanel({
                   </div>
                 )}
               </Panel>
+
+              {legacyQa && (
+                <Panel title="Legacy QA Quality Score">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wide text-slate-400">
+                        SU Coach compatibility metric · separate from Evaluation Overall Score
+                      </div>
+                      <div className="mt-0.5 text-[20px] font-bold text-slate-800">
+                        {Number(legacyQa.quality_score).toFixed(1)}
+                      </div>
+                    </div>
+                    <div className="text-right text-[10px] text-slate-400">
+                      {legacyQa.source_system}
+                      {legacyQa.recorded_at ? ` · ${new Date(legacyQa.recorded_at).toLocaleString()}` : ""}
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
+                    <MetaCard label="Empathy · 20%" value={Number(legacyQa.empathy_score).toFixed(1)} />
+                    <MetaCard label="Policy · 25%" value={Number(legacyQa.policy_accuracy_score).toFixed(1)} />
+                    <MetaCard label="VIP · 25%" value={Number(legacyQa.vip_awareness_score).toFixed(1)} />
+                    <MetaCard label="Resolution · 15%" value={Number(legacyQa.resolution_speed_score).toFixed(1)} />
+                    <MetaCard label="Context · 15%" value={Number(legacyQa.context_score).toFixed(1)} />
+                  </div>
+                </Panel>
+              )}
+
               <Panel title={t(C.evaluation.provenance)}>
                 <Prov label={t(C.evaluation.contract)} value={ev.evaluation_contract_version} />
                 <Prov label={t(C.evaluation.model)} value={ev.model_version} />
@@ -624,6 +665,7 @@ export function CeDetailPanel({
                 <Prov label={t(C.evaluation.bundle)} value={ev.bundle_hash} />
                 <Prov label={t(C.evaluation.snapshot)} value={ev.input_snapshot_hash} />
               </Panel>
+
               <Panel title={t(C.evaluation.review)}>
                 <div className="mb-2 flex flex-wrap items-center gap-2">
                   <span className="text-xs text-muted-foreground">{t(C.evaluation.current)}:</span>
@@ -680,7 +722,6 @@ export function CeDetailPanel({
             </>
           ))}
 
-        {/* ── Emotion Journey ── */}
         {tab === "emotion" && (
           <Panel title={t(C.tabs.emotion)}>
             {sectionErr("emotion") ? (
@@ -718,7 +759,6 @@ export function CeDetailPanel({
           </Panel>
         )}
 
-        {/* ── Next Steps ── */}
         {tab === "nextSteps" && (
           <Panel title={t(C.tabs.nextSteps)}>
             {sectionErr("nextSteps") ? (
@@ -747,7 +787,6 @@ export function CeDetailPanel({
           </Panel>
         )}
 
-        {/* ── Replay Studio ── */}
         {tab === "replay" && (
           <Panel title={t(C.tabs.replay)}>
             {sectionErr("replay") ? (
@@ -768,11 +807,7 @@ export function CeDetailPanel({
                   <Prov label={t(C.evaluation.policy)} value={snapshot.policy_snapshot_id} />
                   <Prov
                     label={t(C.replay.retention)}
-                    value={
-                      snapshot.retention_expires_at
-                        ? new Date(snapshot.retention_expires_at).toLocaleDateString()
-                        : null
-                    }
+                    value={snapshot.retention_expires_at ? new Date(snapshot.retention_expires_at).toLocaleDateString() : null}
                   />
                 </div>
                 <div className="mb-2 flex flex-wrap gap-1.5">
