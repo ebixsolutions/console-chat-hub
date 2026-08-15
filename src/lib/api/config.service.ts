@@ -497,6 +497,20 @@ const PREVIEW_ADMIN_EMAILS = new Set([
   "frankien.ng@gmail.com",
   "frankien.mega001@gmail.com",
 ]);
+const PREVIEW_PROJECT_ID = "4dbf593e-577e-4af4-a553-460441c34473";
+
+function isApprovedLovablePreviewHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  const suffix = `--${PREVIEW_PROJECT_ID}.lovable.app`;
+  if (!host.endsWith(suffix)) return false;
+
+  const prefix = host.slice(0, -suffix.length);
+  // Lovable currently uses both:
+  //   id-preview--<project>.lovable.app
+  //   id-preview-<preview-id>--<project>.lovable.app
+  // Keep this project-scoped and never match the published production hostname.
+  return /^id-preview(?:-[a-z0-9-]+)?$/.test(prefix);
+}
 
 /**
  * FRONTEND ACCEPTANCE ONLY.
@@ -514,8 +528,7 @@ async function resolvePreviewAcceptanceRole(): Promise<AppRole | null> {
   if (typeof window === "undefined") return null;
 
   const host = window.location.hostname.toLowerCase();
-  const isLovableIdPreview =
-    host.startsWith("id-preview--") && host.endsWith(".lovable.app");
+  const isLovableIdPreview = isApprovedLovablePreviewHost(host);
   const isLocalhost = host === "localhost" || host === "127.0.0.1";
   if (!isLovableIdPreview && !isLocalhost) return null;
 

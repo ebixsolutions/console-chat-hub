@@ -91,6 +91,9 @@ bash scripts/pr13-widget-settings-bubble-debug-source-gate.sh || stop "widget se
 echo "== PR13 DIRECTOR TAKEOVER WIDGET RUNTIME UX SOURCE =="
 bash scripts/pr13-widget-runtime-ux-director-takeover-source-gate.sh || stop "PR13 Widget runtime UX source contract failed"
 
+echo "== PR14 CANONICAL ROLE UI / PREVIEW BRIDGE SOURCE =="
+bash scripts/pr14-canonical-role-ui-preview-bridge-source-gate.sh || stop "PR14 canonical role UI / Preview bridge source failed"
+
 echo "== PRODUCTION RUNTIME CONFIG CONTRACT =="
 bash scripts/pr7-production-runtime-config-gate.sh || stop "production runtime configuration incomplete"
 

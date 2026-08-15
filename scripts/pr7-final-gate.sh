@@ -94,6 +94,7 @@ for f in \
   scripts/pr12-production-runtime-identity-binding-source-gate.sh \
   scripts/pr13-widget-settings-bubble-debug-source-gate.sh \
   scripts/pr13-widget-runtime-ux-director-takeover-source-gate.sh \
+  scripts/pr14-canonical-role-ui-preview-bridge-source-gate.sh \
   src/routes/_authenticated/console.widget-preview.tsx \
   src/lib/api/config.service.ts \
   public/widget/chat.js \
@@ -549,6 +550,14 @@ if bash scripts/pr13-widget-runtime-ux-director-takeover-source-gate.sh; then
   echo "PASS PR13 Director takeover Widget runtime UX"
 else
   echo "FAIL PR13 Director takeover Widget runtime UX"
+  fail=1
+fi
+
+echo "== PR14 CANONICAL ROLE UI / PREVIEW BRIDGE =="
+if bash scripts/pr14-canonical-role-ui-preview-bridge-source-gate.sh; then
+  echo "PASS PR14 canonical role UI / Preview bridge"
+else
+  echo "FAIL PR14 canonical role UI / Preview bridge"
   fail=1
 fi
 

@@ -347,4 +347,7 @@ bash scripts/pr11-canonical-role-acceptance.sh || stop "canonical role acceptanc
 echo "== PR13 WIDGET RUNTIME UX SOURCE RECHECK =="
 bash scripts/pr13-widget-runtime-ux-director-takeover-source-gate.sh || stop "PR13 Widget runtime UX source contract failed"
 
+echo "== PR14 CANONICAL ROLE UI / PREVIEW BRIDGE RECHECK =="
+bash scripts/pr14-canonical-role-ui-preview-bridge-source-gate.sh || stop "PR14 canonical role UI / Preview bridge source failed"
+
 echo "FINAL STATUS: READY"

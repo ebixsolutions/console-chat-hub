@@ -1,5 +1,5 @@
 import { createFileRoute, Outlet, Link, useNavigate, useRouterState } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { LogOut } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentRole } from "@/hooks/useCurrentRole";
@@ -190,12 +190,6 @@ const GROUP_BADGE: Record<string, { label: string; bg: string; color: string }> 
   "/console/visitor-analytics": { label: "ANALYTICS", bg: "#dbeafe", color: "#2563eb" },
 };
 
-const ROLES = [
-  { key: "admin", short: "Admin", color: "#dc2626" },
-  { key: "supervisor", short: "Sup", color: "#2563eb" },
-  { key: "customer_service", short: "CS", color: "#16a34a" },
-  { key: "qa_reviewer", short: "QA", color: "#d97706" },
-] as const;
 
 function safeInitials(name: string): string {
   const trimmed = name.trim();
@@ -217,15 +211,6 @@ function ConsoleLayout() {
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const { role, loading: roleLoading } = useCurrentRole();
-  const [demoRole, setDemoRole] = useState<string>("supervisor");
-
-  const hasSyncedRole = useRef(false);
-  useEffect(() => {
-    if (!roleLoading && role && !hasSyncedRole.current) {
-      setDemoRole(role);
-      hasSyncedRole.current = true;
-    }
-  }, [role, roleLoading]);
 
   const [userDisplayName, setUserDisplayName] = useState("System");
   const [userInitials, setUserInitials] = useState("U");
@@ -311,8 +296,13 @@ function ConsoleLayout() {
     };
   }, []);
 
-  const sidebarRole: string | null = import.meta.env.DEV ? demoRole : (role ?? null);
-  const effectiveRoleForContext: EffectiveRole | null = sidebarRole ? mapDemoRoleToEffective(sidebarRole) : null;
+  // Product-ready role authority:
+  // - production: canonical company_membership via useCurrentRole()
+  // - isolated Lovable Preview: approved frontend-only acceptance bridge via useCurrentRole()
+  // No user-selectable role override is permitted.
+  const sidebarRole: string | null = role ?? null;
+  const effectiveRoleForContext: EffectiveRole | null =
+    sidebarRole ? mapDemoRoleToEffective(sidebarRole) : null;
   const effectiveRoleContext: ConsoleOutletContext | null =
     effectiveRoleForContext && sidebarRole
       ? { effectiveRole: effectiveRoleForContext, demoRole: sidebarRole, lang }
@@ -321,7 +311,7 @@ function ConsoleLayout() {
   const t = (key: string) => translations[lang]?.[key] ?? translations.en[key] ?? key;
   const toggleGroup = (key: string) => setCollapsedGroups((prev) => ({ ...prev, [key]: !prev[key] }));
   const showSettingsGroup = sidebarRole === "admin" || sidebarRole === "supervisor";
-  const roleDisplayKey: string | null = sidebarRole === "agent" ? "customer_service" : sidebarRole;
+  const roleDisplayKey: string | null = sidebarRole === "agent" ? "customer_service" : sidebarRole; // one authoritative role only
   const currentRoleMeta = roleDisplayKey ? ROLES.find((r) => r.key === roleDisplayKey) : null;
   const sidebarW = collapsed ? SIDEBAR_COLLAPSED : SIDEBAR_EXPANDED;
 
@@ -561,39 +551,6 @@ function ConsoleLayout() {
                   </div>
                 </div>
               </div>
-              {import.meta.env.DEV && (
-                <div
-                  style={{
-                    padding: "7px 12px 9px",
-                    borderBottom: "0.5px solid #e8e6e0",
-                    display: "flex",
-                    gap: 4,
-                    flexWrap: "wrap",
-                    background: "#ffffff",
-                    flexShrink: 0,
-                  }}
-                >
-                  {ROLES.map((r) => (
-                    <button
-                      key={r.key}
-                      onClick={() => setDemoRole(r.key as string)}
-                      style={{
-                        fontSize: 10,
-                        fontWeight: demoRole === r.key ? 700 : 600,
-                        padding: "3px 9px",
-                        borderRadius: 20,
-                        border: "none",
-                        cursor: "pointer",
-                        transition: "all 0.15s",
-                        background: demoRole === r.key ? "#1a1a1a" : "#f0efe9",
-                        color: demoRole === r.key ? "#ffffff" : "#555",
-                      }}
-                    >
-                      {r.short}
-                    </button>
-                  ))}
-                </div>
-              )}
             </>
           )}
 
