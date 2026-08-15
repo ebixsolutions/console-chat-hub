@@ -350,4 +350,7 @@ bash scripts/pr13-widget-runtime-ux-director-takeover-source-gate.sh || stop "PR
 echo "== PR14 CANONICAL ROLE UI / PREVIEW BRIDGE RECHECK =="
 bash scripts/pr14-canonical-role-ui-preview-bridge-source-gate.sh || stop "PR14 canonical role UI / Preview bridge source failed"
 
+echo "== PR15 WIDGET ACTIONS / ATTACHMENTS / HANDOFF RECHECK =="
+bash scripts/pr15-widget-actions-attachments-handoff-source-gate.sh || stop "PR15 Widget source contract failed"
+
 echo "FINAL STATUS: READY"

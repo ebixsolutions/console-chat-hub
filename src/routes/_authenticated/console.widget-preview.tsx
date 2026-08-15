@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Copy, MonitorDot } from "lucide-react";
+import { Check, Copy, MonitorDot, Plus, History, Image, Video, Paperclip, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -412,6 +412,9 @@ function SimulatedWidget({
   const [messages, setMessages] = useState<SimMsg[]>([]);
   const [input, setInput] = useState("");
   const [typing, setTyping] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [history, setHistory] = useState<SimMsg[][]>([]);
   const [humanState, setHumanState] = useState<"none" | "waiting" | "assigned">("none");
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handoffTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -483,11 +486,36 @@ function SimulatedWidget({
         }
         style={theme === "classic" ? { background: primary } : undefined}
       >
-        <div>
+        <div className="min-w-0">
           <div>{title}</div>
           <div className={theme === "classic" ? "text-[10px] font-normal opacity-80" : "text-[10px] font-normal text-muted-foreground"}>
             {liveAvailable ? "Appearance preview · Live AI requires production Widget" : "UI Simulation"}
           </div>
+        </div>
+        <div className="ml-auto flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setHistoryOpen((v) => !v)}
+            className="rounded p-2 opacity-70 hover:bg-black/5 hover:opacity-100"
+            aria-label="Conversation History"
+            title="Conversation History"
+          >
+            <History className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (messages.length) setHistory((h) => [messages, ...h].slice(0, 10));
+              setMessages([]);
+              setHumanState("none");
+              setHistoryOpen(false);
+            }}
+            className="rounded p-2 opacity-70 hover:bg-black/5 hover:opacity-100"
+            aria-label="New Conversation"
+            title="New Conversation"
+          >
+            +
+          </button>
         </div>
         <button
           type="button"
@@ -542,20 +570,56 @@ function SimulatedWidget({
       </div>
 
       <div className="border-t bg-white p-3">
-        <div className="mb-2 flex items-center justify-between">
+        {historyOpen && (
+          <div className="mb-2 rounded-xl border bg-slate-50 p-2">
+            <div className="mb-2 text-xs font-semibold">Conversation History</div>
+            {history.length === 0 ? (
+              <div className="text-xs text-slate-400">No simulated conversation history yet.</div>
+            ) : (
+              history.map((session, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => {
+                    setMessages(session);
+                    setHistoryOpen(false);
+                  }}
+                  className="mb-1 block w-full rounded-lg border bg-white px-3 py-2 text-left text-xs"
+                >
+                  Conversation {history.length - i} · {session.length} messages
+                </button>
+              ))
+            )}
+          </div>
+        )}
+
+        <div className="relative flex gap-2 rounded-xl border bg-white p-1">
           <button
             type="button"
-            onClick={requestHuman}
-            disabled={humanState !== "none"}
-            className="text-xs font-medium text-violet-700 disabled:opacity-50"
+            onClick={() => setMenuOpen((v) => !v)}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border bg-white"
+            aria-label="More actions"
           >
-            + Request Human Support
+            <Plus className="h-4 w-4" />
           </button>
-          {!liveAvailable && (
-            <span className="text-[10px] text-slate-400">Live AI Test locked until activation</span>
+
+          {menuOpen && (
+            <div className="absolute bottom-12 left-0 z-20 w-56 rounded-xl border bg-white p-1 shadow-xl">
+              <button type="button" onClick={() => { setMenuOpen(false); setMessages((v) => [...v, { id: `image-${Date.now()}`, role: "visitor", content: "[Image upload simulated in Preview]" }]); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50">
+                <Image className="h-4 w-4" />Image
+              </button>
+              <button type="button" onClick={() => { setMenuOpen(false); setMessages((v) => [...v, { id: `video-${Date.now()}`, role: "visitor", content: "[Video upload simulated in Preview]" }]); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50">
+                <Video className="h-4 w-4" />Video
+              </button>
+              <button type="button" onClick={() => { setMenuOpen(false); setMessages((v) => [...v, { id: `file-${Date.now()}`, role: "visitor", content: "[File upload simulated in Preview]" }]); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50">
+                <Paperclip className="h-4 w-4" />File
+              </button>
+              <button type="button" onClick={() => { setMenuOpen(false); requestHuman(); }} disabled={humanState !== "none"} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50 disabled:opacity-50">
+                <UserRound className="h-4 w-4" />Request Human Support
+              </button>
+            </div>
           )}
-        </div>
-        <div className="flex gap-2 rounded-xl border bg-white p-1">
+
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}

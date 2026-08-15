@@ -503,7 +503,8 @@
       "</span>" +
       "</div>" +
       '<div class="nx-header-actions">' +
-      '<button id="nx-my-tickets-btn" class="nx-header-btn" title="My Tickets" type="button">\u2637</button>' +
+      '<button id="nx-my-tickets-btn" class="nx-header-btn" title="Conversation History" type="button">\u2637</button>' +
+      '<button id="nx-new-conversation-btn" class="nx-header-btn" title="New Conversation" type="button">+</button>' +
       '<button id="nx-close-btn" class="nx-header-btn" title="Close" type="button">\u00d7</button>' +
       "</div>" +
       "</div>" +
@@ -537,6 +538,9 @@
     panel
       .querySelector("#nx-my-tickets-btn")
       .addEventListener("click", showMyTickets);
+    panel
+      .querySelector("#nx-new-conversation-btn")
+      .addEventListener("click", resetAndFresh);
     sendBtn.addEventListener("click", handleSend);
 
     inputEl.addEventListener("keydown", function (e) {
@@ -724,22 +728,106 @@
     plusMenuEl = document.createElement("div");
     plusMenuEl.className = "nx-plus-menu";
 
-    var item = document.createElement("div");
-    item.id = "nx-menu-human";
-    item.className =
-      "nx-plus-item" + (state.handoffRequested ? " disabled" : "");
-    item.innerHTML = "<span>\ud83d\udc64</span> Request Human Support";
-    plusMenuEl.appendChild(item);
+    [
+      { key: "image", icon: "🖼️", label: "Image" },
+      { key: "video", icon: "🎬", label: "Video" },
+      { key: "file", icon: "📎", label: "File" },
+      { key: "human", icon: "👤", label: "Request Human Support" },
+    ].forEach(function (action) {
+      var item = document.createElement("div");
+      item.className =
+        "nx-plus-item" +
+        (action.key === "human" && state.handoffRequested ? " disabled" : "");
+      item.innerHTML = "<span>" + action.icon + "</span> " + action.label;
+      plusMenuEl.appendChild(item);
+
+      if (!(action.key === "human" && state.handoffRequested)) {
+        item.addEventListener("click", function (e) {
+          e.stopPropagation();
+          closePlusMenu();
+          if (action.key === "human") handleHumanSupport();
+          else chooseAttachment(action.key);
+        });
+      }
+    });
 
     inputArea.querySelector(".nx-plus-wrap").appendChild(plusMenuEl);
+  }
 
-    if (!state.handoffRequested) {
-      item.addEventListener("click", function (e) {
-        e.stopPropagation();
-        closePlusMenu();
-        handleHumanSupport();
+  function chooseAttachment(kind) {
+    if (!panel || !state.sessionToken || !state.conversationId) return;
+
+    var input = panel.querySelector("#nx-attachment-input");
+    if (!input) {
+      input = document.createElement("input");
+      input.id = "nx-attachment-input";
+      input.type = "file";
+      input.style.display = "none";
+      panel.appendChild(input);
+      input.addEventListener("change", function () {
+        var file = input.files && input.files[0];
+        if (file) uploadAttachment(file);
       });
     }
+
+    if (kind === "image") {
+      input.accept = "image/jpeg,image/png,image/gif,image/webp";
+    } else if (kind === "video") {
+      input.accept = "video/mp4,video/webm,video/quicktime";
+    } else {
+      input.accept = ".pdf,.txt,.doc,.docx,.xls,.xlsx";
+    }
+
+    input.value = "";
+    input.click();
+  }
+
+  function uploadAttachment(file) {
+    if (!file || !state.sessionToken || !state.conversationId) return;
+    if (file.size > 10 * 1024 * 1024) {
+      alert("File too large (max 10 MB).");
+      return;
+    }
+
+    var form = new FormData();
+    form.append("conversation_id", state.conversationId);
+    form.append("session_token", state.sessionToken);
+    form.append("file", file);
+
+    appendMessageObj({
+      id: "system-upload-" + Date.now(),
+      role: "system",
+      content: "Uploading " + file.name + "…",
+      created_at: new Date().toISOString(),
+    });
+
+    fetch(apiBase + "/receive-widget-message", {
+      method: "POST",
+      body: form,
+    })
+      .then(function (response) {
+        return response.json().then(function (body) {
+          return { ok: response.ok, body: body };
+        });
+      })
+      .then(function (res) {
+        if (!res.ok || !res.body || !res.body.success) {
+          throw new Error(
+            (res.body && res.body.error) || "attachment_upload_failed",
+          );
+        }
+        pollStep = 0;
+        if (pollActive) executePoll();
+        else startPolling();
+      })
+      .catch(function () {
+        appendMessageObj({
+          id: "system-upload-error-" + Date.now(),
+          role: "system",
+          content: "Attachment upload failed. Please try again.",
+          created_at: new Date().toISOString(),
+        });
+      });
   }
 
   function closePlusMenu() {
@@ -993,7 +1081,25 @@
     var el = document.createElement("div");
     el.className = "nx-msg " + (message.role || "assistant");
     if (message.role === "visitor") el.style.background = getPrimary();
-    el.textContent = message.content;
+
+    if (
+      message.role === "visitor" &&
+      (message.content_type === "image" ||
+        message.content_type === "video" ||
+        message.content_type === "file") &&
+      message.metadata &&
+      typeof message.metadata.original_name === "string"
+    ) {
+      var prefix =
+        message.content_type === "image"
+          ? "🖼️ "
+          : message.content_type === "video"
+            ? "🎬 "
+            : "📎 ";
+      el.textContent = prefix + message.metadata.original_name.slice(0, 180);
+    } else {
+      el.textContent = message.content;
+    }
 
     if (
       (message.role === "assistant" || message.role === "ai") &&
@@ -1751,10 +1857,7 @@
     .catch(function () {});
 
   console.log(
-    "[NexusAI widget] Shared runtime v1.4.0 loaded; modern assistant panel + classic popup; channel:",
+    "[NexusAI widget] Shared runtime v1.5.0 loaded; modern assistant panel + classic popup; channel:",
     channelId,
-  );
-  console.log(
-    "[NexusAI widget] File upload hidden until real backend support is available.",
   );
 })();

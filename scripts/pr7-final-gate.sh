@@ -561,6 +561,14 @@ else
   fail=1
 fi
 
+echo "== PR15 WIDGET ACTIONS / ATTACHMENTS / HANDOFF =="
+if bash scripts/pr15-widget-actions-attachments-handoff-source-gate.sh; then
+  echo "PASS PR15 Widget actions/attachments/handoff"
+else
+  echo "FAIL PR15 Widget actions/attachments/handoff"
+  fail=1
+fi
+
 echo "== BUILD =="
 if npm run build; then echo "PASS npm run build"; else echo "FAIL npm run build"; fail=1; fi
 if [ "$fail" -ne 0 ]; then echo "FINAL STATUS: FAIL"; exit 1; fi

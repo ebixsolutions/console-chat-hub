@@ -94,6 +94,9 @@ bash scripts/pr13-widget-runtime-ux-director-takeover-source-gate.sh || stop "PR
 echo "== PR14 CANONICAL ROLE UI / PREVIEW BRIDGE SOURCE =="
 bash scripts/pr14-canonical-role-ui-preview-bridge-source-gate.sh || stop "PR14 canonical role UI / Preview bridge source failed"
 
+echo "== PR15 WIDGET ACTIONS / ATTACHMENTS / HANDOFF SOURCE =="
+bash scripts/pr15-widget-actions-attachments-handoff-source-gate.sh || stop "PR15 Widget source contract failed"
+
 echo "== PRODUCTION RUNTIME CONFIG CONTRACT =="
 bash scripts/pr7-production-runtime-config-gate.sh || stop "production runtime configuration incomplete"
 
@@ -258,7 +261,7 @@ SQL_FORWARD=(
   "sql/pr7/pr7_tenant_ownership_consistency.sql"
   "sql/pr7/pr7_widget_theme_contract.sql"
   "sql/pr7/pr7_widget_theme_default_modern.sql"
-  "sql/pr13/pr13_widget_launcher_icon.sql"
+  "sql/pr13/pr13_widget_launcher_icon.sql"\n  "sql/pr15/pr15_widget_attachment.sql"
   "sql/pr7/pr7_customer360_coach_sync_state.sql"
   "sql/pr7/pr7_feedback_config_tenant_scope.sql"
   "sql/pr7/pr7_agent_management_tenant_isolation.sql"
@@ -278,7 +281,7 @@ SQL_ROLLBACK_FOR_FORWARD=(
   "sql/pr7/pr7_tenant_ownership_consistency.rollback.sql"
   "sql/pr7/pr7_widget_theme_contract.rollback.sql"
   "sql/pr7/pr7_widget_theme_default_modern.rollback.sql"
-  "sql/pr13/pr13_widget_launcher_icon.rollback.sql"
+  "sql/pr13/pr13_widget_launcher_icon.rollback.sql"\n  "sql/pr15/pr15_widget_attachment.rollback.sql"
   "sql/pr7/pr7_customer360_coach_sync_state.rollback.sql"
   "sql/pr7/pr7_feedback_config_tenant_scope.rollback.sql"
   "sql/pr7/pr7_agent_management_tenant_isolation.rollback.sql"
