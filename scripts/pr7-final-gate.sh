@@ -92,6 +92,12 @@ for f in \
   scripts/pr12-activation-parameter-contract-source-gate.sh \
   scripts/pr12-production-runtime-identity-binding.sh \
   scripts/pr12-production-runtime-identity-binding-source-gate.sh \
+  scripts/pr13-widget-settings-bubble-debug-source-gate.sh \
+  src/routes/_authenticated/console.widget-preview.tsx \
+  src/lib/api/config.service.ts \
+  public/widget/chat.js \
+  sql/pr13/pr13_widget_launcher_icon.sql \
+  sql/pr13/pr13_widget_launcher_icon.rollback.sql \
   scripts/pr7-console-role-runtime-acceptance.sh \
   src/routes/_authenticated/console.feedback-responses.tsx \
   src/routes/_authenticated/console.agent-settings.tsx \
@@ -526,6 +532,14 @@ if bash scripts/pr12-production-runtime-identity-binding-source-gate.sh; then
   echo "PASS production runtime identity binding source contract"
 else
   echo "FAIL production runtime identity binding source contract"
+  fail=1
+fi
+
+echo "== WIDGET SETTINGS / BUBBLE DEBUG SOURCE CONTRACT =="
+if bash scripts/pr13-widget-settings-bubble-debug-source-gate.sh; then
+  echo "PASS widget settings / bubble debug source contract"
+else
+  echo "FAIL widget settings / bubble debug source contract"
   fail=1
 fi
 

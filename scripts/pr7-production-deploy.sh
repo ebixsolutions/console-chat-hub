@@ -85,6 +85,9 @@ bash scripts/pr12-activation-parameter-contract-source-gate.sh || stop "activati
 echo "== PRODUCTION RUNTIME IDENTITY BINDING SOURCE CONTRACT =="
 bash scripts/pr12-production-runtime-identity-binding-source-gate.sh || stop "production runtime identity binding source failed"
 
+echo "== WIDGET SETTINGS / BUBBLE DEBUG SOURCE CONTRACT =="
+bash scripts/pr13-widget-settings-bubble-debug-source-gate.sh || stop "widget settings/bubble source contract failed"
+
 echo "== PRODUCTION RUNTIME CONFIG CONTRACT =="
 bash scripts/pr7-production-runtime-config-gate.sh || stop "production runtime configuration incomplete"
 
@@ -249,6 +252,7 @@ SQL_FORWARD=(
   "sql/pr7/pr7_tenant_ownership_consistency.sql"
   "sql/pr7/pr7_widget_theme_contract.sql"
   "sql/pr7/pr7_widget_theme_default_modern.sql"
+  "sql/pr13/pr13_widget_launcher_icon.sql"
   "sql/pr7/pr7_customer360_coach_sync_state.sql"
   "sql/pr7/pr7_feedback_config_tenant_scope.sql"
   "sql/pr7/pr7_agent_management_tenant_isolation.sql"
@@ -268,6 +272,7 @@ SQL_ROLLBACK_FOR_FORWARD=(
   "sql/pr7/pr7_tenant_ownership_consistency.rollback.sql"
   "sql/pr7/pr7_widget_theme_contract.rollback.sql"
   "sql/pr7/pr7_widget_theme_default_modern.rollback.sql"
+  "sql/pr13/pr13_widget_launcher_icon.rollback.sql"
   "sql/pr7/pr7_customer360_coach_sync_state.rollback.sql"
   "sql/pr7/pr7_feedback_config_tenant_scope.rollback.sql"
   "sql/pr7/pr7_agent_management_tenant_isolation.rollback.sql"

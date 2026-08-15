@@ -164,6 +164,22 @@
     );
   }
 
+
+  function getLauncherIcon() {
+    var value =
+      config && config.widget_config && typeof config.widget_config.launcher_icon === "string"
+        ? config.widget_config.launcher_icon
+        : "chat";
+    var icons = {
+      chat: "💬",
+      headset: "🎧",
+      sparkles: "✨",
+      bot: "🤖",
+      mail: "✉️",
+    };
+    return icons[value] || icons.chat;
+  }
+
   function getSuggested() {
     var defaults = [
       "Track my order",
@@ -425,7 +441,7 @@
   bubble.className = "nx-bubble";
   bubble.type = "button";
   bubble.setAttribute("aria-label", "Open chat");
-  bubble.innerHTML = "&#128172;";
+  bubble.textContent = getLauncherIcon();
   root.appendChild(bubble);
 
   function applyThemeShell() {
@@ -438,6 +454,7 @@
       restoreHostSplit();
     }
     bubble.style.background = getPrimary();
+    bubble.textContent = getLauncherIcon();
   }
 
   function headerStyle(primary) {

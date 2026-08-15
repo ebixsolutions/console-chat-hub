@@ -183,6 +183,15 @@ BEGIN
     SELECT 1 FROM public.widget_config
     WHERE appearance_theme IS NULL
   ) THEN RAISE EXCEPTION 'widget appearance theme unresolved'; END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='widget_config' AND column_name='launcher_icon'
+  ) THEN RAISE EXCEPTION 'widget launcher icon column missing'; END IF;
+  IF EXISTS (
+    SELECT 1 FROM public.widget_config
+    WHERE launcher_icon IS NULL
+       OR launcher_icon NOT IN ('chat','headset','sparkles','bot','mail')
+  ) THEN RAISE EXCEPTION 'widget launcher icon invalid'; END IF;
   IF (
     SELECT column_default
     FROM information_schema.columns

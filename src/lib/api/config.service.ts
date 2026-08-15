@@ -13,6 +13,8 @@ export interface LiveChannelConfigRow {
   allowed_origins: string[] | null;
 }
 
+export type WidgetLauncherIcon = "chat" | "headset" | "sparkles" | "bot" | "mail";
+
 export interface LiveWidgetConfigRow {
   id: string;
   name: string;
@@ -23,6 +25,7 @@ export interface LiveWidgetConfigRow {
   logo_url: string | null;
   is_active: boolean | null;
   appearance_theme: "modern" | "classic";
+  launcher_icon: WidgetLauncherIcon;
 }
 
 export type JsonRecord = Record<string, any>;
@@ -215,6 +218,26 @@ export const updateChannelConfigFn = createServerFn({ method: "POST" })
     return { ok: true, data: updated as LiveChannelConfigRow };
   });
 
+const WIDGET_LAUNCHER_ICONS = new Set<WidgetLauncherIcon>(["chat", "headset", "sparkles", "bot", "mail"]);
+
+function normalizeWidgetRow(row: any): LiveWidgetConfigRow {
+  const theme: "modern" | "classic" = row?.appearance_theme === "classic" ? "classic" : "modern";
+  const rawIcon = String(row?.launcher_icon ?? "chat") as WidgetLauncherIcon;
+  const launcherIcon: WidgetLauncherIcon = WIDGET_LAUNCHER_ICONS.has(rawIcon) ? rawIcon : "chat";
+  return {
+    id: String(row.id),
+    name: String(row.name ?? "Widget"),
+    header_title: String(row.header_title ?? "Customer Support"),
+    welcome_message: row.welcome_message == null ? null : String(row.welcome_message),
+    placeholder_text: row.placeholder_text == null ? null : String(row.placeholder_text),
+    primary_color: row.primary_color == null ? null : String(row.primary_color),
+    logo_url: row.logo_url == null ? null : String(row.logo_url),
+    is_active: row.is_active == null ? null : Boolean(row.is_active),
+    appearance_theme: theme,
+    launcher_icon: launcherIcon,
+  };
+}
+
 const widgetByChannelInput = z.object({ channel_id: z.string().uuid() });
 
 async function resolveOwnedWidget(
@@ -256,13 +279,13 @@ export const getWidgetConfigFn = createServerFn({ method: "POST" })
 
     const { data: widget, error } = await context.supabase
       .from("widget_config")
-      .select("id, name, header_title, welcome_message, placeholder_text, primary_color, logo_url, is_active, appearance_theme")
+      .select("*")
       .eq("id", owned.data.widgetId)
       .maybeSingle();
 
     if (error) return { ok: false, error: "widget_load_failed" };
     if (!widget) return { ok: false, error: "widget_not_found" };
-    return { ok: true, data: widget as LiveWidgetConfigRow };
+    return { ok: true, data: normalizeWidgetRow(widget) };
   });
 
 const updateWidgetInput = z.object({
@@ -274,6 +297,7 @@ const updateWidgetInput = z.object({
   logo_url: z.string().url().max(2048).nullable().optional(),
   is_active: z.boolean().optional(),
   appearance_theme: z.enum(["modern", "classic"]).optional(),
+  launcher_icon: z.enum(["chat", "headset", "sparkles", "bot", "mail"]).optional(),
 });
 
 export const updateWidgetConfigFn = createServerFn({ method: "POST" })
@@ -309,6 +333,7 @@ export const updateWidgetConfigFn = createServerFn({ method: "POST" })
       "logo_url",
       "is_active",
       "appearance_theme",
+      "launcher_icon",
     ] as const) {
       if (data[key] !== undefined) patch[key] = data[key];
     }
@@ -317,12 +342,12 @@ export const updateWidgetConfigFn = createServerFn({ method: "POST" })
       .from("widget_config")
       .update(patch)
       .eq("id", owned.data.widgetId)
-      .select("id, name, header_title, welcome_message, placeholder_text, primary_color, logo_url, is_active, appearance_theme")
+      .select("*")
       .maybeSingle();
 
     if (error) return { ok: false, error: "widget_update_failed" };
     if (!widget) return { ok: false, error: "widget_update_conflict" };
-    return { ok: true, data: widget as LiveWidgetConfigRow };
+    return { ok: true, data: normalizeWidgetRow(widget) };
   });
 
 const updateSelfProfileInput = z.object({
