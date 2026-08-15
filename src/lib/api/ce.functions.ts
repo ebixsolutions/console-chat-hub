@@ -65,6 +65,82 @@ function resolveCustomerLabel(
   return `${channel} Visitor #${shortId}`;
 }
 
+
+type MetadataValue = {
+  value: string | null;
+  source: string | null;
+};
+
+export interface CeConversationMetadata {
+  customer_tier: MetadataValue;
+  intent: MetadataValue;
+  language: MetadataValue;
+}
+
+function nonEmptyText(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function firstMetadataValue(
+  directValue: unknown,
+  directSource: string,
+  visitorMetadata: unknown,
+  visitorKeys: string[],
+): MetadataValue {
+  const direct = nonEmptyText(directValue);
+  if (direct) return { value: direct, source: directSource };
+
+  const meta =
+    visitorMetadata && typeof visitorMetadata === "object" && !Array.isArray(visitorMetadata)
+      ? (visitorMetadata as Record<string, unknown>)
+      : {};
+  for (const key of visitorKeys) {
+    const value = nonEmptyText(meta[key]);
+    if (value) return { value, source: `visitor_metadata.${key}` };
+  }
+  return { value: null, source: null };
+}
+
+function resolveConversationMetadata(conv: any): CeConversationMetadata {
+  const visitor = conv.visitor_session as { visitor_metadata?: unknown } | null;
+  const visitorMetadata = visitor?.visitor_metadata;
+
+  return {
+    customer_tier: firstMetadataValue(
+      conv.customer_tier,
+      "conversations.customer_tier",
+      visitorMetadata,
+      ["customer_tier", "tier", "customer_segment"],
+    ),
+    intent: firstMetadataValue(
+      conv.intent,
+      "conversations.intent",
+      visitorMetadata,
+      ["intent", "conversation_intent"],
+    ),
+    language: firstMetadataValue(
+      conv.language,
+      "conversations.language",
+      visitorMetadata,
+      ["language", "language_preference", "locale"],
+    ),
+  };
+}
+
+export interface CeLegacyQaMetric {
+  quality_score: number;
+  empathy_score: number;
+  policy_accuracy_score: number;
+  vip_awareness_score: number;
+  resolution_speed_score: number;
+  context_score: number;
+  source_system: string;
+  source_record_id: string | null;
+  recorded_at: string;
+}
+
 type Readiness = { available: boolean; reason: string | null };
 
 function readinessForMessages(messages: any[]): Readiness {
@@ -172,6 +248,14 @@ export interface CeConversationRow {
   updated_at: string | null;
   channel_name: string | null;
   customer_label: string;
+  customer_tier: string | null;
+  intent: string | null;
+  language: string | null;
+  metadata_sources: {
+    customer_tier: string | null;
+    intent: string | null;
+    language: string | null;
+  };
   latest_preview: string;
   evaluation_id: string | null;
   overall_score: number | null;
@@ -216,7 +300,7 @@ export const listConversationsForCeFn = createServerFn({ method: "GET" })
       let q = loose
         .from("conversations")
         .select(
-          "id, status, priority, created_at, updated_at, company_id, " +
+          "id, status, priority, created_at, updated_at, company_id, customer_tier, intent, language, metadata_source, " +
             "channel_config:channel_config_id(name, company_id), " +
             "visitor_session:visitor_session_id(id, visitor_metadata)",
         )
@@ -323,6 +407,7 @@ export const listConversationsForCeFn = createServerFn({ method: "GET" })
     const rows: CeConversationRow[] = convRows.map((c) => {
       const cid = String(c.id);
       const channel = c.channel_config as { name?: string | null } | null;
+      const metadata = resolveConversationMetadata(c);
       const messages = messageMap[cid] ?? [];
       const readiness = readinessForMessages(messages);
       const latest = chooseEvaluation(canonicalMap[cid] ?? null, localMap[cid] ?? null);
@@ -353,6 +438,14 @@ export const listConversationsForCeFn = createServerFn({ method: "GET" })
           cid,
           channel?.name ?? null,
         ),
+        customer_tier: metadata.customer_tier.value,
+        intent: metadata.intent.value,
+        language: metadata.language.value,
+        metadata_sources: {
+          customer_tier: metadata.customer_tier.source,
+          intent: metadata.intent.source,
+          language: metadata.language.source,
+        },
         latest_preview: previewMessage
           ? previewMessage.is_recalled
             ? "[訊息已撤回]"
@@ -385,6 +478,9 @@ export const listConversationsForCeFn = createServerFn({ method: "GET" })
         (r) =>
           r.conversation_id.toLowerCase().includes(searchLower) ||
           r.customer_label.toLowerCase().includes(searchLower) ||
+          (r.intent ?? "").toLowerCase().includes(searchLower) ||
+          (r.customer_tier ?? "").toLowerCase().includes(searchLower) ||
+          (r.language ?? "").toLowerCase().includes(searchLower) ||
           r.latest_preview.toLowerCase().includes(searchLower),
       );
     }
@@ -410,7 +506,7 @@ export const getCeConversationDetailFn = createServerFn({ method: "GET" })
     const { data: conv, error: convErr } = await loose
       .from("conversations")
       .select(
-        "id, status, priority, created_at, updated_at, company_id, " +
+        "id, status, priority, created_at, updated_at, company_id, customer_tier, intent, language, metadata_source, " +
           "channel_config:channel_config_id(name, company_id), " +
           "visitor_session:visitor_session_id(id, visitor_metadata)",
       )
@@ -593,6 +689,20 @@ export const getCeConversationDetailFn = createServerFn({ method: "GET" })
     }
 
     const channel = conv.channel_config as { name?: string | null; company_id?: string | null } | null;
+    const metadata = resolveConversationMetadata(conv);
+
+    const { data: legacyQaRows, error: legacyQaErr } = await loose
+      .from("ce_legacy_qa_metric")
+      .select(
+        "quality_score, empathy_score, policy_accuracy_score, vip_awareness_score, " +
+          "resolution_speed_score, context_score, source_system, source_record_id, recorded_at",
+      )
+      .eq("conversation_id", data.conversationId)
+      .order("recorded_at", { ascending: false })
+      .limit(1);
+    if (legacyQaErr) return { ok: false, error: `ce_legacy_qa_metric: ${legacyQaErr.message}` };
+    const legacyQaMetric = (legacyQaRows?.[0] ?? null) as CeLegacyQaMetric | null;
+
     return {
       ok: true,
       data: {
@@ -609,7 +719,16 @@ export const getCeConversationDetailFn = createServerFn({ method: "GET" })
             data.conversationId,
             channel?.name ?? null,
           ),
+          customer_tier: metadata.customer_tier.value,
+          intent: metadata.intent.value,
+          language: metadata.language.value,
+          metadata_sources: {
+            customer_tier: metadata.customer_tier.source,
+            intent: metadata.intent.source,
+            language: metadata.language.source,
+          },
         },
+        legacyQaMetric,
         evaluation,
         evaluation_available: readiness.available,
         evaluation_unavailable_reason: readiness.reason,
