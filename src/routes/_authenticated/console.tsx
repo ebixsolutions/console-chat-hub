@@ -190,6 +190,17 @@ const GROUP_BADGE: Record<string, { label: string; bg: string; color: string }> 
   "/console/visitor-analytics": { label: "ANALYTICS", bg: "#dbeafe", color: "#2563eb" },
 };
 
+const ROLE_META: Record<
+  "admin" | "supervisor" | "customer_service" | "qa",
+  { label: string; color: string }
+> = {
+  admin: { label: "Admin", color: "#dc2626" },
+  supervisor: { label: "Supervisor", color: "#2563eb" },
+  customer_service: { label: "Customer Service", color: "#16a34a" },
+  qa: { label: "QA Reviewer", color: "#d97706" },
+};
+
+
 
 function safeInitials(name: string): string {
   const trimmed = name.trim();
@@ -312,7 +323,10 @@ function ConsoleLayout() {
   const toggleGroup = (key: string) => setCollapsedGroups((prev) => ({ ...prev, [key]: !prev[key] }));
   const showSettingsGroup = sidebarRole === "admin" || sidebarRole === "supervisor";
   const roleDisplayKey: string | null = sidebarRole === "agent" ? "customer_service" : sidebarRole; // one authoritative role only
-  const currentRoleMeta = roleDisplayKey ? ROLES.find((r) => r.key === roleDisplayKey) : null;
+  const currentRoleMeta =
+    roleDisplayKey && roleDisplayKey in ROLE_META
+      ? ROLE_META[roleDisplayKey as keyof typeof ROLE_META]
+      : null;
   const sidebarW = collapsed ? SIDEBAR_COLLAPSED : SIDEBAR_EXPANDED;
 
   const isConvDetail = pathname.startsWith("/console/conversations/");
@@ -539,15 +553,7 @@ function ConsoleLayout() {
                   <div style={{ fontSize: 11, color: currentRoleMeta?.color ?? "#888", fontWeight: 500 }}>
                     {roleLoading
                       ? "Loading…"
-                      : !currentRoleMeta
-                        ? "No assigned role"
-                        : currentRoleMeta.short === "Sup"
-                          ? "Supervisor"
-                          : currentRoleMeta.short === "CS"
-                            ? "Customer Service"
-                            : currentRoleMeta.short === "QA"
-                              ? "QA Reviewer"
-                              : "Admin"}
+                      : currentRoleMeta?.label ?? "No assigned role"}
                   </div>
                 </div>
               </div>

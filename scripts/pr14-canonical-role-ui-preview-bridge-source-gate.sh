@@ -18,6 +18,9 @@ not_has "$C" 'const ROLES = [' "user-selectable role catalogue removed from Cons
 not_has "$C" 'setDemoRole' "demo role mutator removed"
 not_has "$C" 'import.meta.env.DEV ? demoRole' "DEV role authority override removed"
 not_has "$C" 'ROLES.map' "Admin/Sup/CS/QA chooser removed"
+not_has "$C" 'ROLES.find' "removed role catalogue is never referenced at runtime"
+has "$C" 'const ROLE_META: Record<' "display-only role metadata map exists"
+has "$C" 'currentRoleMeta?.label ?? "No assigned role"' "sidebar renders role label without selectable role catalogue"
 has "$C" 'const sidebarRole: string | null = role ?? null;' "sidebar role comes from authoritative useCurrentRole"
 has "$C" 'No Assigned Role' "production remains fail-closed when canonical membership is absent"
 has "$C" 'one authoritative role only' "single role display contract exists"
@@ -54,6 +57,18 @@ JS
 
 has "$W" 'const { role, loading } = useCurrentRole();' "Widget Preview guard uses same authoritative role source"
 has "$W" 'role !== "admin" && role !== "supervisor"' "Widget Preview retains Admin/Supervisor authorization"
+
+python3 - "$C" <<'PY' || { bad "Console role source has no dangling demo-role symbols"; }
+import re,sys
+text=open(sys.argv[1],encoding="utf-8").read()
+for bad in ("ROLES.find", "ROLES.map", "setDemoRole", "const [demoRole"):
+    if bad in text:
+        print("dangling/forbidden:",bad)
+        raise SystemExit(1)
+if "ROLE_META" not in text:
+    raise SystemExit(1)
+print("PASS no dangling role chooser/runtime symbols")
+PY
 
 if [ "$fail" -ne 0 ]; then
   echo "PR14 CANONICAL ROLE UI / PREVIEW BRIDGE STATUS: FAIL"
