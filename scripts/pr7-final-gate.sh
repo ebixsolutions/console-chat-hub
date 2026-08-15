@@ -577,6 +577,14 @@ else
   fail=1
 fi
 
+echo "== PR17 PREVIEW ROLE HOST AUTHORITY =="
+if bash scripts/pr17-preview-role-host-authority-source-gate.sh; then
+  echo "PASS PR17 Preview role host authority"
+else
+  echo "FAIL PR17 Preview role host authority"
+  fail=1
+fi
+
 echo "== BUILD =="
 if npm run build; then echo "PASS npm run build"; else echo "FAIL npm run build"; fail=1; fi
 if [ "$fail" -ne 0 ]; then echo "FINAL STATUS: FAIL"; exit 1; fi

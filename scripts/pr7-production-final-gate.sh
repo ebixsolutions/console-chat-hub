@@ -356,4 +356,7 @@ bash scripts/pr15-widget-actions-attachments-handoff-source-gate.sh || stop "PR1
 echo "== PR16 WIDGET NEW CHAT / EMOJI / MENU UX RECHECK =="
 bash scripts/pr16-widget-new-chat-emoji-menu-ux-source-gate.sh || stop "PR16 Widget UX source contract failed"
 
+echo "== PR17 PREVIEW ROLE HOST AUTHORITY RECHECK =="
+bash scripts/pr17-preview-role-host-authority-source-gate.sh || stop "PR17 Preview role host authority failed"
+
 echo "FINAL STATUS: READY"

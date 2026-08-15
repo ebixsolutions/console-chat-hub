@@ -100,6 +100,9 @@ bash scripts/pr15-widget-actions-attachments-handoff-source-gate.sh || stop "PR1
 echo "== PR16 WIDGET NEW CHAT / EMOJI / MENU UX SOURCE =="
 bash scripts/pr16-widget-new-chat-emoji-menu-ux-source-gate.sh || stop "PR16 Widget UX source contract failed"
 
+echo "== PR17 PREVIEW ROLE HOST AUTHORITY SOURCE =="
+bash scripts/pr17-preview-role-host-authority-source-gate.sh || stop "PR17 Preview role host authority failed"
+
 echo "== PRODUCTION RUNTIME CONFIG CONTRACT =="
 bash scripts/pr7-production-runtime-config-gate.sh || stop "production runtime configuration incomplete"
 

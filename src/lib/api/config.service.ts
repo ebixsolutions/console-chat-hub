@@ -499,25 +499,43 @@ const PREVIEW_ADMIN_EMAILS = new Set([
 ]);
 const PREVIEW_PROJECT_ID = "4dbf593e-577e-4af4-a553-460441c34473";
 
-function isApprovedLovablePreviewHost(hostname: string): boolean {
-  const host = hostname.toLowerCase();
-  const suffix = `--${PREVIEW_PROJECT_ID}.lovable.app`;
-  if (!host.endsWith(suffix)) return false;
+export function isApprovedLovablePreviewHost(hostname: string): boolean {
+  const host = hostname.trim().toLowerCase();
+  if (!host) return false;
 
-  const prefix = host.slice(0, -suffix.length);
-  // Lovable currently uses both:
-  //   id-preview--<project>.lovable.app
-  //   id-preview-<preview-id>--<project>.lovable.app
-  // Keep this project-scoped and never match the published production hostname.
-  return /^id-preview(?:-[a-z0-9-]+)?$/.test(prefix);
+  // Current Lovable editor Preview host:
+  //   <project-id>.lovableproject.com
+  // Some preview sessions may prepend an isolated preview token:
+  //   <preview-token>--<project-id>.lovableproject.com
+  const lovableProjectHost = `${PREVIEW_PROJECT_ID}.lovableproject.com`;
+  if (host === lovableProjectHost) return true;
+
+  const lovableProjectSuffix = `--${lovableProjectHost}`;
+  if (host.endsWith(lovableProjectSuffix)) {
+    const prefix = host.slice(0, -lovableProjectSuffix.length);
+    if (/^[a-z0-9][a-z0-9-]*$/.test(prefix)) return true;
+  }
+
+  // Older Lovable isolated identity-preview hosts:
+  //   id-preview--<project-id>.lovable.app
+  //   id-preview-<preview-id>--<project-id>.lovable.app
+  const lovableAppSuffix = `--${PREVIEW_PROJECT_ID}.lovable.app`;
+  if (host.endsWith(lovableAppSuffix)) {
+    const prefix = host.slice(0, -lovableAppSuffix.length);
+    if (/^id-preview(?:-[a-z0-9-]+)?$/.test(prefix)) return true;
+  }
+
+  // Important: the published app hostname (for example
+  // console-chat-hub.lovable.app) never matches either project-scoped rule.
+  return false;
 }
 
 /**
  * FRONTEND ACCEPTANCE ONLY.
  *
  * The canonical production authority remains company_membership. This bridge is
- * intentionally reachable only on Lovable's isolated id-preview hostname (or
- * localhost) and only for explicitly named UAT admin accounts. It never writes
+ * intentionally reachable only on this project's Lovable editor Preview hosts
+ * (or localhost) and only for explicitly named UAT admin accounts. It never writes
  * company/company_membership and never changes server-side RBAC/RLS.
  *
  * Product-ready integration must provide the real SU Platform company UUID/int;
