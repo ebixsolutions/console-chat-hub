@@ -94,6 +94,16 @@ function latestByConversation(rows: any[]): Record<string, any> {
 function chooseEvaluation(canonical: any | null, local: any | null): any | null {
   if (!canonical) return local ? { ...local, evaluation_source: "conversation_local" } : null;
   if (!local) return { ...canonical, evaluation_source: "canonical" };
+
+  // Task 3 canonical rebinding: once the local record maps to this canonical
+  // evaluation, canonical is authoritative regardless of created_at ordering.
+  if (
+    local.canonical_evaluation_id &&
+    String(local.canonical_evaluation_id) === String(canonical.id)
+  ) {
+    return { ...canonical, evaluation_source: "canonical" };
+  }
+
   const c = Date.parse(String(canonical.created_at ?? "")) || 0;
   const l = Date.parse(String(local.created_at ?? "")) || 0;
   return l > c
@@ -176,7 +186,7 @@ export const listConversationsForCeFn = createServerFn({ method: "GET" })
         (from, to) =>
           loose
             .from("conversation_evaluation")
-            .select("id, conversation_id, overall_score, severity, review_status, created_at")
+            .select("id, conversation_id, canonical_evaluation_id, overall_score, severity, review_status, created_at")
             .in("conversation_id", ids)
             .order("created_at", { ascending: false })
             .range(from, to),
@@ -458,6 +468,49 @@ export const getCeConversationDetailFn = createServerFn({ method: "GET" })
             .maybeSingle();
           if (snapErr) return { ok: false, error: `ce_bundle_snapshot: ${snapErr.message}` };
           snapshot = snap;
+        }
+
+        // Task 3: manual QA / Root Cause work performed before canonical
+        // activation remains visible after the evaluation is rebound.
+        const { data: localMap, error: mapErr } = await loose
+          .from("ce_local_canonical_map")
+          .select("local_evaluation_id")
+          .eq("canonical_evaluation_id", evaluationId)
+          .maybeSingle();
+        if (mapErr) return { ok: false, error: `ce_local_canonical_map: ${mapErr.message}` };
+        if (localMap?.local_evaluation_id) {
+          const [mappedRoot, mappedQa] = await Promise.all([
+            loose
+              .from("ce_local_root_cause")
+              .select("*")
+              .eq("evaluation_id", localMap.local_evaluation_id)
+              .order("created_at", { ascending: false }),
+            loose
+              .from("ce_local_qa_case")
+              .select("*")
+              .eq("evaluation_id", localMap.local_evaluation_id)
+              .order("created_at", { ascending: false }),
+          ]);
+          if (mappedRoot.error) {
+            return { ok: false, error: `ce_local_root_cause: ${mappedRoot.error.message}` };
+          }
+          if (mappedQa.error) {
+            return { ok: false, error: `ce_local_qa_case: ${mappedQa.error.message}` };
+          }
+          rootCauses = [
+            ...rootCauses,
+            ...(mappedRoot.data ?? []).map((r: any) => ({
+              ...r,
+              remote_sync_state: r.remote_sync_state ?? "canonical_mapped",
+            })),
+          ];
+          qaCases = [
+            ...qaCases,
+            ...(mappedQa.data ?? []).map((q: any) => ({
+              ...q,
+              remote_sync_state: q.remote_sync_state ?? "canonical_mapped",
+            })),
+          ];
         }
       }
     }

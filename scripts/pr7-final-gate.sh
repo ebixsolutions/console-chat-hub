@@ -601,6 +601,14 @@ else
   fail=1
 fi
 
+echo "== PR20 TASK3 CANONICAL REBINDING / FINAL PRODUCT-READY =="
+if bash scripts/pr20-task3-canonical-rebinding-source-gate.sh; then
+  echo "PASS PR20 Task3 canonical rebinding source"
+else
+  echo "FAIL PR20 Task3 canonical rebinding source"
+  fail=1
+fi
+
 echo "== BUILD =="
 if npm run build; then echo "PASS npm run build"; else echo "FAIL npm run build"; fail=1; fi
 if [ "$fail" -ne 0 ]; then echo "FINAL STATUS: FAIL"; exit 1; fi

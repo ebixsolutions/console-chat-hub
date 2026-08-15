@@ -109,6 +109,9 @@ bash scripts/pr18-task1-conversation-first-evaluation-source-gate.sh || stop "PR
 echo "== PR19 TASK2 FULL CE DETAIL WORKFLOW SOURCE =="
 bash scripts/pr19-task2-full-ce-detail-workflow-source-gate.sh || stop "PR19 Task2 source contract failed"
 
+echo "== PR20 TASK3 CANONICAL REBINDING SOURCE =="
+bash scripts/pr20-task3-canonical-rebinding-source-gate.sh || stop "PR20 Task3 source contract failed"
+
 echo "== PRODUCTION RUNTIME CONFIG CONTRACT =="
 bash scripts/pr7-production-runtime-config-gate.sh || stop "production runtime configuration incomplete"
 
@@ -273,9 +276,11 @@ SQL_FORWARD=(
   "sql/pr7/pr7_tenant_ownership_consistency.sql"
   "sql/pr7/pr7_widget_theme_contract.sql"
   "sql/pr7/pr7_widget_theme_default_modern.sql"
-  "sql/pr13/pr13_widget_launcher_icon.sql"\n  "sql/pr15/pr15_widget_attachment.sql"
+  "sql/pr13/pr13_widget_launcher_icon.sql"
+  "sql/pr15/pr15_widget_attachment.sql"
   "sql/pr18/pr18_ce_conversation_first_local_scope.sql"
   "sql/pr19/pr19_ce_local_detail_workflow.sql"
+  "sql/pr20/pr20_ce_canonical_rebinding.sql"
   "sql/pr7/pr7_customer360_coach_sync_state.sql"
   "sql/pr7/pr7_feedback_config_tenant_scope.sql"
   "sql/pr7/pr7_agent_management_tenant_isolation.sql"
@@ -295,9 +300,11 @@ SQL_ROLLBACK_FOR_FORWARD=(
   "sql/pr7/pr7_tenant_ownership_consistency.rollback.sql"
   "sql/pr7/pr7_widget_theme_contract.rollback.sql"
   "sql/pr7/pr7_widget_theme_default_modern.rollback.sql"
-  "sql/pr13/pr13_widget_launcher_icon.rollback.sql"\n  "sql/pr15/pr15_widget_attachment.rollback.sql"
+  "sql/pr13/pr13_widget_launcher_icon.rollback.sql"
+  "sql/pr15/pr15_widget_attachment.rollback.sql"
   "sql/pr18/pr18_ce_conversation_first_local_scope.rollback.sql"
   "sql/pr19/pr19_ce_local_detail_workflow.rollback.sql"
+  "sql/pr20/pr20_ce_canonical_rebinding.rollback.sql"
   "sql/pr7/pr7_customer360_coach_sync_state.rollback.sql"
   "sql/pr7/pr7_feedback_config_tenant_scope.rollback.sql"
   "sql/pr7/pr7_agent_management_tenant_isolation.rollback.sql"
@@ -466,7 +473,21 @@ for fn in "${FUNCTIONS[@]}"; do
   functions_deployed+=("$fn")
 done
 
-echo "== PRODUCTION FINAL GATE =="
-bash scripts/pr7-production-final-gate.sh || { rollback_all; fail "production final-gate failed; rollback attempted"; }
+echo "== PRODUCTION FINAL GATE (PRE-REBIND) =="
+export PR20_DEFER_FINAL_READY="YES"
+bash scripts/pr7-production-final-gate.sh || {
+  unset PR20_DEFER_FINAL_READY
+  rollback_all
+  fail "production final-gate failed before CE rebinding; rollback attempted"
+}
+unset PR20_DEFER_FINAL_READY
+
+echo "== PR20 ATOMIC LOCAL → CANONICAL CE REBIND =="
+# This is intentionally the last fallible production operation. The script
+# performs migration + outbox + tenant/RLS assertions inside one DB transaction.
+bash scripts/pr20-ce-local-to-canonical-migrate.sh || {
+  rollback_all
+  fail "PR20 CE canonical rebinding failed; migration transaction rolled back"
+}
 
 echo "FINAL STATUS: READY"

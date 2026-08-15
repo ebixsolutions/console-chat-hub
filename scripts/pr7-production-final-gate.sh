@@ -365,4 +365,8 @@ bash scripts/pr18-task1-conversation-first-evaluation-source-gate.sh || stop "PR
 echo "== PR19 TASK2 FULL CE DETAIL WORKFLOW RECHECK =="
 bash scripts/pr19-task2-full-ce-detail-workflow-source-gate.sh || stop "PR19 Task2 source contract failed"
 
-echo "FINAL STATUS: READY"
+if [ "${PR20_DEFER_FINAL_READY:-}" = "YES" ]; then
+  echo "FINAL STATUS: PRE-REBIND GATES PASS"
+else
+  echo "FINAL STATUS: READY"
+fi
