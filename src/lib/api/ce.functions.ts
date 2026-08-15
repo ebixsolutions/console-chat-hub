@@ -111,6 +111,59 @@ function chooseEvaluation(canonical: any | null, local: any | null): any | null 
     : { ...canonical, evaluation_source: "canonical" };
 }
 
+
+const SU_COACH_REVIEW_THRESHOLD = 75;
+
+type ReviewFindingFlags = {
+  hallucination: boolean;
+  policy: boolean;
+};
+
+type ReviewTriggerResult = {
+  needsReview: boolean;
+  reasons: string[];
+};
+
+function suCoachReviewTrigger(args: {
+  reviewStatus: string | null | undefined;
+  overallScore: number | null | undefined;
+  conversationStatus: string | null | undefined;
+  findings: ReviewFindingFlags;
+}): ReviewTriggerResult {
+  if (String(args.reviewStatus ?? "pending") !== "pending") {
+    return { needsReview: false, reasons: [] };
+  }
+
+  const reasons: string[] = [];
+  const score = Number(args.overallScore);
+  if (Number.isFinite(score) && score < SU_COACH_REVIEW_THRESHOLD) {
+    reasons.push("score_below_75");
+  }
+  if (args.findings.hallucination) reasons.push("hallucination_detected");
+  if (args.findings.policy) reasons.push("policy_conflict_detected");
+
+  // SU Coach source used Pending/Escalated. In AI Chatbot the frozen handoff
+  // lifecycle represents human-review/escalation control with status=pending.
+  if (String(args.conversationStatus ?? "").toLowerCase() === "pending") {
+    reasons.push("conversation_pending");
+  }
+
+  return { needsReview: reasons.length > 0, reasons };
+}
+
+function addFinding(
+  map: Record<string, ReviewFindingFlags>,
+  evaluationId: unknown,
+  dimension: unknown,
+): void {
+  const id = String(evaluationId ?? "");
+  if (!id) return;
+  const d = String(dimension ?? "").toLowerCase();
+  const flags = (map[id] ??= { hallucination: false, policy: false });
+  if (d === "hallucination") flags.hallucination = true;
+  if (d === "policy") flags.policy = true;
+}
+
 export interface CeConversationRow {
   conversation_id: string;
   conversation_status: string;
@@ -126,6 +179,7 @@ export interface CeConversationRow {
   review_status: string | null;
   evaluated_at: string | null;
   needs_review: boolean;
+  needs_review_reasons: string[];
   evaluation_available: boolean;
   evaluation_unavailable_reason: string | null;
   evaluation_source?: "canonical" | "conversation_local" | null;
@@ -230,22 +284,40 @@ export const listConversationsForCeFn = createServerFn({ method: "GET" })
     const localMap = latestByConversation(localRows);
 
     const canonicalEvalIds = Object.values(canonicalMap).map((ev: any) => String(ev.id));
-    const canonicalNeedsReview: Record<string, boolean> = {};
+    const localEvalIds = Object.values(localMap).map((ev: any) => String(ev.id));
+    const canonicalFindings: Record<string, ReviewFindingFlags> = {};
+    const localFindings: Record<string, ReviewFindingFlags> = {};
+
     for (const ids of chunk(canonicalEvalIds)) {
       if (ids.length === 0) continue;
       const result = await fetchAllPages(
         (from, to) =>
           loose
-            .from("ce_conversation_status_v")
-            .select("evaluation_id, needs_review")
+            .from("ce_discrepancy")
+            .select("evaluation_id, dimension")
             .in("evaluation_id", ids)
+            .in("dimension", ["hallucination", "policy"])
             .range(from, to),
-        "ce_conversation_status_v",
+        "ce_discrepancy_review_findings",
       );
       if (!result.ok) return { ok: false, error: result.error };
-      for (const row of result.rows) {
-        canonicalNeedsReview[String(row.evaluation_id)] = Boolean(row.needs_review);
-      }
+      for (const row of result.rows) addFinding(canonicalFindings, row.evaluation_id, row.dimension);
+    }
+
+    for (const ids of chunk(localEvalIds)) {
+      if (ids.length === 0) continue;
+      const result = await fetchAllPages(
+        (from, to) =>
+          loose
+            .from("ce_local_discrepancy")
+            .select("evaluation_id, dimension")
+            .in("evaluation_id", ids)
+            .in("dimension", ["hallucination", "policy"])
+            .range(from, to),
+        "ce_local_discrepancy_review_findings",
+      );
+      if (!result.ok) return { ok: false, error: result.error };
+      for (const row of result.rows) addFinding(localFindings, row.evaluation_id, row.dimension);
     }
 
     const rows: CeConversationRow[] = convRows.map((c) => {
@@ -255,14 +327,18 @@ export const listConversationsForCeFn = createServerFn({ method: "GET" })
       const readiness = readinessForMessages(messages);
       const latest = chooseEvaluation(canonicalMap[cid] ?? null, localMap[cid] ?? null);
       const source = latest?.evaluation_source ?? null;
-      const needsReview =
-        !latest
-          ? false
-          : source === "canonical"
-            ? Boolean(canonicalNeedsReview[String(latest.id)])
-            : String(latest.review_status ?? "pending") === "pending" &&
-              (["critical", "high"].includes(String(latest.severity)) ||
-                Number(latest.overall_score) < 70);
+      const reviewTrigger = latest
+        ? suCoachReviewTrigger({
+            reviewStatus: latest.review_status,
+            overallScore: latest.overall_score,
+            conversationStatus: c.status,
+            findings:
+              source === "canonical"
+                ? (canonicalFindings[String(latest.id)] ?? { hallucination: false, policy: false })
+                : (localFindings[String(latest.id)] ?? { hallucination: false, policy: false }),
+          })
+        : { needsReview: false, reasons: [] };
+      const needsReview = reviewTrigger.needsReview;
       const previewMessage = messages[0];
 
       return {
@@ -288,6 +364,7 @@ export const listConversationsForCeFn = createServerFn({ method: "GET" })
         review_status: latest?.review_status ?? null,
         evaluated_at: latest?.created_at ?? null,
         needs_review: needsReview,
+        needs_review_reasons: reviewTrigger.reasons,
         evaluation_available: readiness.available,
         evaluation_unavailable_reason: readiness.reason,
         evaluation_source: source,
@@ -579,14 +656,87 @@ export const listCeEvaluationsFn = createServerFn({ method: "GET" })
       ...(canonical ?? []).map((r: any) => ({ ...r, evaluation_source: "canonical" })),
       ...(local ?? []).map((r: any) => ({ ...r, evaluation_source: "conversation_local" })),
     ].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+
+    const conversationIds = [...new Set(rows.map((r: any) => String(r.conversation_id)))];
+    const conversationStatus: Record<string, string> = {};
+    for (const ids of chunk(conversationIds)) {
+      if (ids.length === 0) continue;
+      const result = await fetchAllPages(
+        (from, to) =>
+          loose
+            .from("conversations")
+            .select("id, status")
+            .in("id", ids)
+            .range(from, to),
+        "ce_review_conversation_status",
+      );
+      if (!result.ok) return { ok: false, error: result.error };
+      for (const row of result.rows) conversationStatus[String(row.id)] = String(row.status);
+    }
+
+    const canonicalIds = rows
+      .filter((r: any) => r.evaluation_source === "canonical")
+      .map((r: any) => String(r.id));
+    const localIds = rows
+      .filter((r: any) => r.evaluation_source === "conversation_local")
+      .map((r: any) => String(r.id));
+    const canonicalFindings: Record<string, ReviewFindingFlags> = {};
+    const localFindings: Record<string, ReviewFindingFlags> = {};
+
+    for (const ids of chunk(canonicalIds)) {
+      if (ids.length === 0) continue;
+      const result = await fetchAllPages(
+        (from, to) =>
+          loose
+            .from("ce_discrepancy")
+            .select("evaluation_id, dimension")
+            .in("evaluation_id", ids)
+            .in("dimension", ["hallucination", "policy"])
+            .range(from, to),
+        "ce_discrepancy_review_findings",
+      );
+      if (!result.ok) return { ok: false, error: result.error };
+      for (const row of result.rows) addFinding(canonicalFindings, row.evaluation_id, row.dimension);
+    }
+
+    for (const ids of chunk(localIds)) {
+      if (ids.length === 0) continue;
+      const result = await fetchAllPages(
+        (from, to) =>
+          loose
+            .from("ce_local_discrepancy")
+            .select("evaluation_id, dimension")
+            .in("evaluation_id", ids)
+            .in("dimension", ["hallucination", "policy"])
+            .range(from, to),
+        "ce_local_discrepancy_review_findings",
+      );
+      if (!result.ok) return { ok: false, error: result.error };
+      for (const row of result.rows) addFinding(localFindings, row.evaluation_id, row.dimension);
+    }
+
+    rows = rows.map((r: any) => {
+      const source = String(r.evaluation_source);
+      const trigger = suCoachReviewTrigger({
+        reviewStatus: r.review_status,
+        overallScore: r.overall_score,
+        conversationStatus: conversationStatus[String(r.conversation_id)] ?? null,
+        findings:
+          source === "canonical"
+            ? (canonicalFindings[String(r.id)] ?? { hallucination: false, policy: false })
+            : (localFindings[String(r.id)] ?? { hallucination: false, policy: false }),
+      });
+      return {
+        ...r,
+        needs_review: trigger.needsReview,
+        needs_review_reasons: trigger.reasons,
+      };
+    });
+
     if (data.severity) rows = rows.filter((r) => r.severity === data.severity);
     if (data.search) rows = rows.filter((r) => String(r.conversation_id).includes(data.search!));
     if (data.tab === "needs_review") {
-      rows = rows.filter(
-        (r) =>
-          String(r.review_status ?? "pending") === "pending" &&
-          (["critical", "high"].includes(String(r.severity)) || Number(r.overall_score) < 70),
-      );
+      rows = rows.filter((r) => r.needs_review);
     } else if (data.tab !== "all") {
       rows = rows.filter((r) => r.evaluation_source === "canonical");
     }
