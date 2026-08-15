@@ -61,6 +61,9 @@ bash scripts/pr9-singapore-kb-authenticated-runtime-source-gate.sh || stop "Sing
 echo "== TWO-TENANT SECURITY SOURCE CONTRACT =="
 bash scripts/pr10-two-tenant-security-source-gate.sh || stop "two-tenant security source contract failed"
 
+echo "== CROSS-TENANT EDGE/API SOURCE CONTRACT =="
+bash scripts/pr10-cross-tenant-edge-api-source-gate.sh || stop "cross-tenant Edge/API source contract failed"
+
 echo "== PRODUCTION RUNTIME CONFIG CONTRACT =="
 bash scripts/pr7-production-runtime-config-gate.sh || stop "production runtime configuration incomplete"
 

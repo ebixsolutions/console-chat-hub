@@ -33,6 +33,9 @@ bash scripts/pr9-singapore-kb-authenticated-runtime-smoke.sh || stop "Singapore 
 echo "== TWO-TENANT SECURITY RUNTIME =="
 bash scripts/pr10-two-tenant-security-runtime-smoke.sh || stop "two-tenant security runtime failed"
 
+echo "== CROSS-TENANT EDGE/API RUNTIME =="
+bash scripts/pr10-cross-tenant-edge-api-runtime-smoke.sh || stop "cross-tenant Edge/API runtime failed"
+
 echo "== PRODUCTION ATOMIC ROLLBACK SOURCE CONTRACT =="
 bash scripts/pr7-production-atomic-rollback-source-gate.sh || stop "production rollback source contract failed"
 

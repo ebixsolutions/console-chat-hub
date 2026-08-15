@@ -72,6 +72,8 @@ for f in \
   scripts/pr9-singapore-kb-authenticated-runtime-source-gate.sh \
   scripts/pr10-two-tenant-security-runtime-smoke.sh \
   scripts/pr10-two-tenant-security-source-gate.sh \
+  scripts/pr10-cross-tenant-edge-api-runtime-smoke.sh \
+  scripts/pr10-cross-tenant-edge-api-source-gate.sh \
   scripts/pr7-console-role-runtime-acceptance.sh \
   src/routes/_authenticated/console.feedback-responses.tsx \
   src/routes/_authenticated/console.agent-settings.tsx \
@@ -442,6 +444,14 @@ if bash scripts/pr10-two-tenant-security-source-gate.sh; then
   echo "PASS two-tenant security source contract"
 else
   echo "FAIL two-tenant security source contract"
+  fail=1
+fi
+
+echo "== CROSS-TENANT EDGE/API SOURCE GATE =="
+if bash scripts/pr10-cross-tenant-edge-api-source-gate.sh; then
+  echo "PASS cross-tenant Edge/API source contract"
+else
+  echo "FAIL cross-tenant Edge/API source contract"
   fail=1
 fi
 
