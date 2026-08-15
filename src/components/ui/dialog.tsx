@@ -6,7 +6,52 @@ import { X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
-const Dialog = DialogPrimitive.Root;
+/**
+ * React 19 / Radix Presence guard.
+ *
+ * Radix Dialog's Portal/Content subtree uses @radix-ui/react-presence.
+ * With the currently pinned Radix generation, a closed Content subtree can
+ * enter a nested update loop in React 19. Keep Root mounted (so Trigger and
+ * focus semantics remain intact) but do not mount Portal/Content until this
+ * Dialog instance is actually open.
+ *
+ * Supports both controlled and uncontrolled Radix Root semantics.
+ */
+const DialogOpenContext = React.createContext(false);
+
+type DialogProps = React.ComponentPropsWithoutRef<typeof DialogPrimitive.Root>;
+
+function Dialog({
+  open,
+  defaultOpen,
+  onOpenChange,
+  children,
+  ...props
+}: DialogProps) {
+  const controlled = open !== undefined;
+  const [internalOpen, setInternalOpen] = React.useState(defaultOpen ?? false);
+  const resolvedOpen = controlled ? Boolean(open) : internalOpen;
+
+  const handleOpenChange = React.useCallback(
+    (nextOpen: boolean) => {
+      if (!controlled) setInternalOpen(nextOpen);
+      onOpenChange?.(nextOpen);
+    },
+    [controlled, onOpenChange],
+  );
+
+  return (
+    <DialogOpenContext.Provider value={resolvedOpen}>
+      <DialogPrimitive.Root
+        {...props}
+        open={resolvedOpen}
+        onOpenChange={handleOpenChange}
+      >
+        {children}
+      </DialogPrimitive.Root>
+    </DialogOpenContext.Provider>
+  );
+}
 
 const DialogTrigger = DialogPrimitive.Trigger;
 
@@ -32,25 +77,34 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, ...props }, ref) => (
-  <DialogPortal>
-    <DialogOverlay />
-    <DialogPrimitive.Content
-      ref={ref}
-      className={cn(
-        "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 sm:rounded-lg",
-        className,
-      )}
-      {...props}
-    >
-      {children}
-      <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background cursor-pointer transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground">
-        <X className="h-4 w-4" />
-        <span className="sr-only">Close</span>
-      </DialogPrimitive.Close>
-    </DialogPrimitive.Content>
-  </DialogPortal>
-));
+>(({ className, children, ...props }, ref) => {
+  const open = React.useContext(DialogOpenContext);
+
+  // Critical runtime guard: a closed Dialog must not instantiate Radix
+  // Portal/Presence/Content. This removes the React 19 nested-update loop while
+  // keeping Root + Trigger mounted and functional.
+  if (!open) return null;
+
+  return (
+    <DialogPortal>
+      <DialogOverlay />
+      <DialogPrimitive.Content
+        ref={ref}
+        className={cn(
+          "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 sm:rounded-lg",
+          className,
+        )}
+        {...props}
+      >
+        {children}
+        <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background cursor-pointer transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground">
+          <X className="h-4 w-4" />
+          <span className="sr-only">Close</span>
+        </DialogPrimitive.Close>
+      </DialogPrimitive.Content>
+    </DialogPortal>
+  );
+});
 DialogContent.displayName = DialogPrimitive.Content.displayName;
 
 const DialogHeader = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
