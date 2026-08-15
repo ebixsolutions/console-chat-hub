@@ -186,7 +186,7 @@ export const listConversationsForCeFn = createServerFn({ method: "GET" })
         (from, to) =>
           loose
             .from("conversation_evaluation")
-            .select("id, conversation_id, canonical_evaluation_id, overall_score, severity, review_status, created_at")
+            .select("id, conversation_id, overall_score, severity, review_status, created_at")
             .in("conversation_id", ids)
             .order("created_at", { ascending: false })
             .range(from, to),
@@ -199,7 +199,7 @@ export const listConversationsForCeFn = createServerFn({ method: "GET" })
         (from, to) =>
           loose
             .from("ce_local_evaluation")
-            .select("id, conversation_id, overall_score, severity, review_status, created_at")
+            .select("id, conversation_id, canonical_evaluation_id, overall_score, severity, review_status, created_at")
             .in("conversation_id", ids)
             .order("created_at", { ascending: false })
             .range(from, to),

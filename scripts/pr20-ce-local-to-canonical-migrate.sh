@@ -65,6 +65,19 @@ SELECT public.rebind_local_evaluations_v1(
   :'run'::uuid
 );
 
+DO $$
+DECLARE v_result jsonb;
+BEGIN
+  SELECT public.finalize_local_evaluation_tenant_scope_v1(
+    :'cid'::uuid,
+    :'actor'::uuid
+  ) INTO v_result;
+  IF coalesce(v_result->>'result','') <> 'success' THEN
+    RAISE EXCEPTION 'PR20 local tenant-scope finalization failed: %',
+      coalesce(v_result->>'result','unknown');
+  END IF;
+END $$;
+
 -- Fire the canonical outbox constraint triggers now, while the transaction can
 -- still be rolled back if any lineage assertion fails.
 SET CONSTRAINTS ALL IMMEDIATE;

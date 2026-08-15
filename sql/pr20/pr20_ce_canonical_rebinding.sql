@@ -28,170 +28,151 @@ CREATE TABLE IF NOT EXISTS public.ce_local_canonical_map (
 
 ALTER TABLE public.ce_local_canonical_map ENABLE ROW LEVEL SECURITY;
 
--- After canonical activation, historical local CE data becomes company scoped.
-DROP POLICY IF EXISTS ce_local_evaluation_attempt_staff_read ON public.ce_local_evaluation_attempt;
-DROP POLICY IF EXISTS ce_local_evaluation_staff_read ON public.ce_local_evaluation;
-DROP POLICY IF EXISTS ce_local_evaluation_detail_staff_read ON public.ce_local_evaluation_detail;
-DROP POLICY IF EXISTS ce_local_bundle_snapshot_staff_read ON public.ce_local_bundle_snapshot;
-DROP POLICY IF EXISTS ce_local_emotion_point_staff_read ON public.ce_local_emotion_point;
-DROP POLICY IF EXISTS ce_local_next_step_staff_read ON public.ce_local_next_step;
-DROP POLICY IF EXISTS ce_local_discrepancy_staff_read ON public.ce_local_discrepancy;
-DROP POLICY IF EXISTS ce_local_qa_case_staff_read ON public.ce_local_qa_case;
-DROP POLICY IF EXISTS ce_local_root_cause_staff_read ON public.ce_local_root_cause;
-DROP POLICY IF EXISTS ce_local_canonical_map_tenant_read ON public.ce_local_canonical_map;
+-- RLS and local-mutation authority are intentionally NOT changed at schema
+-- apply time. They are finalized only after successful canonical rebinding,
+-- inside the same final migration transaction, to avoid a deployment blackout
+-- while historical local rows still have company_id = NULL.
 
-CREATE POLICY ce_local_evaluation_tenant_read
-ON public.ce_local_evaluation
-FOR SELECT TO authenticated
-USING (
-  company_id IS NOT NULL
-  AND EXISTS (
-    SELECT 1 FROM public.company_membership cm
-    WHERE cm.company_id=ce_local_evaluation.company_id
-      AND cm.user_id=auth.uid()
-      AND cm.is_active
-  )
-);
+CREATE OR REPLACE FUNCTION public.finalize_local_evaluation_tenant_scope_v1(
+  p_company_id uuid,
+  p_actor_user_id uuid
+) RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path=''
+AS $$
+BEGIN
+  IF NOT EXISTS(
+    SELECT 1 FROM public.company_membership
+    WHERE company_id=p_company_id
+      AND user_id=p_actor_user_id
+      AND is_active
+      AND role::text IN ('admin','supervisor')
+  ) THEN
+    RETURN jsonb_build_object('result','actor_not_authorized');
+  END IF;
 
-CREATE POLICY ce_local_evaluation_attempt_tenant_read
-ON public.ce_local_evaluation_attempt
-FOR SELECT TO authenticated
-USING (
-  company_id IS NOT NULL
-  AND EXISTS (
-    SELECT 1 FROM public.company_membership cm
-    WHERE cm.company_id=ce_local_evaluation_attempt.company_id
-      AND cm.user_id=auth.uid()
-      AND cm.is_active
-  )
-);
+  IF EXISTS(
+    SELECT 1 FROM public.ce_local_evaluation
+    WHERE company_id IS DISTINCT FROM p_company_id
+       OR canonical_evaluation_id IS NULL
+  ) THEN
+    RETURN jsonb_build_object('result','rebind_incomplete');
+  END IF;
 
-CREATE POLICY ce_local_bundle_snapshot_tenant_read
-ON public.ce_local_bundle_snapshot
-FOR SELECT TO authenticated
-USING (
-  company_id IS NOT NULL
-  AND EXISTS (
-    SELECT 1 FROM public.company_membership cm
-    WHERE cm.company_id=ce_local_bundle_snapshot.company_id
-      AND cm.user_id=auth.uid()
-      AND cm.is_active
-  )
-);
+  EXECUTE 'DROP POLICY IF EXISTS ce_local_evaluation_attempt_staff_read ON public.ce_local_evaluation_attempt';
+  EXECUTE 'DROP POLICY IF EXISTS ce_local_evaluation_staff_read ON public.ce_local_evaluation';
+  EXECUTE 'DROP POLICY IF EXISTS ce_local_evaluation_detail_staff_read ON public.ce_local_evaluation_detail';
+  EXECUTE 'DROP POLICY IF EXISTS ce_local_bundle_snapshot_staff_read ON public.ce_local_bundle_snapshot';
+  EXECUTE 'DROP POLICY IF EXISTS ce_local_emotion_point_staff_read ON public.ce_local_emotion_point';
+  EXECUTE 'DROP POLICY IF EXISTS ce_local_next_step_staff_read ON public.ce_local_next_step';
+  EXECUTE 'DROP POLICY IF EXISTS ce_local_discrepancy_staff_read ON public.ce_local_discrepancy';
+  EXECUTE 'DROP POLICY IF EXISTS ce_local_qa_case_staff_read ON public.ce_local_qa_case';
+  EXECUTE 'DROP POLICY IF EXISTS ce_local_root_cause_staff_read ON public.ce_local_root_cause';
 
-CREATE POLICY ce_local_evaluation_detail_tenant_read
-ON public.ce_local_evaluation_detail
-FOR SELECT TO authenticated
-USING (
-  EXISTS (
-    SELECT 1
-    FROM public.ce_local_evaluation e
-    JOIN public.company_membership cm
-      ON cm.company_id=e.company_id
-     AND cm.user_id=auth.uid()
-     AND cm.is_active
-    WHERE e.id=ce_local_evaluation_detail.evaluation_id
-  )
-);
+  EXECUTE 'CREATE POLICY ce_local_evaluation_tenant_read ON public.ce_local_evaluation FOR SELECT TO authenticated USING (
+    company_id IS NOT NULL AND EXISTS (
+      SELECT 1 FROM public.company_membership cm
+      WHERE cm.company_id=ce_local_evaluation.company_id
+        AND cm.user_id=auth.uid() AND cm.is_active
+    )
+  )';
 
-CREATE POLICY ce_local_emotion_point_tenant_read
-ON public.ce_local_emotion_point
-FOR SELECT TO authenticated
-USING (
-  EXISTS (
-    SELECT 1
-    FROM public.ce_local_evaluation e
-    JOIN public.company_membership cm
-      ON cm.company_id=e.company_id
-     AND cm.user_id=auth.uid()
-     AND cm.is_active
-    WHERE e.id=ce_local_emotion_point.evaluation_id
-  )
-);
+  EXECUTE 'CREATE POLICY ce_local_evaluation_attempt_tenant_read ON public.ce_local_evaluation_attempt FOR SELECT TO authenticated USING (
+    company_id IS NOT NULL AND EXISTS (
+      SELECT 1 FROM public.company_membership cm
+      WHERE cm.company_id=ce_local_evaluation_attempt.company_id
+        AND cm.user_id=auth.uid() AND cm.is_active
+    )
+  )';
 
-CREATE POLICY ce_local_next_step_tenant_read
-ON public.ce_local_next_step
-FOR SELECT TO authenticated
-USING (
-  EXISTS (
-    SELECT 1
-    FROM public.ce_local_evaluation e
-    JOIN public.company_membership cm
-      ON cm.company_id=e.company_id
-     AND cm.user_id=auth.uid()
-     AND cm.is_active
-    WHERE e.id=ce_local_next_step.evaluation_id
-  )
-);
+  EXECUTE 'CREATE POLICY ce_local_bundle_snapshot_tenant_read ON public.ce_local_bundle_snapshot FOR SELECT TO authenticated USING (
+    company_id IS NOT NULL AND EXISTS (
+      SELECT 1 FROM public.company_membership cm
+      WHERE cm.company_id=ce_local_bundle_snapshot.company_id
+        AND cm.user_id=auth.uid() AND cm.is_active
+    )
+  )';
 
-CREATE POLICY ce_local_discrepancy_tenant_read
-ON public.ce_local_discrepancy
-FOR SELECT TO authenticated
-USING (
-  EXISTS (
-    SELECT 1
-    FROM public.ce_local_evaluation e
-    JOIN public.company_membership cm
-      ON cm.company_id=e.company_id
-     AND cm.user_id=auth.uid()
-     AND cm.is_active
-    WHERE e.id=ce_local_discrepancy.evaluation_id
-  )
-);
+  EXECUTE 'CREATE POLICY ce_local_evaluation_detail_tenant_read ON public.ce_local_evaluation_detail FOR SELECT TO authenticated USING (
+    EXISTS (
+      SELECT 1 FROM public.ce_local_evaluation e
+      JOIN public.company_membership cm
+        ON cm.company_id=e.company_id AND cm.user_id=auth.uid() AND cm.is_active
+      WHERE e.id=ce_local_evaluation_detail.evaluation_id
+    )
+  )';
 
-CREATE POLICY ce_local_qa_case_tenant_read
-ON public.ce_local_qa_case
-FOR SELECT TO authenticated
-USING (
-  EXISTS (
-    SELECT 1
-    FROM public.ce_local_evaluation e
-    JOIN public.company_membership cm
-      ON cm.company_id=e.company_id
-     AND cm.user_id=auth.uid()
-     AND cm.is_active
-    WHERE e.id=ce_local_qa_case.evaluation_id
-  )
-);
+  EXECUTE 'CREATE POLICY ce_local_emotion_point_tenant_read ON public.ce_local_emotion_point FOR SELECT TO authenticated USING (
+    EXISTS (
+      SELECT 1 FROM public.ce_local_evaluation e
+      JOIN public.company_membership cm
+        ON cm.company_id=e.company_id AND cm.user_id=auth.uid() AND cm.is_active
+      WHERE e.id=ce_local_emotion_point.evaluation_id
+    )
+  )';
 
-CREATE POLICY ce_local_root_cause_tenant_read
-ON public.ce_local_root_cause
-FOR SELECT TO authenticated
-USING (
-  EXISTS (
-    SELECT 1
-    FROM public.ce_local_evaluation e
-    JOIN public.company_membership cm
-      ON cm.company_id=e.company_id
-     AND cm.user_id=auth.uid()
-     AND cm.is_active
-    WHERE e.id=ce_local_root_cause.evaluation_id
-  )
-);
+  EXECUTE 'CREATE POLICY ce_local_next_step_tenant_read ON public.ce_local_next_step FOR SELECT TO authenticated USING (
+    EXISTS (
+      SELECT 1 FROM public.ce_local_evaluation e
+      JOIN public.company_membership cm
+        ON cm.company_id=e.company_id AND cm.user_id=auth.uid() AND cm.is_active
+      WHERE e.id=ce_local_next_step.evaluation_id
+    )
+  )';
 
-CREATE POLICY ce_local_canonical_map_tenant_read
-ON public.ce_local_canonical_map
-FOR SELECT TO authenticated
-USING (
-  EXISTS (
-    SELECT 1 FROM public.company_membership cm
-    WHERE cm.company_id=ce_local_canonical_map.company_id
-      AND cm.user_id=auth.uid()
-      AND cm.is_active
-  )
-);
+  EXECUTE 'CREATE POLICY ce_local_discrepancy_tenant_read ON public.ce_local_discrepancy FOR SELECT TO authenticated USING (
+    EXISTS (
+      SELECT 1 FROM public.ce_local_evaluation e
+      JOIN public.company_membership cm
+        ON cm.company_id=e.company_id AND cm.user_id=auth.uid() AND cm.is_active
+      WHERE e.id=ce_local_discrepancy.evaluation_id
+    )
+  )';
 
-GRANT SELECT ON public.ce_local_canonical_map TO authenticated;
-GRANT ALL ON public.ce_local_canonical_map TO service_role;
+  EXECUTE 'CREATE POLICY ce_local_qa_case_tenant_read ON public.ce_local_qa_case FOR SELECT TO authenticated USING (
+    EXISTS (
+      SELECT 1 FROM public.ce_local_evaluation e
+      JOIN public.company_membership cm
+        ON cm.company_id=e.company_id AND cm.user_id=auth.uid() AND cm.is_active
+      WHERE e.id=ce_local_qa_case.evaluation_id
+    )
+  )';
 
--- Once canonical activation completes, all user mutations must use canonical
--- evaluation IDs. Historical local records are read-only.
-REVOKE EXECUTE ON FUNCTION public.review_local_evaluation_v1(uuid,uuid,text,text)
-FROM authenticated;
-REVOKE EXECUTE ON FUNCTION public.ce_create_local_qa_case_v1(uuid,uuid,text,text,text)
-FROM authenticated;
-REVOKE EXECUTE ON FUNCTION public.ce_record_local_root_cause_v1(uuid,uuid,text,text,jsonb)
-FROM authenticated;
+  EXECUTE 'CREATE POLICY ce_local_root_cause_tenant_read ON public.ce_local_root_cause FOR SELECT TO authenticated USING (
+    EXISTS (
+      SELECT 1 FROM public.ce_local_evaluation e
+      JOIN public.company_membership cm
+        ON cm.company_id=e.company_id AND cm.user_id=auth.uid() AND cm.is_active
+      WHERE e.id=ce_local_root_cause.evaluation_id
+    )
+  )';
+
+  EXECUTE 'DROP POLICY IF EXISTS ce_local_canonical_map_tenant_read ON public.ce_local_canonical_map';
+  EXECUTE 'CREATE POLICY ce_local_canonical_map_tenant_read ON public.ce_local_canonical_map FOR SELECT TO authenticated USING (
+    EXISTS (
+      SELECT 1 FROM public.company_membership cm
+      WHERE cm.company_id=ce_local_canonical_map.company_id
+        AND cm.user_id=auth.uid() AND cm.is_active
+    )
+  )';
+
+  REVOKE EXECUTE ON FUNCTION public.review_local_evaluation_v1(uuid,uuid,text,text)
+    FROM authenticated;
+  REVOKE EXECUTE ON FUNCTION public.ce_create_local_qa_case_v1(uuid,uuid,text,text,text)
+    FROM authenticated;
+  REVOKE EXECUTE ON FUNCTION public.ce_record_local_root_cause_v1(uuid,uuid,text,text,jsonb)
+    FROM authenticated;
+
+  RETURN jsonb_build_object('result','success');
+END
+$$;
+
+ALTER FUNCTION public.finalize_local_evaluation_tenant_scope_v1(uuid,uuid) OWNER TO postgres;
+REVOKE ALL ON FUNCTION public.finalize_local_evaluation_tenant_scope_v1(uuid,uuid)
+FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.finalize_local_evaluation_tenant_scope_v1(uuid,uuid)
+TO service_role;
 
 CREATE OR REPLACE FUNCTION public.rebind_local_evaluations_v1(
   p_company_id uuid,
