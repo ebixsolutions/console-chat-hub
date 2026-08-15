@@ -48,6 +48,7 @@ has "$DEPLOY" 'scripts/pr7-company-membership-bootstrap.sh' "atomic deploy owns 
 has "$DEPLOY" 'scripts/pr7-channel-ownership-bootstrap.sh' "atomic deploy owns channel ownership binding"
 has "$DEPLOY" 'scripts/pr7-conversation-lineage-bootstrap.sh' "atomic deploy owns conversation lineage binding"
 has "$DEPLOY" 'scripts/pr7-production-final-gate.sh' "atomic deploy owns production final acceptance"
+has "scripts/pr7-production-runtime-config-gate.sh" 'two-tenant Singapore mappings missing or not distinct' "final integration runtime config supports two-tenant Singapore mappings"
 
 if [ "$fail" -ne 0 ]; then
   echo "TASK 11.2 FINAL PRODUCT-READY INTEGRATION SOURCE STATUS: FAIL"

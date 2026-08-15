@@ -76,6 +76,9 @@ bash scripts/pr11-whole-product-final-gate-source-gate.sh || stop "whole-product
 echo "== FINAL PRODUCT-READY INTEGRATION SOURCE CONTRACT =="
 bash scripts/pr11-final-product-ready-integration-source-gate.sh || stop "final Product-ready integration source contract failed"
 
+echo "== SINGAPORE KB PRODUCTION MAPPING COMPATIBILITY =="
+bash scripts/pr12-singapore-kb-production-mapping-source-gate.sh || stop "Singapore KB production mapping compatibility failed"
+
 echo "== PRODUCTION RUNTIME CONFIG CONTRACT =="
 bash scripts/pr7-production-runtime-config-gate.sh || stop "production runtime configuration incomplete"
 

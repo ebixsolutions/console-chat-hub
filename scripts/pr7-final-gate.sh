@@ -84,6 +84,8 @@ for f in \
   scripts/pr11-final-product-ready-integration-source-gate.sh \
   scripts/pr11-final-integration-source-lock.sh \
   scripts/pr11-final-integration-source-lock-source-gate.sh \
+  scripts/pr7-singapore-kb-tenant-mapping-gate.sh \
+  scripts/pr12-singapore-kb-production-mapping-source-gate.sh \
   scripts/pr7-console-role-runtime-acceptance.sh \
   src/routes/_authenticated/console.feedback-responses.tsx \
   src/routes/_authenticated/console.agent-settings.tsx \
@@ -494,6 +496,14 @@ if bash scripts/pr11-final-integration-source-lock-source-gate.sh; then
   echo "PASS final integration source drift lock contract"
 else
   echo "FAIL final integration source drift lock contract"
+  fail=1
+fi
+
+echo "== SINGAPORE KB PRODUCTION MAPPING COMPATIBILITY =="
+if bash scripts/pr12-singapore-kb-production-mapping-source-gate.sh; then
+  echo "PASS Singapore KB production mapping compatibility"
+else
+  echo "FAIL Singapore KB production mapping compatibility"
   fail=1
 fi
 

@@ -64,11 +64,40 @@ raw=os.environ["KB_SINGAPORE_TENANT_MAP_JSON"]
 try: obj=json.loads(raw)
 except Exception:
     print("STOP: KB_SINGAPORE_TENANT_MAP_JSON invalid JSON"); raise SystemExit(2)
-if not isinstance(obj,dict) or len(obj)!=1:
-    print("STOP: KB_SINGAPORE_TENANT_MAP_JSON must contain exactly one current production mapping"); raise SystemExit(2)
-k,v=next(iter(obj.items()))
-if not isinstance(k,str) or not k.strip() or not isinstance(v,str) or not v.strip() or k.strip()==v.strip():
-    print("STOP: Singapore KB mapping invalid"); raise SystemExit(2)
+if not isinstance(obj,dict) or not obj:
+    print("STOP: KB_SINGAPORE_TENANT_MAP_JSON must be a non-empty object"); raise SystemExit(2)
+import uuid
+canonical=os.environ.get("PR7_CANONICAL_COMPANY_UUID","").strip()
+try: canonical=str(uuid.UUID(canonical))
+except Exception:
+    print("STOP: PR7_CANONICAL_COMPANY_UUID invalid/missing for Singapore mapping"); raise SystemExit(2)
+normalized={}; reverse={}
+for k,v in obj.items():
+    try: nk=str(uuid.UUID(str(k).strip()))
+    except Exception:
+        print("STOP: Singapore KB mapping key must be canonical UUID"); raise SystemExit(2)
+    if str(k).strip().lower()!=nk:
+        print("STOP: Singapore KB mapping UUID key must use canonical lowercase form"); raise SystemExit(2)
+    if not isinstance(v,str) or not v.strip():
+        print("STOP: Singapore KB tenant value must be non-empty string"); raise SystemExit(2)
+    tenant=v.strip()
+    if tenant.lower()==nk.lower():
+        print("STOP: Singapore tenant id must not equal AI company UUID"); raise SystemExit(2)
+    if tenant in reverse and reverse[tenant]!=nk:
+        print("STOP: Singapore tenant id collision across AI companies"); raise SystemExit(2)
+    normalized[nk]=tenant; reverse[tenant]=nk
+if canonical not in normalized:
+    print("STOP: canonical company missing from Singapore mapping"); raise SystemExit(2)
+a=os.environ.get("PR10_TENANT_A_COMPANY_UUID","").strip()
+b=os.environ.get("PR10_TENANT_B_COMPANY_UUID","").strip()
+if bool(a)!=bool(b):
+    print("STOP: two-tenant mapping fixtures must be supplied together"); raise SystemExit(2)
+if a and b:
+    try: a=str(uuid.UUID(a)); b=str(uuid.UUID(b))
+    except Exception:
+        print("STOP: two-tenant mapping fixture UUID invalid"); raise SystemExit(2)
+    if a==b or a not in normalized or b not in normalized or normalized[a]==normalized[b]:
+        print("STOP: two-tenant Singapore mappings missing or not distinct"); raise SystemExit(2)
 print("PASS Singapore KB production mapping shape")
 ttl=os.environ.get("KB_SINGAPORE_JWT_TTL_SEC","300").strip()
 try: n=int(ttl)
