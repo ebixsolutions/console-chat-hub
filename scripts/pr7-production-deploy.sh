@@ -70,6 +70,9 @@ bash scripts/pr10-cross-tenant-mutation-write-source-gate.sh || stop "cross-tena
 echo "== WHOLE-PRODUCT FINAL-GATE SOURCE CONTRACT =="
 bash scripts/pr11-whole-product-final-gate-source-gate.sh || stop "whole-product final-gate source contract failed"
 
+echo "== FINAL PRODUCT-READY INTEGRATION SOURCE CONTRACT =="
+bash scripts/pr11-final-product-ready-integration-source-gate.sh || stop "final Product-ready integration source contract failed"
+
 echo "== PRODUCTION RUNTIME CONFIG CONTRACT =="
 bash scripts/pr7-production-runtime-config-gate.sh || stop "production runtime configuration incomplete"
 

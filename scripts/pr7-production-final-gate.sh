@@ -326,4 +326,7 @@ echo "PASS two-tenant RLS runtime smoke"
 echo "== CONSOLE CANONICAL ROLE RUNTIME ACCEPTANCE =="
 bash scripts/pr7-console-role-runtime-acceptance.sh || stop "Console canonical role runtime acceptance failed"
 
+echo "== PR11 CANONICAL ROLE / NO-ASSIGNED-ROLE CLOSURE =="
+bash scripts/pr11-canonical-role-acceptance.sh || stop "canonical role acceptance failed"
+
 echo "FINAL STATUS: READY"

@@ -78,6 +78,10 @@ for f in \
   scripts/pr10-cross-tenant-mutation-write-source-gate.sh \
   scripts/pr11-whole-product-final-gate.sh \
   scripts/pr11-whole-product-final-gate-source-gate.sh \
+  scripts/pr11-final-product-ready-integration-preflight.sh \
+  scripts/pr11-final-product-ready-integration-runner.sh \
+  scripts/pr11-canonical-role-acceptance.sh \
+  scripts/pr11-final-product-ready-integration-source-gate.sh \
   scripts/pr7-console-role-runtime-acceptance.sh \
   src/routes/_authenticated/console.feedback-responses.tsx \
   src/routes/_authenticated/console.agent-settings.tsx \
@@ -472,6 +476,14 @@ if bash scripts/pr11-whole-product-final-gate-source-gate.sh; then
   echo "PASS whole-product final-gate source contract"
 else
   echo "FAIL whole-product final-gate source contract"
+  fail=1
+fi
+
+echo "== FINAL PRODUCT-READY INTEGRATION SOURCE CONTRACT =="
+if bash scripts/pr11-final-product-ready-integration-source-gate.sh; then
+  echo "PASS final Product-ready integration source contract"
+else
+  echo "FAIL final Product-ready integration source contract"
   fail=1
 fi
 

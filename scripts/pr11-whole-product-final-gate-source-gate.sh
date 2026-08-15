@@ -43,7 +43,8 @@ for marker in \
   pr9-singapore-kb-authenticated-runtime-source-gate.sh \
   pr10-two-tenant-security-source-gate.sh \
   pr10-cross-tenant-edge-api-source-gate.sh \
-  pr10-cross-tenant-mutation-write-source-gate.sh
+  pr10-cross-tenant-mutation-write-source-gate.sh \
+  pr11-final-product-ready-integration-source-gate.sh
 do
   has "$SOURCE" "$marker" "source final gate includes $marker"
 done
