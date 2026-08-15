@@ -97,6 +97,9 @@ bash scripts/pr14-canonical-role-ui-preview-bridge-source-gate.sh || stop "PR14 
 echo "== PR15 WIDGET ACTIONS / ATTACHMENTS / HANDOFF SOURCE =="
 bash scripts/pr15-widget-actions-attachments-handoff-source-gate.sh || stop "PR15 Widget source contract failed"
 
+echo "== PR16 WIDGET NEW CHAT / EMOJI / MENU UX SOURCE =="
+bash scripts/pr16-widget-new-chat-emoji-menu-ux-source-gate.sh || stop "PR16 Widget UX source contract failed"
+
 echo "== PRODUCTION RUNTIME CONFIG CONTRACT =="
 bash scripts/pr7-production-runtime-config-gate.sh || stop "production runtime configuration incomplete"
 

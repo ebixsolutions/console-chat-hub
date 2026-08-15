@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Copy, MonitorDot, Plus, History, Image, Video, Paperclip, UserRound } from "lucide-react";
+import { Check, Copy, MonitorDot, Plus, History, Image, Video, Paperclip, UserRound, Smile } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -30,6 +30,8 @@ const LAUNCHER_ICONS: ReadonlyArray<{ value: WidgetLauncherIcon; symbol: string;
 ];
 
 const PRESET_COLORS = ["#6B5CE7", "#2563EB", "#0F766E", "#16A34A", "#EA580C", "#DC2626", "#111827"] as const;
+
+const PREVIEW_EMOJIS = ["😊","😂","🙏","👍","❤️","🎉","😅","😭","🔥","✅","👋","😍","🤔","😢","😎","🙌","💪","😁","🥰","🤩"] as const;
 
 const PREVIEW_DEFAULT: LiveWidgetConfigRow = {
   id: "preview-only",
@@ -413,8 +415,10 @@ function SimulatedWidget({
   const [input, setInput] = useState("");
   const [typing, setTyping] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [emojiOpen, setEmojiOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [history, setHistory] = useState<SimMsg[][]>([]);
+  const actionAreaRef = useRef<HTMLDivElement | null>(null);
   const [humanState, setHumanState] = useState<"none" | "waiting" | "assigned">("none");
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handoffTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -426,6 +430,29 @@ function SimulatedWidget({
     },
     [],
   );
+
+
+  useEffect(() => {
+    const closeOutside = (event: MouseEvent | PointerEvent) => {
+      const node = event.target;
+      if (node instanceof Node && actionAreaRef.current?.contains(node)) return;
+      setMenuOpen(false);
+      setEmojiOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setMenuOpen(false);
+      setEmojiOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    document.addEventListener("contextmenu", closeOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOutside);
+      document.removeEventListener("contextmenu", closeOutside);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, []);
 
   const requestHuman = () => {
     if (humanState !== "none") return;
@@ -506,13 +533,23 @@ function SimulatedWidget({
             type="button"
             onClick={() => {
               if (messages.length) setHistory((h) => [messages, ...h].slice(0, 10));
-              setMessages([]);
+              setMessages([{
+                id: `new-conversation-${Date.now()}`,
+                role: "assistant",
+                content: lang === "zh"
+                  ? "已開始新的模擬對話。Live Widget 會建立新的 visitor session / conversation。"
+                  : "New simulated conversation started. In the Live Widget this creates a new visitor session / conversation.",
+              }]);
+              setInput("");
+              setTyping(false);
               setHumanState("none");
               setHistoryOpen(false);
+              setMenuOpen(false);
+              setEmojiOpen(false);
             }}
             className="rounded p-2 opacity-70 hover:bg-black/5 hover:opacity-100"
             aria-label="New Conversation"
-            title="New Conversation"
+            title="New Conversation — Live creates a fresh visitor session / conversation"
           >
             +
           </button>
@@ -593,14 +630,25 @@ function SimulatedWidget({
           </div>
         )}
 
-        <div className="relative flex gap-2 rounded-xl border bg-white p-1">
+        <div ref={actionAreaRef} className="relative flex gap-2 rounded-xl border bg-white p-1">
           <button
             type="button"
-            onClick={() => setMenuOpen((v) => !v)}
+            onClick={() => { setEmojiOpen(false); setMenuOpen((v) => !v); }}
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border bg-white"
             aria-label="More actions"
+            title="More actions"
           >
             <Plus className="h-4 w-4" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => { setMenuOpen(false); setEmojiOpen((v) => !v); }}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white"
+            aria-label="Emoji"
+            title="Emoji"
+          >
+            <Smile className="h-4 w-4" />
           </button>
 
           {menuOpen && (
@@ -617,6 +665,22 @@ function SimulatedWidget({
               <button type="button" onClick={() => { setMenuOpen(false); requestHuman(); }} disabled={humanState !== "none"} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50 disabled:opacity-50">
                 <UserRound className="h-4 w-4" />Request Human Support
               </button>
+            </div>
+          )}
+
+          {emojiOpen && (
+            <div className="absolute bottom-12 left-10 z-20 grid w-64 grid-cols-8 gap-1 rounded-xl border bg-white p-2 shadow-xl">
+              {PREVIEW_EMOJIS.map((emoji) => (
+                <button
+                  key={emoji}
+                  type="button"
+                  onClick={() => { setInput((value) => `${value}${emoji}`); setEmojiOpen(false); }}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-base hover:bg-slate-100"
+                  aria-label={`Insert ${emoji}`}
+                >
+                  {emoji}
+                </button>
+              ))}
             </div>
           )}
 

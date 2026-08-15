@@ -353,4 +353,7 @@ bash scripts/pr14-canonical-role-ui-preview-bridge-source-gate.sh || stop "PR14 
 echo "== PR15 WIDGET ACTIONS / ATTACHMENTS / HANDOFF RECHECK =="
 bash scripts/pr15-widget-actions-attachments-handoff-source-gate.sh || stop "PR15 Widget source contract failed"
 
+echo "== PR16 WIDGET NEW CHAT / EMOJI / MENU UX RECHECK =="
+bash scripts/pr16-widget-new-chat-emoji-menu-ux-source-gate.sh || stop "PR16 Widget UX source contract failed"
+
 echo "FINAL STATUS: READY"

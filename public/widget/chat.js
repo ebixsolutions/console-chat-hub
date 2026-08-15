@@ -504,7 +504,7 @@
       "</div>" +
       '<div class="nx-header-actions">' +
       '<button id="nx-my-tickets-btn" class="nx-header-btn" title="Conversation History" type="button">\u2637</button>' +
-      '<button id="nx-new-conversation-btn" class="nx-header-btn" title="New Conversation" type="button">+</button>' +
+      '<button id="nx-new-conversation-btn" class="nx-header-btn" title="New Conversation — starts a fresh chat session" type="button">+</button>' +
       '<button id="nx-close-btn" class="nx-header-btn" title="Close" type="button">\u00d7</button>' +
       "</div>" +
       "</div>" +
@@ -540,7 +540,11 @@
       .addEventListener("click", showMyTickets);
     panel
       .querySelector("#nx-new-conversation-btn")
-      .addEventListener("click", resetAndFresh);
+      .addEventListener("click", function () {
+        closePlusMenu();
+        closeEmojiPanel();
+        resetAndFresh();
+      });
     sendBtn.addEventListener("click", handleSend);
 
     inputEl.addEventListener("keydown", function (e) {
@@ -568,6 +572,28 @@
     });
 
     document.addEventListener("click", function () {
+      closePlusMenu();
+      closeEmojiPanel();
+    });
+
+    document.addEventListener("contextmenu", function (e) {
+      var plusWrap = panel && panel.querySelector(".nx-plus-wrap");
+      var emojiButton = panel && panel.querySelector("#nx-emoji-btn");
+      var target = e.target;
+      if (
+        target &&
+        ((plusWrap && plusWrap.contains(target)) ||
+          (emojiButton && emojiButton.contains(target)) ||
+          (emojiPanelEl && emojiPanelEl.contains(target)))
+      ) {
+        return;
+      }
+      closePlusMenu();
+      closeEmojiPanel();
+    });
+
+    document.addEventListener("keydown", function (e) {
+      if (e.key !== "Escape") return;
       closePlusMenu();
       closeEmojiPanel();
     });
@@ -1857,7 +1883,7 @@
     .catch(function () {});
 
   console.log(
-    "[NexusAI widget] Shared runtime v1.5.0 loaded; modern assistant panel + classic popup; channel:",
+    "[NexusAI widget] Shared runtime v1.6.0 loaded; modern assistant panel + classic popup; channel:",
     channelId,
   );
 })();

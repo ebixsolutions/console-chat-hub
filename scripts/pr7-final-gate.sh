@@ -569,6 +569,14 @@ else
   fail=1
 fi
 
+echo "== PR16 WIDGET NEW CHAT / EMOJI / MENU UX =="
+if bash scripts/pr16-widget-new-chat-emoji-menu-ux-source-gate.sh; then
+  echo "PASS PR16 Widget New Chat / Emoji / Menu UX"
+else
+  echo "FAIL PR16 Widget New Chat / Emoji / Menu UX"
+  fail=1
+fi
+
 echo "== BUILD =="
 if npm run build; then echo "PASS npm run build"; else echo "FAIL npm run build"; fail=1; fi
 if [ "$fail" -ne 0 ]; then echo "FINAL STATUS: FAIL"; exit 1; fi
