@@ -332,12 +332,13 @@
   var style = document.createElement("style");
   style.textContent = [
     ".nx-root *{box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}",
-    ".nx-bubble{position:fixed;right:20px;bottom:20px;width:56px;height:56px;border-radius:9999px;border:none;color:#fff;font-size:25px;cursor:pointer;box-shadow:0 10px 25px rgba(0,0,0,.22);z-index:2147483646;display:flex;align-items:center;justify-content:center;transition:transform .15s ease,opacity .15s ease;background:#6B5CE7}",
+    ".nx-bubble{position:fixed;right:20px;bottom:max(20px,env(safe-area-inset-bottom));width:56px;height:56px;border-radius:9999px;border:none;color:#fff;font-size:25px;cursor:pointer;box-shadow:0 10px 25px rgba(0,0,0,.22);z-index:2147483646;display:flex;align-items:center;justify-content:center;transition:transform .15s ease,opacity .15s ease;background:#6B5CE7}",
     ".nx-bubble:hover{transform:scale(1.05)}",
     ".nx-panel{z-index:2147483647;display:flex;flex-direction:column;overflow:hidden;background:#fff}",
     ".nx-theme-classic .nx-panel{position:fixed;right:20px;bottom:88px;width:360px;height:560px;min-width:300px;min-height:400px;max-width:80vw;max-height:90vh;border-radius:14px;box-shadow:0 20px 50px rgba(0,0,0,.25);transform-origin:bottom right;animation:nxIn .18s ease-out}",
     "@keyframes nxIn{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}",
-    ".nx-theme-modern .nx-panel{position:fixed;top:0;right:0;bottom:0;height:100vh;width:var(--nx-panel-width,420px);min-width:340px;max-width:55vw;border-radius:0;border-left:1px solid #e6e6e6;box-shadow:none}",
+    ".nx-theme-modern .nx-panel{position:fixed;top:0;right:0;bottom:0;height:100dvh;width:var(--nx-panel-width,420px);min-width:340px;max-width:55vw;border-radius:0;border-left:1px solid #e6e6e6;box-shadow:-12px 0 32px rgba(15,23,42,.08);transform:translateX(100%);visibility:hidden;transition:transform .2s ease-out,visibility 0s linear .2s}",
+    ".nx-theme-modern .nx-panel.nx-open{transform:translateX(0);visibility:visible;transition:transform .2s ease-out}",
     ".nx-modern-divider{position:absolute;top:0;bottom:0;left:-4px;width:8px;cursor:ew-resize;z-index:2147483647;background:transparent}",
     ".nx-modern-divider:after{content:'';position:absolute;top:0;bottom:0;left:3px;width:1px;background:#e5e7eb;transition:background .15s}",
     ".nx-modern-divider:hover:after,.nx-modern-divider.dragging:after{background:#9ca3af}",
@@ -1554,24 +1555,31 @@
 
   function setPanelVisible(open) {
     if (!panel) return;
-    panel.style.display = open ? "flex" : "none";
     if (getTheme() === "modern") {
-      bubble.style.opacity = open ? "0" : "1";
-      bubble.style.pointerEvents = open ? "none" : "auto";
+      panel.style.display = "flex";
       if (open) {
         panel.style.setProperty("--nx-panel-width", modernWidth + "px");
         root.style.setProperty("--nx-panel-width", modernWidth + "px");
+        requestAnimationFrame(function () {
+          panel.classList.add("nx-open");
+        });
+      } else {
+        panel.classList.remove("nx-open");
       }
+      bubble.style.opacity = open ? "0" : "1";
+      bubble.style.pointerEvents = open ? "none" : "auto";
       applyHostSplit(open);
-    } else {
-      restoreHostSplit();
-      bubble.style.opacity = "1";
-      bubble.style.pointerEvents = "auto";
+      return;
     }
+
+    panel.style.display = open ? "flex" : "none";
+    restoreHostSplit();
+    bubble.style.opacity = "1";
+    bubble.style.pointerEvents = "auto";
   }
 
   function openPanel() {
-    if (panel && panel.style.display !== "none") return;
+    if (panel && (getTheme() === "modern" ? panel.classList.contains("nx-open") : panel.style.display !== "none")) return;
 
     var configPromise = config
       ? Promise.resolve()
@@ -1685,7 +1693,7 @@
   }
 
   bubble.addEventListener("click", function () {
-    if (panel && panel.style.display !== "none") closePanel();
+    if (panel && (getTheme() === "modern" ? panel.classList.contains("nx-open") : panel.style.display !== "none")) closePanel();
     else openPanel();
   });
 
@@ -1719,7 +1727,7 @@
     modernWidth = clampModernWidth(modernWidth);
     panel.style.setProperty("--nx-panel-width", modernWidth + "px");
     root.style.setProperty("--nx-panel-width", modernWidth + "px");
-    if (panel.style.display !== "none") applyHostSplit(true);
+    if (panel.classList.contains("nx-open")) applyHostSplit(true);
   });
 
   api(

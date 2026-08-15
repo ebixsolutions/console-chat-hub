@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, MonitorDot } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -47,7 +47,7 @@ const PREVIEW_DEFAULT: LiveWidgetConfigRow = {
 const COPY = {
   en: {
     denied: "You do not have permission to view widget preview.",
-    subtitle: "Configure Widget appearance safely. Preview messages are local simulation only.",
+    subtitle: "Configure appearance and test the Widget interaction flow. Live AI accuracy testing becomes available after canonical channel activation.",
     preview: "Preview",
     embed: "Embed Code",
     style: "Widget 1 / Widget 2",
@@ -59,17 +59,17 @@ const COPY = {
     save: "Save live settings",
     saving: "Saving…",
     saved: "Saved",
-    previewOnly: "Preview-only mode: canonical company/channel is not active yet. You can test style, color and bubble locally; live save and Embed Code remain disabled.",
-    liveBanner: "Live Widget settings loaded. Messages below are still simulated and are never sent to production.",
+    previewOnly: "UI Simulation mode: canonical company/channel is not active yet. You can test Widget 1 / 2, color, launcher and human-handoff UI locally. AI answer accuracy is not simulated; live save, Live AI Test and Embed Code remain disabled.",
+    liveBanner: "Live Widget settings loaded. Appearance preview remains isolated. Use the production Widget after activation for real AI / KB / human-handoff accuracy testing.",
     embedUnavailable: "Embed Code becomes available only after a canonical company and active Website Widget channel are configured.",
     noChannel: "No active Website Widget channel is currently available.",
     reply: "This is a simulated reply. Production replies use the live AI pipeline.",
     send: "Send",
-    launcherHint: "Click the bubble to open/close the simulated Widget.",
+    launcherHint: "The launcher is fixed to the viewport bottom-right and opens Widget 1 as a right-side Assistant bar.",
   },
   zh: {
     denied: "您沒有權限查看 Widget 預覽。",
-    subtitle: "安全設定 Widget 外觀；預覽訊息只在本機模擬，不會送到正式環境。",
+    subtitle: "設定 Widget 外觀並測試互動流程；完成 canonical channel 啟用後才進行真正 AI 準確度測試。",
     preview: "預覽",
     embed: "嵌入代碼",
     style: "Widget 1 / Widget 2",
@@ -81,13 +81,13 @@ const COPY = {
     save: "儲存正式設定",
     saving: "儲存中…",
     saved: "已儲存",
-    previewOnly: "Preview-only 模式：canonical company/channel 尚未啟用。現在可本機測試 Widget 樣式、顏色及 Bubble；正式儲存與 Embed Code 仍維持停用。",
-    liveBanner: "已讀取正式 Widget 設定；下方訊息仍只作模擬，絕不送到 Production。",
+    previewOnly: "UI Simulation 模式：canonical company/channel 尚未啟用。現在可本機測試 Widget 1 / 2、顏色、Bubble 與轉真人 UI；不會偽造 AI 準確度。Live AI Test、正式儲存與 Embed Code 維持停用。",
+    liveBanner: "已讀取正式 Widget 設定；外觀 Preview 仍保持隔離。完成啟用後請使用正式 Widget 測試真實 AI／KB／轉真人準確度。",
     embedUnavailable: "只有在 canonical company 及有效 Website Widget channel 完成設定後才會提供 Embed Code。",
     noChannel: "目前沒有可用的 Website Widget channel。",
     reply: "這是模擬回覆；正式回覆會使用實際 AI pipeline。",
     send: "發送",
-    launcherHint: "點擊 Bubble 可開啟／關閉模擬 Widget。",
+    launcherHint: "Bubble 固定在目前視窗右下角；Widget 1 會像 Assistant sidecar 一樣由右側滑出。",
   },
 } as const;
 
@@ -123,6 +123,7 @@ function WidgetPreviewContent({ role }: { role: "admin" | "supervisor" }) {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -243,7 +244,12 @@ function WidgetPreviewContent({ role }: { role: "admin" | "supervisor" }) {
   if (channels === null) return <LoadingState />;
 
   return (
-    <div className="space-y-4">
+    <div
+      className={[
+        "space-y-4 transition-[padding-right] duration-200",
+        theme === "modern" && previewOpen ? "lg:pr-[420px]" : "",
+      ].join(" ")}
+    >
       <div>
         <h1 className="text-2xl font-semibold">Widget Preview</h1>
         <p className="text-muted-foreground">{c.subtitle}</p>
@@ -282,8 +288,8 @@ function WidgetPreviewContent({ role }: { role: "admin" | "supervisor" }) {
         </div>
 
         <div className="grid gap-3 md:grid-cols-2">
-          <ThemeCard title={c.modern} description="Default · right-side Assistant Panel · desktop resizable · mobile full-screen" selected={theme === "modern"} badge="Default" symbol="▥" onClick={() => setTheme("modern")} />
-          <ThemeCard title={c.classic} description="Floating bubble + classic popup chat window" selected={theme === "classic"} symbol="◩" onClick={() => setTheme("classic")} />
+          <ThemeCard title={c.modern} description="Default · right-side Assistant Panel · desktop resizable · mobile full-screen" selected={theme === "modern"} badge="Default" symbol="▥" onClick={() => { setTheme("modern"); setPreviewOpen(false); }} />
+          <ThemeCard title={c.classic} description="Floating bubble + classic popup chat window" selected={theme === "classic"} symbol="◩" onClick={() => { setTheme("classic"); setPreviewOpen(false); }} />
         </div>
 
         <div className="mt-5 border-t pt-4">
@@ -315,7 +321,7 @@ function WidgetPreviewContent({ role }: { role: "admin" | "supervisor" }) {
           </div>
 
           <div className="mt-4 flex items-center gap-3 rounded-lg bg-muted/40 p-3">
-            <div className="flex h-12 w-12 items-center justify-center rounded-full text-xl text-white shadow" style={{ background: primary }} aria-label="Bubble preview">{launcherSymbol(launcherIcon)}</div>
+            <MonitorDot className="h-5 w-5 text-muted-foreground" />
             <div className="text-xs text-muted-foreground">{c.launcherHint}</div>
           </div>
 
@@ -332,7 +338,17 @@ function WidgetPreviewContent({ role }: { role: "admin" | "supervisor" }) {
         <TabsList><TabsTrigger value="preview">{c.preview}</TabsTrigger><TabsTrigger value="embed">{c.embed}</TabsTrigger></TabsList>
         <TabsContent value="preview">
           {loadingWidget && selectedId ? <LoadingState /> : (
-            <SimulatedWidget lang={lang} theme={theme} primary={primary} title={widget.header_title || "Customer Support"} launcherIcon={launcherIcon} placeholder={widget.placeholder_text || "Type a message…"} />
+            <SimulatedWidget
+              lang={lang}
+              theme={theme}
+              primary={primary}
+              title={widget.header_title || "Customer Support"}
+              launcherIcon={launcherIcon}
+              placeholder={widget.placeholder_text || "Type a message…"}
+              open={previewOpen}
+              onOpenChange={setPreviewOpen}
+              liveAvailable={!previewOnly}
+            />
           )}
         </TabsContent>
         <TabsContent value="embed" className="space-y-3">
@@ -371,62 +387,237 @@ function ThemeCard({ title, description, selected, badge, symbol, onClick }: { t
 
 type SimMsg = { id: string; role: "visitor" | "assistant"; content: string };
 
-function SimulatedWidget({ lang, theme, primary, title, launcherIcon, placeholder }: { lang: Lang; theme: WidgetTheme; primary: string; title: string; launcherIcon: WidgetLauncherIcon; placeholder: string }) {
+function SimulatedWidget({
+  lang,
+  theme,
+  primary,
+  title,
+  launcherIcon,
+  placeholder,
+  open,
+  onOpenChange,
+  liveAvailable,
+}: {
+  lang: Lang;
+  theme: WidgetTheme;
+  primary: string;
+  title: string;
+  launcherIcon: WidgetLauncherIcon;
+  placeholder: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  liveAvailable: boolean;
+}) {
   const c = COPY[lang];
-  const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<SimMsg[]>([]);
   const [input, setInput] = useState("");
   const [typing, setTyping] = useState(false);
+  const [humanState, setHumanState] = useState<"none" | "waiting" | "assigned">("none");
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handoffTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+      if (handoffTimer.current) clearTimeout(handoffTimer.current);
+    },
+    [],
+  );
+
+  const requestHuman = () => {
+    if (humanState !== "none") return;
+    setHumanState("waiting");
+    setMessages((v) => [
+      ...v,
+      {
+        id: `system-handoff-${Date.now()}`,
+        role: "assistant",
+        content:
+          lang === "zh"
+            ? "已模擬提出轉真人要求。"
+            : "Human support request simulated.",
+      },
+    ]);
+    handoffTimer.current = setTimeout(() => {
+      setHumanState("assigned");
+      handoffTimer.current = null;
+    }, 1200);
+  };
 
   const send = () => {
     if (typing || !input.trim()) return;
     const text = input.trim();
     setMessages((v) => [...v, { id: `v-${Date.now()}`, role: "visitor", content: text }]);
     setInput("");
+
+    if (/(human|agent|真人|人工|客服)/i.test(text)) {
+      requestHuman();
+      return;
+    }
+
     setTyping(true);
-    if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => {
-      setMessages((v) => [...v, { id: `a-${Date.now()}`, role: "assistant", content: c.reply }]);
+      setMessages((v) => [
+        ...v,
+        {
+          id: `a-${Date.now()}`,
+          role: "assistant",
+          content:
+            lang === "zh"
+              ? "這是 UI Simulation 回覆，不代表真實 AI／Knowledge Base 準確度。完成 canonical channel activation 後，請以正式 Widget 進行 Live AI Test。"
+              : "This is a UI Simulation reply, not a measure of live AI / Knowledge Base accuracy. After canonical channel activation, use the production Widget for Live AI Test.",
+        },
+      ]);
       setTyping(false);
       timer.current = null;
-    }, 1000);
+    }, 650);
   };
 
   const chat = (
-    <div className="flex min-h-0 flex-1 flex-col bg-white">
-      <div className={theme === "classic" ? "flex items-center justify-between px-4 py-3 text-sm font-semibold text-white" : "flex items-center justify-between border-b px-4 py-3 text-sm font-semibold"} style={theme === "classic" ? { background: primary } : undefined}>
-        <span>{title} · Simulated</span><button type="button" onClick={() => setOpen(false)} className="rounded px-2 py-1 text-xs opacity-70 hover:opacity-100" aria-label="Close simulated widget">✕</button>
+    <div className="flex h-full min-h-0 flex-col bg-white">
+      <div
+        className={
+          theme === "classic"
+            ? "flex items-center justify-between px-4 py-3 text-sm font-semibold text-white"
+            : "flex min-h-14 items-center justify-between border-b bg-white px-4 py-3 text-sm font-semibold"
+        }
+        style={theme === "classic" ? { background: primary } : undefined}
+      >
+        <div>
+          <div>{title}</div>
+          <div className={theme === "classic" ? "text-[10px] font-normal opacity-80" : "text-[10px] font-normal text-muted-foreground"}>
+            {liveAvailable ? "Appearance preview · Live AI requires production Widget" : "UI Simulation"}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => onOpenChange(false)}
+          className="rounded px-2 py-1 text-lg opacity-60 hover:opacity-100"
+          aria-label="Close simulated widget"
+        >
+          ×
+        </button>
       </div>
-      <div className="flex min-h-[320px] flex-1 flex-col gap-2 overflow-y-auto bg-slate-50 p-4">
-        {messages.length === 0 && <div className="py-16 text-center text-xs text-slate-400">Send a message to start simulated chat</div>}
-        {messages.map((m) => <div key={m.id} className={m.role === "visitor" ? "ml-auto max-w-[80%] rounded-lg px-3 py-2 text-sm text-white" : "max-w-[80%] rounded-lg border bg-white px-3 py-2 text-sm"} style={m.role === "visitor" ? { background: primary } : undefined}>{m.content}</div>)}
+
+      {humanState !== "none" && (
+        <div
+          className={
+            humanState === "waiting"
+              ? "border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800"
+              : "border-b border-violet-200 bg-violet-50 px-4 py-2 text-xs text-violet-800"
+          }
+        >
+          {humanState === "waiting"
+            ? lang === "zh"
+              ? "正在模擬等待真人客服…"
+              : "Simulating wait for a human agent…"
+            : lang === "zh"
+              ? "已模擬真人客服接手；AI 回覆暫停。"
+              : "Human agent simulated as connected; AI replies are paused."}
+        </div>
+      )}
+
+      <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto bg-white p-4">
+        {messages.length === 0 && (
+          <div className="my-auto px-6 text-center text-xs leading-6 text-slate-400">
+            {lang === "zh"
+              ? "輸入訊息測試 Widget 互動。輸入「真人客服」可測試 handoff UI。"
+              : "Type a message to test Widget interaction. Type “human agent” to test handoff UI."}
+          </div>
+        )}
+        {messages.map((m) => (
+          <div
+            key={m.id}
+            className={
+              m.role === "visitor"
+                ? "ml-auto max-w-[82%] rounded-2xl rounded-br-md px-3 py-2 text-sm text-white"
+                : "max-w-[82%] rounded-2xl rounded-bl-md border bg-slate-50 px-3 py-2 text-sm"
+            }
+            style={m.role === "visitor" ? { background: primary } : undefined}
+          >
+            {m.content}
+          </div>
+        ))}
         {typing && <div className="text-xs text-slate-400">Typing…</div>}
       </div>
-      <div className="flex gap-2 border-t bg-white p-3">
-        <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); send(); } }} className="min-w-0 flex-1 rounded-md border px-3 py-2 text-sm" placeholder={placeholder} />
-        <Button onClick={send} disabled={typing || !input.trim()} style={{ background: primary }}>{c.send}</Button>
+
+      <div className="border-t bg-white p-3">
+        <div className="mb-2 flex items-center justify-between">
+          <button
+            type="button"
+            onClick={requestHuman}
+            disabled={humanState !== "none"}
+            className="text-xs font-medium text-violet-700 disabled:opacity-50"
+          >
+            + Request Human Support
+          </button>
+          {!liveAvailable && (
+            <span className="text-[10px] text-slate-400">Live AI Test locked until activation</span>
+          )}
+        </div>
+        <div className="flex gap-2 rounded-xl border bg-white p-1">
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                send();
+              }
+            }}
+            className="min-w-0 flex-1 border-0 px-2 py-2 text-sm outline-none"
+            placeholder={placeholder}
+          />
+          <Button
+            onClick={send}
+            disabled={typing || !input.trim() || humanState === "assigned"}
+            style={{ background: primary }}
+          >
+            {c.send}
+          </Button>
+        </div>
       </div>
     </div>
   );
 
   return (
-    <div className="space-y-3">
-      <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">Preview is isolated local simulation: no visitor session, message, polling or production data writes.</div>
-      <div className="relative min-h-[540px] overflow-hidden rounded-xl border bg-slate-50">
-        <div className="absolute inset-0 flex items-center justify-center p-8 text-center text-xs text-slate-400">Host website preview area</div>
-        {open && theme === "modern" && (
-          <div className="absolute bottom-0 right-0 top-0 flex w-full min-w-[340px] flex-col border-l bg-white shadow-xl md:w-[420px]">{chat}</div>
-        )}
-        {open && theme === "classic" && (
-          <div className="absolute bottom-20 right-6 flex h-[440px] w-[360px] max-w-[calc(100%-48px)] flex-col overflow-hidden rounded-xl border bg-white shadow-xl">{chat}</div>
-        )}
-        {!open && (
-          <button type="button" onClick={() => setOpen(true)} className="absolute bottom-5 right-5 flex h-14 w-14 items-center justify-center rounded-full text-2xl text-white shadow-lg transition-transform hover:scale-105" style={{ background: primary }} aria-label="Open simulated chat">{launcherSymbol(launcherIcon)}</button>
-        )}
+    <>
+      <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-800">
+        {lang === "zh"
+          ? "Widget Preview 不再建立假的 Host Website 區域。這裡只測試 Widget 外觀、互動與 handoff UI；真正 AI／KB／handoff 準確度必須在 canonical channel 啟用後使用正式 Widget 測試。"
+          : "Widget Preview no longer renders a fake Host Website area. This screen tests Widget appearance, interaction and handoff UI; real AI / KB / handoff accuracy must be tested with the production Widget after canonical channel activation."}
       </div>
-    </div>
+
+      {!open && (
+        <button
+          type="button"
+          onClick={() => onOpenChange(true)}
+          className="fixed bottom-[max(24px,env(safe-area-inset-bottom))] right-6 z-[80] flex h-14 w-14 items-center justify-center rounded-full text-2xl text-white shadow-xl transition-transform hover:scale-105"
+          style={{ background: primary }}
+          aria-label="Open simulated chat"
+        >
+          {launcherSymbol(launcherIcon)}
+        </button>
+      )}
+
+      {theme === "modern" && (
+        <aside
+          aria-label="Widget 1 Assistant sidecar preview"
+          className={[
+            "fixed bottom-0 right-0 top-[33px] z-[79] flex w-[min(420px,100vw)] flex-col border-l bg-white shadow-[-12px_0_32px_rgba(15,23,42,0.10)]",
+            "transition-transform duration-200 ease-out",
+            open ? "translate-x-0" : "translate-x-full pointer-events-none",
+          ].join(" ")}
+        >
+          {chat}
+        </aside>
+      )}
+
+      {theme === "classic" && open && (
+        <div className="fixed bottom-24 right-6 z-[79] flex h-[min(560px,calc(100dvh-140px))] w-[min(360px,calc(100vw-32px))] flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl">
+          {chat}
+        </div>
+      )}
+    </>
   );
 }

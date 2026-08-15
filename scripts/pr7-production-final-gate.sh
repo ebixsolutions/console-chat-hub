@@ -344,4 +344,7 @@ bash scripts/pr7-console-role-runtime-acceptance.sh || stop "Console canonical r
 echo "== PR11 CANONICAL ROLE / NO-ASSIGNED-ROLE CLOSURE =="
 bash scripts/pr11-canonical-role-acceptance.sh || stop "canonical role acceptance failed"
 
+echo "== PR13 WIDGET RUNTIME UX SOURCE RECHECK =="
+bash scripts/pr13-widget-runtime-ux-director-takeover-source-gate.sh || stop "PR13 Widget runtime UX source contract failed"
+
 echo "FINAL STATUS: READY"

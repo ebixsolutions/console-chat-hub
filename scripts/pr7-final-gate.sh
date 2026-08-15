@@ -93,6 +93,7 @@ for f in \
   scripts/pr12-production-runtime-identity-binding.sh \
   scripts/pr12-production-runtime-identity-binding-source-gate.sh \
   scripts/pr13-widget-settings-bubble-debug-source-gate.sh \
+  scripts/pr13-widget-runtime-ux-director-takeover-source-gate.sh \
   src/routes/_authenticated/console.widget-preview.tsx \
   src/lib/api/config.service.ts \
   public/widget/chat.js \
@@ -540,6 +541,14 @@ if bash scripts/pr13-widget-settings-bubble-debug-source-gate.sh; then
   echo "PASS widget settings / bubble debug source contract"
 else
   echo "FAIL widget settings / bubble debug source contract"
+  fail=1
+fi
+
+echo "== PR13 DIRECTOR TAKEOVER WIDGET RUNTIME UX =="
+if bash scripts/pr13-widget-runtime-ux-director-takeover-source-gate.sh; then
+  echo "PASS PR13 Director takeover Widget runtime UX"
+else
+  echo "FAIL PR13 Director takeover Widget runtime UX"
   fail=1
 fi
 

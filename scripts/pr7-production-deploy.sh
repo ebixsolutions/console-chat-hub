@@ -88,6 +88,9 @@ bash scripts/pr12-production-runtime-identity-binding-source-gate.sh || stop "pr
 echo "== WIDGET SETTINGS / BUBBLE DEBUG SOURCE CONTRACT =="
 bash scripts/pr13-widget-settings-bubble-debug-source-gate.sh || stop "widget settings/bubble source contract failed"
 
+echo "== PR13 DIRECTOR TAKEOVER WIDGET RUNTIME UX SOURCE =="
+bash scripts/pr13-widget-runtime-ux-director-takeover-source-gate.sh || stop "PR13 Widget runtime UX source contract failed"
+
 echo "== PRODUCTION RUNTIME CONFIG CONTRACT =="
 bash scripts/pr7-production-runtime-config-gate.sh || stop "production runtime configuration incomplete"
 
