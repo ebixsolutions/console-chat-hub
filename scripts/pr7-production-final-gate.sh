@@ -30,6 +30,9 @@ command -v psql >/dev/null 2>&1 || stop "psql missing"
 command -v npx >/dev/null 2>&1 || stop "npx missing"
 command -v curl >/dev/null 2>&1 || stop "curl missing"
 
+echo "== PR11 AUTHORIZED SOURCE / COMMIT LOCK =="
+bash scripts/pr11-final-integration-source-lock.sh || stop "authorized source/commit lock failed"
+
 set +e
 bash scripts/pr7-final-gate.sh >/tmp/pr7-source-gate.log 2>&1
 SOURCE_RC=$?

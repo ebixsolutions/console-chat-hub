@@ -11,6 +11,16 @@ cd "$REPO" || stop "cannot enter authoritative repo"
 git diff --quiet || stop "working tree has unstaged changes"
 git diff --cached --quiet || stop "working tree has staged changes"
 
+echo "== PR11 AUTHORIZED SOURCE / COMMIT LOCK =="
+set +e
+bash scripts/pr11-final-integration-source-lock.sh
+LOCK_RC=$?
+set -e
+[ "$LOCK_RC" -eq 0 ] || {
+  [ "$LOCK_RC" -eq 2 ] && stop "authorized source/commit lock unresolved"
+  fail "authorized source/commit lock failed"
+}
+
 echo "== PR11 FINAL PRODUCT-READY INTEGRATION PREFLIGHT =="
 set +e
 bash scripts/pr11-final-product-ready-integration-preflight.sh

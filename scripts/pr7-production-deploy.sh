@@ -40,6 +40,9 @@ command -v python3 >/dev/null 2>&1 || stop "python3 missing"
 [ -s scripts/pr7-canonical-company-bootstrap.sh ] || stop "bootstrap missing"
 [ -s scripts/pr7-canonical-company-bootstrap-rollback.sh ] || stop "bootstrap rollback missing"
 
+echo "== PR11 AUTHORIZED SOURCE / COMMIT LOCK =="
+bash scripts/pr11-final-integration-source-lock.sh || stop "authorized source/commit lock failed"
+
 echo "== PRODUCTION ATOMIC ROLLBACK CONTRACT =="
 bash scripts/pr7-production-atomic-rollback-source-gate.sh || stop "production rollback source contract failed"
 

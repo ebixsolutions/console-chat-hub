@@ -8,12 +8,13 @@ BOOT="scripts/pr7-canonical-company-bootstrap.sh"
 MEM="scripts/pr7-company-membership-bootstrap.sh"
 CFG="src/lib/api/config.service.ts"
 FINAL="scripts/pr11-whole-product-final-gate.sh"
+LOCK="scripts/pr11-final-integration-source-lock.sh"
 fail=0
 pass(){ echo "PASS $1"; }; bad(){ echo "FAIL $1"; fail=1; }
 has(){ grep -Fq "$2" "$1" && pass "$3" || bad "$3"; }
 not_has(){ grep -Fq "$2" "$1" && bad "$3" || pass "$3"; }
 
-for f in "$P" "$R" "$A" "$DEPLOY" "$BOOT" "$MEM" "$CFG" "$FINAL"; do
+for f in "$P" "$R" "$A" "$DEPLOY" "$BOOT" "$MEM" "$CFG" "$FINAL" "$LOCK"; do
   [ -s "$f" ] || { echo "FAIL missing/empty $f"; exit 1; }
 done
 
@@ -36,6 +37,7 @@ has "$CFG" 'host.startsWith("id-preview--")' "preview bridge limited to isolated
 has "$A" '[ "$MEMBERSHIP_COUNT" = "1" ]' "canonical acceptance requires exactly one membership"
 has "$A" 'canonical role resolves without Preview fallback' "canonical acceptance explicitly closes No Assigned Role"
 
+has "$R" 'bash scripts/pr11-final-integration-source-lock.sh' "integration runner requires authorized source lock"
 has "$R" 'bash scripts/pr7-production-deploy.sh' "integration runner delegates writes to frozen atomic deploy"
 not_has "$R" 'psql ' "integration runner contains no direct SQL writes"
 not_has "$R" 'supabase functions deploy' "integration runner contains no direct Edge deploy"
