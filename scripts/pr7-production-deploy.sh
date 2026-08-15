@@ -82,6 +82,9 @@ bash scripts/pr12-singapore-kb-production-mapping-source-gate.sh || stop "Singap
 echo "== ACTIVATION PARAMETER CONTRACT SOURCE =="
 bash scripts/pr12-activation-parameter-contract-source-gate.sh || stop "activation parameter contract source failed"
 
+echo "== PRODUCTION RUNTIME IDENTITY BINDING SOURCE CONTRACT =="
+bash scripts/pr12-production-runtime-identity-binding-source-gate.sh || stop "production runtime identity binding source failed"
+
 echo "== PRODUCTION RUNTIME CONFIG CONTRACT =="
 bash scripts/pr7-production-runtime-config-gate.sh || stop "production runtime configuration incomplete"
 

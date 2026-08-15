@@ -40,6 +40,9 @@ set -e
 cat /tmp/pr7-source-gate.log
 [ "$SOURCE_RC" -eq 2 ] || fail "source gate failed, rc=$SOURCE_RC"
 
+echo "== PR12 PRODUCTION RUNTIME IDENTITY / FIXTURE BINDING =="
+bash scripts/pr12-production-runtime-identity-binding.sh || stop "production runtime identity binding failed"
+
 # Production prerequisites and runtime acceptance must execute in the normal
 # main flow. STOP is immediate and never owns/re-enters any gate.
 echo "== PREVIEW ROLE ACCEPTANCE BRIDGE SAFETY =="

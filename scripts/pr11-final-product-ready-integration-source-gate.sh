@@ -51,6 +51,8 @@ has "$DEPLOY" 'scripts/pr7-production-final-gate.sh' "atomic deploy owns product
 has "scripts/pr7-production-runtime-config-gate.sh" 'two-tenant Singapore mappings missing or not distinct' "final integration runtime config supports two-tenant Singapore mappings"
 has "scripts/pr12-product-ready-activation-loader.py" 'PR7_TEST_USER_A","PR10_TENANT_A_USER_UUID' "activation contract unifies legacy/final two-tenant fixtures"
 has "scripts/pr12-product-ready-activate.command" 'pr12-product-ready-activation-loader.py' "one-command activation wrapper present"
+has "scripts/pr12-production-runtime-identity-binding.sh" 'CE handoff bearer subject/evaluation/conversation/company binding invalid' "production runtime binds token identities to canonical tenant fixtures"
+
 
 
 if [ "$fail" -ne 0 ]; then

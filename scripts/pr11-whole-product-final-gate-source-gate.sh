@@ -47,7 +47,8 @@ for marker in \
   pr11-final-product-ready-integration-source-gate.sh \
   pr11-final-integration-source-lock-source-gate.sh \
   pr12-singapore-kb-production-mapping-source-gate.sh \
-  pr12-activation-parameter-contract-source-gate.sh
+  pr12-activation-parameter-contract-source-gate.sh \
+  pr12-production-runtime-identity-binding-source-gate.sh
 do
   has "$SOURCE" "$marker" "source final gate includes $marker"
 done

@@ -90,6 +90,8 @@ for f in \
   scripts/pr12-product-ready-activate.command \
   config/pr12-production-activation.example.json \
   scripts/pr12-activation-parameter-contract-source-gate.sh \
+  scripts/pr12-production-runtime-identity-binding.sh \
+  scripts/pr12-production-runtime-identity-binding-source-gate.sh \
   scripts/pr7-console-role-runtime-acceptance.sh \
   src/routes/_authenticated/console.feedback-responses.tsx \
   src/routes/_authenticated/console.agent-settings.tsx \
@@ -516,6 +518,14 @@ if bash scripts/pr12-activation-parameter-contract-source-gate.sh; then
   echo "PASS activation parameter contract"
 else
   echo "FAIL activation parameter contract"
+  fail=1
+fi
+
+echo "== PRODUCTION RUNTIME IDENTITY BINDING SOURCE CONTRACT =="
+if bash scripts/pr12-production-runtime-identity-binding-source-gate.sh; then
+  echo "PASS production runtime identity binding source contract"
+else
+  echo "FAIL production runtime identity binding source contract"
   fail=1
 fi
 
