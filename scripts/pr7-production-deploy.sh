@@ -103,6 +103,9 @@ bash scripts/pr16-widget-new-chat-emoji-menu-ux-source-gate.sh || stop "PR16 Wid
 echo "== PR17 PREVIEW ROLE HOST AUTHORITY SOURCE =="
 bash scripts/pr17-preview-role-host-authority-source-gate.sh || stop "PR17 Preview role host authority failed"
 
+echo "== PR18 TASK1 CONVERSATION-FIRST EVALUATION SOURCE =="
+bash scripts/pr18-task1-conversation-first-evaluation-source-gate.sh || stop "PR18 Task1 source contract failed"
+
 echo "== PRODUCTION RUNTIME CONFIG CONTRACT =="
 bash scripts/pr7-production-runtime-config-gate.sh || stop "production runtime configuration incomplete"
 
@@ -268,6 +271,7 @@ SQL_FORWARD=(
   "sql/pr7/pr7_widget_theme_contract.sql"
   "sql/pr7/pr7_widget_theme_default_modern.sql"
   "sql/pr13/pr13_widget_launcher_icon.sql"\n  "sql/pr15/pr15_widget_attachment.sql"
+  "sql/pr18/pr18_ce_conversation_first_local_scope.sql"
   "sql/pr7/pr7_customer360_coach_sync_state.sql"
   "sql/pr7/pr7_feedback_config_tenant_scope.sql"
   "sql/pr7/pr7_agent_management_tenant_isolation.sql"
@@ -288,6 +292,7 @@ SQL_ROLLBACK_FOR_FORWARD=(
   "sql/pr7/pr7_widget_theme_contract.rollback.sql"
   "sql/pr7/pr7_widget_theme_default_modern.rollback.sql"
   "sql/pr13/pr13_widget_launcher_icon.rollback.sql"\n  "sql/pr15/pr15_widget_attachment.rollback.sql"
+  "sql/pr18/pr18_ce_conversation_first_local_scope.rollback.sql"
   "sql/pr7/pr7_customer360_coach_sync_state.rollback.sql"
   "sql/pr7/pr7_feedback_config_tenant_scope.rollback.sql"
   "sql/pr7/pr7_agent_management_tenant_isolation.rollback.sql"

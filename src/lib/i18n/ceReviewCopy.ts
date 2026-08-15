@@ -1,8 +1,7 @@
 /**
- * CE review console copy — PR-4 Round 2.
+ * CE review console copy — Task 1 Conversation-First Core.
  * No training wording. Bilingual.
  */
-
 export type LangValue = { en: string; zh: string };
 
 export const CE_REVIEW_COPY = {
@@ -59,8 +58,8 @@ export const CE_REVIEW_COPY = {
     completed: { en: "Evaluation completed.", zh: "評估已完成。" },
     alreadyEvaluated: { en: "This conversation was already evaluated.", zh: "此對話先前已評估過。" },
     disabled: {
-      en: "Evaluation unavailable until SU Platform company identity is connected.",
-      zh: "在 SU 平台企業身份連接前，評估功能暫時無法使用。",
+      en: "Evaluation requires at least one customer message and one AI response.",
+      zh: "評估至少需要一則客戶訊息及一則 AI 回覆。",
     },
   },
   detail: {
@@ -72,8 +71,8 @@ export const CE_REVIEW_COPY = {
     notEvaluated: { en: "No Data", zh: "無資料" },
     notEvaluatedYet: { en: "No Data", zh: "無資料" },
     evaluateUnavailable: {
-      en: "Evaluation unavailable until SU Platform company identity is connected.",
-      zh: "在 SU 平台企業身份連接前，評估功能暫時無法使用。",
+      en: "Evaluation requires at least one customer message and one AI response.",
+      zh: "評估至少需要一則客戶訊息及一則 AI 回覆。",
     },
     replayUnavailable: { en: "No Data", zh: "無資料" },
     recalled: { en: "[Message recalled]", zh: "[訊息已撤回]" },

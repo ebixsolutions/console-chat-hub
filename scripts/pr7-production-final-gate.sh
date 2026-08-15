@@ -359,4 +359,7 @@ bash scripts/pr16-widget-new-chat-emoji-menu-ux-source-gate.sh || stop "PR16 Wid
 echo "== PR17 PREVIEW ROLE HOST AUTHORITY RECHECK =="
 bash scripts/pr17-preview-role-host-authority-source-gate.sh || stop "PR17 Preview role host authority failed"
 
+echo "== PR18 TASK1 CONVERSATION-FIRST EVALUATION RECHECK =="
+bash scripts/pr18-task1-conversation-first-evaluation-source-gate.sh || stop "PR18 Task1 source contract failed"
+
 echo "FINAL STATUS: READY"
