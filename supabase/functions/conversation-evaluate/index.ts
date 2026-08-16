@@ -568,7 +568,49 @@ async function readBackLocalEvaluation(
   return data ? { ...(data as Record<string, unknown>), evaluation_source: "conversation_local" } : null;
 }
 
+/** True when a Postgres error is the attempt uniqueness violation. */
+function isDuplicateAttempt(error: unknown): boolean {
+  const e = (error ?? {}) as { code?: string; message?: string };
+  return e.code === "23505" ||
+    String(e.message ?? "").includes("ce_local_evaluation_attempt_conversation_id_input_snapshot_");
+}
+
+/**
+ * Delete a spent (`failed`, no evaluation row) local attempt so an identical
+ * snapshot can be re-evaluated. Running or succeeded attempts are never
+ * touched, so in-flight and already-evaluated semantics are unchanged.
+ */
+async function clearSpentLocalAttempt(
+  admin: SupabaseClient,
+  conversationId: string,
+  inputSnapshotHash: string,
+): Promise<boolean> {
+  const { data: attempt, error } = await admin
+    .from("ce_local_evaluation_attempt")
+    .select("id, status")
+    .eq("conversation_id", conversationId)
+    .eq("input_snapshot_hash", inputSnapshotHash)
+    .maybeSingle();
+  if (error || !attempt || String(attempt.status) !== "failed") return false;
+
+  const attemptId = String(attempt.id);
+  const { data: existing } = await admin
+    .from("ce_local_evaluation")
+    .select("id")
+    .eq("attempt_id", attemptId)
+    .maybeSingle();
+  if (existing) return false;
+
+  const { error: delError } = await admin
+    .from("ce_local_evaluation_attempt")
+    .delete()
+    .eq("id", attemptId)
+    .eq("status", "failed");
+  return !delError;
+}
+
 async function handleEvaluate(
+
   req: Request,
   admin: SupabaseClient,
   userId: string,
