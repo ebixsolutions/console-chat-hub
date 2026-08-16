@@ -3,10 +3,19 @@ import {
   resolveKBEndpoint,
   resolveTenantScope,
 } from "../_shared/kb-client.ts";
+import { validateAgent } from "../_shared/agent.ts";
 import {
-  resolveAgentCompanyScope,
-  validateAgent,
-} from "../_shared/agent.ts";
+  applyCompanyScope,
+  resolveConversationScope,
+} from "../_shared/pre-activation-scope.ts";
+
+// Agent Assist pre-activation allow-list preserves the existing console roles.
+const PRE_ACTIVATION_ROLES: ReadonlySet<string> = new Set([
+  "admin",
+  "supervisor",
+  "agent",
+]);
+
 
 const TOOL_TYPES = new Set(["translate", "grammar", "suggest_reply", "check_policy"]);
 const ALLOWED_LANGS = new Set(["en", "zh-TW"]);
