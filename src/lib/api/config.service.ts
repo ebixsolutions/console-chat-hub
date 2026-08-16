@@ -209,7 +209,7 @@ export const updateChannelConfigFn = createServerFn({ method: "POST" })
       return { ok: false, error: "invalid_allowed_origin" };
     }
 
-    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    const patch: Record<string, any> = { updated_at: new Date().toISOString() };
     if (data.name !== undefined) patch.name = data.name;
     if (data.is_active !== undefined) patch.is_active = data.is_active;
     if (data.allowed_origins !== undefined) patch.allowed_origins = [...new Set(data.allowed_origins)];
@@ -333,7 +333,7 @@ export const updateWidgetConfigFn = createServerFn({ method: "POST" })
     );
     if (unsafeLink) return { ok: false, error: "widget_shared_or_unbound" };
 
-    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    const patch: Record<string, any> = { updated_at: new Date().toISOString() };
     for (const key of [
       "header_title",
       "welcome_message",
@@ -371,7 +371,7 @@ export const updateAgentProfileFn = createServerFn({ method: "POST" })
     if (data.display_name === undefined && data.avatar_url === undefined) {
       return { ok: false, error: "no_changes" };
     }
-    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    const patch: Record<string, any> = { updated_at: new Date().toISOString() };
     if (data.display_name !== undefined) patch.display_name = data.display_name;
     if (data.avatar_url !== undefined) patch.avatar_url = data.avatar_url;
 
