@@ -1,7 +1,14 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { corsHeaders, json } from "../_shared/cors.ts";
+import {
+  applyCompanyScope,
+  resolveCallerScope,
+  type ResolvedScope,
+} from "../_shared/pre-activation-scope.ts";
 
 const ALLOWED_ROLES = new Set(["admin", "supervisor"]);
+// Pre-activation Customer 360 is a null-company functional mode only.
+const PRE_ACTIVATION_ROLES: ReadonlySet<string> = new Set(["admin", "supervisor"]);
 const MAX_DIRECTORY = 50;
 
 function safeIdentity(meta: unknown): Record<string, string> {
@@ -15,49 +22,10 @@ function safeIdentity(meta: unknown): Record<string, string> {
   return out;
 }
 
-async function resolveSingleCompany(
-  admin: ReturnType<typeof createClient>,
-  userId: string,
-): Promise<
-  | { ok: true; companyId: string }
-  | { ok: false; error: string; status: number }
-> {
-  const { data: memberships, error } = await admin
-    .from("company_membership")
-    .select("company_id")
-    .eq("user_id", userId)
-    .eq("is_active", true);
-
-  if (error) return { ok: false, error: "company_membership_lookup_failed", status: 500 };
-
-  const companyIds = [
-    ...new Set(
-      (memberships ?? [])
-        .map((row: { company_id: string | null }) => row.company_id)
-        .filter((id: string | null): id is string => Boolean(id)),
-    ),
-  ];
-
-  if (companyIds.length === 0) {
-    return { ok: false, error: "company_membership_unresolved", status: 403 };
-  }
-  if (companyIds.length !== 1) {
-    return { ok: false, error: "company_membership_ambiguous", status: 409 };
-  }
-
-  const { data: company, error: companyError } = await admin
-    .from("company")
-    .select("id, is_active")
-    .eq("id", companyIds[0])
-    .maybeSingle();
-
-  if (companyError) return { ok: false, error: "company_lookup_failed", status: 500 };
-  if (!company || company.is_active !== true) {
-    return { ok: false, error: "company_inactive", status: 403 };
-  }
-
-  return { ok: true, companyId: String(company.id) };
+function scopeDescriptor(scope: ResolvedScope) {
+  return { company_id: scope.companyId, mode: scope.mode };
 }
+
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -89,20 +57,26 @@ Deno.serve(async (req) => {
       return json({ error: "forbidden" }, 403);
     }
 
-    const scope = await resolveSingleCompany(admin, user.id);
-    if (!scope.ok) return json({ error: scope.error }, scope.status);
-    const companyId = scope.companyId;
+    const scopeResult = await resolveCallerScope(admin, {
+      userId: user.id,
+      preActivationRoles: PRE_ACTIVATION_ROLES,
+    });
+    if (!scopeResult.ok) return json({ error: scopeResult.error }, scopeResult.status);
+    const scope = scopeResult.scope;
 
     const body = await req.json().catch(() => ({}));
     const mode = body?.mode;
 
     if (mode === "directory") {
-      const { data: conversations, error: conversationError } = await admin
-        .from("conversations")
-        .select("id, visitor_session_id, created_at, updated_at")
-        .eq("company_id", companyId)
+      const { data: conversations, error: conversationError } = await applyCompanyScope(
+        admin
+          .from("conversations")
+          .select("id, visitor_session_id, created_at, updated_at"),
+        scope,
+      )
         .not("visitor_session_id", "is", null)
         .order("updated_at", { ascending: false });
+
 
       if (conversationError) return json({ error: "directory_query_failed" }, 500);
 
@@ -124,7 +98,7 @@ Deno.serve(async (req) => {
 
       const sessionIds = [...bySession.keys()];
       if (sessionIds.length === 0) {
-        return json({ success: true, scope: { company_id: companyId }, visitors: [] });
+        return json({ success: true, scope: scopeDescriptor(scope), visitors: [] });
       }
 
       const { data: sessions, error: sessionError } = await admin
@@ -155,7 +129,7 @@ Deno.serve(async (req) => {
         })
         .slice(0, MAX_DIRECTORY);
 
-      return json({ success: true, scope: { company_id: companyId }, visitors });
+      return json({ success: true, scope: scopeDescriptor(scope), visitors });
     }
 
     if (mode === "detail") {
@@ -166,13 +140,17 @@ Deno.serve(async (req) => {
         return json({ error: "invalid_visitor_session_id" }, 400);
       }
 
-      // Prove tenant ownership before reading visitor_session.
-      const { data: conversations, error: conversationError } = await admin
-        .from("conversations")
-        .select("id, status, priority, created_at, channel_config:channel_config_id(name), assigned_agent_id")
-        .eq("company_id", companyId)
+      // Prove tenant ownership before reading visitor_session. Pre-activation
+      // mode is bounded to company_id IS NULL conversations.
+      const { data: conversations, error: conversationError } = await applyCompanyScope(
+        admin
+          .from("conversations")
+          .select("id, status, priority, created_at, channel_config:channel_config_id(name), assigned_agent_id"),
+        scope,
+      )
         .eq("visitor_session_id", visitorSessionId)
         .order("created_at", { ascending: false });
+
 
       if (conversationError) return json({ error: "detail_conversation_query_failed" }, 500);
       if (!conversations || conversations.length === 0) {
@@ -252,7 +230,7 @@ Deno.serve(async (req) => {
 
       return json({
         success: true,
-        scope: { company_id: companyId },
+        scope: scopeDescriptor(scope),
         customer: {
           visitor_session_id: visitorSessionId,
           customer_ref: null,

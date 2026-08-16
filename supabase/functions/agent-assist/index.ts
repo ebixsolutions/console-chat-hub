@@ -3,10 +3,19 @@ import {
   resolveKBEndpoint,
   resolveTenantScope,
 } from "../_shared/kb-client.ts";
+import { validateAgent } from "../_shared/agent.ts";
 import {
-  resolveAgentCompanyScope,
-  validateAgent,
-} from "../_shared/agent.ts";
+  applyCompanyScope,
+  resolveConversationScope,
+} from "../_shared/pre-activation-scope.ts";
+
+// Agent Assist pre-activation allow-list preserves the existing console roles.
+const PRE_ACTIVATION_ROLES: ReadonlySet<string> = new Set([
+  "admin",
+  "supervisor",
+  "agent",
+]);
+
 
 const TOOL_TYPES = new Set(["translate", "grammar", "suggest_reply", "check_policy"]);
 const ALLOWED_LANGS = new Set(["en", "zh-TW"]);
@@ -135,21 +144,11 @@ Deno.serve(async (req) => {
   }
 
   try {
-    // PR7 tenant boundary: identity + active agent + single active company
-    // are resolved server-side. Browser-supplied company/tenant scope is not accepted.
+    // PR7 tenant boundary: identity + active agent are resolved server-side.
+    // Browser-supplied company/tenant scope is not accepted.
     const validated = await validateAgent(req);
     if (validated instanceof Response) return validated;
     const { agent, supabaseAdmin } = validated;
-
-    const scope = await resolveAgentCompanyScope(supabaseAdmin, agent);
-    if (scope instanceof Response) return scope;
-
-    const isElevated =
-      scope.companyRole === "admin" || scope.companyRole === "supervisor";
-    const isAgent = scope.companyRole === "agent";
-    if (!isElevated && !isAgent) {
-      return jsonRes({ error: "forbidden" }, 403, req);
-    }
 
     // Parse and validate body
     const body = await req.json().catch(() => null);
@@ -189,25 +188,48 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Conversation guard: service-role lookup is always followed by an exact
-    // company boundary check before any provider or KB call.
-    const { data: conv, error: convErr } = await supabaseAdmin
-      .from("conversations")
-      .select("id, company_id, status, assigned_agent_id")
+    // Scope guard: canonical company membership is enforced whenever the
+    // conversation has canonical identity. Pre-activation (company_id IS NULL)
+    // is allowed only for authenticated console roles.
+    const scopeResult = await resolveConversationScope(supabaseAdmin, {
+      conversationId,
+      userId: agent.user_id,
+      preActivationRoles: PRE_ACTIVATION_ROLES,
+    });
+    if (!scopeResult.ok) {
+      // Deliberately 404 on tenant-boundary misses to avoid enumeration.
+      const status = scopeResult.error === "not_a_member" ? 404 : scopeResult.status;
+      const error = scopeResult.error === "not_a_member"
+        ? "conversation_not_found"
+        : scopeResult.error;
+      return jsonRes({ error }, status, req);
+    }
+    const scope = scopeResult.scope;
+    const scopeRoles = new Set([...scope.roles, agent.role]);
+    const isElevated = scopeRoles.has("admin") || scopeRoles.has("supervisor");
+    const isAgent = scopeRoles.has("agent");
+    if (!isElevated && !isAgent) {
+      return jsonRes({ error: "forbidden" }, 403, req);
+    }
+
+    const { data: conv, error: convErr } = await applyCompanyScope(
+      supabaseAdmin
+        .from("conversations")
+        .select("id, company_id, status, assigned_agent_id"),
+      scope,
+    )
       .eq("id", conversationId)
       .maybeSingle();
     if (convErr) return jsonRes({ error: "conversation_lookup_failed" }, 500, req);
-    if (!conv || !conv.company_id || conv.company_id !== scope.companyId) {
-      // Deliberately 404 to avoid cross-tenant conversation enumeration.
-      return jsonRes({ error: "conversation_not_found" }, 404, req);
-    }
+    if (!conv) return jsonRes({ error: "conversation_not_found" }, 404, req);
     if (conv.status === "resolved") return jsonRes({ error: "conversation_resolved" }, 409, req);
 
     // Ordinary agents may use Agent Assist only for their own active assignment.
-    // Elevated authority is company-scoped by resolveAgentCompanyScope above.
+    // Elevated authority stays scope-bounded by the resolver above.
     if (!isElevated && conv.assigned_agent_id !== agent.id) {
       return jsonRes({ error: "forbidden", detail: "not_assigned_to_conversation" }, 403, req);
     }
+
 
     // Tool execution
     const targetLang = body.target_language as string | undefined;

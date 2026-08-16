@@ -1,6 +1,14 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import {
+  applyCompanyScope,
+  resolveCallerScope,
+  type ResolvedScope,
+} from "../_shared/pre-activation-scope.ts";
 
 const ALLOWED_ROLES = new Set(["admin", "supervisor"]);
+// Pre-activation analytics is a null-company functional mode only.
+const PRE_ACTIVATION_ROLES: ReadonlySet<string> = new Set(["admin", "supervisor"]);
+
 const MAX_RECENT = 20;
 
 const CONSOLE_ORIGINS = [
@@ -36,55 +44,10 @@ function toSessionRef(uuid: string): string {
   return "vs_" + clean.slice(0, 4) + "..." + clean.slice(-4);
 }
 
-async function resolveSingleCompany(
-  admin: ReturnType<typeof createClient>,
-  userId: string,
-): Promise<
-  | { ok: true; companyId: string }
-  | { ok: false; code: string; status: number }
-> {
-  const { data: memberships, error } = await admin
-    .from("company_membership")
-    .select("company_id, is_active")
-    .eq("user_id", userId)
-    .eq("is_active", true);
-
-  if (error) {
-    console.error("[visitor-analytics] company membership lookup failed", error.code);
-    return { ok: false, code: "company_membership_lookup_failed", status: 500 };
-  }
-
-  const companyIds = [
-    ...new Set(
-      (memberships ?? [])
-        .map((row: { company_id: string | null }) => row.company_id)
-        .filter((id: string | null): id is string => Boolean(id)),
-    ),
-  ];
-
-  if (companyIds.length === 0) {
-    return { ok: false, code: "company_membership_unresolved", status: 403 };
-  }
-  if (companyIds.length !== 1) {
-    // Analytics must never merge tenants or guess which company is intended.
-    return { ok: false, code: "company_membership_ambiguous", status: 409 };
-  }
-
-  const { data: company, error: companyError } = await admin
-    .from("company")
-    .select("id, is_active")
-    .eq("id", companyIds[0])
-    .maybeSingle();
-
-  if (companyError) {
-    return { ok: false, code: "company_lookup_failed", status: 500 };
-  }
-  if (!company || company.is_active !== true) {
-    return { ok: false, code: "company_inactive", status: 403 };
-  }
-
-  return { ok: true, companyId: String(company.id) };
+function scopeDescriptor(scope: ResolvedScope) {
+  return { company_id: scope.companyId, mode: scope.mode };
 }
+
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -141,11 +104,14 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: "forbidden" }, 403, req);
     }
 
-    const company = await resolveSingleCompany(admin, user.id);
-    if (!company.ok) {
-      return jsonResponse({ error: company.code }, company.status, req);
+    const scopeResult = await resolveCallerScope(admin, {
+      userId: user.id,
+      preActivationRoles: PRE_ACTIVATION_ROLES,
+    });
+    if (!scopeResult.ok) {
+      return jsonResponse({ error: scopeResult.error }, scopeResult.status, req);
     }
-    const companyId = company.companyId;
+    const scope = scopeResult.scope;
 
     const body = await req.json().catch(() => null);
     if (!body || typeof body !== "object") {
@@ -192,14 +158,17 @@ Deno.serve(async (req) => {
     }
 
     if (mode === "summary") {
-      // Tenant boundary is conversations.company_id. Every downstream metric is
+      // Tenant boundary is conversations.company_id in canonical mode, and
+      // company_id IS NULL in pre-activation mode. Every downstream metric is
       // derived exclusively from this scoped conversation set.
-      const { data: conversations, error: conversationError } = await admin
-        .from("conversations")
-        .select(
-          "id, visitor_session_id, status, created_at, updated_at, resolved_at",
-        )
-        .eq("company_id", companyId);
+      const { data: conversations, error: conversationError } = await applyCompanyScope(
+        admin
+          .from("conversations")
+          .select(
+            "id, visitor_session_id, status, created_at, updated_at, resolved_at",
+          ),
+        scope,
+      );
 
       if (conversationError) {
         console.error(
@@ -365,7 +334,7 @@ Deno.serve(async (req) => {
       return jsonResponse(
         {
           success: true,
-          scope: { company_id: companyId },
+          scope: scopeDescriptor(scope),
           summary: {
             total_sessions: sessionIds.length,
             total_conversations: convRows.length,
@@ -393,11 +362,13 @@ Deno.serve(async (req) => {
     }
 
     // Cross-tenant protection: a visitor session is visible only if it has at
-    // least one conversation owned by the resolved company.
-    const { data: scopedConversations, error: scopedError } = await admin
-      .from("conversations")
-      .select("id, status, created_at, resolved_at, updated_at")
-      .eq("company_id", companyId)
+    // least one conversation inside the resolved scope.
+    const { data: scopedConversations, error: scopedError } = await applyCompanyScope(
+      admin
+        .from("conversations")
+        .select("id, status, created_at, resolved_at, updated_at"),
+      scope,
+    )
       .eq("visitor_session_id", visitorSessionId)
       .order("created_at", { ascending: false });
 
@@ -458,7 +429,7 @@ Deno.serve(async (req) => {
     return jsonResponse(
       {
         success: true,
-        scope: { company_id: companyId },
+        scope: scopeDescriptor(scope),
         visitor: {
           session_ref: toSessionRef(String(visitor.id)),
           first_seen: visitor.created_at,

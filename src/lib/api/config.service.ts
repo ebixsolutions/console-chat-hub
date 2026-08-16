@@ -37,8 +37,14 @@ export interface LiveFeedbackConfigRow {
   delay_minutes: number | null;
   trigger_event: string;
   config: JsonRecord | null;
-  company_id: string;
+  /**
+   * feedback_automation_config is a pre-canonical, company-unbound table: it has
+   * no company_id column. Scope is therefore always null-company until the real
+   * platform binding introduces one.
+   */
+  company_id: null;
 }
+
 
 export interface ServerResult<T> {
   ok: boolean;
@@ -63,11 +69,13 @@ async function resolveCompanyScope(context: {
 
   if (membershipErr) return { ok: false, error: "company_membership_lookup_failed" };
 
-  const companyIds = [...new Set((memberships ?? []).map((m: any) => String(m.company_id)))];
+  const companyIds: string[] = [
+    ...new Set((memberships ?? []).map((m: any) => String(m.company_id))),
+  ] as string[];
   if (companyIds.length === 0) return { ok: false, error: "company_membership_unresolved" };
   if (companyIds.length !== 1) return { ok: false, error: "company_membership_ambiguous" };
 
-  const companyId = companyIds[0];
+  const companyId: string = companyIds[0];
   const { data: company, error: companyErr } = await context.supabase
     .from("company")
     .select("id, is_active")
@@ -78,13 +86,14 @@ async function resolveCompanyScope(context: {
   if (!company || company.is_active !== true) return { ok: false, error: "company_inactive" };
 
   const valid = new Set<AppRole>(ROLE_PRECEDENCE);
-  const roles = [
+  const roles: AppRole[] = [
     ...new Set(
       (memberships ?? [])
         .map((m: any) => String(m.role) as AppRole)
         .filter((r: AppRole) => valid.has(r)),
     ),
-  ];
+  ] as AppRole[];
+
 
   return { ok: true, data: { companyId, roles } };
 }
@@ -200,14 +209,14 @@ export const updateChannelConfigFn = createServerFn({ method: "POST" })
       return { ok: false, error: "invalid_allowed_origin" };
     }
 
-    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    const patch: Record<string, any> = { updated_at: new Date().toISOString() };
     if (data.name !== undefined) patch.name = data.name;
     if (data.is_active !== undefined) patch.is_active = data.is_active;
     if (data.allowed_origins !== undefined) patch.allowed_origins = [...new Set(data.allowed_origins)];
 
     const { data: updated, error } = await context.supabase
       .from("channel_config")
-      .update(patch)
+      .update(patch as never)
       .eq("id", data.channel_id)
       .eq("company_id", scope.data.companyId)
       .select(CHANNEL_SELECT)
@@ -324,7 +333,7 @@ export const updateWidgetConfigFn = createServerFn({ method: "POST" })
     );
     if (unsafeLink) return { ok: false, error: "widget_shared_or_unbound" };
 
-    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    const patch: Record<string, any> = { updated_at: new Date().toISOString() };
     for (const key of [
       "header_title",
       "welcome_message",
@@ -340,7 +349,7 @@ export const updateWidgetConfigFn = createServerFn({ method: "POST" })
 
     const { data: widget, error } = await context.supabase
       .from("widget_config")
-      .update(patch)
+      .update(patch as never)
       .eq("id", owned.data.widgetId)
       .select("*")
       .maybeSingle();
@@ -362,13 +371,13 @@ export const updateAgentProfileFn = createServerFn({ method: "POST" })
     if (data.display_name === undefined && data.avatar_url === undefined) {
       return { ok: false, error: "no_changes" };
     }
-    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    const patch: Record<string, any> = { updated_at: new Date().toISOString() };
     if (data.display_name !== undefined) patch.display_name = data.display_name;
     if (data.avatar_url !== undefined) patch.avatar_url = data.avatar_url;
 
     const { data: row, error } = await context.supabase
       .from("agent_profile")
-      .update(patch)
+      .update(patch as never)
       .eq("user_id", String(context.userId))
       .select("display_name, avatar_url")
       .maybeSingle();
@@ -378,32 +387,103 @@ export const updateAgentProfileFn = createServerFn({ method: "POST" })
     return { ok: true, data: row as { display_name: string; avatar_url: string | null } };
   });
 
-async function resolveSingleActiveCompany(context: {
-  supabase: any;
-  userId: string;
-}): Promise<ServerResult<string>> {
-  const scope = await resolveCompanyScope(context);
-  return scope.ok && scope.data
-    ? { ok: true, data: scope.data.companyId }
-    : { ok: false, error: scope.error };
+/**
+ * Shared pre-activation scope semantics for config surfaces.
+ *
+ * Canonical always wins: when the caller has canonical company membership the
+ * canonical company/role authorization is enforced exactly as before. Only when
+ * canonical identity is genuinely absent (no active membership at all, i.e. the
+ * SU Platform binding has not happened yet) does the caller fall back to
+ * pre-activation mode, which is limited to authenticated authorized roles and to
+ * null-company records. No company id is ever fabricated.
+ */
+type ConfigScope =
+  | { mode: "canonical"; companyId: string; roles: AppRole[] }
+  | { mode: "pre_activation"; companyId: null; roles: AppRole[] };
+
+async function resolveConfigScope(
+  context: { supabase: any; userId: string },
+  allowed: readonly AppRole[],
+): Promise<ServerResult<ConfigScope>> {
+  const canonical = await resolveCompanyScope(context);
+  if (canonical.ok && canonical.data) {
+    if (!canonical.data.roles.some((r) => allowed.includes(r))) {
+      return { ok: false, error: "forbidden" };
+    }
+    return {
+      ok: true,
+      data: {
+        mode: "canonical",
+        companyId: canonical.data.companyId,
+        roles: canonical.data.roles,
+      },
+    };
+  }
+
+  // Canonical company exists but the caller is not an active member, the company
+  // is inactive, or membership is ambiguous: stay fail-closed, never fall back.
+  if (canonical.error !== "company_membership_unresolved") {
+    return { ok: false, error: canonical.error };
+  }
+
+  const { data: roleRows, error: roleErr } = await context.supabase
+    .from("user_roles")
+    .select("role")
+    .eq("user_id", String(context.userId));
+  if (roleErr) return { ok: false, error: "role_lookup_failed" };
+
+  const valid = new Set<AppRole>(ROLE_PRECEDENCE);
+  const roles: AppRole[] = [
+    ...new Set(
+      (roleRows ?? [])
+        .map((r: any) => String(r.role) as AppRole)
+        .filter((r: AppRole) => valid.has(r)),
+    ),
+  ] as AppRole[];
+
+  if (!roles.some((r) => allowed.includes(r))) {
+    return { ok: false, error: "forbidden" };
+  }
+  return { ok: true, data: { mode: "pre_activation", companyId: null, roles } };
+}
+
+/**
+ * feedback_automation_config has no company_id column: it is a single
+ * pre-canonical configuration row. Authorization is therefore role-based via
+ * resolveConfigScope (canonical membership role first, pre-activation role only
+ * when canonical identity is genuinely absent) and reads/writes are never
+ * filtered on a company column that does not exist.
+ */
+const FEEDBACK_SELECT = "id, name, is_active, delay_minutes, trigger_event, config";
+
+function normalizeFeedbackRow(row: any): LiveFeedbackConfigRow {
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    is_active: row.is_active === true,
+    delay_minutes: row.delay_minutes ?? null,
+    trigger_event: String(row.trigger_event),
+    config: (row.config ?? null) as JsonRecord | null,
+    company_id: null,
+  };
 }
 
 export const getFeedbackConfigFn = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }): Promise<ServerResult<LiveFeedbackConfigRow | null>> => {
-    const company = await resolveSingleActiveCompany({
-      supabase: context.supabase,
-      userId: String(context.userId),
-    });
-    if (!company.ok || !company.data) return { ok: false, error: company.error };
+    const scope = await resolveConfigScope(
+      { supabase: context.supabase, userId: String(context.userId) },
+      ["admin", "supervisor", "qa"],
+    );
+    if (!scope.ok || !scope.data) return { ok: false, error: scope.error };
 
     const { data, error } = await context.supabase
       .from("feedback_automation_config")
-      .select("id, name, is_active, delay_minutes, trigger_event, config, company_id")
-      .eq("company_id", company.data)
+      .select(FEEDBACK_SELECT)
+      .eq("trigger_event", "conversation_resolved")
       .maybeSingle();
     if (error) return { ok: false, error: error.message };
-    return { ok: true, data: (data as LiveFeedbackConfigRow | null) ?? null };
+    return { ok: true, data: data ? normalizeFeedbackRow(data) : null };
   });
 
 const updateFeedbackInput = z.object({
@@ -416,20 +496,16 @@ export const updateFeedbackConfigFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator(updateFeedbackInput)
   .handler(async ({ data, context }): Promise<ServerResult<LiveFeedbackConfigRow>> => {
-    const scope = requireRole(
-      await resolveCompanyScope({
-        supabase: context.supabase,
-        userId: String(context.userId),
-      }),
+    const scope = await resolveConfigScope(
+      { supabase: context.supabase, userId: String(context.userId) },
       ["admin", "supervisor"],
     );
     if (!scope.ok || !scope.data) return { ok: false, error: scope.error };
-    const companyId = scope.data.companyId;
 
     const { data: existing, error: readErr } = await context.supabase
       .from("feedback_automation_config")
       .select("id")
-      .eq("company_id", companyId)
+      .eq("trigger_event", "conversation_resolved")
       .maybeSingle();
     if (readErr) return { ok: false, error: `read_before_write_failed: ${readErr.message}` };
 
@@ -443,14 +519,13 @@ export const updateFeedbackConfigFn = createServerFn({ method: "POST" })
           is_active: data.is_active ?? false,
           delay_minutes: data.delay_minutes ?? 1440,
           config: (data.config ?? {}) as never,
-          company_id: companyId,
         } as never)
         .select("id")
         .single();
       if (error) return { ok: false, error: `insert_failed: ${error.message}` };
-      targetId = inserted.id;
+      targetId = String(inserted.id);
     } else {
-      const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+      const patch: Record<string, any> = { updated_at: new Date().toISOString() };
       if (data.is_active !== undefined) patch.is_active = data.is_active;
       if (data.delay_minutes !== undefined) patch.delay_minutes = data.delay_minutes;
       if (data.config !== undefined) patch.config = data.config;
@@ -458,23 +533,22 @@ export const updateFeedbackConfigFn = createServerFn({ method: "POST" })
         .from("feedback_automation_config")
         .update(patch as never)
         .eq("id", existing.id)
-        .eq("company_id", companyId)
         .select("id")
         .maybeSingle();
       if (error) return { ok: false, error: `update_failed: ${error.message}` };
       if (!updated) return { ok: false, error: "update_failed: row not updated" };
-      targetId = existing.id;
+      targetId = String(existing.id);
     }
 
     const { data: verified, error: verifyErr } = await context.supabase
       .from("feedback_automation_config")
-      .select("id, name, is_active, delay_minutes, trigger_event, config, company_id")
+      .select(FEEDBACK_SELECT)
       .eq("id", targetId)
-      .eq("company_id", companyId)
       .maybeSingle();
     if (verifyErr || !verified) return { ok: false, error: "verify_read_failed" };
-    return { ok: true, data: verified as LiveFeedbackConfigRow };
+    return { ok: true, data: normalizeFeedbackRow(verified) };
   });
+
 
 export const configService = {
   listChannelConfigs: () => listChannelConfigsFn(),

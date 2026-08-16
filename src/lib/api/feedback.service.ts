@@ -33,14 +33,16 @@ export type ScheduleFeedbackResult =
   | ScheduleFeedbackSuccess
   | ScheduleFeedbackFailure;
 
-async function readFeedbackConfig(
-  supabase: AuthedSupabase,
-  companyId: string,
-) {
+/**
+ * feedback_automation_config is company-unbound (no company_id column): it holds
+ * a single pre-canonical automation row. Scope authorization happens on the
+ * conversation, not on this read.
+ */
+async function readFeedbackConfig(supabase: AuthedSupabase) {
   const { data, error } = await supabase
     .from("feedback_automation_config")
-    .select("id, name, is_active, delay_minutes, trigger_event, config, company_id")
-    .eq("company_id", companyId)
+    .select("id, name, is_active, delay_minutes, trigger_event, config")
+    .eq("trigger_event", "conversation_resolved")
     .maybeSingle();
 
   if (error) {
@@ -52,6 +54,8 @@ async function readFeedbackConfig(
   }
   return { ok: true as const, data };
 }
+
+const PRE_ACTIVATION_SCHEDULE_ROLES = new Set(["admin", "supervisor", "agent", "qa"]);
 
 const scheduleInput = z.object({ conversation_id: z.string().uuid() });
 
@@ -65,7 +69,7 @@ export const scheduleFeedbackRequestFn = createServerFn({ method: "POST" })
     const { data: conversation, error: conversationErr } =
       await context.supabase
         .from("conversations")
-        .select("id, company_id")
+        .select("id, company_id, channel_config_id")
         .eq("id", conversationId)
         .maybeSingle();
 
@@ -76,33 +80,95 @@ export const scheduleFeedbackRequestFn = createServerFn({ method: "POST" })
         message: "conversation_lookup_failed",
       };
     }
-    if (!conversation?.company_id) {
+    if (!conversation) {
       return {
         ok: false,
         error_type: "config_read_failed",
-        message: "conversation_company_unresolved",
+        message: "conversation_not_found",
       };
     }
 
-    const companyId = String(conversation.company_id);
-    const { data: membership, error: membershipErr } =
-      await context.supabase
-        .from("company_membership")
-        .select("id")
-        .eq("company_id", companyId)
-        .eq("user_id", userId)
-        .eq("is_active", true)
+    let channelCompanyId: string | null = null;
+    if (conversation.channel_config_id) {
+      const { data: channel, error: channelErr } = await context.supabase
+        .from("channel_config")
+        .select("company_id")
+        .eq("id", conversation.channel_config_id)
         .maybeSingle();
+      if (channelErr) {
+        return {
+          ok: false,
+          error_type: "config_read_failed",
+          message: "channel_company_lookup_failed",
+        };
+      }
+      channelCompanyId = channel?.company_id ? String(channel.company_id) : null;
+    }
 
-    if (membershipErr || !membership) {
+    const conversationCompanyId = conversation.company_id
+      ? String(conversation.company_id)
+      : null;
+    if (
+      conversationCompanyId &&
+      channelCompanyId &&
+      conversationCompanyId !== channelCompanyId
+    ) {
       return {
         ok: false,
         error_type: "config_read_failed",
-        message: "company_membership_required",
+        message: "tenant_identity_conflict",
       };
     }
 
-    const cfg = await readFeedbackConfig(context.supabase, companyId);
+    // Canonical always wins: any resolvable canonical company identity requires
+    // canonical active membership and never degrades to pre-activation.
+    const resolvedCompanyId = conversationCompanyId ?? channelCompanyId;
+    if (resolvedCompanyId) {
+      const { data: membership, error: membershipErr } =
+        await context.supabase
+          .from("company_membership")
+          .select("id")
+          .eq("company_id", resolvedCompanyId)
+          .eq("user_id", userId)
+          .eq("is_active", true)
+          .maybeSingle();
+
+      if (membershipErr || !membership) {
+        return {
+          ok: false,
+          error_type: "config_read_failed",
+          message: "company_membership_required",
+        };
+      }
+    } else {
+      // Pre-activation: canonical identity is genuinely absent for this
+      // null-company conversation. Authenticated authorized role is still
+      // required; no company id is fabricated.
+      const { data: roleRows, error: roleErr } = await context.supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", userId);
+      if (roleErr) {
+        return {
+          ok: false,
+          error_type: "config_read_failed",
+          message: "role_lookup_failed",
+        };
+      }
+      const permitted = (roleRows ?? []).some((r: { role: string }) =>
+        PRE_ACTIVATION_SCHEDULE_ROLES.has(String(r.role)),
+      );
+      if (!permitted) {
+        return {
+          ok: false,
+          error_type: "config_read_failed",
+          message: "role_not_permitted",
+        };
+      }
+    }
+
+
+    const cfg = await readFeedbackConfig(context.supabase);
     if (!cfg.ok) {
       return {
         ok: false,
