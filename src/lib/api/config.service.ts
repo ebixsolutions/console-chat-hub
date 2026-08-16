@@ -56,6 +56,7 @@ export type AppRole = "admin" | "supervisor" | "agent" | "qa";
 const ROLE_PRECEDENCE: AppRole[] = ["admin", "supervisor", "agent", "qa"];
 
 type CompanyScope = { companyId: string; roles: AppRole[] };
+type MembershipRow = { company_id: string; role: string; is_active: boolean };
 
 async function resolveCompanyScope(context: {
   supabase: any;
@@ -68,14 +69,14 @@ async function resolveCompanyScope(context: {
 
   if (membershipErr) return { ok: false, error: "company_membership_lookup_failed" };
 
-  const allMemberships = memberships ?? [];
-  const companyIds = [...new Set(allMemberships.map((m: any) => String(m.company_id)))];
+  const allMemberships = (memberships ?? []) as MembershipRow[];
+  const companyIds = [...new Set(allMemberships.map((m) => String(m.company_id)))];
   if (companyIds.length === 0) return { ok: false, error: "company_membership_unresolved" };
   if (companyIds.length !== 1) return { ok: false, error: "company_membership_ambiguous" };
 
-  const companyId = companyIds[0];
+  const companyId: string = companyIds[0];
   const activeMemberships = allMemberships.filter(
-    (membership: any) => membership.is_active === true && String(membership.company_id) === companyId,
+    (membership) => membership.is_active === true && String(membership.company_id) === companyId,
   );
   if (activeMemberships.length === 0) return { ok: false, error: "not_a_member" };
   const { data: company, error: companyErr } = await context.supabase
@@ -88,10 +89,10 @@ async function resolveCompanyScope(context: {
   if (!company || company.is_active !== true) return { ok: false, error: "company_inactive" };
 
   const valid = new Set<AppRole>(ROLE_PRECEDENCE);
-  const roles = [
+  const roles: AppRole[] = [
     ...new Set(
       activeMemberships
-        .map((m: any) => String(m.role) as AppRole)
+        .map((m) => String(m.role) as AppRole)
         .filter((r: AppRole) => valid.has(r)),
     ),
   ];
