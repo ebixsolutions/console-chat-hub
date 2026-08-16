@@ -429,7 +429,7 @@ Deno.serve(async (req) => {
     return jsonResponse(
       {
         success: true,
-        scope: { company_id: companyId },
+        scope: scopeDescriptor(scope),
         visitor: {
           session_ref: toSessionRef(String(visitor.id)),
           first_seen: visitor.created_at,
