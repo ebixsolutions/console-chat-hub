@@ -104,11 +104,14 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: "forbidden" }, 403, req);
     }
 
-    const company = await resolveSingleCompany(admin, user.id);
-    if (!company.ok) {
-      return jsonResponse({ error: company.code }, company.status, req);
+    const scopeResult = await resolveCallerScope(admin, {
+      userId: user.id,
+      preActivationRoles: PRE_ACTIVATION_ROLES,
+    });
+    if (!scopeResult.ok) {
+      return jsonResponse({ error: scopeResult.error }, scopeResult.status, req);
     }
-    const companyId = company.companyId;
+    const scope = scopeResult.scope;
 
     const body = await req.json().catch(() => null);
     if (!body || typeof body !== "object") {
