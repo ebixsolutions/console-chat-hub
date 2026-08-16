@@ -205,7 +205,10 @@ Deno.serve(async (req) => {
       return jsonRes({ error }, status, req);
     }
     const scope = scopeResult.scope;
-    const scopeRoles = new Set([...scope.roles, agent.role]);
+    // Authorization comes exclusively from the resolver: canonical membership
+    // roles in canonical mode, or authorized user_roles in pre-activation mode.
+    // agent_profile.role is identity metadata and cannot elevate scope RBAC.
+    const scopeRoles = new Set(scope.roles);
     const isElevated = scopeRoles.has("admin") || scopeRoles.has("supervisor");
     const isAgent = scopeRoles.has("agent");
     if (!isElevated && !isAgent) {

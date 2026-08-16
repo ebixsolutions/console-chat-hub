@@ -190,6 +190,21 @@ export async function resolveConversationScope(
     return { ok: false, error: "role_not_permitted", status: 403 };
   }
 
+  // A NULL-company resource is pre-activation only when the caller has no
+  // canonical membership identity at all. Inactive memberships remain
+  // canonical identity and must fail closed rather than falling through.
+  const { data: memberships, error: membershipError } = await admin
+    .from("company_membership")
+    .select("company_id, is_active")
+    .eq("user_id", args.userId);
+  if (membershipError) {
+    console.error("[scope] company membership lookup failed", membershipError.code);
+    return { ok: false, error: "membership_lookup_failed", status: 500 };
+  }
+  if ((memberships ?? []).length > 0) {
+    return { ok: false, error: "not_a_member", status: 403 };
+  }
+
   const roleResult = await loadAuthenticatedRoles(admin, args.userId);
   if (!roleResult.ok) return roleResult;
   if (!roleResult.roles.some((r) => args.preActivationRoles.has(r))) {
@@ -203,10 +218,10 @@ export async function resolveConversationScope(
  * Resolve the operating scope for a caller-bound (non-resource) operation such
  * as a console directory or analytics roll-up.
  *
- * Canonical when the caller has exactly one active membership. Ambiguous
- * multi-company membership stays fail-closed. Pre-activation only when the
- * caller has no active membership at all, i.e. canonical binding has not
- * happened yet.
+ * Canonical when all membership rows identify exactly one company and at least
+ * one membership for it is active. Ambiguous multi-company identity stays
+ * fail-closed even when some rows are inactive. Pre-activation is available
+ * only when no membership rows exist at all.
  */
 export async function resolveCallerScope(
   admin: SupabaseClient,
@@ -214,17 +229,17 @@ export async function resolveCallerScope(
 ): Promise<ScopeResult> {
   const { data: memberships, error } = await admin
     .from("company_membership")
-    .select("company_id")
-    .eq("user_id", args.userId)
-    .eq("is_active", true);
+    .select("company_id, is_active, role")
+    .eq("user_id", args.userId);
   if (error) {
     console.error("[scope] company membership lookup failed", error.code);
     return { ok: false, error: "membership_lookup_failed", status: 500 };
   }
 
+  const allMemberships = memberships ?? [];
   const companyIds = [
     ...new Set(
-      (memberships ?? [])
+      allMemberships
         .map((row: { company_id: string | null }) => row.company_id)
         .filter((id: string | null): id is string => Boolean(id)),
     ),
@@ -234,8 +249,19 @@ export async function resolveCallerScope(
     return { ok: false, error: "company_membership_ambiguous", status: 409 };
   }
   if (companyIds.length === 1) {
+    const hasActiveMembership = allMemberships.some(
+      (row: { company_id: string | null; is_active: boolean }) =>
+        row.company_id === companyIds[0] && row.is_active === true,
+    );
+    if (!hasActiveMembership) {
+      return { ok: false, error: "not_a_member", status: 403 };
+    }
     // Canonical always wins.
     return await requireActiveCompanyMembership(admin, companyIds[0], args.userId);
+  }
+
+  if (allMemberships.length > 0) {
+    return { ok: false, error: "not_a_member", status: 403 };
   }
 
   if (args.preActivationRoles.size === 0) {

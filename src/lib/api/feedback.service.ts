@@ -124,6 +124,19 @@ export const scheduleFeedbackRequestFn = createServerFn({ method: "POST" })
     // canonical active membership and never degrades to pre-activation.
     const resolvedCompanyId = conversationCompanyId ?? channelCompanyId;
     if (resolvedCompanyId) {
+      const { data: company, error: companyErr } = await context.supabase
+        .from("company")
+        .select("id, is_active")
+        .eq("id", resolvedCompanyId)
+        .maybeSingle();
+      if (companyErr || !company || company.is_active !== true) {
+        return {
+          ok: false,
+          error_type: "config_read_failed",
+          message: companyErr ? "company_lookup_failed" : "company_inactive",
+        };
+      }
+
       const { data: membership, error: membershipErr } =
         await context.supabase
           .from("company_membership")
@@ -144,6 +157,25 @@ export const scheduleFeedbackRequestFn = createServerFn({ method: "POST" })
       // Pre-activation: canonical identity is genuinely absent for this
       // null-company conversation. Authenticated authorized role is still
       // required; no company id is fabricated.
+      const { data: memberships, error: membershipErr } = await context.supabase
+        .from("company_membership")
+        .select("company_id, is_active")
+        .eq("user_id", userId);
+      if (membershipErr) {
+        return {
+          ok: false,
+          error_type: "config_read_failed",
+          message: "company_membership_lookup_failed",
+        };
+      }
+      if ((memberships ?? []).length > 0) {
+        return {
+          ok: false,
+          error_type: "config_read_failed",
+          message: "company_membership_required",
+        };
+      }
+
       const { data: roleRows, error: roleErr } = await context.supabase
         .from("user_roles")
         .select("role")
