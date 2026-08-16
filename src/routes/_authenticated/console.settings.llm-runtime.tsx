@@ -9,7 +9,11 @@ import {
   PermissionDenied,
   PageHeader,
 } from "@/components/console/PageStates";
-import { supabase } from "@/integrations/supabase/client";
+import { useServerFn } from "@tanstack/react-start";
+import {
+  getLlmRuntimeTelemetryFn,
+  type LlmRuntimeLogRow,
+} from "@/lib/api/llmRuntime.service";
 
 export const Route = createFileRoute(
   "/_authenticated/console/settings/llm-runtime",
@@ -19,14 +23,7 @@ export const Route = createFileRoute(
 
 type RuntimeState = "loading" | "ready" | "error";
 
-type LlmLogRow = {
-  id: string;
-  created_at: string;
-  response_status: number | null;
-  response_latency_ms: number | null;
-  error_message: string | null;
-  request_payload: unknown;
-};
+type LlmLogRow = LlmRuntimeLogRow;
 
 type ParsedLlmCall = {
   id: string;
@@ -88,57 +85,6 @@ function parseCall(row: LlmLogRow): ParsedLlmCall {
   };
 }
 
-async function resolveCurrentCompanyId(): Promise<
-  | { ok: true; companyId: string }
-  | { ok: false; error: string }
-> {
-  const {
-    data: { user },
-    error: authError,
-  } = await supabase.auth.getUser();
-
-  if (authError || !user) {
-    return { ok: false, error: "unauthorized" };
-  }
-
-  const { data: memberships, error: membershipError } = await supabase
-    .from("company_membership")
-    .select("company_id")
-    .eq("user_id", user.id)
-    .eq("is_active", true);
-
-  if (membershipError) {
-    return { ok: false, error: "company_membership_lookup_failed" };
-  }
-
-  const companyIds = [
-    ...new Set((memberships ?? []).map((m) => String(m.company_id))),
-  ];
-
-  if (companyIds.length === 0) {
-    return { ok: false, error: "company_membership_unresolved" };
-  }
-  if (companyIds.length !== 1) {
-    return { ok: false, error: "company_membership_ambiguous" };
-  }
-
-  const companyId = companyIds[0];
-  const { data: company, error: companyError } = await supabase
-    .from("company")
-    .select("id, is_active")
-    .eq("id", companyId)
-    .maybeSingle();
-
-  if (companyError) {
-    return { ok: false, error: "company_lookup_failed" };
-  }
-  if (!company || company.is_active !== true) {
-    return { ok: false, error: "company_inactive" };
-  }
-
-  return { ok: true, companyId };
-}
-
 function LlmRuntimePage() {
   const { role: productionRole, loading } = useCurrentRole();
 
@@ -156,6 +102,8 @@ function LlmRuntimeTelemetry() {
   const [rows, setRows] = useState<ParsedLlmCall[]>([]);
   const [error, setError] = useState("");
 
+  const fetchTelemetry = useServerFn(getLlmRuntimeTelemetryFn);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -163,41 +111,29 @@ function LlmRuntimeTelemetry() {
       setState("loading");
       setError("");
 
-      const scope = await resolveCurrentCompanyId();
-      if (cancelled) return;
+      try {
+        const result = await fetchTelemetry();
+        if (cancelled) return;
 
-      if (!scope.ok) {
-        setError(scope.error);
+        if (!result.ok || !result.data) {
+          setError(result.error ?? "llm_runtime_unavailable");
+          setState("error");
+          return;
+        }
+
+        setRows(result.data.rows.map(parseCall));
+        setState("ready");
+      } catch {
+        if (cancelled) return;
+        setError("llm_runtime_unavailable");
         setState("error");
-        return;
       }
-
-      const { data, error: queryError } = await supabase
-        .from("upstream_call_log")
-        .select(
-          "id, created_at, response_status, response_latency_ms, error_message, request_payload",
-        )
-        .eq("company_id", scope.companyId)
-        .eq("upstream_service", "llm")
-        .order("created_at", { ascending: false })
-        .limit(100);
-
-      if (cancelled) return;
-
-      if (queryError) {
-        setError("llm_runtime_log_query_failed");
-        setState("error");
-        return;
-      }
-
-      setRows(((data ?? []) as LlmLogRow[]).map(parseCall));
-      setState("ready");
     })();
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [fetchTelemetry]);
 
   const stats = useMemo(() => {
     const total = rows.length;
