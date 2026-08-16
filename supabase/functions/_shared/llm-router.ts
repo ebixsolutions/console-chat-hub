@@ -4,17 +4,19 @@
  * No Edge Function may build its own provider request. Everything a governed
  * call must do happens here and cannot be skipped by a caller:
  *
- *   model registry   model ids come from platform configuration, never literals
- *   redaction        outbound text is PII-redacted before it leaves the process
- *   injection guard  known override markers are refused, not forwarded
- *   timeout          per-attempt abort
- *   retry            bounded exponential backoff on retryable classes only
- *   usage logging    tokens and latency written to upstream_call_log
- *   observability    one structured line per attempt, correlated by request_id
- *   safe errors      stable codes out, provider text never surfaced to callers
+ *   provider registry  LLM_PROVIDER selects vertex (default target) or anthropic (rollback)
+ *   model registry     model ids come from platform configuration, never literals
+ *   redaction          outbound text is PII-redacted before it leaves the process
+ *   injection guard    known override markers are refused, not forwarded
+ *   timeout            per-attempt abort
+ *   retry              bounded exponential backoff on retryable classes only
+ *   usage logging      tokens and latency written to upstream_call_log
+ *   observability      one structured line per attempt, correlated by request_id
+ *   safe errors        stable codes out, provider text never surfaced to callers
  */
 
 import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2.45.0";
+import { GoogleAuth } from "npm:google-auth-library@9.15.0";
 
 export type LlmFailureCode =
   | "LLM_CONFIG_MISSING"
@@ -62,11 +64,14 @@ export interface LlmCall {
   tag: string;
 }
 
-const ENDPOINT = "https://api.anthropic.com/v1/messages";
-const API_VERSION = "2023-06-01";
+type ProviderId = "vertex" | "anthropic";
+
+const ANTHROPIC_ENDPOINT = "https://api.anthropic.com/v1/messages";
+const ANTHROPIC_API_VERSION = "2023-06-01";
 const MAX_ATTEMPTS = 3;
 const BASE_BACKOFF_MS = 400;
 const DEFAULT_TIMEOUT_MS = 30000;
+const VERTEX_SCOPE = "https://www.googleapis.com/auth/cloud-platform";
 
 /** Model ids are configuration, never literals in call sites. */
 const MODEL_ENV: Record<ModelPurpose, string> = {
@@ -119,8 +124,16 @@ function log(tag: string, fields: Record<string, unknown>): void {
   );
 }
 
+function resolveProvider(): ProviderId {
+  const raw = (Deno.env.get("LLM_PROVIDER") ?? "").trim().toLowerCase();
+  // Only these two are supported; anything else is a configuration error and is
+  // reported as such rather than silently falling back to another provider.
+  return raw === "anthropic" ? "anthropic" : raw === "vertex" ? "vertex" : ("" as ProviderId);
+}
+
 async function recordUsage(
   call: LlmCall,
+  provider: string,
   model: string,
   outcome: "success" | "failed" | "timeout" | "blocked",
   httpStatus: number,
@@ -128,9 +141,9 @@ async function recordUsage(
   code?: string,
 ): Promise<void> {
   try {
-    // Nothing here carries prompt text, system text or provider output. Only
-    // identifiers, counts and timings are persisted, so the log can never
-    // become a second copy of customer data.
+    // Nothing here carries prompt text, system text, credentials or provider
+    // output. Only identifiers, counts and timings are persisted, so the log can
+    // never become a second copy of customer data.
     await serviceClient().from("upstream_call_log").insert({
       conversation_id: call.conversationId,
       company_id: call.companyId,
@@ -138,6 +151,7 @@ async function recordUsage(
       request_payload: {
         request_id: call.operationId,
         purpose: call.purpose,
+        provider,
         model,
         company_id: call.companyId,
         outcome,
@@ -159,6 +173,145 @@ async function recordUsage(
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+interface ProviderRequest {
+  url: string;
+  headers: Record<string, string>;
+  body: string;
+}
+
+interface ParsedProviderResponse {
+  text: string;
+  input_tokens: number;
+  output_tokens: number;
+}
+
+interface ProviderAdapter {
+  id: ProviderId;
+  model: string;
+  /** Built per attempt so short-lived credentials can be refreshed. */
+  buildRequest: () => Promise<ProviderRequest>;
+  parseResponse: (body: unknown) => ParsedProviderResponse;
+}
+
+/* -------------------------------- anthropic ------------------------------- */
+
+function anthropicAdapter(
+  apiKey: string,
+  model: string,
+  safeSystem: string,
+  safeUser: string,
+  maxTokens: number,
+): ProviderAdapter {
+  return {
+    id: "anthropic",
+    model,
+    buildRequest: () =>
+      Promise.resolve({
+        url: ANTHROPIC_ENDPOINT,
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": ANTHROPIC_API_VERSION,
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: maxTokens,
+          system: safeSystem,
+          messages: [{ role: "user", content: safeUser }],
+        }),
+      }),
+    parseResponse: (body) => {
+      const obj = body as {
+        content?: Array<{ type?: string; text?: string }>;
+        usage?: { input_tokens?: number; output_tokens?: number };
+      };
+      const text = Array.isArray(obj.content)
+        ? obj.content
+          .filter((b) => b?.type === "text" && typeof b.text === "string")
+          .map((b) => b.text as string).join("").trim()
+        : "";
+      return {
+        text,
+        input_tokens: Number(obj.usage?.input_tokens ?? 0),
+        output_tokens: Number(obj.usage?.output_tokens ?? 0),
+      };
+    },
+  };
+}
+
+/* --------------------------------- vertex --------------------------------- */
+
+/**
+ * Service-account OAuth token for Vertex AI. The credential JSON is parsed in
+ * process only and never logged, returned or persisted.
+ */
+async function vertexAccessToken(serviceAccountJson: string): Promise<string> {
+  const credentials = JSON.parse(serviceAccountJson) as Record<string, unknown>;
+  const auth = new GoogleAuth({ credentials, scopes: [VERTEX_SCOPE] });
+  const client = await auth.getClient();
+  const token = await client.getAccessToken();
+  const value = typeof token === "string" ? token : token?.token;
+  if (!value) throw new Error("vertex_token_unavailable");
+  return value;
+}
+
+function vertexAdapter(
+  serviceAccountJson: string,
+  projectId: string,
+  region: string,
+  model: string,
+  safeSystem: string,
+  safeUser: string,
+  maxTokens: number,
+): ProviderAdapter {
+  const url =
+    `https://${region}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${region}/publishers/google/models/${model}:generateContent`;
+
+  return {
+    id: "vertex",
+    model,
+    buildRequest: async () => {
+      const accessToken = await vertexAccessToken(serviceAccountJson);
+      return {
+        url,
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: safeSystem }] },
+          contents: [{ role: "user", parts: [{ text: safeUser }] }],
+          generationConfig: { maxOutputTokens: maxTokens },
+        }),
+      };
+    },
+    parseResponse: (body) => {
+      const obj = body as {
+        candidates?: Array<{
+          content?: { parts?: Array<{ text?: string }> };
+        }>;
+        usageMetadata?: {
+          promptTokenCount?: number;
+          candidatesTokenCount?: number;
+        };
+      };
+      const parts = obj.candidates?.[0]?.content?.parts ?? [];
+      const text = Array.isArray(parts)
+        ? parts
+          .filter((p) => typeof p?.text === "string")
+          .map((p) => p.text as string).join("").trim()
+        : "";
+      return {
+        text,
+        input_tokens: Number(obj.usageMetadata?.promptTokenCount ?? 0),
+        output_tokens: Number(obj.usageMetadata?.candidatesTokenCount ?? 0),
+      };
+    },
+  };
+}
+
+/* --------------------------------- router --------------------------------- */
+
 export async function callModel(call: LlmCall): Promise<LlmResult> {
   const started = Date.now();
   const usage: LlmUsage = {
@@ -169,49 +322,114 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
   };
   const requestId = call.operationId;
 
-  const key = Deno.env.get("ANTHROPIC_API_KEY");
+  const provider = resolveProvider();
   const model = Deno.env.get(MODEL_ENV[call.purpose]);
   const timeoutMs = Number(
     Deno.env.get("LLM_TIMEOUT_MS") ?? DEFAULT_TIMEOUT_MS,
   );
 
-  if (!key || key.trim().length === 0 || !model || model.trim().length === 0) {
+  const nonEmpty = (v: string | undefined) => !!v && v.trim().length > 0;
+
+  const configMissing = async (providerLabel: string, modelLabel: string) => {
     usage.latency_ms = Date.now() - started;
     log(call.tag, {
       event: "config_missing",
       request_id: requestId,
+      provider: providerLabel,
       purpose: call.purpose,
     });
     await recordUsage(
       call,
-      model ?? "unset",
+      providerLabel,
+      modelLabel,
       "failed",
       0,
       usage,
       "LLM_CONFIG_MISSING",
     );
     return {
-      ok: false,
-      code: "LLM_CONFIG_MISSING",
+      ok: false as const,
+      code: "LLM_CONFIG_MISSING" as const,
       request_id: requestId,
       usage,
     };
+  };
+
+  if (provider !== "vertex" && provider !== "anthropic") {
+    return await configMissing("unset", model ?? "unset");
+  }
+  if (!nonEmpty(model)) {
+    return await configMissing(provider, "unset");
   }
 
-  if (looksLikeInjection(call.user)) {
-    usage.latency_ms = Date.now() - started;
-    log(call.tag, { event: "input_blocked", request_id: requestId });
-    await recordUsage(call, model, "blocked", 0, usage, "LLM_INPUT_BLOCKED");
-    return {
-      ok: false,
-      code: "LLM_INPUT_BLOCKED",
-      request_id: requestId,
-      usage,
-    };
+  let adapter: ProviderAdapter;
+  if (provider === "vertex") {
+    const sa = Deno.env.get("GOOGLE_SERVICE_ACCOUNT_JSON");
+    const projectId = Deno.env.get("GOOGLE_PROJECT_ID");
+    const region = Deno.env.get("GOOGLE_REGION");
+    if (!nonEmpty(sa) || !nonEmpty(projectId) || !nonEmpty(region)) {
+      return await configMissing(provider, model!);
+    }
+    if (looksLikeInjection(call.user)) {
+      usage.latency_ms = Date.now() - started;
+      log(call.tag, { event: "input_blocked", request_id: requestId });
+      await recordUsage(
+        call,
+        provider,
+        model!,
+        "blocked",
+        0,
+        usage,
+        "LLM_INPUT_BLOCKED",
+      );
+      return {
+        ok: false,
+        code: "LLM_INPUT_BLOCKED",
+        request_id: requestId,
+        usage,
+      };
+    }
+    adapter = vertexAdapter(
+      sa!,
+      projectId!.trim(),
+      region!.trim(),
+      model!.trim(),
+      redact(call.system),
+      redact(call.user),
+      call.maxTokens,
+    );
+  } else {
+    const key = Deno.env.get("ANTHROPIC_API_KEY");
+    if (!nonEmpty(key)) {
+      return await configMissing(provider, model!);
+    }
+    if (looksLikeInjection(call.user)) {
+      usage.latency_ms = Date.now() - started;
+      log(call.tag, { event: "input_blocked", request_id: requestId });
+      await recordUsage(
+        call,
+        provider,
+        model!,
+        "blocked",
+        0,
+        usage,
+        "LLM_INPUT_BLOCKED",
+      );
+      return {
+        ok: false,
+        code: "LLM_INPUT_BLOCKED",
+        request_id: requestId,
+        usage,
+      };
+    }
+    adapter = anthropicAdapter(
+      key!,
+      model!.trim(),
+      redact(call.system),
+      redact(call.user),
+      call.maxTokens,
+    );
   }
-
-  const safeUser = redact(call.user);
-  const safeSystem = redact(call.system);
 
   let lastCode: LlmFailureCode = "LLM_NETWORK";
   let lastStatus: number | undefined;
@@ -225,19 +443,11 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
     try {
       let res: Response;
       try {
-        res = await fetch(ENDPOINT, {
+        const req = await adapter.buildRequest();
+        res = await fetch(req.url, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-api-key": key,
-            "anthropic-version": API_VERSION,
-          },
-          body: JSON.stringify({
-            model,
-            max_tokens: call.maxTokens,
-            system: safeSystem,
-            messages: [{ role: "user", content: safeUser }],
-          }),
+          headers: req.headers,
+          body: req.body,
           signal: controller.signal,
         });
       } catch (e) {
@@ -246,6 +456,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
         log(call.tag, {
           event: "attempt_failed",
           request_id: requestId,
+          provider: adapter.id,
           attempt,
           code: lastCode,
           ms: Date.now() - attemptStart,
@@ -263,6 +474,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
         log(call.tag, {
           event: "attempt_retryable",
           request_id: requestId,
+          provider: adapter.id,
           attempt,
           status: res.status,
         });
@@ -273,11 +485,14 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
         break;
       }
       if (!res.ok) {
+        // Covers 401/403/404 and every other fatal status. Provider body is
+        // never read into logs or results.
         lastCode = "LLM_NON_2XX";
         lastStatus = res.status;
         log(call.tag, {
           event: "attempt_fatal",
           request_id: requestId,
+          provider: adapter.id,
           attempt,
           status: res.status,
         });
@@ -292,30 +507,22 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
         log(call.tag, {
           event: "parse_failed",
           request_id: requestId,
+          provider: adapter.id,
           attempt,
         });
         break;
       }
 
-      const obj = body as {
-        content?: Array<{ type?: string; text?: string }>;
-        usage?: { input_tokens?: number; output_tokens?: number };
-      };
-      usage.input_tokens = Number(obj.usage?.input_tokens ?? 0);
-      usage.output_tokens = Number(obj.usage?.output_tokens ?? 0);
+      const parsed = adapter.parseResponse(body);
+      usage.input_tokens = parsed.input_tokens;
+      usage.output_tokens = parsed.output_tokens;
 
-      const text = Array.isArray(obj.content)
-        ? obj.content.filter((b) =>
-          b?.type === "text" && typeof b.text === "string"
-        )
-          .map((b) => b.text as string).join("").trim()
-        : "";
-
-      if (!text) {
+      if (!parsed.text) {
         lastCode = "LLM_INVALID_OUTPUT";
         log(call.tag, {
           event: "empty_output",
           request_id: requestId,
+          provider: adapter.id,
           attempt,
         });
         break;
@@ -325,14 +532,28 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
       log(call.tag, {
         event: "success",
         request_id: requestId,
+        provider: adapter.id,
         attempt,
-        model,
+        model: adapter.model,
         input_tokens: usage.input_tokens,
         output_tokens: usage.output_tokens,
         ms: usage.latency_ms,
       });
-      await recordUsage(call, model, "success", res.status, usage);
-      return { ok: true, text, model, usage, request_id: requestId };
+      await recordUsage(
+        call,
+        adapter.id,
+        adapter.model,
+        "success",
+        res.status,
+        usage,
+      );
+      return {
+        ok: true,
+        text: parsed.text,
+        model: adapter.model,
+        usage,
+        request_id: requestId,
+      };
     } finally {
       clearTimeout(timer);
     }
@@ -342,12 +563,14 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
   log(call.tag, {
     event: "exhausted",
     request_id: requestId,
+    provider: adapter.id,
     code: lastCode,
     attempts: usage.attempts,
   });
   await recordUsage(
     call,
-    model,
+    adapter.id,
+    adapter.model,
     lastCode === "LLM_TIMEOUT" ? "timeout" : "failed",
     lastStatus ?? 0,
     usage,
