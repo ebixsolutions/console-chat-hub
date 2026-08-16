@@ -23,7 +23,18 @@ export interface LlmRuntimeLogRow {
   response_status: number | null;
   response_latency_ms: number | null;
   error_message: string | null;
-  request_payload: unknown;
+  request_payload: LlmRuntimePayload | null;
+}
+
+/** Safe, serializable subset of persisted runtime metadata. */
+export interface LlmRuntimePayload {
+  model?: string;
+  purpose?: string;
+  outcome?: string;
+  input_tokens?: number;
+  output_tokens?: number;
+  attempts?: number;
+  error_code?: string;
 }
 
 export interface LlmRuntimeResult {
@@ -134,7 +145,38 @@ export const getLlmRuntimeTelemetryFn = createServerFn({ method: "GET" })
       ok: true,
       data: {
         mode: scope.mode,
-        rows: (data ?? []) as LlmRuntimeLogRow[],
+        rows: ((data ?? []) as any[]).map((row): LlmRuntimeLogRow => {
+          const payload = (row.request_payload ?? null) as Record<string, unknown> | null;
+          return {
+            id: String(row.id),
+            created_at: String(row.created_at),
+            response_status: typeof row.response_status === "number" ? row.response_status : null,
+            response_latency_ms:
+              typeof row.response_latency_ms === "number" ? row.response_latency_ms : null,
+            error_message: row.error_message === null || row.error_message === undefined
+              ? null
+              : String(row.error_message),
+            request_payload: payload
+              ? {
+                  ...(typeof payload.model === "string" ? { model: payload.model } : {}),
+                  ...(typeof payload.purpose === "string" ? { purpose: payload.purpose } : {}),
+                  ...(typeof payload.outcome === "string" ? { outcome: payload.outcome } : {}),
+                  ...(Number.isFinite(Number(payload.input_tokens))
+                    ? { input_tokens: Number(payload.input_tokens) }
+                    : {}),
+                  ...(Number.isFinite(Number(payload.output_tokens))
+                    ? { output_tokens: Number(payload.output_tokens) }
+                    : {}),
+                  ...(Number.isFinite(Number(payload.attempts))
+                    ? { attempts: Number(payload.attempts) }
+                    : {}),
+                  ...(typeof payload.error_code === "string"
+                    ? { error_code: payload.error_code }
+                    : {}),
+                }
+              : null,
+          };
+        }),
       },
     };
   });
