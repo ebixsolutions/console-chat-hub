@@ -1,6 +1,14 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import {
+  applyCompanyScope,
+  resolveCallerScope,
+  type ResolvedScope,
+} from "../_shared/pre-activation-scope.ts";
 
 const ALLOWED_ROLES = new Set(["admin", "supervisor"]);
+// Pre-activation analytics is a null-company functional mode only.
+const PRE_ACTIVATION_ROLES: ReadonlySet<string> = new Set(["admin", "supervisor"]);
+
 const MAX_RECENT = 20;
 
 const CONSOLE_ORIGINS = [
