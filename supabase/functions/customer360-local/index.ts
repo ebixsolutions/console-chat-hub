@@ -1,7 +1,14 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { corsHeaders, json } from "../_shared/cors.ts";
+import {
+  applyCompanyScope,
+  resolveCallerScope,
+  type ResolvedScope,
+} from "../_shared/pre-activation-scope.ts";
 
 const ALLOWED_ROLES = new Set(["admin", "supervisor"]);
+// Pre-activation Customer 360 is a null-company functional mode only.
+const PRE_ACTIVATION_ROLES: ReadonlySet<string> = new Set(["admin", "supervisor"]);
 const MAX_DIRECTORY = 50;
 
 function safeIdentity(meta: unknown): Record<string, string> {
@@ -15,49 +22,10 @@ function safeIdentity(meta: unknown): Record<string, string> {
   return out;
 }
 
-async function resolveSingleCompany(
-  admin: ReturnType<typeof createClient>,
-  userId: string,
-): Promise<
-  | { ok: true; companyId: string }
-  | { ok: false; error: string; status: number }
-> {
-  const { data: memberships, error } = await admin
-    .from("company_membership")
-    .select("company_id")
-    .eq("user_id", userId)
-    .eq("is_active", true);
-
-  if (error) return { ok: false, error: "company_membership_lookup_failed", status: 500 };
-
-  const companyIds = [
-    ...new Set(
-      (memberships ?? [])
-        .map((row: { company_id: string | null }) => row.company_id)
-        .filter((id: string | null): id is string => Boolean(id)),
-    ),
-  ];
-
-  if (companyIds.length === 0) {
-    return { ok: false, error: "company_membership_unresolved", status: 403 };
-  }
-  if (companyIds.length !== 1) {
-    return { ok: false, error: "company_membership_ambiguous", status: 409 };
-  }
-
-  const { data: company, error: companyError } = await admin
-    .from("company")
-    .select("id, is_active")
-    .eq("id", companyIds[0])
-    .maybeSingle();
-
-  if (companyError) return { ok: false, error: "company_lookup_failed", status: 500 };
-  if (!company || company.is_active !== true) {
-    return { ok: false, error: "company_inactive", status: 403 };
-  }
-
-  return { ok: true, companyId: String(company.id) };
+function scopeDescriptor(scope: ResolvedScope) {
+  return { company_id: scope.companyId, mode: scope.mode };
 }
+
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
