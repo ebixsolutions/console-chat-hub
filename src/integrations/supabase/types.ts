@@ -526,6 +526,673 @@ export type Database = {
           },
         ]
       }
+      ce_legacy_qa_metric: {
+        Row: {
+          company_id: string | null
+          context_score: number
+          conversation_id: string
+          empathy_score: number
+          id: string
+          policy_accuracy_score: number
+          quality_score: number | null
+          recorded_at: string
+          resolution_speed_score: number
+          source_payload_hash: string | null
+          source_record_id: string | null
+          source_system: string
+          vip_awareness_score: number
+        }
+        Insert: {
+          company_id?: string | null
+          context_score: number
+          conversation_id: string
+          empathy_score: number
+          id?: string
+          policy_accuracy_score: number
+          quality_score?: number | null
+          recorded_at?: string
+          resolution_speed_score: number
+          source_payload_hash?: string | null
+          source_record_id?: string | null
+          source_system: string
+          vip_awareness_score: number
+        }
+        Update: {
+          company_id?: string | null
+          context_score?: number
+          conversation_id?: string
+          empathy_score?: number
+          id?: string
+          policy_accuracy_score?: number
+          quality_score?: number | null
+          recorded_at?: string
+          resolution_speed_score?: number
+          source_payload_hash?: string | null
+          source_record_id?: string | null
+          source_system?: string
+          vip_awareness_score?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ce_legacy_qa_metric_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "company"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ce_legacy_qa_metric_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ce_local_bundle_snapshot: {
+        Row: {
+          attempt_id: string
+          bundle_hash: string
+          canonical_input: string
+          company_id: string | null
+          conversation_id: string
+          created_at: string
+          evaluated_ai_reply: Json | null
+          evaluation_contract_version: string
+          grounding_evidence: Json
+          grounding_manifest: Json
+          id: string
+          kb_snapshot_id: string
+          model_version: string
+          normalized_transcript: Json
+          policy_snapshot_id: string
+          prompt_version: string
+          rebound_at: string | null
+          rebound_run_id: string | null
+          redaction_applied: boolean
+          retention_expires_at: string
+          transcript_hash: string
+          truncation_manifest: Json
+          verified_human_response: Json | null
+        }
+        Insert: {
+          attempt_id: string
+          bundle_hash: string
+          canonical_input: string
+          company_id?: string | null
+          conversation_id: string
+          created_at?: string
+          evaluated_ai_reply?: Json | null
+          evaluation_contract_version: string
+          grounding_evidence?: Json
+          grounding_manifest?: Json
+          id?: string
+          kb_snapshot_id?: string
+          model_version: string
+          normalized_transcript: Json
+          policy_snapshot_id?: string
+          prompt_version: string
+          rebound_at?: string | null
+          rebound_run_id?: string | null
+          redaction_applied?: boolean
+          retention_expires_at?: string
+          transcript_hash: string
+          truncation_manifest: Json
+          verified_human_response?: Json | null
+        }
+        Update: {
+          attempt_id?: string
+          bundle_hash?: string
+          canonical_input?: string
+          company_id?: string | null
+          conversation_id?: string
+          created_at?: string
+          evaluated_ai_reply?: Json | null
+          evaluation_contract_version?: string
+          grounding_evidence?: Json
+          grounding_manifest?: Json
+          id?: string
+          kb_snapshot_id?: string
+          model_version?: string
+          normalized_transcript?: Json
+          policy_snapshot_id?: string
+          prompt_version?: string
+          rebound_at?: string | null
+          rebound_run_id?: string | null
+          redaction_applied?: boolean
+          retention_expires_at?: string
+          transcript_hash?: string
+          truncation_manifest?: Json
+          verified_human_response?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ce_local_bundle_snapshot_attempt_id_fkey"
+            columns: ["attempt_id"]
+            isOneToOne: true
+            referencedRelation: "ce_local_evaluation_attempt"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ce_local_bundle_snapshot_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ce_local_canonical_map: {
+        Row: {
+          canonical_evaluation_id: string
+          company_id: string
+          local_evaluation_id: string
+          rebind_run_id: string
+          rebound_at: string
+          rebound_by: string
+        }
+        Insert: {
+          canonical_evaluation_id: string
+          company_id: string
+          local_evaluation_id: string
+          rebind_run_id: string
+          rebound_at?: string
+          rebound_by: string
+        }
+        Update: {
+          canonical_evaluation_id?: string
+          company_id?: string
+          local_evaluation_id?: string
+          rebind_run_id?: string
+          rebound_at?: string
+          rebound_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ce_local_canonical_map_canonical_evaluation_id_fkey"
+            columns: ["canonical_evaluation_id"]
+            isOneToOne: true
+            referencedRelation: "ce_conversation_status_v"
+            referencedColumns: ["evaluation_id"]
+          },
+          {
+            foreignKeyName: "ce_local_canonical_map_canonical_evaluation_id_fkey"
+            columns: ["canonical_evaluation_id"]
+            isOneToOne: true
+            referencedRelation: "conversation_evaluation"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ce_local_canonical_map_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "company"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ce_local_canonical_map_local_evaluation_id_fkey"
+            columns: ["local_evaluation_id"]
+            isOneToOne: true
+            referencedRelation: "ce_local_evaluation"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ce_local_discrepancy: {
+        Row: {
+          ai_claim: string | null
+          dimension: string
+          divergence_kind: string | null
+          evaluation_id: string
+          grounded_claim: string | null
+          grounding_refs: Json
+          human_claim: string | null
+          id: string
+          severity: string
+        }
+        Insert: {
+          ai_claim?: string | null
+          dimension: string
+          divergence_kind?: string | null
+          evaluation_id: string
+          grounded_claim?: string | null
+          grounding_refs?: Json
+          human_claim?: string | null
+          id?: string
+          severity: string
+        }
+        Update: {
+          ai_claim?: string | null
+          dimension?: string
+          divergence_kind?: string | null
+          evaluation_id?: string
+          grounded_claim?: string | null
+          grounding_refs?: Json
+          human_claim?: string | null
+          id?: string
+          severity?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ce_local_discrepancy_evaluation_id_fkey"
+            columns: ["evaluation_id"]
+            isOneToOne: false
+            referencedRelation: "ce_local_evaluation"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ce_local_emotion_point: {
+        Row: {
+          evaluation_id: string
+          id: string
+          message_id: string | null
+          occurred_at: string | null
+          sentiment: string
+          sentiment_score: number
+          trigger_label: string | null
+          turn_index: number
+        }
+        Insert: {
+          evaluation_id: string
+          id?: string
+          message_id?: string | null
+          occurred_at?: string | null
+          sentiment: string
+          sentiment_score: number
+          trigger_label?: string | null
+          turn_index: number
+        }
+        Update: {
+          evaluation_id?: string
+          id?: string
+          message_id?: string | null
+          occurred_at?: string | null
+          sentiment?: string
+          sentiment_score?: number
+          trigger_label?: string | null
+          turn_index?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ce_local_emotion_point_evaluation_id_fkey"
+            columns: ["evaluation_id"]
+            isOneToOne: false
+            referencedRelation: "ce_local_evaluation"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ce_local_evaluation: {
+        Row: {
+          accuracy_score: number
+          attempt_id: string
+          bundle_hash: string
+          canonical_evaluation_id: string | null
+          company_id: string | null
+          context_score: number
+          conversation_id: string
+          created_at: string
+          evaluation_contract_version: string
+          grounding_manifest: Json
+          hallucination_quality_score: number
+          hallucination_risk_score: number
+          has_verified_human_response: boolean
+          id: string
+          input_snapshot_hash: string
+          kb_snapshot_id: string
+          model_version: string
+          overall_score: number
+          policy_score: number
+          policy_snapshot_id: string
+          prompt_version: string
+          rebound_at: string | null
+          rebound_run_id: string | null
+          review_note: string | null
+          review_status: string
+          reviewed_at: string | null
+          reviewed_by: string | null
+          sales_score: number
+          severity: string
+          source_deployment: string
+          tone_score: number
+        }
+        Insert: {
+          accuracy_score: number
+          attempt_id: string
+          bundle_hash: string
+          canonical_evaluation_id?: string | null
+          company_id?: string | null
+          context_score: number
+          conversation_id: string
+          created_at?: string
+          evaluation_contract_version: string
+          grounding_manifest?: Json
+          hallucination_quality_score: number
+          hallucination_risk_score: number
+          has_verified_human_response?: boolean
+          id?: string
+          input_snapshot_hash: string
+          kb_snapshot_id?: string
+          model_version: string
+          overall_score: number
+          policy_score: number
+          policy_snapshot_id?: string
+          prompt_version: string
+          rebound_at?: string | null
+          rebound_run_id?: string | null
+          review_note?: string | null
+          review_status?: string
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          sales_score: number
+          severity: string
+          source_deployment: string
+          tone_score: number
+        }
+        Update: {
+          accuracy_score?: number
+          attempt_id?: string
+          bundle_hash?: string
+          canonical_evaluation_id?: string | null
+          company_id?: string | null
+          context_score?: number
+          conversation_id?: string
+          created_at?: string
+          evaluation_contract_version?: string
+          grounding_manifest?: Json
+          hallucination_quality_score?: number
+          hallucination_risk_score?: number
+          has_verified_human_response?: boolean
+          id?: string
+          input_snapshot_hash?: string
+          kb_snapshot_id?: string
+          model_version?: string
+          overall_score?: number
+          policy_score?: number
+          policy_snapshot_id?: string
+          prompt_version?: string
+          rebound_at?: string | null
+          rebound_run_id?: string | null
+          review_note?: string | null
+          review_status?: string
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          sales_score?: number
+          severity?: string
+          source_deployment?: string
+          tone_score?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ce_local_evaluation_attempt_id_fkey"
+            columns: ["attempt_id"]
+            isOneToOne: true
+            referencedRelation: "ce_local_evaluation_attempt"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ce_local_evaluation_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ce_local_evaluation_attempt: {
+        Row: {
+          bundle_hash: string
+          company_id: string | null
+          conversation_id: string
+          created_at: string
+          error_code: string | null
+          evaluation_contract_version: string
+          id: string
+          initiated_by: string
+          input_snapshot_hash: string
+          model_version: string
+          pipeline_run_id: string
+          prompt_version: string
+          rebound_at: string | null
+          rebound_run_id: string | null
+          source_deployment: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          bundle_hash: string
+          company_id?: string | null
+          conversation_id: string
+          created_at?: string
+          error_code?: string | null
+          evaluation_contract_version: string
+          id?: string
+          initiated_by: string
+          input_snapshot_hash: string
+          model_version: string
+          pipeline_run_id?: string
+          prompt_version: string
+          rebound_at?: string | null
+          rebound_run_id?: string | null
+          source_deployment: string
+          status: string
+          updated_at?: string
+        }
+        Update: {
+          bundle_hash?: string
+          company_id?: string | null
+          conversation_id?: string
+          created_at?: string
+          error_code?: string | null
+          evaluation_contract_version?: string
+          id?: string
+          initiated_by?: string
+          input_snapshot_hash?: string
+          model_version?: string
+          pipeline_run_id?: string
+          prompt_version?: string
+          rebound_at?: string | null
+          rebound_run_id?: string | null
+          source_deployment?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ce_local_evaluation_attempt_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ce_local_evaluation_detail: {
+        Row: {
+          created_at: string
+          evaluation_id: string
+          evaluator_model_version: string | null
+          evaluator_prompt_version: string | null
+          evaluator_type: string
+          grounding_refs: Json
+          id: string
+          justification: string
+          raw_score: number
+          recommended_correction: string | null
+          weight: number
+          weighted_score: number
+        }
+        Insert: {
+          created_at?: string
+          evaluation_id: string
+          evaluator_model_version?: string | null
+          evaluator_prompt_version?: string | null
+          evaluator_type: string
+          grounding_refs?: Json
+          id?: string
+          justification: string
+          raw_score: number
+          recommended_correction?: string | null
+          weight: number
+          weighted_score: number
+        }
+        Update: {
+          created_at?: string
+          evaluation_id?: string
+          evaluator_model_version?: string | null
+          evaluator_prompt_version?: string | null
+          evaluator_type?: string
+          grounding_refs?: Json
+          id?: string
+          justification?: string
+          raw_score?: number
+          recommended_correction?: string | null
+          weight?: number
+          weighted_score?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ce_local_evaluation_detail_evaluation_id_fkey"
+            columns: ["evaluation_id"]
+            isOneToOne: false
+            referencedRelation: "ce_local_evaluation"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ce_local_next_step: {
+        Row: {
+          detail: string | null
+          evaluation_id: string
+          id: string
+          ordinal: number
+          owner_role: string | null
+          status: string
+          title: string
+        }
+        Insert: {
+          detail?: string | null
+          evaluation_id: string
+          id?: string
+          ordinal: number
+          owner_role?: string | null
+          status?: string
+          title: string
+        }
+        Update: {
+          detail?: string | null
+          evaluation_id?: string
+          id?: string
+          ordinal?: number
+          owner_role?: string | null
+          status?: string
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ce_local_next_step_evaluation_id_fkey"
+            columns: ["evaluation_id"]
+            isOneToOne: false
+            referencedRelation: "ce_local_evaluation"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ce_local_qa_case: {
+        Row: {
+          case_number: string
+          created_at: string
+          created_by: string
+          description: string | null
+          evaluation_id: string
+          id: string
+          priority: string
+          remote_ref: string | null
+          remote_sync_state: string
+          status: string
+          title: string
+        }
+        Insert: {
+          case_number: string
+          created_at?: string
+          created_by: string
+          description?: string | null
+          evaluation_id: string
+          id?: string
+          priority?: string
+          remote_ref?: string | null
+          remote_sync_state?: string
+          status?: string
+          title: string
+        }
+        Update: {
+          case_number?: string
+          created_at?: string
+          created_by?: string
+          description?: string | null
+          evaluation_id?: string
+          id?: string
+          priority?: string
+          remote_ref?: string | null
+          remote_sync_state?: string
+          status?: string
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ce_local_qa_case_evaluation_id_fkey"
+            columns: ["evaluation_id"]
+            isOneToOne: false
+            referencedRelation: "ce_local_evaluation"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ce_local_root_cause: {
+        Row: {
+          category: string
+          created_at: string
+          evaluation_id: string
+          evidence_refs: Json
+          id: string
+          recorded_by: string
+          remote_ref: string | null
+          remote_sync_state: string
+          summary: string
+        }
+        Insert: {
+          category: string
+          created_at?: string
+          evaluation_id: string
+          evidence_refs?: Json
+          id?: string
+          recorded_by: string
+          remote_ref?: string | null
+          remote_sync_state?: string
+          summary: string
+        }
+        Update: {
+          category?: string
+          created_at?: string
+          evaluation_id?: string
+          evidence_refs?: Json
+          id?: string
+          recorded_by?: string
+          remote_ref?: string | null
+          remote_sync_state?: string
+          summary?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ce_local_root_cause_evaluation_id_fkey"
+            columns: ["evaluation_id"]
+            isOneToOne: false
+            referencedRelation: "ce_local_evaluation"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ce_next_step: {
         Row: {
           company_id: string
@@ -1297,7 +1964,12 @@ export type Database = {
           channel_config_id: string | null
           company_id: string | null
           created_at: string | null
+          customer_tier: string | null
           id: string
+          intent: string | null
+          language: string | null
+          metadata_source: Json
+          metadata_updated_at: string | null
           priority: string | null
           resolved_at: string | null
           status: string
@@ -1310,7 +1982,12 @@ export type Database = {
           channel_config_id?: string | null
           company_id?: string | null
           created_at?: string | null
+          customer_tier?: string | null
           id?: string
+          intent?: string | null
+          language?: string | null
+          metadata_source?: Json
+          metadata_updated_at?: string | null
           priority?: string | null
           resolved_at?: string | null
           status?: string
@@ -1323,7 +2000,12 @@ export type Database = {
           channel_config_id?: string | null
           company_id?: string | null
           created_at?: string | null
+          customer_tier?: string | null
           id?: string
+          intent?: string | null
+          language?: string | null
+          metadata_source?: Json
+          metadata_updated_at?: string | null
           priority?: string | null
           resolved_at?: string | null
           status?: string
@@ -1430,7 +2112,6 @@ export type Database = {
       }
       feedback_automation_config: {
         Row: {
-          company_id: string | null
           config: Json | null
           created_at: string | null
           delay_minutes: number | null
@@ -1441,7 +2122,6 @@ export type Database = {
           updated_at: string | null
         }
         Insert: {
-          company_id?: string | null
           config?: Json | null
           created_at?: string | null
           delay_minutes?: number | null
@@ -1452,7 +2132,6 @@ export type Database = {
           updated_at?: string | null
         }
         Update: {
-          company_id?: string | null
           config?: Json | null
           created_at?: string | null
           delay_minutes?: number | null
@@ -1462,15 +2141,7 @@ export type Database = {
           trigger_event?: string
           updated_at?: string | null
         }
-        Relationships: [
-          {
-            foreignKeyName: "feedback_automation_config_company_id_fkey"
-            columns: ["company_id"]
-            isOneToOne: false
-            referencedRelation: "company"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
       feedback_request: {
         Row: {
@@ -2086,8 +2757,36 @@ export type Database = {
       }
       ce_company_elevated: { Args: { p_company_id: string }; Returns: boolean }
       ce_company_read: { Args: { p_company_id: string }; Returns: boolean }
+      ce_create_local_qa_case_v1: {
+        Args: {
+          p_description?: string
+          p_evaluation_id: string
+          p_expected_conversation_id: string
+          p_priority?: string
+          p_title: string
+        }
+        Returns: Json
+      }
       ce_is_flag_enabled: { Args: { p_key: string }; Returns: boolean }
+      ce_local_actor_can_evaluate: {
+        Args: { p_user_id: string }
+        Returns: boolean
+      }
+      ce_local_actor_can_review: {
+        Args: { p_user_id: string }
+        Returns: boolean
+      }
       ce_purge_expired_snapshots: { Args: never; Returns: Json }
+      ce_record_local_root_cause_v1: {
+        Args: {
+          p_category: string
+          p_evaluation_id: string
+          p_evidence?: Json
+          p_expected_conversation_id: string
+          p_summary: string
+        }
+        Returns: Json
+      }
       check_conv_assignment_invariant: {
         Args: { p_conv_id: string }
         Returns: undefined
@@ -2107,6 +2806,17 @@ export type Database = {
         }
         Returns: Json
       }
+      complete_local_evaluation_v1: {
+        Args: {
+          p_attempt_id: string
+          p_bundle_hash: string
+          p_derived: Json
+          p_details: Json
+          p_scores: Json
+          p_snapshot: Json
+        }
+        Returns: Json
+      }
       explicit_handoff_tx: {
         Args: {
           p_conversation_id: string
@@ -2116,6 +2826,10 @@ export type Database = {
         Returns: Json
       }
       fail_evaluation: {
+        Args: { p_attempt_id: string; p_error: string }
+        Returns: Json
+      }
+      fail_local_evaluation_v1: {
         Args: { p_attempt_id: string; p_error: string }
         Returns: Json
       }
@@ -2165,6 +2879,19 @@ export type Database = {
         }
         Returns: Json
       }
+      initiate_local_evaluation_v1: {
+        Args: {
+          p_bundle_hash: string
+          p_contract_version: string
+          p_conversation_id: string
+          p_initiated_by: string
+          p_input_snapshot_hash: string
+          p_model_version: string
+          p_prompt_version: string
+          p_source_deployment: string
+        }
+        Returns: Json
+      }
       is_company_member: {
         Args: { p_company_id: string; p_user_id: string }
         Returns: boolean
@@ -2183,6 +2910,27 @@ export type Database = {
         Args: { p_older_than?: string }
         Returns: Json
       }
+      required_escalation_clarification_tx: {
+        Args: {
+          p_clarification_content: string
+          p_conversation_id: string
+          p_escalation_rule: string
+          p_reason_code: string
+          p_source_message_id: string
+        }
+        Returns: Json
+      }
+      required_escalation_handoff_tx: {
+        Args: {
+          p_conversation_id: string
+          p_escalation_rule: string
+          p_priority: string
+          p_reason_code: string
+          p_safe_reply_content: string
+          p_source_message_id: string
+        }
+        Returns: Json
+      }
       return_to_ai_tx: {
         Args: {
           p_actor_agent_id: string
@@ -2193,6 +2941,15 @@ export type Database = {
         Returns: Json
       }
       review_evaluation: {
+        Args: {
+          p_decision: string
+          p_evaluation_id: string
+          p_expected_conversation_id: string
+          p_note?: string
+        }
+        Returns: Json
+      }
+      review_local_evaluation_v1: {
         Args: {
           p_decision: string
           p_evaluation_id: string
