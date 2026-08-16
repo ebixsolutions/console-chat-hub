@@ -362,11 +362,13 @@ Deno.serve(async (req) => {
     }
 
     // Cross-tenant protection: a visitor session is visible only if it has at
-    // least one conversation owned by the resolved company.
-    const { data: scopedConversations, error: scopedError } = await admin
-      .from("conversations")
-      .select("id, status, created_at, resolved_at, updated_at")
-      .eq("company_id", companyId)
+    // least one conversation inside the resolved scope.
+    const { data: scopedConversations, error: scopedError } = await applyCompanyScope(
+      admin
+        .from("conversations")
+        .select("id, status, created_at, resolved_at, updated_at"),
+      scope,
+    )
       .eq("visitor_session_id", visitorSessionId)
       .order("created_at", { ascending: false });
 
