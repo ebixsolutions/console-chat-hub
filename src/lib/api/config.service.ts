@@ -333,7 +333,9 @@ export const updateWidgetConfigFn = createServerFn({ method: "POST" })
     );
     if (unsafeLink) return { ok: false, error: "widget_shared_or_unbound" };
 
-    const patch: TablesUpdate<"widget_config"> = { updated_at: new Date().toISOString() };
+    const patch: Record<string, string | boolean | null> = {
+      updated_at: new Date().toISOString(),
+    };
     for (const key of [
       "header_title",
       "welcome_message",
@@ -344,12 +346,13 @@ export const updateWidgetConfigFn = createServerFn({ method: "POST" })
       "appearance_theme",
       "launcher_icon",
     ] as const) {
-      if (data[key] !== undefined) patch[key] = data[key];
+      const value = data[key];
+      if (value !== undefined) patch[key] = value;
     }
 
     const { data: widget, error } = await context.supabase
       .from("widget_config")
-      .update(patch)
+      .update(patch as TablesUpdate<"widget_config">)
       .eq("id", owned.data.widgetId)
       .select("*")
       .maybeSingle();
