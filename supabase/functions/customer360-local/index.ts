@@ -98,7 +98,7 @@ Deno.serve(async (req) => {
 
       const sessionIds = [...bySession.keys()];
       if (sessionIds.length === 0) {
-        return json({ success: true, scope: { company_id: companyId }, visitors: [] });
+        return json({ success: true, scope: scopeDescriptor(scope), visitors: [] });
       }
 
       const { data: sessions, error: sessionError } = await admin
@@ -129,7 +129,7 @@ Deno.serve(async (req) => {
         })
         .slice(0, MAX_DIRECTORY);
 
-      return json({ success: true, scope: { company_id: companyId }, visitors });
+      return json({ success: true, scope: scopeDescriptor(scope), visitors });
     }
 
     if (mode === "detail") {
@@ -230,7 +230,7 @@ Deno.serve(async (req) => {
 
       return json({
         success: true,
-        scope: { company_id: companyId },
+        scope: scopeDescriptor(scope),
         customer: {
           visitor_session_id: visitorSessionId,
           customer_ref: null,
