@@ -63,19 +63,21 @@ async function resolveCompanyScope(context: {
 }): Promise<ServerResult<CompanyScope>> {
   const { data: memberships, error: membershipErr } = await context.supabase
     .from("company_membership")
-    .select("company_id, role")
-    .eq("user_id", String(context.userId))
-    .eq("is_active", true);
+    .select("company_id, role, is_active")
+    .eq("user_id", String(context.userId));
 
   if (membershipErr) return { ok: false, error: "company_membership_lookup_failed" };
 
-  const companyIds: string[] = [
-    ...new Set((memberships ?? []).map((m: any) => String(m.company_id))),
-  ] as string[];
+  const allMemberships = memberships ?? [];
+  const companyIds = [...new Set(allMemberships.map((m: any) => String(m.company_id)))];
   if (companyIds.length === 0) return { ok: false, error: "company_membership_unresolved" };
   if (companyIds.length !== 1) return { ok: false, error: "company_membership_ambiguous" };
 
-  const companyId: string = companyIds[0];
+  const companyId = companyIds[0];
+  const activeMemberships = allMemberships.filter(
+    (membership: any) => membership.is_active === true && String(membership.company_id) === companyId,
+  );
+  if (activeMemberships.length === 0) return { ok: false, error: "not_a_member" };
   const { data: company, error: companyErr } = await context.supabase
     .from("company")
     .select("id, is_active")
@@ -86,14 +88,13 @@ async function resolveCompanyScope(context: {
   if (!company || company.is_active !== true) return { ok: false, error: "company_inactive" };
 
   const valid = new Set<AppRole>(ROLE_PRECEDENCE);
-  const roles: AppRole[] = [
+  const roles = [
     ...new Set(
-      (memberships ?? [])
+      activeMemberships
         .map((m: any) => String(m.role) as AppRole)
         .filter((r: AppRole) => valid.has(r)),
     ),
-  ] as AppRole[];
-
+  ];
 
   return { ok: true, data: { companyId, roles } };
 }
@@ -209,14 +210,14 @@ export const updateChannelConfigFn = createServerFn({ method: "POST" })
       return { ok: false, error: "invalid_allowed_origin" };
     }
 
-    const patch: Record<string, any> = { updated_at: new Date().toISOString() };
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if (data.name !== undefined) patch.name = data.name;
     if (data.is_active !== undefined) patch.is_active = data.is_active;
     if (data.allowed_origins !== undefined) patch.allowed_origins = [...new Set(data.allowed_origins)];
 
     const { data: updated, error } = await context.supabase
       .from("channel_config")
-      .update(patch as never)
+      .update(patch)
       .eq("id", data.channel_id)
       .eq("company_id", scope.data.companyId)
       .select(CHANNEL_SELECT)
@@ -333,7 +334,7 @@ export const updateWidgetConfigFn = createServerFn({ method: "POST" })
     );
     if (unsafeLink) return { ok: false, error: "widget_shared_or_unbound" };
 
-    const patch: Record<string, any> = { updated_at: new Date().toISOString() };
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
     for (const key of [
       "header_title",
       "welcome_message",
@@ -349,7 +350,7 @@ export const updateWidgetConfigFn = createServerFn({ method: "POST" })
 
     const { data: widget, error } = await context.supabase
       .from("widget_config")
-      .update(patch as never)
+      .update(patch)
       .eq("id", owned.data.widgetId)
       .select("*")
       .maybeSingle();
@@ -371,13 +372,13 @@ export const updateAgentProfileFn = createServerFn({ method: "POST" })
     if (data.display_name === undefined && data.avatar_url === undefined) {
       return { ok: false, error: "no_changes" };
     }
-    const patch: Record<string, any> = { updated_at: new Date().toISOString() };
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if (data.display_name !== undefined) patch.display_name = data.display_name;
     if (data.avatar_url !== undefined) patch.avatar_url = data.avatar_url;
 
     const { data: row, error } = await context.supabase
       .from("agent_profile")
-      .update(patch as never)
+      .update(patch)
       .eq("user_id", String(context.userId))
       .select("display_name, avatar_url")
       .maybeSingle();
@@ -392,7 +393,7 @@ export const updateAgentProfileFn = createServerFn({ method: "POST" })
  *
  * Canonical always wins: when the caller has canonical company membership the
  * canonical company/role authorization is enforced exactly as before. Only when
- * canonical identity is genuinely absent (no active membership at all, i.e. the
+ * canonical identity is genuinely absent (no membership rows at all, i.e. the
  * SU Platform binding has not happened yet) does the caller fall back to
  * pre-activation mode, which is limited to authenticated authorized roles and to
  * null-company records. No company id is ever fabricated.
