@@ -76,7 +76,7 @@ function ConsoleChannelSettings() {
 
 function ChannelSettingsContent() {
   const [channels, setChannels] = useState<ChannelConfig[]>([]);
-  const [source, setSource] = useState<"live" | "error" | "unconfigured" | null>(null);
+  const [source, setSource] = useState<"live" | "error" | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [previewChannelId, setPreviewChannelId] = useState<string | null>(null);
   const [bindingChannelId, setBindingChannelId] = useState<string | null>(null);
