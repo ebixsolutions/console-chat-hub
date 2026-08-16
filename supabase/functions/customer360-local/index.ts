@@ -140,13 +140,17 @@ Deno.serve(async (req) => {
         return json({ error: "invalid_visitor_session_id" }, 400);
       }
 
-      // Prove tenant ownership before reading visitor_session.
-      const { data: conversations, error: conversationError } = await admin
-        .from("conversations")
-        .select("id, status, priority, created_at, channel_config:channel_config_id(name), assigned_agent_id")
-        .eq("company_id", companyId)
+      // Prove tenant ownership before reading visitor_session. Pre-activation
+      // mode is bounded to company_id IS NULL conversations.
+      const { data: conversations, error: conversationError } = await applyCompanyScope(
+        admin
+          .from("conversations")
+          .select("id, status, priority, created_at, channel_config:channel_config_id(name), assigned_agent_id"),
+        scope,
+      )
         .eq("visitor_session_id", visitorSessionId)
         .order("created_at", { ascending: false });
+
 
       if (conversationError) return json({ error: "detail_conversation_query_failed" }, 500);
       if (!conversations || conversations.length === 0) {
