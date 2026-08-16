@@ -37,8 +37,14 @@ export interface LiveFeedbackConfigRow {
   delay_minutes: number | null;
   trigger_event: string;
   config: JsonRecord | null;
-  company_id: string;
+  /**
+   * feedback_automation_config is a pre-canonical, company-unbound table: it has
+   * no company_id column. Scope is therefore always null-company until the real
+   * platform binding introduces one.
+   */
+  company_id: null;
 }
+
 
 export interface ServerResult<T> {
   ok: boolean;
