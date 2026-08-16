@@ -693,7 +693,7 @@ async function handleEvaluate(
     if (initResult !== "initiated" || !isUuid(init.attempt_id)) return fail("conflict", req, operationId, "initiate_rejected");
     attemptId = init.attempt_id as string;
   } else {
-    const { data: initRaw, error: initErr } = await admin.rpc("initiate_local_evaluation_v1", {
+    const localInitiateArgs = {
       p_conversation_id: conversationId,
       p_contract_version: contractVersion,
       p_input_snapshot_hash: bundle.transcript_hash,
@@ -702,8 +702,46 @@ async function handleEvaluate(
       p_prompt_version: EVALUATOR_PROMPT_VERSION,
       p_initiated_by: userId,
       p_source_deployment: sourceDeployment,
-    });
-    if (initErr) return fail("internal_error", req, operationId, "local_initiate_failed");
+    };
+
+    let { data: initRaw, error: initErr } = await admin.rpc(
+      "initiate_local_evaluation_v1",
+      localInitiateArgs,
+    );
+
+    // `ce_local_evaluation_attempt` is unique on (conversation_id,
+    // input_snapshot_hash). A terminal `failed` attempt for the same snapshot
+    // therefore permanently blocked every retry with a raw unique violation.
+    // Clearing that spent attempt (only when it is `failed` and produced no
+    // evaluation row) restores retryability without touching canonical
+    // behaviour, company binding or evaluation contracts.
+    if (initErr && isDuplicateAttempt(initErr)) {
+      log({
+        event: "local_initiate_duplicate_attempt",
+        code: (initErr as { code?: string }).code ?? "",
+        operation_id: operationId,
+      });
+      const cleared = await clearSpentLocalAttempt(
+        admin,
+        conversationId,
+        bundle.transcript_hash,
+      );
+      if (cleared) {
+        const retry = await admin.rpc("initiate_local_evaluation_v1", localInitiateArgs);
+        initRaw = retry.data;
+        initErr = retry.error;
+      }
+    }
+
+    if (initErr) {
+      log({
+        event: "local_initiate_failed",
+        code: (initErr as { code?: string }).code ?? "",
+        operation_id: operationId,
+      });
+      return fail("internal_error", req, operationId, "local_initiate_failed");
+    }
+
     const init = (initRaw ?? {}) as Record<string, unknown>;
     const result = String(init.result ?? "");
     if (result === "already_evaluated") {
