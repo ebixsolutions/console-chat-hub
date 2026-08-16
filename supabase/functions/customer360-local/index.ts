@@ -57,20 +57,26 @@ Deno.serve(async (req) => {
       return json({ error: "forbidden" }, 403);
     }
 
-    const scope = await resolveSingleCompany(admin, user.id);
-    if (!scope.ok) return json({ error: scope.error }, scope.status);
-    const companyId = scope.companyId;
+    const scopeResult = await resolveCallerScope(admin, {
+      userId: user.id,
+      preActivationRoles: PRE_ACTIVATION_ROLES,
+    });
+    if (!scopeResult.ok) return json({ error: scopeResult.error }, scopeResult.status);
+    const scope = scopeResult.scope;
 
     const body = await req.json().catch(() => ({}));
     const mode = body?.mode;
 
     if (mode === "directory") {
-      const { data: conversations, error: conversationError } = await admin
-        .from("conversations")
-        .select("id, visitor_session_id, created_at, updated_at")
-        .eq("company_id", companyId)
+      const { data: conversations, error: conversationError } = await applyCompanyScope(
+        admin
+          .from("conversations")
+          .select("id, visitor_session_id, created_at, updated_at"),
+        scope,
+      )
         .not("visitor_session_id", "is", null)
         .order("updated_at", { ascending: false });
+
 
       if (conversationError) return json({ error: "directory_query_failed" }, 500);
 
