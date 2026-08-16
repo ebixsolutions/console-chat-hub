@@ -69,7 +69,9 @@ async function resolveCompanyScope(context: {
 
   if (membershipErr) return { ok: false, error: "company_membership_lookup_failed" };
 
-  const companyIds = [...new Set((memberships ?? []).map((m: any) => String(m.company_id)))];
+  const companyIds: string[] = [
+    ...new Set<string>((memberships ?? []).map((m: any) => String(m.company_id))),
+  ];
   if (companyIds.length === 0) return { ok: false, error: "company_membership_unresolved" };
   if (companyIds.length !== 1) return { ok: false, error: "company_membership_ambiguous" };
 
