@@ -86,8 +86,8 @@ async function resolveCompanyScope(context: {
   if (!company || company.is_active !== true) return { ok: false, error: "company_inactive" };
 
   const valid = new Set<AppRole>(ROLE_PRECEDENCE);
-  const roles = [
-    ...new Set(
+  const roles: AppRole[] = [
+    ...new Set<AppRole>(
       (memberships ?? [])
         .map((m: any) => String(m.role) as AppRole)
         .filter((r: AppRole) => valid.has(r)),
