@@ -36,55 +36,10 @@ function toSessionRef(uuid: string): string {
   return "vs_" + clean.slice(0, 4) + "..." + clean.slice(-4);
 }
 
-async function resolveSingleCompany(
-  admin: ReturnType<typeof createClient>,
-  userId: string,
-): Promise<
-  | { ok: true; companyId: string }
-  | { ok: false; code: string; status: number }
-> {
-  const { data: memberships, error } = await admin
-    .from("company_membership")
-    .select("company_id, is_active")
-    .eq("user_id", userId)
-    .eq("is_active", true);
-
-  if (error) {
-    console.error("[visitor-analytics] company membership lookup failed", error.code);
-    return { ok: false, code: "company_membership_lookup_failed", status: 500 };
-  }
-
-  const companyIds = [
-    ...new Set(
-      (memberships ?? [])
-        .map((row: { company_id: string | null }) => row.company_id)
-        .filter((id: string | null): id is string => Boolean(id)),
-    ),
-  ];
-
-  if (companyIds.length === 0) {
-    return { ok: false, code: "company_membership_unresolved", status: 403 };
-  }
-  if (companyIds.length !== 1) {
-    // Analytics must never merge tenants or guess which company is intended.
-    return { ok: false, code: "company_membership_ambiguous", status: 409 };
-  }
-
-  const { data: company, error: companyError } = await admin
-    .from("company")
-    .select("id, is_active")
-    .eq("id", companyIds[0])
-    .maybeSingle();
-
-  if (companyError) {
-    return { ok: false, code: "company_lookup_failed", status: 500 };
-  }
-  if (!company || company.is_active !== true) {
-    return { ok: false, code: "company_inactive", status: 403 };
-  }
-
-  return { ok: true, companyId: String(company.id) };
+function scopeDescriptor(scope: ResolvedScope) {
+  return { company_id: scope.companyId, mode: scope.mode };
 }
+
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
