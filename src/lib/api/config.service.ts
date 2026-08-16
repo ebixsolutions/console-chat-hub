@@ -69,11 +69,13 @@ async function resolveCompanyScope(context: {
 
   if (membershipErr) return { ok: false, error: "company_membership_lookup_failed" };
 
-  const companyIds = [...new Set((memberships ?? []).map((m: any) => String(m.company_id)))];
+  const companyIds: string[] = [
+    ...new Set((memberships ?? []).map((m: any) => String(m.company_id))),
+  ] as string[];
   if (companyIds.length === 0) return { ok: false, error: "company_membership_unresolved" };
   if (companyIds.length !== 1) return { ok: false, error: "company_membership_ambiguous" };
 
-  const companyId = companyIds[0];
+  const companyId: string = companyIds[0];
   const { data: company, error: companyErr } = await context.supabase
     .from("company")
     .select("id, is_active")
@@ -84,13 +86,13 @@ async function resolveCompanyScope(context: {
   if (!company || company.is_active !== true) return { ok: false, error: "company_inactive" };
 
   const valid = new Set<AppRole>(ROLE_PRECEDENCE);
-  const roles = [
+  const roles: AppRole[] = [
     ...new Set(
       (memberships ?? [])
         .map((m: any) => String(m.role) as AppRole)
         .filter((r: AppRole) => valid.has(r)),
     ),
-  ];
+  ] as AppRole[];
 
   return { ok: true, data: { companyId, roles } };
 }
@@ -409,11 +411,13 @@ async function resolveConfigScope(
   if (membershipError) return { ok: false, error: "company_membership_lookup_failed" };
 
   const memberships = membershipRows ?? [];
-  const companyIds = [...new Set(memberships.map((row: any) => String(row.company_id)))];
+  const companyIds: string[] = [
+    ...new Set(memberships.map((row: any) => String(row.company_id))),
+  ] as string[];
   if (companyIds.length > 1) return { ok: false, error: "company_membership_ambiguous" };
 
   if (companyIds.length === 1) {
-    const companyId = companyIds[0];
+    const companyId: string = companyIds[0];
     const activeMemberships = memberships.filter(
       (row: any) => row.is_active === true && String(row.company_id) === companyId,
     );
@@ -428,13 +432,13 @@ async function resolveConfigScope(
     if (!company || company.is_active !== true) return { ok: false, error: "company_inactive" };
 
     const valid = new Set<AppRole>(ROLE_PRECEDENCE);
-    const roles = [
+    const roles: AppRole[] = [
       ...new Set(
         activeMemberships
           .map((row: any) => String(row.role) as AppRole)
           .filter((role: AppRole) => valid.has(role)),
       ),
-    ];
+    ] as AppRole[];
     if (!roles.some((role) => allowed.includes(role))) {
       return { ok: false, error: "forbidden" };
     }
