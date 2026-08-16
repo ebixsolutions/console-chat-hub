@@ -56,7 +56,6 @@ export type AppRole = "admin" | "supervisor" | "agent" | "qa";
 const ROLE_PRECEDENCE: AppRole[] = ["admin", "supervisor", "agent", "qa"];
 
 type CompanyScope = { companyId: string; roles: AppRole[] };
-type MembershipRow = { company_id: string; role: string; is_active: boolean };
 
 async function resolveCompanyScope(context: {
   supabase: any;
@@ -64,21 +63,17 @@ async function resolveCompanyScope(context: {
 }): Promise<ServerResult<CompanyScope>> {
   const { data: memberships, error: membershipErr } = await context.supabase
     .from("company_membership")
-    .select("company_id, role, is_active")
-    .eq("user_id", String(context.userId));
+    .select("company_id, role")
+    .eq("user_id", String(context.userId))
+    .eq("is_active", true);
 
   if (membershipErr) return { ok: false, error: "company_membership_lookup_failed" };
 
-  const allMemberships = (memberships ?? []) as MembershipRow[];
-  const companyIds = [...new Set(allMemberships.map((m) => String(m.company_id)))];
+  const companyIds = [...new Set((memberships ?? []).map((m: any) => String(m.company_id)))];
   if (companyIds.length === 0) return { ok: false, error: "company_membership_unresolved" };
   if (companyIds.length !== 1) return { ok: false, error: "company_membership_ambiguous" };
 
-  const companyId: string = companyIds[0];
-  const activeMemberships = allMemberships.filter(
-    (membership) => membership.is_active === true && String(membership.company_id) === companyId,
-  );
-  if (activeMemberships.length === 0) return { ok: false, error: "not_a_member" };
+  const companyId = companyIds[0];
   const { data: company, error: companyErr } = await context.supabase
     .from("company")
     .select("id, is_active")
@@ -89,10 +84,10 @@ async function resolveCompanyScope(context: {
   if (!company || company.is_active !== true) return { ok: false, error: "company_inactive" };
 
   const valid = new Set<AppRole>(ROLE_PRECEDENCE);
-  const roles: AppRole[] = [
+  const roles = [
     ...new Set(
-      activeMemberships
-        .map((m) => String(m.role) as AppRole)
+      (memberships ?? [])
+        .map((m: any) => String(m.role) as AppRole)
         .filter((r: AppRole) => valid.has(r)),
     ),
   ];
@@ -407,27 +402,54 @@ async function resolveConfigScope(
   context: { supabase: any; userId: string },
   allowed: readonly AppRole[],
 ): Promise<ServerResult<ConfigScope>> {
-  const canonical = await resolveCompanyScope(context);
-  if (canonical.ok && canonical.data) {
-    if (!canonical.data.roles.some((r) => allowed.includes(r))) {
+  const { data: membershipRows, error: membershipError } = await context.supabase
+    .from("company_membership")
+    .select("company_id, role, is_active")
+    .eq("user_id", String(context.userId));
+  if (membershipError) return { ok: false, error: "company_membership_lookup_failed" };
+
+  const memberships = membershipRows ?? [];
+  const companyIds = [...new Set(memberships.map((row: any) => String(row.company_id)))];
+  if (companyIds.length > 1) return { ok: false, error: "company_membership_ambiguous" };
+
+  if (companyIds.length === 1) {
+    const companyId = companyIds[0];
+    const activeMemberships = memberships.filter(
+      (row: any) => row.is_active === true && String(row.company_id) === companyId,
+    );
+    if (activeMemberships.length === 0) return { ok: false, error: "not_a_member" };
+
+    const { data: company, error: companyError } = await context.supabase
+      .from("company")
+      .select("id, is_active")
+      .eq("id", companyId)
+      .maybeSingle();
+    if (companyError) return { ok: false, error: "company_lookup_failed" };
+    if (!company || company.is_active !== true) return { ok: false, error: "company_inactive" };
+
+    const valid = new Set<AppRole>(ROLE_PRECEDENCE);
+    const roles = [
+      ...new Set(
+        activeMemberships
+          .map((row: any) => String(row.role) as AppRole)
+          .filter((role: AppRole) => valid.has(role)),
+      ),
+    ];
+    if (!roles.some((role) => allowed.includes(role))) {
       return { ok: false, error: "forbidden" };
     }
     return {
       ok: true,
       data: {
         mode: "canonical",
-        companyId: canonical.data.companyId,
-        roles: canonical.data.roles,
+        companyId,
+        roles,
       },
     };
   }
 
-  // Canonical company exists but the caller is not an active member, the company
-  // is inactive, or membership is ambiguous: stay fail-closed, never fall back.
-  if (canonical.error !== "company_membership_unresolved") {
-    return { ok: false, error: canonical.error };
-  }
-
+  // Pre-activation is reachable only after the all-rows lookup proved that the
+  // caller has zero canonical membership rows.
   const { data: roleRows, error: roleErr } = await context.supabase
     .from("user_roles")
     .select("role")

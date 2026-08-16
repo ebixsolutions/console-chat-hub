@@ -45,24 +45,15 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
-    const { data: roles, error: roleError } = await admin
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", user.id);
-
-    if (
-      roleError ||
-      !roles?.some((row: { role: string }) => ALLOWED_ROLES.has(row.role))
-    ) {
-      return json({ error: "forbidden" }, 403);
-    }
-
     const scopeResult = await resolveCallerScope(admin, {
       userId: user.id,
       preActivationRoles: PRE_ACTIVATION_ROLES,
     });
     if (!scopeResult.ok) return json({ error: scopeResult.error }, scopeResult.status);
     const scope = scopeResult.scope;
+    if (!scope.roles.some((role) => ALLOWED_ROLES.has(role))) {
+      return json({ error: "forbidden" }, 403);
+    }
 
     const body = await req.json().catch(() => ({}));
     const mode = body?.mode;
