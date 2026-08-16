@@ -216,7 +216,7 @@ export const updateChannelConfigFn = createServerFn({ method: "POST" })
 
     const { data: updated, error } = await context.supabase
       .from("channel_config")
-      .update(patch)
+      .update(patch as never)
       .eq("id", data.channel_id)
       .eq("company_id", scope.data.companyId)
       .select(CHANNEL_SELECT)
@@ -349,7 +349,7 @@ export const updateWidgetConfigFn = createServerFn({ method: "POST" })
 
     const { data: widget, error } = await context.supabase
       .from("widget_config")
-      .update(patch)
+      .update(patch as never)
       .eq("id", owned.data.widgetId)
       .select("*")
       .maybeSingle();
@@ -377,7 +377,7 @@ export const updateAgentProfileFn = createServerFn({ method: "POST" })
 
     const { data: row, error } = await context.supabase
       .from("agent_profile")
-      .update(patch)
+      .update(patch as never)
       .eq("user_id", String(context.userId))
       .select("display_name, avatar_url")
       .maybeSingle();

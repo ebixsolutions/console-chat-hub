@@ -168,7 +168,7 @@ export const scheduleFeedbackRequestFn = createServerFn({ method: "POST" })
     }
 
 
-    const cfg = await readFeedbackConfig(context.supabase, companyId);
+    const cfg = await readFeedbackConfig(context.supabase);
     if (!cfg.ok) {
       return {
         ok: false,
