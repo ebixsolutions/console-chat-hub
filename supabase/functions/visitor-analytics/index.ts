@@ -334,7 +334,7 @@ Deno.serve(async (req) => {
       return jsonResponse(
         {
           success: true,
-          scope: { company_id: companyId },
+          scope: scopeDescriptor(scope),
           summary: {
             total_sessions: sessionIds.length,
             total_conversations: convRows.length,
