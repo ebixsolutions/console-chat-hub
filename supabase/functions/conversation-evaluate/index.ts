@@ -568,7 +568,49 @@ async function readBackLocalEvaluation(
   return data ? { ...(data as Record<string, unknown>), evaluation_source: "conversation_local" } : null;
 }
 
+/** True when a Postgres error is the attempt uniqueness violation. */
+function isDuplicateAttempt(error: unknown): boolean {
+  const e = (error ?? {}) as { code?: string; message?: string };
+  return e.code === "23505" ||
+    String(e.message ?? "").includes("ce_local_evaluation_attempt_conversation_id_input_snapshot_");
+}
+
+/**
+ * Delete a spent (`failed`, no evaluation row) local attempt so an identical
+ * snapshot can be re-evaluated. Running or succeeded attempts are never
+ * touched, so in-flight and already-evaluated semantics are unchanged.
+ */
+async function clearSpentLocalAttempt(
+  admin: SupabaseClient,
+  conversationId: string,
+  inputSnapshotHash: string,
+): Promise<boolean> {
+  const { data: attempt, error } = await admin
+    .from("ce_local_evaluation_attempt")
+    .select("id, status")
+    .eq("conversation_id", conversationId)
+    .eq("input_snapshot_hash", inputSnapshotHash)
+    .maybeSingle();
+  if (error || !attempt || String(attempt.status) !== "failed") return false;
+
+  const attemptId = String(attempt.id);
+  const { data: existing } = await admin
+    .from("ce_local_evaluation")
+    .select("id")
+    .eq("attempt_id", attemptId)
+    .maybeSingle();
+  if (existing) return false;
+
+  const { error: delError } = await admin
+    .from("ce_local_evaluation_attempt")
+    .delete()
+    .eq("id", attemptId)
+    .eq("status", "failed");
+  return !delError;
+}
+
 async function handleEvaluate(
+
   req: Request,
   admin: SupabaseClient,
   userId: string,
@@ -693,7 +735,7 @@ async function handleEvaluate(
     if (initResult !== "initiated" || !isUuid(init.attempt_id)) return fail("conflict", req, operationId, "initiate_rejected");
     attemptId = init.attempt_id as string;
   } else {
-    const { data: initRaw, error: initErr } = await admin.rpc("initiate_local_evaluation_v1", {
+    const localInitiateArgs = {
       p_conversation_id: conversationId,
       p_contract_version: contractVersion,
       p_input_snapshot_hash: bundle.transcript_hash,
@@ -702,8 +744,46 @@ async function handleEvaluate(
       p_prompt_version: EVALUATOR_PROMPT_VERSION,
       p_initiated_by: userId,
       p_source_deployment: sourceDeployment,
-    });
-    if (initErr) return fail("internal_error", req, operationId, "local_initiate_failed");
+    };
+
+    let { data: initRaw, error: initErr } = await admin.rpc(
+      "initiate_local_evaluation_v1",
+      localInitiateArgs,
+    );
+
+    // `ce_local_evaluation_attempt` is unique on (conversation_id,
+    // input_snapshot_hash). A terminal `failed` attempt for the same snapshot
+    // therefore permanently blocked every retry with a raw unique violation.
+    // Clearing that spent attempt (only when it is `failed` and produced no
+    // evaluation row) restores retryability without touching canonical
+    // behaviour, company binding or evaluation contracts.
+    if (initErr && isDuplicateAttempt(initErr)) {
+      log({
+        event: "local_initiate_duplicate_attempt",
+        code: (initErr as { code?: string }).code ?? "",
+        operation_id: operationId,
+      });
+      const cleared = await clearSpentLocalAttempt(
+        admin,
+        conversationId,
+        bundle.transcript_hash,
+      );
+      if (cleared) {
+        const retry = await admin.rpc("initiate_local_evaluation_v1", localInitiateArgs);
+        initRaw = retry.data;
+        initErr = retry.error;
+      }
+    }
+
+    if (initErr) {
+      log({
+        event: "local_initiate_failed",
+        code: (initErr as { code?: string }).code ?? "",
+        operation_id: operationId,
+      });
+      return fail("internal_error", req, operationId, "local_initiate_failed");
+    }
+
     const init = (initRaw ?? {}) as Record<string, unknown>;
     const result = String(init.result ?? "");
     if (result === "already_evaluated") {
