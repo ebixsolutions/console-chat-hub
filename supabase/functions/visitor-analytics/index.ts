@@ -158,14 +158,17 @@ Deno.serve(async (req) => {
     }
 
     if (mode === "summary") {
-      // Tenant boundary is conversations.company_id. Every downstream metric is
+      // Tenant boundary is conversations.company_id in canonical mode, and
+      // company_id IS NULL in pre-activation mode. Every downstream metric is
       // derived exclusively from this scoped conversation set.
-      const { data: conversations, error: conversationError } = await admin
-        .from("conversations")
-        .select(
-          "id, visitor_session_id, status, created_at, updated_at, resolved_at",
-        )
-        .eq("company_id", companyId);
+      const { data: conversations, error: conversationError } = await applyCompanyScope(
+        admin
+          .from("conversations")
+          .select(
+            "id, visitor_session_id, status, created_at, updated_at, resolved_at",
+          ),
+        scope,
+      );
 
       if (conversationError) {
         console.error(
