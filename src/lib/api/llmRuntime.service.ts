@@ -51,7 +51,7 @@ type Scope =
   | { ok: true; mode: "pre_activation"; companyId: null }
   | { ok: false; error: string };
 
-async function resolveTelemetryScope(
+export async function resolveTelemetryScope(
   db: any,
   userId: string,
 ): Promise<Scope> {
