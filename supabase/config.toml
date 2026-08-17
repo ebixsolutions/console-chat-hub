@@ -56,3 +56,6 @@ verify_jwt = false
 
 [functions.training-kb-finalize]
 verify_jwt = false
+
+[functions.widget-live-ai-test]
+verify_jwt = true
