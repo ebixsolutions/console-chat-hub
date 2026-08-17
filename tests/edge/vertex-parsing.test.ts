@@ -116,7 +116,7 @@ Deno.test("evaluator: rejection reasons are shape-only and specific", () => {
   assertEquals(describeEvaluatorRejection(null), "not_json_object");
   assertEquals(
     describeEvaluatorRejection({ ...payload, evidence: [] }),
-    "evidence_count",
+    "evidence_count:0",
   );
   assertEquals(
     describeEvaluatorRejection({ ...payload, justification: "too short" }),
