@@ -74,7 +74,9 @@ const REVIEW_ROLES = new Set(["admin", "supervisor"]);
 const MAX_BODY_BYTES = 8 * 1024;
 const MAX_MESSAGES = 400;
 const MAX_NOTE_CHARS = 1000;
-const EVALUATOR_MAX_TOKENS = 1100;
+// Gemini charges reasoning tokens against maxOutputTokens, so the budget must
+// cover thinking plus the JSON object or the reply truncates mid-object.
+const EVALUATOR_MAX_TOKENS = 2600;
 const STALE_ATTEMPT_MINUTES = 15;
 const ALLOWED_FIELDS: Record<string, Set<string>> = {
   evaluate: new Set(["action", "conversation_id"]),
