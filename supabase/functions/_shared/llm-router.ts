@@ -583,17 +583,12 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
   };
 }
 
-/** Strip optional fences and parse a JSON object. */
+/**
+ * Strip fences/prose and parse a JSON object. Malformed or truncated output
+ * returns null so callers fail closed.
+ */
 export function parseJsonObject(raw: string): Record<string, unknown> | null {
-  const cleaned = raw.replace(/```json\s*/gi, "").replace(/```/g, "").trim();
-  try {
-    const parsed = JSON.parse(cleaned);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : null;
-  } catch {
-    return null;
-  }
+  return parseJsonObjectLoose(raw);
 }
 
 /** Map a router failure onto the CE attempt error vocabulary. */
