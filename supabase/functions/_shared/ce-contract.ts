@@ -532,7 +532,7 @@ export function describeEvaluatorRejection(
       : "";
     return `evidence_not_array:${typeof ev}:${inner}`;
   }
-  if (evidence.length === 0 || evidence.length > 3) return "evidence_count";
+  if (evidence.length === 0) return "evidence_count:0";
   if (evidence.some((e) => typeof e !== "string" || e.trim().length === 0)) {
     return "evidence_item_invalid";
   }
