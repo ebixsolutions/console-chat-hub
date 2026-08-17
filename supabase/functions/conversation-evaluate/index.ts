@@ -501,12 +501,19 @@ async function runEvaluator(
     companyId,
     conversationId,
     tag: `ce:${dimension}`,
+    responseFormat: "json",
   });
   if (!res.ok) return { ok: false, code: toCeErrorCode(res.code) };
   const parsed = parseJsonObject(res.text);
   const validated = validateEvaluatorOutput(parsed, knownChunkIds);
   if (!validated) {
-    log({ event: "evaluator_output_invalid", dimension, operation_id: operationId });
+    // Shape-only diagnosis; never provider text or customer content.
+    log({
+      event: "evaluator_output_invalid",
+      dimension,
+      operation_id: operationId,
+      reason: describeEvaluatorRejection(parsed),
+    });
     return { ok: false, code: "CE_PROVIDER_INVALID_OUTPUT" };
   }
   return { ok: true, ...validated, model: res.model, raw: parsed as Record<string, unknown> };
