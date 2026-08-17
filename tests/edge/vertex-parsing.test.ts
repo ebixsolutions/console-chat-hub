@@ -106,14 +106,21 @@ Deno.test("evaluator: null recommended_correction is treated as empty", () => {
   assertEquals(out?.recommended_correction, "");
 });
 
-Deno.test("evaluator: string score fails closed with a shape reason", () => {
-  const bad = { ...payload, score: "82" };
+Deno.test("evaluator: rejection reasons are shape-only and specific", () => {
+  const bad = { ...payload, score: {} };
   assertEquals(validateEvaluatorOutput(bad, new Set(["chunk-1"])), null);
-  assertEquals(describeEvaluatorRejection(bad), "score_not_number");
+  assertEquals(
+    describeEvaluatorRejection(bad).startsWith("score_not_number:object"),
+    true,
+  );
   assertEquals(describeEvaluatorRejection(null), "not_json_object");
   assertEquals(
     describeEvaluatorRejection({ ...payload, evidence: [] }),
     "evidence_count",
+  );
+  assertEquals(
+    describeEvaluatorRejection({ ...payload, justification: "too short" }),
+    "justification_length",
   );
 });
 
