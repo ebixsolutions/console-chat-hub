@@ -183,6 +183,8 @@ interface ParsedProviderResponse {
   text: string;
   input_tokens: number;
   output_tokens: number;
+  finish_reason?: string | null;
+  block_reason?: string | null;
 }
 
 interface ProviderAdapter {
