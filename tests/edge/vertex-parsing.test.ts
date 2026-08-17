@@ -141,3 +141,19 @@ Deno.test("evaluator: Gemini drift — string score, single-string evidence, jus
 Deno.test("evaluator: non-numeric string score still fails closed", () => {
   assertEquals(validateEvaluatorOutput({ ...payload, score: "high" }, new Set(["chunk-1"])), null);
 });
+
+Deno.test("evaluator: more than three quotes truncate instead of failing", () => {
+  const many = {
+    ...payload,
+    evidence: ["one quote here", "two quote here", "three quote here", "four quote here"],
+  };
+  const out = validateEvaluatorOutput(many, new Set(["chunk-1"]));
+  assertEquals(out?.evidence.length, 3);
+  assertEquals(describeEvaluatorRejection(many), "unknown");
+});
+
+Deno.test("evaluator: zero quotes still fails closed", () => {
+  const none = { ...payload, evidence: [] };
+  assertEquals(validateEvaluatorOutput(none, new Set(["chunk-1"])), null);
+  assertEquals(describeEvaluatorRejection(none), "evidence_count:0");
+});
