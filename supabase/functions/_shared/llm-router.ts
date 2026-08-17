@@ -17,6 +17,7 @@
 
 import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2.45.0";
 import { GoogleAuth } from "npm:google-auth-library@9.15.0";
+import { parseJsonObjectLoose, parseVertexResponse } from "./vertex-parse.ts";
 
 export type LlmFailureCode =
   | "LLM_CONFIG_MISSING"
@@ -62,6 +63,17 @@ export interface LlmCall {
   companyId: string | null;
   conversationId: string | null;
   tag: string;
+  /**
+   * When "json" the provider is asked for a bare JSON object. Vertex enforces
+   * this with responseMimeType; Anthropic keeps its prompt-driven behaviour so
+   * rollback semantics are unchanged.
+   */
+  responseFormat?: "json" | "text";
+  /**
+   * Optional Vertex response schema (OpenAPI subset). Ignored by providers that
+   * do not support constrained decoding, so rollback stays behaviour-preserving.
+   */
+  responseSchema?: Record<string, unknown>;
 }
 
 type ProviderId = "vertex" | "anthropic";
@@ -183,6 +195,8 @@ interface ParsedProviderResponse {
   text: string;
   input_tokens: number;
   output_tokens: number;
+  finish_reason?: string | null;
+  block_reason?: string | null;
 }
 
 interface ProviderAdapter {
@@ -234,6 +248,8 @@ function anthropicAdapter(
         text,
         input_tokens: Number(obj.usage?.input_tokens ?? 0),
         output_tokens: Number(obj.usage?.output_tokens ?? 0),
+        finish_reason: null,
+        block_reason: null,
       };
     },
   };
@@ -263,6 +279,8 @@ function vertexAdapter(
   safeSystem: string,
   safeUser: string,
   maxTokens: number,
+  jsonOutput: boolean,
+  responseSchema: Record<string, unknown> | undefined,
 ): ProviderAdapter {
   const url =
     `https://${region}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${region}/publishers/google/models/${model}:generateContent`;
@@ -281,34 +299,34 @@ function vertexAdapter(
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: safeSystem }] },
           contents: [{ role: "user", parts: [{ text: safeUser }] }],
-          generationConfig: { maxOutputTokens: maxTokens },
+          generationConfig: {
+            maxOutputTokens: maxTokens,
+            temperature: 0,
+            // Gemini honours a response mime type; callers that require a JSON
+            // object get one without fences or prose. A response schema pins
+            // field names and primitive types, which prompt text alone does
+            // not (Gemini otherwise renames keys and stringifies numbers).
+            ...(jsonOutput ? { responseMimeType: "application/json" } : {}),
+            ...(jsonOutput && responseSchema ? { responseSchema } : {}),
+          },
         }),
       };
     },
     parseResponse: (body) => {
-      const obj = body as {
-        candidates?: Array<{
-          content?: { parts?: Array<{ text?: string }> };
-        }>;
-        usageMetadata?: {
-          promptTokenCount?: number;
-          candidatesTokenCount?: number;
-        };
-      };
-      const parts = obj.candidates?.[0]?.content?.parts ?? [];
-      const text = Array.isArray(parts)
-        ? parts
-          .filter((p) => typeof p?.text === "string")
-          .map((p) => p.text as string).join("").trim()
-        : "";
+      // Thought parts are dropped and thinking tokens are counted; see
+      // _shared/vertex-parse.ts for the full incompatibility list.
+      const parsed = parseVertexResponse(body);
       return {
-        text,
-        input_tokens: Number(obj.usageMetadata?.promptTokenCount ?? 0),
-        output_tokens: Number(obj.usageMetadata?.candidatesTokenCount ?? 0),
+        text: parsed.text,
+        input_tokens: parsed.input_tokens,
+        output_tokens: parsed.output_tokens,
+        finish_reason: parsed.finish_reason,
+        block_reason: parsed.block_reason,
       };
     },
   };
 }
+
 
 /* --------------------------------- router --------------------------------- */
 
@@ -397,6 +415,8 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
       redact(call.system),
       redact(call.user),
       call.maxTokens,
+      call.responseFormat === "json",
+      call.responseSchema,
     );
   } else {
     const key = Deno.env.get("ANTHROPIC_API_KEY");
@@ -518,12 +538,29 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
       usage.output_tokens = parsed.output_tokens;
 
       if (!parsed.text) {
+        // Complete-but-empty responses (safety block, recitation, truncation)
+        // fail closed, with the provider's own reason recorded for diagnosis.
         lastCode = "LLM_INVALID_OUTPUT";
         log(call.tag, {
           event: "empty_output",
           request_id: requestId,
           provider: adapter.id,
           attempt,
+          finish_reason: parsed.finish_reason ?? null,
+          block_reason: parsed.block_reason ?? null,
+        });
+        break;
+      }
+
+      if (parsed.finish_reason === "MAX_TOKENS") {
+        // Truncated output can never be a complete JSON object.
+        lastCode = "LLM_INVALID_OUTPUT";
+        log(call.tag, {
+          event: "truncated_output",
+          request_id: requestId,
+          provider: adapter.id,
+          attempt,
+          output_tokens: parsed.output_tokens,
         });
         break;
       }
@@ -585,17 +622,12 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
   };
 }
 
-/** Strip optional fences and parse a JSON object. */
+/**
+ * Strip fences/prose and parse a JSON object. Malformed or truncated output
+ * returns null so callers fail closed.
+ */
 export function parseJsonObject(raw: string): Record<string, unknown> | null {
-  const cleaned = raw.replace(/```json\s*/gi, "").replace(/```/g, "").trim();
-  try {
-    const parsed = JSON.parse(cleaned);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : null;
-  } catch {
-    return null;
-  }
+  return parseJsonObjectLoose(raw);
 }
 
 /** Map a router failure onto the CE attempt error vocabulary. */

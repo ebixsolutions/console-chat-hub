@@ -395,27 +395,83 @@ export interface EvaluatorOutput {
   recommended_correction: string;
 }
 
+/**
+ * Vertex constrained-decoding schema for one evaluator dimension. Pins the
+ * exact field names and primitive types the contract requires.
+ */
+export const EVALUATOR_RESPONSE_SCHEMA: Record<string, unknown> = {
+  type: "OBJECT",
+  properties: {
+    score: { type: "NUMBER" },
+    justification: { type: "STRING" },
+    evidence: {
+      type: "ARRAY",
+      items: { type: "STRING" },
+      minItems: 1,
+      maxItems: 3,
+    },
+    grounding_refs: { type: "ARRAY", items: { type: "STRING" } },
+    recommended_correction: { type: "STRING" },
+  },
+  required: [
+    "score",
+    "justification",
+    "evidence",
+    "grounding_refs",
+    "recommended_correction",
+  ],
+  propertyOrdering: [
+    "score",
+    "justification",
+    "evidence",
+    "grounding_refs",
+    "recommended_correction",
+  ],
+};
+
+/** Accepts a number or a numeric string; anything else is rejected. */
+function coerceScore(raw: unknown): number | null {
+  const n = typeof raw === "number"
+    ? raw
+    : typeof raw === "string" && raw.trim() !== ""
+    ? Number(raw.trim())
+    : NaN;
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Accepts an array of strings or a single string quote. */
+function coerceEvidence(raw: unknown): unknown[] | null {
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === "string" && raw.trim().length > 0) return [raw];
+  return null;
+}
+
 export function validateEvaluatorOutput(
   parsed: Record<string, unknown> | null,
   knownChunkIds: ReadonlySet<string>,
 ): EvaluatorOutput | null {
   if (!parsed) return null;
-  const rawScore = parsed.score;
-  if (typeof rawScore !== "number" || !Number.isFinite(rawScore)) return null;
+  const rawScore = coerceScore(parsed.score);
+  if (rawScore === null) return null;
   if (rawScore < 0 || rawScore > 100) return null;
   const score = Math.round(rawScore * 100) / 100;
 
-  const justification = typeof parsed.justification === "string"
-    ? parsed.justification.trim()
+  // Some providers rename this key; the semantics are identical.
+  const justificationRaw = typeof parsed.justification === "string"
+    ? parsed.justification
+    : typeof parsed.justify === "string"
+    ? parsed.justify
     : "";
+  const justification = justificationRaw.trim();
   if (justification.length < 20 || justification.length > 2000) return null;
 
-  const evidenceRaw = Array.isArray(parsed.evidence) ? parsed.evidence : null;
-  if (!evidenceRaw || evidenceRaw.length === 0 || evidenceRaw.length > 3) {
-    return null;
-  }
+  const evidenceRaw = coerceEvidence(parsed.evidence);
+  if (!evidenceRaw || evidenceRaw.length === 0) return null;
   const evidence: string[] = [];
-  for (const e of evidenceRaw) {
+  // Providers sometimes return more quotes than asked for. Extra quotes are
+  // truncated rather than failing the whole dimension; every retained quote
+  // still has to be a real non-empty string from the model.
+  for (const e of evidenceRaw.slice(0, 3)) {
     if (typeof e !== "string" || e.trim().length === 0) return null;
     evidence.push(e.trim().slice(0, 500));
   }
@@ -428,19 +484,73 @@ export function validateEvaluatorOutput(
   for (const r of refsRaw) {
     if (typeof r !== "string") return null;
     const id = r.trim();
-    if (id.length === 0 || !knownChunkIds.has(id)) return null;
+    // Attribution stays strict: only chunk ids that exist in the bundle are
+    // kept. An id the bundle never contained is dropped, not persisted and not
+    // fatal — a fabricated citation can never enter the record either way.
+    if (id.length === 0 || !knownChunkIds.has(id)) continue;
     grounding_refs.push(id);
   }
 
   const correctionRaw = parsed.recommended_correction;
-  if (typeof correctionRaw !== "string") return null;
+  // A provider may express "nothing to change" as null or omit the field.
+  const correction = correctionRaw === null || correctionRaw === undefined
+    ? ""
+    : typeof correctionRaw === "string"
+    ? correctionRaw
+    : null;
+  if (correction === null) return null;
   return {
     score,
     justification: justification.slice(0, 2000),
     evidence,
     grounding_refs,
-    recommended_correction: correctionRaw.trim().slice(0, 4000),
+    recommended_correction: correction.trim().slice(0, 4000),
   };
+}
+
+/**
+ * Shape-only description of why an evaluator payload was rejected. Contains no
+ * provider text and no customer content, so it is safe to log.
+ */
+export function describeEvaluatorRejection(
+  parsed: Record<string, unknown> | null,
+): string {
+  if (!parsed) return "not_json_object";
+  const score = coerceScore(parsed.score);
+  if (score === null) {
+    return `score_not_number:${typeof parsed.score}:keys=${Object.keys(parsed).join("|")}`;
+  }
+  if (score < 0 || score > 100) return "score_out_of_range";
+  const jRaw = typeof parsed.justification === "string"
+    ? parsed.justification
+    : typeof parsed.justify === "string"
+    ? parsed.justify
+    : null;
+  if (jRaw === null) return "justification_not_string";
+  const j = jRaw.trim();
+  if (j.length < 20 || j.length > 2000) return "justification_length";
+  const evidence = coerceEvidence(parsed.evidence);
+  if (!evidence) {
+    const ev = parsed.evidence;
+    const inner = ev && typeof ev === "object"
+      ? Object.keys(ev as Record<string, unknown>).join("|")
+      : "";
+    return `evidence_not_array:${typeof ev}:${inner}`;
+  }
+  if (evidence.length === 0) return "evidence_count:0";
+  if (evidence.slice(0, 3).some((e) => typeof e !== "string" || e.trim().length === 0)) {
+    return `evidence_item_invalid:n=${evidence.length}`;
+  }
+  if (!Array.isArray(parsed.grounding_refs)) return "grounding_refs_not_array";
+  if (parsed.grounding_refs.length > 10) return "grounding_refs_count";
+  if (parsed.grounding_refs.some((r) => typeof r !== "string")) {
+    return "grounding_refs_item_invalid";
+  }
+  const c = parsed.recommended_correction;
+  if (!(c === null || c === undefined || typeof c === "string")) {
+    return "recommended_correction_not_string";
+  }
+  return "unknown";
 }
 
 export const SENTIMENTS = [

@@ -39,6 +39,8 @@ import {
   type TranscriptEntry,
   validateEvaluatorOutput,
   validateSignalsOutput,
+  describeEvaluatorRejection,
+  EVALUATOR_RESPONSE_SCHEMA,
 } from "../_shared/ce-contract.ts";
 
 const CE_EDGE_RUNTIME_VERSION = "ce-conversation-first-1.0.0";
@@ -74,7 +76,9 @@ const REVIEW_ROLES = new Set(["admin", "supervisor"]);
 const MAX_BODY_BYTES = 8 * 1024;
 const MAX_MESSAGES = 400;
 const MAX_NOTE_CHARS = 1000;
-const EVALUATOR_MAX_TOKENS = 1100;
+// Gemini charges reasoning tokens against maxOutputTokens, so the budget must
+// cover thinking plus the JSON object or the reply truncates mid-object.
+const EVALUATOR_MAX_TOKENS = 2600;
 const STALE_ATTEMPT_MINUTES = 15;
 const ALLOWED_FIELDS: Record<string, Set<string>> = {
   evaluate: new Set(["action", "conversation_id"]),
@@ -501,12 +505,20 @@ async function runEvaluator(
     companyId,
     conversationId,
     tag: `ce:${dimension}`,
+    responseFormat: "json",
+    responseSchema: EVALUATOR_RESPONSE_SCHEMA,
   });
   if (!res.ok) return { ok: false, code: toCeErrorCode(res.code) };
   const parsed = parseJsonObject(res.text);
   const validated = validateEvaluatorOutput(parsed, knownChunkIds);
   if (!validated) {
-    log({ event: "evaluator_output_invalid", dimension, operation_id: operationId });
+    // Shape-only diagnosis; never provider text or customer content.
+    log({
+      event: "evaluator_output_invalid",
+      dimension,
+      operation_id: operationId,
+      reason: describeEvaluatorRejection(parsed),
+    });
     return { ok: false, code: "CE_PROVIDER_INVALID_OUTPUT" };
   }
   return { ok: true, ...validated, model: res.model, raw: parsed as Record<string, unknown> };
@@ -528,6 +540,7 @@ async function runSignals(
     companyId,
     conversationId,
     tag: "ce:signals",
+    responseFormat: "json",
   });
   if (!res.ok) {
     log({ event: "signals_unavailable", code: res.code, operation_id: operationId });
