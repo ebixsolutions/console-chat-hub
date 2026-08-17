@@ -510,23 +510,29 @@ export function describeEvaluatorRejection(
   parsed: Record<string, unknown> | null,
 ): string {
   if (!parsed) return "not_json_object";
-  const score = parsed.score;
-  if (typeof score !== "number" || !Number.isFinite(score)) {
-    return `score_not_number:${typeof score}:keys=${Object.keys(parsed).join("|")}`;
+  const score = coerceScore(parsed.score);
+  if (score === null) {
+    return `score_not_number:${typeof parsed.score}:keys=${Object.keys(parsed).join("|")}`;
   }
   if (score < 0 || score > 100) return "score_out_of_range";
-  const j = typeof parsed.justification === "string" ? parsed.justification.trim() : null;
-  if (j === null) return "justification_not_string";
+  const jRaw = typeof parsed.justification === "string"
+    ? parsed.justification
+    : typeof parsed.justify === "string"
+    ? parsed.justify
+    : null;
+  if (jRaw === null) return "justification_not_string";
+  const j = jRaw.trim();
   if (j.length < 20 || j.length > 2000) return "justification_length";
-  if (!Array.isArray(parsed.evidence)) {
+  const evidence = coerceEvidence(parsed.evidence);
+  if (!evidence) {
     const ev = parsed.evidence;
     const inner = ev && typeof ev === "object"
       ? Object.keys(ev as Record<string, unknown>).join("|")
       : "";
     return `evidence_not_array:${typeof ev}:${inner}`;
   }
-  if (parsed.evidence.length === 0 || parsed.evidence.length > 3) return "evidence_count";
-  if (parsed.evidence.some((e) => typeof e !== "string" || e.trim().length === 0)) {
+  if (evidence.length === 0 || evidence.length > 3) return "evidence_count";
+  if (evidence.some((e) => typeof e !== "string" || e.trim().length === 0)) {
     return "evidence_item_invalid";
   }
   if (!Array.isArray(parsed.grounding_refs)) return "grounding_refs_not_array";
