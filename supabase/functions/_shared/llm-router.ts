@@ -516,12 +516,29 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
       usage.output_tokens = parsed.output_tokens;
 
       if (!parsed.text) {
+        // Complete-but-empty responses (safety block, recitation, truncation)
+        // fail closed, with the provider's own reason recorded for diagnosis.
         lastCode = "LLM_INVALID_OUTPUT";
         log(call.tag, {
           event: "empty_output",
           request_id: requestId,
           provider: adapter.id,
           attempt,
+          finish_reason: parsed.finish_reason ?? null,
+          block_reason: parsed.block_reason ?? null,
+        });
+        break;
+      }
+
+      if (parsed.finish_reason === "MAX_TOKENS") {
+        // Truncated output can never be a complete JSON object.
+        lastCode = "LLM_INVALID_OUTPUT";
+        log(call.tag, {
+          event: "truncated_output",
+          request_id: requestId,
+          provider: adapter.id,
+          attempt,
+          output_tokens: parsed.output_tokens,
         });
         break;
       }
