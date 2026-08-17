@@ -468,7 +468,13 @@ export function describeEvaluatorRejection(
   const j = typeof parsed.justification === "string" ? parsed.justification.trim() : null;
   if (j === null) return "justification_not_string";
   if (j.length < 20 || j.length > 2000) return "justification_length";
-  if (!Array.isArray(parsed.evidence)) return "evidence_not_array";
+  if (!Array.isArray(parsed.evidence)) {
+    const ev = parsed.evidence;
+    const inner = ev && typeof ev === "object"
+      ? Object.keys(ev as Record<string, unknown>).join("|")
+      : "";
+    return `evidence_not_array:${typeof ev}:${inner}`;
+  }
   if (parsed.evidence.length === 0 || parsed.evidence.length > 3) return "evidence_count";
   if (parsed.evidence.some((e) => typeof e !== "string" || e.trim().length === 0)) {
     return "evidence_item_invalid";
