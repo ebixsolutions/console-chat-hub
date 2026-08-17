@@ -263,6 +263,7 @@ function vertexAdapter(
   safeSystem: string,
   safeUser: string,
   maxTokens: number,
+  jsonOutput: boolean,
 ): ProviderAdapter {
   const url =
     `https://${region}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${region}/publishers/google/models/${model}:generateContent`;
@@ -281,34 +282,31 @@ function vertexAdapter(
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: safeSystem }] },
           contents: [{ role: "user", parts: [{ text: safeUser }] }],
-          generationConfig: { maxOutputTokens: maxTokens },
+          generationConfig: {
+            maxOutputTokens: maxTokens,
+            temperature: 0,
+            // Gemini honours a response mime type; callers that require a JSON
+            // object get one without fences or prose.
+            ...(jsonOutput ? { responseMimeType: "application/json" } : {}),
+          },
         }),
       };
     },
     parseResponse: (body) => {
-      const obj = body as {
-        candidates?: Array<{
-          content?: { parts?: Array<{ text?: string }> };
-        }>;
-        usageMetadata?: {
-          promptTokenCount?: number;
-          candidatesTokenCount?: number;
-        };
-      };
-      const parts = obj.candidates?.[0]?.content?.parts ?? [];
-      const text = Array.isArray(parts)
-        ? parts
-          .filter((p) => typeof p?.text === "string")
-          .map((p) => p.text as string).join("").trim()
-        : "";
+      // Thought parts are dropped and thinking tokens are counted; see
+      // _shared/vertex-parse.ts for the full incompatibility list.
+      const parsed = parseVertexResponse(body);
       return {
-        text,
-        input_tokens: Number(obj.usageMetadata?.promptTokenCount ?? 0),
-        output_tokens: Number(obj.usageMetadata?.candidatesTokenCount ?? 0),
+        text: parsed.text,
+        input_tokens: parsed.input_tokens,
+        output_tokens: parsed.output_tokens,
+        finish_reason: parsed.finish_reason,
+        block_reason: parsed.block_reason,
       };
     },
   };
 }
+
 
 /* --------------------------------- router --------------------------------- */
 
