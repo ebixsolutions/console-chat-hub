@@ -259,6 +259,7 @@ export type Database = {
       }
       ce_automation_runtime: {
         Row: {
+          automation_started_at: string | null
           background_sweep_minutes: number
           debounce_minutes: number
           enabled: boolean
@@ -274,6 +275,7 @@ export type Database = {
           worker_url: string | null
         }
         Insert: {
+          automation_started_at?: string | null
           background_sweep_minutes?: number
           debounce_minutes?: number
           enabled?: boolean
@@ -289,6 +291,7 @@ export type Database = {
           worker_url?: string | null
         }
         Update: {
+          automation_started_at?: string | null
           background_sweep_minutes?: number
           debounce_minutes?: number
           enabled?: boolean
