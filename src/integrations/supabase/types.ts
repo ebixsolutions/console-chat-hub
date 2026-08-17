@@ -257,6 +257,54 @@ export type Database = {
         }
         Relationships: []
       }
+      ce_automation_runtime: {
+        Row: {
+          background_sweep_minutes: number
+          debounce_minutes: number
+          enabled: boolean
+          enqueue_batch_limit: number
+          global_concurrency: number
+          last_background_sweep_at: string | null
+          max_age_minutes: number
+          per_company_concurrency: number
+          singleton: boolean
+          updated_at: string
+          worker_secret_id: string | null
+          worker_token_hash: string | null
+          worker_url: string | null
+        }
+        Insert: {
+          background_sweep_minutes?: number
+          debounce_minutes?: number
+          enabled?: boolean
+          enqueue_batch_limit?: number
+          global_concurrency?: number
+          last_background_sweep_at?: string | null
+          max_age_minutes?: number
+          per_company_concurrency?: number
+          singleton?: boolean
+          updated_at?: string
+          worker_secret_id?: string | null
+          worker_token_hash?: string | null
+          worker_url?: string | null
+        }
+        Update: {
+          background_sweep_minutes?: number
+          debounce_minutes?: number
+          enabled?: boolean
+          enqueue_batch_limit?: number
+          global_concurrency?: number
+          last_background_sweep_at?: string | null
+          max_age_minutes?: number
+          per_company_concurrency?: number
+          singleton?: boolean
+          updated_at?: string
+          worker_secret_id?: string | null
+          worker_token_hash?: string | null
+          worker_url?: string | null
+        }
+        Relationships: []
+      }
       ce_bundle_snapshot: {
         Row: {
           attempt_id: string
@@ -444,6 +492,190 @@ export type Database = {
             columns: ["evaluation_id"]
             isOneToOne: false
             referencedRelation: "conversation_evaluation"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ce_evaluation_job: {
+        Row: {
+          attempts: number
+          available_at: string
+          company_id: string | null
+          conversation_id: string
+          created_at: string
+          error_code: string | null
+          evaluation_fingerprint: string
+          expected_revision: number
+          finished_at: string | null
+          id: string
+          job_key: string
+          lease_expires_at: string | null
+          lease_owner: string | null
+          max_attempts: number
+          priority: number
+          snapshot_hash: string
+          source: string
+          started_at: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          attempts?: number
+          available_at?: string
+          company_id?: string | null
+          conversation_id: string
+          created_at?: string
+          error_code?: string | null
+          evaluation_fingerprint: string
+          expected_revision: number
+          finished_at?: string | null
+          id?: string
+          job_key: string
+          lease_expires_at?: string | null
+          lease_owner?: string | null
+          max_attempts?: number
+          priority: number
+          snapshot_hash: string
+          source: string
+          started_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          attempts?: number
+          available_at?: string
+          company_id?: string | null
+          conversation_id?: string
+          created_at?: string
+          error_code?: string | null
+          evaluation_fingerprint?: string
+          expected_revision?: number
+          finished_at?: string | null
+          id?: string
+          job_key?: string
+          lease_expires_at?: string | null
+          lease_owner?: string | null
+          max_attempts?: number
+          priority?: number
+          snapshot_hash?: string
+          source?: string
+          started_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ce_evaluation_job_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ce_evaluation_methodology: {
+        Row: {
+          activated_at: string | null
+          created_at: string
+          evaluation_contract_version: string
+          evaluation_fingerprint: string
+          evaluator_prompt_version: string
+          evaluator_schema_hash: string
+          prompt_hash: string
+          scoring_config_hash: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          activated_at?: string | null
+          created_at?: string
+          evaluation_contract_version: string
+          evaluation_fingerprint: string
+          evaluator_prompt_version: string
+          evaluator_schema_hash: string
+          prompt_hash: string
+          scoring_config_hash: string
+          status: string
+          updated_at?: string
+        }
+        Update: {
+          activated_at?: string | null
+          created_at?: string
+          evaluation_contract_version?: string
+          evaluation_fingerprint?: string
+          evaluator_prompt_version?: string
+          evaluator_schema_hash?: string
+          prompt_hash?: string
+          scoring_config_hash?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      ce_evaluation_state: {
+        Row: {
+          company_id: string | null
+          conversation_id: string
+          current_evaluation_fingerprint: string | null
+          current_snapshot_hash: string | null
+          dirty_since: string | null
+          evaluating_started_at: string | null
+          last_activity_at: string | null
+          last_error_code: string | null
+          last_success_at: string | null
+          last_success_evaluation_id: string | null
+          last_success_fingerprint: string | null
+          last_success_snapshot_hash: string | null
+          last_success_source: string | null
+          queued_at: string | null
+          revision: number
+          state: string
+          updated_at: string
+        }
+        Insert: {
+          company_id?: string | null
+          conversation_id: string
+          current_evaluation_fingerprint?: string | null
+          current_snapshot_hash?: string | null
+          dirty_since?: string | null
+          evaluating_started_at?: string | null
+          last_activity_at?: string | null
+          last_error_code?: string | null
+          last_success_at?: string | null
+          last_success_evaluation_id?: string | null
+          last_success_fingerprint?: string | null
+          last_success_snapshot_hash?: string | null
+          last_success_source?: string | null
+          queued_at?: string | null
+          revision?: number
+          state?: string
+          updated_at?: string
+        }
+        Update: {
+          company_id?: string | null
+          conversation_id?: string
+          current_evaluation_fingerprint?: string | null
+          current_snapshot_hash?: string | null
+          dirty_since?: string | null
+          evaluating_started_at?: string | null
+          last_activity_at?: string | null
+          last_error_code?: string | null
+          last_success_at?: string | null
+          last_success_evaluation_id?: string | null
+          last_success_fingerprint?: string | null
+          last_success_snapshot_hash?: string | null
+          last_success_source?: string | null
+          queued_at?: string | null
+          revision?: number
+          state?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ce_evaluation_state_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: true
+            referencedRelation: "conversations"
             referencedColumns: ["id"]
           },
         ]
@@ -834,6 +1066,8 @@ export type Database = {
           conversation_id: string
           created_at: string
           evaluation_contract_version: string
+          evaluation_fingerprint: string | null
+          freshness: string
           grounding_manifest: Json
           hallucination_quality_score: number
           hallucination_risk_score: number
@@ -867,6 +1101,8 @@ export type Database = {
           conversation_id: string
           created_at?: string
           evaluation_contract_version: string
+          evaluation_fingerprint?: string | null
+          freshness?: string
           grounding_manifest?: Json
           hallucination_quality_score: number
           hallucination_risk_score: number
@@ -900,6 +1136,8 @@ export type Database = {
           conversation_id?: string
           created_at?: string
           evaluation_contract_version?: string
+          evaluation_fingerprint?: string | null
+          freshness?: string
           grounding_manifest?: Json
           hallucination_quality_score?: number
           hallucination_risk_score?: number
@@ -948,8 +1186,10 @@ export type Database = {
           created_at: string
           error_code: string | null
           evaluation_contract_version: string
+          evaluation_fingerprint: string | null
           id: string
           initiated_by: string
+          initiated_by_kind: string
           input_snapshot_hash: string
           model_version: string
           pipeline_run_id: string
@@ -967,8 +1207,10 @@ export type Database = {
           created_at?: string
           error_code?: string | null
           evaluation_contract_version: string
+          evaluation_fingerprint?: string | null
           id?: string
           initiated_by: string
+          initiated_by_kind?: string
           input_snapshot_hash: string
           model_version: string
           pipeline_run_id?: string
@@ -986,8 +1228,10 @@ export type Database = {
           created_at?: string
           error_code?: string | null
           evaluation_contract_version?: string
+          evaluation_fingerprint?: string | null
           id?: string
           initiated_by?: string
+          initiated_by_kind?: string
           input_snapshot_hash?: string
           model_version?: string
           pipeline_run_id?: string
@@ -1666,6 +1910,8 @@ export type Database = {
           created_at: string
           evaluated_by: string
           evaluation_contract_version: string
+          evaluation_fingerprint: string | null
+          freshness: string
           grounding_manifest: Json | null
           hallucination_quality_score: number
           hallucination_risk_score: number
@@ -1698,6 +1944,8 @@ export type Database = {
           created_at?: string
           evaluated_by: string
           evaluation_contract_version: string
+          evaluation_fingerprint?: string | null
+          freshness?: string
           grounding_manifest?: Json | null
           hallucination_quality_score?: number
           hallucination_risk_score: number
@@ -1730,6 +1978,8 @@ export type Database = {
           created_at?: string
           evaluated_by?: string
           evaluation_contract_version?: string
+          evaluation_fingerprint?: string | null
+          freshness?: string
           grounding_manifest?: Json | null
           hallucination_quality_score?: number
           hallucination_risk_score?: number
@@ -1784,9 +2034,11 @@ export type Database = {
           created_at: string
           error_message: string | null
           evaluation_contract_version: string
+          evaluation_fingerprint: string | null
           grounding_manifest: Json | null
           id: string
           initiated_by: string
+          initiated_by_kind: string
           input_snapshot_hash: string
           kb_snapshot_id: string
           model_version: string
@@ -1804,9 +2056,11 @@ export type Database = {
           created_at?: string
           error_message?: string | null
           evaluation_contract_version?: string
+          evaluation_fingerprint?: string | null
           grounding_manifest?: Json | null
           id?: string
           initiated_by: string
+          initiated_by_kind?: string
           input_snapshot_hash: string
           kb_snapshot_id: string
           model_version: string
@@ -1824,9 +2078,11 @@ export type Database = {
           created_at?: string
           error_message?: string | null
           evaluation_contract_version?: string
+          evaluation_fingerprint?: string | null
           grounding_manifest?: Json | null
           id?: string
           initiated_by?: string
+          initiated_by_kind?: string
           input_snapshot_hash?: string
           kb_snapshot_id?: string
           model_version?: string
@@ -2755,8 +3011,59 @@ export type Database = {
         }
         Returns: Json
       }
+      ce_activate_evaluation_methodology_v1: {
+        Args: {
+          p_contract_version: string
+          p_evaluator_schema_hash: string
+          p_mark_existing_stale?: boolean
+          p_prompt_hash: string
+          p_prompt_version: string
+          p_scoring_config_hash: string
+        }
+        Returns: Json
+      }
+      ce_claim_evaluation_jobs_v1: {
+        Args: { p_limit?: number; p_worker_id: string }
+        Returns: {
+          attempts: number
+          available_at: string
+          company_id: string | null
+          conversation_id: string
+          created_at: string
+          error_code: string | null
+          evaluation_fingerprint: string
+          expected_revision: number
+          finished_at: string | null
+          id: string
+          job_key: string
+          lease_expires_at: string | null
+          lease_owner: string | null
+          max_attempts: number
+          priority: number
+          snapshot_hash: string
+          source: string
+          started_at: string | null
+          status: string
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "ce_evaluation_job"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      ce_claim_specific_job_v1: {
+        Args: { p_job_id: string; p_worker_id: string }
+        Returns: Json
+      }
       ce_company_elevated: { Args: { p_company_id: string }; Returns: boolean }
       ce_company_read: { Args: { p_company_id: string }; Returns: boolean }
+      ce_complete_job_v1: { Args: { p_job_id: string }; Returns: Json }
+      ce_conversation_evaluable_v1: {
+        Args: { p_conversation_id: string }
+        Returns: boolean
+      }
       ce_create_local_qa_case_v1: {
         Args: {
           p_description?: string
@@ -2764,6 +3071,42 @@ export type Database = {
           p_expected_conversation_id: string
           p_priority?: string
           p_title: string
+        }
+        Returns: Json
+      }
+      ce_current_evaluation_fingerprint: { Args: never; Returns: string }
+      ce_enqueue_current_snapshot_v1: {
+        Args: {
+          p_available_at?: string
+          p_conversation_id: string
+          p_source: string
+        }
+        Returns: Json
+      }
+      ce_enqueue_evaluation_v1: {
+        Args: {
+          p_available_at?: string
+          p_conversation_id: string
+          p_evaluation_fingerprint: string
+          p_expected_revision: number
+          p_snapshot_hash: string
+          p_source: string
+        }
+        Returns: Json
+      }
+      ce_fail_job_v1: {
+        Args: { p_error_code: string; p_job_id: string }
+        Returns: Json
+      }
+      ce_finalize_evaluation_freshness_v1: {
+        Args: {
+          p_conversation_id: string
+          p_evaluation_fingerprint: string
+          p_evaluation_id: string
+          p_evaluation_source: string
+          p_expected_revision: number
+          p_snapshot_hash: string
+          p_success_at?: string
         }
         Returns: Json
       }
@@ -2776,7 +3119,12 @@ export type Database = {
         Args: { p_user_id: string }
         Returns: boolean
       }
+      ce_mark_evaluation_dirty: {
+        Args: { p_activity_at?: string; p_conversation_id: string }
+        Returns: undefined
+      }
       ce_purge_expired_snapshots: { Args: never; Returns: Json }
+      ce_reap_expired_jobs_v1: { Args: never; Returns: number }
       ce_record_local_root_cause_v1: {
         Args: {
           p_category: string
@@ -2786,6 +3134,15 @@ export type Database = {
           p_summary: string
         }
         Returns: Json
+      }
+      ce_runtime_conversation_company: {
+        Args: { p_conversation_id: string }
+        Returns: string
+      }
+      ce_scheduler_enqueue_due_v1: { Args: never; Returns: Json }
+      ce_trigger_snapshot_hash_v1: {
+        Args: { p_conversation_id: string }
+        Returns: string
       }
       check_conv_assignment_invariant: {
         Args: { p_conv_id: string }
