@@ -39,6 +39,7 @@ import {
   type TranscriptEntry,
   validateEvaluatorOutput,
   validateSignalsOutput,
+  describeEvaluatorRejection,
 } from "../_shared/ce-contract.ts";
 
 const CE_EDGE_RUNTIME_VERSION = "ce-conversation-first-1.0.0";
