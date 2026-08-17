@@ -298,8 +298,11 @@ function vertexAdapter(
             maxOutputTokens: maxTokens,
             temperature: 0,
             // Gemini honours a response mime type; callers that require a JSON
-            // object get one without fences or prose.
+            // object get one without fences or prose. A response schema pins
+            // field names and primitive types, which prompt text alone does
+            // not (Gemini otherwise renames keys and stringifies numbers).
             ...(jsonOutput ? { responseMimeType: "application/json" } : {}),
+            ...(jsonOutput && responseSchema ? { responseSchema } : {}),
           },
         }),
       };
