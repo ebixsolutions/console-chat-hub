@@ -533,8 +533,8 @@ export function describeEvaluatorRejection(
     return `evidence_not_array:${typeof ev}:${inner}`;
   }
   if (evidence.length === 0) return "evidence_count:0";
-  if (evidence.some((e) => typeof e !== "string" || e.trim().length === 0)) {
-    return "evidence_item_invalid";
+  if (evidence.slice(0, 3).some((e) => typeof e !== "string" || e.trim().length === 0)) {
+    return `evidence_item_invalid:n=${evidence.length}`;
   }
   if (!Array.isArray(parsed.grounding_refs)) return "grounding_refs_not_array";
   if (parsed.grounding_refs.length > 10) return "grounding_refs_count";
