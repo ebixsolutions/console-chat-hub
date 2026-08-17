@@ -461,11 +461,12 @@ export function validateEvaluatorOutput(
   if (justification.length < 20 || justification.length > 2000) return null;
 
   const evidenceRaw = coerceEvidence(parsed.evidence);
-  if (!evidenceRaw || evidenceRaw.length === 0 || evidenceRaw.length > 3) {
-    return null;
-  }
+  if (!evidenceRaw || evidenceRaw.length === 0) return null;
   const evidence: string[] = [];
-  for (const e of evidenceRaw) {
+  // Providers sometimes return more quotes than asked for. Extra quotes are
+  // truncated rather than failing the whole dimension; every retained quote
+  // still has to be a real non-empty string from the model.
+  for (const e of evidenceRaw.slice(0, 3)) {
     if (typeof e !== "string" || e.trim().length === 0) return null;
     evidence.push(e.trim().slice(0, 500));
   }
