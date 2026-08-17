@@ -428,19 +428,59 @@ export function validateEvaluatorOutput(
   for (const r of refsRaw) {
     if (typeof r !== "string") return null;
     const id = r.trim();
-    if (id.length === 0 || !knownChunkIds.has(id)) return null;
+    // Attribution stays strict: only chunk ids that exist in the bundle are
+    // kept. An id the bundle never contained is dropped, not persisted and not
+    // fatal — a fabricated citation can never enter the record either way.
+    if (id.length === 0 || !knownChunkIds.has(id)) continue;
     grounding_refs.push(id);
   }
 
   const correctionRaw = parsed.recommended_correction;
-  if (typeof correctionRaw !== "string") return null;
+  // A provider may express "nothing to change" as null or omit the field.
+  const correction = correctionRaw === null || correctionRaw === undefined
+    ? ""
+    : typeof correctionRaw === "string"
+    ? correctionRaw
+    : null;
+  if (correction === null) return null;
   return {
     score,
     justification: justification.slice(0, 2000),
     evidence,
     grounding_refs,
-    recommended_correction: correctionRaw.trim().slice(0, 4000),
+    recommended_correction: correction.trim().slice(0, 4000),
   };
+}
+
+/**
+ * Shape-only description of why an evaluator payload was rejected. Contains no
+ * provider text and no customer content, so it is safe to log.
+ */
+export function describeEvaluatorRejection(
+  parsed: Record<string, unknown> | null,
+): string {
+  if (!parsed) return "not_json_object";
+  const score = parsed.score;
+  if (typeof score !== "number" || !Number.isFinite(score)) return "score_not_number";
+  if (score < 0 || score > 100) return "score_out_of_range";
+  const j = typeof parsed.justification === "string" ? parsed.justification.trim() : null;
+  if (j === null) return "justification_not_string";
+  if (j.length < 20 || j.length > 2000) return "justification_length";
+  if (!Array.isArray(parsed.evidence)) return "evidence_not_array";
+  if (parsed.evidence.length === 0 || parsed.evidence.length > 3) return "evidence_count";
+  if (parsed.evidence.some((e) => typeof e !== "string" || e.trim().length === 0)) {
+    return "evidence_item_invalid";
+  }
+  if (!Array.isArray(parsed.grounding_refs)) return "grounding_refs_not_array";
+  if (parsed.grounding_refs.length > 10) return "grounding_refs_count";
+  if (parsed.grounding_refs.some((r) => typeof r !== "string")) {
+    return "grounding_refs_item_invalid";
+  }
+  const c = parsed.recommended_correction;
+  if (!(c === null || c === undefined || typeof c === "string")) {
+    return "recommended_correction_not_string";
+  }
+  return "unknown";
 }
 
 export const SENTIMENTS = [
