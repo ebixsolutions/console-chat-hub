@@ -69,6 +69,11 @@ export interface LlmCall {
    * rollback semantics are unchanged.
    */
   responseFormat?: "json" | "text";
+  /**
+   * Optional Vertex response schema (OpenAPI subset). Ignored by providers that
+   * do not support constrained decoding, so rollback stays behaviour-preserving.
+   */
+  responseSchema?: Record<string, unknown>;
 }
 
 type ProviderId = "vertex" | "anthropic";
