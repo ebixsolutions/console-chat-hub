@@ -535,6 +535,7 @@ async function runSignals(
     companyId,
     conversationId,
     tag: "ce:signals",
+    responseFormat: "json",
   });
   if (!res.ok) {
     log({ event: "signals_unavailable", code: res.code, operation_id: operationId });
