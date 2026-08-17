@@ -8,9 +8,15 @@
 // - Browser request bodies never choose tenant/company scope.
 // - Singapore tenant is server-only configuration.
 // - Demo scope is separate and is never used as production/pre-activation fallback.
-// - JWT/token/secrets/raw upstream payloads are never returned to the browser.
+// - Opaque company-specific API keys / JWTs / tokens / raw upstream payloads are never returned to the browser.
+// - Preferred production auth is a server-only Singapore tenant -> API key map.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import {
+  resolveSingaporeCredential,
+  singaporeCredentialHeaders,
+  type KBAuthHeaderMode,
+} from "./kb-auth.ts";
 
 export interface KBQueryInput { query: string; top_k: number }
 export type KBScopeMode = "canonical" | "pre_activation" | "demo";
@@ -48,6 +54,8 @@ export interface KBRagResponse {
 export interface KBEndpointConfig {
   baseUrl: string; ragUrl: string; signingSecret?: string; jwtTtlSec: number;
   defaultToken?: string; tenantTokens: Record<string, string>;
+  tenantApiKeys: Record<string, string>;
+  apiKeyHeaderMode: KBAuthHeaderMode;
 }
 export interface KBPreActivationActor {
   userId: string;
@@ -99,13 +107,30 @@ export function resolveKBEndpoint(): KBEndpointConfig | null {
   const configured = Deno.env.get("KB_RAG_ENDPOINT") ?? Deno.env.get("KB_RAG_BASE_URL") ?? SINGAPORE_KB_DEFAULT_BASE_URL;
   const normalized = normalizeBaseUrl(configured);
   if (!normalized) return null;
+
   const tenantTokens = parseStringMapEnv("KB_RAG_TENANT_TOKENS_JSON");
-  if (tenantTokens === null) return null;
+  const tenantApiKeys = parseStringMapEnv("KB_SINGAPORE_TENANT_API_KEYS_JSON");
+  if (tenantTokens === null || tenantApiKeys === null) return null;
+
+  const headerRaw = (Deno.env.get("KB_SINGAPORE_API_KEY_HEADER") ?? "authorization")
+    .trim().toLowerCase();
+  if (headerRaw !== "authorization" && headerRaw !== "x-api-key") return null;
+  const apiKeyHeaderMode = headerRaw as KBAuthHeaderMode;
+
   const signingSecret = Deno.env.get("KB_SINGAPORE_JWT_SECRET")?.trim() || undefined;
   const ttlRaw = Number.parseInt(Deno.env.get("KB_SINGAPORE_JWT_TTL_SEC") ?? "300", 10);
   const jwtTtlSec = Number.isInteger(ttlRaw) && ttlRaw >= 60 && ttlRaw <= 900 ? ttlRaw : 300;
   const defaultToken = Deno.env.get("KB_RAG_TOKEN")?.trim() || undefined;
-  return { ...normalized, signingSecret, jwtTtlSec, defaultToken, tenantTokens };
+
+  return {
+    ...normalized,
+    signingSecret,
+    jwtTtlSec,
+    defaultToken,
+    tenantTokens,
+    tenantApiKeys,
+    apiKeyHeaderMode,
+  };
 }
 
 export type TenantResolutionReason =
@@ -197,47 +222,6 @@ export async function resolveTenantScope(
   return { resolved: true, scope: { mode: "demo", aiCompanyId: null, singaporeTenantId: tenantId } };
 }
 
-function decodeJwtPayload(token: string): Record<string, unknown> | null {
-  const parts = token.split("."); if (parts.length !== 3) return null;
-  try {
-    const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-    const padded = b64 + "=".repeat((4 - (b64.length % 4 || 4)) % 4);
-    const parsed = JSON.parse(atob(padded));
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
-  } catch { return null; }
-}
-function base64UrlEncode(bytes: Uint8Array): string {
-  let binary = ""; for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-}
-function base64UrlJson(value: Record<string, unknown>): string {
-  return base64UrlEncode(new TextEncoder().encode(JSON.stringify(value)));
-}
-async function mintSingaporeTenantJwt(scope: KBResolvedScope, cfg: KBEndpointConfig): Promise<string | null> {
-  if (!cfg.signingSecret) return null;
-  const now = Math.floor(Date.now() / 1000);
-  const header = base64UrlJson({ alg: "HS256", typ: "JWT" });
-  const actorRef = scope.mode === "canonical" && scope.aiCompanyId
-    ? `company:${scope.aiCompanyId}` : scope.mode === "pre_activation" ? "pre-activation" : "demo";
-  const payload = base64UrlJson({ sub: `ai-chatbot:${actorRef}`, tenant_id: scope.singaporeTenantId, role: "service", iat: now, exp: now + cfg.jwtTtlSec });
-  const signingInput = `${header}.${payload}`;
-  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(cfg.signingSecret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(signingInput));
-  return `${signingInput}.${base64UrlEncode(new Uint8Array(signature))}`;
-}
-async function resolveTenantToken(scope: KBResolvedScope, cfg: KBEndpointConfig): Promise<{ok:true;token:string}|{ok:false;error_code:string}> {
-  const minted = await mintSingaporeTenantJwt(scope, cfg);
-  const token = minted ?? cfg.tenantTokens[scope.singaporeTenantId] ?? cfg.defaultToken;
-  if (!token) return { ok: false, error_code: "KB_AUTH_TOKEN_MISSING" };
-  const claims = decodeJwtPayload(token);
-  if (!claims) return { ok: false, error_code: "KB_AUTH_TOKEN_INVALID" };
-  const tokenTenant = claims.tenant_id ?? claims.sub;
-  if (String(tokenTenant ?? "") !== scope.singaporeTenantId) return { ok: false, error_code: "KB_AUTH_TENANT_MISMATCH" };
-  const exp = Number(claims.exp);
-  if (Number.isFinite(exp) && exp * 1000 <= Date.now() + 5000) return { ok: false, error_code: "KB_AUTH_TOKEN_EXPIRED" };
-  return { ok: true, token };
-}
-
 interface SingaporeCitation { document_id?:unknown; document_title?:unknown; chunk_id?:unknown; chunk_type?:unknown; score?:unknown; label?:unknown }
 interface SingaporeDocument { document_id?:unknown; doc_score?:unknown; chunk_count?:unknown }
 interface SingaporeDocumentMetadata { id?:unknown; name?:unknown; source_type?:unknown; knowledge_type?:unknown; status?:unknown; production_status?:unknown; available_to_live_console?:unknown; is_outdated?:unknown }
@@ -247,17 +231,18 @@ function parseSingaporeContext(raw: string): { summaries:string[]; evidence:stri
   for(const line of raw.split(/\r?\n/)){const s=line.match(/^\[summary\]\s*(.*)$/i); if(s){flush();kind="summary";current.push(s[1]??"");continue;} const e=line.match(/^\[evidence\]\s*(.*)$/i); if(e){flush();kind="evidence";current.push(e[1]??"");continue;} if(kind)current.push(line);} flush(); return {summaries,evidence};
 }
 function asFiniteNumber(value: unknown): number | null { const n=typeof value==="number"?value:Number(value); return Number.isFinite(n)?n:null; }
-async function fetchSelectedDocumentMetadata(cfg:KBEndpointConfig,token:string,documentId:string,signal:AbortSignal):Promise<{ok:true;data:SingaporeDocumentMetadata}|{ok:false;error_code:string}>{
-  let response:Response; try{response=await fetch(`${cfg.baseUrl}/api/entities/KBDocument/${encodeURIComponent(documentId)}`,{method:"GET",headers:{Authorization:`Bearer ${token}`},signal});}catch(err){return {ok:false,error_code:err instanceof DOMException&&err.name==="AbortError"?"KB_TIMEOUT":"KB_DOCUMENT_METADATA_FETCH_ERROR"};}
+async function fetchSelectedDocumentMetadata(cfg:KBEndpointConfig,authHeaders:Record<string,string>,documentId:string,signal:AbortSignal):Promise<{ok:true;data:SingaporeDocumentMetadata}|{ok:false;error_code:string}>{
+  let response:Response; try{response=await fetch(`${cfg.baseUrl}/api/entities/KBDocument/${encodeURIComponent(documentId)}`,{method:"GET",headers:authHeaders,signal});}catch(err){return {ok:false,error_code:err instanceof DOMException&&err.name==="AbortError"?"KB_TIMEOUT":"KB_DOCUMENT_METADATA_FETCH_ERROR"};}
   if(!response.ok)return {ok:false,error_code:`KB_DOCUMENT_METADATA_HTTP_${response.status}`}; let data:unknown; try{data=await response.json();}catch{return {ok:false,error_code:"KB_DOCUMENT_METADATA_INVALID_JSON"};}
   if(!data||typeof data!=="object"||Array.isArray(data))return {ok:false,error_code:"KB_DOCUMENT_METADATA_SCHEMA_INVALID"}; return {ok:true,data:data as SingaporeDocumentMetadata};
 }
 
 export async function fetchKBRag(queryInput:KBQueryInput,scope:KBResolvedScope,endpointCfg:KBEndpointConfig,opts?:{timeoutMs?:number}):Promise<KBRagResponse>{
   const query=queryInput.query.trim(); if(!query)return {success:true,chunks:[],citations:[]};
-  const auth=await resolveTenantToken(scope,endpointCfg); if(!auth.ok)return {success:false,chunks:[],citations:[],error_code:auth.error_code};
+  const credential=await resolveSingaporeCredential(scope,endpointCfg); if(!credential.ok)return {success:false,chunks:[],citations:[],error_code:credential.error_code};
+  const authHeaders=singaporeCredentialHeaders(credential,endpointCfg);
   const controller=new AbortController(); const timeout=setTimeout(()=>controller.abort(),opts?.timeoutMs??KB_DEFAULT_TIMEOUT_MS); let response:Response;
-  try{response=await fetch(endpointCfg.ragUrl,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${auth.token}`},body:JSON.stringify({query,top_k:Math.max(queryInput.top_k,12),score_threshold:0.05,max_documents:1,max_summary:1,max_full_chunks:3}),signal:controller.signal});}
+  try{response=await fetch(endpointCfg.ragUrl,{method:"POST",headers:{"Content-Type":"application/json",...authHeaders},body:JSON.stringify({query,top_k:Math.max(queryInput.top_k,12),score_threshold:0.05,max_documents:1,max_summary:1,max_full_chunks:3}),signal:controller.signal});}
   catch(err){clearTimeout(timeout);return {success:false,chunks:[],citations:[],error_code:err instanceof DOMException&&err.name==="AbortError"?"KB_TIMEOUT":"KB_FETCH_ERROR"};}
   if(!response.ok){clearTimeout(timeout);return {success:false,chunks:[],citations:[],error_code:`KB_HTTP_${response.status}`};}
   let data:unknown; try{data=await response.json();}catch{clearTimeout(timeout);return {success:false,chunks:[],citations:[],error_code:"KB_INVALID_JSON"};}
@@ -269,7 +254,7 @@ export async function fetchKBRag(queryInput:KBQueryInput,scope:KBResolvedScope,e
   const selectedDocumentId=typeof upstreamDocuments[0]?.document_id==="string"?upstreamDocuments[0].document_id:typeof upstreamCitations[0]?.document_id==="string"?upstreamCitations[0].document_id:null;
   if(!selectedDocumentId){clearTimeout(timeout);return {success:false,chunks:[],citations:[],error_code:"KB_SCHEMA_INVALID"};}
   if(upstreamCitations.some(c=>typeof c.document_id==="string"&&c.document_id!==selectedDocumentId)){clearTimeout(timeout);return {success:false,chunks:[],citations:[],error_code:"KB_CROSS_DOCUMENT_MISMATCH"};}
-  const metadata=await fetchSelectedDocumentMetadata(endpointCfg,auth.token,selectedDocumentId,controller.signal); clearTimeout(timeout); if(!metadata.ok)return {success:false,chunks:[],citations:[],error_code:metadata.error_code};
+  const metadata=await fetchSelectedDocumentMetadata(endpointCfg,authHeaders,selectedDocumentId,controller.signal); clearTimeout(timeout); if(!metadata.ok)return {success:false,chunks:[],citations:[],error_code:metadata.error_code};
   const doc=metadata.data; if(String(doc.id??"")!==selectedDocumentId)return {success:false,chunks:[],citations:[],error_code:"KB_DOCUMENT_METADATA_MISMATCH"};
   if(doc.status!=="published"||doc.production_status!=="production"||doc.available_to_live_console!==true||doc.is_outdated===true)return {success:false,chunks:[],citations:[],error_code:"KB_DOCUMENT_NOT_LIVE"};
   const sourceType=typeof doc.source_type==="string"&&doc.source_type.trim()?doc.source_type.trim():typeof doc.knowledge_type==="string"&&doc.knowledge_type.trim()?doc.knowledge_type.trim():"unknown";
