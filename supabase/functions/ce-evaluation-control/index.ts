@@ -5,28 +5,12 @@ import {
   serviceClient,
   type AutomationJob,
 } from "../_shared/ce-automation-engine.ts";
+import { ceCorsHeaders } from "../_shared/ce-cors.ts";
 
-const ALLOWED_ORIGIN = "https://console-chat-hub.lovable.app";
-const PROJECT_HOST = "4dbf593e-577e-4af4-a553-460441c34473.lovableproject.com";
 const EVALUATE_ROLES = new Set(["admin","supervisor","qa"]);
 
 function cors(req: Request) {
-  const origin = req.headers.get("Origin") ?? "";
-  let allow = "";
-  try {
-    const u = new URL(origin);
-    if (
-      origin === ALLOWED_ORIGIN ||
-      (u.protocol === "https:" && (u.hostname === PROJECT_HOST || u.hostname.endsWith(`--${PROJECT_HOST}`)))
-    ) allow = origin;
-  } catch { /* empty */ }
-  return {
-    "Access-Control-Allow-Origin": allow,
-    "Access-Control-Allow-Headers": "authorization, apikey, content-type",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Content-Type": "application/json",
-    Vary: "Origin",
-  };
+  return ceCorsHeaders(req.headers.get("Origin") ?? "");
 }
 function json(req: Request, status: number, body: Record<string, unknown>) {
   return new Response(JSON.stringify(body), { status, headers: cors(req) });
