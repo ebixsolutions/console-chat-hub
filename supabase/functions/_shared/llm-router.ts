@@ -234,6 +234,8 @@ function anthropicAdapter(
         text,
         input_tokens: Number(obj.usage?.input_tokens ?? 0),
         output_tokens: Number(obj.usage?.output_tokens ?? 0),
+        finish_reason: null,
+        block_reason: null,
       };
     },
   };
