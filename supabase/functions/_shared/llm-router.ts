@@ -62,6 +62,12 @@ export interface LlmCall {
   companyId: string | null;
   conversationId: string | null;
   tag: string;
+  /**
+   * When "json" the provider is asked for a bare JSON object. Vertex enforces
+   * this with responseMimeType; Anthropic keeps its prompt-driven behaviour so
+   * rollback semantics are unchanged.
+   */
+  responseFormat?: "json" | "text";
 }
 
 type ProviderId = "vertex" | "anthropic";
