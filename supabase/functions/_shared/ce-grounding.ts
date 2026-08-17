@@ -311,6 +311,17 @@ async function runRag(
     };
   }
 
+  // Canonical CE requires a canonical AI-company identity. A pre-activation KB
+  // scope may legitimately carry aiCompanyId=null, but that scope must never be
+  // promoted into the canonical evaluation grounding path.
+  if (!tenant.scope.aiCompanyId) {
+    return {
+      ok: false,
+      code: "GROUNDING_TENANT_MISMATCH",
+      detail: "ai_company_unresolved",
+    };
+  }
+
   let result: KBRagResponse;
   try {
     result = await fetchKBRag(
