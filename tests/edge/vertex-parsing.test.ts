@@ -116,3 +116,21 @@ Deno.test("evaluator: string score fails closed with a shape reason", () => {
     "evidence_count",
   );
 });
+
+Deno.test("evaluator: Gemini drift — string score, single-string evidence, justify key", () => {
+  const drift = {
+    score: "85",
+    justify: "The agent stayed on policy and answered the shipping question directly.",
+    evidence: "we ship within two business days",
+    grounding_refs: [],
+    recommended_correction: "",
+  };
+  const out = validateEvaluatorOutput(drift, new Set<string>());
+  assertEquals(out?.score, 85);
+  assertEquals(out?.evidence, ["we ship within two business days"]);
+  assertEquals(describeEvaluatorRejection(drift), "unknown");
+});
+
+Deno.test("evaluator: non-numeric string score still fails closed", () => {
+  assertEquals(validateEvaluatorOutput({ ...payload, score: "high" }, new Set(["chunk-1"])), null);
+});
