@@ -395,6 +395,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
       redact(call.system),
       redact(call.user),
       call.maxTokens,
+      call.responseFormat === "json",
     );
   } else {
     const key = Deno.env.get("ANTHROPIC_API_KEY");
