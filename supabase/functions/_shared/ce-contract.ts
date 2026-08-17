@@ -404,7 +404,12 @@ export const EVALUATOR_RESPONSE_SCHEMA: Record<string, unknown> = {
   properties: {
     score: { type: "NUMBER" },
     justification: { type: "STRING" },
-    evidence: { type: "ARRAY", items: { type: "STRING" } },
+    evidence: {
+      type: "ARRAY",
+      items: { type: "STRING" },
+      minItems: 1,
+      maxItems: 3,
+    },
     grounding_refs: { type: "ARRAY", items: { type: "STRING" } },
     recommended_correction: { type: "STRING" },
   },
