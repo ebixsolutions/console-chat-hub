@@ -275,6 +275,7 @@ function vertexAdapter(
   safeUser: string,
   maxTokens: number,
   jsonOutput: boolean,
+  responseSchema: Record<string, unknown> | undefined,
 ): ProviderAdapter {
   const url =
     `https://${region}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${region}/publishers/google/models/${model}:generateContent`;
