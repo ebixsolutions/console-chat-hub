@@ -506,6 +506,7 @@ async function runEvaluator(
     conversationId,
     tag: `ce:${dimension}`,
     responseFormat: "json",
+    responseSchema: EVALUATOR_RESPONSE_SCHEMA,
   });
   if (!res.ok) return { ok: false, code: toCeErrorCode(res.code) };
   const parsed = parseJsonObject(res.text);
