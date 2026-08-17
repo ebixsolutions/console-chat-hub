@@ -17,6 +17,7 @@ import {
   singaporeCredentialHeaders,
   type KBAuthHeaderMode,
 } from "./kb-auth.ts";
+import { parseAggregationResponse } from "./kb-aggregation-response.ts";
 
 export interface KBQueryInput { query: string; top_k: number }
 export type KBScopeMode = "canonical" | "pre_activation" | "demo";
@@ -222,49 +223,119 @@ export async function resolveTenantScope(
   return { resolved: true, scope: { mode: "demo", aiCompanyId: null, singaporeTenantId: tenantId } };
 }
 
-interface SingaporeCitation { document_id?:unknown; document_title?:unknown; chunk_id?:unknown; chunk_type?:unknown; score?:unknown; label?:unknown }
-interface SingaporeDocument { document_id?:unknown; doc_score?:unknown; chunk_count?:unknown }
-interface SingaporeDocumentMetadata { id?:unknown; name?:unknown; source_type?:unknown; knowledge_type?:unknown; status?:unknown; production_status?:unknown; available_to_live_console?:unknown; is_outdated?:unknown }
-function parseSingaporeContext(raw: string): { summaries:string[]; evidence:string[] } {
-  const summaries:string[]=[]; const evidence:string[]=[]; let kind:"summary"|"evidence"|null=null; let current:string[]=[];
-  const flush=()=>{const text=current.join("\n").trim(); if(text){if(kind==="summary") summaries.push(text); if(kind==="evidence") evidence.push(text);} current=[];};
-  for(const line of raw.split(/\r?\n/)){const s=line.match(/^\[summary\]\s*(.*)$/i); if(s){flush();kind="summary";current.push(s[1]??"");continue;} const e=line.match(/^\[evidence\]\s*(.*)$/i); if(e){flush();kind="evidence";current.push(e[1]??"");continue;} if(kind)current.push(line);} flush(); return {summaries,evidence};
-}
-function asFiniteNumber(value: unknown): number | null { const n=typeof value==="number"?value:Number(value); return Number.isFinite(n)?n:null; }
-async function fetchSelectedDocumentMetadata(cfg:KBEndpointConfig,authHeaders:Record<string,string>,documentId:string,signal:AbortSignal):Promise<{ok:true;data:SingaporeDocumentMetadata}|{ok:false;error_code:string}>{
-  let response:Response; try{response=await fetch(`${cfg.baseUrl}/api/entities/KBDocument/${encodeURIComponent(documentId)}`,{method:"GET",headers:authHeaders,signal});}catch(err){return {ok:false,error_code:err instanceof DOMException&&err.name==="AbortError"?"KB_TIMEOUT":"KB_DOCUMENT_METADATA_FETCH_ERROR"};}
-  if(!response.ok)return {ok:false,error_code:`KB_DOCUMENT_METADATA_HTTP_${response.status}`}; let data:unknown; try{data=await response.json();}catch{return {ok:false,error_code:"KB_DOCUMENT_METADATA_INVALID_JSON"};}
-  if(!data||typeof data!=="object"||Array.isArray(data))return {ok:false,error_code:"KB_DOCUMENT_METADATA_SCHEMA_INVALID"}; return {ok:true,data:data as SingaporeDocumentMetadata};
-}
+export async function fetchKBRag(
+  queryInput: KBQueryInput,
+  scope: KBResolvedScope,
+  endpointCfg: KBEndpointConfig,
+  opts?: { timeoutMs?: number },
+): Promise<KBRagResponse> {
+  const query = queryInput.query.trim();
+  if (!query) return { success: true, chunks: [], citations: [] };
 
-export async function fetchKBRag(queryInput:KBQueryInput,scope:KBResolvedScope,endpointCfg:KBEndpointConfig,opts?:{timeoutMs?:number}):Promise<KBRagResponse>{
-  const query=queryInput.query.trim(); if(!query)return {success:true,chunks:[],citations:[]};
-  const credential=await resolveSingaporeCredential(scope,endpointCfg); if(!credential.ok)return {success:false,chunks:[],citations:[],error_code:credential.error_code};
-  const authHeaders=singaporeCredentialHeaders(credential,endpointCfg);
-  const controller=new AbortController(); const timeout=setTimeout(()=>controller.abort(),opts?.timeoutMs??KB_DEFAULT_TIMEOUT_MS); let response:Response;
-  try{response=await fetch(endpointCfg.ragUrl,{method:"POST",headers:{"Content-Type":"application/json",...authHeaders},body:JSON.stringify({query,top_k:Math.max(queryInput.top_k,12),score_threshold:0.05,max_documents:1,max_summary:1,max_full_chunks:3}),signal:controller.signal});}
-  catch(err){clearTimeout(timeout);return {success:false,chunks:[],citations:[],error_code:err instanceof DOMException&&err.name==="AbortError"?"KB_TIMEOUT":"KB_FETCH_ERROR"};}
-  if(!response.ok){clearTimeout(timeout);return {success:false,chunks:[],citations:[],error_code:`KB_HTTP_${response.status}`};}
-  let data:unknown; try{data=await response.json();}catch{clearTimeout(timeout);return {success:false,chunks:[],citations:[],error_code:"KB_INVALID_JSON"};}
-  if(!data||typeof data!=="object"||Array.isArray(data)){clearTimeout(timeout);return {success:false,chunks:[],citations:[],error_code:"KB_SCHEMA_INVALID"};}
-  const d=data as Record<string,unknown>; if(typeof d.has_context!=="boolean"||typeof d.reason!=="string"){clearTimeout(timeout);return {success:false,chunks:[],citations:[],error_code:"KB_SCHEMA_INVALID"};}
-  if(d.has_context===false){clearTimeout(timeout);if(!Array.isArray(d.citations)||!Array.isArray(d.documents))return {success:false,chunks:[],citations:[],error_code:"KB_SCHEMA_INVALID"};return {success:true,chunks:[],citations:[]};}
-  if(d.reason!=="ok"||typeof d.llm_context!=="string"||!Array.isArray(d.citations)||!Array.isArray(d.documents)){clearTimeout(timeout);return {success:false,chunks:[],citations:[],error_code:"KB_SCHEMA_INVALID"};}
-  const upstreamCitations=d.citations as SingaporeCitation[]; const upstreamDocuments=d.documents as SingaporeDocument[];
-  const selectedDocumentId=typeof upstreamDocuments[0]?.document_id==="string"?upstreamDocuments[0].document_id:typeof upstreamCitations[0]?.document_id==="string"?upstreamCitations[0].document_id:null;
-  if(!selectedDocumentId){clearTimeout(timeout);return {success:false,chunks:[],citations:[],error_code:"KB_SCHEMA_INVALID"};}
-  if(upstreamCitations.some(c=>typeof c.document_id==="string"&&c.document_id!==selectedDocumentId)){clearTimeout(timeout);return {success:false,chunks:[],citations:[],error_code:"KB_CROSS_DOCUMENT_MISMATCH"};}
-  const metadata=await fetchSelectedDocumentMetadata(endpointCfg,authHeaders,selectedDocumentId,controller.signal); clearTimeout(timeout); if(!metadata.ok)return {success:false,chunks:[],citations:[],error_code:metadata.error_code};
-  const doc=metadata.data; if(String(doc.id??"")!==selectedDocumentId)return {success:false,chunks:[],citations:[],error_code:"KB_DOCUMENT_METADATA_MISMATCH"};
-  if(doc.status!=="published"||doc.production_status!=="production"||doc.available_to_live_console!==true||doc.is_outdated===true)return {success:false,chunks:[],citations:[],error_code:"KB_DOCUMENT_NOT_LIVE"};
-  const sourceType=typeof doc.source_type==="string"&&doc.source_type.trim()?doc.source_type.trim():typeof doc.knowledge_type==="string"&&doc.knowledge_type.trim()?doc.knowledge_type.trim():"unknown";
-  const title=typeof doc.name==="string"&&doc.name.trim()?doc.name.trim().slice(0,200):"KB document"; const parsed=parseSingaporeContext(d.llm_context);
-  const orientationSummary=parsed.summaries[0]??null; const chunks:KBFullChunk[]=[]; const citations:KBCitationChunk[]=[];
-  const docScore=asFiniteNumber(upstreamDocuments[0]?.doc_score)??0; const scores=upstreamCitations.map(c=>asFiniteNumber(c.score)).filter((n):n is number=>n!==null).sort((a,b)=>b-a);
-  if(orientationSummary){const score=scores[0]??docScore;chunks.push({document_id:selectedDocumentId,doc_id:selectedDocumentId,title,content:orientationSummary,score,chunk_type:"rag_summary",source_type:sourceType,status:"published"});citations.push({display_label:title,content:orientationSummary.slice(0,500),score,source_type:sourceType,document_id:selectedDocumentId,chunk_type:"rag_summary"});}
-  let droppedWithoutContent=0,droppedWithoutDocumentId=0; const fullEvidence:KBLLMContextEvidence[]=[];
-  for(let i=0;i<upstreamCitations.length&&fullEvidence.length<3;i++){const c=upstreamCitations[i];if(c.chunk_type!=="full_content")continue;if(c.document_id!==selectedDocumentId){droppedWithoutDocumentId++;continue;}const content=parsed.evidence[i]?.trim()??"";if(!content){droppedWithoutContent++;continue;}const score=asFiniteNumber(c.score)??0;const chunkId=typeof c.chunk_id==="string"?c.chunk_id:undefined;chunks.push({document_id:selectedDocumentId,doc_id:selectedDocumentId,...(chunkId?{chunk_id:chunkId}:{}),title,content,score,chunk_type:"full_content",source_type:sourceType,status:"published"});fullEvidence.push({document_id:selectedDocumentId,...(chunkId?{chunk_id:chunkId}:{}),content,score,source_type:sourceType});citations.push({display_label:title,content:content.slice(0,500),score,source_type:sourceType,document_id:selectedDocumentId,...(chunkId?{chunk_id:chunkId}:{}),chunk_type:"full_content"});}
-  const llm_context:KBLLMContext={selected_document_id:selectedDocumentId,orientation_summary:orientationSummary,full_content_evidence:fullEvidence};
-  const meta:KBRagMeta={document_score:docScore,highest_chunk_score:scores[0]??0,second_highest_chunk_score:scores[1]??0,returned_summary_count:orientationSummary?1:0,returned_full_content_count:fullEvidence.length,dropped_without_document_id:droppedWithoutDocumentId,dropped_without_content:droppedWithoutContent};
-  return {success:true,chunks,citations,llm_context,meta,selected_document_id:selectedDocumentId,dropped_without_document_id:droppedWithoutDocumentId,dropped_without_content:droppedWithoutContent};
+  const credential = await resolveSingaporeCredential(scope, endpointCfg);
+  if (!credential.ok) {
+    return {
+      success: false,
+      chunks: [],
+      citations: [],
+      error_code: credential.error_code,
+    };
+  }
+
+  const authHeaders = singaporeCredentialHeaders(credential, endpointCfg);
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    opts?.timeoutMs ?? KB_DEFAULT_TIMEOUT_MS,
+  );
+
+  let response: Response;
+  try {
+    response = await fetch(endpointCfg.ragUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders,
+      },
+      body: JSON.stringify({
+        query,
+        candidate_top_k: Math.max(queryInput.top_k, 10),
+        max_documents: 1,
+        max_summary_chunks: 1,
+        max_full_content_chunks: 3,
+        score_threshold: 0.05,
+      }),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    clearTimeout(timeout);
+    return {
+      success: false,
+      chunks: [],
+      citations: [],
+      error_code:
+        err instanceof DOMException && err.name === "AbortError"
+          ? "KB_TIMEOUT"
+          : "KB_FETCH_ERROR",
+    };
+  }
+
+  if (!response.ok) {
+    clearTimeout(timeout);
+    return {
+      success: false,
+      chunks: [],
+      citations: [],
+      error_code: `KB_HTTP_${response.status}`,
+    };
+  }
+
+  let data: unknown;
+  try {
+    data = await response.json();
+  } catch {
+    clearTimeout(timeout);
+    return {
+      success: false,
+      chunks: [],
+      citations: [],
+      error_code: "KB_INVALID_JSON",
+    };
+  }
+  clearTimeout(timeout);
+
+  const parsed = parseAggregationResponse(data);
+  if (!parsed.ok) {
+    return {
+      success: false,
+      chunks: [],
+      citations: [],
+      error_code: parsed.error_code,
+    };
+  }
+
+  if (!parsed.contextFound) {
+    return { success: true, chunks: [], citations: [] };
+  }
+
+  return {
+    success: true,
+    chunks: parsed.chunks.map((c) => ({
+      document_id: c.document_id,
+      doc_id: c.document_id,
+      ...(c.chunk_id ? { chunk_id: c.chunk_id } : {}),
+      title: c.title,
+      content: c.content,
+      score: c.score,
+      chunk_type: c.chunk_type,
+      source_type: c.source_type,
+      status: "published" as const,
+    })),
+    citations: parsed.citations,
+    llm_context: parsed.llmContext,
+    meta: parsed.meta,
+    selected_document_id: parsed.selectedDocumentId,
+    dropped_without_document_id: 0,
+    dropped_without_content: 0,
+  };
 }
