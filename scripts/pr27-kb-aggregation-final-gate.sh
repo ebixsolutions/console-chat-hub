@@ -13,6 +13,15 @@ for f in "${FILES[@]}"; do [ -s "$ROOT/$f" ] || fail "$f missing/empty"; done
 
 python3 "$ROOT/tests/sql/pr27_kb_aggregation_contract_test.py" "$ROOT"
 
+python3 - "$ROOT/supabase/functions/_shared/kb-aggregation-response.ts" <<'PY'
+from pathlib import Path
+import sys
+s=Path(sys.argv[1]).read_text()
+for token in ['chunkType !== "faq_pair"', 'chunkType !== "section"', 'if (chunkType === "full_content")', '"Knowledge Base document"', '"knowledge"']:
+    assert token in s, token
+print("PASS producer compatibility source assertions")
+PY
+
 if command -v deno >/dev/null 2>&1; then
   DENO=(deno)
 elif command -v npx >/dev/null 2>&1; then

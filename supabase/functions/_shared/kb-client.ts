@@ -28,7 +28,7 @@ export interface KBResolvedScope {
 }
 export interface KBFullChunk {
   document_id: string; doc_id?: string; chunk_id?: string; title?: string;
-  content: string; score: number; chunk_type: "rag_summary" | "full_content";
+  content: string; score: number; chunk_type: "rag_summary" | "full_content" | "faq_pair" | "section";
   source_type: string; status: "published";
 }
 export interface KBCitationChunk {

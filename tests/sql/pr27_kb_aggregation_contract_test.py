@@ -28,7 +28,13 @@ for x in [
     "data.llm_context",
     '"rag_summary"',
     '"full_content"',
+    '"faq_pair"',
+    '"section"',
+    '"Knowledge Base document"',
 ]:
     assert x in p, x
 
 print("PR27 KB AGGREGATION CONTRACT: PASS")
+
+assert 'if (chunkType === "full_content")' in p
+assert 'fullEvidence.push' in p

@@ -115,3 +115,82 @@ Deno.test("more than three evidence chunks fails closed", () => {
   });
   assert(!r.ok, "evidence overflow must fail");
 });
+
+
+Deno.test("producer-compatible faq_pair and section evidence are references, not full-content grounding", () => {
+  const r = parseAggregationResponse({
+    success: true,
+    context_found: true,
+    selected_documents: [{
+      document_id: "doc-ref",
+      title: "",
+      source_type: "",
+      document_score: 0.88,
+      summary: null,
+      evidence: [
+        {
+          chunk_id: "faq-1",
+          chunk_type: "faq_pair",
+          content: "FAQ reference",
+          score: 0.88,
+        },
+        {
+          chunk_id: "sec-1",
+          chunk_type: "section",
+          content: "Section reference",
+          score: 0.82,
+        },
+      ],
+    }],
+    llm_context: {
+      summary_count: 0,
+      evidence_count: 2,
+      combined_text: "[EVIDENCE 1]...",
+    },
+    citations: [{
+      document_id: "doc-ref",
+      label: "",
+      source_type: "",
+      relevance: "high",
+    }],
+    meta: {
+      candidate_chunks: 10,
+      qualified_chunks: 2,
+      selected_documents: 1,
+      score_threshold: 0.7,
+    },
+  });
+
+  assert(r.ok && r.contextFound, "producer response should parse");
+  eq(r.chunks.length, 2, "reference chunks retained");
+  eq(r.chunks[0].chunk_type, "faq_pair", "faq type preserved");
+  eq(r.chunks[1].chunk_type, "section", "section type preserved");
+  eq(r.llmContext.full_content_evidence.length, 0, "references must not become factual evidence");
+  eq(r.chunks[0].title, "Knowledge Base document", "empty title fallback");
+  eq(r.chunks[0].source_type, "knowledge", "empty source type fallback");
+});
+
+Deno.test("mixed producer evidence keeps only full_content in factual grounding", () => {
+  const r = parseAggregationResponse({
+    success: true,
+    context_found: true,
+    selected_documents: [{
+      document_id: "doc-mixed",
+      title: "Policy",
+      source_type: "policy",
+      document_score: 0.92,
+      summary: null,
+      evidence: [
+        { chunk_id: "f-1", chunk_type: "full_content", content: "Authoritative policy text", score: 0.92 },
+        { chunk_id: "q-1", chunk_type: "faq_pair", content: "FAQ helper", score: 0.87 },
+      ],
+    }],
+    llm_context: { summary_count: 0, evidence_count: 2, combined_text: "..." },
+    citations: [],
+    meta: { candidate_chunks: 10, qualified_chunks: 2, selected_documents: 1, score_threshold: 0.7 },
+  });
+  assert(r.ok && r.contextFound, "mixed response should parse");
+  eq(r.chunks.length, 2, "both safe references exposed");
+  eq(r.llmContext.full_content_evidence.length, 1, "only full_content grounds LLM");
+  eq(r.llmContext.full_content_evidence[0].content, "Authoritative policy text", "correct factual evidence");
+});

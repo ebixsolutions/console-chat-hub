@@ -3,6 +3,12 @@
 // The API key binds tenant scope server-side; this parser never accepts or
 // derives tenant/company scope from the upstream response.
 
+export type AggregationChunkType =
+  | "rag_summary"
+  | "full_content"
+  | "faq_pair"
+  | "section";
+
 export interface AggregationChunk {
   document_id: string;
   chunk_id?: string;
@@ -10,7 +16,7 @@ export interface AggregationChunk {
   source_type: string;
   content: string;
   score: number;
-  chunk_type: "rag_summary" | "full_content";
+  chunk_type: AggregationChunkType;
 }
 
 export interface AggregationCitation {
@@ -20,7 +26,7 @@ export interface AggregationCitation {
   source_type: string;
   document_id: string;
   chunk_id?: string;
-  chunk_type: "rag_summary" | "full_content";
+  chunk_type: AggregationChunkType;
 }
 
 export interface AggregationEvidence {
@@ -116,10 +122,10 @@ export function parseAggregationResponse(data: unknown): ParsedAggregationRespon
   if (!isObj(doc)) return { ok: false, error_code: "KB_SCHEMA_INVALID" };
 
   const documentId = nonEmpty(doc.document_id);
-  const title = nonEmpty(doc.title);
-  const sourceType = nonEmpty(doc.source_type);
+  const title = nonEmpty(doc.title) ?? "Knowledge Base document";
+  const sourceType = nonEmpty(doc.source_type) ?? "knowledge";
   const documentScore = finite(doc.document_score);
-  if (!documentId || !title || !sourceType || documentScore === null) {
+  if (!documentId || documentScore === null) {
     return { ok: false, error_code: "KB_SCHEMA_INVALID" };
   }
 
@@ -168,9 +174,17 @@ export function parseAggregationResponse(data: unknown): ParsedAggregationRespon
     const content = nonEmpty(item.content);
     const score = finite(item.score);
     const chunkId = nonEmpty(item.chunk_id) ?? undefined;
-    if (!content || score === null || item.chunk_type !== "full_content") {
+    const chunkType = item.chunk_type;
+    if (
+      !content ||
+      score === null ||
+      (chunkType !== "full_content" &&
+        chunkType !== "faq_pair" &&
+        chunkType !== "section")
+    ) {
       return { ok: false, error_code: "KB_SCHEMA_INVALID" };
     }
+
     scores.push(score);
     chunks.push({
       document_id: documentId,
@@ -179,7 +193,7 @@ export function parseAggregationResponse(data: unknown): ParsedAggregationRespon
       source_type: sourceType,
       content,
       score,
-      chunk_type: "full_content",
+      chunk_type: chunkType,
     });
     citations.push({
       display_label: title.slice(0, 200),
@@ -188,18 +202,25 @@ export function parseAggregationResponse(data: unknown): ParsedAggregationRespon
       source_type: sourceType,
       document_id: documentId,
       ...(chunkId ? { chunk_id: chunkId } : {}),
-      chunk_type: "full_content",
+      chunk_type: chunkType,
     });
-    fullEvidence.push({
-      document_id: documentId,
-      ...(chunkId ? { chunk_id: chunkId } : {}),
-      content,
-      score,
-      source_type: sourceType,
-    });
+
+    // Frozen grounding rule: only authoritative full_content may become
+    // factual LLM evidence. faq_pair/section remain safe UI references only.
+    if (chunkType === "full_content") {
+      fullEvidence.push({
+        document_id: documentId,
+        ...(chunkId ? { chunk_id: chunkId } : {}),
+        content,
+        score,
+        source_type: sourceType,
+      });
+    }
   }
 
-  if (!orientationSummary && fullEvidence.length === 0) {
+  // A valid producer response may contain a summary and/or non-full-content
+  // references. Do not convert those references into factual evidence.
+  if (!orientationSummary && chunks.length === 0) {
     return { ok: false, error_code: "KB_SCHEMA_INVALID" };
   }
 
