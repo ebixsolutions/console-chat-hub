@@ -3022,6 +3022,37 @@ export type Database = {
         }
         Returns: Json
       }
+      ce_activate_scheduler_v1: {
+        Args: { p_worker_url: string }
+        Returns: Json
+      }
+      ce_automation_initiate_canonical_v1: {
+        Args: {
+          p_bundle_hash: string
+          p_contract_version: string
+          p_grounding_manifest: Json
+          p_input_snapshot_hash: string
+          p_job_id: string
+          p_kb_snapshot_id: string
+          p_model_version: string
+          p_policy_snapshot_id: string
+          p_prompt_version: string
+          p_source_deployment: string
+        }
+        Returns: Json
+      }
+      ce_automation_initiate_local_v1: {
+        Args: {
+          p_bundle_hash: string
+          p_contract_version: string
+          p_input_snapshot_hash: string
+          p_job_id: string
+          p_model_version: string
+          p_prompt_version: string
+          p_source_deployment: string
+        }
+        Returns: Json
+      }
       ce_claim_evaluation_jobs_v1: {
         Args: { p_limit?: number; p_worker_id: string }
         Returns: {
@@ -3075,6 +3106,7 @@ export type Database = {
         Returns: Json
       }
       ce_current_evaluation_fingerprint: { Args: never; Returns: string }
+      ce_deactivate_scheduler_v1: { Args: never; Returns: Json }
       ce_enqueue_current_snapshot_v1: {
         Args: {
           p_available_at?: string
@@ -3140,10 +3172,12 @@ export type Database = {
         Returns: string
       }
       ce_scheduler_enqueue_due_v1: { Args: never; Returns: Json }
+      ce_scheduler_http_tick_v1: { Args: never; Returns: number }
       ce_trigger_snapshot_hash_v1: {
         Args: { p_conversation_id: string }
         Returns: string
       }
+      ce_verify_worker_token_v1: { Args: { p_token: string }; Returns: boolean }
       check_conv_assignment_invariant: {
         Args: { p_conv_id: string }
         Returns: undefined
