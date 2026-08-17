@@ -461,7 +461,9 @@ export function describeEvaluatorRejection(
 ): string {
   if (!parsed) return "not_json_object";
   const score = parsed.score;
-  if (typeof score !== "number" || !Number.isFinite(score)) return "score_not_number";
+  if (typeof score !== "number" || !Number.isFinite(score)) {
+    return `score_not_number:${typeof score}:keys=${Object.keys(parsed).join("|")}`;
+  }
   if (score < 0 || score > 100) return "score_out_of_range";
   const j = typeof parsed.justification === "string" ? parsed.justification.trim() : null;
   if (j === null) return "justification_not_string";
