@@ -114,7 +114,7 @@ const COPY = {
   en: {
     denied: "You do not have permission to view widget preview.",
     subtitle:
-      "Configure appearance and test the Widget interaction flow. Live AI Test uses the real Singapore Knowledge Base and governed LLM without creating production conversations.",
+      "Configure appearance and test the Widget interaction flow. Live AI Test uses the real Singapore Knowledge Base and governed LLM with persistent test conversations that appear in the AI Chatbot Inbox while remaining clearly marked as test data.",
     preview: "Preview",
     embed: "Embed Code",
     style: "Widget 1 / Widget 2",
@@ -131,7 +131,7 @@ const COPY = {
     simulationBanner:
       "UI Simulation tests Widget appearance, interaction and human-handoff UI only. AI replies are simulated.",
     liveBanner:
-      "Live AI Test is active: messages are sent to the real Singapore Knowledge Base and governed Vertex LLM. This isolated test does not create a production visitor session, conversation, customer message or handoff state.",
+      "Live AI Test is active: messages are sent to the real Singapore Knowledge Base and governed Vertex LLM. Live AI Test conversations are persisted as clearly marked test conversations, kept across page changes, and visible in the AI Chatbot Inbox. They are excluded from training and are not canonical customer sessions.",
     embedUnavailable:
       "Embed Code becomes available only after a canonical company and active Website Widget channel are configured.",
     reply:
@@ -146,7 +146,7 @@ const COPY = {
   zh: {
     denied: "您沒有權限查看 Widget 預覽。",
     subtitle:
-      "設定 Widget 外觀並測試互動流程。Live AI Test 會使用真實 Singapore Knowledge Base 及受管控 LLM，但不建立正式 production 對話。",
+      "設定 Widget 外觀並測試互動流程。Live AI Test 會使用真實 Singapore Knowledge Base 及受管控 LLM，並建立可保留的測試對話；測試對話會顯示於 AI Chatbot Inbox，但會明確標記為 test data。",
     preview: "預覽",
     embed: "嵌入代碼",
     style: "Widget 1 / Widget 2",
@@ -163,7 +163,7 @@ const COPY = {
     simulationBanner:
       "UI Simulation 只測試 Widget 外觀、互動及轉真人 UI；AI 回覆為模擬內容。",
     liveBanner:
-      "Live AI Test 已啟用：訊息會送往真實 Singapore Knowledge Base 及受管控 Vertex LLM。此隔離測試不會建立正式 visitor session、conversation、customer message 或 handoff state。",
+      "Live AI Test 已啟用：訊息會送往真實 Singapore Knowledge Base 及受管控 Vertex LLM。Live AI Test 會保留測試對話及訊息，換頁後仍可讀取，並同步顯示於 AI Chatbot Inbox；資料會標記為測試用途並排除 training，不會冒充 canonical 客戶 session。",
     embedUnavailable:
       "只有在 canonical company 及有效 Website Widget channel 完成設定後才會提供 Embed Code。",
     reply:
@@ -176,9 +176,26 @@ const COPY = {
   },
 } as const;
 
+type LiveAiMessage = {
+  id: string;
+  role: "visitor" | "assistant";
+  content: string;
+  created_at?: string | null;
+  metadata?: Record<string, unknown> | null;
+};
+
+type LiveAiHistoryItem = {
+  conversation_id: string;
+  created_at: string | null;
+  updated_at: string | null;
+  latest_preview: string;
+  message_count: number;
+};
+
 type LiveAiResponse = {
   success: true;
-  mode: "isolated_live_ai_test";
+  mode: "persistent_live_ai_test";
+  conversation_id: string;
   scope_mode: "canonical" | "pre_activation";
   grounded: boolean;
   answer: string;
@@ -196,6 +213,8 @@ type LiveAiResponse = {
     latency_ms: number;
     attempts: number;
   };
+  messages?: LiveAiMessage[];
+  history?: LiveAiHistoryItem[];
 };
 
 type LiveAiFailure = {
@@ -777,7 +796,12 @@ function PreviewWidget({
   const [menuOpen, setMenuOpen] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [history, setHistory] = useState<PreviewMessage[][]>([]);
+  const [history, setHistory] = useState<LiveAiHistoryItem[]>([]);
+  const [testConversationId, setTestConversationId] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    return window.localStorage.getItem("widget_live_test_conversation_id");
+  });
+  const [historyLoading, setHistoryLoading] = useState(false);
   const actionAreaRef = useRef<HTMLDivElement | null>(null);
   const [humanState, setHumanState] = useState<
     "none" | "waiting" | "assigned"
@@ -800,13 +824,15 @@ function PreviewWidget({
   );
 
   useEffect(() => {
-    setMessages([]);
     setInput("");
     setTyping(false);
     setHumanState("none");
     setHistoryOpen(false);
     setMenuOpen(false);
     setEmojiOpen(false);
+    if (mode === "simulation") {
+      setMessages([]);
+    }
     if (simulationTimer.current) {
       clearTimeout(simulationTimer.current);
       simulationTimer.current = null;
@@ -815,6 +841,68 @@ function PreviewWidget({
       clearTimeout(handoffTimer.current);
       handoffTimer.current = null;
     }
+  }, [mode]);
+
+  const applyServerMessages = (rows: LiveAiMessage[] | undefined) => {
+    if (!Array.isArray(rows)) return;
+    setMessages(
+      rows.map((row) => ({
+        id: row.id,
+        role: row.role,
+        content: row.content,
+        meta:
+          row.role === "assistant" && row.metadata
+            ? [
+                row.metadata.grounded === true ? "grounded" : "clarification",
+                typeof row.metadata.model === "string" ? row.metadata.model : null,
+                typeof row.metadata.full_content_evidence_count === "number"
+                  ? `${row.metadata.full_content_evidence_count} full-content evidence`
+                  : null,
+              ].filter(Boolean).join(" · ")
+            : undefined,
+      })),
+    );
+  };
+
+  const loadLiveConversation = async (conversationId: string) => {
+    const { data, error } = await supabase.functions.invoke(
+      "widget-live-ai-test",
+      { body: { action: "load", test_conversation_id: conversationId } },
+    );
+    if (error || !data || data.success !== true) {
+      window.localStorage.removeItem("widget_live_test_conversation_id");
+      setTestConversationId(null);
+      setMessages([]);
+      return;
+    }
+    setTestConversationId(data.conversation_id);
+    window.localStorage.setItem("widget_live_test_conversation_id", data.conversation_id);
+    applyServerMessages(data.messages);
+  };
+
+  const loadLiveHistory = async () => {
+    setHistoryLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke(
+        "widget-live-ai-test",
+        { body: { action: "history" } },
+      );
+      if (!error && data?.success === true && Array.isArray(data.history)) {
+        setHistory(data.history as LiveAiHistoryItem[]);
+      }
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (mode !== "live" || !testConversationId) return;
+    void loadLiveConversation(testConversationId);
+  }, [mode]);
+
+  useEffect(() => {
+    if (mode !== "live") return;
+    void loadLiveHistory();
   }, [mode]);
 
   useEffect(() => {
@@ -892,7 +980,13 @@ function PreviewWidget({
       const { data, error } = await supabase.functions.invoke(
         "widget-live-ai-test",
         {
-          body: { query: text },
+          body: {
+            action: "send",
+            query: text,
+            ...(testConversationId
+              ? { test_conversation_id: testConversationId }
+              : {}),
+          },
         },
       );
 
@@ -915,36 +1009,13 @@ function PreviewWidget({
       }
 
       const result = payload as LiveAiResponse;
-      const answer =
-        typeof result.answer === "string" &&
-        result.answer.trim()
-          ? result.answer.trim()
-          : result.grounded
-            ? c.noEvidence
-            : c.noEvidence;
-
-      const meta = [
-        result.scope_mode === "canonical"
-          ? "canonical tenant"
-          : "pre-activation tenant",
-        result.model || null,
-        `${result.full_content_evidence_count} full-content evidence`,
-        result.usage
-          ? `${result.usage.latency_ms} ms`
-          : null,
-      ]
-        .filter(Boolean)
-        .join(" · ");
-
-      setMessages((value) => [
-        ...value,
-        {
-          id: `live-ai-${Date.now()}`,
-          role: "assistant",
-          content: answer,
-          meta,
-        },
-      ]);
+      setTestConversationId(result.conversation_id);
+      window.localStorage.setItem(
+        "widget_live_test_conversation_id",
+        result.conversation_id,
+      );
+      applyServerMessages(result.messages);
+      void loadLiveHistory();
     } catch (error) {
       appendLiveFailure(
         text,
@@ -981,6 +1052,13 @@ function PreviewWidget({
     if (typing || !input.trim()) return;
 
     const text = input.trim();
+    setInput("");
+
+    if (mode === "live") {
+      void runLiveAi(text);
+      return;
+    }
+
     setMessages((value) => [
       ...value,
       {
@@ -989,22 +1067,23 @@ function PreviewWidget({
         content: text,
       },
     ]);
-    setInput("");
-
-    if (mode === "live") {
-      void runLiveAi(text);
-      return;
-    }
-
     runSimulation(text);
   };
 
   const startNewConversation = () => {
-    if (messages.length > 0) {
-      setHistory((value) =>
-        [messages, ...value].slice(0, 10),
-      );
+    if (mode === "live") {
+      setTestConversationId(null);
+      window.localStorage.removeItem("widget_live_test_conversation_id");
+      setMessages([]);
+      setInput("");
+      setTyping(false);
+      setHistoryOpen(false);
+      setMenuOpen(false);
+      setEmojiOpen(false);
+      void loadLiveHistory();
+      return;
     }
+
     setMessages([]);
     setInput("");
     setTyping(false);
@@ -1046,9 +1125,10 @@ function PreviewWidget({
         <div className="ml-auto flex items-center gap-1">
           <button
             type="button"
-            onClick={() =>
-              setHistoryOpen((value) => !value)
-            }
+            onClick={() => {
+              setHistoryOpen((value) => !value);
+              if (mode === "live") void loadLiveHistory();
+            }}
             className="rounded p-2 opacity-70 hover:bg-black/5 hover:opacity-100"
             aria-label="Conversation History"
             title="Conversation History"
@@ -1063,7 +1143,7 @@ function PreviewWidget({
             aria-label="New Conversation"
             title={
               mode === "live"
-                ? "Clear isolated Live AI Test chat"
+                ? "Start a new persistent Live AI Test conversation"
                 : "Start new simulated conversation"
             }
           >
@@ -1104,8 +1184,8 @@ function PreviewWidget({
           <div className="my-auto px-6 text-center text-xs leading-6 text-slate-400">
             {mode === "live"
               ? lang === "zh"
-                ? "輸入真實客戶問題。Live AI Test 會使用 Singapore Knowledge Base + Vertex 產生 grounded answer，但不寫入正式對話。"
-                : "Ask a real customer question. Live AI Test uses Singapore Knowledge Base + Vertex for a grounded answer without writing a production conversation."
+                ? "輸入真實客戶問題。此 Live AI Test 對話會被保存，換頁後仍存在，並以 test data 顯示於 AI Chatbot Inbox。"
+                : "Ask a real customer question. This test conversation is saved, survives page changes, and appears in the AI Chatbot Inbox as test data."
               : lang === "zh"
                 ? "輸入訊息測試 Widget UI；輸入「真人客服」可測試 handoff UI。"
                 : "Type a message to test Widget UI. Type “human agent” to test handoff UI."}
@@ -1161,34 +1241,46 @@ function PreviewWidget({
             <div className="mb-2 text-xs font-semibold">
               Conversation History
             </div>
-            {history.length === 0 ? (
-              <div className="text-xs text-slate-400">
-                No preview history yet.
+            {mode === "live" && historyLoading ? (
+              <div className="flex items-center gap-2 text-xs text-slate-400">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Loading history…
               </div>
-            ) : (
+            ) : history.length === 0 ? (
+              <div className="text-xs text-slate-400">
+                {mode === "live" ? "No Live AI Test history yet." : "No preview history yet."}
+              </div>
+            ) : mode === "live" ? (
               history.map((session, index) => (
                 <button
-                  key={index}
+                  key={session.conversation_id}
                   type="button"
                   onClick={() => {
-                    setMessages(session);
                     setHistoryOpen(false);
+                    void loadLiveConversation(session.conversation_id);
                   }}
-                  className="mb-1 block w-full rounded-lg border bg-white px-3 py-2 text-left text-xs"
+                  className={
+                    session.conversation_id === testConversationId
+                      ? "mb-1 block w-full rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-left text-xs"
+                      : "mb-1 block w-full rounded-lg border bg-white px-3 py-2 text-left text-xs"
+                  }
                 >
-                  Conversation {history.length - index} ·{" "}
-                  {session.length} messages
+                  <div className="font-medium">
+                    Live Test {history.length - index} · {session.message_count} messages
+                  </div>
+                  <div className="mt-1 truncate text-[10px] text-slate-500">
+                    {session.latest_preview}
+                  </div>
                 </button>
               ))
-            )}
+            ) : null}
           </div>
         )}
 
         {mode === "live" && (
           <div className="mb-2 flex items-start gap-2 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-[10px] leading-4 text-emerald-800">
             <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            Isolated Live AI Test: real KB + Vertex; no
-            production conversation or handoff write.
+            Persistent Live AI Test: real KB + Vertex; saved as test data and visible in Inbox; excluded from training.
           </div>
         )}
 
