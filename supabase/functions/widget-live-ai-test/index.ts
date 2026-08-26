@@ -1,43 +1,37 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
-import { fetchKBRag, resolveKBEndpoint, type KBResolvedScope } from "../_shared/kb-client.ts";
-import { callModel } from "../_shared/llm-router.ts";
 import { supabaseCorsHeaders } from "../_shared/supabase-cors.ts";
 
 const MAX_QUERY_LENGTH = 500;
 const ALLOWED_ROLES = new Set(["admin", "supervisor"]);
 const PROJECT_ID = "4dbf593e-577e-4af4-a553-460441c34473";
 const PRODUCTION_ORIGIN = "https://console-chat-hub.lovable.app";
+const HUMAN_CONTROL_STATUSES = new Set(["pending", "transferred", "human_needed", "human_control"]);
 
 type QueryClient = { from: (table: string) => any };
 
 function isUuid(value: unknown): value is string {
-  return typeof value === "string" &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+  return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 }
 
 function isAllowedConsoleOrigin(raw: string): boolean {
   if (!raw) return false;
   try {
     const url = new URL(raw);
-    if (url.protocol !== "https:" && !(url.protocol === "http:" && ["localhost", "127.0.0.1"].includes(url.hostname))) {
+    if (url.protocol !== "https:" && !(url.protocol === "http:" && ["localhost", "127.0.0.1"].includes(url.hostname)))
       return false;
-    }
     if (raw === PRODUCTION_ORIGIN) return true;
     if (["localhost", "127.0.0.1"].includes(url.hostname)) return true;
-
     const projectHost = `${PROJECT_ID}.lovableproject.com`;
     if (url.hostname === projectHost) return true;
     if (url.hostname.endsWith(`--${projectHost}`)) {
-      const prefix = url.hostname.slice(0, -(`--${projectHost}`).length);
+      const prefix = url.hostname.slice(0, -`--${projectHost}`.length);
       return /^[a-z0-9][a-z0-9-]*$/.test(prefix);
     }
-
     const appSuffix = `--${PROJECT_ID}.lovable.app`;
     if (url.hostname.endsWith(appSuffix)) {
       const prefix = url.hostname.slice(0, -appSuffix.length);
       return /^id-preview(?:-[a-z0-9-]+)?$/.test(prefix);
     }
-
     return false;
   } catch {
     return false;
@@ -60,37 +54,17 @@ function json(req: Request, body: unknown, status = 200): Response {
   });
 }
 
-function parseTenantMap(): Record<string, string> | null {
-  const raw = Deno.env.get("KB_SINGAPORE_TENANT_MAP_JSON");
-  if (!raw) return {};
-  try {
-    const value = JSON.parse(raw);
-    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-    const out: Record<string, string> = {};
-    for (const [companyId, tenantId] of Object.entries(value as Record<string, unknown>)) {
-      if (!isUuid(companyId) || typeof tenantId !== "string" || !tenantId.trim()) {
-        return null;
-      }
-      out[companyId] = tenantId.trim();
-    }
-    return out;
-  } catch {
-    return null;
-  }
-}
-
 async function resolveTestScope(
   admin: QueryClient,
   userId: string,
 ): Promise<
-  | { ok: true; scope: KBResolvedScope; companyId: string | null }
+  | { ok: true; companyId: string | null; scopeMode: "canonical" | "pre_activation" }
   | { ok: false; status: number; error: string }
 > {
   const { data: memberships, error: membershipError } = await admin
     .from("company_membership")
     .select("company_id, role, is_active")
     .eq("user_id", userId);
-
   if (membershipError) {
     return { ok: false, status: 500, error: "company_membership_lookup_failed" };
   }
@@ -106,143 +80,63 @@ async function resolveTestScope(
     const activeRoles = rows
       .filter((r: any) => r.is_active === true && String(r.company_id) === companyId)
       .map((r: any) => String(r.role));
-
     if (!activeRoles.some((role: string) => ALLOWED_ROLES.has(role))) {
       return { ok: false, status: 403, error: "forbidden" };
     }
-
     const { data: company, error: companyError } = await admin
       .from("company")
-      .select("id, is_active")
+      .select("id,is_active")
       .eq("id", companyId)
       .maybeSingle();
-
     if (companyError) return { ok: false, status: 500, error: "company_lookup_failed" };
     if (!company || company.is_active !== true) {
       return { ok: false, status: 403, error: "company_inactive" };
     }
-
-    const tenantMap = parseTenantMap();
-    if (tenantMap === null) {
-      return { ok: false, status: 500, error: "kb_tenant_mapping_invalid" };
-    }
-    const singaporeTenantId = tenantMap[companyId];
-    if (!singaporeTenantId) {
-      return { ok: false, status: 503, error: "kb_tenant_unresolved" };
-    }
-
-    return {
-      ok: true,
-      companyId,
-      scope: {
-        mode: "canonical",
-        aiCompanyId: companyId,
-        singaporeTenantId,
-      },
-    };
+    return { ok: true, companyId, scopeMode: "canonical" };
   }
 
-  const { data: globalRoles, error: roleError } = await admin
-    .from("user_roles")
-    .select("role")
-    .eq("user_id", userId);
-
+  const { data: roles, error: roleError } = await admin.from("user_roles").select("role").eq("user_id", userId);
   if (roleError) return { ok: false, status: 500, error: "role_lookup_failed" };
-  if (!(globalRoles ?? []).some((r: any) => ALLOWED_ROLES.has(String(r.role)))) {
+  if (!(roles ?? []).some((r: any) => ALLOWED_ROLES.has(String(r.role)))) {
     return { ok: false, status: 403, error: "forbidden" };
   }
-
   if (Deno.env.get("KB_PREACTIVATION_ENABLED") !== "true") {
     return { ok: false, status: 503, error: "kb_preactivation_disabled" };
   }
-  const singaporeTenantId = Deno.env.get("KB_PREACTIVATION_TENANT_ID")?.trim();
-  if (!singaporeTenantId) {
+  if (!Deno.env.get("KB_PREACTIVATION_TENANT_ID")?.trim()) {
     return { ok: false, status: 503, error: "kb_preactivation_config_missing" };
   }
-
-  return {
-    ok: true,
-    companyId: null,
-    scope: {
-      mode: "pre_activation",
-      aiCompanyId: null,
-      singaporeTenantId,
-    },
-  };
+  return { ok: true, companyId: null, scopeMode: "pre_activation" };
 }
 
-function referenceList(
-  chunks: Array<{
-    title?: string;
-    source_type?: string;
-    chunk_type?: string;
-    score?: number;
-  }>,
-) {
-  return chunks
-    .slice(0, 4)
-    .map((chunk) => ({
-      label: typeof chunk.title === "string" && chunk.title.trim()
-        ? chunk.title.trim().slice(0, 160)
-        : "Knowledge Base document",
-      source_type: typeof chunk.source_type === "string" && chunk.source_type.trim()
-        ? chunk.source_type.trim().slice(0, 80)
-        : "knowledge",
-      chunk_type: ["rag_summary", "full_content", "faq_pair", "section"].includes(String(chunk.chunk_type))
-        ? String(chunk.chunk_type)
-        : "section",
-      score: Number.isFinite(Number(chunk.score)) ? Number(chunk.score) : 0,
-    }));
-}
-
-
-type TestMessageRow = {
-  id: string;
-  role: "visitor" | "assistant";
-  content: string;
-  created_at: string | null;
-  metadata: Record<string, unknown> | null;
-};
-
-type TestConversationSummary = {
-  conversation_id: string;
-  created_at: string | null;
-  updated_at: string | null;
-  latest_preview: string;
-  message_count: number;
-};
-
-function isTestConversationOwned(
-  metadataSource: unknown,
-  userId: string,
-): boolean {
+function isTestConversationOwned(metadataSource: unknown, userId: string): boolean {
   if (!metadataSource || typeof metadataSource !== "object" || Array.isArray(metadataSource)) {
     return false;
   }
   const m = metadataSource as Record<string, unknown>;
-  return m.widget_live_test === true &&
+  return (
+    m.source === "widget_live_test" &&
+    m.widget_live_test === true &&
     m.owner_user_id === userId &&
-    m.exclude_training === true;
+    m.exclude_training === true
+  );
 }
 
 async function loadOwnedTestConversation(
   admin: QueryClient,
   conversationId: string,
   userId: string,
-): Promise<
-  | { ok: true; conversation: Record<string, any> }
-  | { ok: false; status: number; error: string }
-> {
+): Promise<{ ok: true; conversation: Record<string, any> } | { ok: false; status: number; error: string }> {
   if (!isUuid(conversationId)) {
     return { ok: false, status: 400, error: "invalid_test_conversation_id" };
   }
-
   const { data, error } = await admin
     .from("conversations")
-    .select("id,status,company_id,channel_config_id,visitor_session_id,metadata_source,created_at,updated_at")
+    .select(
+      "id,status,assigned_agent_id,company_id,channel_config_id,visitor_session_id,metadata_source,created_at,updated_at",
+    )
     .eq("id", conversationId)
     .maybeSingle();
-
   if (error) return { ok: false, status: 500, error: "test_conversation_lookup_failed" };
   if (!data || !isTestConversationOwned(data.metadata_source, userId)) {
     return { ok: false, status: 404, error: "test_conversation_not_found" };
@@ -250,10 +144,7 @@ async function loadOwnedTestConversation(
   return { ok: true, conversation: data };
 }
 
-async function loadTestMessages(
-  admin: QueryClient,
-  conversationId: string,
-): Promise<TestMessageRow[]> {
+async function loadTestMessages(admin: QueryClient, conversationId: string) {
   const { data, error } = await admin
     .from("messages")
     .select("id,role,content,created_at,metadata")
@@ -261,18 +152,17 @@ async function loadTestMessages(
     .neq("content", "__THINKING__")
     .order("created_at", { ascending: true })
     .limit(200);
-
   if (error) throw new Error("test_messages_lookup_failed");
   return (data ?? [])
     .filter((m: any) => m.role === "visitor" || m.role === "assistant")
     .map((m: any) => ({
       id: String(m.id),
-      role: m.role === "visitor" ? "visitor" : "assistant",
+      role: m.role === "visitor" ? ("visitor" as const) : ("assistant" as const),
       content: String(m.content ?? ""),
       created_at: typeof m.created_at === "string" ? m.created_at : null,
       metadata:
         m.metadata && typeof m.metadata === "object" && !Array.isArray(m.metadata)
-          ? m.metadata as Record<string, unknown>
+          ? (m.metadata as Record<string, unknown>)
           : null,
     }));
 }
@@ -280,11 +170,8 @@ async function loadTestMessages(
 async function createTestConversation(
   admin: QueryClient,
   userId: string,
-  resolved: { scope: KBResolvedScope; companyId: string | null },
-): Promise<
-  | { ok: true; conversationId: string }
-  | { ok: false; status: number; error: string }
-> {
+  resolved: { companyId: string | null; scopeMode: "canonical" | "pre_activation" },
+): Promise<{ ok: true; conversationId: string } | { ok: false; status: number; error: string }> {
   const sessionToken = `preview-test.${crypto.randomUUID()}.${crypto.randomUUID().replace(/-/g, "")}`;
   const visitorMetadata = {
     name: "Widget Live Test",
@@ -292,7 +179,7 @@ async function createTestConversation(
     test_mode: true,
     owner_user_id: userId,
     exclude_training: true,
-    scope_mode: resolved.scope.mode,
+    scope_mode: resolved.scopeMode,
   };
 
   const { data: session, error: sessionError } = await admin
@@ -316,7 +203,7 @@ async function createTestConversation(
     widget_live_test: true,
     owner_user_id: userId,
     exclude_training: true,
-    scope_mode: resolved.scope.mode,
+    scope_mode: resolved.scopeMode,
     canonical_company_attached: resolved.companyId !== null,
   };
 
@@ -339,28 +226,19 @@ async function createTestConversation(
     await admin.from("visitor_session").delete().eq("id", session.id);
     return { ok: false, status: 500, error: "test_conversation_create_failed" };
   }
-
   return { ok: true, conversationId: String(conversation.id) };
 }
 
-async function listOwnedTestHistory(
-  admin: QueryClient,
-  userId: string,
-): Promise<TestConversationSummary[]> {
+async function listOwnedTestHistory(admin: QueryClient, userId: string) {
   const { data, error } = await admin
     .from("conversations")
     .select("id,created_at,updated_at,metadata_source")
     .order("updated_at", { ascending: false })
     .limit(100);
-
   if (error) throw new Error("test_history_lookup_failed");
 
-  const owned = (data ?? [])
-    .filter((c: any) => isTestConversationOwned(c.metadata_source, userId))
-    .slice(0, 10);
-
-  const out: TestConversationSummary[] = [];
-  for (const c of owned) {
+  const out = [];
+  for (const c of (data ?? []).filter((x: any) => isTestConversationOwned(x.metadata_source, userId)).slice(0, 10)) {
     const messages = await loadTestMessages(admin, String(c.id));
     const latest = [...messages].reverse().find((m) => m.content.trim().length > 0);
     out.push({
@@ -374,46 +252,58 @@ async function listOwnedTestHistory(
   return out;
 }
 
-async function naturalNoEvidenceReply(
-  query: string,
-  resolved: { scope: KBResolvedScope; companyId: string | null },
+async function invokeCanonicalGenerateReply(
+  supabaseUrl: string,
+  serviceKey: string,
   conversationId: string,
-): Promise<{
-  answer: string;
-  model?: string;
-  usage?: { input_tokens: number; output_tokens: number; latency_ms: number; attempts: number };
-}> {
-  const llm = await callModel({
-    purpose: "generation",
-    system: [
-      "You are a friendly customer-service assistant.",
-      "The Knowledge Base search did not return authoritative full-content evidence for this request.",
-      "Do NOT invent product facts, specifications, prices, policies, or recommendations.",
-      "Reply in the same language and script as the user.",
-      "Do not mention technical terms such as full_content, RAG, evidence threshold, schema, API, or Knowledge Base internals.",
-      "Acknowledge what the customer wants in natural language and ask one or two concise clarifying questions that would help narrow the search.",
-      "If the request is broad, offer useful categories to choose from without claiming factual details.",
-      "Keep the response under 90 words.",
-    ].join("\n"),
-    user: query,
-    maxTokens: 240,
-    operationId: `widget-live-test:no-evidence:${conversationId}:${crypto.randomUUID()}`,
-    companyId: resolved.companyId,
-    conversationId,
-    tag: "widget-live-ai-test-no-evidence",
-    responseFormat: "text",
-  });
-
-  if (!llm.ok) {
-    const zh = /[\u4e00-\u9fff]/.test(query);
+  sourceMessageId: string,
+): Promise<{ ok: true; payload: Record<string, unknown> } | { ok: false; status: number; error: string }> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
+  try {
+    const response = await fetch(`${supabaseUrl.replace(/\/+$/, "")}/functions/v1/generate-reply`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${serviceKey}`,
+        apikey: serviceKey,
+      },
+      body: JSON.stringify({
+        conversation_id: conversationId,
+        source_message_id: sourceMessageId,
+      }),
+      signal: controller.signal,
+    });
+    let payload: Record<string, unknown> = {};
+    try {
+      const parsed = await response.json();
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        payload = parsed as Record<string, unknown>;
+      }
+    } catch {
+      // Keep opaque upstream body out of browser responses.
+    }
+    if (!response.ok) {
+      return {
+        ok: false,
+        status: response.status,
+        error:
+          typeof payload.error === "string" ? payload.error.slice(0, 120) : `generate_reply_http_${response.status}`,
+      };
+    }
+    return { ok: true, payload };
+  } catch (error) {
     return {
-      answer: zh
-        ? "可以，我可以幫你找相關資料。你想了解哪一類產品、品牌或型號？如果是冷氣機，也可以告訴我你想看窗口式、分體式，或大約需要的匹數。"
-        : "I can help narrow that down. Which product type, brand, or model are you interested in? If you mean air conditioners, tell me whether you want window or split type, or the approximate capacity you need.",
+      ok: false,
+      status: error instanceof DOMException && error.name === "AbortError" ? 504 : 502,
+      error:
+        error instanceof DOMException && error.name === "AbortError"
+          ? "generate_reply_timeout"
+          : "generate_reply_unavailable",
     };
+  } finally {
+    clearTimeout(timeout);
   }
-
-  return { answer: llm.text, model: llm.model, usage: llm.usage };
 }
 
 Deno.serve(async (req) => {
@@ -421,16 +311,12 @@ Deno.serve(async (req) => {
     const origin = req.headers.get("Origin") ?? "";
     if (!isAllowedConsoleOrigin(origin)) return new Response(null, { status: 403 });
     const headers = cors(req);
-    if (!headers["Access-Control-Allow-Headers"]) {
-      return new Response(null, { status: 403 });
-    }
+    if (!headers["Access-Control-Allow-Headers"]) return new Response(null, { status: 403 });
     return new Response(null, { status: 200, headers });
   }
-
   if (req.method !== "POST") {
     return json(req, { success: false, error: "method_not_allowed" }, 405);
   }
-
   const origin = req.headers.get("Origin") ?? "";
   if (!isAllowedConsoleOrigin(origin)) {
     return json(req, { success: false, error: "forbidden_origin" }, 403);
@@ -441,7 +327,6 @@ Deno.serve(async (req) => {
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       return json(req, { success: false, error: "invalid_request" }, 400);
     }
-
     for (const forbidden of [
       "company_id",
       "companyId",
@@ -450,13 +335,18 @@ Deno.serve(async (req) => {
       "api_key",
       "apiKey",
       "channel_id",
+      "conversation_id",
     ]) {
       if ((body as Record<string, unknown>)[forbidden] !== undefined) {
-        return json(req, {
-          success: false,
-          error: "invalid_request",
-          detail: "tenant/company/key/channel scope is server-derived",
-        }, 400);
+        return json(
+          req,
+          {
+            success: false,
+            error: "invalid_request",
+            detail: "tenant/company/key/channel/conversation scope is server-derived",
+          },
+          400,
+        );
       }
     }
 
@@ -468,11 +358,7 @@ Deno.serve(async (req) => {
     }
 
     const auth = createClient(supabaseUrl, anonKey, {
-      global: {
-        headers: {
-          Authorization: req.headers.get("Authorization") ?? "",
-        },
-      },
+      global: { headers: { Authorization: req.headers.get("Authorization") ?? "" } },
     });
     const { data: authData, error: authError } = await auth.auth.getUser();
     if (authError || !authData.user) {
@@ -491,8 +377,11 @@ Deno.serve(async (req) => {
         : "send";
 
     if (action === "history") {
-      const history = await listOwnedTestHistory(admin, authData.user.id);
-      return json(req, { success: true, mode: "persistent_live_ai_test", history });
+      return json(req, {
+        success: true,
+        mode: "persistent_live_ai_test",
+        history: await listOwnedTestHistory(admin, authData.user.id),
+      });
     }
 
     const requestedConversationId =
@@ -501,19 +390,15 @@ Deno.serve(async (req) => {
         : "";
 
     if (action === "load") {
-      const owned = await loadOwnedTestConversation(
-        admin,
-        requestedConversationId,
-        authData.user.id,
-      );
+      const owned = await loadOwnedTestConversation(admin, requestedConversationId, authData.user.id);
       if (!owned.ok) return json(req, { success: false, error: owned.error }, owned.status);
-      const messages = await loadTestMessages(admin, requestedConversationId);
       return json(req, {
         success: true,
         mode: "persistent_live_ai_test",
-        scope_mode: resolved.scope.mode,
+        scope_mode: resolved.scopeMode,
         conversation_id: requestedConversationId,
-        messages,
+        conversation_status: owned.conversation.status,
+        messages: await loadTestMessages(admin, requestedConversationId),
       });
     }
 
@@ -530,22 +415,29 @@ Deno.serve(async (req) => {
     }
 
     let conversationId = requestedConversationId;
-
     if (conversationId) {
       const owned = await loadOwnedTestConversation(admin, conversationId, authData.user.id);
       if (!owned.ok) return json(req, { success: false, error: owned.error }, owned.status);
-      if (owned.conversation.status === "resolved") {
+      if (owned.conversation.status === "resolved" || owned.conversation.status === "closed") {
         return json(req, { success: false, error: "test_conversation_resolved" }, 409);
+      }
+      if (HUMAN_CONTROL_STATUSES.has(String(owned.conversation.status)) || owned.conversation.assigned_agent_id) {
+        return json(
+          req,
+          {
+            success: false,
+            error: "test_conversation_under_human_control",
+            conversation_id: conversationId,
+          },
+          409,
+        );
       }
     } else {
       const created = await createTestConversation(admin, authData.user.id, resolved);
-      if (!created.ok) {
-        return json(req, { success: false, error: created.error }, created.status);
-      }
+      if (!created.ok) return json(req, { success: false, error: created.error }, created.status);
       conversationId = created.conversationId;
     }
 
-    const now = new Date().toISOString();
     const { data: visitorMessage, error: visitorError } = await admin
       .from("messages")
       .insert({
@@ -569,155 +461,58 @@ Deno.serve(async (req) => {
 
     await admin
       .from("conversations")
-      .update({ updated_at: now })
-      .eq("id", conversationId);
-
-    const kbEndpoint = resolveKBEndpoint();
-    if (!kbEndpoint) {
-      return json(req, { success: false, error: "kb_config_missing", conversation_id: conversationId }, 503);
-    }
-
-    const kb = await fetchKBRag(
-      { query, top_k: 5 },
-      resolved.scope,
-      kbEndpoint,
-      { timeoutMs: 15000 },
-    );
-
-    if (!kb.success) {
-      return json(req, {
-        success: false,
-        error: "kb_live_test_failed",
-        detail: kb.error_code,
-        conversation_id: conversationId,
-      }, kb.error_code === "KB_TIMEOUT" ? 504 : 502);
-    }
-
-    const references = referenceList(kb.chunks);
-    const fullEvidence = kb.llm_context?.full_content_evidence?.filter(
-      (item) =>
-        typeof item.content === "string" &&
-        item.content.trim().length > 0,
-    ).slice(0, 3) ?? [];
-
-    let answer = "";
-    let model: string | undefined;
-    let usage:
-      | { input_tokens: number; output_tokens: number; latency_ms: number; attempts: number }
-      | undefined;
-    let grounded = false;
-
-    if (fullEvidence.length === 0) {
-      const fallback = await naturalNoEvidenceReply(
-        query,
-        resolved,
-        conversationId,
-      );
-      answer = fallback.answer;
-      model = fallback.model;
-      usage = fallback.usage;
-    } else {
-      const orientation = kb.llm_context?.orientation_summary?.trim() ?? "";
-      const evidenceText = fullEvidence.map((item, index) =>
-        `[Full Content Evidence ${index + 1}]\n${item.content.slice(0, 1600)}`
-      ).join("\n\n");
-
-      const system = [
-        "You are a professional, friendly customer-service assistant.",
-        "Answer naturally in the same language and script as the user's question.",
-        "Use ONLY the Full Content Evidence below for factual claims.",
-        "Do not expose internal retrieval terms or implementation details to the customer.",
-        "The Orientation Summary is navigation context only and cannot independently support prices, dates, dimensions, policy conditions, procedures, limits, or other exact facts.",
-        "If evidence supports only part of the request, answer the supported part naturally and ask a concise clarifying question for the rest.",
-        orientation
-          ? `Orientation Summary (context only):\n${orientation.slice(0, 1200)}`
-          : "",
-        `Full Content Evidence:\n${evidenceText}`,
-      ].filter(Boolean).join("\n\n");
-
-      const llm = await callModel({
-        purpose: "generation",
-        system,
-        user: query,
-        maxTokens: 600,
-        operationId: `widget-live-test:${conversationId}:${crypto.randomUUID()}`,
-        companyId: resolved.companyId,
-        conversationId,
-        tag: "widget-live-ai-test",
-        responseFormat: "text",
-      });
-
-      if (!llm.ok) {
-        return json(req, {
-          success: false,
-          error: "llm_live_test_failed",
-          detail: llm.code,
-          conversation_id: conversationId,
-        }, llm.code === "LLM_TIMEOUT" ? 504 : 502);
-      }
-
-      answer = llm.text;
-      model = llm.model;
-      usage = llm.usage;
-      grounded = true;
-    }
-
-    const { error: assistantError } = await admin
-      .from("messages")
-      .insert({
-        conversation_id: conversationId,
-        role: "assistant",
-        content: answer,
-        status: "sent",
-        metadata: {
-          widget_live_test: true,
-          source: "widget_preview",
-          exclude_training: true,
-          grounded,
-          model: model ?? null,
-          full_content_evidence_count: fullEvidence.length,
-          references,
-          source_visitor_message_id: visitorMessage.id,
-        },
-      });
-
-    if (assistantError) {
-      return json(req, {
-        success: false,
-        error: "test_assistant_message_create_failed",
-        conversation_id: conversationId,
-      }, 500);
-    }
-
-    await admin
-      .from("conversations")
       .update({
         updated_at: new Date().toISOString(),
         language: /[\u4e00-\u9fff]/.test(query) ? "zh" : "en",
       })
       .eq("id", conversationId);
 
-    const messages = await loadTestMessages(admin, conversationId);
+    const generation = await invokeCanonicalGenerateReply(
+      supabaseUrl,
+      serviceKey,
+      conversationId,
+      String(visitorMessage.id),
+    );
 
+    const messages = await loadTestMessages(admin, conversationId);
+    const { data: state } = await admin
+      .from("conversations")
+      .select("status,assigned_agent_id,updated_at")
+      .eq("id", conversationId)
+      .maybeSingle();
+
+    if (!generation.ok) {
+      return json(
+        req,
+        {
+          success: false,
+          error: generation.error,
+          conversation_id: conversationId,
+          conversation_status: state?.status ?? null,
+          messages,
+        },
+        generation.status,
+      );
+    }
+
+    const latestAssistant = [...messages].reverse().find((m) => m.role === "assistant");
     return json(req, {
       success: true,
       mode: "persistent_live_ai_test",
-      scope_mode: resolved.scope.mode,
+      scope_mode: resolved.scopeMode,
       conversation_id: conversationId,
-      grounded,
-      answer,
-      model,
-      selected_document_id: kb.llm_context?.selected_document_id ?? null,
-      full_content_evidence_count: fullEvidence.length,
-      references,
-      usage,
+      conversation_status: state?.status ?? null,
+      handoff_persisted:
+        generation.payload.handoff_persisted === true ||
+        generation.payload.escalation_rule === "R1" ||
+        generation.payload.escalation_rule === "S0",
+      escalation_rule:
+        typeof generation.payload.escalation_rule === "string" ? generation.payload.escalation_rule : null,
+      answer: latestAssistant?.content ?? "",
       messages,
     });
   } catch (e) {
-    console.error(
-      "[widget-live-ai-test] unexpected",
-      e instanceof Error ? e.message : "unknown_error",
-    );
+    console.error("[widget-live-ai-test] unexpected", e instanceof Error ? e.message : "unknown_error");
     return json(req, { success: false, error: "internal_error" }, 500);
   }
 });
