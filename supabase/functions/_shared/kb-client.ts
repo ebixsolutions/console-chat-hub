@@ -1,25 +1,23 @@
 // supabase/functions/_shared/kb-client.ts
-// PR27 Task 1 — canonical Singapore KB adapter + secure pre-activation scope.
+// Canonical Singapore KB adapter + secure pre-activation scope.
 //
-// Frozen rules:
+// Security invariants:
 // - Canonical company identity always wins.
-// - Pre-activation never creates/fabricates company_id and is available only
-//   for an authenticated Admin/Supervisor with ZERO company_membership rows.
-// - Browser request bodies never choose tenant/company scope.
-// - Singapore tenant is server-only configuration.
-// - Demo scope is separate and is never used as production/pre-activation fallback.
-// - Opaque company-specific API keys / JWTs / tokens / raw upstream payloads are never returned to the browser.
-// - Preferred production auth is a server-only Singapore tenant -> API key map.
+// - Pre-activation never fabricates company_id.
+// - Browser request bodies never select tenant/company/key scope.
+// - Widget Live Test pre-activation is recognized only from trusted DB metadata,
+//   then independently re-authorized against user_roles + zero company_membership.
+// - Demo scope is separate from production/pre-activation.
+// - Opaque tenant credentials are never returned to the browser.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
-import {
-  resolveSingaporeCredential,
-  singaporeCredentialHeaders,
-  type KBAuthHeaderMode,
-} from "./kb-auth.ts";
+import { resolveSingaporeCredential, singaporeCredentialHeaders, type KBAuthHeaderMode } from "./kb-auth.ts";
 import { parseAggregationResponse } from "./kb-aggregation-response.ts";
 
-export interface KBQueryInput { query: string; top_k: number }
+export interface KBQueryInput {
+  query: string;
+  top_k: number;
+}
 export type KBScopeMode = "canonical" | "pre_activation" | "demo";
 export interface KBResolvedScope {
   mode: KBScopeMode;
@@ -27,40 +25,69 @@ export interface KBResolvedScope {
   singaporeTenantId: string;
 }
 export interface KBFullChunk {
-  document_id: string; doc_id?: string; chunk_id?: string; title?: string;
-  content: string; score: number; chunk_type: "rag_summary" | "full_content" | "faq_pair" | "section";
-  source_type: string; status: "published";
+  document_id: string;
+  doc_id?: string;
+  chunk_id?: string;
+  title?: string;
+  content: string;
+  score: number;
+  chunk_type: "rag_summary" | "full_content" | "faq_pair" | "section";
+  source_type: string;
+  status: "published";
 }
 export interface KBCitationChunk {
-  display_label: string; content: string; score: number; source_type: string;
-  document_id?: string; chunk_id?: string; chunk_type?: string;
+  display_label: string;
+  content: string;
+  score: number;
+  source_type: string;
+  document_id?: string;
+  chunk_id?: string;
+  chunk_type?: string;
 }
 export interface KBLLMContextEvidence {
-  document_id: string; chunk_id?: string; content: string; score: number; source_type: string;
+  document_id: string;
+  chunk_id?: string;
+  content: string;
+  score: number;
+  source_type: string;
 }
 export interface KBLLMContext {
-  selected_document_id: string; orientation_summary: string | null;
+  selected_document_id: string;
+  orientation_summary: string | null;
   full_content_evidence: KBLLMContextEvidence[];
 }
 export interface KBRagMeta {
-  document_score: number; highest_chunk_score: number; second_highest_chunk_score: number;
-  returned_summary_count: number; returned_full_content_count: number;
-  dropped_without_document_id: number; dropped_without_content: number;
+  document_score: number;
+  highest_chunk_score: number;
+  second_highest_chunk_score: number;
+  returned_summary_count: number;
+  returned_full_content_count: number;
+  dropped_without_document_id: number;
+  dropped_without_content: number;
 }
 export interface KBRagResponse {
-  success: boolean; chunks: KBFullChunk[]; citations: KBCitationChunk[];
-  llm_context?: KBLLMContext; meta?: KBRagMeta; selected_document_id?: string;
-  dropped_without_document_id?: number; dropped_without_content?: number; error_code?: string;
+  success: boolean;
+  chunks: KBFullChunk[];
+  citations: KBCitationChunk[];
+  llm_context?: KBLLMContext;
+  meta?: KBRagMeta;
+  selected_document_id?: string;
+  dropped_without_document_id?: number;
+  dropped_without_content?: number;
+  error_code?: string;
 }
 export interface KBEndpointConfig {
-  baseUrl: string; ragUrl: string; signingSecret?: string; jwtTtlSec: number;
-  defaultToken?: string; tenantTokens: Record<string, string>;
+  baseUrl: string;
+  ragUrl: string;
+  signingSecret?: string;
+  jwtTtlSec: number;
+  defaultToken?: string;
+  tenantTokens: Record<string, string>;
   tenantApiKeys: Record<string, string>;
   apiKeyHeaderMode: KBAuthHeaderMode;
 }
 export interface KBPreActivationActor {
   userId: string;
-  /** Must be explicitly enabled by the authenticated server caller. */
   allowPreActivation: true;
 }
 
@@ -68,12 +95,9 @@ const SINGAPORE_KB_DEFAULT_BASE_URL = "https://py.ebixmall.com/py-knowledge-base
 const SINGAPORE_RAG_PATH = "/api/v1/rag/context-search";
 const KB_DEFAULT_TIMEOUT_MS = 12000;
 const PREACTIVATION_ROLES = new Set(["admin", "supervisor"]);
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// Narrow structural type for helpers that only need Supabase query-builder access.
-// Avoids coupling helper signatures to createClient's inferred schema generics.
-type QueryDbClient = {
-  from: (relation: string) => any;
-};
+type QueryDbClient = { from: (relation: string) => any };
 
 function normalizeBaseUrl(raw: string): { baseUrl: string; ragUrl: string } | null {
   const value = raw.trim().replace(/\/+$/, "");
@@ -82,11 +106,12 @@ function normalizeBaseUrl(raw: string): { baseUrl: string; ragUrl: string } | nu
     const url = new URL(value);
     const isLocal = url.hostname === "localhost" || url.hostname === "127.0.0.1";
     if (url.protocol !== "https:" && !isLocal) return null;
-  } catch { return null; }
-  if (value.endsWith(SINGAPORE_RAG_PATH)) {
-    return { baseUrl: value.slice(0, -SINGAPORE_RAG_PATH.length), ragUrl: value };
+  } catch {
+    return null;
   }
-  return { baseUrl: value, ragUrl: `${value}${SINGAPORE_RAG_PATH}` };
+  return value.endsWith(SINGAPORE_RAG_PATH)
+    ? { baseUrl: value.slice(0, -SINGAPORE_RAG_PATH.length), ragUrl: value }
+    : { baseUrl: value, ragUrl: `${value}${SINGAPORE_RAG_PATH}` };
 }
 
 function parseStringMapEnv(name: string): Record<string, string> | null {
@@ -101,11 +126,14 @@ function parseStringMapEnv(name: string): Record<string, string> | null {
       out[key.trim()] = value.trim();
     }
     return out;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
 export function resolveKBEndpoint(): KBEndpointConfig | null {
-  const configured = Deno.env.get("KB_RAG_ENDPOINT") ?? Deno.env.get("KB_RAG_BASE_URL") ?? SINGAPORE_KB_DEFAULT_BASE_URL;
+  const configured =
+    Deno.env.get("KB_RAG_ENDPOINT") ?? Deno.env.get("KB_RAG_BASE_URL") ?? SINGAPORE_KB_DEFAULT_BASE_URL;
   const normalized = normalizeBaseUrl(configured);
   if (!normalized) return null;
 
@@ -113,64 +141,92 @@ export function resolveKBEndpoint(): KBEndpointConfig | null {
   const tenantApiKeys = parseStringMapEnv("KB_SINGAPORE_TENANT_API_KEYS_JSON");
   if (tenantTokens === null || tenantApiKeys === null) return null;
 
-  const headerRaw = (Deno.env.get("KB_SINGAPORE_API_KEY_HEADER") ?? "authorization")
-    .trim().toLowerCase();
+  const headerRaw = (Deno.env.get("KB_SINGAPORE_API_KEY_HEADER") ?? "authorization").trim().toLowerCase();
   if (headerRaw !== "authorization" && headerRaw !== "x-api-key") return null;
-  const apiKeyHeaderMode = headerRaw as KBAuthHeaderMode;
 
-  const signingSecret = Deno.env.get("KB_SINGAPORE_JWT_SECRET")?.trim() || undefined;
   const ttlRaw = Number.parseInt(Deno.env.get("KB_SINGAPORE_JWT_TTL_SEC") ?? "300", 10);
-  const jwtTtlSec = Number.isInteger(ttlRaw) && ttlRaw >= 60 && ttlRaw <= 900 ? ttlRaw : 300;
-  const defaultToken = Deno.env.get("KB_RAG_TOKEN")?.trim() || undefined;
-
   return {
     ...normalized,
-    signingSecret,
-    jwtTtlSec,
-    defaultToken,
+    signingSecret: Deno.env.get("KB_SINGAPORE_JWT_SECRET")?.trim() || undefined,
+    jwtTtlSec: Number.isInteger(ttlRaw) && ttlRaw >= 60 && ttlRaw <= 900 ? ttlRaw : 300,
+    defaultToken: Deno.env.get("KB_RAG_TOKEN")?.trim() || undefined,
     tenantTokens,
     tenantApiKeys,
-    apiKeyHeaderMode,
+    apiKeyHeaderMode: headerRaw as KBAuthHeaderMode,
   };
 }
 
 export type TenantResolutionReason =
-  | "KB_DB_CONFIG_MISSING" | "KB_CONVERSATION_LOOKUP_FAILED" | "KB_CONVERSATION_NOT_FOUND"
-  | "KB_TENANT_MAPPING_CONFIG_INVALID" | "KB_TENANT_MAPPING_UNRESOLVED"
-  | "KB_TENANT_IDENTITY_CONFLICT" | "KB_DEMO_DISABLED" | "KB_DEMO_CONFIG_MISSING"
-  | "KB_PREACTIVATION_DISABLED" | "KB_PREACTIVATION_CONFIG_MISSING"
-  | "KB_PREACTIVATION_MEMBERSHIP_PRESENT" | "KB_PREACTIVATION_ROLE_LOOKUP_FAILED"
+  | "KB_DB_CONFIG_MISSING"
+  | "KB_CONVERSATION_LOOKUP_FAILED"
+  | "KB_CONVERSATION_NOT_FOUND"
+  | "KB_TENANT_MAPPING_CONFIG_INVALID"
+  | "KB_TENANT_MAPPING_UNRESOLVED"
+  | "KB_TENANT_IDENTITY_CONFLICT"
+  | "KB_DEMO_DISABLED"
+  | "KB_DEMO_CONFIG_MISSING"
+  | "KB_PREACTIVATION_DISABLED"
+  | "KB_PREACTIVATION_CONFIG_MISSING"
+  | "KB_PREACTIVATION_MEMBERSHIP_PRESENT"
+  | "KB_PREACTIVATION_ROLE_LOOKUP_FAILED"
   | "KB_PREACTIVATION_ROLE_FORBIDDEN";
+
 export type TenantResolutionResult =
   | { resolved: true; scope: KBResolvedScope }
   | { resolved: false; reason: TenantResolutionReason };
 
+function trustedWidgetLiveTestActor(metadataSource: unknown): KBPreActivationActor | undefined {
+  if (!metadataSource || typeof metadataSource !== "object" || Array.isArray(metadataSource)) {
+    return undefined;
+  }
+  const m = metadataSource as Record<string, unknown>;
+  const owner = typeof m.owner_user_id === "string" ? m.owner_user_id : "";
+  if (
+    m.source !== "widget_live_test" ||
+    m.widget_live_test !== true ||
+    m.exclude_training !== true ||
+    !UUID_RE.test(owner)
+  ) {
+    return undefined;
+  }
+  return { userId: owner, allowPreActivation: true };
+}
+
 async function resolvePreActivationScope(
-  sb: QueryDbClient, actor: KBPreActivationActor | undefined,
+  sb: QueryDbClient,
+  actor: KBPreActivationActor | undefined,
 ): Promise<TenantResolutionResult> {
-  if (!actor?.allowPreActivation) return { resolved: false, reason: "KB_TENANT_MAPPING_UNRESOLVED" };
+  if (!actor?.allowPreActivation) {
+    return { resolved: false, reason: "KB_TENANT_MAPPING_UNRESOLVED" };
+  }
   if (Deno.env.get("KB_PREACTIVATION_ENABLED") !== "true") {
     return { resolved: false, reason: "KB_PREACTIVATION_DISABLED" };
   }
   const tenantId = Deno.env.get("KB_PREACTIVATION_TENANT_ID")?.trim();
   if (!tenantId) return { resolved: false, reason: "KB_PREACTIVATION_CONFIG_MISSING" };
 
-  // IMPORTANT: query ALL membership rows, not only active ones. Any canonical
-  // identity history prevents fallback to pre-activation.
   const { data: memberships, error: membershipError } = await sb
-    .from("company_membership").select("company_id, is_active").eq("user_id", actor.userId);
-  if (membershipError) return { resolved: false, reason: "KB_PREACTIVATION_ROLE_LOOKUP_FAILED" };
+    .from("company_membership")
+    .select("company_id, is_active")
+    .eq("user_id", actor.userId);
+  if (membershipError) {
+    return { resolved: false, reason: "KB_PREACTIVATION_ROLE_LOOKUP_FAILED" };
+  }
   if ((memberships ?? []).length > 0) {
     return { resolved: false, reason: "KB_PREACTIVATION_MEMBERSHIP_PRESENT" };
   }
 
-  const { data: roles, error: roleError } = await sb
-    .from("user_roles").select("role").eq("user_id", actor.userId);
-  if (roleError) return { resolved: false, reason: "KB_PREACTIVATION_ROLE_LOOKUP_FAILED" };
+  const { data: roles, error: roleError } = await sb.from("user_roles").select("role").eq("user_id", actor.userId);
+  if (roleError) {
+    return { resolved: false, reason: "KB_PREACTIVATION_ROLE_LOOKUP_FAILED" };
+  }
   const allowed = (roles ?? []).some((row: { role?: unknown }) => PREACTIVATION_ROLES.has(String(row.role ?? "")));
   if (!allowed) return { resolved: false, reason: "KB_PREACTIVATION_ROLE_FORBIDDEN" };
 
-  return { resolved: true, scope: { mode: "pre_activation", aiCompanyId: null, singaporeTenantId: tenantId } };
+  return {
+    resolved: true,
+    scope: { mode: "pre_activation", aiCompanyId: null, singaporeTenantId: tenantId },
+  };
 }
 
 export async function resolveTenantScope(
@@ -180,47 +236,80 @@ export async function resolveTenantScope(
   if (conversationId) {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-    if (!supabaseUrl || !serviceRoleKey) return { resolved: false, reason: "KB_DB_CONFIG_MISSING" };
+    if (!supabaseUrl || !serviceRoleKey) {
+      return { resolved: false, reason: "KB_DB_CONFIG_MISSING" };
+    }
+
     const sb = createClient(supabaseUrl, serviceRoleKey);
     const { data: conv, error: convErr } = await sb
-      .from("conversations").select("company_id, channel_config_id").eq("id", conversationId).maybeSingle();
+      .from("conversations")
+      .select("company_id, channel_config_id, metadata_source")
+      .eq("id", conversationId)
+      .maybeSingle();
     if (convErr) return { resolved: false, reason: "KB_CONVERSATION_LOOKUP_FAILED" };
     if (!conv) return { resolved: false, reason: "KB_CONVERSATION_NOT_FOUND" };
 
     let channelCompanyId: string | null = null;
     if (conv.channel_config_id) {
       const { data: channel, error: channelErr } = await sb
-        .from("channel_config").select("company_id").eq("id", conv.channel_config_id).maybeSingle();
+        .from("channel_config")
+        .select("company_id")
+        .eq("id", conv.channel_config_id)
+        .maybeSingle();
       if (channelErr) return { resolved: false, reason: "KB_CONVERSATION_LOOKUP_FAILED" };
       channelCompanyId = channel?.company_id ? String(channel.company_id) : null;
     }
+
     const conversationCompanyId = conv.company_id ? String(conv.company_id) : null;
     if (conversationCompanyId && channelCompanyId && conversationCompanyId !== channelCompanyId) {
       return { resolved: false, reason: "KB_TENANT_IDENTITY_CONFLICT" };
     }
-    const resolvedCompanyId = conversationCompanyId ?? channelCompanyId;
 
-    // Canonical ALWAYS wins. Pre-activation is considered only when both
-    // conversation and channel identity are genuinely absent.
-    if (!resolvedCompanyId) return await resolvePreActivationScope(sb, actor);
+    const resolvedCompanyId = conversationCompanyId ?? channelCompanyId;
+    if (!resolvedCompanyId) {
+      // Caller-provided actor is allowed for existing explicit server contracts.
+      // Otherwise only trusted DB metadata may enable Widget Live Test pre-activation.
+      const trustedActor = actor ?? trustedWidgetLiveTestActor(conv.metadata_source);
+      return await resolvePreActivationScope(sb, trustedActor);
+    }
 
     const { data: company, error: companyErr } = await sb
-      .from("company").select("id, is_active").eq("id", resolvedCompanyId).maybeSingle();
+      .from("company")
+      .select("id, is_active")
+      .eq("id", resolvedCompanyId)
+      .maybeSingle();
     if (companyErr) return { resolved: false, reason: "KB_CONVERSATION_LOOKUP_FAILED" };
-    if (!company || company.is_active !== true) return { resolved: false, reason: "KB_TENANT_MAPPING_UNRESOLVED" };
+    if (!company || company.is_active !== true) {
+      return { resolved: false, reason: "KB_TENANT_MAPPING_UNRESOLVED" };
+    }
+
     const tenantMap = parseStringMapEnv("KB_SINGAPORE_TENANT_MAP_JSON");
-    if (tenantMap === null) return { resolved: false, reason: "KB_TENANT_MAPPING_CONFIG_INVALID" };
+    if (tenantMap === null) {
+      return { resolved: false, reason: "KB_TENANT_MAPPING_CONFIG_INVALID" };
+    }
     const singaporeTenantId = tenantMap[String(company.id)]?.trim();
-    if (!singaporeTenantId) return { resolved: false, reason: "KB_TENANT_MAPPING_UNRESOLVED" };
-    return { resolved: true, scope: { mode: "canonical", aiCompanyId: String(company.id), singaporeTenantId } };
+    if (!singaporeTenantId) {
+      return { resolved: false, reason: "KB_TENANT_MAPPING_UNRESOLVED" };
+    }
+    return {
+      resolved: true,
+      scope: {
+        mode: "canonical",
+        aiCompanyId: String(company.id),
+        singaporeTenantId,
+      },
+    };
   }
 
-  // Demo is an explicit non-production mode and remains completely separate
-  // from pre-activation.
-  if (Deno.env.get("KB_DEMO_MODE") !== "true") return { resolved: false, reason: "KB_DEMO_DISABLED" };
+  if (Deno.env.get("KB_DEMO_MODE") !== "true") {
+    return { resolved: false, reason: "KB_DEMO_DISABLED" };
+  }
   const tenantId = Deno.env.get("KB_DEMO_TENANT_ID")?.trim();
   if (!tenantId) return { resolved: false, reason: "KB_DEMO_CONFIG_MISSING" };
-  return { resolved: true, scope: { mode: "demo", aiCompanyId: null, singaporeTenantId: tenantId } };
+  return {
+    resolved: true,
+    scope: { mode: "demo", aiCompanyId: null, singaporeTenantId: tenantId },
+  };
 }
 
 export async function fetchKBRag(
@@ -234,20 +323,11 @@ export async function fetchKBRag(
 
   const credential = await resolveSingaporeCredential(scope, endpointCfg);
   if (!credential.ok) {
-    return {
-      success: false,
-      chunks: [],
-      citations: [],
-      error_code: credential.error_code,
-    };
+    return { success: false, chunks: [], citations: [], error_code: credential.error_code };
   }
 
-  const authHeaders = singaporeCredentialHeaders(credential, endpointCfg);
   const controller = new AbortController();
-  const timeout = setTimeout(
-    () => controller.abort(),
-    opts?.timeoutMs ?? KB_DEFAULT_TIMEOUT_MS,
-  );
+  const timeout = setTimeout(() => controller.abort(), opts?.timeoutMs ?? KB_DEFAULT_TIMEOUT_MS);
 
   let response: Response;
   try {
@@ -255,7 +335,7 @@ export async function fetchKBRag(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...authHeaders,
+        ...singaporeCredentialHeaders(credential, endpointCfg),
       },
       body: JSON.stringify({
         query,
@@ -273,10 +353,7 @@ export async function fetchKBRag(
       success: false,
       chunks: [],
       citations: [],
-      error_code:
-        err instanceof DOMException && err.name === "AbortError"
-          ? "KB_TIMEOUT"
-          : "KB_FETCH_ERROR",
+      error_code: err instanceof DOMException && err.name === "AbortError" ? "KB_TIMEOUT" : "KB_FETCH_ERROR",
     };
   }
 
@@ -295,28 +372,15 @@ export async function fetchKBRag(
     data = await response.json();
   } catch {
     clearTimeout(timeout);
-    return {
-      success: false,
-      chunks: [],
-      citations: [],
-      error_code: "KB_INVALID_JSON",
-    };
+    return { success: false, chunks: [], citations: [], error_code: "KB_INVALID_JSON" };
   }
   clearTimeout(timeout);
 
   const parsed = parseAggregationResponse(data);
   if (!parsed.ok) {
-    return {
-      success: false,
-      chunks: [],
-      citations: [],
-      error_code: parsed.error_code,
-    };
+    return { success: false, chunks: [], citations: [], error_code: parsed.error_code };
   }
-
-  if (!parsed.contextFound) {
-    return { success: true, chunks: [], citations: [] };
-  }
+  if (!parsed.contextFound) return { success: true, chunks: [], citations: [] };
 
   return {
     success: true,
