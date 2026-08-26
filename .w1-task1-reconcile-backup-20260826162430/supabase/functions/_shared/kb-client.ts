@@ -11,14 +11,13 @@
 // - Opaque tenant credentials are never returned to the browser.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
-import {
-  resolveSingaporeCredential,
-  singaporeCredentialHeaders,
-  type KBAuthHeaderMode,
-} from "./kb-auth.ts";
+import { resolveSingaporeCredential, singaporeCredentialHeaders, type KBAuthHeaderMode } from "./kb-auth.ts";
 import { parseAggregationResponse } from "./kb-aggregation-response.ts";
 
-export interface KBQueryInput { query: string; top_k: number }
+export interface KBQueryInput {
+  query: string;
+  top_k: number;
+}
 export type KBScopeMode = "canonical" | "pre_activation" | "demo";
 export interface KBResolvedScope {
   mode: KBScopeMode;
@@ -134,9 +133,7 @@ function parseStringMapEnv(name: string): Record<string, string> | null {
 
 export function resolveKBEndpoint(): KBEndpointConfig | null {
   const configured =
-    Deno.env.get("KB_RAG_ENDPOINT") ??
-    Deno.env.get("KB_RAG_BASE_URL") ??
-    SINGAPORE_KB_DEFAULT_BASE_URL;
+    Deno.env.get("KB_RAG_ENDPOINT") ?? Deno.env.get("KB_RAG_BASE_URL") ?? SINGAPORE_KB_DEFAULT_BASE_URL;
   const normalized = normalizeBaseUrl(configured);
   if (!normalized) return null;
 
@@ -144,9 +141,7 @@ export function resolveKBEndpoint(): KBEndpointConfig | null {
   const tenantApiKeys = parseStringMapEnv("KB_SINGAPORE_TENANT_API_KEYS_JSON");
   if (tenantTokens === null || tenantApiKeys === null) return null;
 
-  const headerRaw = (Deno.env.get("KB_SINGAPORE_API_KEY_HEADER") ?? "authorization")
-    .trim()
-    .toLowerCase();
+  const headerRaw = (Deno.env.get("KB_SINGAPORE_API_KEY_HEADER") ?? "authorization").trim().toLowerCase();
   if (headerRaw !== "authorization" && headerRaw !== "x-api-key") return null;
 
   const ttlRaw = Number.parseInt(Deno.env.get("KB_SINGAPORE_JWT_TTL_SEC") ?? "300", 10);
@@ -221,16 +216,11 @@ async function resolvePreActivationScope(
     return { resolved: false, reason: "KB_PREACTIVATION_MEMBERSHIP_PRESENT" };
   }
 
-  const { data: roles, error: roleError } = await sb
-    .from("user_roles")
-    .select("role")
-    .eq("user_id", actor.userId);
+  const { data: roles, error: roleError } = await sb.from("user_roles").select("role").eq("user_id", actor.userId);
   if (roleError) {
     return { resolved: false, reason: "KB_PREACTIVATION_ROLE_LOOKUP_FAILED" };
   }
-  const allowed = (roles ?? []).some((row: { role?: unknown }) =>
-    PREACTIVATION_ROLES.has(String(row.role ?? ""))
-  );
+  const allowed = (roles ?? []).some((row: { role?: unknown }) => PREACTIVATION_ROLES.has(String(row.role ?? "")));
   if (!allowed) return { resolved: false, reason: "KB_PREACTIVATION_ROLE_FORBIDDEN" };
 
   return {
@@ -271,11 +261,7 @@ export async function resolveTenantScope(
     }
 
     const conversationCompanyId = conv.company_id ? String(conv.company_id) : null;
-    if (
-      conversationCompanyId &&
-      channelCompanyId &&
-      conversationCompanyId !== channelCompanyId
-    ) {
+    if (conversationCompanyId && channelCompanyId && conversationCompanyId !== channelCompanyId) {
       return { resolved: false, reason: "KB_TENANT_IDENTITY_CONFLICT" };
     }
 
@@ -341,10 +327,7 @@ export async function fetchKBRag(
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(
-    () => controller.abort(),
-    opts?.timeoutMs ?? KB_DEFAULT_TIMEOUT_MS,
-  );
+  const timeout = setTimeout(() => controller.abort(), opts?.timeoutMs ?? KB_DEFAULT_TIMEOUT_MS);
 
   let response: Response;
   try {
@@ -370,10 +353,7 @@ export async function fetchKBRag(
       success: false,
       chunks: [],
       citations: [],
-      error_code:
-        err instanceof DOMException && err.name === "AbortError"
-          ? "KB_TIMEOUT"
-          : "KB_FETCH_ERROR",
+      error_code: err instanceof DOMException && err.name === "AbortError" ? "KB_TIMEOUT" : "KB_FETCH_ERROR",
     };
   }
 

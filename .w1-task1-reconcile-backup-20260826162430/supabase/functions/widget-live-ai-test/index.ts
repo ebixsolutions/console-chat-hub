@@ -10,24 +10,21 @@ const HUMAN_CONTROL_STATUSES = new Set(["pending", "transferred", "human_needed"
 type QueryClient = { from: (table: string) => any };
 
 function isUuid(value: unknown): value is string {
-  return typeof value === "string" &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+  return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 }
 
 function isAllowedConsoleOrigin(raw: string): boolean {
   if (!raw) return false;
   try {
     const url = new URL(raw);
-    if (
-      url.protocol !== "https:" &&
-      !(url.protocol === "http:" && ["localhost", "127.0.0.1"].includes(url.hostname))
-    ) return false;
+    if (url.protocol !== "https:" && !(url.protocol === "http:" && ["localhost", "127.0.0.1"].includes(url.hostname)))
+      return false;
     if (raw === PRODUCTION_ORIGIN) return true;
     if (["localhost", "127.0.0.1"].includes(url.hostname)) return true;
     const projectHost = `${PROJECT_ID}.lovableproject.com`;
     if (url.hostname === projectHost) return true;
     if (url.hostname.endsWith(`--${projectHost}`)) {
-      const prefix = url.hostname.slice(0, -(`--${projectHost}`).length);
+      const prefix = url.hostname.slice(0, -`--${projectHost}`.length);
       return /^[a-z0-9][a-z0-9-]*$/.test(prefix);
     }
     const appSuffix = `--${PROJECT_ID}.lovable.app`;
@@ -98,10 +95,7 @@ async function resolveTestScope(
     return { ok: true, companyId, scopeMode: "canonical" };
   }
 
-  const { data: roles, error: roleError } = await admin
-    .from("user_roles")
-    .select("role")
-    .eq("user_id", userId);
+  const { data: roles, error: roleError } = await admin.from("user_roles").select("role").eq("user_id", userId);
   if (roleError) return { ok: false, status: 500, error: "role_lookup_failed" };
   if (!(roles ?? []).some((r: any) => ALLOWED_ROLES.has(String(r.role)))) {
     return { ok: false, status: 403, error: "forbidden" };
@@ -120,26 +114,27 @@ function isTestConversationOwned(metadataSource: unknown, userId: string): boole
     return false;
   }
   const m = metadataSource as Record<string, unknown>;
-  return m.source === "widget_live_test" &&
+  return (
+    m.source === "widget_live_test" &&
     m.widget_live_test === true &&
     m.owner_user_id === userId &&
-    m.exclude_training === true;
+    m.exclude_training === true
+  );
 }
 
 async function loadOwnedTestConversation(
   admin: QueryClient,
   conversationId: string,
   userId: string,
-): Promise<
-  | { ok: true; conversation: Record<string, any> }
-  | { ok: false; status: number; error: string }
-> {
+): Promise<{ ok: true; conversation: Record<string, any> } | { ok: false; status: number; error: string }> {
   if (!isUuid(conversationId)) {
     return { ok: false, status: 400, error: "invalid_test_conversation_id" };
   }
   const { data, error } = await admin
     .from("conversations")
-    .select("id,status,assigned_agent_id,company_id,channel_config_id,visitor_session_id,metadata_source,created_at,updated_at")
+    .select(
+      "id,status,assigned_agent_id,company_id,channel_config_id,visitor_session_id,metadata_source,created_at,updated_at",
+    )
     .eq("id", conversationId)
     .maybeSingle();
   if (error) return { ok: false, status: 500, error: "test_conversation_lookup_failed" };
@@ -162,12 +157,12 @@ async function loadTestMessages(admin: QueryClient, conversationId: string) {
     .filter((m: any) => m.role === "visitor" || m.role === "assistant")
     .map((m: any) => ({
       id: String(m.id),
-      role: m.role === "visitor" ? "visitor" as const : "assistant" as const,
+      role: m.role === "visitor" ? ("visitor" as const) : ("assistant" as const),
       content: String(m.content ?? ""),
       created_at: typeof m.created_at === "string" ? m.created_at : null,
       metadata:
         m.metadata && typeof m.metadata === "object" && !Array.isArray(m.metadata)
-          ? m.metadata as Record<string, unknown>
+          ? (m.metadata as Record<string, unknown>)
           : null,
     }));
 }
@@ -176,10 +171,7 @@ async function createTestConversation(
   admin: QueryClient,
   userId: string,
   resolved: { companyId: string | null; scopeMode: "canonical" | "pre_activation" },
-): Promise<
-  | { ok: true; conversationId: string }
-  | { ok: false; status: number; error: string }
-> {
+): Promise<{ ok: true; conversationId: string } | { ok: false; status: number; error: string }> {
   const sessionToken = `preview-test.${crypto.randomUUID()}.${crypto.randomUUID().replace(/-/g, "")}`;
   const visitorMetadata = {
     name: "Widget Live Test",
@@ -269,22 +261,19 @@ async function invokeCanonicalGenerateReply(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30000);
   try {
-    const response = await fetch(
-      `${supabaseUrl.replace(/\/+$/, "")}/functions/v1/generate-reply`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${serviceKey}`,
-          apikey: serviceKey,
-        },
-        body: JSON.stringify({
-          conversation_id: conversationId,
-          source_message_id: sourceMessageId,
-        }),
-        signal: controller.signal,
+    const response = await fetch(`${supabaseUrl.replace(/\/+$/, "")}/functions/v1/generate-reply`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${serviceKey}`,
+        apikey: serviceKey,
       },
-    );
+      body: JSON.stringify({
+        conversation_id: conversationId,
+        source_message_id: sourceMessageId,
+      }),
+      signal: controller.signal,
+    });
     let payload: Record<string, unknown> = {};
     try {
       const parsed = await response.json();
@@ -298,9 +287,8 @@ async function invokeCanonicalGenerateReply(
       return {
         ok: false,
         status: response.status,
-        error: typeof payload.error === "string"
-          ? payload.error.slice(0, 120)
-          : `generate_reply_http_${response.status}`,
+        error:
+          typeof payload.error === "string" ? payload.error.slice(0, 120) : `generate_reply_http_${response.status}`,
       };
     }
     return { ok: true, payload };
@@ -308,9 +296,10 @@ async function invokeCanonicalGenerateReply(
     return {
       ok: false,
       status: error instanceof DOMException && error.name === "AbortError" ? 504 : 502,
-      error: error instanceof DOMException && error.name === "AbortError"
-        ? "generate_reply_timeout"
-        : "generate_reply_unavailable",
+      error:
+        error instanceof DOMException && error.name === "AbortError"
+          ? "generate_reply_timeout"
+          : "generate_reply_unavailable",
     };
   } finally {
     clearTimeout(timeout);
@@ -339,15 +328,25 @@ Deno.serve(async (req) => {
       return json(req, { success: false, error: "invalid_request" }, 400);
     }
     for (const forbidden of [
-      "company_id", "companyId", "tenant_id", "tenantId",
-      "api_key", "apiKey", "channel_id", "conversation_id",
+      "company_id",
+      "companyId",
+      "tenant_id",
+      "tenantId",
+      "api_key",
+      "apiKey",
+      "channel_id",
+      "conversation_id",
     ]) {
       if ((body as Record<string, unknown>)[forbidden] !== undefined) {
-        return json(req, {
-          success: false,
-          error: "invalid_request",
-          detail: "tenant/company/key/channel/conversation scope is server-derived",
-        }, 400);
+        return json(
+          req,
+          {
+            success: false,
+            error: "invalid_request",
+            detail: "tenant/company/key/channel/conversation scope is server-derived",
+          },
+          400,
+        );
       }
     }
 
@@ -372,9 +371,10 @@ Deno.serve(async (req) => {
       return json(req, { success: false, error: resolved.error }, resolved.status);
     }
 
-    const action = typeof (body as Record<string, unknown>).action === "string"
-      ? String((body as Record<string, unknown>).action)
-      : "send";
+    const action =
+      typeof (body as Record<string, unknown>).action === "string"
+        ? String((body as Record<string, unknown>).action)
+        : "send";
 
     if (action === "history") {
       return json(req, {
@@ -390,11 +390,7 @@ Deno.serve(async (req) => {
         : "";
 
     if (action === "load") {
-      const owned = await loadOwnedTestConversation(
-        admin,
-        requestedConversationId,
-        authData.user.id,
-      );
+      const owned = await loadOwnedTestConversation(admin, requestedConversationId, authData.user.id);
       if (!owned.ok) return json(req, { success: false, error: owned.error }, owned.status);
       return json(req, {
         success: true,
@@ -410,9 +406,10 @@ Deno.serve(async (req) => {
       return json(req, { success: false, error: "invalid_action" }, 400);
     }
 
-    const query = typeof (body as Record<string, unknown>).query === "string"
-      ? String((body as Record<string, unknown>).query).trim()
-      : "";
+    const query =
+      typeof (body as Record<string, unknown>).query === "string"
+        ? String((body as Record<string, unknown>).query).trim()
+        : "";
     if (!query || query.length > MAX_QUERY_LENGTH) {
       return json(req, { success: false, error: "invalid_query" }, 400);
     }
@@ -424,15 +421,16 @@ Deno.serve(async (req) => {
       if (owned.conversation.status === "resolved" || owned.conversation.status === "closed") {
         return json(req, { success: false, error: "test_conversation_resolved" }, 409);
       }
-      if (
-        HUMAN_CONTROL_STATUSES.has(String(owned.conversation.status)) ||
-        owned.conversation.assigned_agent_id
-      ) {
-        return json(req, {
-          success: false,
-          error: "test_conversation_under_human_control",
-          conversation_id: conversationId,
-        }, 409);
+      if (HUMAN_CONTROL_STATUSES.has(String(owned.conversation.status)) || owned.conversation.assigned_agent_id) {
+        return json(
+          req,
+          {
+            success: false,
+            error: "test_conversation_under_human_control",
+            conversation_id: conversationId,
+          },
+          409,
+        );
       }
     } else {
       const created = await createTestConversation(admin, authData.user.id, resolved);
@@ -446,7 +444,7 @@ Deno.serve(async (req) => {
         conversation_id: conversationId,
         role: "visitor",
         content: query,
-        status: "delivered",
+        status: "sent",
         metadata: {
           widget_live_test: true,
           source: "widget_preview",
@@ -484,13 +482,17 @@ Deno.serve(async (req) => {
       .maybeSingle();
 
     if (!generation.ok) {
-      return json(req, {
-        success: false,
-        error: generation.error,
-        conversation_id: conversationId,
-        conversation_status: state?.status ?? null,
-        messages,
-      }, generation.status);
+      return json(
+        req,
+        {
+          success: false,
+          error: generation.error,
+          conversation_id: conversationId,
+          conversation_status: state?.status ?? null,
+          messages,
+        },
+        generation.status,
+      );
     }
 
     const latestAssistant = [...messages].reverse().find((m) => m.role === "assistant");
@@ -505,17 +507,12 @@ Deno.serve(async (req) => {
         generation.payload.escalation_rule === "R1" ||
         generation.payload.escalation_rule === "S0",
       escalation_rule:
-        typeof generation.payload.escalation_rule === "string"
-          ? generation.payload.escalation_rule
-          : null,
+        typeof generation.payload.escalation_rule === "string" ? generation.payload.escalation_rule : null,
       answer: latestAssistant?.content ?? "",
       messages,
     });
   } catch (e) {
-    console.error(
-      "[widget-live-ai-test] unexpected",
-      e instanceof Error ? e.message : "unknown_error",
-    );
+    console.error("[widget-live-ai-test] unexpected", e instanceof Error ? e.message : "unknown_error");
     return json(req, { success: false, error: "internal_error" }, 500);
   }
 });

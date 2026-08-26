@@ -35,13 +35,7 @@ export type PolicyResult = {
   issues: Array<{ excerpt: string; policy_label: string; severity: string }>;
 };
 
-export type KBConnState =
-  | "idle"
-  | "loading"
-  | "connected"
-  | "empty"
-  | "denied"
-  | "unavailable";
+export type KBConnState = "idle" | "loading" | "connected" | "empty" | "denied" | "unavailable";
 
 export const RIGHT_COPY = {
   kbSearch: { en: "Search knowledge base...", zh: "搜尋知識庫..." },
@@ -104,8 +98,7 @@ export function buildBoundedContext(messages: CtxMsg[]): string {
   const recent = eligible.slice(-MAX_CONTEXT_MESSAGES);
   while (recent.length > 1) {
     const totalLen =
-      recent.reduce((s, m) => s + m.content.trim().length, 0) +
-      (recent.length - 1) * CONTEXT_SEPARATOR.length;
+      recent.reduce((s, m) => s + m.content.trim().length, 0) + (recent.length - 1) * CONTEXT_SEPARATOR.length;
     if (totalLen <= EFFECTIVE_QUERY_CAP) break;
     recent.shift();
   }
@@ -134,17 +127,13 @@ export function computeContextRevisionKey(conversationId: string, messages: CtxM
     conversationId +
     ":" +
     eligible
-      .map((m) =>
-        [m.id, m.created_at ?? "", m.status ?? "", String(m.is_recalled), m.content.trim()].join("|")
-      )
+      .map((m) => [m.id, m.created_at ?? "", m.status ?? "", String(m.is_recalled), m.content.trim()].join("|"))
       .join("~")
   );
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null;
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
 export function normalizeKBResults(value: unknown): KBResult[] | null {
@@ -156,10 +145,9 @@ export function normalizeKBResults(value: unknown): KBResult[] | null {
     const scoreRaw = Number(r.score);
     if (!Number.isFinite(scoreRaw)) continue;
     const chunkRaw = String(r.chunk_type ?? "unknown");
-    const chunk_type =
-      ["rag_summary", "full_content", "faq_pair", "section"].includes(chunkRaw)
-        ? chunkRaw as KBResult["chunk_type"]
-        : "unknown";
+    const chunk_type = ["rag_summary", "full_content", "faq_pair", "section"].includes(chunkRaw)
+      ? (chunkRaw as KBResult["chunk_type"])
+      : "unknown";
     out.push({
       display_label:
         typeof r.display_label === "string" && r.display_label.trim()
@@ -168,9 +156,7 @@ export function normalizeKBResults(value: unknown): KBResult[] | null {
       content: r.content,
       score: Math.max(0, Math.min(1, scoreRaw)),
       source_type:
-        typeof r.source_type === "string" && r.source_type.trim()
-          ? r.source_type.trim().slice(0, 80)
-          : "knowledge",
+        typeof r.source_type === "string" && r.source_type.trim() ? r.source_type.trim().slice(0, 80) : "knowledge",
       ...(typeof r.document_id === "string" ? { document_id: r.document_id } : {}),
       chunk_type,
     });
@@ -189,13 +175,8 @@ export function normalizePolicyResult(value: unknown): PolicyResult | null {
       issues.push({
         excerpt: typeof i.excerpt === "string" ? i.excerpt.slice(0, 800) : "",
         policy_label:
-          typeof i.policy_label === "string" && i.policy_label.trim()
-            ? i.policy_label.trim().slice(0, 160)
-            : "Policy",
-        severity:
-          typeof i.severity === "string" && i.severity.trim()
-            ? i.severity.trim().slice(0, 60)
-            : "warning",
+          typeof i.policy_label === "string" && i.policy_label.trim() ? i.policy_label.trim().slice(0, 160) : "Policy",
+        severity: typeof i.severity === "string" && i.severity.trim() ? i.severity.trim().slice(0, 60) : "warning",
       });
     }
   }
@@ -279,7 +260,10 @@ export function CRMPanel({
           return;
         }
         const normalized = normalizeKBResults(data.results);
-        if (normalized === null || (Array.isArray(data.results) && data.results.length > 0 && normalized.length === 0)) {
+        if (
+          normalized === null ||
+          (Array.isArray(data.results) && data.results.length > 0 && normalized.length === 0)
+        ) {
           setKbConnState("unavailable");
           setKbError(rc("kbError"));
           return;
@@ -384,16 +368,28 @@ export function CRMPanel({
   };
 
   const kbStatusLabel = !canAccessKb
-    ? lang === "zh" ? "權限不足" : "Permission denied"
+    ? lang === "zh"
+      ? "權限不足"
+      : "Permission denied"
     : kbConnState === "loading"
-      ? lang === "zh" ? "載入中" : "Loading"
+      ? lang === "zh"
+        ? "載入中"
+        : "Loading"
       : kbConnState === "connected" || kbConnState === "empty"
-        ? lang === "zh" ? "已連線" : "Connected"
+        ? lang === "zh"
+          ? "已連線"
+          : "Connected"
         : kbConnState === "denied"
-          ? lang === "zh" ? "權限不足" : "Permission denied"
+          ? lang === "zh"
+            ? "權限不足"
+            : "Permission denied"
           : kbConnState === "unavailable"
-            ? lang === "zh" ? "無法存取" : "Unavailable"
-            : lang === "zh" ? "就緒" : "Ready";
+            ? lang === "zh"
+              ? "無法存取"
+              : "Unavailable"
+            : lang === "zh"
+              ? "就緒"
+              : "Ready";
 
   const TABS = [
     { key: "customer", label: "Customer" },
@@ -431,7 +427,19 @@ export function CRMPanel({
         {tab === "customer" && conv && (
           <>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-              <div style={{ width: 36, height: 36, borderRadius: "50%", background: "#fef3c7", color: "#92400e", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700 }}>
+              <div
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: "50%",
+                  background: "#fef3c7",
+                  color: "#92400e",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontWeight: 700,
+                }}
+              >
                 {initials}
               </div>
               <div>
@@ -443,15 +451,23 @@ export function CRMPanel({
             </div>
 
             {custCtx.status === "loading" && <div style={{ fontSize: 11, color: "#9ca3af" }}>Loading…</div>}
-            {custCtx.status === "error" && <div style={{ fontSize: 11, color: "#ef4444" }}>Customer context unavailable.</div>}
-            {custCtx.status === "empty" && <div style={{ fontSize: 11, color: "#9ca3af" }}>No customer context available.</div>}
+            {custCtx.status === "error" && (
+              <div style={{ fontSize: 11, color: "#ef4444" }}>Customer context unavailable.</div>
+            )}
+            {custCtx.status === "empty" && (
+              <div style={{ fontSize: 11, color: "#9ca3af" }}>No customer context available.</div>
+            )}
             {custCtx.status === "success" && (
               <>
                 {custCtx.data.evaluations.find((e) => e.conversation_id === conv.id) && (
                   <div style={cardStyle}>
                     {(() => {
                       const ev = custCtx.data.evaluations.find((e) => e.conversation_id === conv.id)!;
-                      return <div style={{ fontSize: 10.5, fontWeight: 600 }}>Evaluation: {ev.overall_score} · {ev.severity} · {ev.review_status}</div>;
+                      return (
+                        <div style={{ fontSize: 10.5, fontWeight: 600 }}>
+                          Evaluation: {ev.overall_score} · {ev.severity} · {ev.review_status}
+                        </div>
+                      );
                     })()}
                   </div>
                 )}
@@ -460,25 +476,52 @@ export function CRMPanel({
                     {(() => {
                       const fb = custCtx.data.feedback.find((f) => f.conversation_id === conv.id && f.rating !== null)!;
                       const rating = Math.max(0, Math.min(5, Number(fb.rating ?? 0)));
-                      return <div style={{ fontSize: 10.5 }}>{"★".repeat(rating)}{"☆".repeat(5 - rating)} {rating}/5{fb.feedback_text ? " — " + fb.feedback_text : ""}</div>;
+                      return (
+                        <div style={{ fontSize: 10.5 }}>
+                          {"★".repeat(rating)}
+                          {"☆".repeat(5 - rating)} {rating}/5{fb.feedback_text ? " — " + fb.feedback_text : ""}
+                        </div>
+                      );
                     })()}
                   </div>
                 )}
               </>
             )}
 
-            <div style={{ background: "#f5f4f0", borderRadius: 9, padding: "12px 14px", marginBottom: 12, fontSize: 11, color: "#555", lineHeight: 1.6 }}>
-              Order history, loyalty status, and CRM trust score require an external CRM integration. No authoritative source currently exists in this repository.
+            <div
+              style={{
+                background: "#f5f4f0",
+                borderRadius: 9,
+                padding: "12px 14px",
+                marginBottom: 12,
+                fontSize: 11,
+                color: "#555",
+                lineHeight: 1.6,
+              }}
+            >
+              Order history, loyalty status, and CRM trust score require an external CRM integration. No authoritative
+              source currently exists in this repository.
             </div>
             <div style={sectionTitle}>Quick Actions</div>
-            <button type="button" onClick={onResolve} style={{ ...btnSm, display: "block", width: "100%", textAlign: "left", color: "#ef4444", padding: "7px 11px" }}>
+            <button
+              type="button"
+              onClick={onResolve}
+              style={{
+                ...btnSm,
+                display: "block",
+                width: "100%",
+                textAlign: "left",
+                color: "#ef4444",
+                padding: "7px 11px",
+              }}
+            >
               Resolve Ticket
             </button>
           </>
         )}
 
-        {tab === "knowledge" && (
-          !canAccessKb ? (
+        {tab === "knowledge" &&
+          (!canAccessKb ? (
             <div style={{ padding: 24, textAlign: "center" }}>{rc("kbDenied")}</div>
           ) : !conv ? (
             <div style={{ padding: 24, textAlign: "center", color: "#9ca3af" }}>{rc("kbNoConv")}</div>
@@ -489,49 +532,88 @@ export function CRMPanel({
                   value={kbQuery}
                   onChange={(e) => setKbQuery(e.target.value)}
                   placeholder={rc("kbSearch")}
-                  onKeyDown={(e) => e.key === "Enter" && kbQuery.trim() && void runKbSearch(kbQuery, ++kbReqIdRef.current)}
-                  style={{ flex: 1, fontSize: 11.5, padding: "5px 8px", borderRadius: 6, border: "0.5px solid #e8e6e0" }}
+                  onKeyDown={(e) =>
+                    e.key === "Enter" && kbQuery.trim() && void runKbSearch(kbQuery, ++kbReqIdRef.current)
+                  }
+                  style={{
+                    flex: 1,
+                    fontSize: 11.5,
+                    padding: "5px 8px",
+                    borderRadius: 6,
+                    border: "0.5px solid #e8e6e0",
+                  }}
                 />
-                <button disabled={kbConnState === "loading" || !kbQuery.trim()} onClick={() => void runKbSearch(kbQuery, ++kbReqIdRef.current)} style={btnSm}>{rc("kbSearchBtn")}</button>
-                <button disabled={kbConnState === "loading"} onClick={() => {
-                  const q = kbQuery.trim() || boundedContext;
-                  if (q) void runKbSearch(q, ++kbReqIdRef.current);
-                }} style={btnSm}>↻</button>
+                <button
+                  disabled={kbConnState === "loading" || !kbQuery.trim()}
+                  onClick={() => void runKbSearch(kbQuery, ++kbReqIdRef.current)}
+                  style={btnSm}
+                >
+                  {rc("kbSearchBtn")}
+                </button>
+                <button
+                  disabled={kbConnState === "loading"}
+                  onClick={() => {
+                    const q = kbQuery.trim() || boundedContext;
+                    if (q) void runKbSearch(q, ++kbReqIdRef.current);
+                  }}
+                  style={btnSm}
+                >
+                  ↻
+                </button>
               </div>
-              {kbConnState === "loading" && <div style={{ textAlign: "center", color: "#888", padding: 16 }}>{rc("kbLoading")}</div>}
+              {kbConnState === "loading" && (
+                <div style={{ textAlign: "center", color: "#888", padding: 16 }}>{rc("kbLoading")}</div>
+              )}
               {kbError && <div style={{ color: "#ef4444", padding: "6px 0" }}>{kbError}</div>}
-              {kbConnState === "empty" && !kbError && <div style={{ padding: 20, textAlign: "center" }}>{rc("kbEmpty")}</div>}
+              {kbConnState === "empty" && !kbError && (
+                <div style={{ padding: 20, textAlign: "center" }}>{rc("kbEmpty")}</div>
+              )}
 
               {kbResults.map((r, i) => (
                 <div key={`${r.document_id ?? "doc"}-${i}`} style={cardStyle}>
                   <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
                     <div style={{ fontWeight: 600, fontSize: 11 }}>{r.display_label}</div>
                     <span style={{ fontSize: 9, color: "#6366f1" }}>
-                      {r.chunk_type === "rag_summary" ? "summary" : r.chunk_type === "full_content" ? "full content" : r.source_type}
+                      {r.chunk_type === "rag_summary"
+                        ? "summary"
+                        : r.chunk_type === "full_content"
+                          ? "full content"
+                          : r.source_type}
                     </span>
                   </div>
                   <div style={{ fontSize: 10.5, color: "#555", lineHeight: 1.5 }}>
-                    {r.content.slice(0, 200)}{r.content.length > 200 ? "..." : ""}
+                    {r.content.slice(0, 200)}
+                    {r.content.length > 200 ? "..." : ""}
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span style={{ fontSize: 9.5, color: "#888" }}>{rc("kbScore")}: {(r.score * 100).toFixed(0)}%</span>
+                    <span style={{ fontSize: 9.5, color: "#888" }}>
+                      {rc("kbScore")}: {(r.score * 100).toFixed(0)}%
+                    </span>
                     <div style={{ display: "flex", gap: 3 }}>
-                      <button onClick={() => handleCopy(r.content)} style={btnSm}>{rc("kbCopy")}</button>
+                      <button onClick={() => handleCopy(r.content)} style={btnSm}>
+                        {rc("kbCopy")}
+                      </button>
                       {r.chunk_type === "full_content" ? (
-                        <button onClick={() => onInsertDraft(r.content)} style={{ ...btnSm, color: "#2563eb", borderColor: "#2563eb" }}>{rc("kbInsert")}</button>
+                        <button
+                          onClick={() => onInsertDraft(r.content)}
+                          style={{ ...btnSm, color: "#2563eb", borderColor: "#2563eb" }}
+                        >
+                          {rc("kbInsert")}
+                        </button>
                       ) : r.chunk_type === "rag_summary" ? (
-                        <span style={{ fontSize: 9.5, color: "#9ca3af", fontStyle: "italic" }}>{rc("kbSummaryOnly")}</span>
+                        <span style={{ fontSize: 9.5, color: "#9ca3af", fontStyle: "italic" }}>
+                          {rc("kbSummaryOnly")}
+                        </span>
                       ) : null}
                     </div>
                   </div>
                 </div>
               ))}
             </>
-          )
-        )}
+          ))}
 
-        {tab === "policy" && (
-          !canAccessKb ? (
+        {tab === "policy" &&
+          (!canAccessKb ? (
             <div style={{ padding: 24, textAlign: "center" }}>{rc("polDenied")}</div>
           ) : !conv ? (
             <div style={{ padding: 24, textAlign: "center", color: "#9ca3af" }}>{rc("polNoContent")}</div>
@@ -562,24 +644,47 @@ export function CRMPanel({
               </div>
               {polLoading && <div style={{ textAlign: "center", color: "#888", padding: 16 }}>{rc("polLoading")}</div>}
               {polError && <div style={{ color: "#ef4444", padding: "6px 0" }}>{polError}</div>}
-              {!polLoading && !polError && !polResult && <div style={{ padding: 20, textAlign: "center" }}>{rc("polNoContent")}</div>}
+              {!polLoading && !polError && !polResult && (
+                <div style={{ padding: 20, textAlign: "center" }}>{rc("polNoContent")}</div>
+              )}
               {polResult && (
                 <div>
-                  <div style={{ ...cardStyle, background: polResult.status === "compliant" ? "#f0fdf4" : polResult.status === "insufficient_evidence" ? "#f9fafb" : "#fef3c7" }}>
+                  <div
+                    style={{
+                      ...cardStyle,
+                      background:
+                        polResult.status === "compliant"
+                          ? "#f0fdf4"
+                          : polResult.status === "insufficient_evidence"
+                            ? "#f9fafb"
+                            : "#fef3c7",
+                    }}
+                  >
                     <div style={{ fontWeight: 600, fontSize: 11, textTransform: "uppercase" }}>{polResult.status}</div>
                     <div style={{ fontSize: 11, lineHeight: 1.5 }}>{polResult.summary}</div>
                   </div>
                   {polResult.issues.map((iss, i) => (
-                    <div key={i} style={{ marginBottom: 3, fontSize: 10.5, padding: "3px 6px", background: iss.severity === "violation" ? "#fef2f2" : "#fffbeb", borderRadius: 4 }}>
-                      <span style={{ fontWeight: 600 }}>{iss.severity}:</span> {iss.excerpt} <span style={{ color: "#888" }}>({iss.policy_label})</span>
+                    <div
+                      key={i}
+                      style={{
+                        marginBottom: 3,
+                        fontSize: 10.5,
+                        padding: "3px 6px",
+                        background: iss.severity === "violation" ? "#fef2f2" : "#fffbeb",
+                        borderRadius: 4,
+                      }}
+                    >
+                      <span style={{ fontWeight: 600 }}>{iss.severity}:</span> {iss.excerpt}{" "}
+                      <span style={{ color: "#888" }}>({iss.policy_label})</span>
                     </div>
                   ))}
-                  <button onClick={() => handleCopy(polResult.summary)} style={{ ...btnSm, marginTop: 4 }}>{rc("polCopySummary")}</button>
+                  <button onClick={() => handleCopy(polResult.summary)} style={{ ...btnSm, marginTop: 4 }}>
+                    {rc("polCopySummary")}
+                  </button>
                 </div>
               )}
             </>
-          )
-        )}
+          ))}
       </div>
     </div>
   );
