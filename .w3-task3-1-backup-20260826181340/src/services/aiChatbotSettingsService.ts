@@ -2,7 +2,7 @@ import {
   type ChannelType,
   type FeedbackAutomationConfig,
   type RatingType,
-} from "@/config/aiChatbotProductConfig";
+} from "@/mock/aiChatbotSettingsMock";
 import {
   configService,
   type LiveChannelConfigRow,
@@ -72,13 +72,13 @@ function deriveChannel(row: LiveChannelConfigRow): ChannelConfig {
     channel_name: row.name || names[type] || rawType,
     status: "coming_soon",
     is_active: !!row.is_active,
-    phase: "Coming Soon",
+    phase: "Phase 3",
     recall_supported: false,
     recall_time_limit_minutes: 0,
     notes:
       type === "email"
-        ? "Email provider contract is not configured"
-        : `${row.name || rawType} production capability is not enabled`,
+        ? "Email cannot be truly recalled — correction message only"
+        : `${row.name || rawType} recall is not guaranteed`,
   };
 }
 
@@ -89,7 +89,9 @@ function daysFromMinutes(m: number | null | undefined): 1 | 3 | 7 {
   return 7;
 }
 
-function mapFeedbackRow(row: LiveFeedbackConfigRow): FeedbackAutomationConfig {
+function mapFeedbackRow(
+  row: LiveFeedbackConfigRow,
+): FeedbackAutomationConfig {
   const cfg = (row.config ?? {}) as Record<string, unknown>;
   return {
     is_enabled: !!row.is_active,
@@ -153,7 +155,8 @@ export const aiChatbotSettingsService = {
     { ok: true; company_id: string } | { ok: false; error: string }
   > {
     try {
-      const res = await configService.bindChannelToCurrentCompany(channelId);
+      const res =
+        await configService.bindChannelToCurrentCompany(channelId);
       if (!res.ok || !res.data?.company_id) {
         return {
           ok: false,
@@ -262,4 +265,4 @@ export const aiChatbotSettingsService = {
   },
 };
 
-export type { FeedbackAutomationConfig } from "@/config/aiChatbotProductConfig";
+export type { FeedbackAutomationConfig } from "@/mock/aiChatbotSettingsMock";
