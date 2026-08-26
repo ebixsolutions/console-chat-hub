@@ -1,0 +1,84 @@
+{
+  "version": "1.0",
+  "repo": "ebixsolutions/console-chat-hub",
+  "branch": "main",
+  "baseline_commit": "241b5917c1f57ed33ebaa06a58191469a4ef22af",
+  "package_marker": {
+    "package": "@lovable.dev/vite-tanstack-config",
+    "version": "2.13.1"
+  },
+  "base44_knowledge_base_app_id": "6a12c8b68d8278b4c735e9eb",
+  "lovable_chat_policy": {
+    "source_changes": "PROHIBITED",
+    "debugging": "PROHIBITED",
+    "replacement_packages": "PROHIBITED",
+    "allowed_only_for": [
+      "necessary Lovable-native publish/deploy operation with no direct tool path",
+      "necessary Supabase migration/Edge deploy/runtime operation with no direct tool path"
+    ]
+  },
+  "workflows": [
+    {
+      "id": "W1",
+      "name": "Runtime & Knowledge Closure",
+      "tasks": [
+        {
+          "id": "1.1",
+          "name": "Canonical Widget / Inbox / Agent runtime closure"
+        },
+        {
+          "id": "1.2",
+          "name": "Knowledge Base read/write contract closure"
+        },
+        {
+          "id": "1.3",
+          "name": "Runtime KB + Widget production smoke closure"
+        }
+      ]
+    },
+    {
+      "id": "W2",
+      "name": "Canonical Tenant, CE & SU CoachAI Activation",
+      "tasks": [
+        {
+          "id": "2.1",
+          "name": "Canonical SU Platform company identity activation"
+        },
+        {
+          "id": "2.2",
+          "name": "Canonical Conversation Evaluation activation"
+        },
+        {
+          "id": "2.3",
+          "name": "AI Chatbot → SU CoachAI → Knowledge Base learning loop"
+        }
+      ]
+    },
+    {
+      "id": "W3",
+      "name": "Whole-product Product-ready Closure",
+      "tasks": [
+        {
+          "id": "3.1",
+          "name": "Product surface truth & legacy/mock retirement"
+        },
+        {
+          "id": "3.2",
+          "name": "Security, build, rollback & two-tenant closure"
+        },
+        {
+          "id": "3.3",
+          "name": "Final production activation & whole-product smoke"
+        }
+      ]
+    }
+  ],
+  "singapore_server_required_inputs": [
+    "production RAG base URL and context-search endpoint",
+    "authentication header/key contract",
+    "canonical company_id to Singapore tenant_id mapping contract",
+    "RAG request/response/no-context schema",
+    "document write/version/publish/status/rollback contract",
+    "content hash/version/conflict/idempotency/error/rate-limit/timeout rules"
+  ]
+}
