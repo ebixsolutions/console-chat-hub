@@ -1,31 +1,19 @@
 /**
  * PR-6B — Singapore KB publish finalizer + live RAG read-back.
  *
- * Publication is accepted locally only after:
- * 1. publish status completed
- * 2. KBDocument published/live/indexed
- * 3. source hash exact
- * 4. active_version_id present
- * 5. training_sync_status synced
- * 6. current production RAG contract selects same document and returns
- *    authoritative full_content evidence
+ * Final publication is accepted locally only after ALL gates pass:
+ * 1. Singapore publish operation status === completed
+ * 2. KBDocument is published + live-console available + production indexed
+ * 3. source content_hash equals SHA-256(new_raw_content)
+ * 4. active_version_id is non-empty
+ * 5. training_sync_status is patched to synced and verified
+ * 6. production RAG selects the same document and exposes full_content evidence
  *
- * No tenant/company is accepted from caller input.
+ * No tenant is accepted from the caller.
  */
 import { createClient } from "npm:@supabase/supabase-js@2.45.0";
-import {
-  resolveSingaporeCredential,
-  singaporeCredentialHeaders,
-  type KBCredentialConfig,
-  type KBCredentialScope,
-} from "../_shared/kb-auth.ts";
-import {
-  parseStringMap,
-  resolveKBEndpoint,
-} from "../_shared/kb-client.ts";
-import { parseAggregationResponse } from "../_shared/kb-aggregation-response.ts";
 
-const CONTRACT = "PR6B_SINGAPORE_KB_FINALIZE_V2";
+const CONTRACT = "PR6B_SINGAPORE_KB_FINALIZE_V1";
 const SUCCESS = "completed";
 const FAILURE = new Set(["failed", "cancelled", "cancellation_failed"]);
 
@@ -39,40 +27,86 @@ function text(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
 }
 function constantTimeEqual(aText: string, bText: string): boolean {
-  const a = new TextEncoder().encode(aText), b = new TextEncoder().encode(bText);
+  const a = new TextEncoder().encode(aText);
+  const b = new TextEncoder().encode(bText);
   if (a.length !== b.length) return false;
   let diff = 0;
   for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
   return diff === 0;
 }
+function parseMap(raw: string): Record<string, string> | null {
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const result: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (typeof value !== "string" || !value.trim()) return null;
+      result[key] = value.trim();
+    }
+    return result;
+  } catch {
+    return null;
+  }
+}
+function b64url(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+function b64json(value: Record<string, unknown>): string {
+  return b64url(new TextEncoder().encode(JSON.stringify(value)));
+}
 async function sha256Hex(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(value),
+  );
   return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
-function credentialConfig(): KBCredentialConfig | null {
-  const endpoint = resolveKBEndpoint();
-  return endpoint
-    ? {
-        signingSecret: endpoint.signingSecret,
-        jwtTtlSec: endpoint.jwtTtlSec,
-        defaultToken: endpoint.defaultToken,
-        tenantTokens: endpoint.tenantTokens,
-        tenantApiKeys: endpoint.tenantApiKeys,
-        apiKeyHeaderMode: endpoint.apiKeyHeaderMode,
-      }
-    : null;
+async function mintJwt(
+  secret: string,
+  companyId: string,
+  tenantId: string,
+): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  const header = b64json({ alg: "HS256", typ: "JWT" });
+  const payload = b64json({
+    sub: `ai-chatbot:${companyId}`,
+    tenant_id: tenantId,
+    role: "service",
+    iat: now,
+    exp: now + 300,
+  });
+  const input = `${header}.${payload}`;
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(input),
+  );
+  return `${input}.${b64url(new Uint8Array(signature))}`;
 }
-function singaporeCompanyId(tenantId: string): number | null {
-  if (!/^[1-9]\d*$/.test(tenantId)) return null;
-  const n = Number(tenantId);
-  return Number.isSafeInteger(n) && n > 0 ? n : null;
+function resolveBase(): string | null {
+  const direct = text(Deno.env.get("KB_SINGAPORE_BASE_URL"));
+  if (direct) return direct.replace(/\/+$/, "");
+  const rag = text(Deno.env.get("KB_RAG_ENDPOINT"));
+  if (!rag) return null;
+  return rag
+    .replace(/\/api\/v1\/rag\/context-search\/?$/, "")
+    .replace(/\/+$/, "");
 }
 async function kbFetch(
   base: string,
   path: string,
-  credential: Extract<Awaited<ReturnType<typeof resolveSingaporeCredential>>, { ok: true }>,
-  cfg: KBCredentialConfig,
+  token: string,
   init: RequestInit = {},
 ): Promise<Response> {
   const controller = new AbortController();
@@ -81,8 +115,8 @@ async function kbFetch(
     return await fetch(`${base}${path}`, {
       ...init,
       headers: {
+        Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
-        ...singaporeCredentialHeaders(credential, cfg),
         ...(init.headers || {}),
       },
       signal: controller.signal,
@@ -93,7 +127,10 @@ async function kbFetch(
 }
 
 Deno.serve(async (req) => {
-  if (req.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
+  if (req.method !== "POST") {
+    return json({ ok: false, error: "method_not_allowed" }, 405);
+  }
+
   const expected = text(Deno.env.get("TRAINING_KB_SYNC_INTERNAL_TOKEN"));
   const actual = text(req.headers.get("X-Training-KB-Sync-Token"));
   if (!expected || !actual || !constantTimeEqual(expected, actual)) {
@@ -102,16 +139,20 @@ Deno.serve(async (req) => {
 
   const supabaseUrl = text(Deno.env.get("SUPABASE_URL"));
   const serviceRole = text(Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"));
-  const endpoint = resolveKBEndpoint();
-  const authCfg = credentialConfig();
-  const tenantMap = parseStringMap(Deno.env.get("KB_SINGAPORE_TENANT_MAP_JSON"));
-  if (!supabaseUrl || !serviceRole || !endpoint || !authCfg || !tenantMap) {
+  const base = resolveBase();
+  const jwtSecret = text(Deno.env.get("KB_SINGAPORE_JWT_SECRET"));
+  const tenantMap = parseMap(text(Deno.env.get("KB_SINGAPORE_TENANT_MAP_JSON")));
+  if (!supabaseUrl || !serviceRole || !base || !jwtSecret || !tenantMap) {
     return json({ ok: false, error: "runtime_config_missing" }, 503);
   }
 
   const admin = createClient(supabaseUrl, serviceRole);
-  const { data: claim, error: claimError } = await admin.rpc("claim_pr6b_kb_finalize_tx", {});
+  const { data: claim, error: claimError } = await admin.rpc(
+    "claim_pr6b_kb_finalize_tx",
+    {},
+  );
   if (claimError) return json({ ok: false, error: "claim_failed" }, 500);
+
   const state = claim as Record<string, unknown> | null;
   if (!state || state.result === "none") {
     return json({ ok: true, contract: CONTRACT, processed: 0 });
@@ -127,20 +168,33 @@ Deno.serve(async (req) => {
   const operationId = text(state.operation_id);
   const improved = (state.improved_result ?? {}) as Record<string, unknown>;
   const kbUpdate = (improved.kb_update ?? {}) as Record<string, unknown>;
-  const newContent = typeof kbUpdate.new_raw_content === "string" ? kbUpdate.new_raw_content : "";
+  const newContent =
+    typeof kbUpdate.new_raw_content === "string" ? kbUpdate.new_raw_content : "";
   const verificationQuery = text(kbUpdate.verification_query);
 
-  async function finish(outcome: "pending" | "published" | "failed", error: string | null) {
-    const { data, error: rpcError } = await admin.rpc("finish_pr6b_kb_finalize_tx", {
-      p_publish_state_id: publishStateId,
-      p_outcome: outcome,
-      p_error: error,
-    });
+  async function finish(
+    outcome: "pending" | "published" | "failed",
+    error: string | null,
+  ) {
+    const { data, error: rpcError } = await admin.rpc(
+      "finish_pr6b_kb_finalize_tx",
+      {
+        p_publish_state_id: publishStateId,
+        p_outcome: outcome,
+        p_error: error,
+      },
+    );
     if (rpcError) throw new Error("finalize_state_commit_failed");
     return data;
   }
 
-  if (!publishStateId || !evaluationId || !companyId || !documentId || !operationId) {
+  if (
+    !publishStateId ||
+    !evaluationId ||
+    !companyId ||
+    !documentId ||
+    !operationId
+  ) {
     await finish("failed", "finalize_claim_invalid");
     return json({ ok: false, error: "finalize_claim_invalid" }, 409);
   }
@@ -154,28 +208,19 @@ Deno.serve(async (req) => {
     await finish("failed", "kb_tenant_mapping_unresolved");
     return json({ ok: false, error: "kb_tenant_mapping_unresolved" }, 409);
   }
-  const upstreamCompanyId = singaporeCompanyId(tenantId);
-  if (upstreamCompanyId === null) {
-    await finish("failed", "kb_company_id_invalid");
-    return json({ ok: false, error: "kb_company_id_invalid" }, 409);
-  }
+  const token = await mintJwt(jwtSecret, companyId, tenantId);
 
-  const scope: KBCredentialScope = {
-    mode: "canonical",
-    aiCompanyId: companyId,
-    singaporeTenantId: tenantId,
-  };
-  const credential = await resolveSingaporeCredential(scope, authCfg);
-  if (!credential.ok) {
-    await finish("failed", credential.error_code.toLowerCase());
-    return json({ ok: false, error: credential.error_code.toLowerCase() }, 409);
-  }
-
+  // Gate 1: authoritative Singapore operation terminal status.
   let statusResponse: Response;
   try {
     statusResponse = await kbFetch(
-      endpoint.baseUrl, "/api/functions/kbPublishGetStatus", credential, authCfg,
-      { method: "POST", body: JSON.stringify({ operation_id: operationId }) },
+      base,
+      "/api/functions/kbPublishGetStatus",
+      token,
+      {
+        method: "POST",
+        body: JSON.stringify({ operation_id: operationId }),
+      },
     );
   } catch {
     await finish("pending", "kb_status_unreachable");
@@ -191,21 +236,28 @@ Deno.serve(async (req) => {
   const operationStatus = text(operation.status);
   if (FAILURE.has(operationStatus)) {
     await finish("failed", `kb_publish_${operationStatus}`);
-    return json({ ok: false, error: `kb_publish_${operationStatus}`, operation_id: operationId }, 409);
+    return json({
+      ok: false,
+      error: `kb_publish_${operationStatus}`,
+      operation_id: operationId,
+    }, 409);
   }
   if (operationStatus !== SUCCESS) {
     await finish("pending", null);
     return json({
-      ok: true, contract: CONTRACT, processed: 1,
-      state: "pending", operation_status: operationStatus,
+      ok: true,
+      contract: CONTRACT,
+      processed: 1,
+      state: "pending",
+      operation_status: operationStatus,
     });
   }
 
+  // Gates 2-4: document activation / exact source hash.
   const documentResponse = await kbFetch(
-    endpoint.baseUrl,
+    base,
     `/api/entities/KBDocument/${encodeURIComponent(documentId)}`,
-    credential,
-    authCfg,
+    token,
   );
   if (!documentResponse.ok) {
     await finish("pending", `kb_document_http_${documentResponse.status}`);
@@ -224,13 +276,16 @@ Deno.serve(async (req) => {
     return json({ ok: false, error: "kb_activation_verification_failed" }, 409);
   }
 
+  // Gate 5: acknowledge training synchronization only after activation is real.
   if (text(document.training_sync_status) !== "synced") {
     const syncResponse = await kbFetch(
-      endpoint.baseUrl,
+      base,
       `/api/entities/KBDocument/${encodeURIComponent(documentId)}`,
-      credential,
-      authCfg,
-      { method: "PATCH", body: JSON.stringify({ training_sync_status: "synced" }) },
+      token,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ training_sync_status: "synced" }),
+      },
     );
     if (!syncResponse.ok) {
       await finish("pending", `kb_training_sync_http_${syncResponse.status}`);
@@ -243,23 +298,21 @@ Deno.serve(async (req) => {
     }
   }
 
-  // Current RAG v1 request/response contract. Structured evidence is authoritative;
-  // combined_text is never used to approve publication.
+  // Gate 6: production RAG read-back. The explicit training verification query
+  // must select the same document and return at least one full_content citation.
   const ragResponse = await kbFetch(
-    endpoint.baseUrl,
+    base,
     "/api/v1/rag/context-search",
-    credential,
-    authCfg,
+    token,
     {
       method: "POST",
       body: JSON.stringify({
         query: verificationQuery,
-        company_id: upstreamCompanyId,
-        candidate_top_k: 12,
-        max_documents: 1,
-        max_summary_chunks: 1,
-        max_full_content_chunks: 3,
+        top_k: 12,
         score_threshold: 0.05,
+        max_documents: 1,
+        max_summary: 1,
+        max_full_chunks: 3,
       }),
     },
   );
@@ -267,20 +320,21 @@ Deno.serve(async (req) => {
     await finish("pending", `kb_rag_http_${ragResponse.status}`);
     return json({ ok: true, contract: CONTRACT, processed: 1, state: "pending" });
   }
-
-  let ragJson: unknown;
-  try {
-    ragJson = await ragResponse.json();
-  } catch {
-    await finish("failed", "kb_rag_invalid_json");
-    return json({ ok: false, error: "kb_rag_invalid_json" }, 409);
-  }
-  const parsed = parseAggregationResponse(ragJson);
+  const rag = await ragResponse.json() as Record<string, unknown>;
+  const documents = Array.isArray(rag.documents)
+    ? rag.documents as Array<Record<string, unknown>>
+    : [];
+  const citations = Array.isArray(rag.citations)
+    ? rag.citations as Array<Record<string, unknown>>
+    : [];
   const selectedSameDocument =
-    parsed.ok && parsed.contextFound && parsed.selectedDocumentId === documentId;
-  const hasFullContent =
-    parsed.ok && parsed.contextFound &&
-    parsed.llmContext.full_content_evidence.some((item) => item.document_id === documentId);
+    rag.has_context === true &&
+    documents.some((item) => text(item.document_id) === documentId);
+  const hasFullContent = citations.some(
+    (item) =>
+      text(item.document_id) === documentId &&
+      text(item.chunk_type) === "full_content",
+  );
 
   if (!selectedSameDocument || !hasFullContent) {
     await finish("failed", "kb_rag_readback_failed");

@@ -1,12 +1,15 @@
 // supabase/functions/_shared/kb-auth.ts
 // Server-only Singapore KB credential resolver.
 //
-// Preferred production contract:
-//   opaque tenant-bound API key -> x-api-key
-// Explicit rollback contract:
-//   JWT / legacy mapped token -> Authorization: Bearer
+// Priority:
+//   1. tenant-specific opaque API key (preferred for AI Chatbot)
+//   2. tenant JWT minted from KB_SINGAPORE_JWT_SECRET
+//   3. legacy tenant JWT/token mapping
+//   4. legacy default JWT/token
 //
-// Browser payloads never choose company/tenant/key scope.
+// Opaque API keys are selected only from a server-side tenant mapping and are
+// never decoded as JWTs. The Singapore KB backend is responsible for binding
+// each issued key to exactly one tenant/company.
 
 export type KBAuthHeaderMode = "authorization" | "x-api-key";
 export type KBScopeMode = "canonical" | "pre_activation" | "demo";
@@ -105,6 +108,8 @@ export async function resolveSingaporeCredential(
   scope: KBCredentialScope,
   cfg: KBCredentialConfig,
 ): Promise<KBCredential> {
+  // Preferred path: tenant-bound opaque key. It is selected exclusively by
+  // server-derived Singapore tenant id; browser/company payloads never choose it.
   const apiKey = cfg.tenantApiKeys[scope.singaporeTenantId]?.trim();
   if (apiKey) {
     if (!validOpaqueApiKey(apiKey)) {
@@ -113,6 +118,7 @@ export async function resolveSingaporeCredential(
     return { ok: true, kind: "api_key", value: apiKey };
   }
 
+  // Legacy/JWT rollback paths remain available.
   const minted = await mintSingaporeTenantJwt(scope, cfg);
   const token = minted ??
     cfg.tenantTokens[scope.singaporeTenantId] ??
@@ -148,7 +154,8 @@ export function singaporeCredentialHeaders(
     credential.kind === "api_key" &&
     cfg.apiKeyHeaderMode === "x-api-key"
   ) {
-    return { "x-api-key": credential.value };
+    return { "X-API-Key": credential.value };
   }
+
   return { Authorization: `Bearer ${credential.value}` };
 }

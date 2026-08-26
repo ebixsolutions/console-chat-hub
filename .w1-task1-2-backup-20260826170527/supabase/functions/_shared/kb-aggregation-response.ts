@@ -1,7 +1,7 @@
 // supabase/functions/_shared/kb-aggregation-response.ts
 // Strict parser for the Singapore KB aggregated RAG v1 response contract.
-// Structured selected_documents[].evidence[] is authoritative for grounding.
-// llm_context.combined_text is intentionally not used as factual evidence.
+// The API key binds tenant scope server-side; this parser never accepts or
+// derives tenant/company scope from the upstream response.
 
 export type AggregationChunkType =
   | "rag_summary"
@@ -75,6 +75,7 @@ export type ParsedAggregationResponse =
   | { ok: false; error_code: string };
 
 type Obj = Record<string, unknown>;
+
 function isObj(v: unknown): v is Obj {
   return !!v && typeof v === "object" && !Array.isArray(v);
 }
@@ -99,34 +100,32 @@ export function parseAggregationResponse(data: unknown): ParsedAggregationRespon
     if (!Array.isArray(data.citations) || data.citations.length !== 0) {
       return { ok: false, error_code: "KB_SCHEMA_INVALID" };
     }
-    // Current producer may include the zero-count llm_context. Validate it when
-    // present, but do not fabricate a requirement for a field that is not used.
-    if (data.llm_context !== undefined && data.llm_context !== null) {
-      if (!isObj(data.llm_context)) {
-        return { ok: false, error_code: "KB_SCHEMA_INVALID" };
-      }
-      const sc = finite(data.llm_context.summary_count);
-      const ec = finite(data.llm_context.evidence_count);
-      if (sc !== 0 || ec !== 0) {
-        return { ok: false, error_code: "KB_SCHEMA_INVALID" };
-      }
+    if (!isObj(data.llm_context)) {
+      return { ok: false, error_code: "KB_SCHEMA_INVALID" };
+    }
+    const sc = finite(data.llm_context.summary_count);
+    const ec = finite(data.llm_context.evidence_count);
+    if (sc !== 0 || ec !== 0 || data.llm_context.combined_text !== "") {
+      return { ok: false, error_code: "KB_SCHEMA_INVALID" };
     }
     return { ok: true, contextFound: false, chunks: [], citations: [] };
   }
 
-  // Callers in AI Chatbot deliberately request max_documents=1. Fail closed if
-  // the producer violates that request, preventing cross-document contamination.
   if (!Array.isArray(data.selected_documents) || data.selected_documents.length !== 1) {
+    return { ok: false, error_code: "KB_SCHEMA_INVALID" };
+  }
+  if (!Array.isArray(data.citations) || !isObj(data.llm_context)) {
     return { ok: false, error_code: "KB_SCHEMA_INVALID" };
   }
 
   const doc = data.selected_documents[0];
   if (!isObj(doc)) return { ok: false, error_code: "KB_SCHEMA_INVALID" };
+
   const documentId = nonEmpty(doc.document_id);
   const title = nonEmpty(doc.title) ?? "Knowledge Base document";
   const sourceType = nonEmpty(doc.source_type) ?? "knowledge";
   const documentScore = finite(doc.document_score);
-  if (!documentId || documentScore === null || !Array.isArray(doc.evidence)) {
+  if (!documentId || documentScore === null) {
     return { ok: false, error_code: "KB_SCHEMA_INVALID" };
   }
 
@@ -134,33 +133,42 @@ export function parseAggregationResponse(data: unknown): ParsedAggregationRespon
   const citations: AggregationCitation[] = [];
   const fullEvidence: AggregationEvidence[] = [];
   const scores: number[] = [];
-  let orientationSummary: string | null = null;
 
-  // Backward-compatible producer shape: optional dedicated summary object.
+  let orientationSummary: string | null = null;
   if (doc.summary !== null && doc.summary !== undefined) {
     if (!isObj(doc.summary)) return { ok: false, error_code: "KB_SCHEMA_INVALID" };
     const content = nonEmpty(doc.summary.content);
     const score = finite(doc.summary.score);
+    const chunkType = doc.summary.chunk_type;
     const chunkId = nonEmpty(doc.summary.chunk_id) ?? undefined;
-    if (!content || score === null || doc.summary.chunk_type !== "rag_summary") {
+    if (!content || score === null || chunkType !== "rag_summary") {
       return { ok: false, error_code: "KB_SCHEMA_INVALID" };
     }
     orientationSummary = content;
     scores.push(score);
     chunks.push({
-      document_id: documentId, ...(chunkId ? { chunk_id: chunkId } : {}),
-      title, source_type: sourceType, content, score, chunk_type: "rag_summary",
+      document_id: documentId,
+      ...(chunkId ? { chunk_id: chunkId } : {}),
+      title,
+      source_type: sourceType,
+      content,
+      score,
+      chunk_type: "rag_summary",
     });
     citations.push({
       display_label: title.slice(0, 200),
-      content: content.slice(0, 500), score, source_type: sourceType,
-      document_id: documentId, ...(chunkId ? { chunk_id: chunkId } : {}),
+      content: content.slice(0, 500),
+      score,
+      source_type: sourceType,
+      document_id: documentId,
+      ...(chunkId ? { chunk_id: chunkId } : {}),
       chunk_type: "rag_summary",
     });
   }
 
-  let fullCount = 0;
-  let summaryCount = orientationSummary ? 1 : 0;
+  if (!Array.isArray(doc.evidence) || doc.evidence.length > 3) {
+    return { ok: false, error_code: "KB_SCHEMA_INVALID" };
+  }
   for (const item of doc.evidence) {
     if (!isObj(item)) return { ok: false, error_code: "KB_SCHEMA_INVALID" };
     const content = nonEmpty(item.content);
@@ -168,67 +176,77 @@ export function parseAggregationResponse(data: unknown): ParsedAggregationRespon
     const chunkId = nonEmpty(item.chunk_id) ?? undefined;
     const chunkType = item.chunk_type;
     if (
-      !content || score === null ||
-      (chunkType !== "rag_summary" &&
-       chunkType !== "full_content" &&
-       chunkType !== "faq_pair" &&
-       chunkType !== "section")
+      !content ||
+      score === null ||
+      (chunkType !== "full_content" &&
+        chunkType !== "faq_pair" &&
+        chunkType !== "section")
     ) {
       return { ok: false, error_code: "KB_SCHEMA_INVALID" };
     }
 
-    if (chunkType === "rag_summary") {
-      summaryCount += 1;
-      if (summaryCount > 1) return { ok: false, error_code: "KB_SCHEMA_INVALID" };
-      orientationSummary = content;
-    }
-    if (chunkType === "full_content") {
-      fullCount += 1;
-      if (fullCount > 3) return { ok: false, error_code: "KB_SCHEMA_INVALID" };
-      fullEvidence.push({
-        document_id: documentId, ...(chunkId ? { chunk_id: chunkId } : {}),
-        content, score, source_type: sourceType,
-      });
-    }
-
     scores.push(score);
     chunks.push({
-      document_id: documentId, ...(chunkId ? { chunk_id: chunkId } : {}),
-      title, source_type: sourceType, content, score,
-      chunk_type: chunkType as AggregationChunkType,
+      document_id: documentId,
+      ...(chunkId ? { chunk_id: chunkId } : {}),
+      title,
+      source_type: sourceType,
+      content,
+      score,
+      chunk_type: chunkType,
     });
     citations.push({
       display_label: title.slice(0, 200),
-      content: content.slice(0, 500), score, source_type: sourceType,
-      document_id: documentId, ...(chunkId ? { chunk_id: chunkId } : {}),
-      chunk_type: chunkType as AggregationChunkType,
+      content: content.slice(0, 500),
+      score,
+      source_type: sourceType,
+      document_id: documentId,
+      ...(chunkId ? { chunk_id: chunkId } : {}),
+      chunk_type: chunkType,
     });
+
+    // Frozen grounding rule: only authoritative full_content may become
+    // factual LLM evidence. faq_pair/section remain safe UI references only.
+    if (chunkType === "full_content") {
+      fullEvidence.push({
+        document_id: documentId,
+        ...(chunkId ? { chunk_id: chunkId } : {}),
+        content,
+        score,
+        source_type: sourceType,
+      });
+    }
   }
 
-  if (chunks.length === 0) {
+  // A valid producer response may contain a summary and/or non-full-content
+  // references. Do not convert those references into factual evidence.
+  if (!orientationSummary && chunks.length === 0) {
     return { ok: false, error_code: "KB_SCHEMA_INVALID" };
   }
 
   scores.sort((a, b) => b - a);
+  const llmContext: AggregationInternalContext = {
+    selected_document_id: documentId,
+    orientation_summary: orientationSummary,
+    full_content_evidence: fullEvidence,
+  };
+  const meta: AggregationMeta = {
+    document_score: documentScore,
+    highest_chunk_score: scores[0] ?? 0,
+    second_highest_chunk_score: scores[1] ?? 0,
+    returned_summary_count: orientationSummary ? 1 : 0,
+    returned_full_content_count: fullEvidence.length,
+    dropped_without_document_id: 0,
+    dropped_without_content: 0,
+  };
+
   return {
     ok: true,
     contextFound: true,
     chunks,
     citations,
-    llmContext: {
-      selected_document_id: documentId,
-      orientation_summary: orientationSummary,
-      full_content_evidence: fullEvidence,
-    },
-    meta: {
-      document_score: documentScore,
-      highest_chunk_score: scores[0] ?? 0,
-      second_highest_chunk_score: scores[1] ?? 0,
-      returned_summary_count: orientationSummary ? 1 : 0,
-      returned_full_content_count: fullEvidence.length,
-      dropped_without_document_id: 0,
-      dropped_without_content: 0,
-    },
+    llmContext,
+    meta,
     selectedDocumentId: documentId,
   };
 }
