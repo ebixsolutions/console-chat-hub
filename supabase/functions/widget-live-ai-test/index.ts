@@ -195,6 +195,227 @@ function referenceList(
     }));
 }
 
+
+type TestMessageRow = {
+  id: string;
+  role: "visitor" | "assistant";
+  content: string;
+  created_at: string | null;
+  metadata: Record<string, unknown> | null;
+};
+
+type TestConversationSummary = {
+  conversation_id: string;
+  created_at: string | null;
+  updated_at: string | null;
+  latest_preview: string;
+  message_count: number;
+};
+
+function isTestConversationOwned(
+  metadataSource: unknown,
+  userId: string,
+): boolean {
+  if (!metadataSource || typeof metadataSource !== "object" || Array.isArray(metadataSource)) {
+    return false;
+  }
+  const m = metadataSource as Record<string, unknown>;
+  return m.widget_live_test === true &&
+    m.owner_user_id === userId &&
+    m.exclude_training === true;
+}
+
+async function loadOwnedTestConversation(
+  admin: QueryClient,
+  conversationId: string,
+  userId: string,
+): Promise<
+  | { ok: true; conversation: Record<string, any> }
+  | { ok: false; status: number; error: string }
+> {
+  if (!isUuid(conversationId)) {
+    return { ok: false, status: 400, error: "invalid_test_conversation_id" };
+  }
+
+  const { data, error } = await admin
+    .from("conversations")
+    .select("id,status,company_id,channel_config_id,visitor_session_id,metadata_source,created_at,updated_at")
+    .eq("id", conversationId)
+    .maybeSingle();
+
+  if (error) return { ok: false, status: 500, error: "test_conversation_lookup_failed" };
+  if (!data || !isTestConversationOwned(data.metadata_source, userId)) {
+    return { ok: false, status: 404, error: "test_conversation_not_found" };
+  }
+  return { ok: true, conversation: data };
+}
+
+async function loadTestMessages(
+  admin: QueryClient,
+  conversationId: string,
+): Promise<TestMessageRow[]> {
+  const { data, error } = await admin
+    .from("messages")
+    .select("id,role,content,created_at,metadata")
+    .eq("conversation_id", conversationId)
+    .neq("content", "__THINKING__")
+    .order("created_at", { ascending: true })
+    .limit(200);
+
+  if (error) throw new Error("test_messages_lookup_failed");
+  return (data ?? [])
+    .filter((m: any) => m.role === "visitor" || m.role === "assistant")
+    .map((m: any) => ({
+      id: String(m.id),
+      role: m.role === "visitor" ? "visitor" : "assistant",
+      content: String(m.content ?? ""),
+      created_at: typeof m.created_at === "string" ? m.created_at : null,
+      metadata:
+        m.metadata && typeof m.metadata === "object" && !Array.isArray(m.metadata)
+          ? m.metadata as Record<string, unknown>
+          : null,
+    }));
+}
+
+async function createTestConversation(
+  admin: QueryClient,
+  userId: string,
+  resolved: { scope: KBResolvedScope; companyId: string | null },
+): Promise<
+  | { ok: true; conversationId: string }
+  | { ok: false; status: number; error: string }
+> {
+  const sessionToken = `preview-test.${crypto.randomUUID()}.${crypto.randomUUID().replace(/-/g, "")}`;
+  const visitorMetadata = {
+    name: "Widget Live Test",
+    source: "widget_live_test",
+    test_mode: true,
+    owner_user_id: userId,
+    exclude_training: true,
+    scope_mode: resolved.scope.mode,
+  };
+
+  const { data: session, error: sessionError } = await admin
+    .from("visitor_session")
+    .insert({
+      session_token: sessionToken,
+      visitor_fingerprint: `widget-live-test:${userId}`,
+      visitor_metadata: visitorMetadata,
+      last_seen_at: new Date().toISOString(),
+      channel_config_id: null,
+    })
+    .select("id")
+    .single();
+
+  if (sessionError || !session?.id) {
+    return { ok: false, status: 500, error: "test_session_create_failed" };
+  }
+
+  const metadataSource = {
+    source: "widget_live_test",
+    widget_live_test: true,
+    owner_user_id: userId,
+    exclude_training: true,
+    scope_mode: resolved.scope.mode,
+    canonical_company_attached: resolved.companyId !== null,
+  };
+
+  const { data: conversation, error: conversationError } = await admin
+    .from("conversations")
+    .insert({
+      visitor_session_id: session.id,
+      channel_config_id: null,
+      company_id: resolved.companyId,
+      status: "open",
+      priority: "normal",
+      tags: ["widget_live_test", "exclude_training"],
+      metadata_source: metadataSource,
+      language: null,
+    })
+    .select("id")
+    .single();
+
+  if (conversationError || !conversation?.id) {
+    await admin.from("visitor_session").delete().eq("id", session.id);
+    return { ok: false, status: 500, error: "test_conversation_create_failed" };
+  }
+
+  return { ok: true, conversationId: String(conversation.id) };
+}
+
+async function listOwnedTestHistory(
+  admin: QueryClient,
+  userId: string,
+): Promise<TestConversationSummary[]> {
+  const { data, error } = await admin
+    .from("conversations")
+    .select("id,created_at,updated_at,metadata_source")
+    .order("updated_at", { ascending: false })
+    .limit(100);
+
+  if (error) throw new Error("test_history_lookup_failed");
+
+  const owned = (data ?? [])
+    .filter((c: any) => isTestConversationOwned(c.metadata_source, userId))
+    .slice(0, 10);
+
+  const out: TestConversationSummary[] = [];
+  for (const c of owned) {
+    const messages = await loadTestMessages(admin, String(c.id));
+    const latest = [...messages].reverse().find((m) => m.content.trim().length > 0);
+    out.push({
+      conversation_id: String(c.id),
+      created_at: typeof c.created_at === "string" ? c.created_at : null,
+      updated_at: typeof c.updated_at === "string" ? c.updated_at : null,
+      latest_preview: latest?.content.slice(0, 120) ?? "(no messages)",
+      message_count: messages.length,
+    });
+  }
+  return out;
+}
+
+async function naturalNoEvidenceReply(
+  query: string,
+  resolved: { scope: KBResolvedScope; companyId: string | null },
+  conversationId: string,
+): Promise<{
+  answer: string;
+  model?: string;
+  usage?: { input_tokens: number; output_tokens: number; latency_ms: number; attempts: number };
+}> {
+  const llm = await callModel({
+    purpose: "generation",
+    system: [
+      "You are a friendly customer-service assistant.",
+      "The Knowledge Base search did not return authoritative full-content evidence for this request.",
+      "Do NOT invent product facts, specifications, prices, policies, or recommendations.",
+      "Reply in the same language and script as the user.",
+      "Do not mention technical terms such as full_content, RAG, evidence threshold, schema, API, or Knowledge Base internals.",
+      "Acknowledge what the customer wants in natural language and ask one or two concise clarifying questions that would help narrow the search.",
+      "If the request is broad, offer useful categories to choose from without claiming factual details.",
+      "Keep the response under 90 words.",
+    ].join("\n"),
+    user: query,
+    maxTokens: 240,
+    operationId: `widget-live-test:no-evidence:${conversationId}:${crypto.randomUUID()}`,
+    companyId: resolved.companyId,
+    conversationId,
+    tag: "widget-live-ai-test-no-evidence",
+    responseFormat: "text",
+  });
+
+  if (!llm.ok) {
+    const zh = /[\u4e00-\u9fff]/.test(query);
+    return {
+      answer: zh
+        ? "可以，我可以幫你找相關資料。你想了解哪一類產品、品牌或型號？如果是冷氣機，也可以告訴我你想看窗口式、分體式，或大約需要的匹數。"
+        : "I can help narrow that down. Which product type, brand, or model are you interested in? If you mean air conditioners, tell me whether you want window or split type, or the approximate capacity you need.",
+    };
+  }
+
+  return { answer: llm.text, model: llm.model, usage: llm.usage };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     const origin = req.headers.get("Origin") ?? "";
@@ -206,7 +427,9 @@ Deno.serve(async (req) => {
     return new Response(null, { status: 200, headers });
   }
 
-  if (req.method !== "POST") return json(req, { success: false, error: "method_not_allowed" }, 405);
+  if (req.method !== "POST") {
+    return json(req, { success: false, error: "method_not_allowed" }, 405);
+  }
 
   const origin = req.headers.get("Origin") ?? "";
   if (!isAllowedConsoleOrigin(origin)) {
@@ -227,22 +450,14 @@ Deno.serve(async (req) => {
       "api_key",
       "apiKey",
       "channel_id",
-      "conversation_id",
     ]) {
       if ((body as Record<string, unknown>)[forbidden] !== undefined) {
         return json(req, {
           success: false,
           error: "invalid_request",
-          detail: "tenant/company/key/channel/conversation scope is server-derived",
+          detail: "tenant/company/key/channel scope is server-derived",
         }, 400);
       }
-    }
-
-    const query = typeof (body as any).query === "string"
-      ? String((body as any).query).trim()
-      : "";
-    if (!query || query.length > MAX_QUERY_LENGTH) {
-      return json(req, { success: false, error: "invalid_query" }, 400);
     }
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -270,9 +485,96 @@ Deno.serve(async (req) => {
       return json(req, { success: false, error: resolved.error }, resolved.status);
     }
 
+    const action =
+      typeof (body as Record<string, unknown>).action === "string"
+        ? String((body as Record<string, unknown>).action)
+        : "send";
+
+    if (action === "history") {
+      const history = await listOwnedTestHistory(admin, authData.user.id);
+      return json(req, { success: true, mode: "persistent_live_ai_test", history });
+    }
+
+    const requestedConversationId =
+      typeof (body as Record<string, unknown>).test_conversation_id === "string"
+        ? String((body as Record<string, unknown>).test_conversation_id)
+        : "";
+
+    if (action === "load") {
+      const owned = await loadOwnedTestConversation(
+        admin,
+        requestedConversationId,
+        authData.user.id,
+      );
+      if (!owned.ok) return json(req, { success: false, error: owned.error }, owned.status);
+      const messages = await loadTestMessages(admin, requestedConversationId);
+      return json(req, {
+        success: true,
+        mode: "persistent_live_ai_test",
+        scope_mode: resolved.scope.mode,
+        conversation_id: requestedConversationId,
+        messages,
+      });
+    }
+
+    if (action !== "send") {
+      return json(req, { success: false, error: "invalid_action" }, 400);
+    }
+
+    const query =
+      typeof (body as Record<string, unknown>).query === "string"
+        ? String((body as Record<string, unknown>).query).trim()
+        : "";
+    if (!query || query.length > MAX_QUERY_LENGTH) {
+      return json(req, { success: false, error: "invalid_query" }, 400);
+    }
+
+    let conversationId = requestedConversationId;
+
+    if (conversationId) {
+      const owned = await loadOwnedTestConversation(admin, conversationId, authData.user.id);
+      if (!owned.ok) return json(req, { success: false, error: owned.error }, owned.status);
+      if (owned.conversation.status === "resolved") {
+        return json(req, { success: false, error: "test_conversation_resolved" }, 409);
+      }
+    } else {
+      const created = await createTestConversation(admin, authData.user.id, resolved);
+      if (!created.ok) {
+        return json(req, { success: false, error: created.error }, created.status);
+      }
+      conversationId = created.conversationId;
+    }
+
+    const now = new Date().toISOString();
+    const { data: visitorMessage, error: visitorError } = await admin
+      .from("messages")
+      .insert({
+        conversation_id: conversationId,
+        role: "visitor",
+        content: query,
+        status: "sent",
+        metadata: {
+          widget_live_test: true,
+          source: "widget_preview",
+          owner_user_id: authData.user.id,
+          exclude_training: true,
+        },
+      })
+      .select("id")
+      .single();
+
+    if (visitorError || !visitorMessage?.id) {
+      return json(req, { success: false, error: "test_visitor_message_create_failed" }, 500);
+    }
+
+    await admin
+      .from("conversations")
+      .update({ updated_at: now })
+      .eq("id", conversationId);
+
     const kbEndpoint = resolveKBEndpoint();
     if (!kbEndpoint) {
-      return json(req, { success: false, error: "kb_config_missing" }, 503);
+      return json(req, { success: false, error: "kb_config_missing", conversation_id: conversationId }, 503);
     }
 
     const kb = await fetchKBRag(
@@ -283,17 +585,12 @@ Deno.serve(async (req) => {
     );
 
     if (!kb.success) {
-      const status = kb.error_code === "KB_TIMEOUT"
-        ? 504
-        : kb.error_code === "KB_AUTH_TOKEN_MISSING" ||
-            kb.error_code === "KB_AUTH_API_KEY_INVALID"
-          ? 503
-          : 502;
       return json(req, {
         success: false,
         error: "kb_live_test_failed",
         detail: kb.error_code,
-      }, status);
+        conversation_id: conversationId,
+      }, kb.error_code === "KB_TIMEOUT" ? 504 : 502);
     }
 
     const references = referenceList(kb.chunks);
@@ -303,73 +600,124 @@ Deno.serve(async (req) => {
         item.content.trim().length > 0,
     ).slice(0, 3) ?? [];
 
+    let answer = "";
+    let model: string | undefined;
+    let usage:
+      | { input_tokens: number; output_tokens: number; latency_ms: number; attempts: number }
+      | undefined;
+    let grounded = false;
+
     if (fullEvidence.length === 0) {
-      return json(req, {
-        success: true,
-        mode: "isolated_live_ai_test",
-        scope_mode: resolved.scope.mode,
-        grounded: false,
-        answer:
-          "The Knowledge Base returned no authoritative full-content evidence for this query, so no factual AI answer was generated.",
-        selected_document_id: kb.llm_context?.selected_document_id ?? null,
-        full_content_evidence_count: 0,
-        references,
+      const fallback = await naturalNoEvidenceReply(
+        query,
+        resolved,
+        conversationId,
+      );
+      answer = fallback.answer;
+      model = fallback.model;
+      usage = fallback.usage;
+    } else {
+      const orientation = kb.llm_context?.orientation_summary?.trim() ?? "";
+      const evidenceText = fullEvidence.map((item, index) =>
+        `[Full Content Evidence ${index + 1}]\n${item.content.slice(0, 1600)}`
+      ).join("\n\n");
+
+      const system = [
+        "You are a professional, friendly customer-service assistant.",
+        "Answer naturally in the same language and script as the user's question.",
+        "Use ONLY the Full Content Evidence below for factual claims.",
+        "Do not expose internal retrieval terms or implementation details to the customer.",
+        "The Orientation Summary is navigation context only and cannot independently support prices, dates, dimensions, policy conditions, procedures, limits, or other exact facts.",
+        "If evidence supports only part of the request, answer the supported part naturally and ask a concise clarifying question for the rest.",
+        orientation
+          ? `Orientation Summary (context only):\n${orientation.slice(0, 1200)}`
+          : "",
+        `Full Content Evidence:\n${evidenceText}`,
+      ].filter(Boolean).join("\n\n");
+
+      const llm = await callModel({
+        purpose: "generation",
+        system,
+        user: query,
+        maxTokens: 600,
+        operationId: `widget-live-test:${conversationId}:${crypto.randomUUID()}`,
+        companyId: resolved.companyId,
+        conversationId,
+        tag: "widget-live-ai-test",
+        responseFormat: "text",
       });
+
+      if (!llm.ok) {
+        return json(req, {
+          success: false,
+          error: "llm_live_test_failed",
+          detail: llm.code,
+          conversation_id: conversationId,
+        }, llm.code === "LLM_TIMEOUT" ? 504 : 502);
+      }
+
+      answer = llm.text;
+      model = llm.model;
+      usage = llm.usage;
+      grounded = true;
     }
 
-    const orientation = kb.llm_context?.orientation_summary?.trim() ?? "";
-    const evidenceText = fullEvidence.map((item, index) =>
-      `[Full Content Evidence ${index + 1}]\n${item.content.slice(0, 1600)}`
-    ).join("\n\n");
+    const { error: assistantError } = await admin
+      .from("messages")
+      .insert({
+        conversation_id: conversationId,
+        role: "assistant",
+        content: answer,
+        status: "sent",
+        metadata: {
+          widget_live_test: true,
+          source: "widget_preview",
+          exclude_training: true,
+          grounded,
+          model: model ?? null,
+          full_content_evidence_count: fullEvidence.length,
+          references,
+          source_visitor_message_id: visitorMessage.id,
+        },
+      });
 
-    const system = [
-      "You are the production customer-service answer generator running in an isolated Live AI Test.",
-      "Answer in the same language and script as the user's question.",
-      "Use ONLY the Full Content Evidence below for factual claims.",
-      "The Orientation Summary is navigation context only and cannot independently support prices, dates, dimensions, policy conditions, procedures, limits, or other exact facts.",
-      "If the Full Content Evidence does not support the requested fact, say the Knowledge Base does not provide enough evidence.",
-      "Do not claim that a human handoff occurred; this test mode never changes production conversation state.",
-      orientation
-        ? `Orientation Summary (context only):\n${orientation.slice(0, 1200)}`
-        : "",
-      `Full Content Evidence:\n${evidenceText}`,
-    ].filter(Boolean).join("\n\n");
-
-    const operationId = `widget-live-test:${crypto.randomUUID()}`;
-    const llm = await callModel({
-      purpose: "generation",
-      system,
-      user: query,
-      maxTokens: 600,
-      operationId,
-      companyId: resolved.companyId,
-      conversationId: null,
-      tag: "widget-live-ai-test",
-      responseFormat: "text",
-    });
-
-    if (!llm.ok) {
+    if (assistantError) {
       return json(req, {
         success: false,
-        error: "llm_live_test_failed",
-        detail: llm.code,
-      }, llm.code === "LLM_TIMEOUT" ? 504 : 502);
+        error: "test_assistant_message_create_failed",
+        conversation_id: conversationId,
+      }, 500);
     }
+
+    await admin
+      .from("conversations")
+      .update({
+        updated_at: new Date().toISOString(),
+        language: /[\u4e00-\u9fff]/.test(query) ? "zh" : "en",
+      })
+      .eq("id", conversationId);
+
+    const messages = await loadTestMessages(admin, conversationId);
 
     return json(req, {
       success: true,
-      mode: "isolated_live_ai_test",
+      mode: "persistent_live_ai_test",
       scope_mode: resolved.scope.mode,
-      grounded: true,
-      answer: llm.text,
-      model: llm.model,
+      conversation_id: conversationId,
+      grounded,
+      answer,
+      model,
       selected_document_id: kb.llm_context?.selected_document_id ?? null,
       full_content_evidence_count: fullEvidence.length,
       references,
-      usage: llm.usage,
+      usage,
+      messages,
     });
   } catch (e) {
-    console.error("[widget-live-ai-test] unexpected", e instanceof Error ? e.name : "unknown_error");
+    console.error(
+      "[widget-live-ai-test] unexpected",
+      e instanceof Error ? e.message : "unknown_error",
+    );
     return json(req, { success: false, error: "internal_error" }, 500);
   }
 });
