@@ -4,7 +4,6 @@ import { toast } from "sonner";
 import { useConsoleLang } from "@/hooks/useEffectiveRole";
 import { useCustomerContext } from "@/lib/customer360/useCustomerContext";
 
-// ─── Shared types ────────────────────────────────────────────────────────────
 export type CRMConv = {
   id: string;
   status: string;
@@ -29,11 +28,13 @@ export type KBResult = {
   document_id?: string;
   chunk_type?: "rag_summary" | "full_content" | "faq_pair" | "section" | "unknown";
 };
+
 export type PolicyResult = {
   status: string;
   summary: string;
   issues: Array<{ excerpt: string; policy_label: string; severity: string }>;
 };
+
 export type KBConnState = "idle" | "loading" | "connected" | "empty" | "denied" | "unavailable";
 
 export const RIGHT_COPY = {
@@ -80,25 +81,27 @@ export const RIGHT_COPY = {
 } as const;
 export type RCK = keyof typeof RIGHT_COPY;
 
-// ── RIGHT-CRM-KB-CONTEXT-1: Deterministic bounded conversational context ──
 export const MAX_CONTEXT_MESSAGES = 5;
 export const CONTEXT_SEPARATOR = " / ";
 export const EFFECTIVE_QUERY_CAP = 500;
 
 export function buildBoundedContext(messages: CtxMsg[]): string {
   const eligible = messages.filter(
-    (m) => m.role === "visitor" && !m.is_recalled && m.content.trim().length > 0 && m.content !== "__THINKING__",
+    (m) =>
+      m.role === "visitor" &&
+      !m.is_recalled &&
+      typeof m.content === "string" &&
+      m.content.trim().length > 0 &&
+      m.content !== "__THINKING__",
   );
   if (eligible.length === 0) return "";
   const recent = eligible.slice(-MAX_CONTEXT_MESSAGES);
-  // Enforce character cap with separator budget
   while (recent.length > 1) {
     const totalLen =
       recent.reduce((s, m) => s + m.content.trim().length, 0) + (recent.length - 1) * CONTEXT_SEPARATOR.length;
     if (totalLen <= EFFECTIVE_QUERY_CAP) break;
     recent.shift();
   }
-  // Head-tail truncation for single message exceeding cap
   if (recent.length === 1 && recent[0].content.trim().length > EFFECTIVE_QUERY_CAP) {
     const text = recent[0].content.trim();
     const headBudget = Math.floor(EFFECTIVE_QUERY_CAP * 0.4);
@@ -111,14 +114,77 @@ export function buildBoundedContext(messages: CtxMsg[]): string {
 export function computeContextRevisionKey(conversationId: string, messages: CtxMsg[]): string {
   const eligible = messages
     .filter(
-      (m) => m.role === "visitor" && !m.is_recalled && m.content.trim().length > 0 && m.content !== "__THINKING__",
+      (m) =>
+        m.role === "visitor" &&
+        !m.is_recalled &&
+        typeof m.content === "string" &&
+        m.content.trim().length > 0 &&
+        m.content !== "__THINKING__",
     )
     .slice(-MAX_CONTEXT_MESSAGES);
   if (eligible.length === 0) return conversationId + ":empty";
-  const fingerprint = eligible
-    .map((m) => [m.id, m.created_at ?? "", m.status ?? "", String(m.is_recalled), m.content.trim()].join("|"))
-    .join("~");
-  return conversationId + ":" + fingerprint;
+  return (
+    conversationId +
+    ":" +
+    eligible
+      .map((m) => [m.id, m.created_at ?? "", m.status ?? "", String(m.is_recalled), m.content.trim()].join("|"))
+      .join("~")
+  );
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+export function normalizeKBResults(value: unknown): KBResult[] | null {
+  if (!Array.isArray(value)) return null;
+  const out: KBResult[] = [];
+  for (const raw of value) {
+    const r = asRecord(raw);
+    if (!r || typeof r.content !== "string" || !r.content.trim()) continue;
+    const scoreRaw = Number(r.score);
+    if (!Number.isFinite(scoreRaw)) continue;
+    const chunkRaw = String(r.chunk_type ?? "unknown");
+    const chunk_type = ["rag_summary", "full_content", "faq_pair", "section"].includes(chunkRaw)
+      ? (chunkRaw as KBResult["chunk_type"])
+      : "unknown";
+    out.push({
+      display_label:
+        typeof r.display_label === "string" && r.display_label.trim()
+          ? r.display_label.trim().slice(0, 180)
+          : "Knowledge Base document",
+      content: r.content,
+      score: Math.max(0, Math.min(1, scoreRaw)),
+      source_type:
+        typeof r.source_type === "string" && r.source_type.trim() ? r.source_type.trim().slice(0, 80) : "knowledge",
+      ...(typeof r.document_id === "string" ? { document_id: r.document_id } : {}),
+      chunk_type,
+    });
+  }
+  return out;
+}
+
+export function normalizePolicyResult(value: unknown): PolicyResult | null {
+  const r = asRecord(value);
+  if (!r || typeof r.status !== "string" || typeof r.summary !== "string") return null;
+  const issues: PolicyResult["issues"] = [];
+  if (Array.isArray(r.issues)) {
+    for (const raw of r.issues) {
+      const i = asRecord(raw);
+      if (!i) continue;
+      issues.push({
+        excerpt: typeof i.excerpt === "string" ? i.excerpt.slice(0, 800) : "",
+        policy_label:
+          typeof i.policy_label === "string" && i.policy_label.trim() ? i.policy_label.trim().slice(0, 160) : "Policy",
+        severity: typeof i.severity === "string" && i.severity.trim() ? i.severity.trim().slice(0, 60) : "warning",
+      });
+    }
+  }
+  return {
+    status: r.status.slice(0, 80),
+    summary: r.summary.slice(0, 3000),
+    issues,
+  };
 }
 
 function getInitials(label: string) {
@@ -130,7 +196,6 @@ function getInitials(label: string) {
     .toUpperCase();
 }
 
-// ─── CRMPanel (Phase 2A: functional Knowledge + Policy) ──────────────────────
 export function CRMPanel({
   conv,
   visitorLabel,
@@ -153,22 +218,19 @@ export function CRMPanel({
   const lang = useConsoleLang();
   const rc = useCallback((k: RCK) => RIGHT_COPY[k]?.[lang] ?? RIGHT_COPY[k]?.en ?? k, [lang]);
   const [tab, setTab] = useState("customer");
-  // Knowledge state
   const [kbResults, setKbResults] = useState<KBResult[]>([]);
   const [kbConnState, setKbConnState] = useState<KBConnState>("idle");
   const [kbError, setKbError] = useState("");
   const [kbQuery, setKbQuery] = useState("");
   const kbReqIdRef = useRef(0);
   const lastAutoQueryRef = useRef("");
-  // Policy state
   const [polResult, setPolResult] = useState<PolicyResult | null>(null);
   const [polLoading, setPolLoading] = useState(false);
   const [polError, setPolError] = useState("");
   const [polMode, setPolMode] = useState<"conv" | "draft">("conv");
   const polReqIdRef = useRef(0);
-  // Permission: mirrors EF ALLOWED_ROLES = ["admin", "supervisor"]
+
   const canAccessKb = currentRole === "admin" || currentRole === "supervisor";
-  // ONE canonical local Customer context loader — shared with standalone Customer360 page.
   const custCtx = useCustomerContext(conv?.visitor_session_id ?? null);
 
   const runKbSearch = useCallback(
@@ -192,24 +254,31 @@ export function CRMPanel({
           setKbError(rc("kbDenied"));
           return;
         }
-        if (!data?.success || !Array.isArray(data.results)) {
+        if (!data?.success) {
           setKbConnState("unavailable");
           setKbError(rc("kbError"));
           return;
         }
-        const results = data.results as KBResult[];
-        setKbResults(results);
-        setKbConnState(results.length > 0 ? "connected" : "empty");
+        const normalized = normalizeKBResults(data.results);
+        if (
+          normalized === null ||
+          (Array.isArray(data.results) && data.results.length > 0 && normalized.length === 0)
+        ) {
+          setKbConnState("unavailable");
+          setKbError(rc("kbError"));
+          return;
+        }
+        setKbResults(normalized);
+        setKbConnState(normalized.length > 0 ? "connected" : "empty");
       } catch {
         if (kbReqIdRef.current !== reqId) return;
         setKbConnState("unavailable");
         setKbError(rc("kbError"));
       }
     },
-    [rc],
+    [conv?.id, rc],
   );
 
-  // Reset on conversation change
   useEffect(() => {
     setTab("customer");
     setKbResults([]);
@@ -225,65 +294,54 @@ export function CRMPanel({
     lastAutoQueryRef.current = "";
   }, [conv?.id]);
 
-  // Auto-query Knowledge (RIGHT-CRM-KB-CONTEXT-1: bounded context)
   useEffect(() => {
     if (!conv || !boundedContext || !canAccessKb) return;
     if (lastAutoQueryRef.current === contextRevisionKey) return;
     lastAutoQueryRef.current = contextRevisionKey;
-    const reqId = ++kbReqIdRef.current;
-    runKbSearch(boundedContext, reqId);
+    void runKbSearch(boundedContext, ++kbReqIdRef.current);
   }, [conv, boundedContext, contextRevisionKey, canAccessKb, runKbSearch]);
 
-  function handleKbKeywordSearch() {
-    if (!kbQuery.trim() || !canAccessKb) return;
-    const reqId = ++kbReqIdRef.current;
-    runKbSearch(kbQuery, reqId);
-  }
-  function handleKbRefresh() {
-    if (!canAccessKb) return;
-    const q = kbQuery.trim() || boundedContext;
-    if (!q) return;
-    const reqId = ++kbReqIdRef.current;
-    runKbSearch(q, reqId);
-  }
-  async function runPolicyCheck(content: string, reqId: number) {
+  const runPolicyCheck = async (content: string, reqId: number) => {
     if (!content.trim() || !canAccessKb) return;
     setPolLoading(true);
     setPolError("");
     setPolResult(null);
     try {
-      // Policy retrieval is server-owned. The browser sends only the
-      // conversation identity and text to assess.
-      const body: Record<string, unknown> = {
-        tool_type: "check_policy",
-        conversation_id: conv?.id ?? "",
-        content: content.trim().slice(0, 2000),
-      };
-      const { data, error } = await supabase.functions.invoke("agent-assist", { body });
+      const { data, error } = await supabase.functions.invoke("agent-assist", {
+        body: {
+          tool_type: "check_policy",
+          conversation_id: conv?.id ?? "",
+          content: content.trim().slice(0, 2000),
+        },
+      });
       if (polReqIdRef.current !== reqId) return;
       if (error || !data?.success) {
-        if (data?.error === "policy_kb_tenant_unresolved") {
-          setPolError(rc("polKbTenantUnresolved"));
-        } else if (data?.error === "policy_kb_unavailable") {
-          setPolError(rc("polKbUnavailable"));
-        } else {
-          setPolError(rc("polError"));
-        }
+        setPolError(
+          data?.error === "policy_kb_tenant_unresolved"
+            ? rc("polKbTenantUnresolved")
+            : data?.error === "policy_kb_unavailable"
+              ? rc("polKbUnavailable")
+              : rc("polError"),
+        );
       } else {
-        setPolResult(data.result as PolicyResult);
+        const normalized = normalizePolicyResult(data.result);
+        if (!normalized) setPolError(rc("polError"));
+        else setPolResult(normalized);
       }
     } catch {
-      if (polReqIdRef.current !== reqId) return;
-      setPolError(rc("polError"));
+      if (polReqIdRef.current === reqId) setPolError(rc("polError"));
+    } finally {
+      if (polReqIdRef.current === reqId) setPolLoading(false);
     }
-    if (polReqIdRef.current === reqId) setPolLoading(false);
-  }
-  function handleCopy(text: string) {
+  };
+
+  const handleCopy = (text: string) => {
     navigator.clipboard
       .writeText(text)
       .then(() => toast.success(rc("copied")))
       .catch(() => toast.error(rc("copyFailed")));
-  }
+  };
+
   const initials = getInitials(visitorLabel);
   const sectionTitle: CSSProperties = {
     fontSize: 10,
@@ -292,11 +350,6 @@ export function CRMPanel({
     textTransform: "uppercase",
     marginBottom: 6,
   };
-  const TABS = [
-    { key: "customer", label: "Customer" },
-    { key: "knowledge", label: lang === "zh" ? "知識" : "Knowledge" },
-    { key: "policy", label: lang === "zh" ? "政策" : "Policy" },
-  ];
   const cardStyle: CSSProperties = {
     background: "#f9fafb",
     border: "1px solid #e8e6e0",
@@ -313,45 +366,43 @@ export function CRMPanel({
     cursor: "pointer",
     fontWeight: 500,
   };
+
   const kbStatusLabel = !canAccessKb
     ? lang === "zh"
       ? "權限不足"
       : "Permission denied"
-    : kbConnState === "idle"
+    : kbConnState === "loading"
       ? lang === "zh"
-        ? "就緒"
-        : "Ready"
-      : kbConnState === "loading"
+        ? "載入中"
+        : "Loading"
+      : kbConnState === "connected" || kbConnState === "empty"
         ? lang === "zh"
-          ? "載入中"
-          : "Loading"
-        : kbConnState === "connected" || kbConnState === "empty"
+          ? "已連線"
+          : "Connected"
+        : kbConnState === "denied"
           ? lang === "zh"
-            ? "已連線"
-            : "Connected"
-          : kbConnState === "denied"
+            ? "權限不足"
+            : "Permission denied"
+          : kbConnState === "unavailable"
             ? lang === "zh"
-              ? "權限不足"
-              : "Permission denied"
-            : lang === "zh"
               ? "無法存取"
-              : "Unavailable";
+              : "Unavailable"
+            : lang === "zh"
+              ? "就緒"
+              : "Ready";
+
+  const TABS = [
+    { key: "customer", label: "Customer" },
+    { key: "knowledge", label: lang === "zh" ? "知識" : "Knowledge" },
+    { key: "policy", label: lang === "zh" ? "政策" : "Policy" },
+  ];
+
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", background: "#fff" }}>
-      <div
-        style={{ padding: "8px 12px", borderBottom: "0.5px solid #e8e6e0", fontSize: 10, color: "#555", flexShrink: 0 }}
-      >
-        <div>Knowledge Base: {kbStatusLabel}</div>
+      <div style={{ padding: "8px 12px", borderBottom: "0.5px solid #e8e6e0", fontSize: 10, color: "#555" }}>
+        Knowledge Base: {kbStatusLabel}
       </div>
-      <div
-        style={{
-          display: "flex",
-          borderBottom: "0.5px solid #e8e6e0",
-          overflowX: "auto",
-          flexShrink: 0,
-          background: "#fff",
-        }}
-      >
+      <div style={{ display: "flex", borderBottom: "0.5px solid #e8e6e0", overflowX: "auto" }}>
         {TABS.map((tb) => (
           <button
             key={tb.key}
@@ -363,55 +414,48 @@ export function CRMPanel({
               border: "none",
               cursor: "pointer",
               background: "#fff",
-              whiteSpace: "nowrap",
               color: tab === tb.key ? "#1a1a1a" : "#888",
               borderBottom: tab === tb.key ? "2px solid #1a1a1a" : "2px solid transparent",
-              flexShrink: 0,
             }}
           >
             {tb.label}
           </button>
         ))}
       </div>
-      <div style={{ flex: 1, overflowY: "auto", padding: 12, background: "#fff" }}>
-        {/* Customer tab */}
+
+      <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
         {tab === "customer" && conv && (
           <>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <div
-                  style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: "50%",
-                    background: "#fef3c7",
-                    color: "#92400e",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: 12,
-                    fontWeight: 700,
-                    flexShrink: 0,
-                  }}
-                >
-                  {initials}
-                </div>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 700 }}>{visitorLabel}</div>
-                  <div style={{ fontSize: 10.5, color: "#888" }}>
-                    {conv.channel_config?.name || "Web"} · #{conv.id.slice(0, 8)}
-                  </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <div
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: "50%",
+                  background: "#fef3c7",
+                  color: "#92400e",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontWeight: 700,
+                }}
+              >
+                {initials}
+              </div>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>{visitorLabel}</div>
+                <div style={{ fontSize: 10.5, color: "#888" }}>
+                  {conv.channel_config?.name || "Web"} · #{conv.id.slice(0, 8)}
                 </div>
               </div>
             </div>
-            {custCtx.status === "loading" && (
-              <div style={{ fontSize: 11, color: "#9ca3af", padding: "6px 0" }}>Loading…</div>
-            )}
+
+            {custCtx.status === "loading" && <div style={{ fontSize: 11, color: "#9ca3af" }}>Loading…</div>}
             {custCtx.status === "error" && (
-              <div style={{ fontSize: 11, color: "#ef4444", padding: "6px 0" }}>Customer context unavailable.</div>
+              <div style={{ fontSize: 11, color: "#ef4444" }}>Customer context unavailable.</div>
             )}
             {custCtx.status === "empty" && (
-              <div style={{ fontSize: 11, color: "#9ca3af", padding: "6px 0" }}>No customer context available.</div>
+              <div style={{ fontSize: 11, color: "#9ca3af" }}>No customer context available.</div>
             )}
             {custCtx.status === "success" && (
               <>
@@ -431,22 +475,19 @@ export function CRMPanel({
                   <div style={cardStyle}>
                     {(() => {
                       const fb = custCtx.data.feedback.find((f) => f.conversation_id === conv.id && f.rating !== null)!;
+                      const rating = Math.max(0, Math.min(5, Number(fb.rating ?? 0)));
                       return (
                         <div style={{ fontSize: 10.5 }}>
-                          {"★".repeat(fb.rating!)}
-                          {"☆".repeat(5 - fb.rating!)} {fb.rating}/5{fb.feedback_text ? " — " + fb.feedback_text : ""}
+                          {"★".repeat(rating)}
+                          {"☆".repeat(5 - rating)} {rating}/5{fb.feedback_text ? " — " + fb.feedback_text : ""}
                         </div>
                       );
                     })()}
                   </div>
                 )}
-                {custCtx.data.conversations.length > 1 && (
-                  <div style={{ fontSize: 10, color: "#888", marginBottom: 8 }}>
-                    {custCtx.data.conversations.length} total conversations from this visitor
-                  </div>
-                )}
               </>
             )}
+
             <div
               style={{
                 background: "#f5f4f0",
@@ -466,35 +507,24 @@ export function CRMPanel({
               type="button"
               onClick={onResolve}
               style={{
+                ...btnSm,
                 display: "block",
                 width: "100%",
                 textAlign: "left",
-                fontSize: 11.5,
-                fontWeight: 500,
-                padding: "7px 11px",
-                borderRadius: 8,
-                border: "0.5px solid #e8e6e0",
-                background: "#fff",
-                cursor: "pointer",
-                marginBottom: 5,
                 color: "#ef4444",
+                padding: "7px 11px",
               }}
             >
               Resolve Ticket
             </button>
           </>
         )}
-        {/* Knowledge tab */}
+
         {tab === "knowledge" &&
           (!canAccessKb ? (
-            <div style={{ padding: "24px 10px", textAlign: "center" }}>
-              <div style={{ fontSize: 20, marginBottom: 6 }}>🔒</div>
-              <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 4 }}>{rc("kbDenied")}</div>
-            </div>
+            <div style={{ padding: 24, textAlign: "center" }}>{rc("kbDenied")}</div>
           ) : !conv ? (
-            <div style={{ padding: "24px 10px", textAlign: "center", color: "#9ca3af", fontSize: 11.5 }}>
-              {rc("kbNoConv")}
-            </div>
+            <div style={{ padding: 24, textAlign: "center", color: "#9ca3af" }}>{rc("kbNoConv")}</div>
           ) : (
             <>
               <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
@@ -502,76 +532,48 @@ export function CRMPanel({
                   value={kbQuery}
                   onChange={(e) => setKbQuery(e.target.value)}
                   placeholder={rc("kbSearch")}
-                  onKeyDown={(e) => e.key === "Enter" && handleKbKeywordSearch()}
+                  onKeyDown={(e) =>
+                    e.key === "Enter" && kbQuery.trim() && void runKbSearch(kbQuery, ++kbReqIdRef.current)
+                  }
                   style={{
                     flex: 1,
                     fontSize: 11.5,
                     padding: "5px 8px",
                     borderRadius: 6,
                     border: "0.5px solid #e8e6e0",
-                    background: "#fff",
-                    outline: "none",
-                    boxSizing: "border-box",
                   }}
                 />
                 <button
-                  onClick={handleKbKeywordSearch}
                   disabled={kbConnState === "loading" || !kbQuery.trim()}
-                  style={{
-                    ...btnSm,
-                    color: kbConnState === "loading" || !kbQuery.trim() ? "#d1d5db" : "#374151",
-                    cursor: kbConnState === "loading" || !kbQuery.trim() ? "not-allowed" : "pointer",
-                  }}
+                  onClick={() => void runKbSearch(kbQuery, ++kbReqIdRef.current)}
+                  style={btnSm}
                 >
                   {rc("kbSearchBtn")}
                 </button>
                 <button
-                  onClick={handleKbRefresh}
                   disabled={kbConnState === "loading"}
-                  style={{
-                    ...btnSm,
-                    color: kbConnState === "loading" ? "#d1d5db" : "#374151",
-                    cursor: kbConnState === "loading" ? "not-allowed" : "pointer",
+                  onClick={() => {
+                    const q = kbQuery.trim() || boundedContext;
+                    if (q) void runKbSearch(q, ++kbReqIdRef.current);
                   }}
+                  style={btnSm}
                 >
                   ↻
                 </button>
               </div>
               {kbConnState === "loading" && (
-                <div style={{ textAlign: "center", color: "#888", padding: 16, fontSize: 11.5 }}>{rc("kbLoading")}</div>
+                <div style={{ textAlign: "center", color: "#888", padding: 16 }}>{rc("kbLoading")}</div>
               )}
-              {kbConnState !== "loading" && kbError && (
-                <div style={{ color: "#ef4444", padding: "6px 0", fontSize: 11.5 }}>{kbError}</div>
-              )}
+              {kbError && <div style={{ color: "#ef4444", padding: "6px 0" }}>{kbError}</div>}
               {kbConnState === "empty" && !kbError && (
-                <div style={{ padding: "20px 10px", textAlign: "center" }}>
-                  <div style={{ fontSize: 18, marginBottom: 4 }}>📚</div>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>{rc("kbEmpty")}</div>
-                  <div style={{ fontSize: 10.5, color: "#9ca3af", marginTop: 3 }}>{rc("kbEmptySub")}</div>
-                </div>
+                <div style={{ padding: 20, textAlign: "center" }}>{rc("kbEmpty")}</div>
               )}
-              {kbConnState === "idle" && !kbError && (
-                <div style={{ padding: "20px 10px", textAlign: "center", color: "#9ca3af", fontSize: 11.5 }}>
-                  {rc("kbNoConv")}
-                </div>
-              )}
+
               {kbResults.map((r, i) => (
-                <div key={i} style={cardStyle}>
-                  <div
-                    style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginBottom: 3 }}
-                  >
-                    <div style={{ fontWeight: 600, fontSize: 11, color: "#1a1a1a", flex: 1 }}>{r.display_label}</div>
-                    <span
-                      style={{
-                        fontSize: 9,
-                        background: "#ede9fe",
-                        color: "#6366f1",
-                        padding: "1px 5px",
-                        borderRadius: 6,
-                        flexShrink: 0,
-                        marginLeft: 4,
-                      }}
-                    >
+                <div key={`${r.document_id ?? "doc"}-${i}`} style={cardStyle}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+                    <div style={{ fontWeight: 600, fontSize: 11 }}>{r.display_label}</div>
+                    <span style={{ fontSize: 9, color: "#6366f1" }}>
                       {r.chunk_type === "rag_summary"
                         ? "summary"
                         : r.chunk_type === "full_content"
@@ -579,7 +581,7 @@ export function CRMPanel({
                           : r.source_type}
                     </span>
                   </div>
-                  <div style={{ fontSize: 10.5, color: "#555", lineHeight: 1.5, marginBottom: 4 }}>
+                  <div style={{ fontSize: 10.5, color: "#555", lineHeight: 1.5 }}>
                     {r.content.slice(0, 200)}
                     {r.content.length > 200 ? "..." : ""}
                   </div>
@@ -599,10 +601,7 @@ export function CRMPanel({
                           {rc("kbInsert")}
                         </button>
                       ) : r.chunk_type === "rag_summary" ? (
-                        <span
-                          title={rc("kbSummaryOnly")}
-                          style={{ fontSize: 9.5, color: "#9ca3af", fontStyle: "italic" }}
-                        >
+                        <span style={{ fontSize: 9.5, color: "#9ca3af", fontStyle: "italic" }}>
                           {rc("kbSummaryOnly")}
                         </span>
                       ) : null}
@@ -612,123 +611,58 @@ export function CRMPanel({
               ))}
             </>
           ))}
-        {/* Policy tab */}
+
         {tab === "policy" &&
           (!canAccessKb ? (
-            <div style={{ padding: "24px 10px", textAlign: "center" }}>
-              <div style={{ fontSize: 20, marginBottom: 6 }}>🔒</div>
-              <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 4 }}>{rc("polDenied")}</div>
-            </div>
+            <div style={{ padding: 24, textAlign: "center" }}>{rc("polDenied")}</div>
           ) : !conv ? (
-            <div style={{ padding: "24px 10px", textAlign: "center", color: "#9ca3af", fontSize: 11.5 }}>
-              {rc("polNoContent")}
-            </div>
+            <div style={{ padding: 24, textAlign: "center", color: "#9ca3af" }}>{rc("polNoContent")}</div>
           ) : (
             <>
               <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
                 <button
+                  style={{ ...btnSm, background: polMode === "conv" ? "#faf5ff" : "#fff" }}
+                  disabled={polLoading || !boundedContext.trim()}
                   onClick={() => {
                     setPolMode("conv");
-                    if (boundedContext.trim()) {
-                      const rid = ++polReqIdRef.current;
-                      runPolicyCheck(boundedContext, rid);
-                    }
-                  }}
-                  disabled={polLoading || !boundedContext.trim()}
-                  style={{
-                    ...btnSm,
-                    background: polMode === "conv" ? "#faf5ff" : "#fff",
-                    borderColor: polMode === "conv" ? "#8b5cf6" : "#e5e7eb",
-                    color: polLoading || !boundedContext.trim() ? "#d1d5db" : "#374151",
-                    cursor: polLoading || !boundedContext.trim() ? "not-allowed" : "pointer",
+                    if (boundedContext.trim()) void runPolicyCheck(boundedContext, ++polReqIdRef.current);
                   }}
                 >
                   {rc("polCheckConv")}
                 </button>
                 <button
+                  style={{ ...btnSm, background: polMode === "draft" ? "#faf5ff" : "#fff" }}
+                  disabled={polLoading}
                   onClick={() => {
                     setPolMode("draft");
-                    if (!draftText.trim()) {
-                      setPolError(rc("polDraftEmpty"));
-                      return;
-                    }
-                    const rid = ++polReqIdRef.current;
-                    runPolicyCheck(draftText, rid);
-                  }}
-                  disabled={polLoading}
-                  style={{
-                    ...btnSm,
-                    background: polMode === "draft" ? "#faf5ff" : "#fff",
-                    borderColor: polMode === "draft" ? "#8b5cf6" : "#e5e7eb",
-                    color: polLoading ? "#d1d5db" : "#374151",
-                    cursor: polLoading ? "not-allowed" : "pointer",
+                    if (!draftText.trim()) setPolError(rc("polDraftEmpty"));
+                    else void runPolicyCheck(draftText, ++polReqIdRef.current);
                   }}
                 >
                   {rc("polCheckDraft")}
                 </button>
               </div>
-              {polLoading && (
-                <div style={{ textAlign: "center", color: "#888", padding: 16, fontSize: 11.5 }}>
-                  {rc("polLoading")}
-                </div>
-              )}
-              {!polLoading && polError && (
-                <div style={{ color: "#ef4444", padding: "6px 0", fontSize: 11.5 }}>{polError}</div>
-              )}
+              {polLoading && <div style={{ textAlign: "center", color: "#888", padding: 16 }}>{rc("polLoading")}</div>}
+              {polError && <div style={{ color: "#ef4444", padding: "6px 0" }}>{polError}</div>}
               {!polLoading && !polError && !polResult && (
-                <div style={{ padding: "20px 10px", textAlign: "center" }}>
-                  <div style={{ fontSize: 18, marginBottom: 4 }}>📋</div>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>
-                    {lang === "zh" ? "政策檢查" : "Policy Check"}
-                  </div>
-                  <div style={{ fontSize: 10.5, color: "#9ca3af", marginTop: 3 }}>{rc("polNoContent")}</div>
-                </div>
+                <div style={{ padding: 20, textAlign: "center" }}>{rc("polNoContent")}</div>
               )}
               {polResult && (
                 <div>
                   <div
                     style={{
+                      ...cardStyle,
                       background:
                         polResult.status === "compliant"
                           ? "#f0fdf4"
                           : polResult.status === "insufficient_evidence"
                             ? "#f9fafb"
                             : "#fef3c7",
-                      border:
-                        "1px solid " +
-                        (polResult.status === "compliant"
-                          ? "#bbf7d0"
-                          : polResult.status === "insufficient_evidence"
-                            ? "#e5e7eb"
-                            : "#fde68a"),
-                      borderRadius: 6,
-                      padding: "8px 10px",
-                      marginBottom: 6,
                     }}
                   >
-                    <div
-                      style={{
-                        fontWeight: 600,
-                        fontSize: 11,
-                        textTransform: "uppercase",
-                        marginBottom: 3,
-                        color:
-                          polResult.status === "compliant"
-                            ? "#166534"
-                            : polResult.status === "violation"
-                              ? "#991b1b"
-                              : "#92400e",
-                      }}
-                    >
-                      {polResult.status}
-                    </div>
-                    <div style={{ fontSize: 11, lineHeight: 1.5, color: "#374151" }}>{polResult.summary}</div>
+                    <div style={{ fontWeight: 600, fontSize: 11, textTransform: "uppercase" }}>{polResult.status}</div>
+                    <div style={{ fontSize: 11, lineHeight: 1.5 }}>{polResult.summary}</div>
                   </div>
-                  {polResult.status !== "insufficient_evidence" && (
-                    <div style={{ fontSize: 9.5, color: "#888", fontStyle: "italic", marginBottom: 4 }}>
-                      {rc("polSrcNote")}
-                    </div>
-                  )}
                   {polResult.issues.map((iss, i) => (
                     <div
                       key={i}
