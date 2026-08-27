@@ -3394,6 +3394,15 @@ export type Database = {
       }
       claim_pr6b_kb_finalize_tx: { Args: never; Returns: Json }
       claim_pr6b_kb_sync_tx: { Args: never; Returns: Json }
+      commit_ai_reply_tx: {
+        Args: {
+          p_content: string
+          p_conversation_id: string
+          p_metadata?: Json
+          p_source_message_id: string
+        }
+        Returns: Json
+      }
       complete_evaluation: {
         Args: { p_attempt_id: string; p_scores: Json }
         Returns: Json
@@ -3417,6 +3426,16 @@ export type Database = {
           p_details: Json
           p_scores: Json
           p_snapshot: Json
+        }
+        Returns: Json
+      }
+      create_widget_session_tx: {
+        Args: {
+          p_channel_id: string
+          p_page_url: string
+          p_session_token: string
+          p_visitor_fingerprint: string
+          p_visitor_metadata: Json
         }
         Returns: Json
       }
@@ -3539,6 +3558,26 @@ export type Database = {
           p_actor_user_id: string
           p_company_id: string
           p_rebind_run_id: string
+        }
+        Returns: Json
+      }
+      receive_widget_attachment_tx: {
+        Args: {
+          p_content_type: string
+          p_conversation_id: string
+          p_mime_type: string
+          p_original_name: string
+          p_session_token: string
+          p_size_bytes: number
+          p_storage_path: string
+        }
+        Returns: Json
+      }
+      receive_widget_message_tx: {
+        Args: {
+          p_content: string
+          p_conversation_id: string
+          p_session_token: string
         }
         Returns: Json
       }
