@@ -1766,6 +1766,7 @@ export type Database = {
           external_workspace_id: string
           id: string
           is_active: boolean
+          platform_company_id: number
           slug: string
         }
         Insert: {
@@ -1775,6 +1776,7 @@ export type Database = {
           external_workspace_id: string
           id?: string
           is_active?: boolean
+          platform_company_id: number
           slug: string
         }
         Update: {
@@ -1784,6 +1786,7 @@ export type Database = {
           external_workspace_id?: string
           id?: string
           is_active?: boolean
+          platform_company_id?: number
           slug?: string
         }
         Relationships: []
@@ -2713,6 +2716,210 @@ export type Database = {
         }
         Relationships: []
       }
+      pr7_channel_ownership_row: {
+        Row: {
+          assigned_company_id: string
+          channel_id: string
+          previous_company_id: string | null
+          run_id: string
+        }
+        Insert: {
+          assigned_company_id: string
+          channel_id: string
+          previous_company_id?: string | null
+          run_id: string
+        }
+        Update: {
+          assigned_company_id?: string
+          channel_id?: string
+          previous_company_id?: string | null
+          run_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pr7_channel_ownership_row_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "pr7_channel_ownership_run"
+            referencedColumns: ["run_id"]
+          },
+        ]
+      }
+      pr7_channel_ownership_run: {
+        Row: {
+          company_id: string
+          completed_at: string | null
+          rolled_back_at: string | null
+          run_id: string
+          started_at: string
+        }
+        Insert: {
+          company_id: string
+          completed_at?: string | null
+          rolled_back_at?: string | null
+          run_id: string
+          started_at?: string
+        }
+        Update: {
+          company_id?: string
+          completed_at?: string | null
+          rolled_back_at?: string | null
+          run_id?: string
+          started_at?: string
+        }
+        Relationships: []
+      }
+      pr7_company_identity_bootstrap_run: {
+        Row: {
+          company_uuid: string
+          completed_at: string | null
+          created_company: boolean
+          platform_company_id: number
+          rolled_back_at: string | null
+          run_id: string
+          started_at: string
+        }
+        Insert: {
+          company_uuid: string
+          completed_at?: string | null
+          created_company: boolean
+          platform_company_id: number
+          rolled_back_at?: string | null
+          run_id: string
+          started_at?: string
+        }
+        Update: {
+          company_uuid?: string
+          completed_at?: string | null
+          created_company?: boolean
+          platform_company_id?: number
+          rolled_back_at?: string | null
+          run_id?: string
+          started_at?: string
+        }
+        Relationships: []
+      }
+      pr7_conversation_lineage_row: {
+        Row: {
+          assigned_company_id: string
+          lineage_source: string
+          previous_company_id: string | null
+          row_id: string
+          run_id: string
+          table_name: string
+        }
+        Insert: {
+          assigned_company_id: string
+          lineage_source: string
+          previous_company_id?: string | null
+          row_id: string
+          run_id: string
+          table_name: string
+        }
+        Update: {
+          assigned_company_id?: string
+          lineage_source?: string
+          previous_company_id?: string | null
+          row_id?: string
+          run_id?: string
+          table_name?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pr7_conversation_lineage_row_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "pr7_conversation_lineage_run"
+            referencedColumns: ["run_id"]
+          },
+        ]
+      }
+      pr7_conversation_lineage_run: {
+        Row: {
+          company_id: string
+          completed_at: string | null
+          rolled_back_at: string | null
+          run_id: string
+          started_at: string
+        }
+        Insert: {
+          company_id: string
+          completed_at?: string | null
+          rolled_back_at?: string | null
+          run_id: string
+          started_at?: string
+        }
+        Update: {
+          company_id?: string
+          completed_at?: string | null
+          rolled_back_at?: string | null
+          run_id?: string
+          started_at?: string
+        }
+        Relationships: []
+      }
+      pr7_membership_bootstrap_row: {
+        Row: {
+          company_id: string
+          created_by_run: boolean
+          is_active: boolean
+          membership_id: string
+          role: Database["public"]["Enums"]["app_role"]
+          run_id: string
+          user_id: string
+        }
+        Insert: {
+          company_id: string
+          created_by_run: boolean
+          is_active: boolean
+          membership_id: string
+          role: Database["public"]["Enums"]["app_role"]
+          run_id: string
+          user_id: string
+        }
+        Update: {
+          company_id?: string
+          created_by_run?: boolean
+          is_active?: boolean
+          membership_id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          run_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pr7_membership_bootstrap_row_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "pr7_membership_bootstrap_run"
+            referencedColumns: ["run_id"]
+          },
+        ]
+      }
+      pr7_membership_bootstrap_run: {
+        Row: {
+          company_id: string
+          completed_at: string | null
+          rolled_back_at: string | null
+          run_id: string
+          started_at: string
+        }
+        Insert: {
+          company_id: string
+          completed_at?: string | null
+          rolled_back_at?: string | null
+          run_id: string
+          started_at?: string
+        }
+        Update: {
+          company_id?: string
+          completed_at?: string | null
+          rolled_back_at?: string | null
+          run_id?: string
+          started_at?: string
+        }
+        Relationships: []
+      }
       rag_trace: {
         Row: {
           conversation_id: string | null
@@ -3185,6 +3392,8 @@ export type Database = {
         Args: { p_conv_id: string }
         Returns: undefined
       }
+      claim_pr6b_kb_finalize_tx: { Args: never; Returns: Json }
+      claim_pr6b_kb_sync_tx: { Args: never; Returns: Json }
       complete_evaluation: {
         Args: { p_attempt_id: string; p_scores: Json }
         Returns: Json
@@ -3227,7 +3436,24 @@ export type Database = {
         Args: { p_attempt_id: string; p_error: string }
         Returns: Json
       }
+      finalize_local_evaluation_tenant_scope_v1: {
+        Args: { p_actor_user_id: string; p_company_id: string }
+        Returns: Json
+      }
       find_auth_user_by_email: { Args: { p_email: string }; Returns: Json }
+      finish_pr6b_kb_finalize_tx: {
+        Args: { p_error: string; p_outcome: string; p_publish_state_id: string }
+        Returns: Json
+      }
+      finish_pr6b_kb_sync_tx: {
+        Args: {
+          p_error: string
+          p_remote_ref: string
+          p_success: boolean
+          p_training_link_id: string
+        }
+        Returns: Json
+      }
       has_company_role: {
         Args: {
           p_company_id: string
@@ -3300,8 +3526,32 @@ export type Database = {
         }
         Returns: Json
       }
+      pr7_ce_canonical_company: {
+        Args: { p_conversation_id: string }
+        Returns: string
+      }
       reap_stale_evaluation_attempts: {
         Args: { p_older_than?: string }
+        Returns: Json
+      }
+      rebind_local_evaluations_v1: {
+        Args: {
+          p_actor_user_id: string
+          p_company_id: string
+          p_rebind_run_id: string
+        }
+        Returns: Json
+      }
+      record_coachai_training_result_tx: {
+        Args: {
+          p_company_id: string
+          p_contract_version: string
+          p_decision: string
+          p_evaluation_id: string
+          p_idempotency_key: string
+          p_remote_ref: string
+          p_result: Json
+        }
         Returns: Json
       }
       required_escalation_clarification_tx: {
