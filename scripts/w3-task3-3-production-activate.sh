@@ -59,6 +59,11 @@ bash scripts/w2-task2-2-final-gate.sh
 export W3_DEV_FIXTURE_WRITE_AUTHORIZED=YES
 bash scripts/w3-task3-2-dev-tenant-b-fixture-bootstrap.sh
 
+# Task 2.1 Product-ready fixed-identity coexistence proof.
+# Dynamic platform identity remains second-stage work; Product Ready only requires
+# the two configured DEV identities to coexist without collision or tenant drift.
+bash scripts/w2-task2-1-two-tenant-identity-runtime-gate.sh
+
 # 2.3 — learning loop activation + Lovable-native deploy confirmation + runtime.
 export W2_T2_3_PRODUCTION_AUTHORIZED=YES
 export W2_T2_3_RUN_PRODUCTION=true
