@@ -65,9 +65,15 @@ bash scripts/w3-task3-2-dev-tenant-b-fixture-bootstrap.sh
 bash scripts/w2-task2-1-two-tenant-identity-runtime-gate.sh
 
 # 2.3 — learning loop activation + Lovable-native deploy confirmation + runtime.
+# Reuse the exact canonical CE artifact created/verified by Task 2.2 for Tenant A.
+# The evaluation_id is auto-discovered from this conversation and must be unique.
 export W2_T2_3_PRODUCTION_AUTHORIZED=YES
 export W2_T2_3_RUN_PRODUCTION=true
 export W2_T2_3_PROJECT_REF="$W3_T3_3_PROJECT_REF"
+export W2_T2_3_FIXTURE_APPROVED=YES
+export W2_T2_3_CONVERSATION_ID="${PR10_TENANT_A_CONVERSATION_UUID}"
+export W2_T2_3_REVIEW_BEARER_TOKEN="${PR10_TENANT_A_BEARER_TOKEN}"
+unset W2_T2_3_EVALUATION_ID
 bash scripts/w2-task2-3-final-gate.sh
 
 # W1 Task 1.2 is a real runtime gate, not a source-only gate. It reuses the

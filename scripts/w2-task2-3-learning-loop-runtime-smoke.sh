@@ -17,8 +17,21 @@ pass(){ echo "PASS $1"; }
 [ "$PROJECT_REF" = "$EXPECTED_REF" ] || stop "project ref mismatch"
 [ "$APPROVED" = "YES" ] || stop "approved canonical training fixture required"
 [ -n "$DB" ] || stop "SUPABASE_DB_URL missing"
-[[ "$EVAL" =~ ^[0-9a-fA-F-]{36}$ ]] || stop "evaluation id invalid"
 [[ "$CONV" =~ ^[0-9a-fA-F-]{36}$ ]] || stop "conversation id invalid"
+if [ -n "$EVAL" ]; then
+  [[ "$EVAL" =~ ^[0-9a-fA-F-]{36}$ ]] || stop "evaluation id invalid"
+else
+  DISCOVERED="$(psql "$DB" -v ON_ERROR_STOP=1 -AtF '|' -v cid="$CONV" <<'SQL'
+SELECT count(*),coalesce(min(id)::text,'')
+FROM public.conversation_evaluation
+WHERE conversation_id=:'cid'::uuid;
+SQL
+)"
+  IFS='|' read -r EVAL_COUNT EVAL <<<"$DISCOVERED"
+  [ "$EVAL_COUNT" = "1" ] || stop "expected exactly one canonical evaluation for runtime fixture conversation; got $EVAL_COUNT"
+  [[ "$EVAL" =~ ^[0-9a-fA-F-]{36}$ ]] || stop "discovered evaluation id invalid"
+  pass "canonical evaluation id auto-discovered from runtime fixture conversation"
+fi
 [ ${#BEARER} -ge 20 ] || stop "review bearer missing"
 [ ${#WORKER_TOKEN} -ge 24 ] || stop "training outbox token missing"
 [ ${#SYNC_TOKEN} -ge 24 ] || stop "training KB sync token missing"
@@ -38,7 +51,13 @@ IFS='|' read -r RID RCID COMPANY ELIGIBLE REVIEW OUTBOX IDEM <<<"$PRE"
 [ "$ELIGIBLE" = "true" ] || stop "fixture not training_eligible"
 [ "$OUTBOX" = "1" ] || stop "expected exactly one canonical outbox"
 [ "$IDEM" = "$EVAL" ] || stop "delivery idempotency key mismatch"
-pass "canonical CE training fixture"
+case "$REVIEW" in
+  pending|needs_review|review_pending|"") ;;
+  accepted) stop "runtime fixture already accepted; use a fresh canonical evaluation" ;;
+  rejected|reopened) stop "runtime fixture is not in an acceptable pre-review state: $REVIEW" ;;
+  *) stop "unexpected runtime fixture review_status: $REVIEW" ;;
+esac
+pass "fresh canonical CE training fixture"
 
 TMP="$(mktemp)"
 trap 'rm -f "$TMP"' EXIT
