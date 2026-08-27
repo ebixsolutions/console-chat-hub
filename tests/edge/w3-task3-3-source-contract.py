@@ -43,11 +43,34 @@ assert t21 < t22 < tb < t23 < t12 < t13
 assert 'w1-task1-2-kb-contract-final-gate.sh' in f
 assert 'w1-task1-3-final-gate.sh' in f
 
-assert 'widget-live-ai-test' in s
-assert 'training-kb-finalize' in s
+# Whole-product smoke must not regress to user-managed Supabase PAT tooling.
+assert 'npx supabase functions list' not in s
+assert 'SUPABASE_ACCESS_TOKEN missing' not in s
+assert 'SUPABASE_ACCESS_TOKEN is ignored' in s
+assert 'W2_T2_3_LOVABLE_NATIVE_DEPLOY_CONFIRMED' in s
+
+# Runtime proof must include linked Supabase health and critical deployed endpoints.
 assert 'health-check' in s
+for fn in [
+    'generate-reply',
+    'conversation-evaluate',
+    'training-outbox-worker',
+    'training-result-receiver',
+    'training-kb-sync',
+    'training-kb-finalize',
+    'widget-live-ai-test',
+]:
+    assert fn in s
+assert 'runtime function reachable' in s
+assert '404|000' in s
+
+# Product-ready source gates must remain included in the whole-product check.
 assert 'w3-task3-1-product-surface-final-gate.sh' in s
+assert 'w1-task1-2-product-ready-runtime-closure-contract.py' in s
+assert 'w1-task1-3-runtime-source-contract.py' in s
+assert 'w2-task2-3-source-contract.py' in s
+
 assert 'w3-task3-3-production-activate.sh' in f
 assert 'w3-task3-3-whole-product-smoke.sh' in f
 
-print('PASS W3 Task 3.3 Product-ready W1 runtime binding source contract')
+print('PASS W3 Task 3.3 no-PAT whole-product smoke source contract')
