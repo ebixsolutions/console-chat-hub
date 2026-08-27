@@ -71,11 +71,15 @@ export W2_T2_3_PRODUCTION_AUTHORIZED=YES
 export W2_T2_3_RUN_PRODUCTION=true
 export W2_T2_3_PROJECT_REF="$W3_T3_3_PROJECT_REF"
 export W2_T2_3_FIXTURE_APPROVED=YES
+export W2_T2_3_REQUIRE_KB_WRITE=YES
 export W2_T2_3_CONVERSATION_ID="${PR10_TENANT_A_CONVERSATION_UUID}"
 export W2_T2_3_REVIEW_BEARER_TOKEN="${PR10_TENANT_A_BEARER_TOKEN}"
 unset W2_T2_3_EVALUATION_ID
 bash scripts/w2-task2-3-final-gate.sh
 
+# Same-process machine proof: Task 2.3 can return PASS in this mode only after
+# governed KB write + publish + NEW-content RAG verification succeeds.
+export W1_T1_2_WRITE_PROOF_CONFIRMED=YES
 export W1_T1_2_RUN_PRODUCTION=true
 bash scripts/w1-task1-2-kb-contract-final-gate.sh
 

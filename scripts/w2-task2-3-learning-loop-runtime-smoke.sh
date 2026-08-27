@@ -10,6 +10,7 @@ WORKER_TOKEN="${TRAINING_OUTBOX_INTERNAL_TOKEN:-}"
 SYNC_TOKEN="${TRAINING_KB_SYNC_INTERNAL_TOKEN:-}"
 WAIT="${W2_T2_3_WAIT_SECONDS:-180}"
 APPROVED="${W2_T2_3_FIXTURE_APPROVED:-}"
+REQUIRE_KB_WRITE="${W2_T2_3_REQUIRE_KB_WRITE:-NO}"
 stop(){ echo "STOP: $1" >&2; exit 2; }
 fail(){ echo "FAIL: $1" >&2; exit 1; }
 pass(){ echo "PASS $1"; }
@@ -138,6 +139,10 @@ SQL
 IFS='|' read -r LC IMPROVED DECISION <<<"$LINK_FINAL"
 [ "$LC" = "1" ] && [ "$IMPROVED" = "received" ] || stop "SU CoachAI result callback not observed"
 
+if [ "$REQUIRE_KB_WRITE" = "YES" ] && [ "$DECISION" != "trained" ]; then
+  fail "Product-ready learning fixture did not produce decision=trained; governed KB write path was not proven"
+fi
+
 if [ "$DECISION" = "trained" ]; then
   KB_CONTRACT="$(psql "$DB" -v ON_ERROR_STOP=1 -AtF '|' -v eid="$EVAL" <<'SQL'
 SELECT
@@ -151,6 +156,10 @@ WHERE evaluation_id=:'eid'::uuid AND link_kind='training_candidate';
 SQL
 )"
   IFS='|' read -r HAS_KB AP_STATUS AP_SOURCE AP_BY AP_AT <<<"$KB_CONTRACT"
+
+  if [ "$REQUIRE_KB_WRITE" = "YES" ] && [ "$HAS_KB" != "yes" ]; then
+    fail "decision=trained did not include kb_update; governed KB write path was not proven"
+  fi
 
   if [ "$HAS_KB" = "yes" ]; then
     [ "$AP_STATUS" = "approved" ] || stop "trained KB update lacks verified approval status"
@@ -220,5 +229,8 @@ SQL
   fi
 fi
 
+if [ "$REQUIRE_KB_WRITE" = "YES" ]; then
+  fail "governed KB write/publish/new-content RAG proof did not complete"
+fi
 pass "training decision requires no KB publish continuation"
 echo "W2 TASK 2.3 LEARNING LOOP RUNTIME STATUS: PASS"

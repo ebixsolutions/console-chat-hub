@@ -4,6 +4,7 @@ ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd)}"
 cd "$ROOT"
 
 python3 tests/edge/w3-task3-3-source-contract.py "$ROOT"
+python3 tests/edge/w3-task3-3-consolidated-closure-contract.py "$ROOT"
 
 for f in \
   scripts/w2-task2-1-final-gate.sh \

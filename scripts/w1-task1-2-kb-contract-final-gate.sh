@@ -19,7 +19,6 @@ do
   test -s "$f" || { echo "FAIL missing/empty required W1 Task1.2 file: $f" >&2; exit 1; }
 done
 
-# No old finalizer RAG contract or direct Bearer-only writer is allowed.
 ! grep -q 'rag\.has_context' supabase/functions/training-kb-finalize/index.ts
 ! grep -q 'rag\.documents' supabase/functions/training-kb-finalize/index.ts
 ! grep -q 'max_summary:' supabase/functions/training-kb-finalize/index.ts
@@ -40,12 +39,12 @@ if [ "${W1_T1_2_RUN_PRODUCTION:-false}" != "true" ]; then
   exit 2
 fi
 
-# READ proof: canonical tenant-bound Singapore KB auth + current RAG contract.
 bash scripts/pr9-singapore-kb-authenticated-runtime-smoke.sh
+[ "${W1_T1_2_WRITE_PROOF_CONFIRMED:-}" = "YES" ] || {
+  echo "STOP: governed KB write/publish/new-content RAG proof was not completed earlier in this activation run" >&2
+  exit 2
+}
 
-# WRITE proof: do not invent a synthetic writer smoke. Reuse the canonical
-# learning-loop runtime which performs the actual governed write, publish and
-# NEW-content RAG read-back with approval, tenant, idempotency and hash guards.
-bash scripts/w2-task2-3-learning-loop-runtime-smoke.sh
+echo "PASS governed KB write/publish/new-content RAG proof already completed by Task 2.3"
 
 echo "W1 TASK 1.2 FINAL STATUS: READY"

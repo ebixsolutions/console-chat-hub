@@ -90,6 +90,8 @@ bash scripts/w3-task3-1-product-surface-final-gate.sh "$(pwd)"
 python3 tests/edge/w1-task1-2-product-ready-runtime-closure-contract.py "$(pwd)"
 python3 tests/edge/w1-task1-3-runtime-source-contract.py "$(pwd)"
 python3 tests/edge/w2-task2-3-source-contract.py "$(pwd)"
+python3 tests/edge/product-ready-t2-3-write-proof-chain-contract.py "$(pwd)"
+python3 tests/edge/w3-task3-3-consolidated-closure-contract.py "$(pwd)"
 pass "product-ready source/runtime contracts remain locked"
 
 echo "W3 TASK 3.3 WHOLE-PRODUCT SMOKE STATUS: PASS"
