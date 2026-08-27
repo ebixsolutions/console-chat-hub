@@ -1,14 +1,20 @@
 /**
  * PR-6B — SU CoachAI improved result -> Singapore KB publish saga.
  *
- * Canonical write sources:
- *   GET/PATCH /api/entities/KBDocument/{id}
- *   POST      /api/entities/KBDocumentVersion
- *   POST      /api/functions/kbPublishStart
+ * PRODUCT-READY LEARNING SAFETY:
+ * A "trained" decision alone is NOT permission to mutate the production KB.
+ * Production KB sync additionally requires an explicit verified correction
+ * approval embedded in improved_result.kb_update.approval.
  *
- * No company/tenant is accepted from caller input. The claimed AI company UUID
- * is mapped server-side to Singapore scope. All Singapore credentials are
- * resolved by the shared kb-auth helper.
+ * Required approval contract:
+ * {
+ *   status: "approved",
+ *   source: "su_coachai_verified_correction",
+ *   approved_by: <non-empty opaque actor id>,
+ *   approved_at: <ISO timestamp>
+ * }
+ *
+ * Tenant and document identity remain server-derived and content-hash guarded.
  */
 import { createClient } from "npm:@supabase/supabase-js@2.45.0";
 import {
@@ -17,13 +23,11 @@ import {
   type KBCredentialConfig,
   type KBCredentialScope,
 } from "../_shared/kb-auth.ts";
-import {
-  parseStringMap,
-  resolveKBEndpoint,
-} from "../_shared/kb-client.ts";
+import { parseStringMap, resolveKBEndpoint } from "../_shared/kb-client.ts";
 
-const WORKER_CONTRACT = "PR6B_SINGAPORE_KB_SYNC_V2";
+const WORKER_CONTRACT = "PR6B_SINGAPORE_KB_SYNC_V3";
 const MAX_CONTENT_BYTES = 512 * 1024;
+const APPROVAL_SOURCE = "su_coachai_verified_correction";
 
 function response(body: Record<string, unknown>, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -49,6 +53,29 @@ function nextMinor(current: string): string | null {
   if (!/^\d+\.\d+$/.test(current)) return null;
   const [maj, min] = current.split(".").map(Number);
   return `${maj}.${min + 1}`;
+}
+function validIsoTimestamp(value: string): boolean {
+  if (!value) return false;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms);
+}
+function approvedKbUpdate(kb: Record<string, unknown>): boolean {
+  const approval =
+    kb.approval && typeof kb.approval === "object" && !Array.isArray(kb.approval)
+      ? kb.approval as Record<string, unknown>
+      : null;
+  if (!approval) return false;
+
+  const approvedBy = text(approval.approved_by);
+  const approvedAt = text(approval.approved_at);
+
+  return (
+    text(approval.status) === "approved" &&
+    text(approval.source) === APPROVAL_SOURCE &&
+    approvedBy.length > 0 &&
+    approvedBy.length <= 200 &&
+    validIsoTimestamp(approvedAt)
+  );
 }
 
 function credentialConfig(): KBCredentialConfig | null {
@@ -91,6 +118,7 @@ async function kbFetch(
 
 Deno.serve(async (req) => {
   if (req.method !== "POST") return response({ ok: false, error: "method_not_allowed" }, 405);
+
   const expected = text(Deno.env.get("TRAINING_KB_SYNC_INTERNAL_TOKEN"));
   const actual = text(req.headers.get("X-Training-KB-Sync-Token"));
   if (!expected || !actual || !constantTimeEqual(expected, actual)) {
@@ -105,10 +133,11 @@ Deno.serve(async (req) => {
   if (!supabaseUrl || !serviceRole || !endpoint || !authCfg || !tenantMap) {
     return response({ ok: false, error: "runtime_config_missing" }, 503);
   }
-  const admin = createClient(supabaseUrl, serviceRole);
 
+  const admin = createClient(supabaseUrl, serviceRole);
   const { data: claim, error: claimErr } = await admin.rpc("claim_pr6b_kb_sync_tx", {});
   if (claimErr) return response({ ok: false, error: "claim_failed" }, 500);
+
   const c = claim as Record<string, unknown> | null;
   if (!c || c.result === "none") {
     return response({ ok: true, contract: WORKER_CONTRACT, processed: 0 });
@@ -127,7 +156,7 @@ Deno.serve(async (req) => {
   const expectedHash = text(kb.expected_content_hash);
   const newContent = typeof kb.new_raw_content === "string" ? kb.new_raw_content : "";
   const verificationQuery = text(kb.verification_query);
-  const changeSummary = text(kb.change_summary) || `SU CoachAI training merge ${evaluationId}`;
+  const changeSummary = text(kb.change_summary) || `SU CoachAI verified correction ${evaluationId}`;
 
   async function fail(code: string, remoteRef: string | null = null) {
     await admin.rpc("finish_pr6b_kb_sync_tx", {
@@ -140,20 +169,28 @@ Deno.serve(async (req) => {
   }
 
   if (decision !== "trained") return fail("training_decision_not_trained");
+
+  // Defense in depth: SQL claim filters approval, and worker verifies again
+  // before the first Singapore KB mutation.
+  if (!approvedKbUpdate(kb)) return fail("kb_update_not_verified_approved");
+
   if (
     !documentId || !/^[0-9a-fA-F-]{8,64}$/.test(documentId) ||
     !/^[0-9a-f]{64}$/i.test(expectedHash)
   ) return fail("kb_update_contract_invalid");
+
   if (
     !newContent.trim() ||
     new TextEncoder().encode(newContent).byteLength > MAX_CONTENT_BYTES
   ) return fail("kb_update_content_invalid");
+
   if (!verificationQuery || verificationQuery.length > 500) {
     return fail("kb_verification_query_invalid");
   }
 
   const tenantId = tenantMap[companyId];
   if (!tenantId) return fail("kb_tenant_mapping_unresolved");
+
   const scope: KBCredentialScope = {
     mode: "canonical",
     aiCompanyId: companyId,
@@ -173,16 +210,26 @@ Deno.serve(async (req) => {
   } catch {
     return fail("kb_unreachable");
   }
+
   if (!docResp.ok) return fail(`kb_document_http_${docResp.status}`);
   const doc = await docResp.json() as Record<string, unknown>;
+
+  // Tenant isolation is enforced twice: credential scope and returned document.
+  if (String(doc.company_id ?? "") !== String(tenantId)) {
+    return fail("kb_document_tenant_mismatch");
+  }
+
   const currentHash = text(doc.content_hash);
   if (currentHash !== expectedHash) return fail("kb_expected_content_hash_mismatch");
+
   const currentVersion = text(doc.version) || "1.0";
   const nextVersion = nextMinor(currentVersion);
   if (!nextVersion) return fail("kb_version_invalid");
+
   const newHash = await sha256Hex(newContent);
   if (newHash === expectedHash) return fail("kb_update_no_change");
 
+  const approval = kb.approval as Record<string, unknown>;
   const snapshotId = `aitr_${(await sha256Hex(evaluationId + ":" + documentId)).slice(0, 40)}`;
   const snapshotBody = {
     id: snapshotId,
@@ -195,7 +242,10 @@ Deno.serve(async (req) => {
     content_hash: expectedHash,
     changed_by_app: "ai_training",
     related_training_case_id: evaluationId,
-    review_status: "pending",
+    review_status: "approved",
+    approval_source: APPROVAL_SOURCE,
+    approved_by: text(approval.approved_by),
+    approved_at: text(approval.approved_at),
     vector_status: "not_generated",
     company_id: doc.company_id,
   };
@@ -204,9 +254,11 @@ Deno.serve(async (req) => {
     method: "POST",
     body: JSON.stringify(snapshotBody),
   });
+
   if (!snap.ok && snap.status !== 409 && snap.status !== 422) {
     return fail(`kb_version_snapshot_http_${snap.status}`);
   }
+
   if (!snap.ok) {
     const existing = await kbFetch(
       endpoint.baseUrl,
@@ -219,7 +271,9 @@ Deno.serve(async (req) => {
     if (
       text(ev.document_id) !== documentId ||
       text(ev.related_training_case_id) !== evaluationId ||
-      text(ev.content_hash) !== expectedHash
+      text(ev.content_hash) !== expectedHash ||
+      text(ev.review_status) !== "approved" ||
+      text(ev.approval_source) !== APPROVAL_SOURCE
     ) return fail("kb_version_snapshot_conflict");
   }
 
@@ -232,6 +286,7 @@ Deno.serve(async (req) => {
     production_vector_status: "not_indexed",
     staging_vector_status: "not_indexed",
   };
+
   const patch = await kbFetch(
     endpoint.baseUrl,
     `/api/entities/KBDocument/${encodeURIComponent(documentId)}`,
@@ -240,6 +295,7 @@ Deno.serve(async (req) => {
     { method: "PATCH", body: JSON.stringify(patchBody) },
   );
   if (!patch.ok) return fail(`kb_document_patch_http_${patch.status}`);
+
   const patched = await patch.json() as Record<string, unknown>;
   if (text(patched.content_hash) !== newHash || text(patched.version) !== nextVersion) {
     return fail("kb_document_patch_verify_failed");
@@ -251,9 +307,16 @@ Deno.serve(async (req) => {
     "/api/functions/kbPublishStart",
     credential,
     authCfg,
-    { method: "POST", body: JSON.stringify({ document_ids: [documentId], idempotency_key: idem }) },
+    {
+      method: "POST",
+      body: JSON.stringify({
+        document_ids: [documentId],
+        idempotency_key: idem,
+      }),
+    },
   );
   if (!start.ok) return fail(`kb_publish_start_http_${start.status}`);
+
   const startJson = await start.json() as Record<string, unknown>;
   const operation = (startJson.operation || {}) as Record<string, unknown>;
   const operationId = text(operation.id);
@@ -265,6 +328,7 @@ Deno.serve(async (req) => {
     p_remote_ref: operationId,
     p_error: null,
   });
+
   return response({
     ok: true,
     contract: WORKER_CONTRACT,
@@ -273,5 +337,9 @@ Deno.serve(async (req) => {
     document_id: documentId,
     operation_id: operationId,
     state: "publish_started",
+    approval: {
+      status: "approved",
+      source: APPROVAL_SOURCE,
+    },
   });
 });
