@@ -15,7 +15,14 @@ source "$CFG"
 [ -z "$(git -C "$REPO" status --porcelain)" ] || stop "working tree must be clean"
 
 cd "$REPO"
+
+# CRITICAL PRE-MUTATION PREFLIGHT:
+# load/validate every external runtime dependency, including explicit
+# Lovable-native Edge deployment confirmation, BEFORE Task2.1/2.2 or any other
+# DB/bootstrap mutation begins.
 source scripts/w3-task3-3-runtime-inputs-load.sh
+[ "${W2_T2_3_LOVABLE_NATIVE_DEPLOY_CONFIRMED:-}" = "YES" ] \
+  || stop "Lovable-native Supabase Edge deployment not confirmed before activation"
 
 # Product-ready runtime aliases are derived from the frozen DEV config/runtime
 # inputs. These are not second-stage dynamic identity bindings.
@@ -27,8 +34,6 @@ export W1_SMOKE_USER_JWT="${PR10_TENANT_A_BEARER_TOKEN}"
 export W1_KB_SMOKE_QUERY="${PR10_KB_TENANT_A_QUERY}"
 export W1_SMOKE_AGENT_PROFILE_ID="${PR10_TENANT_A_AGENT_PROFILE_UUID}"
 
-# Deliberately synthetic no-context probes. They are test messages only and are
-# excluded from training by widget-live-ai-test. They must be genuinely distinct.
 export W1_NO_CONTEXT_QUERY="${W1_NO_CONTEXT_QUERY:-runtime-smoke-unknown-alpha-7f3a91}"
 export W1_NO_CONTEXT_QUERY_ALT="${W1_NO_CONTEXT_QUERY_ALT:-runtime-smoke-unknown-beta-4c82de}"
 
@@ -40,12 +45,10 @@ bash scripts/pr10-cross-tenant-mutation-write-source-gate.sh
 bash scripts/pr7-production-atomic-rollback-source-gate.sh
 npm run build
 
-# 2.1 — canonical DEV identity activation.
 export W2_T2_1_PRODUCTION_AUTHORIZED=YES
 export W2_T2_1_RUN_PRODUCTION=true
 bash scripts/w2-task2-1-final-gate.sh
 
-# 2.2 — canonical CE activation + real multi-agent runtime proof.
 export W2_T2_2_PRODUCTION_AUTHORIZED=YES
 export W2_T2_2_RUN_PRODUCTION=true
 export PR7_PROJECT_REF="$W3_T3_3_PROJECT_REF"
@@ -54,19 +57,11 @@ export PR8_CE_SMOKE_CONVERSATION_ID="${PR10_TENANT_A_CONVERSATION_UUID}"
 export PR8_CE_SMOKE_BEARER_TOKEN="${PR10_TENANT_A_BEARER_TOKEN}"
 bash scripts/w2-task2-2-final-gate.sh
 
-# Only after the legacy single-company canonicalization is complete do we add
-# the second DEV tenant fixture.
 export W3_DEV_FIXTURE_WRITE_AUTHORIZED=YES
 bash scripts/w3-task3-2-dev-tenant-b-fixture-bootstrap.sh
 
-# Task 2.1 Product-ready fixed-identity coexistence proof.
-# Dynamic platform identity remains second-stage work; Product Ready only requires
-# the two configured DEV identities to coexist without collision or tenant drift.
 bash scripts/w2-task2-1-two-tenant-identity-runtime-gate.sh
 
-# 2.3 — learning loop activation + Lovable-native deploy confirmation + runtime.
-# Reuse the exact canonical CE artifact created/verified by Task 2.2 for Tenant A.
-# The evaluation_id is auto-discovered from this conversation and must be unique.
 export W2_T2_3_PRODUCTION_AUTHORIZED=YES
 export W2_T2_3_RUN_PRODUCTION=true
 export W2_T2_3_PROJECT_REF="$W3_T3_3_PROJECT_REF"
@@ -76,12 +71,9 @@ export W2_T2_3_REVIEW_BEARER_TOKEN="${PR10_TENANT_A_BEARER_TOKEN}"
 unset W2_T2_3_EVALUATION_ID
 bash scripts/w2-task2-3-final-gate.sh
 
-# W1 Task 1.2 is a real runtime gate, not a source-only gate. It reuses the
-# canonical Task2.3 write/publish/read-back path after 2.3 has been activated.
 export W1_T1_2_RUN_PRODUCTION=true
 bash scripts/w1-task1-2-kb-contract-final-gate.sh
 
-# W1 Task 1.3 — full widget conversational runtime smoke.
 export W1_RUN_PRODUCTION_SMOKE=true
 bash scripts/w1-task1-3-final-gate.sh
 
