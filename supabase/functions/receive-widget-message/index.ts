@@ -1,6 +1,10 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { corsHeaders, json } from "../_shared/cors.ts";
 import { validateWidgetOrigin } from "../_shared/widget-origin.ts";
+import {
+  classifyConversationalRoute,
+  NOISE_CLARIFICATION,
+} from "../_shared/conversational-routing.ts";
 
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 const ALLOWED_ATTACHMENT_MIME = new Set([
@@ -178,12 +182,70 @@ Deno.serve(async (req) => {
       });
     }
 
+    const route = classifyConversationalRoute(normalizedContent);
+
+    // Noise-only / emoji-only input is not a KB failure and is not an escalation
+    // signal. Persist one natural clarification through the same atomic AI reply
+    // control gate, so human-control / resolved / superseded races remain safe.
+    if (route.kind === "clarify") {
+      const { data:commitData,error:commitError } = await supabase.rpc("commit_ai_reply_tx",{
+        p_conversation_id:conversation_id,
+        p_source_message_id:messageId,
+        p_content:NOISE_CLARIFICATION[route.language],
+        p_metadata:{
+          response_route:"conversational_clarification",
+          kb_lookup:false,
+          handoff_required:false,
+          classifier_reason:route.reason,
+        },
+      });
+
+      if (commitError) {
+        console.error("[receive-widget-message] conversational clarification commit failed",commitError.code);
+        return json({ success:false,error:"conversational_clarification_commit_failed" },500);
+      }
+
+      const commitResult=String(commitData?.result ?? "unexpected_result");
+      if (commitResult === "success" || commitResult === "idempotent") {
+        return json({
+          success:true,
+          data:{
+            message_id:messageId,
+            ai_reply_pending:false,
+            control_state:"ai",
+            response_route:"conversational_clarification",
+          },
+        });
+      }
+      if (commitResult === "human_control") {
+        return json({
+          success:true,
+          data:{message_id:messageId,ai_reply_pending:false,control_state:"human_control"},
+        });
+      }
+      if (commitResult === "resolved" || commitResult === "superseded_source") {
+        return json({
+          success:true,
+          data:{message_id:messageId,ai_reply_pending:false,control_state:commitResult},
+        });
+      }
+      return json({ success:false,error:`conversational_clarification_${commitResult}` },409);
+    }
+
+    // Greetings / thanks / acknowledgements continue to generate-reply, whose
+    // product-ready orchestration skips KB for these conversational turns.
+    // Normal semantic text follows the same canonical path and remains eligible
+    // for KB grounding and escalation rules.
     const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
     const generateReplyTask = fetch(`${supabaseUrl}/functions/v1/generate-reply`,{
       method:"POST",
       headers:{Authorization:`Bearer ${serviceKey}`,"Content-Type":"application/json"},
-      body:JSON.stringify({conversation_id,source_message_id:messageId}),
+      body:JSON.stringify({
+        conversation_id,
+        source_message_id:messageId,
+        ...(route.kind === "conversational" ? { conversational_route:route.subtype } : {}),
+      }),
     })
       .then((response) => {
         if (!response.ok) console.error("[receive-widget-message] generate-reply returned non-success",response.status);
@@ -194,7 +256,12 @@ Deno.serve(async (req) => {
 
     return json({
       success:true,
-      data:{message_id:messageId,ai_reply_pending:true,control_state:"ai"},
+      data:{
+        message_id:messageId,
+        ai_reply_pending:true,
+        control_state:"ai",
+        response_route:route.kind === "conversational" ? route.subtype : "normal",
+      },
     });
   } catch (e) {
     console.error("[receive-widget-message] unexpected",(e as Error).name);
