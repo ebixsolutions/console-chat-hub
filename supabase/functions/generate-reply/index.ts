@@ -18,7 +18,7 @@
 //   Pre-checks confirmed: status='pending' valid; is_recalled exists; DELETE pattern used.
 //   Authorized by: Director Charlson.
 
-import { resolveKBEndpoint, resolveTenantScope, fetchKBRag, type KBFullChunk, type KBResolvedScope } from "../_shared/kb-client.ts";
+import { resolveKBEndpoint, resolveTenantScope, fetchKBRag, type KBFullChunk, type KBResolvedScope, type KBPreActivationActor } from "../_shared/kb-client.ts";
 import { evaluateEscalationShadow } from "../_shared/escalation-shadow.ts";
 import {
   persistRequiredEscalationClarification,
@@ -242,6 +242,26 @@ async function loadSourceVisitorMessage(
       content: data.content,
       created_at: data.created_at,
     },
+  };
+}
+
+function widgetLiveTestPreActivationActor(
+  metadataSource: unknown,
+): KBPreActivationActor | undefined {
+  if (!metadataSource || typeof metadataSource !== "object" || Array.isArray(metadataSource)) {
+    return undefined;
+  }
+  const m = metadataSource as Record<string, unknown>;
+  if (
+    m.widget_live_test !== true ||
+    m.exclude_training !== true ||
+    typeof m.owner_user_id !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(m.owner_user_id)
+  ) return undefined;
+
+  return {
+    userId: m.owner_user_id,
+    allowPreActivation: true,
   };
 }
 
@@ -479,15 +499,68 @@ async function loadAuthoritativeR3SentimentSignals(
 ): Promise<R3SentimentSignals | undefined> {
   if (!expected_tenant_id) return undefined;
 
-  const { data: evaluation, error: evaluationError } = await supabaseAdmin
-    .from("conversation_evaluation")
-    .select("id, company_id, created_at")
+  /*
+   * Product-ready freshness binding.
+   *
+   * Do NOT select "latest evaluation by created_at" alone. A new evaluation-
+   * relevant message marks ce_evaluation_state dirty immediately, so an older
+   * evaluation may still be the newest row while already being stale for the
+   * current conversation state.
+   *
+   * R3 may consume CE emotion only when the freshness state says the exact
+   * canonical evaluation is up-to-date for the same tenant and methodology.
+   */
+  const { data: freshness, error: freshnessError } = await supabaseAdmin
+    .from("ce_evaluation_state")
+    .select(
+      "conversation_id, company_id, state, last_success_evaluation_id, last_success_source, last_success_fingerprint, current_evaluation_fingerprint, last_success_at, last_activity_at",
+    )
     .eq("conversation_id", conversation_id)
     .eq("company_id", expected_tenant_id)
-    .order("created_at", { ascending: false })
-    .limit(1)
     .maybeSingle();
-  if (evaluationError || !evaluation?.id) return undefined;
+
+  if (
+    freshnessError ||
+    !freshness ||
+    freshness.state !== "up_to_date" ||
+    freshness.last_success_source !== "canonical" ||
+    !freshness.last_success_evaluation_id ||
+    !freshness.last_success_fingerprint ||
+    !freshness.current_evaluation_fingerprint ||
+    freshness.last_success_fingerprint !== freshness.current_evaluation_fingerprint
+  ) {
+    return undefined;
+  }
+
+  if (freshness.last_activity_at && freshness.last_success_at) {
+    const activityAt = Date.parse(String(freshness.last_activity_at));
+    const successAt = Date.parse(String(freshness.last_success_at));
+    if (
+      !Number.isFinite(activityAt) ||
+      !Number.isFinite(successAt) ||
+      activityAt > successAt
+    ) {
+      return undefined;
+    }
+  }
+
+  const { data: evaluation, error: evaluationError } = await supabaseAdmin
+    .from("conversation_evaluation")
+    .select("id, company_id, created_at, evaluation_fingerprint, freshness")
+    .eq("id", freshness.last_success_evaluation_id)
+    .eq("conversation_id", conversation_id)
+    .eq("company_id", expected_tenant_id)
+    .eq("freshness", "current")
+    .eq("evaluation_fingerprint", freshness.last_success_fingerprint)
+    .maybeSingle();
+
+  if (
+    evaluationError ||
+    !evaluation?.id ||
+    evaluation.id !== freshness.last_success_evaluation_id
+  ) {
+    return undefined;
+  }
 
   const { data: points, error: pointsError } = await supabaseAdmin
     .from("ce_emotion_point")
@@ -532,7 +605,7 @@ async function loadAuthoritativeR3SentimentSignals(
     ...(scoreSeries.length >= 2 ? { sentiment_trend: scoreSeries.slice(-5) } : {}),
     ...(recovered ? { sentiment_recovered_same_turn: true as const } : {}),
     evaluation_id: evaluation.id,
-    provider_version: "ce-emotion-point-v1.0",
+    provider_version: `ce-emotion-point-v1.1:${String(evaluation.evaluation_fingerprint).slice(0, 12)}`,
   };
 }
 
@@ -1356,7 +1429,7 @@ async function persistExplicitR1IfRequested(
 
 async function orchestrationGenerateReply(conversation_id: string, flags: FlagSet, source_message_id: string | null): Promise<Response> {
   const supabaseAdmin = createClient(Deno.env.get("SUPABASE_URL") ?? "", Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "");
-  const { data: conversation, error: convError } = await supabaseAdmin.from("conversations").select("id, status, assigned_agent_id, created_at, company_id").eq("id", conversation_id).single();
+  const { data: conversation, error: convError } = await supabaseAdmin.from("conversations").select("id, status, assigned_agent_id, created_at, company_id, metadata_source").eq("id", conversation_id).single();
   if (convError || !conversation) return new Response(JSON.stringify({ error: "Conversation not found" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   if (conversation.status === "resolved" || conversation.status === "closed") {
@@ -1430,6 +1503,10 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
   const _pr5ExpectedTenantId =
     typeof conversation.company_id === "string" && conversation.company_id.length > 0
       ? conversation.company_id
+      : undefined;
+  const _widgetLiveTestActor =
+    _pr5ExpectedTenantId === undefined
+      ? widgetLiveTestPreActivationActor(conversation.metadata_source)
       : undefined;
   const _pr5ThreatSignal = classifyAuthoritativeThreat(_h1LastMsg);
   const _pr5ComplianceSignal = resolveAuthoritativeComplianceReview(_pr5ExpectedTenantId);
@@ -1646,7 +1723,7 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
   } | null = null;
 
   if (flags.ENABLE_KB && !_g1SkipKB) {
-    const _kbTenantResult = await resolveTenantScope(conversation_id);
+    const _kbTenantResult = await resolveTenantScope(conversation_id, _widgetLiveTestActor);
     if (!_kbTenantResult.resolved) {
       if (_deferR1ForE1) {
         const r1Response = await persistExplicitR1IfRequested(supabaseAdmin, conversation_id, source_message_id, _h1LastMsg);
