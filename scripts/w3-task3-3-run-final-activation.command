@@ -24,21 +24,26 @@ source "$REPO/config/w3-task3-3-dev-identity.env"
 [ "${W3_T3_3_PROJECT_REF:-}" = "$EXPECTED_REF" ] || stop "project ref mismatch"
 [ "${W3_T3_3_DEV_CONFIG:-}" = "YES" ] || stop "DEV config flag missing"
 
-printf '\nFINAL ACTIVATION TARGET\n'
+printf '\nFINAL PRODUCT-READY ACTIVATION TARGET\n'
 printf 'Repo: %s\n' "$REPO"
 printf 'Commit: %s\n' "$LOCAL"
 printf 'Project ref: %s\n' "$W3_T3_3_PROJECT_REF"
 printf 'Runtime secrets: %s\n\n' "$RUNTIME_FILE"
 
-read -r -p "Type ACTIVATE to execute the authorized final DEV activation: " CONFIRM
+read -r -p "Type ACTIVATE to execute the authorized final DEV activation + whole-product smoke: " CONFIRM
 [ "$CONFIRM" = "ACTIVATE" ] || stop "activation not confirmed"
 
 export W3_T3_3_REPO="$REPO"
 export W3_T3_3_RUNTIME_INPUT_FILE="$RUNTIME_FILE"
 export W3_T3_3_PRODUCTION_AUTHORIZED=YES
+export W3_T3_3_RUN_PRODUCTION=true
 
 cd "$REPO"
-bash scripts/w3-task3-3-production-activate.sh
+
+# IMPORTANT: invoke the true final gate, not production-activate directly.
+# The final gate performs:
+#   source/build -> activation -> whole-product runtime smoke -> READY
+bash scripts/w3-task3-3-final-gate.sh "$REPO"
 
 echo
-echo "FINAL ACTIVATION COMMAND: PASS"
+echo "FINAL PRODUCT-READY ACTIVATION: PASS"
