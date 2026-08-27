@@ -4,15 +4,13 @@
  * Authoritative runtime order:
  * E2 → E1 → R1 → S0 → R2 → R3 → P2 → R4 → P1
  *
- * PURE ONLY:
- * - no DB/network writes
- * - no message insertion
- * - no status mutation
- * - no live routing
- *
- * Required rules return `handoff`.
- * Recommended rules return `recommend_handoff` (pause/agent review semantics).
- * Suggested P1 returns `suggest_handoff` (AI may continue).
+ * PRODUCT-READY POLICY:
+ * - greeting/trivial input never escalates unless a critical signal is present
+ * - first normal KB gap gets one clarification, not an immediate human handoff
+ * - repeated unresolved intent after that clarification may hand off via R2
+ * - R3/P2/R4 are recommendations, not automatic transfer
+ * - P1 is suggestion-only; AI may continue
+ * - explicit human request / critical risk / hard upstream failure remain required handoff
  */
 
 import {
@@ -123,7 +121,6 @@ function threshold(
 
 function maxClarifications(context: EscalationContext): number {
   const configured = context.tenant_config?.max_clarifications;
-  // v1.6 freezes MAX_CLARIFICATIONS=1. A tenant config cannot expand it.
   if (typeof configured === "number" && Number.isInteger(configured)) {
     return Math.max(0, Math.min(MAX_CLARIFICATIONS, configured));
   }
@@ -160,8 +157,6 @@ function evaluateE1(context: EscalationContext, gaps: Set<string>, warnings: str
   if (!isAvailable(context.rag_match_state)) return null;
 
   const rag = context.rag_match_state.value;
-
-  // Frozen v1.6: unavailable must route to S0, never E1.
   if (rag === "unavailable") return null;
 
   const normalHighRiskGap = rag === "no_match" || rag === "partial_match" || rag === "conflict";
@@ -195,8 +190,6 @@ function evaluateR1(context: EscalationContext, gaps: Set<string>, warnings: str
 }
 
 function evaluateS0(context: EscalationContext, gaps: Set<string>, warnings: string[]): EscalationDecision | null {
-  // Explicit provider unavailable state is an S0-class failure even when a
-  // numeric retry counter is not available.
   const ragUnavailable = isAvailable(context.rag_match_state) && context.rag_match_state.value === "unavailable";
   const policyUnavailable =
     isAvailable(context.policy_match_state) && context.policy_match_state.value === "unavailable";
@@ -231,46 +224,81 @@ function evaluateR2(context: EscalationContext, gaps: Set<string>, warnings: str
   signalGap("same_intent_repeated", context.same_intent_repeated, gaps);
   signalGap("consecutive_no_answer", context.consecutive_no_answer, gaps);
   signalGap("rag_match_state", context.rag_match_state, gaps);
+  signalGap("clarification_attempts", context.clarification_attempts, gaps);
 
   if (!isAvailable(context.rag_match_state)) return null;
   if (context.rag_match_state.value === "unavailable") return null;
-  if (context.rag_match_state.value === "confident_match") return null; // G-5
+  if (context.rag_match_state.value === "confident_match") return null;
 
-  const maxNoAnswer = threshold(context, "max_consecutive_no_answer", gaps);
-  if (maxNoAnswer === null) return null;
-
-  const repeated = isAvailable(context.same_intent_repeated) && context.same_intent_repeated.value === true;
-  const noAnswerCount = isAvailable(context.consecutive_no_answer) ? context.consecutive_no_answer.value : null;
-  const ragGap = context.rag_match_state.value === "no_match" || context.rag_match_state.value === "partial_match";
-
-  if (!repeated || noAnswerCount === null || !ragGap) return null;
+  const ragGap =
+    context.rag_match_state.value === "no_match" ||
+    context.rag_match_state.value === "partial_match";
+  if (!ragGap) return null;
 
   const clarificationAttempts = isAvailable(context.clarification_attempts)
     ? context.clarification_attempts.value
     : null;
   const clarificationCap = maxClarifications(context);
+  const repeated =
+    isAvailable(context.same_intent_repeated) &&
+    context.same_intent_repeated.value === true;
 
-  if (noAnswerCount < maxNoAnswer && shouldClarify(context, gaps)) {
-    return decision("R2", "clarify", null, "clarification_required_before_r2", gaps, warnings);
+  /*
+   * Product-ready behavior:
+   * A normal KB gap is not itself a reason to hand off. On the first gap,
+   * ask one natural clarification. This catches short/ambiguous/nonsense
+   * messages and avoids turning ordinary conversation into human escalation.
+   */
+  if (
+    clarificationAttempts !== null &&
+    clarificationAttempts < clarificationCap
+  ) {
+    return decision(
+      "R2",
+      "clarify",
+      null,
+      "clarification_required_before_r2",
+      gaps,
+      warnings,
+    );
   }
 
-  // G2 closure: after the one allowed clarification, an exact repeated intent
-  // with the same unresolved RAG gap must not loop back to AI merely because
-  // the assistant clarification reset consecutive_no_answer.
-  if (clarificationAttempts !== null && clarificationCap > 0 && clarificationAttempts >= clarificationCap) {
+  /*
+   * Only repeated unresolved intent after the one allowed clarification is
+   * eligible for required R2 handoff. A new/different intent is allowed to
+   * continue through the normal AI path instead of inheriting the previous
+   * turn's failure.
+   */
+  if (
+    repeated &&
+    clarificationAttempts !== null &&
+    clarificationCap > 0 &&
+    clarificationAttempts >= clarificationCap
+  ) {
     return decision("R2", "handoff", "high", "repeated_after_clarification", gaps, warnings);
   }
 
-  if (noAnswerCount < maxNoAnswer) return null;
+  const maxNoAnswer = threshold(context, "max_consecutive_no_answer", gaps);
+  const noAnswerCount = isAvailable(context.consecutive_no_answer)
+    ? context.consecutive_no_answer.value
+    : null;
 
-  return decision("R2", "handoff", "high", "repeated_unanswered_query", gaps, warnings);
+  if (
+    repeated &&
+    maxNoAnswer !== null &&
+    noAnswerCount !== null &&
+    noAnswerCount >= maxNoAnswer
+  ) {
+    return decision("R2", "handoff", "high", "repeated_unanswered_query", gaps, warnings);
+  }
+
+  return null;
 }
 
 function evaluateR3(context: EscalationContext, gaps: Set<string>, warnings: string[]): EscalationDecision | null {
-  if (greetingSuppressesNonCritical(context)) return null; // G-1
-
+  if (greetingSuppressesNonCritical(context)) return null;
   if (isAvailable(context.sentiment_recovered_same_turn) && context.sentiment_recovered_same_turn.value === true) {
-    return null; // G-4
+    return null;
   }
 
   signalGap("anger_flag", context.anger_flag, gaps);
@@ -278,7 +306,6 @@ function evaluateR3(context: EscalationContext, gaps: Set<string>, warnings: str
   signalGap("sentiment_trend", context.sentiment_trend, gaps);
 
   const sentimentThreshold = threshold(context, "sentiment_score_threshold", gaps);
-
   const anger = isAvailable(context.anger_flag) && context.anger_flag.value === true;
   const lowSentiment =
     sentimentThreshold !== null &&
@@ -287,7 +314,6 @@ function evaluateR3(context: EscalationContext, gaps: Set<string>, warnings: str
   const falling = isAvailable(context.sentiment_trend) && trendHasTwoConsecutiveDrops(context.sentiment_trend.value);
 
   if (!(anger || lowSentiment || falling)) return null;
-
   return decision("R3", "recommend_handoff", "high", "sentiment_deterioration", gaps, warnings);
 }
 
@@ -304,10 +330,11 @@ function evaluateP2(context: EscalationContext, gaps: Set<string>, warnings: str
     context.conversation_duration_sec.value > slaWarning;
 
   const turnsMatch =
-    maxUnresolved !== null && isAvailable(context.unresolved_turns) && context.unresolved_turns.value > maxUnresolved;
+    maxUnresolved !== null &&
+    isAvailable(context.unresolved_turns) &&
+    context.unresolved_turns.value > maxUnresolved;
 
   if (!(durationMatch || turnsMatch)) return null;
-
   return decision("P2", "recommend_handoff", "high", "sla_breach_risk", gaps, warnings);
 }
 
@@ -316,7 +343,7 @@ function evaluateR4(context: EscalationContext, gaps: Set<string>, warnings: str
   if (!isAvailable(context.policy_match_state)) return null;
 
   const state = context.policy_match_state.value;
-  if (state === "unavailable") return null; // must route S0
+  if (state === "unavailable") return null;
   if (state === "conflict") {
     return decision("R4", "recommend_handoff", "normal", "policy_gap_detected", gaps, warnings);
   }
@@ -341,7 +368,7 @@ function evaluateR4(context: EscalationContext, gaps: Set<string>, warnings: str
 }
 
 function evaluateP1(context: EscalationContext, gaps: Set<string>, warnings: string[]): EscalationDecision | null {
-  if (greetingSuppressesNonCritical(context)) return null; // G-1
+  if (greetingSuppressesNonCritical(context)) return null;
 
   signalGap("predicted_csat", context.predicted_csat, gaps);
   signalGap("churn_risk", context.churn_risk, gaps);
@@ -353,17 +380,14 @@ function evaluateP1(context: EscalationContext, gaps: Set<string>, warnings: str
 
   const lowCsat =
     csatThreshold !== null && isAvailable(context.predicted_csat) && context.predicted_csat.value < csatThreshold;
-
   const highChurn =
     churnThreshold !== null && isAvailable(context.churn_risk) && context.churn_risk.value > churnThreshold;
-
   const highEscalation =
     escalationThreshold !== null &&
     isAvailable(context.escalation_score) &&
     context.escalation_score.value > escalationThreshold;
 
   if (!(lowCsat || highChurn || highEscalation)) return null;
-
   return decision("P1", "suggest_handoff", "normal", "proactive_handoff", gaps, warnings);
 }
 
@@ -397,7 +421,6 @@ export function evaluateFullEscalationRuleset(
     return decision(null, "fallback_r1_only", null, "provider_integrity_fallback", gaps, warnings);
   }
 
-  // G-7 and G-6 apply before all escalation rules.
   if (isResolved(context)) {
     return decision(null, "continue_ai", null, "resolved_no_escalation", gaps, warnings);
   }
