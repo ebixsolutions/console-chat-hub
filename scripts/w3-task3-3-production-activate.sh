@@ -5,6 +5,15 @@ AUTH="${W3_T3_3_PRODUCTION_AUTHORIZED:-}"
 PROJECT_REF="${W3_T3_3_PROJECT_REF:-}"
 EXPECTED_REF="hvmtoqiwdqvgnjepxwrc"
 stop(){ echo "STOP: $1" >&2; exit 2; }
+
+if [ "${W3_T3_3_DEV_CONFIG:-}" = "YES" ]; then
+  CFG="$REPO/config/w3-task3-3-dev-identity.env"
+  [ -s "$CFG" ] || stop "Director DEV identity config missing"
+  # shellcheck disable=SC1090
+  source "$CFG"
+  PROJECT_REF="${W3_T3_3_PROJECT_REF:-}"
+fi
+
 [ "$AUTH" = "YES" ] || stop "explicit final production activation authorization missing"
 [ "$PROJECT_REF" = "$EXPECTED_REF" ] || stop "project ref mismatch"
 [ -d "$REPO/.git" ] || stop "repo missing"
