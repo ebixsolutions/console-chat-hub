@@ -42,7 +42,13 @@ pass "canonical CE training fixture"
 
 TMP="$(mktemp)"
 trap 'rm -f "$TMP"' EXIT
-curl --silent --show-error --fail-with-body --max-time 60   -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/conversation-evaluate"   -H "Authorization: Bearer $BEARER"   -H "Content-Type: application/json"   --data "{\"action\":\"review\",\"evaluation_id\":\"$EVAL\",\"conversation_id\":\"$CONV\",\"decision\":\"accept\"}" >"$TMP"   || stop "canonical CE accept review failed"
+
+curl --silent --show-error --fail-with-body --max-time 60 \
+  -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/conversation-evaluate" \
+  -H "Authorization: Bearer $BEARER" \
+  -H "Content-Type: application/json" \
+  --data "{\"action\":\"review\",\"evaluation_id\":\"$EVAL\",\"conversation_id\":\"$CONV\",\"decision\":\"accept\"}" >"$TMP" \
+  || stop "canonical CE accept review failed"
 
 python3 - "$TMP" <<'PY'
 import json,sys
@@ -52,7 +58,11 @@ if d.get("status")!="reviewed" or d.get("to")!="accepted":
 print("PASS canonical CE review accepted")
 PY
 
-curl --silent --show-error --fail-with-body --max-time 120   -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/training-outbox-worker"   -H "X-Training-Outbox-Token: $WORKER_TOKEN" -H "Content-Type: application/json" --data '{}' >/dev/null   || stop "AI Chatbot -> SU CoachAI outbox worker failed"
+curl --silent --show-error --fail-with-body --max-time 120 \
+  -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/training-outbox-worker" \
+  -H "X-Training-Outbox-Token: $WORKER_TOKEN" \
+  -H "Content-Type: application/json" --data '{}' >/dev/null \
+  || stop "AI Chatbot -> SU CoachAI outbox worker failed"
 
 DELIVERY="$(psql "$DB" -v ON_ERROR_STOP=1 -AtF '|' -v eid="$EVAL" <<'SQL'
 SELECT status,delivery_attempts,delivery_idempotency_key
@@ -96,31 +106,84 @@ IFS='|' read -r LC IMPROVED DECISION <<<"$LINK_FINAL"
 [ "$LC" = "1" ] && [ "$IMPROVED" = "received" ] || stop "SU CoachAI result callback not observed"
 
 if [ "$DECISION" = "trained" ]; then
-  HAS_KB="$(psql "$DB" -v ON_ERROR_STOP=1 -At -v eid="$EVAL" <<'SQL'
-SELECT CASE WHEN jsonb_typeof(improved_result->'kb_update')='object' THEN 'yes' ELSE 'no' END
+  KB_CONTRACT="$(psql "$DB" -v ON_ERROR_STOP=1 -AtF '|' -v eid="$EVAL" <<'SQL'
+SELECT
+  CASE WHEN jsonb_typeof(improved_result->'kb_update')='object' THEN 'yes' ELSE 'no' END,
+  coalesce(improved_result->'kb_update'->'approval'->>'status',''),
+  coalesce(improved_result->'kb_update'->'approval'->>'source',''),
+  CASE WHEN nullif(trim(coalesce(improved_result->'kb_update'->'approval'->>'approved_by','')),'') IS NOT NULL THEN 'yes' ELSE 'no' END,
+  CASE WHEN nullif(trim(coalesce(improved_result->'kb_update'->'approval'->>'approved_at','')),'') IS NOT NULL THEN 'yes' ELSE 'no' END
 FROM public.ce_training_link
 WHERE evaluation_id=:'eid'::uuid AND link_kind='training_candidate';
 SQL
 )"
+  IFS='|' read -r HAS_KB AP_STATUS AP_SOURCE AP_BY AP_AT <<<"$KB_CONTRACT"
+
   if [ "$HAS_KB" = "yes" ]; then
-    for i in $(seq 1 12); do
-      curl --silent --show-error --fail-with-body --max-time 120         -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/training-kb-sync"         -H "X-Training-KB-Sync-Token: $SYNC_TOKEN" -H "Content-Type: application/json" --data '{}' >/dev/null         || stop "training-kb-sync failed"
-      curl --silent --show-error --fail-with-body --max-time 120         -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/training-kb-finalize"         -H "X-Training-KB-Sync-Token: $SYNC_TOKEN" -H "Content-Type: application/json" --data '{}' >/dev/null         || stop "training-kb-finalize failed"
+    [ "$AP_STATUS" = "approved" ] || stop "trained KB update lacks verified approval status"
+    [ "$AP_SOURCE" = "su_coachai_verified_correction" ] || stop "trained KB update approval source invalid"
+    [ "$AP_BY" = "yes" ] || stop "trained KB update approved_by missing"
+    [ "$AP_AT" = "yes" ] || stop "trained KB update approved_at missing"
+    pass "verified-correction approval contract"
+
+    for i in $(seq 1 18); do
+      SYNC_BODY="$(mktemp)"
+      FINAL_BODY="$(mktemp)"
+      curl --silent --show-error --fail-with-body --max-time 120 \
+        -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/training-kb-sync" \
+        -H "X-Training-KB-Sync-Token: $SYNC_TOKEN" \
+        -H "Content-Type: application/json" --data '{}' >"$SYNC_BODY" \
+        || { rm -f "$SYNC_BODY" "$FINAL_BODY"; stop "training-kb-sync failed"; }
+
+      curl --silent --show-error --fail-with-body --max-time 120 \
+        -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/training-kb-finalize" \
+        -H "X-Training-KB-Sync-Token: $SYNC_TOKEN" \
+        -H "Content-Type: application/json" --data '{}' >"$FINAL_BODY" \
+        || { rm -f "$SYNC_BODY" "$FINAL_BODY"; stop "training-kb-finalize failed"; }
+
+      FINAL_JSON="$(python3 - "$FINAL_BODY" <<'PY'
+import json,sys
+try:
+    d=json.load(open(sys.argv[1]))
+except Exception:
+    print("invalid|||")
+    raise SystemExit
+print("|".join([
+    str(d.get("state","")),
+    str(d.get("reason","")),
+    "yes" if d.get("rag_new_content_verified") is True else "no",
+]))
+PY
+)"
+      rm -f "$SYNC_BODY" "$FINAL_BODY"
+      IFS='|' read -r FSTATE FREASON FRAG <<<"$FINAL_JSON"
+
       STATE="$(psql "$DB" -v ON_ERROR_STOP=1 -AtF '|' -v eid="$EVAL" <<'SQL'
 SELECT count(*),coalesce(max(state),''),coalesce(max(remote_sync_state),'')
 FROM public.ce_kb_publish_state WHERE evaluation_id=:'eid'::uuid AND action='publish';
 SQL
 )"
       IFS='|' read -r PC PST PRS <<<"$STATE"
+
       if [ "$PC" = "1" ] && [ "$PST" = "published" ] && [ "$PRS" = "synced" ]; then
-        pass "SU CoachAI improved result -> Singapore KB publish + RAG read-back"
+        [ "$FSTATE" = "published" ] || fail "DB published but finalizer response did not prove published state"
+        [ "$FRAG" = "yes" ] || fail "DB published without rag_new_content_verified=true"
+        pass "SU CoachAI improved result -> Singapore KB new-content RAG read-back"
         echo "W2 TASK 2.3 LEARNING LOOP RUNTIME STATUS: PASS"
         exit 0
       fi
-      if [ "$PST" = "failed" ]; then fail "Singapore KB publish state failed"; fi
+
+      if [ "$PST" = "failed" ]; then
+        fail "Singapore KB publish state failed"
+      fi
+
+      if [ "$FREASON" = "kb_rag_new_content_not_visible" ]; then
+        pass "new vector not visible yet; retrying safely"
+      fi
       sleep 5
     done
-    stop "Singapore KB publish/read-back did not complete within retry window"
+
+    stop "Singapore KB new-content publish/read-back did not complete within retry window"
   fi
 fi
 
