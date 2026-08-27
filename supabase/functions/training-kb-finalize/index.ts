@@ -9,6 +9,8 @@
  * 5. training_sync_status synced
  * 6. current production RAG contract selects same document and returns
  *    authoritative full_content evidence
+ * 7. returned full_content proves the NEW trained content is actually indexed,
+ *    not merely an older vector from the same document
  *
  * No tenant/company is accepted from caller input.
  */
@@ -25,7 +27,7 @@ import {
 } from "../_shared/kb-client.ts";
 import { parseAggregationResponse } from "../_shared/kb-aggregation-response.ts";
 
-const CONTRACT = "PR6B_SINGAPORE_KB_FINALIZE_V2";
+const CONTRACT = "PR6B_SINGAPORE_KB_FINALIZE_V3";
 const SUCCESS = "completed";
 const FAILURE = new Set(["failed", "cancelled", "cancellation_failed"]);
 
@@ -68,6 +70,50 @@ function singaporeCompanyId(tenantId: string): number | null {
   const n = Number(tenantId);
   return Number.isSafeInteger(n) && n > 0 ? n : null;
 }
+
+function normalizeVerificationText(value: string): string {
+  return value
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function verificationWindows(value: string): string[] {
+  const normalized = normalizeVerificationText(value);
+  if (!normalized) return [];
+
+  // Prefer bounded natural-language windows. Very short windows produce false
+  // positives; very long windows are likely to cross a chunk boundary.
+  const words = normalized.split(" ").filter(Boolean);
+  const windows: string[] = [];
+  for (let size = Math.min(8, words.length); size >= 4; size -= 1) {
+    for (let i = 0; i + size <= words.length; i += 1) {
+      const candidate = words.slice(i, i + size).join(" ");
+      if (candidate.length >= 24) windows.push(candidate);
+      if (windows.length >= 24) return windows;
+    }
+    if (windows.length > 0) break;
+  }
+
+  if (windows.length === 0 && normalized.length >= 24) {
+    windows.push(normalized.slice(0, Math.min(120, normalized.length)));
+  }
+  return windows;
+}
+
+function newContentEvidenceMatches(
+  newContent: string,
+  evidenceContents: string[],
+): boolean {
+  const evidence = normalizeVerificationText(evidenceContents.join("\n"));
+  if (!evidence) return false;
+
+  const windows = verificationWindows(newContent);
+  if (windows.length === 0) return false;
+  return windows.some((window) => evidence.includes(window));
+}
+
 async function kbFetch(
   base: string,
   path: string,
@@ -211,6 +257,7 @@ Deno.serve(async (req) => {
     await finish("pending", `kb_document_http_${documentResponse.status}`);
     return json({ ok: true, contract: CONTRACT, processed: 1, state: "pending" });
   }
+
   const document = await documentResponse.json() as Record<string, unknown>;
   const expectedNewHash = await sha256Hex(newContent);
   if (
@@ -222,6 +269,13 @@ Deno.serve(async (req) => {
   ) {
     await finish("failed", "kb_activation_verification_failed");
     return json({ ok: false, error: "kb_activation_verification_failed" }, 409);
+  }
+
+  // Defense in depth: the returned document must still belong to the exact
+  // server-mapped Singapore tenant used for credentials/RAG.
+  if (String(document.company_id ?? "") !== String(tenantId)) {
+    await finish("failed", "kb_document_tenant_mismatch");
+    return json({ ok: false, error: "kb_document_tenant_mismatch" }, 409);
   }
 
   if (text(document.training_sync_status) !== "synced") {
@@ -243,8 +297,6 @@ Deno.serve(async (req) => {
     }
   }
 
-  // Current RAG v1 request/response contract. Structured evidence is authoritative;
-  // combined_text is never used to approve publication.
   const ragResponse = await kbFetch(
     endpoint.baseUrl,
     "/api/v1/rag/context-search",
@@ -275,12 +327,17 @@ Deno.serve(async (req) => {
     await finish("failed", "kb_rag_invalid_json");
     return json({ ok: false, error: "kb_rag_invalid_json" }, 409);
   }
+
   const parsed = parseAggregationResponse(ragJson);
   const selectedSameDocument =
     parsed.ok && parsed.contextFound && parsed.selectedDocumentId === documentId;
-  const hasFullContent =
-    parsed.ok && parsed.contextFound &&
-    parsed.llmContext.full_content_evidence.some((item) => item.document_id === documentId);
+  const sameDocumentEvidence =
+    parsed.ok && parsed.contextFound
+      ? parsed.llmContext.full_content_evidence
+          .filter((item) => item.document_id === documentId)
+          .map((item) => item.content)
+      : [];
+  const hasFullContent = sameDocumentEvidence.length > 0;
 
   if (!selectedSameDocument || !hasFullContent) {
     await finish("failed", "kb_rag_readback_failed");
@@ -292,6 +349,26 @@ Deno.serve(async (req) => {
     }, 409);
   }
 
+  /*
+   * Critical closed-loop proof:
+   * "same document" is insufficient because stale production vectors from the
+   * previous document version can satisfy that check. Require returned
+   * authoritative full_content to contain a bounded window from NEW raw content.
+   * This proves the learned version is actually visible to the live RAG path.
+   */
+  if (!newContentEvidenceMatches(newContent, sameDocumentEvidence)) {
+    await finish("pending", "kb_rag_new_content_not_visible");
+    return json({
+      ok: true,
+      contract: CONTRACT,
+      processed: 1,
+      state: "pending",
+      reason: "kb_rag_new_content_not_visible",
+      evaluation_id: evaluationId,
+      document_id: documentId,
+    });
+  }
+
   await finish("published", null);
   return json({
     ok: true,
@@ -301,5 +378,6 @@ Deno.serve(async (req) => {
     evaluation_id: evaluationId,
     document_id: documentId,
     operation_id: operationId,
+    rag_new_content_verified: true,
   });
 });
