@@ -29,6 +29,11 @@ source scripts/w3-task3-3-runtime-inputs-load.sh
 export PR7_CANONICAL_COMPANY_UUID="${W2_T2_1_CANONICAL_COMPANY_UUID}"
 export PR9_KB_SMOKE_QUERY="${PR10_KB_TENANT_A_QUERY}"
 
+# W1 runtime must be deterministic in the one-click path. The Supabase URL is
+# public project metadata and can be safely derived from the frozen project ref;
+# do not require an extra runtime secret/env variable.
+export SUPABASE_URL="${SUPABASE_URL:-https://${W3_T3_3_PROJECT_REF}.supabase.co}"
+
 # W1 Widget runtime uses the real Tenant A authenticated fixture.
 export W1_SMOKE_USER_JWT="${PR10_TENANT_A_BEARER_TOKEN}"
 export W1_KB_SMOKE_QUERY="${PR10_KB_TENANT_A_QUERY}"
