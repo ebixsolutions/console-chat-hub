@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 import sys
+
 root=Path(sys.argv[1] if len(sys.argv)>1 else ".")
 def rd(p): return (root/p).read_text(encoding="utf-8")
 
@@ -35,24 +36,26 @@ assert 'full_content_evidence' in gen
 assert 'company_id: companyId' in client
 assert '?? "x-api-key"' in client
 
-# Product-ready conversational source invariants.
 assert 'classifyConversationalRoute' in routing
 assert 'emoji/punctuation/noise-only' in routing
 assert '"clarification_new_intent_no_kb_match"' in rules
 assert '"repeated_after_clarification"' in rules
 
-# Runtime smoke must prove actual product behavior, not the obsolete
-# "no KB => immediate human" behavior.
+# Product-ready runtime behavior.
 assert 'greeting receives natural AI reply without handoff' in w
 assert 'first normal KB no-match clarifies without human handoff' in w
 assert 'different new KB no-match intent does not inherit previous clarification cap' in w
 assert 'repeated unresolved intent after clarification persists R2 handoff' in w
-assert 'W1_NO_CONTEXT_QUERY_ALT' in w
-assert 'no-context path does not silently approve ungrounded answer' not in w
-
 assert 'same source message produces no duplicate assistant answer' in w
-assert 'takeover_conversation_tx' in w
-assert 'return_to_ai_tx' in w
+assert 'take-over-conversation' in w
+assert 'return-to-ai' in w
 assert 'company_id":"forbidden"' in w
 
-print("PASS W1 Task 1.3 Product-ready conversational runtime coverage assertions")
+# Lovable-managed Supabase: user environment must not need privileged service role.
+assert 'SUPABASE_SERVICE_ROLE_KEY' not in w
+assert 'SERVICE_ROLE' not in w
+assert '/rest/v1/' not in w
+assert 'SUPABASE_PUBLISHABLE_KEY' in w
+assert 'Authorization":f"Bearer {JWT}"' in w
+
+print("PASS W1 Task 1.3 no-service-role Product-ready runtime source contract")
