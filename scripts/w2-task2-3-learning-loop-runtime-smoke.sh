@@ -52,36 +52,33 @@ IFS='|' read -r RID RCID COMPANY ELIGIBLE REVIEW OUTBOX IDEM <<<"$PRE"
 [ "$OUTBOX" = "1" ] || stop "expected exactly one canonical outbox"
 [ "$IDEM" = "$EVAL" ] || stop "delivery idempotency key mismatch"
 case "$REVIEW" in
-  pending|needs_review|review_pending|"") ;;
-  accepted) stop "runtime fixture already accepted; use a fresh canonical evaluation" ;;
-  rejected|reopened) stop "runtime fixture is not in an acceptable pre-review state: $REVIEW" ;;
+  pending|needs_review|review_pending|"") REVIEW_ACTION="accept" ;;
+  accepted) REVIEW_ACTION="resume" ;;
+  rejected|reopened) stop "runtime fixture is not in an acceptable review state: $REVIEW" ;;
   *) stop "unexpected runtime fixture review_status: $REVIEW" ;;
 esac
-pass "fresh canonical CE training fixture"
 
 TMP="$(mktemp)"
 trap 'rm -f "$TMP"' EXIT
 
-curl --silent --show-error --fail-with-body --max-time 60 \
-  -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/conversation-evaluate" \
-  -H "Authorization: Bearer $BEARER" \
-  -H "Content-Type: application/json" \
-  --data "{\"action\":\"review\",\"evaluation_id\":\"$EVAL\",\"conversation_id\":\"$CONV\",\"decision\":\"accept\"}" >"$TMP" \
-  || stop "canonical CE accept review failed"
+if [ "$REVIEW_ACTION" = "accept" ]; then
+  curl --silent --show-error --fail-with-body --max-time 60 \
+    -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/conversation-evaluate" \
+    -H "Authorization: Bearer $BEARER" \
+    -H "Content-Type: application/json" \
+    --data "{\"action\":\"review\",\"evaluation_id\":\"$EVAL\",\"conversation_id\":\"$CONV\",\"decision\":\"accept\"}" >"$TMP" \
+    || stop "canonical CE accept review failed"
 
-python3 - "$TMP" <<'PY'
+  python3 - "$TMP" <<'PY'
 import json,sys
 d=json.load(open(sys.argv[1]))
 if d.get("status")!="reviewed" or d.get("to")!="accepted":
     raise SystemExit("FAIL: review response not accepted")
 print("PASS canonical CE review accepted")
 PY
-
-curl --silent --show-error --fail-with-body --max-time 120 \
-  -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/training-outbox-worker" \
-  -H "X-Training-Outbox-Token: $WORKER_TOKEN" \
-  -H "Content-Type: application/json" --data '{}' >/dev/null \
-  || stop "AI Chatbot -> SU CoachAI outbox worker failed"
+else
+  pass "canonical CE review already accepted; resuming idempotently"
+fi
 
 DELIVERY="$(psql "$DB" -v ON_ERROR_STOP=1 -AtF '|' -v eid="$EVAL" <<'SQL'
 SELECT status,delivery_attempts,delivery_idempotency_key
@@ -89,10 +86,27 @@ FROM public.evaluation_training_outbox WHERE evaluation_id=:'eid'::uuid;
 SQL
 )"
 IFS='|' read -r DSTATUS ATTEMPTS DIDEM <<<"$DELIVERY"
+[ "$DIDEM" = "$EVAL" ] || stop "delivery idempotency drift"
+
+if [ "$DSTATUS" != "delivered" ]; then
+  curl --silent --show-error --fail-with-body --max-time 120 \
+    -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/training-outbox-worker" \
+    -H "X-Training-Outbox-Token: $WORKER_TOKEN" \
+    -H "Content-Type: application/json" --data '{}' >/dev/null \
+    || stop "AI Chatbot -> SU CoachAI outbox worker failed"
+
+  DELIVERY="$(psql "$DB" -v ON_ERROR_STOP=1 -AtF '|' -v eid="$EVAL" <<'SQL'
+SELECT status,delivery_attempts,delivery_idempotency_key
+FROM public.evaluation_training_outbox WHERE evaluation_id=:'eid'::uuid;
+SQL
+)"
+  IFS='|' read -r DSTATUS ATTEMPTS DIDEM <<<"$DELIVERY"
+fi
+
 [ "$DSTATUS" = "delivered" ] || stop "SU CoachAI transport not delivered"
 [ "$ATTEMPTS" -ge 1 ] || stop "delivery attempts not incremented"
 [ "$DIDEM" = "$EVAL" ] || stop "delivery idempotency drift"
-pass "AI Chatbot -> SU CoachAI transport delivered"
+pass "AI Chatbot -> SU CoachAI transport delivered/resumed idempotently"
 
 deadline=$(( $(date +%s) + WAIT ))
 while [ "$(date +%s)" -le "$deadline" ]; do
