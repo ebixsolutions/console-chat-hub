@@ -1,11 +1,14 @@
 /**
- * Six server-side CE evaluators.
+ * Conversation Evaluation evaluator interfaces.
  *
- * Each evaluator is a server-side scorer behind a provider-agnostic adapter.
- * The provider adapter is NOT invoked in this change set (no external LLM
- * calls are authorized); the deterministic heuristic evaluator below is the
- * default and is what the tests pin. Scoring/aggregation itself is canonical
- * and identical to public.complete_evaluation().
+ * PRODUCT-READY RULE:
+ * Canonical CE scores MUST come from the governed server-side multi-agent
+ * evaluation path (`conversation-evaluate` / `ce-automation-engine`) using the
+ * six dimension prompts, model router, response schema validation, grounding,
+ * tenant guards and canonical completion RPCs.
+ *
+ * The deterministic heuristics below are retained ONLY as explicit test/dev
+ * fixtures. They must never be selected implicitly as a production scorer.
  */
 
 import type { CeRawScores } from "./scoring";
@@ -42,8 +45,14 @@ function clamp(n: number): number {
   return Math.max(0, Math.min(100, Math.round(n * 100) / 100));
 }
 
-/** Deterministic, provider-free evaluators (fail-closed defaults). */
-export const deterministicEvaluators: Record<CeEvaluatorId, CeEvaluator> = {
+/**
+ * TEST/DEV ONLY.
+ *
+ * This object is deliberately NOT used as a default by runEvaluators().
+ * A caller must opt in explicitly, which prevents a legacy UI/local path from
+ * silently presenting heuristic values as canonical Conversation Evaluation.
+ */
+export const deterministicEvaluatorsForTests: Record<CeEvaluatorId, CeEvaluator> = {
   accuracy: {
     id: "accuracy",
     async score(input) {
@@ -53,12 +62,17 @@ export const deterministicEvaluators: Record<CeEvaluatorId, CeEvaluator> = {
       const cited = input.bundle.grounding.filter((c) =>
         text.includes(c.chunk_text_redacted.slice(0, 24)),
       ).length;
-      return clamp(50 + (input.bundle.grounding.length ? (cited / input.bundle.grounding.length) * 50 : 0));
+      return clamp(
+        50 +
+          (input.bundle.grounding.length
+            ? (cited / input.bundle.grounding.length) * 50
+            : 0),
+      );
     },
     async justify(input) {
       return input.groundingVerified
-        ? "Scored against verified grounding evidence."
-        : "Grounding unverified — accuracy fails closed at 0.";
+        ? "Test heuristic scored against verified grounding evidence."
+        : "Grounding unverified — test heuristic accuracy fails closed at 0.";
     },
   },
   policy: {
@@ -70,7 +84,7 @@ export const deterministicEvaluators: Record<CeEvaluatorId, CeEvaluator> = {
       return clamp(100 - hits * 25);
     },
     async justify() {
-      return "Deterministic policy-phrase check.";
+      return "Test-only deterministic policy phrase check.";
     },
   },
   tone: {
@@ -82,7 +96,7 @@ export const deterministicEvaluators: Record<CeEvaluatorId, CeEvaluator> = {
       return clamp(shouty ? 55 : 85);
     },
     async justify() {
-      return "Deterministic tone heuristic (register + shouting).";
+      return "Test-only deterministic tone heuristic.";
     },
   },
   sales: {
@@ -93,7 +107,7 @@ export const deterministicEvaluators: Record<CeEvaluatorId, CeEvaluator> = {
       return clamp(60 + cues.filter((c) => text.includes(c)).length * 10);
     },
     async justify() {
-      return "Deterministic next-step / offer-cue detection.";
+      return "Test-only deterministic next-step / offer-cue detection.";
     },
   },
   context: {
@@ -104,37 +118,64 @@ export const deterministicEvaluators: Record<CeEvaluatorId, CeEvaluator> = {
       return clamp((t.turns_included / t.turns_total) * 100);
     },
     async justify() {
-      return "Share of conversation actually available to the evaluator.";
+      return "Test-only transcript coverage heuristic.";
     },
   },
   hallucination: {
     id: "hallucination",
     async score(input) {
-      // RISK: no verified grounding => maximum risk (fail closed).
       if (!input.groundingVerified) return 100;
       if (input.bundle.grounding.length === 0) return 60;
       return 10;
     },
     async justify(input) {
       return input.groundingVerified
-        ? "Grounding verified; residual risk baseline applied."
-        : "Grounding unverified — maximum hallucination risk.";
+        ? "Test heuristic grounding verified; residual risk baseline applied."
+        : "Grounding unverified — test heuristic returns maximum risk.";
     },
   },
 };
 
+/**
+ * Explicit evaluator runner.
+ *
+ * There is intentionally NO default evaluator set. Product code that needs
+ * canonical CE must call the server-side CE function, not this helper.
+ */
 export async function runEvaluators(
   input: CeEvaluatorInput,
-  evaluators: Record<CeEvaluatorId, CeEvaluator> = deterministicEvaluators,
+  evaluators: Record<CeEvaluatorId, CeEvaluator>,
 ): Promise<CeRawScores> {
-  const [accuracy, policy, tone, sales, context, hallucinationRisk] = await Promise.all([
-    evaluators.accuracy.score(input),
-    evaluators.policy.score(input),
-    evaluators.tone.score(input),
-    evaluators.sales.score(input),
-    evaluators.context.score(input),
-    evaluators.hallucination.score(input),
-  ]);
+  if (!evaluators) {
+    throw new Error(
+      "CE_EVALUATORS_REQUIRED: canonical CE must use the governed server-side multi-agent runtime",
+    );
+  }
+
+  const required: CeEvaluatorId[] = [
+    "accuracy",
+    "policy",
+    "tone",
+    "sales",
+    "context",
+    "hallucination",
+  ];
+  for (const id of required) {
+    if (!evaluators[id] || evaluators[id].id !== id) {
+      throw new Error(`CE_EVALUATOR_SET_INCOMPLETE:${id}`);
+    }
+  }
+
+  const [accuracy, policy, tone, sales, context, hallucinationRisk] =
+    await Promise.all([
+      evaluators.accuracy.score(input),
+      evaluators.policy.score(input),
+      evaluators.tone.score(input),
+      evaluators.sales.score(input),
+      evaluators.context.score(input),
+      evaluators.hallucination.score(input),
+    ]);
+
   return {
     accuracy,
     policy,
