@@ -264,13 +264,28 @@ function evaluateR2(context: EscalationContext, gaps: Set<string>, warnings: str
   }
 
   /*
+   * A new/different normal intent with no KB match must not inherit a previous
+   * conversation-wide clarification budget and must not fall through to the
+   * legacy KB fallback handoff. Route it to a safe clarification. Persistence
+   * handles the legacy global cap by using the atomic AI reply gate without
+   * changing human-control state.
+   */
+  if (!repeated) {
+    return decision(
+      "R2",
+      "clarify",
+      null,
+      "clarification_new_intent_no_kb_match",
+      gaps,
+      warnings,
+    );
+  }
+
+  /*
    * Only repeated unresolved intent after the one allowed clarification is
-   * eligible for required R2 handoff. A new/different intent is allowed to
-   * continue through the normal AI path instead of inheriting the previous
-   * turn's failure.
+   * eligible for required R2 handoff.
    */
   if (
-    repeated &&
     clarificationAttempts !== null &&
     clarificationCap > 0 &&
     clarificationAttempts >= clarificationCap

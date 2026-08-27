@@ -122,14 +122,8 @@ export async function persistRequiredEscalationHandoff(
 
 export interface RequiredClarificationRpcClient {
   rpc(
-    fn: "required_escalation_clarification_tx",
-    args: {
-      p_conversation_id: string;
-      p_source_message_id: string;
-      p_escalation_rule: "R2";
-      p_clarification_content: string;
-      p_reason_code: string;
-    },
+    fn: string,
+    args: Record<string, unknown>,
   ): Promise<{ data: Record<string, unknown> | null; error: { message?: string } | null }>;
 }
 
@@ -152,6 +146,47 @@ export type RequiredClarificationResult =
       detail?: string;
       data?: Record<string, unknown>;
     };
+
+async function persistNewIntentClarificationThroughAiGate(
+  client: RequiredClarificationRpcClient,
+  input: PersistRequiredHandoffInput,
+  clarification: string,
+): Promise<RequiredClarificationResult> {
+  const { data, error } = await client.rpc("commit_ai_reply_tx", {
+    p_conversation_id: input.conversation_id,
+    p_source_message_id: input.source_message_id,
+    p_content: clarification,
+    p_metadata: {
+      escalation_rule: "R2",
+      escalation_action: "new_intent_clarification",
+      response_route: "kb_no_match_recovery",
+      handoff_required: false,
+      reason_code: input.decision.reason_code,
+    },
+  });
+
+  if (error) {
+    return { ok: false, result: "rpc_transport_error", detail: error.message ?? "rpc_error" };
+  }
+
+  const payload = data ?? {};
+  const result = String(payload.result ?? "unexpected_result");
+  switch (result) {
+    case "success":
+    case "idempotent":
+      return { ok: true, result: "success", data: payload };
+    case "human_control":
+      return { ok: false, result: "already_under_human_control", data: payload };
+    case "resolved":
+      return { ok: false, result: "already_resolved", data: payload };
+    case "invalid_source_message":
+    case "invalid_input":
+    case "not_found":
+      return { ok: false, result, data: payload };
+    default:
+      return { ok: false, result: "unexpected_result", detail: result, data: payload };
+  }
+}
 
 export async function persistRequiredEscalationClarification(
   client: RequiredClarificationRpcClient,
@@ -185,14 +220,33 @@ export async function persistRequiredEscalationClarification(
     case "success":
     case "already_handled":
       return { ok: true, result, data: payload };
+
+    case "max_clarifications_reached":
+      /*
+       * The legacy RPC cap is conversation-wide. Product-ready behavior is
+       * intent-scoped: a different normal question must not be transferred
+       * merely because an earlier question already used its clarification.
+       * We therefore persist the current safe clarification through the same
+       * atomic AI-control gate. Same-intent repeats never reach this branch:
+       * the rules engine produces R2 handoff for them.
+       */
+      if (input.decision.reason_code === "clarification_new_intent_no_kb_match") {
+        return await persistNewIntentClarificationThroughAiGate(
+          client,
+          input,
+          clarification,
+        );
+      }
+      return { ok: false, result, data: payload };
+
     case "already_resolved":
     case "already_under_human_control":
-    case "max_clarifications_reached":
     case "invalid_source_message":
     case "invalid_input":
     case "invalid_rule":
     case "not_found":
       return { ok: false, result, data: payload };
+
     default:
       return { ok: false, result: "unexpected_result", detail: result, data: payload };
   }
