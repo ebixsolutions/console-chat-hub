@@ -45,9 +45,13 @@ export W2_T2_1_PRODUCTION_AUTHORIZED=YES
 export W2_T2_1_RUN_PRODUCTION=true
 bash scripts/w2-task2-1-final-gate.sh
 
-# 2.2 — canonical CE activation.
+# 2.2 — canonical CE activation + real multi-agent runtime proof.
 export W2_T2_2_PRODUCTION_AUTHORIZED=YES
 export W2_T2_2_RUN_PRODUCTION=true
+export PR7_PROJECT_REF="$W3_T3_3_PROJECT_REF"
+export PR8_CE_SMOKE_FIXTURE_APPROVED=YES
+export PR8_CE_SMOKE_CONVERSATION_ID="${PR10_TENANT_A_CONVERSATION_UUID}"
+export PR8_CE_SMOKE_BEARER_TOKEN="${PR10_TENANT_A_BEARER_TOKEN}"
 bash scripts/w2-task2-2-final-gate.sh
 
 # Only after the legacy single-company canonicalization is complete do we add

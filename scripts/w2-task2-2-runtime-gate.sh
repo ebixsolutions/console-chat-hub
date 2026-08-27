@@ -6,6 +6,7 @@ PID="${W2_T2_2_CANONICAL_PLATFORM_COMPANY_ID:-}"
 ADMIN="${W2_T2_2_PRIMARY_ADMIN_USER_UUID:-}"
 stop(){ echo "STOP: $1" >&2; exit 2; }
 fail(){ echo "FAIL: $1" >&2; exit 1; }
+
 [ -n "$DB" ] || stop "SUPABASE_DB_URL missing"
 [[ "$CID" =~ ^[0-9a-fA-F-]{36}$ ]] || stop "company UUID invalid"
 [[ "$PID" =~ ^[1-9][0-9]*$ ]] || stop "platform company id invalid"
@@ -62,7 +63,7 @@ for k in identity admin_membership channels conversations local_mapped map_count
  grep -q "^${k}|pass$" <<<"$OUT" || fail "$k"
 done
 
-# RLS: canonical member sees all local provenance; a nonmember sees zero.
+# RLS: canonical member sees all local provenance; nonmember sees zero.
 NONMEMBER="00000000-0000-4000-8000-000000000001"
 psql "$DB" -v ON_ERROR_STOP=1 -v admin="$ADMIN" -v nonmember="$NONMEMBER" <<'SQL'
 BEGIN;
@@ -85,4 +86,15 @@ ROLLBACK;
 SQL
 
 echo "PASS canonical CE RLS member/nonmember isolation"
+
+# Product-ready CE runtime proof. Reuse the existing canonical PR8 smoke because
+# it invokes the real conversation-evaluate Edge function and proves:
+# - exactly six evaluator detail rows / six evaluator types
+# - canonical tenant lineage across evaluation/attempt/snapshot/outbox
+# - redacted immutable snapshot
+# - exactly-once outbox + deterministic idempotency
+# - exact replay produces no duplicate evaluation/outbox
+bash scripts/pr8-ce-runtime-smoke.sh
+
+echo "PASS canonical six-agent CE runtime evaluation"
 echo "W2 TASK 2.2 RUNTIME STATUS: PASS"
