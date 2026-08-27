@@ -10,6 +10,8 @@ w=rd("scripts/w1-task1-3-widget-runtime-smoke.sh")
 live=rd("supabase/functions/widget-live-ai-test/index.ts")
 gen=rd("supabase/functions/generate-reply/index.ts")
 client=rd("supabase/functions/_shared/kb-client.ts")
+routing=rd("supabase/functions/_shared/conversational-routing.ts")
+rules=rd("supabase/functions/_shared/escalation-rules.ts")
 
 for s in (pr7,pr9):
     assert '"x-api-key"' in s or '"x-api-key":' in s
@@ -33,9 +35,24 @@ assert 'full_content_evidence' in gen
 assert 'company_id: companyId' in client
 assert '?? "x-api-key"' in client
 
+# Product-ready conversational source invariants.
+assert 'classifyConversationalRoute' in routing
+assert 'emoji/punctuation/noise-only' in routing
+assert '"clarification_new_intent_no_kb_match"' in rules
+assert '"repeated_after_clarification"' in rules
+
+# Runtime smoke must prove actual product behavior, not the obsolete
+# "no KB => immediate human" behavior.
+assert 'greeting receives natural AI reply without handoff' in w
+assert 'first normal KB no-match clarifies without human handoff' in w
+assert 'different new KB no-match intent does not inherit previous clarification cap' in w
+assert 'repeated unresolved intent after clarification persists R2 handoff' in w
+assert 'W1_NO_CONTEXT_QUERY_ALT' in w
+assert 'no-context path does not silently approve ungrounded answer' not in w
+
 assert 'same source message produces no duplicate assistant answer' in w
 assert 'takeover_conversation_tx' in w
 assert 'return_to_ai_tx' in w
-assert 'no-context path does not silently approve ungrounded answer' in w
 assert 'company_id":"forbidden"' in w
-print("PASS W1 Task 1.3 source coverage assertions")
+
+print("PASS W1 Task 1.3 Product-ready conversational runtime coverage assertions")
