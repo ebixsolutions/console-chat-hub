@@ -35,15 +35,11 @@ psql "$DB_URL" -v ON_ERROR_STOP=1 \
   -v run_id="$RUN_ID" -v company_uuid="$COMPANY_UUID" -v platform_company_id="$PLATFORM_COMPANY_ID" <<'SQL'
 BEGIN;
 SET LOCAL lock_timeout='10s';
-SELECT set_config('w2.run_id', :'run_id', true);
-SELECT set_config('w2.company_uuid', :'company_uuid', true);
-SELECT set_config('w2.platform_company_id', :'platform_company_id', true);
-
 DO $rb$
 DECLARE
-  rid uuid:=current_setting('w2.run_id')::uuid;
-  cuid uuid:=current_setting('w2.company_uuid')::uuid;
-  pid bigint:=current_setting('w2.platform_company_id')::bigint;
+  rid uuid:=:'run_id'::uuid;
+  cuid uuid:=:'company_uuid'::uuid;
+  pid bigint:=:'platform_company_id'::bigint;
   created boolean;
 BEGIN
   SELECT created_company INTO created
@@ -54,6 +50,7 @@ BEGIN
   IF NOT FOUND THEN RAISE EXCEPTION 'rollback provenance missing'; END IF;
 
   IF created THEN
+    -- No CASCADE. Any downstream Task 2.2/2.3 or unrelated FK reference blocks rollback.
     DELETE FROM public.company WHERE id=cuid AND platform_company_id=pid;
     IF NOT FOUND THEN RAISE EXCEPTION 'canonical company row missing'; END IF;
   END IF;

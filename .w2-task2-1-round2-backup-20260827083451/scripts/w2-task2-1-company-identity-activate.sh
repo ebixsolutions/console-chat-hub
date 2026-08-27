@@ -26,6 +26,8 @@ stop(){ echo "STOP: $1" >&2; exit 2; }
 command -v psql >/dev/null 2>&1 || stop "psql missing"
 command -v python3 >/dev/null 2>&1 || stop "python3 missing"
 
+# When Singapore mapping is supplied, it must resolve this canonical UUID to the
+# exact same integer company id. No shadow tenant identity may be introduced.
 if [ -n "$KB_MAP_JSON" ]; then
   KB_SINGAPORE_TENANT_MAP_JSON="$KB_MAP_JSON" \
   W2_T2_1_CANONICAL_COMPANY_UUID="$COMPANY_UUID" \
@@ -44,6 +46,7 @@ print('PASS Singapore mapping matches canonical platform company id')
 PY
 fi
 
+# Schema foundation first; transactional and idempotent for an empty/current foundation.
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$(cd "$(dirname "$0")/.." && pwd)/sql/pr7/pr7_company_dual_identity.sql"
 
 EXISTING="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -Atq \
@@ -74,23 +77,13 @@ psql "$DB_URL" -v ON_ERROR_STOP=1 \
   -v ext_workspace="$EXT_WORKSPACE" -v ext_tenant="$EXT_TENANT" <<'SQL'
 BEGIN;
 SET LOCAL lock_timeout='10s';
-SELECT set_config('w2.run_id', :'run_id', true);
-SELECT set_config('w2.company_uuid', :'company_uuid', true);
-SELECT set_config('w2.platform_company_id', :'platform_company_id', true);
-SELECT set_config('w2.company_slug', :'company_slug', true);
-SELECT set_config('w2.company_name', :'company_name', true);
-SELECT set_config('w2.ext_workspace', :'ext_workspace', true);
-SELECT set_config('w2.ext_tenant', :'ext_tenant', true);
 
 DO $activate$
 DECLARE
-  rid uuid := current_setting('w2.run_id')::uuid;
-  cuid uuid := current_setting('w2.company_uuid')::uuid;
-  pid bigint := current_setting('w2.platform_company_id')::bigint;
-  cslug text := current_setting('w2.company_slug');
-  cname text := current_setting('w2.company_name');
-  ews text := current_setting('w2.ext_workspace');
-  etn text := current_setting('w2.ext_tenant');
+  rid uuid := :'run_id'::uuid;
+  cuid uuid := :'company_uuid'::uuid;
+  pid bigint := :'platform_company_id'::bigint;
+  n int;
   exact boolean;
 BEGIN
   IF pid <= 0 THEN RAISE EXCEPTION 'platform company id must be > 0'; END IF;
@@ -98,30 +91,31 @@ BEGIN
     RAISE EXCEPTION 'run id already exists';
   END IF;
 
-  IF EXISTS (SELECT 1 FROM public.company WHERE id=cuid AND platform_company_id<>pid)
-     OR EXISTS (SELECT 1 FROM public.company WHERE platform_company_id=pid AND id<>cuid) THEN
-    RAISE EXCEPTION 'canonical UUID/integer identity collision';
-  END IF;
-
+  SELECT count(*) INTO n FROM public.company;
   SELECT EXISTS (
     SELECT 1 FROM public.company
-    WHERE id=cuid AND platform_company_id=pid AND slug=cslug
-      AND display_name=cname AND external_workspace_id=ews
-      AND external_tenant_id=etn AND is_active=true
+    WHERE id=cuid AND platform_company_id=pid AND slug=:'company_slug'
+      AND display_name=:'company_name' AND external_workspace_id=:'ext_workspace'
+      AND external_tenant_id=:'ext_tenant' AND is_active=true
   ) INTO exact;
 
-  IF NOT EXISTS (SELECT 1 FROM public.company WHERE id=cuid) THEN
+  IF n=0 THEN
     INSERT INTO public.company(
       id,platform_company_id,slug,display_name,external_workspace_id,external_tenant_id,is_active
-    ) VALUES(cuid,pid,cslug,cname,ews,etn,true);
+    ) VALUES(cuid,pid,:'company_slug',:'company_name',:'ext_workspace',:'ext_tenant',true);
     INSERT INTO public.pr7_company_identity_bootstrap_run(
       run_id,company_uuid,platform_company_id,created_company,completed_at
     ) VALUES(rid,cuid,pid,true,now());
     RETURN;
   END IF;
 
-  IF NOT exact THEN
-    RAISE EXCEPTION 'canonical activation refused: target company identity differs';
+  IF n<>1 OR NOT exact THEN
+    RAISE EXCEPTION 'canonical activation refused: existing company identity differs';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM public.company WHERE id=cuid AND platform_company_id<>pid)
+     OR EXISTS (SELECT 1 FROM public.company WHERE platform_company_id=pid AND id<>cuid) THEN
+    RAISE EXCEPTION 'canonical UUID/integer identity collision';
   END IF;
 
   INSERT INTO public.pr7_company_identity_bootstrap_run(

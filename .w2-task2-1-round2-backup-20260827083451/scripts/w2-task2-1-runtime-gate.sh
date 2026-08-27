@@ -21,17 +21,10 @@ SELECT 'column|' || CASE WHEN EXISTS(
 SELECT 'unique|' || CASE WHEN EXISTS(
   SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='uq_company_platform_company_id'
     AND indexdef ILIKE '%UNIQUE%') THEN 'pass' ELSE 'fail' END;
+SELECT 'company_count|' || CASE WHEN (SELECT count(*) FROM public.company)=1 THEN 'pass' ELSE 'fail' END;
 SELECT 'identity|' || CASE WHEN EXISTS(
   SELECT 1 FROM public.company WHERE id=:'company_uuid'::uuid
     AND platform_company_id=:'platform_company_id'::bigint AND is_active=true)
-  THEN 'pass' ELSE 'fail' END;
-SELECT 'uuid_collision|' || CASE WHEN NOT EXISTS(
-  SELECT 1 FROM public.company WHERE id=:'company_uuid'::uuid
-    AND platform_company_id<>:'platform_company_id'::bigint)
-  THEN 'pass' ELSE 'fail' END;
-SELECT 'platform_collision|' || CASE WHEN NOT EXISTS(
-  SELECT 1 FROM public.company WHERE platform_company_id=:'platform_company_id'::bigint
-    AND id<>:'company_uuid'::uuid)
   THEN 'pass' ELSE 'fail' END;
 SELECT 'bootstrap|' || CASE WHEN EXISTS(
   SELECT 1 FROM public.pr7_company_identity_bootstrap_run
@@ -39,10 +32,11 @@ SELECT 'bootstrap|' || CASE WHEN EXISTS(
     AND platform_company_id=:'platform_company_id'::bigint
     AND completed_at IS NOT NULL AND rolled_back_at IS NULL)
   THEN 'pass' ELSE 'fail' END;
+SELECT 'membership_scope|' || CASE WHEN (SELECT count(*) FROM public.company_membership)=0 THEN 'pass' ELSE 'fail' END;
 SQL
 )"
 printf '%s\n' "$OUT"
-for k in column unique identity uuid_collision platform_collision bootstrap; do
+for k in column unique company_count identity bootstrap membership_scope; do
   grep -q "^${k}|pass$" <<<"$OUT" || fail "$k"
 done
 

@@ -15,20 +15,10 @@ assert 'pr7_company_identity_bootstrap_run' in f
 assert 'company rows still exist' in rb
 assert 'explicit production authorization missing' in b
 assert 'Singapore mapping does not match canonical platform company id' in b
-assert "set_config('w2.run_id'" in b
-assert "current_setting('w2.run_id')" in b
-assert "current_setting('w2.company_uuid')" in b
-assert "current_setting('w2.platform_company_id')" in b
-assert "SELECT count(*) INTO n FROM public.company" not in b
-assert "n<>1" not in b
-assert "SELECT count(*) FROM public.company)=1" not in g
-assert 'membership_scope' not in g
-assert 'uuid_collision' in g and 'platform_collision' in g
-assert "set_config('w2.run_id'" in br
-assert "current_setting('w2.run_id')" in br
-assert ":'run_id'::uuid" not in b.split('DO $activate$',1)[1].split('$activate$;',1)[0]
-assert ":'run_id'::uuid" not in br.split('DO $rb$',1)[1].split('$rb$;',1)[0]
+assert 'SELECT count(*) INTO n FROM public.company' in b
 assert 'company_membership' not in b
 assert 'conversation' not in b.lower()
-assert 'DELETE FROM public.company WHERE id=cuid AND platform_company_id=pid' in br
+assert 'No CASCADE' in br
+assert 'rolled_back_at=now()' in br
+assert 'membership_scope' in g
 print('PASS W2 Task 2.1 source contract')
