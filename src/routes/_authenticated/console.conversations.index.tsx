@@ -405,6 +405,8 @@ function SinglePageInbox() {
   const [activityLoading, setActivityLoading] = useState(false);
   const [activityRows, setActivityRows] = useState<ActivityEvent[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const replyRef = useRef<HTMLTextAreaElement>(null);
+
   const lang = useConsoleLang();
   const { role: currentRole } = useCurrentRole();
   const [selectedMessage, setSelectedMessage] = useState<{ id: string; role: string; content: string } | null>(null);
