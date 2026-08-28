@@ -22,8 +22,9 @@ smoke = read('scripts/w3-task3-3-whole-product-smoke.sh')
 runtime_inputs = read('scripts/w3-task3-3-runtime-inputs-load.sh')
 attachment_sql = read('sql/pr30/pr30_agent_attachment.sql')
 attachment_rollback = read('sql/pr30/pr30_agent_attachment.rollback.sql')
+security_sql = read('sql/pr30/pr30_task3_3_security_hardening.sql')
+security_rollback = read('sql/pr30/pr30_task3_3_security_hardening.rollback.sql')
 
-# Exact deployment identity, current repo and explicit authorization are required.
 for marker in [
     'W3_T3_3_PRODUCTION_AUTHORIZED',
     'W3_T3_3_DEPLOYED_COMMIT_SHA',
@@ -31,23 +32,22 @@ for marker in [
     'branch --show-current',
     'working tree must be clean',
     'psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f sql/pr30/pr30_agent_attachment.sql',
+    'psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f sql/pr30/pr30_task3_3_security_hardening.sql',
 ]:
     assert marker in activation, f"activation missing: {marker}"
 
-# Failed post-migration activation has both an ERR fallback and an explicit
-# assertion-failure rollback path. This must not depend on OR-list semantics.
 for marker in [
     'rollback_pr30',
     'pr30_agent_attachment.rollback.sql',
     "trap 'rollback_pr30 $?' ERR",
     'rollback_pr30 1',
-    'PR30 post-apply assertions failed',
+    'Task 3.3 post-apply security assertions failed',
     'ROLLBACK FAILURE: PR30 rollback command failed',
+    'SAFE ROLLBACK NOTE: Task 3.3 RLS hardening remains active',
 ]:
     assert marker in activation, f"rollback path missing: {marker}"
 assert '|| fail "PR30 post-apply assertions failed"' not in activation
 
-# Deferred Task 2.3 training is not executed or runtime-probed by Task 3.3.
 for src_name, src in [('activation', activation), ('final_gate', final_gate), ('smoke', smoke)]:
     for forbidden in [
         'w2-task2-3-final-gate.sh',
@@ -75,7 +75,6 @@ for deferred_secret in [
 assert 'W3_T3_3_LOVABLE_NATIVE_DEPLOY_CONFIRMED' in runtime_inputs
 assert 'W3_T3_3_DEPLOYED_COMMIT_SHA' in runtime_inputs
 
-# Private attachment locator is atomic, service-role only and reversible.
 for marker in [
     'CREATE TABLE IF NOT EXISTS public.message_attachment_private',
     'ALTER TABLE public.message_attachment_private ENABLE ROW LEVEL SECURITY',
@@ -88,13 +87,25 @@ for marker in [
 assert 'DROP FUNCTION IF EXISTS public.agent_send_attachment_tx' in attachment_rollback
 assert 'DROP TABLE IF EXISTS public.message_attachment_private' in attachment_rollback
 
-# Final status is reachable only after activation and whole-product smoke.
+for marker in [
+    'CREATE POLICY ai_reply_draft_read',
+    'CREATE POLICY handoff_event_read',
+    'JOIN public.company_membership cm',
+    'cm.user_id = auth.uid()',
+    'ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY',
+    'REVOKE ALL ON TABLE public.%I FROM PUBLIC, anon, authenticated',
+]:
+    assert marker in security_sql, f"security hardening missing: {marker}"
+assert 'USING (true)' in security_rollback
+
 assert final_gate.index('bash scripts/w3-task3-3-production-activate.sh') < \
        final_gate.index('bash scripts/w3-task3-3-whole-product-smoke.sh') < \
        final_gate.index('W3 TASK 3.3 FINAL STATUS: READY')
 assert 'production health-check' in smoke
 assert 'runtime function reachable' in smoke
-assert 'attachment private-locator and tenant boundary' in smoke
+assert 'attachment private-locator, RLS and tenant boundary' in smoke
+assert "tablename='ai_reply_draft'" in smoke
+assert "tablename='handoff_event'" in smoke
 assert 'w3-task3-3-consolidated-closure-contract.py' in smoke
 
 print('PASS Task 3.3 current-scope consolidated closure contract')
