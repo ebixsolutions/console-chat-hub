@@ -6,6 +6,7 @@ on:
       - main
       - director/task3-3-debug-takeover
       - director/task3-3-resolution-rpc-fix
+      - director/task3-3-p0-closure
 
 permissions:
   contents: read
@@ -37,6 +38,9 @@ jobs:
 
       - name: Conversation resolution RPC contract
         run: python3 tests/edge/w3-task3-3-resolution-contract.py .
+
+      - name: P0 escalation and tenant closure contract
+        run: python3 tests/edge/w3-task3-3-p0-closure-contract.py .
 
       - name: Lockfile baseline marker
         shell: bash
