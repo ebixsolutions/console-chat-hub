@@ -44,17 +44,20 @@ jobs:
 
       - name: Commit generated implementation when patch step changed files
         run: |
-          if git diff --quiet; then
-            echo 'No generated source changes; current branch validated.'
+          TARGETS=(
+            supabase/functions/generate-reply/index.ts
+            supabase/functions/_shared/conversation-intelligence.ts
+            supabase/functions/_shared/escalation-rules.ts
+            supabase/functions/_shared/escalation-shadow.ts
+            supabase/functions/widget-live-ai-test/index.ts
+            src/routes/_authenticated/console.widget-preview.tsx
+          )
+          if git diff --quiet -- "${TARGETS[@]}"; then
+            echo 'No generated target-source changes; current branch validated.'
             exit 0
           fi
           git config user.name 'Task3.3 Director Automation'
           git config user.email 'actions@users.noreply.github.com'
-          git add supabase/functions/generate-reply/index.ts \
-                  supabase/functions/_shared/conversation-intelligence.ts \
-                  supabase/functions/_shared/escalation-rules.ts \
-                  supabase/functions/_shared/escalation-shadow.ts \
-                  supabase/functions/widget-live-ai-test/index.ts \
-                  src/routes/_authenticated/console.widget-preview.tsx
+          git add "${TARGETS[@]}"
           git commit -m 'Task 3.3: continuous conversational runtime closure [task3-3-generated]'
           git push origin HEAD:task3-3-conversational-runtime-closure
