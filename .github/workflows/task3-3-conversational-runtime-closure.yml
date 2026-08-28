@@ -26,12 +26,17 @@ jobs:
       - name: Apply deterministic source patch if needed
         run: |
           if grep -q 'conversation-intelligence.ts' supabase/functions/generate-reply/index.ts; then
-            echo 'Patch already applied; validating current authoritative branch state.'
+            echo 'Base conversational patch already applied.'
           else
             python3 scripts/task3-3-conversational-runtime-patch.py
           fi
+          if grep -q 'buildConversationContinuityBlock' supabase/functions/generate-reply/index.ts; then
+            echo 'Continuity enhancement already applied.'
+          else
+            python3 scripts/task3-3-continuity-enhancement.py
+          fi
 
-      - name: Conversation intelligence runtime matrix
+      - name: Conversation intelligence and continuous multi-turn matrix
         run: node --experimental-strip-types tests/edge/w3-task3-3-conversation-intelligence.ts
 
       - name: Source contract
@@ -55,9 +60,10 @@ jobs:
           git config user.name 'Task3.3 Director Automation'
           git config user.email 'actions@users.noreply.github.com'
           git add supabase/functions/generate-reply/index.ts \
+                  supabase/functions/_shared/conversation-intelligence.ts \
                   supabase/functions/_shared/escalation-rules.ts \
                   supabase/functions/_shared/escalation-shadow.ts \
                   supabase/functions/widget-live-ai-test/index.ts \
                   src/routes/_authenticated/console.widget-preview.tsx
-          git commit -m 'Task 3.3: conversational runtime closure [task3-3-generated]'
+          git commit -m 'Task 3.3: continuous conversational runtime closure [task3-3-generated]'
           git push origin HEAD:task3-3-conversational-runtime-closure
