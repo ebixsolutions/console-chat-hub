@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import {
+  buildConversationContinuityBlock,
+  buildCustomerAdvisoryContext,
   classifyConversationTurn,
   classifyHandoffIntent,
   hasUsableFullContentEvidence,
@@ -66,4 +68,32 @@ assert.equal(hasUsableFullContentEvidence([
   { chunk_type: "full_content", content: "authoritative fact", score: 0.8 },
 ], 0.55), true, "full content is answerable evidence");
 
-console.log("PASS Task 3.3 conversation intelligence regression matrix");
+// Continuous conversation projection: 24 customer turns with corrections and constraints.
+const multiTurn = Array.from({ length: 24 }, (_, i) => ({
+  role: "visitor",
+  content: `較早客戶資料 ${24 - i}`,
+}));
+multiTurn[0] = { role: "visitor", content: "我頭先講錯，地址唔係8樓B，係8樓A。" };
+multiTurn[1] = { role: "visitor", content: "唔好取消訂單，我只係想知道可唔可以取消。" };
+multiTurn[2] = { role: "visitor", content: "另外，今日送貨仍然未有人聯絡。" };
+const continuity = buildConversationContinuityBlock(multiTurn);
+assert.match(continuity, /地址唔係8樓B，係8樓A/);
+assert.match(continuity, /唔好取消訂單/);
+assert.match(continuity, /newest customer statement as authoritative/i);
+assert.ok(continuity.length <= 5000, "continuity block must stay bounded");
+assert.ok(!continuity.includes("較早客戶資料 1"), "very old turns must be outside bounded projection");
+
+const advisory = buildCustomerAdvisoryContext({
+  tier: "VIP",
+  anger_flag: true,
+  sentiment_score: -0.8,
+  churn_risk: 0.9,
+  escalation_score: 0.85,
+});
+assert.match(advisory, /attentive and efficient/i);
+assert.match(advisory, /frustration or anger/i);
+assert.match(advisory, /must never trigger human handoff/i);
+assert.match(advisory, /not authorization for a required handoff/i);
+assert.equal(buildCustomerAdvisoryContext({}), "");
+
+console.log("PASS Task 3.3 conversation intelligence + continuous multi-turn regression matrix");
