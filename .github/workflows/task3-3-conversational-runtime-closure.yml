@@ -11,7 +11,6 @@ permissions:
 
 jobs:
   apply-and-validate:
-    if: ${{ !contains(github.event.head_commit.message || '', '[task3-3-generated]') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,8 +23,13 @@ jobs:
           node-version: '22'
           cache: npm
 
-      - name: Apply deterministic source patch
-        run: python3 scripts/task3-3-conversational-runtime-patch.py
+      - name: Apply deterministic source patch if needed
+        run: |
+          if grep -q 'conversation-intelligence.ts' supabase/functions/generate-reply/index.ts; then
+            echo 'Patch already applied; validating current authoritative branch state.'
+          else
+            python3 scripts/task3-3-conversational-runtime-patch.py
+          fi
 
       - name: Conversation intelligence runtime matrix
         run: node --experimental-strip-types tests/edge/w3-task3-3-conversation-intelligence.ts
@@ -42,11 +46,11 @@ jobs:
       - name: Verify package marker
         run: node -e "const p=require('./package.json'); if(p.devDependencies['@lovable.dev/vite-tanstack-config']!=='2.13.1') process.exit(1); console.log('PASS package marker 2.13.1')"
 
-      - name: Commit implementation
+      - name: Commit generated implementation when patch step changed files
         run: |
           if git diff --quiet; then
-            echo 'No generated source changes'
-            exit 1
+            echo 'No generated source changes; current branch validated.'
+            exit 0
           fi
           git config user.name 'Task3.3 Director Automation'
           git config user.email 'actions@users.noreply.github.com'
