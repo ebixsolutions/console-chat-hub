@@ -1713,8 +1713,8 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
   const _pr5History = deriveConversationHistorySignals(
     _pr5HistoryRows ?? [],
     _pr5VisitorTurnCount ?? 0,
-
   );
+
 
   const _visitorLang = detectVisitorLanguage(_h1LastMsg);
   const _pr5ExpectedTenantId =
