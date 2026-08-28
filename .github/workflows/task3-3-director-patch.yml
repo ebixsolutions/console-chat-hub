@@ -1,0 +1,54 @@
+name: task3-3-director-exact-patch
+
+on:
+  push:
+    branches:
+      - director/task3-3-debug-takeover
+
+permissions:
+  contents: write
+
+jobs:
+  exact-patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: director/task3-3-debug-takeover
+          fetch-depth: 0
+      - name: Patch only the two no-match boolean call sites
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('supabase/functions/generate-reply/index.ts')
+          s = p.read_text()
+          old_threat = 'threat_flag: _pr5ThreatSignal !== undefined,'
+          new_threat = 'threat_flag: _pr5ThreatSignal?.value === true,'
+          old_compliance = 'compliance_requires_human_review: _pr5ComplianceSignal !== undefined,'
+          new_compliance = 'compliance_requires_human_review: _pr5ComplianceSignal?.value === true,'
+          assert s.count(old_threat) == 2, f'unexpected threat call-site count: {s.count(old_threat)}'
+          assert s.count(old_compliance) == 2, f'unexpected compliance call-site count: {s.count(old_compliance)}'
+          s2 = s.replace(old_threat, new_threat).replace(old_compliance, new_compliance)
+          assert s2.count(new_threat) == 2
+          assert s2.count(new_compliance) == 2
+          assert s2.count(old_threat) == 0
+          assert s2.count(old_compliance) == 0
+          p.write_text(s2)
+          PY
+          git diff --check
+          git diff --exit-code -- . ':!supabase/functions/generate-reply/index.ts' || {
+            echo 'Unexpected file changed' >&2
+            exit 1
+          }
+      - name: Commit exact patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add supabase/functions/generate-reply/index.ts
+          git commit -m 'Task 3.3: honor false compliance signal in no-match clarification'
+          git push origin HEAD:director/task3-3-debug-takeover
