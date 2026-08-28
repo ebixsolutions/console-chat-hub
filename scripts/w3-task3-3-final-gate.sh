@@ -9,6 +9,8 @@ cd "$ROOT"
 python3 tests/edge/w3-task3-3-source-contract.py "$ROOT"
 python3 tests/edge/w3-task3-3-consolidated-closure-contract.py "$ROOT"
 python3 tests/edge/task3-3-consolidated-product-ready-contract.py "$ROOT"
+python3 tests/edge/task3-3-round1-conversational-closure-contract.py "$ROOT"
+deno test supabase/functions/_shared/task3-3-round1-closure_test.ts
 
 for f in \
   scripts/w3-task3-3-runtime-inputs-load.sh \
