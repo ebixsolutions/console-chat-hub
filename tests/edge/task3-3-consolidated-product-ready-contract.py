@@ -99,7 +99,7 @@ assert 'kbEmpty' in crm and 'No relevant knowledge found' in crm, "C: explicit e
 
 # ---- D: Agent Assist regression guard ----
 assert 'resolveGenerationMaxTokens' not in assist, "D: agent-assist budget must stay untouched"
-for tool in ['translate', 'improve_grammar', 'suggest_reply', 'check_policy']:
+for tool in ['translate', 'grammar', 'suggest_reply', 'check_policy']:
     assert tool in assist, f"D: agent-assist tool missing: {tool}"
 
 # ---- E: real composer toolbar + attachments ----
