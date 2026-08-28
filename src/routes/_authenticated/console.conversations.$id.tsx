@@ -83,6 +83,8 @@ function ConversationDetailContent() {
 
   // ── J1: Realtime infrastructure ──
   const realtimeConnectedRef = useRef(true);
+  const replyRef = useRef<HTMLTextAreaElement>(null);
+
   const fallbackTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   function startDetailFallback() {
