@@ -1,0 +1,69 @@
+name: Task 3.3 Direct Write Integration
+
+on:
+  push:
+    branches:
+      - task3-3-direct-write-main-integration
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  integrate-and-validate:
+    if: ${{ !contains(github.event.head_commit.message || '', '[task3-3-direct-integrated]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: task3-3-direct-write-main-integration
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Fetch authoritative Task 3.3 implementation
+        run: git fetch origin task3-3-conversational-runtime-closure
+
+      - name: Apply exact Task 3.3 scoped files
+        run: |
+          git checkout origin/task3-3-conversational-runtime-closure -- \
+            supabase/functions/generate-reply/index.ts \
+            supabase/functions/_shared/conversation-intelligence.ts \
+            supabase/functions/_shared/escalation-rules.ts \
+            supabase/functions/_shared/escalation-shadow.ts \
+            supabase/functions/widget-live-ai-test/index.ts \
+            src/routes/_authenticated/console.widget-preview.tsx \
+            tests/edge/w3-task3-3-conversation-intelligence.ts \
+            tests/edge/w3-task3-3-conversational-runtime-contract.py \
+            scripts/w3-task3-3-conversational-final-gate.sh
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Single Task 3.3 final gate
+        run: bash scripts/w3-task3-3-conversational-final-gate.sh
+
+      - name: Commit direct-write implementation
+        run: |
+          git restore src/routeTree.gen.ts || true
+          if git diff --quiet && git diff --cached --quiet; then
+            echo 'No Task 3.3 scoped changes to commit.'
+            exit 0
+          fi
+          git config user.name 'Task3.3 Director Direct Write'
+          git config user.email 'actions@users.noreply.github.com'
+          git add \
+            supabase/functions/generate-reply/index.ts \
+            supabase/functions/_shared/conversation-intelligence.ts \
+            supabase/functions/_shared/escalation-rules.ts \
+            supabase/functions/_shared/escalation-shadow.ts \
+            supabase/functions/widget-live-ai-test/index.ts \
+            src/routes/_authenticated/console.widget-preview.tsx \
+            tests/edge/w3-task3-3-conversation-intelligence.ts \
+            tests/edge/w3-task3-3-conversational-runtime-contract.py \
+            scripts/w3-task3-3-conversational-final-gate.sh
+          git commit -m 'Task 3.3 direct-write conversational runtime closure [task3-3-direct-integrated]'
+          git push origin HEAD:task3-3-direct-write-main-integration
