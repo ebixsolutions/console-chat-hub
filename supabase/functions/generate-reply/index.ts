@@ -29,7 +29,7 @@ import { evaluateFullEscalationRuleset } from "../_shared/escalation-rules.ts";
 import { assessPolicyEvidenceForR4 } from "../_shared/escalation-policy.ts";
 import { validateP1PredictionSignals, type P1PredictionInput } from "../_shared/escalation-p1.ts";
 import { callModel, resolveGenerationMaxTokens, type LlmFailureCode } from "../_shared/llm-router.ts";
-import { CUSTOMER_CONVERSATION_POLICY, NATURAL_CLARIFICATION, classifyConversationTurn, classifyHandoffIntent, hasUsableFullContentEvidence, isHumanControlState } from "../_shared/conversation-intelligence.ts";
+import { CUSTOMER_CONVERSATION_POLICY, NATURAL_CLARIFICATION, buildConversationContinuityBlock, buildCustomerAdvisoryContext, classifyConversationTurn, classifyHandoffIntent, hasUsableFullContentEvidence, isHumanControlState } from "../_shared/conversation-intelligence.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -1712,6 +1712,7 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     _pr5HistoryRows ?? [],
     _pr5VisitorTurnCount ?? 0,
   );
+  const _conversationContinuityBlock = buildConversationContinuityBlock(_pr5HistoryRows ?? []);
 
 
   const _visitorLang = detectVisitorLanguage(_h1LastMsg);
@@ -2326,7 +2327,21 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
 
   if (flags.ENABLE_TOOL_EXEC) console.log("[generate-reply] ENABLE_TOOL_EXECUTOR=true: Gate present, tools NOT attached (L5d scope)");
 
-  const finalSystemPrompt = [basePrompt, CUSTOMER_CONVERSATION_POLICY, buildMaskedContextBlock(customerContext, opaqueCustomerRef), buildRagBlock(ragResult)].filter((s) => s && s.length > 0).join("\n\n");
+  const _customerAdvisoryBlock = buildCustomerAdvisoryContext({
+    tier: customerContext?.tier,
+    anger_flag: _pr5R3Sentiment?.anger_flag,
+    sentiment_score: _pr5R3Sentiment?.sentiment_score,
+    churn_risk: customerContext?.churn_risk,
+    escalation_score: customerContext?.escalation_score,
+  });
+  const finalSystemPrompt = [
+    basePrompt,
+    CUSTOMER_CONVERSATION_POLICY,
+    _conversationContinuityBlock,
+    _customerAdvisoryBlock,
+    buildMaskedContextBlock(customerContext, opaqueCustomerRef),
+    buildRagBlock(ragResult),
+  ].filter((s) => s && s.length > 0).join("\n\n");
   const { data: newestMessages } = await supabaseAdmin
     .from("messages")
     .select("id, role, content, created_at")
