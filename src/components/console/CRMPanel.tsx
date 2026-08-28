@@ -564,7 +564,7 @@ export function CRMPanel({
                 />
                 <button disabled={kbConnState === "loading" || !kbQuery.trim()} onClick={() => void runKbSearch(kbQuery, ++kbReqIdRef.current)} style={btnSm}>{rc("kbSearchBtn")}</button>
                 <button disabled={kbConnState === "loading"} onClick={() => {
-                  const q = kbQuery.trim() || boundedContext;
+                  const q = kbQuery.trim() || deriveAutoSearchQuery(boundedContext);
                   if (q) void runKbSearch(q, ++kbReqIdRef.current);
                 }} style={btnSm}>↻</button>
               </div>
