@@ -527,16 +527,32 @@ function ConversationDetailContent() {
 
               <div className="space-y-2">
                 <Textarea
+                  ref={replyRef}
                   value={reply}
                   onChange={(e) => setReply(e.target.value)}
                   placeholder="Type your reply…"
                   rows={4}
                   maxLength={4000}
                 />
+                <div className="flex items-center gap-2">
+                  <EmojiPickerButton
+                    onInsert={(emoji) => {
+                      const node = replyRef.current;
+                      const { value, caret } = insertAtCaret(node, reply, emoji);
+                      setReply(value);
+                      requestAnimationFrame(() => {
+                        node?.focus();
+                        node?.setSelectionRange(caret, caret);
+                      });
+                    }}
+                  />
+                  <AttachmentButtons conversationId={id} onSent={() => loadMessages()} />
+                </div>
                 <Button onClick={handleSendClick} disabled={sending || !reply.trim()} className="w-full">
                   {sending ? "Sending…" : "Send reply"}
                 </Button>
               </div>
+
 
               <div className="flex flex-col gap-2">
                 {conv.status !== "resolved" && (
