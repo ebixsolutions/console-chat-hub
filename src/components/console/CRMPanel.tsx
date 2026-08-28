@@ -178,7 +178,58 @@ export function normalizeKBResults(value: unknown): KBResult[] | null {
   return out;
 }
 
+/* --------------------------- UI relevance contract -------------------------- */
+
+/**
+ * Conservative display threshold for the right-hand Knowledge panel.
+ *
+ * Runtime grounding treats ~0.55 as the *minimum* usable retrieval score, but a
+ * 0.55-0.70 hit is frequently a topically unrelated document (e.g. "四電一腦"
+ * surfacing for a Mars-insurance question). Showing it beside the conversation
+ * implies relevance the retrieval never established, so the panel only renders
+ * evidence at or above this stricter bar. Selected-document / full-content
+ * evidence is preferred and shown first; nothing is fabricated or re-scored.
+ */
+export const KB_UI_MIN_RELEVANCE = 0.75;
+export const KB_UI_SELECTED_DOC_MIN_RELEVANCE = 0.65;
+
+export function filterRelevantKBResults(
+  results: KBResult[],
+  selectedDocumentId: string | null,
+): KBResult[] {
+  const kept = results.filter((r) => {
+    const isPreferred =
+      r.chunk_type === "full_content" ||
+      (!!selectedDocumentId && r.document_id === selectedDocumentId);
+    const floor = isPreferred ? KB_UI_SELECTED_DOC_MIN_RELEVANCE : KB_UI_MIN_RELEVANCE;
+    return r.score >= floor;
+  });
+  const rank = (r: KBResult) => {
+    if (!!selectedDocumentId && r.document_id === selectedDocumentId) return 0;
+    if (r.chunk_type === "full_content") return 1;
+    return 2;
+  };
+  return kept.sort((a, b) => rank(a) - rank(b) || b.score - a.score);
+}
+
+/**
+ * The auto-search query is the latest meaningful visitor turn, not the whole
+ * bounded window: concatenating five unrelated turns retrieves documents for
+ * topics the customer already left behind. The bounded context remains the
+ * fallback when the latest turn is too short to be a query on its own.
+ */
+export const KB_AUTO_QUERY_MIN_CHARS = 6;
+
+export function deriveAutoSearchQuery(boundedContext: string): string {
+  const context = boundedContext.trim();
+  if (!context) return "";
+  const parts = context.split(CONTEXT_SEPARATOR).map((p) => p.trim()).filter(Boolean);
+  const latest = parts.length > 0 ? parts[parts.length - 1] : "";
+  return latest.length >= KB_AUTO_QUERY_MIN_CHARS ? latest : context;
+}
+
 export function normalizePolicyResult(value: unknown): PolicyResult | null {
+
   const r = asRecord(value);
   if (!r || typeof r.status !== "string" || typeof r.summary !== "string") return null;
   const issues: PolicyResult["issues"] = [];
