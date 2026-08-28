@@ -98,7 +98,7 @@ async function resolveAgentScope(
     ok: true,
     agentId: String(agent.id),
     agentName: typeof agent.display_name === "string" ? agent.display_name : null,
-    companyId: companyIds[0],
+    companyId: String(companyIds[0]),
   };
 }
 
