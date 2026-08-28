@@ -1,14 +1,16 @@
 /**
- * Task 3.3 (E) — authenticated console attachment send + retrieval.
+ * Task 3.3 (E/F) — authenticated console attachment send + retrieval.
  *
- * Safety contract (same as the widget attachment path):
+ * Safety contract:
  *   * private "widget-attachments" bucket only, never public access
  *   * 10 MB size limit + MIME allowlist enforced server-side
- *   * fresh tenant / ownership / human-control checks inside
- *     public.agent_send_attachment_tx (row lock, takeover + resolved guards)
- *   * compensating storage cleanup when the DB/RPC step fails (no orphans)
- *   * raw storage paths are never returned to the browser; images and files are
- *     read through short-lived signed URLs only
+ *   * tenant + current human-control preflight happens before storage upload
+ *   * authoritative row-lock ownership/control checks remain inside
+ *     public.agent_send_attachment_tx
+ *   * failed DB/RPC commits trigger compensating storage cleanup
+ *   * raw storage bucket/path live only in message_attachment_private and are
+ *     never returned in messages.metadata or browser payloads
+ *   * reads use short-lived authenticated signed URLs only
  */
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
@@ -112,6 +114,8 @@ function rpcFailure(result: string): { ok: false; error_type: string; error: str
       return fail("conversation_owned_by_another_agent", "This conversation is assigned to another agent");
     case "human_control_required":
       return fail("human_control_required", "Conversation is not under human control");
+    case "tenant_unresolved":
+      return fail("company_scope_unresolved", "Conversation company scope is not configured");
     case "agent_not_found":
       return fail("agent_not_found", "Agent profile not found");
     case "agent_inactive":
@@ -152,16 +156,29 @@ export const sendAgentAttachment = createServerFn({ method: "POST" })
     const scope = await resolveAgentScope(supabaseAdmin as never, context.userId);
     if (!scope.ok) return scope;
 
-    // Tenant boundary is verified before any storage write or privileged RPC.
+    // Fail before any storage write when control state is not currently sendable.
+    // The transactional RPC repeats these checks under FOR UPDATE after upload.
     const { data: conversation, error: conversationError } = await supabaseAdmin
       .from("conversations")
-      .select("id")
+      .select("id, status, assigned_agent_id")
       .eq("id", conversationId)
       .eq("company_id", scope.companyId)
       .maybeSingle();
 
     if (conversationError) return fail("conversation_lookup_failed", "Conversation lookup failed");
     if (!conversation) return fail("conversation_not_found", "Conversation not found");
+    if (conversation.status === "resolved" || conversation.status === "closed") {
+      return fail("conversation_resolved", "Conversation is resolved");
+    }
+    if (!conversation.assigned_agent_id) {
+      return fail("takeover_required", "Take over this conversation before sending");
+    }
+    if (String(conversation.assigned_agent_id) !== scope.agentId) {
+      return fail("conversation_owned_by_another_agent", "This conversation is assigned to another agent");
+    }
+    if (conversation.status !== "pending") {
+      return fail("human_control_required", "Conversation is not under human control");
+    }
 
     const ext = (file.name.split(".").pop() || "bin").replace(/[^a-zA-Z0-9]/g, "").slice(0, 10) || "bin";
     const storagePath = `agent/${conversationId}/${crypto.randomUUID()}.${ext}`;
@@ -211,6 +228,8 @@ export const getAgentAttachmentUrl = createServerFn({ method: "POST" })
     const scope = await resolveAgentScope(supabaseAdmin as never, context.userId);
     if (!scope.ok) return scope;
 
+    // Browser-safe message metadata is used for display only. Private storage
+    // location is resolved independently from the service-role-only table.
     const { data: message, error: messageError } = await supabaseAdmin
       .from("messages")
       .select("id, content_type, metadata, conversation_id, conversations!inner(id, company_id)")
@@ -221,17 +240,26 @@ export const getAgentAttachmentUrl = createServerFn({ method: "POST" })
     if (messageError) return fail("attachment_lookup_failed", "Attachment lookup failed");
     if (!message) return fail("attachment_not_found", "Attachment not found");
 
-    const metadata = (message.metadata ?? {}) as Record<string, unknown>;
-    const storagePath = typeof metadata["storage_path"] === "string" ? metadata["storage_path"] : "";
-    const bucket = typeof metadata["storage_bucket"] === "string" ? metadata["storage_bucket"] : "";
-    if (!storagePath || bucket !== ATTACHMENT_BUCKET) return fail("attachment_not_found", "Attachment not found");
+    const { data: locator, error: locatorError } = await supabaseAdmin
+      .from("message_attachment_private")
+      .select("storage_bucket, storage_path")
+      .eq("message_id", data.message_id)
+      .eq("conversation_id", message.conversation_id)
+      .eq("company_id", scope.companyId)
+      .maybeSingle();
+
+    if (locatorError) return fail("attachment_lookup_failed", "Attachment lookup failed");
+    if (!locator || locator.storage_bucket !== ATTACHMENT_BUCKET || typeof locator.storage_path !== "string") {
+      return fail("attachment_not_found", "Attachment not found");
+    }
 
     const { data: signed, error: signError } = await supabaseAdmin.storage
       .from(ATTACHMENT_BUCKET)
-      .createSignedUrl(storagePath, SIGNED_URL_TTL_SECONDS);
+      .createSignedUrl(locator.storage_path, SIGNED_URL_TTL_SECONDS);
 
     if (signError || !signed?.signedUrl) return fail("attachment_unavailable", "Attachment unavailable");
 
+    const metadata = (message.metadata ?? {}) as Record<string, unknown>;
     const rawContentType = String(message.content_type ?? "file");
     return {
       ok: true,
