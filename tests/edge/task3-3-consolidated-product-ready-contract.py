@@ -72,8 +72,6 @@ for guard in [
 ]:
     assert guard in elig, f"B: eligibility guard missing: {guard}"
 
-# Regression guard: an authoritative compliance signal object can exist with
-# value=false. Eligibility must test that boolean value, not object presence.
 assert reply.count('threat_flag: _pr5ThreatSignal?.value === true') >= 2, \
     "B: no-match call sites must pass authoritative threat boolean value"
 assert reply.count('compliance_requires_human_review: _pr5ComplianceSignal?.value === true') >= 2, \
@@ -121,11 +119,10 @@ assert 'TAKEOVER_RETRY_ERRORS' in tools_ui, "E: attachment takeover retry guard"
 assert 'take-over-conversation' in tools_ui, "E: canonical takeover endpoint"
 assert 'Exactly one retry' in tools_ui, "E: no unbounded takeover/send loop"
 
-# Browser model itself cannot represent private locators.
 assert 'storage_path' not in msg_ui and 'storage_bucket' not in msg_ui, \
     "E: private storage locator leaked into browser attachment type"
 assert 'createSignedUrl' in attach_fn
-assert '.from("message_attachment_private")' in attach_fn, \
+assert re.search(r'\.from\("message_attachment_private"(?:\s+as\s+never)?\)', attach_fn), \
     "E: signed URL must resolve locator server-side"
 assert 'metadata["storage_path"]' not in attach_fn and 'metadata["storage_bucket"]' not in attach_fn, \
     "E: signed URL must not read private locators from message metadata"
@@ -144,7 +141,6 @@ for marker in [
 assert attach_fn.index('.upload(') > attach_fn.index('.eq("company_id", scope.companyId)'), \
     "E: tenant/control preflight must precede storage upload"
 
-# SQL must keep browser-safe metadata and private locator storage separate.
 for marker in [
     'CREATE TABLE IF NOT EXISTS public.message_attachment_private',
     'ALTER TABLE public.message_attachment_private ENABLE ROW LEVEL SECURITY',
