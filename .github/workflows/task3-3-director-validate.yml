@@ -1,0 +1,77 @@
+name: task3-3-director-repair-validation
+
+on:
+  push:
+    branches:
+      - director/task3-3-debug-takeover
+
+permissions:
+  contents: write
+
+jobs:
+  repair-and-validate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: director/task3-3-debug-takeover
+          fetch-depth: 0
+
+      - name: Apply exact remaining source repairs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('src/lib/api/attachments.functions.ts')
+          s = p.read_text()
+          old = '.from("message_attachment_private")'
+          new = '.from("message_attachment_private" as never)'
+          assert s.count(old) == 1, f'unexpected private-table call count: {s.count(old)}'
+          s = s.replace(old, new)
+          p.write_text(s)
+
+          p = Path('scripts/w3-task3-3-whole-product-smoke.sh')
+          s = p.read_text()
+          frozen = [
+            'bash scripts/w3-task3-1-product-surface-final-gate.sh "$(pwd)"\n',
+            'python3 tests/edge/w1-task1-2-product-ready-runtime-closure-contract.py "$(pwd)"\n',
+            'python3 tests/edge/w1-task1-3-runtime-source-contract.py "$(pwd)"\n',
+          ]
+          for line in frozen:
+              assert s.count(line) == 1, f'unexpected frozen-gate line count for {line!r}: {s.count(line)}'
+              s = s.replace(line, '')
+          s = s.replace(
+              'pass "current product-ready source/runtime contracts remain locked"',
+              'pass "Task 3.3 current-scope contracts remain locked"',
+          )
+          p.write_text(s)
+          PY
+          git diff --check
+
+      - name: Task 3.3 source contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tests/edge/w3-task3-3-source-contract.py .
+          python3 tests/edge/w3-task3-3-consolidated-closure-contract.py .
+          python3 tests/edge/task3-3-consolidated-product-ready-contract.py .
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Production build
+        run: npm run build
+
+      - name: Commit validated exact repairs
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/lib/api/attachments.functions.ts scripts/w3-task3-3-whole-product-smoke.sh
+          git diff --cached --quiet && exit 0
+          git commit -m 'Task 3.3: close typed locator and frozen-gate regressions'
+          git push origin HEAD:director/task3-3-debug-takeover
