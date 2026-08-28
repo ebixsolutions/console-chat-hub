@@ -2,6 +2,7 @@
 """Task 3.3 consolidated product-ready source contract (A-F).
 
 Machine-checked source guarantees only; this asserts nothing about runtime PASS.
+The assertions intentionally target the previously observed false-PASS classes.
 """
 from pathlib import Path
 import re
@@ -39,20 +40,15 @@ for marker in [
 ]:
     assert marker in router, f"A: {marker}"
 assert 'Math.max(' in router and 'Math.min(' in router, "A: budget must be clamped"
-
 for name, src in (('generate-reply', reply), ('escalation-policy', policy)):
     assert 'resolveGenerationMaxTokens' in src, f"A: {name} must use shared budget"
     assert 'maxTokens: 500' not in src, f"A: {name} still hard-codes 500"
-
-# every generation-purpose caller in _shared + functions uses the helper
 for path in (r / 'supabase' / 'functions').rglob('*.ts'):
     text = path.read_text()
     for m in re.finditer(r'purpose:\s*"generation"', text):
         window = text[max(0, m.start() - 1500): m.start() + 1500]
         assert 'resolveGenerationMaxTokens' in window or 'maxTokens' not in window, \
             f"A: generation caller without shared budget: {path}"
-
-# fail-closed truncation handling preserved
 assert 'MAX_TOKENS' in router and 'LLM_INVALID_OUTPUT' in router, "A: fail-closed truncation"
 
 # ---- B: first ordinary no-match/low-score => one AI clarification turn ----
@@ -69,20 +65,23 @@ for marker in [
 elig = reply[reply.index('export function isFirstNoMatchClarificationEligible'):]
 elig = elig[:elig.index('\n}\n')]
 for guard in [
-    'KB_EMPTY',
-    'KB_LOW_SCORE_STANDARD',
-    'input.high_risk',
-    'input.explicit_human_request',
-    'threat_flag',
-    'compliance_requires_human_review',
-    'clarification_attempts > 0',
+    'KB_EMPTY', 'KB_LOW_SCORE_STANDARD', 'input.high_risk',
+    'input.explicit_human_request', 'threat_flag',
+    'compliance_requires_human_review', 'clarification_attempts > 0',
     'exact_same_intent_repeated',
 ]:
     assert guard in elig, f"B: eligibility guard missing: {guard}"
 
-# escalation guards not weakened
-assert 'handleKBFallback' in reply, "B: KB fallback handoff path must remain"
-assert 'kb_fallback_handoff_tx' in reply, "B: atomic handoff must remain"
+# Regression guard: an authoritative compliance signal object can exist with
+# value=false. Eligibility must test that boolean value, not object presence.
+assert reply.count('threat_flag: _pr5ThreatSignal?.value === true') >= 2, \
+    "B: no-match call sites must pass authoritative threat boolean value"
+assert reply.count('compliance_requires_human_review: _pr5ComplianceSignal?.value === true') >= 2, \
+    "B: no-match call sites must pass authoritative compliance boolean value"
+assert 'compliance_requires_human_review: _pr5ComplianceSignal !== undefined' not in reply, \
+    "B: false compliance object still incorrectly blocks clarification"
+assert 'handleKBFallback' in reply and 'kb_fallback_handoff_tx' in reply, \
+    "B: escalation fallback must remain fail-closed"
 
 # ---- C: right-panel contextual relevance ----
 for marker in [
@@ -93,16 +92,22 @@ for marker in [
     'full_content',
 ]:
     assert marker in crm, f"C: {marker}"
-assert 'filterRelevantKBResults(' in crm, "C: relevance filter must be applied"
-assert 'deriveAutoSearchQuery(boundedContext)' in crm, "C: auto query derivation"
-assert 'kbEmpty' in crm and 'No relevant knowledge found' in crm, "C: explicit empty state"
+assert 'KB_UI_SELECTED_DOC_MIN_RELEVANCE = 0.65' not in crm, \
+    "C: selected/full-content evidence cannot lower the acceptance threshold"
+filter_src = crm[crm.index('export function filterRelevantKBResults'):]
+filter_src = filter_src[:filter_src.index('\n}\n')]
+assert 'r.score >= KB_UI_MIN_RELEVANCE' in filter_src, \
+    "C: every displayed result must meet the hard 0.75 floor"
+assert 'filterRelevantKBResults(' in crm
+assert 'deriveAutoSearchQuery(boundedContext)' in crm
+assert 'kbEmpty' in crm and 'No relevant knowledge found' in crm
 
 # ---- D: Agent Assist regression guard ----
 assert 'resolveGenerationMaxTokens' not in assist, "D: agent-assist budget must stay untouched"
 for tool in ['translate', 'grammar', 'suggest_reply', 'check_policy']:
     assert tool in assist, f"D: agent-assist tool missing: {tool}"
 
-# ---- E: real composer toolbar + attachments ----
+# ---- E/F: composer + attachment security/control ----
 for src_name, src in (('inbox', inbox), ('detail', detail)):
     assert 'coming soon' not in src, f"E: {src_name} still has disabled placeholders"
     assert 'EmojiPickerButton' in src, f"E: {src_name} emoji picker"
@@ -112,9 +117,18 @@ for src_name, src in (('inbox', inbox), ('detail', detail)):
 
 assert 'insertAtCaret' in tools_ui and 'selectionStart' in tools_ui, "E: caret insertion"
 assert 'MAX_ATTACHMENT_BYTES' in tools_ui and 'ALLOWED_ATTACHMENT_MIME' in tools_ui, "E: client guards"
-assert 'storage_path' not in msg_ui.replace('storage_path?: unknown', ''), \
-    "E: raw storage path must never be rendered"
-assert 'createSignedUrl' in attach_fn, "E: signed URL retrieval"
+assert 'TAKEOVER_RETRY_ERRORS' in tools_ui, "E: attachment takeover retry guard"
+assert 'take-over-conversation' in tools_ui, "E: canonical takeover endpoint"
+assert 'Exactly one retry' in tools_ui, "E: no unbounded takeover/send loop"
+
+# Browser model itself cannot represent private locators.
+assert 'storage_path' not in msg_ui and 'storage_bucket' not in msg_ui, \
+    "E: private storage locator leaked into browser attachment type"
+assert 'createSignedUrl' in attach_fn
+assert '.from("message_attachment_private")' in attach_fn, \
+    "E: signed URL must resolve locator server-side"
+assert 'metadata["storage_path"]' not in attach_fn and 'metadata["storage_bucket"]' not in attach_fn, \
+    "E: signed URL must not read private locators from message metadata"
 
 for marker in [
     'widget-attachments',
@@ -123,25 +137,30 @@ for marker in [
     'agent_send_attachment_tx',
     'remove([storagePath])',
     '.eq("company_id", scope.companyId)',
+    'conversation.status === "resolved"',
+    'conversation.assigned_agent_id',
 ]:
-    assert marker in attach_fn, f"E: {marker}"
+    assert marker in attach_fn, f"E: attachment server missing {marker}"
 assert attach_fn.index('.upload(') > attach_fn.index('.eq("company_id", scope.companyId)'), \
-    "E: tenant check must precede storage upload"
+    "E: tenant/control preflight must precede storage upload"
 
+# SQL must keep browser-safe metadata and private locator storage separate.
 for marker in [
-    'FOR UPDATE',
-    'resolved',
-    'human_control',
-    "('image', 'video', 'file')",
-    '10485760',
-    'REVOKE ALL ON FUNCTION public.agent_send_attachment_tx',
+    'CREATE TABLE IF NOT EXISTS public.message_attachment_private',
+    'ALTER TABLE public.message_attachment_private ENABLE ROW LEVEL SECURITY',
+    'REVOKE ALL ON TABLE public.message_attachment_private FROM PUBLIC, anon, authenticated',
+    'INSERT INTO public.message_attachment_private',
+    'FOR UPDATE', 'resolved', 'human_control', "('image', 'video', 'file')",
+    '10485760', 'REVOKE ALL ON FUNCTION public.agent_send_attachment_tx',
     'GRANT EXECUTE ON FUNCTION public.agent_send_attachment_tx',
 ]:
     assert marker in attach_sql, f"E: sql {marker}"
-assert 'DROP FUNCTION' in attach_rollback, "E: rollback migration"
 
-# ---- F: existing safety invariants intact ----
-assert 'requireSupabaseAuth' in attach_fn, "F: attachment endpoints stay authenticated"
-assert 'service_role' in attach_sql, "F: privileged RPC restricted to service role"
+message_insert = attach_sql[attach_sql.index('INSERT INTO public.messages'):attach_sql.index('INSERT INTO public.message_attachment_private')]
+assert "'storage_path'" not in message_insert and "'storage_bucket'" not in message_insert, \
+    "E: public message metadata must not contain private locator"
+assert 'DROP FUNCTION' in attach_rollback and 'DROP TABLE IF EXISTS public.message_attachment_private' in attach_rollback, \
+    "E: rollback must cover RPC and private table"
+assert 'service_role' in attach_sql, "F: privileged RPC/table restricted to service role"
 
 print('PASS Task 3.3 consolidated product-ready source contract (A-F)')
