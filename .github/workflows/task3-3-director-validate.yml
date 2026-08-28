@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - director/task3-3-debug-takeover
+      - director/task3-3-resolution-rpc-fix
 
 permissions:
   contents: read
@@ -33,6 +34,9 @@ jobs:
 
       - name: Product-ready A-F contract
         run: python3 tests/edge/task3-3-consolidated-product-ready-contract.py .
+
+      - name: Conversation resolution RPC contract
+        run: python3 tests/edge/w3-task3-3-resolution-contract.py .
 
       - name: Lockfile baseline marker
         shell: bash
