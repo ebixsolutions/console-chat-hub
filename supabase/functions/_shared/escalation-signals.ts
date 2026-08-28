@@ -117,7 +117,10 @@ export interface EscalationContext {
   upstream_failure_count: SignalValue<number>;
   failure_type: SignalValue<string>;
 
-  // Local / R1
+  // Local / R1.
+  // MUST be produced by the canonical classifier in ./handoff-intent.ts
+  // (classifyHandoffIntent().explicit_request) so negation, conditional/future,
+  // reference and informational mentions can never trigger R1.
   explicit_request: SignalValue<boolean>;
 
   // CoachAI / remote scoring signals

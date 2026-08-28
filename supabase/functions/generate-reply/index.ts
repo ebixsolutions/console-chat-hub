@@ -29,6 +29,14 @@ import { evaluateFullEscalationRuleset } from "../_shared/escalation-rules.ts";
 import { assessPolicyEvidenceForR4 } from "../_shared/escalation-policy.ts";
 import { validateP1PredictionSignals, type P1PredictionInput } from "../_shared/escalation-p1.ts";
 import { callModel, resolveGenerationMaxTokens, type LlmFailureCode } from "../_shared/llm-router.ts";
+import { classifyHandoffIntent, explicitHandoffLanguage } from "../_shared/handoff-intent.ts";
+import { isUnderspecifiedIntent, UNDERSPECIFIED_CLARIFICATION } from "../_shared/conversational-routing.ts";
+import { assessAnswerability } from "../_shared/answerability.ts";
+import {
+  CUSTOMER_CONVERSATION_POLICY_PROMPT,
+  sanitizeCustomerFacingText,
+} from "../_shared/customer-response-policy.ts";
+import { deriveContinuitySignals, buildContinuityBrief } from "../_shared/conversation-continuity.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -87,28 +95,24 @@ const HANDOFF_INTENT_VERBS_EN = ["speak", "talk", "connect", "need", "want", "ge
 const ZH_CN_CHARS = ["转", "们", "队", "预计", "为您", "为我", "为你"];
 const ZH_TW_CHARS = ["轉", "們", "隊", "預計", "為您", "為我", "為你"];
 
+/**
+ * R1 gate. Delegates to the canonical shared classifier so negation,
+ * conditional/future, reference and informational mentions of human handoff can
+ * never produce an R1 false positive.
+ */
 function isHandoffIntent(text: string): boolean {
-  const lower = text.toLowerCase();
-  const allStrong = [...HANDOFF_STRONG_TRIGGERS["zh-TW"], ...HANDOFF_STRONG_TRIGGERS["zh-CN"], ...HANDOFF_STRONG_TRIGGERS["en"]];
-  if (allStrong.some((kw) => lower.includes(kw.toLowerCase()))) return true;
-  const hasWeak = HANDOFF_WEAK_TERMS.some((kw) => text.includes(kw));
-  const hasIntent = [...HANDOFF_INTENT_VERBS_ZH, ...HANDOFF_INTENT_VERBS_EN].some((kw) => lower.includes(kw.toLowerCase()));
-  return hasWeak && hasIntent;
+  return classifyHandoffIntent(text).explicit_request;
+}
+
+/** True when the customer mentions handoff only to refuse it. */
+function isPureHandoffNegationLocal(text: string): boolean {
+  return classifyHandoffIntent(text).pure_handoff_negation;
 }
 
 function detectHandoffLanguage(text: string): "zh-TW" | "zh-CN" | "en" | null {
-  if (!isHandoffIntent(text)) return null;
-  const lower = text.toLowerCase();
-  if (
-    HANDOFF_STRONG_TRIGGERS["en"].some((kw) => lower.includes(kw)) ||
-    (HANDOFF_INTENT_VERBS_EN.some((kw) => lower.includes(kw)) && HANDOFF_WEAK_TERMS.some((kw) => text.includes(kw)))
-  ) return "en";
-  if (ZH_CN_CHARS.some((kw) => text.includes(kw))) return "zh-CN";
-  if (ZH_TW_CHARS.some((kw) => text.includes(kw))) return "zh-TW";
-  if (HANDOFF_STRONG_TRIGGERS["zh-CN"].some((kw) => text.includes(kw))) return "zh-CN";
-  if (HANDOFF_STRONG_TRIGGERS["zh-TW"].some((kw) => text.includes(kw))) return "zh-TW";
-  return "zh-TW";
+  return explicitHandoffLanguage(text);
 }
+
 
 function sanitizeUserMessage(text: string): string {
   if (!text) return "";
@@ -1345,7 +1349,7 @@ When the customer explicitly requests a human agent, or when you transfer to a h
 
   const llm = await callModel({
     purpose: "generation",
-    system: legacySystemPrompt,
+    system: [legacySystemPrompt, CUSTOMER_CONVERSATION_POLICY_PROMPT].join("\n\n"),
     user: buildRouterConversationInput(modelMessages),
     maxTokens: resolveGenerationMaxTokens(),
     operationId: `generate-reply:legacy:${conversation_id}:${source_message_id}`,
@@ -1375,7 +1379,11 @@ When the customer explicitly requests a human agent, or when you transfer to a h
     );
   }
 
-  const aiReplyContent = llm.text;
+  // Last-line customer-facing guard: internal wording must never ship.
+  const aiReplyContent = sanitizeCustomerFacingText(
+    llm.text,
+    detectVisitorLanguage(lastVisitorMsg),
+  );
 
   const committed = await commitAiReplyWithControlGate(
     supabaseAdmin,
@@ -1434,8 +1442,8 @@ function buildCitationMetadata(chunks: Array<{ title?: string; score?: number; s
 type FlagSet = { ENABLE_KB: boolean; ENABLE_COACH: boolean; ENABLE_C360: boolean; ENABLE_TOOL_EXEC: boolean };
 
 const KB_FALLBACK_SAFE_TEXT: Record<string, Record<string, string>> = {
-  KB_SCOPE_GATE: { "zh-TW": "很抱歉，系統暫時無法查詢知識庫。讓我為您轉接客服人員。", "zh-CN": "很抱歉，系统暂时无法查询知识库。让我为您转接客服人员。", en: "Sorry, the knowledge base is temporarily unavailable. Let me connect you with a human agent." },
-  KB_API_FAIL: { "zh-TW": "系統暫時無法查詢知識庫，讓我為您轉接客服人員。", "zh-CN": "系统暂时无法查询知识库，让我为您转接客服人员。", en: "The knowledge base is temporarily unavailable. Let me connect you with a human agent." },
+  KB_SCOPE_GATE: { "zh-TW": "很抱歉，我暫時無法確認這方面的資料。我幫你安排真人客服跟進。", "zh-CN": "很抱歉，我暂时无法确认这方面的资料。我帮你安排真人客服跟进。", en: "Sorry, I can't confirm that information right now. Let me arrange a human agent to follow up with you." },
+  KB_API_FAIL: { "zh-TW": "我暫時無法確認這方面的資料，讓我幫你安排真人客服跟進。", "zh-CN": "我暂时无法确认这方面的资料，让我帮你安排真人客服跟进。", en: "I can't confirm that information at the moment, so let me arrange a human agent to follow up with you." },
   KB_EMPTY: { "zh-TW": "很抱歉，我目前無法確定答案。讓我為您轉接客服人員，以提供更準確的協助。", "zh-CN": "很抱歉，我目前无法确定答案。让我为您转接客服人员，以提供更准确的协助。", en: "Sorry, I'm unable to find a definitive answer. Let me connect you with a human agent for more accurate assistance." },
   KB_LOW_SCORE_HIGH_RISK: { "zh-TW": "這個問題涉及重要政策，為確保您獲得準確資訊，讓我為您轉接客服人員。", "zh-CN": "这个问题涉及重要政策，为确保您获得准确信息，让我为您转接客服人员。", en: "This question involves important policy matters. To ensure you receive accurate information, let me connect you with a human agent." },
   KB_LOW_SCORE_STANDARD: { "zh-TW": "很抱歉，我目前無法確定答案。讓我為您轉接客服人員，以提供更準確的協助。", "zh-CN": "很抱歉，我目前无法确定答案。让我为您转接客服人员，以提供更准确的协助。", en: "Sorry, I'm unable to find a definitive answer. Let me connect you with a human agent for more accurate assistance." },
@@ -1477,6 +1485,17 @@ const KB_NO_MATCH_CLARIFICATION_TEXT: Record<"zh-TW" | "zh-CN" | "en", string> =
 
 export const KB_NO_MATCH_CLARIFICATION_ROUTE = "kb_no_match_recovery";
 
+/**
+ * Ordinary retrieval/answerability outcomes eligible for ONE clarification turn.
+ * Provider/KB outage branches are deliberately absent and stay fail-closed.
+ */
+export const CLARIFICATION_ELIGIBLE_BRANCHES: readonly string[] = [
+  "KB_EMPTY",
+  "KB_LOW_SCORE_STANDARD",
+  "UNDERSPECIFIED_INTENT",
+  "ANSWERABILITY_INSUFFICIENT",
+];
+
 export function isFirstNoMatchClarificationEligible(input: {
   branch_tag: string;
   high_risk: boolean;
@@ -1487,8 +1506,8 @@ export function isFirstNoMatchClarificationEligible(input: {
   exact_same_intent_repeated: boolean;
   source_message_id: string | null;
 }): boolean {
-  // Only ordinary retrieval outcomes; provider/KB outage branches stay fail-closed.
-  if (input.branch_tag !== "KB_EMPTY" && input.branch_tag !== "KB_LOW_SCORE_STANDARD") return false;
+  // Only ordinary retrieval/answerability outcomes; provider/KB outage branches stay fail-closed.
+  if (!CLARIFICATION_ELIGIBLE_BRANCHES.includes(input.branch_tag)) return false;
   if (input.high_risk) return false;
   if (input.explicit_human_request) return false;
   if (input.threat_flag === true) return false;
@@ -1498,6 +1517,7 @@ export function isFirstNoMatchClarificationEligible(input: {
   if (!input.source_message_id) return false;
   return true;
 }
+
 
 async function attemptFirstNoMatchClarification(
   supabaseAdmin: ReturnType<typeof createClient>,
@@ -1512,7 +1532,14 @@ async function attemptFirstNoMatchClarification(
     return null;
   }
 
-  const content = KB_NO_MATCH_CLARIFICATION_TEXT[visitorLang] ?? KB_NO_MATCH_CLARIFICATION_TEXT["zh-TW"];
+  const clarificationTable =
+    branchTag === "UNDERSPECIFIED_INTENT"
+      ? UNDERSPECIFIED_CLARIFICATION
+      : KB_NO_MATCH_CLARIFICATION_TEXT;
+  const content = sanitizeCustomerFacingText(
+    clarificationTable[visitorLang] ?? clarificationTable["zh-TW"],
+    visitorLang,
+  );
   // Same atomic exactly-once gate as every other AI reply: human-control /
   // resolved / superseded races cannot produce a duplicate or late clarification.
   const commit = await commitAiReplyWithControlGate(
@@ -2018,7 +2045,12 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     const usableChunks = ragResult.chunks.filter(
       (c) => c.score && c.score >= minScore && (!c.status || c.status === "published"),
     );
-    const traceMetadata = { rag_api_status: "success", total_results: ragResult.chunks.length, filtered_results: usableChunks.length, min_score_used: usableChunks.length > 0 ? Math.min(...usableChunks.map((c) => c.score ?? 0)) : null, max_score_used: usableChunks.length > 0 ? Math.max(...usableChunks.map((c) => c.score ?? 0)) : null, high_risk_topic: isHighRisk, min_threshold: minScore, citations: usableChunks.map((c) => ({ doc_id: c.doc_id, chunk_id: c.chunk_id, title: c.title, score: c.score, source_type: c.source_type })) };
+    const traceMetadata: Record<string, unknown> = { rag_api_status: "success", total_results: ragResult.chunks.length, filtered_results: usableChunks.length, min_score_used: usableChunks.length > 0 ? Math.min(...usableChunks.map((c) => c.score ?? 0)) : null, max_score_used: usableChunks.length > 0 ? Math.max(...usableChunks.map((c) => c.score ?? 0)) : null, high_risk_topic: isHighRisk, min_threshold: minScore, citations: usableChunks.map((c) => ({ doc_id: c.doc_id, chunk_id: c.chunk_id, title: c.title, score: c.score, source_type: c.source_type })) };
+    // Canonical handoff-intent classification is observable for R1 auditing.
+    const _handoffIntent = classifyHandoffIntent(_h1LastMsg);
+    traceMetadata["handoff_intent_category"] = _handoffIntent.category;
+    traceMetadata["explicit_human_request"] = _handoffIntent.explicit_request;
+    traceMetadata["pure_handoff_negation"] = isPureHandoffNegationLocal(_h1LastMsg);
     ragResult.trace_metadata = traceMetadata;
     if (usableChunks.length === 0) {
       _pr5RagMatchState = "partial_match";
@@ -2098,6 +2130,48 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
             })),
           }
         : undefined;
+
+    // Answerability is decided by whether confirmed content actually covers the
+    // question — never by retrieval score alone. A high score with unusable
+    // content, and an underspecified question, both yield ONE natural
+    // clarification turn (no fabricated answer, no reflex handoff).
+    const _answerability = assessAnswerability(
+      {
+        question: _h1LastMsg,
+        evidence: usableFullContent.map((c) => ({ content: c.content ?? "", score: c.score ?? 0 })),
+        top_score: usableChunks[0]?.score ?? undefined,
+      },
+      isUnderspecifiedIntent(_h1LastMsg),
+    );
+    traceMetadata["answerability"] = {
+      answerable: _answerability.answerable,
+      reason: _answerability.reason,
+      usable_evidence_count: _answerability.usable_evidence_count,
+      top_score: _answerability.top_score,
+    };
+
+    if (!_answerability.answerable) {
+      _pr5RagMatchState = "partial_match";
+      const answerabilityClarification = await attemptFirstNoMatchClarification(
+        supabaseAdmin,
+        conversation_id,
+        source_message_id,
+        _answerability.reason === "question_underspecified"
+          ? "UNDERSPECIFIED_INTENT"
+          : "ANSWERABILITY_INSUFFICIENT",
+        _visitorLang,
+        {
+          high_risk: _pr5LocalRisk?.level === "high",
+          explicit_human_request: isHandoffIntent(_h1LastMsg),
+          threat_flag: _pr5ThreatSignal?.value === true,
+          compliance_requires_human_review: _pr5ComplianceSignal?.value === true,
+          clarification_attempts: _pr5History.clarification_attempts,
+          exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
+        },
+        traceMetadata,
+      );
+      if (answerabilityClarification) return answerabilityClarification;
+    }
 
     finalPromptChunks = usableChunks;
     _kbDone = true;
@@ -2241,10 +2315,10 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
 
   if (flags.ENABLE_TOOL_EXEC) console.log("[generate-reply] ENABLE_TOOL_EXECUTOR=true: Gate present, tools NOT attached (L5d scope)");
 
-  const finalSystemPrompt = [basePrompt, buildMaskedContextBlock(customerContext, opaqueCustomerRef), buildRagBlock(ragResult)].filter((s) => s && s.length > 0).join("\n\n");
+  const finalSystemPrompt = [basePrompt, CUSTOMER_CONVERSATION_POLICY_PROMPT, buildMaskedContextBlock(customerContext, opaqueCustomerRef), buildRagBlock(ragResult)].filter((s) => s && s.length > 0).join("\n\n");
   const { data: newestMessages } = await supabaseAdmin
     .from("messages")
-    .select("id, role, content, created_at")
+    .select("id, role, content, created_at, metadata")
     .eq("conversation_id", conversation_id)
     .neq("content", "__THINKING__")
     .eq("is_recalled", false)
@@ -2264,9 +2338,21 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     );
   }
 
+  // Within-conversation memory: honour the latest correction, resolve follow-up
+  // references, and never re-ask details the customer already gave.
+  const continuityBrief = buildContinuityBrief(
+    deriveContinuitySignals(
+      messages.map((m) => ({
+        role: String(m.role ?? ""),
+        content: String(m.content ?? ""),
+        metadata: (m.metadata ?? null) as Record<string, unknown> | null,
+      })),
+    ),
+  );
+
   const llm = await callModel({
     purpose: "generation",
-    system: finalSystemPrompt,
+    system: [finalSystemPrompt, continuityBrief].filter((s) => s && s.length > 0).join("\n\n"),
     user: buildRouterConversationInput(modelMessages),
     maxTokens: resolveGenerationMaxTokens(),
     operationId: `generate-reply:orchestration:${conversation_id}:${source_message_id}`,
@@ -2296,7 +2382,8 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     );
   }
 
-  const aiReplyContent = llm.text;
+  // Last-line customer-facing guard: internal wording must never ship.
+  const aiReplyContent = sanitizeCustomerFacingText(llm.text, _visitorLang);
 
   const citationMeta = finalPromptChunks.length > 0 ? buildCitationMetadata(finalPromptChunks) : null;
   const committed = await commitAiReplyWithControlGate(
@@ -2383,7 +2470,7 @@ function buildRagBlock(
       "- Answer ONLY from the evidence below.",
       "- The RAG summary is orientation only; never use it alone for exact facts.",
       "- Prices, dates, dimensions, policy conditions, procedures, limits, and other exact facts MUST be supported by Full Content Evidence.",
-      "- If Full Content Evidence does not support an exact claim, state that the knowledge base does not provide enough evidence and offer human assistance.",
+      "- If Full Content Evidence does not support an exact claim, do NOT state it. Say naturally that you do not have confirmed information yet and ask ONE short question or offer the next concrete step. Never mention internal machinery to the customer.",
       `Selected document: ${context.selected_document_id}`,
     ];
 
