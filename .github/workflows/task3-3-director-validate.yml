@@ -60,6 +60,23 @@ jobs:
         run: |
           set -euo pipefail
           git diff --check
+
+          # TanStack route generation deterministically rewrites only this
+          # generated file during `vite build`. Do not commit/re-freeze the
+          # generated ordering drift; fail closed on every other tracked change.
+          mapfile -t changed_files < <(git status --porcelain | sed 's/^...//')
+          for file in "${changed_files[@]}"; do
+            if [[ "$file" != "src/routeTree.gen.ts" ]]; then
+              echo "FAIL unexpected tracked build drift: $file" >&2
+              exit 1
+            fi
+          done
+          if [[ -n "$(git status --porcelain -- src/routeTree.gen.ts)" ]]; then
+            git restore --worktree src/routeTree.gen.ts
+          fi
+
+          git diff --check
           git diff --exit-code
           git diff --cached --exit-code
+          test -z "$(git status --porcelain)"
           echo "PASS Task 3.3 Director source/build validation"
