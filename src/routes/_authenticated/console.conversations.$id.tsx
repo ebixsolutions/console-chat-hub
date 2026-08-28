@@ -492,7 +492,16 @@ function ConversationDetailContent() {
                       {m.is_recalled ? (
                         <div className="italic text-muted-foreground">[訊息已撤回]</div>
                       ) : (
-                        <div className="whitespace-pre-wrap">{m.content}</div>
+                        isAttachmentMessage(m.content_type) ? (
+                          <MessageAttachment
+                            messageId={m.id}
+                            contentType={m.content_type}
+                            metadata={(m.metadata as AttachmentMeta | null) ?? null}
+                          />
+                        ) : (
+                          <div className="whitespace-pre-wrap">{m.content}</div>
+                        )
+
                       )}
                       {!m.is_recalled &&
                         (isAgent || isAssistant || (isVisitor && myAgent && ADMIN_ONLY.has(myAgent.role))) && (
