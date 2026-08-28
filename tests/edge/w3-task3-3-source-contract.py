@@ -2,8 +2,8 @@
 """Task 3.3 comprehensive Product-ready source contract.
 
 Workflow 2 / Task 2.3 SU CoachAI downstream training is deferred. This contract
-therefore validates only the current AI Chatbot-owned Task 3.3 closure path and
-must never re-open frozen W1/W2 gates to manufacture a Product-ready PASS.
+validates only the current AI Chatbot-owned Task 3.3 closure path and must never
+re-open frozen W1/W2 gates to manufacture a Product-ready PASS.
 """
 from pathlib import Path
 import sys
@@ -23,8 +23,9 @@ f = read('scripts/w3-task3-3-final-gate.sh')
 loader = read('scripts/w3-task3-3-runtime-inputs-load.sh')
 pr30 = read('sql/pr30/pr30_agent_attachment.sql')
 rollback = read('sql/pr30/pr30_agent_attachment.rollback.sql')
+sec = read('sql/pr30/pr30_task3_3_security_hardening.sql')
+sec_rollback = read('sql/pr30/pr30_task3_3_security_hardening.rollback.sql')
 
-# Current final-gate ordering and explicit authorization boundary.
 for marker in [
     'W3_T3_3_PRODUCTION_AUTHORIZED',
     'explicit final production activation authorization missing',
@@ -32,23 +33,22 @@ for marker in [
     'W3_T3_3_DEPLOYED_COMMIT_SHA',
     'git rev-parse HEAD',
     'npm run build',
+    'pr30_agent_attachment.sql',
+    'pr30_task3_3_security_hardening.sql',
 ]:
     assert marker in a, f"activation missing current marker: {marker}"
 
-# Rollback safety is explicit after PR30 apply; do not depend on ERR trap behavior
-# through an OR-list or conditional pipeline.
 for marker in [
     "trap 'rollback_pr30 $?' ERR",
     'rollback_pr30 1',
     'if ! psql "$SUPABASE_DB_URL"',
-    'PR30 post-apply assertions failed',
+    'Task 3.3 post-apply security assertions failed',
     'ROLLBACK FAILURE: PR30 rollback command failed',
+    'SAFE ROLLBACK NOTE: Task 3.3 RLS hardening remains active',
 ]:
     assert marker in a, f"activation rollback safety missing: {marker}"
-assert '|| fail "PR30 post-apply assertions failed"' not in a, \
-    "activation must not rely on OR-list ERR semantics for post-apply rollback"
-assert a.index('PR30_APPLIED=true') < a.index('rollback_pr30 1'), \
-    "explicit rollback must occur only after PR30 is marked applied"
+assert '|| fail "PR30 post-apply assertions failed"' not in a
+assert a.index('PR30_APPLIED=true') < a.index('rollback_pr30 1')
 
 for marker in [
     'source "$ROOT/config/w3-task3-3-dev-identity.env"',
@@ -62,8 +62,6 @@ assert f.index('bash scripts/w3-task3-3-production-activate.sh') < \
        f.index('bash scripts/w3-task3-3-whole-product-smoke.sh') < \
        f.index('W3 TASK 3.3 FINAL STATUS: READY')
 
-# No deferred learning-loop or frozen final-gate dependency is allowed in the
-# current Task 3.3 execution chain.
 for src_name, src in [('activation', a), ('smoke', s), ('final-gate', f)]:
     for forbidden in [
         'w2-task2-1-final-gate.sh',
@@ -82,7 +80,6 @@ for src_name, src in [('activation', a), ('smoke', s), ('final-gate', f)]:
     ]:
         assert forbidden not in src, f"{src_name} re-opens deferred/frozen scope: {forbidden}"
 
-# Runtime bridge is current-project only and commit-bound.
 for marker in [
     'SUPABASE_DB_URL',
     'PR10_TENANT_A_BEARER_TOKEN',
@@ -103,9 +100,6 @@ for forbidden in [
 ]:
     assert forbidden not in loader, f"runtime bridge requires deferred secret: {forbidden}"
 
-# Current production smoke covers the live AI Chatbot critical source/runtime
-# surface; authenticated behavior assertions are handled by Task 3.3 runtime
-# fixtures only after deployment authorization.
 for fn in [
     'generate-reply',
     'conversation-evaluate',
@@ -118,6 +112,9 @@ for marker in [
     'health-check',
     'production app shell',
     'message_attachment_private',
+    "tablename='ai_reply_draft'",
+    "tablename='handoff_event'",
+    "c.relkind='r'",
     'metadata ? \'storage_path\'',
     'metadata ? \'storage_bucket\'',
     'w3-task3-3-consolidated-closure-contract.py',
@@ -125,8 +122,6 @@ for marker in [
 ]:
     assert marker in s, f"whole-product smoke missing: {marker}"
 
-# Attachment privacy migration is transactional, service-role-only, atomic and
-# has a source rollback path.
 for marker in [
     'BEGIN;',
     'CREATE TABLE IF NOT EXISTS public.message_attachment_private',
@@ -141,5 +136,27 @@ for marker in [
     assert marker in pr30, f"PR30 missing: {marker}"
 assert 'DROP FUNCTION IF EXISTS public.agent_send_attachment_tx' in rollback
 assert 'DROP TABLE IF EXISTS public.message_attachment_private' in rollback
+
+for marker in [
+    'DROP POLICY IF EXISTS ai_reply_draft_read',
+    'CREATE POLICY ai_reply_draft_read',
+    'DROP POLICY IF EXISTS handoff_event_read',
+    'CREATE POLICY handoff_event_read',
+    'JOIN public.company_membership cm',
+    'cm.user_id = auth.uid()',
+    'cm.is_active = true',
+    'ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY',
+    'REVOKE ALL ON TABLE public.%I FROM PUBLIC, anon, authenticated',
+    "c.relkind='r'",
+    'COMMIT;',
+]:
+    assert marker in sec, f"security hardening missing: {marker}"
+for marker in [
+    'DROP POLICY IF EXISTS ai_reply_draft_read',
+    'DROP POLICY IF EXISTS handoff_event_read',
+    'ALTER TABLE public.%I DISABLE ROW LEVEL SECURITY',
+    'GRANT ALL ON TABLE public.%I TO anon, authenticated',
+]:
+    assert marker in sec_rollback, f"security rollback missing: {marker}"
 
 print('PASS W3 Task3.3 comprehensive current-scope Product-ready source contract')
