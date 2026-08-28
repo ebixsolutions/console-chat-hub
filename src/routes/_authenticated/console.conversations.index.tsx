@@ -474,7 +474,7 @@ function SinglePageInbox() {
     }
     const { data } = await supabase
       .from("messages")
-      .select("id,role,content,status,is_recalled,metadata,created_at")
+      .select("id,role,content,content_type,status,is_recalled,metadata,created_at")
       .eq("conversation_id", convId)
       .neq("content", "__THINKING__")
       .order("created_at", { ascending: true });
