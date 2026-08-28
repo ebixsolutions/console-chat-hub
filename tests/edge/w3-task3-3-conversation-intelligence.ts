@@ -81,7 +81,7 @@ assert.match(continuity, /地址唔係8樓B，係8樓A/);
 assert.match(continuity, /唔好取消訂單/);
 assert.match(continuity, /newest customer statement as authoritative/i);
 assert.ok(continuity.length <= 5000, "continuity block must stay bounded");
-assert.ok(!continuity.includes("較早客戶資料 1"), "very old turns must be outside bounded projection");
+assert.doesNotMatch(continuity, /較早客戶資料 1(?:\n|$)/, "very old turns must be outside bounded projection");
 
 const advisory = buildCustomerAdvisoryContext({
   tier: "VIP",
