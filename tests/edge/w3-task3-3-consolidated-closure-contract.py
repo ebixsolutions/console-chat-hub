@@ -34,10 +34,18 @@ for marker in [
 ]:
     assert marker in activation, f"activation missing: {marker}"
 
-# Failed post-migration activation has an explicit rollback path.
-assert 'rollback_pr30' in activation
-assert 'pr30_agent_attachment.rollback.sql' in activation
-assert 'trap rollback_pr30 ERR' in activation
+# Failed post-migration activation has both an ERR fallback and an explicit
+# assertion-failure rollback path. This must not depend on OR-list semantics.
+for marker in [
+    'rollback_pr30',
+    'pr30_agent_attachment.rollback.sql',
+    "trap 'rollback_pr30 $?' ERR",
+    'rollback_pr30 1',
+    'PR30 post-apply assertions failed',
+    'ROLLBACK FAILURE: PR30 rollback command failed',
+]:
+    assert marker in activation, f"rollback path missing: {marker}"
+assert '|| fail "PR30 post-apply assertions failed"' not in activation
 
 # Deferred Task 2.3 training is not executed or runtime-probed by Task 3.3.
 for src_name, src in [('activation', activation), ('final_gate', final_gate), ('smoke', smoke)]:
