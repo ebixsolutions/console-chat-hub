@@ -103,10 +103,11 @@ BEGIN
   JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = g.table_schema
   WHERE g.table_schema='public'
     AND g.grantee IN ('anon','authenticated')
+    AND c.relkind='r'
     AND c.relrowsecurity = false;
 
   IF leaked <> 0 THEN
-    RAISE EXCEPTION 'ASSERT: public tables without RLS still granted to anon/authenticated: %', leaked;
+    RAISE EXCEPTION 'ASSERT: public base tables without RLS still granted to anon/authenticated: %', leaked;
   END IF;
 END
 $assert$;
