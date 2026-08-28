@@ -1689,11 +1689,10 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
   const [
     { data: _pr5HistoryRows },
     { count: _pr5VisitorTurnCount },
-    { count: _pr5ClarificationCount },
   ] = await Promise.all([
     supabaseAdmin
       .from("messages")
-      .select("role, content, created_at")
+      .select("role, content, created_at, metadata")
       .eq("conversation_id", conversation_id)
       .eq("is_recalled", false)
       .neq("content", "__THINKING__")
@@ -1709,21 +1708,12 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
       .eq("is_recalled", false)
       .neq("content", "__THINKING__")
       .or(sourceBoundaryFilter(sourceVisitorMessage)),
-    supabaseAdmin
-      .from("messages")
-      .select("id", { count: "exact", head: true })
-      .eq("conversation_id", conversation_id)
-      .eq("role", "assistant")
-      .eq("is_recalled", false)
-      .or(sourceBoundaryFilter(sourceVisitorMessage))
-      .filter("metadata->>escalation_rule", "eq", "R2")
-      .filter("metadata->>escalation_action", "eq", "clarification"),
   ]);
 
   const _pr5History = deriveConversationHistorySignals(
     _pr5HistoryRows ?? [],
     _pr5VisitorTurnCount ?? 0,
-    _pr5ClarificationCount ?? 0,
+
   );
 
   const _visitorLang = detectVisitorLanguage(_h1LastMsg);
