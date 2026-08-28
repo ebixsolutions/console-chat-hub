@@ -14,6 +14,9 @@ import { feedbackService } from "@/lib/api/feedback.service";
 import { AgentToolPanel } from "@/components/console/AgentToolPanel";
 import { useConsoleLang } from "@/hooks/useEffectiveRole";
 import { CRMPanel, RIGHT_COPY, buildBoundedContext, computeContextRevisionKey } from "@/components/console/CRMPanel";
+import { MessageAttachment, isAttachmentMessage, type AttachmentMeta } from "@/components/console/MessageAttachment";
+import { AttachmentButtons, EmojiPickerButton, insertAtCaret } from "@/components/console/ComposerTools";
+
 
 export const Route = createFileRoute("/_authenticated/console/conversations/")({
   component: ConversationsInboxGuard,
@@ -47,11 +50,13 @@ type Msg = {
   id: string;
   role: string;
   content: string;
+  content_type: string | null;
   status: string | null;
   is_recalled: boolean;
   metadata: Record<string, unknown> | null;
   created_at: string | null;
 };
+
 type AgentLite = { id: string; display_name: string; role: string; status: string };
 type ActivityEvent = {
   ts: string;
@@ -400,6 +405,8 @@ function SinglePageInbox() {
   const [activityLoading, setActivityLoading] = useState(false);
   const [activityRows, setActivityRows] = useState<ActivityEvent[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const replyRef = useRef<HTMLTextAreaElement>(null);
+
   const lang = useConsoleLang();
   const { role: currentRole } = useCurrentRole();
   const [selectedMessage, setSelectedMessage] = useState<{ id: string; role: string; content: string } | null>(null);
@@ -472,7 +479,7 @@ function SinglePageInbox() {
     }
     const { data } = await supabase
       .from("messages")
-      .select("id,role,content,status,is_recalled,metadata,created_at")
+      .select("id,role,content,content_type,status,is_recalled,metadata,created_at")
       .eq("conversation_id", convId)
       .neq("content", "__THINKING__")
       .order("created_at", { ascending: true });
@@ -1380,7 +1387,16 @@ function SinglePageInbox() {
                             outlineOffset: 2,
                           }}
                         >
-                          <div className="whitespace-pre-wrap">{m.content}</div>
+                          {isAttachmentMessage(m.content_type) ? (
+                            <MessageAttachment
+                              messageId={m.id}
+                              contentType={m.content_type}
+                              metadata={(m.metadata as AttachmentMeta | null) ?? null}
+                            />
+                          ) : (
+                            <div className="whitespace-pre-wrap">{m.content}</div>
+                          )}
+
                         </div>
                       )}
                       {!m.is_recalled &&
@@ -1422,6 +1438,7 @@ function SinglePageInbox() {
             </div>
             <div style={{ background: "#fff", borderTop: "0.5px solid #e8e6e0", padding: "8px 12px", flexShrink: 0 }}>
               <Textarea
+                ref={replyRef}
                 value={reply}
                 onChange={(e) => setReply(e.target.value)}
                 placeholder="Type your reply…"
@@ -1430,15 +1447,24 @@ function SinglePageInbox() {
                 className="mb-2 text-sm"
               />
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 14, cursor: "default", opacity: 0.35 }} title="Emoji — coming soon">
-                  😊
-                </span>
-                <span style={{ fontSize: 14, cursor: "default", opacity: 0.35 }} title="Image upload — coming soon">
-                  🖼️
-                </span>
-                <span style={{ fontSize: 14, cursor: "default", opacity: 0.35 }} title="File attach — coming soon">
-                  📎
-                </span>
+                <EmojiPickerButton
+                  onInsert={(emoji) => {
+                    const node = replyRef.current;
+                    const { value, caret } = insertAtCaret(node, reply, emoji);
+                    setReply(value);
+                    requestAnimationFrame(() => {
+                      node?.focus();
+                      node?.setSelectionRange(caret, caret);
+                    });
+                  }}
+                />
+                <AttachmentButtons
+                  conversationId={selectedConv?.id ?? null}
+                  onSent={() => {
+                    if (selectedConv?.id) return loadMessages(selectedConv.id, false, true);
+                  }}
+                />
+
                 <Button onClick={handleSendClick} disabled={sending || !reply.trim()} className="ml-auto">
                   {sending ? (
                     <>

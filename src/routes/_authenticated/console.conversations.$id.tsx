@@ -15,6 +15,9 @@ import { LoadingState, PermissionDenied } from "@/components/console/PageStates"
 import { useConsoleLang } from "@/hooks/useEffectiveRole";
 import { AgentToolPanel } from "@/components/console/AgentToolPanel";
 import { CRMPanel, RIGHT_COPY, buildBoundedContext, computeContextRevisionKey } from "@/components/console/CRMPanel";
+import { MessageAttachment, isAttachmentMessage, type AttachmentMeta } from "@/components/console/MessageAttachment";
+import { AttachmentButtons, EmojiPickerButton, insertAtCaret } from "@/components/console/ComposerTools";
+
 
 export const Route = createFileRoute("/_authenticated/console/conversations/$id")({
   component: ConversationDetailGuard,
@@ -35,11 +38,13 @@ type Msg = {
   id: string;
   role: string;
   content: string;
+  content_type: string | null;
   status: string | null;
   is_recalled: boolean;
   metadata: Record<string, unknown> | null;
   created_at: string | null;
 };
+
 
 type Conversation = {
   id: string;
@@ -78,6 +83,8 @@ function ConversationDetailContent() {
 
   // ── J1: Realtime infrastructure ──
   const realtimeConnectedRef = useRef(true);
+  const replyRef = useRef<HTMLTextAreaElement>(null);
+
   const fallbackTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   function startDetailFallback() {
@@ -123,7 +130,7 @@ function ConversationDetailContent() {
   const loadMessages = useCallback(async () => {
     const { data } = await supabase
       .from("messages")
-      .select("id, role, content, status, is_recalled, metadata, created_at")
+      .select("id, role, content, content_type, status, is_recalled, metadata, created_at")
       .eq("conversation_id", id)
       .neq("content", "__THINKING__")
       .order("created_at", { ascending: true });
@@ -492,7 +499,16 @@ function ConversationDetailContent() {
                       {m.is_recalled ? (
                         <div className="italic text-muted-foreground">[訊息已撤回]</div>
                       ) : (
-                        <div className="whitespace-pre-wrap">{m.content}</div>
+                        isAttachmentMessage(m.content_type) ? (
+                          <MessageAttachment
+                            messageId={m.id}
+                            contentType={m.content_type}
+                            metadata={(m.metadata as AttachmentMeta | null) ?? null}
+                          />
+                        ) : (
+                          <div className="whitespace-pre-wrap">{m.content}</div>
+                        )
+
                       )}
                       {!m.is_recalled &&
                         (isAgent || isAssistant || (isVisitor && myAgent && ADMIN_ONLY.has(myAgent.role))) && (
@@ -527,16 +543,32 @@ function ConversationDetailContent() {
 
               <div className="space-y-2">
                 <Textarea
+                  ref={replyRef}
                   value={reply}
                   onChange={(e) => setReply(e.target.value)}
                   placeholder="Type your reply…"
                   rows={4}
                   maxLength={4000}
                 />
+                <div className="flex items-center gap-2">
+                  <EmojiPickerButton
+                    onInsert={(emoji) => {
+                      const node = replyRef.current;
+                      const { value, caret } = insertAtCaret(node, reply, emoji);
+                      setReply(value);
+                      requestAnimationFrame(() => {
+                        node?.focus();
+                        node?.setSelectionRange(caret, caret);
+                      });
+                    }}
+                  />
+                  <AttachmentButtons conversationId={id} onSent={() => loadMessages()} />
+                </div>
                 <Button onClick={handleSendClick} disabled={sending || !reply.trim()} className="w-full">
                   {sending ? "Sending…" : "Send reply"}
                 </Button>
               </div>
+
 
               <div className="flex flex-col gap-2">
                 {conv.status !== "resolved" && (

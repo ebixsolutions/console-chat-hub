@@ -11,7 +11,7 @@
  * - provider failure => unavailable
  * - does not produce policy_match_confidence
  */
-import { callModel, parseJsonObject } from "./llm-router.ts";
+import { callModel, parseJsonObject, resolveGenerationMaxTokens } from "./llm-router.ts";
 
 export type PolicyAssessmentStatus =
   | "compliant"
@@ -111,7 +111,7 @@ export async function assessPolicyEvidenceForR4(
       'If sources lack relevant policy, set status to "insufficient_evidence". ' +
       'Return ONLY JSON with status and summary.',
     user: `Text to check:\n${content.slice(0, 2000)}\n\nPolicy sources:\n${block}`,
-    maxTokens: 500,
+    maxTokens: resolveGenerationMaxTokens(),
     operationId: context.operation_id,
     companyId: context.company_id,
     conversationId: context.conversation_id,

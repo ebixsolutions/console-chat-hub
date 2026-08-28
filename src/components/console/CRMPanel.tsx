@@ -178,7 +178,58 @@ export function normalizeKBResults(value: unknown): KBResult[] | null {
   return out;
 }
 
+/* --------------------------- UI relevance contract -------------------------- */
+
+/**
+ * Conservative display threshold for the right-hand Knowledge panel.
+ *
+ * Runtime grounding treats ~0.55 as the *minimum* usable retrieval score, but a
+ * 0.55-0.70 hit is frequently a topically unrelated document (e.g. "四電一腦"
+ * surfacing for a Mars-insurance question). Showing it beside the conversation
+ * implies relevance the retrieval never established, so the panel only renders
+ * evidence at or above this stricter bar. Selected-document / full-content
+ * evidence is preferred and shown first; nothing is fabricated or re-scored.
+ */
+export const KB_UI_MIN_RELEVANCE = 0.75;
+export const KB_UI_SELECTED_DOC_MIN_RELEVANCE = 0.65;
+
+export function filterRelevantKBResults(
+  results: KBResult[],
+  selectedDocumentId: string | null,
+): KBResult[] {
+  const kept = results.filter((r) => {
+    const isPreferred =
+      r.chunk_type === "full_content" ||
+      (!!selectedDocumentId && r.document_id === selectedDocumentId);
+    const floor = isPreferred ? KB_UI_SELECTED_DOC_MIN_RELEVANCE : KB_UI_MIN_RELEVANCE;
+    return r.score >= floor;
+  });
+  const rank = (r: KBResult) => {
+    if (!!selectedDocumentId && r.document_id === selectedDocumentId) return 0;
+    if (r.chunk_type === "full_content") return 1;
+    return 2;
+  };
+  return kept.sort((a, b) => rank(a) - rank(b) || b.score - a.score);
+}
+
+/**
+ * The auto-search query is the latest meaningful visitor turn, not the whole
+ * bounded window: concatenating five unrelated turns retrieves documents for
+ * topics the customer already left behind. The bounded context remains the
+ * fallback when the latest turn is too short to be a query on its own.
+ */
+export const KB_AUTO_QUERY_MIN_CHARS = 6;
+
+export function deriveAutoSearchQuery(boundedContext: string): string {
+  const context = boundedContext.trim();
+  if (!context) return "";
+  const parts = context.split(CONTEXT_SEPARATOR).map((p) => p.trim()).filter(Boolean);
+  const latest = parts.length > 0 ? parts[parts.length - 1] : "";
+  return latest.length >= KB_AUTO_QUERY_MIN_CHARS ? latest : context;
+}
+
 export function normalizePolicyResult(value: unknown): PolicyResult | null {
+
   const r = asRecord(value);
   if (!r || typeof r.status !== "string" || typeof r.summary !== "string") return null;
   const issues: PolicyResult["issues"] = [];
@@ -284,8 +335,16 @@ export function CRMPanel({
           setKbError(rc("kbError"));
           return;
         }
-        setKbResults(normalized);
-        setKbConnState(normalized.length > 0 ? "connected" : "empty");
+        // Conservative UI relevance guard: a medium-score retrieval is NOT
+        // displayed as if it answered the question. Unrelated results are
+        // dropped rather than rendered, and the panel shows the explicit
+        // "No relevant knowledge found" empty state instead.
+        const relevant = filterRelevantKBResults(
+          normalized,
+          typeof data.selected_document_id === "string" ? data.selected_document_id : null,
+        );
+        setKbResults(relevant);
+        setKbConnState(relevant.length > 0 ? "connected" : "empty");
       } catch {
         if (kbReqIdRef.current !== reqId) return;
         setKbConnState("unavailable");
@@ -294,6 +353,7 @@ export function CRMPanel({
     },
     [conv?.id, rc],
   );
+
 
   useEffect(() => {
     setTab("customer");
@@ -314,8 +374,18 @@ export function CRMPanel({
     if (!conv || !boundedContext || !canAccessKb) return;
     if (lastAutoQueryRef.current === contextRevisionKey) return;
     lastAutoQueryRef.current = contextRevisionKey;
-    void runKbSearch(boundedContext, ++kbReqIdRef.current);
+    // Stale results are dropped before the new request resolves so the panel
+    // never shows knowledge belonging to a previous conversation/context.
+    setKbResults([]);
+    setKbError("");
+    const autoQuery = deriveAutoSearchQuery(boundedContext);
+    if (!autoQuery) {
+      setKbConnState("empty");
+      return;
+    }
+    void runKbSearch(autoQuery, ++kbReqIdRef.current);
   }, [conv, boundedContext, contextRevisionKey, canAccessKb, runKbSearch]);
+
 
   const runPolicyCheck = async (content: string, reqId: number) => {
     if (!content.trim() || !canAccessKb) return;
@@ -494,7 +564,7 @@ export function CRMPanel({
                 />
                 <button disabled={kbConnState === "loading" || !kbQuery.trim()} onClick={() => void runKbSearch(kbQuery, ++kbReqIdRef.current)} style={btnSm}>{rc("kbSearchBtn")}</button>
                 <button disabled={kbConnState === "loading"} onClick={() => {
-                  const q = kbQuery.trim() || boundedContext;
+                  const q = kbQuery.trim() || deriveAutoSearchQuery(boundedContext);
                   if (q) void runKbSearch(q, ++kbReqIdRef.current);
                 }} style={btnSm}>↻</button>
               </div>

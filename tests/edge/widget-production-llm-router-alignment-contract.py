@@ -14,7 +14,7 @@ for src,name in [(g,'generate-reply'),(p,'escalation-policy')]:
     assert 'claude-haiku-4-5-20251001' not in src, name
     assert 'ANTHROPIC_API_KEY' not in src, name
 
-assert 'import { callModel, type LlmFailureCode } from "../_shared/llm-router.ts";' in g
+assert 'import { callModel, resolveGenerationMaxTokens, type LlmFailureCode } from "../_shared/llm-router.ts";' in g
 assert g.count('callModel({') >= 2
 assert 'tag: "generate-reply-legacy"' in g
 assert 'tag: "generate-reply-orchestration"' in g
@@ -23,7 +23,7 @@ assert 'LLM_MODEL_GENERATION' in g
 assert 'routerFailureToS0' in g
 assert 'buildRouterConversationInput' in g
 
-assert 'import { callModel, parseJsonObject } from "./llm-router.ts";' in p
+assert 'import { callModel, parseJsonObject, resolveGenerationMaxTokens } from "./llm-router.ts";' in p
 assert 'responseFormat: "json"' in p
 assert 'responseSchema: POLICY_RESPONSE_SCHEMA' in p
 assert 'tag: "generate-reply-r4-policy"' in p
