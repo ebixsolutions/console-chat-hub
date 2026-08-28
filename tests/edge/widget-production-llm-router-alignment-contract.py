@@ -23,7 +23,7 @@ assert 'LLM_MODEL_GENERATION' in g
 assert 'routerFailureToS0' in g
 assert 'buildRouterConversationInput' in g
 
-assert 'import { callModel, parseJsonObject } from "./llm-router.ts";' in p
+assert 'import { callModel, parseJsonObject, resolveGenerationMaxTokens } from "./llm-router.ts";' in p
 assert 'responseFormat: "json"' in p
 assert 'responseSchema: POLICY_RESPONSE_SCHEMA' in p
 assert 'tag: "generate-reply-r4-policy"' in p
