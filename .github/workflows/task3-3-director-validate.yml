@@ -6,11 +6,10 @@ on:
       - director/task3-3-debug-takeover
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  repair-and-validate:
-    if: github.actor != 'github-actions[bot]'
+  validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,37 +17,12 @@ jobs:
           ref: director/task3-3-debug-takeover
           fetch-depth: 0
 
-      - name: Apply exact remaining source repairs
+      - name: Source integrity
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path('src/lib/api/attachments.functions.ts')
-          s = p.read_text()
-          old = '.from("message_attachment_private")'
-          new = '.from("message_attachment_private" as never)'
-          assert s.count(old) == 1, f'unexpected private-table call count: {s.count(old)}'
-          p.write_text(s.replace(old, new))
-
-          p = Path('scripts/w3-task3-3-whole-product-smoke.sh')
-          s = p.read_text()
-          frozen = [
-            'bash scripts/w3-task3-1-product-surface-final-gate.sh "$(pwd)"\n',
-            'python3 tests/edge/w1-task1-2-product-ready-runtime-closure-contract.py "$(pwd)"\n',
-            'python3 tests/edge/w1-task1-3-runtime-source-contract.py "$(pwd)"\n',
-          ]
-          for line in frozen:
-              assert s.count(line) == 1, f'unexpected frozen-gate line count for {line!r}: {s.count(line)}'
-              s = s.replace(line, '')
-          s = s.replace(
-              'pass "current product-ready source/runtime contracts remain locked"',
-              'pass "Task 3.3 current-scope contracts remain locked"',
-          )
-          p.write_text(s)
-          PY
           git diff --check
+          test -z "$(git status --porcelain)"
 
       - name: Comprehensive current-scope source contract
         run: python3 tests/edge/w3-task3-3-source-contract.py .
@@ -59,27 +33,22 @@ jobs:
       - name: Product-ready A-F contract
         run: python3 tests/edge/task3-3-consolidated-product-ready-contract.py .
 
-      - name: Repair package-lock to package.json 2.13.1 marker
+      - name: Lockfile baseline marker
         shell: bash
         run: |
           set -euo pipefail
           node -e "const p=require('./package.json'); if(p.devDependencies['@lovable.dev/vite-tanstack-config']!=='2.13.1') process.exit(1)"
-          npm install --package-lock-only --ignore-scripts
           node -e "const l=require('./package-lock.json'); if(l.packages[''].devDependencies['@lovable.dev/vite-tanstack-config']!=='2.13.1') process.exit(1)"
 
-      - name: Install dependencies from repaired lock
+      - name: Install dependencies
         run: npm ci
 
       - name: Production build
         run: npm run build
 
-      - name: Commit validated exact repairs
+      - name: Final clean-tree assertion
         shell: bash
         run: |
           set -euo pipefail
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add src/lib/api/attachments.functions.ts scripts/w3-task3-3-whole-product-smoke.sh package-lock.json
-          git diff --cached --quiet && exit 0
-          git commit -m 'Task 3.3: close typed locator, frozen-gate, and lockfile regressions'
-          git push origin HEAD:director/task3-3-debug-takeover
+          test -z "$(git status --porcelain)"
+          echo "PASS Task 3.3 Director source/build validation"
