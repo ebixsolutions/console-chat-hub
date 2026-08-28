@@ -284,8 +284,16 @@ export function CRMPanel({
           setKbError(rc("kbError"));
           return;
         }
-        setKbResults(normalized);
-        setKbConnState(normalized.length > 0 ? "connected" : "empty");
+        // Conservative UI relevance guard: a medium-score retrieval is NOT
+        // displayed as if it answered the question. Unrelated results are
+        // dropped rather than rendered, and the panel shows the explicit
+        // "No relevant knowledge found" empty state instead.
+        const relevant = filterRelevantKBResults(
+          normalized,
+          typeof data.selected_document_id === "string" ? data.selected_document_id : null,
+        );
+        setKbResults(relevant);
+        setKbConnState(relevant.length > 0 ? "connected" : "empty");
       } catch {
         if (kbReqIdRef.current !== reqId) return;
         setKbConnState("unavailable");
@@ -294,6 +302,7 @@ export function CRMPanel({
     },
     [conv?.id, rc],
   );
+
 
   useEffect(() => {
     setTab("customer");
