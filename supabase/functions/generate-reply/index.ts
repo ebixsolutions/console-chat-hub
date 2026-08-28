@@ -1331,6 +1331,107 @@ function detectVisitorLanguage(text: string): "zh-TW" | "zh-CN" | "en" {
 
 type KBFallbackRpcResult = "success" | "already_handled" | "already_resolved" | "already_under_human_control" | "invalid_source_message" | "invalid_branch" | "not_found";
 
+/* ------------- ordinary first no-match / low-score clarification ------------ */
+
+/**
+ * Product-ready no-match behaviour.
+ *
+ * An ordinary, low-risk FIRST no-match or partial/low-score retrieval is not a
+ * failure and must not escalate: the AI asks exactly ONE clarification turn and
+ * keeps AI control. Repeated unresolved same intent, the clarification cap,
+ * high-risk topics, explicit human requests, threat/compliance (E1/E2) and real
+ * provider/KB outages are untouched and remain fail-closed — this helper is only
+ * reached AFTER those required-rule evaluations have declined to act.
+ */
+const KB_NO_MATCH_CLARIFICATION_TEXT: Record<"zh-TW" | "zh-CN" | "en", string> = {
+  "zh-TW": "為了幫你找到準確的資料，可以再補充一點細節嗎？例如你想了解的產品、服務或具體情況。",
+  "zh-CN": "为了帮你找到准确的资料，可以再补充一点细节吗？例如你想了解的产品、服务或具体情况。",
+  en: "To find the right information for you, could you share a bit more detail — for example the product, service, or specific situation you're asking about?",
+};
+
+export const KB_NO_MATCH_CLARIFICATION_ROUTE = "kb_no_match_recovery";
+
+export function isFirstNoMatchClarificationEligible(input: {
+  branch_tag: string;
+  high_risk: boolean;
+  explicit_human_request: boolean;
+  threat_flag?: boolean;
+  compliance_requires_human_review?: boolean;
+  clarification_attempts: number;
+  exact_same_intent_repeated: boolean;
+  source_message_id: string | null;
+}): boolean {
+  // Only ordinary retrieval outcomes; provider/KB outage branches stay fail-closed.
+  if (input.branch_tag !== "KB_EMPTY" && input.branch_tag !== "KB_LOW_SCORE_STANDARD") return false;
+  if (input.high_risk) return false;
+  if (input.explicit_human_request) return false;
+  if (input.threat_flag === true) return false;
+  if (input.compliance_requires_human_review === true) return false;
+  if (input.clarification_attempts > 0) return false;
+  if (input.exact_same_intent_repeated) return false;
+  if (!input.source_message_id) return false;
+  return true;
+}
+
+async function attemptFirstNoMatchClarification(
+  supabaseAdmin: ReturnType<typeof createClient>,
+  conversation_id: string,
+  source_message_id: string | null,
+  branchTag: string,
+  visitorLang: "zh-TW" | "zh-CN" | "en",
+  eligibility: Omit<Parameters<typeof isFirstNoMatchClarificationEligible>[0], "branch_tag" | "source_message_id">,
+  traceMetadata: Record<string, unknown>,
+): Promise<Response | null> {
+  if (!isFirstNoMatchClarificationEligible({ ...eligibility, branch_tag: branchTag, source_message_id })) {
+    return null;
+  }
+
+  const content = KB_NO_MATCH_CLARIFICATION_TEXT[visitorLang] ?? KB_NO_MATCH_CLARIFICATION_TEXT["zh-TW"];
+  // Same atomic exactly-once gate as every other AI reply: human-control /
+  // resolved / superseded races cannot produce a duplicate or late clarification.
+  const commit = await commitAiReplyWithControlGate(
+    supabaseAdmin,
+    conversation_id,
+    source_message_id,
+    content,
+    {
+      response_route: KB_NO_MATCH_CLARIFICATION_ROUTE,
+      escalation_action: "clarification",
+      clarification_reason: "clarification_new_intent_no_kb_match",
+      kb_lookup: true,
+      kb_branch_tag: branchTag,
+      handoff_required: false,
+      trace_metadata: traceMetadata,
+    },
+  );
+
+  if (!commit.ok) {
+    if (commit.result === "human_control" || commit.result === "resolved" || commit.result === "superseded_source") {
+      return new Response(
+        JSON.stringify({ success: true, skipped: commit.result, response_route: KB_NO_MATCH_CLARIFICATION_ROUTE, handoff_required: false }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    // Anything else falls through to the existing fail-closed fallback.
+    return null;
+  }
+
+  await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+  return new Response(
+    JSON.stringify({
+      success: true,
+      reply: content,
+      no_answer: true,
+      handoff_required: false,
+      handoff_persisted: false,
+      response_route: KB_NO_MATCH_CLARIFICATION_ROUTE,
+      escalation_rule: null,
+      trace_metadata: { ...traceMetadata, branch: branchTag, clarification_persisted: true, idempotent: commit.idempotent },
+    }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+  );
+}
+
 async function handleKBFallback(
   supabaseAdmin: ReturnType<typeof createClient>, conversation_id: string, branchTag: string,
   source_message_id: string | null, traceMetadata: Record<string, unknown>, visitorLang: "zh-TW" | "zh-CN" | "en" = "zh-TW",
