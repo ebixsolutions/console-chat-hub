@@ -3,9 +3,9 @@ import { useServerFn } from "@tanstack/react-start";
 import { FileText, ImageIcon, Loader2, Video } from "lucide-react";
 import { getAgentAttachmentUrl } from "@/lib/api/attachments.functions";
 
+/** Browser-safe attachment display metadata only. Private bucket/path locators
+ * are stored server-side in message_attachment_private and never belong here. */
 export type AttachmentMeta = {
-  storage_bucket?: unknown;
-  storage_path?: unknown;
   original_name?: unknown;
   mime_type?: unknown;
   size_bytes?: unknown;
@@ -29,8 +29,8 @@ function safeSize(metadata: AttachmentMeta | null): string {
 }
 
 /**
- * Renders an attachment message. Storage paths are never exposed: the file is
- * read exclusively through a short-lived authenticated signed URL.
+ * Renders an attachment message. The browser receives display metadata only;
+ * file access is resolved server-side through a short-lived authenticated URL.
  */
 export function MessageAttachment({
   messageId,
