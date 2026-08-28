@@ -34,14 +34,13 @@ export W1_SMOKE_USER_JWT="${PR10_TENANT_A_BEARER_TOKEN}"
 export W1_KB_SMOKE_QUERY="${PR10_KB_TENANT_A_QUERY}"
 export W1_SMOKE_AGENT_PROFILE_ID="${PR10_TENANT_A_AGENT_PROFILE_UUID}"
 
-# Source/build verification happens again immediately before the only schema
-# mutation owned by Task 3.3. Frozen W1/W2 final gates are not reopened.
 python3 tests/edge/w3-task3-3-source-contract.py "$REPO"
 python3 tests/edge/w3-task3-3-consolidated-closure-contract.py "$REPO"
 python3 tests/edge/task3-3-consolidated-product-ready-contract.py "$REPO"
 npm run build
 
 PR30_APPLIED=false
+SECURITY_HARDENING_APPLIED=false
 rollback_pr30(){
   local rc="${1:-1}"
   if [ "$PR30_APPLIED" = true ]; then
@@ -52,24 +51,46 @@ rollback_pr30(){
     fi
     PR30_APPLIED=false
   fi
+  if [ "$SECURITY_HARDENING_APPLIED" = true ]; then
+    echo "SAFE ROLLBACK NOTE: Task 3.3 RLS hardening remains active; insecure access is not automatically restored" >&2
+  fi
   exit "$rc"
 }
 trap 'rollback_pr30 $?' ERR
 
-# PR30 was intentionally kept source-only until this explicit authorization.
-# The SQL file is transactional; a migration error cannot partially apply it.
+# Attachment persistence boundary.
 psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f sql/pr30/pr30_agent_attachment.sql
 PR30_APPLIED=true
 
-# Machine assertions for the newly activated security boundary. Do not rely on
-# ERR trap semantics through an OR-list: assertion failure explicitly invokes
-# rollback so a failed post-apply check cannot leave PR30 partially activated.
+# Same-task security findings discovered during activation. Transactional and
+# idempotent; a failure rolls itself back and the ERR trap then reverts PR30.
+psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f sql/pr30/pr30_task3_3_security_hardening.sql
+SECURITY_HARDENING_APPLIED=true
+
 if ! psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -Atc "
 SELECT CASE WHEN to_regclass('public.message_attachment_private') IS NOT NULL THEN 'PASS' ELSE 'FAIL' END;
 SELECT CASE WHEN to_regprocedure('public.agent_send_attachment_tx(uuid,uuid,text,text,text,text,bigint,text)') IS NOT NULL THEN 'PASS' ELSE 'FAIL' END;
 SELECT CASE WHEN NOT has_table_privilege('authenticated','public.message_attachment_private','SELECT') THEN 'PASS' ELSE 'FAIL' END;
-" | awk 'BEGIN{ok=1} $0!="PASS"{ok=0} END{exit ok?0:1}'; then
-  echo "FAIL: PR30 post-apply assertions failed" >&2
+SELECT CASE WHEN NOT EXISTS (
+  SELECT 1 FROM pg_policies
+  WHERE schemaname='public' AND tablename='ai_reply_draft' AND policyname='ai_reply_draft_read' AND qual='true'
+) THEN 'PASS' ELSE 'FAIL' END;
+SELECT CASE WHEN NOT EXISTS (
+  SELECT 1 FROM pg_policies
+  WHERE schemaname='public' AND tablename='handoff_event' AND policyname='handoff_event_read' AND qual='true'
+) THEN 'PASS' ELSE 'FAIL' END;
+SELECT CASE WHEN NOT EXISTS (
+  SELECT 1
+  FROM information_schema.role_table_grants g
+  JOIN pg_namespace n ON n.nspname=g.table_schema
+  JOIN pg_class c ON c.relnamespace=n.oid AND c.relname=g.table_name
+  WHERE g.table_schema='public'
+    AND g.grantee IN ('anon','authenticated')
+    AND c.relkind='r'
+    AND c.relrowsecurity=false
+) THEN 'PASS' ELSE 'FAIL' END;
+" | awk 'BEGIN{ok=1;n=0} {n++; if($0!="PASS")ok=0} END{exit (ok && n==6)?0:1}'; then
+  echo "FAIL: Task 3.3 post-apply security assertions failed" >&2
   rollback_pr30 1
 fi
 
