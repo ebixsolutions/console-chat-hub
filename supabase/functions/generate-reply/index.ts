@@ -1879,8 +1879,8 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
         {
           high_risk: _pr5LocalRisk?.level === "high",
           explicit_human_request: isHandoffIntent(_h1LastMsg),
-          threat_flag: _pr5ThreatSignal !== undefined,
-          compliance_requires_human_review: _pr5ComplianceSignal !== undefined,
+          threat_flag: _pr5ThreatSignal?.value === true,
+          compliance_requires_human_review: _pr5ComplianceSignal?.value === true,
           clarification_attempts: _pr5History.clarification_attempts,
           exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
         },
@@ -1940,8 +1940,8 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
         {
           high_risk: isHighRisk,
           explicit_human_request: isHandoffIntent(_h1LastMsg),
-          threat_flag: _pr5ThreatSignal !== undefined,
-          compliance_requires_human_review: _pr5ComplianceSignal !== undefined,
+          threat_flag: _pr5ThreatSignal?.value === true,
+          compliance_requires_human_review: _pr5ComplianceSignal?.value === true,
           clarification_attempts: _pr5History.clarification_attempts,
           exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
         },
