@@ -13,6 +13,8 @@ def read(path: str) -> str:
 gen = read('supabase/functions/generate-reply/index.ts')
 rls = read('sql/pr30/pr30_operational_tenant_rls.sql')
 rollback = read('sql/pr30/pr30_operational_tenant_rls.rollback.sql')
+completion = read('sql/pr30/pr30_operational_tenant_rls_completion.sql')
+completion_rollback = read('sql/pr30/pr30_operational_tenant_rls_completion.rollback.sql')
 
 # Repeat-intent matcher must be deterministic/local and wired only into history signals.
 for marker in [
@@ -84,6 +86,23 @@ for marker in [
 ]:
     assert marker in rls, f'RLS policy missing: {marker}'
 
+# Residual direct-write policies must also be tenant-scoped.
+for marker in [
+    'DROP POLICY IF EXISTS widget_config_write_admin',
+    'FOR UPDATE TO authenticated',
+    'cc.widget_config_id = widget_config.id',
+    'NOT EXISTS (',
+    'other_cc.widget_config_id = widget_config.id',
+    "cm.role::text = 'admin'",
+    'DROP POLICY IF EXISTS feedback_request_insert_supervisor',
+    'CREATE POLICY feedback_request_insert_supervisor',
+    'c.id = feedback_request.conversation_id',
+    "cm.role::text = 'supervisor'",
+    'widget_config global admin write remains',
+    'feedback_request global supervisor insert remains',
+]:
+    assert marker in completion, f'RLS completion missing: {marker}'
+
 # Emergency rollback is explicit and complete for every policy family changed above.
 for marker in [
     'public.is_staff(auth.uid())',
@@ -95,5 +114,13 @@ for marker in [
     'COMMIT;',
 ]:
     assert marker in rollback, f'RLS rollback missing: {marker}'
+for marker in [
+    'widget_config_write_admin',
+    "public.has_role(auth.uid(), 'admin'::public.app_role)",
+    'feedback_request_insert_supervisor',
+    "public.has_role(auth.uid(), 'supervisor'::public.app_role)",
+    'COMMIT;',
+]:
+    assert marker in completion_rollback, f'RLS completion rollback missing: {marker}'
 
 print('PASS Task 3.3 P0 closure contract')
