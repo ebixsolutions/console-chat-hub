@@ -123,7 +123,7 @@ function ConversationDetailContent() {
   const loadMessages = useCallback(async () => {
     const { data } = await supabase
       .from("messages")
-      .select("id, role, content, status, is_recalled, metadata, created_at")
+      .select("id, role, content, content_type, status, is_recalled, metadata, created_at")
       .eq("conversation_id", id)
       .neq("content", "__THINKING__")
       .order("created_at", { ascending: true });
