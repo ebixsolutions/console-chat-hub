@@ -7,6 +7,7 @@ on:
       - director/task3-3-debug-takeover
       - director/task3-3-resolution-rpc-fix
       - director/task3-3-p0-closure
+      - director/task3-3-login-feedback-fix
 
 permissions:
   contents: read
@@ -41,6 +42,9 @@ jobs:
 
       - name: P0 escalation and tenant closure contract
         run: python3 tests/edge/w3-task3-3-p0-closure-contract.py .
+
+      - name: Login feedback contract
+        run: python3 tests/edge/w3-task3-3-login-feedback-contract.py .
 
       - name: Lockfile baseline marker
         shell: bash
