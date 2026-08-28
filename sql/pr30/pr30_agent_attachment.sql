@@ -1,20 +1,34 @@
--- Task 3.3 (E) — authenticated console agent attachment send.
+-- Task 3.3 (E/F) — authenticated console agent attachment send.
 -- SOURCE ONLY. Do not apply to production without explicit Director authorization.
 --
--- Mirrors public.agent_send_reply_tx exactly for control/ownership semantics:
---   * conversation row is locked FIRST, then re-validated
---   * status must not be resolved/closed
---   * conversation must be assigned to the calling agent (takeover guard)
---   * status must be 'pending' (human control)
---   * agent profile must exist and be active
--- Only then is the customer-visible attachment message inserted, carrying
--- content_type plus storage metadata (bucket/path/original_name/mime_type/size).
---
--- The private 'widget-attachments' bucket is reused (see sql/pr15). Nothing here
--- grants storage access to anon/authenticated: object reads happen only through
--- the authenticated console signed-URL path in agent-attachment.
+-- Security contract:
+--   * private storage locators NEVER live in public.messages.metadata
+--   * message + private locator are committed atomically in one transaction
+--   * conversation row is locked before ownership/control validation
+--   * only service_role can invoke the RPC or access the locator table
+--   * browser-safe metadata contains display fields only
 
 BEGIN;
+
+CREATE TABLE IF NOT EXISTS public.message_attachment_private (
+  message_id uuid PRIMARY KEY REFERENCES public.messages(id) ON DELETE CASCADE,
+  conversation_id uuid NOT NULL REFERENCES public.conversations(id) ON DELETE CASCADE,
+  company_id uuid NOT NULL,
+  storage_bucket text NOT NULL,
+  storage_path text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT message_attachment_private_bucket_check
+    CHECK (storage_bucket = 'widget-attachments'),
+  CONSTRAINT message_attachment_private_path_check
+    CHECK (btrim(storage_path) <> '' AND position('..' in storage_path) = 0)
+);
+
+CREATE INDEX IF NOT EXISTS message_attachment_private_conversation_idx
+  ON public.message_attachment_private(conversation_id, company_id);
+
+ALTER TABLE public.message_attachment_private ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.message_attachment_private FROM PUBLIC, anon, authenticated;
+GRANT SELECT, INSERT, DELETE ON TABLE public.message_attachment_private TO service_role;
 
 CREATE OR REPLACE FUNCTION public.agent_send_attachment_tx(
   p_conversation_id uuid,
@@ -52,7 +66,7 @@ BEGIN
     RETURN jsonb_build_object('result', 'invalid_mime_type');
   END IF;
 
-  SELECT id, status, assigned_agent_id
+  SELECT id, status, assigned_agent_id, company_id
     INTO v_conv
   FROM public.conversations
   WHERE id = p_conversation_id
@@ -61,19 +75,18 @@ BEGIN
   IF NOT FOUND THEN
     RETURN jsonb_build_object('result', 'not_found');
   END IF;
-
+  IF v_conv.company_id IS NULL THEN
+    RETURN jsonb_build_object('result', 'tenant_unresolved');
+  END IF;
   IF v_conv.status IN ('resolved', 'closed') THEN
     RETURN jsonb_build_object('result', 'resolved');
   END IF;
-
   IF v_conv.assigned_agent_id IS NULL THEN
     RETURN jsonb_build_object('result', 'takeover_required');
   END IF;
-
   IF v_conv.assigned_agent_id IS DISTINCT FROM p_agent_id THEN
     RETURN jsonb_build_object('result', 'owned_by_another_agent');
   END IF;
-
   IF v_conv.status IS DISTINCT FROM 'pending' THEN
     RETURN jsonb_build_object('result', 'human_control_required');
   END IF;
@@ -115,14 +128,26 @@ BEGIN
       'agent_id', p_agent_id,
       'agent_name', COALESCE(p_agent_name, ''),
       'control_commit', 'human',
-      'storage_bucket', 'widget-attachments',
-      'storage_path', p_storage_path,
       'original_name', left(COALESCE(p_original_name, ''), 255),
       'mime_type', p_mime_type,
       'size_bytes', p_size_bytes
     )
   )
   RETURNING id INTO v_message_id;
+
+  INSERT INTO public.message_attachment_private (
+    message_id,
+    conversation_id,
+    company_id,
+    storage_bucket,
+    storage_path
+  ) VALUES (
+    v_message_id,
+    p_conversation_id,
+    v_conv.company_id,
+    'widget-attachments',
+    p_storage_path
+  );
 
   UPDATE public.conversations
   SET updated_at = v_now
@@ -156,7 +181,6 @@ ALTER FUNCTION public.agent_send_attachment_tx(uuid,uuid,text,text,text,text,big
 
 REVOKE ALL ON FUNCTION public.agent_send_attachment_tx(uuid,uuid,text,text,text,text,bigint,text)
   FROM PUBLIC, anon, authenticated;
-
 GRANT EXECUTE ON FUNCTION public.agent_send_attachment_tx(uuid,uuid,text,text,text,text,bigint,text)
   TO service_role;
 
@@ -176,6 +200,14 @@ BEGIN
     'EXECUTE'
   ) THEN
     RAISE EXCEPTION 'ASSERT: service_role execute missing';
+  END IF;
+
+  IF has_table_privilege('authenticated', 'public.message_attachment_private', 'SELECT') THEN
+    RAISE EXCEPTION 'ASSERT: authenticated cannot read private attachment locators';
+  END IF;
+
+  IF NOT has_table_privilege('service_role', 'public.message_attachment_private', 'SELECT') THEN
+    RAISE EXCEPTION 'ASSERT: service_role private locator read missing';
   END IF;
 END
 $assert$;
