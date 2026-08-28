@@ -1433,6 +1433,7 @@ function SinglePageInbox() {
             </div>
             <div style={{ background: "#fff", borderTop: "0.5px solid #e8e6e0", padding: "8px 12px", flexShrink: 0 }}>
               <Textarea
+                ref={replyRef}
                 value={reply}
                 onChange={(e) => setReply(e.target.value)}
                 placeholder="Type your reply…"
@@ -1441,15 +1442,24 @@ function SinglePageInbox() {
                 className="mb-2 text-sm"
               />
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 14, cursor: "default", opacity: 0.35 }} title="Emoji — coming soon">
-                  😊
-                </span>
-                <span style={{ fontSize: 14, cursor: "default", opacity: 0.35 }} title="Image upload — coming soon">
-                  🖼️
-                </span>
-                <span style={{ fontSize: 14, cursor: "default", opacity: 0.35 }} title="File attach — coming soon">
-                  📎
-                </span>
+                <EmojiPickerButton
+                  onInsert={(emoji) => {
+                    const node = replyRef.current;
+                    const { value, caret } = insertAtCaret(node, reply, emoji);
+                    setReply(value);
+                    requestAnimationFrame(() => {
+                      node?.focus();
+                      node?.setSelectionRange(caret, caret);
+                    });
+                  }}
+                />
+                <AttachmentButtons
+                  conversationId={selectedConv?.id ?? null}
+                  onSent={() => {
+                    if (selectedConv?.id) return loadMessages(selectedConv.id, false, true);
+                  }}
+                />
+
                 <Button onClick={handleSendClick} disabled={sending || !reply.trim()} className="ml-auto">
                   {sending ? (
                     <>
