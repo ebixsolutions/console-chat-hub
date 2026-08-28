@@ -35,11 +35,13 @@ type Msg = {
   id: string;
   role: string;
   content: string;
+  content_type: string | null;
   status: string | null;
   is_recalled: boolean;
   metadata: Record<string, unknown> | null;
   created_at: string | null;
 };
+
 
 type Conversation = {
   id: string;
