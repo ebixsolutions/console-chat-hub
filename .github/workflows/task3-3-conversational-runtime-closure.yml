@@ -23,7 +23,7 @@ jobs:
           node-version: '22'
           cache: npm
 
-      - name: Apply deterministic source patch if needed
+      - name: Apply deterministic source patches if needed
         run: |
           if grep -q 'conversation-intelligence.ts' supabase/functions/generate-reply/index.ts; then
             echo 'Base conversational patch already applied.'
@@ -36,20 +36,11 @@ jobs:
             python3 scripts/task3-3-continuity-enhancement.py
           fi
 
-      - name: Conversation intelligence and continuous multi-turn matrix
-        run: node --experimental-strip-types tests/edge/w3-task3-3-conversation-intelligence.ts
-
-      - name: Source contract
-        run: python3 tests/edge/w3-task3-3-conversational-runtime-contract.py
-
       - name: Install dependencies
         run: npm ci
 
-      - name: Build
-        run: npm run build
-
-      - name: Verify package marker
-        run: node -e "const p=require('./package.json'); if(p.devDependencies['@lovable.dev/vite-tanstack-config']!=='2.13.1') process.exit(1); console.log('PASS package marker 2.13.1')"
+      - name: Single Task 3.3 final gate
+        run: bash scripts/w3-task3-3-conversational-final-gate.sh
 
       - name: Commit generated implementation when patch step changed files
         run: |
