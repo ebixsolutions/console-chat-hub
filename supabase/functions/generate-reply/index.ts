@@ -2017,7 +2017,7 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     purpose: "generation",
     system: finalSystemPrompt,
     user: buildRouterConversationInput(modelMessages),
-    maxTokens: 500,
+    maxTokens: resolveGenerationMaxTokens(),
     operationId: `generate-reply:orchestration:${conversation_id}:${source_message_id}`,
     companyId:
       typeof conversation.company_id === "string" && conversation.company_id.length > 0
