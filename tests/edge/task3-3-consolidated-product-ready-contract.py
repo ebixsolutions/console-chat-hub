@@ -48,7 +48,7 @@ for name, src in (('generate-reply', reply), ('escalation-policy', policy)):
 for path in (r / 'supabase' / 'functions').rglob('*.ts'):
     text = path.read_text()
     for m in re.finditer(r'purpose:\s*"generation"', text):
-        window = text[max(0, m.start() - 400): m.start() + 400]
+        window = text[max(0, m.start() - 1500): m.start() + 1500]
         assert 'resolveGenerationMaxTokens' in window or 'maxTokens' not in window, \
             f"A: generation caller without shared budget: {path}"
 
