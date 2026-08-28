@@ -185,20 +185,31 @@ Deno.serve(async (req) => {
     const route = classifyConversationalRoute(normalizedContent);
 
     // Noise-only / emoji-only input is not a KB failure and is not an escalation
-    // signal. Persist one natural clarification through the same atomic AI reply
-    // control gate, so human-control / resolved / superseded races remain safe.
-    if (route.kind === "clarify") {
+    // signal. An underspecified intent ("I have an order problem") is likewise a
+    // conversational gap, not a handoff trigger: ask ONE natural question.
+    // Both persist through the same atomic AI reply control gate, so
+    // human-control / resolved / superseded races remain safe.
+    if (route.kind === "clarify" || route.kind === "underspecified") {
+      const isUnderspecified = route.kind === "underspecified";
+      const clarificationRoute = isUnderspecified
+        ? "conversational_underspecified_clarification"
+        : "conversational_clarification";
+      const clarificationText = isUnderspecified
+        ? UNDERSPECIFIED_CLARIFICATION[route.language]
+        : NOISE_CLARIFICATION[route.language];
+
       const { data:commitData,error:commitError } = await supabase.rpc("commit_ai_reply_tx",{
         p_conversation_id:conversation_id,
         p_source_message_id:messageId,
-        p_content:NOISE_CLARIFICATION[route.language],
+        p_content:clarificationText,
         p_metadata:{
-          response_route:"conversational_clarification",
+          response_route:clarificationRoute,
           kb_lookup:false,
           handoff_required:false,
           classifier_reason:route.reason,
         },
       });
+
 
       if (commitError) {
         console.error("[receive-widget-message] conversational clarification commit failed",commitError.code);
