@@ -111,7 +111,7 @@ export async function assessPolicyEvidenceForR4(
       'If sources lack relevant policy, set status to "insufficient_evidence". ' +
       'Return ONLY JSON with status and summary.',
     user: `Text to check:\n${content.slice(0, 2000)}\n\nPolicy sources:\n${block}`,
-    maxTokens: 500,
+    maxTokens: resolveGenerationMaxTokens(),
     operationId: context.operation_id,
     companyId: context.company_id,
     conversationId: context.conversation_id,
