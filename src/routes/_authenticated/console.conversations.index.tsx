@@ -14,6 +14,9 @@ import { feedbackService } from "@/lib/api/feedback.service";
 import { AgentToolPanel } from "@/components/console/AgentToolPanel";
 import { useConsoleLang } from "@/hooks/useEffectiveRole";
 import { CRMPanel, RIGHT_COPY, buildBoundedContext, computeContextRevisionKey } from "@/components/console/CRMPanel";
+import { MessageAttachment, isAttachmentMessage, type AttachmentMeta } from "@/components/console/MessageAttachment";
+import { AttachmentButtons, EmojiPickerButton, insertAtCaret } from "@/components/console/ComposerTools";
+
 
 export const Route = createFileRoute("/_authenticated/console/conversations/")({
   component: ConversationsInboxGuard,
