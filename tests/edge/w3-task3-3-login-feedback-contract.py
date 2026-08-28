@@ -7,6 +7,7 @@ root = Path(sys.argv[1] if len(sys.argv) > 1 else '.')
 login = (root / 'src/routes/login.tsx').read_text()
 app_root = (root / 'src/routes/__root.tsx').read_text()
 
+# The login route already emits sonner errors; product-ready requires a global renderer.
 assert 'toast.error(' in login, 'login route no longer surfaces auth errors through toast'
 assert 'from "sonner"' in app_root, 'root must import sonner Toaster'
 assert '<Toaster' in app_root, 'root must mount Toaster so login failures are visible'
