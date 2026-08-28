@@ -2617,6 +2617,48 @@ export type Database = {
           },
         ]
       }
+      message_attachment_private: {
+        Row: {
+          company_id: string
+          conversation_id: string
+          created_at: string
+          message_id: string
+          storage_bucket: string
+          storage_path: string
+        }
+        Insert: {
+          company_id: string
+          conversation_id: string
+          created_at?: string
+          message_id: string
+          storage_bucket: string
+          storage_path: string
+        }
+        Update: {
+          company_id?: string
+          conversation_id?: string
+          created_at?: string
+          message_id?: string
+          storage_bucket?: string
+          storage_path?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "message_attachment_private_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "message_attachment_private_message_id_fkey"
+            columns: ["message_id"]
+            isOneToOne: true
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       messages: {
         Row: {
           content: string
@@ -3211,6 +3253,19 @@ export type Database = {
         Returns: undefined
       }
       _ce_rls: { Args: { p_table: string }; Returns: boolean }
+      agent_send_attachment_tx: {
+        Args: {
+          p_agent_id: string
+          p_agent_name?: string
+          p_content_type: string
+          p_conversation_id: string
+          p_mime_type: string
+          p_original_name: string
+          p_size_bytes: number
+          p_storage_path: string
+        }
+        Returns: Json
+      }
       assign_conversation_tx: {
         Args: {
           p_actor_agent_id: string
