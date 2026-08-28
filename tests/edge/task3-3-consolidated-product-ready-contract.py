@@ -67,7 +67,7 @@ for marker in [
     assert marker in reply, f"B: {marker}"
 
 elig = reply[reply.index('export function isFirstNoMatchClarificationEligible'):]
-elig = elig[:elig.index('\n}')]
+elig = elig[:elig.index('\n}\n')]
 for guard in [
     'KB_EMPTY',
     'KB_LOW_SCORE_STANDARD',
