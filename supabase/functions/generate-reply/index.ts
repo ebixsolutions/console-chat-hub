@@ -1931,6 +1931,23 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
         const r1Response = await persistExplicitR1IfRequested(supabaseAdmin, conversation_id, source_message_id, _h1LastMsg);
         if (r1Response) return r1Response;
       }
+      const clarification = await attemptFirstNoMatchClarification(
+        supabaseAdmin,
+        conversation_id,
+        source_message_id,
+        isHighRisk ? "KB_LOW_SCORE_HIGH_RISK" : "KB_LOW_SCORE_STANDARD",
+        _visitorLang,
+        {
+          high_risk: isHighRisk,
+          explicit_human_request: isHandoffIntent(_h1LastMsg),
+          threat_flag: _pr5ThreatSignal,
+          compliance_requires_human_review: _pr5ComplianceSignal,
+          clarification_attempts: _pr5History.clarification_attempts,
+          exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
+        },
+        traceMetadata,
+      );
+      if (clarification) return clarification;
       return await handleKBFallback(
         supabaseAdmin,
         conversation_id,
