@@ -185,6 +185,38 @@ async function recordUsage(
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/* --------------------- shared generation output budget --------------------- */
+
+/**
+ * Single bounded, configurable output-token budget for every
+ * `purpose: "generation"` caller (widget/AI reply orchestration, legacy reply
+ * path, escalation policy assessment).
+ *
+ * Rationale: the structured/orchestrated generation output routinely exceeds
+ * 500 output tokens, and a provider MAX_TOKENS finish is intentionally treated
+ * as LLM_INVALID_OUTPUT (fail-closed) — so an undersized budget turns healthy
+ * KB-grounded answers into unnecessary human handoffs. The budget therefore
+ * defaults high enough for the current structured contract, stays operator
+ * configurable, and is clamped to a sane min/max so a bad configuration value
+ * can never restore the truncation failure or request an unbounded budget.
+ */
+export const GENERATION_MAX_TOKENS_DEFAULT = 2048;
+export const GENERATION_MAX_TOKENS_MIN = 768;
+export const GENERATION_MAX_TOKENS_MAX = 8192;
+
+export function resolveGenerationMaxTokens(): number {
+  const raw = (Deno.env.get("LLM_MAX_OUTPUT_TOKENS_GENERATION") ?? "").trim();
+  const parsed = Number.parseInt(raw, 10);
+  const candidate = Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : GENERATION_MAX_TOKENS_DEFAULT;
+  return Math.max(
+    GENERATION_MAX_TOKENS_MIN,
+    Math.min(GENERATION_MAX_TOKENS_MAX, candidate),
+  );
+}
+
+
 interface ProviderRequest {
   url: string;
   headers: Record<string, string>;
