@@ -1382,7 +1382,16 @@ function SinglePageInbox() {
                             outlineOffset: 2,
                           }}
                         >
-                          <div className="whitespace-pre-wrap">{m.content}</div>
+                          {isAttachmentMessage(m.content_type) ? (
+                            <MessageAttachment
+                              messageId={m.id}
+                              contentType={m.content_type}
+                              metadata={(m.metadata as AttachmentMeta | null) ?? null}
+                            />
+                          ) : (
+                            <div className="whitespace-pre-wrap">{m.content}</div>
+                          )}
+
                         </div>
                       )}
                       {!m.is_recalled &&
