@@ -221,7 +221,41 @@ type LiveAiFailure = {
   success?: false;
   error?: string;
   detail?: string;
+  human_control?: boolean;
+  ai_suppressed?: boolean;
+  human_control_state?: "none" | "waiting" | "assigned";
 };
+
+/**
+ * Human control is an expected conversation state, not an error: the preview
+ * shows the same waiting / agent-connected state as the customer widget.
+ */
+async function readHumanControl(
+  error: unknown,
+  payload: LiveAiFailure | null,
+): Promise<"waiting" | "assigned" | null> {
+  const fromPayload = (value: LiveAiFailure | null) => {
+    if (!value) return null;
+    if (value.human_control !== true &&
+      value.error !== "test_conversation_under_human_control") return null;
+    return value.human_control_state === "assigned" ? "assigned" : "waiting";
+  };
+
+  const direct = fromPayload(payload);
+  if (direct) return direct;
+
+  const context = (error as { context?: unknown } | null)?.context;
+  if (context && typeof (context as Response).json === "function") {
+    try {
+      const body = (await (context as Response).clone().json()) as LiveAiFailure;
+      return fromPayload(body);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 
 function launcherSymbol(icon: WidgetLauncherIcon): string {
   return LAUNCHER_ICONS.find((item) => item.value === icon)?.symbol ?? "💬";
@@ -998,6 +1032,14 @@ function PreviewWidget({
         !payload ||
         payload.success !== true
       ) {
+        const control = await readHumanControl(
+          error,
+          payload as LiveAiFailure | null,
+        );
+        if (control) {
+          setHumanState(control);
+          return;
+        }
         appendLiveFailure(
           text,
           safeLiveError(
@@ -1008,6 +1050,7 @@ function PreviewWidget({
         return;
       }
 
+
       const result = payload as LiveAiResponse;
       setTestConversationId(result.conversation_id);
       window.localStorage.setItem(
@@ -1017,10 +1060,16 @@ function PreviewWidget({
       applyServerMessages(result.messages);
       void loadLiveHistory();
     } catch (error) {
+      const control = await readHumanControl(error, null);
+      if (control) {
+        setHumanState(control);
+        return;
+      }
       appendLiveFailure(
         text,
         safeLiveError(error, null),
       );
+
     } finally {
       setTyping(false);
     }
@@ -1161,7 +1210,7 @@ function PreviewWidget({
         </button>
       </div>
 
-      {mode === "simulation" && humanState !== "none" && (
+      {humanState !== "none" && (
         <div
           className={
             humanState === "waiting"
@@ -1169,15 +1218,24 @@ function PreviewWidget({
               : "border-b border-violet-200 bg-violet-50 px-4 py-2 text-xs text-violet-800"
           }
         >
-          {humanState === "waiting"
-            ? lang === "zh"
-              ? "正在模擬等待真人客服…"
-              : "Simulating wait for a human agent…"
-            : lang === "zh"
-              ? "已模擬真人客服接手；AI 回覆暫停。"
-              : "Human agent simulated as connected; AI replies are paused."}
+          {mode === "live"
+            ? humanState === "waiting"
+              ? lang === "zh"
+                ? "已交由真人客服跟進，AI 回覆暫停，請稍等一下。"
+                : "A human agent is taking over — AI replies are paused, please hold on."
+              : lang === "zh"
+                ? "真人客服已接手這個對話，會直接回覆你。"
+                : "A human agent has taken over this conversation and will reply directly."
+            : humanState === "waiting"
+              ? lang === "zh"
+                ? "正在模擬等待真人客服…"
+                : "Simulating wait for a human agent…"
+              : lang === "zh"
+                ? "已模擬真人客服接手；AI 回覆暫停。"
+                : "Human agent simulated as connected; AI replies are paused."}
         </div>
       )}
+
 
       <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto bg-white p-4">
         {messages.length === 0 && (
