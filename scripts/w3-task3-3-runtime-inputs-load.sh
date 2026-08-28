@@ -9,8 +9,8 @@ case "$MODE" in 600|400) ;; *) stop "runtime input file permissions must be 600 
 
 source "$RUNTIME_FILE"
 
-# Backward-compatible alias during the current project only. Task 2.3 training
-# itself is deferred and is not a Product-ready blocker for Task 3.3.
+# Backward-compatible confirmation alias only. Task 2.3 training itself is
+# deferred and is not a Product-ready dependency of Task 3.3.
 export W3_T3_3_LOVABLE_NATIVE_DEPLOY_CONFIRMED="${W3_T3_3_LOVABLE_NATIVE_DEPLOY_CONFIRMED:-${W2_T2_3_LOVABLE_NATIVE_DEPLOY_CONFIRMED:-}}"
 
 required=(
@@ -24,6 +24,7 @@ PR10_KB_TENANT_B_EXPECTED_DOCUMENT_ID
 KB_SINGAPORE_TENANT_MAP_JSON
 KB_SINGAPORE_TENANT_API_KEYS_JSON
 W3_T3_3_LOVABLE_NATIVE_DEPLOY_CONFIRMED
+W3_T3_3_DEPLOYED_COMMIT_SHA
 )
 for name in "${required[@]}"; do
   [ -n "${!name:-}" ] || stop "runtime input missing: $name"
@@ -31,6 +32,8 @@ done
 
 [ "$W3_T3_3_LOVABLE_NATIVE_DEPLOY_CONFIRMED" = "YES" ] \
   || stop "Lovable-native Supabase Edge deployment confirmation missing/invalid"
+[[ "$W3_T3_3_DEPLOYED_COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]] \
+  || stop "W3_T3_3_DEPLOYED_COMMIT_SHA must be an exact 40-character commit SHA"
 
 python3 - <<'PY'
 import json,os
@@ -46,5 +49,5 @@ for c in (os.environ["PR10_TENANT_A_COMPANY_UUID"],os.environ["PR10_TENANT_B_COM
 print("PASS Singapore mapping/API-key structure")
 PY
 
-echo "PASS Lovable-native deployment confirmation present before Task 3.3 activation"
+echo "PASS Lovable-native deployment confirmation bound to exact commit"
 echo "PASS W3 Task 3.3 runtime input bridge"
