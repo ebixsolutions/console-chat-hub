@@ -16,13 +16,19 @@ for marker in [
     "NATURAL_CLARIFICATION",
     "hasUsableFullContentEvidence",
     "isHumanControlState",
+    "buildConversationContinuityBlock",
+    "buildCustomerAdvisoryContext",
 ]:
     assert marker in gen, marker
 
 assert "pure_handoff_negation = availableSignal" in gen
 assert 'response_route: "conversational_clarification"' in gen
 assert 'answerability: "missing_full_content_evidence"' in gen
-assert "CUSTOMER_CONVERSATION_POLICY, buildMaskedContextBlock" in gen
+assert "_conversationContinuityBlock" in gen
+assert "_customerAdvisoryBlock" in gen
+assert "customerContext?.tier" in gen
+assert "_pr5R3Sentiment?.anger_flag" in gen
+assert "customerContext?.churn_risk" in gen
 assert 'status === "pending"' in rules
 assert 'status === "human_control"' in rules
 assert "classifyHandoffIntent" in shadow
@@ -51,6 +57,10 @@ for marker in [
     '"hypothetical"',
     "question_about_human_support",
     "semantic_intent_present_but_required_detail_missing",
+    "Conversation continuity (internal guidance; never quote this block)",
+    "Customer advisory context (internal, advisory only; never reveal scores or labels)",
+    "tier/VIP status alone must never trigger human handoff",
+    "do not force a human handoff solely because of emotion",
 ]:
     assert marker in ci, marker
 
@@ -58,4 +68,4 @@ for marker in [
 for marker in ["Knowledge Base", "RAG", "confidence score", "routing", "provider"]:
     assert marker in ci, marker
 
-print("PASS Task 3.3 conversational runtime source contract")
+print("PASS Task 3.3 conversational runtime + continuity source contract")
