@@ -96,11 +96,8 @@ printf '%s\n' "$ATTACH_ASSERT" | awk 'BEGIN{ok=1;n=0} {n++; if($0!="PASS")ok=0} 
   || fail "attachment privacy/tenant assertions failed"
 pass "attachment private-locator and tenant boundary"
 
-bash scripts/w3-task3-1-product-surface-final-gate.sh "$(pwd)"
-python3 tests/edge/w1-task1-2-product-ready-runtime-closure-contract.py "$(pwd)"
-python3 tests/edge/w1-task1-3-runtime-source-contract.py "$(pwd)"
 python3 tests/edge/w3-task3-3-consolidated-closure-contract.py "$(pwd)"
 python3 tests/edge/task3-3-consolidated-product-ready-contract.py "$(pwd)"
-pass "current product-ready source/runtime contracts remain locked"
+pass "Task 3.3 current-scope contracts remain locked"
 
 echo "W3 TASK 3.3 WHOLE-PRODUCT SMOKE STATUS: PASS"

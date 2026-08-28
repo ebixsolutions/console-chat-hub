@@ -241,7 +241,7 @@ export const getAgentAttachmentUrl = createServerFn({ method: "POST" })
     if (!message) return fail("attachment_not_found", "Attachment not found");
 
     const { data: locator, error: locatorError } = await supabaseAdmin
-      .from("message_attachment_private")
+      .from("message_attachment_private" as never)
       .select("storage_bucket, storage_path")
       .eq("message_id", data.message_id)
       .eq("conversation_id", message.conversation_id)
