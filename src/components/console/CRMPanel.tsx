@@ -181,29 +181,18 @@ export function normalizeKBResults(value: unknown): KBResult[] | null {
 /* --------------------------- UI relevance contract -------------------------- */
 
 /**
- * Conservative display threshold for the right-hand Knowledge panel.
- *
- * Runtime grounding treats ~0.55 as the *minimum* usable retrieval score, but a
- * 0.55-0.70 hit is frequently a topically unrelated document (e.g. "四電一腦"
- * surfacing for a Mars-insurance question). Showing it beside the conversation
- * implies relevance the retrieval never established, so the panel only renders
- * evidence at or above this stricter bar. Selected-document / full-content
- * evidence is preferred and shown first; nothing is fabricated or re-scored.
+ * Conservative hard display threshold for the right-hand Knowledge panel.
+ * Selected-document/full-content evidence is a ranking preference only; it can
+ * never lower the acceptance threshold because doing so would present a weak or
+ * unrelated retrieval as contextually relevant evidence.
  */
 export const KB_UI_MIN_RELEVANCE = 0.75;
-export const KB_UI_SELECTED_DOC_MIN_RELEVANCE = 0.65;
 
 export function filterRelevantKBResults(
   results: KBResult[],
   selectedDocumentId: string | null,
 ): KBResult[] {
-  const kept = results.filter((r) => {
-    const isPreferred =
-      r.chunk_type === "full_content" ||
-      (!!selectedDocumentId && r.document_id === selectedDocumentId);
-    const floor = isPreferred ? KB_UI_SELECTED_DOC_MIN_RELEVANCE : KB_UI_MIN_RELEVANCE;
-    return r.score >= floor;
-  });
+  const kept = results.filter((r) => r.score >= KB_UI_MIN_RELEVANCE);
   const rank = (r: KBResult) => {
     if (!!selectedDocumentId && r.document_id === selectedDocumentId) return 0;
     if (r.chunk_type === "full_content") return 1;
@@ -229,7 +218,6 @@ export function deriveAutoSearchQuery(boundedContext: string): string {
 }
 
 export function normalizePolicyResult(value: unknown): PolicyResult | null {
-
   const r = asRecord(value);
   if (!r || typeof r.status !== "string" || typeof r.summary !== "string") return null;
   const issues: PolicyResult["issues"] = [];
@@ -335,10 +323,6 @@ export function CRMPanel({
           setKbError(rc("kbError"));
           return;
         }
-        // Conservative UI relevance guard: a medium-score retrieval is NOT
-        // displayed as if it answered the question. Unrelated results are
-        // dropped rather than rendered, and the panel shows the explicit
-        // "No relevant knowledge found" empty state instead.
         const relevant = filterRelevantKBResults(
           normalized,
           typeof data.selected_document_id === "string" ? data.selected_document_id : null,
@@ -353,7 +337,6 @@ export function CRMPanel({
     },
     [conv?.id, rc],
   );
-
 
   useEffect(() => {
     setTab("customer");
@@ -374,8 +357,6 @@ export function CRMPanel({
     if (!conv || !boundedContext || !canAccessKb) return;
     if (lastAutoQueryRef.current === contextRevisionKey) return;
     lastAutoQueryRef.current = contextRevisionKey;
-    // Stale results are dropped before the new request resolves so the panel
-    // never shows knowledge belonging to a previous conversation/context.
     setKbResults([]);
     setKbError("");
     const autoQuery = deriveAutoSearchQuery(boundedContext);
@@ -385,7 +366,6 @@ export function CRMPanel({
     }
     void runKbSearch(autoQuery, ++kbReqIdRef.current);
   }, [conv, boundedContext, contextRevisionKey, canAccessKb, runKbSearch]);
-
 
   const runPolicyCheck = async (content: string, reqId: number) => {
     if (!content.trim() || !canAccessKb) return;
