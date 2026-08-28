@@ -43,28 +43,35 @@ npm run build
 
 PR30_APPLIED=false
 rollback_pr30(){
-  local rc=$?
+  local rc="${1:-1}"
   if [ "$PR30_APPLIED" = true ]; then
     echo "ROLLBACK: Task 3.3 activation failed; reverting PR30 attachment schema" >&2
-    psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f sql/pr30/pr30_agent_attachment.rollback.sql \
-      || echo "ROLLBACK FAILURE: PR30 rollback command failed; manual owner intervention required" >&2
+    if ! psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f sql/pr30/pr30_agent_attachment.rollback.sql; then
+      echo "ROLLBACK FAILURE: PR30 rollback command failed; manual owner intervention required" >&2
+      exit 3
+    fi
+    PR30_APPLIED=false
   fi
   exit "$rc"
 }
-trap rollback_pr30 ERR
+trap 'rollback_pr30 $?' ERR
 
 # PR30 was intentionally kept source-only until this explicit authorization.
 # The SQL file is transactional; a migration error cannot partially apply it.
 psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f sql/pr30/pr30_agent_attachment.sql
 PR30_APPLIED=true
 
-# Machine assertions for the newly activated security boundary.
-psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -Atc "
+# Machine assertions for the newly activated security boundary. Do not rely on
+# ERR trap semantics through an OR-list: assertion failure explicitly invokes
+# rollback so a failed post-apply check cannot leave PR30 partially activated.
+if ! psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -Atc "
 SELECT CASE WHEN to_regclass('public.message_attachment_private') IS NOT NULL THEN 'PASS' ELSE 'FAIL' END;
 SELECT CASE WHEN to_regprocedure('public.agent_send_attachment_tx(uuid,uuid,text,text,text,text,bigint,text)') IS NOT NULL THEN 'PASS' ELSE 'FAIL' END;
 SELECT CASE WHEN NOT has_table_privilege('authenticated','public.message_attachment_private','SELECT') THEN 'PASS' ELSE 'FAIL' END;
-" | awk 'BEGIN{ok=1} $0!="PASS"{ok=0} END{exit ok?0:1}' \
-  || fail "PR30 post-apply assertions failed"
+" | awk 'BEGIN{ok=1} $0!="PASS"{ok=0} END{exit ok?0:1}'; then
+  echo "FAIL: PR30 post-apply assertions failed" >&2
+  rollback_pr30 1
+fi
 
 trap - ERR
 
