@@ -9,6 +9,10 @@ case "$MODE" in 600|400) ;; *) stop "runtime input file permissions must be 600 
 
 source "$RUNTIME_FILE"
 
+# Backward-compatible alias during the current project only. Task 2.3 training
+# itself is deferred and is not a Product-ready blocker for Task 3.3.
+export W3_T3_3_LOVABLE_NATIVE_DEPLOY_CONFIRMED="${W3_T3_3_LOVABLE_NATIVE_DEPLOY_CONFIRMED:-${W2_T2_3_LOVABLE_NATIVE_DEPLOY_CONFIRMED:-}}"
+
 required=(
 SUPABASE_DB_URL
 PR10_TENANT_A_BEARER_TOKEN
@@ -19,25 +23,21 @@ PR10_KB_TENANT_A_EXPECTED_DOCUMENT_ID
 PR10_KB_TENANT_B_EXPECTED_DOCUMENT_ID
 KB_SINGAPORE_TENANT_MAP_JSON
 KB_SINGAPORE_TENANT_API_KEYS_JSON
-TRAINING_OUTBOX_INTERNAL_TOKEN
-SU_COACHAI_EVALUATION_ENDPOINT
-SU_COACHAI_AUTH_HEADER
-SU_COACHAI_AUTH_VALUE
-SU_COACHAI_RESULT_TOKEN
-TRAINING_KB_SYNC_INTERNAL_TOKEN
-W2_T2_3_LOVABLE_NATIVE_DEPLOY_CONFIRMED
+W3_T3_3_LOVABLE_NATIVE_DEPLOY_CONFIRMED
 )
 for name in "${required[@]}"; do
   [ -n "${!name:-}" ] || stop "runtime input missing: $name"
 done
 
-[ "$W2_T2_3_LOVABLE_NATIVE_DEPLOY_CONFIRMED" = "YES" ] \
+[ "$W3_T3_3_LOVABLE_NATIVE_DEPLOY_CONFIRMED" = "YES" ] \
   || stop "Lovable-native Supabase Edge deployment confirmation missing/invalid"
 
 python3 - <<'PY'
 import json,os
 m=json.loads(os.environ["KB_SINGAPORE_TENANT_MAP_JSON"])
 k=json.loads(os.environ["KB_SINGAPORE_TENANT_API_KEYS_JSON"])
+for name in ("PR10_TENANT_A_COMPANY_UUID", "PR10_TENANT_B_COMPANY_UUID"):
+    assert os.environ.get(name), f"missing {name}"
 assert isinstance(m,dict) and isinstance(k,dict)
 for c in (os.environ["PR10_TENANT_A_COMPANY_UUID"],os.environ["PR10_TENANT_B_COMPANY_UUID"]):
     v=str(m[c])
@@ -46,5 +46,5 @@ for c in (os.environ["PR10_TENANT_A_COMPANY_UUID"],os.environ["PR10_TENANT_B_COM
 print("PASS Singapore mapping/API-key structure")
 PY
 
-echo "PASS Lovable-native deployment confirmation present before activation"
+echo "PASS Lovable-native deployment confirmation present before Task 3.3 activation"
 echo "PASS W3 Task 3.3 runtime input bridge"
