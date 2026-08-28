@@ -36,7 +36,7 @@ const QUESTION_ZH = /(係咪|是不是|是否|幾點|几点|幾時|何時|多久
 const QUESTION_EN = /\b(when|what|who|where|how|hours|available|open|close|can i|could i)\b.*\b(human|agent|customer service|support)\b|\b(human|agent|customer service|support)\b.*\b(when|what|who|where|how|hours|available|open|close)\b/i;
 const HYPOTHETICAL_ZH = /(假如|假設|假设|例如|譬如|可唔可以轉|可不可以转|如果我要|如果想)/;
 const HYPOTHETICAL_EN = /\b(hypothetically|suppose|what if|could i|would i be able to)\b/i;
-const EXPLICIT_ZH = /(而家|現在|现在|即刻|立即|正式)?\s*(請|请|麻煩|麻烦)?\s*(幫我|帮我|替我)?\s*(轉|转|接|搵|找|聯絡|联系)\s*(去|俾|給|给)?\s*(真人|人工|客服)|(我要|我想|我需要)\s*(真人|人工|客服)(?!.*之後)/;
+const EXPLICIT_ZH = /(而家|現在|现在|即刻|立即).{0,8}(轉|转|接|搵|找|聯絡|联系).{0,5}(真人|人工|客服)|(請|请|麻煩|麻烦).{0,8}(轉|转|接|搵|找|聯絡|联系).{0,5}(真人|人工|客服)|(我要|我想|我需要).{0,5}(真人|人工|客服)/;
 const EXPLICIT_EN = /\b(please\s+)?(connect|transfer|put|let)\s+me\s+(to|through to)\s+(a\s+)?(human|live agent|human agent|real person)|\b(i want|i need|let me speak to|i want to speak to|i need to speak to)\s+(a\s+)?(human|live agent|human agent|real person)(\s+now)?\b/i;
 
 function detectLanguage(text: string): "zh-TW" | "zh-CN" | "en" {
@@ -76,7 +76,8 @@ export function classifyHandoffIntent(text: string): HandoffIntentClassification
 
 const TRIVIAL = /^(hi|hello|hey|你好|嗨|哈囉|早安|午安|晚安|ok|okay|好的|好|嗯|謝謝|谢谢|thanks|thank you)[!！。.？?，,\s]*$/i;
 const CORRECTION = /(我講錯|我说错|我說錯|更正|其實係|其实是|唔係.*係|不是.*是|改返|改成|actually|correction|i meant|not .* but )/i;
-const FOLLOW_UP = /^(咁|那|那麼|那么|所以|另外|仲有|还有|咁如果|那如果|then|so|also|what about|and what about|in that case)\b/i;
+const FOLLOW_UP_ZH = /^(咁|那|那麼|那么|所以|另外|仲有|还有|咁如果|那如果)/;
+const FOLLOW_UP_EN = /^(then|so|also|what about|and what about|in that case)\b/i;
 const DOMAIN_ONLY = /^(我有|我想問|我想问|想問|想问|請問|请问)?\s*(一個|一个|個|个)?\s*(訂單|订单|退款|退貨|退货|換貨|换货|送貨|送货|物流|付款|產品|产品|保養|保修|維修|维修|問題|问题)\s*(問題|问题|嘅問題|的問題)?[。.!！?？\s]*$/;
 const VAGUE_REFERENCE = /^(之前嗰樣嘢|之前那件事|之前那个|嗰樣嘢|那個事情|那个事情|same thing|that thing|the previous thing)[。.!！?？\s]*$/i;
 
@@ -84,7 +85,7 @@ export function classifyConversationTurn(text: string): TurnClassification {
   const t = text.normalize("NFKC").trim();
   if (!t || TRIVIAL.test(t)) return { kind: "trivial", should_clarify_before_kb: false, reason: "trivial_or_greeting" };
   if (CORRECTION.test(t)) return { kind: "correction", should_clarify_before_kb: false, reason: "latest_turn_corrects_prior_context" };
-  if (FOLLOW_UP.test(t)) return { kind: "follow_up", should_clarify_before_kb: false, reason: "follow_up_requires_history" };
+  if (FOLLOW_UP_ZH.test(t) || FOLLOW_UP_EN.test(t)) return { kind: "follow_up", should_clarify_before_kb: false, reason: "follow_up_requires_history" };
   if (DOMAIN_ONLY.test(t) || VAGUE_REFERENCE.test(t)) {
     return { kind: "underspecified", should_clarify_before_kb: true, reason: "semantic_intent_present_but_required_detail_missing" };
   }
