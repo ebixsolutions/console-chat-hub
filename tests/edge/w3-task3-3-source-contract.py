@@ -35,6 +35,21 @@ for marker in [
 ]:
     assert marker in a, f"activation missing current marker: {marker}"
 
+# Rollback safety is explicit after PR30 apply; do not depend on ERR trap behavior
+# through an OR-list or conditional pipeline.
+for marker in [
+    "trap 'rollback_pr30 $?' ERR",
+    'rollback_pr30 1',
+    'if ! psql "$SUPABASE_DB_URL"',
+    'PR30 post-apply assertions failed',
+    'ROLLBACK FAILURE: PR30 rollback command failed',
+]:
+    assert marker in a, f"activation rollback safety missing: {marker}"
+assert '|| fail "PR30 post-apply assertions failed"' not in a, \
+    "activation must not rely on OR-list ERR semantics for post-apply rollback"
+assert a.index('PR30_APPLIED=true') < a.index('rollback_pr30 1'), \
+    "explicit rollback must occur only after PR30 is marked applied"
+
 for marker in [
     'source "$ROOT/config/w3-task3-3-dev-identity.env"',
     'source "$ROOT/scripts/w3-task3-3-runtime-inputs-load.sh"',
