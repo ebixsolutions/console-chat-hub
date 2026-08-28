@@ -21,8 +21,6 @@ command -v python3 >/dev/null 2>&1 || stop "python3 missing"
 command -v psql >/dev/null 2>&1 || stop "psql missing"
 [ -n "${SUPABASE_DB_URL:-}" ] || stop "SUPABASE_DB_URL missing"
 
-# Critical AI Chatbot source inventory. SU CoachAI downstream training/learning
-# is explicitly deferred and therefore is not a Task 3.3 Product-ready blocker.
 REQUIRED_SOURCE=(
   get-public-widget-config create-visitor-session receive-widget-message widget-poll-messages
   generate-reply health-check submit-feedback-response deliver-feedback-request agent-send-reply
@@ -74,10 +72,7 @@ HTTP="$(curl --silent --show-error --max-time 20 -L -o "$TMP" -w '%{http_code}' 
 grep -Eqi '<html|id="root"|id='"'"'root'"'"'' "$TMP" || fail "production app shell invalid"
 pass "production app shell"
 
-# New attachment boundary: schema exists, browser roles cannot query private
-# locators, message metadata contains no private path, and locator tenant binding
-# cannot disagree with the owning conversation.
-ATTACH_ASSERT="$(psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -Atc "
+DB_ASSERT="$(psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -Atc "
 SELECT CASE WHEN to_regclass('public.message_attachment_private') IS NOT NULL THEN 'PASS' ELSE 'FAIL' END;
 SELECT CASE WHEN NOT has_table_privilege('authenticated','public.message_attachment_private','SELECT') THEN 'PASS' ELSE 'FAIL' END;
 SELECT CASE WHEN NOT EXISTS (
@@ -91,10 +86,30 @@ SELECT CASE WHEN NOT EXISTS (
   JOIN public.conversations c ON c.id=l.conversation_id
   WHERE c.company_id IS DISTINCT FROM l.company_id
 ) THEN 'PASS' ELSE 'FAIL' END;
-")" || fail "attachment DB assertions could not execute"
-printf '%s\n' "$ATTACH_ASSERT" | awk 'BEGIN{ok=1;n=0} {n++; if($0!="PASS")ok=0} END{exit (ok && n==4)?0:1}' \
-  || fail "attachment privacy/tenant assertions failed"
-pass "attachment private-locator and tenant boundary"
+SELECT CASE WHEN NOT EXISTS (
+  SELECT 1 FROM pg_policies
+  WHERE schemaname='public' AND tablename='ai_reply_draft'
+    AND policyname='ai_reply_draft_read' AND qual='true'
+) THEN 'PASS' ELSE 'FAIL' END;
+SELECT CASE WHEN NOT EXISTS (
+  SELECT 1 FROM pg_policies
+  WHERE schemaname='public' AND tablename='handoff_event'
+    AND policyname='handoff_event_read' AND qual='true'
+) THEN 'PASS' ELSE 'FAIL' END;
+SELECT CASE WHEN NOT EXISTS (
+  SELECT 1
+  FROM information_schema.role_table_grants g
+  JOIN pg_namespace n ON n.nspname=g.table_schema
+  JOIN pg_class c ON c.relnamespace=n.oid AND c.relname=g.table_name
+  WHERE g.table_schema='public'
+    AND g.grantee IN ('anon','authenticated')
+    AND c.relkind='r'
+    AND c.relrowsecurity=false
+) THEN 'PASS' ELSE 'FAIL' END;
+")" || fail "Task 3.3 DB assertions could not execute"
+printf '%s\n' "$DB_ASSERT" | awk 'BEGIN{ok=1;n=0} {n++; if($0!="PASS")ok=0} END{exit (ok && n==7)?0:1}' \
+  || fail "attachment/RLS/tenant assertions failed"
+pass "attachment private-locator, RLS and tenant boundary"
 
 python3 tests/edge/w3-task3-3-consolidated-closure-contract.py "$(pwd)"
 python3 tests/edge/task3-3-consolidated-product-ready-contract.py "$(pwd)"
