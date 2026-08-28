@@ -1,0 +1,59 @@
+name: Task 3.3 Conversational Runtime Closure
+
+on:
+  push:
+    branches:
+      - task3-3-conversational-runtime-closure
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-validate:
+    if: ${{ !contains(github.event.head_commit.message || '', '[task3-3-generated]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: task3-3-conversational-runtime-closure
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Apply deterministic source patch
+        run: python3 scripts/task3-3-conversational-runtime-patch.py
+
+      - name: Conversation intelligence runtime matrix
+        run: node --experimental-strip-types tests/edge/w3-task3-3-conversation-intelligence.ts
+
+      - name: Source contract
+        run: python3 tests/edge/w3-task3-3-conversational-runtime-contract.py
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify package marker
+        run: node -e "const p=require('./package.json'); if(p.devDependencies['@lovable.dev/vite-tanstack-config']!=='2.13.1') process.exit(1); console.log('PASS package marker 2.13.1')"
+
+      - name: Commit implementation
+        run: |
+          if git diff --quiet; then
+            echo 'No generated source changes'
+            exit 1
+          fi
+          git config user.name 'Task3.3 Director Automation'
+          git config user.email 'actions@users.noreply.github.com'
+          git add supabase/functions/generate-reply/index.ts \
+                  supabase/functions/_shared/escalation-rules.ts \
+                  supabase/functions/_shared/escalation-shadow.ts \
+                  supabase/functions/widget-live-ai-test/index.ts \
+                  src/routes/_authenticated/console.widget-preview.tsx
+          git commit -m 'Task 3.3: conversational runtime closure [task3-3-generated]'
+          git push origin HEAD:task3-3-conversational-runtime-closure
