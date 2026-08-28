@@ -3,6 +3,7 @@ name: task3-3-director-repair-validation
 on:
   push:
     branches:
+      - main
       - director/task3-3-debug-takeover
 
 permissions:
@@ -14,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: director/task3-3-debug-takeover
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
       - name: Source integrity
