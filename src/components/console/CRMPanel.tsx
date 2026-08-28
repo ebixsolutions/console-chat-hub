@@ -374,8 +374,18 @@ export function CRMPanel({
     if (!conv || !boundedContext || !canAccessKb) return;
     if (lastAutoQueryRef.current === contextRevisionKey) return;
     lastAutoQueryRef.current = contextRevisionKey;
-    void runKbSearch(boundedContext, ++kbReqIdRef.current);
+    // Stale results are dropped before the new request resolves so the panel
+    // never shows knowledge belonging to a previous conversation/context.
+    setKbResults([]);
+    setKbError("");
+    const autoQuery = deriveAutoSearchQuery(boundedContext);
+    if (!autoQuery) {
+      setKbConnState("empty");
+      return;
+    }
+    void runKbSearch(autoQuery, ++kbReqIdRef.current);
   }, [conv, boundedContext, contextRevisionKey, canAccessKb, runKbSearch]);
+
 
   const runPolicyCheck = async (content: string, reqId: number) => {
     if (!content.trim() || !canAccessKb) return;
