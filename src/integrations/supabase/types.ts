@@ -3772,6 +3772,17 @@ export type Database = {
         }
         Returns: Json
       }
+      set_conversation_resolution_tx: {
+        Args: {
+          p_actor_agent_id: string
+          p_actor_user_id: string
+          p_company_id: string
+          p_conversation_id: string
+          p_reason?: string
+          p_target_state: string
+        }
+        Returns: Json
+      }
       takeover_conversation_tx: {
         Args: {
           p_agent_id: string

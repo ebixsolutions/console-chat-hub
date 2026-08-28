@@ -618,12 +618,100 @@ interface ConversationHistorySignals {
 
 function normalizeIntentText(text: string): string {
   return text
+    .normalize("NFKC")
     .trim()
     .toLowerCase()
     .replace(/[!！。.？?，,、:：;；"'“”‘’()[\]{}<>《》]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
+
+/**
+ * Task 3.3 same-intent matcher.
+ *
+ * Deterministic, symmetric, bounded, non-LLM, no external calls.
+ * Exact normalized equality is preserved first; conservative semantic
+ * similarity is then applied so a rephrased repeat of the same request is
+ * recognised after a first no-match clarification.
+ */
+const SAME_INTENT_STOP_WORDS = new Set([
+  "a","an","the","and","or","but","if","then","so","as","of","to","for","from","with","without",
+  "in","on","at","by","about","into","over","under","is","are","was","were","be","been","being",
+  "am","do","does","did","doing","done","can","could","will","would","shall","should","may","might",
+  "must","have","has","had","i","me","my","mine","we","us","our","you","your","yours","he","she",
+  "it","its","they","them","their","this","that","these","those","there","here","what","which",
+  "who","whom","whose","when","where","why","how","not","no","yes","just","still","again","also",
+  "any","some","more","most","much","many","very","really","please","thanks","thank","hi","hello",
+  "hey","ok","okay","sure","need","want","looking","look","get","got","give","tell","know","help",
+  "sell","sells","selling","available","availability","stock","order","buy","purchase","see","use",
+]);
+
+function extractMeaningfulTokens(normalized: string): Set<string> {
+  const tokens = normalized
+    .split(/[^\p{L}\p{N}-]+/u)
+    .map((t) => t.replace(/^-+|-+$/g, ""))
+    .filter((t) => t.length >= 3 && !SAME_INTENT_STOP_WORDS.has(t));
+  return new Set(tokens);
+}
+
+function compactCjk(normalized: string): string {
+  return (normalized.match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu) ?? []).join("");
+}
+
+function ngramSet(text: string, size: number): Set<string> {
+  const out = new Set<string>();
+  for (let i = 0; i + size <= text.length; i += 1) out.add(text.slice(i, i + size));
+  return out;
+}
+
+function containment(a: Set<string>, b: Set<string>): number {
+  const denominator = Math.min(a.size, b.size);
+  if (denominator === 0) return 0;
+  const [small, large] = a.size <= b.size ? [a, b] : [b, a];
+  let shared = 0;
+  for (const item of small) if (large.has(item)) shared += 1;
+  return shared / denominator;
+}
+
+function sharedCount(a: Set<string>, b: Set<string>): number {
+  const [small, large] = a.size <= b.size ? [a, b] : [b, a];
+  let shared = 0;
+  for (const item of small) if (large.has(item)) shared += 1;
+  return shared;
+}
+
+function isSameIntentRepeat(rawA: string, rawB: string): boolean {
+  const a = normalizeIntentText(rawA);
+  const b = normalizeIntentText(rawB);
+  if (a.length === 0 || b.length === 0) return false;
+  if (a === b) return true;
+
+  // Ignore trivially short inputs on both paths.
+  if (a.length < 8 || b.length < 8) return false;
+
+  const tokensA = extractMeaningfulTokens(a);
+  const tokensB = extractMeaningfulTokens(b);
+  if (tokensA.size >= 3 && tokensB.size >= 3) {
+    if (sharedCount(tokensA, tokensB) >= 3 && containment(tokensA, tokensB) >= 0.7) return true;
+  }
+
+  const cjkA = compactCjk(a);
+  const cjkB = compactCjk(b);
+  if (cjkA.length >= 8 && cjkB.length >= 8) {
+    const gramsA = ngramSet(cjkA, 2);
+    const gramsB = ngramSet(cjkB, 2);
+    if (
+      Math.min(gramsA.size, gramsB.size) >= 6 &&
+      sharedCount(gramsA, gramsB) >= 6 &&
+      containment(gramsA, gramsB) >= 0.6
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 
 function deriveConversationHistorySignals(
   newestFirstMessages: Array<{ role?: string; content?: string | null }>,
@@ -648,9 +736,9 @@ function deriveConversationHistorySignals(
 
   let exactSameIntentRepeated: true | undefined;
   if (recentVisitorMessages.length >= 2) {
-    const last = normalizeIntentText(String(recentVisitorMessages[0]?.content ?? ""));
-    const previous = normalizeIntentText(String(recentVisitorMessages[1]?.content ?? ""));
-    if (last.length > 0 && last === previous) exactSameIntentRepeated = true;
+    const last = String(recentVisitorMessages[0]?.content ?? "");
+    const previous = String(recentVisitorMessages[1]?.content ?? "");
+    if (isSameIntentRepeat(last, previous)) exactSameIntentRepeated = true;
   }
 
   return {
