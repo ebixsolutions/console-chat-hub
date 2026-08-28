@@ -713,16 +713,31 @@ function isSameIntentRepeat(rawA: string, rawB: string): boolean {
 }
 
 
+type HistoryRow = {
+  role?: string;
+  content?: string | null;
+  metadata?: unknown;
+};
+
+function isClarificationAssistantRow(row: HistoryRow): boolean {
+  const metadata = row.metadata;
+  if (typeof metadata !== "object" || metadata === null) return false;
+  const record = metadata as Record<string, unknown>;
+  if (record["escalation_action"] !== "clarification") return false;
+  return (
+    record["escalation_rule"] === "R2" ||
+    record["response_route"] === KB_NO_MATCH_CLARIFICATION_ROUTE
+  );
+}
+
 function deriveConversationHistorySignals(
-  newestFirstMessages: Array<{ role?: string; content?: string | null }>,
+  newestFirstMessages: Array<HistoryRow>,
   exactVisitorTurnCount: number,
-  exactClarificationCount: number,
 ): ConversationHistorySignals {
   const usable = newestFirstMessages.filter(
     (m) => m.content !== "__THINKING__" && typeof m.role === "string",
   );
 
-  const recentVisitorMessages = usable.filter((m) => m.role === "visitor");
   let consecutiveNoAnswer = 0;
 
   for (const message of usable) {
@@ -734,20 +749,43 @@ function deriveConversationHistorySignals(
     if (role === "assistant" || role === "agent") break;
   }
 
+  // Indices (newest-first) of the two most recent visitor turns.
+  const visitorIndices: number[] = [];
+  for (let i = 0; i < usable.length && visitorIndices.length < 2; i += 1) {
+    if (usable[i]?.role === "visitor") visitorIndices.push(i);
+  }
+
   let exactSameIntentRepeated: true | undefined;
-  if (recentVisitorMessages.length >= 2) {
-    const last = String(recentVisitorMessages[0]?.content ?? "");
-    const previous = String(recentVisitorMessages[1]?.content ?? "");
-    if (isSameIntentRepeat(last, previous)) exactSameIntentRepeated = true;
+  let clarificationAttempts = 0;
+
+  if (visitorIndices.length >= 2) {
+    const latestIndex = visitorIndices[0]!;
+    const previousIndex = visitorIndices[1]!;
+    const last = String(usable[latestIndex]?.content ?? "");
+    const previous = String(usable[previousIndex]?.content ?? "");
+    if (isSameIntentRepeat(last, previous)) {
+      exactSameIntentRepeated = true;
+      // Intent-local clarification count: only assistant turns strictly
+      // between the two same-intent visitor turns are considered, capped at 1.
+      for (let i = latestIndex + 1; i < previousIndex; i += 1) {
+        const row = usable[i];
+        if (!row || row.role !== "assistant") continue;
+        if (isClarificationAssistantRow(row)) {
+          clarificationAttempts = 1;
+          break;
+        }
+      }
+    }
   }
 
   return {
     turn_count: exactVisitorTurnCount,
     consecutive_no_answer: consecutiveNoAnswer,
-    clarification_attempts: exactClarificationCount,
+    clarification_attempts: clarificationAttempts,
     exact_same_intent_repeated: exactSameIntentRepeated,
   };
 }
+
 
 function readPositiveIntegerEnv(name: string): number | undefined {
   const raw = Deno.env.get(name);
