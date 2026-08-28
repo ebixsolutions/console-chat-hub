@@ -1221,7 +1221,7 @@ When the customer explicitly requests a human agent, or when you transfer to a h
     purpose: "generation",
     system: legacySystemPrompt,
     user: buildRouterConversationInput(modelMessages),
-    maxTokens: 500,
+    maxTokens: resolveGenerationMaxTokens(),
     operationId: `generate-reply:legacy:${conversation_id}:${source_message_id}`,
     companyId:
       typeof conversation.company_id === "string" && conversation.company_id.length > 0
