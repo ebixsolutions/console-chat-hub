@@ -59,7 +59,15 @@ jobs:
       - name: Product-ready A-F contract
         run: python3 tests/edge/task3-3-consolidated-product-ready-contract.py .
 
-      - name: Install dependencies
+      - name: Repair package-lock to package.json 2.13.1 marker
+        shell: bash
+        run: |
+          set -euo pipefail
+          node -e "const p=require('./package.json'); if(p.devDependencies['@lovable.dev/vite-tanstack-config']!=='2.13.1') process.exit(1)"
+          npm install --package-lock-only --ignore-scripts
+          node -e "const l=require('./package-lock.json'); if(l.packages[''].devDependencies['@lovable.dev/vite-tanstack-config']!=='2.13.1') process.exit(1)"
+
+      - name: Install dependencies from repaired lock
         run: npm ci
 
       - name: Production build
@@ -71,7 +79,7 @@ jobs:
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add src/lib/api/attachments.functions.ts scripts/w3-task3-3-whole-product-smoke.sh
+          git add src/lib/api/attachments.functions.ts scripts/w3-task3-3-whole-product-smoke.sh package-lock.json
           git diff --cached --quiet && exit 0
-          git commit -m 'Task 3.3: close typed locator and frozen-gate regressions'
+          git commit -m 'Task 3.3: close typed locator, frozen-gate, and lockfile regressions'
           git push origin HEAD:director/task3-3-debug-takeover
