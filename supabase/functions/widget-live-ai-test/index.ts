@@ -1,7 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { supabaseCorsHeaders } from "../_shared/supabase-cors.ts";
-import { assessHumanControl } from "../_shared/human-control.ts";
-
 
 const MAX_QUERY_LENGTH = 500;
 const ALLOWED_ROLES = new Set(["admin", "supervisor"]);
@@ -404,6 +402,10 @@ Deno.serve(async (req) => {
         scope_mode: resolved.scopeMode,
         conversation_id: requestedConversationId,
         conversation_status: owned.conversation.status,
+        assigned_agent_id: owned.conversation.assigned_agent_id ?? null,
+        human_control:
+          HUMAN_CONTROL_STATUSES.has(String(owned.conversation.status)) ||
+          Boolean(owned.conversation.assigned_agent_id),
         messages: await loadTestMessages(admin, requestedConversationId),
       });
     }
@@ -426,24 +428,16 @@ Deno.serve(async (req) => {
       if (owned.conversation.status === "resolved" || owned.conversation.status === "closed") {
         return json(req, { success: false, error: "test_conversation_resolved" }, 409);
       }
-      // Human-control parity with production: AI generation is suppressed and the
-      // preview must render the normal waiting/assigned state, not an error.
-      const control = assessHumanControl({
-        status: owned.conversation.status as string | null,
-        assigned_agent_id: (owned.conversation.assigned_agent_id ?? null) as string | null,
-      });
-      if (control.human_control) {
+      if (
+        HUMAN_CONTROL_STATUSES.has(String(owned.conversation.status)) ||
+        owned.conversation.assigned_agent_id
+      ) {
         return json(req, {
           success: false,
           error: "test_conversation_under_human_control",
           conversation_id: conversationId,
-          human_control: true,
-          ai_suppressed: control.ai_suppressed,
-          human_control_state: control.state,
-          human_control_status: control.status,
         }, 409);
       }
-
     } else {
       const created = await createTestConversation(admin, authData.user.id, resolved);
       if (!created.ok) return json(req, { success: false, error: created.error }, created.status);
@@ -499,6 +493,10 @@ Deno.serve(async (req) => {
         error: generation.error,
         conversation_id: conversationId,
         conversation_status: state?.status ?? null,
+        assigned_agent_id: state?.assigned_agent_id ?? null,
+        human_control:
+          HUMAN_CONTROL_STATUSES.has(String(state?.status ?? "")) ||
+          Boolean(state?.assigned_agent_id),
         messages,
       }, generation.status);
     }
@@ -510,6 +508,10 @@ Deno.serve(async (req) => {
       scope_mode: resolved.scopeMode,
       conversation_id: conversationId,
       conversation_status: state?.status ?? null,
+      assigned_agent_id: state?.assigned_agent_id ?? null,
+      human_control:
+        HUMAN_CONTROL_STATUSES.has(String(state?.status ?? "")) ||
+        Boolean(state?.assigned_agent_id),
       handoff_persisted:
         generation.payload.handoff_persisted === true ||
         generation.payload.escalation_rule === "R1" ||

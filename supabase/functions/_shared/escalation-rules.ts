@@ -65,12 +65,14 @@ function isResolved(context: EscalationContext): boolean {
 }
 
 function isExistingHumanControl(context: EscalationContext): boolean {
+  const status = isAvailable(context.conversation_status) ? context.conversation_status.value : null;
+  const assigned = isAvailable(context.assigned_agent_id) ? context.assigned_agent_id.value : null;
   return (
-    isAvailable(context.conversation_status) &&
-    context.conversation_status.value === "pending" &&
-    isAvailable(context.assigned_agent_id) &&
-    typeof context.assigned_agent_id.value === "string" &&
-    context.assigned_agent_id.value.length > 0
+    (typeof assigned === "string" && assigned.length > 0) ||
+    status === "pending" ||
+    status === "transferred" ||
+    status === "human_needed" ||
+    status === "human_control"
   );
 }
 
