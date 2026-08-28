@@ -16,7 +16,7 @@ rollback = read('sql/pr30/pr30_operational_tenant_rls.rollback.sql')
 completion = read('sql/pr30/pr30_operational_tenant_rls_completion.sql')
 completion_rollback = read('sql/pr30/pr30_operational_tenant_rls_completion.rollback.sql')
 
-# Repeat-intent matcher must be deterministic/local and wired only into history signals.
+# Repeat-intent matcher must be deterministic/local and wired into bounded history signals.
 for marker in [
     '.normalize("NFKC")',
     'SAME_INTENT_STOP_WORDS',
@@ -25,10 +25,21 @@ for marker in [
     'containment(tokensA, tokensB) >= 0.7',
     'sharedCount(gramsA, gramsB) >= 6',
     'containment(gramsA, gramsB) >= 0.6',
-    'if (isSameIntentRepeat(last, previous)) exactSameIntentRepeated = true',
+    'if (isSameIntentRepeat(last, previous)) {',
+    'type HistoryRow = {',
+    'metadata?: unknown;',
+    'function isClarificationAssistantRow(',
+    'record["escalation_action"] !== "clarification"',
+    'record["escalation_rule"] === "R2"',
+    'record["response_route"] === KB_NO_MATCH_CLARIFICATION_ROUTE',
+    'clarificationAttempts = 1;',
+    '.select("role, content, created_at, metadata")',
+    '.limit(50)',
 ]:
-    assert marker in gen, f'generate-reply repeat matcher missing: {marker}'
+    assert marker in gen, f'generate-reply repeat/clarification matcher missing: {marker}'
 assert 'last.length > 0 && last === previous' not in gen
+assert '_pr5ClarificationCount' not in gen, 'conversation-wide clarification counter must remain removed'
+assert 'exactClarificationCount' not in gen, 'conversation-wide clarification parameter must remain removed'
 
 # Do not alter the product policy: one clarification, then repeated unresolved intent can handoff.
 rules = read('supabase/functions/_shared/escalation-rules.ts')
