@@ -11,7 +11,7 @@
  * - provider failure => unavailable
  * - does not produce policy_match_confidence
  */
-import { callModel, parseJsonObject } from "./llm-router.ts";
+import { callModel, parseJsonObject, resolveGenerationMaxTokens } from "./llm-router.ts";
 
 export type PolicyAssessmentStatus =
   | "compliant"
