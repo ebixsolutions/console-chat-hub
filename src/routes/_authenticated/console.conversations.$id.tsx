@@ -15,6 +15,9 @@ import { LoadingState, PermissionDenied } from "@/components/console/PageStates"
 import { useConsoleLang } from "@/hooks/useEffectiveRole";
 import { AgentToolPanel } from "@/components/console/AgentToolPanel";
 import { CRMPanel, RIGHT_COPY, buildBoundedContext, computeContextRevisionKey } from "@/components/console/CRMPanel";
+import { MessageAttachment, isAttachmentMessage, type AttachmentMeta } from "@/components/console/MessageAttachment";
+import { AttachmentButtons, EmojiPickerButton, insertAtCaret } from "@/components/console/ComposerTools";
+
 
 export const Route = createFileRoute("/_authenticated/console/conversations/$id")({
   component: ConversationDetailGuard,
