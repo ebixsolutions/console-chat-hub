@@ -7,7 +7,11 @@ stop(){ echo "STOP: $1" >&2; exit 2; }
 MODE="$(stat -f '%Lp' "$RUNTIME_FILE" 2>/dev/null || stat -c '%a' "$RUNTIME_FILE" 2>/dev/null || true)"
 case "$MODE" in 600|400) ;; *) stop "runtime input file permissions must be 600 or 400 (actual: $MODE)";; esac
 
+# Export sourced values so activation/smoke child processes receive the exact
+# validated runtime inputs without asking operators to duplicate exports.
+set -a
 source "$RUNTIME_FILE"
+set +a
 
 # Backward-compatible confirmation alias only. Task 2.3 training itself is
 # deferred and is not a Product-ready dependency of Task 3.3.
@@ -28,6 +32,7 @@ W3_T3_3_DEPLOYED_COMMIT_SHA
 )
 for name in "${required[@]}"; do
   [ -n "${!name:-}" ] || stop "runtime input missing: $name"
+  export "$name"
 done
 
 [ "$W3_T3_3_LOVABLE_NATIVE_DEPLOY_CONFIRMED" = "YES" ] \
