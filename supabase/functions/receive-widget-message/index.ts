@@ -224,7 +224,7 @@ Deno.serve(async (req) => {
             message_id:messageId,
             ai_reply_pending:false,
             control_state:"ai",
-            response_route:"conversational_clarification",
+            response_route:clarificationRoute,
           },
         });
       }
