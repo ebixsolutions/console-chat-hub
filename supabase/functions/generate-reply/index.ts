@@ -1506,7 +1506,9 @@ export function isFirstNoMatchClarificationEligible(input: {
   exact_same_intent_repeated: boolean;
   source_message_id: string | null;
 }): boolean {
-  // Only ordinary retrieval/answerability outcomes; provider/KB outage branches stay fail-closed.
+  // Only ordinary retrieval/answerability outcomes (KB_EMPTY,
+  // KB_LOW_SCORE_STANDARD, UNDERSPECIFIED_INTENT) are eligible; provider/KB
+  // outage branches stay fail-closed.
   if (!CLARIFICATION_ELIGIBLE_BRANCHES.includes(input.branch_tag)) return false;
   if (input.high_risk) return false;
   if (input.explicit_human_request) return false;
