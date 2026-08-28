@@ -30,8 +30,7 @@ jobs:
           old = '.from("message_attachment_private")'
           new = '.from("message_attachment_private" as never)'
           assert s.count(old) == 1, f'unexpected private-table call count: {s.count(old)}'
-          s = s.replace(old, new)
-          p.write_text(s)
+          p.write_text(s.replace(old, new))
 
           p = Path('scripts/w3-task3-3-whole-product-smoke.sh')
           s = p.read_text()
@@ -51,13 +50,14 @@ jobs:
           PY
           git diff --check
 
-      - name: Task 3.3 source contracts
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 tests/edge/w3-task3-3-source-contract.py .
-          python3 tests/edge/w3-task3-3-consolidated-closure-contract.py .
-          python3 tests/edge/task3-3-consolidated-product-ready-contract.py .
+      - name: Comprehensive current-scope source contract
+        run: python3 tests/edge/w3-task3-3-source-contract.py .
+
+      - name: Consolidated closure contract
+        run: python3 tests/edge/w3-task3-3-consolidated-closure-contract.py .
+
+      - name: Product-ready A-F contract
+        run: python3 tests/edge/task3-3-consolidated-product-ready-contract.py .
 
       - name: Install dependencies
         run: npm ci
