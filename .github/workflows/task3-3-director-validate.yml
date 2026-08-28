@@ -6,11 +6,10 @@ on:
       - director/task3-3-debug-takeover
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   validate:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -46,27 +45,6 @@ jobs:
 
       - name: Production build
         run: npm run build
-
-      - name: Converge deterministic generated route tree
-        shell: bash
-        run: |
-          set -euo pipefail
-          git diff --check
-          mapfile -t changed < <(git diff --name-only)
-          if [ "${#changed[@]}" -eq 0 ]; then
-            echo "No tracked build-generated changes"
-            exit 0
-          fi
-          if [ "${#changed[@]}" -ne 1 ] || [ "${changed[0]}" != "src/routeTree.gen.ts" ]; then
-            printf 'Unexpected tracked build changes:\n' >&2
-            printf ' - %s\n' "${changed[@]}" >&2
-            exit 1
-          fi
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add src/routeTree.gen.ts
-          git commit -m 'Task 3.3: refresh generated route tree'
-          git push origin HEAD:director/task3-3-debug-takeover
 
       - name: Final tracked-tree assertion
         shell: bash
