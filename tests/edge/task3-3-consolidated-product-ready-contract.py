@@ -132,7 +132,7 @@ for marker in [
     'FOR UPDATE',
     'resolved',
     'human_control',
-    "'image','video','file'",
+    "('image', 'video', 'file')",
     '10485760',
     'REVOKE ALL ON FUNCTION public.agent_send_attachment_tx',
     'GRANT EXECUTE ON FUNCTION public.agent_send_attachment_tx',
