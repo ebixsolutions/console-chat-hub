@@ -240,7 +240,7 @@ export const getAgentAttachmentUrl = createServerFn({ method: "POST" })
     if (messageError) return fail("attachment_lookup_failed", "Attachment lookup failed");
     if (!message) return fail("attachment_not_found", "Attachment not found");
 
-    const { data: locator, error: locatorError } = await supabaseAdmin
+    const { data: locatorRow, error: locatorError } = await supabaseAdmin
       .from("message_attachment_private" as never)
       .select("storage_bucket, storage_path")
       .eq("message_id", data.message_id)
@@ -248,14 +248,18 @@ export const getAgentAttachmentUrl = createServerFn({ method: "POST" })
       .eq("company_id", scope.companyId)
       .maybeSingle();
 
+    const locator = locatorRow as { storage_bucket?: unknown; storage_path?: unknown } | null;
+
     if (locatorError) return fail("attachment_lookup_failed", "Attachment lookup failed");
     if (!locator || locator.storage_bucket !== ATTACHMENT_BUCKET || typeof locator.storage_path !== "string") {
       return fail("attachment_not_found", "Attachment not found");
     }
 
+    const storagePath: string = locator.storage_path;
+
     const { data: signed, error: signError } = await supabaseAdmin.storage
       .from(ATTACHMENT_BUCKET)
-      .createSignedUrl(locator.storage_path, SIGNED_URL_TTL_SECONDS);
+      .createSignedUrl(storagePath, SIGNED_URL_TTL_SECONDS);
 
     if (signError || !signed?.signedUrl) return fail("attachment_unavailable", "Attachment unavailable");
 
