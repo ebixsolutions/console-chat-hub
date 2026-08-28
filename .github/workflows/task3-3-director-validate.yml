@@ -46,9 +46,11 @@ jobs:
       - name: Production build
         run: npm run build
 
-      - name: Final clean-tree assertion
+      - name: Final tracked-tree assertion
         shell: bash
         run: |
           set -euo pipefail
-          test -z "$(git status --porcelain)"
+          git diff --check
+          git diff --exit-code
+          git diff --cached --exit-code
           echo "PASS Task 3.3 Director source/build validation"
