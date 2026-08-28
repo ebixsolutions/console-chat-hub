@@ -17,6 +17,7 @@ import {
   type PolicyMatchState,
 } from "./escalation-signals.ts";
 import { evaluateFullEscalationRuleset } from "./escalation-rules.ts";
+import { classifyHandoffIntent } from "./conversation-intelligence.ts";
 
 export interface EscalationShadowInput {
   conversation_id: string;
@@ -118,6 +119,17 @@ export function evaluateEscalationShadow(
     expected_tenant_id: input.expected_tenant_id,
   });
 
+  const handoffClassification = classifyHandoffIntent(input.latest_message_content);
+  context.explicit_request = availableSignal(
+    handoffClassification.explicit_request,
+    "local_classifier",
+    { reason: handoffClassification.reason },
+  );
+  context.pure_handoff_negation = availableSignal(
+    handoffClassification.pure_negation,
+    "local_classifier",
+    { reason: handoffClassification.reason },
+  );
   context.conversation_status = availableSignal(
     input.conversation_status,
     "conversation_history",

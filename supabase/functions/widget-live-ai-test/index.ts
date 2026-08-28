@@ -402,6 +402,10 @@ Deno.serve(async (req) => {
         scope_mode: resolved.scopeMode,
         conversation_id: requestedConversationId,
         conversation_status: owned.conversation.status,
+        assigned_agent_id: owned.conversation.assigned_agent_id ?? null,
+        human_control:
+          HUMAN_CONTROL_STATUSES.has(String(owned.conversation.status)) ||
+          Boolean(owned.conversation.assigned_agent_id),
         messages: await loadTestMessages(admin, requestedConversationId),
       });
     }
@@ -489,6 +493,10 @@ Deno.serve(async (req) => {
         error: generation.error,
         conversation_id: conversationId,
         conversation_status: state?.status ?? null,
+        assigned_agent_id: state?.assigned_agent_id ?? null,
+        human_control:
+          HUMAN_CONTROL_STATUSES.has(String(state?.status ?? "")) ||
+          Boolean(state?.assigned_agent_id),
         messages,
       }, generation.status);
     }
@@ -500,6 +508,10 @@ Deno.serve(async (req) => {
       scope_mode: resolved.scopeMode,
       conversation_id: conversationId,
       conversation_status: state?.status ?? null,
+      assigned_agent_id: state?.assigned_agent_id ?? null,
+      human_control:
+        HUMAN_CONTROL_STATUSES.has(String(state?.status ?? "")) ||
+        Boolean(state?.assigned_agent_id),
       handoff_persisted:
         generation.payload.handoff_persisted === true ||
         generation.payload.escalation_rule === "R1" ||

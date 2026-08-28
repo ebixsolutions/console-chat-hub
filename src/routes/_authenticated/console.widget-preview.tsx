@@ -201,6 +201,10 @@ type LiveAiResponse = {
   answer: string;
   model?: string;
   full_content_evidence_count: number;
+  conversation_status?: string | null;
+  assigned_agent_id?: string | null;
+  human_control?: boolean;
+  handoff_persisted?: boolean;
   references?: Array<{
     label?: string;
     source_type?: string;
@@ -877,7 +881,13 @@ function PreviewWidget({
     }
     setTestConversationId(data.conversation_id);
     window.localStorage.setItem("widget_live_test_conversation_id", data.conversation_id);
+    const underHumanControl =
+      data.human_control === true ||
+      ["pending", "transferred", "human_needed", "human_control"].includes(String(data.conversation_status ?? "")) ||
+      Boolean(data.assigned_agent_id);
+    setHumanState(underHumanControl ? (data.assigned_agent_id ? "assigned" : "waiting") : "none");
     applyServerMessages(data.messages);
+    return { humanControl: underHumanControl };
   };
 
   const loadLiveHistory = async () => {
@@ -998,6 +1008,10 @@ function PreviewWidget({
         !payload ||
         payload.success !== true
       ) {
+        if (testConversationId) {
+          const recovered = await loadLiveConversation(testConversationId);
+          if (recovered?.humanControl) return;
+        }
         appendLiveFailure(
           text,
           safeLiveError(
@@ -1014,6 +1028,11 @@ function PreviewWidget({
         "widget_live_test_conversation_id",
         result.conversation_id,
       );
+      const underHumanControl =
+        result.human_control === true ||
+        ["pending", "transferred", "human_needed", "human_control"].includes(String(result.conversation_status ?? "")) ||
+        Boolean(result.assigned_agent_id) || result.handoff_persisted === true;
+      setHumanState(underHumanControl ? (result.assigned_agent_id ? "assigned" : "waiting") : "none");
       applyServerMessages(result.messages);
       void loadLiveHistory();
     } catch (error) {
@@ -1049,7 +1068,7 @@ function PreviewWidget({
   };
 
   const send = () => {
-    if (typing || !input.trim()) return;
+    if (typing || !input.trim() || (mode === "live" && humanState !== "none")) return;
 
     const text = input.trim();
     setInput("");
@@ -1161,7 +1180,7 @@ function PreviewWidget({
         </button>
       </div>
 
-      {mode === "simulation" && humanState !== "none" && (
+      {humanState !== "none" && (
         <div
           className={
             humanState === "waiting"
@@ -1171,11 +1190,19 @@ function PreviewWidget({
         >
           {humanState === "waiting"
             ? lang === "zh"
-              ? "正在模擬等待真人客服…"
-              : "Simulating wait for a human agent…"
+              ? mode === "live"
+                ? "此對話已轉交真人客服，AI 回覆已暫停。客服接手後會在同一對話繼續回覆。"
+                : "正在模擬等待真人客服…"
+              : mode === "live"
+                ? "This conversation has been handed to human support. AI replies are paused until an agent takes over in this same chat."
+                : "Simulating wait for a human agent…"
             : lang === "zh"
-              ? "已模擬真人客服接手；AI 回覆暫停。"
-              : "Human agent simulated as connected; AI replies are paused."}
+              ? mode === "live"
+                ? "真人客服已接手；AI 回覆暫停。"
+                : "已模擬真人客服接手；AI 回覆暫停。"
+              : mode === "live"
+                ? "A human agent has taken over; AI replies are paused."
+                : "Human agent simulated as connected; AI replies are paused."}
         </div>
       )}
 
@@ -1446,7 +1473,12 @@ function PreviewWidget({
               }
             }}
             className="min-w-0 flex-1 border-0 px-2 py-2 text-sm outline-none"
-            placeholder={placeholder}
+            placeholder={
+              mode === "live" && humanState !== "none"
+                ? (lang === "zh" ? "真人客服處理中，AI 輸入已暫停" : "Human support is handling this conversation")
+                : placeholder
+            }
+            disabled={mode === "live" && humanState !== "none"}
           />
 
           <Button
@@ -1454,8 +1486,7 @@ function PreviewWidget({
             disabled={
               typing ||
               !input.trim() ||
-              (mode === "simulation" &&
-                humanState === "assigned")
+              humanState !== "none"
             }
             style={{ background: primary }}
           >
