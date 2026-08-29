@@ -1,0 +1,40 @@
+name: Task 1.2 Security Runtime Gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/task1-2-security-runtime.yml'
+      - 'scripts/task1-2-security-runtime-final-gate.sh'
+      - 'supabase/migrations/20260829140324_task1_2_final_source_closure.sql'
+      - 'src/integrations/supabase/client.server.ts'
+      - 'src/integrations/supabase/client.ts'
+      - '.env'
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  final-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Production dependency security audit
+        run: npm audit --omit=dev --audit-level=high
+      - name: Task 1.2 final gate
+        env:
+          TASK12_LIVE_ASSERTIONS: 'state_nulls=0;job_nulls=0;state_mismatch=0;job_mismatch=0;unbound_logs=4;rpc_overloads=6;anon_exec=0;legacy_channel=0;web_widget=2'
+          TASK12_AUTH_MATRIX: 'same_tenant=8/8;cross_tenant=6/6'
+        run: bash scripts/task1-2-security-runtime-final-gate.sh
