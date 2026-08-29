@@ -1,0 +1,83 @@
+name: Task 3.3 Production AI-to-Human Runtime Check
+
+on:
+  push:
+    branches:
+      - task3-3-prod-handoff-runtime-check
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Exercise production widget handoff semantics
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE='https://hvmtoqiwdqvgnjepxwrc.supabase.co/functions/v1'
+          ORIGIN='https://console-chat-hub.lovable.app'
+
+          send_msg() {
+            local conv="$1" token="$2" text="$3" out="$4"
+            curl --fail-with-body --silent --show-error \
+              -X POST "$BASE/receive-widget-message" \
+              -H 'Content-Type: application/json' \
+              -H "Origin: $ORIGIN" \
+              --data "$(jq -nc --arg c "$conv" --arg s "$token" --arg t "$text" '{conversation_id:$c,session_token:$s,content:$t}')" \
+              > "$out"
+            jq -e '.success == true and .data.control_state == "ai"' "$out" >/dev/null
+          }
+
+          poll_conv() {
+            local conv="$1" token="$2" out="$3"
+            curl --fail-with-body --silent --show-error \
+              -X POST "$BASE/widget-poll-messages" \
+              -H 'Content-Type: application/json' \
+              -H "Origin: $ORIGIN" \
+              --data "$(jq -nc --arg c "$conv" --arg s "$token" '{conversation_id:$c,session_token:$s}')" \
+              > "$out"
+            jq -e '.success == true' "$out" >/dev/null
+          }
+
+          C1='51e0a88f-ba38-4007-92e7-977e4f4f6212'; T1='task33-ai-human-5532e917a6d243a5ac8bcd5ffb7e040c'
+          C2='56997550-bf00-424c-b10a-a2e11cb5ba95'; T2='task33-ai-human-88c86968ecc448ca87d8724d4be8e874'
+          C3='b667a89d-f57a-4dec-a4bb-53e7fa384e1b'; T3='task33-ai-human-ba07015681f5491a92b7b33bfc47e0e0'
+          C4='f0f4a818-17bc-42da-9079-3488dae70c0c'; T4='task33-ai-human-b5ee35ff8251486dbebbef3dd9641005'
+          C5='f80eb7a9-5e8d-42ff-9c4c-37992e500eb8'; T5='task33-ai-human-612696e3399946eaa73e21a0b5d042c3'
+
+          send_msg "$C1" "$T1" '我而家只想你按送貨政策答我，唔好轉真人。' /tmp/send1.json
+          send_msg "$C2" "$T2" '如果你真係完全答唔到，之後先考慮搵真人。' /tmp/send2.json
+          send_msg "$C3" "$T3" '你頭先話可以轉真人，但我而家未需要。' /tmp/send3.json
+          send_msg "$C5" "$T5" '真人客服幾點有人？' /tmp/send5.json
+          send_msg "$C4" "$T4" '我唔想 AI 處理，請直接轉真人客服。' /tmp/send4.json
+
+          # generate-reply is asynchronous. Wait until the explicit handoff reaches
+          # a human-control state or until 60 seconds elapse.
+          for i in $(seq 1 12); do
+            sleep 5
+            poll_conv "$C4" "$T4" /tmp/poll4.json
+            state=$(jq -r '.data.human_support.state' /tmp/poll4.json)
+            if [[ "$state" == 'waiting' || "$state" == 'assigned' ]]; then break; fi
+          done
+
+          poll_conv "$C1" "$T1" /tmp/poll1.json
+          poll_conv "$C2" "$T2" /tmp/poll2.json
+          poll_conv "$C3" "$T3" /tmp/poll3.json
+          poll_conv "$C5" "$T5" /tmp/poll5.json
+          poll_conv "$C4" "$T4" /tmp/poll4.json
+
+          # False-positive cases MUST stay under AI control.
+          for n in 1 2 3 5; do
+            jq -e '.data.human_support.state == "none" and (.data.conversation_status | IN("open","active"))' "/tmp/poll${n}.json" >/dev/null
+          done
+
+          # Explicit-now request MUST enter human control.
+          jq -e '.data.human_support.state == "waiting" or .data.human_support.state == "assigned"' /tmp/poll4.json >/dev/null
+          jq -e '.data.conversation_status | IN("pending","transferred","human_needed","escalation_risk","unresolved")' /tmp/poll4.json >/dev/null
+
+          # Never leak secrets/tokens into logs; print only machine-safe verdicts.
+          echo 'NEGATED_HANDOFF=PASS'
+          echo 'CONDITIONAL_HANDOFF=PASS'
+          echo 'REFERENCE_HANDOFF=PASS'
+          echo 'QUESTION_ABOUT_HUMAN=PASS'
+          echo 'EXPLICIT_R1_HANDOFF=PASS'
