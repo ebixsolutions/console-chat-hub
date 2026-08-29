@@ -1,0 +1,48 @@
+name: Task 2.3 Learning Loop Gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/task2-3-learning-loop.yml'
+      - 'scripts/task2-3-learning-loop-final-gate.sh'
+      - 'scripts/task2-3-learning-loop-runtime-smoke.sh'
+      - 'scripts/w2-task2-3-learning-loop-runtime-smoke.sh'
+      - 'supabase/migrations/20260829150254_task2_3_learning_loop_tenant_atomicity_closure.sql'
+      - 'supabase/migrations/20260829150353_task2_3_kb_finalize_state_machine_fix.sql'
+      - 'supabase/functions/training-outbox-worker/index.ts'
+      - 'supabase/functions/training-result-receiver/index.ts'
+      - 'supabase/functions/training-kb-sync/index.ts'
+      - 'supabase/functions/training-kb-finalize/index.ts'
+      - '.env'
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  final-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Production dependency security audit
+        run: npm audit --omit=dev --audit-level=high
+      - name: Task 2.3 final gate
+        env:
+          TASK23_LIVE_M1_SHA256: '57f2a2dfe3a8061495ddc4b51abc83483b443d79477e09fbfdc3358a7ff9ef6b'
+          TASK23_LIVE_M2_SHA256: 'f526f26cb9402b9dd8c6c0a574fee4b0ac69e3b878213a8628cf88eb6e5b04ef'
+          TASK23_RESULT_RUNTIME_PROOF: 'first=success;replay=idempotent;cross_tenant=company_mismatch'
+          TASK23_SAGA_RUNTIME_PROOF: 'state=published;remote_sync_state=synced;remote_ref=kb-op-task23;link_count=1;state_count=1'
+          TASK23_DB_ASSERTIONS: 'outboxes=8;links=0;kb_states=0;lineage_bad=0;composite_fk=2;finalizer_state=1'
+          TASK23_ROLLBACK_PROOF: 'outbox=pending;links=0;kb_states=0'
+          TASK23_EDGE_ASSERTIONS: 'outbox=ACTIVE;result=ACTIVE;sync=ACTIVE;finalize=ACTIVE'
+          TASK23_DDL_ROLLBACK_PROOF: 'link_fk=1;kb_fk=1;state_check=1'
+        run: bash scripts/task2-3-learning-loop-final-gate.sh
