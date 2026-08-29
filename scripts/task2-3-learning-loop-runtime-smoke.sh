@@ -5,9 +5,13 @@ TARGET_REF="nrfxhqabwblzxoushgnm"
 PROJECT_REF="${W2_T2_3_PROJECT_REF:-$TARGET_REF}"
 [[ "$PROJECT_REF" == "$TARGET_REF" ]] || { echo "FAIL: legacy/wrong Supabase project ref" >&2; exit 1; }
 
-EXPECTED="TASK2_3_INTERNAL_LEARNING_LOOP_ATOMIC_IDEMPOTENT_TENANT_PASS"
-[[ "${TASK23_INTERNAL_RUNTIME_PROOF:-}" == "$EXPECTED" ]] || {
-  echo "FAIL: machine runtime proof missing" >&2
+[[ "${TASK23_RESULT_RUNTIME_PROOF:-}" == "first=success;replay=idempotent;cross_tenant=company_mismatch" ]] || {
+  echo "FAIL: CoachAI result/idempotency/tenant proof missing" >&2
+  exit 1
+}
+
+[[ "${TASK23_SAGA_RUNTIME_PROOF:-}" == "state=published;remote_sync_state=synced;remote_ref=kb-op-task23;link_count=1;state_count=1" ]] || {
+  echo "FAIL: KB saga state-machine proof missing" >&2
   exit 1
 }
 
@@ -17,8 +21,8 @@ EXPECTED="TASK2_3_INTERNAL_LEARNING_LOOP_ATOMIC_IDEMPOTENT_TENANT_PASS"
 }
 
 [[ "${TASK23_ROLLBACK_PROOF:-}" == "outbox=pending;links=0;kb_states=0" ]] || {
-  echo "FAIL: rollback proof marker mismatch" >&2
+  echo "FAIL: fixture rollback proof marker mismatch" >&2
   exit 1
 }
 
-echo "PASS: Task 2.3 target-bound internal learning-loop runtime proof"
+echo "PASS: Task 2.3 target-bound learning-loop machine proofs"
