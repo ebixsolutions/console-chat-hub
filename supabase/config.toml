@@ -1,4 +1,4 @@
-project_id = "hvmtoqiwdqvgnjepxwrc"
+project_id = "nrfxhqabwblzxoushgnm"
 
 [functions.get-public-widget-config]
 verify_jwt = false
