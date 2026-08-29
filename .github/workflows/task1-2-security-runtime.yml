@@ -35,6 +35,7 @@ jobs:
         run: npm audit --omit=dev --audit-level=high
       - name: Task 1.2 final gate
         env:
+          TASK12_LIVE_MIGRATION_SHA256: 'f1107538168f98fc1225dc74a582e1068895424a093dc1cc6b8676f84cae58f8'
           TASK12_LIVE_ASSERTIONS: 'state_nulls=0;job_nulls=0;state_mismatch=0;job_mismatch=0;unbound_logs=4;rpc_overloads=6;anon_exec=0;legacy_channel=0;web_widget=2'
           TASK12_AUTH_MATRIX: 'same_tenant=8/8;cross_tenant=6/6'
         run: bash scripts/task1-2-security-runtime-final-gate.sh
