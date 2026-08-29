@@ -1,0 +1,39 @@
+name: Task 2.1 Company Identity Gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/task2-1-company-identity.yml'
+      - 'scripts/task2-1-company-identity-final-gate.sh'
+      - 'supabase/migrations/20260829143602_task2_1_company_identity_activation.sql'
+      - 'src/integrations/supabase/client.server.ts'
+      - 'src/integrations/supabase/client.ts'
+      - '.env'
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  final-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Production dependency security audit
+        run: npm audit --omit=dev --audit-level=high
+      - name: Task 2.1 final gate
+        env:
+          TASK21_LIVE_MIGRATION_SHA256: '1b826af38b5f2bd84e8a3968b2f1cbf45210f02af770539b7237945f59993150'
+          TASK21_DB_ASSERTIONS: 'companies=2;orphans=0;cross=0;legacy=0;company_channel=0;session_channel=0;tenant2=1;fk=1;platform_uq=1;platform_check=1'
+          TASK21_AUTH_TENANT_NEGATIVE: 'PASS'
+          TASK21_ROLLBACK_PROOF: 'fk=1;index=1;check=1'
+        run: bash scripts/task2-1-company-identity-final-gate.sh
