@@ -1,0 +1,42 @@
+name: Task 2.2 Canonical CE Gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/task2-2-canonical-ce.yml'
+      - 'scripts/task2-2-canonical-ce-final-gate.sh'
+      - 'supabase/migrations/20260829144752_task2_2_canonical_ce_integrity_closure.sql'
+      - 'supabase/functions/conversation-evaluate/index.ts'
+      - 'supabase/functions/_shared/ce-automation-engine.ts'
+      - 'src/integrations/supabase/client.server.ts'
+      - 'src/integrations/supabase/client.ts'
+      - '.env'
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  final-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Production dependency security audit
+        run: npm audit --omit=dev --audit-level=high
+      - name: Task 2.2 final gate
+        env:
+          TASK22_LIVE_MIGRATION_SHA256: '45ae707e7e90124792c0c9b0d3d3ab659c3fd76b5e6444635f8adb43b949292a'
+          TASK22_DB_ASSERTIONS: 'evals=8;attempts=8;outboxes=8;null_company=0;detail_bad=0;outbox_bad=0;quality_bad=0;lineage_bad=0'
+          TASK22_RUNTIME_PROOF: 'PASS'
+          TASK22_AUTH_RLS_NEGATIVE: 'PASS'
+          TASK22_ROLLBACK_PROOF: 'notnull=1;evalfk=1;outboxfk=1;trigger=1'
+        run: bash scripts/task2-2-canonical-ce-final-gate.sh
