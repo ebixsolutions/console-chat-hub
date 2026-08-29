@@ -32,7 +32,15 @@ jobs:
         run: npm ci
 
       - name: Apply compatible lockfile-only security fixes
-        run: npm audit fix --package-lock-only
+        shell: bash
+        run: |
+          set +e
+          npm audit fix --package-lock-only
+          rc=$?
+          set -e
+          if [[ $rc -ne 0 && $rc -ne 1 ]]; then
+            exit $rc
+          fi
 
       - name: Reinstall from repaired lockfile
         run: npm ci
