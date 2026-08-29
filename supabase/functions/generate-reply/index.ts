@@ -29,14 +29,7 @@ import { evaluateFullEscalationRuleset } from "../_shared/escalation-rules.ts";
 import { assessPolicyEvidenceForR4 } from "../_shared/escalation-policy.ts";
 import { validateP1PredictionSignals, type P1PredictionInput } from "../_shared/escalation-p1.ts";
 import { callModel, resolveGenerationMaxTokens, type LlmFailureCode } from "../_shared/llm-router.ts";
-import { classifyHandoffIntent, explicitHandoffLanguage } from "../_shared/handoff-intent.ts";
-import { isUnderspecifiedIntent, UNDERSPECIFIED_CLARIFICATION } from "../_shared/conversational-routing.ts";
-import { assessAnswerability } from "../_shared/answerability.ts";
-import {
-  CUSTOMER_CONVERSATION_POLICY_PROMPT,
-  sanitizeCustomerFacingText,
-} from "../_shared/customer-response-policy.ts";
-import { deriveContinuitySignals, buildContinuityBrief } from "../_shared/conversation-continuity.ts";
+import { CUSTOMER_CONVERSATION_POLICY, NATURAL_CLARIFICATION, buildConversationContinuityBlock, buildCustomerAdvisoryContext, classifyConversationTurn, classifyHandoffIntent, hasUsableFullContentEvidence, isHumanControlState } from "../_shared/conversation-intelligence.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -45,11 +38,14 @@ const corsHeaders = {
 };
 
 
-const MINIMAL_SAFE_FALLBACK_PROMPT = `You are a professional and friendly customer service assistant. 
-Answer customer questions clearly and concisely. 
-If you cannot answer a question confidently, acknowledge it honestly and offer to connect the customer with a human agent.
+const MINIMAL_SAFE_FALLBACK_PROMPT = `You are a professional and friendly customer service assistant.
+Answer customer questions clearly, naturally and concisely.
+When a request is incomplete, ask one necessary contextual question instead of escalating.
+Never expose internal implementation or retrieval terminology.
 Keep responses under 150 words.
-Respond in the same language the customer is using.`;
+Respond in the same language and script the customer is using.
+
+${CUSTOMER_CONVERSATION_POLICY}`;
 
 const SAFE_HANDOFF_WORDING: Record<string, string> = {
   "zh-TW": "我們已將你的對話記錄，客服接手後會在此對話中回覆你。目前未啟用即時輪候時間顯示。",
@@ -95,24 +91,14 @@ const HANDOFF_INTENT_VERBS_EN = ["speak", "talk", "connect", "need", "want", "ge
 const ZH_CN_CHARS = ["转", "们", "队", "预计", "为您", "为我", "为你"];
 const ZH_TW_CHARS = ["轉", "們", "隊", "預計", "為您", "為我", "為你"];
 
-/**
- * R1 gate. Delegates to the canonical shared classifier so negation,
- * conditional/future, reference and informational mentions of human handoff can
- * never produce an R1 false positive.
- */
 function isHandoffIntent(text: string): boolean {
   return classifyHandoffIntent(text).explicit_request;
 }
 
-/** True when the customer mentions handoff only to refuse it. */
-function isPureHandoffNegationLocal(text: string): boolean {
-  return classifyHandoffIntent(text).pure_handoff_negation;
-}
-
 function detectHandoffLanguage(text: string): "zh-TW" | "zh-CN" | "en" | null {
-  return explicitHandoffLanguage(text);
+  const classified = classifyHandoffIntent(text);
+  return classified.explicit_request ? classified.language : null;
 }
-
 
 function sanitizeUserMessage(text: string): string {
   if (!text) return "";
@@ -965,13 +951,19 @@ async function evaluateAndPersistRequiredRulesLive(
     );
   }
 
+  const handoffClassification = classifyHandoffIntent(params.latest_message_content);
   const context: EscalationContext = createEscalationContextBase({
     conversation_id: params.conversation_id,
     source_message_id: params.source_message_id,
     latest_message_content: params.latest_message_content,
-    explicit_request: isHandoffIntent(params.latest_message_content),
+    explicit_request: handoffClassification.explicit_request,
     expected_tenant_id: params.expected_tenant_id,
   });
+  context.pure_handoff_negation = availableSignal(
+    handoffClassification.pure_negation,
+    "local_classifier",
+    { reason: handoffClassification.reason },
+  );
 
   context.conversation_status = availableSignal(params.conversation_status, "conversation_history");
   context.assigned_agent_id = availableSignal(params.assigned_agent_id, "conversation_history");
@@ -1252,7 +1244,7 @@ async function legacyGenerateReply(conversation_id: string, source_message_id: s
 
   if (conversation.status === "resolved") return new Response(JSON.stringify({ success: true, skipped: "resolved" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-  if (conversation.status === "transferred" || (conversation.status === "pending" && conversation.assigned_agent_id)) {
+  if (isHumanControlState(conversation.status, conversation.assigned_agent_id ?? null)) {
     console.log("[generate-reply] human-handling guard: skipping LLM for status:", conversation.status, conversation_id);
     return new Response(JSON.stringify({ success: true, skipped: "human_handling" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
@@ -1342,14 +1334,16 @@ async function legacyGenerateReply(conversation_id: string, source_message_id: s
 
   const legacySystemPrompt = `You are a professional and friendly customer service assistant.
 Answer customer questions clearly and concisely.
-If you cannot answer a question confidently, acknowledge it honestly and offer to connect the customer with a human agent.
+If details are missing, ask one concise contextual question. If a fact cannot be verified, say you cannot confirm it and do not guess. Do not offer a human unless the governed escalation layer has decided one is appropriate.
 Keep responses under 150 words.
 Respond in the same language and script the customer is using.
-When the customer explicitly requests a human agent, or when you transfer to a human agent, include a short safe handoff status message in the same language and script as the customer. The message must state that the conversation has been recorded and that a human agent will reply in this same chat after taking over. If the customer is using Traditional Chinese, use: "我們已將你的對話記錄，客服接手後會在此對話中回覆你。目前未啟用即時輪候時間顯示。" If the customer is using Simplified Chinese, use: "我们已将你的对话记录，客服接手后会在此对话中回复你。目前未启用实时排队位置和预计等待时间显示。" If the customer is using English, use: "We have recorded your conversation. A human agent will reply in this same chat after taking over. Real-time queue position and estimated wait time are not currently enabled." Do NOT invent estimated wait times, response-time promises, or queue positions.`;
+When the customer explicitly requests a human agent, or when you transfer to a human agent, include a short safe handoff status message in the same language and script as the customer. The message must state that the conversation has been recorded and that a human agent will reply in this same chat after taking over. If the customer is using Traditional Chinese, use: "我們已將你的對話記錄，客服接手後會在此對話中回覆你。目前未啟用即時輪候時間顯示。" If the customer is using Simplified Chinese, use: "我们已将你的对话记录，客服接手后会在此对话中回复你。目前未启用实时排队位置和预计等待时间显示。" If the customer is using English, use: "We have recorded your conversation. A human agent will reply in this same chat after taking over. Real-time queue position and estimated wait time are not currently enabled." Do NOT invent estimated wait times, response-time promises, or queue positions.
+
+${CUSTOMER_CONVERSATION_POLICY}`;
 
   const llm = await callModel({
     purpose: "generation",
-    system: [legacySystemPrompt, CUSTOMER_CONVERSATION_POLICY_PROMPT].join("\n\n"),
+    system: legacySystemPrompt,
     user: buildRouterConversationInput(modelMessages),
     maxTokens: resolveGenerationMaxTokens(),
     operationId: `generate-reply:legacy:${conversation_id}:${source_message_id}`,
@@ -1379,11 +1373,7 @@ When the customer explicitly requests a human agent, or when you transfer to a h
     );
   }
 
-  // Last-line customer-facing guard: internal wording must never ship.
-  const aiReplyContent = sanitizeCustomerFacingText(
-    llm.text,
-    detectVisitorLanguage(lastVisitorMsg),
-  );
+  const aiReplyContent = llm.text;
 
   const committed = await commitAiReplyWithControlGate(
     supabaseAdmin,
@@ -1442,8 +1432,8 @@ function buildCitationMetadata(chunks: Array<{ title?: string; score?: number; s
 type FlagSet = { ENABLE_KB: boolean; ENABLE_COACH: boolean; ENABLE_C360: boolean; ENABLE_TOOL_EXEC: boolean };
 
 const KB_FALLBACK_SAFE_TEXT: Record<string, Record<string, string>> = {
-  KB_SCOPE_GATE: { "zh-TW": "很抱歉，我暫時無法確認這方面的資料。我幫你安排真人客服跟進。", "zh-CN": "很抱歉，我暂时无法确认这方面的资料。我帮你安排真人客服跟进。", en: "Sorry, I can't confirm that information right now. Let me arrange a human agent to follow up with you." },
-  KB_API_FAIL: { "zh-TW": "我暫時無法確認這方面的資料，讓我幫你安排真人客服跟進。", "zh-CN": "我暂时无法确认这方面的资料，让我帮你安排真人客服跟进。", en: "I can't confirm that information at the moment, so let me arrange a human agent to follow up with you." },
+  KB_SCOPE_GATE: { "zh-TW": "很抱歉，系統暫時無法查詢知識庫。讓我為您轉接客服人員。", "zh-CN": "很抱歉，系统暂时无法查询知识库。让我为您转接客服人员。", en: "Sorry, the knowledge base is temporarily unavailable. Let me connect you with a human agent." },
+  KB_API_FAIL: { "zh-TW": "系統暫時無法查詢知識庫，讓我為您轉接客服人員。", "zh-CN": "系统暂时无法查询知识库，让我为您转接客服人员。", en: "The knowledge base is temporarily unavailable. Let me connect you with a human agent." },
   KB_EMPTY: { "zh-TW": "很抱歉，我目前無法確定答案。讓我為您轉接客服人員，以提供更準確的協助。", "zh-CN": "很抱歉，我目前无法确定答案。让我为您转接客服人员，以提供更准确的协助。", en: "Sorry, I'm unable to find a definitive answer. Let me connect you with a human agent for more accurate assistance." },
   KB_LOW_SCORE_HIGH_RISK: { "zh-TW": "這個問題涉及重要政策，為確保您獲得準確資訊，讓我為您轉接客服人員。", "zh-CN": "这个问题涉及重要政策，为确保您获得准确信息，让我为您转接客服人员。", en: "This question involves important policy matters. To ensure you receive accurate information, let me connect you with a human agent." },
   KB_LOW_SCORE_STANDARD: { "zh-TW": "很抱歉，我目前無法確定答案。讓我為您轉接客服人員，以提供更準確的協助。", "zh-CN": "很抱歉，我目前无法确定答案。让我为您转接客服人员，以提供更准确的协助。", en: "Sorry, I'm unable to find a definitive answer. Let me connect you with a human agent for more accurate assistance." },
@@ -1485,17 +1475,6 @@ const KB_NO_MATCH_CLARIFICATION_TEXT: Record<"zh-TW" | "zh-CN" | "en", string> =
 
 export const KB_NO_MATCH_CLARIFICATION_ROUTE = "kb_no_match_recovery";
 
-/**
- * Ordinary retrieval/answerability outcomes eligible for ONE clarification turn.
- * Provider/KB outage branches are deliberately absent and stay fail-closed.
- */
-export const CLARIFICATION_ELIGIBLE_BRANCHES: readonly string[] = [
-  "KB_EMPTY",
-  "KB_LOW_SCORE_STANDARD",
-  "UNDERSPECIFIED_INTENT",
-  "ANSWERABILITY_INSUFFICIENT",
-];
-
 export function isFirstNoMatchClarificationEligible(input: {
   branch_tag: string;
   high_risk: boolean;
@@ -1506,10 +1485,8 @@ export function isFirstNoMatchClarificationEligible(input: {
   exact_same_intent_repeated: boolean;
   source_message_id: string | null;
 }): boolean {
-  // Only ordinary retrieval/answerability outcomes (KB_EMPTY,
-  // KB_LOW_SCORE_STANDARD, UNDERSPECIFIED_INTENT) are eligible; provider/KB
-  // outage branches stay fail-closed.
-  if (!CLARIFICATION_ELIGIBLE_BRANCHES.includes(input.branch_tag)) return false;
+  // Only ordinary retrieval outcomes; provider/KB outage branches stay fail-closed.
+  if (input.branch_tag !== "KB_EMPTY" && input.branch_tag !== "KB_LOW_SCORE_STANDARD") return false;
   if (input.high_risk) return false;
   if (input.explicit_human_request) return false;
   if (input.threat_flag === true) return false;
@@ -1519,7 +1496,6 @@ export function isFirstNoMatchClarificationEligible(input: {
   if (!input.source_message_id) return false;
   return true;
 }
-
 
 async function attemptFirstNoMatchClarification(
   supabaseAdmin: ReturnType<typeof createClient>,
@@ -1534,14 +1510,7 @@ async function attemptFirstNoMatchClarification(
     return null;
   }
 
-  const clarificationTable =
-    branchTag === "UNDERSPECIFIED_INTENT"
-      ? UNDERSPECIFIED_CLARIFICATION
-      : KB_NO_MATCH_CLARIFICATION_TEXT;
-  const content = sanitizeCustomerFacingText(
-    clarificationTable[visitorLang] ?? clarificationTable["zh-TW"],
-    visitorLang,
-  );
+  const content = KB_NO_MATCH_CLARIFICATION_TEXT[visitorLang] ?? KB_NO_MATCH_CLARIFICATION_TEXT["zh-TW"];
   // Same atomic exactly-once gate as every other AI reply: human-control /
   // resolved / superseded races cannot produce a duplicate or late clarification.
   const commit = await commitAiReplyWithControlGate(
@@ -1692,7 +1661,7 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return safeRefusal("CONV_RESOLVED_OR_CLOSED");
   }
-  if (conversation.status === "transferred" || (conversation.status === "pending" && conversation.assigned_agent_id)) {
+  if (isHumanControlState(conversation.status, conversation.assigned_agent_id ?? null)) {
     console.log("[generate-reply] orchestration human-handling guard:", conversation.status, conversation_id);
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return new Response(JSON.stringify({ success: true, skipped: "human_handling" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -1743,9 +1712,44 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     _pr5HistoryRows ?? [],
     _pr5VisitorTurnCount ?? 0,
   );
+  const _conversationContinuityBlock = buildConversationContinuityBlock(_pr5HistoryRows ?? []);
 
 
   const _visitorLang = detectVisitorLanguage(_h1LastMsg);
+  const _turnClassification = classifyConversationTurn(_h1LastMsg);
+  if (_turnClassification.should_clarify_before_kb && !isHandoffIntent(_h1LastMsg)) {
+    const clarification = NATURAL_CLARIFICATION[_visitorLang];
+    const clarificationCommit = await commitAiReplyWithControlGate(
+      supabaseAdmin,
+      conversation_id,
+      source_message_id,
+      clarification,
+      {
+        response_route: "conversational_clarification",
+        escalation_action: "clarification",
+        handoff_required: false,
+        reason_code: _turnClassification.reason,
+      },
+    );
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+    if (clarificationCommit.ok) {
+      return new Response(JSON.stringify({
+        success: true,
+        reply: clarification,
+        response_route: "conversational_clarification",
+        handoff_required: false,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+    if (["human_control", "resolved", "superseded_source"].includes(clarificationCommit.result)) {
+      return new Response(JSON.stringify({ success: true, skipped: clarificationCommit.result }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({ success: false, error: `clarification_commit_${clarificationCommit.result}` }), {
+      status: 409,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
   const _pr5ExpectedTenantId =
     typeof conversation.company_id === "string" && conversation.company_id.length > 0
       ? conversation.company_id
@@ -2047,12 +2051,7 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     const usableChunks = ragResult.chunks.filter(
       (c) => c.score && c.score >= minScore && (!c.status || c.status === "published"),
     );
-    const traceMetadata: Record<string, unknown> = { rag_api_status: "success", total_results: ragResult.chunks.length, filtered_results: usableChunks.length, min_score_used: usableChunks.length > 0 ? Math.min(...usableChunks.map((c) => c.score ?? 0)) : null, max_score_used: usableChunks.length > 0 ? Math.max(...usableChunks.map((c) => c.score ?? 0)) : null, high_risk_topic: isHighRisk, min_threshold: minScore, citations: usableChunks.map((c) => ({ doc_id: c.doc_id, chunk_id: c.chunk_id, title: c.title, score: c.score, source_type: c.source_type })) };
-    // Canonical handoff-intent classification is observable for R1 auditing.
-    const _handoffIntent = classifyHandoffIntent(_h1LastMsg);
-    traceMetadata["handoff_intent_category"] = _handoffIntent.category;
-    traceMetadata["explicit_human_request"] = _handoffIntent.explicit_request;
-    traceMetadata["pure_handoff_negation"] = isPureHandoffNegationLocal(_h1LastMsg);
+    const traceMetadata = { rag_api_status: "success", total_results: ragResult.chunks.length, filtered_results: usableChunks.length, min_score_used: usableChunks.length > 0 ? Math.min(...usableChunks.map((c) => c.score ?? 0)) : null, max_score_used: usableChunks.length > 0 ? Math.max(...usableChunks.map((c) => c.score ?? 0)) : null, high_risk_topic: isHighRisk, min_threshold: minScore, citations: usableChunks.map((c) => ({ doc_id: c.doc_id, chunk_id: c.chunk_id, title: c.title, score: c.score, source_type: c.source_type })) };
     ragResult.trace_metadata = traceMetadata;
     if (usableChunks.length === 0) {
       _pr5RagMatchState = "partial_match";
@@ -2107,6 +2106,59 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
         _visitorLang,
       );
     }
+    if (!hasUsableFullContentEvidence(usableChunks, minScore)) {
+      _pr5RagMatchState = "partial_match";
+      const requiredResponse = await evaluateAndPersistRequiredRulesLive(supabaseAdmin, {
+        conversation_id,
+        source_message_id,
+        latest_message_content: _h1LastMsg,
+        conversation_status: conversation.status,
+        assigned_agent_id: conversation.assigned_agent_id ?? null,
+        greeting_or_trivial: _pr5GreetingOrTrivial,
+        visitor_language: _visitorLang,
+        expected_tenant_id: _pr5ExpectedTenantId,
+        rag_match_state: _pr5RagMatchState,
+        topic_risk_level: _pr5LocalRisk?.level,
+        verified_local_risk_classification: _pr5LocalRisk?.verified,
+        conversation_duration_sec: _pr5ConversationDurationSec,
+        turn_count: _pr5History.turn_count,
+        consecutive_no_answer: _pr5History.consecutive_no_answer,
+        clarification_attempts: _pr5History.clarification_attempts,
+        exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
+        threat_flag: _pr5ThreatSignal,
+        compliance_jurisdiction_requires_human_review: _pr5ComplianceSignal,
+      });
+      if (requiredResponse) return requiredResponse;
+      if (_deferR1ForE1) {
+        const r1Response = await persistExplicitR1IfRequested(supabaseAdmin, conversation_id, source_message_id, _h1LastMsg);
+        if (r1Response) return r1Response;
+      }
+      const clarification = await attemptFirstNoMatchClarification(
+        supabaseAdmin,
+        conversation_id,
+        source_message_id,
+        isHighRisk ? "KB_LOW_SCORE_HIGH_RISK" : "KB_LOW_SCORE_STANDARD",
+        _visitorLang,
+        {
+          high_risk: isHighRisk,
+          explicit_human_request: isHandoffIntent(_h1LastMsg),
+          threat_flag: _pr5ThreatSignal?.value === true,
+          compliance_requires_human_review: _pr5ComplianceSignal?.value === true,
+          clarification_attempts: _pr5History.clarification_attempts,
+          exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
+        },
+        { ...traceMetadata, answerability: "missing_full_content_evidence" },
+      );
+      if (clarification) return clarification;
+      return await handleKBFallback(
+        supabaseAdmin,
+        conversation_id,
+        isHighRisk ? "KB_LOW_SCORE_HIGH_RISK" : "KB_LOW_SCORE_STANDARD",
+        source_message_id,
+        { ...traceMetadata, answerability: "missing_full_content_evidence" },
+        _visitorLang,
+      );
+    }
     _pr5RagMatchState = "confident_match";
     ragResult.chunks = usableChunks;
     ragResult.no_answer = false;
@@ -2132,48 +2184,6 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
             })),
           }
         : undefined;
-
-    // Answerability is decided by whether confirmed content actually covers the
-    // question — never by retrieval score alone. A high score with unusable
-    // content, and an underspecified question, both yield ONE natural
-    // clarification turn (no fabricated answer, no reflex handoff).
-    const _answerability = assessAnswerability(
-      {
-        question: _h1LastMsg,
-        evidence: usableFullContent.map((c) => ({ content: c.content ?? "", score: c.score ?? 0 })),
-        top_score: usableChunks[0]?.score ?? undefined,
-      },
-      isUnderspecifiedIntent(_h1LastMsg),
-    );
-    traceMetadata["answerability"] = {
-      answerable: _answerability.answerable,
-      reason: _answerability.reason,
-      usable_evidence_count: _answerability.usable_evidence_count,
-      top_score: _answerability.top_score,
-    };
-
-    if (!_answerability.answerable) {
-      _pr5RagMatchState = "partial_match";
-      const answerabilityClarification = await attemptFirstNoMatchClarification(
-        supabaseAdmin,
-        conversation_id,
-        source_message_id,
-        _answerability.reason === "question_underspecified"
-          ? "UNDERSPECIFIED_INTENT"
-          : "ANSWERABILITY_INSUFFICIENT",
-        _visitorLang,
-        {
-          high_risk: _pr5LocalRisk?.level === "high",
-          explicit_human_request: isHandoffIntent(_h1LastMsg),
-          threat_flag: _pr5ThreatSignal?.value === true,
-          compliance_requires_human_review: _pr5ComplianceSignal?.value === true,
-          clarification_attempts: _pr5History.clarification_attempts,
-          exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
-        },
-        traceMetadata,
-      );
-      if (answerabilityClarification) return answerabilityClarification;
-    }
 
     finalPromptChunks = usableChunks;
     _kbDone = true;
@@ -2317,10 +2327,24 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
 
   if (flags.ENABLE_TOOL_EXEC) console.log("[generate-reply] ENABLE_TOOL_EXECUTOR=true: Gate present, tools NOT attached (L5d scope)");
 
-  const finalSystemPrompt = [basePrompt, CUSTOMER_CONVERSATION_POLICY_PROMPT, buildMaskedContextBlock(customerContext, opaqueCustomerRef), buildRagBlock(ragResult)].filter((s) => s && s.length > 0).join("\n\n");
+  const _customerAdvisoryBlock = buildCustomerAdvisoryContext({
+    tier: customerContext?.tier,
+    anger_flag: _pr5R3Sentiment?.anger_flag,
+    sentiment_score: _pr5R3Sentiment?.sentiment_score,
+    churn_risk: customerContext?.churn_risk,
+    escalation_score: customerContext?.escalation_score,
+  });
+  const finalSystemPrompt = [
+    basePrompt,
+    CUSTOMER_CONVERSATION_POLICY,
+    _conversationContinuityBlock,
+    _customerAdvisoryBlock,
+    buildMaskedContextBlock(customerContext, opaqueCustomerRef),
+    buildRagBlock(ragResult),
+  ].filter((s) => s && s.length > 0).join("\n\n");
   const { data: newestMessages } = await supabaseAdmin
     .from("messages")
-    .select("id, role, content, created_at, metadata")
+    .select("id, role, content, created_at")
     .eq("conversation_id", conversation_id)
     .neq("content", "__THINKING__")
     .eq("is_recalled", false)
@@ -2340,21 +2364,9 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     );
   }
 
-  // Within-conversation memory: honour the latest correction, resolve follow-up
-  // references, and never re-ask details the customer already gave.
-  const continuityBrief = buildContinuityBrief(
-    deriveContinuitySignals(
-      messages.map((m) => ({
-        role: String(m.role ?? ""),
-        content: String(m.content ?? ""),
-        metadata: (m.metadata ?? null) as Record<string, unknown> | null,
-      })),
-    ),
-  );
-
   const llm = await callModel({
     purpose: "generation",
-    system: [finalSystemPrompt, continuityBrief].filter((s) => s && s.length > 0).join("\n\n"),
+    system: finalSystemPrompt,
     user: buildRouterConversationInput(modelMessages),
     maxTokens: resolveGenerationMaxTokens(),
     operationId: `generate-reply:orchestration:${conversation_id}:${source_message_id}`,
@@ -2384,8 +2396,7 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     );
   }
 
-  // Last-line customer-facing guard: internal wording must never ship.
-  const aiReplyContent = sanitizeCustomerFacingText(llm.text, _visitorLang);
+  const aiReplyContent = llm.text;
 
   const citationMeta = finalPromptChunks.length > 0 ? buildCitationMetadata(finalPromptChunks) : null;
   const committed = await commitAiReplyWithControlGate(
@@ -2472,7 +2483,7 @@ function buildRagBlock(
       "- Answer ONLY from the evidence below.",
       "- The RAG summary is orientation only; never use it alone for exact facts.",
       "- Prices, dates, dimensions, policy conditions, procedures, limits, and other exact facts MUST be supported by Full Content Evidence.",
-      "- If Full Content Evidence does not support an exact claim, do NOT state it. Say naturally that you do not have confirmed information yet and ask ONE short question or offer the next concrete step. Never mention internal machinery to the customer.",
+      "- If Full Content Evidence does not support an exact claim, state that the knowledge base does not provide enough evidence and offer human assistance.",
       `Selected document: ${context.selected_document_id}`,
     ];
 
