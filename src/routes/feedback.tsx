@@ -11,8 +11,7 @@ export const Route = createFileRoute("/feedback")({
   component: FeedbackPage,
 });
 
-const EF_URL =
-  "https://hvmtoqiwdqvgnjepxwrc.supabase.co/functions/v1/submit-feedback-response";
+const EF_URL = `${import.meta.env.VITE_SUPABASE_FUNCTIONS_URL}/submit-feedback-response`;
 
 function FeedbackPage() {
   const { token } = useSearch({ from: "/feedback" });
