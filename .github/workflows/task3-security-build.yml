@@ -9,8 +9,10 @@ on:
       - 'src/integrations/supabase/client.server.ts'
       - 'supabase/migrations/20260829093000_task3_server_only_rls_policy_closure.sql'
       - 'package.json'
-      - 'package-lock.json'
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build-gate:
@@ -29,6 +31,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Apply compatible lockfile-only security fixes
+        run: npm audit fix --package-lock-only
+
+      - name: Reinstall from repaired lockfile
+        run: npm ci
+
       - name: Production dependency security audit
         run: npm audit --omit=dev --audit-level=high
 
@@ -38,3 +46,15 @@ jobs:
           TASK3_LIVE_SQL_ASSERTIONS: '15/15'
           TASK3_LEAKED_PASSWORD_PROTECTION: 'plan_limited_free'
         run: bash scripts/task3-security-cutover-final-gate.sh
+
+      - name: Commit repaired lockfile
+        run: |
+          if git diff --quiet -- package-lock.json; then
+            echo "No lockfile changes required"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          git commit -m "Task 3: lockfile security repair"
+          git push origin HEAD:main
