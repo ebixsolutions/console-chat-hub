@@ -38,6 +38,11 @@ grep -q "TENANT_SCOPE_VIOLATION" "$MIGRATION" || fail "cross-tenant widget reass
 grep -q "REVOKE ALL ON FUNCTION public.rpc_update_channel_config(uuid,jsonb) FROM PUBLIC,anon" "$MIGRATION" || fail "anon RPC revoke missing"
 pass "migration contains tenant-scoped RPC hardening"
 
+[[ -n "${TASK12_LIVE_MIGRATION_SHA256:-}" ]] || fail "live migration SHA256 marker missing"
+SOURCE_MIGRATION_SHA256="$(sha256sum "$MIGRATION" | awk '{print $1}')"
+[[ "$SOURCE_MIGRATION_SHA256" == "$TASK12_LIVE_MIGRATION_SHA256" ]] || fail "GitHub migration SHA256 does not match live Supabase migration ledger"
+pass "GitHub migration SHA256 matches live Supabase migration ledger"
+
 [[ "${TASK12_LIVE_ASSERTIONS:-}" == "state_nulls=0;job_nulls=0;state_mismatch=0;job_mismatch=0;unbound_logs=4;rpc_overloads=6;anon_exec=0;legacy_channel=0;web_widget=2" ]] || fail "authoritative live SQL assertion marker missing"
 [[ "${TASK12_AUTH_MATRIX:-}" == "same_tenant=8/8;cross_tenant=6/6" ]] || fail "authenticated runtime matrix marker missing"
 pass "authoritative live SQL and authenticated runtime matrix verified"
