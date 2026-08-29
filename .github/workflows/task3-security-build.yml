@@ -1,0 +1,37 @@
+name: Task 3 Security Build Gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/task3-security-build.yml'
+      - 'scripts/task3-security-cutover-final-gate.sh'
+      - 'src/integrations/supabase/client.server.ts'
+      - 'supabase/migrations/20260829093000_task3_server_only_rls_policy_closure.sql'
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+jobs:
+  build-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Task 3 final gate
+        env:
+          TASK3_SKIP_LIVE_SQL: '1'
+          TASK3_LIVE_SQL_ASSERTIONS: '15/15'
+          TASK3_LEAKED_PASSWORD_PROTECTION: 'plan_limited_free'
+        run: bash scripts/task3-security-cutover-final-gate.sh
