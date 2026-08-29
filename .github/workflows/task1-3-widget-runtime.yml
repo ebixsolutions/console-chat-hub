@@ -1,0 +1,103 @@
+name: Task 1.3 Widget Runtime Gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/task1-3-widget-runtime.yml'
+      - 'scripts/task1-3-widget-runtime-final-gate.sh'
+      - 'supabase/migrations/20260829142515_task1_3_final_source_closure.sql'
+      - 'supabase/functions/_shared/supabase-admin-key.ts'
+      - 'supabase/functions/_shared/cors.ts'
+      - 'supabase/functions/_shared/widget-origin.ts'
+      - 'supabase/functions/_shared/conversational-routing.ts'
+      - 'supabase/functions/create-visitor-session/index.ts'
+      - 'supabase/functions/get-public-widget-config/index.ts'
+      - 'supabase/functions/receive-widget-message/index.ts'
+      - 'supabase/functions/widget-poll-messages/index.ts'
+      - 'src/integrations/supabase/client.server.ts'
+      - 'src/integrations/supabase/client.ts'
+      - '.env'
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  final-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Production dependency security audit
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Public Edge reachability and origin smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a
+          source .env
+          set +a
+          BASE="${SUPABASE_URL}/functions/v1"
+          CHANNEL="b0000000-0000-0000-0000-000000000001"
+          GOOD="https://console-chat-hub.lovable.app"
+          BAD="https://evil.example"
+
+          good_body="$(mktemp)"
+          good_code="$(curl --fail-with-body -sS -o "$good_body" -w '%{http_code}' \
+            -H "Origin: ${GOOD}" \
+            "${BASE}/get-public-widget-config?channel_id=${CHANNEL}")"
+          [[ "$good_code" == "200" ]]
+          python - "$good_body" <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1]))
+          assert d.get('success') is True
+          assert d.get('data',{}).get('id') == 'b0000000-0000-0000-0000-000000000001'
+          assert 'company_id' not in d.get('data',{})
+          assert 'allowed_origins' not in d.get('data',{})
+          PY
+
+          bad_body="$(mktemp)"
+          bad_code="$(curl -sS -o "$bad_body" -w '%{http_code}' \
+            -H "Origin: ${BAD}" \
+            "${BASE}/get-public-widget-config?channel_id=${CHANNEL}")"
+          [[ "$bad_code" == "403" ]]
+
+          cors_headers="$(mktemp)"
+          curl -sS -D "$cors_headers" -o /dev/null -X OPTIONS \
+            -H "Origin: ${GOOD}" \
+            -H 'Access-Control-Request-Method: POST' \
+            -H 'Access-Control-Request-Headers: content-type,idempotency-key' \
+            "${BASE}/receive-widget-message"
+          grep -Eqi '^access-control-allow-headers:.*idempotency-key' "$cors_headers"
+
+          create_body="$(mktemp)"
+          create_code="$(curl -sS -o "$create_body" -w '%{http_code}' -X POST \
+            -H "Origin: ${BAD}" \
+            -H 'Content-Type: application/json' \
+            --data '{"channel_id":"b0000000-0000-0000-0000-000000000001","visitor_metadata":{"task13_no_write_smoke":true}}' \
+            "${BASE}/create-visitor-session")"
+          [[ "$create_code" == "403" ]]
+          echo 'TASK13_PUBLIC_EDGE_SMOKE=PASS' >> "$GITHUB_ENV"
+
+      - name: Task 1.3 final gate
+        env:
+          TASK13_LIVE_MIGRATION_SHA256: '2379db5133c40a19d035f0bf8c6ea86813f0124e6613f8ce2578c0c797d030ba'
+          TASK13_DB_ASSERTIONS: 'fn=4;hardened=4;idem=1;video=1;wrapper=1;company_mismatch=0;channel_mismatch=0'
+          TASK13_RUNTIME_MATRIX: 'PASS'
+          TASK13_EDGE_ASSERTIONS: 'create=v7;config=v7;poll=v7;receive=v7;all_active=1;all_public_custom_auth=1'
+        run: bash scripts/task1-3-widget-runtime-final-gate.sh
