@@ -1,16 +1,40 @@
 name: Task 3.3 Production AI-to-Human Runtime Check
 
-# rerun after fixture channel correction
 on:
   push:
     branches:
       - task3-3-prod-handoff-runtime-check
 
 jobs:
-  verify:
+  deploy-and-verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 12
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Require Supabase deploy credential
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${SUPABASE_ACCESS_TOKEN:-}" ]]; then
+            echo 'SUPABASE_DEPLOY_CREDENTIAL=BLOCKED'
+            exit 2
+          fi
+          echo 'SUPABASE_DEPLOY_CREDENTIAL=AVAILABLE'
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Deploy exact Task 3.3 Edge functions
+        shell: bash
+        run: |
+          set -euo pipefail
+          supabase functions deploy generate-reply --project-ref hvmtoqiwdqvgnjepxwrc
+          supabase functions deploy widget-live-ai-test --project-ref hvmtoqiwdqvgnjepxwrc
+
       - name: Exercise production widget handoff semantics
         shell: bash
         run: |
@@ -40,6 +64,7 @@ jobs:
             jq -e '.success == true' "$out" >/dev/null
           }
 
+          # fresh fixtures are injected by the Director before each run; these ids/tokens are disposable.
           C1='51e0a88f-ba38-4007-92e7-977e4f4f6212'; T1='task33-ai-human-5532e917a6d243a5ac8bcd5ffb7e040c'
           C2='56997550-bf00-424c-b10a-a2e11cb5ba95'; T2='task33-ai-human-88c86968ecc448ca87d8724d4be8e874'
           C3='b667a89d-f57a-4dec-a4bb-53e7fa384e1b'; T3='task33-ai-human-ba07015681f5491a92b7b33bfc47e0e0'
