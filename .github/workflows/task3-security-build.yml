@@ -29,6 +29,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Production dependency security audit
+        run: npm audit --omit=dev --audit-level=high
+
       - name: Task 3 final gate
         env:
           TASK3_SKIP_LIVE_SQL: '1'
