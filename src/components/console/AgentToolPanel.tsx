@@ -69,6 +69,23 @@ export function AgentToolPanel({
   const [tr, setTr] = useState<{ type: string; data: Record<string, unknown> } | null>(null);
   const [tl, setTl] = useState(false);
   const [te, setTe] = useState("");
+  const toolReqIdRef = useRef(0);
+
+  // Conversation changes must invalidate every visible/pending tool result.
+  // This prevents a slow response from conversation A being rendered after
+  // the operator has already switched to conversation B.
+  useEffect(() => {
+    toolReqIdRef.current += 1;
+    setCs("custom");
+    setCi("");
+    setTr(null);
+    setTl(false);
+    setTe("");
+    onClearSelection();
+  // onClearSelection is intentionally excluded: conversationId is the
+  // authoritative context boundary and parent callback identity may change.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId]);
 
   // AUTO-HEIGHT: textarea ref + resize logic
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -97,6 +114,7 @@ export function AgentToolPanel({
 
   async function runTool(tt: string, extra?: Record<string, unknown>) {
     if (!hc || isResolved) return;
+    const reqId = ++toolReqIdRef.current;
     setTl(true);
     setTe("");
     setTr(null);
@@ -104,6 +122,7 @@ export function AgentToolPanel({
       const { data, error } = await supabase.functions.invoke("agent-assist", {
         body: { tool_type: tt, conversation_id: conversationId, content: ac, ...extra },
       });
+      if (toolReqIdRef.current !== reqId) return;
       if (error || !data?.success) {
         if (data?.result?.status === "insufficient_evidence") {
           setTr({ type: tt, data: data.result });
@@ -120,9 +139,10 @@ export function AgentToolPanel({
         setTr({ type: tt, data: data.result });
       }
     } catch {
+      if (toolReqIdRef.current !== reqId) return;
       setTe(tc("netError"));
     }
-    setTl(false);
+    if (toolReqIdRef.current === reqId) setTl(false);
   }
 
   const dis = tl || !hc || isResolved;
