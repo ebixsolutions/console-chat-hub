@@ -10,6 +10,7 @@
 // - Opaque credentials never leave the server.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { getSupabaseAdminKey } from "./supabase-admin-key.ts";
 import {
   resolveSingaporeCredential,
   singaporeCredentialHeaders,
@@ -228,7 +229,8 @@ export async function resolveTenantScope(
 ): Promise<TenantResolutionResult> {
   if (conversationId) {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
-    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    let serviceRoleKey = "";
+    try { serviceRoleKey = getSupabaseAdminKey(); } catch { serviceRoleKey = ""; }
     if (!supabaseUrl || !serviceRoleKey) {
       return { resolved: false, reason: "KB_DB_CONFIG_MISSING" };
     }

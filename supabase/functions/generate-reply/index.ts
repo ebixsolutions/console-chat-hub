@@ -30,6 +30,7 @@ import { assessPolicyEvidenceForR4 } from "../_shared/escalation-policy.ts";
 import { validateP1PredictionSignals, type P1PredictionInput } from "../_shared/escalation-p1.ts";
 import { callModel, resolveGenerationMaxTokens, type LlmFailureCode } from "../_shared/llm-router.ts";
 import { CUSTOMER_CONVERSATION_POLICY, NATURAL_CLARIFICATION, buildConversationContinuityBlock, buildCustomerAdvisoryContext, classifyConversationTurn, classifyHandoffIntent, hasUsableFullContentEvidence, isHumanControlState } from "../_shared/conversation-intelligence.ts";
+import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -891,7 +892,7 @@ function requiredRuleActivationFromEnv(
   if (flags.enable_full_ruleset || flags.enable_e2) enabled.add("E2");
   if (flags.enable_full_ruleset || flags.enable_e1) enabled.add("E1");
   enabled.add("R1");
-  if (flags.enable_full_ruleset || flags.enable_r2) enabled.add("R2");
+  enabled.add("R2");
   return enabled;
 }
 
@@ -934,7 +935,7 @@ async function evaluateAndPersistRequiredRulesLive(
     };
   },
 ): Promise<Response | null> {
-  if (Deno.env.get("ESC_ENABLE_REQUIRED_RULES_LIVE") !== "true") return null;
+  if (Deno.env.get("ESC_ENABLE_REQUIRED_RULES_LIVE") === "false") return null;
 
   const enabled = requiredRuleActivationFromEnv(Deno.env);
   if (enabled.size === 0) return null;
@@ -1196,7 +1197,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    const ENABLE_KB = Deno.env.get("ENABLE_KB_ADAPTER") === "true";
+    const ENABLE_KB = Deno.env.get("ENABLE_KB_ADAPTER") !== "false";
     const ENABLE_COACH = Deno.env.get("ENABLE_COACH_PROMPT_ADAPTER") === "true";
     const ENABLE_C360 = Deno.env.get("ENABLE_CUSTOMER360_ADAPTER") === "true";
     const ENABLE_TOOL_EXEC = Deno.env.get("ENABLE_TOOL_EXECUTOR") === "true";
@@ -1232,7 +1233,7 @@ Deno.serve(async (req) => {
 });
 
 async function legacyGenerateReply(conversation_id: string, source_message_id: string | null): Promise<Response> {
-  const supabaseAdmin = createClient(Deno.env.get("SUPABASE_URL") ?? "", Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "");
+  const supabaseAdmin = createClient(Deno.env.get("SUPABASE_URL") ?? "", getSupabaseAdminKey());
 
   const { data: conversation, error: convError } = await supabaseAdmin
     .from("conversations").select("id, status, assigned_agent_id, created_at, company_id").eq("id", conversation_id).single();
@@ -1653,7 +1654,7 @@ async function persistExplicitR1IfRequested(
 }
 
 async function orchestrationGenerateReply(conversation_id: string, flags: FlagSet, source_message_id: string | null): Promise<Response> {
-  const supabaseAdmin = createClient(Deno.env.get("SUPABASE_URL") ?? "", Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "");
+  const supabaseAdmin = createClient(Deno.env.get("SUPABASE_URL") ?? "", getSupabaseAdminKey());
   const { data: conversation, error: convError } = await supabaseAdmin.from("conversations").select("id, status, assigned_agent_id, created_at, company_id, metadata_source").eq("id", conversation_id).single();
   if (convError || !conversation) return new Response(JSON.stringify({ error: "Conversation not found" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
@@ -1845,7 +1846,7 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
   const _g1SkipKB = _pr5GreetingOrTrivial;
 
   let _pr5RagMatchState: RagMatchState | undefined;
-  const _escEnableS0 = Deno.env.get("ESC_ENABLE_S0") === "true";
+  const _escEnableS0 = Deno.env.get("ESC_ENABLE_S0") !== "false";
 
   let basePrompt = MINIMAL_SAFE_FALLBACK_PROMPT;
   let coachTrace: {
