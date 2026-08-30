@@ -69,9 +69,9 @@ jobs:
           x=d['data']
           print('CONVERSATION_ID='+shlex.quote(x['conversation_id']))
           print('SESSION_TOKEN='+shlex.quote(x['session_token']))
-          print('PASS create-visitor-session')
           PY
           source /tmp/task43.env
+          echo 'PASS create-visitor-session'
           POLL=$(curl -fsS -X POST \
             -H "Origin: ${PROD_ORIGIN}" \
             -H 'Content-Type: application/json' \
