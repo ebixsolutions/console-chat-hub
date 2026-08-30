@@ -1,0 +1,41 @@
+name: Task 3.2 Lovable Preview Rebind Gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/task3-2-lovable-preview-rebind.yml'
+      - 'scripts/task3-2-lovable-preview-rebind-final-gate.sh'
+      - 'src/integrations/supabase/runtime-authority.mjs'
+      - 'src/integrations/supabase/client.ts'
+      - 'src/integrations/supabase/client.server.ts'
+      - 'src/integrations/supabase/previewAuthStorage.ts'
+      - 'src/routes/login.tsx'
+      - 'src/routes/feedback.tsx'
+      - 'src/routes/_authenticated/console.conversations.index.tsx'
+      - 'src/routes/_authenticated/console.conversations.$id.tsx'
+      - 'src/routes/_authenticated/console.widget-preview.tsx'
+      - 'src/routes/_authenticated/console.conversation-evaluation.index.tsx'
+      - '.env'
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  final-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Production dependency security audit
+        run: npm audit --omit=dev --audit-level=high
+      - name: Task 3.2 final gate
+        run: bash scripts/task3-2-lovable-preview-rebind-final-gate.sh
