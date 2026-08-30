@@ -1,0 +1,81 @@
+name: Task 5.2 Console UX Closure
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/task5-2-console-ux-closure.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Patch Agent Assist stale-context race
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('src/components/console/AgentToolPanel.tsx')
+          s=p.read_text()
+          old='''  const [tr, setTr] = useState<{ type: string; data: Record<string, unknown> } | null>(null);\n  const [tl, setTl] = useState(false);\n  const [te, setTe] = useState("");\n'''
+          new='''  const [tr, setTr] = useState<{ type: string; data: Record<string, unknown> } | null>(null);\n  const [tl, setTl] = useState(false);\n  const [te, setTe] = useState("");\n  const toolReqIdRef = useRef(0);\n\n  // Conversation changes must invalidate every visible/pending tool result.\n  // This prevents a slow response from conversation A being rendered after\n  // the operator has already switched to conversation B.\n  useEffect(() => {\n    toolReqIdRef.current += 1;\n    setCs("custom");\n    setCi("");\n    setTr(null);\n    setTl(false);\n    setTe("");\n    onClearSelection();\n  // onClearSelection is intentionally excluded: conversationId is the\n  // authoritative context boundary and parent callback identity may change.\n  // eslint-disable-next-line react-hooks/exhaustive-deps\n  }, [conversationId]);\n'''
+          if old not in s:
+              raise SystemExit('state anchor not found')
+          s=s.replace(old,new,1)
+          old2='''  async function runTool(tt: string, extra?: Record<string, unknown>) {\n    if (!hc || isResolved) return;\n    setTl(true);\n    setTe("");\n    setTr(null);\n    try {\n      const { data, error } = await supabase.functions.invoke("agent-assist", {\n        body: { tool_type: tt, conversation_id: conversationId, content: ac, ...extra },\n      });\n      if (error || !data?.success) {\n'''
+          new2='''  async function runTool(tt: string, extra?: Record<string, unknown>) {\n    if (!hc || isResolved) return;\n    const reqId = ++toolReqIdRef.current;\n    setTl(true);\n    setTe("");\n    setTr(null);\n    try {\n      const { data, error } = await supabase.functions.invoke("agent-assist", {\n        body: { tool_type: tt, conversation_id: conversationId, content: ac, ...extra },\n      });\n      if (toolReqIdRef.current !== reqId) return;\n      if (error || !data?.success) {\n'''
+          if old2 not in s:
+              raise SystemExit('runTool anchor not found')
+          s=s.replace(old2,new2,1)
+          old3='''    } catch {\n      setTe(tc("netError"));\n    }\n    setTl(false);\n  }\n'''
+          new3='''    } catch {\n      if (toolReqIdRef.current !== reqId) return;\n      setTe(tc("netError"));\n    }\n    if (toolReqIdRef.current === reqId) setTl(false);\n  }\n'''
+          if old3 not in s:
+              raise SystemExit('catch anchor not found')
+          s=s.replace(old3,new3,1)
+          p.write_text(s)
+          print('TASK5_2_AGENT_STALE_CONTEXT_PATCH=PASS')
+          PY
+      - name: Source assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          grep -q 'toolReqIdRef' src/components/console/AgentToolPanel.tsx
+          grep -q 'toolReqIdRef.current !== reqId' src/components/console/AgentToolPanel.tsx
+          grep -q 'setTr(null)' src/components/console/AgentToolPanel.tsx
+          grep -q 'KB_UI_MIN_RELEVANCE = 0.75' src/components/console/CRMPanel.tsx
+          grep -q 'computeContextRevisionKey' src/components/console/CRMPanel.tsx
+          grep -q 'kbReqIdRef.current++' src/components/console/CRMPanel.tsx
+          grep -q 'customer360-local' src/lib/customer360/useCustomerContext.ts
+          echo TASK5_2_SOURCE_ASSERTIONS=PASS
+      - name: Build
+        run: |
+          npm ci
+          npm audit --omit=dev --audit-level=high
+          npm run build
+      - name: Commit closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'ebixsolutions'
+          git config user.email '64578119+ebixsolutions@users.noreply.github.com'
+          git add src/components/console/AgentToolPanel.tsx
+          if git diff --cached --quiet; then
+            echo 'No source delta to commit'
+          else
+            git commit -m 'Task 5.2: invalidate stale Agent Assist context'
+            git push origin HEAD:main
+          fi
