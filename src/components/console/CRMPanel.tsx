@@ -84,6 +84,17 @@ export const RIGHT_COPY = {
   copied: { en: "Copied to clipboard", zh: "已複製到剪貼簿" },
   copyFailed: { en: "Copy failed", zh: "複製失敗" },
   inserted: { en: "Inserted into draft", zh: "已插入草稿" },
+  customerTab: { en: "Customer", zh: "客戶" },
+  customerLoading: { en: "Loading…", zh: "載入中…" },
+  customerUnavailable: { en: "Customer context unavailable.", zh: "客戶上下文目前無法使用。" },
+  customerEmpty: { en: "No customer context available.", zh: "目前沒有客戶上下文資料。" },
+  evaluationLabel: { en: "Evaluation", zh: "評估" },
+  externalCrmNotice: {
+    en: "Order history, loyalty status, and CRM trust score require an external CRM integration. No authoritative source currently exists in this repository.",
+    zh: "訂單紀錄、會員忠誠狀態及 CRM 信任分數需要外部 CRM 整合。目前此系統沒有可用的權威資料來源。",
+  },
+  quickActions: { en: "Quick Actions", zh: "快速操作" },
+  resolveTicket: { en: "Resolve Ticket", zh: "解決對話" },
 } as const;
 export type RCK = keyof typeof RIGHT_COPY;
 
@@ -446,7 +457,7 @@ export function CRMPanel({
             : lang === "zh" ? "就緒" : "Ready";
 
   const TABS = [
-    { key: "customer", label: "Customer" },
+    { key: "customer", label: rc("customerTab") },
     { key: "knowledge", label: lang === "zh" ? "知識" : "Knowledge" },
     { key: "policy", label: lang === "zh" ? "政策" : "Policy" },
   ];
@@ -492,16 +503,16 @@ export function CRMPanel({
               </div>
             </div>
 
-            {custCtx.status === "loading" && <div style={{ fontSize: 11, color: "#9ca3af" }}>Loading…</div>}
-            {custCtx.status === "error" && <div style={{ fontSize: 11, color: "#ef4444" }}>Customer context unavailable.</div>}
-            {custCtx.status === "empty" && <div style={{ fontSize: 11, color: "#9ca3af" }}>No customer context available.</div>}
+            {custCtx.status === "loading" && <div style={{ fontSize: 11, color: "#9ca3af" }}>{rc("customerLoading")}</div>}
+            {custCtx.status === "error" && <div style={{ fontSize: 11, color: "#ef4444" }}>{rc("customerUnavailable")}</div>}
+            {custCtx.status === "empty" && <div style={{ fontSize: 11, color: "#9ca3af" }}>{rc("customerEmpty")}</div>}
             {custCtx.status === "success" && (
               <>
                 {custCtx.data.evaluations.find((e) => e.conversation_id === conv.id) && (
                   <div style={cardStyle}>
                     {(() => {
                       const ev = custCtx.data.evaluations.find((e) => e.conversation_id === conv.id)!;
-                      return <div style={{ fontSize: 10.5, fontWeight: 600 }}>Evaluation: {ev.overall_score} · {ev.severity} · {ev.review_status}</div>;
+                      return <div style={{ fontSize: 10.5, fontWeight: 600 }}>{rc("evaluationLabel")}: {ev.overall_score} · {ev.severity} · {ev.review_status}</div>;
                     })()}
                   </div>
                 )}
@@ -518,11 +529,11 @@ export function CRMPanel({
             )}
 
             <div style={{ background: "#f5f4f0", borderRadius: 9, padding: "12px 14px", marginBottom: 12, fontSize: 11, color: "#555", lineHeight: 1.6 }}>
-              Order history, loyalty status, and CRM trust score require an external CRM integration. No authoritative source currently exists in this repository.
+              {rc("externalCrmNotice")}
             </div>
-            <div style={sectionTitle}>Quick Actions</div>
+            <div style={sectionTitle}>{rc("quickActions")}</div>
             <button type="button" onClick={onResolve} style={{ ...btnSm, display: "block", width: "100%", textAlign: "left", color: "#ef4444", padding: "7px 11px" }}>
-              Resolve Ticket
+              {rc("resolveTicket")}
             </button>
           </>
         )}

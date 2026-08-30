@@ -263,10 +263,12 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
 
   useEffect(() => {
-    if (!selected && pageRows.length > 0) {
-      setSelected(pageRows[0].conversation_id);
-      setRunId(pageRows[0].conversation_id);
-    }
+    const visibleIds = new Set(pageRows.map((row) => row.conversation_id));
+    if (selected && visibleIds.has(selected)) return;
+    const next = pageRows[0]?.conversation_id ?? null;
+    dwellGeneration.current += 1;
+    setSelected(next);
+    setRunId(next ?? "");
   }, [selected, pageRows]);
 
   const targetRow = useMemo(() => {
