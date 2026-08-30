@@ -74,7 +74,7 @@ jobs:
           if root.exists():
               shutil.rmtree(root)
           root.mkdir(parents=True)
-          width = 9000
+          width = 4000
           parts = [encoded[i:i+width] for i in range(0, len(encoded), width)]
           imports = []
           names = []
