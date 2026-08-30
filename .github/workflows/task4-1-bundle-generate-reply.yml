@@ -1,0 +1,62 @@
+name: Task 4.1 Bundle Generate Reply
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/task4-1-bundle-generate-reply.yml'
+      - 'supabase/functions/generate-reply/index.ts'
+      - 'supabase/functions/_shared/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Bundle local Edge dependency graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p supabase/functions/generated
+          npx esbuild supabase/functions/generate-reply/index.ts \
+            --bundle \
+            --platform=neutral \
+            --format=esm \
+            --target=es2022 \
+            '--external:https://*' \
+            '--external:http://*' \
+            '--external:npm:*' \
+            '--external:jsr:*' \
+            --outfile=supabase/functions/generated/task4-1-generate-reply.bundle.ts
+          test -s supabase/functions/generated/task4-1-generate-reply.bundle.ts
+          grep -q 'ENABLE_KB_ADAPTER.*false' supabase/functions/generated/task4-1-generate-reply.bundle.ts
+          grep -q 'GENERATION_MAX_TOKENS_DEFAULT = 2048' supabase/functions/generated/task4-1-generate-reply.bundle.ts
+          if grep -q 'hvmtoqiwdqvgnjepxwrc' supabase/functions/generated/task4-1-generate-reply.bundle.ts; then
+            echo 'FAIL: legacy Supabase ref found in bundle' >&2
+            exit 1
+          fi
+      - name: Commit immutable deploy bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- supabase/functions/generated/task4-1-generate-reply.bundle.ts; then
+            echo 'Bundle already current.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add supabase/functions/generated/task4-1-generate-reply.bundle.ts
+          git commit -m 'Task 4.1: refresh generate-reply deploy bundle'
+          git push origin HEAD:main
