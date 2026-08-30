@@ -4,25 +4,7 @@
 // For user-authenticated queries (with RLS), use the auth middleware instead.
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
-
-const AUTHORITATIVE_SUPABASE_PROJECT_ID = 'nrfxhqabwblzxoushgnm';
-const AUTHORITATIVE_SUPABASE_ORIGIN = `https://${AUTHORITATIVE_SUPABASE_PROJECT_ID}.supabase.co`;
-
-function assertAuthoritativeSupabaseRuntime(url: string, projectId?: string) {
-  let origin: string;
-  try {
-    origin = new URL(url).origin;
-  } catch {
-    throw new Error('[Supabase] Invalid Supabase server runtime URL.');
-  }
-
-  if (origin !== AUTHORITATIVE_SUPABASE_ORIGIN) {
-    throw new Error('[Supabase] Refusing non-authoritative Supabase server backend runtime.');
-  }
-  if (projectId && projectId !== AUTHORITATIVE_SUPABASE_PROJECT_ID) {
-    throw new Error('[Supabase] Refusing non-authoritative Supabase server project binding.');
-  }
-}
+import { assertAuthoritativeSupabaseRuntime } from './runtime-authority.mjs';
 
 function createSupabaseAdminClient() {
   const SUPABASE_URL = process.env.SUPABASE_URL;
