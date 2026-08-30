@@ -2,25 +2,7 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 import { brokeredPreviewStorage } from './previewAuthStorage';
-
-const AUTHORITATIVE_SUPABASE_PROJECT_ID = 'nrfxhqabwblzxoushgnm';
-const AUTHORITATIVE_SUPABASE_ORIGIN = `https://${AUTHORITATIVE_SUPABASE_PROJECT_ID}.supabase.co`;
-
-function assertAuthoritativeSupabaseRuntime(url: string, projectId?: string) {
-  let origin: string;
-  try {
-    origin = new URL(url).origin;
-  } catch {
-    throw new Error('[Supabase] Invalid Supabase runtime URL.');
-  }
-
-  if (origin !== AUTHORITATIVE_SUPABASE_ORIGIN) {
-    throw new Error('[Supabase] Refusing non-authoritative Supabase backend runtime.');
-  }
-  if (projectId && projectId !== AUTHORITATIVE_SUPABASE_PROJECT_ID) {
-    throw new Error('[Supabase] Refusing non-authoritative Supabase project binding.');
-  }
-}
+import { assertAuthoritativeSupabaseRuntime } from './runtime-authority.mjs';
 
 function createSupabaseClient() {
   // GitHub/main + the user-owned Supabase project are authoritative.
