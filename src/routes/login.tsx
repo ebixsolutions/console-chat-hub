@@ -7,7 +7,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
-import { lovable } from "@/integrations/lovable";
 
 const searchSchema = z.object({
   redirect: z.string().optional(),
@@ -37,7 +36,6 @@ function LoginPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Only allow same-origin relative redirect targets.
   const safeRedirect = (() => {
     const r = search.redirect;
     if (typeof r === "string" && r.startsWith("/") && !r.startsWith("//")) return r;
@@ -74,18 +72,17 @@ function LoginPage() {
 
   const handleGoogle = async () => {
     setLoading(true);
-    const result = await lovable.auth.signInWithOAuth("google", {
-      redirect_uri: oauthRedirectUri,
-    });
-    if (result.error) {
-      toast.error("Google sign-in failed");
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: oauthRedirectUri ? { redirectTo: oauthRedirectUri } : undefined,
+      });
+      if (error) throw error;
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Google sign-in failed");
       setLoading(false);
-      return;
     }
-    if (result.redirected) return;
-    navigate({ to: postAuthTarget });
   };
-
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-muted/40 p-4">
