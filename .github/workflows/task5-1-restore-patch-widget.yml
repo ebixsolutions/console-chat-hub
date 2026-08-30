@@ -1,0 +1,87 @@
+name: Task 5.1 Restore And Patch Widget Queue UX
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/task5-1-restore-patch-widget.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Restore full pre-truncation widget and patch queue UX
+        shell: bash
+        run: |
+          set -euo pipefail
+          git show 42bc9fbdbef69a7d2254ab90702f406e1b9fd478^:public/widget/chat.js > public/widget/chat.js
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('public/widget/chat.js')
+          s=p.read_text()
+          old='''    if (value === "waiting") {
+      state.handoffRequested = true;
+      hideTyping();
+      state.thinkingStartTime = null;
+      state.fallbackShownForConversation = true;
+      el.classList.add("waiting");
+      el.textContent =
+        "Human support requested. You are waiting for a team member. You can continue sending messages here.";
+      updateTicket(state.conversationId, "human_needed", null);
+      return;
+    }'''
+          new='''    if (value === "waiting") {
+      state.handoffRequested = true;
+      hideTyping();
+      state.thinkingStartTime = null;
+      state.fallbackShownForConversation = true;
+      el.classList.add("waiting");
+      var queuePosition = humanSupport && Number.isInteger(humanSupport.queue_position) && humanSupport.queue_position > 0
+        ? humanSupport.queue_position
+        : null;
+      var customersAhead = humanSupport && Number.isInteger(humanSupport.customers_ahead) && humanSupport.customers_ahead >= 0
+        ? humanSupport.customers_ahead
+        : null;
+      var etaMinutes = humanSupport && Number.isInteger(humanSupport.estimated_wait_minutes) && humanSupport.estimated_wait_minutes > 0
+        ? humanSupport.estimated_wait_minutes
+        : null;
+      var queueText = "Human support requested. You are waiting for a team member.";
+      if (queuePosition !== null) queueText += " Queue position: #" + queuePosition + ".";
+      if (customersAhead !== null) queueText += " Customers ahead: " + customersAhead + ".";
+      if (etaMinutes !== null) queueText += " Estimated wait: about " + etaMinutes + " minute" + (etaMinutes === 1 ? "" : "s") + ".";
+      else queueText += " Estimated wait time is not available yet.";
+      queueText += " You can continue sending messages here.";
+      el.textContent = queueText;
+      updateTicket(state.conversationId, "human_needed", null);
+      return;
+    }'''
+          if s.count(old)!=1:
+              raise SystemExit(f'expected waiting block once, got {s.count(old)}')
+          s=s.replace(old,new,1)
+          if len(s)<50000:
+              raise SystemExit('restored widget unexpectedly short')
+          for needle in ['Queue position: #','Customers ahead:','Estimated wait time is not available yet.','function uploadAttachment(file)','function insertEmoji(emoji)']:
+              if needle not in s: raise SystemExit(f'missing {needle}')
+          p.write_text(s)
+          print('TASK5_1_WIDGET_RESTORE_PATCH=PASS')
+          PY
+          node --check public/widget/chat.js
+          git diff --check
+          test "$(wc -c < public/widget/chat.js)" -gt 50000
+      - name: Commit repaired widget
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'ebixsolutions'
+          git config user.email '64578119+ebixsolutions@users.noreply.github.com'
+          git add public/widget/chat.js
+          git commit -m 'Task 5.1: restore widget and show real queue state'
+          git push origin HEAD:main
