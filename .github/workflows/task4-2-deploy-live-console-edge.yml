@@ -1,0 +1,52 @@
+name: Task 4.2 Deploy Live Console Edge
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/functions/agent-assist/**'
+      - 'supabase/functions/return-to-ai/**'
+      - 'supabase/functions/_shared/**'
+      - '.github/workflows/task4-2-deploy-live-console-edge.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Verify CLI and target
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SUPABASE_ACCESS_TOKEN:-}"
+          npx --yes supabase@latest --version
+          grep -q 'nrfxhqabwblzxoushgnm' .env
+      - name: Deploy agent-assist
+        run: npx --yes supabase@latest functions deploy agent-assist --project-ref "$PROJECT_REF"
+      - name: Deploy return-to-ai
+        run: npx --yes supabase@latest functions deploy return-to-ai --project-ref "$PROJECT_REF"
+      - name: Verify deployed functions
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes supabase@latest functions list --project-ref "$PROJECT_REF" --output json > /tmp/functions.json
+          python - <<'PY'
+          import json
+          rows=json.load(open('/tmp/functions.json'))
+          by_name={str(r.get('slug') or r.get('name')):r for r in rows}
+          for name in ['agent-assist','return-to-ai']:
+              row=by_name.get(name)
+              assert row, f'{name} missing'
+              assert str(row.get('status','')).upper()=='ACTIVE', row
+              print(f'PASS {name} ACTIVE version={row.get("version")}')
+          PY
