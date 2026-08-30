@@ -43,26 +43,21 @@ jobs:
             'assistedge':Path('supabase/functions/agent-assist/index.ts').read_text(),
           }
           crm=files['crm']; agent=files['agent']; ce=files['ce']; c360=files['c360']; hook=files['c360hook']; edge=files['c360edge']
-          # Knowledge panel: relevance + stale response + all required UX actions.
           for needle in ['KB_UI_MIN_RELEVANCE = 0.75','deriveAutoSearchQuery','kbReqIdRef.current','contextRevisionKey','kbSearchBtn','kbCopy','kbInsert','kbEmpty']:
               assert needle in crm,needle
-          # Agent Assist: only the human-control tools required by the frozen UX and stale-request invalidation.
           for needle in ['toolReqIdRef','toolReqIdRef.current !== reqId','knowledge_helper','check_policy','translate','grammar']:
               assert needle in agent,needle
           tool_block=agent.split('const TOOLS = [',1)[1].split('];',1)[0]
           assert 'suggest_reply' not in tool_block, 'suggest_reply still exposed in human-control UI'
-          # CE must never retain a detail row hidden by current filters/page.
           for needle in ['visibleIds.has(selected)','setSelected(next)','setRunId(next ?? "")','CeDetailPanel']:
               assert needle in ce,needle
           assert 'Training Ready' not in ce and '>Trained<' not in ce
-          # Customer 360 is live/local and honest about unavailable external CRM domains.
           for needle in ['customer360-local','useCustomerContext','ordersUnavailable','productsUnavailable','paymentsUnavailable','trustUnavailable','predictionsUnavailable']:
               assert needle in c360,needle
-          for needle in ['reqRef.current','visitorSessionId','customer360-local']:
+          for needle in ['reqIdRef.current','visitorSessionId','customer360-local','const stale = () =>']:
               assert needle in hook,needle
           for needle in ['mode === "directory"','resolveCallerScope','applyCompanyScope','visitor_session']:
               assert needle in edge,needle
-          # No fabricated P0 data paths in active Task 5.2 surfaces.
           banned=['Math.random(', 'faker.', 'mockData', 'demoData', 'fakeCustomer']
           for label,text in files.items():
               for token in banned:
