@@ -2,13 +2,17 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 import { brokeredPreviewStorage } from './previewAuthStorage';
-import { assertAuthoritativeSupabaseRuntime } from './runtime-authority.mjs';
+import {
+  assertAuthoritativeFunctionsRuntime,
+  assertAuthoritativeSupabaseRuntime,
+} from './runtime-authority.mjs';
 
 function createSupabaseClient() {
   // GitHub/main + the user-owned Supabase project are authoritative.
   // Lovable may preview this source, but must never substitute its own backend.
   const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
   const SUPABASE_PROJECT_ID = import.meta.env.VITE_SUPABASE_PROJECT_ID || process.env.SUPABASE_PROJECT_ID;
+  const SUPABASE_FUNCTIONS_URL = import.meta.env.VITE_SUPABASE_FUNCTIONS_URL;
   const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_PUBLISHABLE_KEY;
 
   if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
@@ -22,6 +26,9 @@ function createSupabaseClient() {
   }
 
   assertAuthoritativeSupabaseRuntime(SUPABASE_URL, SUPABASE_PROJECT_ID);
+  if (SUPABASE_FUNCTIONS_URL) {
+    assertAuthoritativeFunctionsRuntime(SUPABASE_FUNCTIONS_URL);
+  }
 
   return createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
     auth: {
