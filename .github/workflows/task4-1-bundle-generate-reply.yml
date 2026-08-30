@@ -40,24 +40,37 @@ jobs:
             '--external:npm:*' \
             '--external:jsr:*' \
             --outfile=supabase/functions/generated/task4-1-generate-reply.bundle.ts
-          test -s supabase/functions/generated/task4-1-generate-reply.bundle.ts
+          npx esbuild supabase/functions/generate-reply/index.ts \
+            --bundle \
+            --minify \
+            --platform=neutral \
+            --format=esm \
+            --target=es2022 \
+            '--external:https://*' \
+            '--external:http://*' \
+            '--external:npm:*' \
+            '--external:jsr:*' \
+            --outfile=supabase/functions/generated/task4-1-generate-reply.deploy.ts
+          for f in supabase/functions/generated/task4-1-generate-reply.bundle.ts supabase/functions/generated/task4-1-generate-reply.deploy.ts; do
+            test -s "$f"
+            if grep -q 'hvmtoqiwdqvgnjepxwrc' "$f"; then
+              echo "FAIL: legacy Supabase ref found in $f" >&2
+              exit 1
+            fi
+          done
           grep -q 'ENABLE_KB_ADAPTER.*false' supabase/functions/generated/task4-1-generate-reply.bundle.ts
           grep -q 'GENERATION_MAX_TOKENS_DEFAULT = 2048' supabase/functions/generated/task4-1-generate-reply.bundle.ts
-          if grep -q 'hvmtoqiwdqvgnjepxwrc' supabase/functions/generated/task4-1-generate-reply.bundle.ts; then
-            echo 'FAIL: legacy Supabase ref found in bundle' >&2
-            exit 1
-          fi
-      - name: Commit immutable deploy bundle
+          wc -c supabase/functions/generated/task4-1-generate-reply.deploy.ts
+      - name: Commit immutable deploy bundles
         shell: bash
         run: |
           set -euo pipefail
-          BUNDLE='supabase/functions/generated/task4-1-generate-reply.bundle.ts'
-          if [[ -z "$(git status --porcelain -- "$BUNDLE")" ]]; then
-            echo 'Bundle already current.'
+          if [[ -z "$(git status --porcelain -- supabase/functions/generated/task4-1-generate-reply.bundle.ts supabase/functions/generated/task4-1-generate-reply.deploy.ts)" ]]; then
+            echo 'Bundles already current.'
             exit 0
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add "$BUNDLE"
-          git commit -m 'Task 4.1: refresh generate-reply deploy bundle'
+          git add supabase/functions/generated/task4-1-generate-reply.bundle.ts supabase/functions/generated/task4-1-generate-reply.deploy.ts
+          git commit -m 'Task 4.1: refresh generate-reply deploy bundles'
           git push origin HEAD:main
