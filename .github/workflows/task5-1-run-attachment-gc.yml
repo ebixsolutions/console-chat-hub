@@ -1,0 +1,27 @@
+name: Task 5.1 Run Attachment GC
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/task5-1-run-attachment-gc.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Run target attachment GC
+        shell: bash
+        run: |
+          set -euo pipefail
+          BODY=$(curl -fsS -X POST 'https://nrfxhqabwblzxoushgnm.supabase.co/functions/v1/attachment-gc')
+          python - <<'PY' "$BODY"
+          import json,sys
+          d=json.loads(sys.argv[1]); assert d.get('success') is True,d
+          assert int(d.get('failed',0))==0,d
+          print(f"PASS attachment GC processed={d.get('processed')} scanned={d.get('scanned')}")
+          PY
