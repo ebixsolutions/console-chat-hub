@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - 'scripts/task5-1-final-gate.sh'
+      - 'supabase/functions/receive-widget-message/**'
+      - 'supabase/migrations/20260830174500_task5_1_attachment_idempotency.sql'
       - '.github/workflows/task5-1-final-gate.yml'
   workflow_dispatch: {}
 
