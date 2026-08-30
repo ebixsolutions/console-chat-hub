@@ -1,0 +1,43 @@
+name: Task 5.1 Apply Attachment Idempotency
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/task5-1-attachment-idempotency.py'
+      - '.github/workflows/task5-1-apply-attachment-idempotency.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Apply exact source patches
+        run: python scripts/task5-1-attachment-idempotency.py
+      - name: Validate source
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check public/widget/chat.js
+          test "$(wc -c < public/widget/chat.js)" -gt 50000
+          grep -q 'p_client_message_id: attachmentClientId' supabase/functions/receive-widget-message/index.ts
+          grep -q 'form.append("client_message_id", createClientMessageId())' public/widget/chat.js
+          git diff --check
+      - name: Install and build
+        run: npm ci && npm run build
+      - name: Commit implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'ebixsolutions'
+          git config user.email '64578119+ebixsolutions@users.noreply.github.com'
+          git add public/widget/chat.js supabase/functions/receive-widget-message/index.ts
+          git commit -m 'Task 5.1: make widget attachments idempotent'
+          git push origin HEAD:main
