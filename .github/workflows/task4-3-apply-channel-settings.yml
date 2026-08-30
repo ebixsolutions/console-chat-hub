@@ -23,6 +23,20 @@ jobs:
         with:
           node-version: '22'
           cache: npm
+      - name: Repair generator escape
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('scripts/task4-3-channel-settings-closure.py')
+          s=p.read_text()
+          old='setEditOrigins(ch.allowed_origins.join("\\n"));'
+          new='setEditOrigins(ch.allowed_origins.join("\\\\n"));'
+          if old not in s:
+              raise SystemExit('expected generator escape source not found')
+          p.write_text(s.replace(old,new,1))
+          print('TASK4_3_GENERATOR_ESCAPE_REPAIR=PASS')
+          PY
       - name: Apply exact Task 4.3 source closure
         run: python scripts/task4-3-channel-settings-closure.py
       - name: Source assertions
@@ -33,6 +47,12 @@ jobs:
           grep -q 'Allowed Origins' src/routes/_authenticated/console.channel-settings.tsx
           grep -q 'Open Real Test' src/routes/_authenticated/console.channel-settings.tsx
           grep -q 'async updateChannelConfig' src/services/aiChatbotSettingsService.ts
+          python - <<'PY'
+          from pathlib import Path
+          s=Path('src/routes/_authenticated/console.channel-settings.tsx').read_text()
+          assert 'setEditOrigins(ch.allowed_origins.join("\\n"));' in s
+          print('TASK4_3_TS_ESCAPE_ASSERTION=PASS')
+          PY
           echo TASK4_3_SOURCE_ASSERTIONS=PASS
       - name: Install dependencies
         run: npm ci
@@ -44,6 +64,6 @@ jobs:
           set -euo pipefail
           git config user.name 'ebixsolutions'
           git config user.email '64578119+ebixsolutions@users.noreply.github.com'
-          git add src/routes/_authenticated/console.channel-settings.tsx src/services/aiChatbotSettingsService.ts
+          git add scripts/task4-3-channel-settings-closure.py src/routes/_authenticated/console.channel-settings.tsx src/services/aiChatbotSettingsService.ts
           git commit -m 'Task 4.3: close channel settings and real test'
           git push origin HEAD:main
