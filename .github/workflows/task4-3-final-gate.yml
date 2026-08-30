@@ -1,0 +1,89 @@
+name: Task 4.3 Channel Settings Final Gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/routes/_authenticated/console.channel-settings.tsx'
+      - 'src/services/aiChatbotSettingsService.ts'
+      - '.github/workflows/task4-3-final-gate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  final-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PROD_ORIGIN: https://console-chat-hub.lovable.app
+      CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Source contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          route=Path('src/routes/_authenticated/console.channel-settings.tsx').read_text()
+          svc=Path('src/services/aiChatbotSettingsService.ts').read_text()
+          cfg=Path('src/lib/api/config.service.ts').read_text()
+          for needle in ['Allowed Origins','Open Real Test','updateChannelConfig','INVALID / must be replaced']:
+              assert needle in route, needle
+          for needle in ['allowed_origins: string[]','async updateChannelConfig']:
+              assert needle in svc, needle
+          for needle in ['invalid_allowed_origin','validOrigin','https:','company_id']:
+              assert needle in cfg, needle
+          assert 'allowed_origins.includes("*")' in route
+          print('TASK4_3_SOURCE_CONTRACT=PASS')
+          PY
+      - name: Install dependencies
+        run: npm ci
+      - name: Production dependency audit
+        run: npm audit --omit=dev --audit-level=high
+      - name: Production build
+        run: npm run build
+      - name: Canonical widget real-runtime smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a; source .env; set +a
+          BASE="${VITE_SUPABASE_FUNCTIONS_URL}"
+          CREATE=$(curl -fsS -X POST \
+            -H "Origin: ${PROD_ORIGIN}" \
+            -H 'Content-Type: application/json' \
+            --data "{\"channel_id\":\"${CHANNEL_ID}\",\"visitor_metadata\":{\"task43_real_test\":true,\"exclude_training\":true}}" \
+            "${BASE}/create-visitor-session")
+          python - <<'PY' "$CREATE" >/tmp/task43.env
+          import json,sys,shlex
+          d=json.loads(sys.argv[1])
+          assert d.get('success') is True,d
+          x=d['data']
+          print('CONVERSATION_ID='+shlex.quote(x['conversation_id']))
+          print('SESSION_TOKEN='+shlex.quote(x['session_token']))
+          print('PASS create-visitor-session')
+          PY
+          source /tmp/task43.env
+          POLL=$(curl -fsS -X POST \
+            -H "Origin: ${PROD_ORIGIN}" \
+            -H 'Content-Type: application/json' \
+            --data "{\"conversation_id\":\"${CONVERSATION_ID}\",\"session_token\":\"${SESSION_TOKEN}\"}" \
+            "${BASE}/widget-poll-messages")
+          python - <<'PY' "$POLL"
+          import json,sys
+          d=json.loads(sys.argv[1])
+          assert d.get('success') is True,d
+          data=d['data']
+          assert data.get('conversation_status') in {'open','pending','unresolved','resolved'},data
+          print('PASS widget-poll-messages')
+          print('TASK4_3_REAL_RUNTIME_SMOKE=PASS')
+          PY
+          echo "TASK43_CONVERSATION_ID=${CONVERSATION_ID}"
