@@ -1,0 +1,84 @@
+name: Task 4.2 R1 Widget Handoff Smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/task4-2-r1-widget-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PROD_ORIGIN: https://console-chat-hub.lovable.app
+      CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Explicit R1 handoff waiting-state smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a; source .env; set +a
+          BASE="${VITE_SUPABASE_FUNCTIONS_URL}"
+          CREATE=$(curl -fsS -X POST \
+            -H "Origin: ${PROD_ORIGIN}" \
+            -H 'Content-Type: application/json' \
+            --data "{\"channel_id\":\"${CHANNEL_ID}\",\"visitor_metadata\":{\"task42_r1_smoke\":true,\"exclude_training\":true}}" \
+            "${BASE}/create-visitor-session")
+          python - <<'PY' "$CREATE" > /tmp/session.env
+          import json,sys,shlex
+          d=json.loads(sys.argv[1]); assert d.get('success') is True,d
+          x=d['data']
+          print('CONVERSATION_ID='+shlex.quote(x['conversation_id']))
+          print('SESSION_TOKEN='+shlex.quote(x['session_token']))
+          PY
+          source /tmp/session.env
+          IDEM=$(python - <<'PY'
+          import uuid; print(uuid.uuid4())
+          PY
+          )
+          SEND=$(curl -fsS -X POST \
+            -H "Origin: ${PROD_ORIGIN}" \
+            -H 'Content-Type: application/json' \
+            -H "idempotency-key: ${IDEM}" \
+            --data "{\"conversation_id\":\"${CONVERSATION_ID}\",\"session_token\":\"${SESSION_TOKEN}\",\"content\":\"I want a human agent now\"}" \
+            "${BASE}/receive-widget-message")
+          python - <<'PY' "$SEND"
+          import json,sys
+          d=json.loads(sys.argv[1]); assert d.get('success') is True,d
+          print('PASS receive-widget-message accepted')
+          PY
+          sleep 7
+          POLL=$(curl -fsS -X POST \
+            -H "Origin: ${PROD_ORIGIN}" \
+            -H 'Content-Type: application/json' \
+            --data "{\"conversation_id\":\"${CONVERSATION_ID}\",\"session_token\":\"${SESSION_TOKEN}\"}" \
+            "${BASE}/widget-poll-messages")
+          python - <<'PY' "$POLL"
+          import json,sys
+          d=json.loads(sys.argv[1]); assert d.get('success') is True,d
+          data=d['data']
+          assert data.get('conversation_status')=='pending', data
+          hs=data.get('human_support') or {}
+          assert hs.get('state')=='waiting', hs
+          assert hs.get('agent_assigned') is False, hs
+          assert data.get('ai_generating') is False, data
+          msgs=data.get('messages') or []
+          replies=[m for m in msgs if m.get('role')=='assistant']
+          assert replies, msgs
+          text=' '.join(str(m.get('content','')) for m in replies).lower()
+          forbidden=['queue position','estimated wait','estimated waiting','eta','you are number']
+          assert not any(x in text for x in forbidden), text
+          print('PASS R1 status=pending')
+          print('PASS human_support=waiting agent_assigned=false')
+          print('PASS ai_generating=false')
+          print('PASS no fabricated queue position or ETA')
+          PY
+          echo "TASK42_R1_CONVERSATION_ID=${CONVERSATION_ID}"
