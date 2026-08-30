@@ -84,7 +84,7 @@ jobs:
               (root / name).write_text(f'export default {json.dumps(part)};\n')
               imports.append(f'import {var} from "./{name}";')
               names.append(var)
-          loader = '\n'.join(imports) + f'''\nconst EXPECTED_SHA256 = "{digest}";\nconst encoded = [{','.join(names)}].join("");\nconst binary = atob(encoded);\nconst bytes = Uint8Array.from(binary, c => c.charCodeAt(0));\nconst hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))).map(b => b.toString(16).padStart(2, "0")).join("");\nif (hash !== EXPECTED_SHA256) throw new Error("TASK4_1_DEPLOY_BUNDLE_HASH_MISMATCH");\nawait import(`data:application/javascript;base64,${{encoded}}`);\n'''
+          loader = '\n'.join(imports) + f'''\nconst EXPECTED_SHA256 = "{digest}";\nconst encoded = [{','.join(names)}].join("");\nconst binary = atob(encoded);\nconst bytes = Uint8Array.from(binary, c => c.charCodeAt(0));\nconst hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))).map(b => b.toString(16).padStart(2, "0")).join("");\nif (hash !== EXPECTED_SHA256) throw new Error("TASK4_1_DEPLOY_BUNDLE_HASH_MISMATCH");\nawait import("data:application/javascript;base64," + encoded);\n'''
           (root / 'index.ts').write_text(loader)
           manifest = {
               'source_sha256': digest,
