@@ -39,7 +39,7 @@ jobs:
           assert 'ANTHROPIC_API_KEY' not in a and 'api.anthropic.com' not in a
           for x in ['callModel, parseJsonObject','purpose:"assist"','companyId:meta.companyId','conversationId:meta.conversationId']:
               assert x in a,x
-          for x in ['purpose: "evaluation" | "assist" | "generation"','GOOGLE_SERVICE_ACCOUNT_JSON','GOOGLE_PROJECT_ID','GOOGLE_REGION']:
+          for x in ['export type ModelPurpose = "evaluation" | "assist" | "generation"','GOOGLE_SERVICE_ACCOUNT_JSON','GOOGLE_PROJECT_ID','GOOGLE_REGION']:
               assert x in r,x
           for x in ['KB_SINGAPORE_TENANT_API_KEYS_JSON','KB_SINGAPORE_TENANT_MAP_JSON','x-api-key','/api/v1/rag/context-search']:
               assert x in k,x
