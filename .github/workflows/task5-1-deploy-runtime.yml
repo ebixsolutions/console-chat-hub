@@ -1,0 +1,51 @@
+name: Task 5.1 Deploy Runtime
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'supabase/functions/widget-poll-messages/**'
+      - 'supabase/functions/attachment-gc/**'
+      - '.github/workflows/task5-1-deploy-runtime.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Verify target and CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SUPABASE_ACCESS_TOKEN:-}"
+          grep -q 'nrfxhqabwblzxoushgnm' .env
+          npx --yes supabase@latest --version
+      - name: Deploy widget poll queue runtime
+        run: npx --yes supabase@latest functions deploy widget-poll-messages --project-ref "$PROJECT_REF"
+      - name: Deploy attachment GC
+        run: npx --yes supabase@latest functions deploy attachment-gc --project-ref "$PROJECT_REF" --no-verify-jwt
+      - name: Verify active
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes supabase@latest functions list --project-ref "$PROJECT_REF" --output json >/tmp/functions.json
+          python - <<'PY'
+          import json
+          rows=json.load(open('/tmp/functions.json'))
+          by={str(r.get('slug') or r.get('name')):r for r in rows}
+          for name in ['widget-poll-messages','attachment-gc','receive-widget-message']:
+              r=by.get(name); assert r, name
+              assert str(r.get('status','')).upper()=='ACTIVE', r
+              print(f'PASS {name} ACTIVE version={r.get("version")}')
+          PY
