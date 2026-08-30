@@ -1,0 +1,44 @@
+name: Task 5.1 Repair Widget
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'scripts/task5-1-patch-widget.py'
+      - '.github/workflows/task5-1-repair-widget.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Apply exact widget patch
+        run: python scripts/task5-1-patch-widget.py
+      - name: Validate widget
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check public/widget/chat.js
+          test "$(wc -c < public/widget/chat.js)" -gt 50000
+          grep -q 'Queue position: #' public/widget/chat.js
+          grep -q 'function uploadAttachment(file)' public/widget/chat.js
+          grep -q 'function executePoll()' public/widget/chat.js
+          git diff --check
+      - name: Commit repaired widget
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'ebixsolutions'
+          git config user.email '64578119+ebixsolutions@users.noreply.github.com'
+          git add public/widget/chat.js
+          git commit -m 'Task 5.1: restore widget and show real queue state'
+          git push origin HEAD:main
