@@ -1,0 +1,46 @@
+name: Task 5.1 Customer Runtime Final Gate
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'scripts/task5-1-final-gate.sh'
+      - '.github/workflows/task5-1-final-gate.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  final-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      PROD_ORIGIN: https://console-chat-hub.lovable.app
+      CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Verify target Edge surfaces
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SUPABASE_ACCESS_TOKEN:-}"
+          npx --yes supabase@latest functions list --project-ref "$PROJECT_REF" --output json >/tmp/functions.json
+          python - <<'PY'
+          import json
+          rows=json.load(open('/tmp/functions.json')); by={str(r.get('slug') or r.get('name')):r for r in rows}
+          for name in ['create-visitor-session','receive-widget-message','widget-poll-messages','attachment-gc']:
+              r=by.get(name); assert r,name; assert str(r.get('status','')).upper()=='ACTIVE',r
+              print(f'PASS {name} ACTIVE version={r.get("version")}')
+          PY
+      - name: Run Task 5.1 final gate
+        run: bash scripts/task5-1-final-gate.sh
