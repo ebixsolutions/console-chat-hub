@@ -1,0 +1,30 @@
+name: Task 3.3 Production Cutover Gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/task3-3-production-cutover-final-gate.sh'
+      - '.github/workflows/task3-3-production-cutover.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  final-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Production dependency security audit
+        run: npm audit --omit=dev --audit-level=high
+      - name: Production build
+        run: npm run build
+      - name: Task 3.3 production cutover final gate
+        run: bash scripts/task3-3-production-cutover-final-gate.sh
