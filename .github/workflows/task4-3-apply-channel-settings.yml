@@ -1,0 +1,49 @@
+name: Task 4.3 Apply Channel Settings Closure
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/task4-3-channel-settings-closure.py'
+      - '.github/workflows/task4-3-apply-channel-settings.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Apply exact Task 4.3 source closure
+        run: python scripts/task4-3-channel-settings-closure.py
+      - name: Source assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          grep -q 'Allowed Origins' src/routes/_authenticated/console.channel-settings.tsx
+          grep -q 'Open Real Test' src/routes/_authenticated/console.channel-settings.tsx
+          grep -q 'async updateChannelConfig' src/services/aiChatbotSettingsService.ts
+          echo TASK4_3_SOURCE_ASSERTIONS=PASS
+      - name: Install dependencies
+        run: npm ci
+      - name: Production build
+        run: npm run build
+      - name: Commit implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'ebixsolutions'
+          git config user.email '64578119+ebixsolutions@users.noreply.github.com'
+          git add src/routes/_authenticated/console.channel-settings.tsx src/services/aiChatbotSettingsService.ts
+          git commit -m 'Task 4.3: close channel settings and real test'
+          git push origin HEAD:main
