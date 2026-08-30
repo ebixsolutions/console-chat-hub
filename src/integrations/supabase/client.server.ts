@@ -5,8 +5,28 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 
+const AUTHORITATIVE_SUPABASE_PROJECT_ID = 'nrfxhqabwblzxoushgnm';
+const AUTHORITATIVE_SUPABASE_ORIGIN = `https://${AUTHORITATIVE_SUPABASE_PROJECT_ID}.supabase.co`;
+
+function assertAuthoritativeSupabaseRuntime(url: string, projectId?: string) {
+  let origin: string;
+  try {
+    origin = new URL(url).origin;
+  } catch {
+    throw new Error('[Supabase] Invalid Supabase server runtime URL.');
+  }
+
+  if (origin !== AUTHORITATIVE_SUPABASE_ORIGIN) {
+    throw new Error('[Supabase] Refusing non-authoritative Supabase server backend runtime.');
+  }
+  if (projectId && projectId !== AUTHORITATIVE_SUPABASE_PROJECT_ID) {
+    throw new Error('[Supabase] Refusing non-authoritative Supabase server project binding.');
+  }
+}
+
 function createSupabaseAdminClient() {
   const SUPABASE_URL = process.env.SUPABASE_URL;
+  const SUPABASE_PROJECT_ID = process.env.SUPABASE_PROJECT_ID;
   const SUPABASE_ADMIN_KEY = process.env.SUPABASE_SECRET_KEY;
 
   if (!SUPABASE_URL || !SUPABASE_ADMIN_KEY) {
@@ -14,10 +34,12 @@ function createSupabaseAdminClient() {
       ...(!SUPABASE_URL ? ['SUPABASE_URL'] : []),
       ...(!SUPABASE_ADMIN_KEY ? ['SUPABASE_SECRET_KEY'] : []),
     ];
-    const message = `Missing Supabase server environment variable(s): ${missing.join(', ')}.`;
+    const message = `Missing authoritative Supabase server environment variable(s): ${missing.join(', ')}.`;
     console.error(`[Supabase] ${message}`);
     throw new Error(message);
   }
+
+  assertAuthoritativeSupabaseRuntime(SUPABASE_URL, SUPABASE_PROJECT_ID);
 
   return createClient<Database>(SUPABASE_URL, SUPABASE_ADMIN_KEY, {
     auth: {
