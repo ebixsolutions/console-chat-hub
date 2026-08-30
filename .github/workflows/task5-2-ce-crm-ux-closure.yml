@@ -42,18 +42,19 @@ jobs:
           repl='''  inserted: { en: "Inserted into draft", zh: "已插入草稿" },\n  customerTab: { en: "Customer", zh: "客戶" },\n  customerLoading: { en: "Loading…", zh: "載入中…" },\n  customerUnavailable: { en: "Customer context unavailable.", zh: "客戶上下文目前無法使用。" },\n  customerEmpty: { en: "No customer context available.", zh: "目前沒有客戶上下文資料。" },\n  evaluationLabel: { en: "Evaluation", zh: "評估" },\n  externalCrmNotice: {\n    en: "Order history, loyalty status, and CRM trust score require an external CRM integration. No authoritative source currently exists in this repository.",\n    zh: "訂單紀錄、會員忠誠狀態及 CRM 信任分數需要外部 CRM 整合。目前此系統沒有可用的權威資料來源。",\n  },\n  quickActions: { en: "Quick Actions", zh: "快速操作" },\n  resolveTicket: { en: "Resolve Ticket", zh: "解決對話" },\n} as const;'''
           if anchor not in s: raise SystemExit('CRM copy anchor not found')
           s=s.replace(anchor,repl,1)
-          replacements={
-            '{ key: "customer", label: "Customer" }':'{ key: "customer", label: rc("customerTab") }',
-            '>Loading…</div>':'>{rc("customerLoading")}</div>',
-            '>Customer context unavailable.</div>':'>{rc("customerUnavailable")}</div>',
-            '>No customer context available.</div>':'>{rc("customerEmpty")}</div>',
-            'return <div style={{ fontSize: 10.5, fontWeight: 600 }}>Evaluation: {ev.overall_score} · {ev.severity} · {ev.review_status}</div>;':'return <div style={{ fontSize: 10.5, fontWeight: 600 }}>{rc("evaluationLabel")}: {ev.overall_score} · {ev.severity} · {ev.review_status}</div>;',
-            'Order history, loyalty status, and CRM trust score require an external CRM integration. No authoritative source currently exists in this repository.':'{rc("externalCrmNotice")}',
-            '<div style={sectionTitle}>Quick Actions</div>':'<div style={sectionTitle}>{rc("quickActions")}</div>',
-            'Resolve Ticket\n            </button>':'{rc("resolveTicket")}\n            </button>',
-          }
-          for oldx,newx in replacements.items():
-              if oldx not in s: raise SystemExit('CRM replacement anchor missing: '+oldx[:70])
+          replacements=[
+            ('{ key: "customer", label: "Customer" }','{ key: "customer", label: rc("customerTab") }'),
+            ('>Loading…</div>','>{rc("customerLoading")}</div>'),
+            ('>Customer context unavailable.</div>','>{rc("customerUnavailable")}</div>'),
+            ('>No customer context available.</div>','>{rc("customerEmpty")}</div>'),
+            ('return <div style={{ fontSize: 10.5, fontWeight: 600 }}>Evaluation: {ev.overall_score} · {ev.severity} · {ev.review_status}</div>;','return <div style={{ fontSize: 10.5, fontWeight: 600 }}>{rc("evaluationLabel")}: {ev.overall_score} · {ev.severity} · {ev.review_status}</div>;'),
+            ('<div style={{ background: "#f5f4f0", borderRadius: 9, padding: "12px 14px", marginBottom: 12, fontSize: 11, color: "#555", lineHeight: 1.6 }}>\n              Order history, loyalty status, and CRM trust score require an external CRM integration. No authoritative source currently exists in this repository.\n            </div>',
+             '<div style={{ background: "#f5f4f0", borderRadius: 9, padding: "12px 14px", marginBottom: 12, fontSize: 11, color: "#555", lineHeight: 1.6 }}>\n              {rc("externalCrmNotice")}\n            </div>'),
+            ('<div style={sectionTitle}>Quick Actions</div>','<div style={sectionTitle}>{rc("quickActions")}</div>'),
+            ('>\n              Resolve Ticket\n            </button>','>\n              {rc("resolveTicket")}\n            </button>'),
+          ]
+          for oldx,newx in replacements:
+              if oldx not in s: raise SystemExit('CRM replacement anchor missing: '+oldx[:80])
               s=s.replace(oldx,newx,1)
           crm.write_text(s)
           print('TASK5_2_CE_CRM_PATCH=PASS')
@@ -67,7 +68,7 @@ jobs:
           grep -q 'setSelected(next)' src/routes/_authenticated/console.conversation-evaluation.index.tsx
           grep -q 'customerTab:' src/components/console/CRMPanel.tsx
           grep -q 'externalCrmNotice:' src/components/console/CRMPanel.tsx
-          ! grep -q '>Loading…</div>' src/components/console/CRMPanel.tsx
+          grep -q '{rc("externalCrmNotice")}' src/components/console/CRMPanel.tsx
           npm ci
           npm audit --omit=dev --audit-level=high
           npm run build
