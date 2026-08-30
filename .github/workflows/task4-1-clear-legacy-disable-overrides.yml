@@ -1,0 +1,44 @@
+name: Task 4.1 Clear Legacy Disable Overrides
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/task4-1-clear-legacy-disable-overrides.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  clear:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Remove legacy explicit-disable runtime overrides
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SUPABASE_ACCESS_TOKEN:-}"
+          # These switches are now product-default-on in authoritative source.
+          # Removing an old secret override is deterministic and does not expose values.
+          for name in ENABLE_KB_ADAPTER ESC_ENABLE_REQUIRED_RULES_LIVE ESC_ENABLE_S0; do
+            npx --yes supabase@latest secrets unset "$name" --project-ref "$PROJECT_REF" >/tmp/unset-${name}.log 2>&1 || {
+              # Supabase CLI may return nonzero if the name is absent; verify by name-only list below.
+              true
+            }
+          done
+          npx --yes supabase@latest secrets list --project-ref "$PROJECT_REF" --output json >/tmp/secrets.json
+          python - <<'PY'
+          import json
+          rows=json.load(open('/tmp/secrets.json'))
+          names={str(r.get('name','')) for r in rows if isinstance(r,dict)}
+          forbidden={'ENABLE_KB_ADAPTER','ESC_ENABLE_REQUIRED_RULES_LIVE','ESC_ENABLE_S0'}
+          remain=sorted(forbidden & names)
+          assert not remain, f'legacy disable overrides remain: {remain}'
+          print('PASS: legacy disable overrides absent; canonical defaults active')
+          PY
