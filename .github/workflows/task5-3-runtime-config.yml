@@ -1,0 +1,41 @@
+name: Task 5.3 Governed Vertex Runtime Config
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/task5-3-runtime-config.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  configure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set non-secret governed Vertex runtime configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SUPABASE_ACCESS_TOKEN:-}"
+          npx --yes supabase@latest secrets set --project-ref "$PROJECT_REF" \
+            LLM_PROVIDER=vertex \
+            LLM_MODEL_ASSIST=gemini-2.5-flash \
+            GOOGLE_PROJECT_ID=vertex-ai-api-491406 \
+            GOOGLE_REGION=asia-southeast1
+          npx --yes supabase@latest secrets list --project-ref "$PROJECT_REF" --output json >/tmp/names.json
+          python - <<'PY'
+          import json
+          rows=json.load(open('/tmp/names.json')); names={str(r.get('name') or '') for r in rows}
+          for n in ('LLM_PROVIDER','LLM_MODEL_ASSIST','GOOGLE_PROJECT_ID','GOOGLE_REGION'):
+              assert n in names,n
+          print('PASS governed Vertex non-secret runtime config installed')
+          print('GOOGLE_SERVICE_ACCOUNT_JSON_PRESENT='+('1' if 'GOOGLE_SERVICE_ACCOUNT_JSON' in names else '0'))
+          print('KB_SINGAPORE_TENANT_API_KEYS_JSON_PRESENT='+('1' if 'KB_SINGAPORE_TENANT_API_KEYS_JSON' in names else '0'))
+          PY
