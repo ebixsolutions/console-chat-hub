@@ -29,7 +29,7 @@ Deno.serve(async (req) => {
     const { data: thinking, error: thinkingError } = await supabase.from("messages").select("id")
       .eq("conversation_id", conversation_id).eq("content", "__THINKING__").eq("is_recalled", false).limit(1);
     if (thinkingError) return json({ success: false, error: "thinking_lookup_failed" }, 500);
-    let query = supabase.from("messages").select("id, role, content, status, created_at, metadata")
+    let query = supabase.from("messages").select("id, role, content, content_type, status, created_at, metadata")
       .eq("conversation_id", conversation_id).eq("is_recalled", false).neq("content", "__THINKING__")
       .order("created_at", { ascending: true }).order("id", { ascending: true });
     if (after_message_id) {
