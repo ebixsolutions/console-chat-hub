@@ -1,0 +1,63 @@
+name: Task 3.3 Conversational Runtime Closure
+
+on:
+  push:
+    branches:
+      - task3-3-conversational-runtime-closure
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: task3-3-conversational-runtime-closure
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Apply deterministic source patches if needed
+        run: |
+          if grep -q 'conversation-intelligence.ts' supabase/functions/generate-reply/index.ts; then
+            echo 'Base conversational patch already applied.'
+          else
+            python3 scripts/task3-3-conversational-runtime-patch.py
+          fi
+          if grep -q 'buildConversationContinuityBlock' supabase/functions/generate-reply/index.ts; then
+            echo 'Continuity enhancement already applied.'
+          else
+            python3 scripts/task3-3-continuity-enhancement.py
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Single Task 3.3 final gate
+        run: bash scripts/w3-task3-3-conversational-final-gate.sh
+
+      - name: Commit generated implementation when patch step changed files
+        run: |
+          TARGETS=(
+            supabase/functions/generate-reply/index.ts
+            supabase/functions/_shared/conversation-intelligence.ts
+            supabase/functions/_shared/escalation-rules.ts
+            supabase/functions/_shared/escalation-shadow.ts
+            supabase/functions/widget-live-ai-test/index.ts
+            src/routes/_authenticated/console.widget-preview.tsx
+          )
+          if git diff --quiet -- "${TARGETS[@]}"; then
+            echo 'No generated target-source changes; current branch validated.'
+            exit 0
+          fi
+          git config user.name 'Task3.3 Director Automation'
+          git config user.email 'actions@users.noreply.github.com'
+          git add "${TARGETS[@]}"
+          git commit -m 'Task 3.3: continuous conversational runtime closure [task3-3-generated]'
+          git push origin HEAD:task3-3-conversational-runtime-closure
