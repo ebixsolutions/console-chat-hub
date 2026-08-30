@@ -1,0 +1,82 @@
+name: Task 5.2 CE CRM UX Closure
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/task5-2-ce-crm-ux-closure.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Patch CE visible-selection invariant and CRM bilingual copy
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          ce=Path('src/routes/_authenticated/console.conversation-evaluation.index.tsx')
+          s=ce.read_text()
+          old='''  useEffect(() => {\n    if (!selected && pageRows.length > 0) {\n      setSelected(pageRows[0].conversation_id);\n      setRunId(pageRows[0].conversation_id);\n    }\n  }, [selected, pageRows]);\n'''
+          new='''  useEffect(() => {\n    const visibleIds = new Set(pageRows.map((row) => row.conversation_id));\n    if (selected && visibleIds.has(selected)) return;\n    const next = pageRows[0]?.conversation_id ?? null;\n    dwellGeneration.current += 1;\n    setSelected(next);\n    setRunId(next ?? "");\n  }, [selected, pageRows]);\n'''
+          if old not in s: raise SystemExit('CE selection anchor not found')
+          ce.write_text(s.replace(old,new,1))
+
+          crm=Path('src/components/console/CRMPanel.tsx')
+          s=crm.read_text()
+          anchor='''  inserted: { en: "Inserted into draft", zh: "已插入草稿" },\n} as const;'''
+          repl='''  inserted: { en: "Inserted into draft", zh: "已插入草稿" },\n  customerTab: { en: "Customer", zh: "客戶" },\n  customerLoading: { en: "Loading…", zh: "載入中…" },\n  customerUnavailable: { en: "Customer context unavailable.", zh: "客戶上下文目前無法使用。" },\n  customerEmpty: { en: "No customer context available.", zh: "目前沒有客戶上下文資料。" },\n  evaluationLabel: { en: "Evaluation", zh: "評估" },\n  externalCrmNotice: {\n    en: "Order history, loyalty status, and CRM trust score require an external CRM integration. No authoritative source currently exists in this repository.",\n    zh: "訂單紀錄、會員忠誠狀態及 CRM 信任分數需要外部 CRM 整合。目前此系統沒有可用的權威資料來源。",\n  },\n  quickActions: { en: "Quick Actions", zh: "快速操作" },\n  resolveTicket: { en: "Resolve Ticket", zh: "解決對話" },\n} as const;'''
+          if anchor not in s: raise SystemExit('CRM copy anchor not found')
+          s=s.replace(anchor,repl,1)
+          replacements={
+            '{ key: "customer", label: "Customer" }':'{ key: "customer", label: rc("customerTab") }',
+            '>Loading…</div>':'>{rc("customerLoading")}</div>',
+            '>Customer context unavailable.</div>':'>{rc("customerUnavailable")}</div>',
+            '>No customer context available.</div>':'>{rc("customerEmpty")}</div>',
+            'return <div style={{ fontSize: 10.5, fontWeight: 600 }}>Evaluation: {ev.overall_score} · {ev.severity} · {ev.review_status}</div>;':'return <div style={{ fontSize: 10.5, fontWeight: 600 }}>{rc("evaluationLabel")}: {ev.overall_score} · {ev.severity} · {ev.review_status}</div>;',
+            'Order history, loyalty status, and CRM trust score require an external CRM integration. No authoritative source currently exists in this repository.':'{rc("externalCrmNotice")}',
+            '<div style={sectionTitle}>Quick Actions</div>':'<div style={sectionTitle}>{rc("quickActions")}</div>',
+            'Resolve Ticket\n            </button>':'{rc("resolveTicket")}\n            </button>',
+          }
+          for oldx,newx in replacements.items():
+              if oldx not in s: raise SystemExit('CRM replacement anchor missing: '+oldx[:70])
+              s=s.replace(oldx,newx,1)
+          crm.write_text(s)
+          print('TASK5_2_CE_CRM_PATCH=PASS')
+          PY
+      - name: Assertions and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          grep -q 'visibleIds.has(selected)' src/routes/_authenticated/console.conversation-evaluation.index.tsx
+          grep -q 'setSelected(next)' src/routes/_authenticated/console.conversation-evaluation.index.tsx
+          grep -q 'customerTab:' src/components/console/CRMPanel.tsx
+          grep -q 'externalCrmNotice:' src/components/console/CRMPanel.tsx
+          ! grep -q '>Loading…</div>' src/components/console/CRMPanel.tsx
+          npm ci
+          npm audit --omit=dev --audit-level=high
+          npm run build
+      - name: Commit implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'ebixsolutions'
+          git config user.email '64578119+ebixsolutions@users.noreply.github.com'
+          git add src/routes/_authenticated/console.conversation-evaluation.index.tsx src/components/console/CRMPanel.tsx
+          git commit -m 'Task 5.2: keep CE detail scoped and localize CRM states'
+          git push origin HEAD:main
