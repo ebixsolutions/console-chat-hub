@@ -1,0 +1,124 @@
+name: Task 5.1 Customer Runtime Production Smoke
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/task5-1-production-smoke.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PROD_ORIGIN: https://console-chat-hub.lovable.app
+      CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Emoji image file queue reconnect smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a; source .env; set +a
+          BASE="${VITE_SUPABASE_FUNCTIONS_URL}"
+          CREATE=$(curl -fsS -X POST -H "Origin: ${PROD_ORIGIN}" -H 'Content-Type: application/json' \
+            --data "{\"channel_id\":\"${CHANNEL_ID}\",\"visitor_metadata\":{\"task51_smoke\":true,\"exclude_training\":true}}" \
+            "${BASE}/create-visitor-session")
+          python - <<'PY' "$CREATE" >/tmp/task51.env
+          import json,sys,shlex
+          d=json.loads(sys.argv[1]); assert d.get('success') is True,d
+          x=d['data']
+          print('CONVERSATION_ID='+shlex.quote(x['conversation_id']))
+          print('SESSION_TOKEN='+shlex.quote(x['session_token']))
+          PY
+          source /tmp/task51.env
+          echo "TASK51_CONVERSATION_ID=${CONVERSATION_ID}"
+
+          IDEM=$(python - <<'PY'
+          import uuid; print(uuid.uuid4())
+          PY
+          )
+          EMOJI=$(curl -fsS -X POST -H "Origin: ${PROD_ORIGIN}" -H 'Content-Type: application/json' -H "idempotency-key: ${IDEM}" \
+            --data "{\"conversation_id\":\"${CONVERSATION_ID}\",\"session_token\":\"${SESSION_TOKEN}\",\"content\":\"😊 ❤️ 👍\"}" \
+            "${BASE}/receive-widget-message")
+          python - <<'PY' "$EMOJI"
+          import json,sys
+          d=json.loads(sys.argv[1]); assert d.get('success') is True,d
+          print('PASS emoji send accepted')
+          PY
+
+          python - <<'PY'
+          import base64
+          png=base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII=')
+          open('/tmp/task51.png','wb').write(png)
+          open('/tmp/task51.txt','w').write('Task 5.1 attachment lifecycle smoke\n')
+          PY
+
+          PNG=$(curl -fsS -X POST -H "Origin: ${PROD_ORIGIN}" \
+            -F "conversation_id=${CONVERSATION_ID}" -F "session_token=${SESSION_TOKEN}" -F "file=@/tmp/task51.png;type=image/png" \
+            "${BASE}/receive-widget-message")
+          TXT=$(curl -fsS -X POST -H "Origin: ${PROD_ORIGIN}" \
+            -F "conversation_id=${CONVERSATION_ID}" -F "session_token=${SESSION_TOKEN}" -F "file=@/tmp/task51.txt;type=text/plain" \
+            "${BASE}/receive-widget-message")
+          python - <<'PY' "$PNG" "$TXT"
+          import json,sys
+          p=json.loads(sys.argv[1]); t=json.loads(sys.argv[2])
+          assert p.get('success') is True,p
+          assert p['data'].get('content_type')=='image',p
+          assert t.get('success') is True,t
+          assert t['data'].get('content_type')=='file',t
+          print('PASS PNG upload transaction')
+          print('PASS TXT upload transaction')
+          PY
+
+          HANDOFF=$(curl -fsS -X POST -H "Origin: ${PROD_ORIGIN}" -H 'Content-Type: application/json' \
+            --data "{\"conversation_id\":\"${CONVERSATION_ID}\",\"session_token\":\"${SESSION_TOKEN}\",\"content\":\"I want a human agent now\"}" \
+            "${BASE}/receive-widget-message")
+          python - <<'PY' "$HANDOFF"
+          import json,sys
+          d=json.loads(sys.argv[1]); assert d.get('success') is True,d
+          print('PASS explicit handoff accepted')
+          PY
+          sleep 4
+
+          POLL=$(curl -fsS -X POST -H "Origin: ${PROD_ORIGIN}" -H 'Content-Type: application/json' \
+            --data "{\"conversation_id\":\"${CONVERSATION_ID}\",\"session_token\":\"${SESSION_TOKEN}\"}" \
+            "${BASE}/widget-poll-messages")
+          python - <<'PY' "$POLL"
+          import json,sys
+          d=json.loads(sys.argv[1]); assert d.get('success') is True,d
+          x=d['data']; hs=x.get('human_support') or {}; msgs=x.get('messages') or []
+          assert x.get('conversation_status')=='pending',x
+          assert hs.get('state')=='waiting',hs
+          pos=hs.get('queue_position'); ahead=hs.get('customers_ahead')
+          assert isinstance(pos,int) and pos>=1,hs
+          assert isinstance(ahead,int) and ahead==pos-1,hs
+          eta=hs.get('estimated_wait_minutes'); assert eta is None or (isinstance(eta,int) and eta>=1),hs
+          assert any(m.get('content')=='😊 ❤️ 👍' for m in msgs),msgs
+          assert any(m.get('content_type')=='image' and (m.get('metadata') or {}).get('original_name')=='task51.png' for m in msgs),msgs
+          assert any(m.get('content_type')=='file' and (m.get('metadata') or {}).get('original_name')=='task51.txt' for m in msgs),msgs
+          print(f'PASS queue position={pos} customers_ahead={ahead} eta={eta}')
+          print('PASS emoji persisted/polled')
+          print('PASS image persisted/polled/content_type')
+          print('PASS file persisted/polled/content_type')
+          PY
+
+          POLL2=$(curl -fsS -X POST -H "Origin: ${PROD_ORIGIN}" -H 'Content-Type: application/json' \
+            --data "{\"conversation_id\":\"${CONVERSATION_ID}\",\"session_token\":\"${SESSION_TOKEN}\"}" \
+            "${BASE}/widget-poll-messages")
+          python - <<'PY' "$POLL2"
+          import json,sys
+          d=json.loads(sys.argv[1]); assert d.get('success') is True,d
+          hs=d['data'].get('human_support') or {}
+          assert hs.get('state')=='waiting',hs
+          assert isinstance(hs.get('queue_position'),int),hs
+          print('PASS reconnect poll retained queue state')
+          print('TASK5_1_CUSTOMER_RUNTIME_SMOKE=PASS')
+          PY
