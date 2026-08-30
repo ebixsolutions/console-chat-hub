@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'supabase/functions/widget-poll-messages/**'
+      - 'supabase/functions/receive-widget-message/**'
       - 'supabase/functions/attachment-gc/**'
       - '.github/workflows/task5-1-deploy-runtime.yml'
   workflow_dispatch: {}
@@ -31,6 +32,8 @@ jobs:
           test -n "${SUPABASE_ACCESS_TOKEN:-}"
           grep -q 'nrfxhqabwblzxoushgnm' .env
           npx --yes supabase@latest --version
+      - name: Deploy widget receiver
+        run: npx --yes supabase@latest functions deploy receive-widget-message --project-ref "$PROJECT_REF"
       - name: Deploy widget poll queue runtime
         run: npx --yes supabase@latest functions deploy widget-poll-messages --project-ref "$PROJECT_REF"
       - name: Deploy attachment GC
