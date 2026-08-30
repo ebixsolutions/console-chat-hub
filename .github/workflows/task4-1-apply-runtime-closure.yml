@@ -1,0 +1,41 @@
+name: Task 4.1 Apply Runtime Closure
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/task4-1-apply-runtime-closure.py'
+      - '.github/workflows/task4-1-apply-runtime-closure.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply exact source patch
+        run: python scripts/task4-1-apply-runtime-closure.py
+      - name: Commit authoritative source changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo 'Task 4.1 source already applied.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add supabase/functions/generate-reply/index.ts \
+                  supabase/functions/_shared/kb-client.ts \
+                  supabase/functions/_shared/llm-router.ts
+          git commit -m 'Task 4.1: activate canonical AI KB runtime'
+          git push origin HEAD:main
