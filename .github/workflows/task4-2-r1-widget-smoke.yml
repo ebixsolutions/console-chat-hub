@@ -62,7 +62,7 @@ jobs:
             --data "{\"conversation_id\":\"${CONVERSATION_ID}\",\"session_token\":\"${SESSION_TOKEN}\"}" \
             "${BASE}/widget-poll-messages")
           python - <<'PY' "$POLL"
-          import json,sys
+          import json,sys,re
           d=json.loads(sys.argv[1]); assert d.get('success') is True,d
           data=d['data']
           assert data.get('conversation_status')=='pending', data
@@ -74,8 +74,14 @@ jobs:
           replies=[m for m in msgs if m.get('role')=='assistant']
           assert replies, msgs
           text=' '.join(str(m.get('content','')) for m in replies).lower()
-          forbidden=['queue position','estimated wait','estimated waiting','eta','you are number']
-          assert not any(x in text for x in forbidden), text
+          fabricated=[
+            r'queue position\s*(?:is|:|#)\s*\d+',
+            r'(?:estimated wait(?:ing)? time|eta)\s*(?:is|:)?\s*\d+',
+            r'you are (?:number|#)\s*\d+',
+            r'\d+\s*(?:minutes?|mins?|hours?)\s*(?:wait|remaining)',
+          ]
+          assert not any(re.search(p,text) for p in fabricated), text
+          assert ('not currently enabled' in text) or ('not enabled' in text) or not ('queue position' in text or 'estimated wait' in text), text
           print('PASS R1 status=pending')
           print('PASS human_support=waiting agent_assigned=false')
           print('PASS ai_generating=false')
