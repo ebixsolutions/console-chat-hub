@@ -27,6 +27,7 @@ export interface ChannelConfig {
   recall_supported: boolean;
   recall_time_limit_minutes: number;
   notes: string;
+  allowed_origins: string[];
 }
 
 export interface FeedbackRequest {
@@ -57,6 +58,7 @@ function deriveChannel(row: LiveChannelConfigRow): ChannelConfig {
       recall_supported: true,
       recall_time_limit_minutes: 10,
       notes: "Website widget channel",
+      allowed_origins: Array.isArray(row.allowed_origins) ? row.allowed_origins : [],
     };
   }
 
@@ -79,6 +81,7 @@ function deriveChannel(row: LiveChannelConfigRow): ChannelConfig {
       type === "email"
         ? "Email provider contract is not configured"
         : `${row.name || rawType} production capability is not enabled`,
+    allowed_origins: Array.isArray(row.allowed_origins) ? row.allowed_origins : [],
   };
 }
 
@@ -144,6 +147,21 @@ export const aiChatbotSettingsService = {
       return { data: res.data.map(deriveChannel), source: "live" };
     } catch (e) {
       return { data: null, source: "error", error: (e as Error).message };
+    }
+  },
+
+  async updateChannelConfig(params: {
+    channel_id: string;
+    name?: string;
+    is_active?: boolean;
+    allowed_origins?: string[];
+  }): Promise<{ ok: true; data: ChannelConfig } | { ok: false; error: string }> {
+    try {
+      const res = await configService.updateChannelConfig(params);
+      if (!res.ok || !res.data) return { ok: false, error: res.error ?? "Channel update failed" };
+      return { ok: true, data: deriveChannel(res.data) };
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
     }
   },
 

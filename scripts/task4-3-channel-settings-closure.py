@@ -73,7 +73,7 @@ replace_once(route,
   const beginEdit = (ch: ChannelConfig) => {
     setEditingChannelId(ch.id);
     setEditName(ch.channel_name);
-    setEditOrigins(ch.allowed_origins.join("\n"));
+    setEditOrigins(ch.allowed_origins.join("\\n"));
     setEditActive(ch.is_active);
     setSaveError(null);
   };
