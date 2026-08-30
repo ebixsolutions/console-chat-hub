@@ -40,7 +40,7 @@ jobs:
         run: npm ci
       - name: Production dependency security audit
         run: npm audit --omit=dev --audit-level=high
-      - name: Credential-independent conversational / escalation / KB regression
+      - name: Credential-independent conversational escalation KB regression
         run: npx --yes tsx scripts/task4-1-source-runtime-regression.ts
       - name: Runtime authority and legacy-backend guard
         shell: bash
@@ -107,4 +107,5 @@ jobs:
           print('PASS: required Vertex and Singapore KB credential names present')
           PY
       - name: Task 4.1 READY marker
-        run: echo 'TASK 4.1 FINAL GATE: PASS — READY'
+        run: |
+          echo 'TASK 4.1 FINAL GATE: PASS — READY'
