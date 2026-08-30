@@ -45,8 +45,10 @@ jobs:
               print(f'CONFIG_{label}=' + ('PRESENT' if all(x in names for x in req) else 'MISSING'))
           cred=any(x in names for x in ['KB_SINGAPORE_TENANT_API_KEYS_JSON','KB_SINGAPORE_JWT_SECRET','KB_RAG_TENANT_TOKENS_JSON','KB_RAG_TOKEN'])
           print('CONFIG_KB_CREDENTIAL=' + ('PRESENT' if cred else 'MISSING'))
+          for legacy in ['ENABLE_KB_ADAPTER','ESC_ENABLE_REQUIRED_RULES_LIVE','ESC_ENABLE_S0']:
+              print(f'CONFIG_{legacy}=' + ('PRESENT' if legacy in names else 'ABSENT'))
           PY
-      - name: Production widget canonical runtime smoke
+      - name: Production widget canonical runtime smoke after override cleanup
         shell: bash
         run: |
           set -euo pipefail
@@ -55,7 +57,7 @@ jobs:
           CREATE=$(curl -fsS -X POST \
             -H "Origin: ${PROD_ORIGIN}" \
             -H 'Content-Type: application/json' \
-            --data "{\"channel_id\":\"${CHANNEL_ID}\",\"visitor_metadata\":{\"task41_production_smoke\":true,\"exclude_training\":true}}" \
+            --data "{\"channel_id\":\"${CHANNEL_ID}\",\"visitor_metadata\":{\"task41_production_smoke\":true,\"task41_after_override_cleanup\":true,\"exclude_training\":true}}" \
             "${BASE}/create-visitor-session")
           python - <<'PY' "$CREATE" > /tmp/session.env
           import json,sys
