@@ -1,0 +1,169 @@
+name: Task 5.1 Remaining Runtime Matrix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/task5-1-remaining-runtime-matrix.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PROD_ORIGIN: https://console-chat-hub.lovable.app
+      CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Run remaining Task 5.1 runtime matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a; source .env; set +a
+          BASE="${VITE_SUPABASE_FUNCTIONS_URL}"
+
+          create_session() {
+            local tag="$1"
+            curl -fsS -X POST \
+              -H "Origin: ${PROD_ORIGIN}" \
+              -H 'Content-Type: application/json' \
+              --data "{\"channel_id\":\"${CHANNEL_ID}\",\"visitor_metadata\":{\"task51_remaining_matrix\":true,\"tag\":\"${tag}\",\"exclude_training\":true}}" \
+              "${BASE}/create-visitor-session"
+          }
+
+          A=$(create_session A)
+          B=$(create_session B)
+          python - <<'PY' "$A" "$B" >/tmp/task51-matrix.env
+          import json,sys,shlex
+          for label,arg in [('A',sys.argv[1]),('B',sys.argv[2])]:
+              d=json.loads(arg); assert d.get('success') is True,d
+              x=d['data']
+              print(f'{label}_CONV='+shlex.quote(x['conversation_id']))
+              print(f'{label}_TOKEN='+shlex.quote(x['session_token']))
+          PY
+          source /tmp/task51-matrix.env
+          echo "TASK51_MATRIX_A=${A_CONV}"
+          echo "TASK51_MATRIX_B=${B_CONV}"
+
+          python - <<'PY'
+          import base64
+          files={
+            '/tmp/t51.jpg':'/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAf/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAF//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABBQJ//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAwEBPwF//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAgEBPwF//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQAGPwJ//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPyF//9oADAMBAAIAAwAAABAf/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAwEBPxB//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAgEBPxB//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxB//9k=',
+            '/tmp/t51.gif':'R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==',
+            '/tmp/t51.webp':'UklGRiIAAABXRUJQVlA4TAYAAAAvAAAAAAfQ//73v/+BiOh/AAA='
+          }
+          for p,b64 in files.items(): open(p,'wb').write(base64.b64decode(b64))
+          open('/tmp/t51.bad','wb').write(b'MZ-not-an-allowed-file')
+          with open('/tmp/t51-big.bin','wb') as f:
+              f.seek(10*1024*1024)
+              f.write(b'X')
+          PY
+
+          upload_ok() {
+            local path="$1" mime="$2" name="$3" client_id="$4"
+            curl -fsS -X POST \
+              -H "Origin: ${PROD_ORIGIN}" \
+              -F "conversation_id=${A_CONV}" \
+              -F "session_token=${A_TOKEN}" \
+              -F "client_message_id=${client_id}" \
+              -F "file=@${path};type=${mime};filename=${name}" \
+              "${BASE}/receive-widget-message"
+          }
+
+          JPG=$(upload_ok /tmp/t51.jpg image/jpeg matrix.jpg "$(python - <<'PY'
+          import uuid; print(uuid.uuid4())
+          PY
+          )")
+          WEBP=$(upload_ok /tmp/t51.webp image/webp matrix.webp "$(python - <<'PY'
+          import uuid; print(uuid.uuid4())
+          PY
+          )")
+          GIF=$(upload_ok /tmp/t51.gif image/gif matrix.gif "$(python - <<'PY'
+          import uuid; print(uuid.uuid4())
+          PY
+          )")
+          python - <<'PY' "$JPG" "$WEBP" "$GIF"
+          import json,sys
+          for label,arg in zip(['JPEG','WEBP','GIF'],sys.argv[1:]):
+              d=json.loads(arg); assert d.get('success') is True,(label,d)
+              assert d['data'].get('content_type')=='image',(label,d)
+              print(f'PASS {label} upload')
+          PY
+
+          BAD_CODE=$(curl -sS -o /tmp/t51-bad.json -w '%{http_code}' -X POST \
+            -H "Origin: ${PROD_ORIGIN}" \
+            -F "conversation_id=${A_CONV}" -F "session_token=${A_TOKEN}" \
+            -F "file=@/tmp/t51.bad;type=application/x-msdownload;filename=bad.exe" \
+            "${BASE}/receive-widget-message")
+          python - <<'PY' "$BAD_CODE"
+          import json,sys
+          code=int(sys.argv[1]); d=json.load(open('/tmp/t51-bad.json'))
+          assert code==400,(code,d); assert d.get('error')=='unsupported_file_type',d
+          print('PASS invalid MIME rejected')
+          PY
+
+          BIG_CODE=$(curl -sS -o /tmp/t51-big.json -w '%{http_code}' -X POST \
+            -H "Origin: ${PROD_ORIGIN}" \
+            -F "conversation_id=${A_CONV}" -F "session_token=${A_TOKEN}" \
+            -F "file=@/tmp/t51-big.bin;type=application/pdf;filename=big.pdf" \
+            "${BASE}/receive-widget-message")
+          python - <<'PY' "$BIG_CODE"
+          import json,sys
+          code=int(sys.argv[1]); d=json.load(open('/tmp/t51-big.json'))
+          assert code==400,(code,d); assert d.get('error')=='file_too_large',d
+          print('PASS >10MB rejected')
+          PY
+
+          IDEM=$(python - <<'PY'
+          import uuid; print(uuid.uuid4())
+          PY
+          )
+          FIRST=$(upload_ok /tmp/t51.gif image/gif duplicate.gif "$IDEM")
+          SECOND=$(upload_ok /tmp/t51.gif image/gif duplicate.gif "$IDEM")
+          python - <<'PY' "$FIRST" "$SECOND"
+          import json,sys
+          a=json.loads(sys.argv[1]); b=json.loads(sys.argv[2])
+          assert a.get('success') is True and b.get('success') is True,(a,b)
+          assert a['data']['message_id']==b['data']['message_id'],(a,b)
+          assert a['data'].get('idempotent') is False,a
+          assert b['data'].get('idempotent') is True,b
+          print('PASS attachment idempotency retry')
+          PY
+
+          ISO_CODE=$(curl -sS -o /tmp/t51-iso.json -w '%{http_code}' -X POST \
+            -H "Origin: ${PROD_ORIGIN}" \
+            -F "conversation_id=${A_CONV}" -F "session_token=${B_TOKEN}" \
+            -F "file=@/tmp/t51.gif;type=image/gif;filename=cross.gif" \
+            "${BASE}/receive-widget-message")
+          python - <<'PY' "$ISO_CODE"
+          import json,sys
+          code=int(sys.argv[1]); d=json.load(open('/tmp/t51-iso.json'))
+          assert code in (401,404),(code,d)
+          assert d.get('success') is False,d
+          print(f'PASS session/cross-conversation isolation HTTP {code}')
+          PY
+
+          POLL=$(curl -fsS -X POST -H "Origin: ${PROD_ORIGIN}" -H 'Content-Type: application/json' \
+            --data "{\"conversation_id\":\"${A_CONV}\",\"session_token\":\"${A_TOKEN}\"}" \
+            "${BASE}/widget-poll-messages")
+          python - <<'PY' "$POLL"
+          import json,sys,collections
+          d=json.loads(sys.argv[1]); assert d.get('success') is True,d
+          msgs=d['data'].get('messages') or []
+          names=[(m.get('metadata') or {}).get('original_name') for m in msgs]
+          for name in ['matrix.jpg','matrix.webp','matrix.gif']:
+              assert names.count(name)==1,(name,names)
+          assert names.count('duplicate.gif')==1,names
+          for m in msgs:
+              md=m.get('metadata') or {}
+              assert 'storage_bucket' not in md and 'storage_path' not in md,(m,md)
+          print('PASS poll image matrix + one logical duplicate message + no locator leak')
+          PY
+
+          echo 'TASK 5.1 REMAINING RUNTIME MATRIX: PASS'
