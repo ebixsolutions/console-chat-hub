@@ -1,0 +1,100 @@
+name: Task 4.1 Runtime Config And Smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/task4-1-runtime-config-and-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+      PROD_ORIGIN: https://console-chat-hub.lovable.app
+      CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Check custom runtime secret names only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SUPABASE_ACCESS_TOKEN:-}"
+          npx --yes supabase@latest secrets list --project-ref "$PROJECT_REF" --output json > /tmp/secrets.json
+          python - <<'PY'
+          import json
+          rows=json.load(open('/tmp/secrets.json'))
+          names={str(r.get('name','')) for r in rows if isinstance(r,dict)}
+          groups={
+            'LLM_PROVIDER':['LLM_PROVIDER'],
+            'LLM_MODEL_GENERATION':['LLM_MODEL_GENERATION'],
+            'GOOGLE_SERVICE_ACCOUNT_JSON':['GOOGLE_SERVICE_ACCOUNT_JSON'],
+            'GOOGLE_PROJECT_ID':['GOOGLE_PROJECT_ID'],
+            'GOOGLE_REGION':['GOOGLE_REGION'],
+            'KB_SINGAPORE_TENANT_MAP_JSON':['KB_SINGAPORE_TENANT_MAP_JSON'],
+          }
+          for label,req in groups.items():
+              print(f'CONFIG_{label}=' + ('PRESENT' if all(x in names for x in req) else 'MISSING'))
+          cred=any(x in names for x in ['KB_SINGAPORE_TENANT_API_KEYS_JSON','KB_SINGAPORE_JWT_SECRET','KB_RAG_TENANT_TOKENS_JSON','KB_RAG_TOKEN'])
+          print('CONFIG_KB_CREDENTIAL=' + ('PRESENT' if cred else 'MISSING'))
+          PY
+      - name: Production widget canonical runtime smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a; source .env; set +a
+          BASE="${VITE_SUPABASE_FUNCTIONS_URL}"
+          CREATE=$(curl -fsS -X POST \
+            -H "Origin: ${PROD_ORIGIN}" \
+            -H 'Content-Type: application/json' \
+            --data "{\"channel_id\":\"${CHANNEL_ID}\",\"visitor_metadata\":{\"task41_production_smoke\":true,\"exclude_training\":true}}" \
+            "${BASE}/create-visitor-session")
+          python - <<'PY' "$CREATE" > /tmp/session.env
+          import json,sys
+          d=json.loads(sys.argv[1]); assert d.get('success') is True, d
+          x=d['data']
+          print('CONVERSATION_ID='+x['conversation_id'])
+          print('SESSION_TOKEN='+x['session_token'])
+          PY
+          source /tmp/session.env
+          CLIENT_ID=$(python - <<'PY'
+          import uuid; print(uuid.uuid4())
+          PY
+          )
+          HTTP=$(curl -sS -o /tmp/send.json -w '%{http_code}' -X POST \
+            -H "Origin: ${PROD_ORIGIN}" \
+            -H 'Content-Type: application/json' \
+            -H "idempotency-key: ${CLIENT_ID}" \
+            --data "{\"conversation_id\":\"${CONVERSATION_ID}\",\"session_token\":\"${SESSION_TOKEN}\",\"content\":\"What is your return policy?\"}" \
+            "${BASE}/receive-widget-message")
+          echo "WIDGET_SEND_HTTP=${HTTP}"
+          python - <<'PY' /tmp/send.json
+          import json,sys
+          d=json.load(open(sys.argv[1])); print('WIDGET_SEND_SUCCESS='+str(d.get('success')).lower()); print('WIDGET_SEND_ERROR='+str(d.get('error','none')))
+          PY
+          sleep 8
+          POLL=$(curl -fsS -X POST \
+            -H "Origin: ${PROD_ORIGIN}" \
+            -H 'Content-Type: application/json' \
+            --data "{\"conversation_id\":\"${CONVERSATION_ID}\",\"session_token\":\"${SESSION_TOKEN}\"}" \
+            "${BASE}/widget-poll-messages")
+          python - <<'PY' "$POLL"
+          import json,sys
+          d=json.loads(sys.argv[1]); assert d.get('success') is True,d
+          data=d.get('data',{}); msgs=data.get('messages',[])
+          print('POLL_MESSAGE_COUNT='+str(len(msgs)))
+          print('POLL_AI_GENERATING='+str(data.get('ai_generating')).lower())
+          print('POLL_STATUS='+str(data.get('conversation_status')))
+          for m in msgs[-5:]:
+              role=m.get('role'); meta=m.get('metadata') or {}; content=str(m.get('content','')).replace('\n',' ')[:160]
+              print(f'MSG role={role} route={meta.get("response_route","none")} escalation={meta.get("escalation_rule","none")} content={content}')
+          PY
+          echo "TASK41_CONVERSATION_ID=${CONVERSATION_ID}"
