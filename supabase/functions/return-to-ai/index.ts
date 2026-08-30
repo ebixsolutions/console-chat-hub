@@ -17,8 +17,20 @@ Deno.serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     const conversation_id = body?.conversation_id;
+    const issueResolved = body?.closure_checklist?.issue_resolved === true;
+    const lowRiskFollowup = body?.closure_checklist?.low_risk_followup === true;
 
     if (!conversation_id) return json({ error: "conversation_id required" }, 400);
+    if (!issueResolved || !lowRiskFollowup) {
+      return json(
+        {
+          success: false,
+          error: "closure_checklist_required",
+          detail: "Return to AI requires issue_resolved=true and low_risk_followup=true",
+        },
+        409,
+      );
+    }
 
     const { data: conversation, error: convErr } = await supabaseAdmin
       .from("conversations")
@@ -29,6 +41,13 @@ Deno.serve(async (req) => {
 
     if (convErr) return json({ error: "Conversation lookup failed" }, 500);
     if (!conversation) return json({ error: "Conversation not found" }, 404);
+
+    if (conversation.status !== "pending" || !conversation.assigned_agent_id) {
+      return json(
+        { success: false, error: "human_control_required", detail: "Conversation must be under active human control" },
+        409,
+      );
+    }
 
     if (!ELEVATED.has(scope.companyRole) && conversation.assigned_agent_id !== agent.id) {
       return json({ error: "You can only return conversations assigned to you" }, 403);

@@ -5,14 +5,15 @@ import { supabase } from "@/integrations/supabase/client";
 export const AGENT_ASSIST_MAX_CONTENT = 2000;
 
 const TOOL_COPY = {
-  panelTitle: { en: "Agent Assist Tools", zh: "智能協助工具" },
+  panelTitle: { en: "Human Support Tools", zh: "真人客服協助工具" },
   useDraft: { en: "Use draft", zh: "使用草稿" },
   useSelected: { en: "Selected msg", zh: "已選訊息" },
   customInput: { en: "Custom", zh: "自訂" },
   customPh: { en: "Paste or type...", zh: "貼上或輸入..." },
   translate: { en: "Translate", zh: "翻譯" },
   grammar: { en: "Grammar", zh: "文法" },
-  suggest: { en: "Suggest", zh: "建議" },
+  knowledgeHelper: { en: "Knowledge Helper", zh: "知識助手" },
+  policyCheck: { en: "Policy Check", zh: "政策檢查" },
   processing: { en: "Processing...", zh: "處理中..." },
   useInDraft: { en: "Use in Draft", zh: "套用至草稿" },
   use: { en: "Use", zh: "使用" },
@@ -26,21 +27,22 @@ const TOOL_COPY = {
   resolved: { en: "Conversation resolved — tools disabled", zh: "對話已解決 — 工具已停用" },
   reqFailed: { en: "Request failed", zh: "請求失敗" },
   kbUnavailable: {
-    en: "Knowledge base unavailable — suggestion not generated",
-    zh: "知識庫目前無法使用 — 未產生建議回覆",
+    en: "Knowledge base unavailable",
+    zh: "知識庫目前無法使用",
   },
   kbTenantUnresolved: {
     en: "Knowledge scope is not configured for this conversation",
     zh: "此對話尚未設定可驗證的知識庫租戶範圍",
   },
   kbInsufficientEvidence: {
-    en: "Not enough verified knowledge to generate a grounded reply",
-    zh: "沒有足夠已驗證知識可產生有依據的建議回覆",
+    en: "Not enough verified knowledge evidence",
+    zh: "沒有足夠已驗證的知識證據",
   },
   netError: { en: "Network error", zh: "網路錯誤" },
   transResult: { en: "Translation", zh: "翻譯結果" },
   gramResult: { en: "Grammar Check", zh: "文法檢查" },
-  sugResult: { en: "Suggested Replies", zh: "建議回覆" },
+  knowledgeResult: { en: "Knowledge Evidence", zh: "知識證據" },
+  policyResult: { en: "Policy Check", zh: "政策檢查" },
   tooLong: { en: "Content exceeds 2,000 characters", zh: "內容超過 2,000 字元" },
 } as const;
 type TCK = keyof typeof TOOL_COPY;
@@ -105,20 +107,11 @@ export function AgentToolPanel({
       if (error || !data?.success) {
         if (data?.result?.status === "insufficient_evidence") {
           setTr({ type: tt, data: data.result });
-        } else if (
-          tt === "suggest_reply" &&
-          data?.error === "suggest_kb_tenant_unresolved"
-        ) {
+        } else if (String(data?.error ?? "").endsWith("_kb_tenant_unresolved")) {
           setTe(tc("kbTenantUnresolved"));
-        } else if (
-          tt === "suggest_reply" &&
-          data?.error === "suggest_insufficient_evidence"
-        ) {
+        } else if (String(data?.error ?? "").includes("insufficient_evidence")) {
           setTe(tc("kbInsufficientEvidence"));
-        } else if (
-          tt === "suggest_reply" &&
-          data?.error === "suggest_kb_unavailable"
-        ) {
+        } else if (String(data?.error ?? "").endsWith("_kb_unavailable")) {
           setTe(tc("kbUnavailable"));
         } else {
           setTe(tc("reqFailed"));
@@ -141,7 +134,8 @@ export function AgentToolPanel({
       a: () => runTool("translate", { target_language: lang === "zh" ? "en" : "zh-TW" }),
     },
     { k: "grammar", l: tc("grammar"), i: "✏️", a: () => runTool("grammar") },
-    { k: "suggest_reply", l: tc("suggest"), i: "💡", a: () => runTool("suggest_reply") },
+    { k: "knowledge_helper", l: tc("knowledgeHelper"), i: "📚", a: () => runTool("knowledge_helper") },
+    { k: "check_policy", l: tc("policyCheck"), i: "🛡️", a: () => runTool("check_policy") },
   ];
 
   return (
@@ -382,54 +376,35 @@ export function AgentToolPanel({
             </button>
           </div>
         )}
-        {tr?.type === "suggest_reply" && (
+        {tr?.type === "knowledge_helper" && (
           <div>
-            <div style={{ fontSize: 10.5, fontWeight: 600, color: "#8b5cf6", marginBottom: 4 }}>{tc("sugResult")}</div>
-            <div style={{ fontSize: 10, color: "#888", marginBottom: 4, fontStyle: "italic" }}>{tc("draftOnly")}</div>
-            {Array.isArray(tr.data.suggestions) &&
-              (tr.data.suggestions as Array<{ content: string; tone_label: string }>).map((s, i) => (
-                <div
-                  key={i}
-                  style={{
-                    background: "#faf5ff",
-                    border: "1px solid #e9d5ff",
-                    borderRadius: 5,
-                    padding: "6px",
-                    marginBottom: 4,
-                  }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
-                    <span
-                      style={{
-                        fontSize: 9.5,
-                        background: "#ede9fe",
-                        color: "#6366f1",
-                        padding: "1px 5px",
-                        borderRadius: 6,
-                        fontWeight: 600,
-                      }}
-                    >
-                      {s.tone_label}
-                    </span>
-                    <button
-                      onClick={() => onUseDraft(s.content)}
-                      style={{
-                        fontSize: 10,
-                        padding: "2px 7px",
-                        borderRadius: 4,
-                        border: "1px solid #8b5cf6",
-                        background: "#faf5ff",
-                        color: "#8b5cf6",
-                        cursor: "pointer",
-                        fontWeight: 600,
-                      }}
-                    >
-                      {tc("use")}
-                    </button>
-                  </div>
-                  <div style={{ fontSize: 10.5, lineHeight: 1.5 }}>{s.content}</div>
-                </div>
-              ))}
+            <div style={{ fontSize: 10.5, fontWeight: 600, color: "#7c3aed", marginBottom: 4 }}>{tc("knowledgeResult")}</div>
+            {String(tr.data.orientation_summary ?? "") && (
+              <div style={{ background: "#faf5ff", border: "1px solid #e9d5ff", borderRadius: 5, padding: 6, marginBottom: 5, lineHeight: 1.5 }}>
+                {String(tr.data.orientation_summary)}
+              </div>
+            )}
+            {Array.isArray(tr.data.evidence) && (tr.data.evidence as Array<{ label: string; source_type: string; chunk_type: string; content: string }>).map((e, i) => (
+              <div key={i} style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 5, padding: 6, marginBottom: 4 }}>
+                <div style={{ fontSize: 9.5, fontWeight: 700, color: "#64748b", marginBottom: 3 }}>{e.label} · {e.source_type} · {e.chunk_type}</div>
+                <div style={{ fontSize: 10.5, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{e.content}</div>
+              </div>
+            ))}
+            {String(tr.data.status ?? "") === "insufficient_evidence" && <div style={{ color: "#92400e" }}>{tc("kbInsufficientEvidence")}</div>}
+          </div>
+        )}
+        {tr?.type === "check_policy" && (
+          <div>
+            <div style={{ fontSize: 10.5, fontWeight: 600, color: "#0f766e", marginBottom: 4 }}>{tc("policyResult")}</div>
+            <div style={{ background: "#f0fdfa", border: "1px solid #99f6e4", borderRadius: 5, padding: 6, lineHeight: 1.5 }}>
+              <strong>{String(tr.data.status ?? "unknown")}</strong> — {String(tr.data.summary ?? "")}
+            </div>
+            {Array.isArray(tr.data.issues) && (tr.data.issues as Array<{ excerpt: string; policy_label: string; severity: string }>).map((i, n) => (
+              <div key={n} style={{ marginTop: 4, background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 5, padding: 6 }}>
+                <div style={{ fontSize: 9.5, fontWeight: 700 }}>{i.severity} · {i.policy_label}</div>
+                <div style={{ fontSize: 10.5, marginTop: 2 }}>{i.excerpt}</div>
+              </div>
+            ))}
           </div>
         )}
         {!tl && !te && !tr && !isResolved && (

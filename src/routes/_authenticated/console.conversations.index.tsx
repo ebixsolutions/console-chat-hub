@@ -69,10 +69,10 @@ type ActivityEvent = {
 // ─── Constants ───────────────────────────────────────────────────────────────
 const FILTERS: { key: string | null; label: string }[] = [
   { key: null, label: "All" },
-  { key: "human_needed", label: "Human Needed" },
+  { key: "waiting_human", label: "Waiting for Human" },
+  { key: "human_control", label: "Human Control" },
   { key: "ai_handling", label: "AI Handling" },
   { key: "escalation_risk", label: "Escalation Risk" },
-  { key: "human_control", label: "Human Control" },
   { key: "unresolved", label: "Unresolved" },
   { key: "resolved", label: "Resolved" },
 ];
@@ -97,8 +97,8 @@ const ADMIN_ONLY = new Set(["admin", "super_admin"]);
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function isHumanNeeded(c: Conv) {
-  if (["pending", "unresolved", "human_needed"].includes(c.status)) return true;
-  return HANDOFF_KEYWORDS.some((kw) => (c.latest_preview || "").toLowerCase().includes(kw.toLowerCase()));
+  if (c.status === "pending") return !c.assigned_agent_id;
+  return ["unresolved", "human_needed", "escalation_risk"].includes(c.status);
 }
 function relTime(iso: string) {
   const diff = Date.now() - new Date(iso).getTime();
@@ -727,9 +727,32 @@ function SinglePageInbox() {
     }
   }
   async function handleReturnToAi() {
-    if (!selectedId) return;
-    if (await callEF("return-to-ai", { conversation_id: selectedId })) {
-      toast.success("Returned to AI");
+    if (!selectedId || !selectedConv) return;
+    if (selectedConv.status !== "pending" || !selectedConv.assigned_agent_id) {
+      toast.error("Return to AI is available only while a human agent owns the conversation.");
+      return;
+    }
+    const issueResolved = window.confirm(
+      "Return to AI checklist 1/2: Has the human-handled issue been resolved or sufficiently addressed?",
+    );
+    if (!issueResolved) {
+      toast.info("Keep Human Control until the issue is addressed, or resolve the ticket.");
+      return;
+    }
+    const lowRiskFollowup = window.confirm(
+      "Return to AI checklist 2/2: Is the remaining follow-up low-risk and appropriate for AI handling?",
+    );
+    if (!lowRiskFollowup) {
+      toast.info("Keep Human Control for non-low-risk follow-up, or resolve the ticket.");
+      return;
+    }
+    if (
+      await callEF("return-to-ai", {
+        conversation_id: selectedId,
+        closure_checklist: { issue_resolved: true, low_risk_followup: true },
+      })
+    ) {
+      toast.success("Returned to AI after closure checklist confirmation");
       loadConversations();
       loadMessages(selectedId, false, true);
     }
@@ -820,7 +843,7 @@ function SinglePageInbox() {
   const stats = useMemo(() => {
     if (!conversations) return { pending_human: 0, high_priority: 0, human_control: 0, ai_handling: 0 };
     return {
-      pending_human: conversations.filter((c) => isHumanNeeded(c)).length,
+      pending_human: conversations.filter((c) => isHumanNeeded(c) && !c.assigned_agent_id).length,
       high_priority: conversations.filter((c) => c.priority === "high").length,
       human_control: conversations.filter((c) => c.status === "pending" && Boolean(c.assigned_agent_id)).length,
       ai_handling: conversations.filter((c) => c.status === "ai_handling" || (!isHumanNeeded(c) && c.status === "open"))
@@ -842,6 +865,10 @@ function SinglePageInbox() {
     }
     if (filter === null) return list;
     if (filter === "human_needed") return list.filter((c) => isHumanNeeded(c));
+    if (filter === "waiting_human")
+      return list.filter((c) => isHumanNeeded(c) && !c.assigned_agent_id);
+    if (filter === "human_control")
+      return list.filter((c) => c.status === "pending" && Boolean(c.assigned_agent_id));
     if (filter === "ai_handling")
       return list.filter((c) => c.status === "ai_handling" || (!isHumanNeeded(c) && c.status === "open"));
     return list.filter((c) => c.status === filter);
