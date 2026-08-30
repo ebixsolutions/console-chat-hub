@@ -33,54 +33,68 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ROUTE='src/routes/_authenticated/console.conversations.index.tsx'
-          PANEL='src/components/console/AgentToolPanel.tsx'
-          RETURN='supabase/functions/return-to-ai/index.ts'
-          ASSIST='supabase/functions/agent-assist/index.ts'
-          SEND='supabase/functions/agent-send-reply/index.ts'
-          POLL='supabase/functions/widget-poll-messages/index.ts'
-          WIDGET='public/widget/chat.js'
+          python - <<'PY'
+          from pathlib import Path
 
-          grep -q 'Waiting for Human' "$ROUTE"
-          grep -q 'filter === "waiting_human"' "$ROUTE"
-          grep -q 'c.status === "pending" && Boolean(c.assigned_agent_id)' "$ROUTE"
-          grep -q 'closure_checklist' "$ROUTE"
-          grep -q 'issue_resolved: true' "$ROUTE"
-          grep -q 'low_risk_followup: true' "$ROUTE"
+          files = {
+              'route': Path('src/routes/_authenticated/console.conversations.index.tsx'),
+              'panel': Path('src/components/console/AgentToolPanel.tsx'),
+              'return': Path('supabase/functions/return-to-ai/index.ts'),
+              'assist': Path('supabase/functions/agent-assist/index.ts'),
+              'send': Path('supabase/functions/agent-send-reply/index.ts'),
+              'poll': Path('supabase/functions/widget-poll-messages/index.ts'),
+              'widget': Path('public/widget/chat.js'),
+          }
+          text = {k: p.read_text() for k, p in files.items()}
 
-          grep -q 'closure_checklist_required' "$RETURN"
-          grep -q 'human_control_required' "$RETURN"
-          grep -q 'resolveAgentCompanyScope' "$RETURN"
-          grep -q 'return_to_ai_tx' "$RETURN"
+          def must(key, label, needle):
+              assert needle in text[key], f'FAIL {label}: missing {needle!r} in {files[key]}'
+              print(f'PASS {label}')
 
-          grep -q 'Knowledge Helper' "$PANEL"
-          grep -q 'Policy Check' "$PANEL"
-          grep -q 'runTool("knowledge_helper")' "$PANEL"
-          grep -q 'runTool("check_policy")' "$PANEL"
-          if grep -q 'runTool("suggest_reply")' "$PANEL"; then
-            echo 'FAIL: customer-facing AI suggestion still exposed in Live Console' >&2
-            exit 1
-          fi
-          grep -q 'toolType==="knowledge_helper"' "$ASSIST"
-          grep -q 'full_content_evidence' "$ASSIST"
+          def absent(key, label, needle):
+              assert needle not in text[key], f'FAIL {label}: forbidden {needle!r} in {files[key]}'
+              print(f'PASS {label}')
 
-          grep -q 'agent_send_reply_tx' "$SEND"
-          grep -q 'takeover_required' "$SEND"
-          grep -q 'owned_by_another_agent' "$SEND"
-          grep -q 'human_control_required' "$SEND"
+          must('route', 'waiting-human filter label', 'Waiting for Human')
+          must('route', 'waiting-human filter logic', 'filter === "waiting_human"')
+          must('route', 'human-control filter logic', 'c.status === "pending" && Boolean(c.assigned_agent_id)')
+          must('route', 'return-to-ai checklist payload', 'closure_checklist')
+          must('route', 'return-to-ai issue-resolved assertion', 'issue_resolved: true')
+          must('route', 'return-to-ai low-risk assertion', 'low_risk_followup: true')
 
-          grep -q 'state: "waiting"' "$POLL"
-          grep -q 'state: "assigned"' "$POLL"
-          grep -q 'agent_assigned' "$POLL"
-          grep -q 'AI replies are paused while the agent handles this conversation' "$WIDGET"
-          grep -q 'You are waiting for a team member' "$WIDGET"
+          must('return', 'server checklist enforcement', 'closure_checklist_required')
+          must('return', 'server human-control enforcement', 'human_control_required')
+          must('return', 'return-to-ai tenant scope', 'resolveAgentCompanyScope')
+          must('return', 'atomic return RPC', 'return_to_ai_tx')
 
-          if grep -R -n --exclude-dir=node_modules --exclude='*.md' 'hvmtoqiwdqvgnjepxwrc' \
-            "$ROUTE" "$PANEL" "$RETURN" "$ASSIST" "$SEND" "$POLL" "$WIDGET"; then
-            echo 'FAIL: legacy Supabase ref in Task 4.2 active runtime scope' >&2
-            exit 1
-          fi
-          echo 'TASK4_2_ACTIVE_SOURCE_CONTRACT=PASS'
+          must('panel', 'Knowledge Helper exposed', 'Knowledge Helper')
+          must('panel', 'Policy Check exposed', 'Policy Check')
+          must('panel', 'Knowledge Helper action', 'runTool("knowledge_helper")')
+          must('panel', 'Policy Check action', 'runTool("check_policy")')
+          absent('panel', 'no Live Console Suggest Reply action', 'runTool("suggest_reply")')
+
+          must('assist', 'knowledge-helper backend branch', 'toolType==="knowledge_helper"')
+          must('assist', 'knowledge-helper evidence contract', 'full_content_evidence')
+
+          must('send', 'atomic human send RPC', 'agent_send_reply_tx')
+          must('send', 'takeover-required guard', 'takeover_required')
+          must('send', 'other-owner guard', 'owned_by_another_agent')
+          must('send', 'human-control send guard', 'human_control_required')
+
+          must('poll', 'human-support computed state', 'const humanSupportState')
+          must('poll', 'waiting-vs-assigned state derivation', 'conv.assigned_agent_id ? "assigned" : "waiting"')
+          must('poll', 'human-support response state', 'human_support: { state: humanSupportState')
+          must('poll', 'agent-assigned response flag', 'agent_assigned: Boolean(conv.assigned_agent_id)')
+
+          must('widget', 'assigned-agent AI pause UX', 'AI replies are paused while the agent handles this conversation')
+          must('widget', 'waiting-human UX', 'You are waiting for a team member')
+
+          legacy = 'hvmtoqiwdqvgnjepxwrc'
+          for key, body in text.items():
+              assert legacy not in body, f'FAIL legacy target ref in {files[key]}'
+          print('PASS Task 4.2 active runtime legacy target ref = 0')
+          print('TASK4_2_ACTIVE_SOURCE_CONTRACT=PASS')
+          PY
       - name: Production client SSR Nitro build
         run: npm run build
       - name: Deployed Edge contract
