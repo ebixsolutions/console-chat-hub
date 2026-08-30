@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   buildConversationContinuityBlock,
   classifyConversationTurn,
@@ -32,7 +33,7 @@ eq(classifyHandoffIntent("When is customer service available?").explicit_request
 eq(classifyHandoffIntent("If you cannot answer, then connect me to a human").explicit_request, false, "conditional human request");
 eq(classifyHandoffIntent("Maybe connect me to a human later").explicit_request, false, "future human request");
 
-const source = await Bun.file("supabase/functions/generate-reply/index.ts").text();
+const source = readFileSync("supabase/functions/generate-reply/index.ts", "utf8");
 assert.match(source, /ENABLE_KB_ADAPTER"\) !== "false"/);
 assert.match(source, /ESC_ENABLE_REQUIRED_RULES_LIVE"\) === "false"/);
 assert.match(source, /enabled\.add\("R2"\)/);
@@ -43,7 +44,7 @@ assert.match(source, /isSameIntentRepeat/);
 assert.match(source, /buildConversationContinuityBlock/);
 console.log("PASS KB default-on / first-no-match / R2 source contracts");
 
-const llm = await Bun.file("supabase/functions/_shared/llm-router.ts").text();
+const llm = readFileSync("supabase/functions/_shared/llm-router.ts", "utf8");
 assert.match(llm, /GENERATION_MAX_TOKENS_DEFAULT = 2048/);
 assert.match(llm, /GENERATION_MAX_TOKENS_MIN = 768/);
 assert.match(llm, /GENERATION_MAX_TOKENS_MAX = 8192/);
@@ -51,7 +52,7 @@ assert.match(llm, /MAX_TOKENS/);
 assert.match(llm, /LLM_INVALID_OUTPUT/);
 console.log("PASS generation budget and truncation fail-closed contract");
 
-const kb = await Bun.file("supabase/functions/_shared/kb-client.ts").text();
+const kb = readFileSync("supabase/functions/_shared/kb-client.ts", "utf8");
 assert.match(kb, /py\.ebixmall\.com\/py-knowledge-base/);
 assert.match(kb, /KB_SINGAPORE_TENANT_MAP_JSON/);
 assert.match(kb, /max_documents/);
