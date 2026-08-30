@@ -60,17 +60,60 @@ jobs:
           done
           grep -q 'ENABLE_KB_ADAPTER.*false' supabase/functions/generated/task4-1-generate-reply.bundle.ts
           grep -q 'GENERATION_MAX_TOKENS_DEFAULT = 2048' supabase/functions/generated/task4-1-generate-reply.bundle.ts
-          wc -c supabase/functions/generated/task4-1-generate-reply.deploy.ts
+      - name: Build hash-bound connector deployment package
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import base64, hashlib, json, shutil
+          source = Path('supabase/functions/generated/task4-1-generate-reply.deploy.ts').read_bytes()
+          digest = hashlib.sha256(source).hexdigest()
+          encoded = base64.b64encode(source).decode('ascii')
+          root = Path('supabase/functions/generated/task4-1-deploy-package')
+          if root.exists():
+              shutil.rmtree(root)
+          root.mkdir(parents=True)
+          width = 9000
+          parts = [encoded[i:i+width] for i in range(0, len(encoded), width)]
+          imports = []
+          names = []
+          for i, part in enumerate(parts):
+              name = f'chunk-{i:02d}.ts'
+              var = f'p{i}'
+              (root / name).write_text(f'export default {json.dumps(part)};\n')
+              imports.append(f'import {var} from "./{name}";')
+              names.append(var)
+          loader = '\n'.join(imports) + f'''\nconst EXPECTED_SHA256 = "{digest}";\nconst encoded = [{','.join(names)}].join("");\nconst binary = atob(encoded);\nconst bytes = Uint8Array.from(binary, c => c.charCodeAt(0));\nconst hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))).map(b => b.toString(16).padStart(2, "0")).join("");\nif (hash !== EXPECTED_SHA256) throw new Error("TASK4_1_DEPLOY_BUNDLE_HASH_MISMATCH");\nawait import(`data:application/javascript;base64,${{encoded}}`);\n'''
+          (root / 'index.ts').write_text(loader)
+          manifest = {
+              'source_sha256': digest,
+              'source_bytes': len(source),
+              'base64_bytes': len(encoded),
+              'chunk_count': len(parts),
+              'chunk_width': width,
+              'files': ['index.ts'] + [f'chunk-{i:02d}.ts' for i in range(len(parts))],
+          }
+          (root / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+          print(json.dumps(manifest))
+          PY
+          test -s supabase/functions/generated/task4-1-deploy-package/index.ts
+          test -s supabase/functions/generated/task4-1-deploy-package/manifest.json
       - name: Commit immutable deploy bundles
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -z "$(git status --porcelain -- supabase/functions/generated/task4-1-generate-reply.bundle.ts supabase/functions/generated/task4-1-generate-reply.deploy.ts)" ]]; then
+          PATHS=(
+            supabase/functions/generated/task4-1-generate-reply.bundle.ts
+            supabase/functions/generated/task4-1-generate-reply.deploy.ts
+            supabase/functions/generated/task4-1-deploy-package
+          )
+          if [[ -z "$(git status --porcelain -- "${PATHS[@]}")" ]]; then
             echo 'Bundles already current.'
             exit 0
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add supabase/functions/generated/task4-1-generate-reply.bundle.ts supabase/functions/generated/task4-1-generate-reply.deploy.ts
-          git commit -m 'Task 4.1: refresh generate-reply deploy bundles'
+          git add "${PATHS[@]}"
+          git commit -m 'Task 4.1: refresh connector deploy package'
           git push origin HEAD:main
