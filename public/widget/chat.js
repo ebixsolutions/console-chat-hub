@@ -808,6 +808,17 @@
     input.click();
   }
 
+  function createClientMessageId() {
+    if (window.crypto && typeof window.crypto.randomUUID === "function") {
+      return window.crypto.randomUUID();
+    }
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
+      var r = (Math.random() * 16) | 0;
+      var v = c === "x" ? r : (r & 0x3) | 0x8;
+      return v.toString(16);
+    });
+  }
+
   function uploadAttachment(file) {
     if (!file || !state.sessionToken || !state.conversationId) return;
     if (file.size > 10 * 1024 * 1024) {
@@ -818,6 +829,7 @@
     var form = new FormData();
     form.append("conversation_id", state.conversationId);
     form.append("session_token", state.sessionToken);
+    form.append("client_message_id", createClientMessageId());
     form.append("file", file);
 
     appendMessageObj({

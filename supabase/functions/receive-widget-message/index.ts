@@ -88,6 +88,7 @@ Deno.serve(async (req) => {
       const { error: uploadError } = await supabase.storage.from("widget-attachments")
         .upload(storagePath, attachment, { contentType: attachment.type, upsert: false, cacheControl: "3600" });
       if (uploadError) return json({ success: false, error: "attachment_upload_failed" }, 500);
+      const attachmentClientId = typeof client_message_id === "string" ? client_message_id : crypto.randomUUID();
       const { data: txData, error: txError } = await supabase.rpc("receive_widget_attachment_tx", {
         p_conversation_id: conversation_id,
         p_session_token: session_token,
@@ -96,12 +97,18 @@ Deno.serve(async (req) => {
         p_original_name: attachment.name.slice(0, 255),
         p_mime_type: attachment.type,
         p_size_bytes: attachment.size,
+        p_client_message_id: attachmentClientId,
       });
-      if (txError || String(txData?.result ?? "") !== "success") {
+      const attachmentResult = String(txData?.result ?? "");
+      if (attachmentResult === "idempotent") {
+        await supabase.storage.from("widget-attachments").remove([storagePath]);
+        return json({ success: true, data: { message_id: String(txData.message_id), content_type: attachmentType(attachment.type), ai_reply_pending: false, idempotent: true } });
+      }
+      if (txError || attachmentResult !== "success") {
         await supabase.storage.from("widget-attachments").remove([storagePath]);
         return json({ success: false, error: "attachment_transaction_failed" }, 500);
       }
-      return json({ success: true, data: { message_id: String(txData.message_id), content_type: attachmentType(attachment.type), ai_reply_pending: false } });
+      return json({ success: true, data: { message_id: String(txData.message_id), content_type: attachmentType(attachment.type), ai_reply_pending: false, idempotent: false } });
     }
 
     const normalizedContent = String(content).trim();
