@@ -1,0 +1,37 @@
+name: Task 3.1 Lovable Backend Retirement Gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/task3-1-lovable-backend-retirement.yml'
+      - 'scripts/task3-1-lovable-backend-retirement-final-gate.sh'
+      - 'src/integrations/supabase/runtime-authority.mjs'
+      - 'src/integrations/supabase/client.ts'
+      - 'src/integrations/supabase/client.server.ts'
+      - '.env'
+      - '.lovable/mcp/manifest.json'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'public/**'
+      - 'supabase/functions/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  final-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Production dependency security audit
+        run: npm audit --omit=dev --audit-level=high
+      - name: Task 3.1 final gate
+        run: bash scripts/task3-1-lovable-backend-retirement-final-gate.sh
