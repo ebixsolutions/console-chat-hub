@@ -32,6 +32,9 @@ for expected in \
   "VITE_SUPABASE_FUNCTIONS_URL=\"${TARGET_FUNCTIONS}\""; do
   grep -Fq "$expected" .env || fail "missing authoritative env binding: $expected"
 done
+PUBLISHABLE_KEY="$(sed -n 's/^SUPABASE_PUBLISHABLE_KEY="\([^"]*\)"$/\1/p' .env | head -n1)"
+[[ -n "$PUBLISHABLE_KEY" ]] || fail "missing public Supabase publishable key"
+[[ "$PUBLISHABLE_KEY" == sb_publishable_* ]] || fail "unexpected publishable key format"
 pass "Lovable preview env bindings"
 
 if grep -R --line-number --fixed-strings "$LEGACY_REF" src public .env \
@@ -75,8 +78,6 @@ grep -q 'authoritativeFunctionsBase' src/routes/feedback.tsx || fail "feedback E
 grep -q 'assertAuthoritativeFunctionsRuntime' src/integrations/supabase/client.ts || fail "preview client does not validate Edge Functions binding"
 pass "login and public Edge calls rebound"
 
-# Surface call-chain source coverage: authenticated surfaces must enter through the guarded
-# Supabase client and/or server API services that ultimately use the guarded clients.
 grep -Eq 'integrations/supabase/client|lib/api/' src/routes/_authenticated/console.conversations.index.tsx || fail "Inbox source not connected to guarded data layer"
 grep -Eq 'integrations/supabase/client|lib/api/' src/routes/_authenticated/console.conversations.\$id.tsx || fail "conversation/Agent Assist source not connected to guarded data layer"
 grep -Eq 'integrations/supabase/client|lib/api/' src/routes/_authenticated/console.widget-preview.tsx || fail "Widget preview source not connected to guarded data layer"
@@ -93,18 +94,32 @@ fi
 grep -R --binary-files=text --fixed-strings "$TARGET_REF" .output >/dev/null || fail "target Supabase ref absent from deployable build"
 pass "deployable build target-only binding"
 
-# No manual login or secret is required for these target-network probes.
-curl --fail --silent --show-error --max-time 15 "${TARGET_ORIGIN}/auth/v1/health" >/tmp/task32_auth_health.json
-pass "target Supabase Auth health"
+# Supabase Auth health is behind the API gateway and requires the public project key.
+auth_code="$(curl --silent --show-error --max-time 15 -o /tmp/task32_auth_health.json -w '%{http_code}' \
+  -H "apikey: ${PUBLISHABLE_KEY}" \
+  "${TARGET_ORIGIN}/auth/v1/health")"
+[[ "$auth_code" == "200" ]] || { cat /tmp/task32_auth_health.json >&2 || true; fail "target Supabase Auth health HTTP ${auth_code}"; }
+python3 - <<'PY'
+import json
+p='/tmp/task32_auth_health.json'
+try:
+    data=json.load(open(p))
+except Exception as e:
+    raise SystemExit(f'FAIL: auth health non-JSON: {e}')
+if not isinstance(data, dict):
+    raise SystemExit('FAIL: auth health response is not object')
+PY
+pass "target Supabase Auth health (HTTP 200)"
 
-# Public Feedback Edge surface: an intentionally invalid token must be handled by the target
-# function without creating data. Any HTTP response proves the preview route reaches the target;
-# connection/DNS/TLS failure is fatal.
-code="$(curl --silent --show-error --max-time 15 -o /tmp/task32_feedback.json -w '%{http_code}' \
+# Public Feedback Edge route: invalid token is deliberately non-mutating. Include the
+# public apikey so the gateway can route regardless of verify_jwt configuration; the
+# application payload is still unauthenticated and must be rejected/handled by the function.
+feedback_code="$(curl --silent --show-error --max-time 15 -o /tmp/task32_feedback.json -w '%{http_code}' \
+  -H "apikey: ${PUBLISHABLE_KEY}" \
   -H 'Content-Type: application/json' \
   --data '{"token":"task3-2-invalid-token","rating":5}' \
   "${TARGET_FUNCTIONS}/submit-feedback-response")"
-[[ "$code" =~ ^(200|400|401|403|404|422)$ ]] || fail "target feedback Edge probe unexpected HTTP $code"
-pass "target public Edge network route (HTTP ${code})"
+[[ "$feedback_code" =~ ^(200|400|401|403|404|422)$ ]] || { cat /tmp/task32_feedback.json >&2 || true; fail "target feedback Edge probe unexpected HTTP ${feedback_code}"; }
+pass "target public Edge network route (HTTP ${feedback_code})"
 
 echo "TASK 3.2 FINAL GATE: PASS"
