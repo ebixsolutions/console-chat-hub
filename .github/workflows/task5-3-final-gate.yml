@@ -1,0 +1,123 @@
+name: Task 5.3 Whole-product Production Final Gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/task5-3-final-gate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  final-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+      PROD_URL: https://console-chat-hub.lovable.app
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Frozen source and Task 5.3 architecture assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          a=Path('supabase/functions/agent-assist/index.ts').read_text()
+          r=Path('supabase/functions/_shared/llm-router.ts').read_text()
+          k=Path('supabase/functions/_shared/kb-client.ts').read_text()
+          assert 'ANTHROPIC_API_KEY' not in a and 'api.anthropic.com' not in a
+          for x in ['callModel, parseJsonObject','purpose:"assist"','companyId:meta.companyId','conversationId:meta.conversationId']:
+              assert x in a,x
+          for x in ['purpose: "evaluation" | "assist" | "generation"','GOOGLE_SERVICE_ACCOUNT_JSON','GOOGLE_PROJECT_ID','GOOGLE_REGION']:
+              assert x in r,x
+          for x in ['KB_SINGAPORE_TENANT_API_KEYS_JSON','KB_SINGAPORE_TENANT_MAP_JSON','x-api-key','/api/v1/rag/context-search']:
+              assert x in k,x
+          print('PASS source/provider/KB contracts')
+          PY
+
+      - name: Production build and dependency gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm audit --omit=dev --audit-level=high
+          npm run build
+          echo 'PASS client/SSR/Nitro build'
+
+      - name: Target functions and runtime configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SUPABASE_ACCESS_TOKEN:-}"
+          npx --yes supabase@latest functions list --project-ref "$PROJECT_REF" --output json >/tmp/functions.json
+          npx --yes supabase@latest secrets list --project-ref "$PROJECT_REF" --output json >/tmp/secrets.json
+          python - <<'PY'
+          import json
+          rows=json.load(open('/tmp/functions.json')); by={str(x.get('slug') or x.get('name')):x for x in rows}
+          for n in ['agent-assist','kb-search-proxy','customer360-local','ce-evaluation-control','generate-reply']:
+              r=by.get(n); assert r and str(r.get('status','')).upper()=='ACTIVE',(n,r)
+              print('PASS '+n+' ACTIVE version='+str(r.get('version')))
+          names={str(x.get('name') or '') for x in json.load(open('/tmp/secrets.json'))}
+          nonsecret=['LLM_PROVIDER','LLM_MODEL_ASSIST','GOOGLE_PROJECT_ID','GOOGLE_REGION','KB_SINGAPORE_TENANT_MAP_JSON']
+          for n in nonsecret:
+              assert n in names,n
+              print('PASS runtime config name '+n)
+          missing=[n for n in ['GOOGLE_SERVICE_ACCOUNT_JSON','KB_SINGAPORE_TENANT_API_KEYS_JSON'] if n not in names]
+          print('TASK53_SECRET_PAYLOAD_BLOCKERS='+(','.join(missing) if missing else 'NONE'))
+          if missing: raise SystemExit(3)
+          print('PASS credential payload names present')
+          PY
+
+      - name: Live canonical product invariants
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SUPABASE_ACCESS_TOKEN:-}"
+          python - <<'PY' >/tmp/query.json
+          import json
+          q='''with shared_vs as (select visitor_session_id from public.conversations where visitor_session_id is not null and company_id is not null group by visitor_session_id having count(distinct company_id)>1), ce_detail as (select ce.id,count(d.id) detail_count from public.conversation_evaluation ce left join public.conversation_evaluation_detail d on d.evaluation_id=ce.id group by ce.id) select (select count(*) from shared_vs) shared_visitor_sessions_cross_tenant,(select count(*) from ce_detail where detail_count<>6) evaluations_not_six_details,(select count(*) from public.conversation_evaluation ce join public.conversations c on c.id=ce.conversation_id where ce.company_id is distinct from c.company_id) ce_company_lineage_bad,(select count(*) from public.conversation_evaluation where company_id is null) ce_null_company;'''
+          print(json.dumps({'query':q}))
+          PY
+          curl -fsS -X POST -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" -H 'Content-Type: application/json' --data @/tmp/query.json "https://api.supabase.com/v1/projects/${PROJECT_REF}/database/query/read-only" >/tmp/db.json
+          python - <<'PY'
+          import json
+          d=json.load(open('/tmp/db.json')); rows=d if isinstance(d,list) else d.get('result') or d.get('data') or []
+          assert rows; r=rows[0]
+          for k in ['shared_visitor_sessions_cross_tenant','evaluations_not_six_details','ce_company_lineage_bad','ce_null_company']:
+              assert int(r[k])==0,(k,r[k]); print('PASS '+k+'=0')
+          PY
+
+      - name: Production routes and auth-negative smoke
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a; source .env; set +a
+          for fn in agent-assist kb-search-proxy customer360-local ce-evaluation-control; do
+            code=$(curl -sS -o "/tmp/${fn}.json" -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{}' "${VITE_SUPABASE_FUNCTIONS_URL}/${fn}")
+            case "$code" in 401|403) echo "PASS ${fn} unauthenticated denied HTTP ${code}";; *) echo "FAIL ${fn} auth-negative HTTP ${code}"; exit 1;; esac
+          done
+          curl -fsS "$PROD_URL/" >/tmp/root.html
+          curl -fsS "$PROD_URL/login" >/tmp/login.html
+          curl -fsS "$PROD_URL/feedback" >/tmp/feedback.html
+          test -s /tmp/root.html && test -s /tmp/login.html && test -s /tmp/feedback.html
+          echo 'PASS production routes reachable'
+
+      - name: Final acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'TASK 5.3 WHOLE-PRODUCT PRODUCTION ACCEPTANCE: PASS'
+          echo 'FINAL STATUS: READY'
