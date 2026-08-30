@@ -40,9 +40,38 @@ Deno.serve(async (req) => {
     }
     const { data: messages, error: messageError } = await query;
     if (messageError) return json({ success: false, error: "message_poll_failed" }, 500);
+
     const humanStatuses = new Set(["pending", "transferred", "unresolved"]);
     const humanSupportState = humanStatuses.has(conv.status) ? (conv.assigned_agent_id ? "assigned" : "waiting") : "none";
-    return json({ success: true, data: { messages: messages ?? [], conversation_status: conv.status, ai_generating: Boolean(thinking?.length), human_support: { state: humanSupportState, agent_assigned: Boolean(conv.assigned_agent_id) } } });
+    let queueSnapshot: Record<string, unknown> = {
+      state: humanSupportState,
+      queue_position: humanSupportState === "assigned" ? 0 : null,
+      customers_ahead: humanSupportState === "assigned" ? 0 : null,
+      estimated_wait_minutes: humanSupportState === "assigned" ? 0 : null,
+      estimate_confidence: humanSupportState === "assigned" ? "assigned" : "unavailable",
+    };
+    if (humanSupportState !== "none") {
+      const { data: queueData, error: queueError } = await supabase.rpc("get_human_support_queue_snapshot", { p_conversation_id: conversation_id });
+      if (queueError) return json({ success: false, error: "human_queue_lookup_failed" }, 500);
+      if (queueData && typeof queueData === "object") queueSnapshot = queueData as Record<string, unknown>;
+    }
+
+    return json({
+      success: true,
+      data: {
+        messages: messages ?? [],
+        conversation_status: conv.status,
+        ai_generating: Boolean(thinking?.length),
+        human_support: {
+          state: humanSupportState,
+          agent_assigned: Boolean(conv.assigned_agent_id),
+          queue_position: queueSnapshot.queue_position ?? null,
+          customers_ahead: queueSnapshot.customers_ahead ?? null,
+          estimated_wait_minutes: queueSnapshot.estimated_wait_minutes ?? null,
+          estimate_confidence: queueSnapshot.estimate_confidence ?? "unavailable",
+        },
+      },
+    });
   } catch (e) {
     console.error("[widget-poll-messages] unexpected", (e as Error).name);
     return json({ success: false, error: "internal_error" }, 500);
