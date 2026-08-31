@@ -4,8 +4,9 @@
 // Data-plane/RAG contract:
 //   opaque tenant-bound API key -> x-api-key
 // Control-plane contract (CRUD / publish / migration):
-//   Base44-compatible SINGAPORE_BACKEND_TOKEN -> Authorization: Bearer
-//   tenant-bound service JWT/token is retained only as an explicit fallback.
+//   Singapore service-role secret -> x-service-role-secret (preferred)
+//   Base44-compatible SINGAPORE_BACKEND_TOKEN -> Authorization: Bearer (fallback)
+//   tenant-bound service JWT/token is retained only as an explicit legacy fallback.
 //
 // Browser payloads never choose company/tenant/key scope.
 
@@ -28,7 +29,7 @@ export interface KBCredentialConfig {
 }
 
 export type KBCredential =
-  | { ok: true; kind: "api_key" | "jwt" | "bearer"; value: string }
+  | { ok: true; kind: "api_key" | "jwt" | "bearer" | "service_role"; value: string }
   | { ok: false; error_code: string };
 
 function decodeJwtPayload(token: string): Record<string, unknown> | null {
@@ -123,6 +124,15 @@ function validateTenantJwt(
   return { ok: true, kind: "jwt", value: token };
 }
 
+function resolveServiceRoleSecret(): string {
+  return (
+    Deno.env.get("SINGAPORE_SERVICE_ROLE_SECRET")?.trim() ||
+    Deno.env.get("KB_SINGAPORE_SERVICE_ROLE_SECRET")?.trim() ||
+    Deno.env.get("SERVICE_ROLE_SECRET")?.trim() ||
+    ""
+  );
+}
+
 /**
  * Resolve the Singapore RAG/data-plane credential.
  * Production prefers the tenant-scoped opaque x-api-key. JWT remains a
@@ -151,20 +161,26 @@ export async function resolveSingaporeCredential(
  * Resolve the Singapore control-plane credential for entity CRUD, publish and
  * migration operations.
  *
- * Current Base44 authoritative callers do not mint or inspect the upstream
- * credential. They read SINGAPORE_BACKEND_TOKEN and forward it as a Bearer
- * token. Preserve that exact contract here: the Singapore backend remains the
- * authority that validates JWT/service-token claims. RAG x-api-keys are NEVER
- * considered on this mutation path.
+ * Current Singapore Base44-parity APIs expose two server-to-server control
+ * authentication surfaces: x-service-role-secret and Authorization Bearer.
+ * Prefer the dedicated service-role secret because it does not require moving
+ * the Singapore JWT signing authority or inventing client-side JWT claims.
  *
- * The older tenant-JWT resolver is retained only as an explicit fallback for
- * environments that already provision that contract; it is not preferred over
- * the Base44-compatible control token.
+ * Base44's SINGAPORE_BACKEND_TOKEN Bearer contract remains a supported fallback.
+ * RAG tenant API keys are NEVER considered on this mutation path.
  */
 export async function resolveSingaporeControlCredential(
   scope: KBCredentialScope,
   cfg: KBCredentialConfig,
 ): Promise<KBCredential> {
+  const serviceRoleSecret = resolveServiceRoleSecret();
+  if (serviceRoleSecret) {
+    if (!validOpaqueCredential(serviceRoleSecret)) {
+      return { ok: false, error_code: "KB_AUTH_CONTROL_SERVICE_SECRET_INVALID" };
+    }
+    return { ok: true, kind: "service_role", value: serviceRoleSecret };
+  }
+
   const base44ControlToken = Deno.env.get("SINGAPORE_BACKEND_TOKEN")?.trim() ?? "";
   if (base44ControlToken) {
     if (!validOpaqueCredential(base44ControlToken)) {
@@ -177,7 +193,7 @@ export async function resolveSingaporeControlCredential(
   const token = minted ??
     cfg.tenantTokens[scope.singaporeTenantId] ??
     cfg.defaultToken ?? "";
-  const resolved = validateTenantJwt(scope, token, "KB_AUTH_CONTROL_TOKEN_MISSING");
+  const resolved = validateTenantJwt(scope, token, "KB_AUTH_CONTROL_CREDENTIAL_MISSING");
   if (!resolved.ok) return resolved;
   return { ok: true, kind: "jwt", value: resolved.value };
 }
@@ -186,6 +202,9 @@ export function singaporeCredentialHeaders(
   credential: Extract<KBCredential, { ok: true }>,
   cfg: Pick<KBCredentialConfig, "apiKeyHeaderMode">,
 ): Record<string, string> {
+  if (credential.kind === "service_role") {
+    return { "x-service-role-secret": credential.value };
+  }
   if (
     credential.kind === "api_key" &&
     cfg.apiKeyHeaderMode === "x-api-key"
