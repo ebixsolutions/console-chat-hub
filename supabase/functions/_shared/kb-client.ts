@@ -16,7 +16,10 @@ import {
   singaporeCredentialHeaders,
   type KBAuthHeaderMode,
 } from "./kb-auth.ts";
-import { parseAggregationResponse } from "./kb-aggregation-response.ts";
+import {
+  parseAggregationResponse,
+  type AggregationDocumentCandidate,
+} from "./kb-aggregation-response.ts";
 
 export interface KBQueryInput { query: string; top_k: number }
 export type KBScopeMode = "canonical" | "pre_activation" | "demo";
@@ -66,10 +69,23 @@ export interface KBRagMeta {
   dropped_without_document_id: number;
   dropped_without_content: number;
 }
+export interface KBDocumentCandidate {
+  document_id: string;
+  title: string;
+  source_type: string;
+  document_score: number;
+  chunks: KBFullChunk[];
+  citations: KBCitationChunk[];
+  llm_context: KBLLMContext;
+  meta: KBRagMeta;
+}
 export interface KBRagResponse {
   success: boolean;
   chunks: KBFullChunk[];
   citations: KBCitationChunk[];
+  documents: KBDocumentCandidate[];
+  // Backward-compatible single-document fields are populated only when the
+  // producer returned exactly one candidate. New callers must use documents[].
   llm_context?: KBLLMContext;
   meta?: KBRagMeta;
   selected_document_id?: string;
@@ -95,6 +111,7 @@ export interface KBPreActivationActor {
 const SINGAPORE_KB_DEFAULT_BASE_URL = "https://py.ebixmall.com/py-knowledge-base";
 const SINGAPORE_RAG_PATH = "/api/v1/rag/context-search";
 const KB_DEFAULT_TIMEOUT_MS = 12000;
+const KB_MAX_DOCUMENT_CANDIDATES = 5;
 const PREACTIVATION_ROLES = new Set(["admin", "supervisor"]);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 type QueryDbClient = { from: (relation: string) => any };
@@ -143,8 +160,6 @@ export function resolveKBEndpoint(): KBEndpointConfig | null {
   const tenantApiKeys = parseStringMap(Deno.env.get("KB_SINGAPORE_TENANT_API_KEYS_JSON"));
   if (tenantTokens === null || tenantApiKeys === null) return null;
 
-  // Current Singapore contract is x-api-key. Authorization remains an explicit
-  // rollback setting, never the implicit production default.
   const headerRaw = (Deno.env.get("KB_SINGAPORE_API_KEY_HEADER") ?? "x-api-key")
     .trim().toLowerCase();
   if (headerRaw !== "authorization" && headerRaw !== "x-api-key") return null;
@@ -289,13 +304,33 @@ export async function resolveTenantScope(
   return { resolved: true, scope: { mode: "demo", aiCompanyId: null, singaporeTenantId: tenantId } };
 }
 
-// Current Singapore RAG contract requires integer company_id. Until Workflow 2
-// activates a native canonical dual-id, the server-only tenant map is the only
-// trusted bridge. Non-numeric mappings fail closed rather than inventing an ID.
 export function singaporeCompanyIdFromScope(scope: KBResolvedScope): number | null {
   if (!/^[1-9]\d*$/.test(scope.singaporeTenantId)) return null;
   const n = Number(scope.singaporeTenantId);
   return Number.isSafeInteger(n) && n > 0 ? n : null;
+}
+
+function mapDocumentCandidate(candidate: AggregationDocumentCandidate): KBDocumentCandidate {
+  return {
+    document_id: candidate.document_id,
+    title: candidate.title,
+    source_type: candidate.source_type,
+    document_score: candidate.document_score,
+    chunks: candidate.chunks.map((c) => ({
+      document_id: c.document_id,
+      doc_id: c.document_id,
+      ...(c.chunk_id ? { chunk_id: c.chunk_id } : {}),
+      title: c.title,
+      content: c.content,
+      score: c.score,
+      chunk_type: c.chunk_type,
+      source_type: c.source_type,
+      status: "published" as const,
+    })),
+    citations: candidate.citations,
+    llm_context: candidate.llm_context,
+    meta: candidate.meta,
+  };
 }
 
 export async function fetchKBRag(
@@ -305,16 +340,16 @@ export async function fetchKBRag(
   opts?: { timeoutMs?: number },
 ): Promise<KBRagResponse> {
   const query = queryInput.query.trim();
-  if (!query) return { success: true, chunks: [], citations: [] };
+  if (!query) return { success: true, chunks: [], citations: [], documents: [] };
 
   const companyId = singaporeCompanyIdFromScope(scope);
   if (companyId === null) {
-    return { success: false, chunks: [], citations: [], error_code: "KB_COMPANY_ID_INVALID" };
+    return { success: false, chunks: [], citations: [], documents: [], error_code: "KB_COMPANY_ID_INVALID" };
   }
 
   const credential = await resolveSingaporeCredential(scope, endpointCfg);
   if (!credential.ok) {
-    return { success: false, chunks: [], citations: [], error_code: credential.error_code };
+    return { success: false, chunks: [], citations: [], documents: [], error_code: credential.error_code };
   }
 
   const controller = new AbortController();
@@ -331,7 +366,7 @@ export async function fetchKBRag(
         query,
         company_id: companyId,
         candidate_top_k: Math.max(queryInput.top_k, 10),
-        max_documents: 1,
+        max_documents: KB_MAX_DOCUMENT_CANDIDATES,
         max_summary_chunks: 1,
         max_full_content_chunks: 3,
         score_threshold: 0.05,
@@ -341,7 +376,7 @@ export async function fetchKBRag(
   } catch (err) {
     clearTimeout(timeout);
     return {
-      success: false, chunks: [], citations: [],
+      success: false, chunks: [], citations: [], documents: [],
       error_code: err instanceof DOMException && err.name === "AbortError"
         ? "KB_TIMEOUT" : "KB_FETCH_ERROR",
     };
@@ -350,7 +385,7 @@ export async function fetchKBRag(
   clearTimeout(timeout);
   if (!response.ok) {
     return {
-      success: false, chunks: [], citations: [],
+      success: false, chunks: [], citations: [], documents: [],
       error_code: `KB_HTTP_${response.status}`,
     };
   }
@@ -359,32 +394,29 @@ export async function fetchKBRag(
   try {
     data = await response.json();
   } catch {
-    return { success: false, chunks: [], citations: [], error_code: "KB_INVALID_JSON" };
+    return { success: false, chunks: [], citations: [], documents: [], error_code: "KB_INVALID_JSON" };
   }
 
   const parsed = parseAggregationResponse(data);
   if (!parsed.ok) {
-    return { success: false, chunks: [], citations: [], error_code: parsed.error_code };
+    return { success: false, chunks: [], citations: [], documents: [], error_code: parsed.error_code };
   }
-  if (!parsed.contextFound) return { success: true, chunks: [], citations: [] };
+  if (!parsed.contextFound) {
+    return { success: true, chunks: [], citations: [], documents: [] };
+  }
 
+  const documents = parsed.documents.map(mapDocumentCandidate);
+  const single = documents.length === 1 ? documents[0] : undefined;
   return {
     success: true,
-    chunks: parsed.chunks.map((c) => ({
-      document_id: c.document_id,
-      doc_id: c.document_id,
-      ...(c.chunk_id ? { chunk_id: c.chunk_id } : {}),
-      title: c.title,
-      content: c.content,
-      score: c.score,
-      chunk_type: c.chunk_type,
-      source_type: c.source_type,
-      status: "published" as const,
-    })),
-    citations: parsed.citations,
-    llm_context: parsed.llmContext,
-    meta: parsed.meta,
-    selected_document_id: parsed.selectedDocumentId,
+    chunks: documents.flatMap((d) => d.chunks),
+    citations: documents.flatMap((d) => d.citations),
+    documents,
+    ...(single ? {
+      llm_context: single.llm_context,
+      meta: single.meta,
+      selected_document_id: single.document_id,
+    } : {}),
     dropped_without_document_id: 0,
     dropped_without_content: 0,
   };
