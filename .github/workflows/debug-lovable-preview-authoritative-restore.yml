@@ -1,0 +1,110 @@
+name: Debug Lovable Preview Authoritative Restore
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/debug-lovable-preview-authoritative-restore.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  restore-validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Exact restore unauthorized Lovable drift
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=214ac782d7db2469337344d9d96c433b65a8c0e2
+          git cat-file -e "${BASE}^{commit}"
+          git checkout "$BASE" -- .env .lovable/mcp/manifest.json src/integrations/supabase/types.ts
+          rm -f .lovable/types/lovable-vite-tanstack-config.d.mts
+
+          echo 'PASS exact authoritative files restored from verified pre-restart commit'
+
+      - name: Architecture and drift assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET=nrfxhqabwblzxoushgnm
+          LEGACY=hvmtoqiwdqvgnjepxwrc
+
+          grep -q "VITE_SUPABASE_PROJECT_ID=${TARGET}" .env
+          grep -q "VITE_SUPABASE_URL=https://${TARGET}.supabase.co" .env
+          grep -q "VITE_SUPABASE_FUNCTIONS_URL=https://${TARGET}.supabase.co/functions/v1" .env
+          grep -q "https://${TARGET}.supabase.co/auth/v1" .lovable/mcp/manifest.json
+          grep -q 'PostgrestVersion: "14.17"' src/integrations/supabase/types.ts
+          test ! -e .lovable/types/lovable-vite-tanstack-config.d.mts
+
+          if grep -RIl --exclude-dir=.git --exclude-dir=node_modules --exclude='*.md' --exclude='*.txt' "$LEGACY" .env .lovable src public supabase 2>/dev/null | tee /tmp/legacy-hits | grep -q .; then
+            echo 'FAIL active legacy Supabase reference remains:'
+            cat /tmp/legacy-hits
+            exit 1
+          fi
+          echo 'PASS active legacy Supabase refs = 0'
+          echo 'PASS target Supabase runtime refs restored'
+
+      - name: Production build
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm audit --omit=dev --audit-level=high
+          npm run build
+          echo 'PASS client/SSR/Nitro build'
+
+      - name: TanStack dev runtime smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run dev -- --host 127.0.0.1 >/tmp/dev.log 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          ready=0
+          for i in $(seq 1 45); do
+            if curl -fsS http://127.0.0.1:8080/ >/tmp/root.html 2>/dev/null; then ready=1; break; fi
+            if ! kill -0 "$pid" 2>/dev/null; then break; fi
+            sleep 1
+          done
+          if [ "$ready" != 1 ]; then
+            cat /tmp/dev.log
+            exit 1
+          fi
+          for path in / /login /console/agent-settings /console/widget-preview; do
+            code=$(curl -sS -o /tmp/body -w '%{http_code}' "http://127.0.0.1:8080${path}")
+            echo "ROUTE ${path} HTTP ${code}"
+            test "$code" -ge 200
+            test "$code" -lt 500
+          done
+          if grep -Eiq 'TypeError|ReferenceError|SyntaxError|Invalid UUID|RUNTIME_ERROR|Internal Server Error' /tmp/dev.log; then
+            cat /tmp/dev.log
+            exit 1
+          fi
+          echo 'PASS TanStack authenticated-route module/runtime smoke'
+
+      - name: Commit exact restore
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- .env .lovable/mcp/manifest.json .lovable/types/lovable-vite-tanstack-config.d.mts src/integrations/supabase/types.ts; then
+            echo 'FAIL expected unauthorized drift was not present'; exit 1
+          fi
+          git config user.name 'ebixsolutions'
+          git config user.email '64578119+ebixsolutions@users.noreply.github.com'
+          git add -A .env .lovable/mcp/manifest.json .lovable/types/lovable-vite-tanstack-config.d.mts src/integrations/supabase/types.ts
+          git commit -m 'Restore target Supabase after Lovable preview drift'
+          git push origin HEAD:main
+          echo 'PASS authoritative restore committed'
