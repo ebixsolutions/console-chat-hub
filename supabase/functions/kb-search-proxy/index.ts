@@ -30,6 +30,20 @@ const RERANK_RESPONSE_SCHEMA: Record<string, unknown> = {
   required: ["relevant", "confidence"],
   propertyOrdering: ["relevant", "confidence"],
 };
+const RETRIEVAL_EXPANSION_MAX_TOKENS = 384;
+const RETRIEVAL_EXPANSION_MAX_QUERIES = 2;
+const RETRIEVAL_MERGED_MAX_DOCUMENTS = 10;
+const RETRIEVAL_EXPANSION_SCHEMA: Record<string, unknown> = {
+  type: "OBJECT",
+  properties: {
+    queries: {
+      type: "ARRAY",
+      items: { type: "STRING" },
+    },
+  },
+  required: ["queries"],
+  propertyOrdering: ["queries"],
+};
 const CONSOLE_ORIGINS = [
   "https://console-chat-hub.lovable.app",
   "https://id-preview--4dbf593e-577e-4af4-a553-460441c34473.lovable.app",
@@ -216,6 +230,59 @@ async function resolveStandaloneScope(
     ok: true,
     scope: { mode: "pre_activation", aiCompanyId: null, singaporeTenantId: tenant },
   };
+}
+
+async function deriveRetrievalExpansions(params: {
+  currentRequest: string;
+  retrievalQuery: string;
+  scope: KBResolvedScope;
+  conversationId: string | null;
+}): Promise<string[]> {
+  const llm = await callModel({
+    purpose: "assist",
+    system: "You expand a customer-service knowledge-base search query. Return JSON only. Produce up to two short alternative search queries that preserve exactly the same customer intent, use likely knowledge-base terminology, and may use another relevant language. Do not answer the customer. Do not add unrelated topics, products, promises, or policies.",
+    user: `ORIGINAL SEARCH QUERY:\n${params.retrievalQuery.slice(0, 1200)}\n\nCURRENT REQUEST:\n${params.currentRequest.slice(0, 800)}`,
+    maxTokens: RETRIEVAL_EXPANSION_MAX_TOKENS,
+    operationId: crypto.randomUUID(),
+    companyId: params.scope.aiCompanyId,
+    conversationId: params.conversationId,
+    tag: "kb-query-expansion",
+    responseFormat: "json",
+    responseSchema: RETRIEVAL_EXPANSION_SCHEMA,
+  });
+  if (!llm.ok) return [];
+  const parsed = parseJsonObject(llm.text);
+  if (!parsed || !Array.isArray(parsed.queries)) return [];
+
+  const base = normalizeComparable(params.retrievalQuery);
+  const current = normalizeComparable(params.currentRequest);
+  const seen = new Set<string>([base, current]);
+  const out: string[] = [];
+  for (const value of parsed.queries) {
+    if (typeof value !== "string") continue;
+    const query = value.trim().slice(0, 240);
+    const normalized = normalizeComparable(query);
+    if (!query || !normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(query);
+    if (out.length >= RETRIEVAL_EXPANSION_MAX_QUERIES) break;
+  }
+  return out;
+}
+
+function mergeDocumentCandidates(groups: KBDocumentCandidate[][]): KBDocumentCandidate[] {
+  const byId = new Map<string, KBDocumentCandidate>();
+  for (const group of groups) {
+    for (const document of group) {
+      const existing = byId.get(document.document_id);
+      if (!existing || document.document_score > existing.document_score) {
+        byId.set(document.document_id, document);
+      }
+    }
+  }
+  return [...byId.values()]
+    .sort((a, b) => b.document_score - a.document_score || a.document_id.localeCompare(b.document_id))
+    .slice(0, RETRIEVAL_MERGED_MAX_DOCUMENTS);
 }
 
 function classifyRerankFailure(code: string, outputTokens: number): string {
@@ -499,10 +566,29 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: "kb_api_error", detail: result.error_code }, 502, req);
     }
 
+    const expansions = await deriveRetrievalExpansions({
+      currentRequest: derived.currentRequest,
+      retrievalQuery: derived.query,
+      scope,
+      conversationId,
+    });
+    const expandedResults = await Promise.all(
+      expansions.map((expandedQuery) =>
+        fetchKBRag({ query: expandedQuery, top_k: topK }, scope, endpoint)
+      ),
+    );
+    const successfulExpanded = expandedResults.filter((r) => r.success);
+    const mergedDocuments = mergeDocumentCandidates([
+      result.documents,
+      ...successfulExpanded.map((r) => r.documents),
+    ]);
+    const rawResultCount = result.citations.length +
+      successfulExpanded.reduce((total, r) => total + r.citations.length, 0);
+
     const ranked = await rankDocumentCandidates({
       currentRequest: derived.currentRequest,
       retrievalQuery: derived.query,
-      documents: result.documents,
+      documents: mergedDocuments,
       scope,
       conversationId,
     });
@@ -537,9 +623,11 @@ Deno.serve(async (req) => {
         ...(winner?.document.meta ?? {}),
         relevance_method: winner?.method ?? "no_accepted_document",
         relevance_confidence: winner?.confidence ?? null,
-        raw_result_count: result.citations.length,
+        raw_result_count: rawResultCount,
         accepted_result_count: winner?.results.length ?? 0,
-        candidate_document_count: result.documents.length,
+        candidate_document_count: mergedDocuments.length,
+        retrieval_query_count: 1 + expansions.length,
+        expanded_retrieval_used: expansions.length > 0,
         evaluated_document_count: ranked.evaluated.length,
         accepted_document_count: ranked.evaluated.filter((r) => r.results.length > 0).length,
         selected_document_score: winner?.document.document_score ?? null,
