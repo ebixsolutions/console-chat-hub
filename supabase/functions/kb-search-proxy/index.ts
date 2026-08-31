@@ -5,7 +5,7 @@ import {
   type KBDocumentCandidate,
   type KBResolvedScope,
 } from "../_shared/kb-client.ts";
-import { callModel } from "../_shared/llm-router.ts";
+import { callModel, parseJsonObject } from "../_shared/llm-router.ts";
 import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { supabaseCorsHeaders } from "../_shared/supabase-cors.ts";
@@ -19,6 +19,17 @@ const CONTEXT_SEPARATOR = " / ";
 const UI_RELEVANCE_FLOOR = 0.75;
 const LLM_RELEVANCE_FLOOR = 0.75;
 const DIRECT_LEXICAL_FLOOR = 0.6;
+const RERANK_MAX_TOKENS = 768;
+const RERANK_TRUNCATION_NEAR_LIMIT = Math.floor(RERANK_MAX_TOKENS * 0.9);
+const RERANK_RESPONSE_SCHEMA: Record<string, unknown> = {
+  type: "OBJECT",
+  properties: {
+    relevant: { type: "BOOLEAN" },
+    confidence: { type: "NUMBER", minimum: 0, maximum: 1 },
+  },
+  required: ["relevant", "confidence"],
+  propertyOrdering: ["relevant", "confidence"],
+};
 const CONSOLE_ORIGINS = [
   "https://console-chat-hub.lovable.app",
   "https://id-preview--4dbf593e-577e-4af4-a553-460441c34473.lovable.app",
@@ -70,7 +81,6 @@ function lexicalSupport(query: string, evidence: string): number {
 
 type MembershipRow = { company_id: string; role: string };
 type VisitorTurn = { content: string; created_at: string | null };
-
 type RankedDocument = {
   document: KBDocumentCandidate;
   results: Array<Record<string, unknown>>;
@@ -208,6 +218,21 @@ async function resolveStandaloneScope(
   };
 }
 
+function classifyRerankFailure(code: string, outputTokens: number): string {
+  if (code === "LLM_INVALID_OUTPUT" && outputTokens >= RERANK_TRUNCATION_NEAR_LIMIT) {
+    return "rerank_token_budget_exhausted";
+  }
+  switch (code) {
+    case "LLM_INVALID_OUTPUT": return "rerank_llm_invalid_output";
+    case "LLM_TIMEOUT": return "rerank_llm_timeout";
+    case "LLM_NETWORK": return "rerank_llm_network";
+    case "LLM_NON_2XX": return "rerank_llm_non_2xx";
+    case "LLM_CONFIG_MISSING": return "rerank_llm_config_missing";
+    case "LLM_INPUT_BLOCKED": return "rerank_llm_input_blocked";
+    default: return "rerank_llm_failure";
+  }
+}
+
 async function rerankForDisplay(params: {
   currentRequest: string;
   retrievalQuery: string;
@@ -253,51 +278,52 @@ async function rerankForDisplay(params: {
     };
   }
 
-  // Task 1.1 intentionally preserves the existing LLM contract. Structured
-  // output hardening/output-budget changes belong to Task 2.
   const llm = await callModel({
     purpose: "assist",
-    system: "You are a multilingual relevance judge for a customer-service knowledge base. Decide only whether the retrieved evidence directly helps answer the CURRENT customer request. Use semantic meaning across languages, not exact wording. Reject same-domain but unrelated documents. Return JSON only with fields relevant (boolean) and confidence (number 0 to 1).",
+    system: "You are a multilingual relevance judge for a customer-service knowledge base. Decide only whether the retrieved evidence directly helps answer the CURRENT customer request. Use semantic meaning across languages, not exact wording. Reject same-domain but unrelated documents. Return exactly one JSON object matching the supplied schema. Confidence must be between 0 and 1.",
     user: `CURRENT REQUEST:\n${currentRequest.slice(0, 1000)}\n\nRETRIEVAL CONTEXT:\n${retrievalQuery.slice(0, 1200)}\n\nCANDIDATE KNOWLEDGE:\n${evidence}`,
-    maxTokens: 256,
+    maxTokens: RERANK_MAX_TOKENS,
     operationId: crypto.randomUUID(),
     companyId: scope.aiCompanyId,
     conversationId,
     tag: "kb-relevance-rerank",
     responseFormat: "json",
+    responseSchema: RERANK_RESPONSE_SCHEMA,
   });
 
   if (!llm.ok) {
-    return { results: [], method: `rerank_${llm.code.toLowerCase()}`, confidence: null };
-  }
-  try {
-    const parsed = JSON.parse(llm.text) as { relevant?: unknown; confidence?: unknown };
-    const confidence = Number(parsed.confidence);
-    if (
-      parsed.relevant !== true ||
-      !Number.isFinite(confidence) ||
-      confidence < LLM_RELEVANCE_FLOOR
-    ) {
-      return {
-        results: [],
-        method: "llm_rejected",
-        confidence: Number.isFinite(confidence) ? confidence : null,
-      };
-    }
-    const bounded = Math.max(LLM_RELEVANCE_FLOOR, Math.min(1, confidence));
     return {
-      results: citations.map((c) => ({
-        ...c,
-        retrieval_score: Number(c.score ?? 0),
-        score: Math.max(Number(c.score ?? 0), bounded),
-        relevance_method: "multilingual_llm",
-      })),
-      method: "multilingual_llm",
-      confidence: bounded,
+      results: [],
+      method: classifyRerankFailure(llm.code, llm.usage.output_tokens),
+      confidence: null,
     };
-  } catch {
-    return { results: [], method: "rerank_invalid_output", confidence: null };
   }
+
+  const parsed = parseJsonObject(llm.text);
+  if (!parsed || typeof parsed.relevant !== "boolean") {
+    return { results: [], method: "rerank_schema_invalid", confidence: null };
+  }
+  const confidence = typeof parsed.confidence === "number"
+    ? parsed.confidence
+    : Number.NaN;
+  if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) {
+    return { results: [], method: "rerank_schema_invalid", confidence: null };
+  }
+  if (parsed.relevant !== true || confidence < LLM_RELEVANCE_FLOOR) {
+    return { results: [], method: "llm_rejected", confidence };
+  }
+
+  const bounded = Math.max(LLM_RELEVANCE_FLOOR, Math.min(1, confidence));
+  return {
+    results: citations.map((c) => ({
+      ...c,
+      retrieval_score: Number(c.score ?? 0),
+      score: Math.max(Number(c.score ?? 0), bounded),
+      relevance_method: "multilingual_llm",
+    })),
+    method: "multilingual_llm",
+    confidence: bounded,
+  };
 }
 
 async function rankDocumentCandidates(params: {
@@ -309,7 +335,6 @@ async function rankDocumentCandidates(params: {
 }): Promise<{ winner: RankedDocument | null; evaluated: RankedDocument[] }> {
   const evaluated: RankedDocument[] = [];
   for (const document of params.documents) {
-    // Fail closed on any accidental cross-document contamination before rerank.
     if (document.citations.some((c) => c.document_id !== document.document_id)) {
       throw new Error("KB_DOCUMENT_EVIDENCE_MISMATCH");
     }
