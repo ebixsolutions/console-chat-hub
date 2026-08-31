@@ -73,23 +73,10 @@ function validOpaqueApiKey(value) {
   if (value.length < 16 || value.length > 1024) return false;
   return !/[\r\n\0]/.test(value);
 }
-async function resolveSingaporeCredential(scope, cfg) {
-  const apiKey = cfg.tenantApiKeys[scope.singaporeTenantId]?.trim();
-  if (apiKey) {
-    if (!validOpaqueApiKey(apiKey)) {
-      return { ok: false, error_code: "KB_AUTH_API_KEY_INVALID" };
-    }
-    return { ok: true, kind: "api_key", value: apiKey };
-  }
-  const minted = await mintSingaporeTenantJwt(scope, cfg);
-  const token = minted ?? cfg.tenantTokens[scope.singaporeTenantId] ?? cfg.defaultToken;
-  if (!token) {
-    return { ok: false, error_code: "KB_AUTH_TOKEN_MISSING" };
-  }
+function validateTenantJwt(scope, token, missingCode) {
+  if (!token) return { ok: false, error_code: missingCode };
   const claims = decodeJwtPayload(token);
-  if (!claims) {
-    return { ok: false, error_code: "KB_AUTH_TOKEN_INVALID" };
-  }
+  if (!claims) return { ok: false, error_code: "KB_AUTH_TOKEN_INVALID" };
   const tokenTenant = claims.tenant_id ?? claims.sub;
   if (String(tokenTenant ?? "") !== scope.singaporeTenantId) {
     return { ok: false, error_code: "KB_AUTH_TENANT_MISMATCH" };
@@ -99,6 +86,18 @@ async function resolveSingaporeCredential(scope, cfg) {
     return { ok: false, error_code: "KB_AUTH_TOKEN_EXPIRED" };
   }
   return { ok: true, kind: "jwt", value: token };
+}
+async function resolveSingaporeCredential(scope, cfg) {
+  const apiKey = cfg.tenantApiKeys[scope.singaporeTenantId]?.trim();
+  if (apiKey) {
+    if (!validOpaqueApiKey(apiKey)) {
+      return { ok: false, error_code: "KB_AUTH_API_KEY_INVALID" };
+    }
+    return { ok: true, kind: "api_key", value: apiKey };
+  }
+  const minted = await mintSingaporeTenantJwt(scope, cfg);
+  const token = minted ?? cfg.tenantTokens[scope.singaporeTenantId] ?? cfg.defaultToken ?? "";
+  return validateTenantJwt(scope, token, "KB_AUTH_TOKEN_MISSING");
 }
 function singaporeCredentialHeaders(credential, cfg) {
   if (credential.kind === "api_key" && cfg.apiKeyHeaderMode === "x-api-key") {
