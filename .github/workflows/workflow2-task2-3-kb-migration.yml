@@ -1,0 +1,33 @@
+name: Workflow2 Task2.3 KB Migration Gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/workflow2-task2-3-kb-migration.yml'
+      - 'scripts/workflow2-task2-3-kb-migration.mjs'
+      - 'scripts/workflow2-task2-3-kb-migration-final-gate.sh'
+      - 'tests/workflow2-task2-3-kb-migration.test.mjs'
+      - 'supabase/functions/_shared/kb-auth.ts'
+      - 'supabase/functions/training-kb-sync/index.ts'
+      - 'supabase/functions/training-kb-finalize/index.ts'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  final-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Production dependency security audit
+        run: npm audit --omit=dev --audit-level=high
+      - name: Workflow2 Task2.3 final gate
+        run: bash scripts/workflow2-task2-3-kb-migration-final-gate.sh
