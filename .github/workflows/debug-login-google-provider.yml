@@ -1,0 +1,143 @@
+name: Debug Login Google Provider Closure
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/debug-login-google-provider.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fix-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TARGET_REF: nrfxhqabwblzxoushgnm
+      LEGACY_REF: hvmtoqiwdqvgnjepxwrc
+      PROD_URL: https://console-chat-hub.lovable.app
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Inspect and migrate Google Auth provider safely
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SUPABASE_ACCESS_TOKEN:-}"
+          python - <<'PY'
+          import json, os, urllib.request, urllib.error
+
+          token=os.environ['SUPABASE_ACCESS_TOKEN']
+          target=os.environ['TARGET_REF']
+          legacy=os.environ['LEGACY_REF']
+          prod=os.environ['PROD_URL']
+          base='https://api.supabase.com/v1/projects/{}/config/auth'
+
+          def req(ref, method='GET', body=None):
+              data=None if body is None else json.dumps(body).encode()
+              r=urllib.request.Request(base.format(ref),data=data,method=method,headers={
+                  'Authorization':'Bearer '+token,
+                  'Content-Type':'application/json',
+              })
+              with urllib.request.urlopen(r, timeout=30) as x:
+                  return json.loads(x.read().decode())
+
+          t=req(target)
+          l=req(legacy)
+
+          def present(v):
+              return isinstance(v,str) and len(v.strip())>0
+
+          print('TARGET_GOOGLE_ENABLED='+str(bool(t.get('external_google_enabled'))).lower())
+          print('TARGET_GOOGLE_CLIENT_ID_PRESENT='+str(present(t.get('external_google_client_id'))).lower())
+          print('TARGET_GOOGLE_SECRET_PRESENT='+str(present(t.get('external_google_secret'))).lower())
+          print('LEGACY_GOOGLE_ENABLED='+str(bool(l.get('external_google_enabled'))).lower())
+          print('LEGACY_GOOGLE_CLIENT_ID_PRESENT='+str(present(l.get('external_google_client_id'))).lower())
+          print('LEGACY_GOOGLE_SECRET_PRESENT='+str(present(l.get('external_google_secret'))).lower())
+
+          patch={
+              'site_url': prod,
+              'uri_allow_list': ','.join([
+                  prod,
+                  prod+'/**',
+                  'http://localhost:3000',
+                  'http://localhost:5173',
+              ]),
+          }
+
+          # Reuse the already-authorized legacy Google OAuth app only when the
+          # Management API returns complete credentials. Never print them.
+          if not t.get('external_google_enabled'):
+              cid=l.get('external_google_client_id')
+              sec=l.get('external_google_secret')
+              if l.get('external_google_enabled') and present(cid) and present(sec):
+                  # Reject obvious redaction placeholders rather than writing them.
+                  lowered=sec.strip().lower()
+                  if any(x in lowered for x in ['*****','redacted','hidden']):
+                      raise SystemExit('STOP: legacy Google client secret is redacted by Management API')
+                  patch.update({
+                      'external_google_enabled': True,
+                      'external_google_client_id': cid,
+                      'external_google_secret': sec,
+                  })
+                  print('ACTION=SAFE_MIGRATE_LEGACY_GOOGLE_PROVIDER')
+              else:
+                  raise SystemExit('STOP: target Google provider disabled and no reusable legacy Google OAuth credential returned')
+          else:
+              print('ACTION=GOOGLE_PROVIDER_ALREADY_ENABLED; URL_CONFIG_REFRESH_ONLY')
+
+          req(target,'PATCH',patch)
+          after=req(target)
+          assert after.get('external_google_enabled') is True, 'Google provider still disabled after PATCH'
+          assert present(after.get('external_google_client_id')), 'Google client id absent after PATCH'
+          print('PASS target Google provider enabled')
+          print('PASS target Auth Site URL / redirect allowlist patched')
+          PY
+
+      - name: Verify hosted Auth settings expose Google
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a; source .env; set +a
+          python - <<'PY'
+          import json, os, urllib.request
+          url=os.environ['VITE_SUPABASE_URL'].rstrip('/')+'/auth/v1/settings'
+          key=os.environ.get('VITE_SUPABASE_PUBLISHABLE_KEY') or os.environ.get('VITE_SUPABASE_ANON_KEY')
+          assert key, 'publishable key missing from repo env'
+          r=urllib.request.Request(url,headers={'apikey':key})
+          with urllib.request.urlopen(r,timeout=30) as x: d=json.loads(x.read().decode())
+          ext=d.get('external') or {}
+          print('AUTH_SETTINGS_GOOGLE='+str(bool(ext.get('google'))).lower())
+          assert ext.get('google') is True, d
+          print('PASS /auth/v1/settings external.google=true')
+          PY
+
+      - name: Verify production OAuth authorize no longer returns provider-disabled
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a; source .env; set +a
+          code=$(curl -sS -o /tmp/google-auth.out -D /tmp/google-auth.headers -w '%{http_code}' \
+            -H "apikey: ${VITE_SUPABASE_PUBLISHABLE_KEY:-${VITE_SUPABASE_ANON_KEY:-}}" \
+            "${VITE_SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${PROD_URL}")
+          case "$code" in
+            301|302|303|307|308) echo "PASS Google authorize redirects HTTP $code";;
+            *)
+              if grep -qi 'provider is not enabled\|Unsupported provider' /tmp/google-auth.out; then
+                echo 'FAIL provider remains disabled'; cat /tmp/google-auth.out; exit 1
+              fi
+              echo "FAIL unexpected Google authorize HTTP $code"; cat /tmp/google-auth.out; exit 1;;
+          esac
+
+      - name: Production build guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          echo 'DEBUG LOGIN FINAL GATE: PASS'
