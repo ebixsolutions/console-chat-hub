@@ -1,0 +1,79 @@
+name: Debug Login Provider Failsafe
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/debug-login-provider-failsafe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch-build-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Patch login Google-provider runtime guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('src/routes/login.tsx')
+          s=p.read_text()
+          s=s.replace('import { useState } from "react";','import { useEffect, useState } from "react";',1)
+          anchor='''  const [loading, setLoading] = useState(false);\n'''
+          repl='''  const [loading, setLoading] = useState(false);\n  const [googleEnabled, setGoogleEnabled] = useState<boolean | null>(null);\n\n  useEffect(() => {\n    let active = true;\n    const loadAuthProviders = async () => {\n      try {\n        const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/auth/v1/settings`, {\n          headers: { apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY },\n        });\n        const settings = response.ok ? await response.json() : null;\n        if (active) setGoogleEnabled(settings?.external?.google === true);\n      } catch {\n        if (active) setGoogleEnabled(false);\n      }\n    };\n    void loadAuthProviders();\n    return () => { active = false; };\n  }, []);\n'''
+          assert anchor in s
+          s=s.replace(anchor,repl,1)
+          old='''  const handleGoogle = async () => {\n    setLoading(true);\n'''
+          new='''  const handleGoogle = async () => {\n    if (googleEnabled !== true) {\n      toast.error("Google sign-in is temporarily unavailable. Please sign in with email and password.");\n      return;\n    }\n    setLoading(true);\n'''
+          assert old in s
+          s=s.replace(old,new,1)
+          oldbtn='''          <Button type="button" variant="outline" className="w-full" onClick={handleGoogle} disabled={loading}>\n            Continue with Google\n          </Button>\n'''
+          newbtn='''          <Button\n            type="button"\n            variant="outline"\n            className="w-full"\n            onClick={handleGoogle}\n            disabled={loading || googleEnabled !== true}\n            title={googleEnabled === false ? "Google sign-in is not enabled for this environment" : undefined}\n          >\n            {googleEnabled === null ? "Checking Google sign-in…" : googleEnabled ? "Continue with Google" : "Google sign-in unavailable"}\n          </Button>\n'''
+          assert oldbtn in s
+          s=s.replace(oldbtn,newbtn,1)
+          p.write_text(s)
+          print('PASS login provider runtime guard patched')
+          PY
+
+      - name: Verify target Auth settings and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a; source .env; set +a
+          curl -fsS -H "apikey: ${VITE_SUPABASE_PUBLISHABLE_KEY}" "${VITE_SUPABASE_URL}/auth/v1/settings" >/tmp/settings.json
+          python - <<'PY'
+          import json
+          d=json.load(open('/tmp/settings.json'))
+          print('TARGET_EMAIL_ENABLED='+str(bool((d.get('external') or {}).get('email', True))).lower())
+          print('TARGET_GOOGLE_ENABLED='+str(bool((d.get('external') or {}).get('google'))).lower())
+          assert (d.get('external') or {}).get('google') is not True
+          print('PASS current root cause reproduced: Google provider disabled')
+          PY
+          grep -q 'googleEnabled !== true' src/routes/login.tsx
+          grep -q 'Google sign-in unavailable' src/routes/login.tsx
+          npm ci
+          npm run build
+          echo 'PASS login failsafe production build'
+
+      - name: Commit fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'ebixsolutions'
+          git config user.email '64578119+ebixsolutions@users.noreply.github.com'
+          git add src/routes/login.tsx
+          git commit -m 'Fix login when Google provider is disabled'
+          git push origin HEAD:main
