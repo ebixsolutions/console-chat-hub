@@ -100,6 +100,9 @@ async function resolveSingaporeCredential(scope, cfg) {
   return validateTenantJwt(scope, token, "KB_AUTH_TOKEN_MISSING");
 }
 function singaporeCredentialHeaders(credential, cfg) {
+  if (credential.kind === "service_role") {
+    return { "x-service-role-secret": credential.value };
+  }
   if (credential.kind === "api_key" && cfg.apiKeyHeaderMode === "x-api-key") {
     return { "x-api-key": credential.value };
   }
