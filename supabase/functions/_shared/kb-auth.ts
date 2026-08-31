@@ -4,7 +4,8 @@
 // Data-plane/RAG contract:
 //   opaque tenant-bound API key -> x-api-key
 // Control-plane contract (CRUD / publish / migration):
-//   tenant-bound service JWT/token -> Authorization: Bearer
+//   Base44-compatible SINGAPORE_BACKEND_TOKEN -> Authorization: Bearer
+//   tenant-bound service JWT/token is retained only as an explicit fallback.
 //
 // Browser payloads never choose company/tenant/key scope.
 
@@ -27,7 +28,7 @@ export interface KBCredentialConfig {
 }
 
 export type KBCredential =
-  | { ok: true; kind: "api_key" | "jwt"; value: string }
+  | { ok: true; kind: "api_key" | "jwt" | "bearer"; value: string }
   | { ok: false; error_code: string };
 
 function decodeJwtPayload(token: string): Record<string, unknown> | null {
@@ -96,8 +97,8 @@ async function mintSingaporeTenantJwt(
   return `${signingInput}.${base64UrlEncode(new Uint8Array(signature))}`;
 }
 
-function validOpaqueApiKey(value: string): boolean {
-  if (value.length < 16 || value.length > 1024) return false;
+function validOpaqueCredential(value: string): boolean {
+  if (value.length < 16 || value.length > 4096) return false;
   return !/[\r\n\0]/.test(value);
 }
 
@@ -133,7 +134,7 @@ export async function resolveSingaporeCredential(
 ): Promise<KBCredential> {
   const apiKey = cfg.tenantApiKeys[scope.singaporeTenantId]?.trim();
   if (apiKey) {
-    if (!validOpaqueApiKey(apiKey)) {
+    if (!validOpaqueCredential(apiKey)) {
       return { ok: false, error_code: "KB_AUTH_API_KEY_INVALID" };
     }
     return { ok: true, kind: "api_key", value: apiKey };
@@ -147,15 +148,31 @@ export async function resolveSingaporeCredential(
 }
 
 /**
- * Resolve a Singapore control-plane credential for entity CRUD, publish and
- * migration operations. RAG API keys are deliberately NEVER considered here:
- * current Singapore generic CRUD correctly rejects those keys, and silently
- * retrying a data-plane key on a mutation path hides missing service auth.
+ * Resolve the Singapore control-plane credential for entity CRUD, publish and
+ * migration operations.
+ *
+ * Current Base44 authoritative callers do not mint or inspect the upstream
+ * credential. They read SINGAPORE_BACKEND_TOKEN and forward it as a Bearer
+ * token. Preserve that exact contract here: the Singapore backend remains the
+ * authority that validates JWT/service-token claims. RAG x-api-keys are NEVER
+ * considered on this mutation path.
+ *
+ * The older tenant-JWT resolver is retained only as an explicit fallback for
+ * environments that already provision that contract; it is not preferred over
+ * the Base44-compatible control token.
  */
 export async function resolveSingaporeControlCredential(
   scope: KBCredentialScope,
   cfg: KBCredentialConfig,
 ): Promise<KBCredential> {
+  const base44ControlToken = Deno.env.get("SINGAPORE_BACKEND_TOKEN")?.trim() ?? "";
+  if (base44ControlToken) {
+    if (!validOpaqueCredential(base44ControlToken)) {
+      return { ok: false, error_code: "KB_AUTH_CONTROL_TOKEN_INVALID" };
+    }
+    return { ok: true, kind: "bearer", value: base44ControlToken };
+  }
+
   const minted = await mintSingaporeTenantJwt(scope, cfg);
   const token = minted ??
     cfg.tenantTokens[scope.singaporeTenantId] ??
