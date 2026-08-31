@@ -30,7 +30,7 @@ const RERANK_RESPONSE_SCHEMA: Record<string, unknown> = {
   required: ["relevant", "confidence"],
   propertyOrdering: ["relevant", "confidence"],
 };
-const RETRIEVAL_EXPANSION_MAX_TOKENS = 768;
+const RETRIEVAL_EXPANSION_MAX_TOKENS = 2048;
 const RETRIEVAL_EXPANSION_MAX_QUERIES = 2;
 const RETRIEVAL_MERGED_MAX_DOCUMENTS = 10;
 const RETRIEVAL_EXPANSION_SCHEMA: Record<string, unknown> = {
