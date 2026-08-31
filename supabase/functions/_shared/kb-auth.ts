@@ -1,10 +1,10 @@
 // supabase/functions/_shared/kb-auth.ts
 // Server-only Singapore KB credential resolver.
 //
-// Preferred production contract:
+// Data-plane/RAG contract:
 //   opaque tenant-bound API key -> x-api-key
-// Explicit rollback contract:
-//   JWT / legacy mapped token -> Authorization: Bearer
+// Control-plane contract (CRUD / publish / migration):
+//   tenant-bound service JWT/token -> Authorization: Bearer
 //
 // Browser payloads never choose company/tenant/key scope.
 
@@ -101,6 +101,32 @@ function validOpaqueApiKey(value: string): boolean {
   return !/[\r\n\0]/.test(value);
 }
 
+function validateTenantJwt(
+  scope: KBCredentialScope,
+  token: string,
+  missingCode: string,
+): KBCredential {
+  if (!token) return { ok: false, error_code: missingCode };
+  const claims = decodeJwtPayload(token);
+  if (!claims) return { ok: false, error_code: "KB_AUTH_TOKEN_INVALID" };
+
+  const tokenTenant = claims.tenant_id ?? claims.sub;
+  if (String(tokenTenant ?? "") !== scope.singaporeTenantId) {
+    return { ok: false, error_code: "KB_AUTH_TENANT_MISMATCH" };
+  }
+
+  const exp = Number(claims.exp);
+  if (Number.isFinite(exp) && exp * 1000 <= Date.now() + 5000) {
+    return { ok: false, error_code: "KB_AUTH_TOKEN_EXPIRED" };
+  }
+  return { ok: true, kind: "jwt", value: token };
+}
+
+/**
+ * Resolve the Singapore RAG/data-plane credential.
+ * Production prefers the tenant-scoped opaque x-api-key. JWT remains a
+ * documented rollback/data-plane option only.
+ */
 export async function resolveSingaporeCredential(
   scope: KBCredentialScope,
   cfg: KBCredentialConfig,
@@ -116,28 +142,27 @@ export async function resolveSingaporeCredential(
   const minted = await mintSingaporeTenantJwt(scope, cfg);
   const token = minted ??
     cfg.tenantTokens[scope.singaporeTenantId] ??
-    cfg.defaultToken;
+    cfg.defaultToken ?? "";
+  return validateTenantJwt(scope, token, "KB_AUTH_TOKEN_MISSING");
+}
 
-  if (!token) {
-    return { ok: false, error_code: "KB_AUTH_TOKEN_MISSING" };
-  }
-
-  const claims = decodeJwtPayload(token);
-  if (!claims) {
-    return { ok: false, error_code: "KB_AUTH_TOKEN_INVALID" };
-  }
-
-  const tokenTenant = claims.tenant_id ?? claims.sub;
-  if (String(tokenTenant ?? "") !== scope.singaporeTenantId) {
-    return { ok: false, error_code: "KB_AUTH_TENANT_MISMATCH" };
-  }
-
-  const exp = Number(claims.exp);
-  if (Number.isFinite(exp) && exp * 1000 <= Date.now() + 5000) {
-    return { ok: false, error_code: "KB_AUTH_TOKEN_EXPIRED" };
-  }
-
-  return { ok: true, kind: "jwt", value: token };
+/**
+ * Resolve a Singapore control-plane credential for entity CRUD, publish and
+ * migration operations. RAG API keys are deliberately NEVER considered here:
+ * current Singapore generic CRUD correctly rejects those keys, and silently
+ * retrying a data-plane key on a mutation path hides missing service auth.
+ */
+export async function resolveSingaporeControlCredential(
+  scope: KBCredentialScope,
+  cfg: KBCredentialConfig,
+): Promise<KBCredential> {
+  const minted = await mintSingaporeTenantJwt(scope, cfg);
+  const token = minted ??
+    cfg.tenantTokens[scope.singaporeTenantId] ??
+    cfg.defaultToken ?? "";
+  const resolved = validateTenantJwt(scope, token, "KB_AUTH_CONTROL_TOKEN_MISSING");
+  if (!resolved.ok) return resolved;
+  return { ok: true, kind: "jwt", value: resolved.value };
 }
 
 export function singaporeCredentialHeaders(
