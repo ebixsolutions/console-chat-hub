@@ -32,6 +32,7 @@ jobs:
           git cat-file -e "${BASE}^{commit}"
           git checkout "$BASE" -- .env .lovable/mcp/manifest.json src/integrations/supabase/types.ts
           rm -f .lovable/types/lovable-vite-tanstack-config.d.mts
+          git add -A .lovable/types/lovable-vite-tanstack-config.d.mts
           echo 'PASS exact authoritative files restored from verified pre-restart commit'
 
       - name: Architecture and drift assertions
@@ -99,12 +100,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if git diff --quiet -- .env .lovable/mcp/manifest.json .lovable/types/lovable-vite-tanstack-config.d.mts src/integrations/supabase/types.ts; then
+          if git diff --cached --quiet -- .env .lovable/mcp/manifest.json .lovable/types/lovable-vite-tanstack-config.d.mts src/integrations/supabase/types.ts; then
             echo 'FAIL expected unauthorized drift was not present'; exit 1
           fi
           git config user.name 'ebixsolutions'
           git config user.email '64578119+ebixsolutions@users.noreply.github.com'
-          git add -A .env .lovable/mcp/manifest.json .lovable/types/lovable-vite-tanstack-config.d.mts src/integrations/supabase/types.ts
           git commit -m 'Restore target Supabase after Lovable preview drift'
+          git pull --rebase origin main
           git push origin HEAD:main
           echo 'PASS authoritative restore committed'
