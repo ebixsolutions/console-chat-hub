@@ -1,3 +1,4 @@
+import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
 /**
  * PR-6B — Singapore KB publish finalizer + live RAG read-back.
  *
@@ -16,6 +17,7 @@
  */
 import { createClient } from "npm:@supabase/supabase-js@2.45.0";
 import {
+  resolveSingaporeControlCredential,
   resolveSingaporeCredential,
   singaporeCredentialHeaders,
   type KBCredentialConfig,
@@ -27,7 +29,7 @@ import {
 } from "../_shared/kb-client.ts";
 import { parseAggregationResponse } from "../_shared/kb-aggregation-response.ts";
 
-const CONTRACT = "PR6B_SINGAPORE_KB_FINALIZE_V3";
+const CONTRACT = "PR6B_SINGAPORE_KB_FINALIZE_V4";
 const SUCCESS = "completed";
 const FAILURE = new Set(["failed", "cancelled", "cancellation_failed"]);
 
@@ -114,10 +116,12 @@ function newContentEvidenceMatches(
   return windows.some((window) => evidence.includes(window));
 }
 
+type ResolvedCredential = Extract<Awaited<ReturnType<typeof resolveSingaporeCredential>>, { ok: true }>;
+
 async function kbFetch(
   base: string,
   path: string,
-  credential: Extract<Awaited<ReturnType<typeof resolveSingaporeCredential>>, { ok: true }>,
+  credential: ResolvedCredential,
   cfg: KBCredentialConfig,
   init: RequestInit = {},
 ): Promise<Response> {
@@ -147,7 +151,8 @@ Deno.serve(async (req) => {
   }
 
   const supabaseUrl = text(Deno.env.get("SUPABASE_URL"));
-  const serviceRole = text(Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"));
+  let serviceRole = "";
+  try { serviceRole = text(getSupabaseAdminKey()); } catch {}
   const endpoint = resolveKBEndpoint();
   const authCfg = credentialConfig();
   const tenantMap = parseStringMap(Deno.env.get("KB_SINGAPORE_TENANT_MAP_JSON"));
@@ -211,16 +216,16 @@ Deno.serve(async (req) => {
     aiCompanyId: companyId,
     singaporeTenantId: tenantId,
   };
-  const credential = await resolveSingaporeCredential(scope, authCfg);
-  if (!credential.ok) {
-    await finish("failed", credential.error_code.toLowerCase());
-    return json({ ok: false, error: credential.error_code.toLowerCase() }, 409);
+  const controlCredential = await resolveSingaporeControlCredential(scope, authCfg);
+  if (!controlCredential.ok) {
+    await finish("failed", controlCredential.error_code.toLowerCase());
+    return json({ ok: false, error: controlCredential.error_code.toLowerCase() }, 409);
   }
 
   let statusResponse: Response;
   try {
     statusResponse = await kbFetch(
-      endpoint.baseUrl, "/api/functions/kbPublishGetStatus", credential, authCfg,
+      endpoint.baseUrl, "/api/functions/kbPublishGetStatus", controlCredential, authCfg,
       { method: "POST", body: JSON.stringify({ operation_id: operationId }) },
     );
   } catch {
@@ -250,7 +255,7 @@ Deno.serve(async (req) => {
   const documentResponse = await kbFetch(
     endpoint.baseUrl,
     `/api/entities/KBDocument/${encodeURIComponent(documentId)}`,
-    credential,
+    controlCredential,
     authCfg,
   );
   if (!documentResponse.ok) {
@@ -282,7 +287,7 @@ Deno.serve(async (req) => {
     const syncResponse = await kbFetch(
       endpoint.baseUrl,
       `/api/entities/KBDocument/${encodeURIComponent(documentId)}`,
-      credential,
+      controlCredential,
       authCfg,
       { method: "PATCH", body: JSON.stringify({ training_sync_status: "synced" }) },
     );
@@ -297,10 +302,18 @@ Deno.serve(async (req) => {
     }
   }
 
+  // Read-back uses the data-plane credential deliberately. Control-plane JWT
+  // is never substituted for the tenant RAG key unless no RAG key is configured.
+  const ragCredential = await resolveSingaporeCredential(scope, authCfg);
+  if (!ragCredential.ok) {
+    await finish("pending", ragCredential.error_code.toLowerCase());
+    return json({ ok: true, contract: CONTRACT, processed: 1, state: "pending" });
+  }
+
   const ragResponse = await kbFetch(
     endpoint.baseUrl,
     "/api/v1/rag/context-search",
-    credential,
+    ragCredential,
     authCfg,
     {
       method: "POST",
