@@ -1,0 +1,116 @@
+name: Debug Console KB Policy Widget Preview
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/debug-console-kb-policy-widget-preview.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch-build-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Patch preview CORS and Widget new-conversation state
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          # 1) Console Edge functions must accept the actual Lovable local preview origin.
+          for rel in ['supabase/functions/kb-search-proxy/index.ts','supabase/functions/agent-assist/index.ts']:
+              p=Path(rel); s=p.read_text()
+              anchor='''const CONSOLE_ORIGINS = [\n  "https://console-chat-hub.lovable.app",\n  "https://id-preview--4dbf593e-577e-4af4-a553-460441c34473.lovable.app",\n];'''
+              repl='''const CONSOLE_ORIGINS = [\n  "https://console-chat-hub.lovable.app",\n  "https://id-preview--4dbf593e-577e-4af4-a553-460441c34473.lovable.app",\n  "http://localhost:3000",\n  "http://localhost:5173",\n];'''
+              assert anchor in s, rel
+              s=s.replace(anchor,repl,1)
+              p.write_text(s)
+
+          # 2) Starting a new Live AI Test conversation must release stale human-control UI state.
+          p=Path('src/routes/_authenticated/console.widget-preview.tsx')
+          s=p.read_text()
+          old='''    if (mode === "live") {\n      setTestConversationId(null);\n      window.localStorage.removeItem("widget_live_test_conversation_id");\n      setMessages([]);\n      setInput("");\n      setTyping(false);\n      setHistoryOpen(false);\n      setMenuOpen(false);\n      setEmojiOpen(false);\n      void loadLiveHistory();\n      return;\n    }'''
+          new='''    if (mode === "live") {\n      setTestConversationId(null);\n      window.localStorage.removeItem("widget_live_test_conversation_id");\n      setMessages([]);\n      setInput("");\n      setTyping(false);\n      setHumanState("none");\n      setHistoryOpen(false);\n      setMenuOpen(false);\n      setEmojiOpen(false);\n      void loadLiveHistory();\n      return;\n    }'''
+          assert old in s
+          s=s.replace(old,new,1)
+          p.write_text(s)
+          print('PASS source patches applied')
+          PY
+
+      - name: Source assertions and production build
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in supabase/functions/kb-search-proxy/index.ts supabase/functions/agent-assist/index.ts; do
+            grep -q '"http://localhost:3000"' "$f"
+            grep -q '"http://localhost:5173"' "$f"
+          done
+          python - <<'PY'
+          from pathlib import Path
+          s=Path('src/routes/_authenticated/console.widget-preview.tsx').read_text()
+          block=s[s.index('const startNewConversation'):s.index('const chat =',s.index('const startNewConversation'))]
+          assert 'setHumanState("none")' in block
+          print('PASS widget human state reset contract')
+          PY
+          npm ci
+          npm audit --omit=dev --audit-level=high
+          npm run build
+          echo 'PASS production build'
+
+      - name: Deploy corrected console Edge functions
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SUPABASE_ACCESS_TOKEN:-}"
+          npx --yes supabase@latest functions deploy kb-search-proxy --project-ref "$PROJECT_REF"
+          npx --yes supabase@latest functions deploy agent-assist --project-ref "$PROJECT_REF"
+          npx --yes supabase@latest functions list --project-ref "$PROJECT_REF" --output json >/tmp/functions.json
+          python - <<'PY'
+          import json
+          rows=json.load(open('/tmp/functions.json')); by={str(x.get('slug') or x.get('name')):x for x in rows}
+          for n in ('kb-search-proxy','agent-assist'):
+              r=by.get(n); assert r and str(r.get('status','')).upper()=='ACTIVE',(n,r)
+              print('PASS '+n+' ACTIVE version='+str(r.get('version')))
+          PY
+
+      - name: CORS preflight smoke for Lovable local preview
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a; source .env; set +a
+          for fn in kb-search-proxy agent-assist; do
+            code=$(curl -sS -o "/tmp/${fn}-cors.txt" -w '%{http_code}' -X OPTIONS \
+              -H 'Origin: http://localhost:3000' \
+              -H 'Access-Control-Request-Method: POST' \
+              -H 'Access-Control-Request-Headers: authorization,apikey,content-type,x-client-info' \
+              "${VITE_SUPABASE_FUNCTIONS_URL}/${fn}")
+            test "$code" = 200 || { echo "FAIL ${fn} localhost CORS HTTP ${code}"; cat "/tmp/${fn}-cors.txt"; exit 1; }
+            echo "PASS ${fn} localhost CORS HTTP 200"
+          done
+
+      - name: Commit source fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'ebixsolutions'
+          git config user.email '64578119+ebixsolutions@users.noreply.github.com'
+          git add src/routes/_authenticated/console.widget-preview.tsx supabase/functions/kb-search-proxy/index.ts supabase/functions/agent-assist/index.ts
+          git commit -m 'Fix preview KB Policy CORS and Widget conversation reset'
+          git push origin HEAD:main
+          echo 'PASS source fixes committed'
