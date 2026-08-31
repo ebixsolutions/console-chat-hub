@@ -1,3 +1,4 @@
+import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
 /**
  * PR-6B — SU CoachAI improved result -> Singapore KB publish saga.
  *
@@ -18,14 +19,14 @@
  */
 import { createClient } from "npm:@supabase/supabase-js@2.45.0";
 import {
-  resolveSingaporeCredential,
+  resolveSingaporeControlCredential,
   singaporeCredentialHeaders,
   type KBCredentialConfig,
   type KBCredentialScope,
 } from "../_shared/kb-auth.ts";
 import { parseStringMap, resolveKBEndpoint } from "../_shared/kb-client.ts";
 
-const WORKER_CONTRACT = "PR6B_SINGAPORE_KB_SYNC_V3";
+const WORKER_CONTRACT = "PR6B_SINGAPORE_KB_SYNC_V4";
 const MAX_CONTENT_BYTES = 512 * 1024;
 const APPROVAL_SOURCE = "su_coachai_verified_correction";
 
@@ -95,7 +96,7 @@ function credentialConfig(): KBCredentialConfig | null {
 async function kbFetch(
   base: string,
   path: string,
-  credential: Extract<Awaited<ReturnType<typeof resolveSingaporeCredential>>, { ok: true }>,
+  credential: Extract<Awaited<ReturnType<typeof resolveSingaporeControlCredential>>, { ok: true }>,
   cfg: KBCredentialConfig,
   init: RequestInit = {},
 ): Promise<Response> {
@@ -126,7 +127,8 @@ Deno.serve(async (req) => {
   }
 
   const supabaseUrl = text(Deno.env.get("SUPABASE_URL"));
-  const serviceRole = text(Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"));
+  let serviceRole = "";
+  try { serviceRole = text(getSupabaseAdminKey()); } catch {}
   const endpoint = resolveKBEndpoint();
   const authCfg = credentialConfig();
   const tenantMap = parseStringMap(Deno.env.get("KB_SINGAPORE_TENANT_MAP_JSON"));
@@ -196,7 +198,7 @@ Deno.serve(async (req) => {
     aiCompanyId: companyId,
     singaporeTenantId: tenantId,
   };
-  const credential = await resolveSingaporeCredential(scope, authCfg);
+  const credential = await resolveSingaporeControlCredential(scope, authCfg);
   if (!credential.ok) return fail(credential.error_code.toLowerCase());
 
   let docResp: Response;
@@ -250,7 +252,7 @@ Deno.serve(async (req) => {
     company_id: doc.company_id,
   };
 
-  let snap = await kbFetch(endpoint.baseUrl, "/api/entities/KBDocumentVersion", credential, authCfg, {
+  const snap = await kbFetch(endpoint.baseUrl, "/api/entities/KBDocumentVersion", credential, authCfg, {
     method: "POST",
     body: JSON.stringify(snapshotBody),
   });
