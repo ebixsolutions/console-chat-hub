@@ -110,6 +110,8 @@ jobs:
           git config user.name 'ebixsolutions'
           git config user.email '64578119+ebixsolutions@users.noreply.github.com'
           git commit -m 'Restore target Supabase after Lovable preview drift'
+          git reset --hard HEAD
+          git clean -fd .output node_modules/.nitro .wrangler 2>/dev/null || true
           git pull --rebase origin main
           git push origin HEAD:main
           echo 'PASS authoritative restore committed'
