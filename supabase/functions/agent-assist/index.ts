@@ -23,6 +23,8 @@ const VALID_POL_ST = new Set(["compliant", "warning", "violation", "insufficient
 const CONSOLE_ORIGINS = [
   "https://console-chat-hub.lovable.app",
   "https://id-preview--4dbf593e-577e-4af4-a553-460441c34473.lovable.app",
+  "http://localhost:3000",
+  "http://localhost:5173",
 ];
 function getCorsHeaders(req:Request):Record<string,string>{
   return supabaseCorsHeaders(req.headers.get("Origin")??"",CONSOLE_ORIGINS,req.headers.get("Access-Control-Request-Headers")??"");

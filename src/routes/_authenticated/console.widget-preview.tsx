@@ -1096,6 +1096,7 @@ function PreviewWidget({
       setMessages([]);
       setInput("");
       setTyping(false);
+      setHumanState("none");
       setHistoryOpen(false);
       setMenuOpen(false);
       setEmojiOpen(false);
