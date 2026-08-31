@@ -276,6 +276,7 @@ function parseAggregationResponse(data) {
 var SINGAPORE_KB_DEFAULT_BASE_URL = "https://py.ebixmall.com/py-knowledge-base";
 var SINGAPORE_RAG_PATH = "/api/v1/rag/context-search";
 var KB_DEFAULT_TIMEOUT_MS = 12e3;
+var KB_MAX_DOCUMENT_CANDIDATES = 5;
 var PREACTIVATION_ROLES = /* @__PURE__ */ new Set(["admin", "supervisor"]);
 var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function normalizeBaseUrl(raw) {
@@ -422,16 +423,38 @@ function singaporeCompanyIdFromScope(scope) {
   const n = Number(scope.singaporeTenantId);
   return Number.isSafeInteger(n) && n > 0 ? n : null;
 }
+function mapDocumentCandidate(candidate) {
+  return {
+    document_id: candidate.document_id,
+    title: candidate.title,
+    source_type: candidate.source_type,
+    document_score: candidate.document_score,
+    chunks: candidate.chunks.map((c) => ({
+      document_id: c.document_id,
+      doc_id: c.document_id,
+      ...c.chunk_id ? { chunk_id: c.chunk_id } : {},
+      title: c.title,
+      content: c.content,
+      score: c.score,
+      chunk_type: c.chunk_type,
+      source_type: c.source_type,
+      status: "published"
+    })),
+    citations: candidate.citations,
+    llm_context: candidate.llm_context,
+    meta: candidate.meta
+  };
+}
 async function fetchKBRag(queryInput, scope, endpointCfg, opts) {
   const query = queryInput.query.trim();
-  if (!query) return { success: true, chunks: [], citations: [] };
+  if (!query) return { success: true, chunks: [], citations: [], documents: [] };
   const companyId = singaporeCompanyIdFromScope(scope);
   if (companyId === null) {
-    return { success: false, chunks: [], citations: [], error_code: "KB_COMPANY_ID_INVALID" };
+    return { success: false, chunks: [], citations: [], documents: [], error_code: "KB_COMPANY_ID_INVALID" };
   }
   const credential = await resolveSingaporeCredential(scope, endpointCfg);
   if (!credential.ok) {
-    return { success: false, chunks: [], citations: [], error_code: credential.error_code };
+    return { success: false, chunks: [], citations: [], documents: [], error_code: credential.error_code };
   }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), opts?.timeoutMs ?? KB_DEFAULT_TIMEOUT_MS);
@@ -447,7 +470,7 @@ async function fetchKBRag(queryInput, scope, endpointCfg, opts) {
         query,
         company_id: companyId,
         candidate_top_k: Math.max(queryInput.top_k, 10),
-        max_documents: 1,
+        max_documents: KB_MAX_DOCUMENT_CANDIDATES,
         max_summary_chunks: 1,
         max_full_content_chunks: 3,
         score_threshold: 0.05
@@ -460,6 +483,7 @@ async function fetchKBRag(queryInput, scope, endpointCfg, opts) {
       success: false,
       chunks: [],
       citations: [],
+      documents: [],
       error_code: err instanceof DOMException && err.name === "AbortError" ? "KB_TIMEOUT" : "KB_FETCH_ERROR"
     };
   }
@@ -469,6 +493,7 @@ async function fetchKBRag(queryInput, scope, endpointCfg, opts) {
       success: false,
       chunks: [],
       citations: [],
+      documents: [],
       error_code: `KB_HTTP_${response.status}`
     };
   }
@@ -476,30 +501,27 @@ async function fetchKBRag(queryInput, scope, endpointCfg, opts) {
   try {
     data = await response.json();
   } catch {
-    return { success: false, chunks: [], citations: [], error_code: "KB_INVALID_JSON" };
+    return { success: false, chunks: [], citations: [], documents: [], error_code: "KB_INVALID_JSON" };
   }
   const parsed = parseAggregationResponse(data);
   if (!parsed.ok) {
-    return { success: false, chunks: [], citations: [], error_code: parsed.error_code };
+    return { success: false, chunks: [], citations: [], documents: [], error_code: parsed.error_code };
   }
-  if (!parsed.contextFound) return { success: true, chunks: [], citations: [] };
+  if (!parsed.contextFound) {
+    return { success: true, chunks: [], citations: [], documents: [] };
+  }
+  const documents = parsed.documents.map(mapDocumentCandidate);
+  const single = documents.length === 1 ? documents[0] : void 0;
   return {
     success: true,
-    chunks: parsed.chunks.map((c) => ({
-      document_id: c.document_id,
-      doc_id: c.document_id,
-      ...c.chunk_id ? { chunk_id: c.chunk_id } : {},
-      title: c.title,
-      content: c.content,
-      score: c.score,
-      chunk_type: c.chunk_type,
-      source_type: c.source_type,
-      status: "published"
-    })),
-    citations: parsed.citations,
-    llm_context: parsed.llmContext,
-    meta: parsed.meta,
-    selected_document_id: parsed.selectedDocumentId,
+    chunks: documents.flatMap((d) => d.chunks),
+    citations: documents.flatMap((d) => d.citations),
+    documents,
+    ...single ? {
+      llm_context: single.llm_context,
+      meta: single.meta,
+      selected_document_id: single.document_id
+    } : {},
     dropped_without_document_id: 0,
     dropped_without_content: 0
   };
