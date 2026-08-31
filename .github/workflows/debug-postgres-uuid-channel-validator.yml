@@ -1,0 +1,72 @@
+name: Debug PostgreSQL UUID Channel Validator
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/debug-postgres-uuid-channel-validator.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  repair-build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Repair all channel_id validators in config service
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('src/lib/api/config.service.ts')
+          s=p.read_text()
+          anchor='''const CHANNEL_SELECT =\n  "id, name, channel_type, is_active, company_id, widget_config_id, allowed_origins";'''
+          replacement='''const CHANNEL_SELECT =\n  "id, name, channel_type, is_active, company_id, widget_config_id, allowed_origins";\n\n// PostgreSQL uuid accepts any hexadecimal version nibble, including legacy\n// seeded identifiers such as b0000000-0000-0000-0000-000000000001.\n// Zod v4 .uuid() enforces RFC variant/version bits and therefore rejects\n// valid existing PostgreSQL uuid values before the server handler can run.\nconst postgresUuid = z.string().regex(\n  /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/,\n  "Invalid PostgreSQL UUID",\n);'''
+          assert anchor in s, 'CHANNEL_SELECT anchor missing'
+          s=s.replace(anchor,replacement,1)
+          old='z.string().uuid()'
+          count=s.count(old)
+          assert count == 4, f'expected exactly 4 channel_id uuid validators, found {count}'
+          s=s.replace(old,'postgresUuid')
+          p.write_text(s)
+          print('PASS replaced all 4 channel_id validators')
+          PY
+      - name: Machine assertions and production build
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          s=Path('src/lib/api/config.service.ts').read_text()
+          assert 'const postgresUuid = z.string().regex(' in s
+          assert s.count('channel_id: postgresUuid') == 4, s.count('channel_id: postgresUuid')
+          assert 'z.string().uuid()' not in s
+          import re
+          pat=re.compile(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
+          assert pat.match('b0000000-0000-0000-0000-000000000001')
+          assert not pat.match('preview-only')
+          assert not pat.match('')
+          print('PASS PostgreSQL UUID lexical contract')
+          PY
+          npm ci
+          npm audit --omit=dev --audit-level=high
+          npm run build
+          echo 'PASS production build'
+      - name: Commit functional source repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'ebixsolutions'
+          git config user.email '64578119+ebixsolutions@users.noreply.github.com'
+          git add src/lib/api/config.service.ts
+          git commit -m 'Fix legacy PostgreSQL UUID channel validation'
+          git push origin HEAD:main
+          echo 'PASS source repair committed'
