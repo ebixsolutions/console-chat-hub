@@ -69,8 +69,8 @@ async function mintSingaporeTenantJwt(scope, cfg) {
   );
   return `${signingInput}.${base64UrlEncode(new Uint8Array(signature))}`;
 }
-function validOpaqueApiKey(value) {
-  if (value.length < 16 || value.length > 1024) return false;
+function validOpaqueCredential(value) {
+  if (value.length < 16 || value.length > 4096) return false;
   return !/[\r\n\0]/.test(value);
 }
 function validateTenantJwt(scope, token, missingCode) {
@@ -90,7 +90,7 @@ function validateTenantJwt(scope, token, missingCode) {
 async function resolveSingaporeCredential(scope, cfg) {
   const apiKey = cfg.tenantApiKeys[scope.singaporeTenantId]?.trim();
   if (apiKey) {
-    if (!validOpaqueApiKey(apiKey)) {
+    if (!validOpaqueCredential(apiKey)) {
       return { ok: false, error_code: "KB_AUTH_API_KEY_INVALID" };
     }
     return { ok: true, kind: "api_key", value: apiKey };
