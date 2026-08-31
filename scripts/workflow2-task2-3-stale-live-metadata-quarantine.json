@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "source_inventory_expected": 216,
+  "records": [
+    {"base44_document_id":"6a1509c9b1d3a6d760fef004","global_document_id":"92c817c7-7e60-4853-aeef-dd8b91dac91b","name":"常見問題 FAQ - 洗衣機","source_type":"FAQ","version":"3.0","reason":"STALE_LIVE_METADATA_NO_AUTHORITATIVE_CONTENT"},
+    {"base44_document_id":"6a1509c9b1d3a6d760fef006","global_document_id":"e8c9689a-966a-424f-bb53-6b26e341d902","name":"品牌語氣指南 2024","source_type":"BrandToneGuide","version":"1.1","reason":"STALE_LIVE_METADATA_NO_AUTHORITATIVE_CONTENT"},
+    {"base44_document_id":"6a1509c9b1d3a6d760fef008","global_document_id":"ecfe15a6-5593-4ee5-a818-a431fa1fcd32","name":"手機安裝設定指南","source_type":"InstallationGuide","version":"1.5","reason":"STALE_LIVE_METADATA_NO_AUTHORITATIVE_CONTENT"},
+    {"base44_document_id":"6a1509c9b1d3a6d760fef00d","global_document_id":"abccd1f0-0322-471f-a1e4-4e4e8f1dea45","name":"服裝尺碼對照表","source_type":"Guide","version":"2.0","reason":"STALE_LIVE_METADATA_NO_AUTHORITATIVE_CONTENT"},
+    {"base44_document_id":"6a1509c9b1d3a6d760fef00e","global_document_id":"9db14361-64c5-47e0-8cb0-87887d7dfae1","name":"預約服務流程說明","source_type":"ServiceSOP","version":"1.4","reason":"STALE_LIVE_METADATA_NO_AUTHORITATIVE_CONTENT"},
+    {"base44_document_id":"6a1509c9b1d3a6d760fef010","global_document_id":"45ef453f-53ff-4746-a592-5f7d9827ee5a","name":"運動器材使用安全須知","source_type":"Guide","version":"1.1","reason":"STALE_LIVE_METADATA_NO_AUTHORITATIVE_CONTENT"}
+  ]
+}
