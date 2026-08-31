@@ -18,14 +18,25 @@ required = [
   'x-service-role-secret',
   'MIGRATION_SOURCE_BLOCKED',
   'MIGRATION_CONTROL_CREDENTIAL_MISSING',
-  'MIGRATION_REVIEW_EXECUTOR_UNAVAILABLE',
+  'KB_REVIEW_EXECUTOR_URL',
+  'KB_REVIEW_EXECUTOR_SERVICE_SECRET',
+  'MIGRATION_REVIEW_EXECUTOR_MISSING',
+  'invokeReviewExecutor',
+  'expected_global_document_id',
+  'expected_content_hash',
+  'MIGRATION_REVIEW_NOT_APPROVED',
+  'MIGRATION_WRITE_ENGINE_NOT_ENABLED',
   'content_unrecoverable',
   'duplicate_global_document_ids',
   'canonical_content_hash',
+  "String(content ?? '').trim()",
 ]
 for marker in required:
     assert marker in p, f'missing marker: {marker}'
+assert 'MIGRATION_REVIEW_EXECUTOR_UNAVAILABLE' not in p, 'obsolete unavailable marker must be removed after B3 implementation'
 assert 'KB_SINGAPORE_TENANT_API_KEYS_JSON' not in p, 'RAG API key must not be used by migration control tooling'
+assert 'company_id:' not in p[p.find('invokeReviewExecutor'):p.find('function parseArgs')], 'review caller must not inject company identity'
+assert 'tenant_id:' not in p[p.find('invokeReviewExecutor'):p.find('function parseArgs')], 'review caller must not inject tenant identity'
 assert 'console.log(resolveControlHeader' not in p
 print('PASS source contract')
 PY
