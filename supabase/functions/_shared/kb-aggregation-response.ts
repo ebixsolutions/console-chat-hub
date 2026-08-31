@@ -2,6 +2,10 @@
 // Strict parser for the Singapore KB aggregated RAG v1 response contract.
 // Structured selected_documents[].evidence[] is authoritative for grounding.
 // llm_context.combined_text is intentionally not used as factual evidence.
+//
+// Task 1.1 invariant: Singapore may return multiple candidate documents, but
+// evidence is parsed and retained per document. Callers must select exactly one
+// winning document before exposing llm_context/policy evidence to the UI.
 
 export type AggregationChunkType =
   | "rag_summary"
@@ -53,28 +57,39 @@ export interface AggregationMeta {
   dropped_without_content: number;
 }
 
+export interface AggregationDocumentCandidate {
+  document_id: string;
+  title: string;
+  source_type: string;
+  document_score: number;
+  chunks: AggregationChunk[];
+  citations: AggregationCitation[];
+  llm_context: AggregationInternalContext;
+  meta: AggregationMeta;
+}
+
 export type ParsedAggregationResponse =
   | {
       ok: true;
       contextFound: false;
       chunks: [];
       citations: [];
-      llmContext?: undefined;
-      meta?: undefined;
-      selectedDocumentId?: undefined;
+      documents: [];
     }
   | {
       ok: true;
       contextFound: true;
       chunks: AggregationChunk[];
       citations: AggregationCitation[];
-      llmContext: AggregationInternalContext;
-      meta: AggregationMeta;
-      selectedDocumentId: string;
+      documents: AggregationDocumentCandidate[];
     }
   | { ok: false; error_code: string };
 
 type Obj = Record<string, unknown>;
+const MAX_SELECTED_DOCUMENTS = 5;
+const MAX_SUMMARY_CHUNKS_PER_DOCUMENT = 1;
+const MAX_FULL_CONTENT_CHUNKS_PER_DOCUMENT = 3;
+
 function isObj(v: unknown): v is Obj {
   return !!v && typeof v === "object" && !Array.isArray(v);
 }
@@ -84,6 +99,131 @@ function finite(v: unknown): number | null {
 }
 function nonEmpty(v: unknown): string | null {
   return typeof v === "string" && v.trim() ? v.trim() : null;
+}
+
+function parseDocumentCandidate(doc: unknown): AggregationDocumentCandidate | null {
+  if (!isObj(doc)) return null;
+
+  const documentId = nonEmpty(doc.document_id);
+  const title = nonEmpty(doc.title) ?? "Knowledge Base document";
+  const sourceType = nonEmpty(doc.source_type) ?? "knowledge";
+  const documentScore = finite(doc.document_score);
+  if (!documentId || documentScore === null || !Array.isArray(doc.evidence)) return null;
+
+  const chunks: AggregationChunk[] = [];
+  const citations: AggregationCitation[] = [];
+  const fullEvidence: AggregationEvidence[] = [];
+  const scores: number[] = [];
+  let orientationSummary: string | null = null;
+
+  if (doc.summary !== null && doc.summary !== undefined) {
+    if (!isObj(doc.summary)) return null;
+    const content = nonEmpty(doc.summary.content);
+    const score = finite(doc.summary.score);
+    const chunkId = nonEmpty(doc.summary.chunk_id) ?? undefined;
+    if (!content || score === null || doc.summary.chunk_type !== "rag_summary") return null;
+
+    orientationSummary = content;
+    scores.push(score);
+    chunks.push({
+      document_id: documentId,
+      ...(chunkId ? { chunk_id: chunkId } : {}),
+      title,
+      source_type: sourceType,
+      content,
+      score,
+      chunk_type: "rag_summary",
+    });
+    citations.push({
+      display_label: title.slice(0, 200),
+      content: content.slice(0, 500),
+      score,
+      source_type: sourceType,
+      document_id: documentId,
+      ...(chunkId ? { chunk_id: chunkId } : {}),
+      chunk_type: "rag_summary",
+    });
+  }
+
+  let fullCount = 0;
+  let summaryCount = orientationSummary ? 1 : 0;
+  for (const item of doc.evidence) {
+    if (!isObj(item)) return null;
+    const content = nonEmpty(item.content);
+    const score = finite(item.score);
+    const chunkId = nonEmpty(item.chunk_id) ?? undefined;
+    const chunkType = item.chunk_type;
+    if (
+      !content || score === null ||
+      (chunkType !== "rag_summary" &&
+       chunkType !== "full_content" &&
+       chunkType !== "faq_pair" &&
+       chunkType !== "section")
+    ) return null;
+
+    if (chunkType === "rag_summary") {
+      summaryCount += 1;
+      if (summaryCount > MAX_SUMMARY_CHUNKS_PER_DOCUMENT) return null;
+      orientationSummary = content;
+    }
+    if (chunkType === "full_content") {
+      fullCount += 1;
+      if (fullCount > MAX_FULL_CONTENT_CHUNKS_PER_DOCUMENT) return null;
+      fullEvidence.push({
+        document_id: documentId,
+        ...(chunkId ? { chunk_id: chunkId } : {}),
+        content,
+        score,
+        source_type: sourceType,
+      });
+    }
+
+    scores.push(score);
+    chunks.push({
+      document_id: documentId,
+      ...(chunkId ? { chunk_id: chunkId } : {}),
+      title,
+      source_type: sourceType,
+      content,
+      score,
+      chunk_type: chunkType as AggregationChunkType,
+    });
+    citations.push({
+      display_label: title.slice(0, 200),
+      content: content.slice(0, 500),
+      score,
+      source_type: sourceType,
+      document_id: documentId,
+      ...(chunkId ? { chunk_id: chunkId } : {}),
+      chunk_type: chunkType as AggregationChunkType,
+    });
+  }
+
+  if (chunks.length === 0) return null;
+  scores.sort((a, b) => b - a);
+
+  return {
+    document_id: documentId,
+    title,
+    source_type: sourceType,
+    document_score: documentScore,
+    chunks,
+    citations,
+    llm_context: {
+      selected_document_id: documentId,
+      orientation_summary: orientationSummary,
+      full_content_evidence: fullEvidence,
+    },
+    meta: {
+      document_score: documentScore,
+      highest_chunk_score: scores[0] ?? 0,
+      second_highest_chunk_score: scores[1] ?? 0,
+      returned_summary_count: orientationSummary ? 1 : 0,
+      returned_full_content_count: fullEvidence.length,
+      dropped_without_document_id: 0,
+      dropped_without_content: 0,
+    },
+  };
 }
 
 export function parseAggregationResponse(data: unknown): ParsedAggregationResponse {
@@ -99,136 +239,39 @@ export function parseAggregationResponse(data: unknown): ParsedAggregationRespon
     if (!Array.isArray(data.citations) || data.citations.length !== 0) {
       return { ok: false, error_code: "KB_SCHEMA_INVALID" };
     }
-    // Current producer may include the zero-count llm_context. Validate it when
-    // present, but do not fabricate a requirement for a field that is not used.
     if (data.llm_context !== undefined && data.llm_context !== null) {
-      if (!isObj(data.llm_context)) {
-        return { ok: false, error_code: "KB_SCHEMA_INVALID" };
-      }
+      if (!isObj(data.llm_context)) return { ok: false, error_code: "KB_SCHEMA_INVALID" };
       const sc = finite(data.llm_context.summary_count);
       const ec = finite(data.llm_context.evidence_count);
-      if (sc !== 0 || ec !== 0) {
-        return { ok: false, error_code: "KB_SCHEMA_INVALID" };
-      }
+      if (sc !== 0 || ec !== 0) return { ok: false, error_code: "KB_SCHEMA_INVALID" };
     }
-    return { ok: true, contextFound: false, chunks: [], citations: [] };
+    return { ok: true, contextFound: false, chunks: [], citations: [], documents: [] };
   }
 
-  // Callers in AI Chatbot deliberately request max_documents=1. Fail closed if
-  // the producer violates that request, preventing cross-document contamination.
-  if (!Array.isArray(data.selected_documents) || data.selected_documents.length !== 1) {
+  if (
+    !Array.isArray(data.selected_documents) ||
+    data.selected_documents.length < 1 ||
+    data.selected_documents.length > MAX_SELECTED_DOCUMENTS
+  ) {
     return { ok: false, error_code: "KB_SCHEMA_INVALID" };
   }
 
-  const doc = data.selected_documents[0];
-  if (!isObj(doc)) return { ok: false, error_code: "KB_SCHEMA_INVALID" };
-  const documentId = nonEmpty(doc.document_id);
-  const title = nonEmpty(doc.title) ?? "Knowledge Base document";
-  const sourceType = nonEmpty(doc.source_type) ?? "knowledge";
-  const documentScore = finite(doc.document_score);
-  if (!documentId || documentScore === null || !Array.isArray(doc.evidence)) {
-    return { ok: false, error_code: "KB_SCHEMA_INVALID" };
-  }
-
-  const chunks: AggregationChunk[] = [];
-  const citations: AggregationCitation[] = [];
-  const fullEvidence: AggregationEvidence[] = [];
-  const scores: number[] = [];
-  let orientationSummary: string | null = null;
-
-  // Backward-compatible producer shape: optional dedicated summary object.
-  if (doc.summary !== null && doc.summary !== undefined) {
-    if (!isObj(doc.summary)) return { ok: false, error_code: "KB_SCHEMA_INVALID" };
-    const content = nonEmpty(doc.summary.content);
-    const score = finite(doc.summary.score);
-    const chunkId = nonEmpty(doc.summary.chunk_id) ?? undefined;
-    if (!content || score === null || doc.summary.chunk_type !== "rag_summary") {
+  const documents: AggregationDocumentCandidate[] = [];
+  const seenDocumentIds = new Set<string>();
+  for (const rawDoc of data.selected_documents) {
+    const parsed = parseDocumentCandidate(rawDoc);
+    if (!parsed || seenDocumentIds.has(parsed.document_id)) {
       return { ok: false, error_code: "KB_SCHEMA_INVALID" };
     }
-    orientationSummary = content;
-    scores.push(score);
-    chunks.push({
-      document_id: documentId, ...(chunkId ? { chunk_id: chunkId } : {}),
-      title, source_type: sourceType, content, score, chunk_type: "rag_summary",
-    });
-    citations.push({
-      display_label: title.slice(0, 200),
-      content: content.slice(0, 500), score, source_type: sourceType,
-      document_id: documentId, ...(chunkId ? { chunk_id: chunkId } : {}),
-      chunk_type: "rag_summary",
-    });
+    seenDocumentIds.add(parsed.document_id);
+    documents.push(parsed);
   }
 
-  let fullCount = 0;
-  let summaryCount = orientationSummary ? 1 : 0;
-  for (const item of doc.evidence) {
-    if (!isObj(item)) return { ok: false, error_code: "KB_SCHEMA_INVALID" };
-    const content = nonEmpty(item.content);
-    const score = finite(item.score);
-    const chunkId = nonEmpty(item.chunk_id) ?? undefined;
-    const chunkType = item.chunk_type;
-    if (
-      !content || score === null ||
-      (chunkType !== "rag_summary" &&
-       chunkType !== "full_content" &&
-       chunkType !== "faq_pair" &&
-       chunkType !== "section")
-    ) {
-      return { ok: false, error_code: "KB_SCHEMA_INVALID" };
-    }
-
-    if (chunkType === "rag_summary") {
-      summaryCount += 1;
-      if (summaryCount > 1) return { ok: false, error_code: "KB_SCHEMA_INVALID" };
-      orientationSummary = content;
-    }
-    if (chunkType === "full_content") {
-      fullCount += 1;
-      if (fullCount > 3) return { ok: false, error_code: "KB_SCHEMA_INVALID" };
-      fullEvidence.push({
-        document_id: documentId, ...(chunkId ? { chunk_id: chunkId } : {}),
-        content, score, source_type: sourceType,
-      });
-    }
-
-    scores.push(score);
-    chunks.push({
-      document_id: documentId, ...(chunkId ? { chunk_id: chunkId } : {}),
-      title, source_type: sourceType, content, score,
-      chunk_type: chunkType as AggregationChunkType,
-    });
-    citations.push({
-      display_label: title.slice(0, 200),
-      content: content.slice(0, 500), score, source_type: sourceType,
-      document_id: documentId, ...(chunkId ? { chunk_id: chunkId } : {}),
-      chunk_type: chunkType as AggregationChunkType,
-    });
-  }
-
-  if (chunks.length === 0) {
-    return { ok: false, error_code: "KB_SCHEMA_INVALID" };
-  }
-
-  scores.sort((a, b) => b - a);
   return {
     ok: true,
     contextFound: true,
-    chunks,
-    citations,
-    llmContext: {
-      selected_document_id: documentId,
-      orientation_summary: orientationSummary,
-      full_content_evidence: fullEvidence,
-    },
-    meta: {
-      document_score: documentScore,
-      highest_chunk_score: scores[0] ?? 0,
-      second_highest_chunk_score: scores[1] ?? 0,
-      returned_summary_count: orientationSummary ? 1 : 0,
-      returned_full_content_count: fullEvidence.length,
-      dropped_without_document_id: 0,
-      dropped_without_content: 0,
-    },
-    selectedDocumentId: documentId,
+    documents,
+    chunks: documents.flatMap((d) => d.chunks),
+    citations: documents.flatMap((d) => d.citations),
   };
 }
