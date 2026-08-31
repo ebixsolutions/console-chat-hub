@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate, useSearch, redirect } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { z } from "zod";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -35,6 +35,24 @@ function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [googleEnabled, setGoogleEnabled] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    const loadAuthProviders = async () => {
+      try {
+        const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/auth/v1/settings`, {
+          headers: { apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY },
+        });
+        const settings = response.ok ? await response.json() : null;
+        if (active) setGoogleEnabled(settings?.external?.google === true);
+      } catch {
+        if (active) setGoogleEnabled(false);
+      }
+    };
+    void loadAuthProviders();
+    return () => { active = false; };
+  }, []);
 
   const safeRedirect = (() => {
     const r = search.redirect;
@@ -71,6 +89,10 @@ function LoginPage() {
   };
 
   const handleGoogle = async () => {
+    if (googleEnabled !== true) {
+      toast.error("Google sign-in is temporarily unavailable. Please sign in with email and password.");
+      return;
+    }
     setLoading(true);
     try {
       const { error } = await supabase.auth.signInWithOAuth({
@@ -105,8 +127,15 @@ function LoginPage() {
               {mode === "signin" ? "Sign in" : "Sign up"}
             </Button>
           </form>
-          <Button type="button" variant="outline" className="w-full" onClick={handleGoogle} disabled={loading}>
-            Continue with Google
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full"
+            onClick={handleGoogle}
+            disabled={loading || googleEnabled !== true}
+            title={googleEnabled === false ? "Google sign-in is not enabled for this environment" : undefined}
+          >
+            {googleEnabled === null ? "Checking Google sign-in…" : googleEnabled ? "Continue with Google" : "Google sign-in unavailable"}
           </Button>
           <button
             type="button"
