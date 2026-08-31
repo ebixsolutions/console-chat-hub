@@ -1,0 +1,58 @@
+name: Debug TanStack Preview Runtime
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/debug-tanstack-preview-runtime.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dev-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install
+        run: npm ci
+      - name: Start dev server and smoke routes
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run dev -- --host 127.0.0.1 > /tmp/dev.log 2>&1 &
+          pid=$!
+          trap 'kill $pid 2>/dev/null || true' EXIT
+          ok=0
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3000/ >/tmp/root.html 2>/tmp/root.err; then ok=1; break; fi
+            if ! kill -0 "$pid" 2>/dev/null; then break; fi
+            sleep 1
+          done
+          if [ "$ok" != 1 ]; then
+            echo 'FAIL dev server/root route'
+            cat /tmp/dev.log
+            cat /tmp/root.err || true
+            exit 1
+          fi
+          for path in / /login /console/widget-preview; do
+            code=$(curl -sS -o /tmp/body -w '%{http_code}' "http://127.0.0.1:3000${path}")
+            echo "ROUTE ${path} HTTP ${code}"
+            test "$code" -ge 200
+            test "$code" -lt 500
+          done
+          if grep -Eiq 'TypeError|ReferenceError|SyntaxError|Invalid UUID|RUNTIME_ERROR|Internal Server Error' /tmp/dev.log; then
+            echo 'FAIL runtime error found in dev log'
+            cat /tmp/dev.log
+            exit 1
+          fi
+          echo 'PASS TanStack dev runtime and routes'
+          cat /tmp/dev.log
