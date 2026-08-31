@@ -108,6 +108,9 @@ function singaporeCredentialHeaders(credential, cfg) {
 }
 
 // supabase/functions/_shared/kb-aggregation-response.ts
+var MAX_SELECTED_DOCUMENTS = 5;
+var MAX_SUMMARY_CHUNKS_PER_DOCUMENT = 1;
+var MAX_FULL_CONTENT_CHUNKS_PER_DOCUMENT = 3;
 function isObj(v) {
   return !!v && typeof v === "object" && !Array.isArray(v);
 }
@@ -118,55 +121,24 @@ function finite(v) {
 function nonEmpty(v) {
   return typeof v === "string" && v.trim() ? v.trim() : null;
 }
-function parseAggregationResponse(data) {
-  if (!isObj(data)) return { ok: false, error_code: "KB_SCHEMA_INVALID" };
-  if (data.success !== true || typeof data.context_found !== "boolean") {
-    return { ok: false, error_code: "KB_SCHEMA_INVALID" };
-  }
-  if (data.context_found === false) {
-    if (!Array.isArray(data.selected_documents) || data.selected_documents.length !== 0) {
-      return { ok: false, error_code: "KB_SCHEMA_INVALID" };
-    }
-    if (!Array.isArray(data.citations) || data.citations.length !== 0) {
-      return { ok: false, error_code: "KB_SCHEMA_INVALID" };
-    }
-    if (data.llm_context !== void 0 && data.llm_context !== null) {
-      if (!isObj(data.llm_context)) {
-        return { ok: false, error_code: "KB_SCHEMA_INVALID" };
-      }
-      const sc = finite(data.llm_context.summary_count);
-      const ec = finite(data.llm_context.evidence_count);
-      if (sc !== 0 || ec !== 0) {
-        return { ok: false, error_code: "KB_SCHEMA_INVALID" };
-      }
-    }
-    return { ok: true, contextFound: false, chunks: [], citations: [] };
-  }
-  if (!Array.isArray(data.selected_documents) || data.selected_documents.length !== 1) {
-    return { ok: false, error_code: "KB_SCHEMA_INVALID" };
-  }
-  const doc = data.selected_documents[0];
-  if (!isObj(doc)) return { ok: false, error_code: "KB_SCHEMA_INVALID" };
+function parseDocumentCandidate(doc) {
+  if (!isObj(doc)) return null;
   const documentId = nonEmpty(doc.document_id);
   const title = nonEmpty(doc.title) ?? "Knowledge Base document";
   const sourceType = nonEmpty(doc.source_type) ?? "knowledge";
   const documentScore = finite(doc.document_score);
-  if (!documentId || documentScore === null || !Array.isArray(doc.evidence)) {
-    return { ok: false, error_code: "KB_SCHEMA_INVALID" };
-  }
+  if (!documentId || documentScore === null || !Array.isArray(doc.evidence)) return null;
   const chunks = [];
   const citations = [];
   const fullEvidence = [];
   const scores = [];
   let orientationSummary = null;
   if (doc.summary !== null && doc.summary !== void 0) {
-    if (!isObj(doc.summary)) return { ok: false, error_code: "KB_SCHEMA_INVALID" };
+    if (!isObj(doc.summary)) return null;
     const content = nonEmpty(doc.summary.content);
     const score = finite(doc.summary.score);
     const chunkId = nonEmpty(doc.summary.chunk_id) ?? void 0;
-    if (!content || score === null || doc.summary.chunk_type !== "rag_summary") {
-      return { ok: false, error_code: "KB_SCHEMA_INVALID" };
-    }
+    if (!content || score === null || doc.summary.chunk_type !== "rag_summary") return null;
     orientationSummary = content;
     scores.push(score);
     chunks.push({
@@ -191,22 +163,20 @@ function parseAggregationResponse(data) {
   let fullCount = 0;
   let summaryCount = orientationSummary ? 1 : 0;
   for (const item of doc.evidence) {
-    if (!isObj(item)) return { ok: false, error_code: "KB_SCHEMA_INVALID" };
+    if (!isObj(item)) return null;
     const content = nonEmpty(item.content);
     const score = finite(item.score);
     const chunkId = nonEmpty(item.chunk_id) ?? void 0;
     const chunkType = item.chunk_type;
-    if (!content || score === null || chunkType !== "rag_summary" && chunkType !== "full_content" && chunkType !== "faq_pair" && chunkType !== "section") {
-      return { ok: false, error_code: "KB_SCHEMA_INVALID" };
-    }
+    if (!content || score === null || chunkType !== "rag_summary" && chunkType !== "full_content" && chunkType !== "faq_pair" && chunkType !== "section") return null;
     if (chunkType === "rag_summary") {
       summaryCount += 1;
-      if (summaryCount > 1) return { ok: false, error_code: "KB_SCHEMA_INVALID" };
+      if (summaryCount > MAX_SUMMARY_CHUNKS_PER_DOCUMENT) return null;
       orientationSummary = content;
     }
     if (chunkType === "full_content") {
       fullCount += 1;
-      if (fullCount > 3) return { ok: false, error_code: "KB_SCHEMA_INVALID" };
+      if (fullCount > MAX_FULL_CONTENT_CHUNKS_PER_DOCUMENT) return null;
       fullEvidence.push({
         document_id: documentId,
         ...chunkId ? { chunk_id: chunkId } : {},
@@ -235,16 +205,16 @@ function parseAggregationResponse(data) {
       chunk_type: chunkType
     });
   }
-  if (chunks.length === 0) {
-    return { ok: false, error_code: "KB_SCHEMA_INVALID" };
-  }
+  if (chunks.length === 0) return null;
   scores.sort((a, b) => b - a);
   return {
-    ok: true,
-    contextFound: true,
+    document_id: documentId,
+    title,
+    source_type: sourceType,
+    document_score: documentScore,
     chunks,
     citations,
-    llmContext: {
+    llm_context: {
       selected_document_id: documentId,
       orientation_summary: orientationSummary,
       full_content_evidence: fullEvidence
@@ -257,8 +227,48 @@ function parseAggregationResponse(data) {
       returned_full_content_count: fullEvidence.length,
       dropped_without_document_id: 0,
       dropped_without_content: 0
-    },
-    selectedDocumentId: documentId
+    }
+  };
+}
+function parseAggregationResponse(data) {
+  if (!isObj(data)) return { ok: false, error_code: "KB_SCHEMA_INVALID" };
+  if (data.success !== true || typeof data.context_found !== "boolean") {
+    return { ok: false, error_code: "KB_SCHEMA_INVALID" };
+  }
+  if (data.context_found === false) {
+    if (!Array.isArray(data.selected_documents) || data.selected_documents.length !== 0) {
+      return { ok: false, error_code: "KB_SCHEMA_INVALID" };
+    }
+    if (!Array.isArray(data.citations) || data.citations.length !== 0) {
+      return { ok: false, error_code: "KB_SCHEMA_INVALID" };
+    }
+    if (data.llm_context !== void 0 && data.llm_context !== null) {
+      if (!isObj(data.llm_context)) return { ok: false, error_code: "KB_SCHEMA_INVALID" };
+      const sc = finite(data.llm_context.summary_count);
+      const ec = finite(data.llm_context.evidence_count);
+      if (sc !== 0 || ec !== 0) return { ok: false, error_code: "KB_SCHEMA_INVALID" };
+    }
+    return { ok: true, contextFound: false, chunks: [], citations: [], documents: [] };
+  }
+  if (!Array.isArray(data.selected_documents) || data.selected_documents.length < 1 || data.selected_documents.length > MAX_SELECTED_DOCUMENTS) {
+    return { ok: false, error_code: "KB_SCHEMA_INVALID" };
+  }
+  const documents = [];
+  const seenDocumentIds = /* @__PURE__ */ new Set();
+  for (const rawDoc of data.selected_documents) {
+    const parsed = parseDocumentCandidate(rawDoc);
+    if (!parsed || seenDocumentIds.has(parsed.document_id)) {
+      return { ok: false, error_code: "KB_SCHEMA_INVALID" };
+    }
+    seenDocumentIds.add(parsed.document_id);
+    documents.push(parsed);
+  }
+  return {
+    ok: true,
+    contextFound: true,
+    documents,
+    chunks: documents.flatMap((d) => d.chunks),
+    citations: documents.flatMap((d) => d.citations)
   };
 }
 
