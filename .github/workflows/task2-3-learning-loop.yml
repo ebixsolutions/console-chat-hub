@@ -10,6 +10,8 @@ on:
       - 'scripts/w2-task2-3-learning-loop-runtime-smoke.sh'
       - 'supabase/migrations/20260829150254_task2_3_learning_loop_tenant_atomicity_closure.sql'
       - 'supabase/migrations/20260829150353_task2_3_kb_finalize_state_machine_fix.sql'
+      - 'supabase/functions/_shared/kb-auth.ts'
+      - 'supabase/functions/_shared/kb-client.ts'
       - 'supabase/functions/training-outbox-worker/index.ts'
       - 'supabase/functions/training-result-receiver/index.ts'
       - 'supabase/functions/training-kb-sync/index.ts'
