@@ -112,6 +112,15 @@ function requireRole(
 const CHANNEL_SELECT =
   "id, name, channel_type, is_active, company_id, widget_config_id, allowed_origins";
 
+// PostgreSQL uuid accepts any hexadecimal version nibble, including legacy
+// seeded identifiers such as b0000000-0000-0000-0000-000000000001.
+// Zod v4 .uuid() enforces RFC variant/version bits and therefore rejects
+// valid existing PostgreSQL uuid values before the server handler can run.
+const postgresUuid = z.string().regex(
+  /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/,
+  "Invalid PostgreSQL UUID",
+);
+
 export const listChannelConfigsFn = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }): Promise<ServerResult<LiveChannelConfigRow[]>> => {
@@ -131,7 +140,7 @@ export const listChannelConfigsFn = createServerFn({ method: "GET" })
     return { ok: true, data: (data ?? []) as LiveChannelConfigRow[] };
   });
 
-const bindChannelCompanyInput = z.object({ channel_id: z.string().uuid() });
+const bindChannelCompanyInput = z.object({ channel_id: postgresUuid });
 
 export const bindChannelToCurrentCompanyFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -186,7 +195,7 @@ function validOrigin(v: string): boolean {
 }
 
 const updateChannelInput = z.object({
-  channel_id: z.string().uuid(),
+  channel_id: postgresUuid,
   name: z.string().trim().min(1).max(120).optional(),
   is_active: z.boolean().optional(),
   allowed_origins: z.array(z.string().trim().min(1).max(300)).max(50).optional(),
@@ -247,7 +256,7 @@ function normalizeWidgetRow(row: any): LiveWidgetConfigRow {
   };
 }
 
-const widgetByChannelInput = z.object({ channel_id: z.string().uuid() });
+const widgetByChannelInput = z.object({ channel_id: postgresUuid });
 
 async function resolveOwnedWidget(
   context: { supabase: any; userId: string },
@@ -298,7 +307,7 @@ export const getWidgetConfigFn = createServerFn({ method: "POST" })
   });
 
 const updateWidgetInput = z.object({
-  channel_id: z.string().uuid(),
+  channel_id: postgresUuid,
   header_title: z.string().trim().min(1).max(120).optional(),
   welcome_message: z.string().max(1000).nullable().optional(),
   placeholder_text: z.string().max(200).nullable().optional(),
