@@ -12,7 +12,9 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const DEFAULT_EXPECTED_COUNT = 216;
 
 export function canonicalHash(content) {
-  return crypto.createHash('sha256').update(String(content ?? ''), 'utf8').digest('hex');
+  const normalized = String(content ?? '').trim();
+  if (!normalized) throw new Error('EMPTY_PUBLISH_CONTENT');
+  return crypto.createHash('sha256').update(normalized, 'utf8').digest('hex');
 }
 
 function text(v) { return typeof v === 'string' ? v.trim() : ''; }
@@ -121,7 +123,7 @@ export function reconcile(expectedManifest, singaporeData, expectedCount = DEFAU
   for (const [gid, e] of expectedById) {
     const a = actualById.get(gid);
     if (!a) { missing.push(gid); continue; }
-    const actualHash = text(a.content_hash).toLowerCase() || (typeof a.raw_content === 'string' ? canonicalHash(a.raw_content) : '');
+    const actualHash = text(a.content_hash).toLowerCase() || (typeof a.raw_content === 'string' && a.raw_content.trim() ? canonicalHash(a.raw_content) : '');
     const fields = [];
     if (text(a.source_type) !== e.source_type) fields.push('source_type');
     if (text(a.version || '1.0') !== e.version) fields.push('version');
@@ -158,6 +160,53 @@ export function resolveControlHeader(env = process.env) {
   return null;
 }
 
+export function resolveReviewExecutorConfig(env = process.env) {
+  const url = text(env.KB_REVIEW_EXECUTOR_URL).replace(/\/$/, '');
+  const secret = text(env.KB_REVIEW_EXECUTOR_SERVICE_SECRET);
+  if (!url || !secret) return null;
+  let parsed;
+  try { parsed = new URL(url); } catch { throw new Error('REVIEW_EXECUTOR_URL_INVALID'); }
+  if (parsed.protocol !== 'https:' && !['localhost','127.0.0.1'].includes(parsed.hostname)) {
+    throw new Error('REVIEW_EXECUTOR_HTTPS_REQUIRED');
+  }
+  return { url, secret };
+}
+
+export async function invokeReviewExecutor(document, singaporeDocumentId, env = process.env, fetchImpl = fetch) {
+  const cfg = resolveReviewExecutorConfig(env);
+  if (!cfg) throw new Error('MIGRATION_REVIEW_EXECUTOR_MISSING');
+  const gid = text(document?.global_document_id);
+  const version = text(document?.version) || '1.0';
+  const hash = text(document?.canonical_content_hash).toLowerCase();
+  if (!UUID_RE.test(gid) || !singaporeDocumentId || !hash) throw new Error('REVIEW_EXECUTOR_BINDING_REQUIRED');
+  const idempotencyKey = `migration:${gid}:${version}:${hash}`;
+  const response = await fetchImpl(`${cfg.url}/api/functions/kbReviewExecute`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-service-role-secret': cfg.secret,
+    },
+    body: JSON.stringify({
+      document_id: singaporeDocumentId,
+      review_mode: 'smart',
+      idempotency_key: idempotencyKey,
+      expected_global_document_id: gid,
+      expected_version: version,
+      expected_content_hash: hash,
+    }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload?.ok !== true) throw new Error(`MIGRATION_REVIEW_EXECUTOR_FAILED:${response.status}`);
+  if (!['ready','ready_with_review'].includes(payload.publish_decision)) {
+    throw new Error(`MIGRATION_REVIEW_NOT_APPROVED:${payload.publish_decision || 'unknown'}`);
+  }
+  return {
+    review_id: text(payload.review_id),
+    publish_decision: payload.publish_decision,
+    idempotent: payload.idempotent === true,
+  };
+}
+
 function parseArgs(argv) {
   const out = { expectedCount: DEFAULT_EXPECTED_COUNT, commit: false };
   for (let i = 2; i < argv.length; i++) {
@@ -189,6 +238,7 @@ async function main() {
 
   let reconciliation = null;
   if (args.singaporeExport) reconciliation = reconcile(normalized.documents, loadJson(args.singaporeExport), args.expectedCount);
+  const reviewCfg = resolveReviewExecutorConfig();
 
   const output = {
     mode: args.commit ? 'commit' : 'dry_run',
@@ -196,17 +246,18 @@ async function main() {
     reconciliation,
     control_credential_present: !!resolveControlHeader(),
     control_credential_kind: resolveControlHeader()?.kind ?? null,
-    review_executor_status: 'unavailable_in_current_singapore_openapi',
+    review_executor_status: reviewCfg ? 'configured' : 'not_configured',
   };
   console.log(JSON.stringify(output, null, 2));
 
   if (args.commit) {
     if (normalized.diagnostics.blocking_issue_count > 0) throw new Error('MIGRATION_SOURCE_BLOCKED');
     if (!resolveControlHeader()) throw new Error('MIGRATION_CONTROL_CREDENTIAL_MISSING');
-    // Current Singapore OpenAPI exposes KBReview/KBAgentResult entity CRUD but no
-    // review/agent execution endpoint. Creating synthetic PASS rows would bypass
-    // kbPublishStart release gates, so production writes intentionally fail closed.
-    throw new Error('MIGRATION_REVIEW_EXECUTOR_UNAVAILABLE');
+    if (!reviewCfg) throw new Error('MIGRATION_REVIEW_EXECUTOR_MISSING');
+    // B3 is now implemented and callable. Production data mutation remains intentionally
+    // unavailable here until the exact-ID upsert/vector/publish writer is authorized and
+    // wired; do not silently turn this manifest/reconciliation CLI into a partial writer.
+    throw new Error('MIGRATION_WRITE_ENGINE_NOT_ENABLED');
   }
 }
 
