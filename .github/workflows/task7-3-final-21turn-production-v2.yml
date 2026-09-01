@@ -1,0 +1,51 @@
+name: Task 7.3 Final 21-Turn Production Acceptance v2
+on:
+  push:
+    branches: [task7-3-production-acceptance]
+    paths: [.github/workflows/task7-3-final-21turn-production-v2.yml]
+jobs:
+  acceptance:
+    runs-on: ubuntu-24.04
+    permissions: {contents: read}
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+      BASE_URL: https://nrfxhqabwblzxoushgnm.supabase.co
+      CID: e43ef48c-3c0f-4c00-8a7d-abc68d273331
+    steps:
+      - uses: supabase/setup-cli@v1
+        with: {version: latest}
+      - name: Run final 21-turn production acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          supabase projects api-keys --project-ref "$PROJECT_REF" -o json >/tmp/keys.json; chmod 600 /tmp/keys.json
+          J="$(jq -r '[.[]|select((.name//"")|ascii_downcase=="service_role")|(.api_key//.key//.value)][0]//empty' /tmp/keys.json)"
+          P="$(jq -r '[.[]|select(((.api_key//.key//.value//"")|startswith("sb_publishable_")))|(.api_key//.key//.value)][0]//empty' /tmp/keys.json)"; [[ -n "$P" ]] || P="$(jq -r '[.[]|select((.name//"")|ascii_downcase=="anon")|(.api_key//.key//.value)][0]//empty' /tmp/keys.json)"
+          test -n "$J" && test -n "$P"; echo "::add-mask::$J"; echo "::add-mask::$P"
+          rest(){ curl -fsS "$@" -H "apikey: $P" -H "Authorization: Bearer $J"; }
+          send(){ local q="$1" payload response mid code answer state owner; payload="$(jq -nc --arg c "$CID" --arg q "$q" '{conversation_id:$c,role:"visitor",content:$q,status:"delivered",is_recalled:false,metadata:{source:"task7_3_final_acceptance",exclude_training:true}}')"; response="$(rest -X POST "$BASE_URL/rest/v1/messages" -H 'Content-Type: application/json' -H 'Prefer: return=representation' --data "$payload")"; mid="$(jq -r '.[0].id//empty'<<<"$response")"; test -n "$mid"; code="$(curl -sS -o /tmp/gen.json -w '%{http_code}' -X POST "$BASE_URL/functions/v1/generate-reply" -H "apikey: $P" -H "Authorization: Bearer $J" -H 'Content-Type: application/json' --data "$(jq -nc --arg c "$CID" --arg m "$mid" '{conversation_id:$c,source_message_id:$m}')")"; [[ "$code" == 2* ]] || { echo "GEN_HTTP=$code"; cat /tmp/gen.json; exit 31; }; state="$(rest "$BASE_URL/rest/v1/conversations?id=eq.$CID&select=status,assigned_agent_id"|jq -r '.[0].status//empty')"; owner="$(rest "$BASE_URL/rest/v1/conversations?id=eq.$CID&select=status,assigned_agent_id"|jq -r '.[0].assigned_agent_id//""')"; answer="$(rest "$BASE_URL/rest/v1/messages?conversation_id=eq.$CID&role=eq.assistant&is_recalled=eq.false&content=neq.__THINKING__&select=content,created_at&order=created_at.desc&limit=1"|jq -r '.[0].content//empty')"; test -n "$answer"; jq -nc --arg answer "$answer" --arg state "$state" --arg owner "$owner" '{answer:$answer,state:$state,owner:$owner}'; }
+          ai(){ test "$(jq -r '.state'<<<"$1")" = open; test -z "$(jq -r '.owner'<<<"$1")"; }
+          echo T01; R="$(send '什么是四電一腦？')"; ai "$R"; echo "$(jq -r .answer<<<"$R")"|grep -Eq '電腦|电脑|電器|電視|冷氣|洗衣|雪櫃|冰箱'
+          echo T02; R="$(send '簡單一點解釋給我聽。')"; ai "$R"
+          echo T03; R="$(send '那包括哪些種類？')"; ai "$R"; echo "$(jq -r .answer<<<"$R")"|grep -Eq '電腦|电脑|電視|冷氣|洗衣|雪櫃|冰箱'
+          echo T04; R="$(send '我叫測試甲，請記住。')"; ai "$R"
+          echo T05; R="$(send '我在香港。')"; ai "$R"
+          echo T06; R="$(send '我不要你猜任何產品型號。')"; ai "$R"
+          echo T07; R="$(send '之前說的種類再簡述一次。')"; ai "$R"
+          echo T08; R="$(send '我講錯，我其實在澳門。')"; ai "$R"
+          echo T09; R="$(send '那我現在在哪裡？')"; ai "$R"; echo "$(jq -r .answer<<<"$R")"|grep -Eq '澳門|澳门|Macau|Macao'
+          echo T10; R="$(send 'Please answer this turn in English only: what was the topic we discussed first?')"; ai "$R"; test -n "$(jq -r .answer<<<"$R")"
+          echo T11; R="$(send '轉回繁體中文，我一開始問的是什麼？')"; ai "$R"; echo "$(jq -r .answer<<<"$R")"|grep -Eq '四電|電腦|电脑|電器'
+          echo T12; R="$(send '如果我在火星，這項香港政策是否一定適用？不要猜。')"; ai "$R"
+          echo T13; R="$(send '我很生氣，但不要轉真人，我只是想知道。')"; ai "$R"
+          echo T14; R="$(send '不要轉真人客服，我自己先看看。')"; ai "$R"
+          echo T15; R="$(send '我不是要求真人，只是問你能否解釋。')"; ai "$R"
+          echo T16; R="$(send '請再次告訴我之前更正後的地點。')"; ai "$R"; echo "$(jq -r .answer<<<"$R")"|grep -Eq '澳門|澳门|Macau|Macao'
+          echo T17; R="$(send '我叫什麼名字？')"; ai "$R"; echo "$(jq -r .answer<<<"$R")"|grep -q '測試甲'
+          echo T18; R="$(send '請記住我不要你猜型號。')"; ai "$R"
+          echo T19; R="$(send '什麼是四電一腦？用一句話。')"; ai "$R"; echo "$(jq -r .answer<<<"$R")"|grep -Eq '四電|電腦|电脑|電器'
+          echo T20; R="$(send '請總結目前你記得的更正與限制，不要新增資料。')"; ai "$R"; A="$(jq -r .answer<<<"$R")"; echo "$A"|grep -Eq '澳門|澳门|Macau|Macao'; echo "$A"|grep -Eq '型號|型号|model'; ! echo "$A"|grep -q '不要新增資料'
+          echo T21; R="$(send '最後一題：我最初問的是什麼？')"; ai "$R"; echo "$(jq -r .answer<<<"$R")"|grep -Eq '四電|電腦|电脑|電器'
+          V="$(rest "$BASE_URL/rest/v1/messages?conversation_id=eq.$CID&role=eq.visitor&is_recalled=eq.false&select=id"|jq length)"; A="$(rest "$BASE_URL/rest/v1/messages?conversation_id=eq.$CID&role=eq.assistant&is_recalled=eq.false&content=neq.__THINKING__&select=id"|jq length)"; M="$(rest "$BASE_URL/rest/v1/messages?conversation_id=eq.$CID&is_recalled=eq.false&content=neq.__THINKING__&select=id"|jq length)"; test "$V" -eq 21; test "$A" -ge 21; test "$M" -ge 42
+          echo TASK7_3_FINAL_21TURN_PRODUCTION=PASS; echo VISITORS=$V; echo ASSISTANTS=$A; echo VISIBLE=$M
