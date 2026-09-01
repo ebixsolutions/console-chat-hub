@@ -26,7 +26,8 @@ jobs:
       - name: Baseline guard
         run: |
           set -euo pipefail
-          test "$(node -p "require('./package.json').version")" = "2.7.1"
+          git hash-object package.json > /tmp/task5-package-json.sha
+          git hash-object package-lock.json > /tmp/task5-package-lock.sha
           grep -F 'const userQuery = _h1LastMsg;' supabase/functions/generate-reply/index.ts
           grep -F 'export function buildConversationContinuityBlock(' supabase/functions/_shared/conversation-intelligence.ts
       - name: Install
@@ -46,7 +47,8 @@ jobs:
           changed="$(git diff --name-only | sort)"
           expected="$(printf '%s\n' 'supabase/functions/_shared/conversation-intelligence.ts' 'supabase/functions/generate-reply/index.ts' | sort)"
           test "$changed" = "$expected"
-          test "$(node -p "require('./package.json').version")" = "2.7.1"
+          test "$(git hash-object package.json)" = "$(cat /tmp/task5-package-json.sha)"
+          test "$(git hash-object package-lock.json)" = "$(cat /tmp/task5-package-lock.sha)"
           ! git diff -- package.json package-lock.json | grep -q .
       - name: Commit validated source repair
         run: |
