@@ -1,0 +1,59 @@
+name: tmp-task2-3-runtime-contract-probe
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/tmp-task2-3-runtime-contract-probe.yml']
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    env:
+      S1: ${{ secrets.SINGAPORE_SERVICE_ROLE_SECRET }}
+      S2: ${{ secrets.KB_SINGAPORE_SERVICE_ROLE_SECRET }}
+      S3: ${{ secrets.SERVICE_ROLE_SECRET }}
+      S4: ${{ secrets.SINGAPORE_BACKEND_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe exact runtime contracts without writes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          vals=[os.getenv('S1',''),os.getenv('S2',''),os.getenv('S3',''),os.getenv('S4','')]
+          print('B1_GITHUB_CONTROL_CREDENTIAL=' + ('PRESENT' if any(len(v.strip())>=16 for v in vals) else 'MISSING'))
+          PY
+          BASE='https://py.ebixmall.com/py-knowledge-base'
+          code=$(curl -sS --max-time 20 -o /tmp/openapi.json -w '%{http_code}' "$BASE/openapi.json" || true)
+          echo "OPENAPI_HTTP=$code"
+          test "$code" = 200
+          python - <<'PY'
+          import json
+          o=json.load(open('/tmp/openapi.json'))
+          paths=o.get('paths',{})
+          wanted=['/api/entities/KBDocument','/api/entities/KBDocument/{entity_id}','/api/functions/kbReviewExecute','/api/functions/kbPublishStart','/api/functions/kbPublishGetStatus','/api/v1/rag/context-search']
+          for p in wanted:
+            print('PATH',p,'METHODS',','.join(sorted(paths.get(p,{}).keys())) if p in paths else 'MISSING')
+          for p in ['/api/entities/KBDocument','/api/functions/kbReviewExecute','/api/functions/kbPublishStart','/api/functions/kbPublishGetStatus']:
+            item=paths.get(p,{})
+            for m,v in item.items():
+              if m.lower() not in ('get','post','patch','put','delete'): continue
+              rb=v.get('requestBody',{}).get('content',{}).get('application/json',{}).get('schema')
+              print('REQUEST_SCHEMA',m.upper(),p,json.dumps(rb,sort_keys=True,separators=(',',':')))
+          comps=o.get('components',{}).get('schemas',{})
+          refs=set()
+          def walk(x):
+            if isinstance(x,dict):
+              if '$ref' in x: refs.add(x['$ref'].split('/')[-1])
+              for v in x.values(): walk(v)
+            elif isinstance(x,list):
+              for v in x: walk(v)
+          for p in wanted:
+            walk(paths.get(p,{}))
+          for r in sorted(refs):
+            if r in comps:
+              print('SCHEMA',r,json.dumps(comps[r],sort_keys=True,separators=(',',':'))[:12000])
+          PY
+          review=$(curl -sS --max-time 20 -o /tmp/review.txt -w '%{http_code}' -X POST "$BASE/api/functions/kbReviewExecute" -H 'content-type: application/json' -d '{}' || true)
+          echo "B3_ROUTE_HTTP=$review"
