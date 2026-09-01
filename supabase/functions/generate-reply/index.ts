@@ -29,7 +29,7 @@ import { evaluateFullEscalationRuleset } from "../_shared/escalation-rules.ts";
 import { assessPolicyEvidenceForR4 } from "../_shared/escalation-policy.ts";
 import { validateP1PredictionSignals, type P1PredictionInput } from "../_shared/escalation-p1.ts";
 import { callModel, resolveGenerationMaxTokens, type LlmFailureCode } from "../_shared/llm-router.ts";
-import { CUSTOMER_CONVERSATION_POLICY, NATURAL_CLARIFICATION, buildConversationContinuityBlock, buildCustomerAdvisoryContext, classifyConversationTurn, classifyHandoffIntent, hasUsableFullContentEvidence, isHumanControlState } from "../_shared/conversation-intelligence.ts";
+import { CUSTOMER_CONVERSATION_POLICY, NATURAL_CLARIFICATION, buildContextualRetrievalQuery, buildConversationContinuityBlock, buildCustomerAdvisoryContext, classifyConversationTurn, classifyHandoffIntent, hasUsableFullContentEvidence, isHumanControlState } from "../_shared/conversation-intelligence.ts";
 import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -1983,7 +1983,8 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
       if (_escEnableS0) return await handleS0Handoff(supabaseAdmin, conversation_id, source_message_id, "KB_SCOPE_GATE", _visitorLang);
       return await handleKBFallback(supabaseAdmin, conversation_id, "KB_SCOPE_GATE", source_message_id, { rag_api_status: "scope_unavailable" }, _visitorLang);
     }
-    const userQuery = _h1LastMsg;
+    const _semanticRetrieval = buildContextualRetrievalQuery(_h1LastMsg, _pr5HistoryRows ?? []);
+    const userQuery = _semanticRetrieval.query;
     ragResult = !userQuery ? { success: true, no_answer: true, retrieval_quality: "failed", chunks: [] } : await callKBAdapter(conversation_id, userQuery, _kbTenantResult.scope);
     if (!ragResult || !ragResult.success) {
       if (_deferR1ForE1) {
