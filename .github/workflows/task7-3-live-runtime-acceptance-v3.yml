@@ -1,0 +1,54 @@
+name: Task 7.3 Live Runtime Acceptance v3
+on:
+  push:
+    branches: [task7-3-production-acceptance]
+    paths: [.github/workflows/task7-3-live-runtime-acceptance-v3.yml]
+jobs:
+  live-runtime:
+    runs-on: ubuntu-24.04
+    permissions: { contents: read }
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+      BASE_URL: https://nrfxhqabwblzxoushgnm.supabase.co
+      ORIGIN: https://console-chat-hub.lovable.app
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: c133a1e91ffb5a4716fb56b9d3000d4ffd7dc20b }
+      - uses: supabase/setup-cli@v1
+        with: { version: latest }
+      - name: Isolated live acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          trap 'set +e; if [[ -n "${SECRET_KEY:-}" && -n "${TEST_UID:-}" ]]; then curl -sS -X DELETE "$BASE_URL/rest/v1/user_roles?user_id=eq.$TEST_UID" -H "apikey: $SECRET_KEY" >/dev/null; curl -sS -X DELETE "$BASE_URL/auth/v1/admin/users/$TEST_UID" -H "apikey: $SECRET_KEY" >/dev/null; fi' EXIT
+          supabase projects api-keys --project-ref "$PROJECT_REF" -o json >/tmp/keys.json; chmod 600 /tmp/keys.json
+          SECRET_KEY="$(jq -r '[.[]|select(((.api_key//.key//.value//"")|startswith("sb_secret_")))|(.api_key//.key//.value)][0]//empty' /tmp/keys.json)"
+          PUB_KEY="$(jq -r '[.[]|select(((.api_key//.key//.value//"")|startswith("sb_publishable_")))|(.api_key//.key//.value)][0]//empty' /tmp/keys.json)"
+          if [[ -z "$PUB_KEY" ]]; then PUB_KEY="$(jq -r '[.[]|select((.name//"")|ascii_downcase=="anon")|(.api_key//.key//.value)][0]//empty' /tmp/keys.json)"; fi
+          test -n "$SECRET_KEY" && test -n "$PUB_KEY"; echo "::add-mask::$SECRET_KEY"; echo "::add-mask::$PUB_KEY"
+          TEST_EMAIL="task73-$(date +%s)-$RANDOM@example.invalid"; TEST_PASS="T73!$(openssl rand -hex 18)Aa9"
+          echo STAGE_CREATE_USER
+          CREATE="$(curl -fsS -X POST "$BASE_URL/auth/v1/admin/users" -H "apikey: $SECRET_KEY" -H 'Content-Type: application/json' --data "$(jq -nc --arg e "$TEST_EMAIL" --arg p "$TEST_PASS" '{email:$e,password:$p,email_confirm:true}')")"
+          TEST_UID="$(jq -r '.id//empty'<<<"$CREATE")"; test -n "$TEST_UID"
+          echo STAGE_ROLE
+          curl -fsS -X POST "$BASE_URL/rest/v1/user_roles" -H "apikey: $SECRET_KEY" -H 'Content-Type: application/json' -H 'Prefer: return=minimal' --data "$(jq -nc --arg u "$TEST_UID" '{user_id:$u,role:"admin"}')" >/dev/null
+          echo STAGE_LOGIN
+          LOGIN="$(curl -fsS -X POST "$BASE_URL/auth/v1/token?grant_type=password" -H "apikey: $PUB_KEY" -H 'Content-Type: application/json' --data "$(jq -nc --arg e "$TEST_EMAIL" --arg p "$TEST_PASS" '{email:$e,password:$p}')")"; JWT="$(jq -r '.access_token//empty'<<<"$LOGIN")"; test -n "$JWT"; echo "::add-mask::$JWT"
+          send(){ local q="$1" cid="${2:-}" body resp; if [[ -n "$cid" ]];then body="$(jq -nc --arg q "$q" --arg c "$cid" '{action:"send",query:$q,test_conversation_id:$c}')";else body="$(jq -nc --arg q "$q" '{action:"send",query:$q}')";fi; resp="$(curl -fsS -X POST "$BASE_URL/functions/v1/widget-live-ai-test" -H "apikey: $PUB_KEY" -H "Authorization: Bearer $JWT" -H "Origin: $ORIGIN" -H 'Content-Type: application/json' --data "$body")"; test "$(jq -r '.success'<<<"$resp")" = true; printf '%s' "$resp"; }
+          echo STAGE_LIVE_TURNS
+          R="$(send '什么是四電一腦？')"; CID="$(jq -r '.conversation_id'<<<"$R")"; test -n "$(jq -r '.answer'<<<"$R")"
+          R="$(send '簡單一點解釋給我聽。' "$CID")"; test "$(jq -r '.human_control'<<<"$R")" = false
+          R="$(send '那包括哪些種類？' "$CID")"; test -n "$(jq -r '.answer'<<<"$R")"
+          for q in '我叫測試甲，請記住。' '我在香港。' '我不要你猜任何產品型號。' '之前說的種類再簡述一次。' '我講錯，我其實在澳門。';do R="$(send "$q" "$CID")";done
+          R="$(send '那我現在在哪裡？' "$CID")"; echo "$(jq -r '.answer'<<<"$R")"|grep -Eq '澳門|澳门|Macau|Macao'
+          R="$(send 'Please answer this turn in English only: what was the topic we discussed first?' "$CID")"; test -n "$(jq -r '.answer'<<<"$R")"
+          R="$(send '轉回繁體中文，我一開始問的是什麼？' "$CID")"; echo "$(jq -r '.answer'<<<"$R")"|grep -Eq '四電|電腦|电脑|電器'
+          R="$(send '如果我在火星，這項香港政策是否一定適用？不要猜。' "$CID")"; test "$(jq -r '.human_control'<<<"$R")" = false
+          for q in '我很生氣，但不要轉真人，我只是想知道。' '不要轉真人客服，我自己先看看。' '我不是要求真人，只是問你能否解釋。';do R="$(send "$q" "$CID")"; test "$(jq -r '.human_control'<<<"$R")" = false;done
+          R="$(send '請再次告訴我之前更正後的地點。' "$CID")"; echo "$(jq -r '.answer'<<<"$R")"|grep -Eq '澳門|澳门|Macau|Macao'
+          for q in '請記住我不要你猜型號。' '什麼是四電一腦？用一句話。' '那個概念跟我最初問的一樣嗎？';do R="$(send "$q" "$CID")";done
+          R="$(send '請總結目前你記得的更正與限制，不要新增資料。' "$CID")"; A="$(jq -r '.answer'<<<"$R")"; echo "$A"|grep -Eq '澳門|澳门|Macau|Macao'; echo "$A"|grep -Eq '型號|型号|model'
+          R="$(send '最後一題：我最初問的是什麼？' "$CID")"; echo "$(jq -r '.answer'<<<"$R")"|grep -Eq '四電|電腦|电脑|電器'
+          LOAD="$(curl -fsS -X POST "$BASE_URL/functions/v1/widget-live-ai-test" -H "apikey: $PUB_KEY" -H "Authorization: Bearer $JWT" -H "Origin: $ORIGIN" -H 'Content-Type: application/json' --data "$(jq -nc --arg c "$CID" '{action:"load",test_conversation_id:$c}')")"; COUNT="$(jq '.messages|length'<<<"$LOAD")"; test "$COUNT" -ge 40
+          echo "TASK7_3_LONG_STATEFUL_RUNTIME=PASS"; echo "TASK7_3_MESSAGE_COUNT=$COUNT"
