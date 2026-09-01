@@ -1,0 +1,47 @@
+name: Task 6.3 Production Closure
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/task6-3-final-gate.mjs'
+      - 'scripts/task6-3-production-rollback.sql'
+      - 'tests/fixtures/task6-3-20turn-smoke.json'
+      - '.github/workflows/task6-3-production-closure.yml'
+      - 'supabase/functions/generate-reply/**'
+      - 'supabase/functions/ce-evaluation-worker/**'
+      - 'supabase/functions/_shared/runtime-signal-lifecycle.ts'
+      - 'supabase/functions/_shared/escalation-rules.ts'
+      - 'supabase/functions/_shared/escalation-signals.ts'
+      - 'supabase/functions/_shared/agent-assist-grounding.ts'
+      - 'supabase/migrations/20260901062000_task6_2_realtime_ce_dispatch.sql'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  predeploy-final-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - name: Install
+        run: npm ci
+      - name: Task 6.3 single final gate
+        run: node scripts/task6-3-final-gate.mjs
+      - name: TypeScript compile
+        run: npx tsc --noEmit
+      - name: Production build
+        run: npm run build
+      - name: No production mutation assertion
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain)"
+          echo 'TASK6_3_NO_PRODUCTION_MUTATION=PASS'
