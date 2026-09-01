@@ -47,6 +47,9 @@ jobs:
         run: |
           set -euo pipefail
           git checkout -- src/routeTree.gen.ts 2>/dev/null || true
+          # intent-to-add makes the newly-created helper visible to diff without
+          # staging its content; this fixes only Round-2 gate accounting.
+          git add -N src/lib/console/contextualKbQuery.ts
           git diff --check
           changed="$(git diff --name-only | sort)"
           expected="$(printf '%s\n' 'src/components/console/CRMPanel.tsx' 'src/lib/console/contextualKbQuery.ts' | sort)"
