@@ -1,0 +1,76 @@
+name: Task 7.3 Director Correction Classifier Fix
+on:
+  push:
+    branches: [task7-3-production-acceptance]
+    paths: [.github/workflows/task7-3-director-correction-classifier-fix.yml]
+jobs:
+  fix-validate-deploy:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Apply classifier root-cause fix
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path('supabase/functions/_shared/conversation-runtime-state.ts')
+          s=p.read_text()
+          old='const CORRECTION = /(我講錯|我说错|我說錯|我要更正|我想更正|更正一下[：:]?|更正[：:]|其實係|其实是|唔係.*係|不是.*是|改返|改成|actually[,\\s]+i meant|i meant|correction\\s*[:：]|not .+ but .+)/i;'
+          new='const CORRECTION = /(我講錯|我说错|我說錯|我要更正|我想更正|更正一下[：:]?|更正[：:]|其實係|其实是|唔係[^，。,.!?！？]{1,80}[，,]\\s*係|不是[^，。,.!?！？]{1,80}[，,]\\s*(?:而)?是|改返|改成|actually[,\\s]+i meant|i meant|correction\\s*[:：]|not .+ but .+)/i;'
+          assert old in s
+          p.write_text(s.replace(old,new))
+      - run: npm ci
+      - name: Correction classifier regression
+        shell: bash
+        run: |
+          cat >/tmp/task73-correction.test.ts <<'EOF'
+          import assert from 'node:assert/strict';
+          import { projectConversationRuntimeState, resolveConversationMemoryResponse } from '/home/runner/work/console-chat-hub/console-chat-hub/supabase/functions/_shared/conversation-runtime-state.ts';
+          const rows=(latest:string, prior:string[])=>[{role:'visitor',content:latest},...prior.map(content=>({role:'visitor',content}))];
+          const trueCases=['我講錯，我其實在澳門。','我說錯，其實是澳門。','我要更正：地點是澳門','不是香港，而是澳門','唔係香港，係澳門','Actually, I meant Macau','not Hong Kong but Macau'];
+          for (const t of trueCases) assert.equal(projectConversationRuntimeState([{role:'visitor',content:t}]).latest_corrections[0],t,`true correction missed: ${t}`);
+          const falseCases=['我不是要求真人，只是問你能否解釋。','我不是想投訴，只是想了解。','不要轉真人客服，我自己先看看。','我很生氣，但不要轉真人，我只是想知道。','這不是產品問題，是一般查詢嗎？'];
+          for (const t of falseCases) assert.equal(projectConversationRuntimeState([{role:'visitor',content:t}]).latest_corrections.length,0,`false correction: ${t}`);
+          const fillers=Array.from({length:12},(_,i)=>`中間對話 ${i+1}`);
+          let r=rows('請再次告訴我之前更正後的地點。',['我不是要求真人，只是問你能否解釋。','不要轉真人客服，我自己先看看。','我很生氣，但不要轉真人，我只是想知道。',...fillers,'我講錯，我其實在澳門。','我在香港。']);
+          assert.equal(projectConversationRuntimeState(r.slice(1)).latest_corrections[0],'我講錯，我其實在澳門。');
+          assert.match(resolveConversationMemoryResponse(r[0].content!,r)!,/澳門/);
+          console.log('TASK7_3_CORRECTION_CLASSIFIER=PASS');
+          EOF
+          node --experimental-strip-types /tmp/task73-correction.test.ts
+          node tests/task7-1-canonical-runtime.test.mjs
+      - name: Compile and build
+        run: npx tsc --noEmit && npm run build
+      - name: Scope guard
+        shell: bash
+        run: |
+          git checkout -- src/routeTree.gen.ts || true
+          mapfile -t f < <(git diff --name-only | sort)
+          printf '%s\n' "${f[@]}"
+          test "${#f[@]}" -eq 1
+          test "${f[0]}" = 'supabase/functions/_shared/conversation-runtime-state.ts'
+      - name: Commit main and deploy generate-reply
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add supabase/functions/_shared/conversation-runtime-state.ts
+          git commit -m 'Fix Task 7.3 correction classifier false positives'
+          git push origin HEAD:main
+          echo "VALIDATED_COMMIT=$(git rev-parse HEAD)"
+          supabase functions deploy generate-reply --project-ref "$PROJECT_REF"
+          echo TASK7_3_DIRECTOR_CORRECTION_FIX=PASS
