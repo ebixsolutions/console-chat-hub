@@ -9,13 +9,13 @@ import { callModel, parseJsonObject } from "../_shared/llm-router.ts";
 import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { supabaseCorsHeaders } from "../_shared/supabase-cors.ts";
-import { buildContextualRetrievalQuery } from "../_shared/conversation-intelligence.ts";
+import { buildCanonicalRetrievalQuery } from "../_shared/conversation-runtime-state.ts";
 
 const ALLOWED_ROLES = new Set(["admin", "supervisor"]);
 type QueryDbClient = { from: (relation: string) => any; };
 const MAX_QUERY_LENGTH = 500;
 const MAX_TOP_K = 3;
-const MAX_CONTEXT_MESSAGES = 5;
+const MAX_CONTEXT_MESSAGES = 200;
 const CONTEXT_SEPARATOR = " / ";
 const UI_RELEVANCE_FLOOR = 0.75;
 const LLM_RELEVANCE_FLOOR = 0.75;
@@ -164,7 +164,7 @@ function buildTrustedRetrievalQuery(
   const isAuto = forceAutoContext || q === normalizeComparable(latest) || q === normalizeComparable(joined.slice(0, MAX_QUERY_LENGTH));
   if (!isAuto) return { query: clientQuery, currentRequest: clientQuery, mode: "manual" };
   const newestFirst = [...turns].reverse().map((t) => ({ role: "visitor", content: t.content }));
-  const semantic = buildContextualRetrievalQuery(latest, newestFirst);
+  const semantic = buildCanonicalRetrievalQuery(latest, newestFirst);
   return { query: semantic.query.slice(0, MAX_QUERY_LENGTH), currentRequest: latest, mode: "auto_context" };
 }
 

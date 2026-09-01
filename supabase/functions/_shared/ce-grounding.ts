@@ -9,6 +9,7 @@ import {
   type KBFullChunk,
   type KBRagResponse,
 } from "./kb-client.ts";
+import { selectCanonicalGrounding } from "./canonical-grounding.ts";
 
 export interface GroundingCompany {
   company_id: string;
@@ -238,68 +239,13 @@ function isPolicySource(sourceType: string): boolean {
   return sourceType.toLowerCase().includes("policy");
 }
 
-function evidenceRows(result: KBRagResponse): Array<Record<string, unknown>> {
-  const documentRows = (result.documents ?? []).flatMap((document) =>
-    (document.llm_context?.full_content_evidence ?? []).map((item) => {
-      const matching = (document.chunks ?? []).find(
-        (c: KBFullChunk) =>
-          c.chunk_type === "full_content" &&
-          c.document_id === item.document_id &&
-          (!item.chunk_id || c.chunk_id === item.chunk_id),
-      );
-      return {
-        chunk_id: item.chunk_id ?? matching?.chunk_id ?? "",
-        document_id: item.document_id || document.document_id,
-        document_title: matching?.title ?? "KB document",
-        citation_label: matching?.title ?? "KB document",
-        source_type: item.source_type || matching?.source_type || "unknown",
-        source_scope: "customer_answer",
-        score: item.score,
-        version: null,
-        last_updated_at: null,
-        freshness_status: "fresh",
-        content: item.content,
-      };
-    })
-  );
-  if (documentRows.length > 0) return documentRows;
-
-  const selectedDocumentId =
-    result.llm_context?.selected_document_id ??
-    result.selected_document_id ??
-    "";
-
-  return (result.llm_context?.full_content_evidence ?? []).map((item) => {
-    const matching = result.chunks.find(
-      (c: KBFullChunk) =>
-        c.chunk_type === "full_content" &&
-        c.document_id === item.document_id &&
-        (!item.chunk_id || c.chunk_id === item.chunk_id),
-    );
-
-    return {
-      chunk_id: item.chunk_id ?? matching?.chunk_id ?? "",
-      document_id: item.document_id || selectedDocumentId,
-      document_title: matching?.title ?? "KB document",
-      citation_label: matching?.title ?? "KB document",
-      source_type: item.source_type || matching?.source_type || "unknown",
-      source_scope: "customer_answer",
-      score: item.score,
-      version: null,
-      last_updated_at: null,
-      freshness_status: "fresh",
-      content: item.content,
-    };
+function evidenceRows(result: KBRagResponse, requestText: string, policyOnly = false): Array<Record<string, unknown>> {
+  const selected = selectCanonicalGrounding(result.documents ?? [], { requestText, policyOnly, requirePublished: true });
+  if (!selected.ok || !selected.document) return [];
+  return selected.evidence.map((item) => {
+    const matching = selected.chunks.find((c: KBFullChunk) => c.chunk_type === "full_content" && c.document_id === item.document_id && (!item.chunk_id || c.chunk_id === item.chunk_id));
+    return { chunk_id:item.chunk_id ?? matching?.chunk_id ?? "", document_id:selected.document.document_id, document_title:matching?.title ?? selected.document.title ?? "KB document", citation_label:matching?.title ?? selected.document.title ?? "KB document", source_type:item.source_type || matching?.source_type || "unknown", source_scope:policyOnly ? "policy" : "customer_answer", score:item.score, version:null, last_updated_at:null, freshness_status:"fresh", content:item.content };
   });
-}
-
-function resultDocumentIds(result: KBRagResponse): string[] {
-  const multi = (result.documents ?? [])
-    .map((document) => document.document_id)
-    .filter((id): id is string => typeof id === "string" && id.trim().length > 0);
-  if (multi.length > 0) return multi;
-  const legacy = result.llm_context?.selected_document_id ?? result.selected_document_id ?? "";
-  return legacy ? [legacy] : [];
 }
 
 function mergeEvidence(
@@ -422,8 +368,8 @@ export async function fetchGrounding(args: {
     };
   }
 
-  let evidence = evidenceRows(primary.result);
-  let selectedDocumentIds = resultDocumentIds(primary.result);
+  let evidence = evidenceRows(primary.result, query);
+  let selectedDocumentIds = [...new Set(evidence.map((row) => String(row.document_id ?? "")).filter(Boolean))];
 
   let secondaryResult: KBRagResponse | null = null;
   if (
@@ -445,8 +391,9 @@ export async function fetchGrounding(args: {
       };
     }
     secondaryResult = secondary.result;
-    evidence = mergeEvidence(evidence, evidenceRows(secondary.result));
-    selectedDocumentIds.push(...resultDocumentIds(secondary.result));
+    const policyEvidence = evidenceRows(secondary.result, policyQuery, true);
+    evidence = mergeEvidence(evidence, policyEvidence);
+    selectedDocumentIds.push(...policyEvidence.map((row) => String(row.document_id ?? "")).filter(Boolean));
   }
 
   if (evidence.length === 0) return { ok: false, code: "GROUNDING_EMPTY" };
