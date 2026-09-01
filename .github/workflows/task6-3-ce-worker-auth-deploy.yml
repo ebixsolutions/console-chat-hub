@@ -1,0 +1,25 @@
+name: Task 6.3 CE Worker Auth Deploy
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/task6-3-ce-worker-auth-deploy.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify credential
+        run: test -n "${SUPABASE_ACCESS_TOKEN:-}"
+      - name: Verify worker source frozen
+        run: test "$(git hash-object supabase/functions/ce-evaluation-worker/index.ts)" = "85230c4af3592f169a7684d1899175a7ea543ffc"
+      - name: Deploy CE worker behind custom token
+        run: npx --yes supabase@latest functions deploy ce-evaluation-worker --project-ref "$PROJECT_REF" --no-verify-jwt
+      - name: Closure
+        run: echo TASK6_3_CE_WORKER_AUTH_DEPLOY=PASS
