@@ -1,0 +1,70 @@
+name: Task 6.3 Live 20-Turn Production Smoke
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/task6-3-live-20turn-smoke.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PROD_ORIGIN: https://console-chat-hub.lovable.app
+      CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+    steps:
+      - uses: actions/checkout@v4
+      - name: Stateful 20-turn Widget smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a; source .env; set +a
+          python - <<'PY'
+          import json, os, time, uuid, urllib.request, urllib.error
+          BASE=os.environ['VITE_SUPABASE_FUNCTIONS_URL'].rstrip('/')
+          ORIGIN=os.environ['PROD_ORIGIN']; CHANNEL=os.environ['CHANNEL_ID']
+          turns=json.load(open('tests/fixtures/task6-3-20turn-smoke.json'))['turns']
+          def post(path, body):
+              req=urllib.request.Request(BASE+'/'+path,data=json.dumps(body,ensure_ascii=False).encode(),headers={'Origin':ORIGIN,'Content-Type':'application/json'},method='POST')
+              try:
+                  with urllib.request.urlopen(req,timeout=45) as r: return r.status,json.loads(r.read())
+              except urllib.error.HTTPError as e:
+                  raw=e.read();
+                  try: payload=json.loads(raw)
+                  except: payload={'raw':raw.decode(errors='replace')}
+                  return e.code,payload
+          st,c=post('create-visitor-session',{'channel_id':CHANNEL,'visitor_metadata':{'task63_smoke':True,'exclude_training':True}})
+          assert st==200 and c.get('success') is True,(st,c)
+          d=c['data']; cid=d['conversation_id']; token=d['session_token']
+          print('TASK6_3_CONVERSATION_ID='+cid)
+          prior_assistant=0
+          for t in turns:
+              msg=t['message']; turn=t['turn']
+              st,s=post('receive-widget-message',{'conversation_id':cid,'session_token':token,'content':msg})
+              assert st==200 and s.get('success') is True,(turn,st,s)
+              deadline=time.time()+40; p=None
+              while time.time()<deadline:
+                  st,p=post('widget-poll-messages',{'conversation_id':cid,'session_token':token})
+                  assert st==200 and p.get('success') is True,(turn,st,p)
+                  data=p['data']; msgs=data.get('messages') or []
+                  ac=sum(1 for x in msgs if x.get('role')=='assistant')
+                  if ac>prior_assistant or data.get('conversation_status') in ('pending','transferred','human_needed','human_control'):
+                      break
+                  time.sleep(1)
+              data=p['data']; msgs=data.get('messages') or []
+              assistants=[x for x in msgs if x.get('role')=='assistant']
+              ac=len(assistants); status=data.get('conversation_status')
+              latest=(assistants[-1].get('content','') if assistants else '')
+              print(json.dumps({'turn':turn,'status':status,'assistant_count':ac,'answer':latest[:500]},ensure_ascii=False))
+              if turn<20:
+                  assert status not in ('pending','transferred','human_needed','human_control'),(turn,status,latest)
+                  assert ac>prior_assistant,(turn,'no assistant reply',data)
+              else:
+                  assert status in ('pending','transferred','human_needed','human_control'),(turn,status,latest)
+                  low=latest.lower()
+                  assert ('客服' in latest) or ('human' in low) or ('agent' in low),(turn,latest)
+              prior_assistant=ac
+          print('TASK6_3_20TURN_WIDGET_SMOKE=PASS')
+          print('TASK6_3_FINAL_STATUS='+str(data.get('conversation_status')))
+          PY
