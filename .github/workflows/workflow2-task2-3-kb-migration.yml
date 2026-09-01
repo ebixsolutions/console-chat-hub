@@ -7,6 +7,7 @@ on:
       - '.github/workflows/workflow2-task2-3-kb-migration.yml'
       - 'scripts/workflow2-task2-3-kb-migration.mjs'
       - 'scripts/workflow2-task2-3-kb-migration-final-gate.sh'
+      - 'scripts/workflow2-task2-3-stale-live-metadata-quarantine.json'
       - 'tests/workflow2-task2-3-kb-migration.test.mjs'
       - 'supabase/functions/_shared/kb-auth.ts'
       - 'supabase/functions/training-kb-sync/index.ts'
