@@ -29,9 +29,7 @@ function isContextDependent(text: string): boolean {
   const t = clean(text);
   if (!t) return false;
   if (CORRECTION.test(t)) return true;
-  if (FOLLOW_UP_START.test(t) || REFERENCE.test(t) || TRANSFORM.test(t) || ELLIPSIS.test(t)) return true;
-  if (t.length <= 12 && /[？?呢嗎吗]|^(多久|幾耐|几耐|哪個|哪个|哪些|why|how|when|where)/i.test(t)) return true;
-  return false;
+  return FOLLOW_UP_START.test(t) || REFERENCE.test(t) || TRANSFORM.test(t) || ELLIPSIS.test(t);
 }
 
 function findAnchor(parts: string[]): string {
