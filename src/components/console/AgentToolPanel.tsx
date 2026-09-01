@@ -122,7 +122,7 @@ export function AgentToolPanel({
     setTr(null);
     try {
       const { data, error } = await supabase.functions.invoke("agent-assist", {
-        body: { tool_type: tt, conversation_id: conversationId, content: ac, ...extra },
+        body: { tool_type: tt, conversation_id: conversationId, content: ac, ...((["suggest_reply", "knowledge_helper", "check_policy"].includes(tt)) ? { context_mode: cs === "custom" ? "manual" : "conversation" } : {}), ...extra },
       });
       if (toolReqIdRef.current !== reqId) return;
       if (error || !data?.success) {

@@ -4,6 +4,7 @@ import { applyCompanyScope, resolveConversationScope } from "../_shared/pre-acti
 import { supabaseCorsHeaders } from "../_shared/supabase-cors.ts";
 import { callModel, parseJsonObject } from "../_shared/llm-router.ts";
 import { selectAgentAssistGrounding } from "../_shared/agent-assist-grounding.ts";
+import { buildConversationAssistRetrievalQuery } from "../_shared/conversation-intelligence.ts";
 
 const PRE_ACTIVATION_ROLES: ReadonlySet<string> = new Set(["admin", "supervisor", "agent"]);
 const TOOL_TYPES = new Set(["translate", "grammar", "suggest_reply", "knowledge_helper", "check_policy"]);
@@ -13,9 +14,9 @@ const MAX_POLICY_EVIDENCE = 3;
 const TOOL_ALLOWED_FIELDS: Record<string, Set<string>> = {
   translate: new Set(["tool_type", "conversation_id", "content", "target_language"]),
   grammar: new Set(["tool_type", "conversation_id", "content"]),
-  suggest_reply: new Set(["tool_type", "conversation_id", "content"]),
-  knowledge_helper: new Set(["tool_type", "conversation_id", "content"]),
-  check_policy: new Set(["tool_type", "conversation_id", "content"]),
+  suggest_reply: new Set(["tool_type", "conversation_id", "content", "context_mode"]),
+  knowledge_helper: new Set(["tool_type", "conversation_id", "content", "context_mode"]),
+  check_policy: new Set(["tool_type", "conversation_id", "content", "context_mode"]),
 };
 const VALID_TONES = new Set(["professional", "casual", "empathetic", "needs_improvement"]);
 const VALID_SUG_TONES = new Set(["Empathetic", "Informative", "Neutral"]);
@@ -47,6 +48,11 @@ async function callAssistModel(sys:string,usr:string,meta:AssistModelMeta):Promi
   return r.ok?{ok:true,text:r.text}:{ok:false};
 }
 function parseJson(raw:string):Record<string,unknown>|null{return parseJsonObject(raw);}
+async function loadAssistConversationHistory(supabaseAdmin:any,conversationId:string){
+  const {data,error}=await supabaseAdmin.from("messages").select("role, content, metadata, created_at").eq("conversation_id",conversationId).eq("is_recalled",false).neq("content","__THINKING__").order("created_at",{ascending:false}).limit(20);
+  if(error)return null;
+  return (data??[]).filter((row:any)=>typeof row?.content==="string"&&row.content.trim());
+}
 Deno.serve(async(req)=>{
  if(req.method==="OPTIONS"){const o=req.headers.get("Origin")??"";if(!CONSOLE_ORIGINS.includes(o))return new Response(null,{status:403});return new Response(null,{headers:getCorsHeaders(req)});}
  if(req.method!=="POST")return jsonRes({error:"method_not_allowed"},405,req);
@@ -68,7 +74,10 @@ Deno.serve(async(req)=>{
   const tenant=await resolveTenantScope(conversationId,{userId:agent.user_id,allowPreActivation:true});if(!tenant.resolved)return jsonRes({success:false,error:`${kbPrefix}_kb_tenant_unresolved`,detail:tenant.reason},503,req);
   const scopeAligned=scope.mode==="canonical"?tenant.scope.mode==="canonical"&&tenant.scope.aiCompanyId===scope.companyId:tenant.scope.mode==="pre_activation"&&scope.companyId===null;if(!scopeAligned)return jsonRes({success:false,error:`${kbPrefix}_kb_tenant_unresolved`},503,req);
   const endpoint=resolveKBEndpoint();if(!endpoint)return jsonRes({success:false,error:`${kbPrefix}_kb_unavailable`},503,req);
-  const kb=await fetchKBRag({query:content.slice(0,500),top_k:3},tenant.scope,endpoint);if(!kb.success)return jsonRes({success:false,error:`${kbPrefix}_kb_unavailable`},kb.error_code==="KB_TIMEOUT"?504:502,req);
+  const contextMode=body.context_mode==="manual"?"manual":"conversation";
+  let retrievalQuery=content.slice(0,500);
+  if(contextMode==="conversation"){const history=await loadAssistConversationHistory(supabaseAdmin,conversationId);if(history===null)return jsonRes({success:false,error:`${kbPrefix}_conversation_context_unavailable`},500,req);retrievalQuery=buildConversationAssistRetrievalQuery(content,history).query.slice(0,500);}
+  const kb=await fetchKBRag({query:retrievalQuery,top_k:3},tenant.scope,endpoint);if(!kb.success)return jsonRes({success:false,error:`${kbPrefix}_kb_unavailable`},kb.error_code==="KB_TIMEOUT"?504:502,req);
   const groundingSelection=selectAgentAssistGrounding(kb.documents);if(!groundingSelection.ok)return jsonRes({success:false,error:`${kbPrefix}_kb_contract_mismatch`},502,req);
   if(toolType==="knowledge_helper"){const selected=groundingSelection.document,evidence=groundingSelection.evidence.slice(0,3);if(!selected||!evidence.length)return jsonRes({success:true,tool_type:"knowledge_helper",knowledge_grounded:true,scope_mode:tenant.scope.mode,selected_document_id:null,result:{status:"insufficient_evidence",orientation_summary:"",evidence:[]}},200,req);return jsonRes({success:true,tool_type:"knowledge_helper",knowledge_grounded:true,scope_mode:tenant.scope.mode,selected_document_id:selected.document_id,result:{status:"available",orientation_summary:selected.llm_context.orientation_summary?.slice(0,800)??"",evidence:evidence.map((i,n)=>({label:`Evidence ${n+1}`,source_type:i.source_type,chunk_type:"full_content",content:i.content.slice(0,1200)}))}},200,req);}
   if(toolType==="suggest_reply"){const selected=groundingSelection.document,evidence=groundingSelection.evidence.slice(0,3);if(!selected||!evidence.length)return jsonRes({success:false,error:"suggest_insufficient_evidence"},422,req);const grounding=[selected.llm_context.orientation_summary?`Orientation Summary (context only):\n${selected.llm_context.orientation_summary.slice(0,1200)}`:"",`Full Content Evidence:\n${evidence.map((i,n)=>`[Evidence ${n+1}]\n${i.content.slice(0,1200)}`).join("\n\n")}`].filter(Boolean).join("\n\n");const r=await callAssistModel('Generate up to 3 customer-service reply drafts with different tones. Ground factual claims ONLY in Full Content Evidence. Return ONLY JSON: {"suggestions":[{"content":"...","tone_label":"Empathetic|Informative|Neutral"}]}',`Customer message:\n${content}\n\nKnowledge Base grounding:\n${grounding}`,{companyId:scope.companyId,conversationId,toolType:"suggest_reply"});if(!r.ok||!r.text)return jsonRes({success:false,error:"suggest_failed"},502,req);const p=parseJson(r.text);if(!Array.isArray(p?.suggestions))return jsonRes({success:false,error:"suggest_parse_failed"},502,req);const safe=(p!.suggestions as any[]).filter(s=>typeof s?.content==="string"&&s.content.trim()&&VALID_SUG_TONES.has(String(s.tone_label))).slice(0,3).map(s=>({content:String(s.content).slice(0,1000),tone_label:String(s.tone_label)}));if(!safe.length)return jsonRes({success:false,error:"suggest_parse_failed"},502,req);return jsonRes({success:true,tool_type:"suggest_reply",draft_only:true,knowledge_grounded:true,scope_mode:tenant.scope.mode,selected_document_id:selected.document_id,result:{suggestions:safe}},200,req);}

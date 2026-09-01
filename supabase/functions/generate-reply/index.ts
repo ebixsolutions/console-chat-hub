@@ -30,6 +30,7 @@ import { assessPolicyEvidenceForR4 } from "../_shared/escalation-policy.ts";
 import { validateP1PredictionSignals, type P1PredictionInput } from "../_shared/escalation-p1.ts";
 import { callModel, resolveGenerationMaxTokens, type LlmFailureCode } from "../_shared/llm-router.ts";
 import { CUSTOMER_CONVERSATION_POLICY, NATURAL_CLARIFICATION, buildContextualRetrievalQuery, buildConversationContinuityBlock, buildCustomerAdvisoryContext, classifyConversationTurn, classifyHandoffIntent, hasUsableFullContentEvidence, isHumanControlState } from "../_shared/conversation-intelligence.ts";
+import { selectGroundedDocument } from "../_shared/kb-grounding.ts";
 import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -2050,9 +2051,11 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
 
     const isHighRisk = _pr5LocalRisk?.level === "high";
     const minScore = isHighRisk ? 0.78 : 0.55;
-    const usableChunks = ragResult.chunks.filter(
-      (c) => c.score && c.score >= minScore && (!c.status || c.status === "published"),
-    );
+    const _groundingSelection = selectGroundedDocument(ragResult.documents ?? [], {
+      minScore,
+      requirePublished: true,
+    });
+    const usableChunks = _groundingSelection.ok ? _groundingSelection.chunks : [];
     const traceMetadata = { rag_api_status: "success", total_results: ragResult.chunks.length, filtered_results: usableChunks.length, min_score_used: usableChunks.length > 0 ? Math.min(...usableChunks.map((c) => c.score ?? 0)) : null, max_score_used: usableChunks.length > 0 ? Math.max(...usableChunks.map((c) => c.score ?? 0)) : null, high_risk_topic: isHighRisk, min_threshold: minScore, citations: usableChunks.map((c) => ({ doc_id: c.doc_id, chunk_id: c.chunk_id, title: c.title, score: c.score, source_type: c.source_type })) };
     ragResult.trace_metadata = traceMetadata;
     if (usableChunks.length === 0) {

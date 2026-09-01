@@ -250,6 +250,40 @@ export function buildContextualRetrievalQuery(
   return { query, mode: "contextual", latest, context_turns: contextTurns };
 }
 
+export function buildConversationAssistRetrievalQuery(
+  assistanceInput: string,
+  newestFirstMessages: ConversationHistoryRow[],
+): ContextualRetrievalQuery {
+  const latest = cleanContinuityText(assistanceInput);
+  if (!latest) return { query: "", mode: "standalone", latest: "", context_turns: [] };
+
+  const customerTurns = newestFirstMessages
+    .filter((row) => CUSTOMER_ROLES.has(String(row.role ?? "").toLowerCase()))
+    .map((row) => cleanContinuityText(row.content))
+    .filter(Boolean);
+  if (customerTurns.length === 0) {
+    return { query: latest, mode: "standalone", latest, context_turns: [] };
+  }
+
+  // Agent-assist input can be a selected customer turn OR an agent draft. In
+  // both cases the authoritative topic comes from the same trusted conversation.
+  // Keep the projection bounded, customer-only and newest-correction aware.
+  const contextTurns = customerTurns
+    .filter((text) => !isRetrievalNoise(text))
+    .slice(0, 6);
+  if (contextTurns.length === 0) {
+    return { query: latest, mode: "standalone", latest, context_turns: [] };
+  }
+
+  const chronological = [...contextTurns].reverse();
+  const query = [
+    "Assistance input: " + latest,
+    "Relevant customer conversation: " + chronological.join(" / "),
+  ].join("\n").slice(0, 1200);
+
+  return { query, mode: "contextual", latest, context_turns: contextTurns };
+}
+
 export interface CustomerAdvisorySignals {
   tier?: string | null;
   anger_flag?: boolean;

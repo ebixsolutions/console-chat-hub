@@ -9,6 +9,7 @@ import { callModel, parseJsonObject } from "../_shared/llm-router.ts";
 import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { supabaseCorsHeaders } from "../_shared/supabase-cors.ts";
+import { buildContextualRetrievalQuery } from "../_shared/conversation-intelligence.ts";
 
 const ALLOWED_ROLES = new Set(["admin", "supervisor"]);
 type QueryDbClient = { from: (relation: string) => any; };
@@ -154,28 +155,19 @@ async function loadRecentVisitorTurns(
 function buildTrustedRetrievalQuery(
   clientQuery: string,
   turns: VisitorTurn[],
+  forceAutoContext = false,
 ): { query: string; currentRequest: string; mode: "auto_context" | "manual" } {
-  if (turns.length === 0) {
-    return { query: clientQuery, currentRequest: clientQuery, mode: "manual" };
-  }
+  if (turns.length === 0) return { query: clientQuery, currentRequest: clientQuery, mode: "manual" };
   const latest = turns[turns.length - 1].content.trim();
   const joined = turns.map((t) => t.content.trim()).join(CONTEXT_SEPARATOR);
   const q = normalizeComparable(clientQuery);
-  const isAuto = q === normalizeComparable(latest) ||
-    q === normalizeComparable(joined.slice(0, MAX_QUERY_LENGTH));
+  const isAuto = forceAutoContext || q === normalizeComparable(latest) || q === normalizeComparable(joined.slice(0, MAX_QUERY_LENGTH));
   if (!isAuto) return { query: clientQuery, currentRequest: clientQuery, mode: "manual" };
-
-  const previous = turns.slice(-3, -1)
-    .map((t) => t.content.trim()).filter(Boolean).join(CONTEXT_SEPARATOR);
-  const composed = previous
-    ? `Current request: ${latest}\nRecent context: ${previous}`
-    : latest;
-  return {
-    query: composed.length <= MAX_QUERY_LENGTH ? composed : composed.slice(0, MAX_QUERY_LENGTH),
-    currentRequest: latest,
-    mode: "auto_context",
-  };
+  const newestFirst = [...turns].reverse().map((t) => ({ role: "visitor", content: t.content }));
+  const semantic = buildContextualRetrievalQuery(latest, newestFirst);
+  return { query: semantic.query.slice(0, MAX_QUERY_LENGTH), currentRequest: latest, mode: "auto_context" };
 }
+
 function parseTenantMap(): Record<string, string> | null {
   const raw = Deno.env.get("KB_SINGAPORE_TENANT_MAP_JSON");
   if (!raw) return {};
@@ -550,7 +542,8 @@ Deno.serve(async (req) => {
       scope = standalone.scope;
     }
 
-    const derived = buildTrustedRetrievalQuery(query, recentTurns);
+    const queryMode = body?.query_mode === "auto_context" ? "auto_context" : "manual";
+    const derived = buildTrustedRetrievalQuery(query, recentTurns, queryMode === "auto_context");
     const endpoint = resolveKBEndpoint();
     if (!endpoint) return jsonResponse({ error: "kb_config_missing" }, 500, req);
 

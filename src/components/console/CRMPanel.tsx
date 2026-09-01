@@ -300,14 +300,14 @@ export function CRMPanel({
   const custCtx = useCustomerContext(conv?.visitor_session_id ?? null);
 
   const runKbSearch = useCallback(
-    async (query: string, reqId: number) => {
+    async (query: string, reqId: number, queryMode: "manual" | "auto_context" = "manual") => {
       if (!query.trim()) return;
       setKbConnState("loading");
       setKbError("");
       setKbResults([]);
       try {
         const { data, error } = await supabase.functions.invoke("kb-search-proxy", {
-          body: { query: query.trim().slice(0, 500), top_k: 3, conversation_id: conv?.id },
+          body: { query: query.trim().slice(0, 500), top_k: 3, conversation_id: conv?.id, query_mode: queryMode },
         });
         if (kbReqIdRef.current !== reqId) return;
         if (error) {
@@ -372,7 +372,7 @@ export function CRMPanel({
       setKbConnState("empty");
       return;
     }
-    void runKbSearch(autoQuery, ++kbReqIdRef.current);
+    void runKbSearch(autoQuery, ++kbReqIdRef.current, "auto_context");
   }, [conv, boundedContext, contextRevisionKey, canAccessKb, runKbSearch]);
 
   const runPolicyCheck = async (content: string, reqId: number) => {
@@ -386,6 +386,7 @@ export function CRMPanel({
           tool_type: "check_policy",
           conversation_id: conv?.id ?? "",
           content: content.trim().slice(0, 2000),
+          context_mode: "conversation",
         },
       });
       if (polReqIdRef.current !== reqId) return;
@@ -553,7 +554,7 @@ export function CRMPanel({
                 <button disabled={kbConnState === "loading" || !kbQuery.trim()} onClick={() => void runKbSearch(kbQuery, ++kbReqIdRef.current)} style={btnSm}>{rc("kbSearchBtn")}</button>
                 <button disabled={kbConnState === "loading"} onClick={() => {
                   const q = kbQuery.trim() || deriveAutoSearchQuery(boundedContext);
-                  if (q) void runKbSearch(q, ++kbReqIdRef.current);
+                  if (q) void runKbSearch(q, ++kbReqIdRef.current, kbQuery.trim() ? "manual" : "auto_context");
                 }} style={btnSm}>↻</button>
               </div>
               {kbConnState === "loading" && <div style={{ textAlign: "center", color: "#888", padding: 16 }}>{rc("kbLoading")}</div>}
