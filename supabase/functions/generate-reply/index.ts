@@ -31,6 +31,7 @@ import { validateP1PredictionSignals, type P1PredictionInput } from "../_shared/
 import { callModel, resolveGenerationMaxTokens, type LlmFailureCode } from "../_shared/llm-router.ts";
 import { CUSTOMER_CONVERSATION_POLICY, NATURAL_CLARIFICATION, buildContextualRetrievalQuery, buildConversationContinuityBlock, buildCustomerAdvisoryContext, classifyConversationTurn, classifyHandoffIntent, hasUsableFullContentEvidence, isHumanControlState } from "../_shared/conversation-intelligence.ts";
 import { selectGroundedDocument } from "../_shared/kb-grounding.ts";
+import { buildRealtimeR3SentimentSignals } from "../_shared/runtime-signal-lifecycle.ts";
 import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -511,29 +512,18 @@ async function loadAuthoritativeR3SentimentSignals(
     .eq("company_id", expected_tenant_id)
     .maybeSingle();
 
+  // A new visitor turn correctly marks CE dirty before generation. The last
+  // canonical evaluation is therefore historical context, not current-turn
+  // truth. We may use its bounded trajectory only when lineage/tenant are valid;
+  // current-turn polarity is supplied separately by the deterministic classifier.
   if (
     freshnessError ||
     !freshness ||
-    freshness.state !== "up_to_date" ||
     freshness.last_success_source !== "canonical" ||
     !freshness.last_success_evaluation_id ||
-    !freshness.last_success_fingerprint ||
-    !freshness.current_evaluation_fingerprint ||
-    freshness.last_success_fingerprint !== freshness.current_evaluation_fingerprint
+    !freshness.last_success_fingerprint
   ) {
     return undefined;
-  }
-
-  if (freshness.last_activity_at && freshness.last_success_at) {
-    const activityAt = Date.parse(String(freshness.last_activity_at));
-    const successAt = Date.parse(String(freshness.last_success_at));
-    if (
-      !Number.isFinite(activityAt) ||
-      !Number.isFinite(successAt) ||
-      activityAt > successAt
-    ) {
-      return undefined;
-    }
   }
 
   const { data: evaluation, error: evaluationError } = await supabaseAdmin
@@ -542,7 +532,6 @@ async function loadAuthoritativeR3SentimentSignals(
     .eq("id", freshness.last_success_evaluation_id)
     .eq("conversation_id", conversation_id)
     .eq("company_id", expected_tenant_id)
-    .eq("freshness", "current")
     .eq("evaluation_fingerprint", freshness.last_success_fingerprint)
     .maybeSingle();
 
@@ -597,7 +586,7 @@ async function loadAuthoritativeR3SentimentSignals(
     ...(scoreSeries.length >= 2 ? { sentiment_trend: scoreSeries.slice(-5) } : {}),
     ...(recovered ? { sentiment_recovered_same_turn: true as const } : {}),
     evaluation_id: evaluation.id,
-    provider_version: `ce-emotion-point-v1.1:${String(evaluation.evaluation_fingerprint).slice(0, 12)}`,
+    provider_version: `ce-emotion-history-v1.0:${String(evaluation.evaluation_fingerprint).slice(0, 12)}`,
   };
 }
 
@@ -1763,10 +1752,14 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
   const _pr5ThreatSignal = classifyAuthoritativeThreat(_h1LastMsg);
   const _pr5ComplianceSignal = resolveAuthoritativeComplianceReview(_pr5ExpectedTenantId);
   const _pr5LocalRisk = classifyLocalTopicRisk(_h1LastMsg);
-  const _pr5R3Sentiment = await loadAuthoritativeR3SentimentSignals(
+  const _pr5HistoricalR3Sentiment = await loadAuthoritativeR3SentimentSignals(
     supabaseAdmin,
     conversation_id,
     _pr5ExpectedTenantId,
+  );
+  const _pr5R3Sentiment = buildRealtimeR3SentimentSignals(
+    _h1LastMsg,
+    _pr5HistoricalR3Sentiment,
   );
   const _pr5ConversationDurationSec =
     conversation.created_at
