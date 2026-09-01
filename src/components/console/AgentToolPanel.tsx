@@ -12,6 +12,7 @@ const TOOL_COPY = {
   customPh: { en: "Paste or type...", zh: "貼上或輸入..." },
   translate: { en: "Translate", zh: "翻譯" },
   grammar: { en: "Grammar", zh: "文法" },
+  suggestReply: { en: "Suggest Reply", zh: "建議回覆" },
   knowledgeHelper: { en: "Knowledge Helper", zh: "知識助手" },
   policyCheck: { en: "Policy Check", zh: "政策檢查" },
   processing: { en: "Processing...", zh: "處理中..." },
@@ -41,6 +42,7 @@ const TOOL_COPY = {
   netError: { en: "Network error", zh: "網路錯誤" },
   transResult: { en: "Translation", zh: "翻譯結果" },
   gramResult: { en: "Grammar Check", zh: "文法檢查" },
+  suggestResult: { en: "Suggested Replies", zh: "建議回覆" },
   knowledgeResult: { en: "Knowledge Evidence", zh: "知識證據" },
   policyResult: { en: "Policy Check", zh: "政策檢查" },
   tooLong: { en: "Content exceeds 2,000 characters", zh: "內容超過 2,000 字元" },
@@ -154,6 +156,7 @@ export function AgentToolPanel({
       a: () => runTool("translate", { target_language: lang === "zh" ? "en" : "zh-TW" }),
     },
     { k: "grammar", l: tc("grammar"), i: "✏️", a: () => runTool("grammar") },
+    { k: "suggest_reply", l: tc("suggestReply"), i: "💬", a: () => runTool("suggest_reply") },
     { k: "knowledge_helper", l: tc("knowledgeHelper"), i: "📚", a: () => runTool("knowledge_helper") },
     { k: "check_policy", l: tc("policyCheck"), i: "🛡️", a: () => runTool("check_policy") },
   ];
@@ -394,6 +397,18 @@ export function AgentToolPanel({
             >
               {tc("useInDraft")}
             </button>
+          </div>
+        )}
+        {tr?.type === "suggest_reply" && (
+          <div>
+            <div style={{ fontSize: 10.5, fontWeight: 600, color: "#7c3aed", marginBottom: 4 }}>{tc("suggestResult")}</div>
+            {Array.isArray(tr.data.suggestions) && (tr.data.suggestions as Array<{ content: string; tone_label: string }>).map((s, i) => (
+              <div key={i} style={{ background: "#faf5ff", border: "1px solid #e9d5ff", borderRadius: 5, padding: 6, marginBottom: 5 }}>
+                <div style={{ fontSize: 9.5, fontWeight: 700, color: "#7c3aed", marginBottom: 3 }}>{s.tone_label}</div>
+                <div style={{ fontSize: 10.5, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{s.content}</div>
+                <button onClick={() => onUseDraft(s.content)} style={{ marginTop: 4, fontSize: 10.5, padding: "3px 9px", borderRadius: 4, border: "1px solid #7c3aed", background: "#faf5ff", color: "#7c3aed", cursor: "pointer", fontWeight: 600 }}>{tc("useInDraft")}</button>
+              </div>
+            ))}
           </div>
         )}
         {tr?.type === "knowledge_helper" && (
