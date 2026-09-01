@@ -1,0 +1,88 @@
+name: Task 6.3 CE Grounding Repair
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/task6-3-ce-grounding-repair.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  repair-deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - name: Apply CE multi-document evidence repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('supabase/functions/_shared/ce-grounding.ts')
+          s=p.read_text()
+          start=s.index('function evidenceRows(result: KBRagResponse): Array<Record<string, unknown>> {')
+          end=s.index('\nfunction mergeEvidence(', start)
+          old=s[start:end]
+          new='''function evidenceRows(result: KBRagResponse): Array<Record<string, unknown>> {\n  const documentRows = (result.documents ?? []).flatMap((document) =>\n    (document.llm_context?.full_content_evidence ?? []).map((item) => {\n      const matching = (document.chunks ?? []).find(\n        (c: KBFullChunk) =>\n          c.chunk_type === "full_content" &&\n          c.document_id === item.document_id &&\n          (!item.chunk_id || c.chunk_id === item.chunk_id),\n      );\n      return {\n        chunk_id: item.chunk_id ?? matching?.chunk_id ?? "",\n        document_id: item.document_id || document.document_id,\n        document_title: matching?.title ?? "KB document",\n        citation_label: matching?.title ?? "KB document",\n        source_type: item.source_type || matching?.source_type || "unknown",\n        source_scope: "customer_answer",\n        score: item.score,\n        version: null,\n        last_updated_at: null,\n        freshness_status: "fresh",\n        content: item.content,\n      };\n    })\n  );\n  if (documentRows.length > 0) return documentRows;\n\n  const selectedDocumentId =\n    result.llm_context?.selected_document_id ??\n    result.selected_document_id ??\n    "";\n\n  return (result.llm_context?.full_content_evidence ?? []).map((item) => {\n    const matching = result.chunks.find(\n      (c: KBFullChunk) =>\n        c.chunk_type === "full_content" &&\n        c.document_id === item.document_id &&\n        (!item.chunk_id || c.chunk_id === item.chunk_id),\n    );\n\n    return {\n      chunk_id: item.chunk_id ?? matching?.chunk_id ?? "",\n      document_id: item.document_id || selectedDocumentId,\n      document_title: matching?.title ?? "KB document",\n      citation_label: matching?.title ?? "KB document",\n      source_type: item.source_type || matching?.source_type || "unknown",\n      source_scope: "customer_answer",\n      score: item.score,\n      version: null,\n      last_updated_at: null,\n      freshness_status: "fresh",\n      content: item.content,\n    };\n  });\n}\n\nfunction resultDocumentIds(result: KBRagResponse): string[] {\n  const multi = (result.documents ?? [])\n    .map((document) => document.document_id)\n    .filter((id): id is string => typeof id === "string" && id.trim().length > 0);\n  if (multi.length > 0) return multi;\n  const legacy = result.llm_context?.selected_document_id ?? result.selected_document_id ?? "";\n  return legacy ? [legacy] : [];\n}\n'''
+          s=s[:start]+new+s[end:]
+          old_primary='''  let selectedDocumentIds = [\n    primary.result.llm_context?.selected_document_id ??\n      primary.result.selected_document_id ??\n      "",\n  ].filter(Boolean);'''
+          assert s.count(old_primary)==1, 'primary selected-document baseline mismatch'
+          s=s.replace(old_primary,'  let selectedDocumentIds = resultDocumentIds(primary.result);',1)
+          old_secondary='''    const secondaryId =\n      secondary.result.llm_context?.selected_document_id ??\n      secondary.result.selected_document_id ??\n      "";\n    if (secondaryId) selectedDocumentIds.push(secondaryId);'''
+          assert s.count(old_secondary)==1, 'secondary selected-document baseline mismatch'
+          s=s.replace(old_secondary,'    selectedDocumentIds.push(...resultDocumentIds(secondary.result));',1)
+          p.write_text(s)
+          PY
+          grep -q 'const documentRows = (result.documents ?? \[\]).flatMap' supabase/functions/_shared/ce-grounding.ts
+          grep -q 'resultDocumentIds(primary.result)' supabase/functions/_shared/ce-grounding.ts
+          git diff --check
+          echo TASK6_3_CE_MULTI_DOC_REPAIR=PASS
+      - name: Install and production build
+        run: |
+          npm ci
+          npx tsc --noEmit
+          npm run build
+      - name: Freeze CE grounding hash and run final gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          CE_HASH="$(git hash-object supabase/functions/_shared/ce-grounding.ts)"
+          python - "$CE_HASH" <<'PY'
+          from pathlib import Path
+          import sys
+          h=sys.argv[1]
+          p=Path('scripts/task6-3-final-gate.mjs')
+          s=p.read_text()
+          marker="  'supabase/functions/_shared/runtime-signal-lifecycle.ts': 'ee4fc601a90f459d89df8c7e3fbee14189a789ed',"
+          assert s.count(marker)==1
+          insertion=marker+"\n  'supabase/functions/_shared/ce-grounding.ts': '"+h+"',"
+          p.write_text(s.replace(marker,insertion,1))
+          PY
+          node scripts/task6-3-final-gate.mjs
+          echo "TASK6_3_CE_GROUNDING_BLOB=$CE_HASH"
+      - name: Commit authoritative CE repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'ebixsolutions'
+          git config user.email '64578119+ebixsolutions@users.noreply.github.com'
+          git add supabase/functions/_shared/ce-grounding.ts scripts/task6-3-final-gate.mjs
+          git commit -m 'Fix CE multi-document grounding evidence'
+          git push origin HEAD:main
+      - name: Deploy CE worker with repaired shared grounding
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SUPABASE_ACCESS_TOKEN:-}"
+          npx --yes supabase@latest functions deploy ce-evaluation-worker --project-ref "$PROJECT_REF" --no-verify-jwt
+          echo TASK6_3_CE_GROUNDING_DEPLOY=PASS
