@@ -1,0 +1,86 @@
+name: Task 6.3 Long Memory and Jurisdiction Repair
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/task6-3-long-memory-jurisdiction-repair.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  repair-deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: main, fetch-depth: 0}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22.13.0', cache: npm}
+      - name: Apply exact runtime repairs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('supabase/functions/_shared/conversation-intelligence.ts')
+          s=p.read_text()
+          old='''  lines.push("Recent customer turns (newest first):");\n  recent.forEach((text, i) => lines.push(`${i + 1}. ${text}`));\n  return lines.join("\\n").slice(0, 5000);'''
+          new='''  const firstCustomerTurn = customerTurns[customerTurns.length - 1] ?? "";\n  if (firstCustomerTurn) {\n    lines.push("First customer turn in this conversation (oldest anchor):");\n    lines.push(`1. ${firstCustomerTurn}`);\n  }\n  lines.push("Recent customer turns (newest first):");\n  recent.forEach((text, i) => lines.push(`${i + 1}. ${text}`));\n  return lines.join("\\n").slice(0, 5000);'''
+          assert s.count(old)==1, 'continuity baseline mismatch'
+          p.write_text(s.replace(old,new,1))
+
+          p=Path('supabase/functions/generate-reply/index.ts')
+          s=p.read_text()
+          anchor='''function buildCitationMetadata(chunks: Array<{ title?: string; score?: number; source_type?: string }>): { citations: Array<{ label: string; source_type: string; relevance?: string }> } | null {'''
+          assert s.count(anchor)==1
+          helper='''function extractExplicitJurisdictionConstraint(text: string): string | null {\n  const t = text.normalize("NFKC").trim();\n  const patterns = [\n    /(?:^|[\\s，,。])([A-Z][A-Za-z]{2,30})(?:\\s*(?:的|嘅)|\\s+).*?(?:規則|规则|政策|回收|費|费|rule|policy|recycling|fee)/i,\n    /(?:^|[\\s，,。])([\\u4e00-\\u9fff]{2,10})(?:的|嘅).*?(?:規則|规则|政策|回收|費|费)/,\n  ];\n  for (const pattern of patterns) {\n    const match = t.match(pattern);\n    const value = match?.[1]?.trim();\n    if (value) return value;\n  }\n  return null;\n}\n\nfunction evidenceSupportsJurisdiction(\n  jurisdiction: string | null,\n  chunks: Array<{ content?: string; title?: string }>,\n): boolean {\n  if (!jurisdiction) return true;\n  const needle = jurisdiction.toLocaleLowerCase();\n  return chunks.some((chunk) =>\n    `${chunk.title ?? ""}\\n${chunk.content ?? ""}`.toLocaleLowerCase().includes(needle)\n  );\n}\n\n'''
+          s=s.replace(anchor,helper+anchor,1)
+          old='''    const usableChunks = _groundingSelection.ok ? _groundingSelection.chunks : [];\n    const traceMetadata = { rag_api_status: "success", total_results: ragResult.chunks.length, filtered_results: usableChunks.length, min_score_used: usableChunks.length > 0 ? Math.min(...usableChunks.map((c) => c.score ?? 0)) : null, max_score_used: usableChunks.length > 0 ? Math.max(...usableChunks.map((c) => c.score ?? 0)) : null, high_risk_topic: isHighRisk, min_threshold: minScore, citations: usableChunks.map((c) => ({ doc_id: c.doc_id, chunk_id: c.chunk_id, title: c.title, score: c.score, source_type: c.source_type })) };'''
+          new='''    const _scoreUsableChunks = _groundingSelection.ok ? _groundingSelection.chunks : [];\n    const _explicitJurisdiction = extractExplicitJurisdictionConstraint(_h1LastMsg);\n    const _jurisdictionSupported = evidenceSupportsJurisdiction(_explicitJurisdiction, _scoreUsableChunks);\n    const usableChunks = _jurisdictionSupported ? _scoreUsableChunks : [];\n    const traceMetadata = { rag_api_status: "success", total_results: ragResult.chunks.length, filtered_results: usableChunks.length, jurisdiction_constraint: _explicitJurisdiction, jurisdiction_supported: _jurisdictionSupported, min_score_used: usableChunks.length > 0 ? Math.min(...usableChunks.map((c) => c.score ?? 0)) : null, max_score_used: usableChunks.length > 0 ? Math.max(...usableChunks.map((c) => c.score ?? 0)) : null, high_risk_topic: isHighRisk, min_threshold: minScore, citations: usableChunks.map((c) => ({ doc_id: c.doc_id, chunk_id: c.chunk_id, title: c.title, score: c.score, source_type: c.source_type })) };'''
+          assert s.count(old)==1, 'grounding selection baseline mismatch'
+          p.write_text(s.replace(old,new,1))
+          PY
+          grep -q 'First customer turn in this conversation' supabase/functions/_shared/conversation-intelligence.ts
+          grep -q 'jurisdiction_supported' supabase/functions/generate-reply/index.ts
+          git diff --check
+      - name: Build and final gate
+        run: |
+          npm ci
+          npx tsc --noEmit
+          npm run build
+      - name: Freeze repaired hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          GH="$(git hash-object supabase/functions/generate-reply/index.ts)"
+          CH="$(git hash-object supabase/functions/_shared/conversation-intelligence.ts)"
+          python - "$GH" "$CH" <<'PY'
+          from pathlib import Path
+          import re,sys
+          gh,ch=sys.argv[1:]
+          p=Path('scripts/task6-3-final-gate.mjs'); s=p.read_text()
+          s,n=re.subn(r"('supabase/functions/generate-reply/index.ts': ')[0-9a-f]{40}(')",r'\g<1>'+gh+r'\2',s,count=1); assert n==1
+          marker="  'supabase/functions/_shared/runtime-signal-lifecycle.ts':"
+          if "'supabase/functions/_shared/conversation-intelligence.ts':" in s:
+            s,n=re.subn(r"('supabase/functions/_shared/conversation-intelligence.ts': ')[0-9a-f]{40}(')",r'\g<1>'+ch+r'\2',s,count=1); assert n==1
+          else:
+            line=next(x for x in s.splitlines() if marker in x)
+            s=s.replace(line,line+"\n  'supabase/functions/_shared/conversation-intelligence.ts': '"+ch+"',",1)
+          p.write_text(s)
+          PY
+          node scripts/task6-3-final-gate.mjs
+      - name: Commit repair
+        shell: bash
+        run: |
+          git config user.name ebixsolutions
+          git config user.email 64578119+ebixsolutions@users.noreply.github.com
+          git add supabase/functions/generate-reply/index.ts supabase/functions/_shared/conversation-intelligence.ts scripts/task6-3-final-gate.mjs
+          git commit -m 'Fix long-history recall and jurisdiction grounding'
+          git push origin HEAD:main
+      - name: Deploy generate-reply
+        run: |
+          test -n "${SUPABASE_ACCESS_TOKEN:-}"
+          npx --yes supabase@latest functions deploy generate-reply --project-ref "$PROJECT_REF"
+          echo TASK6_3_LONG_MEMORY_JURISDICTION_DEPLOY=PASS
