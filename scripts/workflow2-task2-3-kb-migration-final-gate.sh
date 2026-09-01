@@ -12,12 +12,16 @@ from pathlib import Path
 import json
 p = Path('scripts/workflow2-task2-3-kb-migration.mjs').read_text()
 c = json.loads(Path('config/workflow2-task2-3-canonical-corpus.json').read_text())
-assert c['contract'] == 'WORKFLOW2_TASK2_3_CANONICAL_BASE44_CORPUS_V2'
-assert c['selection']['expected_source_query_count'] == 210
+assert c['schema_version'] == '1.0'
+assert c['authoritative_source'] == 'Base44 KBDocument live canonical predicate'
 assert c['expected_canonical_count'] == 210
-assert c['expected_archived_excluded_count'] == 6
-assert c['expected_total_partition_count'] == 216
-assert len(c['archived_excluded_base44_record_ids']) == 6
+assert c['archived_legacy_records_excluded'] == 6
+assert c['predicate'] == {
+  'status': 'published',
+  'production_vector_status': 'indexed',
+  'available_to_live_console': True,
+}
+assert c['hash_contract'] == 'SHA256(trim(raw_content))'
 required = [
   'SINGAPORE_SERVICE_ROLE_SECRET','KB_SINGAPORE_SERVICE_ROLE_SECRET','SERVICE_ROLE_SECRET','SINGAPORE_BACKEND_TOKEN','x-service-role-secret',
   'MIGRATION_SOURCE_BLOCKED','MIGRATION_CONTROL_CREDENTIAL_MISSING','WORKFLOW2_TASK2_3_ENABLE_MIGRATION_WRITES','MIGRATION_WRITES_NOT_AUTHORIZED',
