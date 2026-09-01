@@ -18,7 +18,7 @@
 //   Pre-checks confirmed: status='pending' valid; is_recalled exists; DELETE pattern used.
 //   Authorized by: Director Charlson.
 
-import { resolveKBEndpoint, resolveTenantScope, fetchKBRag, type KBFullChunk, type KBResolvedScope, type KBPreActivationActor } from "../_shared/kb-client.ts";
+import { resolveKBEndpoint, resolveTenantScope, fetchKBRag, type KBFullChunk, type KBDocumentCandidate, type KBResolvedScope, type KBPreActivationActor } from "../_shared/kb-client.ts";
 import { evaluateEscalationShadow } from "../_shared/escalation-shadow.ts";
 import {
   persistRequiredEscalationClarification,
@@ -1943,6 +1943,7 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
       published_at?: string;
       updated_at?: string;
     }>;
+    documents?: KBDocumentCandidate[];
     llm_context?: {
       selected_document_id: string;
       orientation_summary: string | null;
@@ -2741,6 +2742,7 @@ async function callKBAdapter(
   no_answer?: boolean;
   retrieval_quality?: "high" | "medium" | "low" | "failed";
   chunks?: KBFullChunk[];
+  documents?: KBDocumentCandidate[];
   llm_context?: {
     selected_document_id: string;
     orientation_summary: string | null;
@@ -2773,6 +2775,7 @@ async function callKBAdapter(
     no_answer: false,
     retrieval_quality: "high",
     chunks: result.chunks,
+    documents: result.documents,
     ...(result.llm_context ? { llm_context: result.llm_context } : {}),
     ...(result.meta ? { meta: result.meta } : {}),
     query_text_preview: userMessage.slice(0, 100),

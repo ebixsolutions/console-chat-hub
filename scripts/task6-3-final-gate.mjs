@@ -7,7 +7,7 @@ const read = (path) => fs.readFileSync(path, 'utf8');
 const blob = (path) => execFileSync('git', ['hash-object', path], { encoding: 'utf8' }).trim();
 
 const frozenBlobs = {
-  'supabase/functions/generate-reply/index.ts': '0cf21f6f3949974ee227c12cd00e8fcb0274bbe0',
+  'supabase/functions/generate-reply/index.ts': 'e20393027ebda8b1fe0bf76e12cedcc3960b0a31',
   'supabase/functions/ce-evaluation-worker/index.ts': '85230c4af3592f169a7684d1899175a7ea543ffc',
   'supabase/functions/_shared/runtime-signal-lifecycle.ts': 'ee4fc601a90f459d89df8c7e3fbee14189a789ed',
   'supabase/migrations/20260901062000_task6_2_realtime_ce_dispatch.sql': '423e8b672fd7999a3fee76f5d3c91a71cd7312fc',
