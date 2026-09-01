@@ -43,9 +43,18 @@ jobs:
       - name: Scope guard
         run: |
           set -euo pipefail
+          echo 'Tracked changes before collateral cleanup:'
+          git diff --name-only
+          # TanStack route generation may rewrite this generated file during build.
+          # Task 5.1 does not change routes, so discard that generated collateral only.
+          if ! git diff --quiet -- src/routeTree.gen.ts; then
+            git checkout -- src/routeTree.gen.ts
+          fi
           git diff --check
           changed="$(git diff --name-only | sort)"
           expected="$(printf '%s\n' 'supabase/functions/_shared/conversation-intelligence.ts' 'supabase/functions/generate-reply/index.ts' | sort)"
+          echo "Validated tracked changes:"
+          printf '%s\n' "$changed"
           test "$changed" = "$expected"
           test "$(git hash-object package.json)" = "$(cat /tmp/task5-package-json.sha)"
           test "$(git hash-object package-lock.json)" = "$(cat /tmp/task5-package-lock.sha)"
