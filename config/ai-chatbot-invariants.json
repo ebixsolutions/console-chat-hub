@@ -1,0 +1,35 @@
+{
+  "version": "2026-09-01-task6.1",
+  "invariants": [
+    {
+      "id": "INV-CONV-RAG-01",
+      "description": "Every conversation-bound RAG caller derives retrieval intent from trusted conversation context; explicit manual search is the only exemption.",
+      "production_callers": [
+        "supabase/functions/generate-reply/index.ts",
+        "supabase/functions/agent-assist/index.ts",
+        "supabase/functions/kb-search-proxy/index.ts"
+      ],
+      "test": "node tests/task6-1-invariant-closure.test.mjs"
+    },
+    {
+      "id": "INV-KB-DOC-01",
+      "description": "A customer-facing grounded answer or suggestion uses factual evidence from exactly one deterministic winning KB document.",
+      "production_callers": [
+        "supabase/functions/generate-reply/index.ts",
+        "supabase/functions/agent-assist/index.ts",
+        "supabase/functions/kb-search-proxy/index.ts"
+      ],
+      "test": "node tests/task6-1-invariant-closure.test.mjs"
+    },
+    {
+      "id": "INV-KB-PUB-01",
+      "description": "Customer-facing factual KB evidence must be explicitly published; missing or non-published status is unusable.",
+      "production_callers": [
+        "supabase/functions/generate-reply/index.ts",
+        "supabase/functions/agent-assist/index.ts",
+        "supabase/functions/kb-search-proxy/index.ts"
+      ],
+      "test": "node tests/task6-1-invariant-closure.test.mjs"
+    }
+  ]
+}
