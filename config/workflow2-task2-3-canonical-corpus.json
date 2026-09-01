@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "authoritative_source": "Base44 KBDocument live canonical predicate",
+  "effective_after": "2026-09-01T02:03:12Z",
+  "expected_canonical_count": 210,
+  "predicate": {
+    "status": "published",
+    "production_vector_status": "indexed",
+    "available_to_live_console": true
+  },
+  "archived_legacy_records_excluded": 6,
+  "archived_reason_contract": "Director-authorized removal from canonical corpus: corrupted legacy metadata record with no authoritative raw_content/content_hash/version/vector source.",
+  "hash_contract": "SHA256(trim(raw_content))"
+}
