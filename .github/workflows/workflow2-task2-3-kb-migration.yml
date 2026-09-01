@@ -5,10 +5,14 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/workflow2-task2-3-kb-migration.yml'
+      - 'config/workflow2-task2-3-canonical-corpus.json'
       - 'scripts/workflow2-task2-3-kb-migration.mjs'
+      - 'scripts/workflow2-task2-3-canonical-source.mjs'
       - 'scripts/workflow2-task2-3-kb-migration-final-gate.sh'
+      - 'scripts/workflow2-task2-3-canonical-source-final-gate.sh'
       - 'scripts/workflow2-task2-3-stale-live-metadata-quarantine.json'
       - 'tests/workflow2-task2-3-kb-migration.test.mjs'
+      - 'tests/workflow2-task2-3-canonical-source.test.mjs'
       - 'supabase/functions/_shared/kb-auth.ts'
       - 'supabase/functions/training-kb-sync/index.ts'
       - 'supabase/functions/training-kb-finalize/index.ts'
@@ -30,5 +34,5 @@ jobs:
       - run: npm ci
       - name: Production dependency security audit
         run: npm audit --omit=dev --audit-level=high
-      - name: Workflow2 Task2.3 final gate
-        run: bash scripts/workflow2-task2-3-kb-migration-final-gate.sh
+      - name: Workflow2 Task2.3 canonical-source final gate
+        run: bash scripts/workflow2-task2-3-canonical-source-final-gate.sh
