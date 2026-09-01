@@ -1,0 +1,17 @@
+name: Task 7.3 Key Metadata
+on:
+  push:
+    branches: [task7-3-production-acceptance]
+    paths: [.github/workflows/task7-3-key-metadata.yml]
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+    steps:
+      - uses: supabase/setup-cli@v1
+        with: { version: latest }
+      - run: |
+          set -euo pipefail
+          supabase projects api-keys --project-ref nrfxhqabwblzxoushgnm -o json >/tmp/k.json
+          jq '[.[]|{name:(.name//null),type:(.type//null),api_key_prefix:((.api_key//.key//.value//"")|if startswith("sb_secret_") then "sb_secret" elif startswith("sb_publishable_") then "sb_publishable" elif (split(".")|length)==3 then "jwt" else "other" end)}]' /tmp/k.json
