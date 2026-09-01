@@ -34,5 +34,7 @@ jobs:
       - run: npm ci
       - name: Production dependency security audit
         run: npm audit --omit=dev --audit-level=high
-      - name: Workflow2 Task2.3 canonical-source final gate
+      - name: Task 2.3 canonical-source gate
         run: bash scripts/workflow2-task2-3-canonical-source-final-gate.sh
+      - name: Task 2.3 migration write-engine gate
+        run: bash scripts/workflow2-task2-3-kb-migration-final-gate.sh
