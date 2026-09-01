@@ -1,0 +1,76 @@
+name: Task 6.2 Runtime Lifecycle
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/task6-2-runtime-lifecycle-apply.mjs'
+      - 'tests/task6-2-runtime-lifecycle.test.mjs'
+      - '.github/workflows/task6-2-runtime-lifecycle.yml'
+      - 'config/ai-chatbot-runtime-invariants.json'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  apply-validate-commit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+          cache: npm
+      - name: Frozen baseline guard
+        run: |
+          set -euo pipefail
+          test "$(node -p "require('./package.json').version || '2.7.1'" 2>/dev/null || echo 2.7.1)" != "" || true
+          git hash-object package.json > /tmp/t62-package.sha
+          git hash-object package-lock.json > /tmp/t62-lock.sha
+          git hash-object supabase/functions/_shared/escalation-rules.ts > /tmp/t62-rules.sha
+          git hash-object supabase/functions/_shared/escalation-signals.ts > /tmp/t62-signals.sha
+          git hash-object supabase/functions/_shared/agent-assist-grounding.ts > /tmp/t62-agent-grounding.sha
+          grep -F 'const _pr5R3Sentiment = await loadAuthoritativeR3SentimentSignals(' supabase/functions/generate-reply/index.ts
+          grep -F 'const workerId = `cron:${crypto.randomUUID()}`;' supabase/functions/ce-evaluation-worker/index.ts
+          test ! -e supabase/functions/_shared/runtime-signal-lifecycle.ts
+          test ! -e supabase/migrations/20260901062000_task6_2_realtime_ce_dispatch.sql
+      - name: Install
+        run: npm ci
+      - name: Apply exact Task 6.2 implementation
+        run: node scripts/task6-2-runtime-lifecycle-apply.mjs
+      - name: Runtime lifecycle assertions
+        run: node tests/task6-2-runtime-lifecycle.test.mjs
+      - name: TypeScript compile
+        run: npx tsc --noEmit
+      - name: Production build
+        run: npm run build
+      - name: Scope/frozen guard
+        run: |
+          set -euo pipefail
+          git checkout -- src/routeTree.gen.ts 2>/dev/null || true
+          git add -N supabase/functions/_shared/runtime-signal-lifecycle.ts supabase/migrations/20260901062000_task6_2_realtime_ce_dispatch.sql
+          git diff --check
+          changed="$(git diff --name-only | sort)"
+          expected="$(printf '%s\n' \
+            'supabase/functions/_shared/runtime-signal-lifecycle.ts' \
+            'supabase/functions/ce-evaluation-worker/index.ts' \
+            'supabase/functions/generate-reply/index.ts' \
+            'supabase/migrations/20260901062000_task6_2_realtime_ce_dispatch.sql' | sort)"
+          test "$changed" = "$expected"
+          test "$(git hash-object package.json)" = "$(cat /tmp/t62-package.sha)"
+          test "$(git hash-object package-lock.json)" = "$(cat /tmp/t62-lock.sha)"
+          test "$(git hash-object supabase/functions/_shared/escalation-rules.ts)" = "$(cat /tmp/t62-rules.sha)"
+          test "$(git hash-object supabase/functions/_shared/escalation-signals.ts)" = "$(cat /tmp/t62-signals.sha)"
+          test "$(git hash-object supabase/functions/_shared/agent-assist-grounding.ts)" = "$(cat /tmp/t62-agent-grounding.sha)"
+      - name: Commit validated Task 6.2 source
+        run: |
+          set -euo pipefail
+          git config user.name 'NexusAI Director Runtime Gate'
+          git config user.email 'actions@users.noreply.github.com'
+          git add \
+            supabase/functions/_shared/runtime-signal-lifecycle.ts \
+            supabase/functions/ce-evaluation-worker/index.ts \
+            supabase/functions/generate-reply/index.ts \
+            supabase/migrations/20260901062000_task6_2_realtime_ce_dispatch.sql
+          git commit -m 'Close Task 6.2 realtime CE signal lifecycle'
+          git push origin HEAD:main
