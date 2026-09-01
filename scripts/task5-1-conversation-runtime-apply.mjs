@@ -20,10 +20,10 @@ export interface ContextualRetrievalQuery {
   context_turns: string[];
 }
 
-const CONTEXTUAL_FOLLOW_UP = /^(?:咁|那|那麼|那么|所以|另外|仲有|还有|咁如果|那如果|如果|再|又|而|同埋|還有|还有|what about|and what about|then|so|also|in that case|how about)\b?/i;
+const CONTEXTUAL_FOLLOW_UP = /^(?:咁|那|那麼|那么|所以|另外|仲有|还有|咁如果|那如果|如果|再|又|而|同埋|還有|还有|what about|and what about|then|so|also|in that case|how about)/i;
 const CONTEXTUAL_PRONOUN = /(?:^|[\s，,。.!！?？])(那個|那个|這個|这个|它|佢|他|她|嗰個|呢個|上述|剛才|刚才|之前|前面|that|this|it|they|them|those|these|the one|earlier|above)(?:$|[\s，,。.!！?？])/i;
 const CONTEXTUAL_STYLE_REQUEST = /^(?:簡單一點|简单一点|簡單啲|简单点|再簡單|再简单|詳細一點|详细一点|再詳細|再详细|說清楚一點|说清楚一点|用繁體中文|用繁体中文|用簡體中文|用简体中文|用英文|in english|explain(?: it| that)? (?:more )?simply|make it simpler|more detail|simpler|shorter)(?:[。.!！?？\s].*)?$/i;
-const CONTEXTUAL_ELLIPSIS = /(?:呢|呢？|嗎|吗|呢\?|呢？|呢。|呢！|about that|and that|same one|same thing)$/i;
+const CONTEXTUAL_ELLIPSIS = /(?:呢|嗎|吗|about that|and that|same one|same thing)[。.!！?？\s]*$/i;
 
 function isRetrievalNoise(text: string): boolean {
   const t = text.trim();
@@ -51,7 +51,6 @@ export function buildContextualRetrievalQuery(
     .filter(Boolean)
     .slice(0, 20);
 
-  // History is newest-first in generate-reply. Remove one copy of the current turn.
   let skippedCurrent = false;
   const previousTurns = turns.filter((text) => {
     if (!skippedCurrent && text === latest) {
@@ -66,7 +65,7 @@ export function buildContextualRetrievalQuery(
   }
 
   const turnClass = classifyConversationTurn(latest);
-  const shortContinuation = latest.length <= 28 && (
+  const shortContinuation = latest.length <= 40 && (
     CONTEXTUAL_FOLLOW_UP.test(latest) ||
     CONTEXTUAL_PRONOUN.test(latest) ||
     CONTEXTUAL_STYLE_REQUEST.test(latest) ||
@@ -88,8 +87,8 @@ export function buildContextualRetrievalQuery(
   }
 
   const query = [
-    `Current request: ${latest}`,
-    `Relevant prior customer context: ${contextTurns.join(" / ")}`,
+    "Current request: " + latest,
+    "Relevant prior customer context: " + contextTurns.join(" / "),
   ].join("\n").slice(0, 1200);
 
   return { query, mode: "contextual", latest, context_turns: contextTurns };
