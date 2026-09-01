@@ -1,0 +1,90 @@
+name: Task 7.2 CE Human Control Runtime Closure
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-validate-freeze:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: task7-2-runtime-closure
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Frozen Task 7.1 baseline guard
+        run: |
+          test "$(git merge-base HEAD 16253b9647042c1e76a82a06ec5ab89b0e60d849)" = "16253b9647042c1e76a82a06ec5ab89b0e60d849"
+          for f in \
+            config/ai-chatbot-invariants.json \
+            supabase/functions/_shared/conversation-runtime-state.ts \
+            supabase/functions/_shared/canonical-grounding.ts \
+            supabase/functions/_shared/ce-grounding.ts \
+            supabase/functions/generate-reply/index.ts \
+            supabase/functions/agent-assist/index.ts \
+            supabase/functions/kb-search-proxy/index.ts; do
+            test "$(git rev-parse HEAD:$f)" = "$(git rev-parse 16253b9647042c1e76a82a06ec5ab89b0e60d849:$f)"
+          done
+
+      - name: Install
+        run: npm ci
+
+      - name: Apply Task 7.2 exact source repair
+        run: node scripts/task7-2-runtime-closure-apply.mjs
+
+      - name: CE emotion escalation state assertions
+        run: node --experimental-strip-types tests/task7-2-runtime-closure.test.mjs
+
+      - name: TypeScript compile
+        run: npx tsc --noEmit
+
+      - name: Production build
+        run: npm run build
+
+      - name: Cross-state final gate
+        run: |
+          set -euo pipefail
+          changed="$(git diff --name-only 16253b9647042c1e76a82a06ec5ab89b0e60d849...HEAD; git diff --name-only)"
+          printf '%s\n' "$changed" | sort -u > /tmp/task72_changed.txt
+          cat /tmp/task72_changed.txt
+
+          for f in \
+            config/ai-chatbot-invariants.json \
+            supabase/functions/_shared/conversation-runtime-state.ts \
+            supabase/functions/_shared/canonical-grounding.ts \
+            supabase/functions/_shared/ce-grounding.ts \
+            supabase/functions/generate-reply/index.ts \
+            supabase/functions/agent-assist/index.ts \
+            supabase/functions/kb-search-proxy/index.ts \
+            package.json package-lock.json; do
+            test "$(git hash-object "$f")" = "$(git rev-parse 16253b9647042c1e76a82a06ec5ab89b0e60d849:$f)"
+          done
+
+          test -s supabase/migrations/20260901073000_task7_2_ce_human_control_state_closure.sql
+          grep -q "status in ('resolved','closed')" supabase/migrations/20260901073000_task7_2_ce_human_control_state_closure.sql
+          grep -q 'v_methodology_current' supabase/migrations/20260901073000_task7_2_ce_human_control_state_closure.sql
+          grep -q 'v_snapshot_current' supabase/migrations/20260901073000_task7_2_ce_human_control_state_closure.sql
+          grep -q 'current-turn-emotion-v1.0' supabase/functions/_shared/escalation-shadow.ts
+          grep -q 'ADVISORY_RULE_DECISION_DOWNGRADED' supabase/functions/_shared/escalation-shadow.ts
+
+          # Production source scope is deliberately narrow. Task artifacts are
+          # allowed but no Task 7.1 factual-runtime file may move.
+          unexpected="$(grep -Ev '^(scripts/task7-2-runtime-closure-apply\.mjs|tests/task7-2-runtime-closure\.test\.mjs|\.github/workflows/task7-2-runtime-closure\.yml|supabase/functions/_shared/escalation-shadow\.ts|supabase/migrations/20260901073000_task7_2_ce_human_control_state_closure\.sql)$' /tmp/task72_changed.txt || true)"
+          test -z "$unexpected" || { echo "Unexpected Task 7.2 scope:"; echo "$unexpected"; exit 1; }
+
+      - name: Commit validated Task 7.2 source
+        run: |
+          git config user.name "NexusAI Director Runtime Gate"
+          git config user.email "actions@users.noreply.github.com"
+          git add supabase/functions/_shared/escalation-shadow.ts
+          if ! git diff --cached --quiet; then
+            git commit -m "Close Task 7.2 CE emotion and human-control runtime contract"
+            git push origin HEAD:task7-2-runtime-closure
+          fi
