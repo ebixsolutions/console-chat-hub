@@ -25,7 +25,13 @@ export interface CanonicalRetrievalQuery {
 
 const CUSTOMER = new Set(["visitor", "customer", "user"]);
 const ASSISTANT = new Set(["assistant", "ai", "human_agent"]);
-const CORRECTION = /(我講錯|我说错|我說錯|我要更正|我想更正|更正一下[：:]?|更正[：:]|其實係|其实是|唔係.*係|不是.*是|改返|改成|actually[,\s]+i meant|i meant|correction\s*[:：]|not .+ but .+)/i;
+const EXPLICIT_CORRECTION = /(我講錯|我说错|我說錯|我要更正|我想更正|更正一下[：:]?|更正[：:]|其實係|其实是|改返|改成|actually[,\s]+i meant|i meant|correction\s*[:：])/i;
+const CONTRAST_CORRECTION = /(唔係[^，。,.!?！？]{1,80}[，,]\s*係|不是[^，。,.!?！？]{1,80}[，,]\s*(?:而)?是|not .+ but .+)/i;
+function isCorrectionText(text: string): boolean {
+  if (EXPLICIT_CORRECTION.test(text)) return true;
+  if (/[?？]/.test(text)) return false;
+  return CONTRAST_CORRECTION.test(text);
+}
 const CONSTRAINT = /(不要|唔好|不准|唔准|不要猜|唔好估|沒有型號|没有型号|冇型號|only|don't|do not|without|must not|no model)/i;
 const FOLLOW = /^(?:咁|那|那麼|那么|所以|另外|仲有|还有|如果|再|又|而|同埋|what about|and what about|then|so|also|in that case|how about)/i;
 const PRONOUN = /(這個|这个|那個|那个|它|其|上述|剛才|刚才|之前|頭先|头先|same|that|this|it|its|earlier|previous)/i;
@@ -72,7 +78,7 @@ export function projectConversationRuntimeState(newestFirst: RuntimeHistoryRow[]
   const chronological = [...customers].reverse();
   const latest = customers[0]?.text ?? null;
   const first = chronological[0]?.text ?? null;
-  const corrections = customers.filter((row) => CORRECTION.test(row.text)).slice(0, 6).map((row) => row.text);
+  const corrections = customers.filter((row) => isCorrectionText(row.text)).slice(0, 6).map((row) => row.text);
   const constraints = customers.filter((row) => CONSTRAINT.test(row.text)).slice(0, 8).map((row) => row.text);
   const unresolved = customers.filter((row) => QUESTION.test(row.text)).slice(0, 8).map((row) => row.text);
   const explicitJurisdiction = latest ? detectExplicitJurisdiction(latest) : null;
@@ -222,7 +228,7 @@ export function buildCanonicalRetrievalQuery(
     FOLLOW.test(latest) ||
     PRONOUN.test(latest) ||
     (latest.length <= 28 && QUESTION.test(latest)) ||
-    CORRECTION.test(latest);
+    isCorrectionText(latest);
 
   // An explicit jurisdiction is a hard topic boundary. Do not contaminate it
   // with prior-jurisdiction context; applicability is enforced downstream.
