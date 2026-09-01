@@ -395,8 +395,11 @@ export async function processEvaluationJob(
           external_tenant_id: String(company.external_tenant_id),
         },
         query: redact(lastCustomer?.content ?? ""),
+        // Missing applicable policy evidence is a governed policy-gap signal,
+        // not a reason to suppress the other realtime CE dimensions. The
+        // grounding manifest preserves policy_gap=true for the policy evaluator.
         riskLevel: "high",
-        requirePolicyEvidence: true,
+        requirePolicyEvidence: false,
       });
       if (!grounding.ok) throw new Error(`grounding:${grounding.code}`);
       const g: GroundingBundle = grounding.bundle;
