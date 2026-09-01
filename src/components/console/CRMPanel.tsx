@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useConsoleLang } from "@/hooks/useEffectiveRole";
 import { useCustomerContext } from "@/lib/customer360/useCustomerContext";
+import { deriveContextualKbAutoQuery } from "@/lib/console/contextualKbQuery";
 
 export type CRMConv = {
   id: string;
@@ -221,11 +222,7 @@ export function filterRelevantKBResults(
 export const KB_AUTO_QUERY_MIN_CHARS = 6;
 
 export function deriveAutoSearchQuery(boundedContext: string): string {
-  const context = boundedContext.trim();
-  if (!context) return "";
-  const parts = context.split(CONTEXT_SEPARATOR).map((p) => p.trim()).filter(Boolean);
-  const latest = parts.length > 0 ? parts[parts.length - 1] : "";
-  return latest.length >= KB_AUTO_QUERY_MIN_CHARS ? latest : context;
+  return deriveContextualKbAutoQuery(boundedContext);
 }
 
 export function normalizePolicyResult(value: unknown): PolicyResult | null {
