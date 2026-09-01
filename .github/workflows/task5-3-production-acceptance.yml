@@ -1,0 +1,68 @@
+name: Task 5.3 Production Acceptance
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/task5-3-production-acceptance.yml'
+      - 'scripts/task5-3-production-acceptance-apply-v2.mjs'
+      - 'tests/task5-3-production-acceptance.test.mjs'
+
+permissions:
+  contents: write
+
+jobs:
+  apply-validate-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.12.0'
+          cache: npm
+      - name: Frozen baseline guard
+        run: |
+          set -euo pipefail
+          git hash-object package.json > /tmp/task5-3-package-json.sha
+          git hash-object package-lock.json > /tmp/task5-3-package-lock.sha
+          git hash-object supabase/functions/_shared/llm-router.ts > /tmp/task5-3-router.sha
+          git hash-object supabase/functions/kb-search-proxy/index.ts > /tmp/task5-3-proxy.sha
+          grep -F 'const TOOL_TYPES = new Set(["translate", "grammar", "suggest_reply", "knowledge_helper", "check_policy"]);' supabase/functions/agent-assist/index.ts
+          grep -F 'kb.llm_context?.full_content_evidence' supabase/functions/agent-assist/index.ts
+          grep -F 'toolReqIdRef.current !== reqId' src/components/console/AgentToolPanel.tsx
+          test ! -e supabase/functions/_shared/agent-assist-grounding.ts
+      - name: Install
+        run: npm ci
+      - name: Apply exact Task 5.3 repair
+        run: node scripts/task5-3-production-acceptance-apply-v2.mjs
+      - name: Agent Assist multi-document and UI regression
+        run: node tests/task5-3-production-acceptance.test.mjs
+      - name: TypeScript compile
+        run: npx tsc --noEmit
+      - name: Production build
+        run: npm run build
+      - name: Scope and frozen-source guard
+        run: |
+          set -euo pipefail
+          git checkout -- src/routeTree.gen.ts 2>/dev/null || true
+          git add -N supabase/functions/_shared/agent-assist-grounding.ts
+          git diff --check
+          changed="$(git diff --name-only | sort)"
+          expected="$(printf '%s\n' 'src/components/console/AgentToolPanel.tsx' 'supabase/functions/_shared/agent-assist-grounding.ts' 'supabase/functions/agent-assist/index.ts' | sort)"
+          test "$changed" = "$expected"
+          test "$(git hash-object package.json)" = "$(cat /tmp/task5-3-package-json.sha)"
+          test "$(git hash-object package-lock.json)" = "$(cat /tmp/task5-3-package-lock.sha)"
+          test "$(git hash-object supabase/functions/_shared/llm-router.ts)" = "$(cat /tmp/task5-3-router.sha)"
+          test "$(git hash-object supabase/functions/kb-search-proxy/index.ts)" = "$(cat /tmp/task5-3-proxy.sha)"
+          ! git diff -- package.json package-lock.json supabase/functions/_shared/llm-router.ts supabase/functions/kb-search-proxy/index.ts | grep -q .
+      - name: Commit validated Task 5.3 source
+        run: |
+          set -euo pipefail
+          git config user.name 'NexusAI Director Runtime Gate'
+          git config user.email 'actions@users.noreply.github.com'
+          git add src/components/console/AgentToolPanel.tsx supabase/functions/agent-assist/index.ts supabase/functions/_shared/agent-assist-grounding.ts
+          git commit -m 'Fix Task 5.3 Agent Assist production acceptance'
+          git push origin HEAD:main
