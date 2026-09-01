@@ -119,16 +119,24 @@ assert.match(crm, /"auto_context"/);
 assert.match(crm, /context_mode: "conversation"/);
 assert.match(tools, /context_mode: cs === "custom" \? "manual" : "conversation"/);
 
-// Machine caller registry: every production fetchKBRag caller must be known and
-// carry its appropriate canonical context/winner contract.
+// Machine caller registry. Customer-facing / agent-assist production callers
+// must obey Task 6.1. CE grounding is explicitly owned by Task 6.2 because it
+// evaluates a whole conversation and intentionally may collect separate KB and
+// policy evidence. Generated bundles are frozen build artifacts, never source
+// entrypoints, and must not be treated as independent runtime callers.
 const productionCallers = [];
+const explicitExemptions = new Set([
+  'supabase/functions/_shared/ce-grounding.ts',
+]);
 function walk(dir) {
   for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
-    const p = path.join(dir, ent.name);
-    if (ent.isDirectory()) walk(p);
-    else if (ent.isFile() && p.endsWith('.ts')) {
+    const p = path.join(dir, ent.name).replaceAll('\\', '/');
+    if (ent.isDirectory()) {
+      if (p.includes('/generated')) continue;
+      walk(p);
+    } else if (ent.isFile() && p.endsWith('.ts')) {
       const s = fs.readFileSync(p, 'utf8');
-      if (s.includes('fetchKBRag(') && !p.endsWith('_shared/kb-client.ts')) productionCallers.push(p.replaceAll('\\', '/'));
+      if (s.includes('fetchKBRag(') && !p.endsWith('_shared/kb-client.ts') && !explicitExemptions.has(p)) productionCallers.push(p);
     }
   }
 }
@@ -138,6 +146,21 @@ const expected = [
   'supabase/functions/generate-reply/index.ts',
   'supabase/functions/kb-search-proxy/index.ts',
 ].sort();
-assert.deepEqual(productionCallers.sort(), expected, `Unexpected fetchKBRag callers: ${productionCallers.join(', ')}`);
+assert.deepEqual(productionCallers.sort(), expected, `Unexpected Task 6.1 fetchKBRag callers: ${productionCallers.join(', ')}`);
+
+const ceGrounding = fs.readFileSync('supabase/functions/_shared/ce-grounding.ts', 'utf8');
+assert.match(ceGrounding, /Conversation Evaluation grounding adapter/);
+assert.match(ceGrounding, /requirePolicyEvidence/);
+const generatedBundle = fs.readFileSync('supabase/functions/generated/task4-1-generate-reply.bundle.ts', 'utf8');
+assert.match(generatedBundle, /^\/\/ supabase\/functions\/_shared\/kb-client\.ts/);
+
+const registry = JSON.parse(fs.readFileSync('config/ai-chatbot-invariants.json', 'utf8'));
+assert.ok(registry.invariants.some((i) => i.id === 'INV-CONV-RAG-01'));
+assert.ok(registry.invariants.some((i) => i.id === 'INV-KB-DOC-01'));
+assert.ok(registry.invariants.some((i) => i.id === 'INV-KB-PUB-01'));
+assert.deepEqual(registry.task6_1_exemptions.map((x) => x.path).sort(), [
+  'supabase/functions/_shared/ce-grounding.ts',
+  'supabase/functions/generated/task4-1-generate-reply.bundle.ts',
+].sort());
 
 console.log('TASK6_1_INVARIANT_CLOSURE_TESTS=PASS');
