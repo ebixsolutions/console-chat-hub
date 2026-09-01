@@ -161,6 +161,11 @@ export function buildConversationContinuityBlock(
     lines.push("Latest corrections / constraints (newest first):");
     corrections.forEach((text, i) => lines.push(`${i + 1}. ${text}`));
   }
+  const firstCustomerTurn = customerTurns[customerTurns.length - 1] ?? "";
+  if (firstCustomerTurn) {
+    lines.push("First customer turn in this conversation (oldest anchor):");
+    lines.push(`1. ${firstCustomerTurn}`);
+  }
   lines.push("Recent customer turns (newest first):");
   recent.forEach((text, i) => lines.push(`${i + 1}. ${text}`));
   return lines.join("\n").slice(0, 5000);

@@ -7,9 +7,10 @@ const read = (path) => fs.readFileSync(path, 'utf8');
 const blob = (path) => execFileSync('git', ['hash-object', path], { encoding: 'utf8' }).trim();
 
 const frozenBlobs = {
-  'supabase/functions/generate-reply/index.ts': 'e20393027ebda8b1fe0bf76e12cedcc3960b0a31',
+  'supabase/functions/generate-reply/index.ts': '4dba7188424a9a48bd96eb9cba40b92ce5ee43ad',
   'supabase/functions/ce-evaluation-worker/index.ts': '85230c4af3592f169a7684d1899175a7ea543ffc',
   'supabase/functions/_shared/runtime-signal-lifecycle.ts': 'ee4fc601a90f459d89df8c7e3fbee14189a789ed',
+  'supabase/functions/_shared/conversation-intelligence.ts': '6f674a86d4ae87c0d09cd758a9e39909a09ddb77',
   'supabase/functions/_shared/ce-grounding.ts': 'b153d5ebb018b706ca37d538c56ee24ab61db61b',
   'supabase/functions/_shared/ce-automation-engine.ts': 'a1956313eb4c9fbf66ba5a12e448cc41d0c49223',
   'supabase/migrations/20260901062000_task6_2_realtime_ce_dispatch.sql': '423e8b672fd7999a3fee76f5d3c91a71cd7312fc',

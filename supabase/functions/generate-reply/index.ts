@@ -1402,6 +1402,31 @@ ${CUSTOMER_CONVERSATION_POLICY}`;
   return new Response(JSON.stringify({ success: true, idempotent: committed.idempotent }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
+function extractExplicitJurisdictionConstraint(text: string): string | null {
+  const t = text.normalize("NFKC").trim();
+  const patterns = [
+    /(?:^|[\s，,。])([A-Z][A-Za-z]{2,30})(?:\s*(?:的|嘅)|\s+).*?(?:規則|规则|政策|回收|費|费|rule|policy|recycling|fee)/i,
+    /(?:^|[\s，,。])([\u4e00-\u9fff]{2,10})(?:的|嘅).*?(?:規則|规则|政策|回收|費|费)/,
+  ];
+  for (const pattern of patterns) {
+    const match = t.match(pattern);
+    const value = match?.[1]?.trim();
+    if (value) return value;
+  }
+  return null;
+}
+
+function evidenceSupportsJurisdiction(
+  jurisdiction: string | null,
+  chunks: Array<{ content?: string; title?: string }>,
+): boolean {
+  if (!jurisdiction) return true;
+  const needle = jurisdiction.toLocaleLowerCase();
+  return chunks.some((chunk) =>
+    `${chunk.title ?? ""}\n${chunk.content ?? ""}`.toLocaleLowerCase().includes(needle)
+  );
+}
+
 function buildCitationMetadata(chunks: Array<{ title?: string; score?: number; source_type?: string }>): { citations: Array<{ label: string; source_type: string; relevance?: string }> } | null {
   const seen = new Set<string>();
   const citations: Array<{ label: string; source_type: string; relevance?: string }> = [];
@@ -2049,8 +2074,11 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
       minScore,
       requirePublished: true,
     });
-    const usableChunks = _groundingSelection.ok ? _groundingSelection.chunks : [];
-    const traceMetadata = { rag_api_status: "success", total_results: ragResult.chunks.length, filtered_results: usableChunks.length, min_score_used: usableChunks.length > 0 ? Math.min(...usableChunks.map((c) => c.score ?? 0)) : null, max_score_used: usableChunks.length > 0 ? Math.max(...usableChunks.map((c) => c.score ?? 0)) : null, high_risk_topic: isHighRisk, min_threshold: minScore, citations: usableChunks.map((c) => ({ doc_id: c.doc_id, chunk_id: c.chunk_id, title: c.title, score: c.score, source_type: c.source_type })) };
+    const _scoreUsableChunks = _groundingSelection.ok ? _groundingSelection.chunks : [];
+    const _explicitJurisdiction = extractExplicitJurisdictionConstraint(_h1LastMsg);
+    const _jurisdictionSupported = evidenceSupportsJurisdiction(_explicitJurisdiction, _scoreUsableChunks);
+    const usableChunks = _jurisdictionSupported ? _scoreUsableChunks : [];
+    const traceMetadata = { rag_api_status: "success", total_results: ragResult.chunks.length, filtered_results: usableChunks.length, jurisdiction_constraint: _explicitJurisdiction, jurisdiction_supported: _jurisdictionSupported, min_score_used: usableChunks.length > 0 ? Math.min(...usableChunks.map((c) => c.score ?? 0)) : null, max_score_used: usableChunks.length > 0 ? Math.max(...usableChunks.map((c) => c.score ?? 0)) : null, high_risk_topic: isHighRisk, min_threshold: minScore, citations: usableChunks.map((c) => ({ doc_id: c.doc_id, chunk_id: c.chunk_id, title: c.title, score: c.score, source_type: c.source_type })) };
     ragResult.trace_metadata = traceMetadata;
     if (usableChunks.length === 0) {
       _pr5RagMatchState = "partial_match";
