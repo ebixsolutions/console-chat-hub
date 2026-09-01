@@ -21,7 +21,8 @@ export interface ContextualRetrievalQuery {
 }
 
 const CONTEXTUAL_FOLLOW_UP = /^(?:咁|那|那麼|那么|所以|另外|仲有|还有|咁如果|那如果|如果|再|又|而|同埋|還有|还有|what about|and what about|then|so|also|in that case|how about)/i;
-const CONTEXTUAL_PRONOUN = /(?:^|[\s，,。.!！?？])(那個|那个|這個|这个|它|佢|他|她|嗰個|呢個|上述|剛才|刚才|之前|前面|that|this|it|they|them|those|these|the one|earlier|above)(?:$|[\s，,。.!！?？])/i;
+const CONTEXTUAL_PRONOUN_START = /^(?:那個|那个|這個|这个|它|佢|他|她|嗰個|呢個|上述|剛才|刚才|之前|前面)(?:的|嘅|呢|那|這|这|\s|，|,|。|.|!|！|?？|$)/i;
+const CONTEXTUAL_PRONOUN_EN = /(?:^|[\s,.;!?])(that|this|it|they|them|those|these|the one|earlier|above)(?:$|[\s,.;!?])/i;
 const CONTEXTUAL_STYLE_REQUEST = /^(?:(?:請|请)?(?:再)?(?:簡單|简单)(?:一點|一点|啲|些|點|点)?(?:地)?(?:解釋|解释|講|讲|說|说|介紹|介绍)?(?:給我聽|给我听|一下|啲|些)?|(?:請|请)?(?:再)?(?:詳細|详细)(?:一點|一点|啲|些|點|点)?(?:解釋|解释|講|讲|說|说)?(?:給我聽|给我听|一下)?|(?:用|改用)(?:繁體中文|繁体中文|簡體中文|简体中文|英文)(?:再)?(?:講|讲|解釋|解释|說|说)?(?:一次|一下)?|in english|explain(?: it| that)? (?:more )?simply|make it simpler|more detail|more details|simpler|shorter)(?:[。.!！?？\s].*)?$/i;
 const CONTEXTUAL_ELLIPSIS = /(?:呢|嗎|吗|about that|and that|same one|same thing)[。.!！?？\s]*$/i;
 
@@ -67,7 +68,8 @@ export function buildContextualRetrievalQuery(
   const turnClass = classifyConversationTurn(latest);
   const shortContinuation = latest.length <= 40 && (
     CONTEXTUAL_FOLLOW_UP.test(latest) ||
-    CONTEXTUAL_PRONOUN.test(latest) ||
+    CONTEXTUAL_PRONOUN_START.test(latest) ||
+    CONTEXTUAL_PRONOUN_EN.test(latest) ||
     CONTEXTUAL_STYLE_REQUEST.test(latest) ||
     CONTEXTUAL_ELLIPSIS.test(latest)
   );
