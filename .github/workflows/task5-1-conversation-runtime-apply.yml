@@ -1,0 +1,58 @@
+name: Task 5.1 Conversation Runtime Apply
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/task5-1-conversation-runtime-apply.yml'
+      - 'scripts/task5-1-conversation-runtime-apply.mjs'
+      - 'tests/task5-1-conversation-runtime.test.mjs'
+
+permissions:
+  contents: write
+
+jobs:
+  apply-validate-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - name: Baseline guard
+        run: |
+          set -euo pipefail
+          test "$(node -p "require('./package.json').version")" = "2.7.1"
+          grep -F 'const userQuery = _h1LastMsg;' supabase/functions/generate-reply/index.ts
+          grep -F 'export function buildConversationContinuityBlock(' supabase/functions/_shared/conversation-intelligence.ts
+      - name: Install
+        run: npm ci
+      - name: Apply exact Task 5.1 repair
+        run: node scripts/task5-1-conversation-runtime-apply.mjs
+      - name: Production-linked semantic tests
+        run: node tests/task5-1-conversation-runtime.test.mjs
+      - name: TypeScript compile
+        run: npx tsc --noEmit
+      - name: Production build
+        run: npm run build
+      - name: Scope guard
+        run: |
+          set -euo pipefail
+          git diff --check
+          changed="$(git diff --name-only | sort)"
+          expected="$(printf '%s\n' 'supabase/functions/_shared/conversation-intelligence.ts' 'supabase/functions/generate-reply/index.ts' | sort)"
+          test "$changed" = "$expected"
+          test "$(node -p "require('./package.json').version")" = "2.7.1"
+          ! git diff -- package.json package-lock.json | grep -q .
+      - name: Commit validated source repair
+        run: |
+          set -euo pipefail
+          git config user.name 'NexusAI Director Runtime Gate'
+          git config user.email 'actions@users.noreply.github.com'
+          git add supabase/functions/_shared/conversation-intelligence.ts supabase/functions/generate-reply/index.ts
+          git commit -m 'Fix Task 5.1 contextual RAG continuity'
+          git push origin HEAD:main
