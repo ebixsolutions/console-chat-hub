@@ -1,8 +1,8 @@
 {
-  "source_sha256": "66e97430f1c0fefb1e80346d00ac7751b75a371ce35aab149acdd1a52f12dd26",
-  "source_bytes": 127210,
-  "base64_bytes": 169616,
-  "chunk_count": 43,
+  "source_sha256": "1bf10b42dfa198013512bdfcefa6dab6364ed755114c152fa596a426ce03c5c7",
+  "source_bytes": 135823,
+  "base64_bytes": 181100,
+  "chunk_count": 46,
   "chunk_width": 4000,
   "files": [
     "index.ts",
@@ -48,6 +48,9 @@
     "chunk-39.ts",
     "chunk-40.ts",
     "chunk-41.ts",
-    "chunk-42.ts"
+    "chunk-42.ts",
+    "chunk-43.ts",
+    "chunk-44.ts",
+    "chunk-45.ts"
   ]
 }

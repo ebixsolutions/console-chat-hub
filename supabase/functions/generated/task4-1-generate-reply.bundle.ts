@@ -1074,31 +1074,6 @@ var NATURAL_CLARIFICATION = {
   "zh-CN": "\u53EF\u4EE5\uFF0C\u60F3\u786E\u8BA4\u4E00\u4E0B\u4F60\u4E3B\u8981\u60F3\u5904\u7406\u54EA\u4E00\u65B9\u9762\uFF1F\u4F8B\u5982\u9001\u8D27\u3001\u4ED8\u6B3E\u3001\u53D6\u6D88\uFF0C\u8FD8\u662F\u9000\u6362\u8D27\uFF1F",
   en: "Sure \u2014 which part would you like help with, for example delivery, payment, cancellation, or a return/refund?"
 };
-function cleanContinuityText(value) {
-  if (typeof value !== "string") return "";
-  return value.replace(/\s+/g, " ").trim().slice(0, 500);
-}
-var CUSTOMER_ROLES = /* @__PURE__ */ new Set(["visitor", "customer", "user"]);
-var CORRECTION_OR_CONSTRAINT = /(我講錯|我说错|我說錯|更正|其實係|其实是|唔係.*係|不是.*是|改返|改成|唔好|不要|不准|唔准|只係想知|只是想知道|只想知道|actually|i meant|correction|don't|do not|not .* but|only asking|just asking)/i;
-function buildConversationContinuityBlock(newestFirstMessages) {
-  const customerTurns = newestFirstMessages.filter((row) => CUSTOMER_ROLES.has(String(row.role ?? "").toLowerCase())).map((row) => cleanContinuityText(row.content)).filter(Boolean).slice(0, 20);
-  if (customerTurns.length < 2) return "";
-  const corrections = customerTurns.filter((text) => CORRECTION_OR_CONSTRAINT.test(text)).slice(0, 6);
-  const recent = customerTurns.slice(0, 8);
-  const lines = [
-    "Conversation continuity (internal guidance; never quote this block):",
-    "- Treat the newest customer statement as authoritative when it corrects, narrows, cancels, or forbids an earlier request.",
-    "- Do not re-ask a detail already supplied unless the customer made it ambiguous or contradictory.",
-    "- Keep unresolved follow-up questions in context; do not pretend an action was requested when the customer only asked whether it is possible."
-  ];
-  if (corrections.length) {
-    lines.push("Latest corrections / constraints (newest first):");
-    corrections.forEach((text, i) => lines.push(`${i + 1}. ${text}`));
-  }
-  lines.push("Recent customer turns (newest first):");
-  recent.forEach((text, i) => lines.push(`${i + 1}. ${text}`));
-  return lines.join("\n").slice(0, 5e3);
-}
 function buildCustomerAdvisoryContext(signals) {
   const lines = [];
   const tier = typeof signals.tier === "string" ? signals.tier.trim().slice(0, 80) : "";
@@ -1114,10 +1089,15 @@ function buildCustomerAdvisoryContext(signals) {
 }
 
 // supabase/functions/_shared/escalation-shadow.ts
-function hasCeProvenance(input) {
-  return Boolean(
-    input.expected_tenant_id && input.sentiment_provider_version?.trim() && input.sentiment_evaluation_id?.trim()
-  );
+function resolveSentimentProvenance(input) {
+  const tenant = input.expected_tenant_id?.trim();
+  const provider = input.sentiment_provider_version?.trim();
+  if (!tenant || !provider) return "invalid";
+  if (input.sentiment_evaluation_id?.trim()) return "conversation_evaluation";
+  if (provider.split("+").some((part) => part.trim().startsWith("current-turn-emotion-v1.0"))) {
+    return "current_turn";
+  }
+  return "invalid";
 }
 function hasP1Provenance(input) {
   return Boolean(
@@ -1203,32 +1183,25 @@ function evaluateEscalationShadow(input, env) {
       "local_classifier"
     );
   }
-  const ceProvenanceOk = hasCeProvenance(input);
+  const sentimentProvenance = resolveSentimentProvenance(input);
   const ceSignalPresent = input.anger_flag === true || typeof input.sentiment_score === "number" || Array.isArray(input.sentiment_trend) || input.sentiment_recovered_same_turn === true;
-  if (ceSignalPresent && !ceProvenanceOk) {
+  if (ceSignalPresent && sentimentProvenance === "invalid") {
     providerWarnings.push("CE_ADVISORY_SIGNAL_PROVENANCE_INCOMPLETE");
   }
-  if (ceProvenanceOk) {
+  if (ceSignalPresent && sentimentProvenance !== "invalid") {
+    const signalSource = sentimentProvenance === "current_turn" ? "local_classifier" : "conversation_evaluation";
     const ceMeta = {
       provider_version: input.sentiment_provider_version,
-      reason: `evaluation_id:${input.sentiment_evaluation_id}`,
+      reason: sentimentProvenance === "current_turn" ? "current_turn_emotion_classifier" : `evaluation_id:${input.sentiment_evaluation_id}`,
       tenant_id: input.expected_tenant_id
     };
     if (input.anger_flag === true) {
-      context.anger_flag = availableSignal(
-        true,
-        "conversation_evaluation",
-        ceMeta
-      );
+      context.anger_flag = availableSignal(true, signalSource, ceMeta);
     }
     if (typeof input.sentiment_score === "number" && Number.isFinite(input.sentiment_score)) {
-      context.sentiment_score = availableSignal(
-        input.sentiment_score,
-        "conversation_evaluation",
-        ceMeta
-      );
+      context.sentiment_score = availableSignal(input.sentiment_score, signalSource, ceMeta);
     }
-    if (Array.isArray(input.sentiment_trend) && input.sentiment_trend.length >= 2 && input.sentiment_trend.every((n) => typeof n === "number" && Number.isFinite(n))) {
+    if (sentimentProvenance === "conversation_evaluation" && Array.isArray(input.sentiment_trend) && input.sentiment_trend.length >= 2 && input.sentiment_trend.every((n) => typeof n === "number" && Number.isFinite(n))) {
       context.sentiment_trend = availableSignal(
         input.sentiment_trend,
         "conversation_evaluation",
@@ -1238,10 +1211,10 @@ function evaluateEscalationShadow(input, env) {
     if (input.sentiment_recovered_same_turn === true) {
       context.sentiment_recovered_same_turn = availableSignal(
         true,
-        "conversation_evaluation",
+        signalSource,
         {
           ...ceMeta,
-          reason: `evaluation_id:${input.sentiment_evaluation_id}:recovery`
+          reason: sentimentProvenance === "current_turn" ? "current_turn_emotion_recovery" : `evaluation_id:${input.sentiment_evaluation_id}:recovery`
         }
       );
     }
@@ -2100,6 +2073,296 @@ function validateP1PredictionSignals(input) {
   };
 }
 
+// supabase/functions/_shared/conversation-runtime-state.ts
+var CUSTOMER = /* @__PURE__ */ new Set(["visitor", "customer", "user"]);
+var ASSISTANT = /* @__PURE__ */ new Set(["assistant", "ai", "human_agent"]);
+var CORRECTION2 = /(我講錯|我说错|我說錯|更正|其實係|其实是|唔係.*係|不是.*是|改返|改成|actually|i meant|correction|not .* but )/i;
+var CONSTRAINT = /(不要|唔好|不准|唔准|不要猜|唔好估|沒有型號|没有型号|冇型號|only|don't|do not|without|must not|no model)/i;
+var FOLLOW = /^(?:咁|那|那麼|那么|所以|另外|仲有|还有|如果|再|又|而|同埋|what about|and what about|then|so|also|in that case|how about)/i;
+var PRONOUN = /(這個|这个|那個|那个|它|其|上述|剛才|刚才|之前|頭先|头先|same|that|this|it|its|earlier|previous)/i;
+var MEMORY = /(一開始|一开始|第一個問題|第一个问题|最初|剛才建議|刚才建议|之前建議|之前建议|first question|first thing|what did i ask|what did you suggest|earlier recommendation)/i;
+var QUESTION = /[?？]|^(?:什麼|什么|如何|怎樣|怎样|哪|哪些|多久|幾耐|几耐|why|what|which|how|when|where)/i;
+var RECOMMEND = /(建議|建议|需要我提供|請提供|请提供|可以提供|recommend|suggest|provide)/i;
+var JURISDICTIONS = [
+  ["mars", /(mars|火星)/i],
+  ["hong_kong", /(香港|hong\s*kong|\bhk\b)/i],
+  ["macau", /(澳門|澳门|macau|macao)/i],
+  ["singapore", /(新加坡|singapore)/i],
+  ["taiwan", /(台灣|台湾|taiwan)/i],
+  ["mainland_china", /(中國大陸|中国大陆|內地|内地|mainland\s*china)/i]
+];
+function clean(v) {
+  return typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, 800) : "";
+}
+function detectLanguage2(text) {
+  if (!/[\u4e00-\u9fff]/.test(text)) return "en";
+  return /[转们为这没请台]/.test(text) ? "zh-CN" : "zh-TW";
+}
+function detectExplicitJurisdiction(text) {
+  for (const [id, re] of JURISDICTIONS) if (re.test(text)) return id;
+  return null;
+}
+function normalizeTopic(text) {
+  return clean(text).replace(/[?？!！。,.，]/g, " ").replace(/^(?:咁|那|所以|另外|再|又|what about|then|so)\s*/i, "").trim().slice(0, 180);
+}
+function projectConversationRuntimeState(newestFirst) {
+  const rows = newestFirst.map((row) => ({
+    text: clean(row.content),
+    role: String(row.role ?? "").toLowerCase()
+  })).filter((row) => row.text && row.text !== "__THINKING__");
+  const customers = rows.filter((row) => CUSTOMER.has(row.role));
+  const assistants = rows.filter((row) => ASSISTANT.has(row.role));
+  const chronological = [...customers].reverse();
+  const latest = customers[0]?.text ?? null;
+  const first = chronological[0]?.text ?? null;
+  const corrections = customers.filter((row) => CORRECTION2.test(row.text)).slice(0, 6).map((row) => row.text);
+  const constraints = customers.filter((row) => CONSTRAINT.test(row.text)).slice(0, 8).map((row) => row.text);
+  const unresolved = customers.filter((row) => QUESTION.test(row.text)).slice(0, 8).map((row) => row.text);
+  const explicitJurisdiction = latest ? detectExplicitJurisdiction(latest) : null;
+  const inheritedJurisdiction = customers.map((row) => detectExplicitJurisdiction(row.text)).find(Boolean) ?? null;
+  const topics = [];
+  for (const row of chronological) {
+    const topic = normalizeTopic(row.text);
+    if (topic && !topics.includes(topic)) topics.push(topic);
+  }
+  const currentTopic = latest ? normalizeTopic(latest) : null;
+  const refs = latest ? [...latest.matchAll(/(這個|这个|那個|那个|它|其|上述|剛才|刚才|之前|same|that|this|it|its)/gi)].map((m) => m[0]).slice(0, 6) : [];
+  return {
+    first_customer_turn: first,
+    first_intent: first ? normalizeTopic(first) : null,
+    latest_customer_turn: latest,
+    current_intent: latest,
+    current_topic: currentTopic,
+    prior_topics: topics.slice(0, -1).slice(-12),
+    active_referents: refs,
+    unresolved_questions: unresolved,
+    latest_corrections: corrections,
+    active_constraints: constraints,
+    jurisdiction: explicitJurisdiction ?? inheritedJurisdiction,
+    language: detectLanguage2(latest ?? first ?? ""),
+    prior_recommendations: assistants.filter((row) => RECOMMEND.test(row.text)).slice(0, 6).map((row) => row.text)
+  };
+}
+function buildCanonicalContinuityBlock(newestFirst) {
+  const state = projectConversationRuntimeState(newestFirst);
+  if (!state.latest_customer_turn) return "";
+  const lines = [
+    "Canonical conversation state (internal; never quote this block):",
+    `First customer turn: ${state.first_customer_turn ?? "\u2014"}`,
+    `Current customer turn: ${state.latest_customer_turn}`,
+    `Current topic: ${state.current_topic ?? "\u2014"}`,
+    `Jurisdiction: ${state.jurisdiction ?? "unspecified"}`
+  ];
+  if (state.latest_corrections.length) {
+    lines.push("Newest corrections / superseding facts:");
+    state.latest_corrections.forEach((x, i) => lines.push(`${i + 1}. ${x}`));
+  }
+  if (state.active_constraints.length) {
+    lines.push("Active customer constraints:");
+    state.active_constraints.forEach((x, i) => lines.push(`${i + 1}. ${x}`));
+  }
+  if (state.unresolved_questions.length) {
+    lines.push("Recent unresolved customer questions:");
+    state.unresolved_questions.slice(0, 5).forEach((x, i) => lines.push(`${i + 1}. ${x}`));
+  }
+  if (state.prior_recommendations.length) {
+    lines.push("Recent assistant recommendations (context only, not customer facts):");
+    state.prior_recommendations.slice(0, 3).forEach((x, i) => lines.push(`${i + 1}. ${x}`));
+  }
+  return lines.join("\n").slice(0, 6e3);
+}
+function buildCanonicalRetrievalQuery(latestInput, newestFirst) {
+  const latest = clean(latestInput);
+  const state = projectConversationRuntimeState(newestFirst);
+  if (!latest) return { query: "", mode: "standalone", latest: "", context_turns: [], state };
+  if (MEMORY.test(latest)) {
+    const parts = [`Conversation-memory request: ${latest}`];
+    if (state.first_customer_turn) parts.push(`First customer turn: ${state.first_customer_turn}`);
+    if (state.prior_recommendations.length) {
+      parts.push(`Relevant prior recommendations: ${state.prior_recommendations.join(" / ")}`);
+    }
+    return { query: parts.join("\n").slice(0, 1200), mode: "memory", latest, context_turns: [], state };
+  }
+  const explicitJurisdiction = detectExplicitJurisdiction(latest);
+  const previous = newestFirst.filter((row) => CUSTOMER.has(String(row.role ?? "").toLowerCase())).map((row) => clean(row.content)).filter((x) => x && x !== latest && x !== "__THINKING__");
+  const needsContext = FOLLOW.test(latest) || PRONOUN.test(latest) || latest.length <= 28 && QUESTION.test(latest) || CORRECTION2.test(latest);
+  if (!needsContext || explicitJurisdiction) {
+    return {
+      query: latest,
+      mode: "standalone",
+      latest,
+      context_turns: [],
+      state: { ...state, jurisdiction: explicitJurisdiction ?? state.jurisdiction }
+    };
+  }
+  const contextTurns = previous.filter((x) => !MEMORY.test(x)).slice(0, 5);
+  if (!contextTurns.length) return { query: latest, mode: "standalone", latest, context_turns: [], state };
+  return {
+    query: [
+      `Current request: ${latest}`,
+      `Relevant prior customer context: ${contextTurns.join(" / ")}`
+    ].join("\n").slice(0, 1200),
+    mode: "contextual",
+    latest,
+    context_turns: contextTurns,
+    state
+  };
+}
+
+// supabase/functions/_shared/canonical-grounding.ts
+function modelTokens(text) {
+  return [...new Set(
+    (text.match(/\b[A-Z]{2,}[A-Z0-9]*[- ]?\d{2,}[A-Z0-9-]*\b/g) ?? []).map((x) => x.replace(/\s+/g, "").toUpperCase())
+  )];
+}
+function candidateText(document) {
+  return [
+    document.title,
+    document.source_type,
+    ...document.chunks.map((c) => `${c.title ?? ""} ${c.content}`),
+    ...document.llm_context.full_content_evidence.map((e) => e.content)
+  ].join("\n").slice(0, 5e4);
+}
+function jurisdictions(text) {
+  const found = [];
+  if (/(mars|火星)/i.test(text)) found.push("mars");
+  if (/(香港|hong\s*kong|\bhk\b)/i.test(text)) found.push("hong_kong");
+  if (/(澳門|澳门|macau|macao)/i.test(text)) found.push("macau");
+  if (/(新加坡|singapore)/i.test(text)) found.push("singapore");
+  if (/(台灣|台湾|taiwan)/i.test(text)) found.push("taiwan");
+  if (/(中國大陸|中国大陆|內地|内地|mainland\s*china)/i.test(text)) found.push("mainland_china");
+  return found;
+}
+function assessApplicability(document, requestText) {
+  const requestJurisdiction = detectExplicitJurisdiction(requestText);
+  const text = candidateText(document);
+  const documentJurisdictions = jurisdictions(text);
+  if (requestJurisdiction === "mars" && !documentJurisdictions.includes("mars")) {
+    return {
+      accepted: false,
+      reason: "unsupported_explicit_jurisdiction",
+      request_jurisdiction: requestJurisdiction,
+      document_jurisdictions: documentJurisdictions
+    };
+  }
+  if (requestJurisdiction && documentJurisdictions.length > 0 && !documentJurisdictions.includes(requestJurisdiction)) {
+    return {
+      accepted: false,
+      reason: "jurisdiction_mismatch",
+      request_jurisdiction: requestJurisdiction,
+      document_jurisdictions: documentJurisdictions
+    };
+  }
+  const requestModels = modelTokens(requestText);
+  const documentModels = modelTokens(text);
+  if (requestModels.length > 0 && documentModels.length > 0 && !requestModels.some((model) => documentModels.includes(model))) {
+    return {
+      accepted: false,
+      reason: "model_mismatch",
+      request_jurisdiction: requestJurisdiction,
+      document_jurisdictions: documentJurisdictions
+    };
+  }
+  return {
+    accepted: true,
+    reason: "applicable",
+    request_jurisdiction: requestJurisdiction,
+    document_jurisdictions: documentJurisdictions
+  };
+}
+function selectCanonicalGrounding(documents, options = {}) {
+  const minScore = Number.isFinite(options.minScore) ? Number(options.minScore) : 0;
+  const policyOnly = options.policyOnly === true;
+  const requirePublished = options.requirePublished !== false;
+  const requestText = options.requestText ?? "";
+  const eligible = [];
+  for (const document of documents ?? []) {
+    if (document.llm_context.selected_document_id !== document.document_id) {
+      return { ok: false, error: "KB_DOCUMENT_EVIDENCE_MISMATCH" };
+    }
+    if (document.llm_context.full_content_evidence.some((e) => e.document_id !== document.document_id)) {
+      return { ok: false, error: "KB_DOCUMENT_EVIDENCE_MISMATCH" };
+    }
+    if (document.chunks.some((c) => c.document_id !== document.document_id)) {
+      return { ok: false, error: "KB_DOCUMENT_EVIDENCE_MISMATCH" };
+    }
+    const chunks = document.chunks.filter(
+      (c) => c.content.trim() && Number.isFinite(c.score) && c.score >= minScore && (!requirePublished || c.status === "published") && (!policyOnly || c.source_type.toLowerCase().includes("policy"))
+    );
+    const fullContentIds = new Set(
+      chunks.filter((c) => c.chunk_type === "full_content").map((c) => c.chunk_id ?? c.content)
+    );
+    const evidence = document.llm_context.full_content_evidence.filter(
+      (e) => e.content.trim() && Number.isFinite(e.score) && e.score >= minScore && (!policyOnly || e.source_type.toLowerCase().includes("policy")) && fullContentIds.has(e.chunk_id ?? e.content)
+    );
+    if (requirePublished && evidence.length > 0 && chunks.every((c) => c.status !== "published")) {
+      return { ok: false, error: "KB_EVIDENCE_NOT_PUBLISHED" };
+    }
+    if (!evidence.length) continue;
+    const applicability = assessApplicability(document, requestText);
+    if (!applicability.accepted) continue;
+    eligible.push({
+      document,
+      chunks,
+      evidence,
+      applicability,
+      evidenceScore: Math.max(...evidence.map((e) => e.score), 0)
+    });
+  }
+  eligible.sort(
+    (a, b) => b.document.document_score - a.document.document_score || b.evidenceScore - a.evidenceScore || a.document.document_id.localeCompare(b.document.document_id)
+  );
+  const winner = eligible[0];
+  return winner ? {
+    ok: true,
+    document: winner.document,
+    chunks: winner.chunks,
+    evidence: winner.evidence,
+    applicability: winner.applicability
+  } : {
+    ok: true,
+    document: null,
+    chunks: [],
+    evidence: [],
+    applicability: {
+      accepted: false,
+      reason: "no_applicable_published_evidence",
+      request_jurisdiction: detectExplicitJurisdiction(requestText),
+      document_jurisdictions: []
+    }
+  };
+}
+
+// supabase/functions/_shared/runtime-signal-lifecycle.ts
+var STRONG_ANGER = /(嬲|憤怒|愤怒|火大|離譜|离谱|垃圾|廢物|废物|荒謬|荒谬|angry|furious|irate|rage|ridiculous|unacceptable|bullshit)/i;
+var NEGATIVE = /(失望|不滿|不满|很差|太差|煩|烦|frustrated|annoyed|upset|disappointed|terrible|awful)/i;
+var POSITIVE_RECOVERY = /(明白了|明白啦|好的現在|好的现在|而家明白|现在明白|謝謝|谢谢|thanks|thank you|got it|that helps|understand now)/i;
+function classifyCurrentTurnEmotion(text) {
+  const t = String(text ?? "").normalize("NFKC").trim();
+  if (!t) return { provider_version: "current-turn-emotion-v1.0" };
+  if (STRONG_ANGER.test(t)) return { anger_flag: true, sentiment_score: -0.85, provider_version: "current-turn-emotion-v1.0" };
+  if (NEGATIVE.test(t)) return { sentiment_score: -0.5, provider_version: "current-turn-emotion-v1.0" };
+  if (POSITIVE_RECOVERY.test(t)) return { sentiment_score: 0.35, provider_version: "current-turn-emotion-v1.0" };
+  return { provider_version: "current-turn-emotion-v1.0" };
+}
+function buildRealtimeR3SentimentSignals(text, historical) {
+  const current = classifyCurrentTurnEmotion(text);
+  const currentScore = current.sentiment_score;
+  if (currentScore === void 0 && current.anger_flag !== true) return void 0;
+  const base = Array.isArray(historical?.sentiment_trend) ? historical.sentiment_trend.filter(Number.isFinite).slice(-4) : typeof historical?.sentiment_score === "number" && Number.isFinite(historical.sentiment_score) ? [historical.sentiment_score] : [];
+  const trend = currentScore === void 0 ? base : [...base, currentScore].slice(-5);
+  const previous = base.length ? base[base.length - 1] : void 0;
+  const recovered = typeof previous === "number" && previous < -0.2 && typeof currentScore === "number" && currentScore >= 0.2;
+  return {
+    ...current.anger_flag ? { anger_flag: true } : {},
+    ...typeof currentScore === "number" ? { sentiment_score: currentScore } : {},
+    ...trend.length >= 2 ? { sentiment_trend: trend } : {},
+    ...recovered ? { sentiment_recovered_same_turn: true } : {},
+    ...historical?.evaluation_id ? { evaluation_id: historical.evaluation_id } : {},
+    provider_version: [current.provider_version, historical?.provider_version].filter(Boolean).join("+")
+  };
+}
+
 // supabase/functions/generate-reply/index.ts
 import { createClient as createClient3 } from "https://esm.sh/@supabase/supabase-js@2";
 var corsHeaders = {
@@ -2430,17 +2693,10 @@ async function loadAuthoritativeR3SentimentSignals(supabaseAdmin, conversation_i
   const { data: freshness, error: freshnessError } = await supabaseAdmin.from("ce_evaluation_state").select(
     "conversation_id, company_id, state, last_success_evaluation_id, last_success_source, last_success_fingerprint, current_evaluation_fingerprint, last_success_at, last_activity_at"
   ).eq("conversation_id", conversation_id).eq("company_id", expected_tenant_id).maybeSingle();
-  if (freshnessError || !freshness || freshness.state !== "up_to_date" || freshness.last_success_source !== "canonical" || !freshness.last_success_evaluation_id || !freshness.last_success_fingerprint || !freshness.current_evaluation_fingerprint || freshness.last_success_fingerprint !== freshness.current_evaluation_fingerprint) {
+  if (freshnessError || !freshness || freshness.last_success_source !== "canonical" || !freshness.last_success_evaluation_id || !freshness.last_success_fingerprint) {
     return void 0;
   }
-  if (freshness.last_activity_at && freshness.last_success_at) {
-    const activityAt = Date.parse(String(freshness.last_activity_at));
-    const successAt = Date.parse(String(freshness.last_success_at));
-    if (!Number.isFinite(activityAt) || !Number.isFinite(successAt) || activityAt > successAt) {
-      return void 0;
-    }
-  }
-  const { data: evaluation, error: evaluationError } = await supabaseAdmin.from("conversation_evaluation").select("id, company_id, created_at, evaluation_fingerprint, freshness").eq("id", freshness.last_success_evaluation_id).eq("conversation_id", conversation_id).eq("company_id", expected_tenant_id).eq("freshness", "current").eq("evaluation_fingerprint", freshness.last_success_fingerprint).maybeSingle();
+  const { data: evaluation, error: evaluationError } = await supabaseAdmin.from("conversation_evaluation").select("id, company_id, created_at, evaluation_fingerprint, freshness").eq("id", freshness.last_success_evaluation_id).eq("conversation_id", conversation_id).eq("company_id", expected_tenant_id).eq("evaluation_fingerprint", freshness.last_success_fingerprint).maybeSingle();
   if (evaluationError || !evaluation?.id || evaluation.id !== freshness.last_success_evaluation_id) {
     return void 0;
   }
@@ -2471,7 +2727,7 @@ async function loadAuthoritativeR3SentimentSignals(supabaseAdmin, conversation_i
     ...scoreSeries.length >= 2 ? { sentiment_trend: scoreSeries.slice(-5) } : {},
     ...recovered ? { sentiment_recovered_same_turn: true } : {},
     evaluation_id: evaluation.id,
-    provider_version: `ce-emotion-point-v1.1:${String(evaluation.evaluation_fingerprint).slice(0, 12)}`
+    provider_version: `ce-emotion-history-v1.0:${String(evaluation.evaluation_fingerprint).slice(0, 12)}`
   };
 }
 function normalizeIntentText(text) {
@@ -3144,6 +3400,27 @@ ${CUSTOMER_CONVERSATION_POLICY}`;
   console.log("[generate-reply] AI reply committed for conversation:", conversation_id);
   return new Response(JSON.stringify({ success: true, idempotent: committed.idempotent }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
+function extractExplicitJurisdictionConstraint(text) {
+  const t = text.normalize("NFKC").trim();
+  const patterns = [
+    /(?:^|[\s，,。])([A-Z][A-Za-z]{2,30})(?:\s*(?:的|嘅)|\s+).*?(?:規則|规则|政策|回收|費|费|rule|policy|recycling|fee)/i,
+    /(?:^|[\s，,。])([\u4e00-\u9fff]{2,10})(?:的|嘅).*?(?:規則|规则|政策|回收|費|费)/
+  ];
+  for (const pattern of patterns) {
+    const match = t.match(pattern);
+    const value = match?.[1]?.trim();
+    if (value) return value;
+  }
+  return null;
+}
+function evidenceSupportsJurisdiction(jurisdiction, chunks) {
+  if (!jurisdiction) return true;
+  const needle = jurisdiction.toLocaleLowerCase();
+  return chunks.some(
+    (chunk) => `${chunk.title ?? ""}
+${chunk.content ?? ""}`.toLocaleLowerCase().includes(needle)
+  );
+}
 function buildCitationMetadata(chunks) {
   const seen = /* @__PURE__ */ new Set();
   const citations = [];
@@ -3375,7 +3652,7 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
     _pr5HistoryRows ?? [],
     _pr5VisitorTurnCount ?? 0
   );
-  const _conversationContinuityBlock = buildConversationContinuityBlock(_pr5HistoryRows ?? []);
+  const _conversationContinuityBlock = buildCanonicalContinuityBlock(_pr5HistoryRows ?? []);
   const _visitorLang = detectVisitorLanguage(_h1LastMsg);
   const _turnClassification = classifyConversationTurn(_h1LastMsg);
   if (_turnClassification.should_clarify_before_kb && !isHandoffIntent(_h1LastMsg)) {
@@ -3416,10 +3693,14 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
   const _pr5ThreatSignal = classifyAuthoritativeThreat(_h1LastMsg);
   const _pr5ComplianceSignal = resolveAuthoritativeComplianceReview(_pr5ExpectedTenantId);
   const _pr5LocalRisk = classifyLocalTopicRisk(_h1LastMsg);
-  const _pr5R3Sentiment = await loadAuthoritativeR3SentimentSignals(
+  const _pr5HistoricalR3Sentiment = await loadAuthoritativeR3SentimentSignals(
     supabaseAdmin,
     conversation_id,
     _pr5ExpectedTenantId
+  );
+  const _pr5R3Sentiment = buildRealtimeR3SentimentSignals(
+    _h1LastMsg,
+    _pr5HistoricalR3Sentiment
   );
   const _pr5ConversationDurationSec = conversation.created_at ? Math.max(0, Math.floor((Date.now() - new Date(conversation.created_at).getTime()) / 1e3)) : void 0;
   const _pr5VerifiedTenantConfig = buildVerifiedTenantEscalationConfig();
@@ -3554,7 +3835,8 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
       if (_escEnableS0) return await handleS0Handoff(supabaseAdmin, conversation_id, source_message_id, "KB_SCOPE_GATE", _visitorLang);
       return await handleKBFallback(supabaseAdmin, conversation_id, "KB_SCOPE_GATE", source_message_id, { rag_api_status: "scope_unavailable" }, _visitorLang);
     }
-    const userQuery = _h1LastMsg;
+    const _semanticRetrieval = buildCanonicalRetrievalQuery(_h1LastMsg, _pr5HistoryRows ?? []);
+    const userQuery = _semanticRetrieval.query;
     ragResult = !userQuery ? { success: true, no_answer: true, retrieval_quality: "failed", chunks: [] } : await callKBAdapter(conversation_id, userQuery, _kbTenantResult.scope);
     if (!ragResult || !ragResult.success) {
       if (_deferR1ForE1) {
@@ -3619,10 +3901,16 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
     }
     const isHighRisk = _pr5LocalRisk?.level === "high";
     const minScore = isHighRisk ? 0.78 : 0.55;
-    const usableChunks = ragResult.chunks.filter(
-      (c) => c.score && c.score >= minScore && (!c.status || c.status === "published")
-    );
-    const traceMetadata = { rag_api_status: "success", total_results: ragResult.chunks.length, filtered_results: usableChunks.length, min_score_used: usableChunks.length > 0 ? Math.min(...usableChunks.map((c) => c.score ?? 0)) : null, max_score_used: usableChunks.length > 0 ? Math.max(...usableChunks.map((c) => c.score ?? 0)) : null, high_risk_topic: isHighRisk, min_threshold: minScore, citations: usableChunks.map((c) => ({ doc_id: c.doc_id, chunk_id: c.chunk_id, title: c.title, score: c.score, source_type: c.source_type })) };
+    const _groundingSelection = selectCanonicalGrounding(ragResult.documents ?? [], {
+      minScore,
+      requirePublished: true,
+      requestText: userQuery
+    });
+    const _scoreUsableChunks = _groundingSelection.ok ? _groundingSelection.chunks : [];
+    const _explicitJurisdiction = extractExplicitJurisdictionConstraint(_h1LastMsg);
+    const _jurisdictionSupported = evidenceSupportsJurisdiction(_explicitJurisdiction, _scoreUsableChunks);
+    const usableChunks = _jurisdictionSupported ? _scoreUsableChunks : [];
+    const traceMetadata = { rag_api_status: "success", total_results: ragResult.chunks.length, filtered_results: usableChunks.length, jurisdiction_constraint: _explicitJurisdiction, jurisdiction_supported: _jurisdictionSupported, min_score_used: usableChunks.length > 0 ? Math.min(...usableChunks.map((c) => c.score ?? 0)) : null, max_score_used: usableChunks.length > 0 ? Math.max(...usableChunks.map((c) => c.score ?? 0)) : null, high_risk_topic: isHighRisk, min_threshold: minScore, citations: usableChunks.map((c) => ({ doc_id: c.doc_id, chunk_id: c.chunk_id, title: c.title, score: c.score, source_type: c.source_type })) };
     ragResult.trace_metadata = traceMetadata;
     if (usableChunks.length === 0) {
       _pr5RagMatchState = "partial_match";
@@ -4170,6 +4458,7 @@ async function callKBAdapter(_conversation_id, userMessage, scope) {
     no_answer: false,
     retrieval_quality: "high",
     chunks: result.chunks,
+    documents: result.documents,
     ...result.llm_context ? { llm_context: result.llm_context } : {},
     ...result.meta ? { meta: result.meta } : {},
     query_text_preview: userMessage.slice(0, 100)
