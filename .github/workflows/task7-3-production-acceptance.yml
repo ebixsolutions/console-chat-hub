@@ -1,0 +1,64 @@
+name: Task 7.3 Production Acceptance Source QA
+
+on:
+  push:
+    branches: [task7-3-production-acceptance]
+  workflow_dispatch:
+
+jobs:
+  source-qa:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: task7-3-production-acceptance
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Authoritative baseline guard
+        run: |
+          test "$(git merge-base HEAD c133a1e91ffb5a4716fb56b9d3000d4ffd7dc20b)" = "c133a1e91ffb5a4716fb56b9d3000d4ffd7dc20b"
+          test "$(git rev-parse c133a1e91ffb5a4716fb56b9d3000d4ffd7dc20b^1)" = "952697351a706f3e0000c99e5e2ff22b02908b96"
+      - name: Install
+        run: npm ci
+      - name: Frozen Task 7.1 canonical runtime QA
+        run: node tests/task7-1-canonical-runtime.test.mjs
+      - name: Frozen Task 7.2 CE human-control QA
+        run: node --experimental-strip-types tests/task7-2-runtime-closure.test.mjs
+      - name: Task 7.3 whole-source acceptance assertions
+        run: node tests/task7-3-production-acceptance-source.test.mjs
+      - name: TypeScript compile
+        run: npx tsc --noEmit
+      - name: Production build
+        run: npm run build
+      - name: Restore generated collateral
+        run: git checkout -- src/routeTree.gen.ts
+      - name: Frozen production source integrity
+        run: |
+          set -euo pipefail
+          # 7.3 adds QA artifacts only. No accepted Task 7.1/7.2 production source may change.
+          for f in \
+            config/ai-chatbot-invariants.json \
+            supabase/functions/_shared/conversation-runtime-state.ts \
+            supabase/functions/_shared/canonical-grounding.ts \
+            supabase/functions/_shared/ce-grounding.ts \
+            supabase/functions/_shared/escalation-shadow.ts \
+            supabase/functions/generate-reply/index.ts \
+            supabase/functions/agent-assist/index.ts \
+            supabase/functions/kb-search-proxy/index.ts \
+            supabase/migrations/20260901073000_task7_2_ce_human_control_state_closure.sql \
+            package.json package-lock.json; do
+            test "$(git hash-object "$f")" = "$(git rev-parse c133a1e91ffb5a4716fb56b9d3000d4ffd7dc20b:$f)"
+          done
+          changed="$(git diff --name-only c133a1e91ffb5a4716fb56b9d3000d4ffd7dc20b...HEAD; git diff --name-only)"
+          printf '%s\n' "$changed" | sort -u > /tmp/task73_changed.txt
+          cat /tmp/task73_changed.txt
+          unexpected="$(grep -Ev '^(tests/task7-3-production-acceptance-source\.test\.mjs|\.github/workflows/task7-3-production-acceptance\.yml)$' /tmp/task73_changed.txt || true)"
+          test -z "$unexpected" || { echo "Unexpected Task 7.3 source change:"; echo "$unexpected"; exit 1; }
+      - name: QA conclusion
+        run: |
+          echo 'TASK7_3_SOURCE_QA=PASS'
+          echo 'PRODUCTION_PARITY=REQUIRES_EXTERNAL_LIVE_GATE'
+          echo 'READY=FORBIDDEN_UNTIL_LIVE_DEPLOYMENT_AND_LONG_STATEFUL_ACCEPTANCE_PASS'
