@@ -21,16 +21,17 @@ jobs:
           set -euo pipefail
           set -a; source .env; set +a
           python - <<'PY'
-          import json, os, time, uuid, urllib.request, urllib.error
+          import json, os, time, urllib.request, urllib.error
           BASE=os.environ['VITE_SUPABASE_FUNCTIONS_URL'].rstrip('/')
           ORIGIN=os.environ['PROD_ORIGIN']; CHANNEL=os.environ['CHANNEL_ID']
           turns=json.load(open('tests/fixtures/task6-3-20turn-smoke.json'))['turns']
+          HUMAN={'pending','transferred','human_needed','human_control'}
           def post(path, body):
               req=urllib.request.Request(BASE+'/'+path,data=json.dumps(body,ensure_ascii=False).encode(),headers={'Origin':ORIGIN,'Content-Type':'application/json'},method='POST')
               try:
                   with urllib.request.urlopen(req,timeout=45) as r: return r.status,json.loads(r.read())
               except urllib.error.HTTPError as e:
-                  raw=e.read();
+                  raw=e.read()
                   try: payload=json.loads(raw)
                   except: payload={'raw':raw.decode(errors='replace')}
                   return e.code,payload
@@ -38,33 +39,42 @@ jobs:
           assert st==200 and c.get('success') is True,(st,c)
           d=c['data']; cid=d['conversation_id']; token=d['session_token']
           print('TASK6_3_CONVERSATION_ID='+cid)
-          prior_assistant=0
+          prior_assistant=0; answers=[]
+          generic=['補充一點細節','最重要的細節','share a bit more detail','clarify one detail']
           for t in turns:
               msg=t['message']; turn=t['turn']
               st,s=post('receive-widget-message',{'conversation_id':cid,'session_token':token,'content':msg})
               assert st==200 and s.get('success') is True,(turn,st,s)
-              deadline=time.time()+40; p=None
+              deadline=time.time()+55; p=None
               while time.time()<deadline:
                   st,p=post('widget-poll-messages',{'conversation_id':cid,'session_token':token})
                   assert st==200 and p.get('success') is True,(turn,st,p)
                   data=p['data']; msgs=data.get('messages') or []
                   ac=sum(1 for x in msgs if x.get('role')=='assistant')
-                  if ac>prior_assistant or data.get('conversation_status') in ('pending','transferred','human_needed','human_control'):
-                      break
+                  status=data.get('conversation_status')
+                  if turn<20 and ac>prior_assistant: break
+                  if turn==20 and ac>prior_assistant and status in HUMAN: break
                   time.sleep(1)
               data=p['data']; msgs=data.get('messages') or []
               assistants=[x for x in msgs if x.get('role')=='assistant']
               ac=len(assistants); status=data.get('conversation_status')
               latest=(assistants[-1].get('content','') if assistants else '')
-              print(json.dumps({'turn':turn,'status':status,'assistant_count':ac,'answer':latest[:500]},ensure_ascii=False))
+              answers.append(latest)
+              print(json.dumps({'turn':turn,'status':status,'assistant_count':ac,'answer':latest[:700]},ensure_ascii=False))
+              assert ac>prior_assistant,(turn,'no assistant reply',data)
               if turn<20:
-                  assert status not in ('pending','transferred','human_needed','human_control'),(turn,status,latest)
-                  assert ac>prior_assistant,(turn,'no assistant reply',data)
+                  assert status not in HUMAN,(turn,'premature_handoff',status,latest)
               else:
-                  assert status in ('pending','transferred','human_needed','human_control'),(turn,status,latest)
-                  low=latest.lower()
-                  assert ('客服' in latest) or ('human' in low) or ('agent' in low),(turn,latest)
+                  assert status in HUMAN,(turn,'R1_status_not_committed',status,latest)
+                  low=latest.lower(); assert ('客服' in latest) or ('human' in low) or ('agent' in low),(turn,latest)
               prior_assistant=ac
+          assert not any(x in answers[0] for x in generic),('T1_GENERIC',answers[0])
+          assert ('四電一腦' in answers[0]) or ('電腦' in answers[0]) or ('电脑' in answers[0]),('T1_NOT_GROUNDED',answers[0])
+          assert not any(x in answers[1] for x in generic),('T2_CONTEXT_LOST',answers[1])
+          assert not any(x in answers[2] for x in generic),('T3_CONTEXT_LOST',answers[2])
+          assert any(x in answers[2] for x in ['電視','雪櫃','洗衣','冷氣','電腦','电脑']),('T3_CATEGORIES_MISSING',answers[2])
+          assert 'Mars' not in answers[13] and 'mars' not in answers[13].lower(),('T14_TOPIC_SWITCH_STALE_MARS',answers[13])
+          assert ('四電一腦' in answers[14]) or ('電腦' in answers[14]) or ('电脑' in answers[14]),('T15_RECALL_FAILED',answers[14])
           print('TASK6_3_20TURN_WIDGET_SMOKE=PASS')
           print('TASK6_3_FINAL_STATUS='+str(data.get('conversation_status')))
           PY
