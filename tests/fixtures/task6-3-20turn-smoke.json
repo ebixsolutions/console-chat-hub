@@ -1,0 +1,33 @@
+{
+  "contract": "task6.3-production-runtime-closure-v1",
+  "purpose": "Post-deploy customer runtime smoke. Production execution is forbidden until explicit deployment authorization.",
+  "turns": [
+    {"turn":1,"message":"什么是四電一腦？","expected_topic":"四電一腦","expected_behavior":"published_kb_grounded_answer","expected_handoff":false},
+    {"turn":2,"message":"簡單一點解釋給我聽。","expected_topic":"四電一腦","expected_behavior":"contextual_simplification","expected_handoff":false},
+    {"turn":3,"message":"那包括哪些種類？","expected_topic":"四電一腦","expected_behavior":"contextual_categories","expected_handoff":false},
+    {"turn":4,"message":"購買家電時跟我有什麼關係？","expected_topic":"四電一腦","expected_behavior":"contextual_relevance","expected_handoff":false},
+    {"turn":5,"message":"Explain that in English.","expected_topic":"四電一腦","expected_behavior":"language_switch_en","expected_handoff":false},
+    {"turn":6,"message":"用繁體中文簡短一點。","expected_topic":"四電一腦","expected_behavior":"language_switch_zh_tw","expected_handoff":false},
+    {"turn":7,"message":"所有情況都一樣嗎？","expected_topic":"四電一腦","expected_behavior":"contextual_qualification","expected_handoff":false},
+    {"turn":8,"message":"如果我不確定分類呢？","expected_topic":"四電一腦","expected_behavior":"contextual_uncertainty","expected_handoff":false},
+    {"turn":9,"message":"我只知道它是家用電器。","expected_topic":"四電一腦","expected_behavior":"constraint_retention","expected_handoff":false},
+    {"turn":10,"message":"我沒有型號。","expected_topic":"四電一腦","expected_behavior":"constraint_retention","expected_handoff":false},
+    {"turn":11,"message":"那你需要我提供什麼資料？","expected_topic":"四電一腦","expected_behavior":"contextual_next_information","expected_handoff":false},
+    {"turn":12,"message":"Mars 的冷氣機回收費是多少？","expected_topic":"Mars 冷氣機回收","expected_behavior":"no_hallucination_clarify_or_cannot_confirm","expected_handoff":false},
+    {"turn":13,"message":"我是認真的，Mars 那邊規則是什麼？","expected_topic":"Mars 冷氣機回收","expected_behavior":"repeat_unresolved_governed_r2_only_if_prior_clarification_same_intent","expected_handoff":"conditional_r2"},
+    {"turn":14,"message":"算了，不談 Mars，回香港的規則。","expected_topic":"香港冷氣機回收","expected_behavior":"topic_switch_clears_mars","expected_handoff":false},
+    {"turn":15,"message":"我一開始問的是什麼？","expected_topic":"conversation_history","expected_behavior":"recall_first_question","expected_handoff":false},
+    {"turn":16,"message":"你剛才建議我要提供哪些資料？","expected_topic":"conversation_history","expected_behavior":"recall_prior_recommendation","expected_handoff":false},
+    {"turn":17,"message":"ABC-999999 屬於哪一類？","expected_topic":"ABC-999999 分類","expected_behavior":"no_hallucination_clarify_or_cannot_confirm","expected_handoff":false},
+    {"turn":18,"message":"不要猜。","expected_topic":"ABC-999999 分類","expected_behavior":"constraint_no_guess","expected_handoff":false},
+    {"turn":19,"message":"那官方的回收安排是什麼？","expected_topic":"香港回收安排","expected_behavior":"published_kb_grounded_policy_answer","expected_handoff":false},
+    {"turn":20,"message":"我要真人客服。","expected_topic":"human_handoff","expected_behavior":"explicit_r1_handoff","expected_handoff":true,"expected_rule":"R1"}
+  ],
+  "post_turn_assertions": [
+    "After turn 20 the conversation is under human control and generate-reply must suppress AI output.",
+    "Return-to-AI must require its existing governed authorization path; only after explicit return may AI reply again.",
+    "CE freshness must be verified on a canonical tenant/company conversation, not widget_live_test because widget_live_test is excluded from CE dirtying/training.",
+    "Anger, VIP/tier, low CE, predicted CSAT or churn alone must never be asserted as a required handoff.",
+    "Any exact policy/factual answer must be backed by published full-content evidence for the same tenant."
+  ]
+}
