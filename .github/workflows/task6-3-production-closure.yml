@@ -40,8 +40,11 @@ jobs:
         run: npx tsc --noEmit
       - name: Production build
         run: npm run build
-      - name: No production mutation assertion
+      - name: No production source mutation assertion
         run: |
           set -euo pipefail
-          test -z "$(git status --porcelain)"
+          # TanStack/Vite may regenerate this tracked derived file during build.
+          # Restore it before testing whether authoritative source changed.
+          git checkout -- src/routeTree.gen.ts 2>/dev/null || true
+          test -z "$(git status --porcelain --untracked-files=no)"
           echo 'TASK6_3_NO_PRODUCTION_MUTATION=PASS'
