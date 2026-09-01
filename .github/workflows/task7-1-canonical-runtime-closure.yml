@@ -1,0 +1,84 @@
+name: Task 7.1 Canonical Runtime Closure
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/task7-1-canonical-runtime-closure.yml'
+      - 'scripts/task7-1-canonical-runtime-apply.mjs'
+      - 'scripts/task7-1-registry-apply.mjs'
+      - 'tests/task7-1-canonical-runtime.test.mjs'
+permissions:
+  contents: write
+jobs:
+  apply-validate-freeze:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: '22.12.0', cache: npm }
+      - name: Frozen baseline guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          git hash-object package.json > /tmp/t71-package
+          git hash-object package-lock.json > /tmp/t71-lock
+          git hash-object supabase/functions/_shared/escalation-rules.ts > /tmp/t71-escrules
+          git hash-object supabase/functions/_shared/escalation-signals.ts > /tmp/t71-escsignals
+          grep -F 'buildContextualRetrievalQuery' supabase/functions/generate-reply/index.ts
+          grep -F 'selectGroundedDocument' supabase/functions/generate-reply/index.ts
+          grep -F 'selectAgentAssistGrounding' supabase/functions/agent-assist/index.ts
+          grep -F 'buildContextualRetrievalQuery' supabase/functions/kb-search-proxy/index.ts
+          grep -F 'function evidenceRows(result: KBRagResponse)' supabase/functions/_shared/ce-grounding.ts
+          test ! -e supabase/functions/_shared/conversation-runtime-state.ts
+          test ! -e supabase/functions/_shared/canonical-grounding.ts
+      - name: Install
+        run: npm ci
+      - name: Apply Task 7.1 canonical runtime
+        run: |
+          node scripts/task7-1-canonical-runtime-apply.mjs
+          node scripts/task7-1-registry-apply.mjs
+      - name: Canonical state and evidence invariant tests
+        run: node tests/task7-1-canonical-runtime.test.mjs
+      - name: TypeScript compile
+        run: npx tsc --noEmit
+      - name: Production build
+        run: npm run build
+      - name: Cross-caller final gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout -- src/routeTree.gen.ts 2>/dev/null || true
+          git add -N supabase/functions/_shared/conversation-runtime-state.ts supabase/functions/_shared/canonical-grounding.ts
+          git diff --check
+          # Customer-answer/suggestion callers may no longer call legacy selectors/query builders.
+          ! grep -n 'selectGroundedDocument\|selectAgentAssistGrounding(' supabase/functions/generate-reply/index.ts supabase/functions/agent-assist/index.ts
+          ! grep -n 'buildContextualRetrievalQuery\|buildConversationAssistRetrievalQuery' supabase/functions/generate-reply/index.ts supabase/functions/agent-assist/index.ts supabase/functions/kb-search-proxy/index.ts
+          grep -F 'selectCanonicalGrounding' supabase/functions/generate-reply/index.ts supabase/functions/agent-assist/index.ts supabase/functions/_shared/ce-grounding.ts
+          grep -F 'buildCanonicalRetrievalQuery' supabase/functions/generate-reply/index.ts supabase/functions/kb-search-proxy/index.ts
+          grep -F 'buildCanonicalAssistRetrievalQuery' supabase/functions/agent-assist/index.ts
+          ! grep -F 'result.llm_context?.full_content_evidence' supabase/functions/_shared/ce-grounding.ts
+          test "$(git hash-object package.json)" = "$(cat /tmp/t71-package)"
+          test "$(git hash-object package-lock.json)" = "$(cat /tmp/t71-lock)"
+          test "$(git hash-object supabase/functions/_shared/escalation-rules.ts)" = "$(cat /tmp/t71-escrules)"
+          test "$(git hash-object supabase/functions/_shared/escalation-signals.ts)" = "$(cat /tmp/t71-escsignals)"
+          changed="$(git diff --name-only | sort)"
+          expected="$(printf '%s\n' config/ai-chatbot-invariants.json supabase/functions/_shared/canonical-grounding.ts supabase/functions/_shared/ce-grounding.ts supabase/functions/_shared/conversation-runtime-state.ts supabase/functions/agent-assist/index.ts supabase/functions/generate-reply/index.ts supabase/functions/kb-search-proxy/index.ts | sort)"
+          test "$changed" = "$expected"
+          echo TASK7_1_CROSS_CALLER_GATE=PASS
+      - name: Commit validated Task 7.1 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'NexusAI Director Runtime Gate'
+          git config user.email 'actions@users.noreply.github.com'
+          git add config/ai-chatbot-invariants.json \
+            supabase/functions/_shared/canonical-grounding.ts \
+            supabase/functions/_shared/ce-grounding.ts \
+            supabase/functions/_shared/conversation-runtime-state.ts \
+            supabase/functions/agent-assist/index.ts \
+            supabase/functions/generate-reply/index.ts \
+            supabase/functions/kb-search-proxy/index.ts
+          git commit -m 'Close Task 7.1 canonical conversation and grounding contract'
+          git push origin HEAD:main
