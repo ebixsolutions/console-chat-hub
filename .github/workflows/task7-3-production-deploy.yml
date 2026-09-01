@@ -1,0 +1,35 @@
+name: Task 7.3 Authorized Production Function Deploy
+
+on:
+  push:
+    branches: [task7-3-production-acceptance]
+    paths: [.github/workflows/task7-3-production-deploy.yml]
+
+jobs:
+  deploy-authorized-functions:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: c133a1e91ffb5a4716fb56b9d3000d4ffd7dc20b
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Production credential guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SUPABASE_ACCESS_TOKEN:-}" || { echo 'SUPABASE_ACCESS_TOKEN missing'; exit 41; }
+      - name: Deploy generate-reply
+        run: supabase functions deploy generate-reply --project-ref "$PROJECT_REF"
+      - name: Deploy kb-search-proxy
+        run: supabase functions deploy kb-search-proxy --project-ref "$PROJECT_REF"
+      - name: Deployment conclusion
+        run: |
+          echo 'TASK7_3_GENERATE_REPLY_DEPLOY=PASS'
+          echo 'TASK7_3_KB_SEARCH_PROXY_DEPLOY=PASS'
