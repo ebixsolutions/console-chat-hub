@@ -25,7 +25,7 @@ export interface CanonicalRetrievalQuery {
 
 const CUSTOMER = new Set(["visitor", "customer", "user"]);
 const ASSISTANT = new Set(["assistant", "ai", "human_agent"]);
-const CORRECTION = /(我講錯|我说错|我說錯|更正|其實係|其实是|唔係.*係|不是.*是|改返|改成|actually|i meant|correction|not .* but )/i;
+const CORRECTION = /(我講錯|我说错|我說錯|我要更正|我想更正|更正一下[：:]?|更正[：:]|其實係|其实是|唔係.*係|不是.*是|改返|改成|actually[,\s]+i meant|i meant|correction\s*[:：]|not .+ but .+)/i;
 const CONSTRAINT = /(不要|唔好|不准|唔准|不要猜|唔好估|沒有型號|没有型号|冇型號|only|don't|do not|without|must not|no model)/i;
 const FOLLOW = /^(?:咁|那|那麼|那么|所以|另外|仲有|还有|如果|再|又|而|同埋|what about|and what about|then|so|also|in that case|how about)/i;
 const PRONOUN = /(這個|这个|那個|那个|它|其|上述|剛才|刚才|之前|頭先|头先|same|that|this|it|its|earlier|previous)/i;
@@ -130,6 +130,70 @@ export function buildCanonicalContinuityBlock(newestFirst: RuntimeHistoryRow[]):
     state.prior_recommendations.slice(0, 3).forEach((x, i) => lines.push(`${i + 1}. ${x}`));
   }
   return lines.join("\n").slice(0, 6000);
+}
+
+export function resolveConversationMemoryResponse(
+  latestInput: string,
+  newestFirst: RuntimeHistoryRow[],
+): string | null {
+  const latest = clean(latestInput);
+  if (!latest) return null;
+  if (/(請記住|请记住|please\s+remember|remember\s+that)/i.test(latest)) return null;
+
+  // Memory answers are derived from PRIOR turns only. The current
+  // recall request must never become its own correction/constraint/name.
+  let currentRemoved = false;
+  const priorRows = newestFirst.filter((row) => {
+    const role = String(row.role ?? "").toLowerCase();
+    const text = clean(row.content);
+    if (!currentRemoved && CUSTOMER.has(role) && text === latest) {
+      currentRemoved = true;
+      return false;
+    }
+    return true;
+  });
+  const state = projectConversationRuntimeState(priorRows);
+  const lang = detectLanguage(latest);
+  const firstRequest = /(一開始|一开始|第一個問題|第一个问题|最初).*(問|問題|问题)|what\s+(?:did\s+i\s+ask|was\s+(?:my\s+)?first)|first\s+(?:question|thing\s+i\s+asked)/i.test(latest);
+  const correctionRequest = /(之前|先前|剛才|刚才|earlier|previous).*(更正|改正|correct)|更正後|更正后|what\s+did\s+i\s+correct|latest\s+correction/i.test(latest);
+  const constraintRequest = /(限制|約束|约束|不要猜|唔好估|constraint|restriction|what.*(?:told|asked).*(?:not|don.?t))/i.test(latest) && /(記得|记得|總結|总结|告訴|告诉|什麼|什么|what|recall|remember|summari)/i.test(latest);
+  const summaryRequest = /(總結|总结|summari[sz]e).*(記得|记得|更正|限制|constraint|correction|remember)/i.test(latest);
+  const recommendationRequest = /(之前|先前|剛才|刚才|earlier|previous).*(建議|建议|recommend|suggest)|what\s+did\s+you\s+(?:recommend|suggest)/i.test(latest);
+  const nameRequest = /(我叫什麼|我叫什么|我的名字|我個名|我个名|what(?:'s| is)\s+my\s+name|do\s+you\s+remember\s+my\s+name)/i.test(latest);
+  const locationRequest = /(我(?:現在|现在|目前).*(?:哪裡|哪里)|我.*(?:在哪|喺邊)|where\s+am\s+i|my\s+(?:current\s+)?location|更正後.*(?:地點|地点)|更正后.*(?:地點|地点))/i.test(latest);
+  if (!(firstRequest || correctionRequest || constraintRequest || summaryRequest || recommendationRequest || nameRequest || locationRequest)) return null;
+
+  const zh = lang !== "en";
+  const q = lang === "zh-CN" ? { first:"你一开始问的是", correction:"你之前最新的更正是", constraint:"你之前明确提出的限制包括", recommendation:"我之前的相关建议包括", name:"你之前告诉我你的名字是", location:"你之前更正后的地点是", none:"这段对话里没有足够资料可以确认。" } : { first:"你一開始問的是", correction:"你之前最新的更正是", constraint:"你之前明確提出的限制包括", recommendation:"我之前的相關建議包括", name:"你之前告訴我你的名字是", location:"你之前更正後的地點是", none:"這段對話裡沒有足夠資料可以確認。" };
+  const en = { first:"Your first question was", correction:"Your latest correction was", constraint:"The constraints you explicitly gave me include", recommendation:"My relevant earlier recommendations include", name:"You told me your name is", location:"The location from your latest correction is", none:"There is not enough information in this conversation to confirm that." };
+  const t = zh ? q : en;
+  const quote = (v: string) => zh ? `「${v}」` : `“${v}”`;
+  const list = (xs: string[]) => xs.map((x, i) => `${i + 1}. ${x}`).join("\n");
+  if (summaryRequest) {
+    const parts: string[] = [];
+    if (state.latest_corrections.length) parts.push(`${t.correction}：\n${list(state.latest_corrections.slice(0, 3))}`);
+    if (state.active_constraints.length) parts.push(`${t.constraint}：\n${list(state.active_constraints.slice(0, 5))}`);
+    return parts.length ? parts.join("\n\n").slice(0, 1800) : t.none;
+  }
+  if (firstRequest) return state.first_customer_turn ? `${t.first} ${quote(state.first_customer_turn)}` : t.none;
+  if (correctionRequest) return state.latest_corrections[0] ? `${t.correction} ${quote(state.latest_corrections[0])}` : t.none;
+  if (constraintRequest) return state.active_constraints.length ? `${t.constraint}：\n${list(state.active_constraints.slice(0, 5))}` : t.none;
+  if (recommendationRequest) return state.prior_recommendations.length ? `${t.recommendation}：\n${list(state.prior_recommendations.slice(0, 3))}` : t.none;
+  if (nameRequest) {
+    const customerTexts = priorRows.filter((r) => CUSTOMER.has(String(r.role ?? "").toLowerCase())).map((r) => clean(r.content));
+    const named = customerTexts.find((x) => /^我叫\s*[^，。,.!?！？]{1,40}/.test(x));
+    const m = named?.match(/^我叫\s*([^，。,.!?！？]{1,40})/);
+    return m?.[1] ? `${t.name} ${quote(m[1].replace(/(?:請|请)?記住.*$/,'').trim())}` : t.none;
+  }
+  if (locationRequest) {
+    const corrected = state.latest_corrections.map((x) => detectExplicitJurisdiction(x)).find(Boolean) ?? null;
+    const label: Record<string, Record<RuntimeLanguage,string>> = {
+      hong_kong:{"zh-TW":"香港","zh-CN":"香港",en:"Hong Kong"}, macau:{"zh-TW":"澳門","zh-CN":"澳门",en:"Macau"}, singapore:{"zh-TW":"新加坡","zh-CN":"新加坡",en:"Singapore"}, taiwan:{"zh-TW":"台灣","zh-CN":"台湾",en:"Taiwan"}, mainland_china:{"zh-TW":"中國大陸","zh-CN":"中国大陆",en:"Mainland China"}, mars:{"zh-TW":"火星","zh-CN":"火星",en:"Mars"}
+    };
+    const value = corrected ? label[corrected]?.[lang] : undefined;
+    return value ? `${t.location} ${value}` : t.none;
+  }
+  return null;
 }
 
 export function buildCanonicalRetrievalQuery(

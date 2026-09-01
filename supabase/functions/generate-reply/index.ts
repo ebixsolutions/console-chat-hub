@@ -30,7 +30,7 @@ import { assessPolicyEvidenceForR4 } from "../_shared/escalation-policy.ts";
 import { validateP1PredictionSignals, type P1PredictionInput } from "../_shared/escalation-p1.ts";
 import { callModel, resolveGenerationMaxTokens, type LlmFailureCode } from "../_shared/llm-router.ts";
 import { CUSTOMER_CONVERSATION_POLICY, NATURAL_CLARIFICATION, buildCustomerAdvisoryContext, classifyConversationTurn, classifyHandoffIntent, hasUsableFullContentEvidence, isHumanControlState } from "../_shared/conversation-intelligence.ts";
-import { buildCanonicalRetrievalQuery, buildCanonicalContinuityBlock } from "../_shared/conversation-runtime-state.ts";
+import { buildCanonicalRetrievalQuery, buildCanonicalContinuityBlock, resolveConversationMemoryResponse } from "../_shared/conversation-runtime-state.ts";
 import { selectCanonicalGrounding } from "../_shared/canonical-grounding.ts";
 import { buildRealtimeR3SentimentSignals } from "../_shared/runtime-signal-lifecycle.ts";
 import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
@@ -1861,6 +1861,17 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
       supabaseAdmin, conversation_id, source_message_id, _h1LastMsg,
     );
     if (r1Response) return r1Response;
+  }
+
+  const _conversationMemoryReply = resolveConversationMemoryResponse(_h1LastMsg, _pr5HistoryRows ?? []);
+  if (_conversationMemoryReply) {
+    const committed = await commitAiReplyWithControlGate(supabaseAdmin, conversation_id, source_message_id, _conversationMemoryReply, { response_route: "conversation_memory", conversation_grounded: true });
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+    if (!committed.ok) {
+      if (committed.result === "human_control" || committed.result === "resolved" || committed.result === "superseded_source") return new Response(JSON.stringify({ success: true, skipped: committed.result }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ success: false, error: `conversation_memory_commit_${committed.result}` }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+    return new Response(JSON.stringify({ success: true, response_route: "conversation_memory", conversation_grounded: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 
   const _g1SkipKB = _pr5GreetingOrTrivial;
