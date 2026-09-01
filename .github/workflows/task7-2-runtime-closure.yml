@@ -50,6 +50,9 @@ jobs:
       - name: Production build
         run: npm run build
 
+      - name: Restore generated collateral
+        run: git checkout -- src/routeTree.gen.ts
+
       - name: Cross-state final gate
         run: |
           set -euo pipefail
