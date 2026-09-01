@@ -3,7 +3,7 @@
   "invariants": [
     {
       "id": "INV-CONV-RAG-01",
-      "description": "Every conversation-bound RAG caller derives retrieval intent from trusted conversation context; explicit manual search is the only exemption.",
+      "description": "Every conversation-bound customer/agent-assist RAG caller derives retrieval intent from trusted conversation context; explicit manual search is the only exemption.",
       "production_callers": [
         "supabase/functions/generate-reply/index.ts",
         "supabase/functions/agent-assist/index.ts",
@@ -30,6 +30,16 @@
         "supabase/functions/kb-search-proxy/index.ts"
       ],
       "test": "node tests/task6-1-invariant-closure.test.mjs"
+    }
+  ],
+  "task6_1_exemptions": [
+    {
+      "path": "supabase/functions/_shared/ce-grounding.ts",
+      "reason": "Conversation Evaluation grounding is a non-customer-facing evaluator input that intentionally may retrieve separate KB and policy evidence; its full lifecycle is owned by Task 6.2."
+    },
+    {
+      "path": "supabase/functions/generated/task4-1-generate-reply.bundle.ts",
+      "reason": "Frozen generated build artifact, not an authoritative Edge Function entrypoint or independent runtime caller."
     }
   ]
 }
