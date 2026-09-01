@@ -1,6 +1,8 @@
 name: Task 7.2 CE Human Control Runtime Closure
 
 on:
+  push:
+    branches: [task7-2-runtime-closure]
   workflow_dispatch:
 
 permissions:
@@ -74,8 +76,6 @@ jobs:
           grep -q 'current-turn-emotion-v1.0' supabase/functions/_shared/escalation-shadow.ts
           grep -q 'ADVISORY_RULE_DECISION_DOWNGRADED' supabase/functions/_shared/escalation-shadow.ts
 
-          # Production source scope is deliberately narrow. Task artifacts are
-          # allowed but no Task 7.1 factual-runtime file may move.
           unexpected="$(grep -Ev '^(scripts/task7-2-runtime-closure-apply\.mjs|tests/task7-2-runtime-closure\.test\.mjs|\.github/workflows/task7-2-runtime-closure\.yml|supabase/functions/_shared/escalation-shadow\.ts|supabase/migrations/20260901073000_task7_2_ce_human_control_state_closure\.sql)$' /tmp/task72_changed.txt || true)"
           test -z "$unexpected" || { echo "Unexpected Task 7.2 scope:"; echo "$unexpected"; exit 1; }
 
