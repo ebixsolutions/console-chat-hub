@@ -1,0 +1,64 @@
+name: Task 5.2 Console Context Apply
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/task5-2-console-context-apply.yml'
+      - 'scripts/task5-2-console-context-apply.mjs'
+      - 'tests/task5-2-console-context.test.mjs'
+
+permissions:
+  contents: write
+
+jobs:
+  apply-validate-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - name: Baseline guard
+        run: |
+          set -euo pipefail
+          git hash-object package.json > /tmp/task5-2-package-json.sha
+          git hash-object package-lock.json > /tmp/task5-2-package-lock.sha
+          grep -F 'return latest.length >= KB_AUTO_QUERY_MIN_CHARS ? latest : context;' src/components/console/CRMPanel.tsx
+          grep -F 'kbReqIdRef.current !== reqId' src/components/console/CRMPanel.tsx
+          grep -F 'toolReqIdRef.current !== reqId' src/components/console/AgentToolPanel.tsx
+          grep -F 'const stale = () => cancelled || reqIdRef.current !== reqId;' src/lib/customer360/useCustomerContext.ts
+          test ! -e src/lib/console/contextualKbQuery.ts
+      - name: Install
+        run: npm ci
+      - name: Apply exact Task 5.2 repair
+        run: node scripts/task5-2-console-context-apply.mjs
+      - name: Product UX regression tests
+        run: node tests/task5-2-console-context.test.mjs
+      - name: TypeScript compile
+        run: npx tsc --noEmit
+      - name: Production build
+        run: npm run build
+      - name: Scope guard
+        run: |
+          set -euo pipefail
+          git checkout -- src/routeTree.gen.ts 2>/dev/null || true
+          git diff --check
+          changed="$(git diff --name-only | sort)"
+          expected="$(printf '%s\n' 'src/components/console/CRMPanel.tsx' 'src/lib/console/contextualKbQuery.ts' | sort)"
+          test "$changed" = "$expected"
+          test "$(git hash-object package.json)" = "$(cat /tmp/task5-2-package-json.sha)"
+          test "$(git hash-object package-lock.json)" = "$(cat /tmp/task5-2-package-lock.sha)"
+          ! git diff -- package.json package-lock.json | grep -q .
+      - name: Commit validated source repair
+        run: |
+          set -euo pipefail
+          git config user.name 'NexusAI Director Runtime Gate'
+          git config user.email 'actions@users.noreply.github.com'
+          git add src/components/console/CRMPanel.tsx src/lib/console/contextualKbQuery.ts
+          git commit -m 'Fix Task 5.2 contextual Knowledge panel retrieval'
+          git push origin HEAD:main
