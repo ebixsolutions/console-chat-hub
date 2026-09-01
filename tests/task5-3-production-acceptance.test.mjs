@@ -29,6 +29,15 @@ assert.match(router, /LLM_PROVIDER/);
 assert.match(router, /GOOGLE_SERVICE_ACCOUNT_JSON/);
 assert.match(router, /vertex/);
 
+for (const [label, source] of [['agent-assist', backend], ['grounding-helper', helperSource]]) {
+  const compiled = ts.transpileModule(source, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 },
+    reportDiagnostics: true,
+  });
+  const syntacticErrors = (compiled.diagnostics ?? []).filter(d => d.category === ts.DiagnosticCategory.Error);
+  assert.equal(syntacticErrors.length, 0, `${label} has TypeScript syntax errors: ${syntacticErrors.map(d => d.messageText).join('; ')}`);
+}
+
 const transpiled = ts.transpileModule(helperSource, {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 },
 }).outputText;
