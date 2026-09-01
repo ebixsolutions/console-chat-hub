@@ -1,0 +1,53 @@
+name: Task 6.3 Live T1-T3 Smoke
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/task6-3-live-t1-t3-smoke.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      PROD_ORIGIN: https://console-chat-hub.lovable.app
+      CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+    steps:
+      - uses: actions/checkout@v4
+      - name: Known KB plus contextual follow-ups
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a; source .env; set +a
+          python - <<'PY'
+          import json, os, time, urllib.request, urllib.error
+          BASE=os.environ['VITE_SUPABASE_FUNCTIONS_URL'].rstrip('/'); ORIGIN=os.environ['PROD_ORIGIN']; CHANNEL=os.environ['CHANNEL_ID']
+          def post(path, body):
+            req=urllib.request.Request(BASE+'/'+path,data=json.dumps(body,ensure_ascii=False).encode(),headers={'Origin':ORIGIN,'Content-Type':'application/json'},method='POST')
+            with urllib.request.urlopen(req,timeout=45) as r: return json.loads(r.read())
+          c=post('create-visitor-session',{'channel_id':CHANNEL,'visitor_metadata':{'task63_t1_t3':True,'exclude_training':True}})
+          assert c.get('success') is True,c
+          cid=c['data']['conversation_id']; token=c['data']['session_token']; prior=0
+          print('TASK6_3_T1T3_CONVERSATION_ID='+cid)
+          qs=['什么是四電一腦？','簡單一點解釋給我聽。','那包括哪些種類？']
+          answers=[]
+          for i,q in enumerate(qs,1):
+            s=post('receive-widget-message',{'conversation_id':cid,'session_token':token,'content':q}); assert s.get('success') is True,(i,s)
+            deadline=time.time()+45
+            while time.time()<deadline:
+              p=post('widget-poll-messages',{'conversation_id':cid,'session_token':token}); assert p.get('success') is True,p
+              msgs=p['data'].get('messages') or []; assistants=[m for m in msgs if m.get('role')=='assistant']
+              if len(assistants)>prior: break
+              time.sleep(1)
+            assert len(assistants)>prior,(i,'no reply')
+            ans=assistants[-1].get('content',''); answers.append(ans); prior=len(assistants)
+            print(json.dumps({'turn':i,'answer':ans[:1000]},ensure_ascii=False))
+          generic=['補充一點細節','最重要的細節','share a bit more detail','clarify one detail']
+          assert not any(x in answers[0] for x in generic),('T1_GENERIC_CLARIFICATION',answers[0])
+          assert ('四電一腦' in answers[0]) or ('電腦' in answers[0]) or ('电脑' in answers[0]),('T1_NOT_GROUNDED',answers[0])
+          assert not any(x in answers[1] for x in generic),('T2_LOST_CONTEXT',answers[1])
+          assert not any(x in answers[2] for x in generic),('T3_LOST_CONTEXT',answers[2])
+          assert any(x in answers[2] for x in ['電視','雪櫃','洗衣','冷氣','电脑','電腦','television','refrigerator']),('T3_NO_CATEGORIES',answers[2])
+          print('TASK6_3_T1_T3_CONTEXTUAL_RAG=PASS')
+          PY
