@@ -239,6 +239,31 @@ function isPolicySource(sourceType: string): boolean {
 }
 
 function evidenceRows(result: KBRagResponse): Array<Record<string, unknown>> {
+  const documentRows = (result.documents ?? []).flatMap((document) =>
+    (document.llm_context?.full_content_evidence ?? []).map((item) => {
+      const matching = (document.chunks ?? []).find(
+        (c: KBFullChunk) =>
+          c.chunk_type === "full_content" &&
+          c.document_id === item.document_id &&
+          (!item.chunk_id || c.chunk_id === item.chunk_id),
+      );
+      return {
+        chunk_id: item.chunk_id ?? matching?.chunk_id ?? "",
+        document_id: item.document_id || document.document_id,
+        document_title: matching?.title ?? "KB document",
+        citation_label: matching?.title ?? "KB document",
+        source_type: item.source_type || matching?.source_type || "unknown",
+        source_scope: "customer_answer",
+        score: item.score,
+        version: null,
+        last_updated_at: null,
+        freshness_status: "fresh",
+        content: item.content,
+      };
+    })
+  );
+  if (documentRows.length > 0) return documentRows;
+
   const selectedDocumentId =
     result.llm_context?.selected_document_id ??
     result.selected_document_id ??
@@ -266,6 +291,15 @@ function evidenceRows(result: KBRagResponse): Array<Record<string, unknown>> {
       content: item.content,
     };
   });
+}
+
+function resultDocumentIds(result: KBRagResponse): string[] {
+  const multi = (result.documents ?? [])
+    .map((document) => document.document_id)
+    .filter((id): id is string => typeof id === "string" && id.trim().length > 0);
+  if (multi.length > 0) return multi;
+  const legacy = result.llm_context?.selected_document_id ?? result.selected_document_id ?? "";
+  return legacy ? [legacy] : [];
 }
 
 function mergeEvidence(
@@ -389,11 +423,7 @@ export async function fetchGrounding(args: {
   }
 
   let evidence = evidenceRows(primary.result);
-  let selectedDocumentIds = [
-    primary.result.llm_context?.selected_document_id ??
-      primary.result.selected_document_id ??
-      "",
-  ].filter(Boolean);
+  let selectedDocumentIds = resultDocumentIds(primary.result);
 
   let secondaryResult: KBRagResponse | null = null;
   if (
@@ -416,11 +446,7 @@ export async function fetchGrounding(args: {
     }
     secondaryResult = secondary.result;
     evidence = mergeEvidence(evidence, evidenceRows(secondary.result));
-    const secondaryId =
-      secondary.result.llm_context?.selected_document_id ??
-      secondary.result.selected_document_id ??
-      "";
-    if (secondaryId) selectedDocumentIds.push(secondaryId);
+    selectedDocumentIds.push(...resultDocumentIds(secondary.result));
   }
 
   if (evidence.length === 0) return { ok: false, code: "GROUNDING_EMPTY" };
