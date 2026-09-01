@@ -1,0 +1,92 @@
+name: Task 6.3 RAG Contract Repair
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/task6-3-rag-contract-repair.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  repair-deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - name: Apply exact multi-document contract repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('supabase/functions/generate-reply/index.ts')
+          s=p.read_text()
+          old='import { resolveKBEndpoint, resolveTenantScope, fetchKBRag, type KBFullChunk, type KBResolvedScope, type KBPreActivationActor } from "../_shared/kb-client.ts";'
+          new='import { resolveKBEndpoint, resolveTenantScope, fetchKBRag, type KBFullChunk, type KBDocumentCandidate, type KBResolvedScope, type KBPreActivationActor } from "../_shared/kb-client.ts";'
+          assert s.count(old)==1, 'import baseline mismatch'
+          s=s.replace(old,new,1)
+          anchor='''    chunks?: Array<{\n      document_id?: string;\n      doc_id?: string;\n      chunk_id?: string;\n      title?: string;\n      content?: string;\n      score?: number;\n      chunk_type?: string;\n      industry?: string;\n      company_id?: number;\n      language?: string;\n      status?: string;\n      source_type?: string;\n      published_at?: string;\n      updated_at?: string;\n    }>;\n    llm_context?: {'''
+          repl=anchor.replace('    llm_context?: {','    documents?: KBDocumentCandidate[];\n    llm_context?: {')
+          assert s.count(anchor)==1, 'ragResult type baseline mismatch'
+          s=s.replace(anchor,repl,1)
+          ret='''  chunks?: KBFullChunk[];\n  llm_context?: {'''
+          ret_new='''  chunks?: KBFullChunk[];\n  documents?: KBDocumentCandidate[];\n  llm_context?: {'''
+          assert s.count(ret)==1, 'callKBAdapter return type baseline mismatch'
+          s=s.replace(ret,ret_new,1)
+          out='''    retrieval_quality: "high",\n    chunks: result.chunks,\n    ...(result.llm_context ? { llm_context: result.llm_context } : {}),'''
+          out_new='''    retrieval_quality: "high",\n    chunks: result.chunks,\n    documents: result.documents,\n    ...(result.llm_context ? { llm_context: result.llm_context } : {}),'''
+          assert s.count(out)==1, 'callKBAdapter result propagation baseline mismatch'
+          s=s.replace(out,out_new,1)
+          p.write_text(s)
+          PY
+          grep -q 'documents: result.documents' supabase/functions/generate-reply/index.ts
+          grep -q 'documents?: KBDocumentCandidate' supabase/functions/generate-reply/index.ts
+          git diff --check
+          echo TASK6_3_RAG_CONTRACT_REPAIR=PASS
+      - name: Install and production build
+        run: |
+          npm ci
+          npx tsc --noEmit
+          npm run build
+      - name: Freeze repaired source hash in final gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          NEW_HASH="$(git hash-object supabase/functions/generate-reply/index.ts)"
+          python - "$NEW_HASH" <<'PY'
+          from pathlib import Path
+          import sys
+          h=sys.argv[1]
+          p=Path('scripts/task6-3-final-gate.mjs')
+          s=p.read_text()
+          old='0cf21f6f3949974ee227c12cd00e8fcb0274bbe0'
+          assert s.count(old)==1, 'frozen hash baseline mismatch'
+          p.write_text(s.replace(old,h,1))
+          PY
+          node scripts/task6-3-final-gate.mjs
+          echo "TASK6_3_REPAIRED_GENERATE_REPLY_BLOB=$NEW_HASH"
+      - name: Commit authoritative repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'ebixsolutions'
+          git config user.email '64578119+ebixsolutions@users.noreply.github.com'
+          git add supabase/functions/generate-reply/index.ts scripts/task6-3-final-gate.mjs
+          git commit -m 'Fix generate-reply multi-document RAG propagation'
+          git push origin HEAD:main
+      - name: Deploy repaired generate-reply
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SUPABASE_ACCESS_TOKEN:-}"
+          npx --yes supabase@latest functions deploy generate-reply --project-ref "$PROJECT_REF"
+          echo TASK6_3_RAG_REPAIR_DEPLOY=PASS
