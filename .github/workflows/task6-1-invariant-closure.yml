@@ -1,0 +1,94 @@
+name: Task 6.1 Invariant Closure
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/task6-1-invariant-closure.yml'
+      - 'scripts/task6-1-invariant-closure-apply.mjs'
+      - 'tests/task6-1-invariant-closure.test.mjs'
+      - 'config/ai-chatbot-invariants.json'
+
+permissions:
+  contents: write
+
+jobs:
+  apply-validate-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.12.0'
+          cache: npm
+
+      - name: Frozen baseline guard
+        run: |
+          set -euo pipefail
+          git hash-object package.json > /tmp/t61-package-json.sha
+          git hash-object package-lock.json > /tmp/t61-package-lock.sha
+          git hash-object supabase/functions/_shared/llm-router.ts > /tmp/t61-router.sha
+          git hash-object supabase/functions/_shared/agent-assist-grounding.ts > /tmp/t61-agent-grounding.sha
+          grep -F 'buildContextualRetrievalQuery(_h1LastMsg' supabase/functions/generate-reply/index.ts
+          grep -F 'const usableChunks = ragResult.chunks.filter' supabase/functions/generate-reply/index.ts
+          grep -F 'fetchKBRag({query:content.slice(0,500),top_k:3}' supabase/functions/agent-assist/index.ts
+          grep -F 'function buildTrustedRetrievalQuery(' supabase/functions/kb-search-proxy/index.ts
+          grep -F 'query: query.trim().slice(0, 500), top_k: 3, conversation_id: conv?.id' src/components/console/CRMPanel.tsx
+          grep -F 'body: { tool_type: tt, conversation_id: conversationId, content: ac, ...extra }' src/components/console/AgentToolPanel.tsx
+          test ! -e supabase/functions/_shared/kb-grounding.ts
+
+      - name: Install
+        run: npm ci
+
+      - name: Apply exact Task 6.1 invariant repair
+        run: node scripts/task6-1-invariant-closure-apply.mjs
+
+      - name: Cross-caller invariant tests
+        run: node tests/task6-1-invariant-closure.test.mjs
+
+      - name: TypeScript compile
+        run: npx tsc --noEmit
+
+      - name: Production build
+        run: npm run build
+
+      - name: Scope and frozen-source guard
+        run: |
+          set -euo pipefail
+          git checkout -- src/routeTree.gen.ts 2>/dev/null || true
+          git add -N supabase/functions/_shared/kb-grounding.ts
+          git diff --check
+          changed="$(git diff --name-only | sort)"
+          expected="$(printf '%s\n' \
+            'src/components/console/AgentToolPanel.tsx' \
+            'src/components/console/CRMPanel.tsx' \
+            'supabase/functions/_shared/conversation-intelligence.ts' \
+            'supabase/functions/_shared/kb-grounding.ts' \
+            'supabase/functions/agent-assist/index.ts' \
+            'supabase/functions/generate-reply/index.ts' \
+            'supabase/functions/kb-search-proxy/index.ts' | sort)"
+          test "$changed" = "$expected"
+          test "$(git hash-object package.json)" = "$(cat /tmp/t61-package-json.sha)"
+          test "$(git hash-object package-lock.json)" = "$(cat /tmp/t61-package-lock.sha)"
+          test "$(git hash-object supabase/functions/_shared/llm-router.ts)" = "$(cat /tmp/t61-router.sha)"
+          test "$(git hash-object supabase/functions/_shared/agent-assist-grounding.ts)" = "$(cat /tmp/t61-agent-grounding.sha)"
+          ! git diff -- package.json package-lock.json supabase/functions/_shared/llm-router.ts supabase/functions/_shared/agent-assist-grounding.ts | grep -q .
+
+      - name: Commit validated Task 6.1 production source
+        run: |
+          set -euo pipefail
+          git config user.name 'NexusAI Director Runtime Gate'
+          git config user.email 'actions@users.noreply.github.com'
+          git add \
+            src/components/console/AgentToolPanel.tsx \
+            src/components/console/CRMPanel.tsx \
+            supabase/functions/_shared/conversation-intelligence.ts \
+            supabase/functions/_shared/kb-grounding.ts \
+            supabase/functions/agent-assist/index.ts \
+            supabase/functions/generate-reply/index.ts \
+            supabase/functions/kb-search-proxy/index.ts
+          git commit -m 'Close Task 6.1 conversation RAG invariants'
+          git push origin HEAD:main
