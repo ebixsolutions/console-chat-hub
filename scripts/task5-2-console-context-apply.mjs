@@ -11,10 +11,10 @@ if (crm.includes('deriveContextualKbAutoQuery')) throw new Error('CRM already co
 const oldFn = `export const KB_AUTO_QUERY_MIN_CHARS = 6;\n\nexport function deriveAutoSearchQuery(boundedContext: string): string {\n  const context = boundedContext.trim();\n  if (!context) return \"\";\n  const parts = context.split(CONTEXT_SEPARATOR).map((p) => p.trim()).filter(Boolean);\n  const latest = parts.length > 0 ? parts[parts.length - 1] : \"\";\n  return latest.length >= KB_AUTO_QUERY_MIN_CHARS ? latest : context;\n}\n`;
 if (!crm.includes(oldFn)) throw new Error('CRM auto-query baseline marker missing');
 
-const helper = `export const CONSOLE_CONTEXT_SEPARATOR = " / ";
+const helper = String.raw`export const CONSOLE_CONTEXT_SEPARATOR = " / ";
 export const CONSOLE_KB_QUERY_CAP = 500;
 
-const FOLLOW_UP_START = /^(咁|那|那麼|那么|所以|另外|仲有|还有|咁如果|那如果|而|then|so|also|what about|and what about|in that case)\\b?/i;
+const FOLLOW_UP_START = /^(咁|那|那麼|那么|所以|另外|仲有|还有|咁如果|那如果|而|then|so|also|what about|and what about|in that case)/i;
 const REFERENCE = /(這個|这个|那個|那个|它|其|其中|上述|前面|剛才|刚才|之前|頭先|头先|同一個|同一个|same|that|this|these|those|it|its|they|them|earlier|previous|above)/i;
 const TRANSFORM = /(簡單一點|简单一点|簡單啲|简单点|再講一次|再说一次|解釋給我|解释给我|只講|只说|用繁體|用简体|用英文|in english|simpler|briefly|explain that|say that again)/i;
 const ELLIPSIS = /(呢[？?。.!！]*$|呢個[？?。.!！]*$|呢个[？?。.!！]*$|又如何[？?。.!！]*$|怎樣[？?。.!！]*$|怎样[？?。.!！]*$|what about .*?[？?]*$)/i;
@@ -22,7 +22,7 @@ const CORRECTION = /(我講錯|我说错|我說錯|更正|其實係|其实是|�
 const STANDALONE_SIGNAL = /(型號|型号|產品|产品|訂單|订单|退款|退貨|退货|保養|保修|政策|規定|條款|价格|價錢|price|model|product|order|refund|return|warranty|policy)/i;
 
 function clean(value: string): string {
-  return value.replace(/\\s+/g, ' ').trim();
+  return value.replace(/\s+/g, ' ').trim();
 }
 
 function isContextDependent(text: string): boolean {
@@ -30,9 +30,6 @@ function isContextDependent(text: string): boolean {
   if (!t) return false;
   if (CORRECTION.test(t)) return true;
   if (FOLLOW_UP_START.test(t) || REFERENCE.test(t) || TRANSFORM.test(t) || ELLIPSIS.test(t)) return true;
-  // Very short conversational turns commonly omit the subject even when they
-  // contain a question word. Prefer a trusted prior customer anchor rather than
-  // sending the fragment to KB retrieval in isolation.
   if (t.length <= 12 && /[？?呢嗎吗]|^(多久|幾耐|几耐|哪個|哪个|哪些|why|how|when|where)/i.test(t)) return true;
   return false;
 }
@@ -53,20 +50,17 @@ export function deriveContextualKbAutoQuery(boundedContext: string): string {
   const latest = clean(parts.at(-1) ?? '');
   if (!latest) return '';
 
-  // A specific new subject should not inherit an old topic merely because the
-  // conversation has history. Corrections are the exception because they must
-  // preserve the object being corrected while the newest value wins.
   if (!isContextDependent(latest) && (latest.length >= 6 || STANDALONE_SIGNAL.test(latest))) {
     return latest.slice(0, CONSOLE_KB_QUERY_CAP);
   }
 
   const anchor = findAnchor(parts);
   if (!anchor || anchor === latest) return latest.slice(0, CONSOLE_KB_QUERY_CAP);
-  const joined = \\`${anchor} / ${latest}\`;
+  const joined = anchor + ' / ' + latest;
   if (joined.length <= CONSOLE_KB_QUERY_CAP) return joined;
   const latestBudget = Math.min(latest.length, Math.floor(CONSOLE_KB_QUERY_CAP * 0.45));
   const anchorBudget = CONSOLE_KB_QUERY_CAP - latestBudget - 3;
-  return \\`${anchor.slice(0, anchorBudget)} / ${latest.slice(-latestBudget)}\`;
+  return anchor.slice(0, anchorBudget) + ' / ' + latest.slice(-latestBudget);
 }
 `;
 
