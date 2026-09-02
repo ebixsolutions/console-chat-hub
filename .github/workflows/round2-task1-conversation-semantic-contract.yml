@@ -1,0 +1,190 @@
+name: Round2 Task1 Conversation Semantic Contract
+
+on:
+  push:
+    branches:
+      - director/round2-task1-conversation-semantic-contract
+    paths:
+      - .github/workflows/round2-task1-conversation-semantic-contract.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  task1-final-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: director/round2-task1-conversation-semantic-contract
+          fetch-depth: 0
+
+      - name: Apply canonical semantic adapters
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          intel = Path('supabase/functions/_shared/conversation-intelligence.ts')
+          s = intel.read_text()
+          imp = 'import { classifyCanonicalConversationTurn } from "./conversation-semantic-contract.ts";\n\n'
+          if not s.startswith(imp):
+              s = imp + s
+          a = s.index('export function classifyConversationTurn(text: string): TurnClassification {')
+          b = s.index('\nexport function isHumanControlState', a)
+          fn = '''export function classifyConversationTurn(text: string): TurnClassification {
+            const t = text.normalize("NFKC").trim();
+            const handoff = classifyHandoffIntent(t);
+            const semantic = classifyCanonicalConversationTurn(t, [], { explicit_handoff: handoff.explicit_request });
+            switch (semantic.operation) {
+              case "TRIVIAL":
+                return { kind: "trivial", should_clarify_before_kb: false, reason: semantic.reason };
+              case "UNDERSPECIFIED":
+                return { kind: "underspecified", should_clarify_before_kb: true, reason: semantic.reason };
+              case "CORRECTION":
+                return { kind: "correction", should_clarify_before_kb: false, reason: semantic.reason };
+              case "FOLLOW_UP_FACTUAL":
+              case "PRONOUN_OR_ELLIPSIS":
+              case "SIMPLIFY":
+              case "REPHRASE":
+              case "TRANSLATE":
+              case "SUMMARIZE":
+              case "RETURN_TO_PRIOR_TOPIC":
+              case "CONVERSATION_MEMORY":
+                return { kind: "follow_up", should_clarify_before_kb: false, reason: semantic.reason };
+              default:
+                return { kind: "specific", should_clarify_before_kb: false, reason: semantic.reason };
+            }
+          }
+          '''
+          s = s[:a] + fn + s[b:]
+          intel.write_text(s)
+
+          runtime = Path('supabase/functions/_shared/conversation-runtime-state.ts')
+          r = runtime.read_text()
+          rimp = 'import { classifyCanonicalConversationTurn, type ConversationOperation, type EvidenceAuthority } from "./conversation-semantic-contract.ts";\n\n'
+          if not r.startswith(rimp):
+              r = rimp + r
+
+          old = '  current_intent: string | null;\n  current_topic: string | null;'
+          new = '  current_intent: string | null;\n  current_operation: ConversationOperation;\n  evidence_authority: EvidenceAuthority;\n  prior_grounded_document_id: string | null;\n  current_topic: string | null;'
+          if old in r:
+              r = r.replace(old, new, 1)
+
+          a = r.index('export function detectExplicitJurisdiction(text: string): string | null {')
+          b = r.index('\nfunction normalizeTopic', a)
+          jurisdiction = '''export function detectExplicitJurisdiction(text: string): string | null {
+            const t = clean(text);
+            const candidates: Array<{ id: string; index: number }> = [];
+            for (const [id, re] of JURISDICTIONS) {
+              const match = t.match(re);
+              if (!match || typeof match.index !== "number") continue;
+              const before = t.slice(Math.max(0, match.index - 18), match.index);
+              const negated = /(不談|不谈|別談|别谈|不要談|不要谈|唔講|唔好講|forget|ignore|drop|not\\s+(?:talk|discuss|about))/i.test(before);
+              if (!negated) candidates.push({ id, index: match.index });
+            }
+            candidates.sort((x, y) => y.index - x.index);
+            return candidates[0]?.id ?? null;
+          }
+          '''
+          r = r[:a] + jurisdiction + r[b:]
+
+          needle = '  const latest = customers[0]?.text ?? null;\n  const first = chronological[0]?.text ?? null;'
+          repl = needle + '\n  const semantic = latest ? classifyCanonicalConversationTurn(latest, newestFirst) : null;'
+          if needle in r and 'const semantic = latest ? classifyCanonicalConversationTurn' not in r:
+              r = r.replace(needle, repl, 1)
+
+          oldret = '    current_intent: latest,\n    current_topic: currentTopic,'
+          newret = '    current_intent: latest,\n    current_operation: semantic?.operation ?? "TRIVIAL",\n    evidence_authority: semantic?.evidence_authority ?? "NONE",\n    prior_grounded_document_id: semantic?.prior_grounded_answer?.document_id ?? null,\n    current_topic: currentTopic,'
+          if oldret in r:
+              r = r.replace(oldret, newret, 1)
+
+          block = '    `Current customer turn: ${state.latest_customer_turn}`,\n    `Current topic: ${state.current_topic ?? "—"}`,\n    `Jurisdiction: ${state.jurisdiction ?? "unspecified"}`,'
+          block2 = '    `Current customer turn: ${state.latest_customer_turn}`,\n    `Current operation: ${state.current_operation}`,\n    `Evidence authority: ${state.evidence_authority}`,\n    `Prior grounded document: ${state.prior_grounded_document_id ?? "—"}`,\n    `Current topic: ${state.current_topic ?? "—"}`,\n    `Jurisdiction: ${state.jurisdiction ?? "unspecified"}`,'
+          if block in r:
+              r = r.replace(block, block2, 1)
+
+          needle2 = '  const latest = clean(latestInput);\n  const state = projectConversationRuntimeState(newestFirst);\n  if (!latest)'
+          repl2 = '  const latest = clean(latestInput);\n  const state = projectConversationRuntimeState(newestFirst);\n  const semantic = classifyCanonicalConversationTurn(latest, newestFirst);\n  if (!latest)'
+          if needle2 in r:
+              r = r.replace(needle2, repl2, 1)
+
+          r = r.replace('  if (MEMORY.test(latest)) {', '  if (semantic.operation === "CONVERSATION_MEMORY") {', 1)
+          oldneeds = '''  const needsContext =
+    FOLLOW.test(latest) ||
+    PRONOUN.test(latest) ||
+    (latest.length <= 28 && QUESTION.test(latest)) ||
+    isCorrectionText(latest);'''
+          if oldneeds in r:
+              r = r.replace(oldneeds, '  const needsContext = semantic.needs_history;', 1)
+          oldboundary = '  if (!needsContext || explicitJurisdiction) {'
+          newboundary = '''  const explicitBoundary = Boolean(explicitJurisdiction) &&
+    semantic.operation !== "RETURN_TO_PRIOR_TOPIC" &&
+    semantic.operation !== "CORRECTION";
+  if (!needsContext || explicitBoundary) {'''
+          if oldboundary in r:
+              r = r.replace(oldboundary, newboundary, 1)
+          runtime.write_text(r)
+          PY
+
+          git diff --check
+          git diff -- supabase/functions/_shared/conversation-intelligence.ts supabase/functions/_shared/conversation-runtime-state.ts
+
+      - name: Compile affected runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno check --node-modules-dir=auto supabase/functions/_shared/conversation-semantic-contract.ts
+          deno check --node-modules-dir=auto supabase/functions/_shared/conversation-intelligence.ts
+          deno check --node-modules-dir=auto supabase/functions/_shared/conversation-runtime-state.ts
+          deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+          echo TASK1_RUNTIME_COMPILE=PASS
+
+      - name: Run Task 1 semantic regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno test --allow-env --node-modules-dir=auto tests/edge/round2-task1-conversation-semantic-contract.test.ts
+          echo TASK1_SEMANTIC_TESTS=PASS
+
+      - name: Run frozen grounding regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno test --allow-env --node-modules-dir=auto tests/edge/task2-2-output-grounding-router.test.ts
+          deno test --allow-env --node-modules-dir=auto tests/edge/task2-3-citation-lineage.test.ts
+          echo TASK1_FROZEN_GROUNDING_REGRESSION=PASS
+
+      - name: Machine assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'PRIOR_GROUNDED_ANSWER' supabase/functions/_shared/conversation-semantic-contract.ts
+          grep -q 'current_operation: ConversationOperation' supabase/functions/_shared/conversation-runtime-state.ts
+          grep -q 'const semantic = classifyCanonicalConversationTurn' supabase/functions/_shared/conversation-runtime-state.ts
+          grep -q 'classifyCanonicalConversationTurn(t, \[\]' supabase/functions/_shared/conversation-intelligence.ts
+          echo TASK1_MACHINE_ASSERTIONS=PASS
+
+      - name: Full authoritative build
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          echo TASK1_FULL_BUILD=PASS
+
+      - name: Commit validated Task 1 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add supabase/functions/_shared/conversation-intelligence.ts supabase/functions/_shared/conversation-runtime-state.ts
+            git commit -m 'Complete Round 2 Task 1 canonical conversation semantic contract'
+            git push origin HEAD:director/round2-task1-conversation-semantic-contract
+          fi
+          echo TASK1_FINAL_GATE=PASS
