@@ -14,11 +14,11 @@ jobs:
           test "$(git hash-object package.json)" = "7e2063d0268e63ed0a0401eb4fecabffcbbc40a4"
           echo PACKAGE_BASELINE_HASH=PASS
       - name: Check governed router
-        run: deno check supabase/functions/_shared/llm-router.ts
+        run: deno check --node-modules-dir=auto supabase/functions/_shared/llm-router.ts
       - name: Check generate reply
-        run: deno check supabase/functions/generate-reply/index.ts
+        run: deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
       - name: Run Task 2.2 tests
-        run: deno test tests/edge/task2-2-output-grounding-router.test.ts
+        run: deno test --node-modules-dir=auto tests/edge/task2-2-output-grounding-router.test.ts
       - name: Contract assertions
         shell: bash
         run: |
