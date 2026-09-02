@@ -35,7 +35,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(node -p "require('./package.json').version")" = "2.7.1"
+          test "$(git rev-parse 241194177711da584560509b162740dd4d48f074:package.json)" = "7e2063d0268e63ed0a0401eb4fecabffcbbc40a4"
+          test "$(git rev-parse HEAD:package.json)" = "7e2063d0268e63ed0a0401eb4fecabffcbbc40a4"
           git cat-file -e 241194177711da584560509b162740dd4d48f074^{commit}
           git diff --quiet 241194177711da584560509b162740dd4d48f074 -- \
             supabase/functions/generate-reply/index.ts \
