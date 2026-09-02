@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import json, os, subprocess, sys, urllib.error, urllib.request, uuid
+import json, os, subprocess, sys, tempfile, uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,25 +12,43 @@ def out(msg: str): print(msg, flush=True)
 def fail(msg: str): out('FAIL_B31_' + msg); raise SystemExit(1)
 def stop(msg: str): out('STOP_B31_' + msg); raise SystemExit(STOP)
 
+
 def request(path: str, method='GET', body=None, headers=None, timeout=25):
-    data = None if body is None else json.dumps(body).encode()
-    h = {'accept': 'application/json'}
-    if body is not None: h['content-type'] = 'application/json'
-    if headers: h.update(headers)
-    req = urllib.request.Request(BASE + path, data=data, method=method, headers=h)
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            raw = r.read()
-            try: payload = json.loads(raw) if raw else None
-            except Exception: payload = None
-            return r.status, payload
-    except urllib.error.HTTPError as e:
-        raw = e.read()
-        try: payload = json.loads(raw) if raw else None
-        except Exception: payload = None
-        return e.code, payload
-    except Exception as e:
-        fail('NETWORK_' + type(e).__name__.upper())
+    """Use curl for the same network semantics as prior successful production probes.
+
+    Secret headers are passed as subprocess argv and are never logged/printed.
+    Response bodies are written to a private temp file and only parsed in-memory.
+    """
+    with tempfile.TemporaryDirectory(prefix='b31-http-') as td:
+        response_file = Path(td) / 'response.bin'
+        body_file = Path(td) / 'body.json'
+        cmd = [
+            'curl', '-sS', '-L', '--max-time', str(timeout),
+            '-o', str(response_file), '-w', '%{http_code}',
+            '-X', method,
+            '-H', 'accept: application/json',
+        ]
+        if body is not None:
+            body_file.write_text(json.dumps(body, separators=(',', ':')))
+            os.chmod(body_file, 0o600)
+            cmd += ['-H', 'content-type: application/json', '--data-binary', '@' + str(body_file)]
+        for key, value in (headers or {}).items():
+            cmd += ['-H', f'{key}: {value}']
+        cmd.append(BASE + path)
+        p = subprocess.run(cmd, capture_output=True, text=True)
+        if p.returncode != 0:
+            fail(f'NETWORK_CURL_{p.returncode}')
+        try:
+            status = int((p.stdout or '').strip())
+        except Exception:
+            fail('NETWORK_HTTP_STATUS_INVALID')
+        raw = response_file.read_bytes() if response_file.exists() else b''
+        try:
+            payload = json.loads(raw) if raw else None
+        except Exception:
+            payload = None
+        return status, payload
+
 
 def control_headers():
     for name in ('SINGAPORE_SERVICE_ROLE_SECRET','KB_SINGAPORE_SERVICE_ROLE_SECRET','SERVICE_ROLE_SECRET','KB_REVIEW_EXECUTOR_SERVICE_SECRET'):
@@ -42,6 +60,7 @@ def control_headers():
         return {'authorization': 'Bearer ' + value}, 'bearer'
     return None, None
 
+
 def rows(payload):
     if isinstance(payload, list): return payload
     if not isinstance(payload, dict): return []
@@ -49,7 +68,8 @@ def rows(payload):
         if isinstance(payload.get(key), list): return payload[key]
     return []
 
-# Frozen source contract first. Do not rewrite frozen B3 implementation to satisfy runtime drift.
+
+# Single canonical gate owns source contract + production runtime checks.
 subprocess.run([sys.executable, str(ROOT/'tests/b3-1-review-executor-source-contract.py'), str(ROOT)], check=True)
 
 status, spec = request('/openapi.json')
