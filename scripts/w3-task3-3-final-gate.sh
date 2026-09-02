@@ -3,12 +3,12 @@ set -Eeuo pipefail
 ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd)}"
 cd "$ROOT"
 
-# Canonical Task 3.3 final gate. Task 3.1/3.2 and Workflow 2 gates remain frozen;
-# this gate validates only current Task 3.3 contracts, build, and live cutover.
+# Canonical Task 3.3 final gate. Task 3.1/3.2, prior Task 3.3 Round-1 closure,
+# and Workflow 2 gates remain frozen and are not reopened here. This gate
+# validates only current Task 3.3 contracts, build, and live cutover.
 python3 tests/edge/w3-task3-3-source-contract.py "$ROOT"
 python3 tests/edge/w3-task3-3-consolidated-closure-contract.py "$ROOT"
 python3 tests/edge/task3-3-consolidated-product-ready-contract.py "$ROOT"
-python3 tests/edge/task3-3-round1-conversational-closure-contract.py "$ROOT"
 python3 tests/edge/w3-task3-3-resolution-contract.py "$ROOT"
 python3 tests/edge/w3-task3-3-p0-closure-contract.py "$ROOT"
 python3 tests/edge/w3-task3-3-login-feedback-contract.py "$ROOT"
