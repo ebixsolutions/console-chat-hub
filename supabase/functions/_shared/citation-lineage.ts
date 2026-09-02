@@ -9,7 +9,7 @@ export interface PersistedKBCitation {
   chunk_type: "full_content";
 }
 
-export interface KBCitationMetadata {
+export interface KBCitationMetadata extends Record<string, unknown> {
   citations: PersistedKBCitation[];
   citation_lineage: {
     selected_document_id: string;
