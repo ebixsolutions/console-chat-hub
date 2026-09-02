@@ -1,0 +1,48 @@
+{
+  "schema_version": "1.0",
+  "task": "B3.1",
+  "title": "Singapore KB Review Executor Production Activation",
+  "authoritative_backend": {
+    "base_url": "https://py.ebixmall.com/py-knowledge-base",
+    "source_control": "SVN",
+    "review_route": "/api/functions/kbReviewExecute",
+    "control_probe_route": "/api/entities/KBDocument"
+  },
+  "frozen_package": {
+    "name": "nexus-fastapi-review-executor-director-v1.zip.base64.txt",
+    "sha256": "aa1309a7a95cb7688fccd884b34dc0a7b2429d1c94e3933e52e644eee1da4948",
+    "source_status": "PASS_FROZEN"
+  },
+  "required_runtime_contract": [
+    "server_only_caller",
+    "anonymous_denied",
+    "exact_global_document_id_binding",
+    "exact_version_binding",
+    "exact_content_hash_binding",
+    "source_drift_fail_closed",
+    "real_kb_agent_registry",
+    "real_kb_agent_toggle_config",
+    "real_kb_agent_result",
+    "real_kb_review_terminal_state",
+    "industry_agent_required_when_applicable",
+    "conflict_and_version_agents_required",
+    "idempotent_review_reuse",
+    "publish_decision_ready_or_ready_with_review_only",
+    "no_company_or_tenant_from_client",
+    "no_fake_pass_rows",
+    "no_publish_bypass"
+  ],
+  "credential_contract": {
+    "control_plane_only": true,
+    "rag_tenant_api_key_forbidden": true,
+    "preferred": "SINGAPORE_SERVICE_ROLE_SECRET",
+    "aliases": ["KB_SINGAPORE_SERVICE_ROLE_SECRET", "SERVICE_ROLE_SECRET", "SINGAPORE_BACKEND_TOKEN"],
+    "runtime_resolver_fallbacks_must_be_machine_tested": true,
+    "manual_user_secret_handoff_forbidden": true
+  },
+  "final_status": {
+    "READY": "route deployed + anonymous denied + authenticated route smoke + real review provenance/readback PASS",
+    "STOP": "authoritative SVN/deployment or infrastructure credential access unavailable",
+    "FAIL": "route/security/binding/review/idempotency/runtime assertion fails"
+  }
+}
