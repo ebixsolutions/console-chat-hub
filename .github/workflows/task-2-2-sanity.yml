@@ -1,9 +1,9 @@
-name: Task 2.2 Integration Compile Fix
+name: Task 2.2 Complete Compile Fix
 on: [push]
 permissions:
   contents: write
 jobs:
-  fix:
+  fix-and-validate:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
@@ -14,51 +14,114 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
-      - name: Apply same-root compile fixes
+      - name: Apply all proven compile root-cause fixes
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          p = Path('supabase/functions/generate-reply/index.ts')
-          s = p.read_text()
+
+          g = Path('supabase/functions/generate-reply/index.ts')
+          s = g.read_text()
+
           old_import = 'import { createClient } from "https://esm.sh/@supabase/supabase-js@2";'
           new_import = 'import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";'
           if old_import in s:
               s = s.replace(old_import, new_import, 1)
           elif new_import not in s:
               raise SystemExit('STOP: unexpected Supabase import baseline')
-          alias_marker = 'const corsHeaders = {'
+
           alias = 'type SupabaseAdminClient = SupabaseClient<any, "public", any>;\n\n'
           if alias not in s:
-              if alias_marker not in s:
+              marker = 'const corsHeaders = {'
+              if marker not in s:
                   raise SystemExit('STOP: cors marker missing')
-              s = s.replace(alias_marker, alias + alias_marker, 1)
-          count = s.count('ReturnType<typeof createClient>')
-          if count == 0:
-              raise SystemExit('STOP: expected generic ReturnType sites missing')
-          s = s.replace('ReturnType<typeof createClient>', 'SupabaseAdminClient')
+              s = s.replace(marker, alias + marker, 1)
+
+          rt_count = s.count('ReturnType<typeof createClient>')
+          if rt_count:
+              s = s.replace('ReturnType<typeof createClient>', 'SupabaseAdminClient')
+
           old_messages = 'const modelMessages = messages.map((m) => ({ role: m.role === "visitor" ? "user" : "assistant", content: m.content }));'
           new_messages = 'const modelMessages: Array<{ role: "user" | "assistant"; content: string }> = messages.map((m) => ({ role: m.role === "visitor" ? "user" : "assistant", content: String(m.content ?? "") }));'
           msg_count = s.count(old_messages)
-          if msg_count == 0:
-              raise SystemExit('STOP: expected modelMessages widening sites missing')
-          s = s.replace(old_messages, new_messages)
-          p.write_text(s)
-          print(f'SUPABASE_CLIENT_TYPE_SITES_FIXED={count}')
-          print(f'MODEL_MESSAGE_SITES_FIXED={msg_count}')
+          if msg_count:
+              s = s.replace(old_messages, new_messages)
+
+          bool_old = 'exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,'
+          bool_new = 'exact_same_intent_repeated: _pr5History.exact_same_intent_repeated === true,'
+          # Only clarification-option objects require a strict boolean. The compiler
+          # identified exactly three such sites. Preserve optional semantics elsewhere.
+          locations = []
+          start = 0
+          while True:
+              i = s.find(bool_old, start)
+              if i < 0:
+                  break
+              before = s[max(0, i-900):i]
+              if 'attemptFirstNoMatchClarification(' in before:
+                  locations.append(i)
+              start = i + len(bool_old)
+          if len(locations) != 3:
+              raise SystemExit(f'STOP: expected 3 strict-boolean clarification sites, got {len(locations)}')
+          # replace from end so offsets remain stable
+          for i in reversed(locations):
+              s = s[:i] + bool_new + s[i+len(bool_old):]
+
+          g.write_text(s)
+          print(f'GENERATE_RETURN_TYPE_SITES_FIXED={rt_count}')
+          print(f'GENERATE_MODEL_MESSAGE_SITES_FIXED={msg_count}')
+          print(f'GENERATE_BOOLEAN_BOUNDARIES_FIXED={len(locations)}')
+
+          e = Path('supabase/functions/_shared/escalation-live.ts')
+          es = e.read_text()
+          promise_sig = 'Promise<{ data: Record<string, unknown> | null; error: { message?: string } | null }>'
+          promise_like_sig = 'PromiseLike<{ data: Record<string, unknown> | null; error: { message?: string } | null }>'
+          rpc_count = es.count(promise_sig)
+          if rpc_count != 2:
+              raise SystemExit(f'STOP: expected 2 RPC Promise signatures, got {rpc_count}')
+          es = es.replace(promise_sig, promise_like_sig)
+          e.write_text(es)
+          print(f'RPC_THENABLE_SIGNATURES_FIXED={rpc_count}')
           PY
-      - name: Compile router and integration
+
+      - name: Compile complete affected runtime
         run: |
           deno check --node-modules-dir=auto supabase/functions/_shared/llm-router.ts
+          deno check --node-modules-dir=auto supabase/functions/_shared/escalation-live.ts
           deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
-      - name: Run Task 2.2 tests
+
+      - name: Run Task 2.2 grounding tests
         run: deno test --node-modules-dir=auto tests/edge/task2-2-output-grounding-router.test.ts
-      - name: Commit compile fix
+
+      - name: Run existing escalation-live tests when present
+        shell: bash
+        run: |
+          files=$(find tests -type f \( -name '*escalation-live*.test.ts' -o -name '*required*escalation*.test.ts' \) -print)
+          if [ -n "$files" ]; then
+            deno test --node-modules-dir=auto $files
+          else
+            echo ESCALATION_LIVE_TEST_FILES=NONE
+          fi
+
+      - name: Machine assertions
+        shell: bash
+        run: |
+          grep -q 'verifyGroundedGeneration' supabase/functions/_shared/llm-router.ts
+          grep -q 'buildVerifierEvidenceAliases' supabase/functions/_shared/llm-router.ts
+          grep -q 'LLM_OUTPUT_UNGROUNDED' supabase/functions/_shared/llm-router.ts
+          ! grep -q 'fetchKBRag' supabase/functions/_shared/llm-router.ts
+          ! grep -q '/api/v1/rag/context-search' supabase/functions/_shared/llm-router.ts
+          test "$(grep -c 'PromiseLike<{ data: Record<string, unknown> | null; error: { message?: string } | null }>' supabase/functions/_shared/escalation-live.ts)" = "2"
+          test "$(grep -c 'exact_same_intent_repeated: _pr5History.exact_same_intent_repeated === true,' supabase/functions/generate-reply/index.ts)" = "3"
+          ! grep -q 'ReturnType<typeof createClient>' supabase/functions/generate-reply/index.ts
+          echo TASK_2_2_IMPLEMENTATION_ASSERTIONS=PASS
+
+      - name: Commit validated source fixes
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add supabase/functions/generate-reply/index.ts
+          git add supabase/functions/generate-reply/index.ts supabase/functions/_shared/escalation-live.ts
           git diff --cached --quiet && { echo NO_SOURCE_DELTA=PASS; exit 0; }
-          git commit -m "Fix generate-reply Supabase client typing"
+          git commit -m "Complete Task 2.2 output grounding compile fixes"
           git push origin HEAD:director/task-2-2-output-grounding
