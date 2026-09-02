@@ -72,20 +72,21 @@ done
 [[ "$handoff_ok" == "1" ]] || fail "explicit R1 handoff did not persist"
 pass "explicit AI-to-human handoff persistence + poll state"
 
-# Flow B: separate session for the credential-dependent KB + LLM path.
-create_session "task3-3-llm-smoke"
+# Flow B: separate session exercising a known published-KB semantic path.
+# This checks the observed answer, not merely the existence of any assistant turn.
+create_session "task3-3-kb-semantic-smoke"
 session="$SESSION"; conversation="$CONVERSATION"
-normal="$(curl -sS --fail-with-body --max-time 20 -H "apikey: ${PUB}" -H "Origin: ${ORIGIN}" -H 'Content-Type: application/json' --data "{\"conversation_id\":\"${conversation}\",\"session_token\":\"${session}\",\"content\":\"What is your return policy?\",\"client_message_id\":\"$(uuid)\"}" "${FUNCTIONS}/receive-widget-message")"
-node -e 'const x=JSON.parse(process.argv[1]); if(!x.success||!x.data?.message_id)process.exit(1)' "$normal" || fail "normal widget message rejected"
-pass "normal Widget message accepted"
+normal="$(curl -sS --fail-with-body --max-time 20 -H "apikey: ${PUB}" -H "Origin: ${ORIGIN}" -H 'Content-Type: application/json' --data "{\"conversation_id\":\"${conversation}\",\"session_token\":\"${session}\",\"content\":\"什么是四電一腦？\",\"client_message_id\":\"$(uuid)\"}" "${FUNCTIONS}/receive-widget-message")"
+node -e 'const x=JSON.parse(process.argv[1]); if(!x.success||!x.data?.message_id)process.exit(1)' "$normal" || fail "published-KB semantic widget message rejected"
+pass "published-KB semantic Widget message accepted"
 
-llm_ok=0
+kb_ok=0
 for i in $(seq 1 12); do
   sleep 5
   p="$(curl -sS --fail-with-body --max-time 20 -H "apikey: ${PUB}" -H "Origin: ${ORIGIN}" -H 'Content-Type: application/json' --data "{\"conversation_id\":\"${conversation}\",\"session_token\":\"${session}\"}" "${FUNCTIONS}/widget-poll-messages")"
-  if node -e 'const x=JSON.parse(process.argv[1]); const m=x.data?.messages||[]; if(!x.success||!m.some(v=>v.role==="assistant")||x.data?.ai_generating)process.exit(1)' "$p"; then llm_ok=1; break; fi
+  if node -e 'const x=JSON.parse(process.argv[1]); const m=x.data?.messages||[]; const a=[...m].reverse().find(v=>v.role==="assistant"); const c=String(a?.content||""); const semantic=/(空調|冷氣|洗衣|雪櫃|冰箱|電視|電腦|打印機|印表機|掃描器|顯示器)/i.test(c); const generic=/(please add the most important detail|could you tell me what you.d like|clarify one detail)/i.test(c); if(!x.success||!a||x.data?.ai_generating||!semantic||generic)process.exit(1)' "$p"; then kb_ok=1; break; fi
 done
-[[ "$llm_ok" == "1" ]] || fail "credential-dependent KB/LLM reply did not complete"
-pass "Singapore KB + governed LLM runtime response"
+[[ "$kb_ok" == "1" ]] || fail "published-KB semantic answer did not complete"
+pass "published-KB semantic runtime answer"
 
 echo "TASK 3.3 PRODUCTION CUTOVER FINAL GATE: PASS"
