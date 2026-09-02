@@ -1,0 +1,30 @@
+name: Integrated Long Conversation Final Production Smoke
+
+on:
+  push:
+    branches:
+      - director/integrated-production-long-conversation-closure
+    paths:
+      - .github/workflows/integrated-long-conversation-final-production-smoke.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  production-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      PROD_ORIGIN: https://console-chat-hub.lovable.app
+      CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: director/integrated-production-long-conversation-closure
+      - name: Run four-conversation production smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a; source .env; set +a
+          python scripts/integrated_final_production_smoke.py
