@@ -33,7 +33,5 @@ jobs:
       B31_SMOKE_CONTENT_HASH: ${{ vars.B31_SMOKE_CONTENT_HASH }}
     steps:
       - uses: actions/checkout@v4
-      - name: Frozen B3.1 source/caller/security contract
-        run: python3 tests/b3-1-review-executor-source-contract.py .
-      - name: B3.1 production route/auth/review/idempotency/readback final gate
+      - name: B3.1 single canonical source/runtime final gate
         run: python3 scripts/b3-1-review-executor-final-gate.py
