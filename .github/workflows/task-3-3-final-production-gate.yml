@@ -1,0 +1,125 @@
+name: Task 3.3 Final AI Chatbot Production Gate
+
+on:
+  push:
+    branches:
+      - director/task-3-2-agent-console-runtime
+    paths:
+      - .github/workflows/task-3-3-final-production-gate.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  final-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      PROD_ORIGIN: https://console-chat-hub.lovable.app
+      CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: director/task-3-2-agent-console-runtime
+          fetch-depth: 0
+
+      - name: Frozen source assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(node -p "require('./package.json').version")" = "2.7.1"
+          base=cff73a3aa64aac6b075d4c306c77be42b167476b
+          git cat-file -e "$base^{commit}"
+          changed=$(git diff --name-only "$base" HEAD)
+          test "$changed" = ".github/workflows/task-3-3-final-production-gate.yml"
+          for f in \
+            supabase/functions/_shared/widget-runtime-state.ts \
+            supabase/functions/receive-widget-message/index.ts \
+            supabase/functions/widget-poll-messages/index.ts \
+            supabase/functions/agent-send-reply/index.ts \
+            supabase/functions/generate-reply/index.ts \
+            supabase/migrations/20260902142000_task3_1_widget_human_control_ingress.sql \
+            supabase/migrations/20260902170000_task3_2_agent_console_runtime.sql \
+            supabase/migrations/20260902171000_task3_2_conversation_control_grants.sql; do
+            git diff --quiet "$base" HEAD -- "$f"
+          done
+          echo TASK3_3_FROZEN_SOURCE=PASS
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Compile production runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno check --node-modules-dir=auto supabase/functions/receive-widget-message/index.ts
+          deno check --node-modules-dir=auto supabase/functions/widget-poll-messages/index.ts
+          deno check --node-modules-dir=auto supabase/functions/agent-send-reply/index.ts
+          deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+          echo TASK3_3_RUNTIME_COMPILE=PASS
+
+      - name: Full authoritative repo build
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          echo TASK3_3_FULL_BUILD=PASS
+
+      - name: Post-cutover production widget RAG smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a; source .env; set +a
+          python - <<'PY'
+          import json, os, time, urllib.request, urllib.error
+          BASE=os.environ['VITE_SUPABASE_FUNCTIONS_URL'].rstrip('/')
+          ORIGIN=os.environ['PROD_ORIGIN']; CHANNEL=os.environ['CHANNEL_ID']
+          def post(path, body):
+              req=urllib.request.Request(BASE+'/'+path,data=json.dumps(body,ensure_ascii=False).encode(),headers={'Origin':ORIGIN,'Content-Type':'application/json'},method='POST')
+              try:
+                  with urllib.request.urlopen(req,timeout=45) as r: return r.status,json.loads(r.read())
+              except urllib.error.HTTPError as e:
+                  raw=e.read()
+                  try: payload=json.loads(raw)
+                  except: payload={'raw':raw.decode(errors='replace')}
+                  return e.code,payload
+          st,c=post('create-visitor-session',{'channel_id':CHANNEL,'visitor_metadata':{'task33_smoke':True,'exclude_training':True}})
+          assert st==200 and c.get('success') is True,(st,c)
+          d=c['data']; cid=d['conversation_id']; token=d['session_token']
+          print('TASK3_3_CONVERSATION_ID='+cid)
+          st,s=post('receive-widget-message',{'conversation_id':cid,'session_token':token,'content':'什么是四電一腦？'})
+          assert st==200 and s.get('success') is True,(st,s)
+          deadline=time.time()+70; latest=None
+          while time.time()<deadline:
+              st,p=post('widget-poll-messages',{'conversation_id':cid,'session_token':token})
+              assert st==200 and p.get('success') is True,(st,p)
+              msgs=p['data'].get('messages') or []
+              assistants=[m for m in msgs if m.get('role')=='assistant']
+              if assistants:
+                  latest=assistants[-1]
+                  if latest.get('content') and latest.get('content')!='__THINKING__': break
+              time.sleep(1)
+          assert latest is not None, 'no assistant reply'
+          answer=latest.get('content','')
+          meta=latest.get('metadata') or {}
+          citations=meta.get('citations') or []
+          assert ('四電一腦' in answer) or ('電腦' in answer) or ('电脑' in answer), answer
+          assert isinstance(citations,list) and len(citations)>0, meta
+          label=str(citations[0].get('label','')) if isinstance(citations[0],dict) else str(citations[0])
+          assert ('四電一腦' in label) or ('生產者責任' in label), citations
+          hs=p['data'].get('human_support') or {}
+          assert hs.get('state')=='none', hs
+          assert p['data'].get('ai_generating') is False, p['data']
+          print('TASK3_3_POST_CUTOVER_RAG_SMOKE=PASS')
+          print(json.dumps({'answer':answer[:500],'citation_label':label,'conversation_id':cid},ensure_ascii=False))
+          PY
+
+      - name: Final gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo TASK_3_3_FINAL_GATE=PASS
+          echo AI_CHATBOT_PRODUCT_READY=READY
