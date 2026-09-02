@@ -1,3 +1,5 @@
+import { classifyCanonicalConversationTurn, type ConversationOperation, type EvidenceAuthority } from "./conversation-semantic-contract.ts";
+
 export type RuntimeHistoryRow = { role?: string; content?: string | null; created_at?: string | null; metadata?: unknown };
 export type RuntimeLanguage = "zh-TW" | "zh-CN" | "en";
 export interface ConversationRuntimeState {
@@ -5,6 +7,9 @@ export interface ConversationRuntimeState {
   first_intent: string | null;
   latest_customer_turn: string | null;
   current_intent: string | null;
+  current_operation: ConversationOperation;
+  evidence_authority: EvidenceAuthority;
+  prior_grounded_document_id: string | null;
   current_topic: string | null;
   prior_topics: string[];
   active_referents: string[];
@@ -54,10 +59,27 @@ function detectLanguage(text: string): RuntimeLanguage {
   if (!/[\u4e00-\u9fff]/.test(text)) return "en";
   return /[转们为这没请台]/.test(text) ? "zh-CN" : "zh-TW";
 }
-export function detectExplicitJurisdiction(text: string): string | null {
-  for (const [id, re] of JURISDICTIONS) if (re.test(text)) return id;
-  return null;
+function jurisdictionOccurrenceIsNegated(text: string, index: number): boolean {
+  const before = text.slice(Math.max(0, index - 30), index);
+  return /(?:不談|不谈|別談|别谈|不要談|不要谈|唔講|唔好講)\s*$/i.test(before) ||
+    /(?:forget|ignore|drop)(?:\s+about)?\s*$/i.test(before) ||
+    /not\s+(?:talk|discuss)(?:\s+about)?\s*$/i.test(before);
 }
+
+export function detectExplicitJurisdiction(text: string): string | null {
+  const t = clean(text);
+  const candidates: Array<{ id: string; index: number }> = [];
+  for (const [id, re] of JURISDICTIONS) {
+    const match = t.match(re);
+    if (!match || typeof match.index !== "number") continue;
+    if (!jurisdictionOccurrenceIsNegated(t, match.index)) {
+      candidates.push({ id, index: match.index });
+    }
+  }
+  candidates.sort((x, y) => y.index - x.index);
+  return candidates[0]?.id ?? null;
+}
+
 function normalizeTopic(text: string): string {
   return clean(text)
     .replace(/[?？!！。,.，]/g, " ")
@@ -78,6 +100,7 @@ export function projectConversationRuntimeState(newestFirst: RuntimeHistoryRow[]
   const chronological = [...customers].reverse();
   const latest = customers[0]?.text ?? null;
   const first = chronological[0]?.text ?? null;
+  const semantic = latest ? classifyCanonicalConversationTurn(latest, newestFirst) : null;
   const corrections = customers.filter((row) => isCorrectionText(row.text)).slice(0, 6).map((row) => row.text);
   const constraints = customers.filter((row) => CONSTRAINT.test(row.text)).slice(0, 8).map((row) => row.text);
   const unresolved = customers.filter((row) => QUESTION.test(row.text)).slice(0, 8).map((row) => row.text);
@@ -97,6 +120,9 @@ export function projectConversationRuntimeState(newestFirst: RuntimeHistoryRow[]
     first_intent: first ? normalizeTopic(first) : null,
     latest_customer_turn: latest,
     current_intent: latest,
+    current_operation: semantic?.operation ?? "TRIVIAL",
+    evidence_authority: semantic?.evidence_authority ?? "NONE",
+    prior_grounded_document_id: semantic?.prior_grounded_answer?.document_id ?? null,
     current_topic: currentTopic,
     prior_topics: topics.slice(0, -1).slice(-12),
     active_referents: refs,
@@ -116,6 +142,9 @@ export function buildCanonicalContinuityBlock(newestFirst: RuntimeHistoryRow[]):
     "Canonical conversation state (internal; never quote this block):",
     `First customer turn: ${state.first_customer_turn ?? "—"}`,
     `Current customer turn: ${state.latest_customer_turn}`,
+    `Current operation: ${state.current_operation}`,
+    `Evidence authority: ${state.evidence_authority}`,
+    `Prior grounded document: ${state.prior_grounded_document_id ?? "—"}`,
     `Current topic: ${state.current_topic ?? "—"}`,
     `Jurisdiction: ${state.jurisdiction ?? "unspecified"}`,
   ];
@@ -249,9 +278,10 @@ export function buildCanonicalRetrievalQuery(
 ): CanonicalRetrievalQuery {
   const latest = clean(latestInput);
   const state = projectConversationRuntimeState(newestFirst);
+  const semantic = classifyCanonicalConversationTurn(latest, newestFirst);
   if (!latest) return { query: "", mode: "standalone", latest: "", context_turns: [], state };
 
-  if (MEMORY.test(latest)) {
+  if (semantic.operation === "CONVERSATION_MEMORY") {
     const parts = [`Conversation-memory request: ${latest}`];
     if (state.first_customer_turn) parts.push(`First customer turn: ${state.first_customer_turn}`);
     if (state.prior_recommendations.length) {
@@ -265,15 +295,14 @@ export function buildCanonicalRetrievalQuery(
     .filter((row) => CUSTOMER.has(String(row.role ?? "").toLowerCase()))
     .map((row) => clean(row.content))
     .filter((x) => x && x !== latest && x !== "__THINKING__");
-  const needsContext =
-    FOLLOW.test(latest) ||
-    PRONOUN.test(latest) ||
-    (latest.length <= 28 && QUESTION.test(latest)) ||
-    isCorrectionText(latest);
+  const needsContext = semantic.needs_history;
 
   // An explicit jurisdiction is a hard topic boundary. Do not contaminate it
   // with prior-jurisdiction context; applicability is enforced downstream.
-  if (!needsContext || explicitJurisdiction) {
+  const explicitBoundary = Boolean(explicitJurisdiction) &&
+    semantic.operation !== "RETURN_TO_PRIOR_TOPIC" &&
+    semantic.operation !== "CORRECTION";
+  if (!needsContext || explicitBoundary) {
     return {
       query: latest,
       mode: "standalone",

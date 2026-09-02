@@ -1,3 +1,5 @@
+import { classifyCanonicalConversationTurn } from "./conversation-semantic-contract.ts";
+
 export type HandoffIntentKind =
   | "explicit_now"
   | "negated"
@@ -83,13 +85,27 @@ const VAGUE_REFERENCE = /^(之前嗰樣嘢|之前那件事|之前那个|嗰樣�
 
 export function classifyConversationTurn(text: string): TurnClassification {
   const t = text.normalize("NFKC").trim();
-  if (!t || TRIVIAL.test(t)) return { kind: "trivial", should_clarify_before_kb: false, reason: "trivial_or_greeting" };
-  if (CORRECTION.test(t)) return { kind: "correction", should_clarify_before_kb: false, reason: "latest_turn_corrects_prior_context" };
-  if (FOLLOW_UP_ZH.test(t) || FOLLOW_UP_EN.test(t)) return { kind: "follow_up", should_clarify_before_kb: false, reason: "follow_up_requires_history" };
-  if (DOMAIN_ONLY.test(t) || VAGUE_REFERENCE.test(t)) {
-    return { kind: "underspecified", should_clarify_before_kb: true, reason: "semantic_intent_present_but_required_detail_missing" };
+  const handoff = classifyHandoffIntent(t);
+  const semantic = classifyCanonicalConversationTurn(t, [], { explicit_handoff: handoff.explicit_request });
+  switch (semantic.operation) {
+    case "TRIVIAL":
+      return { kind: "trivial", should_clarify_before_kb: false, reason: semantic.reason };
+    case "UNDERSPECIFIED":
+      return { kind: "underspecified", should_clarify_before_kb: true, reason: semantic.reason };
+    case "CORRECTION":
+      return { kind: "correction", should_clarify_before_kb: false, reason: semantic.reason };
+    case "FOLLOW_UP_FACTUAL":
+    case "PRONOUN_OR_ELLIPSIS":
+    case "SIMPLIFY":
+    case "REPHRASE":
+    case "TRANSLATE":
+    case "SUMMARIZE":
+    case "RETURN_TO_PRIOR_TOPIC":
+    case "CONVERSATION_MEMORY":
+      return { kind: "follow_up", should_clarify_before_kb: false, reason: semantic.reason };
+    default:
+      return { kind: "specific", should_clarify_before_kb: false, reason: semantic.reason };
   }
-  return { kind: "specific", should_clarify_before_kb: false, reason: "specific_enough_for_normal_routing" };
 }
 
 export function isHumanControlState(status: string | null | undefined, assignedAgentId: string | null | undefined): boolean {
