@@ -1,4 +1,5 @@
 import {
+  buildVerifierEvidenceAliases,
   extractGroundingBlock,
   parseGroundingVerifierDecision,
   validateExactFactGrounding,
@@ -60,20 +61,20 @@ Deno.test("internal chunk id leakage fails closed", () => {
 
 Deno.test("verifier decision requires grounded shape and allowed chunk ids", () => {
   const accepted = parseGroundingVerifierDecision(
-    JSON.stringify({ grounded: true, unsupported_claims: [], evidence_chunk_ids: ["chunk-1"] }),
-    ["chunk-1"],
+    JSON.stringify({ grounded: true, unsupported_claims: [], evidence_chunk_ids: ["E1"] }),
+    ["E1"],
   );
   assert(accepted?.grounded === true, "valid verifier decision should pass");
 
   const fakeId = parseGroundingVerifierDecision(
     JSON.stringify({ grounded: true, unsupported_claims: [], evidence_chunk_ids: ["fake"] }),
-    ["chunk-1"],
+    ["E1"],
   );
   assert(fakeId === null, "unknown evidence id must fail closed");
 
   const contradictory = parseGroundingVerifierDecision(
-    JSON.stringify({ grounded: true, unsupported_claims: ["unsupported"], evidence_chunk_ids: ["chunk-1"] }),
-    ["chunk-1"],
+    JSON.stringify({ grounded: true, unsupported_claims: ["unsupported"], evidence_chunk_ids: ["E1"] }),
+    ["E1"],
   );
   assert(contradictory === null, "contradictory verifier output must fail closed");
 });
@@ -81,13 +82,28 @@ Deno.test("verifier decision requires grounded shape and allowed chunk ids", () 
 Deno.test("negative verifier decision must name unsupported claim", () => {
   const malformed = parseGroundingVerifierDecision(
     JSON.stringify({ grounded: false, unsupported_claims: [], evidence_chunk_ids: [] }),
-    ["chunk-1"],
+    ["E1"],
   );
   assert(malformed === null, "empty negative decision must fail closed");
 
   const validNegative = parseGroundingVerifierDecision(
     JSON.stringify({ grounded: false, unsupported_claims: ["30-day return period"], evidence_chunk_ids: [] }),
-    ["chunk-1"],
+    ["E1"],
   );
   assert(validNegative?.grounded === false, "well-formed negative decision must parse");
+});
+
+Deno.test("semantic verifier uses safe aliases instead of raw UUID chunk ids", () => {
+  const rawId = "11111111-2222-3333-4444-555555555555";
+  const grounding = extractGroundingBlock([
+    "Knowledge Base grounding rules:",
+    "Full Content Evidence:",
+    `[Full Content Evidence 1] [chunk:${rawId}]`,
+    "Authoritative policy fact.",
+  ].join("\n"));
+  assert(grounding !== null, "grounding block required");
+  const aliased = buildVerifierEvidenceAliases(grounding);
+  assert(!aliased.evidence_text.includes(rawId), "raw UUID must not enter verifier prompt");
+  assert(aliased.evidence_text.includes("[chunk:E1]"), "safe E1 alias required");
+  assert(aliased.allowed_ids.length === 1 && aliased.allowed_ids[0] === "E1", "alias allowlist mismatch");
 });
