@@ -49,15 +49,22 @@ if old in r:
 
 a = r.index('export function detectExplicitJurisdiction(text: string): string | null {')
 b = r.index('\nfunction normalizeTopic', a)
-jurisdiction = '''export function detectExplicitJurisdiction(text: string): string | null {
+jurisdiction = '''function jurisdictionOccurrenceIsNegated(text: string, index: number): boolean {
+  const before = text.slice(Math.max(0, index - 30), index);
+  return /(?:不談|不谈|別談|别谈|不要談|不要谈|唔講|唔好講)\\s*$/i.test(before) ||
+    /(?:forget|ignore|drop)(?:\\s+about)?\\s*$/i.test(before) ||
+    /not\\s+(?:talk|discuss)(?:\\s+about)?\\s*$/i.test(before);
+}
+
+export function detectExplicitJurisdiction(text: string): string | null {
   const t = clean(text);
   const candidates: Array<{ id: string; index: number }> = [];
   for (const [id, re] of JURISDICTIONS) {
     const match = t.match(re);
     if (!match || typeof match.index !== "number") continue;
-    const before = t.slice(Math.max(0, match.index - 18), match.index);
-    const negated = /(不談|不谈|別談|别谈|不要談|不要谈|唔講|唔好講|forget|ignore|drop|not\\s+(?:talk|discuss|about))/i.test(before);
-    if (!negated) candidates.push({ id, index: match.index });
+    if (!jurisdictionOccurrenceIsNegated(t, match.index)) {
+      candidates.push({ id, index: match.index });
+    }
   }
   candidates.sort((x, y) => y.index - x.index);
   return candidates[0]?.id ?? null;
