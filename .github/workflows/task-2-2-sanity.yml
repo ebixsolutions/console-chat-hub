@@ -49,8 +49,6 @@ jobs:
 
           bool_old = 'exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,'
           bool_new = 'exact_same_intent_repeated: _pr5History.exact_same_intent_repeated === true,'
-          # Only clarification-option objects require a strict boolean. The compiler
-          # identified exactly three such sites. Preserve optional semantics elsewhere.
           locations = []
           start = 0
           while True:
@@ -63,7 +61,6 @@ jobs:
               start = i + len(bool_old)
           if len(locations) != 3:
               raise SystemExit(f'STOP: expected 3 strict-boolean clarification sites, got {len(locations)}')
-          # replace from end so offsets remain stable
           for i in reversed(locations):
               s = s[:i] + bool_new + s[i+len(bool_old):]
 
@@ -91,14 +88,14 @@ jobs:
           deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
 
       - name: Run Task 2.2 grounding tests
-        run: deno test --node-modules-dir=auto tests/edge/task2-2-output-grounding-router.test.ts
+        run: deno test --allow-env --node-modules-dir=auto tests/edge/task2-2-output-grounding-router.test.ts
 
       - name: Run existing escalation-live tests when present
         shell: bash
         run: |
           files=$(find tests -type f \( -name '*escalation-live*.test.ts' -o -name '*required*escalation*.test.ts' \) -print)
           if [ -n "$files" ]; then
-            deno test --node-modules-dir=auto $files
+            deno test --allow-env --node-modules-dir=auto $files
           else
             echo ESCALATION_LIVE_TEST_FILES=NONE
           fi
