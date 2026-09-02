@@ -1,0 +1,121 @@
+
+[0m[1mTS2345 [0m[ERROR]: Argument of type 'SupabaseClient<any, "public", "public", any, any>' is not assignable to parameter of type 'SupabaseClient<unknown, { PostgrestVersion: string; }, never, never, { PostgrestVersion: string; }>'.
+  Types of property 'rest' are incompatible.
+    Type 'PostgrestClient<any, any, "public", any>' is not assignable to type 'PostgrestClient<unknown, { PostgrestVersion: string; }, never, never>'.
+      Type '"public"' is not assignable to type 'never'.
+        supabaseAdmin,
+[0m[31m        ~~~~~~~~~~~~~[0m
+    at [0m[36mfile:///home/runner/work/console-chat-hub/console-chat-hub/supabase/functions/generate-reply/index.ts[0m:[0m[33m2141[0m:[0m[33m9[0m
+
+[0m[1mTS2345 [0m[ERROR]: Argument of type 'SupabaseClient<any, "public", "public", any, any>' is not assignable to parameter of type 'SupabaseClient<unknown, { PostgrestVersion: string; }, never, never, { PostgrestVersion: string; }>'.
+  Types of property 'rest' are incompatible.
+    Type 'PostgrestClient<any, any, "public", any>' is not assignable to type 'PostgrestClient<unknown, { PostgrestVersion: string; }, never, never>'.
+      Type '"public"' is not assignable to type 'never'.
+      const requiredResponse = await evaluateAndPersistRequiredRulesLive(supabaseAdmin, {
+[0m[31m                                                                         ~~~~~~~~~~~~~[0m
+    at [0m[36mfile:///home/runner/work/console-chat-hub/console-chat-hub/supabase/functions/generate-reply/index.ts[0m:[0m[33m2151[0m:[0m[33m74[0m
+
+[0m[1mTS2345 [0m[ERROR]: Argument of type 'SupabaseClient<any, "public", "public", any, any>' is not assignable to parameter of type 'SupabaseClient<unknown, { PostgrestVersion: string; }, never, never, { PostgrestVersion: string; }>'.
+  Types of property 'rest' are incompatible.
+    Type 'PostgrestClient<any, any, "public", any>' is not assignable to type 'PostgrestClient<unknown, { PostgrestVersion: string; }, never, never>'.
+      Type '"public"' is not assignable to type 'never'.
+        const r1Response = await persistExplicitR1IfRequested(supabaseAdmin, conversation_id, source_message_id, _h1LastMsg);
+[0m[31m                                                              ~~~~~~~~~~~~~[0m
+    at [0m[36mfile:///home/runner/work/console-chat-hub/console-chat-hub/supabase/functions/generate-reply/index.ts[0m:[0m[33m2173[0m:[0m[33m63[0m
+
+[0m[1mTS2345 [0m[ERROR]: Argument of type 'SupabaseClient<any, "public", "public", any, any>' is not assignable to parameter of type 'SupabaseClient<unknown, { PostgrestVersion: string; }, never, never, { PostgrestVersion: string; }>'.
+  Types of property 'rest' are incompatible.
+    Type 'PostgrestClient<any, any, "public", any>' is not assignable to type 'PostgrestClient<unknown, { PostgrestVersion: string; }, never, never>'.
+      Type '"public"' is not assignable to type 'never'.
+        supabaseAdmin,
+[0m[31m        ~~~~~~~~~~~~~[0m
+    at [0m[36mfile:///home/runner/work/console-chat-hub/console-chat-hub/supabase/functions/generate-reply/index.ts[0m:[0m[33m2177[0m:[0m[33m9[0m
+
+[0m[1mTS2345 [0m[ERROR]: Argument of type 'SupabaseClient<any, "public", "public", any, any>' is not assignable to parameter of type 'SupabaseClient<unknown, { PostgrestVersion: string; }, never, never, { PostgrestVersion: string; }>'.
+  Types of property 'rest' are incompatible.
+    Type 'PostgrestClient<any, any, "public", any>' is not assignable to type 'PostgrestClient<unknown, { PostgrestVersion: string; }, never, never>'.
+      Type '"public"' is not assignable to type 'never'.
+        supabaseAdmin,
+[0m[31m        ~~~~~~~~~~~~~[0m
+    at [0m[36mfile:///home/runner/work/console-chat-hub/console-chat-hub/supabase/functions/generate-reply/index.ts[0m:[0m[33m2194[0m:[0m[33m9[0m
+
+[0m[1mTS2345 [0m[ERROR]: Argument of type 'SupabaseClient<any, "public", "public", any, any>' is not assignable to parameter of type 'SupabaseClient<unknown, { PostgrestVersion: string; }, never, never, { PostgrestVersion: string; }>'.
+  Types of property 'rest' are incompatible.
+    Type 'PostgrestClient<any, any, "public", any>' is not assignable to type 'PostgrestClient<unknown, { PostgrestVersion: string; }, never, never>'.
+      Type '"public"' is not assignable to type 'never'.
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+[0m[31m                          ~~~~~~~~~~~~~[0m
+    at [0m[36mfile:///home/runner/work/console-chat-hub/console-chat-hub/supabase/functions/generate-reply/index.ts[0m:[0m[33m2233[0m:[0m[33m27[0m
+
+[0m[1mTS2345 [0m[ERROR]: Argument of type 'SupabaseClient<any, "public", "public", any, any>' is not assignable to parameter of type 'SupabaseClient<unknown, { PostgrestVersion: string; }, never, never, { PostgrestVersion: string; }>'.
+  Types of property 'rest' are incompatible.
+    Type 'PostgrestClient<any, any, "public", any>' is not assignable to type 'PostgrestClient<unknown, { PostgrestVersion: string; }, never, never>'.
+      Type '"public"' is not assignable to type 'never'.
+  const _pr5RequiredLiveResponse = await evaluateAndPersistRequiredRulesLive(supabaseAdmin, {
+[0m[31m                                                                             ~~~~~~~~~~~~~[0m
+    at [0m[36mfile:///home/runner/work/console-chat-hub/console-chat-hub/supabase/functions/generate-reply/index.ts[0m:[0m[33m2302[0m:[0m[33m78[0m
+
+[0m[1mTS2345 [0m[ERROR]: Argument of type 'SupabaseClient<any, "public", "public", any, any>' is not assignable to parameter of type 'SupabaseClient<unknown, { PostgrestVersion: string; }, never, never, { PostgrestVersion: string; }>'.
+  Types of property 'rest' are incompatible.
+    Type 'PostgrestClient<any, any, "public", any>' is not assignable to type 'PostgrestClient<unknown, { PostgrestVersion: string; }, never, never>'.
+      Type '"public"' is not assignable to type 'never'.
+    const r1Response = await persistExplicitR1IfRequested(supabaseAdmin, conversation_id, source_message_id, _h1LastMsg);
+[0m[31m                                                          ~~~~~~~~~~~~~[0m
+    at [0m[36mfile:///home/runner/work/console-chat-hub/console-chat-hub/supabase/functions/generate-reply/index.ts[0m:[0m[33m2325[0m:[0m[33m59[0m
+
+[0m[1mTS2345 [0m[ERROR]: Argument of type 'SupabaseClient<any, "public", "public", any, any>' is not assignable to parameter of type 'SupabaseClient<unknown, { PostgrestVersion: string; }, never, never, { PostgrestVersion: string; }>'.
+  Types of property 'rest' are incompatible.
+    Type 'PostgrestClient<any, any, "public", any>' is not assignable to type 'PostgrestClient<unknown, { PostgrestVersion: string; }, never, never>'.
+      Type '"public"' is not assignable to type 'never'.
+    at [0m[36mfile:///home/runner/work/console-chat-hub/console-chat-hub/supabase/functions/generate-reply/index.ts[0m:[0m[33m2395[0m:[0m[33m79[0m
+
+[0m[1mTS2345 [0m[ERROR]: Argument of type 'SupabaseClient<any, "public", "public", any, any>' is not assignable to parameter of type 'SupabaseClient<unknown, { PostgrestVersion: string; }, never, never, { PostgrestVersion: string; }>'.
+  Types of property 'rest' are incompatible.
+    Type 'PostgrestClient<any, any, "public", any>' is not assignable to type 'PostgrestClient<unknown, { PostgrestVersion: string; }, never, never>'.
+      Type '"public"' is not assignable to type 'never'.
+    at [0m[36mfile:///home/runner/work/console-chat-hub/console-chat-hub/supabase/functions/generate-reply/index.ts[0m:[0m[33m2398[0m:[0m[33m93[0m
+
+[0m[1mTS2345 [0m[ERROR]: Argument of type '{ role: string; content: any; }[]' is not assignable to parameter of type '{ role: "user" | "assistant"; content: string; }[]'.
+  Type '{ role: string; content: any; }' is not assignable to type '{ role: "user" | "assistant"; content: string; }'.
+    Types of property 'role' are incompatible.
+      Type 'string' is not assignable to type '"user" | "assistant"'.
+    user: buildRouterConversationInput(modelMessages),
+[0m[31m                                       ~~~~~~~~~~~~~[0m
+    at [0m[36mfile:///home/runner/work/console-chat-hub/console-chat-hub/supabase/functions/generate-reply/index.ts[0m:[0m[33m2410[0m:[0m[33m40[0m
+
+[0m[1mTS2345 [0m[ERROR]: Argument of type 'SupabaseClient<any, "public", "public", any, any>' is not assignable to parameter of type 'SupabaseClient<unknown, { PostgrestVersion: string; }, never, never, { PostgrestVersion: string; }>'.
+  Types of property 'rest' are incompatible.
+    Type 'PostgrestClient<any, any, "public", any>' is not assignable to type 'PostgrestClient<unknown, { PostgrestVersion: string; }, never, never>'.
+      Type '"public"' is not assignable to type 'never'.
+        supabaseAdmin,
+[0m[31m        ~~~~~~~~~~~~~[0m
+    at [0m[36mfile:///home/runner/work/console-chat-hub/console-chat-hub/supabase/functions/generate-reply/index.ts[0m:[0m[33m2425[0m:[0m[33m9[0m
+
+[0m[1mTS2345 [0m[ERROR]: Argument of type 'SupabaseClient<any, "public", "public", any, any>' is not assignable to parameter of type 'SupabaseClient<unknown, { PostgrestVersion: string; }, never, never, { PostgrestVersion: string; }>'.
+  Types of property 'rest' are incompatible.
+    Type 'PostgrestClient<any, any, "public", any>' is not assignable to type 'PostgrestClient<unknown, { PostgrestVersion: string; }, never, never>'.
+      Type '"public"' is not assignable to type 'never'.
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+[0m[31m                          ~~~~~~~~~~~~~[0m
+    at [0m[36mfile:///home/runner/work/console-chat-hub/console-chat-hub/supabase/functions/generate-reply/index.ts[0m:[0m[33m2432[0m:[0m[33m27[0m
+
+[0m[1mTS2345 [0m[ERROR]: Argument of type 'SupabaseClient<any, "public", "public", any, any>' is not assignable to parameter of type 'SupabaseClient<unknown, { PostgrestVersion: string; }, never, never, { PostgrestVersion: string; }>'.
+  Types of property 'rest' are incompatible.
+    Type 'PostgrestClient<any, any, "public", any>' is not assignable to type 'PostgrestClient<unknown, { PostgrestVersion: string; }, never, never>'.
+      Type '"public"' is not assignable to type 'never'.
+    supabaseAdmin,
+[0m[31m    ~~~~~~~~~~~~~[0m
+    at [0m[36mfile:///home/runner/work/console-chat-hub/console-chat-hub/supabase/functions/generate-reply/index.ts[0m:[0m[33m2443[0m:[0m[33m5[0m
+
+[0m[1mTS2345 [0m[ERROR]: Argument of type 'SupabaseClient<any, "public", "public", any, any>' is not assignable to parameter of type 'SupabaseClient<unknown, { PostgrestVersion: string; }, never, never, { PostgrestVersion: string; }>'.
+  Types of property 'rest' are incompatible.
+    Type 'PostgrestClient<any, any, "public", any>' is not assignable to type 'PostgrestClient<unknown, { PostgrestVersion: string; }, never, never>'.
+      Type '"public"' is not assignable to type 'never'.
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+[0m[31m                          ~~~~~~~~~~~~~[0m
+    at [0m[36mfile:///home/runner/work/console-chat-hub/console-chat-hub/supabase/functions/generate-reply/index.ts[0m:[0m[33m2450[0m:[0m[33m27[0m
+
+Found 95 errors.
+
+[0m[1m[31merror[0m: Type checking failed.
+EXIT_CODE=1
