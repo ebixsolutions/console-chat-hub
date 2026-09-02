@@ -1,11 +1,15 @@
 name: Task 3.3 Production Cutover Gate
-# Closure run: execute production cutover smoke against current authoritative main.
+# Single canonical Task 3.3 closure gate for current Singapore production target.
 
 on:
   push:
     branches: [main]
     paths:
+      - 'scripts/w3-task3-3-final-gate.sh'
       - 'scripts/task3-3-production-cutover-final-gate.sh'
+      - 'tests/edge/w3-task3-3-source-contract.py'
+      - 'tests/edge/w3-task3-3-consolidated-closure-contract.py'
+      - 'tests/edge/task3-3-consolidated-product-ready-contract.py'
       - '.github/workflows/task3-3-production-cutover.yml'
   workflow_dispatch:
 
@@ -15,7 +19,7 @@ permissions:
 jobs:
   final-gate:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -25,7 +29,5 @@ jobs:
       - run: npm ci
       - name: Production dependency security audit
         run: npm audit --omit=dev --audit-level=high
-      - name: Production build
-        run: npm run build
-      - name: Task 3.3 production cutover final gate
-        run: bash scripts/task3-3-production-cutover-final-gate.sh
+      - name: Task 3.3 canonical source/build/runtime final gate
+        run: W3_T3_3_RUN_PRODUCTION=true bash scripts/w3-task3-3-final-gate.sh
