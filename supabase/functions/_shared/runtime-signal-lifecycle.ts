@@ -9,7 +9,7 @@ export interface RealtimeSentimentSignal extends HistoricalSentimentSignal {
   sentiment_recovered_same_turn?: true;
 }
 
-const STRONG_ANGER = /(嬲|憤怒|愤怒|火大|離譜|离谱|垃圾|廢物|废物|荒謬|荒谬|angry|furious|irate|rage|ridiculous|unacceptable|bullshit)/i;
+const STRONG_ANGER = /(嬲|生氣|生气|好嬲|很氣|很气|憤怒|愤怒|火大|離譜|离谱|垃圾|廢物|废物|荒謬|荒谬|angry|furious|irate|rage|ridiculous|unacceptable|bullshit)/i;
 const NEGATIVE = /(失望|不滿|不满|很差|太差|煩|烦|frustrated|annoyed|upset|disappointed|terrible|awful)/i;
 const POSITIVE_RECOVERY = /(明白了|明白啦|好的現在|好的现在|而家明白|现在明白|謝謝|谢谢|thanks|thank you|got it|that helps|understand now)/i;
 

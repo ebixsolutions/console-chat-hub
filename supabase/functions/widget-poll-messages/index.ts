@@ -64,8 +64,21 @@ Deno.serve(async (req) => {
       return typeof sourceId !== "string" || !completedSourceIds.has(sourceId);
     });
 
-    const humanSupportState = isHumanControlState(conv.status, conv.assigned_agent_id)
-      ? (conv.assigned_agent_id ? "assigned" : "waiting")
+    // Conversation control may change between the initial authorization read and
+    // the message read (for example R1 handoff commits while polling). Refresh
+    // only control fields after messages are loaded so the customer-visible
+    // snapshot cannot contain a handoff acknowledgement with stale `none` state.
+    const { data: freshControl, error: freshControlError } = await supabase.from("conversations")
+      .select("status, assigned_agent_id")
+      .eq("id", conversation_id)
+      .maybeSingle();
+    if (freshControlError) return json({ success: false, error: "conversation_control_refresh_failed" }, 500);
+    if (!freshControl) return json({ success: false, error: "Conversation not found" }, 404);
+
+    const finalStatus = freshControl.status;
+    const finalAssignedAgentId = freshControl.assigned_agent_id;
+    const humanSupportState = isHumanControlState(finalStatus, finalAssignedAgentId)
+      ? (finalAssignedAgentId ? "assigned" : "waiting")
       : "none";
     let queueSnapshot: Record<string, unknown> = {
       state: humanSupportState,
@@ -84,11 +97,11 @@ Deno.serve(async (req) => {
       success: true,
       data: {
         messages: messages ?? [],
-        conversation_status: conv.status,
+        conversation_status: finalStatus,
         ai_generating: humanSupportState === "none" && hasActiveThinkingClaim(unresolvedThinking),
         human_support: {
           state: humanSupportState,
-          agent_assigned: Boolean(conv.assigned_agent_id),
+          agent_assigned: Boolean(finalAssignedAgentId),
           queue_position: queueSnapshot.queue_position ?? null,
           customers_ahead: queueSnapshot.customers_ahead ?? null,
           estimated_wait_minutes: queueSnapshot.estimated_wait_minutes ?? null,

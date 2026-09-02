@@ -1408,16 +1408,25 @@ ${CUSTOMER_CONVERSATION_POLICY}`;
 
 function extractExplicitJurisdictionConstraint(text: string): string | null {
   const t = text.normalize("NFKC").trim();
-  const patterns = [
-    /(?:^|[\s，,。])([A-Z][A-Za-z]{2,30})(?:\s*(?:的|嘅)|\s+).*?(?:規則|规则|政策|回收|費|费|rule|policy|recycling|fee)/i,
-    /(?:^|[\s，,。])([\u4e00-\u9fff]{2,10})(?:的|嘅).*?(?:規則|规则|政策|回收|費|费)/,
+  const jurisdictions: Array<{ label: string; re: RegExp }> = [
+    { label: "Mars", re: /(mars|火星)/ig },
+    { label: "香港", re: /(香港|hong\s*kong|\bhk\b)/ig },
+    { label: "澳門", re: /(澳門|澳门|macau|macao)/ig },
+    { label: "新加坡", re: /(新加坡|singapore)/ig },
+    { label: "台灣", re: /(台灣|台湾|taiwan)/ig },
+    { label: "中國大陸", re: /(中國大陸|中国大陆|內地|内地|mainland\s*china)/ig },
   ];
-  for (const pattern of patterns) {
-    const match = t.match(pattern);
-    const value = match?.[1]?.trim();
-    if (value) return value;
+  const negatedMars = /(不談|不谈|唔講|唔讲|不要談|不要谈|not\s+(?:talking\s+about|about)|forget\s+about)\s*(mars|火星)/i.test(t);
+  let best: { label: string; index: number } | null = null;
+  for (const item of jurisdictions) {
+    item.re.lastIndex = 0;
+    for (const match of t.matchAll(item.re)) {
+      if (item.label === "Mars" && negatedMars) continue;
+      const index = match.index ?? -1;
+      if (!best || index > best.index) best = { label: item.label, index };
+    }
   }
-  return null;
+  return best?.label ?? null;
 }
 
 function evidenceSupportsJurisdiction(

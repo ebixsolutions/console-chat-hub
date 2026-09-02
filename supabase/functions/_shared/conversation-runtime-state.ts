@@ -35,9 +35,9 @@ function isCorrectionText(text: string): boolean {
 const CONSTRAINT = /(不要|唔好|不准|唔准|不要猜|唔好估|沒有型號|没有型号|冇型號|only|don't|do not|without|must not|no model)/i;
 const FOLLOW = /^(?:咁|那|那麼|那么|所以|另外|仲有|还有|如果|再|又|而|同埋|what about|and what about|then|so|also|in that case|how about)/i;
 const PRONOUN = /(這個|这个|那個|那个|它|其|上述|剛才|刚才|之前|頭先|头先|same|that|this|it|its|earlier|previous)/i;
-const MEMORY = /(一開始|一开始|第一個問題|第一个问题|最初|剛才建議|刚才建议|之前建議|之前建议|first question|first thing|what did i ask|what did you suggest|earlier recommendation)/i;
+const MEMORY = /(一開始|一开始|第一個問題|第一个问题|最初|剛才建議|刚才建议|之前建議|之前建议|剛才談過|刚才谈过|談過的內容|谈过的内容|總結我們|总结我们|first question|first thing|what did i ask|what did you suggest|earlier recommendation|what information have i already given|what have i already given|what is still missing|summari[sz]e.*(?:conversation|discussed|talked))/i;
 const QUESTION = /[?？]|^(?:什麼|什么|如何|怎樣|怎样|哪|哪些|多久|幾耐|几耐|why|what|which|how|when|where)/i;
-const RECOMMEND = /(建議|建议|需要我提供|請提供|请提供|可以提供|recommend|suggest|provide)/i;
+const RECOMMEND = /(建議|建议|需要我提供|請提供|请提供|可以提供|我需要知道|需要知道|仍然需要|還需要|还需要|需要以下資料|需要以下资料|recommend|suggest|provide|i need to know|we still need|still need|information.*missing)/i;
 const JURISDICTIONS: Array<[string, RegExp]> = [
   ["mars", /(mars|火星)/i],
   ["hong_kong", /(香港|hong\s*kong|\bhk\b)/i],
@@ -164,10 +164,12 @@ export function resolveConversationMemoryResponse(
   const correctionRequest = /(之前|先前|剛才|刚才|earlier|previous).*(更正|改正|correct)|更正後|更正后|what\s+did\s+i\s+correct|latest\s+correction/i.test(latest);
   const constraintRequest = /(限制|約束|约束|不要猜|唔好估|constraint|restriction|what.*(?:told|asked).*(?:not|don.?t))/i.test(latest) && /(記得|记得|總結|总结|告訴|告诉|什麼|什么|what|recall|remember|summari)/i.test(latest);
   const summaryRequest = /(總結|总结|summari[sz]e).*(記得|记得|更正|限制|constraint|correction|remember)/i.test(latest);
-  const recommendationRequest = /(之前|先前|剛才|刚才|earlier|previous).*(建議|建议|recommend|suggest)|what\s+did\s+you\s+(?:recommend|suggest)/i.test(latest);
+  const recommendationRequest = /(之前|先前|剛才|刚才|earlier|previous).*(建議|建议|要我提供|需要.*資料|需要.*资料|recommend|suggest)|what\s+did\s+you\s+(?:recommend|suggest)|what\s+information.*(?:missing|need)/i.test(latest);
+  const providedMissingRequest = /(我已經提供|我已经提供|我提供過|我提供过|已提供.*哪些|還缺|还缺|仍缺|what\s+information\s+have\s+i\s+already\s+given|what\s+have\s+i\s+already\s+given|what.*still\s+missing)/i.test(latest);
+  const generalSummaryRequest = /(最後|最后|請|请)?\s*(?:用.{0,8})?(?:三點|三点|幾點|几点)?\s*(?:總結|总结).*(?:剛才|刚才|我們|我们|談過|谈过|內容|内容)|summari[sz]e.*(?:conversation|discussed|talked|so far)/i.test(latest);
   const nameRequest = /(我叫什麼|我叫什么|我的名字|我個名|我个名|what(?:'s| is)\s+my\s+name|do\s+you\s+remember\s+my\s+name)/i.test(latest);
   const locationRequest = /(我(?:現在|现在|目前).*(?:哪裡|哪里)|我.*(?:在哪|喺邊)|where\s+am\s+i|my\s+(?:current\s+)?location|更正後.*(?:地點|地点)|更正后.*(?:地點|地点))/i.test(latest);
-  if (!(firstRequest || correctionRequest || constraintRequest || summaryRequest || recommendationRequest || nameRequest || locationRequest)) return null;
+  if (!(firstRequest || correctionRequest || constraintRequest || summaryRequest || recommendationRequest || providedMissingRequest || generalSummaryRequest || nameRequest || locationRequest)) return null;
 
   const zh = lang !== "en";
   const q = lang === "zh-CN" ? { first:"你一开始问的是", correction:"你之前最新的更正是", constraint:"你之前明确提出的限制包括", recommendation:"我之前的相关建议包括", name:"你之前告诉我你的名字是", location:"你之前更正后的地点是", none:"这段对话里没有足够资料可以确认。" } : { first:"你一開始問的是", correction:"你之前最新的更正是", constraint:"你之前明確提出的限制包括", recommendation:"我之前的相關建議包括", name:"你之前告訴我你的名字是", location:"你之前更正後的地點是", none:"這段對話裡沒有足夠資料可以確認。" };
@@ -175,6 +177,45 @@ export function resolveConversationMemoryResponse(
   const t = zh ? q : en;
   const quote = (v: string) => zh ? `「${v}」` : `“${v}”`;
   const list = (xs: string[]) => xs.map((x, i) => `${i + 1}. ${x}`).join("\n");
+  if (providedMissingRequest) {
+    const priorCustomer = priorRows
+      .filter((r) => CUSTOMER.has(String(r.role ?? "").toLowerCase()))
+      .map((r) => clean(r.content))
+      .filter(Boolean)
+      .reverse()
+      .slice(-8);
+    const supplied = priorCustomer.filter((x) => !QUESTION.test(x) && !MEMORY.test(x)).slice(-5);
+    const requested = state.prior_recommendations.slice(0, 4);
+    if (lang === "en") {
+      const parts: string[] = [];
+      if (supplied.length) parts.push(`You have already told me:
+${list(supplied)}`);
+      if (requested.length) parts.push(`The information I previously asked for / that may still be missing:
+${list(requested)}`);
+      return parts.length ? parts.join("\n\n").slice(0, 1800) : en.none;
+    }
+    const parts: string[] = [];
+    if (supplied.length) parts.push(`你已經提供：
+${list(supplied)}`);
+    if (requested.length) parts.push(`我之前要求／仍可能欠缺的資料：
+${list(requested)}`);
+    return parts.length ? parts.join("\n\n").slice(0, 1800) : q.none;
+  }
+  if (generalSummaryRequest) {
+    const chronological = priorRows
+      .filter((r) => CUSTOMER.has(String(r.role ?? "").toLowerCase()))
+      .map((r) => clean(r.content))
+      .filter(Boolean)
+      .reverse();
+    const anchors = [state.first_customer_turn, ...chronological.slice(-6)]
+      .filter((x): x is string => Boolean(x))
+      .filter((x, i, a) => a.indexOf(x) === i)
+      .slice(0, 7);
+    if (!anchors.length) return zh ? q.none : en.none;
+    const heading = lang === "en" ? "Here is a concise summary of what we discussed:" : "我們剛才主要談到：";
+    return `${heading}
+${list(anchors.slice(0, 3))}`.slice(0, 1800);
+  }
   if (summaryRequest) {
     const parts: string[] = [];
     if (state.latest_corrections.length) parts.push(`${t.correction}：\n${list(state.latest_corrections.slice(0, 3))}`);
@@ -242,7 +283,10 @@ export function buildCanonicalRetrievalQuery(
     };
   }
 
-  const contextTurns = previous.filter((x) => !MEMORY.test(x)).slice(0, 5);
+  const contextTurns = previous.filter((x) => !MEMORY.test(x) && !/^(不要猜|唔好估|不要估|do not guess|don.t guess|不要真人|不需要真人)/i.test(x)).slice(0, 5);
+  if (state.first_customer_turn && !contextTurns.includes(state.first_customer_turn) && /(回收|政策|規則|规则|安排|official|policy|recycling)/i.test(latest)) {
+    contextTurns.push(state.first_customer_turn);
+  }
   if (!contextTurns.length) return { query: latest, mode: "standalone", latest, context_turns: [], state };
   return {
     query: [

@@ -239,23 +239,47 @@ async function runEvaluator(
   conversationId: string,
   local: boolean,
 ) {
-  const res = await callModel({
-    purpose: "evaluation",
-    system: local ? LOCAL_EVALUATOR_SYSTEM_PROMPT[dimension] : EVALUATOR_SYSTEM_PROMPT[dimension],
-    user: bundle,
-    maxTokens: EVALUATOR_MAX_TOKENS,
-    operationId: `${operationId}:${dimension}`,
-    companyId,
-    conversationId,
-    tag: `ce:auto:${dimension}`,
-    responseFormat: "json",
-    responseSchema: EVALUATOR_RESPONSE_SCHEMA,
-  });
-  if (!res.ok) return { ok: false as const, code: toCeErrorCode(res.code) };
-  const parsed = parseJsonObject(res.text);
-  const out = validateEvaluatorOutput(parsed, knownChunkIds);
-  if (!out) return { ok: false as const, code: "CE_PROVIDER_INVALID_OUTPUT" };
-  return { ok: true as const, ...out, model: res.model, raw: parsed! };
+  let lastCode = "CE_PROVIDER_INVALID_OUTPUT";
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const res = await callModel({
+      purpose: "evaluation",
+      system: local ? LOCAL_EVALUATOR_SYSTEM_PROMPT[dimension] : EVALUATOR_SYSTEM_PROMPT[dimension],
+      user: bundle,
+      maxTokens: EVALUATOR_MAX_TOKENS,
+      operationId: `${operationId}:${dimension}:attempt${attempt}`,
+      companyId,
+      conversationId,
+      tag: `ce:auto:${dimension}`,
+      responseFormat: "json",
+      responseSchema: EVALUATOR_RESPONSE_SCHEMA,
+    });
+    if (!res.ok) {
+      lastCode = toCeErrorCode(res.code);
+      if (attempt < 2 && (res.code === "LLM_NETWORK" || res.code === "LLM_TIMEOUT" || res.code === "LLM_NON_2XX")) continue;
+      return { ok: false as const, code: lastCode };
+    }
+    const parsed = parseJsonObject(res.text);
+    const out = validateEvaluatorOutput(parsed, knownChunkIds);
+    if (out) return { ok: true as const, ...out, model: res.model, raw: parsed! };
+    lastCode = "CE_PROVIDER_INVALID_OUTPUT";
+  }
+  return { ok: false as const, code: lastCode };
+}
+
+function deterministicEmotionPoints(transcript: TranscriptEntry[]) {
+  const strong = /(嬲|生氣|生气|很氣|很气|憤怒|愤怒|火大|angry|furious|irate|rage|unacceptable)/i;
+  const negative = /(失望|不滿|不满|很差|太差|煩|烦|frustrated|annoyed|upset|disappointed|terrible|awful)/i;
+  const positive = /(謝謝|谢谢|明白了|明白啦|thanks|thank you|got it|that helps)/i;
+  const out: Array<{ message_id: string; turn_index: number; occurred_at: string; sentiment: "very_negative" | "negative" | "positive"; sentiment_score: number; trigger_label: string }> = [];
+  let customerTurn = 0;
+  for (const e of transcript) {
+    if (!e.included || e.role !== "customer") continue;
+    customerTurn++;
+    if (strong.test(e.content)) out.push({ message_id: e.id, turn_index: customerTurn, occurred_at: e.created_at, sentiment: "very_negative", sentiment_score: -0.9, trigger_label: "deterministic_strong_anger" });
+    else if (negative.test(e.content)) out.push({ message_id: e.id, turn_index: customerTurn, occurred_at: e.created_at, sentiment: "negative", sentiment_score: -0.55, trigger_label: "deterministic_negative" });
+    else if (positive.test(e.content)) out.push({ message_id: e.id, turn_index: customerTurn, occurred_at: e.created_at, sentiment: "positive", sentiment_score: 0.4, trigger_label: "deterministic_positive" });
+  }
+  return out;
 }
 
 async function runSignals(
@@ -504,9 +528,16 @@ export async function processEvaluationJob(
       };
     });
 
-    const signals = await runSignals(
+    const modelSignals = await runSignals(
       bundle.text, bundle.transcript, operationId, companyId, job.conversation_id,
     );
+    const deterministicEmotion = deterministicEmotionPoints(bundle.transcript);
+    const modelEmotion = modelSignals?.emotion ?? [];
+    const seenEmotionMessageIds = new Set(modelEmotion.map((x) => x.message_id));
+    const signals = {
+      emotion: [...modelEmotion, ...deterministicEmotion.filter((x) => !seenEmotionMessageIds.has(x.message_id))].slice(0, 40),
+      next_steps: modelSignals?.next_steps ?? [],
+    };
     const aiText = bundle.evaluated_ai_reply
       ? bundle.transcript.find((e) => e.id === bundle.evaluated_ai_reply!.id)?.content ?? ""
       : "";

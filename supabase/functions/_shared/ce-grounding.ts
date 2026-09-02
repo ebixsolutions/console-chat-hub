@@ -242,9 +242,10 @@ function isPolicySource(sourceType: string): boolean {
 function evidenceRows(result: KBRagResponse, requestText: string, policyOnly = false): Array<Record<string, unknown>> {
   const selected = selectCanonicalGrounding(result.documents ?? [], { requestText, policyOnly, requirePublished: true });
   if (!selected.ok || !selected.document) return [];
+  const selectedDocument = selected.document;
   return selected.evidence.map((item) => {
     const matching = selected.chunks.find((c: KBFullChunk) => c.chunk_type === "full_content" && c.document_id === item.document_id && (!item.chunk_id || c.chunk_id === item.chunk_id));
-    return { chunk_id:item.chunk_id ?? matching?.chunk_id ?? "", document_id:selected.document.document_id, document_title:matching?.title ?? selected.document.title ?? "KB document", citation_label:matching?.title ?? selected.document.title ?? "KB document", source_type:item.source_type || matching?.source_type || "unknown", source_scope:policyOnly ? "policy" : "customer_answer", score:item.score, version:null, last_updated_at:null, freshness_status:"fresh", content:item.content };
+    return { chunk_id:item.chunk_id ?? matching?.chunk_id ?? "", document_id:selectedDocument.document_id, document_title:matching?.title ?? selectedDocument.title ?? "KB document", citation_label:matching?.title ?? selectedDocument.title ?? "KB document", source_type:item.source_type || matching?.source_type || "unknown", source_scope:policyOnly ? "policy" : "customer_answer", score:item.score, version:null, last_updated_at:null, freshness_status:"fresh", content:item.content };
   });
 }
 
