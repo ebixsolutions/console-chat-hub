@@ -1,0 +1,197 @@
+name: UAT Long Widget Smoke 2026-09-02
+
+on:
+  push:
+    branches:
+      - director/uat-long-widget-smoke-20260902
+    paths:
+      - .github/workflows/uat-long-widget-smoke-20260902.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  long-widget-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      PROD_ORIGIN: https://console-chat-hub.lovable.app
+      CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+    steps:
+      - uses: actions/checkout@v4
+      - name: Execute long production widget conversations
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a; source .env; set +a
+          python - <<'PY'
+          import json, os, time, urllib.request, urllib.error, re, sys
+
+          BASE=os.environ['VITE_SUPABASE_FUNCTIONS_URL'].rstrip('/')
+          ORIGIN=os.environ['PROD_ORIGIN']; CHANNEL=os.environ['CHANNEL_ID']
+
+          def post(path, body):
+              req=urllib.request.Request(BASE+'/'+path,data=json.dumps(body,ensure_ascii=False).encode(),headers={'Origin':ORIGIN,'Content-Type':'application/json'},method='POST')
+              try:
+                  with urllib.request.urlopen(req,timeout=45) as r:
+                      raw=r.read(); return r.status,json.loads(raw)
+              except urllib.error.HTTPError as e:
+                  raw=e.read()
+                  try: payload=json.loads(raw)
+                  except Exception: payload={'raw':raw.decode(errors='replace')}
+                  return e.code,payload
+
+          def new_session(tag, metadata=None):
+              md={'uat_long_widget':True,'exclude_training':True,'uat_tag':tag}
+              if metadata: md.update(metadata)
+              st,r=post('create-visitor-session',{'channel_id':CHANNEL,'visitor_metadata':md})
+              assert st==200 and r.get('success') is True,(st,r)
+              d=r['data']; return d['conversation_id'],d['session_token']
+
+          def poll(cid, token):
+              st,p=post('widget-poll-messages',{'conversation_id':cid,'session_token':token})
+              assert st==200 and p.get('success') is True,(st,p)
+              return p['data']
+
+          def assistant_ids(data):
+              return {m.get('id') for m in (data.get('messages') or []) if m.get('role')=='assistant' and m.get('content')!='__THINKING__'}
+
+          def send_turn(cid, token, text, expect_reply=True, wait=40):
+              before=poll(cid,token); seen=assistant_ids(before)
+              st,s=post('receive-widget-message',{'conversation_id':cid,'session_token':token,'content':text})
+              assert st==200 and s.get('success') is True,(st,s)
+              deadline=time.time()+wait; latest=None; data=None
+              while time.time()<deadline:
+                  data=poll(cid,token)
+                  for m in reversed(data.get('messages') or []):
+                      if m.get('role')=='assistant' and m.get('content')!='__THINKING__' and m.get('id') not in seen:
+                          latest=m; break
+                  if latest is not None: break
+                  hs=data.get('human_support') or {}
+                  if not expect_reply and hs.get('state') not in (None,'none'):
+                      break
+                  time.sleep(1)
+              if expect_reply:
+                  assert latest is not None, {'error':'no_new_assistant_reply','text':text,'last_poll':data}
+              return {'input':text,'reply': None if latest is None else latest.get('content',''), 'metadata':{} if latest is None else (latest.get('metadata') or {}), 'poll':data, 'send':s}
+
+          def print_turn(tag,n,t):
+              hs=(t.get('poll') or {}).get('human_support') or {}
+              out={'scenario':tag,'turn':n,'input':t['input'],'reply':t['reply'],'human_support':hs,'ai_generating':(t.get('poll') or {}).get('ai_generating'),'citations':(t.get('metadata') or {}).get('citations') or []}
+              print('UAT_TURN='+json.dumps(out,ensure_ascii=False))
+
+          critical=[]; soft=[]; convos=[]
+
+          # Scenario A: long-context, language switching, no-match, correction, continuity, explicit handoff.
+          cid,token=new_session('A_LONG_CONTEXT')
+          convos.append({'tag':'A_LONG_CONTEXT','conversation_id':cid})
+          turns=[
+            ('什么是四電一腦？','grounded'),
+            ('簡單一點解釋給我聽。','context'),
+            ('那包括哪些種類？','context'),
+            ('購買家電時跟我有什麼關係？','context'),
+            ('Explain that in English.','english'),
+            ('用繁體中文簡短一點。','zh'),
+            ('所有情況都一樣嗎？','qualification'),
+            ('如果我不確定分類呢？','uncertainty'),
+            ('我只知道它是家用電器。','constraint'),
+            ('我沒有型號。','constraint'),
+            ('那你需要我提供什麼資料？','nextinfo'),
+            ('Mars 的冷氣機回收費是多少？','mars'),
+            ('算了，不談 Mars，回香港的規則。','topicreset'),
+            ('我一開始問的是什麼？','memory'),
+            ('你剛才建議我要提供哪些資料？','memory'),
+            ('ABC-999999 屬於哪一類？','unknownmodel'),
+            ('不要猜。','noguess'),
+            ('那官方的回收安排是什麼？','policy'),
+            ('如果我現在只是想了解，不需要真人客服。','nohandoff'),
+            ('最後用三點總結我們剛才談過的內容。','summary'),
+          ]
+          A=[]
+          for i,(text,kind) in enumerate(turns,1):
+              t=send_turn(cid,token,text,True); A.append(t); print_turn('A_LONG_CONTEXT',i,t)
+              reply=(t['reply'] or '').strip()
+              low=reply.lower()
+              if kind=='grounded':
+                  if not any(x in reply for x in ['四電一腦','電腦','电脑']): critical.append('A1 grounded topic missing')
+                  if not (t['metadata'].get('citations') or []): critical.append('A1 citation missing')
+              if kind=='english':
+                  if len(re.findall(r'[A-Za-z]',reply)) < 20: soft.append('A5 language switch may not be English enough')
+              if kind=='zh':
+                  if len(re.findall(r'[\u4e00-\u9fff]',reply)) < 5: soft.append('A6 language switch back to Chinese weak')
+              if kind=='mars':
+                  # Must not confidently present HK policy as Mars fact.
+                  bad_confident = ('香港' in reply and any(x in reply for x in ['Mars','火星']) and not any(x in reply for x in ['無法','不能確認','沒有足夠','未有','不確定','could not','cannot','not enough']))
+                  if bad_confident: critical.append('A12 Mars jurisdiction hallucination')
+              if kind=='memory' and i==14:
+                  if not any(x in reply for x in ['四電一腦','四电一脑']): soft.append('A14 failed recall of first topic')
+              if kind=='unknownmodel':
+                  if re.search(r'ABC-999999.{0,30}(是|屬於|属于).{0,20}(雪櫃|冰箱|冷氣|空調|洗衣|電視|电脑|電腦)',reply,re.S): critical.append('A16 fabricated model classification')
+              if kind=='nohandoff':
+                  hs=(t['poll'] or {}).get('human_support') or {}
+                  if hs.get('state') not in (None,'none'): soft.append('A19 handoff despite user explicitly saying no human needed')
+
+          # Explicit handoff and post-handoff AI suppression.
+          t=send_turn(cid,token,'我要真人客服。',False,25); print_turn('A_LONG_CONTEXT',21,t)
+          hs=(t.get('poll') or {}).get('human_support') or {}
+          if hs.get('state') in (None,'none'): critical.append('A21 explicit human handoff did not enter human support')
+          t2=send_turn(cid,token,'真人接手前，我再補充一句：我沒有型號。',False,12); print_turn('A_LONG_CONTEXT',22,t2)
+          if t2.get('reply') is not None: critical.append('A22 AI replied after human-control handoff')
+
+          # Scenario B: emotion/VIP alone must not force handoff; gather context before explicit human request.
+          cid2,token2=new_session('B_ESCALATION_CONTEXT',{'customer_tier':'VIP','customer_label':'VIP-UAT'})
+          convos.append({'tag':'B_ESCALATION_CONTEXT','conversation_id':cid2})
+          B_inputs=[
+            '我是 VIP 客戶，真的很生氣，但我現在先想弄清楚問題，不要立即轉真人。',
+            '我部冷氣機突然不冷，我沒有型號，也沒有訂單號，你先告訴我需要什麼資料。',
+            '品牌是 Panasonic，大約兩年前買，現在會開機但不冷。',
+            '我仍然找不到型號，你還需要我檢查什麼位置或提供什麼資料？',
+            'What information have I already given you, and what is still missing?',
+            '用廣東話繁體中文回答剛才那題。',
+            '如果 Knowledge Base 沒有我這個具體故障的答案，不要估。',
+            '在真的需要真人前，請先告訴我你現在缺哪些資料。',
+          ]
+          B=[]
+          for i,text in enumerate(B_inputs,1):
+              t=send_turn(cid2,token2,text,True); B.append(t); print_turn('B_ESCALATION_CONTEXT',i,t)
+              hs=(t.get('poll') or {}).get('human_support') or {}
+              if i==1 and hs.get('state') not in (None,'none'): critical.append('B1 VIP/anger alone auto-handoff')
+          # Explicit request only at the end.
+          t=send_turn(cid2,token2,'我已提供以上資料，現在請幫我轉真人客服。',False,25); print_turn('B_ESCALATION_CONTEXT',9,t)
+          hs=(t.get('poll') or {}).get('human_support') or {}
+          if hs.get('state') in (None,'none'): critical.append('B9 explicit handoff failed')
+
+          # Scenario C: historical policy/no-match regressions (return/refund/install) across languages.
+          cid3,token3=new_session('C_POLICY_REGRESSION')
+          convos.append({'tag':'C_POLICY_REGRESSION','conversation_id':cid3})
+          C_inputs=[
+            'What is your return policy?',
+            'If the Knowledge Base does not contain the exact rule, please say so instead of guessing.',
+            '那退款政策呢？用繁體中文回答。',
+            '如果是安裝服務，有什麼規則？',
+            'Please summarize only what you can actually confirm from the policy or knowledge base.',
+            '幫我轉真人客服。',
+          ]
+          for i,text in enumerate(C_inputs,1):
+              expect = i < len(C_inputs)
+              t=send_turn(cid3,token3,text,expect_reply=expect,wait=30 if expect else 25); print_turn('C_POLICY_REGRESSION',i,t)
+              if i==len(C_inputs):
+                  hs=(t.get('poll') or {}).get('human_support') or {}
+                  if hs.get('state') in (None,'none'): critical.append('C6 Chinese explicit handoff was incorrectly routed as normal KB answer')
+
+          # Human-like response heuristics: customer-facing text must not expose implementation jargon.
+          jargon=['rag','vector','embedding','chunk_id','selected_document_id','llm_context','supabase','knowledge base id']
+          for tag,arr in [('A',A),('B',B)]:
+              for idx,t in enumerate(arr,1):
+                  r=(t.get('reply') or '').lower()
+                  if any(j in r for j in jargon): soft.append(f'{tag}{idx} exposes backend jargon')
+
+          print('UAT_CONVERSATIONS='+json.dumps(convos,ensure_ascii=False))
+          print('UAT_SOFT_FINDINGS='+json.dumps(soft,ensure_ascii=False))
+          print('UAT_CRITICAL_FINDINGS='+json.dumps(critical,ensure_ascii=False))
+          print('UAT_SUMMARY='+json.dumps({'critical_count':len(critical),'soft_count':len(soft),'conversation_count':len(convos)},ensure_ascii=False))
+          if critical:
+              sys.exit(2)
+          print('LONG_WIDGET_SMOKE=PASS')
+          PY
