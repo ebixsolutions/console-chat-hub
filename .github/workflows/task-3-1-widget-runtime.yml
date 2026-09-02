@@ -86,6 +86,7 @@ jobs:
           grep -q "'human_needed','human_control','escalation_risk'" supabase/migrations/20260902142000_task3_1_widget_human_control_ingress.sql
           grep -q 'revoke all on function public.receive_widget_message_tx' supabase/migrations/20260902142000_task3_1_widget_human_control_ingress.sql
           grep -q 'grant execute on function public.receive_widget_message_tx' supabase/migrations/20260902142000_task3_1_widget_human_control_ingress.sql
+          grep -q 'declare const EdgeRuntime' supabase/functions/receive-widget-message/index.ts
           if git diff --name-only 241194177711da584560509b162740dd4d48f074 HEAD | xargs grep -n 'hvmtoqiwdqvgnjepxwrc'; then
             echo 'STOP: legacy Supabase ref in Task 3.1 delta'
             exit 1
@@ -93,6 +94,7 @@ jobs:
           cat > /tmp/expected.txt <<'EOF'
           .github/workflows/task-3-1-widget-runtime.yml
           supabase/functions/_shared/widget-runtime-state.ts
+          supabase/functions/receive-widget-message/index.ts
           supabase/functions/widget-poll-messages/index.ts
           supabase/migrations/20260902142000_task3_1_widget_human_control_ingress.sql
           tests/edge/task3-1-widget-runtime-state.test.ts
