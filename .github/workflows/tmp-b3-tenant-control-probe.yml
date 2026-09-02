@@ -1,0 +1,72 @@
+name: tmp-b3-tenant-control-probe
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/tmp-b3-tenant-control-probe.yml']
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+      PROBE_TOKEN: jxl1d0vQSf98G016_X2CS5Rrjhihhgus
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build ephemeral runtime probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p supabase/functions/tmp-b3-tenant-control-probe
+          cat > supabase/functions/tmp-b3-tenant-control-probe/index.ts <<'TS'
+          const EXPECTED = 'jxl1d0vQSf98G016_X2CS5Rrjhihhgus';
+          const BASE = (Deno.env.get('KB_SINGAPORE_BASE_URL') || 'https://py.ebixmall.com/py-knowledge-base').replace(/\/$/, '');
+          function parseMap(raw: string | undefined): Record<string,string> {
+            if (!raw) return {};
+            try { const x = JSON.parse(raw); return x && typeof x === 'object' && !Array.isArray(x) ? x : {}; } catch { return {}; }
+          }
+          Deno.serve(async (req) => {
+            if (req.headers.get('x-probe-token') !== EXPECTED) return new Response('unauthorized', {status:401});
+            const keys = parseMap(Deno.env.get('KB_SINGAPORE_TENANT_API_KEYS_JSON'));
+            const tenants = Object.keys(keys).sort();
+            const routes = ['/api/entities/KBDocument','/api/entities/KBAgentRegistry','/api/entities/KBAgentToggleConfig','/api/entities/KBReview','/api/entities/KBAgentResult'];
+            const out: Record<string,unknown> = { key_map_present: tenants.length > 0, tenant_count: tenants.length, tenants: [] };
+            const rows: unknown[] = [];
+            for (const tenant of tenants) {
+              const key = String(keys[tenant] || '');
+              const statuses: Record<string,number|string> = {};
+              if (key.length < 16) { statuses.invalid_key = 'yes'; rows.push({tenant,statuses}); continue; }
+              for (const route of routes) {
+                try {
+                  const r = await fetch(BASE + route, {headers:{'x-api-key':key,'accept':'application/json'}});
+                  statuses[route] = r.status;
+                  await r.body?.cancel();
+                } catch { statuses[route] = 'FETCH_ERROR'; }
+              }
+              rows.push({tenant,statuses});
+            }
+            out.tenants = rows;
+            return new Response(JSON.stringify(out), {headers:{'content-type':'application/json'}});
+          });
+          TS
+      - name: Deploy invoke and delete probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          cleanup(){ npx --yes supabase@latest functions delete tmp-b3-tenant-control-probe --project-ref "$PROJECT_REF" --yes >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          test -n "${SUPABASE_ACCESS_TOKEN:-}"
+          npx --yes supabase@latest functions deploy tmp-b3-tenant-control-probe --project-ref "$PROJECT_REF" --no-verify-jwt
+          sleep 4
+          curl -sS --fail-with-body --max-time 40 -H "x-probe-token: ${PROBE_TOKEN}" "https://${PROJECT_REF}.supabase.co/functions/v1/tmp-b3-tenant-control-probe" | tee /tmp/result.json
+          python3 - <<'PY'
+          import json
+          x=json.load(open('/tmp/result.json'))
+          print('B3_TENANT_KEY_MAP_PRESENT=' + ('YES' if x.get('key_map_present') else 'NO'))
+          print('B3_TENANT_COUNT=' + str(x.get('tenant_count',0)))
+          for row in x.get('tenants',[]):
+              print('TENANT=' + str(row.get('tenant')))
+              for k,v in sorted(row.get('statuses',{}).items()): print('STATUS ' + k + '=' + str(v))
+          PY
