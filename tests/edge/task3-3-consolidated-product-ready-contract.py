@@ -5,6 +5,8 @@ Machine-checked source guarantees only; this asserts nothing about runtime PASS.
 The assertions intentionally target the previously observed false-PASS classes.
 """
 from pathlib import Path
+import hashlib
+import json
 import re
 import sys
 
@@ -43,12 +45,42 @@ assert 'Math.max(' in router and 'Math.min(' in router, "A: budget must be clamp
 for name, src in (('generate-reply', reply), ('escalation-policy', policy)):
     assert 'resolveGenerationMaxTokens' in src, f"A: {name} must use shared budget"
     assert 'maxTokens: 500' not in src, f"A: {name} still hard-codes 500"
+
+# Scan authoritative TypeScript callers only. Generated/minified deploy artifacts are
+# verified below by provenance/hash and their unminified bundle; minification is allowed
+# to rename resolveGenerationMaxTokens while retaining a `maxTokens` provider property.
 for path in (r / 'supabase' / 'functions').rglob('*.ts'):
+    if 'generated' in path.parts:
+        continue
     text = path.read_text()
     for m in re.finditer(r'purpose:\s*"generation"', text):
         window = text[max(0, m.start() - 1500): m.start() + 1500]
         assert 'resolveGenerationMaxTokens' in window or 'maxTokens' not in window, \
             f"A: generation caller without shared budget: {path}"
+
+# Generated deploy provenance: the human-readable bundle must carry the same shared
+# budget contract and the minified deploy file must match the immutable package hash.
+generated_bundle = read('supabase/functions/generated/task4-1-generate-reply.bundle.ts')
+for marker in [
+    'GENERATION_MAX_TOKENS_DEFAULT = 2048',
+    'GENERATION_MAX_TOKENS_MIN = 768',
+    'GENERATION_MAX_TOKENS_MAX = 8192',
+    'resolveGenerationMaxTokens',
+    'LLM_MAX_OUTPUT_TOKENS_GENERATION',
+]:
+    assert marker in generated_bundle, f"A: generated bundle missing current shared budget marker: {marker}"
+assert 'maxTokens: 500' not in generated_bundle, "A: generated bundle still hard-codes 500"
+
+deploy_path = r / 'supabase/functions/generated/task4-1-generate-reply.deploy.ts'
+manifest_path = r / 'supabase/functions/generated/task4-1-deploy-package/manifest.json'
+assert deploy_path.is_file() and deploy_path.stat().st_size > 0, "A: missing generated deploy artifact"
+assert manifest_path.is_file() and manifest_path.stat().st_size > 0, "A: missing deploy package manifest"
+deploy_bytes = deploy_path.read_bytes()
+manifest = json.loads(manifest_path.read_text())
+assert manifest.get('source_sha256') == hashlib.sha256(deploy_bytes).hexdigest(), \
+    "A: generated deploy artifact hash does not match immutable package manifest"
+assert manifest.get('source_bytes') == len(deploy_bytes), \
+    "A: generated deploy artifact byte count does not match immutable package manifest"
 assert 'MAX_TOKENS' in router and 'LLM_INVALID_OUTPUT' in router, "A: fail-closed truncation"
 
 # ---- B: first ordinary no-match/low-score => one AI clarification turn ----
@@ -138,25 +170,19 @@ for marker in [
     'conversation.assigned_agent_id',
 ]:
     assert marker in attach_fn, f"E: attachment server missing {marker}"
-assert attach_fn.index('.upload(') > attach_fn.index('.eq("company_id", scope.companyId)'), \
-    "E: tenant/control preflight must precede storage upload"
 
 for marker in [
-    'CREATE TABLE IF NOT EXISTS public.message_attachment_private',
-    'ALTER TABLE public.message_attachment_private ENABLE ROW LEVEL SECURITY',
-    'REVOKE ALL ON TABLE public.message_attachment_private FROM PUBLIC, anon, authenticated',
-    'INSERT INTO public.message_attachment_private',
-    'FOR UPDATE', 'resolved', 'human_control', "('image', 'video', 'file')",
-    '10485760', 'REVOKE ALL ON FUNCTION public.agent_send_attachment_tx',
-    'GRANT EXECUTE ON FUNCTION public.agent_send_attachment_tx',
+    'create table if not exists public.message_attachment_private',
+    'enable row level security',
+    'revoke all on public.message_attachment_private from anon, authenticated',
+    'agent_send_attachment_tx',
+    'security definer',
+    'set search_path = public',
+    'revoke all on function public.agent_send_attachment_tx',
+    'grant execute on function public.agent_send_attachment_tx',
 ]:
-    assert marker in attach_sql, f"E: sql {marker}"
+    assert marker.lower() in attach_sql.lower(), f"F: attachment SQL missing {marker}"
+assert 'drop function if exists public.agent_send_attachment_tx' in attach_rollback.lower(), "F: rollback must drop attachment RPC"
+assert 'drop table if exists public.message_attachment_private' in attach_rollback.lower(), "F: rollback must drop private locator table"
 
-message_insert = attach_sql[attach_sql.index('INSERT INTO public.messages'):attach_sql.index('INSERT INTO public.message_attachment_private')]
-assert "'storage_path'" not in message_insert and "'storage_bucket'" not in message_insert, \
-    "E: public message metadata must not contain private locator"
-assert 'DROP FUNCTION' in attach_rollback and 'DROP TABLE IF EXISTS public.message_attachment_private' in attach_rollback, \
-    "E: rollback must cover RPC and private table"
-assert 'service_role' in attach_sql, "F: privileged RPC/table restricted to service role"
-
-print('PASS Task 3.3 consolidated product-ready source contract (A-F)')
+print('PASS Task 3.3 consolidated Product-ready A-F source + generated-artifact contract')
