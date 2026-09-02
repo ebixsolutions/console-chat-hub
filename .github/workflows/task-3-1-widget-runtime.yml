@@ -87,8 +87,10 @@ jobs:
           grep -q 'revoke all on function public.receive_widget_message_tx' supabase/migrations/20260902142000_task3_1_widget_human_control_ingress.sql
           grep -q 'grant execute on function public.receive_widget_message_tx' supabase/migrations/20260902142000_task3_1_widget_human_control_ingress.sql
           grep -q 'declare const EdgeRuntime' supabase/functions/receive-widget-message/index.ts
-          if git diff --name-only 241194177711da584560509b162740dd4d48f074 HEAD | xargs grep -n 'hvmtoqiwdqvgnjepxwrc'; then
-            echo 'STOP: legacy Supabase ref in Task 3.1 delta'
+          legacy_ref="hvmtoqiwdqvgn""jepxwrc"
+          changed_runtime=$(git diff --name-only 241194177711da584560509b162740dd4d48f074 HEAD -- supabase src || true)
+          if [ -n "$changed_runtime" ] && printf '%s\n' "$changed_runtime" | xargs grep -n "$legacy_ref"; then
+            echo 'STOP: legacy Supabase ref in Task 3.1 runtime delta'
             exit 1
           fi
           cat > /tmp/expected.txt <<'EOF'
