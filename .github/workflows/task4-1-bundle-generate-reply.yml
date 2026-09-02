@@ -1,4 +1,5 @@
 name: Task 4.1 Bundle Generate Reply
+# Task 3.3 closure refresh: regenerate immutable deploy artifacts from current authoritative source.
 
 on:
   push:
