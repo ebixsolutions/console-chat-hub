@@ -1,4 +1,4 @@
-name: Task 2.2 Compiler Diagnostic
+name: Task 2.2 Compiler Diagnostic Tail
 on: [push]
 permissions:
   contents: write
@@ -13,23 +13,24 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
-      - name: Capture and persist generate-reply compiler output
+      - name: Capture concise generate-reply compiler tail
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set +e
-          deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts > task2-2-compile.log 2>&1
+          deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts > task2-2-full.log 2>&1
           code=$?
           set -e
-          echo "EXIT_CODE=$code" >> task2-2-compile.log
-          cat task2-2-compile.log
+          tail -n 120 task2-2-full.log > task2-2-compile-tail.log
+          echo "EXIT_CODE=$code" >> task2-2-compile-tail.log
+          cat task2-2-compile-tail.log
           python3 - <<'PY'
           import base64, json
           from pathlib import Path
           payload = {
-              "message": "Persist Task 2.2 compiler diagnostic",
-              "content": base64.b64encode(Path("task2-2-compile.log").read_bytes()).decode(),
+              "message": "Persist concise Task 2.2 compiler tail",
+              "content": base64.b64encode(Path("task2-2-compile-tail.log").read_bytes()).decode(),
               "branch": "director/task-2-2-output-grounding",
           }
           Path("task2-2-payload.json").write_text(json.dumps(payload))
@@ -38,6 +39,6 @@ jobs:
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            https://api.github.com/repos/ebixsolutions/console-chat-hub/contents/task2-2-compile.log \
+            https://api.github.com/repos/ebixsolutions/console-chat-hub/contents/task2-2-compile-tail.log \
             -d @task2-2-payload.json
-          echo "DIAGNOSTIC_PERSISTED=PASS"
+          echo "DIAGNOSTIC_TAIL_PERSISTED=PASS"
