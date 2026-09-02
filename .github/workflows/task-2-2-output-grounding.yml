@@ -1,4 +1,4 @@
-name: Task 2.2 Output Grounding Validation
+name: Task 2.2 Output Grounding Fix And Validation
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
       - director/task-2-2-output-grounding
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   validate:
@@ -20,6 +20,72 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
+
+      - name: Apply verifier evidence alias fix
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('supabase/functions/_shared/llm-router.ts')
+          s = p.read_text()
+          if 'buildVerifierEvidenceAliases' not in s:
+            marker = '''export function validateExactFactGrounding(\n'''
+            helper = r'''export function buildVerifierEvidenceAliases(
+  grounding: ParsedGroundingBlock,
+): { evidence_text: string; allowed_ids: string[] } {
+  let next = 0;
+  const allowed: string[] = [];
+  const aliased = grounding.evidence_text.replace(
+    /\[chunk:([^\]\s]+)\]/g,
+    () => {
+      next += 1;
+      const alias = `E${next}`;
+      allowed.push(alias);
+      return `[chunk:${alias}]`;
+    },
+  );
+  return {
+    evidence_text: aliased,
+    allowed_ids: allowed,
+  };
+}
+
+'''
+            if marker not in s:
+              raise SystemExit('STOP: exact grounding marker missing')
+            s = s.replace(marker, helper + marker, 1)
+
+            marker2 = '''  const evaluationModel = (Deno.env.get(MODEL_ENV.evaluation) ?? "").trim();'''
+            repl2 = '''  const verifierEvidence = buildVerifierEvidenceAliases(grounding);\n\n  const evaluationModel = (Deno.env.get(MODEL_ENV.evaluation) ?? "").trim();'''
+            if marker2 not in s:
+              raise SystemExit('STOP: evaluation model marker missing')
+            s = s.replace(marker2, repl2, 1)
+            s = s.replace('''    grounding.evidence_text,\n    "",\n    "Proposed answer:",''', '''    verifierEvidence.evidence_text,\n    "",\n    "Proposed answer:",''', 1)
+            s = s.replace('''      const decision = parseGroundingVerifierDecision(parsed.text, grounding.chunk_ids);''', '''      const decision = parseGroundingVerifierDecision(parsed.text, verifierEvidence.allowed_ids);''', 1)
+            p.write_text(s)
+
+          t = Path('tests/edge/task2-2-output-grounding-router.test.ts')
+          ts = t.read_text()
+          if 'buildVerifierEvidenceAliases' not in ts:
+            ts = ts.replace('''import {\n  extractGroundingBlock,''', '''import {\n  buildVerifierEvidenceAliases,\n  extractGroundingBlock,''', 1)
+            ts += r'''
+
+Deno.test("semantic verifier uses safe aliases instead of raw UUID chunk ids", () => {
+  const grounding = extractGroundingBlock([
+    "Knowledge Base grounding rules:",
+    "Full Content Evidence:",
+    "[Full Content Evidence 1] [chunk:11111111-2222-3333-4444-555555555555]",
+    "Authoritative policy fact.",
+  ].join("\n"));
+  assert(grounding !== null, "grounding block required");
+  const aliased = buildVerifierEvidenceAliases(grounding);
+  assert(!aliased.evidence_text.includes("11111111-2222-3333-4444-555555555555"), "raw UUID must not enter verifier prompt");
+  assert(aliased.evidence_text.includes("[chunk:E1]"), "safe E1 alias required");
+  assert(aliased.allowed_ids.length === 1 && aliased.allowed_ids[0] === "E1", "alias allowlist mismatch");
+});
+'''
+            t.write_text(ts)
+          PY
 
       - name: Verify package baseline
         run: |
@@ -45,7 +111,7 @@ jobs:
             'KB grounding marker detection': 'Knowledge Base grounding rules:' in router,
             'exact-fact gate': 'validateExactFactGrounding' in router,
             'semantic verifier': 'verifyGroundedGeneration' in router,
-            'same-evidence verifier': 'grounding.evidence_text' in router,
+            'safe evidence aliases': 'buildVerifierEvidenceAliases' in router and 'verifierEvidence.allowed_ids' in router,
             'no second KB search': '/api/v1/rag/context-search' not in router and 'fetchKBRag' not in router,
             'fail closed as invalid output': 'code: "LLM_INVALID_OUTPUT"' in router and 'LLM_OUTPUT_UNGROUNDED' in router,
             'verifier lineage allowlist': 'parseGroundingVerifierDecision' in router,
@@ -56,3 +122,16 @@ jobs:
             raise SystemExit('CONTRACT_FAIL: ' + ', '.join(failed))
           print('TASK_2_2_CONTRACT=PASS')
           PY
+
+      - name: Commit alias fix if changed
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add supabase/functions/_shared/llm-router.ts tests/edge/task2-2-output-grounding-router.test.ts
+          if git diff --cached --quiet; then
+            echo "NO_SOURCE_DELTA=PASS"
+            exit 0
+          fi
+          git commit -m "Fix Task 2.2 verifier evidence aliasing"
+          git push origin HEAD:director/task-2-2-output-grounding
