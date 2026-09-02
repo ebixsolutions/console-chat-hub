@@ -1,0 +1,114 @@
+name: Task 2.3 Citation Persistence Final Gate
+on: [push]
+permissions:
+  contents: write
+jobs:
+  validate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: director/task-2-3-citation-persistence
+          fetch-depth: 0
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Apply citation-lineage source closure
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path('supabase/functions/generate-reply/index.ts')
+          s = p.read_text()
+
+          import_marker = 'import { selectCanonicalGrounding } from "../_shared/canonical-grounding.ts";'
+          new_import = 'import { buildCitationMetadata } from "../_shared/citation-lineage.ts";'
+          if new_import not in s:
+              if import_marker not in s:
+                  raise SystemExit('STOP: canonical grounding import marker missing')
+              s = s.replace(import_marker, import_marker + '\n' + new_import, 1)
+
+          pattern = re.compile(r'\nfunction buildCitationMetadata\(chunks: Array<\{ title\?: string; score\?: number; source_type\?: string \}>\): \{ citations: Array<\{ label: string; source_type: string; relevance\?: string \}> \} \| null \{.*?\n\}\n\ntype FlagSet', re.S)
+          s, removed = pattern.subn('\n\ntype FlagSet', s, count=1)
+          if removed != 1:
+              raise SystemExit(f'STOP: expected one legacy citation builder, removed={removed}')
+
+          old_type = 'let finalPromptChunks: Array<{ title?: string; score?: number; source_type?: string }> = [];'
+          new_type = 'let finalPromptChunks: KBFullChunk[] = [];'
+          if old_type in s:
+              s = s.replace(old_type, new_type, 1)
+          elif new_type not in s:
+              raise SystemExit('STOP: finalPromptChunks type baseline mismatch')
+
+          old_assign = 'finalPromptChunks = usableChunks;'
+          new_assign = 'finalPromptChunks = usableFullContent;'
+          if old_assign in s:
+              s = s.replace(old_assign, new_assign, 1)
+          elif new_assign not in s:
+              raise SystemExit('STOP: finalPromptChunks assignment baseline mismatch')
+
+          old_commit = 'const citationMeta = finalPromptChunks.length > 0 ? buildCitationMetadata(finalPromptChunks) : null;\n  const committed = await commitAiReplyWithControlGate('
+          new_commit = '''const citationMeta = finalPromptChunks.length > 0
+    ? buildCitationMetadata(
+        finalPromptChunks,
+        ragResult?.llm_context?.selected_document_id ?? null,
+      )
+    : null;
+  if (flags.ENABLE_KB && !_g1SkipKB && finalPromptChunks.length > 0 && !citationMeta) {
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+    return new Response(
+      JSON.stringify({ success: false, error: "citation_lineage_unavailable" }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+  const committed = await commitAiReplyWithControlGate('''
+          if old_commit in s:
+              s = s.replace(old_commit, new_commit, 1)
+          elif 'error: "citation_lineage_unavailable"' not in s:
+              raise SystemExit('STOP: citation commit baseline mismatch')
+
+          p.write_text(s)
+          print('TASK23_SOURCE_PATCH=PASS')
+          PY
+
+      - name: Compile affected runtime
+        run: |
+          deno check --node-modules-dir=auto supabase/functions/_shared/citation-lineage.ts
+          deno check --node-modules-dir=auto supabase/functions/_shared/llm-router.ts
+          deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+
+      - name: Run Task 2.3 citation-lineage tests
+        run: deno test --allow-env --node-modules-dir=auto tests/edge/task2-3-citation-lineage.test.ts
+
+      - name: Preserve Task 2.2 frozen grounding gate
+        run: deno test --allow-env --node-modules-dir=auto tests/edge/task2-2-output-grounding-router.test.ts
+
+      - name: Machine assertions
+        shell: bash
+        run: |
+          grep -q 'import { buildCitationMetadata } from "../_shared/citation-lineage.ts";' supabase/functions/generate-reply/index.ts
+          grep -q 'let finalPromptChunks: KBFullChunk\[\] = \[\];' supabase/functions/generate-reply/index.ts
+          grep -q 'finalPromptChunks = usableFullContent;' supabase/functions/generate-reply/index.ts
+          grep -q 'ragResult?.llm_context?.selected_document_id ?? null' supabase/functions/generate-reply/index.ts
+          grep -q 'citation_lineage_unavailable' supabase/functions/generate-reply/index.ts
+          grep -q 'supabaseAdmin.rpc("commit_ai_reply_tx"' supabase/functions/generate-reply/index.ts
+          grep -q 'source_message_id' supabase/functions/generate-reply/index.ts
+          grep -q 'chunk_type: "full_content"' supabase/functions/_shared/citation-lineage.ts
+          grep -q 'document_id: selected' supabase/functions/_shared/citation-lineage.ts
+          grep -q 'selected_document_id: selected' supabase/functions/_shared/citation-lineage.ts
+          ! grep -q 'function buildCitationMetadata(chunks: Array' supabase/functions/generate-reply/index.ts
+          echo TASK_2_3_IMPLEMENTATION_ASSERTIONS=PASS
+
+      - name: Commit validated source closure
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add supabase/functions/generate-reply/index.ts
+          git diff --cached --quiet && { echo NO_RUNTIME_SOURCE_DELTA=PASS; exit 0; }
+          git commit -m "Complete Task 2.3 citation persistence closure"
+          git push origin HEAD:director/task-2-3-citation-persistence
