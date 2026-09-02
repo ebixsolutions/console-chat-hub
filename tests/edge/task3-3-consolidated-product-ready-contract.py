@@ -171,17 +171,23 @@ for marker in [
 ]:
     assert marker in attach_fn, f"E: attachment server missing {marker}"
 
-for marker in [
-    'create table if not exists public.message_attachment_private',
-    'enable row level security',
-    'revoke all on public.message_attachment_private from anon, authenticated',
-    'agent_send_attachment_tx',
-    'security definer',
-    'set search_path = public',
-    'revoke all on function public.agent_send_attachment_tx',
-    'grant execute on function public.agent_send_attachment_tx',
-]:
-    assert marker.lower() in attach_sql.lower(), f"F: attachment SQL missing {marker}"
+sql = attach_sql.lower()
+assert 'create table if not exists public.message_attachment_private' in sql, "F: private attachment table missing"
+assert 'enable row level security' in sql, "F: private attachment table must enable RLS"
+assert re.search(r'revoke\s+all\s+on(?:\s+table)?\s+public\.message_attachment_private\s+from\s+[^;]*\banon\b[^;]*\bauthenticated\b', sql), \
+    "F: anon/authenticated privileges must be revoked from private attachment table"
+assert 'agent_send_attachment_tx' in sql, "F: attachment RPC missing"
+assert 'security definer' in sql, "F: attachment RPC must be SECURITY DEFINER"
+assert re.search(r'set\s+search_path\s*(?:=|to)\s*[^\n;]*public', sql), \
+    "F: attachment RPC must pin search_path to public"
+assert re.search(r'revoke\s+all\s+on\s+function\s+public\.agent_send_attachment_tx', sql), \
+    "F: RPC default privileges must be revoked"
+assert re.search(r'grant\s+execute\s+on\s+function\s+public\.agent_send_attachment_tx', sql), \
+    "F: RPC service_role execute grant missing"
+assert "has_function_privilege(\n    'authenticated'" in sql and "'execute'" in sql, \
+    "F: SQL must assert authenticated cannot execute attachment RPC"
+assert "has_table_privilege('authenticated', 'public.message_attachment_private', 'select')" in sql, \
+    "F: SQL must assert authenticated cannot read private attachment locators"
 assert 'drop function if exists public.agent_send_attachment_tx' in attach_rollback.lower(), "F: rollback must drop attachment RPC"
 assert 'drop table if exists public.message_attachment_private' in attach_rollback.lower(), "F: rollback must drop private locator table"
 
