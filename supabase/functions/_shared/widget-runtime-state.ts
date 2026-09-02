@@ -7,7 +7,7 @@ export const HUMAN_CONTROL_STATUSES = new Set([
   "unresolved",
 ]);
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const ACTIVE_THINKING_MAX_AGE_MS = 5 * 60 * 1000;
 
 export function isHumanControlState(status: unknown, assignedAgentId?: unknown): boolean {
