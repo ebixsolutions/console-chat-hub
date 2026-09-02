@@ -34,7 +34,9 @@ import { buildCanonicalRetrievalQuery, buildCanonicalContinuityBlock, resolveCon
 import { selectCanonicalGrounding } from "../_shared/canonical-grounding.ts";
 import { buildRealtimeR3SentimentSignals } from "../_shared/runtime-signal-lifecycle.ts";
 import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+
+type SupabaseAdminClient = SupabaseClient<any, "public", any>;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -115,7 +117,7 @@ function sanitizeUserMessage(text: string): string {
 }
 
 async function writeTraces(
-  supabaseAdmin: ReturnType<typeof createClient>,
+  supabaseAdmin: SupabaseAdminClient,
   params: {
     conversation_id: string;
     message_id: string | null;
@@ -178,7 +180,7 @@ function routerFailureToS0(code: LlmFailureCode): string {
 }
 
 async function cleanupThinking(
-  supabaseAdmin: ReturnType<typeof createClient>,
+  supabaseAdmin: SupabaseAdminClient,
   conversation_id: string,
   source_message_id: string | null,
 ): Promise<void> {
@@ -200,7 +202,7 @@ interface SourceVisitorMessage {
 }
 
 async function loadSourceVisitorMessage(
-  supabaseAdmin: ReturnType<typeof createClient>,
+  supabaseAdmin: SupabaseAdminClient,
   conversation_id: string,
   source_message_id: string | null,
 ): Promise<
@@ -274,7 +276,7 @@ function sourceMessageErrorResponse(
 }
 
 async function commitAiReplyWithControlGate(
-  supabaseAdmin: ReturnType<typeof createClient>,
+  supabaseAdmin: SupabaseAdminClient,
   conversation_id: string,
   source_message_id: string | null,
   content: string,
@@ -487,7 +489,7 @@ function explicitAngerLabel(value: unknown): boolean {
 }
 
 async function loadAuthoritativeR3SentimentSignals(
-  supabaseAdmin: ReturnType<typeof createClient>,
+  supabaseAdmin: SupabaseAdminClient,
   conversation_id: string,
   expected_tenant_id: string | undefined,
 ): Promise<R3SentimentSignals | undefined> {
@@ -900,7 +902,7 @@ function isE1LiveActivationEnabled(env: { get(name: string): string | undefined 
 }
 
 async function evaluateAndPersistRequiredRulesLive(
-  supabaseAdmin: ReturnType<typeof createClient>,
+  supabaseAdmin: SupabaseAdminClient,
   params: {
     conversation_id: string;
     source_message_id: string | null;
@@ -1268,7 +1270,7 @@ async function legacyGenerateReply(conversation_id: string, source_message_id: s
   if (!newestMessages || newestMessages.length === 0) return new Response(JSON.stringify({ success: true, skipped: "no messages" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   const messages = [...newestMessages].reverse();
-  const modelMessages = messages.map((m) => ({ role: m.role === "visitor" ? "user" : "assistant", content: m.content }));
+  const modelMessages: Array<{ role: "user" | "assistant"; content: string }> = messages.map((m) => ({ role: m.role === "visitor" ? "user" : "assistant", content: String(m.content ?? "") }));
   if (modelMessages[modelMessages.length - 1].role === "assistant") return new Response(JSON.stringify({ success: true, skipped: "last message is assistant" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   const lastVisitorMsg = sourceVisitorMessage.content;
@@ -1515,7 +1517,7 @@ export function isFirstNoMatchClarificationEligible(input: {
 }
 
 async function attemptFirstNoMatchClarification(
-  supabaseAdmin: ReturnType<typeof createClient>,
+  supabaseAdmin: SupabaseAdminClient,
   conversation_id: string,
   source_message_id: string | null,
   branchTag: string,
@@ -1574,7 +1576,7 @@ async function attemptFirstNoMatchClarification(
 }
 
 async function handleKBFallback(
-  supabaseAdmin: ReturnType<typeof createClient>, conversation_id: string, branchTag: string,
+  supabaseAdmin: SupabaseAdminClient, conversation_id: string, branchTag: string,
   source_message_id: string | null, traceMetadata: Record<string, unknown>, visitorLang: "zh-TW" | "zh-CN" | "en" = "zh-TW",
 ): Promise<Response> {
   const _branchTexts = KB_FALLBACK_SAFE_TEXT[branchTag];
@@ -1598,7 +1600,7 @@ async function handleKBFallback(
 }
 
 async function handleS0Handoff(
-  supabaseAdmin: ReturnType<typeof createClient>, conversation_id: string, source_message_id: string | null,
+  supabaseAdmin: SupabaseAdminClient, conversation_id: string, source_message_id: string | null,
   failure_type: string, visitorLang: "zh-TW" | "zh-CN" | "en",
 ): Promise<Response> {
   const isKBFailure = failure_type === "KB_SCOPE_GATE" || failure_type === "KB_API_FAIL";
@@ -1629,7 +1631,7 @@ async function handleS0Handoff(
 }
 
 async function persistExplicitR1IfRequested(
-  supabaseAdmin: ReturnType<typeof createClient>,
+  supabaseAdmin: SupabaseAdminClient,
   conversation_id: string,
   source_message_id: string | null,
   latestMessage: string,
@@ -2065,7 +2067,7 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
           threat_flag: _pr5ThreatSignal?.value === true,
           compliance_requires_human_review: _pr5ComplianceSignal?.value === true,
           clarification_attempts: _pr5History.clarification_attempts,
-          exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
+          exact_same_intent_repeated: _pr5History.exact_same_intent_repeated === true,
         },
         { rag_api_status: "success_empty" },
       );
@@ -2132,7 +2134,7 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
           threat_flag: _pr5ThreatSignal?.value === true,
           compliance_requires_human_review: _pr5ComplianceSignal?.value === true,
           clarification_attempts: _pr5History.clarification_attempts,
-          exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
+          exact_same_intent_repeated: _pr5History.exact_same_intent_repeated === true,
         },
         traceMetadata,
       );
@@ -2185,7 +2187,7 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
           threat_flag: _pr5ThreatSignal?.value === true,
           compliance_requires_human_review: _pr5ComplianceSignal?.value === true,
           clarification_attempts: _pr5History.clarification_attempts,
-          exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
+          exact_same_intent_repeated: _pr5History.exact_same_intent_repeated === true,
         },
         { ...traceMetadata, answerability: "missing_full_content_evidence" },
       );
@@ -2394,7 +2396,7 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     .limit(10);
   if (!newestMessages || newestMessages.length === 0) { await cleanupThinking(supabaseAdmin, conversation_id, source_message_id); return new Response(JSON.stringify({ success: true, skipped: "no messages" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
   const messages = [...newestMessages].reverse();
-  const modelMessages = messages.map((m) => ({ role: m.role === "visitor" ? "user" : "assistant", content: m.content }));
+  const modelMessages: Array<{ role: "user" | "assistant"; content: string }> = messages.map((m) => ({ role: m.role === "visitor" ? "user" : "assistant", content: String(m.content ?? "") }));
   if (modelMessages[modelMessages.length - 1].role === "assistant") { await cleanupThinking(supabaseAdmin, conversation_id, source_message_id); return new Response(JSON.stringify({ success: true, skipped: "last message is assistant" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
 
   if (flags.ENABLE_TOOL_EXEC) {

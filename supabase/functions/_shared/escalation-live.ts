@@ -24,7 +24,7 @@ export interface RequiredHandoffRpcClient {
       p_safe_reply_content: string;
       p_reason_code: string;
     },
-  ): Promise<{ data: Record<string, unknown> | null; error: { message?: string } | null }>;
+  ): PromiseLike<{ data: Record<string, unknown> | null; error: { message?: string } | null }>;
 }
 
 export interface PersistRequiredHandoffInput {
@@ -124,7 +124,7 @@ export interface RequiredClarificationRpcClient {
   rpc(
     fn: string,
     args: Record<string, unknown>,
-  ): Promise<{ data: Record<string, unknown> | null; error: { message?: string } | null }>;
+  ): PromiseLike<{ data: Record<string, unknown> | null; error: { message?: string } | null }>;
 }
 
 export type RequiredClarificationResult =
