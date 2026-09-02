@@ -42,6 +42,28 @@ Deno.serve(async (req) => {
     const { data: messages, error: messageError } = await query;
     if (messageError) return json({ success: false, error: "message_poll_failed" }, 500);
 
+    // `thinking` and `messages` are separate READ COMMITTED statements. An AI
+    // commit can delete __THINKING__ and insert the final assistant message in
+    // between them. Suppress any stale in-memory thinking claim whose source
+    // already has a final assistant reply in this same response.
+    const completedSourceIds = new Set(
+      (messages ?? [])
+        .filter((message) => message.role === "assistant" && message.content !== "__THINKING__")
+        .map((message) => {
+          const metadata = message.metadata;
+          if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return null;
+          const sourceId = (metadata as Record<string, unknown>).source_message_id;
+          return typeof sourceId === "string" && uuid.test(sourceId) ? sourceId : null;
+        })
+        .filter((sourceId): sourceId is string => Boolean(sourceId)),
+    );
+    const unresolvedThinking = (thinking ?? []).filter((row) => {
+      const metadata = row.metadata;
+      if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return true;
+      const sourceId = (metadata as Record<string, unknown>).source_message_id;
+      return typeof sourceId !== "string" || !completedSourceIds.has(sourceId);
+    });
+
     const humanSupportState = isHumanControlState(conv.status, conv.assigned_agent_id)
       ? (conv.assigned_agent_id ? "assigned" : "waiting")
       : "none";
@@ -63,7 +85,7 @@ Deno.serve(async (req) => {
       data: {
         messages: messages ?? [],
         conversation_status: conv.status,
-        ai_generating: humanSupportState === "none" && hasActiveThinkingClaim(thinking ?? []),
+        ai_generating: humanSupportState === "none" && hasActiveThinkingClaim(unresolvedThinking),
         human_support: {
           state: humanSupportState,
           agent_assigned: Boolean(conv.assigned_agent_id),
