@@ -1,7 +1,27 @@
-name: Task 2.2 CI Sanity
+name: Task 2.2 Final Gate
 on: [push]
 jobs:
-  sanity:
+  final-gate:
     runs-on: ubuntu-latest
     steps:
-      - run: echo TASK_2_2_CI_SANITY=PASS
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Package baseline
+        run: node -e 'const p=require("./package.json"); if(p.version!=="2.7.1") process.exit(1); console.log("PACKAGE_BASELINE=PASS")'
+      - name: Check governed router
+        run: deno check supabase/functions/_shared/llm-router.ts
+      - name: Check generate reply
+        run: deno check supabase/functions/generate-reply/index.ts
+      - name: Run Task 2.2 tests
+        run: deno test tests/edge/task2-2-output-grounding-router.test.ts
+      - name: Contract assertions
+        shell: bash
+        run: |
+          grep -q 'buildVerifierEvidenceAliases' supabase/functions/_shared/llm-router.ts
+          grep -q 'verifyGroundedGeneration' supabase/functions/_shared/llm-router.ts
+          grep -q 'LLM_OUTPUT_UNGROUNDED' supabase/functions/_shared/llm-router.ts
+          ! grep -q 'fetchKBRag' supabase/functions/_shared/llm-router.ts
+          ! grep -q '/api/v1/rag/context-search' supabase/functions/_shared/llm-router.ts
+          echo TASK_2_2_CONTRACT=PASS
