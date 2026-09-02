@@ -70,6 +70,10 @@ jobs:
           set -euo pipefail
           psql -h 127.0.0.1 -U postgres -d postgres -f tests/sql/task3-2-agent-console-runtime.sql 2>&1 | tee /tmp/task32-sql.log
           grep -q 'TASK3_2_SQL_RUNTIME_PASS' /tmp/task32-sql.log
+          dropdb -h 127.0.0.1 -U postgres --if-exists task32_grants
+          createdb -h 127.0.0.1 -U postgres task32_grants
+          psql -h 127.0.0.1 -U postgres -d task32_grants -f tests/sql/task3-2-conversation-control-grants.sql 2>&1 | tee /tmp/task32-grants.log
+          grep -q 'TASK3_2_CONTROL_GRANTS_PASS' /tmp/task32-grants.log
           echo TASK3_2_SQL_RUNTIME=PASS
 
       - name: Machine assertions
@@ -77,11 +81,14 @@ jobs:
         run: |
           set -euo pipefail
           migration=supabase/migrations/20260902170000_task3_2_agent_console_runtime.sql
+          grants=supabase/migrations/20260902171000_task3_2_conversation_control_grants.sql
           grep -q 'CREATE OR REPLACE FUNCTION public.agent_send_reply_tx' "$migration"
           grep -q "GRANT EXECUTE ON FUNCTION public.agent_send_reply_tx(uuid, uuid, text, text) TO service_role" "$migration"
           grep -q "REVOKE ALL ON FUNCTION public.agent_send_reply_tx(uuid, uuid, text, text) FROM authenticated" "$migration"
           grep -q "h.handoff_type = 'agent_to_agent'" "$migration"
           grep -q "RETURN jsonb_build_object('result', 'superseded_source')" "$migration"
+          grep -q 'REVOKE UPDATE ON TABLE public.conversations FROM authenticated' "$grants"
+          grep -q 'GRANT UPDATE (' "$grants"
           grep -q '"agent_send_reply_tx"' supabase/functions/agent-send-reply/index.ts
           grep -q 'resolveAgentCompanyScope' supabase/functions/agent-send-reply/index.ts
           grep -q '.eq("company_id", scope.companyId)' supabase/functions/agent-send-reply/index.ts
@@ -94,7 +101,9 @@ jobs:
           cat > /tmp/expected.txt <<'EOF'
           .github/workflows/task-3-2-agent-console-runtime.yml
           supabase/migrations/20260902170000_task3_2_agent_console_runtime.sql
+          supabase/migrations/20260902171000_task3_2_conversation_control_grants.sql
           tests/sql/task3-2-agent-console-runtime.sql
+          tests/sql/task3-2-conversation-control-grants.sql
           EOF
           git diff --name-only 63ddf6361ec2c04d0c7e8fc657d4323306f6bbbe HEAD | sort > /tmp/actual.txt
           sort /tmp/expected.txt -o /tmp/expected.txt
