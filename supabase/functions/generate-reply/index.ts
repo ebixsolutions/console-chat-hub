@@ -33,6 +33,7 @@ import { CUSTOMER_CONVERSATION_POLICY, NATURAL_CLARIFICATION, buildCustomerAdvis
 import { buildCanonicalRetrievalQuery, buildCanonicalContinuityBlock, resolveConversationMemoryResponse } from "../_shared/conversation-runtime-state.ts";
 import { selectCanonicalGrounding } from "../_shared/canonical-grounding.ts";
 import { buildCitationMetadata } from "../_shared/citation-lineage.ts";
+import { buildInheritedTransformCitationMetadata, buildPriorGroundedTransformBlock, resolvePriorGroundedTransform } from "../_shared/prior-grounded-transform.ts";
 import { buildRealtimeR3SentimentSignals } from "../_shared/runtime-signal-lifecycle.ts";
 import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
@@ -1724,6 +1725,10 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     _pr5HistoryRows ?? [],
     _pr5VisitorTurnCount ?? 0,
   );
+  const _priorGroundedTransform = resolvePriorGroundedTransform(
+    _h1LastMsg,
+    _pr5HistoryRows ?? [],
+  );
   const _conversationContinuityBlock = buildCanonicalContinuityBlock(_pr5HistoryRows ?? []);
 
 
@@ -1869,7 +1874,10 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     return new Response(JSON.stringify({ success: true, response_route: "conversation_memory", conversation_grounded: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 
-  const _g1SkipKB = _pr5GreetingOrTrivial;
+  // A verified transform reuses the immutable evidence authority of the prior
+  // grounded answer. It must not perform a second/current KB retrieval because
+  // that can select different evidence and falsely reject a faithful transform.
+  const _g1SkipKB = _pr5GreetingOrTrivial || Boolean(_priorGroundedTransform);
 
   let _pr5RagMatchState: RagMatchState | undefined;
   const _escEnableS0 = Deno.env.get("ESC_ENABLE_S0") !== "false";
@@ -2376,6 +2384,7 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     _customerAdvisoryBlock,
     buildMaskedContextBlock(customerContext, opaqueCustomerRef),
     buildRagBlock(ragResult),
+    buildPriorGroundedTransformBlock(_priorGroundedTransform),
   ].filter((s) => s && s.length > 0).join("\n\n");
   const { data: newestMessages } = await supabaseAdmin
     .from("messages")
@@ -2433,12 +2442,21 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
 
   const aiReplyContent = llm.text;
 
-  const citationMeta = finalPromptChunks.length > 0
-    ? buildCitationMetadata(
-        finalPromptChunks,
-        ragResult?.llm_context?.selected_document_id ?? null,
-      )
-    : null;
+  const citationMeta = _priorGroundedTransform
+    ? buildInheritedTransformCitationMetadata(_priorGroundedTransform)
+    : finalPromptChunks.length > 0
+      ? buildCitationMetadata(
+          finalPromptChunks,
+          ragResult?.llm_context?.selected_document_id ?? null,
+        )
+      : null;
+  if (_priorGroundedTransform && !citationMeta) {
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+    return new Response(
+      JSON.stringify({ success: false, error: "prior_grounded_transform_lineage_unavailable" }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
   if (flags.ENABLE_KB && !_g1SkipKB && finalPromptChunks.length > 0 && !citationMeta) {
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return new Response(

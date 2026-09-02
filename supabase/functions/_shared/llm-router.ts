@@ -325,6 +325,7 @@ function vertexAdapter(
 }
 
 interface ParsedGroundingBlock {
+  authority: "CURRENT_KB" | "PRIOR_GROUNDED_ANSWER";
   evidence_text: string;
   chunk_ids: string[];
 }
@@ -342,6 +343,23 @@ function canonicalExactToken(value: string): string {
 }
 
 export function extractGroundingBlock(system: string): ParsedGroundingBlock | null {
+  const transformRules = "Prior Grounded Answer transform rules:";
+  const transformMarker = "Prior Grounded Answer Evidence:\n";
+  if (system.includes(transformRules)) {
+    const transformIndex = system.lastIndexOf(transformMarker);
+    if (transformIndex >= 0) {
+      const prior = system.slice(transformIndex + transformMarker.length).trim();
+      if (prior) {
+        return {
+          authority: "PRIOR_GROUNDED_ANSWER",
+          evidence_text: prior.slice(0, 3000),
+          chunk_ids: [],
+        };
+      }
+    }
+    return null;
+  }
+
   if (!system.includes("Knowledge Base grounding rules:")) return null;
   const marker = "Full Content Evidence:\n";
   const markerIndex = system.lastIndexOf(marker);
@@ -352,6 +370,7 @@ export function extractGroundingBlock(system: string): ParsedGroundingBlock | nu
     .map((match) => (match[1] ?? "").trim())
     .filter(Boolean);
   return {
+    authority: "CURRENT_KB",
     evidence_text: raw.slice(0, 6000),
     chunk_ids: [...new Set(ids)],
   };
@@ -460,8 +479,10 @@ async function verifyGroundedGeneration(
 
   const verifierSystem = [
     "You are a strict factual-grounding verifier.",
-    "Judge ONLY whether every factual claim in the proposed answer is entailed by the supplied evidence.",
-    "Do not use outside knowledge, assumptions, the customer request, or prior conversation as factual evidence.",
+    grounding.authority === "PRIOR_GROUNDED_ANSWER"
+      ? "The evidence is a previously verified grounded answer. Judge whether the proposed answer is a faithful simplification, rephrase, translation, or summary of that evidence without any new factual claim. Wording and language may differ, and a summary may omit detail."
+      : "Judge ONLY whether every factual claim in the proposed answer is entailed by the supplied current Knowledge Base evidence.",
+    "Do not use outside knowledge, assumptions, the customer request, or other prior conversation as factual evidence.",
     "Politeness, conversational transitions, and non-factual wording do not need evidence.",
     "Any unsupported product fact, policy fact, price, date, duration, dimension, eligibility condition, jurisdiction claim, procedure, limit, availability statement, or categorical factual statement makes grounded=false.",
     "evidence_chunk_ids may contain only supplied E1/E2/E3 aliases that materially support the answer.",
@@ -595,6 +616,7 @@ async function verifyGroundedGeneration(
         log(call.tag, {
           event: "grounding_semantic_rejected",
           request_id: call.operationId,
+          grounding_authority: grounding.authority,
           unsupported_claim_count: decision.unsupported_claims.length,
         });
         return { ok: false, reason: "unsupported_semantic_claim" };
