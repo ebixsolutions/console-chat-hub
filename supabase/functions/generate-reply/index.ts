@@ -32,6 +32,7 @@ import { callModel, resolveGenerationMaxTokens, type LlmFailureCode } from "../_
 import { CUSTOMER_CONVERSATION_POLICY, NATURAL_CLARIFICATION, buildCustomerAdvisoryContext, classifyConversationTurn, classifyHandoffIntent, hasUsableFullContentEvidence, isHumanControlState } from "../_shared/conversation-intelligence.ts";
 import { buildCanonicalRetrievalQuery, buildCanonicalContinuityBlock, resolveConversationMemoryResponse } from "../_shared/conversation-runtime-state.ts";
 import { selectCanonicalGrounding } from "../_shared/canonical-grounding.ts";
+import { buildCitationMetadata } from "../_shared/citation-lineage.ts";
 import { buildRealtimeR3SentimentSignals } from "../_shared/runtime-signal-lifecycle.ts";
 import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
@@ -1430,23 +1431,6 @@ function evidenceSupportsJurisdiction(
   );
 }
 
-function buildCitationMetadata(chunks: Array<{ title?: string; score?: number; source_type?: string }>): { citations: Array<{ label: string; source_type: string; relevance?: string }> } | null {
-  const seen = new Set<string>();
-  const citations: Array<{ label: string; source_type: string; relevance?: string }> = [];
-  for (const c of chunks) {
-    if (citations.length >= 3) break;
-    const label = (typeof c.title === "string" ? c.title : "").trim().slice(0, 120);
-    if (!label) continue;
-    const dedupeKey = label.toLowerCase();
-    if (seen.has(dedupeKey)) continue;
-    seen.add(dedupeKey);
-    const rawSt = typeof c.source_type === "string" ? c.source_type.trim().slice(0, 40) : "";
-    const source_type = rawSt || "unknown";
-    const relevance = typeof c.score === "number" ? (c.score >= 0.85 ? "high" : "medium") : undefined;
-    citations.push({ label, source_type, ...(relevance ? { relevance } : {}) });
-  }
-  return citations.length > 0 ? { citations } : null;
-}
 
 type FlagSet = { ENABLE_KB: boolean; ENABLE_COACH: boolean; ENABLE_C360: boolean; ENABLE_TOOL_EXEC: boolean };
 
@@ -1960,7 +1944,7 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
       : undefined;
   const _pr5P1Signals = validateP1PredictionSignals(_pr5P1Input);
 
-  let finalPromptChunks: Array<{ title?: string; score?: number; source_type?: string }> = [];
+  let finalPromptChunks: KBFullChunk[] = [];
   let _kbDone = false;
   let ragResult: {
     success: boolean;
@@ -2227,7 +2211,7 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
           }
         : undefined;
 
-    finalPromptChunks = usableChunks;
+    finalPromptChunks = usableFullContent;
     _kbDone = true;
   }
   if (!flags.ENABLE_KB || _g1SkipKB) _kbDone = true;
@@ -2440,7 +2424,19 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
 
   const aiReplyContent = llm.text;
 
-  const citationMeta = finalPromptChunks.length > 0 ? buildCitationMetadata(finalPromptChunks) : null;
+  const citationMeta = finalPromptChunks.length > 0
+    ? buildCitationMetadata(
+        finalPromptChunks,
+        ragResult?.llm_context?.selected_document_id ?? null,
+      )
+    : null;
+  if (flags.ENABLE_KB && !_g1SkipKB && finalPromptChunks.length > 0 && !citationMeta) {
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+    return new Response(
+      JSON.stringify({ success: false, error: "citation_lineage_unavailable" }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
   const committed = await commitAiReplyWithControlGate(
     supabaseAdmin,
     conversation_id,
