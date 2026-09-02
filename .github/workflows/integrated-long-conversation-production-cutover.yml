@@ -1,0 +1,89 @@
+name: Integrated Long Conversation Production Cutover
+
+on:
+  push:
+    branches:
+      - director/integrated-production-long-conversation-closure
+    paths:
+      - .github/workflows/integrated-long-conversation-production-cutover.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PROJECT_REF: nrfxhqabwblzxoushgnm
+
+jobs:
+  production-cutover:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: director/integrated-production-long-conversation-closure
+          fetch-depth: 0
+
+      - name: Authoritative source gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=693ff517f815a8a8afe78f9f8f52f8e86c6f89ec
+          test "$(git rev-parse HEAD:supabase/functions/generate-reply/index.ts)" = "$(git rev-parse ${expected}:supabase/functions/generate-reply/index.ts)"
+          test "$(git rev-parse HEAD:supabase/functions/widget-poll-messages/index.ts)" = "$(git rev-parse ${expected}:supabase/functions/widget-poll-messages/index.ts)"
+          test "$(git rev-parse HEAD:supabase/functions/ce-evaluation-worker/index.ts)" = "$(git rev-parse ${expected}:supabase/functions/ce-evaluation-worker/index.ts)"
+          test "$(git rev-parse HEAD:supabase/functions/_shared/llm-router.ts)" = "$(git rev-parse ${expected}:supabase/functions/_shared/llm-router.ts)"
+          test "$(git rev-parse HEAD:supabase/functions/_shared/citation-lineage.ts)" = "$(git rev-parse ${expected}:supabase/functions/_shared/citation-lineage.ts)"
+          echo PRODUCTION_CUTOVER_SOURCE=PASS
+
+      - name: Require deployment credential
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SUPABASE_ACCESS_TOKEN:-}" || { echo 'STOP: SUPABASE_ACCESS_TOKEN_MISSING'; exit 78; }
+          echo SUPABASE_DEPLOY_CREDENTIAL=PASS
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Remove accidental diagnostic function
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if supabase functions list --project-ref "$PROJECT_REF" | grep -q 'nonexistent-test'; then
+            supabase functions delete nonexistent-test --project-ref "$PROJECT_REF"
+          fi
+          if supabase functions list --project-ref "$PROJECT_REF" | grep -q 'nonexistent-test'; then
+            echo 'FAIL: nonexistent-test still present'
+            exit 1
+          fi
+          echo ACCIDENTAL_FUNCTION_CLEANUP=PASS
+
+      - name: Deploy integrated production functions
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          supabase functions deploy generate-reply --project-ref "$PROJECT_REF" --use-api
+          supabase functions deploy widget-poll-messages --project-ref "$PROJECT_REF" --no-verify-jwt --use-api
+          supabase functions deploy ce-evaluation-worker --project-ref "$PROJECT_REF" --no-verify-jwt --use-api
+          echo INTEGRATED_PRODUCTION_DEPLOY=PASS
+
+      - name: Deployment list assertion
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          supabase functions list --project-ref "$PROJECT_REF" | tee /tmp/functions.txt
+          grep -q 'generate-reply' /tmp/functions.txt
+          grep -q 'widget-poll-messages' /tmp/functions.txt
+          grep -q 'ce-evaluation-worker' /tmp/functions.txt
+          ! grep -q 'nonexistent-test' /tmp/functions.txt
+          echo PRODUCTION_DEPLOYMENT_LIST=PASS
