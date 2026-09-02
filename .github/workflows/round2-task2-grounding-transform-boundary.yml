@@ -1,0 +1,98 @@
+name: Round2 Task2 Grounding Transform Boundary
+
+on:
+  push:
+    branches:
+      - director/round2-task2-grounding-transform-boundary
+    paths:
+      - .github/workflows/round2-task2-grounding-transform-boundary.yml
+      - scripts/round2-task2-apply.py
+      - supabase/functions/_shared/prior-grounded-transform.ts
+      - tests/edge/round2-task2-grounding-transform-boundary.test.ts
+      - supabase/functions/_shared/llm-router.ts
+      - supabase/functions/generate-reply/index.ts
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  task2-final-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: director/round2-task2-grounding-transform-boundary
+          fetch-depth: 0
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.6
+
+      - name: Apply Task 2 runtime integration
+        run: |
+          set -euo pipefail
+          python scripts/round2-task2-apply.py
+          git diff --check
+
+      - name: Compile affected runtime
+        run: |
+          set -euo pipefail
+          deno check --node-modules-dir=auto supabase/functions/_shared/prior-grounded-transform.ts
+          deno check --node-modules-dir=auto supabase/functions/_shared/llm-router.ts
+          deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+          echo TASK2_RUNTIME_COMPILE=PASS
+
+      - name: Run Task 2 grounding transform regressions
+        run: |
+          set -euo pipefail
+          deno test --allow-env --node-modules-dir=auto tests/edge/round2-task2-grounding-transform-boundary.test.ts
+          echo TASK2_TRANSFORM_TESTS=PASS
+
+      - name: Run frozen semantic and grounding regressions
+        run: |
+          set -euo pipefail
+          deno test --allow-env --node-modules-dir=auto tests/edge/round2-task1-conversation-semantic-contract.test.ts
+          deno test --allow-env --node-modules-dir=auto tests/edge/task2-2-output-grounding-router.test.ts
+          deno test --allow-env --node-modules-dir=auto tests/edge/task2-3-citation-lineage.test.ts
+          echo TASK2_FROZEN_REGRESSION=PASS
+
+      - name: Machine assertions
+        run: |
+          set -euo pipefail
+          grep -q 'PRIOR_GROUNDED_ANSWER' supabase/functions/_shared/prior-grounded-transform.ts
+          grep -q 'Prior Grounded Answer Evidence' supabase/functions/_shared/llm-router.ts
+          grep -q '_pr5GreetingOrTrivial || Boolean(_priorGroundedTransform)' supabase/functions/generate-reply/index.ts
+          grep -q 'buildInheritedTransformCitationMetadata(_priorGroundedTransform)' supabase/functions/generate-reply/index.ts
+          grep -q 'buildPriorGroundedTransformBlock(_priorGroundedTransform)' supabase/functions/generate-reply/index.ts
+          python - <<'PY'
+          from pathlib import Path
+          s = Path('supabase/functions/generate-reply/index.ts').read_text()
+          start = s.index('const _g1SkipKB = _pr5GreetingOrTrivial || Boolean(_priorGroundedTransform);')
+          fetch = s.index('if (flags.ENABLE_KB && !_g1SkipKB)', start)
+          assert fetch > start
+          block = s[fetch:s.index('if (!flags.ENABLE_KB || _g1SkipKB) _kbDone = true;', fetch)]
+          assert block.count('fetchKBRag(') == 1, 'canonical KB path must remain exactly one retrieval when not skipped'
+          assert 'resolvePriorGroundedTransform' in s
+          print('TASK2_MACHINE_ASSERTIONS=PASS')
+          PY
+
+      - name: Full authoritative build
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          echo TASK2_FULL_BUILD=PASS
+
+      - name: Commit validated Task 2 source
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add supabase/functions/_shared/llm-router.ts supabase/functions/generate-reply/index.ts
+            git commit -m 'Complete Round 2 Task 2 grounded transform boundary'
+            git push origin HEAD:director/round2-task2-grounding-transform-boundary
+          fi
+          echo TASK2_FINAL_GATE=PASS
