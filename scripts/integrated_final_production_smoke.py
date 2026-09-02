@@ -56,11 +56,34 @@ def relevant(m,label):
         x=(c.get('label','') if isinstance(c,dict) else str(c)).lower()
         if any(b in x for b in ['選購及落單','購買前重要','购买前重要','manus_uat']):fail.append(label+':IRRELEVANT_CITATION:'+x)
 
-# A long context
+# A — 20 stateful AI turns BEFORE handoff. This is the production-blocking
+# long-conversation acceptance path, not a sequential-call proxy for concurrency.
 cid,tok=new('A_LONG_CONTEXT_FINAL'); A={}
-qs=[('A1','什么是四電一腦？'),('A2','簡單一點解釋給我聽。'),('A3','Explain that in English.'),('A4','用繁體中文簡短一點。'),('A5','我只知道它是家用電器，而且我沒有型號。'),('A6','那你需要我提供什麼資料？'),('A7','Mars 的冷氣機回收費是多少？'),('A8','算了，不談 Mars，回香港的規則。'),('A9','我一開始問的是什麼？'),('A10','你剛才建議我要提供哪些資料？'),('A11','ABC-999999 屬於哪一類？'),('A12','那官方的回收安排是什麼？'),('A13','最後用三點總結我們剛才談過的內容。')]
+qs=[
+ ('A1','什么是四電一腦？'),
+ ('A2','簡單一點解釋給我聽。'),
+ ('A3','Explain that in English.'),
+ ('A4','用繁體中文簡短一點。'),
+ ('A5','我只知道它是家用電器，而且我沒有型號。'),
+ ('A6','那你需要我提供什麼資料？'),
+ ('A7','Mars 的冷氣機回收費是多少？'),
+ ('A8','算了，不談 Mars，回香港的規則。'),
+ ('A9','我一開始問的是什麼？'),
+ ('A10','你剛才建議我要提供哪些資料？'),
+ ('A11','ABC-999999 屬於哪一類？'),
+ ('A12','那官方的回收安排是什麼？'),
+ ('A13','最後用三點總結我們剛才談過的內容。'),
+ ('A14','在香港，它的回收安排還需要我準備什麼？'),
+ ('A15','我更正一下，我問的是冷氣機，不是電視機。'),
+ ('A16','那這個更正後的項目，官方安排怎樣？'),
+ ('A17','In English, summarize only the facts you can actually confirm.'),
+ ('A18','再用繁體中文回答上一題。'),
+ ('A19','我現在問的是哪個地區和哪個項目？'),
+ ('A20','最後只根據已確認資料，用三點總結。'),
+]
 for k,q in qs:
     m,p=send(cid,tok,q);A[k]=(m,p);log(k,q,m,p);relevant(m,k)
+if len(A)!=20:fail.append('A:TWENTY_TURN_COUNT')
 if not any(x in txt(A['A1'][0]) for x in ['四電一腦','四电一脑']):fail.append('A1:TOPIC')
 lineage(A['A1'][0],'A1')
 if len(re.findall(r'[A-Za-z]',txt(A['A3'][0])))<20:fail.append('A3:LANG_EN')
@@ -70,11 +93,16 @@ if not any(x in txt(A['A9'][0]) for x in ['四電一腦','四电一脑']):fail.a
 if not any(x in txt(A['A10'][0]) for x in ['型號','型号','家用電器','家用电器','資料','资料']):fail.append('A10:REQUEST_MEMORY')
 if re.search(r'ABC-999999.{0,40}(是|屬於|属于).{0,20}(冷氣|空調|雪櫃|冰箱|洗衣|電視|电脑|電腦)',txt(A['A11'][0]),re.S):fail.append('A11:MODEL_HALLUCINATION')
 if any(x in txt(A['A13'][0]) for x in ['補充一點細節','share a bit more detail']):fail.append('A13:SUMMARY_LOOP')
-m,p=send(cid,tok,'幫我轉真人客服。',False,35);log('A14','幫我轉真人客服。',m,p)
-if ((p or {}).get('human_support') or {}).get('state') not in ('waiting','assigned'):fail.append('A14:R1')
-if (p or {}).get('ai_generating') is not False:fail.append('A14:POLL_COHERENCE')
+if not any(x in txt(A['A15'][0])+txt(A['A16'][0])+txt(A['A19'][0]) for x in ['冷氣','空調','air conditioner']):fail.append('A15_A19:CORRECTION_SUPERSESSION')
+if not any(x in txt(A['A19'][0]) for x in ['香港','Hong Kong']):fail.append('A19:JURISDICTION_MEMORY')
+if len(re.findall(r'[A-Za-z]',txt(A['A17'][0])))<20:fail.append('A17:LANG_EN')
+if len(re.findall(r'[\u4e00-\u9fff]',txt(A['A18'][0])))<8:fail.append('A18:LANG_ZH')
+if any(x in txt(A['A20'][0]) for x in ['補充一點細節','share a bit more detail']):fail.append('A20:SUMMARY_LOOP')
+m,p=send(cid,tok,'幫我轉真人客服。',False,35);log('A21','幫我轉真人客服。',m,p)
+if ((p or {}).get('human_support') or {}).get('state') not in ('waiting','assigned'):fail.append('A21:R1')
+if (p or {}).get('ai_generating') is not False:fail.append('A21:POLL_COHERENCE')
 m2,p2=send(cid,tok,'真人接手前補充：我仍然沒有型號。',False,12)
-if m2 is not None:fail.append('A15:AI_AFTER_HANDOFF')
+if m2 is not None:fail.append('A22:AI_AFTER_HANDOFF')
 
 # B emotion + cross-language memory
 cid,tok=new('B_ESCALATION_FINAL'); B=[]
@@ -105,5 +133,5 @@ if not any(x in txt(D[3][0]) for x in ['四電一腦','四电一脑']):fail.appe
 
 print('FINAL_CONVERSATIONS='+json.dumps(conversations,ensure_ascii=False));print('FINAL_FAILURES='+json.dumps(fail,ensure_ascii=False))
 if fail:sys.exit(2)
-for name in ['LONG_CONTEXT_CONTINUITY','MULTILINGUAL_CONTEXT','TOPIC_CORRECTION','JURISDICTION_PARSER','NO_MATCH_RECOVERY','CONVERSATION_MEMORY','GROUNDING_OUTPUT_GATE','CITATION_LINEAGE','CITATION_RELEVANCE','R1_MULTILINGUAL','HUMAN_CONTROL_SUPPRESSION','HANDOFF_POLL_CONSISTENCY','PRODUCTION_SMOKE']:
+for name in ['STANDALONE_KNOWN_KB_HIT','FOLLOW_UP_SEMANTIC_RETRIEVAL','PRONOUN_RESOLUTION','CORRECTION_SUPERSESSION','TOPIC_SWITCH_ISOLATION','MULTILINGUAL_CONTINUITY','PUBLISHED_ONLY_EVIDENCE','FULL_CONTENT_FACTUAL_GROUNDING','FIRST_NO_MATCH_CLARIFICATION','EXPLICIT_R1','ANGER_VIP_ADVISORY_ONLY','HUMAN_CONTROL_AI_SUPPRESSION','TWENTY_TURN_STATEFUL_CONVERSATION','LONG_CONTEXT_CONTINUITY','CONVERSATION_MEMORY','GROUNDING_OUTPUT_GATE','CITATION_LINEAGE','CITATION_RELEVANCE','R1_MULTILINGUAL','HANDOFF_POLL_CONSISTENCY','PRODUCTION_SMOKE']:
     print(name+'=PASS')
