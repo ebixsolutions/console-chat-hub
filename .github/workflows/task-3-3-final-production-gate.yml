@@ -28,9 +28,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(node -p "require('./package.json').version")" = "2.7.1"
           base=cff73a3aa64aac6b075d4c306c77be42b167476b
           git cat-file -e "$base^{commit}"
+          test "$(git rev-parse HEAD:package.json)" = "7e2063d0268e63ed0a0401eb4fecabffcbbc40a4"
+          test "$(git rev-parse "$base:package.json")" = "7e2063d0268e63ed0a0401eb4fecabffcbbc40a4"
           changed=$(git diff --name-only "$base" HEAD)
           test "$changed" = ".github/workflows/task-3-3-final-production-gate.yml"
           for f in \
