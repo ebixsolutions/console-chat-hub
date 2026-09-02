@@ -1,0 +1,140 @@
+name: Round2 Task3 Conversation Runtime Final Gate
+
+on:
+  push:
+    branches:
+      - director/round2-task3-conversation-runtime-final-gate
+    paths:
+      - .github/workflows/round2-task3-conversation-runtime-final-gate.yml
+      - scripts/integrated_final_production_smoke.py
+      - supabase/functions/generate-reply/**
+      - supabase/functions/receive-widget-message/**
+      - supabase/functions/widget-poll-messages/**
+      - supabase/functions/agent-assist/**
+      - supabase/functions/conversation-evaluate/**
+      - supabase/functions/ce-evaluation-worker/**
+      - supabase/functions/customer360-adapter/**
+      - supabase/functions/_shared/**
+      - tests/edge/round2-task1-conversation-semantic-contract.test.ts
+      - tests/edge/round2-task2-grounding-transform-boundary.test.ts
+      - tests/edge/task2-2-output-grounding-router.test.ts
+      - tests/edge/task2-3-citation-lineage.test.ts
+  workflow_dispatch:
+    inputs:
+      production_runtime_authorized:
+        description: Explicit production-owner authorization to run the write-capable production smoke
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  task3-final-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: director/round2-task3-conversation-runtime-final-gate
+          fetch-depth: 0
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.6
+
+      - name: Compile production runtime call chain
+        run: |
+          set -euo pipefail
+          deno check --node-modules-dir=auto supabase/functions/_shared/conversation-semantic-contract.ts
+          deno check --node-modules-dir=auto supabase/functions/_shared/prior-grounded-transform.ts
+          deno check --node-modules-dir=auto supabase/functions/_shared/llm-router.ts
+          deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+          deno check --node-modules-dir=auto supabase/functions/receive-widget-message/index.ts
+          deno check --node-modules-dir=auto supabase/functions/widget-poll-messages/index.ts
+          deno check --node-modules-dir=auto supabase/functions/agent-assist/index.ts
+          deno check --node-modules-dir=auto supabase/functions/conversation-evaluate/index.ts
+          deno check --node-modules-dir=auto supabase/functions/ce-evaluation-worker/index.ts
+          deno check --node-modules-dir=auto supabase/functions/customer360-adapter/index.ts
+          echo TASK3_RUNTIME_COMPILE=PASS
+
+      - name: Run frozen Task 1 and Task 2 regressions
+        run: |
+          set -euo pipefail
+          deno test --allow-env --node-modules-dir=auto tests/edge/round2-task1-conversation-semantic-contract.test.ts
+          deno test --allow-env --node-modules-dir=auto tests/edge/round2-task2-grounding-transform-boundary.test.ts
+          deno test --allow-env --node-modules-dir=auto tests/edge/task2-2-output-grounding-router.test.ts
+          deno test --allow-env --node-modules-dir=auto tests/edge/task2-3-citation-lineage.test.ts
+          echo TASK3_FROZEN_REGRESSION=PASS
+
+      - name: Validate production smoke contract
+        run: |
+          set -euo pipefail
+          python -m py_compile scripts/integrated_final_production_smoke.py
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          s = Path('scripts/integrated_final_production_smoke.py').read_text()
+          for i in range(1, 21):
+              assert f"('A{i}'" in s, f'missing stateful turn A{i}'
+          assert "send(cid,tok,'幫我轉真人客服。',False,35)" in s
+          assert "A21:R1" in s
+          assert "A22:AI_AFTER_HANDOFF" in s
+          for token in [
+              'TWENTY_TURN_STATEFUL_CONVERSATION',
+              'STANDALONE_KNOWN_KB_HIT',
+              'FOLLOW_UP_SEMANTIC_RETRIEVAL',
+              'PRONOUN_RESOLUTION',
+              'CORRECTION_SUPERSESSION',
+              'TOPIC_SWITCH_ISOLATION',
+              'MULTILINGUAL_CONTINUITY',
+              'PUBLISHED_ONLY_EVIDENCE',
+              'FULL_CONTENT_FACTUAL_GROUNDING',
+              'FIRST_NO_MATCH_CLARIFICATION',
+              'EXPLICIT_R1',
+              'ANGER_VIP_ADVISORY_ONLY',
+              'HUMAN_CONTROL_AI_SUPPRESSION',
+          ]:
+              assert token in s, token
+          # The runtime smoke is intentionally write-capable and must never be
+          # auto-executed merely because source was pushed.
+          assert "create-visitor-session" in s
+          assert "receive-widget-message" in s
+          print('TASK3_SMOKE_CONTRACT=PASS')
+          PY
+
+      - name: Machine assertions for frozen runtime boundaries
+        run: |
+          set -euo pipefail
+          grep -q 'PRIOR_GROUNDED_ANSWER' supabase/functions/_shared/prior-grounded-transform.ts
+          grep -q 'const _g1SkipKB = _pr5GreetingOrTrivial || Boolean(_priorGroundedTransform)' supabase/functions/generate-reply/index.ts
+          grep -q 'buildInheritedTransformCitationMetadata(_priorGroundedTransform)' supabase/functions/generate-reply/index.ts
+          grep -q 'commit_ai_reply_tx' supabase/functions/generate-reply/index.ts
+          grep -q 'resolveTenantScope' supabase/functions/generate-reply/index.ts
+          grep -q 'requirePublished: true' supabase/functions/generate-reply/index.ts
+          grep -q 'full_content' supabase/functions/_shared/citation-lineage.ts
+          echo TASK3_MACHINE_ASSERTIONS=PASS
+
+      - name: Full authoritative repository build
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          echo TASK3_FULL_BUILD=PASS
+
+      - name: Production owner authorization boundary
+        env:
+          AUTHORIZED: ${{ github.event_name == 'workflow_dispatch' && inputs.production_runtime_authorized || 'false' }}
+        run: |
+          set -euo pipefail
+          if [[ "$AUTHORIZED" != "true" ]]; then
+            echo 'TASK3_PRODUCTION_RUNTIME=NOT_RUN'
+            echo 'TASK3_FINAL_STATUS=STOP'
+            echo 'BLOCKER=EXPLICIT_PRODUCTION_DEPLOYMENT_AND_WRITE_SMOKE_AUTHORIZATION_REQUIRED'
+            exit 3
+          fi
+          echo 'Production-owner authorization is present, but this workflow does not deploy application source.'
+          echo 'Authoritative deployed-source parity must be proven after an explicitly authorized deployment before the write-capable smoke may run.'
+          echo 'TASK3_DEPLOYED_SOURCE_PARITY=NOT_PROVEN'
+          exit 4
