@@ -2076,7 +2076,13 @@ function validateP1PredictionSignals(input) {
 // supabase/functions/_shared/conversation-runtime-state.ts
 var CUSTOMER = /* @__PURE__ */ new Set(["visitor", "customer", "user"]);
 var ASSISTANT = /* @__PURE__ */ new Set(["assistant", "ai", "human_agent"]);
-var CORRECTION2 = /(我講錯|我说错|我說錯|更正|其實係|其实是|唔係.*係|不是.*是|改返|改成|actually|i meant|correction|not .* but )/i;
+var EXPLICIT_CORRECTION = /(我講錯|我说错|我說錯|我要更正|我想更正|更正一下[：:]?|更正[：:]|其實係|其实是|改返|改成|actually[,\s]+i meant|i meant|correction\s*[:：])/i;
+var CONTRAST_CORRECTION = /(唔係[^，。,.!?！？]{1,80}[，,]\s*係|不是[^，。,.!?！？]{1,80}[，,]\s*(?:而)?是|not .+ but .+)/i;
+function isCorrectionText(text) {
+  if (EXPLICIT_CORRECTION.test(text)) return true;
+  if (/[?？]/.test(text)) return false;
+  return CONTRAST_CORRECTION.test(text);
+}
 var CONSTRAINT = /(不要|唔好|不准|唔准|不要猜|唔好估|沒有型號|没有型号|冇型號|only|don't|do not|without|must not|no model)/i;
 var FOLLOW = /^(?:咁|那|那麼|那么|所以|另外|仲有|还有|如果|再|又|而|同埋|what about|and what about|then|so|also|in that case|how about)/i;
 var PRONOUN = /(這個|这个|那個|那个|它|其|上述|剛才|刚才|之前|頭先|头先|same|that|this|it|its|earlier|previous)/i;
@@ -2115,7 +2121,7 @@ function projectConversationRuntimeState(newestFirst) {
   const chronological = [...customers].reverse();
   const latest = customers[0]?.text ?? null;
   const first = chronological[0]?.text ?? null;
-  const corrections = customers.filter((row) => CORRECTION2.test(row.text)).slice(0, 6).map((row) => row.text);
+  const corrections = customers.filter((row) => isCorrectionText(row.text)).slice(0, 6).map((row) => row.text);
   const constraints = customers.filter((row) => CONSTRAINT.test(row.text)).slice(0, 8).map((row) => row.text);
   const unresolved = customers.filter((row) => QUESTION.test(row.text)).slice(0, 8).map((row) => row.text);
   const explicitJurisdiction = latest ? detectExplicitJurisdiction(latest) : null;
@@ -2171,6 +2177,71 @@ function buildCanonicalContinuityBlock(newestFirst) {
   }
   return lines.join("\n").slice(0, 6e3);
 }
+function resolveConversationMemoryResponse(latestInput, newestFirst) {
+  const latest = clean(latestInput);
+  if (!latest) return null;
+  if (/(請記住|请记住|please\s+remember|remember\s+that)/i.test(latest)) return null;
+  let currentRemoved = false;
+  const priorRows = newestFirst.filter((row) => {
+    const role = String(row.role ?? "").toLowerCase();
+    const text = clean(row.content);
+    if (!currentRemoved && CUSTOMER.has(role) && text === latest) {
+      currentRemoved = true;
+      return false;
+    }
+    return true;
+  });
+  const state = projectConversationRuntimeState(priorRows);
+  const lang = detectLanguage2(latest);
+  const firstRequest = /(一開始|一开始|第一個問題|第一个问题|最初).*(問|問題|问题)|what\s+(?:did\s+i\s+ask|was\s+(?:my\s+)?first)|first\s+(?:question|thing\s+i\s+asked)/i.test(latest);
+  const correctionRequest = /(之前|先前|剛才|刚才|earlier|previous).*(更正|改正|correct)|更正後|更正后|what\s+did\s+i\s+correct|latest\s+correction/i.test(latest);
+  const constraintRequest = /(限制|約束|约束|不要猜|唔好估|constraint|restriction|what.*(?:told|asked).*(?:not|don.?t))/i.test(latest) && /(記得|记得|總結|总结|告訴|告诉|什麼|什么|what|recall|remember|summari)/i.test(latest);
+  const summaryRequest = /(總結|总结|summari[sz]e).*(記得|记得|更正|限制|constraint|correction|remember)/i.test(latest);
+  const recommendationRequest = /(之前|先前|剛才|刚才|earlier|previous).*(建議|建议|recommend|suggest)|what\s+did\s+you\s+(?:recommend|suggest)/i.test(latest);
+  const nameRequest = /(我叫什麼|我叫什么|我的名字|我個名|我个名|what(?:'s| is)\s+my\s+name|do\s+you\s+remember\s+my\s+name)/i.test(latest);
+  const locationRequest = /(我(?:現在|现在|目前).*(?:哪裡|哪里)|我.*(?:在哪|喺邊)|where\s+am\s+i|my\s+(?:current\s+)?location|更正後.*(?:地點|地点)|更正后.*(?:地點|地点))/i.test(latest);
+  if (!(firstRequest || correctionRequest || constraintRequest || summaryRequest || recommendationRequest || nameRequest || locationRequest)) return null;
+  const zh = lang !== "en";
+  const q = lang === "zh-CN" ? { first: "\u4F60\u4E00\u5F00\u59CB\u95EE\u7684\u662F", correction: "\u4F60\u4E4B\u524D\u6700\u65B0\u7684\u66F4\u6B63\u662F", constraint: "\u4F60\u4E4B\u524D\u660E\u786E\u63D0\u51FA\u7684\u9650\u5236\u5305\u62EC", recommendation: "\u6211\u4E4B\u524D\u7684\u76F8\u5173\u5EFA\u8BAE\u5305\u62EC", name: "\u4F60\u4E4B\u524D\u544A\u8BC9\u6211\u4F60\u7684\u540D\u5B57\u662F", location: "\u4F60\u4E4B\u524D\u66F4\u6B63\u540E\u7684\u5730\u70B9\u662F", none: "\u8FD9\u6BB5\u5BF9\u8BDD\u91CC\u6CA1\u6709\u8DB3\u591F\u8D44\u6599\u53EF\u4EE5\u786E\u8BA4\u3002" } : { first: "\u4F60\u4E00\u958B\u59CB\u554F\u7684\u662F", correction: "\u4F60\u4E4B\u524D\u6700\u65B0\u7684\u66F4\u6B63\u662F", constraint: "\u4F60\u4E4B\u524D\u660E\u78BA\u63D0\u51FA\u7684\u9650\u5236\u5305\u62EC", recommendation: "\u6211\u4E4B\u524D\u7684\u76F8\u95DC\u5EFA\u8B70\u5305\u62EC", name: "\u4F60\u4E4B\u524D\u544A\u8A34\u6211\u4F60\u7684\u540D\u5B57\u662F", location: "\u4F60\u4E4B\u524D\u66F4\u6B63\u5F8C\u7684\u5730\u9EDE\u662F", none: "\u9019\u6BB5\u5C0D\u8A71\u88E1\u6C92\u6709\u8DB3\u5920\u8CC7\u6599\u53EF\u4EE5\u78BA\u8A8D\u3002" };
+  const en = { first: "Your first question was", correction: "Your latest correction was", constraint: "The constraints you explicitly gave me include", recommendation: "My relevant earlier recommendations include", name: "You told me your name is", location: "The location from your latest correction is", none: "There is not enough information in this conversation to confirm that." };
+  const t = zh ? q : en;
+  const quote = (v) => zh ? `\u300C${v}\u300D` : `\u201C${v}\u201D`;
+  const list = (xs) => xs.map((x, i) => `${i + 1}. ${x}`).join("\n");
+  if (summaryRequest) {
+    const parts = [];
+    if (state.latest_corrections.length) parts.push(`${t.correction}\uFF1A
+${list(state.latest_corrections.slice(0, 3))}`);
+    if (state.active_constraints.length) parts.push(`${t.constraint}\uFF1A
+${list(state.active_constraints.slice(0, 5))}`);
+    return parts.length ? parts.join("\n\n").slice(0, 1800) : t.none;
+  }
+  if (firstRequest) return state.first_customer_turn ? `${t.first} ${quote(state.first_customer_turn)}` : t.none;
+  if (correctionRequest) return state.latest_corrections[0] ? `${t.correction} ${quote(state.latest_corrections[0])}` : t.none;
+  if (constraintRequest) return state.active_constraints.length ? `${t.constraint}\uFF1A
+${list(state.active_constraints.slice(0, 5))}` : t.none;
+  if (recommendationRequest) return state.prior_recommendations.length ? `${t.recommendation}\uFF1A
+${list(state.prior_recommendations.slice(0, 3))}` : t.none;
+  if (nameRequest) {
+    const customerTexts = priorRows.filter((r) => CUSTOMER.has(String(r.role ?? "").toLowerCase())).map((r) => clean(r.content));
+    const named = customerTexts.find((x) => /^我叫\s*[^，。,.!?！？]{1,40}/.test(x));
+    const m = named?.match(/^我叫\s*([^，。,.!?！？]{1,40})/);
+    return m?.[1] ? `${t.name} ${quote(m[1].replace(/(?:請|请)?記住.*$/, "").trim())}` : t.none;
+  }
+  if (locationRequest) {
+    const corrected = state.latest_corrections.map((x) => detectExplicitJurisdiction(x)).find(Boolean) ?? null;
+    const label = {
+      hong_kong: { "zh-TW": "\u9999\u6E2F", "zh-CN": "\u9999\u6E2F", en: "Hong Kong" },
+      macau: { "zh-TW": "\u6FB3\u9580", "zh-CN": "\u6FB3\u95E8", en: "Macau" },
+      singapore: { "zh-TW": "\u65B0\u52A0\u5761", "zh-CN": "\u65B0\u52A0\u5761", en: "Singapore" },
+      taiwan: { "zh-TW": "\u53F0\u7063", "zh-CN": "\u53F0\u6E7E", en: "Taiwan" },
+      mainland_china: { "zh-TW": "\u4E2D\u570B\u5927\u9678", "zh-CN": "\u4E2D\u56FD\u5927\u9646", en: "Mainland China" },
+      mars: { "zh-TW": "\u706B\u661F", "zh-CN": "\u706B\u661F", en: "Mars" }
+    };
+    const value = corrected ? label[corrected]?.[lang] : void 0;
+    return value ? `${t.location} ${value}` : t.none;
+  }
+  return null;
+}
 function buildCanonicalRetrievalQuery(latestInput, newestFirst) {
   const latest = clean(latestInput);
   const state = projectConversationRuntimeState(newestFirst);
@@ -2185,7 +2256,7 @@ function buildCanonicalRetrievalQuery(latestInput, newestFirst) {
   }
   const explicitJurisdiction = detectExplicitJurisdiction(latest);
   const previous = newestFirst.filter((row) => CUSTOMER.has(String(row.role ?? "").toLowerCase())).map((row) => clean(row.content)).filter((x) => x && x !== latest && x !== "__THINKING__");
-  const needsContext = FOLLOW.test(latest) || PRONOUN.test(latest) || latest.length <= 28 && QUESTION.test(latest) || CORRECTION2.test(latest);
+  const needsContext = FOLLOW.test(latest) || PRONOUN.test(latest) || latest.length <= 28 && QUESTION.test(latest) || isCorrectionText(latest);
   if (!needsContext || explicitJurisdiction) {
     return {
       query: latest,
@@ -3766,6 +3837,16 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
       _h1LastMsg
     );
     if (r1Response) return r1Response;
+  }
+  const _conversationMemoryReply = resolveConversationMemoryResponse(_h1LastMsg, _pr5HistoryRows ?? []);
+  if (_conversationMemoryReply) {
+    const committed2 = await commitAiReplyWithControlGate(supabaseAdmin, conversation_id, source_message_id, _conversationMemoryReply, { response_route: "conversation_memory", conversation_grounded: true });
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+    if (!committed2.ok) {
+      if (committed2.result === "human_control" || committed2.result === "resolved" || committed2.result === "superseded_source") return new Response(JSON.stringify({ success: true, skipped: committed2.result }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ success: false, error: `conversation_memory_commit_${committed2.result}` }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+    return new Response(JSON.stringify({ success: true, response_route: "conversation_memory", conversation_grounded: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
   const _g1SkipKB = _pr5GreetingOrTrivial;
   let _pr5RagMatchState;
