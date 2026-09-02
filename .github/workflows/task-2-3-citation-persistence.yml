@@ -1,5 +1,8 @@
 name: Task 2.3 Citation Persistence Final Gate
-on: [push]
+on:
+  push:
+    branches:
+      - director/task-2-3-citation-persistence
 permissions:
   contents: write
 jobs:
@@ -34,8 +37,8 @@ jobs:
 
           pattern = re.compile(r'\nfunction buildCitationMetadata\(chunks: Array<\{ title\?: string; score\?: number; source_type\?: string \}>\): \{ citations: Array<\{ label: string; source_type: string; relevance\?: string \}> \} \| null \{.*?\n\}\n\ntype FlagSet', re.S)
           s, removed = pattern.subn('\n\ntype FlagSet', s, count=1)
-          if removed != 1:
-              raise SystemExit(f'STOP: expected one legacy citation builder, removed={removed}')
+          if removed != 1 and 'function buildCitationMetadata(chunks: Array' in s:
+              raise SystemExit(f'STOP: legacy citation builder removal failed: {removed}')
 
           old_type = 'let finalPromptChunks: Array<{ title?: string; score?: number; source_type?: string }> = [];'
           new_type = 'let finalPromptChunks: KBFullChunk[] = [];'
@@ -52,20 +55,23 @@ jobs:
               raise SystemExit('STOP: finalPromptChunks assignment baseline mismatch')
 
           old_commit = 'const citationMeta = finalPromptChunks.length > 0 ? buildCitationMetadata(finalPromptChunks) : null;\n  const committed = await commitAiReplyWithControlGate('
-          new_commit = '''const citationMeta = finalPromptChunks.length > 0
-    ? buildCitationMetadata(
-        finalPromptChunks,
-        ragResult?.llm_context?.selected_document_id ?? null,
-      )
-    : null;
-  if (flags.ENABLE_KB && !_g1SkipKB && finalPromptChunks.length > 0 && !citationMeta) {
-    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-    return new Response(
-      JSON.stringify({ success: false, error: "citation_lineage_unavailable" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
-  }
-  const committed = await commitAiReplyWithControlGate('''
+          new_lines = [
+              'const citationMeta = finalPromptChunks.length > 0',
+              '    ? buildCitationMetadata(',
+              '        finalPromptChunks,',
+              '        ragResult?.llm_context?.selected_document_id ?? null,',
+              '      )',
+              '    : null;',
+              '  if (flags.ENABLE_KB && !_g1SkipKB && finalPromptChunks.length > 0 && !citationMeta) {',
+              '    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);',
+              '    return new Response(',
+              '      JSON.stringify({ success: false, error: "citation_lineage_unavailable" }),',
+              '      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },',
+              '    );',
+              '  }',
+              '  const committed = await commitAiReplyWithControlGate(',
+          ]
+          new_commit = '\n'.join(new_lines)
           if old_commit in s:
               s = s.replace(old_commit, new_commit, 1)
           elif 'error: "citation_lineage_unavailable"' not in s:
