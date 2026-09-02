@@ -1,0 +1,116 @@
+name: Task 3.2 Agent Console Runtime Final Gate
+
+on:
+  push:
+    branches:
+      - director/task-3-2-agent-console-runtime
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: director/task-3-2-agent-console-runtime
+          fetch-depth: 0
+
+      - name: Frozen Task 3.1 baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=63ddf6361ec2c04d0c7e8fc657d4323306f6bbbe
+          git cat-file -e "$base^{commit}"
+          test "$(git rev-parse "$base:package.json")" = "$(git rev-parse HEAD:package.json)"
+          for f in \
+            .github/workflows/task-3-1-widget-runtime.yml \
+            supabase/functions/_shared/widget-runtime-state.ts \
+            supabase/functions/receive-widget-message/index.ts \
+            supabase/functions/widget-poll-messages/index.ts \
+            supabase/migrations/20260902142000_task3_1_widget_human_control_ingress.sql \
+            tests/edge/task3-1-widget-runtime-state.test.ts \
+            tests/sql/task3-1-widget-ingress-runtime.sql; do
+            git diff --quiet "$base" HEAD -- "$f"
+          done
+          echo TASK3_2_FROZEN_TASK3_1=PASS
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Compile agent console callers
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno check --node-modules-dir=auto supabase/functions/agent-send-reply/index.ts
+          deno check --node-modules-dir=auto supabase/functions/assign-conversation/index.ts
+          echo TASK3_2_CALLER_COMPILE=PASS
+
+      - name: Execute agent console RPC runtime
+        env:
+          PGPASSWORD: postgres
+        shell: bash
+        run: |
+          set -euo pipefail
+          psql -h 127.0.0.1 -U postgres -d postgres -f tests/sql/task3-2-agent-console-runtime.sql 2>&1 | tee /tmp/task32-sql.log
+          grep -q 'TASK3_2_SQL_RUNTIME_PASS' /tmp/task32-sql.log
+          echo TASK3_2_SQL_RUNTIME=PASS
+
+      - name: Machine assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          migration=supabase/migrations/20260902170000_task3_2_agent_console_runtime.sql
+          grep -q 'CREATE OR REPLACE FUNCTION public.agent_send_reply_tx' "$migration"
+          grep -q "GRANT EXECUTE ON FUNCTION public.agent_send_reply_tx(uuid, uuid, text, text) TO service_role" "$migration"
+          grep -q "REVOKE ALL ON FUNCTION public.agent_send_reply_tx(uuid, uuid, text, text) FROM authenticated" "$migration"
+          grep -q "h.handoff_type = 'agent_to_agent'" "$migration"
+          grep -q "RETURN jsonb_build_object('result', 'superseded_source')" "$migration"
+          grep -q '"agent_send_reply_tx"' supabase/functions/agent-send-reply/index.ts
+          grep -q 'resolveAgentCompanyScope' supabase/functions/agent-send-reply/index.ts
+          grep -q '.eq("company_id", scope.companyId)' supabase/functions/agent-send-reply/index.ts
+          legacy_ref="hvmtoqiwdqvgn""jepxwrc"
+          changed_runtime=$(git diff --name-only 63ddf6361ec2c04d0c7e8fc657d4323306f6bbbe HEAD -- supabase src || true)
+          if [ -n "$changed_runtime" ] && printf '%s\n' "$changed_runtime" | xargs grep -n "$legacy_ref"; then
+            echo 'STOP: legacy Supabase ref in Task 3.2 runtime delta'
+            exit 1
+          fi
+          cat > /tmp/expected.txt <<'EOF'
+          .github/workflows/task-3-2-agent-console-runtime.yml
+          supabase/migrations/20260902170000_task3_2_agent_console_runtime.sql
+          tests/sql/task3-2-agent-console-runtime.sql
+          EOF
+          git diff --name-only 63ddf6361ec2c04d0c7e8fc657d4323306f6bbbe HEAD | sort > /tmp/actual.txt
+          sort /tmp/expected.txt -o /tmp/expected.txt
+          diff -u /tmp/expected.txt /tmp/actual.txt
+          echo TASK3_2_IMPLEMENTATION_ASSERTIONS=PASS
+
+      - name: Install and build authoritative repo
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          echo TASK3_2_FULL_BUILD=PASS
+
+      - name: Final gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo TASK_3_2_FINAL_GATE=PASS
