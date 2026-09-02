@@ -1,0 +1,117 @@
+name: Task 3.1 Customer Widget Runtime Final Gate
+
+on:
+  push:
+    branches:
+      - director/task-3-1-widget-runtime
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: director/task-3-1-widget-runtime
+          fetch-depth: 0
+
+      - name: Frozen baseline and package assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(node -p "require('./package.json').version")" = "2.7.1"
+          git cat-file -e 241194177711da584560509b162740dd4d48f074^{commit}
+          git diff --quiet 241194177711da584560509b162740dd4d48f074 -- \
+            supabase/functions/generate-reply/index.ts \
+            supabase/functions/_shared/citation-lineage.ts \
+            tests/edge/task2-3-citation-lineage.test.ts
+          echo TASK3_1_FROZEN_BASELINE=PASS
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Compile affected customer runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno check --node-modules-dir=auto supabase/functions/_shared/widget-runtime-state.ts
+          deno check --node-modules-dir=auto supabase/functions/widget-poll-messages/index.ts
+          deno check --node-modules-dir=auto supabase/functions/receive-widget-message/index.ts
+          deno check --node-modules-dir=auto supabase/functions/create-visitor-session/index.ts
+          deno check --node-modules-dir=auto supabase/functions/get-public-widget-config/index.ts
+          echo TASK3_1_RUNTIME_COMPILE=PASS
+
+      - name: Run widget runtime state tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno test --allow-env --node-modules-dir=auto tests/edge/task3-1-widget-runtime-state.test.ts
+
+      - name: Execute widget ingress RPC behavior
+        env:
+          PGPASSWORD: postgres
+        shell: bash
+        run: |
+          set -euo pipefail
+          psql -h 127.0.0.1 -U postgres -d postgres -f tests/sql/task3-1-widget-ingress-runtime.sql | tee /tmp/task31-sql.log
+          grep -q 'TASK3_1_WIDGET_INGRESS_RUNTIME=PASS' /tmp/task31-sql.log
+
+      - name: Machine assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q '"human_needed"' supabase/functions/_shared/widget-runtime-state.ts
+          grep -q '"human_control"' supabase/functions/_shared/widget-runtime-state.ts
+          grep -q '"escalation_risk"' supabase/functions/_shared/widget-runtime-state.ts
+          grep -q 'hasActiveThinkingClaim' supabase/functions/widget-poll-messages/index.ts
+          grep -q 'humanSupportState === "none" && hasActiveThinkingClaim' supabase/functions/widget-poll-messages/index.ts
+          grep -q "'human_needed','human_control','escalation_risk'" supabase/migrations/20260902142000_task3_1_widget_human_control_ingress.sql
+          grep -q 'revoke all on function public.receive_widget_message_tx' supabase/migrations/20260902142000_task3_1_widget_human_control_ingress.sql
+          grep -q 'grant execute on function public.receive_widget_message_tx' supabase/migrations/20260902142000_task3_1_widget_human_control_ingress.sql
+          if git diff --name-only 241194177711da584560509b162740dd4d48f074 HEAD | xargs grep -n 'hvmtoqiwdqvgnjepxwrc'; then
+            echo 'STOP: legacy Supabase ref in Task 3.1 delta'
+            exit 1
+          fi
+          cat > /tmp/expected.txt <<'EOF'
+          .github/workflows/task-3-1-widget-runtime.yml
+          supabase/functions/_shared/widget-runtime-state.ts
+          supabase/functions/widget-poll-messages/index.ts
+          supabase/migrations/20260902142000_task3_1_widget_human_control_ingress.sql
+          tests/edge/task3-1-widget-runtime-state.test.ts
+          tests/sql/task3-1-widget-ingress-runtime.sql
+          EOF
+          git diff --name-only 241194177711da584560509b162740dd4d48f074 HEAD | sort > /tmp/actual.txt
+          sort /tmp/expected.txt -o /tmp/expected.txt
+          diff -u /tmp/expected.txt /tmp/actual.txt
+          echo TASK3_1_IMPLEMENTATION_ASSERTIONS=PASS
+
+      - name: Install and build authoritative repo
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          echo TASK3_1_FULL_BUILD=PASS
+
+      - name: Final gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo TASK_3_1_FINAL_GATE=PASS
