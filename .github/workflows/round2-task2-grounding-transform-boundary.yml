@@ -69,12 +69,18 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           s = Path('supabase/functions/generate-reply/index.ts').read_text()
-          start = s.index('const _g1SkipKB = _pr5GreetingOrTrivial || Boolean(_priorGroundedTransform);')
-          fetch = s.index('if (flags.ENABLE_KB && !_g1SkipKB)', start)
-          assert fetch > start
-          block = s[fetch:s.index('if (!flags.ENABLE_KB || _g1SkipKB) _kbDone = true;', fetch)]
-          assert block.count('fetchKBRag(') == 1, 'canonical KB path must remain exactly one retrieval when not skipped'
-          assert 'resolvePriorGroundedTransform' in s
+          resolve = s.index('const _priorGroundedTransform = resolvePriorGroundedTransform(')
+          skip = s.index('const _g1SkipKB = _pr5GreetingOrTrivial || Boolean(_priorGroundedTransform);', resolve)
+          kb = s.index('if (flags.ENABLE_KB && !_g1SkipKB)', skip)
+          done = s.index('if (!flags.ENABLE_KB || _g1SkipKB) _kbDone = true;', kb)
+          prompt = s.index('buildPriorGroundedTransformBlock(_priorGroundedTransform)', done)
+          citation = s.index('buildInheritedTransformCitationMetadata(_priorGroundedTransform)', prompt)
+          assert resolve < skip < kb < done < prompt < citation
+          assert 'fetchKBRag(' not in s[resolve:skip], 'transform authority resolution must not retrieve KB'
+          assert 'fetchKBRag(' not in s[done:citation], 'transform prompt/citation path must not retrieve KB'
+          # The Task 2 patch must not create any transform-specific second retrieval.
+          patch = Path('scripts/round2-task2-apply.py').read_text()
+          assert 'fetchKBRag(' not in patch, 'Task 2 patch must not add a KB retrieval call'
           print('TASK2_MACHINE_ASSERTIONS=PASS')
           PY
 
