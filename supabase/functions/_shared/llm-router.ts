@@ -155,9 +155,6 @@ async function recordUsage(
   code?: string,
 ): Promise<void> {
   try {
-    // Nothing here carries prompt text, system text, credentials or provider
-    // output. Only identifiers, counts and timings are persisted, so the log can
-    // never become a second copy of customer data.
     await serviceClient().from("upstream_call_log").insert({
       conversation_id: call.conversationId,
       company_id: call.companyId,
@@ -179,29 +176,12 @@ async function recordUsage(
       error_message: code ?? null,
     });
   } catch (e) {
-    // Logging must never fail the caller, and the failure itself must not leak
-    // anything: only the error class name is emitted.
     log(call.tag, { event: "usage_log_failed", detail: (e as Error).name });
   }
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/* --------------------- shared generation output budget --------------------- */
-
-/**
- * Single bounded, configurable output-token budget for every
- * `purpose: "generation"` caller (widget/AI reply orchestration, legacy reply
- * path, escalation policy assessment).
- *
- * Rationale: the structured/orchestrated generation output routinely exceeds
- * 500 output tokens, and a provider MAX_TOKENS finish is intentionally treated
- * as LLM_INVALID_OUTPUT (fail-closed) — so an undersized budget turns healthy
- * KB-grounded answers into unnecessary human handoffs. The budget therefore
- * defaults high enough for the current structured contract, stays operator
- * configurable, and is clamped to a sane min/max so a bad configuration value
- * can never restore the truncation failure or request an unbounded budget.
- */
 export const GENERATION_MAX_TOKENS_DEFAULT = 2048;
 export const GENERATION_MAX_TOKENS_MIN = 768;
 export const GENERATION_MAX_TOKENS_MAX = 8192;
@@ -217,7 +197,6 @@ export function resolveGenerationMaxTokens(): number {
     Math.min(GENERATION_MAX_TOKENS_MAX, candidate),
   );
 }
-
 
 interface ProviderRequest {
   url: string;
@@ -236,12 +215,9 @@ interface ParsedProviderResponse {
 interface ProviderAdapter {
   id: ProviderId;
   model: string;
-  /** Built per attempt so short-lived credentials can be refreshed. */
   buildRequest: () => Promise<ProviderRequest>;
   parseResponse: (body: unknown) => ParsedProviderResponse;
 }
-
-/* -------------------------------- anthropic ------------------------------- */
 
 function anthropicAdapter(
   apiKey: string,
@@ -253,21 +229,20 @@ function anthropicAdapter(
   return {
     id: "anthropic",
     model,
-    buildRequest: () =>
-      Promise.resolve({
-        url: ANTHROPIC_ENDPOINT,
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": apiKey,
-          "anthropic-version": ANTHROPIC_API_VERSION,
-        },
-        body: JSON.stringify({
-          model,
-          max_tokens: maxTokens,
-          system: safeSystem,
-          messages: [{ role: "user", content: safeUser }],
-        }),
+    buildRequest: () => Promise.resolve({
+      url: ANTHROPIC_ENDPOINT,
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": ANTHROPIC_API_VERSION,
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: maxTokens,
+        system: safeSystem,
+        messages: [{ role: "user", content: safeUser }],
       }),
+    }),
     parseResponse: (body) => {
       const obj = body as {
         content?: Array<{ type?: string; text?: string }>;
@@ -289,12 +264,6 @@ function anthropicAdapter(
   };
 }
 
-/* --------------------------------- vertex --------------------------------- */
-
-/**
- * Service-account OAuth token for Vertex AI. The credential JSON is parsed in
- * process only and never logged, returned or persisted.
- */
 async function vertexAccessToken(serviceAccountJson: string): Promise<string> {
   const credentials = JSON.parse(serviceAccountJson) as Record<string, unknown>;
   const auth = new GoogleAuth({ credentials, scopes: [VERTEX_SCOPE] });
@@ -336,10 +305,6 @@ function vertexAdapter(
           generationConfig: {
             maxOutputTokens: maxTokens,
             temperature: 0,
-            // Gemini honours a response mime type; callers that require a JSON
-            // object get one without fences or prose. A response schema pins
-            // field names and primitive types, which prompt text alone does
-            // not (Gemini otherwise renames keys and stringifies numbers).
             ...(jsonOutput ? { responseMimeType: "application/json" } : {}),
             ...(jsonOutput && responseSchema ? { responseSchema } : {}),
           },
@@ -347,8 +312,6 @@ function vertexAdapter(
       };
     },
     parseResponse: (body) => {
-      // Thought parts are dropped and thinking tokens are counted; see
-      // _shared/vertex-parse.ts for the full incompatibility list.
       const parsed = parseVertexResponse(body);
       return {
         text: parsed.text,
@@ -360,8 +323,6 @@ function vertexAdapter(
     },
   };
 }
-
-/* ----------------------- grounded generation verifier ---------------------- */
 
 interface ParsedGroundingBlock {
   evidence_text: string;
@@ -394,6 +355,23 @@ export function extractGroundingBlock(system: string): ParsedGroundingBlock | nu
     evidence_text: raw.slice(0, 6000),
     chunk_ids: [...new Set(ids)],
   };
+}
+
+export function buildVerifierEvidenceAliases(
+  grounding: ParsedGroundingBlock,
+): { evidence_text: string; allowed_ids: string[] } {
+  let next = 0;
+  const allowed: string[] = [];
+  const aliased = grounding.evidence_text.replace(
+    /\[chunk:([^\]\s]+)\]/g,
+    () => {
+      next += 1;
+      const alias = `E${next}`;
+      allowed.push(alias);
+      return `[chunk:${alias}]`;
+    },
+  );
+  return { evidence_text: aliased, allowed_ids: allowed };
 }
 
 export function validateExactFactGrounding(
@@ -470,6 +448,7 @@ async function verifyGroundedGeneration(
     return { ok: false, reason: exact.reason };
   }
 
+  const verifierEvidence = buildVerifierEvidenceAliases(grounding);
   const evaluationModel = (Deno.env.get(MODEL_ENV.evaluation) ?? "").trim();
   if (!evaluationModel) {
     log(call.tag, {
@@ -485,12 +464,12 @@ async function verifyGroundedGeneration(
     "Do not use outside knowledge, assumptions, the customer request, or prior conversation as factual evidence.",
     "Politeness, conversational transitions, and non-factual wording do not need evidence.",
     "Any unsupported product fact, policy fact, price, date, duration, dimension, eligibility condition, jurisdiction claim, procedure, limit, availability statement, or categorical factual statement makes grounded=false.",
-    "evidence_chunk_ids may contain only supplied chunk ids that materially support the answer.",
+    "evidence_chunk_ids may contain only supplied E1/E2/E3 aliases that materially support the answer.",
     "Return JSON only with grounded, unsupported_claims, evidence_chunk_ids.",
   ].join("\n");
   const verifierUser = [
     "Evidence:",
-    grounding.evidence_text,
+    verifierEvidence.evidence_text,
     "",
     "Proposed answer:",
     answer.slice(0, 3000),
@@ -589,7 +568,7 @@ async function verifyGroundedGeneration(
       verifierUsage.latency_ms = Date.now() - verifierStarted;
       if (!parsed.text || parsed.finish_reason === "MAX_TOKENS") break;
 
-      const decision = parseGroundingVerifierDecision(parsed.text, grounding.chunk_ids);
+      const decision = parseGroundingVerifierDecision(parsed.text, verifierEvidence.allowed_ids);
       if (!decision) {
         await recordUsage(
           verifierCall,
@@ -645,8 +624,6 @@ async function verifyGroundedGeneration(
   );
   return { ok: false, reason: "verifier_unavailable" };
 }
-
-/* --------------------------------- router --------------------------------- */
 
 export async function callModel(call: LlmCall): Promise<LlmResult> {
   const started = Date.now();
@@ -823,8 +800,6 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
         break;
       }
       if (!res.ok) {
-        // Covers 401/403/404 and every other fatal status. Provider body is
-        // never read into logs or results.
         lastCode = "LLM_NON_2XX";
         lastStatus = res.status;
         log(call.tag, {
@@ -856,8 +831,6 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
       usage.output_tokens = parsed.output_tokens;
 
       if (!parsed.text) {
-        // Complete-but-empty responses (safety block, recitation, truncation)
-        // fail closed, with the provider's own reason recorded for diagnosis.
         lastCode = "LLM_INVALID_OUTPUT";
         log(call.tag, {
           event: "empty_output",
@@ -871,7 +844,6 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
       }
 
       if (parsed.finish_reason === "MAX_TOKENS") {
-        // Truncated output can never be a complete JSON object.
         lastCode = "LLM_INVALID_OUTPUT";
         log(call.tag, {
           event: "truncated_output",
@@ -982,28 +954,17 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
   };
 }
 
-/**
- * Strip fences/prose and parse a JSON object. Malformed or truncated output
- * returns null so callers fail closed.
- */
 export function parseJsonObject(raw: string): Record<string, unknown> | null {
   return parseJsonObjectLoose(raw);
 }
 
-/** Map a router failure onto the CE attempt error vocabulary. */
 export function toCeErrorCode(code: LlmFailureCode): string {
   switch (code) {
-    case "LLM_TIMEOUT":
-      return "CE_PROVIDER_TIMEOUT";
-    case "LLM_NETWORK":
-      return "CE_PROVIDER_NETWORK_ERROR";
-    case "LLM_NON_2XX":
-      return "CE_PROVIDER_NON_2XX";
-    case "LLM_INVALID_OUTPUT":
-      return "CE_PROVIDER_INVALID_OUTPUT";
-    case "LLM_INPUT_BLOCKED":
-      return "CE_PROVIDER_INVALID_OUTPUT";
-    case "LLM_CONFIG_MISSING":
-      return "CE_PROVIDER_CONFIG_ERROR";
+    case "LLM_TIMEOUT": return "CE_PROVIDER_TIMEOUT";
+    case "LLM_NETWORK": return "CE_PROVIDER_NETWORK_ERROR";
+    case "LLM_NON_2XX": return "CE_PROVIDER_NON_2XX";
+    case "LLM_INVALID_OUTPUT": return "CE_PROVIDER_INVALID_OUTPUT";
+    case "LLM_INPUT_BLOCKED": return "CE_PROVIDER_INVALID_OUTPUT";
+    case "LLM_CONFIG_MISSING": return "CE_PROVIDER_CONFIG_ERROR";
   }
 }
