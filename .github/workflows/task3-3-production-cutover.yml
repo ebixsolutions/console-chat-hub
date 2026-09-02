@@ -1,4 +1,5 @@
 name: Task 3.3 Production Cutover Gate
+# Closure run: execute production cutover smoke against current authoritative main.
 
 on:
   push:
