@@ -1,0 +1,7 @@
+name: Task 2.2 CI Sanity
+on: [push]
+jobs:
+  sanity:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo TASK_2_2_CI_SANITY=PASS
