@@ -32,38 +32,17 @@ BEGIN
    WHERE id = p_conversation_id
    FOR UPDATE;
 
-  IF NOT FOUND THEN
-    RETURN jsonb_build_object('result', 'not_found');
-  END IF;
-  IF v_conv.company_id IS NULL THEN
-    RETURN jsonb_build_object('result', 'tenant_unresolved');
-  END IF;
-  IF v_conv.status IN ('resolved', 'closed') THEN
-    RETURN jsonb_build_object('result', 'resolved');
-  END IF;
-  IF v_conv.assigned_agent_id IS NULL THEN
-    RETURN jsonb_build_object('result', 'takeover_required');
-  END IF;
-  IF v_conv.assigned_agent_id IS DISTINCT FROM p_agent_id THEN
-    RETURN jsonb_build_object('result', 'owned_by_another_agent');
-  END IF;
-  IF v_conv.status IS DISTINCT FROM 'pending' THEN
-    RETURN jsonb_build_object('result', 'human_control_required');
-  END IF;
+  IF NOT FOUND THEN RETURN jsonb_build_object('result', 'not_found'); END IF;
+  IF v_conv.company_id IS NULL THEN RETURN jsonb_build_object('result', 'tenant_unresolved'); END IF;
+  IF v_conv.status IN ('resolved', 'closed') THEN RETURN jsonb_build_object('result', 'resolved'); END IF;
+  IF v_conv.assigned_agent_id IS NULL THEN RETURN jsonb_build_object('result', 'takeover_required'); END IF;
+  IF v_conv.assigned_agent_id IS DISTINCT FROM p_agent_id THEN RETURN jsonb_build_object('result', 'owned_by_another_agent'); END IF;
+  IF v_conv.status IS DISTINCT FROM 'pending' THEN RETURN jsonb_build_object('result', 'human_control_required'); END IF;
 
-  SELECT id, status
-    INTO v_agent
-    FROM public.agent_profile
-   WHERE id = p_agent_id;
-  IF NOT FOUND THEN
-    RETURN jsonb_build_object('result', 'agent_not_found');
-  END IF;
-  IF v_agent.status IS DISTINCT FROM 'active' THEN
-    RETURN jsonb_build_object('result', 'agent_inactive');
-  END IF;
+  SELECT id, status INTO v_agent FROM public.agent_profile WHERE id = p_agent_id;
+  IF NOT FOUND THEN RETURN jsonb_build_object('result', 'agent_not_found'); END IF;
+  IF v_agent.status IS DISTINCT FROM 'active' THEN RETURN jsonb_build_object('result', 'agent_inactive'); END IF;
 
-  -- Any AI typing indicator belongs to a generation that is no longer allowed
-  -- to represent current control once a human commits a reply.
   DELETE FROM public.messages
    WHERE conversation_id = p_conversation_id
      AND content = '__THINKING__';
@@ -81,13 +60,10 @@ BEGIN
     )
   ) RETURNING id INTO v_message_id;
 
-  UPDATE public.conversations
-     SET updated_at = v_now
-   WHERE id = p_conversation_id;
+  UPDATE public.conversations SET updated_at = v_now WHERE id = p_conversation_id;
 
-  INSERT INTO public.audit_log(
-    actor_id, actor_type, action, resource_type, resource_id, diff
-  ) VALUES (
+  INSERT INTO public.audit_log(actor_id, actor_type, action, resource_type, resource_id, diff)
+  VALUES (
     p_agent_id, 'agent', 'agent_send_reply', 'messages', v_message_id,
     jsonb_build_object(
       'conversation_id', p_conversation_id,
@@ -134,9 +110,7 @@ BEGIN
     FROM public.conversations
    WHERE id = p_conversation_id
    FOR UPDATE;
-  IF NOT FOUND THEN
-    RETURN jsonb_build_object('result', 'not_found');
-  END IF;
+  IF NOT FOUND THEN RETURN jsonb_build_object('result', 'not_found'); END IF;
 
   IF v_conv.status IN ('resolved', 'closed') THEN
     DELETE FROM public.messages
@@ -171,8 +145,8 @@ BEGIN
     RETURN jsonb_build_object('result', 'invalid_source_message');
   END IF;
 
-  -- A takeover/transfer/return-to-AI boundary after the source message makes
-  -- the pre-boundary generation stale even if current control is AI again.
+  -- Existing generate-reply already treats superseded_source as a safe skip.
+  -- Reuse that frozen result code for a control-epoch invalidation.
   IF EXISTS (
     SELECT 1
       FROM public.handoff_event h
@@ -184,7 +158,7 @@ BEGIN
      WHERE conversation_id = p_conversation_id
        AND content = '__THINKING__'
        AND COALESCE(metadata->>'source_message_id', '') = p_source_message_id::text;
-    RETURN jsonb_build_object('result', 'superseded_control_epoch');
+    RETURN jsonb_build_object('result', 'superseded_source');
   END IF;
 
   IF EXISTS (
@@ -239,10 +213,7 @@ BEGIN
       || jsonb_build_object('source_message_id', p_source_message_id::text, 'control_commit', 'ai')
   ) RETURNING id INTO v_message_id;
 
-  UPDATE public.conversations
-     SET updated_at = v_now
-   WHERE id = p_conversation_id;
-
+  UPDATE public.conversations SET updated_at = v_now WHERE id = p_conversation_id;
   RETURN jsonb_build_object('result', 'success', 'message_id', v_message_id);
 END;
 $function$;
