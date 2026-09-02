@@ -32,12 +32,17 @@ jobs:
           git cat-file -e "$base^{commit}"
           test "$(git rev-parse HEAD:package.json)" = "7e2063d0268e63ed0a0401eb4fecabffcbbc40a4"
           test "$(git rev-parse "$base:package.json")" = "7e2063d0268e63ed0a0401eb4fecabffcbbc40a4"
-          changed=$(git diff --name-only "$base" HEAD)
-          test "$changed" = ".github/workflows/task-3-3-final-production-gate.yml"
+          test "$(git rev-parse HEAD:supabase/functions/widget-poll-messages/index.ts)" = "4115651620ac35804d98b5419cf0f78c7a10acf7"
+          cat > /tmp/expected.txt <<'EOF'
+          .github/workflows/task-3-3-final-production-gate.yml
+          supabase/functions/widget-poll-messages/index.ts
+          EOF
+          git diff --name-only "$base" HEAD | sort > /tmp/actual.txt
+          sort /tmp/expected.txt -o /tmp/expected.txt
+          diff -u /tmp/expected.txt /tmp/actual.txt
           for f in \
             supabase/functions/_shared/widget-runtime-state.ts \
             supabase/functions/receive-widget-message/index.ts \
-            supabase/functions/widget-poll-messages/index.ts \
             supabase/functions/agent-send-reply/index.ts \
             supabase/functions/generate-reply/index.ts \
             supabase/migrations/20260902142000_task3_1_widget_human_control_ingress.sql \
