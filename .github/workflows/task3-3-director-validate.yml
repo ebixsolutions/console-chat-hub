@@ -1,4 +1,5 @@
 name: task3-3-director-repair-validation
+# Re-run the frozen Task 3.3 closure against the current authoritative generated artifacts.
 
 on:
   push:
