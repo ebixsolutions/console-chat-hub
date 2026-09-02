@@ -21,6 +21,10 @@ jobs:
           ref: director/round2-task1-conversation-semantic-contract
           fetch-depth: 0
 
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.6
+
       - name: Apply canonical semantic adapters
         run: |
           set -euo pipefail
