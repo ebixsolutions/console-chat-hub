@@ -1,0 +1,39 @@
+name: B3.1 Review Executor Production Activation
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'config/b3-1-review-executor-closure.json'
+      - 'tests/b3-1-review-executor-source-contract.py'
+      - 'scripts/b3-1-review-executor-final-gate.py'
+      - '.github/workflows/b3-1-review-executor-activation.yml'
+      - 'scripts/workflow2-task2-3-kb-migration.mjs'
+      - 'supabase/functions/_shared/kb-auth.ts'
+
+permissions:
+  contents: read
+
+jobs:
+  final-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # Infrastructure-managed only. Never ask the Director/user to paste these.
+      SINGAPORE_SERVICE_ROLE_SECRET: ${{ secrets.SINGAPORE_SERVICE_ROLE_SECRET }}
+      KB_SINGAPORE_SERVICE_ROLE_SECRET: ${{ secrets.KB_SINGAPORE_SERVICE_ROLE_SECRET }}
+      SERVICE_ROLE_SECRET: ${{ secrets.SERVICE_ROLE_SECRET }}
+      SINGAPORE_BACKEND_TOKEN: ${{ secrets.SINGAPORE_BACKEND_TOKEN }}
+      KB_REVIEW_EXECUTOR_SERVICE_SECRET: ${{ secrets.KB_REVIEW_EXECUTOR_SERVICE_SECRET }}
+      # Disposable review fixture must be provisioned by automation/production fixture management.
+      B31_SMOKE_DOCUMENT_ID: ${{ vars.B31_SMOKE_DOCUMENT_ID }}
+      B31_SMOKE_GLOBAL_DOCUMENT_ID: ${{ vars.B31_SMOKE_GLOBAL_DOCUMENT_ID }}
+      B31_SMOKE_VERSION: ${{ vars.B31_SMOKE_VERSION }}
+      B31_SMOKE_CONTENT_HASH: ${{ vars.B31_SMOKE_CONTENT_HASH }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Frozen B3.1 source/caller/security contract
+        run: python3 tests/b3-1-review-executor-source-contract.py .
+      - name: B3.1 production route/auth/review/idempotency/readback final gate
+        run: python3 scripts/b3-1-review-executor-final-gate.py
