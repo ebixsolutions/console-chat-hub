@@ -1,44 +1,64 @@
-name: Task 2.2 Compiler Diagnostic Tail
+name: Task 2.2 Integration Compile Fix
 on: [push]
 permissions:
   contents: write
 jobs:
-  diagnostic:
+  fix:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: director/task-2-2-output-grounding
+          fetch-depth: 0
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
-      - name: Capture concise generate-reply compiler tail
+      - name: Apply same-root compile fixes
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          set +e
-          deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts > task2-2-full.log 2>&1
-          code=$?
-          set -e
-          tail -n 120 task2-2-full.log > task2-2-compile-tail.log
-          echo "EXIT_CODE=$code" >> task2-2-compile-tail.log
-          cat task2-2-compile-tail.log
           python3 - <<'PY'
-          import base64, json
           from pathlib import Path
-          payload = {
-              "message": "Persist concise Task 2.2 compiler tail",
-              "content": base64.b64encode(Path("task2-2-compile-tail.log").read_bytes()).decode(),
-              "branch": "director/task-2-2-output-grounding",
-          }
-          Path("task2-2-payload.json").write_text(json.dumps(payload))
+          p = Path('supabase/functions/generate-reply/index.ts')
+          s = p.read_text()
+          old_import = 'import { createClient } from "https://esm.sh/@supabase/supabase-js@2";'
+          new_import = 'import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";'
+          if old_import in s:
+              s = s.replace(old_import, new_import, 1)
+          elif new_import not in s:
+              raise SystemExit('STOP: unexpected Supabase import baseline')
+          alias_marker = 'const corsHeaders = {'
+          alias = 'type SupabaseAdminClient = SupabaseClient<any, "public", any>;\n\n'
+          if alias not in s:
+              if alias_marker not in s:
+                  raise SystemExit('STOP: cors marker missing')
+              s = s.replace(alias_marker, alias + alias_marker, 1)
+          count = s.count('ReturnType<typeof createClient>')
+          if count == 0:
+              raise SystemExit('STOP: expected generic ReturnType sites missing')
+          s = s.replace('ReturnType<typeof createClient>', 'SupabaseAdminClient')
+          old_messages = 'const modelMessages = messages.map((m) => ({ role: m.role === "visitor" ? "user" : "assistant", content: m.content }));'
+          new_messages = 'const modelMessages: Array<{ role: "user" | "assistant"; content: string }> = messages.map((m) => ({ role: m.role === "visitor" ? "user" : "assistant", content: String(m.content ?? "") }));'
+          msg_count = s.count(old_messages)
+          if msg_count == 0:
+              raise SystemExit('STOP: expected modelMessages widening sites missing')
+          s = s.replace(old_messages, new_messages)
+          p.write_text(s)
+          print(f'SUPABASE_CLIENT_TYPE_SITES_FIXED={count}')
+          print(f'MODEL_MESSAGE_SITES_FIXED={msg_count}')
           PY
-          curl --fail-with-body -sS -X PUT \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            https://api.github.com/repos/ebixsolutions/console-chat-hub/contents/task2-2-compile-tail.log \
-            -d @task2-2-payload.json
-          echo "DIAGNOSTIC_TAIL_PERSISTED=PASS"
+      - name: Compile router and integration
+        run: |
+          deno check --node-modules-dir=auto supabase/functions/_shared/llm-router.ts
+          deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+      - name: Run Task 2.2 tests
+        run: deno test --node-modules-dir=auto tests/edge/task2-2-output-grounding-router.test.ts
+      - name: Commit compile fix
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add supabase/functions/generate-reply/index.ts
+          git diff --cached --quiet && { echo NO_SOURCE_DELTA=PASS; exit 0; }
+          git commit -m "Fix generate-reply Supabase client typing"
+          git push origin HEAD:director/task-2-2-output-grounding
