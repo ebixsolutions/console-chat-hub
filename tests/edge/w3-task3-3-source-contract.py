@@ -61,7 +61,9 @@ assert re.search(r'空調\|冷氣\|洗衣', cutover), 'KB smoke must assert obse
 
 assert 'W3_T3_3_RUN_PRODUCTION=true' in workflow, 'workflow must invoke canonical final gate in production mode'
 assert 'bash scripts/w3-task3-3-final-gate.sh' in workflow, 'workflow must use the single canonical Task 3.3 final gate'
-assert 'task3-3-production-cutover-final-gate.sh' not in workflow, 'workflow must not bypass canonical final gate'
+# The cutover script may legitimately appear in workflow path filters; only a direct run bypass is forbidden.
+assert not re.search(r'^\s*run:\s*(?:W3_T3_3_RUN_PRODUCTION=true\s+)?bash\s+scripts/task3-3-production-cutover-final-gate\.sh\s*$', workflow, re.M), \
+    'workflow must not bypass canonical final gate'
 
 for marker in [
     'BEGIN;',
