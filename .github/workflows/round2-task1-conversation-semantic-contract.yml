@@ -6,6 +6,9 @@ on:
       - director/round2-task1-conversation-semantic-contract
     paths:
       - .github/workflows/round2-task1-conversation-semantic-contract.yml
+      - scripts/round2-task1-apply.py
+      - supabase/functions/_shared/conversation-semantic-contract.ts
+      - tests/edge/round2-task1-conversation-semantic-contract.test.ts
   workflow_dispatch:
 
 permissions:
