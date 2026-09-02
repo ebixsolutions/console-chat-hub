@@ -1,0 +1,76 @@
+name: Integrated Long Conversation Closure Implementation v4
+
+on:
+  push:
+    branches:
+      - director/integrated-production-long-conversation-closure
+    paths:
+      - .github/workflows/integrated-long-conversation-implementation-v4.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  implement-and-validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: director/integrated-production-long-conversation-closure
+          fetch-depth: 0
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Apply integrated patch
+        run: |
+          set -euo pipefail
+          python scripts/integrated_long_conversation_patch_v3.py
+          python scripts/normalize_integrated_generated_source.py
+      - name: Source assertions
+        run: |
+          set -euo pipefail
+          grep -q '幫我|帮我' supabase/functions/_shared/conversation-intelligence.ts
+          grep -q 'providedMissingRequest' supabase/functions/_shared/conversation-runtime-state.ts
+          grep -q 'generalSummaryRequest' supabase/functions/_shared/conversation-runtime-state.ts
+          grep -q 'deterministicEmotionPoints' supabase/functions/_shared/ce-automation-engine.ts
+          grep -q 'attempt <= 2' supabase/functions/_shared/ce-automation-engine.ts
+          grep -q 'label: "香港"' supabase/functions/generate-reply/index.ts
+          echo INTEGRATED_SOURCE_ASSERTIONS=PASS
+      - name: Compile affected runtime
+        run: |
+          set -euo pipefail
+          deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+          deno check --node-modules-dir=auto supabase/functions/ce-evaluation-worker/index.ts
+          deno check --node-modules-dir=auto supabase/functions/widget-poll-messages/index.ts
+          echo INTEGRATED_RUNTIME_COMPILE=PASS
+      - name: Targeted regressions
+        run: |
+          set -euo pipefail
+          deno test --allow-env --node-modules-dir=auto tests/edge/integrated-long-conversation-closure.test.ts
+          deno test --allow-env --node-modules-dir=auto tests/edge/task2-2-output-grounding-router.test.ts
+          deno test --allow-env --node-modules-dir=auto tests/edge/task2-3-citation-lineage.test.ts
+          deno test --allow-env --node-modules-dir=auto tests/edge/task3-1-widget-runtime-state.test.ts
+          echo INTEGRATED_TARGETED_TESTS=PASS
+      - name: Full authoritative build
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          echo INTEGRATED_FULL_BUILD=PASS
+      - name: Commit validated implementation
+        run: |
+          set -euo pipefail
+          git config user.name cms
+          git config user.email 64578119+ebixsolutions@users.noreply.github.com
+          git add supabase/functions/_shared/conversation-intelligence.ts \
+                  supabase/functions/_shared/conversation-runtime-state.ts \
+                  supabase/functions/_shared/runtime-signal-lifecycle.ts \
+                  supabase/functions/_shared/ce-automation-engine.ts \
+                  supabase/functions/generate-reply/index.ts \
+                  tests/edge/integrated-long-conversation-closure.test.ts
+          git diff --cached --quiet && { echo NO_CHANGES_TO_COMMIT; exit 1; }
+          git commit -m 'Fix integrated long conversation production regressions'
+          git push origin HEAD:director/integrated-production-long-conversation-closure
+          echo INTEGRATED_IMPLEMENTATION_COMMIT=PASS
