@@ -8,8 +8,11 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
-      - name: Package baseline
-        run: node -e 'const p=require("./package.json"); if(p.version!=="2.7.1") process.exit(1); console.log("PACKAGE_BASELINE=PASS")'
+      - name: Authoritative package baseline
+        shell: bash
+        run: |
+          test "$(git hash-object package.json)" = "7e2063d0268e63ed0a0401eb4fecabffcbbc40a4"
+          echo PACKAGE_BASELINE_HASH=PASS
       - name: Check governed router
         run: deno check supabase/functions/_shared/llm-router.ts
       - name: Check generate reply
@@ -22,6 +25,7 @@ jobs:
           grep -q 'buildVerifierEvidenceAliases' supabase/functions/_shared/llm-router.ts
           grep -q 'verifyGroundedGeneration' supabase/functions/_shared/llm-router.ts
           grep -q 'LLM_OUTPUT_UNGROUNDED' supabase/functions/_shared/llm-router.ts
+          grep -q 'parseGroundingVerifierDecision(parsed.text, verifierEvidence.allowed_ids)' supabase/functions/_shared/llm-router.ts
           ! grep -q 'fetchKBRag' supabase/functions/_shared/llm-router.ts
           ! grep -q '/api/v1/rag/context-search' supabase/functions/_shared/llm-router.ts
           echo TASK_2_2_CONTRACT=PASS
