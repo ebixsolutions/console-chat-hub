@@ -28,12 +28,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          expected=693ff517f815a8a8afe78f9f8f52f8e86c6f89ec
-          test "$(git rev-parse HEAD:supabase/functions/generate-reply/index.ts)" = "$(git rev-parse ${expected}:supabase/functions/generate-reply/index.ts)"
-          test "$(git rev-parse HEAD:supabase/functions/widget-poll-messages/index.ts)" = "$(git rev-parse ${expected}:supabase/functions/widget-poll-messages/index.ts)"
-          test "$(git rev-parse HEAD:supabase/functions/ce-evaluation-worker/index.ts)" = "$(git rev-parse ${expected}:supabase/functions/ce-evaluation-worker/index.ts)"
-          test "$(git rev-parse HEAD:supabase/functions/_shared/llm-router.ts)" = "$(git rev-parse ${expected}:supabase/functions/_shared/llm-router.ts)"
-          test "$(git rev-parse HEAD:supabase/functions/_shared/citation-lineage.ts)" = "$(git rev-parse ${expected}:supabase/functions/_shared/citation-lineage.ts)"
+          test "$(git rev-parse HEAD:supabase/functions/generate-reply/index.ts)" = "e56593e01aa7e7245e6bc2bd4f6cb6cf4a5e0cec"
+          test "$(git rev-parse HEAD:supabase/functions/widget-poll-messages/index.ts)" = "f1002318c97383407acfb8d754660f2c1460f466"
+          test "$(git rev-parse HEAD:supabase/functions/ce-evaluation-worker/index.ts)" = "85230c4af3592f169a7684d1899175a7ea543ffc"
+          test "$(git rev-parse HEAD:supabase/functions/_shared/llm-router.ts)" = "187d2da2700326e0d54edffd49740702ca98d681"
+          test "$(git rev-parse HEAD:supabase/functions/_shared/citation-lineage.ts)" = "ef5d0f31520605d61eb87055d8bbc940a54aedb6"
           echo PRODUCTION_CUTOVER_SOURCE=PASS
 
       - name: Require deployment credential
