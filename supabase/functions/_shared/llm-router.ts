@@ -13,6 +13,7 @@
  *   usage logging      tokens and latency written to upstream_call_log
  *   observability      one structured line per attempt, correlated by request_id
  *   safe errors        stable codes out, provider text never surfaced to callers
+ *   grounding gate     KB-grounded generation is verified before caller persistence
  */
 
 import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2.45.0";
@@ -360,6 +361,290 @@ function vertexAdapter(
   };
 }
 
+/* ----------------------- grounded generation verifier ---------------------- */
+
+interface ParsedGroundingBlock {
+  evidence_text: string;
+  chunk_ids: string[];
+}
+
+interface GroundingVerifierDecision {
+  grounded: boolean;
+  unsupported_claims: string[];
+  evidence_chunk_ids: string[];
+}
+
+const EXACT_FACT_TOKEN_RE = /(?:[$€£¥]|HKD|USD|EUR|GBP|JPY|TWD|NTD|RMB|CNY)?\s*\d+(?:[.,]\d+)?(?:\s*(?:%|percent|days?|hours?|minutes?|years?|months?|kg|g|lb|lbs|mm|cm|m|km|ml|l|公升|毫升|公斤|克|天|日|小時|小时|分鐘|分钟|年|月))?|\b(?=[A-Z0-9-]*[A-Z])(?=[A-Z0-9-]*\d)[A-Z0-9-]{4,}\b/giu;
+
+function canonicalExactToken(value: string): string {
+  return value.normalize("NFKC").toLowerCase().replace(/[\s,]/g, "").trim();
+}
+
+export function extractGroundingBlock(system: string): ParsedGroundingBlock | null {
+  if (!system.includes("Knowledge Base grounding rules:")) return null;
+  const marker = "Full Content Evidence:\n";
+  const markerIndex = system.lastIndexOf(marker);
+  if (markerIndex < 0) return null;
+  const raw = system.slice(markerIndex + marker.length).trim();
+  if (!raw || /^none\b/i.test(raw)) return null;
+  const ids = [...raw.matchAll(/\[chunk:([^\]\s]+)\]/g)]
+    .map((match) => (match[1] ?? "").trim())
+    .filter(Boolean);
+  return {
+    evidence_text: raw.slice(0, 6000),
+    chunk_ids: [...new Set(ids)],
+  };
+}
+
+export function validateExactFactGrounding(
+  answer: string,
+  evidenceText: string,
+  protectedChunkIds: string[] = [],
+): { ok: true } | { ok: false; reason: string; unsupported_tokens: string[] } {
+  const answerNorm = answer.normalize("NFKC");
+  for (const id of protectedChunkIds) {
+    if (id && answerNorm.includes(id)) {
+      return { ok: false, reason: "internal_chunk_id_leak", unsupported_tokens: [id] };
+    }
+  }
+  const evidenceNorm = canonicalExactToken(evidenceText);
+  const unsupported = new Set<string>();
+  for (const match of answer.matchAll(EXACT_FACT_TOKEN_RE)) {
+    const token = canonicalExactToken(match[0] ?? "");
+    if (!token || /^\d$/.test(token)) continue;
+    if (!evidenceNorm.includes(token)) unsupported.add(token);
+  }
+  return unsupported.size === 0
+    ? { ok: true }
+    : {
+        ok: false,
+        reason: "unsupported_exact_fact",
+        unsupported_tokens: [...unsupported],
+      };
+}
+
+export function parseGroundingVerifierDecision(
+  raw: string,
+  allowedChunkIds: string[],
+): GroundingVerifierDecision | null {
+  const parsed = parseJsonObjectLoose(raw);
+  if (!parsed || typeof parsed.grounded !== "boolean") return null;
+  if (!Array.isArray(parsed.unsupported_claims) || !Array.isArray(parsed.evidence_chunk_ids)) return null;
+  const unsupported = parsed.unsupported_claims
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (unsupported.length !== parsed.unsupported_claims.length) return null;
+  const ids = parsed.evidence_chunk_ids
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (ids.length !== parsed.evidence_chunk_ids.length) return null;
+  const allowed = new Set(allowedChunkIds.filter(Boolean));
+  if (ids.some((id) => !allowed.has(id))) return null;
+  if (parsed.grounded && unsupported.length > 0) return null;
+  if (!parsed.grounded && unsupported.length === 0) return null;
+  if (parsed.grounded && allowed.size > 0 && ids.length === 0) return null;
+  return {
+    grounded: parsed.grounded,
+    unsupported_claims: unsupported,
+    evidence_chunk_ids: [...new Set(ids)],
+  };
+}
+
+async function verifyGroundedGeneration(
+  call: LlmCall,
+  provider: ProviderId,
+  answer: string,
+  grounding: ParsedGroundingBlock,
+  timeoutMs: number,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const exact = validateExactFactGrounding(answer, grounding.evidence_text, grounding.chunk_ids);
+  if (!exact.ok) {
+    log(call.tag, {
+      event: "grounding_exact_fact_rejected",
+      request_id: call.operationId,
+      reason: exact.reason,
+      unsupported_token_count: exact.unsupported_tokens.length,
+    });
+    return { ok: false, reason: exact.reason };
+  }
+
+  const evaluationModel = (Deno.env.get(MODEL_ENV.evaluation) ?? "").trim();
+  if (!evaluationModel) {
+    log(call.tag, {
+      event: "grounding_verifier_config_missing",
+      request_id: call.operationId,
+    });
+    return { ok: false, reason: "verifier_model_missing" };
+  }
+
+  const verifierSystem = [
+    "You are a strict factual-grounding verifier.",
+    "Judge ONLY whether every factual claim in the proposed answer is entailed by the supplied evidence.",
+    "Do not use outside knowledge, assumptions, the customer request, or prior conversation as factual evidence.",
+    "Politeness, conversational transitions, and non-factual wording do not need evidence.",
+    "Any unsupported product fact, policy fact, price, date, duration, dimension, eligibility condition, jurisdiction claim, procedure, limit, availability statement, or categorical factual statement makes grounded=false.",
+    "evidence_chunk_ids may contain only supplied chunk ids that materially support the answer.",
+    "Return JSON only with grounded, unsupported_claims, evidence_chunk_ids.",
+  ].join("\n");
+  const verifierUser = [
+    "Evidence:",
+    grounding.evidence_text,
+    "",
+    "Proposed answer:",
+    answer.slice(0, 3000),
+  ].join("\n");
+
+  let verifierAdapter: ProviderAdapter;
+  if (provider === "vertex") {
+    const sa = Deno.env.get("GOOGLE_SERVICE_ACCOUNT_JSON");
+    const projectId = Deno.env.get("GOOGLE_PROJECT_ID");
+    const region = Deno.env.get("GOOGLE_REGION");
+    if (!sa?.trim() || !projectId?.trim() || !region?.trim()) {
+      return { ok: false, reason: "verifier_provider_config_missing" };
+    }
+    verifierAdapter = vertexAdapter(
+      sa,
+      projectId.trim(),
+      region.trim(),
+      evaluationModel,
+      redact(verifierSystem),
+      redact(verifierUser),
+      512,
+      true,
+      {
+        type: "OBJECT",
+        properties: {
+          grounded: { type: "BOOLEAN" },
+          unsupported_claims: { type: "ARRAY", items: { type: "STRING" } },
+          evidence_chunk_ids: { type: "ARRAY", items: { type: "STRING" } },
+        },
+        required: ["grounded", "unsupported_claims", "evidence_chunk_ids"],
+      },
+    );
+  } else {
+    const key = Deno.env.get("ANTHROPIC_API_KEY");
+    if (!key?.trim()) return { ok: false, reason: "verifier_provider_config_missing" };
+    verifierAdapter = anthropicAdapter(
+      key,
+      evaluationModel,
+      redact(verifierSystem),
+      redact(verifierUser),
+      512,
+    );
+  }
+
+  const verifierCall: LlmCall = {
+    purpose: "evaluation",
+    system: verifierSystem,
+    user: verifierUser,
+    maxTokens: 512,
+    operationId: `${call.operationId}:grounding-verifier`,
+    companyId: call.companyId,
+    conversationId: call.conversationId,
+    tag: `${call.tag}-grounding-verifier`,
+    responseFormat: "json",
+  };
+  const verifierUsage: LlmUsage = {
+    input_tokens: 0,
+    output_tokens: 0,
+    latency_ms: 0,
+    attempts: 0,
+  };
+  const verifierStarted = Date.now();
+  let lastStatus = 0;
+
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    verifierUsage.attempts = attempt;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const req = await verifierAdapter.buildRequest();
+      const res = await fetch(req.url, {
+        method: "POST",
+        headers: req.headers,
+        body: req.body,
+        signal: controller.signal,
+      });
+      lastStatus = res.status;
+      if (res.status === 429 || res.status >= 500) {
+        if (attempt < 2) {
+          await sleep(BASE_BACKOFF_MS * 2 ** (attempt - 1));
+          continue;
+        }
+        break;
+      }
+      if (!res.ok) break;
+
+      let body: unknown;
+      try {
+        body = await res.json();
+      } catch {
+        break;
+      }
+      const parsed = verifierAdapter.parseResponse(body);
+      verifierUsage.input_tokens = parsed.input_tokens;
+      verifierUsage.output_tokens = parsed.output_tokens;
+      verifierUsage.latency_ms = Date.now() - verifierStarted;
+      if (!parsed.text || parsed.finish_reason === "MAX_TOKENS") break;
+
+      const decision = parseGroundingVerifierDecision(parsed.text, grounding.chunk_ids);
+      if (!decision) {
+        await recordUsage(
+          verifierCall,
+          verifierAdapter.id,
+          verifierAdapter.model,
+          "failed",
+          res.status,
+          verifierUsage,
+          "GROUNDING_VERIFIER_INVALID_OUTPUT",
+        );
+        return { ok: false, reason: "verifier_invalid_output" };
+      }
+
+      await recordUsage(
+        verifierCall,
+        verifierAdapter.id,
+        verifierAdapter.model,
+        decision.grounded ? "success" : "failed",
+        res.status,
+        verifierUsage,
+        decision.grounded ? undefined : "GROUNDING_UNSUPPORTED_CLAIMS",
+      );
+      if (!decision.grounded) {
+        log(call.tag, {
+          event: "grounding_semantic_rejected",
+          request_id: call.operationId,
+          unsupported_claim_count: decision.unsupported_claims.length,
+        });
+        return { ok: false, reason: "unsupported_semantic_claim" };
+      }
+      return { ok: true };
+    } catch (error) {
+      const aborted = error instanceof Error && error.name === "AbortError";
+      if (!aborted && attempt < 2) {
+        await sleep(BASE_BACKOFF_MS * 2 ** (attempt - 1));
+        continue;
+      }
+      break;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  verifierUsage.latency_ms = Date.now() - verifierStarted;
+  await recordUsage(
+    verifierCall,
+    verifierAdapter.id,
+    verifierAdapter.model,
+    "failed",
+    lastStatus,
+    verifierUsage,
+    "GROUNDING_VERIFIER_UNAVAILABLE",
+  );
+  return { ok: false, reason: "verifier_unavailable" };
+}
 
 /* --------------------------------- router --------------------------------- */
 
@@ -598,6 +883,47 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
         break;
       }
 
+      const grounding =
+        call.purpose === "generation" && call.responseFormat !== "json"
+          ? extractGroundingBlock(call.system)
+          : null;
+      if (grounding) {
+        const groundingDecision = await verifyGroundedGeneration(
+          call,
+          provider,
+          parsed.text,
+          grounding,
+          timeoutMs,
+        );
+        if (!groundingDecision.ok) {
+          lastCode = "LLM_INVALID_OUTPUT";
+          usage.latency_ms = Date.now() - started;
+          log(call.tag, {
+            event: "grounding_rejected",
+            request_id: requestId,
+            provider: adapter.id,
+            attempt,
+            reason: groundingDecision.reason,
+          });
+          await recordUsage(
+            call,
+            adapter.id,
+            adapter.model,
+            "failed",
+            res.status,
+            usage,
+            "LLM_OUTPUT_UNGROUNDED",
+          );
+          return {
+            ok: false,
+            code: "LLM_INVALID_OUTPUT",
+            status: res.status,
+            request_id: requestId,
+            usage,
+          };
+        }
+      }
+
       usage.latency_ms = Date.now() - started;
       log(call.tag, {
         event: "success",
@@ -608,6 +934,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
         input_tokens: usage.input_tokens,
         output_tokens: usage.output_tokens,
         ms: usage.latency_ms,
+        grounding_verified: grounding !== null,
       });
       await recordUsage(
         call,
