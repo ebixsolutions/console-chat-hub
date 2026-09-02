@@ -1,4 +1,4 @@
-name: Task 2.2 Output Grounding Implementation
+name: Task 2.2 Output Grounding Validation
 
 on:
   push:
@@ -6,11 +6,10 @@ on:
       - director/task-2-2-output-grounding
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  implement:
-    if: github.actor != 'github-actions[bot]'
+  validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,304 +21,38 @@ jobs:
         with:
           deno-version: v2.x
 
-      - name: Apply grounded-output enforcement
-        shell: bash
+      - name: Verify package baseline
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
+          node -e 'const p=require("./package.json"); if(p.version!=="2.7.1"){console.error(`expected package.json 2.7.1, got ${p.version}`); process.exit(1)}; console.log("PACKAGE_BASELINE=PASS")'
 
-          validator = r'''export interface GroundingEvidence {
-  chunk_id?: string;
-  content: string;
-  score?: number;
-  source_type?: string;
-}
+      - name: Deno compile governed router
+        run: deno check supabase/functions/_shared/llm-router.ts
 
-export interface GroundingVerifierDecision {
-  grounded: boolean;
-  unsupported_claims: string[];
-  evidence_chunk_ids: string[];
-}
-
-const EXACT_TOKEN_RE = /(?:[$€£¥]|HKD|USD|EUR|GBP|JPY|TWD|NTD|RMB|CNY)?\s*\d+(?:[.,]\d+)?(?:\s*(?:%|percent|days?|hours?|minutes?|years?|months?|kg|g|lb|lbs|mm|cm|m|km|ml|l|公升|毫升|公斤|克|天|日|小時|小时|分鐘|分钟|年|月))?|\b(?=[A-Z0-9-]*[A-Z])(?=[A-Z0-9-]*\d)[A-Z0-9-]{4,}\b/giu;
-
-function normalize(value: string): string {
-  return value.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
-}
-
-function canonicalToken(value: string): string {
-  return normalize(value).replace(/[\s,]/g, "");
-}
-
-function extractExactTokens(value: string): string[] {
-  const out = new Set<string>();
-  for (const match of value.matchAll(EXACT_TOKEN_RE)) {
-    const token = canonicalToken(match[0] ?? "");
-    if (!token) continue;
-    if (/^\d$/.test(token)) continue;
-    out.add(token);
-  }
-  return [...out];
-}
-
-export function validateExactFactGrounding(
-  answer: string,
-  evidence: GroundingEvidence[],
-): { ok: true } | { ok: false; unsupported_tokens: string[] } {
-  const evidenceText = canonicalToken(evidence.map((item) => item.content).join("\n"));
-  const unsupported = extractExactTokens(answer).filter((token) => !evidenceText.includes(token));
-  return unsupported.length === 0
-    ? { ok: true }
-    : { ok: false, unsupported_tokens: unsupported };
-}
-
-export function buildGroundingVerifierSystem(evidence: GroundingEvidence[]): string {
-  const blocks = evidence.slice(0, 3).map((item, index) => {
-    const id = item.chunk_id?.trim() || `evidence-${index + 1}`;
-    return `[${id}]\n${item.content.slice(0, 1600)}`;
-  });
-  return [
-    "You are a strict factual-grounding verifier.",
-    "Decide whether EVERY factual claim in the proposed customer answer is supported by the supplied evidence.",
-    "Do not use outside knowledge, prior knowledge, assumptions, or the customer request as factual evidence.",
-    "Conversational wording, politeness, and non-factual transitions do not need evidence.",
-    "If any product fact, policy fact, price, date, duration, dimension, eligibility condition, jurisdiction claim, procedure, limit, availability statement, or categorical factual statement is not entailed by the evidence, grounded must be false.",
-    "evidence_chunk_ids must contain only chunk ids that actually support the answer.",
-    "Return JSON only.",
-    "\nEvidence:\n" + blocks.join("\n\n"),
-  ].join("\n");
-}
-
-export function parseGroundingVerifierDecision(
-  value: Record<string, unknown> | null,
-  allowedChunkIds: string[],
-): GroundingVerifierDecision | null {
-  if (!value || typeof value.grounded !== "boolean") return null;
-  if (!Array.isArray(value.unsupported_claims) || !Array.isArray(value.evidence_chunk_ids)) return null;
-  const unsupported = value.unsupported_claims.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean);
-  if (unsupported.length !== value.unsupported_claims.length) return null;
-  const ids = value.evidence_chunk_ids.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean);
-  if (ids.length !== value.evidence_chunk_ids.length) return null;
-  const allowed = new Set(allowedChunkIds.filter(Boolean));
-  if (ids.some((id) => !allowed.has(id))) return null;
-  if (value.grounded && unsupported.length > 0) return null;
-  if (!value.grounded && unsupported.length === 0) return null;
-  if (value.grounded && allowed.size > 0 && ids.length === 0) return null;
-  return { grounded: value.grounded, unsupported_claims: unsupported, evidence_chunk_ids: [...new Set(ids)] };
-}
-'''
-          Path('supabase/functions/_shared/grounded-answer-validator.ts').write_text(validator)
-
-          tests = r'''import {
-  buildGroundingVerifierSystem,
-  parseGroundingVerifierDecision,
-  validateExactFactGrounding,
-} from "../../supabase/functions/_shared/grounded-answer-validator.ts";
-
-function assert(value: unknown, message: string): asserts value {
-  if (!value) throw new Error(message);
-}
-
-Deno.test("exact facts present in evidence pass", () => {
-  const r = validateExactFactGrounding(
-    "The policy applies within 7 days and the limit is 500 L.",
-    [{ chunk_id: "c1", content: "Returns are accepted within 7 days. Maximum volume is 500 L." }],
-  );
-  assert(r.ok, "supported exact facts should pass");
-});
-
-Deno.test("unsupported numeric fact fails closed", () => {
-  const r = validateExactFactGrounding(
-    "The policy applies within 30 days.",
-    [{ chunk_id: "c1", content: "Returns are accepted within 7 days." }],
-  );
-  assert(!r.ok && r.unsupported_tokens.includes("30days"), "30 days must be rejected");
-});
-
-Deno.test("unsupported model identifier fails closed", () => {
-  const r = validateExactFactGrounding(
-    "This applies to model ABC-1234.",
-    [{ chunk_id: "c1", content: "This applies to model XYZ-9000." }],
-  );
-  assert(!r.ok, "invented model id must be rejected");
-});
-
-Deno.test("verifier decision requires real evidence ids", () => {
-  const ok = parseGroundingVerifierDecision(
-    { grounded: true, unsupported_claims: [], evidence_chunk_ids: ["c1"] },
-    ["c1", "c2"],
-  );
-  assert(ok?.grounded === true, "valid grounded decision should pass");
-
-  const bad = parseGroundingVerifierDecision(
-    { grounded: true, unsupported_claims: [], evidence_chunk_ids: ["made-up"] },
-    ["c1"],
-  );
-  assert(bad === null, "unknown evidence id must fail closed");
-});
-
-Deno.test("grounded false requires unsupported claims", () => {
-  const bad = parseGroundingVerifierDecision(
-    { grounded: false, unsupported_claims: [], evidence_chunk_ids: [] },
-    ["c1"],
-  );
-  assert(bad === null, "empty negative decision is malformed");
-});
-
-Deno.test("verifier prompt contains only supplied evidence", () => {
-  const prompt = buildGroundingVerifierSystem([{ chunk_id: "c1", content: "Authoritative fact." }]);
-  assert(prompt.includes("[c1]"), "chunk id missing");
-  assert(prompt.includes("Authoritative fact."), "evidence missing");
-  assert(prompt.includes("Do not use outside knowledge"), "outside-knowledge prohibition missing");
-});
-'''
-          Path('tests/edge/task2-2-grounded-output.test.ts').write_text(tests)
-
-          p = Path('supabase/functions/generate-reply/index.ts')
-          src = p.read_text()
-
-          old_import = 'import { callModel, resolveGenerationMaxTokens, type LlmFailureCode } from "../_shared/llm-router.ts";'
-          new_import = 'import { callModel, parseJsonObject, resolveGenerationMaxTokens, type LlmFailureCode } from "../_shared/llm-router.ts";\nimport { buildGroundingVerifierSystem, parseGroundingVerifierDecision, validateExactFactGrounding } from "../_shared/grounded-answer-validator.ts";'
-          if old_import not in src:
-            raise SystemExit('STOP: expected llm-router import marker missing')
-          src = src.replace(old_import, new_import, 1)
-
-          marker = '''  const aiReplyContent = llm.text;\n\n  const citationMeta = finalPromptChunks.length > 0 ? buildCitationMetadata(finalPromptChunks) : null;'''
-          replacement = r'''  const aiReplyContent = llm.text;
-
-  // Task 2.2 — pre-persistence grounded-output enforcement.
-  // Input-side RAG selection is already deterministic; this second gate prevents
-  // the generation model from adding unsupported facts before the customer-visible
-  // message is atomically committed. It reuses the exact selected evidence from
-  // this request and never performs a second KB search.
-  if (flags.ENABLE_KB && ragResult?.llm_context?.full_content_evidence?.length) {
-    const groundingEvidence = ragResult.llm_context.full_content_evidence;
-    const exactFactCheck = validateExactFactGrounding(aiReplyContent, groundingEvidence);
-    const allowedChunkIds = groundingEvidence
-      .map((item) => item.chunk_id ?? "")
-      .filter((id) => id.length > 0);
-
-    let groundedOutput = exactFactCheck.ok;
-    let groundingFailureReason = exactFactCheck.ok
-      ? "semantic_verifier_failed"
-      : `unsupported_exact_fact:${exactFactCheck.unsupported_tokens.join(",")}`;
-
-    if (exactFactCheck.ok) {
-      const verifier = await callModel({
-        purpose: "evaluation",
-        system: buildGroundingVerifierSystem(groundingEvidence),
-        user: `Customer request:\n${_h1LastMsg.slice(0, 1200)}\n\nProposed answer:\n${aiReplyContent.slice(0, 2400)}`,
-        maxTokens: 512,
-        operationId: `generate-reply:grounding-verifier:${conversation_id}:${source_message_id}`,
-        companyId:
-          typeof conversation.company_id === "string" && conversation.company_id.length > 0
-            ? conversation.company_id
-            : null,
-        conversationId: conversation_id,
-        tag: "generate-reply-grounding-verifier",
-        responseFormat: "json",
-        responseSchema: {
-          type: "OBJECT",
-          properties: {
-            grounded: { type: "BOOLEAN" },
-            unsupported_claims: { type: "ARRAY", items: { type: "STRING" } },
-            evidence_chunk_ids: { type: "ARRAY", items: { type: "STRING" } },
-          },
-          required: ["grounded", "unsupported_claims", "evidence_chunk_ids"],
-        },
-      });
-
-      if (verifier.ok) {
-        const decision = parseGroundingVerifierDecision(
-          parseJsonObject(verifier.text),
-          allowedChunkIds,
-        );
-        groundedOutput = decision?.grounded === true;
-        groundingFailureReason = decision
-          ? decision.unsupported_claims.join(" | ") || "semantic_verifier_rejected"
-          : "semantic_verifier_invalid_output";
-      } else {
-        groundedOutput = false;
-        groundingFailureReason = `semantic_verifier_${verifier.code}`;
-      }
-    }
-
-    if (!groundedOutput) {
-      console.warn("[generate-reply] KB_OUTPUT_UNGROUNDED blocked before persistence", {
-        conversation_id,
-        source_message_id,
-        reason: groundingFailureReason,
-      });
-      const safeGroundingReply = _visitorLang === "zh-CN"
-        ? "我暂时无法从现有资料可靠确认这个答案。请换一个方式描述你想查询的内容，我会再帮你核对。"
-        : _visitorLang === "zh-TW"
-          ? "我暫時無法從現有資料可靠確認這個答案。請換一個方式描述你想查詢的內容，我會再幫你核對。"
-          : "I can't reliably confirm that answer from the available information. Please rephrase what you'd like to check and I'll verify it again.";
-      const recoveryCommit = await commitAiReplyWithControlGate(
-        supabaseAdmin,
-        conversation_id,
-        source_message_id,
-        safeGroundingReply,
-        {
-          response_route: "kb_output_grounding_recovery",
-          grounding_blocked: true,
-          grounding_reason: groundingFailureReason.slice(0, 240),
-          citations: [],
-        },
-      );
-      await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-      if (!recoveryCommit.ok) {
-        if (
-          recoveryCommit.result === "human_control" ||
-          recoveryCommit.result === "resolved" ||
-          recoveryCommit.result === "superseded_source"
-        ) {
-          return new Response(JSON.stringify({ success: true, skipped: recoveryCommit.result }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-        }
-        return new Response(JSON.stringify({ success: false, error: `grounding_recovery_commit_${recoveryCommit.result}` }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      }
-      return new Response(JSON.stringify({ success: true, response_route: "kb_output_grounding_recovery", grounding_blocked: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-    }
-  }
-
-  const citationMeta = finalPromptChunks.length > 0 ? buildCitationMetadata(finalPromptChunks) : null;'''
-          if marker not in src:
-            raise SystemExit('STOP: expected pre-commit marker missing')
-          src = src.replace(marker, replacement, 1)
-          p.write_text(src)
-          PY
-
-      - name: Assert patch wiring
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          s = Path('supabase/functions/generate-reply/index.ts').read_text()
-          assertions = {
-            'validator import': 'grounded-answer-validator.ts' in s,
-            'pre-persistence gate': 'KB_OUTPUT_UNGROUNDED blocked before persistence' in s,
-            'same evidence': 'ragResult.llm_context.full_content_evidence' in s,
-            'no second KB search in verifier': 'generate-reply:grounding-verifier' in s,
-            'safe recovery route': 'kb_output_grounding_recovery' in s,
-          }
-          failed = [k for k,v in assertions.items() if not v]
-          print(assertions)
-          if failed:
-            raise SystemExit('FAIL: ' + ', '.join(failed))
-          PY
-
-      - name: Deno unit tests
-        run: deno test tests/edge/task2-2-grounded-output.test.ts
-
-      - name: Deno compile check
+      - name: Deno compile generate-reply integration
         run: deno check supabase/functions/generate-reply/index.ts
 
-      - name: Commit implementation
-        shell: bash
+      - name: Task 2.2 unit assertions
+        run: deno test tests/edge/task2-2-output-grounding-router.test.ts
+
+      - name: Machine contract assertions
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add supabase/functions/generate-reply/index.ts supabase/functions/_shared/grounded-answer-validator.ts tests/edge/task2-2-grounded-output.test.ts
-          git diff --cached --quiet && exit 0
-          git commit -m "Implement Task 2.2 grounded output enforcement"
-          git push origin HEAD:director/task-2-2-output-grounding
+          python3 - <<'PY'
+          from pathlib import Path
+          router = Path('supabase/functions/_shared/llm-router.ts').read_text()
+          generate = Path('supabase/functions/generate-reply/index.ts').read_text()
+          checks = {
+            'single governed provider callsite': 'from "../_shared/llm-router.ts"' in generate,
+            'KB grounding marker detection': 'Knowledge Base grounding rules:' in router,
+            'exact-fact gate': 'validateExactFactGrounding' in router,
+            'semantic verifier': 'verifyGroundedGeneration' in router,
+            'same-evidence verifier': 'grounding.evidence_text' in router,
+            'no second KB search': '/api/v1/rag/context-search' not in router and 'fetchKBRag' not in router,
+            'fail closed as invalid output': 'code: "LLM_INVALID_OUTPUT"' in router and 'LLM_OUTPUT_UNGROUNDED' in router,
+            'verifier lineage allowlist': 'parseGroundingVerifierDecision' in router,
+          }
+          print(checks)
+          failed = [k for k,v in checks.items() if not v]
+          if failed:
+            raise SystemExit('CONTRACT_FAIL: ' + ', '.join(failed))
+          print('TASK_2_2_CONTRACT=PASS')
+          PY
