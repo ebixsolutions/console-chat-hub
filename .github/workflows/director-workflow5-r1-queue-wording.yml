@@ -34,7 +34,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22.12.0'
           cache: npm
 
       - name: Install authoritative runtime dependencies
@@ -61,7 +61,7 @@ jobs:
           deno test tests/edge/warm-handoff-package.test.ts
           deno test tests/edge/return-to-ai-control-context.test.ts
           deno test tests/edge/e2-direct-threat.test.ts
-          deno check supabase/functions/generate-reply/index.ts
+          deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
 
       - name: Full build
         run: npm run build
