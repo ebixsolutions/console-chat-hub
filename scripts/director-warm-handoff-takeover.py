@@ -207,7 +207,10 @@ end = s.find("/>", idx)
 assert end != -1
 block = s[idx:end]
 if "autoLoadHandoffContext=" not in block:
-    s = s[:end] + '\n                autoLoadHandoffContext={conv.status === "pending" || Boolean(conv.assigned_agent_id)}' + s[end:]
+    line_start = s.rfind("\n", 0, idx) + 1
+    indent = s[line_start:idx]
+    prop_indent = indent + "  "
+    s = s[:end].rstrip() + f'\n{prop_indent}autoLoadHandoffContext={{conv.status === "pending" || Boolean(conv.assigned_agent_id)}}\n{indent}' + s[end:]
 p.write_text(s)
 
 print("DIRECTOR_WARM_HANDOFF_SOURCE_IMPLEMENTATION=PASS")
