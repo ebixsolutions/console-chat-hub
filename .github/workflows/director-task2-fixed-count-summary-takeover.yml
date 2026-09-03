@@ -1,0 +1,84 @@
+name: Director Task 2 Fixed Count Summary Takeover
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/director-task2-fixed-count-summary-takeover.yml'
+permissions: { contents: write }
+env:
+  PROJECT_REF: nrfxhqabwblzxoushgnm
+  PROD_ORIGIN: https://console-chat-hub.lovable.app
+  CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+  SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: main, fetch-depth: 0 }
+      - uses: denoland/setup-deno@v2
+        with: { deno-version: v2.9.6 }
+      - name: Patch and semantic tests
+        run: |
+          set -euo pipefail
+          python scripts/director_task2_fixed_count_summary_patch.py
+          git diff --check
+          test "$(git diff --name-only)" = "supabase/functions/_shared/conversation-semantic-contract.ts"
+          deno test --allow-read --node-modules-dir=auto tests/edge/task2-fixed-count-summary-regression.test.ts
+          deno test --allow-read --node-modules-dir=auto tests/edge/task2-standalone-simplify-regression.test.ts
+          deno test --allow-read --node-modules-dir=auto tests/edge/task4-1-current-context-memory.test.ts
+          deno check --node-modules-dir=auto supabase/functions/_shared/conversation-semantic-contract.ts
+          deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+      - name: Full build
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+      - name: Commit exact source
+        run: |
+          set -euo pipefail
+          git config user.name ebixsolutions
+          git config user.email '64578119+ebixsolutions@users.noreply.github.com'
+          git add supabase/functions/_shared/conversation-semantic-contract.ts
+          test "$(git diff --cached --name-only)" = "supabase/functions/_shared/conversation-semantic-contract.ts"
+          git commit -m '[authorized-prod] Task 2 close fixed-count prior-grounded summary'
+          git push origin HEAD:main
+      - uses: supabase/setup-cli@v1
+        with: { version: latest }
+      - name: Snapshot
+        id: snap
+        run: |
+          set -euo pipefail
+          S=/tmp/t2-summary-rollback; rm -rf "$S"; mkdir -p "$S/supabase"; cp supabase/config.toml "$S/supabase/config.toml"
+          cd "$S"; supabase functions download generate-reply --project-ref "$PROJECT_REF" --use-api
+          E="$(find . -type f -path '*/generate-reply/index.ts' -print -quit)"; test -s "$E"; R="$(dirname "$(dirname "$E")")"; test -d "$R/_shared"
+          find . -type f -not -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          sha256sum -c SHA256SUMS
+          deno check --node-modules-dir=auto "$E"
+      - name: Deploy
+        id: deploy
+        run: |
+          set -euo pipefail
+          supabase functions deploy generate-reply --project-ref "$PROJECT_REF" --use-api
+          supabase functions list --project-ref "$PROJECT_REF" | grep -q generate-reply
+      - name: T01-T11 preserved
+        id: smoke
+        run: |
+          set -euo pipefail
+          set -a; source .env; set +a
+          python scripts/director_task2_t01_t11_smoke.py
+      - name: Rollback on failure
+        if: ${{ failure() && (steps.deploy.outcome == 'failure' || steps.smoke.outcome == 'failure') }}
+        run: |
+          set -euo pipefail
+          cd /tmp/t2-summary-rollback
+          sha256sum -c SHA256SUMS
+          supabase functions deploy generate-reply --project-ref "$PROJECT_REF" --use-api
+          echo TASK2_SUMMARY_ROLLBACK=PASS
+      - name: Final gate
+        run: |
+          set -euo pipefail
+          test -s /tmp/t2-summary-rollback/SHA256SUMS
+          echo TASK2_FIXED_COUNT_SUMMARY_GATE=PASS
