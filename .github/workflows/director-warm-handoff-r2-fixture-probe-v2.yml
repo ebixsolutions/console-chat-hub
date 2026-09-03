@@ -1,0 +1,44 @@
+name: Director Warm Handoff R2 Fixture Probe v2
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/director-warm-handoff-r2-fixture-probe-v2.yml']
+permissions: {contents: read}
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      PROD_ORIGIN: https://console-chat-hub.lovable.app
+      CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: main}
+      - shell: bash
+        run: |
+          set -euo pipefail; set -a; source .env; set +a; BASE="$VITE_SUPABASE_FUNCTIONS_URL"
+          C=$(curl -fsS -X POST -H "Origin: $PROD_ORIGIN" -H 'Content-Type: application/json' --data "{\"channel_id\":\"$CHANNEL_ID\",\"visitor_metadata\":{\"warm_handoff_r2_probe_v2\":true,\"exclude_training\":true}}" "$BASE/create-visitor-session")
+          eval "$(python - <<'PY' "$C"
+          import json,sys,shlex; d=json.loads(sys.argv[1])['data']; print('CID='+shlex.quote(d['conversation_id'])); print('TOK='+shlex.quote(d['session_token']))
+          PY
+          )"
+          poll(){ curl -fsS -X POST -H "Origin: $PROD_ORIGIN" -H 'Content-Type: application/json' --data "{\"conversation_id\":\"$CID\",\"session_token\":\"$TOK\"}" "$BASE/widget-poll-messages"; }
+          count(){ python -c 'import json,sys; d=json.load(sys.stdin); print(sum(1 for m in d["data"].get("messages",[]) if m.get("role")=="assistant"))'; }
+          send(){ local t="$1" p; p=$(python - <<'PY' "$CID" "$TOK" "$t"
+          import json,sys; print(json.dumps({'conversation_id':sys.argv[1],'session_token':sys.argv[2],'content':sys.argv[3]},ensure_ascii=False))
+          PY
+          ); curl -fsS -X POST -H "Origin: $PROD_ORIGIN" -H 'Content-Type: application/json' -H "idempotency-key: $(python -c 'import uuid;print(uuid.uuid4())')" --data "$p" "$BASE/receive-widget-message" >/dev/null; }
+          waitone(){ local b="$1"; for i in $(seq 1 25); do sleep 2; P=$(poll); a=$(printf '%s' "$P"|count); if [ "$a" -gt "$b" ]; then printf '%s' "$P" >/tmp/p; return 0; fi; done; echo NO_REPLY; exit 1; }
+          TEXT='我的火星基地雪櫃送貨訂單原定昨天到貨，但現在仍未收到，請幫我查送貨狀態。'
+          for n in 1 2 3; do
+            b=$(poll|count); send "$TEXT"; waitone "$b"
+            python - <<'PY' /tmp/p "$n"
+          import json,sys
+          d=json.load(open(sys.argv[1])); m=[x for x in d['data']['messages'] if x.get('role')=='assistant'][-1]; md=m.get('metadata') or {}; route=md.get('response_route')
+          print('PROBE_'+sys.argv[2]+'='+json.dumps({'status':d['data'].get('conversation_status'),'route':route,'rule':md.get('escalation_rule'),'content':m.get('content')},ensure_ascii=False))
+          if route=='warm_handoff_data_collection': open('/tmp/found','w').write('1')
+          PY
+            [ -f /tmp/found ] && { echo R2_FIXTURE_FOUND=PASS; exit 0; }
+            [ "$(poll | python -c 'import json,sys;print(json.load(sys.stdin)["data"].get("conversation_status"))')" != pending ] || { echo EARLY_HANDOFF_BEFORE_R2_COLLECTION=FAIL; exit 1; }
+          done
+          echo R2_FIXTURE_FOUND=FAIL; exit 1
