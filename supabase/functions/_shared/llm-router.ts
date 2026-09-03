@@ -330,6 +330,7 @@ interface ParsedGroundingBlock {
   authority: "CURRENT_KB" | "PRIOR_GROUNDED_ANSWER";
   evidence_text: string;
   chunk_ids: string[];
+  transform_operations: string[];
 }
 
 interface GroundingVerifierDecision {
@@ -341,7 +342,18 @@ interface GroundingVerifierDecision {
 const EXACT_FACT_TOKEN_RE = /(?:[$€£¥]|HKD|USD|EUR|GBP|JPY|TWD|NTD|RMB|CNY)?\s*\d+(?:[.,]\d+)?(?:\s*(?:%|percent|days?|hours?|minutes?|years?|months?|kg|g|lb|lbs|mm|cm|m|km|ml|l|公升|毫升|公斤|克|天|日|小時|小时|分鐘|分钟|年|月))?|\b(?=[A-Z0-9-]*[A-Z])(?=[A-Z0-9-]*\d)[A-Z0-9-]{4,}\b/giu;
 
 function canonicalExactToken(value: string): string {
-  return value.normalize("NFKC").toLowerCase().replace(/[\s,]/g, "").trim();
+  return value.normalize("NFKC").toLowerCase()
+    .replace(/percent/g, "%")
+    .replace(/(?:litres?|liters?|公升)/g, "l")
+    .replace(/(?:millilitres?|milliliters?|毫升)/g, "ml")
+    .replace(/(?:kilograms?|公斤)/g, "kg")
+    .replace(/(?:grams?|克)/g, "g")
+    .replace(/(?:hours?|小時|小时)/g, "h")
+    .replace(/(?:minutes?|分鐘|分钟)/g, "min")
+    .replace(/(?:days?|天|日)/g, "d")
+    .replace(/(?:years?|年)/g, "y")
+    .replace(/(?:months?|月)/g, "mo")
+    .replace(/[\s,]/g, "").trim();
 }
 
 export function extractGroundingBlock(system: string): ParsedGroundingBlock | null {
@@ -352,10 +364,13 @@ export function extractGroundingBlock(system: string): ParsedGroundingBlock | nu
     if (transformIndex >= 0) {
       const prior = system.slice(transformIndex + transformMarker.length).trim();
       if (prior) {
+        const operationsLine = system.match(/^- Operations:\s*(.+)$/m)?.[1] ?? "";
+        const transformOperations = operationsLine.split("+").map((x) => x.trim()).filter(Boolean);
         return {
           authority: "PRIOR_GROUNDED_ANSWER",
           evidence_text: prior.slice(0, 3000),
           chunk_ids: [],
+          transform_operations: transformOperations,
         };
       }
     }
@@ -375,6 +390,7 @@ export function extractGroundingBlock(system: string): ParsedGroundingBlock | nu
     authority: "CURRENT_KB",
     evidence_text: raw.slice(0, 6000),
     chunk_ids: [...new Set(ids)],
+    transform_operations: [],
   };
 }
 
@@ -484,6 +500,12 @@ async function verifyGroundedGeneration(
     grounding.authority === "PRIOR_GROUNDED_ANSWER"
       ? "The evidence is a previously verified grounded answer. Judge whether the proposed answer is a faithful simplification, rephrase, translation, or summary of that evidence without any new factual claim. Wording and language may differ, and a summary may omit detail."
       : "Judge ONLY whether every factual claim in the proposed answer is entailed by the supplied current Knowledge Base evidence.",
+    grounding.authority === "PRIOR_GROUNDED_ANSWER" && grounding.transform_operations.length
+      ? `Requested transform operations: ${grounding.transform_operations.join(" + ")}.`
+      : "",
+    grounding.authority === "PRIOR_GROUNDED_ANSWER" && grounding.transform_operations.includes("TRANSLATE")
+      ? "For TRANSLATE, compare semantic meaning across languages rather than surface-word overlap. Direct translations of the same names, product categories, units, and relationships are supported when they preserve the source meaning; do not reject a faithful translation merely because its words differ from the source language."
+      : "",
     "Do not use outside knowledge, assumptions, the customer request, or other prior conversation as factual evidence.",
     "Politeness, conversational transitions, and non-factual wording do not need evidence.",
     "Any unsupported product fact, policy fact, price, date, duration, dimension, eligibility condition, jurisdiction claim, procedure, limit, availability statement, or categorical factual statement makes grounded=false.",
