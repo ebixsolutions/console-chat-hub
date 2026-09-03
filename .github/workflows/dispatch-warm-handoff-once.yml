@@ -6,14 +6,44 @@ on:
       - '.github/workflows/dispatch-warm-handoff-once.yml'
 permissions:
   actions: write
-  contents: read
+  contents: write
 jobs:
   dispatch:
     runs-on: ubuntu-24.04
     steps:
-      - name: Dispatch implementation workflow
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Director residual fix and dispatch
         env:
           GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
-          echo round2-final
+          set -euo pipefail
+          git config user.name 'ebixsolutions'
+          git config user.email '64578119+ebixsolutions@users.noreply.github.com'
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('.github/workflows/director-warm-handoff-context-panel.yml')
+          s=p.read_text()
+          old="""          const ORDER_VALUE=/(?:訂單(?:編號|号码|號碼)?|订单(?:编号|号码)?|order(?: number| no\\.?| id)?)[\\s:：#-]*([A-Za-z0-9][A-Za-z0-9._\\/-]{2,80})/i;"""
+          new="""          const ORDER_VALUE=/(?:訂單(?:編號|號碼|号码)|订单(?:编号|号码)|order(?: number| no\\.?| id)|order\\s*#)[\\s:：#-]*([A-Za-z0-9][A-Za-z0-9._\\/-]{2,80})/i;"""
+          if old in s:
+              s=s.replace(old,new,1)
+          assert new in s
+          old_test="""          Deno.test('order flow asks order reference only when actually missing',()=>{const p=buildWarmHandoffPackage([{role:'visitor',content:'我的送貨訂單出問題'}]);assertEquals(p.missing_facts,['order_reference'])});"""
+          if "plain order word is never parsed as an identifier" not in s:
+              assert old_test in s
+              new_test=old_test+"""\n          Deno.test('explicit order reference is accepted',()=>{const p=buildWarmHandoffPackage([{role:'visitor',content:'我的送貨訂單編號 ABC123 出問題'}]);assertEquals(p.missing_facts,[]);assert(p.known_facts.some(x=>x.label==='Order reference'&&x.value==='ABC123'))});\n          Deno.test('plain order word is never parsed as an identifier',()=>{const p=buildWarmHandoffPackage([{role:'visitor',content:'我的訂單還沒到'}]);assertEquals(p.missing_facts,['order_reference']);assert(!p.known_facts.some(x=>x.label==='Order reference'))});\n          Deno.test('unavailable order reference does not loop',()=>{const p=buildWarmHandoffPackage([{role:'visitor',content:'我的送貨有問題，但我沒有訂單編號'}]);assertEquals(p.missing_facts,[]);assertEquals(p.unavailable_facts,['order_reference'])});"""
+              s=s.replace(old_test,new_test,1)
+          p.write_text(s)
+          print('DIRECTOR_RESIDUAL_DETECTOR_FIX=PASS')
+          PY
+          git diff --check
+          if ! git diff --quiet; then
+            git add .github/workflows/director-warm-handoff-context-panel.yml
+            git commit -m '[director] make order-reference detection explicit'
+            git push origin HEAD:main
+          fi
           gh workflow run director-warm-handoff-context-panel.yml --repo ebixsolutions/console-chat-hub --ref main
