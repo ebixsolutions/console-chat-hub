@@ -48,6 +48,12 @@ jobs:
           PY
       - name: Install dependencies
         run: npm ci
+      - name: Lockfile-compatible security remediation
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm audit fix --package-lock-only
+          npm ci
       - name: Production dependency audit
         run: npm audit --omit=dev --audit-level=high
       - name: Production build
@@ -56,12 +62,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if git diff --quiet -- src/lib/api/config.service.ts src/routes/_authenticated/console.channel-settings.tsx; then
+          git diff --check
+          if git diff --quiet -- src/lib/api/config.service.ts src/routes/_authenticated/console.channel-settings.tsx package-lock.json; then
             echo 'TASK4_3_RBAC_NO_SOURCE_DELTA=PASS'
             exit 0
           fi
           git config user.name 'ebixsolutions'
           git config user.email '64578119+ebixsolutions@users.noreply.github.com'
-          git add src/lib/api/config.service.ts src/routes/_authenticated/console.channel-settings.tsx
+          git add src/lib/api/config.service.ts src/routes/_authenticated/console.channel-settings.tsx package-lock.json
           git commit -m 'Task 4.3: enforce channel settings RBAC'
           git push origin HEAD:main
