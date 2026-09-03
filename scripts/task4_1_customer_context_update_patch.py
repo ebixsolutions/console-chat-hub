@@ -38,8 +38,8 @@ if 'buildCustomerContextAcknowledgement' not in s:
 intel.write_text(s)
 
 s = gen.read_text()
-old_import = '''  NATURAL_CLARIFICATION,\n  CUSTOMER_CONVERSATION_POLICY,'''
-new_import = '''  NATURAL_CLARIFICATION,\n  buildCustomerContextAcknowledgement,\n  CUSTOMER_CONVERSATION_POLICY,'''
+old_import = 'import { CUSTOMER_CONVERSATION_POLICY, NATURAL_CLARIFICATION, buildCustomerAdvisoryContext, classifyConversationTurn, classifyHandoffIntent, hasUsableFullContentEvidence, isHumanControlState } from "../_shared/conversation-intelligence.ts";'
+new_import = 'import { CUSTOMER_CONVERSATION_POLICY, NATURAL_CLARIFICATION, buildCustomerAdvisoryContext, buildCustomerContextAcknowledgement, classifyConversationTurn, classifyHandoffIntent, hasUsableFullContentEvidence, isHumanControlState } from "../_shared/conversation-intelligence.ts";'
 if new_import not in s:
     assert old_import in s
     s = s.replace(old_import, new_import, 1)
@@ -50,7 +50,6 @@ if semantic_import not in s:
     assert anchor_import in s
     s = s.replace(anchor_import, anchor_import + '\n' + semantic_import, 1)
 
-# Add canonical history-aware turn classification before the older adapter path.
 anchor = '''  const _visitorLang = detectVisitorLanguage(_h1LastMsg);\n  const _turnClassification = classifyConversationTurn(_h1LastMsg);'''
 replacement = '''  const _visitorLang = detectVisitorLanguage(_h1LastMsg);\n  const _canonicalTurn = classifyCanonicalConversationTurn(\n    _h1LastMsg,\n    _pr5HistoryRows ?? [],\n    { explicit_handoff: isHandoffIntent(_h1LastMsg) },\n  );\n  if (_canonicalTurn.operation === "CUSTOMER_CONTEXT_UPDATE") {\n    const acknowledgement = buildCustomerContextAcknowledgement(_canonicalTurn.language);\n    const contextCommit = await commitAiReplyWithControlGate(\n      supabaseAdmin,\n      conversation_id,\n      source_message_id,\n      acknowledgement,\n      {\n        response_route: "customer_context_update",\n        escalation_action: "continue_ai",\n        handoff_required: false,\n        reason_code: _canonicalTurn.reason,\n      },\n    );\n    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);\n    if (contextCommit.ok) {\n      return new Response(JSON.stringify({\n        success: true,\n        reply: acknowledgement,\n        response_route: "customer_context_update",\n        handoff_required: false,\n      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });\n    }\n    if (["human_control", "resolved", "superseded_source"].includes(contextCommit.result)) {\n      return new Response(JSON.stringify({ success: true, skipped: contextCommit.result }), {\n        headers: { ...corsHeaders, "Content-Type": "application/json" },\n      });\n    }\n    return new Response(JSON.stringify({ success: false, error: `context_update_commit_${contextCommit.result}` }), {\n      status: 409,\n      headers: { ...corsHeaders, "Content-Type": "application/json" },\n    });\n  }\n  const _turnClassification = classifyConversationTurn(_h1LastMsg);'''
 if 'response_route: "customer_context_update"' not in s:
