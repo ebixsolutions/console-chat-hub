@@ -1,0 +1,155 @@
+name: Director Task 2 Current Context Takeover
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/director-task2-current-context-takeover.yml'
+
+permissions:
+  contents: write
+
+env:
+  PROJECT_REF: nrfxhqabwblzxoushgnm
+  PROD_ORIGIN: https://console-chat-hub.lovable.app
+  CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+  SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+jobs:
+  director-takeover:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.6
+
+      - name: Apply exact current-context call-chain patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/director_task2_current_context_takeover_patch.py
+          git diff --check
+          changed="$(git diff --name-only)"
+          test "$changed" = "supabase/functions/_shared/conversation-runtime-state.ts"
+          grep -q 'current_item' supabase/functions/_shared/conversation-runtime-state.ts
+          grep -q 'groundedAssistantJurisdiction' supabase/functions/_shared/conversation-runtime-state.ts
+          grep -q 'memoryLanguageContinuation' supabase/functions/_shared/conversation-runtime-state.ts
+          echo DIRECTOR_TASK2_CONTEXT_PATCH=PASS
+
+      - name: Current-context and frozen semantic regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno test --allow-read --node-modules-dir=auto tests/edge/task2-current-context-language-continuation.test.ts
+          deno test --allow-read --node-modules-dir=auto tests/edge/task2-standalone-simplify-regression.test.ts
+          deno test --allow-read --node-modules-dir=auto tests/edge/task4-1-current-context-memory.test.ts
+          deno test --allow-env --node-modules-dir=auto tests/edge/task4-1-director-transform-isolation.test.ts
+          deno test --allow-env --allow-read --node-modules-dir=auto tests/edge/round2-task1-conversation-semantic-contract.test.ts
+          deno check --node-modules-dir=auto supabase/functions/_shared/conversation-runtime-state.ts
+          deno check --node-modules-dir=auto supabase/functions/_shared/conversation-semantic-contract.ts
+          deno check --node-modules-dir=auto supabase/functions/_shared/prior-grounded-transform.ts
+          deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+          echo DIRECTOR_TASK2_CONTEXT_REGRESSIONS=PASS
+
+      - name: Full authoritative build
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          echo DIRECTOR_TASK2_CONTEXT_BUILD=PASS
+
+      - name: Commit exact Director takeover source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'ebixsolutions'
+          git config user.email '64578119+ebixsolutions@users.noreply.github.com'
+          git add supabase/functions/_shared/conversation-runtime-state.ts
+          test -n "$(git diff --cached --name-only)"
+          test "$(git diff --cached --name-only)" = "supabase/functions/_shared/conversation-runtime-state.ts"
+          git commit -m '[authorized-prod] Task 2 Director close current-context memory chain'
+          git push origin HEAD:main
+          echo DIRECTOR_TASK2_CONTEXT_MAIN=PASS
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Capture exact production rollback bundle
+        id: snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SUPABASE_ACCESS_TOKEN:-}"
+          SNAP=/tmp/task2-director-rollback
+          rm -rf "$SNAP"
+          mkdir -p "$SNAP/supabase"
+          cp supabase/config.toml "$SNAP/supabase/config.toml"
+          supabase functions list --project-ref "$PROJECT_REF" | tee "$SNAP/PREDEPLOY_FUNCTION_LIST.txt"
+          grep -q 'generate-reply' "$SNAP/PREDEPLOY_FUNCTION_LIST.txt"
+          cd "$SNAP"
+          supabase functions download generate-reply --project-ref "$PROJECT_REF" --use-api
+          ENTRY="$(find "$SNAP" -type f -path '*/generate-reply/index.ts' -print -quit)"
+          test -n "$ENTRY" && test -s "$ENTRY"
+          ROOT="$(dirname "$(dirname "$ENTRY")")"
+          test -d "$ROOT/_shared"
+          cd "$SNAP"
+          find . -type f -not -name 'ROLLBACK_SHA256SUMS.txt' -print0 | sort -z | xargs -0 sha256sum > ROLLBACK_SHA256SUMS.txt
+          sha256sum -c ROLLBACK_SHA256SUMS.txt
+          deno check --node-modules-dir=auto "$ENTRY"
+          test "$(find "$ROOT" -type f -empty | wc -l | tr -d ' ')" -eq 0
+          echo DIRECTOR_TASK2_CONTEXT_SNAPSHOT=PASS
+
+      - name: Archive rollback bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: task2-director-current-context-predeploy-rollback
+          path: /tmp/task2-director-rollback
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Deploy Director current-context closure
+        id: deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          supabase functions deploy generate-reply --project-ref "$PROJECT_REF" --use-api
+          supabase functions list --project-ref "$PROJECT_REF" | tee /tmp/task2-director-postdeploy.txt
+          grep -q 'generate-reply' /tmp/task2-director-postdeploy.txt
+          echo DIRECTOR_TASK2_CONTEXT_DEPLOY=PASS
+
+      - name: Production T01-T11 regression
+        id: smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a; source .env; set +a
+          python scripts/director_task2_t01_t11_smoke.py
+          echo DIRECTOR_TASK2_T01_T11=PASS
+
+      - name: Roll back if Director deploy or smoke fails
+        if: ${{ failure() && (steps.deploy.outcome == 'failure' || steps.smoke.outcome == 'failure') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/task2-director-rollback
+          sha256sum -c ROLLBACK_SHA256SUMS.txt
+          supabase functions deploy generate-reply --project-ref "$PROJECT_REF" --use-api
+          supabase functions list --project-ref "$PROJECT_REF" | grep -q 'generate-reply'
+          echo DIRECTOR_TASK2_CONTEXT_ROLLBACK=PASS
+
+      - name: Director takeover final gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s /tmp/task2-director-rollback/ROLLBACK_SHA256SUMS.txt
+          test -s /tmp/task2-director-postdeploy.txt
+          echo DIRECTOR_TASK2_CURRENT_CONTEXT_FINAL_GATE=PASS
