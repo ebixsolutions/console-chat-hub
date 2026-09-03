@@ -1,0 +1,146 @@
+name: Director Warm Handoff Generator Whitespace Closure
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/director-warm-handoff-generator-whitespace-closure.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  final-gate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.6
+      - name: Fix generator root cause
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'ebixsolutions'
+          git config user.email '64578119+ebixsolutions@users.noreply.github.com'
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/director-warm-handoff-takeover.py')
+          s = p.read_text()
+          old = """if \"autoLoadHandoffContext=\" not in block:\n    s = s[:end] + '\\n                autoLoadHandoffContext={conv.status === \"pending\" || Boolean(conv.assigned_agent_id)}' + s[end:]"""
+          new = """if \"autoLoadHandoffContext=\" not in block:\n    line_start = s.rfind(\"\\n\", 0, idx) + 1\n    indent = s[line_start:idx]\n    prop_indent = indent + \"  \"\n    s = s[:end].rstrip() + f'\\n{prop_indent}autoLoadHandoffContext={{conv.status === \"pending\" || Boolean(conv.assigned_agent_id)}}\\n{indent}' + s[end:]"""
+          assert old in s, 'expected generator insertion block not found'
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+          print('GENERATOR_WHITESPACE_ROOT_CAUSE_FIXED=PASS')
+          PY
+          git diff --check
+          git add scripts/director-warm-handoff-takeover.py
+          test "$(git diff --cached --name-only | wc -l | tr -d ' ')" = "1"
+          git commit -m '[director] fix warm handoff generator whitespace root cause'
+          git push origin HEAD:main
+
+      - name: Generate exact warm handoff implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/director-warm-handoff-takeover.py
+
+      - name: Warm Handoff 10 of 10
+        run: deno test --allow-read tests/edge/warm-handoff-package.test.ts
+
+      - name: T16 6 of 6
+        run: deno test --allow-read --allow-env --node-modules-dir=auto tests/edge/task2-human-language-transform-regression.test.ts
+
+      - name: Simplify 7 of 7
+        run: deno test --allow-read --allow-env --node-modules-dir=auto tests/edge/task2-standalone-simplify-regression.test.ts
+
+      - name: Deno check warm handoff
+        run: deno check --node-modules-dir=auto supabase/functions/_shared/warm-handoff.ts
+
+      - name: Deno check agent assist
+        run: deno check --node-modules-dir=auto supabase/functions/agent-assist/index.ts
+
+      - name: Deno check generate reply
+        run: deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+
+      - name: Full build
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+
+      - name: Diff check
+        run: git diff --check
+
+      - name: Semantic coverage 8 of 8
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          a=Path('supabase/functions/agent-assist/index.ts').read_text()
+          g=Path('supabase/functions/generate-reply/index.ts').read_text()
+          u=Path('src/components/console/AgentToolPanel.tsx').read_text()
+          r=Path('src/routes/_authenticated/console.conversations.$id.tsx').read_text()
+          w=Path('supabase/functions/_shared/warm-handoff.ts').read_text()
+          checks={
+            'agent_unified_handoff_tool': 'handoff_context' in a and 'warm_handoff_package:pkg' in a and 'policyOnly:true' in a and 'suggested_replies:suggestions' in a,
+            'r2_collection_route': 'warm_handoff_data_collection' in g and 'collect_missing_handoff_facts' in g and 'handoff_required: false' in g,
+            'r2_only_noncritical_gate': 'decision.decision === "handoff"' in g and 'decision.matched_rule === "R2"' in g and 'warm_handoff_question' in g,
+            'agent_panel_summary': 'Warm Handoff Context / 真人接手摘要' in u and 'Relevant Knowledge' in u and 'Relevant Policy' in u and 'Suggested Replies' in u,
+            'agent_panel_auto_load': 'handoff_context' in u and 'autoLoadHandoffContext' in u,
+            'route_handoff_state_activation': 'autoLoadHandoffContext' in r and 'conv.status === "pending"' in r and 'assigned_agent_id' in r,
+            'order_identifier_source_present': 'const ORDER_VALUE' in w and 'Order reference' in w and 'ORDER_VALUE' in w,
+            'no_repeat_collection_contract': 'collection_already_attempted' in w and 'unavailable_facts' in w,
+          }
+          for name,value in checks.items(): print(f'{name}={"PASS" if value else "FAIL"}')
+          failed=[name for name,value in checks.items() if not value]
+          assert not failed, f'coverage failures={failed}'
+          assert len(checks) == 8
+          print('SEMANTIC_COVERAGE_8_OF_8=PASS')
+          PY
+
+      - name: Exact six file commit and push
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add \
+            supabase/functions/_shared/warm-handoff.ts \
+            supabase/functions/agent-assist/index.ts \
+            supabase/functions/generate-reply/index.ts \
+            src/components/console/AgentToolPanel.tsx \
+            'src/routes/_authenticated/console.conversations.$id.tsx' \
+            tests/edge/warm-handoff-package.test.ts
+          test "$(git diff --cached --name-only | wc -l | tr -d ' ')" = "6"
+          git diff --cached --name-only | sort > /tmp/actual
+          cat > /tmp/expected <<'EOF'
+          src/components/console/AgentToolPanel.tsx
+          src/routes/_authenticated/console.conversations.$id.tsx
+          supabase/functions/_shared/warm-handoff.ts
+          supabase/functions/agent-assist/index.ts
+          supabase/functions/generate-reply/index.ts
+          tests/edge/warm-handoff-package.test.ts
+          EOF
+          sort /tmp/expected -o /tmp/expected
+          diff -u /tmp/expected /tmp/actual
+          git diff --cached --check
+          git commit -m '[director] complete warm handoff package and takeover context panel'
+          git push origin HEAD:main
+          echo EXACT_SIX_FILE_COMMIT_PUSH=PASS
+
+      - name: Final status
+        run: |
+          echo WARM_HANDOFF_10_OF_10=PASS
+          echo T16_6_OF_6=PASS
+          echo SIMPLIFY_7_OF_7=PASS
+          echo DENO_X3=PASS
+          echo FULL_BUILD=PASS
+          echo GIT_DIFF_CHECK=PASS
+          echo SEMANTIC_COVERAGE_8_OF_8=PASS
+          echo EXACT_SIX_FILE_COMMIT_PUSH=PASS
+          echo SOURCE_READY_FROZEN=PASS
