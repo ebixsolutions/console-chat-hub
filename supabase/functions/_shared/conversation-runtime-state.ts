@@ -235,6 +235,7 @@ export function resolveConversationMemoryResponse(
   const recommendationRequest = /(之前|先前|剛才|刚才|earlier|previous).*(建議|建议|要我提供|需要.*資料|需要.*资料|recommend|suggest)|what\s+did\s+you\s+(?:recommend|suggest)|what\s+information.*(?:missing|need)/i.test(latest);
   const providedMissingRequest = /(我已經提供|我已经提供|我提供過|我提供过|已提供.*哪些|還缺|还缺|仍缺|what\s+information\s+have\s+i\s+already\s+given|what\s+have\s+i\s+already\s+given|what.*still\s+missing)/i.test(latest);
   const generalSummaryRequest = /(最後|最后|請|请)?\s*(?:用.{0,8})?(?:三點|三点|幾點|几点)?\s*(?:總結|总结).*(?:剛才|刚才|我們|我们|談過|谈过|內容|内容)|summari[sz]e.*(?:conversation|discussed|talked|so far)/i.test(latest);
+  const mainlyAskedRequest = /(?:剛才|刚才).*(?:主要)?(?:問|问).*(?:什麼|什么|咩)|(?:主要)(?:問|问).*(?:什麼|什么|咩)|what\s+(?:was|is)\s+(?:my\s+)?(?:main|mainly|primary).*(?:question|asking|ask)/i.test(latest);
   const nameRequest = /(我叫什麼|我叫什么|我的名字|我個名|我个名|what(?:'s| is)\s+my\s+name|do\s+you\s+remember\s+my\s+name)/i.test(latest);
   const locationRequest = /(我(?:現在|现在|目前).*(?:哪裡|哪里)|我.*(?:在哪|喺邊)|where\s+am\s+i|my\s+(?:current\s+)?location|更正後.*(?:地點|地点)|更正后.*(?:地點|地点))/i.test(latest);
   const currentContextPattern = /(我(?:現在|现在|目前).*(?:哪個|哪个|什麼|什么).*(?:地區|地区).*(?:哪個|哪个|什麼|什么).*(?:項目|项目)|what(?:\x27s| is)?\s+(?:the\s+)?(?:current\s+)?(?:region|jurisdiction).*(?:item|product))/i;
@@ -255,7 +256,7 @@ export function resolveConversationMemoryResponse(
   const memoryLanguageContinuation = languageContinuationPattern.test(latest) &&
     (hasRecentCurrentContextQuestion || hasChainedLanguageContinuation);
   const currentContextRequest = currentContextPattern.test(latest) || memoryLanguageContinuation;
-  if (!(firstRequest || correctionRequest || constraintRequest || summaryRequest || recommendationRequest || providedMissingRequest || generalSummaryRequest || nameRequest || locationRequest || currentContextRequest)) return null;
+  if (!(firstRequest || correctionRequest || constraintRequest || summaryRequest || recommendationRequest || providedMissingRequest || generalSummaryRequest || mainlyAskedRequest || nameRequest || locationRequest || currentContextRequest)) return null;
 
   const zh = lang !== "en";
   const q = lang === "zh-CN" ? { first:"你一开始问的是", correction:"你之前最新的更正是", constraint:"你之前明确提出的限制包括", recommendation:"我之前的相关建议包括", name:"你之前告诉我你的名字是", location:"你之前更正后的地点是", none:"这段对话里没有足够资料可以确认。" } : { first:"你一開始問的是", correction:"你之前最新的更正是", constraint:"你之前明確提出的限制包括", recommendation:"我之前的相關建議包括", name:"你之前告訴我你的名字是", location:"你之前更正後的地點是", none:"這段對話裡沒有足夠資料可以確認。" };
@@ -263,6 +264,24 @@ export function resolveConversationMemoryResponse(
   const t = zh ? q : en;
   const quote = (v: string) => zh ? `「${v}」` : `“${v}”`;
   const list = (xs: string[]) => xs.map((x, i) => `${i + 1}. ${x}`).join("\n");
+  if (mainlyAskedRequest) {
+    const label: Record<string, Record<RuntimeLanguage,string>> = {
+      hong_kong:{"zh-TW":"香港","zh-CN":"香港",en:"Hong Kong"}, macau:{"zh-TW":"澳門","zh-CN":"澳门",en:"Macau"}, singapore:{"zh-TW":"新加坡","zh-CN":"新加坡",en:"Singapore"}, taiwan:{"zh-TW":"台灣","zh-CN":"台湾",en:"Taiwan"}, mainland_china:{"zh-TW":"中國大陸","zh-CN":"中国大陆",en:"Mainland China"}, mars:{"zh-TW":"火星","zh-CN":"火星",en:"Mars"}
+    };
+    const region = state.jurisdiction ? label[state.jurisdiction]?.[lang] : undefined;
+    const item = state.current_item ? localizedCurrentItem(state.current_item, lang) : "";
+    if (region && item) {
+      if (lang === "en") return `You were mainly asking about ${item} in ${region}.`;
+      if (lang === "zh-CN") return `你刚才主要问的是${region}的${item}相关问题。`;
+      return `你剛才主要問的是${region}的${item}相關問題。`;
+    }
+    if (state.first_customer_turn) {
+      if (lang === "en") return `You were mainly asking about: ${state.first_customer_turn}`;
+      if (lang === "zh-CN") return `你刚才主要问的是：${state.first_customer_turn}`;
+      return `你剛才主要問的是：${state.first_customer_turn}`;
+    }
+    return lang === "en" ? en.none : q.none;
+  }
   if (providedMissingRequest) {
     const priorCustomer = priorRows
       .filter((r) => CUSTOMER.has(String(r.role ?? "").toLowerCase()))
