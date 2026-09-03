@@ -4,7 +4,14 @@ import { resolvePriorGroundedTransform } from "../../supabase/functions/_shared/
 
 const groundedMeta = {
   source_message_id: "11111111-1111-4111-8111-111111111111",
-  citations: [{ document_id: "doc-hk", chunk_id: "chunk-hk" }],
+  citations: [{
+    document_id: "doc-hk",
+    chunk_id: "chunk-hk",
+    label: "HK recycling",
+    source_type: "Other",
+    relevance: "medium",
+    chunk_type: "full_content",
+  }],
   citation_lineage: {
     selected_document_id: "doc-hk",
     evidence_chunk_ids: ["chunk-hk"],
@@ -40,5 +47,6 @@ for (const prompt of [
     assertEquals(transform?.operation, "SIMPLIFY");
     assertEquals(transform?.selected_document_id, "doc-hk");
     assertEquals(transform?.evidence_chunk_ids, ["chunk-hk"]);
+    assertEquals(transform?.prior_source_message_id, groundedMeta.source_message_id);
   });
 }
