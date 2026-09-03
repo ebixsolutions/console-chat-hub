@@ -36,6 +36,7 @@ import { selectCanonicalGrounding } from "../_shared/canonical-grounding.ts";
 import { buildCitationMetadata } from "../_shared/citation-lineage.ts";
 import { buildInheritedTransformCitationMetadata, buildPriorGroundedTransformBlock, buildPriorGroundedTransformGenerationSystem, buildPriorGroundedTransformGenerationUser, buildPriorGroundedTransformRetrySystem, resolvePriorGroundedTransform } from "../_shared/prior-grounded-transform.ts";
 import { isDirectViolentThreat } from "../_shared/e2-direct-threat.ts";
+import { buildReturnToAiGenerationGuard } from "../_shared/return-to-ai-control.ts";
 import { buildMissingFactsQuestion, buildWarmHandoffPackage } from "../_shared/warm-handoff.ts";
 import { buildRealtimeR3SentimentSignals } from "../_shared/runtime-signal-lifecycle.ts";
 import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
@@ -198,6 +199,25 @@ function routerFailureHttpStatus(code: LlmFailureCode): number {
   if (code === "LLM_TIMEOUT") return 504;
   if (code === "LLM_CONFIG_MISSING") return 503;
   return 502;
+}
+
+
+async function loadLatestHandoffReason(
+  supabaseAdmin: SupabaseAdminClient,
+  conversationId: string,
+): Promise<string | null> {
+  const { data, error } = await supabaseAdmin
+    .from("handoff_event")
+    .select("handoff_reason, created_at")
+    .eq("conversation_id", conversationId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    console.error("[generate-reply] latest handoff control lookup failed (non-blocking):", conversationId);
+    return null;
+  }
+  return typeof data?.handoff_reason === "string" ? data.handoff_reason : null;
 }
 
 function routerFailureToS0(code: LlmFailureCode): string {
@@ -1390,6 +1410,12 @@ async function legacyGenerateReply(conversation_id: string, source_message_id: s
     }
   }
 
+  const legacyLatestHandoffReason = await loadLatestHandoffReason(supabaseAdmin, conversation_id);
+  const legacyReturnToAiGuard = buildReturnToAiGenerationGuard(
+    legacyLatestHandoffReason,
+    conversation.assigned_agent_id ?? null,
+  );
+
   const legacySystemPrompt = `You are a professional and friendly customer service assistant.
 Answer customer questions clearly and concisely.
 If details are missing, ask one concise contextual question. If a fact cannot be verified, say you cannot confirm it and do not guess. Do not offer a human unless the governed escalation layer has decided one is appropriate.
@@ -1397,7 +1423,9 @@ Keep responses under 150 words.
 Respond in the same language and script the customer is using.
 When the customer explicitly requests a human agent, or when you transfer to a human agent, include a short safe handoff status message in the same language and script as the customer. The message must state that the conversation has been recorded and that a human agent will reply in this same chat after taking over. If the customer is using Traditional Chinese, use: "我們已將你的對話記錄，客服接手後會在此對話中回覆你。目前未啟用即時輪候時間顯示。" If the customer is using Simplified Chinese, use: "我们已将你的对话记录，客服接手后会在此对话中回复你。目前未启用实时排队位置和预计等待时间显示。" If the customer is using English, use: "We have recorded your conversation. A human agent will reply in this same chat after taking over. Real-time queue position and estimated wait time are not currently enabled." Do NOT invent estimated wait times, response-time promises, or queue positions.
 
-${CUSTOMER_CONVERSATION_POLICY}`;
+${CUSTOMER_CONVERSATION_POLICY}
+
+${legacyReturnToAiGuard}`;
 
   const llm = await callModel({
     purpose: "generation",
@@ -2542,12 +2570,18 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     churn_risk: customerContext?.churn_risk,
     escalation_score: customerContext?.escalation_score,
   });
+  const latestHandoffReason = await loadLatestHandoffReason(supabaseAdmin, conversation_id);
+  const returnToAiGuard = buildReturnToAiGenerationGuard(
+    latestHandoffReason,
+    conversation.assigned_agent_id ?? null,
+  );
   const finalSystemPrompt = _priorGroundedTransform
     ? buildPriorGroundedTransformGenerationSystem(_priorGroundedTransform)
     : [
         basePrompt,
         CUSTOMER_CONVERSATION_POLICY,
         _conversationContinuityBlock,
+        returnToAiGuard,
         _customerAdvisoryBlock,
         buildMaskedContextBlock(customerContext, opaqueCustomerRef),
         buildRagBlock(ragResult),
