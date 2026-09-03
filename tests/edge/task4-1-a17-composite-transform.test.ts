@@ -2,6 +2,8 @@ import {
   buildInheritedTransformCitationMetadata,
   buildPriorGroundedTransformGenerationSystem,
   buildPriorGroundedTransformGenerationUser,
+  buildPriorGroundedTransformRetrySystem,
+  detectRequestedSummaryCount,
   detectRequestedTransformOperations,
   resolvePriorGroundedTransform,
 } from "../../supabase/functions/_shared/prior-grounded-transform.ts";
@@ -135,4 +137,52 @@ Deno.test("A17 inherited metadata preserves current document/chunk lineage and c
 Deno.test("single-step transforms remain single-step", () => {
   const ops = detectRequestedTransformOperations("Explain that in English.", "TRANSLATE");
   assert(ops.length === 1 && ops[0] === "TRANSLATE", `single transform changed: ${ops.join(",")}`);
+});
+
+Deno.test("A20 detects Chinese and English fixed summary counts", () => {
+  assert(detectRequestedSummaryCount("最後只根據已確認資料，用三點總結。") === 3, "Chinese three-point count missing");
+  assert(detectRequestedSummaryCount("請用 3 點總結已確認資料") === 3, "numeric Chinese count missing");
+  assert(detectRequestedSummaryCount("Summarize the confirmed facts in 3 bullets.") === 3, "English bullet count missing");
+  assert(detectRequestedSummaryCount("簡單總結") === null, "count invented for unbounded summary");
+});
+
+Deno.test("A20 fixed-count summary contract makes grounding higher priority than count", () => {
+  const context = resolvePriorGroundedTransform(
+    "最後只根據已確認資料，用三點總結。",
+    [
+      { role: "visitor", content: "最後只根據已確認資料，用三點總結。" },
+      latestGrounded,
+      ...history.slice(2),
+    ],
+  );
+  assert(context !== null, "A20 transform context missing");
+  assert(context.operation === "SUMMARIZE", `wrong A20 operation: ${context.operation}`);
+  assert(context.requested_summary_count === 3, `wrong requested count: ${context.requested_summary_count}`);
+  const system = buildPriorGroundedTransformGenerationSystem(context);
+  const user = buildPriorGroundedTransformGenerationUser("最後只根據已確認資料，用三點總結。");
+  const retry = buildPriorGroundedTransformRetrySystem(context);
+  assert(system.includes("Return AT MOST 3 supported points"), "A20 bounded count rule missing");
+  assert(system.includes("Grounding has higher priority"), "A20 grounding priority missing");
+  assert(system.includes("return fewer points"), "A20 insufficient-evidence rule missing");
+  assert(system.includes("Never split one factual claim"), "A20 anti-padding rule missing");
+  assert(user.includes("return fewer points rather than inventing filler"), "A20 user anti-filler rule missing");
+  assert(retry.includes("soft formatting target only"), "A20 retry still treats count as hard factual requirement");
+  assert(!retry.includes("do not drop the requested target language or summary constraint"), "old hard summary-constraint retry survived");
+});
+
+Deno.test("A20 fixed-count lineage records the request without changing factual authority", () => {
+  const context = resolvePriorGroundedTransform(
+    "最後只根據已確認資料，用三點總結。",
+    [
+      { role: "visitor", content: "最後只根據已確認資料，用三點總結。" },
+      latestGrounded,
+      ...history.slice(2),
+    ],
+  );
+  assert(context !== null);
+  const metadata = buildInheritedTransformCitationMetadata(context) as Record<string, any>;
+  assert(metadata.transform_lineage.requested_summary_count === 3, "fixed summary count lineage missing");
+  assert(metadata.transform_lineage.authority === "PRIOR_GROUNDED_ANSWER", "A20 authority changed");
+  assert(metadata.citation_lineage.selected_document_id === "doc-current-aircon", "A20 document lineage changed");
+  assert(metadata.citation_lineage.evidence_chunk_ids[0] === "chunk-current-1", "A20 evidence lineage changed");
 });
