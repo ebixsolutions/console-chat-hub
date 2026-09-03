@@ -33,8 +33,8 @@ replace_once(
 '''    jurisdiction: explicitJurisdiction ?? inheritedJurisdiction ?? groundedAssistantJurisdiction,\n    current_item: correctedItem ?? focusedItem,\n    language: detectLanguage(latest ?? first ?? ""),''')
 
 replace_once(
-'''    `Jurisdiction: ${state.jurisdiction ?? "unspecified"}`,''',
-'''    `Jurisdiction: ${state.jurisdiction ?? "unspecified"}`,\n    `Current item: ${state.current_item ?? "unspecified"}`,''')
+'''    `Prior grounded document: ${state.prior_grounded_document_id ?? "—"}`,\n    `Current topic: ${state.current_topic ?? "—"}`,\n    `Jurisdiction: ${state.jurisdiction ?? "unspecified"}`,''',
+'''    `Prior grounded document: ${state.prior_grounded_document_id ?? "—"}`,\n    `Current topic: ${state.current_topic ?? "—"}`,\n    `Jurisdiction: ${state.jurisdiction ?? "unspecified"}`,\n    `Current item: ${state.current_item ?? "unspecified"}`,''')
 
 replace_once(
 '''  const currentContextRequest = /(我(?:現在|现在|目前).*(?:哪個|哪个|什麼|什么).*(?:地區|地区).*(?:哪個|哪个|什麼|什么).*(?:項目|项目)|what(?:\\x27s| is)?\\s+(?:the\\s+)?(?:current\\s+)?(?:region|jurisdiction).*(?:item|product))/i.test(latest);''',
