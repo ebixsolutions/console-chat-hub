@@ -1,0 +1,161 @@
+name: Director Task 4.1 Runtime Restore Final Gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/director-task4-1-runtime-restore-final-gate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  director-final-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    env:
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+      PROD_ORIGIN: https://console-chat-hub.lovable.app
+      CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Restore frozen Task 4.1 exact runtime files
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin director/task-4-1-long-conversation-director-takeover
+          SRC=origin/director/task-4-1-long-conversation-director-takeover
+          for f in \
+            supabase/functions/_shared/citation-lineage.ts \
+            supabase/functions/_shared/conversation-intelligence.ts \
+            supabase/functions/_shared/conversation-runtime-state.ts \
+            supabase/functions/_shared/conversation-semantic-contract.ts \
+            supabase/functions/_shared/llm-router.ts \
+            supabase/functions/_shared/prior-grounded-transform.ts \
+            supabase/functions/generate-reply/index.ts \
+            tests/edge/round2-task1-conversation-semantic-contract.test.ts \
+            tests/edge/round2-task2-grounding-transform-boundary.test.ts \
+            tests/edge/task2-2-output-grounding-router.test.ts \
+            tests/edge/task2-3-citation-lineage.test.ts \
+            tests/edge/task3-grounding-verifier-budget.test.ts \
+            tests/edge/task4-1-a17-composite-transform.test.ts \
+            tests/edge/task4-1-context-requirements-followup.test.ts \
+            tests/edge/task4-1-current-context-memory.test.ts \
+            tests/edge/task4-1-customer-context-update.test.ts \
+            tests/edge/task4-1-director-transform-isolation.test.ts \
+            tests/edge/task4-1-verifier-invalid-output-retry.test.ts
+          do
+            git checkout "$SRC" -- "$f"
+            test -s "$f"
+          done
+          python scripts/director_restore_task4_1_runtime.py
+          git diff --check
+          grep -q 'resolvePriorGroundedTransform' supabase/functions/generate-reply/index.ts
+          grep -q 'prior_grounded_transform' supabase/functions/_shared/prior-grounded-transform.ts
+          echo DIRECTOR_TASK4_1_SOURCE_RESTORE=PASS
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.6
+
+      - name: Compile affected production runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno check --node-modules-dir=auto supabase/functions/_shared/citation-lineage.ts
+          deno check --node-modules-dir=auto supabase/functions/_shared/conversation-semantic-contract.ts
+          deno check --node-modules-dir=auto supabase/functions/_shared/conversation-runtime-state.ts
+          deno check --node-modules-dir=auto supabase/functions/_shared/conversation-intelligence.ts
+          deno check --node-modules-dir=auto supabase/functions/_shared/prior-grounded-transform.ts
+          deno check --node-modules-dir=auto supabase/functions/_shared/llm-router.ts
+          deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+          echo DIRECTOR_TASK4_1_COMPILE=PASS
+
+      - name: Frozen semantic and grounding regression suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno test --allow-env --allow-read --node-modules-dir=auto tests/edge/task4-1-a17-composite-transform.test.ts
+          deno test --allow-read --node-modules-dir=auto tests/edge/task4-1-current-context-memory.test.ts
+          deno test --allow-read --node-modules-dir=auto tests/edge/task4-1-customer-context-update.test.ts
+          deno test --allow-read --node-modules-dir=auto tests/edge/task4-1-context-requirements-followup.test.ts
+          deno test --allow-env --node-modules-dir=auto tests/edge/task4-1-director-transform-isolation.test.ts
+          deno test --allow-read --node-modules-dir=auto tests/edge/task4-1-verifier-invalid-output-retry.test.ts
+          deno test --allow-env --node-modules-dir=auto tests/edge/round2-task1-conversation-semantic-contract.test.ts
+          deno test --allow-env --node-modules-dir=auto tests/edge/round2-task2-grounding-transform-boundary.test.ts
+          deno test --allow-env --node-modules-dir=auto tests/edge/task2-2-output-grounding-router.test.ts
+          deno test --allow-env --node-modules-dir=auto tests/edge/task2-3-citation-lineage.test.ts
+          deno test --allow-env --allow-read --node-modules-dir=auto tests/edge/task3-grounding-verifier-budget.test.ts
+          echo DIRECTOR_TASK4_1_REGRESSIONS=PASS
+
+      - name: Full authoritative application build
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          echo DIRECTOR_TASK4_1_BUILD=PASS
+
+      - name: Commit restored frozen runtime to main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'ebixsolutions'
+          git config user.email '64578119+ebixsolutions@users.noreply.github.com'
+          git add supabase/functions/_shared supabase/functions/generate-reply/index.ts tests/edge
+          if ! git diff --cached --quiet; then
+            git commit -m '[authorized-prod] Director restore frozen Task 4.1 runtime to main'
+            git push origin HEAD:main
+          fi
+          echo DIRECTOR_TASK4_1_MAIN=PASS
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Snapshot production rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SUPABASE_ACCESS_TOKEN:-}"
+          git log origin/director/task-4-1-long-conversation-director-takeover -20 --pretty=%B | grep -Fq '[authorized-prod]'
+          rm -rf /tmp/task4-1-director-backup
+          mkdir -p /tmp/task4-1-director-backup/supabase
+          cp supabase/config.toml /tmp/task4-1-director-backup/supabase/config.toml
+          cd /tmp/task4-1-director-backup
+          supabase functions download generate-reply --project-ref "$PROJECT_REF" --use-api
+          test -s supabase/functions/generate-reply/index.ts
+          echo DIRECTOR_TASK4_1_ROLLBACK_SNAPSHOT=PASS
+
+      - name: Deploy restored generate-reply
+        shell: bash
+        run: |
+          set -euo pipefail
+          supabase functions deploy generate-reply --project-ref "$PROJECT_REF" --use-api
+          supabase functions list --project-ref "$PROJECT_REF" | tee /tmp/task4-1-functions.txt
+          grep -q 'generate-reply' /tmp/task4-1-functions.txt
+          echo DIRECTOR_TASK4_1_DEPLOY=PASS
+
+      - name: T01-T02 production semantic regression with rollback
+        shell: bash
+        run: |
+          set -uo pipefail
+          set -a
+          source .env
+          set +a
+          python scripts/director_task4_1_t01_t02_smoke.py
+          rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo DIRECTOR_TASK4_1_PRODUCTION_REGRESSION=FAIL
+            cd /tmp/task4-1-director-backup
+            supabase functions deploy generate-reply --project-ref "$PROJECT_REF" --use-api
+            echo DIRECTOR_TASK4_1_ROLLBACK=PASS
+            exit "$rc"
+          fi
+          echo DIRECTOR_TASK4_1_FINAL_GATE=PASS
