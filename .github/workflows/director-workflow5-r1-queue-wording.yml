@@ -66,6 +66,13 @@ jobs:
       - name: Full build
         run: npm run build
 
+      - name: Restore validation-only tracked drift
+        shell: bash
+        run: |
+          set -euo pipefail
+          git restore -- deno.lock package-lock.json
+          echo 'WORKFLOW5_VALIDATION_LOCKFILES_RESTORED=PASS'
+
       - name: Diff safety
         shell: bash
         run: |
