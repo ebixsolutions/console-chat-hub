@@ -35,7 +35,7 @@ jobs:
           test "$(git diff --name-only)" = "supabase/functions/generate-reply/index.ts"
           deno test --allow-read --node-modules-dir=auto tests/edge/task2-human-support-question-regression.test.ts
           deno test --allow-read --node-modules-dir=auto tests/edge/task2-fixed-count-summary-regression.test.ts
-          deno test --allow-read --node-modules-dir=auto tests/edge/task2-translation-grounding-regression.test.ts
+          deno test --allow-env --allow-read --node-modules-dir=auto tests/edge/task2-translation-grounding-regression.test.ts
           deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
           echo DIRECTOR_TASK2_HUMAN_SUPPORT_REGRESSION=PASS
       - name: Full build
