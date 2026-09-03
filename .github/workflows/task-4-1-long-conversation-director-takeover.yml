@@ -1,0 +1,134 @@
+name: Task 4.1 Long Conversation Director Takeover
+
+on:
+  push:
+    branches:
+      - director/task-4-1-long-conversation-director-takeover
+    paths:
+      - .github/workflows/task-4-1-long-conversation-director-takeover.yml
+      - scripts/task4_1_director_takeover_patch.py
+      - tests/edge/task4-1-director-transform-isolation.test.ts
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  task4-1:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    env:
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+      PROD_ORIGIN: https://console-chat-hub.lovable.app
+      CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: director/task-4-1-long-conversation-director-takeover
+          fetch-depth: 0
+
+      - name: Apply Director takeover transform isolation
+        run: |
+          set -euo pipefail
+          python scripts/task4_1_director_takeover_patch.py
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if ! git diff --quiet -- supabase/functions/_shared/prior-grounded-transform.ts supabase/functions/generate-reply/index.ts; then
+            git add supabase/functions/_shared/prior-grounded-transform.ts supabase/functions/generate-reply/index.ts
+            git commit -m '[authorized-prod] Task 4.1 isolate prior-grounded transform generation [skip ci]'
+            git push origin HEAD:director/task-4-1-long-conversation-director-takeover
+          fi
+          echo TASK4_1_PATCH=PASS
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.6
+
+      - name: Compile affected runtime
+        run: |
+          set -euo pipefail
+          deno check --node-modules-dir=auto supabase/functions/_shared/prior-grounded-transform.ts
+          deno check --node-modules-dir=auto supabase/functions/_shared/llm-router.ts
+          deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+          echo TASK4_1_COMPILE=PASS
+
+      - name: Run Task 4.1 and frozen regressions
+        run: |
+          set -euo pipefail
+          deno test --allow-env --node-modules-dir=auto tests/edge/task4-1-director-transform-isolation.test.ts
+          deno test --allow-env --node-modules-dir=auto tests/edge/round2-task1-conversation-semantic-contract.test.ts
+          deno test --allow-env --node-modules-dir=auto tests/edge/round2-task2-grounding-transform-boundary.test.ts
+          deno test --allow-env --node-modules-dir=auto tests/edge/task2-2-output-grounding-router.test.ts
+          deno test --allow-env --node-modules-dir=auto tests/edge/task2-3-citation-lineage.test.ts
+          deno test --allow-env --allow-read --node-modules-dir=auto tests/edge/task3-grounding-verifier-budget.test.ts
+          echo TASK4_1_REGRESSIONS=PASS
+
+      - name: Machine assertions
+        run: |
+          set -euo pipefail
+          grep -q 'buildPriorGroundedTransformGenerationSystem' supabase/functions/generate-reply/index.ts
+          grep -q 'buildPriorGroundedTransformGenerationUser' supabase/functions/generate-reply/index.ts
+          grep -q 'buildPriorGroundedTransformRetrySystem' supabase/functions/generate-reply/index.ts
+          grep -q 'flags.ENABLE_COACH && !_priorGroundedTransform' supabase/functions/generate-reply/index.ts
+          grep -q 'transform-retry' supabase/functions/generate-reply/index.ts
+          grep -q 'ONLY factual authority' supabase/functions/_shared/prior-grounded-transform.ts
+          grep -q 'Do not use facts from conversation history' supabase/functions/_shared/prior-grounded-transform.ts
+          grep -q 'GROUNDING_VERIFIER_MAX_TOKENS = 2048' supabase/functions/_shared/llm-router.ts
+          echo TASK4_1_ASSERTIONS=PASS
+
+      - name: Full authoritative build
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          echo TASK4_1_BUILD=PASS
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Authorization and rollback snapshot
+        run: |
+          set -euo pipefail
+          test -n "${SUPABASE_ACCESS_TOKEN:-}"
+          git log -4 --pretty=%B | grep -Fq '[authorized-prod]'
+          rm -rf /tmp/task4-1-live-backup
+          mkdir -p /tmp/task4-1-live-backup/supabase
+          cp supabase/config.toml /tmp/task4-1-live-backup/supabase/config.toml
+          cd /tmp/task4-1-live-backup
+          supabase functions download generate-reply --project-ref "$PROJECT_REF" --use-api
+          test -s supabase/functions/generate-reply/index.ts
+          echo TASK4_1_ROLLBACK_SNAPSHOT=PASS
+
+      - name: Deploy validated generate-reply
+        run: |
+          set -euo pipefail
+          supabase functions deploy generate-reply --project-ref "$PROJECT_REF" --use-api
+          supabase functions list --project-ref "$PROJECT_REF" | tee /tmp/task4-1-functions.txt
+          grep -q 'generate-reply' /tmp/task4-1-functions.txt
+          echo TASK4_1_DEPLOY=PASS
+
+      - name: Run authorized long-conversation smoke with automatic rollback
+        run: |
+          set -uo pipefail
+          set -a; source .env; set +a
+          set +e
+          python scripts/integrated_final_production_smoke.py | tee /tmp/task4-1-smoke.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [[ "$rc" -ne 0 ]]; then
+            echo "TASK4_1_PRODUCTION_SMOKE=FAIL rc=$rc"
+            cd /tmp/task4-1-live-backup
+            supabase functions deploy generate-reply --project-ref "$PROJECT_REF" --use-api
+            echo TASK4_1_ROLLBACK=PASS
+            exit "$rc"
+          fi
+          grep -q 'FINAL_FAILURES=\[\]' /tmp/task4-1-smoke.log
+          grep -q 'TWENTY_TURN_STATEFUL_CONVERSATION=PASS' /tmp/task4-1-smoke.log
+          grep -q 'LONG_CONTEXT_CONTINUITY=PASS' /tmp/task4-1-smoke.log
+          grep -q 'CONVERSATION_MEMORY=PASS' /tmp/task4-1-smoke.log
+          grep -q 'GROUNDING_OUTPUT_GATE=PASS' /tmp/task4-1-smoke.log
+          grep -q 'CITATION_LINEAGE=PASS' /tmp/task4-1-smoke.log
+          echo TASK4_1_PRODUCTION_SMOKE=PASS
+          echo TASK4_1_FINAL_STATUS=READY
