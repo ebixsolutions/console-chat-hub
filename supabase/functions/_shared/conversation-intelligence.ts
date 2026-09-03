@@ -1,3 +1,5 @@
+import { classifyCanonicalConversationTurn, type SemanticLanguage } from "./conversation-semantic-contract.ts";
+
 export type HandoffIntentKind =
   | "explicit_now"
   | "negated"
@@ -36,8 +38,8 @@ const QUESTION_ZH = /(係咪|是不是|是否|幾點|几点|幾時|何時|多久
 const QUESTION_EN = /\b(when|what|who|where|how|hours|available|open|close|can i|could i)\b.*\b(human|agent|customer service|support)\b|\b(human|agent|customer service|support)\b.*\b(when|what|who|where|how|hours|available|open|close)\b/i;
 const HYPOTHETICAL_ZH = /(假如|假設|假设|例如|譬如|可唔可以轉|可不可以转|如果我要|如果想)/;
 const HYPOTHETICAL_EN = /\b(hypothetically|suppose|what if|could i|would i be able to)\b/i;
-const EXPLICIT_ZH = /(而家|現在|现在|即刻|立即).{0,8}(轉|转|接|搵|找|聯絡|联系).{0,5}(真人|人工|客服)|(請|请|麻煩|麻烦).{0,8}(轉|转|接|搵|找|聯絡|联系).{0,5}(真人|人工|客服)|(我要|我想|我需要).{0,5}(真人|人工|客服)/;
-const EXPLICIT_EN = /\b(please\s+)?(connect|transfer|put|let)\s+me\s+(to|through to)\s+(a\s+)?(human|live agent|human agent|real person)|\b(i want|i need|let me speak to|i want to speak to|i need to speak to)\s+(a\s+)?(human|live agent|human agent|real person)(\s+now)?\b/i;
+const EXPLICIT_ZH = /(?:而家|現在|现在|即刻|立即).{0,8}(轉|转|接|搵|找|聯絡|联系).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:請|请|麻煩|麻烦|幫我|帮我).{0,10}(轉|转|接|搵|找|聯絡|联系).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:我要|我想|我需要|想要|需要).{0,8}(真人|人工|客服(?:人員|人员)?)/;
+const EXPLICIT_EN = /\b(please\s+)?(connect|transfer|put|let)\s+me\s+(to|through to)\s+(a\s+)?(human|live agent|human agent|real person|customer service)|\b(i want|i need|let me speak to|i want to speak to|i need to speak to|connect me to)\s+(a\s+)?(human|live agent|human agent|real person|customer service)(\s+now)?\b/i;
 
 function detectLanguage(text: string): "zh-TW" | "zh-CN" | "en" {
   if (!/[\u4e00-\u9fff]/.test(text)) return "en";
@@ -83,13 +85,28 @@ const VAGUE_REFERENCE = /^(之前嗰樣嘢|之前那件事|之前那个|嗰樣�
 
 export function classifyConversationTurn(text: string): TurnClassification {
   const t = text.normalize("NFKC").trim();
-  if (!t || TRIVIAL.test(t)) return { kind: "trivial", should_clarify_before_kb: false, reason: "trivial_or_greeting" };
-  if (CORRECTION.test(t)) return { kind: "correction", should_clarify_before_kb: false, reason: "latest_turn_corrects_prior_context" };
-  if (FOLLOW_UP_ZH.test(t) || FOLLOW_UP_EN.test(t)) return { kind: "follow_up", should_clarify_before_kb: false, reason: "follow_up_requires_history" };
-  if (DOMAIN_ONLY.test(t) || VAGUE_REFERENCE.test(t)) {
-    return { kind: "underspecified", should_clarify_before_kb: true, reason: "semantic_intent_present_but_required_detail_missing" };
+  const handoff = classifyHandoffIntent(t);
+  const semantic = classifyCanonicalConversationTurn(t, [], { explicit_handoff: handoff.explicit_request });
+  switch (semantic.operation) {
+    case "TRIVIAL":
+      return { kind: "trivial", should_clarify_before_kb: false, reason: semantic.reason };
+    case "UNDERSPECIFIED":
+      return { kind: "underspecified", should_clarify_before_kb: true, reason: semantic.reason };
+    case "CORRECTION":
+      return { kind: "correction", should_clarify_before_kb: false, reason: semantic.reason };
+    case "FOLLOW_UP_FACTUAL":
+    case "PRONOUN_OR_ELLIPSIS":
+    case "SIMPLIFY":
+    case "REPHRASE":
+    case "TRANSLATE":
+    case "SUMMARIZE":
+    case "RETURN_TO_PRIOR_TOPIC":
+    case "CONVERSATION_MEMORY":
+    case "CUSTOMER_CONTEXT_UPDATE":
+      return { kind: "follow_up", should_clarify_before_kb: false, reason: semantic.reason };
+    default:
+      return { kind: "specific", should_clarify_before_kb: false, reason: semantic.reason };
   }
-  return { kind: "specific", should_clarify_before_kb: false, reason: "specific_enough_for_normal_routing" };
 }
 
 export function isHumanControlState(status: string | null | undefined, assignedAgentId: string | null | undefined): boolean {
@@ -116,6 +133,47 @@ export const NATURAL_CLARIFICATION: Record<"zh-TW" | "zh-CN" | "en", string> = {
   "zh-CN": "可以，想确认一下你主要想处理哪一方面？例如送货、付款、取消，还是退换货？",
   en: "Sure — which part would you like help with, for example delivery, payment, cancellation, or a return/refund?",
 };
+
+export function buildCustomerContextRequirementsResponse(
+  language: SemanticLanguage,
+  newestFirstMessages: ConversationHistoryRow[],
+): string {
+  const customerTurns = newestFirstMessages
+    .filter((row) => CUSTOMER_ROLES.has(String(row.role ?? "").toLowerCase()))
+    .map((row) => cleanContinuityText(row.content))
+    .filter(Boolean)
+    .slice(0, 12);
+  const joined = customerTurns.join(" ");
+  const missingModel = /(?:沒有|没有|冇|不知道|唔知).{0,8}(?:型號|型号)|(?:don't|do not) have (?:the )?(?:model|model number)/i.test(joined);
+  const hasBrand = /(?:品牌(?:是|係)|brand is|\bpanasonic\b|\bsamsung\b|\blg\b|\bsony\b|\bwhirlpool\b)/i.test(joined);
+  const hasApplianceType = /(?:冷氣|空調|空调|洗衣機|洗衣机|雪櫃|冰箱|電視|电视|家用電器|家用电器|air conditioner|washing machine|refrigerator|fridge|television|\btv\b)/i.test(joined);
+
+  if (language === "en") {
+    const known = missingModel ? "You’ve already told me you don’t have the model number, so you don’t need to repeat that. " : "";
+    const asks = [];
+    if (!hasApplianceType) asks.push("what type of appliance it is");
+    if (!hasBrand) asks.push("the brand, if you know it");
+    asks.push("roughly when you bought it", "what is happening now");
+    return known + "Please tell me " + asks.join(", ") + ".";
+  }
+  const known = missingModel
+    ? (language === "zh-CN" ? "你已经说目前没有型号，不用重复提供。" : "你已經說目前沒有型號，不用重複提供。")
+    : "";
+  if (language === "zh-CN") {
+    return known + `请告诉我${hasApplianceType ? "更具体是哪一类家用电器" : "是哪一类家用电器"}${hasBrand ? "" : "、品牌（如果知道）"}、大约购买时间，以及目前出现的情况。`;
+  }
+  return known + `請告訴我${hasApplianceType ? "更具體是哪一類家用電器" : "是哪一類家用電器"}${hasBrand ? "" : "、品牌（如果知道）"}、大約購買時間，以及目前出現的情況。`;
+}
+
+export function buildCustomerContextAcknowledgement(language: SemanticLanguage): string {
+  if (language === "en") {
+    return "Got it. I’ll keep using the details you’ve provided and won’t guess anything that hasn’t been confirmed. If I need anything else, I’ll ask you directly.";
+  }
+  if (language === "zh-CN") {
+    return "收到。我会继续使用你已提供的资料，未确认的部分不会自行猜测；如果还需要其他资料，我会直接告诉你。";
+  }
+  return "收到。我會繼續使用你已提供的資料，未確認的部分不會自行猜測；如果還需要其他資料，我會直接告訴你。";
+}
 
 
 export type ConversationHistoryRow = {

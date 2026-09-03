@@ -13,6 +13,7 @@
  *   usage logging      tokens and latency written to upstream_call_log
  *   observability      one structured line per attempt, correlated by request_id
  *   safe errors        stable codes out, provider text never surfaced to callers
+ *   grounding gate     KB-grounded generation is verified before caller persistence
  */
 
 import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2.45.0";
@@ -154,9 +155,6 @@ async function recordUsage(
   code?: string,
 ): Promise<void> {
   try {
-    // Nothing here carries prompt text, system text, credentials or provider
-    // output. Only identifiers, counts and timings are persisted, so the log can
-    // never become a second copy of customer data.
     await serviceClient().from("upstream_call_log").insert({
       conversation_id: call.conversationId,
       company_id: call.companyId,
@@ -178,29 +176,14 @@ async function recordUsage(
       error_message: code ?? null,
     });
   } catch (e) {
-    // Logging must never fail the caller, and the failure itself must not leak
-    // anything: only the error class name is emitted.
     log(call.tag, { event: "usage_log_failed", detail: (e as Error).name });
   }
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/* --------------------- shared generation output budget --------------------- */
+export const GROUNDING_VERIFIER_MAX_TOKENS = 2048;
 
-/**
- * Single bounded, configurable output-token budget for every
- * `purpose: "generation"` caller (widget/AI reply orchestration, legacy reply
- * path, escalation policy assessment).
- *
- * Rationale: the structured/orchestrated generation output routinely exceeds
- * 500 output tokens, and a provider MAX_TOKENS finish is intentionally treated
- * as LLM_INVALID_OUTPUT (fail-closed) — so an undersized budget turns healthy
- * KB-grounded answers into unnecessary human handoffs. The budget therefore
- * defaults high enough for the current structured contract, stays operator
- * configurable, and is clamped to a sane min/max so a bad configuration value
- * can never restore the truncation failure or request an unbounded budget.
- */
 export const GENERATION_MAX_TOKENS_DEFAULT = 2048;
 export const GENERATION_MAX_TOKENS_MIN = 768;
 export const GENERATION_MAX_TOKENS_MAX = 8192;
@@ -216,7 +199,6 @@ export function resolveGenerationMaxTokens(): number {
     Math.min(GENERATION_MAX_TOKENS_MAX, candidate),
   );
 }
-
 
 interface ProviderRequest {
   url: string;
@@ -235,12 +217,9 @@ interface ParsedProviderResponse {
 interface ProviderAdapter {
   id: ProviderId;
   model: string;
-  /** Built per attempt so short-lived credentials can be refreshed. */
   buildRequest: () => Promise<ProviderRequest>;
   parseResponse: (body: unknown) => ParsedProviderResponse;
 }
-
-/* -------------------------------- anthropic ------------------------------- */
 
 function anthropicAdapter(
   apiKey: string,
@@ -252,21 +231,20 @@ function anthropicAdapter(
   return {
     id: "anthropic",
     model,
-    buildRequest: () =>
-      Promise.resolve({
-        url: ANTHROPIC_ENDPOINT,
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": apiKey,
-          "anthropic-version": ANTHROPIC_API_VERSION,
-        },
-        body: JSON.stringify({
-          model,
-          max_tokens: maxTokens,
-          system: safeSystem,
-          messages: [{ role: "user", content: safeUser }],
-        }),
+    buildRequest: () => Promise.resolve({
+      url: ANTHROPIC_ENDPOINT,
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": ANTHROPIC_API_VERSION,
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: maxTokens,
+        system: safeSystem,
+        messages: [{ role: "user", content: safeUser }],
       }),
+    }),
     parseResponse: (body) => {
       const obj = body as {
         content?: Array<{ type?: string; text?: string }>;
@@ -288,12 +266,6 @@ function anthropicAdapter(
   };
 }
 
-/* --------------------------------- vertex --------------------------------- */
-
-/**
- * Service-account OAuth token for Vertex AI. The credential JSON is parsed in
- * process only and never logged, returned or persisted.
- */
 async function vertexAccessToken(serviceAccountJson: string): Promise<string> {
   const credentials = JSON.parse(serviceAccountJson) as Record<string, unknown>;
   const auth = new GoogleAuth({ credentials, scopes: [VERTEX_SCOPE] });
@@ -335,10 +307,6 @@ function vertexAdapter(
           generationConfig: {
             maxOutputTokens: maxTokens,
             temperature: 0,
-            // Gemini honours a response mime type; callers that require a JSON
-            // object get one without fences or prose. A response schema pins
-            // field names and primitive types, which prompt text alone does
-            // not (Gemini otherwise renames keys and stringifies numbers).
             ...(jsonOutput ? { responseMimeType: "application/json" } : {}),
             ...(jsonOutput && responseSchema ? { responseSchema } : {}),
           },
@@ -346,8 +314,6 @@ function vertexAdapter(
       };
     },
     parseResponse: (body) => {
-      // Thought parts are dropped and thinking tokens are counted; see
-      // _shared/vertex-parse.ts for the full incompatibility list.
       const parsed = parseVertexResponse(body);
       return {
         text: parsed.text,
@@ -360,8 +326,337 @@ function vertexAdapter(
   };
 }
 
+interface ParsedGroundingBlock {
+  authority: "CURRENT_KB" | "PRIOR_GROUNDED_ANSWER";
+  evidence_text: string;
+  chunk_ids: string[];
+}
 
-/* --------------------------------- router --------------------------------- */
+interface GroundingVerifierDecision {
+  grounded: boolean;
+  unsupported_claims: string[];
+  evidence_chunk_ids: string[];
+}
+
+const EXACT_FACT_TOKEN_RE = /(?:[$€£¥]|HKD|USD|EUR|GBP|JPY|TWD|NTD|RMB|CNY)?\s*\d+(?:[.,]\d+)?(?:\s*(?:%|percent|days?|hours?|minutes?|years?|months?|kg|g|lb|lbs|mm|cm|m|km|ml|l|公升|毫升|公斤|克|天|日|小時|小时|分鐘|分钟|年|月))?|\b(?=[A-Z0-9-]*[A-Z])(?=[A-Z0-9-]*\d)[A-Z0-9-]{4,}\b/giu;
+
+function canonicalExactToken(value: string): string {
+  return value.normalize("NFKC").toLowerCase().replace(/[\s,]/g, "").trim();
+}
+
+export function extractGroundingBlock(system: string): ParsedGroundingBlock | null {
+  const transformRules = "Prior Grounded Answer transform rules:";
+  const transformMarker = "Prior Grounded Answer Evidence:\n";
+  if (system.includes(transformRules)) {
+    const transformIndex = system.lastIndexOf(transformMarker);
+    if (transformIndex >= 0) {
+      const prior = system.slice(transformIndex + transformMarker.length).trim();
+      if (prior) {
+        return {
+          authority: "PRIOR_GROUNDED_ANSWER",
+          evidence_text: prior.slice(0, 3000),
+          chunk_ids: [],
+        };
+      }
+    }
+    return null;
+  }
+
+  if (!system.includes("Knowledge Base grounding rules:")) return null;
+  const marker = "Full Content Evidence:\n";
+  const markerIndex = system.lastIndexOf(marker);
+  if (markerIndex < 0) return null;
+  const raw = system.slice(markerIndex + marker.length).trim();
+  if (!raw || /^none\b/i.test(raw)) return null;
+  const ids = [...raw.matchAll(/\[chunk:([^\]\s]+)\]/g)]
+    .map((match) => (match[1] ?? "").trim())
+    .filter(Boolean);
+  return {
+    authority: "CURRENT_KB",
+    evidence_text: raw.slice(0, 6000),
+    chunk_ids: [...new Set(ids)],
+  };
+}
+
+export function buildVerifierEvidenceAliases(
+  grounding: ParsedGroundingBlock,
+): { evidence_text: string; allowed_ids: string[] } {
+  let next = 0;
+  const allowed: string[] = [];
+  const aliased = grounding.evidence_text.replace(
+    /\[chunk:([^\]\s]+)\]/g,
+    () => {
+      next += 1;
+      const alias = `E${next}`;
+      allowed.push(alias);
+      return `[chunk:${alias}]`;
+    },
+  );
+  return { evidence_text: aliased, allowed_ids: allowed };
+}
+
+export function validateExactFactGrounding(
+  answer: string,
+  evidenceText: string,
+  protectedChunkIds: string[] = [],
+): { ok: true } | { ok: false; reason: string; unsupported_tokens: string[] } {
+  const answerNorm = answer.normalize("NFKC");
+  for (const id of protectedChunkIds) {
+    if (id && answerNorm.includes(id)) {
+      return { ok: false, reason: "internal_chunk_id_leak", unsupported_tokens: [id] };
+    }
+  }
+  const evidenceNorm = canonicalExactToken(evidenceText);
+  const unsupported = new Set<string>();
+  for (const match of answer.matchAll(EXACT_FACT_TOKEN_RE)) {
+    const token = canonicalExactToken(match[0] ?? "");
+    if (!token || /^\d$/.test(token)) continue;
+    if (!evidenceNorm.includes(token)) unsupported.add(token);
+  }
+  return unsupported.size === 0
+    ? { ok: true }
+    : {
+        ok: false,
+        reason: "unsupported_exact_fact",
+        unsupported_tokens: [...unsupported],
+      };
+}
+
+export function parseGroundingVerifierDecision(
+  raw: string,
+  allowedChunkIds: string[],
+): GroundingVerifierDecision | null {
+  const parsed = parseJsonObjectLoose(raw);
+  if (!parsed || typeof parsed.grounded !== "boolean") return null;
+  if (!Array.isArray(parsed.unsupported_claims) || !Array.isArray(parsed.evidence_chunk_ids)) return null;
+  const unsupported = parsed.unsupported_claims
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (unsupported.length !== parsed.unsupported_claims.length) return null;
+  const ids = parsed.evidence_chunk_ids
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (ids.length !== parsed.evidence_chunk_ids.length) return null;
+  const allowed = new Set(allowedChunkIds.filter(Boolean));
+  if (ids.some((id) => !allowed.has(id))) return null;
+  if (parsed.grounded && unsupported.length > 0) return null;
+  if (!parsed.grounded && unsupported.length === 0) return null;
+  if (parsed.grounded && allowed.size > 0 && ids.length === 0) return null;
+  return {
+    grounded: parsed.grounded,
+    unsupported_claims: unsupported,
+    evidence_chunk_ids: [...new Set(ids)],
+  };
+}
+
+async function verifyGroundedGeneration(
+  call: LlmCall,
+  provider: ProviderId,
+  answer: string,
+  grounding: ParsedGroundingBlock,
+  timeoutMs: number,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const exact = validateExactFactGrounding(answer, grounding.evidence_text, grounding.chunk_ids);
+  if (!exact.ok) {
+    log(call.tag, {
+      event: "grounding_exact_fact_rejected",
+      request_id: call.operationId,
+      reason: exact.reason,
+      unsupported_token_count: exact.unsupported_tokens.length,
+    });
+    return { ok: false, reason: exact.reason };
+  }
+
+  const verifierEvidence = buildVerifierEvidenceAliases(grounding);
+  const evaluationModel = (Deno.env.get(MODEL_ENV.evaluation) ?? "").trim();
+  if (!evaluationModel) {
+    log(call.tag, {
+      event: "grounding_verifier_config_missing",
+      request_id: call.operationId,
+    });
+    return { ok: false, reason: "verifier_model_missing" };
+  }
+
+  const verifierSystem = [
+    "You are a strict factual-grounding verifier.",
+    grounding.authority === "PRIOR_GROUNDED_ANSWER"
+      ? "The evidence is a previously verified grounded answer. Judge whether the proposed answer is a faithful simplification, rephrase, translation, or summary of that evidence without any new factual claim. Wording and language may differ, and a summary may omit detail."
+      : "Judge ONLY whether every factual claim in the proposed answer is entailed by the supplied current Knowledge Base evidence.",
+    "Do not use outside knowledge, assumptions, the customer request, or other prior conversation as factual evidence.",
+    "Politeness, conversational transitions, and non-factual wording do not need evidence.",
+    "Any unsupported product fact, policy fact, price, date, duration, dimension, eligibility condition, jurisdiction claim, procedure, limit, availability statement, or categorical factual statement makes grounded=false.",
+    "evidence_chunk_ids may contain only supplied E1/E2/E3 aliases that materially support the answer.",
+    "Return JSON only with grounded, unsupported_claims, evidence_chunk_ids.",
+  ].join("\n");
+  const verifierUser = [
+    "Evidence:",
+    verifierEvidence.evidence_text,
+    "",
+    "Proposed answer:",
+    answer.slice(0, 3000),
+  ].join("\n");
+
+  let verifierAdapter: ProviderAdapter;
+  if (provider === "vertex") {
+    const sa = Deno.env.get("GOOGLE_SERVICE_ACCOUNT_JSON");
+    const projectId = Deno.env.get("GOOGLE_PROJECT_ID");
+    const region = Deno.env.get("GOOGLE_REGION");
+    if (!sa?.trim() || !projectId?.trim() || !region?.trim()) {
+      return { ok: false, reason: "verifier_provider_config_missing" };
+    }
+    verifierAdapter = vertexAdapter(
+      sa,
+      projectId.trim(),
+      region.trim(),
+      evaluationModel,
+      redact(verifierSystem),
+      redact(verifierUser),
+      GROUNDING_VERIFIER_MAX_TOKENS,
+      true,
+      {
+        type: "OBJECT",
+        properties: {
+          grounded: { type: "BOOLEAN" },
+          unsupported_claims: { type: "ARRAY", items: { type: "STRING" } },
+          evidence_chunk_ids: { type: "ARRAY", items: { type: "STRING" } },
+        },
+        required: ["grounded", "unsupported_claims", "evidence_chunk_ids"],
+      },
+    );
+  } else {
+    const key = Deno.env.get("ANTHROPIC_API_KEY");
+    if (!key?.trim()) return { ok: false, reason: "verifier_provider_config_missing" };
+    verifierAdapter = anthropicAdapter(
+      key,
+      evaluationModel,
+      redact(verifierSystem),
+      redact(verifierUser),
+      GROUNDING_VERIFIER_MAX_TOKENS,
+    );
+  }
+
+  const verifierCall: LlmCall = {
+    purpose: "evaluation",
+    system: verifierSystem,
+    user: verifierUser,
+    maxTokens: GROUNDING_VERIFIER_MAX_TOKENS,
+    operationId: `${call.operationId}:grounding-verifier`,
+    companyId: call.companyId,
+    conversationId: call.conversationId,
+    tag: `${call.tag}-grounding-verifier`,
+    responseFormat: "json",
+  };
+  const verifierUsage: LlmUsage = {
+    input_tokens: 0,
+    output_tokens: 0,
+    latency_ms: 0,
+    attempts: 0,
+  };
+  const verifierStarted = Date.now();
+  let lastStatus = 0;
+
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    verifierUsage.attempts = attempt;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const req = await verifierAdapter.buildRequest();
+      const res = await fetch(req.url, {
+        method: "POST",
+        headers: req.headers,
+        body: req.body,
+        signal: controller.signal,
+      });
+      lastStatus = res.status;
+      if (res.status === 429 || res.status >= 500) {
+        if (attempt < 2) {
+          await sleep(BASE_BACKOFF_MS * 2 ** (attempt - 1));
+          continue;
+        }
+        break;
+      }
+      if (!res.ok) break;
+
+      let body: unknown;
+      try {
+        body = await res.json();
+      } catch {
+        break;
+      }
+      const parsed = verifierAdapter.parseResponse(body);
+      verifierUsage.input_tokens = parsed.input_tokens;
+      verifierUsage.output_tokens = parsed.output_tokens;
+      verifierUsage.latency_ms = Date.now() - verifierStarted;
+      if (!parsed.text || parsed.finish_reason === "MAX_TOKENS") break;
+
+      const decision = parseGroundingVerifierDecision(parsed.text, verifierEvidence.allowed_ids);
+      if (!decision) {
+        await recordUsage(
+          verifierCall,
+          verifierAdapter.id,
+          verifierAdapter.model,
+          "failed",
+          res.status,
+          verifierUsage,
+          "GROUNDING_VERIFIER_INVALID_OUTPUT",
+        );
+        if (attempt < 2) {
+          log(call.tag, {
+            event: "grounding_verifier_invalid_output_retry",
+            request_id: call.operationId,
+            attempt,
+          });
+          await sleep(BASE_BACKOFF_MS * 2 ** (attempt - 1));
+          continue;
+        }
+        return { ok: false, reason: "verifier_invalid_output" };
+      }
+
+      await recordUsage(
+        verifierCall,
+        verifierAdapter.id,
+        verifierAdapter.model,
+        decision.grounded ? "success" : "failed",
+        res.status,
+        verifierUsage,
+        decision.grounded ? undefined : "GROUNDING_UNSUPPORTED_CLAIMS",
+      );
+      if (!decision.grounded) {
+        log(call.tag, {
+          event: "grounding_semantic_rejected",
+          request_id: call.operationId,
+          grounding_authority: grounding.authority,
+          unsupported_claim_count: decision.unsupported_claims.length,
+        });
+        return { ok: false, reason: "unsupported_semantic_claim" };
+      }
+      return { ok: true };
+    } catch (error) {
+      const aborted = error instanceof Error && error.name === "AbortError";
+      if (!aborted && attempt < 2) {
+        await sleep(BASE_BACKOFF_MS * 2 ** (attempt - 1));
+        continue;
+      }
+      break;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  verifierUsage.latency_ms = Date.now() - verifierStarted;
+  await recordUsage(
+    verifierCall,
+    verifierAdapter.id,
+    verifierAdapter.model,
+    "failed",
+    lastStatus,
+    verifierUsage,
+    "GROUNDING_VERIFIER_UNAVAILABLE",
+  );
+  return { ok: false, reason: "verifier_unavailable" };
+}
 
 export async function callModel(call: LlmCall): Promise<LlmResult> {
   const started = Date.now();
@@ -538,8 +833,6 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
         break;
       }
       if (!res.ok) {
-        // Covers 401/403/404 and every other fatal status. Provider body is
-        // never read into logs or results.
         lastCode = "LLM_NON_2XX";
         lastStatus = res.status;
         log(call.tag, {
@@ -571,8 +864,6 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
       usage.output_tokens = parsed.output_tokens;
 
       if (!parsed.text) {
-        // Complete-but-empty responses (safety block, recitation, truncation)
-        // fail closed, with the provider's own reason recorded for diagnosis.
         lastCode = "LLM_INVALID_OUTPUT";
         log(call.tag, {
           event: "empty_output",
@@ -586,7 +877,6 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
       }
 
       if (parsed.finish_reason === "MAX_TOKENS") {
-        // Truncated output can never be a complete JSON object.
         lastCode = "LLM_INVALID_OUTPUT";
         log(call.tag, {
           event: "truncated_output",
@@ -596,6 +886,47 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
           output_tokens: parsed.output_tokens,
         });
         break;
+      }
+
+      const grounding =
+        call.purpose === "generation" && call.responseFormat !== "json"
+          ? extractGroundingBlock(call.system)
+          : null;
+      if (grounding) {
+        const groundingDecision = await verifyGroundedGeneration(
+          call,
+          provider,
+          parsed.text,
+          grounding,
+          timeoutMs,
+        );
+        if (!groundingDecision.ok) {
+          lastCode = "LLM_INVALID_OUTPUT";
+          usage.latency_ms = Date.now() - started;
+          log(call.tag, {
+            event: "grounding_rejected",
+            request_id: requestId,
+            provider: adapter.id,
+            attempt,
+            reason: groundingDecision.reason,
+          });
+          await recordUsage(
+            call,
+            adapter.id,
+            adapter.model,
+            "failed",
+            res.status,
+            usage,
+            "LLM_OUTPUT_UNGROUNDED",
+          );
+          return {
+            ok: false,
+            code: "LLM_INVALID_OUTPUT",
+            status: res.status,
+            request_id: requestId,
+            usage,
+          };
+        }
       }
 
       usage.latency_ms = Date.now() - started;
@@ -608,6 +939,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
         input_tokens: usage.input_tokens,
         output_tokens: usage.output_tokens,
         ms: usage.latency_ms,
+        grounding_verified: grounding !== null,
       });
       await recordUsage(
         call,
@@ -655,28 +987,17 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
   };
 }
 
-/**
- * Strip fences/prose and parse a JSON object. Malformed or truncated output
- * returns null so callers fail closed.
- */
 export function parseJsonObject(raw: string): Record<string, unknown> | null {
   return parseJsonObjectLoose(raw);
 }
 
-/** Map a router failure onto the CE attempt error vocabulary. */
 export function toCeErrorCode(code: LlmFailureCode): string {
   switch (code) {
-    case "LLM_TIMEOUT":
-      return "CE_PROVIDER_TIMEOUT";
-    case "LLM_NETWORK":
-      return "CE_PROVIDER_NETWORK_ERROR";
-    case "LLM_NON_2XX":
-      return "CE_PROVIDER_NON_2XX";
-    case "LLM_INVALID_OUTPUT":
-      return "CE_PROVIDER_INVALID_OUTPUT";
-    case "LLM_INPUT_BLOCKED":
-      return "CE_PROVIDER_INVALID_OUTPUT";
-    case "LLM_CONFIG_MISSING":
-      return "CE_PROVIDER_CONFIG_ERROR";
+    case "LLM_TIMEOUT": return "CE_PROVIDER_TIMEOUT";
+    case "LLM_NETWORK": return "CE_PROVIDER_NETWORK_ERROR";
+    case "LLM_NON_2XX": return "CE_PROVIDER_NON_2XX";
+    case "LLM_INVALID_OUTPUT": return "CE_PROVIDER_INVALID_OUTPUT";
+    case "LLM_INPUT_BLOCKED": return "CE_PROVIDER_INVALID_OUTPUT";
+    case "LLM_CONFIG_MISSING": return "CE_PROVIDER_CONFIG_ERROR";
   }
 }

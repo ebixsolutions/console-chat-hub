@@ -29,12 +29,38 @@ import { evaluateFullEscalationRuleset } from "../_shared/escalation-rules.ts";
 import { assessPolicyEvidenceForR4 } from "../_shared/escalation-policy.ts";
 import { validateP1PredictionSignals, type P1PredictionInput } from "../_shared/escalation-p1.ts";
 import { callModel, resolveGenerationMaxTokens, type LlmFailureCode } from "../_shared/llm-router.ts";
-import { CUSTOMER_CONVERSATION_POLICY, NATURAL_CLARIFICATION, buildCustomerAdvisoryContext, classifyConversationTurn, classifyHandoffIntent, hasUsableFullContentEvidence, isHumanControlState } from "../_shared/conversation-intelligence.ts";
+import { CUSTOMER_CONVERSATION_POLICY, NATURAL_CLARIFICATION, buildCustomerAdvisoryContext, buildCustomerContextAcknowledgement, buildCustomerContextRequirementsResponse, classifyConversationTurn, classifyHandoffIntent, hasUsableFullContentEvidence, isHumanControlState } from "../_shared/conversation-intelligence.ts";
 import { buildCanonicalRetrievalQuery, buildCanonicalContinuityBlock, resolveConversationMemoryResponse } from "../_shared/conversation-runtime-state.ts";
+import { classifyCanonicalConversationTurn } from "../_shared/conversation-semantic-contract.ts";
 import { selectCanonicalGrounding } from "../_shared/canonical-grounding.ts";
+import { buildCitationMetadata } from "../_shared/citation-lineage.ts";
+import { buildInheritedTransformCitationMetadata, buildPriorGroundedTransformBlock, buildPriorGroundedTransformGenerationSystem, buildPriorGroundedTransformGenerationUser, buildPriorGroundedTransformRetrySystem, resolvePriorGroundedTransform } from "../_shared/prior-grounded-transform.ts";
 import { buildRealtimeR3SentimentSignals } from "../_shared/runtime-signal-lifecycle.ts";
 import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+
+type SupabaseAdminClient = SupabaseClient<any, "public", any>;
+
+// Current-main escalation-live.ts intentionally exposes a narrow Promise-shaped
+// RPC contract. Supabase-js returns an awaitable Postgrest builder. Normalize that
+// boundary once so the frozen escalation semantics/RPC names remain unchanged.
+function requiredEscalationRpcClient(client: SupabaseAdminClient) {
+  return {
+    rpc: async (fn: string, args: Record<string, unknown>) => {
+      const { data, error } = await client.rpc(fn, args as any);
+      const payload: Record<string, unknown> | null =
+        data == null
+          ? null
+          : (typeof data === "object" && !Array.isArray(data)
+            ? data as Record<string, unknown>
+            : { result: data });
+      return {
+        data: payload,
+        error: error ? { message: String(error.message ?? "rpc_error") } : null,
+      };
+    },
+  };
+}
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -115,7 +141,7 @@ function sanitizeUserMessage(text: string): string {
 }
 
 async function writeTraces(
-  supabaseAdmin: ReturnType<typeof createClient>,
+  supabaseAdmin: SupabaseAdminClient,
   params: {
     conversation_id: string;
     message_id: string | null;
@@ -178,7 +204,7 @@ function routerFailureToS0(code: LlmFailureCode): string {
 }
 
 async function cleanupThinking(
-  supabaseAdmin: ReturnType<typeof createClient>,
+  supabaseAdmin: SupabaseAdminClient,
   conversation_id: string,
   source_message_id: string | null,
 ): Promise<void> {
@@ -200,7 +226,7 @@ interface SourceVisitorMessage {
 }
 
 async function loadSourceVisitorMessage(
-  supabaseAdmin: ReturnType<typeof createClient>,
+  supabaseAdmin: SupabaseAdminClient,
   conversation_id: string,
   source_message_id: string | null,
 ): Promise<
@@ -274,7 +300,7 @@ function sourceMessageErrorResponse(
 }
 
 async function commitAiReplyWithControlGate(
-  supabaseAdmin: ReturnType<typeof createClient>,
+  supabaseAdmin: SupabaseAdminClient,
   conversation_id: string,
   source_message_id: string | null,
   content: string,
@@ -487,7 +513,7 @@ function explicitAngerLabel(value: unknown): boolean {
 }
 
 async function loadAuthoritativeR3SentimentSignals(
-  supabaseAdmin: ReturnType<typeof createClient>,
+  supabaseAdmin: SupabaseAdminClient,
   conversation_id: string,
   expected_tenant_id: string | undefined,
 ): Promise<R3SentimentSignals | undefined> {
@@ -900,7 +926,7 @@ function isE1LiveActivationEnabled(env: { get(name: string): string | undefined 
 }
 
 async function evaluateAndPersistRequiredRulesLive(
-  supabaseAdmin: ReturnType<typeof createClient>,
+  supabaseAdmin: SupabaseAdminClient,
   params: {
     conversation_id: string;
     source_message_id: string | null;
@@ -1030,7 +1056,7 @@ async function evaluateAndPersistRequiredRulesLive(
 
   if (decision.decision === "clarify" && decision.matched_rule === "R2" && enabled.has("R2")) {
     const clarification = R2_CLARIFICATION_SAFE_WORDING[params.visitor_language];
-    const persisted = await persistRequiredEscalationClarification(supabaseAdmin, {
+    const persisted = await persistRequiredEscalationClarification(requiredEscalationRpcClient(supabaseAdmin), {
       conversation_id: params.conversation_id,
       source_message_id: params.source_message_id,
       decision,
@@ -1117,7 +1143,7 @@ async function evaluateAndPersistRequiredRulesLive(
   const safeReply =
     REQUIRED_ESCALATION_SAFE_WORDING[decision.matched_rule][params.visitor_language];
 
-  const persisted = await persistRequiredEscalationHandoff(supabaseAdmin, {
+  const persisted = await persistRequiredEscalationHandoff(requiredEscalationRpcClient(supabaseAdmin), {
     conversation_id: params.conversation_id,
     source_message_id: params.source_message_id,
     decision,
@@ -1268,7 +1294,7 @@ async function legacyGenerateReply(conversation_id: string, source_message_id: s
   if (!newestMessages || newestMessages.length === 0) return new Response(JSON.stringify({ success: true, skipped: "no messages" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   const messages = [...newestMessages].reverse();
-  const modelMessages = messages.map((m) => ({ role: m.role === "visitor" ? "user" : "assistant", content: m.content }));
+  const modelMessages: Array<{ role: "user" | "assistant"; content: string }> = messages.map((m) => ({ role: m.role === "visitor" ? "user" : "assistant", content: String(m.content ?? "") }));
   if (modelMessages[modelMessages.length - 1].role === "assistant") return new Response(JSON.stringify({ success: true, skipped: "last message is assistant" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   const lastVisitorMsg = sourceVisitorMessage.content;
@@ -1405,16 +1431,25 @@ ${CUSTOMER_CONVERSATION_POLICY}`;
 
 function extractExplicitJurisdictionConstraint(text: string): string | null {
   const t = text.normalize("NFKC").trim();
-  const patterns = [
-    /(?:^|[\s，,。])([A-Z][A-Za-z]{2,30})(?:\s*(?:的|嘅)|\s+).*?(?:規則|规则|政策|回收|費|费|rule|policy|recycling|fee)/i,
-    /(?:^|[\s，,。])([\u4e00-\u9fff]{2,10})(?:的|嘅).*?(?:規則|规则|政策|回收|費|费)/,
+  const jurisdictions: Array<{ label: string; re: RegExp }> = [
+    { label: "Mars", re: /(mars|火星)/ig },
+    { label: "香港", re: /(香港|hong\s*kong|\bhk\b)/ig },
+    { label: "澳門", re: /(澳門|澳门|macau|macao)/ig },
+    { label: "新加坡", re: /(新加坡|singapore)/ig },
+    { label: "台灣", re: /(台灣|台湾|taiwan)/ig },
+    { label: "中國大陸", re: /(中國大陸|中国大陆|內地|内地|mainland\s*china)/ig },
   ];
-  for (const pattern of patterns) {
-    const match = t.match(pattern);
-    const value = match?.[1]?.trim();
-    if (value) return value;
+  const negatedMars = /(不談|不谈|唔講|唔讲|不要談|不要谈|not\s+(?:talking\s+about|about)|forget\s+about)\s*(mars|火星)/i.test(t);
+  let best: { label: string; index: number } | null = null;
+  for (const item of jurisdictions) {
+    item.re.lastIndex = 0;
+    for (const match of t.matchAll(item.re)) {
+      if (item.label === "Mars" && negatedMars) continue;
+      const index = match.index ?? -1;
+      if (!best || index > best.index) best = { label: item.label, index };
+    }
   }
-  return null;
+  return best?.label ?? null;
 }
 
 function evidenceSupportsJurisdiction(
@@ -1428,23 +1463,6 @@ function evidenceSupportsJurisdiction(
   );
 }
 
-function buildCitationMetadata(chunks: Array<{ title?: string; score?: number; source_type?: string }>): { citations: Array<{ label: string; source_type: string; relevance?: string }> } | null {
-  const seen = new Set<string>();
-  const citations: Array<{ label: string; source_type: string; relevance?: string }> = [];
-  for (const c of chunks) {
-    if (citations.length >= 3) break;
-    const label = (typeof c.title === "string" ? c.title : "").trim().slice(0, 120);
-    if (!label) continue;
-    const dedupeKey = label.toLowerCase();
-    if (seen.has(dedupeKey)) continue;
-    seen.add(dedupeKey);
-    const rawSt = typeof c.source_type === "string" ? c.source_type.trim().slice(0, 40) : "";
-    const source_type = rawSt || "unknown";
-    const relevance = typeof c.score === "number" ? (c.score >= 0.85 ? "high" : "medium") : undefined;
-    citations.push({ label, source_type, ...(relevance ? { relevance } : {}) });
-  }
-  return citations.length > 0 ? { citations } : null;
-}
 
 type FlagSet = { ENABLE_KB: boolean; ENABLE_COACH: boolean; ENABLE_C360: boolean; ENABLE_TOOL_EXEC: boolean };
 
@@ -1515,7 +1533,7 @@ export function isFirstNoMatchClarificationEligible(input: {
 }
 
 async function attemptFirstNoMatchClarification(
-  supabaseAdmin: ReturnType<typeof createClient>,
+  supabaseAdmin: SupabaseAdminClient,
   conversation_id: string,
   source_message_id: string | null,
   branchTag: string,
@@ -1574,7 +1592,7 @@ async function attemptFirstNoMatchClarification(
 }
 
 async function handleKBFallback(
-  supabaseAdmin: ReturnType<typeof createClient>, conversation_id: string, branchTag: string,
+  supabaseAdmin: SupabaseAdminClient, conversation_id: string, branchTag: string,
   source_message_id: string | null, traceMetadata: Record<string, unknown>, visitorLang: "zh-TW" | "zh-CN" | "en" = "zh-TW",
 ): Promise<Response> {
   const _branchTexts = KB_FALLBACK_SAFE_TEXT[branchTag];
@@ -1598,7 +1616,7 @@ async function handleKBFallback(
 }
 
 async function handleS0Handoff(
-  supabaseAdmin: ReturnType<typeof createClient>, conversation_id: string, source_message_id: string | null,
+  supabaseAdmin: SupabaseAdminClient, conversation_id: string, source_message_id: string | null,
   failure_type: string, visitorLang: "zh-TW" | "zh-CN" | "en",
 ): Promise<Response> {
   const isKBFailure = failure_type === "KB_SCOPE_GATE" || failure_type === "KB_API_FAIL";
@@ -1629,7 +1647,7 @@ async function handleS0Handoff(
 }
 
 async function persistExplicitR1IfRequested(
-  supabaseAdmin: ReturnType<typeof createClient>,
+  supabaseAdmin: SupabaseAdminClient,
   conversation_id: string,
   source_message_id: string | null,
   latestMessage: string,
@@ -1729,10 +1747,54 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     _pr5HistoryRows ?? [],
     _pr5VisitorTurnCount ?? 0,
   );
+  const _priorGroundedTransform = resolvePriorGroundedTransform(
+    _h1LastMsg,
+    _pr5HistoryRows ?? [],
+  );
   const _conversationContinuityBlock = buildCanonicalContinuityBlock(_pr5HistoryRows ?? []);
 
 
   const _visitorLang = detectVisitorLanguage(_h1LastMsg);
+  const _canonicalTurn = classifyCanonicalConversationTurn(
+    _h1LastMsg,
+    _pr5HistoryRows ?? [],
+    { explicit_handoff: isHandoffIntent(_h1LastMsg) },
+  );
+  if (_canonicalTurn.operation === "CUSTOMER_CONTEXT_UPDATE") {
+    const acknowledgement = _canonicalTurn.reason === "customer_context_requirements_request"
+      ? buildCustomerContextRequirementsResponse(_canonicalTurn.language, _pr5HistoryRows ?? [])
+      : buildCustomerContextAcknowledgement(_canonicalTurn.language);
+    const contextCommit = await commitAiReplyWithControlGate(
+      supabaseAdmin,
+      conversation_id,
+      source_message_id,
+      acknowledgement,
+      {
+        response_route: "customer_context_update",
+        escalation_action: "continue_ai",
+        handoff_required: false,
+        reason_code: _canonicalTurn.reason,
+      },
+    );
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+    if (contextCommit.ok) {
+      return new Response(JSON.stringify({
+        success: true,
+        reply: acknowledgement,
+        response_route: "customer_context_update",
+        handoff_required: false,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+    if (["human_control", "resolved", "superseded_source"].includes(contextCommit.result)) {
+      return new Response(JSON.stringify({ success: true, skipped: contextCommit.result }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({ success: false, error: `context_update_commit_${contextCommit.result}` }), {
+      status: 409,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
   const _turnClassification = classifyConversationTurn(_h1LastMsg);
   if (_turnClassification.should_clarify_before_kb && !isHandoffIntent(_h1LastMsg)) {
     const clarification = NATURAL_CLARIFICATION[_visitorLang];
@@ -1874,7 +1936,10 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     return new Response(JSON.stringify({ success: true, response_route: "conversation_memory", conversation_grounded: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 
-  const _g1SkipKB = _pr5GreetingOrTrivial;
+  // A verified transform reuses the immutable evidence authority of the prior
+  // grounded answer. It must not perform a second/current KB retrieval because
+  // that can select different evidence and falsely reject a faithful transform.
+  const _g1SkipKB = _pr5GreetingOrTrivial || Boolean(_priorGroundedTransform);
 
   let _pr5RagMatchState: RagMatchState | undefined;
   const _escEnableS0 = Deno.env.get("ESC_ENABLE_S0") !== "false";
@@ -1887,7 +1952,7 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     source: "upstream" | "minimal_fallback";
   } = { source: "minimal_fallback" };
 
-  if (flags.ENABLE_COACH) {
+  if (flags.ENABLE_COACH && !_priorGroundedTransform) {
     const promptResult = await callCoachPromptAdapter(conversation_id);
 
     if (!promptResult.success || !promptResult.content) {
@@ -1958,7 +2023,7 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
       : undefined;
   const _pr5P1Signals = validateP1PredictionSignals(_pr5P1Input);
 
-  let finalPromptChunks: Array<{ title?: string; score?: number; source_type?: string }> = [];
+  let finalPromptChunks: KBFullChunk[] = [];
   let _kbDone = false;
   let ragResult: {
     success: boolean;
@@ -2065,7 +2130,7 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
           threat_flag: _pr5ThreatSignal?.value === true,
           compliance_requires_human_review: _pr5ComplianceSignal?.value === true,
           clarification_attempts: _pr5History.clarification_attempts,
-          exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
+          exact_same_intent_repeated: _pr5History.exact_same_intent_repeated === true,
         },
         { rag_api_status: "success_empty" },
       );
@@ -2132,7 +2197,7 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
           threat_flag: _pr5ThreatSignal?.value === true,
           compliance_requires_human_review: _pr5ComplianceSignal?.value === true,
           clarification_attempts: _pr5History.clarification_attempts,
-          exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
+          exact_same_intent_repeated: _pr5History.exact_same_intent_repeated === true,
         },
         traceMetadata,
       );
@@ -2185,7 +2250,7 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
           threat_flag: _pr5ThreatSignal?.value === true,
           compliance_requires_human_review: _pr5ComplianceSignal?.value === true,
           clarification_attempts: _pr5History.clarification_attempts,
-          exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
+          exact_same_intent_repeated: _pr5History.exact_same_intent_repeated === true,
         },
         { ...traceMetadata, answerability: "missing_full_content_evidence" },
       );
@@ -2225,7 +2290,7 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
           }
         : undefined;
 
-    finalPromptChunks = usableChunks;
+    finalPromptChunks = usableFullContent;
     _kbDone = true;
   }
   if (!flags.ENABLE_KB || _g1SkipKB) _kbDone = true;
@@ -2374,14 +2439,16 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     churn_risk: customerContext?.churn_risk,
     escalation_score: customerContext?.escalation_score,
   });
-  const finalSystemPrompt = [
-    basePrompt,
-    CUSTOMER_CONVERSATION_POLICY,
-    _conversationContinuityBlock,
-    _customerAdvisoryBlock,
-    buildMaskedContextBlock(customerContext, opaqueCustomerRef),
-    buildRagBlock(ragResult),
-  ].filter((s) => s && s.length > 0).join("\n\n");
+  const finalSystemPrompt = _priorGroundedTransform
+    ? buildPriorGroundedTransformGenerationSystem(_priorGroundedTransform)
+    : [
+        basePrompt,
+        CUSTOMER_CONVERSATION_POLICY,
+        _conversationContinuityBlock,
+        _customerAdvisoryBlock,
+        buildMaskedContextBlock(customerContext, opaqueCustomerRef),
+        buildRagBlock(ragResult),
+      ].filter((s) => s && s.length > 0).join("\n\n");
   const { data: newestMessages } = await supabaseAdmin
     .from("messages")
     .select("id, role, content, created_at")
@@ -2394,7 +2461,7 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     .limit(10);
   if (!newestMessages || newestMessages.length === 0) { await cleanupThinking(supabaseAdmin, conversation_id, source_message_id); return new Response(JSON.stringify({ success: true, skipped: "no messages" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
   const messages = [...newestMessages].reverse();
-  const modelMessages = messages.map((m) => ({ role: m.role === "visitor" ? "user" : "assistant", content: m.content }));
+  const modelMessages: Array<{ role: "user" | "assistant"; content: string }> = messages.map((m) => ({ role: m.role === "visitor" ? "user" : "assistant", content: String(m.content ?? "") }));
   if (modelMessages[modelMessages.length - 1].role === "assistant") { await cleanupThinking(supabaseAdmin, conversation_id, source_message_id); return new Response(JSON.stringify({ success: true, skipped: "last message is assistant" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
 
   if (flags.ENABLE_TOOL_EXEC) {
@@ -2404,20 +2471,42 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     );
   }
 
-  const llm = await callModel({
+  const _generationCompanyId =
+    typeof conversation.company_id === "string" && conversation.company_id.length > 0
+      ? conversation.company_id
+      : null;
+  const _generationUserInput = _priorGroundedTransform
+    ? buildPriorGroundedTransformGenerationUser(_h1LastMsg)
+    : buildRouterConversationInput(modelMessages);
+
+  let llm = await callModel({
     purpose: "generation",
     system: finalSystemPrompt,
-    user: buildRouterConversationInput(modelMessages),
+    user: _generationUserInput,
     maxTokens: resolveGenerationMaxTokens(),
     operationId: `generate-reply:orchestration:${conversation_id}:${source_message_id}`,
-    companyId:
-      typeof conversation.company_id === "string" && conversation.company_id.length > 0
-        ? conversation.company_id
-        : null,
+    companyId: _generationCompanyId,
     conversationId: conversation_id,
     tag: "generate-reply-orchestration",
     responseFormat: "text",
   });
+
+  // A verifier rejection on a prior-grounded transform is not yet proof of an
+  // upstream/system outage. Retry once with stricter factual isolation. Both
+  // drafts are still gated by the same exact + semantic grounding verifier.
+  if (_priorGroundedTransform && !llm.ok && llm.code === "LLM_INVALID_OUTPUT") {
+    llm = await callModel({
+      purpose: "generation",
+      system: buildPriorGroundedTransformRetrySystem(_priorGroundedTransform),
+      user: _generationUserInput,
+      maxTokens: resolveGenerationMaxTokens(),
+      operationId: `generate-reply:orchestration:${conversation_id}:${source_message_id}:transform-retry`,
+      companyId: _generationCompanyId,
+      conversationId: conversation_id,
+      tag: "generate-reply-orchestration-transform-retry",
+      responseFormat: "text",
+    });
+  }
 
   if (!llm.ok) {
     if (_escEnableS0) {
@@ -2438,7 +2527,28 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
 
   const aiReplyContent = llm.text;
 
-  const citationMeta = finalPromptChunks.length > 0 ? buildCitationMetadata(finalPromptChunks) : null;
+  const citationMeta = _priorGroundedTransform
+    ? buildInheritedTransformCitationMetadata(_priorGroundedTransform)
+    : finalPromptChunks.length > 0
+      ? buildCitationMetadata(
+          finalPromptChunks,
+          ragResult?.llm_context?.selected_document_id ?? null,
+        )
+      : null;
+  if (_priorGroundedTransform && !citationMeta) {
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+    return new Response(
+      JSON.stringify({ success: false, error: "prior_grounded_transform_lineage_unavailable" }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+  if (flags.ENABLE_KB && !_g1SkipKB && finalPromptChunks.length > 0 && !citationMeta) {
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+    return new Response(
+      JSON.stringify({ success: false, error: "citation_lineage_unavailable" }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
   const committed = await commitAiReplyWithControlGate(
     supabaseAdmin,
     conversation_id,
