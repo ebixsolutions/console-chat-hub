@@ -1,0 +1,78 @@
+name: Director Handoff Context Policy Retrieval Fix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/director-handoff-context-policy-retrieval-fix.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  implement-validate-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.6
+
+      - name: Separate policy retrieval from general knowledge retrieval
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('supabase/functions/agent-assist/index.ts')
+          s=p.read_text()
+          old='''    const policy=selectCanonicalGrounding(kb.documents,{policyOnly:true,requestText:query,requirePublished:true});\n    if(!policy.ok)return jsonRes({success:false,error:"handoff_policy_contract_mismatch"},502,req);\n    const ke=knowledge.evidence.slice(0,3).map((i,n)=>({label:`Evidence ${n+1}`,content:i.content.slice(0,1200),source_type:i.source_type,chunk_type:"full_content"}));\n    const pe=policy.evidence.slice(0,3).map((i,n)=>({label:`Policy ${n+1}`,content:i.content.slice(0,1000),source_type:i.source_type,chunk_type:"full_content"}));\n'''
+          new='''    // Policy evidence must not depend on the top general-knowledge documents.\n    // Run a dedicated policy-oriented retrieval in the same verified tenant scope,\n    // then apply the same canonical published/full-content policy contract.\n    const policyQuery=`${query} policy rules terms requirements compliance 政策 規則 條款 要求 合規`.slice(0,500);\n    const policyKb=await fetchKBRag({query:policyQuery,top_k:8},tenant.scope,endpoint);\n    if(!policyKb.success)return jsonRes({success:false,error:"handoff_policy_unavailable"},policyKb.error_code==="KB_TIMEOUT"?504:502,req);\n    const policy=selectCanonicalGrounding(policyKb.documents,{policyOnly:true,requestText:policyQuery,requirePublished:true});\n    if(!policy.ok)return jsonRes({success:false,error:"handoff_policy_contract_mismatch"},502,req);\n    const ke=knowledge.evidence.slice(0,3).map((i,n)=>({label:`Evidence ${n+1}`,content:i.content.slice(0,1200),source_type:i.source_type,chunk_type:"full_content"}));\n    const pe=policy.evidence.slice(0,3).map((i,n)=>({label:`Policy ${n+1}`,content:i.content.slice(0,1000),source_type:i.source_type,chunk_type:"full_content"}));\n'''
+          if new not in s:
+              assert old in s,'handoff policy retrieval block not found'
+              s=s.replace(old,new,1)
+          p.write_text(s)
+          PY
+          grep -q 'const policyKb=await fetchKBRag({query:policyQuery,top_k:8}' supabase/functions/agent-assist/index.ts
+          grep -q 'policyOnly:true,requestText:policyQuery,requirePublished:true' supabase/functions/agent-assist/index.ts
+          echo HANDOFF_POLICY_SEPARATE_RETRIEVAL=PASS
+
+      - name: Regression compile and full build
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno test --allow-read tests/edge/warm-handoff-package.test.ts
+          deno check --node-modules-dir=auto supabase/functions/agent-assist/index.ts
+          git diff --check
+          npm ci
+          npm run build
+          echo HANDOFF_POLICY_REGRESSION_BUILD=PASS
+
+      - name: Commit exact functional source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Director Runtime Fix'
+          git config user.email 'director-runtime-fix@users.noreply.github.com'
+          git add supabase/functions/agent-assist/index.ts
+          test "$(git diff --cached --name-only | wc -l | tr -d ' ')" -le 1
+          if ! git diff --cached --quiet; then
+            git commit -m '[director] retrieve handoff policy evidence separately'
+            git push origin HEAD:main
+          fi
+          echo HANDOFF_POLICY_FUNCTIONAL_COMMIT=PASS
+
+      - name: Deploy agent-assist only
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes supabase@2.116.0 functions deploy agent-assist --project-ref "$PROJECT_REF"
+          echo HANDOFF_POLICY_AGENT_ASSIST_DEPLOY=PASS
