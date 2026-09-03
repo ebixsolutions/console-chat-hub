@@ -7,7 +7,7 @@ export function isDirectViolentThreat(text: string): boolean {
   const zhAspect = "(?:了|掉)?";
   const zhDirect = new RegExp(`(?:我要|我會|我会|我將|我将|我想要|我想|我要去|我準備|我准备)\\s*${zhVerb}${zhAspect}\\s*${zhTarget}`);
   const zhImperative = new RegExp(`${zhVerb}${zhAspect}\\s*${zhTarget}`);
-  const enDirect = /\b(?:i\s+(?:will|am going to|want to|plan to)|i['’]ll)\s+(?:kill|hurt|attack|shoot|stab)\s+(?:you|him|her|them|someone|people)\b/i;
+  const enDirect = /\b(?:i\s+(?:will|am going to|want to|plan to)|i['’](?:ll|m\s+going\s+to))\s+(?:kill|hurt|attack|shoot|stab)\s+(?:you|him|her|them|someone|people)\b/i;
 
   return zhDirect.test(normalized) || zhImperative.test(normalized) || enDirect.test(normalized);
 }
