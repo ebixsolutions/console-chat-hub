@@ -13,6 +13,7 @@ export interface PriorGroundedTransformContext {
   selected_document_id: string;
   evidence_chunk_ids: string[];
   prior_source_message_id: string;
+  requested_summary_count?: number;
   citations: Array<{
     label: string;
     source_type: string;
@@ -37,6 +38,21 @@ const COMPOSITE_TRANSFORM_RULES: Array<[TransformOperation, RegExp]> = [
   ["REPHRASE", /(?:換句話|换句话|另一種講法|另一种说法|改寫|改写|重新講|重新说|rephrase|rewrite|say that another way|word it differently)/i],
 ];
 
+const CHINESE_COUNT: Record<string, number> = {
+  一: 1,
+  二: 2,
+  兩: 2,
+  两: 2,
+  三: 3,
+  四: 4,
+  五: 5,
+  六: 6,
+  七: 7,
+  八: 8,
+  九: 9,
+  十: 10,
+};
+
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -60,9 +76,31 @@ export function detectRequestedTransformOperations(
   return [...new Set(requested)];
 }
 
+export function detectRequestedSummaryCount(latest: string): number | null {
+  const normalized = latest.normalize("NFKC");
+  const chinese = normalized.match(/(?:用|以|分成|分為|分为)?\s*([一二兩两三四五六七八九十]|\d{1,2})\s*(?:點|点|項|项|條|条|個|个)(?:重點|重点)?\s*(?:來|来)?\s*(?:總結|总结|概括|歸納|归纳)?/i);
+  const english = normalized.match(/(?:in|using|with)?\s*(\d{1,2})\s*(?:points?|bullets?|items?)\b/i);
+  const raw = chinese?.[1] ?? english?.[1] ?? "";
+  if (!raw) return null;
+  const parsed = /^\d+$/.test(raw) ? Number(raw) : CHINESE_COUNT[raw];
+  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 10 ? parsed : null;
+}
+
 function resolvedOperations(context: PriorGroundedTransformContext): TransformOperation[] {
   const operations = context.operations?.filter((op) => TRANSFORMS.has(op)) ?? [];
   return operations.length > 0 ? [...new Set(operations)] : [context.operation];
+}
+
+function fixedCountContract(context: PriorGroundedTransformContext): string[] {
+  const count = context.requested_summary_count;
+  if (!count || !resolvedOperations(context).includes("SUMMARIZE")) return [];
+  return [
+    `- Requested summary count: ${count} points/bullets. This is a formatting target, NEVER permission to create or infer facts.`,
+    `- Return AT MOST ${count} supported points. Use exactly ${count} only when the Prior Grounded Answer already contains ${count} distinct factual points.`,
+    "- If the Prior Grounded Answer contains fewer supported points, return fewer points. Grounding has higher priority than satisfying the requested count.",
+    "- Never split one factual claim into artificial variants, repeat the same claim, or add filler merely to reach the requested count.",
+    "- For fixed-count summaries, prefer verbatim or near-verbatim clauses from the Prior Grounded Answer. Do not add generic advice, caveats, recommendations, or meta statements as extra points.",
+  ];
 }
 
 export function resolvePriorGroundedTransform(
@@ -130,13 +168,18 @@ export function resolvePriorGroundedTransform(
     if (citations.length === 0) return null;
 
     const operation = semantic.operation as TransformOperation;
+    const operations = detectRequestedTransformOperations(latest, operation);
+    const requestedSummaryCount = operations.includes("SUMMARIZE")
+      ? detectRequestedSummaryCount(latest)
+      : null;
     return {
       operation,
-      operations: detectRequestedTransformOperations(latest, operation),
+      operations,
       prior_answer: anchor.content,
       selected_document_id: selected,
       evidence_chunk_ids: lineageIds,
       prior_source_message_id: sourceMessageId,
+      ...(requestedSummaryCount ? { requested_summary_count: requestedSummaryCount } : {}),
       citations,
     };
   }
@@ -155,11 +198,12 @@ export function buildPriorGroundedTransformGenerationSystem(
     operations.length > 1
       ? "This is one composite transformation. Apply ALL listed operations to the same prior grounded answer in a single response."
       : "Apply the listed transformation to the same prior grounded answer.",
-    "Transform that answer exactly as requested by the latest customer instruction.",
+    "Transform that answer exactly as requested by the latest customer instruction, except that factual grounding always overrides formatting/count requests.",
     "Do not use facts from conversation history, CRM/customer context, general knowledge, policies, titles, or any other prompt section.",
     "Do not add examples, explanations, caveats, eligibility conditions, jurisdictions, procedures, prices, dates, durations, quantities, model details, or recommendations unless they already appear in the prior grounded answer.",
     "Do not say that you checked, searched, know, recommend, infer, or verified anything beyond that prior answer.",
     "Return only the transformed customer-facing answer. No preface, no meta-commentary, no source discussion.",
+    ...fixedCountContract(context),
     buildPriorGroundedTransformBlock(context),
   ].join("\n\n");
 }
@@ -171,7 +215,7 @@ export function buildPriorGroundedTransformGenerationUser(
     "Latest transformation instruction:",
     latestInstruction.normalize("NFKC").trim().slice(0, 1000),
     "",
-    "Perform every transformation explicitly requested in this instruction, using only the prior grounded answer as factual authority. Do not answer any other question or add any new factual content.",
+    "Perform every transformation explicitly requested in this instruction, using only the prior grounded answer as factual authority. Do not answer any other question or add any new factual content. If a requested summary count exceeds the number of distinct supported points, return fewer points rather than inventing filler.",
   ].join("\n");
 }
 
@@ -184,7 +228,8 @@ export function buildPriorGroundedTransformRetrySystem(
     base,
     "STRICT RETRY: The previous transformed draft was rejected by the grounding verifier.",
     "Use shorter wording and copy factual nouns, numbers, product categories, jurisdictions, and conditions directly from the prior grounded answer whenever possible.",
-    "For a composite transformation, preserve every requested operation while reducing wording; do not drop the requested target language or summary constraint.",
+    "For a composite transformation, preserve every requested operation while reducing wording; do not drop the requested target language or summary operation.",
+    "A fixed summary count is a soft formatting target only. If satisfying it would require splitting, repeating, padding, or adding a claim, return fewer supported points.",
     "Do not introduce even plausible explanatory facts that are absent from the prior grounded answer.",
   ].join("\n\n");
 }
@@ -203,7 +248,8 @@ export function buildPriorGroundedTransformBlock(
     "- Preserve factual meaning. Do not add, update, correct, infer, or replace facts from outside knowledge or other conversation text.",
     "- Simplification/rephrasing may change wording; translation may change language; summarization may omit detail, but none may introduce a new factual claim.",
     "- If multiple operations are listed, apply them together to this same evidence authority.",
-    "- If the requested transformation cannot be completed without adding facts, say so without inventing information.",
+    ...fixedCountContract(context),
+    "- If the requested transformation cannot be completed without adding facts, preserve the grounded facts and relax only the formatting/count requirement; never invent information.",
     "Prior Grounded Answer Evidence:",
     "[chunk:PRIOR1]",
     context.prior_answer.slice(0, 3000),
@@ -228,6 +274,7 @@ export function buildInheritedTransformCitationMetadata(
       composite: operations.length > 1,
       authority: "PRIOR_GROUNDED_ANSWER",
       prior_source_message_id: context.prior_source_message_id,
+      ...(context.requested_summary_count ? { requested_summary_count: context.requested_summary_count } : {}),
     },
     response_route: "prior_grounded_transform",
   };
