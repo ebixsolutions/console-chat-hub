@@ -33,7 +33,7 @@ import { CUSTOMER_CONVERSATION_POLICY, NATURAL_CLARIFICATION, buildCustomerAdvis
 import { buildCanonicalRetrievalQuery, buildCanonicalContinuityBlock, resolveConversationMemoryResponse } from "../_shared/conversation-runtime-state.ts";
 import { selectCanonicalGrounding } from "../_shared/canonical-grounding.ts";
 import { buildCitationMetadata } from "../_shared/citation-lineage.ts";
-import { buildInheritedTransformCitationMetadata, buildPriorGroundedTransformBlock, resolvePriorGroundedTransform } from "../_shared/prior-grounded-transform.ts";
+import { buildInheritedTransformCitationMetadata, buildPriorGroundedTransformBlock, buildPriorGroundedTransformGenerationSystem, buildPriorGroundedTransformGenerationUser, buildPriorGroundedTransformRetrySystem, resolvePriorGroundedTransform } from "../_shared/prior-grounded-transform.ts";
 import { buildRealtimeR3SentimentSignals } from "../_shared/runtime-signal-lifecycle.ts";
 import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
@@ -1890,7 +1890,7 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     source: "upstream" | "minimal_fallback";
   } = { source: "minimal_fallback" };
 
-  if (flags.ENABLE_COACH) {
+  if (flags.ENABLE_COACH && !_priorGroundedTransform) {
     const promptResult = await callCoachPromptAdapter(conversation_id);
 
     if (!promptResult.success || !promptResult.content) {
@@ -2377,15 +2377,16 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     churn_risk: customerContext?.churn_risk,
     escalation_score: customerContext?.escalation_score,
   });
-  const finalSystemPrompt = [
-    basePrompt,
-    CUSTOMER_CONVERSATION_POLICY,
-    _conversationContinuityBlock,
-    _customerAdvisoryBlock,
-    buildMaskedContextBlock(customerContext, opaqueCustomerRef),
-    buildRagBlock(ragResult),
-    buildPriorGroundedTransformBlock(_priorGroundedTransform),
-  ].filter((s) => s && s.length > 0).join("\n\n");
+  const finalSystemPrompt = _priorGroundedTransform
+    ? buildPriorGroundedTransformGenerationSystem(_priorGroundedTransform)
+    : [
+        basePrompt,
+        CUSTOMER_CONVERSATION_POLICY,
+        _conversationContinuityBlock,
+        _customerAdvisoryBlock,
+        buildMaskedContextBlock(customerContext, opaqueCustomerRef),
+        buildRagBlock(ragResult),
+      ].filter((s) => s && s.length > 0).join("\n\n");
   const { data: newestMessages } = await supabaseAdmin
     .from("messages")
     .select("id, role, content, created_at")
@@ -2408,20 +2409,42 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     );
   }
 
-  const llm = await callModel({
+  const _generationCompanyId =
+    typeof conversation.company_id === "string" && conversation.company_id.length > 0
+      ? conversation.company_id
+      : null;
+  const _generationUserInput = _priorGroundedTransform
+    ? buildPriorGroundedTransformGenerationUser(_h1LastMsg)
+    : buildRouterConversationInput(modelMessages);
+
+  let llm = await callModel({
     purpose: "generation",
     system: finalSystemPrompt,
-    user: buildRouterConversationInput(modelMessages),
+    user: _generationUserInput,
     maxTokens: resolveGenerationMaxTokens(),
     operationId: `generate-reply:orchestration:${conversation_id}:${source_message_id}`,
-    companyId:
-      typeof conversation.company_id === "string" && conversation.company_id.length > 0
-        ? conversation.company_id
-        : null,
+    companyId: _generationCompanyId,
     conversationId: conversation_id,
     tag: "generate-reply-orchestration",
     responseFormat: "text",
   });
+
+  // A verifier rejection on a prior-grounded transform is not yet proof of an
+  // upstream/system outage. Retry once with stricter factual isolation. Both
+  // drafts are still gated by the same exact + semantic grounding verifier.
+  if (_priorGroundedTransform && !llm.ok && llm.code === "LLM_INVALID_OUTPUT") {
+    llm = await callModel({
+      purpose: "generation",
+      system: buildPriorGroundedTransformRetrySystem(_priorGroundedTransform),
+      user: _generationUserInput,
+      maxTokens: resolveGenerationMaxTokens(),
+      operationId: `generate-reply:orchestration:${conversation_id}:${source_message_id}:transform-retry`,
+      companyId: _generationCompanyId,
+      conversationId: conversation_id,
+      tag: "generate-reply-orchestration-transform-retry",
+      responseFormat: "text",
+    });
+  }
 
   if (!llm.ok) {
     if (_escEnableS0) {

@@ -117,6 +117,46 @@ export function resolvePriorGroundedTransform(
   return null;
 }
 
+export function buildPriorGroundedTransformGenerationSystem(
+  context: PriorGroundedTransformContext | null,
+): string {
+  if (!context) return "";
+  return [
+    "You are a customer-service response transformer, not a factual answering system.",
+    "The previously verified grounded answer below is the ONLY factual authority for this turn.",
+    "Transform that answer exactly as requested by the latest customer instruction.",
+    "Do not use facts from conversation history, CRM/customer context, general knowledge, policies, titles, or any other prompt section.",
+    "Do not add examples, explanations, caveats, eligibility conditions, jurisdictions, procedures, prices, dates, durations, quantities, model details, or recommendations unless they already appear in the prior grounded answer.",
+    "Do not say that you checked, searched, know, recommend, infer, or verified anything beyond that prior answer.",
+    "Return only the transformed customer-facing answer. No preface, no meta-commentary, no source discussion.",
+    buildPriorGroundedTransformBlock(context),
+  ].join("\n\n");
+}
+
+export function buildPriorGroundedTransformGenerationUser(
+  latestInstruction: string,
+): string {
+  return [
+    "Latest transformation instruction:",
+    latestInstruction.normalize("NFKC").trim().slice(0, 1000),
+    "",
+    "Perform only this transformation. Do not answer any other question or add any new factual content.",
+  ].join("\n");
+}
+
+export function buildPriorGroundedTransformRetrySystem(
+  context: PriorGroundedTransformContext | null,
+): string {
+  const base = buildPriorGroundedTransformGenerationSystem(context);
+  if (!base) return "";
+  return [
+    base,
+    "STRICT RETRY: The previous transformed draft was rejected by the grounding verifier.",
+    "Use shorter wording and copy factual nouns, numbers, product categories, jurisdictions, and conditions directly from the prior grounded answer whenever possible.",
+    "Do not introduce even plausible explanatory facts that are absent from the prior grounded answer.",
+  ].join("\n\n");
+}
+
 export function buildPriorGroundedTransformBlock(
   context: PriorGroundedTransformContext | null,
 ): string {
