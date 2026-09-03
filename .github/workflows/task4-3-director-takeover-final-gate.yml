@@ -1,0 +1,99 @@
+name: Task 4.3 Director Takeover Final Gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/task4-3-director-takeover-final-gate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  director-final-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Apply authoritative Task 4.3 source closure
+        run: python scripts/task4-3-rbac-origin-closure.py
+      - name: Source and migration contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          python - <<'PY'
+          from pathlib import Path
+          svc=Path('src/lib/api/config.service.ts').read_text()
+          route=Path('src/routes/_authenticated/console.channel-settings.tsx').read_text()
+          mig=Path('supabase/migrations/20260903052000_task4_3_channel_settings_rbac_closure.sql').read_text()
+          required_svc=[
+            'allowedRoles: readonly AppRole[]',
+            'requireRole(await resolveCompanyScope(context), allowedRoles)',
+            '["admin", "supervisor"]',
+          ]
+          required_route=[
+            'ChannelSettingsContent canManage={productionRole === "admin"}',
+            'canManage && (editingChannelId === ch.id ? (',
+            'Admin permission is required to bind this channel.',
+          ]
+          required_mig=[
+            "cm.role::text in ('admin', 'supervisor')",
+            'drop policy if exists channel_config_read',
+            'drop policy if exists widget_config_read',
+          ]
+          for n in required_svc: assert n in svc, n
+          for n in required_route: assert n in route, n
+          for n in required_mig: assert n in mig, n
+          print('TASK4_3_DIRECTOR_SOURCE_CONTRACT=PASS')
+          PY
+      - name: Install baseline dependencies
+        run: npm ci
+      - name: Remediate lockfile vulnerabilities
+        shell: bash
+        run: |
+          set -u
+          npm audit fix --package-lock-only
+          rc=$?
+          echo "AUDIT_FIX_EXIT=${rc}"
+          # npm audit fix may return non-zero when only below-threshold findings remain.
+          # The authoritative gate is the explicit high-threshold audit below.
+          exit 0
+      - name: Reinstall remediated lockfile
+        run: npm ci
+      - name: Production high-severity dependency gate
+        run: npm audit --omit=dev --audit-level=high
+      - name: Production build
+        run: npm run build
+      - name: Final source assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          test -s src/lib/api/config.service.ts
+          test -s src/routes/_authenticated/console.channel-settings.tsx
+          test -s package-lock.json
+          test -s supabase/migrations/20260903052000_task4_3_channel_settings_rbac_closure.sql
+          node -e "const p=require('./package.json'); if(p.version!=='2.7.1') process.exit(1); console.log('PACKAGE_VERSION=2.7.1 PASS')"
+          echo TASK4_3_DIRECTOR_FINAL_SOURCE_GATE=PASS
+      - name: Commit authoritative implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'ebixsolutions'
+          git config user.email '64578119+ebixsolutions@users.noreply.github.com'
+          git add src/lib/api/config.service.ts src/routes/_authenticated/console.channel-settings.tsx package-lock.json
+          if git diff --cached --quiet; then
+            echo TASK4_3_DIRECTOR_NO_DELTA=PASS
+            exit 0
+          fi
+          git commit -m 'Task 4.3: Director close channel settings RBAC'
+          git push origin HEAD:main
+          echo TASK4_3_DIRECTOR_COMMIT=PASS
