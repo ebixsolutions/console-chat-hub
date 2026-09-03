@@ -71,10 +71,10 @@ function ConsoleChannelSettings() {
     return <PermissionDenied message="You do not have permission to manage channel settings." />;
   }
 
-  return <ChannelSettingsContent />;
+  return <ChannelSettingsContent canManage={productionRole === "admin"} />;
 }
 
-function ChannelSettingsContent() {
+function ChannelSettingsContent({ canManage }: { canManage: boolean }) {
   const [channels, setChannels] = useState<ChannelConfig[]>([]);
   const [source, setSource] = useState<"live" | "error" | "unconfigured" | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -262,7 +262,7 @@ function ChannelSettingsContent() {
                 <div style={{ fontFamily: "monospace", opacity: 0.8 }}>
                   {ch.company_id}
                 </div>
-              ) : (
+              ) : canManage ? (
                 <button
                   type="button"
                   disabled={bindingChannelId === ch.id || source !== "live"}
@@ -281,6 +281,8 @@ function ChannelSettingsContent() {
                 >
                   {bindingChannelId === ch.id ? "Binding…" : "Bind to my company"}
                 </button>
+              ) : (
+                <div style={{ fontSize: 10, color: "#64748b" }}>Admin permission is required to bind this channel.</div>
               )}
             </div>
             {ch.notes && <div style={{ fontSize: 10.5, color: "#888", marginBottom: 8 }}>{ch.notes}</div>}
@@ -294,7 +296,7 @@ function ChannelSettingsContent() {
                 )) : <div style={{ fontSize: 10, color: "#991b1b" }}>No allowed origin configured</div>}
               </div>
             )}
-            {editingChannelId === ch.id ? (
+            {canManage && (editingChannelId === ch.id ? (
               <div style={{ background: "#f8fafc", border: "0.5px solid #cbd5e1", borderRadius: 8, padding: 10, marginTop: 8 }}>
                 <div style={{ fontSize: 10.5, fontWeight: 700, marginBottom: 4 }}>Channel name</div>
                 <input value={editName} onChange={(e) => setEditName(e.target.value)} style={{ width: "100%", boxSizing: "border-box", fontSize: 11, padding: 6, marginBottom: 8 }} />
@@ -312,7 +314,7 @@ function ChannelSettingsContent() {
               </div>
             ) : (
               <button type="button" onClick={() => beginEdit(ch)} style={{ fontSize: 10.5, fontWeight: 600, padding: "5px 10px", borderRadius: 8, border: "0.5px solid #cbd5e1", background: "#fff", cursor: "pointer", marginRight: 6, marginTop: 4 }}>Edit Settings</button>
-            )}
+            ))}
             {ch.channel_type === "website_widget" && (
               <button
                 onClick={() => setPreviewChannelId(ch.id)}

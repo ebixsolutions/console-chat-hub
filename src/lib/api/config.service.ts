@@ -124,10 +124,13 @@ const postgresUuid = z.string().regex(
 export const listChannelConfigsFn = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }): Promise<ServerResult<LiveChannelConfigRow[]>> => {
-    const scope = await resolveCompanyScope({
-      supabase: context.supabase,
-      userId: String(context.userId),
-    });
+    const scope = requireRole(
+      await resolveCompanyScope({
+        supabase: context.supabase,
+        userId: String(context.userId),
+      }),
+      ["admin", "supervisor"],
+    );
     if (!scope.ok || !scope.data) return { ok: false, error: scope.error };
 
     const { data, error } = await context.supabase
@@ -261,10 +264,9 @@ const widgetByChannelInput = z.object({ channel_id: postgresUuid });
 async function resolveOwnedWidget(
   context: { supabase: any; userId: string },
   channelId: string,
-  requireAdmin: boolean,
+  allowedRoles: readonly AppRole[],
 ): Promise<ServerResult<{ companyId: string; widgetId: string }>> {
-  let scope = await resolveCompanyScope(context);
-  if (requireAdmin) scope = requireRole(scope, ["admin"]);
+  const scope = requireRole(await resolveCompanyScope(context), allowedRoles);
   if (!scope.ok || !scope.data) return { ok: false, error: scope.error };
 
   const { data: channel, error } = await context.supabase
@@ -291,7 +293,7 @@ export const getWidgetConfigFn = createServerFn({ method: "POST" })
     const owned = await resolveOwnedWidget(
       { supabase: context.supabase, userId: String(context.userId) },
       data.channel_id,
-      false,
+      ["admin", "supervisor"],
     );
     if (!owned.ok || !owned.data) return { ok: false, error: owned.error };
 
@@ -325,7 +327,7 @@ export const updateWidgetConfigFn = createServerFn({ method: "POST" })
     const owned = await resolveOwnedWidget(
       { supabase: context.supabase, userId: String(context.userId) },
       data.channel_id,
-      true,
+      ["admin"],
     );
     if (!owned.ok || !owned.data) return { ok: false, error: owned.error };
 
