@@ -1,4 +1,4 @@
-import { classifyCanonicalConversationTurn } from "./conversation-semantic-contract.ts";
+import { classifyCanonicalConversationTurn, type SemanticLanguage } from "./conversation-semantic-contract.ts";
 
 export type HandoffIntentKind =
   | "explicit_now"
@@ -102,6 +102,7 @@ export function classifyConversationTurn(text: string): TurnClassification {
     case "SUMMARIZE":
     case "RETURN_TO_PRIOR_TOPIC":
     case "CONVERSATION_MEMORY":
+    case "CUSTOMER_CONTEXT_UPDATE":
       return { kind: "follow_up", should_clarify_before_kb: false, reason: semantic.reason };
     default:
       return { kind: "specific", should_clarify_before_kb: false, reason: semantic.reason };
@@ -132,6 +133,16 @@ export const NATURAL_CLARIFICATION: Record<"zh-TW" | "zh-CN" | "en", string> = {
   "zh-CN": "可以，想确认一下你主要想处理哪一方面？例如送货、付款、取消，还是退换货？",
   en: "Sure — which part would you like help with, for example delivery, payment, cancellation, or a return/refund?",
 };
+
+export function buildCustomerContextAcknowledgement(language: SemanticLanguage): string {
+  if (language === "en") {
+    return "Got it. I’ll keep using the details you’ve provided and won’t guess anything that hasn’t been confirmed. If I need anything else, I’ll ask you directly.";
+  }
+  if (language === "zh-CN") {
+    return "收到。我会继续使用你已提供的资料，未确认的部分不会自行猜测；如果还需要其他资料，我会直接告诉你。";
+  }
+  return "收到。我會繼續使用你已提供的資料，未確認的部分不會自行猜測；如果還需要其他資料，我會直接告訴你。";
+}
 
 
 export type ConversationHistoryRow = {
