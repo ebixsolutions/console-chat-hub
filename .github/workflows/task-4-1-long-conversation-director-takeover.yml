@@ -7,7 +7,10 @@ on:
     paths:
       - .github/workflows/task-4-1-long-conversation-director-takeover.yml
       - scripts/task4_1_director_takeover_patch.py
+      - scripts/task4_1_verifier_invalid_retry_patch.py
+      - scripts/task4_1_smoke_failfast_patch.py
       - tests/edge/task4-1-director-transform-isolation.test.ts
+      - tests/edge/task4-1-verifier-invalid-output-retry.test.ts
   workflow_dispatch:
 
 permissions:
@@ -28,15 +31,21 @@ jobs:
           ref: director/task-4-1-long-conversation-director-takeover
           fetch-depth: 0
 
-      - name: Apply Director takeover transform isolation
+      - name: Apply Director takeover closure patches
         run: |
           set -euo pipefail
-          python scripts/task4_1_director_takeover_patch.py
+          if ! grep -q 'buildPriorGroundedTransformGenerationSystem' supabase/functions/_shared/prior-grounded-transform.ts; then
+            python scripts/task4_1_director_takeover_patch.py
+          fi
+          if ! grep -q 'grounding_verifier_invalid_output_retry' supabase/functions/_shared/llm-router.ts; then
+            python scripts/task4_1_verifier_invalid_retry_patch.py
+          fi
+          python scripts/task4_1_smoke_failfast_patch.py
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          if ! git diff --quiet -- supabase/functions/_shared/prior-grounded-transform.ts supabase/functions/generate-reply/index.ts; then
-            git add supabase/functions/_shared/prior-grounded-transform.ts supabase/functions/generate-reply/index.ts
-            git commit -m '[authorized-prod] Task 4.1 isolate prior-grounded transform generation [skip ci]'
+          if ! git diff --quiet -- supabase/functions/_shared/prior-grounded-transform.ts supabase/functions/_shared/llm-router.ts supabase/functions/generate-reply/index.ts scripts/integrated_final_production_smoke.py; then
+            git add supabase/functions/_shared/prior-grounded-transform.ts supabase/functions/_shared/llm-router.ts supabase/functions/generate-reply/index.ts scripts/integrated_final_production_smoke.py
+            git commit -m '[authorized-prod] Task 4.1 close verifier invalid-output retry [skip ci]'
             git push origin HEAD:director/task-4-1-long-conversation-director-takeover
           fi
           echo TASK4_1_PATCH=PASS
@@ -57,6 +66,7 @@ jobs:
         run: |
           set -euo pipefail
           deno test --allow-env --node-modules-dir=auto tests/edge/task4-1-director-transform-isolation.test.ts
+          deno test --allow-read --node-modules-dir=auto tests/edge/task4-1-verifier-invalid-output-retry.test.ts
           deno test --allow-env --node-modules-dir=auto tests/edge/round2-task1-conversation-semantic-contract.test.ts
           deno test --allow-env --node-modules-dir=auto tests/edge/round2-task2-grounding-transform-boundary.test.ts
           deno test --allow-env --node-modules-dir=auto tests/edge/task2-2-output-grounding-router.test.ts
@@ -75,6 +85,8 @@ jobs:
           grep -q 'ONLY factual authority' supabase/functions/_shared/prior-grounded-transform.ts
           grep -q 'Do not use facts from conversation history' supabase/functions/_shared/prior-grounded-transform.ts
           grep -q 'GROUNDING_VERIFIER_MAX_TOKENS = 2048' supabase/functions/_shared/llm-router.ts
+          grep -q 'grounding_verifier_invalid_output_retry' supabase/functions/_shared/llm-router.ts
+          grep -q 'UNEXPECTED_HUMAN_CONTROL:' scripts/integrated_final_production_smoke.py
           echo TASK4_1_ASSERTIONS=PASS
 
       - name: Full authoritative build
@@ -92,7 +104,7 @@ jobs:
         run: |
           set -euo pipefail
           test -n "${SUPABASE_ACCESS_TOKEN:-}"
-          git log -4 --pretty=%B | grep -Fq '[authorized-prod]'
+          git log -6 --pretty=%B | grep -Fq '[authorized-prod]'
           rm -rf /tmp/task4-1-live-backup
           mkdir -p /tmp/task4-1-live-backup/supabase
           cp supabase/config.toml /tmp/task4-1-live-backup/supabase/config.toml
