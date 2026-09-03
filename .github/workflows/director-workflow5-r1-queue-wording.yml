@@ -50,6 +50,7 @@ jobs:
           grep -Fq '如目前有可用的輪候資料' supabase/functions/generate-reply/index.ts
           grep -Fq '如目前有可用的排队资料' supabase/functions/generate-reply/index.ts
           grep -Fq 'if live queue data is available' supabase/functions/generate-reply/index.ts
+          grep -Fq 'Queue position, customers-ahead counts, and estimated wait time are dynamic widget runtime data' supabase/functions/generate-reply/index.ts
           echo 'WORKFLOW5_R1_QUEUE_WORDING_SOURCE_ASSERTIONS=PASS'
 
       - name: Deno regression
