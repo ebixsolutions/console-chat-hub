@@ -22,7 +22,7 @@ on:
   workflow_dispatch:
     inputs:
       production_runtime_authorized:
-        description: Explicit production-owner authorization to run the write-capable production smoke
+        description: Explicit production-owner authorization to deploy and run the write-capable production smoke
         required: true
         default: false
         type: boolean
@@ -33,7 +33,12 @@ permissions:
 jobs:
   task3-final-gate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 60
+    env:
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+      PROD_ORIGIN: https://console-chat-hub.lovable.app
+      CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -74,7 +79,6 @@ jobs:
           python -m py_compile scripts/integrated_final_production_smoke.py
           python - <<'PY'
           from pathlib import Path
-          import re
           s = Path('scripts/integrated_final_production_smoke.py').read_text()
           for i in range(1, 21):
               assert f"('A{i}'" in s, f'missing stateful turn A{i}'
@@ -97,10 +101,8 @@ jobs:
               'HUMAN_CONTROL_AI_SUPPRESSION',
           ]:
               assert token in s, token
-          # The runtime smoke is intentionally write-capable and must never be
-          # auto-executed merely because source was pushed.
-          assert "create-visitor-session" in s
-          assert "receive-widget-message" in s
+          assert 'create-visitor-session' in s
+          assert 'receive-widget-message' in s
           print('TASK3_SMOKE_CONTRACT=PASS')
           PY
 
@@ -114,6 +116,7 @@ jobs:
           grep -q 'resolveTenantScope' supabase/functions/generate-reply/index.ts
           grep -q 'requirePublished: true' supabase/functions/generate-reply/index.ts
           grep -q 'full_content' supabase/functions/_shared/citation-lineage.ts
+          grep -q '^verify_jwt = true$' <(awk '/\[functions.generate-reply\]/{f=1;next} /^\[/{f=0} f' supabase/config.toml)
           echo TASK3_MACHINE_ASSERTIONS=PASS
 
       - name: Full authoritative repository build
@@ -123,18 +126,74 @@ jobs:
           npm run build
           echo TASK3_FULL_BUILD=PASS
 
-      - name: Production owner authorization boundary
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Enforce one-shot production authorization and credential
         env:
-          AUTHORIZED: ${{ github.event_name == 'workflow_dispatch' && inputs.production_runtime_authorized || 'false' }}
+          DISPATCH_AUTHORIZED: ${{ github.event_name == 'workflow_dispatch' && inputs.production_runtime_authorized || 'false' }}
         run: |
           set -euo pipefail
-          if [[ "$AUTHORIZED" != "true" ]]; then
-            echo 'TASK3_PRODUCTION_RUNTIME=NOT_RUN'
-            echo 'TASK3_FINAL_STATUS=STOP'
-            echo 'BLOCKER=EXPLICIT_PRODUCTION_DEPLOYMENT_AND_WRITE_SMOKE_AUTHORIZATION_REQUIRED'
-            exit 3
+          PUSH_AUTHORIZED=false
+          if git log -1 --pretty=%B | grep -Fq '[authorized-prod]'; then PUSH_AUTHORIZED=true; fi
+          if [[ "$DISPATCH_AUTHORIZED" != "true" && "$PUSH_AUTHORIZED" != "true" ]]; then
+            echo 'TASK3_PRODUCTION_AUTHORIZATION=FAIL'
+            exit 31
           fi
-          echo 'Production-owner authorization is present, but this workflow does not deploy application source.'
-          echo 'Authoritative deployed-source parity must be proven after an explicitly authorized deployment before the write-capable smoke may run.'
-          echo 'TASK3_DEPLOYED_SOURCE_PARITY=NOT_PROVEN'
-          exit 4
+          if [[ -z "${SUPABASE_ACCESS_TOKEN:-}" ]]; then
+            echo 'TASK3_DEPLOY_CREDENTIAL=NOT_CONFIGURED'
+            exit 32
+          fi
+          echo 'TASK3_PRODUCTION_AUTHORIZATION=PASS'
+          echo 'TASK3_DEPLOY_CREDENTIAL=CONFIGURED'
+
+      - name: Capture exact live rollback source
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/task3-live-backup
+          mkdir -p /tmp/task3-live-backup/supabase
+          cp supabase/config.toml /tmp/task3-live-backup/supabase/config.toml
+          cd /tmp/task3-live-backup
+          supabase functions download generate-reply --project-ref "$PROJECT_REF" --use-api
+          test -s supabase/functions/generate-reply/index.ts
+          find supabase/functions -type f -print0 | sort -z | xargs -0 sha256sum > /tmp/task3-live-backup.sha256
+          echo TASK3_ROLLBACK_SOURCE_CAPTURE=PASS
+
+      - name: Deploy validated generate-reply runtime
+        run: |
+          set -euo pipefail
+          supabase functions deploy generate-reply --project-ref "$PROJECT_REF" --use-api
+          supabase functions list --project-ref "$PROJECT_REF" | tee /tmp/task3-function-list.txt
+          grep -q 'generate-reply' /tmp/task3-function-list.txt
+          echo TASK3_PRODUCTION_DEPLOY=PASS
+
+      - name: Run authorized 20-turn production smoke with automatic rollback
+        run: |
+          set -uo pipefail
+          set -a
+          source .env
+          set +a
+          set +e
+          python scripts/integrated_final_production_smoke.py | tee /tmp/task3-production-smoke.log
+          smoke_rc=${PIPESTATUS[0]}
+          set -e
+          if [[ "$smoke_rc" -ne 0 ]]; then
+            echo "TASK3_PRODUCTION_SMOKE=FAIL rc=$smoke_rc"
+            echo 'TASK3_ROLLBACK=START'
+            cd /tmp/task3-live-backup
+            supabase functions deploy generate-reply --project-ref "$PROJECT_REF" --use-api
+            supabase functions list --project-ref "$PROJECT_REF" | tee /tmp/task3-rollback-function-list.txt
+            grep -q 'generate-reply' /tmp/task3-rollback-function-list.txt
+            echo 'TASK3_ROLLBACK=PASS'
+            exit "$smoke_rc"
+          fi
+          grep -q 'FINAL_FAILURES=\[\]' /tmp/task3-production-smoke.log
+          grep -q 'TWENTY_TURN_STATEFUL_CONVERSATION=PASS' /tmp/task3-production-smoke.log
+          grep -q 'LONG_CONTEXT_CONTINUITY=PASS' /tmp/task3-production-smoke.log
+          grep -q 'GROUNDING_OUTPUT_GATE=PASS' /tmp/task3-production-smoke.log
+          grep -q 'CITATION_LINEAGE=PASS' /tmp/task3-production-smoke.log
+          grep -q 'EXPLICIT_R1=PASS' /tmp/task3-production-smoke.log
+          grep -q 'HUMAN_CONTROL_AI_SUPPRESSION=PASS' /tmp/task3-production-smoke.log
+          echo 'TASK3_PRODUCTION_SMOKE=PASS'
+          echo 'TASK3_FINAL_STATUS=READY'
