@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/director-task2-current-context-takeover.yml'
+      - 'scripts/director_task2_current_context_takeover_patch.py'
 
 permissions:
   contents: write
