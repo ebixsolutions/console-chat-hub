@@ -1,0 +1,216 @@
+name: Restore Frozen Task 4.1 Runtime and Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/restore-frozen-task4-1-runtime-and-deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  restore:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    env:
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+      PROD_ORIGIN: https://console-chat-hub.lovable.app
+      CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Restore exact frozen Task 4.1 runtime from authorized branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin director/task-4-1-long-conversation-director-takeover
+          SRC=origin/director/task-4-1-long-conversation-director-takeover
+          files=(
+            supabase/functions/_shared/citation-lineage.ts
+            supabase/functions/_shared/conversation-intelligence.ts
+            supabase/functions/_shared/conversation-runtime-state.ts
+            supabase/functions/_shared/conversation-semantic-contract.ts
+            supabase/functions/_shared/llm-router.ts
+            supabase/functions/_shared/prior-grounded-transform.ts
+            supabase/functions/generate-reply/index.ts
+            tests/edge/round2-task1-conversation-semantic-contract.test.ts
+            tests/edge/round2-task2-grounding-transform-boundary.test.ts
+            tests/edge/task2-2-output-grounding-router.test.ts
+            tests/edge/task2-3-citation-lineage.test.ts
+            tests/edge/task3-grounding-verifier-budget.test.ts
+            tests/edge/task4-1-a17-composite-transform.test.ts
+            tests/edge/task4-1-context-requirements-followup.test.ts
+            tests/edge/task4-1-current-context-memory.test.ts
+            tests/edge/task4-1-customer-context-update.test.ts
+            tests/edge/task4-1-director-transform-isolation.test.ts
+            tests/edge/task4-1-verifier-invalid-output-retry.test.ts
+          )
+          for f in "${files[@]}"; do
+            git checkout "$SRC" -- "$f"
+            test -s "$f"
+          done
+          git diff --check
+          grep -q 'resolvePriorGroundedTransform' supabase/functions/generate-reply/index.ts
+          grep -q 'buildPriorGroundedTransformGenerationSystem' supabase/functions/generate-reply/index.ts
+          grep -q 'response_route: "prior_grounded_transform"' supabase/functions/_shared/prior-grounded-transform.ts
+          grep -q 'authority: "PRIOR_GROUNDED_ANSWER"' supabase/functions/_shared/prior-grounded-transform.ts
+          echo FROZEN_TASK4_1_SOURCE_RESTORE=PASS
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.6
+
+      - name: Compile complete affected runtime
+        run: |
+          set -euo pipefail
+          deno check --node-modules-dir=auto supabase/functions/_shared/citation-lineage.ts
+          deno check --node-modules-dir=auto supabase/functions/_shared/conversation-semantic-contract.ts
+          deno check --node-modules-dir=auto supabase/functions/_shared/conversation-runtime-state.ts
+          deno check --node-modules-dir=auto supabase/functions/_shared/conversation-intelligence.ts
+          deno check --node-modules-dir=auto supabase/functions/_shared/prior-grounded-transform.ts
+          deno check --node-modules-dir=auto supabase/functions/_shared/llm-router.ts
+          deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+          echo FROZEN_TASK4_1_COMPILE=PASS
+
+      - name: Run all frozen Task 4.1 semantic/grounding regressions
+        run: |
+          set -euo pipefail
+          deno test --allow-env --allow-read --node-modules-dir=auto tests/edge/task4-1-a17-composite-transform.test.ts
+          deno test --allow-read --node-modules-dir=auto tests/edge/task4-1-current-context-memory.test.ts
+          deno test --allow-read --node-modules-dir=auto tests/edge/task4-1-customer-context-update.test.ts
+          deno test --allow-read --node-modules-dir=auto tests/edge/task4-1-context-requirements-followup.test.ts
+          deno test --allow-env --node-modules-dir=auto tests/edge/task4-1-director-transform-isolation.test.ts
+          deno test --allow-read --node-modules-dir=auto tests/edge/task4-1-verifier-invalid-output-retry.test.ts
+          deno test --allow-env --node-modules-dir=auto tests/edge/round2-task1-conversation-semantic-contract.test.ts
+          deno test --allow-env --node-modules-dir=auto tests/edge/round2-task2-grounding-transform-boundary.test.ts
+          deno test --allow-env --node-modules-dir=auto tests/edge/task2-2-output-grounding-router.test.ts
+          deno test --allow-env --node-modules-dir=auto tests/edge/task2-3-citation-lineage.test.ts
+          deno test --allow-env --allow-read --node-modules-dir=auto tests/edge/task3-grounding-verifier-budget.test.ts
+          echo FROZEN_TASK4_1_REGRESSIONS=PASS
+
+      - name: Full authoritative application build
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          echo FROZEN_TASK4_1_FULL_BUILD=PASS
+
+      - name: Commit exact frozen runtime to authoritative main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'ebixsolutions'
+          git config user.email '64578119+ebixsolutions@users.noreply.github.com'
+          git add \
+            supabase/functions/_shared/citation-lineage.ts \
+            supabase/functions/_shared/conversation-intelligence.ts \
+            supabase/functions/_shared/conversation-runtime-state.ts \
+            supabase/functions/_shared/conversation-semantic-contract.ts \
+            supabase/functions/_shared/llm-router.ts \
+            supabase/functions/_shared/prior-grounded-transform.ts \
+            supabase/functions/generate-reply/index.ts \
+            tests/edge/round2-task1-conversation-semantic-contract.test.ts \
+            tests/edge/round2-task2-grounding-transform-boundary.test.ts \
+            tests/edge/task2-2-output-grounding-router.test.ts \
+            tests/edge/task2-3-citation-lineage.test.ts \
+            tests/edge/task3-grounding-verifier-budget.test.ts \
+            tests/edge/task4-1-a17-composite-transform.test.ts \
+            tests/edge/task4-1-context-requirements-followup.test.ts \
+            tests/edge/task4-1-current-context-memory.test.ts \
+            tests/edge/task4-1-customer-context-update.test.ts \
+            tests/edge/task4-1-director-transform-isolation.test.ts \
+            tests/edge/task4-1-verifier-invalid-output-retry.test.ts
+          if ! git diff --cached --quiet; then
+            git commit -m '[authorized-prod] Restore frozen Task 4.1 long-conversation runtime to main'
+            git push origin HEAD:main
+          fi
+          echo FROZEN_TASK4_1_MAIN_COMMIT=PASS
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Verify prior production authorization and snapshot rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SUPABASE_ACCESS_TOKEN:-}"
+          git show origin/director/task-4-1-long-conversation-director-takeover:.github/workflows/task-4-1-long-conversation-director-takeover.yml | grep -q 'Deploy validated generate-reply'
+          git log origin/director/task-4-1-long-conversation-director-takeover -15 --pretty=%B | grep -Fq '[authorized-prod]'
+          rm -rf /tmp/frozen-task4-1-live-backup
+          mkdir -p /tmp/frozen-task4-1-live-backup/supabase
+          cp supabase/config.toml /tmp/frozen-task4-1-live-backup/supabase/config.toml
+          cd /tmp/frozen-task4-1-live-backup
+          supabase functions download generate-reply --project-ref "$PROJECT_REF" --use-api
+          test -s supabase/functions/generate-reply/index.ts
+          echo FROZEN_TASK4_1_ROLLBACK_SNAPSHOT=PASS
+
+      - name: Deploy restored frozen generate-reply
+        shell: bash
+        run: |
+          set -euo pipefail
+          supabase functions deploy generate-reply --project-ref "$PROJECT_REF" --use-api
+          supabase functions list --project-ref "$PROJECT_REF" | tee /tmp/functions.txt
+          grep -q 'generate-reply' /tmp/functions.txt
+          echo FROZEN_TASK4_1_DEPLOY=PASS
+
+      - name: Production T01-T02 regression with automatic rollback
+        shell: bash
+        run: |
+          set -uo pipefail
+          set -a; source .env; set +a
+          BASE="${VITE_SUPABASE_FUNCTIONS_URL}"
+          rollback() {
+            echo FROZEN_TASK4_1_PROD_REGRESSION=FAIL
+            cd /tmp/frozen-task4-1-live-backup
+            supabase functions deploy generate-reply --project-ref "$PROJECT_REF" --use-api
+            echo FROZEN_TASK4_1_ROLLBACK=PASS
+          }
+          fail() { rollback; exit 1; }
+          CREATE=$(curl -fsS -X POST -H "Origin: ${PROD_ORIGIN}" -H 'Content-Type: application/json' --data "{\"channel_id\":\"${CHANNEL_ID}\",\"visitor_metadata\":{\"task4_1_restore_smoke\":true,\"exclude_training\":true}}" "${BASE}/create-visitor-session") || fail
+          python - <<'PY' "$CREATE" >/tmp/restore-session.env
+          import json,sys,shlex
+          d=json.loads(sys.argv[1]); assert d.get('success') is True,d
+          x=d['data']; print('CID='+shlex.quote(x['conversation_id'])); print('TOKEN='+shlex.quote(x['session_token']))
+          PY
+          source /tmp/restore-session.env
+          send() {
+            local text="$1" idem; idem=$(python -c 'import uuid;print(uuid.uuid4())')
+            body=$(python - <<'PY' "$CID" "$TOKEN" "$text"
+          import json,sys; print(json.dumps({'conversation_id':sys.argv[1],'session_token':sys.argv[2],'content':sys.argv[3]},ensure_ascii=False))
+          PY
+          )
+            curl -fsS -X POST -H "Origin: ${PROD_ORIGIN}" -H 'Content-Type: application/json' -H "idempotency-key: $idem" --data "$body" "${BASE}/receive-widget-message" >/dev/null || fail
+          }
+          poll() { curl -fsS -X POST -H "Origin: ${PROD_ORIGIN}" -H 'Content-Type: application/json' --data "{\"conversation_id\":\"${CID}\",\"session_token\":\"${TOKEN}\"}" "${BASE}/widget-poll-messages"; }
+          wait_reply() {
+            local before="$1" expected_route="$2"
+            for i in $(seq 1 30); do
+              sleep 2; P=$(poll) || fail
+              python - <<'PY' "$P" "$before" "$expected_route" && return 0
+          import json,sys
+          d=json.loads(sys.argv[1]); before=int(sys.argv[2]); expected=sys.argv[3]
+          msgs=[m for m in d['data'].get('messages',[]) if m.get('role')=='assistant']
+          if len(msgs)<=before: raise SystemExit(1)
+          if d['data'].get('conversation_status')!='open': raise SystemExit(2)
+          route=(msgs[-1].get('metadata') or {}).get('response_route')
+          if expected and route!=expected: raise SystemExit(3)
+          print('RESTORE_RUNTIME_REPLY='+json.dumps({'status':'open','route':route,'content':msgs[-1].get('content')},ensure_ascii=False))
+          PY
+            done
+            return 1
+          }
+          before=$(poll | python -c 'import json,sys;d=json.load(sys.stdin);print(sum(m.get("role")=="assistant" for m in d["data"].get("messages",[])))')
+          send '什么是四電一腦？'
+          wait_reply "$before" '' || fail
+          before=$(poll | python -c 'import json,sys;d=json.load(sys.stdin);print(sum(m.get("role")=="assistant" for m in d["data"].get("messages",[])))')
+          send '請用繁體中文簡單解釋。'
+          wait_reply "$before" 'prior_grounded_transform' || fail
+          echo FROZEN_TASK4_1_T01_T02_PROD_REGRESSION=PASS
+          echo RESTORED_CONVERSATION_ID="$CID"
