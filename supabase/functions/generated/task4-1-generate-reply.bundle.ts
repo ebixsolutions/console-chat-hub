@@ -988,6 +988,147 @@ function evaluateFullEscalationRuleset(context, options) {
   return decision(null, "continue_ai", null, "no_escalation", gaps, warnings);
 }
 
+// supabase/functions/_shared/conversation-semantic-contract.ts
+var CUSTOMER = /* @__PURE__ */ new Set(["visitor", "customer", "user"]);
+var ASSISTANT = /* @__PURE__ */ new Set(["assistant", "ai"]);
+var TRIVIAL = /^(hi|hello|hey|你好|嗨|哈囉|早安|午安|晚安|ok|okay|好的|好|嗯|謝謝|谢谢|thanks|thank you)[!！。.？?，,\s]*$/i;
+var CORRECTION = /(我講錯|我说错|我說錯|我要更正|我想更正|更正一下|其實係|其实是|改返|改成|actually[,\s]+i meant|\bi meant\b|correction\s*[:：]|不是.+(?:而)?是|唔係.+係|not .+ but .+)/i;
+var SIMPLIFY = /(?:簡單|简单)(?:一點|一点|啲|些|點|点)?(?:[。.!！?？\s]*$|.*(?:解釋|解释|講|讲|說|说|介紹|介绍))|(?:講|讲|說|说)(?:得|得再)?(?:簡單|简单)(?:一點|一点|啲|些|點|点)?|explain(?: it| that)? (?:more )?simply|make it simpler|\bsimpler\b|\bshorter\b/i;
+var REPHRASE = /(換句話|换句话|另一種講法|另一种说法|改寫|改写|重新講|重新说|rephrase|rewrite|say that another way|word it differently)/i;
+var TRANSLATE = /(?:用|改用)(?:廣東話|广东话|繁體中文|繁体中文|簡體中文|简体中文|英文).*(?:講|讲|回答|答|解釋|解释|說|说|一次)?|\b(?:in|into)\s+(?:english|chinese|cantonese|traditional chinese|simplified chinese)\b|translate(?: that| it)?/i;
+var SUMMARY = /(?:總結|总结|概括|歸納|归纳).*(?:剛才|刚才|以上|之前|我們|我们|內容|内容|三點|三点)?|summari[sz]e(?: that| it| this| the above| what we discussed| our conversation)?/i;
+var MEMORY = /(一開始|一开始|第一個問題|第一个问题|最初).*(?:問|問題|问题)|剛才.*(?:建議|建议|叫我|要我)|刚才.*(?:建议|叫我|要我)|之前.*(?:建議|建议|提供)|what\s+(?:did\s+i\s+ask|was\s+(?:my\s+)?first)|what\s+did\s+you\s+(?:recommend|suggest)|what\s+information\s+have\s+i\s+already\s+given|what\s+have\s+i\s+already\s+given|我(?:現在|现在|目前).*(?:哪個|哪个|什麼|什么).*(?:地區|地区).*(?:哪個|哪个|什麼|什么).*(?:項目|项目)|what(?:\x27s| is)?\s+(?:the\s+)?(?:current\s+)?(?:region|jurisdiction).*(?:item|product)|what.*still\s+missing/i;
+var RETURN_PRIOR = /(回到|返回|返去|回返|講返|讲回|回香港|回到香港|back to|return to|go back to|back on).{0,50}/i;
+var TOPIC_SWITCH = /^(?:算了|算啦|另外|轉個話題|转个话题|換個話題|换个话题|不談|不谈|forget that|never mind|different topic|another question)/i;
+var FOLLOW = /^(?:咁|那|那麼|那么|所以|另外|仲有|还有|如果|再|又|而|同埋|what about|and what about|then|so|also|in that case|how about)/i;
+var PRONOUN = /^(?:那個|那个|這個|这个|它|佢|他|她|嗰個|呢個|上述|剛才|刚才|之前|same|that|this|it|its|earlier|previous)|(?:呢|嗎|吗|about that|and that|same one|same thing)[。.!！?？\s]*$/i;
+var DOMAIN_ONLY = /^(?:我有|我想問|我想问|想問|想问|請問|请问)?\s*(?:一個|一个|個|个)?\s*(?:訂單|订单|退款|退貨|退货|換貨|换货|送貨|送货|物流|付款|產品|产品|保養|保修|維修|维修|問題|问题)\s*(?:問題|问题|嘅問題|的問題)?[。.!！?？\s]*$/;
+var QUESTIONISH = /[?？]|^(?:什麼|什么|如何|怎樣|怎样|哪|哪些|多久|幾耐|几耐|why|what|which|how|when|where)/i;
+var CUSTOMER_CONTEXT_REQUIREMENTS = /(?:你|妳|您).{0,12}(?:還|还)?需要(?:我)?(?:再)?提供(?:什麼|什么|哪些|咩)(?:資料|资料|資訊|信息|details|information)|(?:還|还)需要(?:我)?提供(?:什麼|什么|哪些|咩)(?:資料|资料|資訊|信息)|what (?:information|details) do you (?:still )?need from me|what else do you need from me/i;
+var CUSTOMER_CONTEXT_UPDATE = /(?:^|[，,。.!！\s])(?:我只知道|我只知|我目前只知道|我現在只知道|我现在只知道|我沒有|我没有|我冇|不知道型號|不知道型号|唔知型號|型號(?:是|係)?未知|型号(?:是)?未知|品牌(?:是|係)|大約.{0,24}(?:買|购买|購買)|大概.{0,24}(?:買|购买|購買)|現在.{0,32}(?:不冷|唔凍|不能|無法|无法)|现在.{0,32}(?:不冷|不能|无法)|i only know|i (?:do not|don't) have (?:the )?(?:model|model number|order number)|the brand is|brand is|i bought (?:it )?.{0,40}ago|it (?:powers|turns) on but)/i;
+function isCustomerContextUpdate(text) {
+  const latest = clean(text);
+  if (!latest || QUESTIONISH.test(latest) || /[?？]/.test(latest)) return false;
+  return CUSTOMER_CONTEXT_UPDATE.test(latest);
+}
+function clean(v) {
+  return typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, 1200) : "";
+}
+function detectSemanticLanguage(text) {
+  if (!/[\u4e00-\u9fff]/.test(text)) return "en";
+  return /[转们为这没请台]/.test(text) ? "zh-CN" : "zh-TW";
+}
+function metadataRecord(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+function findPriorGroundedAnswer(newestFirst, currentLatest) {
+  const latest = clean(currentLatest);
+  let skippedCurrent = false;
+  for (const row of newestFirst) {
+    const role = String(row.role ?? "").toLowerCase();
+    const content = clean(row.content);
+    if (!content || content === "__THINKING__") continue;
+    if (!skippedCurrent && latest && CUSTOMER.has(role) && content === latest) {
+      skippedCurrent = true;
+      continue;
+    }
+    if (!ASSISTANT.has(role)) continue;
+    const meta = metadataRecord(row.metadata);
+    const lineage = metadataRecord(meta?.citation_lineage);
+    const selected = typeof lineage?.selected_document_id === "string" ? lineage.selected_document_id : "";
+    const ids = Array.isArray(lineage?.evidence_chunk_ids) ? lineage.evidence_chunk_ids.filter((x) => typeof x === "string" && x.length > 0) : [];
+    if (!selected || ids.length === 0) continue;
+    const source = typeof meta?.source_message_id === "string" ? meta.source_message_id : null;
+    return { content, document_id: selected, chunk_ids: ids, source_message_id: source };
+  }
+  return null;
+}
+function classifyCanonicalConversationTurn(latestInput, newestFirst, options = {}) {
+  const latest = clean(latestInput);
+  const language = detectSemanticLanguage(latest);
+  const priorGrounded = findPriorGroundedAnswer(newestFirst, latest);
+  const base = (operation, reason, overrides = {}) => ({
+    operation,
+    language,
+    latest,
+    needs_history: false,
+    requires_new_kb_retrieval: true,
+    may_reuse_prior_grounded_answer: false,
+    evidence_authority: "CURRENT_KB_REQUIRED",
+    topic_action: "NONE",
+    explicit_handoff: false,
+    prior_grounded_answer: priorGrounded,
+    reason,
+    ...overrides
+  });
+  if (options.explicit_handoff === true) {
+    return base("EXPLICIT_HANDOFF", "governed_explicit_handoff", {
+      explicit_handoff: true,
+      requires_new_kb_retrieval: false,
+      evidence_authority: "NONE"
+    });
+  }
+  if (!latest || TRIVIAL.test(latest)) {
+    return base("TRIVIAL", "trivial_or_greeting", { requires_new_kb_retrieval: false, evidence_authority: "NONE" });
+  }
+  if (MEMORY.test(latest)) {
+    return base("CONVERSATION_MEMORY", "conversation_memory_request", {
+      needs_history: true,
+      requires_new_kb_retrieval: false,
+      evidence_authority: "CONVERSATION_MEMORY",
+      topic_action: "KEEP"
+    });
+  }
+  const transform = SIMPLIFY.test(latest) ? "SIMPLIFY" : TRANSLATE.test(latest) ? "TRANSLATE" : REPHRASE.test(latest) ? "REPHRASE" : SUMMARY.test(latest) ? "SUMMARIZE" : null;
+  if (transform) {
+    return base(transform, priorGrounded ? "transform_of_prior_grounded_answer" : "transform_requires_history_without_grounded_anchor", {
+      needs_history: true,
+      requires_new_kb_retrieval: !priorGrounded,
+      may_reuse_prior_grounded_answer: Boolean(priorGrounded),
+      evidence_authority: priorGrounded ? "PRIOR_GROUNDED_ANSWER" : "CURRENT_KB_REQUIRED",
+      topic_action: "KEEP"
+    });
+  }
+  if (CORRECTION.test(latest)) {
+    return base("CORRECTION", "latest_turn_supersedes_prior_context", { needs_history: true, topic_action: "CORRECT" });
+  }
+  if (CUSTOMER_CONTEXT_REQUIREMENTS.test(latest)) {
+    return base("CUSTOMER_CONTEXT_UPDATE", "customer_context_requirements_request", {
+      needs_history: true,
+      requires_new_kb_retrieval: false,
+      evidence_authority: "CONVERSATION_MEMORY",
+      topic_action: "KEEP"
+    });
+  }
+  if (isCustomerContextUpdate(latest)) {
+    return base("CUSTOMER_CONTEXT_UPDATE", "customer_supplied_context_without_factual_request", {
+      needs_history: true,
+      requires_new_kb_retrieval: false,
+      evidence_authority: "NONE",
+      topic_action: "KEEP"
+    });
+  }
+  if (RETURN_PRIOR.test(latest)) {
+    return base("RETURN_TO_PRIOR_TOPIC", "explicit_return_to_prior_topic", { needs_history: true, topic_action: "RETURN" });
+  }
+  if (TOPIC_SWITCH.test(latest)) {
+    return base("TOPIC_SWITCH", "explicit_topic_switch", { needs_history: true, topic_action: "SWITCH" });
+  }
+  if (PRONOUN.test(latest)) {
+    return base("PRONOUN_OR_ELLIPSIS", "referential_follow_up_requires_history", { needs_history: true, topic_action: "KEEP" });
+  }
+  if (FOLLOW.test(latest)) {
+    return base("FOLLOW_UP_FACTUAL", "follow_up_requires_history", { needs_history: true, topic_action: "KEEP" });
+  }
+  if (DOMAIN_ONLY.test(latest)) {
+    return base("UNDERSPECIFIED", "semantic_intent_present_but_required_detail_missing", { requires_new_kb_retrieval: false, evidence_authority: "NONE" });
+  }
+  if (QUESTIONISH.test(latest)) {
+    return base("NEW_FACTUAL_QUERY", "standalone_factual_request");
+  }
+  return base("NEW_FACTUAL_QUERY", "specific_standalone_request");
+}
+
 // supabase/functions/_shared/conversation-intelligence.ts
 var HUMAN_ZH = /(真人|人工|客服)/;
 var HUMAN_EN = /\b(human|live agent|human agent|real person|support agent|customer service)\b/i;
@@ -1003,8 +1144,8 @@ var QUESTION_ZH = /(係咪|是不是|是否|幾點|几点|幾時|何時|多久|�
 var QUESTION_EN = /\b(when|what|who|where|how|hours|available|open|close|can i|could i)\b.*\b(human|agent|customer service|support)\b|\b(human|agent|customer service|support)\b.*\b(when|what|who|where|how|hours|available|open|close)\b/i;
 var HYPOTHETICAL_ZH = /(假如|假設|假设|例如|譬如|可唔可以轉|可不可以转|如果我要|如果想)/;
 var HYPOTHETICAL_EN = /\b(hypothetically|suppose|what if|could i|would i be able to)\b/i;
-var EXPLICIT_ZH = /(而家|現在|现在|即刻|立即).{0,8}(轉|转|接|搵|找|聯絡|联系).{0,5}(真人|人工|客服)|(請|请|麻煩|麻烦).{0,8}(轉|转|接|搵|找|聯絡|联系).{0,5}(真人|人工|客服)|(我要|我想|我需要).{0,5}(真人|人工|客服)/;
-var EXPLICIT_EN = /\b(please\s+)?(connect|transfer|put|let)\s+me\s+(to|through to)\s+(a\s+)?(human|live agent|human agent|real person)|\b(i want|i need|let me speak to|i want to speak to|i need to speak to)\s+(a\s+)?(human|live agent|human agent|real person)(\s+now)?\b/i;
+var EXPLICIT_ZH = /(?:而家|現在|现在|即刻|立即).{0,8}(轉|转|接|搵|找|聯絡|联系).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:請|请|麻煩|麻烦|幫我|帮我).{0,10}(轉|转|接|搵|找|聯絡|联系).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:我要|我想|我需要|想要|需要).{0,8}(真人|人工|客服(?:人員|人员)?)/;
+var EXPLICIT_EN = /\b(please\s+)?(connect|transfer|put|let)\s+me\s+(to|through to)\s+(a\s+)?(human|live agent|human agent|real person|customer service)|\b(i want|i need|let me speak to|i want to speak to|i need to speak to|connect me to)\s+(a\s+)?(human|live agent|human agent|real person|customer service)(\s+now)?\b/i;
 function detectLanguage(text) {
   if (!/[\u4e00-\u9fff]/.test(text)) return "en";
   return /[转们为这没请]/.test(text) ? "zh-CN" : "zh-TW";
@@ -1037,21 +1178,30 @@ function classifyHandoffIntent(text) {
   }
   return { kind: "none", explicit_request: false, pure_negation: false, language, reason: "human_support_mentioned_without_explicit_request" };
 }
-var TRIVIAL = /^(hi|hello|hey|你好|嗨|哈囉|早安|午安|晚安|ok|okay|好的|好|嗯|謝謝|谢谢|thanks|thank you)[!！。.？?，,\s]*$/i;
-var CORRECTION = /(我講錯|我说错|我說錯|更正|其實係|其实是|唔係.*係|不是.*是|改返|改成|actually|correction|i meant|not .* but )/i;
-var FOLLOW_UP_ZH = /^(咁|那|那麼|那么|所以|另外|仲有|还有|咁如果|那如果)/;
-var FOLLOW_UP_EN = /^(then|so|also|what about|and what about|in that case)\b/i;
-var DOMAIN_ONLY = /^(我有|我想問|我想问|想問|想问|請問|请问)?\s*(一個|一个|個|个)?\s*(訂單|订单|退款|退貨|退货|換貨|换货|送貨|送货|物流|付款|產品|产品|保養|保修|維修|维修|問題|问题)\s*(問題|问题|嘅問題|的問題)?[。.!！?？\s]*$/;
-var VAGUE_REFERENCE = /^(之前嗰樣嘢|之前那件事|之前那个|嗰樣嘢|那個事情|那个事情|same thing|that thing|the previous thing)[。.!！?？\s]*$/i;
 function classifyConversationTurn(text) {
   const t = text.normalize("NFKC").trim();
-  if (!t || TRIVIAL.test(t)) return { kind: "trivial", should_clarify_before_kb: false, reason: "trivial_or_greeting" };
-  if (CORRECTION.test(t)) return { kind: "correction", should_clarify_before_kb: false, reason: "latest_turn_corrects_prior_context" };
-  if (FOLLOW_UP_ZH.test(t) || FOLLOW_UP_EN.test(t)) return { kind: "follow_up", should_clarify_before_kb: false, reason: "follow_up_requires_history" };
-  if (DOMAIN_ONLY.test(t) || VAGUE_REFERENCE.test(t)) {
-    return { kind: "underspecified", should_clarify_before_kb: true, reason: "semantic_intent_present_but_required_detail_missing" };
+  const handoff = classifyHandoffIntent(t);
+  const semantic = classifyCanonicalConversationTurn(t, [], { explicit_handoff: handoff.explicit_request });
+  switch (semantic.operation) {
+    case "TRIVIAL":
+      return { kind: "trivial", should_clarify_before_kb: false, reason: semantic.reason };
+    case "UNDERSPECIFIED":
+      return { kind: "underspecified", should_clarify_before_kb: true, reason: semantic.reason };
+    case "CORRECTION":
+      return { kind: "correction", should_clarify_before_kb: false, reason: semantic.reason };
+    case "FOLLOW_UP_FACTUAL":
+    case "PRONOUN_OR_ELLIPSIS":
+    case "SIMPLIFY":
+    case "REPHRASE":
+    case "TRANSLATE":
+    case "SUMMARIZE":
+    case "RETURN_TO_PRIOR_TOPIC":
+    case "CONVERSATION_MEMORY":
+    case "CUSTOMER_CONTEXT_UPDATE":
+      return { kind: "follow_up", should_clarify_before_kb: false, reason: semantic.reason };
+    default:
+      return { kind: "specific", should_clarify_before_kb: false, reason: semantic.reason };
   }
-  return { kind: "specific", should_clarify_before_kb: false, reason: "specific_enough_for_normal_routing" };
 }
 function isHumanControlState(status, assignedAgentId) {
   if (typeof assignedAgentId === "string" && assignedAgentId.length > 0) return true;
@@ -1074,6 +1224,40 @@ var NATURAL_CLARIFICATION = {
   "zh-CN": "\u53EF\u4EE5\uFF0C\u60F3\u786E\u8BA4\u4E00\u4E0B\u4F60\u4E3B\u8981\u60F3\u5904\u7406\u54EA\u4E00\u65B9\u9762\uFF1F\u4F8B\u5982\u9001\u8D27\u3001\u4ED8\u6B3E\u3001\u53D6\u6D88\uFF0C\u8FD8\u662F\u9000\u6362\u8D27\uFF1F",
   en: "Sure \u2014 which part would you like help with, for example delivery, payment, cancellation, or a return/refund?"
 };
+function buildCustomerContextRequirementsResponse(language, newestFirstMessages) {
+  const customerTurns = newestFirstMessages.filter((row) => CUSTOMER_ROLES.has(String(row.role ?? "").toLowerCase())).map((row) => cleanContinuityText(row.content)).filter(Boolean).slice(0, 12);
+  const joined = customerTurns.join(" ");
+  const missingModel = /(?:沒有|没有|冇|不知道|唔知).{0,8}(?:型號|型号)|(?:don't|do not) have (?:the )?(?:model|model number)/i.test(joined);
+  const hasBrand = /(?:品牌(?:是|係)|brand is|\bpanasonic\b|\bsamsung\b|\blg\b|\bsony\b|\bwhirlpool\b)/i.test(joined);
+  const hasApplianceType = /(?:冷氣|空調|空调|洗衣機|洗衣机|雪櫃|冰箱|電視|电视|家用電器|家用电器|air conditioner|washing machine|refrigerator|fridge|television|\btv\b)/i.test(joined);
+  if (language === "en") {
+    const known2 = missingModel ? "You\u2019ve already told me you don\u2019t have the model number, so you don\u2019t need to repeat that. " : "";
+    const asks = [];
+    if (!hasApplianceType) asks.push("what type of appliance it is");
+    if (!hasBrand) asks.push("the brand, if you know it");
+    asks.push("roughly when you bought it", "what is happening now");
+    return known2 + "Please tell me " + asks.join(", ") + ".";
+  }
+  const known = missingModel ? language === "zh-CN" ? "\u4F60\u5DF2\u7ECF\u8BF4\u76EE\u524D\u6CA1\u6709\u578B\u53F7\uFF0C\u4E0D\u7528\u91CD\u590D\u63D0\u4F9B\u3002" : "\u4F60\u5DF2\u7D93\u8AAA\u76EE\u524D\u6C92\u6709\u578B\u865F\uFF0C\u4E0D\u7528\u91CD\u8907\u63D0\u4F9B\u3002" : "";
+  if (language === "zh-CN") {
+    return known + `\u8BF7\u544A\u8BC9\u6211${hasApplianceType ? "\u66F4\u5177\u4F53\u662F\u54EA\u4E00\u7C7B\u5BB6\u7528\u7535\u5668" : "\u662F\u54EA\u4E00\u7C7B\u5BB6\u7528\u7535\u5668"}${hasBrand ? "" : "\u3001\u54C1\u724C\uFF08\u5982\u679C\u77E5\u9053\uFF09"}\u3001\u5927\u7EA6\u8D2D\u4E70\u65F6\u95F4\uFF0C\u4EE5\u53CA\u76EE\u524D\u51FA\u73B0\u7684\u60C5\u51B5\u3002`;
+  }
+  return known + `\u8ACB\u544A\u8A34\u6211${hasApplianceType ? "\u66F4\u5177\u9AD4\u662F\u54EA\u4E00\u985E\u5BB6\u7528\u96FB\u5668" : "\u662F\u54EA\u4E00\u985E\u5BB6\u7528\u96FB\u5668"}${hasBrand ? "" : "\u3001\u54C1\u724C\uFF08\u5982\u679C\u77E5\u9053\uFF09"}\u3001\u5927\u7D04\u8CFC\u8CB7\u6642\u9593\uFF0C\u4EE5\u53CA\u76EE\u524D\u51FA\u73FE\u7684\u60C5\u6CC1\u3002`;
+}
+function buildCustomerContextAcknowledgement(language) {
+  if (language === "en") {
+    return "Got it. I\u2019ll keep using the details you\u2019ve provided and won\u2019t guess anything that hasn\u2019t been confirmed. If I need anything else, I\u2019ll ask you directly.";
+  }
+  if (language === "zh-CN") {
+    return "\u6536\u5230\u3002\u6211\u4F1A\u7EE7\u7EED\u4F7F\u7528\u4F60\u5DF2\u63D0\u4F9B\u7684\u8D44\u6599\uFF0C\u672A\u786E\u8BA4\u7684\u90E8\u5206\u4E0D\u4F1A\u81EA\u884C\u731C\u6D4B\uFF1B\u5982\u679C\u8FD8\u9700\u8981\u5176\u4ED6\u8D44\u6599\uFF0C\u6211\u4F1A\u76F4\u63A5\u544A\u8BC9\u4F60\u3002";
+  }
+  return "\u6536\u5230\u3002\u6211\u6703\u7E7C\u7E8C\u4F7F\u7528\u4F60\u5DF2\u63D0\u4F9B\u7684\u8CC7\u6599\uFF0C\u672A\u78BA\u8A8D\u7684\u90E8\u5206\u4E0D\u6703\u81EA\u884C\u731C\u6E2C\uFF1B\u5982\u679C\u9084\u9700\u8981\u5176\u4ED6\u8CC7\u6599\uFF0C\u6211\u6703\u76F4\u63A5\u544A\u8A34\u4F60\u3002";
+}
+function cleanContinuityText(value) {
+  if (typeof value !== "string") return "";
+  return value.replace(/\s+/g, " ").trim().slice(0, 500);
+}
+var CUSTOMER_ROLES = /* @__PURE__ */ new Set(["visitor", "customer", "user"]);
 function buildCustomerAdvisoryContext(signals) {
   const lines = [];
   const tier = typeof signals.tier === "string" ? signals.tier.trim().slice(0, 80) : "";
@@ -1597,6 +1781,7 @@ async function recordUsage(call, provider, model, outcome, httpStatus, usage, co
   }
 }
 var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+var GROUNDING_VERIFIER_MAX_TOKENS = 2048;
 var GENERATION_MAX_TOKENS_DEFAULT = 2048;
 var GENERATION_MAX_TOKENS_MIN = 768;
 var GENERATION_MAX_TOKENS_MAX = 8192;
@@ -1668,10 +1853,6 @@ function vertexAdapter(serviceAccountJson, projectId, region, model, safeSystem,
           generationConfig: {
             maxOutputTokens: maxTokens,
             temperature: 0,
-            // Gemini honours a response mime type; callers that require a JSON
-            // object get one without fences or prose. A response schema pins
-            // field names and primitive types, which prompt text alone does
-            // not (Gemini otherwise renames keys and stringifies numbers).
             ...jsonOutput ? { responseMimeType: "application/json" } : {},
             ...jsonOutput && responseSchema ? { responseSchema } : {}
           }
@@ -1689,6 +1870,282 @@ function vertexAdapter(serviceAccountJson, projectId, region, model, safeSystem,
       };
     }
   };
+}
+var EXACT_FACT_TOKEN_RE = /(?:[$€£¥]|HKD|USD|EUR|GBP|JPY|TWD|NTD|RMB|CNY)?\s*\d+(?:[.,]\d+)?(?:\s*(?:%|percent|days?|hours?|minutes?|years?|months?|kg|g|lb|lbs|mm|cm|m|km|ml|l|公升|毫升|公斤|克|天|日|小時|小时|分鐘|分钟|年|月))?|\b(?=[A-Z0-9-]*[A-Z])(?=[A-Z0-9-]*\d)[A-Z0-9-]{4,}\b/giu;
+function canonicalExactToken(value) {
+  return value.normalize("NFKC").toLowerCase().replace(/[\s,]/g, "").trim();
+}
+function extractGroundingBlock(system) {
+  const transformRules = "Prior Grounded Answer transform rules:";
+  const transformMarker = "Prior Grounded Answer Evidence:\n";
+  if (system.includes(transformRules)) {
+    const transformIndex = system.lastIndexOf(transformMarker);
+    if (transformIndex >= 0) {
+      const prior = system.slice(transformIndex + transformMarker.length).trim();
+      if (prior) {
+        return {
+          authority: "PRIOR_GROUNDED_ANSWER",
+          evidence_text: prior.slice(0, 3e3),
+          chunk_ids: []
+        };
+      }
+    }
+    return null;
+  }
+  if (!system.includes("Knowledge Base grounding rules:")) return null;
+  const marker = "Full Content Evidence:\n";
+  const markerIndex = system.lastIndexOf(marker);
+  if (markerIndex < 0) return null;
+  const raw = system.slice(markerIndex + marker.length).trim();
+  if (!raw || /^none\b/i.test(raw)) return null;
+  const ids = [...raw.matchAll(/\[chunk:([^\]\s]+)\]/g)].map((match) => (match[1] ?? "").trim()).filter(Boolean);
+  return {
+    authority: "CURRENT_KB",
+    evidence_text: raw.slice(0, 6e3),
+    chunk_ids: [...new Set(ids)]
+  };
+}
+function buildVerifierEvidenceAliases(grounding) {
+  let next = 0;
+  const allowed = [];
+  const aliased = grounding.evidence_text.replace(
+    /\[chunk:([^\]\s]+)\]/g,
+    () => {
+      next += 1;
+      const alias = `E${next}`;
+      allowed.push(alias);
+      return `[chunk:${alias}]`;
+    }
+  );
+  return { evidence_text: aliased, allowed_ids: allowed };
+}
+function validateExactFactGrounding(answer, evidenceText, protectedChunkIds = []) {
+  const answerNorm = answer.normalize("NFKC");
+  for (const id of protectedChunkIds) {
+    if (id && answerNorm.includes(id)) {
+      return { ok: false, reason: "internal_chunk_id_leak", unsupported_tokens: [id] };
+    }
+  }
+  const evidenceNorm = canonicalExactToken(evidenceText);
+  const unsupported = /* @__PURE__ */ new Set();
+  for (const match of answer.matchAll(EXACT_FACT_TOKEN_RE)) {
+    const token = canonicalExactToken(match[0] ?? "");
+    if (!token || /^\d$/.test(token)) continue;
+    if (!evidenceNorm.includes(token)) unsupported.add(token);
+  }
+  return unsupported.size === 0 ? { ok: true } : {
+    ok: false,
+    reason: "unsupported_exact_fact",
+    unsupported_tokens: [...unsupported]
+  };
+}
+function parseGroundingVerifierDecision(raw, allowedChunkIds) {
+  const parsed = parseJsonObjectLoose(raw);
+  if (!parsed || typeof parsed.grounded !== "boolean") return null;
+  if (!Array.isArray(parsed.unsupported_claims) || !Array.isArray(parsed.evidence_chunk_ids)) return null;
+  const unsupported = parsed.unsupported_claims.filter((item) => typeof item === "string").map((item) => item.trim()).filter(Boolean);
+  if (unsupported.length !== parsed.unsupported_claims.length) return null;
+  const ids = parsed.evidence_chunk_ids.filter((item) => typeof item === "string").map((item) => item.trim()).filter(Boolean);
+  if (ids.length !== parsed.evidence_chunk_ids.length) return null;
+  const allowed = new Set(allowedChunkIds.filter(Boolean));
+  if (ids.some((id) => !allowed.has(id))) return null;
+  if (parsed.grounded && unsupported.length > 0) return null;
+  if (!parsed.grounded && unsupported.length === 0) return null;
+  if (parsed.grounded && allowed.size > 0 && ids.length === 0) return null;
+  return {
+    grounded: parsed.grounded,
+    unsupported_claims: unsupported,
+    evidence_chunk_ids: [...new Set(ids)]
+  };
+}
+async function verifyGroundedGeneration(call, provider, answer, grounding, timeoutMs) {
+  const exact = validateExactFactGrounding(answer, grounding.evidence_text, grounding.chunk_ids);
+  if (!exact.ok) {
+    log(call.tag, {
+      event: "grounding_exact_fact_rejected",
+      request_id: call.operationId,
+      reason: exact.reason,
+      unsupported_token_count: exact.unsupported_tokens.length
+    });
+    return { ok: false, reason: exact.reason };
+  }
+  const verifierEvidence = buildVerifierEvidenceAliases(grounding);
+  const evaluationModel = (Deno.env.get(MODEL_ENV.evaluation) ?? "").trim();
+  if (!evaluationModel) {
+    log(call.tag, {
+      event: "grounding_verifier_config_missing",
+      request_id: call.operationId
+    });
+    return { ok: false, reason: "verifier_model_missing" };
+  }
+  const verifierSystem = [
+    "You are a strict factual-grounding verifier.",
+    grounding.authority === "PRIOR_GROUNDED_ANSWER" ? "The evidence is a previously verified grounded answer. Judge whether the proposed answer is a faithful simplification, rephrase, translation, or summary of that evidence without any new factual claim. Wording and language may differ, and a summary may omit detail." : "Judge ONLY whether every factual claim in the proposed answer is entailed by the supplied current Knowledge Base evidence.",
+    "Do not use outside knowledge, assumptions, the customer request, or other prior conversation as factual evidence.",
+    "Politeness, conversational transitions, and non-factual wording do not need evidence.",
+    "Any unsupported product fact, policy fact, price, date, duration, dimension, eligibility condition, jurisdiction claim, procedure, limit, availability statement, or categorical factual statement makes grounded=false.",
+    "evidence_chunk_ids may contain only supplied E1/E2/E3 aliases that materially support the answer.",
+    "Return JSON only with grounded, unsupported_claims, evidence_chunk_ids."
+  ].join("\n");
+  const verifierUser = [
+    "Evidence:",
+    verifierEvidence.evidence_text,
+    "",
+    "Proposed answer:",
+    answer.slice(0, 3e3)
+  ].join("\n");
+  let verifierAdapter;
+  if (provider === "vertex") {
+    const sa = Deno.env.get("GOOGLE_SERVICE_ACCOUNT_JSON");
+    const projectId = Deno.env.get("GOOGLE_PROJECT_ID");
+    const region = Deno.env.get("GOOGLE_REGION");
+    if (!sa?.trim() || !projectId?.trim() || !region?.trim()) {
+      return { ok: false, reason: "verifier_provider_config_missing" };
+    }
+    verifierAdapter = vertexAdapter(
+      sa,
+      projectId.trim(),
+      region.trim(),
+      evaluationModel,
+      redact(verifierSystem),
+      redact(verifierUser),
+      GROUNDING_VERIFIER_MAX_TOKENS,
+      true,
+      {
+        type: "OBJECT",
+        properties: {
+          grounded: { type: "BOOLEAN" },
+          unsupported_claims: { type: "ARRAY", items: { type: "STRING" } },
+          evidence_chunk_ids: { type: "ARRAY", items: { type: "STRING" } }
+        },
+        required: ["grounded", "unsupported_claims", "evidence_chunk_ids"]
+      }
+    );
+  } else {
+    const key = Deno.env.get("ANTHROPIC_API_KEY");
+    if (!key?.trim()) return { ok: false, reason: "verifier_provider_config_missing" };
+    verifierAdapter = anthropicAdapter(
+      key,
+      evaluationModel,
+      redact(verifierSystem),
+      redact(verifierUser),
+      GROUNDING_VERIFIER_MAX_TOKENS
+    );
+  }
+  const verifierCall = {
+    purpose: "evaluation",
+    system: verifierSystem,
+    user: verifierUser,
+    maxTokens: GROUNDING_VERIFIER_MAX_TOKENS,
+    operationId: `${call.operationId}:grounding-verifier`,
+    companyId: call.companyId,
+    conversationId: call.conversationId,
+    tag: `${call.tag}-grounding-verifier`,
+    responseFormat: "json"
+  };
+  const verifierUsage = {
+    input_tokens: 0,
+    output_tokens: 0,
+    latency_ms: 0,
+    attempts: 0
+  };
+  const verifierStarted = Date.now();
+  let lastStatus = 0;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    verifierUsage.attempts = attempt;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const req = await verifierAdapter.buildRequest();
+      const res = await fetch(req.url, {
+        method: "POST",
+        headers: req.headers,
+        body: req.body,
+        signal: controller.signal
+      });
+      lastStatus = res.status;
+      if (res.status === 429 || res.status >= 500) {
+        if (attempt < 2) {
+          await sleep(BASE_BACKOFF_MS * 2 ** (attempt - 1));
+          continue;
+        }
+        break;
+      }
+      if (!res.ok) break;
+      let body;
+      try {
+        body = await res.json();
+      } catch {
+        break;
+      }
+      const parsed = verifierAdapter.parseResponse(body);
+      verifierUsage.input_tokens = parsed.input_tokens;
+      verifierUsage.output_tokens = parsed.output_tokens;
+      verifierUsage.latency_ms = Date.now() - verifierStarted;
+      if (!parsed.text || parsed.finish_reason === "MAX_TOKENS") break;
+      const decision2 = parseGroundingVerifierDecision(parsed.text, verifierEvidence.allowed_ids);
+      if (!decision2) {
+        await recordUsage(
+          verifierCall,
+          verifierAdapter.id,
+          verifierAdapter.model,
+          "failed",
+          res.status,
+          verifierUsage,
+          "GROUNDING_VERIFIER_INVALID_OUTPUT"
+        );
+        if (attempt < 2) {
+          log(call.tag, {
+            event: "grounding_verifier_invalid_output_retry",
+            request_id: call.operationId,
+            attempt
+          });
+          await sleep(BASE_BACKOFF_MS * 2 ** (attempt - 1));
+          continue;
+        }
+        return { ok: false, reason: "verifier_invalid_output" };
+      }
+      await recordUsage(
+        verifierCall,
+        verifierAdapter.id,
+        verifierAdapter.model,
+        decision2.grounded ? "success" : "failed",
+        res.status,
+        verifierUsage,
+        decision2.grounded ? void 0 : "GROUNDING_UNSUPPORTED_CLAIMS"
+      );
+      if (!decision2.grounded) {
+        log(call.tag, {
+          event: "grounding_semantic_rejected",
+          request_id: call.operationId,
+          grounding_authority: grounding.authority,
+          unsupported_claim_count: decision2.unsupported_claims.length
+        });
+        return { ok: false, reason: "unsupported_semantic_claim" };
+      }
+      return { ok: true };
+    } catch (error) {
+      const aborted = error instanceof Error && error.name === "AbortError";
+      if (!aborted && attempt < 2) {
+        await sleep(BASE_BACKOFF_MS * 2 ** (attempt - 1));
+        continue;
+      }
+      break;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  verifierUsage.latency_ms = Date.now() - verifierStarted;
+  await recordUsage(
+    verifierCall,
+    verifierAdapter.id,
+    verifierAdapter.model,
+    "failed",
+    lastStatus,
+    verifierUsage,
+    "GROUNDING_VERIFIER_UNAVAILABLE"
+  );
+  return { ok: false, reason: "verifier_unavailable" };
 }
 async function callModel(call) {
   const started = Date.now();
@@ -1906,6 +2363,43 @@ async function callModel(call) {
         });
         break;
       }
+      const grounding = call.purpose === "generation" && call.responseFormat !== "json" ? extractGroundingBlock(call.system) : null;
+      if (grounding) {
+        const groundingDecision = await verifyGroundedGeneration(
+          call,
+          provider,
+          parsed.text,
+          grounding,
+          timeoutMs
+        );
+        if (!groundingDecision.ok) {
+          lastCode = "LLM_INVALID_OUTPUT";
+          usage.latency_ms = Date.now() - started;
+          log(call.tag, {
+            event: "grounding_rejected",
+            request_id: requestId,
+            provider: adapter.id,
+            attempt,
+            reason: groundingDecision.reason
+          });
+          await recordUsage(
+            call,
+            adapter.id,
+            adapter.model,
+            "failed",
+            res.status,
+            usage,
+            "LLM_OUTPUT_UNGROUNDED"
+          );
+          return {
+            ok: false,
+            code: "LLM_INVALID_OUTPUT",
+            status: res.status,
+            request_id: requestId,
+            usage
+          };
+        }
+      }
       usage.latency_ms = Date.now() - started;
       log(call.tag, {
         event: "success",
@@ -1915,7 +2409,8 @@ async function callModel(call) {
         model: adapter.model,
         input_tokens: usage.input_tokens,
         output_tokens: usage.output_tokens,
-        ms: usage.latency_ms
+        ms: usage.latency_ms,
+        grounding_verified: grounding !== null
       });
       await recordUsage(
         call,
@@ -2074,8 +2569,8 @@ function validateP1PredictionSignals(input) {
 }
 
 // supabase/functions/_shared/conversation-runtime-state.ts
-var CUSTOMER = /* @__PURE__ */ new Set(["visitor", "customer", "user"]);
-var ASSISTANT = /* @__PURE__ */ new Set(["assistant", "ai", "human_agent"]);
+var CUSTOMER2 = /* @__PURE__ */ new Set(["visitor", "customer", "user"]);
+var ASSISTANT2 = /* @__PURE__ */ new Set(["assistant", "ai", "human_agent"]);
 var EXPLICIT_CORRECTION = /(我講錯|我说错|我說錯|我要更正|我想更正|更正一下[：:]?|更正[：:]|其實係|其实是|改返|改成|actually[,\s]+i meant|i meant|correction\s*[:：])/i;
 var CONTRAST_CORRECTION = /(唔係[^，。,.!?！？]{1,80}[，,]\s*係|不是[^，。,.!?！？]{1,80}[，,]\s*(?:而)?是|not .+ but .+)/i;
 function isCorrectionText(text) {
@@ -2084,11 +2579,9 @@ function isCorrectionText(text) {
   return CONTRAST_CORRECTION.test(text);
 }
 var CONSTRAINT = /(不要|唔好|不准|唔准|不要猜|唔好估|沒有型號|没有型号|冇型號|only|don't|do not|without|must not|no model)/i;
-var FOLLOW = /^(?:咁|那|那麼|那么|所以|另外|仲有|还有|如果|再|又|而|同埋|what about|and what about|then|so|also|in that case|how about)/i;
-var PRONOUN = /(這個|这个|那個|那个|它|其|上述|剛才|刚才|之前|頭先|头先|same|that|this|it|its|earlier|previous)/i;
-var MEMORY = /(一開始|一开始|第一個問題|第一个问题|最初|剛才建議|刚才建议|之前建議|之前建议|first question|first thing|what did i ask|what did you suggest|earlier recommendation)/i;
+var MEMORY2 = /(一開始|一开始|第一個問題|第一个问题|最初|剛才建議|刚才建议|之前建議|之前建议|剛才談過|刚才谈过|談過的內容|谈过的内容|總結我們|总结我们|first question|first thing|what did i ask|what did you suggest|earlier recommendation|what information have i already given|what have i already given|what is still missing|我(?:現在|现在|目前).*(?:哪個|哪个|什麼|什么).*(?:地區|地区).*(?:哪個|哪个|什麼|什么).*(?:項目|项目)|what(?:\x27s| is)?\s+(?:the\s+)?(?:current\s+)?(?:region|jurisdiction).*(?:item|product)|summari[sz]e.*(?:conversation|discussed|talked))/i;
 var QUESTION = /[?？]|^(?:什麼|什么|如何|怎樣|怎样|哪|哪些|多久|幾耐|几耐|why|what|which|how|when|where)/i;
-var RECOMMEND = /(建議|建议|需要我提供|請提供|请提供|可以提供|recommend|suggest|provide)/i;
+var RECOMMEND = /(建議|建议|需要我提供|請提供|请提供|可以提供|我需要知道|需要知道|仍然需要|還需要|还需要|需要以下資料|需要以下资料|recommend|suggest|provide|i need to know|we still need|still need|information.*missing)/i;
 var JURISDICTIONS = [
   ["mars", /(mars|火星)/i],
   ["hong_kong", /(香港|hong\s*kong|\bhk\b)/i],
@@ -2097,30 +2590,44 @@ var JURISDICTIONS = [
   ["taiwan", /(台灣|台湾|taiwan)/i],
   ["mainland_china", /(中國大陸|中国大陆|內地|内地|mainland\s*china)/i]
 ];
-function clean(v) {
+function clean2(v) {
   return typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, 800) : "";
 }
 function detectLanguage2(text) {
   if (!/[\u4e00-\u9fff]/.test(text)) return "en";
   return /[转们为这没请台]/.test(text) ? "zh-CN" : "zh-TW";
 }
+function jurisdictionOccurrenceIsNegated(text, index) {
+  const before = text.slice(Math.max(0, index - 30), index);
+  return /(?:不談|不谈|別談|别谈|不要談|不要谈|唔講|唔好講)\s*$/i.test(before) || /(?:forget|ignore|drop)(?:\s+about)?\s*$/i.test(before) || /not\s+(?:talk|discuss)(?:\s+about)?\s*$/i.test(before);
+}
 function detectExplicitJurisdiction(text) {
-  for (const [id, re] of JURISDICTIONS) if (re.test(text)) return id;
-  return null;
+  const t = clean2(text);
+  const candidates = [];
+  for (const [id, re] of JURISDICTIONS) {
+    const match = t.match(re);
+    if (!match || typeof match.index !== "number") continue;
+    if (!jurisdictionOccurrenceIsNegated(t, match.index)) {
+      candidates.push({ id, index: match.index });
+    }
+  }
+  candidates.sort((x, y) => y.index - x.index);
+  return candidates[0]?.id ?? null;
 }
 function normalizeTopic(text) {
-  return clean(text).replace(/[?？!！。,.，]/g, " ").replace(/^(?:咁|那|所以|另外|再|又|what about|then|so)\s*/i, "").trim().slice(0, 180);
+  return clean2(text).replace(/[?？!！。,.，]/g, " ").replace(/^(?:咁|那|所以|另外|再|又|what about|then|so)\s*/i, "").trim().slice(0, 180);
 }
 function projectConversationRuntimeState(newestFirst) {
   const rows = newestFirst.map((row) => ({
-    text: clean(row.content),
+    text: clean2(row.content),
     role: String(row.role ?? "").toLowerCase()
   })).filter((row) => row.text && row.text !== "__THINKING__");
-  const customers = rows.filter((row) => CUSTOMER.has(row.role));
-  const assistants = rows.filter((row) => ASSISTANT.has(row.role));
+  const customers = rows.filter((row) => CUSTOMER2.has(row.role));
+  const assistants = rows.filter((row) => ASSISTANT2.has(row.role));
   const chronological = [...customers].reverse();
   const latest = customers[0]?.text ?? null;
   const first = chronological[0]?.text ?? null;
+  const semantic = latest ? classifyCanonicalConversationTurn(latest, newestFirst) : null;
   const corrections = customers.filter((row) => isCorrectionText(row.text)).slice(0, 6).map((row) => row.text);
   const constraints = customers.filter((row) => CONSTRAINT.test(row.text)).slice(0, 8).map((row) => row.text);
   const unresolved = customers.filter((row) => QUESTION.test(row.text)).slice(0, 8).map((row) => row.text);
@@ -2138,6 +2645,9 @@ function projectConversationRuntimeState(newestFirst) {
     first_intent: first ? normalizeTopic(first) : null,
     latest_customer_turn: latest,
     current_intent: latest,
+    current_operation: semantic?.operation ?? "TRIVIAL",
+    evidence_authority: semantic?.evidence_authority ?? "NONE",
+    prior_grounded_document_id: semantic?.prior_grounded_answer?.document_id ?? null,
     current_topic: currentTopic,
     prior_topics: topics.slice(0, -1).slice(-12),
     active_referents: refs,
@@ -2156,6 +2666,9 @@ function buildCanonicalContinuityBlock(newestFirst) {
     "Canonical conversation state (internal; never quote this block):",
     `First customer turn: ${state.first_customer_turn ?? "\u2014"}`,
     `Current customer turn: ${state.latest_customer_turn}`,
+    `Current operation: ${state.current_operation}`,
+    `Evidence authority: ${state.evidence_authority}`,
+    `Prior grounded document: ${state.prior_grounded_document_id ?? "\u2014"}`,
     `Current topic: ${state.current_topic ?? "\u2014"}`,
     `Jurisdiction: ${state.jurisdiction ?? "unspecified"}`
   ];
@@ -2178,14 +2691,14 @@ function buildCanonicalContinuityBlock(newestFirst) {
   return lines.join("\n").slice(0, 6e3);
 }
 function resolveConversationMemoryResponse(latestInput, newestFirst) {
-  const latest = clean(latestInput);
+  const latest = clean2(latestInput);
   if (!latest) return null;
   if (/(請記住|请记住|please\s+remember|remember\s+that)/i.test(latest)) return null;
   let currentRemoved = false;
   const priorRows = newestFirst.filter((row) => {
     const role = String(row.role ?? "").toLowerCase();
-    const text = clean(row.content);
-    if (!currentRemoved && CUSTOMER.has(role) && text === latest) {
+    const text = clean2(row.content);
+    if (!currentRemoved && CUSTOMER2.has(role) && text === latest) {
       currentRemoved = true;
       return false;
     }
@@ -2197,16 +2710,46 @@ function resolveConversationMemoryResponse(latestInput, newestFirst) {
   const correctionRequest = /(之前|先前|剛才|刚才|earlier|previous).*(更正|改正|correct)|更正後|更正后|what\s+did\s+i\s+correct|latest\s+correction/i.test(latest);
   const constraintRequest = /(限制|約束|约束|不要猜|唔好估|constraint|restriction|what.*(?:told|asked).*(?:not|don.?t))/i.test(latest) && /(記得|记得|總結|总结|告訴|告诉|什麼|什么|what|recall|remember|summari)/i.test(latest);
   const summaryRequest = /(總結|总结|summari[sz]e).*(記得|记得|更正|限制|constraint|correction|remember)/i.test(latest);
-  const recommendationRequest = /(之前|先前|剛才|刚才|earlier|previous).*(建議|建议|recommend|suggest)|what\s+did\s+you\s+(?:recommend|suggest)/i.test(latest);
+  const recommendationRequest = /(之前|先前|剛才|刚才|earlier|previous).*(建議|建议|要我提供|需要.*資料|需要.*资料|recommend|suggest)|what\s+did\s+you\s+(?:recommend|suggest)|what\s+information.*(?:missing|need)/i.test(latest);
+  const providedMissingRequest = /(我已經提供|我已经提供|我提供過|我提供过|已提供.*哪些|還缺|还缺|仍缺|what\s+information\s+have\s+i\s+already\s+given|what\s+have\s+i\s+already\s+given|what.*still\s+missing)/i.test(latest);
+  const generalSummaryRequest = /(最後|最后|請|请)?\s*(?:用.{0,8})?(?:三點|三点|幾點|几点)?\s*(?:總結|总结).*(?:剛才|刚才|我們|我们|談過|谈过|內容|内容)|summari[sz]e.*(?:conversation|discussed|talked|so far)/i.test(latest);
   const nameRequest = /(我叫什麼|我叫什么|我的名字|我個名|我个名|what(?:'s| is)\s+my\s+name|do\s+you\s+remember\s+my\s+name)/i.test(latest);
   const locationRequest = /(我(?:現在|现在|目前).*(?:哪裡|哪里)|我.*(?:在哪|喺邊)|where\s+am\s+i|my\s+(?:current\s+)?location|更正後.*(?:地點|地点)|更正后.*(?:地點|地点))/i.test(latest);
-  if (!(firstRequest || correctionRequest || constraintRequest || summaryRequest || recommendationRequest || nameRequest || locationRequest)) return null;
+  const currentContextRequest = /(我(?:現在|现在|目前).*(?:哪個|哪个|什麼|什么).*(?:地區|地区).*(?:哪個|哪个|什麼|什么).*(?:項目|项目)|what(?:\x27s| is)?\s+(?:the\s+)?(?:current\s+)?(?:region|jurisdiction).*(?:item|product))/i.test(latest);
+  if (!(firstRequest || correctionRequest || constraintRequest || summaryRequest || recommendationRequest || providedMissingRequest || generalSummaryRequest || nameRequest || locationRequest || currentContextRequest)) return null;
   const zh = lang !== "en";
   const q = lang === "zh-CN" ? { first: "\u4F60\u4E00\u5F00\u59CB\u95EE\u7684\u662F", correction: "\u4F60\u4E4B\u524D\u6700\u65B0\u7684\u66F4\u6B63\u662F", constraint: "\u4F60\u4E4B\u524D\u660E\u786E\u63D0\u51FA\u7684\u9650\u5236\u5305\u62EC", recommendation: "\u6211\u4E4B\u524D\u7684\u76F8\u5173\u5EFA\u8BAE\u5305\u62EC", name: "\u4F60\u4E4B\u524D\u544A\u8BC9\u6211\u4F60\u7684\u540D\u5B57\u662F", location: "\u4F60\u4E4B\u524D\u66F4\u6B63\u540E\u7684\u5730\u70B9\u662F", none: "\u8FD9\u6BB5\u5BF9\u8BDD\u91CC\u6CA1\u6709\u8DB3\u591F\u8D44\u6599\u53EF\u4EE5\u786E\u8BA4\u3002" } : { first: "\u4F60\u4E00\u958B\u59CB\u554F\u7684\u662F", correction: "\u4F60\u4E4B\u524D\u6700\u65B0\u7684\u66F4\u6B63\u662F", constraint: "\u4F60\u4E4B\u524D\u660E\u78BA\u63D0\u51FA\u7684\u9650\u5236\u5305\u62EC", recommendation: "\u6211\u4E4B\u524D\u7684\u76F8\u95DC\u5EFA\u8B70\u5305\u62EC", name: "\u4F60\u4E4B\u524D\u544A\u8A34\u6211\u4F60\u7684\u540D\u5B57\u662F", location: "\u4F60\u4E4B\u524D\u66F4\u6B63\u5F8C\u7684\u5730\u9EDE\u662F", none: "\u9019\u6BB5\u5C0D\u8A71\u88E1\u6C92\u6709\u8DB3\u5920\u8CC7\u6599\u53EF\u4EE5\u78BA\u8A8D\u3002" };
   const en = { first: "Your first question was", correction: "Your latest correction was", constraint: "The constraints you explicitly gave me include", recommendation: "My relevant earlier recommendations include", name: "You told me your name is", location: "The location from your latest correction is", none: "There is not enough information in this conversation to confirm that." };
   const t = zh ? q : en;
   const quote = (v) => zh ? `\u300C${v}\u300D` : `\u201C${v}\u201D`;
   const list = (xs) => xs.map((x, i) => `${i + 1}. ${x}`).join("\n");
+  if (providedMissingRequest) {
+    const priorCustomer = priorRows.filter((r) => CUSTOMER2.has(String(r.role ?? "").toLowerCase())).map((r) => clean2(r.content)).filter(Boolean).reverse().slice(-8);
+    const supplied = priorCustomer.filter((x) => !QUESTION.test(x) && !MEMORY2.test(x)).slice(-5);
+    const requested = state.prior_recommendations.slice(0, 4);
+    if (lang === "en") {
+      const parts2 = [];
+      if (supplied.length) parts2.push(`You have already told me:
+${list(supplied)}`);
+      if (requested.length) parts2.push(`The information I previously asked for / that may still be missing:
+${list(requested)}`);
+      return parts2.length ? parts2.join("\n\n").slice(0, 1800) : en.none;
+    }
+    const parts = [];
+    if (supplied.length) parts.push(`\u4F60\u5DF2\u7D93\u63D0\u4F9B\uFF1A
+${list(supplied)}`);
+    if (requested.length) parts.push(`\u6211\u4E4B\u524D\u8981\u6C42\uFF0F\u4ECD\u53EF\u80FD\u6B20\u7F3A\u7684\u8CC7\u6599\uFF1A
+${list(requested)}`);
+    return parts.length ? parts.join("\n\n").slice(0, 1800) : q.none;
+  }
+  if (generalSummaryRequest) {
+    const chronological = priorRows.filter((r) => CUSTOMER2.has(String(r.role ?? "").toLowerCase())).map((r) => clean2(r.content)).filter(Boolean).reverse();
+    const anchors = [state.first_customer_turn, ...chronological.slice(-6)].filter((x) => Boolean(x)).filter((x, i, a) => a.indexOf(x) === i).slice(0, 7);
+    if (!anchors.length) return zh ? q.none : en.none;
+    const heading = lang === "en" ? "Here is a concise summary of what we discussed:" : "\u6211\u5011\u525B\u624D\u4E3B\u8981\u8AC7\u5230\uFF1A";
+    return `${heading}
+${list(anchors.slice(0, 3))}`.slice(0, 1800);
+  }
   if (summaryRequest) {
     const parts = [];
     if (state.latest_corrections.length) parts.push(`${t.correction}\uFF1A
@@ -2222,10 +2765,28 @@ ${list(state.active_constraints.slice(0, 5))}` : t.none;
   if (recommendationRequest) return state.prior_recommendations.length ? `${t.recommendation}\uFF1A
 ${list(state.prior_recommendations.slice(0, 3))}` : t.none;
   if (nameRequest) {
-    const customerTexts = priorRows.filter((r) => CUSTOMER.has(String(r.role ?? "").toLowerCase())).map((r) => clean(r.content));
+    const customerTexts = priorRows.filter((r) => CUSTOMER2.has(String(r.role ?? "").toLowerCase())).map((r) => clean2(r.content));
     const named = customerTexts.find((x) => /^我叫\s*[^，。,.!?！？]{1,40}/.test(x));
     const m = named?.match(/^我叫\s*([^，。,.!?！？]{1,40})/);
     return m?.[1] ? `${t.name} ${quote(m[1].replace(/(?:請|请)?記住.*$/, "").trim())}` : t.none;
+  }
+  if (currentContextRequest) {
+    const label = {
+      hong_kong: { "zh-TW": "\u9999\u6E2F", "zh-CN": "\u9999\u6E2F", en: "Hong Kong" },
+      macau: { "zh-TW": "\u6FB3\u9580", "zh-CN": "\u6FB3\u95E8", en: "Macau" },
+      singapore: { "zh-TW": "\u65B0\u52A0\u5761", "zh-CN": "\u65B0\u52A0\u5761", en: "Singapore" },
+      taiwan: { "zh-TW": "\u53F0\u7063", "zh-CN": "\u53F0\u6E7E", en: "Taiwan" },
+      mainland_china: { "zh-TW": "\u4E2D\u570B\u5927\u9678", "zh-CN": "\u4E2D\u56FD\u5927\u9646", en: "Mainland China" },
+      mars: { "zh-TW": "\u706B\u661F", "zh-CN": "\u706B\u661F", en: "Mars" }
+    };
+    const region = state.jurisdiction ? label[state.jurisdiction]?.[lang] : void 0;
+    const correction = state.latest_corrections[0] ?? "";
+    const itemMatch = correction.match(/(?:問的是|問嘅係|问的是|其實係|其实是|改成)\s*([^，。,.!?！？]{1,40})/i);
+    const item = itemMatch?.[1]?.trim() ?? "";
+    if (!region || !item) return t.none;
+    if (lang === "en") return `Your current region is ${region}, and the current item is ${item}.`;
+    if (lang === "zh-CN") return `\u4F60\u73B0\u5728\u95EE\u7684\u662F${region}\u7684${item}\u3002`;
+    return `\u4F60\u73FE\u5728\u554F\u7684\u662F${region}\u7684${item}\u3002`;
   }
   if (locationRequest) {
     const corrected = state.latest_corrections.map((x) => detectExplicitJurisdiction(x)).find(Boolean) ?? null;
@@ -2243,10 +2804,11 @@ ${list(state.prior_recommendations.slice(0, 3))}` : t.none;
   return null;
 }
 function buildCanonicalRetrievalQuery(latestInput, newestFirst) {
-  const latest = clean(latestInput);
+  const latest = clean2(latestInput);
   const state = projectConversationRuntimeState(newestFirst);
+  const semantic = classifyCanonicalConversationTurn(latest, newestFirst);
   if (!latest) return { query: "", mode: "standalone", latest: "", context_turns: [], state };
-  if (MEMORY.test(latest)) {
+  if (semantic.operation === "CONVERSATION_MEMORY") {
     const parts = [`Conversation-memory request: ${latest}`];
     if (state.first_customer_turn) parts.push(`First customer turn: ${state.first_customer_turn}`);
     if (state.prior_recommendations.length) {
@@ -2255,9 +2817,10 @@ function buildCanonicalRetrievalQuery(latestInput, newestFirst) {
     return { query: parts.join("\n").slice(0, 1200), mode: "memory", latest, context_turns: [], state };
   }
   const explicitJurisdiction = detectExplicitJurisdiction(latest);
-  const previous = newestFirst.filter((row) => CUSTOMER.has(String(row.role ?? "").toLowerCase())).map((row) => clean(row.content)).filter((x) => x && x !== latest && x !== "__THINKING__");
-  const needsContext = FOLLOW.test(latest) || PRONOUN.test(latest) || latest.length <= 28 && QUESTION.test(latest) || isCorrectionText(latest);
-  if (!needsContext || explicitJurisdiction) {
+  const previous = newestFirst.filter((row) => CUSTOMER2.has(String(row.role ?? "").toLowerCase())).map((row) => clean2(row.content)).filter((x) => x && x !== latest && x !== "__THINKING__");
+  const needsContext = semantic.needs_history;
+  const explicitBoundary = Boolean(explicitJurisdiction) && semantic.operation !== "RETURN_TO_PRIOR_TOPIC" && semantic.operation !== "CORRECTION";
+  if (!needsContext || explicitBoundary) {
     return {
       query: latest,
       mode: "standalone",
@@ -2266,7 +2829,10 @@ function buildCanonicalRetrievalQuery(latestInput, newestFirst) {
       state: { ...state, jurisdiction: explicitJurisdiction ?? state.jurisdiction }
     };
   }
-  const contextTurns = previous.filter((x) => !MEMORY.test(x)).slice(0, 5);
+  const contextTurns = previous.filter((x) => !MEMORY2.test(x) && !/^(不要猜|唔好估|不要估|do not guess|don.t guess|不要真人|不需要真人)/i.test(x)).slice(0, 5);
+  if (state.first_customer_turn && !contextTurns.includes(state.first_customer_turn) && /(回收|政策|規則|规则|安排|official|policy|recycling)/i.test(latest)) {
+    contextTurns.push(state.first_customer_turn);
+  }
   if (!contextTurns.length) return { query: latest, mode: "standalone", latest, context_turns: [], state };
   return {
     query: [
@@ -2404,6 +2970,240 @@ function selectCanonicalGrounding(documents, options = {}) {
   };
 }
 
+// supabase/functions/_shared/citation-lineage.ts
+function buildCitationMetadata(chunks, selectedDocumentId) {
+  const selected = (selectedDocumentId ?? "").trim();
+  if (!selected) return null;
+  const citations = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const chunk of chunks) {
+    if (citations.length >= 3) break;
+    if (chunk.chunk_type !== "full_content") continue;
+    if (!chunk.content?.trim()) continue;
+    if (!Number.isFinite(chunk.score)) continue;
+    if (chunk.document_id !== selected) return null;
+    const chunkId = typeof chunk.chunk_id === "string" && chunk.chunk_id.trim() ? chunk.chunk_id.trim() : void 0;
+    const dedupeKey = chunkId ? `${selected}:${chunkId}` : `${selected}:${chunk.content}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+    const rawLabel = typeof chunk.title === "string" ? chunk.title.trim().slice(0, 120) : "";
+    const rawSourceType = typeof chunk.source_type === "string" ? chunk.source_type.trim().slice(0, 40) : "";
+    const relevance = chunk.score >= 0.85 ? "high" : "medium";
+    citations.push({
+      label: rawLabel || "Knowledge Base source",
+      source_type: rawSourceType || "unknown",
+      relevance,
+      document_id: selected,
+      ...chunkId ? { chunk_id: chunkId } : {},
+      chunk_type: "full_content"
+    });
+  }
+  if (citations.length === 0) return null;
+  return {
+    citations,
+    citation_lineage: {
+      selected_document_id: selected,
+      evidence_chunk_ids: citations.flatMap((citation) => citation.chunk_id ? [citation.chunk_id] : []),
+      evidence_count: citations.length
+    }
+  };
+}
+
+// supabase/functions/_shared/prior-grounded-transform.ts
+var TRANSFORMS = /* @__PURE__ */ new Set([
+  "SIMPLIFY",
+  "REPHRASE",
+  "TRANSLATE",
+  "SUMMARIZE"
+]);
+var COMPOSITE_TRANSFORM_RULES = [
+  ["TRANSLATE", /(?:用|改用)(?:廣東話|广东话|繁體中文|繁体中文|簡體中文|简体中文|英文)|\b(?:in|into)\s+(?:english|chinese|cantonese|traditional chinese|simplified chinese)\b|translate(?: that| it)?/i],
+  ["SUMMARIZE", /(?:總結|总结|概括|歸納|归纳)|summari[sz]e/i],
+  ["SIMPLIFY", /(?:簡單|简单)(?:一點|一点|啲|些|點|点)?|\b(?:simpler|shorter)\b|explain(?: it| that)? (?:more )?simply/i],
+  ["REPHRASE", /(?:換句話|换句话|另一種講法|另一种说法|改寫|改写|重新講|重新说|rephrase|rewrite|say that another way|word it differently)/i]
+];
+var CHINESE_COUNT = {
+  \u4E00: 1,
+  \u4E8C: 2,
+  \u5169: 2,
+  \u4E24: 2,
+  \u4E09: 3,
+  \u56DB: 4,
+  \u4E94: 5,
+  \u516D: 6,
+  \u4E03: 7,
+  \u516B: 8,
+  \u4E5D: 9,
+  \u5341: 10
+};
+function record(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+function clean3(value, max = 4e3) {
+  return typeof value === "string" ? value.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max) : "";
+}
+function detectRequestedTransformOperations(latest, primary) {
+  const requested = COMPOSITE_TRANSFORM_RULES.filter(([, pattern]) => pattern.test(latest)).map(([operation]) => operation);
+  if (!requested.includes(primary)) requested.unshift(primary);
+  return [...new Set(requested)];
+}
+function detectRequestedSummaryCount(latest) {
+  const normalized = latest.normalize("NFKC");
+  const chinese = normalized.match(/(?:用|以|分成|分為|分为)?\s*([一二兩两三四五六七八九十]|\d{1,2})\s*(?:點|点|項|项|條|条|個|个)(?:重點|重点)?\s*(?:來|来)?\s*(?:總結|总结|概括|歸納|归纳)?/i);
+  const english = normalized.match(/(?:in|using|with)?\s*(\d{1,2})\s*(?:points?|bullets?|items?)\b/i);
+  const raw = chinese?.[1] ?? english?.[1] ?? "";
+  if (!raw) return null;
+  const parsed = /^\d+$/.test(raw) ? Number(raw) : CHINESE_COUNT[raw];
+  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 10 ? parsed : null;
+}
+function resolvedOperations(context) {
+  const operations = context.operations?.filter((op) => TRANSFORMS.has(op)) ?? [];
+  return operations.length > 0 ? [...new Set(operations)] : [context.operation];
+}
+function fixedCountContract(context) {
+  const count = context.requested_summary_count;
+  if (!count || !resolvedOperations(context).includes("SUMMARIZE")) return [];
+  return [
+    `- Requested summary count: ${count} points/bullets. This is a formatting target, NEVER permission to create or infer facts.`,
+    `- Return AT MOST ${count} supported points. Use exactly ${count} only when the Prior Grounded Answer already contains ${count} distinct factual points.`,
+    "- If the Prior Grounded Answer contains fewer supported points, return fewer points. Grounding has higher priority than satisfying the requested count.",
+    "- Never split one factual claim into artificial variants, repeat the same claim, or add filler merely to reach the requested count.",
+    "- For fixed-count summaries, prefer verbatim or near-verbatim clauses from the Prior Grounded Answer. Do not add generic advice, caveats, recommendations, or meta statements as extra points."
+  ];
+}
+function resolvePriorGroundedTransform(latest, newestFirst) {
+  const semantic = classifyCanonicalConversationTurn(latest, newestFirst);
+  if (semantic.evidence_authority !== "PRIOR_GROUNDED_ANSWER" || !semantic.prior_grounded_answer || !TRANSFORMS.has(semantic.operation)) return null;
+  const anchor = semantic.prior_grounded_answer;
+  if (!anchor.source_message_id) return null;
+  const sourceChunks = [...new Set(anchor.chunk_ids.filter(Boolean))];
+  if (!anchor.document_id || sourceChunks.length === 0) return null;
+  for (const row of newestFirst) {
+    const role = String(row.role ?? "").toLowerCase();
+    const content = clean3(row.content);
+    if (role !== "assistant" && role !== "ai" || content !== clean3(anchor.content)) continue;
+    const meta = record(row.metadata);
+    const lineage = record(meta?.citation_lineage);
+    const selected = clean3(lineage?.selected_document_id, 200);
+    const lineageIds = Array.isArray(lineage?.evidence_chunk_ids) ? [...new Set(lineage.evidence_chunk_ids.filter((x) => typeof x === "string" && x.trim().length > 0).map((x) => x.trim()))] : [];
+    const sourceMessageId = clean3(meta?.source_message_id, 200);
+    if (selected !== anchor.document_id || sourceMessageId !== anchor.source_message_id || lineageIds.length !== sourceChunks.length || lineageIds.some((id) => !sourceChunks.includes(id))) return null;
+    if (!Array.isArray(meta?.citations) || meta.citations.length === 0) return null;
+    const citations = [];
+    for (const item of meta.citations.slice(0, 3)) {
+      const c = record(item);
+      if (!c) return null;
+      const documentId = clean3(c.document_id, 200);
+      const chunkId = clean3(c.chunk_id, 200);
+      const chunkType = clean3(c.chunk_type, 40);
+      const label = clean3(c.label, 300) || "Knowledge Base source";
+      const sourceType = clean3(c.source_type, 80) || "unknown";
+      const relevance = c.relevance === "high" ? "high" : c.relevance === "medium" ? "medium" : null;
+      if (documentId !== selected || chunkType !== "full_content" || !relevance || chunkId && !lineageIds.includes(chunkId)) return null;
+      citations.push({
+        label,
+        source_type: sourceType,
+        relevance,
+        document_id: documentId,
+        ...chunkId ? { chunk_id: chunkId } : {},
+        chunk_type: "full_content"
+      });
+    }
+    if (citations.length === 0) return null;
+    const operation = semantic.operation;
+    const operations = detectRequestedTransformOperations(latest, operation);
+    const requestedSummaryCount = operations.includes("SUMMARIZE") ? detectRequestedSummaryCount(latest) : null;
+    return {
+      operation,
+      operations,
+      prior_answer: anchor.content,
+      selected_document_id: selected,
+      evidence_chunk_ids: lineageIds,
+      prior_source_message_id: sourceMessageId,
+      ...requestedSummaryCount ? { requested_summary_count: requestedSummaryCount } : {},
+      citations
+    };
+  }
+  return null;
+}
+function buildPriorGroundedTransformGenerationSystem(context) {
+  if (!context) return "";
+  const operations = resolvedOperations(context);
+  return [
+    "You are a customer-service response transformer, not a factual answering system.",
+    "The previously verified grounded answer below is the ONLY factual authority for this turn.",
+    `Required transformation operations: ${operations.join(" + ")}.`,
+    operations.length > 1 ? "This is one composite transformation. Apply ALL listed operations to the same prior grounded answer in a single response." : "Apply the listed transformation to the same prior grounded answer.",
+    "Transform that answer exactly as requested by the latest customer instruction, except that factual grounding always overrides formatting/count requests.",
+    "Do not use facts from conversation history, CRM/customer context, general knowledge, policies, titles, or any other prompt section.",
+    "Do not add examples, explanations, caveats, eligibility conditions, jurisdictions, procedures, prices, dates, durations, quantities, model details, or recommendations unless they already appear in the prior grounded answer.",
+    "Do not say that you checked, searched, know, recommend, infer, or verified anything beyond that prior answer.",
+    "Return only the transformed customer-facing answer. No preface, no meta-commentary, no source discussion.",
+    ...fixedCountContract(context),
+    buildPriorGroundedTransformBlock(context)
+  ].join("\n\n");
+}
+function buildPriorGroundedTransformGenerationUser(latestInstruction) {
+  return [
+    "Latest transformation instruction:",
+    latestInstruction.normalize("NFKC").trim().slice(0, 1e3),
+    "",
+    "Perform every transformation explicitly requested in this instruction, using only the prior grounded answer as factual authority. Do not answer any other question or add any new factual content. If a requested summary count exceeds the number of distinct supported points, return fewer points rather than inventing filler."
+  ].join("\n");
+}
+function buildPriorGroundedTransformRetrySystem(context) {
+  const base = buildPriorGroundedTransformGenerationSystem(context);
+  if (!base) return "";
+  return [
+    base,
+    "STRICT RETRY: The previous transformed draft was rejected by the grounding verifier.",
+    "Use shorter wording and copy factual nouns, numbers, product categories, jurisdictions, and conditions directly from the prior grounded answer whenever possible.",
+    "For a composite transformation, preserve every requested operation while reducing wording; do not drop the requested target language or summary operation.",
+    "A fixed summary count is a soft formatting target only. If satisfying it would require splitting, repeating, padding, or adding a claim, return fewer supported points.",
+    "Do not introduce even plausible explanatory facts that are absent from the prior grounded answer."
+  ].join("\n\n");
+}
+function buildPriorGroundedTransformBlock(context) {
+  if (!context) return "";
+  const operations = resolvedOperations(context);
+  return [
+    "Prior Grounded Answer transform rules:",
+    `- Operation: ${context.operation}`,
+    `- Operations: ${operations.join(" + ")}`,
+    "- This is a transformation of the previously verified grounded answer, not a new factual query.",
+    "- Transform ONLY the Prior Grounded Answer Evidence below.",
+    "- Preserve factual meaning. Do not add, update, correct, infer, or replace facts from outside knowledge or other conversation text.",
+    "- Simplification/rephrasing may change wording; translation may change language; summarization may omit detail, but none may introduce a new factual claim.",
+    "- If multiple operations are listed, apply them together to this same evidence authority.",
+    ...fixedCountContract(context),
+    "- If the requested transformation cannot be completed without adding facts, preserve the grounded facts and relax only the formatting/count requirement; never invent information.",
+    "Prior Grounded Answer Evidence:",
+    "[chunk:PRIOR1]",
+    context.prior_answer.slice(0, 3e3)
+  ].join("\n");
+}
+function buildInheritedTransformCitationMetadata(context) {
+  if (!context) return null;
+  const operations = resolvedOperations(context);
+  return {
+    citations: context.citations.map((citation) => ({ ...citation })),
+    citation_lineage: {
+      selected_document_id: context.selected_document_id,
+      evidence_chunk_ids: [...context.evidence_chunk_ids],
+      evidence_count: context.evidence_chunk_ids.length
+    },
+    transform_lineage: {
+      operation: context.operation,
+      operations,
+      composite: operations.length > 1,
+      authority: "PRIOR_GROUNDED_ANSWER",
+      prior_source_message_id: context.prior_source_message_id,
+      ...context.requested_summary_count ? { requested_summary_count: context.requested_summary_count } : {}
+    },
+    response_route: "prior_grounded_transform"
+  };
+}
+
 // supabase/functions/_shared/runtime-signal-lifecycle.ts
 var STRONG_ANGER = /(嬲|憤怒|愤怒|火大|離譜|离谱|垃圾|廢物|废物|荒謬|荒谬|angry|furious|irate|rage|ridiculous|unacceptable|bullshit)/i;
 var NEGATIVE = /(失望|不滿|不满|很差|太差|煩|烦|frustrated|annoyed|upset|disappointed|terrible|awful)/i;
@@ -2435,7 +3235,19 @@ function buildRealtimeR3SentimentSignals(text, historical) {
 }
 
 // supabase/functions/generate-reply/index.ts
-import { createClient as createClient3 } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient as createClient3 } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+function requiredEscalationRpcClient(client) {
+  return {
+    rpc: async (fn, args) => {
+      const { data, error } = await client.rpc(fn, args);
+      const payload = data == null ? null : typeof data === "object" && !Array.isArray(data) ? data : { result: data };
+      return {
+        data: payload,
+        error: error ? { message: String(error.message ?? "rpc_error") } : null
+      };
+    }
+  };
+}
 var corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type"
@@ -2983,9 +3795,9 @@ function isSameIntentRepeat(rawA, rawB) {
 function isClarificationAssistantRow(row) {
   const metadata = row.metadata;
   if (typeof metadata !== "object" || metadata === null) return false;
-  const record = metadata;
-  if (record["escalation_action"] !== "clarification") return false;
-  return record["escalation_rule"] === "R2" || record["response_route"] === KB_NO_MATCH_CLARIFICATION_ROUTE;
+  const record2 = metadata;
+  if (record2["escalation_action"] !== "clarification") return false;
+  return record2["escalation_rule"] === "R2" || record2["response_route"] === KB_NO_MATCH_CLARIFICATION_ROUTE;
 }
 function deriveConversationHistorySignals(newestFirstMessages, exactVisitorTurnCount) {
   const usable = newestFirstMessages.filter(
@@ -3181,7 +3993,7 @@ async function evaluateAndPersistRequiredRulesLive(supabaseAdmin, params) {
   });
   if (decision2.decision === "clarify" && decision2.matched_rule === "R2" && enabled.has("R2")) {
     const clarification = R2_CLARIFICATION_SAFE_WORDING[params.visitor_language];
-    const persisted2 = await persistRequiredEscalationClarification(supabaseAdmin, {
+    const persisted2 = await persistRequiredEscalationClarification(requiredEscalationRpcClient(supabaseAdmin), {
       conversation_id: params.conversation_id,
       source_message_id: params.source_message_id,
       decision: decision2,
@@ -3242,7 +4054,7 @@ async function evaluateAndPersistRequiredRulesLive(supabaseAdmin, params) {
   }
   if (decision2.matched_rule !== "E2" && decision2.matched_rule !== "E1" && decision2.matched_rule !== "R2") return null;
   const safeReply = REQUIRED_ESCALATION_SAFE_WORDING[decision2.matched_rule][params.visitor_language];
-  const persisted = await persistRequiredEscalationHandoff(supabaseAdmin, {
+  const persisted = await persistRequiredEscalationHandoff(requiredEscalationRpcClient(supabaseAdmin), {
     conversation_id: params.conversation_id,
     source_message_id: params.source_message_id,
     decision: decision2,
@@ -3355,7 +4167,7 @@ async function legacyGenerateReply(conversation_id, source_message_id) {
   const { data: newestMessages } = await supabaseAdmin.from("messages").select("id, role, content, created_at").eq("conversation_id", conversation_id).neq("content", "__THINKING__").eq("is_recalled", false).or(sourceBoundaryFilter(sourceVisitorMessage)).order("created_at", { ascending: false }).order("id", { ascending: false }).limit(10);
   if (!newestMessages || newestMessages.length === 0) return new Response(JSON.stringify({ success: true, skipped: "no messages" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   const messages = [...newestMessages].reverse();
-  const modelMessages = messages.map((m) => ({ role: m.role === "visitor" ? "user" : "assistant", content: m.content }));
+  const modelMessages = messages.map((m) => ({ role: m.role === "visitor" ? "user" : "assistant", content: String(m.content ?? "") }));
   if (modelMessages[modelMessages.length - 1].role === "assistant") return new Response(JSON.stringify({ success: true, skipped: "last message is assistant" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   const lastVisitorMsg = sourceVisitorMessage.content;
   const handoffLang = detectHandoffLanguage(lastVisitorMsg);
@@ -3473,16 +4285,25 @@ ${CUSTOMER_CONVERSATION_POLICY}`;
 }
 function extractExplicitJurisdictionConstraint(text) {
   const t = text.normalize("NFKC").trim();
-  const patterns = [
-    /(?:^|[\s，,。])([A-Z][A-Za-z]{2,30})(?:\s*(?:的|嘅)|\s+).*?(?:規則|规则|政策|回收|費|费|rule|policy|recycling|fee)/i,
-    /(?:^|[\s，,。])([\u4e00-\u9fff]{2,10})(?:的|嘅).*?(?:規則|规则|政策|回收|費|费)/
+  const jurisdictions2 = [
+    { label: "Mars", re: /(mars|火星)/ig },
+    { label: "\u9999\u6E2F", re: /(香港|hong\s*kong|\bhk\b)/ig },
+    { label: "\u6FB3\u9580", re: /(澳門|澳门|macau|macao)/ig },
+    { label: "\u65B0\u52A0\u5761", re: /(新加坡|singapore)/ig },
+    { label: "\u53F0\u7063", re: /(台灣|台湾|taiwan)/ig },
+    { label: "\u4E2D\u570B\u5927\u9678", re: /(中國大陸|中国大陆|內地|内地|mainland\s*china)/ig }
   ];
-  for (const pattern of patterns) {
-    const match = t.match(pattern);
-    const value = match?.[1]?.trim();
-    if (value) return value;
+  const negatedMars = /(不談|不谈|唔講|唔讲|不要談|不要谈|not\s+(?:talking\s+about|about)|forget\s+about)\s*(mars|火星)/i.test(t);
+  let best = null;
+  for (const item of jurisdictions2) {
+    item.re.lastIndex = 0;
+    for (const match of t.matchAll(item.re)) {
+      if (item.label === "Mars" && negatedMars) continue;
+      const index = match.index ?? -1;
+      if (!best || index > best.index) best = { label: item.label, index };
+    }
   }
-  return null;
+  return best?.label ?? null;
 }
 function evidenceSupportsJurisdiction(jurisdiction, chunks) {
   if (!jurisdiction) return true;
@@ -3491,23 +4312,6 @@ function evidenceSupportsJurisdiction(jurisdiction, chunks) {
     (chunk) => `${chunk.title ?? ""}
 ${chunk.content ?? ""}`.toLocaleLowerCase().includes(needle)
   );
-}
-function buildCitationMetadata(chunks) {
-  const seen = /* @__PURE__ */ new Set();
-  const citations = [];
-  for (const c of chunks) {
-    if (citations.length >= 3) break;
-    const label = (typeof c.title === "string" ? c.title : "").trim().slice(0, 120);
-    if (!label) continue;
-    const dedupeKey = label.toLowerCase();
-    if (seen.has(dedupeKey)) continue;
-    seen.add(dedupeKey);
-    const rawSt = typeof c.source_type === "string" ? c.source_type.trim().slice(0, 40) : "";
-    const source_type = rawSt || "unknown";
-    const relevance = typeof c.score === "number" ? c.score >= 0.85 ? "high" : "medium" : void 0;
-    citations.push({ label, source_type, ...relevance ? { relevance } : {} });
-  }
-  return citations.length > 0 ? { citations } : null;
 }
 var KB_FALLBACK_SAFE_TEXT = {
   KB_SCOPE_GATE: { "zh-TW": "\u5F88\u62B1\u6B49\uFF0C\u7CFB\u7D71\u66AB\u6642\u7121\u6CD5\u67E5\u8A62\u77E5\u8B58\u5EAB\u3002\u8B93\u6211\u70BA\u60A8\u8F49\u63A5\u5BA2\u670D\u4EBA\u54E1\u3002", "zh-CN": "\u5F88\u62B1\u6B49\uFF0C\u7CFB\u7EDF\u6682\u65F6\u65E0\u6CD5\u67E5\u8BE2\u77E5\u8BC6\u5E93\u3002\u8BA9\u6211\u4E3A\u60A8\u8F6C\u63A5\u5BA2\u670D\u4EBA\u5458\u3002", en: "Sorry, the knowledge base is temporarily unavailable. Let me connect you with a human agent." },
@@ -3723,8 +4527,50 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
     _pr5HistoryRows ?? [],
     _pr5VisitorTurnCount ?? 0
   );
+  const _priorGroundedTransform = resolvePriorGroundedTransform(
+    _h1LastMsg,
+    _pr5HistoryRows ?? []
+  );
   const _conversationContinuityBlock = buildCanonicalContinuityBlock(_pr5HistoryRows ?? []);
   const _visitorLang = detectVisitorLanguage(_h1LastMsg);
+  const _canonicalTurn = classifyCanonicalConversationTurn(
+    _h1LastMsg,
+    _pr5HistoryRows ?? [],
+    { explicit_handoff: isHandoffIntent(_h1LastMsg) }
+  );
+  if (_canonicalTurn.operation === "CUSTOMER_CONTEXT_UPDATE") {
+    const acknowledgement = _canonicalTurn.reason === "customer_context_requirements_request" ? buildCustomerContextRequirementsResponse(_canonicalTurn.language, _pr5HistoryRows ?? []) : buildCustomerContextAcknowledgement(_canonicalTurn.language);
+    const contextCommit = await commitAiReplyWithControlGate(
+      supabaseAdmin,
+      conversation_id,
+      source_message_id,
+      acknowledgement,
+      {
+        response_route: "customer_context_update",
+        escalation_action: "continue_ai",
+        handoff_required: false,
+        reason_code: _canonicalTurn.reason
+      }
+    );
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+    if (contextCommit.ok) {
+      return new Response(JSON.stringify({
+        success: true,
+        reply: acknowledgement,
+        response_route: "customer_context_update",
+        handoff_required: false
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+    if (["human_control", "resolved", "superseded_source"].includes(contextCommit.result)) {
+      return new Response(JSON.stringify({ success: true, skipped: contextCommit.result }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    return new Response(JSON.stringify({ success: false, error: `context_update_commit_${contextCommit.result}` }), {
+      status: 409,
+      headers: { ...corsHeaders, "Content-Type": "application/json" }
+    });
+  }
   const _turnClassification = classifyConversationTurn(_h1LastMsg);
   if (_turnClassification.should_clarify_before_kb && !isHandoffIntent(_h1LastMsg)) {
     const clarification = NATURAL_CLARIFICATION[_visitorLang];
@@ -3848,12 +4694,12 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
     }
     return new Response(JSON.stringify({ success: true, response_route: "conversation_memory", conversation_grounded: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
-  const _g1SkipKB = _pr5GreetingOrTrivial;
+  const _g1SkipKB = _pr5GreetingOrTrivial || Boolean(_priorGroundedTransform);
   let _pr5RagMatchState;
   const _escEnableS0 = Deno.env.get("ESC_ENABLE_S0") !== "false";
   let basePrompt = MINIMAL_SAFE_FALLBACK_PROMPT;
   let coachTrace = { source: "minimal_fallback" };
-  if (flags.ENABLE_COACH) {
+  if (flags.ENABLE_COACH && !_priorGroundedTransform) {
     const promptResult = await callCoachPromptAdapter(conversation_id);
     if (!promptResult.success || !promptResult.content) {
       console.error("[generate-reply] COACH_PROMPT_REQUIRED_UNAVAILABLE", {
@@ -3966,7 +4812,7 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
           threat_flag: _pr5ThreatSignal?.value === true,
           compliance_requires_human_review: _pr5ComplianceSignal?.value === true,
           clarification_attempts: _pr5History.clarification_attempts,
-          exact_same_intent_repeated: _pr5History.exact_same_intent_repeated
+          exact_same_intent_repeated: _pr5History.exact_same_intent_repeated === true
         },
         { rag_api_status: "success_empty" }
       );
@@ -4032,7 +4878,7 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
           threat_flag: _pr5ThreatSignal?.value === true,
           compliance_requires_human_review: _pr5ComplianceSignal?.value === true,
           clarification_attempts: _pr5History.clarification_attempts,
-          exact_same_intent_repeated: _pr5History.exact_same_intent_repeated
+          exact_same_intent_repeated: _pr5History.exact_same_intent_repeated === true
         },
         traceMetadata
       );
@@ -4085,7 +4931,7 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
           threat_flag: _pr5ThreatSignal?.value === true,
           compliance_requires_human_review: _pr5ComplianceSignal?.value === true,
           clarification_attempts: _pr5History.clarification_attempts,
-          exact_same_intent_repeated: _pr5History.exact_same_intent_repeated
+          exact_same_intent_repeated: _pr5History.exact_same_intent_repeated === true
         },
         { ...traceMetadata, answerability: "missing_full_content_evidence" }
       );
@@ -4116,7 +4962,7 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
         source_type: c.source_type ?? "unknown"
       }))
     } : void 0;
-    finalPromptChunks = usableChunks;
+    finalPromptChunks = usableFullContent;
     _kbDone = true;
   }
   if (!flags.ENABLE_KB || _g1SkipKB) _kbDone = true;
@@ -4244,7 +5090,7 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
     churn_risk: customerContext?.churn_risk,
     escalation_score: customerContext?.escalation_score
   });
-  const finalSystemPrompt = [
+  const finalSystemPrompt = _priorGroundedTransform ? buildPriorGroundedTransformGenerationSystem(_priorGroundedTransform) : [
     basePrompt,
     CUSTOMER_CONVERSATION_POLICY,
     _conversationContinuityBlock,
@@ -4258,7 +5104,7 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
     return new Response(JSON.stringify({ success: true, skipped: "no messages" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
   const messages = [...newestMessages].reverse();
-  const modelMessages = messages.map((m) => ({ role: m.role === "visitor" ? "user" : "assistant", content: m.content }));
+  const modelMessages = messages.map((m) => ({ role: m.role === "visitor" ? "user" : "assistant", content: String(m.content ?? "") }));
   if (modelMessages[modelMessages.length - 1].role === "assistant") {
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return new Response(JSON.stringify({ success: true, skipped: "last message is assistant" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -4269,17 +5115,32 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
       { conversation_id }
     );
   }
-  const llm = await callModel({
+  const _generationCompanyId = typeof conversation.company_id === "string" && conversation.company_id.length > 0 ? conversation.company_id : null;
+  const _generationUserInput = _priorGroundedTransform ? buildPriorGroundedTransformGenerationUser(_h1LastMsg) : buildRouterConversationInput(modelMessages);
+  let llm = await callModel({
     purpose: "generation",
     system: finalSystemPrompt,
-    user: buildRouterConversationInput(modelMessages),
+    user: _generationUserInput,
     maxTokens: resolveGenerationMaxTokens(),
     operationId: `generate-reply:orchestration:${conversation_id}:${source_message_id}`,
-    companyId: typeof conversation.company_id === "string" && conversation.company_id.length > 0 ? conversation.company_id : null,
+    companyId: _generationCompanyId,
     conversationId: conversation_id,
     tag: "generate-reply-orchestration",
     responseFormat: "text"
   });
+  if (_priorGroundedTransform && !llm.ok && llm.code === "LLM_INVALID_OUTPUT") {
+    llm = await callModel({
+      purpose: "generation",
+      system: buildPriorGroundedTransformRetrySystem(_priorGroundedTransform),
+      user: _generationUserInput,
+      maxTokens: resolveGenerationMaxTokens(),
+      operationId: `generate-reply:orchestration:${conversation_id}:${source_message_id}:transform-retry`,
+      companyId: _generationCompanyId,
+      conversationId: conversation_id,
+      tag: "generate-reply-orchestration-transform-retry",
+      responseFormat: "text"
+    });
+  }
   if (!llm.ok) {
     if (_escEnableS0) {
       return await handleS0Handoff(
@@ -4297,7 +5158,24 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
     );
   }
   const aiReplyContent = llm.text;
-  const citationMeta = finalPromptChunks.length > 0 ? buildCitationMetadata(finalPromptChunks) : null;
+  const citationMeta = _priorGroundedTransform ? buildInheritedTransformCitationMetadata(_priorGroundedTransform) : finalPromptChunks.length > 0 ? buildCitationMetadata(
+    finalPromptChunks,
+    ragResult?.llm_context?.selected_document_id ?? null
+  ) : null;
+  if (_priorGroundedTransform && !citationMeta) {
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+    return new Response(
+      JSON.stringify({ success: false, error: "prior_grounded_transform_lineage_unavailable" }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+  if (flags.ENABLE_KB && !_g1SkipKB && finalPromptChunks.length > 0 && !citationMeta) {
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+    return new Response(
+      JSON.stringify({ success: false, error: "citation_lineage_unavailable" }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
   const committed = await commitAiReplyWithControlGate(
     supabaseAdmin,
     conversation_id,
