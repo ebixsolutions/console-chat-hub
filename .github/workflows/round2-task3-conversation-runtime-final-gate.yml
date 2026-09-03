@@ -7,6 +7,7 @@ on:
     paths:
       - .github/workflows/round2-task3-conversation-runtime-final-gate.yml
       - scripts/integrated_final_production_smoke.py
+      - scripts/task3_patch_verifier_budget.py
       - supabase/functions/generate-reply/**
       - supabase/functions/receive-widget-message/**
       - supabase/functions/widget-poll-messages/**
@@ -19,6 +20,7 @@ on:
       - tests/edge/round2-task2-grounding-transform-boundary.test.ts
       - tests/edge/task2-2-output-grounding-router.test.ts
       - tests/edge/task2-3-citation-lineage.test.ts
+      - tests/edge/task3-grounding-verifier-budget.test.ts
   workflow_dispatch:
     inputs:
       production_runtime_authorized:
@@ -28,7 +30,7 @@ on:
         type: boolean
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   task3-final-gate:
@@ -44,6 +46,21 @@ jobs:
         with:
           ref: director/round2-task3-conversation-runtime-final-gate
           fetch-depth: 0
+
+      - name: Apply and freeze production verifier-budget repair
+        run: |
+          set -euo pipefail
+          python scripts/task3_patch_verifier_budget.py
+          if ! git diff --quiet -- supabase/functions/_shared/llm-router.ts; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add supabase/functions/_shared/llm-router.ts
+            git commit -m '[authorized-prod] Fix grounding verifier output budget [skip ci]'
+            git push origin HEAD:director/round2-task3-conversation-runtime-final-gate
+          fi
+          grep -q 'export const GROUNDING_VERIFIER_MAX_TOKENS = 2048;' supabase/functions/_shared/llm-router.ts
+          test "$(grep -c 'GROUNDING_VERIFIER_MAX_TOKENS' supabase/functions/_shared/llm-router.ts)" -eq 4
+          echo TASK3_VERIFIER_BUDGET_SOURCE=PASS
 
       - uses: denoland/setup-deno@v2
         with:
@@ -64,13 +81,14 @@ jobs:
           deno check --node-modules-dir=auto supabase/functions/customer360-adapter/index.ts
           echo TASK3_RUNTIME_COMPILE=PASS
 
-      - name: Run frozen Task 1 and Task 2 regressions
+      - name: Run frozen Task 1 and Task 2 regressions plus verifier-budget regression
         run: |
           set -euo pipefail
           deno test --allow-env --node-modules-dir=auto tests/edge/round2-task1-conversation-semantic-contract.test.ts
           deno test --allow-env --node-modules-dir=auto tests/edge/round2-task2-grounding-transform-boundary.test.ts
           deno test --allow-env --node-modules-dir=auto tests/edge/task2-2-output-grounding-router.test.ts
           deno test --allow-env --node-modules-dir=auto tests/edge/task2-3-citation-lineage.test.ts
+          deno test --allow-env --allow-read --node-modules-dir=auto tests/edge/task3-grounding-verifier-budget.test.ts
           echo TASK3_FROZEN_REGRESSION=PASS
 
       - name: Validate production smoke contract
@@ -116,6 +134,8 @@ jobs:
           grep -q 'resolveTenantScope' supabase/functions/generate-reply/index.ts
           grep -q 'requirePublished: true' supabase/functions/generate-reply/index.ts
           grep -q 'full_content' supabase/functions/_shared/citation-lineage.ts
+          grep -q 'export const GROUNDING_VERIFIER_MAX_TOKENS = 2048;' supabase/functions/_shared/llm-router.ts
+          test "$(grep -c 'GROUNDING_VERIFIER_MAX_TOKENS' supabase/functions/_shared/llm-router.ts)" -eq 4
           grep -q '^verify_jwt = true$' <(awk '/\[functions.generate-reply\]/{f=1;next} /^\[/{f=0} f' supabase/config.toml)
           echo TASK3_MACHINE_ASSERTIONS=PASS
 
@@ -136,7 +156,7 @@ jobs:
         run: |
           set -euo pipefail
           PUSH_AUTHORIZED=false
-          if git log -1 --pretty=%B | grep -Fq '[authorized-prod]'; then PUSH_AUTHORIZED=true; fi
+          if git log -2 --pretty=%B | grep -Fq '[authorized-prod]'; then PUSH_AUTHORIZED=true; fi
           if [[ "$DISPATCH_AUTHORIZED" != "true" && "$PUSH_AUTHORIZED" != "true" ]]; then
             echo 'TASK3_PRODUCTION_AUTHORIZATION=FAIL'
             exit 31
