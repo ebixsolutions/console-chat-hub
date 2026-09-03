@@ -62,6 +62,54 @@ jobs:
           grep -q 'authority: "PRIOR_GROUNDED_ANSWER"' supabase/functions/_shared/prior-grounded-transform.ts
           echo FROZEN_TASK4_1_SOURCE_RESTORE=PASS
 
+      - name: Apply current-main RPC client compatibility adapter
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('supabase/functions/generate-reply/index.ts')
+          s=p.read_text()
+          anchor='type SupabaseAdminClient = SupabaseClient<any, "public", any>;\n'
+          adapter='''type SupabaseAdminClient = SupabaseClient<any, "public", any>;
+
+// Current-main escalation-live.ts intentionally exposes a narrow Promise-shaped
+// RPC contract. Supabase-js returns an awaitable Postgrest builder. Normalize that
+// boundary once so the frozen escalation semantics/RPC names remain unchanged.
+function requiredEscalationRpcClient(client: SupabaseAdminClient) {
+  return {
+    rpc: async (fn: string, args: Record<string, unknown>) => {
+      const { data, error } = await client.rpc(fn, args as any);
+      const payload: Record<string, unknown> | null =
+        data == null
+          ? null
+          : (typeof data === "object" && !Array.isArray(data)
+            ? data as Record<string, unknown>
+            : { result: data });
+      return {
+        data: payload,
+        error: error ? { message: String(error.message ?? "rpc_error") } : null,
+      };
+    },
+  };
+}
+'''
+          assert s.count(anchor)==1, s.count(anchor)
+          s=s.replace(anchor,adapter,1)
+          pairs=[
+            ('persistRequiredEscalationClarification(supabaseAdmin, {','persistRequiredEscalationClarification(requiredEscalationRpcClient(supabaseAdmin), {'),
+            ('persistRequiredEscalationHandoff(supabaseAdmin, {','persistRequiredEscalationHandoff(requiredEscalationRpcClient(supabaseAdmin), {'),
+          ]
+          for old,new in pairs:
+            assert s.count(old)==1,(old,s.count(old))
+            s=s.replace(old,new,1)
+          p.write_text(s)
+          PY
+          git diff --check
+          grep -q 'requiredEscalationRpcClient(supabaseAdmin)' supabase/functions/generate-reply/index.ts
+          test "$(grep -o 'requiredEscalationRpcClient(supabaseAdmin)' supabase/functions/generate-reply/index.ts | wc -l)" -eq 2
+          echo TASK4_1_CURRENT_MAIN_RPC_COMPAT=PASS
+
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.9.6
