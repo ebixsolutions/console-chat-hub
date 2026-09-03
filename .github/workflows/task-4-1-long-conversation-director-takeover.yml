@@ -8,9 +8,11 @@ on:
       - .github/workflows/task-4-1-long-conversation-director-takeover.yml
       - scripts/task4_1_director_takeover_patch.py
       - scripts/task4_1_verifier_invalid_retry_patch.py
+      - scripts/task4_1_customer_context_update_patch.py
       - scripts/task4_1_smoke_failfast_patch.py
       - tests/edge/task4-1-director-transform-isolation.test.ts
       - tests/edge/task4-1-verifier-invalid-output-retry.test.ts
+      - tests/edge/task4-1-customer-context-update.test.ts
   workflow_dispatch:
 
 permissions:
@@ -31,24 +33,25 @@ jobs:
           ref: director/task-4-1-long-conversation-director-takeover
           fetch-depth: 0
 
-      - name: Apply Director takeover closure patches
+      - name: Apply Director takeover customer-context closure
         run: |
           set -euo pipefail
-          if ! grep -q 'buildPriorGroundedTransformGenerationSystem' supabase/functions/_shared/prior-grounded-transform.ts; then
-            python scripts/task4_1_director_takeover_patch.py
-          fi
-          if ! grep -q 'grounding_verifier_invalid_output_retry' supabase/functions/_shared/llm-router.ts; then
-            python scripts/task4_1_verifier_invalid_retry_patch.py
+          # Prior grounded-transform and verifier gates are frozen. Assert them;
+          # do not modify verifier behavior while closing CUSTOMER_CONTEXT_UPDATE.
+          grep -q 'buildPriorGroundedTransformGenerationSystem' supabase/functions/_shared/prior-grounded-transform.ts
+          grep -q 'grounding_verifier_invalid_output_retry' supabase/functions/_shared/llm-router.ts
+          if ! grep -q 'customer_supplied_context_without_factual_request' supabase/functions/_shared/conversation-semantic-contract.ts; then
+            python scripts/task4_1_customer_context_update_patch.py
           fi
           python scripts/task4_1_smoke_failfast_patch.py
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          if ! git diff --quiet -- supabase/functions/_shared/prior-grounded-transform.ts supabase/functions/_shared/llm-router.ts supabase/functions/generate-reply/index.ts scripts/integrated_final_production_smoke.py; then
-            git add supabase/functions/_shared/prior-grounded-transform.ts supabase/functions/_shared/llm-router.ts supabase/functions/generate-reply/index.ts scripts/integrated_final_production_smoke.py
-            git commit -m '[authorized-prod] Task 4.1 close verifier invalid-output retry [skip ci]'
+          if ! git diff --quiet -- supabase/functions/_shared/conversation-semantic-contract.ts supabase/functions/_shared/conversation-intelligence.ts supabase/functions/generate-reply/index.ts scripts/integrated_final_production_smoke.py; then
+            git add supabase/functions/_shared/conversation-semantic-contract.ts supabase/functions/_shared/conversation-intelligence.ts supabase/functions/generate-reply/index.ts scripts/integrated_final_production_smoke.py
+            git commit -m '[authorized-prod] Task 4.1 implement CUSTOMER_CONTEXT_UPDATE [skip ci]'
             git push origin HEAD:director/task-4-1-long-conversation-director-takeover
           fi
-          echo TASK4_1_PATCH=PASS
+          echo TASK4_1_CUSTOMER_CONTEXT_PATCH=PASS
 
       - uses: denoland/setup-deno@v2
         with:
@@ -57,6 +60,8 @@ jobs:
       - name: Compile affected runtime
         run: |
           set -euo pipefail
+          deno check --node-modules-dir=auto supabase/functions/_shared/conversation-semantic-contract.ts
+          deno check --node-modules-dir=auto supabase/functions/_shared/conversation-intelligence.ts
           deno check --node-modules-dir=auto supabase/functions/_shared/prior-grounded-transform.ts
           deno check --node-modules-dir=auto supabase/functions/_shared/llm-router.ts
           deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
@@ -65,6 +70,7 @@ jobs:
       - name: Run Task 4.1 and frozen regressions
         run: |
           set -euo pipefail
+          deno test --allow-read --node-modules-dir=auto tests/edge/task4-1-customer-context-update.test.ts
           deno test --allow-env --node-modules-dir=auto tests/edge/task4-1-director-transform-isolation.test.ts
           deno test --allow-read --node-modules-dir=auto tests/edge/task4-1-verifier-invalid-output-retry.test.ts
           deno test --allow-env --node-modules-dir=auto tests/edge/round2-task1-conversation-semantic-contract.test.ts
@@ -77,6 +83,11 @@ jobs:
       - name: Machine assertions
         run: |
           set -euo pipefail
+          grep -q 'CUSTOMER_CONTEXT_UPDATE' supabase/functions/_shared/conversation-semantic-contract.ts
+          grep -q 'customer_supplied_context_without_factual_request' supabase/functions/_shared/conversation-semantic-contract.ts
+          grep -q 'buildCustomerContextAcknowledgement' supabase/functions/_shared/conversation-intelligence.ts
+          grep -q 'response_route: "customer_context_update"' supabase/functions/generate-reply/index.ts
+          grep -q 'escalation_action: "continue_ai"' supabase/functions/generate-reply/index.ts
           grep -q 'buildPriorGroundedTransformGenerationSystem' supabase/functions/generate-reply/index.ts
           grep -q 'buildPriorGroundedTransformGenerationUser' supabase/functions/generate-reply/index.ts
           grep -q 'buildPriorGroundedTransformRetrySystem' supabase/functions/generate-reply/index.ts
@@ -104,7 +115,7 @@ jobs:
         run: |
           set -euo pipefail
           test -n "${SUPABASE_ACCESS_TOKEN:-}"
-          git log -6 --pretty=%B | grep -Fq '[authorized-prod]'
+          git log -8 --pretty=%B | grep -Fq '[authorized-prod]'
           rm -rf /tmp/task4-1-live-backup
           mkdir -p /tmp/task4-1-live-backup/supabase
           cp supabase/config.toml /tmp/task4-1-live-backup/supabase/config.toml
