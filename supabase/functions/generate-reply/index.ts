@@ -1795,6 +1795,32 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
 
 
   const _visitorLang = detectVisitorLanguage(_h1LastMsg);
+  // P0 critical preflight: E2 must run before customer-context and generic clarification early returns.
+  const _criticalE2ExpectedTenantId =
+    typeof conversation.company_id === "string" && conversation.company_id.length > 0
+      ? conversation.company_id
+      : undefined;
+  const _criticalE2ThreatSignal = classifyAuthoritativeThreat(_h1LastMsg);
+  if (isE2LiveActivationEnabled(Deno.env) && _criticalE2ThreatSignal) {
+    const _criticalE2Response = await evaluateAndPersistRequiredRulesLive(supabaseAdmin, {
+      conversation_id,
+      source_message_id,
+      latest_message_content: _h1LastMsg,
+      conversation_status: conversation.status,
+      assigned_agent_id: conversation.assigned_agent_id ?? null,
+      greeting_or_trivial: isGreetingOrTrivial(_h1LastMsg),
+      visitor_language: _visitorLang,
+      expected_tenant_id: _criticalE2ExpectedTenantId,
+      turn_count: _pr5History.turn_count,
+      consecutive_no_answer: _pr5History.consecutive_no_answer,
+      clarification_attempts: _pr5History.clarification_attempts,
+      exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
+      threat_flag: _criticalE2ThreatSignal,
+      compliance_jurisdiction_requires_human_review: resolveAuthoritativeComplianceReview(_criticalE2ExpectedTenantId),
+    });
+    if (_criticalE2Response) return _criticalE2Response;
+  }
+  const _criticalLocalRisk = classifyLocalTopicRisk(_h1LastMsg);
   const _canonicalTurn = classifyCanonicalConversationTurn(
     _h1LastMsg,
     _pr5HistoryRows ?? [],
@@ -1836,7 +1862,7 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     });
   }
   const _turnClassification = classifyConversationTurn(_h1LastMsg);
-  if (_turnClassification.should_clarify_before_kb && !isHandoffIntent(_h1LastMsg)) {
+  if (_turnClassification.should_clarify_before_kb && !isHandoffIntent(_h1LastMsg) && _criticalLocalRisk?.level !== "high") {
     const clarification = NATURAL_CLARIFICATION[_visitorLang];
     const clarificationCommit = await commitAiReplyWithControlGate(
       supabaseAdmin,
