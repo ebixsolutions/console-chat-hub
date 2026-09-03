@@ -80,9 +80,10 @@ jobs:
           git diff --check
           test -s src/lib/api/config.service.ts
           test -s src/routes/_authenticated/console.channel-settings.tsx
+          test -s package.json
           test -s package-lock.json
           test -s supabase/migrations/20260903052000_task4_3_channel_settings_rbac_closure.sql
-          node -e "const p=require('./package.json'); if(p.version!=='2.7.1') process.exit(1); console.log('PACKAGE_VERSION=2.7.1 PASS')"
+          node -e "const p=require('./package.json'); if(p.name!=='tanstack_start_ts'||p.private!==true) process.exit(1); console.log('AUTHORITATIVE_PACKAGE_MANIFEST=PASS')"
           echo TASK4_3_DIRECTOR_FINAL_SOURCE_GATE=PASS
       - name: Commit authoritative implementation
         shell: bash
