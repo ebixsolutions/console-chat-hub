@@ -6,7 +6,8 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/director-task2-current-context-takeover.yml'
-      - 'scripts/director_task2_current_context_takeover_patch.py'
+      - 'scripts/director_task2_memory_continuation_takeover_patch.py'
+      - 'tests/edge/task2-current-context-language-continuation.test.ts'
 
 permissions:
   contents: write
@@ -31,18 +32,19 @@ jobs:
         with:
           deno-version: v2.9.6
 
-      - name: Apply exact current-context call-chain patch
+      - name: Apply exact memory-continuation call-chain patch
         shell: bash
         run: |
           set -euo pipefail
-          python scripts/director_task2_current_context_takeover_patch.py
+          python scripts/director_task2_memory_continuation_takeover_patch.py
           git diff --check
           changed="$(git diff --name-only)"
           test "$changed" = "supabase/functions/_shared/conversation-runtime-state.ts"
           grep -q 'current_item' supabase/functions/_shared/conversation-runtime-state.ts
           grep -q 'groundedAssistantJurisdiction' supabase/functions/_shared/conversation-runtime-state.ts
+          grep -q 'recentPriorCustomerTurns' supabase/functions/_shared/conversation-runtime-state.ts
           grep -q 'memoryLanguageContinuation' supabase/functions/_shared/conversation-runtime-state.ts
-          echo DIRECTOR_TASK2_CONTEXT_PATCH=PASS
+          echo DIRECTOR_TASK2_MEMORY_CONTINUATION_PATCH=PASS
 
       - name: Current-context and frozen semantic regressions
         shell: bash
@@ -76,7 +78,7 @@ jobs:
           git add supabase/functions/_shared/conversation-runtime-state.ts
           test -n "$(git diff --cached --name-only)"
           test "$(git diff --cached --name-only)" = "supabase/functions/_shared/conversation-runtime-state.ts"
-          git commit -m '[authorized-prod] Task 2 Director close current-context memory chain'
+          git commit -m '[authorized-prod] Task 2 Director close memory language continuation'
           git push origin HEAD:main
           echo DIRECTOR_TASK2_CONTEXT_MAIN=PASS
 
