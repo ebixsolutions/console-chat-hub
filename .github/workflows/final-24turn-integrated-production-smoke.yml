@@ -146,7 +146,6 @@ jobs:
             [ "$ok" -eq 1 ] || { echo "FAIL_NO_ASSISTANT_REPLY_TURN=${idx}"; exit 1; }
           done
 
-          # T22 must be the first explicit R1 handoff.
           before=$(poll_json | assistant_count)
           send_turn 22 "${TURNS[21]}"
           r1=0
@@ -163,9 +162,6 @@ jobs:
           [ "$r1" -eq 1 ] || { echo FAIL_R1_HANDOFF; exit 1; }
           echo T22_R1_HANDOFF=PASS
 
-          # Build a real authenticated agent session without storing an agent password.
-          # Use curl for Management API because Python urllib is blocked by the Supabase edge/WAF
-          # from hosted runners (403 code 1010). Never print the returned project keys.
           umask 077
           curl -fsS --retry 3 --retry-all-errors \
             -A 'curl/8 github-actions-auth-smoke' \
@@ -193,18 +189,15 @@ jobs:
                   except Exception: payload={'raw':raw[:300]}
                   return e.code,payload
 
-          public_key=server_key=None
-          for row in keys:
-              value=row.get('api_key') or row.get('key') or row.get('value')
-              name=str(row.get('name') or '').lower()
-              typ=str(row.get('type') or '').lower()
-              tmpl=row.get('secret_jwt_template') or {}
-              role=str(tmpl.get('role') or '').lower() if isinstance(tmpl,dict) else ''
-              if value and (name=='anon' or typ=='publishable') and public_key is None:
-                  public_key=value
-              if value and (name=='service_role' or (typ=='secret' and role in ('','service_role'))) and server_key is None:
-                  server_key=value
-          assert public_key and server_key, 'required project API keys unavailable'
+          def key_value(row):
+              return row.get('api_key') or row.get('key') or row.get('value')
+
+          publishable=[key_value(r) for r in keys if str(r.get('type') or '').lower()=='publishable' and key_value(r)]
+          secret=[key_value(r) for r in keys if str(r.get('type') or '').lower()=='secret' and key_value(r)]
+          assert publishable, 'new publishable API key unavailable; legacy anon key is intentionally forbidden'
+          assert secret, 'new secret API key unavailable; legacy service_role key is intentionally forbidden'
+          public_key=publishable[0]
+          server_key=secret[0]
 
           server_headers={'apikey':server_key,'Authorization':f'Bearer {server_key}','Content-Type':'application/json'}
           conv_q=urllib.parse.urlencode({'id':f'eq.{conversation_id}','select':'company_id'})
@@ -281,7 +274,6 @@ jobs:
           print('AUTHENTICATED_TAKEOVER=PASS')
           PY
 
-          # T23 under assigned human control: AI must remain silent.
           before=$(poll_json | assistant_count)
           send_turn 23 "${TURNS[22]}"
           sleep 8
@@ -320,7 +312,6 @@ jobs:
           [ "$returned" -eq 1 ] || { echo FAIL_RETURN_TO_AI_TIMEOUT; exit 1; }
           echo RETURN_TO_AI_OBSERVED=PASS
 
-          # T24 same visitor session after explicit authenticated Return-to-AI.
           before=$(poll_json | assistant_count)
           send_turn 24 "現在回到AI，請只用一句話說明我剛才主要問的是什麼。"
           resumed=0
