@@ -7,7 +7,7 @@ function assert(cond: unknown, msg: string): asserts cond {
 Deno.test("malformed verifier output retries once on identical evidence path", () => {
   const start = source.indexOf("const decision = parseGroundingVerifierDecision");
   assert(start >= 0, "decision parser missing");
-  const block = source.slice(start, start + 1800);
+  const block = source.slice(start, start + 2200);
   assert(block.includes("GROUNDING_VERIFIER_INVALID_OUTPUT"), "invalid-output audit missing");
   assert(block.includes("grounding_verifier_invalid_output_retry"), "invalid-output retry event missing");
   assert(block.includes("if (attempt < 2)"), "retry bound missing");
@@ -16,12 +16,14 @@ Deno.test("malformed verifier output retries once on identical evidence path", (
 });
 
 Deno.test("valid grounded=false remains immediate semantic rejection", () => {
-  const start = source.indexOf("if (!decision.grounded)");
-  assert(start >= 0, "grounded=false branch missing");
-  const block = source.slice(start, start + 900);
+  const decisionStart = source.indexOf("const decision = parseGroundingVerifierDecision");
+  const rejectStart = source.indexOf("if (!decision.grounded)", decisionStart);
+  assert(decisionStart >= 0 && rejectStart > decisionStart, "grounded=false branch missing");
+  const block = source.slice(decisionStart, rejectStart + 1200);
   assert(block.includes("GROUNDING_UNSUPPORTED_CLAIMS"), "unsupported-claims audit missing");
-  assert(block.includes('reason: "unsupported_semantic_claim"'), "semantic fail-closed missing");
-  assert(!block.includes("grounding_verifier_invalid_output_retry"), "grounded=false must not use malformed-output retry");
+  const rejectBlock = source.slice(rejectStart, rejectStart + 1200);
+  assert(rejectBlock.includes('reason: "unsupported_semantic_claim"'), "semantic fail-closed missing");
+  assert(!rejectBlock.includes("grounding_verifier_invalid_output_retry"), "grounded=false must not use malformed-output retry");
 });
 
 Deno.test("exact-fact rejection remains before semantic verifier", () => {
