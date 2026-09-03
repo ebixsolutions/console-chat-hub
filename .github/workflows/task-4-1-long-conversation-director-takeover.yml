@@ -6,6 +6,7 @@ on:
       - director/task-4-1-long-conversation-director-takeover
     paths:
       - .github/workflows/task-4-1-long-conversation-director-takeover.yml
+      - supabase/functions/_shared/prior-grounded-transform.ts
       - scripts/task4_1_director_takeover_patch.py
       - scripts/task4_1_verifier_invalid_retry_patch.py
       - scripts/task4_1_customer_context_update_patch.py
@@ -15,6 +16,7 @@ on:
       - tests/edge/task4-1-verifier-invalid-output-retry.test.ts
       - tests/edge/task4-1-customer-context-update.test.ts
       - tests/edge/task4-1-context-requirements-followup.test.ts
+      - tests/edge/task4-1-a17-composite-transform.test.ts
   workflow_dispatch:
 
 permissions:
@@ -35,28 +37,26 @@ jobs:
           ref: director/task-4-1-long-conversation-director-takeover
           fetch-depth: 0
 
-      - name: Apply Director takeover customer-context closure
+      - name: Assert Task 4.1 authoritative implementation
         run: |
           set -euo pipefail
-          # Prior grounded-transform and verifier gates are frozen. Assert them;
-          # do not modify verifier behavior while closing CUSTOMER_CONTEXT_UPDATE.
+          # Grounding verifier remains frozen; A17 is solved at the composite
+          # transform contract / evidence-authority boundary.
           grep -q 'buildPriorGroundedTransformGenerationSystem' supabase/functions/_shared/prior-grounded-transform.ts
+          grep -q 'Required transformation operations' supabase/functions/_shared/prior-grounded-transform.ts
+          grep -q '\[chunk:PRIOR1\]' supabase/functions/_shared/prior-grounded-transform.ts
           grep -q 'grounding_verifier_invalid_output_retry' supabase/functions/_shared/llm-router.ts
-          if ! grep -q 'customer_supplied_context_without_factual_request' supabase/functions/_shared/conversation-semantic-contract.ts; then
-            python scripts/task4_1_customer_context_update_patch.py
-          fi
-          if ! grep -q 'customer_context_requirements_request' supabase/functions/_shared/conversation-semantic-contract.ts; then
-            python scripts/task4_1_context_requirements_patch.py
-          fi
+          grep -q 'customer_supplied_context_without_factual_request' supabase/functions/_shared/conversation-semantic-contract.ts
+          grep -q 'customer_context_requirements_request' supabase/functions/_shared/conversation-semantic-contract.ts
           python scripts/task4_1_smoke_failfast_patch.py
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          if ! git diff --quiet -- supabase/functions/_shared/conversation-semantic-contract.ts supabase/functions/_shared/conversation-intelligence.ts supabase/functions/generate-reply/index.ts scripts/integrated_final_production_smoke.py; then
-            git add supabase/functions/_shared/conversation-semantic-contract.ts supabase/functions/_shared/conversation-intelligence.ts supabase/functions/generate-reply/index.ts scripts/integrated_final_production_smoke.py
-            git commit -m '[authorized-prod] Task 4.1 close CUSTOMER_CONTEXT_UPDATE workflow [skip ci]'
+          if ! git diff --quiet -- scripts/integrated_final_production_smoke.py; then
+            git add scripts/integrated_final_production_smoke.py
+            git commit -m '[authorized-prod] Task 4.1 retain fail-fast production smoke [skip ci]'
             git push origin HEAD:director/task-4-1-long-conversation-director-takeover
           fi
-          echo TASK4_1_CUSTOMER_CONTEXT_PATCH=PASS
+          echo TASK4_1_IMPLEMENTATION=PASS
 
       - uses: denoland/setup-deno@v2
         with:
@@ -75,6 +75,7 @@ jobs:
       - name: Run Task 4.1 and frozen regressions
         run: |
           set -euo pipefail
+          deno test --allow-env --allow-read --node-modules-dir=auto tests/edge/task4-1-a17-composite-transform.test.ts
           deno test --allow-read --node-modules-dir=auto tests/edge/task4-1-customer-context-update.test.ts
           deno test --allow-read --node-modules-dir=auto tests/edge/task4-1-context-requirements-followup.test.ts
           deno test --allow-env --node-modules-dir=auto tests/edge/task4-1-director-transform-isolation.test.ts
@@ -96,6 +97,10 @@ jobs:
           grep -q 'buildCustomerContextRequirementsResponse' supabase/functions/_shared/conversation-intelligence.ts
           grep -q 'response_route: "customer_context_update"' supabase/functions/generate-reply/index.ts
           grep -q 'escalation_action: "continue_ai"' supabase/functions/generate-reply/index.ts
+          grep -q 'Required transformation operations' supabase/functions/_shared/prior-grounded-transform.ts
+          grep -q 'Apply ALL listed operations' supabase/functions/_shared/prior-grounded-transform.ts
+          grep -q '\[chunk:PRIOR1\]' supabase/functions/_shared/prior-grounded-transform.ts
+          grep -q 'composite: operations.length > 1' supabase/functions/_shared/prior-grounded-transform.ts
           grep -q 'buildPriorGroundedTransformGenerationSystem' supabase/functions/generate-reply/index.ts
           grep -q 'buildPriorGroundedTransformGenerationUser' supabase/functions/generate-reply/index.ts
           grep -q 'buildPriorGroundedTransformRetrySystem' supabase/functions/generate-reply/index.ts
@@ -123,7 +128,7 @@ jobs:
         run: |
           set -euo pipefail
           test -n "${SUPABASE_ACCESS_TOKEN:-}"
-          git log -12 --pretty=%B | grep -Fq '[authorized-prod]'
+          git log -15 --pretty=%B | grep -Fq '[authorized-prod]'
           rm -rf /tmp/task4-1-live-backup
           mkdir -p /tmp/task4-1-live-backup/supabase
           cp supabase/config.toml /tmp/task4-1-live-backup/supabase/config.toml
