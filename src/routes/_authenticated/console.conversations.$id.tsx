@@ -669,6 +669,7 @@ function ConversationDetailContent() {
                 setReply(text);
               }
             }}
+            autoLoadHandoffContext={conv.status === "pending" || Boolean(conv.assigned_agent_id)}
           />
         </div>
       </div>

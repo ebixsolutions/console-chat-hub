@@ -56,6 +56,7 @@ export function AgentToolPanel({
   selectedMessage,
   onClearSelection,
   onUseDraft,
+  autoLoadHandoffContext,
 }: {
   conversationId: string;
   convStatus: string;
@@ -63,6 +64,7 @@ export function AgentToolPanel({
   selectedMessage: { id: string; role: string; content: string } | null;
   onClearSelection: () => void;
   onUseDraft: (t: string) => void;
+  autoLoadHandoffContext?: boolean;
 }) {
   const lang = useConsoleLang();
   const tc = (k: TCK) => TOOL_COPY[k]?.[lang] ?? TOOL_COPY[k]?.en ?? k;
@@ -71,6 +73,8 @@ export function AgentToolPanel({
   const [tr, setTr] = useState<{ type: string; data: Record<string, unknown> } | null>(null);
   const [tl, setTl] = useState(false);
   const [te, setTe] = useState("");
+  const [handoffContext, setHandoffContext] = useState<Record<string, any> | null>(null);
+  const [handoffLoading, setHandoffLoading] = useState(false);
   const toolReqIdRef = useRef(0);
 
   // Conversation changes must invalidate every visible/pending tool result.
@@ -83,6 +87,8 @@ export function AgentToolPanel({
     setTr(null);
     setTl(false);
     setTe("");
+    setHandoffContext(null);
+    setHandoffLoading(false);
     onClearSelection();
   // onClearSelection is intentionally excluded: conversationId is the
   // authoritative context boundary and parent callback identity may change.
@@ -103,6 +109,17 @@ export function AgentToolPanel({
   useEffect(() => {
     if (cs === "custom") adjustHeight();
   }, [ci, cs, adjustHeight]);
+
+  useEffect(() => {
+    if (!autoLoadHandoffContext || convStatus === "resolved") return;
+    let cancelled = false;
+    setHandoffLoading(true);
+    void supabase.functions.invoke("agent-assist", { body: { tool_type: "handoff_context", conversation_id: conversationId, content: "handoff" } }).then(({ data, error }) => {
+      if (cancelled) return;
+      if (!error && data?.success) setHandoffContext(data as Record<string, any>);
+    }).finally(() => { if (!cancelled) setHandoffLoading(false); });
+    return () => { cancelled = true; };
+  }, [autoLoadHandoffContext, conversationId, convStatus]);
 
   const gc = (): string => {
     if (cs === "draft") return draftText.trim();
@@ -328,6 +345,26 @@ export function AgentToolPanel({
         </>
       )}
       <div style={{ flex: 1, overflowY: "auto", padding: "8px 12px", fontSize: 11 }}>
+        {autoLoadHandoffContext && (handoffLoading || handoffContext) && (
+          <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 10, marginBottom: 10, background: "#fafafa" }}>
+            <div style={{ fontWeight: 700, marginBottom: 6 }}>Warm Handoff Context / 真人接手摘要</div>
+            {handoffLoading && <div style={{ color: "#888" }}>Loading handoff context...</div>}
+            {handoffContext?.warm_handoff_package && <>
+              <div><b>Customer goal:</b> {String(handoffContext.warm_handoff_package.customer_goal || "—")}</div>
+              <div><b>Last request:</b> {String(handoffContext.warm_handoff_package.last_customer_request || "—")}</div>
+              <div style={{ marginTop: 5 }}><b>Known facts:</b> {(handoffContext.warm_handoff_package.known_facts || []).length ? (handoffContext.warm_handoff_package.known_facts || []).map((x: any) => `${x.label}: ${x.value}`).join(" · ") : "—"}</div>
+              <div><b>Missing facts:</b> {(handoffContext.warm_handoff_package.missing_facts || []).join(", ") || "—"}</div>
+              <div><b>Unavailable:</b> {(handoffContext.warm_handoff_package.unavailable_facts || []).join(", ") || "—"}</div>
+              <div style={{ marginTop: 5 }}><b>Summary:</b> {String(handoffContext.warm_handoff_package.conversation_summary || "—")}</div>
+            </>}
+            <div style={{ marginTop: 8, fontWeight: 600 }}>Relevant Knowledge</div>
+            {(handoffContext?.knowledge?.evidence || []).length ? (handoffContext.knowledge.evidence as any[]).map((x: any, i: number) => <div key={`hk-${i}`} style={{ marginTop: 4, padding: 6, background: "#fff", borderRadius: 5 }}>{x.content}</div>) : <div style={{ color: "#888" }}>No matching verified evidence.</div>}
+            <div style={{ marginTop: 8, fontWeight: 600 }}>Relevant Policy</div>
+            {(handoffContext?.policy?.evidence || []).length ? (handoffContext.policy.evidence as any[]).map((x: any, i: number) => <div key={`hp-${i}`} style={{ marginTop: 4, padding: 6, background: "#fff", borderRadius: 5 }}>{x.content}</div>) : <div style={{ color: "#888" }}>No matching verified policy evidence.</div>}
+            <div style={{ marginTop: 8, fontWeight: 600 }}>Suggested Replies</div>
+            {(handoffContext?.suggested_replies || []).length ? (handoffContext.suggested_replies as any[]).map((x: any, i: number) => <div key={`hs-${i}`} style={{ marginTop: 5, padding: 6, background: "#fff", borderRadius: 5 }}><div>{x.content}</div><button onClick={() => onUseDraft(String(x.content))} style={{ marginTop: 4, fontSize: 10, padding: "3px 7px" }}>Use in Draft</button></div>) : <div style={{ color: "#888" }}>No grounded draft available.</div>}
+          </div>
+        )}
         {tl && <div style={{ textAlign: "center", color: "#888", padding: 14 }}>{tc("processing")}</div>}
         {te && <div style={{ color: "#ef4444", padding: "4px 0" }}>{te}</div>}
         {tr?.type === "translate" && (

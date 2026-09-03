@@ -35,6 +35,7 @@ import { classifyCanonicalConversationTurn } from "../_shared/conversation-seman
 import { selectCanonicalGrounding } from "../_shared/canonical-grounding.ts";
 import { buildCitationMetadata } from "../_shared/citation-lineage.ts";
 import { buildInheritedTransformCitationMetadata, buildPriorGroundedTransformBlock, buildPriorGroundedTransformGenerationSystem, buildPriorGroundedTransformGenerationUser, buildPriorGroundedTransformRetrySystem, resolvePriorGroundedTransform } from "../_shared/prior-grounded-transform.ts";
+import { buildMissingFactsQuestion, buildWarmHandoffPackage } from "../_shared/warm-handoff.ts";
 import { buildRealtimeR3SentimentSignals } from "../_shared/runtime-signal-lifecycle.ts";
 import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
@@ -943,6 +944,7 @@ async function evaluateAndPersistRequiredRulesLive(
     visitor_language: "zh-TW" | "zh-CN" | "en";
     expected_tenant_id?: string;
     suppress_r2_for_prior_grounded_transform?: boolean;
+    warm_handoff_question?: string;
     rag_match_state?: RagMatchState;
     topic_risk_level?: TopicRiskLevel;
     verified_local_risk_classification?: boolean;
@@ -1065,6 +1067,23 @@ async function evaluateAndPersistRequiredRulesLive(
   // Suppress only R2 for this turn; E2/E1/R1/S0 keep their frozen priority and behavior.
   if (params.suppress_r2_for_prior_grounded_transform === true && decision.matched_rule === "R2") {
     return null;
+  }
+
+  if (decision.decision === "handoff" && decision.matched_rule === "R2" && params.warm_handoff_question) {
+    const { data, error } = await supabaseAdmin.rpc("commit_ai_reply_tx", {
+      p_conversation_id: params.conversation_id,
+      p_source_message_id: params.source_message_id,
+      p_content: params.warm_handoff_question,
+      p_metadata: { escalation_rule: "R2", escalation_action: "collect_missing_handoff_facts", response_route: "warm_handoff_data_collection", handoff_required: false },
+    });
+    if (error) return new Response(JSON.stringify({ success:false, error:"warm_handoff_collection_failed" }), { status:500, headers:{...corsHeaders,"Content-Type":"application/json"} });
+    const result=String((data as any)?.result ?? "");
+    if (result === "success" || result === "idempotent") {
+      await cleanupThinking(supabaseAdmin, params.conversation_id, params.source_message_id);
+      return new Response(JSON.stringify({ success:true, response_route:"warm_handoff_data_collection", handoff_required:false, missing_facts_requested:true }), { headers:{...corsHeaders,"Content-Type":"application/json"} });
+    }
+    if (result === "human_control" || result === "resolved" || result === "superseded_source") return new Response(JSON.stringify({ success:true, skipped:result }), { headers:{...corsHeaders,"Content-Type":"application/json"} });
+    return new Response(JSON.stringify({ success:false, error:`warm_handoff_collection_${result||"unexpected"}` }), { status:409, headers:{...corsHeaders,"Content-Type":"application/json"} });
   }
 
   if (decision.decision === "clarify" && decision.matched_rule === "R2" && enabled.has("R2")) {
@@ -2406,6 +2425,9 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     }
   }
 
+  const _warmHandoffPackage = buildWarmHandoffPackage(_pr5HistoryRows ?? [], "R2");
+  const _warmHandoffQuestion = buildMissingFactsQuestion(_warmHandoffPackage, _visitorLang);
+
   const _pr5RequiredLiveResponse = await evaluateAndPersistRequiredRulesLive(supabaseAdmin, {
     conversation_id,
     source_message_id,
@@ -2416,6 +2438,7 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     visitor_language: _visitorLang,
     expected_tenant_id: _pr5ExpectedTenantId,
     suppress_r2_for_prior_grounded_transform: Boolean(_priorGroundedTransform),
+    warm_handoff_question: _warmHandoffQuestion ?? undefined,
     rag_match_state: _pr5RagMatchState,
     topic_risk_level: _pr5LocalRisk?.level,
     verified_local_risk_classification: _pr5LocalRisk?.verified,
