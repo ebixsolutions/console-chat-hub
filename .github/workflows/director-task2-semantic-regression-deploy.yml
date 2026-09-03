@@ -6,6 +6,8 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/director-task2-semantic-regression-deploy.yml'
+      - 'supabase/functions/_shared/conversation-semantic-contract.ts'
+      - 'tests/edge/task2-standalone-simplify-regression.test.ts'
 
 permissions:
   contents: read
