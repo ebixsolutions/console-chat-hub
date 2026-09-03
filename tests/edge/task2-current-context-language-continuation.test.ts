@@ -35,11 +35,11 @@ Deno.test("Task2 T09 derives current Hong Kong + air-conditioner context without
   assertStringIncludes(reply, "冷氣機");
 });
 
-Deno.test("Task2 T10 repeats the current-context memory answer in English", () => {
+Deno.test("Task2 T10 repeats current context in English without relying on assistant route metadata", () => {
   const latest = "Answer the same question in English.";
   const reply = resolveConversationMemoryResponse(latest, [
     { role: "visitor", content: latest },
-    { role: "assistant", content: "你現在問的是香港的冷氣機。", metadata: { response_route: "conversation_memory" } },
+    { role: "assistant", content: "你現在問的是香港的冷氣機。", metadata: {} },
     { role: "visitor", content: "我現在問的是哪個地區和哪個項目？" },
     ...baseBeforeT09(),
   ]);
@@ -47,16 +47,31 @@ Deno.test("Task2 T10 repeats the current-context memory answer in English", () =
   assertEquals(reply, "Your current region is Hong Kong, and the current item is air conditioner.");
 });
 
-Deno.test("Task2 T11 can switch the same memory answer back to Traditional Chinese", () => {
+Deno.test("Task2 T11 can chain the same deterministic memory answer back to Traditional Chinese", () => {
   const latest = "回到繁體中文，不要增加新資料。";
   const reply = resolveConversationMemoryResponse(latest, [
     { role: "visitor", content: latest },
-    { role: "assistant", content: "Your current region is Hong Kong, and the current item is air conditioner.", metadata: { response_route: "conversation_memory" } },
+    { role: "assistant", content: "Your current region is Hong Kong, and the current item is air conditioner.", metadata: {} },
     { role: "visitor", content: "Answer the same question in English." },
-    { role: "assistant", content: "你現在問的是香港的冷氣機。", metadata: { response_route: "conversation_memory" } },
+    { role: "assistant", content: "你現在問的是香港的冷氣機。", metadata: {} },
     { role: "visitor", content: "我現在問的是哪個地區和哪個項目？" },
     ...baseBeforeT09(),
   ]);
   assert(reply);
   assertEquals(reply, "你現在問的是香港的冷氣機。");
+});
+
+Deno.test("Task2 unrelated old current-context memory does not hijack a later language request", () => {
+  const latest = "Answer the same question in English.";
+  const reply = resolveConversationMemoryResponse(latest, [
+    { role: "visitor", content: latest },
+    { role: "assistant", content: "這是另一個新問題的回答。" },
+    { role: "visitor", content: "另一個完全不同的新問題是什麼？" },
+    { role: "assistant", content: "再前一題。" },
+    { role: "visitor", content: "又一個不同問題。" },
+    { role: "assistant", content: "你現在問的是香港的冷氣機。" },
+    { role: "visitor", content: "我現在問的是哪個地區和哪個項目？" },
+    ...baseBeforeT09(),
+  ]);
+  assertEquals(reply, null);
 });
