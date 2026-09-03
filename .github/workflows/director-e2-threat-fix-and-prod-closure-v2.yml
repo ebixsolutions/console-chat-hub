@@ -1,0 +1,136 @@
+name: Director E2 Threat Fix and Production Closure v2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/director-e2-threat-fix-and-prod-closure-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  implement-validate-deploy-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROD_ORIGIN: https://console-chat-hub.lovable.app
+      CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.6
+
+      - name: Wire conservative E2 detector into authoritative preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('supabase/functions/generate-reply/index.ts')
+          s=p.read_text()
+          imp='import { isDirectViolentThreat } from "../_shared/e2-direct-threat.ts";\n'
+          if imp not in s:
+              anchor='import { buildMissingFactsQuestion, buildWarmHandoffPackage } from "../_shared/warm-handoff.ts";\n'
+              assert anchor in s
+              s=s.replace(anchor, imp+anchor, 1)
+          fn='function classifyAuthoritativeThreat(text: string): {'
+          start=s.index(fn)
+          end=s.index('\n}\n', start)+3
+          block=s[start:end]
+          if 'isDirectViolentThreat(normalized)' not in block:
+              needle='  const normalized = text.trim().replace(/\\s+/g, " ");\n'
+              assert needle in block, block[:500]
+              inject=(needle+
+                  '  if (isDirectViolentThreat(normalized)) {\n'
+                  '    return {\n'
+                  '      value: true,\n'
+                  '      reason: "explicit_violence_or_harm_threat",\n'
+                  '      provider_version: E2_LOCAL_THREAT_CLASSIFIER_VERSION,\n'
+                  '    };\n'
+                  '  }\n')
+              block=block.replace(needle, inject, 1)
+              s=s[:start]+block+s[end:]
+          p.write_text(s)
+          PY
+          grep -q 'isDirectViolentThreat(normalized)' supabase/functions/generate-reply/index.ts
+          echo E2_AUTHORITATIVE_PREFLIGHT_WIRING=PASS
+
+      - name: Regression and compile/build
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno test --allow-read tests/edge/e2-direct-threat.test.ts
+          deno test --allow-read tests/edge/warm-handoff-package.test.ts
+          deno test --allow-read --allow-env --node-modules-dir=auto tests/edge/task2-human-language-transform-regression.test.ts
+          deno test --allow-read --allow-env --node-modules-dir=auto tests/edge/task2-standalone-simplify-regression.test.ts
+          deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+          git diff --check
+          npm ci
+          npm run build
+          echo E2_SOURCE_REGRESSION_BUILD=PASS
+
+      - name: Commit exact functional fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Director Runtime Fix'
+          git config user.email 'director-runtime-fix@users.noreply.github.com'
+          git add supabase/functions/generate-reply/index.ts supabase/functions/_shared/e2-direct-threat.ts tests/edge/e2-direct-threat.test.ts
+          test "$(git diff --cached --name-only | wc -l | tr -d ' ')" -le 3
+          if ! git diff --cached --quiet; then
+            git commit -m '[director] fix authoritative E2 direct-threat classification'
+            git push origin HEAD:main
+          fi
+          echo E2_FUNCTIONAL_COMMIT=PASS
+
+      - name: Deploy generate-reply only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SUPABASE_ACCESS_TOKEN:-}"
+          npx --yes supabase@2.116.0 functions deploy generate-reply --project-ref "$PROJECT_REF"
+          echo E2_GENERATE_REPLY_DEPLOY=PASS
+
+      - name: Production E2 smoke
+        shell: bash
+        run: |
+          set -euo pipefail; set -a; source .env; set +a
+          BASE="$VITE_SUPABASE_FUNCTIONS_URL"; SU="$VITE_SUPABASE_URL"
+          curl -fsS --retry 3 --retry-all-errors -A 'curl/8 e2-fix-smoke-v2' -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" "https://api.supabase.com/v1/projects/$PROJECT_REF/api-keys?reveal=true" -o /tmp/k.json
+          python - <<'PY' /tmp/k.json >/tmp/k.env
+          import json,sys,shlex
+          a=json.load(open(sys.argv[1])); val=lambda r:r.get('api_key') or r.get('key') or r.get('value'); s=[val(r) for r in a if str(r.get('type') or '').lower()=='secret' and val(r)]; assert s; print('SK='+shlex.quote(s[0]))
+          PY
+          source /tmp/k.env; rm /tmp/k.json
+          S=$(curl -fsS -X POST -H "Origin: $PROD_ORIGIN" -H 'Content-Type: application/json' --data "{\"channel_id\":\"$CHANNEL_ID\",\"visitor_metadata\":{\"e2_direct_fix_smoke\":true,\"exclude_training\":true}}" "$BASE/create-visitor-session")
+          python - <<'PY' "$S" >/tmp/s.env
+          import json,sys,shlex; d=json.loads(sys.argv[1]); assert d.get('success') is True,d; x=d['data']; print('CID='+shlex.quote(x['conversation_id'])); print('TOK='+shlex.quote(x['session_token']))
+          PY
+          source /tmp/s.env
+          P=$(python - <<'PY' "$CID" "$TOK"
+          import json,sys; print(json.dumps({'conversation_id':sys.argv[1],'session_token':sys.argv[2],'content':'我要殺了你。'},ensure_ascii=False))
+          PY
+          )
+          curl -fsS -X POST -H "Origin: $PROD_ORIGIN" -H 'Content-Type: application/json' -H "idempotency-key: $(python -c 'import uuid;print(uuid.uuid4())')" --data "$P" "$BASE/receive-widget-message" >/tmp/send.json
+          for i in $(seq 1 30); do
+            sleep 2
+            curl -fsS -X POST -H "Origin: $PROD_ORIGIN" -H 'Content-Type: application/json' --data "{\"conversation_id\":\"$CID\",\"session_token\":\"$TOK\"}" "$BASE/widget-poll-messages" >/tmp/poll.json
+            st=$(python -c 'import json;d=json.load(open("/tmp/poll.json"));print(d["data"].get("conversation_status",""))')
+            [ "$st" = pending ] && break
+          done
+          curl -fsS -H "apikey: $SK" -H "Authorization: Bearer $SK" "$SU/rest/v1/handoff_event?conversation_id=eq.$CID&select=escalation_rule,branch_tag,handoff_reason&order=created_at.desc&limit=1" >/tmp/e2.json
+          python - <<'PY' /tmp/poll.json /tmp/e2.json
+          import json,sys
+          d=json.load(open(sys.argv[1])); e=json.load(open(sys.argv[2])); assert d['data'].get('conversation_status')=='pending',(d['data'].get('conversation_status'),e); assert e and e[0].get('escalation_rule')=='E2',e
+          m=[x for x in d['data'].get('messages',[]) if x.get('role')=='assistant'][-1]; assert (m.get('metadata') or {}).get('response_route')!='warm_handoff_data_collection'
+          print('E2_CRITICAL_BYPASS=PASS')
+          PY
+          echo E2_PRODUCTION_RUNTIME=PASS
