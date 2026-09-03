@@ -182,6 +182,8 @@ async function recordUsage(
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+export const GROUNDING_VERIFIER_MAX_TOKENS = 2048;
+
 export const GENERATION_MAX_TOKENS_DEFAULT = 2048;
 export const GENERATION_MAX_TOKENS_MIN = 768;
 export const GENERATION_MAX_TOKENS_MAX = 8192;
@@ -511,7 +513,7 @@ async function verifyGroundedGeneration(
       evaluationModel,
       redact(verifierSystem),
       redact(verifierUser),
-      512,
+      GROUNDING_VERIFIER_MAX_TOKENS,
       true,
       {
         type: "OBJECT",
@@ -531,7 +533,7 @@ async function verifyGroundedGeneration(
       evaluationModel,
       redact(verifierSystem),
       redact(verifierUser),
-      512,
+      GROUNDING_VERIFIER_MAX_TOKENS,
     );
   }
 
@@ -539,7 +541,7 @@ async function verifyGroundedGeneration(
     purpose: "evaluation",
     system: verifierSystem,
     user: verifierUser,
-    maxTokens: 512,
+    maxTokens: GROUNDING_VERIFIER_MAX_TOKENS,
     operationId: `${call.operationId}:grounding-verifier`,
     companyId: call.companyId,
     conversationId: call.conversationId,
