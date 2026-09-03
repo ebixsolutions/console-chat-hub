@@ -1,0 +1,67 @@
+name: Task 4.3 RBAC Origin Closure
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/task4-3-rbac-origin-closure.py'
+      - 'supabase/migrations/20260903052000_task4_3_channel_settings_rbac_closure.sql'
+      - '.github/workflows/task4-3-rbac-origin-closure.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  source-closure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Apply Task 4.3 RBAC source closure
+        run: python scripts/task4-3-rbac-origin-closure.py
+      - name: Source and migration assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          python - <<'PY'
+          from pathlib import Path
+          svc=Path('src/lib/api/config.service.ts').read_text()
+          route=Path('src/routes/_authenticated/console.channel-settings.tsx').read_text()
+          mig=Path('supabase/migrations/20260903052000_task4_3_channel_settings_rbac_closure.sql').read_text()
+          assert 'allowedRoles: readonly AppRole[]' in svc
+          assert 'requireRole(await resolveCompanyScope(context), allowedRoles)' in svc
+          assert '["admin", "supervisor"]' in svc
+          assert 'ChannelSettingsContent canManage={productionRole === "admin"}' in route
+          assert 'canManage && (editingChannelId === ch.id ? (' in route
+          assert "cm.role::text in ('admin', 'supervisor')" in mig
+          assert 'drop policy if exists channel_config_read' in mig
+          assert 'drop policy if exists widget_config_read' in mig
+          print('TASK4_3_RBAC_SOURCE_ASSERTIONS=PASS')
+          PY
+      - name: Install dependencies
+        run: npm ci
+      - name: Production dependency audit
+        run: npm audit --omit=dev --audit-level=high
+      - name: Production build
+        run: npm run build
+      - name: Commit exact source closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- src/lib/api/config.service.ts src/routes/_authenticated/console.channel-settings.tsx; then
+            echo 'TASK4_3_RBAC_NO_SOURCE_DELTA=PASS'
+            exit 0
+          fi
+          git config user.name 'ebixsolutions'
+          git config user.email '64578119+ebixsolutions@users.noreply.github.com'
+          git add src/lib/api/config.service.ts src/routes/_authenticated/console.channel-settings.tsx
+          git commit -m 'Task 4.3: enforce channel settings RBAC'
+          git push origin HEAD:main
