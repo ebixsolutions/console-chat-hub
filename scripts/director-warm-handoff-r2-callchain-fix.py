@@ -1,6 +1,7 @@
 from pathlib import Path
 
 # Director runtime takeover: patch every R2-capable required-rules call site, not one symptom branch.
+# Final-gate contract: three early R2-capable calls plus the already-wired final R2 call.
 p = Path('supabase/functions/generate-reply/index.ts')
 s = p.read_text()
 needle = '    rag_match_state: _pr5RagMatchState,'
