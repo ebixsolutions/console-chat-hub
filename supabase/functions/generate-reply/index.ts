@@ -35,6 +35,7 @@ import { classifyCanonicalConversationTurn } from "../_shared/conversation-seman
 import { selectCanonicalGrounding } from "../_shared/canonical-grounding.ts";
 import { buildCitationMetadata } from "../_shared/citation-lineage.ts";
 import { buildInheritedTransformCitationMetadata, buildPriorGroundedTransformBlock, buildPriorGroundedTransformGenerationSystem, buildPriorGroundedTransformGenerationUser, buildPriorGroundedTransformRetrySystem, resolvePriorGroundedTransform } from "../_shared/prior-grounded-transform.ts";
+import { isDirectViolentThreat } from "../_shared/e2-direct-threat.ts";
 import { buildMissingFactsQuestion, buildWarmHandoffPackage } from "../_shared/warm-handoff.ts";
 import { buildRealtimeR3SentimentSignals } from "../_shared/runtime-signal-lifecycle.ts";
 import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
@@ -405,6 +406,13 @@ function classifyAuthoritativeThreat(text: string): {
   provider_version: string;
 } | undefined {
   const normalized = text.trim().replace(/\s+/g, " ");
+  if (isDirectViolentThreat(normalized)) {
+    return {
+      value: true,
+      reason: "explicit_violence_or_harm_threat",
+      provider_version: E2_LOCAL_THREAT_CLASSIFIER_VERSION,
+    };
+  }
   const lower = normalized.toLowerCase();
 
   const explicitEnglishThreats = [
