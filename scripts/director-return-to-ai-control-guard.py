@@ -23,9 +23,13 @@ if 'const legacyReturnToAiGuard = buildReturnToAiGenerationGuard(' not in s:
     assert legacy_marker in s
     legacy_pre = '''  const legacyLatestHandoffReason = await loadLatestHandoffReason(supabaseAdmin, conversation_id);\n  const legacyReturnToAiGuard = buildReturnToAiGenerationGuard(\n    legacyLatestHandoffReason,\n    conversation.assigned_agent_id ?? null,\n  );\n\n'''
     s = s.replace(legacy_marker, legacy_pre + legacy_marker, 1)
+    legacy_start = s.index(legacy_marker)
+    legacy_tail = s[legacy_start:]
     legacy_policy = '\n${CUSTOMER_CONVERSATION_POLICY}`;'
-    assert legacy_policy in s
-    s = s.replace(legacy_policy, '\n${CUSTOMER_CONVERSATION_POLICY}\n\n${legacyReturnToAiGuard}`;', 1)
+    local_idx = legacy_tail.index(legacy_policy)
+    pos = legacy_start + local_idx
+    replacement = '\n${CUSTOMER_CONVERSATION_POLICY}\n\n${legacyReturnToAiGuard}`;'
+    s = s[:pos] + replacement + s[pos + len(legacy_policy):]
 
 orch_marker = '  const finalSystemPrompt = _priorGroundedTransform\n'
 if 'const returnToAiGuard = buildReturnToAiGenerationGuard(' not in s:
