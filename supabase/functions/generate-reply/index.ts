@@ -83,6 +83,12 @@ const SAFE_HANDOFF_WORDING: Record<string, string> = {
   en: "We have recorded your conversation. A human agent will reply in this same chat after taking over. Real-time queue position and estimated wait time are not currently enabled.",
 };
 
+const HUMAN_SUPPORT_INFO_WORDING: Record<"zh-TW" | "zh-CN" | "en", string> = {
+  "zh-TW": "我目前沒有已確認的真人客服服務時間資料。如果你現在要轉真人客服，可以直接告訴我。",
+  "zh-CN": "我目前没有已确认的人工客服服务时间资料。如果你现在要转人工客服，可以直接告诉我。",
+  en: "I don't currently have confirmed human-support service hours. If you want a human agent now, you can tell me directly.",
+};
+
 const REQUIRED_ESCALATION_SAFE_WORDING: Record<
   "E2" | "E1" | "R2",
   Record<"zh-TW" | "zh-CN" | "en", string>
@@ -1923,6 +1929,35 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
       supabaseAdmin, conversation_id, source_message_id, _h1LastMsg,
     );
     if (r1Response) return r1Response;
+  }
+
+  // Asking about human-support availability/contact is informational, not an
+  // explicit R1 request. Keep AI control and answer deterministically rather
+  // than routing the question through KB/LLM grounding, where absence of an
+  // authoritative schedule could incorrectly become S0.
+  const _humanSupportIntent = classifyHandoffIntent(_h1LastMsg);
+  if (_humanSupportIntent.kind === "question_about_human_support") {
+    const infoReply = HUMAN_SUPPORT_INFO_WORDING[_humanSupportIntent.language];
+    const committed = await commitAiReplyWithControlGate(
+      supabaseAdmin,
+      conversation_id,
+      source_message_id,
+      infoReply,
+      {
+        response_route: "human_support_information",
+        handoff_required: false,
+        escalation_rule: null,
+        handoff_intent_kind: _humanSupportIntent.kind,
+      },
+    );
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+    if (!committed.ok) {
+      if (committed.result === "human_control" || committed.result === "resolved" || committed.result === "superseded_source") {
+        return new Response(JSON.stringify({ success: true, skipped: committed.result }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ success: false, error: `human_support_info_commit_${committed.result}` }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+    return new Response(JSON.stringify({ success: true, response_route: "human_support_information", handoff_required: false }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 
   const _conversationMemoryReply = resolveConversationMemoryResponse(_h1LastMsg, _pr5HistoryRows ?? []);
