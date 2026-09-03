@@ -61,15 +61,22 @@ jobs:
           deno test tests/edge/warm-handoff-package.test.ts
           deno test tests/edge/return-to-ai-control-context.test.ts
           deno test tests/edge/e2-direct-threat.test.ts
-          deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+          deno check --no-lock --node-modules-dir=auto supabase/functions/generate-reply/index.ts
 
       - name: Full build
         run: npm run build
 
       - name: Diff safety
+        shell: bash
         run: |
+          set -euo pipefail
           git diff --check
-          changed="$(git diff --name-only)"
+          echo '--- git status --short ---'
+          git status --short
+          echo '--- tracked diff files ---'
+          git diff --name-only
+          changed="$(git diff --name-only | sort)"
+          printf 'WORKFLOW5_DIFF_FILES=%s\n' "$changed"
           test "$changed" = "supabase/functions/generate-reply/index.ts"
           echo 'WORKFLOW5_CHANGED_FILES_EXACT=PASS'
 
