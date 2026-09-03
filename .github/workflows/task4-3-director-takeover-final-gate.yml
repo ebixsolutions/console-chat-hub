@@ -60,12 +60,13 @@ jobs:
         shell: bash
         run: |
           set -u
+          set +e
           npm audit fix --package-lock-only
           rc=$?
+          set -e
           echo "AUDIT_FIX_EXIT=${rc}"
-          # npm audit fix may return non-zero when only below-threshold findings remain.
-          # The authoritative gate is the explicit high-threshold audit below.
-          exit 0
+          # Remediation command status is informational. The explicit high-severity
+          # audit below is the machine gate and must return zero.
       - name: Reinstall remediated lockfile
         run: npm ci
       - name: Production high-severity dependency gate
