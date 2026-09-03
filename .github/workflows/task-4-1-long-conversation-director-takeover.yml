@@ -11,12 +11,14 @@ on:
       - scripts/task4_1_verifier_invalid_retry_patch.py
       - scripts/task4_1_customer_context_update_patch.py
       - scripts/task4_1_context_requirements_patch.py
+      - scripts/task4_1_current_context_memory_patch.py
       - scripts/task4_1_smoke_failfast_patch.py
       - tests/edge/task4-1-director-transform-isolation.test.ts
       - tests/edge/task4-1-verifier-invalid-output-retry.test.ts
       - tests/edge/task4-1-customer-context-update.test.ts
       - tests/edge/task4-1-context-requirements-followup.test.ts
       - tests/edge/task4-1-a17-composite-transform.test.ts
+      - tests/edge/task4-1-current-context-memory.test.ts
   workflow_dispatch:
 
 permissions:
@@ -37,9 +39,10 @@ jobs:
           ref: director/task-4-1-long-conversation-director-takeover
           fetch-depth: 0
 
-      - name: Assert Task 4.1 authoritative implementation
+      - name: Apply A19 current-context memory closure and assert Task 4.1 implementation
         run: |
           set -euo pipefail
+          python scripts/task4_1_current_context_memory_patch.py
           # Grounding verifier remains frozen; A17 is solved at the composite
           # transform contract / evidence-authority boundary.
           grep -q 'buildPriorGroundedTransformGenerationSystem' supabase/functions/_shared/prior-grounded-transform.ts
@@ -48,6 +51,7 @@ jobs:
           grep -q 'grounding_verifier_invalid_output_retry' supabase/functions/_shared/llm-router.ts
           grep -q 'customer_supplied_context_without_factual_request' supabase/functions/_shared/conversation-semantic-contract.ts
           grep -q 'customer_context_requirements_request' supabase/functions/_shared/conversation-semantic-contract.ts
+          grep -q 'currentContextRequest' supabase/functions/_shared/conversation-runtime-state.ts
           python scripts/task4_1_smoke_failfast_patch.py
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
@@ -66,6 +70,7 @@ jobs:
         run: |
           set -euo pipefail
           deno check --node-modules-dir=auto supabase/functions/_shared/conversation-semantic-contract.ts
+          deno check --node-modules-dir=auto supabase/functions/_shared/conversation-runtime-state.ts
           deno check --node-modules-dir=auto supabase/functions/_shared/conversation-intelligence.ts
           deno check --node-modules-dir=auto supabase/functions/_shared/prior-grounded-transform.ts
           deno check --node-modules-dir=auto supabase/functions/_shared/llm-router.ts
@@ -76,6 +81,7 @@ jobs:
         run: |
           set -euo pipefail
           deno test --allow-env --allow-read --node-modules-dir=auto tests/edge/task4-1-a17-composite-transform.test.ts
+          deno test --allow-read --node-modules-dir=auto tests/edge/task4-1-current-context-memory.test.ts
           deno test --allow-read --node-modules-dir=auto tests/edge/task4-1-customer-context-update.test.ts
           deno test --allow-read --node-modules-dir=auto tests/edge/task4-1-context-requirements-followup.test.ts
           deno test --allow-env --node-modules-dir=auto tests/edge/task4-1-director-transform-isolation.test.ts
@@ -93,6 +99,8 @@ jobs:
           grep -q 'CUSTOMER_CONTEXT_UPDATE' supabase/functions/_shared/conversation-semantic-contract.ts
           grep -q 'customer_supplied_context_without_factual_request' supabase/functions/_shared/conversation-semantic-contract.ts
           grep -q 'customer_context_requirements_request' supabase/functions/_shared/conversation-semantic-contract.ts
+          grep -q 'currentContextRequest' supabase/functions/_shared/conversation-runtime-state.ts
+          grep -q '你現在問的是' supabase/functions/_shared/conversation-runtime-state.ts
           grep -q 'buildCustomerContextAcknowledgement' supabase/functions/_shared/conversation-intelligence.ts
           grep -q 'buildCustomerContextRequirementsResponse' supabase/functions/_shared/conversation-intelligence.ts
           grep -q 'response_route: "customer_context_update"' supabase/functions/generate-reply/index.ts
@@ -119,6 +127,18 @@ jobs:
           npm ci
           npm run build
           echo TASK4_1_BUILD=PASS
+
+      - name: Commit validated A19/A20 source
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if ! git diff --quiet -- supabase/functions/_shared/conversation-semantic-contract.ts supabase/functions/_shared/conversation-runtime-state.ts; then
+            git add supabase/functions/_shared/conversation-semantic-contract.ts supabase/functions/_shared/conversation-runtime-state.ts
+            git commit -m '[authorized-prod] Complete Task 4.1 A19 current-context memory [skip ci]'
+            git push origin HEAD:director/task-4-1-long-conversation-director-takeover
+          fi
+          echo TASK4_1_A19_SOURCE_COMMIT=PASS
 
       - uses: supabase/setup-cli@v1
         with:
