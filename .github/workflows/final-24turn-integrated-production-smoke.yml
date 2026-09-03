@@ -1,0 +1,200 @@
+name: Final 24-Turn Integrated Production Smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/final-24turn-integrated-production-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PROD_ORIGIN: https://console-chat-hub.lovable.app
+      CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Run stateful T01-T23 and wait for canonical Return-to-AI
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a; source .env; set +a
+          BASE="${VITE_SUPABASE_FUNCTIONS_URL}"
+
+          CREATE=$(curl -fsS -X POST \
+            -H "Origin: ${PROD_ORIGIN}" \
+            -H 'Content-Type: application/json' \
+            --data "{\"channel_id\":\"${CHANNEL_ID}\",\"visitor_metadata\":{\"final_24turn_smoke\":true,\"exclude_training\":true,\"started_by\":\"director\"}}" \
+            "${BASE}/create-visitor-session")
+
+          python - <<'PY' "$CREATE" > /tmp/session.env
+          import json,sys,shlex
+          d=json.loads(sys.argv[1]); assert d.get('success') is True,d
+          x=d['data']
+          print('CONVERSATION_ID='+shlex.quote(x['conversation_id']))
+          print('SESSION_TOKEN='+shlex.quote(x['session_token']))
+          PY
+          source /tmp/session.env
+          echo "FINAL_SMOKE_CONVERSATION_ID=${CONVERSATION_ID}"
+
+          cat >/tmp/turns.txt <<'EOF'
+          什么是四電一腦？
+          請用繁體中文簡單解釋。
+          Explain that in English.
+          用繁體中文再講一次，不要增加新資料。
+          用一句話總結。
+          只說冷氣機相關部分。
+          那回收安排的重點是什麼？
+          簡單一點。
+          我現在問的是哪個地區和哪個項目？
+          Answer the same question in English.
+          回到繁體中文，不要增加新資料。
+          根據已確認資料列兩點。
+          第一點再解釋簡單一點。
+          第二點呢？
+          剛才內容有沒有提到回收和送貨／安裝是同一件事？
+          用香港客戶聽得懂的人話回答。
+          用英文只翻譯上一個答案。
+          再用繁體中文。
+          最後只根據已確認資料，用三點總結。
+          我現在問的是哪個地區和哪個項目？
+          真人客服幾點有人？
+          現在我要真人客服。
+          我再補充一下，我沒有型號。
+          EOF
+
+          poll_json() {
+            curl -fsS -X POST \
+              -H "Origin: ${PROD_ORIGIN}" \
+              -H 'Content-Type: application/json' \
+              --data "{\"conversation_id\":\"${CONVERSATION_ID}\",\"session_token\":\"${SESSION_TOKEN}\"}" \
+              "${BASE}/widget-poll-messages"
+          }
+
+          assistant_count() {
+            python -c 'import json,sys; d=json.load(sys.stdin); print(sum(1 for m in d["data"].get("messages",[]) if m.get("role")=="assistant"))'
+          }
+
+          status_of() {
+            python -c 'import json,sys; d=json.load(sys.stdin); print(d["data"].get("conversation_status",""))'
+          }
+
+          send_turn() {
+            local n="$1" text="$2"
+            local idem
+            idem=$(python - <<'PY'
+          import uuid; print(uuid.uuid4())
+          PY
+          )
+            python - <<'PY' "$n" "$text"
+          import json,sys
+          print('TURN_INPUT='+json.dumps({'turn':int(sys.argv[1]),'text':sys.argv[2]},ensure_ascii=False))
+          PY
+            RESP=$(python - <<'PY' "$CONVERSATION_ID" "$SESSION_TOKEN" "$text"
+          import json,sys
+          print(json.dumps({'conversation_id':sys.argv[1],'session_token':sys.argv[2],'content':sys.argv[3]},ensure_ascii=False))
+          PY
+          )
+            curl -fsS -X POST \
+              -H "Origin: ${PROD_ORIGIN}" \
+              -H 'Content-Type: application/json' \
+              -H "idempotency-key: ${idem}" \
+              --data "$RESP" \
+              "${BASE}/receive-widget-message" >/tmp/send.json
+            python - <<'PY' /tmp/send.json "$n"
+          import json,sys
+          d=json.load(open(sys.argv[1])); assert d.get('success') is True,d
+          print(f'TURN_SEND_ACCEPTED={sys.argv[2]}')
+          PY
+          }
+
+          mapfile -t TURNS </tmp/turns.txt
+          test "${#TURNS[@]}" -eq 23
+
+          for idx in $(seq 1 21); do
+            text="${TURNS[$((idx-1))]}"
+            before=$(poll_json | assistant_count)
+            send_turn "$idx" "$text"
+            ok=0
+            for attempt in $(seq 1 24); do
+              sleep 2
+              P=$(poll_json)
+              after=$(printf '%s' "$P" | assistant_count)
+              status=$(printf '%s' "$P" | status_of)
+              if [ "$after" -gt "$before" ]; then
+                printf '%s' "$P" | python -c 'import json,sys; d=json.load(sys.stdin); m=[x for x in d["data"].get("messages",[]) if x.get("role")=="assistant"][-1]; print("TURN_OUTPUT="+json.dumps({"turn":int(sys.argv[1]),"status":d["data"].get("conversation_status"),"route":(m.get("metadata") or {}).get("response_route"),"escalation":(m.get("metadata") or {}).get("escalation_rule"),"content":m.get("content")},ensure_ascii=False))' "$idx"
+                if [ "$idx" -le 21 ] && [ "$status" = "pending" ]; then
+                  echo "FAIL_UNEXPECTED_HANDOFF_AT_TURN=${idx}"
+                  exit 1
+                fi
+                ok=1; break
+              fi
+            done
+            [ "$ok" -eq 1 ] || { echo "FAIL_NO_ASSISTANT_REPLY_TURN=${idx}"; exit 1; }
+          done
+
+          # T22 explicit R1 handoff.
+          before=$(poll_json | assistant_count)
+          send_turn 22 "${TURNS[21]}"
+          r1=0
+          for attempt in $(seq 1 30); do
+            sleep 2
+            P=$(poll_json)
+            after=$(printf '%s' "$P" | assistant_count)
+            status=$(printf '%s' "$P" | status_of)
+            if [ "$status" = "pending" ] && [ "$after" -gt "$before" ]; then
+              printf '%s' "$P" | python -c 'import json,sys; d=json.load(sys.stdin); m=[x for x in d["data"].get("messages",[]) if x.get("role")=="assistant"][-1]; hs=d["data"].get("human_support") or {}; print("TURN_OUTPUT="+json.dumps({"turn":22,"status":d["data"].get("conversation_status"),"human_support":hs,"route":(m.get("metadata") or {}).get("response_route"),"escalation":(m.get("metadata") or {}).get("escalation_rule"),"content":m.get("content")},ensure_ascii=False))'
+              r1=1; break
+            fi
+          done
+          [ "$r1" -eq 1 ] || { echo FAIL_R1_HANDOFF; exit 1; }
+
+          # T23 while human control/waiting: visitor message accepted but AI must stay silent.
+          before=$(poll_json | assistant_count)
+          send_turn 23 "${TURNS[22]}"
+          sleep 8
+          P=$(poll_json)
+          after=$(printf '%s' "$P" | assistant_count)
+          status=$(printf '%s' "$P" | status_of)
+          [ "$status" = "pending" ] || { echo "FAIL_T23_STATUS=${status}"; exit 1; }
+          [ "$after" -eq "$before" ] || { echo "FAIL_AI_REPLIED_DURING_HUMAN_CONTROL before=${before} after=${after}"; exit 1; }
+          echo "T23_AI_SUPPRESSION=PASS"
+          echo "EXTERNAL_CONTROL_REQUIRED_CONVERSATION_ID=${CONVERSATION_ID}"
+
+          # Director will exercise the already-frozen canonical takeover + return RPC
+          # against this exact conversation. Wait for status=open again.
+          returned=0
+          for attempt in $(seq 1 180); do
+            sleep 2
+            P=$(poll_json)
+            status=$(printf '%s' "$P" | status_of)
+            if [ "$status" = "open" ]; then returned=1; break; fi
+          done
+          [ "$returned" -eq 1 ] || { echo FAIL_RETURN_TO_AI_TIMEOUT; exit 1; }
+          echo RETURN_TO_AI_OBSERVED=PASS
+
+          # T24 after explicit Return-to-AI must resume AI on the same session.
+          before=$(poll_json | assistant_count)
+          send_turn 24 "現在回到AI，請只用一句話說明我剛才主要問的是什麼。"
+          resumed=0
+          for attempt in $(seq 1 30); do
+            sleep 2
+            P=$(poll_json)
+            after=$(printf '%s' "$P" | assistant_count)
+            status=$(printf '%s' "$P" | status_of)
+            if [ "$status" = "open" ] && [ "$after" -gt "$before" ]; then
+              printf '%s' "$P" | python -c 'import json,sys; d=json.load(sys.stdin); m=[x for x in d["data"].get("messages",[]) if x.get("role")=="assistant"][-1]; print("TURN_OUTPUT="+json.dumps({"turn":24,"status":d["data"].get("conversation_status"),"route":(m.get("metadata") or {}).get("response_route"),"escalation":(m.get("metadata") or {}).get("escalation_rule"),"content":m.get("content")},ensure_ascii=False))'
+              resumed=1; break
+            fi
+          done
+          [ "$resumed" -eq 1 ] || { echo FAIL_AI_DID_NOT_RESUME; exit 1; }
+          echo FINAL_24TURN_RUNTIME_FLOW=PASS
+          echo "FINAL_SMOKE_CONVERSATION_ID=${CONVERSATION_ID}"
