@@ -5,45 +5,55 @@ on:
     paths:
       - '.github/workflows/dispatch-warm-handoff-once.yml'
 permissions:
-  actions: write
   contents: write
 jobs:
   dispatch:
     runs-on: ubuntu-24.04
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
-      - name: Director residual fix and dispatch
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.6
+      - name: Director takeover implementation and final gate
         shell: bash
         run: |
           set -euo pipefail
           git config user.name 'ebixsolutions'
           git config user.email '64578119+ebixsolutions@users.noreply.github.com'
+          python scripts/director-warm-handoff-takeover.py
+          deno test --allow-read tests/edge/warm-handoff-package.test.ts
+          deno test --allow-read --allow-env --node-modules-dir=auto tests/edge/task2-human-language-transform-regression.test.ts
+          deno test --allow-read --allow-env --node-modules-dir=auto tests/edge/task2-standalone-simplify-regression.test.ts
+          deno check --node-modules-dir=auto supabase/functions/_shared/warm-handoff.ts
+          deno check --node-modules-dir=auto supabase/functions/agent-assist/index.ts
+          deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+          npm ci
+          npm run build
+          git diff --check
           python - <<'PY'
           from pathlib import Path
-          p=Path('.github/workflows/director-warm-handoff-context-panel.yml')
-          s=p.read_text()
-          old="""          const ORDER_VALUE=/(?:訂單(?:編號|号码|號碼)?|订单(?:编号|号码)?|order(?: number| no\\.?| id)?)[\\s:：#-]*([A-Za-z0-9][A-Za-z0-9._\\/-]{2,80})/i;"""
-          new="""          const ORDER_VALUE=/(?:訂單(?:編號|號碼|号码)|订单(?:编号|号码)|order(?: number| no\\.?| id)|order\\s*#)[\\s:：#-]*([A-Za-z0-9][A-Za-z0-9._\\/-]{2,80})/i;"""
-          if old in s:
-              s=s.replace(old,new,1)
-          assert new in s
-          old_test="""          Deno.test('order flow asks order reference only when actually missing',()=>{const p=buildWarmHandoffPackage([{role:'visitor',content:'我的送貨訂單出問題'}]);assertEquals(p.missing_facts,['order_reference'])});"""
-          if "plain order word is never parsed as an identifier" not in s:
-              assert old_test in s
-              new_test=old_test+"""\n          Deno.test('explicit order reference is accepted',()=>{const p=buildWarmHandoffPackage([{role:'visitor',content:'我的送貨訂單編號 ABC123 出問題'}]);assertEquals(p.missing_facts,[]);assert(p.known_facts.some(x=>x.label==='Order reference'&&x.value==='ABC123'))});\n          Deno.test('plain order word is never parsed as an identifier',()=>{const p=buildWarmHandoffPackage([{role:'visitor',content:'我的訂單還沒到'}]);assertEquals(p.missing_facts,['order_reference']);assert(!p.known_facts.some(x=>x.label==='Order reference'))});\n          Deno.test('unavailable order reference does not loop',()=>{const p=buildWarmHandoffPackage([{role:'visitor',content:'我的送貨有問題，但我沒有訂單編號'}]);assertEquals(p.missing_facts,[]);assertEquals(p.unavailable_facts,['order_reference'])});"""
-              s=s.replace(old_test,new_test,1)
-          p.write_text(s)
-          print('DIRECTOR_RESIDUAL_DETECTOR_FIX=PASS')
+          a=Path('supabase/functions/agent-assist/index.ts').read_text()
+          g=Path('supabase/functions/generate-reply/index.ts').read_text()
+          u=Path('src/components/console/AgentToolPanel.tsx').read_text()
+          r=Path('src/routes/_authenticated/console.conversations.$id.tsx').read_text()
+          w=Path('supabase/functions/_shared/warm-handoff.ts').read_text()
+          assert 'toolType==="handoff_context"' in a
+          assert 'response_route: "warm_handoff_data_collection"' in g
+          assert 'warm_handoff_question: _warmHandoffQuestion' in g
+          assert 'decision.decision === "handoff" && decision.matched_rule === "R2"' in g
+          assert 'Warm Handoff Context / 真人接手摘要' in u
+          assert 'tool_type: "handoff_context"' in u
+          assert 'autoLoadHandoffContext={conv.status === "pending" || Boolean(conv.assigned_agent_id)}' in r
+          assert 'plain order' not in w
+          assert '訂單(?:編號|號碼|号码)' in w
+          print('WARM_HANDOFF_MACHINE_COVERAGE=PASS')
           PY
-          git diff --check
-          if ! git diff --quiet; then
-            git add .github/workflows/director-warm-handoff-context-panel.yml
-            git commit -m '[director] make order-reference detection explicit'
-            git push origin HEAD:main
-          fi
-          gh workflow run director-warm-handoff-context-panel.yml --repo ebixsolutions/console-chat-hub --ref main
+          git add supabase/functions/_shared/warm-handoff.ts supabase/functions/agent-assist/index.ts supabase/functions/generate-reply/index.ts src/components/console/AgentToolPanel.tsx 'src/routes/_authenticated/console.conversations.$id.tsx' tests/edge/warm-handoff-package.test.ts
+          test "$(git diff --cached --name-only | wc -l | tr -d ' ')" = "6"
+          git commit -m '[director] complete warm handoff package and takeover context panel'
+          git push origin HEAD:main
+          echo WARM_HANDOFF_IMPLEMENTATION_FINAL_GATE=PASS
