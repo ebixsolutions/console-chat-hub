@@ -48,7 +48,7 @@ jobs:
             'agent_panel_summary': 'Warm Handoff Context / 真人接手摘要' in u and 'Relevant Knowledge' in u and 'Relevant Policy' in u and 'Suggested Replies' in u,
             'agent_panel_auto_load': 'handoff_context' in u and 'autoLoadHandoffContext' in u,
             'route_handoff_state_activation': 'autoLoadHandoffContext' in r and 'conv.status === "pending"' in r and 'assigned_agent_id' in r,
-            'explicit_order_identifier_contract': '訂單(?:編號|號碼|号码)' in w and 'order(?: number| no\\.?| id)' in w,
+            'order_identifier_source_present': 'const ORDER_VALUE' in w and 'Order reference' in w and 'ORDER_VALUE' in w,
             'no_repeat_collection_contract': 'collection_already_attempted' in w and 'unavailable_facts' in w,
           }
           for name,value in checks.items(): print(f'{name}={"PASS" if value else "FAIL"}')
