@@ -238,16 +238,22 @@ export function resolveConversationMemoryResponse(
   const nameRequest = /(我叫什麼|我叫什么|我的名字|我個名|我个名|what(?:'s| is)\s+my\s+name|do\s+you\s+remember\s+my\s+name)/i.test(latest);
   const locationRequest = /(我(?:現在|现在|目前).*(?:哪裡|哪里)|我.*(?:在哪|喺邊)|where\s+am\s+i|my\s+(?:current\s+)?location|更正後.*(?:地點|地点)|更正后.*(?:地點|地点))/i.test(latest);
   const currentContextPattern = /(我(?:現在|现在|目前).*(?:哪個|哪个|什麼|什么).*(?:地區|地区).*(?:哪個|哪个|什麼|什么).*(?:項目|项目)|what(?:\x27s| is)?\s+(?:the\s+)?(?:current\s+)?(?:region|jurisdiction).*(?:item|product))/i;
-  const previousAssistantMemory = priorRows.find((row) => {
-    const role = String(row.role ?? "").toLowerCase();
-    return ASSISTANT.has(role) && metadataRecord(row.metadata)?.response_route === "conversation_memory";
-  });
-  const previousCurrentContextQuestion = priorRows.find((row) => {
-    const role = String(row.role ?? "").toLowerCase();
-    return CUSTOMER.has(role) && currentContextPattern.test(clean(row.content));
-  });
-  const memoryLanguageContinuation = Boolean(previousAssistantMemory && previousCurrentContextQuestion) &&
-    /(?:answer|say|repeat).*(?:same|that).*(?:english|chinese|cantonese)|(?:same|that).*(?:in|into)\s+(?:english|chinese|cantonese)|(?:回到|改用|用)\s*(?:繁體中文|繁体中文|簡體中文|简体中文|英文|廣東話|广东话)/i.test(latest);
+  const languageContinuationPattern = /(?:answer|say|repeat).*(?:same|that).*(?:english|chinese|cantonese)|(?:same|that).*(?:in|into)\s+(?:english|chinese|cantonese)|(?:回到|改用|用)\s*(?:繁體中文|繁体中文|簡體中文|简体中文|英文|廣東話|广东话)/i;
+  // A language-only continuation of the deterministic current region/item answer
+  // must not depend on assistant metadata surviving an async cross-turn boundary.
+  // Authorize it only when the two most recent PRIOR customer turns contain the
+  // current-context question itself or an immediately chained language continuation.
+  const recentPriorCustomerTurns = priorRows
+    .filter((row) => CUSTOMER.has(String(row.role ?? "").toLowerCase()))
+    .map((row) => clean(row.content))
+    .filter(Boolean)
+    .slice(0, 2);
+  const hasRecentCurrentContextQuestion = recentPriorCustomerTurns.some((text) => currentContextPattern.test(text));
+  const hasChainedLanguageContinuation = recentPriorCustomerTurns.length >= 2 &&
+    languageContinuationPattern.test(recentPriorCustomerTurns[0]) &&
+    currentContextPattern.test(recentPriorCustomerTurns[1]);
+  const memoryLanguageContinuation = languageContinuationPattern.test(latest) &&
+    (hasRecentCurrentContextQuestion || hasChainedLanguageContinuation);
   const currentContextRequest = currentContextPattern.test(latest) || memoryLanguageContinuation;
   if (!(firstRequest || correctionRequest || constraintRequest || summaryRequest || recommendationRequest || providedMissingRequest || generalSummaryRequest || nameRequest || locationRequest || currentContextRequest)) return null;
 
