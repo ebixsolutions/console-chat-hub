@@ -48,6 +48,7 @@ source /tmp/s.env
 
 poll(){ curl -fsS -X POST -H "Origin: $PROD_ORIGIN" -H 'Content-Type: application/json' --data "{\"conversation_id\":\"$CID\",\"session_token\":\"$TOK\"}" "$BASE/widget-poll-messages"; }
 acount(){ python -c 'import json,sys;d=json.load(sys.stdin);print(sum(1 for m in d["data"].get("messages",[]) if m.get("role")=="assistant"))'; }
+ecount(){ curl -fsS -H "apikey: $SK" -H "Authorization: Bearer $SK" "$SU/rest/v1/handoff_event?conversation_id=eq.$CID&select=id" | python -c 'import json,sys;print(len(json.load(sys.stdin)))'; }
 send(){ local text="$1" payload; payload=$(python - "$CID" "$TOK" "$text" <<'PY'
 import json,sys
 print(json.dumps({'conversation_id':sys.argv[1],'session_token':sys.argv[2],'content':sys.argv[3]},ensure_ascii=False))
@@ -56,13 +57,10 @@ PY
 wait_status(){ local wanted="$1"; for i in $(seq 1 30); do sleep 2; p=$(poll); s=$(printf '%s' "$p"|python -c 'import json,sys;print(json.load(sys.stdin)["data"].get("conversation_status"))'); [ "$s" = "$wanted" ] && return 0; done; echo "status did not reach $wanted"; exit 1; }
 wait_new_ai(){ local before="$1"; for i in $(seq 1 30); do sleep 2; p=$(poll); a=$(printf '%s' "$p"|acount); if [ "$a" -gt "$before" ]; then printf '%s' "$p" >/tmp/after-resume.json; return 0; fi; done; echo 'AI did not resume'; exit 1; }
 
-# Establish a legitimate human-control state with the same visitor session token retained.
 send '現在我要真人客服。'
 wait_status pending
-
 echo 'R1_FIXTURE_FOR_RESUME=PASS'
 
-# Resolve a real same-company elevated agent and mint a real authenticated user JWT.
 python - "$SU" "$SK" "$PK" "$CID" >/tmp/a.env <<'PY'
 import json,sys,urllib.request,urllib.parse,urllib.error,shlex
 su,sk,pk,cid=sys.argv[1:]
@@ -101,7 +99,6 @@ PY
 source /tmp/a.env
 echo 'AUTHENTICATED_RESUME_AGENT_SESSION=PASS'
 
-# Take over only to establish the fixture needed for the resume assertion; prior takeover gate remains frozen.
 take=$(curl -fsS -X POST -H "Origin: $PROD_ORIGIN" -H "apikey: $PK" -H "Authorization: Bearer $JWT" -H 'Content-Type: application/json' --data "{\"conversation_id\":\"$CID\"}" "$BASE/take-over-conversation")
 python - "$take" <<'PY'
 import json,sys
@@ -117,15 +114,19 @@ d=json.loads(sys.argv[1]); assert d.get('success') is True,d
 print('AUTHENTICATED_RETURN_TO_AI_FOR_RESUME=PASS')
 PY
 
-before=$(poll|acount)
-send '現在回到 AI，請只用一句話回覆：AI 已恢復。'
-wait_new_ai "$before"
+before_ai=$(poll|acount)
+before_events=$(ecount)
+send '你好'
+wait_new_ai "$before_ai"
+after_events=$(ecount)
+test "$after_events" = "$before_events"
 python - /tmp/after-resume.json <<'PY'
 import json,sys
 d=json.load(open(sys.argv[1])); msgs=[m for m in d['data'].get('messages',[]) if m.get('role')=='assistant']
 assert msgs and isinstance(msgs[-1].get('content'),str) and msgs[-1]['content'].strip(),msgs[-1:] if msgs else msgs
 assert d['data'].get('conversation_status') not in ('transferred','resolved','closed'),d['data'].get('conversation_status')
 print('RETURN_TO_AI_AI_REPLY_RESUMED=PASS')
+print('RETURN_TO_AI_NO_NEW_HANDOFF=PASS')
 print('RETURN_TO_AI_POST_RELEASE_STATUS=PASS')
 PY
 
