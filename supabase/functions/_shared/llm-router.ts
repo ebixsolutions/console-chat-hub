@@ -602,6 +602,15 @@ async function verifyGroundedGeneration(
           verifierUsage,
           "GROUNDING_VERIFIER_INVALID_OUTPUT",
         );
+        if (attempt < 2) {
+          log(call.tag, {
+            event: "grounding_verifier_invalid_output_retry",
+            request_id: call.operationId,
+            attempt,
+          });
+          await sleep(BASE_BACKOFF_MS * 2 ** (attempt - 1));
+          continue;
+        }
         return { ok: false, reason: "verifier_invalid_output" };
       }
 

@@ -31,6 +31,9 @@ def send(cid,tok,q,expect=True,timeout=55):
         xs=[m for m in p.get('messages',[]) if m.get('role')=='assistant' and m.get('content')!='__THINKING__' and m.get('id') not in seen]
         if xs:latest=xs[-1]
         hs=(p.get('human_support') or {}).get('state')
+        if expect and hs not in (None,'none'):
+            fail.append('UNEXPECTED_HUMAN_CONTROL:'+q+':'+str(hs))
+            break
         if expect and latest:break
         if not expect and hs not in (None,'none') and p.get('ai_generating') is False:break
         time.sleep(1)
