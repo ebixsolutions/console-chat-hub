@@ -1,0 +1,99 @@
+name: Director Warm Handoff Package + Agent Context Panel
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  PROJECT_REF: nrfxhqabwblzxoushgnm
+
+jobs:
+  implement:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.6
+      - name: Implement warm handoff package backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > supabase/functions/_shared/warm-handoff.ts <<'TS'
+          export type WarmHandoffKnownFact = { label:string; value:string };
+          export type WarmHandoffPackage = {
+            reason:string; customer_goal:string; known_facts:WarmHandoffKnownFact[];
+            missing_facts:string[]; actions_already_tried:string[]; last_customer_request:string;
+            conversation_summary:string; ready_for_handoff:boolean;
+          };
+          const MODEL=/(型號|型号|model(?: number)?)/i, ORDER=/(訂單|订单|order(?: number| no\.?| id)?)/i,
+                REGION=/(香港|台灣|台湾|澳門|澳门|Hong Kong|Taiwan|Macau)/i,
+                PRODUCT=/(冷氣|空調|空调|洗衣機|洗衣机|雪櫃|冰箱|電視|电视|產品|产品|product)/i;
+          function clean(v:unknown){return typeof v==='string'?v.replace(/\s+/g,' ').trim().slice(0,500):''}
+          export function buildWarmHandoffPackage(rows:Array<{role?:string;content?:string|null;metadata?:unknown}>,reason='human_handoff'):WarmHandoffPackage{
+            const usable=rows.filter(r=>clean(r.content)&&clean(r.content)!=='__THINKING__');
+            const visitors=usable.filter(r=>['visitor','customer','user'].includes(String(r.role||'').toLowerCase()));
+            const transcript=visitors.map(r=>clean(r.content)).join(' ');
+            const last=clean(visitors.at(-1)?.content);
+            const known:WarmHandoffKnownFact[]=[];
+            const add=(label:string,re:RegExp)=>{const m=transcript.match(re); if(m) known.push({label,value:m[0]})};
+            add('Region',REGION); add('Product',PRODUCT); add('Model',MODEL); add('Order reference',ORDER);
+            const goal=last || clean(visitors.at(-2)?.content) || 'Customer requested human support';
+            const missing:string[]=[];
+            const productSupport=/(維修|维修|保養|保修|故障|唔凍|不冷|不能運作|无法运行|repair|warranty|broken|not working)/i.test(transcript);
+            const orderSupport=/(訂單|订单|送貨|送货|退款|退貨|退货|order|delivery|refund|return)/i.test(transcript);
+            if(productSupport && !MODEL.test(transcript)) missing.push('model');
+            if(orderSupport && !ORDER.test(transcript)) missing.push('order_reference');
+            const actions=usable.filter(r=>String(r.role).toLowerCase()==='assistant').slice(-3).map(r=>clean(r.content)).filter(Boolean);
+            return {reason,customer_goal:goal,known_facts:known,missing_facts:missing,actions_already_tried:actions,last_customer_request:last,conversation_summary:[...visitors.slice(-5)].map(r=>clean(r.content)).join(' / ').slice(0,1500),ready_for_handoff:missing.length===0};
+          }
+          export function buildMissingFactsQuestion(pkg:WarmHandoffPackage,lang:'zh-TW'|'zh-CN'|'en'='zh-TW'){
+            if(pkg.missing_facts.length===0)return null;
+            const names={model:{'zh-TW':'產品型號','zh-CN':'产品型号',en:'product model'},order_reference:{'zh-TW':'訂單編號','zh-CN':'订单编号',en:'order number'}} as const;
+            const labels=pkg.missing_facts.map(x=>(names as any)[x]?.[lang]||x);
+            return lang==='en'?`Before I connect you with a human agent, could you provide ${labels.join(' and ')}? If you don’t have it, just say so and I’ll still pass along everything we have.`:`轉交真人客服前，想先補齊${labels.join('、')}；如果你手上沒有，直接告訴我「沒有」也可以，我會把目前資料一併交給客服。`;
+          }
+          export function shouldBlockForMissingFacts(rule:string|null|undefined,explicitNow:boolean,pkg:WarmHandoffPackage){
+            if(explicitNow)return false;
+            if(rule==='E1'||rule==='E2'||rule==='S0'||rule==='R1')return false;
+            return !pkg.ready_for_handoff;
+          }
+          TS
+
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('supabase/functions/agent-assist/index.ts')
+          s=p.read_text()
+          if 'warm_handoff_package' not in s:
+              s=s.replace('import { buildCanonicalAssistRetrievalQuery } from "../_shared/conversation-runtime-state.ts";','import { buildCanonicalAssistRetrievalQuery } from "../_shared/conversation-runtime-state.ts";\nimport { buildWarmHandoffPackage } from "../_shared/warm-handoff.ts";')
+              s=s.replace('const TOOL_TYPES = new Set(["translate", "grammar", "suggest_reply", "knowledge_helper", "check_policy"]);','const TOOL_TYPES = new Set(["translate", "grammar", "suggest_reply", "knowledge_helper", "check_policy", "handoff_context"]);')
+              s=s.replace('check_policy: new Set(["tool_type", "conversation_id", "content", "context_mode"]),','check_policy: new Set(["tool_type", "conversation_id", "content", "context_mode"]),\n  handoff_context: new Set(["tool_type", "conversation_id", "content"]),')
+              marker='''  if(toolType==="translate"){'''
+              block='''  if(toolType==="handoff_context"){const history=await loadAssistConversationHistory(supabaseAdmin,conversationId);if(history===null)return jsonRes({success:false,error:"handoff_context_unavailable"},500,req);const pkg=buildWarmHandoffPackage(history,"takeover");const tenant=await resolveTenantScope(conversationId,{userId:agent.user_id,allowPreActivation:true});if(!tenant.resolved)return jsonRes({success:false,error:"handoff_kb_tenant_unresolved"},503,req);const endpoint=resolveKBEndpoint();if(!endpoint)return jsonRes({success:false,error:"handoff_kb_unavailable"},503,req);const query=buildCanonicalAssistRetrievalQuery(pkg.customer_goal,history).query.slice(0,500);const kb=await fetchKBRag({query,top_k:3},tenant.scope,endpoint);if(!kb.success)return jsonRes({success:false,error:"handoff_kb_unavailable"},502,req);const knowledge=selectCanonicalGrounding(kb.documents,{requestText:query,requirePublished:true});if(!knowledge.ok)return jsonRes({success:false,error:"handoff_kb_contract_mismatch"},502,req);const policy=selectCanonicalGrounding(kb.documents,{policyOnly:true,requestText:query,requirePublished:true});if(!policy.ok)return jsonRes({success:false,error:"handoff_policy_contract_mismatch"},502,req);const ke=knowledge.evidence.slice(0,3).map((i,n)=>({label:`Evidence ${n+1}`,content:i.content.slice(0,1200),source_type:i.source_type,chunk_type:"full_content"}));const pe=policy.evidence.slice(0,3).map((i,n)=>({label:`Policy ${n+1}`,content:i.content.slice(0,1000),source_type:i.source_type,chunk_type:"full_content"}));let suggestions:any[]=[];if(ke.length){const grounding=ke.map((i:any)=>i.content).join("\\n\\n");const r=await callAssistModel('Generate up to 3 concise customer-service reply drafts grounded ONLY in the supplied evidence. Return ONLY JSON: {"suggestions":[{"content":"...","tone_label":"Empathetic|Informative|Neutral"}]}',`Customer goal:\n${pkg.customer_goal}\n\nEvidence:\n${grounding}`,{companyId:scope.companyId,conversationId,toolType:"handoff_context"});if(r.ok&&r.text){const x=parseJson(r.text);if(Array.isArray(x?.suggestions))suggestions=(x!.suggestions as any[]).filter(v=>typeof v?.content==="string"&&VALID_SUG_TONES.has(String(v.tone_label))).slice(0,3);}}return jsonRes({success:true,tool_type:"handoff_context",warm_handoff_package:pkg,knowledge:{selected_document_id:knowledge.document?.document_id??null,evidence:ke},policy:{selected_document_id:policy.document?.document_id??null,evidence:pe},suggested_replies:suggestions},200,req);}\n'''
+              s=s.replace(marker,block+marker,1)
+              p.write_text(s)
+          PY
+
+          cat > tests/edge/warm-handoff-package.test.ts <<'TS'
+          import {assertEquals,assert} from "https://deno.land/std@0.224.0/assert/mod.ts";
+          import {buildWarmHandoffPackage,shouldBlockForMissingFacts} from "../../supabase/functions/_shared/warm-handoff.ts";
+          Deno.test('complete conversation does not ask again',()=>{const p=buildWarmHandoffPackage([{role:'visitor',content:'香港冷氣維修，型號 AC-123'}]);assertEquals(p.missing_facts,[]);assert(p.ready_for_handoff)});
+          Deno.test('incomplete nonurgent asks only missing',()=>{const p=buildWarmHandoffPackage([{role:'visitor',content:'香港冷氣壞了，想維修'}]);assertEquals(p.missing_facts,['model']);assert(shouldBlockForMissingFacts('R2',false,p))});
+          Deno.test('explicit R1 never blocked by missing facts',()=>{const p=buildWarmHandoffPackage([{role:'visitor',content:'我要真人客服，我沒有型號'}]);assertEquals(shouldBlockForMissingFacts('R1',true,p),false)});
+          Deno.test('critical E1 never blocked',()=>{const p=buildWarmHandoffPackage([{role:'visitor',content:'冷氣有危險情況'}]);assertEquals(shouldBlockForMissingFacts('E1',false,p),false)});
+          TS
+          deno test --allow-read tests/edge/warm-handoff-package.test.ts
+          deno check --node-modules-dir=auto supabase/functions/agent-assist/index.ts
+          npm ci
+          npm run build
+          git diff --check
+          git add supabase/functions/_shared/warm-handoff.ts supabase/functions/agent-assist/index.ts tests/edge/warm-handoff-package.test.ts
+          git commit -m '[director] implement warm handoff package and preload context'
+          git push origin HEAD:main
+          echo WARM_HANDOFF_IMPLEMENTATION=PASS
