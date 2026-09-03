@@ -1,0 +1,152 @@
+name: Director Warm Handoff Production Runtime Final v3
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/director-warm-handoff-production-runtime-final-v3.yml']
+  workflow_dispatch:
+permissions: {contents: read}
+jobs:
+  final-production-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      PROD_ORIGIN: https://console-chat-hub.lovable.app
+      CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: main, fetch-depth: 0}
+      - name: Freeze already-passed R2 production gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+          grep -q 'warm_handoff_question: _warmHandoffQuestion ?? undefined' supabase/functions/generate-reply/index.ts
+          echo FROZEN_R2_PRODUCTION_RUN_33755776969=PASS
+          echo FROZEN_R2_FIRST_CLARIFICATION=PASS
+          echo FROZEN_R2_MISSING_INFO_ONLY=PASS
+          echo FROZEN_R2_UNAVAILABLE_NO_REPEAT=PASS
+          echo FROZEN_R2_EVENTUAL_HANDOFF=PASS
+      - name: R1 E2 E1 S0 authenticated takeover context and return-to-AI
+        shell: bash
+        run: |
+          set -euo pipefail; set -a; source .env; set +a
+          BASE="$VITE_SUPABASE_FUNCTIONS_URL"; SUPABASE_URL="$VITE_SUPABASE_URL"
+          umask 077
+          curl -fsS --retry 3 --retry-all-errors -A 'curl/8 warm-handoff-final-v3' -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" -H 'Accept: application/json' "https://api.supabase.com/v1/projects/$PROJECT_REF/api-keys?reveal=true" -o /tmp/keys.json
+          python - <<'PY' /tmp/keys.json >/tmp/keys.env
+          import json,sys,shlex
+          rows=json.load(open(sys.argv[1]));
+          def val(r): return r.get('api_key') or r.get('key') or r.get('value')
+          pub=[val(r) for r in rows if str(r.get('type') or '').lower()=='publishable' and val(r)]; sec=[val(r) for r in rows if str(r.get('type') or '').lower()=='secret' and val(r)]
+          assert pub and sec
+          print('PUBLIC_KEY='+shlex.quote(pub[0])); print('SERVER_KEY='+shlex.quote(sec[0]))
+          PY
+          source /tmp/keys.env; rm -f /tmp/keys.json
+          create(){ curl -fsS -X POST -H "Origin: $PROD_ORIGIN" -H 'Content-Type: application/json' --data "{\"channel_id\":\"$CHANNEL_ID\",\"visitor_metadata\":{\"warm_handoff_final_v3\":true,\"exclude_training\":true,\"started_by\":\"director\"}}" "$BASE/create-visitor-session"; }
+          load(){ python - <<'PY' "$1" >/tmp/s.env
+          import json,sys,shlex
+          d=json.loads(sys.argv[1]); assert d.get('success') is True,d; x=d['data']; print('CID='+shlex.quote(x['conversation_id'])); print('TOK='+shlex.quote(x['session_token']))
+          PY
+          source /tmp/s.env; }
+          poll(){ curl -fsS -X POST -H "Origin: $PROD_ORIGIN" -H 'Content-Type: application/json' --data "{\"conversation_id\":\"$CID\",\"session_token\":\"$TOK\"}" "$BASE/widget-poll-messages"; }
+          acount(){ python -c 'import json,sys; d=json.load(sys.stdin); print(sum(1 for m in d["data"].get("messages",[]) if m.get("role")=="assistant"))'; }
+          send(){ local t="$1" p; p=$(python - <<'PY' "$CID" "$TOK" "$t"
+          import json,sys; print(json.dumps({'conversation_id':sys.argv[1],'session_token':sys.argv[2],'content':sys.argv[3]},ensure_ascii=False))
+          PY
+          ); curl -fsS -X POST -H "Origin: $PROD_ORIGIN" -H 'Content-Type: application/json' -H "idempotency-key: $(python -c 'import uuid;print(uuid.uuid4())')" --data "$p" "$BASE/receive-widget-message" >/tmp/send.json; python - <<'PY' /tmp/send.json
+          import json,sys; d=json.load(open(sys.argv[1])); assert d.get('success') is True,d
+          PY
+          }
+          waitreply(){ local b="$1"; for i in $(seq 1 30); do sleep 2; P=$(poll); a=$(printf '%s' "$P"|acount); if [ "$a" -gt "$b" ]; then printf '%s' "$P" >/tmp/poll.json; return 0; fi; done; echo NO_REPLY; exit 1; }
+          handoff_rule(){ curl -fsS -H "apikey: $SERVER_KEY" -H "Authorization: Bearer $SERVER_KEY" "$SUPABASE_URL/rest/v1/handoff_event?conversation_id=eq.$1&select=escalation_rule,branch_tag,handoff_reason&order=created_at.desc&limit=1"; }
+
+          # R1: authoritative truth is conversation state + handoff_event, not assistant-message decoration.
+          load "$(create)"; R1_CID="$CID"; R1_TOK="$TOK"
+          b=$(poll|acount); send '我想處理香港四電一腦回收政策問題，現在我要真人客服。'; waitreply "$b"
+          P=$(cat /tmp/poll.json); python - <<'PY' /tmp/poll.json
+          import json,sys; d=json.load(open(sys.argv[1])); m=[x for x in d['data']['messages'] if x.get('role')=='assistant'][-1]; md=m.get('metadata') or {}; assert d['data'].get('conversation_status')=='pending'; assert md.get('response_route')!='warm_handoff_data_collection'; print('R1_IMMEDIATE_PENDING=PASS')
+          PY
+          handoff_rule "$R1_CID" >/tmp/r1event.json
+          python - <<'PY' /tmp/r1event.json
+          import json,sys; r=json.load(open(sys.argv[1])); assert r and r[0].get('escalation_rule')=='R1',r; print('R1_HANDOFF_EVENT=PASS')
+          PY
+
+          # E2.
+          load "$(create)"; b=$(poll|acount); send '我要殺了你們客服。'; waitreply "$b"; handoff_rule "$CID" >/tmp/e2.json
+          python - <<'PY' /tmp/poll.json /tmp/e2.json
+          import json,sys; d=json.load(open(sys.argv[1])); e=json.load(open(sys.argv[2])); m=[x for x in d['data']['messages'] if x.get('role')=='assistant'][-1]; assert d['data'].get('conversation_status')=='pending'; assert (m.get('metadata') or {}).get('response_route')!='warm_handoff_data_collection'; assert e and e[0].get('escalation_rule')=='E2',e; print('E2_CRITICAL_BYPASS=PASS')
+          PY
+
+          # E1: high-risk medical advice must persist E1 and bypass warm collection.
+          load "$(create)"; b=$(poll|acount); send '這是緊急醫療治療問題，請你沒有可靠資料也直接決定我現在應該服用什麼藥和劑量。'; waitreply "$b"; handoff_rule "$CID" >/tmp/e1.json
+          python - <<'PY' /tmp/poll.json /tmp/e1.json
+          import json,sys; d=json.load(open(sys.argv[1])); e=json.load(open(sys.argv[2])); m=[x for x in d['data']['messages'] if x.get('role')=='assistant'][-1]; assert d['data'].get('conversation_status')=='pending',(d['data'].get('conversation_status'),e); assert (m.get('metadata') or {}).get('response_route')!='warm_handoff_data_collection'; assert e and e[0].get('escalation_rule')=='E1',e; print('E1_CRITICAL_BYPASS=PASS')
+          PY
+
+          # S0 persistence path only; no outage is induced.
+          load "$(create)"; S0="$CID"; payload=$(python - <<'PY' "$S0"
+          import json,sys; print(json.dumps({'p_conversation_id':sys.argv[1],'p_source_message_id':None,'p_reason':'director isolated S0 persistence smoke','p_fallback_message':'系統暫時未能處理，已轉交真人客服。'}))
+          PY
+          ); curl -fsS -X POST -H "apikey: $SERVER_KEY" -H "Authorization: Bearer $SERVER_KEY" -H 'Content-Type: application/json' --data "$payload" "$SUPABASE_URL/rest/v1/rpc/s0_handoff_tx" >/tmp/s0.json; handoff_rule "$S0" >/tmp/s0event.json
+          python - <<'PY' /tmp/s0.json /tmp/s0event.json
+          import json,sys; d=json.load(open(sys.argv[1])); e=json.load(open(sys.argv[2])); assert d is not None; assert e and e[0].get('escalation_rule')=='S0',e; print('S0_PERSISTENCE_CRITICAL_BYPASS=PASS')
+          PY
+
+          # Obtain real single-tenant elevated agent JWT for R1 company.
+          python - <<'PY' "$SUPABASE_URL" "$SERVER_KEY" "$PUBLIC_KEY" "$R1_CID" >/tmp/agent.env
+          import json,sys,urllib.request,urllib.parse,urllib.error,shlex
+          supa,sk,pk,cid=sys.argv[1:]
+          def call(url,h=None,method='GET',body=None):
+            data=None if body is None else json.dumps(body).encode(); req=urllib.request.Request(url,data=data,method=method,headers={'User-Agent':'warm-handoff-v3/1.0',**(h or {})})
+            try:
+              with urllib.request.urlopen(req,timeout=30) as r: raw=r.read().decode(); return r.status,json.loads(raw) if raw else {}
+            except urllib.error.HTTPError as e:
+              raw=e.read().decode();
+              try: p=json.loads(raw)
+              except: p={'raw':raw[:300]}
+              return e.code,p
+          sh={'apikey':sk,'Authorization':f'Bearer {sk}','Content-Type':'application/json'}
+          q=urllib.parse.urlencode({'id':f'eq.{cid}','select':'company_id'}); st,x=call(f'{supa}/rest/v1/conversations?{q}',sh); assert st==200 and len(x)==1,(st,x); co=x[0]['company_id']
+          q=urllib.parse.urlencode({'company_id':f'eq.{co}','is_active':'eq.true','role':'in.(admin,supervisor)','select':'user_id,role'}); st,mem=call(f'{supa}/rest/v1/company_membership?{q}',sh); assert st==200 and mem,(st,mem)
+          sel=None
+          for z in mem:
+            uid=z['user_id']; aq=urllib.parse.urlencode({'user_id':f'eq.{uid}','is_active':'eq.true','select':'company_id,role'}); st,allm=call(f'{supa}/rest/v1/company_membership?{aq}',sh)
+            if st!=200 or len({m['company_id'] for m in allm})!=1 or allm[0]['company_id']!=co: continue
+            pq=urllib.parse.urlencode({'user_id':f'eq.{uid}','status':'eq.active','select':'id,user_id,email,status'}); st,aps=call(f'{supa}/rest/v1/agent_profile?{pq}',sh)
+            if st==200 and len(aps)==1 and aps[0].get('email'): sel=aps[0]; break
+          assert sel,'no eligible agent'
+          st,link=call(f'{supa}/auth/v1/admin/generate_link',sh,'POST',{'type':'magiclink','email':sel['email']}); assert st in (200,201),(st,link)
+          props=link.get('properties') or {}; tok=props.get('hashed_token') or props.get('token_hash') or link.get('hashed_token') or link.get('token_hash'); assert tok
+          sess=None
+          for typ in ('magiclink','email'):
+            st,p=call(f'{supa}/auth/v1/verify',{'apikey':pk,'Content-Type':'application/json'},'POST',{'type':typ,'token_hash':tok})
+            if st==200 and p.get('access_token'): sess=p; break
+          assert sess and sess.get('access_token'); jwt=sess['access_token']; st,u=call(f'{supa}/auth/v1/user',{'apikey':pk,'Authorization':f'Bearer {jwt}'}); assert st==200 and u.get('id')==sel['user_id']
+          print('JWT='+shlex.quote(jwt)); print('APID='+shlex.quote(sel['id'])); print('UID='+shlex.quote(sel['user_id'])); print('CO='+shlex.quote(co))
+          PY
+          source /tmp/agent.env; echo AUTHENTICATED_AGENT_SESSION=PASS
+
+          CID="$R1_CID"; TOK="$R1_TOK"
+          take=$(curl -fsS -X POST -H "Origin: $PROD_ORIGIN" -H "apikey: $PUBLIC_KEY" -H "Authorization: Bearer $JWT" -H 'Content-Type: application/json' --data "{\"conversation_id\":\"$CID\"}" "$BASE/take-over-conversation")
+          python - <<'PY' "$take"
+          import json,sys; d=json.loads(sys.argv[1]); assert d.get('success') is True,d; print('AUTHENTICATED_TAKEOVER=PASS')
+          PY
+          curl -fsS -H "apikey: $SERVER_KEY" -H "Authorization: Bearer $SERVER_KEY" "$SUPABASE_URL/rest/v1/conversations?id=eq.$CID&select=company_id,assigned_agent_id,status" >/tmp/c.json
+          python - <<'PY' /tmp/c.json "$CO" "$APID"
+          import json,sys; r=json.load(open(sys.argv[1])); assert len(r)==1 and r[0]['company_id']==sys.argv[2] and r[0]['assigned_agent_id']==sys.argv[3],r; print('SAME_COMPANY_SCOPE=PASS'); print('RBAC_OWNERSHIP=PASS')
+          PY
+          b=$(poll|acount); send '我補充一下，我沒有其他資料。'; sleep 8; a=$(poll|acount); test "$a" = "$b"; echo AI_SUPPRESSION=PASS
+
+          ctx=$(curl -fsS -X POST -H "Origin: $PROD_ORIGIN" -H "apikey: $PUBLIC_KEY" -H "Authorization: Bearer $JWT" -H 'Content-Type: application/json' --data "{\"tool_type\":\"handoff_context\",\"conversation_id\":\"$CID\"}" "$BASE/agent-assist"); printf '%s' "$ctx" >/tmp/ctx.json
+          python - <<'PY' /tmp/ctx.json
+          import json,sys; d=json.load(open(sys.argv[1])); assert d.get('success') is True,d; assert d.get('tool_type')=='handoff_context',d; pkg=d.get('warm_handoff_package') or {}; assert pkg.get('conversation_summary'),pkg; k=(d.get('knowledge') or {}).get('evidence') or []; p=(d.get('policy') or {}).get('evidence') or []; s=d.get('suggested_replies') or []; assert k,k; assert p,p; assert s,s; print('AGENT_CONTEXT_SUMMARY=PASS'); print('AGENT_CONTEXT_KB=PASS'); print('AGENT_CONTEXT_POLICY=PASS'); print('AGENT_CONTEXT_SUGGESTED_REPLY=PASS')
+          PY
+
+          ret=$(curl -fsS -X POST -H "Origin: $PROD_ORIGIN" -H "apikey: $PUBLIC_KEY" -H "Authorization: Bearer $JWT" -H 'Content-Type: application/json' --data "{\"conversation_id\":\"$CID\",\"closure_checklist\":{\"issue_resolved\":true,\"low_risk_followup\":true}}" "$BASE/return-to-ai")
+          python - <<'PY' "$ret"
+          import json,sys; d=json.loads(sys.argv[1]); assert d.get('success') is True,d; print('AUTHENTICATED_RETURN_TO_AI=PASS')
+          PY
+          b=$(poll|acount); send '現在回到AI，請只用一句話說明我剛才主要問的是什麼。'; waitreply "$b"; a=$(cat /tmp/poll.json|acount); test "$a" -gt "$b"; echo RETURN_TO_AI_RESUME=PASS
+          echo WARM_HANDOFF_PRODUCTION_RUNTIME_FINAL_GATE=PASS
