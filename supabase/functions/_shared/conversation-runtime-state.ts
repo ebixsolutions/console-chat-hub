@@ -17,6 +17,7 @@ export interface ConversationRuntimeState {
   latest_corrections: string[];
   active_constraints: string[];
   jurisdiction: string | null;
+  current_item: string | null;
   language: RuntimeLanguage;
   prior_recommendations: string[];
 }
@@ -54,6 +55,35 @@ const JURISDICTIONS: Array<[string, RegExp]> = [
 
 function clean(v: unknown): string {
   return typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, 800) : "";
+}
+function metadataRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+function hasGroundedLineage(metadata: unknown): boolean {
+  const meta = metadataRecord(metadata);
+  const lineage = metadataRecord(meta?.citation_lineage);
+  return typeof lineage?.selected_document_id === "string" &&
+    Array.isArray(lineage?.evidence_chunk_ids) &&
+    lineage.evidence_chunk_ids.some((x) => typeof x === "string" && x.length > 0);
+}
+function detectFocusedItem(text: string): string | null {
+  const t = clean(text);
+  const focus = t.match(/(?:只(?:說|说|講|讲)|只要|聚焦|focus(?: only)? on)\s*([^，。,.!?！？]{1,40}?)(?:相關|相关|部分|內容|内容|\s+only|$)/i);
+  const raw = focus?.[1]?.trim().replace(/^(?:在|關於|关于|the)\s*/i, "") ?? "";
+  return raw && raw.length <= 40 ? raw : null;
+}
+function detectCorrectedItem(text: string): string | null {
+  const m = clean(text).match(/(?:問的是|問嘅係|问的是|其實係|其实是|改成)\s*([^，。,.!?！？]{1,40})/i);
+  if (!m?.[1]) return null;
+  return m[1].replace(/(?:，|,)?\s*(?:不是|唔係|not)\s+.*$/i, "").trim() || null;
+}
+function localizedCurrentItem(item: string, lang: RuntimeLanguage): string {
+  const normalized = clean(item).toLowerCase();
+  const airConditioner = /(?:冷氣機|冷气机|空調機|空调机|air[- ]?conditioner|aircon)/i.test(normalized);
+  if (!airConditioner) return item;
+  if (lang === "en") return "air conditioner";
+  if (lang === "zh-CN") return "空调机";
+  return "冷氣機";
 }
 function detectLanguage(text: string): RuntimeLanguage {
   if (!/[\u4e00-\u9fff]/.test(text)) return "en";
@@ -93,6 +123,7 @@ export function projectConversationRuntimeState(newestFirst: RuntimeHistoryRow[]
     .map((row) => ({
       text: clean(row.content),
       role: String(row.role ?? "").toLowerCase(),
+      metadata: row.metadata,
     }))
     .filter((row) => row.text && row.text !== "__THINKING__");
   const customers = rows.filter((row) => CUSTOMER.has(row.role));
@@ -106,6 +137,12 @@ export function projectConversationRuntimeState(newestFirst: RuntimeHistoryRow[]
   const unresolved = customers.filter((row) => QUESTION.test(row.text)).slice(0, 8).map((row) => row.text);
   const explicitJurisdiction = latest ? detectExplicitJurisdiction(latest) : null;
   const inheritedJurisdiction = customers.map((row) => detectExplicitJurisdiction(row.text)).find(Boolean) ?? null;
+  const groundedAssistantJurisdiction = assistants
+    .filter((row) => hasGroundedLineage(row.metadata))
+    .map((row) => detectExplicitJurisdiction(row.text))
+    .find(Boolean) ?? null;
+  const correctedItem = corrections.map((text) => detectCorrectedItem(text)).find(Boolean) ?? null;
+  const focusedItem = customers.map((row) => detectFocusedItem(row.text)).find(Boolean) ?? null;
   const topics: string[] = [];
   for (const row of chronological) {
     const topic = normalizeTopic(row.text);
@@ -129,7 +166,8 @@ export function projectConversationRuntimeState(newestFirst: RuntimeHistoryRow[]
     unresolved_questions: unresolved,
     latest_corrections: corrections,
     active_constraints: constraints,
-    jurisdiction: explicitJurisdiction ?? inheritedJurisdiction,
+    jurisdiction: explicitJurisdiction ?? inheritedJurisdiction ?? groundedAssistantJurisdiction,
+    current_item: correctedItem ?? focusedItem,
     language: detectLanguage(latest ?? first ?? ""),
     prior_recommendations: assistants.filter((row) => RECOMMEND.test(row.text)).slice(0, 6).map((row) => row.text),
   };
@@ -147,6 +185,7 @@ export function buildCanonicalContinuityBlock(newestFirst: RuntimeHistoryRow[]):
     `Prior grounded document: ${state.prior_grounded_document_id ?? "—"}`,
     `Current topic: ${state.current_topic ?? "—"}`,
     `Jurisdiction: ${state.jurisdiction ?? "unspecified"}`,
+    `Current item: ${state.current_item ?? "unspecified"}`,
   ];
   if (state.latest_corrections.length) {
     lines.push("Newest corrections / superseding facts:");
@@ -198,7 +237,18 @@ export function resolveConversationMemoryResponse(
   const generalSummaryRequest = /(最後|最后|請|请)?\s*(?:用.{0,8})?(?:三點|三点|幾點|几点)?\s*(?:總結|总结).*(?:剛才|刚才|我們|我们|談過|谈过|內容|内容)|summari[sz]e.*(?:conversation|discussed|talked|so far)/i.test(latest);
   const nameRequest = /(我叫什麼|我叫什么|我的名字|我個名|我个名|what(?:'s| is)\s+my\s+name|do\s+you\s+remember\s+my\s+name)/i.test(latest);
   const locationRequest = /(我(?:現在|现在|目前).*(?:哪裡|哪里)|我.*(?:在哪|喺邊)|where\s+am\s+i|my\s+(?:current\s+)?location|更正後.*(?:地點|地点)|更正后.*(?:地點|地点))/i.test(latest);
-  const currentContextRequest = /(我(?:現在|现在|目前).*(?:哪個|哪个|什麼|什么).*(?:地區|地区).*(?:哪個|哪个|什麼|什么).*(?:項目|项目)|what(?:\x27s| is)?\s+(?:the\s+)?(?:current\s+)?(?:region|jurisdiction).*(?:item|product))/i.test(latest);
+  const currentContextPattern = /(我(?:現在|现在|目前).*(?:哪個|哪个|什麼|什么).*(?:地區|地区).*(?:哪個|哪个|什麼|什么).*(?:項目|项目)|what(?:\x27s| is)?\s+(?:the\s+)?(?:current\s+)?(?:region|jurisdiction).*(?:item|product))/i;
+  const previousAssistantMemory = priorRows.find((row) => {
+    const role = String(row.role ?? "").toLowerCase();
+    return ASSISTANT.has(role) && metadataRecord(row.metadata)?.response_route === "conversation_memory";
+  });
+  const previousCurrentContextQuestion = priorRows.find((row) => {
+    const role = String(row.role ?? "").toLowerCase();
+    return CUSTOMER.has(role) && currentContextPattern.test(clean(row.content));
+  });
+  const memoryLanguageContinuation = Boolean(previousAssistantMemory && previousCurrentContextQuestion) &&
+    /(?:answer|say|repeat).*(?:same|that).*(?:english|chinese|cantonese)|(?:same|that).*(?:in|into)\s+(?:english|chinese|cantonese)|(?:回到|改用|用)\s*(?:繁體中文|繁体中文|簡體中文|简体中文|英文|廣東話|广东话)/i.test(latest);
+  const currentContextRequest = currentContextPattern.test(latest) || memoryLanguageContinuation;
   if (!(firstRequest || correctionRequest || constraintRequest || summaryRequest || recommendationRequest || providedMissingRequest || generalSummaryRequest || nameRequest || locationRequest || currentContextRequest)) return null;
 
   const zh = lang !== "en";
@@ -267,9 +317,7 @@ ${list(anchors.slice(0, 3))}`.slice(0, 1800);
       hong_kong:{"zh-TW":"香港","zh-CN":"香港",en:"Hong Kong"}, macau:{"zh-TW":"澳門","zh-CN":"澳门",en:"Macau"}, singapore:{"zh-TW":"新加坡","zh-CN":"新加坡",en:"Singapore"}, taiwan:{"zh-TW":"台灣","zh-CN":"台湾",en:"Taiwan"}, mainland_china:{"zh-TW":"中國大陸","zh-CN":"中国大陆",en:"Mainland China"}, mars:{"zh-TW":"火星","zh-CN":"火星",en:"Mars"}
     };
     const region = state.jurisdiction ? label[state.jurisdiction]?.[lang] : undefined;
-    const correction = state.latest_corrections[0] ?? "";
-    const itemMatch = correction.match(/(?:問的是|問嘅係|问的是|其實係|其实是|改成)\s*([^，。,.!?！？]{1,40})/i);
-    const item = itemMatch?.[1]?.trim() ?? "";
+    const item = state.current_item ? localizedCurrentItem(state.current_item, lang) : "";
     if (!region || !item) return t.none;
     if (lang === "en") return `Your current region is ${region}, and the current item is ${item}.`;
     if (lang === "zh-CN") return `你现在问的是${region}的${item}。`;
