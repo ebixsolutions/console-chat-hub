@@ -1,0 +1,77 @@
+name: Director Return-to-AI Control Guard
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/director-return-to-ai-control-guard.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  implement-validate-deploy-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      PROD_ORIGIN: https://console-chat-hub.lovable.app
+      CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.6
+
+      - name: Apply Return-to-AI generation control guard
+        run: |
+          set -euo pipefail
+          python scripts/director-return-to-ai-control-guard.py
+          grep -q 'AI_ACTIVE_AFTER_EXPLICIT_RETURN_TO_AI' supabase/functions/_shared/return-to-ai-control.ts
+          grep -q 'returnToAiGuard' supabase/functions/generate-reply/index.ts
+          echo RETURN_TO_AI_CONTROL_GUARD_SOURCE=PASS
+
+      - name: Regression compile and full build
+        run: |
+          set -euo pipefail
+          deno test --allow-read tests/edge/return-to-ai-control-context.test.ts
+          deno test --allow-read tests/edge/warm-handoff-package.test.ts
+          deno test --allow-read --allow-env --node-modules-dir=auto tests/edge/task2-human-language-transform-regression.test.ts
+          deno test --allow-read --allow-env --node-modules-dir=auto tests/edge/task2-standalone-simplify-regression.test.ts
+          deno check --node-modules-dir=auto supabase/functions/_shared/return-to-ai-control.ts
+          deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+          git diff --check
+          npm ci
+          npm run build
+          echo RETURN_TO_AI_CONTROL_GUARD_REGRESSION_BUILD=PASS
+
+      - name: Commit exact functional source
+        run: |
+          set -euo pipefail
+          git config user.name 'Director Runtime Fix'
+          git config user.email 'director-runtime-fix@users.noreply.github.com'
+          git add supabase/functions/_shared/return-to-ai-control.ts supabase/functions/generate-reply/index.ts tests/edge/return-to-ai-control-context.test.ts
+          test "$(git diff --cached --name-only | wc -l | tr -d ' ')" = 3
+          git diff --cached --name-only | grep -qx 'supabase/functions/_shared/return-to-ai-control.ts'
+          git diff --cached --name-only | grep -qx 'supabase/functions/generate-reply/index.ts'
+          git diff --cached --name-only | grep -qx 'tests/edge/return-to-ai-control-context.test.ts'
+          git commit -m '[director] prevent stale human-handoff language after Return-to-AI'
+          git push origin HEAD:main
+          echo RETURN_TO_AI_CONTROL_GUARD_COMMIT=PASS
+
+      - name: Deploy generate-reply only
+        run: |
+          set -euo pipefail
+          npx supabase functions deploy generate-reply --project-ref "$PROJECT_REF"
+          echo RETURN_TO_AI_CONTROL_GUARD_DEPLOY=PASS
+
+      - name: Fresh production Return-to-AI resume smoke
+        run: |
+          set -euo pipefail
+          bash scripts/director-return-to-ai-resume-final.sh
+          echo RETURN_TO_AI_CONTROL_GUARD_PRODUCTION_SMOKE=PASS
