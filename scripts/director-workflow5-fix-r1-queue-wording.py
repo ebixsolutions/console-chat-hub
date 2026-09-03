@@ -1,5 +1,6 @@
 from pathlib import Path
 
+# Workflow 5 final customer-facing R1 queue/ETA wording closure.
 TARGET = Path("supabase/functions/generate-reply/index.ts")
 text = TARGET.read_text(encoding="utf-8")
 
