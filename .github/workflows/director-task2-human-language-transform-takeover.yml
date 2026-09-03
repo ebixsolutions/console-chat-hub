@@ -1,0 +1,108 @@
+name: Director Task 2 Human Language Transform Takeover
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/director-task2-human-language-transform-takeover.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  PROJECT_REF: nrfxhqabwblzxoushgnm
+  SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.6
+      - name: Patch and regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/director_task2_human_language_transform_patch.py
+          git diff --check
+          test "$(git diff --name-only)" = "supabase/functions/_shared/conversation-semantic-contract.ts"
+          deno test --allow-read --allow-env --node-modules-dir=auto tests/edge/task2-human-language-transform-regression.test.ts
+          deno test --allow-read --allow-env --node-modules-dir=auto tests/edge/task2-standalone-simplify-regression.test.ts
+          deno test --allow-read --allow-env --node-modules-dir=auto tests/edge/task2-fixed-count-summary-regression.test.ts
+          deno test --allow-read --allow-env --node-modules-dir=auto tests/edge/task2-translation-grounding-regression.test.ts
+          deno check --node-modules-dir=auto supabase/functions/_shared/conversation-semantic-contract.ts
+          deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+          echo DIRECTOR_TASK2_HUMAN_LANGUAGE_REGRESSION=PASS
+      - name: Full build
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          echo DIRECTOR_TASK2_HUMAN_LANGUAGE_BUILD=PASS
+      - name: Commit exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'ebixsolutions'
+          git config user.email '64578119+ebixsolutions@users.noreply.github.com'
+          git add supabase/functions/_shared/conversation-semantic-contract.ts
+          test "$(git diff --cached --name-only)" = "supabase/functions/_shared/conversation-semantic-contract.ts"
+          git commit -m '[authorized-prod] Task 2 close human-language transform continuity'
+          git push origin HEAD:main
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          SNAP=/tmp/task2-human-language-rollback
+          rm -rf "$SNAP"; mkdir -p "$SNAP/supabase"
+          cp supabase/config.toml "$SNAP/supabase/config.toml"
+          cd "$SNAP"
+          supabase functions download generate-reply --project-ref "$PROJECT_REF" --use-api
+          ENTRY="$(find "$SNAP" -type f -path '*/generate-reply/index.ts' -print -quit)"
+          test -n "$ENTRY" && test -s "$ENTRY"
+          ROOT="$(dirname "$(dirname "$ENTRY")")"; test -d "$ROOT/_shared"
+          find . -type f -not -name 'ROLLBACK_SHA256SUMS.txt' -print0 | sort -z | xargs -0 sha256sum > ROLLBACK_SHA256SUMS.txt
+          sha256sum -c ROLLBACK_SHA256SUMS.txt
+          deno check --node-modules-dir=auto "$ENTRY"
+          test "$(find "$ROOT" -type f -empty | wc -l | tr -d ' ')" -eq 0
+          echo DIRECTOR_TASK2_HUMAN_LANGUAGE_SNAPSHOT=PASS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: task2-human-language-predeploy-rollback
+          path: /tmp/task2-human-language-rollback
+          if-no-files-found: error
+          retention-days: 30
+      - name: Deploy
+        id: deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          supabase functions deploy generate-reply --project-ref "$PROJECT_REF" --use-api
+          supabase functions list --project-ref "$PROJECT_REF" | grep -q 'generate-reply'
+          echo DIRECTOR_TASK2_HUMAN_LANGUAGE_DEPLOY=PASS
+      - name: Rollback deploy failure
+        if: ${{ failure() && steps.deploy.outcome == 'failure' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/task2-human-language-rollback
+          sha256sum -c ROLLBACK_SHA256SUMS.txt
+          supabase functions deploy generate-reply --project-ref "$PROJECT_REF" --use-api
+          echo DIRECTOR_TASK2_HUMAN_LANGUAGE_ROLLBACK=PASS
+      - name: Final gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s /tmp/task2-human-language-rollback/ROLLBACK_SHA256SUMS.txt
+          echo DIRECTOR_TASK2_HUMAN_LANGUAGE_FINAL_GATE=PASS
