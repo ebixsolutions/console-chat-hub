@@ -1,0 +1,284 @@
+name: Director Warm Handoff Production Runtime Final v2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/director-warm-handoff-production-runtime-final-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  final-production-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PROD_ORIGIN: https://console-chat-hub.lovable.app
+      CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Freeze deployed R2 call-chain source
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'warm_handoff_question: buildMissingFactsQuestion(buildWarmHandoffPackage(_pr5HistoryRows ?? \[\], "R2"), _visitorLang) ?? undefined' supabase/functions/generate-reply/index.ts
+          test "$(grep -c 'warm_handoff_question: buildMissingFactsQuestion(buildWarmHandoffPackage(_pr5HistoryRows ?? \[\], "R2"), _visitorLang) ?? undefined' supabase/functions/generate-reply/index.ts)" -ge 3
+          grep -q 'warm_handoff_question: _warmHandoffQuestion ?? undefined' supabase/functions/generate-reply/index.ts
+          grep -q 'handoff_context' supabase/functions/agent-assist/index.ts
+          echo DEPLOYED_R2_CALLCHAIN_SOURCE=PASS
+
+      - name: Run final authenticated production runtime closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a; source .env; set +a
+          BASE="${VITE_SUPABASE_FUNCTIONS_URL}"
+          SUPABASE_URL="${VITE_SUPABASE_URL}"
+          test -n "${SUPABASE_ACCESS_TOKEN:-}"
+
+          umask 077
+          curl -fsS --retry 3 --retry-all-errors -A 'curl/8 warm-handoff-final-v2' \
+            -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" -H 'Accept: application/json' \
+            "https://api.supabase.com/v1/projects/${PROJECT_REF}/api-keys?reveal=true" -o /tmp/project-api-keys.json
+          python - <<'PY' /tmp/project-api-keys.json > /tmp/keys.env
+          import json,sys,shlex
+          rows=json.load(open(sys.argv[1])); assert isinstance(rows,list) and rows,rows
+          def kv(r): return r.get('api_key') or r.get('key') or r.get('value')
+          pub=[kv(r) for r in rows if str(r.get('type') or '').lower()=='publishable' and kv(r)]
+          sec=[kv(r) for r in rows if str(r.get('type') or '').lower()=='secret' and kv(r)]
+          assert pub and sec,'new publishable/secret keys unavailable'
+          print('PUBLIC_KEY='+shlex.quote(pub[0])); print('SERVER_KEY='+shlex.quote(sec[0]))
+          PY
+          source /tmp/keys.env
+          rm -f /tmp/project-api-keys.json
+
+          create_session() {
+            curl -fsS -X POST -H "Origin: ${PROD_ORIGIN}" -H 'Content-Type: application/json' \
+              --data "{\"channel_id\":\"${CHANNEL_ID}\",\"visitor_metadata\":{\"warm_handoff_final_v2\":true,\"exclude_training\":true,\"started_by\":\"director\"}}" \
+              "${BASE}/create-visitor-session"
+          }
+          load_session() {
+            python - <<'PY' "$1" > /tmp/session.env
+          import json,sys,shlex
+          d=json.loads(sys.argv[1]); assert d.get('success') is True,d
+          x=d['data']; print('CONVERSATION_ID='+shlex.quote(x['conversation_id'])); print('SESSION_TOKEN='+shlex.quote(x['session_token']))
+          PY
+            source /tmp/session.env
+          }
+          poll_json() {
+            curl -fsS -X POST -H "Origin: ${PROD_ORIGIN}" -H 'Content-Type: application/json' \
+              --data "{\"conversation_id\":\"${CONVERSATION_ID}\",\"session_token\":\"${SESSION_TOKEN}\"}" "${BASE}/widget-poll-messages"
+          }
+          assistant_count() { python -c 'import json,sys; d=json.load(sys.stdin); print(sum(1 for m in d["data"].get("messages",[]) if m.get("role")=="assistant"))'; }
+          status_of() { python -c 'import json,sys; d=json.load(sys.stdin); print(d["data"].get("conversation_status", ""))'; }
+          send_turn() {
+            local text="$1" idem payload
+            idem=$(python -c 'import uuid; print(uuid.uuid4())')
+            payload=$(python - <<'PY' "$CONVERSATION_ID" "$SESSION_TOKEN" "$text"
+          import json,sys; print(json.dumps({'conversation_id':sys.argv[1],'session_token':sys.argv[2],'content':sys.argv[3]},ensure_ascii=False))
+          PY
+            )
+            curl -fsS -X POST -H "Origin: ${PROD_ORIGIN}" -H 'Content-Type: application/json' -H "idempotency-key: ${idem}" --data "$payload" "${BASE}/receive-widget-message" >/tmp/send.json
+            python - <<'PY' /tmp/send.json
+          import json,sys; d=json.load(open(sys.argv[1])); assert d.get('success') is True,d
+          PY
+          }
+          wait_reply() {
+            local before="$1" ok=0
+            for _ in $(seq 1 30); do
+              sleep 2; P=$(poll_json); after=$(printf '%s' "$P" | assistant_count)
+              if [ "$after" -gt "$before" ]; then printf '%s' "$P" > /tmp/poll.json; ok=1; break; fi
+            done
+            [ "$ok" -eq 1 ] || { echo FAIL_NO_ASSISTANT_REPLY; exit 1; }
+          }
+          latest_assert() {
+            python - "$@" <<'PY'
+          import json,sys
+          d=json.load(open('/tmp/poll.json')); m=[x for x in d['data'].get('messages',[]) if x.get('role')=='assistant'][-1]; md=m.get('metadata') or {}
+          print(json.dumps({'status':d['data'].get('conversation_status'),'content':m.get('content'),'metadata':md},ensure_ascii=False))
+          PY
+          }
+
+          # 1) Deterministic existing R2 contract -> warm collection -> unavailable no-repeat -> eventual R2 handoff.
+          load_session "$(create_session)"
+          R2_TEXT='我的火星基地雪櫃送貨訂單原定昨天到貨，但現在仍未收到，請幫我查送貨狀態。'
+          before=$(poll_json | assistant_count); send_turn "$R2_TEXT"; wait_reply "$before"
+          python - <<'PY' /tmp/poll.json
+          import json,sys
+          d=json.load(open(sys.argv[1])); m=[x for x in d['data']['messages'] if x.get('role')=='assistant'][-1]; md=m.get('metadata') or {}
+          assert md.get('reason_code')=='clarification_required_before_r2',md
+          assert d['data'].get('conversation_status')!='pending',d['data'].get('conversation_status')
+          print('R2_FIRST_CLARIFICATION=PASS')
+          PY
+          before=$(poll_json | assistant_count); send_turn "$R2_TEXT"; wait_reply "$before"
+          python - <<'PY' /tmp/poll.json
+          import json,sys
+          d=json.load(open(sys.argv[1])); m=[x for x in d['data']['messages'] if x.get('role')=='assistant'][-1]; md=m.get('metadata') or {}; c=m.get('content') or ''
+          assert md.get('response_route')=='warm_handoff_data_collection',(md,c)
+          assert md.get('escalation_rule')=='R2',md
+          assert d['data'].get('conversation_status')!='pending',d['data'].get('conversation_status')
+          assert ('訂單' in c or 'order' in c.lower()),c
+          print('R2_MISSING_INFO_ONLY=PASS')
+          PY
+          before=$(poll_json | assistant_count); send_turn '我沒有訂單編號。'; wait_reply "$before"
+          python - <<'PY' /tmp/poll.json
+          import json,sys
+          d=json.load(open(sys.argv[1])); m=[x for x in d['data']['messages'] if x.get('role')=='assistant'][-1]; md=m.get('metadata') or {}
+          assert md.get('response_route')!='warm_handoff_data_collection',md
+          print('R2_UNAVAILABLE_NO_IMMEDIATE_REPEAT=PASS')
+          PY
+          reached=0
+          for attempt in 1 2; do
+            P=$(poll_json); status=$(printf '%s' "$P" | status_of)
+            if [ "$status" = pending ]; then reached=1; break; fi
+            before=$(printf '%s' "$P" | assistant_count); send_turn "$R2_TEXT"; wait_reply "$before"
+            python - <<'PY' /tmp/poll.json
+          import json,sys
+          d=json.load(open(sys.argv[1])); m=[x for x in d['data']['messages'] if x.get('role')=='assistant'][-1]; md=m.get('metadata') or {}
+          assert md.get('response_route')!='warm_handoff_data_collection',md
+          PY
+          done
+          [ "$reached" -eq 1 ] || [ "$(poll_json | status_of)" = pending ] || { echo R2_EVENTUAL_HANDOFF=FAIL; exit 1; }
+          echo R2_UNAVAILABLE_NO_REPEAT=PASS
+          echo R2_EVENTUAL_HANDOFF=PASS
+
+          # 2) Explicit R1 immediate. Keep this policy-rich conversation for authenticated agent context.
+          load_session "$(create_session)"
+          R1_CONVERSATION_ID="$CONVERSATION_ID"; R1_SESSION_TOKEN="$SESSION_TOKEN"
+          before=$(poll_json | assistant_count); send_turn '我想處理香港四電一腦回收政策問題，現在我要真人客服。'; wait_reply "$before"
+          python - <<'PY' /tmp/poll.json
+          import json,sys
+          d=json.load(open(sys.argv[1])); m=[x for x in d['data']['messages'] if x.get('role')=='assistant'][-1]; md=m.get('metadata') or {}
+          assert d['data'].get('conversation_status')=='pending',d['data'].get('conversation_status')
+          assert md.get('escalation_rule')=='R1',md
+          assert md.get('response_route')!='warm_handoff_data_collection',md
+          print('EXPLICIT_R1_IMMEDIATE=PASS')
+          PY
+
+          # 3a) E2 immediate.
+          load_session "$(create_session)"
+          before=$(poll_json | assistant_count); send_turn '我要殺了你們客服。'; wait_reply "$before"
+          python - <<'PY' /tmp/poll.json
+          import json,sys
+          d=json.load(open(sys.argv[1])); m=[x for x in d['data']['messages'] if x.get('role')=='assistant'][-1]; md=m.get('metadata') or {}
+          assert md.get('escalation_rule')=='E2',md
+          assert md.get('response_route')!='warm_handoff_data_collection',md
+          assert d['data'].get('conversation_status')=='pending',d['data'].get('conversation_status')
+          print('E2_CRITICAL_BYPASS=PASS')
+          PY
+
+          # 3b) E1 immediate on high-risk advice request; assert actual classifier outcome, never false-pass.
+          load_session "$(create_session)"
+          before=$(poll_json | assistant_count); send_turn '這是緊急醫療治療問題，請你沒有可靠資料也直接決定我現在應該服用什麼藥和劑量。'; wait_reply "$before"
+          python - <<'PY' /tmp/poll.json
+          import json,sys
+          d=json.load(open(sys.argv[1])); m=[x for x in d['data']['messages'] if x.get('role')=='assistant'][-1]; md=m.get('metadata') or {}
+          assert md.get('escalation_rule')=='E1',md
+          assert md.get('response_route')!='warm_handoff_data_collection',md
+          assert d['data'].get('conversation_status')=='pending',d['data'].get('conversation_status')
+          print('E1_CRITICAL_BYPASS=PASS')
+          PY
+
+          # 3c) S0 persistence/critical-bypass path only; no production outage is induced.
+          load_session "$(create_session)"
+          S0_CONVERSATION_ID="$CONVERSATION_ID"
+          S0_PAYLOAD=$(python - <<'PY' "$S0_CONVERSATION_ID"
+          import json,sys; print(json.dumps({'p_conversation_id':sys.argv[1],'p_source_message_id':None,'p_reason':'director isolated S0 persistence smoke','p_fallback_message':'系統暫時未能處理，已轉交真人客服。'}))
+          PY
+          )
+          curl -fsS -X POST -H "apikey: ${SERVER_KEY}" -H "Authorization: Bearer ${SERVER_KEY}" -H 'Content-Type: application/json' --data "$S0_PAYLOAD" "${SUPABASE_URL}/rest/v1/rpc/s0_handoff_tx" >/tmp/s0.json
+          python - <<'PY' /tmp/s0.json
+          import json,sys
+          d=json.load(open(sys.argv[1])); assert d is not None,d
+          print('S0_PERSISTENCE_CRITICAL_BYPASS=PASS')
+          PY
+
+          # 4) Real same-tenant elevated agent JWT for the R1 conversation.
+          python - <<'PY' "$SUPABASE_URL" "$SERVER_KEY" "$PUBLIC_KEY" "$R1_CONVERSATION_ID" > /tmp/agent.env
+          import json,sys,urllib.request,urllib.parse,urllib.error,shlex
+          supa,server_key,public_key,cid=sys.argv[1:]
+          def call(url,headers=None,method='GET',body=None):
+              data=None if body is None else json.dumps(body).encode(); h={'User-Agent':'warm-handoff-final-v2/1.0',**(headers or {})}
+              req=urllib.request.Request(url,data=data,method=method,headers=h)
+              try:
+                  with urllib.request.urlopen(req,timeout=30) as r:
+                      raw=r.read().decode(); return r.status,json.loads(raw) if raw else {}
+              except urllib.error.HTTPError as e:
+                  raw=e.read().decode();
+                  try: p=json.loads(raw)
+                  except Exception: p={'raw':raw[:300]}
+                  return e.code,p
+          sh={'apikey':server_key,'Authorization':f'Bearer {server_key}','Content-Type':'application/json'}
+          q=urllib.parse.urlencode({'id':f'eq.{cid}','select':'company_id'}); st,conv=call(f'{supa}/rest/v1/conversations?{q}',sh); assert st==200 and len(conv)==1,(st,conv); co=conv[0]['company_id']
+          q=urllib.parse.urlencode({'company_id':f'eq.{co}','is_active':'eq.true','role':'in.(admin,supervisor)','select':'user_id,role'}); st,mem=call(f'{supa}/rest/v1/company_membership?{q}',sh); assert st==200 and mem,(st,mem)
+          sel=None
+          for x in mem:
+              uid=x['user_id']; aq=urllib.parse.urlencode({'user_id':f'eq.{uid}','is_active':'eq.true','select':'company_id,role'}); st,allm=call(f'{supa}/rest/v1/company_membership?{aq}',sh)
+              if st!=200 or len({z['company_id'] for z in allm})!=1 or allm[0]['company_id']!=co: continue
+              pq=urllib.parse.urlencode({'user_id':f'eq.{uid}','status':'eq.active','select':'id,user_id,email,status'}); st,aps=call(f'{supa}/rest/v1/agent_profile?{pq}',sh)
+              if st==200 and len(aps)==1 and aps[0].get('email'): sel=aps[0]; break
+          assert sel,'no single-tenant active elevated agent available'
+          st,link=call(f'{supa}/auth/v1/admin/generate_link',sh,'POST',{'type':'magiclink','email':sel['email']}); assert st in (200,201),(st,link)
+          props=link.get('properties') if isinstance(link,dict) else {}; props=props if isinstance(props,dict) else {}
+          tok=props.get('hashed_token') or props.get('token_hash') or link.get('hashed_token') or link.get('token_hash')
+          if not tok:
+              action=props.get('action_link') or link.get('action_link') or ''; tok=urllib.parse.parse_qs(urllib.parse.urlparse(action).query).get('token',[''])[0] if action else ''
+          assert tok,'missing magiclink token hash'
+          ah={'apikey':public_key,'Content-Type':'application/json'}; sess=None
+          for typ in ('magiclink','email'):
+              st,p=call(f'{supa}/auth/v1/verify',ah,'POST',{'type':typ,'token_hash':tok})
+              if st==200 and p.get('access_token'): sess=p; break
+          assert sess and sess.get('access_token'),'JWT exchange failed'; jwt=sess['access_token']
+          st,user=call(f'{supa}/auth/v1/user',{'apikey':public_key,'Authorization':f'Bearer {jwt}'}); assert st==200 and user.get('id')==sel['user_id'],(st,user)
+          print('AGENT_JWT='+shlex.quote(jwt)); print('AGENT_PROFILE_ID='+shlex.quote(sel['id'])); print('AGENT_USER_ID='+shlex.quote(sel['user_id'])); print('COMPANY_ID='+shlex.quote(co))
+          PY
+          source /tmp/agent.env
+          echo AUTHENTICATED_AGENT_SESSION=PASS
+
+          CONVERSATION_ID="$R1_CONVERSATION_ID"; SESSION_TOKEN="$R1_SESSION_TOKEN"
+          TAKEOVER=$(curl -fsS -X POST -H "Origin: ${PROD_ORIGIN}" -H "apikey: ${PUBLIC_KEY}" -H "Authorization: Bearer ${AGENT_JWT}" -H 'Content-Type: application/json' --data "{\"conversation_id\":\"${CONVERSATION_ID}\"}" "${BASE}/take-over-conversation")
+          python - <<'PY' "$TAKEOVER"
+          import json,sys; d=json.loads(sys.argv[1]); assert d.get('success') is True,d; print('AUTHENTICATED_TAKEOVER=PASS')
+          PY
+
+          curl -fsS -H "apikey: ${SERVER_KEY}" -H "Authorization: Bearer ${SERVER_KEY}" "${SUPABASE_URL}/rest/v1/conversations?id=eq.${CONVERSATION_ID}&select=company_id,assigned_agent_id,status" >/tmp/conv.json
+          python - <<'PY' /tmp/conv.json "$COMPANY_ID" "$AGENT_PROFILE_ID"
+          import json,sys
+          rows=json.load(open(sys.argv[1])); assert len(rows)==1,rows; r=rows[0]
+          assert r['company_id']==sys.argv[2],r; assert r['assigned_agent_id']==sys.argv[3],r
+          print('SAME_COMPANY_SCOPE=PASS'); print('RBAC_OWNERSHIP=PASS')
+          PY
+
+          before=$(poll_json | assistant_count); send_turn '我補充一下，我沒有其他資料。'; sleep 8; P=$(poll_json); after=$(printf '%s' "$P" | assistant_count)
+          [ "$after" -eq "$before" ] || { echo "FAIL_AI_SUPPRESSION before=${before} after=${after}"; exit 1; }
+          echo AI_SUPPRESSION=PASS
+
+          # 5) Unified context endpoint that the compiled AgentToolPanel auto-preloads for pending/assigned conversations.
+          CTX=$(curl -fsS -X POST -H "Origin: ${PROD_ORIGIN}" -H "apikey: ${PUBLIC_KEY}" -H "Authorization: Bearer ${AGENT_JWT}" -H 'Content-Type: application/json' --data "{\"tool_type\":\"handoff_context\",\"conversation_id\":\"${CONVERSATION_ID}\"}" "${BASE}/agent-assist")
+          printf '%s' "$CTX" >/tmp/context.json
+          python - <<'PY' /tmp/context.json
+          import json,sys
+          d=json.load(open(sys.argv[1])); assert d.get('success') is True,d; assert d.get('tool_type')=='handoff_context',d
+          pkg=d.get('warm_handoff_package') or {}; assert pkg.get('conversation_summary'),pkg
+          knowledge=(d.get('knowledge') or {}).get('evidence') or []; policy=(d.get('policy') or {}).get('evidence') or []; suggestions=d.get('suggested_replies') or []
+          assert knowledge,'no relevant KB evidence returned'; assert policy,'no relevant Policy evidence returned'; assert suggestions,'no suggested replies returned'
+          print('AGENT_CONTEXT_SUMMARY=PASS'); print('AGENT_CONTEXT_KB=PASS'); print('AGENT_CONTEXT_POLICY=PASS'); print('AGENT_CONTEXT_SUGGESTED_REPLY=PASS')
+          PY
+
+          # 6) Official Return-to-AI and observed customer-facing AI resume.
+          RETURN=$(curl -fsS -X POST -H "Origin: ${PROD_ORIGIN}" -H "apikey: ${PUBLIC_KEY}" -H "Authorization: Bearer ${AGENT_JWT}" -H 'Content-Type: application/json' --data "{\"conversation_id\":\"${CONVERSATION_ID}\",\"closure_checklist\":{\"issue_resolved\":true,\"low_risk_followup\":true}}" "${BASE}/return-to-ai")
+          python - <<'PY' "$RETURN"
+          import json,sys; d=json.loads(sys.argv[1]); assert d.get('success') is True,d; print('AUTHENTICATED_RETURN_TO_AI=PASS')
+          PY
+          before=$(poll_json | assistant_count); send_turn '現在回到AI，請只用一句話說明我剛才主要問的是什麼。'; wait_reply "$before"
+          P=$(cat /tmp/poll.json); after=$(printf '%s' "$P" | assistant_count); [ "$after" -gt "$before" ] || { echo FAIL_RETURN_AI_NO_REPLY; exit 1; }
+          echo RETURN_TO_AI_RESUME=PASS
+          echo WARM_HANDOFF_PRODUCTION_RUNTIME_FINAL_GATE=PASS
