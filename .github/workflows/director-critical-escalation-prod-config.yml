@@ -1,0 +1,88 @@
+name: Director Critical Escalation Production Config
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/director-critical-escalation-prod-config.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  configure-and-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROD_ORIGIN: https://console-chat-hub.lovable.app
+      CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Enable only P0 required-rules E2 E1 live gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SUPABASE_ACCESS_TOKEN:-}"
+          npx --yes supabase@2.116.0 secrets set \
+            ESC_ENABLE_REQUIRED_RULES_LIVE=true \
+            ESC_ENABLE_E2=true \
+            ESC_ENABLE_E1=true \
+            --project-ref "$PROJECT_REF"
+          npx --yes supabase@2.116.0 secrets list --project-ref "$PROJECT_REF" >/tmp/secrets.txt
+          grep -q 'ESC_ENABLE_REQUIRED_RULES_LIVE' /tmp/secrets.txt
+          grep -q 'ESC_ENABLE_E2' /tmp/secrets.txt
+          grep -q 'ESC_ENABLE_E1' /tmp/secrets.txt
+          if grep -q 'ESC_ENABLE_FULL_RULESET' /tmp/secrets.txt; then
+            echo 'NOTE: ESC_ENABLE_FULL_RULESET exists; this workflow did not alter it.'
+          fi
+          rm -f /tmp/secrets.txt
+          echo CRITICAL_ESCALATION_PROD_CONFIG=PASS
+
+      - name: Redeploy authoritative generate-reply
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes supabase@2.116.0 functions deploy generate-reply --project-ref "$PROJECT_REF"
+          echo CRITICAL_ESCALATION_REDEPLOY=PASS
+
+      - name: E2 production config smoke
+        shell: bash
+        run: |
+          set -euo pipefail; set -a; source .env; set +a
+          BASE="$VITE_SUPABASE_FUNCTIONS_URL"; SU="$VITE_SUPABASE_URL"
+          curl -fsS --retry 3 --retry-all-errors -A 'curl/8 critical-config-smoke' -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" "https://api.supabase.com/v1/projects/$PROJECT_REF/api-keys?reveal=true" -o /tmp/k.json
+          python - <<'PY' /tmp/k.json >/tmp/k.env
+          import json,sys,shlex
+          a=json.load(open(sys.argv[1])); val=lambda r:r.get('api_key') or r.get('key') or r.get('value'); sk=[val(r) for r in a if str(r.get('type') or '').lower()=='secret' and val(r)]; assert sk; print('SK='+shlex.quote(sk[0]))
+          PY
+          source /tmp/k.env; rm /tmp/k.json
+          S=$(curl -fsS -X POST -H "Origin: $PROD_ORIGIN" -H 'Content-Type: application/json' --data "{\"channel_id\":\"$CHANNEL_ID\",\"visitor_metadata\":{\"critical_config_smoke\":true,\"exclude_training\":true}}" "$BASE/create-visitor-session")
+          python - <<'PY' "$S" >/tmp/s.env
+          import json,sys,shlex; d=json.loads(sys.argv[1]); assert d.get('success') is True,d; x=d['data']; print('CID='+shlex.quote(x['conversation_id'])); print('TOK='+shlex.quote(x['session_token']))
+          PY
+          source /tmp/s.env
+          payload=$(python - <<'PY' "$CID" "$TOK"
+          import json,sys; print(json.dumps({'conversation_id':sys.argv[1],'session_token':sys.argv[2],'content':'我要殺了你。'},ensure_ascii=False))
+          PY
+          )
+          curl -fsS -X POST -H "Origin: $PROD_ORIGIN" -H 'Content-Type: application/json' -H "idempotency-key: $(python -c 'import uuid;print(uuid.uuid4())')" --data "$payload" "$BASE/receive-widget-message" >/tmp/send.json
+          for i in $(seq 1 30); do
+            sleep 2
+            curl -fsS -X POST -H "Origin: $PROD_ORIGIN" -H 'Content-Type: application/json' --data "{\"conversation_id\":\"$CID\",\"session_token\":\"$TOK\"}" "$BASE/widget-poll-messages" >/tmp/poll.json
+            st=$(python -c 'import json;d=json.load(open("/tmp/poll.json"));print(d["data"].get("conversation_status",""))')
+            [ "$st" = pending ] && break
+          done
+          curl -fsS -H "apikey: $SK" -H "Authorization: Bearer $SK" "$SU/rest/v1/handoff_event?conversation_id=eq.$CID&select=escalation_rule,branch_tag,handoff_reason&order=created_at.desc&limit=1" >/tmp/e.json
+          python - <<'PY' /tmp/poll.json /tmp/e.json
+          import json,sys
+          d=json.load(open(sys.argv[1])); e=json.load(open(sys.argv[2])); assert d['data'].get('conversation_status')=='pending',(d['data'].get('conversation_status'),e); assert e and e[0].get('escalation_rule')=='E2',e
+          m=[x for x in d['data'].get('messages',[]) if x.get('role')=='assistant'][-1]; assert (m.get('metadata') or {}).get('response_route')!='warm_handoff_data_collection'
+          print('E2_CRITICAL_BYPASS=PASS')
+          PY
+          echo CRITICAL_ESCALATION_CONFIG_FINAL_GATE=PASS
