@@ -29,7 +29,7 @@ import { evaluateFullEscalationRuleset } from "../_shared/escalation-rules.ts";
 import { assessPolicyEvidenceForR4 } from "../_shared/escalation-policy.ts";
 import { validateP1PredictionSignals, type P1PredictionInput } from "../_shared/escalation-p1.ts";
 import { callModel, resolveGenerationMaxTokens, type LlmFailureCode } from "../_shared/llm-router.ts";
-import { CUSTOMER_CONVERSATION_POLICY, NATURAL_CLARIFICATION, buildCustomerAdvisoryContext, buildCustomerContextAcknowledgement, classifyConversationTurn, classifyHandoffIntent, hasUsableFullContentEvidence, isHumanControlState } from "../_shared/conversation-intelligence.ts";
+import { CUSTOMER_CONVERSATION_POLICY, NATURAL_CLARIFICATION, buildCustomerAdvisoryContext, buildCustomerContextAcknowledgement, buildCustomerContextRequirementsResponse, classifyConversationTurn, classifyHandoffIntent, hasUsableFullContentEvidence, isHumanControlState } from "../_shared/conversation-intelligence.ts";
 import { buildCanonicalRetrievalQuery, buildCanonicalContinuityBlock, resolveConversationMemoryResponse } from "../_shared/conversation-runtime-state.ts";
 import { classifyCanonicalConversationTurn } from "../_shared/conversation-semantic-contract.ts";
 import { selectCanonicalGrounding } from "../_shared/canonical-grounding.ts";
@@ -1740,7 +1740,9 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     { explicit_handoff: isHandoffIntent(_h1LastMsg) },
   );
   if (_canonicalTurn.operation === "CUSTOMER_CONTEXT_UPDATE") {
-    const acknowledgement = buildCustomerContextAcknowledgement(_canonicalTurn.language);
+    const acknowledgement = _canonicalTurn.reason === "customer_context_requirements_request"
+      ? buildCustomerContextRequirementsResponse(_canonicalTurn.language, _pr5HistoryRows ?? [])
+      : buildCustomerContextAcknowledgement(_canonicalTurn.language);
     const contextCommit = await commitAiReplyWithControlGate(
       supabaseAdmin,
       conversation_id,

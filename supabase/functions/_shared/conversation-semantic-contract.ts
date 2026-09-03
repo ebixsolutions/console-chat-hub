@@ -67,6 +67,7 @@ const FOLLOW = /^(?:咁|那|那麼|那么|所以|另外|仲有|还有|如果|再
 const PRONOUN = /^(?:那個|那个|這個|这个|它|佢|他|她|嗰個|呢個|上述|剛才|刚才|之前|same|that|this|it|its|earlier|previous)|(?:呢|嗎|吗|about that|and that|same one|same thing)[。.!！?？\s]*$/i;
 const DOMAIN_ONLY = /^(?:我有|我想問|我想问|想問|想问|請問|请问)?\s*(?:一個|一个|個|个)?\s*(?:訂單|订单|退款|退貨|退货|換貨|换货|送貨|送货|物流|付款|產品|产品|保養|保修|維修|维修|問題|问题)\s*(?:問題|问题|嘅問題|的問題)?[。.!！?？\s]*$/;
 const QUESTIONISH = /[?？]|^(?:什麼|什么|如何|怎樣|怎样|哪|哪些|多久|幾耐|几耐|why|what|which|how|when|where)/i;
+const CUSTOMER_CONTEXT_REQUIREMENTS = /(?:你|妳|您).{0,12}(?:還|还)?需要(?:我)?(?:再)?提供(?:什麼|什么|哪些|咩)(?:資料|资料|資訊|信息|details|information)|(?:還|还)需要(?:我)?提供(?:什麼|什么|哪些|咩)(?:資料|资料|資訊|信息)|what (?:information|details) do you (?:still )?need from me|what else do you need from me/i;
 const CUSTOMER_CONTEXT_UPDATE = /(?:^|[，,。.!！\s])(?:我只知道|我只知|我目前只知道|我現在只知道|我现在只知道|我沒有|我没有|我冇|不知道型號|不知道型号|唔知型號|型號(?:是|係)?未知|型号(?:是)?未知|品牌(?:是|係)|大約.{0,24}(?:買|购买|購買)|大概.{0,24}(?:買|购买|購買)|現在.{0,32}(?:不冷|唔凍|不能|無法|无法)|现在.{0,32}(?:不冷|不能|无法)|i only know|i (?:do not|don't) have (?:the )?(?:model|model number|order number)|the brand is|brand is|i bought (?:it )?.{0,40}ago|it (?:powers|turns) on but)/i;
 
 export function isCustomerContextUpdate(text: string): boolean {
@@ -166,6 +167,14 @@ export function classifyCanonicalConversationTurn(
   }
   if (CORRECTION.test(latest)) {
     return base("CORRECTION", "latest_turn_supersedes_prior_context", { needs_history: true, topic_action: "CORRECT" });
+  }
+  if (CUSTOMER_CONTEXT_REQUIREMENTS.test(latest)) {
+    return base("CUSTOMER_CONTEXT_UPDATE", "customer_context_requirements_request", {
+      needs_history: true,
+      requires_new_kb_retrieval: false,
+      evidence_authority: "CONVERSATION_MEMORY",
+      topic_action: "KEEP",
+    });
   }
   if (isCustomerContextUpdate(latest)) {
     return base("CUSTOMER_CONTEXT_UPDATE", "customer_supplied_context_without_factual_request", {

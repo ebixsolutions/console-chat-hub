@@ -134,6 +134,37 @@ export const NATURAL_CLARIFICATION: Record<"zh-TW" | "zh-CN" | "en", string> = {
   en: "Sure — which part would you like help with, for example delivery, payment, cancellation, or a return/refund?",
 };
 
+export function buildCustomerContextRequirementsResponse(
+  language: SemanticLanguage,
+  newestFirstMessages: ConversationHistoryRow[],
+): string {
+  const customerTurns = newestFirstMessages
+    .filter((row) => CUSTOMER_ROLES.has(String(row.role ?? "").toLowerCase()))
+    .map((row) => cleanContinuityText(row.content))
+    .filter(Boolean)
+    .slice(0, 12);
+  const joined = customerTurns.join(" ");
+  const missingModel = /(?:沒有|没有|冇|不知道|唔知).{0,8}(?:型號|型号)|(?:don't|do not) have (?:the )?(?:model|model number)/i.test(joined);
+  const hasBrand = /(?:品牌(?:是|係)|brand is|\bpanasonic\b|\bsamsung\b|\blg\b|\bsony\b|\bwhirlpool\b)/i.test(joined);
+  const hasApplianceType = /(?:冷氣|空調|空调|洗衣機|洗衣机|雪櫃|冰箱|電視|电视|家用電器|家用电器|air conditioner|washing machine|refrigerator|fridge|television|\btv\b)/i.test(joined);
+
+  if (language === "en") {
+    const known = missingModel ? "You’ve already told me you don’t have the model number, so you don’t need to repeat that. " : "";
+    const asks = [];
+    if (!hasApplianceType) asks.push("what type of appliance it is");
+    if (!hasBrand) asks.push("the brand, if you know it");
+    asks.push("roughly when you bought it", "what is happening now");
+    return known + "Please tell me " + asks.join(", ") + ".";
+  }
+  const known = missingModel
+    ? (language === "zh-CN" ? "你已经说目前没有型号，不用重复提供。" : "你已經說目前沒有型號，不用重複提供。")
+    : "";
+  if (language === "zh-CN") {
+    return known + `请告诉我${hasApplianceType ? "更具体是哪一类家用电器" : "是哪一类家用电器"}${hasBrand ? "" : "、品牌（如果知道）"}、大约购买时间，以及目前出现的情况。`;
+  }
+  return known + `請告訴我${hasApplianceType ? "更具體是哪一類家用電器" : "是哪一類家用電器"}${hasBrand ? "" : "、品牌（如果知道）"}、大約購買時間，以及目前出現的情況。`;
+}
+
 export function buildCustomerContextAcknowledgement(language: SemanticLanguage): string {
   if (language === "en") {
     return "Got it. I’ll keep using the details you’ve provided and won’t guess anything that hasn’t been confirmed. If I need anything else, I’ll ask you directly.";
