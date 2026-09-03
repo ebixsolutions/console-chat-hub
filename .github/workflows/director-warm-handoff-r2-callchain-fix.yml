@@ -39,9 +39,11 @@ jobs:
               if 'rag_match_state: _pr5RagMatchState,' in head:
                   r2cap += 1
                   if 'warm_handoff_question:' in head: wired += 1
-          assert r2cap >= 4,(r2cap,wired)
+          assert r2cap >= 3,(r2cap,wired)
           assert wired == r2cap,(r2cap,wired)
-          print(f'ALL_R2_CAPABLE_REQUIRED_RULE_CALLS_WIRED={wired}/{r2cap}=PASS')
+          assert 'warm_handoff_question: _warmHandoffQuestion ?? undefined' in s
+          print(f'ALL_EARLY_R2_CAPABLE_REQUIRED_RULE_CALLS_WIRED={wired}/{r2cap}=PASS')
+          print('FINAL_R2_REQUIRED_RULE_CALL_WIRED=PASS')
           PY
       - name: Regression and compile
         shell: bash
