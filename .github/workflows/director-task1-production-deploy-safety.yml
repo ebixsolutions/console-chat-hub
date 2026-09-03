@@ -1,0 +1,147 @@
+name: Director Task 1 Production Deploy Safety
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/director-task1-production-deploy-safety.yml'
+
+permissions:
+  contents: read
+
+env:
+  PROJECT_REF: nrfxhqabwblzxoushgnm
+  PROD_ORIGIN: https://console-chat-hub.lovable.app
+  CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+  SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+jobs:
+  task1-final-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Deployment preconditions only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SUPABASE_ACCESS_TOKEN:-}"
+          test -s supabase/functions/generate-reply/index.ts
+          test -s supabase/functions/_shared/prior-grounded-transform.ts
+          test -s supabase/functions/_shared/conversation-semantic-contract.ts
+          test -s supabase/functions/_shared/citation-lineage.ts
+          grep -q 'resolvePriorGroundedTransform' supabase/functions/generate-reply/index.ts
+          grep -q 'prior_grounded_transform' supabase/functions/_shared/prior-grounded-transform.ts
+          grep -q 'verify_jwt = true' <(awk '/\[functions.generate-reply\]/{f=1;next} /^\[/{f=0} f' supabase/config.toml)
+          git rev-parse HEAD | tee /tmp/task1-main-commit.txt
+          sha256sum \
+            supabase/functions/generate-reply/index.ts \
+            supabase/functions/_shared/prior-grounded-transform.ts \
+            supabase/functions/_shared/conversation-semantic-contract.ts \
+            supabase/functions/_shared/citation-lineage.ts \
+            | tee /tmp/task1-source-hashes.txt
+          echo DIRECTOR_TASK1_PRECONDITIONS=PASS
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.6
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Capture exact production rollback bundle
+        id: snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          SNAP=/tmp/task1-rollback
+          rm -rf "$SNAP"
+          mkdir -p "$SNAP/supabase"
+          cp supabase/config.toml "$SNAP/supabase/config.toml"
+
+          supabase functions list --project-ref "$PROJECT_REF" | tee "$SNAP/PREDEPLOY_FUNCTION_LIST.txt"
+          grep -q 'generate-reply' "$SNAP/PREDEPLOY_FUNCTION_LIST.txt"
+
+          cd "$SNAP"
+          supabase functions download generate-reply --project-ref "$PROJECT_REF" --use-api
+
+          ENTRY="$(find "$SNAP" -type f -path '*/generate-reply/index.ts' -print -quit)"
+          test -n "$ENTRY"
+          test -s "$ENTRY"
+          FUNCTION_DIR="$(dirname "$ENTRY")"
+          FUNCTIONS_ROOT="$(dirname "$FUNCTION_DIR")"
+          test -d "$FUNCTIONS_ROOT/_shared"
+
+          cd "$SNAP"
+          find . -type f -not -name 'ROLLBACK_SHA256SUMS.txt' -print0 \
+            | sort -z \
+            | xargs -0 sha256sum > ROLLBACK_SHA256SUMS.txt
+          test -s ROLLBACK_SHA256SUMS.txt
+          sha256sum -c ROLLBACK_SHA256SUMS.txt
+
+          deno check --node-modules-dir=auto "$ENTRY"
+
+          FILE_COUNT="$(find "$FUNCTIONS_ROOT" -type f | wc -l | tr -d ' ')"
+          EMPTY_COUNT="$(find "$FUNCTIONS_ROOT" -type f -empty | wc -l | tr -d ' ')"
+          test "$FILE_COUNT" -gt 1
+          test "$EMPTY_COUNT" -eq 0
+          printf 'SNAPSHOT_ENTRY=%s\nSNAPSHOT_FILES=%s\nSNAPSHOT_EMPTY=%s\n' "$ENTRY" "$FILE_COUNT" "$EMPTY_COUNT" \
+            | tee "$SNAP/ROLLBACK_MANIFEST.txt"
+          echo "snapshot_dir=$SNAP" >> "$GITHUB_OUTPUT"
+          echo DIRECTOR_TASK1_ROLLBACK_SNAPSHOT=PASS
+
+      - name: Archive rollback bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: task1-generate-reply-predeploy-rollback
+          path: /tmp/task1-rollback
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Deploy restored generate-reply
+        id: deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          supabase functions deploy generate-reply --project-ref "$PROJECT_REF" --use-api
+          supabase functions list --project-ref "$PROJECT_REF" | tee /tmp/task1-postdeploy-functions.txt
+          grep -q 'generate-reply' /tmp/task1-postdeploy-functions.txt
+          echo DIRECTOR_TASK1_DEPLOY=PASS
+
+      - name: Immediate production T01 grounded smoke
+        id: smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/director_task1_postdeploy_t01_smoke.py
+          echo DIRECTOR_TASK1_POSTDEPLOY_SMOKE=PASS
+
+      - name: Roll back on deploy or smoke failure
+        if: ${{ failure() && (steps.deploy.outcome == 'failure' || steps.smoke.outcome == 'failure') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          SNAP=/tmp/task1-rollback
+          test -d "$SNAP/supabase/functions/generate-reply"
+          cd "$SNAP"
+          sha256sum -c ROLLBACK_SHA256SUMS.txt
+          supabase functions deploy generate-reply --project-ref "$PROJECT_REF" --use-api
+          supabase functions list --project-ref "$PROJECT_REF" | tee /tmp/task1-rollback-functions.txt
+          grep -q 'generate-reply' /tmp/task1-rollback-functions.txt
+          echo DIRECTOR_TASK1_ROLLBACK=PASS
+
+      - name: Final Task 1 gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s /tmp/task1-main-commit.txt
+          test -s /tmp/task1-source-hashes.txt
+          test -s /tmp/task1-rollback/ROLLBACK_SHA256SUMS.txt
+          test -s /tmp/task1-postdeploy-functions.txt
+          echo DIRECTOR_TASK1_FINAL_GATE=PASS
