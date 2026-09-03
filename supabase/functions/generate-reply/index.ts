@@ -942,6 +942,7 @@ async function evaluateAndPersistRequiredRulesLive(
     greeting_or_trivial: boolean;
     visitor_language: "zh-TW" | "zh-CN" | "en";
     expected_tenant_id?: string;
+    suppress_r2_for_prior_grounded_transform?: boolean;
     rag_match_state?: RagMatchState;
     topic_risk_level?: TopicRiskLevel;
     verified_local_risk_classification?: boolean;
@@ -1059,6 +1060,12 @@ async function evaluateAndPersistRequiredRulesLive(
   const decision = evaluateFullEscalationRuleset(context, {
     activation: { enabled },
   });
+
+  // A pure transformation of an already verified grounded answer is not a new KB gap.
+  // Suppress only R2 for this turn; E2/E1/R1/S0 keep their frozen priority and behavior.
+  if (params.suppress_r2_for_prior_grounded_transform === true && decision.matched_rule === "R2") {
+    return null;
+  }
 
   if (decision.decision === "clarify" && decision.matched_rule === "R2" && enabled.has("R2")) {
     const clarification = R2_CLARIFICATION_SAFE_WORDING[params.visitor_language];
@@ -2408,6 +2415,7 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     greeting_or_trivial: _pr5GreetingOrTrivial,
     visitor_language: _visitorLang,
     expected_tenant_id: _pr5ExpectedTenantId,
+    suppress_r2_for_prior_grounded_transform: Boolean(_priorGroundedTransform),
     rag_match_state: _pr5RagMatchState,
     topic_risk_level: _pr5LocalRisk?.level,
     verified_local_risk_classification: _pr5LocalRisk?.verified,
