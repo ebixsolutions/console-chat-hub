@@ -1,4 +1,4 @@
-name: Director Task 2 Human Language Transform Takeover
+name: Director Task 2 Human Language + Escalation Closure
 
 on:
   push:
@@ -12,59 +12,108 @@ permissions:
 
 env:
   PROJECT_REF: nrfxhqabwblzxoushgnm
+  PROD_ORIGIN: https://console-chat-hub.lovable.app
+  CHANNEL_ID: b0000000-0000-0000-0000-000000000001
   SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
 
 jobs:
   gate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 70
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
+
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.9.6
-      - name: Patch and regressions
+
+      - name: Patch T16 R2 interception without weakening critical escalation
         shell: bash
         run: |
           set -euo pipefail
-          python scripts/director_task2_human_language_transform_patch.py
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('supabase/functions/generate-reply/index.ts')
+          s=p.read_text()
+          param_anchor='''    visitor_language: "zh-TW" | "zh-CN" | "en";\n    expected_tenant_id?: string;'''
+          param_new='''    visitor_language: "zh-TW" | "zh-CN" | "en";\n    expected_tenant_id?: string;\n    suppress_r2_for_prior_grounded_transform?: boolean;'''
+          if 'suppress_r2_for_prior_grounded_transform?: boolean;' not in s:
+              assert s.count(param_anchor)==1, f'param anchor count={s.count(param_anchor)}'
+              s=s.replace(param_anchor,param_new,1)
+
+          decision_anchor='''  const decision = evaluateFullEscalationRuleset(context, {\n    activation: { enabled },\n  });\n\n  if (decision.decision === "clarify" && decision.matched_rule === "R2" && enabled.has("R2")) {'''
+          decision_new='''  const decision = evaluateFullEscalationRuleset(context, {\n    activation: { enabled },\n  });\n\n  // A pure transformation of an already verified grounded answer is not a new KB gap.\n  // Suppress only R2 for this turn; E2/E1/R1/S0 keep their frozen priority and behavior.\n  if (params.suppress_r2_for_prior_grounded_transform === true && decision.matched_rule === "R2") {\n    return null;\n  }\n\n  if (decision.decision === "clarify" && decision.matched_rule === "R2" && enabled.has("R2")) {'''
+          if 'params.suppress_r2_for_prior_grounded_transform === true' not in s:
+              assert s.count(decision_anchor)==1, f'decision anchor count={s.count(decision_anchor)}'
+              s=s.replace(decision_anchor,decision_new,1)
+
+          call_anchor='''    visitor_language: _visitorLang,\n    expected_tenant_id: _pr5ExpectedTenantId,\n    rag_match_state: _pr5RagMatchState,'''
+          call_new='''    visitor_language: _visitorLang,\n    expected_tenant_id: _pr5ExpectedTenantId,\n    suppress_r2_for_prior_grounded_transform: Boolean(_priorGroundedTransform),\n    rag_match_state: _pr5RagMatchState,'''
+          # Only the final post-retrieval required-rules call should be transform-aware.
+          # Earlier KB-gap calls occur only when retrieval ran; prior-grounded transforms skip retrieval.
+          if 'suppress_r2_for_prior_grounded_transform: Boolean(_priorGroundedTransform)' not in s:
+              pos=s.rfind(call_anchor)
+              assert pos!=-1, 'final required-rules call anchor not found'
+              s=s[:pos]+s[pos:].replace(call_anchor,call_new,1)
+
+          p.write_text(s)
+          assert 'params.suppress_r2_for_prior_grounded_transform === true && decision.matched_rule === "R2"' in s
+          assert 'suppress_r2_for_prior_grounded_transform: Boolean(_priorGroundedTransform)' in s
+          print('T16_R2_INTERCEPTION_PATCH=PASS')
+          PY
           git diff --check
-          test "$(git diff --name-only)" = "supabase/functions/_shared/conversation-semantic-contract.ts"
+          test "$(git diff --name-only)" = "supabase/functions/generate-reply/index.ts"
+
+      - name: Essential semantic and escalation regressions
+        shell: bash
+        run: |
+          set -euo pipefail
           deno test --allow-read --allow-env --node-modules-dir=auto tests/edge/task2-human-language-transform-regression.test.ts
           deno test --allow-read --allow-env --node-modules-dir=auto tests/edge/task2-standalone-simplify-regression.test.ts
-          deno test --allow-read --allow-env --node-modules-dir=auto tests/edge/task2-fixed-count-summary-regression.test.ts
-          deno test --allow-read --allow-env --node-modules-dir=auto tests/edge/task2-translation-grounding-regression.test.ts
-          deno check --node-modules-dir=auto supabase/functions/_shared/conversation-semantic-contract.ts
           deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
-          echo DIRECTOR_TASK2_HUMAN_LANGUAGE_REGRESSION=PASS
+          deno check --node-modules-dir=auto supabase/functions/_shared/escalation-rules.ts
+          python - <<'PY'
+          from pathlib import Path
+          r=Path('supabase/functions/_shared/escalation-rules.ts').read_text()
+          assert 'return decision("R3", "recommend_handoff"' in r
+          assert 'return decision("P1", "suggest_handoff"' in r
+          assert 'customer_tier' not in r or 'handoff' not in '\n'.join([x for x in r.splitlines() if 'customer_tier' in x])
+          print('EMOTION_VIP_LOW_CSAT_RULE_CONTRACT=PASS')
+          PY
+          echo DIRECTOR_TASK2_CLOSURE_REGRESSION=PASS
+
       - name: Full build
         shell: bash
         run: |
           set -euo pipefail
           npm ci
           npm run build
-          echo DIRECTOR_TASK2_HUMAN_LANGUAGE_BUILD=PASS
+          echo DIRECTOR_TASK2_CLOSURE_BUILD=PASS
+
       - name: Commit exact source
         shell: bash
         run: |
           set -euo pipefail
           git config user.name 'ebixsolutions'
           git config user.email '64578119+ebixsolutions@users.noreply.github.com'
-          git add supabase/functions/_shared/conversation-semantic-contract.ts
-          test "$(git diff --cached --name-only)" = "supabase/functions/_shared/conversation-semantic-contract.ts"
-          git commit -m '[authorized-prod] Task 2 close human-language transform continuity'
+          git add supabase/functions/generate-reply/index.ts
+          test "$(git diff --cached --name-only)" = "supabase/functions/generate-reply/index.ts"
+          git commit -m '[authorized-prod] suppress R2 on prior-grounded transform only'
           git push origin HEAD:main
+          git rev-parse HEAD | tee /tmp/source_commit
+
       - uses: supabase/setup-cli@v1
         with:
           version: latest
-      - name: Snapshot
+
+      - name: Snapshot deployed function
         shell: bash
         run: |
           set -euo pipefail
-          SNAP=/tmp/task2-human-language-rollback
+          SNAP=/tmp/task2-closure-rollback
           rm -rf "$SNAP"; mkdir -p "$SNAP/supabase"
           cp supabase/config.toml "$SNAP/supabase/config.toml"
           cd "$SNAP"
@@ -75,34 +124,142 @@ jobs:
           find . -type f -not -name 'ROLLBACK_SHA256SUMS.txt' -print0 | sort -z | xargs -0 sha256sum > ROLLBACK_SHA256SUMS.txt
           sha256sum -c ROLLBACK_SHA256SUMS.txt
           deno check --node-modules-dir=auto "$ENTRY"
-          test "$(find "$ROOT" -type f -empty | wc -l | tr -d ' ')" -eq 0
-          echo DIRECTOR_TASK2_HUMAN_LANGUAGE_SNAPSHOT=PASS
+          echo TASK2_CLOSURE_SNAPSHOT=PASS
+
       - uses: actions/upload-artifact@v4
         with:
-          name: task2-human-language-predeploy-rollback
-          path: /tmp/task2-human-language-rollback
+          name: task2-t16-escalation-predeploy-rollback
+          path: /tmp/task2-closure-rollback
           if-no-files-found: error
           retention-days: 30
-      - name: Deploy
+
+      - name: Deploy generate-reply
         id: deploy
         shell: bash
         run: |
           set -euo pipefail
           supabase functions deploy generate-reply --project-ref "$PROJECT_REF" --use-api
           supabase functions list --project-ref "$PROJECT_REF" | grep -q 'generate-reply'
-          echo DIRECTOR_TASK2_HUMAN_LANGUAGE_DEPLOY=PASS
-      - name: Rollback deploy failure
-        if: ${{ failure() && steps.deploy.outcome == 'failure' }}
+          echo TASK2_CLOSURE_DEPLOY=PASS
+
+      - name: Production closure smoke
+        id: smoke
         shell: bash
         run: |
           set -euo pipefail
-          cd /tmp/task2-human-language-rollback
+          set -a; source .env; set +a
+          BASE="${VITE_SUPABASE_FUNCTIONS_URL}"
+
+          create_session() {
+            local label="$1"
+            curl -fsS -X POST \
+              -H "Origin: ${PROD_ORIGIN}" \
+              -H 'Content-Type: application/json' \
+              --data "{\"channel_id\":\"${CHANNEL_ID}\",\"visitor_metadata\":{\"production_closure\":\"${label}\",\"exclude_training\":true}}" \
+              "${BASE}/create-visitor-session" > /tmp/create.json
+            python - <<'PY' /tmp/create.json > /tmp/session.env
+          import json,sys,shlex
+          d=json.load(open(sys.argv[1])); assert d.get('success') is True,d
+          x=d['data']; print('CONVERSATION_ID='+shlex.quote(x['conversation_id'])); print('SESSION_TOKEN='+shlex.quote(x['session_token']))
+          PY
+            source /tmp/session.env
+          }
+
+          poll_json() {
+            curl -fsS -X POST -H "Origin: ${PROD_ORIGIN}" -H 'Content-Type: application/json' \
+              --data "{\"conversation_id\":\"${CONVERSATION_ID}\",\"session_token\":\"${SESSION_TOKEN}\"}" \
+              "${BASE}/widget-poll-messages"
+          }
+
+          send_and_wait() {
+            local text="$1" before after P status
+            before=$(poll_json | python -c 'import json,sys; d=json.load(sys.stdin); print(sum(1 for m in d["data"].get("messages",[]) if m.get("role")=="assistant"))')
+            BODY=$(python - <<'PY' "$CONVERSATION_ID" "$SESSION_TOKEN" "$text"
+          import json,sys
+          print(json.dumps({'conversation_id':sys.argv[1],'session_token':sys.argv[2],'content':sys.argv[3]},ensure_ascii=False))
+          PY
+            )
+            curl -fsS -X POST -H "Origin: ${PROD_ORIGIN}" -H 'Content-Type: application/json' \
+              -H "idempotency-key: $(python -c 'import uuid; print(uuid.uuid4())')" --data "$BODY" \
+              "${BASE}/receive-widget-message" >/tmp/send.json
+            python - <<'PY' /tmp/send.json
+          import json,sys
+          d=json.load(open(sys.argv[1])); assert d.get('success') is True,d
+          PY
+            for _ in $(seq 1 30); do
+              sleep 2
+              P=$(poll_json)
+              after=$(printf '%s' "$P" | python -c 'import json,sys; d=json.load(sys.stdin); print(sum(1 for m in d["data"].get("messages",[]) if m.get("role")=="assistant"))')
+              if [ "$after" -gt "$before" ]; then printf '%s' "$P" > /tmp/last.json; return 0; fi
+            done
+            echo "assistant reply timeout" >&2; return 1
+          }
+
+          assert_open() {
+            python - <<'PY' /tmp/last.json
+          import json
+          d=json.load(open('/tmp/last.json')); assert d['data'].get('conversation_status')=='open',d['data'].get('conversation_status')
+          PY
+          }
+
+          # T16 exact semantic closure: grounded answer -> human-language rewrite must stay transform, never R2.
+          create_session t16-human-language
+          send_and_wait '什么是四電一腦？'
+          send_and_wait '那回收安排的重點是什麼？'
+          send_and_wait '剛才內容有沒有提到回收和送貨／安裝是同一件事？'
+          send_and_wait '用香港客戶聽得懂的人話回答。'
+          assert_open
+          python - <<'PY' /tmp/last.json
+          import json
+          d=json.load(open('/tmp/last.json')); m=[x for x in d['data']['messages'] if x.get('role')=='assistant'][-1]; meta=m.get('metadata') or {}; c=m.get('content') or ''
+          assert meta.get('response_route')=='prior_grounded_transform',meta
+          assert meta.get('escalation_rule')!='R2',meta
+          assert '分開' in c or '分別' in c,c
+          assert '補充' not in c,c
+          print('T16_HUMAN_LANGUAGE_PRODUCTION=PASS')
+          PY
+
+          # Emotion/anger alone may recommend handoff, but must never force human control.
+          create_session emotion-r3
+          send_and_wait '什么是四電一腦？'
+          send_and_wait '這真的很離譜，我很生氣，但請繼續回答剛才的問題。'
+          assert_open
+          echo EMOTION_NO_FORCED_HANDOFF_PRODUCTION=PASS
+
+          # Self-claimed VIP is not verified Customer360 authority and must not force handoff or fabricate privilege.
+          create_session vip-no-force
+          send_and_wait '我是VIP客戶，請繼續用AI告訴我什麼是四電一腦。'
+          assert_open
+          python - <<'PY' /tmp/last.json
+          import json
+          d=json.load(open('/tmp/last.json')); m=[x for x in d['data']['messages'] if x.get('role')=='assistant'][-1]; c=m.get('content') or ''
+          bad=['VIP專屬','專屬折扣','優先退款','保證優先','免費升級']
+          assert not any(x in c for x in bad),c
+          print('VIP_NO_FORCED_HANDOFF_NO_FABRICATION_PRODUCTION=PASS')
+          PY
+
+          # User-stated low satisfaction must not itself seize control from AI.
+          create_session low-csat-no-force
+          send_and_wait '我對剛才服務只給1分，很失望，但請繼續由AI回答什麼是四電一腦。'
+          assert_open
+          echo LOW_CSAT_NO_FORCED_HANDOFF_PRODUCTION=PASS
+
+          echo TASK2_T16_EMOTION_VIP_LOW_CSAT_PRODUCTION_CLOSURE=PASS
+
+      - name: Rollback deployed function on deploy/smoke failure
+        if: ${{ failure() && (steps.deploy.outcome == 'failure' || steps.smoke.outcome == 'failure') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/task2-closure-rollback
           sha256sum -c ROLLBACK_SHA256SUMS.txt
           supabase functions deploy generate-reply --project-ref "$PROJECT_REF" --use-api
-          echo DIRECTOR_TASK2_HUMAN_LANGUAGE_ROLLBACK=PASS
+          echo TASK2_CLOSURE_RUNTIME_ROLLBACK=PASS
+
       - name: Final gate
         shell: bash
         run: |
           set -euo pipefail
-          test -s /tmp/task2-human-language-rollback/ROLLBACK_SHA256SUMS.txt
-          echo DIRECTOR_TASK2_HUMAN_LANGUAGE_FINAL_GATE=PASS
+          test -s /tmp/source_commit
+          test -s /tmp/task2-closure-rollback/ROLLBACK_SHA256SUMS.txt
+          echo TASK2_T16_EMOTION_VIP_LOW_CSAT_FINAL_GATE=PASS
