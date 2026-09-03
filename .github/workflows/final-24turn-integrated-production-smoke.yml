@@ -164,16 +164,25 @@ jobs:
           echo T22_R1_HANDOFF=PASS
 
           # Build a real authenticated agent session without storing an agent password.
-          # The management PAT reveals project API keys; a service-role admin call generates
-          # a one-time magic-link token for an existing active agent in the same tenant.
-          # The token is then exchanged through Auth /verify for a normal user access JWT.
-          python - <<'PY' "$PROJECT_REF" "$SUPABASE_ACCESS_TOKEN" "$SUPABASE_URL" "$CONVERSATION_ID" > /tmp/agent.env
-          import json,sys,urllib.request,urllib.parse,shlex
-          project_ref,pat,supa_url,conversation_id=sys.argv[1:]
+          # Use curl for Management API because Python urllib is blocked by the Supabase edge/WAF
+          # from hosted runners (403 code 1010). Never print the returned project keys.
+          umask 077
+          curl -fsS --retry 3 --retry-all-errors \
+            -A 'curl/8 github-actions-auth-smoke' \
+            -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
+            -H 'Accept: application/json' \
+            "https://api.supabase.com/v1/projects/${PROJECT_REF}/api-keys?reveal=true" \
+            -o /tmp/project-api-keys.json
+          python - <<'PY' /tmp/project-api-keys.json "$SUPABASE_URL" "$CONVERSATION_ID" > /tmp/agent.env
+          import json,sys,urllib.request,urllib.parse,urllib.error,shlex
+          keys_path,supa_url,conversation_id=sys.argv[1:]
+          keys=json.load(open(keys_path))
+          assert isinstance(keys,list) and keys, 'Management API returned no project keys'
 
           def call(url, headers=None, method='GET', body=None):
               data=None if body is None else json.dumps(body).encode()
-              req=urllib.request.Request(url,data=data,method=method,headers=headers or {})
+              h={'User-Agent':'github-actions-auth-smoke/1.0', **(headers or {})}
+              req=urllib.request.Request(url,data=data,method=method,headers=h)
               try:
                   with urllib.request.urlopen(req,timeout=30) as r:
                       raw=r.read().decode()
@@ -184,10 +193,6 @@ jobs:
                   except Exception: payload={'raw':raw[:300]}
                   return e.code,payload
 
-          status,keys=call(
-              f'https://api.supabase.com/v1/projects/{project_ref}/api-keys?reveal=true',
-              {'Authorization':f'Bearer {pat}'})
-          assert status==200 and isinstance(keys,list), (status,keys)
           public_key=server_key=None
           for row in keys:
               value=row.get('api_key') or row.get('key') or row.get('value')
@@ -254,6 +259,7 @@ jobs:
           print('AGENT_PROFILE_ID='+shlex.quote(selected['id']))
           print('AGENT_USER_ID='+shlex.quote(selected['user_id']))
           PY
+          rm -f /tmp/project-api-keys.json
           chmod 600 /tmp/agent.env
           source /tmp/agent.env
           echo AUTHENTICATED_AGENT_SESSION=PASS
