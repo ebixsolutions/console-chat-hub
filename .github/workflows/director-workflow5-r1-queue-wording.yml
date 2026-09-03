@@ -1,0 +1,82 @@
+name: Director Workflow 5 - R1 Queue Wording Closure
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - scripts/director-workflow5-fix-r1-queue-wording.py
+      - .github/workflows/director-workflow5-r1-queue-wording.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  closure:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout authoritative main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.6
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Apply exact functional patch
+        run: python scripts/director-workflow5-fix-r1-queue-wording.py
+
+      - name: Source assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! grep -Fq '目前未啟用即時輪候時間顯示' supabase/functions/generate-reply/index.ts
+          ! grep -Fq '目前未启用实时排队位置和预计等待时间显示' supabase/functions/generate-reply/index.ts
+          ! grep -Fq 'Real-time queue position and estimated wait time are not currently enabled' supabase/functions/generate-reply/index.ts
+          grep -Fq '如目前有可用的輪候資料' supabase/functions/generate-reply/index.ts
+          grep -Fq '如目前有可用的排队资料' supabase/functions/generate-reply/index.ts
+          grep -Fq 'if live queue data is available' supabase/functions/generate-reply/index.ts
+          echo 'WORKFLOW5_R1_QUEUE_WORDING_SOURCE_ASSERTIONS=PASS'
+
+      - name: Deno regression
+        run: |
+          deno test tests/edge/warm-handoff-package.test.ts
+          deno test tests/edge/return-to-ai-control-context.test.ts
+          deno test tests/edge/e2-direct-threat.test.ts
+          deno check supabase/functions/generate-reply/index.ts
+
+      - name: Full build
+        run: |
+          npm ci
+          npm run build
+
+      - name: Diff safety
+        run: |
+          git diff --check
+          changed="$(git diff --name-only)"
+          test "$changed" = "supabase/functions/generate-reply/index.ts"
+          echo 'WORKFLOW5_CHANGED_FILES_EXACT=PASS'
+
+      - name: Commit exact functional source
+        run: |
+          git config user.name 'AI Commerce Coach Director'
+          git config user.email 'actions@users.noreply.github.com'
+          git add supabase/functions/generate-reply/index.ts
+          git commit -m '[director] align R1 handoff wording with live queue ETA'
+          git push origin HEAD:main
+          echo "WORKFLOW5_FUNCTIONAL_COMMIT=$(git rev-parse HEAD)"
+          echo 'WORKFLOW5_R1_QUEUE_WORDING_FINAL_GATE=PASS'
