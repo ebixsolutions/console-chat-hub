@@ -1,0 +1,27 @@
+name: Director Warm Handoff Context Return Final
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/director-warm-handoff-context-return-final.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  context-return-final:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PROD_ORIGIN: https://console-chat-hub.lovable.app
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Run final context and Return-to-AI gates
+        shell: bash
+        run: bash scripts/director-warm-handoff-context-return-final.sh
