@@ -6,17 +6,26 @@ STATE = Path('supabase/functions/_shared/conversation-runtime-state.ts')
 CURRENT_CONTEXT_FRAGMENT = r'|我(?:現在|现在|目前).*(?:哪個|哪个|什麼|什么).*(?:地區|地区).*(?:哪個|哪个|什麼|什么).*(?:項目|项目)|what(?:\x27s| is)?\s+(?:the\s+)?(?:current\s+)?(?:region|jurisdiction).*(?:item|product)'
 
 
-def patch_memory_regex(text: str) -> str:
+def patch_semantic_memory_regex(text: str) -> str:
+    marker = r'|what.*still\s+missing/i;'
+    if CURRENT_CONTEXT_FRAGMENT in text:
+        return text
+    if marker not in text:
+        raise SystemExit('STOP: semantic MEMORY regex marker not found')
+    return text.replace(marker, CURRENT_CONTEXT_FRAGMENT + marker, 1)
+
+
+def patch_runtime_memory_regex(text: str) -> str:
     marker = r'|summari[sz]e.*(?:conversation|discussed|talked))/i;'
     if CURRENT_CONTEXT_FRAGMENT in text:
         return text
     if marker not in text:
-        raise SystemExit('STOP: MEMORY regex marker not found')
+        raise SystemExit('STOP: runtime MEMORY regex marker not found')
     return text.replace(marker, CURRENT_CONTEXT_FRAGMENT + marker, 1)
 
 
 def patch_state(text: str) -> str:
-    text = patch_memory_regex(text)
+    text = patch_runtime_memory_regex(text)
     if 'const currentContextRequest =' not in text:
         needle = '  const locationRequest = /(我(?:現在|现在|目前).*(?:哪裡|哪里)|我.*(?:在哪|喺邊)|where\\s+am\\s+i|my\\s+(?:current\\s+)?location|更正後.*(?:地點|地点)|更正后.*(?:地點|地点))/i.test(latest);\n'
         replacement = needle + '  const currentContextRequest = /(我(?:現在|现在|目前).*(?:哪個|哪个|什麼|什么).*(?:地區|地区).*(?:哪個|哪个|什麼|什么).*(?:項目|项目)|what(?:\\x27s| is)?\\s+(?:the\\s+)?(?:current\\s+)?(?:region|jurisdiction).*(?:item|product))/i.test(latest);\n'
@@ -42,7 +51,7 @@ def patch_state(text: str) -> str:
 
 sem = SEM.read_text()
 state = STATE.read_text()
-new_sem = patch_memory_regex(sem)
+new_sem = patch_semantic_memory_regex(sem)
 new_state = patch_state(state)
 SEM.write_text(new_sem)
 STATE.write_text(new_state)
@@ -50,4 +59,5 @@ STATE.write_text(new_state)
 assert 'currentContextRequest' in new_state
 assert 'current region' in new_state
 assert CURRENT_CONTEXT_FRAGMENT in new_sem
+assert CURRENT_CONTEXT_FRAGMENT in new_state
 print('TASK4_1_CURRENT_CONTEXT_MEMORY_PATCH=PASS')
