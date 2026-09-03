@@ -993,11 +993,11 @@ var CUSTOMER = /* @__PURE__ */ new Set(["visitor", "customer", "user"]);
 var ASSISTANT = /* @__PURE__ */ new Set(["assistant", "ai"]);
 var TRIVIAL = /^(hi|hello|hey|你好|嗨|哈囉|早安|午安|晚安|ok|okay|好的|好|嗯|謝謝|谢谢|thanks|thank you)[!！。.？?，,\s]*$/i;
 var CORRECTION = /(我講錯|我说错|我說錯|我要更正|我想更正|更正一下|其實係|其实是|改返|改成|actually[,\s]+i meant|\bi meant\b|correction\s*[:：]|不是.+(?:而)?是|唔係.+係|not .+ but .+)/i;
-var SIMPLIFY = /(?:簡單|简单)(?:一點|一点|啲|些|點|点)?(?:[。.!！?？\s]*$|.*(?:解釋|解释|講|讲|說|说|介紹|介绍))|(?:講|讲|說|说)(?:得|得再)?(?:簡單|简单)(?:一點|一点|啲|些|點|点)?|explain(?: it| that)? (?:more )?simply|make it simpler|\bsimpler\b|\bshorter\b/i;
+var SIMPLIFY = /(?:簡單|简单)(?:一點|一点|啲|些|點|点)?(?:[。.!！?？\s]*$|.*(?:解釋|解释|講|讲|說|说|介紹|介绍))|(?:講|讲|說|说)(?:得|得再)?(?:簡單|简单)(?:一點|一点|啲|些|點|点)?|(?:用|講|讲|說|说)(?:香港客戶|香港客户|一般客戶|一般客户|客戶|客户)?(?:聽得懂|听得懂|明白|易明)?(?:的|嘅)?(?:人話|人话|白話|白话|口語|口语|貼地|贴地)(?:回答|講|讲|說|说)?|(?:講|讲|說|说|回答)(?:得)?(?:自然|口語|口语|貼地|贴地)(?:一點|一点|啲)?|explain(?: it| that)? (?:more )?simply|make it simpler|\bsimpler\b|\bshorter\b|(?:say|explain|answer).*(?:plain|natural|everyday|customer-friendly) (?:language|words|terms)/i;
 var REPHRASE = /(換句話|换句话|另一種講法|另一种说法|改寫|改写|重新講|重新说|rephrase|rewrite|say that another way|word it differently)/i;
 var TRANSLATE = /(?:用|改用)(?:廣東話|广东话|繁體中文|繁体中文|簡體中文|简体中文|英文).*(?:講|讲|回答|答|解釋|解释|說|说|一次)?|\b(?:in|into)\s+(?:english|chinese|cantonese|traditional chinese|simplified chinese)\b|translate(?: that| it)?/i;
-var SUMMARY = /(?:總結|总结|概括|歸納|归纳).*(?:剛才|刚才|以上|之前|我們|我们|內容|内容|三點|三点)?|summari[sz]e(?: that| it| this| the above| what we discussed| our conversation)?/i;
-var MEMORY = /(一開始|一开始|第一個問題|第一个问题|最初).*(?:問|問題|问题)|剛才.*(?:建議|建议|叫我|要我)|刚才.*(?:建议|叫我|要我)|之前.*(?:建議|建议|提供)|what\s+(?:did\s+i\s+ask|was\s+(?:my\s+)?first)|what\s+did\s+you\s+(?:recommend|suggest)|what\s+information\s+have\s+i\s+already\s+given|what\s+have\s+i\s+already\s+given|我(?:現在|现在|目前).*(?:哪個|哪个|什麼|什么).*(?:地區|地区).*(?:哪個|哪个|什麼|什么).*(?:項目|项目)|what(?:\x27s| is)?\s+(?:the\s+)?(?:current\s+)?(?:region|jurisdiction).*(?:item|product)|what.*still\s+missing/i;
+var SUMMARY = /(?:總結|总结|概括|歸納|归纳).*(?:剛才|刚才|以上|之前|我們|我们|內容|内容|三點|三点)?|(?:根據|根据)?(?:已確認|已确认)(?:資料|资料).*(?:列|分成|整理成)?\s*(?:[一二兩两三四五六七八九十]|\d{1,2})\s*(?:點|点|項|项|條|条)|summari[sz]e(?: that| it| this| the above| what we discussed| our conversation)?/i;
+var MEMORY = /(一開始|一开始|第一個問題|第一个问题|最初).*(?:問|問題|问题)|(?:剛才|刚才).*(?:主要)?(?:問|问).*(?:什麼|什么|咩)|(?:主要)(?:問|问).*(?:什麼|什么|咩)|剛才.*(?:建議|建议|叫我|要我)|刚才.*(?:建议|叫我|要我)|之前.*(?:建議|建议|提供)|what\s+(?:did\s+i\s+ask|was\s+(?:my\s+)?first)|what\s+(?:was|is)\s+(?:my\s+)?(?:main|mainly|primary).*(?:question|asking|ask)|what\s+did\s+you\s+(?:recommend|suggest)|what\s+information\s+have\s+i\s+already\s+given|what\s+have\s+i\s+already\s+given|我(?:現在|现在|目前).*(?:哪個|哪个|什麼|什么).*(?:地區|地区).*(?:哪個|哪个|什麼|什么).*(?:項目|项目)|what(?:\x27s| is)?\s+(?:the\s+)?(?:current\s+)?(?:region|jurisdiction).*(?:item|product)|what.*still\s+missing/i;
 var RETURN_PRIOR = /(回到|返回|返去|回返|講返|讲回|回香港|回到香港|back to|return to|go back to|back on).{0,50}/i;
 var TOPIC_SWITCH = /^(?:算了|算啦|另外|轉個話題|转个话题|換個話題|换个话题|不談|不谈|forget that|never mind|different topic|another question)/i;
 var FOLLOW = /^(?:咁|那|那麼|那么|所以|另外|仲有|还有|如果|再|又|而|同埋|what about|and what about|then|so|also|in that case|how about)/i;
@@ -1033,12 +1033,12 @@ function findPriorGroundedAnswer(newestFirst, currentLatest) {
       continue;
     }
     if (!ASSISTANT.has(role)) continue;
-    const meta = metadataRecord(row.metadata);
-    const lineage = metadataRecord(meta?.citation_lineage);
+    const meta2 = metadataRecord(row.metadata);
+    const lineage = metadataRecord(meta2?.citation_lineage);
     const selected = typeof lineage?.selected_document_id === "string" ? lineage.selected_document_id : "";
     const ids = Array.isArray(lineage?.evidence_chunk_ids) ? lineage.evidence_chunk_ids.filter((x) => typeof x === "string" && x.length > 0) : [];
     if (!selected || ids.length === 0) continue;
-    const source = typeof meta?.source_message_id === "string" ? meta.source_message_id : null;
+    const source = typeof meta2?.source_message_id === "string" ? meta2.source_message_id : null;
     return { content, document_id: selected, chunk_ids: ids, source_message_id: source };
   }
   return null;
@@ -1873,7 +1873,7 @@ function vertexAdapter(serviceAccountJson, projectId, region, model, safeSystem,
 }
 var EXACT_FACT_TOKEN_RE = /(?:[$€£¥]|HKD|USD|EUR|GBP|JPY|TWD|NTD|RMB|CNY)?\s*\d+(?:[.,]\d+)?(?:\s*(?:%|percent|days?|hours?|minutes?|years?|months?|kg|g|lb|lbs|mm|cm|m|km|ml|l|公升|毫升|公斤|克|天|日|小時|小时|分鐘|分钟|年|月))?|\b(?=[A-Z0-9-]*[A-Z])(?=[A-Z0-9-]*\d)[A-Z0-9-]{4,}\b/giu;
 function canonicalExactToken(value) {
-  return value.normalize("NFKC").toLowerCase().replace(/[\s,]/g, "").trim();
+  return value.normalize("NFKC").toLowerCase().replace(/percent/g, "%").replace(/(?:litres?|liters?|公升)/g, "l").replace(/(?:millilitres?|milliliters?|毫升)/g, "ml").replace(/(?:kilograms?|公斤)/g, "kg").replace(/(?:grams?|克)/g, "g").replace(/(?:hours?|小時|小时)/g, "h").replace(/(?:minutes?|分鐘|分钟)/g, "min").replace(/(?:days?|天|日)/g, "d").replace(/(?:years?|年)/g, "y").replace(/(?:months?|月)/g, "mo").replace(/[\s,]/g, "").trim();
 }
 function extractGroundingBlock(system) {
   const transformRules = "Prior Grounded Answer transform rules:";
@@ -1883,10 +1883,13 @@ function extractGroundingBlock(system) {
     if (transformIndex >= 0) {
       const prior = system.slice(transformIndex + transformMarker.length).trim();
       if (prior) {
+        const operationsLine = system.match(/^- Operations:\s*(.+)$/m)?.[1] ?? "";
+        const transformOperations = operationsLine.split("+").map((x) => x.trim()).filter(Boolean);
         return {
           authority: "PRIOR_GROUNDED_ANSWER",
           evidence_text: prior.slice(0, 3e3),
-          chunk_ids: []
+          chunk_ids: [],
+          transform_operations: transformOperations
         };
       }
     }
@@ -1902,7 +1905,8 @@ function extractGroundingBlock(system) {
   return {
     authority: "CURRENT_KB",
     evidence_text: raw.slice(0, 6e3),
-    chunk_ids: [...new Set(ids)]
+    chunk_ids: [...new Set(ids)],
+    transform_operations: []
   };
 }
 function buildVerifierEvidenceAliases(grounding) {
@@ -1981,6 +1985,8 @@ async function verifyGroundedGeneration(call, provider, answer, grounding, timeo
   const verifierSystem = [
     "You are a strict factual-grounding verifier.",
     grounding.authority === "PRIOR_GROUNDED_ANSWER" ? "The evidence is a previously verified grounded answer. Judge whether the proposed answer is a faithful simplification, rephrase, translation, or summary of that evidence without any new factual claim. Wording and language may differ, and a summary may omit detail." : "Judge ONLY whether every factual claim in the proposed answer is entailed by the supplied current Knowledge Base evidence.",
+    grounding.authority === "PRIOR_GROUNDED_ANSWER" && grounding.transform_operations.length ? `Requested transform operations: ${grounding.transform_operations.join(" + ")}.` : "",
+    grounding.authority === "PRIOR_GROUNDED_ANSWER" && grounding.transform_operations.includes("TRANSLATE") ? "For TRANSLATE, compare semantic meaning across languages rather than surface-word overlap. Direct translations of the same names, product categories, units, and relationships are supported when they preserve the source meaning; do not reject a faithful translation merely because its words differ from the source language." : "",
     "Do not use outside knowledge, assumptions, the customer request, or other prior conversation as factual evidence.",
     "Politeness, conversational transitions, and non-factual wording do not need evidence.",
     "Any unsupported product fact, policy fact, price, date, duration, dimension, eligibility condition, jurisdiction claim, procedure, limit, availability statement, or categorical factual statement makes grounded=false.",
@@ -2593,6 +2599,33 @@ var JURISDICTIONS = [
 function clean2(v) {
   return typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, 800) : "";
 }
+function metadataRecord2(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+function hasGroundedLineage(metadata) {
+  const meta2 = metadataRecord2(metadata);
+  const lineage = metadataRecord2(meta2?.citation_lineage);
+  return typeof lineage?.selected_document_id === "string" && Array.isArray(lineage?.evidence_chunk_ids) && lineage.evidence_chunk_ids.some((x) => typeof x === "string" && x.length > 0);
+}
+function detectFocusedItem(text) {
+  const t = clean2(text);
+  const focus = t.match(/(?:只(?:說|说|講|讲)|只要|聚焦|focus(?: only)? on)\s*([^，。,.!?！？]{1,40}?)(?:相關|相关|部分|內容|内容|\s+only|$)/i);
+  const raw = focus?.[1]?.trim().replace(/^(?:在|關於|关于|the)\s*/i, "") ?? "";
+  return raw && raw.length <= 40 ? raw : null;
+}
+function detectCorrectedItem(text) {
+  const m = clean2(text).match(/(?:問的是|問嘅係|问的是|其實係|其实是|改成)\s*([^，。,.!?！？]{1,40})/i);
+  if (!m?.[1]) return null;
+  return m[1].replace(/(?:，|,)?\s*(?:不是|唔係|not)\s+.*$/i, "").trim() || null;
+}
+function localizedCurrentItem(item, lang) {
+  const normalized = clean2(item).toLowerCase();
+  const airConditioner = /(?:冷氣機|冷气机|空調機|空调机|air[- ]?conditioner|aircon)/i.test(normalized);
+  if (!airConditioner) return item;
+  if (lang === "en") return "air conditioner";
+  if (lang === "zh-CN") return "\u7A7A\u8C03\u673A";
+  return "\u51B7\u6C23\u6A5F";
+}
 function detectLanguage2(text) {
   if (!/[\u4e00-\u9fff]/.test(text)) return "en";
   return /[转们为这没请台]/.test(text) ? "zh-CN" : "zh-TW";
@@ -2620,7 +2653,8 @@ function normalizeTopic(text) {
 function projectConversationRuntimeState(newestFirst) {
   const rows = newestFirst.map((row) => ({
     text: clean2(row.content),
-    role: String(row.role ?? "").toLowerCase()
+    role: String(row.role ?? "").toLowerCase(),
+    metadata: row.metadata
   })).filter((row) => row.text && row.text !== "__THINKING__");
   const customers = rows.filter((row) => CUSTOMER2.has(row.role));
   const assistants = rows.filter((row) => ASSISTANT2.has(row.role));
@@ -2633,6 +2667,9 @@ function projectConversationRuntimeState(newestFirst) {
   const unresolved = customers.filter((row) => QUESTION.test(row.text)).slice(0, 8).map((row) => row.text);
   const explicitJurisdiction = latest ? detectExplicitJurisdiction(latest) : null;
   const inheritedJurisdiction = customers.map((row) => detectExplicitJurisdiction(row.text)).find(Boolean) ?? null;
+  const groundedAssistantJurisdiction = assistants.filter((row) => hasGroundedLineage(row.metadata)).map((row) => detectExplicitJurisdiction(row.text)).find(Boolean) ?? null;
+  const correctedItem = corrections.map((text) => detectCorrectedItem(text)).find(Boolean) ?? null;
+  const focusedItem = customers.map((row) => detectFocusedItem(row.text)).find(Boolean) ?? null;
   const topics = [];
   for (const row of chronological) {
     const topic = normalizeTopic(row.text);
@@ -2654,7 +2691,8 @@ function projectConversationRuntimeState(newestFirst) {
     unresolved_questions: unresolved,
     latest_corrections: corrections,
     active_constraints: constraints,
-    jurisdiction: explicitJurisdiction ?? inheritedJurisdiction,
+    jurisdiction: explicitJurisdiction ?? inheritedJurisdiction ?? groundedAssistantJurisdiction,
+    current_item: correctedItem ?? focusedItem,
     language: detectLanguage2(latest ?? first ?? ""),
     prior_recommendations: assistants.filter((row) => RECOMMEND.test(row.text)).slice(0, 6).map((row) => row.text)
   };
@@ -2670,7 +2708,8 @@ function buildCanonicalContinuityBlock(newestFirst) {
     `Evidence authority: ${state.evidence_authority}`,
     `Prior grounded document: ${state.prior_grounded_document_id ?? "\u2014"}`,
     `Current topic: ${state.current_topic ?? "\u2014"}`,
-    `Jurisdiction: ${state.jurisdiction ?? "unspecified"}`
+    `Jurisdiction: ${state.jurisdiction ?? "unspecified"}`,
+    `Current item: ${state.current_item ?? "unspecified"}`
   ];
   if (state.latest_corrections.length) {
     lines.push("Newest corrections / superseding facts:");
@@ -2713,16 +2752,46 @@ function resolveConversationMemoryResponse(latestInput, newestFirst) {
   const recommendationRequest = /(之前|先前|剛才|刚才|earlier|previous).*(建議|建议|要我提供|需要.*資料|需要.*资料|recommend|suggest)|what\s+did\s+you\s+(?:recommend|suggest)|what\s+information.*(?:missing|need)/i.test(latest);
   const providedMissingRequest = /(我已經提供|我已经提供|我提供過|我提供过|已提供.*哪些|還缺|还缺|仍缺|what\s+information\s+have\s+i\s+already\s+given|what\s+have\s+i\s+already\s+given|what.*still\s+missing)/i.test(latest);
   const generalSummaryRequest = /(最後|最后|請|请)?\s*(?:用.{0,8})?(?:三點|三点|幾點|几点)?\s*(?:總結|总结).*(?:剛才|刚才|我們|我们|談過|谈过|內容|内容)|summari[sz]e.*(?:conversation|discussed|talked|so far)/i.test(latest);
+  const mainlyAskedRequest = /(?:剛才|刚才).*(?:主要)?(?:問|问).*(?:什麼|什么|咩)|(?:主要)(?:問|问).*(?:什麼|什么|咩)|what\s+(?:was|is)\s+(?:my\s+)?(?:main|mainly|primary).*(?:question|asking|ask)/i.test(latest);
   const nameRequest = /(我叫什麼|我叫什么|我的名字|我個名|我个名|what(?:'s| is)\s+my\s+name|do\s+you\s+remember\s+my\s+name)/i.test(latest);
   const locationRequest = /(我(?:現在|现在|目前).*(?:哪裡|哪里)|我.*(?:在哪|喺邊)|where\s+am\s+i|my\s+(?:current\s+)?location|更正後.*(?:地點|地点)|更正后.*(?:地點|地点))/i.test(latest);
-  const currentContextRequest = /(我(?:現在|现在|目前).*(?:哪個|哪个|什麼|什么).*(?:地區|地区).*(?:哪個|哪个|什麼|什么).*(?:項目|项目)|what(?:\x27s| is)?\s+(?:the\s+)?(?:current\s+)?(?:region|jurisdiction).*(?:item|product))/i.test(latest);
-  if (!(firstRequest || correctionRequest || constraintRequest || summaryRequest || recommendationRequest || providedMissingRequest || generalSummaryRequest || nameRequest || locationRequest || currentContextRequest)) return null;
+  const currentContextPattern = /(我(?:現在|现在|目前).*(?:哪個|哪个|什麼|什么).*(?:地區|地区).*(?:哪個|哪个|什麼|什么).*(?:項目|项目)|what(?:\x27s| is)?\s+(?:the\s+)?(?:current\s+)?(?:region|jurisdiction).*(?:item|product))/i;
+  const languageContinuationPattern = /(?:answer|say|repeat).*(?:same|that).*(?:english|chinese|cantonese)|(?:same|that).*(?:in|into)\s+(?:english|chinese|cantonese)|(?:回到|改用|用)\s*(?:繁體中文|繁体中文|簡體中文|简体中文|英文|廣東話|广东话)/i;
+  const recentPriorCustomerTurns = priorRows.filter((row) => CUSTOMER2.has(String(row.role ?? "").toLowerCase())).map((row) => clean2(row.content)).filter(Boolean).slice(0, 2);
+  const hasRecentCurrentContextQuestion = recentPriorCustomerTurns.some((text) => currentContextPattern.test(text));
+  const hasChainedLanguageContinuation = recentPriorCustomerTurns.length >= 2 && languageContinuationPattern.test(recentPriorCustomerTurns[0]) && currentContextPattern.test(recentPriorCustomerTurns[1]);
+  const memoryLanguageContinuation = languageContinuationPattern.test(latest) && (hasRecentCurrentContextQuestion || hasChainedLanguageContinuation);
+  const currentContextRequest = currentContextPattern.test(latest) || memoryLanguageContinuation;
+  if (!(firstRequest || correctionRequest || constraintRequest || summaryRequest || recommendationRequest || providedMissingRequest || generalSummaryRequest || mainlyAskedRequest || nameRequest || locationRequest || currentContextRequest)) return null;
   const zh = lang !== "en";
   const q = lang === "zh-CN" ? { first: "\u4F60\u4E00\u5F00\u59CB\u95EE\u7684\u662F", correction: "\u4F60\u4E4B\u524D\u6700\u65B0\u7684\u66F4\u6B63\u662F", constraint: "\u4F60\u4E4B\u524D\u660E\u786E\u63D0\u51FA\u7684\u9650\u5236\u5305\u62EC", recommendation: "\u6211\u4E4B\u524D\u7684\u76F8\u5173\u5EFA\u8BAE\u5305\u62EC", name: "\u4F60\u4E4B\u524D\u544A\u8BC9\u6211\u4F60\u7684\u540D\u5B57\u662F", location: "\u4F60\u4E4B\u524D\u66F4\u6B63\u540E\u7684\u5730\u70B9\u662F", none: "\u8FD9\u6BB5\u5BF9\u8BDD\u91CC\u6CA1\u6709\u8DB3\u591F\u8D44\u6599\u53EF\u4EE5\u786E\u8BA4\u3002" } : { first: "\u4F60\u4E00\u958B\u59CB\u554F\u7684\u662F", correction: "\u4F60\u4E4B\u524D\u6700\u65B0\u7684\u66F4\u6B63\u662F", constraint: "\u4F60\u4E4B\u524D\u660E\u78BA\u63D0\u51FA\u7684\u9650\u5236\u5305\u62EC", recommendation: "\u6211\u4E4B\u524D\u7684\u76F8\u95DC\u5EFA\u8B70\u5305\u62EC", name: "\u4F60\u4E4B\u524D\u544A\u8A34\u6211\u4F60\u7684\u540D\u5B57\u662F", location: "\u4F60\u4E4B\u524D\u66F4\u6B63\u5F8C\u7684\u5730\u9EDE\u662F", none: "\u9019\u6BB5\u5C0D\u8A71\u88E1\u6C92\u6709\u8DB3\u5920\u8CC7\u6599\u53EF\u4EE5\u78BA\u8A8D\u3002" };
   const en = { first: "Your first question was", correction: "Your latest correction was", constraint: "The constraints you explicitly gave me include", recommendation: "My relevant earlier recommendations include", name: "You told me your name is", location: "The location from your latest correction is", none: "There is not enough information in this conversation to confirm that." };
   const t = zh ? q : en;
   const quote = (v) => zh ? `\u300C${v}\u300D` : `\u201C${v}\u201D`;
   const list = (xs) => xs.map((x, i) => `${i + 1}. ${x}`).join("\n");
+  if (mainlyAskedRequest) {
+    const label = {
+      hong_kong: { "zh-TW": "\u9999\u6E2F", "zh-CN": "\u9999\u6E2F", en: "Hong Kong" },
+      macau: { "zh-TW": "\u6FB3\u9580", "zh-CN": "\u6FB3\u95E8", en: "Macau" },
+      singapore: { "zh-TW": "\u65B0\u52A0\u5761", "zh-CN": "\u65B0\u52A0\u5761", en: "Singapore" },
+      taiwan: { "zh-TW": "\u53F0\u7063", "zh-CN": "\u53F0\u6E7E", en: "Taiwan" },
+      mainland_china: { "zh-TW": "\u4E2D\u570B\u5927\u9678", "zh-CN": "\u4E2D\u56FD\u5927\u9646", en: "Mainland China" },
+      mars: { "zh-TW": "\u706B\u661F", "zh-CN": "\u706B\u661F", en: "Mars" }
+    };
+    const region = state.jurisdiction ? label[state.jurisdiction]?.[lang] : void 0;
+    const item = state.current_item ? localizedCurrentItem(state.current_item, lang) : "";
+    if (region && item) {
+      if (lang === "en") return `You were mainly asking about ${item} in ${region}.`;
+      if (lang === "zh-CN") return `\u4F60\u521A\u624D\u4E3B\u8981\u95EE\u7684\u662F${region}\u7684${item}\u76F8\u5173\u95EE\u9898\u3002`;
+      return `\u4F60\u525B\u624D\u4E3B\u8981\u554F\u7684\u662F${region}\u7684${item}\u76F8\u95DC\u554F\u984C\u3002`;
+    }
+    if (state.first_customer_turn) {
+      if (lang === "en") return `You were mainly asking about: ${state.first_customer_turn}`;
+      if (lang === "zh-CN") return `\u4F60\u521A\u624D\u4E3B\u8981\u95EE\u7684\u662F\uFF1A${state.first_customer_turn}`;
+      return `\u4F60\u525B\u624D\u4E3B\u8981\u554F\u7684\u662F\uFF1A${state.first_customer_turn}`;
+    }
+    return lang === "en" ? en.none : q.none;
+  }
   if (providedMissingRequest) {
     const priorCustomer = priorRows.filter((r) => CUSTOMER2.has(String(r.role ?? "").toLowerCase())).map((r) => clean2(r.content)).filter(Boolean).reverse().slice(-8);
     const supplied = priorCustomer.filter((x) => !QUESTION.test(x) && !MEMORY2.test(x)).slice(-5);
@@ -2780,9 +2849,7 @@ ${list(state.prior_recommendations.slice(0, 3))}` : t.none;
       mars: { "zh-TW": "\u706B\u661F", "zh-CN": "\u706B\u661F", en: "Mars" }
     };
     const region = state.jurisdiction ? label[state.jurisdiction]?.[lang] : void 0;
-    const correction = state.latest_corrections[0] ?? "";
-    const itemMatch = correction.match(/(?:問的是|問嘅係|问的是|其實係|其实是|改成)\s*([^，。,.!?！？]{1,40})/i);
-    const item = itemMatch?.[1]?.trim() ?? "";
+    const item = state.current_item ? localizedCurrentItem(state.current_item, lang) : "";
     if (!region || !item) return t.none;
     if (lang === "en") return `Your current region is ${region}, and the current item is ${item}.`;
     if (lang === "zh-CN") return `\u4F60\u73B0\u5728\u95EE\u7684\u662F${region}\u7684${item}\u3002`;
@@ -3082,15 +3149,15 @@ function resolvePriorGroundedTransform(latest, newestFirst) {
     const role = String(row.role ?? "").toLowerCase();
     const content = clean3(row.content);
     if (role !== "assistant" && role !== "ai" || content !== clean3(anchor.content)) continue;
-    const meta = record(row.metadata);
-    const lineage = record(meta?.citation_lineage);
+    const meta2 = record(row.metadata);
+    const lineage = record(meta2?.citation_lineage);
     const selected = clean3(lineage?.selected_document_id, 200);
     const lineageIds = Array.isArray(lineage?.evidence_chunk_ids) ? [...new Set(lineage.evidence_chunk_ids.filter((x) => typeof x === "string" && x.trim().length > 0).map((x) => x.trim()))] : [];
-    const sourceMessageId = clean3(meta?.source_message_id, 200);
+    const sourceMessageId = clean3(meta2?.source_message_id, 200);
     if (selected !== anchor.document_id || sourceMessageId !== anchor.source_message_id || lineageIds.length !== sourceChunks.length || lineageIds.some((id) => !sourceChunks.includes(id))) return null;
-    if (!Array.isArray(meta?.citations) || meta.citations.length === 0) return null;
+    if (!Array.isArray(meta2?.citations) || meta2.citations.length === 0) return null;
     const citations = [];
-    for (const item of meta.citations.slice(0, 3)) {
+    for (const item of meta2.citations.slice(0, 3)) {
       const c = record(item);
       if (!c) return null;
       const documentId = clean3(c.document_id, 200);
@@ -3204,6 +3271,69 @@ function buildInheritedTransformCitationMetadata(context) {
   };
 }
 
+// supabase/functions/_shared/warm-handoff.ts
+var REGION = /(香港|台灣|台湾|澳門|澳门|Hong Kong|Taiwan|Macau)/i;
+var PRODUCT = /(冷氣|空調|空调|洗衣機|洗衣机|雪櫃|冰箱|電視|电视|產品|产品|product)/i;
+var PRODUCT_SUPPORT = /(維修|维修|保養|保修|故障|唔凍|不冷|不能運作|无法运行|repair|warranty|broken|not working)/i;
+var ORDER_SUPPORT = /(訂單|订单|送貨|送货|退款|退貨|退货|order|delivery|refund|return)/i;
+var MODEL_VALUE = /(?:型號|型号|model(?: number)?)[\s:：#-]*([A-Za-z0-9][A-Za-z0-9._\/-]{1,60})/i;
+var ORDER_VALUE = /(?:訂單(?:編號|號碼|号码)|订单(?:编号|号码)|order(?: number| no\.?| id)|order\s*#)[\s:：#-]*([A-Za-z0-9][A-Za-z0-9._\/-]{2,80})/i;
+var NO_MODEL = /(?:沒有|没有|冇|不知道|唔知|未知|no|don['’]?t have|do not have).{0,10}(?:型號|型号|model)/i;
+var NO_ORDER = /(?:沒有|没有|冇|不知道|唔知|未知|no|don['’]?t have|do not have).{0,12}(?:訂單(?:編號|號碼|号码)?|订单(?:编号|号码)?|order(?: number| no\.?| id)?)/i;
+function clean4(v, max = 500) {
+  return typeof v === "string" ? v.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max) : "";
+}
+function meta(v) {
+  return v && typeof v === "object" && !Array.isArray(v) ? v : null;
+}
+function buildWarmHandoffPackage(rows, reason = "human_handoff") {
+  const usable = rows.filter((r) => clean4(r.content) && clean4(r.content) !== "__THINKING__");
+  const visitors = usable.filter((r) => ["visitor", "customer", "user"].includes(String(r.role || "").toLowerCase()));
+  const transcript = visitors.map((r) => clean4(r.content)).join(" ");
+  const last = clean4(visitors.at(-1)?.content);
+  const known = [];
+  const region = transcript.match(REGION)?.[0];
+  if (region) known.push({ label: "Region", value: region });
+  const product = transcript.match(PRODUCT)?.[0];
+  if (product) known.push({ label: "Product", value: product });
+  const model = transcript.match(MODEL_VALUE)?.[1];
+  if (model) known.push({ label: "Model", value: model });
+  const order = transcript.match(ORDER_VALUE)?.[1];
+  if (order) known.push({ label: "Order reference", value: order });
+  const unavailable = [];
+  if (NO_MODEL.test(transcript)) unavailable.push("model");
+  if (NO_ORDER.test(transcript)) unavailable.push("order_reference");
+  const missing = [];
+  if (PRODUCT_SUPPORT.test(transcript) && !model && !unavailable.includes("model")) missing.push("model");
+  if (ORDER_SUPPORT.test(transcript) && !order && !unavailable.includes("order_reference")) missing.push("order_reference");
+  const collectionAttempted = usable.some((r) => meta(r.metadata)?.response_route === "warm_handoff_data_collection");
+  const assistants = usable.filter((r) => String(r.role || "").toLowerCase() === "assistant");
+  const actions = assistants.filter((r) => meta(r.metadata)?.response_route !== "warm_handoff_data_collection").slice(-3).map((r) => clean4(r.content)).filter(Boolean);
+  const goal = last || clean4(visitors.at(-2)?.content) || "Customer requested human support";
+  return {
+    reason,
+    customer_goal: goal,
+    known_facts: known,
+    unavailable_facts: unavailable,
+    missing_facts: missing,
+    actions_already_tried: actions,
+    last_customer_request: last,
+    conversation_summary: visitors.slice(-5).map((r) => clean4(r.content)).join(" / ").slice(0, 1500),
+    collection_already_attempted: collectionAttempted,
+    ready_for_handoff: missing.length === 0 || collectionAttempted
+  };
+}
+function buildMissingFactsQuestion(pkg, lang = "zh-TW") {
+  if (pkg.missing_facts.length === 0 || pkg.collection_already_attempted) return null;
+  const names = {
+    model: { "zh-TW": "\u7522\u54C1\u578B\u865F", "zh-CN": "\u4EA7\u54C1\u578B\u53F7", en: "product model" },
+    order_reference: { "zh-TW": "\u8A02\u55AE\u7DE8\u865F", "zh-CN": "\u8BA2\u5355\u7F16\u53F7", en: "order number" }
+  };
+  const labels = pkg.missing_facts.map((x) => names[x]?.[lang] || x);
+  if (lang === "en") return `Before I connect you with a human agent, could you provide ${labels.join(" and ")}? If you don\u2019t have it, just say so and I\u2019ll still pass along everything we have.`;
+  return `\u8F49\u4EA4\u771F\u4EBA\u5BA2\u670D\u524D\uFF0C\u60F3\u5148\u88DC\u9F4A${labels.join("\u3001")}\uFF1B\u5982\u679C\u4F60\u624B\u4E0A\u6C92\u6709\uFF0C\u76F4\u63A5\u544A\u8A34\u6211\u300C\u6C92\u6709\u300D\u4E5F\u53EF\u4EE5\uFF0C\u6211\u6703\u628A\u76EE\u524D\u8CC7\u6599\u4E00\u4F75\u4EA4\u7D66\u5BA2\u670D\u3002`;
+}
+
 // supabase/functions/_shared/runtime-signal-lifecycle.ts
 var STRONG_ANGER = /(嬲|憤怒|愤怒|火大|離譜|离谱|垃圾|廢物|废物|荒謬|荒谬|angry|furious|irate|rage|ridiculous|unacceptable|bullshit)/i;
 var NEGATIVE = /(失望|不滿|不满|很差|太差|煩|烦|frustrated|annoyed|upset|disappointed|terrible|awful)/i;
@@ -3264,6 +3394,11 @@ var SAFE_HANDOFF_WORDING = {
   "zh-TW": "\u6211\u5011\u5DF2\u5C07\u4F60\u7684\u5C0D\u8A71\u8A18\u9304\uFF0C\u5BA2\u670D\u63A5\u624B\u5F8C\u6703\u5728\u6B64\u5C0D\u8A71\u4E2D\u56DE\u8986\u4F60\u3002\u76EE\u524D\u672A\u555F\u7528\u5373\u6642\u8F2A\u5019\u6642\u9593\u986F\u793A\u3002",
   "zh-CN": "\u6211\u4EEC\u5DF2\u5C06\u4F60\u7684\u5BF9\u8BDD\u8BB0\u5F55\uFF0C\u5BA2\u670D\u63A5\u624B\u540E\u4F1A\u5728\u6B64\u5BF9\u8BDD\u4E2D\u56DE\u590D\u4F60\u3002\u76EE\u524D\u672A\u542F\u7528\u5B9E\u65F6\u6392\u961F\u4F4D\u7F6E\u548C\u9884\u8BA1\u7B49\u5F85\u65F6\u95F4\u663E\u793A\u3002",
   en: "We have recorded your conversation. A human agent will reply in this same chat after taking over. Real-time queue position and estimated wait time are not currently enabled."
+};
+var HUMAN_SUPPORT_INFO_WORDING = {
+  "zh-TW": "\u6211\u76EE\u524D\u6C92\u6709\u5DF2\u78BA\u8A8D\u7684\u771F\u4EBA\u5BA2\u670D\u670D\u52D9\u6642\u9593\u8CC7\u6599\u3002\u5982\u679C\u4F60\u73FE\u5728\u8981\u8F49\u771F\u4EBA\u5BA2\u670D\uFF0C\u53EF\u4EE5\u76F4\u63A5\u544A\u8A34\u6211\u3002",
+  "zh-CN": "\u6211\u76EE\u524D\u6CA1\u6709\u5DF2\u786E\u8BA4\u7684\u4EBA\u5DE5\u5BA2\u670D\u670D\u52A1\u65F6\u95F4\u8D44\u6599\u3002\u5982\u679C\u4F60\u73B0\u5728\u8981\u8F6C\u4EBA\u5DE5\u5BA2\u670D\uFF0C\u53EF\u4EE5\u76F4\u63A5\u544A\u8BC9\u6211\u3002",
+  en: "I don't currently have confirmed human-support service hours. If you want a human agent now, you can tell me directly."
 };
 var REQUIRED_ESCALATION_SAFE_WORDING = {
   E2: {
@@ -3991,6 +4126,25 @@ async function evaluateAndPersistRequiredRulesLive(supabaseAdmin, params) {
   const decision2 = evaluateFullEscalationRuleset(context, {
     activation: { enabled }
   });
+  if (params.suppress_r2_for_prior_grounded_transform === true && decision2.matched_rule === "R2") {
+    return null;
+  }
+  if (decision2.decision === "handoff" && decision2.matched_rule === "R2" && params.warm_handoff_question) {
+    const { data, error } = await supabaseAdmin.rpc("commit_ai_reply_tx", {
+      p_conversation_id: params.conversation_id,
+      p_source_message_id: params.source_message_id,
+      p_content: params.warm_handoff_question,
+      p_metadata: { escalation_rule: "R2", escalation_action: "collect_missing_handoff_facts", response_route: "warm_handoff_data_collection", handoff_required: false }
+    });
+    if (error) return new Response(JSON.stringify({ success: false, error: "warm_handoff_collection_failed" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    const result = String(data?.result ?? "");
+    if (result === "success" || result === "idempotent") {
+      await cleanupThinking(supabaseAdmin, params.conversation_id, params.source_message_id);
+      return new Response(JSON.stringify({ success: true, response_route: "warm_handoff_data_collection", handoff_required: false, missing_facts_requested: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+    if (result === "human_control" || result === "resolved" || result === "superseded_source") return new Response(JSON.stringify({ success: true, skipped: result }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ success: false, error: `warm_handoff_collection_${result || "unexpected"}` }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
   if (decision2.decision === "clarify" && decision2.matched_rule === "R2" && enabled.has("R2")) {
     const clarification = R2_CLARIFICATION_SAFE_WORDING[params.visitor_language];
     const persisted2 = await persistRequiredEscalationClarification(requiredEscalationRpcClient(supabaseAdmin), {
@@ -4684,6 +4838,30 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
     );
     if (r1Response) return r1Response;
   }
+  const _humanSupportIntent = classifyHandoffIntent(_h1LastMsg);
+  if (_humanSupportIntent.kind === "question_about_human_support") {
+    const infoReply = HUMAN_SUPPORT_INFO_WORDING[_humanSupportIntent.language];
+    const committed2 = await commitAiReplyWithControlGate(
+      supabaseAdmin,
+      conversation_id,
+      source_message_id,
+      infoReply,
+      {
+        response_route: "human_support_information",
+        handoff_required: false,
+        escalation_rule: null,
+        handoff_intent_kind: _humanSupportIntent.kind
+      }
+    );
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+    if (!committed2.ok) {
+      if (committed2.result === "human_control" || committed2.result === "resolved" || committed2.result === "superseded_source") {
+        return new Response(JSON.stringify({ success: true, skipped: committed2.result }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ success: false, error: `human_support_info_commit_${committed2.result}` }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+    return new Response(JSON.stringify({ success: true, response_route: "human_support_information", handoff_required: false }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
   const _conversationMemoryReply = resolveConversationMemoryResponse(_h1LastMsg, _pr5HistoryRows ?? []);
   if (_conversationMemoryReply) {
     const committed2 = await commitAiReplyWithControlGate(supabaseAdmin, conversation_id, source_message_id, _conversationMemoryReply, { response_route: "conversation_memory", conversation_grounded: true });
@@ -4784,6 +4962,7 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
         greeting_or_trivial: _pr5GreetingOrTrivial,
         visitor_language: _visitorLang,
         expected_tenant_id: _pr5ExpectedTenantId,
+        warm_handoff_question: buildMissingFactsQuestion(buildWarmHandoffPackage(_pr5HistoryRows ?? [], "R2"), _visitorLang) ?? void 0,
         rag_match_state: _pr5RagMatchState,
         topic_risk_level: _pr5LocalRisk?.level,
         verified_local_risk_classification: _pr5LocalRisk?.verified,
@@ -4850,6 +5029,7 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
         greeting_or_trivial: _pr5GreetingOrTrivial,
         visitor_language: _visitorLang,
         expected_tenant_id: _pr5ExpectedTenantId,
+        warm_handoff_question: buildMissingFactsQuestion(buildWarmHandoffPackage(_pr5HistoryRows ?? [], "R2"), _visitorLang) ?? void 0,
         rag_match_state: _pr5RagMatchState,
         topic_risk_level: _pr5LocalRisk?.level,
         verified_local_risk_classification: _pr5LocalRisk?.verified,
@@ -4903,6 +5083,7 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
         greeting_or_trivial: _pr5GreetingOrTrivial,
         visitor_language: _visitorLang,
         expected_tenant_id: _pr5ExpectedTenantId,
+        warm_handoff_question: buildMissingFactsQuestion(buildWarmHandoffPackage(_pr5HistoryRows ?? [], "R2"), _visitorLang) ?? void 0,
         rag_match_state: _pr5RagMatchState,
         topic_risk_level: _pr5LocalRisk?.level,
         verified_local_risk_classification: _pr5LocalRisk?.verified,
@@ -5019,6 +5200,8 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
       });
     }
   }
+  const _warmHandoffPackage = buildWarmHandoffPackage(_pr5HistoryRows ?? [], "R2");
+  const _warmHandoffQuestion = buildMissingFactsQuestion(_warmHandoffPackage, _visitorLang);
   const _pr5RequiredLiveResponse = await evaluateAndPersistRequiredRulesLive(supabaseAdmin, {
     conversation_id,
     source_message_id,
@@ -5028,6 +5211,8 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
     greeting_or_trivial: _pr5GreetingOrTrivial,
     visitor_language: _visitorLang,
     expected_tenant_id: _pr5ExpectedTenantId,
+    suppress_r2_for_prior_grounded_transform: Boolean(_priorGroundedTransform),
+    warm_handoff_question: _warmHandoffQuestion ?? void 0,
     rag_match_state: _pr5RagMatchState,
     topic_risk_level: _pr5LocalRisk?.level,
     verified_local_risk_classification: _pr5LocalRisk?.verified,
