@@ -1,0 +1,115 @@
+name: Director Task 2 Translation Grounding Takeover
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/director-task2-translation-grounding-takeover.yml'
+      - 'scripts/director_task2_translation_grounding_patch.py'
+      - 'tests/edge/task2-translation-grounding-regression.test.ts'
+
+permissions:
+  contents: write
+
+env:
+  PROJECT_REF: nrfxhqabwblzxoushgnm
+  PROD_ORIGIN: https://console-chat-hub.lovable.app
+  CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+  SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+jobs:
+  final-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: main, fetch-depth: 0 }
+      - uses: denoland/setup-deno@v2
+        with: { deno-version: v2.9.6 }
+      - name: Apply translation-grounding patch
+        run: |
+          set -euo pipefail
+          python scripts/director_task2_translation_grounding_patch.py
+          git diff --check
+          test "$(git diff --name-only)" = "supabase/functions/_shared/llm-router.ts"
+          grep -q 'transform_operations' supabase/functions/_shared/llm-router.ts
+          echo TASK2_TRANSLATION_PATCH=PASS
+      - name: Semantic and grounding regressions
+        run: |
+          set -euo pipefail
+          deno test --allow-env --allow-read --node-modules-dir=auto tests/edge/task2-translation-grounding-regression.test.ts
+          deno test --allow-read --node-modules-dir=auto tests/edge/task2-current-context-language-continuation.test.ts
+          deno test --allow-read --node-modules-dir=auto tests/edge/task2-standalone-simplify-regression.test.ts
+          deno test --allow-read --node-modules-dir=auto tests/edge/task4-1-current-context-memory.test.ts
+          deno check --node-modules-dir=auto supabase/functions/_shared/llm-router.ts
+          deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+          echo TASK2_TRANSLATION_REGRESSION=PASS
+      - name: Full authoritative build
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          echo TASK2_BUILD=PASS
+      - name: Commit exact source
+        run: |
+          set -euo pipefail
+          git config user.name ebixsolutions
+          git config user.email '64578119+ebixsolutions@users.noreply.github.com'
+          git add supabase/functions/_shared/llm-router.ts
+          test "$(git diff --cached --name-only)" = "supabase/functions/_shared/llm-router.ts"
+          git commit -m '[authorized-prod] Task 2 close translation grounding'
+          git push origin HEAD:main
+      - uses: supabase/setup-cli@v1
+        with: { version: latest }
+      - name: Capture rollback bundle
+        id: snapshot
+        run: |
+          set -euo pipefail
+          SNAP=/tmp/task2-translation-rollback
+          rm -rf "$SNAP"; mkdir -p "$SNAP/supabase"
+          cp supabase/config.toml "$SNAP/supabase/config.toml"
+          cd "$SNAP"
+          supabase functions download generate-reply --project-ref "$PROJECT_REF" --use-api
+          ENTRY="$(find . -type f -path '*/generate-reply/index.ts' -print -quit)"
+          test -n "$ENTRY" && test -s "$ENTRY"
+          ROOT="$(dirname "$(dirname "$ENTRY")")"
+          test -d "$ROOT/_shared"
+          find . -type f -not -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          sha256sum -c SHA256SUMS
+          deno check --node-modules-dir=auto "$ENTRY"
+          test "$(find "$ROOT" -type f -empty | wc -l | tr -d ' ')" -eq 0
+          echo TASK2_ROLLBACK_SNAPSHOT=PASS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: task2-translation-grounding-predeploy-rollback
+          path: /tmp/task2-translation-rollback
+          if-no-files-found: error
+          retention-days: 30
+      - name: Deploy current generate-reply bundle
+        id: deploy
+        run: |
+          set -euo pipefail
+          supabase functions deploy generate-reply --project-ref "$PROJECT_REF" --use-api
+          supabase functions list --project-ref "$PROJECT_REF" | grep -q generate-reply
+          echo TASK2_DEPLOY=PASS
+      - name: Production T01-T11
+        id: smoke
+        run: |
+          set -euo pipefail
+          set -a; source .env; set +a
+          python scripts/director_task2_t01_t11_smoke.py
+          echo TASK2_T01_T11=PASS
+      - name: Roll back failed deployment
+        if: ${{ failure() && (steps.deploy.outcome == 'failure' || steps.smoke.outcome == 'failure') }}
+        run: |
+          set -euo pipefail
+          cd /tmp/task2-translation-rollback
+          sha256sum -c SHA256SUMS
+          supabase functions deploy generate-reply --project-ref "$PROJECT_REF" --use-api
+          echo TASK2_ROLLBACK=PASS
+      - name: Final gate
+        run: |
+          set -euo pipefail
+          test -s /tmp/task2-translation-rollback/SHA256SUMS
+          echo TASK2_TRANSLATION_FINAL_GATE=PASS
