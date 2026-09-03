@@ -41,15 +41,19 @@ jobs:
           u=Path('src/components/console/AgentToolPanel.tsx').read_text()
           r=Path('src/routes/_authenticated/console.conversations.$id.tsx').read_text()
           w=Path('supabase/functions/_shared/warm-handoff.ts').read_text()
-          assert 'toolType==="handoff_context"' in a
-          assert 'response_route: "warm_handoff_data_collection"' in g
-          assert 'warm_handoff_question: _warmHandoffQuestion' in g
-          assert 'decision.decision === "handoff" && decision.matched_rule === "R2"' in g
-          assert 'Warm Handoff Context / 真人接手摘要' in u
-          assert 'tool_type: "handoff_context"' in u
-          assert 'autoLoadHandoffContext={conv.status === "pending" || Boolean(conv.assigned_agent_id)}' in r
-          assert 'plain order' not in w
-          assert '訂單(?:編號|號碼|号码)' in w
+          checks={
+            'agent_unified_handoff_tool': 'handoff_context' in a and 'warm_handoff_package:pkg' in a and 'policyOnly:true' in a and 'suggested_replies:suggestions' in a,
+            'r2_collection_route': 'warm_handoff_data_collection' in g and 'collect_missing_handoff_facts' in g and 'handoff_required: false' in g,
+            'r2_only_noncritical_gate': 'decision.decision === "handoff"' in g and 'decision.matched_rule === "R2"' in g and 'warm_handoff_question' in g,
+            'agent_panel_summary': 'Warm Handoff Context / 真人接手摘要' in u and 'Relevant Knowledge' in u and 'Relevant Policy' in u and 'Suggested Replies' in u,
+            'agent_panel_auto_load': 'handoff_context' in u and 'autoLoadHandoffContext' in u,
+            'route_handoff_state_activation': 'autoLoadHandoffContext' in r and 'conv.status === "pending"' in r and 'assigned_agent_id' in r,
+            'explicit_order_identifier_contract': '訂單(?:編號|號碼|号码)' in w and 'order(?: number| no\\.?| id)' in w,
+            'no_repeat_collection_contract': 'collection_already_attempted' in w and 'unavailable_facts' in w,
+          }
+          for name,value in checks.items(): print(f'{name}={"PASS" if value else "FAIL"}')
+          failed=[name for name,value in checks.items() if not value]
+          assert not failed, f'coverage failures={failed}'
           print('WARM_HANDOFF_MACHINE_COVERAGE=PASS')
           PY
           git add supabase/functions/_shared/warm-handoff.ts supabase/functions/agent-assist/index.ts supabase/functions/generate-reply/index.ts src/components/console/AgentToolPanel.tsx 'src/routes/_authenticated/console.conversations.$id.tsx' tests/edge/warm-handoff-package.test.ts
