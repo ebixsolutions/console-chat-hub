@@ -84,7 +84,13 @@ Deno.serve(async(req)=>{
     if(!kb.success)return jsonRes({success:false,error:"handoff_kb_unavailable"},kb.error_code==="KB_TIMEOUT"?504:502,req);
     const knowledge=selectCanonicalGrounding(kb.documents,{requestText:query,requirePublished:true});
     if(!knowledge.ok)return jsonRes({success:false,error:"handoff_kb_contract_mismatch"},502,req);
-    const policy=selectCanonicalGrounding(kb.documents,{policyOnly:true,requestText:query,requirePublished:true});
+    // Policy evidence must not depend on the top general-knowledge documents.
+    // Run a dedicated policy-oriented retrieval in the same verified tenant scope,
+    // then apply the same canonical published/full-content policy contract.
+    const policyQuery=`${query} policy rules terms requirements compliance 政策 規則 條款 要求 合規`.slice(0,500);
+    const policyKb=await fetchKBRag({query:policyQuery,top_k:8},tenant.scope,endpoint);
+    if(!policyKb.success)return jsonRes({success:false,error:"handoff_policy_unavailable"},policyKb.error_code==="KB_TIMEOUT"?504:502,req);
+    const policy=selectCanonicalGrounding(policyKb.documents,{policyOnly:true,requestText:policyQuery,requirePublished:true});
     if(!policy.ok)return jsonRes({success:false,error:"handoff_policy_contract_mismatch"},502,req);
     const ke=knowledge.evidence.slice(0,3).map((i,n)=>({label:`Evidence ${n+1}`,content:i.content.slice(0,1200),source_type:i.source_type,chunk_type:"full_content"}));
     const pe=policy.evidence.slice(0,3).map((i,n)=>({label:`Policy ${n+1}`,content:i.content.slice(0,1000),source_type:i.source_type,chunk_type:"full_content"}));
