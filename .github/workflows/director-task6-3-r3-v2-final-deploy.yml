@@ -48,8 +48,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat > /tmp/task6_3_r3_v2.test.ts <<'TS'
-          import { evaluateEscalationShadow } from `${Deno.cwd()}/supabase/functions/_shared/escalation-shadow.ts`;
+          cat > .task6_3_r3_v2.test.ts <<'TS'
+          const { evaluateEscalationShadow } = await import(`./supabase/functions/_shared/escalation-shadow.ts`);
           const env = { get(name: string) { if (name === 'ESC_SHADOW_MODE') return 'true'; if (name === 'ESC_ENABLE_R3') return 'true'; return undefined; } };
           const base = {
             conversation_id:'00000000-0000-4000-8000-000000000001',
@@ -73,8 +73,8 @@ jobs:
             if(!r.provider_warnings.includes('CE_ADVISORY_SIGNAL_PROVENANCE_INCOMPLETE')) throw new Error('unknown accepted');
           });
           TS
-          sed -i "s#\`${Deno.cwd()}#\`${GITHUB_WORKSPACE}#g" /tmp/task6_3_r3_v2.test.ts || true
-          deno test --allow-read /tmp/task6_3_r3_v2.test.ts
+          deno test --allow-read .task6_3_r3_v2.test.ts
+          rm .task6_3_r3_v2.test.ts
           echo TASK6_3_R3_V2_RUNTIME_ASSERTIONS=PASS
       - name: Compile and frozen regressions
         shell: bash
