@@ -1,0 +1,71 @@
+name: Director Task 6.1 - Multi Emotion Closure
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/functions/_shared/runtime-signal-lifecycle.ts'
+      - 'tests/edge/runtime-signal-multi-emotion.test.ts'
+      - '.github/workflows/director-task6-1-multi-emotion.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: director-task6-1-multi-emotion
+  cancel-in-progress: true
+
+jobs:
+  final-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout authoritative main
+        uses: actions/checkout@v4
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.6
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.12.0'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Task 6.1 multi-emotion semantic tests
+        run: |
+          deno test --no-lock --allow-env tests/edge/runtime-signal-multi-emotion.test.ts
+          echo 'TASK6_1_MULTI_EMOTION_TESTS=PASS'
+
+      - name: Frozen escalation regressions
+        run: |
+          deno test --no-lock --allow-env tests/edge/e2-direct-threat.test.ts
+          deno test --no-lock --allow-env tests/edge/warm-handoff-package.test.ts
+          deno test --no-lock --allow-env tests/edge/return-to-ai-control-context.test.ts
+          echo 'TASK6_1_FROZEN_ESCALATION_REGRESSION=PASS'
+
+      - name: Compile runtime signal and generate-reply
+        run: |
+          deno check --no-lock --node-modules-dir=auto supabase/functions/_shared/runtime-signal-lifecycle.ts
+          deno check --no-lock --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+          echo 'TASK6_1_DENO_COMPILE=PASS'
+
+      - name: Full application build
+        run: |
+          npm run build
+          echo 'TASK6_1_FULL_BUILD=PASS'
+
+      - name: Restore validation-generated tracked drift
+        run: |
+          git restore -- deno.lock package-lock.json src/routeTree.gen.ts 2>/dev/null || true
+          echo 'TASK6_1_VALIDATION_DRIFT_RESTORED=PASS'
+
+      - name: Diff safety
+        run: |
+          git diff --check
+          test -z "$(git status --porcelain)"
+          echo 'TASK6_1_WORKTREE_CLEAN=PASS'
+          echo 'TASK6_1_FINAL_GATE=PASS'
