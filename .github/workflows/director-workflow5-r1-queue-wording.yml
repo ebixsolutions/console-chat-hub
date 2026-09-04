@@ -8,6 +8,10 @@ on:
       - .github/workflows/director-workflow5-r1-queue-wording.yml
   workflow_dispatch:
 
+concurrency:
+  group: director-workflow5-r1-queue-wording-main
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
