@@ -1,0 +1,140 @@
+name: Director Workflow 5 - Production Deploy and R1 Smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/director-workflow5-production-deploy-smoke.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: director-workflow5-production-deploy-smoke-main
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROD_ORIGIN: https://console-chat-hub.lovable.app
+      CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+      BASE: https://nrfxhqabwblzxoushgnm.supabase.co/functions/v1
+    steps:
+      - name: Checkout authoritative main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Pre-deploy exact source assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+          ! grep -Fq '目前未啟用即時輪候時間顯示' supabase/functions/generate-reply/index.ts
+          ! grep -Fq '目前未启用实时排队位置和预计等待时间显示' supabase/functions/generate-reply/index.ts
+          ! grep -Fq 'Real-time queue position and estimated wait time are not currently enabled' supabase/functions/generate-reply/index.ts
+          grep -Fq '如目前有可用的輪候資料' supabase/functions/generate-reply/index.ts
+          grep -Fq '如目前有可用的排队资料' supabase/functions/generate-reply/index.ts
+          grep -Fq 'if live queue data is available' supabase/functions/generate-reply/index.ts
+          echo "WORKFLOW5_DEPLOY_SOURCE_SHA=$(git rev-parse HEAD)"
+          echo 'WORKFLOW5_PREDEPLOY_SOURCE=PASS'
+
+      - name: Deploy generate-reply only
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx supabase functions deploy generate-reply --project-ref "$PROJECT_REF"
+          echo 'WORKFLOW5_GENERATE_REPLY_DEPLOY=PASS'
+
+      - name: Fresh production R1 queue-wording smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          SESSION=$(curl -fsS -X POST -H "Origin: $PROD_ORIGIN" -H 'Content-Type: application/json' \
+            --data "{\"channel_id\":\"$CHANNEL_ID\",\"visitor_metadata\":{\"workflow5_final_r1_smoke\":true,\"exclude_training\":true}}" \
+            "$BASE/create-visitor-session")
+
+          python - "$SESSION" > /tmp/session.env <<'PY'
+          import json,sys,shlex
+          d=json.loads(sys.argv[1]); assert d.get('success') is True,d
+          x=d['data']
+          print('CID='+shlex.quote(x['conversation_id']))
+          print('TOK='+shlex.quote(x['session_token']))
+          PY
+          source /tmp/session.env
+          rm -f /tmp/session.env
+          echo "WORKFLOW5_R1_CONVERSATION_ID=$CID"
+
+          POLL_PAYLOAD=$(python - "$CID" "$TOK" <<'PY'
+          import json,sys
+          print(json.dumps({'conversation_id':sys.argv[1],'session_token':sys.argv[2]}))
+          PY
+          )
+          BEFORE=$(curl -fsS -X POST -H "Origin: $PROD_ORIGIN" -H 'Content-Type: application/json' \
+            --data "$POLL_PAYLOAD" "$BASE/widget-poll-messages" | \
+            python -c 'import json,sys; d=json.load(sys.stdin); print(sum(1 for m in d["data"].get("messages",[]) if m.get("role")=="assistant"))')
+
+          SEND_PAYLOAD=$(python - "$CID" "$TOK" <<'PY'
+          import json,sys
+          print(json.dumps({'conversation_id':sys.argv[1],'session_token':sys.argv[2],'content':'現在我要真人客服。'},ensure_ascii=False))
+          PY
+          )
+          curl -fsS -X POST -H "Origin: $PROD_ORIGIN" -H 'Content-Type: application/json' \
+            -H "idempotency-key: $(python -c 'import uuid; print(uuid.uuid4())')" \
+            --data "$SEND_PAYLOAD" "$BASE/receive-widget-message" -o /tmp/send.json
+          python - /tmp/send.json <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1])); assert d.get('success') is True,d
+          PY
+
+          AFTER="$BEFORE"
+          : > /tmp/poll.json
+          for _ in $(seq 1 30); do
+            sleep 2
+            curl -fsS -X POST -H "Origin: $PROD_ORIGIN" -H 'Content-Type: application/json' \
+              --data "$POLL_PAYLOAD" "$BASE/widget-poll-messages" -o /tmp/poll.json
+            AFTER=$(python - /tmp/poll.json <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1])); print(sum(1 for m in d['data'].get('messages',[]) if m.get('role')=='assistant'))
+          PY
+            )
+            if [ "$AFTER" -gt "$BEFORE" ]; then break; fi
+          done
+          test "$AFTER" -gt "$BEFORE"
+
+          python - /tmp/poll.json <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1])); data=d['data']
+          assert data.get('conversation_status')=='pending',data.get('conversation_status')
+          msgs=[m for m in data.get('messages',[]) if m.get('role')=='assistant']
+          assert msgs,'no assistant reply'
+          text=str(msgs[-1].get('content') or '')
+          forbidden=[
+            '目前未啟用即時輪候時間顯示',
+            '目前未启用实时排队位置和预计等待时间显示',
+            'Real-time queue position and estimated wait time are not currently enabled',
+          ]
+          assert not any(x in text for x in forbidden),text
+          assert '如目前有可用的輪候資料' in text,text
+          assert '輪候位置' in text and '預計等候時間' in text,text
+          print('WORKFLOW5_R1_SAFE_WORDING_LIVE=PASS')
+          print('WORKFLOW5_R1_PENDING_STATUS=PASS')
+          PY
+
+          sleep 3
+          curl -fsS -X POST -H "Origin: $PROD_ORIGIN" -H 'Content-Type: application/json' \
+            --data "$POLL_PAYLOAD" "$BASE/widget-poll-messages" -o /tmp/poll2.json
+          COUNT2=$(python - /tmp/poll2.json <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1])); print(sum(1 for m in d['data'].get('messages',[]) if m.get('role')=='assistant'))
+          PY
+          )
+          test "$COUNT2" = "$AFTER"
+          echo 'WORKFLOW5_R1_NO_DUPLICATE_ASSISTANT=PASS'
+          echo 'WORKFLOW5_PRODUCTION_R1_VISITOR_GATE=PASS'
