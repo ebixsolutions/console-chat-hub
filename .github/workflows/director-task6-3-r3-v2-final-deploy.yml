@@ -89,7 +89,12 @@ jobs:
           npm run build
           git restore -- deno.lock package-lock.json 2>/dev/null || true
           git diff --check
-          test -z "$(git status --porcelain)"
+          dirty="$(git status --porcelain)"
+          if [ -n "$dirty" ]; then
+            echo 'TASK6_3_DIRTY_WORKTREE_AFTER_BUILD=FAIL'
+            printf '%s\n' "$dirty"
+            exit 1
+          fi
           echo TASK6_3_COMPILE_REGRESSION_BUILD=PASS
       - name: Deploy generate-reply only
         shell: bash
@@ -102,5 +107,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -z "$(git status --porcelain)"
+          dirty="$(git status --porcelain)"
+          if [ -n "$dirty" ]; then
+            echo 'TASK6_3_FINAL_DIRTY_WORKTREE=FAIL'
+            printf '%s\n' "$dirty"
+            exit 1
+          fi
           echo TASK6_3_R3_V2_FINAL_DEPLOY_GATE=PASS
