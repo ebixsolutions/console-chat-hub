@@ -70,8 +70,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git restore -- deno.lock package-lock.json
-          echo 'WORKFLOW5_VALIDATION_LOCKFILES_RESTORED=PASS'
+          git restore --source=HEAD -- deno.lock package-lock.json src/routeTree.gen.ts
+          echo 'WORKFLOW5_VALIDATION_TRACKED_DRIFT_RESTORED=PASS'
 
       - name: Diff safety
         shell: bash
