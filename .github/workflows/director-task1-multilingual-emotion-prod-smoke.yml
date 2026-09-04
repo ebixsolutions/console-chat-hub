@@ -34,23 +34,26 @@ jobs:
           CHANNEL=os.environ['CHANNEL_ID']
           HUMAN={'pending','transferred','human_needed','human_control'}
 
+          # Every emotion turn is anchored to the same known published-KB topic used by
+          # the frozen contextual-RAG smoke. This isolates Task 1 emotion/tone behavior
+          # from an intentionally underspecified support request that has no factual task.
           CASES={
             'ZH_TW': [
-              '我已經試了好幾次都搞不定，真的很煩，可以直接告訴我下一步嗎？',
-              '我有點看不懂，也不確定應不應該繼續，你可以簡單說明嗎？',
-              '我現在就想處理好，請告訴我最快可以怎麼做。',
+              '我已經看了好幾次還是不明白，真的很煩。四電一腦到底包括哪些種類？請直接講重點。',
+              '我還是有點搞不清楚，也不確定自己理解得對不對。四電一腦可以再簡單解釋一次嗎？',
+              '我現在就要弄清楚四電一腦，請用最簡單的方式列出包括哪些種類。',
               '明白了，這樣清楚多了，謝謝。',
             ],
             'ZH_CN': [
-              '我已经试了很多次还是不行，真的有点失望，不知道还能怎么办。',
-              '我有点搞不清楚，也不确定要不要继续，可以简单说明吗？',
-              '我现在就想解决，请直接告诉我下一步怎么做。',
+              '我已经看了很多次还是不明白，真的有点失望。四电一脑到底包括哪些种类？请直接讲重点。',
+              '我还是有点搞不清楚，也不确定自己理解得对不对。四电一脑可以再简单解释一次吗？',
+              '我现在就要弄清楚四电一脑，请用最简单的方式列出包括哪些种类。',
               '明白了，这样清楚多了，谢谢。',
             ],
             'EN': [
-              "I've tried this several times and it still doesn't work. I'm frustrated and disappointed. What should I do next?",
-              "I'm confused and not sure whether I should continue. Can you explain it simply?",
-              'I want to get this resolved now. Please tell me the next concrete step.',
+              "I've read about 四電一腦 several times and still don't understand it. I'm frustrated and disappointed. What categories does it include? Please keep it direct.",
+              "I'm still confused and not sure I've understood 四電一腦 correctly. Can you explain it more simply?",
+              'I want to understand 四電一腦 now. Please list the included categories as simply as possible.',
               'That makes sense now, thank you.',
             ],
           }
@@ -61,6 +64,7 @@ jobs:
             'human agent has joined','refund has been approved','your order has shipped',
             'guaranteed compensation','一定賠償','一定赔偿',
           ]
+          CATEGORY_TERMS=['電視','电视','雪櫃','冰箱','洗衣','冷氣','空调','電腦','电脑','television','refrigerator','washing','air conditioner','computer']
 
           def post(path, body):
             req=urllib.request.Request(
@@ -85,7 +89,7 @@ jobs:
             else:
               words=re.findall(r"[A-Za-z]+",text)
               assert len(words) >= 3,(label,'expected English reply',text)
-              assert cjk <= max(2,len(text)//20),(label,'unexpected predominantly CJK reply',text)
+              assert cjk <= max(10,len(text)//12),(label,'unexpected predominantly CJK reply',text)
 
           all_answers=[]
           for label,turns in CASES.items():
@@ -94,6 +98,7 @@ jobs:
               'visitor_metadata':{
                 'task1_multilingual_emotion_smoke':True,
                 'language':label,
+                'fixture':'published_kb_four_appliances_one_computer',
                 'exclude_training':True,
               },
             })
@@ -103,6 +108,7 @@ jobs:
             prior=0
             print(f'TASK1_{label}_CONVERSATION_ID={cid}')
 
+            language_answers=[]
             for turn,msg in enumerate(turns,1):
               st,s=post('receive-widget-message',{
                 'conversation_id':cid,
@@ -133,20 +139,25 @@ jobs:
               ans=assistants[-1].get('content','')
               status=data.get('conversation_status')
               assert ans.strip(),(label,turn,'empty assistant reply')
-              assert status not in HUMAN,(label,turn,'emotion forced handoff',status,ans)
+              assert status not in HUMAN,(label,turn,'unexpected handoff',status,ans)
               assert_language(label,ans)
               low=ans.lower()
               for phrase in FORBIDDEN:
                 assert phrase.lower() not in low,(label,turn,'fabricated action',phrase,ans)
+              language_answers.append(ans)
               all_answers.append(ans)
               prior=len(assistants)
               print(json.dumps({'language':label,'turn':turn,'status':status,'answer':ans[:1000]},ensure_ascii=False))
 
+            # At least one of the first three grounded answers must carry the known KB categories.
+            joined=' '.join(language_answers[:3]).lower()
+            assert any(term.lower() in joined for term in CATEGORY_TERMS),(label,'known KB grounding absent',joined[:2000])
             print(f'TASK1_{label}_EMOTION_SMOKE=PASS')
 
           assert len(all_answers)==12,len(all_answers)
-          print('TASK1_NO_FORCED_HANDOFF=PASS')
+          print('TASK1_NO_UNEXPECTED_HANDOFF=PASS')
           print('TASK1_NO_FABRICATED_ACTIONS=PASS')
           print('TASK1_SAME_LANGUAGE_BEHAVIOR=PASS')
+          print('TASK1_KB_GROUNDING_PRESERVED=PASS')
           print('TASK1_MULTILINGUAL_EMOTION_PROD_SMOKE=PASS')
           PY
