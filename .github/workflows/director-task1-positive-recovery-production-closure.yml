@@ -38,7 +38,7 @@ jobs:
         run: |
           set -euo pipefail
           deno check --no-lock --node-modules-dir=auto supabase/functions/generate-reply/index.ts
-          deno test --allow-read tests/edge/runtime-signal-lifecycle.test.ts
+          deno test --allow-read tests/edge/runtime-signal-multi-emotion.test.ts
           deno test --allow-read tests/edge/emotion-reply-strategy.test.ts
           deno test --allow-read tests/edge/warm-handoff-package.test.ts
           deno test --allow-read tests/edge/return-to-ai-control-context.test.ts
