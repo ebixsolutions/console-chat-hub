@@ -105,6 +105,10 @@ jobs:
           set -euo pipefail
           test -n "${SUPABASE_ACCESS_TOKEN:-}"
           npx --yes supabase@2.116.0 functions deploy generate-reply --project-ref "$PROJECT_REF"
+          # Supabase CLI creates an untracked local cache under supabase/.temp/. It is
+          # deployment-tool state, not repository/source state, so remove only that
+          # known generated artifact before the strict final cleanliness assertion.
+          rm -rf supabase/.temp
           echo TASK6_3_GENERATE_REPLY_REDEPLOY=PASS
       - name: Final gate
         shell: bash
