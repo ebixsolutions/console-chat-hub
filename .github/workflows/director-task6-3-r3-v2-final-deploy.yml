@@ -93,6 +93,9 @@ jobs:
           if [ -n "$dirty" ]; then
             echo 'TASK6_3_DIRTY_WORKTREE_AFTER_BUILD=FAIL'
             printf '%s\n' "$dirty"
+            echo 'TASK6_3_DIRTY_DIFF_BEGIN'
+            git diff -- src/routeTree.gen.ts
+            echo 'TASK6_3_DIRTY_DIFF_END'
             exit 1
           fi
           echo TASK6_3_COMPILE_REGRESSION_BUILD=PASS
