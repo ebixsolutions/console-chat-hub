@@ -1,0 +1,152 @@
+name: Director Task 1 Multilingual Emotion Production Smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/director-task1-multilingual-emotion-prod-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  production-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PROD_ORIGIN: https://console-chat-hub.lovable.app
+      CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+    steps:
+      - uses: actions/checkout@v4
+      - name: Task 1 zh-TW zh-CN English multi-emotion production smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a
+          source .env
+          set +a
+          python - <<'PY'
+          import json, os, re, time, urllib.request, urllib.error
+
+          BASE=os.environ['VITE_SUPABASE_FUNCTIONS_URL'].rstrip('/')
+          ORIGIN=os.environ['PROD_ORIGIN']
+          CHANNEL=os.environ['CHANNEL_ID']
+          HUMAN={'pending','transferred','human_needed','human_control'}
+
+          CASES={
+            'ZH_TW': [
+              '我已經試了好幾次都搞不定，真的很煩，可以直接告訴我下一步嗎？',
+              '我有點看不懂，也不確定應不應該繼續，你可以簡單說明嗎？',
+              '我現在就想處理好，請告訴我最快可以怎麼做。',
+              '明白了，這樣清楚多了，謝謝。',
+            ],
+            'ZH_CN': [
+              '我已经试了很多次还是不行，真的有点失望，不知道还能怎么办。',
+              '我有点搞不清楚，也不确定要不要继续，可以简单说明吗？',
+              '我现在就想解决，请直接告诉我下一步怎么做。',
+              '明白了，这样清楚多了，谢谢。',
+            ],
+            'EN': [
+              "I've tried this several times and it still doesn't work. I'm frustrated and disappointed. What should I do next?",
+              "I'm confused and not sure whether I should continue. Can you explain it simply?",
+              'I want to get this resolved now. Please tell me the next concrete step.',
+              'That makes sense now, thank you.',
+            ],
+          }
+
+          FORBIDDEN=[
+            '退款已批准','已批准退款','退款已安排','已經安排退款','已经安排退款',
+            '訂單已出貨','订单已发货','客服已接手','人工客服已接入','人工客服已经接入',
+            'human agent has joined','refund has been approved','your order has shipped',
+            'guaranteed compensation','一定賠償','一定赔偿',
+          ]
+
+          def post(path, body):
+            req=urllib.request.Request(
+              BASE+'/'+path,
+              data=json.dumps(body,ensure_ascii=False).encode(),
+              headers={'Origin':ORIGIN,'Content-Type':'application/json'},
+              method='POST',
+            )
+            try:
+              with urllib.request.urlopen(req,timeout=45) as r:
+                return r.status,json.loads(r.read())
+            except urllib.error.HTTPError as e:
+              raw=e.read()
+              try: payload=json.loads(raw)
+              except Exception: payload={'raw':raw.decode(errors='replace')}
+              return e.code,payload
+
+          def assert_language(label, text):
+            cjk=len(re.findall(r'[\u3400-\u9fff]',text))
+            if label in ('ZH_TW','ZH_CN'):
+              assert cjk >= 2,(label,'expected CJK reply',text)
+            else:
+              words=re.findall(r"[A-Za-z]+",text)
+              assert len(words) >= 3,(label,'expected English reply',text)
+              assert cjk <= max(2,len(text)//20),(label,'unexpected predominantly CJK reply',text)
+
+          all_answers=[]
+          for label,turns in CASES.items():
+            st,c=post('create-visitor-session',{
+              'channel_id':CHANNEL,
+              'visitor_metadata':{
+                'task1_multilingual_emotion_smoke':True,
+                'language':label,
+                'exclude_training':True,
+              },
+            })
+            assert st==200 and c.get('success') is True,(label,'create',st,c)
+            cid=c['data']['conversation_id']
+            token=c['data']['session_token']
+            prior=0
+            print(f'TASK1_{label}_CONVERSATION_ID={cid}')
+
+            for turn,msg in enumerate(turns,1):
+              st,s=post('receive-widget-message',{
+                'conversation_id':cid,
+                'session_token':token,
+                'content':msg,
+              })
+              assert st==200 and s.get('success') is True,(label,turn,'send',st,s)
+
+              deadline=time.time()+55
+              data=None
+              while time.time()<deadline:
+                st,p=post('widget-poll-messages',{
+                  'conversation_id':cid,
+                  'session_token':token,
+                })
+                assert st==200 and p.get('success') is True,(label,turn,'poll',st,p)
+                data=p['data']
+                msgs=data.get('messages') or []
+                assistants=[m for m in msgs if m.get('role')=='assistant']
+                if len(assistants)>prior:
+                  break
+                time.sleep(1)
+
+              assert data is not None,(label,turn,'missing poll data')
+              msgs=data.get('messages') or []
+              assistants=[m for m in msgs if m.get('role')=='assistant']
+              assert len(assistants)>prior,(label,turn,'no assistant reply',data)
+              ans=assistants[-1].get('content','')
+              status=data.get('conversation_status')
+              assert ans.strip(),(label,turn,'empty assistant reply')
+              assert status not in HUMAN,(label,turn,'emotion forced handoff',status,ans)
+              assert_language(label,ans)
+              low=ans.lower()
+              for phrase in FORBIDDEN:
+                assert phrase.lower() not in low,(label,turn,'fabricated action',phrase,ans)
+              all_answers.append(ans)
+              prior=len(assistants)
+              print(json.dumps({'language':label,'turn':turn,'status':status,'answer':ans[:1000]},ensure_ascii=False))
+
+            print(f'TASK1_{label}_EMOTION_SMOKE=PASS')
+
+          assert len(all_answers)==12,len(all_answers)
+          print('TASK1_NO_FORCED_HANDOFF=PASS')
+          print('TASK1_NO_FABRICATED_ACTIONS=PASS')
+          print('TASK1_SAME_LANGUAGE_BEHAVIOR=PASS')
+          print('TASK1_MULTILINGUAL_EMOTION_PROD_SMOKE=PASS')
+          PY
