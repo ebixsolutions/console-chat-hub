@@ -39,6 +39,7 @@ import { isDirectViolentThreat } from "../_shared/e2-direct-threat.ts";
 import { buildReturnToAiGenerationGuard } from "../_shared/return-to-ai-control.ts";
 import { buildMissingFactsQuestion, buildWarmHandoffPackage } from "../_shared/warm-handoff.ts";
 import { buildRealtimeR3SentimentSignals } from "../_shared/runtime-signal-lifecycle.ts";
+import { buildEmotionReplyStrategyContext } from "../_shared/emotion-reply-strategy.ts";
 import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
@@ -2570,6 +2571,12 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     churn_risk: customerContext?.churn_risk,
     escalation_score: customerContext?.escalation_score,
   });
+  const _emotionReplyStrategyBlock = buildEmotionReplyStrategyContext({
+    emotion_kind: _pr5R3Sentiment?.emotion_kind,
+    emotion_intensity: _pr5R3Sentiment?.emotion_intensity,
+    emotion_confidence: _pr5R3Sentiment?.emotion_confidence,
+    sentiment_recovered_same_turn: _pr5R3Sentiment?.sentiment_recovered_same_turn,
+  });
   const latestHandoffReason = await loadLatestHandoffReason(supabaseAdmin, conversation_id);
   const returnToAiGuard = buildReturnToAiGenerationGuard(
     latestHandoffReason,
@@ -2583,6 +2590,7 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
         _conversationContinuityBlock,
         returnToAiGuard,
         _customerAdvisoryBlock,
+        _emotionReplyStrategyBlock,
         buildMaskedContextBlock(customerContext, opaqueCustomerRef),
         buildRagBlock(ragResult),
       ].filter((s) => s && s.length > 0).join("\n\n");
