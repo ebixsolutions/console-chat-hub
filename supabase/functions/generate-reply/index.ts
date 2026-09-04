@@ -81,9 +81,9 @@ Respond in the same language and script the customer is using.
 ${CUSTOMER_CONVERSATION_POLICY}`;
 
 const SAFE_HANDOFF_WORDING: Record<string, string> = {
-  "zh-TW": "我們已將你的對話記錄，客服接手後會在此對話中回覆你。目前未啟用即時輪候時間顯示。",
-  "zh-CN": "我们已将你的对话记录，客服接手后会在此对话中回复你。目前未启用实时排队位置和预计等待时间显示。",
-  en: "We have recorded your conversation. A human agent will reply in this same chat after taking over. Real-time queue position and estimated wait time are not currently enabled.",
+  "zh-TW": "我們已將你的對話轉交真人客服。客服接手後會在此對話中回覆你；如目前有可用的輪候資料，系統會在此顯示輪候位置及預計等候時間。",
+  "zh-CN": "我们已将你的对话转交人工客服。客服接手后会在此对话中回复你；如目前有可用的排队资料，系统会在此显示排队位置及预计等待时间。",
+  en: "I’ve handed this conversation to a human support agent. They will reply in this same chat after taking over; if live queue data is available, your queue position and estimated wait will be shown here.",
 };
 
 const HUMAN_SUPPORT_INFO_WORDING: Record<"zh-TW" | "zh-CN" | "en", string> = {
@@ -1421,7 +1421,7 @@ Answer customer questions clearly and concisely.
 If details are missing, ask one concise contextual question. If a fact cannot be verified, say you cannot confirm it and do not guess. Do not offer a human unless the governed escalation layer has decided one is appropriate.
 Keep responses under 150 words.
 Respond in the same language and script the customer is using.
-When the customer explicitly requests a human agent, or when you transfer to a human agent, include a short safe handoff status message in the same language and script as the customer. The message must state that the conversation has been recorded and that a human agent will reply in this same chat after taking over. If the customer is using Traditional Chinese, use: "我們已將你的對話記錄，客服接手後會在此對話中回覆你。目前未啟用即時輪候時間顯示。" If the customer is using Simplified Chinese, use: "我们已将你的对话记录，客服接手后会在此对话中回复你。目前未启用实时排队位置和预计等待时间显示。" If the customer is using English, use: "We have recorded your conversation. A human agent will reply in this same chat after taking over. Real-time queue position and estimated wait time are not currently enabled." Do NOT invent estimated wait times, response-time promises, or queue positions.
+When the customer explicitly requests a human agent, or when you transfer to a human agent, include a short safe handoff status message in the same language and script as the customer. Confirm only that the conversation has been handed to human support and that the agent will reply in this same chat. Queue position, customers-ahead counts, and estimated wait time are dynamic widget runtime data: never invent or hard-code them. If live queue data is available, the widget will display it separately; if it is unavailable, do not promise an estimate.
 
 ${CUSTOMER_CONVERSATION_POLICY}
 
