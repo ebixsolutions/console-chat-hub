@@ -1,0 +1,75 @@
+name: Director Task 6.3 Emotion Production Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/director-task6-3-emotion-prod-deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.6
+      - name: Task 6.2 authoritative source assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          g=Path('supabase/functions/generate-reply/index.ts').read_text()
+          r=Path('supabase/functions/_shared/runtime-signal-lifecycle.ts').read_text()
+          e=Path('supabase/functions/_shared/emotion-reply-strategy.ts').read_text()
+          assert 'buildEmotionReplyStrategyContext' in g
+          assert '_emotionReplyStrategyBlock' in g
+          assert 'emotion_kind: _pr5R3Sentiment?.emotion_kind' in g
+          assert '_emotionReplyStrategyBlock,' in g
+          for k in ['angry','frustrated','disappointed','helpless','confused','hesitant','urgent','positive','positive_recovery','high_intent']:
+              assert f'"{k}"' in r or f'{k}:' in e, k
+              assert f'{k}:' in e, k
+          assert 'current-turn-emotion-v2.0' in r
+          assert 'Emotion alone never authorizes compensation' in e
+          assert 'emotion changes presentation, not factual truth' in e
+          print('TASK6_2_AUTHORITATIVE_SOURCE=PASS')
+          PY
+      - name: Runtime compile and regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno check --no-lock --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+          if [ -f tests/edge/runtime-signal-lifecycle.test.ts ]; then deno test --allow-read tests/edge/runtime-signal-lifecycle.test.ts; fi
+          if [ -f tests/edge/emotion-reply-strategy.test.ts ]; then deno test --allow-read tests/edge/emotion-reply-strategy.test.ts; fi
+          deno test --allow-read tests/edge/warm-handoff-package.test.ts
+          deno test --allow-read tests/edge/return-to-ai-control-context.test.ts
+          git diff --check
+          npm ci
+          npm run build
+          echo TASK6_3_COMPILE_REGRESSION_BUILD=PASS
+      - name: Deploy generate-reply only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SUPABASE_ACCESS_TOKEN:-}"
+          npx --yes supabase@2.116.0 functions deploy generate-reply --project-ref "$PROJECT_REF"
+          echo TASK6_3_GENERATE_REPLY_DEPLOY=PASS
+      - name: Deployment scope assertion
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git status --porcelain | wc -l | tr -d ' ')" -eq 0
+          echo TASK6_3_NO_SOURCE_MUTATION=PASS
+          echo TASK6_3_DEPLOY_SCOPE_GENERATE_REPLY_ONLY=PASS
