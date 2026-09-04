@@ -83,7 +83,7 @@ function resolveSentimentProvenance(input: EscalationShadowInput): SentimentProv
   // classifier before a new CE row can exist. It is advisory-only, so tenant +
   // the frozen classifier provider version is sufficient provenance. Historical
   // CE-derived trend data still requires a concrete evaluation id below.
-  if (provider.split("+").some((part) => part.trim().startsWith("current-turn-emotion-v1.0"))) {
+  if (provider.split("+").some((part) => /^(?:current-turn-emotion-v1\.0|current-turn-emotion-v2\.0)$/.test(part.trim()))) {
     return "current_turn";
   }
   return "invalid";
