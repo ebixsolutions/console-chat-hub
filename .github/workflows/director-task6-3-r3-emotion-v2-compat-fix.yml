@@ -1,0 +1,122 @@
+name: Director Task 6.3 R3 Emotion V2 Compatibility Closure
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/director-task6-3-r3-emotion-v2-compat-fix.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix-validate-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.6
+      - name: Apply exact v1+v2 provenance compatibility fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('supabase/functions/_shared/escalation-shadow.ts')
+          s=p.read_text()
+          old='if (provider.split("+").some((part) => part.trim().startsWith("current-turn-emotion-v1.0"))) {'
+          new='if (provider.split("+").some((part) => /^(?:current-turn-emotion-v1\\.0|current-turn-emotion-v2\\.0)$/.test(part.trim()))) {'
+          assert s.count(old)==1, f'expected exact legacy provider check once, found {s.count(old)}'
+          s=s.replace(old,new)
+          p.write_text(s)
+          assert 'current-turn-emotion-v2\\.0' in s
+          print('TASK6_3_R3_V2_SOURCE_PATCH=PASS')
+          PY
+      - name: Machine assertions for current-turn v2 provenance and advisory-only R3
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > tests/edge/.task6_3_r3_v2_temp.test.ts <<'TS'
+          import { evaluateEscalationShadow } from '../../supabase/functions/_shared/escalation-shadow.ts';
+          const env = { get(name: string) { if (name === 'ESC_SHADOW_MODE') return 'true'; if (name === 'ESC_ENABLE_R3') return 'true'; return undefined; } };
+          const base = {
+            conversation_id: '00000000-0000-4000-8000-000000000001',
+            source_message_id: '00000000-0000-4000-8000-000000000002',
+            latest_message_content: '我真的很生氣，已經試了很多次都沒有解決',
+            conversation_status: 'open',
+            assigned_agent_id: null,
+            explicit_request: false,
+            expected_tenant_id: 'tenant-test',
+            anger_flag: true as const,
+            sentiment_score: -0.9,
+          };
+          Deno.test('Task6.3 accepts current-turn-emotion-v2.0 provenance and keeps R3 advisory-only', () => {
+            const r = evaluateEscalationShadow({...base, sentiment_provider_version:'current-turn-emotion-v2.0'}, env)!;
+            if (!r.evaluated) throw new Error('not evaluated');
+            if (r.provider_warnings.includes('CE_ADVISORY_SIGNAL_PROVENANCE_INCOMPLETE')) throw new Error('v2 provenance rejected');
+            if (r.matched_rule === 'R3' && r.decision !== 'recommend_handoff') throw new Error(`R3 not advisory: ${r.decision}`);
+            if (r.decision === 'handoff' && r.matched_rule === 'R3') throw new Error('R3 forced handoff');
+          });
+          Deno.test('Task6.3 keeps v1.0 backward compatibility', () => {
+            const r = evaluateEscalationShadow({...base, sentiment_provider_version:'current-turn-emotion-v1.0'}, env)!;
+            if (r.provider_warnings.includes('CE_ADVISORY_SIGNAL_PROVENANCE_INCOMPLETE')) throw new Error('v1 provenance rejected');
+          });
+          Deno.test('Task6.3 rejects unknown current-turn emotion provider versions fail-closed', () => {
+            const r = evaluateEscalationShadow({...base, sentiment_provider_version:'current-turn-emotion-v9.9'}, env)!;
+            if (!r.provider_warnings.includes('CE_ADVISORY_SIGNAL_PROVENANCE_INCOMPLETE')) throw new Error('unknown provider not rejected');
+          });
+          TS
+          deno test --allow-read tests/edge/.task6_3_r3_v2_temp.test.ts
+          rm tests/edge/.task6_3_r3_v2_temp.test.ts
+          echo TASK6_3_R3_V2_PROVENANCE_RUNTIME_TEST=PASS
+      - name: Compile and frozen regression gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno check --no-lock --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+          if [ -f tests/edge/runtime-signal-lifecycle.test.ts ]; then deno test --allow-read tests/edge/runtime-signal-lifecycle.test.ts; fi
+          if [ -f tests/edge/emotion-reply-strategy.test.ts ]; then deno test --allow-read tests/edge/emotion-reply-strategy.test.ts; fi
+          deno test --allow-read tests/edge/warm-handoff-package.test.ts
+          deno test --allow-read tests/edge/return-to-ai-control-context.test.ts
+          npm ci
+          npm run build
+          git restore -- deno.lock package-lock.json 2>/dev/null || true
+          git diff --check
+          python - <<'PY'
+          import subprocess
+          changed=[x for x in subprocess.check_output(['git','diff','--name-only'],text=True).splitlines() if x]
+          assert changed==['supabase/functions/_shared/escalation-shadow.ts'], changed
+          print('TASK6_3_CHANGED_FILES_EXACT=PASS')
+          PY
+      - name: Commit root-cause fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'ebixsolutions'
+          git config user.email 'actions@users.noreply.github.com'
+          git add supabase/functions/_shared/escalation-shadow.ts
+          git commit -m '[director] accept emotion v2 provenance in R3 advisory shadow'
+          git push origin HEAD:main
+          echo TASK6_3_R3_V2_FIX_COMMIT=PASS
+      - name: Deploy generate-reply only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SUPABASE_ACCESS_TOKEN:-}"
+          npx --yes supabase@2.116.0 functions deploy generate-reply --project-ref "$PROJECT_REF"
+          echo TASK6_3_GENERATE_REPLY_REDEPLOY=PASS
+      - name: Final gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain)"
+          echo TASK6_3_R3_V2_COMPAT_FINAL_GATE=PASS
