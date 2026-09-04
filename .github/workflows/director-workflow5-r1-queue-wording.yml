@@ -38,7 +38,8 @@ jobs:
           cache: npm
 
       - name: Install authoritative runtime dependencies
-        run: npm ci
+        timeout-minutes: 5
+        run: npm ci --prefer-offline --no-audit --no-fund
 
       - name: Apply exact functional patch
         run: python scripts/director-workflow5-fix-r1-queue-wording.py
