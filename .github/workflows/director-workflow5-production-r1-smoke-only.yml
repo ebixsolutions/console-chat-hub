@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: director-workflow5-production-r1-smoke-only-main
+  group: director-workflow5-production-deploy-smoke-main
   cancel-in-progress: true
 
 permissions:
