@@ -39,7 +39,7 @@ import { isDirectViolentThreat } from "../_shared/e2-direct-threat.ts";
 import { buildReturnToAiGenerationGuard } from "../_shared/return-to-ai-control.ts";
 import { buildMissingFactsQuestion, buildWarmHandoffPackage } from "../_shared/warm-handoff.ts";
 import { buildRealtimeR3SentimentSignals } from "../_shared/runtime-signal-lifecycle.ts";
-import { buildEmotionReplyStrategyContext } from "../_shared/emotion-reply-strategy.ts";
+import { buildEmotionReplyStrategyContext, resolvePositiveRecoveryAcknowledgement } from "../_shared/emotion-reply-strategy.ts";
 import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
@@ -2049,6 +2049,31 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     return new Response(JSON.stringify({ success: true, response_route: "human_support_information", handoff_required: false }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 
+  // Pure positive-recovery acknowledgements are non-factual and must not enter KB/LLM grounding.
+  const _positiveRecoveryAcknowledgement = _pr5R3Sentiment?.emotion_kind === "positive_recovery"
+    ? resolvePositiveRecoveryAcknowledgement(_h1LastMsg, _visitorLang)
+    : null;
+  if (_positiveRecoveryAcknowledgement) {
+    const committed = await commitAiReplyWithControlGate(
+      supabaseAdmin,
+      conversation_id,
+      source_message_id,
+      _positiveRecoveryAcknowledgement,
+      {
+        response_route: "positive_recovery_acknowledgement",
+        handoff_required: false,
+        factual_grounding_required: false,
+      },
+    );
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+    if (!committed.ok) {
+      if (committed.result === "human_control" || committed.result === "resolved" || committed.result === "superseded_source") {
+        return new Response(JSON.stringify({ success: true, skipped: committed.result }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ success: false, error: `positive_recovery_commit_${committed.result}` }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+    return new Response(JSON.stringify({ success: true, response_route: "positive_recovery_acknowledgement", handoff_required: false }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
   const _conversationMemoryReply = resolveConversationMemoryResponse(_h1LastMsg, _pr5HistoryRows ?? []);
   if (_conversationMemoryReply) {
     const committed = await commitAiReplyWithControlGate(supabaseAdmin, conversation_id, source_message_id, _conversationMemoryReply, { response_route: "conversation_memory", conversation_grounded: true });
