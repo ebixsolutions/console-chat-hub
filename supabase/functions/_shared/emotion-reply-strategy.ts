@@ -7,6 +7,37 @@ export interface EmotionReplyStrategySignals {
   sentiment_recovered_same_turn?: boolean;
 }
 
+export type PositiveRecoveryLanguage = "zh-TW" | "zh-CN" | "en";
+
+const PURE_POSITIVE_RECOVERY_ACK = /^(?:(?:明白了|明白啦|而家明白|現在明白|现在明白|解決了|解决了|搞掂|好了現在|好了现在)(?:[，,。.!！\s]*(?:這樣|这样)?(?:清楚|明白)(?:多了|好多|咗))?(?:[，,。.!！\s]*(?:謝謝|谢谢|多謝))?|(?:got it|that helps|i understand now|that makes sense now|makes sense now|resolved now|working now)(?:[,.!\s]*(?:thanks|thank you))?)[。.!！\s]*$/i;
+
+const POSITIVE_RECOVERY_ACKNOWLEDGEMENT: Record<PositiveRecoveryLanguage, string> = {
+  "zh-TW": "不用客氣，很高興這次說清楚了。如果還有其他問題，直接告訴我就可以。",
+  "zh-CN": "不客气，很高兴这次说明白了。如果还有其他问题，直接告诉我就可以。",
+  en: "You're welcome. I'm glad that makes sense now. If you have another question, just let me know.",
+};
+
+/**
+ * Pure positive-recovery acknowledgements contain no factual request and should
+ * not be routed through KB-grounded generation. Keeping them deterministic
+ * avoids turning a successful resolution into an S0 handoff if an upstream
+ * grounding verifier is unavailable or rejects a non-factual courtesy reply.
+ *
+ * This helper is deliberately conservative: any extra request/question or
+ * unrelated content returns null and continues through the normal governed
+ * factual/escalation pipeline.
+ */
+export function resolvePositiveRecoveryAcknowledgement(
+  text: string,
+  language: PositiveRecoveryLanguage,
+): string | null {
+  const normalized = String(text ?? "").normalize("NFKC").trim();
+  if (!normalized || normalized.length > 120) return null;
+  if (/[?？]/.test(normalized)) return null;
+  if (!PURE_POSITIVE_RECOVERY_ACK.test(normalized)) return null;
+  return POSITIVE_RECOVERY_ACKNOWLEDGEMENT[language];
+}
+
 const STRATEGIES: Record<EmotionKind, string[]> = {
   angry: [
     "Acknowledge the customer's anger or unacceptable experience briefly and naturally before the factual answer.",
