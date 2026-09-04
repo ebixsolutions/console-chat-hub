@@ -1,5 +1,5 @@
 import { assertEquals, assertStringIncludes } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { buildEmotionReplyStrategyContext } from "../../supabase/functions/_shared/emotion-reply-strategy.ts";
+import { buildEmotionReplyStrategyContext, resolvePositiveRecoveryAcknowledgement } from "../../supabase/functions/_shared/emotion-reply-strategy.ts";
 
 Deno.test("all governed emotion kinds produce distinct human-like strategy guidance", () => {
   const kinds = [
@@ -34,4 +34,26 @@ Deno.test("no emotion signal creates no prompt pollution", () => {
 Deno.test("recovery guard explicitly prevents stale negative tone", () => {
   const output = buildEmotionReplyStrategyContext({ emotion_kind: "positive", sentiment_recovered_same_turn: true });
   assertStringIncludes(output, "avoid carrying stale negative tone forward");
+});
+
+Deno.test("pure positive-recovery acknowledgements are deterministic in all supported languages", () => {
+  assertEquals(
+    resolvePositiveRecoveryAcknowledgement("明白了，這樣清楚多了，謝謝。", "zh-TW"),
+    "不用客氣，很高興這次說清楚了。如果還有其他問題，直接告訴我就可以。",
+  );
+  assertEquals(
+    resolvePositiveRecoveryAcknowledgement("明白了，这样清楚多了，谢谢。", "zh-CN"),
+    "不客气，很高兴这次说明白了。如果还有其他问题，直接告诉我就可以。",
+  );
+  assertEquals(
+    resolvePositiveRecoveryAcknowledgement("That makes sense now, thank you.", "en"),
+    "You're welcome. I'm glad that makes sense now. If you have another question, just let me know.",
+  );
+});
+
+Deno.test("positive-recovery shortcut rejects questions and mixed factual requests", () => {
+  assertEquals(resolvePositiveRecoveryAcknowledgement("明白了，退款政策是什麼？", "zh-TW"), null);
+  assertEquals(resolvePositiveRecoveryAcknowledgement("明白了，但請幫我查訂單", "zh-TW"), null);
+  assertEquals(resolvePositiveRecoveryAcknowledgement("That makes sense now. What is the refund policy?", "en"), null);
+  assertEquals(resolvePositiveRecoveryAcknowledgement("Thanks, please cancel my order", "en"), null);
 });
