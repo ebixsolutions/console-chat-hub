@@ -230,6 +230,9 @@ jobs:
               status=$(printf '%s' "$P" | status_of)
               if [ "$after" -gt "$before" ]; then
                 printf '%s' "$P" | python -c 'import json,sys; d=json.load(sys.stdin); m=[x for x in d["data"].get("messages",[]) if x.get("role")=="assistant"][-1]; print("TURN_OUTPUT="+json.dumps({"turn":int(sys.argv[1]),"status":d["data"].get("conversation_status"),"route":(m.get("metadata") or {}).get("response_route"),"escalation":(m.get("metadata") or {}).get("escalation_rule"),"content":m.get("content")},ensure_ascii=False))' "$idx"
+                if [ "$idx" -eq 19 ]; then
+                  printf '%s' "$P" | python -c 'import json,re,sys; d=json.load(sys.stdin); m=[x for x in d["data"].get("messages",[]) if x.get("role")=="assistant"][-1]; meta=m.get("metadata") or {}; tl=meta.get("transform_lineage") or {}; content=str(m.get("content") or ""); bullets=[ln for ln in content.splitlines() if re.match(r"^\s*(?:[-*•]|\d+[.)])\s+\S",ln)]; assert meta.get("response_route")=="prior_grounded_transform",meta; assert tl.get("authority")=="PRIOR_GROUNDED_ANSWER",tl; assert tl.get("requested_summary_count")==3,tl; assert len(bullets)==3,(len(bullets),content); print("T19_PRIOR_GROUNDED_FIXED_COUNT_3=PASS")'
+                fi
                 [ "$status" != "pending" ] || { echo "FAIL_UNEXPECTED_HANDOFF_AT_TURN=${idx}"; exit 1; }
                 ok=1; break
               fi
