@@ -21,6 +21,9 @@ for old,new in repls.items():
     src=src.replace(old,new)
 assert "r jsonb; b boolean; cls text; n int;" in src
 assert "INTO r FROM hf3_learning_case" not in src
+old='deno check "$WORKER" "$RECEIVER" >/dev/null'
+assert old in src
+src=src.replace(old, 'deno check --node-modules-dir=auto "$WORKER" "$RECEIVER" >/dev/null')
 Path('scripts/.hf3-director-final-gate.generated.sh').write_text(src)
 PY
 bash "$TMP"
