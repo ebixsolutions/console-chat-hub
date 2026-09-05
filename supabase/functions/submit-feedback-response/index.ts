@@ -1,3 +1,4 @@
+import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { corsHeaders, json } from "../_shared/cors.ts";
 
@@ -57,8 +58,6 @@ Deno.serve(async (req) => {
       return json({ success: false, error: "invalid_request" }, 400);
     }
 
-    // The transaction validates the exact range against the persisted rating_type.
-    // 0..10 is the bounded superset needed by NPS/CES/stars/thumbs.
     if (
       typeof rating !== "number" ||
       !Number.isInteger(rating) ||
@@ -81,7 +80,12 @@ Deno.serve(async (req) => {
     }
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")?.trim() ?? "";
-    const serviceRole = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")?.trim() ?? "";
+    let serviceRole = "";
+    try {
+      serviceRole = getSupabaseAdminKey();
+    } catch {
+      return json({ success: false, error: "database_not_configured" }, 503);
+    }
     if (!supabaseUrl || !serviceRole) {
       return json({ success: false, error: "database_not_configured" }, 503);
     }
