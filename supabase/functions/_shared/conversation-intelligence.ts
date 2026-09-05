@@ -28,6 +28,8 @@ const HUMAN_ZH = /(真人|人工|客服)/;
 const HUMAN_EN = /\b(human|live agent|human agent|real person|support agent|customer service)\b/i;
 const NEG_HUMAN_ZH = /(?:唔好|不要|唔使|不用|毋須|毋需|別|别|未需要|未要|而家未|現在未|现在未|唔係要|不是要|並非要|并非要|未叫|冇叫|没有叫|沒有叫|禁止|不准|唔准).{0,8}(?:轉|转|接|搵|找|聯絡|联系|要|需要)?\s*(?:真人|人工|客服(?:人員|人员)?)|(?:真人|人工|客服(?:人員|人员)?).{0,8}(?:唔好|不要|唔使|不用|毋須|毋需|未需要|未要|禁止|不准|唔准)/;
 const NEG_HUMAN_EN = /\b(?:don't|do not|didn't|did not|not asking|not ask|no need|don't need|do not need|not yet|never)\b.{0,28}\b(?:connect|transfer|put|speak|want|need)?\b.{0,12}\b(?:human|live agent|human agent|real person|support agent|customer service)\b|\b(?:human|live agent|human agent|real person|support agent|customer service)\b.{0,20}\b(?:not needed|not required|no need|not yet)\b/i;
+const AI_REJECT_HUMAN_REQUEST_ZH = /(?:唔好|不要|唔使|不用|毋須|毋需)\s*(?:AI|人工智能|機器人|机器人|bot).{0,24}(?:(?:我)?(?:而家|現在|现在|即刻|立即)?(?:要|想要|需要).{0,8}(?:真人|人工|客服(?:人員|人员)?)|(?:請|请|麻煩|麻烦|幫我|帮我).{0,10}(?:轉|转|接|搵|找|聯絡|联系).{0,8}(?:真人|人工|客服(?:人員|人员)?))/i;
+const AI_REJECT_HUMAN_REQUEST_EN = /\b(?:don't|do not|no longer want|stop using)\b.{0,16}\b(?:ai|bot|robot|automation)\b.{0,40}\b(?:i want|i need|please connect|please transfer|connect me|transfer me|let me speak to)\b.{0,16}\b(?:a\s+)?(?:human|live agent|human agent|real person|customer service)\b/i;
 const CONDITIONAL_ZH = /(如果|若果|如果.*先|先至|才|除非|答唔到|答不到|查唔到|查不到)/;
 const CONDITIONAL_EN = /\b(if|only if|unless|in case)\b/i;
 const FUTURE_ZH = /(之後|之后|遲啲|迟点|遲些|稍後|稍后|日後|以后|以後|到時|到时|再考慮|再考虑|可能)/;
@@ -52,10 +54,11 @@ export function classifyHandoffIntent(text: string): HandoffIntentClassification
   const hasHuman = HUMAN_ZH.test(t) || HUMAN_EN.test(t);
   if (!hasHuman) return { kind: "none", explicit_request: false, pure_negation: false, language, reason: "no_human_support_reference" };
 
-  // Negation must target the human handoff itself. Phrases such as
-  // "不要AI，我現在要真人客服" / "I don't want AI, I want a human"
-  // are affirmative handoff requests and must never be swallowed by a generic
-  // negation token elsewhere in the sentence.
+  // Target-aware contrast override: rejecting AI/bot while affirmatively asking
+  // for a human is a present handoff request, not a human-handoff negation.
+  if (AI_REJECT_HUMAN_REQUEST_ZH.test(t) || AI_REJECT_HUMAN_REQUEST_EN.test(t)) {
+    return { kind: "explicit_now", explicit_request: true, pure_negation: false, language, reason: "ai_rejected_human_requested_now" };
+  }
   if (NEG_HUMAN_ZH.test(t) || NEG_HUMAN_EN.test(t)) {
     return { kind: "negated", explicit_request: false, pure_negation: true, language, reason: "handoff_prohibited_or_negated" };
   }
@@ -179,7 +182,6 @@ export function buildCustomerContextAcknowledgement(language: SemanticLanguage):
   return "收到。我會繼續使用你已提供的資料，未確認的部分不會自行猜測；如果還需要其他資料，我會直接告訴你。";
 }
 
-
 export type ConversationHistoryRow = {
   role?: string;
   content?: string | null;
@@ -232,7 +234,6 @@ export function buildConversationContinuityBlock(
   recent.forEach((text, i) => lines.push(`${i + 1}. ${text}`));
   return lines.join("\n").slice(0, 5000);
 }
-
 
 export interface ContextualRetrievalQuery {
   query: string;
@@ -332,9 +333,6 @@ export function buildConversationAssistRetrievalQuery(
     return { query: latest, mode: "standalone", latest, context_turns: [] };
   }
 
-  // Agent-assist input can be a selected customer turn OR an agent draft. In
-  // both cases the authoritative topic comes from the same trusted conversation.
-  // Keep the projection bounded, customer-only and newest-correction aware.
   const contextTurns = customerTurns
     .filter((text) => !isRetrievalNoise(text))
     .slice(0, 6);
