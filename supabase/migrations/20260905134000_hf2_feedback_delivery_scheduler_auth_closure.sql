@@ -139,22 +139,21 @@ GRANT EXECUTE ON FUNCTION public.process_feedback_delivery_batch_tx(integer)
 DO $block$
 DECLARE
   v_job record;
+  v_job_id bigint;
 BEGIN
   FOR v_job IN
     SELECT jobid FROM cron.job WHERE jobname = 'hf2_feedback_delivery'
   LOOP
     PERFORM cron.unschedule(v_job.jobid);
   END LOOP;
+
+  v_job_id := cron.schedule(
+    'hf2_feedback_delivery',
+    '*/5 * * * *',
+    $cron$SELECT public.process_feedback_delivery_batch_tx(20);$cron$
+  );
+
+  -- Fail-safe deployment posture: no automatic customer delivery until final gate passes.
+  PERFORM cron.alter_job(v_job_id, active => false);
 END
 $block$;
-
-SELECT cron.schedule(
-  'hf2_feedback_delivery',
-  '*/5 * * * *',
-  $cron$SELECT public.process_feedback_delivery_batch_tx(20);$cron$
-);
-
--- Fail-safe deployment posture: no automatic customer delivery until final gate passes.
-UPDATE cron.job
-SET active = false
-WHERE jobname = 'hf2_feedback_delivery';
