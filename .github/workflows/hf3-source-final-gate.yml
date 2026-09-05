@@ -9,6 +9,7 @@ on:
       - 'supabase/functions/hf3-training-result-receiver/index.ts'
       - 'scripts/hf3-source-final-gate.sh'
       - 'scripts/hf3-source-final-gate-round2.sh'
+      - 'scripts/hf3-director-final-gate.sh'
       - '.github/workflows/hf3-source-final-gate.yml'
   workflow_dispatch:
 
@@ -27,5 +28,5 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - name: HF-3 source final gate
-        run: bash scripts/hf3-source-final-gate-round2.sh
+      - name: HF-3 Director final gate
+        run: bash scripts/hf3-director-final-gate.sh
