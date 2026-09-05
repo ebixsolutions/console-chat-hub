@@ -1,5 +1,6 @@
 import { deriveHandoffDecisionInput, evaluateHandoffDecision } from "./handoff-decision.ts";
 import { classifyConversationClosure, buildConversationClosureReply } from "./conversation-closure.ts";
+import { buildWarmHandoffPackage, buildMissingFactsQuestion } from "./warm-handoff.ts";
 function a(v:unknown,n:string):asserts v { if(!v) throw new Error(`ASSERT_FAIL:${n}`); }
 const rows=(xs:string[])=>xs.map(content=>({role:"visitor",content}));
 let i=deriveHandoffDecisionInput(rows(["可以幫我轉真人客服嗎？"]),"可以幫我轉真人客服嗎？",["order_reference"],{explicit_human_request:true});
@@ -24,4 +25,14 @@ i=deriveHandoffDecisionInput(infoThenRequest,"可以幫我轉真人客服嗎？"
 i=deriveHandoffDecisionInput(rows(["可以幫我轉真人客服嗎？"]),"可以幫我轉真人客服嗎？",["order_reference"],{explicit_human_request:true,unresolved_turns:3}); d=evaluateHandoffDecision(i); a(d.handoff_mode==="immediate"&&d.missing_info_policy==="do_not_ask","unresolved_immediate");
 i=deriveHandoffDecisionInput(rows(["可以幫我轉真人客服嗎？"]),"可以幫我轉真人客服嗎？",["order_reference"],{explicit_human_request:true,anger_level:"high",sentiment_trend:[0.2,-0.4]}); d=evaluateHandoffDecision(i); a(d.handoff_mode==="immediate"&&d.missing_info_policy==="do_not_ask","authoritative_anger_immediate");
 i=deriveHandoffDecisionInput(rows(["可以幫我轉真人客服嗎？"]),"可以幫我轉真人客服嗎？",["order_reference"],{explicit_human_request:true,vip_tier:"gold",predicted_csat:2,churn_risk:0.9}); d=evaluateHandoffDecision(i); a(d.handoff_priority==="required"&&d.handoff_mode==="immediate","explicit_with_customer_signals_required");
+const handoffPkg=buildWarmHandoffPackage(rows(["我要退貨，訂單編號 ABC123","現在想轉真人客服"]),"R1");
+a(handoffPkg.known_facts.some((x)=>x.label==="Order reference"&&x.value==="ABC123"),"known_order_preserved");
+a(!handoffPkg.missing_facts.includes("order_reference"),"known_order_not_reasked");
+const missingPkg=buildWarmHandoffPackage(rows(["我要退貨，現在想轉真人客服"]),"R1");
+const missingCopy=buildMissingFactsQuestion(missingPkg,"zh-TW")??"";
+a(missingPkg.missing_facts.length===1&&missingPkg.missing_facts[0]==="order_reference","only_needed_order_missing");
+a(missingCopy.includes("現在幫你轉真人客服")&&missingCopy.includes("沒有也可以")&&missingCopy.includes("轉接仍會繼續"),"optional_copy_nonblocking");
+const unavailablePkg=buildWarmHandoffPackage(rows(["我要退貨，但沒有訂單號，現在想轉真人客服"]),"R1");
+a(unavailablePkg.unavailable_facts.includes("order_reference"),"unavailable_order_recorded");
+a(!unavailablePkg.missing_facts.includes("order_reference"),"unavailable_order_not_reasked");
 console.log("HF1_DIRECTOR_UNIT_ASSERTIONS=PASS");
