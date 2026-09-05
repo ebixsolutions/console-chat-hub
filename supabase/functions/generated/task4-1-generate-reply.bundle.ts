@@ -1134,6 +1134,8 @@ var HUMAN_ZH = /(真人|人工|客服)/;
 var HUMAN_EN = /\b(human|live agent|human agent|real person|support agent|customer service)\b/i;
 var NEG_HUMAN_ZH = /(?:唔好|不要|唔使|不用|毋須|毋需|別|别|未需要|未要|而家未|現在未|现在未|唔係要|不是要|並非要|并非要|未叫|冇叫|没有叫|沒有叫|禁止|不准|唔准).{0,8}(?:轉|转|接|搵|找|聯絡|联系|要|需要)?\s*(?:真人|人工|客服(?:人員|人员)?)|(?:真人|人工|客服(?:人員|人员)?).{0,8}(?:唔好|不要|唔使|不用|毋須|毋需|未需要|未要|禁止|不准|唔准)/;
 var NEG_HUMAN_EN = /\b(?:don't|do not|didn't|did not|not asking|not ask|no need|don't need|do not need|not yet|never)\b.{0,28}\b(?:connect|transfer|put|speak|want|need)?\b.{0,12}\b(?:human|live agent|human agent|real person|support agent|customer service)\b|\b(?:human|live agent|human agent|real person|support agent|customer service)\b.{0,20}\b(?:not needed|not required|no need|not yet)\b/i;
+var AI_REJECT_HUMAN_REQUEST_ZH = /(?:唔好|不要|唔使|不用|毋須|毋需)\s*(?:AI|人工智能|機器人|机器人|bot).{0,24}(?:(?:我)?(?:而家|現在|现在|即刻|立即)?(?:要|想要|需要).{0,8}(?:真人|人工|客服(?:人員|人员)?)|(?:請|请|麻煩|麻烦|幫我|帮我).{0,10}(?:轉|转|接|搵|找|聯絡|联系).{0,8}(?:真人|人工|客服(?:人員|人员)?))/i;
+var AI_REJECT_HUMAN_REQUEST_EN = /\b(?:don't|do not|no longer want|stop using)\b.{0,16}\b(?:ai|bot|robot|automation)\b.{0,40}\b(?:i want|i need|please connect|please transfer|connect me|transfer me|let me speak to)\b.{0,16}\b(?:a\s+)?(?:human|live agent|human agent|real person|customer service)\b/i;
 var CONDITIONAL_ZH = /(如果|若果|如果.*先|先至|才|除非|答唔到|答不到|查唔到|查不到)/;
 var CONDITIONAL_EN = /\b(if|only if|unless|in case)\b/i;
 var FUTURE_ZH = /(之後|之后|遲啲|迟点|遲些|稍後|稍后|日後|以后|以後|到時|到时|再考慮|再考虑|可能)/;
@@ -1155,6 +1157,9 @@ function classifyHandoffIntent(text) {
   const language = detectLanguage(t);
   const hasHuman = HUMAN_ZH.test(t) || HUMAN_EN.test(t);
   if (!hasHuman) return { kind: "none", explicit_request: false, pure_negation: false, language, reason: "no_human_support_reference" };
+  if (AI_REJECT_HUMAN_REQUEST_ZH.test(t) || AI_REJECT_HUMAN_REQUEST_EN.test(t)) {
+    return { kind: "explicit_now", explicit_request: true, pure_negation: false, language, reason: "ai_rejected_human_requested_now" };
+  }
   if (NEG_HUMAN_ZH.test(t) || NEG_HUMAN_EN.test(t)) {
     return { kind: "negated", explicit_request: false, pure_negation: true, language, reason: "handoff_prohibited_or_negated" };
   }
