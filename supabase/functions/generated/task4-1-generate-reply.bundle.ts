@@ -1644,17 +1644,17 @@ var num = (v) => {
   return Number.isFinite(n) ? n : 0;
 };
 function parseVertexResponse(body) {
-  const obj = body ?? {};
-  const candidate = Array.isArray(obj.candidates) ? obj.candidates[0] : void 0;
+  const obj2 = body ?? {};
+  const candidate = Array.isArray(obj2.candidates) ? obj2.candidates[0] : void 0;
   const parts = candidate?.content?.parts;
   const text = Array.isArray(parts) ? parts.filter((p) => p?.thought !== true && typeof p?.text === "string").map((p) => p.text).join("").trim() : "";
-  const usage = obj.usageMetadata;
+  const usage = obj2.usageMetadata;
   return {
     text,
     input_tokens: num(usage?.promptTokenCount),
     output_tokens: num(usage?.candidatesTokenCount) + num(usage?.thoughtsTokenCount),
     finish_reason: typeof candidate?.finishReason === "string" ? candidate.finishReason : null,
-    block_reason: typeof obj.promptFeedback?.blockReason === "string" ? obj.promptFeedback.blockReason : null
+    block_reason: typeof obj2.promptFeedback?.blockReason === "string" ? obj2.promptFeedback.blockReason : null
   };
 }
 function extractJsonObjectText(raw) {
@@ -1813,12 +1813,12 @@ function anthropicAdapter(apiKey, model, safeSystem, safeUser, maxTokens) {
       })
     }),
     parseResponse: (body) => {
-      const obj = body;
-      const text = Array.isArray(obj.content) ? obj.content.filter((b) => b?.type === "text" && typeof b.text === "string").map((b) => b.text).join("").trim() : "";
+      const obj2 = body;
+      const text = Array.isArray(obj2.content) ? obj2.content.filter((b) => b?.type === "text" && typeof b.text === "string").map((b) => b.text).join("").trim() : "";
       return {
         text,
-        input_tokens: Number(obj.usage?.input_tokens ?? 0),
-        output_tokens: Number(obj.usage?.output_tokens ?? 0),
+        input_tokens: Number(obj2.usage?.input_tokens ?? 0),
+        output_tokens: Number(obj2.usage?.output_tokens ?? 0),
         finish_reason: null,
         block_reason: null
       };
@@ -2618,12 +2618,12 @@ function detectCorrectedItem(text) {
   if (!m?.[1]) return null;
   return m[1].replace(/(?:，|,)?\s*(?:不是|唔係|not)\s+.*$/i, "").trim() || null;
 }
-function localizedCurrentItem(item, lang) {
+function localizedCurrentItem(item, lang2) {
   const normalized = clean2(item).toLowerCase();
   const airConditioner = /(?:冷氣機|冷气机|空調機|空调机|air[- ]?conditioner|aircon)/i.test(normalized);
   if (!airConditioner) return item;
-  if (lang === "en") return "air conditioner";
-  if (lang === "zh-CN") return "\u7A7A\u8C03\u673A";
+  if (lang2 === "en") return "air conditioner";
+  if (lang2 === "zh-CN") return "\u7A7A\u8C03\u673A";
   return "\u51B7\u6C23\u6A5F";
 }
 function detectLanguage2(text) {
@@ -2744,7 +2744,7 @@ function resolveConversationMemoryResponse(latestInput, newestFirst) {
     return true;
   });
   const state = projectConversationRuntimeState(priorRows);
-  const lang = detectLanguage2(latest);
+  const lang2 = detectLanguage2(latest);
   const firstRequest = /(一開始|一开始|第一個問題|第一个问题|最初).*(問|問題|问题)|what\s+(?:did\s+i\s+ask|was\s+(?:my\s+)?first)|first\s+(?:question|thing\s+i\s+asked)/i.test(latest);
   const correctionRequest = /(之前|先前|剛才|刚才|earlier|previous).*(更正|改正|correct)|更正後|更正后|what\s+did\s+i\s+correct|latest\s+correction/i.test(latest);
   const constraintRequest = /(限制|約束|约束|不要猜|唔好估|constraint|restriction|what.*(?:told|asked).*(?:not|don.?t))/i.test(latest) && /(記得|记得|總結|总结|告訴|告诉|什麼|什么|what|recall|remember|summari)/i.test(latest);
@@ -2763,8 +2763,8 @@ function resolveConversationMemoryResponse(latestInput, newestFirst) {
   const memoryLanguageContinuation = languageContinuationPattern.test(latest) && (hasRecentCurrentContextQuestion || hasChainedLanguageContinuation);
   const currentContextRequest = currentContextPattern.test(latest) || memoryLanguageContinuation;
   if (!(firstRequest || correctionRequest || constraintRequest || summaryRequest || recommendationRequest || providedMissingRequest || generalSummaryRequest || mainlyAskedRequest || nameRequest || locationRequest || currentContextRequest)) return null;
-  const zh = lang !== "en";
-  const q = lang === "zh-CN" ? { first: "\u4F60\u4E00\u5F00\u59CB\u95EE\u7684\u662F", correction: "\u4F60\u4E4B\u524D\u6700\u65B0\u7684\u66F4\u6B63\u662F", constraint: "\u4F60\u4E4B\u524D\u660E\u786E\u63D0\u51FA\u7684\u9650\u5236\u5305\u62EC", recommendation: "\u6211\u4E4B\u524D\u7684\u76F8\u5173\u5EFA\u8BAE\u5305\u62EC", name: "\u4F60\u4E4B\u524D\u544A\u8BC9\u6211\u4F60\u7684\u540D\u5B57\u662F", location: "\u4F60\u4E4B\u524D\u66F4\u6B63\u540E\u7684\u5730\u70B9\u662F", none: "\u8FD9\u6BB5\u5BF9\u8BDD\u91CC\u6CA1\u6709\u8DB3\u591F\u8D44\u6599\u53EF\u4EE5\u786E\u8BA4\u3002" } : { first: "\u4F60\u4E00\u958B\u59CB\u554F\u7684\u662F", correction: "\u4F60\u4E4B\u524D\u6700\u65B0\u7684\u66F4\u6B63\u662F", constraint: "\u4F60\u4E4B\u524D\u660E\u78BA\u63D0\u51FA\u7684\u9650\u5236\u5305\u62EC", recommendation: "\u6211\u4E4B\u524D\u7684\u76F8\u95DC\u5EFA\u8B70\u5305\u62EC", name: "\u4F60\u4E4B\u524D\u544A\u8A34\u6211\u4F60\u7684\u540D\u5B57\u662F", location: "\u4F60\u4E4B\u524D\u66F4\u6B63\u5F8C\u7684\u5730\u9EDE\u662F", none: "\u9019\u6BB5\u5C0D\u8A71\u88E1\u6C92\u6709\u8DB3\u5920\u8CC7\u6599\u53EF\u4EE5\u78BA\u8A8D\u3002" };
+  const zh = lang2 !== "en";
+  const q = lang2 === "zh-CN" ? { first: "\u4F60\u4E00\u5F00\u59CB\u95EE\u7684\u662F", correction: "\u4F60\u4E4B\u524D\u6700\u65B0\u7684\u66F4\u6B63\u662F", constraint: "\u4F60\u4E4B\u524D\u660E\u786E\u63D0\u51FA\u7684\u9650\u5236\u5305\u62EC", recommendation: "\u6211\u4E4B\u524D\u7684\u76F8\u5173\u5EFA\u8BAE\u5305\u62EC", name: "\u4F60\u4E4B\u524D\u544A\u8BC9\u6211\u4F60\u7684\u540D\u5B57\u662F", location: "\u4F60\u4E4B\u524D\u66F4\u6B63\u540E\u7684\u5730\u70B9\u662F", none: "\u8FD9\u6BB5\u5BF9\u8BDD\u91CC\u6CA1\u6709\u8DB3\u591F\u8D44\u6599\u53EF\u4EE5\u786E\u8BA4\u3002" } : { first: "\u4F60\u4E00\u958B\u59CB\u554F\u7684\u662F", correction: "\u4F60\u4E4B\u524D\u6700\u65B0\u7684\u66F4\u6B63\u662F", constraint: "\u4F60\u4E4B\u524D\u660E\u78BA\u63D0\u51FA\u7684\u9650\u5236\u5305\u62EC", recommendation: "\u6211\u4E4B\u524D\u7684\u76F8\u95DC\u5EFA\u8B70\u5305\u62EC", name: "\u4F60\u4E4B\u524D\u544A\u8A34\u6211\u4F60\u7684\u540D\u5B57\u662F", location: "\u4F60\u4E4B\u524D\u66F4\u6B63\u5F8C\u7684\u5730\u9EDE\u662F", none: "\u9019\u6BB5\u5C0D\u8A71\u88E1\u6C92\u6709\u8DB3\u5920\u8CC7\u6599\u53EF\u4EE5\u78BA\u8A8D\u3002" };
   const en = { first: "Your first question was", correction: "Your latest correction was", constraint: "The constraints you explicitly gave me include", recommendation: "My relevant earlier recommendations include", name: "You told me your name is", location: "The location from your latest correction is", none: "There is not enough information in this conversation to confirm that." };
   const t = zh ? q : en;
   const quote = (v) => zh ? `\u300C${v}\u300D` : `\u201C${v}\u201D`;
@@ -2778,25 +2778,25 @@ function resolveConversationMemoryResponse(latestInput, newestFirst) {
       mainland_china: { "zh-TW": "\u4E2D\u570B\u5927\u9678", "zh-CN": "\u4E2D\u56FD\u5927\u9646", en: "Mainland China" },
       mars: { "zh-TW": "\u706B\u661F", "zh-CN": "\u706B\u661F", en: "Mars" }
     };
-    const region = state.jurisdiction ? label[state.jurisdiction]?.[lang] : void 0;
-    const item = state.current_item ? localizedCurrentItem(state.current_item, lang) : "";
+    const region = state.jurisdiction ? label[state.jurisdiction]?.[lang2] : void 0;
+    const item = state.current_item ? localizedCurrentItem(state.current_item, lang2) : "";
     if (region && item) {
-      if (lang === "en") return `You were mainly asking about ${item} in ${region}.`;
-      if (lang === "zh-CN") return `\u4F60\u521A\u624D\u4E3B\u8981\u95EE\u7684\u662F${region}\u7684${item}\u76F8\u5173\u95EE\u9898\u3002`;
+      if (lang2 === "en") return `You were mainly asking about ${item} in ${region}.`;
+      if (lang2 === "zh-CN") return `\u4F60\u521A\u624D\u4E3B\u8981\u95EE\u7684\u662F${region}\u7684${item}\u76F8\u5173\u95EE\u9898\u3002`;
       return `\u4F60\u525B\u624D\u4E3B\u8981\u554F\u7684\u662F${region}\u7684${item}\u76F8\u95DC\u554F\u984C\u3002`;
     }
     if (state.first_customer_turn) {
-      if (lang === "en") return `You were mainly asking about: ${state.first_customer_turn}`;
-      if (lang === "zh-CN") return `\u4F60\u521A\u624D\u4E3B\u8981\u95EE\u7684\u662F\uFF1A${state.first_customer_turn}`;
+      if (lang2 === "en") return `You were mainly asking about: ${state.first_customer_turn}`;
+      if (lang2 === "zh-CN") return `\u4F60\u521A\u624D\u4E3B\u8981\u95EE\u7684\u662F\uFF1A${state.first_customer_turn}`;
       return `\u4F60\u525B\u624D\u4E3B\u8981\u554F\u7684\u662F\uFF1A${state.first_customer_turn}`;
     }
-    return lang === "en" ? en.none : q.none;
+    return lang2 === "en" ? en.none : q.none;
   }
   if (providedMissingRequest) {
     const priorCustomer = priorRows.filter((r) => CUSTOMER2.has(String(r.role ?? "").toLowerCase())).map((r) => clean2(r.content)).filter(Boolean).reverse().slice(-8);
     const supplied = priorCustomer.filter((x) => !QUESTION.test(x) && !MEMORY2.test(x)).slice(-5);
     const requested = state.prior_recommendations.slice(0, 4);
-    if (lang === "en") {
+    if (lang2 === "en") {
       const parts2 = [];
       if (supplied.length) parts2.push(`You have already told me:
 ${list(supplied)}`);
@@ -2815,7 +2815,7 @@ ${list(requested)}`);
     const chronological = priorRows.filter((r) => CUSTOMER2.has(String(r.role ?? "").toLowerCase())).map((r) => clean2(r.content)).filter(Boolean).reverse();
     const anchors = [state.first_customer_turn, ...chronological.slice(-6)].filter((x) => Boolean(x)).filter((x, i, a) => a.indexOf(x) === i).slice(0, 7);
     if (!anchors.length) return zh ? q.none : en.none;
-    const heading = lang === "en" ? "Here is a concise summary of what we discussed:" : "\u6211\u5011\u525B\u624D\u4E3B\u8981\u8AC7\u5230\uFF1A";
+    const heading = lang2 === "en" ? "Here is a concise summary of what we discussed:" : "\u6211\u5011\u525B\u624D\u4E3B\u8981\u8AC7\u5230\uFF1A";
     return `${heading}
 ${list(anchors.slice(0, 3))}`.slice(0, 1800);
   }
@@ -2848,11 +2848,11 @@ ${list(state.prior_recommendations.slice(0, 3))}` : t.none;
       mainland_china: { "zh-TW": "\u4E2D\u570B\u5927\u9678", "zh-CN": "\u4E2D\u56FD\u5927\u9646", en: "Mainland China" },
       mars: { "zh-TW": "\u706B\u661F", "zh-CN": "\u706B\u661F", en: "Mars" }
     };
-    const region = state.jurisdiction ? label[state.jurisdiction]?.[lang] : void 0;
-    const item = state.current_item ? localizedCurrentItem(state.current_item, lang) : "";
+    const region = state.jurisdiction ? label[state.jurisdiction]?.[lang2] : void 0;
+    const item = state.current_item ? localizedCurrentItem(state.current_item, lang2) : "";
     if (!region || !item) return t.none;
-    if (lang === "en") return `Your current region is ${region}, and the current item is ${item}.`;
-    if (lang === "zh-CN") return `\u4F60\u73B0\u5728\u95EE\u7684\u662F${region}\u7684${item}\u3002`;
+    if (lang2 === "en") return `Your current region is ${region}, and the current item is ${item}.`;
+    if (lang2 === "zh-CN") return `\u4F60\u73B0\u5728\u95EE\u7684\u662F${region}\u7684${item}\u3002`;
     return `\u4F60\u73FE\u5728\u554F\u7684\u662F${region}\u7684${item}\u3002`;
   }
   if (locationRequest) {
@@ -2865,7 +2865,7 @@ ${list(state.prior_recommendations.slice(0, 3))}` : t.none;
       mainland_china: { "zh-TW": "\u4E2D\u570B\u5927\u9678", "zh-CN": "\u4E2D\u56FD\u5927\u9646", en: "Mainland China" },
       mars: { "zh-TW": "\u706B\u661F", "zh-CN": "\u706B\u661F", en: "Mars" }
     };
-    const value = corrected ? label[corrected]?.[lang] : void 0;
+    const value = corrected ? label[corrected]?.[lang2] : void 0;
     return value ? `${t.location} ${value}` : t.none;
   }
   return null;
@@ -3389,15 +3389,124 @@ function buildWarmHandoffPackage(rows, reason = "human_handoff") {
     ready_for_handoff: missing.length === 0 || collectionAttempted
   };
 }
-function buildMissingFactsQuestion(pkg, lang = "zh-TW") {
+function buildMissingFactsQuestion(pkg, lang2 = "zh-TW") {
   if (pkg.missing_facts.length === 0 || pkg.collection_already_attempted) return null;
   const names = {
     model: { "zh-TW": "\u7522\u54C1\u578B\u865F", "zh-CN": "\u4EA7\u54C1\u578B\u53F7", en: "product model" },
     order_reference: { "zh-TW": "\u8A02\u55AE\u7DE8\u865F", "zh-CN": "\u8BA2\u5355\u7F16\u53F7", en: "order number" }
   };
-  const labels = pkg.missing_facts.map((x) => names[x]?.[lang] || x);
-  if (lang === "en") return `Before I connect you with a human agent, could you provide ${labels.join(" and ")}? If you don\u2019t have it, just say so and I\u2019ll still pass along everything we have.`;
+  const labels = pkg.missing_facts.map((x) => names[x]?.[lang2] || x);
+  if (lang2 === "en") return `Before I connect you with a human agent, could you provide ${labels.join(" and ")}? If you don\u2019t have it, just say so and I\u2019ll still pass along everything we have.`;
   return `\u8F49\u4EA4\u771F\u4EBA\u5BA2\u670D\u524D\uFF0C\u60F3\u5148\u88DC\u9F4A${labels.join("\u3001")}\uFF1B\u5982\u679C\u4F60\u624B\u4E0A\u6C92\u6709\uFF0C\u76F4\u63A5\u544A\u8A34\u6211\u300C\u6C92\u6709\u300D\u4E5F\u53EF\u4EE5\uFF0C\u6211\u6703\u628A\u76EE\u524D\u8CC7\u6599\u4E00\u4F75\u4EA4\u7D66\u5BA2\u670D\u3002`;
+}
+
+// supabase/functions/_shared/handoff-decision.ts
+var HUMAN_REQUEST = /(真人客服|人工客服|真人|人工|human agent|live agent|real person|speak to (?:a )?human|talk to (?:a )?human)/i;
+var HUMAN_INFO_QUESTION = /(真人客服|人工客服|human agent|live agent).{0,16}(幾點|几点|時間|时间|服務時間|服务时间|hours|when|available)|(?:幾點|几点|hours|when).{0,16}(真人客服|人工客服|human agent|live agent)/i;
+var STRONG_REQUEST = /(立即|即刻|而家|現在|现在).{0,10}(?:真人|人工)|(?:不要|唔要|不想要|別再|别再).{0,10}(?:AI|機器人|机器人)|(?:只要|一定要|必須|必须).{0,10}(?:真人|人工)|(?:connect|transfer).{0,8}(?:now|immediately)|no more ai|don't want ai|do not want ai/i;
+var ANGER = /(嬲|生氣|生气|憤怒|愤怒|火大|離譜|离谱|垃圾|廢話|废话|煩|烦|投訴|投诉|angry|furious|ridiculous|useless|frustrat|annoyed)/i;
+var REPETITION_FRUSTRATION = /(又問|再問|問過|问过|講過|说过|重複|重复|already told|asked already|again\?|stop asking|same question)/i;
+var REFUSED = /(不想再提供|唔想再答|不要再問|不要再问|不會再提供|不会再提供|不提供|拒絕提供|拒绝提供|won't provide|will not provide|don't ask|do not ask|not giving)/i;
+var CLARIFICATION_ROUTES = /* @__PURE__ */ new Set(["warm_handoff_data_collection", "kb_no_match_clarification"]);
+function clean5(v) {
+  return typeof v === "string" ? v.normalize("NFKC").trim() : "";
+}
+function obj(v) {
+  return v && typeof v === "object" && !Array.isArray(v) ? v : null;
+}
+function deriveHandoffDecisionInput(rows, latestMessage, requiredMissing, opts = {}) {
+  const visitors = rows.filter((r) => ["visitor", "customer", "user"].includes(String(r.role ?? "").toLowerCase()));
+  const humanCount = visitors.filter((r) => {
+    const text = clean5(r.content);
+    return HUMAN_REQUEST.test(text) && !HUMAN_INFO_QUESTION.test(text);
+  }).length;
+  const transcript = visitors.map((r) => clean5(r.content)).join(" ");
+  const priorClarifications = rows.filter((r) => {
+    const m = obj(r.metadata);
+    return !!m && (CLARIFICATION_ROUTES.has(String(m.response_route ?? "")) || m.escalation_action === "clarification");
+  }).length;
+  const explicit = opts.explicit_human_request ?? HUMAN_REQUEST.test(latestMessage);
+  const strength = opts.request_strength ?? (STRONG_REQUEST.test(latestMessage) || humanCount >= 2 ? "strong" : "standard");
+  const anger = opts.anger_level ?? (ANGER.test(latestMessage) ? "high" : null);
+  const refusal = opts.customer_refused_more_questions ?? REFUSED.test(latestMessage);
+  const repetition = opts.frustration_due_to_repetition ?? REPETITION_FRUSTRATION.test(transcript.slice(-1200));
+  const actionability = opts.missing_info_actionability ?? (requiredMissing.length === 0 ? "none" : requiredMissing.length === 1 && ["model", "order_reference"].includes(requiredMissing[0]) ? "high" : "low");
+  return {
+    explicit_human_request: explicit,
+    human_request_count: opts.human_request_count ?? humanCount,
+    request_strength: strength,
+    anger_level: anger,
+    sentiment_trend: opts.sentiment_trend ?? null,
+    frustration_due_to_repetition: repetition,
+    unresolved_turns: opts.unresolved_turns ?? 0,
+    same_intent_repeat: opts.same_intent_repeat ?? false,
+    prior_clarification_count: opts.prior_clarification_count ?? priorClarifications,
+    customer_refused_more_questions: refusal,
+    vip_tier: opts.vip_tier ?? null,
+    high_value_customer: opts.high_value_customer ?? null,
+    predicted_csat: opts.predicted_csat ?? null,
+    churn_risk: opts.churn_risk ?? null,
+    policy_risk: opts.policy_risk ?? null,
+    threat_flag: opts.threat_flag ?? false,
+    rag_state: opts.rag_state ?? null,
+    handoff_history: opts.handoff_history ?? humanCount,
+    current_intent: opts.current_intent ?? null,
+    current_topic: opts.current_topic ?? null,
+    required_info_missing: [...requiredMissing],
+    missing_info_actionability: actionability
+  };
+}
+function evaluateHandoffDecision(input) {
+  const reasons = [];
+  if (input.threat_flag || input.policy_risk === "high") {
+    reasons.push(input.threat_flag ? "threat_or_safety_risk" : "high_policy_risk");
+    return { handoff_mode: "immediate", handoff_priority: "emergency", missing_info_policy: "do_not_ask", reason_codes: reasons };
+  }
+  if (input.explicit_human_request) {
+    const mustNotAsk = input.request_strength === "strong" || input.human_request_count >= 2 || input.anger_level === "high" || input.frustration_due_to_repetition || input.unresolved_turns >= 2 || input.prior_clarification_count > 0 || input.customer_refused_more_questions;
+    if (input.request_strength === "strong") reasons.push("strong_explicit_human_request");
+    if (input.human_request_count >= 2) reasons.push("repeated_human_request");
+    if (input.anger_level === "high") reasons.push("high_anger");
+    if (input.frustration_due_to_repetition) reasons.push("repetition_frustration");
+    if (input.unresolved_turns >= 2) reasons.push("multiple_unresolved_turns");
+    if (input.prior_clarification_count > 0) reasons.push("already_clarified");
+    if (input.customer_refused_more_questions) reasons.push("customer_refused_more_questions");
+    if (mustNotAsk) {
+      return { handoff_mode: "immediate", handoff_priority: "required", missing_info_policy: "do_not_ask", reason_codes: reasons };
+    }
+    if (input.required_info_missing.length === 1 && input.missing_info_actionability === "high") {
+      reasons.push("first_calm_human_request", "one_high_value_missing_fact", "handoff_not_blocked_for_missing_info");
+      return { handoff_mode: "immediate", handoff_priority: "required", missing_info_policy: "ask_if_customer_willing", reason_codes: reasons };
+    }
+    return { handoff_mode: "immediate", handoff_priority: "required", missing_info_policy: "ask_if_customer_willing", reason_codes: ["explicit_human_request_override"] };
+  }
+  if (input.vip_tier || input.high_value_customer === true || input.predicted_csat !== null && input.predicted_csat < 3 || input.churn_risk !== null && input.churn_risk >= 0.7) {
+    return { handoff_mode: "normal_ai_continue", handoff_priority: "advisory", missing_info_policy: "ask_if_customer_willing", reason_codes: ["advisory_signal_only"] };
+  }
+  return { handoff_mode: "normal_ai_continue", handoff_priority: "advisory", missing_info_policy: "ask_if_customer_willing", reason_codes: ["no_handoff_trigger"] };
+}
+
+// supabase/functions/_shared/conversation-closure.ts
+var MISSING_FACT_GUARD = /(沒有|没有|冇|未有|不知道|唔知|no|don['’]?t have|do not have).{0,16}(型號|型号|model|訂單|订单|order|收到|收貨|收货|貨|货|地址|電話|电话|email|電郵|邮箱|付款|payment)/i;
+var NO_MORE = /(?:沒有了|没有了|冇喇|冇啦|沒有其他(?:問題)?|没有其他(?:问题)?|暫時沒有|暂时没有|不用了|唔使喇|唔使啦|就這樣|就这样|沒事了|没事了|沒有問題了|没有问题了|no more|nothing else|that['’]?s all|no thanks|all good|i['’]?m good)/i;
+var POSITIVE = /(滿意|满意|很好|幫到我|帮到我|解決了|解决了|多謝|謝謝|谢谢|great|good service|helpful|satisfied|resolved)/i;
+var ACK_ONLY = /^(?:謝謝|谢谢|多謝|唔該|明白|明白了|知道了|收到|好的|好|ok|okay|got it|understood|thanks|thank you)[。.!！?？\s]*$/i;
+function lang(t) {
+  if (!/[\u4e00-\u9fff]/.test(t)) return "en";
+  return /[转们队为这吗个]/.test(t) ? "zh-CN" : "zh-TW";
+}
+function classifyConversationClosure(text) {
+  const t = String(text ?? "").normalize("NFKC").trim();
+  const language = lang(t);
+  if (!t || MISSING_FACT_GUARD.test(t)) return { kind: "none", language, reason: !t ? "empty" : "missing_fact_not_closure" };
+  if (NO_MORE.test(t)) return { kind: POSITIVE.test(t) ? "positive_no_more_help" : "no_more_help", language, reason: "customer_has_no_more_help_requests" };
+  if (ACK_ONLY.test(t)) return { kind: "closure_candidate", language, reason: "customer_acknowledged_resolution" };
+  return { kind: "none", language, reason: "substantive_or_unresolved_turn" };
+}
+function buildConversationClosureReply(c) {
+  if (c.kind === "none") return null;
+  if (c.kind === "closure_candidate") return c.language === "en" ? "You're welcome. Is there anything else I can help you with?" : c.language === "zh-CN" ? "\u4E0D\u7528\u5BA2\u6C14\u3002\u8FD8\u6709\u4EC0\u4E48\u53EF\u4EE5\u5E2E\u5230\u4F60\u5417\uFF1F" : "\u4E0D\u7528\u5BA2\u6C23\u3002\u9084\u6709\u4EC0\u9EBC\u53EF\u4EE5\u5E6B\u5230\u4F60\u55CE\uFF1F";
+  return c.language === "en" ? "You're very welcome. Thank you for contacting us." : c.language === "zh-CN" ? "\u597D\u7684\uFF0C\u4E0D\u7528\u5BA2\u6C14\u3002\u8C22\u8C22\u4F60\u8054\u7EDC\u6211\u4EEC\uFF01" : "\u597D\u7684\uFF0C\u4E0D\u7528\u5BA2\u6C23\u3002\u8B1D\u8B1D\u4F60\u806F\u7D61\u6211\u5011\uFF01";
 }
 
 // supabase/functions/_shared/runtime-signal-lifecycle.ts
@@ -3411,7 +3520,7 @@ var HESITANT = /(不確定|不确定|猶豫|犹豫|怕.*不適合|怕.*不适合
 var URGENT = /(好急|很急|非常急|趕住|赶着|今天一定|今日一定|明天就要|聽日就要|马上要|馬上要|立即要|urgent|asap|right away|today for sure|need it (today|tomorrow))/i;
 var HIGH_INTENT = /(我要買|我要买|想下單|想下单|直接下單|直接下单|怎麼付款|怎么付款|如何付款|立即購買|立即购买|ready to buy|i'?ll take it|want to buy|place (the )?order|how do i pay|checkout now)/i;
 var POSITIVE_RECOVERY = /(明白了|明白啦|而家明白|現在明白|现在明白|解決了|解决了|搞掂|好了現在|好了现在|got it|that helps|understand now|makes sense now|resolved now|working now)/i;
-var POSITIVE = /(喜歡|喜欢|滿意|满意|開心|开心|好正|真係好|真的很好|非常好|太好了|很棒|好棒|love (it|this)|like (it|this)|great|excellent|amazing|happy|satisfied|thank you|thanks|謝謝|谢谢)/i;
+var POSITIVE2 = /(喜歡|喜欢|滿意|满意|開心|开心|好正|真係好|真的很好|非常好|太好了|很棒|好棒|love (it|this)|like (it|this)|great|excellent|amazing|happy|satisfied|thank you|thanks|謝謝|谢谢)/i;
 var THIRD_PARTY_EMOTION = /(?:朋友|同事|另一個客人|另一个客人|客戶|客户|他|她|佢|my friend|my colleague|another customer|he|she|they).{0,24}(?:嬲|憤怒|愤怒|失望|無奈|无奈|煩|烦|angry|furious|frustrated|disappointed|helpless|confused|happy|satisfied)/i;
 var HYPOTHETICAL_EMOTION = /(?:如果|假如|假設|假设|例如|譬如|假如我|如果我|suppose|hypothetically|for example|what if).{0,40}(?:嬲|憤怒|愤怒|失望|無奈|无奈|煩|烦|angry|furious|frustrated|disappointed|helpless|confused|happy|satisfied)/i;
 var QUOTED_EMOTION = /(?:佢話|他說|他说|她說|她说|客人話|客人说|customer said|they said|he said|she said)[：:\s“\"]{0,4}.{0,40}(?:嬲|憤怒|愤怒|失望|無奈|无奈|煩|烦|angry|furious|frustrated|disappointed|helpless|confused|happy|satisfied)/i;
@@ -3443,7 +3552,7 @@ function classifyCurrentTurnEmotion(text) {
   if (URGENT.test(t)) return result("urgent", -0.08, 0.75, 0.9);
   if (HIGH_INTENT.test(t)) return result("high_intent", 0.48, 0.78, 0.91);
   if (POSITIVE_RECOVERY.test(t)) return result("positive_recovery", 0.42, 0.58, 0.9);
-  if (POSITIVE.test(t)) return result("positive", 0.68, 0.68, 0.91);
+  if (POSITIVE2.test(t)) return result("positive", 0.68, 0.68, 0.91);
   return { provider_version: PROVIDER_VERSION };
 }
 function buildRealtimeR3SentimentSignals(text, historical) {
@@ -3774,8 +3883,8 @@ async function commitAiReplyWithControlGate(supabaseAdmin, conversation_id, sour
   }
 }
 function classifyExplicitHandoff(text) {
-  const lang = detectHandoffLanguage(text);
-  if (lang) return { rule: "R1", confidence: 1, trigger_span: text.slice(0, 100), language: lang };
+  const lang2 = detectHandoffLanguage(text);
+  if (lang2) return { rule: "R1", confidence: 1, trigger_span: text.slice(0, 100), language: lang2 };
   return { rule: null, confidence: 0, trigger_span: "", language: "zh-TW" };
 }
 function isGreetingOrTrivial(text) {
@@ -4498,6 +4607,24 @@ Deno.serve(async (req) => {
     });
   }
 });
+async function handleConversationClosureIfNeeded(supabaseAdmin, conversation_id, source_message_id, latestMessage) {
+  const classification = classifyConversationClosure(latestMessage);
+  const content = buildConversationClosureReply(classification);
+  if (!content || classification.kind === "none") return null;
+  const { data: conversation } = await supabaseAdmin.from("conversations").select("status, assigned_agent_id").eq("id", conversation_id).maybeSingle();
+  if (!conversation || conversation.status === "resolved" || isHumanControlState(String(conversation.status ?? ""), conversation.assigned_agent_id ?? null)) return null;
+  const { data: prior } = await supabaseAdmin.from("messages").select("role, metadata, content, created_at").eq("conversation_id", conversation_id).eq("is_recalled", false).neq("content", "__THINKING__").order("created_at", { ascending: false }).limit(4);
+  const previousAssistant = (prior ?? []).find((r) => r.role === "assistant" && String(r.content ?? "") !== content);
+  const pm = previousAssistant?.metadata && typeof previousAssistant.metadata === "object" ? previousAssistant.metadata : null;
+  if (!previousAssistant || pm?.handoff_required === true || ["warm_handoff_data_collection", "kb_no_match_clarification", "system_error_handoff"].includes(String(pm?.response_route ?? ""))) return null;
+  const committed = await commitAiReplyWithControlGate(supabaseAdmin, conversation_id, source_message_id, content, { response_route: "conversation_closure", closure_state: classification.kind === "closure_candidate" ? "awaiting_more_help" : "completed", closure_reason: classification.reason, feedback_eligible_candidate: classification.kind !== "closure_candidate", handoff_required: false });
+  await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+  if (!committed.ok) {
+    if (["human_control", "resolved", "superseded_source"].includes(committed.result)) return new Response(JSON.stringify({ success: true, skipped: committed.result }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ success: false, error: `conversation_closure_${committed.result}` }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+  return new Response(JSON.stringify({ success: true, response_route: "conversation_closure", closure_state: classification.kind }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+}
 async function legacyGenerateReply(conversation_id, source_message_id) {
   const supabaseAdmin = createClient3(Deno.env.get("SUPABASE_URL") ?? "", getSupabaseAdminKey());
   const { data: conversation, error: convError } = await supabaseAdmin.from("conversations").select("id, status, assigned_agent_id, created_at, company_id").eq("id", conversation_id).single();
@@ -4818,9 +4945,44 @@ async function handleS0Handoff(supabaseAdmin, conversation_id, source_message_id
       return new Response(JSON.stringify({ success: false, error: "s0_rpc_unknown_result", escalation_rule: "S0", failure_type, rpc_result: _s0Result }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 }
-async function persistExplicitR1IfRequested(supabaseAdmin, conversation_id, source_message_id, latestMessage) {
+async function persistExplicitR1IfRequested(supabaseAdmin, conversation_id, source_message_id, latestMessage, runtimeSignals = {}) {
   const classified = classifyExplicitHandoff(latestMessage);
-  if (classified.rule !== "R1") return null;
+  const { data: handoffHistory, error: handoffHistoryError } = await supabaseAdmin.from("messages").select("id, role, content, metadata, created_at").eq("conversation_id", conversation_id).eq("is_recalled", false).order("created_at", { ascending: true }).order("id", { ascending: true }).limit(40);
+  const pkg = buildWarmHandoffPackage(handoffHistory ?? [], "R1");
+  const collectionContinuation = pkg.collection_already_attempted && classified.rule !== "R1";
+  if (classified.rule !== "R1" && !collectionContinuation) return null;
+  const urgent = isDirectViolentThreat(latestMessage);
+  const hf1Input = deriveHandoffDecisionInput(handoffHistory ?? [], latestMessage, pkg.missing_facts, {
+    explicit_human_request: classified.rule === "R1",
+    threat_flag: runtimeSignals.threat_flag ?? urgent,
+    anger_level: runtimeSignals.anger_level ?? null,
+    sentiment_trend: runtimeSignals.sentiment_trend ?? null,
+    unresolved_turns: runtimeSignals.unresolved_turns ?? 0,
+    same_intent_repeat: runtimeSignals.same_intent_repeat ?? false,
+    prior_clarification_count: runtimeSignals.prior_clarification_count,
+    vip_tier: runtimeSignals.vip_tier ?? null,
+    high_value_customer: runtimeSignals.high_value_customer ?? null,
+    predicted_csat: runtimeSignals.predicted_csat ?? null,
+    churn_risk: runtimeSignals.churn_risk ?? null,
+    policy_risk: runtimeSignals.policy_risk ?? null,
+    rag_state: runtimeSignals.rag_state ?? null,
+    current_intent: runtimeSignals.current_intent ?? null,
+    current_topic: pkg.customer_goal
+  });
+  const hf1Decision = evaluateHandoffDecision(hf1Input);
+  if (handoffHistoryError) console.error("[generate-reply] HF1 handoff history unavailable; fail-open to immediate handoff", conversation_id);
+  if (classified.rule === "R1" && !handoffHistoryError && hf1Decision.handoff_mode === "optional_clarification_then_handoff" && !pkg.collection_already_attempted) {
+    const question = buildMissingFactsQuestion(pkg, classified.language);
+    if (question) {
+      const collected = await commitAiReplyWithControlGate(supabaseAdmin, conversation_id, source_message_id, question, { escalation_rule: "R1", escalation_action: "collect_missing_handoff_facts", response_route: "warm_handoff_data_collection", handoff_required: false, hf1_decision: hf1Decision });
+      if (collected.ok) {
+        await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+        return new Response(JSON.stringify({ success: true, escalation_rule: "R1", response_route: "warm_handoff_data_collection", handoff_required: false, handoff_mode: hf1Decision.handoff_mode, missing_info_policy: hf1Decision.missing_info_policy }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      if (["human_control", "resolved", "superseded_source"].includes(collected.result)) return new Response(JSON.stringify({ success: true, skipped: collected.result }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ success: false, error: `r1_optional_clarification_${collected.result}` }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+  }
   if (!source_message_id) {
     return new Response(JSON.stringify({ success: false, error: "esc_missing_source_message_id", escalation_rule: "R1", handoff_persisted: false }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
@@ -4880,6 +5042,8 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
   }
   const sourceVisitorMessage = sourceResult.message;
   const _h1LastMsg = sourceVisitorMessage.content;
+  const _closureResponse = await handleConversationClosureIfNeeded(supabaseAdmin, conversation_id, source_message_id, _h1LastMsg);
+  if (_closureResponse) return _closureResponse;
   const [
     { data: _pr5HistoryRows },
     { count: _pr5VisitorTurnCount }
@@ -5061,12 +5225,37 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
     if (_pr5E2PreflightResponse) return _pr5E2PreflightResponse;
   }
   const _deferR1ForE1 = isE1LiveActivationEnabled(Deno.env) && _pr5LocalRisk?.level === "high" && flags.ENABLE_KB && !_pr5GreetingOrTrivial;
+  let _hf1CustomerContext = null;
+  let _hf1OpaqueCustomerRef = null;
+  const _hf1ExplicitClassification = classifyExplicitHandoff(_h1LastMsg);
+  if (!_deferR1ForE1 && flags.ENABLE_C360 && _hf1ExplicitClassification.rule === "R1") {
+    const c360 = await callCustomer360Adapter(conversation_id);
+    if (c360.success && c360.customer_context) {
+      _hf1CustomerContext = c360.customer_context;
+      _hf1OpaqueCustomerRef = c360.customer_ref ?? null;
+    }
+  }
   if (!_deferR1ForE1) {
     const r1Response = await persistExplicitR1IfRequested(
       supabaseAdmin,
       conversation_id,
       source_message_id,
-      _h1LastMsg
+      _h1LastMsg,
+      {
+        anger_level: _pr5R3Sentiment?.anger_flag === true ? "high" : null,
+        sentiment_trend: _pr5R3Sentiment?.sentiment_trend ?? null,
+        unresolved_turns: _pr5History.consecutive_no_answer,
+        same_intent_repeat: _pr5History.exact_same_intent_repeated === true,
+        prior_clarification_count: _pr5History.clarification_attempts,
+        vip_tier: _hf1CustomerContext?.tier ?? null,
+        high_value_customer: null,
+        predicted_csat: _hf1CustomerContext?.predicted_csat ?? null,
+        churn_risk: _hf1CustomerContext?.churn_risk ?? null,
+        policy_risk: _pr5ComplianceSignal?.value === true || _pr5LocalRisk?.level === "high" ? "high" : "standard",
+        threat_flag: _pr5ThreatSignal?.value === true,
+        rag_state: null,
+        current_intent: _canonicalTurn.operation
+      }
     );
     if (r1Response) return r1Response;
   }
@@ -5164,9 +5353,9 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
       source: "upstream"
     };
   }
-  let customerContext = null;
-  let opaqueCustomerRef = null;
-  if (flags.ENABLE_C360) {
+  let customerContext = _hf1CustomerContext;
+  let opaqueCustomerRef = _hf1OpaqueCustomerRef;
+  if (flags.ENABLE_C360 && customerContext === null) {
     const c360Result = await callCustomer360Adapter(conversation_id);
     if (c360Result.success && c360Result.customer_context) {
       customerContext = c360Result.customer_context;
