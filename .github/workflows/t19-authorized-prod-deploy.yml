@@ -1,0 +1,69 @@
+name: Authorized T19 Production Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/t19-authorized-prod-deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Verify authorized source and target
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$PROJECT_REF" = "nrfxhqabwblzxoushgnm"
+          test -n "${SUPABASE_ACCESS_TOKEN:-}"
+          grep -q 'const BROAD_SUMMARY_SCOPE' supabase/functions/_shared/prior-grounded-transform.ts
+          grep -q 'selectBroadSummaryAnchor' supabase/functions/_shared/prior-grounded-transform.ts
+          git log -1 --format=%H
+          echo T19_SOURCE_TARGET_PREFLIGHT=PASS
+
+      - name: Snapshot current production generate-reply
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/t19-predeploy
+          mkdir -p /tmp/t19-predeploy/supabase
+          cp supabase/config.toml /tmp/t19-predeploy/supabase/config.toml
+          cd /tmp/t19-predeploy
+          supabase functions download generate-reply --project-ref "$PROJECT_REF" --use-api
+          test -s supabase/functions/generate-reply/index.ts
+          tar -czf /tmp/t19-generate-reply-predeploy.tgz supabase/functions/generate-reply supabase/config.toml
+          echo T19_ROLLBACK_SNAPSHOT=PASS
+
+      - name: Upload rollback snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: t19-generate-reply-predeploy-rollback
+          path: /tmp/t19-generate-reply-predeploy.tgz
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Deploy generate-reply from current main
+        shell: bash
+        run: |
+          set -euo pipefail
+          supabase functions deploy generate-reply --project-ref "$PROJECT_REF" --use-api
+          supabase functions list --project-ref "$PROJECT_REF" | tee /tmp/functions.txt
+          grep -q 'generate-reply' /tmp/functions.txt
+          echo T19_GENERATE_REPLY_DEPLOY=PASS
