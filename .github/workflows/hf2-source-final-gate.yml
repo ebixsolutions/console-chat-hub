@@ -1,0 +1,40 @@
+name: HF-2 Source Final Gate
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/20260905123000_hf2_structured_handoff_feedback_closure.sql'
+      - 'supabase/functions/submit-feedback-response/index.ts'
+      - 'supabase/functions/deliver-feedback-request/index.ts'
+      - 'scripts/hf2-source-final-gate.sh'
+      - '.github/workflows/hf2-source-final-gate.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  hf2-source-final-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.6
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: HF-2 source final gate
+        shell: bash
+        run: bash scripts/hf2-source-final-gate.sh
