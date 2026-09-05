@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "HF1_GATE_VERSION=3"
+echo "HF1_GATE_VERSION=4"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
@@ -56,7 +56,7 @@ echo "HF1_DEPENDENCY_INSTALL=PASS"
 deno test supabase/functions/_shared/task1-closure-handoff.test.ts
 echo "HF1_UNIT_GATE=PASS"
 
-deno check supabase/functions/generate-reply/index.ts
+deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
 echo "HF1_DENO_CHECK=PASS"
 
 npm run build
