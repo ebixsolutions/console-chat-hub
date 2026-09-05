@@ -91,8 +91,8 @@ BEGIN
       CONTINUE;
     END IF;
 
-    v_raw_token := encode(gen_random_bytes(32), 'hex');
-    v_token_hash := encode(digest(convert_to(v_raw_token, 'utf8'), 'sha256'), 'hex');
+    v_raw_token := encode(extensions.gen_random_bytes(32), 'hex');
+    v_token_hash := encode(extensions.digest(convert_to(v_raw_token, 'utf8'), 'sha256'), 'hex');
     v_now := now();
     v_expires := v_now + interval '7 days';
     v_feedback_link := v_base_url || '/feedback?token=' || v_raw_token;
