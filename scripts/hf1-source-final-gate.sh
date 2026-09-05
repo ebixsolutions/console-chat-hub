@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "HF1_GATE_VERSION=1"
+echo "HF1_GATE_VERSION=2"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
@@ -37,7 +37,15 @@ assert 'e2_threat_precedes_closure' in c and 'human_handoff_precedes_closure' in
 assert 'missing_fact_not_closure' in c and 'customer_has_no_more_help_requests' in c
 assert '轉接仍會繼續' in w and 'handoff will still proceed' in w
 assert 'explicit_handoff_tx' in g
-assert 'deriveHF1RuntimeSignals' in g and 'deriveHandoffDecisionInput' in g
+assert 'persistExplicitR1IfRequested' in g and 'deriveHandoffDecisionInput' in g
+assert 'anger_level: _pr5R3Sentiment?.anger_flag === true ? "high" : null' in g
+assert 'sentiment_trend: _pr5R3Sentiment?.sentiment_trend ?? null' in g
+assert 'unresolved_turns: _pr5History.consecutive_no_answer' in g
+assert 'same_intent_repeat: _pr5History.exact_same_intent_repeated === true' in g
+assert 'vip_tier: _hf1CustomerContext?.tier ?? null' in g
+assert 'predicted_csat: _hf1CustomerContext?.predicted_csat ?? null' in g
+assert 'churn_risk: _hf1CustomerContext?.churn_risk ?? null' in g
+assert 'current_intent: _canonicalTurn.operation' in g
 assert 'response_route:"warm_handoff_data_collection"' in g
 print('HF1_SOURCE_ASSERTIONS=PASS')
 PY
