@@ -1,4 +1,4 @@
-import { createClient } from "npm:@supabase/supabase-js@2.45.0";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2.45.0";
 import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
 
 const CONTRACT_VERSION = "AI_CHATBOT_HF3_LEARNING_V1";
@@ -18,6 +18,8 @@ type OutboxRow = {
   source_deployment: string;
   evaluation_contract_version: string;
 };
+
+type AdminClient = SupabaseClient<any, "public", any>;
 
 function json(body: Record<string, unknown>, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -69,7 +71,7 @@ function remoteConfig():
   };
 }
 
-async function loadPayload(admin: ReturnType<typeof createClient>, row: OutboxRow) {
+async function loadPayload(admin: AdminClient, row: OutboxRow) {
   const { data: evaluation, error: evalErr } = await admin
     .from("conversation_evaluation")
     .select("id,attempt_id,conversation_id,company_id,evaluation_contract_version,input_snapshot_hash,bundle_hash,accuracy_score,policy_score,tone_score,sales_score,context_score,hallucination_risk_score,hallucination_quality_score,overall_score,severity,has_verified_human_response,training_eligible,model_version,prompt_version,kb_snapshot_id,policy_snapshot_id,source_deployment,review_status,created_at")
@@ -182,7 +184,7 @@ Deno.serve(async (req) => {
   let adminKey = "";
   try { adminKey = getSupabaseAdminKey(); } catch {}
   if (!supabaseUrl || !adminKey) return json({ ok: false, error: "database_not_configured" }, 503);
-  const admin = createClient(supabaseUrl, adminKey, { auth: { persistSession: false, autoRefreshToken: false } });
+  const admin: AdminClient = createClient(supabaseUrl, adminKey, { auth: { persistSession: false, autoRefreshToken: false } });
 
   const batchSize = intEnv("TRAINING_OUTBOX_BATCH_SIZE", DEFAULT_BATCH_SIZE, MAX_BATCH_SIZE);
   const { data: claimed, error: claimErr } = await admin.rpc("hf3_claim_training_outbox_tx", { p_max_batch: batchSize });
