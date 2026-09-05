@@ -64,12 +64,18 @@ Deno.serve(async (req) => {
     return json({ success: false, error: "unauthorized" }, 401);
   }
 
+  const payload = await req.json().catch(() => ({})) as { max_batch?: unknown };
+  const requestedBatch = typeof payload?.max_batch === "number" && Number.isInteger(payload.max_batch)
+    ? payload.max_batch
+    : MAX_BATCH;
+  const batchLimit = Math.min(MAX_BATCH, Math.max(1, requestedBatch));
+
   const baseUrl = feedbackBaseUrl();
   if (!baseUrl) return json({ success: false, error: "public_app_base_url_not_configured" }, 503);
 
   const summary = { processed: 0, delivered: 0, skipped: 0, failed: 0 };
 
-  for (let i = 0; i < MAX_BATCH; i++) {
+  for (let i = 0; i < batchLimit; i++) {
     const { data: claim, error: claimError } = await admin.rpc("claim_feedback_delivery_tx", {});
     if (claimError) {
       console.error("[deliver-feedback-request] claim failed", claimError.code);
