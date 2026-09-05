@@ -88,19 +88,20 @@ export function evaluateHandoffDecision(input: HandoffDecisionInput): HandoffDec
     return { handoff_mode:"immediate", handoff_priority:"emergency", missing_info_policy:"do_not_ask", reason_codes:reasons };
   }
   if (input.explicit_human_request) {
-    const immediate = input.request_strength === "strong" || input.human_request_count >= 2 || input.anger_level === "high" || input.frustration_due_to_repetition || input.unresolved_turns >= 2 || input.prior_clarification_count > 0 || (input.same_intent_repeat && input.prior_clarification_count > 0) || input.customer_refused_more_questions;
-    if (immediate) {
-      if (input.request_strength === "strong") reasons.push("strong_explicit_human_request");
-      if (input.human_request_count >= 2) reasons.push("repeated_human_request");
-      if (input.anger_level === "high") reasons.push("high_anger");
-      if (input.frustration_due_to_repetition) reasons.push("repetition_frustration");
-      if (input.unresolved_turns >= 2) reasons.push("multiple_unresolved_turns");
-      if (input.prior_clarification_count > 0) reasons.push("already_clarified");
-      if (input.customer_refused_more_questions) reasons.push("customer_refused_more_questions");
+    const mustNotAsk = input.request_strength === "strong" || input.human_request_count >= 2 || input.anger_level === "high" || input.frustration_due_to_repetition || input.unresolved_turns >= 2 || input.prior_clarification_count > 0 || input.customer_refused_more_questions;
+    if (input.request_strength === "strong") reasons.push("strong_explicit_human_request");
+    if (input.human_request_count >= 2) reasons.push("repeated_human_request");
+    if (input.anger_level === "high") reasons.push("high_anger");
+    if (input.frustration_due_to_repetition) reasons.push("repetition_frustration");
+    if (input.unresolved_turns >= 2) reasons.push("multiple_unresolved_turns");
+    if (input.prior_clarification_count > 0) reasons.push("already_clarified");
+    if (input.customer_refused_more_questions) reasons.push("customer_refused_more_questions");
+    if (mustNotAsk) {
       return { handoff_mode:"immediate", handoff_priority:"required", missing_info_policy:"do_not_ask", reason_codes:reasons };
     }
     if (input.required_info_missing.length === 1 && input.missing_info_actionability === "high") {
-      return { handoff_mode:"optional_clarification_then_handoff", handoff_priority:"required", missing_info_policy:"ask_once_optional", reason_codes:["first_calm_human_request","one_high_value_missing_fact"] };
+      reasons.push("first_calm_human_request", "one_high_value_missing_fact", "handoff_not_blocked_for_missing_info");
+      return { handoff_mode:"immediate", handoff_priority:"required", missing_info_policy:"ask_if_customer_willing", reason_codes:reasons };
     }
     return { handoff_mode:"immediate", handoff_priority:"required", missing_info_policy:"ask_if_customer_willing", reason_codes:["explicit_human_request_override"] };
   }
