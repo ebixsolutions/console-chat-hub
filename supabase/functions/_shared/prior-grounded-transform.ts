@@ -84,6 +84,20 @@ function sameLineage(
     candidateChunkIds.every((id) => chunkIds.includes(id));
 }
 
+function supportedPointCount(content: string): number {
+  const raw = typeof content === "string" ? content.normalize("NFKC").trim() : "";
+  if (!raw) return 0;
+  const bullets = raw
+    .split(/\r?\n/)
+    .filter((line) => /^\s*(?:[-*•]|\d+[.)])\s+\S/.test(line));
+  if (bullets.length > 0) return bullets.length;
+  return raw
+    .split(/[。！？!?]+/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .length;
+}
+
 function selectBroadSummaryAnchor(
   latest: string,
   newestFirst: SemanticHistoryRow[],
@@ -93,13 +107,19 @@ function selectBroadSummaryAnchor(
     chunk_ids: string[];
     source_message_id: string | null;
   },
+  requestedSummaryCount: number | null,
 ): typeof anchor {
   if (!BROAD_SUMMARY_SCOPE.test(latest)) return anchor;
   const anchorChunks = [...new Set(anchor.chunk_ids.filter(Boolean))];
   if (!anchor.document_id || anchorChunks.length === 0) return anchor;
 
-  let best = anchor;
-  let bestLength = clean(anchor.content).length;
+  // Broad summaries must preserve recency/topic before breadth. Walk newest-first
+  // and choose the first same-lineage grounded answer that already contains enough
+  // independently stated supported points. This prevents an older, longer answer
+  // from hijacking the active sub-topic merely because it shares the same KB chunk.
+  // If no candidate can safely satisfy the requested count, keep the immediate
+  // grounded anchor and let fixedCountContract return fewer points rather than pad.
+  const minimumPoints = requestedSummaryCount ?? 1;
   for (const row of newestFirst) {
     const role = String(row.role ?? "").toLowerCase();
     if (role !== "assistant" && role !== "ai") continue;
@@ -111,16 +131,15 @@ function selectBroadSummaryAnchor(
     const ids = normalizedChunkIds(lineage?.evidence_chunk_ids);
     const sourceMessageId = clean(meta?.source_message_id, 200);
     if (!sourceMessageId || !sameLineage(anchor.document_id, anchorChunks, selected, ids)) continue;
-    if (content.length <= bestLength) continue;
-    best = {
+    if (supportedPointCount(content) < minimumPoints) continue;
+    return {
       content,
       document_id: selected,
       chunk_ids: ids,
       source_message_id: sourceMessageId,
     };
-    bestLength = content.length;
   }
-  return best;
+  return anchor;
 }
 
 export function detectRequestedTransformOperations(
@@ -178,7 +197,7 @@ export function resolvePriorGroundedTransform(
     ? detectRequestedSummaryCount(latest)
     : null;
   const anchor = operations.includes("SUMMARIZE")
-    ? selectBroadSummaryAnchor(latest, newestFirst, semantic.prior_grounded_answer)
+    ? selectBroadSummaryAnchor(latest, newestFirst, semantic.prior_grounded_answer, requestedSummaryCount)
     : semantic.prior_grounded_answer;
   if (!anchor.source_message_id) return null;
 
