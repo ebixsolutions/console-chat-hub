@@ -1,0 +1,111 @@
+name: Director HF-1 Signal Binding Final
+on:
+  push:
+    paths:
+      - '.github/workflows/director-hf1-signal-binding-final.yml'
+permissions:
+  contents: write
+jobs:
+  bind-and-validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Install dependencies
+        run: npm ci
+      - name: Bind full authoritative HF-1 runtime signals
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          # 1) Tighten human request count: informational support questions are not R1 requests.
+          p = Path('supabase/functions/_shared/handoff-decision.ts')
+          s = p.read_text()
+          human_anchor = 'const HUMAN_REQUEST = /(真人客服|人工客服|真人|人工|human agent|live agent|real person|speak to (?:a )?human|talk to (?:a )?human)/i;\n'
+          assert s.count(human_anchor) == 1
+          s = s.replace(human_anchor, human_anchor + 'const HUMAN_INFO_QUESTION = /(真人客服|人工客服|human agent|live agent).{0,16}(幾點|几点|時間|时间|服務時間|服务时间|hours|when|available)|(?:幾點|几点|hours|when).{0,16}(真人客服|人工客服|human agent|live agent)/i;\n', 1)
+          old_count = 'const humanCount = visitors.filter((r) => HUMAN_REQUEST.test(clean(r.content))).length;'
+          new_count = 'const humanCount = visitors.filter((r) => { const text = clean(r.content); return HUMAN_REQUEST.test(text) && !HUMAN_INFO_QUESTION.test(text); }).length;'
+          assert s.count(old_count) == 1
+          s = s.replace(old_count, new_count, 1)
+          old_immediate = 'const immediate = input.request_strength === "strong" || input.human_request_count >= 2 || input.anger_level === "high" || input.frustration_due_to_repetition || input.unresolved_turns >= 2 || input.prior_clarification_count > 0 || input.customer_refused_more_questions;'
+          new_immediate = 'const immediate = input.request_strength === "strong" || input.human_request_count >= 2 || input.anger_level === "high" || input.frustration_due_to_repetition || input.unresolved_turns >= 2 || input.prior_clarification_count > 0 || (input.same_intent_repeat && input.prior_clarification_count > 0) || input.customer_refused_more_questions;'
+          assert s.count(old_immediate) == 1
+          s = s.replace(old_immediate, new_immediate, 1)
+          p.write_text(s)
+
+          # 2) Expand R1 helper input with existing authoritative runtime signals.
+          p = Path('supabase/functions/generate-reply/index.ts')
+          s = p.read_text()
+          sig_anchor = '''async function persistExplicitR1IfRequested(\n  supabaseAdmin: SupabaseAdminClient,\n  conversation_id: string,\n  source_message_id: string | null,\n  latestMessage: string,\n): Promise<Response | null> {'''
+          assert s.count(sig_anchor) == 1
+          sig_new = '''type HF1RuntimeSignals = {\n  anger_level?: "high" | "medium" | "low" | null;\n  sentiment_trend?: number[] | null;\n  unresolved_turns?: number;\n  same_intent_repeat?: boolean;\n  prior_clarification_count?: number;\n  vip_tier?: string | null;\n  high_value_customer?: boolean | null;\n  predicted_csat?: number | null;\n  churn_risk?: number | null;\n  policy_risk?: "high" | "standard" | null;\n  threat_flag?: boolean;\n  rag_state?: string | null;\n  current_intent?: string | null;\n};\n\nasync function persistExplicitR1IfRequested(\n  supabaseAdmin: SupabaseAdminClient,\n  conversation_id: string,\n  source_message_id: string | null,\n  latestMessage: string,\n  runtimeSignals: HF1RuntimeSignals = {},\n): Promise<Response | null> {'''
+          s = s.replace(sig_anchor, sig_new, 1)
+
+          old_derive = 'const hf1Input = deriveHandoffDecisionInput(handoffHistory ?? [], latestMessage, pkg.missing_facts, { explicit_human_request: classified.rule === "R1", threat_flag: urgent, current_topic: pkg.customer_goal });'
+          new_derive = '''const hf1Input = deriveHandoffDecisionInput(handoffHistory ?? [], latestMessage, pkg.missing_facts, {\n    explicit_human_request: classified.rule === "R1",\n    threat_flag: runtimeSignals.threat_flag ?? urgent,\n    anger_level: runtimeSignals.anger_level ?? null,\n    sentiment_trend: runtimeSignals.sentiment_trend ?? null,\n    unresolved_turns: runtimeSignals.unresolved_turns ?? 0,\n    same_intent_repeat: runtimeSignals.same_intent_repeat ?? false,\n    prior_clarification_count: runtimeSignals.prior_clarification_count,\n    vip_tier: runtimeSignals.vip_tier ?? null,\n    high_value_customer: runtimeSignals.high_value_customer ?? null,\n    predicted_csat: runtimeSignals.predicted_csat ?? null,\n    churn_risk: runtimeSignals.churn_risk ?? null,\n    policy_risk: runtimeSignals.policy_risk ?? null,\n    rag_state: runtimeSignals.rag_state ?? null,\n    current_intent: runtimeSignals.current_intent ?? null,\n    current_topic: pkg.customer_goal,\n  });'''
+          assert s.count(old_derive) == 1
+          s = s.replace(old_derive, new_derive, 1)
+
+          # 3) Prefetch Customer360 only when an actual R1 request exists; downstream reuses it.
+          r1_call_anchor = '''  const _deferR1ForE1 =\n    isE1LiveActivationEnabled(Deno.env) &&\n    _pr5LocalRisk?.level === "high" &&\n    flags.ENABLE_KB &&\n    !_pr5GreetingOrTrivial;\n\n  if (!_deferR1ForE1) {\n    const r1Response = await persistExplicitR1IfRequested(\n      supabaseAdmin, conversation_id, source_message_id, _h1LastMsg,\n    );\n    if (r1Response) return r1Response;\n  }'''
+          assert s.count(r1_call_anchor) == 1
+          r1_call_new = '''  const _deferR1ForE1 =\n    isE1LiveActivationEnabled(Deno.env) &&\n    _pr5LocalRisk?.level === "high" &&\n    flags.ENABLE_KB &&\n    !_pr5GreetingOrTrivial;\n\n  let _hf1CustomerContext: {\n    masked_summary?: string; tier?: string; predicted_csat?: number; churn_risk?: number; escalation_score?: number; p1_provider_version?: string;\n  } | null = null;\n  let _hf1OpaqueCustomerRef: string | null = null;\n  const _hf1ExplicitClassification = classifyExplicitHandoff(_h1LastMsg);\n  if (!_deferR1ForE1 && flags.ENABLE_C360 && _hf1ExplicitClassification.rule === "R1") {\n    const c360 = await callCustomer360Adapter(conversation_id);\n    if (c360.success && c360.customer_context) {\n      _hf1CustomerContext = c360.customer_context;\n      _hf1OpaqueCustomerRef = c360.customer_ref ?? null;\n    }\n  }\n\n  if (!_deferR1ForE1) {\n    const r1Response = await persistExplicitR1IfRequested(\n      supabaseAdmin, conversation_id, source_message_id, _h1LastMsg, {\n        anger_level: _pr5R3Sentiment?.anger_flag === true ? "high" : null,\n        sentiment_trend: _pr5R3Sentiment?.sentiment_trend ?? null,\n        unresolved_turns: _pr5History.consecutive_no_answer,\n        same_intent_repeat: _pr5History.exact_same_intent_repeated === true,\n        prior_clarification_count: _pr5History.clarification_attempts,\n        vip_tier: _hf1CustomerContext?.tier ?? null,\n        high_value_customer: null,\n        predicted_csat: _hf1CustomerContext?.predicted_csat ?? null,\n        churn_risk: _hf1CustomerContext?.churn_risk ?? null,\n        policy_risk: (_pr5ComplianceSignal?.value === true || _pr5LocalRisk?.level === "high") ? "high" : "standard",\n        threat_flag: _pr5ThreatSignal?.value === true,\n        rag_state: null,\n        current_intent: _canonicalTurn.operation,\n      },\n    );\n    if (r1Response) return r1Response;\n  }'''
+          s = s.replace(r1_call_anchor, r1_call_new, 1)
+
+          downstream_anchor = '''  let customerContext: {\n    masked_summary?: string;\n    tier?: string;\n    predicted_csat?: number;\n    churn_risk?: number;\n    escalation_score?: number;\n    p1_provider_version?: string;\n  } | null = null;\n  let opaqueCustomerRef: string | null = null;\n  if (flags.ENABLE_C360) {\n    const c360Result = await callCustomer360Adapter(conversation_id);\n    if (c360Result.success && c360Result.customer_context) {\n      customerContext = c360Result.customer_context;\n      opaqueCustomerRef = c360Result.customer_ref ?? null;\n    }\n  }'''
+          assert s.count(downstream_anchor) == 1
+          downstream_new = '''  let customerContext: {\n    masked_summary?: string;\n    tier?: string;\n    predicted_csat?: number;\n    churn_risk?: number;\n    escalation_score?: number;\n    p1_provider_version?: string;\n  } | null = _hf1CustomerContext;\n  let opaqueCustomerRef: string | null = _hf1OpaqueCustomerRef;\n  if (flags.ENABLE_C360 && customerContext === null) {\n    const c360Result = await callCustomer360Adapter(conversation_id);\n    if (c360Result.success && c360Result.customer_context) {\n      customerContext = c360Result.customer_context;\n      opaqueCustomerRef = c360Result.customer_ref ?? null;\n    }\n  }'''
+          s = s.replace(downstream_anchor, downstream_new, 1)
+          p.write_text(s)
+
+          # 4) Extend deterministic tests for informational history and signal-driven immediate handoff.
+          p = Path('supabase/functions/_shared/task1-closure-handoff.test.ts')
+          t = p.read_text()
+          marker = 'a((buildConversationClosureReply(classifyConversationClosure("謝謝"))??"").includes("還有什麼"),"anything_else_prompt");\n'
+          assert t.count(marker) == 1
+          extra = '''a((buildConversationClosureReply(classifyConversationClosure("謝謝"))??"").includes("還有什麼"),"anything_else_prompt");\nconst infoThenRequest=[{role:"visitor",content:"真人客服幾點有人？"},{role:"assistant",content:"我目前沒有已確認的真人客服服務時間資料。"},{role:"visitor",content:"可以幫我轉真人客服嗎？"}];\ni=deriveHandoffDecisionInput(infoThenRequest,"可以幫我轉真人客服嗎？",["order_reference"],{explicit_human_request:true}); d=evaluateHandoffDecision(i); a(i.human_request_count===1,"info_question_not_request_count"); a(d.handoff_mode==="optional_clarification_then_handoff","info_then_first_request_optional");\ni=deriveHandoffDecisionInput(rows(["可以幫我轉真人客服嗎？"]),"可以幫我轉真人客服嗎？",["order_reference"],{explicit_human_request:true,unresolved_turns:3}); d=evaluateHandoffDecision(i); a(d.handoff_mode==="immediate","unresolved_immediate");\ni=deriveHandoffDecisionInput(rows(["可以幫我轉真人客服嗎？"]),"可以幫我轉真人客服嗎？",["order_reference"],{explicit_human_request:true,anger_level:"high",sentiment_trend:[0.2,-0.4]}); d=evaluateHandoffDecision(i); a(d.handoff_mode==="immediate","authoritative_anger_immediate");\ni=deriveHandoffDecisionInput(rows(["可以幫我轉真人客服嗎？"]),"可以幫我轉真人客服嗎？",["order_reference"],{explicit_human_request:true,vip_tier:"gold",predicted_csat:2,churn_risk:0.9}); d=evaluateHandoffDecision(i); a(d.handoff_priority==="required","explicit_with_customer_signals_required");\n'''
+          p.write_text(t.replace(marker, extra, 1))
+          print('HF1_SIGNAL_BINDING_PATCH=PASS')
+          PY
+      - name: HF-1 deterministic semantics
+        run: node --experimental-strip-types supabase/functions/_shared/task1-closure-handoff.test.ts
+      - name: HF-1 source/binding assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'sentiment_trend: _pr5R3Sentiment?.sentiment_trend' supabase/functions/generate-reply/index.ts
+          grep -q 'unresolved_turns: _pr5History.consecutive_no_answer' supabase/functions/generate-reply/index.ts
+          grep -q 'vip_tier: _hf1CustomerContext?.tier' supabase/functions/generate-reply/index.ts
+          grep -q 'predicted_csat: _hf1CustomerContext?.predicted_csat' supabase/functions/generate-reply/index.ts
+          grep -q 'churn_risk: _hf1CustomerContext?.churn_risk' supabase/functions/generate-reply/index.ts
+          grep -q 'policy_risk:' supabase/functions/generate-reply/index.ts
+          grep -q 'threat_flag: _pr5ThreatSignal?.value === true' supabase/functions/generate-reply/index.ts
+          grep -q 'current_intent: _canonicalTurn.operation' supabase/functions/generate-reply/index.ts
+          git diff --check
+          echo HF1_RUNTIME_SIGNAL_BINDING=PASS
+      - name: Deno Edge compile
+        run: deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+      - name: App build
+        run: npm run build
+      - name: Commit final HF-1 binding
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add supabase/functions/_shared/handoff-decision.ts supabase/functions/_shared/task1-closure-handoff.test.ts supabase/functions/generate-reply/index.ts
+          git diff --cached --quiet && { echo HF1_NO_BINDING_DIFF; exit 1; }
+          git commit -m "Director takeover: bind authoritative HF-1 runtime signals"
+          git push origin HEAD:main
+      - name: Final markers
+        run: |
+          echo HF1_SIGNAL_BINDING_FINAL_GATE=PASS
+          echo HF1_SOURCE_IMPLEMENTATION=READY
