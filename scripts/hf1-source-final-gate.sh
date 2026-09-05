@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "HF1_GATE_VERSION=2"
+echo "HF1_GATE_VERSION=3"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
@@ -50,13 +50,15 @@ assert 'response_route:"warm_handoff_data_collection"' in g
 print('HF1_SOURCE_ASSERTIONS=PASS')
 PY
 
+npm ci
+echo "HF1_DEPENDENCY_INSTALL=PASS"
+
 deno test supabase/functions/_shared/task1-closure-handoff.test.ts
 echo "HF1_UNIT_GATE=PASS"
 
 deno check supabase/functions/generate-reply/index.ts
 echo "HF1_DENO_CHECK=PASS"
 
-npm ci
 npm run build
 echo "HF1_BUILD_GATE=PASS"
 
