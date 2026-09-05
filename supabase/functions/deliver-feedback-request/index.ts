@@ -5,15 +5,7 @@ import { corsHeaders, json } from "../_shared/cors.ts";
 const CONTRACT = "PR7_FEEDBACK_DELIVERY_V1";
 const TOKEN_TTL_DAYS = 7;
 const MAX_BATCH = 20;
-
-function constantTimeEqual(aText: string, bText: string): boolean {
-  const a = new TextEncoder().encode(aText);
-  const b = new TextEncoder().encode(bText);
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
-  return diff === 0;
-}
+const DELIVERY_TOKEN_RE = /^[A-Fa-f0-9]{64}$/;
 
 function generateRawToken(): string {
   const bytes = new Uint8Array(32);
@@ -46,14 +38,10 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   if (req.method !== "POST") return json({ success: false, error: "method_not_allowed" }, 405);
 
-  const expected = Deno.env.get("FEEDBACK_DELIVERY_INTERNAL_TOKEN")?.trim() ?? "";
   const actual = req.headers.get("X-Feedback-Delivery-Token")?.trim() ?? "";
-  if (!expected || !actual || !constantTimeEqual(expected, actual)) {
+  if (!DELIVERY_TOKEN_RE.test(actual)) {
     return json({ success: false, error: "unauthorized" }, 401);
   }
-
-  const baseUrl = feedbackBaseUrl();
-  if (!baseUrl) return json({ success: false, error: "public_app_base_url_not_configured" }, 503);
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")?.trim() ?? "";
   let serviceRole = "";
@@ -67,6 +55,18 @@ Deno.serve(async (req) => {
   }
 
   const admin = createClient(supabaseUrl, serviceRole);
+  const deliveryTokenHash = await sha256Hex(actual);
+  const { data: authorized, error: authError } = await admin.rpc(
+    "authorize_feedback_delivery_tx",
+    { p_token_hash: deliveryTokenHash },
+  );
+  if (authError || authorized !== true) {
+    return json({ success: false, error: "unauthorized" }, 401);
+  }
+
+  const baseUrl = feedbackBaseUrl();
+  if (!baseUrl) return json({ success: false, error: "public_app_base_url_not_configured" }, 503);
+
   const summary = { processed: 0, delivered: 0, skipped: 0, failed: 0 };
 
   for (let i = 0; i < MAX_BATCH; i++) {
