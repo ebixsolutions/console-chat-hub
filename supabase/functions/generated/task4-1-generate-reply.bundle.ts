@@ -982,8 +982,8 @@ function evaluateFullEscalationRuleset(context, options) {
   }
   for (const ruleId of ESCALATION_FIRST_MATCH_ORDER) {
     if (!options.activation.enabled.has(ruleId)) continue;
-    const result = RULES[ruleId](context, gaps, warnings);
-    if (result) return result;
+    const result2 = RULES[ruleId](context, gaps, warnings);
+    if (result2) return result2;
   }
   return decision(null, "continue_ai", null, "no_escalation", gaps, warnings);
 }
@@ -1278,7 +1278,7 @@ function resolveSentimentProvenance(input) {
   const provider = input.sentiment_provider_version?.trim();
   if (!tenant || !provider) return "invalid";
   if (input.sentiment_evaluation_id?.trim()) return "conversation_evaluation";
-  if (provider.split("+").some((part) => part.trim().startsWith("current-turn-emotion-v1.0"))) {
+  if (provider.split("+").some((part) => /^(?:current-turn-emotion-v1\.0|current-turn-emotion-v2\.0)$/.test(part.trim()))) {
     return "current_turn";
   }
   return "invalid";
@@ -1473,30 +1473,30 @@ function evaluateEscalationShadow(input, env) {
   if (input.failure_type || input.rag_match_state === "unavailable") {
     enabled.add("S0");
   }
-  const result = evaluateFullEscalationRuleset(context, {
+  const result2 = evaluateFullEscalationRuleset(context, {
     activation: { enabled }
   });
-  if (result.matched_rule === "R3" || result.matched_rule === "P1") {
-    const advisoryDecision = result.matched_rule === "R3" ? "recommend_handoff" : "suggest_handoff";
-    if (result.decision !== advisoryDecision) {
+  if (result2.matched_rule === "R3" || result2.matched_rule === "P1") {
+    const advisoryDecision = result2.matched_rule === "R3" ? "recommend_handoff" : "suggest_handoff";
+    if (result2.decision !== advisoryDecision) {
       providerWarnings.push("ADVISORY_RULE_DECISION_DOWNGRADED");
     }
     return {
       evaluated: true,
-      matched_rule: result.matched_rule,
+      matched_rule: result2.matched_rule,
       decision: advisoryDecision,
-      reason_code: result.reason_code,
-      signal_gaps: result.signal_gaps,
-      provider_warnings: [...result.provider_warnings, ...providerWarnings]
+      reason_code: result2.reason_code,
+      signal_gaps: result2.signal_gaps,
+      provider_warnings: [...result2.provider_warnings, ...providerWarnings]
     };
   }
   return {
     evaluated: true,
-    matched_rule: result.matched_rule,
-    decision: result.decision,
-    reason_code: result.reason_code,
-    signal_gaps: result.signal_gaps,
-    provider_warnings: [...result.provider_warnings, ...providerWarnings]
+    matched_rule: result2.matched_rule,
+    decision: result2.decision,
+    reason_code: result2.reason_code,
+    signal_gaps: result2.signal_gaps,
+    provider_warnings: [...result2.provider_warnings, ...providerWarnings]
   };
 }
 
@@ -1533,11 +1533,11 @@ async function persistRequiredEscalationHandoff(client, input) {
     };
   }
   const payload = data ?? {};
-  const result = String(payload.result ?? "unexpected_result");
-  switch (result) {
+  const result2 = String(payload.result ?? "unexpected_result");
+  switch (result2) {
     case "success":
     case "already_handled":
-      return { ok: true, result, data: payload };
+      return { ok: true, result: result2, data: payload };
     case "already_resolved":
     case "already_under_human_control":
     case "invalid_source_message":
@@ -1545,12 +1545,12 @@ async function persistRequiredEscalationHandoff(client, input) {
     case "invalid_rule":
     case "invalid_priority":
     case "not_found":
-      return { ok: false, result, data: payload };
+      return { ok: false, result: result2, data: payload };
     default:
       return {
         ok: false,
         result: "unexpected_result",
-        detail: result,
+        detail: result2,
         data: payload
       };
   }
@@ -1572,8 +1572,8 @@ async function persistNewIntentClarificationThroughAiGate(client, input, clarifi
     return { ok: false, result: "rpc_transport_error", detail: error.message ?? "rpc_error" };
   }
   const payload = data ?? {};
-  const result = String(payload.result ?? "unexpected_result");
-  switch (result) {
+  const result2 = String(payload.result ?? "unexpected_result");
+  switch (result2) {
     case "success":
     case "idempotent":
       return { ok: true, result: "success", data: payload };
@@ -1584,9 +1584,9 @@ async function persistNewIntentClarificationThroughAiGate(client, input, clarifi
     case "invalid_source_message":
     case "invalid_input":
     case "not_found":
-      return { ok: false, result, data: payload };
+      return { ok: false, result: result2, data: payload };
     default:
-      return { ok: false, result: "unexpected_result", detail: result, data: payload };
+      return { ok: false, result: "unexpected_result", detail: result2, data: payload };
   }
 }
 async function persistRequiredEscalationClarification(client, input) {
@@ -1608,11 +1608,11 @@ async function persistRequiredEscalationClarification(client, input) {
     return { ok: false, result: "rpc_transport_error", detail: error.message ?? "rpc_error" };
   }
   const payload = data ?? {};
-  const result = String(payload.result ?? "unexpected_result");
-  switch (result) {
+  const result2 = String(payload.result ?? "unexpected_result");
+  switch (result2) {
     case "success":
     case "already_handled":
-      return { ok: true, result, data: payload };
+      return { ok: true, result: result2, data: payload };
     case "max_clarifications_reached":
       if (input.decision.reason_code === "clarification_new_intent_no_kb_match") {
         return await persistNewIntentClarificationThroughAiGate(
@@ -1621,16 +1621,16 @@ async function persistRequiredEscalationClarification(client, input) {
           clarification
         );
       }
-      return { ok: false, result, data: payload };
+      return { ok: false, result: result2, data: payload };
     case "already_resolved":
     case "already_under_human_control":
     case "invalid_source_message":
     case "invalid_input":
     case "invalid_rule":
     case "not_found":
-      return { ok: false, result, data: payload };
+      return { ok: false, result: result2, data: payload };
     default:
-      return { ok: false, result: "unexpected_result", detail: result, data: payload };
+      return { ok: false, result: "unexpected_result", detail: result2, data: payload };
   }
 }
 
@@ -2511,7 +2511,7 @@ async function assessPolicyEvidenceForR4(content, items, context) {
   if (evidence.length === 0) return void 0;
   const block = evidence.map((item) => `[${item.label}]
 ${item.content}`).join("\n\n");
-  const result = await callModel({
+  const result2 = await callModel({
     purpose: "generation",
     system: 'Assess policy compliance based ONLY on the provided sources. Do NOT invent rules not in the sources. If sources lack relevant policy, set status to "insufficient_evidence". Return ONLY JSON with status and summary.',
     user: `Text to check:
@@ -2527,14 +2527,14 @@ ${block}`,
     responseFormat: "json",
     responseSchema: POLICY_RESPONSE_SCHEMA
   });
-  if (!result.ok) {
+  if (!result2.ok) {
     return {
       match_state: "unavailable",
       provider_version: POLICY_PROVIDER_VERSION,
-      reason: `policy_provider_${result.code.toLowerCase()}`
+      reason: `policy_provider_${result2.code.toLowerCase()}`
     };
   }
-  const parsed = parseJsonObject(result.text);
+  const parsed = parseJsonObject(result2.text);
   const rawStatus = parsed?.status;
   if (typeof rawStatus !== "string" || !VALID_POLICY_STATUS.has(rawStatus)) {
     return {
@@ -3103,11 +3103,46 @@ var CHINESE_COUNT = {
   \u4E5D: 9,
   \u5341: 10
 };
+var BROAD_SUMMARY_SCOPE = /(?:已確認|已确认)(?:資料|资料)|(?:剛才|刚才|以上|之前|我們|我们).{0,24}(?:內容|内容|資料|资料|討論|讨论)|\b(?:the above|what we discussed|our conversation|confirmed information|confirmed facts)\b/i;
 function record(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 function clean3(value, max = 4e3) {
   return typeof value === "string" ? value.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max) : "";
+}
+function normalizedChunkIds(value) {
+  return Array.isArray(value) ? [...new Set(value.filter((x) => typeof x === "string" && x.trim().length > 0).map((x) => x.trim()))] : [];
+}
+function sameLineage(documentId, chunkIds, candidateDocumentId, candidateChunkIds) {
+  return candidateDocumentId === documentId && candidateChunkIds.length === chunkIds.length && candidateChunkIds.every((id) => chunkIds.includes(id));
+}
+function selectBroadSummaryAnchor(latest, newestFirst, anchor) {
+  if (!BROAD_SUMMARY_SCOPE.test(latest)) return anchor;
+  const anchorChunks = [...new Set(anchor.chunk_ids.filter(Boolean))];
+  if (!anchor.document_id || anchorChunks.length === 0) return anchor;
+  let best = anchor;
+  let bestLength = clean3(anchor.content).length;
+  for (const row of newestFirst) {
+    const role = String(row.role ?? "").toLowerCase();
+    if (role !== "assistant" && role !== "ai") continue;
+    const content = clean3(row.content);
+    if (!content || content === "__THINKING__") continue;
+    const meta2 = record(row.metadata);
+    const lineage = record(meta2?.citation_lineage);
+    const selected = clean3(lineage?.selected_document_id, 200);
+    const ids = normalizedChunkIds(lineage?.evidence_chunk_ids);
+    const sourceMessageId = clean3(meta2?.source_message_id, 200);
+    if (!sourceMessageId || !sameLineage(anchor.document_id, anchorChunks, selected, ids)) continue;
+    if (content.length <= bestLength) continue;
+    best = {
+      content,
+      document_id: selected,
+      chunk_ids: ids,
+      source_message_id: sourceMessageId
+    };
+    bestLength = content.length;
+  }
+  return best;
 }
 function detectRequestedTransformOperations(latest, primary) {
   const requested = COMPOSITE_TRANSFORM_RULES.filter(([, pattern]) => pattern.test(latest)).map(([operation]) => operation);
@@ -3141,7 +3176,10 @@ function fixedCountContract(context) {
 function resolvePriorGroundedTransform(latest, newestFirst) {
   const semantic = classifyCanonicalConversationTurn(latest, newestFirst);
   if (semantic.evidence_authority !== "PRIOR_GROUNDED_ANSWER" || !semantic.prior_grounded_answer || !TRANSFORMS.has(semantic.operation)) return null;
-  const anchor = semantic.prior_grounded_answer;
+  const operation = semantic.operation;
+  const operations = detectRequestedTransformOperations(latest, operation);
+  const requestedSummaryCount = operations.includes("SUMMARIZE") ? detectRequestedSummaryCount(latest) : null;
+  const anchor = operations.includes("SUMMARIZE") ? selectBroadSummaryAnchor(latest, newestFirst, semantic.prior_grounded_answer) : semantic.prior_grounded_answer;
   if (!anchor.source_message_id) return null;
   const sourceChunks = [...new Set(anchor.chunk_ids.filter(Boolean))];
   if (!anchor.document_id || sourceChunks.length === 0) return null;
@@ -3152,7 +3190,7 @@ function resolvePriorGroundedTransform(latest, newestFirst) {
     const meta2 = record(row.metadata);
     const lineage = record(meta2?.citation_lineage);
     const selected = clean3(lineage?.selected_document_id, 200);
-    const lineageIds = Array.isArray(lineage?.evidence_chunk_ids) ? [...new Set(lineage.evidence_chunk_ids.filter((x) => typeof x === "string" && x.trim().length > 0).map((x) => x.trim()))] : [];
+    const lineageIds = normalizedChunkIds(lineage?.evidence_chunk_ids);
     const sourceMessageId = clean3(meta2?.source_message_id, 200);
     if (selected !== anchor.document_id || sourceMessageId !== anchor.source_message_id || lineageIds.length !== sourceChunks.length || lineageIds.some((id) => !sourceChunks.includes(id))) return null;
     if (!Array.isArray(meta2?.citations) || meta2.citations.length === 0) return null;
@@ -3177,9 +3215,6 @@ function resolvePriorGroundedTransform(latest, newestFirst) {
       });
     }
     if (citations.length === 0) return null;
-    const operation = semantic.operation;
-    const operations = detectRequestedTransformOperations(latest, operation);
-    const requestedSummaryCount = operations.includes("SUMMARIZE") ? detectRequestedSummaryCount(latest) : null;
     return {
       operation,
       operations,
@@ -3271,6 +3306,32 @@ function buildInheritedTransformCitationMetadata(context) {
   };
 }
 
+// supabase/functions/_shared/e2-direct-threat.ts
+function isDirectViolentThreat(text) {
+  const normalized = String(text ?? "").trim().replace(/\s+/g, " ");
+  if (!normalized) return false;
+  const zhTarget = "(?:\u4F60|\u4F60\u5011|\u4F60\u4EEC|\u4ED6|\u5979|\u4ED6\u5011|\u4ED6\u4EEC|\u5979\u5011|\u5979\u4EEC|\u67D0\u4EBA|\u4EBA)";
+  const zhVerb = "(?:\u6BBA|\u6740|\u6253\u6B7B|\u5F04\u6B7B|\u523A\u6B7B|\u50B7\u5BB3|\u4F24\u5BB3|\u653B\u64CA|\u653B\u51FB)";
+  const zhAspect = "(?:\u4E86|\u6389)?";
+  const zhDirect = new RegExp(`(?:\u6211\u8981|\u6211\u6703|\u6211\u4F1A|\u6211\u5C07|\u6211\u5C06|\u6211\u60F3\u8981|\u6211\u60F3|\u6211\u8981\u53BB|\u6211\u6E96\u5099|\u6211\u51C6\u5907)\\s*${zhVerb}${zhAspect}\\s*${zhTarget}`);
+  const zhImperative = new RegExp(`${zhVerb}${zhAspect}\\s*${zhTarget}`);
+  const enDirect = /\b(?:i\s+(?:will|am going to|want to|plan to)|i['’](?:ll|m\s+going\s+to))\s+(?:kill|hurt|attack|shoot|stab)\s+(?:you|him|her|them|someone|people)\b/i;
+  return zhDirect.test(normalized) || zhImperative.test(normalized) || enDirect.test(normalized);
+}
+
+// supabase/functions/_shared/return-to-ai-control.ts
+function buildReturnToAiGenerationGuard(latestHandoffReason, assignedAgentId) {
+  const reason = String(latestHandoffReason ?? "").trim().toLowerCase();
+  if (reason !== "return to ai" || assignedAgentId) return "";
+  return [
+    "Conversation control state: AI_ACTIVE_AFTER_EXPLICIT_RETURN_TO_AI.",
+    "- The conversation was explicitly returned from human control to AI control.",
+    "- Do NOT tell the customer that a human agent will reply, contact them, take over, or follow up unless the CURRENT visitor turn independently triggers a new governed handoff.",
+    "- Historical handoff messages are past state only; do not continue or restate them as current status.",
+    "- Continue the current customer conversation normally under AI control."
+  ].join("\n");
+}
+
 // supabase/functions/_shared/warm-handoff.ts
 var REGION = /(香港|台灣|台湾|澳門|澳门|Hong Kong|Taiwan|Macau)/i;
 var PRODUCT = /(冷氣|空調|空调|洗衣機|洗衣机|雪櫃|冰箱|電視|电视|產品|产品|product)/i;
@@ -3335,33 +3396,155 @@ function buildMissingFactsQuestion(pkg, lang = "zh-TW") {
 }
 
 // supabase/functions/_shared/runtime-signal-lifecycle.ts
+var PROVIDER_VERSION = "current-turn-emotion-v2.0";
 var STRONG_ANGER = /(嬲|憤怒|愤怒|火大|離譜|离谱|垃圾|廢物|废物|荒謬|荒谬|angry|furious|irate|rage|ridiculous|unacceptable|bullshit)/i;
-var NEGATIVE = /(失望|不滿|不满|很差|太差|煩|烦|frustrated|annoyed|upset|disappointed|terrible|awful)/i;
-var POSITIVE_RECOVERY = /(明白了|明白啦|好的現在|好的现在|而家明白|现在明白|謝謝|谢谢|thanks|thank you|got it|that helps|understand now)/i;
+var FRUSTRATED = /(煩死|烦死|煩透|烦透|搞咗好多次|搞了很多次|試咗好多次|试了很多次|一直都唔得|一直都不行|frustrated|annoyed|fed up with this|keeps? failing|tried .* times)/i;
+var DISAPPOINTED = /(失望|很差|太差|不滿意|不满意|辜負|辜负|disappointed|let down|terrible experience|awful experience)/i;
+var HELPLESS = /(無奈|无奈|冇辦法|沒辦法|没有办法|唔知可以點|不知道怎麼辦|不知道怎么办|心累|算了|放棄|放弃|helpless|exhausted|don'?t know what else to do|give up|at a loss)/i;
+var CONFUSED = /(睇唔明|看不懂|唔明|不明白|搞唔清|搞不清|不清楚你(?:講|说)乜|confused|don'?t understand|doesn'?t make sense|not clear to me)/i;
+var HESITANT = /(不確定|不确定|猶豫|犹豫|怕.*不適合|怕.*不适合|唔知.*適唔適合|不知道.*适不适合|unsure|hesitant|not sure|worried .*won'?t (fit|work|suit)|can'?t decide)/i;
+var URGENT = /(好急|很急|非常急|趕住|赶着|今天一定|今日一定|明天就要|聽日就要|马上要|馬上要|立即要|urgent|asap|right away|today for sure|need it (today|tomorrow))/i;
+var HIGH_INTENT = /(我要買|我要买|想下單|想下单|直接下單|直接下单|怎麼付款|怎么付款|如何付款|立即購買|立即购买|ready to buy|i'?ll take it|want to buy|place (the )?order|how do i pay|checkout now)/i;
+var POSITIVE_RECOVERY = /(明白了|明白啦|而家明白|現在明白|现在明白|解決了|解决了|搞掂|好了現在|好了现在|got it|that helps|understand now|makes sense now|resolved now|working now)/i;
+var POSITIVE = /(喜歡|喜欢|滿意|满意|開心|开心|好正|真係好|真的很好|非常好|太好了|很棒|好棒|love (it|this)|like (it|this)|great|excellent|amazing|happy|satisfied|thank you|thanks|謝謝|谢谢)/i;
+var THIRD_PARTY_EMOTION = /(?:朋友|同事|另一個客人|另一个客人|客戶|客户|他|她|佢|my friend|my colleague|another customer|he|she|they).{0,24}(?:嬲|憤怒|愤怒|失望|無奈|无奈|煩|烦|angry|furious|frustrated|disappointed|helpless|confused|happy|satisfied)/i;
+var HYPOTHETICAL_EMOTION = /(?:如果|假如|假設|假设|例如|譬如|假如我|如果我|suppose|hypothetically|for example|what if).{0,40}(?:嬲|憤怒|愤怒|失望|無奈|无奈|煩|烦|angry|furious|frustrated|disappointed|helpless|confused|happy|satisfied)/i;
+var QUOTED_EMOTION = /(?:佢話|他說|他说|她說|她说|客人話|客人说|customer said|they said|he said|she said)[：:\s“\"]{0,4}.{0,40}(?:嬲|憤怒|愤怒|失望|無奈|无奈|煩|烦|angry|furious|frustrated|disappointed|helpless|confused|happy|satisfied)/i;
+function bounded(value) {
+  return Math.max(0, Math.min(1, value));
+}
+function result(emotion_kind, sentiment_score, emotion_intensity, emotion_confidence, anger_flag = false) {
+  return {
+    emotion_kind,
+    sentiment_score,
+    emotion_intensity: bounded(emotion_intensity),
+    emotion_confidence: bounded(emotion_confidence),
+    ...anger_flag ? { anger_flag: true } : {},
+    provider_version: PROVIDER_VERSION
+  };
+}
 function classifyCurrentTurnEmotion(text) {
   const t = String(text ?? "").normalize("NFKC").trim();
-  if (!t) return { provider_version: "current-turn-emotion-v1.0" };
-  if (STRONG_ANGER.test(t)) return { anger_flag: true, sentiment_score: -0.85, provider_version: "current-turn-emotion-v1.0" };
-  if (NEGATIVE.test(t)) return { sentiment_score: -0.5, provider_version: "current-turn-emotion-v1.0" };
-  if (POSITIVE_RECOVERY.test(t)) return { sentiment_score: 0.35, provider_version: "current-turn-emotion-v1.0" };
-  return { provider_version: "current-turn-emotion-v1.0" };
+  if (!t) return { provider_version: PROVIDER_VERSION };
+  if (THIRD_PARTY_EMOTION.test(t) || HYPOTHETICAL_EMOTION.test(t) || QUOTED_EMOTION.test(t)) {
+    return { provider_version: PROVIDER_VERSION };
+  }
+  if (STRONG_ANGER.test(t)) return result("angry", -0.9, 0.95, 0.96, true);
+  if (HELPLESS.test(t)) return result("helpless", -0.72, 0.82, 0.92);
+  if (FRUSTRATED.test(t)) return result("frustrated", -0.66, 0.76, 0.91);
+  if (DISAPPOINTED.test(t)) return result("disappointed", -0.6, 0.7, 0.91);
+  if (CONFUSED.test(t)) return result("confused", -0.28, 0.52, 0.9);
+  if (HESITANT.test(t)) return result("hesitant", -0.12, 0.42, 0.88);
+  if (URGENT.test(t)) return result("urgent", -0.08, 0.75, 0.9);
+  if (HIGH_INTENT.test(t)) return result("high_intent", 0.48, 0.78, 0.91);
+  if (POSITIVE_RECOVERY.test(t)) return result("positive_recovery", 0.42, 0.58, 0.9);
+  if (POSITIVE.test(t)) return result("positive", 0.68, 0.68, 0.91);
+  return { provider_version: PROVIDER_VERSION };
 }
 function buildRealtimeR3SentimentSignals(text, historical) {
   const current = classifyCurrentTurnEmotion(text);
   const currentScore = current.sentiment_score;
-  if (currentScore === void 0 && current.anger_flag !== true) return void 0;
+  if (currentScore === void 0 && current.anger_flag !== true && !current.emotion_kind) return void 0;
   const base = Array.isArray(historical?.sentiment_trend) ? historical.sentiment_trend.filter(Number.isFinite).slice(-4) : typeof historical?.sentiment_score === "number" && Number.isFinite(historical.sentiment_score) ? [historical.sentiment_score] : [];
   const trend = currentScore === void 0 ? base : [...base, currentScore].slice(-5);
   const previous = base.length ? base[base.length - 1] : void 0;
   const recovered = typeof previous === "number" && previous < -0.2 && typeof currentScore === "number" && currentScore >= 0.2;
   return {
     ...current.anger_flag ? { anger_flag: true } : {},
+    ...current.emotion_kind ? { emotion_kind: current.emotion_kind } : {},
+    ...typeof current.emotion_intensity === "number" ? { emotion_intensity: current.emotion_intensity } : {},
+    ...typeof current.emotion_confidence === "number" ? { emotion_confidence: current.emotion_confidence } : {},
     ...typeof currentScore === "number" ? { sentiment_score: currentScore } : {},
     ...trend.length >= 2 ? { sentiment_trend: trend } : {},
     ...recovered ? { sentiment_recovered_same_turn: true } : {},
     ...historical?.evaluation_id ? { evaluation_id: historical.evaluation_id } : {},
     provider_version: [current.provider_version, historical?.provider_version].filter(Boolean).join("+")
   };
+}
+
+// supabase/functions/_shared/emotion-reply-strategy.ts
+var PURE_POSITIVE_RECOVERY_ACK = /^(?:(?:明白了|明白啦|而家明白|現在明白|现在明白|解決了|解决了|搞掂|好了現在|好了现在)(?:[，,。.!！\s]*(?:這樣|这样)?(?:清楚|明白)(?:多了|好多|咗))?(?:[，,。.!！\s]*(?:謝謝|谢谢|多謝))?|(?:got it|that helps|i understand now|that makes sense now|makes sense now|resolved now|working now)(?:[,.!\s]*(?:thanks|thank you))?)[。.!！\s]*$/i;
+var POSITIVE_RECOVERY_ACKNOWLEDGEMENT = {
+  "zh-TW": "\u4E0D\u7528\u5BA2\u6C23\uFF0C\u5F88\u9AD8\u8208\u9019\u6B21\u8AAA\u6E05\u695A\u4E86\u3002\u5982\u679C\u9084\u6709\u5176\u4ED6\u554F\u984C\uFF0C\u76F4\u63A5\u544A\u8A34\u6211\u5C31\u53EF\u4EE5\u3002",
+  "zh-CN": "\u4E0D\u5BA2\u6C14\uFF0C\u5F88\u9AD8\u5174\u8FD9\u6B21\u8BF4\u660E\u767D\u4E86\u3002\u5982\u679C\u8FD8\u6709\u5176\u4ED6\u95EE\u9898\uFF0C\u76F4\u63A5\u544A\u8BC9\u6211\u5C31\u53EF\u4EE5\u3002",
+  en: "You're welcome. I'm glad that makes sense now. If you have another question, just let me know."
+};
+function resolvePositiveRecoveryAcknowledgement(text, language) {
+  const normalized = String(text ?? "").normalize("NFKC").trim();
+  if (!normalized || normalized.length > 120) return null;
+  if (/[?？]/.test(normalized)) return null;
+  if (!PURE_POSITIVE_RECOVERY_ACK.test(normalized)) return null;
+  return POSITIVE_RECOVERY_ACKNOWLEDGEMENT[language];
+}
+var STRATEGIES = {
+  angry: [
+    "Acknowledge the customer's anger or unacceptable experience briefly and naturally before the factual answer.",
+    "Stay calm and non-defensive. Do not argue, blame, lecture, or repeat apologies.",
+    "Address the core problem first and give the clearest grounded next step."
+  ],
+  frustrated: [
+    "Acknowledge that the customer has already spent effort trying to resolve the problem.",
+    "Do not ask them to repeat steps or facts already present in the conversation.",
+    "Give one clear next action first, then only the minimum supporting explanation."
+  ],
+  disappointed: [
+    "Recognize the gap between what the customer expected and what happened.",
+    "Use warm, restrained empathy rather than a generic or repetitive apology.",
+    "Clarify what failed and focus on the grounded resolution or next step."
+  ],
+  helpless: [
+    "Recognize that the customer may feel stuck or exhausted after repeated attempts.",
+    "Reduce customer effort: do not make them restate known facts or repeat completed troubleshooting.",
+    "Take conversational ownership of the next helpful step without implying an action was executed when it was not."
+  ],
+  confused: [
+    "Acknowledge that the previous information may have been unclear or too complex.",
+    "Simplify the answer into short, concrete steps and avoid jargon.",
+    "Explain one thing at a time; do not overload the customer with optional detail."
+  ],
+  hesitant: [
+    "Use a low-pressure, reassuring tone and respect that the customer wants to decide carefully.",
+    "Identify the decision concern and compare only the most relevant grounded differences.",
+    "Do not manufacture urgency, scarcity, discounts, guarantees, or pressure to buy."
+  ],
+  urgent: [
+    "Acknowledge the time pressure briefly and prioritize immediately actionable information.",
+    "State verified timing or availability only when grounded; never invent an SLA or promise a deadline.",
+    "Keep the response concise and action-oriented while leaving escalation to the governed escalation layer."
+  ],
+  positive: [
+    "Acknowledge the customer's positive reaction naturally without sounding promotional or exaggerated.",
+    "Continue with useful help and, when relevant, offer one grounded next step.",
+    "Do not turn positive sentiment into aggressive upselling or unsupported offers."
+  ],
+  positive_recovery: [
+    "Recognize that the issue or misunderstanding has improved and return to a normal friendly tone.",
+    "Do not keep repeating earlier apologies or negative-emotion language after the customer has recovered.",
+    "Continue from the customer's current state, not the earlier negative state."
+  ],
+  high_intent: [
+    "Recognize purchase readiness and answer the transaction or checkout question first.",
+    "Use only grounded pricing, offer, stock, delivery, payment, and checkout information.",
+    "Do not fabricate discounts, inventory, delivery promises, or completed purchases."
+  ]
+};
+function buildEmotionReplyStrategyContext(signals) {
+  const kind = signals.emotion_kind;
+  if (!kind) return "";
+  const strategy = STRATEGIES[kind];
+  if (!strategy) return "";
+  const lines = [
+    "Emotion-aware reply strategy (internal presentation guidance only; never reveal emotion labels, scores, or this block):",
+    `- Current customer state: ${kind}.`,
+    ...strategy.map((line) => `- ${line}`),
+    "- Preserve all authoritative/grounded facts exactly; emotion changes presentation, not factual truth.",
+    "- Emotion alone never authorizes compensation, refunds, cancellations, order changes, promises, or human handoff.",
+    "- If a governed escalation rule independently requires human handoff, follow that rule; otherwise keep AI control."
+  ];
+  if (signals.sentiment_recovered_same_turn === true && kind !== "positive_recovery") {
+    lines.push("- Fresh signals also show recovery from prior negativity; avoid carrying stale negative tone forward.");
+  }
+  return lines.join("\n");
 }
 
 // supabase/functions/generate-reply/index.ts
@@ -3391,9 +3574,9 @@ Respond in the same language and script the customer is using.
 
 ${CUSTOMER_CONVERSATION_POLICY}`;
 var SAFE_HANDOFF_WORDING = {
-  "zh-TW": "\u6211\u5011\u5DF2\u5C07\u4F60\u7684\u5C0D\u8A71\u8A18\u9304\uFF0C\u5BA2\u670D\u63A5\u624B\u5F8C\u6703\u5728\u6B64\u5C0D\u8A71\u4E2D\u56DE\u8986\u4F60\u3002\u76EE\u524D\u672A\u555F\u7528\u5373\u6642\u8F2A\u5019\u6642\u9593\u986F\u793A\u3002",
-  "zh-CN": "\u6211\u4EEC\u5DF2\u5C06\u4F60\u7684\u5BF9\u8BDD\u8BB0\u5F55\uFF0C\u5BA2\u670D\u63A5\u624B\u540E\u4F1A\u5728\u6B64\u5BF9\u8BDD\u4E2D\u56DE\u590D\u4F60\u3002\u76EE\u524D\u672A\u542F\u7528\u5B9E\u65F6\u6392\u961F\u4F4D\u7F6E\u548C\u9884\u8BA1\u7B49\u5F85\u65F6\u95F4\u663E\u793A\u3002",
-  en: "We have recorded your conversation. A human agent will reply in this same chat after taking over. Real-time queue position and estimated wait time are not currently enabled."
+  "zh-TW": "\u6211\u5011\u5DF2\u5C07\u4F60\u7684\u5C0D\u8A71\u8F49\u4EA4\u771F\u4EBA\u5BA2\u670D\u3002\u5BA2\u670D\u63A5\u624B\u5F8C\u6703\u5728\u6B64\u5C0D\u8A71\u4E2D\u56DE\u8986\u4F60\uFF1B\u5982\u76EE\u524D\u6709\u53EF\u7528\u7684\u8F2A\u5019\u8CC7\u6599\uFF0C\u7CFB\u7D71\u6703\u5728\u6B64\u986F\u793A\u8F2A\u5019\u4F4D\u7F6E\u53CA\u9810\u8A08\u7B49\u5019\u6642\u9593\u3002",
+  "zh-CN": "\u6211\u4EEC\u5DF2\u5C06\u4F60\u7684\u5BF9\u8BDD\u8F6C\u4EA4\u4EBA\u5DE5\u5BA2\u670D\u3002\u5BA2\u670D\u63A5\u624B\u540E\u4F1A\u5728\u6B64\u5BF9\u8BDD\u4E2D\u56DE\u590D\u4F60\uFF1B\u5982\u76EE\u524D\u6709\u53EF\u7528\u7684\u6392\u961F\u8D44\u6599\uFF0C\u7CFB\u7EDF\u4F1A\u5728\u6B64\u663E\u793A\u6392\u961F\u4F4D\u7F6E\u53CA\u9884\u8BA1\u7B49\u5F85\u65F6\u95F4\u3002",
+  en: "I\u2019ve handed this conversation to a human support agent. They will reply in this same chat after taking over; if live queue data is available, your queue position and estimated wait will be shown here."
 };
 var HUMAN_SUPPORT_INFO_WORDING = {
   "zh-TW": "\u6211\u76EE\u524D\u6C92\u6709\u5DF2\u78BA\u8A8D\u7684\u771F\u4EBA\u5BA2\u670D\u670D\u52D9\u6642\u9593\u8CC7\u6599\u3002\u5982\u679C\u4F60\u73FE\u5728\u8981\u8F49\u771F\u4EBA\u5BA2\u670D\uFF0C\u53EF\u4EE5\u76F4\u63A5\u544A\u8A34\u6211\u3002",
@@ -3469,6 +3652,14 @@ function routerFailureHttpStatus(code) {
   if (code === "LLM_CONFIG_MISSING") return 503;
   return 502;
 }
+async function loadLatestHandoffReason(supabaseAdmin, conversationId) {
+  const { data, error } = await supabaseAdmin.from("handoff_event").select("handoff_reason, created_at").eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(1).maybeSingle();
+  if (error) {
+    console.error("[generate-reply] latest handoff control lookup failed (non-blocking):", conversationId);
+    return null;
+  }
+  return typeof data?.handoff_reason === "string" ? data.handoff_reason : null;
+}
 function routerFailureToS0(code) {
   switch (code) {
     case "LLM_TIMEOUT":
@@ -3528,9 +3719,9 @@ function widgetLiveTestPreActivationActor(metadataSource) {
 function sourceBoundaryFilter(source) {
   return `created_at.lt.${source.created_at},and(created_at.eq.${source.created_at},id.lte.${source.id})`;
 }
-function sourceMessageErrorResponse(result) {
-  const status = result.error === "source_message_lookup_failed" ? 500 : 400;
-  return new Response(JSON.stringify({ success: false, error: result.error }), {
+function sourceMessageErrorResponse(result2) {
+  const status = result2.error === "source_message_lookup_failed" ? 500 : 400;
+  return new Response(JSON.stringify({ success: false, error: result2.error }), {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" }
   });
@@ -3551,8 +3742,8 @@ async function commitAiReplyWithControlGate(supabaseAdmin, conversation_id, sour
     return { ok: false, result: "rpc_error" };
   }
   const payload = data ?? {};
-  const result = String(payload.result ?? data ?? "unexpected_result");
-  switch (result) {
+  const result2 = String(payload.result ?? data ?? "unexpected_result");
+  switch (result2) {
     case "success":
       return {
         ok: true,
@@ -3572,7 +3763,7 @@ async function commitAiReplyWithControlGate(supabaseAdmin, conversation_id, sour
     case "source_already_replied":
     case "superseded_source":
     case "not_found":
-      return { ok: false, result };
+      return { ok: false, result: result2 };
     default:
       return { ok: false, result: "unexpected_result" };
   }
@@ -3593,6 +3784,13 @@ function isGreetingOrTrivial(text) {
 var E2_LOCAL_THREAT_CLASSIFIER_VERSION = "e2-local-threat-v1.0";
 function classifyAuthoritativeThreat(text) {
   const normalized = text.trim().replace(/\s+/g, " ");
+  if (isDirectViolentThreat(normalized)) {
+    return {
+      value: true,
+      reason: "explicit_violence_or_harm_threat",
+      provider_version: E2_LOCAL_THREAT_CLASSIFIER_VERSION
+    };
+  }
   const lower = normalized.toLowerCase();
   const explicitEnglishThreats = [
     /\b(?:i(?:'ll| will| am going to| am gonna| gonna| plan to| intend to)\s+)?(?:kill|shoot|stab|hurt|attack)\s+(?:you|him|her|them|someone|people|staff|agent|employee)\b/i,
@@ -4137,13 +4335,13 @@ async function evaluateAndPersistRequiredRulesLive(supabaseAdmin, params) {
       p_metadata: { escalation_rule: "R2", escalation_action: "collect_missing_handoff_facts", response_route: "warm_handoff_data_collection", handoff_required: false }
     });
     if (error) return new Response(JSON.stringify({ success: false, error: "warm_handoff_collection_failed" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-    const result = String(data?.result ?? "");
-    if (result === "success" || result === "idempotent") {
+    const result2 = String(data?.result ?? "");
+    if (result2 === "success" || result2 === "idempotent") {
       await cleanupThinking(supabaseAdmin, params.conversation_id, params.source_message_id);
       return new Response(JSON.stringify({ success: true, response_route: "warm_handoff_data_collection", handoff_required: false, missing_facts_requested: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
-    if (result === "human_control" || result === "resolved" || result === "superseded_source") return new Response(JSON.stringify({ success: true, skipped: result }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-    return new Response(JSON.stringify({ success: false, error: `warm_handoff_collection_${result || "unexpected"}` }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    if (result2 === "human_control" || result2 === "resolved" || result2 === "superseded_source") return new Response(JSON.stringify({ success: true, skipped: result2 }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ success: false, error: `warm_handoff_collection_${result2 || "unexpected"}` }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
   if (decision2.decision === "clarify" && decision2.matched_rule === "R2" && enabled.has("R2")) {
     const clarification = R2_CLARIFICATION_SAFE_WORDING[params.visitor_language];
@@ -4371,14 +4569,21 @@ async function legacyGenerateReply(conversation_id, source_message_id) {
         return new Response(JSON.stringify({ success: false, error: "legacy_handoff_unexpected_result", escalation_rule: "R1", handoff_persisted: false, rpc_result: handoffResult }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
   }
+  const legacyLatestHandoffReason = await loadLatestHandoffReason(supabaseAdmin, conversation_id);
+  const legacyReturnToAiGuard = buildReturnToAiGenerationGuard(
+    legacyLatestHandoffReason,
+    conversation.assigned_agent_id ?? null
+  );
   const legacySystemPrompt = `You are a professional and friendly customer service assistant.
 Answer customer questions clearly and concisely.
 If details are missing, ask one concise contextual question. If a fact cannot be verified, say you cannot confirm it and do not guess. Do not offer a human unless the governed escalation layer has decided one is appropriate.
 Keep responses under 150 words.
 Respond in the same language and script the customer is using.
-When the customer explicitly requests a human agent, or when you transfer to a human agent, include a short safe handoff status message in the same language and script as the customer. The message must state that the conversation has been recorded and that a human agent will reply in this same chat after taking over. If the customer is using Traditional Chinese, use: "\u6211\u5011\u5DF2\u5C07\u4F60\u7684\u5C0D\u8A71\u8A18\u9304\uFF0C\u5BA2\u670D\u63A5\u624B\u5F8C\u6703\u5728\u6B64\u5C0D\u8A71\u4E2D\u56DE\u8986\u4F60\u3002\u76EE\u524D\u672A\u555F\u7528\u5373\u6642\u8F2A\u5019\u6642\u9593\u986F\u793A\u3002" If the customer is using Simplified Chinese, use: "\u6211\u4EEC\u5DF2\u5C06\u4F60\u7684\u5BF9\u8BDD\u8BB0\u5F55\uFF0C\u5BA2\u670D\u63A5\u624B\u540E\u4F1A\u5728\u6B64\u5BF9\u8BDD\u4E2D\u56DE\u590D\u4F60\u3002\u76EE\u524D\u672A\u542F\u7528\u5B9E\u65F6\u6392\u961F\u4F4D\u7F6E\u548C\u9884\u8BA1\u7B49\u5F85\u65F6\u95F4\u663E\u793A\u3002" If the customer is using English, use: "We have recorded your conversation. A human agent will reply in this same chat after taking over. Real-time queue position and estimated wait time are not currently enabled." Do NOT invent estimated wait times, response-time promises, or queue positions.
+When the customer explicitly requests a human agent, or when you transfer to a human agent, include a short safe handoff status message in the same language and script as the customer. Confirm only that the conversation has been handed to human support and that the agent will reply in this same chat. Queue position, customers-ahead counts, and estimated wait time are dynamic widget runtime data: never invent or hard-code them. If live queue data is available, the widget will display it separately; if it is unavailable, do not promise an estimate.
 
-${CUSTOMER_CONVERSATION_POLICY}`;
+${CUSTOMER_CONVERSATION_POLICY}
+
+${legacyReturnToAiGuard}`;
   const llm = await callModel({
     purpose: "generation",
     system: legacySystemPrompt,
@@ -4554,8 +4759,8 @@ async function handleKBFallback(supabaseAdmin, conversation_id, branchTag, sourc
   if (!source_message_id) return new Response(JSON.stringify({ success: false, error: "kb_fallback_missing_source_id", reply: safeText, no_answer: true, handoff_required: true, handoff_persisted: false, trace_metadata: { ...traceMetadata, handoff_persisted: false } }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   const { data: rpcData, error: rpcErr } = await supabaseAdmin.rpc("kb_fallback_handoff_tx", { p_conversation_id: conversation_id, p_safe_reply_content: safeText, p_branch_tag: branchTag, p_source_message_id: source_message_id });
   if (rpcErr) return new Response(JSON.stringify({ success: false, error: "kb_fallback_persistence_failed", reply: safeText, no_answer: true, handoff_required: true, handoff_persisted: false, trace_metadata: { ...traceMetadata, handoff_persisted: false } }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-  const result = rpcData?.result ?? "unknown";
-  switch (result) {
+  const result2 = rpcData?.result ?? "unknown";
+  switch (result2) {
     case "success":
       return new Response(JSON.stringify({ success: true, reply: safeText, no_answer: true, handoff_required: true, handoff_persisted: true, trace_metadata: { ...traceMetadata, rpc_result: "success", handoff_persisted: true } }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     case "already_handled":
@@ -4622,8 +4827,8 @@ async function persistExplicitR1IfRequested(supabaseAdmin, conversation_id, sour
   if (error) {
     return new Response(JSON.stringify({ success: false, error: "esc_rpc_transport_error", escalation_rule: "R1", handoff_persisted: false, handoff_uncertain: true }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
-  const result = data?.result ?? "unknown";
-  switch (result) {
+  const result2 = data?.result ?? "unknown";
+  switch (result2) {
     case "success":
       await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
       return new Response(JSON.stringify({ success: true, escalation_rule: "R1", handoff_persisted: true, rpc_result: "success" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -4638,7 +4843,7 @@ async function persistExplicitR1IfRequested(supabaseAdmin, conversation_id, sour
     case "invalid_source_message":
       return new Response(JSON.stringify({ success: false, error: "esc_invalid_source_message", escalation_rule: "R1" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     default:
-      return new Response(JSON.stringify({ success: false, error: "esc_rpc_unknown_result", escalation_rule: "R1", rpc_result: result }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ success: false, error: "esc_rpc_unknown_result", escalation_rule: "R1", rpc_result: result2 }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 }
 async function orchestrationGenerateReply(conversation_id, flags, source_message_id) {
@@ -4687,6 +4892,28 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
   );
   const _conversationContinuityBlock = buildCanonicalContinuityBlock(_pr5HistoryRows ?? []);
   const _visitorLang = detectVisitorLanguage(_h1LastMsg);
+  const _criticalE2ExpectedTenantId = typeof conversation.company_id === "string" && conversation.company_id.length > 0 ? conversation.company_id : void 0;
+  const _criticalE2ThreatSignal = classifyAuthoritativeThreat(_h1LastMsg);
+  if (isE2LiveActivationEnabled(Deno.env) && _criticalE2ThreatSignal) {
+    const _criticalE2Response = await evaluateAndPersistRequiredRulesLive(supabaseAdmin, {
+      conversation_id,
+      source_message_id,
+      latest_message_content: _h1LastMsg,
+      conversation_status: conversation.status,
+      assigned_agent_id: conversation.assigned_agent_id ?? null,
+      greeting_or_trivial: isGreetingOrTrivial(_h1LastMsg),
+      visitor_language: _visitorLang,
+      expected_tenant_id: _criticalE2ExpectedTenantId,
+      turn_count: _pr5History.turn_count,
+      consecutive_no_answer: _pr5History.consecutive_no_answer,
+      clarification_attempts: _pr5History.clarification_attempts,
+      exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
+      threat_flag: _criticalE2ThreatSignal,
+      compliance_jurisdiction_requires_human_review: resolveAuthoritativeComplianceReview(_criticalE2ExpectedTenantId)
+    });
+    if (_criticalE2Response) return _criticalE2Response;
+  }
+  const _criticalLocalRisk = classifyLocalTopicRisk(_h1LastMsg);
   const _canonicalTurn = classifyCanonicalConversationTurn(
     _h1LastMsg,
     _pr5HistoryRows ?? [],
@@ -4726,7 +4953,7 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
     });
   }
   const _turnClassification = classifyConversationTurn(_h1LastMsg);
-  if (_turnClassification.should_clarify_before_kb && !isHandoffIntent(_h1LastMsg)) {
+  if (_turnClassification.should_clarify_before_kb && !isHandoffIntent(_h1LastMsg) && _criticalLocalRisk?.level !== "high") {
     const clarification = NATURAL_CLARIFICATION[_visitorLang];
     const clarificationCommit = await commitAiReplyWithControlGate(
       supabaseAdmin,
@@ -4861,6 +5088,28 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
       return new Response(JSON.stringify({ success: false, error: `human_support_info_commit_${committed2.result}` }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
     return new Response(JSON.stringify({ success: true, response_route: "human_support_information", handoff_required: false }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+  const _positiveRecoveryAcknowledgement = _pr5R3Sentiment?.emotion_kind === "positive_recovery" ? resolvePositiveRecoveryAcknowledgement(_h1LastMsg, _visitorLang) : null;
+  if (_positiveRecoveryAcknowledgement) {
+    const committed2 = await commitAiReplyWithControlGate(
+      supabaseAdmin,
+      conversation_id,
+      source_message_id,
+      _positiveRecoveryAcknowledgement,
+      {
+        response_route: "positive_recovery_acknowledgement",
+        handoff_required: false,
+        factual_grounding_required: false
+      }
+    );
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+    if (!committed2.ok) {
+      if (committed2.result === "human_control" || committed2.result === "resolved" || committed2.result === "superseded_source") {
+        return new Response(JSON.stringify({ success: true, skipped: committed2.result }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ success: false, error: `positive_recovery_commit_${committed2.result}` }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+    return new Response(JSON.stringify({ success: true, response_route: "positive_recovery_acknowledgement", handoff_required: false }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
   const _conversationMemoryReply = resolveConversationMemoryResponse(_h1LastMsg, _pr5HistoryRows ?? []);
   if (_conversationMemoryReply) {
@@ -5275,11 +5524,24 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
     churn_risk: customerContext?.churn_risk,
     escalation_score: customerContext?.escalation_score
   });
+  const _emotionReplyStrategyBlock = buildEmotionReplyStrategyContext({
+    emotion_kind: _pr5R3Sentiment?.emotion_kind,
+    emotion_intensity: _pr5R3Sentiment?.emotion_intensity,
+    emotion_confidence: _pr5R3Sentiment?.emotion_confidence,
+    sentiment_recovered_same_turn: _pr5R3Sentiment?.sentiment_recovered_same_turn
+  });
+  const latestHandoffReason = await loadLatestHandoffReason(supabaseAdmin, conversation_id);
+  const returnToAiGuard = buildReturnToAiGenerationGuard(
+    latestHandoffReason,
+    conversation.assigned_agent_id ?? null
+  );
   const finalSystemPrompt = _priorGroundedTransform ? buildPriorGroundedTransformGenerationSystem(_priorGroundedTransform) : [
     basePrompt,
     CUSTOMER_CONVERSATION_POLICY,
     _conversationContinuityBlock,
+    returnToAiGuard,
     _customerAdvisoryBlock,
+    _emotionReplyStrategyBlock,
     buildMaskedContextBlock(customerContext, opaqueCustomerRef),
     buildRagBlock(ragResult)
   ].filter((s) => s && s.length > 0).join("\n\n");
@@ -5594,17 +5856,17 @@ async function callCustomer360Adapter(conversation_id) {
 async function callKBAdapter(_conversation_id, userMessage, scope) {
   const endpointCfg = resolveKBEndpoint();
   if (!endpointCfg) return { success: false, no_answer: true, retrieval_quality: "failed" };
-  const result = await fetchKBRag({ query: userMessage, top_k: 5 }, scope, endpointCfg, { timeoutMs: 15e3 });
-  if (!result.success) return { success: false, no_answer: true, retrieval_quality: "failed" };
-  if (result.chunks.length === 0) return { success: true, no_answer: true, retrieval_quality: "failed", chunks: [], query_text_preview: userMessage.slice(0, 100) };
+  const result2 = await fetchKBRag({ query: userMessage, top_k: 5 }, scope, endpointCfg, { timeoutMs: 15e3 });
+  if (!result2.success) return { success: false, no_answer: true, retrieval_quality: "failed" };
+  if (result2.chunks.length === 0) return { success: true, no_answer: true, retrieval_quality: "failed", chunks: [], query_text_preview: userMessage.slice(0, 100) };
   return {
     success: true,
     no_answer: false,
     retrieval_quality: "high",
-    chunks: result.chunks,
-    documents: result.documents,
-    ...result.llm_context ? { llm_context: result.llm_context } : {},
-    ...result.meta ? { meta: result.meta } : {},
+    chunks: result2.chunks,
+    documents: result2.documents,
+    ...result2.llm_context ? { llm_context: result2.llm_context } : {},
+    ...result2.meta ? { meta: result2.meta } : {},
     query_text_preview: userMessage.slice(0, 100)
   };
 }
@@ -5712,9 +5974,9 @@ function checkGuardrails(toolResults, ragResult, mode) {
     if (ragResult.policy_gap) return { pass: false, reason: "KB_POLICY_GAP" };
     if (ragResult.source_scope !== "customer_answer") return { pass: false, reason: "KB_SCOPE_NOT_CUSTOMER_ANSWER" };
   }
-  for (const result of toolResults) {
-    if (result.result_classification === "draft_only") return { pass: false, reason: "TOOL_RESULT_DRAFT_ONLY" };
-    if (result.result_classification === "supervisor_only") return { pass: false, reason: "TOOL_RESULT_SUPERVISOR_ONLY" };
+  for (const result2 of toolResults) {
+    if (result2.result_classification === "draft_only") return { pass: false, reason: "TOOL_RESULT_DRAFT_ONLY" };
+    if (result2.result_classification === "supervisor_only") return { pass: false, reason: "TOOL_RESULT_SUPERVISOR_ONLY" };
   }
   const suggestResult = toolResults.find((r) => r.tool_name === "suggest_reply");
   if (suggestResult?.citation_required && !suggestResult?.has_valid_citation) return { pass: false, reason: "SUGGEST_REPLY_MISSING_CITATION" };
