@@ -1,0 +1,33 @@
+name: HF-1 Source Final Gate
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/functions/_shared/handoff-decision.ts'
+      - 'supabase/functions/_shared/conversation-closure.ts'
+      - 'supabase/functions/_shared/warm-handoff.ts'
+      - 'supabase/functions/_shared/task1-closure-handoff.test.ts'
+      - 'supabase/functions/generate-reply/index.ts'
+      - 'scripts/hf1-source-final-gate.sh'
+      - '.github/workflows/hf1-source-final-gate.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  hf1-source-final-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Run canonical HF-1 source final gate
+        run: bash scripts/hf1-source-final-gate.sh
