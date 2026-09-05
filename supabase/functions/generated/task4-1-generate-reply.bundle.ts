@@ -1132,8 +1132,8 @@ function classifyCanonicalConversationTurn(latestInput, newestFirst, options = {
 // supabase/functions/_shared/conversation-intelligence.ts
 var HUMAN_ZH = /(真人|人工|客服)/;
 var HUMAN_EN = /\b(human|live agent|human agent|real person|support agent|customer service)\b/i;
-var NEG_ZH = /(唔好|不要|唔使|不用|毋須|毋需|別|别|未需要|未要|而家未|現在未|唔係|不是|並非|并非|未叫|冇叫|没有叫|沒有叫|禁止|不准|唔准)/;
-var NEG_EN = /\b(don't|do not|didn't|did not|not asking|not ask|no need|don't need|do not need|not yet|without|never)\b/i;
+var NEG_HUMAN_ZH = /(?:唔好|不要|唔使|不用|毋須|毋需|別|别|未需要|未要|而家未|現在未|现在未|唔係要|不是要|並非要|并非要|未叫|冇叫|没有叫|沒有叫|禁止|不准|唔准).{0,8}(?:轉|转|接|搵|找|聯絡|联系|要|需要)?\s*(?:真人|人工|客服(?:人員|人员)?)|(?:真人|人工|客服(?:人員|人员)?).{0,8}(?:唔好|不要|唔使|不用|毋須|毋需|未需要|未要|禁止|不准|唔准)/;
+var NEG_HUMAN_EN = /\b(?:don't|do not|didn't|did not|not asking|not ask|no need|don't need|do not need|not yet|never)\b.{0,28}\b(?:connect|transfer|put|speak|want|need)?\b.{0,12}\b(?:human|live agent|human agent|real person|support agent|customer service)\b|\b(?:human|live agent|human agent|real person|support agent|customer service)\b.{0,20}\b(?:not needed|not required|no need|not yet)\b/i;
 var CONDITIONAL_ZH = /(如果|若果|如果.*先|先至|才|除非|答唔到|答不到|查唔到|查不到)/;
 var CONDITIONAL_EN = /\b(if|only if|unless|in case)\b/i;
 var FUTURE_ZH = /(之後|之后|遲啲|迟点|遲些|稍後|稍后|日後|以后|以後|到時|到时|再考慮|再考虑|可能)/;
@@ -1144,7 +1144,7 @@ var QUESTION_ZH = /(係咪|是不是|是否|幾點|几点|幾時|何時|多久|�
 var QUESTION_EN = /\b(when|what|who|where|how|hours|available|open|close|can i|could i)\b.*\b(human|agent|customer service|support)\b|\b(human|agent|customer service|support)\b.*\b(when|what|who|where|how|hours|available|open|close)\b/i;
 var HYPOTHETICAL_ZH = /(假如|假設|假设|例如|譬如|可唔可以轉|可不可以转|如果我要|如果想)/;
 var HYPOTHETICAL_EN = /\b(hypothetically|suppose|what if|could i|would i be able to)\b/i;
-var EXPLICIT_ZH = /(?:而家|現在|现在|即刻|立即).{0,8}(轉|转|接|搵|找|聯絡|联系).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:請|请|麻煩|麻烦|幫我|帮我).{0,10}(轉|转|接|搵|找|聯絡|联系).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:我要|我想|我需要|想要|需要).{0,8}(真人|人工|客服(?:人員|人员)?)/;
+var EXPLICIT_ZH = /(?:而家|現在|现在|即刻|立即).{0,8}(轉|转|接|搵|找|聯絡|联系).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:請|请|麻煩|麻烦|幫我|帮我).{0,10}(轉|转|接|搵|找|聯絡|联系).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:我要|我想|我需要|想要|需要).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:我)?(?:而家|現在|现在|即刻|立即).{0,4}(?:要|想要|需要).{0,8}(真人|人工|客服(?:人員|人员)?)/;
 var EXPLICIT_EN = /\b(please\s+)?(connect|transfer|put|let)\s+me\s+(to|through to)\s+(a\s+)?(human|live agent|human agent|real person|customer service)|\b(i want|i need|let me speak to|i want to speak to|i need to speak to|connect me to)\s+(a\s+)?(human|live agent|human agent|real person|customer service)(\s+now)?\b/i;
 function detectLanguage(text) {
   if (!/[\u4e00-\u9fff]/.test(text)) return "en";
@@ -1155,7 +1155,7 @@ function classifyHandoffIntent(text) {
   const language = detectLanguage(t);
   const hasHuman = HUMAN_ZH.test(t) || HUMAN_EN.test(t);
   if (!hasHuman) return { kind: "none", explicit_request: false, pure_negation: false, language, reason: "no_human_support_reference" };
-  if (NEG_ZH.test(t) || NEG_EN.test(t)) {
+  if (NEG_HUMAN_ZH.test(t) || NEG_HUMAN_EN.test(t)) {
     return { kind: "negated", explicit_request: false, pure_negation: true, language, reason: "handoff_prohibited_or_negated" };
   }
   if (CONDITIONAL_ZH.test(t) || CONDITIONAL_EN.test(t)) {
@@ -3396,8 +3396,9 @@ function buildMissingFactsQuestion(pkg, lang2 = "zh-TW") {
     order_reference: { "zh-TW": "\u8A02\u55AE\u7DE8\u865F", "zh-CN": "\u8BA2\u5355\u7F16\u53F7", en: "order number" }
   };
   const labels = pkg.missing_facts.map((x) => names[x]?.[lang2] || x);
-  if (lang2 === "en") return `Before I connect you with a human agent, could you provide ${labels.join(" and ")}? If you don\u2019t have it, just say so and I\u2019ll still pass along everything we have.`;
-  return `\u8F49\u4EA4\u771F\u4EBA\u5BA2\u670D\u524D\uFF0C\u60F3\u5148\u88DC\u9F4A${labels.join("\u3001")}\uFF1B\u5982\u679C\u4F60\u624B\u4E0A\u6C92\u6709\uFF0C\u76F4\u63A5\u544A\u8A34\u6211\u300C\u6C92\u6709\u300D\u4E5F\u53EF\u4EE5\uFF0C\u6211\u6703\u628A\u76EE\u524D\u8CC7\u6599\u4E00\u4F75\u4EA4\u7D66\u5BA2\u670D\u3002`;
+  if (lang2 === "en") return `I\u2019m connecting you with a human agent now. If it\u2019s convenient, please share ${labels.join(" and ")}; if you don\u2019t have it, that\u2019s fine \u2014 the handoff will still proceed.`;
+  if (lang2 === "zh-CN") return `\u53EF\u4EE5\uFF0C\u6211\u73B0\u5728\u5E2E\u4F60\u8F6C\u4EBA\u5DE5\u5BA2\u670D\u3002\u5982\u679C\u65B9\u4FBF\uFF0C\u8BF7\u63D0\u4F9B${labels.join("\u3001")}\uFF1B\u6CA1\u6709\u4E5F\u53EF\u4EE5\uFF0C\u8F6C\u63A5\u4ECD\u4F1A\u7EE7\u7EED\u3002`;
+  return `\u53EF\u4EE5\uFF0C\u6211\u73FE\u5728\u5E6B\u4F60\u8F49\u771F\u4EBA\u5BA2\u670D\u3002\u5982\u679C\u65B9\u4FBF\uFF0C\u8ACB\u63D0\u4F9B${labels.join("\u3001")}\uFF1B\u6C92\u6709\u4E5F\u53EF\u4EE5\uFF0C\u8F49\u63A5\u4ECD\u6703\u7E7C\u7E8C\u3002`;
 }
 
 // supabase/functions/_shared/handoff-decision.ts
