@@ -38,6 +38,8 @@ import { buildInheritedTransformCitationMetadata, buildPriorGroundedTransformBlo
 import { isDirectViolentThreat } from "../_shared/e2-direct-threat.ts";
 import { buildReturnToAiGenerationGuard } from "../_shared/return-to-ai-control.ts";
 import { buildMissingFactsQuestion, buildWarmHandoffPackage } from "../_shared/warm-handoff.ts";
+import { deriveHandoffDecisionInput, evaluateHandoffDecision } from "../_shared/handoff-decision.ts";
+import { buildConversationClosureReply, classifyConversationClosure } from "../_shared/conversation-closure.ts";
 import { buildRealtimeR3SentimentSignals } from "../_shared/runtime-signal-lifecycle.ts";
 import { buildEmotionReplyStrategyContext, resolvePositiveRecoveryAcknowledgement } from "../_shared/emotion-reply-strategy.ts";
 import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
@@ -1310,6 +1312,27 @@ Deno.serve(async (req) => {
   }
 });
 
+async function handleConversationClosureIfNeeded(
+  supabaseAdmin: SupabaseAdminClient,
+  conversation_id: string,
+  source_message_id: string | null,
+  latestMessage: string,
+): Promise<Response | null> {
+  const classification = classifyConversationClosure(latestMessage);
+  const content = buildConversationClosureReply(classification);
+  if (!content || classification.kind === "none") return null;
+  const { data: conversation } = await supabaseAdmin.from("conversations").select("status, assigned_agent_id").eq("id", conversation_id).maybeSingle();
+  if (!conversation || conversation.status === "resolved" || isHumanControlState(String(conversation.status ?? ""), conversation.assigned_agent_id ?? null)) return null;
+  const { data: prior } = await supabaseAdmin.from("messages").select("role, metadata, content, created_at").eq("conversation_id", conversation_id).eq("is_recalled", false).neq("content", "__THINKING__").order("created_at", { ascending: false }).limit(4);
+  const previousAssistant = (prior ?? []).find((r:any) => r.role === "assistant" && String(r.content ?? "") !== content);
+  const pm = previousAssistant?.metadata && typeof previousAssistant.metadata === "object" ? previousAssistant.metadata as Record<string,unknown> : null;
+  if (!previousAssistant || pm?.handoff_required === true || ["warm_handoff_data_collection","kb_no_match_clarification","system_error_handoff"].includes(String(pm?.response_route ?? ""))) return null;
+  const committed = await commitAiReplyWithControlGate(supabaseAdmin, conversation_id, source_message_id, content, { response_route:"conversation_closure", closure_state:classification.kind === "closure_candidate" ? "awaiting_more_help" : "completed", closure_reason:classification.reason, feedback_eligible_candidate:classification.kind !== "closure_candidate", handoff_required:false });
+  await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+  if (!committed.ok) { if (["human_control","resolved","superseded_source"].includes(committed.result)) return new Response(JSON.stringify({success:true,skipped:committed.result}),{headers:{...corsHeaders,"Content-Type":"application/json"}}); return new Response(JSON.stringify({success:false,error:`conversation_closure_${committed.result}`}),{status:409,headers:{...corsHeaders,"Content-Type":"application/json"}}); }
+  return new Response(JSON.stringify({success:true,response_route:"conversation_closure",closure_state:classification.kind}),{headers:{...corsHeaders,"Content-Type":"application/json"}});
+}
+
 async function legacyGenerateReply(conversation_id: string, source_message_id: string | null): Promise<Response> {
   const supabaseAdmin = createClient(Deno.env.get("SUPABASE_URL") ?? "", getSupabaseAdminKey());
 
@@ -1722,7 +1745,23 @@ async function persistExplicitR1IfRequested(
   latestMessage: string,
 ): Promise<Response | null> {
   const classified = classifyExplicitHandoff(latestMessage);
-  if (classified.rule !== "R1") return null;
+  const { data: handoffHistory, error: handoffHistoryError } = await supabaseAdmin.from("messages").select("id, role, content, metadata, created_at").eq("conversation_id", conversation_id).eq("is_recalled", false).order("created_at", { ascending: true }).order("id", { ascending: true }).limit(40);
+  const pkg = buildWarmHandoffPackage(handoffHistory ?? [], "R1");
+  const collectionContinuation = pkg.collection_already_attempted && classified.rule !== "R1";
+  if (classified.rule !== "R1" && !collectionContinuation) return null;
+  const urgent = isDirectViolentThreat(latestMessage);
+  const hf1Input = deriveHandoffDecisionInput(handoffHistory ?? [], latestMessage, pkg.missing_facts, { explicit_human_request: classified.rule === "R1", threat_flag: urgent, current_topic: pkg.customer_goal });
+  const hf1Decision = evaluateHandoffDecision(hf1Input);
+  if (handoffHistoryError) console.error("[generate-reply] HF1 handoff history unavailable; fail-open to immediate handoff", conversation_id);
+  if (classified.rule === "R1" && !handoffHistoryError && hf1Decision.handoff_mode === "optional_clarification_then_handoff" && !pkg.collection_already_attempted) {
+    const question = buildMissingFactsQuestion(pkg, classified.language);
+    if (question) {
+      const collected = await commitAiReplyWithControlGate(supabaseAdmin, conversation_id, source_message_id, question, { escalation_rule:"R1", escalation_action:"collect_missing_handoff_facts", response_route:"warm_handoff_data_collection", handoff_required:false, hf1_decision:hf1Decision });
+      if (collected.ok) { await cleanupThinking(supabaseAdmin, conversation_id, source_message_id); return new Response(JSON.stringify({success:true,escalation_rule:"R1",response_route:"warm_handoff_data_collection",handoff_required:false,handoff_mode:hf1Decision.handoff_mode,missing_info_policy:hf1Decision.missing_info_policy}),{headers:{...corsHeaders,"Content-Type":"application/json"}}); }
+      if (["human_control","resolved","superseded_source"].includes(collected.result)) return new Response(JSON.stringify({success:true,skipped:collected.result}),{headers:{...corsHeaders,"Content-Type":"application/json"}});
+      return new Response(JSON.stringify({success:false,error:`r1_optional_clarification_${collected.result}`}),{status:409,headers:{...corsHeaders,"Content-Type":"application/json"}});
+    }
+  }
   if (!source_message_id) {
     return new Response(JSON.stringify({ success: false, error: "esc_missing_source_message_id", escalation_rule: "R1", handoff_persisted: false }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
@@ -1787,6 +1826,9 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
   }
   const sourceVisitorMessage = sourceResult.message;
   const _h1LastMsg = sourceVisitorMessage.content;
+
+  const _closureResponse = await handleConversationClosureIfNeeded(supabaseAdmin, conversation_id, source_message_id, _h1LastMsg);
+  if (_closureResponse) return _closureResponse;
 
   const [
     { data: _pr5HistoryRows },

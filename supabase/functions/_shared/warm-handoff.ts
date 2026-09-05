@@ -72,7 +72,7 @@ export function buildMissingFactsQuestion(pkg: WarmHandoffPackage, lang: "zh-TW"
   return `轉交真人客服前，想先補齊${labels.join("、")}；如果你手上沒有，直接告訴我「沒有」也可以，我會把目前資料一併交給客服。`;
 }
 export function shouldCollectMissingFacts(rule: string | null | undefined, explicitNow: boolean, pkg: WarmHandoffPackage): boolean {
-  if (explicitNow) return false;
-  if (rule === "E1" || rule === "E2" || rule === "S0" || rule === "R1") return false;
-  return pkg.missing_facts.length > 0 && !pkg.collection_already_attempted;
+  if (rule === "E1" || rule === "E2" || rule === "S0") return false;
+  if (pkg.collection_already_attempted || pkg.missing_facts.length !== 1) return false;
+  return explicitNow || rule === "R1" || rule === "R2" || !rule;
 }
