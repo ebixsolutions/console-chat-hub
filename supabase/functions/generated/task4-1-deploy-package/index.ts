@@ -63,7 +63,7 @@ import p61 from "./chunk-61.ts";
 import p62 from "./chunk-62.ts";
 import p63 from "./chunk-63.ts";
 import p64 from "./chunk-64.ts";
-const EXPECTED_SHA256 = "e3de436d39139e3833abda4d84ba6c2c61aa4fa533f98a6895df0367d304fc8e";
+const EXPECTED_SHA256 = "0f3bf86ad8a6c0de672d45a53a9313eec3c59825819c32b095d578e2263b375c";
 const encoded = [p0,p1,p2,p3,p4,p5,p6,p7,p8,p9,p10,p11,p12,p13,p14,p15,p16,p17,p18,p19,p20,p21,p22,p23,p24,p25,p26,p27,p28,p29,p30,p31,p32,p33,p34,p35,p36,p37,p38,p39,p40,p41,p42,p43,p44,p45,p46,p47,p48,p49,p50,p51,p52,p53,p54,p55,p56,p57,p58,p59,p60,p61,p62,p63,p64].join("");
 const binary = atob(encoded);
 const bytes = Uint8Array.from(binary, c => c.charCodeAt(0));

@@ -3116,12 +3116,18 @@ function normalizedChunkIds(value) {
 function sameLineage(documentId, chunkIds, candidateDocumentId, candidateChunkIds) {
   return candidateDocumentId === documentId && candidateChunkIds.length === chunkIds.length && candidateChunkIds.every((id) => chunkIds.includes(id));
 }
-function selectBroadSummaryAnchor(latest, newestFirst, anchor) {
+function supportedPointCount(content) {
+  const raw = typeof content === "string" ? content.normalize("NFKC").trim() : "";
+  if (!raw) return 0;
+  const bullets = raw.split(/\r?\n/).filter((line) => /^\s*(?:[-*•]|\d+[.)])\s+\S/.test(line));
+  if (bullets.length > 0) return bullets.length;
+  return raw.split(/[。！？!?]+/).map((part) => part.trim()).filter(Boolean).length;
+}
+function selectBroadSummaryAnchor(latest, newestFirst, anchor, requestedSummaryCount) {
   if (!BROAD_SUMMARY_SCOPE.test(latest)) return anchor;
   const anchorChunks = [...new Set(anchor.chunk_ids.filter(Boolean))];
   if (!anchor.document_id || anchorChunks.length === 0) return anchor;
-  let best = anchor;
-  let bestLength = clean3(anchor.content).length;
+  const minimumPoints = requestedSummaryCount ?? 1;
   for (const row of newestFirst) {
     const role = String(row.role ?? "").toLowerCase();
     if (role !== "assistant" && role !== "ai") continue;
@@ -3133,16 +3139,15 @@ function selectBroadSummaryAnchor(latest, newestFirst, anchor) {
     const ids = normalizedChunkIds(lineage?.evidence_chunk_ids);
     const sourceMessageId = clean3(meta2?.source_message_id, 200);
     if (!sourceMessageId || !sameLineage(anchor.document_id, anchorChunks, selected, ids)) continue;
-    if (content.length <= bestLength) continue;
-    best = {
+    if (supportedPointCount(content) < minimumPoints) continue;
+    return {
       content,
       document_id: selected,
       chunk_ids: ids,
       source_message_id: sourceMessageId
     };
-    bestLength = content.length;
   }
-  return best;
+  return anchor;
 }
 function detectRequestedTransformOperations(latest, primary) {
   const requested = COMPOSITE_TRANSFORM_RULES.filter(([, pattern]) => pattern.test(latest)).map(([operation]) => operation);
@@ -3179,7 +3184,7 @@ function resolvePriorGroundedTransform(latest, newestFirst) {
   const operation = semantic.operation;
   const operations = detectRequestedTransformOperations(latest, operation);
   const requestedSummaryCount = operations.includes("SUMMARIZE") ? detectRequestedSummaryCount(latest) : null;
-  const anchor = operations.includes("SUMMARIZE") ? selectBroadSummaryAnchor(latest, newestFirst, semantic.prior_grounded_answer) : semantic.prior_grounded_answer;
+  const anchor = operations.includes("SUMMARIZE") ? selectBroadSummaryAnchor(latest, newestFirst, semantic.prior_grounded_answer, requestedSummaryCount) : semantic.prior_grounded_answer;
   if (!anchor.source_message_id) return null;
   const sourceChunks = [...new Set(anchor.chunk_ids.filter(Boolean))];
   if (!anchor.document_id || sourceChunks.length === 0) return null;
