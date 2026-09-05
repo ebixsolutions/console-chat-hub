@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - 'supabase/migrations/20260905123000_hf2_structured_handoff_feedback_closure.sql'
+      - 'supabase/migrations/20260905134000_hf2_feedback_delivery_scheduler_auth_closure.sql'
       - 'supabase/functions/submit-feedback-response/index.ts'
       - 'supabase/functions/deliver-feedback-request/index.ts'
       - 'scripts/hf2-source-final-gate.sh'
