@@ -53,6 +53,8 @@ const CHINESE_COUNT: Record<string, number> = {
   十: 10,
 };
 
+const BROAD_SUMMARY_SCOPE = /(?:已確認|已确认)(?:資料|资料)|(?:剛才|刚才|以上|之前|我們|我们).{0,24}(?:內容|内容|資料|资料|討論|讨论)|\b(?:the above|what we discussed|our conversation|confirmed information|confirmed facts)\b/i;
+
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -63,6 +65,62 @@ function clean(value: unknown, max = 4000): string {
   return typeof value === "string"
     ? value.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max)
     : "";
+}
+
+function normalizedChunkIds(value: unknown): string[] {
+  return Array.isArray(value)
+    ? [...new Set(value.filter((x): x is string => typeof x === "string" && x.trim().length > 0).map((x) => x.trim()))]
+    : [];
+}
+
+function sameLineage(
+  documentId: string,
+  chunkIds: string[],
+  candidateDocumentId: string,
+  candidateChunkIds: string[],
+): boolean {
+  return candidateDocumentId === documentId &&
+    candidateChunkIds.length === chunkIds.length &&
+    candidateChunkIds.every((id) => chunkIds.includes(id));
+}
+
+function selectBroadSummaryAnchor(
+  latest: string,
+  newestFirst: SemanticHistoryRow[],
+  anchor: {
+    content: string;
+    document_id: string;
+    chunk_ids: string[];
+    source_message_id: string | null;
+  },
+): typeof anchor {
+  if (!BROAD_SUMMARY_SCOPE.test(latest)) return anchor;
+  const anchorChunks = [...new Set(anchor.chunk_ids.filter(Boolean))];
+  if (!anchor.document_id || anchorChunks.length === 0) return anchor;
+
+  let best = anchor;
+  let bestLength = clean(anchor.content).length;
+  for (const row of newestFirst) {
+    const role = String(row.role ?? "").toLowerCase();
+    if (role !== "assistant" && role !== "ai") continue;
+    const content = clean(row.content);
+    if (!content || content === "__THINKING__") continue;
+    const meta = record(row.metadata);
+    const lineage = record(meta?.citation_lineage);
+    const selected = clean(lineage?.selected_document_id, 200);
+    const ids = normalizedChunkIds(lineage?.evidence_chunk_ids);
+    const sourceMessageId = clean(meta?.source_message_id, 200);
+    if (!sourceMessageId || !sameLineage(anchor.document_id, anchorChunks, selected, ids)) continue;
+    if (content.length <= bestLength) continue;
+    best = {
+      content,
+      document_id: selected,
+      chunk_ids: ids,
+      source_message_id: sourceMessageId,
+    };
+    bestLength = content.length;
+  }
+  return best;
 }
 
 export function detectRequestedTransformOperations(
@@ -114,7 +172,14 @@ export function resolvePriorGroundedTransform(
     !TRANSFORMS.has(semantic.operation)
   ) return null;
 
-  const anchor = semantic.prior_grounded_answer;
+  const operation = semantic.operation as TransformOperation;
+  const operations = detectRequestedTransformOperations(latest, operation);
+  const requestedSummaryCount = operations.includes("SUMMARIZE")
+    ? detectRequestedSummaryCount(latest)
+    : null;
+  const anchor = operations.includes("SUMMARIZE")
+    ? selectBroadSummaryAnchor(latest, newestFirst, semantic.prior_grounded_answer)
+    : semantic.prior_grounded_answer;
   if (!anchor.source_message_id) return null;
 
   const sourceChunks = [...new Set(anchor.chunk_ids.filter(Boolean))];
@@ -128,9 +193,7 @@ export function resolvePriorGroundedTransform(
     const meta = record(row.metadata);
     const lineage = record(meta?.citation_lineage);
     const selected = clean(lineage?.selected_document_id, 200);
-    const lineageIds = Array.isArray(lineage?.evidence_chunk_ids)
-      ? [...new Set(lineage.evidence_chunk_ids.filter((x): x is string => typeof x === "string" && x.trim().length > 0).map((x) => x.trim()))]
-      : [];
+    const lineageIds = normalizedChunkIds(lineage?.evidence_chunk_ids);
     const sourceMessageId = clean(meta?.source_message_id, 200);
     if (
       selected !== anchor.document_id ||
@@ -167,11 +230,6 @@ export function resolvePriorGroundedTransform(
     }
     if (citations.length === 0) return null;
 
-    const operation = semantic.operation as TransformOperation;
-    const operations = detectRequestedTransformOperations(latest, operation);
-    const requestedSummaryCount = operations.includes("SUMMARIZE")
-      ? detectRequestedSummaryCount(latest)
-      : null;
     return {
       operation,
       operations,
