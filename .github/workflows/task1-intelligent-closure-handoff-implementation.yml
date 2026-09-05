@@ -1,0 +1,505 @@
+name: Task 1 Intelligent Closure Handoff Implementation
+on:
+  push:
+    paths:
+      - '.github/workflows/task1-intelligent-closure-handoff-implementation.yml'
+permissions:
+  contents: write
+jobs:
+  implement:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+      - name: Apply Task 1 source implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          warm = r'''export type WarmHandoffKnownFact = { label: string; value: string };
+          export type WarmHandoffIntent =
+            | "informational"
+            | "arrangement_request"
+            | "order_specific_issue"
+            | "product_troubleshooting"
+            | "complaint"
+            | "refund_return"
+            | "delivery_installation"
+            | "account_member_issue"
+            | "policy_exception"
+            | "general_support";
+          export type WarmHandoffPackage = {
+            reason: string;
+            customer_goal: string;
+            intent: WarmHandoffIntent;
+            known_facts: WarmHandoffKnownFact[];
+            unavailable_facts: string[];
+            missing_facts: string[];
+            actions_already_tried: string[];
+            last_customer_request: string;
+            conversation_summary: string;
+            collection_already_attempted: boolean;
+            collection_response_received: boolean;
+            collection_rule: string | null;
+            ready_for_handoff: boolean;
+          };
+          type Row = { id?: string; role?: string; content?: string | null; metadata?: unknown; created_at?: string | null };
+          const REGION = /(香港|台灣|台湾|澳門|澳门|Hong Kong|Taiwan|Macau)/i;
+          const PRODUCT = /(冷氣機?|空調|空调|洗衣機|洗衣机|雪櫃|冰箱|電視|电视|產品|产品|product|air conditioner|washing machine|refrigerator|fridge|television|\btv\b)/i;
+          const PRODUCT_SUPPORT = /(維修|维修|保養|保修|故障|壞|坏|唔凍|不冷|不能運作|无法运行|repair|warranty|broken|not working|fault)/i;
+          const ORDER_SUPPORT = /(訂單|订单|送貨|送货|退款|退貨|退货|換貨|换货|取消|order|delivery|refund|return|exchange|cancel)/i;
+          const REFUND_RETURN = /(退款|退貨|退货|換貨|换货|refund|return|exchange)/i;
+          const DELIVERY_INSTALL = /(送貨|送货|安裝|安装|delivery|installation)/i;
+          const ACCOUNT = /(帳戶|账户|會員|会员|登入|登录|account|member|login)/i;
+          const COMPLAINT = /(投訴|投诉|complain|complaint)/i;
+          const POLICY_EXCEPTION = /(例外|豁免|特殊批准|政策例外|exception|waive|waiver)/i;
+          const ACTION_REQUEST = /(我要|我想要|請幫|请帮|幫我|帮我|安排|申請|申请|處理|处理|跟進|跟进|取消|改地址|未收到|收不到|壞了|坏了|故障|i want|i need|please (?:arrange|process|help)|arrange|process|cancel|change|not received|broken|not working)/i;
+          const INFO_ONLY = /(什麼|什么|是否|係咪|是不是|有沒有|有没有|怎樣|怎样|怎麼|怎么|幾點|几点|幾時|何時|多久|幾耐|重點|解释|解釋|規定|政策|what|whether|how|when|hours|explain|policy|difference)/i;
+          const MODEL_VALUE = /(?:型號|型号|model(?: number)?)[\s:：#-]*([A-Za-z0-9][A-Za-z0-9._\/-]{1,60})/i;
+          const ORDER_VALUE = /(?:訂單(?:編號|號碼|号码)|订单(?:编号|号码)|order(?: number| no\.?| id)|order\s*#)[\s:：#-]*([A-Za-z0-9][A-Za-z0-9._\/-]{2,80})/i;
+          const NO_MODEL = /(?:沒有|没有|冇|不知道|唔知|未知|no|don['’]?t have|do not have).{0,12}(?:型號|型号|model)/i;
+          const NO_ORDER = /(?:沒有|没有|冇|不知道|唔知|未知|no|don['’]?t have|do not have).{0,14}(?:訂單(?:編號|號碼|号码)?|订单(?:编号|号码)?|order(?: number| no\.?| id)?)/i;
+          const HUMAN_ONLY = /^(?:(?:而家|現在|现在|即刻|立即)?\s*)?(?:我要|我想|我需要|請|请|麻煩|麻烦|幫我|帮我)?\s*(?:轉|转|接|找|搵|聯絡|联系)?\s*(?:真人|人工|客服|真人客服|人工客服)(?:人員|人员)?[。.!！?？\s]*$/i;
+
+          function clean(v: unknown, max = 500): string {
+            return typeof v === "string" ? v.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max) : "";
+          }
+          function meta(v: unknown): Record<string, unknown> | null {
+            return v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : null;
+          }
+          function chronological(rows: Row[]): Row[] {
+            return rows.map((row, index) => ({ row, index })).sort((a, b) => {
+              const at = Date.parse(String(a.row.created_at ?? ""));
+              const bt = Date.parse(String(b.row.created_at ?? ""));
+              if (Number.isFinite(at) && Number.isFinite(bt) && at != bt) return at - bt;
+              return a.index - b.index;
+            }).map((x) => x.row);
+          }
+          function classifyIntent(recentText: string): WarmHandoffIntent {
+            if (COMPLAINT.test(recentText)) return "complaint";
+            if (ACCOUNT.test(recentText)) return "account_member_issue";
+            if (POLICY_EXCEPTION.test(recentText)) return "policy_exception";
+            if (REFUND_RETURN.test(recentText) && ACTION_REQUEST.test(recentText)) return "refund_return";
+            if (DELIVERY_INSTALL.test(recentText) && ACTION_REQUEST.test(recentText)) return "delivery_installation";
+            if (PRODUCT_SUPPORT.test(recentText) && ACTION_REQUEST.test(recentText)) return "product_troubleshooting";
+            if (ORDER_SUPPORT.test(recentText) && ACTION_REQUEST.test(recentText)) return "order_specific_issue";
+            if (ACTION_REQUEST.test(recentText)) return "arrangement_request";
+            if (INFO_ONLY.test(recentText)) return "informational";
+            return "general_support";
+          }
+          function requiredFacts(intent: WarmHandoffIntent): string[] {
+            switch (intent) {
+              case "product_troubleshooting": return ["model"];
+              case "refund_return":
+              case "delivery_installation":
+              case "order_specific_issue": return ["order_reference"];
+              default: return [];
+            }
+          }
+
+          export function buildWarmHandoffPackage(rows: Row[], reason = "human_handoff"): WarmHandoffPackage {
+            const usable = chronological(rows).filter((r) => clean(r.content) && clean(r.content) !== "__THINKING__");
+            const visitors = usable.filter((r) => ["visitor", "customer", "user"].includes(String(r.role || "").toLowerCase()));
+            const transcript = visitors.map((r) => clean(r.content)).join(" ");
+            const last = clean(visitors.at(-1)?.content);
+            const goalRow = [...visitors].reverse().find((r) => {
+              const text = clean(r.content);
+              return text && !HUMAN_ONLY.test(text);
+            });
+            const goal = clean(goalRow?.content) || last || "Customer requested human support";
+            const recentIntentText = visitors.slice(-6).map((r) => clean(r.content)).filter((x) => !HUMAN_ONLY.test(x)).join(" ");
+            const intent = classifyIntent(recentIntentText || goal);
+            const known: WarmHandoffKnownFact[] = [];
+            const region = transcript.match(REGION)?.[0]; if (region) known.push({ label: "Region", value: region });
+            const product = transcript.match(PRODUCT)?.[0]; if (product) known.push({ label: "Product", value: product });
+            const model = transcript.match(MODEL_VALUE)?.[1]; if (model) known.push({ label: "Model", value: model });
+            const order = transcript.match(ORDER_VALUE)?.[1]; if (order) known.push({ label: "Order reference", value: order });
+            const unavailable: string[] = [];
+            if (NO_MODEL.test(transcript)) unavailable.push("model");
+            if (NO_ORDER.test(transcript)) unavailable.push("order_reference");
+            const required = requiredFacts(intent);
+            const missing = required.filter((fact) => {
+              if (unavailable.includes(fact)) return false;
+              if (fact === "model") return !model;
+              if (fact === "order_reference") return !order;
+              return true;
+            });
+
+            let lastCollectionIndex = -1;
+            let collectionRule: string | null = null;
+            for (let i = usable.length - 1; i >= 0; i -= 1) {
+              const m = meta(usable[i]?.metadata);
+              if (m?.response_route === "warm_handoff_data_collection") {
+                lastCollectionIndex = i;
+                collectionRule = typeof m.escalation_rule === "string" ? m.escalation_rule : null;
+                break;
+              }
+            }
+            let collectionAttempted = false;
+            let collectionResponseReceived = false;
+            if (lastCollectionIndex >= 0) {
+              const tail = usable.slice(lastCollectionIndex + 1);
+              const assistantAfter = tail.some((r) => String(r.role || "").toLowerCase() === "assistant");
+              const visitorAfter = tail.some((r) => ["visitor", "customer", "user"].includes(String(r.role || "").toLowerCase()));
+              const recent = tail.length <= 2 && !assistantAfter;
+              collectionAttempted = recent;
+              collectionResponseReceived = recent && visitorAfter;
+            }
+            const assistants = usable.filter((r) => String(r.role || "").toLowerCase() === "assistant");
+            const actions = assistants
+              .filter((r) => meta(r.metadata)?.response_route !== "warm_handoff_data_collection")
+              .slice(-3).map((r) => clean(r.content)).filter(Boolean);
+            return {
+              reason,
+              customer_goal: goal,
+              intent,
+              known_facts: known,
+              unavailable_facts: unavailable,
+              missing_facts: missing,
+              actions_already_tried: actions,
+              last_customer_request: last,
+              conversation_summary: visitors.slice(-6).map((r) => clean(r.content)).join(" / ").slice(0, 1500),
+              collection_already_attempted: collectionAttempted,
+              collection_response_received: collectionResponseReceived,
+              collection_rule: collectionRule,
+              ready_for_handoff: missing.length === 0 || collectionResponseReceived,
+            };
+          }
+
+          export function buildMissingFactsQuestion(pkg: WarmHandoffPackage, lang: "zh-TW" | "zh-CN" | "en" = "zh-TW"): string | null {
+            if (pkg.missing_facts.length === 0 || pkg.collection_already_attempted) return null;
+            const fact = pkg.missing_facts[0];
+            const names = {
+              model: { "zh-TW": "產品型號", "zh-CN": "产品型号", en: "product model" },
+              order_reference: { "zh-TW": "訂單編號", "zh-CN": "订单编号", en: "order number" },
+            } as const;
+            const label = (names as any)[fact]?.[lang] || fact;
+            if (lang === "en") return `Before I connect you with a human agent, one detail would help them continue immediately: ${label}. If you don't have it, just say so and I'll still pass along everything we already know.`;
+            if (lang === "zh-CN") return `转交人工客服前，为了让客服可以直接继续处理，还差一个必要资料：${label}。如果你手上没有，直接告诉我「没有」就可以，我仍会把目前已知资料一并交给客服。`;
+            return `轉交真人客服前，為了讓客服可以直接繼續處理，還差一個必要資料：${label}。如果你手上沒有，直接告訴我「沒有」就可以，我仍會把目前已知資料一併交給客服。`;
+          }
+
+          export function shouldCollectMissingFacts(rule: string | null | undefined, explicitNow: boolean, pkg: WarmHandoffPackage): boolean {
+            if (rule === "E1" || rule === "E2" || rule === "S0") return false;
+            if (pkg.collection_already_attempted) return false;
+            if (pkg.missing_facts.length === 0) return false;
+            return explicitNow || rule === "R1" || rule === "R2" || !rule;
+          }
+          '''.replace('\n          ', '\n').lstrip()
+
+          closure = r'''export type ConversationClosureKind = "none" | "closure_candidate" | "no_more_help" | "positive_no_more_help";
+          export type ConversationClosureClassification = {
+            kind: ConversationClosureKind;
+            language: "zh-TW" | "zh-CN" | "en";
+            reason: string;
+          };
+
+          const MISSING_FACT_GUARD = /(沒有|没有|冇|未有|不知道|唔知|no|don['’]?t have|do not have).{0,16}(型號|型号|model|訂單|订单|order|收到|收貨|收货|貨|货|地址|電話|电话|email|電郵|邮箱|付款|payment)/i;
+          const MORE_HELP_NEGATIVE = /^(?:沒有了|没有了|冇喇|冇啦|沒有其他(?:問題)?|没有其他(?:问题)?|暫時沒有|暂时没有|不用了|唔使喇|唔使啦|就這樣|就这样|沒事了|没事了|沒有問題了|没有问题了|no more|nothing else|that['’]?s all|no thanks|all good|i['’]?m good)[。.!！?？,，\s]*(?:謝謝|谢谢|多謝|唔該|thanks|thank you)?[。.!！?？\s]*$/i;
+          const POSITIVE = /(滿意|满意|很好|好好|幫到我|帮到我|解決了|解决了|多謝|謝謝|谢谢|great|good service|helpful|satisfied|resolved)/i;
+          const ACK_ONLY = /^(?:謝謝|谢谢|多謝|唔該|明白|明白了|知道了|收到|好的|好|ok|okay|got it|understood|thanks|thank you)[。.!！?？\s]*$/i;
+
+          function detectClosureLanguage(text: string): "zh-TW" | "zh-CN" | "en" {
+            if (!/[\u4e00-\u9fff]/.test(text)) return "en";
+            return /[转们为这没请]/.test(text) ? "zh-CN" : "zh-TW";
+          }
+
+          export function classifyConversationClosure(text: string): ConversationClosureClassification {
+            const t = String(text ?? "").normalize("NFKC").trim();
+            const language = detectClosureLanguage(t);
+            if (!t || MISSING_FACT_GUARD.test(t)) return { kind: "none", language, reason: !t ? "empty" : "missing_fact_not_closure" };
+            if (MORE_HELP_NEGATIVE.test(t)) {
+              return { kind: POSITIVE.test(t) ? "positive_no_more_help" : "no_more_help", language, reason: "customer_has_no_more_help_requests" };
+            }
+            if (ACK_ONLY.test(t)) return { kind: "closure_candidate", language, reason: "customer_acknowledged_resolution" };
+            return { kind: "none", language, reason: "substantive_or_unresolved_turn" };
+          }
+
+          export function buildConversationClosureReply(classification: ConversationClosureClassification): string | null {
+            const lang = classification.language;
+            if (classification.kind === "closure_candidate") {
+              if (lang === "en") return "You're welcome — I'm glad I could help. Is there anything else I can help you with?";
+              if (lang === "zh-CN") return "不用客气，很高兴能帮到你。还有什么可以帮到你吗？";
+              return "不用客氣，很高興能幫到你。還有什麼可以幫到你嗎？";
+            }
+            if (classification.kind === "no_more_help" || classification.kind === "positive_no_more_help") {
+              if (lang === "en") return "You're very welcome. I'm glad I could help today, and thank you for contacting us.";
+              if (lang === "zh-CN") return "好的，不用客气。很高兴今次能帮到你，也谢谢你联络我们！";
+              return "好的，不用客氣。很高興今次能幫到你，也謝謝你聯絡我們！";
+            }
+            return null;
+          }
+          '''.replace('\n          ', '\n').lstrip()
+
+          test = r'''import { buildMissingFactsQuestion, buildWarmHandoffPackage } from "./warm-handoff.ts";
+          import { buildConversationClosureReply, classifyConversationClosure } from "./conversation-closure.ts";
+
+          function assert(condition: unknown, label: string): asserts condition {
+            if (!condition) throw new Error(`ASSERT_FAIL:${label}`);
+          }
+          function rows(contents: string[]) {
+            return contents.map((content, i) => ({ role: "visitor", content, created_at: `2026-09-05T00:00:${String(i).padStart(2,"0")}Z` }));
+          }
+
+          const info = buildWarmHandoffPackage(rows([
+            "我現在問的是香港的冷氣機。",
+            "回收和送貨／安裝是不是同一件事？",
+            "現在我要真人客服。",
+          ]), "R1");
+          assert(info.intent === "informational", "informational_intent");
+          assert(info.missing_facts.length === 0, "informational_no_required_fields");
+          assert(info.ready_for_handoff === true, "informational_ready");
+
+          const repair = buildWarmHandoffPackage(rows(["香港冷氣壞了，現在我要真人客服。"]), "R1");
+          assert(repair.intent === "product_troubleshooting", "repair_intent");
+          assert(repair.missing_facts[0] === "model", "repair_model_required");
+          const repairQuestion = buildMissingFactsQuestion(repair, "zh-TW") ?? "";
+          assert(repairQuestion.includes("產品型號"), "repair_question_specific");
+          assert(!repairQuestion.includes("訂單編號"), "one_missing_fact_only");
+
+          const noModel = buildWarmHandoffPackage(rows(["香港冷氣壞了，但我沒有型號，現在我要真人客服。"]), "R1");
+          assert(noModel.unavailable_facts.includes("model"), "model_unavailable_recorded");
+          assert(noModel.missing_facts.length === 0, "unavailable_not_reasked");
+          assert(noModel.ready_for_handoff === true, "unavailable_still_handoff_ready");
+
+          const refund = buildWarmHandoffPackage(rows(["我要退貨退款，請轉真人客服。"]), "R1");
+          assert(refund.intent === "refund_return", "refund_intent");
+          assert(refund.missing_facts[0] === "order_reference", "refund_order_required");
+
+          const collected = buildWarmHandoffPackage([
+            { role:"visitor", content:"我要退貨退款，請轉真人客服。", created_at:"2026-09-05T00:00:00Z" },
+            { role:"assistant", content:"請提供訂單編號", metadata:{ response_route:"warm_handoff_data_collection", escalation_rule:"R1" }, created_at:"2026-09-05T00:00:01Z" },
+            { role:"visitor", content:"我沒有訂單編號。", created_at:"2026-09-05T00:00:02Z" },
+          ], "R1");
+          assert(collected.collection_response_received === true, "bounded_collection_response");
+          assert(collected.collection_rule === "R1", "collection_rule_preserved");
+          assert(collected.unavailable_facts.includes("order_reference"), "order_unavailable_recorded");
+          assert(collected.ready_for_handoff === true, "one_attempt_then_handoff");
+
+          assert(classifyConversationClosure("沒有了").kind === "no_more_help", "no_more_help");
+          assert(classifyConversationClosure("沒有型號").kind === "none", "missing_model_not_closure");
+          assert(classifyConversationClosure("謝謝").kind === "closure_candidate", "thanks_candidate");
+          assert(classifyConversationClosure("很滿意，沒有其他問題").kind === "positive_no_more_help", "positive_no_more_help");
+          assert((buildConversationClosureReply(classifyConversationClosure("謝謝")) ?? "").includes("還有什麼"), "anything_else_prompt");
+          console.log("TASK1_UNIT_ASSERTIONS=PASS");
+          '''.replace('\n          ', '\n').lstrip()
+
+          Path('supabase/functions/_shared/warm-handoff.ts').write_text(warm)
+          Path('supabase/functions/_shared/conversation-closure.ts').write_text(closure)
+          Path('supabase/functions/_shared/task1-closure-handoff.test.ts').write_text(test)
+
+          path = Path('supabase/functions/generate-reply/index.ts')
+          s = path.read_text()
+          import_old = 'import { buildMissingFactsQuestion, buildWarmHandoffPackage } from "../_shared/warm-handoff.ts";'
+          import_new = import_old + '\nimport { buildConversationClosureReply, classifyConversationClosure } from "../_shared/conversation-closure.ts";'
+          assert s.count(import_old) == 1, f'import_anchor_count={s.count(import_old)}'
+          s = s.replace(import_old, import_new, 1)
+
+          legacy_pattern = re.compile(r'''  const lastVisitorMsg = sourceVisitorMessage\.content;\n  const handoffLang = detectHandoffLanguage\(lastVisitorMsg\);\n\n  if \(handoffLang\) \{.*?\n  \}\n\n  const legacyLatestHandoffReason''', re.S)
+          legacy_replacement = '''  const lastVisitorMsg = sourceVisitorMessage.content;
+          const legacyClosureResponse = await handleConversationClosureIfNeeded(
+            supabaseAdmin, conversation_id, source_message_id, lastVisitorMsg,
+          );
+          if (legacyClosureResponse) return legacyClosureResponse;
+          const legacyR1Response = await persistExplicitR1IfRequested(
+            supabaseAdmin, conversation_id, source_message_id, lastVisitorMsg,
+          );
+          if (legacyR1Response) return legacyR1Response;
+
+          const legacyLatestHandoffReason'''.replace('\n          ', '\n')
+          s, n = legacy_pattern.subn(legacy_replacement, s, count=1)
+          assert n == 1, f'legacy_handoff_replace_count={n}'
+
+          orchestration_anchor = '''  const _pr5History = deriveConversationHistorySignals(
+            _pr5HistoryRows ?? [],
+            _pr5VisitorTurnCount ?? 0,
+          );'''.replace('\n          ', '\n')
+          orchestration_insert = '''  const _closureResponse = await handleConversationClosureIfNeeded(
+            supabaseAdmin, conversation_id, source_message_id, _h1LastMsg,
+          );
+          if (_closureResponse) return _closureResponse;
+
+          const _pr5History = deriveConversationHistorySignals(
+            _pr5HistoryRows ?? [],
+            _pr5VisitorTurnCount ?? 0,
+          );'''.replace('\n          ', '\n')
+          assert s.count(orchestration_anchor) == 1, f'orchestration_anchor_count={s.count(orchestration_anchor)}'
+          s = s.replace(orchestration_anchor, orchestration_insert, 1)
+
+          helper_pattern = re.compile(r'''async function persistExplicitR1IfRequested\(.*?\n\}\n\nasync function orchestrationGenerateReply''', re.S)
+          helper_replacement = r'''async function handleConversationClosureIfNeeded(
+            supabaseAdmin: SupabaseAdminClient,
+            conversation_id: string,
+            source_message_id: string | null,
+            latestMessage: string,
+          ): Promise<Response | null> {
+            const classification = classifyConversationClosure(latestMessage);
+            const content = buildConversationClosureReply(classification);
+            if (!content || classification.kind === "none") return null;
+            const committed = await commitAiReplyWithControlGate(
+              supabaseAdmin,
+              conversation_id,
+              source_message_id,
+              content,
+              {
+                response_route: "conversation_closure",
+                closure_state: classification.kind === "closure_candidate" ? "awaiting_more_help" : "completed",
+                closure_reason: classification.reason,
+                feedback_eligible_candidate: classification.kind === "no_more_help" || classification.kind === "positive_no_more_help",
+                handoff_required: false,
+              },
+            );
+            await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+            if (!committed.ok) {
+              if (committed.result === "human_control" || committed.result === "resolved" || committed.result === "superseded_source") {
+                return new Response(JSON.stringify({ success: true, skipped: committed.result, response_route: "conversation_closure" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+              }
+              return new Response(JSON.stringify({ success: false, error: `conversation_closure_commit_${committed.result}` }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+            }
+            return new Response(JSON.stringify({ success: true, response_route: "conversation_closure", closure_kind: classification.kind, handoff_required: false }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+          }
+
+          async function persistExplicitR1IfRequested(
+            supabaseAdmin: SupabaseAdminClient,
+            conversation_id: string,
+            source_message_id: string | null,
+            latestMessage: string,
+          ): Promise<Response | null> {
+            const classified = classifyExplicitHandoff(latestMessage);
+            const { data: handoffHistory, error: handoffHistoryError } = await supabaseAdmin
+              .from("messages")
+              .select("id, role, content, metadata, created_at")
+              .eq("conversation_id", conversation_id)
+              .neq("content", "__THINKING__")
+              .eq("is_recalled", false)
+              .order("created_at", { ascending: true })
+              .order("id", { ascending: true })
+              .limit(40);
+
+            const pkg = buildWarmHandoffPackage(handoffHistory ?? [], "R1");
+            const isCollectionContinuation =
+              pkg.collection_response_received && pkg.collection_rule === "R1";
+            if (classified.rule !== "R1" && !isCollectionContinuation) return null;
+
+            if (handoffHistoryError) {
+              console.error("[generate-reply] R1 readiness history unavailable; handing off without blocking", conversation_id);
+            }
+
+            const urgent = isDirectViolentThreat(latestMessage);
+            if (classified.rule === "R1" && !urgent && !handoffHistoryError && !pkg.collection_already_attempted) {
+              const question = buildMissingFactsQuestion(pkg, classified.language);
+              if (question) {
+                const collected = await commitAiReplyWithControlGate(
+                  supabaseAdmin,
+                  conversation_id,
+                  source_message_id,
+                  question,
+                  {
+                    escalation_rule: "R1",
+                    escalation_action: "collect_missing_handoff_facts",
+                    response_route: "warm_handoff_data_collection",
+                    handoff_required: false,
+                    handoff_readiness: {
+                      intent: pkg.intent,
+                      ready_for_handoff: false,
+                      missing_facts: pkg.missing_facts.slice(0, 1),
+                      unavailable_facts: pkg.unavailable_facts,
+                    },
+                  },
+                );
+                await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+                if (!collected.ok) {
+                  if (collected.result === "human_control" || collected.result === "resolved" || collected.result === "superseded_source") {
+                    return new Response(JSON.stringify({ success: true, skipped: collected.result, escalation_rule: "R1", handoff_required: false }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+                  }
+                  return new Response(JSON.stringify({ success: false, error: `r1_handoff_collection_${collected.result}`, escalation_rule: "R1" }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+                }
+                return new Response(JSON.stringify({ success: true, escalation_rule: "R1", response_route: "warm_handoff_data_collection", handoff_required: false, missing_facts_requested: pkg.missing_facts.slice(0, 1) }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+              }
+            }
+
+            if (!source_message_id) {
+              return new Response(JSON.stringify({ success: false, error: "esc_missing_source_message_id", escalation_rule: "R1", handoff_persisted: false }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+            }
+            const language = classified.rule === "R1" ? classified.language : detectVisitorLanguage(latestMessage);
+            const { data, error } = await supabaseAdmin.rpc("explicit_handoff_tx", {
+              p_conversation_id: conversation_id,
+              p_safe_reply_content: SAFE_HANDOFF_WORDING[language],
+              p_source_message_id: source_message_id,
+            });
+            if (error) {
+              return new Response(JSON.stringify({ success: false, error: "esc_rpc_transport_error", escalation_rule: "R1", handoff_persisted: false, handoff_uncertain: true }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+            }
+
+            const result: string = data?.result ?? "unknown";
+            switch (result) {
+              case "success":
+                await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+                return new Response(JSON.stringify({ success:true, escalation_rule:"R1", handoff_persisted:true, handoff_readiness:{ intent:pkg.intent, ready_for_handoff:true, missing_facts:pkg.missing_facts, unavailable_facts:pkg.unavailable_facts, collection_attempted:pkg.collection_already_attempted } }), { headers:{...corsHeaders,"Content-Type":"application/json"} });
+              case "already_handled":
+                await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+                return new Response(JSON.stringify({ success:true, escalation_rule:"R1", handoff_persisted:true, idempotent:true }), { headers:{...corsHeaders,"Content-Type":"application/json"} });
+              case "already_resolved":
+                return new Response(JSON.stringify({ success:true, skipped:"resolved", escalation_rule:"R1" }), { headers:{...corsHeaders,"Content-Type":"application/json"} });
+              case "already_under_human_control":
+                return new Response(JSON.stringify({ success:true, skipped:"human_handling", escalation_rule:"R1" }), { headers:{...corsHeaders,"Content-Type":"application/json"} });
+              case "not_found":
+                return new Response(JSON.stringify({ success:false, error:"esc_conversation_not_found", escalation_rule:"R1" }), { status:404, headers:{...corsHeaders,"Content-Type":"application/json"} });
+              case "invalid_source_message":
+                return new Response(JSON.stringify({ success:false, error:"esc_invalid_source_message", escalation_rule:"R1" }), { status:400, headers:{...corsHeaders,"Content-Type":"application/json"} });
+              default:
+                return new Response(JSON.stringify({ success:false, error:"esc_rpc_unknown_result", escalation_rule:"R1", rpc_result:result }), { status:500, headers:{...corsHeaders,"Content-Type":"application/json"} });
+            }
+          }
+
+          async function orchestrationGenerateReply'''.replace('\n          ', '\n')
+          s, n = helper_pattern.subn(helper_replacement, s, count=1)
+          assert n == 1, f'r1_helper_replace_count={n}'
+          path.write_text(s)
+
+          assert s.count('response_route: "conversation_closure"') >= 2
+          assert 'collection_response_received && pkg.collection_rule === "R1"' in s
+          assert s.count('legacy_handoff_missing_source_message_id') == 0
+          print('TASK1_SOURCE_PATCH_ASSERTIONS=PASS')
+          PY
+      - name: Task 1 deterministic unit assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --experimental-strip-types supabase/functions/_shared/task1-closure-handoff.test.ts
+      - name: Production build validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+      - name: Source contract assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(node -p "require('./package.json').name")" = "tanstack_start_ts"
+          node -e "const p=require('./package.json'); if(p.private!==true) process.exit(1)"
+          grep -q 'conversation_closure' supabase/functions/generate-reply/index.ts
+          grep -q 'warm_handoff_data_collection' supabase/functions/generate-reply/index.ts
+          grep -q 'collection_response_received' supabase/functions/_shared/warm-handoff.ts
+          grep -q 'missing_fact_not_closure' supabase/functions/_shared/conversation-closure.ts
+          git diff --check
+          echo TASK1_FINAL_GATE=PASS
+      - name: Commit implementation and remove temporary workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/task1-intelligent-closure-handoff-implementation.yml
+          git add supabase/functions/generate-reply/index.ts \
+                  supabase/functions/_shared/warm-handoff.ts \
+                  supabase/functions/_shared/conversation-closure.ts \
+                  supabase/functions/_shared/task1-closure-handoff.test.ts
+          git commit -m "Task 1: intelligent closure and handoff readiness"
+          git push origin HEAD:main
