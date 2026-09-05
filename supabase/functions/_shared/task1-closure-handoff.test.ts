@@ -3,7 +3,7 @@ import { classifyConversationClosure, buildConversationClosureReply } from "./co
 function a(v:unknown,n:string):asserts v { if(!v) throw new Error(`ASSERT_FAIL:${n}`); }
 const rows=(xs:string[])=>xs.map(content=>({role:"visitor",content}));
 let i=deriveHandoffDecisionInput(rows(["可以幫我轉真人客服嗎？"]),"可以幫我轉真人客服嗎？",["order_reference"],{explicit_human_request:true});
-let d=evaluateHandoffDecision(i); a(d.handoff_mode==="optional_clarification_then_handoff","calm_first_optional"); a(d.missing_info_policy==="ask_once_optional","optional_once");
+let d=evaluateHandoffDecision(i); a(d.handoff_mode==="immediate","calm_first_immediate"); a(d.missing_info_policy==="ask_if_customer_willing","calm_first_nonblocking_missing_info"); a(d.reason_codes.includes("handoff_not_blocked_for_missing_info"),"explicit_override_reason");
 i=deriveHandoffDecisionInput(rows(["我要真人客服","我說了我要真人客服"]),"我說了我要真人客服",["order_reference"],{explicit_human_request:true}); d=evaluateHandoffDecision(i); a(d.handoff_mode==="immediate","repeat_immediate");
 i=deriveHandoffDecisionInput(rows(["不要AI，我只要真人客服"]),"不要AI，我只要真人客服",["order_reference"],{explicit_human_request:true}); d=evaluateHandoffDecision(i); a(d.handoff_mode==="immediate"&&d.missing_info_policy==="do_not_ask","no_ai_immediate");
 i=deriveHandoffDecisionInput(rows(["我很生氣，轉真人客服"]),"我很生氣，轉真人客服",["model"],{explicit_human_request:true}); d=evaluateHandoffDecision(i); a(d.handoff_mode==="immediate","anger_immediate");
@@ -17,8 +17,8 @@ a(classifyConversationClosure("沒有收到貨").kind==="none","missing_delivery
 a(classifyConversationClosure("謝謝").kind==="closure_candidate","thanks_candidate");
 a((buildConversationClosureReply(classifyConversationClosure("謝謝"))??"").includes("還有什麼"),"anything_else_prompt");
 const infoThenRequest=[{role:"visitor",content:"真人客服幾點有人？"},{role:"assistant",content:"我目前沒有已確認的真人客服服務時間資料。"},{role:"visitor",content:"可以幫我轉真人客服嗎？"}];
-i=deriveHandoffDecisionInput(infoThenRequest,"可以幫我轉真人客服嗎？",["order_reference"],{explicit_human_request:true}); d=evaluateHandoffDecision(i); a(i.human_request_count===1,"info_question_not_request_count"); a(d.handoff_mode==="optional_clarification_then_handoff","info_then_first_request_optional");
-i=deriveHandoffDecisionInput(rows(["可以幫我轉真人客服嗎？"]),"可以幫我轉真人客服嗎？",["order_reference"],{explicit_human_request:true,unresolved_turns:3}); d=evaluateHandoffDecision(i); a(d.handoff_mode==="immediate","unresolved_immediate");
-i=deriveHandoffDecisionInput(rows(["可以幫我轉真人客服嗎？"]),"可以幫我轉真人客服嗎？",["order_reference"],{explicit_human_request:true,anger_level:"high",sentiment_trend:[0.2,-0.4]}); d=evaluateHandoffDecision(i); a(d.handoff_mode==="immediate","authoritative_anger_immediate");
-i=deriveHandoffDecisionInput(rows(["可以幫我轉真人客服嗎？"]),"可以幫我轉真人客服嗎？",["order_reference"],{explicit_human_request:true,vip_tier:"gold",predicted_csat:2,churn_risk:0.9}); d=evaluateHandoffDecision(i); a(d.handoff_priority==="required","explicit_with_customer_signals_required");
+i=deriveHandoffDecisionInput(infoThenRequest,"可以幫我轉真人客服嗎？",["order_reference"],{explicit_human_request:true}); d=evaluateHandoffDecision(i); a(i.human_request_count===1,"info_question_not_request_count"); a(d.handoff_mode==="immediate","info_then_first_request_immediate"); a(d.missing_info_policy==="ask_if_customer_willing","info_then_request_nonblocking");
+i=deriveHandoffDecisionInput(rows(["可以幫我轉真人客服嗎？"]),"可以幫我轉真人客服嗎？",["order_reference"],{explicit_human_request:true,unresolved_turns:3}); d=evaluateHandoffDecision(i); a(d.handoff_mode==="immediate"&&d.missing_info_policy==="do_not_ask","unresolved_immediate");
+i=deriveHandoffDecisionInput(rows(["可以幫我轉真人客服嗎？"]),"可以幫我轉真人客服嗎？",["order_reference"],{explicit_human_request:true,anger_level:"high",sentiment_trend:[0.2,-0.4]}); d=evaluateHandoffDecision(i); a(d.handoff_mode==="immediate"&&d.missing_info_policy==="do_not_ask","authoritative_anger_immediate");
+i=deriveHandoffDecisionInput(rows(["可以幫我轉真人客服嗎？"]),"可以幫我轉真人客服嗎？",["order_reference"],{explicit_human_request:true,vip_tier:"gold",predicted_csat:2,churn_risk:0.9}); d=evaluateHandoffDecision(i); a(d.handoff_priority==="required"&&d.handoff_mode==="immediate","explicit_with_customer_signals_required");
 console.log("HF1_DIRECTOR_UNIT_ASSERTIONS=PASS");
