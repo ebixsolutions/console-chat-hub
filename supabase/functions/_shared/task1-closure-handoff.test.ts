@@ -1,6 +1,7 @@
 import { deriveHandoffDecisionInput, evaluateHandoffDecision } from "./handoff-decision.ts";
 import { classifyConversationClosure, buildConversationClosureReply } from "./conversation-closure.ts";
 import { buildWarmHandoffPackage, buildMissingFactsQuestion } from "./warm-handoff.ts";
+import { classifyHandoffIntent } from "./conversation-intelligence.ts";
 function a(v:unknown,n:string):asserts v { if(!v) throw new Error(`ASSERT_FAIL:${n}`); }
 const rows=(xs:string[])=>xs.map(content=>({role:"visitor",content}));
 let i=deriveHandoffDecisionInput(rows(["可以幫我轉真人客服嗎？"]),"可以幫我轉真人客服嗎？",["order_reference"],{explicit_human_request:true});
@@ -11,6 +12,13 @@ i=deriveHandoffDecisionInput(rows(["我很生氣，轉真人客服"]),"我很生
 i=deriveHandoffDecisionInput(rows(["VIP會員"]),"VIP會員",[],{vip_tier:"gold"}); d=evaluateHandoffDecision(i); a(d.handoff_mode==="normal_ai_continue","vip_alone_not_handoff");
 i=deriveHandoffDecisionInput(rows(["真人客服幾點有人？"]),"真人客服幾點有人？",[],{explicit_human_request:false}); d=evaluateHandoffDecision(i); a(d.handoff_mode==="normal_ai_continue","support_hours_not_r1");
 i=deriveHandoffDecisionInput(rows(["現在我要真人客服"]),"現在我要真人客服",["model"],{explicit_human_request:true,threat_flag:true}); d=evaluateHandoffDecision(i); a(d.handoff_priority==="emergency"&&d.handoff_mode==="immediate","threat_emergency");
+a(classifyHandoffIntent("不要AI，我現在要真人客服。").kind==="explicit_now","zh_no_ai_but_human_now");
+a(classifyHandoffIntent("不用機器人，請幫我轉人工客服。").kind==="explicit_now","zh_no_bot_but_human_now");
+a(classifyHandoffIntent("不要轉真人客服。").kind==="negated","zh_true_handoff_negation");
+a(classifyHandoffIntent("不用真人客服。").kind==="negated","zh_true_human_negation");
+a(classifyHandoffIntent("I don't want AI, I want a human now.").kind==="explicit_now","en_no_ai_but_human_now");
+a(classifyHandoffIntent("Don't connect me to a human agent.").kind==="negated","en_true_handoff_negation");
+a(classifyHandoffIntent("真人客服幾點有人？").kind==="question_about_human_support","support_info_question_preserved");
 a(classifyConversationClosure("沒有了").kind==="no_more_help","no_more_help");
 a(classifyConversationClosure("很滿意，沒有其他問題").kind==="positive_no_more_help","positive_no_more_help");
 a(classifyConversationClosure("沒有型號").kind==="none","missing_model_not_closure");
