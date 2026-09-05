@@ -16,6 +16,9 @@ a(classifyConversationClosure("沒有型號").kind==="none","missing_model_not_c
 a(classifyConversationClosure("沒有收到貨").kind==="none","missing_delivery_not_closure");
 a(classifyConversationClosure("謝謝").kind==="closure_candidate","thanks_candidate");
 a((buildConversationClosureReply(classifyConversationClosure("謝謝"))??"").includes("還有什麼"),"anything_else_prompt");
+a(classifyConversationClosure("that's all, connect me to a human agent").kind==="none","handoff_precedes_closure");
+a(classifyConversationClosure("that's all, I will kill you").kind==="none","e2_precedes_closure");
+a(classifyConversationClosure("不用了，產品剛剛起火").kind==="none","risk_precedes_closure");
 const infoThenRequest=[{role:"visitor",content:"真人客服幾點有人？"},{role:"assistant",content:"我目前沒有已確認的真人客服服務時間資料。"},{role:"visitor",content:"可以幫我轉真人客服嗎？"}];
 i=deriveHandoffDecisionInput(infoThenRequest,"可以幫我轉真人客服嗎？",["order_reference"],{explicit_human_request:true}); d=evaluateHandoffDecision(i); a(i.human_request_count===1,"info_question_not_request_count"); a(d.handoff_mode==="immediate","info_then_first_request_immediate"); a(d.missing_info_policy==="ask_if_customer_willing","info_then_request_nonblocking");
 i=deriveHandoffDecisionInput(rows(["可以幫我轉真人客服嗎？"]),"可以幫我轉真人客服嗎？",["order_reference"],{explicit_human_request:true,unresolved_turns:3}); d=evaluateHandoffDecision(i); a(d.handoff_mode==="immediate"&&d.missing_info_policy==="do_not_ask","unresolved_immediate");
