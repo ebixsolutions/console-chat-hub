@@ -26,8 +26,8 @@ export interface TurnClassification {
 
 const HUMAN_ZH = /(真人|人工|客服)/;
 const HUMAN_EN = /\b(human|live agent|human agent|real person|support agent|customer service)\b/i;
-const NEG_ZH = /(唔好|不要|唔使|不用|毋須|毋需|別|别|未需要|未要|而家未|現在未|唔係|不是|並非|并非|未叫|冇叫|没有叫|沒有叫|禁止|不准|唔准)/;
-const NEG_EN = /\b(don't|do not|didn't|did not|not asking|not ask|no need|don't need|do not need|not yet|without|never)\b/i;
+const NEG_HUMAN_ZH = /(?:唔好|不要|唔使|不用|毋須|毋需|別|别|未需要|未要|而家未|現在未|现在未|唔係要|不是要|並非要|并非要|未叫|冇叫|没有叫|沒有叫|禁止|不准|唔准).{0,8}(?:轉|转|接|搵|找|聯絡|联系|要|需要)?\s*(?:真人|人工|客服(?:人員|人员)?)|(?:真人|人工|客服(?:人員|人员)?).{0,8}(?:唔好|不要|唔使|不用|毋須|毋需|未需要|未要|禁止|不准|唔准)/;
+const NEG_HUMAN_EN = /\b(?:don't|do not|didn't|did not|not asking|not ask|no need|don't need|do not need|not yet|never)\b.{0,28}\b(?:connect|transfer|put|speak|want|need)?\b.{0,12}\b(?:human|live agent|human agent|real person|support agent|customer service)\b|\b(?:human|live agent|human agent|real person|support agent|customer service)\b.{0,20}\b(?:not needed|not required|no need|not yet)\b/i;
 const CONDITIONAL_ZH = /(如果|若果|如果.*先|先至|才|除非|答唔到|答不到|查唔到|查不到)/;
 const CONDITIONAL_EN = /\b(if|only if|unless|in case)\b/i;
 const FUTURE_ZH = /(之後|之后|遲啲|迟点|遲些|稍後|稍后|日後|以后|以後|到時|到时|再考慮|再考虑|可能)/;
@@ -38,7 +38,7 @@ const QUESTION_ZH = /(係咪|是不是|是否|幾點|几点|幾時|何時|多久
 const QUESTION_EN = /\b(when|what|who|where|how|hours|available|open|close|can i|could i)\b.*\b(human|agent|customer service|support)\b|\b(human|agent|customer service|support)\b.*\b(when|what|who|where|how|hours|available|open|close)\b/i;
 const HYPOTHETICAL_ZH = /(假如|假設|假设|例如|譬如|可唔可以轉|可不可以转|如果我要|如果想)/;
 const HYPOTHETICAL_EN = /\b(hypothetically|suppose|what if|could i|would i be able to)\b/i;
-const EXPLICIT_ZH = /(?:而家|現在|现在|即刻|立即).{0,8}(轉|转|接|搵|找|聯絡|联系).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:請|请|麻煩|麻烦|幫我|帮我).{0,10}(轉|转|接|搵|找|聯絡|联系).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:我要|我想|我需要|想要|需要).{0,8}(真人|人工|客服(?:人員|人员)?)/;
+const EXPLICIT_ZH = /(?:而家|現在|现在|即刻|立即).{0,8}(轉|转|接|搵|找|聯絡|联系).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:請|请|麻煩|麻烦|幫我|帮我).{0,10}(轉|转|接|搵|找|聯絡|联系).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:我要|我想|我需要|想要|需要).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:我)?(?:而家|現在|现在|即刻|立即).{0,4}(?:要|想要|需要).{0,8}(真人|人工|客服(?:人員|人员)?)/;
 const EXPLICIT_EN = /\b(please\s+)?(connect|transfer|put|let)\s+me\s+(to|through to)\s+(a\s+)?(human|live agent|human agent|real person|customer service)|\b(i want|i need|let me speak to|i want to speak to|i need to speak to|connect me to)\s+(a\s+)?(human|live agent|human agent|real person|customer service)(\s+now)?\b/i;
 
 function detectLanguage(text: string): "zh-TW" | "zh-CN" | "en" {
@@ -52,7 +52,11 @@ export function classifyHandoffIntent(text: string): HandoffIntentClassification
   const hasHuman = HUMAN_ZH.test(t) || HUMAN_EN.test(t);
   if (!hasHuman) return { kind: "none", explicit_request: false, pure_negation: false, language, reason: "no_human_support_reference" };
 
-  if (NEG_ZH.test(t) || NEG_EN.test(t)) {
+  // Negation must target the human handoff itself. Phrases such as
+  // "不要AI，我現在要真人客服" / "I don't want AI, I want a human"
+  // are affirmative handoff requests and must never be swallowed by a generic
+  // negation token elsewhere in the sentence.
+  if (NEG_HUMAN_ZH.test(t) || NEG_HUMAN_EN.test(t)) {
     return { kind: "negated", explicit_request: false, pure_negation: true, language, reason: "handoff_prohibited_or_negated" };
   }
   if (CONDITIONAL_ZH.test(t) || CONDITIONAL_EN.test(t)) {
