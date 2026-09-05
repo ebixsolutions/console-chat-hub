@@ -18,20 +18,111 @@ jobs:
       PROD_ORIGIN: https://console-chat-hub.lovable.app
       CHANNEL_ID: b0000000-0000-0000-0000-000000000001
       PROJECT_REF: nrfxhqabwblzxoushgnm
-      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      FINAL_SMOKE_AGENT_EMAIL: ${{ secrets.FINAL_SMOKE_AGENT_EMAIL }}
+      FINAL_SMOKE_AGENT_PASSWORD: ${{ secrets.FINAL_SMOKE_AGENT_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: main
+
+      - name: Preflight authenticated agent credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a; source .env; set +a
+
+          PUBLIC_KEY="${SUPABASE_PUBLISHABLE_KEY:-${VITE_SUPABASE_PUBLISHABLE_KEY:-}}"
+          SUPABASE_URL="${SUPABASE_URL:-${VITE_SUPABASE_URL:-}}"
+
+          test "${PROJECT_REF}" = "nrfxhqabwblzxoushgnm"
+          test "${SUPABASE_URL}" = "https://nrfxhqabwblzxoushgnm.supabase.co"
+          test -n "${PUBLIC_KEY:-}" || { echo "STOP_FINAL_SMOKE_PUBLIC_KEY_MISSING"; exit 41; }
+          test -n "${FINAL_SMOKE_AGENT_EMAIL:-}" || { echo "STOP_FINAL_SMOKE_AGENT_EMAIL_SECRET_MISSING"; exit 42; }
+          test -n "${FINAL_SMOKE_AGENT_PASSWORD:-}" || { echo "STOP_FINAL_SMOKE_AGENT_PASSWORD_SECRET_MISSING"; exit 43; }
+
+          python - <<'PY' "$SUPABASE_URL" "$PUBLIC_KEY" "$FINAL_SMOKE_AGENT_EMAIL" "$FINAL_SMOKE_AGENT_PASSWORD" > /tmp/preflight-agent.env
+          import json,sys,urllib.request,urllib.error,urllib.parse,shlex
+          supa_url,public_key,email,password=sys.argv[1:]
+
+          def call(url, headers=None, method='GET', body=None):
+              data=None if body is None else json.dumps(body).encode()
+              req=urllib.request.Request(
+                  url,
+                  data=data,
+                  method=method,
+                  headers={'User-Agent':'github-actions-auth-smoke/2.0', **(headers or {})},
+              )
+              try:
+                  with urllib.request.urlopen(req,timeout=30) as r:
+                      raw=r.read().decode()
+                      return r.status, json.loads(raw) if raw else {}
+              except urllib.error.HTTPError as e:
+                  raw=e.read().decode()
+                  try: payload=json.loads(raw)
+                  except Exception: payload={'error':'http_error'}
+                  return e.code,payload
+
+          auth_headers={'apikey':public_key,'Content-Type':'application/json'}
+          st,session=call(
+              f'{supa_url}/auth/v1/token?grant_type=password',
+              auth_headers,
+              'POST',
+              {'email':email,'password':password},
+          )
+          assert st==200 and session.get('access_token'), ('PASSWORD_GRANT_FAILED',st)
+          jwt=session['access_token']
+
+          st,user=call(
+              f'{supa_url}/auth/v1/user',
+              {'apikey':public_key,'Authorization':f'Bearer {jwt}'},
+          )
+          assert st==200 and user.get('id'), ('AUTH_GET_USER_FAILED',st)
+          uid=user['id']
+
+          user_headers={
+              'apikey':public_key,
+              'Authorization':f'Bearer {jwt}',
+              'Content-Type':'application/json',
+          }
+          mq=urllib.parse.urlencode({
+              'user_id':f'eq.{uid}',
+              'is_active':'eq.true',
+              'select':'company_id,role,is_active',
+          })
+          st,memberships=call(f'{supa_url}/rest/v1/company_membership?{mq}',user_headers)
+          assert st==200 and memberships, ('ACTIVE_MEMBERSHIP_UNAVAILABLE',st)
+          companies={str(x.get('company_id') or '') for x in memberships if x.get('company_id')}
+          assert len(companies)==1, ('AGENT_NOT_SINGLE_TENANT',len(companies))
+          elevated=[x for x in memberships if str(x.get('role') or '') in ('admin','supervisor')]
+          assert elevated, 'AGENT_RBAC_NOT_ELEVATED'
+
+          aq=urllib.parse.urlencode({
+              'user_id':f'eq.{uid}',
+              'status':'eq.active',
+              'select':'id,user_id,status',
+          })
+          st,profiles=call(f'{supa_url}/rest/v1/agent_profile?{aq}',user_headers)
+          assert st==200 and len(profiles)==1, ('ACTIVE_AGENT_PROFILE_UNAVAILABLE',st,len(profiles) if isinstance(profiles,list) else -1)
+
+          print('AGENT_JWT='+shlex.quote(jwt))
+          print('PUBLIC_KEY='+shlex.quote(public_key))
+          print('AGENT_PROFILE_ID='+shlex.quote(str(profiles[0]['id'])))
+          print('AGENT_USER_ID='+shlex.quote(uid))
+          print('AGENT_COMPANY_ID='+shlex.quote(next(iter(companies))))
+          PY
+          chmod 600 /tmp/preflight-agent.env
+          echo AUTHENTICATED_AGENT_PREFLIGHT=PASS
+          echo MANAGEMENT_API_DEPENDENCY=REMOVED
 
       - name: Run authenticated stateful T01-T24 final gate
         shell: bash
         run: |
           set -euo pipefail
           set -a; source .env; set +a
+          source /tmp/preflight-agent.env
+
           BASE="${VITE_SUPABASE_FUNCTIONS_URL}"
           SUPABASE_URL="${VITE_SUPABASE_URL}"
-          test -n "${SUPABASE_ACCESS_TOKEN:-}"
 
           CREATE=$(curl -fsS -X POST \
             -H "Origin: ${PROD_ORIGIN}" \
@@ -162,99 +253,6 @@ jobs:
           [ "$r1" -eq 1 ] || { echo FAIL_R1_HANDOFF; exit 1; }
           echo T22_R1_HANDOFF=PASS
 
-          umask 077
-          curl -fsS --retry 3 --retry-all-errors \
-            -A 'curl/8 github-actions-auth-smoke' \
-            -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
-            -H 'Accept: application/json' \
-            "https://api.supabase.com/v1/projects/${PROJECT_REF}/api-keys?reveal=true" \
-            -o /tmp/project-api-keys.json
-          python - <<'PY' /tmp/project-api-keys.json "$SUPABASE_URL" "$CONVERSATION_ID" > /tmp/agent.env
-          import json,sys,urllib.request,urllib.parse,urllib.error,shlex
-          keys_path,supa_url,conversation_id=sys.argv[1:]
-          keys=json.load(open(keys_path))
-          assert isinstance(keys,list) and keys, 'Management API returned no project keys'
-
-          def call(url, headers=None, method='GET', body=None):
-              data=None if body is None else json.dumps(body).encode()
-              h={'User-Agent':'github-actions-auth-smoke/1.0', **(headers or {})}
-              req=urllib.request.Request(url,data=data,method=method,headers=h)
-              try:
-                  with urllib.request.urlopen(req,timeout=30) as r:
-                      raw=r.read().decode()
-                      return r.status, json.loads(raw) if raw else {}
-              except urllib.error.HTTPError as e:
-                  raw=e.read().decode()
-                  try: payload=json.loads(raw)
-                  except Exception: payload={'raw':raw[:300]}
-                  return e.code,payload
-
-          def key_value(row):
-              return row.get('api_key') or row.get('key') or row.get('value')
-
-          publishable=[key_value(r) for r in keys if str(r.get('type') or '').lower()=='publishable' and key_value(r)]
-          secret=[key_value(r) for r in keys if str(r.get('type') or '').lower()=='secret' and key_value(r)]
-          assert publishable, 'new publishable API key unavailable; legacy anon key is intentionally forbidden'
-          assert secret, 'new secret API key unavailable; legacy service_role key is intentionally forbidden'
-          public_key=publishable[0]
-          server_key=secret[0]
-
-          server_headers={'apikey':server_key,'Authorization':f'Bearer {server_key}','Content-Type':'application/json'}
-          conv_q=urllib.parse.urlencode({'id':f'eq.{conversation_id}','select':'company_id'})
-          st,conv=call(f'{supa_url}/rest/v1/conversations?{conv_q}',server_headers)
-          assert st==200 and len(conv)==1, (st,conv)
-          company_id=conv[0]['company_id']
-
-          mem_q=urllib.parse.urlencode({'company_id':f'eq.{company_id}','is_active':'eq.true','role':'in.(admin,supervisor)','select':'user_id,role'})
-          st,members=call(f'{supa_url}/rest/v1/company_membership?{mem_q}',server_headers)
-          assert st==200 and members, (st,members)
-
-          selected=None
-          for member in members:
-              uid=member['user_id']
-              all_q=urllib.parse.urlencode({'user_id':f'eq.{uid}','is_active':'eq.true','select':'company_id,role'})
-              st,allm=call(f'{supa_url}/rest/v1/company_membership?{all_q}',server_headers)
-              if st!=200 or len({x['company_id'] for x in allm})!=1 or allm[0]['company_id']!=company_id:
-                  continue
-              ap_q=urllib.parse.urlencode({'user_id':f'eq.{uid}','status':'eq.active','select':'id,user_id,email,status'})
-              st,aps=call(f'{supa_url}/rest/v1/agent_profile?{ap_q}',server_headers)
-              if st==200 and len(aps)==1 and aps[0].get('email'):
-                  selected=aps[0]; break
-          assert selected, 'no single-tenant active elevated agent available'
-
-          st,link=call(f'{supa_url}/auth/v1/admin/generate_link',server_headers,'POST',{'type':'magiclink','email':selected['email']})
-          assert st in (200,201), (st,link)
-          props=link.get('properties') if isinstance(link,dict) else None
-          props=props if isinstance(props,dict) else {}
-          token_hash=props.get('hashed_token') or props.get('token_hash') or link.get('hashed_token') or link.get('token_hash')
-          if not token_hash:
-              action=props.get('action_link') or link.get('action_link') or ''
-              if action:
-                  token_hash=urllib.parse.parse_qs(urllib.parse.urlparse(action).query).get('token',[''])[0]
-          assert token_hash, 'generate_link did not return a one-time token hash'
-
-          auth_headers={'apikey':public_key,'Content-Type':'application/json'}
-          session=None
-          errors=[]
-          for typ in ('magiclink','email'):
-              st,payload=call(f'{supa_url}/auth/v1/verify',auth_headers,'POST',{'type':typ,'token_hash':token_hash})
-              if st==200 and payload.get('access_token'):
-                  session=payload; break
-              errors.append((typ,st,payload))
-          assert session and session.get('access_token'), errors
-          jwt=session['access_token']
-
-          st,user=call(f'{supa_url}/auth/v1/user',{'apikey':public_key,'Authorization':f'Bearer {jwt}'})
-          assert st==200 and user.get('id')==selected['user_id'], (st,user)
-
-          print('AGENT_JWT='+shlex.quote(jwt))
-          print('PUBLIC_KEY='+shlex.quote(public_key))
-          print('AGENT_PROFILE_ID='+shlex.quote(selected['id']))
-          print('AGENT_USER_ID='+shlex.quote(selected['user_id']))
-          PY
-          rm -f /tmp/project-api-keys.json
-          chmod 600 /tmp/agent.env
-          source /tmp/agent.env
           echo AUTHENTICATED_AGENT_SESSION=PASS
 
           TAKEOVER_BODY=$(python - <<'PY' "$CONVERSATION_ID"
@@ -272,6 +270,22 @@ jobs:
           import json,sys
           d=json.loads(sys.argv[1]); assert d.get('success') is True,d
           print('AUTHENTICATED_TAKEOVER=PASS')
+          PY
+
+          python - <<'PY' "$SUPABASE_URL" "$PUBLIC_KEY" "$AGENT_JWT" "$CONVERSATION_ID" "$AGENT_PROFILE_ID" "$AGENT_COMPANY_ID"
+          import json,sys,urllib.request,urllib.error,urllib.parse
+          supa_url,public_key,jwt,cid,agent_profile_id,expected_company=sys.argv[1:]
+          headers={'apikey':public_key,'Authorization':f'Bearer {jwt}'}
+          q=urllib.parse.urlencode({'id':f'eq.{cid}','select':'company_id,assigned_agent_id,status'})
+          req=urllib.request.Request(f'{supa_url}/rest/v1/conversations?{q}',headers=headers)
+          with urllib.request.urlopen(req,timeout=30) as r:
+              rows=json.loads(r.read().decode())
+          assert len(rows)==1, rows
+          row=rows[0]
+          assert str(row.get('company_id'))==expected_company,(row,expected_company)
+          assert str(row.get('assigned_agent_id'))==agent_profile_id,(row,agent_profile_id)
+          print('SAME_COMPANY_SCOPE=PASS')
+          print('RBAC_OWNERSHIP=PASS')
           PY
 
           before=$(poll_json | assistant_count)
@@ -326,6 +340,7 @@ jobs:
             fi
           done
           [ "$resumed" -eq 1 ] || { echo FAIL_AI_DID_NOT_RESUME; exit 1; }
+          echo T24_AI_RESUME=PASS
 
           FINAL=$(poll_json)
           final_status=$(printf '%s' "$FINAL" | status_of)
