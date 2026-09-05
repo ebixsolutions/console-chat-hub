@@ -1,0 +1,285 @@
+name: HF-1 Production Final Gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/hf1-production-final-gate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-and-final-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROD_ORIGIN: https://console-chat-hub.lovable.app
+      CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+      EXPECTED_COMPANY_ID: 3d6e17b5-ec79-4f75-aa7f-eaa824ff8493
+      ROLLBACK_COMMIT: 0652b2a2fc21586ab18c5acd3cc3e190f01931f2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.6
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Authoritative HF-1 source gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SUPABASE_ACCESS_TOKEN:-}"
+          test "$PROJECT_REF" = "nrfxhqabwblzxoushgnm"
+          test -f scripts/hf1-source-final-gate.sh
+          bash scripts/hf1-source-final-gate.sh
+          grep -q 'deriveHandoffDecisionInput' supabase/functions/generate-reply/index.ts
+          grep -q 'classifyConversationClosure' supabase/functions/generate-reply/index.ts
+          grep -q 'handoff_not_blocked_for_missing_info' supabase/functions/_shared/handoff-decision.ts
+          grep -q '轉接仍會繼續' supabase/functions/_shared/warm-handoff.ts
+          grep -q 'missing_fact_not_closure' supabase/functions/_shared/conversation-closure.ts
+          echo HF1_PREDEPLOY_SOURCE_GATE=PASS
+
+      - name: Deploy exact main, run production gate, rollback automatically on failure
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEPLOYED=0
+          ROLLBACK_DIR=/tmp/hf1-rollback
+
+          rollback() {
+            echo 'HF1_AUTOMATIC_ROLLBACK=START'
+            cd "$ROLLBACK_DIR"
+            npx --yes supabase@2.116.0 functions deploy generate-reply --project-ref "$PROJECT_REF"
+            echo 'HF1_AUTOMATIC_ROLLBACK=PASS'
+          }
+          finish() {
+            rc=$?
+            if [ "$rc" -ne 0 ] && [ "$DEPLOYED" -eq 1 ]; then
+              rollback || echo 'HF1_AUTOMATIC_ROLLBACK=FAIL'
+            fi
+            exit "$rc"
+          }
+          trap finish EXIT
+
+          git worktree add --detach "$ROLLBACK_DIR" "$ROLLBACK_COMMIT"
+          test -f "$ROLLBACK_DIR/supabase/functions/generate-reply/index.ts"
+          ! grep -q 'handoff-decision.ts' "$ROLLBACK_DIR/supabase/functions/generate-reply/index.ts"
+          echo HF1_ROLLBACK_SOURCE=PASS
+
+          npx --yes supabase@2.116.0 functions deploy generate-reply --project-ref "$PROJECT_REF"
+          DEPLOYED=1
+          echo HF1_PRODUCTION_DEPLOY=PASS
+
+          set -a
+          source .env
+          set +a
+          test -n "${VITE_SUPABASE_FUNCTIONS_URL:-}"
+          test -n "${VITE_SUPABASE_URL:-}"
+
+          curl -fsS --retry 3 --retry-all-errors \
+            -A 'curl/8 hf1-production-final-gate' \
+            -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+            "https://api.supabase.com/v1/projects/$PROJECT_REF/api-keys?reveal=true" \
+            -o /tmp/hf1-keys.json
+          python3 - <<'PY' /tmp/hf1-keys.json >/tmp/hf1-key.env
+          import json,sys,shlex
+          rows=json.load(open(sys.argv[1]))
+          def value(row): return row.get('api_key') or row.get('key') or row.get('value')
+          keys=[value(r) for r in rows if str(r.get('type') or '').lower()=='secret' and value(r)]
+          assert keys, 'no server secret key available for production assertions'
+          print('HF1_SK='+shlex.quote(keys[0]))
+          PY
+          source /tmp/hf1-key.env
+          rm -f /tmp/hf1-keys.json /tmp/hf1-key.env
+          export HF1_SK
+
+          cat >/tmp/hf1_prod_gate.py <<'PY'
+          import json, os, time, uuid, urllib.parse, urllib.request, urllib.error
+
+          BASE=os.environ['VITE_SUPABASE_FUNCTIONS_URL'].rstrip('/')
+          SU=os.environ['VITE_SUPABASE_URL'].rstrip('/')
+          ORIGIN=os.environ['PROD_ORIGIN']
+          CHANNEL=os.environ['CHANNEL_ID']
+          EXPECTED_COMPANY=os.environ['EXPECTED_COMPANY_ID']
+          SK=os.environ['HF1_SK']
+          created=[]
+
+          def request(method,url,payload=None,headers=None,timeout=30):
+              h={'User-Agent':'hf1-production-final-gate/1.0'}
+              if headers: h.update(headers)
+              data=None
+              if payload is not None:
+                  data=json.dumps(payload,ensure_ascii=False).encode()
+                  h.setdefault('Content-Type','application/json')
+              req=urllib.request.Request(url,data=data,headers=h,method=method)
+              try:
+                  with urllib.request.urlopen(req,timeout=timeout) as r:
+                      raw=r.read().decode()
+                      return json.loads(raw) if raw else {}
+              except urllib.error.HTTPError as e:
+                  raw=e.read().decode(errors='replace')
+                  raise AssertionError(f'HTTP {e.code} {url}: {raw[:1000]}')
+
+          def post_fn(name,payload,headers=None):
+              h={'Origin':ORIGIN}
+              if headers: h.update(headers)
+              return request('POST',f'{BASE}/{name}',payload,h)
+
+          def rest(path):
+              return request('GET',f'{SU}/rest/v1/{path}',None,{'apikey':SK,'Authorization':f'Bearer {SK}'})
+
+          def create(tag):
+              d=post_fn('create-visitor-session',{'channel_id':CHANNEL,'visitor_metadata':{'hf1_final_gate':tag,'exclude_training':True}})
+              assert d.get('success') is True,d
+              x=d['data']; cid=x['conversation_id']; tok=x['session_token']
+              created.append(cid)
+              return cid,tok
+
+          def send(cid,tok,content,key=None):
+              key=key or str(uuid.uuid4())
+              d=post_fn('receive-widget-message',{'conversation_id':cid,'session_token':tok,'content':content},{'idempotency-key':key})
+              assert d.get('success') is True,d
+              return key,d
+
+          def poll(cid,tok,condition,seconds=70):
+              last=None
+              end=time.time()+seconds
+              while time.time()<end:
+                  last=post_fn('widget-poll-messages',{'conversation_id':cid,'session_token':tok})
+                  assert last.get('success') is True,last
+                  data=last.get('data') or {}
+                  if condition(data): return data
+                  time.sleep(2)
+              raise AssertionError(f'poll timeout cid={cid} last={last}')
+
+          def assistants(data):
+              return [m for m in data.get('messages',[]) if m.get('role')=='assistant' and m.get('content')!='__THINKING__']
+
+          def latest_assistant(data):
+              a=assistants(data)
+              assert a,f'no assistant messages: {data}'
+              return a[-1]
+
+          def handoffs(cid):
+              q=urllib.parse.quote(cid,safe='-')
+              return rest(f'handoff_event?conversation_id=eq.{q}&select=escalation_rule,branch_tag,handoff_reason,source_message_id,safe_reply_content,created_at&order=created_at.desc')
+
+          def messages(cid):
+              q=urllib.parse.quote(cid,safe='-')
+              return rest(f'messages?conversation_id=eq.{q}&select=id,role,content,metadata,created_at&order=created_at.asc')
+
+          # A — informational human-support question must stay AI-owned.
+          cid,tok=create('human_support_info')
+          send(cid,tok,'真人客服幾點有人？')
+          data=poll(cid,tok,lambda d: len(assistants(d))>=1 or d.get('conversation_status')=='pending')
+          assert data.get('conversation_status')!='pending',data
+          m=latest_assistant(data); meta=m.get('metadata') or {}
+          assert meta.get('response_route')=='human_support_information',(m,data)
+          assert not handoffs(cid),handoffs(cid)
+          print('HF1_INFO_NOT_R1=PASS')
+
+          # B — first calm R1 + one high-value missing fact: handoff now, never blocked by AI collection.
+          cid,tok=create('first_calm_r1_missing_order')
+          send(cid,tok,'我想處理退款，請幫我轉真人客服。')
+          data=poll(cid,tok,lambda d: d.get('conversation_status')=='pending')
+          hs=handoffs(cid); assert hs and hs[0].get('escalation_rule')=='R1',hs
+          ms=messages(cid)
+          assert not any((m.get('metadata') or {}).get('response_route')=='warm_handoff_data_collection' for m in ms),ms
+          assert sum(1 for m in ms if m.get('role')=='assistant')==1,ms
+          print('HF1_FIRST_CALM_R1_NONBLOCKING=PASS')
+
+          # C — strong/no-AI R1 is immediate and never asks more data.
+          cid,tok=create('strong_r1')
+          send(cid,tok,'不要AI，我現在要真人客服。')
+          data=poll(cid,tok,lambda d: d.get('conversation_status')=='pending')
+          hs=handoffs(cid); assert hs and hs[0].get('escalation_rule')=='R1',hs
+          ms=messages(cid)
+          assert not any((m.get('metadata') or {}).get('response_route')=='warm_handoff_data_collection' for m in ms),ms
+          print('HF1_STRONG_R1_IMMEDIATE=PASS')
+
+          # D — anger alone must not become R1. First ordinary gap may clarify, but R1 is forbidden.
+          cid,tok=create('anger_only')
+          send(cid,tok,'你好，我有點生氣，但我只是想先自己處理。')
+          data=poll(cid,tok,lambda d: len(assistants(d))>=1 or d.get('conversation_status')=='pending')
+          hs=handoffs(cid)
+          assert not any(h.get('escalation_rule')=='R1' for h in hs),hs
+          print('HF1_ANGER_ONLY_NOT_R1=PASS')
+
+          # E — neutral end-of-conversation signal after a real AI turn.
+          cid,tok=create('neutral_closure')
+          send(cid,tok,'你好')
+          first=poll(cid,tok,lambda d: len(assistants(d))>=1)
+          before=len(assistants(first))
+          send(cid,tok,'沒有了')
+          data=poll(cid,tok,lambda d: len(assistants(d))>before)
+          m=latest_assistant(data); meta=m.get('metadata') or {}
+          assert meta.get('response_route')=='conversation_closure',(m,data)
+          assert meta.get('closure_state')=='completed',(m,data)
+          content=str(m.get('content') or '').lower()
+          assert '滿意' not in content and '满意' not in content and 'satisfied' not in content,content
+          print('HF1_NO_MORE_HELP_NEUTRAL=PASS')
+
+          # F — missing order number during an active issue is not a closure signal.
+          cid,tok=create('missing_order_not_closure')
+          send(cid,tok,'你好')
+          first=poll(cid,tok,lambda d: len(assistants(d))>=1)
+          before=len(assistants(first))
+          send(cid,tok,'沒有訂單號')
+          data=poll(cid,tok,lambda d: len(assistants(d))>before or d.get('conversation_status')=='pending')
+          ms=messages(cid)
+          latest=[m for m in ms if m.get('role')=='assistant'][-1]
+          assert (latest.get('metadata') or {}).get('response_route')!='conversation_closure',latest
+          print('HF1_MISSING_ORDER_NOT_CLOSURE=PASS')
+
+          # G — E2 threat outranks closure wording.
+          cid,tok=create('threat_precedence')
+          send(cid,tok,'沒有了，我要殺了你。')
+          data=poll(cid,tok,lambda d: d.get('conversation_status')=='pending')
+          hs=handoffs(cid); assert hs and hs[0].get('escalation_rule')=='E2',hs
+          ms=messages(cid)
+          assert not any((m.get('metadata') or {}).get('response_route')=='conversation_closure' for m in ms),ms
+          print('HF1_E2_PRECEDES_CLOSURE=PASS')
+
+          # H — endpoint/idempotency + exactly-once visitor persistence.
+          cid,tok=create('idempotency')
+          key=str(uuid.uuid4())
+          send(cid,tok,'真人客服幾點有人？',key)
+          send(cid,tok,'真人客服幾點有人？',key)
+          poll(cid,tok,lambda d: len(assistants(d))>=1)
+          ms=messages(cid)
+          exact=sum(1 for m in ms if m.get('role')=='visitor' and m.get('content')=='真人客服幾點有人？')
+          assert exact==1,ms
+          print('HF1_EXACTLY_ONCE=PASS')
+
+          # I — every smoke conversation must remain bound to the canonical channel company.
+          joined=','.join(created)
+          q=urllib.parse.quote('('+','.join(created)+')',safe='(),-')
+          rows=rest(f'conversations?id=in.{q}&select=id,company_id,channel_config_id,status')
+          assert len(rows)==len(created),(len(rows),len(created),rows)
+          byid={r['id']:r for r in rows}
+          for cid in created:
+              r=byid[cid]
+              assert r.get('company_id')==EXPECTED_COMPANY,r
+              assert r.get('channel_config_id')==CHANNEL,r
+          print('HF1_TENANT_BINDING=PASS')
+          print('HF1_FRESH_CONVERSATIONS='+','.join(created))
+          print('HF1_PRODUCTION_RUNTIME_FINAL_GATE=PASS')
+          PY
+
+          python3 /tmp/hf1_prod_gate.py
+          echo HF1_FINAL_GATE_EXIT=0
+          DEPLOYED=0
+          trap - EXIT
+          echo HF1_PRODUCTION_FINAL_STATUS=READY
