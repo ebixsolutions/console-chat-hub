@@ -67,3 +67,5 @@ jobs:
           supabase functions list --project-ref "$PROJECT_REF" | tee /tmp/functions.txt
           grep -q 'generate-reply' /tmp/functions.txt
           echo T19_GENERATE_REPLY_DEPLOY=PASS
+
+# authorized rerun: topic-preserving T12/T19 source at current main
