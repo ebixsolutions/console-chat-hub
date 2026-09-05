@@ -68,8 +68,9 @@ export function buildMissingFactsQuestion(pkg: WarmHandoffPackage, lang: "zh-TW"
     order_reference: { "zh-TW": "訂單編號", "zh-CN": "订单编号", en: "order number" },
   } as const;
   const labels = pkg.missing_facts.map((x) => (names as any)[x]?.[lang] || x);
-  if (lang === "en") return `Before I connect you with a human agent, could you provide ${labels.join(" and ")}? If you don’t have it, just say so and I’ll still pass along everything we have.`;
-  return `轉交真人客服前，想先補齊${labels.join("、")}；如果你手上沒有，直接告訴我「沒有」也可以，我會把目前資料一併交給客服。`;
+  if (lang === "en") return `I’m connecting you with a human agent now. If it’s convenient, please share ${labels.join(" and ")}; if you don’t have it, that’s fine — the handoff will still proceed.`;
+  if (lang === "zh-CN") return `可以，我现在帮你转人工客服。如果方便，请提供${labels.join("、")}；没有也可以，转接仍会继续。`;
+  return `可以，我現在幫你轉真人客服。如果方便，請提供${labels.join("、")}；沒有也可以，轉接仍會繼續。`;
 }
 export function shouldCollectMissingFacts(rule: string | null | undefined, explicitNow: boolean, pkg: WarmHandoffPackage): boolean {
   if (rule === "E1" || rule === "E2" || rule === "S0") return false;
