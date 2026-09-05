@@ -1,0 +1,30 @@
+name: HF-3 Source Final Gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/20260905143000_hf3_quality_learning_workload_closure.sql'
+      - 'supabase/functions/hf3-training-outbox-worker/index.ts'
+      - 'supabase/functions/hf3-training-result-receiver/index.ts'
+      - 'scripts/hf3-source-final-gate.sh'
+      - '.github/workflows/hf3-source-final-gate.yml'
+  workflow_dispatch:
+
+jobs:
+  hf3-source-final-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: HF-3 source final gate
+        run: bash scripts/hf3-source-final-gate.sh
