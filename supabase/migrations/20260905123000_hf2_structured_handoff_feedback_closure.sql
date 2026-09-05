@@ -1,10 +1,8 @@
 -- HF-2 Structured Warm Handoff + Feedback Automation closure
--- Source-only until explicitly authorized for production migration/deploy.
-
--- Idempotent resolution -> feedback scheduling key.
-CREATE UNIQUE INDEX IF NOT EXISTS uq_feedback_request_conversation_config
-  ON public.feedback_request (conversation_id, config_version_id)
-  WHERE config_version_id IS NOT NULL;
+-- Production-safe with historical duplicate preservation.
+-- Exactly-once scheduling is enforced inside the conversation row-locked
+-- resolution transaction; historical feedback rows are never deleted/relinked.
+DROP INDEX IF EXISTS public.uq_feedback_request_conversation_config;
 
 -- Align persisted rating constraints with configured rating types.
 ALTER TABLE public.feedback_request DROP CONSTRAINT IF EXISTS feedback_request_rating_check;
@@ -124,6 +122,9 @@ BEGIN
   );
 
   IF p_target_state='resolved' THEN
+    -- The conversation row is already locked FOR UPDATE above. Competing resolve
+    -- calls for this conversation therefore serialize, making this NOT EXISTS
+    -- check + INSERT atomic without rewriting historical duplicate feedback rows.
     INSERT INTO public.feedback_request(
       conversation_id,visitor_session_id,request_type,status,scheduled_at,channel,
       rating_type,config_version_id,delivery_status,created_at,updated_at
@@ -146,10 +147,14 @@ BEGIN
       cfg.id,
       'pending',v_now,v_now
     FROM public.feedback_automation_config cfg
-    WHERE cfg.is_active IS TRUE AND cfg.trigger_event='conversation_resolved'
-    ON CONFLICT (conversation_id, config_version_id)
-      WHERE config_version_id IS NOT NULL
-    DO NOTHING;
+    WHERE cfg.is_active IS TRUE
+      AND cfg.trigger_event='conversation_resolved'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM public.feedback_request existing
+        WHERE existing.conversation_id=p_conversation_id
+          AND existing.config_version_id=cfg.id
+      );
     GET DIAGNOSTICS v_scheduled = ROW_COUNT;
   END IF;
 
