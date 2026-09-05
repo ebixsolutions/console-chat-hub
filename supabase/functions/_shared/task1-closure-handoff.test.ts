@@ -16,4 +16,9 @@ a(classifyConversationClosure("沒有型號").kind==="none","missing_model_not_c
 a(classifyConversationClosure("沒有收到貨").kind==="none","missing_delivery_not_closure");
 a(classifyConversationClosure("謝謝").kind==="closure_candidate","thanks_candidate");
 a((buildConversationClosureReply(classifyConversationClosure("謝謝"))??"").includes("還有什麼"),"anything_else_prompt");
+const infoThenRequest=[{role:"visitor",content:"真人客服幾點有人？"},{role:"assistant",content:"我目前沒有已確認的真人客服服務時間資料。"},{role:"visitor",content:"可以幫我轉真人客服嗎？"}];
+i=deriveHandoffDecisionInput(infoThenRequest,"可以幫我轉真人客服嗎？",["order_reference"],{explicit_human_request:true}); d=evaluateHandoffDecision(i); a(i.human_request_count===1,"info_question_not_request_count"); a(d.handoff_mode==="optional_clarification_then_handoff","info_then_first_request_optional");
+i=deriveHandoffDecisionInput(rows(["可以幫我轉真人客服嗎？"]),"可以幫我轉真人客服嗎？",["order_reference"],{explicit_human_request:true,unresolved_turns:3}); d=evaluateHandoffDecision(i); a(d.handoff_mode==="immediate","unresolved_immediate");
+i=deriveHandoffDecisionInput(rows(["可以幫我轉真人客服嗎？"]),"可以幫我轉真人客服嗎？",["order_reference"],{explicit_human_request:true,anger_level:"high",sentiment_trend:[0.2,-0.4]}); d=evaluateHandoffDecision(i); a(d.handoff_mode==="immediate","authoritative_anger_immediate");
+i=deriveHandoffDecisionInput(rows(["可以幫我轉真人客服嗎？"]),"可以幫我轉真人客服嗎？",["order_reference"],{explicit_human_request:true,vip_tier:"gold",predicted_csat:2,churn_risk:0.9}); d=evaluateHandoffDecision(i); a(d.handoff_priority==="required","explicit_with_customer_signals_required");
 console.log("HF1_DIRECTOR_UNIT_ASSERTIONS=PASS");

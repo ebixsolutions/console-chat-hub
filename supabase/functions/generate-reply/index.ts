@@ -1738,11 +1738,28 @@ async function handleS0Handoff(
   }
 }
 
+type HF1RuntimeSignals = {
+  anger_level?: "high" | "medium" | "low" | null;
+  sentiment_trend?: number[] | null;
+  unresolved_turns?: number;
+  same_intent_repeat?: boolean;
+  prior_clarification_count?: number;
+  vip_tier?: string | null;
+  high_value_customer?: boolean | null;
+  predicted_csat?: number | null;
+  churn_risk?: number | null;
+  policy_risk?: "high" | "standard" | null;
+  threat_flag?: boolean;
+  rag_state?: string | null;
+  current_intent?: string | null;
+};
+
 async function persistExplicitR1IfRequested(
   supabaseAdmin: SupabaseAdminClient,
   conversation_id: string,
   source_message_id: string | null,
   latestMessage: string,
+  runtimeSignals: HF1RuntimeSignals = {},
 ): Promise<Response | null> {
   const classified = classifyExplicitHandoff(latestMessage);
   const { data: handoffHistory, error: handoffHistoryError } = await supabaseAdmin.from("messages").select("id, role, content, metadata, created_at").eq("conversation_id", conversation_id).eq("is_recalled", false).order("created_at", { ascending: true }).order("id", { ascending: true }).limit(40);
@@ -1750,7 +1767,23 @@ async function persistExplicitR1IfRequested(
   const collectionContinuation = pkg.collection_already_attempted && classified.rule !== "R1";
   if (classified.rule !== "R1" && !collectionContinuation) return null;
   const urgent = isDirectViolentThreat(latestMessage);
-  const hf1Input = deriveHandoffDecisionInput(handoffHistory ?? [], latestMessage, pkg.missing_facts, { explicit_human_request: classified.rule === "R1", threat_flag: urgent, current_topic: pkg.customer_goal });
+  const hf1Input = deriveHandoffDecisionInput(handoffHistory ?? [], latestMessage, pkg.missing_facts, {
+    explicit_human_request: classified.rule === "R1",
+    threat_flag: runtimeSignals.threat_flag ?? urgent,
+    anger_level: runtimeSignals.anger_level ?? null,
+    sentiment_trend: runtimeSignals.sentiment_trend ?? null,
+    unresolved_turns: runtimeSignals.unresolved_turns ?? 0,
+    same_intent_repeat: runtimeSignals.same_intent_repeat ?? false,
+    prior_clarification_count: runtimeSignals.prior_clarification_count,
+    vip_tier: runtimeSignals.vip_tier ?? null,
+    high_value_customer: runtimeSignals.high_value_customer ?? null,
+    predicted_csat: runtimeSignals.predicted_csat ?? null,
+    churn_risk: runtimeSignals.churn_risk ?? null,
+    policy_risk: runtimeSignals.policy_risk ?? null,
+    rag_state: runtimeSignals.rag_state ?? null,
+    current_intent: runtimeSignals.current_intent ?? null,
+    current_topic: pkg.customer_goal,
+  });
   const hf1Decision = evaluateHandoffDecision(hf1Input);
   if (handoffHistoryError) console.error("[generate-reply] HF1 handoff history unavailable; fail-open to immediate handoff", conversation_id);
   if (classified.rule === "R1" && !handoffHistoryError && hf1Decision.handoff_mode === "optional_clarification_then_handoff" && !pkg.collection_already_attempted) {
@@ -2055,9 +2088,36 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     flags.ENABLE_KB &&
     !_pr5GreetingOrTrivial;
 
+  let _hf1CustomerContext: {
+    masked_summary?: string; tier?: string; predicted_csat?: number; churn_risk?: number; escalation_score?: number; p1_provider_version?: string;
+  } | null = null;
+  let _hf1OpaqueCustomerRef: string | null = null;
+  const _hf1ExplicitClassification = classifyExplicitHandoff(_h1LastMsg);
+  if (!_deferR1ForE1 && flags.ENABLE_C360 && _hf1ExplicitClassification.rule === "R1") {
+    const c360 = await callCustomer360Adapter(conversation_id);
+    if (c360.success && c360.customer_context) {
+      _hf1CustomerContext = c360.customer_context;
+      _hf1OpaqueCustomerRef = c360.customer_ref ?? null;
+    }
+  }
+
   if (!_deferR1ForE1) {
     const r1Response = await persistExplicitR1IfRequested(
-      supabaseAdmin, conversation_id, source_message_id, _h1LastMsg,
+      supabaseAdmin, conversation_id, source_message_id, _h1LastMsg, {
+        anger_level: _pr5R3Sentiment?.anger_flag === true ? "high" : null,
+        sentiment_trend: _pr5R3Sentiment?.sentiment_trend ?? null,
+        unresolved_turns: _pr5History.consecutive_no_answer,
+        same_intent_repeat: _pr5History.exact_same_intent_repeated === true,
+        prior_clarification_count: _pr5History.clarification_attempts,
+        vip_tier: _hf1CustomerContext?.tier ?? null,
+        high_value_customer: null,
+        predicted_csat: _hf1CustomerContext?.predicted_csat ?? null,
+        churn_risk: _hf1CustomerContext?.churn_risk ?? null,
+        policy_risk: (_pr5ComplianceSignal?.value === true || _pr5LocalRisk?.level === "high") ? "high" : "standard",
+        threat_flag: _pr5ThreatSignal?.value === true,
+        rag_state: null,
+        current_intent: _canonicalTurn.operation,
+      },
     );
     if (r1Response) return r1Response;
   }
@@ -2192,9 +2252,9 @@ async function orchestrationGenerateReply(conversation_id: string, flags: FlagSe
     churn_risk?: number;
     escalation_score?: number;
     p1_provider_version?: string;
-  } | null = null;
-  let opaqueCustomerRef: string | null = null;
-  if (flags.ENABLE_C360) {
+  } | null = _hf1CustomerContext;
+  let opaqueCustomerRef: string | null = _hf1OpaqueCustomerRef;
+  if (flags.ENABLE_C360 && customerContext === null) {
     const c360Result = await callCustomer360Adapter(conversation_id);
     if (c360Result.success && c360Result.customer_context) {
       customerContext = c360Result.customer_context;

@@ -33,6 +33,7 @@ export type HandoffDecision = {
 };
 type Row = { role?: string; content?: string | null; metadata?: unknown };
 const HUMAN_REQUEST = /(真人客服|人工客服|真人|人工|human agent|live agent|real person|speak to (?:a )?human|talk to (?:a )?human)/i;
+const HUMAN_INFO_QUESTION = /(真人客服|人工客服|human agent|live agent).{0,16}(幾點|几点|時間|时间|服務時間|服务时间|hours|when|available)|(?:幾點|几点|hours|when).{0,16}(真人客服|人工客服|human agent|live agent)/i;
 const STRONG_REQUEST = /(立即|即刻|而家|現在|现在).{0,10}(?:真人|人工)|(?:不要|唔要|不想要|別再|别再).{0,10}(?:AI|機器人|机器人)|(?:只要|一定要|必須|必须).{0,10}(?:真人|人工)|(?:connect|transfer).{0,8}(?:now|immediately)|no more ai|don't want ai|do not want ai/i;
 const ANGER = /(嬲|生氣|生气|憤怒|愤怒|火大|離譜|离谱|垃圾|廢話|废话|煩|烦|投訴|投诉|angry|furious|ridiculous|useless|frustrat|annoyed)/i;
 const REPETITION_FRUSTRATION = /(又問|再問|問過|问过|講過|说过|重複|重复|already told|asked already|again\?|stop asking|same question)/i;
@@ -44,7 +45,7 @@ export function deriveHandoffDecisionInput(
   rows: Row[], latestMessage: string, requiredMissing: string[], opts: Partial<HandoffDecisionInput> = {},
 ): HandoffDecisionInput {
   const visitors = rows.filter((r) => ["visitor","customer","user"].includes(String(r.role ?? "").toLowerCase()));
-  const humanCount = visitors.filter((r) => HUMAN_REQUEST.test(clean(r.content))).length;
+  const humanCount = visitors.filter((r) => { const text = clean(r.content); return HUMAN_REQUEST.test(text) && !HUMAN_INFO_QUESTION.test(text); }).length;
   const transcript = visitors.map((r) => clean(r.content)).join(" ");
   const priorClarifications = rows.filter((r) => {
     const m = obj(r.metadata); return !!m && (CLARIFICATION_ROUTES.has(String(m.response_route ?? "")) || m.escalation_action === "clarification");
@@ -87,7 +88,7 @@ export function evaluateHandoffDecision(input: HandoffDecisionInput): HandoffDec
     return { handoff_mode:"immediate", handoff_priority:"emergency", missing_info_policy:"do_not_ask", reason_codes:reasons };
   }
   if (input.explicit_human_request) {
-    const immediate = input.request_strength === "strong" || input.human_request_count >= 2 || input.anger_level === "high" || input.frustration_due_to_repetition || input.unresolved_turns >= 2 || input.prior_clarification_count > 0 || input.customer_refused_more_questions;
+    const immediate = input.request_strength === "strong" || input.human_request_count >= 2 || input.anger_level === "high" || input.frustration_due_to_repetition || input.unresolved_turns >= 2 || input.prior_clarification_count > 0 || (input.same_intent_repeat && input.prior_clarification_count > 0) || input.customer_refused_more_questions;
     if (immediate) {
       if (input.request_strength === "strong") reasons.push("strong_explicit_human_request");
       if (input.human_request_count >= 2) reasons.push("repeated_human_request");
