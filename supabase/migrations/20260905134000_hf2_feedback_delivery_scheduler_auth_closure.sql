@@ -1,70 +1,140 @@
--- HF-2 Director takeover: secure delivery scheduler + DB-backed worker authentication.
--- Raw worker token lives only in Supabase Vault. public schema stores SHA-256 only.
+-- HF-2 Director takeover: database-native feedback delivery scheduler.
+-- The cron job is installed INACTIVE. It is enabled only after production smoke passes.
+-- No shared worker secret, Vault decryption, or HTTP callback is required.
 
-CREATE TABLE IF NOT EXISTS public.feedback_delivery_runtime_auth (
-  singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
-  token_hash text NOT NULL CHECK (length(token_hash) = 64),
-  vault_secret_name text NOT NULL UNIQUE,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
-);
-
-ALTER TABLE public.feedback_delivery_runtime_auth ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON TABLE public.feedback_delivery_runtime_auth FROM PUBLIC, anon, authenticated;
-
-CREATE OR REPLACE FUNCTION public.authorize_feedback_delivery_tx(p_token_hash text)
-RETURNS boolean
-LANGUAGE sql
-STABLE
+CREATE OR REPLACE FUNCTION public.process_feedback_delivery_batch_tx(
+  p_max_batch integer DEFAULT 20
+) RETURNS jsonb
+LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path TO 'public', 'pg_temp'
 AS $function$
-  SELECT EXISTS (
-    SELECT 1
-    FROM public.feedback_delivery_runtime_auth a
-    WHERE a.singleton IS TRUE
-      AND a.token_hash = p_token_hash
-      AND length(p_token_hash) = 64
+DECLARE
+  v_limit integer := LEAST(20, GREATEST(1, COALESCE(p_max_batch, 20)));
+  v_i integer;
+  v_claim jsonb;
+  v_result text;
+  v_feedback_request_id uuid;
+  v_conversation_id uuid;
+  v_company_id uuid;
+  v_channel text;
+  v_rating_type text;
+  v_raw_token text;
+  v_token_hash text;
+  v_now timestamptz;
+  v_expires timestamptz;
+  v_base_url text;
+  v_feedback_link text;
+  v_complete jsonb;
+  v_processed integer := 0;
+  v_delivered integer := 0;
+  v_skipped integer := 0;
+  v_failed integer := 0;
+BEGIN
+  FOR v_i IN 1..v_limit LOOP
+    v_claim := public.claim_feedback_delivery_tx();
+    v_result := COALESCE(v_claim->>'result', 'none');
+    EXIT WHEN v_result = 'none';
+
+    IF v_result <> 'claimed' THEN
+      v_failed := v_failed + 1;
+      EXIT;
+    END IF;
+
+    v_processed := v_processed + 1;
+    v_feedback_request_id := NULLIF(v_claim->>'feedback_request_id', '')::uuid;
+    v_conversation_id := NULLIF(v_claim->>'conversation_id', '')::uuid;
+    v_company_id := NULLIF(v_claim->>'company_id', '')::uuid;
+    v_channel := COALESCE(v_claim->>'channel', '');
+    v_rating_type := COALESCE(v_claim->>'rating_type', 'stars_1_5');
+
+    IF v_feedback_request_id IS NULL OR v_conversation_id IS NULL OR v_company_id IS NULL THEN
+      PERFORM public.finish_feedback_delivery_tx(
+        v_feedback_request_id, 'failed', 'invalid_claim_scope', NULL, NULL, NULL, NULL
+      );
+      v_failed := v_failed + 1;
+      CONTINUE;
+    END IF;
+
+    IF v_channel = 'email' THEN
+      PERFORM public.finish_feedback_delivery_tx(
+        v_feedback_request_id, 'pending', 'email_provider_not_configured', NULL, NULL, NULL, NULL
+      );
+      v_skipped := v_skipped + 1;
+      CONTINUE;
+    END IF;
+
+    IF v_channel <> 'website_widget' THEN
+      PERFORM public.finish_feedback_delivery_tx(
+        v_feedback_request_id, 'failed', 'unsupported_feedback_channel', NULL, NULL, NULL, NULL
+      );
+      v_failed := v_failed + 1;
+      CONTINUE;
+    END IF;
+
+    SELECT regexp_replace(o.origin, '/+$', '')
+      INTO v_base_url
+    FROM public.conversations c
+    JOIN public.channel_config cc ON cc.id = c.channel_config_id
+    CROSS JOIN LATERAL unnest(cc.allowed_origins) AS o(origin)
+    WHERE c.id = v_conversation_id
+      AND c.company_id = v_company_id
+      AND o.origin ~ '^https://'
+    ORDER BY o.origin
+    LIMIT 1;
+
+    IF v_base_url IS NULL OR v_base_url = '' THEN
+      PERFORM public.finish_feedback_delivery_tx(
+        v_feedback_request_id, 'failed', 'config_error', NULL, NULL, NULL, NULL
+      );
+      v_failed := v_failed + 1;
+      CONTINUE;
+    END IF;
+
+    v_raw_token := encode(gen_random_bytes(32), 'hex');
+    v_token_hash := encode(digest(convert_to(v_raw_token, 'utf8'), 'sha256'), 'hex');
+    v_now := now();
+    v_expires := v_now + interval '7 days';
+    v_feedback_link := v_base_url || '/feedback?token=' || v_raw_token;
+
+    v_complete := public.complete_widget_feedback_delivery_tx(
+      v_feedback_request_id,
+      v_conversation_id,
+      v_company_id,
+      v_token_hash,
+      v_now,
+      v_expires,
+      v_now,
+      v_feedback_link,
+      v_rating_type,
+      'HF2_DB_DELIVERY_V1'
+    );
+
+    v_result := COALESCE(v_complete->>'result', 'unknown');
+    IF v_result IN ('success', 'already_sent') THEN
+      v_delivered := v_delivered + 1;
+    ELSIF v_result IN ('stale_claim', 'request_not_pending') THEN
+      v_skipped := v_skipped + 1;
+    ELSE
+      v_failed := v_failed + 1;
+    END IF;
+  END LOOP;
+
+  RETURN jsonb_build_object(
+    'result', 'success',
+    'contract_version', 'HF2_DB_DELIVERY_V1',
+    'processed', v_processed,
+    'delivered', v_delivered,
+    'skipped', v_skipped,
+    'failed', v_failed
   );
+END
 $function$;
 
-REVOKE ALL ON FUNCTION public.authorize_feedback_delivery_tx(text) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.authorize_feedback_delivery_tx(text) TO service_role;
-
-DO $block$
-DECLARE
-  v_secret_name text := 'hf2_feedback_delivery_internal_token';
-  v_raw text;
-  v_hash text;
-BEGIN
-  SELECT decrypted_secret
-    INTO v_raw
-  FROM vault.decrypted_secrets
-  WHERE name = v_secret_name
-  LIMIT 1;
-
-  IF v_raw IS NULL OR btrim(v_raw) = '' THEN
-    v_raw := encode(gen_random_bytes(32), 'hex');
-    PERFORM vault.create_secret(
-      v_raw,
-      v_secret_name,
-      'HF-2 feedback delivery worker token; raw value must remain Vault-only'
-    );
-  END IF;
-
-  v_hash := encode(digest(convert_to(v_raw, 'utf8'), 'sha256'), 'hex');
-
-  INSERT INTO public.feedback_delivery_runtime_auth(
-    singleton, token_hash, vault_secret_name, updated_at
-  ) VALUES (
-    true, v_hash, v_secret_name, now()
-  )
-  ON CONFLICT (singleton) DO UPDATE
-    SET token_hash = EXCLUDED.token_hash,
-        vault_secret_name = EXCLUDED.vault_secret_name,
-        updated_at = now();
-END
-$block$;
+REVOKE ALL ON FUNCTION public.process_feedback_delivery_batch_tx(integer)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.process_feedback_delivery_batch_tx(integer)
+  TO service_role;
 
 DO $block$
 DECLARE
@@ -81,20 +151,10 @@ $block$;
 SELECT cron.schedule(
   'hf2_feedback_delivery',
   '*/5 * * * *',
-  $cron$
-    SELECT net.http_post(
-      url := 'https://nrfxhqabwblzxoushgnm.supabase.co/functions/v1/deliver-feedback-request',
-      headers := jsonb_build_object(
-        'Content-Type', 'application/json',
-        'X-Feedback-Delivery-Token', (
-          SELECT decrypted_secret
-          FROM vault.decrypted_secrets
-          WHERE name = 'hf2_feedback_delivery_internal_token'
-          LIMIT 1
-        )
-      ),
-      body := '{}'::jsonb,
-      timeout_milliseconds := 15000
-    );
-  $cron$
+  $cron$SELECT public.process_feedback_delivery_batch_tx(20);$cron$
 );
+
+-- Fail-safe deployment posture: no automatic customer delivery until final gate passes.
+UPDATE cron.job
+SET active = false
+WHERE jobname = 'hf2_feedback_delivery';
