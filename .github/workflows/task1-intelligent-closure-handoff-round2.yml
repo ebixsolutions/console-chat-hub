@@ -1,0 +1,73 @@
+name: Task 1 Intelligent Closure Handoff Round 2
+on:
+  push:
+    paths:
+      - '.github/workflows/task1-intelligent-closure-handoff-round2.yml'
+permissions:
+  contents: write
+jobs:
+  implement:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+      - name: Apply corrected Task 1 implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import textwrap
+
+          src = Path('.github/workflows/task1-intelligent-closure-handoff-implementation.yml').read_text()
+          marker = "          python3 - <<'PY'\n"
+          start = src.index(marker) + len(marker)
+          end = src.index("\n          PY\n", start)
+          script = textwrap.dedent(src[start:end])
+
+          old = '''orchestration_anchor = \'\'\'  const _pr5History = deriveConversationHistorySignals(\n  _pr5HistoryRows ?? [],\n  _pr5VisitorTurnCount ?? 0,\n);\'\'\'.replace('\\n          ', '\\n')\norchestration_insert = \'\'\'  const _closureResponse = await handleConversationClosureIfNeeded(\n  supabaseAdmin, conversation_id, source_message_id, _h1LastMsg,\n);\nif (_closureResponse) return _closureResponse;\n\nconst _pr5History = deriveConversationHistorySignals(\n  _pr5HistoryRows ?? [],\n  _pr5VisitorTurnCount ?? 0,\n);\'\'\'.replace('\\n          ', '\\n')\nassert s.count(orchestration_anchor) == 1, f'orchestration_anchor_count={s.count(orchestration_anchor)}'\ns = s.replace(orchestration_anchor, orchestration_insert, 1)'''
+          new = '''orchestration_pattern = re.compile(r\"\\s*const _pr5History\\s*=\\s*deriveConversationHistorySignals\\(\\s*_pr5HistoryRows \\?\\? \\[\\],\\s*_pr5VisitorTurnCount \\?\\? 0,\\s*\\);\", re.S)\norchestration_insert = \"\"\"\n  const _closureResponse = await handleConversationClosureIfNeeded(\n    supabaseAdmin, conversation_id, source_message_id, _h1LastMsg,\n  );\n  if (_closureResponse) return _closureResponse;\n\n  const _pr5History = deriveConversationHistorySignals(\n    _pr5HistoryRows ?? [],\n    _pr5VisitorTurnCount ?? 0,\n  );\"\"\"\ns, orchestration_n = orchestration_pattern.subn(orchestration_insert, s, count=1)\nassert orchestration_n == 1, f'orchestration_anchor_count={orchestration_n}' '''
+          if old not in script:
+              raise SystemExit('ROUND2_SCRIPT_ANCHOR_NOT_FOUND')
+          script = script.replace(old, new, 1)
+          exec(compile(script, '<task1-round2>', 'exec'), {'__name__':'__main__'})
+          PY
+      - name: Task 1 deterministic unit assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --experimental-strip-types supabase/functions/_shared/task1-closure-handoff.test.ts
+      - name: Production build validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+      - name: Source contract assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(node -p "require('./package.json').name")" = "tanstack_start_ts"
+          node -e "const p=require('./package.json'); if(p.private!==true) process.exit(1)"
+          grep -q 'response_route: "conversation_closure"' supabase/functions/generate-reply/index.ts
+          grep -q 'collection_response_received && pkg.collection_rule === "R1"' supabase/functions/generate-reply/index.ts
+          grep -q 'missing_fact_not_closure' supabase/functions/_shared/conversation-closure.ts
+          grep -q 'one detail would help them continue immediately' supabase/functions/_shared/warm-handoff.ts
+          git diff --check
+          echo TASK1_FINAL_GATE=PASS
+      - name: Commit implementation and remove temporary workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/task1-intelligent-closure-handoff-implementation.yml
+          git rm .github/workflows/task1-intelligent-closure-handoff-round2.yml
+          git add supabase/functions/generate-reply/index.ts \
+                  supabase/functions/_shared/warm-handoff.ts \
+                  supabase/functions/_shared/conversation-closure.ts \
+                  supabase/functions/_shared/task1-closure-handoff.test.ts
+          git commit -m "Task 1: intelligent closure and handoff readiness"
+          git push origin HEAD:main
