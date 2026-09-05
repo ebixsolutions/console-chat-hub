@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 MIG="supabase/migrations/20260905123000_hf2_structured_handoff_feedback_closure.sql"
+SCHED="supabase/migrations/20260905134000_hf2_feedback_delivery_scheduler_auth_closure.sql"
 SUBMIT="supabase/functions/submit-feedback-response/index.ts"
 DELIVER="supabase/functions/deliver-feedback-request/index.ts"
 ADMIN_KEY="supabase/functions/_shared/supabase-admin-key.ts"
-for f in "$MIG" "$SUBMIT" "$DELIVER" "$ADMIN_KEY"; do test -s "$f" || { echo "HF2_FAIL=missing_or_empty:$f"; exit 1; }; done
+for f in "$MIG" "$SCHED" "$SUBMIT" "$DELIVER" "$ADMIN_KEY"; do test -s "$f" || { echo "HF2_FAIL=missing_or_empty:$f"; exit 1; }; done
 echo "HF2_FILES_NONEMPTY=PASS"
 grep -q "NOT EXISTS" "$MIG"
 grep -q "claim_feedback_delivery_tx" "$MIG"
@@ -12,6 +13,15 @@ grep -q "complete_widget_feedback_delivery_tx" "$MIG"
 grep -q "submit_feedback_response_tx" "$MIG"
 grep -q "REVOKE ALL ON FUNCTION" "$MIG"
 ! grep -q "CREATE UNIQUE INDEX IF NOT EXISTS uq_feedback_request_conversation_config" "$MIG"
+grep -q "process_feedback_delivery_batch_tx" "$SCHED"
+grep -q "extensions.gen_random_bytes" "$SCHED"
+grep -q "extensions.digest" "$SCHED"
+grep -q "cron.schedule" "$SCHED"
+grep -q "cron.alter_job" "$SCHED"
+grep -q "active => false" "$SCHED"
+grep -q "REVOKE ALL ON FUNCTION public.process_feedback_delivery_batch_tx" "$SCHED"
+! grep -q "vault.decrypted_secrets" "$SCHED"
+! grep -q "net.http_post" "$SCHED"
 grep -q "getSupabaseAdminKey" "$SUBMIT"
 grep -q "getSupabaseAdminKey" "$DELIVER"
 ! grep -q 'Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")' "$SUBMIT"
@@ -19,6 +29,7 @@ grep -q "getSupabaseAdminKey" "$DELIVER"
 grep -q "submit_feedback_response_tx" "$SUBMIT"
 ! grep -q '\.from("feedback_request")' "$SUBMIT"
 echo "HF2_SOURCE_ASSERTIONS=PASS"
+echo "HF2_SCHEDULER_SOURCE_ASSERTIONS=PASS"
 
 CID="hf2-pg-$RANDOM-$RANDOM"
 trap 'docker rm -f "$CID" >/dev/null 2>&1 || true' EXIT
@@ -44,7 +55,6 @@ CREATE TABLE feedback_automation_config(id uuid primary key default gen_random_u
 CREATE TABLE feedback_request(id uuid primary key default gen_random_uuid(),conversation_id uuid not null,visitor_session_id uuid,request_type text default 'csat',status text default 'pending',rating integer,feedback_text text,sent_at timestamptz,responded_at timestamptz,scheduled_at timestamptz,channel text,rating_type text not null default 'stars_1_5',config_version_id uuid,created_at timestamptz not null default now(),updated_at timestamptz not null default now(),response_token_hash text,token_expires_at timestamptz,token_used_at timestamptz,token_created_at timestamptz,recipient_email text,delivery_status text default 'pending',delivery_error_type text,email_provider text,email_provider_message_id text,delivery_event_received_at timestamptz,CONSTRAINT feedback_request_rating_check CHECK(rating between 1 and 5),CONSTRAINT feedback_request_delivery_error_type_check CHECK(delivery_error_type IS NULL OR delivery_error_type='config_error'));
 CREATE UNIQUE INDEX idx_feedback_request_response_token_hash ON feedback_request(response_token_hash) WHERE response_token_hash IS NOT NULL;
 CREATE TABLE messages(id uuid primary key default gen_random_uuid(),conversation_id uuid not null,role text not null,content text not null,content_type text default 'text',status text default 'delivered',metadata jsonb default '{}'::jsonb,created_at timestamptz default now(),updated_at timestamptz default now());
--- Reproduce production history: two already-responded rows for one conversation/config.
 INSERT INTO feedback_request(id,conversation_id,status,rating,rating_type,config_version_id,delivery_status,created_at,updated_at)
 VALUES
 ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','responded',1,'stars_1_5','cccccccc-cccc-cccc-cccc-cccccccccccc','sent',now()-interval '60 days',now()-interval '59 days'),
