@@ -27,7 +27,8 @@ export type LlmFailureCode =
   | "LLM_TIMEOUT"
   | "LLM_NETWORK"
   | "LLM_NON_2XX"
-  | "LLM_INVALID_OUTPUT";
+  | "LLM_INVALID_OUTPUT"
+  | "LLM_GROUNDING_REJECTED";
 
 export interface LlmUsage {
   input_tokens: number;
@@ -142,7 +143,11 @@ function resolveProvider(): ProviderId {
   const raw = (Deno.env.get("LLM_PROVIDER") ?? "").trim().toLowerCase();
   // Only these two are supported; anything else is a configuration error and is
   // reported as such rather than silently falling back to another provider.
-  return raw === "anthropic" ? "anthropic" : raw === "vertex" ? "vertex" : ("" as ProviderId);
+  return raw === "anthropic"
+    ? "anthropic"
+    : raw === "vertex"
+    ? "vertex"
+    : ("" as ProviderId);
 }
 
 async function recordUsage(
@@ -231,20 +236,21 @@ function anthropicAdapter(
   return {
     id: "anthropic",
     model,
-    buildRequest: () => Promise.resolve({
-      url: ANTHROPIC_ENDPOINT,
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": ANTHROPIC_API_VERSION,
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: maxTokens,
-        system: safeSystem,
-        messages: [{ role: "user", content: safeUser }],
+    buildRequest: () =>
+      Promise.resolve({
+        url: ANTHROPIC_ENDPOINT,
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": ANTHROPIC_API_VERSION,
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: maxTokens,
+          system: safeSystem,
+          messages: [{ role: "user", content: safeUser }],
+        }),
       }),
-    }),
     parseResponse: (body) => {
       const obj = body as {
         content?: Array<{ type?: string; text?: string }>;
@@ -339,7 +345,8 @@ interface GroundingVerifierDecision {
   evidence_chunk_ids: string[];
 }
 
-const EXACT_FACT_TOKEN_RE = /(?:[$€£¥]|HKD|USD|EUR|GBP|JPY|TWD|NTD|RMB|CNY)?\s*\d+(?:[.,]\d+)?(?:\s*(?:%|percent|days?|hours?|minutes?|years?|months?|kg|g|lb|lbs|mm|cm|m|km|ml|l|公升|毫升|公斤|克|天|日|小時|小时|分鐘|分钟|年|月))?|\b(?=[A-Z0-9-]*[A-Z])(?=[A-Z0-9-]*\d)[A-Z0-9-]{4,}\b/giu;
+const EXACT_FACT_TOKEN_RE =
+  /(?:[$€£¥]|HKD|USD|EUR|GBP|JPY|TWD|NTD|RMB|CNY)?\s*\d+(?:[.,]\d+)?(?:\s*(?:%|percent|days?|hours?|minutes?|years?|months?|kg|g|lb|lbs|mm|cm|m|km|ml|l|公升|毫升|公斤|克|天|日|小時|小时|分鐘|分钟|年|月))?|\b(?=[A-Z0-9-]*[A-Z])(?=[A-Z0-9-]*\d)[A-Z0-9-]{4,}\b/giu;
 
 function canonicalExactToken(value: string): string {
   return value.normalize("NFKC").toLowerCase()
@@ -356,16 +363,38 @@ function canonicalExactToken(value: string): string {
     .replace(/[\s,]/g, "").trim();
 }
 
-export function extractGroundingBlock(system: string): ParsedGroundingBlock | null {
+/** Customer-authored evidence only; assistant turns never become authority. */
+export function extractCustomerConversationEvidence(input: string): string {
+  const raw = typeof input === "string" ? input : "";
+  const turnPattern =
+    /\[Turn\s+\d+\s+Visitor\]\n([\s\S]*?)(?=\n\n\[Turn\s+\d+\s+(?:Visitor|Assistant)\]\n|$)/g;
+  const visitorTurns: string[] = [];
+  for (const match of raw.matchAll(turnPattern)) {
+    const content = String(match[1] ?? "").trim();
+    if (content) visitorTurns.push(content.slice(0, 3000));
+  }
+  if (visitorTurns.length > 0) {
+    return visitorTurns.slice(-6).join("\n\n").slice(0, 12000);
+  }
+  return raw.slice(0, 3000);
+}
+
+export function extractGroundingBlock(
+  system: string,
+): ParsedGroundingBlock | null {
   const transformRules = "Prior Grounded Answer transform rules:";
   const transformMarker = "Prior Grounded Answer Evidence:\n";
   if (system.includes(transformRules)) {
     const transformIndex = system.lastIndexOf(transformMarker);
     if (transformIndex >= 0) {
-      const prior = system.slice(transformIndex + transformMarker.length).trim();
+      const prior = system.slice(transformIndex + transformMarker.length)
+        .trim();
       if (prior) {
-        const operationsLine = system.match(/^- Operations:\s*(.+)$/m)?.[1] ?? "";
-        const transformOperations = operationsLine.split("+").map((x) => x.trim()).filter(Boolean);
+        const operationsLine = system.match(/^- Operations:\s*(.+)$/m)?.[1] ??
+          "";
+        const transformOperations = operationsLine.split("+").map((x) =>
+          x.trim()
+        ).filter(Boolean);
         return {
           authority: "PRIOR_GROUNDED_ANSWER",
           evidence_text: prior.slice(0, 3000),
@@ -420,23 +449,27 @@ export function validateExactFactGrounding(
   const answerNorm = answer.normalize("NFKC");
   for (const id of protectedChunkIds) {
     if (id && answerNorm.includes(id)) {
-      return { ok: false, reason: "internal_chunk_id_leak", unsupported_tokens: [id] };
+      return {
+        ok: false,
+        reason: "internal_chunk_id_leak",
+        unsupported_tokens: [id],
+      };
     }
   }
-  const evidenceNorm = canonicalExactToken(`${evidenceText}\n${conversationEvidenceText}`);
+  const evidenceNorm = canonicalExactToken(
+    `${evidenceText}\n${conversationEvidenceText}`,
+  );
   const unsupported = new Set<string>();
   for (const match of answer.matchAll(EXACT_FACT_TOKEN_RE)) {
     const token = canonicalExactToken(match[0] ?? "");
     if (!token || /^\d$/.test(token)) continue;
     if (!evidenceNorm.includes(token)) unsupported.add(token);
   }
-  return unsupported.size === 0
-    ? { ok: true }
-    : {
-        ok: false,
-        reason: "unsupported_exact_fact",
-        unsupported_tokens: [...unsupported],
-      };
+  return unsupported.size === 0 ? { ok: true } : {
+    ok: false,
+    reason: "unsupported_exact_fact",
+    unsupported_tokens: [...unsupported],
+  };
 }
 
 export function parseGroundingVerifierDecision(
@@ -488,7 +521,7 @@ async function verifyGroundedGeneration(
   // customer/conversation itself supplied (preferences, quantities, reference
   // ids, prior requests, recap state). It MUST NOT authorize product/company/
   // policy facts that remain KB/prior-grounded-only.
-  const conversationEvidence = call.user.slice(0, 12000);
+  const conversationEvidence = extractCustomerConversationEvidence(call.user);
   const exact = validateExactFactGrounding(
     answer,
     grounding.evidence_text,
@@ -521,10 +554,14 @@ async function verifyGroundedGeneration(
     grounding.authority === "PRIOR_GROUNDED_ANSWER"
       ? "The authoritative evidence is a previously verified grounded answer. Judge whether product, company, policy, price, date, duration, eligibility, availability, procedure, jurisdiction, model/specification or other external factual claims remain supported by that evidence."
       : "The authoritative evidence is the supplied current Knowledge Base evidence. Product, company, policy, price, date, duration, eligibility, availability, procedure, jurisdiction, model/specification and other external factual claims must be supported by that authoritative evidence.",
-    grounding.authority === "PRIOR_GROUNDED_ANSWER" && grounding.transform_operations.length
-      ? `Requested transform operations: ${grounding.transform_operations.join(" + ")}.`
+    grounding.authority === "PRIOR_GROUNDED_ANSWER" &&
+      grounding.transform_operations.length
+      ? `Requested transform operations: ${
+        grounding.transform_operations.join(" + ")
+      }.`
       : "",
-    grounding.authority === "PRIOR_GROUNDED_ANSWER" && grounding.transform_operations.includes("TRANSLATE")
+    grounding.authority === "PRIOR_GROUNDED_ANSWER" &&
+      grounding.transform_operations.includes("TRANSLATE")
       ? "For TRANSLATE, compare semantic meaning across languages rather than surface-word overlap. Direct translations of the same names, product categories, units, and relationships are supported when they preserve the source meaning; do not reject a faithful translation merely because its words differ from the source language."
       : "",
     "Conversation Context C1 is a separate, non-authoritative evidence class. It may support only facts explicitly supplied by the customer or already present as conversational state, including preferences, requested features, quantities/SKU counts, customer-provided order/reference ids, prior requests, and faithful recap/acknowledgement of those facts.",
@@ -575,7 +612,9 @@ async function verifyGroundedGeneration(
     );
   } else {
     const key = Deno.env.get("ANTHROPIC_API_KEY");
-    if (!key?.trim()) return { ok: false, reason: "verifier_provider_config_missing" };
+    if (!key?.trim()) {
+      return { ok: false, reason: "verifier_provider_config_missing" };
+    }
     verifierAdapter = anthropicAdapter(
       key,
       evaluationModel,
@@ -639,7 +678,10 @@ async function verifyGroundedGeneration(
       verifierUsage.latency_ms = Date.now() - verifierStarted;
       if (!parsed.text || parsed.finish_reason === "MAX_TOKENS") break;
 
-      const decision = parseGroundingVerifierDecision(parsed.text, allowedVerifierIds);
+      const decision = parseGroundingVerifierDecision(
+        parsed.text,
+        allowedVerifierIds,
+      );
       if (!decision) {
         const parsedShape = parseJsonObjectLoose(parsed.text);
         log(call.tag, {
@@ -651,13 +693,13 @@ async function verifyGroundedGeneration(
           unsupported_claims_type: parsedShape == null
             ? "missing"
             : Array.isArray(parsedShape.unsupported_claims)
-              ? "array"
-              : typeof parsedShape.unsupported_claims,
+            ? "array"
+            : typeof parsedShape.unsupported_claims,
           evidence_chunk_ids_type: parsedShape == null
             ? "missing"
             : Array.isArray(parsedShape.evidence_chunk_ids)
-              ? "array"
-              : typeof parsedShape.evidence_chunk_ids,
+            ? "array"
+            : typeof parsedShape.evidence_chunk_ids,
           finish_reason: parsed.finish_reason ?? null,
           block_reason: parsed.block_reason ?? null,
           output_tokens: parsed.output_tokens,
@@ -979,7 +1021,8 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
             attempt,
             reason: groundingDecision.reason,
           });
-          const groundingErrorCode = `LLM_OUTPUT_UNGROUNDED:${groundingDecision.reason}`;
+          const groundingErrorCode =
+            `LLM_OUTPUT_UNGROUNDED:${groundingDecision.reason}`;
           await recordUsage(
             call,
             adapter.id,
@@ -991,7 +1034,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
           );
           return {
             ok: false,
-            code: "LLM_INVALID_OUTPUT",
+            code: "LLM_GROUNDING_REJECTED",
             status: res.status,
             request_id: requestId,
             usage,
@@ -1063,11 +1106,19 @@ export function parseJsonObject(raw: string): Record<string, unknown> | null {
 
 export function toCeErrorCode(code: LlmFailureCode): string {
   switch (code) {
-    case "LLM_TIMEOUT": return "CE_PROVIDER_TIMEOUT";
-    case "LLM_NETWORK": return "CE_PROVIDER_NETWORK_ERROR";
-    case "LLM_NON_2XX": return "CE_PROVIDER_NON_2XX";
-    case "LLM_INVALID_OUTPUT": return "CE_PROVIDER_INVALID_OUTPUT";
-    case "LLM_INPUT_BLOCKED": return "CE_PROVIDER_INVALID_OUTPUT";
-    case "LLM_CONFIG_MISSING": return "CE_PROVIDER_CONFIG_ERROR";
+    case "LLM_TIMEOUT":
+      return "CE_PROVIDER_TIMEOUT";
+    case "LLM_NETWORK":
+      return "CE_PROVIDER_NETWORK_ERROR";
+    case "LLM_NON_2XX":
+      return "CE_PROVIDER_NON_2XX";
+    case "LLM_INVALID_OUTPUT":
+      return "CE_PROVIDER_INVALID_OUTPUT";
+    case "LLM_GROUNDING_REJECTED":
+      return "CE_PROVIDER_INVALID_OUTPUT";
+    case "LLM_INPUT_BLOCKED":
+      return "CE_PROVIDER_INVALID_OUTPUT";
+    case "LLM_CONFIG_MISSING":
+      return "CE_PROVIDER_CONFIG_ERROR";
   }
 }
