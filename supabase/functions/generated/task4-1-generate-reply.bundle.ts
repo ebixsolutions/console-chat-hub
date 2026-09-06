@@ -1928,14 +1928,15 @@ function buildVerifierEvidenceAliases(grounding) {
   );
   return { evidence_text: aliased, allowed_ids: allowed };
 }
-function validateExactFactGrounding(answer, evidenceText, protectedChunkIds = []) {
+function validateExactFactGrounding(answer, evidenceText, protectedChunkIds = [], conversationEvidenceText = "") {
   const answerNorm = answer.normalize("NFKC");
   for (const id of protectedChunkIds) {
     if (id && answerNorm.includes(id)) {
       return { ok: false, reason: "internal_chunk_id_leak", unsupported_tokens: [id] };
     }
   }
-  const evidenceNorm = canonicalExactToken(evidenceText);
+  const evidenceNorm = canonicalExactToken(`${evidenceText}
+${conversationEvidenceText}`);
   const unsupported = /* @__PURE__ */ new Set();
   for (const match of answer.matchAll(EXACT_FACT_TOKEN_RE)) {
     const token = canonicalExactToken(match[0] ?? "");
@@ -1951,16 +1952,20 @@ function validateExactFactGrounding(answer, evidenceText, protectedChunkIds = []
 function parseGroundingVerifierDecision(raw, allowedChunkIds) {
   const parsed = parseJsonObjectLoose(raw);
   if (!parsed || typeof parsed.grounded !== "boolean") return null;
-  if (!Array.isArray(parsed.unsupported_claims) || !Array.isArray(parsed.evidence_chunk_ids)) return null;
-  const unsupported = parsed.unsupported_claims.filter((item) => typeof item === "string").map((item) => item.trim()).filter(Boolean);
-  if (unsupported.length !== parsed.unsupported_claims.length) return null;
-  const ids = parsed.evidence_chunk_ids.filter((item) => typeof item === "string").map((item) => item.trim()).filter(Boolean);
-  if (ids.length !== parsed.evidence_chunk_ids.length) return null;
+  const rawUnsupported = parsed.unsupported_claims;
+  if (rawUnsupported != null && !Array.isArray(rawUnsupported)) return null;
+  const unsupportedInput = Array.isArray(rawUnsupported) ? rawUnsupported : [];
+  const unsupported = unsupportedInput.filter((item) => typeof item === "string").map((item) => item.trim()).filter(Boolean);
+  if (unsupported.length !== unsupportedInput.length) return null;
+  const rawIds = parsed.evidence_chunk_ids;
+  if (rawIds != null && !Array.isArray(rawIds)) return null;
+  const idsInput = Array.isArray(rawIds) ? rawIds : [];
+  const ids = idsInput.filter((item) => typeof item === "string").map((item) => item.trim()).filter(Boolean);
+  if (ids.length !== idsInput.length) return null;
   const allowed = new Set(allowedChunkIds.filter(Boolean));
   if (ids.some((id) => !allowed.has(id))) return null;
   if (parsed.grounded && unsupported.length > 0) return null;
   if (!parsed.grounded && unsupported.length === 0) return null;
-  if (parsed.grounded && allowed.size > 0 && ids.length === 0) return null;
   return {
     grounded: parsed.grounded,
     unsupported_claims: unsupported,
@@ -1968,7 +1973,13 @@ function parseGroundingVerifierDecision(raw, allowedChunkIds) {
   };
 }
 async function verifyGroundedGeneration(call, provider, answer, grounding, timeoutMs) {
-  const exact = validateExactFactGrounding(answer, grounding.evidence_text, grounding.chunk_ids);
+  const conversationEvidence = call.user.slice(0, 12e3);
+  const exact = validateExactFactGrounding(
+    answer,
+    grounding.evidence_text,
+    grounding.chunk_ids,
+    conversationEvidence
+  );
   if (!exact.ok) {
     log(call.tag, {
       event: "grounding_exact_fact_rejected",
@@ -1979,6 +1990,7 @@ async function verifyGroundedGeneration(call, provider, answer, grounding, timeo
     return { ok: false, reason: exact.reason };
   }
   const verifierEvidence = buildVerifierEvidenceAliases(grounding);
+  const allowedVerifierIds = [...verifierEvidence.allowed_ids, "C1"];
   const evaluationModel = (Deno.env.get(MODEL_ENV.evaluation) ?? "").trim();
   if (!evaluationModel) {
     log(call.tag, {
@@ -1989,18 +2001,23 @@ async function verifyGroundedGeneration(call, provider, answer, grounding, timeo
   }
   const verifierSystem = [
     "You are a strict factual-grounding verifier.",
-    grounding.authority === "PRIOR_GROUNDED_ANSWER" ? "The evidence is a previously verified grounded answer. Judge whether the proposed answer is a faithful simplification, rephrase, translation, or summary of that evidence without any new factual claim. Wording and language may differ, and a summary may omit detail." : "Judge ONLY whether every factual claim in the proposed answer is entailed by the supplied current Knowledge Base evidence.",
+    grounding.authority === "PRIOR_GROUNDED_ANSWER" ? "The authoritative evidence is a previously verified grounded answer. Judge whether product, company, policy, price, date, duration, eligibility, availability, procedure, jurisdiction, model/specification or other external factual claims remain supported by that evidence." : "The authoritative evidence is the supplied current Knowledge Base evidence. Product, company, policy, price, date, duration, eligibility, availability, procedure, jurisdiction, model/specification and other external factual claims must be supported by that authoritative evidence.",
     grounding.authority === "PRIOR_GROUNDED_ANSWER" && grounding.transform_operations.length ? `Requested transform operations: ${grounding.transform_operations.join(" + ")}.` : "",
     grounding.authority === "PRIOR_GROUNDED_ANSWER" && grounding.transform_operations.includes("TRANSLATE") ? "For TRANSLATE, compare semantic meaning across languages rather than surface-word overlap. Direct translations of the same names, product categories, units, and relationships are supported when they preserve the source meaning; do not reject a faithful translation merely because its words differ from the source language." : "",
-    "Do not use outside knowledge, assumptions, the customer request, or other prior conversation as factual evidence.",
-    "Politeness, conversational transitions, and non-factual wording do not need evidence.",
-    "Any unsupported product fact, policy fact, price, date, duration, dimension, eligibility condition, jurisdiction claim, procedure, limit, availability statement, or categorical factual statement makes grounded=false.",
-    "evidence_chunk_ids may contain only supplied E1/E2/E3 aliases that materially support the answer.",
+    "Conversation Context C1 is a separate, non-authoritative evidence class. It may support only facts explicitly supplied by the customer or already present as conversational state, including preferences, requested features, quantities/SKU counts, customer-provided order/reference ids, prior requests, and faithful recap/acknowledgement of those facts.",
+    "Never use C1 to support a new product, company, policy, price, eligibility, availability, procedure, jurisdiction, roadmap, guarantee, refund, account-status or other external factual claim. Those claims require the authoritative E* evidence above.",
+    "Do not use outside knowledge or assumptions.",
+    "Politeness, conversational transitions, questions, and non-factual wording do not need evidence.",
+    "Any unsupported external factual claim makes grounded=false. A faithful restatement of customer-provided/conversation facts is allowed when supported by C1.",
+    "evidence_chunk_ids may contain supplied E* aliases and C1 when they materially support the answer. This field is audit metadata; grounded must still reflect the rules above.",
     "Return JSON only with grounded, unsupported_claims, evidence_chunk_ids."
   ].join("\n");
   const verifierUser = [
-    "Evidence:",
+    "Authoritative Evidence:",
     verifierEvidence.evidence_text,
+    "",
+    "Conversation Context [context:C1]:",
+    conversationEvidence,
     "",
     "Proposed answer:",
     answer.slice(0, 3e3)
@@ -2094,8 +2111,21 @@ async function verifyGroundedGeneration(call, provider, answer, grounding, timeo
       verifierUsage.output_tokens = parsed.output_tokens;
       verifierUsage.latency_ms = Date.now() - verifierStarted;
       if (!parsed.text || parsed.finish_reason === "MAX_TOKENS") break;
-      const decision2 = parseGroundingVerifierDecision(parsed.text, verifierEvidence.allowed_ids);
+      const decision2 = parseGroundingVerifierDecision(parsed.text, allowedVerifierIds);
       if (!decision2) {
+        const parsedShape = parseJsonObjectLoose(parsed.text);
+        log(call.tag, {
+          event: "grounding_verifier_invalid_output_shape",
+          request_id: call.operationId,
+          attempt,
+          keys: parsedShape ? Object.keys(parsedShape).slice(0, 12) : [],
+          grounded_type: parsedShape ? typeof parsedShape.grounded : "missing",
+          unsupported_claims_type: parsedShape == null ? "missing" : Array.isArray(parsedShape.unsupported_claims) ? "array" : typeof parsedShape.unsupported_claims,
+          evidence_chunk_ids_type: parsedShape == null ? "missing" : Array.isArray(parsedShape.evidence_chunk_ids) ? "array" : typeof parsedShape.evidence_chunk_ids,
+          finish_reason: parsed.finish_reason ?? null,
+          block_reason: parsed.block_reason ?? null,
+          output_tokens: parsed.output_tokens
+        });
         await recordUsage(
           verifierCall,
           verifierAdapter.id,
@@ -2393,6 +2423,7 @@ async function callModel(call) {
             attempt,
             reason: groundingDecision.reason
           });
+          const groundingErrorCode = `LLM_OUTPUT_UNGROUNDED:${groundingDecision.reason}`;
           await recordUsage(
             call,
             adapter.id,
@@ -2400,7 +2431,7 @@ async function callModel(call) {
             "failed",
             res.status,
             usage,
-            "LLM_OUTPUT_UNGROUNDED"
+            groundingErrorCode
           );
           return {
             ok: false,
