@@ -1,4 +1,5 @@
 name: Director Return-to-AI Resume Final
+# Workflow 3 authorized targeted production smoke trigger — 2026-09-06
 
 on:
   push:
