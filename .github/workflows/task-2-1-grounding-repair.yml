@@ -83,22 +83,16 @@ jobs:
             '  const conversationEvidence = extractCustomerConversationEvidence(call.user);',
             'visitor-only-evidence-use')
 
-          router = once(router,
-            '''          return {
-            ok: false,
-            code: "LLM_INVALID_OUTPUT",
-            status: res.status,
-            request_id: requestId,
-            usage,
-          };''',
-            '''          return {
-            ok: false,
-            code: "LLM_GROUNDING_REJECTED",
-            status: res.status,
-            request_id: requestId,
-            usage,
-          };''',
-            'grounding-specific-failure-code')
+          marker = 'const groundingErrorCode = `LLM_OUTPUT_UNGROUNDED:${groundingDecision.reason}`;'
+          marker_pos = router.find(marker)
+          if marker_pos < 0:
+              raise SystemExit('grounding-specific-failure-code: marker missing')
+          code_pos = router.find('code: "LLM_INVALID_OUTPUT",', marker_pos)
+          if code_pos < 0 or code_pos - marker_pos > 1200:
+              raise SystemExit('grounding-specific-failure-code: scoped return code missing')
+          if router.find('code: "LLM_INVALID_OUTPUT",', code_pos + 1, code_pos + 1200) >= 0:
+              raise SystemExit('grounding-specific-failure-code: ambiguous scoped return code')
+          router = router[:code_pos] + 'code: "LLM_GROUNDING_REJECTED",' + router[code_pos + len('code: "LLM_INVALID_OUTPUT",'):]
 
           router = once(router,
             '    case "LLM_INVALID_OUTPUT": return "CE_PROVIDER_INVALID_OUTPUT";\n    case "LLM_INPUT_BLOCKED": return "CE_PROVIDER_INVALID_OUTPUT";',
@@ -204,10 +198,10 @@ jobs:
 
           Deno.test("customer exact facts are accepted without promoting assistant facts", () => {
             const input = [
-              "[Turn 1 Visitor]\\n我大約300 SKU。訂單號TEST-SMOKE-PAY-07。",
-              "[Turn 2 Assistant]\\n你有500 SKU，而且訂單TEST-FAKE-500已確認。",
-              "[Turn 3 Visitor]\\n我最重視安靜。",
-            ].join("\\n\\n");
+              "[Turn 1 Visitor]\n我大約300 SKU。訂單號TEST-SMOKE-PAY-07。",
+              "[Turn 2 Assistant]\n你有500 SKU，而且訂單TEST-FAKE-500已確認。",
+              "[Turn 3 Visitor]\n我最重視安靜。",
+            ].join("\n\n");
             const customer = extractCustomerConversationEvidence(input);
             assert(customer.includes("300 SKU"), "visitor quantity missing");
             assert(customer.includes("TEST-SMOKE-PAY-07"), "visitor reference missing");
@@ -249,6 +243,7 @@ jobs:
 
       - name: Static and regression validation
         run: |
+          deno fmt supabase/functions/_shared/llm-router.ts supabase/functions/generate-reply/index.ts supabase/functions/_shared/llm-router-grounding.test.ts
           deno fmt --check supabase/functions/_shared/llm-router.ts supabase/functions/generate-reply/index.ts supabase/functions/_shared/llm-router-grounding.test.ts
           deno check supabase/functions/_shared/llm-router.ts
           deno check supabase/functions/generate-reply/index.ts
