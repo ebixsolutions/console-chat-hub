@@ -2,6 +2,16 @@ import { classifyCanonicalConversationTurn, type ConversationOperation, type Evi
 
 export type RuntimeHistoryRow = { role?: string; content?: string | null; created_at?: string | null; metadata?: unknown };
 export type RuntimeLanguage = "zh-TW" | "zh-CN" | "en";
+
+export interface CurrentRequirementSnapshot {
+  product_count: number | null;
+  staff_count: number | null;
+  app_interest: boolean | null;
+  desired_features: string[];
+  current_market: string | null;
+  future_markets: string[];
+}
+
 export interface ConversationRuntimeState {
   first_customer_turn: string | null;
   first_intent: string | null;
@@ -20,7 +30,9 @@ export interface ConversationRuntimeState {
   current_item: string | null;
   language: RuntimeLanguage;
   prior_recommendations: string[];
+  current_requirements: CurrentRequirementSnapshot;
 }
+
 export interface CanonicalRetrievalQuery {
   query: string;
   mode: "standalone" | "contextual" | "memory";
@@ -33,11 +45,14 @@ const CUSTOMER = new Set(["visitor", "customer", "user"]);
 const ASSISTANT = new Set(["assistant", "ai", "human_agent"]);
 const EXPLICIT_CORRECTION = /(我講錯|我说错|我說錯|我要更正|我想更正|更正一下[：:]?|更正[：:]|其實係|其实是|改返|改成|actually[,\s]+i meant|i meant|correction\s*[:：])/i;
 const CONTRAST_CORRECTION = /(唔係[^，。,.!?！？]{1,80}[，,]\s*係|不是[^，。,.!?！？]{1,80}[，,]\s*(?:而)?是|not .+ but .+)/i;
+const LATEST_VALUE_CORRECTION = /(?:記住|记住)?\s*(?:最新|目前|現在|现在)\s*(?:係|是|為|为)?\s*[^，。,.!?！？]{1,50}(?:，|,)\s*(?:唔係|不是|而不是|not)\s*[^，。,.!?！？]{1,50}/i;
+
 function isCorrectionText(text: string): boolean {
-  if (EXPLICIT_CORRECTION.test(text)) return true;
+  if (EXPLICIT_CORRECTION.test(text) || LATEST_VALUE_CORRECTION.test(text)) return true;
   if (/[?？]/.test(text)) return false;
   return CONTRAST_CORRECTION.test(text);
 }
+
 const CONSTRAINT = /(不要|唔好|不准|唔准|不要猜|唔好估|沒有型號|没有型号|冇型號|only|don't|do not|without|must not|no model)/i;
 const FOLLOW = /^(?:咁|那|那麼|那么|所以|另外|仲有|还有|如果|再|又|而|同埋|what about|and what about|then|so|also|in that case|how about)/i;
 const PRONOUN = /(這個|这个|那個|那个|它|其|上述|剛才|刚才|之前|頭先|头先|same|that|this|it|its|earlier|previous)/i;
@@ -56,9 +71,11 @@ const JURISDICTIONS: Array<[string, RegExp]> = [
 function clean(v: unknown): string {
   return typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, 800) : "";
 }
+
 function metadataRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
+
 function hasGroundedLineage(metadata: unknown): boolean {
   const meta = metadataRecord(metadata);
   const lineage = metadataRecord(meta?.citation_lineage);
@@ -66,17 +83,20 @@ function hasGroundedLineage(metadata: unknown): boolean {
     Array.isArray(lineage?.evidence_chunk_ids) &&
     lineage.evidence_chunk_ids.some((x) => typeof x === "string" && x.length > 0);
 }
+
 function detectFocusedItem(text: string): string | null {
   const t = clean(text);
   const focus = t.match(/(?:只(?:說|说|講|讲)|只要|聚焦|focus(?: only)? on)\s*([^，。,.!?！？]{1,40}?)(?:相關|相关|部分|內容|内容|\s+only|$)/i);
   const raw = focus?.[1]?.trim().replace(/^(?:在|關於|关于|the)\s*/i, "") ?? "";
   return raw && raw.length <= 40 ? raw : null;
 }
+
 function detectCorrectedItem(text: string): string | null {
   const m = clean(text).match(/(?:問的是|問嘅係|问的是|其實係|其实是|改成)\s*([^，。,.!?！？]{1,40})/i);
   if (!m?.[1]) return null;
   return m[1].replace(/(?:，|,)?\s*(?:不是|唔係|not)\s+.*$/i, "").trim() || null;
 }
+
 function localizedCurrentItem(item: string, lang: RuntimeLanguage): string {
   const normalized = clean(item).toLowerCase();
   const airConditioner = /(?:冷氣機|冷气机|空調機|空调机|air[- ]?conditioner|aircon)/i.test(normalized);
@@ -85,10 +105,12 @@ function localizedCurrentItem(item: string, lang: RuntimeLanguage): string {
   if (lang === "zh-CN") return "空调机";
   return "冷氣機";
 }
+
 function detectLanguage(text: string): RuntimeLanguage {
   if (!/[\u4e00-\u9fff]/.test(text)) return "en";
   return /[转们为这没请台]/.test(text) ? "zh-CN" : "zh-TW";
 }
+
 function jurisdictionOccurrenceIsNegated(text: string, index: number): boolean {
   const before = text.slice(Math.max(0, index - 30), index);
   return /(?:不談|不谈|別談|别谈|不要談|不要谈|唔講|唔好講)\s*$/i.test(before) ||
@@ -102,9 +124,7 @@ export function detectExplicitJurisdiction(text: string): string | null {
   for (const [id, re] of JURISDICTIONS) {
     const match = t.match(re);
     if (!match || typeof match.index !== "number") continue;
-    if (!jurisdictionOccurrenceIsNegated(t, match.index)) {
-      candidates.push({ id, index: match.index });
-    }
+    if (!jurisdictionOccurrenceIsNegated(t, match.index)) candidates.push({ id, index: match.index });
   }
   candidates.sort((x, y) => y.index - x.index);
   return candidates[0]?.id ?? null;
@@ -118,13 +138,101 @@ function normalizeTopic(text: string): string {
     .slice(0, 180);
 }
 
+function smallCount(raw: string): number | null {
+  if (/^\d{1,6}$/.test(raw)) return Number(raw);
+  const map: Record<string, number> = { 一: 1, 二: 2, 兩: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
+  return map[raw] ?? null;
+}
+
+function marketLabel(id: string, lang: RuntimeLanguage): string {
+  const labels: Record<string, Record<RuntimeLanguage, string>> = {
+    hong_kong: { "zh-TW": "香港", "zh-CN": "香港", en: "Hong Kong" },
+    macau: { "zh-TW": "澳門", "zh-CN": "澳门", en: "Macau" },
+    singapore: { "zh-TW": "新加坡", "zh-CN": "新加坡", en: "Singapore" },
+    taiwan: { "zh-TW": "台灣", "zh-CN": "台湾", en: "Taiwan" },
+    mainland_china: { "zh-TW": "中國大陸", "zh-CN": "中国大陆", en: "Mainland China" },
+    mars: { "zh-TW": "火星", "zh-CN": "火星", en: "Mars" },
+  };
+  return labels[id]?.[lang] ?? id;
+}
+
+export function deriveCurrentRequirementSnapshot(chronologicalCustomerTurns: string[]): CurrentRequirementSnapshot {
+  let productCount: number | null = null;
+  let staffCount: number | null = null;
+  let appInterest: boolean | null = null;
+  const desired = new Set<string>();
+  let currentMarket: string | null = null;
+  const futureMarkets = new Set<string>();
+
+  for (const raw of chronologicalCustomerTurns) {
+    const text = clean(raw);
+    if (!text || /[?？]/.test(text)) continue;
+
+    const product = text.match(/(\d{1,6})\s*(?:件(?:商品|產品|产品)?|sku\b)/i);
+    if (product?.[1]) productCount = Number(product[1]);
+    const latestCount = text.match(/(?:最新|目前|現在|现在)\s*(?:係|是|為|为)?\s*(\d{1,6})(?:\s*(?:件|sku))?/i);
+    if (productCount !== null && latestCount?.[1]) productCount = Number(latestCount[1]);
+
+    if (/(?:得我|只有我|只係我|只是我).{0,12}(?:一個人|一个人).{0,12}(?:管理|manage)/i.test(text)) staffCount = 1;
+    const staff = text.match(/(?:我有|有)\s*([一二兩两三四五六七八九十]|\d{1,3})\s*(?:個|个|位)?\s*(?:staff|員工|员工)/i);
+    if (staff?.[1]) staffCount = smallCount(staff[1]);
+    const addStaff = text.match(/(?:再加|增加|加多|add)\s*([一二兩两三四五六七八九十]|\d{1,3})\s*(?:個|个|位)?\s*(?:staff|員工|员工)/i);
+    if (addStaff?.[1]) {
+      const n = smallCount(addStaff[1]);
+      if (n !== null) staffCount = (staffCount ?? 0) + n;
+    }
+
+    if (/(?:唔要|不要|不需要|唔需要)\s*app.{0,20}(?:已經|已经)?(?:過時|过时|outdated|no longer)/i.test(text)) appInterest = true;
+    else if (/(?:app).{0,16}(?:有興趣|有兴趣|想要|需要|要用|會用|会用)|(?:想要|需要|要用)\s*app/i.test(text)) appInterest = true;
+    else if (/(?:暫時|暂时)?\s*(?:唔需要|不需要|唔要|不要)\s*app/i.test(text)) appInterest = false;
+
+    if (/(?:想要|要用|會用|会用|需要).{0,12}(?:push|推播|推送)|(?:push|推播|推送).{0,12}(?:想要|要用|會用|会用|需要)/i.test(text)) desired.add("Push");
+    if (/(?:想用|要用|會用|会用|需要).{0,12}crm|crm.{0,12}(?:想用|要用|會用|会用|需要)/i.test(text)) desired.add("CRM");
+    if (/(?:會員等級|会员等级).{0,12}(?:都)?(?:會用|会用|要用|需要)|(?:想用|要用|需要).{0,12}(?:會員等級|会员等级)/i.test(text)) desired.add("會員等級");
+
+    const market = detectExplicitJurisdiction(text);
+    if (market) {
+      if (/(?:之後|之后|以後|以后|未來|未来|later|future).{0,20}(?:可能|maybe|may|plan|做|進入|进入)/i.test(text)) futureMarkets.add(market);
+      else if (/(?:目前|而家|現在|现在|主要市場|主要市场|仍然|只做|currently|current|main market)/i.test(text)) currentMarket = market;
+    }
+  }
+
+  if (currentMarket) futureMarkets.delete(currentMarket);
+  return {
+    product_count: productCount,
+    staff_count: staffCount,
+    app_interest: appInterest,
+    desired_features: [...desired],
+    current_market: currentMarket,
+    future_markets: [...futureMarkets],
+  };
+}
+
+function currentRequirementLines(snapshot: CurrentRequirementSnapshot, lang: RuntimeLanguage): string[] {
+  const out: string[] = [];
+  if (lang === "en") {
+    if (snapshot.product_count !== null) out.push(`Product count: about ${snapshot.product_count}`);
+    if (snapshot.staff_count !== null) out.push(`Management staff: ${snapshot.staff_count}`);
+    if (snapshot.app_interest === true) out.push("App: interested / include in plan");
+    if (snapshot.app_interest === false) out.push("App: not currently needed");
+    if (snapshot.desired_features.length) out.push(`Desired features: ${snapshot.desired_features.join(", ")}`);
+    if (snapshot.current_market) out.push(`Current main market: ${marketLabel(snapshot.current_market, lang)}`);
+    if (snapshot.future_markets.length) out.push(`Possible future markets: ${snapshot.future_markets.map((x) => marketLabel(x, lang)).join(", ")} (not the current main market)`);
+    return out;
+  }
+  if (snapshot.product_count !== null) out.push(`商品數量：約 ${snapshot.product_count} 件`);
+  if (snapshot.staff_count !== null) out.push(`管理人手：${snapshot.staff_count} 位 staff`);
+  if (snapshot.app_interest === true) out.push("App：有興趣／需要納入方案");
+  if (snapshot.app_interest === false) out.push("App：目前不需要");
+  if (snapshot.desired_features.length) out.push(`需要功能：${snapshot.desired_features.join("、")}`);
+  if (snapshot.current_market) out.push(`目前主要市場：${marketLabel(snapshot.current_market, lang)}`);
+  if (snapshot.future_markets.length) out.push(`未來可能市場：${snapshot.future_markets.map((x) => marketLabel(x, lang)).join("、")}（不是目前主要市場）`);
+  return out;
+}
+
 export function projectConversationRuntimeState(newestFirst: RuntimeHistoryRow[]): ConversationRuntimeState {
   const rows = newestFirst
-    .map((row) => ({
-      text: clean(row.content),
-      role: String(row.role ?? "").toLowerCase(),
-      metadata: row.metadata,
-    }))
+    .map((row) => ({ text: clean(row.content), role: String(row.role ?? "").toLowerCase(), metadata: row.metadata }))
     .filter((row) => row.text && row.text !== "__THINKING__");
   const customers = rows.filter((row) => CUSTOMER.has(row.role));
   const assistants = rows.filter((row) => ASSISTANT.has(row.role));
@@ -137,10 +245,7 @@ export function projectConversationRuntimeState(newestFirst: RuntimeHistoryRow[]
   const unresolved = customers.filter((row) => QUESTION.test(row.text)).slice(0, 8).map((row) => row.text);
   const explicitJurisdiction = latest ? detectExplicitJurisdiction(latest) : null;
   const inheritedJurisdiction = customers.map((row) => detectExplicitJurisdiction(row.text)).find(Boolean) ?? null;
-  const groundedAssistantJurisdiction = assistants
-    .filter((row) => hasGroundedLineage(row.metadata))
-    .map((row) => detectExplicitJurisdiction(row.text))
-    .find(Boolean) ?? null;
+  const groundedAssistantJurisdiction = assistants.filter((row) => hasGroundedLineage(row.metadata)).map((row) => detectExplicitJurisdiction(row.text)).find(Boolean) ?? null;
   const correctedItem = corrections.map((text) => detectCorrectedItem(text)).find(Boolean) ?? null;
   const focusedItem = customers.map((row) => detectFocusedItem(row.text)).find(Boolean) ?? null;
   const topics: string[] = [];
@@ -149,9 +254,8 @@ export function projectConversationRuntimeState(newestFirst: RuntimeHistoryRow[]
     if (topic && !topics.includes(topic)) topics.push(topic);
   }
   const currentTopic = latest ? normalizeTopic(latest) : null;
-  const refs = latest
-    ? [...latest.matchAll(/(這個|这个|那個|那个|它|其|上述|剛才|刚才|之前|same|that|this|it|its)/gi)].map((m) => m[0]).slice(0, 6)
-    : [];
+  const refs = latest ? [...latest.matchAll(/(這個|这个|那個|那个|它|其|上述|剛才|刚才|之前|same|that|this|it|its)/gi)].map((m) => m[0]).slice(0, 6) : [];
+  const currentRequirements = deriveCurrentRequirementSnapshot(chronological.map((row) => row.text));
   return {
     first_customer_turn: first,
     first_intent: first ? normalizeTopic(first) : null,
@@ -170,6 +274,7 @@ export function projectConversationRuntimeState(newestFirst: RuntimeHistoryRow[]
     current_item: correctedItem ?? focusedItem,
     language: detectLanguage(latest ?? first ?? ""),
     prior_recommendations: assistants.filter((row) => RECOMMEND.test(row.text)).slice(0, 6).map((row) => row.text),
+    current_requirements: currentRequirements,
   };
 }
 
@@ -187,6 +292,11 @@ export function buildCanonicalContinuityBlock(newestFirst: RuntimeHistoryRow[]):
     `Jurisdiction: ${state.jurisdiction ?? "unspecified"}`,
     `Current item: ${state.current_item ?? "unspecified"}`,
   ];
+  const requirementLines = currentRequirementLines(state.current_requirements, state.language);
+  if (requirementLines.length) {
+    lines.push("Current customer-authored requirements (latest state wins; assistant statements are not authority):");
+    requirementLines.forEach((x, i) => lines.push(`${i + 1}. ${x}`));
+  }
   if (state.latest_corrections.length) {
     lines.push("Newest corrections / superseding facts:");
     state.latest_corrections.forEach((x, i) => lines.push(`${i + 1}. ${x}`));
@@ -206,16 +316,11 @@ export function buildCanonicalContinuityBlock(newestFirst: RuntimeHistoryRow[]):
   return lines.join("\n").slice(0, 6000);
 }
 
-export function resolveConversationMemoryResponse(
-  latestInput: string,
-  newestFirst: RuntimeHistoryRow[],
-): string | null {
+export function resolveConversationMemoryResponse(latestInput: string, newestFirst: RuntimeHistoryRow[]): string | null {
   const latest = clean(latestInput);
   if (!latest) return null;
   if (/(請記住|请记住|please\s+remember|remember\s+that)/i.test(latest)) return null;
 
-  // Memory answers are derived from PRIOR turns only. The current
-  // recall request must never become its own correction/constraint/name.
   let currentRemoved = false;
   const priorRows = newestFirst.filter((row) => {
     const role = String(row.role ?? "").toLowerCase();
@@ -240,33 +345,32 @@ export function resolveConversationMemoryResponse(
   const locationRequest = /(我(?:現在|现在|目前).*(?:哪裡|哪里)|我.*(?:在哪|喺邊)|where\s+am\s+i|my\s+(?:current\s+)?location|更正後.*(?:地點|地点)|更正后.*(?:地點|地点))/i.test(latest);
   const currentContextPattern = /(我(?:現在|现在|目前).*(?:哪個|哪个|什麼|什么).*(?:地區|地区).*(?:哪個|哪个|什麼|什么).*(?:項目|项目)|what(?:\x27s| is)?\s+(?:the\s+)?(?:current\s+)?(?:region|jurisdiction).*(?:item|product))/i;
   const languageContinuationPattern = /(?:answer|say|repeat).*(?:same|that).*(?:english|chinese|cantonese)|(?:same|that).*(?:in|into)\s+(?:english|chinese|cantonese)|(?:回到|改用|用)\s*(?:繁體中文|繁体中文|簡體中文|简体中文|英文|廣東話|广东话)/i;
-  // A language-only continuation of the deterministic current region/item answer
-  // must not depend on assistant metadata surviving an async cross-turn boundary.
-  // Authorize it only when the two most recent PRIOR customer turns contain the
-  // current-context question itself or an immediately chained language continuation.
-  const recentPriorCustomerTurns = priorRows
-    .filter((row) => CUSTOMER.has(String(row.role ?? "").toLowerCase()))
-    .map((row) => clean(row.content))
-    .filter(Boolean)
-    .slice(0, 2);
+  const recentPriorCustomerTurns = priorRows.filter((row) => CUSTOMER.has(String(row.role ?? "").toLowerCase())).map((row) => clean(row.content)).filter(Boolean).slice(0, 2);
   const hasRecentCurrentContextQuestion = recentPriorCustomerTurns.some((text) => currentContextPattern.test(text));
-  const hasChainedLanguageContinuation = recentPriorCustomerTurns.length >= 2 &&
-    languageContinuationPattern.test(recentPriorCustomerTurns[0]) &&
-    currentContextPattern.test(recentPriorCustomerTurns[1]);
-  const memoryLanguageContinuation = languageContinuationPattern.test(latest) &&
-    (hasRecentCurrentContextQuestion || hasChainedLanguageContinuation);
+  const hasChainedLanguageContinuation = recentPriorCustomerTurns.length >= 2 && languageContinuationPattern.test(recentPriorCustomerTurns[0]) && currentContextPattern.test(recentPriorCustomerTurns[1]);
+  const memoryLanguageContinuation = languageContinuationPattern.test(latest) && (hasRecentCurrentContextQuestion || hasChainedLanguageContinuation);
   const currentContextRequest = currentContextPattern.test(latest) || memoryLanguageContinuation;
-  if (!(firstRequest || correctionRequest || constraintRequest || summaryRequest || recommendationRequest || providedMissingRequest || generalSummaryRequest || mainlyAskedRequest || nameRequest || locationRequest || currentContextRequest)) return null;
+  const latestRequirementsRequest = /(?:列出|整理|總結|总结|講出|说出|tell me|list|summari[sz]e).{0,30}(?:最新|目前|現在|现在|current).{0,20}(?:需求|要求|條件|条件|requirements?)|(?:最新|目前|現在|现在|current).{0,20}(?:需求|要求|條件|条件|requirements?).{0,30}(?:是什麼|是什么|有哪些|係咩|what are)/i.test(latest);
+  if (!(firstRequest || correctionRequest || constraintRequest || summaryRequest || recommendationRequest || providedMissingRequest || generalSummaryRequest || mainlyAskedRequest || nameRequest || locationRequest || currentContextRequest || latestRequirementsRequest)) return null;
 
   const zh = lang !== "en";
-  const q = lang === "zh-CN" ? { first:"你一开始问的是", correction:"你之前最新的更正是", constraint:"你之前明确提出的限制包括", recommendation:"我之前的相关建议包括", name:"你之前告诉我你的名字是", location:"你之前更正后的地点是", none:"这段对话里没有足够资料可以确认。" } : { first:"你一開始問的是", correction:"你之前最新的更正是", constraint:"你之前明確提出的限制包括", recommendation:"我之前的相關建議包括", name:"你之前告訴我你的名字是", location:"你之前更正後的地點是", none:"這段對話裡沒有足夠資料可以確認。" };
-  const en = { first:"Your first question was", correction:"Your latest correction was", constraint:"The constraints you explicitly gave me include", recommendation:"My relevant earlier recommendations include", name:"You told me your name is", location:"The location from your latest correction is", none:"There is not enough information in this conversation to confirm that." };
+  const q = lang === "zh-CN"
+    ? { first: "你一开始问的是", correction: "你之前最新的更正是", constraint: "你之前明确提出的限制包括", recommendation: "我之前的相关建议包括", name: "你之前告诉我你的名字是", location: "你之前更正后的地点是", none: "这段对话里没有足够资料可以确认。" }
+    : { first: "你一開始問的是", correction: "你之前最新的更正是", constraint: "你之前明確提出的限制包括", recommendation: "我之前的相關建議包括", name: "你之前告訴我你的名字是", location: "你之前更正後的地點是", none: "這段對話裡沒有足夠資料可以確認。" };
+  const en = { first: "Your first question was", correction: "Your latest correction was", constraint: "The constraints you explicitly gave me include", recommendation: "My relevant earlier recommendations include", name: "You told me your name is", location: "The location from your latest correction is", none: "There is not enough information in this conversation to confirm that." };
   const t = zh ? q : en;
   const quote = (v: string) => zh ? `「${v}」` : `“${v}”`;
   const list = (xs: string[]) => xs.map((x, i) => `${i + 1}. ${x}`).join("\n");
+
+  if (latestRequirementsRequest) {
+    const lines = currentRequirementLines(state.current_requirements, lang);
+    if (!lines.length) return lang === "en" ? en.none : q.none;
+    const heading = lang === "en" ? "Your latest confirmed requirements are:" : "你目前最新的需求是：";
+    return `${heading}\n${list(lines)}`.slice(0, 1800);
+  }
   if (mainlyAskedRequest) {
-    const label: Record<string, Record<RuntimeLanguage,string>> = {
-      hong_kong:{"zh-TW":"香港","zh-CN":"香港",en:"Hong Kong"}, macau:{"zh-TW":"澳門","zh-CN":"澳门",en:"Macau"}, singapore:{"zh-TW":"新加坡","zh-CN":"新加坡",en:"Singapore"}, taiwan:{"zh-TW":"台灣","zh-CN":"台湾",en:"Taiwan"}, mainland_china:{"zh-TW":"中國大陸","zh-CN":"中国大陆",en:"Mainland China"}, mars:{"zh-TW":"火星","zh-CN":"火星",en:"Mars"}
+    const label: Record<string, Record<RuntimeLanguage, string>> = {
+      hong_kong: { "zh-TW": "香港", "zh-CN": "香港", en: "Hong Kong" }, macau: { "zh-TW": "澳門", "zh-CN": "澳门", en: "Macau" }, singapore: { "zh-TW": "新加坡", "zh-CN": "新加坡", en: "Singapore" }, taiwan: { "zh-TW": "台灣", "zh-CN": "台湾", en: "Taiwan" }, mainland_china: { "zh-TW": "中國大陸", "zh-CN": "中国大陆", en: "Mainland China" }, mars: { "zh-TW": "火星", "zh-CN": "火星", en: "Mars" },
     };
     const region = state.jurisdiction ? label[state.jurisdiction]?.[lang] : undefined;
     const item = state.current_item ? localizedCurrentItem(state.current_item, lang) : "";
@@ -283,43 +387,26 @@ export function resolveConversationMemoryResponse(
     return lang === "en" ? en.none : q.none;
   }
   if (providedMissingRequest) {
-    const priorCustomer = priorRows
-      .filter((r) => CUSTOMER.has(String(r.role ?? "").toLowerCase()))
-      .map((r) => clean(r.content))
-      .filter(Boolean)
-      .reverse()
-      .slice(-8);
+    const priorCustomer = priorRows.filter((r) => CUSTOMER.has(String(r.role ?? "").toLowerCase())).map((r) => clean(r.content)).filter(Boolean).reverse().slice(-8);
     const supplied = priorCustomer.filter((x) => !QUESTION.test(x) && !MEMORY.test(x)).slice(-5);
     const requested = state.prior_recommendations.slice(0, 4);
     if (lang === "en") {
       const parts: string[] = [];
-      if (supplied.length) parts.push(`You have already told me:
-${list(supplied)}`);
-      if (requested.length) parts.push(`The information I previously asked for / that may still be missing:
-${list(requested)}`);
+      if (supplied.length) parts.push(`You have already told me:\n${list(supplied)}`);
+      if (requested.length) parts.push(`The information I previously asked for / that may still be missing:\n${list(requested)}`);
       return parts.length ? parts.join("\n\n").slice(0, 1800) : en.none;
     }
     const parts: string[] = [];
-    if (supplied.length) parts.push(`你已經提供：
-${list(supplied)}`);
-    if (requested.length) parts.push(`我之前要求／仍可能欠缺的資料：
-${list(requested)}`);
+    if (supplied.length) parts.push(`你已經提供：\n${list(supplied)}`);
+    if (requested.length) parts.push(`我之前要求／仍可能欠缺的資料：\n${list(requested)}`);
     return parts.length ? parts.join("\n\n").slice(0, 1800) : q.none;
   }
   if (generalSummaryRequest) {
-    const chronological = priorRows
-      .filter((r) => CUSTOMER.has(String(r.role ?? "").toLowerCase()))
-      .map((r) => clean(r.content))
-      .filter(Boolean)
-      .reverse();
-    const anchors = [state.first_customer_turn, ...chronological.slice(-6)]
-      .filter((x): x is string => Boolean(x))
-      .filter((x, i, a) => a.indexOf(x) === i)
-      .slice(0, 7);
+    const chronological = priorRows.filter((r) => CUSTOMER.has(String(r.role ?? "").toLowerCase())).map((r) => clean(r.content)).filter(Boolean).reverse();
+    const anchors = [state.first_customer_turn, ...chronological.slice(-6)].filter((x): x is string => Boolean(x)).filter((x, i, a) => a.indexOf(x) === i).slice(0, 7);
     if (!anchors.length) return zh ? q.none : en.none;
     const heading = lang === "en" ? "Here is a concise summary of what we discussed:" : "我們剛才主要談到：";
-    return `${heading}
-${list(anchors.slice(0, 3))}`.slice(0, 1800);
+    return `${heading}\n${list(anchors.slice(0, 3))}`.slice(0, 1800);
   }
   if (summaryRequest) {
     const parts: string[] = [];
@@ -335,11 +422,11 @@ ${list(anchors.slice(0, 3))}`.slice(0, 1800);
     const customerTexts = priorRows.filter((r) => CUSTOMER.has(String(r.role ?? "").toLowerCase())).map((r) => clean(r.content));
     const named = customerTexts.find((x) => /^我叫\s*[^，。,.!?！？]{1,40}/.test(x));
     const m = named?.match(/^我叫\s*([^，。,.!?！？]{1,40})/);
-    return m?.[1] ? `${t.name} ${quote(m[1].replace(/(?:請|请)?記住.*$/,'').trim())}` : t.none;
+    return m?.[1] ? `${t.name} ${quote(m[1].replace(/(?:請|请)?記住.*$/, "").trim())}` : t.none;
   }
   if (currentContextRequest) {
-    const label: Record<string, Record<RuntimeLanguage,string>> = {
-      hong_kong:{"zh-TW":"香港","zh-CN":"香港",en:"Hong Kong"}, macau:{"zh-TW":"澳門","zh-CN":"澳门",en:"Macau"}, singapore:{"zh-TW":"新加坡","zh-CN":"新加坡",en:"Singapore"}, taiwan:{"zh-TW":"台灣","zh-CN":"台湾",en:"Taiwan"}, mainland_china:{"zh-TW":"中國大陸","zh-CN":"中国大陆",en:"Mainland China"}, mars:{"zh-TW":"火星","zh-CN":"火星",en:"Mars"}
+    const label: Record<string, Record<RuntimeLanguage, string>> = {
+      hong_kong: { "zh-TW": "香港", "zh-CN": "香港", en: "Hong Kong" }, macau: { "zh-TW": "澳門", "zh-CN": "澳门", en: "Macau" }, singapore: { "zh-TW": "新加坡", "zh-CN": "新加坡", en: "Singapore" }, taiwan: { "zh-TW": "台灣", "zh-CN": "台湾", en: "Taiwan" }, mainland_china: { "zh-TW": "中國大陸", "zh-CN": "中国大陆", en: "Mainland China" }, mars: { "zh-TW": "火星", "zh-CN": "火星", en: "Mars" },
     };
     const region = state.jurisdiction ? label[state.jurisdiction]?.[lang] : undefined;
     const item = state.current_item ? localizedCurrentItem(state.current_item, lang) : "";
@@ -350,8 +437,8 @@ ${list(anchors.slice(0, 3))}`.slice(0, 1800);
   }
   if (locationRequest) {
     const corrected = state.latest_corrections.map((x) => detectExplicitJurisdiction(x)).find(Boolean) ?? null;
-    const label: Record<string, Record<RuntimeLanguage,string>> = {
-      hong_kong:{"zh-TW":"香港","zh-CN":"香港",en:"Hong Kong"}, macau:{"zh-TW":"澳門","zh-CN":"澳门",en:"Macau"}, singapore:{"zh-TW":"新加坡","zh-CN":"新加坡",en:"Singapore"}, taiwan:{"zh-TW":"台灣","zh-CN":"台湾",en:"Taiwan"}, mainland_china:{"zh-TW":"中國大陸","zh-CN":"中国大陆",en:"Mainland China"}, mars:{"zh-TW":"火星","zh-CN":"火星",en:"Mars"}
+    const label: Record<string, Record<RuntimeLanguage, string>> = {
+      hong_kong: { "zh-TW": "香港", "zh-CN": "香港", en: "Hong Kong" }, macau: { "zh-TW": "澳門", "zh-CN": "澳门", en: "Macau" }, singapore: { "zh-TW": "新加坡", "zh-CN": "新加坡", en: "Singapore" }, taiwan: { "zh-TW": "台灣", "zh-CN": "台湾", en: "Taiwan" }, mainland_china: { "zh-TW": "中國大陸", "zh-CN": "中国大陆", en: "Mainland China" }, mars: { "zh-TW": "火星", "zh-CN": "火星", en: "Mars" },
     };
     const value = corrected ? label[corrected]?.[lang] : undefined;
     return value ? `${t.location} ${value}` : t.none;
@@ -359,10 +446,7 @@ ${list(anchors.slice(0, 3))}`.slice(0, 1800);
   return null;
 }
 
-export function buildCanonicalRetrievalQuery(
-  latestInput: string,
-  newestFirst: RuntimeHistoryRow[],
-): CanonicalRetrievalQuery {
+export function buildCanonicalRetrievalQuery(latestInput: string, newestFirst: RuntimeHistoryRow[]): CanonicalRetrievalQuery {
   const latest = clean(latestInput);
   const state = projectConversationRuntimeState(newestFirst);
   const semantic = classifyCanonicalConversationTurn(latest, newestFirst);
@@ -371,44 +455,30 @@ export function buildCanonicalRetrievalQuery(
   if (semantic.operation === "CONVERSATION_MEMORY") {
     const parts = [`Conversation-memory request: ${latest}`];
     if (state.first_customer_turn) parts.push(`First customer turn: ${state.first_customer_turn}`);
-    if (state.prior_recommendations.length) {
-      parts.push(`Relevant prior recommendations: ${state.prior_recommendations.join(" / ")}`);
-    }
+    if (state.prior_recommendations.length) parts.push(`Relevant prior recommendations: ${state.prior_recommendations.join(" / ")}`);
     return { query: parts.join("\n").slice(0, 1200), mode: "memory", latest, context_turns: [], state };
   }
 
   const explicitJurisdiction = detectExplicitJurisdiction(latest);
-  const previous = newestFirst
-    .filter((row) => CUSTOMER.has(String(row.role ?? "").toLowerCase()))
-    .map((row) => clean(row.content))
-    .filter((x) => x && x !== latest && x !== "__THINKING__");
-  const needsContext = semantic.needs_history;
+  const previous = newestFirst.filter((row) => CUSTOMER.has(String(row.role ?? "").toLowerCase())).map((row) => clean(row.content)).filter((x) => x && x !== latest && x !== "__THINKING__");
+  const referencesCurrentRequirements = /(?:基於|基于|根據|根据|按|依照|based on|according to).{0,30}(?:最新|目前|現在|现在|current).{0,20}(?:需求|要求|條件|条件|requirements?)/i.test(latest);
+  const needsContext = semantic.needs_history || referencesCurrentRequirements;
 
-  // An explicit jurisdiction is a hard topic boundary. Do not contaminate it
-  // with prior-jurisdiction context; applicability is enforced downstream.
-  const explicitBoundary = Boolean(explicitJurisdiction) &&
-    semantic.operation !== "RETURN_TO_PRIOR_TOPIC" &&
-    semantic.operation !== "CORRECTION";
+  const explicitBoundary = Boolean(explicitJurisdiction) && semantic.operation !== "RETURN_TO_PRIOR_TOPIC" && semantic.operation !== "CORRECTION";
   if (!needsContext || explicitBoundary) {
-    return {
-      query: latest,
-      mode: "standalone",
-      latest,
-      context_turns: [],
-      state: { ...state, jurisdiction: explicitJurisdiction ?? state.jurisdiction },
-    };
+    return { query: latest, mode: "standalone", latest, context_turns: [], state: { ...state, jurisdiction: explicitJurisdiction ?? state.jurisdiction } };
   }
 
   const contextTurns = previous.filter((x) => !MEMORY.test(x) && !/^(不要猜|唔好估|不要估|do not guess|don.t guess|不要真人|不需要真人)/i.test(x)).slice(0, 5);
-  if (state.first_customer_turn && !contextTurns.includes(state.first_customer_turn) && /(回收|政策|規則|规则|安排|official|policy|recycling)/i.test(latest)) {
-    contextTurns.push(state.first_customer_turn);
-  }
+  if (state.first_customer_turn && !contextTurns.includes(state.first_customer_turn) && /(回收|政策|規則|规则|安排|official|policy|recycling)/i.test(latest)) contextTurns.push(state.first_customer_turn);
   if (!contextTurns.length) return { query: latest, mode: "standalone", latest, context_turns: [], state };
+  const requirementLines = currentRequirementLines(state.current_requirements, state.language);
   return {
     query: [
       `Current request: ${latest}`,
+      ...(requirementLines.length ? [`Current customer requirement snapshot (latest wins): ${requirementLines.join(" / ")}`] : []),
       `Relevant prior customer context: ${contextTurns.join(" / ")}`,
-    ].join("\n").slice(0, 1200),
+    ].join("\n").slice(0, 1600),
     mode: "contextual",
     latest,
     context_turns: contextTurns,
@@ -416,17 +486,10 @@ export function buildCanonicalRetrievalQuery(
   };
 }
 
-export function buildCanonicalAssistRetrievalQuery(
-  assistanceInput: string,
-  newestFirst: RuntimeHistoryRow[],
-): CanonicalRetrievalQuery {
+export function buildCanonicalAssistRetrievalQuery(assistanceInput: string, newestFirst: RuntimeHistoryRow[]): CanonicalRetrievalQuery {
   const latest = clean(assistanceInput);
   const state = projectConversationRuntimeState(newestFirst);
-  const customerTurns = newestFirst
-    .filter((row) => CUSTOMER.has(String(row.role ?? "").toLowerCase()))
-    .map((row) => clean(row.content))
-    .filter(Boolean)
-    .slice(0, 12);
+  const customerTurns = newestFirst.filter((row) => CUSTOMER.has(String(row.role ?? "").toLowerCase())).map((row) => clean(row.content)).filter(Boolean).slice(0, 12);
   const chronological = [...customerTurns].reverse();
   return {
     query: [
