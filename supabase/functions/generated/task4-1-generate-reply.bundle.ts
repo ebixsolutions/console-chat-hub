@@ -1880,6 +1880,19 @@ var EXACT_FACT_TOKEN_RE = /(?:[$€£¥]|HKD|USD|EUR|GBP|JPY|TWD|NTD|RMB|CNY)?\s
 function canonicalExactToken(value) {
   return value.normalize("NFKC").toLowerCase().replace(/percent/g, "%").replace(/(?:litres?|liters?|公升)/g, "l").replace(/(?:millilitres?|milliliters?|毫升)/g, "ml").replace(/(?:kilograms?|公斤)/g, "kg").replace(/(?:grams?|克)/g, "g").replace(/(?:hours?|小時|小时)/g, "h").replace(/(?:minutes?|分鐘|分钟)/g, "min").replace(/(?:days?|天|日)/g, "d").replace(/(?:years?|年)/g, "y").replace(/(?:months?|月)/g, "mo").replace(/[\s,]/g, "").trim();
 }
+function extractCustomerConversationEvidence(input) {
+  const raw = typeof input === "string" ? input : "";
+  const turnPattern = /\[Turn\s+\d+\s+Visitor\]\n([\s\S]*?)(?=\n\n\[Turn\s+\d+\s+(?:Visitor|Assistant)\]\n|$)/g;
+  const visitorTurns = [];
+  for (const match of raw.matchAll(turnPattern)) {
+    const content = String(match[1] ?? "").trim();
+    if (content) visitorTurns.push(content.slice(0, 3e3));
+  }
+  if (visitorTurns.length > 0) {
+    return visitorTurns.slice(-6).join("\n\n").slice(0, 12e3);
+  }
+  return raw.slice(0, 3e3);
+}
 function extractGroundingBlock(system) {
   const transformRules = "Prior Grounded Answer transform rules:";
   const transformMarker = "Prior Grounded Answer Evidence:\n";
@@ -1889,7 +1902,9 @@ function extractGroundingBlock(system) {
       const prior = system.slice(transformIndex + transformMarker.length).trim();
       if (prior) {
         const operationsLine = system.match(/^- Operations:\s*(.+)$/m)?.[1] ?? "";
-        const transformOperations = operationsLine.split("+").map((x) => x.trim()).filter(Boolean);
+        const transformOperations = operationsLine.split("+").map(
+          (x) => x.trim()
+        ).filter(Boolean);
         return {
           authority: "PRIOR_GROUNDED_ANSWER",
           evidence_text: prior.slice(0, 3e3),
@@ -1932,11 +1947,17 @@ function validateExactFactGrounding(answer, evidenceText, protectedChunkIds = []
   const answerNorm = answer.normalize("NFKC");
   for (const id of protectedChunkIds) {
     if (id && answerNorm.includes(id)) {
-      return { ok: false, reason: "internal_chunk_id_leak", unsupported_tokens: [id] };
+      return {
+        ok: false,
+        reason: "internal_chunk_id_leak",
+        unsupported_tokens: [id]
+      };
     }
   }
-  const evidenceNorm = canonicalExactToken(`${evidenceText}
-${conversationEvidenceText}`);
+  const evidenceNorm = canonicalExactToken(
+    `${evidenceText}
+${conversationEvidenceText}`
+  );
   const unsupported = /* @__PURE__ */ new Set();
   for (const match of answer.matchAll(EXACT_FACT_TOKEN_RE)) {
     const token = canonicalExactToken(match[0] ?? "");
@@ -1973,7 +1994,7 @@ function parseGroundingVerifierDecision(raw, allowedChunkIds) {
   };
 }
 async function verifyGroundedGeneration(call, provider, answer, grounding, timeoutMs) {
-  const conversationEvidence = call.user.slice(0, 12e3);
+  const conversationEvidence = extractCustomerConversationEvidence(call.user);
   const exact = validateExactFactGrounding(
     answer,
     grounding.evidence_text,
@@ -2051,7 +2072,9 @@ async function verifyGroundedGeneration(call, provider, answer, grounding, timeo
     );
   } else {
     const key = Deno.env.get("ANTHROPIC_API_KEY");
-    if (!key?.trim()) return { ok: false, reason: "verifier_provider_config_missing" };
+    if (!key?.trim()) {
+      return { ok: false, reason: "verifier_provider_config_missing" };
+    }
     verifierAdapter = anthropicAdapter(
       key,
       evaluationModel,
@@ -2111,7 +2134,10 @@ async function verifyGroundedGeneration(call, provider, answer, grounding, timeo
       verifierUsage.output_tokens = parsed.output_tokens;
       verifierUsage.latency_ms = Date.now() - verifierStarted;
       if (!parsed.text || parsed.finish_reason === "MAX_TOKENS") break;
-      const decision2 = parseGroundingVerifierDecision(parsed.text, allowedVerifierIds);
+      const decision2 = parseGroundingVerifierDecision(
+        parsed.text,
+        allowedVerifierIds
+      );
       if (!decision2) {
         const parsedShape = parseJsonObjectLoose(parsed.text);
         log(call.tag, {
@@ -2435,7 +2461,7 @@ async function callModel(call) {
           );
           return {
             ok: false,
-            code: "LLM_INVALID_OUTPUT",
+            code: "LLM_GROUNDING_REJECTED",
             status: res.status,
             request_id: requestId,
             usage
@@ -2615,8 +2641,9 @@ var CUSTOMER2 = /* @__PURE__ */ new Set(["visitor", "customer", "user"]);
 var ASSISTANT2 = /* @__PURE__ */ new Set(["assistant", "ai", "human_agent"]);
 var EXPLICIT_CORRECTION = /(我講錯|我说错|我說錯|我要更正|我想更正|更正一下[：:]?|更正[：:]|其實係|其实是|改返|改成|actually[,\s]+i meant|i meant|correction\s*[:：])/i;
 var CONTRAST_CORRECTION = /(唔係[^，。,.!?！？]{1,80}[，,]\s*係|不是[^，。,.!?！？]{1,80}[，,]\s*(?:而)?是|not .+ but .+)/i;
+var LATEST_VALUE_CORRECTION = /(?:記住|记住)?\s*(?:最新|目前|現在|现在)\s*(?:係|是|為|为)?\s*[^，。,.!?！？]{1,50}(?:，|,)\s*(?:唔係|不是|而不是|not)\s*[^，。,.!?！？]{1,50}/i;
 function isCorrectionText(text) {
-  if (EXPLICIT_CORRECTION.test(text)) return true;
+  if (EXPLICIT_CORRECTION.test(text) || LATEST_VALUE_CORRECTION.test(text)) return true;
   if (/[?？]/.test(text)) return false;
   return CONTRAST_CORRECTION.test(text);
 }
@@ -2676,9 +2703,7 @@ function detectExplicitJurisdiction(text) {
   for (const [id, re] of JURISDICTIONS) {
     const match = t.match(re);
     if (!match || typeof match.index !== "number") continue;
-    if (!jurisdictionOccurrenceIsNegated(t, match.index)) {
-      candidates.push({ id, index: match.index });
-    }
+    if (!jurisdictionOccurrenceIsNegated(t, match.index)) candidates.push({ id, index: match.index });
   }
   candidates.sort((x, y) => y.index - x.index);
   return candidates[0]?.id ?? null;
@@ -2686,12 +2711,89 @@ function detectExplicitJurisdiction(text) {
 function normalizeTopic(text) {
   return clean2(text).replace(/[?？!！。,.，]/g, " ").replace(/^(?:咁|那|所以|另外|再|又|what about|then|so)\s*/i, "").trim().slice(0, 180);
 }
+function smallCount(raw) {
+  if (/^\d{1,6}$/.test(raw)) return Number(raw);
+  const map = { \u4E00: 1, \u4E8C: 2, \u5169: 2, \u4E24: 2, \u4E09: 3, \u56DB: 4, \u4E94: 5, \u516D: 6, \u4E03: 7, \u516B: 8, \u4E5D: 9, \u5341: 10 };
+  return map[raw] ?? null;
+}
+function marketLabel(id, lang2) {
+  const labels = {
+    hong_kong: { "zh-TW": "\u9999\u6E2F", "zh-CN": "\u9999\u6E2F", en: "Hong Kong" },
+    macau: { "zh-TW": "\u6FB3\u9580", "zh-CN": "\u6FB3\u95E8", en: "Macau" },
+    singapore: { "zh-TW": "\u65B0\u52A0\u5761", "zh-CN": "\u65B0\u52A0\u5761", en: "Singapore" },
+    taiwan: { "zh-TW": "\u53F0\u7063", "zh-CN": "\u53F0\u6E7E", en: "Taiwan" },
+    mainland_china: { "zh-TW": "\u4E2D\u570B\u5927\u9678", "zh-CN": "\u4E2D\u56FD\u5927\u9646", en: "Mainland China" },
+    mars: { "zh-TW": "\u706B\u661F", "zh-CN": "\u706B\u661F", en: "Mars" }
+  };
+  return labels[id]?.[lang2] ?? id;
+}
+function deriveCurrentRequirementSnapshot(chronologicalCustomerTurns) {
+  let productCount = null;
+  let staffCount = null;
+  let appInterest = null;
+  const desired = /* @__PURE__ */ new Set();
+  let currentMarket = null;
+  const futureMarkets = /* @__PURE__ */ new Set();
+  for (const raw of chronologicalCustomerTurns) {
+    const text = clean2(raw);
+    if (!text || /[?？]/.test(text)) continue;
+    const product = text.match(/(\d{1,6})\s*(?:件(?:商品|產品|产品)?|sku\b)/i);
+    if (product?.[1]) productCount = Number(product[1]);
+    const latestCount = text.match(/(?:最新|目前|現在|现在)\s*(?:係|是|為|为)?\s*(\d{1,6})(?:\s*(?:件|sku))?/i);
+    if (productCount !== null && latestCount?.[1]) productCount = Number(latestCount[1]);
+    if (/(?:得我|只有我|只係我|只是我).{0,12}(?:一個人|一个人).{0,12}(?:管理|manage)/i.test(text)) staffCount = 1;
+    const staff = text.match(/(?:我有|有)\s*([一二兩两三四五六七八九十]|\d{1,3})\s*(?:個|个|位)?\s*(?:staff|員工|员工)/i);
+    if (staff?.[1]) staffCount = smallCount(staff[1]);
+    const addStaff = text.match(/(?:再加|增加|加多|add)\s*([一二兩两三四五六七八九十]|\d{1,3})\s*(?:個|个|位)?\s*(?:staff|員工|员工)/i);
+    if (addStaff?.[1]) {
+      const n = smallCount(addStaff[1]);
+      if (n !== null) staffCount = (staffCount ?? 0) + n;
+    }
+    if (/(?:唔要|不要|不需要|唔需要)\s*app.{0,20}(?:已經|已经)?(?:過時|过时|outdated|no longer)/i.test(text)) appInterest = true;
+    else if (/(?:app).{0,16}(?:有興趣|有兴趣|想要|需要|要用|會用|会用)|(?:想要|需要|要用)\s*app/i.test(text)) appInterest = true;
+    else if (/(?:暫時|暂时)?\s*(?:唔需要|不需要|唔要|不要)\s*app/i.test(text)) appInterest = false;
+    if (/(?:想要|要用|會用|会用|需要).{0,12}(?:push|推播|推送)|(?:push|推播|推送).{0,12}(?:想要|要用|會用|会用|需要)/i.test(text)) desired.add("Push");
+    if (/(?:想用|要用|會用|会用|需要).{0,12}crm|crm.{0,12}(?:想用|要用|會用|会用|需要)/i.test(text)) desired.add("CRM");
+    if (/(?:會員等級|会员等级).{0,12}(?:都)?(?:會用|会用|要用|需要)|(?:想用|要用|需要).{0,12}(?:會員等級|会员等级)/i.test(text)) desired.add("\u6703\u54E1\u7B49\u7D1A");
+    const market = detectExplicitJurisdiction(text);
+    if (market) {
+      if (/(?:之後|之后|以後|以后|未來|未来|later|future).{0,20}(?:可能|maybe|may|plan|做|進入|进入)/i.test(text)) futureMarkets.add(market);
+      else if (/(?:目前|而家|現在|现在|主要市場|主要市场|仍然|只做|currently|current|main market)/i.test(text)) currentMarket = market;
+    }
+  }
+  if (currentMarket) futureMarkets.delete(currentMarket);
+  return {
+    product_count: productCount,
+    staff_count: staffCount,
+    app_interest: appInterest,
+    desired_features: [...desired],
+    current_market: currentMarket,
+    future_markets: [...futureMarkets]
+  };
+}
+function currentRequirementLines(snapshot, lang2) {
+  const out = [];
+  if (lang2 === "en") {
+    if (snapshot.product_count !== null) out.push(`Product count: about ${snapshot.product_count}`);
+    if (snapshot.staff_count !== null) out.push(`Management staff: ${snapshot.staff_count}`);
+    if (snapshot.app_interest === true) out.push("App: interested / include in plan");
+    if (snapshot.app_interest === false) out.push("App: not currently needed");
+    if (snapshot.desired_features.length) out.push(`Desired features: ${snapshot.desired_features.join(", ")}`);
+    if (snapshot.current_market) out.push(`Current main market: ${marketLabel(snapshot.current_market, lang2)}`);
+    if (snapshot.future_markets.length) out.push(`Possible future markets: ${snapshot.future_markets.map((x) => marketLabel(x, lang2)).join(", ")} (not the current main market)`);
+    return out;
+  }
+  if (snapshot.product_count !== null) out.push(`\u5546\u54C1\u6578\u91CF\uFF1A\u7D04 ${snapshot.product_count} \u4EF6`);
+  if (snapshot.staff_count !== null) out.push(`\u7BA1\u7406\u4EBA\u624B\uFF1A${snapshot.staff_count} \u4F4D staff`);
+  if (snapshot.app_interest === true) out.push("App\uFF1A\u6709\u8208\u8DA3\uFF0F\u9700\u8981\u7D0D\u5165\u65B9\u6848");
+  if (snapshot.app_interest === false) out.push("App\uFF1A\u76EE\u524D\u4E0D\u9700\u8981");
+  if (snapshot.desired_features.length) out.push(`\u9700\u8981\u529F\u80FD\uFF1A${snapshot.desired_features.join("\u3001")}`);
+  if (snapshot.current_market) out.push(`\u76EE\u524D\u4E3B\u8981\u5E02\u5834\uFF1A${marketLabel(snapshot.current_market, lang2)}`);
+  if (snapshot.future_markets.length) out.push(`\u672A\u4F86\u53EF\u80FD\u5E02\u5834\uFF1A${snapshot.future_markets.map((x) => marketLabel(x, lang2)).join("\u3001")}\uFF08\u4E0D\u662F\u76EE\u524D\u4E3B\u8981\u5E02\u5834\uFF09`);
+  return out;
+}
 function projectConversationRuntimeState(newestFirst) {
-  const rows = newestFirst.map((row) => ({
-    text: clean2(row.content),
-    role: String(row.role ?? "").toLowerCase(),
-    metadata: row.metadata
-  })).filter((row) => row.text && row.text !== "__THINKING__");
+  const rows = newestFirst.map((row) => ({ text: clean2(row.content), role: String(row.role ?? "").toLowerCase(), metadata: row.metadata })).filter((row) => row.text && row.text !== "__THINKING__");
   const customers = rows.filter((row) => CUSTOMER2.has(row.role));
   const assistants = rows.filter((row) => ASSISTANT2.has(row.role));
   const chronological = [...customers].reverse();
@@ -2713,6 +2815,7 @@ function projectConversationRuntimeState(newestFirst) {
   }
   const currentTopic = latest ? normalizeTopic(latest) : null;
   const refs = latest ? [...latest.matchAll(/(這個|这个|那個|那个|它|其|上述|剛才|刚才|之前|same|that|this|it|its)/gi)].map((m) => m[0]).slice(0, 6) : [];
+  const currentRequirements = deriveCurrentRequirementSnapshot(chronological.map((row) => row.text));
   return {
     first_customer_turn: first,
     first_intent: first ? normalizeTopic(first) : null,
@@ -2730,7 +2833,8 @@ function projectConversationRuntimeState(newestFirst) {
     jurisdiction: explicitJurisdiction ?? inheritedJurisdiction ?? groundedAssistantJurisdiction,
     current_item: correctedItem ?? focusedItem,
     language: detectLanguage2(latest ?? first ?? ""),
-    prior_recommendations: assistants.filter((row) => RECOMMEND.test(row.text)).slice(0, 6).map((row) => row.text)
+    prior_recommendations: assistants.filter((row) => RECOMMEND.test(row.text)).slice(0, 6).map((row) => row.text),
+    current_requirements: currentRequirements
   };
 }
 function buildCanonicalContinuityBlock(newestFirst) {
@@ -2747,6 +2851,11 @@ function buildCanonicalContinuityBlock(newestFirst) {
     `Jurisdiction: ${state.jurisdiction ?? "unspecified"}`,
     `Current item: ${state.current_item ?? "unspecified"}`
   ];
+  const requirementLines = currentRequirementLines(state.current_requirements, state.language);
+  if (requirementLines.length) {
+    lines.push("Current customer-authored requirements (latest state wins; assistant statements are not authority):");
+    requirementLines.forEach((x, i) => lines.push(`${i + 1}. ${x}`));
+  }
   if (state.latest_corrections.length) {
     lines.push("Newest corrections / superseding facts:");
     state.latest_corrections.forEach((x, i) => lines.push(`${i + 1}. ${x}`));
@@ -2798,13 +2907,21 @@ function resolveConversationMemoryResponse(latestInput, newestFirst) {
   const hasChainedLanguageContinuation = recentPriorCustomerTurns.length >= 2 && languageContinuationPattern.test(recentPriorCustomerTurns[0]) && currentContextPattern.test(recentPriorCustomerTurns[1]);
   const memoryLanguageContinuation = languageContinuationPattern.test(latest) && (hasRecentCurrentContextQuestion || hasChainedLanguageContinuation);
   const currentContextRequest = currentContextPattern.test(latest) || memoryLanguageContinuation;
-  if (!(firstRequest || correctionRequest || constraintRequest || summaryRequest || recommendationRequest || providedMissingRequest || generalSummaryRequest || mainlyAskedRequest || nameRequest || locationRequest || currentContextRequest)) return null;
+  const latestRequirementsRequest = /(?:列出|整理|總結|总结|講出|说出|tell me|list|summari[sz]e).{0,30}(?:最新|目前|現在|现在|current).{0,20}(?:需求|要求|條件|条件|requirements?)|(?:最新|目前|現在|现在|current).{0,20}(?:需求|要求|條件|条件|requirements?).{0,30}(?:是什麼|是什么|有哪些|係咩|what are)/i.test(latest);
+  if (!(firstRequest || correctionRequest || constraintRequest || summaryRequest || recommendationRequest || providedMissingRequest || generalSummaryRequest || mainlyAskedRequest || nameRequest || locationRequest || currentContextRequest || latestRequirementsRequest)) return null;
   const zh = lang2 !== "en";
   const q = lang2 === "zh-CN" ? { first: "\u4F60\u4E00\u5F00\u59CB\u95EE\u7684\u662F", correction: "\u4F60\u4E4B\u524D\u6700\u65B0\u7684\u66F4\u6B63\u662F", constraint: "\u4F60\u4E4B\u524D\u660E\u786E\u63D0\u51FA\u7684\u9650\u5236\u5305\u62EC", recommendation: "\u6211\u4E4B\u524D\u7684\u76F8\u5173\u5EFA\u8BAE\u5305\u62EC", name: "\u4F60\u4E4B\u524D\u544A\u8BC9\u6211\u4F60\u7684\u540D\u5B57\u662F", location: "\u4F60\u4E4B\u524D\u66F4\u6B63\u540E\u7684\u5730\u70B9\u662F", none: "\u8FD9\u6BB5\u5BF9\u8BDD\u91CC\u6CA1\u6709\u8DB3\u591F\u8D44\u6599\u53EF\u4EE5\u786E\u8BA4\u3002" } : { first: "\u4F60\u4E00\u958B\u59CB\u554F\u7684\u662F", correction: "\u4F60\u4E4B\u524D\u6700\u65B0\u7684\u66F4\u6B63\u662F", constraint: "\u4F60\u4E4B\u524D\u660E\u78BA\u63D0\u51FA\u7684\u9650\u5236\u5305\u62EC", recommendation: "\u6211\u4E4B\u524D\u7684\u76F8\u95DC\u5EFA\u8B70\u5305\u62EC", name: "\u4F60\u4E4B\u524D\u544A\u8A34\u6211\u4F60\u7684\u540D\u5B57\u662F", location: "\u4F60\u4E4B\u524D\u66F4\u6B63\u5F8C\u7684\u5730\u9EDE\u662F", none: "\u9019\u6BB5\u5C0D\u8A71\u88E1\u6C92\u6709\u8DB3\u5920\u8CC7\u6599\u53EF\u4EE5\u78BA\u8A8D\u3002" };
   const en = { first: "Your first question was", correction: "Your latest correction was", constraint: "The constraints you explicitly gave me include", recommendation: "My relevant earlier recommendations include", name: "You told me your name is", location: "The location from your latest correction is", none: "There is not enough information in this conversation to confirm that." };
   const t = zh ? q : en;
   const quote = (v) => zh ? `\u300C${v}\u300D` : `\u201C${v}\u201D`;
   const list = (xs) => xs.map((x, i) => `${i + 1}. ${x}`).join("\n");
+  if (latestRequirementsRequest) {
+    const lines = currentRequirementLines(state.current_requirements, lang2);
+    if (!lines.length) return lang2 === "en" ? en.none : q.none;
+    const heading = lang2 === "en" ? "Your latest confirmed requirements are:" : "\u4F60\u76EE\u524D\u6700\u65B0\u7684\u9700\u6C42\u662F\uFF1A";
+    return `${heading}
+${list(lines)}`.slice(0, 1800);
+  }
   if (mainlyAskedRequest) {
     const label = {
       hong_kong: { "zh-TW": "\u9999\u6E2F", "zh-CN": "\u9999\u6E2F", en: "Hong Kong" },
@@ -2914,34 +3031,27 @@ function buildCanonicalRetrievalQuery(latestInput, newestFirst) {
   if (semantic.operation === "CONVERSATION_MEMORY") {
     const parts = [`Conversation-memory request: ${latest}`];
     if (state.first_customer_turn) parts.push(`First customer turn: ${state.first_customer_turn}`);
-    if (state.prior_recommendations.length) {
-      parts.push(`Relevant prior recommendations: ${state.prior_recommendations.join(" / ")}`);
-    }
+    if (state.prior_recommendations.length) parts.push(`Relevant prior recommendations: ${state.prior_recommendations.join(" / ")}`);
     return { query: parts.join("\n").slice(0, 1200), mode: "memory", latest, context_turns: [], state };
   }
   const explicitJurisdiction = detectExplicitJurisdiction(latest);
   const previous = newestFirst.filter((row) => CUSTOMER2.has(String(row.role ?? "").toLowerCase())).map((row) => clean2(row.content)).filter((x) => x && x !== latest && x !== "__THINKING__");
-  const needsContext = semantic.needs_history;
+  const referencesCurrentRequirements = /(?:基於|基于|根據|根据|按|依照|based on|according to).{0,30}(?:最新|目前|現在|现在|current).{0,20}(?:需求|要求|條件|条件|requirements?)/i.test(latest);
+  const needsContext = semantic.needs_history || referencesCurrentRequirements;
   const explicitBoundary = Boolean(explicitJurisdiction) && semantic.operation !== "RETURN_TO_PRIOR_TOPIC" && semantic.operation !== "CORRECTION";
   if (!needsContext || explicitBoundary) {
-    return {
-      query: latest,
-      mode: "standalone",
-      latest,
-      context_turns: [],
-      state: { ...state, jurisdiction: explicitJurisdiction ?? state.jurisdiction }
-    };
+    return { query: latest, mode: "standalone", latest, context_turns: [], state: { ...state, jurisdiction: explicitJurisdiction ?? state.jurisdiction } };
   }
   const contextTurns = previous.filter((x) => !MEMORY2.test(x) && !/^(不要猜|唔好估|不要估|do not guess|don.t guess|不要真人|不需要真人)/i.test(x)).slice(0, 5);
-  if (state.first_customer_turn && !contextTurns.includes(state.first_customer_turn) && /(回收|政策|規則|规则|安排|official|policy|recycling)/i.test(latest)) {
-    contextTurns.push(state.first_customer_turn);
-  }
+  if (state.first_customer_turn && !contextTurns.includes(state.first_customer_turn) && /(回收|政策|規則|规则|安排|official|policy|recycling)/i.test(latest)) contextTurns.push(state.first_customer_turn);
   if (!contextTurns.length) return { query: latest, mode: "standalone", latest, context_turns: [], state };
+  const requirementLines = currentRequirementLines(state.current_requirements, state.language);
   return {
     query: [
       `Current request: ${latest}`,
+      ...requirementLines.length ? [`Current customer requirement snapshot (latest wins): ${requirementLines.join(" / ")}`] : [],
       `Relevant prior customer context: ${contextTurns.join(" / ")}`
-    ].join("\n").slice(0, 1200),
+    ].join("\n").slice(0, 1600),
     mode: "contextual",
     latest,
     context_turns: contextTurns,
@@ -3705,7 +3815,9 @@ function buildEmotionReplyStrategyContext(signals) {
 }
 
 // supabase/functions/generate-reply/index.ts
-import { createClient as createClient3 } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import {
+  createClient as createClient3
+} from "https://esm.sh/@supabase/supabase-js@2.45.0";
 function requiredEscalationRpcClient(client) {
   return {
     rpc: async (fn, args) => {
@@ -3762,6 +3874,11 @@ var R2_CLARIFICATION_SAFE_WORDING = {
   "zh-CN": "\u6211\u60F3\u518D\u786E\u8BA4\u4E00\u6B21\uFF0C\u624D\u80FD\u66F4\u51C6\u786E\u5730\u5E2E\u4F60\u3002\u8BF7\u8865\u5145\u8FD9\u4E2A\u95EE\u9898\u4E2D\u6700\u91CD\u8981\u7684\u7EC6\u8282\uFF0C\u4F8B\u5982\u4F60\u5E0C\u671B\u5904\u7406\u7684\u9879\u76EE\u6216\u76EE\u524D\u9047\u5230\u7684\u60C5\u51B5\u3002",
   en: "I\u2019d like to clarify one detail so I can help more accurately. Please add the most important detail about what you want handled or what is happening now."
 };
+var GROUNDING_RECOVERY_WORDING = {
+  "zh-TW": "\u6211\u60F3\u518D\u78BA\u8A8D\u4E00\u4E0B\u8CC7\u6599\uFF0C\u907F\u514D\u7B54\u932F\u3002\u4F60\u6700\u60F3\u5148\u78BA\u8A8D\u54EA\u4E00\u9EDE\uFF1F",
+  "zh-CN": "\u6211\u60F3\u518D\u786E\u8BA4\u4E00\u4E0B\u8D44\u6599\uFF0C\u907F\u514D\u7B54\u9519\u3002\u4F60\u6700\u60F3\u5148\u786E\u8BA4\u54EA\u4E00\u70B9\uFF1F",
+  en: "I want to verify the information before answering so I don\u2019t give you something inaccurate. Which point would you like me to confirm first?"
+};
 function isHandoffIntent(text) {
   return classifyHandoffIntent(text).explicit_request;
 }
@@ -3772,7 +3889,10 @@ function detectHandoffLanguage(text) {
 function sanitizeUserMessage(text) {
   if (!text) return "";
   let s = text;
-  s = s.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "[redacted_email]");
+  s = s.replace(
+    /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g,
+    "[redacted_email]"
+  );
   s = s.replace(/\+?\d[\d\s().-]{6,}\d/g, "[redacted_phone]");
   s = s.replace(/\d{7,}/g, "[redacted_digits]");
   if (s.length > 300) s = s.slice(0, 300);
@@ -3793,7 +3913,10 @@ async function writeTraces(supabaseAdmin, params) {
       user_message: sanitizeUserMessage(params.user_message_raw)
     });
   } catch (e) {
-    console.error("[generate-reply] final_prompt_trace insert failed (non-blocking):", e);
+    console.error(
+      "[generate-reply] final_prompt_trace insert failed (non-blocking):",
+      e
+    );
   }
 }
 function buildRouterConversationInput(messages) {
@@ -3807,12 +3930,16 @@ function routerFailureHttpStatus(code) {
   if (code === "LLM_INPUT_BLOCKED") return 400;
   if (code === "LLM_TIMEOUT") return 504;
   if (code === "LLM_CONFIG_MISSING") return 503;
+  if (code === "LLM_GROUNDING_REJECTED") return 422;
   return 502;
 }
 async function loadLatestHandoffReason(supabaseAdmin, conversationId) {
   const { data, error } = await supabaseAdmin.from("handoff_event").select("handoff_reason, created_at").eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(1).maybeSingle();
   if (error) {
-    console.error("[generate-reply] latest handoff control lookup failed (non-blocking):", conversationId);
+    console.error(
+      "[generate-reply] latest handoff control lookup failed (non-blocking):",
+      conversationId
+    );
     return null;
   }
   return typeof data?.handoff_reason === "string" ? data.handoff_reason : null;
@@ -3828,24 +3955,38 @@ function routerFailureToS0(code) {
     case "LLM_CONFIG_MISSING":
       return "LLM_NON_2XX";
     case "LLM_INPUT_BLOCKED":
-      return "LLM_EMPTY_RESPONSE";
+      return "LLM_INPUT_BLOCKED";
     case "LLM_INVALID_OUTPUT":
-      return "LLM_EMPTY_RESPONSE";
+      return "LLM_INVALID_OUTPUT";
+    case "LLM_GROUNDING_REJECTED":
+      return "LLM_GROUNDING_REJECTED";
   }
 }
 async function cleanupThinking(supabaseAdmin, conversation_id, source_message_id) {
   if (!source_message_id) {
-    console.error("[generate-reply] cleanupThinking skipped: missing source_message_id", conversation_id);
+    console.error(
+      "[generate-reply] cleanupThinking skipped: missing source_message_id",
+      conversation_id
+    );
     return;
   }
   try {
-    await supabaseAdmin.from("messages").delete().eq("conversation_id", conversation_id).eq("content", "__THINKING__").filter("metadata->>source_message_id", "eq", source_message_id);
+    await supabaseAdmin.from("messages").delete().eq(
+      "conversation_id",
+      conversation_id
+    ).eq("content", "__THINKING__").filter(
+      "metadata->>source_message_id",
+      "eq",
+      source_message_id
+    );
   } catch (e) {
     console.error("[generate-reply] cleanupThinking failed (non-blocking):", e);
   }
 }
 async function loadSourceVisitorMessage(supabaseAdmin, conversation_id, source_message_id) {
-  if (!source_message_id || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(source_message_id)) {
+  if (!source_message_id || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    source_message_id
+  )) {
     return { ok: false, error: "source_message_id_required" };
   }
   const { data, error } = await supabaseAdmin.from("messages").select("id, content, created_at").eq("id", source_message_id).eq("conversation_id", conversation_id).eq("role", "visitor").eq("is_recalled", false).neq("content", "__THINKING__").maybeSingle();
@@ -3867,7 +4008,9 @@ function widgetLiveTestPreActivationActor(metadataSource) {
     return void 0;
   }
   const m = metadataSource;
-  if (m.widget_live_test !== true || m.exclude_training !== true || typeof m.owner_user_id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(m.owner_user_id)) return void 0;
+  if (m.widget_live_test !== true || m.exclude_training !== true || typeof m.owner_user_id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    m.owner_user_id
+  )) return void 0;
   return {
     userId: m.owner_user_id,
     allowPreActivation: true
@@ -3884,7 +4027,9 @@ function sourceMessageErrorResponse(result2) {
   });
 }
 async function commitAiReplyWithControlGate(supabaseAdmin, conversation_id, source_message_id, content, metadata = null) {
-  if (!source_message_id) return { ok: false, result: "invalid_source_message" };
+  if (!source_message_id) {
+    return { ok: false, result: "invalid_source_message" };
+  }
   const { data, error } = await supabaseAdmin.rpc("commit_ai_reply_tx", {
     p_conversation_id: conversation_id,
     p_source_message_id: source_message_id,
@@ -3927,7 +4072,14 @@ async function commitAiReplyWithControlGate(supabaseAdmin, conversation_id, sour
 }
 function classifyExplicitHandoff(text) {
   const lang2 = detectHandoffLanguage(text);
-  if (lang2) return { rule: "R1", confidence: 1, trigger_span: text.slice(0, 100), language: lang2 };
+  if (lang2) {
+    return {
+      rule: "R1",
+      confidence: 1,
+      trigger_span: text.slice(0, 100),
+      language: lang2
+    };
+  }
   return { rule: null, confidence: 0, trigger_span: "", language: "zh-TW" };
 }
 function isGreetingOrTrivial(text) {
@@ -3976,18 +4128,25 @@ function resolveAuthoritativeComplianceReview(expectedTenantId) {
   try {
     parsed = JSON.parse(raw);
   } catch {
-    console.error("[generate-reply] invalid ESC_E2_COMPLIANCE_REVIEW_BY_TENANT_JSON JSON");
+    console.error(
+      "[generate-reply] invalid ESC_E2_COMPLIANCE_REVIEW_BY_TENANT_JSON JSON"
+    );
     return void 0;
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    console.error("[generate-reply] compliance tenant map must be a JSON object");
+    console.error(
+      "[generate-reply] compliance tenant map must be a JSON object"
+    );
     return void 0;
   }
   const tenantMap = parsed;
   if (!(expectedTenantId in tenantMap)) return void 0;
   const value = tenantMap[expectedTenantId];
   if (typeof value !== "boolean") {
-    console.error("[generate-reply] compliance tenant value must be boolean", expectedTenantId);
+    console.error(
+      "[generate-reply] compliance tenant value must be boolean",
+      expectedTenantId
+    );
     return void 0;
   }
   return {
@@ -4059,7 +4218,17 @@ function isFiniteScore(value) {
 }
 function explicitAngerLabel(value) {
   if (typeof value !== "string") return false;
-  return ["angry", "anger", "furious", "rage", "irate", "\u61A4\u6012", "\u6124\u6012", "\u751F\u6C23", "\u751F\u6C14"].includes(value.trim().toLowerCase());
+  return [
+    "angry",
+    "anger",
+    "furious",
+    "rage",
+    "irate",
+    "\u61A4\u6012",
+    "\u6124\u6012",
+    "\u751F\u6C23",
+    "\u751F\u6C14"
+  ].includes(value.trim().toLowerCase());
 }
 async function loadAuthoritativeR3SentimentSignals(supabaseAdmin, conversation_id, expected_tenant_id) {
   if (!expected_tenant_id) return void 0;
@@ -4073,7 +4242,9 @@ async function loadAuthoritativeR3SentimentSignals(supabaseAdmin, conversation_i
   if (evaluationError || !evaluation?.id || evaluation.id !== freshness.last_success_evaluation_id) {
     return void 0;
   }
-  const { data: points, error: pointsError } = await supabaseAdmin.from("ce_emotion_point").select("turn_index, sentiment, sentiment_score, trigger_label, occurred_at").eq("evaluation_id", evaluation.id).eq("company_id", expected_tenant_id).order("turn_index", { ascending: true }).limit(20);
+  const { data: points, error: pointsError } = await supabaseAdmin.from("ce_emotion_point").select(
+    "turn_index, sentiment, sentiment_score, trigger_label, occurred_at"
+  ).eq("evaluation_id", evaluation.id).eq("company_id", expected_tenant_id).order("turn_index", { ascending: true }).limit(20);
   if (pointsError || !points || points.length === 0) return void 0;
   const usable = points.map((p) => ({
     turn_index: typeof p.turn_index === "number" ? p.turn_index : -1,
@@ -4092,7 +4263,9 @@ async function loadAuthoritativeR3SentimentSignals(supabaseAdmin, conversation_i
   if (scoreSeries.length >= 2) {
     const previous = scoreSeries[scoreSeries.length - 2];
     const current = scoreSeries[scoreSeries.length - 1];
-    if (previous < -0.2 && current >= 0 && current - previous >= 0.3) recovered = true;
+    if (previous < -0.2 && current >= 0 && current - previous >= 0.3) {
+      recovered = true;
+    }
   }
   return {
     ...anger ? { anger_flag: true } : {},
@@ -4239,11 +4412,15 @@ function extractMeaningfulTokens(normalized) {
   return new Set(tokens);
 }
 function compactCjk(normalized) {
-  return (normalized.match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu) ?? []).join("");
+  return (normalized.match(
+    /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu
+  ) ?? []).join("");
 }
 function ngramSet(text, size) {
   const out = /* @__PURE__ */ new Set();
-  for (let i = 0; i + size <= text.length; i += 1) out.add(text.slice(i, i + size));
+  for (let i = 0; i + size <= text.length; i += 1) {
+    out.add(text.slice(i, i + size));
+  }
   return out;
 }
 function containment(a, b) {
@@ -4340,7 +4517,9 @@ function readPositiveIntegerEnv(name) {
   return parsed;
 }
 function buildVerifiedTenantEscalationConfig() {
-  const maxConsecutiveNoAnswer = readPositiveIntegerEnv("ESC_MAX_CONSECUTIVE_NO_ANSWER");
+  const maxConsecutiveNoAnswer = readPositiveIntegerEnv(
+    "ESC_MAX_CONSECUTIVE_NO_ANSWER"
+  );
   const maxClarifications2 = readPositiveIntegerEnv("ESC_MAX_CLARIFICATIONS");
   const sentimentThresholdRaw = Deno.env.get("ESC_SENTIMENT_SCORE_THRESHOLD");
   const parsedSentimentThreshold = sentimentThresholdRaw !== void 0 && sentimentThresholdRaw.trim() !== "" ? Number(sentimentThresholdRaw) : void 0;
@@ -4392,17 +4571,25 @@ async function evaluateAndPersistRequiredRulesLive(supabaseAdmin, params) {
   const enabled = requiredRuleActivationFromEnv(Deno.env);
   if (enabled.size === 0) return null;
   if (!params.source_message_id) {
-    console.error("[generate-reply] required-rules live blocked: missing source_message_id", params.conversation_id);
+    console.error(
+      "[generate-reply] required-rules live blocked: missing source_message_id",
+      params.conversation_id
+    );
     return new Response(
       JSON.stringify({
         success: false,
         error: "required_escalation_missing_source_message_id",
         handoff_persisted: false
       }),
-      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      }
     );
   }
-  const handoffClassification = classifyHandoffIntent(params.latest_message_content);
+  const handoffClassification = classifyHandoffIntent(
+    params.latest_message_content
+  );
   const context = createEscalationContextBase({
     conversation_id: params.conversation_id,
     source_message_id: params.source_message_id,
@@ -4415,16 +4602,29 @@ async function evaluateAndPersistRequiredRulesLive(supabaseAdmin, params) {
     "local_classifier",
     { reason: handoffClassification.reason }
   );
-  context.conversation_status = availableSignal(params.conversation_status, "conversation_history");
-  context.assigned_agent_id = availableSignal(params.assigned_agent_id, "conversation_history");
-  context.greeting_or_trivial = availableSignal(params.greeting_or_trivial, "local_classifier");
+  context.conversation_status = availableSignal(
+    params.conversation_status,
+    "conversation_history"
+  );
+  context.assigned_agent_id = availableSignal(
+    params.assigned_agent_id,
+    "conversation_history"
+  );
+  context.greeting_or_trivial = availableSignal(
+    params.greeting_or_trivial,
+    "local_classifier"
+  );
   if (params.threat_flag !== void 0) {
-    context.threat_flag = availableSignal(params.threat_flag.value, "local_classifier", {
-      provider_version: params.threat_flag.provider_version,
-      observed_at: (/* @__PURE__ */ new Date()).toISOString(),
-      reason: params.threat_flag.reason,
-      ...params.expected_tenant_id ? { tenant_id: params.expected_tenant_id } : {}
-    });
+    context.threat_flag = availableSignal(
+      params.threat_flag.value,
+      "local_classifier",
+      {
+        provider_version: params.threat_flag.provider_version,
+        observed_at: (/* @__PURE__ */ new Date()).toISOString(),
+        reason: params.threat_flag.reason,
+        ...params.expected_tenant_id ? { tenant_id: params.expected_tenant_id } : {}
+      }
+    );
   }
   if (params.compliance_jurisdiction_requires_human_review !== void 0) {
     const compliance = params.compliance_jurisdiction_requires_human_review;
@@ -4443,7 +4643,10 @@ async function evaluateAndPersistRequiredRulesLive(supabaseAdmin, params) {
     context.rag_match_state = availableSignal(params.rag_match_state, "kb_rag");
   }
   if (params.topic_risk_level !== void 0) {
-    context.topic_risk_level = availableSignal(params.topic_risk_level, "local_classifier");
+    context.topic_risk_level = availableSignal(
+      params.topic_risk_level,
+      "local_classifier"
+    );
   }
   if (params.verified_local_risk_classification !== void 0) {
     context.verified_local_risk_classification = availableSignal(
@@ -4458,7 +4661,10 @@ async function evaluateAndPersistRequiredRulesLive(supabaseAdmin, params) {
     );
   }
   if (params.turn_count !== void 0) {
-    context.turn_count = availableSignal(params.turn_count, "conversation_history");
+    context.turn_count = availableSignal(
+      params.turn_count,
+      "conversation_history"
+    );
   }
   if (params.consecutive_no_answer !== void 0) {
     context.consecutive_no_answer = availableSignal(
@@ -4473,9 +4679,13 @@ async function evaluateAndPersistRequiredRulesLive(supabaseAdmin, params) {
     );
   }
   if (params.exact_same_intent_repeated === true) {
-    context.same_intent_repeated = availableSignal(true, "conversation_history", {
-      reason: "exact_normalized_repeat"
-    });
+    context.same_intent_repeated = availableSignal(
+      true,
+      "conversation_history",
+      {
+        reason: "exact_normalized_repeat"
+      }
+    );
   }
   context.tenant_config = buildVerifiedTenantEscalationConfig();
   const decision2 = evaluateFullEscalationRuleset(context, {
@@ -4489,27 +4699,75 @@ async function evaluateAndPersistRequiredRulesLive(supabaseAdmin, params) {
       p_conversation_id: params.conversation_id,
       p_source_message_id: params.source_message_id,
       p_content: params.warm_handoff_question,
-      p_metadata: { escalation_rule: "R2", escalation_action: "collect_missing_handoff_facts", response_route: "warm_handoff_data_collection", handoff_required: false }
+      p_metadata: {
+        escalation_rule: "R2",
+        escalation_action: "collect_missing_handoff_facts",
+        response_route: "warm_handoff_data_collection",
+        handoff_required: false
+      }
     });
-    if (error) return new Response(JSON.stringify({ success: false, error: "warm_handoff_collection_failed" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    if (error) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "warm_handoff_collection_failed"
+        }),
+        {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        }
+      );
+    }
     const result2 = String(data?.result ?? "");
     if (result2 === "success" || result2 === "idempotent") {
-      await cleanupThinking(supabaseAdmin, params.conversation_id, params.source_message_id);
-      return new Response(JSON.stringify({ success: true, response_route: "warm_handoff_data_collection", handoff_required: false, missing_facts_requested: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      await cleanupThinking(
+        supabaseAdmin,
+        params.conversation_id,
+        params.source_message_id
+      );
+      return new Response(
+        JSON.stringify({
+          success: true,
+          response_route: "warm_handoff_data_collection",
+          handoff_required: false,
+          missing_facts_requested: true
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
-    if (result2 === "human_control" || result2 === "resolved" || result2 === "superseded_source") return new Response(JSON.stringify({ success: true, skipped: result2 }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-    return new Response(JSON.stringify({ success: false, error: `warm_handoff_collection_${result2 || "unexpected"}` }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    if (result2 === "human_control" || result2 === "resolved" || result2 === "superseded_source") {
+      return new Response(JSON.stringify({ success: true, skipped: result2 }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: `warm_handoff_collection_${result2 || "unexpected"}`
+      }),
+      {
+        status: 409,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      }
+    );
   }
   if (decision2.decision === "clarify" && decision2.matched_rule === "R2" && enabled.has("R2")) {
     const clarification = R2_CLARIFICATION_SAFE_WORDING[params.visitor_language];
-    const persisted2 = await persistRequiredEscalationClarification(requiredEscalationRpcClient(supabaseAdmin), {
-      conversation_id: params.conversation_id,
-      source_message_id: params.source_message_id,
-      decision: decision2,
-      safe_reply_content: clarification
-    });
+    const persisted2 = await persistRequiredEscalationClarification(
+      requiredEscalationRpcClient(supabaseAdmin),
+      {
+        conversation_id: params.conversation_id,
+        source_message_id: params.source_message_id,
+        decision: decision2,
+        safe_reply_content: clarification
+      }
+    );
     if (persisted2.ok) {
-      await cleanupThinking(supabaseAdmin, params.conversation_id, params.source_message_id);
+      await cleanupThinking(
+        supabaseAdmin,
+        params.conversation_id,
+        params.source_message_id
+      );
       return new Response(
         JSON.stringify({
           success: true,
@@ -4522,14 +4780,28 @@ async function evaluateAndPersistRequiredRulesLive(supabaseAdmin, params) {
       );
     }
     if (persisted2.result === "already_resolved") {
-      return new Response(JSON.stringify({ success: true, skipped: "resolved", escalation_rule: "R2" }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" }
-      });
+      return new Response(
+        JSON.stringify({
+          success: true,
+          skipped: "resolved",
+          escalation_rule: "R2"
+        }),
+        {
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        }
+      );
     }
     if (persisted2.result === "already_under_human_control") {
-      return new Response(JSON.stringify({ success: true, skipped: "human_handling", escalation_rule: "R2" }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" }
-      });
+      return new Response(
+        JSON.stringify({
+          success: true,
+          skipped: "human_handling",
+          escalation_rule: "R2"
+        }),
+        {
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        }
+      );
     }
     if (persisted2.result === "max_clarifications_reached") {
       console.log("[generate-reply] R2 clarification capped at one", {
@@ -4563,14 +4835,21 @@ async function evaluateAndPersistRequiredRulesLive(supabaseAdmin, params) {
   }
   if (decision2.matched_rule !== "E2" && decision2.matched_rule !== "E1" && decision2.matched_rule !== "R2") return null;
   const safeReply = REQUIRED_ESCALATION_SAFE_WORDING[decision2.matched_rule][params.visitor_language];
-  const persisted = await persistRequiredEscalationHandoff(requiredEscalationRpcClient(supabaseAdmin), {
-    conversation_id: params.conversation_id,
-    source_message_id: params.source_message_id,
-    decision: decision2,
-    safe_reply_content: safeReply
-  });
+  const persisted = await persistRequiredEscalationHandoff(
+    requiredEscalationRpcClient(supabaseAdmin),
+    {
+      conversation_id: params.conversation_id,
+      source_message_id: params.source_message_id,
+      decision: decision2,
+      safe_reply_content: safeReply
+    }
+  );
   if (persisted.ok) {
-    await cleanupThinking(supabaseAdmin, params.conversation_id, params.source_message_id);
+    await cleanupThinking(
+      supabaseAdmin,
+      params.conversation_id,
+      params.source_message_id
+    );
     return new Response(
       JSON.stringify({
         success: true,
@@ -4584,12 +4863,22 @@ async function evaluateAndPersistRequiredRulesLive(supabaseAdmin, params) {
   switch (persisted.result) {
     case "already_resolved":
       return new Response(
-        JSON.stringify({ success: true, skipped: "resolved", escalation_rule: decision2.matched_rule, handoff_persisted: false }),
+        JSON.stringify({
+          success: true,
+          skipped: "resolved",
+          escalation_rule: decision2.matched_rule,
+          handoff_persisted: false
+        }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     case "already_under_human_control":
       return new Response(
-        JSON.stringify({ success: true, skipped: "human_handling", escalation_rule: decision2.matched_rule, handoff_persisted: false }),
+        JSON.stringify({
+          success: true,
+          skipped: "human_handling",
+          escalation_rule: decision2.matched_rule,
+          handoff_persisted: false
+        }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     case "invalid_source_message":
@@ -4598,36 +4887,74 @@ async function evaluateAndPersistRequiredRulesLive(supabaseAdmin, params) {
     case "invalid_priority":
     case "invalid_safe_reply":
       return new Response(
-        JSON.stringify({ success: false, error: `required_escalation_${persisted.result}`, escalation_rule: decision2.matched_rule, handoff_persisted: false }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        JSON.stringify({
+          success: false,
+          error: `required_escalation_${persisted.result}`,
+          escalation_rule: decision2.matched_rule,
+          handoff_persisted: false
+        }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        }
       );
     case "rpc_transport_error":
       return new Response(
-        JSON.stringify({ success: false, error: "required_escalation_rpc_transport_error", escalation_rule: decision2.matched_rule, handoff_persisted: false, handoff_uncertain: true }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        JSON.stringify({
+          success: false,
+          error: "required_escalation_rpc_transport_error",
+          escalation_rule: decision2.matched_rule,
+          handoff_persisted: false,
+          handoff_uncertain: true
+        }),
+        {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        }
       );
     case "not_found":
       return new Response(
-        JSON.stringify({ success: false, error: "required_escalation_conversation_not_found", escalation_rule: decision2.matched_rule, handoff_persisted: false }),
-        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        JSON.stringify({
+          success: false,
+          error: "required_escalation_conversation_not_found",
+          escalation_rule: decision2.matched_rule,
+          handoff_persisted: false
+        }),
+        {
+          status: 404,
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        }
       );
     default:
       return new Response(
-        JSON.stringify({ success: false, error: "required_escalation_unexpected_result", escalation_rule: decision2.matched_rule, handoff_persisted: false }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        JSON.stringify({
+          success: false,
+          error: "required_escalation_unexpected_result",
+          escalation_rule: decision2.matched_rule,
+          handoff_persisted: false
+        }),
+        {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        }
       );
   }
 }
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
   try {
     const body = await req.json();
     const { conversation_id, source_message_id } = body ?? {};
     if (!conversation_id) {
-      return new Response(JSON.stringify({ error: "conversation_id required" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" }
-      });
+      return new Response(
+        JSON.stringify({ error: "conversation_id required" }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        }
+      );
     }
     const ENABLE_KB = Deno.env.get("ENABLE_KB_ADAPTER") !== "false";
     const ENABLE_COACH = Deno.env.get("ENABLE_COACH_PROMPT_ADAPTER") === "true";
@@ -4635,7 +4962,10 @@ Deno.serve(async (req) => {
     const ENABLE_TOOL_EXEC = Deno.env.get("ENABLE_TOOL_EXECUTOR") === "true";
     const ENABLE_PR5_ESCALATION_RUNTIME = Deno.env.get("ESC_MVP_FEATURE_FLAG") === "true" || Deno.env.get("ESC_ENABLE_S0") === "true" || Deno.env.get("ESC_SHADOW_MODE") === "true" || Deno.env.get("ESC_ENABLE_REQUIRED_RULES_LIVE") === "true";
     if (!ENABLE_KB && !ENABLE_COACH && !ENABLE_C360 && !ENABLE_TOOL_EXEC && !ENABLE_PR5_ESCALATION_RUNTIME) {
-      return await legacyGenerateReply(conversation_id, source_message_id ?? null);
+      return await legacyGenerateReply(
+        conversation_id,
+        source_message_id ?? null
+      );
     }
     return await orchestrationGenerateReply(
       conversation_id,
@@ -4655,34 +4985,112 @@ async function handleConversationClosureIfNeeded(supabaseAdmin, conversation_id,
   const content = buildConversationClosureReply(classification);
   if (!content || classification.kind === "none") return null;
   const { data: conversation } = await supabaseAdmin.from("conversations").select("status, assigned_agent_id").eq("id", conversation_id).maybeSingle();
-  if (!conversation || conversation.status === "resolved" || isHumanControlState(String(conversation.status ?? ""), conversation.assigned_agent_id ?? null)) return null;
-  const { data: prior } = await supabaseAdmin.from("messages").select("role, metadata, content, created_at").eq("conversation_id", conversation_id).eq("is_recalled", false).neq("content", "__THINKING__").order("created_at", { ascending: false }).limit(4);
-  const previousAssistant = (prior ?? []).find((r) => r.role === "assistant" && String(r.content ?? "") !== content);
+  if (!conversation || conversation.status === "resolved" || isHumanControlState(
+    String(conversation.status ?? ""),
+    conversation.assigned_agent_id ?? null
+  )) return null;
+  const { data: prior } = await supabaseAdmin.from("messages").select(
+    "role, metadata, content, created_at"
+  ).eq("conversation_id", conversation_id).eq("is_recalled", false).neq(
+    "content",
+    "__THINKING__"
+  ).order("created_at", { ascending: false }).limit(4);
+  const previousAssistant = (prior ?? []).find(
+    (r) => r.role === "assistant" && String(r.content ?? "") !== content
+  );
   const pm = previousAssistant?.metadata && typeof previousAssistant.metadata === "object" ? previousAssistant.metadata : null;
-  if (!previousAssistant || pm?.handoff_required === true || ["warm_handoff_data_collection", "kb_no_match_clarification", "system_error_handoff"].includes(String(pm?.response_route ?? ""))) return null;
-  const committed = await commitAiReplyWithControlGate(supabaseAdmin, conversation_id, source_message_id, content, { response_route: "conversation_closure", closure_state: classification.kind === "closure_candidate" ? "awaiting_more_help" : "completed", closure_reason: classification.reason, feedback_eligible_candidate: classification.kind !== "closure_candidate", handoff_required: false });
+  if (!previousAssistant || pm?.handoff_required === true || [
+    "warm_handoff_data_collection",
+    "kb_no_match_clarification",
+    "system_error_handoff"
+  ].includes(String(pm?.response_route ?? ""))) return null;
+  const committed = await commitAiReplyWithControlGate(
+    supabaseAdmin,
+    conversation_id,
+    source_message_id,
+    content,
+    {
+      response_route: "conversation_closure",
+      closure_state: classification.kind === "closure_candidate" ? "awaiting_more_help" : "completed",
+      closure_reason: classification.reason,
+      feedback_eligible_candidate: classification.kind !== "closure_candidate",
+      handoff_required: false
+    }
+  );
   await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
   if (!committed.ok) {
-    if (["human_control", "resolved", "superseded_source"].includes(committed.result)) return new Response(JSON.stringify({ success: true, skipped: committed.result }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-    return new Response(JSON.stringify({ success: false, error: `conversation_closure_${committed.result}` }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    if (["human_control", "resolved", "superseded_source"].includes(
+      committed.result
+    )) {
+      return new Response(
+        JSON.stringify({ success: true, skipped: committed.result }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: `conversation_closure_${committed.result}`
+      }),
+      {
+        status: 409,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      }
+    );
   }
-  return new Response(JSON.stringify({ success: true, response_route: "conversation_closure", closure_state: classification.kind }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  return new Response(
+    JSON.stringify({
+      success: true,
+      response_route: "conversation_closure",
+      closure_state: classification.kind
+    }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  );
 }
 async function legacyGenerateReply(conversation_id, source_message_id) {
-  const supabaseAdmin = createClient3(Deno.env.get("SUPABASE_URL") ?? "", getSupabaseAdminKey());
-  const { data: conversation, error: convError } = await supabaseAdmin.from("conversations").select("id, status, assigned_agent_id, created_at, company_id").eq("id", conversation_id).single();
+  const supabaseAdmin = createClient3(
+    Deno.env.get("SUPABASE_URL") ?? "",
+    getSupabaseAdminKey()
+  );
+  const { data: conversation, error: convError } = await supabaseAdmin.from("conversations").select(
+    "id, status, assigned_agent_id, created_at, company_id"
+  ).eq("id", conversation_id).single();
   if (convError || !conversation) {
     console.error("[generate-reply] conversation not found:", conversation_id);
-    return new Response(JSON.stringify({ error: "Conversation not found" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ error: "Conversation not found" }), {
+      status: 404,
+      headers: { ...corsHeaders, "Content-Type": "application/json" }
+    });
   }
-  if (conversation.status === "resolved") return new Response(JSON.stringify({ success: true, skipped: "resolved" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-  if (isHumanControlState(conversation.status, conversation.assigned_agent_id ?? null)) {
-    console.log("[generate-reply] human-handling guard: skipping LLM for status:", conversation.status, conversation_id);
-    return new Response(JSON.stringify({ success: true, skipped: "human_handling" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  if (conversation.status === "resolved") {
+    return new Response(
+      JSON.stringify({ success: true, skipped: "resolved" }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+  if (isHumanControlState(
+    conversation.status,
+    conversation.assigned_agent_id ?? null
+  )) {
+    console.log(
+      "[generate-reply] human-handling guard: skipping LLM for status:",
+      conversation.status,
+      conversation_id
+    );
+    return new Response(
+      JSON.stringify({ success: true, skipped: "human_handling" }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
   }
   if (conversation.assigned_agent_id) {
-    console.log("[generate-reply] S-1 assigned_agent_id guard (legacy):", conversation_id);
-    return new Response(JSON.stringify({ success: true, skipped: "assigned_to_agent" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    console.log(
+      "[generate-reply] S-1 assigned_agent_id guard (legacy):",
+      conversation_id
+    );
+    return new Response(
+      JSON.stringify({ success: true, skipped: "assigned_to_agent" }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
   }
   const sourceResult = await loadSourceVisitorMessage(
     supabaseAdmin,
@@ -4692,18 +5100,39 @@ async function legacyGenerateReply(conversation_id, source_message_id) {
   if (!sourceResult.ok) return sourceMessageErrorResponse(sourceResult);
   const sourceVisitorMessage = sourceResult.message;
   const { data: newestMessages } = await supabaseAdmin.from("messages").select("id, role, content, created_at").eq("conversation_id", conversation_id).neq("content", "__THINKING__").eq("is_recalled", false).or(sourceBoundaryFilter(sourceVisitorMessage)).order("created_at", { ascending: false }).order("id", { ascending: false }).limit(10);
-  if (!newestMessages || newestMessages.length === 0) return new Response(JSON.stringify({ success: true, skipped: "no messages" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  if (!newestMessages || newestMessages.length === 0) {
+    return new Response(
+      JSON.stringify({ success: true, skipped: "no messages" }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
   const messages = [...newestMessages].reverse();
-  const modelMessages = messages.map((m) => ({ role: m.role === "visitor" ? "user" : "assistant", content: String(m.content ?? "") }));
-  if (modelMessages[modelMessages.length - 1].role === "assistant") return new Response(JSON.stringify({ success: true, skipped: "last message is assistant" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  const modelMessages = messages.map((m) => ({
+    role: m.role === "visitor" ? "user" : "assistant",
+    content: String(m.content ?? "")
+  }));
+  if (modelMessages[modelMessages.length - 1].role === "assistant") {
+    return new Response(
+      JSON.stringify({ success: true, skipped: "last message is assistant" }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
   const lastVisitorMsg = sourceVisitorMessage.content;
   const handoffLang = detectHandoffLanguage(lastVisitorMsg);
   if (handoffLang) {
     if (!source_message_id) {
       await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
       return new Response(
-        JSON.stringify({ success: false, error: "legacy_handoff_missing_source_message_id", escalation_rule: "R1", handoff_persisted: false }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        JSON.stringify({
+          success: false,
+          error: "legacy_handoff_missing_source_message_id",
+          escalation_rule: "R1",
+          handoff_persisted: false
+        }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        }
       );
     }
     const { data: handoffData, error: handoffError } = await supabaseAdmin.rpc(
@@ -4716,35 +5145,137 @@ async function legacyGenerateReply(conversation_id, source_message_id) {
     );
     if (handoffError) {
       return new Response(
-        JSON.stringify({ success: false, error: "legacy_handoff_rpc_transport_error", escalation_rule: "R1", handoff_persisted: false, handoff_uncertain: true }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        JSON.stringify({
+          success: false,
+          error: "legacy_handoff_rpc_transport_error",
+          escalation_rule: "R1",
+          handoff_persisted: false,
+          handoff_uncertain: true
+        }),
+        {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        }
       );
     }
     const handoffResult = String(handoffData?.result ?? "unknown");
     switch (handoffResult) {
       case "success":
-        await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-        return new Response(JSON.stringify({ success: true, escalation_rule: "R1", handoff_persisted: true, rpc_result: "success" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        await cleanupThinking(
+          supabaseAdmin,
+          conversation_id,
+          source_message_id
+        );
+        return new Response(
+          JSON.stringify({
+            success: true,
+            escalation_rule: "R1",
+            handoff_persisted: true,
+            rpc_result: "success"
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
       case "already_handled":
-        await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-        return new Response(JSON.stringify({ success: true, escalation_rule: "R1", handoff_persisted: true, rpc_result: "already_handled" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        await cleanupThinking(
+          supabaseAdmin,
+          conversation_id,
+          source_message_id
+        );
+        return new Response(
+          JSON.stringify({
+            success: true,
+            escalation_rule: "R1",
+            handoff_persisted: true,
+            rpc_result: "already_handled"
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
       case "already_resolved":
-        await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-        return new Response(JSON.stringify({ success: true, skipped: "resolved", escalation_rule: "R1", handoff_persisted: false }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        await cleanupThinking(
+          supabaseAdmin,
+          conversation_id,
+          source_message_id
+        );
+        return new Response(
+          JSON.stringify({
+            success: true,
+            skipped: "resolved",
+            escalation_rule: "R1",
+            handoff_persisted: false
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
       case "already_under_human_control":
-        await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-        return new Response(JSON.stringify({ success: true, skipped: "human_handling", escalation_rule: "R1", handoff_persisted: false }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        await cleanupThinking(
+          supabaseAdmin,
+          conversation_id,
+          source_message_id
+        );
+        return new Response(
+          JSON.stringify({
+            success: true,
+            skipped: "human_handling",
+            escalation_rule: "R1",
+            handoff_persisted: false
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
       case "invalid_source_message":
-        await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-        return new Response(JSON.stringify({ success: false, error: "legacy_handoff_invalid_source_message", escalation_rule: "R1", handoff_persisted: false }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        await cleanupThinking(
+          supabaseAdmin,
+          conversation_id,
+          source_message_id
+        );
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "legacy_handoff_invalid_source_message",
+            escalation_rule: "R1",
+            handoff_persisted: false
+          }),
+          {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" }
+          }
+        );
       case "not_found":
-        await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-        return new Response(JSON.stringify({ success: false, error: "legacy_handoff_conversation_not_found", escalation_rule: "R1", handoff_persisted: false }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        await cleanupThinking(
+          supabaseAdmin,
+          conversation_id,
+          source_message_id
+        );
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "legacy_handoff_conversation_not_found",
+            escalation_rule: "R1",
+            handoff_persisted: false
+          }),
+          {
+            status: 404,
+            headers: { ...corsHeaders, "Content-Type": "application/json" }
+          }
+        );
       default:
-        return new Response(JSON.stringify({ success: false, error: "legacy_handoff_unexpected_result", escalation_rule: "R1", handoff_persisted: false, rpc_result: handoffResult }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "legacy_handoff_unexpected_result",
+            escalation_rule: "R1",
+            handoff_persisted: false,
+            rpc_result: handoffResult
+          }),
+          {
+            status: 500,
+            headers: { ...corsHeaders, "Content-Type": "application/json" }
+          }
+        );
     }
   }
-  const legacyLatestHandoffReason = await loadLatestHandoffReason(supabaseAdmin, conversation_id);
+  const legacyLatestHandoffReason = await loadLatestHandoffReason(
+    supabaseAdmin,
+    conversation_id
+  );
   const legacyReturnToAiGuard = buildReturnToAiGenerationGuard(
     legacyLatestHandoffReason,
     conversation.assigned_agent_id ?? null
@@ -4782,8 +5313,15 @@ ${legacyReturnToAiGuard}`;
       model_used: Deno.env.get("LLM_MODEL_GENERATION")?.trim() || "unset"
     });
     return new Response(
-      JSON.stringify({ success: false, error: "AI service error", error_code: llm.code }),
-      { status: routerFailureHttpStatus(llm.code), headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      JSON.stringify({
+        success: false,
+        error: "AI service error",
+        error_code: llm.code
+      }),
+      {
+        status: routerFailureHttpStatus(llm.code),
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      }
     );
   }
   const aiReplyContent = llm.text;
@@ -4797,13 +5335,28 @@ ${legacyReturnToAiGuard}`;
   if (!committed.ok) {
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     if (committed.result === "human_control" || committed.result === "resolved" || committed.result === "superseded_source") {
-      console.log("[generate-reply] stale AI reply suppressed by control gate:", {
-        conversation_id,
-        result: committed.result
-      });
-      return new Response(JSON.stringify({ success: true, skipped: committed.result }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      console.log(
+        "[generate-reply] stale AI reply suppressed by control gate:",
+        {
+          conversation_id,
+          result: committed.result
+        }
+      );
+      return new Response(
+        JSON.stringify({ success: true, skipped: committed.result }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
-    return new Response(JSON.stringify({ success: false, error: `ai_reply_commit_${committed.result}` }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: `ai_reply_commit_${committed.result}`
+      }),
+      {
+        status: 409,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      }
+    );
   }
   await writeTraces(supabaseAdmin, {
     conversation_id,
@@ -4814,8 +5367,14 @@ ${legacyReturnToAiGuard}`;
     token_output: llm.usage.output_tokens,
     model_used: llm.model
   });
-  console.log("[generate-reply] AI reply committed for conversation:", conversation_id);
-  return new Response(JSON.stringify({ success: true, idempotent: committed.idempotent }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  console.log(
+    "[generate-reply] AI reply committed for conversation:",
+    conversation_id
+  );
+  return new Response(
+    JSON.stringify({ success: true, idempotent: committed.idempotent }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  );
 }
 function extractExplicitJurisdictionConstraint(text) {
   const t = text.normalize("NFKC").trim();
@@ -4825,7 +5384,10 @@ function extractExplicitJurisdictionConstraint(text) {
     { label: "\u6FB3\u9580", re: /(澳門|澳门|macau|macao)/ig },
     { label: "\u65B0\u52A0\u5761", re: /(新加坡|singapore)/ig },
     { label: "\u53F0\u7063", re: /(台灣|台湾|taiwan)/ig },
-    { label: "\u4E2D\u570B\u5927\u9678", re: /(中國大陸|中国大陆|內地|内地|mainland\s*china)/ig }
+    {
+      label: "\u4E2D\u570B\u5927\u9678",
+      re: /(中國大陸|中国大陆|內地|内地|mainland\s*china)/ig
+    }
   ];
   const negatedMars = /(不談|不谈|唔講|唔讲|不要談|不要谈|not\s+(?:talking\s+about|about)|forget\s+about)\s*(mars|火星)/i.test(t);
   let best = null;
@@ -4844,15 +5406,37 @@ function evidenceSupportsJurisdiction(jurisdiction, chunks) {
   const needle = jurisdiction.toLocaleLowerCase();
   return chunks.some(
     (chunk) => `${chunk.title ?? ""}
-${chunk.content ?? ""}`.toLocaleLowerCase().includes(needle)
+${chunk.content ?? ""}`.toLocaleLowerCase().includes(
+      needle
+    )
   );
 }
 var KB_FALLBACK_SAFE_TEXT = {
-  KB_SCOPE_GATE: { "zh-TW": "\u5F88\u62B1\u6B49\uFF0C\u7CFB\u7D71\u66AB\u6642\u7121\u6CD5\u67E5\u8A62\u77E5\u8B58\u5EAB\u3002\u8B93\u6211\u70BA\u60A8\u8F49\u63A5\u5BA2\u670D\u4EBA\u54E1\u3002", "zh-CN": "\u5F88\u62B1\u6B49\uFF0C\u7CFB\u7EDF\u6682\u65F6\u65E0\u6CD5\u67E5\u8BE2\u77E5\u8BC6\u5E93\u3002\u8BA9\u6211\u4E3A\u60A8\u8F6C\u63A5\u5BA2\u670D\u4EBA\u5458\u3002", en: "Sorry, the knowledge base is temporarily unavailable. Let me connect you with a human agent." },
-  KB_API_FAIL: { "zh-TW": "\u7CFB\u7D71\u66AB\u6642\u7121\u6CD5\u67E5\u8A62\u77E5\u8B58\u5EAB\uFF0C\u8B93\u6211\u70BA\u60A8\u8F49\u63A5\u5BA2\u670D\u4EBA\u54E1\u3002", "zh-CN": "\u7CFB\u7EDF\u6682\u65F6\u65E0\u6CD5\u67E5\u8BE2\u77E5\u8BC6\u5E93\uFF0C\u8BA9\u6211\u4E3A\u60A8\u8F6C\u63A5\u5BA2\u670D\u4EBA\u5458\u3002", en: "The knowledge base is temporarily unavailable. Let me connect you with a human agent." },
-  KB_EMPTY: { "zh-TW": "\u5F88\u62B1\u6B49\uFF0C\u6211\u76EE\u524D\u7121\u6CD5\u78BA\u5B9A\u7B54\u6848\u3002\u8B93\u6211\u70BA\u60A8\u8F49\u63A5\u5BA2\u670D\u4EBA\u54E1\uFF0C\u4EE5\u63D0\u4F9B\u66F4\u6E96\u78BA\u7684\u5354\u52A9\u3002", "zh-CN": "\u5F88\u62B1\u6B49\uFF0C\u6211\u76EE\u524D\u65E0\u6CD5\u786E\u5B9A\u7B54\u6848\u3002\u8BA9\u6211\u4E3A\u60A8\u8F6C\u63A5\u5BA2\u670D\u4EBA\u5458\uFF0C\u4EE5\u63D0\u4F9B\u66F4\u51C6\u786E\u7684\u534F\u52A9\u3002", en: "Sorry, I'm unable to find a definitive answer. Let me connect you with a human agent for more accurate assistance." },
-  KB_LOW_SCORE_HIGH_RISK: { "zh-TW": "\u9019\u500B\u554F\u984C\u6D89\u53CA\u91CD\u8981\u653F\u7B56\uFF0C\u70BA\u78BA\u4FDD\u60A8\u7372\u5F97\u6E96\u78BA\u8CC7\u8A0A\uFF0C\u8B93\u6211\u70BA\u60A8\u8F49\u63A5\u5BA2\u670D\u4EBA\u54E1\u3002", "zh-CN": "\u8FD9\u4E2A\u95EE\u9898\u6D89\u53CA\u91CD\u8981\u653F\u7B56\uFF0C\u4E3A\u786E\u4FDD\u60A8\u83B7\u5F97\u51C6\u786E\u4FE1\u606F\uFF0C\u8BA9\u6211\u4E3A\u60A8\u8F6C\u63A5\u5BA2\u670D\u4EBA\u5458\u3002", en: "This question involves important policy matters. To ensure you receive accurate information, let me connect you with a human agent." },
-  KB_LOW_SCORE_STANDARD: { "zh-TW": "\u5F88\u62B1\u6B49\uFF0C\u6211\u76EE\u524D\u7121\u6CD5\u78BA\u5B9A\u7B54\u6848\u3002\u8B93\u6211\u70BA\u60A8\u8F49\u63A5\u5BA2\u670D\u4EBA\u54E1\uFF0C\u4EE5\u63D0\u4F9B\u66F4\u6E96\u78BA\u7684\u5354\u52A9\u3002", "zh-CN": "\u5F88\u62B1\u6B49\uFF0C\u6211\u76EE\u524D\u65E0\u6CD5\u786E\u5B9A\u7B54\u6848\u3002\u8BA9\u6211\u4E3A\u60A8\u8F6C\u63A5\u5BA2\u670D\u4EBA\u5458\uFF0C\u4EE5\u63D0\u4F9B\u66F4\u51C6\u786E\u7684\u534F\u52A9\u3002", en: "Sorry, I'm unable to find a definitive answer. Let me connect you with a human agent for more accurate assistance." }
+  KB_SCOPE_GATE: {
+    "zh-TW": "\u5F88\u62B1\u6B49\uFF0C\u7CFB\u7D71\u66AB\u6642\u7121\u6CD5\u67E5\u8A62\u77E5\u8B58\u5EAB\u3002\u8B93\u6211\u70BA\u60A8\u8F49\u63A5\u5BA2\u670D\u4EBA\u54E1\u3002",
+    "zh-CN": "\u5F88\u62B1\u6B49\uFF0C\u7CFB\u7EDF\u6682\u65F6\u65E0\u6CD5\u67E5\u8BE2\u77E5\u8BC6\u5E93\u3002\u8BA9\u6211\u4E3A\u60A8\u8F6C\u63A5\u5BA2\u670D\u4EBA\u5458\u3002",
+    en: "Sorry, the knowledge base is temporarily unavailable. Let me connect you with a human agent."
+  },
+  KB_API_FAIL: {
+    "zh-TW": "\u7CFB\u7D71\u66AB\u6642\u7121\u6CD5\u67E5\u8A62\u77E5\u8B58\u5EAB\uFF0C\u8B93\u6211\u70BA\u60A8\u8F49\u63A5\u5BA2\u670D\u4EBA\u54E1\u3002",
+    "zh-CN": "\u7CFB\u7EDF\u6682\u65F6\u65E0\u6CD5\u67E5\u8BE2\u77E5\u8BC6\u5E93\uFF0C\u8BA9\u6211\u4E3A\u60A8\u8F6C\u63A5\u5BA2\u670D\u4EBA\u5458\u3002",
+    en: "The knowledge base is temporarily unavailable. Let me connect you with a human agent."
+  },
+  KB_EMPTY: {
+    "zh-TW": "\u5F88\u62B1\u6B49\uFF0C\u6211\u76EE\u524D\u7121\u6CD5\u78BA\u5B9A\u7B54\u6848\u3002\u8B93\u6211\u70BA\u60A8\u8F49\u63A5\u5BA2\u670D\u4EBA\u54E1\uFF0C\u4EE5\u63D0\u4F9B\u66F4\u6E96\u78BA\u7684\u5354\u52A9\u3002",
+    "zh-CN": "\u5F88\u62B1\u6B49\uFF0C\u6211\u76EE\u524D\u65E0\u6CD5\u786E\u5B9A\u7B54\u6848\u3002\u8BA9\u6211\u4E3A\u60A8\u8F6C\u63A5\u5BA2\u670D\u4EBA\u5458\uFF0C\u4EE5\u63D0\u4F9B\u66F4\u51C6\u786E\u7684\u534F\u52A9\u3002",
+    en: "Sorry, I'm unable to find a definitive answer. Let me connect you with a human agent for more accurate assistance."
+  },
+  KB_LOW_SCORE_HIGH_RISK: {
+    "zh-TW": "\u9019\u500B\u554F\u984C\u6D89\u53CA\u91CD\u8981\u653F\u7B56\uFF0C\u70BA\u78BA\u4FDD\u60A8\u7372\u5F97\u6E96\u78BA\u8CC7\u8A0A\uFF0C\u8B93\u6211\u70BA\u60A8\u8F49\u63A5\u5BA2\u670D\u4EBA\u54E1\u3002",
+    "zh-CN": "\u8FD9\u4E2A\u95EE\u9898\u6D89\u53CA\u91CD\u8981\u653F\u7B56\uFF0C\u4E3A\u786E\u4FDD\u60A8\u83B7\u5F97\u51C6\u786E\u4FE1\u606F\uFF0C\u8BA9\u6211\u4E3A\u60A8\u8F6C\u63A5\u5BA2\u670D\u4EBA\u5458\u3002",
+    en: "This question involves important policy matters. To ensure you receive accurate information, let me connect you with a human agent."
+  },
+  KB_LOW_SCORE_STANDARD: {
+    "zh-TW": "\u5F88\u62B1\u6B49\uFF0C\u6211\u76EE\u524D\u7121\u6CD5\u78BA\u5B9A\u7B54\u6848\u3002\u8B93\u6211\u70BA\u60A8\u8F49\u63A5\u5BA2\u670D\u4EBA\u54E1\uFF0C\u4EE5\u63D0\u4F9B\u66F4\u6E96\u78BA\u7684\u5354\u52A9\u3002",
+    "zh-CN": "\u5F88\u62B1\u6B49\uFF0C\u6211\u76EE\u524D\u65E0\u6CD5\u786E\u5B9A\u7B54\u6848\u3002\u8BA9\u6211\u4E3A\u60A8\u8F6C\u63A5\u5BA2\u670D\u4EBA\u5458\uFF0C\u4EE5\u63D0\u4F9B\u66F4\u51C6\u786E\u7684\u534F\u52A9\u3002",
+    en: "Sorry, I'm unable to find a definitive answer. Let me connect you with a human agent for more accurate assistance."
+  }
 };
 var S0_LLM_FAILURE_SAFE_TEXT = {
   "zh-TW": "\u7CFB\u7D71\u66AB\u6642\u7121\u6CD5\u5B8C\u6210\u56DE\u8986\uFF0C\u6211\u5DF2\u70BA\u4F60\u8F49\u4EA4\u5BA2\u670D\u4EBA\u54E1\u8DDF\u9032\u3002",
@@ -4862,7 +5446,18 @@ var S0_LLM_FAILURE_SAFE_TEXT = {
 function detectVisitorLanguage(text) {
   if (!text) return "zh-TW";
   if (!/[\u4e00-\u9fff]/.test(text)) return "en";
-  const zhCnIndicators = ["\u8F6C", "\u4EEC", "\u961F", "\u9884\u8BA1", "\u4E3A\u60A8", "\u4E3A\u6211", "\u4E3A\u4F60", "\u8BF7", "\u8FD9", "\u6CA1"];
+  const zhCnIndicators = [
+    "\u8F6C",
+    "\u4EEC",
+    "\u961F",
+    "\u9884\u8BA1",
+    "\u4E3A\u60A8",
+    "\u4E3A\u6211",
+    "\u4E3A\u4F60",
+    "\u8BF7",
+    "\u8FD9",
+    "\u6CA1"
+  ];
   if (zhCnIndicators.some((c) => text.includes(c))) return "zh-CN";
   return "zh-TW";
 }
@@ -4884,7 +5479,11 @@ function isFirstNoMatchClarificationEligible(input) {
   return true;
 }
 async function attemptFirstNoMatchClarification(supabaseAdmin, conversation_id, source_message_id, branchTag, visitorLang, eligibility, traceMetadata) {
-  if (!isFirstNoMatchClarificationEligible({ ...eligibility, branch_tag: branchTag, source_message_id })) {
+  if (!isFirstNoMatchClarificationEligible({
+    ...eligibility,
+    branch_tag: branchTag,
+    source_message_id
+  })) {
     return null;
   }
   const content = KB_NO_MATCH_CLARIFICATION_TEXT[visitorLang] ?? KB_NO_MATCH_CLARIFICATION_TEXT["zh-TW"];
@@ -4906,7 +5505,12 @@ async function attemptFirstNoMatchClarification(supabaseAdmin, conversation_id, 
   if (!commit.ok) {
     if (commit.result === "human_control" || commit.result === "resolved" || commit.result === "superseded_source") {
       return new Response(
-        JSON.stringify({ success: true, skipped: commit.result, response_route: KB_NO_MATCH_CLARIFICATION_ROUTE, handoff_required: false }),
+        JSON.stringify({
+          success: true,
+          skipped: commit.result,
+          response_route: KB_NO_MATCH_CLARIFICATION_ROUTE,
+          handoff_required: false
+        }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -4922,7 +5526,12 @@ async function attemptFirstNoMatchClarification(supabaseAdmin, conversation_id, 
       handoff_persisted: false,
       response_route: KB_NO_MATCH_CLARIFICATION_ROUTE,
       escalation_rule: null,
-      trace_metadata: { ...traceMetadata, branch: branchTag, clarification_persisted: true, idempotent: commit.idempotent }
+      trace_metadata: {
+        ...traceMetadata,
+        branch: branchTag,
+        clarification_persisted: true,
+        idempotent: commit.idempotent
+      }
     }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } }
   );
@@ -4930,28 +5539,203 @@ async function attemptFirstNoMatchClarification(supabaseAdmin, conversation_id, 
 async function handleKBFallback(supabaseAdmin, conversation_id, branchTag, source_message_id, traceMetadata, visitorLang = "zh-TW") {
   const _branchTexts = KB_FALLBACK_SAFE_TEXT[branchTag];
   const safeText = _branchTexts ? _branchTexts[visitorLang] ?? _branchTexts["zh-TW"] : void 0;
-  if (!safeText) return new Response(JSON.stringify({ success: false, error: "kb_fallback_unknown_branch", no_answer: true, handoff_required: true, handoff_persisted: false, trace_metadata: { ...traceMetadata, branch: branchTag, handoff_persisted: false } }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-  if (!source_message_id) return new Response(JSON.stringify({ success: false, error: "kb_fallback_missing_source_id", reply: safeText, no_answer: true, handoff_required: true, handoff_persisted: false, trace_metadata: { ...traceMetadata, handoff_persisted: false } }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-  const { data: rpcData, error: rpcErr } = await supabaseAdmin.rpc("kb_fallback_handoff_tx", { p_conversation_id: conversation_id, p_safe_reply_content: safeText, p_branch_tag: branchTag, p_source_message_id: source_message_id });
-  if (rpcErr) return new Response(JSON.stringify({ success: false, error: "kb_fallback_persistence_failed", reply: safeText, no_answer: true, handoff_required: true, handoff_persisted: false, trace_metadata: { ...traceMetadata, handoff_persisted: false } }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  if (!safeText) {
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: "kb_fallback_unknown_branch",
+        no_answer: true,
+        handoff_required: true,
+        handoff_persisted: false,
+        trace_metadata: {
+          ...traceMetadata,
+          branch: branchTag,
+          handoff_persisted: false
+        }
+      }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      }
+    );
+  }
+  if (!source_message_id) {
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: "kb_fallback_missing_source_id",
+        reply: safeText,
+        no_answer: true,
+        handoff_required: true,
+        handoff_persisted: false,
+        trace_metadata: { ...traceMetadata, handoff_persisted: false }
+      }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      }
+    );
+  }
+  const { data: rpcData, error: rpcErr } = await supabaseAdmin.rpc(
+    "kb_fallback_handoff_tx",
+    {
+      p_conversation_id: conversation_id,
+      p_safe_reply_content: safeText,
+      p_branch_tag: branchTag,
+      p_source_message_id: source_message_id
+    }
+  );
+  if (rpcErr) {
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: "kb_fallback_persistence_failed",
+        reply: safeText,
+        no_answer: true,
+        handoff_required: true,
+        handoff_persisted: false,
+        trace_metadata: { ...traceMetadata, handoff_persisted: false }
+      }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      }
+    );
+  }
   const result2 = rpcData?.result ?? "unknown";
   switch (result2) {
     case "success":
-      return new Response(JSON.stringify({ success: true, reply: safeText, no_answer: true, handoff_required: true, handoff_persisted: true, trace_metadata: { ...traceMetadata, rpc_result: "success", handoff_persisted: true } }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(
+        JSON.stringify({
+          success: true,
+          reply: safeText,
+          no_answer: true,
+          handoff_required: true,
+          handoff_persisted: true,
+          trace_metadata: {
+            ...traceMetadata,
+            rpc_result: "success",
+            handoff_persisted: true
+          }
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     case "already_handled":
-      return new Response(JSON.stringify({ success: true, reply: null, no_answer: true, handoff_required: false, handoff_persisted: true, trace_metadata: { ...traceMetadata, rpc_result: "already_handled", handoff_persisted: true, existing_branch: rpcData?.existing_branch, requested_branch: rpcData?.requested_branch } }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(
+        JSON.stringify({
+          success: true,
+          reply: null,
+          no_answer: true,
+          handoff_required: false,
+          handoff_persisted: true,
+          trace_metadata: {
+            ...traceMetadata,
+            rpc_result: "already_handled",
+            handoff_persisted: true,
+            existing_branch: rpcData?.existing_branch,
+            requested_branch: rpcData?.requested_branch
+          }
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     case "already_resolved":
-      return new Response(JSON.stringify({ success: false, error: "conversation_resolved", reply: null, no_answer: false, handoff_required: false, handoff_persisted: false, trace_metadata: { ...traceMetadata, rpc_result: "already_resolved", handoff_persisted: false } }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "conversation_resolved",
+          reply: null,
+          no_answer: false,
+          handoff_required: false,
+          handoff_persisted: false,
+          trace_metadata: {
+            ...traceMetadata,
+            rpc_result: "already_resolved",
+            handoff_persisted: false
+          }
+        }),
+        {
+          status: 409,
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        }
+      );
     case "already_under_human_control":
-      return new Response(JSON.stringify({ success: true, reply: null, no_answer: false, handoff_required: false, handoff_persisted: false, trace_metadata: { ...traceMetadata, rpc_result: "already_under_human_control", handoff_persisted: false } }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(
+        JSON.stringify({
+          success: true,
+          reply: null,
+          no_answer: false,
+          handoff_required: false,
+          handoff_persisted: false,
+          trace_metadata: {
+            ...traceMetadata,
+            rpc_result: "already_under_human_control",
+            handoff_persisted: false
+          }
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     case "invalid_source_message":
-      return new Response(JSON.stringify({ success: false, error: "kb_fallback_invalid_source", reply: safeText, no_answer: true, handoff_required: true, handoff_persisted: false, trace_metadata: { ...traceMetadata, handoff_persisted: false } }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "kb_fallback_invalid_source",
+          reply: safeText,
+          no_answer: true,
+          handoff_required: true,
+          handoff_persisted: false,
+          trace_metadata: { ...traceMetadata, handoff_persisted: false }
+        }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        }
+      );
     case "invalid_branch":
-      return new Response(JSON.stringify({ success: false, error: "kb_fallback_invalid_branch", no_answer: true, handoff_required: true, handoff_persisted: false, trace_metadata: { ...traceMetadata, handoff_persisted: false } }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "kb_fallback_invalid_branch",
+          no_answer: true,
+          handoff_required: true,
+          handoff_persisted: false,
+          trace_metadata: { ...traceMetadata, handoff_persisted: false }
+        }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        }
+      );
     case "not_found":
-      return new Response(JSON.stringify({ success: false, error: "kb_fallback_conversation_not_found", no_answer: true, handoff_required: true, handoff_persisted: false, trace_metadata: { ...traceMetadata, handoff_persisted: false } }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "kb_fallback_conversation_not_found",
+          no_answer: true,
+          handoff_required: true,
+          handoff_persisted: false,
+          trace_metadata: { ...traceMetadata, handoff_persisted: false }
+        }),
+        {
+          status: 404,
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        }
+      );
     default:
-      return new Response(JSON.stringify({ success: false, error: "kb_fallback_unexpected_result", reply: safeText, no_answer: true, handoff_required: true, handoff_persisted: false, trace_metadata: { ...traceMetadata, handoff_persisted: false } }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "kb_fallback_unexpected_result",
+          reply: safeText,
+          no_answer: true,
+          handoff_required: true,
+          handoff_persisted: false,
+          trace_metadata: { ...traceMetadata, handoff_persisted: false }
+        }),
+        {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        }
+      );
   }
 }
 async function handleS0Handoff(supabaseAdmin, conversation_id, source_message_id, failure_type, visitorLang) {
@@ -4960,74 +5744,282 @@ async function handleS0Handoff(supabaseAdmin, conversation_id, source_message_id
   if (isKBFailure) {
     const branchTexts = KB_FALLBACK_SAFE_TEXT[failure_type];
     safeReply = branchTexts?.[visitorLang] ?? branchTexts?.["zh-TW"] ?? "";
-  } else safeReply = S0_LLM_FAILURE_SAFE_TEXT[visitorLang] ?? S0_LLM_FAILURE_SAFE_TEXT["zh-TW"];
-  if (!safeReply) return new Response(JSON.stringify({ success: false, error: "s0_no_safe_reply", failure_type }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-  if (!source_message_id) return new Response(JSON.stringify({ success: false, error: "s0_missing_source_message_id", failure_type }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-  const { data: rpcData, error: rpcErr } = await supabaseAdmin.rpc("s0_handoff_tx", { p_conversation_id: conversation_id, p_safe_reply_content: safeReply, p_source_message_id: source_message_id, p_failure_type: failure_type });
-  if (rpcErr) return new Response(JSON.stringify({ success: false, error: "s0_rpc_transport_error", failure_type, handoff_persisted: false, handoff_uncertain: true }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  } else {
+    safeReply = S0_LLM_FAILURE_SAFE_TEXT[visitorLang] ?? S0_LLM_FAILURE_SAFE_TEXT["zh-TW"];
+  }
+  if (!safeReply) {
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: "s0_no_safe_reply",
+        failure_type
+      }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      }
+    );
+  }
+  if (!source_message_id) {
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: "s0_missing_source_message_id",
+        failure_type
+      }),
+      {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      }
+    );
+  }
+  const { data: rpcData, error: rpcErr } = await supabaseAdmin.rpc(
+    "s0_handoff_tx",
+    {
+      p_conversation_id: conversation_id,
+      p_safe_reply_content: safeReply,
+      p_source_message_id: source_message_id,
+      p_failure_type: failure_type
+    }
+  );
+  if (rpcErr) {
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: "s0_rpc_transport_error",
+        failure_type,
+        handoff_persisted: false,
+        handoff_uncertain: true
+      }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      }
+    );
+  }
   const _s0Result = rpcData?.result ?? "unknown";
   switch (_s0Result) {
     case "success":
       await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-      return new Response(JSON.stringify({ success: true, escalation_rule: "S0", failure_type, handoff_persisted: true, rpc_result: "success" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(
+        JSON.stringify({
+          success: true,
+          escalation_rule: "S0",
+          failure_type,
+          handoff_persisted: true,
+          rpc_result: "success"
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     case "already_handled":
-      return new Response(JSON.stringify({ success: true, escalation_rule: "S0", failure_type, handoff_persisted: true, rpc_result: "already_handled" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(
+        JSON.stringify({
+          success: true,
+          escalation_rule: "S0",
+          failure_type,
+          handoff_persisted: true,
+          rpc_result: "already_handled"
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     case "already_resolved":
-      return new Response(JSON.stringify({ success: true, skipped: "resolved", escalation_rule: "S0", failure_type, handoff_persisted: false }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(
+        JSON.stringify({
+          success: true,
+          skipped: "resolved",
+          escalation_rule: "S0",
+          failure_type,
+          handoff_persisted: false
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     case "already_under_human_control":
-      return new Response(JSON.stringify({ success: true, skipped: "human_handling", escalation_rule: "S0", failure_type, handoff_persisted: false }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(
+        JSON.stringify({
+          success: true,
+          skipped: "human_handling",
+          escalation_rule: "S0",
+          failure_type,
+          handoff_persisted: false
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     case "invalid_source_message":
-      return new Response(JSON.stringify({ success: false, error: "s0_invalid_source_message", escalation_rule: "S0", failure_type }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "s0_invalid_source_message",
+          escalation_rule: "S0",
+          failure_type
+        }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        }
+      );
     case "invalid_input":
-      return new Response(JSON.stringify({ success: false, error: "s0_invalid_input", escalation_rule: "S0", failure_type }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "s0_invalid_input",
+          escalation_rule: "S0",
+          failure_type
+        }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        }
+      );
     case "invalid_failure_type":
-      return new Response(JSON.stringify({ success: false, error: "s0_invalid_failure_type", escalation_rule: "S0", failure_type }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "s0_invalid_failure_type",
+          escalation_rule: "S0",
+          failure_type
+        }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        }
+      );
     case "not_found":
-      return new Response(JSON.stringify({ success: false, error: "s0_conversation_not_found", escalation_rule: "S0", failure_type }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "s0_conversation_not_found",
+          escalation_rule: "S0",
+          failure_type
+        }),
+        {
+          status: 404,
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        }
+      );
     default:
-      return new Response(JSON.stringify({ success: false, error: "s0_rpc_unknown_result", escalation_rule: "S0", failure_type, rpc_result: _s0Result }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "s0_rpc_unknown_result",
+          escalation_rule: "S0",
+          failure_type,
+          rpc_result: _s0Result
+        }),
+        {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        }
+      );
   }
 }
 async function persistExplicitR1IfRequested(supabaseAdmin, conversation_id, source_message_id, latestMessage, runtimeSignals = {}) {
   const classified = classifyExplicitHandoff(latestMessage);
-  const { data: handoffHistory, error: handoffHistoryError } = await supabaseAdmin.from("messages").select("id, role, content, metadata, created_at").eq("conversation_id", conversation_id).eq("is_recalled", false).order("created_at", { ascending: true }).order("id", { ascending: true }).limit(40);
+  const { data: handoffHistory, error: handoffHistoryError } = await supabaseAdmin.from("messages").select(
+    "id, role, content, metadata, created_at"
+  ).eq("conversation_id", conversation_id).eq("is_recalled", false).order(
+    "created_at",
+    { ascending: true }
+  ).order("id", { ascending: true }).limit(40);
   const pkg = buildWarmHandoffPackage(handoffHistory ?? [], "R1");
   const collectionContinuation = pkg.collection_already_attempted && classified.rule !== "R1";
   if (classified.rule !== "R1" && !collectionContinuation) return null;
   const urgent = isDirectViolentThreat(latestMessage);
-  const hf1Input = deriveHandoffDecisionInput(handoffHistory ?? [], latestMessage, pkg.missing_facts, {
-    explicit_human_request: classified.rule === "R1",
-    threat_flag: runtimeSignals.threat_flag ?? urgent,
-    anger_level: runtimeSignals.anger_level ?? null,
-    sentiment_trend: runtimeSignals.sentiment_trend ?? null,
-    unresolved_turns: runtimeSignals.unresolved_turns ?? 0,
-    same_intent_repeat: runtimeSignals.same_intent_repeat ?? false,
-    prior_clarification_count: runtimeSignals.prior_clarification_count,
-    vip_tier: runtimeSignals.vip_tier ?? null,
-    high_value_customer: runtimeSignals.high_value_customer ?? null,
-    predicted_csat: runtimeSignals.predicted_csat ?? null,
-    churn_risk: runtimeSignals.churn_risk ?? null,
-    policy_risk: runtimeSignals.policy_risk ?? null,
-    rag_state: runtimeSignals.rag_state ?? null,
-    current_intent: runtimeSignals.current_intent ?? null,
-    current_topic: pkg.customer_goal
-  });
+  const hf1Input = deriveHandoffDecisionInput(
+    handoffHistory ?? [],
+    latestMessage,
+    pkg.missing_facts,
+    {
+      explicit_human_request: classified.rule === "R1",
+      threat_flag: runtimeSignals.threat_flag ?? urgent,
+      anger_level: runtimeSignals.anger_level ?? null,
+      sentiment_trend: runtimeSignals.sentiment_trend ?? null,
+      unresolved_turns: runtimeSignals.unresolved_turns ?? 0,
+      same_intent_repeat: runtimeSignals.same_intent_repeat ?? false,
+      prior_clarification_count: runtimeSignals.prior_clarification_count,
+      vip_tier: runtimeSignals.vip_tier ?? null,
+      high_value_customer: runtimeSignals.high_value_customer ?? null,
+      predicted_csat: runtimeSignals.predicted_csat ?? null,
+      churn_risk: runtimeSignals.churn_risk ?? null,
+      policy_risk: runtimeSignals.policy_risk ?? null,
+      rag_state: runtimeSignals.rag_state ?? null,
+      current_intent: runtimeSignals.current_intent ?? null,
+      current_topic: pkg.customer_goal
+    }
+  );
   const hf1Decision = evaluateHandoffDecision(hf1Input);
-  if (handoffHistoryError) console.error("[generate-reply] HF1 handoff history unavailable; fail-open to immediate handoff", conversation_id);
+  if (handoffHistoryError) {
+    console.error(
+      "[generate-reply] HF1 handoff history unavailable; fail-open to immediate handoff",
+      conversation_id
+    );
+  }
   if (classified.rule === "R1" && !handoffHistoryError && hf1Decision.handoff_mode === "optional_clarification_then_handoff" && !pkg.collection_already_attempted) {
     const question = buildMissingFactsQuestion(pkg, classified.language);
     if (question) {
-      const collected = await commitAiReplyWithControlGate(supabaseAdmin, conversation_id, source_message_id, question, { escalation_rule: "R1", escalation_action: "collect_missing_handoff_facts", response_route: "warm_handoff_data_collection", handoff_required: false, hf1_decision: hf1Decision });
+      const collected = await commitAiReplyWithControlGate(
+        supabaseAdmin,
+        conversation_id,
+        source_message_id,
+        question,
+        {
+          escalation_rule: "R1",
+          escalation_action: "collect_missing_handoff_facts",
+          response_route: "warm_handoff_data_collection",
+          handoff_required: false,
+          hf1_decision: hf1Decision
+        }
+      );
       if (collected.ok) {
-        await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-        return new Response(JSON.stringify({ success: true, escalation_rule: "R1", response_route: "warm_handoff_data_collection", handoff_required: false, handoff_mode: hf1Decision.handoff_mode, missing_info_policy: hf1Decision.missing_info_policy }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        await cleanupThinking(
+          supabaseAdmin,
+          conversation_id,
+          source_message_id
+        );
+        return new Response(
+          JSON.stringify({
+            success: true,
+            escalation_rule: "R1",
+            response_route: "warm_handoff_data_collection",
+            handoff_required: false,
+            handoff_mode: hf1Decision.handoff_mode,
+            missing_info_policy: hf1Decision.missing_info_policy
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
       }
-      if (["human_control", "resolved", "superseded_source"].includes(collected.result)) return new Response(JSON.stringify({ success: true, skipped: collected.result }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      return new Response(JSON.stringify({ success: false, error: `r1_optional_clarification_${collected.result}` }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      if (["human_control", "resolved", "superseded_source"].includes(
+        collected.result
+      )) {
+        return new Response(
+          JSON.stringify({ success: true, skipped: collected.result }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: `r1_optional_clarification_${collected.result}`
+        }),
+        {
+          status: 409,
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        }
+      );
     }
   }
   if (!source_message_id) {
-    return new Response(JSON.stringify({ success: false, error: "esc_missing_source_message_id", escalation_rule: "R1", handoff_persisted: false }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: "esc_missing_source_message_id",
+        escalation_rule: "R1",
+        handoff_persisted: false
+      }),
+      {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      }
+    );
   }
   const { data, error } = await supabaseAdmin.rpc("explicit_handoff_tx", {
     p_conversation_id: conversation_id,
@@ -5035,44 +6027,147 @@ async function persistExplicitR1IfRequested(supabaseAdmin, conversation_id, sour
     p_source_message_id: source_message_id
   });
   if (error) {
-    return new Response(JSON.stringify({ success: false, error: "esc_rpc_transport_error", escalation_rule: "R1", handoff_persisted: false, handoff_uncertain: true }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: "esc_rpc_transport_error",
+        escalation_rule: "R1",
+        handoff_persisted: false,
+        handoff_uncertain: true
+      }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      }
+    );
   }
   const result2 = data?.result ?? "unknown";
   switch (result2) {
     case "success":
       await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-      return new Response(JSON.stringify({ success: true, escalation_rule: "R1", handoff_persisted: true, rpc_result: "success" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(
+        JSON.stringify({
+          success: true,
+          escalation_rule: "R1",
+          handoff_persisted: true,
+          rpc_result: "success"
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     case "already_handled":
-      return new Response(JSON.stringify({ success: true, escalation_rule: "R1", handoff_persisted: true, rpc_result: "already_handled" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(
+        JSON.stringify({
+          success: true,
+          escalation_rule: "R1",
+          handoff_persisted: true,
+          rpc_result: "already_handled"
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     case "already_resolved":
-      return new Response(JSON.stringify({ success: true, skipped: "resolved", escalation_rule: "R1", handoff_persisted: false }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(
+        JSON.stringify({
+          success: true,
+          skipped: "resolved",
+          escalation_rule: "R1",
+          handoff_persisted: false
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     case "already_under_human_control":
-      return new Response(JSON.stringify({ success: true, skipped: "human_handling", escalation_rule: "R1", handoff_persisted: false }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(
+        JSON.stringify({
+          success: true,
+          skipped: "human_handling",
+          escalation_rule: "R1",
+          handoff_persisted: false
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     case "not_found":
-      return new Response(JSON.stringify({ success: false, error: "esc_conversation_not_found", escalation_rule: "R1" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "esc_conversation_not_found",
+          escalation_rule: "R1"
+        }),
+        {
+          status: 404,
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        }
+      );
     case "invalid_source_message":
-      return new Response(JSON.stringify({ success: false, error: "esc_invalid_source_message", escalation_rule: "R1" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "esc_invalid_source_message",
+          escalation_rule: "R1"
+        }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        }
+      );
     default:
-      return new Response(JSON.stringify({ success: false, error: "esc_rpc_unknown_result", escalation_rule: "R1", rpc_result: result2 }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "esc_rpc_unknown_result",
+          escalation_rule: "R1",
+          rpc_result: result2
+        }),
+        {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        }
+      );
   }
 }
 async function orchestrationGenerateReply(conversation_id, flags, source_message_id) {
-  const supabaseAdmin = createClient3(Deno.env.get("SUPABASE_URL") ?? "", getSupabaseAdminKey());
-  const { data: conversation, error: convError } = await supabaseAdmin.from("conversations").select("id, status, assigned_agent_id, created_at, company_id, metadata_source").eq("id", conversation_id).single();
-  if (convError || !conversation) return new Response(JSON.stringify({ error: "Conversation not found" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  const supabaseAdmin = createClient3(
+    Deno.env.get("SUPABASE_URL") ?? "",
+    getSupabaseAdminKey()
+  );
+  const { data: conversation, error: convError } = await supabaseAdmin.from(
+    "conversations"
+  ).select(
+    "id, status, assigned_agent_id, created_at, company_id, metadata_source"
+  ).eq("id", conversation_id).single();
+  if (convError || !conversation) {
+    return new Response(JSON.stringify({ error: "Conversation not found" }), {
+      status: 404,
+      headers: { ...corsHeaders, "Content-Type": "application/json" }
+    });
+  }
   if (conversation.status === "resolved" || conversation.status === "closed") {
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return safeRefusal("CONV_RESOLVED_OR_CLOSED");
   }
-  if (isHumanControlState(conversation.status, conversation.assigned_agent_id ?? null)) {
-    console.log("[generate-reply] orchestration human-handling guard:", conversation.status, conversation_id);
+  if (isHumanControlState(
+    conversation.status,
+    conversation.assigned_agent_id ?? null
+  )) {
+    console.log(
+      "[generate-reply] orchestration human-handling guard:",
+      conversation.status,
+      conversation_id
+    );
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-    return new Response(JSON.stringify({ success: true, skipped: "human_handling" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(
+      JSON.stringify({ success: true, skipped: "human_handling" }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
   }
   if (conversation.assigned_agent_id) {
-    console.log("[generate-reply] S-1 assigned_agent_id guard (orchestration):", conversation_id);
+    console.log(
+      "[generate-reply] S-1 assigned_agent_id guard (orchestration):",
+      conversation_id
+    );
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-    return new Response(JSON.stringify({ success: true, skipped: "assigned_to_agent" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(
+      JSON.stringify({ success: true, skipped: "assigned_to_agent" }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
   }
   const sourceResult = await loadSourceVisitorMessage(
     supabaseAdmin,
@@ -5085,7 +6180,12 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
   }
   const sourceVisitorMessage = sourceResult.message;
   const _h1LastMsg = sourceVisitorMessage.content;
-  const _closureResponse = await handleConversationClosureIfNeeded(supabaseAdmin, conversation_id, source_message_id, _h1LastMsg);
+  const _closureResponse = await handleConversationClosureIfNeeded(
+    supabaseAdmin,
+    conversation_id,
+    source_message_id,
+    _h1LastMsg
+  );
   if (_closureResponse) return _closureResponse;
   const [
     { data: _pr5HistoryRows },
@@ -5102,27 +6202,32 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
     _h1LastMsg,
     _pr5HistoryRows ?? []
   );
-  const _conversationContinuityBlock = buildCanonicalContinuityBlock(_pr5HistoryRows ?? []);
+  const _conversationContinuityBlock = buildCanonicalContinuityBlock(
+    _pr5HistoryRows ?? []
+  );
   const _visitorLang = detectVisitorLanguage(_h1LastMsg);
   const _criticalE2ExpectedTenantId = typeof conversation.company_id === "string" && conversation.company_id.length > 0 ? conversation.company_id : void 0;
   const _criticalE2ThreatSignal = classifyAuthoritativeThreat(_h1LastMsg);
   if (isE2LiveActivationEnabled(Deno.env) && _criticalE2ThreatSignal) {
-    const _criticalE2Response = await evaluateAndPersistRequiredRulesLive(supabaseAdmin, {
-      conversation_id,
-      source_message_id,
-      latest_message_content: _h1LastMsg,
-      conversation_status: conversation.status,
-      assigned_agent_id: conversation.assigned_agent_id ?? null,
-      greeting_or_trivial: isGreetingOrTrivial(_h1LastMsg),
-      visitor_language: _visitorLang,
-      expected_tenant_id: _criticalE2ExpectedTenantId,
-      turn_count: _pr5History.turn_count,
-      consecutive_no_answer: _pr5History.consecutive_no_answer,
-      clarification_attempts: _pr5History.clarification_attempts,
-      exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
-      threat_flag: _criticalE2ThreatSignal,
-      compliance_jurisdiction_requires_human_review: resolveAuthoritativeComplianceReview(_criticalE2ExpectedTenantId)
-    });
+    const _criticalE2Response = await evaluateAndPersistRequiredRulesLive(
+      supabaseAdmin,
+      {
+        conversation_id,
+        source_message_id,
+        latest_message_content: _h1LastMsg,
+        conversation_status: conversation.status,
+        assigned_agent_id: conversation.assigned_agent_id ?? null,
+        greeting_or_trivial: isGreetingOrTrivial(_h1LastMsg),
+        visitor_language: _visitorLang,
+        expected_tenant_id: _criticalE2ExpectedTenantId,
+        turn_count: _pr5History.turn_count,
+        consecutive_no_answer: _pr5History.consecutive_no_answer,
+        clarification_attempts: _pr5History.clarification_attempts,
+        exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
+        threat_flag: _criticalE2ThreatSignal,
+        compliance_jurisdiction_requires_human_review: resolveAuthoritativeComplianceReview(_criticalE2ExpectedTenantId)
+      }
+    );
     if (_criticalE2Response) return _criticalE2Response;
   }
   const _criticalLocalRisk = classifyLocalTopicRisk(_h1LastMsg);
@@ -5132,7 +6237,10 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
     { explicit_handoff: isHandoffIntent(_h1LastMsg) }
   );
   if (_canonicalTurn.operation === "CUSTOMER_CONTEXT_UPDATE") {
-    const acknowledgement = _canonicalTurn.reason === "customer_context_requirements_request" ? buildCustomerContextRequirementsResponse(_canonicalTurn.language, _pr5HistoryRows ?? []) : buildCustomerContextAcknowledgement(_canonicalTurn.language);
+    const acknowledgement = _canonicalTurn.reason === "customer_context_requirements_request" ? buildCustomerContextRequirementsResponse(
+      _canonicalTurn.language,
+      _pr5HistoryRows ?? []
+    ) : buildCustomerContextAcknowledgement(_canonicalTurn.language);
     const contextCommit = await commitAiReplyWithControlGate(
       supabaseAdmin,
       conversation_id,
@@ -5147,22 +6255,36 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
     );
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     if (contextCommit.ok) {
-      return new Response(JSON.stringify({
-        success: true,
-        reply: acknowledgement,
-        response_route: "customer_context_update",
-        handoff_required: false
-      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(
+        JSON.stringify({
+          success: true,
+          reply: acknowledgement,
+          response_route: "customer_context_update",
+          handoff_required: false
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
-    if (["human_control", "resolved", "superseded_source"].includes(contextCommit.result)) {
-      return new Response(JSON.stringify({ success: true, skipped: contextCommit.result }), {
+    if (["human_control", "resolved", "superseded_source"].includes(
+      contextCommit.result
+    )) {
+      return new Response(
+        JSON.stringify({ success: true, skipped: contextCommit.result }),
+        {
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        }
+      );
+    }
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: `context_update_commit_${contextCommit.result}`
+      }),
+      {
+        status: 409,
         headers: { ...corsHeaders, "Content-Type": "application/json" }
-      });
-    }
-    return new Response(JSON.stringify({ success: false, error: `context_update_commit_${contextCommit.result}` }), {
-      status: 409,
-      headers: { ...corsHeaders, "Content-Type": "application/json" }
-    });
+      }
+    );
   }
   const _turnClassification = classifyConversationTurn(_h1LastMsg);
   if (_turnClassification.should_clarify_before_kb && !isHandoffIntent(_h1LastMsg) && _criticalLocalRisk?.level !== "high") {
@@ -5181,27 +6303,43 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
     );
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     if (clarificationCommit.ok) {
-      return new Response(JSON.stringify({
-        success: true,
-        reply: clarification,
-        response_route: "conversational_clarification",
-        handoff_required: false
-      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(
+        JSON.stringify({
+          success: true,
+          reply: clarification,
+          response_route: "conversational_clarification",
+          handoff_required: false
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
-    if (["human_control", "resolved", "superseded_source"].includes(clarificationCommit.result)) {
-      return new Response(JSON.stringify({ success: true, skipped: clarificationCommit.result }), {
+    if (["human_control", "resolved", "superseded_source"].includes(
+      clarificationCommit.result
+    )) {
+      return new Response(
+        JSON.stringify({ success: true, skipped: clarificationCommit.result }),
+        {
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        }
+      );
+    }
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: `clarification_commit_${clarificationCommit.result}`
+      }),
+      {
+        status: 409,
         headers: { ...corsHeaders, "Content-Type": "application/json" }
-      });
-    }
-    return new Response(JSON.stringify({ success: false, error: `clarification_commit_${clarificationCommit.result}` }), {
-      status: 409,
-      headers: { ...corsHeaders, "Content-Type": "application/json" }
-    });
+      }
+    );
   }
   const _pr5ExpectedTenantId = typeof conversation.company_id === "string" && conversation.company_id.length > 0 ? conversation.company_id : void 0;
   const _widgetLiveTestActor = _pr5ExpectedTenantId === void 0 ? widgetLiveTestPreActivationActor(conversation.metadata_source) : void 0;
   const _pr5ThreatSignal = classifyAuthoritativeThreat(_h1LastMsg);
-  const _pr5ComplianceSignal = resolveAuthoritativeComplianceReview(_pr5ExpectedTenantId);
+  const _pr5ComplianceSignal = resolveAuthoritativeComplianceReview(
+    _pr5ExpectedTenantId
+  );
   const _pr5LocalRisk = classifyLocalTopicRisk(_h1LastMsg);
   const _pr5HistoricalR3Sentiment = await loadAuthoritativeR3SentimentSignals(
     supabaseAdmin,
@@ -5212,7 +6350,12 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
     _h1LastMsg,
     _pr5HistoricalR3Sentiment
   );
-  const _pr5ConversationDurationSec = conversation.created_at ? Math.max(0, Math.floor((Date.now() - new Date(conversation.created_at).getTime()) / 1e3)) : void 0;
+  const _pr5ConversationDurationSec = conversation.created_at ? Math.max(
+    0,
+    Math.floor(
+      (Date.now() - new Date(conversation.created_at).getTime()) / 1e3
+    )
+  ) : void 0;
   const _pr5VerifiedTenantConfig = buildVerifiedTenantEscalationConfig();
   const _pr5GreetingOrTrivial = isGreetingOrTrivial(_h1LastMsg);
   const _pr5Shadow = evaluateEscalationShadow(
@@ -5249,22 +6392,25 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
     });
   }
   if (isE2LiveActivationEnabled(Deno.env)) {
-    const _pr5E2PreflightResponse = await evaluateAndPersistRequiredRulesLive(supabaseAdmin, {
-      conversation_id,
-      source_message_id,
-      latest_message_content: _h1LastMsg,
-      conversation_status: conversation.status,
-      assigned_agent_id: conversation.assigned_agent_id ?? null,
-      greeting_or_trivial: _pr5GreetingOrTrivial,
-      visitor_language: _visitorLang,
-      expected_tenant_id: _pr5ExpectedTenantId,
-      turn_count: _pr5History.turn_count,
-      consecutive_no_answer: _pr5History.consecutive_no_answer,
-      clarification_attempts: _pr5History.clarification_attempts,
-      exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
-      threat_flag: _pr5ThreatSignal,
-      compliance_jurisdiction_requires_human_review: _pr5ComplianceSignal
-    });
+    const _pr5E2PreflightResponse = await evaluateAndPersistRequiredRulesLive(
+      supabaseAdmin,
+      {
+        conversation_id,
+        source_message_id,
+        latest_message_content: _h1LastMsg,
+        conversation_status: conversation.status,
+        assigned_agent_id: conversation.assigned_agent_id ?? null,
+        greeting_or_trivial: _pr5GreetingOrTrivial,
+        visitor_language: _visitorLang,
+        expected_tenant_id: _pr5ExpectedTenantId,
+        turn_count: _pr5History.turn_count,
+        consecutive_no_answer: _pr5History.consecutive_no_answer,
+        clarification_attempts: _pr5History.clarification_attempts,
+        exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
+        threat_flag: _pr5ThreatSignal,
+        compliance_jurisdiction_requires_human_review: _pr5ComplianceSignal
+      }
+    );
     if (_pr5E2PreflightResponse) return _pr5E2PreflightResponse;
   }
   const _deferR1ForE1 = isE1LiveActivationEnabled(Deno.env) && _pr5LocalRisk?.level === "high" && flags.ENABLE_KB && !_pr5GreetingOrTrivial;
@@ -5320,11 +6466,30 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     if (!committed2.ok) {
       if (committed2.result === "human_control" || committed2.result === "resolved" || committed2.result === "superseded_source") {
-        return new Response(JSON.stringify({ success: true, skipped: committed2.result }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        return new Response(
+          JSON.stringify({ success: true, skipped: committed2.result }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
       }
-      return new Response(JSON.stringify({ success: false, error: `human_support_info_commit_${committed2.result}` }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: `human_support_info_commit_${committed2.result}`
+        }),
+        {
+          status: 409,
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        }
+      );
     }
-    return new Response(JSON.stringify({ success: true, response_route: "human_support_information", handoff_required: false }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(
+      JSON.stringify({
+        success: true,
+        response_route: "human_support_information",
+        handoff_required: false
+      }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
   }
   const _positiveRecoveryAcknowledgement = _pr5R3Sentiment?.emotion_kind === "positive_recovery" ? resolvePositiveRecoveryAcknowledgement(_h1LastMsg, _visitorLang) : null;
   if (_positiveRecoveryAcknowledgement) {
@@ -5342,21 +6507,70 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     if (!committed2.ok) {
       if (committed2.result === "human_control" || committed2.result === "resolved" || committed2.result === "superseded_source") {
-        return new Response(JSON.stringify({ success: true, skipped: committed2.result }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        return new Response(
+          JSON.stringify({ success: true, skipped: committed2.result }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
       }
-      return new Response(JSON.stringify({ success: false, error: `positive_recovery_commit_${committed2.result}` }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: `positive_recovery_commit_${committed2.result}`
+        }),
+        {
+          status: 409,
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        }
+      );
     }
-    return new Response(JSON.stringify({ success: true, response_route: "positive_recovery_acknowledgement", handoff_required: false }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(
+      JSON.stringify({
+        success: true,
+        response_route: "positive_recovery_acknowledgement",
+        handoff_required: false
+      }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
   }
-  const _conversationMemoryReply = resolveConversationMemoryResponse(_h1LastMsg, _pr5HistoryRows ?? []);
+  const _conversationMemoryReply = resolveConversationMemoryResponse(
+    _h1LastMsg,
+    _pr5HistoryRows ?? []
+  );
   if (_conversationMemoryReply) {
-    const committed2 = await commitAiReplyWithControlGate(supabaseAdmin, conversation_id, source_message_id, _conversationMemoryReply, { response_route: "conversation_memory", conversation_grounded: true });
+    const committed2 = await commitAiReplyWithControlGate(
+      supabaseAdmin,
+      conversation_id,
+      source_message_id,
+      _conversationMemoryReply,
+      { response_route: "conversation_memory", conversation_grounded: true }
+    );
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     if (!committed2.ok) {
-      if (committed2.result === "human_control" || committed2.result === "resolved" || committed2.result === "superseded_source") return new Response(JSON.stringify({ success: true, skipped: committed2.result }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      return new Response(JSON.stringify({ success: false, error: `conversation_memory_commit_${committed2.result}` }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      if (committed2.result === "human_control" || committed2.result === "resolved" || committed2.result === "superseded_source") {
+        return new Response(
+          JSON.stringify({ success: true, skipped: committed2.result }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: `conversation_memory_commit_${committed2.result}`
+        }),
+        {
+          status: 409,
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        }
+      );
     }
-    return new Response(JSON.stringify({ success: true, response_route: "conversation_memory", conversation_grounded: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(
+      JSON.stringify({
+        success: true,
+        response_route: "conversation_memory",
+        conversation_grounded: true
+      }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
   }
   const _g1SkipKB = _pr5GreetingOrTrivial || Boolean(_priorGroundedTransform);
   let _pr5RagMatchState;
@@ -5417,52 +6631,114 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
   let _kbDone = false;
   let ragResult = null;
   if (flags.ENABLE_KB && !_g1SkipKB) {
-    const _kbTenantResult = await resolveTenantScope(conversation_id, _widgetLiveTestActor);
+    const _kbTenantResult = await resolveTenantScope(
+      conversation_id,
+      _widgetLiveTestActor
+    );
     if (!_kbTenantResult.resolved) {
       if (_deferR1ForE1) {
-        const r1Response = await persistExplicitR1IfRequested(supabaseAdmin, conversation_id, source_message_id, _h1LastMsg);
+        const r1Response = await persistExplicitR1IfRequested(
+          supabaseAdmin,
+          conversation_id,
+          source_message_id,
+          _h1LastMsg
+        );
         if (r1Response) return r1Response;
       }
-      if (_escEnableS0) return await handleS0Handoff(supabaseAdmin, conversation_id, source_message_id, "KB_SCOPE_GATE", _visitorLang);
-      return await handleKBFallback(supabaseAdmin, conversation_id, "KB_SCOPE_GATE", source_message_id, { rag_api_status: "scope_unavailable" }, _visitorLang);
+      if (_escEnableS0) {
+        return await handleS0Handoff(
+          supabaseAdmin,
+          conversation_id,
+          source_message_id,
+          "KB_SCOPE_GATE",
+          _visitorLang
+        );
+      }
+      return await handleKBFallback(
+        supabaseAdmin,
+        conversation_id,
+        "KB_SCOPE_GATE",
+        source_message_id,
+        { rag_api_status: "scope_unavailable" },
+        _visitorLang
+      );
     }
-    const _semanticRetrieval = buildCanonicalRetrievalQuery(_h1LastMsg, _pr5HistoryRows ?? []);
+    const _semanticRetrieval = buildCanonicalRetrievalQuery(
+      _h1LastMsg,
+      _pr5HistoryRows ?? []
+    );
     const userQuery = _semanticRetrieval.query;
-    ragResult = !userQuery ? { success: true, no_answer: true, retrieval_quality: "failed", chunks: [] } : await callKBAdapter(conversation_id, userQuery, _kbTenantResult.scope);
+    ragResult = !userQuery ? {
+      success: true,
+      no_answer: true,
+      retrieval_quality: "failed",
+      chunks: []
+    } : await callKBAdapter(conversation_id, userQuery, _kbTenantResult.scope);
     if (!ragResult || !ragResult.success) {
       if (_deferR1ForE1) {
-        const r1Response = await persistExplicitR1IfRequested(supabaseAdmin, conversation_id, source_message_id, _h1LastMsg);
+        const r1Response = await persistExplicitR1IfRequested(
+          supabaseAdmin,
+          conversation_id,
+          source_message_id,
+          _h1LastMsg
+        );
         if (r1Response) return r1Response;
       }
-      if (_escEnableS0) return await handleS0Handoff(supabaseAdmin, conversation_id, source_message_id, "KB_API_FAIL", _visitorLang);
-      return await handleKBFallback(supabaseAdmin, conversation_id, "KB_API_FAIL", source_message_id, { rag_api_status: "failure" }, _visitorLang);
+      if (_escEnableS0) {
+        return await handleS0Handoff(
+          supabaseAdmin,
+          conversation_id,
+          source_message_id,
+          "KB_API_FAIL",
+          _visitorLang
+        );
+      }
+      return await handleKBFallback(
+        supabaseAdmin,
+        conversation_id,
+        "KB_API_FAIL",
+        source_message_id,
+        { rag_api_status: "failure" },
+        _visitorLang
+      );
     }
     if (ragResult.no_answer || !ragResult.chunks || ragResult.chunks.length === 0) {
       _pr5RagMatchState = "no_match";
-      const requiredResponse = await evaluateAndPersistRequiredRulesLive(supabaseAdmin, {
-        conversation_id,
-        source_message_id,
-        latest_message_content: _h1LastMsg,
-        conversation_status: conversation.status,
-        assigned_agent_id: conversation.assigned_agent_id ?? null,
-        greeting_or_trivial: _pr5GreetingOrTrivial,
-        visitor_language: _visitorLang,
-        expected_tenant_id: _pr5ExpectedTenantId,
-        warm_handoff_question: buildMissingFactsQuestion(buildWarmHandoffPackage(_pr5HistoryRows ?? [], "R2"), _visitorLang) ?? void 0,
-        rag_match_state: _pr5RagMatchState,
-        topic_risk_level: _pr5LocalRisk?.level,
-        verified_local_risk_classification: _pr5LocalRisk?.verified,
-        conversation_duration_sec: _pr5ConversationDurationSec,
-        turn_count: _pr5History.turn_count,
-        consecutive_no_answer: _pr5History.consecutive_no_answer,
-        clarification_attempts: _pr5History.clarification_attempts,
-        exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
-        threat_flag: _pr5ThreatSignal,
-        compliance_jurisdiction_requires_human_review: _pr5ComplianceSignal
-      });
+      const requiredResponse = await evaluateAndPersistRequiredRulesLive(
+        supabaseAdmin,
+        {
+          conversation_id,
+          source_message_id,
+          latest_message_content: _h1LastMsg,
+          conversation_status: conversation.status,
+          assigned_agent_id: conversation.assigned_agent_id ?? null,
+          greeting_or_trivial: _pr5GreetingOrTrivial,
+          visitor_language: _visitorLang,
+          expected_tenant_id: _pr5ExpectedTenantId,
+          warm_handoff_question: buildMissingFactsQuestion(
+            buildWarmHandoffPackage(_pr5HistoryRows ?? [], "R2"),
+            _visitorLang
+          ) ?? void 0,
+          rag_match_state: _pr5RagMatchState,
+          topic_risk_level: _pr5LocalRisk?.level,
+          verified_local_risk_classification: _pr5LocalRisk?.verified,
+          conversation_duration_sec: _pr5ConversationDurationSec,
+          turn_count: _pr5History.turn_count,
+          consecutive_no_answer: _pr5History.consecutive_no_answer,
+          clarification_attempts: _pr5History.clarification_attempts,
+          exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
+          threat_flag: _pr5ThreatSignal,
+          compliance_jurisdiction_requires_human_review: _pr5ComplianceSignal
+        }
+      );
       if (requiredResponse) return requiredResponse;
       if (_deferR1ForE1) {
-        const r1Response = await persistExplicitR1IfRequested(supabaseAdmin, conversation_id, source_message_id, _h1LastMsg);
+        const r1Response = await persistExplicitR1IfRequested(
+          supabaseAdmin,
+          conversation_id,
+          source_message_id,
+          _h1LastMsg
+        );
         if (r1Response) return r1Response;
       }
       const clarification = await attemptFirstNoMatchClarification(
@@ -5493,43 +6769,79 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
     }
     const isHighRisk = _pr5LocalRisk?.level === "high";
     const minScore = isHighRisk ? 0.78 : 0.55;
-    const _groundingSelection = selectCanonicalGrounding(ragResult.documents ?? [], {
-      minScore,
-      requirePublished: true,
-      requestText: userQuery
-    });
+    const _groundingSelection = selectCanonicalGrounding(
+      ragResult.documents ?? [],
+      {
+        minScore,
+        requirePublished: true,
+        requestText: userQuery
+      }
+    );
     const _scoreUsableChunks = _groundingSelection.ok ? _groundingSelection.chunks : [];
-    const _explicitJurisdiction = extractExplicitJurisdictionConstraint(_h1LastMsg);
-    const _jurisdictionSupported = evidenceSupportsJurisdiction(_explicitJurisdiction, _scoreUsableChunks);
+    const _explicitJurisdiction = extractExplicitJurisdictionConstraint(
+      _h1LastMsg
+    );
+    const _jurisdictionSupported = evidenceSupportsJurisdiction(
+      _explicitJurisdiction,
+      _scoreUsableChunks
+    );
     const usableChunks = _jurisdictionSupported ? _scoreUsableChunks : [];
-    const traceMetadata = { rag_api_status: "success", total_results: ragResult.chunks.length, filtered_results: usableChunks.length, jurisdiction_constraint: _explicitJurisdiction, jurisdiction_supported: _jurisdictionSupported, min_score_used: usableChunks.length > 0 ? Math.min(...usableChunks.map((c) => c.score ?? 0)) : null, max_score_used: usableChunks.length > 0 ? Math.max(...usableChunks.map((c) => c.score ?? 0)) : null, high_risk_topic: isHighRisk, min_threshold: minScore, citations: usableChunks.map((c) => ({ doc_id: c.doc_id, chunk_id: c.chunk_id, title: c.title, score: c.score, source_type: c.source_type })) };
+    const traceMetadata = {
+      rag_api_status: "success",
+      total_results: ragResult.chunks.length,
+      filtered_results: usableChunks.length,
+      jurisdiction_constraint: _explicitJurisdiction,
+      jurisdiction_supported: _jurisdictionSupported,
+      min_score_used: usableChunks.length > 0 ? Math.min(...usableChunks.map((c) => c.score ?? 0)) : null,
+      max_score_used: usableChunks.length > 0 ? Math.max(...usableChunks.map((c) => c.score ?? 0)) : null,
+      high_risk_topic: isHighRisk,
+      min_threshold: minScore,
+      citations: usableChunks.map((c) => ({
+        doc_id: c.doc_id,
+        chunk_id: c.chunk_id,
+        title: c.title,
+        score: c.score,
+        source_type: c.source_type
+      }))
+    };
     ragResult.trace_metadata = traceMetadata;
     if (usableChunks.length === 0) {
       _pr5RagMatchState = "partial_match";
-      const requiredResponse = await evaluateAndPersistRequiredRulesLive(supabaseAdmin, {
-        conversation_id,
-        source_message_id,
-        latest_message_content: _h1LastMsg,
-        conversation_status: conversation.status,
-        assigned_agent_id: conversation.assigned_agent_id ?? null,
-        greeting_or_trivial: _pr5GreetingOrTrivial,
-        visitor_language: _visitorLang,
-        expected_tenant_id: _pr5ExpectedTenantId,
-        warm_handoff_question: buildMissingFactsQuestion(buildWarmHandoffPackage(_pr5HistoryRows ?? [], "R2"), _visitorLang) ?? void 0,
-        rag_match_state: _pr5RagMatchState,
-        topic_risk_level: _pr5LocalRisk?.level,
-        verified_local_risk_classification: _pr5LocalRisk?.verified,
-        conversation_duration_sec: _pr5ConversationDurationSec,
-        turn_count: _pr5History.turn_count,
-        consecutive_no_answer: _pr5History.consecutive_no_answer,
-        clarification_attempts: _pr5History.clarification_attempts,
-        exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
-        threat_flag: _pr5ThreatSignal,
-        compliance_jurisdiction_requires_human_review: _pr5ComplianceSignal
-      });
+      const requiredResponse = await evaluateAndPersistRequiredRulesLive(
+        supabaseAdmin,
+        {
+          conversation_id,
+          source_message_id,
+          latest_message_content: _h1LastMsg,
+          conversation_status: conversation.status,
+          assigned_agent_id: conversation.assigned_agent_id ?? null,
+          greeting_or_trivial: _pr5GreetingOrTrivial,
+          visitor_language: _visitorLang,
+          expected_tenant_id: _pr5ExpectedTenantId,
+          warm_handoff_question: buildMissingFactsQuestion(
+            buildWarmHandoffPackage(_pr5HistoryRows ?? [], "R2"),
+            _visitorLang
+          ) ?? void 0,
+          rag_match_state: _pr5RagMatchState,
+          topic_risk_level: _pr5LocalRisk?.level,
+          verified_local_risk_classification: _pr5LocalRisk?.verified,
+          conversation_duration_sec: _pr5ConversationDurationSec,
+          turn_count: _pr5History.turn_count,
+          consecutive_no_answer: _pr5History.consecutive_no_answer,
+          clarification_attempts: _pr5History.clarification_attempts,
+          exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
+          threat_flag: _pr5ThreatSignal,
+          compliance_jurisdiction_requires_human_review: _pr5ComplianceSignal
+        }
+      );
       if (requiredResponse) return requiredResponse;
       if (_deferR1ForE1) {
-        const r1Response = await persistExplicitR1IfRequested(supabaseAdmin, conversation_id, source_message_id, _h1LastMsg);
+        const r1Response = await persistExplicitR1IfRequested(
+          supabaseAdmin,
+          conversation_id,
+          source_message_id,
+          _h1LastMsg
+        );
         if (r1Response) return r1Response;
       }
       const clarification = await attemptFirstNoMatchClarification(
@@ -5560,30 +6872,41 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
     }
     if (!hasUsableFullContentEvidence(usableChunks, minScore)) {
       _pr5RagMatchState = "partial_match";
-      const requiredResponse = await evaluateAndPersistRequiredRulesLive(supabaseAdmin, {
-        conversation_id,
-        source_message_id,
-        latest_message_content: _h1LastMsg,
-        conversation_status: conversation.status,
-        assigned_agent_id: conversation.assigned_agent_id ?? null,
-        greeting_or_trivial: _pr5GreetingOrTrivial,
-        visitor_language: _visitorLang,
-        expected_tenant_id: _pr5ExpectedTenantId,
-        warm_handoff_question: buildMissingFactsQuestion(buildWarmHandoffPackage(_pr5HistoryRows ?? [], "R2"), _visitorLang) ?? void 0,
-        rag_match_state: _pr5RagMatchState,
-        topic_risk_level: _pr5LocalRisk?.level,
-        verified_local_risk_classification: _pr5LocalRisk?.verified,
-        conversation_duration_sec: _pr5ConversationDurationSec,
-        turn_count: _pr5History.turn_count,
-        consecutive_no_answer: _pr5History.consecutive_no_answer,
-        clarification_attempts: _pr5History.clarification_attempts,
-        exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
-        threat_flag: _pr5ThreatSignal,
-        compliance_jurisdiction_requires_human_review: _pr5ComplianceSignal
-      });
+      const requiredResponse = await evaluateAndPersistRequiredRulesLive(
+        supabaseAdmin,
+        {
+          conversation_id,
+          source_message_id,
+          latest_message_content: _h1LastMsg,
+          conversation_status: conversation.status,
+          assigned_agent_id: conversation.assigned_agent_id ?? null,
+          greeting_or_trivial: _pr5GreetingOrTrivial,
+          visitor_language: _visitorLang,
+          expected_tenant_id: _pr5ExpectedTenantId,
+          warm_handoff_question: buildMissingFactsQuestion(
+            buildWarmHandoffPackage(_pr5HistoryRows ?? [], "R2"),
+            _visitorLang
+          ) ?? void 0,
+          rag_match_state: _pr5RagMatchState,
+          topic_risk_level: _pr5LocalRisk?.level,
+          verified_local_risk_classification: _pr5LocalRisk?.verified,
+          conversation_duration_sec: _pr5ConversationDurationSec,
+          turn_count: _pr5History.turn_count,
+          consecutive_no_answer: _pr5History.consecutive_no_answer,
+          clarification_attempts: _pr5History.clarification_attempts,
+          exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
+          threat_flag: _pr5ThreatSignal,
+          compliance_jurisdiction_requires_human_review: _pr5ComplianceSignal
+        }
+      );
       if (requiredResponse) return requiredResponse;
       if (_deferR1ForE1) {
-        const r1Response = await persistExplicitR1IfRequested(supabaseAdmin, conversation_id, source_message_id, _h1LastMsg);
+        const r1Response = await persistExplicitR1IfRequested(
+          supabaseAdmin,
+          conversation_id,
+          source_message_id,
+          _h1LastMsg
+        );
         if (r1Response) return r1Response;
       }
       const clarification = await attemptFirstNoMatchClarification(
@@ -5615,7 +6938,9 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
     _pr5RagMatchState = "confident_match";
     ragResult.chunks = usableChunks;
     ragResult.no_answer = false;
-    const usableSummary = usableChunks.find((c) => c.chunk_type === "rag_summary");
+    const usableSummary = usableChunks.find(
+      (c) => c.chunk_type === "rag_summary"
+    );
     const usableFullContent = usableChunks.filter((c) => c.chunk_type === "full_content").slice(0, 3);
     const selectedDocumentId = usableChunks[0]?.document_id ?? usableChunks[0]?.doc_id;
     ragResult.llm_context = selectedDocumentId ? {
@@ -5635,7 +6960,13 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
   if (!flags.ENABLE_KB || _g1SkipKB) _kbDone = true;
   if (flags.ENABLE_KB && !_g1SkipKB && !_kbDone) {
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-    return new Response(JSON.stringify({ error: "Internal KB processing error" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(
+      JSON.stringify({ error: "Internal KB processing error" }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      }
+    );
   }
   let _pr5R4Policy;
   const _pr5ShadowFlags = escalationFeatureFlagsFromEnv(Deno.env);
@@ -5686,33 +7017,49 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
       });
     }
   }
-  const _warmHandoffPackage = buildWarmHandoffPackage(_pr5HistoryRows ?? [], "R2");
-  const _warmHandoffQuestion = buildMissingFactsQuestion(_warmHandoffPackage, _visitorLang);
-  const _pr5RequiredLiveResponse = await evaluateAndPersistRequiredRulesLive(supabaseAdmin, {
-    conversation_id,
-    source_message_id,
-    latest_message_content: _h1LastMsg,
-    conversation_status: conversation.status,
-    assigned_agent_id: conversation.assigned_agent_id ?? null,
-    greeting_or_trivial: _pr5GreetingOrTrivial,
-    visitor_language: _visitorLang,
-    expected_tenant_id: _pr5ExpectedTenantId,
-    suppress_r2_for_prior_grounded_transform: Boolean(_priorGroundedTransform),
-    warm_handoff_question: _warmHandoffQuestion ?? void 0,
-    rag_match_state: _pr5RagMatchState,
-    topic_risk_level: _pr5LocalRisk?.level,
-    verified_local_risk_classification: _pr5LocalRisk?.verified,
-    conversation_duration_sec: _pr5ConversationDurationSec,
-    turn_count: _pr5History.turn_count,
-    consecutive_no_answer: _pr5History.consecutive_no_answer,
-    clarification_attempts: _pr5History.clarification_attempts,
-    exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
-    threat_flag: _pr5ThreatSignal,
-    compliance_jurisdiction_requires_human_review: _pr5ComplianceSignal
-  });
+  const _warmHandoffPackage = buildWarmHandoffPackage(
+    _pr5HistoryRows ?? [],
+    "R2"
+  );
+  const _warmHandoffQuestion = buildMissingFactsQuestion(
+    _warmHandoffPackage,
+    _visitorLang
+  );
+  const _pr5RequiredLiveResponse = await evaluateAndPersistRequiredRulesLive(
+    supabaseAdmin,
+    {
+      conversation_id,
+      source_message_id,
+      latest_message_content: _h1LastMsg,
+      conversation_status: conversation.status,
+      assigned_agent_id: conversation.assigned_agent_id ?? null,
+      greeting_or_trivial: _pr5GreetingOrTrivial,
+      visitor_language: _visitorLang,
+      expected_tenant_id: _pr5ExpectedTenantId,
+      suppress_r2_for_prior_grounded_transform: Boolean(
+        _priorGroundedTransform
+      ),
+      warm_handoff_question: _warmHandoffQuestion ?? void 0,
+      rag_match_state: _pr5RagMatchState,
+      topic_risk_level: _pr5LocalRisk?.level,
+      verified_local_risk_classification: _pr5LocalRisk?.verified,
+      conversation_duration_sec: _pr5ConversationDurationSec,
+      turn_count: _pr5History.turn_count,
+      consecutive_no_answer: _pr5History.consecutive_no_answer,
+      clarification_attempts: _pr5History.clarification_attempts,
+      exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
+      threat_flag: _pr5ThreatSignal,
+      compliance_jurisdiction_requires_human_review: _pr5ComplianceSignal
+    }
+  );
   if (_pr5RequiredLiveResponse) return _pr5RequiredLiveResponse;
   if (_deferR1ForE1) {
-    const r1Response = await persistExplicitR1IfRequested(supabaseAdmin, conversation_id, source_message_id, _h1LastMsg);
+    const r1Response = await persistExplicitR1IfRequested(
+      supabaseAdmin,
+      conversation_id,
+      source_message_id,
+      _h1LastMsg
+    );
     if (r1Response) return r1Response;
   }
   if (Deno.env.get("ESC_SHADOW_MODE") === "true") {
@@ -5753,7 +7100,11 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
       });
     }
   }
-  if (flags.ENABLE_TOOL_EXEC) console.log("[generate-reply] ENABLE_TOOL_EXECUTOR=true: Gate present, tools NOT attached (L5d scope)");
+  if (flags.ENABLE_TOOL_EXEC) {
+    console.log(
+      "[generate-reply] ENABLE_TOOL_EXECUTOR=true: Gate present, tools NOT attached (L5d scope)"
+    );
+  }
   const _customerAdvisoryBlock = buildCustomerAdvisoryContext({
     tier: customerContext?.tier,
     anger_flag: _pr5R3Sentiment?.anger_flag,
@@ -5767,7 +7118,10 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
     emotion_confidence: _pr5R3Sentiment?.emotion_confidence,
     sentiment_recovered_same_turn: _pr5R3Sentiment?.sentiment_recovered_same_turn
   });
-  const latestHandoffReason = await loadLatestHandoffReason(supabaseAdmin, conversation_id);
+  const latestHandoffReason = await loadLatestHandoffReason(
+    supabaseAdmin,
+    conversation_id
+  );
   const returnToAiGuard = buildReturnToAiGenerationGuard(
     latestHandoffReason,
     conversation.assigned_agent_id ?? null
@@ -5785,13 +7139,22 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
   const { data: newestMessages } = await supabaseAdmin.from("messages").select("id, role, content, created_at").eq("conversation_id", conversation_id).neq("content", "__THINKING__").eq("is_recalled", false).or(sourceBoundaryFilter(sourceVisitorMessage)).order("created_at", { ascending: false }).order("id", { ascending: false }).limit(10);
   if (!newestMessages || newestMessages.length === 0) {
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-    return new Response(JSON.stringify({ success: true, skipped: "no messages" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(
+      JSON.stringify({ success: true, skipped: "no messages" }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
   }
   const messages = [...newestMessages].reverse();
-  const modelMessages = messages.map((m) => ({ role: m.role === "visitor" ? "user" : "assistant", content: String(m.content ?? "") }));
+  const modelMessages = messages.map((m) => ({
+    role: m.role === "visitor" ? "user" : "assistant",
+    content: String(m.content ?? "")
+  }));
   if (modelMessages[modelMessages.length - 1].role === "assistant") {
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-    return new Response(JSON.stringify({ success: true, skipped: "last message is assistant" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(
+      JSON.stringify({ success: true, skipped: "last message is assistant" }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
   }
   if (flags.ENABLE_TOOL_EXEC) {
     console.warn(
@@ -5812,7 +7175,7 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
     tag: "generate-reply-orchestration",
     responseFormat: "text"
   });
-  if (_priorGroundedTransform && !llm.ok && llm.code === "LLM_INVALID_OUTPUT") {
+  if (_priorGroundedTransform && !llm.ok && (llm.code === "LLM_INVALID_OUTPUT" || llm.code === "LLM_GROUNDING_REJECTED")) {
     llm = await callModel({
       purpose: "generation",
       system: buildPriorGroundedTransformRetrySystem(_priorGroundedTransform),
@@ -5826,6 +7189,50 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
     });
   }
   if (!llm.ok) {
+    if (llm.code === "LLM_GROUNDING_REJECTED") {
+      const recoveryReply = GROUNDING_RECOVERY_WORDING[_visitorLang] ?? GROUNDING_RECOVERY_WORDING.en;
+      const committed2 = await commitAiReplyWithControlGate(
+        supabaseAdmin,
+        conversation_id,
+        source_message_id,
+        recoveryReply,
+        {
+          response_route: "grounding_recovery_clarification",
+          handoff_required: false,
+          factual_grounding_required: false,
+          source_error_code: "LLM_GROUNDING_REJECTED"
+        }
+      );
+      await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+      if (!committed2.ok) {
+        if (["human_control", "resolved", "superseded_source"].includes(
+          committed2.result
+        )) {
+          return new Response(
+            JSON.stringify({ success: true, skipped: committed2.result }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: `grounding_recovery_commit_${committed2.result}`
+          }),
+          {
+            status: 409,
+            headers: { ...corsHeaders, "Content-Type": "application/json" }
+          }
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          success: true,
+          response_route: "grounding_recovery_clarification",
+          handoff_required: false
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
     if (_escEnableS0) {
       return await handleS0Handoff(
         supabaseAdmin,
@@ -5837,8 +7244,15 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
     }
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return new Response(
-      JSON.stringify({ success: false, error: "AI service error", error_code: llm.code }),
-      { status: routerFailureHttpStatus(llm.code), headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      JSON.stringify({
+        success: false,
+        error: "AI service error",
+        error_code: llm.code
+      }),
+      {
+        status: routerFailureHttpStatus(llm.code),
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      }
     );
   }
   const aiReplyContent = llm.text;
@@ -5849,15 +7263,24 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
   if (_priorGroundedTransform && !citationMeta) {
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return new Response(
-      JSON.stringify({ success: false, error: "prior_grounded_transform_lineage_unavailable" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      JSON.stringify({
+        success: false,
+        error: "prior_grounded_transform_lineage_unavailable"
+      }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      }
     );
   }
   if (flags.ENABLE_KB && !_g1SkipKB && finalPromptChunks.length > 0 && !citationMeta) {
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return new Response(
       JSON.stringify({ success: false, error: "citation_lineage_unavailable" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      }
     );
   }
   const committed = await commitAiReplyWithControlGate(
@@ -5874,24 +7297,58 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
         conversation_id,
         result: committed.result
       });
-      return new Response(JSON.stringify({ success: true, skipped: committed.result }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(
+        JSON.stringify({ success: true, skipped: committed.result }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
-    return new Response(JSON.stringify({ success: false, error: `ai_reply_commit_${committed.result}` }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: `ai_reply_commit_${committed.result}`
+      }),
+      {
+        status: 409,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      }
+    );
   }
   if (flags.ENABLE_COACH) void coachTrace;
   if (flags.ENABLE_KB && ragResult?.success) void ragResult;
-  console.log("[generate-reply] AI reply committed (orchestration path) for conversation:", conversation_id);
-  return new Response(JSON.stringify({ success: true, idempotent: committed.idempotent }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  console.log(
+    "[generate-reply] AI reply committed (orchestration path) for conversation:",
+    conversation_id
+  );
+  return new Response(
+    JSON.stringify({ success: true, idempotent: committed.idempotent }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  );
 }
 function safeRefusal(code) {
-  return new Response(JSON.stringify({ success: true, skipped: "refused", reason_code: code, handoff_required: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  return new Response(
+    JSON.stringify({
+      success: true,
+      skipped: "refused",
+      reason_code: code,
+      handoff_required: true
+    }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  );
 }
 function buildMaskedContextBlock(customerContext, opaqueCustomerRef) {
   if (!customerContext) return "";
   const parts = [];
-  if (customerContext.tier) parts.push(`Customer tier: ${customerContext.tier}`);
-  if (customerContext.masked_summary) parts.push(customerContext.masked_summary);
-  if (opaqueCustomerRef) parts.push(`Customer reference (pseudonymous): ${pseudonymizeRef(opaqueCustomerRef)}`);
+  if (customerContext.tier) {
+    parts.push(`Customer tier: ${customerContext.tier}`);
+  }
+  if (customerContext.masked_summary) {
+    parts.push(customerContext.masked_summary);
+  }
+  if (opaqueCustomerRef) {
+    parts.push(
+      `Customer reference (pseudonymous): ${pseudonymizeRef(opaqueCustomerRef)}`
+    );
+  }
   return parts.length === 0 ? "" : `Customer context (masked):
 ${parts.join("\n")}`;
 }
@@ -5938,17 +7395,24 @@ ${evidence2}`);
     summaries[0]?.content ? `Orientation Summary:
 ${summaries[0].content.slice(0, 1200)}` : "",
     evidence.length > 0 ? `Full Content Evidence:
-${evidence.map((c, i) => `[${i + 1}]
-${(c.content ?? c.short_snippet ?? "").slice(0, 1200)}`).join("\n\n")}` : "Full Content Evidence: none. Do not assert exact facts."
+${evidence.map(
+      (c, i) => `[${i + 1}]
+${(c.content ?? c.short_snippet ?? "").slice(0, 1200)}`
+    ).join("\n\n")}` : "Full Content Evidence: none. Do not assert exact facts."
   ].filter(Boolean).join("\n\n");
 }
 function pseudonymizeRef(ref) {
   let h = 0;
-  for (let i = 0; i < ref.length; i++) h = (h << 5) - h + ref.charCodeAt(i) | 0;
+  for (let i = 0; i < ref.length; i++) {
+    h = (h << 5) - h + ref.charCodeAt(i) | 0;
+  }
   return `cust_${(h >>> 0).toString(36)}`;
 }
 async function callCoachPromptAdapter(conversation_id) {
-  const FAIL = (error_type) => ({ success: false, error_type });
+  const FAIL = (error_type) => ({
+    success: false,
+    error_type
+  });
   const endpoint = Deno.env.get("COACH_PROMPT_ENDPOINT");
   const token = Deno.env.get("COACH_PROMPT_INTERNAL_TOKEN");
   const timeoutMs = parseInt(Deno.env.get("COACH_AI_TIMEOUT_MS") || "3000");
@@ -5957,7 +7421,16 @@ async function callCoachPromptAdapter(conversation_id) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(endpoint, { method: "POST", headers: { "x-coach-internal-token": token, "x-coach-runtime": "C0", "Content-Type": "application/json" }, body: JSON.stringify({ include_content: true }), signal: controller.signal });
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "x-coach-internal-token": token,
+        "x-coach-runtime": "C0",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ include_content: true }),
+      signal: controller.signal
+    });
     clearTimeout(timeout);
     if (!response.ok) return FAIL("COACH_API_ERROR");
     let data;
@@ -5971,11 +7444,23 @@ async function callCoachPromptAdapter(conversation_id) {
     const validationError = validateCoachPromptContent(content);
     if (validationError) return FAIL(validationError);
     const versionId = data.data.id || "";
-    const promptHash = await computePromptHash(content, versionId, conversation_id);
-    return { success: true, content, version_id: versionId, version_label: data.data.label || "", prompt_hash: promptHash };
+    const promptHash = await computePromptHash(
+      content,
+      versionId,
+      conversation_id
+    );
+    return {
+      success: true,
+      content,
+      version_id: versionId,
+      version_label: data.data.label || "",
+      prompt_hash: promptHash
+    };
   } catch (err) {
     clearTimeout(timeout);
-    if (err instanceof DOMException && err.name === "AbortError") return FAIL("COACH_API_TIMEOUT");
+    if (err instanceof DOMException && err.name === "AbortError") {
+      return FAIL("COACH_API_TIMEOUT");
+    }
     return FAIL("COACH_API_EXCEPTION");
   }
 }
@@ -5983,12 +7468,19 @@ function validateCoachPromptContent(content) {
   if (typeof content !== "string") return "COACH_SCHEMA_INVALID";
   if (content.length === 0) return "COACH_CONTENT_EMPTY";
   if (content.length > 2e4) return "COACH_CONTENT_TOO_LONG";
-  if (/sk-ant-[a-zA-Z0-9]+/.test(content) || /service_role/.test(content)) return "COACH_SCHEMA_INVALID";
+  if (/sk-ant-[a-zA-Z0-9]+/.test(content) || /service_role/.test(content)) {
+    return "COACH_SCHEMA_INVALID";
+  }
   return null;
 }
 async function computePromptHash(content, versionId, conversationId) {
-  const hashBuffer = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(content + "|" + versionId + "|" + conversationId));
-  return Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, "0")).join("").substring(0, 12);
+  const hashBuffer = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(content + "|" + versionId + "|" + conversationId)
+  );
+  return Array.from(new Uint8Array(hashBuffer)).map(
+    (b) => b.toString(16).padStart(2, "0")
+  ).join("").substring(0, 12);
 }
 async function callCustomer360Adapter(conversation_id) {
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -6043,7 +7535,10 @@ async function callCustomer360Adapter(conversation_id) {
       conversation_id,
       status: response.status
     });
-    return { success: false, error_type: `C360_CALLER_HTTP_${response.status}` };
+    return {
+      success: false,
+      error_type: `C360_CALLER_HTTP_${response.status}`
+    };
   }
   let payload;
   try {
@@ -6082,7 +7577,10 @@ async function callCustomer360Adapter(conversation_id) {
     safeContext.escalation_score = context.escalation_score;
   }
   if (typeof context.p1_provider_version === "string" && context.p1_provider_version.trim()) {
-    safeContext.p1_provider_version = context.p1_provider_version.trim().slice(0, 120);
+    safeContext.p1_provider_version = context.p1_provider_version.trim().slice(
+      0,
+      120
+    );
   }
   return {
     success: true,
@@ -6092,10 +7590,27 @@ async function callCustomer360Adapter(conversation_id) {
 }
 async function callKBAdapter(_conversation_id, userMessage, scope) {
   const endpointCfg = resolveKBEndpoint();
-  if (!endpointCfg) return { success: false, no_answer: true, retrieval_quality: "failed" };
-  const result2 = await fetchKBRag({ query: userMessage, top_k: 5 }, scope, endpointCfg, { timeoutMs: 15e3 });
-  if (!result2.success) return { success: false, no_answer: true, retrieval_quality: "failed" };
-  if (result2.chunks.length === 0) return { success: true, no_answer: true, retrieval_quality: "failed", chunks: [], query_text_preview: userMessage.slice(0, 100) };
+  if (!endpointCfg) {
+    return { success: false, no_answer: true, retrieval_quality: "failed" };
+  }
+  const result2 = await fetchKBRag(
+    { query: userMessage, top_k: 5 },
+    scope,
+    endpointCfg,
+    { timeoutMs: 15e3 }
+  );
+  if (!result2.success) {
+    return { success: false, no_answer: true, retrieval_quality: "failed" };
+  }
+  if (result2.chunks.length === 0) {
+    return {
+      success: true,
+      no_answer: true,
+      retrieval_quality: "failed",
+      chunks: [],
+      query_text_preview: userMessage.slice(0, 100)
+    };
+  }
   return {
     success: true,
     no_answer: false,
@@ -6107,73 +7622,228 @@ async function callKBAdapter(_conversation_id, userMessage, scope) {
     query_text_preview: userMessage.slice(0, 100)
   };
 }
-var ALLOWED_TOOLS = ["kb_search", "escalate_to_human", "get_customer_context", "get_order_summary", "create_handoff_summary", "mark_unresolved", "suggest_reply"];
-var READ_ONLY_TOOLS = ["kb_search", "get_customer_context", "get_order_summary"];
-var HIGH_RISK_ALLOWED = ["kb_search", "get_customer_context", "escalate_to_human", "create_handoff_summary"];
+var ALLOWED_TOOLS = [
+  "kb_search",
+  "escalate_to_human",
+  "get_customer_context",
+  "get_order_summary",
+  "create_handoff_summary",
+  "mark_unresolved",
+  "suggest_reply"
+];
+var READ_ONLY_TOOLS = [
+  "kb_search",
+  "get_customer_context",
+  "get_order_summary"
+];
+var HIGH_RISK_ALLOWED = [
+  "kb_search",
+  "get_customer_context",
+  "escalate_to_human",
+  "create_handoff_summary"
+];
 var OFFLINE_BOT_ALLOWED = ["kb_search", "escalate_to_human"];
 var MAX_TOOL_CALLS = 10;
 var MAX_KB_SEARCH = 3;
 var MAX_C360_CALLS = 2;
 function buildSafeDedupeKey(tool_name, input, server_resolved_customer_ref) {
-  if (tool_name === "get_order_summary") return server_resolved_customer_ref ? `get_order_summary:${server_resolved_customer_ref}` : null;
-  const SAFE_FIELDS = { kb_search: ["query_norm", "locale"], get_customer_context: [], escalate_to_human: ["reason_code"], create_handoff_summary: ["reason_code"], mark_unresolved: ["reason_code"], suggest_reply: ["intent_code"] };
+  if (tool_name === "get_order_summary") {
+    return server_resolved_customer_ref ? `get_order_summary:${server_resolved_customer_ref}` : null;
+  }
+  const SAFE_FIELDS = {
+    kb_search: ["query_norm", "locale"],
+    get_customer_context: [],
+    escalate_to_human: ["reason_code"],
+    create_handoff_summary: ["reason_code"],
+    mark_unresolved: ["reason_code"],
+    suggest_reply: ["intent_code"]
+  };
   const safe = {};
-  for (const k of SAFE_FIELDS[tool_name] ?? []) if (input[k] !== void 0 && typeof input[k] !== "object") safe[k] = String(input[k]).slice(0, 200);
+  for (const k of SAFE_FIELDS[tool_name] ?? []) {
+    if (input[k] !== void 0 && typeof input[k] !== "object") {
+      safe[k] = String(input[k]).slice(0, 200);
+    }
+  }
   return `${tool_name}:${JSON.stringify(safe)}`;
 }
 function toolExecutorGate(toolRequest, context) {
   const { tool_name, input } = toolRequest;
-  const { conversation, caller_mode, risk_level, privacy_flags, turn_tool_calls, turn_budget, server_resolved_customer_ref } = context;
-  if (tool_name === "schedule_feedback_request") return { decision: "DENY", reason: "TOOL_EXCLUDED" };
-  if (!ALLOWED_TOOLS.includes(tool_name)) return { decision: "DENY", reason: "TOOL_NOT_REGISTERED" };
+  const {
+    conversation,
+    caller_mode,
+    risk_level,
+    privacy_flags,
+    turn_tool_calls,
+    turn_budget,
+    server_resolved_customer_ref
+  } = context;
+  if (tool_name === "schedule_feedback_request") {
+    return { decision: "DENY", reason: "TOOL_EXCLUDED" };
+  }
+  if (!ALLOWED_TOOLS.includes(tool_name)) {
+    return { decision: "DENY", reason: "TOOL_NOT_REGISTERED" };
+  }
   const status = conversation.status;
-  if (status === "resolved" || status === "closed") return { decision: "DENY", reason: "CONV_RESOLVED_OR_CLOSED" };
+  if (status === "resolved" || status === "closed") {
+    return { decision: "DENY", reason: "CONV_RESOLVED_OR_CLOSED" };
+  }
   if ((status === "human_needed" || status === "human_control") && !READ_ONLY_TOOLS.includes(tool_name)) return { decision: "DENY", reason: "TOOL_NOT_ALLOWED_IN_STATUS" };
   if (status === "offline_bot" && !OFFLINE_BOT_ALLOWED.includes(tool_name)) return { decision: "DENY", reason: "TOOL_NOT_ALLOWED_OFFLINE" };
   if (risk_level === "high" && !HIGH_RISK_ALLOWED.includes(tool_name)) return { decision: "ESCALATE", reason: "HIGH_RISK_TOOL_BLOCKED" };
-  if (tool_name === "mark_unresolved" && caller_mode === "system_auto") return { decision: "DENY", reason: "MARK_UNRESOLVED_REQUIRES_HUMAN" };
+  if (tool_name === "mark_unresolved" && caller_mode === "system_auto") {
+    return { decision: "DENY", reason: "MARK_UNRESOLVED_REQUIRES_HUMAN" };
+  }
   if ((privacy_flags?.do_not_profile === true || privacy_flags?.consent_status === "withdrawn") && tool_name === "get_customer_context") return { decision: "DENY", reason: "PRIVACY_DO_NOT_PROFILE" };
-  const dedupe_key = buildSafeDedupeKey(tool_name, input, server_resolved_customer_ref);
-  if (dedupe_key === null) return { decision: "DENY", reason: "SERVER_REFERENCE_REQUIRED" };
-  if (turn_tool_calls.has(dedupe_key)) return { decision: "DENY", reason: "DUPLICATE_TOOL_CALL_IN_TURN" };
+  const dedupe_key = buildSafeDedupeKey(
+    tool_name,
+    input,
+    server_resolved_customer_ref
+  );
+  if (dedupe_key === null) {
+    return { decision: "DENY", reason: "SERVER_REFERENCE_REQUIRED" };
+  }
+  if (turn_tool_calls.has(dedupe_key)) {
+    return { decision: "DENY", reason: "DUPLICATE_TOOL_CALL_IN_TURN" };
+  }
   turn_tool_calls.add(dedupe_key);
-  if (turn_budget.total >= MAX_TOOL_CALLS) return { decision: "DENY", reason: "TOOL_BUDGET_EXCEEDED" };
-  if (tool_name === "kb_search" && turn_budget.kb_search >= MAX_KB_SEARCH) return { decision: "DENY", reason: "KB_SEARCH_BUDGET_EXCEEDED" };
+  if (turn_budget.total >= MAX_TOOL_CALLS) {
+    return { decision: "DENY", reason: "TOOL_BUDGET_EXCEEDED" };
+  }
+  if (tool_name === "kb_search" && turn_budget.kb_search >= MAX_KB_SEARCH) {
+    return { decision: "DENY", reason: "KB_SEARCH_BUDGET_EXCEEDED" };
+  }
   if (tool_name === "get_customer_context" && turn_budget.c360 >= MAX_C360_CALLS) return { decision: "DENY", reason: "C360_BUDGET_EXCEEDED" };
-  if (status === "ai_draft_only" || status === "unresolved") return { decision: "DOWNGRADE_TO_DRAFT", reason: "STATUS_DRAFT_ONLY", execution_allowed: true, force_draft: true, execution_deferred_to: "L5d", draft_enforcement_deferred_to: "L5e" };
-  if (status === "escalation_risk") return { decision: "DOWNGRADE_TO_DRAFT", reason: "ESCALATION_RISK_DOWNGRADE", execution_allowed: true, force_draft: true, execution_deferred_to: "L5d", draft_enforcement_deferred_to: "L5e" };
-  return { decision: "ALLOW", reason: "GATE_PASSED", execution_allowed: true, execution_deferred_to: "L5d" };
+  if (status === "ai_draft_only" || status === "unresolved") {
+    return {
+      decision: "DOWNGRADE_TO_DRAFT",
+      reason: "STATUS_DRAFT_ONLY",
+      execution_allowed: true,
+      force_draft: true,
+      execution_deferred_to: "L5d",
+      draft_enforcement_deferred_to: "L5e"
+    };
+  }
+  if (status === "escalation_risk") {
+    return {
+      decision: "DOWNGRADE_TO_DRAFT",
+      reason: "ESCALATION_RISK_DOWNGRADE",
+      execution_allowed: true,
+      force_draft: true,
+      execution_deferred_to: "L5d",
+      draft_enforcement_deferred_to: "L5e"
+    };
+  }
+  return {
+    decision: "ALLOW",
+    reason: "GATE_PASSED",
+    execution_allowed: true,
+    execution_deferred_to: "L5d"
+  };
 }
 function handleGateDecision(decision2) {
   switch (decision2.decision) {
     case "ALLOW":
-      return { decision: "ALLOW", reason: decision2.reason ?? "GATE_PASSED", execution_allowed: true, execution_deferred_to: "L5d" };
+      return {
+        decision: "ALLOW",
+        reason: decision2.reason ?? "GATE_PASSED",
+        execution_allowed: true,
+        execution_deferred_to: "L5d"
+      };
     case "DENY":
-      return { decision: "DENY", reason: decision2.reason, message_to_llm: "tool not available in current context" };
+      return {
+        decision: "DENY",
+        reason: decision2.reason,
+        message_to_llm: "tool not available in current context"
+      };
     case "DOWNGRADE_TO_DRAFT":
-      return { decision: "DOWNGRADE_TO_DRAFT", reason: decision2.reason, execution_allowed: true, force_draft: true, execution_deferred_to: "L5d", draft_enforcement_deferred_to: "L5e" };
+      return {
+        decision: "DOWNGRADE_TO_DRAFT",
+        reason: decision2.reason,
+        execution_allowed: true,
+        force_draft: true,
+        execution_deferred_to: "L5d",
+        draft_enforcement_deferred_to: "L5e"
+      };
     case "ESCALATE":
-      return { decision: "ESCALATE", reason: decision2.reason, handoff_required: true, action_deferred_to: "L5e" };
+      return {
+        decision: "ESCALATE",
+        reason: decision2.reason,
+        handoff_required: true,
+        action_deferred_to: "L5e"
+      };
   }
 }
 async function handleToolCall(tool_name, _tool_input, _context) {
   switch (tool_name) {
     case "kb_search":
-      return { tool_name, status: "stub", result_classification: "internal_only", retrieval_quality: "failed", no_answer: true, handoff_required: true, results: [], stub_note: "KB adapter not yet enabled (L5d stub)" };
+      return {
+        tool_name,
+        status: "stub",
+        result_classification: "internal_only",
+        retrieval_quality: "failed",
+        no_answer: true,
+        handoff_required: true,
+        results: [],
+        stub_note: "KB adapter not yet enabled (L5d stub)"
+      };
     case "escalate_to_human":
-      return { tool_name, status: "stub", result_classification: "internal_only", escalated: false, stub_note: "Escalation workflow deferred to L5e \u2014 no state changes in L5d" };
+      return {
+        tool_name,
+        status: "stub",
+        result_classification: "internal_only",
+        escalated: false,
+        stub_note: "Escalation workflow deferred to L5e \u2014 no state changes in L5d"
+      };
     case "get_customer_context":
-      return { tool_name, status: "stub", result_classification: "internal_only", customer_context: null, context_available: false, stub_note: "Customer360 adapter not enabled; no customer context returned" };
+      return {
+        tool_name,
+        status: "stub",
+        result_classification: "internal_only",
+        customer_context: null,
+        context_available: false,
+        stub_note: "Customer360 adapter not enabled; no customer context returned"
+      };
     case "get_order_summary":
-      return { tool_name, status: "stub", result_classification: "internal_only", order_available: false, stub_note: "Order adapter not yet enabled (L5d stub)" };
+      return {
+        tool_name,
+        status: "stub",
+        result_classification: "internal_only",
+        order_available: false,
+        stub_note: "Order adapter not yet enabled (L5d stub)"
+      };
     case "create_handoff_summary":
-      return { tool_name, status: "stub", result_classification: "internal_only", summary: "[Handoff summary not yet available \u2014 L5d stub]", stub_note: "Handoff summary generation deferred to L5e; conversation_id server-side only" };
+      return {
+        tool_name,
+        status: "stub",
+        result_classification: "internal_only",
+        summary: "[Handoff summary not yet available \u2014 L5d stub]",
+        stub_note: "Handoff summary generation deferred to L5e; conversation_id server-side only"
+      };
     case "mark_unresolved":
-      return { tool_name, status: "stub", result_classification: "internal_only", marked: false, stub_note: "mark_unresolved write action deferred to L5e \u2014 no state changes in L5d" };
+      return {
+        tool_name,
+        status: "stub",
+        result_classification: "internal_only",
+        marked: false,
+        stub_note: "mark_unresolved write action deferred to L5e \u2014 no state changes in L5d"
+      };
     case "suggest_reply":
-      return { tool_name, status: "stub", result_classification: "internal_only", draft_content: "", confidence: 0, recommended_action: "human_review", stub_note: "suggest_reply draft write deferred to L5e \u2014 no state changes in L5d" };
+      return {
+        tool_name,
+        status: "stub",
+        result_classification: "internal_only",
+        draft_content: "",
+        confidence: 0,
+        recommended_action: "human_review",
+        stub_note: "suggest_reply draft write deferred to L5e \u2014 no state changes in L5d"
+      };
     default:
-      return { tool_name, status: "denied", result_classification: "internal_only", error: "tool not available in current context" };
+      return {
+        tool_name,
+        status: "denied",
+        result_classification: "internal_only",
+        error: "tool not available in current context"
+      };
   }
 }
 function determineOutputMode(conversationStatus, toolResults, ragResult, mode) {
@@ -6203,21 +7873,39 @@ function determineOutputMode(conversationStatus, toolResults, ragResult, mode) {
   return guardrailsPass.pass ? { action: "auto_send", reason: "GUARDRAILS_PASSED" } : { action: "draft_only", reason: guardrailsPass.reason };
 }
 function checkGuardrails(toolResults, ragResult, mode) {
-  if (mode === "console_suggest") return { pass: false, reason: "CONSOLE_SUGGEST_ALWAYS_DRAFT" };
+  if (mode === "console_suggest") {
+    return { pass: false, reason: "CONSOLE_SUGGEST_ALWAYS_DRAFT" };
+  }
   if (ragResult) {
     if (ragResult.no_answer) return { pass: false, reason: "KB_NO_ANSWER" };
-    if (ragResult.conflict_detected) return { pass: false, reason: "KB_CONFLICT" };
-    if (ragResult.retrieval_quality === "low") return { pass: false, reason: "KB_LOW_QUALITY" };
+    if (ragResult.conflict_detected) {
+      return { pass: false, reason: "KB_CONFLICT" };
+    }
+    if (ragResult.retrieval_quality === "low") {
+      return { pass: false, reason: "KB_LOW_QUALITY" };
+    }
     if (ragResult.policy_gap) return { pass: false, reason: "KB_POLICY_GAP" };
-    if (ragResult.source_scope !== "customer_answer") return { pass: false, reason: "KB_SCOPE_NOT_CUSTOMER_ANSWER" };
+    if (ragResult.source_scope !== "customer_answer") {
+      return { pass: false, reason: "KB_SCOPE_NOT_CUSTOMER_ANSWER" };
+    }
   }
   for (const result2 of toolResults) {
-    if (result2.result_classification === "draft_only") return { pass: false, reason: "TOOL_RESULT_DRAFT_ONLY" };
-    if (result2.result_classification === "supervisor_only") return { pass: false, reason: "TOOL_RESULT_SUPERVISOR_ONLY" };
+    if (result2.result_classification === "draft_only") {
+      return { pass: false, reason: "TOOL_RESULT_DRAFT_ONLY" };
+    }
+    if (result2.result_classification === "supervisor_only") {
+      return { pass: false, reason: "TOOL_RESULT_SUPERVISOR_ONLY" };
+    }
   }
-  const suggestResult = toolResults.find((r) => r.tool_name === "suggest_reply");
-  if (suggestResult?.citation_required && !suggestResult?.has_valid_citation) return { pass: false, reason: "SUGGEST_REPLY_MISSING_CITATION" };
-  if (toolResults.some((r) => r.handoff_required)) return { pass: false, reason: "HANDOFF_REQUIRED_BY_TOOL" };
+  const suggestResult = toolResults.find(
+    (r) => r.tool_name === "suggest_reply"
+  );
+  if (suggestResult?.citation_required && !suggestResult?.has_valid_citation) {
+    return { pass: false, reason: "SUGGEST_REPLY_MISSING_CITATION" };
+  }
+  if (toolResults.some((r) => r.handoff_required)) {
+    return { pass: false, reason: "HANDOFF_REQUIRED_BY_TOOL" };
+  }
   return { pass: true, reason: "ALL_GUARDRAILS_PASSED" };
 }
 function l5eSanitize(input, opts) {
@@ -6231,7 +7919,9 @@ function l5eSanitize(input, opts) {
   return s.length > opts.maxChars ? s.slice(0, opts.maxChars) : s;
 }
 async function executeSuggestReply(_input, context, outputMode) {
-  if (!context.flags.ENABLE_TOOL_EXEC) return { auto_sent: false, deferred: true, reason: "TOOL_EXEC_DISABLED" };
+  if (!context.flags.ENABLE_TOOL_EXEC) {
+    return { auto_sent: false, deferred: true, reason: "TOOL_EXEC_DISABLED" };
+  }
   void outputMode;
   return { deferred: true, reason: "GATE_B_REQUIRED" };
 }
@@ -6241,11 +7931,15 @@ async function executeEscalateToHuman(input, context) {
   const _handoffSummary = context.handoff_summary_from_tool || _summary;
   void _reason;
   void _handoffSummary;
-  if (!context.flags.ENABLE_TOOL_EXEC) return { escalated: false, deferred: true, reason: "TOOL_EXEC_DISABLED" };
+  if (!context.flags.ENABLE_TOOL_EXEC) {
+    return { escalated: false, deferred: true, reason: "TOOL_EXEC_DISABLED" };
+  }
   return { deferred: true, reason: "GATE_B_REQUIRED" };
 }
 async function executeMarkUnresolved(input, context) {
-  if (!context.flags.ENABLE_TOOL_EXEC) return { marked: false, deferred: true, reason: "TOOL_EXEC_DISABLED" };
+  if (!context.flags.ENABLE_TOOL_EXEC) {
+    return { marked: false, deferred: true, reason: "TOOL_EXEC_DISABLED" };
+  }
   void input;
   return { deferred: true, reason: "GATE_B_REQUIRED" };
 }
