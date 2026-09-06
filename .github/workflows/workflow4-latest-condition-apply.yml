@@ -1,5 +1,6 @@
 name: Workflow 4 Latest Condition Apply
 
+# one-shot functional apply trigger
 on:
   push:
     branches: [main]
