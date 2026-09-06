@@ -1,0 +1,40 @@
+name: Workflow 4 Latest Condition Source Gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/workflow4-latest-condition-source-gate.yml'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: denoland/setup-deno@v1
+        with:
+          deno-version: v2.x
+
+      - name: Workflow 4 semantic state tests
+        run: |
+          set -euo pipefail
+          deno test tests/edge/workflow4-latest-condition-state.test.ts
+          deno test tests/edge/task4-1-current-context-memory.test.ts
+
+      - name: generate-reply compile
+        run: |
+          set -euo pipefail
+          deno check supabase/functions/generate-reply/index.ts
+
+      - name: Workflow 4 machine assertions
+        run: |
+          set -euo pipefail
+          grep -q 'deriveCurrentRequirementSnapshot' supabase/functions/_shared/conversation-runtime-state.ts
+          grep -q 'latestRequirementsRequest' supabase/functions/_shared/conversation-runtime-state.ts
+          grep -q 'Current customer requirement snapshot (latest wins)' supabase/functions/_shared/conversation-runtime-state.ts
+          echo 'WORKFLOW4_SOURCE_FINAL_GATE=PASS'
