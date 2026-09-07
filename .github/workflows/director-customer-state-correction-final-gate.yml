@@ -14,8 +14,6 @@ jobs:
   semantic-and-compile:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      DENO_NODE_MODULES_DIR: auto
     steps:
       - uses: actions/checkout@v4
         with:
@@ -26,8 +24,8 @@ jobs:
       - name: Customer-owned state correction semantic gate
         run: deno run --allow-read .github/scripts/director_customer_state_correction_gate.ts
       - name: Compile generate-reply
-        run: deno check supabase/functions/generate-reply/index.ts
+        run: deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
       - name: Compile receive-widget-message
-        run: deno check supabase/functions/receive-widget-message/index.ts
+        run: deno check --node-modules-dir=auto supabase/functions/receive-widget-message/index.ts
 
-# trigger: director-takeover-customer-state-correction-v2
+# trigger: director-takeover-customer-state-correction-v3
