@@ -28,13 +28,15 @@ jobs:
           patch -p1 < .github/patches/workflow7-published-kb-context.patch
           patch --dry-run -p1 < .github/patches/workflow7-regression-compat.patch
           patch -p1 < .github/patches/workflow7-regression-compat.patch
+          patch --dry-run -p1 < .github/patches/workflow7-regression-compat-v2.patch
+          patch -p1 < .github/patches/workflow7-regression-compat-v2.patch
           git diff --check
           deno test --allow-read tests/edge/workflow7-published-kb-context-integrity.test.ts
           deno test --allow-read tests/edge/workflow5-multilingual-privacy.test.ts
           deno test --allow-read tests/edge/task4-1-current-context-memory.test.ts
           deno test --allow-read tests/edge/task4-1-context-requirements-followup.test.ts
           deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
-          test "$(sha256sum supabase/functions/_shared/conversation-runtime-state.ts | awk '{print $1}')" = "14e545e24ee853b22b0f7327f0085ea26a194f8a50f51ac015cb3f82c025ef8d"
+          test "$(sha256sum supabase/functions/_shared/conversation-runtime-state.ts | awk '{print $1}')" = "24c8168a8e4d0b616ce5ab51bd2ca8e797f0c7c7e1176bc73c793c807421d3cc"
           test "$(sha256sum supabase/functions/_shared/canonical-grounding.ts | awk '{print $1}')" = "2f901244f9c5f5f93ec5cdc2aa4f0f793662a5bdfd08541dcba3635e8503e88d"
           test "$(sha256sum supabase/functions/generate-reply/index.ts | awk '{print $1}')" = "8032c2ddcd6f5dd33f3a60e270a0d5092bac68b462b96ff12968a187c9f263a5"
           changed="$(git diff --name-only | sort)"
@@ -50,4 +52,4 @@ jobs:
           git commit -m "fix: stabilize published KB retrieval and context integrity [skip ci]"
           git push origin HEAD:main
 
-# consolidated-patch-v2
+# consolidated-patch-v3
