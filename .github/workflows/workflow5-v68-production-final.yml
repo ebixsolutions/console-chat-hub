@@ -1,0 +1,59 @@
+name: Workflow 5 v68 Production Final
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/workflow5-v68-production-final.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: workflow5-v68-production-final
+  cancel-in-progress: true
+
+jobs:
+  final:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    env:
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROD_ORIGIN: https://console-chat-hub.lovable.app
+      CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+      BASE: https://nrfxhqabwblzxoushgnm.supabase.co/functions/v1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Pre-deploy final gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'resolveWorkflow5ConversationLanguage(_h1LastMsg' supabase/functions/generate-reply/index.ts
+          grep -Fq 'buildWorkflow5TopicalClarification(params.latest_message_content' supabase/functions/generate-reply/index.ts
+          grep -A2 '^\[functions.generate-reply\]' supabase/config.toml | grep -Fq 'verify_jwt = true'
+          deno test --allow-env tests/edge/workflow5-multilingual-privacy.test.ts
+          deno test --allow-env tests/edge/workflow4-latest-condition-state.test.ts
+          deno test --allow-env tests/edge/task4-1-current-context-memory.test.ts
+          deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+          echo "WORKFLOW5_V68_DEPLOY_COMMIT=$(git rev-parse HEAD)"
+          echo WORKFLOW5_V68_PREDEPLOY=PASS
+      - name: Deploy generate-reply
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx supabase functions deploy generate-reply --project-ref "$PROJECT_REF"
+          echo WORKFLOW5_V68_DEPLOY=PASS
+      - name: Fresh Cases04 and 09 runtime gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python .github/scripts/workflow5_prod_final_v3.py
+          echo WORKFLOW5_V68_PRODUCTION_CASE04_CASE09_FINAL_GATE=PASS
