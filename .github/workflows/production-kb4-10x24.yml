@@ -37,7 +37,18 @@ jobs:
           set -uo pipefail
           set -a; source .env; set +a
           mkdir -p stress-results
-          python .github/scripts/production_kb4_10x24.py
+          rc=0
+          for attempt in 1 2 3; do
+            echo "KB4 harness attempt $attempt"
+            python .github/scripts/production_kb4_10x24.py && exit 0
+            rc=$?
+            if [ -f "stress-results/kb4-case-${CASE_ID}.json" ]; then
+              exit "$rc"
+            fi
+            echo "No result artifact produced; treating as transient harness/runtime transport crash and retrying fresh conversation"
+            sleep $((attempt * 3))
+          done
+          exit "$rc"
 
       - name: Upload KB4 case evidence
         if: always()
@@ -47,4 +58,4 @@ jobs:
           path: stress-results/
           if-no-files-found: warn
 
-# trigger: published-kb4-smoke-2026-09-07
+# trigger: published-kb4-smoke-retry-v2
