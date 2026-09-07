@@ -48,3 +48,5 @@ jobs:
           git add supabase/functions/_shared/conversation-runtime-state.ts supabase/functions/_shared/canonical-grounding.ts supabase/functions/generate-reply/index.ts
           git commit -m "fix: stabilize published KB retrieval and context integrity [skip ci]"
           git push origin HEAD:main
+
+# trigger-v2
