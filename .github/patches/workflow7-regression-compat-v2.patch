@@ -1,0 +1,31 @@
+--- a/supabase/functions/_shared/conversation-runtime-state.ts
++++ b/supabase/functions/_shared/conversation-runtime-state.ts
+@@ -472,6 +472,7 @@
+       .map((row) => clean(row.content)).filter(Boolean).join(" / ");
+     const known: string[] = [...req];
+     if (/(?:website|網站|网站)/i.test(priorCustomerText)) known.unshift(lang === "en" ? "Existing website: yes" : "已有網站");
++    if (/(?:\bhk\b|hong\s*kong|香港)/i.test(priorCustomerText) && !known.some((x) => /(?:香港|Hong Kong)/i.test(x))) known.push(lang === "en" ? "Current main market: Hong Kong" : "目前主要市場：香港");
+     if (state.current_requirements.product_count === null && /\bsku\b/i.test(priorCustomerText)) known.push(lang === "en" ? "SKU volume discussed, exact count not confirmed" : "已談及 SKU 數量，但未有可靠精確數字");
+     const asked: string[] = [];
+     if (/(?:app)/i.test(priorCustomerText)) asked.push("App");
+@@ -480,7 +481,7 @@
+     if (asked.length) known.push(lang === "en" ? `Topics being checked: ${asked.join(", ")}` : `正在查詢：${asked.join("、")}`);
+     const unknown: string[] = [];
+     if (/(?:migrate|migration|遷移|迁移)/i.test(priorCustomerText)) unknown.push(lang === "en" ? "product/member-data migration details" : "商品／會員資料遷移細節");
+-    if (/(?:澳門|澳门|macau).{0,30}(?:pay|付款|payment)|(?:pay|付款|payment).{0,30}(?:澳門|澳门|macau)/i.test(priorCustomerText)) unknown.push(lang === "en" ? "Macau-customer payment support" : "澳門客戶付款支援");
++    if (/(?:澳門|澳门|macau).{0,30}(?:pay|付款|payment)|(?:pay|付款|payment).{0,30}(?:澳門|澳门|macau)/i.test(priorCustomerText)) unknown.push(lang === "en" ? "Macau-customer payment / Stripe support" : "澳門客戶付款／Stripe 支援");
+     const knownText = known.length ? known.join(lang === "en" ? "; " : "、") : (lang === "en" ? "no additional customer facts are confirmed" : "暫未有更多已確認客戶條件");
+     const unknownText = unknown.length ? unknown.join(lang === "en" ? "; " : "、") : (lang === "en" ? "any fact not explicitly supported by published information" : "任何未有已發布資料支持嘅具體事實");
+     if (lang === "en") return `Confirmed from this conversation: ${knownText}. Still to verify from published information: ${unknownText}.`;
+@@ -492,9 +493,9 @@
+   if (workflow5NextStepRequest) {
+     const count = state.current_requirements.product_count;
+     const countText = count !== null ? (lang === "en" ? `${count} SKUs` : `${count} SKU`) : "SKU";
+-    if (lang === "en") return `Next, verify the plan billing cadence, limits for ${countText}, product/member-data migration, Macau-customer payment support, App/Push details, and the AI SEO quota or overage rules against published information.`;
++    if (lang === "en") return `Next, verify the plan billing cadence, limits for ${countText}, product/member-data migration, Macau-customer payment / Stripe support, App/Push details, and the AI SEO quota or overage rules against published information.`;
+     if (lang === "zh-CN") return `下一步请按已发布资料核实方案的年／月收费方式、对 ${countText} 的限制、商品／会员资料迁移、澳门客户付款支持、App／Push 细节，以及 AI SEO 额度与超额规则。`;
+-    return `下一步請按已發布資料核實方案嘅年／月收費方式、對 ${countText} 嘅限制、商品／會員資料遷移、澳門客戶付款支援、App／Push 細節，以及 AI SEO 額度同超額規則。`;
++    return `下一步請按已發布資料核實方案嘅年／月收費方式、對 ${countText} 嘅限制、商品／會員資料遷移、澳門客戶付款／Stripe 支援、App／Push 細節，以及 AI SEO 額度同超額規則。`;
+   }
+ 
+   const latestRequirementsRequest = /(?:列出|整理|總結|总结|講出|说出|tell me|list|summari[sz]e).{0,30}(?:最新|目前|現在|现在|current).{0,20}(?:需求|要求|條件|条件|requirements?)|(?:最新|目前|現在|现在|current).{0,20}(?:需求|要求|條件|条件|requirements?).{0,30}(?:是什麼|是什么|有哪些|係咩|what are)/i.test(latest);
