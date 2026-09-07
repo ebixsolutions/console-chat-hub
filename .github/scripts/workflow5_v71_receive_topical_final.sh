@@ -30,7 +30,23 @@ print('WORKFLOW5_V71_UPSTREAM_PATCH=PASS')
 PY
 
 deno eval 'import { workflow5ShortTopicHint } from "./supabase/functions/_shared/conversation-runtime-state.ts"; const c=[["會員等級呢？","membership tiers"],["会员等级呢？","membership tiers"],["membership tiers?","membership tiers"],["CRM呢？","CRM"],["Push呢？","Push notifications"],["App呢？","App support"]]; for (const [i,w] of c) { const g=workflow5ShortTopicHint(i); if(g!==w) throw new Error(`${i}: ${g} != ${w}`); } console.log("WORKFLOW5_V71_SHORT_TOPIC_FAMILY=PASS");'
-deno check --node-modules-dir=auto supabase/functions/receive-widget-message/index.ts
+
+# Compile-gate only: Supabase Edge Runtime injects EdgeRuntime at runtime, while
+# standalone `deno check` does not know that global. Validate the exact product
+# source through a temporary same-directory copy with a type-only declaration;
+# product source remains unchanged by this declaration.
+CHECK_FILE='supabase/functions/receive-widget-message/.workflow5-v71-check.ts'
+cleanup_check_file() { rm -f "$CHECK_FILE"; }
+trap cleanup_check_file EXIT
+{
+  printf '%s\n' 'declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };'
+  cat supabase/functions/receive-widget-message/index.ts
+} > "$CHECK_FILE"
+deno check --node-modules-dir=auto "$CHECK_FILE"
+rm -f "$CHECK_FILE"
+trap - EXIT
+echo WORKFLOW5_V71_RECEIVE_COMPILE=PASS
+
 deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
 deno test --allow-env tests/edge/workflow5-multilingual-privacy.test.ts
 deno test --allow-env tests/edge/workflow4-latest-condition-state.test.ts
