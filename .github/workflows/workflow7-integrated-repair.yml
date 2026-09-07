@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/workflow7-integrated-repair.yml'
+      - '.github/workflow7-trigger.txt'
 
 permissions:
   contents: write
