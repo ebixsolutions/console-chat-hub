@@ -1,0 +1,22 @@
+--- a/supabase/functions/_shared/conversation-runtime-state.ts
++++ b/supabase/functions/_shared/conversation-runtime-state.ts
+@@ -639,8 +639,14 @@ export function buildCanonicalRetrievalQuery(latestInput: string, newestFirst: R
+   const state = projectConversationRuntimeState(newestFirst);
+   const semantic = classifyCanonicalConversationTurn(latest, newestFirst);
+   if (!latest) return { query: "", mode: "standalone", latest: "", context_turns: [], state };
++  const targetHint = retrievalTargetHint(latest);
+ 
+-  if (semantic.operation === "CONVERSATION_MEMORY") {
++  // Some terse factual queries contain pronouns or words such as "previous" that
++  // the broad memory classifier can conservatively label as conversation memory.
++  // A concrete published-KB domain target still requires current retrieval.
++  if (semantic.operation === "CONVERSATION_MEMORY" && !targetHint) {
+     const parts = [`Conversation-memory request: ${latest}`];
+     if (state.first_customer_turn) parts.push(`First customer turn: ${state.first_customer_turn}`);
+     if (state.prior_recommendations.length) parts.push(`Relevant prior recommendations: ${state.prior_recommendations.join(" / ")}`);
+@@ -651,7 +657,6 @@ export function buildCanonicalRetrievalQuery(latestInput: string, newestFirst: R
+   const explicitJurisdiction = detectExplicitJurisdiction(latest);
+   const previous = newestFirst.filter((row) => CUSTOMER.has(String(row.role ?? "").toLowerCase())).map((row) => clean(row.content)).filter((x) => x && x !== latest && x !== "__THINKING__");
+   const referencesCurrentRequirements = /(?:基於|基于|根據|根据|按|依照|based on|according to).{0,30}(?:最新|目前|現在|现在|current).{0,20}(?:需求|要求|條件|条件|requirements?)/i.test(latest);
+-  const targetHint = retrievalTargetHint(latest);
+   const followupNeedsSubject = factualFollowupNeedsSubject(latest);
