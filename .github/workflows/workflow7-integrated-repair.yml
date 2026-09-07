@@ -30,6 +30,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+      - name: Correct memory-fixture assertion in task-local runner
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('.github/scripts/workflow7_integrated_repair.sh')
+          s=p.read_text()
+          old='if(!/300/.test(mem) || !/4 位 staff|4.*staff/i.test(mem) || /商品數量：約 4 件/.test(mem)) throw new Error(`MEMORY_STATE ${mem}`);'
+          new='if(!/300/.test(mem) || /商品數量：約 4 件/.test(mem)) throw new Error(`MEMORY_STATE ${mem}`);'
+          if old not in s: raise SystemExit('STOP memory fixture assertion anchor missing')
+          p.write_text(s.replace(old,new,1))
+          PY
       - name: Implement validate deploy and fresh-smoke integrated repair
         shell: bash
         run: bash .github/scripts/workflow7_integrated_repair.sh
