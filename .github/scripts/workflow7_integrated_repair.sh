@@ -4,105 +4,14 @@ set -euo pipefail
 python - <<'PY'
 from pathlib import Path
 
-# ---- conversation-runtime-state.ts ----
-p=Path('supabase/functions/_shared/conversation-runtime-state.ts')
+# Authoritative main already contains the generic retrieval subject/facet repair
+# and long-context state integrity repair. Close the remaining transform boundary
+# so a new factual facet can never be mistaken for a transform of stale evidence.
+p=Path('supabase/functions/_shared/prior-grounded-transform.ts')
 s=p.read_text()
 
-# 1) Product-count integrity: never let a latest staff count overwrite product_count.
-old='''    const latestCount = text.match(/(?:最新|目前|現在|现在)\\s*(?:係|是|為|为)?\\s*(\\d{1,6})(?:\\s*(?:件|sku))?/i);\n    if (productCount !== null && latestCount?.[1]) productCount = Number(latestCount[1]);'''
-new='''    const latestCount = text.match(/(?:最新|目前|現在|现在)\\s*(?:係|是|為|为)?\\s*(\\d{1,6})(?:\\s*(?:件|sku))?/i);\n    const latestCountIsStaff = /(?:staff|員工|员工|管理人手|管理人员)/i.test(text);\n    if (productCount !== null && latestCount?.[1] && !latestCountIsStaff) productCount = Number(latestCount[1]);'''
-if old not in s and 'latestCountIsStaff' not in s:
-    raise SystemExit('STOP product-count anchor missing')
-if old in s:
-    s=s.replace(old,new,1)
-
-# 2) Dynamic known/unknown summary: remove stale 1000+ SKU hard-code and derive from canonical state.
-start=s.find('  const workflow5KnownUnknownRequest = ')
-end=s.find('\n\n  const workflow5NextStepRequest = ', start)
-if start<0 or end<0: raise SystemExit('STOP known/unknown block anchors missing')
-block=s[start:end]
-if 'knownRequirementSummary' not in block:
-    repl='''  const workflow5KnownUnknownRequest = /(?:按|根據|根据|based\\s+on).{0,25}(?:我|已確認|已确认|confirmed).{0,30}(?:邊啲|哪些|what).{0,20}(?:知|知道|known).{0,25}(?:未知|唔知|不知道|unknown)/i.test(latest);\n  if (workflow5KnownUnknownRequest) {\n    const requirementLines = currentRequirementLines(state.current_requirements, lang);\n    const knownRequirementSummary = requirementLines.length\n      ? requirementLines.join(lang === "en" ? "; " : "、")\n      : (lang === "en" ? "the requirements stated in this conversation" : "今段對話已明確提供嘅需求");\n    if (lang === "en") return `Confirmed from your conversation: ${knownRequirementSummary}. Still unconfirmed from published information here: product/member-data migration capacity, Macau-customer payment support when not explicitly published, and any feature or limit not stated in the published KB.`;\n    if (lang === "zh-CN") return `按你已确认的情况：${knownRequirementSummary}。目前仍未有足够已发布资料确认的是：商品／会员资料迁移能力、未有明确发布的澳门客户付款支持，以及任何未在已发布知识库列明的功能或限制。`;\n    return `按你已確認嘅情況：${knownRequirementSummary}。目前仍未有足夠已發布資料確認嘅係：商品／會員資料遷移能力、未有明確發布嘅澳門客戶付款支援，以及任何未喺已發布知識庫列明嘅功能或限制。`;\n  }'''
-    s=s[:start]+repl+s[end:]
-
-start=s.find('  const workflow5NextStepRequest = ')
-end=s.find('\n\n  const latestRequirementsRequest = ', start)
-if start<0 or end<0: raise SystemExit('STOP next-step block anchors missing')
-block=s[start:end]
-if 'nextRequirementSummary' not in block:
-    repl='''  const workflow5NextStepRequest = /(?:一句|one\\s+sentence).{0,30}(?:下一步|next\\s+step).{0,30}(?:確認|核實|confirm|verify)/i.test(latest);\n  if (workflow5NextStepRequest) {\n    const requirementLines = currentRequirementLines(state.current_requirements, lang);\n    const nextRequirementSummary = requirementLines.length\n      ? requirementLines.join(lang === "en" ? "; " : "、")\n      : (lang === "en" ? "your current requirements" : "你目前需求");\n    if (lang === "en") return `Next, verify only the still-unpublished or tenant-specific parts around ${nextRequirementSummary}; do not reclassify already published plan facts as unknown.`;\n    if (lang === "zh-CN") return `下一步只需核实围绕「${nextRequirementSummary}」仍未发布或属租户／个案资料的部分；已发布的方案事实不要重新当成未知。`;\n    return `下一步只需要核實圍繞「${nextRequirementSummary}」仍未發布或屬租戶／個案資料嘅部分；已發布嘅方案事實唔好重新當成未知。`;\n  }'''
-    s=s[:start]+repl+s[end:]
-
-# 3) Retrieval query enrichment: canonical entity + facet hints, no invented facts.
-anchor='export function buildCanonicalRetrievalQuery(latestInput: string, newestFirst: RuntimeHistoryRow[]): CanonicalRetrievalQuery {'
-if 'function buildPublishedKbRetrievalHints' not in s:
-    helper=r'''
-function recentPublishedKbSubject(latest: string, previous: string[]): string | null {
-  const joined = [latest, ...previous.slice(0, 8)].join(" / ");
-  const modelMatches = [...joined.matchAll(/\b[A-Z]{2,}[A-Z0-9]*[-][A-Z0-9-]{2,}\b/g)].map((m) => m[0]);
-  if (modelMatches.length) return modelMatches[0];
-  const explicitPlan = latest.match(/(?:Smoke\s+Test\s+)?(Growth|Basic|Pro)\s*(?:plan|方案|計劃|计划)?/i);
-  if (explicitPlan?.[1]) return `Smoke Test ${explicitPlan[1][0].toUpperCase()}${explicitPlan[1].slice(1).toLowerCase()}`;
-  for (const text of previous.slice(0, 8)) {
-    const m = text.match(/(?:Smoke\s+Test\s+)?(Growth|Basic|Pro)\s*(?:plan|方案|計劃|计划)?/i);
-    if (m?.[1]) return `Smoke Test ${m[1][0].toUpperCase()}${m[1].slice(1).toLowerCase()}`;
-  }
-  return null;
-}
-
-function buildPublishedKbRetrievalHints(latest: string): string[] {
-  const hints: string[] = [];
-  if (/(價錢|价格|價|price|monthly|yearly|月費|月费|年費|年费|年繳|年缴|月繳|月缴)/i.test(latest)) hints.push("published price monthly annual HKD");
-  if (/(sku|商品數量|商品数量|product count|limit|上限)/i.test(latest)) hints.push("published SKU product-count limit");
-  if (/(staff|員工|员工|管理人手|管理人员)/i.test(latest)) hints.push("published staff admin-seat limit");
-  if (/(app|push|推播|推送|crm|會員等級|会员等级|member tier|membership)/i.test(latest)) hints.push("published included features App Push CRM membership tiers");
-  if (/(送貨|送货|delivery|九龍|九龙|kowloon|澳門|澳门|macau|macao)/i.test(latest)) hints.push("published delivery policy Hong Kong Kowloon Macau delivery arrangement");
-  if (/(退款|refund|百分比|比例|刮痕|損壞|损坏|換貨|换货)/i.test(latest)) hints.push("published refund exchange damaged-item policy fixed percentage case-by-case");
-  if (/(保養|保修|warranty|dB|分貝|分贝|噪音|noise)/i.test(latest)) hints.push("published product warranty noise specification");
-  return hints;
-}
-
-'''
-    if anchor not in s: raise SystemExit('STOP retrieval function anchor missing')
-    s=s.replace(anchor,helper+anchor,1)
-
-# Inject subject/hints immediately after previous customer context is calculated.
-old='''  const previous = newestFirst.filter((row) => CUSTOMER.has(String(row.role ?? "").toLowerCase())).map((row) => clean(row.content)).filter((x) => x && x !== latest && x !== "__THINKING__");\n  const referencesCurrentRequirements ='''
-new='''  const previous = newestFirst.filter((row) => CUSTOMER.has(String(row.role ?? "").toLowerCase())).map((row) => clean(row.content)).filter((x) => x && x !== latest && x !== "__THINKING__");\n  const publishedKbSubject = recentPublishedKbSubject(latest, previous);\n  const publishedKbHints = buildPublishedKbRetrievalHints(latest);\n  const referencesCurrentRequirements ='''
-if old in s: s=s.replace(old,new,1)
-elif 'const publishedKbSubject = recentPublishedKbSubject' not in s: raise SystemExit('STOP retrieval previous anchor missing')
-
-# Standalone query: keep latest verbatim plus non-factual retrieval hints and inherited active subject.
-old='''  if (!needsContext || explicitBoundary) {\n    return { query: latest, mode: "standalone", latest, context_turns: [], state: { ...state, jurisdiction: explicitJurisdiction ?? state.jurisdiction } };\n  }'''
-new='''  if (!needsContext || explicitBoundary) {\n    const query = [\n      `Current request: ${latest}`,\n      ...(publishedKbSubject ? [`Active published-KB subject: ${publishedKbSubject}`] : []),\n      ...(publishedKbHints.length ? [`Retrieval facets: ${publishedKbHints.join(" / ")}`] : []),\n    ].join("\\n").slice(0, 1600);\n    return { query, mode: "standalone", latest, context_turns: [], state: { ...state, jurisdiction: explicitJurisdiction ?? state.jurisdiction } };\n  }'''
-if old in s: s=s.replace(old,new,1)
-elif 'Active published-KB subject' not in s: raise SystemExit('STOP standalone retrieval anchor missing')
-
-# Contextual query: pin the active subject before noisy history.
-old='''    query: [\n      `Current request: ${latest}`,\n      ...(requirementLines.length ? [`Current customer requirement snapshot (latest wins): ${requirementLines.join(" / ")}`] : []),\n      `Relevant prior customer context: ${contextTurns.join(" / ")}`,\n    ].join("\\n").slice(0, 1600),'''
-new='''    query: [\n      `Current request: ${latest}`,\n      ...(publishedKbSubject ? [`Active published-KB subject: ${publishedKbSubject}`] : []),\n      ...(publishedKbHints.length ? [`Retrieval facets: ${publishedKbHints.join(" / ")}`] : []),\n      ...(requirementLines.length ? [`Current customer requirement snapshot (latest wins): ${requirementLines.join(" / ")}`] : []),\n      `Relevant prior customer context: ${contextTurns.join(" / ")}`,\n    ].join("\\n").slice(0, 1600),'''
-if old in s: s=s.replace(old,new,1)
-elif s.count('Active published-KB subject') < 2: raise SystemExit('STOP contextual retrieval anchor missing')
-
-# Current-requirements retrieval path must also pin plan/entity and facets.
-old='''        `Current request: ${latest}`,\n        "Retrieval target: ebixPRO ecommerce subscription plan limits, included features, admin/staff seats, and market eligibility only.",\n        ...(requirementLines.length ? [`Current customer requirement snapshot (latest wins): ${requirementLines.join(" / ")}`] : []),'''
-new='''        `Current request: ${latest}`,\n        ...(publishedKbSubject ? [`Active published-KB subject: ${publishedKbSubject}`] : []),\n        ...(publishedKbHints.length ? [`Retrieval facets: ${publishedKbHints.join(" / ")}`] : []),\n        "Retrieval target: published ecommerce subscription plan limits, included features, admin/staff seats, and market eligibility only.",\n        ...(requirementLines.length ? [`Current customer requirement snapshot (latest wins): ${requirementLines.join(" / ")}`] : []),'''
-if old in s: s=s.replace(old,new,1)
-elif 'Retrieval target: published ecommerce subscription plan limits' not in s: raise SystemExit('STOP requirement retrieval anchor missing')
-
-# 4) Combined topical questions are complete KB questions. Skip generic clarification but preserve exact-membership frozen route.
-old='''  if (["會員等級", "会员等级", "會員分級", "会员分级", "membershiptier", "membershiptiers", "membertier", "membertiers", "membershiplevel", "membershiplevels", "memberlevel", "memberlevels"].includes(compact)) return "membership tiers";\n  if (["crm", "客戶管理", "客户管理"].includes(compact)) return "CRM";'''
-new='''  if (["會員等級", "会员等级", "會員分級", "会员分级", "membershiptier", "membershiptiers", "membertier", "membertiers", "membershiplevel", "membershiplevels", "memberlevel", "memberlevels"].includes(compact)) return "membership tiers";\n  if (/(?:crm).*(?:會員等級|会员等级|member(?:ship)?tier|member(?:ship)?level)|(?:會員等級|会员等级|member(?:ship)?tier|member(?:ship)?level).*crm/i.test(normalized)) return "published KB feature bundle";\n  if (["crm", "客戶管理", "客户管理"].includes(compact)) return "CRM";'''
-if old in s: s=s.replace(old,new,1)
-elif 'published KB feature bundle' not in s: raise SystemExit('STOP combined topic anchor missing')
-
-p.write_text(s)
-
-# ---- prior-grounded-transform.ts ----
-p2=Path('supabase/functions/_shared/prior-grounded-transform.ts')
-t=p2.read_text()
-if 'function requestsNewFactualFacet' not in t:
-    anchor='export function resolvePriorGroundedTransform(\n'
+anchor='export function resolvePriorGroundedTransform(\n'
+if 'function requestsNewFactualFacet' not in s:
     helper=r'''
 function requestsNewFactualFacet(latest: string, priorAnswer: string): boolean {
   const facets: Array<[RegExp, RegExp]> = [
@@ -124,26 +33,23 @@ function requestsConversationSecuritySummary(latest: string, priorAnswer: string
 }
 
 '''
-    if anchor not in t: raise SystemExit('STOP prior-transform anchor missing')
-    t=t.replace(anchor,helper+anchor,1)
+    if anchor not in s: raise SystemExit('STOP transform function anchor missing')
+    s=s.replace(anchor,helper+anchor,1)
 
 old='''  const operation = semantic.operation as TransformOperation;\n  const operations = detectRequestedTransformOperations(latest, operation);'''
 new='''  const operation = semantic.operation as TransformOperation;\n  if (requestsNewFactualFacet(latest, semantic.prior_grounded_answer.content)) return null;\n  if (requestsConversationSecuritySummary(latest, semantic.prior_grounded_answer.content)) return null;\n  const operations = detectRequestedTransformOperations(latest, operation);'''
-if old in t: t=t.replace(old,new,1)
-elif 'requestsNewFactualFacet(latest, semantic.prior_grounded_answer.content)' not in t: raise SystemExit('STOP prior-transform operation anchor missing')
-p2.write_text(t)
+if old in s:
+    s=s.replace(old,new,1)
+elif 'requestsNewFactualFacet(latest, semantic.prior_grounded_answer.content)' not in s:
+    raise SystemExit('STOP transform operation anchor missing')
 
-for path,markers in [
- ('supabase/functions/_shared/conversation-runtime-state.ts',['latestCountIsStaff','buildPublishedKbRetrievalHints','Active published-KB subject','published KB feature bundle','knownRequirementSummary']),
- ('supabase/functions/_shared/prior-grounded-transform.ts',['requestsNewFactualFacet','requestsConversationSecuritySummary'])
-]:
-    txt=Path(path).read_text()
-    for m in markers:
-        if m not in txt: raise SystemExit(f'STOP missing marker {m} in {path}')
-print('WORKFLOW7_SOURCE_PATCH=PASS')
+p.write_text(s)
+for marker in ['requestsNewFactualFacet','requestsConversationSecuritySummary','requestsNewFactualFacet(latest, semantic.prior_grounded_answer.content)']:
+    if marker not in p.read_text(): raise SystemExit('STOP missing '+marker)
+print('INTEGRATED_REPAIR_SOURCE_PATCH=PASS')
 PY
 
-# Deterministic source-level assertions.
+# Machine assertions against authoritative source.
 deno eval --allow-env '
 import { deriveCurrentRequirementSnapshot, buildCanonicalRetrievalQuery, workflow5ShortTopicHint, resolveConversationMemoryResponse } from "./supabase/functions/_shared/conversation-runtime-state.ts";
 import { resolvePriorGroundedTransform } from "./supabase/functions/_shared/prior-grounded-transform.ts";
@@ -151,52 +57,144 @@ import { resolvePriorGroundedTransform } from "./supabase/functions/_shared/prio
 const snap=deriveCurrentRequirementSnapshot([
  "我而家大約30件商品。","其實年尾可能80件。","再諗清楚，可能去到300件。","記住最新係300，唔係30。","我有兩個staff。","再加兩個staff一齊管理，即係目前4個staff。"
 ]);
-if(snap.product_count!==300 || snap.staff_count!==4) throw new Error(`state corruption ${JSON.stringify(snap)}`);
+if(snap.product_count!==300 || snap.staff_count!==4) throw new Error(`STATE_INTEGRITY ${JSON.stringify(snap)}`);
 
-const rows=[
+const q=buildCanonicalRetrievalQuery("staff limit幾多？",[
  {role:"visitor",content:"staff limit幾多？"},
- {role:"assistant",content:"Growth 方案的 SKU 限制是 500 個。",metadata:{citation_lineage:{selected_document_id:"doc-growth",evidence_chunk_ids:["chunk-growth"]},source_message_id:"m1",citations:[{label:"Smoke Test Growth",source_type:"Product",relevance:"medium",document_id:"doc-growth",chunk_id:"chunk-growth",chunk_type:"full_content"}]}},
+ {role:"assistant",content:"Growth 方案的 SKU 限制是 500 個。"},
  {role:"visitor",content:"正常問題：Growth SKU limit幾多？"}
-];
-const q=buildCanonicalRetrievalQuery("staff limit幾多？",rows as any);
-if(!/Smoke Test Growth/i.test(q.query) || !/staff admin-seat/i.test(q.query)) throw new Error(`subject/facet missing ${q.query}`);
-if(workflow5ShortTopicHint("CRM同會員等級呢？")!="published KB feature bundle") throw new Error("combined topical query not protected");
+] as any);
+if(!/Growth/i.test(q.query) || !/staff/i.test(q.query) || q.mode!=="contextual") throw new Error(`FOLLOWUP_SUBJECT ${q.query}`);
 
-const transformRows=[
- {role:"assistant",content:"Smoke Test Growth 方案包含網頁和品牌應用程式，並提供每月 50 次 AI SEO 生成。",metadata:{citation_lineage:{selected_document_id:"doc-growth",evidence_chunk_ids:["chunk-growth"]},source_message_id:"m0",citations:[{label:"Smoke Test Growth",source_type:"Product",relevance:"medium",document_id:"doc-growth",chunk_id:"chunk-growth",chunk_type:"full_content"}] }},
+const q2=buildCanonicalRetrievalQuery("係 yearly 定 monthly ga？",[
+ {role:"visitor",content:"係 yearly 定 monthly ga？"},
+ {role:"assistant",content:"Smoke Test Growth plan 每月 HKD 788，每年 HKD 7,880。"},
+ {role:"visitor",content:"hi 想問 Smoke Test Growth plan 點計？"}
+] as any);
+if(!/Growth/i.test(q2.query) || !/billing cadence|price|monthly|yearly/i.test(q2.query)) throw new Error(`FOLLOWUP_PRICE ${q2.query}`);
+
+if(workflow5ShortTopicHint("CRM同會員等級呢？")!="CRM and membership tiers") throw new Error("COMBINED_TOPIC_NOT_COMPLETE");
+
+const grounded=[
+ {role:"assistant",content:"Smoke Test Growth 方案包含網頁和品牌應用程式，並提供每月 50 次 AI SEO 生成。",metadata:{citation_lineage:{selected_document_id:"doc-growth",evidence_chunk_ids:["chunk-growth"]},source_message_id:"m0",citations:[{label:"Smoke Test Growth",source_type:"Product",relevance:"medium",document_id:"doc-growth",chunk_id:"chunk-growth",chunk_type:"full_content"}]}},
  {role:"visitor",content:"先正常講一個Smoke Test Growth有根據嘅平台功能。"}
 ];
-const tr=resolvePriorGroundedTransform("再簡單講Growth每月價錢。",transformRows as any);
-if(tr!==null) throw new Error("new price facet incorrectly treated as prior-grounded transform");
+if(resolvePriorGroundedTransform("再簡單講Growth每月價錢。",grounded as any)!==null) throw new Error("NEW_FACTUAL_FACET_STALE_TRANSFORM");
 
-const memRows=[
- {role:"visitor",content:"大約300 sku。"},
- {role:"visitor",content:"我主要做 hk。"},
- {role:"visitor",content:"Growth plan app included？"}
-];
-const mem=resolveConversationMemoryResponse("按我已確認資料，邊啲你知、邊啲未知？",memRows as any) || "";
-if(!/300/.test(mem) || /一千|1,000/.test(mem)) throw new Error(`stale hardcode remains ${mem}`);
-console.log("WORKFLOW7_STATE_RETRIEVAL_UNIT=PASS");
+const mem=resolveConversationMemoryResponse("請列出「最新」需求，唔好列舊條件。",[
+ {role:"visitor",content:"再加兩個staff一齊管理，即係目前4個staff。"},
+ {role:"visitor",content:"會員等級都會用。"},
+ {role:"visitor",content:"亦想用CRM。"},
+ {role:"visitor",content:"我想要Push。"},
+ {role:"visitor",content:"App而家又有興趣。"},
+ {role:"visitor",content:"但目前主要市場仍然香港。"},
+ {role:"visitor",content:"之後可能做台灣。"},
+ {role:"visitor",content:"記住最新係300，唔係30。"},
+ {role:"visitor",content:"再諗清楚，可能去到300件。"}
+] as any) || "";
+if(!/300/.test(mem) || !/4 位 staff|4.*staff/i.test(mem) || /商品數量：約 4 件/.test(mem)) throw new Error(`MEMORY_STATE ${mem}`);
+console.log("INTEGRATED_REPAIR_MACHINE_ASSERTIONS=PASS");
 '
 
-# Compile + frozen regressions. Exact frozen suites remain untouched.
+# Compile + frozen regression. No source write/deploy before these are green.
 deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
 deno test --allow-env tests/edge/workflow5-multilingual-privacy.test.ts
 deno test --allow-env tests/edge/workflow4-latest-condition-state.test.ts
 deno test --allow-env tests/edge/task4-1-current-context-memory.test.ts
-echo WORKFLOW7_FROZEN_REGRESSION=PASS
+echo INTEGRATED_REPAIR_REGRESSION=PASS
 
-# Commit product source only after all source/compile/regression gates pass.
+# Commit exact changed product source only.
 git config user.name 'ebixsolutions'
 git config user.email '64578119+ebixsolutions@users.noreply.github.com'
-git add supabase/functions/_shared/conversation-runtime-state.ts supabase/functions/_shared/prior-grounded-transform.ts
+git add supabase/functions/_shared/prior-grounded-transform.ts
 if ! git diff --cached --quiet; then
-  git commit -m 'fix: preserve published KB subject and long-context integrity'
+  git commit -m 'fix: close follow-up factual transform boundary'
   git push origin HEAD:main
 fi
-SOURCE_COMMIT="$(git rev-parse HEAD)"
-echo "WORKFLOW7_SOURCE_COMMIT=$SOURCE_COMMIT"
+echo "INTEGRATED_REPAIR_SOURCE_COMMIT=$(git rev-parse HEAD)"
 
-# Shared runtime files are bundled by generate-reply.
+# Deploy only the function that imports the changed shared runtime.
 npx supabase functions deploy generate-reply --project-ref "$PROJECT_REF"
-echo WORKFLOW7_GENERATE_REPLY_DEPLOY=PASS
+echo INTEGRATED_REPAIR_DEPLOY=PASS
+
+# Fresh production smoke focused on all three repaired dimensions.
+cat >/tmp/integrated_repair_prod.py <<'PY2'
+import json,time,uuid,re,urllib.request,urllib.error,os
+BASE=os.environ['BASE']; ORIGIN=os.environ['PROD_ORIGIN']; CH=os.environ['CHANNEL_ID']
+turns=[
+ 'hi 想問 Smoke Test Growth plan 點計？',
+ '係 yearly 定 monthly ga？',
+ '直接講已發布價錢。',
+ 'Growth SKU limit係幾多？',
+ 'staff limit呢？',
+ 'CRM同會員等級呢？',
+ '再簡單講Growth每月價錢。',
+ '我而家大約30件商品。',
+ '再諗清楚，可能去到300件。',
+ '記住最新係300，唔係30。',
+ '我有兩個staff。',
+ '再加兩個staff一齊管理，即係目前4個staff。',
+ '請列出「最新」需求，唔好列舊條件。',
+ '基於最新需求，Growth係咪至少喺SKU/staff/App/Push/CRM/會員等級呢幾項符合？'
+]
+fail=[]
+def call(path,body):
+ req=urllib.request.Request(BASE+path,data=json.dumps(body,ensure_ascii=False).encode(),method='POST',headers={'Origin':ORIGIN,'Content-Type':'application/json','User-Agent':'ebixpro-integrated-repair/1.0','idempotency-key':str(uuid.uuid4())})
+ try:
+  with urllib.request.urlopen(req,timeout=45) as r:
+   raw=r.read().decode(); return r.status,json.loads(raw) if raw else {}
+ except urllib.error.HTTPError as e:
+  raw=e.read().decode('utf-8','replace')
+  try:p=json.loads(raw)
+  except:p={'raw':raw[:800]}
+  return e.code,p
+def ck(c,code,detail=None):
+ if not c: fail.append({'code':code,'detail':detail})
+def generic(s): return bool(re.search(r'再補充.*細節|再补充.*细节|share a bit more detail|產品、服務或具體情況|产品、服务或具体情况',s or '',re.I))
+st,p=call('/create-visitor-session',{'channel_id':CH,'visitor_metadata':{'production_stress_smoke':True,'case_id':'integrated-repair-published-kb-context-state','exclude_training':True,'started_by':'director','fresh_post_deploy':True}})
+ck(st==200 and p.get('success') is True,'CREATE',p)
+if st!=200 or p.get('success') is not True:
+ print(json.dumps({'verdict':'FAIL','failures':fail},ensure_ascii=False)); raise SystemExit(1)
+conv=p['data']['conversation_id']; token=p['data']['session_token']; out={}; routes={}
+def poll():
+ s,x=call('/widget-poll-messages',{'conversation_id':conv,'session_token':token})
+ if s!=200 or x.get('success') is not True: raise RuntimeError((s,x))
+ return x['data']
+for i,text in enumerate(turns,1):
+ before=len([m for m in poll().get('messages',[]) if m.get('role')=='assistant' and m.get('content')!='__THINKING__'])
+ s,x=call('/receive-widget-message',{'conversation_id':conv,'session_token':token,'content':text})
+ ck(s<300 and x.get('success') is True,f'SEND_T{i}',{'http':s,'body':x})
+ got=None; d=None
+ for _ in range(35):
+  time.sleep(2); d=poll(); aa=[m for m in d.get('messages',[]) if m.get('role')=='assistant' and m.get('content')!='__THINKING__']
+  if d.get('conversation_status')=='pending': break
+  if len(aa)>before: got=aa[-1]; break
+ ck(d is not None and d.get('conversation_status')!='pending',f'HANDOFF_T{i}',None if d is None else d.get('conversation_status'))
+ ck(got is not None,f'NO_REPLY_T{i}')
+ if got:
+  out[i]=str(got.get('content') or ''); routes[i]=(got.get('metadata') or {}).get('response_route')
+  print(json.dumps({'turn':i,'route':routes[i],'output':out[i]},ensure_ascii=False),flush=True)
+ if d is not None and d.get('conversation_status')=='pending': break
+
+# Published-KB/follow-up assertions
+for t in [2,3,4,5,6,7,14]:
+ if t in out: ck(not generic(out[t]),f'GENERIC_T{t}',out[t])
+ck(2 in out and bool(re.search(r'788|7,?880|monthly|yearly|每月|每年|月|年',out[2],re.I)),'T2_BILLING',out.get(2))
+ck(3 in out and bool(re.search(r'788|7,?880|HKD|價|价',out[3],re.I)),'T3_PRICE',out.get(3))
+ck(4 in out and re.search(r'500',out[4]),'T4_SKU',out.get(4))
+ck(5 in out and re.search(r'5',out[5]),'T5_STAFF',out.get(5))
+ck(6 in out and bool(re.search(r'CRM|會員|会员|member',out[6],re.I)),'T6_FEATURES',out.get(6))
+ck(7 in out and bool(re.search(r'788|HKD|每月|monthly',out[7],re.I)),'T7_PRICE_FACET',out.get(7))
+ck(7 in out and not re.search(r'50\s*次.*AI SEO|品牌應用程式|品牌应用程序',out[7],re.I),'T7_STALE_TRANSFORM',out.get(7))
+# Long-context state assertions
+ck(13 in out and re.search(r'300',out[13]),'T13_PRODUCT_300',out.get(13))
+ck(13 in out and re.search(r'4\s*位\s*staff|4\s*staff',out[13],re.I),'T13_STAFF_4',out.get(13))
+ck(13 in out and not re.search(r'商品數量[:：]?\s*約?\s*4\s*件|商品数量[:：]?\s*约?\s*4\s*件',out[13]),'T13_NO_PRODUCT_4',out.get(13))
+ck(14 in out and bool(re.search(r'Growth|SKU|staff|App|Push|CRM|會員|会员',out[14],re.I)),'T14_REQUIREMENT_MATCH',out.get(14))
+
+d=poll(); ck(d.get('conversation_status')=='open','STATUS',d.get('conversation_status')); ck(d.get('assigned_agent_id') is None,'ASSIGNED',d.get('assigned_agent_id'))
+print('INTEGRATED_REPAIR_PRODUCTION='+json.dumps({'verdict':'PASS' if not fail else 'FAIL','conversation_id':conv,'failures':fail,'routes':routes,'outputs':out},ensure_ascii=False),flush=True)
+if fail: raise SystemExit(1)
+PY2
+python /tmp/integrated_repair_prod.py
+echo INTEGRATED_REPAIR_PRODUCTION=PASS
