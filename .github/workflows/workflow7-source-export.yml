@@ -52,4 +52,4 @@ jobs:
           git commit -m "fix: stabilize published KB retrieval and context integrity [skip ci]"
           git push origin HEAD:main
 
-# trigger-v5
+# trigger-v6
