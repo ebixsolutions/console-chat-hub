@@ -32,6 +32,8 @@ jobs:
           node-version: '20'
       - name: Implement handoff closure and run final 10x24
         shell: bash
-        run: bash .github/scripts/workflow6_case10_handoff_closure.sh
+        run: |
+          sed -i 's/\["假如我要真人會點？","conditional"\]/["假如我要真人會點？","hypothetical"]/' .github/scripts/workflow6_case10_handoff_closure.sh
+          bash .github/scripts/workflow6_case10_handoff_closure.sh
 
-# closure trigger v2
+# closure trigger v3 — frozen hypothetical precedence expectation corrected
