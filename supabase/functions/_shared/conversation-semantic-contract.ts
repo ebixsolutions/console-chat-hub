@@ -73,6 +73,9 @@ const CUSTOMER_OWNED_STATE_FIELD = /(?:sku|商品(?:數量|数量)?|產品(?:數
 const CUSTOMER_OWNED_STATE_CORRECTION = /(?:記住|记住|最新|目前|現在|现在|其實|其实|更正|改返|改成|更新(?:一下)?|actually|correction).{0,45}(?:唔係|不是|并非|並非|而家係|現在係|现在是|改為|改为|最新係|最新是|而係|而是|not .+ but|instead)/i;
 const BARE_LATEST_NUMERIC_CORRECTION = /(?:記住|记住).{0,20}(?:最新)?(?:係|是)?\s*\d+(?:\.\d+)?\s*[，,。.!！\s]*(?:唔係|不是|而唔係|而不是)\s*\d+(?:\.\d+)?/i;
 const FACTUAL_TOPIC_OR_KB_SWITCH = /(?:Growth|Basic|Pro|plan|方案|型號|型号|model|價錢|价钱|價格|价格|price|費用|费用|收費|收费|limit|上限|支援|支持|包括|包含|功能|feature|保養|保修|送貨|送货|退款|退貨|退货|付款|政策|policy|terms?\b|T&C|我要問|我想問|想問|想问|ask about)/i;
+const CUSTOMER_OWNED_STATE_DECLARATION_CUE = /(?:^|[，,。.!！\s])(?:我|目前|現在|现在|而家|暫時|暂时|之後|之后|未來|未来|年尾|只做|主要做|再諗|再想|再加|得我|亦|都會|都会|可能|大約|大概|only|currently|right now|for now|later|future|i (?:have|need|want|use|am|currently))/i;
+const CUSTOMER_OWNED_STATE_PREFERENCE_CUE = /(?:有興趣|有兴趣|想要|想用|要用|會用|会用|需要|唔需要|不需要|不用|過時|过时|管理|一齊|一起|加\s*[一二兩两三四五六七八九十\d]+|only|interested|need|want|use|have)/i;
+const CUSTOMER_OWNED_LOCATION_DECLARATION = /(?:只做|主要做|目前(?:主要市場|主要市场)?(?:仍然|還是|还是)?|現在(?:主要市場|主要市场)?|现在(?:主要市场)?|之後可能做|之后可能做|未來可能做|未来可能做).{0,24}(?:香港|台灣|台湾|澳門|澳门|Hong Kong|Taiwan|Macau)/i;
 
 function recentCustomerStateField(newestFirst: SemanticHistoryRow[], currentLatest: string): boolean {
   let skippedCurrent = false;
@@ -99,6 +102,18 @@ export function isCustomerOwnedStateCorrection(text: string, newestFirst: Semant
   if (FACTUAL_TOPIC_OR_KB_SWITCH.test(latest)) return false;
   if (CUSTOMER_OWNED_STATE_FIELD.test(latest) && (CORRECTION.test(latest) || CUSTOMER_OWNED_STATE_CORRECTION.test(latest))) return true;
   return BARE_LATEST_NUMERIC_CORRECTION.test(latest) && recentCustomerStateField(newestFirst, latest);
+}
+
+export function isCustomerOwnedStateUpdate(text: string): boolean {
+  const latest = clean(text);
+  if (!latest || QUESTIONISH.test(latest) || /[?？]/.test(latest)) return false;
+  if (FACTUAL_TOPIC_OR_KB_SWITCH.test(latest)) return false;
+
+  if (CUSTOMER_OWNED_LOCATION_DECLARATION.test(latest)) return true;
+  if (!CUSTOMER_OWNED_STATE_FIELD.test(latest)) return false;
+
+  if (/\d+(?:\.\d+)?\s*(?:件|sku|staff|員工|员工)/i.test(latest)) return true;
+  return CUSTOMER_OWNED_STATE_DECLARATION_CUE.test(latest) || CUSTOMER_OWNED_STATE_PREFERENCE_CUE.test(latest);
 }
 
 export function isCustomerContextUpdate(text: string): boolean {
@@ -203,6 +218,15 @@ export function classifyCanonicalConversationTurn(
       may_reuse_prior_grounded_answer: false,
       evidence_authority: "CONVERSATION_MEMORY",
       topic_action: "CORRECT",
+    });
+  }
+  if (isCustomerOwnedStateUpdate(latest)) {
+    return base("CUSTOMER_CONTEXT_UPDATE", "customer_owned_state_update", {
+      needs_history: true,
+      requires_new_kb_retrieval: false,
+      may_reuse_prior_grounded_answer: false,
+      evidence_authority: "CONVERSATION_MEMORY",
+      topic_action: "KEEP",
     });
   }
   if (CORRECTION.test(latest)) {
