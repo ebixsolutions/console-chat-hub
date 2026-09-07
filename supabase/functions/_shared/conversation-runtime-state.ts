@@ -351,7 +351,8 @@ export function resolveConversationMemoryResponse(latestInput: string, newestFir
   const memoryLanguageContinuation = languageContinuationPattern.test(latest) && (hasRecentCurrentContextQuestion || hasChainedLanguageContinuation);
   const currentContextRequest = currentContextPattern.test(latest) || memoryLanguageContinuation;
   const latestRequirementsRequest = /(?:列出|整理|總結|总结|講出|说出|tell me|list|summari[sz]e).{0,30}(?:最新|目前|現在|现在|current).{0,20}(?:需求|要求|條件|条件|requirements?)|(?:最新|目前|現在|现在|current).{0,20}(?:需求|要求|條件|条件|requirements?).{0,30}(?:是什麼|是什么|有哪些|係咩|what are)/i.test(latest);
-  if (!(firstRequest || correctionRequest || constraintRequest || summaryRequest || recommendationRequest || providedMissingRequest || generalSummaryRequest || mainlyAskedRequest || nameRequest || locationRequest || currentContextRequest || latestRequirementsRequest)) return null;
+  const latestRequirementsLimitRequest = /(?:基於|基于|根據|根据|按|依照|based on|according to).{0,30}(?:最新|目前|現在|现在|current).{0,20}(?:需求|要求|條件|条件|requirements?).{0,40}(?:方案|plan).{0,20}(?:限制|上限|名額|名额|支援|支持|包含|restriction|limit|eligib)/i.test(latest);
+  if (!(firstRequest || correctionRequest || constraintRequest || summaryRequest || recommendationRequest || providedMissingRequest || generalSummaryRequest || mainlyAskedRequest || nameRequest || locationRequest || currentContextRequest || latestRequirementsRequest || latestRequirementsLimitRequest)) return null;
 
   const zh = lang !== "en";
   const q = lang === "zh-CN"
@@ -362,6 +363,14 @@ export function resolveConversationMemoryResponse(latestInput: string, newestFir
   const quote = (v: string) => zh ? `「${v}」` : `“${v}”`;
   const list = (xs: string[]) => xs.map((x, i) => `${i + 1}. ${x}`).join("\n");
 
+  if (latestRequirementsLimitRequest) {
+    const lines = currentRequirementLines(state.current_requirements, lang);
+    if (!lines.length) return lang === "en" ? en.none : q.none;
+    const snapshot = lines.join(lang === "en" ? "; " : "、");
+    if (lang === "en") return `Based on your latest requirements (${snapshot}), verify each plan's product-count limit, staff/admin-seat limit, whether App/Push/CRM/member tiers are included and any related restrictions, plus support scope for the current and future markets; use published plan information for any concrete limits.`.slice(0, 1800);
+    if (lang === "zh-CN") return `基于你目前最新需求（${snapshot}），你应再核实各方案的商品数量上限、管理人员名额、App／Push／CRM／会员等级是否包含及相关限制，以及目前与未来市场的支持范围；任何具体方案上限只以已发布方案资料为准。`.slice(0, 1800);
+    return `基於你目前最新需求（${snapshot}），你應再核實各方案的商品數量上限、管理人手名額、App／Push／CRM／會員等級是否包含及相關限制，以及目前與未來市場的支援範圍；任何具體方案上限只以已發布方案資料為準。`.slice(0, 1800);
+  }
   if (latestRequirementsRequest) {
     const lines = currentRequirementLines(state.current_requirements, lang);
     if (!lines.length) return lang === "en" ? en.none : q.none;
@@ -465,6 +474,21 @@ export function buildCanonicalRetrievalQuery(latestInput: string, newestFirst: R
   const needsContext = semantic.needs_history || referencesCurrentRequirements;
 
   const explicitBoundary = Boolean(explicitJurisdiction) && semantic.operation !== "RETURN_TO_PRIOR_TOPIC" && semantic.operation !== "CORRECTION";
+  if (referencesCurrentRequirements) {
+    const requirementLines = currentRequirementLines(state.current_requirements, state.language);
+    return {
+      query: [
+        `Current request: ${latest}`,
+        "Retrieval target: ebixPRO ecommerce subscription plan limits, included features, admin/staff seats, and market eligibility only.",
+        ...(requirementLines.length ? [`Current customer requirement snapshot (latest wins): ${requirementLines.join(" / ")}`] : []),
+      ].join("\n").slice(0, 1600),
+      mode: "contextual",
+      latest,
+      context_turns: [],
+      state,
+    };
+  }
+
   if (!needsContext || explicitBoundary) {
     return { query: latest, mode: "standalone", latest, context_turns: [], state: { ...state, jurisdiction: explicitJurisdiction ?? state.jurisdiction } };
   }

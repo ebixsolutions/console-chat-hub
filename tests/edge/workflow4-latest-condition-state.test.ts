@@ -67,3 +67,15 @@ Deno.test("Workflow 4 plan-limit follow-up carries full current requirement snap
   }
   if (query.query.includes("App：目前不需要")) throw new Error(`stale App state in retrieval: ${query.query}`);
 });
+
+Deno.test("Workflow 4 T24 latest-plan-limit answer is deterministic and excludes stale unrelated KB topic", () => {
+  const latest = "基於最新需求，一句講我應該再核實邊幾項方案限制。";
+  const reply = resolveConversationMemoryResponse(latest, newestFirst(["請列出「最新」需求，唔好列舊條件。", latest]));
+  if (!reply) throw new Error("T24 deterministic reply missing");
+  for (const expected of ["300", "4 位 staff", "App", "Push", "CRM", "會員等級", "香港", "台灣", "商品數量上限", "管理人手名額"]) {
+    if (!reply.includes(expected)) throw new Error(`T24 missing ${expected}: ${reply}`);
+  }
+  for (const stale of ["30 件", "80 件", "2 位 staff", "App：目前不需要", "四電一腦", "雪櫃容積"]) {
+    if (reply.includes(stale)) throw new Error(`T24 stale/unrelated topic leaked: ${stale}: ${reply}`);
+  }
+});
