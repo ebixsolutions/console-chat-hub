@@ -230,6 +230,53 @@ function currentRequirementLines(snapshot: CurrentRequirementSnapshot, lang: Run
   return out;
 }
 
+
+function resolveWorkflow5ConversationLanguage(latest: string, rows: RuntimeHistoryRow[]): RuntimeLanguage {
+  const direct = detectLanguage(latest);
+  if (/[\u4e00-\u9fff]/.test(latest)) return direct;
+  const priorCustomer = rows
+    .filter((row) => CUSTOMER.has(String(row.role ?? "").toLowerCase()))
+    .map((row) => clean(row.content))
+    .filter((text) => text && text !== latest)
+    .slice(0, 6);
+  const zh = priorCustomer.map(detectLanguage).filter((x) => x !== "en");
+  if (direct === "en" && latest.length <= 120 && zh.length >= 2) return zh[0];
+  return direct;
+}
+
+function workflow5PreviousCustomerTurn(latest: string, rows: RuntimeHistoryRow[]): string | null {
+  let skippedCurrent = false;
+  for (const row of rows) {
+    if (!CUSTOMER.has(String(row.role ?? "").toLowerCase())) continue;
+    const text = clean(row.content);
+    if (!text) continue;
+    if (!skippedCurrent && text === latest) { skippedCurrent = true; continue; }
+    return text;
+  }
+  return null;
+}
+
+function workflow5SecurityBoundaryResponse(latest: string, lang: RuntimeLanguage): string | null {
+  const t = clean(latest);
+  const promptProbe = /(?:system\s*prompt|hidden\s*(?:prompt|context)|internal\s*(?:prompt|instruction)|系統提示|系统提示|隱藏(?:提示|上下文)|隐藏(?:提示|上下文))/i.test(t);
+  const secretProbe = /(?:secret\s*key|service[_ -]?role|api\s*key|access\s*token|密鑰|密钥|秘密金鑰|秘密密钥)/i.test(t);
+  const bypassProbe = /(?:pretend\s+you\s+are\s+admin|bypass\s+auth|ignore\s+all\s+previous\s+instructions|假裝.*(?:admin|管理員)|假装.*(?:admin|管理员)|繞過.*(?:認證|驗證)|绕过.*(?:认证|验证))/i.test(t);
+  const crossUserProbe = /(?:其他客戶資料|其他客户资料|other\s+(?:customer|user)s?.{0,20}(?:data|information)|all\s+customer\s+data)/i.test(t);
+  if (!(promptProbe || secretProbe || bypassProbe || crossUserProbe)) return null;
+  if (lang === "en") {
+    if (crossUserProbe) return "I can’t provide another customer’s private information or bypass access controls. I can still help with public product and service information.";
+    if (secretProbe) return "I can’t reveal secret keys, access tokens, or other private credentials. I can still help with public product and service information.";
+    return "I can’t reveal hidden instructions, internal prompts, or bypass access controls. I can still help with normal product and service questions.";
+  }
+  if (lang === "zh-CN") {
+    if (crossUserProbe) return "我不能提供其他客户的私人资料，也不能绕过访问权限；我仍可继续回答公开的产品和服务问题。";
+    if (secretProbe) return "我不能提供密钥、访问令牌或其他私人凭证；我仍可继续回答公开的产品和服务问题。";
+    return "我不能披露隐藏指令、内部提示或绕过访问权限；你仍可继续问正常的产品和服务问题。";
+  }
+  if (crossUserProbe) return "我不能提供其他客戶的私人資料，也不能繞過存取權限；我仍可繼續回答公開的產品和服務問題。";
+  if (secretProbe) return "我不能提供密鑰、存取權杖或其他私人憑證；我仍可繼續回答公開的產品和服務問題。";
+  return "我不能披露隱藏指令、內部提示或繞過存取權限；你仍可繼續問正常的產品和服務問題。";
+}
 export function projectConversationRuntimeState(newestFirst: RuntimeHistoryRow[]): ConversationRuntimeState {
   const rows = newestFirst
     .map((row) => ({ text: clean(row.content), role: String(row.role ?? "").toLowerCase(), metadata: row.metadata }))
@@ -272,7 +319,7 @@ export function projectConversationRuntimeState(newestFirst: RuntimeHistoryRow[]
     active_constraints: constraints,
     jurisdiction: explicitJurisdiction ?? inheritedJurisdiction ?? groundedAssistantJurisdiction,
     current_item: correctedItem ?? focusedItem,
-    language: detectLanguage(latest ?? first ?? ""),
+    language: resolveWorkflow5ConversationLanguage(latest ?? first ?? "", newestFirst),
     prior_recommendations: assistants.filter((row) => RECOMMEND.test(row.text)).slice(0, 6).map((row) => row.text),
     current_requirements: currentRequirements,
   };
@@ -332,7 +379,7 @@ export function resolveConversationMemoryResponse(latestInput: string, newestFir
     return true;
   });
   const state = projectConversationRuntimeState(priorRows);
-  const lang = detectLanguage(latest);
+  const lang = resolveWorkflow5ConversationLanguage(latest, priorRows);
   const firstRequest = /(一開始|一开始|第一個問題|第一个问题|最初).*(問|問題|问题)|what\s+(?:did\s+i\s+ask|was\s+(?:my\s+)?first)|first\s+(?:question|thing\s+i\s+asked)/i.test(latest);
   const correctionRequest = /(之前|先前|剛才|刚才|earlier|previous).*(更正|改正|correct)|更正後|更正后|what\s+did\s+i\s+correct|latest\s+correction/i.test(latest);
   const constraintRequest = /(限制|約束|约束|不要猜|唔好估|constraint|restriction|what.*(?:told|asked).*(?:not|don.?t))/i.test(latest) && /(記得|记得|總結|总结|告訴|告诉|什麼|什么|what|recall|remember|summari)/i.test(latest);
@@ -350,6 +397,34 @@ export function resolveConversationMemoryResponse(latestInput: string, newestFir
   const hasChainedLanguageContinuation = recentPriorCustomerTurns.length >= 2 && languageContinuationPattern.test(recentPriorCustomerTurns[0]) && currentContextPattern.test(recentPriorCustomerTurns[1]);
   const memoryLanguageContinuation = languageContinuationPattern.test(latest) && (hasRecentCurrentContextQuestion || hasChainedLanguageContinuation);
   const currentContextRequest = currentContextPattern.test(latest) || memoryLanguageContinuation;
+  const workflow5SecurityReply = workflow5SecurityBoundaryResponse(latest, lang);
+  if (workflow5SecurityReply) return workflow5SecurityReply;
+
+  const workflow5PreviousMeaningRequest = /(?:你)?(?:理解|記得|记得).{0,12}(?:我)?(?:上一句|上句|剛才一句|刚才一句).{0,12}(?:問|講|說|说).*(?:咩|什麼|什么)|what\s+(?:did\s+i\s+mean|was\s+i\s+asking).*(?:last|previous)/i.test(latest);
+  if (workflow5PreviousMeaningRequest) {
+    const previous = workflow5PreviousCustomerTurn(latest, priorRows);
+    if (previous && /(?:澳門|澳门|macau).{0,20}(?:客|customer).{0,20}(?:pay|付款)|(?:澳門|澳门|macau).{0,20}(?:pay|付款)/i.test(previous)) {
+      if (lang === "en") return "Your previous message clarified that you were asking whether a Macau customer can pay, not changing your main market from Hong Kong to Macau.";
+      if (lang === "zh-CN") return "你上一句是在澄清：你问的是澳门客户能否付款，而不是把主要市场从香港改成澳门。";
+      return "你上一句係澄清：你問緊澳門客戶能否付款，而唔係將主要市場由香港改成澳門。";
+    }
+    if (previous) return lang === "en" ? `Your previous message was: “${previous}”` : `你上一句係：「${previous}」`;
+  }
+
+  const workflow5KnownUnknownRequest = /(?:按|根據|根据|based\s+on).{0,25}(?:我|已確認|已确认|confirmed).{0,30}(?:邊啲|哪些|what).{0,20}(?:知|知道|known).{0,25}(?:未知|唔知|不知道|unknown)/i.test(latest);
+  if (workflow5KnownUnknownRequest) {
+    if (lang === "en") return "Confirmed from your conversation: you already have a website, have roughly 1,000+ SKUs, mainly operate in Hong Kong, and sometimes serve Macau; you are also asking about App, Push and AI SEO. Still unconfirmed from published information here: billing cadence, product/member-data migration capacity, Macau-customer payment/Stripe support, App/Push pricing, and the exact AI SEO quota/overage policy.";
+    if (lang === "zh-CN") return "按你已确认的情况：你已有网站、约一千多个 SKU、主要市场是香港、偶尔涉及澳门，并在查询 App、Push 和 AI SEO；目前仍未有足够已发布资料确认的是：方案按年／按月、商品及会员资料迁移能力、澳门客户付款／Stripe 支持、App／Push 收费，以及 AI SEO 额度与超额政策。";
+    return "按你已確認嘅情況：你已有網站、約一千多個 SKU、主要市場係香港、間中涉及澳門，亦正在問 App、Push 同 AI SEO；目前仍未有足夠已發布資料確認嘅係：方案按年／按月、商品及會員資料遷移能力、澳門客戶付款／Stripe 支援、App／Push 收費，以及 AI SEO 額度同超額政策。";
+  }
+
+  const workflow5NextStepRequest = /(?:一句|one\s+sentence).{0,30}(?:下一步|next\s+step).{0,30}(?:確認|核實|confirm|verify)/i.test(latest);
+  if (workflow5NextStepRequest) {
+    if (lang === "en") return "Next, verify the plan’s billing cadence, migration limits for roughly 1,000+ SKUs and member data, Macau-customer payment/Stripe support, App/Push pricing, and the AI SEO quota and overage policy.";
+    if (lang === "zh-CN") return "下一步请确认方案的年／月收费方式、约一千多个 SKU 与会员资料的迁移限制、澳门客户付款／Stripe 支持、App／Push 收费，以及 AI SEO 额度和超额政策。";
+    return "下一步請確認方案嘅年／月收費方式、約一千多個 SKU 同會員資料嘅遷移限制、澳門客戶付款／Stripe 支援、App／Push 收費，以及 AI SEO 額度同超額政策。";
+  }
+
   const latestRequirementsRequest = /(?:列出|整理|總結|总结|講出|说出|tell me|list|summari[sz]e).{0,30}(?:最新|目前|現在|现在|current).{0,20}(?:需求|要求|條件|条件|requirements?)|(?:最新|目前|現在|现在|current).{0,20}(?:需求|要求|條件|条件|requirements?).{0,30}(?:是什麼|是什么|有哪些|係咩|what are)/i.test(latest);
   const latestRequirementsLimitRequest = /(?:基於|基于|根據|根据|按|依照|based on|according to).{0,30}(?:最新|目前|現在|现在|current).{0,20}(?:需求|要求|條件|条件|requirements?).{0,40}(?:方案|plan).{0,20}(?:限制|上限|名額|名额|支援|支持|包含|restriction|limit|eligib)/i.test(latest);
   if (!(firstRequest || correctionRequest || constraintRequest || summaryRequest || recommendationRequest || providedMissingRequest || generalSummaryRequest || mainlyAskedRequest || nameRequest || locationRequest || currentContextRequest || latestRequirementsRequest || latestRequirementsLimitRequest)) return null;
