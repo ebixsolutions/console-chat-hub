@@ -1,0 +1,48 @@
+name: Production KB4 Conversation Stress Smoke 10x24
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/production-kb4-10x24.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stress:
+    name: KB4 Case ${{ matrix.case_id }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        case_id: ['01','02','03','04','05','06','07','08','09','10']
+    env:
+      PROD_ORIGIN: https://console-chat-hub.lovable.app
+      CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+      CASE_ID: ${{ matrix.case_id }}
+      FINAL_SMOKE_AGENT_EMAIL: ${{ secrets.FINAL_SMOKE_AGENT_EMAIL }}
+      FINAL_SMOKE_AGENT_PASSWORD: ${{ secrets.FINAL_SMOKE_AGENT_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Run published KB4 production stress case
+        shell: bash
+        run: |
+          set -uo pipefail
+          set -a; source .env; set +a
+          mkdir -p stress-results
+          python .github/scripts/production_kb4_10x24.py
+
+      - name: Upload KB4 case evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-kb4-stress-case-${{ matrix.case_id }}
+          path: stress-results/
+          if-no-files-found: warn
