@@ -1,0 +1,176 @@
+name: Workflow 7 Customer State Final Gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflow7-final-trigger.txt'
+
+permissions:
+  contents: write
+
+jobs:
+  final-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROD_ORIGIN: https://console-chat-hub.lovable.app
+      CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+      BASE: https://nrfxhqabwblzxoushgnm.supabase.co/functions/v1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Implement customer-owned state correction boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('supabase/functions/_shared/conversation-semantic-contract.ts')
+          s=p.read_text()
+          const='const CUSTOMER_OWNED_STATE_CORRECTION = /(?:記住|记住).{0,40}(?:最新|目前|現在|现在)|(?:最新|目前|現在|现在).{0,60}(?:唔係|不是|而不是|not\\b)/i;'
+          if 'const CUSTOMER_OWNED_STATE_CORRECTION = ' not in s:
+              anchor='\nfunction clean(v: unknown): string {'
+              if anchor not in s: raise SystemExit('STOP clean anchor missing')
+              s=s.replace(anchor,'\n'+const+'\n'+anchor,1)
+          if '"customer_owned_state_correction"' not in s:
+              anchor='  if (MEMORY.test(latest)) {'
+              branch='''  if (CUSTOMER_OWNED_STATE_CORRECTION.test(latest) && !QUESTIONISH.test(latest)) {
+    return base("CUSTOMER_CONTEXT_UPDATE", "customer_owned_state_correction", {
+      needs_history: true,
+      requires_new_kb_retrieval: false,
+      may_reuse_prior_grounded_answer: false,
+      evidence_authority: "CONVERSATION_MEMORY",
+      topic_action: "CORRECT",
+    });
+  }
+'''
+              if anchor not in s: raise SystemExit('STOP memory anchor missing')
+              s=s.replace(anchor,branch+anchor,1)
+          p.write_text(s)
+          PY
+
+          deno eval '
+          import { classifyCanonicalConversationTurn } from "./supabase/functions/_shared/conversation-semantic-contract.ts";
+          for (const text of ["記住最新係300，唔係30。","最新係4個staff，唔係2個。","其實目前主要市場係香港，唔係台灣。"]) {
+            const c=classifyCanonicalConversationTurn(text,[]);
+            if(c.operation!=="CUSTOMER_CONTEXT_UPDATE" || c.requires_new_kb_retrieval!==false || c.evidence_authority!=="CONVERSATION_MEMORY" || c.topic_action!=="CORRECT") throw new Error(`${text} ${JSON.stringify(c)}`);
+          }
+          const factual=classifyCanonicalConversationTurn("Growth SKU limit係幾多？",[]);
+          if(factual.requires_new_kb_retrieval!==true) throw new Error(`factual ${JSON.stringify(factual)}`);
+          const topic=classifyCanonicalConversationTurn("其實 Growth 唔係我要問，我想問 Pro。",[]);
+          if(topic.requires_new_kb_retrieval!==true) throw new Error(`topic ${JSON.stringify(topic)}`);
+          console.log("CUSTOMER_STATE_CLASSIFIER=PASS");'
+
+          deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+          deno test --allow-env tests/edge/workflow5-multilingual-privacy.test.ts
+          deno test --allow-env tests/edge/workflow4-latest-condition-state.test.ts
+          deno test --allow-env tests/edge/task4-1-current-context-memory.test.ts
+          echo AFFECTED_FROZEN_REGRESSION=PASS
+
+          git config user.name 'ebixsolutions'
+          git config user.email '64578119+ebixsolutions@users.noreply.github.com'
+          git add supabase/functions/_shared/conversation-semantic-contract.ts
+          if ! git diff --cached --quiet; then
+            git commit -m 'fix: keep customer-owned state corrections out of retrieval'
+            git push origin HEAD:main
+          fi
+          echo "SOURCE_COMMIT=$(git rev-parse HEAD)"
+
+      - name: Deploy affected production runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx supabase functions deploy generate-reply --project-ref "$PROJECT_REF"
+          npx supabase functions deploy receive-widget-message --project-ref "$PROJECT_REF" --no-verify-jwt
+          echo PRODUCTION_DEPLOY=PASS
+
+      - name: Fresh production final gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json,time,uuid,re,urllib.request,urllib.error,os,sys
+          BASE=os.environ['BASE']; ORIGIN=os.environ['PROD_ORIGIN']; CH=os.environ['CHANNEL_ID']
+          turns=[
+            'hi 想問 Smoke Test Growth plan 點計？',
+            '直接講已發布價錢。',
+            'Growth SKU limit係幾多？',
+            'staff limit呢？',
+            'CRM同會員等級呢？',
+            '我而家大約30件商品。',
+            '再諗清楚，可能去到300件。',
+            '記住最新係300，唔係30。',
+            '我有兩個staff。',
+            '最新係4個staff，唔係2個。',
+            '其實目前主要市場係香港，唔係台灣。',
+            'App而家有興趣。',
+            '我想要Push，亦想用CRM同會員等級。',
+            '請列出「最新」需求，唔好列舊條件。',
+            '基於最新需求，Growth係咪至少喺SKU/staff/App/Push/CRM/會員等級呢幾項符合？'
+          ]
+          failures=[]; outputs={}; routes={}
+          def call(path,body):
+            req=urllib.request.Request(BASE+path,data=json.dumps(body,ensure_ascii=False).encode(),method='POST',headers={'Origin':ORIGIN,'Content-Type':'application/json','User-Agent':'ebixpro-workflow7-final/1.0','idempotency-key':str(uuid.uuid4())})
+            try:
+              with urllib.request.urlopen(req,timeout=50) as r:
+                raw=r.read().decode(); return r.status,json.loads(raw) if raw else {}
+            except urllib.error.HTTPError as e:
+              raw=e.read().decode('utf-8','replace')
+              try: body=json.loads(raw)
+              except: body={'raw':raw[:800]}
+              return e.code,body
+          def ck(cond,code,detail=None):
+            if not cond: failures.append({'code':code,'detail':detail})
+          st,p=call('/create-visitor-session',{'channel_id':CH,'visitor_metadata':{'production_stress_smoke':True,'case_id':'workflow7-customer-state-final','exclude_training':True,'started_by':'director'}})
+          ck(st==200 and p.get('success') is True,'CREATE',p)
+          if failures:
+            print(json.dumps({'verdict':'FAIL','failures':failures},ensure_ascii=False)); sys.exit(1)
+          cid=p['data']['conversation_id']; token=p['data']['session_token']
+          def poll():
+            s,x=call('/widget-poll-messages',{'conversation_id':cid,'session_token':token})
+            if s!=200 or x.get('success') is not True: raise RuntimeError((s,x))
+            return x['data']
+          for i,text in enumerate(turns,1):
+            before=len([m for m in poll().get('messages',[]) if m.get('role')=='assistant' and m.get('content')!='__THINKING__'])
+            s,x=call('/receive-widget-message',{'conversation_id':cid,'session_token':token,'content':text})
+            ck(s<300 and x.get('success') is True,f'SEND_T{i}',{'http':s,'body':x})
+            got=None; d=None
+            for _ in range(35):
+              time.sleep(2); d=poll(); aa=[m for m in d.get('messages',[]) if m.get('role')=='assistant' and m.get('content')!='__THINKING__']
+              if d.get('conversation_status')=='pending': break
+              if len(aa)>before: got=aa[-1]; break
+            ck(d is not None and d.get('conversation_status')!='pending',f'HANDOFF_T{i}',None if d is None else d.get('conversation_status'))
+            ck(got is not None,f'NO_REPLY_T{i}')
+            if got:
+              outputs[i]=str(got.get('content') or '')
+              routes[i]=(got.get('metadata') or {}).get('response_route')
+              print(json.dumps({'turn':i,'route':routes[i],'output':outputs[i]},ensure_ascii=False),flush=True)
+            if d is not None and d.get('conversation_status')=='pending': break
+          ck(2 in outputs and re.search(r'788|7,?880|HKD',outputs[2],re.I),'PRICE',outputs.get(2))
+          ck(3 in outputs and re.search(r'500',outputs[3]),'SKU',outputs.get(3))
+          ck(4 in outputs and re.search(r'5',outputs[4]),'STAFF',outputs.get(4))
+          ck(5 in outputs and re.search(r'CRM|會員|会员|member',outputs[5],re.I),'FEATURES',outputs.get(5))
+          for t in (8,10,11):
+            ck(routes.get(t)=='customer_context_update',f'CORRECTION_ROUTE_T{t}',{'route':routes.get(t),'output':outputs.get(t)})
+            ck(t in outputs and not re.search(r'Smoke\s+Test\s+(?:Pro|Basic)|5000|HKD\s*1,?2\d\d',outputs[t],re.I),f'NO_KB_CONTAMINATION_T{t}',outputs.get(t))
+          ck(14 in outputs and re.search(r'300',outputs[14]),'LATEST_300',outputs.get(14))
+          ck(14 in outputs and re.search(r'4\s*(?:位\s*)?staff|staff.{0,12}4',outputs[14],re.I),'LATEST_STAFF_4',outputs.get(14))
+          ck(14 in outputs and re.search(r'香港|HK',outputs[14],re.I),'LATEST_HK',outputs.get(14))
+          ck(15 in outputs and re.search(r'Growth',outputs[15],re.I) and re.search(r'500|5',outputs[15]),'FINAL_GROWTH',outputs.get(15))
+          result={'conversation_id':cid,'failures':failures,'routes':routes,'outputs':outputs,'verdict':'PASS' if not failures else 'FAIL'}
+          print('WORKFLOW7_FINAL='+json.dumps(result,ensure_ascii=False))
+          print('WORKFLOW7_FINAL_GATE='+('PASS' if not failures else 'FAIL'))
+          sys.exit(0 if not failures else 1)
+          PY
