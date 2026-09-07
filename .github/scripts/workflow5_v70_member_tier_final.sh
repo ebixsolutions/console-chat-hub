@@ -3,6 +3,28 @@ set -euo pipefail
 
 python - <<'PY'
 from pathlib import Path
+
+shared=Path('supabase/functions/_shared/conversation-runtime-state.ts')
+ss=shared.read_text()
+if 'export function workflow5ShortTopicHint(' not in ss:
+    ss += r'''
+
+// Workflow 5 short topical queries are semantically complete subjects even when
+// conversationally terse. Keep this detector pure so callers can prevent generic
+// clarification from consuming a known topic.
+export function workflow5ShortTopicHint(text: string): string | null {
+  const normalized = (text || "").trim().toLowerCase();
+  if (!normalized) return null;
+  const compact = normalized.replace(/\s+/g, "");
+  if (/^(?:咁|那)?(?:會員|会员)(?:等級|等级|分級|分级|tier|tiers)(?:呢|咧|啊|呀|嗎|吗|？|\?)?$/.test(compact) || /^(?:membership|member)(?:tiers?|levels?)(?:\?|？)?$/.test(compact)) return "membership tiers";
+  if (/^(?:crm|客戶管理|客户管理)(?:呢|咧|啊|呀|嗎|吗|？|\?)?$/.test(compact)) return "CRM";
+  if (/^(?:push|推送|推播|通知|推送通知)(?:呢|咧|啊|呀|嗎|吗|？|\?)?$/.test(compact)) return "Push notifications";
+  if (/^(?:app|手機app|手机app|手機應用|手机应用|應用程式|应用程序)(?:呢|咧|啊|呀|嗎|吗|？|\?)?$/.test(compact)) return "App support";
+  return null;
+}
+'''
+    shared.write_text(ss)
+
 p=Path('supabase/functions/generate-reply/index.ts')
 s=p.read_text()
 old='  buildWorkflow5TopicalClarification,\n  resolveConversationMemoryResponse,'
@@ -18,10 +40,14 @@ if marker not in s:
     s=s.replace(anchor,anchor+block,1)
 s=s.replace('!buildWorkflow5TopicalClarification(_h1LastMsg, _visitorLang) &&','!_w5ShortTopicHint &&')
 p.write_text(s)
-out=p.read_text()
-for x in ['workflow5ShortTopicHint,','const _w5ShortTopicHint = workflow5ShortTopicHint(_h1LastMsg);','_w5ShortTopicHint === "membership tiers"','workflow5_topical_recovery','published_evidence_unconfirmed','!_w5ShortTopicHint &&']:
-    if x not in out: raise SystemExit('STOP missing '+x)
-print('WORKFLOW5_V70_MEMBER_TIER_PATCH=PASS')
+
+required_shared=['export function workflow5ShortTopicHint(','membership tiers','Push notifications','App support']
+for x in required_shared:
+    if x not in shared.read_text(): raise SystemExit('STOP missing shared '+x)
+required_index=['workflow5ShortTopicHint,','const _w5ShortTopicHint = workflow5ShortTopicHint(_h1LastMsg);','_w5ShortTopicHint === "membership tiers"','workflow5_topical_recovery','published_evidence_unconfirmed','!_w5ShortTopicHint &&']
+for x in required_index:
+    if x not in p.read_text(): raise SystemExit('STOP missing index '+x)
+print('WORKFLOW5_V70_DEPENDENCY_CLOSURE_PATCH=PASS')
 PY
 
 deno eval 'import { workflow5ShortTopicHint } from "./supabase/functions/_shared/conversation-runtime-state.ts"; const c=[["會員等級呢？","membership tiers"],["会员等级呢？","membership tiers"],["membership tiers?","membership tiers"],["CRM呢？","CRM"],["Push呢？","Push notifications"],["App呢？","App support"]]; for (const [i,w] of c) { const g=workflow5ShortTopicHint(i); if(g!==w) throw new Error(`${i}: ${g} != ${w}`); } console.log("WORKFLOW5_SHORT_TOPIC_ROOT_FAMILY=PASS");'
@@ -34,9 +60,9 @@ echo WORKFLOW5_V70_SOURCE_GATE=PASS
 
 git config user.name 'ebixsolutions'
 git config user.email '64578119+ebixsolutions@users.noreply.github.com'
-git add supabase/functions/generate-reply/index.ts
+git add supabase/functions/_shared/conversation-runtime-state.ts supabase/functions/generate-reply/index.ts
 if ! git diff --cached --quiet; then
-  git commit -m 'fix: recover member-tier topic without generic clarification'
+  git commit -m 'fix: close member-tier topical recovery dependency chain'
   git push origin HEAD:main
 fi
 echo "WORKFLOW5_V70_SOURCE_COMMIT=$(git rev-parse HEAD)"
