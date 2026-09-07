@@ -15,11 +15,14 @@ if 'export function workflow5ShortTopicHint(' not in ss:
 export function workflow5ShortTopicHint(text: string): string | null {
   const normalized = (text || "").trim().toLowerCase();
   if (!normalized) return null;
-  const compact = normalized.replace(/\s+/g, "");
-  if (/^(?:咁|那)?(?:會員|会员)(?:等級|等级|分級|分级|tier|tiers)(?:呢|咧|啊|呀|嗎|吗|？|\?)?$/.test(compact) || /^(?:membership|member)(?:tiers?|levels?)(?:\?|？)?$/.test(compact)) return "membership tiers";
-  if (/^(?:crm|客戶管理|客户管理)(?:呢|咧|啊|呀|嗎|吗|？|\?)?$/.test(compact)) return "CRM";
-  if (/^(?:push|推送|推播|通知|推送通知)(?:呢|咧|啊|呀|嗎|吗|？|\?)?$/.test(compact)) return "Push notifications";
-  if (/^(?:app|手機app|手机app|手機應用|手机应用|應用程式|应用程序)(?:呢|咧|啊|呀|嗎|吗|？|\?)?$/.test(compact)) return "App support";
+  let compact = normalized.replace(/\s+/g, "");
+  compact = compact.replace(/[？?]+$/g, "");
+  compact = compact.replace(/(?:呢|咧|啊|呀|嗎|吗)+$/g, "");
+  compact = compact.replace(/^(?:咁|那)/, "");
+  if (["會員等級", "会员等级", "會員分級", "会员分级", "membershiptier", "membershiptiers", "membertier", "membertiers", "membershiplevel", "membershiplevels", "memberlevel", "memberlevels"].includes(compact)) return "membership tiers";
+  if (["crm", "客戶管理", "客户管理"].includes(compact)) return "CRM";
+  if (["push", "推送", "推播", "通知", "推送通知"].includes(compact)) return "Push notifications";
+  if (["app", "手機app", "手机app", "手機應用", "手机应用", "應用程式", "应用程序"].includes(compact)) return "App support";
   return null;
 }
 '''
