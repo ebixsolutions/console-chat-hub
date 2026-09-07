@@ -12,10 +12,13 @@ permissions:
 jobs:
   repair:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 55
     env:
       PROJECT_REF: nrfxhqabwblzxoushgnm
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROD_ORIGIN: https://console-chat-hub.lovable.app
+      CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+      BASE: https://nrfxhqabwblzxoushgnm.supabase.co/functions/v1
     steps:
       - uses: actions/checkout@v4
         with:
@@ -27,6 +30,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Implement validate commit and deploy Workflow 7 repair
+      - name: Implement validate deploy and fresh-smoke integrated repair
         shell: bash
         run: bash .github/scripts/workflow7_integrated_repair.sh
