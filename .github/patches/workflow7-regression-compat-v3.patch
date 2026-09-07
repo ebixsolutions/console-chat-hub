@@ -1,0 +1,11 @@
+--- a/supabase/functions/_shared/conversation-runtime-state.ts
++++ b/supabase/functions/_shared/conversation-runtime-state.ts
+@@ -486,7 +486,7 @@
+     const unknownText = unknown.length ? unknown.join(lang === "en" ? "; " : "、") : (lang === "en" ? "any fact not explicitly supported by published information" : "任何未有已發布資料支持嘅具體事實");
+     if (lang === "en") return `Confirmed from this conversation: ${knownText}. Still to verify from published information: ${unknownText}.`;
+     if (lang === "zh-CN") return `按这段对话已确认的情况：${knownText}；仍需按已发布资料核实：${unknownText}。`;
+-    return `按呢段對話已確認嘅情況：${knownText}；仍需按已發布資料核實：${unknownText}。`;
++    return `按呢段對話已確認嘅情況：${knownText}；仍未有足夠已發布資料確認、需核實：${unknownText}。`;
+   }
+ 
+   const workflow5NextStepRequest = /(?:一句|one\s+sentence).{0,30}(?:下一步|next\s+step).{0,30}(?:確認|核實|confirm|verify)/i.test(latest);
