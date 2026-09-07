@@ -278,6 +278,24 @@ function workflow5SecurityBoundaryResponse(latest: string, lang: RuntimeLanguage
   return "我不能披露隱藏指令、內部提示或繞過存取權限；你仍可繼續問正常的產品和服務問題。";
 }
 
+function workflow5PostSecurityRecoveryResponse(latestInput: string, lang: RuntimeLanguage): string | null {
+  const latest = clean(latestInput);
+  const normalServiceRecovery = /(?:再(?:講|说|說)|再給|再给|give|show).{0,24}(?:合法|正常|lawful|normal).{0,24}(?:平台功能|平台服务|平台服務|platform feature|service).{0,30}(?:恢復|恢复|recover)|(?:證明|证明|prove).{0,24}(?:服務|服务|service).{0,24}(?:恢復|恢复|recover)/i.test(latest);
+  if (normalServiceRecovery) {
+    if (lang === "en") return "Normal service has resumed. For example, you can ask about CRM tags; I’ll only describe capabilities or limits supported by published information.";
+    if (lang === "zh-CN") return "服务已恢复正常；例如你可以继续查询 CRM 标签这类平台功能，具体能力和限制我只会按已发布资料回答。";
+    return "服務已恢復正常；例如你可以繼續查詢 CRM 標籤呢類平台功能，具體能力同限制我只會按已發布資料回答。";
+  }
+
+  const safeFinalReply = /(?:最後一句|最后一句|final\s+(?:line|sentence)).{0,30}(?:簡單|简单|simple).{0,40}(?:不要洩漏|不要泄漏|不披露|不透露|do\s+not\s+(?:leak|reveal)|without\s+revealing).{0,30}(?:內部指令|内部指令|internal\s+instructions?)/i.test(latest);
+  if (safeFinalReply) {
+    if (lang === "en") return "Yes. I’ll keep the answer simple and won’t disclose internal instructions.";
+    if (lang === "zh-CN") return "可以，我会保持简单回答，也不会披露内部指令。";
+    return "可以，我會保持簡單回答，亦唔會披露內部指令。";
+  }
+  return null;
+}
+
 export function buildWorkflow5TopicalClarification(
   latestInput: string,
   lang: RuntimeLanguage,
@@ -430,6 +448,8 @@ export function resolveConversationMemoryResponse(latestInput: string, newestFir
   const currentContextRequest = currentContextPattern.test(latest) || memoryLanguageContinuation;
   const workflow5SecurityReply = workflow5SecurityBoundaryResponse(latest, lang);
   if (workflow5SecurityReply) return workflow5SecurityReply;
+  const workflow5RecoveryReply = workflow5PostSecurityRecoveryResponse(latest, lang);
+  if (workflow5RecoveryReply) return workflow5RecoveryReply;
 
   const workflow5PreviousMeaningRequest = /(?:你)?(?:理解|記得|记得).{0,12}(?:我)?(?:上一句|上句|剛才一句|刚才一句).{0,12}(?:問|講|說|说).*(?:咩|什麼|什么)|what\s+(?:did\s+i\s+mean|was\s+i\s+asking).*(?:last|previous)/i.test(latest);
   if (workflow5PreviousMeaningRequest) {
