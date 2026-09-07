@@ -58,4 +58,4 @@ jobs:
           path: stress-results/
           if-no-files-found: warn
 
-# trigger: published-kb4-smoke-retry-v2
+# trigger: published-kb4-smoke-post-integrated-repair-v3
