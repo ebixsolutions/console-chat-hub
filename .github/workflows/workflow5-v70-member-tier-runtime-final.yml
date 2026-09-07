@@ -28,6 +28,6 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
-      - name: Run source repair deploy and fresh Case09 final gate
+      - name: Run dependency-closed source repair deploy and fresh Case09 final gate
         shell: bash
         run: bash .github/scripts/workflow5_v70_member_tier_final.sh
