@@ -69,6 +69,37 @@ const DOMAIN_ONLY = /^(?:我有|我想問|我想问|想問|想问|請問|请问)
 const QUESTIONISH = /[?？]|^(?:什麼|什么|如何|怎樣|怎样|哪|哪些|多久|幾耐|几耐|why|what|which|how|when|where)/i;
 const CUSTOMER_CONTEXT_REQUIREMENTS = /(?:你|妳|您).{0,12}(?:還|还)?需要(?:我)?(?:再)?提供(?:什麼|什么|哪些|咩)(?:資料|资料|資訊|信息|details|information)|(?:還|还)需要(?:我)?提供(?:什麼|什么|哪些|咩)(?:資料|资料|資訊|信息)|what (?:information|details) do you (?:still )?need from me|what else do you need from me/i;
 const CUSTOMER_CONTEXT_UPDATE = /(?:^|[，,。.!！\s])(?:我只知道|我只知|我目前只知道|我現在只知道|我现在只知道|我沒有|我没有|我冇|不知道型號|不知道型号|唔知型號|型號(?:是|係)?未知|型号(?:是)?未知|品牌(?:是|係)|大約.{0,24}(?:買|购买|購買)|大概.{0,24}(?:買|购买|購買)|現在.{0,32}(?:不冷|唔凍|不能|無法|无法)|现在.{0,32}(?:不冷|不能|无法)|i only know|i (?:do not|don't) have (?:the )?(?:model|model number|order number)|the brand is|brand is|i bought (?:it )?.{0,40}ago|it (?:powers|turns) on but)/i;
+const CUSTOMER_OWNED_STATE_FIELD = /(?:sku|商品(?:數量|数量)?|產品(?:數量|数量)?|产品(?:数量)?|貨品(?:數量|数量)?|件(?:商品|產品|产品)?|staff|員工|员工|人手|同事|市場|市场|主要市場|主要市场|地區|地区|region|market|app(?:需求|需要|要求)?|push(?:需求|需要|要求)?|crm(?:需求|需要|要求)?|會員等級|会员等级)/i;
+const CUSTOMER_OWNED_STATE_CORRECTION = /(?:記住|记住|最新|目前|現在|现在|其實|其实|更正|改返|改成|更新(?:一下)?|actually|correction).{0,45}(?:唔係|不是|并非|並非|而家係|現在係|现在是|改為|改为|最新係|最新是|而係|而是|not .+ but|instead)/i;
+const BARE_LATEST_NUMERIC_CORRECTION = /(?:記住|记住).{0,20}(?:最新)?(?:係|是)?\s*\d+(?:\.\d+)?\s*[，,。.!！\s]*(?:唔係|不是|而唔係|而不是)\s*\d+(?:\.\d+)?/i;
+const FACTUAL_TOPIC_OR_KB_SWITCH = /(?:Growth|Basic|Pro|plan|方案|型號|型号|model|價錢|价钱|價格|价格|price|費用|费用|收費|收费|limit|上限|支援|支持|包括|包含|功能|feature|保養|保修|送貨|送货|退款|退貨|退货|付款|政策|policy|terms?\b|T&C|我要問|我想問|想問|想问|ask about)/i;
+
+function recentCustomerStateField(newestFirst: SemanticHistoryRow[], currentLatest: string): boolean {
+  let skippedCurrent = false;
+  let customerTurns = 0;
+  for (const row of newestFirst) {
+    const role = String(row.role ?? "").toLowerCase();
+    if (!CUSTOMER.has(role)) continue;
+    const content = clean(row.content);
+    if (!content) continue;
+    if (!skippedCurrent && content === currentLatest) {
+      skippedCurrent = true;
+      continue;
+    }
+    customerTurns += 1;
+    if (CUSTOMER_OWNED_STATE_FIELD.test(content)) return true;
+    if (customerTurns >= 4) break;
+  }
+  return false;
+}
+
+export function isCustomerOwnedStateCorrection(text: string, newestFirst: SemanticHistoryRow[] = []): boolean {
+  const latest = clean(text);
+  if (!latest || QUESTIONISH.test(latest) || /[?？]/.test(latest)) return false;
+  if (FACTUAL_TOPIC_OR_KB_SWITCH.test(latest)) return false;
+  if (CUSTOMER_OWNED_STATE_FIELD.test(latest) && (CORRECTION.test(latest) || CUSTOMER_OWNED_STATE_CORRECTION.test(latest))) return true;
+  return BARE_LATEST_NUMERIC_CORRECTION.test(latest) && recentCustomerStateField(newestFirst, latest);
+}
 
 export function isCustomerContextUpdate(text: string): boolean {
   const latest = clean(text);
@@ -163,6 +194,15 @@ export function classifyCanonicalConversationTurn(
       may_reuse_prior_grounded_answer: Boolean(priorGrounded),
       evidence_authority: priorGrounded ? "PRIOR_GROUNDED_ANSWER" : "CURRENT_KB_REQUIRED",
       topic_action: "KEEP",
+    });
+  }
+  if (isCustomerOwnedStateCorrection(latest, newestFirst)) {
+    return base("CUSTOMER_CONTEXT_UPDATE", "customer_owned_state_correction", {
+      needs_history: true,
+      requires_new_kb_retrieval: false,
+      may_reuse_prior_grounded_answer: false,
+      evidence_authority: "CONVERSATION_MEMORY",
+      topic_action: "CORRECT",
     });
   }
   if (CORRECTION.test(latest)) {
