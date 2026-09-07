@@ -1,0 +1,52 @@
+name: Workflow 6 Final 10x24 Production Regression
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/workflow6-final-10x24-trigger.yml'
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch-and-wait:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+      - name: Dispatch fresh 10x24 production regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          gh workflow run production-conversation-stress-10x24.yml --ref main
+          echo "WORKFLOW6_DISPATCHED_AT=$started"
+          run_id=""
+          for _ in $(seq 1 30); do
+            run_id="$(gh run list --workflow production-conversation-stress-10x24.yml --branch main --event workflow_dispatch --limit 1 --json databaseId,createdAt --jq '.[0].databaseId // empty')"
+            created="$(gh run list --workflow production-conversation-stress-10x24.yml --branch main --event workflow_dispatch --limit 1 --json createdAt --jq '.[0].createdAt // empty')"
+            if [[ -n "$run_id" && -n "$created" && "$created" > "$started" ]]; then break; fi
+            run_id=""
+            sleep 2
+          done
+          [[ -n "$run_id" ]] || { echo 'STOP: fresh Workflow 6 run not found'; exit 1; }
+          echo "WORKFLOW6_RUN_ID=$run_id"
+          gh run watch "$run_id" --exit-status
+          jobs_json="$(gh run view "$run_id" --json jobs,conclusion,status)"
+          total="$(jq '.jobs|length' <<<"$jobs_json")"
+          success="$(jq '[.jobs[]|select(.conclusion=="success")]|length' <<<"$jobs_json")"
+          failed="$(jq '[.jobs[]|select(.conclusion!="success")]|length' <<<"$jobs_json")"
+          echo "WORKFLOW6_TOTAL_JOBS=$total"
+          echo "WORKFLOW6_SUCCESS_JOBS=$success"
+          echo "WORKFLOW6_FAILED_JOBS=$failed"
+          [[ "$total" -eq 10 ]] || { echo "STOP: expected 10 jobs, got $total"; exit 1; }
+          [[ "$success" -eq 10 && "$failed" -eq 0 ]] || { echo 'WORKFLOW6_FINAL_10X24=FAIL'; exit 1; }
+          echo 'WORKFLOW6_FINAL_10X24=PASS'
