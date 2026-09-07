@@ -1,0 +1,32 @@
+name: Workflow 7 Integrated KB Context Repair
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/workflow7-integrated-repair.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Implement validate commit and deploy Workflow 7 repair
+        shell: bash
+        run: bash .github/scripts/workflow7_integrated_repair.sh
