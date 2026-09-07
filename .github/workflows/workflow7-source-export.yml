@@ -26,13 +26,15 @@ jobs:
           test "$(sha256sum supabase/functions/generate-reply/index.ts | awk '{print $1}')" = "f4ebcc1b7fcc923bb806091a788e70e87ceb4c02ecf0f4cdad6677053d1c3d93"
           patch --dry-run -p1 < .github/patches/workflow7-published-kb-context.patch
           patch -p1 < .github/patches/workflow7-published-kb-context.patch
+          patch --dry-run -p1 < .github/patches/workflow7-factual-memory-routing.patch
+          patch -p1 < .github/patches/workflow7-factual-memory-routing.patch
           git diff --check
           deno test --allow-read tests/edge/workflow7-published-kb-context-integrity.test.ts
           deno test --allow-read tests/edge/workflow5-multilingual-privacy.test.ts
           deno test --allow-read tests/edge/task4-1-current-context-memory.test.ts
           deno test --allow-read tests/edge/task4-1-context-requirements-followup.test.ts
           deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
-          test "$(sha256sum supabase/functions/_shared/conversation-runtime-state.ts | awk '{print $1}')" = "dac8832ba323bb1313c2f00d28d7f0a76544be95e619a86daccc5b0bc98569a4"
+          test "$(sha256sum supabase/functions/_shared/conversation-runtime-state.ts | awk '{print $1}')" = "835cf66cff951a80ca4ced7b0de75e68cbbaa76633f6518442d0ad5e07637ac5"
           test "$(sha256sum supabase/functions/_shared/canonical-grounding.ts | awk '{print $1}')" = "388a08565beb6f53155db5bf13b0a0c123ee8f48781c33ae990ee6a2967dadb0"
           test "$(sha256sum supabase/functions/generate-reply/index.ts | awk '{print $1}')" = "8032c2ddcd6f5dd33f3a60e270a0d5092bac68b462b96ff12968a187c9f263a5"
           changed="$(git diff --name-only | sort)"
