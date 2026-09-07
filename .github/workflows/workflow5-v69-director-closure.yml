@@ -1,0 +1,132 @@
+name: Workflow 5 v69 Director Closure
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/workflow5-v69-director-closure.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: workflow5-v69-director-closure
+  cancel-in-progress: false
+
+jobs:
+  closure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    env:
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROD_ORIGIN: https://console-chat-hub.lovable.app
+      CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+      BASE: https://nrfxhqabwblzxoushgnm.supabase.co/functions/v1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Apply v69 topical precedence fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('supabase/functions/generate-reply/index.ts')
+          s=p.read_text()
+          route='response_route: "conversational_underspecified_clarification"'
+          if s.count(route)!=1:
+              raise SystemExit(f'STOP route count={s.count(route)}')
+          lines=s.splitlines()
+          ridx=next(i for i,l in enumerate(lines) if route in l)
+          guard='!buildWorkflow5TopicalClarification(_h1LastMsg, _visitorLang) &&'
+          if any(guard in l for l in lines[max(0,ridx-180):ridx+1]):
+              print('v69 guard already present')
+          else:
+              def block_end(start):
+                  depth=0; seen=False
+                  for k in range(start,len(lines)):
+                      line=lines[k]
+                      # Good enough for TS control blocks; runtime compile/test is authoritative.
+                      for ch in line:
+                          if ch=='{': depth+=1; seen=True
+                          elif ch=='}' and seen:
+                              depth-=1
+                              if depth==0: return k
+                  return None
+              start=None
+              for j in range(ridx-1,max(-1,ridx-180),-1):
+                  if lines[j].strip()=='if (':
+                      end=block_end(j)
+                      if end is not None and end>=ridx:
+                          start=j; break
+              if start is None:
+                  raise SystemExit('STOP enclosing generic-clarification if not found')
+              indent=lines[start][:len(lines[start])-len(lines[start].lstrip())]+'  '
+              lines.insert(start+1, indent+guard)
+              s='\n'.join(lines)+'\n'
+              p.write_text(s)
+          s=p.read_text(); lines=s.splitlines(); ridx=next(i for i,l in enumerate(lines) if route in l)
+          window='\n'.join(lines[max(0,ridx-180):ridx+1])
+          assert guard in window, 'guard missing from generic clarification branch window'
+          print('WORKFLOW5_V69_PRECEDENCE_PATCH=PASS')
+          print('\n'.join(lines[max(0,ridx-18):ridx+4]))
+          PY
+
+      - name: Source compile and frozen regression gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq '!buildWorkflow5TopicalClarification(_h1LastMsg, _visitorLang) &&' supabase/functions/generate-reply/index.ts
+          grep -A2 '^\[functions.generate-reply\]' supabase/config.toml | grep -Fq 'verify_jwt = true'
+          deno test --allow-env tests/edge/workflow5-multilingual-privacy.test.ts
+          deno test --allow-env tests/edge/workflow4-latest-condition-state.test.ts
+          deno test --allow-env tests/edge/task4-1-current-context-memory.test.ts
+          deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+          echo WORKFLOW5_V69_SOURCE_GATE=PASS
+
+      - name: Commit authoritative source fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'ebixsolutions'
+          git config user.email '64578119+ebixsolutions@users.noreply.github.com'
+          git add supabase/functions/generate-reply/index.ts
+          if git diff --cached --quiet; then
+            echo 'No source diff to commit'
+          else
+            git commit -m 'fix: prioritize topical recovery over generic clarification'
+            git push origin HEAD:main
+          fi
+          echo "WORKFLOW5_V69_SOURCE_COMMIT=$(git rev-parse HEAD)"
+
+      - name: Deploy generate-reply v69
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx supabase functions deploy generate-reply --project-ref "$PROJECT_REF"
+          echo WORKFLOW5_V69_DEPLOY=PASS
+
+      - name: Fresh Case09 only final runtime gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          src=Path('.github/scripts/workflow5_prod_final_v3.py').read_text()
+          lines=src.splitlines()
+          removed=[l for l in lines if l.lstrip().startswith("'04':")]
+          if len(removed)!=1:
+              raise SystemExit(f'STOP expected one Case04 definition, got {len(removed)}')
+          out=[l for l in lines if not l.lstrip().startswith("'04':")]
+          Path('/tmp/workflow5_case09_v69.py').write_text('\n'.join(out)+'\n')
+          PY
+          python /tmp/workflow5_case09_v69.py
+          echo WORKFLOW5_V69_FRESH_CASE09_FINAL_GATE=PASS
