@@ -1,0 +1,29 @@
+name: Workflow7 Source Export
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/workflow7-source-export.yml'
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Export authoritative Workflow7 source
+        run: |
+          set -euo pipefail
+          mkdir -p workflow7-source/supabase/functions/_shared workflow7-source/supabase/functions/generate-reply workflow7-source/tests/edge
+          cp supabase/functions/_shared/conversation-runtime-state.ts workflow7-source/supabase/functions/_shared/
+          cp supabase/functions/_shared/canonical-grounding.ts workflow7-source/supabase/functions/_shared/
+          cp supabase/functions/_shared/kb-client.ts workflow7-source/supabase/functions/_shared/
+          cp supabase/functions/generate-reply/index.ts workflow7-source/supabase/functions/generate-reply/
+          find tests/edge -maxdepth 1 -type f -name '*workflow5*' -o -name '*task4-1*' | while read f; do cp "$f" workflow7-source/tests/edge/; done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: workflow7-authoritative-source
+          path: workflow7-source/
+          if-no-files-found: error
