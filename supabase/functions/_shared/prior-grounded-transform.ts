@@ -54,6 +54,7 @@ const CHINESE_COUNT: Record<string, number> = {
 };
 
 const BROAD_SUMMARY_SCOPE = /(?:已確認|已确认)(?:資料|资料)|(?:剛才|刚才|以上|之前|我們|我们).{0,24}(?:內容|内容|資料|资料|討論|讨论)|\b(?:the above|what we discussed|our conversation|confirmed information|confirmed facts)\b/i;
+const CURRENT_REQUIREMENTS_SUMMARY_SCOPE = /(?:(?:按|根據|根据|基於|基于|依照|based\s+on|according\s+to).{0,30}(?:最新|目前|現在|现在|current|latest).{0,30}(?:條件|条件|需求|要求|requirements?)|(?:總結|总结|整理|列出|概括|歸納|归纳|summari[sz]e|list).{0,30}(?:我|客戶|客户|customer)?\s*.{0,12}(?:最新|目前|現在|现在|current|latest).{0,20}(?:條件|条件|需求|要求|requirements?)|(?:最新|目前|現在|现在|current|latest).{0,20}(?:條件|条件|需求|要求|requirements?).{0,30}(?:總結|总结|整理|列出|概括|歸納|归纳|summari[sz]e|list))/i;
 
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -113,12 +114,6 @@ function selectBroadSummaryAnchor(
   const anchorChunks = [...new Set(anchor.chunk_ids.filter(Boolean))];
   if (!anchor.document_id || anchorChunks.length === 0) return anchor;
 
-  // Broad summaries must preserve recency/topic before breadth. Walk newest-first
-  // and choose the first same-lineage grounded answer that already contains enough
-  // independently stated supported points. This prevents an older, longer answer
-  // from hijacking the active sub-topic merely because it shares the same KB chunk.
-  // If no candidate can safely satisfy the requested count, keep the immediate
-  // grounded anchor and let fixedCountContract return fewer points rather than pad.
   const minimumPoints = requestedSummaryCount ?? 1;
   for (const row of newestFirst) {
     const role = String(row.role ?? "").toLowerCase();
@@ -180,6 +175,9 @@ function fixedCountContract(context: PriorGroundedTransformContext): string[] {
   ];
 }
 
+function requestsCurrentCustomerRequirementsSummary(latest: string): boolean {
+  return CURRENT_REQUIREMENTS_SUMMARY_SCOPE.test(clean(latest, 1600));
+}
 
 function requestsNewFactualFacet(latest: string, priorAnswer: string): boolean {
   const facets: Array<[RegExp, RegExp]> = [
@@ -210,6 +208,12 @@ export function resolvePriorGroundedTransform(
     !semantic.prior_grounded_answer ||
     !TRANSFORMS.has(semantic.operation)
   ) return null;
+
+  // Latest/current customer-requirements summaries are conversation-memory/state
+  // operations, not formatting transforms of the immediately prior KB answer.
+  // Never let a grounded answer hijack customer-authored state just because the
+  // request contains words such as "summarize" or "list".
+  if (requestsCurrentCustomerRequirementsSummary(latest)) return null;
 
   const operation = semantic.operation as TransformOperation;
   if (requestsNewFactualFacet(latest, semantic.prior_grounded_answer.content)) return null;
