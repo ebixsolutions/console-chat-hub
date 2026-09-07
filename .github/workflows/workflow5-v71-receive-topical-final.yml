@@ -28,6 +28,7 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
+      # Closure rerun: compile gate injects a temporary type-only EdgeRuntime declaration.
       - name: Repair upstream routing deploy and fresh Case09 final gate
         shell: bash
         run: bash .github/scripts/workflow5_v71_receive_topical_final.sh
