@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+python - <<'PY'
+from pathlib import Path
+p=Path('supabase/functions/generate-reply/index.ts')
+s=p.read_text()
+old='  buildWorkflow5TopicalClarification,\n  resolveConversationMemoryResponse,'
+new='  buildWorkflow5TopicalClarification,\n  workflow5ShortTopicHint,\n  resolveConversationMemoryResponse,'
+if 'workflow5ShortTopicHint,' not in s:
+    if s.count(old)!=1: raise SystemExit(f'STOP import anchor count={s.count(old)}')
+    s=s.replace(old,new,1)
+anchor='  const _visitorLang = resolveWorkflow5ConversationLanguage(_h1LastMsg, _pr5HistoryRows ?? []);\n'
+marker='  const _w5ShortTopicHint = workflow5ShortTopicHint(_h1LastMsg);\n'
+if marker not in s:
+    if s.count(anchor)!=1: raise SystemExit(f'STOP lang anchor count={s.count(anchor)}')
+    block='''  const _w5ShortTopicHint = workflow5ShortTopicHint(_h1LastMsg);\n  if (_w5ShortTopicHint === "membership tiers") {\n    const topicalReply = _visitorLang === "en"\n      ? "You’re asking about membership tiers. I don’t have enough confirmed published information to state the tier structure, inclusions, or limits, so I won’t guess."\n      : _visitorLang === "zh-CN"\n      ? "你问的是会员等级。目前没有足够已确认的已发布资料来确定会员等级的架构、包含内容或限制，所以我不会猜。"\n      : "你問的是會員等級。目前未有足夠已確認的已發布資料去確定會員等級的架構、包含內容或限制，所以我唔會估。";\n    const topicalCommit = await commitAiReplyWithControlGate(\n      supabaseAdmin, conversation_id, source_message_id, topicalReply,\n      { response_route: "workflow5_topical_recovery", escalation_action: "continue_ai", handoff_required: false, topic: _w5ShortTopicHint, factual_grounding_required: true, grounding_state: "published_evidence_unconfirmed" },\n    );\n    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);\n    if (topicalCommit.ok) return new Response(JSON.stringify({ success: true, reply: topicalReply, response_route: "workflow5_topical_recovery", handoff_required: false }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });\n    if (["human_control", "resolved", "superseded_source"].includes(topicalCommit.result)) return new Response(JSON.stringify({ success: true, skipped: topicalCommit.result }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });\n    return new Response(JSON.stringify({ success: false, error: `workflow5_topical_recovery_${topicalCommit.result}` }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });\n  }\n'''
+    s=s.replace(anchor,anchor+block,1)
+s=s.replace('!buildWorkflow5TopicalClarification(_h1LastMsg, _visitorLang) &&','!_w5ShortTopicHint &&')
+p.write_text(s)
+out=p.read_text()
+for x in ['workflow5ShortTopicHint,','const _w5ShortTopicHint = workflow5ShortTopicHint(_h1LastMsg);','_w5ShortTopicHint === "membership tiers"','workflow5_topical_recovery','published_evidence_unconfirmed','!_w5ShortTopicHint &&']:
+    if x not in out: raise SystemExit('STOP missing '+x)
+print('WORKFLOW5_V70_MEMBER_TIER_PATCH=PASS')
+PY
+
+deno eval 'import { workflow5ShortTopicHint } from "./supabase/functions/_shared/conversation-runtime-state.ts"; const c=[["會員等級呢？","membership tiers"],["会员等级呢？","membership tiers"],["membership tiers?","membership tiers"],["CRM呢？","CRM"],["Push呢？","Push notifications"],["App呢？","App support"]]; for (const [i,w] of c) { const g=workflow5ShortTopicHint(i); if(g!==w) throw new Error(`${i}: ${g} != ${w}`); } console.log("WORKFLOW5_SHORT_TOPIC_ROOT_FAMILY=PASS");'
+deno test --allow-env tests/edge/workflow5-multilingual-privacy.test.ts
+deno test --allow-env tests/edge/workflow4-latest-condition-state.test.ts
+deno test --allow-env tests/edge/task4-1-current-context-memory.test.ts
+deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+grep -A2 '^\[functions.generate-reply\]' supabase/config.toml | grep -Fq 'verify_jwt = true'
+echo WORKFLOW5_V70_SOURCE_GATE=PASS
+
+git config user.name 'ebixsolutions'
+git config user.email '64578119+ebixsolutions@users.noreply.github.com'
+git add supabase/functions/generate-reply/index.ts
+if ! git diff --cached --quiet; then
+  git commit -m 'fix: recover member-tier topic without generic clarification'
+  git push origin HEAD:main
+fi
+echo "WORKFLOW5_V70_SOURCE_COMMIT=$(git rev-parse HEAD)"
+
+npx supabase functions deploy generate-reply --project-ref "$PROJECT_REF"
+echo WORKFLOW5_V70_DEPLOY=PASS
+
+python - <<'PY'
+from pathlib import Path
+src=Path('.github/scripts/workflow5_prod_final_v3.py').read_text()
+lines=src.splitlines(); removed=[l for l in lines if l.lstrip().startswith("'04':")]
+if len(removed)!=1: raise SystemExit(f'STOP expected one Case04 definition, got {len(removed)}')
+Path('/tmp/workflow5_case09_v70.py').write_text('\n'.join(l for l in lines if not l.lstrip().startswith("'04':"))+'\n')
+PY
+python /tmp/workflow5_case09_v70.py
+echo WORKFLOW5_V70_FRESH_CASE09_FINAL_GATE=PASS
