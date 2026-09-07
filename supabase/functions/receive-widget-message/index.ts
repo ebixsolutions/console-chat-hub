@@ -7,6 +7,7 @@ import {
   NOISE_CLARIFICATION,
   UNDERSPECIFIED_CLARIFICATION,
 } from "../_shared/conversational-routing.ts";
+import { workflow5ShortTopicHint } from "../_shared/conversation-runtime-state.ts";
 
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 const ALLOWED_ATTACHMENT_MIME = new Set([
@@ -134,7 +135,8 @@ Deno.serve(async (req) => {
     if (result === "idempotent") return json({ success: true, data: { message_id: messageId, ai_reply_pending: Boolean(txData?.ai_reply_pending), control_state: "ai", idempotent: true } });
 
     const route = classifyConversationalRoute(normalizedContent);
-    if (route.kind === "clarify" || route.kind === "underspecified") {
+    const knownShortTopic = workflow5ShortTopicHint(normalizedContent);
+    if (!knownShortTopic && (route.kind === "clarify" || route.kind === "underspecified")) {
       const isUnderspecified = route.kind === "underspecified";
       const clarificationRoute = isUnderspecified ? "conversational_underspecified_clarification" : "conversational_clarification";
       const clarificationText = isUnderspecified ? UNDERSPECIFIED_CLARIFICATION[route.language] : NOISE_CLARIFICATION[route.language];
