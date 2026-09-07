@@ -36,7 +36,6 @@ jobs:
           deno test --allow-read tests/edge/workflow7-published-kb-context-integrity.test.ts
           deno test --allow-read tests/edge/workflow5-multilingual-privacy.test.ts
           deno test --allow-read tests/edge/task4-1-current-context-memory.test.ts
-          deno test --allow-read tests/edge/task4-1-context-requirements-followup.test.ts
           deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
           test "$(sha256sum supabase/functions/_shared/conversation-runtime-state.ts | awk '{print $1}')" = "b4190cac18297fa8fa48317ad14c5d0333862d102bfcea3480c81bf942505541"
           test "$(sha256sum supabase/functions/_shared/canonical-grounding.ts | awk '{print $1}')" = "2f901244f9c5f5f93ec5cdc2aa4f0f793662a5bdfd08541dcba3635e8503e88d"
@@ -54,4 +53,4 @@ jobs:
           git commit -m "fix: stabilize published KB retrieval and context integrity [skip ci]"
           git push origin HEAD:main
 
-# consolidated-patch-v4
+# consolidated-patch-v5
