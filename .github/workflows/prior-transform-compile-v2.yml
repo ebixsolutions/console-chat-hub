@@ -1,0 +1,70 @@
+name: Prior Transform Compile Gate V2
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/prior-transform-compile-v2.yml'
+      - 'supabase/functions/_shared/prior-grounded-transform.ts'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Compile authoritative generate-reply
+        run: deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+      - name: Focused current-requirements assertions
+        shell: bash
+        run: |
+          cat > /tmp/prior_transform_gate.ts <<'EOF'
+          import { resolvePriorGroundedTransform } from "${GITHUB_WORKSPACE}/supabase/functions/_shared/prior-grounded-transform.ts";
+          const grounded = {
+            role: "assistant",
+            content: "Smoke Test Growth plan 的商品數量上限是 500 個 SKU，而員工帳戶上限是 5 個。",
+            metadata: {
+              source_message_id: "source-1",
+              citation_lineage: { selected_document_id: "doc-growth", evidence_chunk_ids: ["chunk-growth"] },
+              citations: [{ label: "Products.csv", source_type: "product", relevance: "high", document_id: "doc-growth", chunk_id: "chunk-growth", chunk_type: "full_content" }],
+            },
+          };
+          function history(latest: string) {
+            return [
+              { role: "visitor", content: latest },
+              grounded,
+              { role: "visitor", content: "Growth SKU同staff limit分別係幾多？" },
+              { role: "visitor", content: "我大約300 SKU。" },
+              { role: "visitor", content: "我有4個staff。" },
+              { role: "visitor", content: "App而家有興趣。" },
+              { role: "visitor", content: "我想要Push，亦想用CRM同會員等級。" },
+              { role: "visitor", content: "目前主要市場係香港。" },
+            ];
+          }
+          for (const latest of [
+            "按最新條件總結，唔好沿用上一句。",
+            "請列出最新需求，唔好列舊條件。",
+            "根據目前需求總結我已確認嘅條件。",
+            "Summarize my current requirements, not the previous answer.",
+          ]) {
+            const result = resolvePriorGroundedTransform(latest, history(latest));
+            if (result !== null) throw new Error(`CURRENT_REQUIREMENTS_HIJACK:${latest}`);
+          }
+          for (const latest of ["簡單啲講。", "用英文講一次。", "Summarize that answer in 2 points."]) {
+            const result = resolvePriorGroundedTransform(latest, history(latest));
+            if (result === null) throw new Error(`LEGITIMATE_TRANSFORM_REGRESSION:${latest}`);
+            if (result.selected_document_id !== "doc-growth") throw new Error(`LINEAGE_REGRESSION:${latest}`);
+          }
+          console.log("CURRENT_REQUIREMENTS_BYPASS=PASS");
+          console.log("LEGITIMATE_TRANSFORMS_PRESERVED=PASS");
+          console.log("PRIOR_TRANSFORM_COMPILE_GATE_V2=PASS");
+          EOF
+          sed -i "s|\${GITHUB_WORKSPACE}|${GITHUB_WORKSPACE}|g" /tmp/prior_transform_gate.ts
+          deno run /tmp/prior_transform_gate.ts
