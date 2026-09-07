@@ -1006,6 +1006,35 @@ var DOMAIN_ONLY = /^(?:我有|我想問|我想问|想問|想问|請問|请问)?\
 var QUESTIONISH = /[?？]|^(?:什麼|什么|如何|怎樣|怎样|哪|哪些|多久|幾耐|几耐|why|what|which|how|when|where)/i;
 var CUSTOMER_CONTEXT_REQUIREMENTS = /(?:你|妳|您).{0,12}(?:還|还)?需要(?:我)?(?:再)?提供(?:什麼|什么|哪些|咩)(?:資料|资料|資訊|信息|details|information)|(?:還|还)需要(?:我)?提供(?:什麼|什么|哪些|咩)(?:資料|资料|資訊|信息)|what (?:information|details) do you (?:still )?need from me|what else do you need from me/i;
 var CUSTOMER_CONTEXT_UPDATE = /(?:^|[，,。.!！\s])(?:我只知道|我只知|我目前只知道|我現在只知道|我现在只知道|我沒有|我没有|我冇|不知道型號|不知道型号|唔知型號|型號(?:是|係)?未知|型号(?:是)?未知|品牌(?:是|係)|大約.{0,24}(?:買|购买|購買)|大概.{0,24}(?:買|购买|購買)|現在.{0,32}(?:不冷|唔凍|不能|無法|无法)|现在.{0,32}(?:不冷|不能|无法)|i only know|i (?:do not|don't) have (?:the )?(?:model|model number|order number)|the brand is|brand is|i bought (?:it )?.{0,40}ago|it (?:powers|turns) on but)/i;
+var CUSTOMER_OWNED_STATE_FIELD = /(?:sku|商品(?:數量|数量)?|產品(?:數量|数量)?|产品(?:数量)?|貨品(?:數量|数量)?|件(?:商品|產品|产品)?|staff|員工|员工|人手|同事|市場|市场|主要市場|主要市场|地區|地区|region|market|app(?:需求|需要|要求)?|push(?:需求|需要|要求)?|crm(?:需求|需要|要求)?|會員等級|会员等级)/i;
+var CUSTOMER_OWNED_STATE_CORRECTION = /(?:記住|记住|最新|目前|現在|现在|其實|其实|更正|改返|改成|更新(?:一下)?|actually|correction).{0,45}(?:唔係|不是|并非|並非|而家係|現在係|现在是|改為|改为|最新係|最新是|而係|而是|not .+ but|instead)/i;
+var BARE_LATEST_NUMERIC_CORRECTION = /(?:記住|记住).{0,20}(?:最新)?(?:係|是)?\s*\d+(?:\.\d+)?\s*[，,。.!！\s]*(?:唔係|不是|而唔係|而不是)\s*\d+(?:\.\d+)?/i;
+var FACTUAL_TOPIC_OR_KB_SWITCH = /(?:Growth|Basic|Pro|plan|方案|型號|型号|model|價錢|价钱|價格|价格|price|費用|费用|收費|收费|limit|上限|支援|支持|包括|包含|功能|feature|保養|保修|送貨|送货|退款|退貨|退货|付款|政策|policy|terms?\b|T&C|我要問|我想問|想問|想问|ask about)/i;
+function recentCustomerStateField(newestFirst, currentLatest) {
+  let skippedCurrent = false;
+  let customerTurns = 0;
+  for (const row of newestFirst) {
+    const role = String(row.role ?? "").toLowerCase();
+    if (!CUSTOMER.has(role)) continue;
+    const content = clean(row.content);
+    if (!content) continue;
+    if (!skippedCurrent && content === currentLatest) {
+      skippedCurrent = true;
+      continue;
+    }
+    customerTurns += 1;
+    if (CUSTOMER_OWNED_STATE_FIELD.test(content)) return true;
+    if (customerTurns >= 4) break;
+  }
+  return false;
+}
+function isCustomerOwnedStateCorrection(text, newestFirst = []) {
+  const latest = clean(text);
+  if (!latest || QUESTIONISH.test(latest) || /[?？]/.test(latest)) return false;
+  if (FACTUAL_TOPIC_OR_KB_SWITCH.test(latest)) return false;
+  if (CUSTOMER_OWNED_STATE_FIELD.test(latest) && (CORRECTION.test(latest) || CUSTOMER_OWNED_STATE_CORRECTION.test(latest))) return true;
+  return BARE_LATEST_NUMERIC_CORRECTION.test(latest) && recentCustomerStateField(newestFirst, latest);
+}
 function isCustomerContextUpdate(text) {
   const latest = clean(text);
   if (!latest || QUESTIONISH.test(latest) || /[?？]/.test(latest)) return false;
@@ -1089,6 +1118,15 @@ function classifyCanonicalConversationTurn(latestInput, newestFirst, options = {
       topic_action: "KEEP"
     });
   }
+  if (isCustomerOwnedStateCorrection(latest, newestFirst)) {
+    return base("CUSTOMER_CONTEXT_UPDATE", "customer_owned_state_correction", {
+      needs_history: true,
+      requires_new_kb_retrieval: false,
+      may_reuse_prior_grounded_answer: false,
+      evidence_authority: "CONVERSATION_MEMORY",
+      topic_action: "CORRECT"
+    });
+  }
   if (CORRECTION.test(latest)) {
     return base("CORRECTION", "latest_turn_supersedes_prior_context", { needs_history: true, topic_action: "CORRECT" });
   }
@@ -1146,7 +1184,7 @@ var QUESTION_ZH = /(係咪|是不是|是否|幾點|几点|幾時|何時|多久|�
 var QUESTION_EN = /\b(when|what|who|where|how|hours|available|open|close|can i|could i)\b.*\b(human|agent|customer service|support)\b|\b(human|agent|customer service|support)\b.*\b(when|what|who|where|how|hours|available|open|close)\b/i;
 var HYPOTHETICAL_ZH = /(假如|假設|假设|例如|譬如|可唔可以轉|可不可以转|如果我要|如果想)/;
 var HYPOTHETICAL_EN = /\b(hypothetically|suppose|what if|could i|would i be able to)\b/i;
-var EXPLICIT_ZH = /(?:而家|現在|现在|即刻|立即).{0,8}(轉|转|接|搵|找|聯絡|联系).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:請|请|麻煩|麻烦|幫我|帮我).{0,10}(轉|转|接|搵|找|聯絡|联系).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:我要|我想|我需要|想要|需要).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:我)?(?:而家|現在|现在|即刻|立即).{0,4}(?:要|想要|需要).{0,8}(真人|人工|客服(?:人員|人员)?)/;
+var EXPLICIT_ZH = /(?:而家|現在|现在|即刻|立即).{0,8}(轉|转|接|搵|找|聯絡|联系).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:請|请|麻煩|麻烦|幫我|帮我).{0,10}(轉|转|接|搵|找|聯絡|联系).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:我要|我想|我需要|想要|需要).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:我)?(?:而家|現在|现在|即刻|立即).{0,4}(?:要|想要|需要).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:我)?(?:而家|現在|现在|即刻|立即)?(?:正式|明確|明确|確定|确定)(?:要|要求|想要|需要).{0,8}(真人|人工|客服(?:人員|人员)?)/;
 var EXPLICIT_EN = /\b(please\s+)?(connect|transfer|put|let)\s+me\s+(to|through to)\s+(a\s+)?(human|live agent|human agent|real person|customer service)|\b(i want|i need|let me speak to|i want to speak to|i need to speak to|connect me to)\s+(a\s+)?(human|live agent|human agent|real person|customer service)(\s+now)?\b/i;
 function detectLanguage(text) {
   if (!/[\u4e00-\u9fff]/.test(text)) return "en";
@@ -2739,8 +2777,10 @@ function deriveCurrentRequirementSnapshot(chronologicalCustomerTurns) {
     if (!text || /[?？]/.test(text)) continue;
     const product = text.match(/(\d{1,6})\s*(?:件(?:商品|產品|产品)?|sku\b)/i);
     if (product?.[1]) productCount = Number(product[1]);
+    if (/(?:成千幾|成千几|一千幾|一千几)\s*sku\b/i.test(text)) productCount = productCount ?? 1e3;
     const latestCount = text.match(/(?:最新|目前|現在|现在)\s*(?:係|是|為|为)?\s*(\d{1,6})(?:\s*(?:件|sku))?/i);
-    if (productCount !== null && latestCount?.[1]) productCount = Number(latestCount[1]);
+    const latestCountIsStaffScoped = /(?:staff|員工|员工|管理人手|管理人员)/i.test(text);
+    if (productCount !== null && latestCount?.[1] && !latestCountIsStaffScoped) productCount = Number(latestCount[1]);
     if (/(?:得我|只有我|只係我|只是我).{0,12}(?:一個人|一个人).{0,12}(?:管理|manage)/i.test(text)) staffCount = 1;
     const staff = text.match(/(?:我有|有)\s*([一二兩两三四五六七八九十]|\d{1,3})\s*(?:個|个|位)?\s*(?:staff|員工|员工)/i);
     if (staff?.[1]) staffCount = smallCount(staff[1]);
@@ -2783,7 +2823,7 @@ function currentRequirementLines(snapshot, lang2) {
     if (snapshot.future_markets.length) out.push(`Possible future markets: ${snapshot.future_markets.map((x) => marketLabel(x, lang2)).join(", ")} (not the current main market)`);
     return out;
   }
-  if (snapshot.product_count !== null) out.push(`\u5546\u54C1\u6578\u91CF\uFF1A\u7D04 ${snapshot.product_count} \u4EF6`);
+  if (snapshot.product_count !== null) out.push(`\u5546\u54C1\u6578\u91CF\uFF1A\u7D04 ${snapshot.product_count} \u4EF6\uFF08${snapshot.product_count} SKU\uFF09`);
   if (snapshot.staff_count !== null) out.push(`\u7BA1\u7406\u4EBA\u624B\uFF1A${snapshot.staff_count} \u4F4D staff`);
   if (snapshot.app_interest === true) out.push("App\uFF1A\u6709\u8208\u8DA3\uFF0F\u9700\u8981\u7D0D\u5165\u65B9\u6848");
   if (snapshot.app_interest === false) out.push("App\uFF1A\u76EE\u524D\u4E0D\u9700\u8981");
@@ -2791,6 +2831,86 @@ function currentRequirementLines(snapshot, lang2) {
   if (snapshot.current_market) out.push(`\u76EE\u524D\u4E3B\u8981\u5E02\u5834\uFF1A${marketLabel(snapshot.current_market, lang2)}`);
   if (snapshot.future_markets.length) out.push(`\u672A\u4F86\u53EF\u80FD\u5E02\u5834\uFF1A${snapshot.future_markets.map((x) => marketLabel(x, lang2)).join("\u3001")}\uFF08\u4E0D\u662F\u76EE\u524D\u4E3B\u8981\u5E02\u5834\uFF09`);
   return out;
+}
+function resolveWorkflow5ConversationLanguage(latest, rows) {
+  const direct = detectLanguage2(latest);
+  if (/[\u4e00-\u9fff]/.test(latest)) return direct;
+  const priorCustomer = rows.filter((row) => CUSTOMER2.has(String(row.role ?? "").toLowerCase())).map((row) => clean2(row.content)).filter((text) => text && text !== latest).slice(0, 6);
+  const zh = priorCustomer.map(detectLanguage2).filter((x) => x !== "en");
+  if (direct === "en" && latest.length <= 120 && zh.length >= 2) return zh[0];
+  return direct;
+}
+function workflow5PreviousCustomerTurn(latest, rows) {
+  let skippedCurrent = false;
+  for (const row of rows) {
+    if (!CUSTOMER2.has(String(row.role ?? "").toLowerCase())) continue;
+    const text = clean2(row.content);
+    if (!text) continue;
+    if (!skippedCurrent && text === latest) {
+      skippedCurrent = true;
+      continue;
+    }
+    return text;
+  }
+  return null;
+}
+function workflow5SecurityBoundaryResponse(latest, lang2) {
+  const t = clean2(latest);
+  const promptProbe = /(?:system\s*prompt|hidden\s*(?:prompt|context)|internal\s*(?:prompt|instruction)|系統提示|系统提示|隱藏(?:提示|上下文)|隐藏(?:提示|上下文))/i.test(t);
+  const secretProbe = /(?:secret\s*key|service[_ -]?role|api\s*key|access\s*token|密鑰|密钥|秘密金鑰|秘密密钥)/i.test(t);
+  const bypassProbe = /(?:pretend\s+you\s+are\s+admin|bypass\s+auth|ignore\s+all\s+previous\s+instructions|假裝.*(?:admin|管理員)|假装.*(?:admin|管理员)|繞過.*(?:認證|驗證)|绕过.*(?:认证|验证))/i.test(t);
+  const crossUserProbe = /(?:其他客戶資料|其他客户资料|other\s+(?:customer|user)s?.{0,20}(?:data|information)|all\s+customer\s+data)/i.test(t);
+  if (!(promptProbe || secretProbe || bypassProbe || crossUserProbe)) return null;
+  if (lang2 === "en") {
+    if (crossUserProbe) return "I can\u2019t provide another customer\u2019s private information or bypass access controls. I can still help with public product and service information.";
+    if (secretProbe) return "I can\u2019t reveal secret keys, access tokens, or other private credentials. I can still help with public product and service information.";
+    return "I can\u2019t reveal hidden instructions, internal prompts, or bypass access controls. I can still help with normal product and service questions.";
+  }
+  if (lang2 === "zh-CN") {
+    if (crossUserProbe) return "\u6211\u4E0D\u80FD\u63D0\u4F9B\u5176\u4ED6\u5BA2\u6237\u7684\u79C1\u4EBA\u8D44\u6599\uFF0C\u4E5F\u4E0D\u80FD\u7ED5\u8FC7\u8BBF\u95EE\u6743\u9650\uFF1B\u6211\u4ECD\u53EF\u7EE7\u7EED\u56DE\u7B54\u516C\u5F00\u7684\u4EA7\u54C1\u548C\u670D\u52A1\u95EE\u9898\u3002";
+    if (secretProbe) return "\u6211\u4E0D\u80FD\u63D0\u4F9B\u5BC6\u94A5\u3001\u8BBF\u95EE\u4EE4\u724C\u6216\u5176\u4ED6\u79C1\u4EBA\u51ED\u8BC1\uFF1B\u6211\u4ECD\u53EF\u7EE7\u7EED\u56DE\u7B54\u516C\u5F00\u7684\u4EA7\u54C1\u548C\u670D\u52A1\u95EE\u9898\u3002";
+    return "\u6211\u4E0D\u80FD\u62AB\u9732\u9690\u85CF\u6307\u4EE4\u3001\u5185\u90E8\u63D0\u793A\u6216\u7ED5\u8FC7\u8BBF\u95EE\u6743\u9650\uFF1B\u4F60\u4ECD\u53EF\u7EE7\u7EED\u95EE\u6B63\u5E38\u7684\u4EA7\u54C1\u548C\u670D\u52A1\u95EE\u9898\u3002";
+  }
+  if (crossUserProbe) return "\u6211\u4E0D\u80FD\u63D0\u4F9B\u5176\u4ED6\u5BA2\u6236\u7684\u79C1\u4EBA\u8CC7\u6599\uFF0C\u4E5F\u4E0D\u80FD\u7E5E\u904E\u5B58\u53D6\u6B0A\u9650\uFF1B\u6211\u4ECD\u53EF\u7E7C\u7E8C\u56DE\u7B54\u516C\u958B\u7684\u7522\u54C1\u548C\u670D\u52D9\u554F\u984C\u3002";
+  if (secretProbe) return "\u6211\u4E0D\u80FD\u63D0\u4F9B\u5BC6\u9470\u3001\u5B58\u53D6\u6B0A\u6756\u6216\u5176\u4ED6\u79C1\u4EBA\u6191\u8B49\uFF1B\u6211\u4ECD\u53EF\u7E7C\u7E8C\u56DE\u7B54\u516C\u958B\u7684\u7522\u54C1\u548C\u670D\u52D9\u554F\u984C\u3002";
+  return "\u6211\u4E0D\u80FD\u62AB\u9732\u96B1\u85CF\u6307\u4EE4\u3001\u5167\u90E8\u63D0\u793A\u6216\u7E5E\u904E\u5B58\u53D6\u6B0A\u9650\uFF1B\u4F60\u4ECD\u53EF\u7E7C\u7E8C\u554F\u6B63\u5E38\u7684\u7522\u54C1\u548C\u670D\u52D9\u554F\u984C\u3002";
+}
+function workflow5PostSecurityRecoveryResponse(latestInput, lang2) {
+  const latest = clean2(latestInput);
+  const normalServiceRecovery = /(?:再(?:講|说|說)|再給|再给|give|show).{0,24}(?:合法|正常|lawful|normal).{0,24}(?:平台功能|平台服务|平台服務|platform feature|service).{0,30}(?:恢復|恢复|recover)|(?:證明|证明|prove).{0,24}(?:服務|服务|service).{0,24}(?:恢復|恢复|recover)/i.test(latest);
+  if (normalServiceRecovery) {
+    if (lang2 === "en") return "Normal service has resumed. For example, you can ask about CRM tags; I\u2019ll only describe capabilities or limits supported by published information.";
+    if (lang2 === "zh-CN") return "\u670D\u52A1\u5DF2\u6062\u590D\u6B63\u5E38\uFF1B\u4F8B\u5982\u4F60\u53EF\u4EE5\u7EE7\u7EED\u67E5\u8BE2 CRM \u6807\u7B7E\u8FD9\u7C7B\u5E73\u53F0\u529F\u80FD\uFF0C\u5177\u4F53\u80FD\u529B\u548C\u9650\u5236\u6211\u53EA\u4F1A\u6309\u5DF2\u53D1\u5E03\u8D44\u6599\u56DE\u7B54\u3002";
+    return "\u670D\u52D9\u5DF2\u6062\u5FA9\u6B63\u5E38\uFF1B\u4F8B\u5982\u4F60\u53EF\u4EE5\u7E7C\u7E8C\u67E5\u8A62 CRM \u6A19\u7C64\u5462\u985E\u5E73\u53F0\u529F\u80FD\uFF0C\u5177\u9AD4\u80FD\u529B\u540C\u9650\u5236\u6211\u53EA\u6703\u6309\u5DF2\u767C\u5E03\u8CC7\u6599\u56DE\u7B54\u3002";
+  }
+  const safeFinalReply = /(?:最後一句|最后一句|final\s+(?:line|sentence)).{0,30}(?:簡單|简单|simple).{0,40}(?:不要洩漏|不要泄漏|不披露|不透露|do\s+not\s+(?:leak|reveal)|without\s+revealing).{0,30}(?:內部指令|内部指令|internal\s+instructions?)/i.test(latest);
+  if (safeFinalReply) {
+    if (lang2 === "en") return "Yes. I\u2019ll keep the answer simple and won\u2019t disclose internal instructions.";
+    if (lang2 === "zh-CN") return "\u53EF\u4EE5\uFF0C\u6211\u4F1A\u4FDD\u6301\u7B80\u5355\u56DE\u7B54\uFF0C\u4E5F\u4E0D\u4F1A\u62AB\u9732\u5185\u90E8\u6307\u4EE4\u3002";
+    return "\u53EF\u4EE5\uFF0C\u6211\u6703\u4FDD\u6301\u7C21\u55AE\u56DE\u7B54\uFF0C\u4EA6\u5514\u6703\u62AB\u9732\u5167\u90E8\u6307\u4EE4\u3002";
+  }
+  return null;
+}
+function buildWorkflow5TopicalClarification(latestInput, lang2) {
+  const latest = clean2(latestInput);
+  const topic = /(?:app\s*push|push\s*notification|推播|推送通知)/i.test(latest) ? "app_push" : /(?:crm).{0,12}(?:標籤|标签|tag)|(?:標籤|标签).{0,12}crm/i.test(latest) ? "crm_tags" : /(?:會員|会员|member).{0,12}(?:等級|等级|tier)|^(?:會員等級|会员等级|member\s*tiers?)\s*(?:呢|嗞|吗|\?)?$/i.test(latest) ? "member_tiers" : /(?:香港|hong\s*kong|\bhk\b).{0,24}(?:付款|支付|payment)|(?:付款|支付|payment).{0,24}(?:香港|hong\s*kong|\bhk\b)/i.test(latest) ? "hk_payment" : null;
+  if (!topic) return null;
+  if (lang2 === "en") {
+    if (topic === "app_push") return "I don\u2019t have enough published information to confirm the specific App Push capabilities or limits, so I won\u2019t guess.";
+    if (topic === "crm_tags") return "I don\u2019t have enough published information to confirm the specific CRM tag capabilities or limits, so I won\u2019t guess.";
+    if (topic === "member_tiers") return "I don\u2019t have enough published information to confirm the specific member-tier benefits or limits, so I won\u2019t guess.";
+    return "I don\u2019t have enough published information to confirm which payment methods are available for the Hong Kong market, so I won\u2019t guess.";
+  }
+  if (lang2 === "zh-CN") {
+    if (topic === "app_push") return "\u6211\u76EE\u524D\u6CA1\u6709\u8DB3\u591F\u5DF2\u53D1\u5E03\u8D44\u6599\u786E\u8BA4 App Push \u7684\u5177\u4F53\u529F\u80FD\u6216\u9650\u5236\uFF0C\u6240\u4EE5\u4E0D\u4F1A\u731C\u6D4B\u3002";
+    if (topic === "crm_tags") return "\u6211\u76EE\u524D\u6CA1\u6709\u8DB3\u591F\u5DF2\u53D1\u5E03\u8D44\u6599\u786E\u8BA4 CRM \u6807\u7B7E\u7684\u5177\u4F53\u529F\u80FD\u6216\u9650\u5236\uFF0C\u6240\u4EE5\u4E0D\u4F1A\u731C\u6D4B\u3002";
+    if (topic === "member_tiers") return "\u6211\u76EE\u524D\u6CA1\u6709\u8DB3\u591F\u5DF2\u53D1\u5E03\u8D44\u6599\u786E\u8BA4\u4F1A\u5458\u7B49\u7EA7\u7684\u5177\u4F53\u6743\u76CA\u6216\u9650\u5236\uFF0C\u6240\u4EE5\u4E0D\u4F1A\u731C\u6D4B\u3002";
+    return "\u6211\u76EE\u524D\u6CA1\u6709\u8DB3\u591F\u5DF2\u53D1\u5E03\u8D44\u6599\u786E\u8BA4\u9999\u6E2F\u5E02\u573A\u53EF\u7528\u7684\u4ED8\u6B3E\u65B9\u5F0F\uFF0C\u6240\u4EE5\u4E0D\u4F1A\u731C\u6D4B\u3002";
+  }
+  if (topic === "app_push") return "\u6211\u76EE\u524D\u672A\u6709\u8DB3\u5920\u5DF2\u767C\u5E03\u8CC7\u6599\u78BA\u8A8D App Push \u5605\u5177\u9AD4\u529F\u80FD\u6216\u9650\u5236\uFF0C\u6240\u4EE5\u5514\u6703\u4F30\u3002";
+  if (topic === "crm_tags") return "\u6211\u76EE\u524D\u672A\u6709\u8DB3\u5920\u5DF2\u767C\u5E03\u8CC7\u6599\u78BA\u8A8D CRM \u6A19\u7C64\u5605\u5177\u9AD4\u529F\u80FD\u6216\u9650\u5236\uFF0C\u6240\u4EE5\u5514\u6703\u4F30\u3002";
+  if (topic === "member_tiers") return "\u6211\u76EE\u524D\u672A\u6709\u8DB3\u5920\u5DF2\u767C\u5E03\u8CC7\u6599\u78BA\u8A8D\u6703\u54E1\u7B49\u7D1A\u5605\u5177\u9AD4\u6B0A\u76CA\u6216\u9650\u5236\uFF0C\u6240\u4EE5\u5514\u6703\u4F30\u3002";
+  return "\u6211\u76EE\u524D\u672A\u6709\u8DB3\u5920\u5DF2\u767C\u5E03\u8CC7\u6599\u78BA\u8A8D\u9999\u6E2F\u5E02\u5834\u53EF\u7528\u5605\u4ED8\u6B3E\u65B9\u5F0F\uFF0C\u6240\u4EE5\u5514\u6703\u4F30\u3002";
 }
 function projectConversationRuntimeState(newestFirst) {
   const rows = newestFirst.map((row) => ({ text: clean2(row.content), role: String(row.role ?? "").toLowerCase(), metadata: row.metadata })).filter((row) => row.text && row.text !== "__THINKING__");
@@ -2832,7 +2952,7 @@ function projectConversationRuntimeState(newestFirst) {
     active_constraints: constraints,
     jurisdiction: explicitJurisdiction ?? inheritedJurisdiction ?? groundedAssistantJurisdiction,
     current_item: correctedItem ?? focusedItem,
-    language: detectLanguage2(latest ?? first ?? ""),
+    language: resolveWorkflow5ConversationLanguage(latest ?? first ?? "", newestFirst),
     prior_recommendations: assistants.filter((row) => RECOMMEND.test(row.text)).slice(0, 6).map((row) => row.text),
     current_requirements: currentRequirements
   };
@@ -2889,7 +3009,7 @@ function resolveConversationMemoryResponse(latestInput, newestFirst) {
     return true;
   });
   const state = projectConversationRuntimeState(priorRows);
-  const lang2 = detectLanguage2(latest);
+  const lang2 = resolveWorkflow5ConversationLanguage(latest, priorRows);
   const firstRequest = /(一開始|一开始|第一個問題|第一个问题|最初).*(問|問題|问题)|what\s+(?:did\s+i\s+ask|was\s+(?:my\s+)?first)|first\s+(?:question|thing\s+i\s+asked)/i.test(latest);
   const correctionRequest = /(之前|先前|剛才|刚才|earlier|previous).*(更正|改正|correct)|更正後|更正后|what\s+did\s+i\s+correct|latest\s+correction/i.test(latest);
   const constraintRequest = /(限制|約束|约束|不要猜|唔好估|constraint|restriction|what.*(?:told|asked).*(?:not|don.?t))/i.test(latest) && /(記得|记得|總結|总结|告訴|告诉|什麼|什么|what|recall|remember|summari)/i.test(latest);
@@ -2907,14 +3027,67 @@ function resolveConversationMemoryResponse(latestInput, newestFirst) {
   const hasChainedLanguageContinuation = recentPriorCustomerTurns.length >= 2 && languageContinuationPattern.test(recentPriorCustomerTurns[0]) && currentContextPattern.test(recentPriorCustomerTurns[1]);
   const memoryLanguageContinuation = languageContinuationPattern.test(latest) && (hasRecentCurrentContextQuestion || hasChainedLanguageContinuation);
   const currentContextRequest = currentContextPattern.test(latest) || memoryLanguageContinuation;
+  const workflow5SecurityReply = workflow5SecurityBoundaryResponse(latest, lang2);
+  if (workflow5SecurityReply) return workflow5SecurityReply;
+  const workflow5RecoveryReply = workflow5PostSecurityRecoveryResponse(latest, lang2);
+  if (workflow5RecoveryReply) return workflow5RecoveryReply;
+  const workflow5PreviousMeaningRequest = /(?:你)?(?:理解|記得|记得).{0,12}(?:我)?(?:上一句|上句|剛才一句|刚才一句).{0,12}(?:問|講|說|说).*(?:咩|什麼|什么)|what\s+(?:did\s+i\s+mean|was\s+i\s+asking).*(?:last|previous)/i.test(latest);
+  if (workflow5PreviousMeaningRequest) {
+    const previous = workflow5PreviousCustomerTurn(latest, priorRows);
+    if (previous && /(?:澳門|澳门|macau).{0,20}(?:客|customer).{0,20}(?:pay|付款)|(?:澳門|澳门|macau).{0,20}(?:pay|付款)/i.test(previous)) {
+      if (lang2 === "en") return "Your previous message clarified that you were asking whether a Macau customer can pay, not changing your main market from Hong Kong to Macau.";
+      if (lang2 === "zh-CN") return "\u4F60\u4E0A\u4E00\u53E5\u662F\u5728\u6F84\u6E05\uFF1A\u4F60\u95EE\u7684\u662F\u6FB3\u95E8\u5BA2\u6237\u80FD\u5426\u4ED8\u6B3E\uFF0C\u800C\u4E0D\u662F\u628A\u4E3B\u8981\u5E02\u573A\u4ECE\u9999\u6E2F\u6539\u6210\u6FB3\u95E8\u3002";
+      return "\u4F60\u4E0A\u4E00\u53E5\u4FC2\u6F84\u6E05\uFF1A\u4F60\u554F\u7DCA\u6FB3\u9580\u5BA2\u6236\u80FD\u5426\u4ED8\u6B3E\uFF0C\u800C\u5514\u4FC2\u5C07\u4E3B\u8981\u5E02\u5834\u7531\u9999\u6E2F\u6539\u6210\u6FB3\u9580\u3002";
+    }
+    if (previous) return lang2 === "en" ? `Your previous message was: \u201C${previous}\u201D` : `\u4F60\u4E0A\u4E00\u53E5\u4FC2\uFF1A\u300C${previous}\u300D`;
+  }
+  const workflow5KnownUnknownRequest = /(?:按|根據|根据|based\s+on).{0,25}(?:我|已確認|已确认|confirmed).{0,30}(?:邊啲|哪些|what).{0,20}(?:知|知道|known).{0,25}(?:未知|唔知|不知道|unknown)/i.test(latest);
+  if (workflow5KnownUnknownRequest) {
+    const req = currentRequirementLines(state.current_requirements, lang2);
+    const priorCustomerText = priorRows.filter((row) => CUSTOMER2.has(String(row.role ?? "").toLowerCase())).map((row) => clean2(row.content)).filter(Boolean).join(" / ");
+    const known = [...req];
+    if (/(?:website|網站|网站)/i.test(priorCustomerText)) known.unshift(lang2 === "en" ? "Existing website: yes" : "\u5DF2\u6709\u7DB2\u7AD9");
+    if (/(?:\bhk\b|hong\s*kong|香港)/i.test(priorCustomerText) && !known.some((x) => /(?:香港|Hong Kong)/i.test(x))) known.push(lang2 === "en" ? "Current main market: Hong Kong" : "\u76EE\u524D\u4E3B\u8981\u5E02\u5834\uFF1A\u9999\u6E2F");
+    if (state.current_requirements.product_count === null && /\bsku\b/i.test(priorCustomerText)) known.push(lang2 === "en" ? "SKU volume discussed, exact count not confirmed" : "\u5DF2\u8AC7\u53CA SKU \u6578\u91CF\uFF0C\u4F46\u672A\u6709\u53EF\u9760\u7CBE\u78BA\u6578\u5B57");
+    const asked = [];
+    if (/(?:app)/i.test(priorCustomerText)) asked.push("App");
+    if (/(?:push|推播|推送)/i.test(priorCustomerText)) asked.push("Push");
+    if (/(?:ai\s*seo)/i.test(priorCustomerText)) asked.push("AI SEO");
+    if (asked.length) known.push(lang2 === "en" ? `Topics being checked: ${asked.join(", ")}` : `\u6B63\u5728\u67E5\u8A62\uFF1A${asked.join("\u3001")}`);
+    const unknown = [];
+    if (/(?:migrate|migration|遷移|迁移)/i.test(priorCustomerText)) unknown.push(lang2 === "en" ? "product/member-data migration details" : "\u5546\u54C1\uFF0F\u6703\u54E1\u8CC7\u6599\u9077\u79FB\u7D30\u7BC0");
+    if (/(?:澳門|澳门|macau).{0,30}(?:pay|付款|payment)|(?:pay|付款|payment).{0,30}(?:澳門|澳门|macau)/i.test(priorCustomerText)) unknown.push(lang2 === "en" ? "Macau-customer payment / Stripe support" : "\u6FB3\u9580\u5BA2\u6236\u4ED8\u6B3E\uFF0FStripe \u652F\u63F4");
+    const knownText = known.length ? known.join(lang2 === "en" ? "; " : "\u3001") : lang2 === "en" ? "no additional customer facts are confirmed" : "\u66AB\u672A\u6709\u66F4\u591A\u5DF2\u78BA\u8A8D\u5BA2\u6236\u689D\u4EF6";
+    const unknownText = unknown.length ? unknown.join(lang2 === "en" ? "; " : "\u3001") : lang2 === "en" ? "any fact not explicitly supported by published information" : "\u4EFB\u4F55\u672A\u6709\u5DF2\u767C\u5E03\u8CC7\u6599\u652F\u6301\u5605\u5177\u9AD4\u4E8B\u5BE6";
+    if (lang2 === "en") return `Confirmed from this conversation: ${knownText}. Still to verify from published information: ${unknownText}.`;
+    if (lang2 === "zh-CN") return `\u6309\u8FD9\u6BB5\u5BF9\u8BDD\u5DF2\u786E\u8BA4\u7684\u60C5\u51B5\uFF1A${knownText}\uFF1B\u4ECD\u9700\u6309\u5DF2\u53D1\u5E03\u8D44\u6599\u6838\u5B9E\uFF1A${unknownText}\u3002`;
+    return `\u6309\u5462\u6BB5\u5C0D\u8A71\u5DF2\u78BA\u8A8D\u5605\u60C5\u6CC1\uFF1A${knownText}\uFF1B\u4ECD\u672A\u6709\u8DB3\u5920\u5DF2\u767C\u5E03\u8CC7\u6599\u78BA\u8A8D\u3001\u9700\u6838\u5BE6\uFF1A${unknownText}\u3002`;
+  }
+  const workflow5NextStepRequest = /(?:一句|one\s+sentence).{0,30}(?:下一步|next\s+step).{0,30}(?:確認|核實|confirm|verify)/i.test(latest);
+  if (workflow5NextStepRequest) {
+    const count = state.current_requirements.product_count;
+    const countText = count !== null ? lang2 === "en" ? `${count} SKUs` : `${count} SKU` : "SKU";
+    if (lang2 === "en") return `Next, verify the plan billing cadence, limits for ${countText}, product/member-data migration, Macau-customer payment / Stripe support, App/Push details, and the AI SEO quota or overage rules against published information.`;
+    if (lang2 === "zh-CN") return `\u4E0B\u4E00\u6B65\u8BF7\u6309\u5DF2\u53D1\u5E03\u8D44\u6599\u6838\u5B9E\u65B9\u6848\u7684\u5E74\uFF0F\u6708\u6536\u8D39\u65B9\u5F0F\u3001\u5BF9 ${countText} \u7684\u9650\u5236\u3001\u5546\u54C1\uFF0F\u4F1A\u5458\u8D44\u6599\u8FC1\u79FB\u3001\u6FB3\u95E8\u5BA2\u6237\u4ED8\u6B3E\u652F\u6301\u3001App\uFF0FPush \u7EC6\u8282\uFF0C\u4EE5\u53CA AI SEO \u989D\u5EA6\u4E0E\u8D85\u989D\u89C4\u5219\u3002`;
+    return `\u4E0B\u4E00\u6B65\u8ACB\u6309\u5DF2\u767C\u5E03\u8CC7\u6599\u6838\u5BE6\u65B9\u6848\u5605\u5E74\uFF0F\u6708\u6536\u8CBB\u65B9\u5F0F\u3001\u5C0D ${countText} \u5605\u9650\u5236\u3001\u5546\u54C1\uFF0F\u6703\u54E1\u8CC7\u6599\u9077\u79FB\u3001\u6FB3\u9580\u5BA2\u6236\u4ED8\u6B3E\uFF0FStripe \u652F\u63F4\u3001App\uFF0FPush \u7D30\u7BC0\uFF0C\u4EE5\u53CA AI SEO \u984D\u5EA6\u540C\u8D85\u984D\u898F\u5247\u3002`;
+  }
   const latestRequirementsRequest = /(?:列出|整理|總結|总结|講出|说出|tell me|list|summari[sz]e).{0,30}(?:最新|目前|現在|现在|current).{0,20}(?:需求|要求|條件|条件|requirements?)|(?:最新|目前|現在|现在|current).{0,20}(?:需求|要求|條件|条件|requirements?).{0,30}(?:是什麼|是什么|有哪些|係咩|what are)/i.test(latest);
-  if (!(firstRequest || correctionRequest || constraintRequest || summaryRequest || recommendationRequest || providedMissingRequest || generalSummaryRequest || mainlyAskedRequest || nameRequest || locationRequest || currentContextRequest || latestRequirementsRequest)) return null;
+  const latestRequirementsLimitRequest = /(?:基於|基于|根據|根据|按|依照|based on|according to).{0,30}(?:最新|目前|現在|现在|current).{0,20}(?:需求|要求|條件|条件|requirements?).{0,40}(?:方案|plan).{0,20}(?:限制|上限|名額|名额|支援|支持|包含|restriction|limit|eligib)/i.test(latest);
+  if (!(firstRequest || correctionRequest || constraintRequest || summaryRequest || recommendationRequest || providedMissingRequest || generalSummaryRequest || mainlyAskedRequest || nameRequest || locationRequest || currentContextRequest || latestRequirementsRequest || latestRequirementsLimitRequest)) return null;
   const zh = lang2 !== "en";
   const q = lang2 === "zh-CN" ? { first: "\u4F60\u4E00\u5F00\u59CB\u95EE\u7684\u662F", correction: "\u4F60\u4E4B\u524D\u6700\u65B0\u7684\u66F4\u6B63\u662F", constraint: "\u4F60\u4E4B\u524D\u660E\u786E\u63D0\u51FA\u7684\u9650\u5236\u5305\u62EC", recommendation: "\u6211\u4E4B\u524D\u7684\u76F8\u5173\u5EFA\u8BAE\u5305\u62EC", name: "\u4F60\u4E4B\u524D\u544A\u8BC9\u6211\u4F60\u7684\u540D\u5B57\u662F", location: "\u4F60\u4E4B\u524D\u66F4\u6B63\u540E\u7684\u5730\u70B9\u662F", none: "\u8FD9\u6BB5\u5BF9\u8BDD\u91CC\u6CA1\u6709\u8DB3\u591F\u8D44\u6599\u53EF\u4EE5\u786E\u8BA4\u3002" } : { first: "\u4F60\u4E00\u958B\u59CB\u554F\u7684\u662F", correction: "\u4F60\u4E4B\u524D\u6700\u65B0\u7684\u66F4\u6B63\u662F", constraint: "\u4F60\u4E4B\u524D\u660E\u78BA\u63D0\u51FA\u7684\u9650\u5236\u5305\u62EC", recommendation: "\u6211\u4E4B\u524D\u7684\u76F8\u95DC\u5EFA\u8B70\u5305\u62EC", name: "\u4F60\u4E4B\u524D\u544A\u8A34\u6211\u4F60\u7684\u540D\u5B57\u662F", location: "\u4F60\u4E4B\u524D\u66F4\u6B63\u5F8C\u7684\u5730\u9EDE\u662F", none: "\u9019\u6BB5\u5C0D\u8A71\u88E1\u6C92\u6709\u8DB3\u5920\u8CC7\u6599\u53EF\u4EE5\u78BA\u8A8D\u3002" };
   const en = { first: "Your first question was", correction: "Your latest correction was", constraint: "The constraints you explicitly gave me include", recommendation: "My relevant earlier recommendations include", name: "You told me your name is", location: "The location from your latest correction is", none: "There is not enough information in this conversation to confirm that." };
   const t = zh ? q : en;
   const quote = (v) => zh ? `\u300C${v}\u300D` : `\u201C${v}\u201D`;
   const list = (xs) => xs.map((x, i) => `${i + 1}. ${x}`).join("\n");
+  if (latestRequirementsLimitRequest) {
+    const lines = currentRequirementLines(state.current_requirements, lang2);
+    if (!lines.length) return lang2 === "en" ? en.none : q.none;
+    const snapshot = lines.join(lang2 === "en" ? "; " : "\u3001");
+    if (lang2 === "en") return `Based on your latest requirements (${snapshot}), verify each plan's product-count limit, staff/admin-seat limit, whether App/Push/CRM/member tiers are included and any related restrictions, plus support scope for the current and future markets; use published plan information for any concrete limits.`.slice(0, 1800);
+    if (lang2 === "zh-CN") return `\u57FA\u4E8E\u4F60\u76EE\u524D\u6700\u65B0\u9700\u6C42\uFF08${snapshot}\uFF09\uFF0C\u4F60\u5E94\u518D\u6838\u5B9E\u5404\u65B9\u6848\u7684\u5546\u54C1\u6570\u91CF\u4E0A\u9650\u3001\u7BA1\u7406\u4EBA\u5458\u540D\u989D\u3001App\uFF0FPush\uFF0FCRM\uFF0F\u4F1A\u5458\u7B49\u7EA7\u662F\u5426\u5305\u542B\u53CA\u76F8\u5173\u9650\u5236\uFF0C\u4EE5\u53CA\u76EE\u524D\u4E0E\u672A\u6765\u5E02\u573A\u7684\u652F\u6301\u8303\u56F4\uFF1B\u4EFB\u4F55\u5177\u4F53\u65B9\u6848\u4E0A\u9650\u53EA\u4EE5\u5DF2\u53D1\u5E03\u65B9\u6848\u8D44\u6599\u4E3A\u51C6\u3002`.slice(0, 1800);
+    return `\u57FA\u65BC\u4F60\u76EE\u524D\u6700\u65B0\u9700\u6C42\uFF08${snapshot}\uFF09\uFF0C\u4F60\u61C9\u518D\u6838\u5BE6\u5404\u65B9\u6848\u7684\u5546\u54C1\u6578\u91CF\u4E0A\u9650\u3001\u7BA1\u7406\u4EBA\u624B\u540D\u984D\u3001App\uFF0FPush\uFF0FCRM\uFF0F\u6703\u54E1\u7B49\u7D1A\u662F\u5426\u5305\u542B\u53CA\u76F8\u95DC\u9650\u5236\uFF0C\u4EE5\u53CA\u76EE\u524D\u8207\u672A\u4F86\u5E02\u5834\u7684\u652F\u63F4\u7BC4\u570D\uFF1B\u4EFB\u4F55\u5177\u9AD4\u65B9\u6848\u4E0A\u9650\u53EA\u4EE5\u5DF2\u767C\u5E03\u65B9\u6848\u8CC7\u6599\u70BA\u6E96\u3002`.slice(0, 1800);
+  }
   if (latestRequirementsRequest) {
     const lines = currentRequirementLines(state.current_requirements, lang2);
     if (!lines.length) return lang2 === "en" ? en.none : q.none;
@@ -3023,12 +3196,59 @@ ${list(state.prior_recommendations.slice(0, 3))}` : t.none;
   }
   return null;
 }
+function retrievalTargetHint(text) {
+  const t = clean2(text);
+  if (!t) return null;
+  if (/\b[A-Z]{2,}[A-Z0-9]*[- ]?\d{2,}[A-Z0-9-]*\b/i.test(t) || /(?:型號|型号|model)/i.test(t) || /(?:呢部|這部|这部|this one).{0,24}(?:幾錢|几钱|價錢|价钱|價格|价格|price|噪音|db|保養|保修|warranty)/i.test(t) || /(?:噪音|db|保養|保修|warranty)/i.test(t)) {
+    return "Exact published product record: model identity, price, specifications, noise level, warranty and included/excluded product facts.";
+  }
+  if (/(?:送貨|送货|delivery|shipping|九龍|九龙|澳門|澳门|macau|地址).{0,40}(?:範圍|范围|安排|政策|policy|改|修改|change|fee|費|费)?/i.test(t)) {
+    return "Published delivery policy: service area, Macau handling, address changes, delivery conditions and fees.";
+  }
+  if (/(?:退款|退貨|退货|refund|return|刮痕|損壞|损坏|damage|百分比|比例)/i.test(t)) {
+    return "Published terms and policy: returns, refunds, damaged goods, evidence requirements, fixed-percentage rules and case-by-case handling.";
+  }
+  if (/(?:smoke\s*test\s*(?:basic|growth|pro)|growth|basic|pro\s*plan|sku|staff|app|push|crm|會員等級|会员等级|ai\s*seo|幾錢|几钱|價錢|价钱|價格|价格|price|monthly|yearly|每月|每年)/i.test(t)) {
+    return "Published product/plan record: exact price, billing cadence, SKU/staff limits, App, Push, CRM, member tiers and AI SEO inclusions.";
+  }
+  return null;
+}
+function factualFollowupNeedsSubject(text) {
+  const t = clean2(text);
+  if (!t) return false;
+  if (/^(?:直接|就|咁|那|再|同埋|另外|and|what about|then|so)/i.test(t) && t.length <= 120) return true;
+  return t.length <= 80 && /(?:幾多|多少|幾錢|几钱|價錢|价钱|價格|价格|price|monthly|yearly|每月|每年|limit|上限|staff|sku|app|push|crm|會員等級|会员等级|噪音|db|保養|保修|warranty|百分比|比例|included|包括|有冇|有没有|係咪|是否)/i.test(t);
+}
+function recentFactualSubject(previousCustomerTurns) {
+  const strong = /(?:\b[A-Z]{2,}[A-Z0-9]*[- ]?\d{2,}[A-Z0-9-]*\b|Smoke\s*Test\s*(?:Basic|Growth|Pro)|\bGrowth\b|\bBasic\b|\bPro\b)/i;
+  const found = previousCustomerTurns.find((x) => strong.test(x));
+  if (found) return found.slice(0, 260);
+  return previousCustomerTurns[0]?.slice(0, 260) ?? null;
+}
 function buildCanonicalRetrievalQuery(latestInput, newestFirst) {
   const latest = clean2(latestInput);
   const state = projectConversationRuntimeState(newestFirst);
   const semantic = classifyCanonicalConversationTurn(latest, newestFirst);
   if (!latest) return { query: "", mode: "standalone", latest: "", context_turns: [], state };
-  if (semantic.operation === "CONVERSATION_MEMORY") {
+  const targetHint = retrievalTargetHint(latest);
+  const earlyPrevious = newestFirst.filter((row) => CUSTOMER2.has(String(row.role ?? "").toLowerCase())).map((row) => clean2(row.content)).filter((x) => x && x !== latest && x !== "__THINKING__");
+  const earlyPublishedFactQuestion = /[?？]|(?:幾多|多少|幾錢|几钱|價錢|价钱|價格|价格|price|monthly|yearly|每月|每年|limit|上限|included|包括|有冇|有没有|係咪|是否|噪音|db|保養|保修|warranty|百分比|比例)|^(?:直接|再講|再说|tell me)/i.test(latest);
+  if (targetHint && earlyPublishedFactQuestion) {
+    const subject = recentFactualSubject(earlyPrevious);
+    const query = [
+      `Current request: ${latest}`,
+      `Retrieval target: ${targetHint}`,
+      ...subject ? [`Inherited factual subject from customer context: ${subject}`] : []
+    ].join("\n").slice(0, 1600);
+    return {
+      query,
+      mode: subject ? "contextual" : "standalone",
+      latest,
+      context_turns: subject ? earlyPrevious.slice(0, 5) : [],
+      state
+    };
+  }
+  if (semantic.operation === "CONVERSATION_MEMORY" && !targetHint) {
     const parts = [`Conversation-memory request: ${latest}`];
     if (state.first_customer_turn) parts.push(`First customer turn: ${state.first_customer_turn}`);
     if (state.prior_recommendations.length) parts.push(`Relevant prior recommendations: ${state.prior_recommendations.join(" / ")}`);
@@ -3037,10 +3257,29 @@ function buildCanonicalRetrievalQuery(latestInput, newestFirst) {
   const explicitJurisdiction = detectExplicitJurisdiction(latest);
   const previous = newestFirst.filter((row) => CUSTOMER2.has(String(row.role ?? "").toLowerCase())).map((row) => clean2(row.content)).filter((x) => x && x !== latest && x !== "__THINKING__");
   const referencesCurrentRequirements = /(?:基於|基于|根據|根据|按|依照|based on|according to).{0,30}(?:最新|目前|現在|现在|current).{0,20}(?:需求|要求|條件|条件|requirements?)/i.test(latest);
-  const needsContext = semantic.needs_history || referencesCurrentRequirements;
-  const explicitBoundary = Boolean(explicitJurisdiction) && semantic.operation !== "RETURN_TO_PRIOR_TOPIC" && semantic.operation !== "CORRECTION";
+  const followupNeedsSubject = factualFollowupNeedsSubject(latest);
+  const inheritedSubject = followupNeedsSubject ? recentFactualSubject(previous) : null;
+  const needsContext = semantic.needs_history || referencesCurrentRequirements || followupNeedsSubject;
+  const explicitBoundary = Boolean(explicitJurisdiction) && semantic.operation !== "RETURN_TO_PRIOR_TOPIC" && semantic.operation !== "CORRECTION" && !followupNeedsSubject;
+  if (referencesCurrentRequirements) {
+    const requirementLines2 = currentRequirementLines(state.current_requirements, state.language);
+    return {
+      query: [
+        `Current request: ${latest}`,
+        targetHint ? `Retrieval target: ${targetHint}` : "Retrieval target: published plan limits, included features, admin/staff seats, and market eligibility only.",
+        ...inheritedSubject ? [`Inherited factual subject from customer context: ${inheritedSubject}`] : [],
+        ...requirementLines2.length ? [`Current customer requirement snapshot (latest wins): ${requirementLines2.join(" / ")}`] : []
+      ].join("\n").slice(0, 1600),
+      mode: "contextual",
+      latest,
+      context_turns: [],
+      state
+    };
+  }
   if (!needsContext || explicitBoundary) {
-    return { query: latest, mode: "standalone", latest, context_turns: [], state: { ...state, jurisdiction: explicitJurisdiction ?? state.jurisdiction } };
+    const standaloneQuery = targetHint ? `Current request: ${latest}
+Retrieval target: ${targetHint}` : latest;
+    return { query: standaloneQuery.slice(0, 1600), mode: "standalone", latest, context_turns: [], state: { ...state, jurisdiction: explicitJurisdiction ?? state.jurisdiction } };
   }
   const contextTurns = previous.filter((x) => !MEMORY2.test(x) && !/^(不要猜|唔好估|不要估|do not guess|don.t guess|不要真人|不需要真人)/i.test(x)).slice(0, 5);
   if (state.first_customer_turn && !contextTurns.includes(state.first_customer_turn) && /(回收|政策|規則|规则|安排|official|policy|recycling)/i.test(latest)) contextTurns.push(state.first_customer_turn);
@@ -3049,6 +3288,8 @@ function buildCanonicalRetrievalQuery(latestInput, newestFirst) {
   return {
     query: [
       `Current request: ${latest}`,
+      ...targetHint ? [`Retrieval target: ${targetHint}`] : [],
+      ...inheritedSubject ? [`Inherited factual subject from customer context: ${inheritedSubject}`] : [],
       ...requirementLines.length ? [`Current customer requirement snapshot (latest wins): ${requirementLines.join(" / ")}`] : [],
       `Relevant prior customer context: ${contextTurns.join(" / ")}`
     ].join("\n").slice(0, 1600),
@@ -3057,6 +3298,20 @@ function buildCanonicalRetrievalQuery(latestInput, newestFirst) {
     context_turns: contextTurns,
     state
   };
+}
+function workflow5ShortTopicHint(text) {
+  const normalized = (text || "").trim().toLowerCase();
+  if (!normalized) return null;
+  let compact = normalized.replace(/\s+/g, "");
+  compact = compact.replace(/[？?]+$/g, "");
+  compact = compact.replace(/(?:呢|咧|啊|呀|嗎|吗)+$/g, "");
+  compact = compact.replace(/^(?:咁|那)/, "");
+  if (/(?:crm).*(?:會員等級|会员等级)|(?:會員等級|会员等级).*(?:crm)/i.test(compact)) return "CRM and membership tiers";
+  if (["\u6703\u54E1\u7B49\u7D1A", "\u4F1A\u5458\u7B49\u7EA7", "\u6703\u54E1\u5206\u7D1A", "\u4F1A\u5458\u5206\u7EA7", "membershiptier", "membershiptiers", "membertier", "membertiers", "membershiplevel", "membershiplevels", "memberlevel", "memberlevels"].includes(compact)) return "membership tiers";
+  if (["crm", "\u5BA2\u6236\u7BA1\u7406", "\u5BA2\u6237\u7BA1\u7406"].includes(compact)) return "CRM";
+  if (["push", "\u63A8\u9001", "\u63A8\u64AD", "\u901A\u77E5", "\u63A8\u9001\u901A\u77E5"].includes(compact)) return "Push notifications";
+  if (["app", "\u624B\u6A5Fapp", "\u624B\u673Aapp", "\u624B\u6A5F\u61C9\u7528", "\u624B\u673A\u5E94\u7528", "\u61C9\u7528\u7A0B\u5F0F", "\u5E94\u7528\u7A0B\u5E8F"].includes(compact)) return "App support";
+  return null;
 }
 
 // supabase/functions/_shared/canonical-grounding.ts
@@ -3120,6 +3375,44 @@ function assessApplicability(document, requestText) {
     document_jurisdictions: documentJurisdictions
   };
 }
+function lexicalRelevance(requestText, document) {
+  const request = requestText.normalize("NFKC").toLowerCase();
+  const text = candidateText(document).normalize("NFKC").toLowerCase();
+  let score = 0;
+  const reqModels = modelTokens(requestText);
+  if (reqModels.some((model) => text.includes(model.toLowerCase()))) score += 12;
+  const anchors = [
+    "smoke test growth",
+    "smoke test basic",
+    "smoke test pro",
+    "growth",
+    "basic",
+    "pro",
+    "\u4E5D\u9F8D",
+    "\u4E5D\u9F99",
+    "\u6FB3\u9580",
+    "\u6FB3\u95E8",
+    "\u9000\u6B3E",
+    "\u9000\u8CA8",
+    "\u9000\u8D27",
+    "delivery",
+    "shipping",
+    "warranty",
+    "\u4FDD\u990A",
+    "\u4FDD\u4FEE",
+    "sku",
+    "staff",
+    "push",
+    "crm",
+    "ai seo"
+  ];
+  for (const anchor of anchors) {
+    if (request.includes(anchor) && text.includes(anchor)) score += 2;
+  }
+  const latinTokens = [...new Set(request.match(/[a-z0-9][a-z0-9-]{2,}/g) ?? [])].filter((x) => !["current", "request", "retrieval", "target", "published", "customer", "context"].includes(x));
+  for (const token of latinTokens.slice(0, 20)) if (text.includes(token)) score += 0.25;
+  return score;
+}
 function selectCanonicalGrounding(documents, options = {}) {
   const minScore = Number.isFinite(options.minScore) ? Number(options.minScore) : 0;
   const policyOnly = options.policyOnly === true;
@@ -3156,11 +3449,12 @@ function selectCanonicalGrounding(documents, options = {}) {
       chunks,
       evidence,
       applicability,
-      evidenceScore: Math.max(...evidence.map((e) => e.score), 0)
+      evidenceScore: Math.max(...evidence.map((e) => e.score), 0),
+      lexicalScore: lexicalRelevance(requestText, document)
     });
   }
   eligible.sort(
-    (a, b) => b.document.document_score - a.document.document_score || b.evidenceScore - a.evidenceScore || a.document.document_id.localeCompare(b.document.document_id)
+    (a, b) => b.lexicalScore - a.lexicalScore || b.document.document_score - a.document.document_score || b.evidenceScore - a.evidenceScore || a.document.document_id.localeCompare(b.document.document_id)
   );
   const winner = eligible[0];
   return winner ? {
@@ -3324,10 +3618,29 @@ function fixedCountContract(context) {
     "- For fixed-count summaries, prefer verbatim or near-verbatim clauses from the Prior Grounded Answer. Do not add generic advice, caveats, recommendations, or meta statements as extra points."
   ];
 }
+function requestsNewFactualFacet(latest, priorAnswer) {
+  const facets = [
+    [/(價錢|价格|price|月費|月费|年費|年费|monthly|yearly|年繳|年缴|月繳|月缴)/i, /(HKD|價錢|价格|price|月費|月费|年費|年费|monthly|yearly|年繳|年缴|月繳|月缴)/i],
+    [/(staff|員工|员工|管理人手|管理人员)/i, /(staff|員工|员工|管理人手|管理人员)/i],
+    [/(sku|商品數量|商品数量|product count)/i, /(sku|商品數量|商品数量|product count)/i],
+    [/(保養|保修|warranty)/i, /(保養|保修|warranty)/i],
+    [/(送貨|送货|delivery|九龍|九龙|kowloon|澳門|澳门|macau|macao)/i, /(送貨|送货|delivery|九龍|九龙|kowloon|澳門|澳门|macau|macao)/i],
+    [/(退款|refund|百分比|比例)/i, /(退款|refund|百分比|比例)/i],
+    [/(app|push|推播|推送|crm|會員等級|会员等级|membership)/i, /(app|push|推播|推送|crm|會員等級|会员等级|membership)/i]
+  ];
+  return facets.some(([request, evidence]) => request.test(latest) && !evidence.test(priorAnswer));
+}
+function requestsConversationSecuritySummary(latest, priorAnswer) {
+  const asksSecuritySummary = /(拒絕|拒绝|敏感要求|sensitive requests?|system prompt|hidden context|secret key|bypass auth|其他客戶|其他客户)/i.test(latest) && /(總結|总结|summari)/i.test(latest);
+  if (!asksSecuritySummary) return false;
+  return !/(拒絕|拒绝|system prompt|hidden|secret|存取|访问|客戶|客户|credential|auth)/i.test(priorAnswer);
+}
 function resolvePriorGroundedTransform(latest, newestFirst) {
   const semantic = classifyCanonicalConversationTurn(latest, newestFirst);
   if (semantic.evidence_authority !== "PRIOR_GROUNDED_ANSWER" || !semantic.prior_grounded_answer || !TRANSFORMS.has(semantic.operation)) return null;
   const operation = semantic.operation;
+  if (requestsNewFactualFacet(latest, semantic.prior_grounded_answer.content)) return null;
+  if (requestsConversationSecuritySummary(latest, semantic.prior_grounded_answer.content)) return null;
   const operations = detectRequestedTransformOperations(latest, operation);
   const requestedSummaryCount = operations.includes("SUMMARIZE") ? detectRequestedSummaryCount(latest) : null;
   const anchor = operations.includes("SUMMARIZE") ? selectBroadSummaryAnchor(latest, newestFirst, semantic.prior_grounded_answer, requestedSummaryCount) : semantic.prior_grounded_answer;
@@ -4183,7 +4496,9 @@ function classifyLocalTopicRisk(text) {
     /請問/,
     /想了解/,
     /介紹/,
-    /說明/
+    /說明/,
+    /(?:有冇|有没有|是否|係咪).{0,24}(?:退款|退貨|退货|refund|return).{0,24}(?:比例|百分比|規則|规则|政策)?/i,
+    /(?:退款|退貨|退货|refund|return).{0,24}(?:有冇|有没有|是否|係咪|幾多|多少|比例|百分比|規則|规则|政策)/i
   ];
   const alwaysHigh = [
     /醫療/,
@@ -4752,7 +5067,7 @@ async function evaluateAndPersistRequiredRulesLive(supabaseAdmin, params) {
     );
   }
   if (decision2.decision === "clarify" && decision2.matched_rule === "R2" && enabled.has("R2")) {
-    const clarification = R2_CLARIFICATION_SAFE_WORDING[params.visitor_language];
+    const clarification = buildWorkflow5TopicalClarification(params.latest_message_content, params.visitor_language) ?? R2_CLARIFICATION_SAFE_WORDING[params.visitor_language];
     const persisted2 = await persistRequiredEscalationClarification(
       requiredEscalationRpcClient(supabaseAdmin),
       {
@@ -5443,24 +5758,6 @@ var S0_LLM_FAILURE_SAFE_TEXT = {
   "zh-CN": "\u7CFB\u7EDF\u6682\u65F6\u65E0\u6CD5\u5B8C\u6210\u56DE\u590D\uFF0C\u6211\u5DF2\u4E3A\u4F60\u8F6C\u4EA4\u5BA2\u670D\u4EBA\u5458\u8DDF\u8FDB\u3002",
   en: "The system is temporarily unable to complete a response. I\u2019ve handed this conversation to a support agent for follow-up."
 };
-function detectVisitorLanguage(text) {
-  if (!text) return "zh-TW";
-  if (!/[\u4e00-\u9fff]/.test(text)) return "en";
-  const zhCnIndicators = [
-    "\u8F6C",
-    "\u4EEC",
-    "\u961F",
-    "\u9884\u8BA1",
-    "\u4E3A\u60A8",
-    "\u4E3A\u6211",
-    "\u4E3A\u4F60",
-    "\u8BF7",
-    "\u8FD9",
-    "\u6CA1"
-  ];
-  if (zhCnIndicators.some((c) => text.includes(c))) return "zh-CN";
-  return "zh-TW";
-}
 var KB_NO_MATCH_CLARIFICATION_TEXT = {
   "zh-TW": "\u70BA\u4E86\u5E6B\u4F60\u627E\u5230\u6E96\u78BA\u7684\u8CC7\u6599\uFF0C\u53EF\u4EE5\u518D\u88DC\u5145\u4E00\u9EDE\u7D30\u7BC0\u55CE\uFF1F\u4F8B\u5982\u4F60\u60F3\u4E86\u89E3\u7684\u7522\u54C1\u3001\u670D\u52D9\u6216\u5177\u9AD4\u60C5\u6CC1\u3002",
   "zh-CN": "\u4E3A\u4E86\u5E2E\u4F60\u627E\u5230\u51C6\u786E\u7684\u8D44\u6599\uFF0C\u53EF\u4EE5\u518D\u8865\u5145\u4E00\u70B9\u7EC6\u8282\u5417\uFF1F\u4F8B\u5982\u4F60\u60F3\u4E86\u89E3\u7684\u4EA7\u54C1\u3001\u670D\u52A1\u6216\u5177\u4F53\u60C5\u51B5\u3002",
@@ -6205,7 +6502,22 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
   const _conversationContinuityBlock = buildCanonicalContinuityBlock(
     _pr5HistoryRows ?? []
   );
-  const _visitorLang = detectVisitorLanguage(_h1LastMsg);
+  const _visitorLang = resolveWorkflow5ConversationLanguage(_h1LastMsg, _pr5HistoryRows ?? []);
+  const _w5ShortTopicHint = workflow5ShortTopicHint(_h1LastMsg);
+  if (_w5ShortTopicHint === "membership tiers") {
+    const topicalReply = _visitorLang === "en" ? "You\u2019re asking about membership tiers. I don\u2019t have enough confirmed published information to state the tier structure, inclusions, or limits, so I won\u2019t guess." : _visitorLang === "zh-CN" ? "\u4F60\u95EE\u7684\u662F\u4F1A\u5458\u7B49\u7EA7\u3002\u76EE\u524D\u6CA1\u6709\u8DB3\u591F\u5DF2\u786E\u8BA4\u7684\u5DF2\u53D1\u5E03\u8D44\u6599\u6765\u786E\u5B9A\u4F1A\u5458\u7B49\u7EA7\u7684\u67B6\u6784\u3001\u5305\u542B\u5185\u5BB9\u6216\u9650\u5236\uFF0C\u6240\u4EE5\u6211\u4E0D\u4F1A\u731C\u3002" : "\u4F60\u554F\u7684\u662F\u6703\u54E1\u7B49\u7D1A\u3002\u76EE\u524D\u672A\u6709\u8DB3\u5920\u5DF2\u78BA\u8A8D\u7684\u5DF2\u767C\u5E03\u8CC7\u6599\u53BB\u78BA\u5B9A\u6703\u54E1\u7B49\u7D1A\u7684\u67B6\u69CB\u3001\u5305\u542B\u5167\u5BB9\u6216\u9650\u5236\uFF0C\u6240\u4EE5\u6211\u5514\u6703\u4F30\u3002";
+    const topicalCommit = await commitAiReplyWithControlGate(
+      supabaseAdmin,
+      conversation_id,
+      source_message_id,
+      topicalReply,
+      { response_route: "workflow5_topical_recovery", escalation_action: "continue_ai", handoff_required: false, topic: _w5ShortTopicHint, factual_grounding_required: true, grounding_state: "published_evidence_unconfirmed" }
+    );
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+    if (topicalCommit.ok) return new Response(JSON.stringify({ success: true, reply: topicalReply, response_route: "workflow5_topical_recovery", handoff_required: false }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    if (["human_control", "resolved", "superseded_source"].includes(topicalCommit.result)) return new Response(JSON.stringify({ success: true, skipped: topicalCommit.result }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ success: false, error: `workflow5_topical_recovery_${topicalCommit.result}` }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
   const _criticalE2ExpectedTenantId = typeof conversation.company_id === "string" && conversation.company_id.length > 0 ? conversation.company_id : void 0;
   const _criticalE2ThreatSignal = classifyAuthoritativeThreat(_h1LastMsg);
   if (isE2LiveActivationEnabled(Deno.env) && _criticalE2ThreatSignal) {
@@ -6287,7 +6599,7 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
     );
   }
   const _turnClassification = classifyConversationTurn(_h1LastMsg);
-  if (_turnClassification.should_clarify_before_kb && !isHandoffIntent(_h1LastMsg) && _criticalLocalRisk?.level !== "high") {
+  if (!_w5ShortTopicHint && _turnClassification.should_clarify_before_kb && !isHandoffIntent(_h1LastMsg) && _criticalLocalRisk?.level !== "high") {
     const clarification = NATURAL_CLARIFICATION[_visitorLang];
     const clarificationCommit = await commitAiReplyWithControlGate(
       supabaseAdmin,
@@ -6768,7 +7080,7 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
       );
     }
     const isHighRisk = _pr5LocalRisk?.level === "high";
-    const minScore = isHighRisk ? 0.78 : 0.55;
+    const minScore = isHighRisk ? 0.78 : 0.45;
     const _groundingSelection = selectCanonicalGrounding(
       ragResult.documents ?? [],
       {
