@@ -54,15 +54,14 @@
    }
  
    const latestRequirementsRequest = /(?:列出|整理|總結|总结|講出|说出|tell me|list|summari[sz]e).{0,30}(?:最新|目前|現在|现在|current).{0,20}(?:需求|要求|條件|条件|requirements?)|(?:最新|目前|現在|现在|current).{0,20}(?:需求|要求|條件|条件|requirements?).{0,30}(?:是什麼|是什么|有哪些|係咩|what are)/i.test(latest);
-@@ -581,6 +602,39 @@
+@@ -581,13 +602,69 @@
    return null;
  }
  
-+
 +function retrievalTargetHint(text: string): string | null {
 +  const t = clean(text);
 +  if (!t) return null;
-+  if (/\b[A-Z]{2,}[A-Z0-9]*[- ]?\d{2,}[A-Z0-9-]*\b/i.test(t) || /(?:型號|型号|model)/i.test(t)) {
++  if (/\b[A-Z]{2,}[A-Z0-9]*[- ]?\d{2,}[A-Z0-9-]*\b/i.test(t) || /(?:型號|型号|model)/i.test(t) || /(?:呢部|這部|这部|this one).{0,24}(?:幾錢|几钱|價錢|价钱|價格|价格|price|噪音|db|保養|保修|warranty)/i.test(t) || /(?:噪音|db|保養|保修|warranty)/i.test(t)) {
 +    return "Exact published product record: model identity, price, specifications, noise level, warranty and included/excluded product facts.";
 +  }
 +  if (/(?:送貨|送货|delivery|shipping|九龍|九龙|澳門|澳门|macau|地址).{0,40}(?:範圍|范围|安排|政策|policy|改|修改|change|fee|費|费)?/i.test(t)) {
@@ -71,7 +70,7 @@
 +  if (/(?:退款|退貨|退货|refund|return|刮痕|損壞|损坏|damage|百分比|比例)/i.test(t)) {
 +    return "Published terms and policy: returns, refunds, damaged goods, evidence requirements, fixed-percentage rules and case-by-case handling.";
 +  }
-+  if (/(?:smoke\s*test\s*(?:basic|growth|pro)|growth|basic|pro\s*plan|sku|staff|app|push|crm|會員等級|会员等级|ai\s*seo|價錢|价钱|價格|价格|price|monthly|yearly|每月|每年)/i.test(t)) {
++  if (/(?:smoke\s*test\s*(?:basic|growth|pro)|growth|basic|pro\s*plan|sku|staff|app|push|crm|會員等級|会员等级|ai\s*seo|幾錢|几钱|價錢|价钱|價格|价格|price|monthly|yearly|每月|每年)/i.test(t)) {
 +    return "Published product/plan record: exact price, billing cadence, SKU/staff limits, App, Push, CRM, member tiers and AI SEO inclusions.";
 +  }
 +  return null;
@@ -81,7 +80,7 @@
 +  const t = clean(text);
 +  if (!t) return false;
 +  if (/^(?:直接|就|咁|那|再|同埋|另外|and|what about|then|so)/i.test(t) && t.length <= 120) return true;
-+  return t.length <= 80 && /(?:幾多|多少|價錢|价钱|價格|价格|price|monthly|yearly|每月|每年|limit|上限|staff|sku|app|push|crm|會員等級|会员等级|噪音|db|保養|保修|warranty|百分比|比例|included|包括|有冇|有没有|係咪|是否)/i.test(t);
++  return t.length <= 80 && /(?:幾多|多少|幾錢|几钱|價錢|价钱|價格|价格|price|monthly|yearly|每月|每年|limit|上限|staff|sku|app|push|crm|會員等級|会员等级|噪音|db|保養|保修|warranty|百分比|比例|included|包括|有冇|有没有|係咪|是否)/i.test(t);
 +}
 +
 +function recentFactualSubject(previousCustomerTurns: string[]): string | null {
@@ -94,12 +93,43 @@
  export function buildCanonicalRetrievalQuery(latestInput: string, newestFirst: RuntimeHistoryRow[]): CanonicalRetrievalQuery {
    const latest = clean(latestInput);
    const state = projectConversationRuntimeState(newestFirst);
-@@ -597,15 +651,19 @@
+   const semantic = classifyCanonicalConversationTurn(latest, newestFirst);
+   if (!latest) return { query: "", mode: "standalone", latest: "", context_turns: [], state };
++  const targetHint = retrievalTargetHint(latest);
++  const earlyPrevious = newestFirst
++    .filter((row) => CUSTOMER.has(String(row.role ?? "").toLowerCase()))
++    .map((row) => clean(row.content))
++    .filter((x) => x && x !== latest && x !== "__THINKING__");
++  const earlyPublishedFactQuestion = /[?？]|(?:幾多|多少|幾錢|几钱|價錢|价钱|價格|价格|price|monthly|yearly|每月|每年|limit|上限|included|包括|有冇|有没有|係咪|是否|噪音|db|保養|保修|warranty|百分比|比例)|^(?:直接|再講|再说|tell me)/i.test(latest);
++  if (targetHint && earlyPublishedFactQuestion) {
++    const subject = recentFactualSubject(earlyPrevious);
++    const query = [
++      `Current request: ${latest}`,
++      `Retrieval target: ${targetHint}`,
++      ...(subject ? [`Inherited factual subject from customer context: ${subject}`] : []),
++    ].join("\n").slice(0, 1600);
++    return {
++      query,
++      mode: subject ? "contextual" : "standalone",
++      latest,
++      context_turns: subject ? earlyPrevious.slice(0, 5) : [],
++      state,
++    };
++  }
+ 
+-  if (semantic.operation === "CONVERSATION_MEMORY") {
++  // Some terse factual queries contain pronouns or words such as "previous" that
++  // the broad memory classifier can conservatively label as conversation memory.
++  // A concrete published-KB domain target still requires current retrieval.
++  if (semantic.operation === "CONVERSATION_MEMORY" && !targetHint) {
+     const parts = [`Conversation-memory request: ${latest}`];
+     if (state.first_customer_turn) parts.push(`First customer turn: ${state.first_customer_turn}`);
+     if (state.prior_recommendations.length) parts.push(`Relevant prior recommendations: ${state.prior_recommendations.join(" / ")}`);
+@@ -597,15 +674,18 @@
    const explicitJurisdiction = detectExplicitJurisdiction(latest);
    const previous = newestFirst.filter((row) => CUSTOMER.has(String(row.role ?? "").toLowerCase())).map((row) => clean(row.content)).filter((x) => x && x !== latest && x !== "__THINKING__");
    const referencesCurrentRequirements = /(?:基於|基于|根據|根据|按|依照|based on|according to).{0,30}(?:最新|目前|現在|现在|current).{0,20}(?:需求|要求|條件|条件|requirements?)/i.test(latest);
 -  const needsContext = semantic.needs_history || referencesCurrentRequirements;
-+  const targetHint = retrievalTargetHint(latest);
 +  const followupNeedsSubject = factualFollowupNeedsSubject(latest);
 +  const inheritedSubject = followupNeedsSubject ? recentFactualSubject(previous) : null;
 +  const needsContext = semantic.needs_history || referencesCurrentRequirements || followupNeedsSubject;
@@ -117,7 +147,7 @@
          ...(requirementLines.length ? [`Current customer requirement snapshot (latest wins): ${requirementLines.join(" / ")}`] : []),
        ].join("\n").slice(0, 1600),
        mode: "contextual",
-@@ -616,7 +674,10 @@
+@@ -616,7 +696,10 @@
    }
  
    if (!needsContext || explicitBoundary) {
@@ -129,7 +159,7 @@
    }
  
    const contextTurns = previous.filter((x) => !MEMORY.test(x) && !/^(不要猜|唔好估|不要估|do not guess|don.t guess|不要真人|不需要真人)/i.test(x)).slice(0, 5);
-@@ -626,6 +687,8 @@
+@@ -626,6 +709,8 @@
    return {
      query: [
        `Current request: ${latest}`,
@@ -138,7 +168,7 @@
        ...(requirementLines.length ? [`Current customer requirement snapshot (latest wins): ${requirementLines.join(" / ")}`] : []),
        `Relevant prior customer context: ${contextTurns.join(" / ")}`,
      ].join("\n").slice(0, 1600),
-@@ -665,6 +728,7 @@
+@@ -665,6 +750,7 @@
    compact = compact.replace(/[？?]+$/g, "");
    compact = compact.replace(/(?:呢|咧|啊|呀|嗎|吗)+$/g, "");
    compact = compact.replace(/^(?:咁|那)/, "");
@@ -148,11 +178,10 @@
    if (["push", "推送", "推播", "通知", "推送通知"].includes(compact)) return "Push notifications";
 --- a/supabase/functions/_shared/canonical-grounding.ts
 +++ b/supabase/functions/_shared/canonical-grounding.ts
-@@ -92,6 +92,28 @@
+@@ -92,6 +92,27 @@
    };
  }
  
-+
 +function lexicalRelevance(requestText: string, document: KBDocumentCandidate): number {
 +  const request = requestText.normalize("NFKC").toLowerCase();
 +  const text = candidateText(document).normalize("NFKC").toLowerCase();
@@ -177,7 +206,7 @@
  export function selectCanonicalGrounding(
    documents: KBDocumentCandidate[],
    options: CanonicalGroundingOptions = {},
-@@ -106,6 +128,7 @@
+@@ -106,6 +127,7 @@
      evidence: KBLLMContextEvidence[];
      applicability: ReturnType<typeof assessApplicability>;
      evidenceScore: number;
@@ -185,7 +214,7 @@
    }> = [];
  
    for (const document of documents ?? []) {
-@@ -150,10 +173,12 @@
+@@ -150,10 +172,12 @@
        evidence,
        applicability,
        evidenceScore: Math.max(...evidence.map((e) => e.score), 0),
