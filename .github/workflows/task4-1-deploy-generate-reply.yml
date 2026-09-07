@@ -1,5 +1,5 @@
 name: Task 4.1 Deploy Generate Reply
-# Workflow 3 authorized production redeploy trigger — 2026-09-06
+# Workflow 4 authorized production redeploy trigger — 2026-09-07
 
 on:
   push:
