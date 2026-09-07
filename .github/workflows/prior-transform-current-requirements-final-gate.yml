@@ -1,0 +1,95 @@
+name: Prior Transform Current Requirements Final Gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/functions/_shared/prior-grounded-transform.ts'
+      - '.github/workflows/prior-transform-current-requirements-final-gate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  final-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Authoritative repo compile
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+          echo AUTHORITATIVE_REPO_COMPILE=PASS
+
+      - name: Focused machine assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno eval '
+          import { resolvePriorGroundedTransform } from "./supabase/functions/_shared/prior-grounded-transform.ts";
+
+          const grounded = {
+            role: "assistant",
+            content: "Smoke Test Growth plan 的商品數量上限是 500 個 SKU，而員工帳戶上限是 5 個。",
+            metadata: {
+              source_message_id: "source-1",
+              citation_lineage: {
+                selected_document_id: "doc-growth",
+                evidence_chunk_ids: ["chunk-growth"],
+              },
+              citations: [{
+                label: "Products.csv",
+                source_type: "product",
+                relevance: "high",
+                document_id: "doc-growth",
+                chunk_id: "chunk-growth",
+                chunk_type: "full_content",
+              }],
+            },
+          };
+
+          function history(latest) {
+            return [
+              { role: "visitor", content: latest },
+              grounded,
+              { role: "visitor", content: "Growth SKU同staff limit分別係幾多？" },
+              { role: "visitor", content: "我大約300 SKU。" },
+              { role: "visitor", content: "我有4個staff。" },
+              { role: "visitor", content: "App而家有興趣。" },
+              { role: "visitor", content: "我想要Push，亦想用CRM同會員等級。" },
+              { role: "visitor", content: "目前主要市場係香港。" },
+            ];
+          }
+
+          const mustBypass = [
+            "按最新條件總結，唔好沿用上一句。",
+            "請列出最新需求，唔好列舊條件。",
+            "根據目前需求總結我已確認嘅條件。",
+            "Summarize my current requirements, not the previous answer.",
+          ];
+          for (const latest of mustBypass) {
+            const result = resolvePriorGroundedTransform(latest, history(latest));
+            if (result !== null) throw new Error(`CURRENT_REQUIREMENTS_HIJACK:${latest}:${JSON.stringify(result)}`);
+          }
+          console.log("CURRENT_REQUIREMENTS_BYPASS=PASS");
+
+          const legitimate = [
+            "簡單啲講。",
+            "用英文講一次。",
+          ];
+          for (const latest of legitimate) {
+            const result = resolvePriorGroundedTransform(latest, history(latest));
+            if (result === null) throw new Error(`LEGITIMATE_TRANSFORM_REGRESSION:${latest}`);
+            if (result.selected_document_id !== "doc-growth") throw new Error(`LINEAGE_REGRESSION:${latest}`);
+          }
+          console.log("LEGITIMATE_TRANSFORMS_PRESERVED=PASS");
+          console.log("PRIOR_TRANSFORM_CURRENT_REQUIREMENTS_FINAL_GATE=PASS");'
