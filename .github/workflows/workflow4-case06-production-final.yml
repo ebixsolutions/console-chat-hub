@@ -1,0 +1,145 @@
+name: Workflow 4 Case06 Production Final Gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/workflow4-case06-production-final.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  case06:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      PROD_ORIGIN: https://console-chat-hub.lovable.app
+      CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Run fresh isolated Case06 24-turn production gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a; source .env; set +a
+          python - <<'PY'
+          import json, os, time, uuid, urllib.request, urllib.error, re
+
+          PROD_ORIGIN=os.environ['PROD_ORIGIN']
+          CHANNEL_ID=os.environ['CHANNEL_ID']
+          BASE=os.environ['VITE_SUPABASE_FUNCTIONS_URL']
+          events=[]; failures=[]
+
+          turns=[
+            '我而家大約30件商品。','想先睇最簡單方案。','暫時唔需要App。','得我一個人管理。','只做香港。','如果商品少，應該留意咩限制？','50件商品限制如果有就講清楚。','其實年尾可能80件。','咁建議會唔會變？','再諗清楚，可能去到300件。','記住最新係300，唔係30。','我有兩個staff。','多人管理有咩要確認？','之後可能做台灣。','但目前主要市場仍然香港。','App而家又有興趣。','所以「唔要App」已經過時。','我想要Push。','亦想用CRM。','會員等級都會用。','再加兩個staff一齊管理。','如果只睇我第一句會推薦錯，係咪？','請列出「最新」需求，唔好列舊條件。','基於最新需求，一句講我應該再核實邊幾項方案限制。'
+          ]
+          assert len(turns)==24
+
+          def record(kind, **kw):
+              row={'kind':kind,**kw}; events.append(row); print(json.dumps(row,ensure_ascii=False),flush=True)
+          def fail(code, **kw):
+              failures.append({'code':code,**kw}); record('FAIL',code=code,**kw)
+          def call(url, method='GET', headers=None, body=None, timeout=45):
+              data=None if body is None else json.dumps(body,ensure_ascii=False).encode('utf-8')
+              h={'User-Agent':'ebixpro-workflow4-case06-final/1.0', **(headers or {})}
+              req=urllib.request.Request(url,data=data,method=method,headers=h)
+              try:
+                  with urllib.request.urlopen(req,timeout=timeout) as r:
+                      raw=r.read().decode('utf-8'); return r.status, json.loads(raw) if raw else {}
+              except urllib.error.HTTPError as e:
+                  raw=e.read().decode('utf-8','replace')
+                  try: payload=json.loads(raw)
+                  except Exception: payload={'raw':raw[:1000]}
+                  return e.code,payload
+
+          st,create=call(BASE+'/create-visitor-session','POST',{'Origin':PROD_ORIGIN,'Content-Type':'application/json'},
+            {'channel_id':CHANNEL_ID,'visitor_metadata':{'production_stress_smoke':True,'case_id':'06-W4-final','exclude_training':True,'started_by':'director'}})
+          if st!=200 or create.get('success') is not True:
+              fail('CREATE_SESSION_FAILED',http=st,payload=create); raise SystemExit(1)
+          CID=create['data']['conversation_id']; TOKEN=create['data']['session_token']
+          record('SESSION_CREATED',conversation_id=CID)
+
+          def poll():
+              st,p=call(BASE+'/widget-poll-messages','POST',{'Origin':PROD_ORIGIN,'Content-Type':'application/json'},
+                {'conversation_id':CID,'session_token':TOKEN})
+              if st!=200 or p.get('success') is not True: raise RuntimeError(('POLL_FAILED',st,p))
+              return p
+          def parts(p):
+              d=p['data']; msgs=d.get('messages',[])
+              return d,msgs,[m for m in msgs if m.get('role')=='assistant'],[m for m in msgs if m.get('role')=='visitor']
+          def send(text):
+              return call(BASE+'/receive-widget-message','POST',
+                {'Origin':PROD_ORIGIN,'Content-Type':'application/json','idempotency-key':str(uuid.uuid4())},
+                {'conversation_id':CID,'session_token':TOKEN,'content':text})
+
+          outputs={}
+          for i,text in enumerate(turns,1):
+              p0=poll(); d0,msgs0,a0,v0=parts(p0); before=len(a0)
+              st,s=send(text)
+              if st>=300 or s.get('success') is not True:
+                  fail('SEND_FAILED',turn=i,http=st,payload=s); continue
+              got=None; finalp=None
+              for _ in range(24):
+                  time.sleep(2)
+                  finalp=poll(); d,msgs,a,v=parts(finalp)
+                  if d.get('conversation_status')=='pending':
+                      fail('UNEXPECTED_HANDOFF',turn=i,status='pending'); break
+                  if len(a)>before:
+                      got=a[-1]; break
+              if got is None:
+                  fail('NO_ASSISTANT_REPLY_WHILE_OPEN',turn=i,status=(finalp or p0)['data'].get('conversation_status')); continue
+              content=str(got.get('content') or '')
+              outputs[i]=content
+              record('TURN',turn=i,input=text,status=finalp['data'].get('conversation_status'),route=(got.get('metadata') or {}).get('response_route'),output=content,metadata=got.get('metadata') or {})
+
+          pf=poll(); df,mf,af,vf=parts(pf)
+          if len(vf)!=24: fail('VISITOR_COUNT_MISMATCH',expected=24,actual=len(vf))
+          if len(af)!=24: fail('ASSISTANT_COUNT_MISMATCH',expected=24,actual=len(af))
+          if df.get('conversation_status')!='open': fail('FINAL_STATUS_NOT_OPEN',actual=df.get('conversation_status'))
+          assigned=df.get('assigned_agent_id')
+          if assigned is not None: fail('ASSIGNED_AGENT_NOT_NULL',actual=assigned)
+
+          t23=outputs.get(23,'')
+          t24=outputs.get(24,'')
+          required23={
+            'PRODUCT_300': r'300',
+            'STAFF_4': r'(?i)(4|四)\s*(?:個|位)?\s*(?:staff|員工|人)',
+            'APP_INTEREST': r'(?i)App',
+            'PUSH': r'(?i)Push|推播|推送',
+            'CRM': r'(?i)CRM',
+            'MEMBER_TIERS': r'會員(?:等級|級別)|member\s*tier',
+            'CURRENT_HK': r'香港|Hong\s*Kong|\bHK\b',
+            'FUTURE_TW': r'台灣|臺灣|Taiwan'
+          }
+          for code,pat in required23.items():
+              if not re.search(pat,t23): fail('T23_MISSING_'+code,output=t23)
+          stale23={
+            'PRODUCT_30': r'(?<![0-9])30\s*(?:件|個)?\s*(?:商品|產品|SKU)',
+            'PRODUCT_80': r'(?<![0-9])80\s*(?:件|個)?\s*(?:商品|產品|SKU)',
+            'STAFF_1': r'(?i)(?:1|一)\s*(?:個|位)?\s*(?:staff|員工|人)\s*(?:管理)?',
+            'STAFF_2': r'(?i)(?:2|兩|二)\s*(?:個|位)?\s*(?:staff|員工|人)',
+            'NO_APP': r'(?i)(?:唔需要|不需要|不要|冇需要|無需)\s*App'
+          }
+          for code,pat in stale23.items():
+              if re.search(pat,t23): fail('T23_STALE_'+code,output=t23)
+
+          if not t24.strip(): fail('T24_EMPTY')
+          if len(re.split(r'[。！？!?]+',t24.strip().strip('。！？!?'))) > 2:
+              fail('T24_NOT_CONCISE_ONE_SENTENCE',output=t24)
+          if re.search(r'(?<![0-9])(?:30|80)\s*(?:件|個)?\s*(?:商品|產品|SKU)',t24): fail('T24_STALE_PRODUCT',output=t24)
+          if re.search(r'(?i)(?:1|一|2|兩|二)\s*(?:個|位)?\s*(?:staff|員工)',t24): fail('T24_STALE_STAFF',output=t24)
+          if re.search(r'(?i)(?:唔需要|不需要|不要|冇需要|無需)\s*App',t24): fail('T24_STALE_APP',output=t24)
+          # T24 must discuss limits/eligibility to verify, not fabricate a guaranteed plan outcome.
+          if not re.search(r'限制|上限|方案|支援|包含|名額|數量|地區|市場|App|Push|CRM|會員|staff|員工|商品',t24,re.I):
+              fail('T24_NO_RELEVANT_LIMIT_DIMENSION',output=t24)
+          if re.search(r'(?i)(保證|一定|絕對|guaranteed).{0,20}(支援|包含|無限制|unlimited)',t24):
+              fail('T24_UNGROUNDED_GUARANTEE',output=t24)
+
+          verdict='PASS' if not failures else 'FAIL'
+          print('WORKFLOW4_CASE06_FINAL='+json.dumps({'conversation_id':CID,'verdict':verdict,'visitor_count':len(vf),'assistant_count':len(af),'status':df.get('conversation_status'),'assigned_agent_id':assigned,'t23':t23,'t24':t24,'failures':failures},ensure_ascii=False))
+          if failures: raise SystemExit(1)
+          PY
