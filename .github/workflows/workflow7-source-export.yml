@@ -5,7 +5,7 @@ on:
     paths:
       - '.github/workflows/workflow7-source-export.yml'
 permissions:
-  contents: read
+  contents: write
 jobs:
   export:
     runs-on: ubuntu-latest
@@ -13,17 +13,37 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: main
-      - name: Export authoritative Workflow7 source
+          fetch-depth: 1
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Apply and validate Workflow7 repair
+        shell: bash
         run: |
           set -euo pipefail
-          mkdir -p workflow7-source/supabase/functions/_shared workflow7-source/supabase/functions/generate-reply workflow7-source/tests/edge
-          cp supabase/functions/_shared/conversation-runtime-state.ts workflow7-source/supabase/functions/_shared/
-          cp supabase/functions/_shared/canonical-grounding.ts workflow7-source/supabase/functions/_shared/
-          cp supabase/functions/_shared/kb-client.ts workflow7-source/supabase/functions/_shared/
-          cp supabase/functions/generate-reply/index.ts workflow7-source/supabase/functions/generate-reply/
-          find tests/edge -maxdepth 1 -type f -name '*workflow5*' -o -name '*task4-1*' | while read f; do cp "$f" workflow7-source/tests/edge/; done
-      - uses: actions/upload-artifact@v4
-        with:
-          name: workflow7-authoritative-source
-          path: workflow7-source/
-          if-no-files-found: error
+          test "$(sha256sum supabase/functions/_shared/conversation-runtime-state.ts | awk '{print $1}')" = "d0e51bb04f2112b9ebea332ec33c8879e58dbd48acd4d4fdeb5d51d849f1aff8"
+          test "$(sha256sum supabase/functions/_shared/canonical-grounding.ts | awk '{print $1}')" = "8679ef5417e44a6894545e58a1b8c11a964585adefac4fa3d1bb903f79d49577"
+          test "$(sha256sum supabase/functions/generate-reply/index.ts | awk '{print $1}')" = "f4ebcc1b7fcc923bb806091a788e70e87ceb4c02ecf0f4cdad6677053d1c3d93"
+          patch --dry-run -p1 < .github/patches/workflow7-published-kb-context.patch
+          patch -p1 < .github/patches/workflow7-published-kb-context.patch
+          git diff --check
+          deno test --allow-read tests/edge/workflow7-published-kb-context-integrity.test.ts
+          deno test --allow-read tests/edge/workflow5-multilingual-privacy.test.ts
+          deno test --allow-read tests/edge/task4-1-current-context-memory.test.ts
+          deno test --allow-read tests/edge/task4-1-context-requirements-followup.test.ts
+          deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+          test "$(sha256sum supabase/functions/_shared/conversation-runtime-state.ts | awk '{print $1}')" = "dac8832ba323bb1313c2f00d28d7f0a76544be95e619a86daccc5b0bc98569a4"
+          test "$(sha256sum supabase/functions/_shared/canonical-grounding.ts | awk '{print $1}')" = "388a08565beb6f53155db5bf13b0a0c123ee8f48781c33ae990ee6a2967dadb0"
+          test "$(sha256sum supabase/functions/generate-reply/index.ts | awk '{print $1}')" = "8032c2ddcd6f5dd33f3a60e270a0d5092bac68b462b96ff12968a187c9f263a5"
+          changed="$(git diff --name-only | sort)"
+          expected="$(printf '%s\n' supabase/functions/_shared/canonical-grounding.ts supabase/functions/_shared/conversation-runtime-state.ts supabase/functions/generate-reply/index.ts | sort)"
+          test "$changed" = "$expected"
+      - name: Commit validated Workflow7 functional source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "ebixsolutions-workflow7"
+          git config user.email "64578119+ebixsolutions@users.noreply.github.com"
+          git add supabase/functions/_shared/conversation-runtime-state.ts supabase/functions/_shared/canonical-grounding.ts supabase/functions/generate-reply/index.ts
+          git commit -m "fix: stabilize published KB retrieval and context integrity [skip ci]"
+          git push origin HEAD:main
