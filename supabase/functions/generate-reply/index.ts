@@ -718,6 +718,8 @@ function classifyLocalTopicRisk(
     /想了解/,
     /介紹/,
     /說明/,
+    /(?:有冇|有没有|是否|係咪).{0,24}(?:退款|退貨|退货|refund|return).{0,24}(?:比例|百分比|規則|规则|政策)?/i,
+    /(?:退款|退貨|退货|refund|return).{0,24}(?:有冇|有没有|是否|係咪|幾多|多少|比例|百分比|規則|规则|政策)/i,
   ];
   const alwaysHigh = [
     /醫療/,
@@ -4049,7 +4051,7 @@ async function orchestrationGenerateReply(
     }
 
     const isHighRisk = _pr5LocalRisk?.level === "high";
-    const minScore = isHighRisk ? 0.78 : 0.55;
+    const minScore = isHighRisk ? 0.78 : 0.45;
     const _groundingSelection = selectCanonicalGrounding(
       ragResult.documents ?? [],
       {

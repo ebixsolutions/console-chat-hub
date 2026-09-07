@@ -170,8 +170,10 @@ export function deriveCurrentRequirementSnapshot(chronologicalCustomerTurns: str
 
     const product = text.match(/(\d{1,6})\s*(?:件(?:商品|產品|产品)?|sku\b)/i);
     if (product?.[1]) productCount = Number(product[1]);
+    if (/(?:成千幾|成千几|一千幾|一千几)\s*sku\b/i.test(text)) productCount = productCount ?? 1000;
     const latestCount = text.match(/(?:最新|目前|現在|现在)\s*(?:係|是|為|为)?\s*(\d{1,6})(?:\s*(?:件|sku))?/i);
-    if (productCount !== null && latestCount?.[1]) productCount = Number(latestCount[1]);
+    const latestCountIsStaffScoped = /(?:staff|員工|员工|管理人手|管理人员)/i.test(text);
+    if (productCount !== null && latestCount?.[1] && !latestCountIsStaffScoped) productCount = Number(latestCount[1]);
 
     if (/(?:得我|只有我|只係我|只是我).{0,12}(?:一個人|一个人).{0,12}(?:管理|manage)/i.test(text)) staffCount = 1;
     const staff = text.match(/(?:我有|有)\s*([一二兩两三四五六七八九十]|\d{1,3})\s*(?:個|个|位)?\s*(?:staff|員工|员工)/i);
@@ -220,7 +222,7 @@ function currentRequirementLines(snapshot: CurrentRequirementSnapshot, lang: Run
     if (snapshot.future_markets.length) out.push(`Possible future markets: ${snapshot.future_markets.map((x) => marketLabel(x, lang)).join(", ")} (not the current main market)`);
     return out;
   }
-  if (snapshot.product_count !== null) out.push(`商品數量：約 ${snapshot.product_count} 件`);
+  if (snapshot.product_count !== null) out.push(`商品數量：約 ${snapshot.product_count} 件（${snapshot.product_count} SKU）`);
   if (snapshot.staff_count !== null) out.push(`管理人手：${snapshot.staff_count} 位 staff`);
   if (snapshot.app_interest === true) out.push("App：有興趣／需要納入方案");
   if (snapshot.app_interest === false) out.push("App：目前不需要");
@@ -464,16 +466,36 @@ export function resolveConversationMemoryResponse(latestInput: string, newestFir
 
   const workflow5KnownUnknownRequest = /(?:按|根據|根据|based\s+on).{0,25}(?:我|已確認|已确认|confirmed).{0,30}(?:邊啲|哪些|what).{0,20}(?:知|知道|known).{0,25}(?:未知|唔知|不知道|unknown)/i.test(latest);
   if (workflow5KnownUnknownRequest) {
-    if (lang === "en") return "Confirmed from your conversation: you already have a website, have roughly 1,000+ SKUs, mainly operate in Hong Kong, and sometimes serve Macau; you are also asking about App, Push and AI SEO. Still unconfirmed from published information here: billing cadence, product/member-data migration capacity, Macau-customer payment/Stripe support, App/Push pricing, and the exact AI SEO quota/overage policy.";
-    if (lang === "zh-CN") return "按你已确认的情况：你已有网站、约一千多个 SKU、主要市场是香港、偶尔涉及澳门，并在查询 App、Push 和 AI SEO；目前仍未有足够已发布资料确认的是：方案按年／按月、商品及会员资料迁移能力、澳门客户付款／Stripe 支持、App／Push 收费，以及 AI SEO 额度与超额政策。";
-    return "按你已確認嘅情況：你已有網站、約一千多個 SKU、主要市場係香港、間中涉及澳門，亦正在問 App、Push 同 AI SEO；目前仍未有足夠已發布資料確認嘅係：方案按年／按月、商品及會員資料遷移能力、澳門客戶付款／Stripe 支援、App／Push 收費，以及 AI SEO 額度同超額政策。";
+    const req = currentRequirementLines(state.current_requirements, lang);
+    const priorCustomerText = priorRows
+      .filter((row) => CUSTOMER.has(String(row.role ?? "").toLowerCase()))
+      .map((row) => clean(row.content)).filter(Boolean).join(" / ");
+    const known: string[] = [...req];
+    if (/(?:website|網站|网站)/i.test(priorCustomerText)) known.unshift(lang === "en" ? "Existing website: yes" : "已有網站");
+    if (/(?:\bhk\b|hong\s*kong|香港)/i.test(priorCustomerText) && !known.some((x) => /(?:香港|Hong Kong)/i.test(x))) known.push(lang === "en" ? "Current main market: Hong Kong" : "目前主要市場：香港");
+    if (state.current_requirements.product_count === null && /\bsku\b/i.test(priorCustomerText)) known.push(lang === "en" ? "SKU volume discussed, exact count not confirmed" : "已談及 SKU 數量，但未有可靠精確數字");
+    const asked: string[] = [];
+    if (/(?:app)/i.test(priorCustomerText)) asked.push("App");
+    if (/(?:push|推播|推送)/i.test(priorCustomerText)) asked.push("Push");
+    if (/(?:ai\s*seo)/i.test(priorCustomerText)) asked.push("AI SEO");
+    if (asked.length) known.push(lang === "en" ? `Topics being checked: ${asked.join(", ")}` : `正在查詢：${asked.join("、")}`);
+    const unknown: string[] = [];
+    if (/(?:migrate|migration|遷移|迁移)/i.test(priorCustomerText)) unknown.push(lang === "en" ? "product/member-data migration details" : "商品／會員資料遷移細節");
+    if (/(?:澳門|澳门|macau).{0,30}(?:pay|付款|payment)|(?:pay|付款|payment).{0,30}(?:澳門|澳门|macau)/i.test(priorCustomerText)) unknown.push(lang === "en" ? "Macau-customer payment / Stripe support" : "澳門客戶付款／Stripe 支援");
+    const knownText = known.length ? known.join(lang === "en" ? "; " : "、") : (lang === "en" ? "no additional customer facts are confirmed" : "暫未有更多已確認客戶條件");
+    const unknownText = unknown.length ? unknown.join(lang === "en" ? "; " : "、") : (lang === "en" ? "any fact not explicitly supported by published information" : "任何未有已發布資料支持嘅具體事實");
+    if (lang === "en") return `Confirmed from this conversation: ${knownText}. Still to verify from published information: ${unknownText}.`;
+    if (lang === "zh-CN") return `按这段对话已确认的情况：${knownText}；仍需按已发布资料核实：${unknownText}。`;
+    return `按呢段對話已確認嘅情況：${knownText}；仍未有足夠已發布資料確認、需核實：${unknownText}。`;
   }
 
   const workflow5NextStepRequest = /(?:一句|one\s+sentence).{0,30}(?:下一步|next\s+step).{0,30}(?:確認|核實|confirm|verify)/i.test(latest);
   if (workflow5NextStepRequest) {
-    if (lang === "en") return "Next, verify the plan’s billing cadence, migration limits for roughly 1,000+ SKUs and member data, Macau-customer payment/Stripe support, App/Push pricing, and the AI SEO quota and overage policy.";
-    if (lang === "zh-CN") return "下一步请确认方案的年／月收费方式、约一千多个 SKU 与会员资料的迁移限制、澳门客户付款／Stripe 支持、App／Push 收费，以及 AI SEO 额度和超额政策。";
-    return "下一步請確認方案嘅年／月收費方式、約一千多個 SKU 同會員資料嘅遷移限制、澳門客戶付款／Stripe 支援、App／Push 收費，以及 AI SEO 額度同超額政策。";
+    const count = state.current_requirements.product_count;
+    const countText = count !== null ? (lang === "en" ? `${count} SKUs` : `${count} SKU`) : "SKU";
+    if (lang === "en") return `Next, verify the plan billing cadence, limits for ${countText}, product/member-data migration, Macau-customer payment / Stripe support, App/Push details, and the AI SEO quota or overage rules against published information.`;
+    if (lang === "zh-CN") return `下一步请按已发布资料核实方案的年／月收费方式、对 ${countText} 的限制、商品／会员资料迁移、澳门客户付款支持、App／Push 细节，以及 AI SEO 额度与超额规则。`;
+    return `下一步請按已發布資料核實方案嘅年／月收費方式、對 ${countText} 嘅限制、商品／會員資料遷移、澳門客戶付款／Stripe 支援、App／Push 細節，以及 AI SEO 額度同超額規則。`;
   }
 
   const latestRequirementsRequest = /(?:列出|整理|總結|总结|講出|说出|tell me|list|summari[sz]e).{0,30}(?:最新|目前|現在|现在|current).{0,20}(?:需求|要求|條件|条件|requirements?)|(?:最新|目前|現在|现在|current).{0,20}(?:需求|要求|條件|条件|requirements?).{0,30}(?:是什麼|是什么|有哪些|係咩|what are)/i.test(latest);
@@ -581,13 +603,69 @@ export function resolveConversationMemoryResponse(latestInput: string, newestFir
   return null;
 }
 
+function retrievalTargetHint(text: string): string | null {
+  const t = clean(text);
+  if (!t) return null;
+  if (/\b[A-Z]{2,}[A-Z0-9]*[- ]?\d{2,}[A-Z0-9-]*\b/i.test(t) || /(?:型號|型号|model)/i.test(t) || /(?:呢部|這部|这部|this one).{0,24}(?:幾錢|几钱|價錢|价钱|價格|价格|price|噪音|db|保養|保修|warranty)/i.test(t) || /(?:噪音|db|保養|保修|warranty)/i.test(t)) {
+    return "Exact published product record: model identity, price, specifications, noise level, warranty and included/excluded product facts.";
+  }
+  if (/(?:送貨|送货|delivery|shipping|九龍|九龙|澳門|澳门|macau|地址).{0,40}(?:範圍|范围|安排|政策|policy|改|修改|change|fee|費|费)?/i.test(t)) {
+    return "Published delivery policy: service area, Macau handling, address changes, delivery conditions and fees.";
+  }
+  if (/(?:退款|退貨|退货|refund|return|刮痕|損壞|损坏|damage|百分比|比例)/i.test(t)) {
+    return "Published terms and policy: returns, refunds, damaged goods, evidence requirements, fixed-percentage rules and case-by-case handling.";
+  }
+  if (/(?:smoke\s*test\s*(?:basic|growth|pro)|growth|basic|pro\s*plan|sku|staff|app|push|crm|會員等級|会员等级|ai\s*seo|幾錢|几钱|價錢|价钱|價格|价格|price|monthly|yearly|每月|每年)/i.test(t)) {
+    return "Published product/plan record: exact price, billing cadence, SKU/staff limits, App, Push, CRM, member tiers and AI SEO inclusions.";
+  }
+  return null;
+}
+
+function factualFollowupNeedsSubject(text: string): boolean {
+  const t = clean(text);
+  if (!t) return false;
+  if (/^(?:直接|就|咁|那|再|同埋|另外|and|what about|then|so)/i.test(t) && t.length <= 120) return true;
+  return t.length <= 80 && /(?:幾多|多少|幾錢|几钱|價錢|价钱|價格|价格|price|monthly|yearly|每月|每年|limit|上限|staff|sku|app|push|crm|會員等級|会员等级|噪音|db|保養|保修|warranty|百分比|比例|included|包括|有冇|有没有|係咪|是否)/i.test(t);
+}
+
+function recentFactualSubject(previousCustomerTurns: string[]): string | null {
+  const strong = /(?:\b[A-Z]{2,}[A-Z0-9]*[- ]?\d{2,}[A-Z0-9-]*\b|Smoke\s*Test\s*(?:Basic|Growth|Pro)|\bGrowth\b|\bBasic\b|\bPro\b)/i;
+  const found = previousCustomerTurns.find((x) => strong.test(x));
+  if (found) return found.slice(0, 260);
+  return previousCustomerTurns[0]?.slice(0, 260) ?? null;
+}
+
 export function buildCanonicalRetrievalQuery(latestInput: string, newestFirst: RuntimeHistoryRow[]): CanonicalRetrievalQuery {
   const latest = clean(latestInput);
   const state = projectConversationRuntimeState(newestFirst);
   const semantic = classifyCanonicalConversationTurn(latest, newestFirst);
   if (!latest) return { query: "", mode: "standalone", latest: "", context_turns: [], state };
+  const targetHint = retrievalTargetHint(latest);
+  const earlyPrevious = newestFirst
+    .filter((row) => CUSTOMER.has(String(row.role ?? "").toLowerCase()))
+    .map((row) => clean(row.content))
+    .filter((x) => x && x !== latest && x !== "__THINKING__");
+  const earlyPublishedFactQuestion = /[?？]|(?:幾多|多少|幾錢|几钱|價錢|价钱|價格|价格|price|monthly|yearly|每月|每年|limit|上限|included|包括|有冇|有没有|係咪|是否|噪音|db|保養|保修|warranty|百分比|比例)|^(?:直接|再講|再说|tell me)/i.test(latest);
+  if (targetHint && earlyPublishedFactQuestion) {
+    const subject = recentFactualSubject(earlyPrevious);
+    const query = [
+      `Current request: ${latest}`,
+      `Retrieval target: ${targetHint}`,
+      ...(subject ? [`Inherited factual subject from customer context: ${subject}`] : []),
+    ].join("\n").slice(0, 1600);
+    return {
+      query,
+      mode: subject ? "contextual" : "standalone",
+      latest,
+      context_turns: subject ? earlyPrevious.slice(0, 5) : [],
+      state,
+    };
+  }
 
-  if (semantic.operation === "CONVERSATION_MEMORY") {
+  // Some terse factual queries contain pronouns or words such as "previous" that
+  // the broad memory classifier can conservatively label as conversation memory.
+  // A concrete published-KB domain target still requires current retrieval.
+  if (semantic.operation === "CONVERSATION_MEMORY" && !targetHint) {
     const parts = [`Conversation-memory request: ${latest}`];
     if (state.first_customer_turn) parts.push(`First customer turn: ${state.first_customer_turn}`);
     if (state.prior_recommendations.length) parts.push(`Relevant prior recommendations: ${state.prior_recommendations.join(" / ")}`);
@@ -597,15 +675,18 @@ export function buildCanonicalRetrievalQuery(latestInput: string, newestFirst: R
   const explicitJurisdiction = detectExplicitJurisdiction(latest);
   const previous = newestFirst.filter((row) => CUSTOMER.has(String(row.role ?? "").toLowerCase())).map((row) => clean(row.content)).filter((x) => x && x !== latest && x !== "__THINKING__");
   const referencesCurrentRequirements = /(?:基於|基于|根據|根据|按|依照|based on|according to).{0,30}(?:最新|目前|現在|现在|current).{0,20}(?:需求|要求|條件|条件|requirements?)/i.test(latest);
-  const needsContext = semantic.needs_history || referencesCurrentRequirements;
+  const followupNeedsSubject = factualFollowupNeedsSubject(latest);
+  const inheritedSubject = followupNeedsSubject ? recentFactualSubject(previous) : null;
+  const needsContext = semantic.needs_history || referencesCurrentRequirements || followupNeedsSubject;
 
-  const explicitBoundary = Boolean(explicitJurisdiction) && semantic.operation !== "RETURN_TO_PRIOR_TOPIC" && semantic.operation !== "CORRECTION";
+  const explicitBoundary = Boolean(explicitJurisdiction) && semantic.operation !== "RETURN_TO_PRIOR_TOPIC" && semantic.operation !== "CORRECTION" && !followupNeedsSubject;
   if (referencesCurrentRequirements) {
     const requirementLines = currentRequirementLines(state.current_requirements, state.language);
     return {
       query: [
         `Current request: ${latest}`,
-        "Retrieval target: ebixPRO ecommerce subscription plan limits, included features, admin/staff seats, and market eligibility only.",
+        targetHint ? `Retrieval target: ${targetHint}` : "Retrieval target: published plan limits, included features, admin/staff seats, and market eligibility only.",
+        ...(inheritedSubject ? [`Inherited factual subject from customer context: ${inheritedSubject}`] : []),
         ...(requirementLines.length ? [`Current customer requirement snapshot (latest wins): ${requirementLines.join(" / ")}`] : []),
       ].join("\n").slice(0, 1600),
       mode: "contextual",
@@ -616,7 +697,10 @@ export function buildCanonicalRetrievalQuery(latestInput: string, newestFirst: R
   }
 
   if (!needsContext || explicitBoundary) {
-    return { query: latest, mode: "standalone", latest, context_turns: [], state: { ...state, jurisdiction: explicitJurisdiction ?? state.jurisdiction } };
+    const standaloneQuery = targetHint
+      ? `Current request: ${latest}\nRetrieval target: ${targetHint}`
+      : latest;
+    return { query: standaloneQuery.slice(0, 1600), mode: "standalone", latest, context_turns: [], state: { ...state, jurisdiction: explicitJurisdiction ?? state.jurisdiction } };
   }
 
   const contextTurns = previous.filter((x) => !MEMORY.test(x) && !/^(不要猜|唔好估|不要估|do not guess|don.t guess|不要真人|不需要真人)/i.test(x)).slice(0, 5);
@@ -626,6 +710,8 @@ export function buildCanonicalRetrievalQuery(latestInput: string, newestFirst: R
   return {
     query: [
       `Current request: ${latest}`,
+      ...(targetHint ? [`Retrieval target: ${targetHint}`] : []),
+      ...(inheritedSubject ? [`Inherited factual subject from customer context: ${inheritedSubject}`] : []),
       ...(requirementLines.length ? [`Current customer requirement snapshot (latest wins): ${requirementLines.join(" / ")}`] : []),
       `Relevant prior customer context: ${contextTurns.join(" / ")}`,
     ].join("\n").slice(0, 1600),
@@ -665,6 +751,7 @@ export function workflow5ShortTopicHint(text: string): string | null {
   compact = compact.replace(/[？?]+$/g, "");
   compact = compact.replace(/(?:呢|咧|啊|呀|嗎|吗)+$/g, "");
   compact = compact.replace(/^(?:咁|那)/, "");
+  if (/(?:crm).*(?:會員等級|会员等级)|(?:會員等級|会员等级).*(?:crm)/i.test(compact)) return "CRM and membership tiers";
   if (["會員等級", "会员等级", "會員分級", "会员分级", "membershiptier", "membershiptiers", "membertier", "membertiers", "membershiplevel", "membershiplevels", "memberlevel", "memberlevels"].includes(compact)) return "membership tiers";
   if (["crm", "客戶管理", "客户管理"].includes(compact)) return "CRM";
   if (["push", "推送", "推播", "通知", "推送通知"].includes(compact)) return "Push notifications";

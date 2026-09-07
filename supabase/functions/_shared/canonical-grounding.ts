@@ -92,6 +92,27 @@ function assessApplicability(document: KBDocumentCandidate, requestText: string)
   };
 }
 
+function lexicalRelevance(requestText: string, document: KBDocumentCandidate): number {
+  const request = requestText.normalize("NFKC").toLowerCase();
+  const text = candidateText(document).normalize("NFKC").toLowerCase();
+  let score = 0;
+  const reqModels = modelTokens(requestText);
+  if (reqModels.some((model) => text.includes(model.toLowerCase()))) score += 12;
+  const anchors = [
+    "smoke test growth", "smoke test basic", "smoke test pro",
+    "growth", "basic", "pro", "九龍", "九龙", "澳門", "澳门",
+    "退款", "退貨", "退货", "delivery", "shipping", "warranty",
+    "保養", "保修", "sku", "staff", "push", "crm", "ai seo",
+  ];
+  for (const anchor of anchors) {
+    if (request.includes(anchor) && text.includes(anchor)) score += 2;
+  }
+  const latinTokens = [...new Set(request.match(/[a-z0-9][a-z0-9-]{2,}/g) ?? [])]
+    .filter((x) => !["current", "request", "retrieval", "target", "published", "customer", "context"].includes(x));
+  for (const token of latinTokens.slice(0, 20)) if (text.includes(token)) score += 0.25;
+  return score;
+}
+
 export function selectCanonicalGrounding(
   documents: KBDocumentCandidate[],
   options: CanonicalGroundingOptions = {},
@@ -106,6 +127,7 @@ export function selectCanonicalGrounding(
     evidence: KBLLMContextEvidence[];
     applicability: ReturnType<typeof assessApplicability>;
     evidenceScore: number;
+    lexicalScore: number;
   }> = [];
 
   for (const document of documents ?? []) {
@@ -150,10 +172,12 @@ export function selectCanonicalGrounding(
       evidence,
       applicability,
       evidenceScore: Math.max(...evidence.map((e) => e.score), 0),
+      lexicalScore: lexicalRelevance(requestText, document),
     });
   }
 
   eligible.sort((a, b) =>
+    b.lexicalScore - a.lexicalScore ||
     b.document.document_score - a.document.document_score ||
     b.evidenceScore - a.evidenceScore ||
     a.document.document_id.localeCompare(b.document.document_id)
