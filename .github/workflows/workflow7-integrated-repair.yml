@@ -30,7 +30,43 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Correct memory-fixture assertion in task-local runner
+      - name: Close customer-owned state correction boundary
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('supabase/functions/_shared/conversation-semantic-contract.ts')
+          s=p.read_text()
+          marker='const CUSTOMER_OWNED_STATE_CORRECTION = '
+          if marker not in s:
+              anchor='const CUSTOMER_CONTEXT_UPDATE = '
+              i=s.find(anchor)
+              if i < 0: raise SystemExit('STOP customer-context const anchor missing')
+              line_end=s.find('\n', i)
+              helper='\nconst CUSTOMER_OWNED_STATE_CORRECTION = /(?:記住|记住).{0,24}(?:最新|目前|現在|现在)|(?:最新|目前|現在|现在).{0,40}(?:唔係|不是|而不是|not\\b)/i;'
+              s=s[:line_end+1]+helper+'\n'+s[line_end+1:]
+          old='''  if (CORRECTION.test(latest)) {\n    return base("CORRECTION", "latest_turn_supersedes_prior_context", { needs_history: true, topic_action: "CORRECT" });\n  }'''
+          new='''  if (CORRECTION.test(latest) && CUSTOMER_OWNED_STATE_CORRECTION.test(latest) && !QUESTIONISH.test(latest)) {\n    return base("CUSTOMER_CONTEXT_UPDATE", "customer_owned_state_correction", {\n      needs_history: true,\n      requires_new_kb_retrieval: false,\n      evidence_authority: "CONVERSATION_MEMORY",\n      topic_action: "CORRECT",\n    });\n  }\n  if (CORRECTION.test(latest)) {\n    return base("CORRECTION", "latest_turn_supersedes_prior_context", { needs_history: true, topic_action: "CORRECT" });\n  }'''
+          if old in s:
+              s=s.replace(old,new,1)
+          elif 'customer_owned_state_correction' not in s:
+              raise SystemExit('STOP correction branch anchor missing')
+          p.write_text(s)
+          PY
+          deno eval '
+          import { classifyCanonicalConversationTurn } from "./supabase/functions/_shared/conversation-semantic-contract.ts";
+          const c=classifyCanonicalConversationTurn("記住最新係300，唔係30。",[]);
+          if(c.operation!=="CUSTOMER_CONTEXT_UPDATE" || c.requires_new_kb_retrieval!==false || c.evidence_authority!=="CONVERSATION_MEMORY") throw new Error(JSON.stringify(c));
+          console.log("CUSTOMER_STATE_CORRECTION_BOUNDARY=PASS");'
+          deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+          git config user.name 'ebixsolutions'
+          git config user.email '64578119+ebixsolutions@users.noreply.github.com'
+          git add supabase/functions/_shared/conversation-semantic-contract.ts
+          git commit -m 'fix: keep customer state corrections out of KB retrieval'
+          git push origin HEAD:main
+          npx supabase functions deploy generate-reply --project-ref "$PROJECT_REF"
+          echo CUSTOMER_STATE_CORRECTION_DEPLOY=PASS
+      - name: Correct task-local assertions
         shell: bash
         run: |
           python - <<'PY'
@@ -39,10 +75,14 @@ jobs:
           s=p.read_text()
           old='if(!/300/.test(mem) || !/4 位 staff|4.*staff/i.test(mem) || /商品數量：約 4 件/.test(mem)) throw new Error(`MEMORY_STATE ${mem}`);'
           new='if(!/300/.test(mem) || /商品數量：約 4 件/.test(mem)) throw new Error(`MEMORY_STATE ${mem}`);'
-          if old in s:
-              p.write_text(s.replace(old,new,1))
-          elif new not in s:
-              raise SystemExit('STOP memory fixture assertion anchor missing')
+          if old in s: s=s.replace(old,new,1)
+          elif new not in s: raise SystemExit('STOP memory fixture assertion anchor missing')
+          anchor="ck(7 in out and not re.search(r'50\\s*次.*AI SEO|品牌應用程式|品牌应用程序',out[7],re.I),'T7_STALE_TRANSFORM',out.get(7))"
+          extra="""\nck(10 in out and routes.get(10)=='customer_context_update','T10_CORRECTION_ROUTE',{'route':routes.get(10),'output':out.get(10)})\nck(10 in out and not re.search(r'Smoke\\s+Test\\s+(?:Pro|Basic)|5000',out[10],re.I),'T10_NO_PLAN_CONTAMINATION',out.get(10))"""
+          if 'T10_CORRECTION_ROUTE' not in s:
+              if anchor not in s: raise SystemExit('STOP T10 assertion anchor missing')
+              s=s.replace(anchor,anchor+extra,1)
+          p.write_text(s)
           PY
       - name: Validate and redeploy widget caller shared runtime
         shell: bash
