@@ -47,7 +47,17 @@ jobs:
       - name: Validate and redeploy widget caller shared runtime
         shell: bash
         run: |
+          cp supabase/functions/receive-widget-message/index.ts /tmp/receive-widget-message.index.ts
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('supabase/functions/receive-widget-message/index.ts')
+          s=p.read_text()
+          decl='declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };\n'
+          if not s.startswith(decl): p.write_text(decl+s)
+          PY
           deno check --node-modules-dir=auto supabase/functions/receive-widget-message/index.ts
+          cp /tmp/receive-widget-message.index.ts supabase/functions/receive-widget-message/index.ts
+          git diff --exit-code -- supabase/functions/receive-widget-message/index.ts
           npx supabase functions deploy receive-widget-message --project-ref "$PROJECT_REF" --no-verify-jwt
           echo INTEGRATED_REPAIR_WIDGET_DEPLOY=PASS
       - name: Implement validate deploy and fresh-smoke integrated repair
