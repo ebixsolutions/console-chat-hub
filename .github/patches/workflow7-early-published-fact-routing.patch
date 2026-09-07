@@ -1,0 +1,29 @@
+--- a/supabase/functions/_shared/conversation-runtime-state.ts
++++ b/supabase/functions/_shared/conversation-runtime-state.ts
+@@ -641,6 +641,24 @@
+   const semantic = classifyCanonicalConversationTurn(latest, newestFirst);
+   if (!latest) return { query: "", mode: "standalone", latest: "", context_turns: [], state };
+   const targetHint = retrievalTargetHint(latest);
++  const earlyPrevious = newestFirst
++    .filter((row) => CUSTOMER.has(String(row.role ?? "").toLowerCase()))
++    .map((row) => clean(row.content))
++    .filter((x) => x && x !== latest && x !== "__THINKING__");
++  const earlyPublishedFactQuestion = /[?？]|(?:幾多|多少|價錢|价钱|價格|价格|price|monthly|yearly|每月|每年|limit|上限|included|包括|有冇|有没有|係咪|是否|噪音|db|保養|保修|warranty|百分比|比例)|^(?:直接|再講|再说|tell me)/i.test(latest);
++  if (targetHint && earlyPublishedFactQuestion) {
++    const subject = recentFactualSubject(earlyPrevious);
++    const query = [
++      `Current request: ${latest}`,
++      `Retrieval target: ${targetHint}`,
++      ...(subject ? [`Inherited factual subject from customer context: ${subject}`] : []),
++    ].join("\n").slice(0, 1600);
++    return {
++      query,
++      mode: subject ? "contextual" : "standalone",
++      latest,
++      context_turns: subject ? earlyPrevious.slice(0, 5) : [],
++      state,
++    };
++  }
+ 
+   // Some terse factual queries contain pronouns or words such as "previous" that
+   // the broad memory classifier can conservatively label as conversation memory.
