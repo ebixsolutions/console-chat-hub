@@ -180,6 +180,26 @@ function fixedCountContract(context: PriorGroundedTransformContext): string[] {
   ];
 }
 
+
+function requestsNewFactualFacet(latest: string, priorAnswer: string): boolean {
+  const facets: Array<[RegExp, RegExp]> = [
+    [/(價錢|价格|price|月費|月费|年費|年费|monthly|yearly|年繳|年缴|月繳|月缴)/i, /(HKD|價錢|价格|price|月費|月费|年費|年费|monthly|yearly|年繳|年缴|月繳|月缴)/i],
+    [/(staff|員工|员工|管理人手|管理人员)/i, /(staff|員工|员工|管理人手|管理人员)/i],
+    [/(sku|商品數量|商品数量|product count)/i, /(sku|商品數量|商品数量|product count)/i],
+    [/(保養|保修|warranty)/i, /(保養|保修|warranty)/i],
+    [/(送貨|送货|delivery|九龍|九龙|kowloon|澳門|澳门|macau|macao)/i, /(送貨|送货|delivery|九龍|九龙|kowloon|澳門|澳门|macau|macao)/i],
+    [/(退款|refund|百分比|比例)/i, /(退款|refund|百分比|比例)/i],
+    [/(app|push|推播|推送|crm|會員等級|会员等级|membership)/i, /(app|push|推播|推送|crm|會員等級|会员等级|membership)/i],
+  ];
+  return facets.some(([request, evidence]) => request.test(latest) && !evidence.test(priorAnswer));
+}
+
+function requestsConversationSecuritySummary(latest: string, priorAnswer: string): boolean {
+  const asksSecuritySummary = /(拒絕|拒绝|敏感要求|sensitive requests?|system prompt|hidden context|secret key|bypass auth|其他客戶|其他客户)/i.test(latest) && /(總結|总结|summari)/i.test(latest);
+  if (!asksSecuritySummary) return false;
+  return !/(拒絕|拒绝|system prompt|hidden|secret|存取|访问|客戶|客户|credential|auth)/i.test(priorAnswer);
+}
+
 export function resolvePriorGroundedTransform(
   latest: string,
   newestFirst: SemanticHistoryRow[],
@@ -192,6 +212,8 @@ export function resolvePriorGroundedTransform(
   ) return null;
 
   const operation = semantic.operation as TransformOperation;
+  if (requestsNewFactualFacet(latest, semantic.prior_grounded_answer.content)) return null;
+  if (requestsConversationSecuritySummary(latest, semantic.prior_grounded_answer.content)) return null;
   const operations = detectRequestedTransformOperations(latest, operation);
   const requestedSummaryCount = operations.includes("SUMMARIZE")
     ? detectRequestedSummaryCount(latest)
