@@ -9,6 +9,10 @@ import {
 } from "../_shared/conversational-routing.ts";
 import { workflow5ShortTopicHint } from "../_shared/conversation-runtime-state.ts";
 
+declare const EdgeRuntime: {
+  waitUntil(promise: Promise<unknown>): void;
+};
+
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 const ALLOWED_ATTACHMENT_MIME = new Set([
   "image/jpeg", "image/png", "image/gif", "image/webp",
