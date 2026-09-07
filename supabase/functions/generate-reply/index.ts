@@ -66,7 +66,9 @@ import {
 import {
   buildCanonicalContinuityBlock,
   buildCanonicalRetrievalQuery,
+  buildWorkflow5TopicalClarification,
   resolveConversationMemoryResponse,
+  resolveWorkflow5ConversationLanguage,
 } from "../_shared/conversation-runtime-state.ts";
 import { classifyCanonicalConversationTurn } from "../_shared/conversation-semantic-contract.ts";
 import { selectCanonicalGrounding } from "../_shared/canonical-grounding.ts";
@@ -1571,6 +1573,7 @@ async function evaluateAndPersistRequiredRulesLive(
     enabled.has("R2")
   ) {
     const clarification =
+      buildWorkflow5TopicalClarification(params.latest_message_content, params.visitor_language) ??
       R2_CLARIFICATION_SAFE_WORDING[params.visitor_language];
     const persisted = await persistRequiredEscalationClarification(
       requiredEscalationRpcClient(supabaseAdmin),
@@ -3314,7 +3317,7 @@ async function orchestrationGenerateReply(
     _pr5HistoryRows ?? [],
   );
 
-  const _visitorLang = detectVisitorLanguage(_h1LastMsg);
+  const _visitorLang = resolveWorkflow5ConversationLanguage(_h1LastMsg, _pr5HistoryRows ?? []);
   // P0 critical preflight: E2 must run before customer-context and generic clarification early returns.
   const _criticalE2ExpectedTenantId =
     typeof conversation.company_id === "string" &&

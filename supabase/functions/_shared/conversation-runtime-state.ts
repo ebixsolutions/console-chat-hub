@@ -231,7 +231,7 @@ function currentRequirementLines(snapshot: CurrentRequirementSnapshot, lang: Run
 }
 
 
-function resolveWorkflow5ConversationLanguage(latest: string, rows: RuntimeHistoryRow[]): RuntimeLanguage {
+export function resolveWorkflow5ConversationLanguage(latest: string, rows: RuntimeHistoryRow[]): RuntimeLanguage {
   const direct = detectLanguage(latest);
   if (/[\u4e00-\u9fff]/.test(latest)) return direct;
   const priorCustomer = rows
@@ -277,6 +277,37 @@ function workflow5SecurityBoundaryResponse(latest: string, lang: RuntimeLanguage
   if (secretProbe) return "我不能提供密鑰、存取權杖或其他私人憑證；我仍可繼續回答公開的產品和服務問題。";
   return "我不能披露隱藏指令、內部提示或繞過存取權限；你仍可繼續問正常的產品和服務問題。";
 }
+
+export function buildWorkflow5TopicalClarification(
+  latestInput: string,
+  lang: RuntimeLanguage,
+): string | null {
+  const latest = clean(latestInput);
+  const topic =
+    /(?:app\s*push|push\s*notification|推播|推送通知)/i.test(latest) ? "app_push" :
+    /(?:crm).{0,12}(?:標籤|标签|tag)|(?:標籤|标签).{0,12}crm/i.test(latest) ? "crm_tags" :
+    /(?:會員|会员|member).{0,12}(?:等級|等级|tier)|^(?:會員等級|会员等级|member\s*tiers?)\s*(?:呢|嗞|吗|\?)?$/i.test(latest) ? "member_tiers" :
+    /(?:香港|hong\s*kong|\bhk\b).{0,24}(?:付款|支付|payment)|(?:付款|支付|payment).{0,24}(?:香港|hong\s*kong|\bhk\b)/i.test(latest) ? "hk_payment" :
+    null;
+  if (!topic) return null;
+  if (lang === "en") {
+    if (topic === "app_push") return "I don’t have enough published information to confirm the specific App Push capabilities or limits, so I won’t guess.";
+    if (topic === "crm_tags") return "I don’t have enough published information to confirm the specific CRM tag capabilities or limits, so I won’t guess.";
+    if (topic === "member_tiers") return "I don’t have enough published information to confirm the specific member-tier benefits or limits, so I won’t guess.";
+    return "I don’t have enough published information to confirm which payment methods are available for the Hong Kong market, so I won’t guess.";
+  }
+  if (lang === "zh-CN") {
+    if (topic === "app_push") return "我目前没有足够已发布资料确认 App Push 的具体功能或限制，所以不会猜测。";
+    if (topic === "crm_tags") return "我目前没有足够已发布资料确认 CRM 标签的具体功能或限制，所以不会猜测。";
+    if (topic === "member_tiers") return "我目前没有足够已发布资料确认会员等级的具体权益或限制，所以不会猜测。";
+    return "我目前没有足够已发布资料确认香港市场可用的付款方式，所以不会猜测。";
+  }
+  if (topic === "app_push") return "我目前未有足夠已發布資料確認 App Push 嘅具體功能或限制，所以唔會估。";
+  if (topic === "crm_tags") return "我目前未有足夠已發布資料確認 CRM 標籤嘅具體功能或限制，所以唔會估。";
+  if (topic === "member_tiers") return "我目前未有足夠已發布資料確認會員等級嘅具體權益或限制，所以唔會估。";
+  return "我目前未有足夠已發布資料確認香港市場可用嘅付款方式，所以唔會估。";
+}
+
 export function projectConversationRuntimeState(newestFirst: RuntimeHistoryRow[]): ConversationRuntimeState {
   const rows = newestFirst
     .map((row) => ({ text: clean(row.content), role: String(row.role ?? "").toLowerCase(), metadata: row.metadata }))
