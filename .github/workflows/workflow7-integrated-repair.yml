@@ -39,9 +39,17 @@ jobs:
           s=p.read_text()
           old='if(!/300/.test(mem) || !/4 位 staff|4.*staff/i.test(mem) || /商品數量：約 4 件/.test(mem)) throw new Error(`MEMORY_STATE ${mem}`);'
           new='if(!/300/.test(mem) || /商品數量：約 4 件/.test(mem)) throw new Error(`MEMORY_STATE ${mem}`);'
-          if old not in s: raise SystemExit('STOP memory fixture assertion anchor missing')
-          p.write_text(s.replace(old,new,1))
+          if old in s:
+              p.write_text(s.replace(old,new,1))
+          elif new not in s:
+              raise SystemExit('STOP memory fixture assertion anchor missing')
           PY
+      - name: Validate and redeploy widget caller shared runtime
+        shell: bash
+        run: |
+          deno check --node-modules-dir=auto supabase/functions/receive-widget-message/index.ts
+          npx supabase functions deploy receive-widget-message --project-ref "$PROJECT_REF" --no-verify-jwt
+          echo INTEGRATED_REPAIR_WIDGET_DEPLOY=PASS
       - name: Implement validate deploy and fresh-smoke integrated repair
         shell: bash
         run: bash .github/scripts/workflow7_integrated_repair.sh
