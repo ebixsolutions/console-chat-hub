@@ -3411,6 +3411,7 @@ async function orchestrationGenerateReply(
   }
   const _turnClassification = classifyConversationTurn(_h1LastMsg);
   if (
+    !buildWorkflow5TopicalClarification(_h1LastMsg, _visitorLang) &&
     _turnClassification.should_clarify_before_kb &&
     !isHandoffIntent(_h1LastMsg) && _criticalLocalRisk?.level !== "high"
   ) {
