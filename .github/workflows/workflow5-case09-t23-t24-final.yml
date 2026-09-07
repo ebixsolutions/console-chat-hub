@@ -1,0 +1,36 @@
+name: Workflow 5 Case09 T23 T24 Final Closure
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/workflow5-case09-t23-t24-final.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  final:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    env:
+      PROJECT_REF: nrfxhqabwblzxoushgnm
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROD_ORIGIN: https://console-chat-hub.lovable.app
+      CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+      BASE: https://nrfxhqabwblzxoushgnm.supabase.co/functions/v1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Implement, validate, deploy and fresh-run Case09 T23/T24
+        shell: bash
+        run: bash .github/scripts/workflow5_case09_t23_t24_final.sh
