@@ -232,7 +232,6 @@ function currentRequirementLines(snapshot: CurrentRequirementSnapshot, lang: Run
   return out;
 }
 
-
 export function resolveWorkflow5ConversationLanguage(latest: string, rows: RuntimeHistoryRow[]): RuntimeLanguage {
   const direct = detectLanguage(latest);
   if (/[\u4e00-\u9fff]/.test(latest)) return direct;
@@ -282,6 +281,9 @@ function workflow5SecurityBoundaryResponse(latest: string, lang: RuntimeLanguage
 
 function workflow5PostSecurityRecoveryResponse(latestInput: string, lang: RuntimeLanguage): string | null {
   const latest = clean(latestInput);
+  // A service-recovery phrase is presentation context, not authority to suppress a
+  // concrete published-fact request in the same turn. Let the normal KB path answer it.
+  if (retrievalTargetHint(latest)) return null;
   const normalServiceRecovery = /(?:再(?:講|说|說)|再給|再给|give|show).{0,24}(?:合法|正常|lawful|normal).{0,24}(?:平台功能|平台服务|平台服務|platform feature|service).{0,30}(?:恢復|恢复|recover)|(?:證明|证明|prove).{0,24}(?:服務|服务|service).{0,24}(?:恢復|恢复|recover)/i.test(latest);
   if (normalServiceRecovery) {
     if (lang === "en") return "Normal service has resumed. For example, you can ask about CRM tags; I’ll only describe capabilities or limits supported by published information.";
@@ -610,7 +612,7 @@ function retrievalTargetHint(text: string): string | null {
     return "Exact published product record: model identity, price, specifications, noise level, warranty and included/excluded product facts.";
   }
   if (/(?:送貨|送货|delivery|shipping|九龍|九龙|澳門|澳门|macau|地址).{0,40}(?:範圍|范围|安排|政策|policy|改|修改|change|fee|費|费)?/i.test(t)) {
-    return "Published delivery policy: service area, Macau handling, address changes, delivery conditions and fees.";
+    return "Published delivery policy lookup terms: service area, Kowloon, Macau handling, delivery-address change, pre-dispatch requirements, identity verification, human handling, system confirmation, delivery conditions and fees.";
   }
   if (/(?:退款|退貨|退货|refund|return|刮痕|損壞|损坏|damage|百分比|比例)/i.test(t)) {
     return "Published terms and policy: returns, refunds, damaged goods, evidence requirements, fixed-percentage rules and case-by-case handling.";
@@ -628,11 +630,25 @@ function factualFollowupNeedsSubject(text: string): boolean {
   return t.length <= 80 && /(?:幾多|多少|幾錢|几钱|價錢|价钱|價格|价格|price|monthly|yearly|每月|每年|limit|上限|staff|sku|app|push|crm|會員等級|会员等级|噪音|db|保養|保修|warranty|百分比|比例|included|包括|有冇|有没有|係咪|是否)/i.test(t);
 }
 
-function recentFactualSubject(previousCustomerTurns: string[]): string | null {
+function recentFactualSubjects(previousCustomerTurns: string[], max = 5): string[] {
   const strong = /(?:\b[A-Z]{2,}[A-Z0-9]*[- ]?\d{2,}[A-Z0-9-]*\b|Smoke\s*Test\s*(?:Basic|Growth|Pro)|\bGrowth\b|\bBasic\b|\bPro\b)/i;
-  const found = previousCustomerTurns.find((x) => strong.test(x));
-  if (found) return found.slice(0, 260);
-  return previousCustomerTurns[0]?.slice(0, 260) ?? null;
+  const out: string[] = [];
+  for (const turn of previousCustomerTurns) {
+    if (!strong.test(turn)) continue;
+    const value = turn.slice(0, 260);
+    if (!out.includes(value)) out.push(value);
+    if (out.length >= max) break;
+  }
+  if (!out.length && previousCustomerTurns[0]) out.push(previousCustomerTurns[0].slice(0, 260));
+  return out;
+}
+
+function recentFactualSubject(previousCustomerTurns: string[]): string | null {
+  return recentFactualSubjects(previousCustomerTurns, 1)[0] ?? null;
+}
+
+function pluralFactualReference(text: string): boolean {
+  return /(?:[兩两二三四五六七八九十幾几]\s*(?:款|部|個|个)|呢幾款|呢几款|這幾款|这几款|these\s+(?:models?|products?)|those\s+(?:models?|products?)|all\s+(?:models?|products?))/i.test(clean(text));
 }
 
 export function buildCanonicalRetrievalQuery(latestInput: string, newestFirst: RuntimeHistoryRow[]): CanonicalRetrievalQuery {
@@ -647,24 +663,21 @@ export function buildCanonicalRetrievalQuery(latestInput: string, newestFirst: R
     .filter((x) => x && x !== latest && x !== "__THINKING__");
   const earlyPublishedFactQuestion = /[?？]|(?:幾多|多少|幾錢|几钱|價錢|价钱|價格|价格|price|monthly|yearly|每月|每年|limit|上限|included|包括|有冇|有没有|係咪|是否|噪音|db|保養|保修|warranty|百分比|比例)|^(?:直接|再講|再说|tell me)/i.test(latest);
   if (targetHint && earlyPublishedFactQuestion) {
-    const subject = recentFactualSubject(earlyPrevious);
+    const subjects = pluralFactualReference(latest) ? recentFactualSubjects(earlyPrevious) : [recentFactualSubject(earlyPrevious)].filter((x): x is string => Boolean(x));
     const query = [
       `Current request: ${latest}`,
       `Retrieval target: ${targetHint}`,
-      ...(subject ? [`Inherited factual subject from customer context: ${subject}`] : []),
-    ].join("\n").slice(0, 1600);
+      ...(subjects.length ? [`Inherited factual subjects from customer context: ${subjects.join(" / ")}`] : []),
+    ].join("\n").slice(0, 1800);
     return {
       query,
-      mode: subject ? "contextual" : "standalone",
+      mode: subjects.length ? "contextual" : "standalone",
       latest,
-      context_turns: subject ? earlyPrevious.slice(0, 5) : [],
+      context_turns: subjects.length ? earlyPrevious.slice(0, 6) : [],
       state,
     };
   }
 
-  // Some terse factual queries contain pronouns or words such as "previous" that
-  // the broad memory classifier can conservatively label as conversation memory.
-  // A concrete published-KB domain target still requires current retrieval.
   if (semantic.operation === "CONVERSATION_MEMORY" && !targetHint) {
     const parts = [`Conversation-memory request: ${latest}`];
     if (state.first_customer_turn) parts.push(`First customer turn: ${state.first_customer_turn}`);
@@ -740,10 +753,9 @@ export function buildCanonicalAssistRetrievalQuery(assistanceInput: string, newe
   };
 }
 
-
-// Workflow 5 short topical queries are semantically complete subjects even when
-// conversationally terse. Keep this detector pure so callers can prevent generic
-// clarification from consuming a known topic.
+// Known published-KB factual subjects are semantically complete even when a
+// lightweight conversational classifier calls them terse/underspecified. Returning
+// a hint here prevents receive-widget-message from committing a generic no-KB reply.
 export function workflow5ShortTopicHint(text: string): string | null {
   const normalized = (text || "").trim().toLowerCase();
   if (!normalized) return null;
@@ -756,5 +768,5 @@ export function workflow5ShortTopicHint(text: string): string | null {
   if (["crm", "客戶管理", "客户管理"].includes(compact)) return "CRM";
   if (["push", "推送", "推播", "通知", "推送通知"].includes(compact)) return "Push notifications";
   if (["app", "手機app", "手机app", "手機應用", "手机应用", "應用程式", "应用程序"].includes(compact)) return "App support";
-  return null;
+  return retrievalTargetHint(text);
 }
