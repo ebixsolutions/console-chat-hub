@@ -1,0 +1,89 @@
+name: Workflow 4 T24 Director Repair v2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/workflow4-t24-director-repair-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+  PROJECT_REF: nrfxhqabwblzxoushgnm
+
+jobs:
+  repair-validate-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Patch authoritative W4 source and regression test
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('supabase/functions/_shared/conversation-runtime-state.ts')
+          s=p.read_text()
+          if 'latestRequirementsLimitRequest' in s:
+              raise SystemExit('STOP: repair marker already present; refusing duplicate patch')
+          start=s.index('  const latestRequirementsRequest = ')
+          end=s.index('\n  if (!(', start)
+          s=s[:end]+'''\n  const latestRequirementsLimitRequest = /(?:基於|基于|根據|根据|按|依照|based on|according to).{0,30}(?:最新|目前|現在|现在|current).{0,20}(?:需求|要求|條件|条件|requirements?).{0,40}(?:方案|plan).{0,20}(?:限制|上限|名額|名额|支援|支持|包含|restriction|limit|eligib)/i.test(latest);'''+s[end:]
+          old='currentContextRequest || latestRequirementsRequest)) return null;'
+          new='currentContextRequest || latestRequirementsRequest || latestRequirementsLimitRequest)) return null;'
+          if old not in s: raise SystemExit('STOP: memory-request guard baseline mismatch')
+          s=s.replace(old,new,1)
+          marker='  if (latestRequirementsRequest) {'
+          i=s.index(marker)
+          branch='''  if (latestRequirementsLimitRequest) {\n    const lines = currentRequirementLines(state.current_requirements, lang);\n    if (!lines.length) return lang === "en" ? en.none : q.none;\n    const snapshot = lines.join(lang === "en" ? "; " : "、");\n    if (lang === "en") {\n      return `Based on your latest requirements (${snapshot}), verify each plan's product-count limit, staff/admin-seat limit, whether App/Push/CRM/member tiers are included and any related restrictions, plus support scope for the current and future markets; use published plan information for any concrete limits.`.slice(0, 1800);\n    }\n    if (lang === "zh-CN") {\n      return `基于你目前最新需求（${snapshot}），你应再核实各方案的商品数量上限、管理人员名额、App／Push／CRM／会员等级是否包含及相关限制，以及目前与未来市场的支持范围；任何具体方案上限只以已发布方案资料为准。`.slice(0, 1800);\n    }\n    return `基於你目前最新需求（${snapshot}），你應再核實各方案的商品數量上限、管理人手名額、App／Push／CRM／會員等級是否包含及相關限制，以及目前與未來市場的支援範圍；任何具體方案上限只以已發布方案資料為準。`.slice(0, 1800);\n  }\n'''
+          s=s[:i]+branch+s[i:]
+          needle='  const explicitBoundary = Boolean(explicitJurisdiction) && semantic.operation !== "RETURN_TO_PRIOR_TOPIC" && semantic.operation !== "CORRECTION";\n'
+          j=s.index(needle)+len(needle)
+          retrieval='''  if (referencesCurrentRequirements) {\n    const requirementLines = currentRequirementLines(state.current_requirements, state.language);\n    return {\n      query: [\n        `Current request: ${latest}`,\n        "Retrieval target: ebixPRO ecommerce subscription plan limits, included features, admin/staff seats, and market eligibility only.",\n        ...(requirementLines.length ? [`Current customer requirement snapshot (latest wins): ${requirementLines.join(" / ")}`] : []),\n      ].join("\\n").slice(0, 1600),\n      mode: "contextual",\n      latest,\n      context_turns: [],\n      state,\n    };\n  }\n\n'''
+          s=s[:j]+retrieval+s[j:]
+          p.write_text(s)
+
+          t=Path('tests/edge/workflow4-latest-condition-state.test.ts')
+          ts=t.read_text()
+          addition=r'''\nDeno.test("Workflow 4 T24 latest-plan-limit answer is deterministic and cannot regress to stale unrelated KB topic", () => {\n  const latest = "基於最新需求，一句講我應該再核實邊幾項方案限制。";\n  const reply = resolveConversationMemoryResponse(latest, newestFirst(["請列出「最新」需求，唔好列舊條件。", latest]));\n  if (!reply) throw new Error("T24 deterministic reply missing");\n  for (const expected of ["300", "4 位 staff", "App", "Push", "CRM", "會員等級", "香港", "台灣", "商品數量上限", "管理人手名額"]) {\n    if (!reply.includes(expected)) throw new Error(`T24 missing ${expected}: ${reply}`);\n  }\n  for (const stale of ["30 件", "80 件", "2 位 staff", "App：目前不需要", "四電一腦", "雪櫃容積"]) {\n    if (reply.includes(stale)) throw new Error(`T24 stale/unrelated topic leaked: ${stale}: ${reply}`);\n  }\n});\n'''
+          t.write_text(ts+addition)
+          PY
+          grep -q 'latestRequirementsLimitRequest' supabase/functions/_shared/conversation-runtime-state.ts
+          grep -q 'Retrieval target: ebixPRO ecommerce subscription plan limits' supabase/functions/_shared/conversation-runtime-state.ts
+          grep -q 'Workflow 4 T24 latest-plan-limit answer is deterministic' tests/edge/workflow4-latest-condition-state.test.ts
+      - name: Validate W4 repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno test --allow-env tests/edge/workflow4-latest-condition-state.test.ts
+          deno test --allow-env tests/edge/task4-1-current-context-memory.test.ts
+          deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+          echo WORKFLOW4_T24_REPAIR_GATE=PASS
+      - name: Commit authoritative repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'ebixsolutions'
+          git config user.email '64578119+ebixsolutions@users.noreply.github.com'
+          git add supabase/functions/_shared/conversation-runtime-state.ts tests/edge/workflow4-latest-condition-state.test.ts
+          git commit -m 'fix: isolate latest-plan-limit follow-up from stale topics'
+          git push origin HEAD:main
+      - name: Deploy repaired generate-reply to production
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${SUPABASE_ACCESS_TOKEN:-}" ]]; then
+            echo 'EXTERNAL_BLOCKER: SUPABASE_ACCESS_TOKEN missing' >&2
+            exit 78
+          fi
+          npx --yes supabase@latest functions deploy generate-reply --project-ref "$PROJECT_REF" --no-verify-jwt=false
+          echo WORKFLOW4_T24_PRODUCTION_DEPLOY=PASS
