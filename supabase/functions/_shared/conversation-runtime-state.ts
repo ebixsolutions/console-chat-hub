@@ -633,3 +633,21 @@ export function buildCanonicalAssistRetrievalQuery(assistanceInput: string, newe
     state,
   };
 }
+
+
+// Workflow 5 short topical queries are semantically complete subjects even when
+// conversationally terse. Keep this detector pure so callers can prevent generic
+// clarification from consuming a known topic.
+export function workflow5ShortTopicHint(text: string): string | null {
+  const normalized = (text || "").trim().toLowerCase();
+  if (!normalized) return null;
+  let compact = normalized.replace(/\s+/g, "");
+  compact = compact.replace(/[？?]+$/g, "");
+  compact = compact.replace(/(?:呢|咧|啊|呀|嗎|吗)+$/g, "");
+  compact = compact.replace(/^(?:咁|那)/, "");
+  if (["會員等級", "会员等级", "會員分級", "会员分级", "membershiptier", "membershiptiers", "membertier", "membertiers", "membershiplevel", "membershiplevels", "memberlevel", "memberlevels"].includes(compact)) return "membership tiers";
+  if (["crm", "客戶管理", "客户管理"].includes(compact)) return "CRM";
+  if (["push", "推送", "推播", "通知", "推送通知"].includes(compact)) return "Push notifications";
+  if (["app", "手機app", "手机app", "手機應用", "手机应用", "應用程式", "应用程序"].includes(compact)) return "App support";
+  return null;
+}

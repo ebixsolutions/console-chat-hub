@@ -67,6 +67,7 @@ import {
   buildCanonicalContinuityBlock,
   buildCanonicalRetrievalQuery,
   buildWorkflow5TopicalClarification,
+  workflow5ShortTopicHint,
   resolveConversationMemoryResponse,
   resolveWorkflow5ConversationLanguage,
 } from "../_shared/conversation-runtime-state.ts";
@@ -3318,6 +3319,22 @@ async function orchestrationGenerateReply(
   );
 
   const _visitorLang = resolveWorkflow5ConversationLanguage(_h1LastMsg, _pr5HistoryRows ?? []);
+  const _w5ShortTopicHint = workflow5ShortTopicHint(_h1LastMsg);
+  if (_w5ShortTopicHint === "membership tiers") {
+    const topicalReply = _visitorLang === "en"
+      ? "You’re asking about membership tiers. I don’t have enough confirmed published information to state the tier structure, inclusions, or limits, so I won’t guess."
+      : _visitorLang === "zh-CN"
+      ? "你问的是会员等级。目前没有足够已确认的已发布资料来确定会员等级的架构、包含内容或限制，所以我不会猜。"
+      : "你問的是會員等級。目前未有足夠已確認的已發布資料去確定會員等級的架構、包含內容或限制，所以我唔會估。";
+    const topicalCommit = await commitAiReplyWithControlGate(
+      supabaseAdmin, conversation_id, source_message_id, topicalReply,
+      { response_route: "workflow5_topical_recovery", escalation_action: "continue_ai", handoff_required: false, topic: _w5ShortTopicHint, factual_grounding_required: true, grounding_state: "published_evidence_unconfirmed" },
+    );
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+    if (topicalCommit.ok) return new Response(JSON.stringify({ success: true, reply: topicalReply, response_route: "workflow5_topical_recovery", handoff_required: false }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    if (["human_control", "resolved", "superseded_source"].includes(topicalCommit.result)) return new Response(JSON.stringify({ success: true, skipped: topicalCommit.result }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ success: false, error: `workflow5_topical_recovery_${topicalCommit.result}` }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
   // P0 critical preflight: E2 must run before customer-context and generic clarification early returns.
   const _criticalE2ExpectedTenantId =
     typeof conversation.company_id === "string" &&
@@ -3411,7 +3428,7 @@ async function orchestrationGenerateReply(
   }
   const _turnClassification = classifyConversationTurn(_h1LastMsg);
   if (
-    !buildWorkflow5TopicalClarification(_h1LastMsg, _visitorLang) &&
+    !_w5ShortTopicHint &&
     _turnClassification.should_clarify_before_kb &&
     !isHandoffIntent(_h1LastMsg) && _criticalLocalRisk?.level !== "high"
   ) {
