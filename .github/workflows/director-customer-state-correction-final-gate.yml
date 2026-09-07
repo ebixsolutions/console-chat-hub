@@ -1,0 +1,31 @@
+name: Director Customer State Correction Final Gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/director-customer-state-correction-final-gate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  semantic-and-compile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Customer-owned state correction semantic gate
+        run: deno run --allow-read .github/scripts/director_customer_state_correction_gate.ts
+      - name: Compile generate-reply
+        run: deno check supabase/functions/generate-reply/index.ts
+      - name: Compile receive-widget-message
+        run: deno check supabase/functions/receive-widget-message/index.ts
+
+# trigger: director-takeover-customer-state-correction
