@@ -61,6 +61,8 @@ const REPHRASE = /(換句話|换句话|另一種講法|另一种说法|改寫|�
 const TRANSLATE = /(?:用|改用)(?:廣東話|广东话|繁體中文|繁体中文|簡體中文|简体中文|英文).*(?:講|讲|回答|答|解釋|解释|說|说|一次)?|\b(?:in|into)\s+(?:english|chinese|cantonese|traditional chinese|simplified chinese)\b|translate(?: that| it)?/i;
 const SUMMARY = /(?:總結|总结|概括|歸納|归纳).*(?:剛才|刚才|以上|之前|我們|我们|內容|内容|三點|三点)?|(?:根據|根据)?(?:已確認|已确认)(?:資料|资料).*(?:列|分成|整理成)?\s*(?:[一二兩两三四五六七八九十]|\d{1,2})\s*(?:點|点|項|项|條|条)|summari[sz]e(?: that| it| this| the above| what we discussed| our conversation)?/i;
 const MEMORY = /(一開始|一开始|第一個問題|第一个问题|最初).*(?:問|問題|问题)|(?:剛才|刚才).*(?:主要)?(?:問|问).*(?:什麼|什么|咩)|(?:主要)(?:問|问).*(?:什麼|什么|咩)|剛才.*(?:建議|建议|叫我|要我)|刚才.*(?:建议|叫我|要我)|之前.*(?:建議|建议|提供)|what\s+(?:did\s+i\s+ask|was\s+(?:my\s+)?first)|what\s+(?:was|is)\s+(?:my\s+)?(?:main|mainly|primary).*(?:question|asking|ask)|what\s+did\s+you\s+(?:recommend|suggest)|what\s+information\s+have\s+i\s+already\s+given|what\s+have\s+i\s+already\s+given|我(?:現在|现在|目前).*(?:哪個|哪个|什麼|什么).*(?:地區|地区).*(?:哪個|哪个|什麼|什么).*(?:項目|项目)|what(?:\x27s| is)?\s+(?:the\s+)?(?:current\s+)?(?:region|jurisdiction).*(?:item|product)|what.*still\s+missing/i;
+const CURRENT_REQUIREMENTS_SUMMARY = /(?:整理|總結|总结|概括|歸納|归纳).{0,18}(?:我)?(?:而家|現在|现在|目前|current|latest).{0,18}(?:最新)?(?:需求|要求|需要|requirements?|needs?)|(?:我)?(?:而家|現在|现在|目前|current|latest).{0,18}(?:最新)?(?:需求|要求|需要|requirements?|needs?).{0,18}(?:整理|總結|总结|概括|歸納|归纳|summary)|(?:current|latest)\s+(?:requirements?|needs?)\s+(?:summary|summarize|summarise)/i;
+const EXPLICIT_FACTUAL_TARGET_CORRECTION = /(?:其實|其实|actually)?.{0,20}(?:Growth|Basic|Pro|plan|方案|型號|型号|model|價錢|价钱|價格|价格|price|費用|费用|收費|收费|limit|上限|功能|feature|保養|保修|送貨|送货|退款|退貨|退货|付款|政策|policy|terms?\b|T&C).{0,20}(?:唔係|不是|并非|並非|not).{0,28}(?:我要問|我想問|想問|想问|ask about).{0,28}(?:Growth|Basic|Pro|plan|方案|型號|型号|model|價錢|价钱|價格|价格|price|費用|费用|收費|收费|limit|上限|功能|feature|保養|保修|送貨|送货|退款|退貨|退货|付款|政策|policy|terms?\b|T&C)|(?:唔係|不是|not).{0,50}(?:我要問|我想問|想問|想问|ask about)/i;
 const RETURN_PRIOR = /(回到|返回|返去|回返|講返|讲回|回香港|回到香港|back to|return to|go back to|back on).{0,50}/i;
 const TOPIC_SWITCH = /^(?:算了|算啦|另外|轉個話題|转个话题|換個話題|换个话题|不談|不谈|forget that|never mind|different topic|another question)/i;
 const FOLLOW = /^(?:咁|那|那麼|那么|所以|另外|仲有|还有|如果|再|又|而|同埋|what about|and what about|then|so|also|in that case|how about)/i;
@@ -201,13 +203,12 @@ export function classifyCanonicalConversationTurn(
       topic_action: "KEEP",
     });
   }
-  const transform = SIMPLIFY.test(latest) ? "SIMPLIFY" : TRANSLATE.test(latest) ? "TRANSLATE" : REPHRASE.test(latest) ? "REPHRASE" : SUMMARY.test(latest) ? "SUMMARIZE" : null;
-  if (transform) {
-    return base(transform, priorGrounded ? "transform_of_prior_grounded_answer" : "transform_requires_history_without_grounded_anchor", {
+  if (CURRENT_REQUIREMENTS_SUMMARY.test(latest)) {
+    return base("CONVERSATION_MEMORY", "current_customer_requirements_summary", {
       needs_history: true,
-      requires_new_kb_retrieval: !priorGrounded,
-      may_reuse_prior_grounded_answer: Boolean(priorGrounded),
-      evidence_authority: priorGrounded ? "PRIOR_GROUNDED_ANSWER" : "CURRENT_KB_REQUIRED",
+      requires_new_kb_retrieval: false,
+      may_reuse_prior_grounded_answer: false,
+      evidence_authority: "CONVERSATION_MEMORY",
       topic_action: "KEEP",
     });
   }
@@ -227,6 +228,15 @@ export function classifyCanonicalConversationTurn(
       may_reuse_prior_grounded_answer: false,
       evidence_authority: "CONVERSATION_MEMORY",
       topic_action: "KEEP",
+    });
+  }
+  if (EXPLICIT_FACTUAL_TARGET_CORRECTION.test(latest)) {
+    return base("TOPIC_SWITCH", "explicit_factual_target_correction", {
+      needs_history: true,
+      requires_new_kb_retrieval: true,
+      may_reuse_prior_grounded_answer: false,
+      evidence_authority: "CURRENT_KB_REQUIRED",
+      topic_action: "SWITCH",
     });
   }
   if (CORRECTION.test(latest)) {
@@ -253,6 +263,16 @@ export function classifyCanonicalConversationTurn(
   }
   if (TOPIC_SWITCH.test(latest)) {
     return base("TOPIC_SWITCH", "explicit_topic_switch", { needs_history: true, topic_action: "SWITCH" });
+  }
+  const transform = SIMPLIFY.test(latest) ? "SIMPLIFY" : TRANSLATE.test(latest) ? "TRANSLATE" : REPHRASE.test(latest) ? "REPHRASE" : SUMMARY.test(latest) ? "SUMMARIZE" : null;
+  if (transform) {
+    return base(transform, priorGrounded ? "transform_of_prior_grounded_answer" : "transform_requires_history_without_grounded_anchor", {
+      needs_history: true,
+      requires_new_kb_retrieval: !priorGrounded,
+      may_reuse_prior_grounded_answer: Boolean(priorGrounded),
+      evidence_authority: priorGrounded ? "PRIOR_GROUNDED_ANSWER" : "CURRENT_KB_REQUIRED",
+      topic_action: "KEEP",
+    });
   }
   if (PRONOUN.test(latest)) {
     return base("PRONOUN_OR_ELLIPSIS", "referential_follow_up_requires_history", { needs_history: true, topic_action: "KEEP" });
