@@ -25,11 +25,12 @@ function clean(value: unknown, max = 1600): string {
 
 function isCurrentCustomerStateSummary(text: string): boolean {
   const latest = clean(text);
+  const explicitLatestRequirements =
+    /(?:最新|目前|現在|现在|而家|current|latest).{0,24}(?:需求|要求|需要|requirements?|needs?)/i.test(latest);
   return Boolean(
     latest &&
       CURRENT_STATE_SUMMARY_VERB.test(latest) &&
-      CURRENT_STATE_SUMMARY_SCOPE.test(latest) &&
-      CURRENT_STATE_FIELDS.test(latest),
+      (CURRENT_STATE_SUMMARY_SCOPE.test(latest) || explicitLatestRequirements),
   );
 }
 
@@ -66,6 +67,58 @@ function marketLabel(id: string, language: RuntimeLanguage): string {
   return labels[id]?.[language] ?? id;
 }
 
+function augmentState6RequirementSnapshot(
+  newestFirst: RuntimeHistoryRow[],
+  snapshot: ReturnType<typeof projectConversationRuntimeState>["current_requirements"],
+) {
+  const customerText = newestFirst
+    .filter((row) => CUSTOMER_ROLES.has(String(row.role ?? "").toLowerCase()))
+    .map((row) => clean(row.content, 1200))
+    .filter(Boolean)
+    .reverse()
+    .join(" / ");
+
+  let staffCount = snapshot.staff_count;
+  if (staffCount === null) {
+    const staff = customerText.match(/([一二兩两三四五六七八九十]|\d{1,3})\s*(?:個|个|位)?\s*(?:staff|員工|员工)/i);
+    if (staff?.[1]) {
+      const map: Record<string, number> = { 一: 1, 二: 2, 兩: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
+      staffCount = /^\d+$/.test(staff[1]) ? Number(staff[1]) : (map[staff[1]] ?? null);
+    }
+  }
+
+  let currentMarket = snapshot.current_market;
+  const current = customerText.match(/(?:目前|而家|現在|现在|currently|current|main\s+market)[^，。,.!?！？/]{0,30}?(香港|台灣|台湾|澳門|澳门|Hong\s+Kong|Taiwan|Macau)/i);
+  const raw = current?.[1]?.toLowerCase() ?? "";
+  if (/香港|hong\s+kong/.test(raw)) currentMarket = "hong_kong";
+  else if (/台灣|台湾|taiwan/.test(raw)) currentMarket = "taiwan";
+  else if (/澳門|澳门|macau/.test(raw)) currentMarket = "macau";
+
+  const futureMarkets = new Set(snapshot.future_markets);
+  const future = customerText.match(/(香港|台灣|台湾|澳門|澳门|Hong\s+Kong|Taiwan|Macau)\s*(?:之後|之后|以後|以后|未來|未来|later|future)/i);
+  const futureRaw = future?.[1]?.toLowerCase() ?? "";
+  if (/香港|hong\s+kong/.test(futureRaw)) futureMarkets.add("hong_kong");
+  else if (/台灣|台湾|taiwan/.test(futureRaw)) futureMarkets.add("taiwan");
+  else if (/澳門|澳门|macau/.test(futureRaw)) futureMarkets.add("macau");
+  if (currentMarket) futureMarkets.delete(currentMarket);
+
+  const desiredFeatures = new Set(snapshot.desired_features);
+  if (
+    /(?:會員功能|会员功能|membership(?:\s+(?:feature|features|function|functions))?)/i.test(customerText) &&
+    /(?:想要|想用|要用|會用|会用|需要|need|want|use)/i.test(customerText)
+  ) {
+    desiredFeatures.add("會員功能");
+  }
+
+  return {
+    ...snapshot,
+    staff_count: staffCount,
+    current_market: currentMarket,
+    future_markets: [...futureMarkets],
+    desired_features: [...desiredFeatures],
+  };
+}
+
 function currentStateSummaryReply(
   latestInput: string,
   newestFirst: RuntimeHistoryRow[],
@@ -74,7 +127,7 @@ function currentStateSummaryReply(
 
   const priorRows = historyWithoutCurrentCustomerTurn(latestInput, newestFirst);
   const state = projectConversationRuntimeState(priorRows);
-  const snapshot = state.current_requirements;
+  const snapshot = augmentState6RequirementSnapshot(priorRows, state.current_requirements);
   const language = state.language;
   const lines: string[] = [];
 
@@ -163,7 +216,7 @@ function correctedPlanSubject(text: string): PublishedPlan | null {
   if (!correctionCue.test(latest)) return null;
 
   const explicitTarget = latest.match(
-    /(?:我要問|我要问|我想問|我想问|想問|想问|問嘅係|问的是|改問|改问|ask\s+about|i\s+(?:want|meant)\s+(?:to\s+)?(?:ask\s+about\s+)?)(?:the\s+)?(Basic|Growth|Pro)(?:\s+(?:plan|方案))?/i,
+    /(?:我要問|我要问|我想問|我想问|想問|想问|問嘅係|问的是|改問|改问|ask\s+about|i\s+(?:want|meant)\s+(?:to\s+)?(?:ask\s+about\s+)?)\s*(?:the\s+)?(Basic|Growth|Pro)(?:\s+(?:plan|方案))?/i,
   );
   const explicitPlan = normalizePlan(explicitTarget?.[1]);
   if (explicitPlan) return explicitPlan;
