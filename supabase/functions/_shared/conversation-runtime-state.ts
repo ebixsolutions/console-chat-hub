@@ -1,6 +1,7 @@
 export * from "./conversation-runtime-state-core.ts";
 
 import {
+  buildCanonicalRetrievalQuery as baseBuildCanonicalRetrievalQuery,
   projectConversationRuntimeState,
   type CanonicalRetrievalQuery,
   type RuntimeHistoryRow,
