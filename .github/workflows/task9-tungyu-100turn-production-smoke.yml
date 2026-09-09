@@ -1,0 +1,37 @@
+name: Task 9 Tung Yu 100-turn Production Smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/task9-tungyu-100turn-production-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PROD_ORIGIN: https://console-chat-hub.lovable.app
+  CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+  PROJECT_REF: nrfxhqabwblzxoushgnm
+  SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Run 100-turn real widget ingress smoke
+        run: python3 scripts/task9-tungyu-100turn-production-smoke.py
+      - name: Upload complete Task 9 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: task9-tungyu-100turn-evidence
+          path: |
+            task9-results.json
+            task9-summary.txt
+          if-no-files-found: error
