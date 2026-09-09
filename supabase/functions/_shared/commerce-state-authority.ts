@@ -44,6 +44,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+function isKnownValue(value: unknown): boolean {
+  return value !== undefined && value !== null && value !== "";
+}
+
 export function getCommerceStatePath(state: ConversationCommerceState, path: string): unknown {
   const parts = clean(path, 300).split(".").filter(Boolean);
   if (!parts.length) return undefined;
@@ -108,28 +112,68 @@ function questionLooksLikeCalculation(question: string): boolean {
   return /(?:加埋|合共|總共幾錢|总共多少钱|一共多少|total|how much.*(?:total|altogether)|calculate|計下|算下|計算|计算)/i.test(question);
 }
 
+function inferKnownCustomerStatePath(
+  question: string,
+  state: ConversationCommerceState,
+): { path: string; value: unknown } | null {
+  const candidates: Array<[RegExp, string]> = [
+    [/(?:送貨地址|送货地址|地址|delivery address|address)/i, "delivery.address"],
+    [/(?:收貨人電話|收货人电话|recipient phone|contact phone)/i, "delivery.recipient_phone"],
+    [/(?:收貨人|收货人|recipient)/i, "delivery.recipient_name"],
+    [/(?:送貨日期|送货日期|送貨時間|送货时间|delivery date|delivery time|preferred date)/i, "delivery.preferred_date"],
+    [/(?:order status|訂單狀態|订单状态|落單狀態|下单状态)/i, "conversion.order_status"],
+    [/(?:quote status|quotation status|報價狀態|报价状态)/i, "conversion.quotation_status"],
+    [/(?:payment status|付款狀態|付款状态)/i, "conversion.payment_status"],
+  ];
+
+  for (const [pattern, path] of candidates) {
+    if (!pattern.test(question)) continue;
+    const value = getCommerceStatePath(state, path);
+    if (isKnownValue(value)) return { path, value };
+  }
+
+  if (/(?:幾多|多少|數量|数量|quantity|how many)/i.test(question)) {
+    const active = state.entities.filter((entity) => entity.status !== "cancelled" && entity.status !== "deferred");
+    if (active.length === 1) {
+      return { path: `entities.${state.entities.indexOf(active[0])}.quantity`, value: active[0].quantity };
+    }
+  }
+
+  return null;
+}
+
 /**
  * Universal authority hierarchy for commerce answers.
- * 1. Explicit customer-owned state wins when the requested path is known.
+ * 1. Explicit/inferred customer-owned state wins when already known.
  * 2. Deterministic arithmetic from supplied terms wins over KB retrieval.
- * 3. Current business/product/policy facts require current KB/tool evidence.
- * 4. Site/safety-sensitive questions require professional confirmation.
+ * 3. Safety/site-sensitive questions require professional confirmation.
+ * 4. Current business/product/policy facts require current KB/tool evidence.
  * 5. Otherwise fail safely instead of inventing facts.
  */
 export function resolveCommerceAnswerAuthority(input: ResolveCommerceAuthorityInput): CommerceAuthorityDecision {
   const question = clean(input.question);
-  const statePath = clean(input.requested_state_path ?? "", 300);
+  const explicitStatePath = clean(input.requested_state_path ?? "", 300);
 
-  if (statePath) {
-    const known = getCommerceStatePath(input.state, statePath);
-    if (known !== undefined && known !== null && known !== "") {
+  if (explicitStatePath) {
+    const known = getCommerceStatePath(input.state, explicitStatePath);
+    if (isKnownValue(known)) {
       return {
         authority: "CONVERSATION_STATE",
         reason: "requested_customer_state_is_known",
         known_value: known,
-        state_path: statePath,
+        state_path: explicitStatePath,
       };
     }
+  }
+
+  const inferred = inferKnownCustomerStatePath(question, input.state);
+  if (inferred) {
+    return {
+      authority: "CONVERSATION_STATE",
+      reason: "customer_state_inferred_and_known",
+      known_value: inferred.value,
+      state_path: inferred.path,
+    };
   }
 
   if ((questionLooksLikeCalculation(question) || (input.calculation_terms?.length ?? 0) > 0) && input.calculation_terms?.length) {
@@ -141,6 +185,13 @@ export function resolveCommerceAnswerAuthority(input: ResolveCommerceAuthorityIn
         calculation,
       };
     }
+  }
+
+  if (input.requires_professional_site_check || input.unsafe_to_remote_confirm) {
+    return {
+      authority: "SAFE_PROFESSIONAL_CONFIRMATION",
+      reason: "remote_confirmation_not_safe_or_not_authoritative",
+    };
   }
 
   if (
@@ -155,18 +206,11 @@ export function resolveCommerceAnswerAuthority(input: ResolveCommerceAuthorityIn
     };
   }
 
-  if (input.requires_professional_site_check || input.unsafe_to_remote_confirm) {
-    return {
-      authority: "SAFE_PROFESSIONAL_CONFIRMATION",
-      reason: "remote_confirmation_not_safe_or_not_authoritative",
-    };
-  }
-
   if (questionLooksLikeCustomerState(question)) {
     return {
       authority: "INSUFFICIENT_INFORMATION",
       reason: "customer_state_question_but_requested_fact_not_resolved",
-      state_path: statePath || null,
+      state_path: explicitStatePath || null,
     };
   }
 
