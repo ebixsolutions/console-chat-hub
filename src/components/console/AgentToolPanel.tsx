@@ -358,11 +358,11 @@ export function AgentToolPanel({
               <div style={{ marginTop: 5 }}><b>Summary:</b> {String(handoffContext.warm_handoff_package.conversation_summary || "—")}</div>
             </>}
             <div style={{ marginTop: 8, fontWeight: 600 }}>Relevant Knowledge</div>
-            {(handoffContext?.knowledge?.evidence || []).length ? (handoffContext.knowledge.evidence as any[]).map((x: any, i: number) => <div key={`hk-${i}`} style={{ marginTop: 4, padding: 6, background: "#fff", borderRadius: 5 }}>{x.content}</div>) : <div style={{ color: "#888" }}>No matching verified evidence.</div>}
+            {(handoffContext?.knowledge?.evidence || []).length ? ((handoffContext?.knowledge?.evidence ?? []) as any[]).map((x: any, i: number) => <div key={`hk-${i}`} style={{ marginTop: 4, padding: 6, background: "#fff", borderRadius: 5 }}>{x.content}</div>) : <div style={{ color: "#888" }}>No matching verified evidence.</div>}
             <div style={{ marginTop: 8, fontWeight: 600 }}>Relevant Policy</div>
-            {(handoffContext?.policy?.evidence || []).length ? (handoffContext.policy.evidence as any[]).map((x: any, i: number) => <div key={`hp-${i}`} style={{ marginTop: 4, padding: 6, background: "#fff", borderRadius: 5 }}>{x.content}</div>) : <div style={{ color: "#888" }}>No matching verified policy evidence.</div>}
+            {(handoffContext?.policy?.evidence || []).length ? ((handoffContext?.policy?.evidence ?? []) as any[]).map((x: any, i: number) => <div key={`hp-${i}`} style={{ marginTop: 4, padding: 6, background: "#fff", borderRadius: 5 }}>{x.content}</div>) : <div style={{ color: "#888" }}>No matching verified policy evidence.</div>}
             <div style={{ marginTop: 8, fontWeight: 600 }}>Suggested Replies</div>
-            {(handoffContext?.suggested_replies || []).length ? (handoffContext.suggested_replies as any[]).map((x: any, i: number) => <div key={`hs-${i}`} style={{ marginTop: 5, padding: 6, background: "#fff", borderRadius: 5 }}><div>{x.content}</div><button onClick={() => onUseDraft(String(x.content))} style={{ marginTop: 4, fontSize: 10, padding: "3px 7px" }}>Use in Draft</button></div>) : <div style={{ color: "#888" }}>No grounded draft available.</div>}
+            {(handoffContext?.suggested_replies || []).length ? ((handoffContext?.suggested_replies ?? []) as any[]).map((x: any, i: number) => <div key={`hs-${i}`} style={{ marginTop: 5, padding: 6, background: "#fff", borderRadius: 5 }}><div>{x.content}</div><button onClick={() => onUseDraft(String(x.content))} style={{ marginTop: 4, fontSize: 10, padding: "3px 7px" }}>Use in Draft</button></div>) : <div style={{ color: "#888" }}>No grounded draft available.</div>}
           </div>
         )}
         {tl && <div style={{ textAlign: "center", color: "#888", padding: 14 }}>{tc("processing")}</div>}

@@ -103,6 +103,11 @@ import {
 } from "../_shared/emotion-reply-strategy.ts";
 import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
 import {
+  type CommerceRuntimeOutcome,
+  type CommerceStateDbClient,
+  runCommerceStateRuntime,
+} from "../_shared/commerce-state-runtime.ts";
+import {
   createClient,
   type SupabaseClient,
 } from "https://esm.sh/@supabase/supabase-js@2.45.0";
@@ -3366,6 +3371,76 @@ async function orchestrationGenerateReply(
       },
     );
     if (_criticalE2Response) return _criticalE2Response;
+  }
+  // ===== TASK A3: persistent commerce state runtime =====
+  // Runs AFTER the critical E2 safety branch and BEFORE CUSTOMER_CONTEXT_UPDATE,
+  // generic clarification, conversation-memory shortcut and KB retrieval.
+  let _a3Commerce: CommerceRuntimeOutcome | null = null;
+  if (_criticalE2ExpectedTenantId) {
+    try {
+      _a3Commerce = await runCommerceStateRuntime(
+        supabaseAdmin as unknown as CommerceStateDbClient,
+        {
+          conversation_id,
+          company_id: _criticalE2ExpectedTenantId,
+          source_message_id,
+          text: _h1LastMsg,
+          language: _visitorLang === "en" ? "en" : _visitorLang === "zh-CN" ? "zh-CN" : "zh-TW",
+          occurred_at: sourceVisitorMessage.created_at ?? null,
+          history: (_pr5HistoryRows ?? []).map((row) => ({
+            role: String((row as { role?: unknown }).role ?? ""),
+            content: String((row as { content?: unknown }).content ?? ""),
+          })),
+        },
+      );
+    } catch (commerceError) {
+      console.error("[generate-reply] A3 commerce state runtime failed (non-blocking):", commerceError);
+      _a3Commerce = null;
+    }
+  }
+  if (_a3Commerce && _a3Commerce.reply) {
+    const commerceReply = _a3Commerce.reply;
+    const commerceCommit = await commitAiReplyWithControlGate(
+      supabaseAdmin,
+      conversation_id,
+      source_message_id,
+      commerceReply,
+      {
+        response_route: _a3Commerce.route,
+        escalation_action: "continue_ai",
+        handoff_required: false,
+        commerce_authority: _a3Commerce.authority,
+        commerce_state_revision: _a3Commerce.revision,
+        commerce_state_persist_result: _a3Commerce.persist_result,
+        commerce_reason: _a3Commerce.reason,
+        commerce_state_path: _a3Commerce.state_path ?? null,
+        commerce_calculation: _a3Commerce.calculation ?? null,
+      },
+    );
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+    if (commerceCommit.ok) {
+      return new Response(
+        JSON.stringify({
+          success: true,
+          reply: commerceReply,
+          response_route: _a3Commerce.route,
+          commerce_authority: _a3Commerce.authority,
+          commerce_state_revision: _a3Commerce.revision,
+          handoff_required: false,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    if (["human_control", "resolved", "superseded_source"].includes(commerceCommit.result)) {
+      return new Response(
+        JSON.stringify({ success: true, skipped: commerceCommit.result }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    return new Response(
+      JSON.stringify({ success: false, error: `commerce_state_runtime_${commerceCommit.result}` }),
+      { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
   }
   const _criticalLocalRisk = classifyLocalTopicRisk(_h1LastMsg);
   const _canonicalTurn = classifyCanonicalConversationTurn(
