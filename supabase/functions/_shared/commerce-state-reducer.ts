@@ -307,8 +307,8 @@ function parseSmallCount(raw: string): number | null {
 }
 
 function parseExplicitQuantity(text: string): number | null {
-  const m = text.match(/(?:qty|quantity|數量|数量|共|總共|总共|要|需要|買|买|訂|订)\s*(?:係|是|=|:|：)?\s*([一二兩两三四五六七八九十]|\d{1,4})\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚|night|nights|pcs?|pieces?|units?|items?)?/i)
-    ?? text.match(/\b(\d{1,4})\s*(?:pcs?|pieces?|units?|items?)\b/i);
+  const m = text.match(/(?:qty|quantity|數量|数量|共|總共|总共|要|需要|買|买|訂|订|改做|改成|change to)\s*(?:係|是|=|:|：)?\s*([一二兩两三四五六七八九十]|\d{1,4})\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚|night|nights|pcs?|pieces?|units?|items?)?/i)
+    ?? text.match(/([一二兩两三四五六七八九十]|\d{1,4})\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚|night|nights|pcs?|pieces?|units?|items?)\b/i);
   return m?.[1] ? parseSmallCount(m[1]) : null;
 }
 
@@ -388,7 +388,7 @@ export function deriveCommerceEventsFromCustomerTurn(input: CommerceTurnInterpre
   if (money) {
     const entityId = mentioned.length === 1 ? mentioned[0].entity_id : null;
     const historical = /(?:之前|上次|舊價|旧价|歷史|历史|previous|historical|last time)/i.test(text);
-    const unverified = /(?:唔肯定|不確定|不确定|未confirm|未確認|未确认|unverified|not sure)/i.test(text);
+    const explicitlyUnverified = /(?:唔肯定|不確定|不确定|未confirm|未確認|未确认|unverified|not sure)/i.test(text);
     events.push({
       type: "ADD_QUOTE",
       quote: {
@@ -396,10 +396,10 @@ export function deriveCommerceEventsFromCustomerTurn(input: CommerceTurnInterpre
         entity_id: entityId,
         amount: money.amount,
         currency: input.currency ?? money.currency,
-        quote_type: historical ? "customer_reported_historical" : unverified ? "unverified" : "customer_reported_historical",
-        validity_status: historical && !unverified ? "historical" : "unknown",
+        quote_type: historical ? "customer_reported_historical" : "unverified",
+        validity_status: historical && !explicitlyUnverified ? "historical" : "unknown",
         source_label: "customer_reported",
-        conditions: { historical, unverified },
+        conditions: { historical, unverified: !historical || explicitlyUnverified },
         provenance: p,
       },
     });
