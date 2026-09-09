@@ -1,0 +1,36 @@
+name: Task A1 Commerce State Final Gate
+
+on:
+  push:
+    branches: [task-a1-commerce-state]
+    paths:
+      - 'supabase/functions/_shared/commerce-state-contract.ts'
+      - 'supabase/migrations/20260909173000_task_a1_universal_commerce_state.sql'
+      - 'supabase/rollback/20260909173000_task_a1_universal_commerce_state.rollback.sql'
+      - '.github/scripts/task_a1_commerce_state_final_gate.mjs'
+      - '.github/workflows/task-a1-commerce-state-final-gate.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'supabase/functions/_shared/commerce-state-contract.ts'
+      - 'supabase/migrations/20260909173000_task_a1_universal_commerce_state.sql'
+      - 'supabase/rollback/20260909173000_task_a1_universal_commerce_state.rollback.sql'
+      - '.github/scripts/task_a1_commerce_state_final_gate.mjs'
+      - '.github/workflows/task-a1-commerce-state-final-gate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  final-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: node .github/scripts/task_a1_commerce_state_final_gate.mjs
