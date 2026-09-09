@@ -10,6 +10,7 @@ drop trigger if exists trg_conversation_commerce_state_lineage
 
 drop function if exists public.enforce_conversation_commerce_state_lineage_v1();
 
+drop table if exists public.conversation_commerce_state_event;
 drop table if exists public.conversation_commerce_state;
 
 commit;
