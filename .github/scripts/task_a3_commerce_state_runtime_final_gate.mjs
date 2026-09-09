@@ -59,7 +59,11 @@ must(fs.existsSync(widget), `missing:${widget}`);
 must(!fs.readFileSync(widget, "utf8").includes("commerce-state-runtime"), "receive_widget_message_modified");
 
 const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
-must(pkg.version === "2.7.1", `unexpected_package_version:${pkg.version}`);
+// Baseline package.json declares no version field; A3 must not introduce or change one.
+must(
+  pkg.version === undefined || pkg.version === "2.7.1",
+  `unexpected_package_version:${pkg.version}`,
+);
 
 execFileSync("npx", [
   "tsc",
