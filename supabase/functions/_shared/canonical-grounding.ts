@@ -92,6 +92,25 @@ function assessApplicability(document: KBDocumentCandidate, requestText: string)
   };
 }
 
+const STRONG_LEXICAL_SCORE_FLOOR = 0.05;
+
+function strongLexicalEvidenceMatch(requestText: string, document: KBDocumentCandidate): boolean {
+  const request = requestText.normalize("NFKC").toLowerCase();
+  const text = candidateText(document).normalize("NFKC").toLowerCase();
+  const namedPlan = ["growth", "basic", "pro"].find((plan) =>
+    new RegExp(`\\b${plan}\\b`, "i").test(request) && new RegExp(`\\b${plan}\\b`, "i").test(text)
+  );
+  const requestHasPlanFact = /(?:sku|staff|admin|seat|app|push|crm|會員|会员|ai\s*seo|price|billing|monthly|yearly|limit|上限|費用|费用|價錢|价钱|價格|价格)/i.test(request);
+  const textHasPlanFact = /(?:sku|staff|admin|seat|app|push|crm|會員|会员|ai\s*seo|price|billing|monthly|yearly|limit|上限|費用|费用|價錢|价钱|價格|价格)/i.test(text);
+  if (namedPlan && requestHasPlanFact && textHasPlanFact) return true;
+
+  const reqModels = modelTokens(requestText);
+  if (reqModels.length > 0 && reqModels.some((model) => text.includes(model.toLowerCase()))) {
+    return /(?:price|spec|warranty|保養|保修|噪音|db|delivery|shipping|送貨|送货)/i.test(request);
+  }
+  return false;
+}
+
 function lexicalRelevance(requestText: string, document: KBDocumentCandidate): number {
   const request = requestText.normalize("NFKC").toLowerCase();
   const text = candidateText(document).normalize("NFKC").toLowerCase();
@@ -141,10 +160,14 @@ export function selectCanonicalGrounding(
       return { ok: false, error: "KB_DOCUMENT_EVIDENCE_MISMATCH" };
     }
 
+    const lexicalScore = lexicalRelevance(requestText, document);
+    const effectiveMinScore = strongLexicalEvidenceMatch(requestText, document)
+      ? Math.min(minScore, STRONG_LEXICAL_SCORE_FLOOR)
+      : minScore;
     const chunks = document.chunks.filter((c) =>
       c.content.trim() &&
       Number.isFinite(c.score) &&
-      c.score >= minScore &&
+      c.score >= effectiveMinScore &&
       (!requirePublished || c.status === "published") &&
       (!policyOnly || c.source_type.toLowerCase().includes("policy"))
     );
@@ -154,7 +177,7 @@ export function selectCanonicalGrounding(
     const evidence = document.llm_context.full_content_evidence.filter((e) =>
       e.content.trim() &&
       Number.isFinite(e.score) &&
-      e.score >= minScore &&
+      e.score >= effectiveMinScore &&
       (!policyOnly || e.source_type.toLowerCase().includes("policy")) &&
       fullContentIds.has(e.chunk_id ?? e.content)
     );
@@ -172,7 +195,7 @@ export function selectCanonicalGrounding(
       evidence,
       applicability,
       evidenceScore: Math.max(...evidence.map((e) => e.score), 0),
-      lexicalScore: lexicalRelevance(requestText, document),
+      lexicalScore,
     });
   }
 
