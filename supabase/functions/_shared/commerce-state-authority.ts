@@ -112,6 +112,11 @@ function questionLooksLikeCalculation(question: string): boolean {
   return /(?:加埋|合共|總共幾錢|总共多少钱|一共多少|total|how much.*(?:total|altogether)|calculate|計下|算下|計算|计算)/i.test(question);
 }
 
+function questionExplicitlyAsksQuantity(question: string): boolean {
+  if (/(?:價|价|price|amount|金額|金额|幾錢|几钱|多少錢|多少钱|fee|收費|收费)/i.test(question)) return false;
+  return /(?:數量|数量|quantity|how many|幾多\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚)|多少\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚))/i.test(question);
+}
+
 function inferKnownCustomerStatePath(
   question: string,
   state: ConversationCommerceState,
@@ -132,7 +137,7 @@ function inferKnownCustomerStatePath(
     if (isKnownValue(value)) return { path, value };
   }
 
-  if (/(?:幾多|多少|數量|数量|quantity|how many)/i.test(question)) {
+  if (questionExplicitlyAsksQuantity(question)) {
     const active = state.entities.filter((entity) => entity.status !== "cancelled" && entity.status !== "deferred");
     if (active.length === 1) {
       return { path: `entities.${state.entities.indexOf(active[0])}.quantity`, value: active[0].quantity };
