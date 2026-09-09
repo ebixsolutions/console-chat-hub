@@ -15,6 +15,7 @@ import {
 
 export type CommerceStateEvent =
   | { type: "SET_CONTEXT"; language?: "zh-TW" | "zh-CN" | "en" | null; intent?: string | null; topic?: string | null; industry?: string | null }
+  | { type: "ENSURE_ENTITY"; entity: CommerceEntity }
   | { type: "ADD_ENTITY"; entity: CommerceEntity }
   | { type: "UPDATE_ENTITY"; entity_id: string; patch: Partial<Omit<CommerceEntity, "entity_id">>; provenance?: CommerceProvenance }
   | { type: "SET_ENTITY_STATUS"; entity_id: string; status: CommerceEntityStatus; provenance: CommerceProvenance }
@@ -135,19 +136,15 @@ export function reduceCommerceState(
         if (event.industry !== undefined) next.current_industry = event.industry;
         break;
       }
+      case "ENSURE_ENTITY": {
+        assertFiniteNonNegative(event.entity.quantity, "entity_quantity");
+        if (findEntityIndex(next, event.entity.entity_id) < 0) next.entities.push(clone(event.entity));
+        break;
+      }
       case "ADD_ENTITY": {
         assertFiniteNonNegative(event.entity.quantity, "entity_quantity");
-        const idx = findEntityIndex(next, event.entity.entity_id);
-        if (idx >= 0) {
-          next.entities[idx] = {
-            ...next.entities[idx],
-            ...clone(event.entity),
-            attributes: { ...next.entities[idx].attributes, ...clone(event.entity.attributes) },
-            constraints: { ...next.entities[idx].constraints, ...clone(event.entity.constraints) },
-          };
-        } else {
-          next.entities.push(clone(event.entity));
-        }
+        if (findEntityIndex(next, event.entity.entity_id) >= 0) throw new Error("commerce_entity_already_exists");
+        next.entities.push(clone(event.entity));
         break;
       }
       case "UPDATE_ENTITY": {
@@ -288,7 +285,7 @@ function mentionedHints(text: string, hints: CommerceTurnEntityHint[]): Commerce
 function ensureHintEntityEvents(input: CommerceTurnInterpretationInput, hints: CommerceTurnEntityHint[]): CommerceStateEvent[] {
   const p = provenance(input.source_message_id, input.occurred_at);
   return hints.map((hint) => ({
-    type: "ADD_ENTITY" as const,
+    type: "ENSURE_ENTITY" as const,
     entity: {
       entity_id: hint.entity_id,
       category: hint.category,
@@ -303,10 +300,16 @@ function ensureHintEntityEvents(input: CommerceTurnInterpretationInput, hints: C
   }));
 }
 
+function parseSmallCount(raw: string): number | null {
+  if (/^\d{1,4}$/.test(raw)) return Number(raw);
+  const map: Record<string, number> = { 一: 1, 二: 2, 兩: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
+  return map[raw] ?? null;
+}
+
 function parseExplicitQuantity(text: string): number | null {
-  const m = text.match(/(?:qty|quantity|數量|数量|共|總共|总共|要|需要|買|买|訂|订)\s*(?:係|是|=|:|：)?\s*(\d{1,4})\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚|night|nights|pcs?|pieces?|units?|items?)?/i)
+  const m = text.match(/(?:qty|quantity|數量|数量|共|總共|总共|要|需要|買|买|訂|订)\s*(?:係|是|=|:|：)?\s*([一二兩两三四五六七八九十]|\d{1,4})\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚|night|nights|pcs?|pieces?|units?|items?)?/i)
     ?? text.match(/\b(\d{1,4})\s*(?:pcs?|pieces?|units?|items?)\b/i);
-  return m?.[1] ? Number(m[1]) : null;
+  return m?.[1] ? parseSmallCount(m[1]) : null;
 }
 
 function parseMoney(text: string): { amount: number; currency: string } | null {
@@ -359,11 +362,6 @@ function explicitDeliveryPatch(text: string): Partial<ConversationCommerceState[
   return Object.keys(patch).length ? patch : null;
 }
 
-/**
- * Deterministic, industry-neutral interpreter. It only emits events for facts
- * explicitly present in the customer turn or supplied through trusted entity hints.
- * It deliberately does not infer product-domain facts from model knowledge.
- */
 export function deriveCommerceEventsFromCustomerTurn(input: CommerceTurnInterpretationInput): CommerceStateEvent[] {
   const text = clean(input.text);
   if (!text || !input.source_message_id) return [];
@@ -398,10 +396,10 @@ export function deriveCommerceEventsFromCustomerTurn(input: CommerceTurnInterpre
         entity_id: entityId,
         amount: money.amount,
         currency: input.currency ?? money.currency,
-        quote_type: unverified ? "unverified" : "customer_reported_historical",
-        validity_status: unverified ? "unknown" : historical ? "historical" : "unknown",
+        quote_type: historical ? "customer_reported_historical" : unverified ? "unverified" : "customer_reported_historical",
+        validity_status: historical && !unverified ? "historical" : "unknown",
         source_label: "customer_reported",
-        conditions: {},
+        conditions: { historical, unverified },
         provenance: p,
       },
     });
