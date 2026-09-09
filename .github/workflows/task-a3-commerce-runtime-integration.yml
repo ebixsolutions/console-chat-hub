@@ -1,0 +1,40 @@
+name: Task A3 Commerce Runtime Integration
+
+on:
+  push:
+    branches:
+      - task-a3-commerce-runtime-integration
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  integrate-and-validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Apply deterministic A3 integration patch
+        run: node .github/scripts/task_a3_patch_generate_reply.mjs
+      - name: A3 final gate
+        run: node .github/scripts/task_a3_commerce_runtime_final_gate.mjs
+      - name: Commit integrated source when changed
+        run: |
+          if git diff --quiet; then
+            echo "No generated source changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add supabase/functions/generate-reply/index.ts
+          git commit -m "Task A3: integrate persistent commerce runtime into generate-reply"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
