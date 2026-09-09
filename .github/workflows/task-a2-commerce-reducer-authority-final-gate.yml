@@ -1,0 +1,38 @@
+name: Task A2 Commerce Reducer Authority Final Gate
+
+on:
+  push:
+    branches: [task-a2-commerce-reducer-authority]
+    paths:
+      - 'supabase/functions/_shared/commerce-state-contract.ts'
+      - 'supabase/functions/_shared/commerce-state-reducer.ts'
+      - 'supabase/functions/_shared/commerce-state-authority.ts'
+      - '.github/scripts/task_a2_commerce_reducer_authority_test.ts'
+      - '.github/scripts/task_a2_commerce_reducer_authority_final_gate.mjs'
+      - '.github/workflows/task-a2-commerce-reducer-authority-final-gate.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'supabase/functions/_shared/commerce-state-contract.ts'
+      - 'supabase/functions/_shared/commerce-state-reducer.ts'
+      - 'supabase/functions/_shared/commerce-state-authority.ts'
+      - '.github/scripts/task_a2_commerce_reducer_authority_test.ts'
+      - '.github/scripts/task_a2_commerce_reducer_authority_final_gate.mjs'
+      - '.github/workflows/task-a2-commerce-reducer-authority-final-gate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  final-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: node .github/scripts/task_a2_commerce_reducer_authority_final_gate.mjs
