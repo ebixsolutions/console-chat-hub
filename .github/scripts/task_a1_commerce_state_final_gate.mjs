@@ -1,3 +1,4 @@
+// Task A1 authoritative full-repo final gate.
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
 
