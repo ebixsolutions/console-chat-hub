@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - task-a3-commerce-runtime-integration
+      - main
 
 permissions:
   contents: write
@@ -36,4 +37,4 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add supabase/functions/generate-reply/index.ts
           git commit -m "Task A3: integrate persistent commerce runtime into generate-reply"
-          git push origin HEAD:task-a3-commerce-runtime-integration
+          git push origin "HEAD:${GITHUB_REF_NAME}"
