@@ -244,11 +244,47 @@ function correctedPlanFactDimension(newestFirst: RuntimeHistoryRow[]): string | 
   return null;
 }
 
+function explicitPlanFactQuery(text: string): { plan: PublishedPlan; fact: string } | null {
+  const latest = clean(text);
+  if (!latest) return null;
+  const planMatch = latest.match(/\b(Basic|Growth|Pro)\b/i);
+  const plan = normalizePlan(planMatch?.[1]);
+  if (!plan) return null;
+  let fact: string | null = null;
+  if (/(?:sku|商品.*(?:上限|limit)|產品.*(?:上限|limit)|产品.*(?:上限|limit))/i.test(latest)) fact = "SKU limit";
+  else if (/(?:staff|員工|员工|人手|admin(?:[- ]?seat)?)/i.test(latest)) fact = "staff/admin-seat limit";
+  else if (/(?:價錢|价钱|價格|价格|price|費用|费用|monthly|yearly|每月|每年)/i.test(latest)) fact = "price and billing cadence";
+  else if (/(?:app|push|crm|會員|会员|ai\s*seo|feature|功能|included|包括|包含)/i.test(latest)) fact = "included features and limits";
+  if (!fact) return null;
+  return { plan, fact };
+}
+
 export function buildCanonicalRetrievalQuery(
   latestInput: string,
   newestFirst: RuntimeHistoryRow[],
 ): CanonicalRetrievalQuery {
   const correctedPlan = correctedPlanSubject(latestInput);
+  const explicitPlanFact = explicitPlanFactQuery(latestInput);
+  if (!correctedPlan && explicitPlanFact) {
+    const latest = clean(latestInput);
+    const state = projectConversationRuntimeState(newestFirst);
+    const currentRequirements = augmentState6RequirementSnapshot(
+      newestFirst,
+      state.current_requirements,
+    );
+    return {
+      query: `${explicitPlanFact.plan} ${explicitPlanFact.fact}`,
+      mode: "standalone",
+      latest,
+      context_turns: [],
+      state: {
+        ...state,
+        current_topic: explicitPlanFact.plan,
+        jurisdiction: currentRequirements.current_market ?? state.jurisdiction,
+        current_requirements: currentRequirements,
+      },
+    };
+  }
   if (!correctedPlan) {
     return baseBuildCanonicalRetrievalQuery(latestInput, newestFirst);
   }
