@@ -158,6 +158,15 @@ export interface PersistedConversationCommerceState {
   updated_at: string;
 }
 
+export interface CommerceStateApplicationReceipt {
+  conversation_id: string;
+  company_id: string;
+  source_message_id: string;
+  applied_revision: number;
+  state_hash: string;
+  created_at: string;
+}
+
 export function createEmptyConversationCommerceState(): ConversationCommerceState {
   return {
     version: COMMERCE_STATE_VERSION,
