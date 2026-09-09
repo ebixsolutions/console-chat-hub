@@ -16,14 +16,34 @@ create table public.conversation_commerce_state (
     check (state->>'version' = 'commerce-state-1.0.0'),
   constraint conversation_commerce_state_hash_check
     check (state_hash ~ '^[0-9a-f]{64}$'),
-  constraint conversation_commerce_state_source_message_unique
-    unique (source_message_id)
+  constraint conversation_commerce_state_conversation_company_unique
+    unique (conversation_id, company_id)
+);
+
+-- Durable applied-message ledger. The canonical row stores only the latest
+-- source_message_id, so durable replay protection must keep every applied source.
+create table public.conversation_commerce_state_event (
+  source_message_id uuid primary key references public.messages(id) on delete restrict,
+  conversation_id uuid not null,
+  company_id uuid not null,
+  applied_revision bigint not null check (applied_revision >= 1),
+  state_hash text not null check (state_hash ~ '^[0-9a-f]{64}$'),
+  created_at timestamptz not null default now(),
+  constraint conversation_commerce_state_event_revision_unique
+    unique (conversation_id, applied_revision),
+  constraint conversation_commerce_state_event_parent_fk
+    foreign key (conversation_id, company_id)
+    references public.conversation_commerce_state(conversation_id, company_id)
+    on delete cascade
 );
 
 create index conversation_commerce_state_company_updated_idx
   on public.conversation_commerce_state(company_id, updated_at desc);
+create index conversation_commerce_state_event_company_created_idx
+  on public.conversation_commerce_state_event(company_id, created_at desc);
 
 alter table public.conversation_commerce_state enable row level security;
+alter table public.conversation_commerce_state_event enable row level security;
 
 create policy conversation_commerce_state_select_staff
 on public.conversation_commerce_state
@@ -34,11 +54,21 @@ using (
   and public.is_company_member(company_id, auth.uid())
 );
 
--- Browser/authenticated users can inspect only their tenant's state. They cannot
--- mutate it directly; canonical writes are server-side and revision guarded.
-revoke all on table public.conversation_commerce_state from anon, authenticated;
-grant select on table public.conversation_commerce_state to authenticated;
-grant select, insert, update, delete on table public.conversation_commerce_state to service_role;
+create policy conversation_commerce_state_event_select_staff
+on public.conversation_commerce_state_event
+for select
+to authenticated
+using (
+  company_id is not null
+  and public.is_company_member(company_id, auth.uid())
+);
+
+-- Browser/authenticated users can inspect only their tenant's state. No caller
+-- receives direct table mutation rights; canonical writes go through the RPC.
+revoke all on table public.conversation_commerce_state from anon, authenticated, service_role;
+revoke all on table public.conversation_commerce_state_event from anon, authenticated, service_role;
+grant select on table public.conversation_commerce_state to authenticated, service_role;
+grant select on table public.conversation_commerce_state_event to authenticated, service_role;
 
 create or replace function public.enforce_conversation_commerce_state_lineage_v1()
 returns trigger
@@ -97,7 +127,8 @@ begin
 end
 $function$;
 
-revoke all on function public.enforce_conversation_commerce_state_lineage_v1() from public, anon, authenticated;
+revoke all on function public.enforce_conversation_commerce_state_lineage_v1()
+  from public, anon, authenticated, service_role;
 
 drop trigger if exists trg_conversation_commerce_state_lineage
   on public.conversation_commerce_state;
@@ -124,8 +155,10 @@ declare
   v_message_conversation_id uuid;
   v_message_role text;
   v_existing public.conversation_commerce_state%rowtype;
+  v_receipt public.conversation_commerce_state_event%rowtype;
   v_hash text;
   v_revision bigint;
+  v_current_revision bigint;
 begin
   if p_conversation_id is null
      or p_company_id is null
@@ -177,6 +210,37 @@ begin
 
   v_hash := encode(extensions.digest(p_state::text, 'sha256'), 'hex');
 
+  -- Durable idempotency: check the append-only receipt before looking only at
+  -- the latest canonical row. A replay of any historical source message is safe.
+  select *
+    into v_receipt
+  from public.conversation_commerce_state_event e
+  where e.source_message_id = p_source_message_id;
+
+  if found then
+    if v_receipt.conversation_id is distinct from p_conversation_id
+       or v_receipt.company_id is distinct from p_company_id
+       or v_receipt.state_hash is distinct from v_hash then
+      return jsonb_build_object(
+        'result', 'source_message_replay_conflict',
+        'applied_revision', v_receipt.applied_revision
+      );
+    end if;
+
+    select s.revision
+      into v_current_revision
+    from public.conversation_commerce_state s
+    where s.conversation_id = p_conversation_id;
+
+    return jsonb_build_object(
+      'result', 'success',
+      'idempotent', true,
+      'applied_revision', v_receipt.applied_revision,
+      'current_revision', v_current_revision,
+      'state_hash', v_receipt.state_hash
+    );
+  end if;
+
   select *
     into v_existing
   from public.conversation_commerce_state s
@@ -184,21 +248,6 @@ begin
   for update;
 
   if found then
-    if v_existing.source_message_id = p_source_message_id then
-      if v_existing.state_hash = v_hash then
-        return jsonb_build_object(
-          'result', 'success',
-          'idempotent', true,
-          'revision', v_existing.revision,
-          'state_hash', v_existing.state_hash
-        );
-      end if;
-      return jsonb_build_object(
-        'result', 'source_message_replay_conflict',
-        'revision', v_existing.revision
-      );
-    end if;
-
     if v_existing.revision <> p_expected_revision then
       return jsonb_build_object(
         'result', 'revision_conflict',
@@ -216,43 +265,52 @@ begin
           updated_at = now()
     where conversation_id = p_conversation_id
     returning revision into v_revision;
+  else
+    if p_expected_revision <> 0 then
+      return jsonb_build_object(
+        'result', 'revision_conflict',
+        'expected_revision', p_expected_revision,
+        'actual_revision', 0
+      );
+    end if;
 
-    return jsonb_build_object(
-      'result', 'success',
-      'idempotent', false,
-      'revision', v_revision,
-      'state_hash', v_hash
-    );
+    insert into public.conversation_commerce_state(
+      conversation_id,
+      company_id,
+      revision,
+      source_message_id,
+      state,
+      state_hash
+    ) values (
+      p_conversation_id,
+      p_company_id,
+      1,
+      p_source_message_id,
+      p_state,
+      v_hash
+    )
+    returning revision into v_revision;
   end if;
 
-  if p_expected_revision <> 0 then
-    return jsonb_build_object(
-      'result', 'revision_conflict',
-      'expected_revision', p_expected_revision,
-      'actual_revision', 0
-    );
-  end if;
-
-  insert into public.conversation_commerce_state(
+  insert into public.conversation_commerce_state_event(
+    source_message_id,
     conversation_id,
     company_id,
-    revision,
-    source_message_id,
-    state,
+    applied_revision,
     state_hash
   ) values (
+    p_source_message_id,
     p_conversation_id,
     p_company_id,
-    1,
-    p_source_message_id,
-    p_state,
+    v_revision,
     v_hash
   );
 
   return jsonb_build_object(
     'result', 'success',
     'idempotent', false,
-    'revision', 1,
+    'applied_revision', v_revision,
+    'current_revision', v_revision,
     'state_hash', v_hash
   );
 end
@@ -265,5 +323,7 @@ grant execute on function public.upsert_conversation_commerce_state_v1(uuid, uui
 
 comment on table public.conversation_commerce_state is
   'Canonical cross-industry commerce/transaction state. One tenant-bound, revisioned row per conversation.';
+comment on table public.conversation_commerce_state_event is
+  'Append-only source-message application ledger for durable commerce-state replay idempotency.';
 comment on function public.upsert_conversation_commerce_state_v1(uuid, uuid, bigint, uuid, jsonb) is
-  'Atomic idempotent server-side write contract for canonical commerce state. Source-message replay cannot mutate state.';
+  'Atomic tenant-bound commerce-state write. Optimistic revision lock plus durable source-message idempotency.';
