@@ -7,6 +7,7 @@ import {
   type RuntimeHistoryRow,
   type RuntimeLanguage,
   resolveConversationMemoryResponse as resolveConversationMemoryResponseCore,
+  resolveWorkflow5ConversationLanguage,
 } from "./conversation-runtime-state-core.ts";
 
 const CUSTOMER_ROLES = new Set(["visitor", "customer", "user"]);
@@ -128,7 +129,7 @@ function currentStateSummaryReply(
   const priorRows = historyWithoutCurrentCustomerTurn(latestInput, newestFirst);
   const state = projectConversationRuntimeState(priorRows);
   const snapshot = augmentState6RequirementSnapshot(priorRows, state.current_requirements);
-  const language = state.language;
+  const language = resolveWorkflow5ConversationLanguage(latestInput, priorRows);
   const lines: string[] = [];
 
   if (language === "en") {
@@ -227,6 +228,22 @@ function correctedPlanSubject(text: string): PublishedPlan | null {
   return normalizePlan(contrastTarget?.[1]);
 }
 
+function correctedPlanFactDimension(newestFirst: RuntimeHistoryRow[]): string | null {
+  const previousCustomerTurns = newestFirst
+    .filter((row) => CUSTOMER_ROLES.has(String(row.role ?? "").toLowerCase()))
+    .map((row) => clean(row.content, 500))
+    .filter(Boolean);
+  const prior = previousCustomerTurns.find((text) =>
+    /(?:sku|staff|員工|员工|人手|app|push|crm|會員|会员|ai\s*seo|價錢|价钱|價格|价格|price|費用|费用|limit|上限)/i.test(text)
+  );
+  if (!prior) return null;
+  if (/(?:sku|商品.*上限|產品.*上限|产品.*上限)/i.test(prior)) return "SKU limit";
+  if (/(?:staff|員工|员工|人手)/i.test(prior)) return "staff/admin-seat limit";
+  if (/(?:價錢|价钱|價格|价格|price|費用|费用)/i.test(prior)) return "price and billing cadence";
+  if (/(?:app|push|crm|會員|会员|ai\s*seo)/i.test(prior)) return "included features and limits";
+  return null;
+}
+
 export function buildCanonicalRetrievalQuery(
   latestInput: string,
   newestFirst: RuntimeHistoryRow[],
@@ -238,15 +255,26 @@ export function buildCanonicalRetrievalQuery(
 
   const latest = clean(latestInput);
   const state = projectConversationRuntimeState(newestFirst);
+  const factDimension = correctedPlanFactDimension(newestFirst);
+  const currentRequirements = augmentState6RequirementSnapshot(
+    newestFirst,
+    state.current_requirements,
+  );
   return {
     query: [
-      `Current request: ${correctedPlan} plan`,
-      `Correction boundary: answer about ${correctedPlan} only; prior plan references in the conversation are superseded for this turn.`,
+      `Current factual target: ${correctedPlan}`,
+      ...(factDimension ? [`Requested fact: ${factDimension}`] : []),
+      `Correction boundary: answer about ${correctedPlan} only; prior plan references are superseded for this turn and must not appear in retrieval context or evidence.`,
       `Retrieval target: published ${correctedPlan} plan record: exact price, billing cadence, SKU/staff limits, App, Push, CRM, member tiers and AI SEO inclusions.`,
     ].join("\n").slice(0, 1600),
     mode: "standalone",
     latest,
     context_turns: [],
-    state,
+    state: {
+      ...state,
+      current_topic: correctedPlan,
+      jurisdiction: currentRequirements.current_market ?? state.jurisdiction,
+      current_requirements: currentRequirements,
+    },
   };
 }
