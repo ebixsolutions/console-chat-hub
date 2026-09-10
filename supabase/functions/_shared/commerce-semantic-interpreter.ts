@@ -1,7 +1,6 @@
 import { callModel } from "./llm-router.ts";
 import {
   COMMERCE_SEMANTIC_FRAME_VERSION,
-  COMMERCE_SEMANTIC_RESPONSE_SCHEMA,
   normalizeCommerceSemanticFrame,
   type CommerceSemanticFrame,
 } from "./commerce-semantic-frame.ts";
@@ -27,9 +26,14 @@ export interface CommerceSemanticInterpretResult {
 }
 
 const SYSTEM = `You are a multilingual commerce semantic interpreter.
-Your job is ONLY to understand the customer's commerce meaning and return the required JSON schema.
+Your job is ONLY to understand the customer's commerce meaning and return one JSON object matching the canonical commerce semantic frame.
 Do not answer the customer. Do not invent product facts, prices, availability, policies, T&C, delivery rules or company facts.
 Do not assume an industry taxonomy. Interpret unfamiliar products/services compositionally from the customer's words and context.
+Required JSON fields: version, language, operation, intent, topic, entities, referents, customer_correction, additive, explicit_negations, requested_facts, confidence.
+Each entity must contain: entity_ref, name, kind, category_hint, sku, model, quantity, unit, attributes, constraints, capabilities, confidence.
+Allowed operation values: ADD_ITEM, SET_QUANTITY, UPDATE_ITEM, REMOVE_ITEM, CANCEL_ITEM, RESERVE, REQUEST_QUOTE, ASK_FACT, ASK_CALCULATION, CONFIRM, DEFER, NO_STATE_CHANGE.
+Allowed kind values: physical_product, digital_good, service, rental, subscription, ticket, custom_item, b2b_product, unknown.
+Capabilities must contain booleans: requires_delivery, supports_pickup, requires_installation, requires_booking, requires_quote, requires_site_check, digital_fulfilment, recurring_billing, rental_return, customization.
 Core rules:
 1. Resolve ellipsis, pronouns and short follow-ups from recent customer context and persistent state when confidence is sufficient.
 2. Keep semantics language-neutral even though language records the customer's input language.
@@ -68,6 +72,10 @@ export async function interpretCommerceSemantics(
   const latest = clean(input.latest, 1600);
   if (!latest) return { frame: null, source: "none", failure_code: null };
 
+  // Vertex's constrained responseSchema rejects our open-ended attributes/constraints
+  // shape (HTTP 400). Keep provider-level JSON mode, then enforce the canonical
+  // semantic contract through normalizeCommerceSemanticFrame before any state event
+  // is accepted. The model still cannot write state directly.
   const result = await callModel({
     purpose: "evaluation",
     system: SYSTEM,
@@ -78,7 +86,6 @@ export async function interpretCommerceSemantics(
     conversationId: input.conversation_id,
     tag: "commerce-semantic-interpreter",
     responseFormat: "json",
-    responseSchema: COMMERCE_SEMANTIC_RESPONSE_SCHEMA,
   });
 
   if (!result.ok) {
