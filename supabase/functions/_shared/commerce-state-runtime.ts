@@ -285,6 +285,15 @@ function parseMoneyTerms(text: string): number[] {
   return amounts;
 }
 
+/**
+ * True only when the CURRENT customer turn explicitly asks for a total/calculation.
+ * A plain historical-price statement must not auto-answer a total.
+ */
+export function detectExplicitCalculationRequest(text: string): boolean {
+  return /(?:加埋|合共|總共|总共|一共|總數|总数|埋一齊|埋一起|total|altogether|calculate|計下|计下|算下|計算|计算|how much.*(?:total|altogether))/i
+    .test(clean(text));
+}
+
 export function extractCommerceCalculationTerms(
   texts: string[],
   state: ConversationCommerceState,
@@ -295,8 +304,14 @@ export function extractCommerceCalculationTerms(
     if (!text) continue;
     for (const amount of parseMoneyTerms(text)) amounts.push(amount);
   }
+  const textAmounts = new Set(amounts);
+  // A persisted historical quote may only SUPPLEMENT the calculation when its
+  // amount is not already present in the scanned conversation text; otherwise it
+  // double-counts the same evidence.
   for (const quote of state.quotes) {
-    if (quote.quote_type === "customer_reported_historical") amounts.push(quote.amount);
+    if (quote.quote_type !== "customer_reported_historical") continue;
+    if (textAmounts.has(quote.amount)) continue;
+    amounts.push(quote.amount);
   }
   const unique: number[] = [];
   const seen = new Map<number, number>();
