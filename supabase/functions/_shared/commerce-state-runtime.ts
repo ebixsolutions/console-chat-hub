@@ -466,6 +466,44 @@ function calculationExplicitlyUsesHistory(text: string): boolean {
   return /(?:(?:之前|以前|以往|舊|旧|歷史|历史|previous|historical|earlier).{0,40}(?:數字|数字|價|价|報價|报价|price|quote|figure|amount).{0,40}(?:計|计|算|calculate|total|合共|總共|总共)|(?:計|计|算|calculate|total|合共|總共|总共).{0,40}(?:之前|以前|以往|舊|旧|歷史|历史|previous|historical|earlier))/i.test(t);
 }
 
+function isHistoricalMoneyContext(text: string): boolean {
+  const t = clean(text);
+  if (!t) return false;
+  return /(?:之前|以前|以往|舊|旧|歷史|历史|previous|historical|earlier|old)\b?/i.test(t)
+    && /(?:報價|报价|價|价|price|quote|quotation|收費|收费|fee|HK\$|HKD|\$|元|蚊|dollars?)/i.test(t);
+}
+
+/**
+ * Choose figures for a calculation without reopening arbitrary conversation history.
+ * Current-turn figures always win. If the calculation is elliptical (for example
+ * "咁2部連送貨同安裝總數係幾多？"), carry forward only the nearest recent
+ * customer turn containing monetary figures from the active transaction context.
+ * Explicitly historical figures stay excluded unless the customer explicitly asks
+ * to calculate historical figures.
+ */
+export function selectCommerceCalculationTexts(
+  currentText: string,
+  historyTexts: string[],
+): { texts: string[]; include_historical_state: boolean } {
+  const current = clean(currentText);
+  if (!current) return { texts: [], include_historical_state: false };
+  const explicitlyHistorical = calculationExplicitlyUsesHistory(current);
+  if (explicitlyHistorical) {
+    return { texts: [current, ...historyTexts.map((text) => clean(text)).filter(Boolean)], include_historical_state: true };
+  }
+  if (parseMoneyTerms(current).length > 0 || detectCurrentPriceValidityQuestion(current)) {
+    return { texts: [current], include_historical_state: false };
+  }
+  for (const raw of historyTexts) {
+    const candidate = clean(raw);
+    if (!candidate || candidate === current) continue;
+    if (parseMoneyTerms(candidate).length === 0) continue;
+    if (isHistoricalMoneyContext(candidate)) continue;
+    return { texts: [current, candidate], include_historical_state: false };
+  }
+  return { texts: [current], include_historical_state: false };
+}
+
 interface LoadedCommerceState {
   state: ConversationCommerceState;
   revision: number;
@@ -867,10 +905,11 @@ export async function runCommerceStateRuntime(
 
   const summaryIntent = detectTransactionSummaryIntent(text);
   const wantsCalculation = detectExplicitCalculationRequest(text);
-  const historicalCalculation = wantsCalculation && calculationExplicitlyUsesHistory(text);
-  const calculationTexts = historicalCalculation ? conversationTexts : [text];
+  const calculationContext = wantsCalculation
+    ? selectCommerceCalculationTexts(text, historyTexts)
+    : { texts: [text], include_historical_state: false };
   const calculation = wantsCalculation
-    ? extractCommerceCalculationTerms(calculationTexts, state, { include_historical_state: historicalCalculation })
+    ? extractCommerceCalculationTerms(calculationContext.texts, state, { include_historical_state: calculationContext.include_historical_state })
     : { terms: [] as CommerceCalculationTerm[], currency: null };
   const decision = resolveCommerceAnswerAuthority({
     question: text,
