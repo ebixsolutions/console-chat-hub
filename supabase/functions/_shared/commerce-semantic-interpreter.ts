@@ -1,4 +1,5 @@
 import { callModel } from "./llm-router.ts";
+import { getSupabaseAdminKey } from "./supabase-admin-key.ts";
 import {
   COMMERCE_SEMANTIC_FRAME_VERSION,
   normalizeCommerceSemanticFrame,
@@ -48,10 +49,94 @@ Core rules:
 Return JSON only.`;
 
 function clean(value: unknown, max = 3000): string {
-  return typeof value === "string" ? value.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max) : "";
+  return typeof value === "string"
+    ? value.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max)
+    : "";
 }
 
-function buildUser(input: CommerceSemanticInterpretInput): string {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * Produces the bounded customer-authored state context presented to the semantic
+ * model. This is context only: the model cannot persist it and the deterministic
+ * A1/A2 reducer remains the sole state mutation authority.
+ */
+export function buildPersistentCommerceStateSummary(row: unknown): string | null {
+  if (!isRecord(row) || !isRecord(row.state)) return null;
+  const revision = typeof row.revision === "number"
+    ? row.revision
+    : Number(row.revision ?? 0);
+  const bounded = {
+    revision: Number.isFinite(revision) && revision >= 0 ? revision : 0,
+    state: row.state,
+  };
+  try {
+    return JSON.stringify(bounded).slice(0, 2400);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read-only tenant-bound persistent state lookup. If the caller did not already
+ * supply a state summary, A3.1 resolves it here before semantic interpretation.
+ * Failure is non-blocking: the interpreter can still use bounded conversation
+ * history, while deterministic runtime state loading/persistence remains separate.
+ */
+async function loadPersistentCommerceStateSummary(
+  input: CommerceSemanticInterpretInput,
+): Promise<string | null> {
+  const supplied = clean(input.persistent_state_summary, 2400);
+  if (supplied) return supplied;
+
+  const supabaseUrl = clean(Deno.env.get("SUPABASE_URL"), 600).replace(/\/$/, "");
+  if (!supabaseUrl || !input.conversation_id || !input.company_id) return null;
+
+  let adminKey = "";
+  try {
+    adminKey = getSupabaseAdminKey();
+  } catch {
+    return null;
+  }
+
+  const params = new URLSearchParams({
+    select: "revision,state",
+    conversation_id: `eq.${input.conversation_id}`,
+    company_id: `eq.${input.company_id}`,
+    limit: "1",
+  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 800);
+  try {
+    const response = await fetch(
+      `${supabaseUrl}/rest/v1/conversation_commerce_state?${params.toString()}`,
+      {
+        method: "GET",
+        headers: {
+          apikey: adminKey,
+          Authorization: `Bearer ${adminKey}`,
+          Accept: "application/json",
+        },
+        signal: controller.signal,
+      },
+    );
+    if (!response.ok) return null;
+    const payload: unknown = await response.json();
+    if (!Array.isArray(payload) || payload.length === 0) return null;
+    return buildPersistentCommerceStateSummary(payload[0]);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function buildUser(
+  input: CommerceSemanticInterpretInput,
+  persistentStateSummary: string | null,
+): string {
   const prior = (input.history ?? [])
     .filter((x) => clean(x.content) && clean(x.content) !== clean(input.latest))
     .slice(-12)
@@ -60,8 +145,12 @@ function buildUser(input: CommerceSemanticInterpretInput): string {
   return [
     `Semantic frame version: ${COMMERCE_SEMANTIC_FRAME_VERSION}`,
     `Latest customer turn: ${clean(input.latest, 1600)}`,
-    prior ? `Recent conversation turns (oldest to newest):\n${prior}` : "Recent conversation turns: none",
-    input.persistent_state_summary ? `Persistent commerce state summary (customer-authored state only; do not treat as external facts):\n${clean(input.persistent_state_summary, 2400)}` : "Persistent commerce state summary: none",
+    prior
+      ? `Recent conversation turns (oldest to newest):\n${prior}`
+      : "Recent conversation turns: none",
+    persistentStateSummary
+      ? `Persistent commerce state summary (customer-authored state only; do not treat as external facts):\n${clean(persistentStateSummary, 2400)}`
+      : "Persistent commerce state summary: none",
     "Return one canonical semantic frame.",
   ].join("\n\n");
 }
@@ -72,6 +161,8 @@ export async function interpretCommerceSemantics(
   const latest = clean(input.latest, 1600);
   if (!latest) return { frame: null, source: "none", failure_code: null };
 
+  const persistentStateSummary = await loadPersistentCommerceStateSummary(input);
+
   // Vertex's constrained responseSchema rejects our open-ended attributes/constraints
   // shape (HTTP 400). Keep provider-level JSON mode, then enforce the canonical
   // semantic contract through normalizeCommerceSemanticFrame before any state event
@@ -79,7 +170,7 @@ export async function interpretCommerceSemantics(
   const result = await callModel({
     purpose: "evaluation",
     system: SYSTEM,
-    user: buildUser(input),
+    user: buildUser(input, persistentStateSummary),
     maxTokens: 1800,
     operationId: `commerce-semantic:${input.source_message_id}`,
     companyId: input.company_id,
@@ -99,6 +190,8 @@ export async function interpretCommerceSemantics(
     return { frame: null, source: "none", failure_code: "LLM_INVALID_OUTPUT" };
   }
   const frame = normalizeCommerceSemanticFrame(parsed);
-  if (!frame) return { frame: null, source: "none", failure_code: "LLM_INVALID_OUTPUT" };
+  if (!frame) {
+    return { frame: null, source: "none", failure_code: "LLM_INVALID_OUTPUT" };
+  }
   return { frame, source: "llm", failure_code: null };
 }
