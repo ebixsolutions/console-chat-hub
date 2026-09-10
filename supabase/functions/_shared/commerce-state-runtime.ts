@@ -246,6 +246,16 @@ function hintsMentionedInTurn(text: string, hints: CommerceTurnEntityHint[]): Co
   });
 }
 
+function hintRequiresBookingWithoutDelivery(hint: CommerceTurnEntityHint): boolean {
+  const attributes = hint.attributes;
+  if (!isRecord(attributes)) return false;
+  const capabilities = attributes["capabilities"];
+  if (!isRecord(capabilities)) return false;
+  return capabilities["requires_booking"] === true
+    && capabilities["requires_delivery"] !== true
+    && capabilities["requires_installation"] !== true;
+}
+
 const COUNT_TOKEN = "[一二兩两三四五六七八九十]|\\d{1,4}";
 const COUNT_UNIT = "部|台|件|個|个|套|張|张|盒|箱|包|袋|樽|瓶|支|枝|本|冊|册|對|对|雙|双|條|条|份|位|席|間|间|晚|次|堂|課|课|units?|pcs?|pieces?|items?|boxes?|bottles?|packs?|bags?|pairs?|sets?|seats?|nights?|sessions?|lessons?";
 
@@ -509,6 +519,21 @@ function deriveA3RuntimeEvents(
     }
   }
 
+  if (additive && quantity !== null && mentioned.length === 0) {
+    const active = previous.entities.filter(
+      (entity) => entity.status !== "cancelled" && entity.status !== "deferred",
+    );
+    if (active.length === 1) {
+      events.push({
+        type: "SET_ENTITY_QUANTITY",
+        entity_id: active[0].entity_id,
+        quantity: active[0].quantity + quantity,
+        provenance,
+      });
+      events.push({ type: "SET_ENTITY_STATUS", entity_id: active[0].entity_id, status: "tentative", provenance });
+    }
+  }
+
   for (const hint of mentioned) {
     if (cancelled) {
       events.push({ type: "SET_ENTITY_STATUS", entity_id: hint.entity_id, status: "cancelled", provenance });
@@ -614,17 +639,25 @@ export function reduceTurn(
 ): ConversationCommerceState {
   const calculationTurn = detectExplicitCalculationRequest(input.text);
   const hints = calculationTurn ? [] : filterGhostUnscopedHints(input.text, previous, rawHints);
+  const mentioned = calculationTurn ? [] : hintsMentionedInTurn(input.text, hints);
+  const bookingWithoutDelivery = mentioned.some(hintRequiresBookingWithoutDelivery);
   const semanticAuthoritative = !calculationTurn && Boolean(input.semantic_frame && input.semantic_frame.confidence >= 0.72);
-  const semanticEvents = semanticAuthoritative
+  const semanticEventsRaw = semanticAuthoritative
     ? semanticFrameToStateEvents(input.semantic_frame, previous, hints, input.source_message_id, input.occurred_at ?? null)
     : [];
-  const derived = calculationTurn || semanticAuthoritative ? [] : deriveCommerceEventsFromCustomerTurn({
+  const semanticEvents = bookingWithoutDelivery
+    ? semanticEventsRaw.filter((event) => event.type !== "SET_DELIVERY")
+    : semanticEventsRaw;
+  const derivedRaw = calculationTurn || semanticAuthoritative ? [] : deriveCommerceEventsFromCustomerTurn({
     text: input.text,
     source_message_id: input.source_message_id,
     occurred_at: input.occurred_at ?? null,
     entity_hints: hints,
     current_language: input.language,
   });
+  const derived = bookingWithoutDelivery
+    ? derivedRaw.filter((event) => event.type !== "SET_DELIVERY")
+    : derivedRaw;
   const runtimeEvents = calculationTurn ? [] : deriveA3RuntimeEvents(input, hints, previous);
   const reduced = reduceCommerceState(previous, [...semanticEvents, ...derived, ...runtimeEvents]);
   const guard = enforceQuotationNotOrderEvents(clean(input.text), reduced);
@@ -805,6 +838,24 @@ export async function runCommerceStateRuntime(
   const text = clean(input.text);
   if (!text || !input.conversation_id || !input.company_id || !input.source_message_id) return null;
 
+  const language = input.language;
+  if (detectPreorderUnpaidIntent(text)) {
+    const loaded = await loadCommerceState(db, input.conversation_id);
+    const hasActiveEntity = loaded.state.entities.some(
+      (entity) => entity.status !== "cancelled" && entity.status !== "deferred",
+    );
+    if (hasActiveEntity) {
+      return {
+        authority: "CONVERSATION_STATE",
+        reply: buildPreorderUnpaidAnswer(language, loaded.state),
+        revision: loaded.revision,
+        persist_result: "read_only",
+        reason: "preorder_intent_acknowledged_without_order_or_payment_promotion",
+        route: "commerce_state_answer",
+      };
+    }
+  }
+
   const historyTexts = (input.history ?? []).filter((turn) => turn.role === "visitor" || turn.role === "user" || turn.role === "customer").slice(0, MAX_HISTORY_TURNS).map((turn) => clean(turn.content));
   const conversationTexts = [text, ...historyTexts];
   const deterministicHints = buildCommerceEntityHints(conversationTexts);
@@ -813,7 +864,6 @@ export async function runCommerceStateRuntime(
 
   const persisted = await persistCommerceTurn(db, input, hints);
   const state = persisted.state;
-  const language = input.language;
 
   const summaryIntent = detectTransactionSummaryIntent(text);
   const wantsCalculation = detectExplicitCalculationRequest(text);
@@ -836,6 +886,10 @@ export async function runCommerceStateRuntime(
     return { ...base, authority: decision.authority, reply: buildProfessionalConfirmationAnswer(language, state), route: "commerce_state_answer" };
   }
 
+  if (detectPreorderUnpaidIntent(text)) {
+    return { ...base, authority: "CONVERSATION_STATE", reason: "preorder_intent_acknowledged_without_order_or_payment_promotion", reply: buildPreorderUnpaidAnswer(language, state), route: "commerce_state_answer" };
+  }
+
   if (decision.authority === "CONVERSATION_STATE" && decision.state_path) {
     return { ...base, authority: decision.authority, state_path: decision.state_path, reply: buildKnownStateAnswer(language, decision.state_path, decision.known_value, state), route: "commerce_state_answer" };
   }
@@ -846,10 +900,6 @@ export async function runCommerceStateRuntime(
 
   if (detectCurrentPriceValidityQuestion(text)) {
     return { ...base, authority: "CURRENT_KB_REQUIRED", reason: "previous_quote_not_authoritative_for_current_price", reply: buildCurrentPriceValidityAnswer(language), route: "commerce_state_answer" };
-  }
-
-  if (detectPreorderUnpaidIntent(text)) {
-    return { ...base, authority: "CONVERSATION_STATE", reason: "preorder_intent_acknowledged_without_order_or_payment_promotion", reply: buildPreorderUnpaidAnswer(language, state), route: "commerce_state_answer" };
   }
 
   if (summaryIntent && (state.entities.length > 0 || state.quotes.length > 0)) {
