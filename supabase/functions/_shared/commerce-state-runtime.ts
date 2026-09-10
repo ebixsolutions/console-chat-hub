@@ -1,8 +1,8 @@
 /**
  * TASK A3 — Commerce state runtime adapter.
  *
- * This module is the ONLY place where industry/appliance-specific extraction is
- * allowed. A1 (contract) and A2 (reducer + authority) stay frozen and universal.
+ * This module owns capability-driven commerce extraction plus optional industry
+ * profiles. A1 (contract) and A2 (reducer + authority) stay frozen and universal.
  *
  * Responsibilities:
  *  - load persistent commerce state for (conversation_id, company_id)
@@ -32,6 +32,11 @@ import {
   type CommerceCalculationTerm,
   resolveCommerceAnswerAuthority,
 } from "./commerce-state-authority.ts";
+import {
+  buildCapabilityAwarePreorderNextStep,
+  buildGenericCommerceEntityHints,
+  genericEntityLabelFromId,
+} from "./commerce-capability-runtime.ts";
 
 export type CommerceLanguage = "zh-TW" | "zh-CN" | "en";
 
@@ -91,7 +96,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /* ------------------------------------------------------------------ *
- * A3 runtime extraction (industry-specific, intentionally NOT in A2)
+ * A3 runtime extraction (generic capability layer + optional industry profiles)
  * ------------------------------------------------------------------ */
 
 interface CategorySpec {
@@ -167,6 +172,8 @@ function detectRooms(text: string): RoomSpec[] {
 }
 
 function entityLabel(entityId: string, language: CommerceLanguage): string {
+  const generic = genericEntityLabelFromId(entityId);
+  if (generic) return generic;
   const [categoryKey, roomKey] = entityId.split(":");
   const category = CATEGORY_SPECS.find((x) => x.key === categoryKey);
   const room = ROOM_SPECS.find((x) => x.key === roomKey);
@@ -184,19 +191,30 @@ export function buildCommerceEntityHints(texts: string[]): CommerceTurnEntityHin
     const text = clean(raw);
     if (!text) continue;
     const categories = detectCategories(text);
-    if (!categories.length) continue;
-    const rooms = detectRooms(text);
-    for (const category of categories) {
-      const scopes = rooms.length ? rooms : [null];
-      for (const room of scopes) {
-        const entityId = room ? `${category.key}:${room.key}` : `${category.key}:unscoped`;
-        if (hints.has(entityId)) continue;
-        hints.set(entityId, {
-          entity_id: entityId,
-          category: category.key,
-          aliases: [...category.aliases, ...(room ? room.aliases : [])],
-        });
+    if (categories.length) {
+      const rooms = detectRooms(text);
+      for (const category of categories) {
+        const scopes = rooms.length ? rooms : [null];
+        for (const room of scopes) {
+          const entityId = room ? `${category.key}:${room.key}` : `${category.key}:unscoped`;
+          if (hints.has(entityId)) continue;
+          hints.set(entityId, {
+            entity_id: entityId,
+            category: category.key,
+            aliases: [...category.aliases, ...(room ? room.aliases : [])],
+          });
+        }
       }
+      continue;
+    }
+    for (const hint of buildGenericCommerceEntityHints([text])) {
+      const existing = hints.get(hint.entity_id);
+      if (!existing) hints.set(hint.entity_id, hint);
+      else hints.set(hint.entity_id, {
+        ...existing,
+        aliases: [...new Set([...(existing.aliases ?? []), ...(hint.aliases ?? [])])],
+        attributes: { ...(existing.attributes ?? {}), ...(hint.attributes ?? {}) },
+      });
     }
   }
   return [...hints.values()];
@@ -207,6 +225,12 @@ function hintsMentionedInTurn(text: string, hints: CommerceTurnEntityHint[]): Co
   const rooms = detectRooms(text);
   const categories = detectCategories(text).map((x) => x.key);
   return hints.filter((hint) => {
+    if (hint.entity_id.startsWith("generic:")) {
+      return (hint.aliases ?? []).some((alias) => {
+        const normalized = clean(alias, 80).toLowerCase();
+        return normalized.length >= 2 && lower.includes(normalized);
+      });
+    }
     if (!categories.includes(hint.category)) return false;
     const [, roomKey] = hint.entity_id.split(":");
     if (!rooms.length) return true;
@@ -216,7 +240,7 @@ function hintsMentionedInTurn(text: string, hints: CommerceTurnEntityHint[]): Co
 }
 
 const COUNT_TOKEN = "[一二兩两三四五六七八九十]|\\d{1,4}";
-const COUNT_UNIT = "部|台|件|個|个|套|張|张|units?|pcs?|pieces?";
+const COUNT_UNIT = "部|台|件|個|个|套|張|张|盒|箱|包|袋|樽|瓶|支|枝|本|冊|册|對|对|雙|双|條|条|份|位|席|間|间|晚|次|堂|課|课|units?|pcs?|pieces?|items?|boxes?|bottles?|packs?|bags?|pairs?|sets?|seats?|nights?|sessions?|lessons?";
 
 function countTokenValue(raw: string): number | null {
   const map: Record<string, number> = {
@@ -245,7 +269,7 @@ function parseCount(text: string): number | null {
   }
 
   const m = t.match(
-    /(?:改(?:做|成|返)?|變成|变成|change to|要|need|order)?\s*([一二兩两三四五六七八九十]|\d{1,4})\s*(?:部|台|件|個|个|套|張|张|units?|pcs?|pieces?)/i,
+    /(?:改(?:做|成|返)?|變成|变成|change to|要|need|order)?\s*([一二兩两三四五六七八九十]|\d{1,4})\s*(?:部|台|件|個|个|套|張|张|盒|箱|包|袋|樽|瓶|支|枝|本|冊|册|對|对|雙|双|條|条|份|位|席|間|间|晚|次|堂|課|课|units?|pcs?|pieces?|items?|boxes?|bottles?|packs?|bags?|pairs?|sets?|seats?|nights?|sessions?|lessons?)/i,
   );
   if (!m?.[1]) return null;
   return countTokenValue(m[1]);
@@ -271,11 +295,12 @@ function detectSiteChecks(text: string): string[] {
   return SITE_CHECK_PATTERNS.filter(([pattern]) => pattern.test(text)).map(([, key]) => key);
 }
 
-function requiresProfessionalSiteCheck(text: string): boolean {
-  return (
-    /(?:啲|個|个)?(?:窗口|窗台|牆|墙|電壓|电压|排水|承重)/i.test(text) &&
-    /(?:得唔得|可以嗎|可以吗|夠唔夠|够不够|安全|裝得|装得|OK嗎|ok\?|feasible|可行|支持|support)/i.test(text)
-  ) || /(?:上門|上门|師傅|师傅|onsite|on-site|site (?:visit|survey)|technician)/i.test(text);
+export function requiresProfessionalSiteCheck(text: string): boolean {
+  const structural = /(?:啲|個|个)?(?:窗口|窗台|牆|墙|電壓|电压|排水|承重|wall strength|structural|voltage|drainage)/i.test(text)
+    && /(?:得唔得|可以嗎|可以吗|夠唔夠|够不够|安全|裝得|装得|OK嗎|ok\?|feasible|可行|支持|support)/i.test(text);
+  const installation = /(?:安裝|安装|installation|install|mount|拆機|拆机|dismantle)/i.test(text)
+    && /(?:上門|上门|師傅|师傅|onsite|on-site|site (?:visit|survey)|technician|安全|可行|feasible)/i.test(text);
+  return structural || installation;
 }
 
 /* ------------------------------------------------------------------ *
@@ -351,7 +376,7 @@ export function detectCurrentPriceValidityQuestion(text: string): boolean {
 export function detectPreorderUnpaidIntent(text: string): boolean {
   const t = clean(text);
   if (!t) return false;
-  const preorder = /(?:想預訂|想预订|想訂|想订|要預訂|要预订|預訂|预订|reserve|reservation|pre[- ]?order|want to order|place an order)/i.test(t);
+  const preorder = /(?:想預訂|想预订|想訂|想订|要預訂|要预订|預訂|预订|想預約|想预约|要預約|要预约|預約|预约|reserve|reservation|book(?:ing)?|pre[- ]?order|want to order|place an order)/i.test(t);
   return preorder && scanNegatedTransaction(t).negated_payment;
 }
 
@@ -662,7 +687,7 @@ export function buildTransactionSummary(
     pending: { "zh-TW": "待師傅上門確認", "zh-CN": "待师傅上门确认", en: "Pending onsite professional checks" },
     quotes: { "zh-TW": "你提供嘅歷史報價（歷史數字，非現價）", "zh-CN": "你提供的历史报价（历史数字，非现价）", en: "Historical prices you provided (historical, not current)" },
     status: { "zh-TW": "目前狀態", "zh-CN": "目前状态", en: "Current status" },
-    tail: { "zh-TW": "最新價格同工程費用仍然要同事確認之後才作準。", "zh-CN": "最新价格与工程费用仍需同事确认后才作准。", en: "Latest pricing and engineering fees still need to be confirmed by our team." },
+    tail: { "zh-TW": "最新價格、適用費用同相關條件仍然要確認之後先作準。", "zh-CN": "最新价格、适用费用及相关条件仍需确认后才作准。", en: "Latest pricing, applicable fees and relevant conditions still need to be confirmed." },
   } as const;
 
   lines.push(t.head[language]);
@@ -696,8 +721,8 @@ function buildQuantityAnswer(state: ConversationCommerceState, language: Commerc
   const total = active.reduce((sum, e) => sum + e.quantity, 0);
   const breakdown = active.map((e) => `${entityLabel(e.entity_id, language)} x${e.quantity}`).join("、");
   if (language === "en") return `You currently have ${total} unit(s) in total: ${breakdown}.`;
-  if (language === "zh-CN") return `你目前合共 ${total} 部：${breakdown}。`;
-  return `你而家合共 ${total} 部：${breakdown}。`;
+  if (language === "zh-CN") return `你目前合共 ${total} 个单位：${breakdown}。`;
+  return `你而家合共 ${total} 個單位：${breakdown}。`;
 }
 
 function buildKnownStateAnswer(language: CommerceLanguage, statePath: string, value: unknown, state: ConversationCommerceState): string {
@@ -734,9 +759,9 @@ function renderCalculationExpression(calculation: { expression: string; result: 
 function buildCalculationAnswer(language: CommerceLanguage, calculation: { expression: string; result: number; currency?: string | null }): string {
   const currency = calculation.currency ?? "HKD";
   const rendered = renderCalculationExpression(calculation);
-  if (language === "en") return `Based only on the figures in this calculation: ${rendered} (${currency}). Latest prices and engineering fees still need to be confirmed by our team.`;
-  if (language === "zh-CN") return `只按你这次提供的数字计算：${rendered}（${currency}）。最新价格与工程费用仍需同事确认。`;
-  return `只按你今次提供嘅數字計：${rendered}（${currency}）。最新價格同工程費用仍然要同事確認。`;
+  if (language === "en") return `Based only on the figures in this calculation: ${rendered} (${currency}). Latest prices, applicable fees and conditions still need to be confirmed.`;
+  if (language === "zh-CN") return `只按你这次提供的数字计算：${rendered}（${currency}）。最新价格、适用费用及相关条件仍需确认。`;
+  return `只按你今次提供嘅數字計：${rendered}（${currency}）。最新價格、適用費用同相關條件仍然要確認。`;
 }
 
 function buildProfessionalConfirmationAnswer(language: CommerceLanguage, state: ConversationCommerceState): string {
@@ -748,17 +773,18 @@ function buildProfessionalConfirmationAnswer(language: CommerceLanguage, state: 
 }
 
 export function buildCurrentPriceValidityAnswer(language: CommerceLanguage): string {
-  if (language === "en") return "Not necessarily. A previous quote is only a reference and does not guarantee the current price. The latest product price and any installation or engineering charges need to be confirmed again before they are final.";
-  if (language === "zh-CN") return "未必。你之前看到的报价只可作为参考，并不代表目前仍是同一价格。最新产品价格及安装／工程费用需要重新确认后才作准。";
-  return "未必。你之前見過嘅報價只可以作參考，唔代表而家仍然係同一個價。最新產品價格同安裝／工程費用需要重新確認後先作準。";
+  if (language === "en") return "Not necessarily. A previous quote is only a reference and does not guarantee the current price. The latest price, applicable fees and relevant conditions need to be confirmed again before they are final.";
+  if (language === "zh-CN") return "未必。你之前看到的报价只可作为参考，并不代表目前仍是同一价格。最新价格、适用费用及相关条件需要重新确认后才作准。";
+  return "未必。你之前見過嘅報價只可以作參考，唔代表而家仍然係同一個價。最新價格、適用費用同相關條件需要重新確認後先作準。";
 }
 
 export function buildPreorderUnpaidAnswer(language: CommerceLanguage, state: ConversationCommerceState): string {
   const active = state.entities.filter((e) => e.status !== "cancelled" && e.status !== "deferred");
   const known = active.length ? active.map((e) => `${entityLabel(e.entity_id, language)} x${e.quantity}`).join("、") : "";
-  if (language === "en") return `${known ? `Got it — you want to reserve ${known}. ` : "Got it — you want to make a reservation. "}Since payment has not been made yet, this is not a completed or confirmed order. The next step is to confirm the final quote, installation requirements and payment arrangement.`;
-  if (language === "zh-CN") return `${known ? `好的，我知道你想预订${known}。` : "好的，我知道你想预订。"}由于目前还未付款，所以现在还不算已完成或已确认订单。下一步需要先确认最终报价、安装条件及付款安排。`;
-  return `${known ? `好，我知道你想預訂${known}。` : "好，我知道你想預訂。"}因為你仲未付款，所以而家未算完成或已確認訂單。下一步要先確認最終報價、安裝條件同付款安排。`;
+  const nextStep = buildCapabilityAwarePreorderNextStep(state, language);
+  if (language === "en") return `${known ? `Got it — you want to reserve ${known}. ` : "Got it — you want to proceed. "}Since payment has not been made yet, this is not a completed or confirmed order. ${nextStep}`;
+  if (language === "zh-CN") return `${known ? `好的，我知道你想预订${known}。` : "好的，我知道你想继续预订。"}由于目前还未付款，所以现在还不算已完成或已确认订单。${nextStep}`;
+  return `${known ? `好，我知道你想預訂${known}。` : "好，我知道你想繼續預訂。"}因為你仲未付款，所以而家未算完成或已確認訂單。${nextStep}`;
 }
 
 export async function runCommerceStateRuntime(

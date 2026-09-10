@@ -10,6 +10,7 @@ const sha = (p) => crypto.createHash("sha256").update(fs.readFileSync(p)).digest
 const files = {
   index: "supabase/functions/generate-reply/index.ts",
   runtime: "supabase/functions/_shared/commerce-state-runtime.ts",
+  capability: "supabase/functions/_shared/commerce-capability-runtime.ts",
   contract: "supabase/functions/_shared/commerce-state-contract.ts",
   reducer: "supabase/functions/_shared/commerce-state-reducer.ts",
   authority: "supabase/functions/_shared/commerce-state-authority.ts",
@@ -62,7 +63,8 @@ must(pkg.name === "tanstack_start_ts", "unexpected package identity");
 
 execFileSync("deno", ["run", "--allow-read", ".github/scripts/task_a3_hotfix6_calculation_state_test.ts"], { stdio: "inherit" });
 execFileSync("deno", ["run", "--allow-read", ".github/scripts/task_a3_hotfix7_customer_reply_test.ts"], { stdio: "inherit" });
-execFileSync("npx", ["tsc", "--noEmit", "--strict", "--target", "ES2022", "--module", "ESNext", "--moduleResolution", "bundler", "--allowImportingTsExtensions", files.runtime, files.contract, files.reducer, files.authority], { stdio: "inherit" });
+execFileSync("deno", ["run", "--allow-read", ".github/scripts/task_a3_generic_capability_runtime_test.ts"], { stdio: "inherit" });
+execFileSync("npx", ["tsc", "--noEmit", "--strict", "--target", "ES2022", "--module", "ESNext", "--moduleResolution", "bundler", "--allowImportingTsExtensions", files.runtime, files.capability, files.contract, files.reducer, files.authority], { stdio: "inherit" });
 execFileSync("npm", ["run", "build"], { stdio: "inherit" });
 
 console.log(JSON.stringify({

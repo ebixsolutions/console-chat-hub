@@ -81,12 +81,12 @@ function extractVariant(text: string): Record<string, string> {
   const t = clean(text);
   const variant: Record<string, string> = {};
   const size = t.match(/(?:size|尺寸|尺碼|尺码)\s*(?:=|:|：)?\s*([A-Z0-9-]{1,12})/i)
-    ?? t.match(/\b([XSML]{1,4})\s*碼\b/i);
+    ?? t.match(/\b([XSML]{1,4})\s*碼/i);
   if (size?.[1]) variant.size = size[1];
   const color = t.match(/(?:color|colour|顏色|颜色)\s*(?:=|:|：)?\s*([^，。,.!?！？]{1,24})/i);
   if (color?.[1]) variant.color = color[1].trim();
   else {
-    const leading = t.match(/(?:^|\s)(黑色|白色|紅色|红色|藍色|蓝色|綠色|绿色|黃色|黄色|粉紅|粉红|紫色|灰色|black|white|red|blue|green|yellow|pink|purple|grey|gray)(?=\s|[A-Za-z\u3400-\u9fff])/i);
+    const leading = t.match(/(黑色|白色|紅色|红色|藍色|蓝色|綠色|绿色|黃色|黄色|粉紅|粉红|紫色|灰色|black|white|red|blue|green|yellow|pink|purple|grey|gray)(?=\s|[A-Za-z\u3400-\u9fff])/i);
     if (leading?.[1]) variant.color = leading[1];
   }
   return variant;
