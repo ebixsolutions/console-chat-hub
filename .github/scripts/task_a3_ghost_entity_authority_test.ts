@@ -34,6 +34,8 @@ function bedroomAirconTwo(): ConversationCommerceState {
 function applyTurn(text: string, previous: ConversationCommerceState): ConversationCommerceState {
   const hints = buildCommerceEntityHints(["睡房要2部冷氣", text]);
   return reduceTurn(previous, {
+    conversation_id: "c-ghost",
+    company_id: "co-ghost",
     text,
     source_message_id: "m-ghost",
     occurred_at: null,
