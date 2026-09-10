@@ -517,11 +517,44 @@ export function enforceQuotationNotOrderEvents(
 }
 
 
-function reduceTurn(
+/**
+ * Hotfix #3: a category-only mention (safety / feasibility / KB / descriptive
+ * question) must never fabricate a ghost `<category>:unscoped` entity.
+ * An unscoped hint may only create a NEW entity when the current customer turn
+ * carries an explicit creation signal (quantity, add/buy/order/need intent, or
+ * an explicit new-item statement). Hints for entities that already exist in
+ * state are always kept so quantity/status corrections keep working.
+ */
+export function detectExplicitEntityCreationSignal(text: string): boolean {
+  const t = clean(text);
+  if (!t) return false;
+  if (parseCount(t) !== null) return true;
+  return /(?:另外|再加|再要|加多|加一|加個|加个|多要|多買|多买|新增|想買|想买|要買|要买|購買|购买|訂購|订购|落單|下單|下单|需要|我要|加裝|加装|安裝多|添置|add\s|buy\s|purchase|order\s|need\s|want\s|another|extra|additional)/i
+    .test(t);
+}
+
+export function filterGhostUnscopedHints(
+  text: string,
+  state: ConversationCommerceState,
+  hints: CommerceTurnEntityHint[],
+): CommerceTurnEntityHint[] {
+  const explicitCreation = detectExplicitEntityCreationSignal(text);
+  return hints.filter((hint) => {
+    const roomKey = hint.entity_id.split(":")[1];
+    if (roomKey !== "unscoped") return true;
+    if (state.entities.some((e) => e.entity_id === hint.entity_id)) return true;
+    // A bare category mention (question / KB / descriptive) never creates a
+    // new unscoped entity without an explicit creation signal.
+    return explicitCreation;
+  });
+}
+
+export function reduceTurn(
   previous: ConversationCommerceState,
   input: CommerceRuntimeInput,
-  hints: CommerceTurnEntityHint[],
+  rawHints: CommerceTurnEntityHint[],
 ): ConversationCommerceState {
+  const hints = filterGhostUnscopedHints(input.text, previous, rawHints);
   const derived = deriveCommerceEventsFromCustomerTurn({
     text: input.text,
     source_message_id: input.source_message_id,
