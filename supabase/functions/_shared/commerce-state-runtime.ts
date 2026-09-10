@@ -335,7 +335,24 @@ function quotationOnlySignal(text: string): boolean {
 }
 
 export function detectTransactionSummaryIntent(text: string): boolean {
-  return /(?:落單|下單|下单|落单|報價|报价|quotation|quote|付款|payment|checkout|幫我總結|帮我总结|總結一下|总结一下|整理(?:一下)?(?:比|畀|給|给)?同事|同事跟進|同事跟进|summar(?:y|ise|ize)|recap|hand over to)/i.test(clean(text));
+  return /(?:幫我總結|帮我总结|總結一下|总结一下|幫我整理|帮我整理|整理(?:一下)?(?:比|畀|給|给)?同事|同事跟進|同事跟进|summar(?:y|ise|ize)|recap|hand over to)/i.test(clean(text));
+}
+
+export function detectCurrentPriceValidityQuestion(text: string): boolean {
+  const t = clean(text);
+  if (!t) return false;
+  const historical = /(?:之前|以前|以往|舊|旧|歷史|历史|previous|earlier|old)/i.test(t);
+  const price = /(?:報價|报价|價|价|price|quote|quotation|收費|收费|fee)/i.test(t);
+  const current = /(?:而家|現在|现在|目前|最新|仲係|还是|仍然|current|latest|still)/i.test(t);
+  const validity = /(?:一定|作準|作准|有效|同價|同价|一樣|一样|same|valid|guarantee|guaranteed)/i.test(t);
+  return historical && price && (current || validity);
+}
+
+export function detectPreorderUnpaidIntent(text: string): boolean {
+  const t = clean(text);
+  if (!t) return false;
+  const preorder = /(?:想預訂|想预订|想訂|想订|要預訂|要预订|預訂|预订|reserve|reservation|pre[- ]?order|want to order|place an order)/i.test(t);
+  return preorder && scanNegatedTransaction(t).negated_payment;
 }
 
 function parseMoneyTerms(text: string): number[] {
@@ -657,7 +674,18 @@ export function buildTransactionSummary(
   const pending = [...state.installation.pending_checks, ...state.installation.items.filter((i) => i.status === "pending").map((i) => i.kind)];
   if (pending.length) lines.push(`${t.pending[language]}: ${[...new Set(pending)].join("、")}`);
   if (historical.length) lines.push(`${t.quotes[language]}: ${historical.map((q) => `${q.currency} ${q.amount}`).join("、")}`);
-  lines.push(`${t.status[language]}: ${state.conversion.funnel_stage} / quotation=${state.conversion.quotation_status} / order=${state.conversion.order_status} / payment=${state.conversion.payment_status}`);
+  const orderConfirmed = state.conversion.order_status === "confirmed" || state.conversion.order_status === "completed";
+  const paymentPaid = state.conversion.payment_status === "paid";
+  if (language === "en") {
+    lines.push(orderConfirmed ? "Order: confirmed." : "Order: not yet confirmed.");
+    lines.push(paymentPaid ? "Payment: received." : "Payment: no confirmed payment on record yet.");
+  } else if (language === "zh-CN") {
+    lines.push(orderConfirmed ? "订单：已确认。" : "订单：尚未确认。");
+    lines.push(paymentPaid ? "付款：已确认收到。" : "付款：目前未有已付款记录。");
+  } else {
+    lines.push(orderConfirmed ? "訂單：已確認。" : "訂單：尚未確認。");
+    lines.push(paymentPaid ? "付款：已確認收到。" : "付款：目前未有已付款記錄。");
+  }
   lines.push(t.tail[language]);
   return lines.join("\n");
 }
@@ -719,6 +747,20 @@ function buildProfessionalConfirmationAnswer(language: CommerceLanguage, state: 
   return `${known ? `我哋已保留您之前提供嘅資料：${known}。` : ""}為確保安全同準確，需要師傅上門檢查窗口尺寸、承托同安裝環境後先可以確認是否適合安裝。`;
 }
 
+export function buildCurrentPriceValidityAnswer(language: CommerceLanguage): string {
+  if (language === "en") return "Not necessarily. A previous quote is only a reference and does not guarantee the current price. The latest product price and any installation or engineering charges need to be confirmed again before they are final.";
+  if (language === "zh-CN") return "未必。你之前看到的报价只可作为参考，并不代表目前仍是同一价格。最新产品价格及安装／工程费用需要重新确认后才作准。";
+  return "未必。你之前見過嘅報價只可以作參考，唔代表而家仍然係同一個價。最新產品價格同安裝／工程費用需要重新確認後先作準。";
+}
+
+export function buildPreorderUnpaidAnswer(language: CommerceLanguage, state: ConversationCommerceState): string {
+  const active = state.entities.filter((e) => e.status !== "cancelled" && e.status !== "deferred");
+  const known = active.length ? active.map((e) => `${entityLabel(e.entity_id, language)} x${e.quantity}`).join("、") : "";
+  if (language === "en") return `${known ? `Got it — you want to reserve ${known}. ` : "Got it — you want to make a reservation. "}Since payment has not been made yet, this is not a completed or confirmed order. The next step is to confirm the final quote, installation requirements and payment arrangement.`;
+  if (language === "zh-CN") return `${known ? `好的，我知道你想预订${known}。` : "好的，我知道你想预订。"}由于目前还未付款，所以现在还不算已完成或已确认订单。下一步需要先确认最终报价、安装条件及付款安排。`;
+  return `${known ? `好，我知道你想預訂${known}。` : "好，我知道你想預訂。"}因為你仲未付款，所以而家未算完成或已確認訂單。下一步要先確認最終報價、安裝條件同付款安排。`;
+}
+
 export async function runCommerceStateRuntime(
   db: CommerceStateDbClient,
   input: CommerceRuntimeInput,
@@ -761,6 +803,14 @@ export async function runCommerceStateRuntime(
 
   if (decision.authority === "DETERMINISTIC_CALCULATION" && decision.calculation) {
     return { ...base, authority: decision.authority, calculation: decision.calculation, reply: buildCalculationAnswer(language, decision.calculation), route: "commerce_state_answer" };
+  }
+
+  if (detectCurrentPriceValidityQuestion(text)) {
+    return { ...base, authority: "CURRENT_KB_REQUIRED", reason: "previous_quote_not_authoritative_for_current_price", reply: buildCurrentPriceValidityAnswer(language), route: "commerce_state_answer" };
+  }
+
+  if (detectPreorderUnpaidIntent(text)) {
+    return { ...base, authority: "CONVERSATION_STATE", reason: "preorder_intent_acknowledged_without_order_or_payment_promotion", reply: buildPreorderUnpaidAnswer(language, state), route: "commerce_state_answer" };
   }
 
   if (summaryIntent && (state.entities.length > 0 || state.quotes.length > 0)) {

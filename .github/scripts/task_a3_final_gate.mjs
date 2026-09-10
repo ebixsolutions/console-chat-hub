@@ -61,6 +61,7 @@ must(!index.includes('receive-widget-message'), "generate-reply must not depend 
 must(pkg.name === "tanstack_start_ts", "unexpected package identity");
 
 execFileSync("deno", ["run", "--allow-read", ".github/scripts/task_a3_hotfix6_calculation_state_test.ts"], { stdio: "inherit" });
+execFileSync("deno", ["run", "--allow-read", ".github/scripts/task_a3_hotfix7_customer_reply_test.ts"], { stdio: "inherit" });
 execFileSync("npx", ["tsc", "--noEmit", "--strict", "--target", "ES2022", "--module", "ESNext", "--moduleResolution", "bundler", "--allowImportingTsExtensions", files.runtime, files.contract, files.reducer, files.authority], { stdio: "inherit" });
 execFileSync("npm", ["run", "build"], { stdio: "inherit" });
 
