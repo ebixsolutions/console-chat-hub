@@ -1,0 +1,93 @@
+name: Task A3 Production Closure
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/task-a3-production-closure.yml'
+      - '.github/scripts/task_a3_*.ts'
+      - '.github/scripts/task_a3_*.mjs'
+      - 'supabase/functions/generate-reply/**'
+      - 'supabase/functions/_shared/commerce-*.ts'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  closure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      PROD_ORIGIN: https://console-chat-hub.lovable.app
+      CHANNEL_ID: b0000000-0000-0000-0000-000000000001
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Ghost entity authority
+        run: deno run --allow-read .github/scripts/task_a3_ghost_entity_authority_test.ts
+      - name: A3 source final gate
+        run: node .github/scripts/task_a3_final_gate.mjs
+      - name: Fresh production commerce smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a; source .env; set +a
+          python - <<'PY'
+          import json, os, time, urllib.request, urllib.error
+          BASE=os.environ['VITE_SUPABASE_FUNCTIONS_URL'].rstrip('/')
+          ORIGIN=os.environ['PROD_ORIGIN']; CHANNEL=os.environ['CHANNEL_ID']
+          def post(path, body):
+              req=urllib.request.Request(BASE+'/'+path,data=json.dumps(body,ensure_ascii=False).encode(),headers={'Origin':ORIGIN,'Content-Type':'application/json'},method='POST')
+              try:
+                  with urllib.request.urlopen(req,timeout=50) as r: return r.status,json.loads(r.read())
+              except urllib.error.HTTPError as e:
+                  raw=e.read()
+                  try: payload=json.loads(raw)
+                  except: payload={'raw':raw.decode(errors='replace')}
+                  return e.code,payload
+          st,c=post('create-visitor-session',{'channel_id':CHANNEL,'visitor_metadata':{'a3_task1_closure':True,'exclude_training':True,'fictional_test':True}})
+          assert st==200 and c.get('success') is True,(st,c)
+          d=c['data']; cid=d['conversation_id']; token=d['session_token']
+          print('A3_CONVERSATION_ID='+cid)
+          turns=[
+            '睡房要3部冷氣。每部冷氣$5,600，每部送貨$550，每部安裝$550。呢啲只係今次測試用報價資料，未正式落單。',
+            '更正，睡房冷氣改做2部。',
+            '咁2部連送貨同安裝總數係幾多？',
+            '窗口夠唔夠安全安裝冷氣？',
+            '確認一下：呢個只係報價／預購查詢，未正式落單、未付款、未安排送貨、未安排安裝。'
+          ]
+          prior=0; answers=[]
+          for turn,msg in enumerate(turns,1):
+              st,s=post('receive-widget-message',{'conversation_id':cid,'session_token':token,'content':msg})
+              assert st==200 and s.get('success') is True,(turn,st,s)
+              deadline=time.time()+70; p=None
+              while time.time()<deadline:
+                  st,p=post('widget-poll-messages',{'conversation_id':cid,'session_token':token})
+                  assert st==200 and p.get('success') is True,(turn,st,p)
+                  msgs=(p.get('data') or {}).get('messages') or []
+                  assistants=[x for x in msgs if x.get('role')=='assistant' and not x.get('is_recalled')]
+                  if len(assistants)>prior: break
+                  time.sleep(1)
+              msgs=(p.get('data') or {}).get('messages') or []
+              assistants=[x for x in msgs if x.get('role')=='assistant' and not x.get('is_recalled')]
+              assert len(assistants)>prior,(turn,'no assistant reply',p)
+              latest=assistants[-1].get('content','')
+              answers.append(latest)
+              prior=len(assistants)
+              print(json.dumps({'turn':turn,'answer':latest[:1000]},ensure_ascii=False))
+          calc=''.join(ch for ch in answers[2] if ch.isdigit())
+          normalized=answers[2].replace(',','').replace('，','')
+          assert ('13400' in normalized) or ('13,400' in answers[2]),('DETERMINISTIC_TOTAL_NOT_13400',answers[2])
+          assert not any(x in answers[4].lower() for x in ['已付款','payment confirmed','paid successfully']),('FALSE_PAYMENT_CONFIRMATION',answers[4])
+          assert not any(x in answers[4].lower() for x in ['已安排送貨','已安排安裝','delivery booked','installation booked']),('FALSE_FULFILMENT_CONFIRMATION',answers[4])
+          print('A3_WIDGET_SMOKE=PASS')
+          print('A3_EXPECTED_TOTAL=13400')
+          PY
+      - name: Final closure marker
+        run: echo 'TASK_A3_PRODUCTION_CLOSURE=PASS'
