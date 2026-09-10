@@ -517,11 +517,48 @@ export function enforceQuotationNotOrderEvents(
 }
 
 
+/**
+ * Hotfix #3: a category-only mention (safety / feasibility / KB / descriptive
+ * question) must never fabricate a ghost `<category>:unscoped` entity.
+ * An unscoped hint may only create a NEW entity when the current customer turn
+ * carries an explicit creation signal (quantity, add/buy/order/need intent, or
+ * an explicit new-item statement). Hints for entities that already exist in
+ * state are always kept so quantity/status corrections keep working.
+ */
+export function detectExplicitEntityCreationSignal(text: string): boolean {
+  const t = clean(text);
+  if (!t) return false;
+  if (parseCount(t) !== null) return true;
+  return /(?:另外|再加|再要|加多|加一|加個|加个|多要|多買|多买|新增|想買|想买|要買|要买|購買|购买|訂購|订购|落單|下單|下单|需要|我要|加裝|加装|安裝多|添置|add\s|buy\s|purchase|order\s|need\s|want\s|another|extra|additional)/i
+    .test(t);
+}
+
+export function filterGhostUnscopedHints(
+  text: string,
+  state: ConversationCommerceState,
+  hints: CommerceTurnEntityHint[],
+): CommerceTurnEntityHint[] {
+  const explicitCreation = detectExplicitEntityCreationSignal(text);
+  return hints.filter((hint) => {
+    const [categoryKey, roomKey] = hint.entity_id.split(":");
+    if (roomKey !== "unscoped") return true;
+    if (state.entities.some((e) => e.entity_id === hint.entity_id)) return true;
+    if (explicitCreation) return true;
+    // No explicit creation signal: keep only when no concrete entity of the
+    // same category exists to attach the mention to.
+    return !state.entities.some((e) => {
+      const [existingCategory, existingRoom] = e.entity_id.split(":");
+      return existingCategory === categoryKey && existingRoom !== "unscoped";
+    });
+  });
+}
+
 function reduceTurn(
   previous: ConversationCommerceState,
   input: CommerceRuntimeInput,
-  hints: CommerceTurnEntityHint[],
+  rawHints: CommerceTurnEntityHint[],
 ): ConversationCommerceState {
+  const hints = filterGhostUnscopedHints(input.text, previous, rawHints);
   const derived = deriveCommerceEventsFromCustomerTurn({
     text: input.text,
     source_message_id: input.source_message_id,
