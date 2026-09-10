@@ -4,6 +4,7 @@ import {
   buildPreorderUnpaidAnswer,
   reduceTurn,
   requiresProfessionalSiteCheck,
+  runCommerceStateRuntime,
 } from "../../supabase/functions/_shared/commerce-state-runtime.ts";
 import {
   extractGenericCommerceEntity,
@@ -28,6 +29,21 @@ function apply(state: ReturnType<typeof createEmptyConversationCommerceState>, t
   }, buildCommerceEntityHints([text]));
 }
 
+function readOnlyDb(state: ReturnType<typeof createEmptyConversationCommerceState>, revision = 1) {
+  return {
+    from: (_table: string) => ({
+      select: (_columns: string) => ({
+        eq: (_column: string, _value: string) => ({
+          maybeSingle: async () => ({ data: { revision, state }, error: null }),
+        }),
+      }),
+    }),
+    rpc: async () => {
+      throw new Error("read-only preorder route must not persist");
+    },
+  };
+}
+
 const fashion = extractGenericCommerceEntity("我要2件黑色T-shirt，M碼。");
 assert(fashion?.entity_id === "generic:t-shirt", `fashion generic id mismatch: ${fashion?.entity_id}`);
 assert(fashion?.quantity === 2, "fashion quantity mismatch");
@@ -50,6 +66,15 @@ const service = extractGenericCommerceEntity("我想預約2位剪髮，星期五
 assert(service?.kind === "service", "service kind failed");
 assert(service?.capabilities.requires_booking === true, "service booking capability failed");
 
+const serviceProductionPhrase = extractGenericCommerceEntity("我要預約2位星期五剪髮。");
+assert(serviceProductionPhrase !== null, "production service phrase extraction failed");
+assert(serviceProductionPhrase.display_name === "剪髮", `service name polluted by weekday: ${serviceProductionPhrase.display_name}`);
+assert(serviceProductionPhrase.quantity === 2, "production service quantity mismatch");
+assert(serviceProductionPhrase.kind === "service", "production service kind mismatch");
+assert(serviceProductionPhrase.capabilities.requires_booking === true, "production service booking capability missing");
+assert(serviceProductionPhrase.capabilities.requires_delivery === false, "service must not require delivery");
+assert(serviceProductionPhrase.capabilities.requires_installation === false, "service must not require installation");
+
 const b2b = extractGenericCommerceEntity("我要100箱紙杯，請報價。");
 assert(b2b?.kind === "b2b_product", "B2B kind failed");
 assert(b2b?.capabilities.requires_quote === true, "B2B quote capability failed");
@@ -68,15 +93,27 @@ const serviceReply = buildPreorderUnpaidAnswer("zh-TW", serviceState);
 assert(/預約時段/.test(serviceReply), "service preorder missing booking-aware next step");
 assert(!/安裝/.test(serviceReply), "service preorder leaked installation");
 
+const serviceExactState = apply(createEmptyConversationCommerceState(), "我要預約2位星期五剪髮。", "33333333-3333-4333-8333-333333333312");
+assert(serviceExactState.entities.length === 1, "exact service state entity missing");
+assert(serviceExactState.entities[0].entity_id === "generic:剪髮", `exact service id mismatch: ${serviceExactState.entities[0]?.entity_id}`);
+assert(serviceExactState.entities[0].quantity === 2, "exact service quantity failed");
+assert(serviceExactState.delivery.preferred_date === null, "service booking weekday must not mutate delivery date");
+
 let b2bState = apply(createEmptyConversationCommerceState(), "我要100箱紙杯，請報價。", "33333333-3333-4333-8333-333333333303");
 assert(b2bState.entities[0].quantity === 100, "B2B quantity state failed");
 assert(getEntityCapabilities(b2bState.entities[0]).requires_quote === true, "B2B state quote capability failed");
 
 let additiveState = apply(createEmptyConversationCommerceState(), "我要2盒牛奶。", "33333333-3333-4333-8333-333333333304");
 additiveState = apply(additiveState, "另外加1盒牛奶。", "33333333-3333-4333-8333-333333333305");
-assert(additiveState.entities.length === 1 && additiveState.entities[0].quantity === 3, "generic additive quantity failed");
+assert(additiveState.entities.length === 1 && additiveState.entities[0].quantity === 3, "generic named additive quantity failed");
 additiveState = apply(additiveState, "更正，唔係3盒，係2盒。", "33333333-3333-4333-8333-333333333306");
 assert(additiveState.entities[0].quantity === 2, "generic correction failed");
+
+let groceryState = apply(createEmptyConversationCommerceState(), "我要3盒牛奶。", "33333333-3333-4333-8333-333333333313");
+groceryState = apply(groceryState, "另外加2盒。", "33333333-3333-4333-8333-333333333314");
+assert(groceryState.entities.length === 1, "unnamed additive created ghost entity");
+assert(groceryState.entities[0].entity_id === "generic:牛奶", "unnamed additive changed target entity");
+assert(groceryState.entities[0].quantity === 5, `unnamed additive expected 5, got ${groceryState.entities[0].quantity}`);
 
 const applianceHints = buildCommerceEntityHints(["我睡房有2部冷氣。"]).filter((x) => x.entity_id === "air_conditioner:bedroom");
 assert(applianceHints.length === 1, "legacy appliance profile regressed");
@@ -96,22 +133,67 @@ const priceReply = buildCurrentPriceValidityAnswer("zh-TW");
 assert(!/(?:安裝|工程)/.test(priceReply), "generic current-price answer leaked appliance terms");
 assert(/適用費用/.test(priceReply), "generic current-price answer missing applicable fees");
 
+const fashionPreorder = await runCommerceStateRuntime(readOnlyDb(fashionState), {
+  conversation_id: conversation,
+  company_id: company,
+  source_message_id: "33333333-3333-4333-8333-333333333315",
+  text: "我想預訂，但未付款。",
+  language: "zh-TW",
+});
+assert(fashionPreorder?.persist_result === "read_only", "fashion preorder must be read-only");
+assert(fashionPreorder?.route === "commerce_state_answer", "fashion preorder must be deterministic state answer");
+assert(/未付款|仲未付款/.test(fashionPreorder?.reply ?? ""), "fashion preorder acknowledgment missing unpaid state");
+
+let digitalState = apply(createEmptyConversationCommerceState(), "我要2個software license。", "33333333-3333-4333-8333-333333333316");
+const digitalPreorder = await runCommerceStateRuntime(readOnlyDb(digitalState), {
+  conversation_id: conversation,
+  company_id: company,
+  source_message_id: "33333333-3333-4333-8333-333333333317",
+  text: "我想預訂，但未付款。",
+  language: "zh-TW",
+});
+assert(digitalPreorder?.persist_result === "read_only", "digital preorder must be read-only");
+assert(/數碼交付/.test(digitalPreorder?.reply ?? ""), "digital preorder missing digital fulfilment");
+assert(!/(?:送貨|安裝|師傅|現場|site|delivery|install)/i.test(digitalPreorder?.reply ?? ""), "digital preorder leaked physical fulfilment");
+
+const servicePreorder = await runCommerceStateRuntime(readOnlyDb(serviceExactState), {
+  conversation_id: conversation,
+  company_id: company,
+  source_message_id: "33333333-3333-4333-8333-333333333318",
+  text: "我想預訂，但未付款。",
+  language: "zh-TW",
+});
+assert(servicePreorder?.persist_result === "read_only", "service preorder must be read-only");
+assert(/預約時段/.test(servicePreorder?.reply ?? ""), "service preorder missing booking next step");
+assert(!/(?:送貨|安裝|delivery|install)/i.test(servicePreorder?.reply ?? ""), "service preorder leaked delivery/install workflow");
+
+const bareAdditionBase = apply(createEmptyConversationCommerceState(), "我要1盒牛奶。", "33333333-3333-4333-8333-333333333319");
+const bareAddition = apply(bareAdditionBase, "另外", "33333333-3333-4333-8333-333333333320");
+assert(bareAddition.entities.length === 1 && bareAddition.entities[0].quantity === 1, "bare 另外 must not mutate quantity or create entity");
+
 console.log(JSON.stringify({
   status: "PASS",
   gate: "TASK_A3_GENERIC_CAPABILITY_RUNTIME",
-  cases: 12,
+  cases: 19,
   assertions: {
     fashion_product_variant: true,
     beauty_product: true,
     grocery_product: true,
     digital_good: true,
     service_booking: true,
+    service_weekday_name_preserved: true,
+    service_weekday_not_delivery: true,
     b2b_quote: true,
     generic_state_persistence: true,
-    generic_additive_and_correction: true,
+    generic_named_additive_and_correction: true,
+    generic_unnamed_additive: true,
     appliance_profile_preserved: true,
     capability_aware_preorder: true,
+    preorder_read_only_routing: true,
+    digital_fulfilment_no_physical_leakage: true,
     service_not_installation_misroute: true,
+    service_preorder_no_delivery_leakage: true,
+    bare_addition_no_mutation: true,
     generic_price_reply: true
   }
 }));
