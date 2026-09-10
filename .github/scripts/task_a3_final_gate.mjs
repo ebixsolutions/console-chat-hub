@@ -25,6 +25,7 @@ for (const p of Object.values(files)) must(fs.existsSync(p) && fs.statSync(p).si
 
 const index = read(files.index);
 const runtime = read(files.runtime);
+const semanticInterpreter = read(files.semanticInterpreter);
 const env = read(files.env);
 const pkg = JSON.parse(read(files.pkg));
 
@@ -42,6 +43,8 @@ for (const marker of [
   'TASK A3: persistent commerce state runtime',
   'commitAiReplyWithControlGate',
   'cleanupThinking',
+  'interpretCommerceSemantics',
+  'semantic_frame: _a3SemanticFrame',
 ]) must(index.includes(marker), `generate-reply missing ${marker}`);
 for (const marker of [
   'deriveCommerceEventsFromCustomerTurn',
@@ -53,10 +56,25 @@ for (const marker of [
   'revision_conflict',
 ]) must(runtime.includes(marker), `runtime missing ${marker}`);
 
+// A3.1 must semantically interpret latest + bounded conversation + tenant-bound
+// persistent commerce state before the deterministic adapter/reducer consumes the
+// proposal. The interpreter is read-only and never owns the mutation RPC.
+for (const marker of [
+  'loadPersistentCommerceStateSummary',
+  'conversation_commerce_state',
+  'conversation_id: `eq.${input.conversation_id}`',
+  'company_id: `eq.${input.company_id}`',
+  'Persistent commerce state summary',
+  'normalizeCommerceSemanticFrame',
+  'responseFormat: "json"',
+]) must(semanticInterpreter.includes(marker), `semantic interpreter missing ${marker}`);
+must(!semanticInterpreter.includes('upsert_conversation_commerce_state_v1'), "semantic interpreter must not mutate commerce state");
+
+const semantic = index.indexOf('// ===== TASK A3.1: multilingual universal semantic interpreter =====');
 const e2 = index.indexOf('if (_criticalE2Response) return _criticalE2Response;');
 const a3 = index.indexOf('// ===== TASK A3: persistent commerce state runtime =====');
 const ctx = index.indexOf('if (_canonicalTurn.operation === "CUSTOMER_CONTEXT_UPDATE")');
-must(e2 >= 0 && a3 > e2 && ctx > a3, `bad route order e2=${e2} a3=${a3} context=${ctx}`);
+must(e2 >= 0 && semantic > e2 && a3 > semantic && ctx > a3, `bad route order e2=${e2} semantic=${semantic} a3=${a3} context=${ctx}`);
 
 // Frozen safety surface: A3 must not import or call receive-widget-message.
 must(!index.includes('receive-widget-message'), "generate-reply must not depend on receive-widget-message");
@@ -79,8 +97,11 @@ console.log(JSON.stringify({
   assertions: {
     authoritative_runtime_binding: true,
     a1_a2_a3_sources_present: true,
+    semantic_latest_history_persistent_state_bound: true,
+    semantic_tenant_isolation: true,
+    semantic_interpreter_read_only: true,
     optimistic_revision_and_idempotency_markers: true,
-    order_e2_before_a3_before_customer_context: true,
+    order_e2_before_semantic_before_a3_before_customer_context: true,
     receive_widget_message_not_integrated: true,
     strict_typescript: true,
     build: true
