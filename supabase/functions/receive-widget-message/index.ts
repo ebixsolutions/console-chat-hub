@@ -140,7 +140,10 @@ Deno.serve(async (req) => {
 
     const route = classifyConversationalRoute(normalizedContent);
     const knownShortTopic = workflow5ShortTopicHint(normalizedContent);
-    if (!knownShortTopic && (route.kind === "clarify" || route.kind === "underspecified")) {
+    // Noise-only input can be clarified locally. Meaningful underspecified input must
+    // reach generate-reply so A3.1 multilingual semantic interpretation can resolve
+    // ellipsis/referents from conversation context instead of keyword heuristics.
+    if (!knownShortTopic && route.kind === "clarify") {
       const isUnderspecified = route.kind === "underspecified";
       const clarificationRoute = isUnderspecified ? "conversational_underspecified_clarification" : "conversational_clarification";
       const clarificationText = isUnderspecified ? UNDERSPECIFIED_CLARIFICATION[route.language] : NOISE_CLARIFICATION[route.language];

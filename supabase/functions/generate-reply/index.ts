@@ -107,6 +107,8 @@ import {
   type CommerceStateDbClient,
   runCommerceStateRuntime,
 } from "../_shared/commerce-state-runtime.ts";
+import { interpretCommerceSemantics } from "../_shared/commerce-semantic-interpreter.ts";
+import type { CommerceSemanticFrame } from "../_shared/commerce-semantic-frame.ts";
 import {
   createClient,
   type SupabaseClient,
@@ -3372,6 +3374,28 @@ async function orchestrationGenerateReply(
     );
     if (_criticalE2Response) return _criticalE2Response;
   }
+  // ===== TASK A3.1: multilingual universal semantic interpreter =====
+  // LLM proposes a schema-constrained, language-neutral semantic frame only.
+  // It never writes commerce state and never supplies external product/policy facts.
+  let _a3SemanticFrame: CommerceSemanticFrame | null = null;
+  if (_criticalE2ExpectedTenantId) {
+    try {
+      const semanticResult = await interpretCommerceSemantics({
+        company_id: _criticalE2ExpectedTenantId,
+        conversation_id,
+        source_message_id,
+        latest: _h1LastMsg,
+        history: (_pr5HistoryRows ?? []).map((row) => ({
+          role: String((row as { role?: unknown }).role ?? ""),
+          content: String((row as { content?: unknown }).content ?? ""),
+        })),
+      });
+      _a3SemanticFrame = semanticResult.frame;
+    } catch (error) {
+      console.error("[generate-reply] A3.1 semantic interpreter fallback", error instanceof Error ? error.name : "unknown_error");
+    }
+  }
+
   // ===== TASK A3: persistent commerce state runtime =====
   // Runs AFTER the critical E2 safety branch and BEFORE CUSTOMER_CONTEXT_UPDATE,
   // generic clarification, conversation-memory shortcut and KB retrieval.
@@ -3391,6 +3415,7 @@ async function orchestrationGenerateReply(
             role: String((row as { role?: unknown }).role ?? ""),
             content: String((row as { content?: unknown }).content ?? ""),
           })),
+          semantic_frame: _a3SemanticFrame,
         },
       );
     } catch (commerceError) {

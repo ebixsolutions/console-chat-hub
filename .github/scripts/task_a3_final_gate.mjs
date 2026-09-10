@@ -11,6 +11,9 @@ const files = {
   index: "supabase/functions/generate-reply/index.ts",
   runtime: "supabase/functions/_shared/commerce-state-runtime.ts",
   capability: "supabase/functions/_shared/commerce-capability-runtime.ts",
+  semanticFrame: "supabase/functions/_shared/commerce-semantic-frame.ts",
+  semanticInterpreter: "supabase/functions/_shared/commerce-semantic-interpreter.ts",
+  semanticAdapter: "supabase/functions/_shared/commerce-semantic-adapter.ts",
   contract: "supabase/functions/_shared/commerce-state-contract.ts",
   reducer: "supabase/functions/_shared/commerce-state-reducer.ts",
   authority: "supabase/functions/_shared/commerce-state-authority.ts",
@@ -64,6 +67,8 @@ must(pkg.name === "tanstack_start_ts", "unexpected package identity");
 execFileSync("deno", ["run", "--allow-read", ".github/scripts/task_a3_hotfix6_calculation_state_test.ts"], { stdio: "inherit" });
 execFileSync("deno", ["run", "--allow-read", ".github/scripts/task_a3_hotfix7_customer_reply_test.ts"], { stdio: "inherit" });
 execFileSync("deno", ["run", "--allow-read", ".github/scripts/task_a3_generic_capability_runtime_test.ts"], { stdio: "inherit" });
+execFileSync("deno", ["run", "--allow-read", ".github/scripts/task_a3_task1_universal_semantics_test.ts"], { stdio: "inherit" });
+execFileSync("deno", ["check", "--config", "supabase/functions/deno.json", files.semanticFrame, files.semanticAdapter, files.semanticInterpreter], { stdio: "inherit" });
 execFileSync("npx", ["tsc", "--noEmit", "--strict", "--target", "ES2022", "--module", "ESNext", "--moduleResolution", "bundler", "--allowImportingTsExtensions", files.runtime, files.capability, files.contract, files.reducer, files.authority], { stdio: "inherit" });
 execFileSync("npm", ["run", "build"], { stdio: "inherit" });
 

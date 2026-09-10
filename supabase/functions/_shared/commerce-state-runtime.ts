@@ -37,6 +37,12 @@ import {
   buildGenericCommerceEntityHints,
   genericEntityLabelFromId,
 } from "./commerce-capability-runtime.ts";
+import type { CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
+import {
+  mergeCommerceEntityHints,
+  semanticFrameToEntityHints,
+  semanticFrameToStateEvents,
+} from "./commerce-semantic-adapter.ts";
 
 export type CommerceLanguage = "zh-TW" | "zh-CN" | "en";
 
@@ -69,6 +75,7 @@ export interface CommerceRuntimeInput {
   language: CommerceLanguage;
   history?: CommerceHistoryTurn[];
   occurred_at?: string | null;
+  semantic_frame?: CommerceSemanticFrame | null;
 }
 
 export interface CommerceRuntimeOutcome {
@@ -607,7 +614,11 @@ export function reduceTurn(
 ): ConversationCommerceState {
   const calculationTurn = detectExplicitCalculationRequest(input.text);
   const hints = calculationTurn ? [] : filterGhostUnscopedHints(input.text, previous, rawHints);
-  const derived = calculationTurn ? [] : deriveCommerceEventsFromCustomerTurn({
+  const semanticAuthoritative = !calculationTurn && Boolean(input.semantic_frame && input.semantic_frame.confidence >= 0.72);
+  const semanticEvents = semanticAuthoritative
+    ? semanticFrameToStateEvents(input.semantic_frame, previous, hints, input.source_message_id, input.occurred_at ?? null)
+    : [];
+  const derived = calculationTurn || semanticAuthoritative ? [] : deriveCommerceEventsFromCustomerTurn({
     text: input.text,
     source_message_id: input.source_message_id,
     occurred_at: input.occurred_at ?? null,
@@ -615,7 +626,7 @@ export function reduceTurn(
     current_language: input.language,
   });
   const runtimeEvents = calculationTurn ? [] : deriveA3RuntimeEvents(input, hints, previous);
-  const reduced = reduceCommerceState(previous, [...derived, ...runtimeEvents]);
+  const reduced = reduceCommerceState(previous, [...semanticEvents, ...derived, ...runtimeEvents]);
   const guard = enforceQuotationNotOrderEvents(clean(input.text), reduced);
   return guard.length ? reduceCommerceState(reduced, guard) : reduced;
 }
@@ -796,7 +807,9 @@ export async function runCommerceStateRuntime(
 
   const historyTexts = (input.history ?? []).filter((turn) => turn.role === "visitor" || turn.role === "user" || turn.role === "customer").slice(0, MAX_HISTORY_TURNS).map((turn) => clean(turn.content));
   const conversationTexts = [text, ...historyTexts];
-  const hints = buildCommerceEntityHints(conversationTexts);
+  const deterministicHints = buildCommerceEntityHints(conversationTexts);
+  const semanticHints = semanticFrameToEntityHints(input.semantic_frame);
+  const hints = mergeCommerceEntityHints(semanticHints, deterministicHints);
 
   const persisted = await persistCommerceTurn(db, input, hints);
   const state = persisted.state;
