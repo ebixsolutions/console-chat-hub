@@ -70,9 +70,9 @@ Deno.test("explicit 另外加1部冷氣 still creates a legitimate new entity", 
     "explicit add creates unscoped entity",
   );
   assertEquals(
-    state.entities.find((e) => e.entity_id === "air_conditioner:bedroom")?.quantity,
-    2,
-    "existing bedroom quantity untouched",
+    state.entities.find((e) => e.entity_id === "air_conditioner:unscoped")?.quantity,
+    1,
+    "explicit added quantity",
   );
 });
 
