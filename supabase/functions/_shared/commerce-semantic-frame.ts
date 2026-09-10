@@ -25,6 +25,50 @@ export type CommerceSemanticKind =
   | "b2b_product"
   | "unknown";
 
+export type CommerceSemanticTransactionState =
+  | "none"
+  | "draft"
+  | "pending_confirmation"
+  | "confirmed"
+  | "completed"
+  | "cancelled"
+  | "unknown";
+
+export type CommerceSemanticPaymentState =
+  | "none"
+  | "pending_quote"
+  | "pending_payment"
+  | "paid"
+  | "failed"
+  | "refunded"
+  | "partially_refunded"
+  | "unknown";
+
+export type CommerceSemanticBookingState =
+  | "none"
+  | "requested"
+  | "pending"
+  | "booked"
+  | "completed"
+  | "cancelled"
+  | "unknown";
+
+export type CommerceSemanticFulfillmentState =
+  | "none"
+  | "requested"
+  | "pending"
+  | "scheduled"
+  | "in_progress"
+  | "fulfilled"
+  | "cancelled"
+  | "unknown";
+
+export interface CommerceSemanticAmbiguity {
+  is_ambiguous: boolean;
+  reasons: string[];
+  clarification_question: string | null;
+}
+
 export interface CommerceSemanticCapabilities {
   requires_delivery: boolean;
   supports_pickup: boolean;
@@ -71,6 +115,11 @@ export interface CommerceSemanticFrame {
   additive: boolean;
   explicit_negations: string[];
   requested_facts: string[];
+  transaction_state: CommerceSemanticTransactionState;
+  payment_state: CommerceSemanticPaymentState;
+  booking_state: CommerceSemanticBookingState;
+  fulfillment_state: CommerceSemanticFulfillmentState;
+  ambiguity: CommerceSemanticAmbiguity;
   confidence: number;
 }
 
@@ -82,6 +131,18 @@ const OPERATIONS = new Set<CommerceSemanticOperation>([
 const KINDS = new Set<CommerceSemanticKind>([
   "physical_product", "digital_good", "service", "rental", "subscription",
   "ticket", "custom_item", "b2b_product", "unknown",
+]);
+const TRANSACTION_STATES = new Set<CommerceSemanticTransactionState>([
+  "none", "draft", "pending_confirmation", "confirmed", "completed", "cancelled", "unknown",
+]);
+const PAYMENT_STATES = new Set<CommerceSemanticPaymentState>([
+  "none", "pending_quote", "pending_payment", "paid", "failed", "refunded", "partially_refunded", "unknown",
+]);
+const BOOKING_STATES = new Set<CommerceSemanticBookingState>([
+  "none", "requested", "pending", "booked", "completed", "cancelled", "unknown",
+]);
+const FULFILLMENT_STATES = new Set<CommerceSemanticFulfillmentState>([
+  "none", "requested", "pending", "scheduled", "in_progress", "fulfilled", "cancelled", "unknown",
 ]);
 
 export const COMMERCE_SEMANTIC_RESPONSE_SCHEMA: Record<string, unknown> = {
@@ -153,11 +214,25 @@ export const COMMERCE_SEMANTIC_RESPONSE_SCHEMA: Record<string, unknown> = {
     additive: { type: "boolean" },
     explicit_negations: { type: "array", items: { type: "string" }, maxItems: 20 },
     requested_facts: { type: "array", items: { type: "string" }, maxItems: 20 },
+    transaction_state: { type: "string", enum: [...TRANSACTION_STATES] },
+    payment_state: { type: "string", enum: [...PAYMENT_STATES] },
+    booking_state: { type: "string", enum: [...BOOKING_STATES] },
+    fulfillment_state: { type: "string", enum: [...FULFILLMENT_STATES] },
+    ambiguity: {
+      type: "object",
+      properties: {
+        is_ambiguous: { type: "boolean" },
+        reasons: { type: "array", items: { type: "string" }, maxItems: 12 },
+        clarification_question: { type: ["string", "null"] },
+      },
+      required: ["is_ambiguous", "reasons", "clarification_question"],
+    },
     confidence: { type: "number", minimum: 0, maximum: 1 },
   },
   required: [
     "version", "language", "operation", "intent", "topic", "entities", "referents",
-    "customer_correction", "additive", "explicit_negations", "requested_facts", "confidence",
+    "customer_correction", "additive", "explicit_negations", "requested_facts",
+    "transaction_state", "payment_state", "booking_state", "fulfillment_state", "ambiguity", "confidence",
   ],
 };
 
@@ -205,10 +280,31 @@ function normalizeCapabilities(raw: unknown): CommerceSemanticCapabilities {
   };
 }
 
+function enumValue<T extends string>(value: unknown, allowed: Set<T>, fallback: T): T {
+  const normalized = clean(value, 60) as T;
+  return allowed.has(normalized) ? normalized : fallback;
+}
+
+function normalizeAmbiguity(value: unknown, confidence: number): CommerceSemanticAmbiguity {
+  const raw = isRecord(value) ? value : {};
+  const reasons = (Array.isArray(raw.reasons) ? raw.reasons : [])
+    .map((x) => clean(x, 200)).filter(Boolean).slice(0, 12);
+  const lowConfidence = confidence < 0.62;
+  const explicitAmbiguous = raw.is_ambiguous === true;
+  if (lowConfidence && !reasons.includes("low_confidence")) reasons.push("low_confidence");
+  return {
+    is_ambiguous: explicitAmbiguous || lowConfidence,
+    reasons,
+    clarification_question: raw.clarification_question === null
+      ? null
+      : clean(raw.clarification_question, 400) || null,
+  };
+}
+
 export function normalizeCommerceSemanticFrame(value: unknown): CommerceSemanticFrame | null {
   if (!isRecord(value)) return null;
-  const operation = clean(value.operation, 40) as CommerceSemanticOperation;
-  if (!OPERATIONS.has(operation)) return null;
+  const rawOperation = clean(value.operation, 40) as CommerceSemanticOperation;
+  if (!OPERATIONS.has(rawOperation)) return null;
 
   const entities: CommerceSemanticEntity[] = [];
   for (const raw of Array.isArray(value.entities) ? value.entities.slice(0, 12) : []) {
@@ -245,6 +341,10 @@ export function normalizeCommerceSemanticFrame(value: unknown): CommerceSemantic
     referents.push({ ref, source, confidence: clampConfidence(raw.confidence) });
   }
 
+  const confidence = clampConfidence(value.confidence);
+  const ambiguity = normalizeAmbiguity(value.ambiguity, confidence);
+  const operation: CommerceSemanticOperation = ambiguity.is_ambiguous ? "NO_STATE_CHANGE" : rawOperation;
+
   return {
     version: COMMERCE_SEMANTIC_FRAME_VERSION,
     language: clean(value.language, 40) || "und",
@@ -257,6 +357,11 @@ export function normalizeCommerceSemanticFrame(value: unknown): CommerceSemantic
     additive: value.additive === true,
     explicit_negations: (Array.isArray(value.explicit_negations) ? value.explicit_negations : []).map((x) => clean(x, 200)).filter(Boolean).slice(0, 20),
     requested_facts: (Array.isArray(value.requested_facts) ? value.requested_facts : []).map((x) => clean(x, 200)).filter(Boolean).slice(0, 20),
-    confidence: clampConfidence(value.confidence),
+    transaction_state: enumValue(value.transaction_state, TRANSACTION_STATES, "unknown"),
+    payment_state: enumValue(value.payment_state, PAYMENT_STATES, "unknown"),
+    booking_state: enumValue(value.booking_state, BOOKING_STATES, "unknown"),
+    fulfillment_state: enumValue(value.fulfillment_state, FULFILLMENT_STATES, "unknown"),
+    ambiguity,
+    confidence,
   };
 }
