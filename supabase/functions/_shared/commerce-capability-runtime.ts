@@ -45,9 +45,10 @@ function countValue(raw: string): number | null {
 function trimCandidate(raw: string): string {
   return clean(raw, 80)
     .replace(/(?:請|请)?(?:報價|报价|幾錢|几钱|多少錢|多少钱|price|quote|quotation|total|合共|總共|总共).*$/i, "")
-    .replace(/(?:星期[一二三四五六日天]|週[一二三四五六日天]|周[一二三四五六日天]|monday|tuesday|wednesday|thursday|friday|saturday|sunday).*$/i, "")
+    .replace(/(?:星期[一二三四五六日天]|週[一二三四五六日天]|周[一二三四五六日天]|monday|tuesday|wednesday|thursday|friday|saturday|sunday)/gi, " ")
     .replace(/(?:HK\$|HKD|US\$|USD|NT\$|TWD|\$)\s*[0-9].*$/i, "")
     .replace(/[，。！？,.!?;；:：]+$/g, "")
+    .replace(/\s+/g, " ")
     .trim();
 }
 
