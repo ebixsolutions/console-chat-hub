@@ -254,14 +254,70 @@ function requiresProfessionalSiteCheck(text: string): boolean {
   ) || /(?:上門|上门|師傅|师傅|onsite|on-site|site (?:visit|survey)|technician)/i.test(text);
 }
 
+/* ------------------------------------------------------------------ *
+ * Negation-aware transaction statement handling
+ * A negated statement ("未正式落單", "not paid yet") must never be read as a
+ * positive confirmation of order / payment / booking.
+ * ------------------------------------------------------------------ */
+
+const NEGATED_TX_PATTERNS: RegExp[] = [
+  // Chinese: negator (+ optional copula) + order/confirm token
+  /(?:尚未|還未|还未|暫未|暂未|未|唔係|唔系|唔|冇|沒有|没有|沒|没|不是|不係|不)(?:係|系|會|会|有|想|要)?\s*(?:正式)?(?:落單|落单|下單|下单|確認落單|确认下单|確認訂單|确认订单|落實|落实|訂單|订单|確認|确认)/gi,
+  // Chinese: negator + 正式 (e.g. 未正式)
+  /(?:尚未|還未|还未|暫未|暂未|未|唔|不)(?:係|系)?\s*正式/gi,
+  // Chinese: negator + payment token
+  /(?:尚未|還未|还未|暫未|暂未|未|唔|冇|沒有|没有|沒|没|不)\s*(?:付款|付錢|付钱|支付|畀錢|畀钱|付)/gi,
+  // Chinese: negator + booking/scheduling token
+  /(?:尚未|還未|还未|暫未|暂未|未|唔|冇|沒有|没有|沒|没|不)\s*(?:預約|预约|約定|约定|約|约|安排|落實時間|落实时间)/gi,
+  // English: negator ... order/pay/confirm/book/schedule
+  /\b(?:not|no|never|haven'?t|hasn'?t|have\s+not|has\s+not|didn'?t|did\s+not|don'?t|do\s+not|won'?t)\b[^.,;!?]{0,24}?\b(?:order(?:ed|s)?|paid|pay(?:ment|ing)?|confirm(?:ed)?|book(?:ed|ing)?|schedul(?:ed|e|ing))\b/gi,
+  // English: subject ... not (yet) made/confirmed/placed/paid/booked/scheduled
+  /\b(?:order|payment|booking|delivery|installation)\b[^.,;!?]{0,16}?\bnot\b\s*(?:yet\s*)?(?:been\s*)?(?:made|confirmed|placed|paid|booked|scheduled)?/gi,
+];
+
+interface NegatedTransactionScan {
+  positive: string;
+  negated_order: boolean;
+  negated_payment: boolean;
+  negated_booking: boolean;
+}
+
+function scanNegatedTransaction(text: string): NegatedTransactionScan {
+  let positive = text;
+  const removed: string[] = [];
+  for (const pattern of NEGATED_TX_PATTERNS) {
+    positive = positive.replace(pattern, (match) => {
+      removed.push(match);
+      return " ";
+    });
+  }
+  const negated = removed.join(" ");
+  return {
+    positive,
+    negated_order:
+      /(?:落單|落单|下單|下单|訂單|订单|正式|確認|确认|order|confirm)/i.test(negated),
+    negated_payment: /(?:付|支付|pay|paid)/i.test(negated),
+    negated_booking: /(?:預約|预约|約|约|安排|book|schedul)/i.test(negated),
+  };
+}
+
 function explicitOrderConfirmation(text: string): boolean {
   return /(?:已付款|已付|付咗|paid\b|正式落單|正式下单|確認落單|确认下单|confirm(?:ed)? (?:the )?order|已預約|已预约|booked)/i
     .test(text);
 }
 
+function explicitPaymentConfirmation(text: string): boolean {
+  return /(?:已付款|已付|付咗|已支付|paid\b)/i.test(text);
+}
+
+function explicitBookingConfirmation(text: string): boolean {
+  return /(?:已預約|已预约|已約|已约|已安排|booked|scheduled)/i.test(text);
+}
+
 function quotationOnlySignal(text: string): boolean {
   return /(?:報價|报价|quotation|quote|未落單|未下单|未正式|唔係落單|不是下单|先問價|先问价)/i.test(text);
 }
+
 
 export function detectTransactionSummaryIntent(text: string): boolean {
   return /(?:落單|下單|下单|落单|報價|报价|quotation|quote|付款|payment|checkout|幫我總結|帮我总结|總結一下|总结一下|整理(?:一下)?(?:比|畀|給|给)?同事|同事跟進|同事跟进|summar(?:y|ise|ize)|recap|hand over to)/i
@@ -409,30 +465,57 @@ function deriveA3RuntimeEvents(
   return events;
 }
 
-function enforceQuotationNotOrderEvents(
+export function enforceQuotationNotOrderEvents(
   text: string,
   state: ConversationCommerceState,
 ): CommerceStateEvent[] {
-  if (explicitOrderConfirmation(text)) return [];
-  const promoted = state.conversion.order_status === "confirmed" ||
-    state.conversion.order_status === "completed";
-  if (!promoted) {
-    if (quotationOnlySignal(text) && state.conversion.quotation_status === "none") {
-      return [{ type: "SET_CONVERSION", patch: { funnel_stage: "quotation", quotation_status: "draft" } }];
-    }
-    return [];
+  const scan = scanNegatedTransaction(text);
+  const positiveOrder = explicitOrderConfirmation(scan.positive);
+  const positivePayment = explicitPaymentConfirmation(scan.positive);
+  const positiveBooking = explicitBookingConfirmation(scan.positive);
+
+  const events: CommerceStateEvent[] = [];
+
+  // Negated booking must never leave a confirmed delivery/booking behind.
+  if (scan.negated_booking && !positiveBooking && state.delivery.confirmed) {
+    events.push({
+      type: "SET_DELIVERY",
+      patch: { confirmed: false },
+      provenance: { source_type: "derived" },
+    });
   }
-  return [{
-    type: "SET_CONVERSION",
-    patch: {
-      funnel_stage: "quotation",
-      order_status: "draft",
-      quotation_status: state.conversion.quotation_status === "none"
-        ? "draft"
-        : state.conversion.quotation_status,
-    },
-  }];
+
+  if (positiveOrder) return events;
+
+  const promoted = state.conversion.order_status === "confirmed" ||
+    state.conversion.order_status === "completed" ||
+    state.conversion.funnel_stage === "order_confirmed";
+  const paidDrift = !positivePayment && scan.negated_payment &&
+    (state.conversion.payment_status === "paid" ||
+      state.conversion.payment_status === "pending_payment");
+
+  if (!promoted && !paidDrift) {
+    if (quotationOnlySignal(text) && state.conversion.quotation_status === "none") {
+      events.push({
+        type: "SET_CONVERSION",
+        patch: { funnel_stage: "quotation", quotation_status: "draft" },
+      });
+    }
+    return events;
+  }
+
+  const patch: Partial<ConversationCommerceState["conversion"]> = {
+    funnel_stage: "quotation",
+    quotation_status: state.conversion.quotation_status === "none"
+      ? "draft"
+      : state.conversion.quotation_status,
+  };
+  if (promoted) patch.order_status = "draft";
+  if (paidDrift) patch.payment_status = "pending_quote";
+  events.push({ type: "SET_CONVERSION", patch });
+  return events;
 }
+
 
 function reduceTurn(
   previous: ConversationCommerceState,
