@@ -465,30 +465,57 @@ function deriveA3RuntimeEvents(
   return events;
 }
 
-function enforceQuotationNotOrderEvents(
+export function enforceQuotationNotOrderEvents(
   text: string,
   state: ConversationCommerceState,
 ): CommerceStateEvent[] {
-  if (explicitOrderConfirmation(text)) return [];
-  const promoted = state.conversion.order_status === "confirmed" ||
-    state.conversion.order_status === "completed";
-  if (!promoted) {
-    if (quotationOnlySignal(text) && state.conversion.quotation_status === "none") {
-      return [{ type: "SET_CONVERSION", patch: { funnel_stage: "quotation", quotation_status: "draft" } }];
-    }
-    return [];
+  const scan = scanNegatedTransaction(text);
+  const positiveOrder = explicitOrderConfirmation(scan.positive);
+  const positivePayment = explicitPaymentConfirmation(scan.positive);
+  const positiveBooking = explicitBookingConfirmation(scan.positive);
+
+  const events: CommerceStateEvent[] = [];
+
+  // Negated booking must never leave a confirmed delivery/booking behind.
+  if (scan.negated_booking && !positiveBooking && state.delivery.confirmed) {
+    events.push({
+      type: "SET_DELIVERY",
+      patch: { confirmed: false },
+      provenance: { source_type: "derived" },
+    });
   }
-  return [{
-    type: "SET_CONVERSION",
-    patch: {
-      funnel_stage: "quotation",
-      order_status: "draft",
-      quotation_status: state.conversion.quotation_status === "none"
-        ? "draft"
-        : state.conversion.quotation_status,
-    },
-  }];
+
+  if (positiveOrder) return events;
+
+  const promoted = state.conversion.order_status === "confirmed" ||
+    state.conversion.order_status === "completed" ||
+    state.conversion.funnel_stage === "order_confirmed";
+  const paidDrift = !positivePayment && scan.negated_payment &&
+    (state.conversion.payment_status === "paid" ||
+      state.conversion.payment_status === "pending_payment");
+
+  if (!promoted && !paidDrift) {
+    if (quotationOnlySignal(text) && state.conversion.quotation_status === "none") {
+      events.push({
+        type: "SET_CONVERSION",
+        patch: { funnel_stage: "quotation", quotation_status: "draft" },
+      });
+    }
+    return events;
+  }
+
+  const patch: Partial<ConversationCommerceState["conversion"]> = {
+    funnel_stage: "quotation",
+    quotation_status: state.conversion.quotation_status === "none"
+      ? "draft"
+      : state.conversion.quotation_status,
+  };
+  if (promoted) patch.order_status = "draft";
+  if (paidDrift) patch.payment_status = "pending_quote";
+  events.push({ type: "SET_CONVERSION", patch });
+  return events;
 }
+
 
 function reduceTurn(
   previous: ConversationCommerceState,
