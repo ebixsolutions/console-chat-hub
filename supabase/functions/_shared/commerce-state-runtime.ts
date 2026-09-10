@@ -215,16 +215,40 @@ function hintsMentionedInTurn(text: string, hints: CommerceTurnEntityHint[]): Co
   });
 }
 
-function parseCount(text: string): number | null {
+const COUNT_TOKEN = "[一二兩两三四五六七八九十]|\\d{1,4}";
+const COUNT_UNIT = "部|台|件|個|个|套|張|张|units?|pcs?|pieces?";
+
+function countTokenValue(raw: string): number | null {
   const map: Record<string, number> = {
     一: 1, 二: 2, 兩: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10,
   };
-  const m = clean(text).match(
+  if (/^\d+$/.test(raw)) return Number(raw);
+  return map[raw] ?? null;
+}
+
+export function detectQuantityCorrectionSignal(text: string): boolean {
+  const t = clean(text);
+  return /(?:更正|改(?:做|成|為|为|返)?|變成|变成|唔係.+?(?:而係|係|系)|不是.+?(?:而是|是)|不係.+?(?:而係|係)|actually|change(?:\s+it)?\s+to|make\s+it)/i.test(t);
+}
+
+function parseCount(text: string): number | null {
+  const t = clean(text);
+  if (!t) return null;
+
+  const correctionPatterns = [
+    new RegExp(`(?:唔係|唔系|不是|不係)\\s*(?:${COUNT_TOKEN})\\s*(?:${COUNT_UNIT})?.{0,24}?(?:而係|而系|而是|係|系|是)\\s*(${COUNT_TOKEN})\\s*(?:${COUNT_UNIT})`, "i"),
+    new RegExp(`(?:更正|改(?:做|成|為|为|返)?|變成|变成|change(?:\\s+it)?\\s+to|make\\s+it|actually)\\s*[:：,，]?\\s*(${COUNT_TOKEN})\\s*(?:${COUNT_UNIT})`, "i"),
+  ];
+  for (const pattern of correctionPatterns) {
+    const correction = t.match(pattern);
+    if (correction?.[1]) return countTokenValue(correction[1]);
+  }
+
+  const m = t.match(
     /(?:改(?:做|成|返)?|變成|变成|change to|要|need|order)?\s*([一二兩两三四五六七八九十]|\d{1,4})\s*(?:部|台|件|個|个|套|張|张|units?|pcs?|pieces?)/i,
   );
   if (!m?.[1]) return null;
-  if (/^\d+$/.test(m[1])) return Number(m[1]);
-  return map[m[1]] ?? null;
+  return countTokenValue(m[1]);
 }
 
 function detectCancellation(text: string): boolean {
@@ -261,17 +285,11 @@ function requiresProfessionalSiteCheck(text: string): boolean {
  * ------------------------------------------------------------------ */
 
 const NEGATED_TX_PATTERNS: RegExp[] = [
-  // Chinese: negator (+ optional copula) + order/confirm token
   /(?:尚未|還未|还未|暫未|暂未|未|唔係|唔系|唔|冇|沒有|没有|沒|没|不是|不係|不)(?:係|系|會|会|有|想|要)?\s*(?:正式)?(?:落單|落单|下單|下单|確認落單|确认下单|確認訂單|确认订单|落實|落实|訂單|订单|確認|确认)/gi,
-  // Chinese: negator + 正式 (e.g. 未正式)
   /(?:尚未|還未|还未|暫未|暂未|未|唔|不)(?:係|系)?\s*正式/gi,
-  // Chinese: negator + payment token
   /(?:尚未|還未|还未|暫未|暂未|未|唔|冇|沒有|没有|沒|没|不)\s*(?:付款|付錢|付钱|支付|畀錢|畀钱|付)/gi,
-  // Chinese: negator + booking/scheduling token
   /(?:尚未|還未|还未|暫未|暂未|未|唔|冇|沒有|没有|沒|没|不)\s*(?:預約|预约|約定|约定|約|约|安排|落實時間|落实时间)/gi,
-  // English: negator ... order/pay/confirm/book/schedule
   /\b(?:not|no|never|haven'?t|hasn'?t|have\s+not|has\s+not|didn'?t|did\s+not|don'?t|do\s+not|won'?t)\b[^.,;!?]{0,24}?\b(?:order(?:ed|s)?|paid|pay(?:ment|ing)?|confirm(?:ed)?|book(?:ed|ing)?|schedul(?:ed|e|ing))\b/gi,
-  // English: subject ... not (yet) made/confirmed/placed/paid/booked/scheduled
   /\b(?:order|payment|booking|delivery|installation)\b[^.,;!?]{0,16}?\bnot\b\s*(?:yet\s*)?(?:been\s*)?(?:made|confirmed|placed|paid|booked|scheduled)?/gi,
 ];
 
@@ -294,16 +312,14 @@ function scanNegatedTransaction(text: string): NegatedTransactionScan {
   const negated = removed.join(" ");
   return {
     positive,
-    negated_order:
-      /(?:落單|落单|下單|下单|訂單|订单|正式|確認|确认|order|confirm)/i.test(negated),
+    negated_order: /(?:落單|落单|下單|下单|訂單|订单|正式|確認|确认|order|confirm)/i.test(negated),
     negated_payment: /(?:付|支付|pay|paid)/i.test(negated),
     negated_booking: /(?:預約|预约|約|约|安排|book|schedul)/i.test(negated),
   };
 }
 
 function explicitOrderConfirmation(text: string): boolean {
-  return /(?:已付款|已付|付咗|paid\b|正式落單|正式下单|確認落單|确认下单|confirm(?:ed)? (?:the )?order|已預約|已预约|booked)/i
-    .test(text);
+  return /(?:已付款|已付|付咗|paid\b|正式落單|正式下单|確認落單|确认下单|confirm(?:ed)? (?:the )?order|已預約|已预约|booked)/i.test(text);
 }
 
 function explicitPaymentConfirmation(text: string): boolean {
@@ -318,15 +334,9 @@ function quotationOnlySignal(text: string): boolean {
   return /(?:報價|报价|quotation|quote|未落單|未下单|未正式|唔係落單|不是下单|先問價|先问价)/i.test(text);
 }
 
-
 export function detectTransactionSummaryIntent(text: string): boolean {
-  return /(?:落單|下單|下单|落单|報價|报价|quotation|quote|付款|payment|checkout|幫我總結|帮我总结|總結一下|总结一下|整理(?:一下)?(?:比|畀|給|给)?同事|同事跟進|同事跟进|summar(?:y|ise|ize)|recap|hand over to)/i
-    .test(clean(text));
+  return /(?:落單|下單|下单|落单|報價|报价|quotation|quote|付款|payment|checkout|幫我總結|帮我总结|總結一下|总结一下|整理(?:一下)?(?:比|畀|給|给)?同事|同事跟進|同事跟进|summar(?:y|ise|ize)|recap|hand over to)/i.test(clean(text));
 }
-
-/* ------------------------------------------------------------------ *
- * Deterministic calculation extraction (customer-provided terms only)
- * ------------------------------------------------------------------ */
 
 function parseMoneyTerms(text: string): number[] {
   const amounts: number[] = [];
@@ -341,13 +351,8 @@ function parseMoneyTerms(text: string): number[] {
   return amounts;
 }
 
-/**
- * True only when the CURRENT customer turn explicitly asks for a total/calculation.
- * A plain historical-price statement must not auto-answer a total.
- */
 export function detectExplicitCalculationRequest(text: string): boolean {
-  return /(?:加埋|合共|總共|总共|一共|總數|总数|埋一齊|埋一起|total|altogether|calculate|計下|计下|算下|計算|计算|how much.*(?:total|altogether))/i
-    .test(clean(text));
+  return /(?:加埋|合共|總共|总共|一共|總數|总数|埋一齊|埋一起|total|altogether|calculate|計下|计下|算下|計算|计算|how much.*(?:total|altogether))/i.test(clean(text));
 }
 
 export function extractCommerceCalculationTerms(
@@ -361,9 +366,6 @@ export function extractCommerceCalculationTerms(
     for (const amount of parseMoneyTerms(text)) amounts.push(amount);
   }
   const textAmounts = new Set(amounts);
-  // A persisted historical quote may only SUPPLEMENT the calculation when its
-  // amount is not already present in the scanned conversation text; otherwise it
-  // double-counts the same evidence.
   for (const quote of state.quotes) {
     if (quote.quote_type !== "customer_reported_historical") continue;
     if (textAmounts.has(quote.amount)) continue;
@@ -373,7 +375,6 @@ export function extractCommerceCalculationTerms(
   const seen = new Map<number, number>();
   for (const amount of amounts) {
     const count = seen.get(amount) ?? 0;
-    // Preserve genuine duplicates from distinct mentions, capped at 2 per amount.
     if (count < 2) {
       seen.set(amount, count + 1);
       unique.push(amount);
@@ -390,18 +391,10 @@ export function extractCommerceCalculationTerms(
 
   const currency = state.quotes.find((q) => q.currency)?.currency ?? "HKD";
   return {
-    terms: unique.map((amount, index) => ({
-      label: `customer_term_${index + 1}`,
-      value: amount,
-      multiplier,
-    })),
+    terms: unique.map((amount, index) => ({ label: `customer_term_${index + 1}`, value: amount, multiplier })),
     currency,
   };
 }
-
-/* ------------------------------------------------------------------ *
- * Persistence (RPC invariants preserved)
- * ------------------------------------------------------------------ */
 
 interface LoadedCommerceState {
   state: ConversationCommerceState;
@@ -412,14 +405,8 @@ export async function loadCommerceState(
   db: CommerceStateDbClient,
   conversation_id: string,
 ): Promise<LoadedCommerceState> {
-  const { data, error } = await db
-    .from("conversation_commerce_state")
-    .select("revision, state")
-    .eq("conversation_id", conversation_id)
-    .maybeSingle();
-  if (error || !isRecord(data)) {
-    return { state: createEmptyConversationCommerceState(), revision: 0 };
-  }
+  const { data, error } = await db.from("conversation_commerce_state").select("revision, state").eq("conversation_id", conversation_id).maybeSingle();
+  if (error || !isRecord(data)) return { state: createEmptyConversationCommerceState(), revision: 0 };
   const revision = typeof data["revision"] === "number" ? data["revision"] : Number(data["revision"] ?? 0);
   const state = data["state"];
   return {
@@ -446,6 +433,21 @@ function deriveA3RuntimeEvents(
   const deferred = detectDeferral(text);
   const additive = detectAdditiveEntityCreationSignal(text);
   const explicitCreation = detectExplicitEntityCreationSignal(text);
+  const correction = detectQuantityCorrectionSignal(text);
+
+  if (correction && quantity !== null && mentioned.length === 0) {
+    const active = previous.entities.filter(
+      (entity) => entity.status !== "cancelled" && entity.status !== "deferred",
+    );
+    if (active.length === 1) {
+      events.push({
+        type: "SET_ENTITY_QUANTITY",
+        entity_id: active[0].entity_id,
+        quantity,
+        provenance,
+      });
+    }
+  }
 
   for (const hint of mentioned) {
     if (cancelled) {
@@ -468,7 +470,6 @@ function deriveA3RuntimeEvents(
 
   const checks = detectSiteChecks(text);
   if (checks.length) events.push({ type: "SET_PENDING_CHECKS", checks });
-
   return events;
 }
 
@@ -480,42 +481,26 @@ export function enforceQuotationNotOrderEvents(
   const positiveOrder = explicitOrderConfirmation(scan.positive);
   const positivePayment = explicitPaymentConfirmation(scan.positive);
   const positiveBooking = explicitBookingConfirmation(scan.positive);
-
   const events: CommerceStateEvent[] = [];
 
-  // Negated booking must never leave a confirmed delivery/booking behind.
   if (scan.negated_booking && !positiveBooking && state.delivery.confirmed) {
-    events.push({
-      type: "SET_DELIVERY",
-      patch: { confirmed: false },
-      provenance: { source_type: "derived" },
-    });
+    events.push({ type: "SET_DELIVERY", patch: { confirmed: false }, provenance: { source_type: "derived" } });
   }
-
   if (positiveOrder) return events;
 
-  const promoted = state.conversion.order_status === "confirmed" ||
-    state.conversion.order_status === "completed" ||
-    state.conversion.funnel_stage === "order_confirmed";
-  const paidDrift = !positivePayment && scan.negated_payment &&
-    (state.conversion.payment_status === "paid" ||
-      state.conversion.payment_status === "pending_payment");
+  const promoted = state.conversion.order_status === "confirmed" || state.conversion.order_status === "completed" || state.conversion.funnel_stage === "order_confirmed";
+  const paidDrift = !positivePayment && scan.negated_payment && (state.conversion.payment_status === "paid" || state.conversion.payment_status === "pending_payment");
 
   if (!promoted && !paidDrift) {
     if (quotationOnlySignal(text) && state.conversion.quotation_status === "none") {
-      events.push({
-        type: "SET_CONVERSION",
-        patch: { funnel_stage: "quotation", quotation_status: "draft" },
-      });
+      events.push({ type: "SET_CONVERSION", patch: { funnel_stage: "quotation", quotation_status: "draft" } });
     }
     return events;
   }
 
   const patch: Partial<ConversationCommerceState["conversion"]> = {
     funnel_stage: "quotation",
-    quotation_status: state.conversion.quotation_status === "none"
-      ? "draft"
-      : state.conversion.quotation_status,
+    quotation_status: state.conversion.quotation_status === "none" ? "draft" : state.conversion.quotation_status,
   };
   if (promoted) patch.order_status = "draft";
   if (paidDrift) patch.payment_status = "pending_quote";
@@ -523,21 +508,11 @@ export function enforceQuotationNotOrderEvents(
   return events;
 }
 
-
-/**
- * Hotfix #3: a category-only mention (safety / feasibility / KB / descriptive
- * question) must never fabricate a ghost `<category>:unscoped` entity.
- * An unscoped hint may only create a NEW entity when the current customer turn
- * carries an explicit creation signal (quantity, add/buy/order/need intent, or
- * an explicit new-item statement). Hints for entities that already exist in
- * state are always kept so quantity/status corrections keep working.
- */
 export function detectExplicitEntityCreationSignal(text: string): boolean {
   const t = clean(text);
   if (!t) return false;
   if (parseCount(t) !== null) return true;
-  return /(?:另外|再加|再要|加多|加一|加個|加个|多要|多買|多买|新增|想買|想买|要買|要买|購買|购买|訂購|订购|落單|下單|下单|需要|我要|加裝|加装|安裝多|添置|add\s|buy\s|purchase|order\s|need\s|want\s|another|extra|additional)/i
-    .test(t);
+  return /(?:另外|再加|再要|加多|加一|加個|加个|多要|多買|多买|新增|想買|想买|要買|要买|購買|购买|訂購|订购|落單|下單|下单|需要|我要|加裝|加装|安裝多|添置|add\s|buy\s|purchase|order\s|need\s|want\s|another|extra|additional)/i.test(t);
 }
 
 export function detectAdditiveEntityCreationSignal(text: string): boolean {
@@ -558,33 +533,16 @@ export function filterGhostUnscopedHints(
 
   return hints.filter((hint) => {
     if (!categories.has(hint.category)) return true;
-
     const roomKey = hint.entity_id.split(":")[1];
-
     if (rooms.length > 0 && roomKey === "unscoped") return false;
-
-    if (additive && rooms.length === 0) {
-      return roomKey === "unscoped";
-    }
-
+    if (additive && rooms.length === 0) return roomKey === "unscoped";
     if (roomKey !== "unscoped") return true;
-
-    if (state.entities.some((e) => e.entity_id === hint.entity_id)) {
-      return true;
-    }
-
+    if (state.entities.some((e) => e.entity_id === hint.entity_id)) return true;
     if (!explicitCreation) return false;
-
     const hasConcreteSameCategory = state.entities.some(
-      (entity) =>
-        entity.category === hint.category &&
-        !entity.entity_id.endsWith(":unscoped") &&
-        entity.status !== "cancelled" &&
-        entity.status !== "deferred",
+      (entity) => entity.category === hint.category && !entity.entity_id.endsWith(":unscoped") && entity.status !== "cancelled" && entity.status !== "deferred",
     );
-
     if (rooms.length === 0 && hasConcreteSameCategory) return false;
-
     return true;
   });
 }
@@ -611,10 +569,7 @@ function rpcResult(data: unknown): { result: string; applied_revision: number | 
   if (!isRecord(data)) return { result: "rpc_transport_error", applied_revision: null };
   const result = typeof data["result"] === "string" ? data["result"] : "rpc_unknown_result";
   const applied = data["applied_revision"];
-  return {
-    result,
-    applied_revision: typeof applied === "number" ? applied : null,
-  };
+  return { result, applied_revision: typeof applied === "number" ? applied : null };
 }
 
 export async function persistCommerceTurn(
@@ -634,15 +589,10 @@ export async function persistCommerceTurn(
       p_source_message_id: input.source_message_id,
       p_state: next,
     });
-    if (error) {
-      return { state: next, revision: expected, result: "rpc_transport_error" };
-    }
+    if (error) return { state: next, revision: expected, result: "rpc_transport_error" };
     const parsed = rpcResult(data);
-    if (parsed.result === "success") {
-      return { state: next, revision: parsed.applied_revision ?? expected + 1, result: "success" };
-    }
+    if (parsed.result === "success") return { state: next, revision: parsed.applied_revision ?? expected + 1, result: "success" };
     if (parsed.result === "revision_conflict" && attempt === 0) {
-      // Reload, re-reduce on top of the winning state, and reapply exactly once.
       const reloaded = await loadCommerceState(db, input.conversation_id);
       expected = reloaded.revision;
       next = reduceTurn(reloaded.state, input, hints);
@@ -652,10 +602,6 @@ export async function persistCommerceTurn(
   }
   return { state: next, revision: expected, result: "revision_conflict" };
 }
-
-/* ------------------------------------------------------------------ *
- * Customer-facing answer builders
- * ------------------------------------------------------------------ */
 
 function statusLabel(status: string, language: CommerceLanguage): string {
   const table: Record<string, Record<CommerceLanguage, string>> = {
@@ -678,88 +624,42 @@ export function buildTransactionSummary(
   const historical = state.quotes.filter((q) => q.quote_type === "customer_reported_historical");
 
   const t = {
-    head: {
-      "zh-TW": "我幫你整理咗現時已確認嘅資料：",
-      "zh-CN": "我帮你整理了目前已确认的资料：",
-      en: "Here is what is on record so far:",
-    },
+    head: { "zh-TW": "我幫你整理咗現時已確認嘅資料：", "zh-CN": "我帮你整理了目前已确认的资料：", en: "Here is what is on record so far:" },
     items: { "zh-TW": "項目", "zh-CN": "项目", en: "Items" },
     none: { "zh-TW": "暫時未有", "zh-CN": "暂时没有", en: "none yet" },
     removed: { "zh-TW": "已取消／暫緩", "zh-CN": "已取消／暂缓", en: "Cancelled / deferred" },
     delivery: { "zh-TW": "送貨安排", "zh-CN": "送货安排", en: "Delivery" },
     pending: { "zh-TW": "待師傅上門確認", "zh-CN": "待师傅上门确认", en: "Pending onsite professional checks" },
-    quotes: {
-      "zh-TW": "你提供嘅歷史報價（歷史數字，非現價）",
-      "zh-CN": "你提供的历史报价（历史数字，非现价）",
-      en: "Historical prices you provided (historical, not current)",
-    },
+    quotes: { "zh-TW": "你提供嘅歷史報價（歷史數字，非現價）", "zh-CN": "你提供的历史报价（历史数字，非现价）", en: "Historical prices you provided (historical, not current)" },
     status: { "zh-TW": "目前狀態", "zh-CN": "目前状态", en: "Current status" },
-    tail: {
-      "zh-TW": "最新價格同工程費用仍然要同事確認之後才作準。",
-      "zh-CN": "最新价格与工程费用仍需同事确认后才作准。",
-      en: "Latest pricing and engineering fees still need to be confirmed by our team.",
-    },
+    tail: { "zh-TW": "最新價格同工程費用仍然要同事確認之後才作準。", "zh-CN": "最新价格与工程费用仍需同事确认后才作准。", en: "Latest pricing and engineering fees still need to be confirmed by our team." },
   } as const;
 
   lines.push(t.head[language]);
-  lines.push(
-    `${t.items[language]}: ${
-      active.length
-        ? active.map((e) => `${entityLabel(e.entity_id, language)} x${e.quantity} (${statusLabel(e.status, language)})`)
-          .join("、")
-        : t.none[language]
-    }`,
-  );
-  if (inactive.length) {
-    lines.push(
-      `${t.removed[language]}: ${
-        inactive.map((e) => `${entityLabel(e.entity_id, language)} (${statusLabel(e.status, language)})`).join("、")
-      }`,
-    );
-  }
+  lines.push(`${t.items[language]}: ${active.length ? active.map((e) => `${entityLabel(e.entity_id, language)} x${e.quantity} (${statusLabel(e.status, language)})`).join("、") : t.none[language]}`);
+  if (inactive.length) lines.push(`${t.removed[language]}: ${inactive.map((e) => `${entityLabel(e.entity_id, language)} (${statusLabel(e.status, language)})`).join("、")}`);
   const delivery = state.delivery;
-  const deliveryParts = [delivery.preferred_date, delivery.preferred_window, delivery.address, delivery.recipient_name, delivery.recipient_phone]
-    .map((x) => clean(x, 180))
-    .filter(Boolean);
+  const deliveryParts = [delivery.preferred_date, delivery.preferred_window, delivery.address, delivery.recipient_name, delivery.recipient_phone].map((x) => clean(x, 180)).filter(Boolean);
   lines.push(`${t.delivery[language]}: ${deliveryParts.length ? deliveryParts.join(" / ") : t.none[language]}`);
-  const pending = [
-    ...state.installation.pending_checks,
-    ...state.installation.items.filter((i) => i.status === "pending").map((i) => i.kind),
-  ];
+  const pending = [...state.installation.pending_checks, ...state.installation.items.filter((i) => i.status === "pending").map((i) => i.kind)];
   if (pending.length) lines.push(`${t.pending[language]}: ${[...new Set(pending)].join("、")}`);
-  if (historical.length) {
-    lines.push(
-      `${t.quotes[language]}: ${historical.map((q) => `${q.currency} ${q.amount}`).join("、")}`,
-    );
-  }
-  lines.push(
-    `${t.status[language]}: ${state.conversion.funnel_stage} / quotation=${state.conversion.quotation_status} / order=${state.conversion.order_status} / payment=${state.conversion.payment_status}`,
-  );
+  if (historical.length) lines.push(`${t.quotes[language]}: ${historical.map((q) => `${q.currency} ${q.amount}`).join("、")}`);
+  lines.push(`${t.status[language]}: ${state.conversion.funnel_stage} / quotation=${state.conversion.quotation_status} / order=${state.conversion.order_status} / payment=${state.conversion.payment_status}`);
   lines.push(t.tail[language]);
   return lines.join("\n");
 }
 
-function buildQuantityAnswer(
-  state: ConversationCommerceState,
-  language: CommerceLanguage,
-): string | null {
+function buildQuantityAnswer(state: ConversationCommerceState, language: CommerceLanguage): string | null {
   const active = state.entities.filter((e) => e.status !== "cancelled" && e.status !== "deferred");
   if (!active.length) return null;
   const total = active.reduce((sum, e) => sum + e.quantity, 0);
-  const breakdown = active
-    .map((e) => `${entityLabel(e.entity_id, language)} x${e.quantity}`)
-    .join("、");
+  const breakdown = active.map((e) => `${entityLabel(e.entity_id, language)} x${e.quantity}`).join("、");
   if (language === "en") return `You currently have ${total} unit(s) in total: ${breakdown}.`;
   if (language === "zh-CN") return `你目前合共 ${total} 部：${breakdown}。`;
   return `你而家合共 ${total} 部：${breakdown}。`;
 }
 
-function buildKnownStateAnswer(
-  language: CommerceLanguage,
-  statePath: string,
-  value: unknown,
-  state: ConversationCommerceState,
-): string {
+function buildKnownStateAnswer(language: CommerceLanguage, statePath: string, value: unknown, state: ConversationCommerceState): string {
   if (statePath.startsWith("entities.") && statePath.endsWith(".quantity")) {
     const answer = buildQuantityAnswer(state, language);
     if (answer) return answer;
@@ -770,40 +670,20 @@ function buildKnownStateAnswer(
   return `按你之前提供嘅資料：${rendered}。`;
 }
 
-function buildCalculationAnswer(
-  language: CommerceLanguage,
-  calculation: { expression: string; result: number; currency?: string | null },
-): string {
+function buildCalculationAnswer(language: CommerceLanguage, calculation: { expression: string; result: number; currency?: string | null }): string {
   const currency = calculation.currency ?? "HKD";
-  if (language === "en") {
-    return `Based only on the figures you gave me, the total is ${currency} ${calculation.result}. These are your own historical figures — the latest prices and engineering fees still need to be confirmed by our team.`;
-  }
-  if (language === "zh-CN") {
-    return `只按你提供的数字计算，合共 ${currency} ${calculation.result}。这些是你提供的历史数字，最新价格与工程费用仍需同事确认。`;
-  }
+  if (language === "en") return `Based only on the figures you gave me, the total is ${currency} ${calculation.result}. These are your own historical figures — the latest prices and engineering fees still need to be confirmed by our team.`;
+  if (language === "zh-CN") return `只按你提供的数字计算，合共 ${currency} ${calculation.result}。这些是你提供的历史数字，最新价格与工程费用仍需同事确认。`;
   return `只按你提供嘅數字計，合共 ${currency} ${calculation.result}。呢啲係你之前提供嘅歷史數字，最新價格同工程費用仍然要同事確認。`;
 }
 
-function buildProfessionalConfirmationAnswer(
-  language: CommerceLanguage,
-  state: ConversationCommerceState,
-): string {
+function buildProfessionalConfirmationAnswer(language: CommerceLanguage, state: ConversationCommerceState): string {
   const active = state.entities.filter((e) => e.status !== "cancelled" && e.status !== "deferred");
-  const known = active.length
-    ? active.map((e) => `${entityLabel(e.entity_id, language)} x${e.quantity}`).join("、")
-    : "";
-  if (language === "en") {
-    return `${known ? `I still have your details on record: ${known}. ` : ""}For safety and accuracy, our technician needs to inspect the site in person before we can confirm whether the installation is suitable.`;
-  }
-  if (language === "zh-CN") {
-    return `${known ? `我们已保留您之前提供的资料：${known}。` : ""}为确保安全和准确，需要师傅上门检查窗口尺寸、承托及安装环境后再确认是否适合安装。`;
-  }
+  const known = active.length ? active.map((e) => `${entityLabel(e.entity_id, language)} x${e.quantity}`).join("、") : "";
+  if (language === "en") return `${known ? `I still have your details on record: ${known}. ` : ""}For safety and accuracy, our technician needs to inspect the site in person before we can confirm whether the installation is suitable.`;
+  if (language === "zh-CN") return `${known ? `我们已保留您之前提供的资料：${known}。` : ""}为确保安全和准确，需要师傅上门检查窗口尺寸、承托及安装环境后再确认是否适合安装。`;
   return `${known ? `我哋已保留您之前提供嘅資料：${known}。` : ""}為確保安全同準確，需要師傅上門檢查窗口尺寸、承托同安裝環境後先可以確認是否適合安裝。`;
 }
-
-/* ------------------------------------------------------------------ *
- * Entry point
- * ------------------------------------------------------------------ */
 
 export async function runCommerceStateRuntime(
   db: CommerceStateDbClient,
@@ -812,10 +692,7 @@ export async function runCommerceStateRuntime(
   const text = clean(input.text);
   if (!text || !input.conversation_id || !input.company_id || !input.source_message_id) return null;
 
-  const historyTexts = (input.history ?? [])
-    .filter((turn) => turn.role === "visitor" || turn.role === "user" || turn.role === "customer")
-    .slice(0, MAX_HISTORY_TURNS)
-    .map((turn) => clean(turn.content));
+  const historyTexts = (input.history ?? []).filter((turn) => turn.role === "visitor" || turn.role === "user" || turn.role === "customer").slice(0, MAX_HISTORY_TURNS).map((turn) => clean(turn.content));
   const conversationTexts = [text, ...historyTexts];
   const hints = buildCommerceEntityHints(conversationTexts);
 
@@ -825,9 +702,7 @@ export async function runCommerceStateRuntime(
 
   const summaryIntent = detectTransactionSummaryIntent(text);
   const wantsCalculation = detectExplicitCalculationRequest(text);
-  const calculation = wantsCalculation
-    ? extractCommerceCalculationTerms(conversationTexts, state)
-    : { terms: [] as CommerceCalculationTerm[], currency: null };
+  const calculation = wantsCalculation ? extractCommerceCalculationTerms(conversationTexts, state) : { terms: [] as CommerceCalculationTerm[], currency: null };
   const decision = resolveCommerceAnswerAuthority({
     question: text,
     state,
@@ -836,54 +711,24 @@ export async function runCommerceStateRuntime(
     requires_professional_site_check: requiresProfessionalSiteCheck(text),
   });
 
-  const base = {
-    revision: persisted.revision,
-    persist_result: persisted.result,
-    reason: decision.reason,
-  };
+  const base = { revision: persisted.revision, persist_result: persisted.result, reason: decision.reason };
 
-  // Safety/site facts must never be answered from state or KB guesses.
   if (decision.authority === "SAFE_PROFESSIONAL_CONFIRMATION") {
-    return {
-      ...base,
-      authority: decision.authority,
-      reply: buildProfessionalConfirmationAnswer(language, state),
-      route: "commerce_state_answer",
-    };
+    return { ...base, authority: decision.authority, reply: buildProfessionalConfirmationAnswer(language, state), route: "commerce_state_answer" };
   }
 
   if (decision.authority === "CONVERSATION_STATE" && decision.state_path) {
-    return {
-      ...base,
-      authority: decision.authority,
-      state_path: decision.state_path,
-      reply: buildKnownStateAnswer(language, decision.state_path, decision.known_value, state),
-      route: "commerce_state_answer",
-    };
+    return { ...base, authority: decision.authority, state_path: decision.state_path, reply: buildKnownStateAnswer(language, decision.state_path, decision.known_value, state), route: "commerce_state_answer" };
   }
 
   if (decision.authority === "DETERMINISTIC_CALCULATION" && decision.calculation) {
-    return {
-      ...base,
-      authority: decision.authority,
-      calculation: decision.calculation,
-      reply: buildCalculationAnswer(language, decision.calculation),
-      route: "commerce_state_answer",
-    };
+    return { ...base, authority: decision.authority, calculation: decision.calculation, reply: buildCalculationAnswer(language, decision.calculation), route: "commerce_state_answer" };
   }
 
-  // Transaction-summary intents answer from state instead of generic clarification.
   if (summaryIntent && (state.entities.length > 0 || state.quotes.length > 0)) {
-    return {
-      ...base,
-      authority: "CONVERSATION_STATE",
-      reply: buildTransactionSummary(state, language),
-      route: "commerce_transaction_summary",
-    };
+    return { ...base, authority: "CONVERSATION_STATE", reply: buildTransactionSummary(state, language), route: "commerce_transaction_summary" };
   }
 
-  // Current business/product/price/stock/policy facts continue on the existing
-  // authoritative KB retrieval path; state must not manufacture citations.
   return {
     ...base,
     authority: decision.authority === "CURRENT_KB_REQUIRED" ? "CURRENT_KB_REQUIRED" : decision.authority,
