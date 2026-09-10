@@ -105,25 +105,12 @@ jobs:
               if (!categories.has(hint.category)) return true;
               const roomKey = hint.entity_id.split(":")[1];
 
-              // An explicit room/scope owns the turn. Never let the same category's
-              // unscoped history alias participate in that scoped mutation.
               if (rooms.length > 0 && roomKey === "unscoped") return false;
-
-              // "另外/再加/another" without a room is a genuinely new category-level
-              // item. Preserve all existing scoped entities by targeting only the
-              // unscoped new-item slot for this turn.
               if (additive && rooms.length === 0) return roomKey === "unscoped";
-
               if (roomKey !== "unscoped") return true;
               if (state.entities.some((e) => e.entity_id === hint.entity_id)) return true;
-
-              // A bare category mention (question / KB / descriptive) never creates a
-              // new unscoped entity without explicit transactional evidence.
               if (!explicitCreation) return false;
 
-              // With an existing concrete same-category entity, a category-only
-              // non-additive reference resolves to that context instead of fabricating
-              // a second ghost entity. Explicit additive wording is handled above.
               const hasConcreteSameCategory = state.entities.some(
                 (entity) => entity.category === hint.category && !entity.entity_id.endsWith(":unscoped") &&
                   entity.status !== "cancelled" && entity.status !== "deferred",
@@ -163,70 +150,40 @@ jobs:
 
           const company = "3d6e17b5-ec79-4f75-aa7f-eaa824ff8493";
           const conversation = "11111111-1111-4111-8111-111111111111";
-
-          function assert(ok: unknown, message: string): asserts ok {
-            if (!ok) throw new Error(message);
-          }
-
-          function apply(
-            state: ConversationCommerceState,
-            text: string,
-            id: string,
-            history: string[] = [],
-          ): ConversationCommerceState {
+          function assert(ok: unknown, message: string): asserts ok { if (!ok) throw new Error(message); }
+          function apply(state: ConversationCommerceState, text: string, id: string, history: string[] = []): ConversationCommerceState {
             const hints = buildCommerceEntityHints([text, ...history]);
-            return reduceTurn(state, {
-              conversation_id: conversation,
-              company_id: company,
-              source_message_id: id,
-              text,
-              language: "zh-TW",
-              history: history.map((content) => ({ role: "visitor", content })),
-            }, hints);
+            return reduceTurn(state, { conversation_id: conversation, company_id: company, source_message_id: id, text, language: "zh-TW", history: history.map((content) => ({ role: "visitor", content })) }, hints);
           }
-
-          function entity(state: ConversationCommerceState, id: string) {
-            return state.entities.find((item) => item.entity_id === id);
-          }
-
+          function entity(state: ConversationCommerceState, id: string) { return state.entities.find((item) => item.entity_id === id); }
           const t1 = "我睡房有2部冷氣。";
           const t2 = "窗口夠唔夠安全安裝冷氣？";
           const t3 = "另外加1部冷氣。";
-
           const s0 = createEmptyConversationCommerceState();
           const s1 = apply(s0, t1, "11111111-1111-4111-8111-111111111101");
           assert(entity(s1, "air_conditioner:bedroom")?.quantity === 2, "turn1 bedroom must be x2");
           assert(!entity(s1, "air_conditioner:unscoped"), "turn1 must not create unscoped");
-
           const bedroomP1 = entity(s1, "air_conditioner:bedroom")?.provenance.source_message_id;
           const s2 = apply(s1, t2, "11111111-1111-4111-8111-111111111102", [t1]);
           assert(entity(s2, "air_conditioner:bedroom")?.quantity === 2, "safety turn must preserve bedroom x2");
           assert(!entity(s2, "air_conditioner:unscoped"), "safety turn must create zero ghost entities");
           assert(entity(s2, "air_conditioner:bedroom")?.provenance.source_message_id === bedroomP1, "safety turn must not rewrite entity provenance");
           assert(s2.installation.pending_checks.includes("window_opening_check"), "safety turn must retain professional window check");
-
           const s3 = apply(s2, t3, "11111111-1111-4111-8111-111111111103", [t2, t1]);
           assert(entity(s3, "air_conditioner:bedroom")?.quantity === 2, "additive category turn must preserve bedroom x2");
           assert(entity(s3, "air_conditioner:unscoped")?.quantity === 1, "additive category turn must add exactly one new unscoped item");
           assert(s3.entities.filter((item) => item.category === "air_conditioner").length === 2, "must have exactly two AC entities after additive turn");
-
           const scopedAdd = apply(s1, "睡房再加1部冷氣。", "11111111-1111-4111-8111-111111111104", [t1]);
           assert(entity(scopedAdd, "air_conditioner:bedroom")?.quantity === 3, "scoped additive turn must increment 2 to 3");
           assert(!entity(scopedAdd, "air_conditioner:unscoped"), "scoped additive turn must not create unscoped");
-
           const contextual = apply(s1, "我要2部冷氣。", "11111111-1111-4111-8111-111111111105", [t1]);
           assert(entity(contextual, "air_conditioner:bedroom")?.quantity === 2, "category-only non-additive reference must resolve existing concrete context");
           assert(!entity(contextual, "air_conditioner:unscoped"), "category-only contextual reference must not create ghost");
-
           const fresh = apply(s0, "我要2部冷氣。", "11111111-1111-4111-8111-111111111106");
           assert(entity(fresh, "air_conditioner:unscoped")?.quantity === 2, "explicit transactional evidence on empty state must create new entity");
-
           const source = await Deno.readTextFile("supabase/functions/_shared/commerce-state-runtime.ts");
-          for (const rude of ["隔住screen估", "我不会在线上猜", "I won't guess that remotely"]) {
-            assert(!source.includes(rude), `rude professional-confirmation phrase remains: ${rude}`);
-          }
+          for (const rude of ["隔住screen估", "我不会在线上猜", "I won't guess that remotely"]) assert(!source.includes(rude), `rude phrase remains: ${rude}`);
           assert(source.includes("為確保安全同準確"), "polite zh-TW safety wording missing");
-
           console.log(JSON.stringify({ status: "PASS", cases: 7, gate: "TASK_A3_HOTFIX4_ENTITY_AND_TONE" }));
           '''
           Path('.github/scripts/task_a3_hotfix4_entity_and_tone_test.ts').write_text(test)
@@ -252,3 +209,5 @@ jobs:
           git add supabase/functions/_shared/commerce-state-runtime.ts .github/scripts/task_a3_hotfix4_entity_and_tone_test.ts .github/workflows/task-a3-hotfix4-director-apply.yml
           git commit -m "fix(a3): preserve scoped quantities and polite safety routing"
           git push origin HEAD:main
+
+# trigger-2
