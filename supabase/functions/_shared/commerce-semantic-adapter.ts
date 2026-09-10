@@ -60,6 +60,10 @@ export function semanticFrameToEntityHints(frame: CommerceSemanticFrame | null |
         unit: entity.unit,
         sku: entity.sku,
         semantic_confidence: entity.confidence,
+        semantic_transaction_state: frame.transaction_state,
+        semantic_payment_state: frame.payment_state,
+        semantic_booking_state: frame.booking_state,
+        semantic_fulfillment_state: frame.fulfillment_state,
         semantic_attributes: entity.attributes,
         capabilities: entity.capabilities,
       },
@@ -132,7 +136,11 @@ export function semanticFrameToStateEvents(
   sourceMessageId: string,
   occurredAt?: string | null,
 ): CommerceStateEvent[] {
-  if (!frame || frame.confidence < 0.62) return [];
+  // Defense in depth: ambiguous or low-confidence semantic interpretation is read-only.
+  // The canonical normalizer also forces NO_STATE_CHANGE for ambiguity, but the
+  // deterministic adapter independently refuses mutations so model output can never
+  // advance commerce state merely by claiming an operation.
+  if (!frame || frame.confidence < 0.62 || frame.ambiguity.is_ambiguous) return [];
   const p = provenance(sourceMessageId, occurredAt);
   const events: CommerceStateEvent[] = [];
 
