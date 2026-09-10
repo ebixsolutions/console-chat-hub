@@ -543,13 +543,9 @@ export function filterGhostUnscopedHints(
     const [categoryKey, roomKey] = hint.entity_id.split(":");
     if (roomKey !== "unscoped") return true;
     if (state.entities.some((e) => e.entity_id === hint.entity_id)) return true;
-    if (explicitCreation) return true;
-    // No explicit creation signal: keep only when no concrete entity of the
-    // same category exists to attach the mention to.
-    return !state.entities.some((e) => {
-      const [existingCategory, existingRoom] = e.entity_id.split(":");
-      return existingCategory === categoryKey && existingRoom !== "unscoped";
-    });
+    // A bare category mention (question / KB / descriptive) never creates a
+    // new unscoped entity without an explicit creation signal.
+    return explicitCreation;
   });
 }
 
