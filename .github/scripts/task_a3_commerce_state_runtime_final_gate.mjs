@@ -32,7 +32,18 @@ for (const token of [
   "resolveCommerceAnswerAuthority",
   "buildTransactionSummary",
   "extractCommerceCalculationTerms",
+  "detectExplicitCalculationRequest",
 ]) must(runtime.includes(token), `runtime_missing:${token}`);
+
+// Hotfix invariants: deterministic calculation only on explicit request; no quote double-count.
+must(
+  runtime.includes("const wantsCalculation = detectExplicitCalculationRequest(text);"),
+  "runtime_missing:explicit_calculation_gate",
+);
+must(
+  runtime.includes("if (textAmounts.has(quote.amount)) continue;"),
+  "runtime_missing:persisted_quote_dedup",
+);
 
 // A2 stays frozen: appliance-specific extraction only lives in the A3 adapter.
 for (const file of frozen) {
