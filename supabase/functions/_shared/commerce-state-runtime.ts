@@ -668,7 +668,10 @@ export async function runCommerceStateRuntime(
   const language = input.language;
 
   const summaryIntent = detectTransactionSummaryIntent(text);
-  const calculation = extractCommerceCalculationTerms(conversationTexts, state);
+  const wantsCalculation = detectExplicitCalculationRequest(text);
+  const calculation = wantsCalculation
+    ? extractCommerceCalculationTerms(conversationTexts, state)
+    : { terms: [] as CommerceCalculationTerm[], currency: null };
   const decision = resolveCommerceAnswerAuthority({
     question: text,
     state,
