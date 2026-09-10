@@ -7,7 +7,7 @@ import {
   buildCommerceEntityHints,
   detectExplicitEntityCreationSignal,
   filterGhostUnscopedHints,
-  runCommerceStateReduction,
+  reduceTurn,
 } from "../../supabase/functions/_shared/commerce-state-runtime.ts";
 
 function assert(condition: unknown, message: string): void {
@@ -33,7 +33,7 @@ function bedroomAirconTwo(): ConversationCommerceState {
 
 function applyTurn(text: string, previous: ConversationCommerceState): ConversationCommerceState {
   const hints = buildCommerceEntityHints(["睡房要2部冷氣", text]);
-  return runCommerceStateReduction(previous, {
+  return reduceTurn(previous, {
     text,
     source_message_id: "m-ghost",
     occurred_at: null,

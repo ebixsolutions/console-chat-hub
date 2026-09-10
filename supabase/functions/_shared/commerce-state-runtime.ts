@@ -549,7 +549,7 @@ export function filterGhostUnscopedHints(
   });
 }
 
-function reduceTurn(
+export function reduceTurn(
   previous: ConversationCommerceState,
   input: CommerceRuntimeInput,
   rawHints: CommerceTurnEntityHint[],
