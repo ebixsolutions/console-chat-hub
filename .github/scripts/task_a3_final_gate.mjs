@@ -46,7 +46,7 @@ for (const marker of [
   'upsert_conversation_commerce_state_v1',
   'expected_revision',
   'source_message_id',
-  '40001',
+  'revision_conflict',
 ]) must(runtime.includes(marker), `runtime missing ${marker}`);
 
 const e2 = index.indexOf('if (_criticalE2Response) return _criticalE2Response;');

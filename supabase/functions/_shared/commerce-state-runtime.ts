@@ -431,6 +431,7 @@ export async function loadCommerceState(
 function deriveA3RuntimeEvents(
   input: CommerceRuntimeInput,
   hints: CommerceTurnEntityHint[],
+  previous: ConversationCommerceState,
 ): CommerceStateEvent[] {
   const text = clean(input.text);
   const events: CommerceStateEvent[] = [];
@@ -443,6 +444,8 @@ function deriveA3RuntimeEvents(
   const quantity = parseCount(text);
   const cancelled = detectCancellation(text);
   const deferred = detectDeferral(text);
+  const additive = detectAdditiveEntityCreationSignal(text);
+  const explicitCreation = detectExplicitEntityCreationSignal(text);
 
   for (const hint of mentioned) {
     if (cancelled) {
@@ -453,10 +456,14 @@ function deriveA3RuntimeEvents(
       events.push({ type: "SET_ENTITY_STATUS", entity_id: hint.entity_id, status: "deferred", provenance });
       continue;
     }
-    if (quantity !== null) {
-      events.push({ type: "SET_ENTITY_QUANTITY", entity_id: hint.entity_id, quantity, provenance });
+    if (quantity !== null && (additive || mentioned.length === 1)) {
+      const existing = previous.entities.find((entity) => entity.entity_id === hint.entity_id);
+      const nextQuantity = additive && existing ? existing.quantity + quantity : quantity;
+      events.push({ type: "SET_ENTITY_QUANTITY", entity_id: hint.entity_id, quantity: nextQuantity, provenance });
     }
-    events.push({ type: "SET_ENTITY_STATUS", entity_id: hint.entity_id, status: "tentative", provenance });
+    if (quantity !== null || explicitCreation) {
+      events.push({ type: "SET_ENTITY_STATUS", entity_id: hint.entity_id, status: "tentative", provenance });
+    }
   }
 
   const checks = detectSiteChecks(text);
@@ -533,19 +540,52 @@ export function detectExplicitEntityCreationSignal(text: string): boolean {
     .test(t);
 }
 
+export function detectAdditiveEntityCreationSignal(text: string): boolean {
+  const t = clean(text);
+  if (!t) return false;
+  return /(?:另外|再加|再要|加多|多要|多買|多买|新增多|加裝多|加装多|another|extra|additional|add\s+(?:another|one|two|three|\d))/i.test(t);
+}
+
 export function filterGhostUnscopedHints(
   text: string,
   state: ConversationCommerceState,
   hints: CommerceTurnEntityHint[],
 ): CommerceTurnEntityHint[] {
   const explicitCreation = detectExplicitEntityCreationSignal(text);
+  const additive = detectAdditiveEntityCreationSignal(text);
+  const categories = new Set(detectCategories(text).map((category) => category.key));
+  const rooms = detectRooms(text);
+
   return hints.filter((hint) => {
+    if (!categories.has(hint.category)) return true;
+
     const roomKey = hint.entity_id.split(":")[1];
+
+    if (rooms.length > 0 && roomKey === "unscoped") return false;
+
+    if (additive && rooms.length === 0) {
+      return roomKey === "unscoped";
+    }
+
     if (roomKey !== "unscoped") return true;
-    if (state.entities.some((e) => e.entity_id === hint.entity_id)) return true;
-    // A bare category mention (question / KB / descriptive) never creates a
-    // new unscoped entity without an explicit creation signal.
-    return explicitCreation;
+
+    if (state.entities.some((e) => e.entity_id === hint.entity_id)) {
+      return true;
+    }
+
+    if (!explicitCreation) return false;
+
+    const hasConcreteSameCategory = state.entities.some(
+      (entity) =>
+        entity.category === hint.category &&
+        !entity.entity_id.endsWith(":unscoped") &&
+        entity.status !== "cancelled" &&
+        entity.status !== "deferred",
+    );
+
+    if (rooms.length === 0 && hasConcreteSameCategory) return false;
+
+    return true;
   });
 }
 
@@ -562,7 +602,7 @@ export function reduceTurn(
     entity_hints: hints,
     current_language: input.language,
   });
-  const reduced = reduceCommerceState(previous, [...derived, ...deriveA3RuntimeEvents(input, hints)]);
+  const reduced = reduceCommerceState(previous, [...derived, ...deriveA3RuntimeEvents(input, hints, previous)]);
   const guard = enforceQuotationNotOrderEvents(clean(input.text), reduced);
   return guard.length ? reduceCommerceState(reduced, guard) : reduced;
 }
@@ -753,12 +793,12 @@ function buildProfessionalConfirmationAnswer(
     ? active.map((e) => `${entityLabel(e.entity_id, language)} x${e.quantity}`).join("、")
     : "";
   if (language === "en") {
-    return `${known ? `I still have your details on record: ${known}. ` : ""}Whether the site actually supports the installation has to be confirmed onsite by our technician — I won't guess that remotely.`;
+    return `${known ? `I still have your details on record: ${known}. ` : ""}For safety and accuracy, our technician needs to inspect the site in person before we can confirm whether the installation is suitable.`;
   }
   if (language === "zh-CN") {
-    return `${known ? `你的资料我仍然保留：${known}。` : ""}现场是否符合安装条件，需要师傅上门实地确认，我不会在线上猜。`;
+    return `${known ? `我们已保留您之前提供的资料：${known}。` : ""}为确保安全和准确，需要师傅上门检查窗口尺寸、承托及安装环境后再确认是否适合安装。`;
   }
-  return `${known ? `你嘅資料我仍然保留住：${known}。` : ""}現場實際做唔做得到，要師傅上門確認先作準，我唔會隔住screen估。`;
+  return `${known ? `我哋已保留您之前提供嘅資料：${known}。` : ""}為確保安全同準確，需要師傅上門檢查窗口尺寸、承托同安裝環境後先可以確認是否適合安裝。`;
 }
 
 /* ------------------------------------------------------------------ *
