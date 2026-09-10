@@ -540,7 +540,7 @@ export function filterGhostUnscopedHints(
 ): CommerceTurnEntityHint[] {
   const explicitCreation = detectExplicitEntityCreationSignal(text);
   return hints.filter((hint) => {
-    const [categoryKey, roomKey] = hint.entity_id.split(":");
+    const roomKey = hint.entity_id.split(":")[1];
     if (roomKey !== "unscoped") return true;
     if (state.entities.some((e) => e.entity_id === hint.entity_id)) return true;
     // A bare category mention (question / KB / descriptive) never creates a
