@@ -170,10 +170,12 @@ if 'semanticInterpreter:' not in s:
 old = '''execFileSync("deno", ["run", "--allow-read", ".github/scripts/task_a3_generic_capability_runtime_test.ts"], { stdio: "inherit" });'''
 new = old + '''
 execFileSync("deno", ["run", "--allow-read", ".github/scripts/task_a3_task1_universal_semantics_test.ts"], { stdio: "inherit" });
-execFileSync("deno", ["check", files.semanticFrame, files.semanticAdapter, files.semanticInterpreter], { stdio: "inherit" });'''
+execFileSync("deno", ["check", "--config", "supabase/functions/deno.json", files.semanticFrame, files.semanticAdapter, files.semanticInterpreter], { stdio: "inherit" });'''
 assert old in s or 'task_a3_task1_universal_semantics_test.ts' in s, 'STOP final gate test baseline mismatch'
 if 'task_a3_task1_universal_semantics_test.ts' not in s:
     s = s.replace(old, new, 1)
+else:
+    s = s.replace('execFileSync("deno", ["check", files.semanticFrame, files.semanticAdapter, files.semanticInterpreter], { stdio: "inherit" });', 'execFileSync("deno", ["check", "--config", "supabase/functions/deno.json", files.semanticFrame, files.semanticAdapter, files.semanticInterpreter], { stdio: "inherit" });')
 
 old = '''execFileSync("npx", ["tsc", "--noEmit", "--strict", "--target", "ES2022", "--module", "ESNext", "--moduleResolution", "bundler", "--allowImportingTsExtensions", files.runtime, files.capability, files.contract, files.reducer, files.authority], { stdio: "inherit" });'''
 new = '''execFileSync("npx", ["tsc", "--noEmit", "--strict", "--target", "ES2022", "--module", "ESNext", "--moduleResolution", "bundler", "--allowImportingTsExtensions", files.runtime, files.capability, files.semanticFrame, files.semanticAdapter, files.contract, files.reducer, files.authority], { stdio: "inherit" });'''
