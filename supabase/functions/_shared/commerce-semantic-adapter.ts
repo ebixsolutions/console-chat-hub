@@ -1,4 +1,5 @@
-import type { CommerceTurnEntityHint } from "./commerce-state-reducer.ts";
+import type { ConversationCommerceState, CommerceProvenance } from "./commerce-state-contract.ts";
+import type { CommerceStateEvent, CommerceTurnEntityHint } from "./commerce-state-reducer.ts";
 import type { CommerceSemanticEntity, CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 
 function clean(value: unknown, max = 200): string {
@@ -59,7 +60,7 @@ export function semanticFrameToEntityHints(frame: CommerceSemanticFrame | null |
         unit: entity.unit,
         sku: entity.sku,
         semantic_confidence: entity.confidence,
-        attributes: entity.attributes,
+        semantic_attributes: entity.attributes,
         capabilities: entity.capabilities,
       },
       constraints: entity.constraints,
@@ -75,20 +76,116 @@ export function mergeCommerceEntityHints(
   const map = new Map<string, CommerceTurnEntityHint>();
   for (const hint of deterministic) map.set(hint.entity_id, hint);
   for (const hint of semantic) {
-    const existing = map.get(hint.entity_id);
+    const semanticAliases = (hint.aliases ?? []).map((x) => clean(x).toLowerCase()).filter(Boolean);
+    const compatible = [...map.values()].find((candidate) => {
+      const aliases = [candidate.entity_id, candidate.category, ...(candidate.aliases ?? [])]
+        .map((x) => clean(x).toLowerCase()).filter(Boolean);
+      return semanticAliases.some((a) => aliases.some((b) => a === b || a.includes(b) || b.includes(a)));
+    });
+    const key = compatible?.entity_id ?? hint.entity_id;
+    const existing = map.get(key);
+    const normalized = compatible ? { ...hint, entity_id: compatible.entity_id, category: compatible.category } : hint;
     if (!existing) {
-      map.set(hint.entity_id, hint);
+      map.set(key, normalized);
       continue;
     }
-    map.set(hint.entity_id, {
+    map.set(key, {
       ...existing,
-      category: hint.category || existing.category,
-      aliases: [...new Set([...(existing.aliases ?? []), ...(hint.aliases ?? [])])],
-      quantity: hint.quantity ?? existing.quantity,
-      model: hint.model ?? existing.model,
-      attributes: { ...(existing.attributes ?? {}), ...(hint.attributes ?? {}) },
-      constraints: { ...(existing.constraints ?? {}), ...(hint.constraints ?? {}) },
+      aliases: [...new Set([...(existing.aliases ?? []), ...(normalized.aliases ?? [])])],
+      quantity: normalized.quantity ?? existing.quantity,
+      model: normalized.model ?? existing.model,
+      attributes: { ...(existing.attributes ?? {}), ...(normalized.attributes ?? {}) },
+      constraints: { ...(existing.constraints ?? {}), ...(normalized.constraints ?? {}) },
     });
   }
   return [...map.values()];
+}
+
+function provenance(sourceMessageId: string, occurredAt?: string | null): CommerceProvenance {
+  return { source_type: "customer", source_message_id: sourceMessageId, recorded_at: occurredAt ?? null };
+}
+
+function activeEntities(state: ConversationCommerceState) {
+  return state.entities.filter((x) => x.status !== "cancelled" && x.status !== "deferred");
+}
+
+function resolveHintId(entity: CommerceSemanticEntity, hints: CommerceTurnEntityHint[], previous: ConversationCommerceState): string | null {
+  const wanted = [entity.name, entity.entity_ref, entity.sku ?? "", entity.model ?? ""]
+    .map((x) => clean(x).toLowerCase()).filter(Boolean);
+  const hinted = hints.find((hint) => {
+    const aliases = [hint.entity_id, hint.category, ...(hint.aliases ?? [])]
+      .map((x) => clean(x).toLowerCase()).filter(Boolean);
+    return wanted.some((a) => aliases.some((b) => a === b || a.includes(b) || b.includes(a)));
+  });
+  if (hinted) return hinted.entity_id;
+  const direct = entityId(entity);
+  if (previous.entities.some((x) => x.entity_id === direct)) return direct;
+  const active = activeEntities(previous);
+  if (active.length === 1 && entity.confidence >= 0.75) return active[0].entity_id;
+  return direct;
+}
+
+export function semanticFrameToStateEvents(
+  frame: CommerceSemanticFrame | null | undefined,
+  previous: ConversationCommerceState,
+  hints: CommerceTurnEntityHint[],
+  sourceMessageId: string,
+  occurredAt?: string | null,
+): CommerceStateEvent[] {
+  if (!frame || frame.confidence < 0.62) return [];
+  const p = provenance(sourceMessageId, occurredAt);
+  const events: CommerceStateEvent[] = [];
+
+  for (const entity of frame.entities) {
+    if (entity.confidence < 0.55) continue;
+    const id = resolveHintId(entity, hints, previous);
+    if (!id) continue;
+    const existing = previous.entities.find((x) => x.entity_id === id);
+    const hint = hints.find((x) => x.entity_id === id);
+
+    if (frame.operation === "ADD_ITEM") {
+      if (existing && frame.additive && entity.quantity !== null) {
+        events.push({ type: "SET_ENTITY_QUANTITY", entity_id: id, quantity: existing.quantity + entity.quantity, provenance: p });
+      } else if (!existing) {
+        events.push({
+          type: "ENSURE_ENTITY",
+          entity: {
+            entity_id: id,
+            category: hint?.category ?? categoryFor(entity),
+            brand: null,
+            model: entity.model,
+            quantity: entity.quantity ?? 1,
+            status: "tentative",
+            attributes: { ...(hint?.attributes ?? {}), semantic_attributes: entity.attributes, capabilities: entity.capabilities },
+            constraints: { ...(hint?.constraints ?? {}), ...entity.constraints },
+            provenance: p,
+          },
+        });
+      } else if (entity.quantity !== null && !frame.additive) {
+        events.push({ type: "SET_ENTITY_QUANTITY", entity_id: id, quantity: entity.quantity, provenance: p });
+      }
+    }
+
+    if ((frame.operation === "SET_QUANTITY" || frame.customer_correction) && entity.quantity !== null && existing) {
+      events.push({ type: "SET_ENTITY_QUANTITY", entity_id: id, quantity: entity.quantity, provenance: p });
+    }
+
+    if (frame.operation === "UPDATE_ITEM" && existing) {
+      for (const [key, value] of Object.entries(entity.attributes)) {
+        events.push({ type: "SET_ENTITY_ATTRIBUTE", entity_id: id, key, value, provenance: p });
+      }
+      for (const [key, value] of Object.entries(entity.constraints)) {
+        events.push({ type: "SET_ENTITY_CONSTRAINT", entity_id: id, key, value, provenance: p });
+      }
+    }
+
+    if ((frame.operation === "CANCEL_ITEM" || frame.operation === "REMOVE_ITEM") && existing) {
+      events.push({ type: "SET_ENTITY_STATUS", entity_id: id, status: "cancelled", provenance: p });
+    }
+  }
+
+  if (frame.operation === "REQUEST_QUOTE") {
+    events.push({ type: "SET_CONVERSION", patch: { funnel_stage: "quotation", quotation_status: "draft" } });
+  }
+  return events;
 }
