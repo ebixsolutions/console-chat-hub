@@ -28,6 +28,11 @@ function frame(overrides: Partial<CommerceSemanticFrame>): CommerceSemanticFrame
     additive: false,
     explicit_negations: [],
     requested_facts: [],
+    transaction_state: "unknown",
+    payment_state: "unknown",
+    booking_state: "unknown",
+    fulfillment_state: "unknown",
+    ambiguity: { is_ambiguous: false, reasons: [], clarification_question: null },
     confidence: 0.95,
     ...overrides,
   };
@@ -69,10 +74,18 @@ const unknownIndustry = normalizeCommerceSemanticFrame({
   additive: false,
   explicit_negations: [],
   requested_facts: ["rental price", "delivery conditions"],
+  transaction_state: "draft",
+  payment_state: "pending_quote",
+  booking_state: "none",
+  fulfillment_state: "requested",
+  ambiguity: { is_ambiguous: false, reasons: [], clarification_question: null },
   confidence: 0.97,
 });
 assert(unknownIndustry?.entities[0].kind === "rental", "unseen rental industry failed schema normalization");
 assert(unknownIndustry?.language === "zu", "arbitrary language code must survive normalization");
+assert(unknownIndustry?.transaction_state === "draft", "transaction lifecycle missing from canonical frame");
+assert(unknownIndustry?.payment_state === "pending_quote", "payment lifecycle missing from canonical frame");
+assert(unknownIndustry?.fulfillment_state === "requested", "fulfillment lifecycle missing from canonical frame");
 
 const semanticHints = semanticFrameToEntityHints(unknownIndustry);
 assert(semanticHints.length === 1, "semantic entity hint missing");
@@ -120,6 +133,7 @@ const first = frame({
   language: "ja",
   operation: "ADD_ITEM",
   intent: "buy_unknown_item",
+  transaction_state: "draft",
   entities: [{
     entity_ref: "custom-widget",
     name: "超新型部材",
@@ -185,12 +199,86 @@ const negatedReserve = frame({
   language: "zh-TW",
   operation: "RESERVE",
   intent: "preorder_unpaid",
+  payment_state: "none",
+  booking_state: "requested",
   explicit_negations: ["未付款"],
   confidence: 0.99,
 });
 const beforeReserve = JSON.stringify(state);
 state = reduceCommerceState(state, semanticFrameToStateEvents(negatedReserve, state, [], "55555555-5555-4555-8555-555555555555"));
 assert(JSON.stringify(state) === beforeReserve, "negated reservation must not promote order/payment state");
+
+const ambiguousRaw = normalizeCommerceSemanticFrame({
+  version: COMMERCE_SEMANTIC_FRAME_VERSION,
+  language: "en",
+  operation: "ADD_ITEM",
+  intent: "add_item",
+  topic: "accessory",
+  entities: [{ ...first.entities[0], entity_ref: "another-one", name: "another one", quantity: 1, confidence: 0.91 }],
+  referents: [{ ref: "prior:item", source: "prior_turn", confidence: 0.55 }],
+  customer_correction: false,
+  additive: true,
+  explicit_negations: [],
+  requested_facts: [],
+  transaction_state: "draft",
+  payment_state: "none",
+  booking_state: "none",
+  fulfillment_state: "none",
+  ambiguity: { is_ambiguous: true, reasons: ["multiple plausible prior items"], clarification_question: "Which item do you mean?" },
+  confidence: 0.91,
+});
+assert(ambiguousRaw?.operation === "NO_STATE_CHANGE", "ambiguous semantic frame must normalize to NO_STATE_CHANGE");
+assert(ambiguousRaw?.ambiguity.is_ambiguous === true, "ambiguity must remain explicit in canonical frame");
+const beforeAmbiguous = JSON.stringify(state);
+state = reduceCommerceState(state, semanticFrameToStateEvents(ambiguousRaw, state, semanticFrameToEntityHints(ambiguousRaw), "66666666-6666-4666-8666-666666666666"));
+assert(JSON.stringify(state) === beforeAmbiguous, "ambiguous interpretation must not mutate commerce state");
+
+const lowConfidenceRaw = normalizeCommerceSemanticFrame({
+  version: COMMERCE_SEMANTIC_FRAME_VERSION,
+  language: "en",
+  operation: "ADD_ITEM",
+  intent: "add_item",
+  topic: null,
+  entities: [],
+  referents: [],
+  customer_correction: false,
+  additive: false,
+  explicit_negations: [],
+  requested_facts: [],
+  transaction_state: "unknown",
+  payment_state: "unknown",
+  booking_state: "unknown",
+  fulfillment_state: "unknown",
+  ambiguity: { is_ambiguous: false, reasons: [], clarification_question: null },
+  confidence: 0.4,
+});
+assert(lowConfidenceRaw?.ambiguity.is_ambiguous === true, "low-confidence frame must be forced ambiguous");
+assert(lowConfidenceRaw?.ambiguity.reasons.includes("low_confidence"), "low-confidence ambiguity reason missing");
+assert(lowConfidenceRaw?.operation === "NO_STATE_CHANGE", "low-confidence frame must be read-only");
+
+const invalidLifecycle = normalizeCommerceSemanticFrame({
+  version: COMMERCE_SEMANTIC_FRAME_VERSION,
+  language: "en",
+  operation: "NO_STATE_CHANGE",
+  intent: "status",
+  topic: null,
+  entities: [],
+  referents: [],
+  customer_correction: false,
+  additive: false,
+  explicit_negations: [],
+  requested_facts: [],
+  transaction_state: "magically_done",
+  payment_state: "definitely_paid_somehow",
+  booking_state: "booked_by_guess",
+  fulfillment_state: "teleported",
+  ambiguity: { is_ambiguous: false, reasons: [], clarification_question: null },
+  confidence: 0.99,
+});
+assert(invalidLifecycle?.transaction_state === "unknown", "invalid transaction lifecycle must normalize safely");
+assert(invalidLifecycle?.payment_state === "unknown", "invalid payment lifecycle must normalize safely");
+assert(invalidLifecycle?.booking_state === "unknown", "invalid booking lifecycle must normalize safely");
+assert(invalidLifecycle?.fulfillment_state === "unknown", "invalid fulfillment lifecycle must normalize safely");
 
 console.log(JSON.stringify({
   status: "PASS",
@@ -205,5 +293,11 @@ console.log(JSON.stringify({
     language_neutral_additive: true,
     factual_query_read_only: true,
     negated_transaction_safe: true,
+    canonical_lifecycle_fields_required: true,
+    ambiguity_explicit: true,
+    ambiguity_forces_no_state_change: true,
+    ambiguity_blocks_reducer_events: true,
+    low_confidence_forces_ambiguity: true,
+    invalid_lifecycle_values_fail_safe: true,
   },
 }, null, 2));
