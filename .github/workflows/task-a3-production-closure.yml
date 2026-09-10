@@ -13,7 +13,7 @@ permissions:
   contents: read
 jobs:
   closure:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       PROD_ORIGIN: https://console-chat-hub.lovable.app
@@ -81,7 +81,6 @@ jobs:
               answers.append(latest)
               prior=len(assistants)
               print(json.dumps({'turn':turn,'answer':latest[:1000]},ensure_ascii=False))
-          calc=''.join(ch for ch in answers[2] if ch.isdigit())
           normalized=answers[2].replace(',','').replace('，','')
           assert ('13400' in normalized) or ('13,400' in answers[2]),('DETERMINISTIC_TOTAL_NOT_13400',answers[2])
           assert not any(x in answers[4].lower() for x in ['已付款','payment confirmed','paid successfully']),('FALSE_PAYMENT_CONFIRMATION',answers[4])
