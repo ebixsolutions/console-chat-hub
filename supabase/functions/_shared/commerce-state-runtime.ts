@@ -340,7 +340,7 @@ export function detectTransactionSummaryIntent(text: string): boolean {
 
 function parseMoneyTerms(text: string): number[] {
   const amounts: number[] = [];
-  const re = /(?:HK\$|HKD|\$|元|價|价|費|费|收費|收费|fee|price)\s*([0-9][0-9,]{2,9}(?:\.\d{1,2})?)|([0-9][0-9,]{2,9}(?:\.\d{1,2})?)\s*(?:元|蚊|dollars?)/gi;
+  const re = /(?:HK\$|HKD|\$|元|價|价|費|费|收費|收费|fee|price)\s*((?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,10})(?:\.[0-9]{1,2})?)|((?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,10})(?:\.[0-9]{1,2})?)\s*(?:元|蚊|dollars?)/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     const raw = m[1] ?? m[2];
@@ -358,6 +358,7 @@ export function detectExplicitCalculationRequest(text: string): boolean {
 export function extractCommerceCalculationTerms(
   texts: string[],
   state: ConversationCommerceState,
+  options?: { include_historical_state?: boolean },
 ): { terms: CommerceCalculationTerm[]; currency: string | null } {
   const amounts: number[] = [];
   for (const raw of texts) {
@@ -365,11 +366,13 @@ export function extractCommerceCalculationTerms(
     if (!text) continue;
     for (const amount of parseMoneyTerms(text)) amounts.push(amount);
   }
-  const textAmounts = new Set(amounts);
-  for (const quote of state.quotes) {
-    if (quote.quote_type !== "customer_reported_historical") continue;
-    if (textAmounts.has(quote.amount)) continue;
-    amounts.push(quote.amount);
+  if (options?.include_historical_state) {
+    const textAmounts = new Set(amounts);
+    for (const quote of state.quotes) {
+      if (quote.quote_type !== "customer_reported_historical") continue;
+      if (textAmounts.has(quote.amount)) continue;
+      amounts.push(quote.amount);
+    }
   }
   const unique: number[] = [];
   const seen = new Map<number, number>();
@@ -382,18 +385,26 @@ export function extractCommerceCalculationTerms(
   }
   if (!unique.length) return { terms: [], currency: null };
 
+  const currentTurnMultiplier = parseCount(texts[0] ?? "");
   const activeEntities = state.entities.filter(
     (entity) => entity.status !== "cancelled" && entity.status !== "deferred",
   );
-  const multiplier = activeEntities.length === 1
+  const stateMultiplier = activeEntities.length === 1
     ? Math.max(1, activeEntities[0].quantity)
     : activeEntities.reduce((sum, entity) => sum + Math.max(0, entity.quantity), 0) || 1;
+  const multiplier = currentTurnMultiplier ?? stateMultiplier;
 
   const currency = state.quotes.find((q) => q.currency)?.currency ?? "HKD";
   return {
     terms: unique.map((amount, index) => ({ label: `customer_term_${index + 1}`, value: amount, multiplier })),
     currency,
   };
+}
+
+function calculationExplicitlyUsesHistory(text: string): boolean {
+  const t = clean(text);
+  if (!t) return false;
+  return /(?:(?:之前|以前|以往|舊|旧|歷史|历史|previous|historical|earlier).{0,40}(?:數字|数字|價|价|報價|报价|price|quote|figure|amount).{0,40}(?:計|计|算|calculate|total|合共|總共|总共)|(?:計|计|算|calculate|total|合共|總共|总共).{0,40}(?:之前|以前|以往|舊|旧|歷史|历史|previous|historical|earlier))/i.test(t);
 }
 
 interface LoadedCommerceState {
@@ -518,7 +529,7 @@ export function detectExplicitEntityCreationSignal(text: string): boolean {
 export function detectAdditiveEntityCreationSignal(text: string): boolean {
   const t = clean(text);
   if (!t) return false;
-  return /(?:另外|再加|再要|加多|多要|多買|多买|新增多|加裝多|加装多|another|extra|additional|add\s+(?:another|one|two|three|\d))/i.test(t);
+  return /(?:另外\s*(?:加|要|買|买|訂|订|新增|加裝|加装)|再加|再要|加多|多要|多買|多买|新增多|加裝多|加装多|another|extra|additional|add\s+(?:another|one|two|three|\d))/i.test(t);
 }
 
 export function filterGhostUnscopedHints(
@@ -552,15 +563,17 @@ export function reduceTurn(
   input: CommerceRuntimeInput,
   rawHints: CommerceTurnEntityHint[],
 ): ConversationCommerceState {
-  const hints = filterGhostUnscopedHints(input.text, previous, rawHints);
-  const derived = deriveCommerceEventsFromCustomerTurn({
+  const calculationTurn = detectExplicitCalculationRequest(input.text);
+  const hints = calculationTurn ? [] : filterGhostUnscopedHints(input.text, previous, rawHints);
+  const derived = calculationTurn ? [] : deriveCommerceEventsFromCustomerTurn({
     text: input.text,
     source_message_id: input.source_message_id,
     occurred_at: input.occurred_at ?? null,
     entity_hints: hints,
     current_language: input.language,
   });
-  const reduced = reduceCommerceState(previous, [...derived, ...deriveA3RuntimeEvents(input, hints, previous)]);
+  const runtimeEvents = calculationTurn ? [] : deriveA3RuntimeEvents(input, hints, previous);
+  const reduced = reduceCommerceState(previous, [...derived, ...runtimeEvents]);
   const guard = enforceQuotationNotOrderEvents(clean(input.text), reduced);
   return guard.length ? reduceCommerceState(reduced, guard) : reduced;
 }
@@ -670,11 +683,32 @@ function buildKnownStateAnswer(language: CommerceLanguage, statePath: string, va
   return `按你之前提供嘅資料：${rendered}。`;
 }
 
+function formatCalculationNumber(value: number): string {
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value);
+}
+
+function renderCalculationExpression(calculation: { expression: string; result: number }): string {
+  const parsed = calculation.expression.split(" + ").map((part) => {
+    const match = part.match(/^[^:]+:([0-9.]+)×([0-9.]+)$/);
+    return match ? { value: Number(match[1]), multiplier: Number(match[2]) } : null;
+  });
+  if (parsed.length && parsed.every(Boolean)) {
+    const terms = parsed as Array<{ value: number; multiplier: number }>;
+    const multiplier = terms[0].multiplier;
+    if (terms.every((term) => term.multiplier === multiplier)) {
+      const values = terms.map((term) => formatCalculationNumber(term.value)).join(" + ");
+      return `${formatCalculationNumber(multiplier)} × (${values}) = ${formatCalculationNumber(calculation.result)}`;
+    }
+  }
+  return `${calculation.expression} = ${formatCalculationNumber(calculation.result)}`;
+}
+
 function buildCalculationAnswer(language: CommerceLanguage, calculation: { expression: string; result: number; currency?: string | null }): string {
   const currency = calculation.currency ?? "HKD";
-  if (language === "en") return `Based only on the figures you gave me, the total is ${currency} ${calculation.result}. These are your own historical figures — the latest prices and engineering fees still need to be confirmed by our team.`;
-  if (language === "zh-CN") return `只按你提供的数字计算，合共 ${currency} ${calculation.result}。这些是你提供的历史数字，最新价格与工程费用仍需同事确认。`;
-  return `只按你提供嘅數字計，合共 ${currency} ${calculation.result}。呢啲係你之前提供嘅歷史數字，最新價格同工程費用仍然要同事確認。`;
+  const rendered = renderCalculationExpression(calculation);
+  if (language === "en") return `Based only on the figures in this calculation: ${rendered} (${currency}). Latest prices and engineering fees still need to be confirmed by our team.`;
+  if (language === "zh-CN") return `只按你这次提供的数字计算：${rendered}（${currency}）。最新价格与工程费用仍需同事确认。`;
+  return `只按你今次提供嘅數字計：${rendered}（${currency}）。最新價格同工程費用仍然要同事確認。`;
 }
 
 function buildProfessionalConfirmationAnswer(language: CommerceLanguage, state: ConversationCommerceState): string {
@@ -702,7 +736,11 @@ export async function runCommerceStateRuntime(
 
   const summaryIntent = detectTransactionSummaryIntent(text);
   const wantsCalculation = detectExplicitCalculationRequest(text);
-  const calculation = wantsCalculation ? extractCommerceCalculationTerms(conversationTexts, state) : { terms: [] as CommerceCalculationTerm[], currency: null };
+  const historicalCalculation = wantsCalculation && calculationExplicitlyUsesHistory(text);
+  const calculationTexts = historicalCalculation ? conversationTexts : [text];
+  const calculation = wantsCalculation
+    ? extractCommerceCalculationTerms(calculationTexts, state, { include_historical_state: historicalCalculation })
+    : { terms: [] as CommerceCalculationTerm[], currency: null };
   const decision = resolveCommerceAnswerAuthority({
     question: text,
     state,
