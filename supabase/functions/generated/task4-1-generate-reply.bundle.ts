@@ -992,12 +992,14 @@ function evaluateFullEscalationRuleset(context, options) {
 var CUSTOMER = /* @__PURE__ */ new Set(["visitor", "customer", "user"]);
 var ASSISTANT = /* @__PURE__ */ new Set(["assistant", "ai"]);
 var TRIVIAL = /^(hi|hello|hey|你好|嗨|哈囉|早安|午安|晚安|ok|okay|好的|好|嗯|謝謝|谢谢|thanks|thank you)[!！。.？?，,\s]*$/i;
-var CORRECTION = /(我講錯|我说错|我說錯|我要更正|我想更正|更正一下|其實係|其实是|改返|改成|actually[,\s]+i meant|\bi meant\b|correction\s*[:：]|不是.+(?:而)?是|唔係.+係|not .+ but .+)/i;
-var SIMPLIFY = /(?:簡單|简单)(?:一點|一点|啲|些|點|点)?(?:[。.!！?？\s]*$|.*(?:解釋|解释|講|讲|說|说|介紹|介绍))|(?:講|讲|說|说)(?:得|得再)?(?:簡單|简单)(?:一點|一点|啲|些|點|点)?|(?:用|講|讲|說|说)(?:香港客戶|香港客户|一般客戶|一般客户|客戶|客户)?(?:聽得懂|听得懂|明白|易明)?(?:的|嘅)?(?:人話|人话|白話|白话|口語|口语|貼地|贴地)(?:回答|講|讲|說|说)?|(?:講|讲|說|说|回答)(?:得)?(?:自然|口語|口语|貼地|贴地)(?:一點|一点|啲)?|explain(?: it| that)? (?:more )?simply|make it simpler|\bsimpler\b|\bshorter\b|(?:say|explain|answer).*(?:plain|natural|everyday|customer-friendly) (?:language|words|terms)/i;
+var CORRECTION = /(我講錯|我说错|我說錯|我要更正|我想更正|更正一下|其實係|其实是|改返|改成|actually[,\s]+i meant|\bi meant\b|correction\s*[:：]|不是.+(?:而)?是|唔係.+係|(?:唔係|不是).{0,60}(?:我要問|我想問|想問|想问)|not .+ but .+)/i;
+var SIMPLIFY = /(?:簡單|简单)(?:一點|一点|啲|些|點|点)?(?:[。.!！?？\s]*$|.*(?:解釋|解释|講|讲|說|说|介紹|介绍))|(?:講|讲|說|说)(?:得|得再)?(?:簡單|简单)(?:一點|一点|啲|些|點|点)?|(?:用|講|讲|說|说)(?:香港客戶|香港客户|一般客戶|一般客户|客戶|客户)?(?:聽得懂|听得懂|明白|易明)?(?:的|嘅)?(?:人話|人话|白話|白话|口語|口语|貼地|贴地)(?:回答|講|讲|說|说)?|(?:講|讲|說|说|回答)(?:得)?(?:自然|口語|口语|貼地|贴地)(?:一點|一点|啲)?|(?:將|把|幫我|帮我)?(?:上一個|上一个|上一個答案|上一个答案|之前(?:個|个)?答案|前一個答案|前一个答案)?(?:答案|回答)?(?:改短|縮短|缩短)(?:一點|一点|啲|些|點|点)?|(?:改短|縮短|缩短)(?:一點|一点|啲|些|點|点)?(?:上一個|上一个|答案|回答)?|explain(?: it| that)? (?:more )?simply|make it simpler|\bsimpler\b|\bshorter\b|(?:say|explain|answer).*(?:plain|natural|everyday|customer-friendly) (?:language|words|terms)/i;
 var REPHRASE = /(換句話|换句话|另一種講法|另一种说法|改寫|改写|重新講|重新说|rephrase|rewrite|say that another way|word it differently)/i;
 var TRANSLATE = /(?:用|改用)(?:廣東話|广东话|繁體中文|繁体中文|簡體中文|简体中文|英文).*(?:講|讲|回答|答|解釋|解释|說|说|一次)?|\b(?:in|into)\s+(?:english|chinese|cantonese|traditional chinese|simplified chinese)\b|translate(?: that| it)?/i;
 var SUMMARY = /(?:總結|总结|概括|歸納|归纳).*(?:剛才|刚才|以上|之前|我們|我们|內容|内容|三點|三点)?|(?:根據|根据)?(?:已確認|已确认)(?:資料|资料).*(?:列|分成|整理成)?\s*(?:[一二兩两三四五六七八九十]|\d{1,2})\s*(?:點|点|項|项|條|条)|summari[sz]e(?: that| it| this| the above| what we discussed| our conversation)?/i;
 var MEMORY = /(一開始|一开始|第一個問題|第一个问题|最初).*(?:問|問題|问题)|(?:剛才|刚才).*(?:主要)?(?:問|问).*(?:什麼|什么|咩)|(?:主要)(?:問|问).*(?:什麼|什么|咩)|剛才.*(?:建議|建议|叫我|要我)|刚才.*(?:建议|叫我|要我)|之前.*(?:建議|建议|提供)|what\s+(?:did\s+i\s+ask|was\s+(?:my\s+)?first)|what\s+(?:was|is)\s+(?:my\s+)?(?:main|mainly|primary).*(?:question|asking|ask)|what\s+did\s+you\s+(?:recommend|suggest)|what\s+information\s+have\s+i\s+already\s+given|what\s+have\s+i\s+already\s+given|我(?:現在|现在|目前).*(?:哪個|哪个|什麼|什么).*(?:地區|地区).*(?:哪個|哪个|什麼|什么).*(?:項目|项目)|what(?:\x27s| is)?\s+(?:the\s+)?(?:current\s+)?(?:region|jurisdiction).*(?:item|product)|what.*still\s+missing/i;
+var CURRENT_REQUIREMENTS_SUMMARY = /(?:整理|總結|总结|概括|歸納|归纳).{0,18}(?:我)?(?:而家|現在|现在|目前|current|latest).{0,18}(?:最新)?(?:需求|要求|需要|requirements?|needs?)|(?:我)?(?:而家|現在|现在|目前|current|latest).{0,18}(?:最新)?(?:需求|要求|需要|requirements?|needs?).{0,18}(?:整理|總結|总结|概括|歸納|归纳|summary)|(?:current|latest)\s+(?:requirements?|needs?)\s+(?:summary|summarize|summarise)/i;
+var EXPLICIT_FACTUAL_TARGET_CORRECTION = /(?:其實|其实|actually)?.{0,20}(?:Growth|Basic|Pro|plan|方案|型號|型号|model|價錢|价钱|價格|价格|price|費用|费用|收費|收费|limit|上限|功能|feature|保養|保修|送貨|送货|退款|退貨|退货|付款|政策|policy|terms?\b|T&C).{0,20}(?:唔係|不是|并非|並非|not).{0,28}(?:我要問|我想問|想問|想问|ask about).{0,28}(?:Growth|Basic|Pro|plan|方案|型號|型号|model|價錢|价钱|價格|价格|price|費用|费用|收費|收费|limit|上限|功能|feature|保養|保修|送貨|送货|退款|退貨|退货|付款|政策|policy|terms?\b|T&C)|(?:唔係|不是|not).{0,50}(?:我要問|我想問|想問|想问|ask about)/i;
 var RETURN_PRIOR = /(回到|返回|返去|回返|講返|讲回|回香港|回到香港|back to|return to|go back to|back on).{0,50}/i;
 var TOPIC_SWITCH = /^(?:算了|算啦|另外|轉個話題|转个话题|換個話題|换个话题|不談|不谈|forget that|never mind|different topic|another question)/i;
 var FOLLOW = /^(?:咁|那|那麼|那么|所以|另外|仲有|还有|如果|再|又|而|同埋|what about|and what about|then|so|also|in that case|how about)/i;
@@ -1009,7 +1011,9 @@ var CUSTOMER_CONTEXT_UPDATE = /(?:^|[，,。.!！\s])(?:我只知道|我只知|�
 var CUSTOMER_OWNED_STATE_FIELD = /(?:sku|商品(?:數量|数量)?|產品(?:數量|数量)?|产品(?:数量)?|貨品(?:數量|数量)?|件(?:商品|產品|产品)?|staff|員工|员工|人手|同事|市場|市场|主要市場|主要市场|地區|地区|region|market|app(?:需求|需要|要求)?|push(?:需求|需要|要求)?|crm(?:需求|需要|要求)?|會員等級|会员等级)/i;
 var CUSTOMER_OWNED_STATE_CORRECTION = /(?:記住|记住|最新|目前|現在|现在|其實|其实|更正|改返|改成|更新(?:一下)?|actually|correction).{0,45}(?:唔係|不是|并非|並非|而家係|現在係|现在是|改為|改为|最新係|最新是|而係|而是|not .+ but|instead)/i;
 var BARE_LATEST_NUMERIC_CORRECTION = /(?:記住|记住).{0,20}(?:最新)?(?:係|是)?\s*\d+(?:\.\d+)?\s*[，,。.!！\s]*(?:唔係|不是|而唔係|而不是)\s*\d+(?:\.\d+)?/i;
-var FACTUAL_TOPIC_OR_KB_SWITCH = /(?:Growth|Basic|Pro|plan|方案|型號|型号|model|價錢|价钱|價格|价格|price|費用|费用|收費|收费|limit|上限|支援|支持|包括|包含|功能|feature|保養|保修|送貨|送货|退款|退貨|退货|付款|政策|policy|terms?\b|T&C|我要問|我想問|想問|想问|ask about)/i;
+var FACTUAL_TOPIC_OR_KB_SWITCH = /(?:Growth|Basic|Pro|plan|方案|型號|型号|model|價錢|价钱|價格|价格|price|費用|费用|收費|收费|limit|上限|保養|保修|送貨|送货|退款|退貨|退货|付款|政策|policy|terms?\b|T&C|我要問|我想問|想問|想问|ask about)/i;
+var CUSTOMER_OWNED_STATE_DECLARATION_CUE = /(?:^|[，,。.!！\s])(?:我|目前|現在|现在|而家|暫時|暂时|之後|之后|未來|未来|年尾|只做|主要做|再諗|再想|再加|得我|亦|都會|都会|可能|大約|大概|only|currently|right now|for now|later|future|i (?:have|need|want|use|am|currently))/i;
+var CUSTOMER_OWNED_STATE_PREFERENCE_CUE = /(?:有興趣|有兴趣|想要|想用|要用|會用|会用|需要|唔需要|不需要|不用|過時|过時|outdated|interested|need|want|use)/i;
 function recentCustomerStateField(newestFirst, currentLatest) {
   let skippedCurrent = false;
   let customerTurns = 0;
@@ -1035,6 +1039,13 @@ function isCustomerOwnedStateCorrection(text, newestFirst = []) {
   if (CUSTOMER_OWNED_STATE_FIELD.test(latest) && (CORRECTION.test(latest) || CUSTOMER_OWNED_STATE_CORRECTION.test(latest))) return true;
   return BARE_LATEST_NUMERIC_CORRECTION.test(latest) && recentCustomerStateField(newestFirst, latest);
 }
+function isCustomerOwnedStateUpdate(text) {
+  const latest = clean(text);
+  if (!latest || QUESTIONISH.test(latest) || /[?？]/.test(latest)) return false;
+  if (FACTUAL_TOPIC_OR_KB_SWITCH.test(latest)) return false;
+  if (!CUSTOMER_OWNED_STATE_FIELD.test(latest)) return false;
+  return CUSTOMER_OWNED_STATE_DECLARATION_CUE.test(latest) || CUSTOMER_OWNED_STATE_PREFERENCE_CUE.test(latest);
+}
 function isCustomerContextUpdate(text) {
   const latest = clean(text);
   if (!latest || QUESTIONISH.test(latest) || /[?？]/.test(latest)) return false;
@@ -1045,7 +1056,7 @@ function clean(v) {
 }
 function detectSemanticLanguage(text) {
   if (!/[\u4e00-\u9fff]/.test(text)) return "en";
-  return /[转们为这没请台]/.test(text) ? "zh-CN" : "zh-TW";
+  return /[转们为这没请]/.test(text) ? "zh-CN" : "zh-TW";
 }
 function metadataRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
@@ -1100,6 +1111,24 @@ function classifyCanonicalConversationTurn(latestInput, newestFirst, options = {
   if (!latest || TRIVIAL.test(latest)) {
     return base("TRIVIAL", "trivial_or_greeting", { requires_new_kb_retrieval: false, evidence_authority: "NONE" });
   }
+  if (CURRENT_REQUIREMENTS_SUMMARY.test(latest)) {
+    return base("CONVERSATION_MEMORY", "current_customer_requirements_summary", {
+      needs_history: true,
+      requires_new_kb_retrieval: false,
+      may_reuse_prior_grounded_answer: false,
+      evidence_authority: "CONVERSATION_MEMORY",
+      topic_action: "KEEP"
+    });
+  }
+  if (EXPLICIT_FACTUAL_TARGET_CORRECTION.test(latest)) {
+    return base("TOPIC_SWITCH", "explicit_factual_target_correction", {
+      needs_history: true,
+      requires_new_kb_retrieval: true,
+      may_reuse_prior_grounded_answer: false,
+      evidence_authority: "CURRENT_KB_REQUIRED",
+      topic_action: "SWITCH"
+    });
+  }
   if (MEMORY.test(latest)) {
     return base("CONVERSATION_MEMORY", "conversation_memory_request", {
       needs_history: true,
@@ -1125,6 +1154,15 @@ function classifyCanonicalConversationTurn(latestInput, newestFirst, options = {
       may_reuse_prior_grounded_answer: false,
       evidence_authority: "CONVERSATION_MEMORY",
       topic_action: "CORRECT"
+    });
+  }
+  if (isCustomerOwnedStateUpdate(latest)) {
+    return base("CUSTOMER_CONTEXT_UPDATE", "customer_owned_state_update", {
+      needs_history: true,
+      requires_new_kb_retrieval: false,
+      may_reuse_prior_grounded_answer: false,
+      evidence_authority: "CONVERSATION_MEMORY",
+      topic_action: "KEEP"
     });
   }
   if (CORRECTION.test(latest)) {
@@ -2674,7 +2712,7 @@ function validateP1PredictionSignals(input) {
   };
 }
 
-// supabase/functions/_shared/conversation-runtime-state.ts
+// supabase/functions/_shared/conversation-runtime-state-core.ts
 var CUSTOMER2 = /* @__PURE__ */ new Set(["visitor", "customer", "user"]);
 var ASSISTANT2 = /* @__PURE__ */ new Set(["assistant", "ai", "human_agent"]);
 var EXPLICIT_CORRECTION = /(我講錯|我说错|我說錯|我要更正|我想更正|更正一下[：:]?|更正[：:]|其實係|其实是|改返|改成|actually[,\s]+i meant|i meant|correction\s*[:：])/i;
@@ -2877,6 +2915,7 @@ function workflow5SecurityBoundaryResponse(latest, lang2) {
 }
 function workflow5PostSecurityRecoveryResponse(latestInput, lang2) {
   const latest = clean2(latestInput);
+  if (retrievalTargetHint(latest)) return null;
   const normalServiceRecovery = /(?:再(?:講|说|說)|再給|再给|give|show).{0,24}(?:合法|正常|lawful|normal).{0,24}(?:平台功能|平台服务|平台服務|platform feature|service).{0,30}(?:恢復|恢复|recover)|(?:證明|证明|prove).{0,24}(?:服務|服务|service).{0,24}(?:恢復|恢复|recover)/i.test(latest);
   if (normalServiceRecovery) {
     if (lang2 === "en") return "Normal service has resumed. For example, you can ask about CRM tags; I\u2019ll only describe capabilities or limits supported by published information.";
@@ -3203,7 +3242,7 @@ function retrievalTargetHint(text) {
     return "Exact published product record: model identity, price, specifications, noise level, warranty and included/excluded product facts.";
   }
   if (/(?:送貨|送货|delivery|shipping|九龍|九龙|澳門|澳门|macau|地址).{0,40}(?:範圍|范围|安排|政策|policy|改|修改|change|fee|費|费)?/i.test(t)) {
-    return "Published delivery policy: service area, Macau handling, address changes, delivery conditions and fees.";
+    return "Published delivery policy lookup terms: service area, Kowloon, Macau handling, delivery-address change, pre-dispatch requirements, identity verification, human handling, system confirmation, delivery conditions and fees.";
   }
   if (/(?:退款|退貨|退货|refund|return|刮痕|損壞|损坏|damage|百分比|比例)/i.test(t)) {
     return "Published terms and policy: returns, refunds, damaged goods, evidence requirements, fixed-percentage rules and case-by-case handling.";
@@ -3219,11 +3258,23 @@ function factualFollowupNeedsSubject(text) {
   if (/^(?:直接|就|咁|那|再|同埋|另外|and|what about|then|so)/i.test(t) && t.length <= 120) return true;
   return t.length <= 80 && /(?:幾多|多少|幾錢|几钱|價錢|价钱|價格|价格|price|monthly|yearly|每月|每年|limit|上限|staff|sku|app|push|crm|會員等級|会员等级|噪音|db|保養|保修|warranty|百分比|比例|included|包括|有冇|有没有|係咪|是否)/i.test(t);
 }
-function recentFactualSubject(previousCustomerTurns) {
+function recentFactualSubjects(previousCustomerTurns, max = 5) {
   const strong = /(?:\b[A-Z]{2,}[A-Z0-9]*[- ]?\d{2,}[A-Z0-9-]*\b|Smoke\s*Test\s*(?:Basic|Growth|Pro)|\bGrowth\b|\bBasic\b|\bPro\b)/i;
-  const found = previousCustomerTurns.find((x) => strong.test(x));
-  if (found) return found.slice(0, 260);
-  return previousCustomerTurns[0]?.slice(0, 260) ?? null;
+  const out = [];
+  for (const turn of previousCustomerTurns) {
+    if (!strong.test(turn)) continue;
+    const value = turn.slice(0, 260);
+    if (!out.includes(value)) out.push(value);
+    if (out.length >= max) break;
+  }
+  if (!out.length && previousCustomerTurns[0]) out.push(previousCustomerTurns[0].slice(0, 260));
+  return out;
+}
+function recentFactualSubject(previousCustomerTurns) {
+  return recentFactualSubjects(previousCustomerTurns, 1)[0] ?? null;
+}
+function pluralFactualReference(text) {
+  return /(?:[兩两二三四五六七八九十幾几]\s*(?:款|部|個|个)|呢幾款|呢几款|這幾款|这几款|these\s+(?:models?|products?)|those\s+(?:models?|products?)|all\s+(?:models?|products?))/i.test(clean2(text));
 }
 function buildCanonicalRetrievalQuery(latestInput, newestFirst) {
   const latest = clean2(latestInput);
@@ -3234,17 +3285,17 @@ function buildCanonicalRetrievalQuery(latestInput, newestFirst) {
   const earlyPrevious = newestFirst.filter((row) => CUSTOMER2.has(String(row.role ?? "").toLowerCase())).map((row) => clean2(row.content)).filter((x) => x && x !== latest && x !== "__THINKING__");
   const earlyPublishedFactQuestion = /[?？]|(?:幾多|多少|幾錢|几钱|價錢|价钱|價格|价格|price|monthly|yearly|每月|每年|limit|上限|included|包括|有冇|有没有|係咪|是否|噪音|db|保養|保修|warranty|百分比|比例)|^(?:直接|再講|再说|tell me)/i.test(latest);
   if (targetHint && earlyPublishedFactQuestion) {
-    const subject = recentFactualSubject(earlyPrevious);
+    const subjects = pluralFactualReference(latest) ? recentFactualSubjects(earlyPrevious) : [recentFactualSubject(earlyPrevious)].filter((x) => Boolean(x));
     const query = [
       `Current request: ${latest}`,
       `Retrieval target: ${targetHint}`,
-      ...subject ? [`Inherited factual subject from customer context: ${subject}`] : []
-    ].join("\n").slice(0, 1600);
+      ...subjects.length ? [`Inherited factual subjects from customer context: ${subjects.join(" / ")}`] : []
+    ].join("\n").slice(0, 1800);
     return {
       query,
-      mode: subject ? "contextual" : "standalone",
+      mode: subjects.length ? "contextual" : "standalone",
       latest,
-      context_turns: subject ? earlyPrevious.slice(0, 5) : [],
+      context_turns: subjects.length ? earlyPrevious.slice(0, 6) : [],
       state
     };
   }
@@ -3311,7 +3362,242 @@ function workflow5ShortTopicHint(text) {
   if (["crm", "\u5BA2\u6236\u7BA1\u7406", "\u5BA2\u6237\u7BA1\u7406"].includes(compact)) return "CRM";
   if (["push", "\u63A8\u9001", "\u63A8\u64AD", "\u901A\u77E5", "\u63A8\u9001\u901A\u77E5"].includes(compact)) return "Push notifications";
   if (["app", "\u624B\u6A5Fapp", "\u624B\u673Aapp", "\u624B\u6A5F\u61C9\u7528", "\u624B\u673A\u5E94\u7528", "\u61C9\u7528\u7A0B\u5F0F", "\u5E94\u7528\u7A0B\u5E8F"].includes(compact)) return "App support";
+  return retrievalTargetHint(text);
+}
+
+// supabase/functions/_shared/conversation-runtime-state.ts
+var CUSTOMER_ROLES2 = /* @__PURE__ */ new Set(["visitor", "customer", "user"]);
+var CURRENT_STATE_SUMMARY_VERB = /(?:總結|总结|整理|列出|概括|歸納|归纳|summari[sz]e|list)/i;
+var CURRENT_STATE_SUMMARY_SCOPE = /(?:(?:根據|根据|按|依照|基於|基于|based\s+on|according\s+to).{0,80}(?:我|my).{0,50}(?:最新|目前|現在|现在|current|latest).{0,50}(?:提供|資料|资料|資訊|信息|details|information)|(?:我|my).{0,40}(?:最新|目前|現在|现在|current|latest).{0,40}(?:提供|資料|资料|資訊|信息|details|information|需求|要求|requirements?))/i;
+function clean3(value, max = 1600) {
+  return typeof value === "string" ? value.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max) : "";
+}
+function isCurrentCustomerStateSummary(text) {
+  const latest = clean3(text);
+  const explicitLatestRequirements = /(?:最新|目前|現在|现在|而家|current|latest).{0,24}(?:需求|要求|需要|requirements?|needs?)/i.test(latest);
+  return Boolean(
+    latest && CURRENT_STATE_SUMMARY_VERB.test(latest) && (CURRENT_STATE_SUMMARY_SCOPE.test(latest) || explicitLatestRequirements)
+  );
+}
+function historyWithoutCurrentCustomerTurn(latestInput, newestFirst) {
+  const latest = clean3(latestInput);
+  let removed = false;
+  return newestFirst.filter((row) => {
+    const role = String(row.role ?? "").toLowerCase();
+    const content = clean3(row.content);
+    if (!removed && CUSTOMER_ROLES2.has(role) && content === latest) {
+      removed = true;
+      return false;
+    }
+    return true;
+  });
+}
+function marketLabel2(id, language) {
+  const labels = {
+    hong_kong: { "zh-TW": "\u9999\u6E2F", "zh-CN": "\u9999\u6E2F", en: "Hong Kong" },
+    macau: { "zh-TW": "\u6FB3\u9580", "zh-CN": "\u6FB3\u95E8", en: "Macau" },
+    singapore: { "zh-TW": "\u65B0\u52A0\u5761", "zh-CN": "\u65B0\u52A0\u5761", en: "Singapore" },
+    taiwan: { "zh-TW": "\u53F0\u7063", "zh-CN": "\u53F0\u6E7E", en: "Taiwan" },
+    mainland_china: {
+      "zh-TW": "\u4E2D\u570B\u5927\u9678",
+      "zh-CN": "\u4E2D\u56FD\u5927\u9646",
+      en: "Mainland China"
+    },
+    mars: { "zh-TW": "\u706B\u661F", "zh-CN": "\u706B\u661F", en: "Mars" }
+  };
+  return labels[id]?.[language] ?? id;
+}
+function augmentState6RequirementSnapshot(newestFirst, snapshot) {
+  const customerText = newestFirst.filter((row) => CUSTOMER_ROLES2.has(String(row.role ?? "").toLowerCase())).map((row) => clean3(row.content, 1200)).filter(Boolean).reverse().join(" / ");
+  let staffCount = snapshot.staff_count;
+  if (staffCount === null) {
+    const staff = customerText.match(/([一二兩两三四五六七八九十]|\d{1,3})\s*(?:個|个|位)?\s*(?:staff|員工|员工)/i);
+    if (staff?.[1]) {
+      const map = { \u4E00: 1, \u4E8C: 2, \u5169: 2, \u4E24: 2, \u4E09: 3, \u56DB: 4, \u4E94: 5, \u516D: 6, \u4E03: 7, \u516B: 8, \u4E5D: 9, \u5341: 10 };
+      staffCount = /^\d+$/.test(staff[1]) ? Number(staff[1]) : map[staff[1]] ?? null;
+    }
+  }
+  let currentMarket = snapshot.current_market;
+  const current = customerText.match(/(?:目前|而家|現在|现在|currently|current|main\s+market)[^，。,.!?！？/]{0,30}?(香港|台灣|台湾|澳門|澳门|Hong\s+Kong|Taiwan|Macau)/i);
+  const raw = current?.[1]?.toLowerCase() ?? "";
+  if (/香港|hong\s+kong/.test(raw)) currentMarket = "hong_kong";
+  else if (/台灣|台湾|taiwan/.test(raw)) currentMarket = "taiwan";
+  else if (/澳門|澳门|macau/.test(raw)) currentMarket = "macau";
+  const futureMarkets = new Set(snapshot.future_markets);
+  const future = customerText.match(/(香港|台灣|台湾|澳門|澳门|Hong\s+Kong|Taiwan|Macau)\s*(?:之後|之后|以後|以后|未來|未来|later|future)/i);
+  const futureRaw = future?.[1]?.toLowerCase() ?? "";
+  if (/香港|hong\s+kong/.test(futureRaw)) futureMarkets.add("hong_kong");
+  else if (/台灣|台湾|taiwan/.test(futureRaw)) futureMarkets.add("taiwan");
+  else if (/澳門|澳门|macau/.test(futureRaw)) futureMarkets.add("macau");
+  if (currentMarket) futureMarkets.delete(currentMarket);
+  const desiredFeatures = new Set(snapshot.desired_features);
+  if (/(?:會員功能|会员功能|membership(?:\s+(?:feature|features|function|functions))?)/i.test(customerText) && /(?:想要|想用|要用|會用|会用|需要|need|want|use)/i.test(customerText)) {
+    desiredFeatures.add("\u6703\u54E1\u529F\u80FD");
+  }
+  return {
+    ...snapshot,
+    staff_count: staffCount,
+    current_market: currentMarket,
+    future_markets: [...futureMarkets],
+    desired_features: [...desiredFeatures]
+  };
+}
+function currentStateSummaryReply(latestInput, newestFirst) {
+  if (!isCurrentCustomerStateSummary(latestInput)) return null;
+  const priorRows = historyWithoutCurrentCustomerTurn(latestInput, newestFirst);
+  const state = projectConversationRuntimeState(priorRows);
+  const snapshot = augmentState6RequirementSnapshot(priorRows, state.current_requirements);
+  const language = resolveWorkflow5ConversationLanguage(latestInput, priorRows);
+  const lines = [];
+  if (language === "en") {
+    if (snapshot.product_count !== null) {
+      lines.push(`Product count: about ${snapshot.product_count}`);
+    }
+    if (snapshot.staff_count !== null) {
+      lines.push(`Management staff: ${snapshot.staff_count}`);
+    }
+    if (snapshot.current_market) {
+      lines.push(`Current main market: ${marketLabel2(snapshot.current_market, language)}`);
+    }
+    if (snapshot.future_markets.length) {
+      lines.push(
+        `Possible future markets: ${snapshot.future_markets.map((x) => marketLabel2(x, language)).join(", ")} (not the current main market)`
+      );
+    }
+    if (snapshot.app_interest === true) lines.push("App: interested / include in plan");
+    if (snapshot.app_interest === false) lines.push("App: not currently needed");
+    if (snapshot.desired_features.length) {
+      lines.push(`Desired features: ${snapshot.desired_features.join(", ")}`);
+    }
+    return lines.length ? `Your latest confirmed requirements are:
+${lines.map((line, index) => `${index + 1}. ${line}`).join("\n")}` : null;
+  }
+  if (snapshot.product_count !== null) {
+    lines.push(`\u5546\u54C1\u6578\u91CF\uFF1A\u7D04 ${snapshot.product_count} \u4EF6\uFF08${snapshot.product_count} SKU\uFF09`);
+  }
+  if (snapshot.staff_count !== null) {
+    lines.push(`\u7BA1\u7406\u4EBA\u624B\uFF1A${snapshot.staff_count} \u4F4D staff`);
+  }
+  if (snapshot.current_market) {
+    lines.push(`\u76EE\u524D\u4E3B\u8981\u5E02\u5834\uFF1A${marketLabel2(snapshot.current_market, language)}`);
+  }
+  if (snapshot.future_markets.length) {
+    lines.push(
+      `\u672A\u4F86\u53EF\u80FD\u5E02\u5834\uFF1A${snapshot.future_markets.map((x) => marketLabel2(x, language)).join("\u3001")}\uFF08\u4E0D\u662F\u76EE\u524D\u4E3B\u8981\u5E02\u5834\uFF09`
+    );
+  }
+  if (snapshot.app_interest === true) lines.push("App\uFF1A\u6709\u8208\u8DA3\uFF0F\u9700\u8981\u7D0D\u5165\u65B9\u6848");
+  if (snapshot.app_interest === false) lines.push("App\uFF1A\u76EE\u524D\u4E0D\u9700\u8981");
+  if (snapshot.desired_features.length) {
+    lines.push(`\u9700\u8981\u529F\u80FD\uFF1A${snapshot.desired_features.join("\u3001")}`);
+  }
+  const heading = language === "zh-CN" ? "\u4F60\u76EE\u524D\u6700\u65B0\u7684\u9700\u6C42\u662F\uFF1A" : "\u4F60\u76EE\u524D\u6700\u65B0\u7684\u9700\u6C42\u662F\uFF1A";
+  return lines.length ? `${heading}
+${lines.map((line, index) => `${index + 1}. ${line}`).join("\n")}` : null;
+}
+function resolveConversationMemoryResponse2(latestInput, newestFirst) {
+  const currentState = currentStateSummaryReply(latestInput, newestFirst);
+  if (currentState) return currentState;
+  return resolveConversationMemoryResponse(latestInput, newestFirst);
+}
+function normalizePlan(raw) {
+  const value = clean3(raw, 40).toLowerCase();
+  if (value === "basic") return "Basic";
+  if (value === "growth") return "Growth";
+  if (value === "pro") return "Pro";
   return null;
+}
+function correctedPlanSubject(text) {
+  const latest = clean3(text);
+  if (!latest) return null;
+  const correctionCue = /(?:其實|其实|唔係|不是|並非|并非|改問|改问|更正|instead|not\b|i\s+meant)/i;
+  if (!correctionCue.test(latest)) return null;
+  const explicitTarget = latest.match(
+    /(?:我要問|我要问|我想問|我想问|想問|想问|問嘅係|问的是|改問|改问|ask\s+about|i\s+(?:want|meant)\s+(?:to\s+)?(?:ask\s+about\s+)?)\s*(?:the\s+)?(Basic|Growth|Pro)(?:\s+(?:plan|方案))?/i
+  );
+  const explicitPlan = normalizePlan(explicitTarget?.[1]);
+  if (explicitPlan) return explicitPlan;
+  const contrastTarget = latest.match(
+    /(?:而係|而是|instead(?:\s+of)?|but)\s*(?:the\s+)?(Basic|Growth|Pro)(?:\s+(?:plan|方案))?/i
+  );
+  return normalizePlan(contrastTarget?.[1]);
+}
+function correctedPlanFactDimension(newestFirst) {
+  const previousCustomerTurns = newestFirst.filter((row) => CUSTOMER_ROLES2.has(String(row.role ?? "").toLowerCase())).map((row) => clean3(row.content, 500)).filter(Boolean);
+  const prior = previousCustomerTurns.find(
+    (text) => /(?:sku|staff|員工|员工|人手|app|push|crm|會員|会员|ai\s*seo|價錢|价钱|價格|价格|price|費用|费用|limit|上限)/i.test(text)
+  );
+  if (!prior) return null;
+  if (/(?:sku|商品.*上限|產品.*上限|产品.*上限)/i.test(prior)) return "SKU limit";
+  if (/(?:staff|員工|员工|人手)/i.test(prior)) return "staff/admin-seat limit";
+  if (/(?:價錢|价钱|價格|价格|price|費用|费用)/i.test(prior)) return "price and billing cadence";
+  if (/(?:app|push|crm|會員|会员|ai\s*seo)/i.test(prior)) return "included features and limits";
+  return null;
+}
+function explicitPlanFactQuery(text) {
+  const latest = clean3(text);
+  if (!latest) return null;
+  const planMatch = latest.match(/\b(Basic|Growth|Pro)\b/i);
+  const plan = normalizePlan(planMatch?.[1]);
+  if (!plan) return null;
+  let fact = null;
+  if (/(?:sku|商品.*(?:上限|limit)|產品.*(?:上限|limit)|产品.*(?:上限|limit))/i.test(latest)) fact = "SKU limit";
+  else if (/(?:staff|員工|员工|人手|admin(?:[- ]?seat)?)/i.test(latest)) fact = "staff/admin-seat limit";
+  else if (/(?:價錢|价钱|價格|价格|price|費用|费用|monthly|yearly|每月|每年)/i.test(latest)) fact = "price and billing cadence";
+  else if (/(?:app|push|crm|會員|会员|ai\s*seo|feature|功能|included|包括|包含)/i.test(latest)) fact = "included features and limits";
+  if (!fact) return null;
+  return { plan, fact };
+}
+function buildCanonicalRetrievalQuery2(latestInput, newestFirst) {
+  const correctedPlan = correctedPlanSubject(latestInput);
+  const explicitPlanFact = explicitPlanFactQuery(latestInput);
+  if (!correctedPlan && explicitPlanFact) {
+    const latest2 = clean3(latestInput);
+    const state2 = projectConversationRuntimeState(newestFirst);
+    const currentRequirements2 = augmentState6RequirementSnapshot(
+      newestFirst,
+      state2.current_requirements
+    );
+    return {
+      query: `${explicitPlanFact.plan} ${explicitPlanFact.fact}`,
+      mode: "standalone",
+      latest: latest2,
+      context_turns: [],
+      state: {
+        ...state2,
+        current_topic: explicitPlanFact.plan,
+        jurisdiction: currentRequirements2.current_market ?? state2.jurisdiction,
+        current_requirements: currentRequirements2
+      }
+    };
+  }
+  if (!correctedPlan) {
+    return buildCanonicalRetrievalQuery(latestInput, newestFirst);
+  }
+  const latest = clean3(latestInput);
+  const state = projectConversationRuntimeState(newestFirst);
+  const factDimension = correctedPlanFactDimension(newestFirst);
+  const currentRequirements = augmentState6RequirementSnapshot(
+    newestFirst,
+    state.current_requirements
+  );
+  return {
+    query: [
+      `Current factual target: ${correctedPlan}`,
+      ...factDimension ? [`Requested fact: ${factDimension}`] : [],
+      `Correction boundary: answer about ${correctedPlan} only; prior plan references are superseded for this turn and must not appear in retrieval context or evidence.`,
+      `Retrieval target: published ${correctedPlan} plan record: exact price, billing cadence, SKU/staff limits, App, Push, CRM, member tiers and AI SEO inclusions.`
+    ].join("\n").slice(0, 1600),
+    mode: "standalone",
+    latest,
+    context_turns: [],
+    state: {
+      ...state,
+      current_topic: correctedPlan,
+      jurisdiction: currentRequirements.current_market ?? state.jurisdiction,
+      current_requirements: currentRequirements
+    }
+  };
 }
 
 // supabase/functions/_shared/canonical-grounding.ts
@@ -3375,6 +3661,22 @@ function assessApplicability(document, requestText) {
     document_jurisdictions: documentJurisdictions
   };
 }
+var STRONG_LEXICAL_SCORE_FLOOR = 0.05;
+function strongLexicalEvidenceMatch(requestText, document) {
+  const request = requestText.normalize("NFKC").toLowerCase();
+  const text = candidateText(document).normalize("NFKC").toLowerCase();
+  const namedPlan = ["growth", "basic", "pro"].find(
+    (plan) => new RegExp(`\\b${plan}\\b`, "i").test(request) && new RegExp(`\\b${plan}\\b`, "i").test(text)
+  );
+  const requestHasPlanFact = /(?:sku|staff|admin|seat|app|push|crm|會員|会员|ai\s*seo|price|billing|monthly|yearly|limit|上限|費用|费用|價錢|价钱|價格|价格)/i.test(request);
+  const textHasPlanFact = /(?:sku|staff|admin|seat|app|push|crm|會員|会员|ai\s*seo|price|billing|monthly|yearly|limit|上限|費用|费用|價錢|价钱|價格|价格)/i.test(text);
+  if (namedPlan && requestHasPlanFact && textHasPlanFact) return true;
+  const reqModels = modelTokens(requestText);
+  if (reqModels.length > 0 && reqModels.some((model) => text.includes(model.toLowerCase()))) {
+    return /(?:price|spec|warranty|保養|保修|噪音|db|delivery|shipping|送貨|送货)/i.test(request);
+  }
+  return false;
+}
 function lexicalRelevance(requestText, document) {
   const request = requestText.normalize("NFKC").toLowerCase();
   const text = candidateText(document).normalize("NFKC").toLowerCase();
@@ -3429,14 +3731,16 @@ function selectCanonicalGrounding(documents, options = {}) {
     if (document.chunks.some((c) => c.document_id !== document.document_id)) {
       return { ok: false, error: "KB_DOCUMENT_EVIDENCE_MISMATCH" };
     }
+    const lexicalScore = lexicalRelevance(requestText, document);
+    const effectiveMinScore = strongLexicalEvidenceMatch(requestText, document) ? Math.min(minScore, STRONG_LEXICAL_SCORE_FLOOR) : minScore;
     const chunks = document.chunks.filter(
-      (c) => c.content.trim() && Number.isFinite(c.score) && c.score >= minScore && (!requirePublished || c.status === "published") && (!policyOnly || c.source_type.toLowerCase().includes("policy"))
+      (c) => c.content.trim() && Number.isFinite(c.score) && c.score >= effectiveMinScore && (!requirePublished || c.status === "published") && (!policyOnly || c.source_type.toLowerCase().includes("policy"))
     );
     const fullContentIds = new Set(
       chunks.filter((c) => c.chunk_type === "full_content").map((c) => c.chunk_id ?? c.content)
     );
     const evidence = document.llm_context.full_content_evidence.filter(
-      (e) => e.content.trim() && Number.isFinite(e.score) && e.score >= minScore && (!policyOnly || e.source_type.toLowerCase().includes("policy")) && fullContentIds.has(e.chunk_id ?? e.content)
+      (e) => e.content.trim() && Number.isFinite(e.score) && e.score >= effectiveMinScore && (!policyOnly || e.source_type.toLowerCase().includes("policy")) && fullContentIds.has(e.chunk_id ?? e.content)
     );
     if (requirePublished && evidence.length > 0 && chunks.every((c) => c.status !== "published")) {
       return { ok: false, error: "KB_EVIDENCE_NOT_PUBLISHED" };
@@ -3450,7 +3754,7 @@ function selectCanonicalGrounding(documents, options = {}) {
       evidence,
       applicability,
       evidenceScore: Math.max(...evidence.map((e) => e.score), 0),
-      lexicalScore: lexicalRelevance(requestText, document)
+      lexicalScore
     });
   }
   eligible.sort(
@@ -3516,7 +3820,7 @@ function buildCitationMetadata(chunks, selectedDocumentId) {
   };
 }
 
-// supabase/functions/_shared/prior-grounded-transform.ts
+// supabase/functions/_shared/prior-grounded-transform-core.ts
 var TRANSFORMS = /* @__PURE__ */ new Set([
   "SIMPLIFY",
   "REPHRASE",
@@ -3544,10 +3848,11 @@ var CHINESE_COUNT = {
   \u5341: 10
 };
 var BROAD_SUMMARY_SCOPE = /(?:已確認|已确认)(?:資料|资料)|(?:剛才|刚才|以上|之前|我們|我们).{0,24}(?:內容|内容|資料|资料|討論|讨论)|\b(?:the above|what we discussed|our conversation|confirmed information|confirmed facts)\b/i;
+var CURRENT_REQUIREMENTS_SUMMARY_SCOPE = /(?:(?:按|根據|根据|基於|基于|依照|based\s+on|according\s+to).{0,30}(?:最新|目前|現在|现在|current|latest).{0,30}(?:條件|条件|需求|要求|requirements?)|(?:總結|总结|整理|列出|概括|歸納|归纳|summari[sz]e|list).{0,30}(?:我|客戶|客户|customer)?\s*.{0,12}(?:最新|目前|現在|现在|current|latest).{0,20}(?:條件|条件|需求|要求|requirements?)|(?:最新|目前|現在|现在|current|latest).{0,20}(?:條件|条件|需求|要求|requirements?).{0,30}(?:總結|总结|整理|列出|概括|歸納|归纳|summari[sz]e|list))/i;
 function record(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
-function clean3(value, max = 4e3) {
+function clean4(value, max = 4e3) {
   return typeof value === "string" ? value.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max) : "";
 }
 function normalizedChunkIds(value) {
@@ -3571,13 +3876,13 @@ function selectBroadSummaryAnchor(latest, newestFirst, anchor, requestedSummaryC
   for (const row of newestFirst) {
     const role = String(row.role ?? "").toLowerCase();
     if (role !== "assistant" && role !== "ai") continue;
-    const content = clean3(row.content);
+    const content = clean4(row.content);
     if (!content || content === "__THINKING__") continue;
     const meta2 = record(row.metadata);
     const lineage = record(meta2?.citation_lineage);
-    const selected = clean3(lineage?.selected_document_id, 200);
+    const selected = clean4(lineage?.selected_document_id, 200);
     const ids = normalizedChunkIds(lineage?.evidence_chunk_ids);
-    const sourceMessageId = clean3(meta2?.source_message_id, 200);
+    const sourceMessageId = clean4(meta2?.source_message_id, 200);
     if (!sourceMessageId || !sameLineage(anchor.document_id, anchorChunks, selected, ids)) continue;
     if (supportedPointCount(content) < minimumPoints) continue;
     return {
@@ -3618,6 +3923,9 @@ function fixedCountContract(context) {
     "- For fixed-count summaries, prefer verbatim or near-verbatim clauses from the Prior Grounded Answer. Do not add generic advice, caveats, recommendations, or meta statements as extra points."
   ];
 }
+function requestsCurrentCustomerRequirementsSummary(latest) {
+  return CURRENT_REQUIREMENTS_SUMMARY_SCOPE.test(clean4(latest, 1600));
+}
 function requestsNewFactualFacet(latest, priorAnswer) {
   const facets = [
     [/(價錢|价格|price|月費|月费|年費|年费|monthly|yearly|年繳|年缴|月繳|月缴)/i, /(HKD|價錢|价格|price|月費|月费|年費|年费|monthly|yearly|年繳|年缴|月繳|月缴)/i],
@@ -3638,6 +3946,7 @@ function requestsConversationSecuritySummary(latest, priorAnswer) {
 function resolvePriorGroundedTransform(latest, newestFirst) {
   const semantic = classifyCanonicalConversationTurn(latest, newestFirst);
   if (semantic.evidence_authority !== "PRIOR_GROUNDED_ANSWER" || !semantic.prior_grounded_answer || !TRANSFORMS.has(semantic.operation)) return null;
+  if (requestsCurrentCustomerRequirementsSummary(latest)) return null;
   const operation = semantic.operation;
   if (requestsNewFactualFacet(latest, semantic.prior_grounded_answer.content)) return null;
   if (requestsConversationSecuritySummary(latest, semantic.prior_grounded_answer.content)) return null;
@@ -3649,24 +3958,24 @@ function resolvePriorGroundedTransform(latest, newestFirst) {
   if (!anchor.document_id || sourceChunks.length === 0) return null;
   for (const row of newestFirst) {
     const role = String(row.role ?? "").toLowerCase();
-    const content = clean3(row.content);
-    if (role !== "assistant" && role !== "ai" || content !== clean3(anchor.content)) continue;
+    const content = clean4(row.content);
+    if (role !== "assistant" && role !== "ai" || content !== clean4(anchor.content)) continue;
     const meta2 = record(row.metadata);
     const lineage = record(meta2?.citation_lineage);
-    const selected = clean3(lineage?.selected_document_id, 200);
+    const selected = clean4(lineage?.selected_document_id, 200);
     const lineageIds = normalizedChunkIds(lineage?.evidence_chunk_ids);
-    const sourceMessageId = clean3(meta2?.source_message_id, 200);
+    const sourceMessageId = clean4(meta2?.source_message_id, 200);
     if (selected !== anchor.document_id || sourceMessageId !== anchor.source_message_id || lineageIds.length !== sourceChunks.length || lineageIds.some((id) => !sourceChunks.includes(id))) return null;
     if (!Array.isArray(meta2?.citations) || meta2.citations.length === 0) return null;
     const citations = [];
     for (const item of meta2.citations.slice(0, 3)) {
       const c = record(item);
       if (!c) return null;
-      const documentId = clean3(c.document_id, 200);
-      const chunkId = clean3(c.chunk_id, 200);
-      const chunkType = clean3(c.chunk_type, 40);
-      const label = clean3(c.label, 300) || "Knowledge Base source";
-      const sourceType = clean3(c.source_type, 80) || "unknown";
+      const documentId = clean4(c.document_id, 200);
+      const chunkId = clean4(c.chunk_id, 200);
+      const chunkType = clean4(c.chunk_type, 40);
+      const label = clean4(c.label, 300) || "Knowledge Base source";
+      const sourceType = clean4(c.source_type, 80) || "unknown";
       const relevance = c.relevance === "high" ? "high" : c.relevance === "medium" ? "medium" : null;
       if (documentId !== selected || chunkType !== "full_content" || !relevance || chunkId && !lineageIds.includes(chunkId)) return null;
       citations.push({
@@ -3770,6 +4079,24 @@ function buildInheritedTransformCitationMetadata(context) {
   };
 }
 
+// supabase/functions/_shared/prior-grounded-transform.ts
+var CURRENT_STATE_SUMMARY_VERB2 = /(?:總結|总结|整理|列出|概括|歸納|归纳|summari[sz]e|list)/i;
+var CURRENT_STATE_SUMMARY_SCOPE2 = /(?:(?:根據|根据|按|依照|基於|基于|based\s+on|according\s+to).{0,80}(?:我|my).{0,50}(?:最新|目前|現時|現在|现在|而家|依家|current|latest).{0,50}(?:提供|資料|资料|資訊|信息|details|information)|(?:我|my).{0,40}(?:最新|目前|現時|現在|现在|而家|依家|current|latest).{0,40}(?:提供|資料|资料|資訊|信息|details|information|需求|要求|requirements?))/i;
+var CURRENT_STATE_FIELDS = /(?:商品|產品|产品|sku|staff|員工|员工|人手|市場|市场|market|app|push|crm|會員等級|会员等级|功能|features?)/i;
+var EXPLICIT_CURRENT_REQUIREMENTS_SUMMARY = /(?:總結|总结|整理|列出|概括|歸納|归纳|summari[sz]e|list).{0,30}(?:我|my)?\s*.{0,12}(?:最新|目前|現時|現在|现在|而家|依家|current|latest).{0,20}(?:條件|条件|需求|要求|requirements?)/i;
+function isCurrentCustomerStateSummary2(text) {
+  const latest = typeof text === "string" ? text.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, 1600) : "";
+  if (!latest || !CURRENT_STATE_SUMMARY_VERB2.test(latest)) return false;
+  if (EXPLICIT_CURRENT_REQUIREMENTS_SUMMARY.test(latest)) return true;
+  return Boolean(
+    CURRENT_STATE_SUMMARY_SCOPE2.test(latest) && CURRENT_STATE_FIELDS.test(latest)
+  );
+}
+function resolvePriorGroundedTransform2(latest, newestFirst) {
+  if (isCurrentCustomerStateSummary2(latest)) return null;
+  return resolvePriorGroundedTransform(latest, newestFirst);
+}
+
 // supabase/functions/_shared/e2-direct-threat.ts
 function isDirectViolentThreat(text) {
   const normalized = String(text ?? "").trim().replace(/\s+/g, " ");
@@ -3805,17 +4132,17 @@ var MODEL_VALUE = /(?:型號|型号|model(?: number)?)[\s:：#-]*([A-Za-z0-9][A-
 var ORDER_VALUE = /(?:訂單(?:編號|號碼|号码)|订单(?:编号|号码)|order(?: number| no\.?| id)|order\s*#)[\s:：#-]*([A-Za-z0-9][A-Za-z0-9._\/-]{2,80})/i;
 var NO_MODEL = /(?:沒有|没有|冇|不知道|唔知|未知|no|don['’]?t have|do not have).{0,10}(?:型號|型号|model)/i;
 var NO_ORDER = /(?:沒有|没有|冇|不知道|唔知|未知|no|don['’]?t have|do not have).{0,12}(?:訂單(?:編號|號碼|号码)?|订单(?:编号|号码)?|order(?: number| no\.?| id)?)/i;
-function clean4(v, max = 500) {
+function clean5(v, max = 500) {
   return typeof v === "string" ? v.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max) : "";
 }
 function meta(v) {
   return v && typeof v === "object" && !Array.isArray(v) ? v : null;
 }
 function buildWarmHandoffPackage(rows, reason = "human_handoff") {
-  const usable = rows.filter((r) => clean4(r.content) && clean4(r.content) !== "__THINKING__");
+  const usable = rows.filter((r) => clean5(r.content) && clean5(r.content) !== "__THINKING__");
   const visitors = usable.filter((r) => ["visitor", "customer", "user"].includes(String(r.role || "").toLowerCase()));
-  const transcript = visitors.map((r) => clean4(r.content)).join(" ");
-  const last = clean4(visitors.at(-1)?.content);
+  const transcript = visitors.map((r) => clean5(r.content)).join(" ");
+  const last = clean5(visitors.at(-1)?.content);
   const known = [];
   const region = transcript.match(REGION)?.[0];
   if (region) known.push({ label: "Region", value: region });
@@ -3833,8 +4160,8 @@ function buildWarmHandoffPackage(rows, reason = "human_handoff") {
   if (ORDER_SUPPORT.test(transcript) && !order && !unavailable.includes("order_reference")) missing.push("order_reference");
   const collectionAttempted = usable.some((r) => meta(r.metadata)?.response_route === "warm_handoff_data_collection");
   const assistants = usable.filter((r) => String(r.role || "").toLowerCase() === "assistant");
-  const actions = assistants.filter((r) => meta(r.metadata)?.response_route !== "warm_handoff_data_collection").slice(-3).map((r) => clean4(r.content)).filter(Boolean);
-  const goal = last || clean4(visitors.at(-2)?.content) || "Customer requested human support";
+  const actions = assistants.filter((r) => meta(r.metadata)?.response_route !== "warm_handoff_data_collection").slice(-3).map((r) => clean5(r.content)).filter(Boolean);
+  const goal = last || clean5(visitors.at(-2)?.content) || "Customer requested human support";
   return {
     reason,
     customer_goal: goal,
@@ -3843,7 +4170,7 @@ function buildWarmHandoffPackage(rows, reason = "human_handoff") {
     missing_facts: missing,
     actions_already_tried: actions,
     last_customer_request: last,
-    conversation_summary: visitors.slice(-5).map((r) => clean4(r.content)).join(" / ").slice(0, 1500),
+    conversation_summary: visitors.slice(-5).map((r) => clean5(r.content)).join(" / ").slice(0, 1500),
     collection_already_attempted: collectionAttempted,
     ready_for_handoff: missing.length === 0 || collectionAttempted
   };
@@ -3868,7 +4195,7 @@ var ANGER = /(嬲|生氣|生气|憤怒|愤怒|火大|離譜|离谱|垃圾|廢話
 var REPETITION_FRUSTRATION = /(又問|再問|問過|问过|講過|说过|重複|重复|already told|asked already|again\?|stop asking|same question)/i;
 var REFUSED = /(不想再提供|唔想再答|不要再問|不要再问|不會再提供|不会再提供|不提供|拒絕提供|拒绝提供|won't provide|will not provide|don't ask|do not ask|not giving)/i;
 var CLARIFICATION_ROUTES = /* @__PURE__ */ new Set(["warm_handoff_data_collection", "kb_no_match_clarification"]);
-function clean5(v) {
+function clean6(v) {
   return typeof v === "string" ? v.normalize("NFKC").trim() : "";
 }
 function obj(v) {
@@ -3877,10 +4204,10 @@ function obj(v) {
 function deriveHandoffDecisionInput(rows, latestMessage, requiredMissing, opts = {}) {
   const visitors = rows.filter((r) => ["visitor", "customer", "user"].includes(String(r.role ?? "").toLowerCase()));
   const humanCount = visitors.filter((r) => {
-    const text = clean5(r.content);
+    const text = clean6(r.content);
     return HUMAN_REQUEST.test(text) && !HUMAN_INFO_QUESTION.test(text);
   }).length;
-  const transcript = visitors.map((r) => clean5(r.content)).join(" ");
+  const transcript = visitors.map((r) => clean6(r.content)).join(" ");
   const priorClarifications = rows.filter((r) => {
     const m = obj(r.metadata);
     return !!m && (CLARIFICATION_ROUTES.has(String(m.response_route ?? "")) || m.escalation_action === "clarification");
@@ -4125,6 +4452,2261 @@ function buildEmotionReplyStrategyContext(signals) {
     lines.push("- Fresh signals also show recovery from prior negativity; avoid carrying stale negative tone forward.");
   }
   return lines.join("\n");
+}
+
+// supabase/functions/_shared/commerce-state-contract.ts
+var COMMERCE_STATE_VERSION = "commerce-state-1.0.0";
+function createEmptyConversationCommerceState() {
+  return {
+    version: COMMERCE_STATE_VERSION,
+    language: null,
+    current_intent: null,
+    current_topic: null,
+    current_industry: null,
+    latest_corrections: [],
+    unresolved_items: [],
+    customer_constraints: {},
+    entities: [],
+    quotes: [],
+    delivery: { confirmed: false },
+    installation: { items: [], site_conditions: {}, pending_checks: [] },
+    conversion: {
+      funnel_stage: "discovery",
+      quotation_status: "none",
+      order_status: "none",
+      payment_status: "none",
+      confirmed_entity_ids: [],
+      tentative_entity_ids: [],
+      cancelled_entity_ids: [],
+      next_best_action: null
+    },
+    metadata: {}
+  };
+}
+function isRecord(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function isConversationCommerceState(value) {
+  if (!isRecord(value) || value.version !== COMMERCE_STATE_VERSION) return false;
+  if (!Array.isArray(value.latest_corrections)) return false;
+  if (!Array.isArray(value.unresolved_items)) return false;
+  if (!isRecord(value.customer_constraints)) return false;
+  if (!Array.isArray(value.entities) || !Array.isArray(value.quotes)) return false;
+  if (!isRecord(value.delivery) || !isRecord(value.installation) || !isRecord(value.conversion)) return false;
+  if (!isRecord(value.metadata)) return false;
+  return true;
+}
+
+// supabase/functions/_shared/commerce-state-reducer.ts
+var MAX_CORRECTIONS = 50;
+var MAX_UNRESOLVED = 100;
+function clone(value) {
+  return structuredClone(value);
+}
+function clean7(value, max = 1200) {
+  return typeof value === "string" ? value.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max) : "";
+}
+function uniq(values) {
+  return [...new Set(values.map((x) => clean7(x, 300)).filter(Boolean))];
+}
+function provenance(source_message_id, occurred_at) {
+  return {
+    source_type: "customer",
+    source_message_id,
+    recorded_at: occurred_at ?? null
+  };
+}
+function findEntityIndex(state, entityId2) {
+  return state.entities.findIndex((x) => x.entity_id === entityId2);
+}
+function reconcileConversionEntityLists(state) {
+  const confirmed = [];
+  const tentative = [];
+  const cancelled = [];
+  for (const entity of state.entities) {
+    if (entity.status === "confirmed") confirmed.push(entity.entity_id);
+    else if (entity.status === "tentative") tentative.push(entity.entity_id);
+    else if (entity.status === "cancelled") cancelled.push(entity.entity_id);
+  }
+  state.conversion.confirmed_entity_ids = uniq(confirmed);
+  state.conversion.tentative_entity_ids = uniq(tentative);
+  state.conversion.cancelled_entity_ids = uniq(cancelled);
+}
+function assertFiniteNonNegative(value, label) {
+  if (!Number.isFinite(value) || value < 0) throw new Error(`invalid_${label}`);
+}
+function assertStateShape(state) {
+  if (state.version !== COMMERCE_STATE_VERSION) throw new Error("commerce_state_version_mismatch");
+  const ids = /* @__PURE__ */ new Set();
+  for (const entity of state.entities) {
+    if (!entity.entity_id || ids.has(entity.entity_id)) throw new Error("duplicate_or_empty_entity_id");
+    ids.add(entity.entity_id);
+    assertFiniteNonNegative(entity.quantity, "entity_quantity");
+  }
+  const quoteIds = /* @__PURE__ */ new Set();
+  for (const quote of state.quotes) {
+    if (!quote.quote_id || quoteIds.has(quote.quote_id)) throw new Error("duplicate_or_empty_quote_id");
+    quoteIds.add(quote.quote_id);
+    assertFiniteNonNegative(quote.amount, "quote_amount");
+  }
+}
+function reduceCommerceState(previous, events) {
+  const next = clone(previous ?? createEmptyConversationCommerceState());
+  assertStateShape(next);
+  for (const event of events) {
+    switch (event.type) {
+      case "SET_CONTEXT": {
+        if (event.language !== void 0) next.language = event.language;
+        if (event.intent !== void 0) next.current_intent = event.intent;
+        if (event.topic !== void 0) next.current_topic = event.topic;
+        if (event.industry !== void 0) next.current_industry = event.industry;
+        break;
+      }
+      case "ENSURE_ENTITY": {
+        assertFiniteNonNegative(event.entity.quantity, "entity_quantity");
+        if (findEntityIndex(next, event.entity.entity_id) < 0) next.entities.push(clone(event.entity));
+        break;
+      }
+      case "ADD_ENTITY": {
+        assertFiniteNonNegative(event.entity.quantity, "entity_quantity");
+        if (findEntityIndex(next, event.entity.entity_id) >= 0) throw new Error("commerce_entity_already_exists");
+        next.entities.push(clone(event.entity));
+        break;
+      }
+      case "UPDATE_ENTITY": {
+        const idx = findEntityIndex(next, event.entity_id);
+        if (idx < 0) throw new Error("commerce_entity_not_found");
+        const old = next.entities[idx];
+        const patch = clone(event.patch);
+        if (patch.quantity !== void 0) assertFiniteNonNegative(patch.quantity, "entity_quantity");
+        next.entities[idx] = {
+          ...old,
+          ...patch,
+          entity_id: old.entity_id,
+          attributes: patch.attributes ? { ...old.attributes, ...patch.attributes } : old.attributes,
+          constraints: patch.constraints ? { ...old.constraints, ...patch.constraints } : old.constraints,
+          provenance: event.provenance ?? patch.provenance ?? old.provenance
+        };
+        break;
+      }
+      case "SET_ENTITY_STATUS": {
+        const idx = findEntityIndex(next, event.entity_id);
+        if (idx < 0) throw new Error("commerce_entity_not_found");
+        next.entities[idx] = { ...next.entities[idx], status: event.status, provenance: clone(event.provenance) };
+        break;
+      }
+      case "SET_ENTITY_QUANTITY": {
+        assertFiniteNonNegative(event.quantity, "entity_quantity");
+        const idx = findEntityIndex(next, event.entity_id);
+        if (idx < 0) throw new Error("commerce_entity_not_found");
+        next.entities[idx] = { ...next.entities[idx], quantity: event.quantity, provenance: clone(event.provenance) };
+        break;
+      }
+      case "SET_ENTITY_ATTRIBUTE": {
+        const idx = findEntityIndex(next, event.entity_id);
+        if (idx < 0) throw new Error("commerce_entity_not_found");
+        next.entities[idx] = {
+          ...next.entities[idx],
+          attributes: { ...next.entities[idx].attributes, [event.key]: clone(event.value) },
+          provenance: clone(event.provenance)
+        };
+        break;
+      }
+      case "SET_ENTITY_CONSTRAINT": {
+        const idx = findEntityIndex(next, event.entity_id);
+        if (idx < 0) throw new Error("commerce_entity_not_found");
+        next.entities[idx] = {
+          ...next.entities[idx],
+          constraints: { ...next.entities[idx].constraints, [event.key]: clone(event.value) },
+          provenance: clone(event.provenance)
+        };
+        break;
+      }
+      case "REMOVE_ENTITY_CONSTRAINT": {
+        const idx = findEntityIndex(next, event.entity_id);
+        if (idx < 0) throw new Error("commerce_entity_not_found");
+        const constraints = { ...next.entities[idx].constraints };
+        delete constraints[event.key];
+        next.entities[idx] = { ...next.entities[idx], constraints, provenance: clone(event.provenance) };
+        break;
+      }
+      case "ADD_QUOTE": {
+        assertFiniteNonNegative(event.quote.amount, "quote_amount");
+        const idx = next.quotes.findIndex((x) => x.quote_id === event.quote.quote_id);
+        if (idx >= 0) next.quotes[idx] = clone(event.quote);
+        else next.quotes.push(clone(event.quote));
+        break;
+      }
+      case "SET_QUOTE_VALIDITY": {
+        const idx = next.quotes.findIndex((x) => x.quote_id === event.quote_id);
+        if (idx < 0) throw new Error("commerce_quote_not_found");
+        next.quotes[idx] = { ...next.quotes[idx], validity_status: event.validity_status };
+        break;
+      }
+      case "SET_DELIVERY": {
+        next.delivery = { ...next.delivery, ...clone(event.patch), provenance: clone(event.provenance) };
+        break;
+      }
+      case "UPSERT_INSTALLATION_ITEM": {
+        const idx = next.installation.items.findIndex((x) => x.item_id === event.item.item_id);
+        if (idx >= 0) next.installation.items[idx] = clone(event.item);
+        else next.installation.items.push(clone(event.item));
+        break;
+      }
+      case "SET_SITE_CONDITION": {
+        next.installation.site_conditions = {
+          ...next.installation.site_conditions,
+          [event.key]: clone(event.value)
+        };
+        break;
+      }
+      case "SET_PENDING_CHECKS": {
+        next.installation.pending_checks = uniq(event.checks);
+        break;
+      }
+      case "SET_CONVERSION": {
+        next.conversion = { ...next.conversion, ...clone(event.patch) };
+        break;
+      }
+      case "ADD_CORRECTION": {
+        next.latest_corrections = uniq([...next.latest_corrections, event.correction]).slice(-MAX_CORRECTIONS);
+        break;
+      }
+      case "SET_UNRESOLVED_ITEMS": {
+        next.unresolved_items = uniq(event.items).slice(0, MAX_UNRESOLVED);
+        break;
+      }
+      case "SET_CUSTOMER_CONSTRAINT": {
+        next.customer_constraints = { ...next.customer_constraints, [event.key]: clone(event.value) };
+        break;
+      }
+      case "REMOVE_CUSTOMER_CONSTRAINT": {
+        const constraints = { ...next.customer_constraints };
+        delete constraints[event.key];
+        next.customer_constraints = constraints;
+        break;
+      }
+      default: {
+        const _never = event;
+        throw new Error(`unsupported_commerce_event:${String(_never)}`);
+      }
+    }
+  }
+  reconcileConversionEntityLists(next);
+  assertStateShape(next);
+  return next;
+}
+function normalizedAliases(hint) {
+  return uniq([hint.entity_id, hint.category, hint.brand ?? "", hint.model ?? "", ...hint.aliases ?? []]).map((x) => x.toLowerCase());
+}
+function mentionedHints(text, hints) {
+  const lower = text.toLowerCase();
+  return hints.filter((hint) => normalizedAliases(hint).some((alias) => alias.length >= 2 && lower.includes(alias)));
+}
+function ensureHintEntityEvents(input, hints) {
+  const p = provenance(input.source_message_id, input.occurred_at);
+  return hints.map((hint) => ({
+    type: "ENSURE_ENTITY",
+    entity: {
+      entity_id: hint.entity_id,
+      category: hint.category,
+      brand: hint.brand ?? null,
+      model: hint.model ?? null,
+      quantity: hint.quantity ?? 1,
+      status: hint.status ?? "researching",
+      attributes: clone(hint.attributes ?? {}),
+      constraints: clone(hint.constraints ?? {}),
+      provenance: p
+    }
+  }));
+}
+function parseSmallCount(raw) {
+  if (/^\d{1,4}$/.test(raw)) return Number(raw);
+  const map = { \u4E00: 1, \u4E8C: 2, \u5169: 2, \u4E24: 2, \u4E09: 3, \u56DB: 4, \u4E94: 5, \u516D: 6, \u4E03: 7, \u516B: 8, \u4E5D: 9, \u5341: 10 };
+  return map[raw] ?? null;
+}
+function parseExplicitQuantity(text) {
+  const m = text.match(/(?:qty|quantity|數量|数量|共|總共|总共|要|需要|買|买|訂|订|改做|改成|change to)\s*(?:係|是|=|:|：)?\s*([一二兩两三四五六七八九十]|\d{1,4})\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚|night|nights|pcs?|pieces?|units?|items?)?/i) ?? text.match(/([一二兩两三四五六七八九十]|\d{1,4})\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚|night|nights|pcs?|pieces?|units?|items?)\b/i);
+  return m?.[1] ? parseSmallCount(m[1]) : null;
+}
+function parseMoney(text) {
+  const m = text.match(/(?:HK\$|US\$|NT\$|TWD\s*|USD\s*|HKD\s*|\$)\s*([0-9][0-9,]*(?:\.\d{1,2})?)/i) ?? text.match(/(?:價|价|報價|报价|quote|quoted|price)\s*(?:係|是|為|为|=|:|：)?\s*([0-9][0-9,]*(?:\.\d{1,2})?)/i);
+  if (!m?.[1]) return null;
+  const amount = Number(m[1].replace(/,/g, ""));
+  if (!Number.isFinite(amount)) return null;
+  const prefix = m[0].toUpperCase();
+  const currency = prefix.includes("US$") || prefix.includes("USD") ? "USD" : prefix.includes("NT$") || prefix.includes("TWD") ? "TWD" : "HKD";
+  return { amount, currency };
+}
+function detectEntityStatus(text) {
+  if (/(?:取消|唔要|不要|不買|不买|唔買|cancel(?:led)?|remove it|drop it)/i.test(text)) return "cancelled";
+  if (/(?:暫時唔|暫時不|暂时不|稍後先|稍后再|defer|later|hold off)/i.test(text)) return "deferred";
+  if (/(?:確認要|确认要|確定要|确定要|就要|confirmed?|keep it|take it)/i.test(text)) return "confirmed";
+  if (/(?:考慮|考虑|睇下|看看|研究|research|consider)/i.test(text)) return "researching";
+  return null;
+}
+function detectFunnel(text) {
+  if (/(?:已付款|已付|paid\b)/i.test(text)) return { funnel_stage: "order_confirmed", order_status: "confirmed", payment_status: "paid" };
+  if (/(?:正式落單|正式下单|confirm(?:ed)? order|order confirmed)/i.test(text)) return { funnel_stage: "order_confirmed", order_status: "confirmed" };
+  if (/(?:未正式落單|未正式下单|唔係正式落單|不是正式下单|not (?:a )?confirmed order|quotation only|只係報價|只是报价)/i.test(text)) {
+    return { funnel_stage: "quotation", quotation_status: "draft", order_status: "draft", payment_status: "pending_quote" };
+  }
+  if (/(?:準備落單|准备下单|ready to order|準備下單|准备落单)/i.test(text)) return { funnel_stage: "checkout_ready", order_status: "pending_confirmation" };
+  if (/(?:報價|报价|quotation|quote)/i.test(text)) return { funnel_stage: "quotation", quotation_status: "draft" };
+  return null;
+}
+function correctionText(text) {
+  if (/(?:更正|改返|改成|最新|記住|记住|唔係|不是|actually|i meant|correction)/i.test(text)) return text;
+  return null;
+}
+function explicitDeliveryPatch(text) {
+  const patch = {};
+  const phone = text.match(/(?:電話|电话|phone|contact)\s*(?:係|是|=|:|：)?\s*([+\d][\d\s-]{6,20})/i);
+  if (phone?.[1]) patch.recipient_phone = phone[1].replace(/\s+/g, " ").trim();
+  const recipient = text.match(/(?:收貨人|收货人|recipient)\s*(?:係|是|=|:|：)?\s*([^，。,.!?！？]{1,40})/i);
+  if (recipient?.[1]) patch.recipient_name = recipient[1].trim();
+  const address = text.match(/(?:地址|送貨地址|送货地址|delivery address)\s*(?:係|是|=|:|：)?\s*([^。!?！？]{3,180})/i);
+  if (address?.[1]) patch.address = address[1].trim();
+  const date = text.match(/(?:送貨|送货|delivery|deliver|appointment|預約|预约).{0,20}(星期[一二三四五六日天]|週[一二三四五六日天]|周[一二三四五六日天]|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d{4}-\d{2}-\d{2})/i);
+  if (date?.[1]) patch.preferred_date = date[1];
+  return Object.keys(patch).length ? patch : null;
+}
+function deriveCommerceEventsFromCustomerTurn(input) {
+  const text = clean7(input.text);
+  if (!text || !input.source_message_id) return [];
+  const p = provenance(input.source_message_id, input.occurred_at);
+  const hints = input.entity_hints ?? [];
+  const mentioned = mentionedHints(text, hints);
+  const events = [
+    { type: "SET_CONTEXT", language: input.current_language, industry: input.current_industry },
+    ...ensureHintEntityEvents(input, mentioned)
+  ];
+  const correction = correctionText(text);
+  if (correction) events.push({ type: "ADD_CORRECTION", correction });
+  const status = detectEntityStatus(text);
+  const quantity = parseExplicitQuantity(text);
+  if (mentioned.length === 1) {
+    const entityId2 = mentioned[0].entity_id;
+    if (status) events.push({ type: "SET_ENTITY_STATUS", entity_id: entityId2, status, provenance: p });
+    if (quantity !== null) events.push({ type: "SET_ENTITY_QUANTITY", entity_id: entityId2, quantity, provenance: p });
+  }
+  const money = parseMoney(text);
+  if (money) {
+    const entityId2 = mentioned.length === 1 ? mentioned[0].entity_id : null;
+    const historical = /(?:之前|上次|舊價|旧价|歷史|历史|previous|historical|last time)/i.test(text);
+    const explicitlyUnverified = /(?:唔肯定|不確定|不确定|未confirm|未確認|未确认|unverified|not sure)/i.test(text);
+    events.push({
+      type: "ADD_QUOTE",
+      quote: {
+        quote_id: `customer:${input.source_message_id}:0`,
+        entity_id: entityId2,
+        amount: money.amount,
+        currency: input.currency ?? money.currency,
+        quote_type: historical ? "customer_reported_historical" : "unverified",
+        validity_status: historical && !explicitlyUnverified ? "historical" : "unknown",
+        source_label: "customer_reported",
+        conditions: { historical, unverified: !historical || explicitlyUnverified },
+        provenance: p
+      }
+    });
+  }
+  const delivery = explicitDeliveryPatch(text);
+  if (delivery) events.push({ type: "SET_DELIVERY", patch: delivery, provenance: p });
+  const conversion = detectFunnel(text);
+  if (conversion) events.push({ type: "SET_CONVERSION", patch: conversion });
+  return events;
+}
+
+// supabase/functions/_shared/commerce-state-authority.ts
+function clean8(value, max = 1200) {
+  return typeof value === "string" ? value.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max) : "";
+}
+function isRecord2(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function isKnownValue(value) {
+  return value !== void 0 && value !== null && value !== "";
+}
+function getCommerceStatePath(state, path) {
+  const parts = clean8(path, 300).split(".").filter(Boolean);
+  if (!parts.length) return void 0;
+  let current = state;
+  for (const part of parts) {
+    if (Array.isArray(current)) {
+      const index = Number(part);
+      if (!Number.isInteger(index) || index < 0 || index >= current.length) return void 0;
+      current = current[index];
+      continue;
+    }
+    if (!isRecord2(current) || !(part in current)) return void 0;
+    current = current[part];
+  }
+  return current;
+}
+function calculateCommerceTerms(terms, currency) {
+  if (!terms.length) return null;
+  let total = 0;
+  const expressionParts = [];
+  for (const term of terms) {
+    if (!Number.isFinite(term.value)) return null;
+    const multiplier = term.multiplier ?? 1;
+    if (!Number.isFinite(multiplier)) return null;
+    total += term.value * multiplier;
+    expressionParts.push(`${term.label}:${term.value}\xD7${multiplier}`);
+  }
+  return {
+    expression: expressionParts.join(" + "),
+    result: Math.round((total + Number.EPSILON) * 100) / 100,
+    currency: currency ?? null
+  };
+}
+function questionLooksLikeCurrentBusinessFact(question) {
+  return /(?:而家|現在|现在|目前|最新|current|latest|今日|today).{0,30}(?:價|价|price|stock|庫存|库存|有貨|有货|available|政策|policy|收費|收费|fee|delivery|送貨|送货|保養|保修|warranty)/i.test(question);
+}
+function questionLooksLikeCustomerState(question) {
+  return /(?:我(?:而家|現在|现在|目前|最後|最后)?|my\s+(?:current|latest|final)?).{0,45}(?:幾多|多少|數量|数量|要咩|要什麼|要什么|地址|電話|电话|收貨人|收货人|日期|時間|时间|要求|需求|限制|狀態|状态|order|quote|quotation|quantity|address|phone|recipient|date|requirements?|constraints?|status)|(?:幫我|帮我|please).{0,30}(?:總結|总结|summari[sz]e).{0,30}(?:我|my)/i.test(question);
+}
+function questionLooksLikeCalculation(question) {
+  return /(?:加埋|合共|總共幾錢|总共多少钱|一共多少|total|how much.*(?:total|altogether)|calculate|計下|算下|計算|计算)/i.test(question);
+}
+function questionExplicitlyAsksQuantity(question) {
+  if (/(?:價|价|price|amount|金額|金额|幾錢|几钱|多少錢|多少钱|fee|收費|收费)/i.test(question)) return false;
+  return /(?:數量|数量|quantity|how many|幾多\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚)|多少\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚))/i.test(question);
+}
+function inferKnownCustomerStatePath(question, state) {
+  const candidates = [
+    [/(?:送貨地址|送货地址|地址|delivery address|address)/i, "delivery.address"],
+    [/(?:收貨人電話|收货人电话|recipient phone|contact phone)/i, "delivery.recipient_phone"],
+    [/(?:收貨人|收货人|recipient)/i, "delivery.recipient_name"],
+    [/(?:送貨日期|送货日期|送貨時間|送货时间|delivery date|delivery time|preferred date)/i, "delivery.preferred_date"],
+    [/(?:order status|訂單狀態|订单状态|落單狀態|下单状态)/i, "conversion.order_status"],
+    [/(?:quote status|quotation status|報價狀態|报价状态)/i, "conversion.quotation_status"],
+    [/(?:payment status|付款狀態|付款状态)/i, "conversion.payment_status"]
+  ];
+  for (const [pattern, path] of candidates) {
+    if (!pattern.test(question)) continue;
+    const value = getCommerceStatePath(state, path);
+    if (isKnownValue(value)) return { path, value };
+  }
+  if (questionExplicitlyAsksQuantity(question)) {
+    const active = state.entities.filter((entity) => entity.status !== "cancelled" && entity.status !== "deferred");
+    if (active.length === 1) {
+      return { path: `entities.${state.entities.indexOf(active[0])}.quantity`, value: active[0].quantity };
+    }
+  }
+  return null;
+}
+function resolveCommerceAnswerAuthority(input) {
+  const question = clean8(input.question);
+  const explicitStatePath = clean8(input.requested_state_path ?? "", 300);
+  if (explicitStatePath) {
+    const known = getCommerceStatePath(input.state, explicitStatePath);
+    if (isKnownValue(known)) {
+      return {
+        authority: "CONVERSATION_STATE",
+        reason: "requested_customer_state_is_known",
+        known_value: known,
+        state_path: explicitStatePath
+      };
+    }
+  }
+  const inferred = inferKnownCustomerStatePath(question, input.state);
+  if (inferred) {
+    return {
+      authority: "CONVERSATION_STATE",
+      reason: "customer_state_inferred_and_known",
+      known_value: inferred.value,
+      state_path: inferred.path
+    };
+  }
+  if ((questionLooksLikeCalculation(question) || (input.calculation_terms?.length ?? 0) > 0) && input.calculation_terms?.length) {
+    const calculation = calculateCommerceTerms(input.calculation_terms, input.calculation_currency);
+    if (calculation) {
+      return {
+        authority: "DETERMINISTIC_CALCULATION",
+        reason: "calculation_fully_supported_by_known_terms",
+        calculation
+      };
+    }
+  }
+  if (input.requires_professional_site_check || input.unsafe_to_remote_confirm) {
+    return {
+      authority: "SAFE_PROFESSIONAL_CONFIRMATION",
+      reason: "remote_confirmation_not_safe_or_not_authoritative"
+    };
+  }
+  if (input.requires_current_business_fact || input.requires_current_price_or_stock || input.requires_policy_or_terms || questionLooksLikeCurrentBusinessFact(question)) {
+    return {
+      authority: "CURRENT_KB_REQUIRED",
+      reason: "current_business_fact_requires_authoritative_evidence"
+    };
+  }
+  if (questionLooksLikeCustomerState(question)) {
+    return {
+      authority: "INSUFFICIENT_INFORMATION",
+      reason: "customer_state_question_but_requested_fact_not_resolved",
+      state_path: explicitStatePath || null
+    };
+  }
+  return {
+    authority: "INSUFFICIENT_INFORMATION",
+    reason: "no_authoritative_source_selected"
+  };
+}
+
+// supabase/functions/_shared/commerce-capability-runtime.ts
+var COUNT_TOKEN = "[\u4E00\u4E8C\u5169\u4E24\u4E09\u56DB\u4E94\u516D\u4E03\u516B\u4E5D\u5341]|\\d{1,4}";
+var GENERIC_UNIT = "\u4EF6|\u500B|\u4E2A|\u76D2|\u7BB1|\u5305|\u888B|\u6A3D|\u74F6|\u652F|\u679D|\u672C|\u518A|\u518C|\u5957|\u5C0D|\u5BF9|\u96D9|\u53CC|\u689D|\u6761|\u5F35|\u5F20|\u53F0|\u90E8|\u4EFD|\u4F4D|\u5E2D|\u9593|\u95F4|\u665A|\u6B21|\u5802|\u8AB2|\u8BFE|units?|pcs?|pieces?|items?|boxes?|bottles?|packs?|bags?|pairs?|sets?|seats?|nights?|sessions?|lessons?";
+function clean9(value, max = 1200) {
+  return typeof value === "string" ? value.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max) : "";
+}
+function countValue(raw) {
+  const map = {
+    \u4E00: 1,
+    \u4E8C: 2,
+    \u5169: 2,
+    \u4E24: 2,
+    \u4E09: 3,
+    \u56DB: 4,
+    \u4E94: 5,
+    \u516D: 6,
+    \u4E03: 7,
+    \u516B: 8,
+    \u4E5D: 9,
+    \u5341: 10
+  };
+  if (/^\d+$/.test(raw)) return Number(raw);
+  return map[raw] ?? null;
+}
+function trimCandidate(raw) {
+  return clean9(raw, 80).replace(/(?:請|请)?(?:報價|报价|幾錢|几钱|多少錢|多少钱|price|quote|quotation|total|合共|總共|总共).*$/i, "").replace(/(?:星期[一二三四五六日天]|週[一二三四五六日天]|周[一二三四五六日天]|monday|tuesday|wednesday|thursday|friday|saturday|sunday)/gi, " ").replace(/(?:HK\$|HKD|US\$|USD|NT\$|TWD|\$)\s*[0-9].*$/i, "").replace(/[，。！？,.!?;；:：]+$/g, "").replace(/\s+/g, " ").trim();
+}
+function canonicalGenericName(raw) {
+  let value = trimCandidate(raw).replace(/^(?:黑色|白色|紅色|红色|藍色|蓝色|綠色|绿色|黃色|黄色|粉紅|粉红|紫色|灰色|black|white|red|blue|green|yellow|pink|purple|grey|gray)\s*/i, "").replace(/^(?:small|medium|large|xl|xxl|xs)\s+/i, "").replace(/^(?:size\s*[xsml0-9-]+)\s+/i, "").trim();
+  if (/^[a-z0-9][a-z0-9 -]{3,}$/i.test(value) && /s$/i.test(value) && !/ss$/i.test(value)) {
+    value = value.replace(/s$/i, "");
+  }
+  return value;
+}
+function slugify(raw) {
+  return canonicalGenericName(raw).toLowerCase().replace(/["'`]/g, "").replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "").slice(0, 80);
+}
+function extractSku(text) {
+  const match = clean9(text).match(/(?:SKU|貨號|货号|型號|型号|model)\s*(?:=|:|：|#)?\s*([A-Z0-9][A-Z0-9._\/-]{1,39})/i);
+  return match?.[1] ? match[1].trim() : null;
+}
+function extractVariant(text) {
+  const t = clean9(text);
+  const variant = {};
+  const size = t.match(/(?:size|尺寸|尺碼|尺码)\s*(?:=|:|：)?\s*([A-Z0-9-]{1,12})/i) ?? t.match(/\b([XSML]{1,4})\s*碼/i);
+  if (size?.[1]) variant.size = size[1];
+  const color = t.match(/(?:color|colour|顏色|颜色)\s*(?:=|:|：)?\s*([^，。,.!?！？]{1,24})/i);
+  if (color?.[1]) variant.color = color[1].trim();
+  else {
+    const leading = t.match(/(黑色|白色|紅色|红色|藍色|蓝色|綠色|绿色|黃色|黄色|粉紅|粉红|紫色|灰色|black|white|red|blue|green|yellow|pink|purple|grey|gray)(?=\s|[A-Za-z\u3400-\u9fff])/i);
+    if (leading?.[1]) variant.color = leading[1];
+  }
+  return variant;
+}
+function inferKind(text, unit, quantity) {
+  const t = clean9(text).toLowerCase();
+  if (/(?:下載|下载|電子版|电子版|digital|download|software|license|licence|ebook|e-book|activation key|啟用碼|激活码)/i.test(t)) return "digital_good";
+  if (/(?:預約|预约|appointment|book(?:ing)?|reserve|reservation|服務|服务|剪髮|剪发|療程|疗程|consultation|session|lesson|class)/i.test(t) || /^(?:位|席|次|堂|課|课|sessions?|lessons?|seats?)$/i.test(unit ?? "")) return "service";
+  if (quantity >= 20 && /(?:批發|批发|MOQ|minimum order|wholesale|報價|报价|quotation|quote)/i.test(t)) return "b2b_product";
+  if (unit || /(?:產品|产品|商品|貨品|货品|product|item)/i.test(t)) return "physical_product";
+  return "unknown";
+}
+function inferCommerceCapabilities(text, kind) {
+  const t = clean9(text).toLowerCase();
+  const requiresInstallation = /(?:安裝|安装|install(?:ation)?|mount(?:ing)?|setup|拆機|拆机)/i.test(t);
+  const requiresSiteCheck = requiresInstallation && /(?:上門|上门|site|onsite|on-site|窗口|窗台|牆|墙|承重|電壓|电压|排水|師傅|师傅|technician|survey)/i.test(t);
+  const requiresBooking = kind === "service" || /(?:預約|预约|appointment|book(?:ing)?|reserve|reservation|時段|时段|slot)/i.test(t);
+  const requiresDelivery = /(?:送貨|送货|配送|delivery|deliver|shipping|ship\b|寄送|收貨|收货|delivery address)/i.test(t);
+  const requiresQuote = /(?:報價|报价|quotation|quote|幾錢|几钱|多少錢|多少钱|price|fee|收費|收费|MOQ)/i.test(t);
+  return {
+    requires_delivery: requiresDelivery,
+    requires_installation: requiresInstallation,
+    requires_booking: requiresBooking,
+    requires_quote: requiresQuote,
+    requires_site_check: requiresSiteCheck,
+    digital_fulfilment: kind === "digital_good"
+  };
+}
+function mergeCapabilities(a, b) {
+  return {
+    requires_delivery: a.requires_delivery || b.requires_delivery,
+    requires_installation: a.requires_installation || b.requires_installation,
+    requires_booking: a.requires_booking || b.requires_booking,
+    requires_quote: a.requires_quote || b.requires_quote,
+    requires_site_check: a.requires_site_check || b.requires_site_check,
+    digital_fulfilment: a.digital_fulfilment || b.digital_fulfilment
+  };
+}
+function extractGenericCommerceEntity(text) {
+  const t = clean9(text);
+  if (!t) return null;
+  const action = "(?:\u6211\u8981|\u6211\u60F3\u8981|\u60F3\u8CB7|\u60F3\u4E70|\u8981\u8CB7|\u8981\u4E70|\u8CB7|\u4E70|\u9700\u8981|\u8A02\u8CFC|\u8BA2\u8D2D|\u8A02|\u8BA2|\u9810\u8A02|\u9884\u8BA2|\u9810\u7D04|\u9884\u7EA6|\u53E6\u5916\u52A0|\u518D\u52A0|\u52A0\u591A|\u65B0\u589E|I\\s+(?:want|need)|want|need|buy|order|pre[- ]?order|book|reserve|add)";
+  const zhOrUnit = new RegExp(`${action}\\s*(${COUNT_TOKEN})\\s*(${GENERIC_UNIT})?\\s*([^\uFF0C\u3002\uFF01\uFF1F,.!?;\uFF1B]{1,60})`, "i");
+  const match = t.match(zhOrUnit);
+  if (!match?.[1] || !match?.[3]) return null;
+  const quantity = countValue(match[1]);
+  if (quantity === null || quantity <= 0) return null;
+  const unit = match[2]?.trim() || null;
+  const rawName = trimCandidate(match[3]);
+  const canonicalName = canonicalGenericName(rawName);
+  const slug = slugify(canonicalName);
+  if (!canonicalName || !slug || canonicalName.length < 2) return null;
+  const kind = inferKind(t, unit, quantity);
+  const capabilities = inferCommerceCapabilities(t, kind);
+  const category = kind === "service" ? "service" : kind === "digital_good" ? "digital_good" : kind === "b2b_product" ? "b2b_product" : "generic_product";
+  const aliases = [...new Set([canonicalName, rawName].map((x) => clean9(x, 80)).filter(Boolean))];
+  return {
+    entity_id: `generic:${slug}`,
+    category,
+    display_name: canonicalName,
+    quantity,
+    unit,
+    kind,
+    sku: extractSku(t),
+    variant: extractVariant(t),
+    capabilities,
+    aliases
+  };
+}
+function buildGenericCommerceEntityHints(texts) {
+  const hints = /* @__PURE__ */ new Map();
+  for (const raw of texts) {
+    const extracted = extractGenericCommerceEntity(raw);
+    if (!extracted) continue;
+    const next = {
+      entity_id: extracted.entity_id,
+      category: extracted.category,
+      aliases: extracted.aliases,
+      quantity: extracted.quantity,
+      attributes: {
+        product_name: extracted.display_name,
+        commerce_kind: extracted.kind,
+        unit: extracted.unit,
+        sku: extracted.sku,
+        variant: extracted.variant,
+        capabilities: extracted.capabilities
+      }
+    };
+    const existing = hints.get(extracted.entity_id);
+    if (!existing) {
+      hints.set(extracted.entity_id, next);
+      continue;
+    }
+    const existingCaps = readCapabilitiesFromAttributes(existing.attributes);
+    hints.set(extracted.entity_id, {
+      ...existing,
+      aliases: [.../* @__PURE__ */ new Set([...existing.aliases ?? [], ...extracted.aliases])],
+      attributes: {
+        ...existing.attributes ?? {},
+        capabilities: mergeCapabilities(existingCaps, extracted.capabilities)
+      }
+    });
+  }
+  return [...hints.values()];
+}
+function readCapabilitiesFromAttributes(attributes) {
+  const raw = attributes?.capabilities;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return inferCommerceCapabilities("", "unknown");
+  const r = raw;
+  return {
+    requires_delivery: r.requires_delivery === true,
+    requires_installation: r.requires_installation === true,
+    requires_booking: r.requires_booking === true,
+    requires_quote: r.requires_quote === true,
+    requires_site_check: r.requires_site_check === true,
+    digital_fulfilment: r.digital_fulfilment === true
+  };
+}
+function getEntityCapabilities(entity) {
+  return readCapabilitiesFromAttributes(entity.attributes);
+}
+function aggregateCommerceCapabilities(state) {
+  const zero = inferCommerceCapabilities("", "unknown");
+  return state.entities.filter((entity) => entity.status !== "cancelled" && entity.status !== "deferred").reduce((acc, entity) => mergeCapabilities(acc, getEntityCapabilities(entity)), zero);
+}
+function genericEntityLabelFromId(entityId2) {
+  if (!entityId2.startsWith("generic:")) return null;
+  const raw = entityId2.slice("generic:".length).replace(/-/g, " ").trim();
+  return raw || null;
+}
+function buildCapabilityAwarePreorderNextStep(state, language) {
+  const caps = aggregateCommerceCapabilities(state);
+  if (language === "en") {
+    if (caps.requires_booking) return "The next step is to confirm the service or time slot, the final price, and then the payment arrangement.";
+    if (caps.requires_installation || caps.requires_site_check) return "The next step is to confirm the final price, any installation or site requirements, and then the payment arrangement.";
+    if (caps.requires_delivery) return "The next step is to confirm the final price and order details, delivery arrangements, and then payment.";
+    if (caps.digital_fulfilment) return "The next step is to confirm the final price and order details, then arrange payment before digital fulfilment.";
+    return "The next step is to confirm the final price and order details, then arrange payment.";
+  }
+  if (language === "zh-CN") {
+    if (caps.requires_booking) return "\u4E0B\u4E00\u6B65\u9700\u8981\u786E\u8BA4\u670D\u52A1\uFF0F\u9884\u7EA6\u65F6\u6BB5\u548C\u6700\u7EC8\u4EF7\u683C\uFF0C\u518D\u5B89\u6392\u4ED8\u6B3E\u3002";
+    if (caps.requires_installation || caps.requires_site_check) return "\u4E0B\u4E00\u6B65\u9700\u8981\u786E\u8BA4\u6700\u7EC8\u4EF7\u683C\u53CA\u9002\u7528\u7684\u5B89\u88C5\uFF0F\u73B0\u573A\u6761\u4EF6\uFF0C\u518D\u5B89\u6392\u4ED8\u6B3E\u3002";
+    if (caps.requires_delivery) return "\u4E0B\u4E00\u6B65\u9700\u8981\u786E\u8BA4\u6700\u7EC8\u4EF7\u683C\u548C\u8BA2\u5355\u8D44\u6599\u3001\u9001\u8D27\u5B89\u6392\uFF0C\u518D\u5B89\u6392\u4ED8\u6B3E\u3002";
+    if (caps.digital_fulfilment) return "\u4E0B\u4E00\u6B65\u9700\u8981\u786E\u8BA4\u6700\u7EC8\u4EF7\u683C\u548C\u8BA2\u5355\u8D44\u6599\uFF0C\u518D\u5B89\u6392\u4ED8\u6B3E\u53CA\u6570\u7801\u4EA4\u4ED8\u3002";
+    return "\u4E0B\u4E00\u6B65\u9700\u8981\u786E\u8BA4\u6700\u7EC8\u4EF7\u683C\u548C\u8BA2\u5355\u8D44\u6599\uFF0C\u518D\u5B89\u6392\u4ED8\u6B3E\u3002";
+  }
+  if (caps.requires_booking) return "\u4E0B\u4E00\u6B65\u8981\u78BA\u8A8D\u670D\u52D9\uFF0F\u9810\u7D04\u6642\u6BB5\u540C\u6700\u7D42\u50F9\u683C\uFF0C\u518D\u5B89\u6392\u4ED8\u6B3E\u3002";
+  if (caps.requires_installation || caps.requires_site_check) return "\u4E0B\u4E00\u6B65\u8981\u78BA\u8A8D\u6700\u7D42\u50F9\u683C\u540C\u9069\u7528\u5605\u5B89\u88DD\uFF0F\u73FE\u5834\u689D\u4EF6\uFF0C\u518D\u5B89\u6392\u4ED8\u6B3E\u3002";
+  if (caps.requires_delivery) return "\u4E0B\u4E00\u6B65\u8981\u78BA\u8A8D\u6700\u7D42\u50F9\u683C\u540C\u8A02\u55AE\u8CC7\u6599\u3001\u9001\u8CA8\u5B89\u6392\uFF0C\u518D\u5B89\u6392\u4ED8\u6B3E\u3002";
+  if (caps.digital_fulfilment) return "\u4E0B\u4E00\u6B65\u8981\u78BA\u8A8D\u6700\u7D42\u50F9\u683C\u540C\u8A02\u55AE\u8CC7\u6599\uFF0C\u518D\u5B89\u6392\u4ED8\u6B3E\u540C\u6578\u78BC\u4EA4\u4ED8\u3002";
+  return "\u4E0B\u4E00\u6B65\u8981\u78BA\u8A8D\u6700\u7D42\u50F9\u683C\u540C\u8A02\u55AE\u8CC7\u6599\uFF0C\u518D\u5B89\u6392\u4ED8\u6B3E\u3002";
+}
+
+// supabase/functions/_shared/commerce-semantic-adapter.ts
+function clean10(value, max = 200) {
+  return typeof value === "string" ? value.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max) : "";
+}
+function slugify2(raw) {
+  return clean10(raw, 160).toLowerCase().replace(/["'`]/g, "").replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "").slice(0, 80);
+}
+function categoryFor(entity) {
+  if (entity.category_hint) return clean10(entity.category_hint, 80) || "generic_product";
+  switch (entity.kind) {
+    case "digital_good":
+      return "digital_good";
+    case "service":
+      return "service";
+    case "rental":
+      return "rental";
+    case "subscription":
+      return "subscription";
+    case "ticket":
+      return "ticket";
+    case "custom_item":
+      return "custom_item";
+    case "b2b_product":
+      return "b2b_product";
+    case "physical_product":
+      return "generic_product";
+    default:
+      return "generic_item";
+  }
+}
+function entityId(entity) {
+  const explicit = clean10(entity.entity_ref, 120);
+  if (explicit && !/^(?:semantic|current|prior|item|entity):?\d*$/i.test(explicit)) {
+    return explicit.startsWith("generic:") ? explicit : `generic:${slugify2(explicit)}`;
+  }
+  return `generic:${slugify2(entity.name) || "item"}`;
+}
+function semanticFrameToEntityHints(frame) {
+  if (!frame) return [];
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const entity of frame.entities) {
+    if (!entity.name || entity.confidence < 0.45) continue;
+    const id = entityId(entity);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push({
+      entity_id: id,
+      category: categoryFor(entity),
+      aliases: [...new Set([entity.name, entity.entity_ref, entity.sku ?? "", entity.model ?? ""].map((x) => clean10(x, 160)).filter(Boolean))],
+      quantity: entity.quantity ?? void 0,
+      model: entity.model,
+      attributes: {
+        semantic_frame_version: frame.version,
+        semantic_operation: frame.operation,
+        product_name: entity.name,
+        commerce_kind: entity.kind,
+        unit: entity.unit,
+        sku: entity.sku,
+        semantic_confidence: entity.confidence,
+        semantic_transaction_state: frame.transaction_state,
+        semantic_payment_state: frame.payment_state,
+        semantic_booking_state: frame.booking_state,
+        semantic_fulfillment_state: frame.fulfillment_state,
+        semantic_attributes: entity.attributes,
+        capabilities: entity.capabilities
+      },
+      constraints: entity.constraints
+    });
+  }
+  return out;
+}
+function mergeCommerceEntityHints(semantic, deterministic) {
+  const map = /* @__PURE__ */ new Map();
+  for (const hint of deterministic) map.set(hint.entity_id, hint);
+  for (const hint of semantic) {
+    const semanticAliases = (hint.aliases ?? []).map((x) => clean10(x).toLowerCase()).filter(Boolean);
+    const compatible = [...map.values()].find((candidate) => {
+      const aliases = [candidate.entity_id, candidate.category, ...candidate.aliases ?? []].map((x) => clean10(x).toLowerCase()).filter(Boolean);
+      return semanticAliases.some((a) => aliases.some((b) => a === b || a.includes(b) || b.includes(a)));
+    });
+    const key = compatible?.entity_id ?? hint.entity_id;
+    const existing = map.get(key);
+    const normalized = compatible ? { ...hint, entity_id: compatible.entity_id, category: compatible.category } : hint;
+    if (!existing) {
+      map.set(key, normalized);
+      continue;
+    }
+    map.set(key, {
+      ...existing,
+      aliases: [.../* @__PURE__ */ new Set([...existing.aliases ?? [], ...normalized.aliases ?? []])],
+      quantity: normalized.quantity ?? existing.quantity,
+      model: normalized.model ?? existing.model,
+      attributes: { ...existing.attributes ?? {}, ...normalized.attributes ?? {} },
+      constraints: { ...existing.constraints ?? {}, ...normalized.constraints ?? {} }
+    });
+  }
+  return [...map.values()];
+}
+function provenance2(sourceMessageId, occurredAt) {
+  return { source_type: "customer", source_message_id: sourceMessageId, recorded_at: occurredAt ?? null };
+}
+function activeEntities(state) {
+  return state.entities.filter((x) => x.status !== "cancelled" && x.status !== "deferred");
+}
+function resolveHintId(entity, hints, previous) {
+  const wanted = [entity.name, entity.entity_ref, entity.sku ?? "", entity.model ?? ""].map((x) => clean10(x).toLowerCase()).filter(Boolean);
+  const hinted = hints.find((hint) => {
+    const aliases = [hint.entity_id, hint.category, ...hint.aliases ?? []].map((x) => clean10(x).toLowerCase()).filter(Boolean);
+    return wanted.some((a) => aliases.some((b) => a === b || a.includes(b) || b.includes(a)));
+  });
+  if (hinted) return hinted.entity_id;
+  const direct = entityId(entity);
+  if (previous.entities.some((x) => x.entity_id === direct)) return direct;
+  const active = activeEntities(previous);
+  if (active.length === 1 && entity.confidence >= 0.75) return active[0].entity_id;
+  return direct;
+}
+function semanticFrameToStateEvents(frame, previous, hints, sourceMessageId, occurredAt) {
+  if (!frame || frame.confidence < 0.62 || frame.ambiguity.is_ambiguous) return [];
+  const p = provenance2(sourceMessageId, occurredAt);
+  const events = [];
+  for (const entity of frame.entities) {
+    if (entity.confidence < 0.55) continue;
+    const id = resolveHintId(entity, hints, previous);
+    if (!id) continue;
+    const existing = previous.entities.find((x) => x.entity_id === id);
+    const hint = hints.find((x) => x.entity_id === id);
+    if (frame.operation === "ADD_ITEM") {
+      if (existing && frame.additive && entity.quantity !== null) {
+        events.push({ type: "SET_ENTITY_QUANTITY", entity_id: id, quantity: existing.quantity + entity.quantity, provenance: p });
+      } else if (!existing) {
+        events.push({
+          type: "ENSURE_ENTITY",
+          entity: {
+            entity_id: id,
+            category: hint?.category ?? categoryFor(entity),
+            brand: null,
+            model: entity.model,
+            quantity: entity.quantity ?? 1,
+            status: "tentative",
+            attributes: { ...hint?.attributes ?? {}, semantic_attributes: entity.attributes, capabilities: entity.capabilities },
+            constraints: { ...hint?.constraints ?? {}, ...entity.constraints },
+            provenance: p
+          }
+        });
+      } else if (entity.quantity !== null && !frame.additive) {
+        events.push({ type: "SET_ENTITY_QUANTITY", entity_id: id, quantity: entity.quantity, provenance: p });
+      }
+    }
+    if ((frame.operation === "SET_QUANTITY" || frame.customer_correction) && entity.quantity !== null && existing) {
+      events.push({ type: "SET_ENTITY_QUANTITY", entity_id: id, quantity: entity.quantity, provenance: p });
+    }
+    if (frame.operation === "UPDATE_ITEM" && existing) {
+      for (const [key, value] of Object.entries(entity.attributes)) {
+        events.push({ type: "SET_ENTITY_ATTRIBUTE", entity_id: id, key, value, provenance: p });
+      }
+      for (const [key, value] of Object.entries(entity.constraints)) {
+        events.push({ type: "SET_ENTITY_CONSTRAINT", entity_id: id, key, value, provenance: p });
+      }
+    }
+    if ((frame.operation === "CANCEL_ITEM" || frame.operation === "REMOVE_ITEM") && existing) {
+      events.push({ type: "SET_ENTITY_STATUS", entity_id: id, status: "cancelled", provenance: p });
+    }
+  }
+  if (frame.operation === "REQUEST_QUOTE") {
+    events.push({ type: "SET_CONVERSION", patch: { funnel_stage: "quotation", quotation_status: "draft" } });
+  }
+  return events;
+}
+
+// supabase/functions/_shared/industry-schema.ts
+var IDENTIFIER = /^[a-z][a-z0-9_]{1,63}$/;
+var VERSION = /^\d+\.\d+\.\d+$/;
+var FIELD_TYPES = /* @__PURE__ */ new Set(["string", "number", "boolean", "object"]);
+function isRecord3(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function validateIndustrySchema(schema) {
+  const errors = [];
+  if (!IDENTIFIER.test(schema.id)) errors.push("invalid_schema_id");
+  if (!VERSION.test(schema.version)) errors.push("invalid_schema_version");
+  if (!Array.isArray(schema.fields) || schema.fields.length === 0)
+    errors.push("empty_schema_fields");
+  const seen = /* @__PURE__ */ new Set();
+  for (const field of schema.fields ?? []) {
+    if (!IDENTIFIER.test(field.key)) errors.push(`invalid_field_key:${field.key}`);
+    if (seen.has(field.key)) errors.push(`duplicate_field_key:${field.key}`);
+    seen.add(field.key);
+    if (!FIELD_TYPES.has(field.type)) errors.push(`invalid_field_type:${field.key}`);
+    if (typeof field.required !== "boolean") errors.push(`invalid_field_required:${field.key}`);
+    if (!field.description.trim()) errors.push(`missing_field_description:${field.key}`);
+  }
+  return { valid: errors.length === 0, errors };
+}
+function validateIndustrySchemaValues(schema, value) {
+  const definition = validateIndustrySchema(schema);
+  if (!definition.valid) return definition;
+  if (!isRecord3(value)) return { valid: false, errors: ["industry_values_not_object"] };
+  const errors = [];
+  const fields = new Map(schema.fields.map((field) => [field.key, field]));
+  for (const key of Object.keys(value)) if (!fields.has(key)) errors.push(`unknown_field:${key}`);
+  for (const field of schema.fields) {
+    const fieldValue = value[field.key];
+    if (fieldValue === void 0 || fieldValue === null) {
+      if (field.required) errors.push(`missing_required_field:${field.key}`);
+      continue;
+    }
+    const matches2 = field.type === "object" ? isRecord3(fieldValue) : typeof fieldValue === field.type;
+    if (!matches2 || field.type === "number" && !Number.isFinite(fieldValue)) {
+      errors.push(`invalid_field_value:${field.key}`);
+    }
+  }
+  return { valid: errors.length === 0, errors };
+}
+
+// supabase/functions/_shared/industry-agent-registry.ts
+function normalize(value) {
+  return value.normalize("NFKC").trim().toLowerCase().replace(/[\s-]+/g, "_");
+}
+function createIndustryRegistry(profiles) {
+  const entries = /* @__PURE__ */ new Map();
+  for (const profile of profiles) {
+    if (!/^[a-z][a-z0-9_]{1,63}$/.test(profile.id))
+      throw new Error(`invalid_industry_id:${profile.id}`);
+    if (!/^\d+\.\d+\.\d+$/.test(profile.version))
+      throw new Error(`invalid_profile_version:${profile.id}`);
+    const validation = validateIndustrySchema(profile.schema);
+    if (!validation.valid)
+      throw new Error(`invalid_industry_schema:${profile.id}:${validation.errors.join(",")}`);
+    if (profile.schema.id !== profile.id)
+      throw new Error(`industry_schema_binding_mismatch:${profile.id}`);
+    for (const candidate of [profile.id, ...profile.aliases]) {
+      const key = normalize(candidate);
+      if (!key || entries.has(key)) throw new Error(`duplicate_industry_identifier:${key}`);
+      entries.set(key, profile);
+    }
+  }
+  const frozen = Object.freeze([...profiles]);
+  return Object.freeze({
+    resolve(identifier) {
+      return identifier ? entries.get(normalize(identifier)) ?? null : null;
+    },
+    profiles() {
+      return frozen;
+    }
+  });
+}
+
+// supabase/functions/_shared/industry-profiles/home-appliance-v1.ts
+var HOME_APPLIANCE_CATEGORIES = [
+  {
+    key: "air_conditioner",
+    label: { "zh-TW": "\u51B7\u6C23\u6A5F", "zh-CN": "\u7A7A\u8C03", en: "air conditioner" },
+    aliases: [
+      "\u51B7\u6C23",
+      "\u51B7\u6C14",
+      "\u7A7A\u8ABF",
+      "\u7A7A\u8C03",
+      "air con",
+      "aircon",
+      "air-con",
+      "air conditioner",
+      "ac unit"
+    ]
+  },
+  {
+    key: "refrigerator",
+    label: { "zh-TW": "\u96EA\u6AC3", "zh-CN": "\u51B0\u7BB1", en: "refrigerator" },
+    aliases: ["\u96EA\u6AC3", "\u96EA\u67DC", "\u51B0\u7BB1", "fridge", "refrigerator"]
+  },
+  {
+    key: "washing_machine",
+    label: { "zh-TW": "\u6D17\u8863\u6A5F", "zh-CN": "\u6D17\u8863\u673A", en: "washing machine" },
+    aliases: ["\u6D17\u8863\u6A5F", "\u6D17\u8863\u673A", "washer", "washing machine"]
+  },
+  {
+    key: "water_heater",
+    label: { "zh-TW": "\u71B1\u6C34\u7210", "zh-CN": "\u70ED\u6C34\u5668", en: "water heater" },
+    aliases: ["\u71B1\u6C34\u7210", "\u70ED\u6C34\u5668", "water heater"]
+  },
+  {
+    key: "television",
+    label: { "zh-TW": "\u96FB\u8996", "zh-CN": "\u7535\u89C6", en: "television" },
+    aliases: ["\u96FB\u8996", "\u7535\u89C6", "television", "tv"]
+  }
+];
+var HOME_APPLIANCE_ROOMS = [
+  {
+    key: "living_room",
+    label: { "zh-TW": "\u5BA2\u5EF3", "zh-CN": "\u5BA2\u5385", en: "living room" },
+    aliases: ["\u5BA2\u5EF3", "\u5BA2\u5385", "living room", "lounge"]
+  },
+  {
+    key: "bedroom",
+    label: { "zh-TW": "\u7761\u623F", "zh-CN": "\u5367\u5BA4", en: "bedroom" },
+    aliases: ["\u7761\u623F", "\u81E5\u5BA4", "\u5367\u5BA4", "\u623F\u9593", "\u623F\u95F4", "bedroom"]
+  },
+  {
+    key: "kitchen",
+    label: { "zh-TW": "\u5EDA\u623F", "zh-CN": "\u53A8\u623F", en: "kitchen" },
+    aliases: ["\u5EDA\u623F", "\u53A8\u623F", "kitchen"]
+  }
+];
+var HOME_APPLIANCE_PROFILE_V1 = Object.freeze({
+  id: "home_appliance",
+  version: "1.0.0",
+  aliases: ["home_appliances", "appliance", "appliances", "\u5BB6\u96FB", "\u5BB6\u7535"],
+  schema: Object.freeze({
+    id: "home_appliance",
+    version: "1.0.0",
+    fields: Object.freeze([
+      {
+        key: "product",
+        type: "string",
+        required: false,
+        description: "Customer-grounded appliance product or category."
+      },
+      {
+        key: "model",
+        type: "string",
+        required: false,
+        description: "Customer-grounded product model."
+      },
+      {
+        key: "capacity",
+        type: "string",
+        required: false,
+        description: "Customer-stated size or capacity."
+      },
+      {
+        key: "installation",
+        type: "object",
+        required: false,
+        description: "Installation requirements stated by the customer."
+      },
+      {
+        key: "delivery",
+        type: "object",
+        required: false,
+        description: "Delivery requirements stated by the customer."
+      },
+      {
+        key: "engineering",
+        type: "object",
+        required: false,
+        description: "Site or engineering constraints requiring confirmation."
+      },
+      {
+        key: "payment",
+        type: "object",
+        required: false,
+        description: "Customer-stated payment requirements; never payment authority."
+      },
+      {
+        key: "warranty",
+        type: "string",
+        required: false,
+        description: "Customer-stated warranty requirement; never an inferred policy."
+      }
+    ])
+  })
+});
+
+// supabase/functions/_shared/industry-runtime-adapter.ts
+var INDUSTRY_AGENT_REGISTRY = createIndustryRegistry([HOME_APPLIANCE_PROFILE_V1]);
+function clean11(value) {
+  return typeof value === "string" ? value.normalize("NFKC").replace(/\s+/g, " ").trim() : "";
+}
+function matches(text, aliases) {
+  const lower = clean11(text).toLowerCase();
+  return aliases.some(
+    (alias) => alias.trim().length >= 2 && lower.includes(alias.trim().toLowerCase())
+  );
+}
+function resolveIndustryRuntime(input) {
+  const explicit = INDUSTRY_AGENT_REGISTRY.resolve(input.industry_identifier);
+  const detected = input.texts.some(
+    (text) => HOME_APPLIANCE_CATEGORIES.some((category) => matches(text, category.aliases))
+  ) ? HOME_APPLIANCE_PROFILE_V1 : null;
+  const hasExplicitIdentifier = Boolean(clean11(input.industry_identifier));
+  const profile = hasExplicitIdentifier ? explicit : detected;
+  if (!profile) return { industry_id: null, profile: null, hints: [] };
+  const hints = /* @__PURE__ */ new Map();
+  for (const text of input.texts) {
+    const categories = HOME_APPLIANCE_CATEGORIES.filter(
+      (category) => matches(text, category.aliases)
+    );
+    const rooms = HOME_APPLIANCE_ROOMS.filter((room) => matches(text, room.aliases));
+    for (const category of categories) {
+      for (const room of rooms.length ? rooms : [null]) {
+        const entityId2 = `${category.key}:${room?.key ?? "unscoped"}`;
+        hints.set(entityId2, {
+          entity_id: entityId2,
+          category: category.key,
+          aliases: [...category.aliases, ...room?.aliases ?? []],
+          attributes: {
+            industry_profile_id: profile.id,
+            industry_profile_version: profile.version
+          }
+        });
+      }
+    }
+  }
+  for (const entity of input.semantic_frame?.entities ?? []) {
+    const values = {};
+    const candidate = {
+      product: entity.name,
+      model: entity.model,
+      ...entity.attributes,
+      ...entity.constraints
+    };
+    for (const field of profile.schema.fields) {
+      const value = candidate[field.key];
+      if (value !== void 0 && value !== null) values[field.key] = value;
+    }
+    if (!validateIndustrySchemaValues(profile.schema, values).valid) continue;
+    const semanticHint = [...hints.values()].find(
+      (hint) => (hint.aliases ?? []).some(
+        (alias) => clean11(entity.name).toLowerCase().includes(clean11(alias).toLowerCase())
+      )
+    );
+    if (semanticHint)
+      semanticHint.attributes = { ...semanticHint.attributes, industry_fields: values };
+  }
+  return { industry_id: profile.id, profile, hints: [...hints.values()] };
+}
+function industryEntityLabel(entityId2, language) {
+  const [categoryKey, roomKey] = entityId2.split(":");
+  const category = HOME_APPLIANCE_CATEGORIES.find((item) => item.key === categoryKey);
+  if (!category) return null;
+  const room = HOME_APPLIANCE_ROOMS.find((item) => item.key === roomKey);
+  if (!room) return category.label[language];
+  return language === "en" ? `${room.label.en} ${category.label.en}` : `${room.label[language]}${category.label[language]}`;
+}
+
+// supabase/functions/_shared/commerce-state-runtime-base.ts
+var COMMERCE_STATE_RPC = "upsert_conversation_commerce_state_v1";
+var MAX_HISTORY_TURNS = 24;
+function clean12(value, max = 1600) {
+  return typeof value === "string" ? value.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max) : "";
+}
+function isRecord4(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function matchedAliases(lower, aliases) {
+  return aliases.filter((alias) => alias.trim().length >= 2 && lower.includes(alias.trim().toLowerCase()));
+}
+function detectCategories(text) {
+  const lower = clean12(text).toLowerCase();
+  return HOME_APPLIANCE_CATEGORIES.filter((spec) => matchedAliases(lower, spec.aliases).length > 0);
+}
+function detectRooms(text) {
+  const lower = clean12(text).toLowerCase();
+  return HOME_APPLIANCE_ROOMS.filter((spec) => matchedAliases(lower, spec.aliases).length > 0);
+}
+function entityLabel(entityId2, language) {
+  const generic = genericEntityLabelFromId(entityId2);
+  if (generic) return generic;
+  const industry = industryEntityLabel(entityId2, language);
+  if (industry) return industry;
+  const [categoryKey, roomKey] = entityId2.split(":");
+  const category = HOME_APPLIANCE_CATEGORIES.find((x) => x.key === categoryKey);
+  const room = HOME_APPLIANCE_ROOMS.find((x) => x.key === roomKey);
+  const categoryText = category ? category.label[language] : clean12(categoryKey, 60);
+  if (!room) return categoryText;
+  return language === "en" ? `${room.label.en} ${categoryText}` : `${room.label[language]}${categoryText}`;
+}
+function buildCommerceEntityHints(texts) {
+  const hints = /* @__PURE__ */ new Map();
+  for (const raw of texts) {
+    const text = clean12(raw);
+    if (!text) continue;
+    const categories = detectCategories(text);
+    if (categories.length) {
+      const rooms = detectRooms(text);
+      for (const category of categories) {
+        const scopes = rooms.length ? rooms : [null];
+        for (const room of scopes) {
+          const entityId2 = room ? `${category.key}:${room.key}` : `${category.key}:unscoped`;
+          if (hints.has(entityId2)) continue;
+          hints.set(entityId2, {
+            entity_id: entityId2,
+            category: category.key,
+            aliases: [...category.aliases, ...room ? room.aliases : []]
+          });
+        }
+      }
+      continue;
+    }
+    for (const hint of buildGenericCommerceEntityHints([text])) {
+      const existing = hints.get(hint.entity_id);
+      if (!existing) hints.set(hint.entity_id, hint);
+      else hints.set(hint.entity_id, {
+        ...existing,
+        aliases: [.../* @__PURE__ */ new Set([...existing.aliases ?? [], ...hint.aliases ?? []])],
+        attributes: { ...existing.attributes ?? {}, ...hint.attributes ?? {} }
+      });
+    }
+  }
+  return [...hints.values()];
+}
+function hintsMentionedInTurn(text, hints) {
+  const lower = clean12(text).toLowerCase();
+  const rooms = detectRooms(text);
+  const categories = detectCategories(text).map((x) => x.key);
+  return hints.filter((hint) => {
+    if (hint.entity_id.startsWith("generic:")) {
+      return (hint.aliases ?? []).some((alias) => {
+        const normalized = clean12(alias, 80).toLowerCase();
+        return normalized.length >= 2 && lower.includes(normalized);
+      });
+    }
+    if (!categories.includes(hint.category)) return false;
+    const [, roomKey] = hint.entity_id.split(":");
+    if (!rooms.length) return true;
+    if (roomKey === "unscoped") return false;
+    return rooms.some((room) => room.key === roomKey) || Boolean(lower) === false;
+  });
+}
+function hintRequiresBookingWithoutDelivery(hint) {
+  const attributes = hint.attributes;
+  if (!isRecord4(attributes)) return false;
+  const capabilities = attributes["capabilities"];
+  if (!isRecord4(capabilities)) return false;
+  return capabilities["requires_booking"] === true && capabilities["requires_delivery"] !== true && capabilities["requires_installation"] !== true;
+}
+var COUNT_TOKEN2 = "[\u4E00\u4E8C\u5169\u4E24\u4E09\u56DB\u4E94\u516D\u4E03\u516B\u4E5D\u5341]|\\d{1,4}";
+var COUNT_UNIT = "\u90E8|\u53F0|\u4EF6|\u500B|\u4E2A|\u5957|\u5F35|\u5F20|\u76D2|\u7BB1|\u5305|\u888B|\u6A3D|\u74F6|\u652F|\u679D|\u672C|\u518A|\u518C|\u5C0D|\u5BF9|\u96D9|\u53CC|\u689D|\u6761|\u4EFD|\u4F4D|\u5E2D|\u9593|\u95F4|\u665A|\u6B21|\u5802|\u8AB2|\u8BFE|units?|pcs?|pieces?|items?|boxes?|bottles?|packs?|bags?|pairs?|sets?|seats?|nights?|sessions?|lessons?";
+function countTokenValue(raw) {
+  const map = {
+    \u4E00: 1,
+    \u4E8C: 2,
+    \u5169: 2,
+    \u4E24: 2,
+    \u4E09: 3,
+    \u56DB: 4,
+    \u4E94: 5,
+    \u516D: 6,
+    \u4E03: 7,
+    \u516B: 8,
+    \u4E5D: 9,
+    \u5341: 10
+  };
+  if (/^\d+$/.test(raw)) return Number(raw);
+  return map[raw] ?? null;
+}
+function detectQuantityCorrectionSignal(text) {
+  const t = clean12(text);
+  return /(?:更正|改(?:做|成|為|为|返)?|變成|变成|唔係.+?(?:而係|係|系)|不是.+?(?:而是|是)|不係.+?(?:而係|係)|actually|change(?:\s+it)?\s+to|make\s+it)/i.test(t);
+}
+function parseCount(text) {
+  const t = clean12(text);
+  if (!t) return null;
+  const correctionPatterns = [
+    new RegExp(`(?:\u5514\u4FC2|\u5514\u7CFB|\u4E0D\u662F|\u4E0D\u4FC2)\\s*(?:${COUNT_TOKEN2})\\s*(?:${COUNT_UNIT})?.{0,24}?(?:\u800C\u4FC2|\u800C\u7CFB|\u800C\u662F|\u4FC2|\u7CFB|\u662F)\\s*(${COUNT_TOKEN2})\\s*(?:${COUNT_UNIT})`, "i"),
+    new RegExp(`(?:\u66F4\u6B63|\u6539(?:\u505A|\u6210|\u70BA|\u4E3A|\u8FD4)?|\u8B8A\u6210|\u53D8\u6210|change(?:\\s+it)?\\s+to|make\\s+it|actually)\\s*[:\uFF1A,\uFF0C]?\\s*(${COUNT_TOKEN2})\\s*(?:${COUNT_UNIT})`, "i")
+  ];
+  for (const pattern of correctionPatterns) {
+    const correction = t.match(pattern);
+    if (correction?.[1]) return countTokenValue(correction[1]);
+  }
+  const m = t.match(
+    /(?:改(?:做|成|返)?|變成|变成|change to|要|need|order)?\s*([一二兩两三四五六七八九十]|\d{1,4})\s*(?:部|台|件|個|个|套|張|张|盒|箱|包|袋|樽|瓶|支|枝|本|冊|册|對|对|雙|双|條|条|份|位|席|間|间|晚|次|堂|課|课|units?|pcs?|pieces?|items?|boxes?|bottles?|packs?|bags?|pairs?|sets?|seats?|nights?|sessions?|lessons?)/i
+  );
+  if (!m?.[1]) return null;
+  return countTokenValue(m[1]);
+}
+function detectCancellation(text) {
+  return /(?:取消|唔要|不要|唔買|不买|不買|cancel|remove it|drop it)/i.test(text);
+}
+function detectDeferral(text) {
+  return /(?:暫時唔|暫時不|暂时不|稍後先|稍后再|later|hold off|defer)/i.test(text);
+}
+var SITE_CHECK_PATTERNS = [
+  [/(?:窗口|窗台|window opening)/i, "window_opening_check"],
+  [/(?:牆|墙|承重|wall strength|structural)/i, "wall_structure_check"],
+  [/(?:電壓|电压|電力|电力|voltage|power supply|安培|amp)/i, "electrical_supply_check"],
+  [/(?:排水|drainage|drain pipe|冷凝水)/i, "drainage_check"],
+  [/(?:安裝|安装|installation|拆機|拆机|dismantle)/i, "installation_site_check"]
+];
+function detectSiteChecks(text) {
+  return SITE_CHECK_PATTERNS.filter(([pattern]) => pattern.test(text)).map(([, key]) => key);
+}
+function requiresProfessionalSiteCheck(text) {
+  const structural = /(?:啲|個|个)?(?:窗口|窗台|牆|墙|電壓|电压|排水|承重|wall strength|structural|voltage|drainage)/i.test(text) && /(?:得唔得|可以嗎|可以吗|夠唔夠|够不够|安全|裝得|装得|OK嗎|ok\?|feasible|可行|支持|support)/i.test(text);
+  const installation = /(?:安裝|安装|installation|install|mount|拆機|拆机|dismantle)/i.test(text) && /(?:上門|上门|師傅|师傅|onsite|on-site|site (?:visit|survey)|technician|安全|可行|feasible)/i.test(text);
+  return structural || installation;
+}
+var NEGATED_TX_PATTERNS = [
+  /(?:尚未|還未|还未|暫未|暂未|未|唔係|唔系|唔|冇|沒有|没有|沒|没|不是|不係|不)(?:係|系|會|会|有|想|要)?\s*(?:正式)?(?:落單|落单|下單|下单|確認落單|确认下单|確認訂單|确认订单|落實|落实|訂單|订单|確認|确认)/gi,
+  /(?:尚未|還未|还未|暫未|暂未|未|唔|不)(?:係|系)?\s*正式/gi,
+  /(?:尚未|還未|还未|暫未|暂未|未|唔|冇|沒有|没有|沒|没|不)\s*(?:付款|付錢|付钱|支付|畀錢|畀钱|付)/gi,
+  /(?:尚未|還未|还未|暫未|暂未|未|唔|冇|沒有|没有|沒|没|不)\s*(?:預約|预约|約定|约定|約|约|安排|落實時間|落实时间)/gi,
+  /\b(?:not|no|never|haven'?t|hasn'?t|have\s+not|has\s+not|didn'?t|did\s+not|don'?t|do\s+not|won'?t)\b[^.,;!?]{0,24}?\b(?:order(?:ed|s)?|paid|pay(?:ment|ing)?|confirm(?:ed)?|book(?:ed|ing)?|schedul(?:ed|e|ing))\b/gi,
+  /\b(?:order|payment|booking|delivery|installation)\b[^.,;!?]{0,16}?\bnot\b\s*(?:yet\s*)?(?:been\s*)?(?:made|confirmed|placed|paid|booked|scheduled)?/gi
+];
+function scanNegatedTransaction(text) {
+  let positive = text;
+  const removed = [];
+  for (const pattern of NEGATED_TX_PATTERNS) {
+    positive = positive.replace(pattern, (match) => {
+      removed.push(match);
+      return " ";
+    });
+  }
+  const negated = removed.join(" ");
+  return {
+    positive,
+    negated_order: /(?:落單|落单|下單|下单|訂單|订单|正式|確認|确认|order|confirm)/i.test(negated),
+    negated_payment: /(?:付|支付|pay|paid)/i.test(negated),
+    negated_booking: /(?:預約|预约|約|约|安排|book|schedul)/i.test(negated)
+  };
+}
+function explicitOrderConfirmation(text) {
+  return /(?:已付款|已付|付咗|paid\b|正式落單|正式下单|確認落單|确认下单|confirm(?:ed)? (?:the )?order|已預約|已预约|booked)/i.test(text);
+}
+function explicitPaymentConfirmation(text) {
+  return /(?:已付款|已付|付咗|已支付|paid\b)/i.test(text);
+}
+function explicitBookingConfirmation(text) {
+  return /(?:已預約|已预约|已約|已约|已安排|booked|scheduled)/i.test(text);
+}
+function quotationOnlySignal(text) {
+  return /(?:報價|报价|quotation|quote|未落單|未下单|未正式|唔係落單|不是下单|先問價|先问价)/i.test(text);
+}
+function detectTransactionSummaryIntent(text) {
+  return /(?:幫我總結|帮我总结|總結一下|总结一下|幫我整理|帮我整理|整理(?:一下)?(?:比|畀|給|给)?同事|同事跟進|同事跟进|summar(?:y|ise|ize)|recap|hand over to)/i.test(clean12(text));
+}
+function detectCurrentPriceValidityQuestion(text) {
+  const t = clean12(text);
+  if (!t) return false;
+  const historical = /(?:之前|以前|以往|舊|旧|歷史|历史|previous|earlier|old)/i.test(t);
+  const price = /(?:報價|报价|價|价|price|quote|quotation|收費|收费|fee)/i.test(t);
+  const current = /(?:而家|現在|现在|目前|最新|仲係|还是|仍然|current|latest|still)/i.test(t);
+  const validity = /(?:一定|作準|作准|有效|同價|同价|一樣|一样|same|valid|guarantee|guaranteed)/i.test(t);
+  return historical && price && (current || validity);
+}
+function detectPreorderUnpaidIntent(text) {
+  const t = clean12(text);
+  if (!t) return false;
+  const preorder = /(?:想預訂|想预订|想訂|想订|要預訂|要预订|預訂|预订|想預約|想预约|要預約|要预约|預約|预约|reserve|reservation|book(?:ing)?|pre[- ]?order|want to order|place an order)/i.test(t);
+  return preorder && scanNegatedTransaction(t).negated_payment;
+}
+function parseMoneyTerms(text) {
+  const amounts = [];
+  const re = /(?:HK\$|HKD|\$|元|價|价|費|费|收費|收费|fee|price)\s*((?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,10})(?:\.[0-9]{1,2})?)|((?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,10})(?:\.[0-9]{1,2})?)\s*(?:元|蚊|dollars?)/gi;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const raw = m[1] ?? m[2];
+    if (!raw) continue;
+    const value = Number(raw.replace(/,/g, ""));
+    if (Number.isFinite(value) && value > 0) amounts.push(value);
+  }
+  return amounts;
+}
+function detectExplicitCalculationRequest(text) {
+  return /(?:加埋|合共|總共|总共|一共|總數|总数|埋一齊|埋一起|total|altogether|calculate|計下|计下|算下|計算|计算|how much.*(?:total|altogether))/i.test(clean12(text));
+}
+function extractCommerceCalculationTerms(texts, state, options) {
+  const amounts = [];
+  for (const raw of texts) {
+    const text = clean12(raw);
+    if (!text) continue;
+    for (const amount of parseMoneyTerms(text)) amounts.push(amount);
+  }
+  if (options?.include_historical_state) {
+    const textAmounts = new Set(amounts);
+    for (const quote of state.quotes) {
+      if (quote.quote_type !== "customer_reported_historical") continue;
+      if (textAmounts.has(quote.amount)) continue;
+      amounts.push(quote.amount);
+    }
+  }
+  const unique = [];
+  const seen = /* @__PURE__ */ new Map();
+  for (const amount of amounts) {
+    const count = seen.get(amount) ?? 0;
+    if (count < 2) {
+      seen.set(amount, count + 1);
+      unique.push(amount);
+    }
+  }
+  if (!unique.length) return { terms: [], currency: null };
+  const currentTurnMultiplier = parseCount(texts[0] ?? "");
+  const activeEntities2 = state.entities.filter(
+    (entity) => entity.status !== "cancelled" && entity.status !== "deferred"
+  );
+  const stateMultiplier = activeEntities2.length === 1 ? Math.max(1, activeEntities2[0].quantity) : activeEntities2.reduce((sum, entity) => sum + Math.max(0, entity.quantity), 0) || 1;
+  const multiplier = currentTurnMultiplier ?? stateMultiplier;
+  const currency = state.quotes.find((q) => q.currency)?.currency ?? "HKD";
+  return {
+    terms: unique.map((amount, index) => ({ label: `customer_term_${index + 1}`, value: amount, multiplier })),
+    currency
+  };
+}
+function calculationExplicitlyUsesHistory(text) {
+  const t = clean12(text);
+  if (!t) return false;
+  return /(?:(?:之前|以前|以往|舊|旧|歷史|历史|previous|historical|earlier).{0,40}(?:數字|数字|價|价|報價|报价|price|quote|figure|amount).{0,40}(?:計|计|算|calculate|total|合共|總共|总共)|(?:計|计|算|calculate|total|合共|總共|总共).{0,40}(?:之前|以前|以往|舊|旧|歷史|历史|previous|historical|earlier))/i.test(t);
+}
+async function loadCommerceState(db, conversation_id) {
+  const { data, error } = await db.from("conversation_commerce_state").select("revision, state").eq("conversation_id", conversation_id).maybeSingle();
+  if (error || !isRecord4(data)) return { state: createEmptyConversationCommerceState(), revision: 0 };
+  const revision = typeof data["revision"] === "number" ? data["revision"] : Number(data["revision"] ?? 0);
+  const state = data["state"];
+  return {
+    state: isConversationCommerceState(state) ? state : createEmptyConversationCommerceState(),
+    revision: Number.isFinite(revision) && revision > 0 ? revision : 0
+  };
+}
+function deriveA3RuntimeEvents(input, hints, previous) {
+  const text = clean12(input.text);
+  const events = [];
+  const provenance3 = {
+    source_type: "customer",
+    source_message_id: input.source_message_id,
+    recorded_at: input.occurred_at ?? null
+  };
+  const mentioned = hintsMentionedInTurn(text, hints);
+  const quantity = parseCount(text);
+  const cancelled = detectCancellation(text);
+  const deferred = detectDeferral(text);
+  const additive = detectAdditiveEntityCreationSignal(text);
+  const explicitCreation = detectExplicitEntityCreationSignal(text);
+  const correction = detectQuantityCorrectionSignal(text);
+  if (correction && quantity !== null && mentioned.length === 0) {
+    const active = previous.entities.filter(
+      (entity) => entity.status !== "cancelled" && entity.status !== "deferred"
+    );
+    if (active.length === 1) {
+      events.push({
+        type: "SET_ENTITY_QUANTITY",
+        entity_id: active[0].entity_id,
+        quantity,
+        provenance: provenance3
+      });
+    }
+  }
+  if (additive && quantity !== null && mentioned.length === 0) {
+    const active = previous.entities.filter(
+      (entity) => entity.status !== "cancelled" && entity.status !== "deferred"
+    );
+    if (active.length === 1) {
+      events.push({
+        type: "SET_ENTITY_QUANTITY",
+        entity_id: active[0].entity_id,
+        quantity: active[0].quantity + quantity,
+        provenance: provenance3
+      });
+      events.push({ type: "SET_ENTITY_STATUS", entity_id: active[0].entity_id, status: "tentative", provenance: provenance3 });
+    }
+  }
+  for (const hint of mentioned) {
+    if (cancelled) {
+      events.push({ type: "SET_ENTITY_STATUS", entity_id: hint.entity_id, status: "cancelled", provenance: provenance3 });
+      continue;
+    }
+    if (deferred) {
+      events.push({ type: "SET_ENTITY_STATUS", entity_id: hint.entity_id, status: "deferred", provenance: provenance3 });
+      continue;
+    }
+    if (quantity !== null && (additive || mentioned.length === 1)) {
+      const existing = previous.entities.find((entity) => entity.entity_id === hint.entity_id);
+      const nextQuantity = additive && existing ? existing.quantity + quantity : quantity;
+      events.push({ type: "SET_ENTITY_QUANTITY", entity_id: hint.entity_id, quantity: nextQuantity, provenance: provenance3 });
+    }
+    if (quantity !== null || explicitCreation) {
+      events.push({ type: "SET_ENTITY_STATUS", entity_id: hint.entity_id, status: "tentative", provenance: provenance3 });
+    }
+  }
+  const checks = detectSiteChecks(text);
+  if (checks.length) events.push({ type: "SET_PENDING_CHECKS", checks });
+  return events;
+}
+function enforceQuotationNotOrderEvents(text, state) {
+  const scan = scanNegatedTransaction(text);
+  const positiveOrder = explicitOrderConfirmation(scan.positive);
+  const positivePayment = explicitPaymentConfirmation(scan.positive);
+  const positiveBooking = explicitBookingConfirmation(scan.positive);
+  const events = [];
+  if (scan.negated_booking && !positiveBooking && state.delivery.confirmed) {
+    events.push({ type: "SET_DELIVERY", patch: { confirmed: false }, provenance: { source_type: "derived" } });
+  }
+  if (positiveOrder) return events;
+  const promoted = state.conversion.order_status === "confirmed" || state.conversion.order_status === "completed" || state.conversion.funnel_stage === "order_confirmed";
+  const paidDrift = !positivePayment && scan.negated_payment && (state.conversion.payment_status === "paid" || state.conversion.payment_status === "pending_payment");
+  if (!promoted && !paidDrift) {
+    if (quotationOnlySignal(text) && state.conversion.quotation_status === "none") {
+      events.push({ type: "SET_CONVERSION", patch: { funnel_stage: "quotation", quotation_status: "draft" } });
+    }
+    return events;
+  }
+  const patch = {
+    funnel_stage: "quotation",
+    quotation_status: state.conversion.quotation_status === "none" ? "draft" : state.conversion.quotation_status
+  };
+  if (promoted) patch.order_status = "draft";
+  if (paidDrift) patch.payment_status = "pending_quote";
+  events.push({ type: "SET_CONVERSION", patch });
+  return events;
+}
+function detectExplicitEntityCreationSignal(text) {
+  const t = clean12(text);
+  if (!t) return false;
+  if (parseCount(t) !== null) return true;
+  return /(?:另外|再加|再要|加多|加一|加個|加个|多要|多買|多买|新增|想買|想买|要買|要买|購買|购买|訂購|订购|落單|下單|下单|需要|我要|加裝|加装|安裝多|添置|add\s|buy\s|purchase|order\s|need\s|want\s|another|extra|additional)/i.test(t);
+}
+function detectAdditiveEntityCreationSignal(text) {
+  const t = clean12(text);
+  if (!t) return false;
+  return /(?:另外\s*(?:加|要|買|买|訂|订|新增|加裝|加装)|再加|再要|加多|多要|多買|多买|新增多|加裝多|加装多|another|extra|additional|add\s+(?:another|one|two|three|\d))/i.test(t);
+}
+function filterGhostUnscopedHints(text, state, hints) {
+  const explicitCreation = detectExplicitEntityCreationSignal(text);
+  const additive = detectAdditiveEntityCreationSignal(text);
+  const categories = new Set(detectCategories(text).map((category) => category.key));
+  const rooms = detectRooms(text);
+  return hints.filter((hint) => {
+    if (!categories.has(hint.category)) return true;
+    const roomKey = hint.entity_id.split(":")[1];
+    if (rooms.length > 0 && roomKey === "unscoped") return false;
+    if (additive && rooms.length === 0) return roomKey === "unscoped";
+    if (roomKey !== "unscoped") return true;
+    if (state.entities.some((e) => e.entity_id === hint.entity_id)) return true;
+    if (!explicitCreation) return false;
+    const hasConcreteSameCategory = state.entities.some(
+      (entity) => entity.category === hint.category && !entity.entity_id.endsWith(":unscoped") && entity.status !== "cancelled" && entity.status !== "deferred"
+    );
+    if (rooms.length === 0 && hasConcreteSameCategory) return false;
+    return true;
+  });
+}
+function reduceTurn(previous, input, rawHints) {
+  const calculationTurn = detectExplicitCalculationRequest(input.text);
+  const hints = calculationTurn ? [] : filterGhostUnscopedHints(input.text, previous, rawHints);
+  const mentioned = calculationTurn ? [] : hintsMentionedInTurn(input.text, hints);
+  const bookingWithoutDelivery = mentioned.some(hintRequiresBookingWithoutDelivery);
+  const semanticAuthoritative = !calculationTurn && Boolean(input.semantic_frame && input.semantic_frame.confidence >= 0.72);
+  const semanticEventsRaw = semanticAuthoritative ? semanticFrameToStateEvents(input.semantic_frame, previous, hints, input.source_message_id, input.occurred_at ?? null) : [];
+  const semanticEvents = bookingWithoutDelivery ? semanticEventsRaw.filter((event) => event.type !== "SET_DELIVERY") : semanticEventsRaw;
+  const derivedRaw = calculationTurn || semanticAuthoritative ? [] : deriveCommerceEventsFromCustomerTurn({
+    text: input.text,
+    source_message_id: input.source_message_id,
+    occurred_at: input.occurred_at ?? null,
+    entity_hints: hints,
+    current_language: input.language
+  });
+  const derived = bookingWithoutDelivery ? derivedRaw.filter((event) => event.type !== "SET_DELIVERY") : derivedRaw;
+  const runtimeEvents = calculationTurn ? [] : deriveA3RuntimeEvents(input, hints, previous);
+  const industryEvent = input.industry_identifier ? [{ type: "SET_CONTEXT", language: input.language, industry: input.industry_identifier }] : [];
+  const reduced = reduceCommerceState(previous, [...industryEvent, ...semanticEvents, ...derived, ...runtimeEvents]);
+  const guard = enforceQuotationNotOrderEvents(clean12(input.text), reduced);
+  return guard.length ? reduceCommerceState(reduced, guard) : reduced;
+}
+function rpcResult(data) {
+  if (!isRecord4(data)) return { result: "rpc_transport_error", applied_revision: null };
+  const result2 = typeof data["result"] === "string" ? data["result"] : "rpc_unknown_result";
+  const applied = data["applied_revision"];
+  return { result: result2, applied_revision: typeof applied === "number" ? applied : null };
+}
+async function persistCommerceTurn(db, input, hints) {
+  const loaded = await loadCommerceState(db, input.conversation_id);
+  let expected = loaded.revision;
+  let next = reduceTurn(loaded.state, input, hints);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { data, error } = await db.rpc(COMMERCE_STATE_RPC, {
+      p_conversation_id: input.conversation_id,
+      p_company_id: input.company_id,
+      p_expected_revision: expected,
+      p_source_message_id: input.source_message_id,
+      p_state: next
+    });
+    if (error) return { state: next, revision: expected, result: "rpc_transport_error" };
+    const parsed = rpcResult(data);
+    if (parsed.result === "success") return { state: next, revision: parsed.applied_revision ?? expected + 1, result: "success" };
+    if (parsed.result === "revision_conflict" && attempt === 0) {
+      const reloaded = await loadCommerceState(db, input.conversation_id);
+      expected = reloaded.revision;
+      next = reduceTurn(reloaded.state, input, hints);
+      continue;
+    }
+    return { state: next, revision: expected, result: parsed.result };
+  }
+  return { state: next, revision: expected, result: "revision_conflict" };
+}
+function statusLabel(status, language) {
+  const table = {
+    cancelled: { "zh-TW": "\u5DF2\u53D6\u6D88", "zh-CN": "\u5DF2\u53D6\u6D88", en: "cancelled" },
+    deferred: { "zh-TW": "\u66AB\u7DE9", "zh-CN": "\u6682\u7F13", en: "deferred" },
+    confirmed: { "zh-TW": "\u5DF2\u78BA\u8A8D", "zh-CN": "\u5DF2\u786E\u8BA4", en: "confirmed" },
+    tentative: { "zh-TW": "\u521D\u6B65", "zh-CN": "\u521D\u6B65", en: "tentative" },
+    researching: { "zh-TW": "\u8003\u616E\u4E2D", "zh-CN": "\u8003\u8651\u4E2D", en: "under consideration" }
+  };
+  return table[status]?.[language] ?? status;
+}
+function buildTransactionSummary(state, language) {
+  const lines = [];
+  const active = state.entities.filter((e) => e.status !== "cancelled" && e.status !== "deferred");
+  const inactive = state.entities.filter((e) => e.status === "cancelled" || e.status === "deferred");
+  const historical = state.quotes.filter((q) => q.quote_type === "customer_reported_historical");
+  const t = {
+    head: { "zh-TW": "\u6211\u5E6B\u4F60\u6574\u7406\u5497\u73FE\u6642\u5DF2\u78BA\u8A8D\u5605\u8CC7\u6599\uFF1A", "zh-CN": "\u6211\u5E2E\u4F60\u6574\u7406\u4E86\u76EE\u524D\u5DF2\u786E\u8BA4\u7684\u8D44\u6599\uFF1A", en: "Here is what is on record so far:" },
+    items: { "zh-TW": "\u9805\u76EE", "zh-CN": "\u9879\u76EE", en: "Items" },
+    none: { "zh-TW": "\u66AB\u6642\u672A\u6709", "zh-CN": "\u6682\u65F6\u6CA1\u6709", en: "none yet" },
+    removed: { "zh-TW": "\u5DF2\u53D6\u6D88\uFF0F\u66AB\u7DE9", "zh-CN": "\u5DF2\u53D6\u6D88\uFF0F\u6682\u7F13", en: "Cancelled / deferred" },
+    delivery: { "zh-TW": "\u9001\u8CA8\u5B89\u6392", "zh-CN": "\u9001\u8D27\u5B89\u6392", en: "Delivery" },
+    pending: { "zh-TW": "\u5F85\u5E2B\u5085\u4E0A\u9580\u78BA\u8A8D", "zh-CN": "\u5F85\u5E08\u5085\u4E0A\u95E8\u786E\u8BA4", en: "Pending onsite professional checks" },
+    quotes: { "zh-TW": "\u4F60\u63D0\u4F9B\u5605\u6B77\u53F2\u5831\u50F9\uFF08\u6B77\u53F2\u6578\u5B57\uFF0C\u975E\u73FE\u50F9\uFF09", "zh-CN": "\u4F60\u63D0\u4F9B\u7684\u5386\u53F2\u62A5\u4EF7\uFF08\u5386\u53F2\u6570\u5B57\uFF0C\u975E\u73B0\u4EF7\uFF09", en: "Historical prices you provided (historical, not current)" },
+    status: { "zh-TW": "\u76EE\u524D\u72C0\u614B", "zh-CN": "\u76EE\u524D\u72B6\u6001", en: "Current status" },
+    tail: { "zh-TW": "\u6700\u65B0\u50F9\u683C\u3001\u9069\u7528\u8CBB\u7528\u540C\u76F8\u95DC\u689D\u4EF6\u4ECD\u7136\u8981\u78BA\u8A8D\u4E4B\u5F8C\u5148\u4F5C\u6E96\u3002", "zh-CN": "\u6700\u65B0\u4EF7\u683C\u3001\u9002\u7528\u8D39\u7528\u53CA\u76F8\u5173\u6761\u4EF6\u4ECD\u9700\u786E\u8BA4\u540E\u624D\u4F5C\u51C6\u3002", en: "Latest pricing, applicable fees and relevant conditions still need to be confirmed." }
+  };
+  lines.push(t.head[language]);
+  lines.push(`${t.items[language]}: ${active.length ? active.map((e) => `${entityLabel(e.entity_id, language)} x${e.quantity} (${statusLabel(e.status, language)})`).join("\u3001") : t.none[language]}`);
+  if (inactive.length) lines.push(`${t.removed[language]}: ${inactive.map((e) => `${entityLabel(e.entity_id, language)} (${statusLabel(e.status, language)})`).join("\u3001")}`);
+  const delivery = state.delivery;
+  const deliveryParts = [delivery.preferred_date, delivery.preferred_window, delivery.address, delivery.recipient_name, delivery.recipient_phone].map((x) => clean12(x, 180)).filter(Boolean);
+  lines.push(`${t.delivery[language]}: ${deliveryParts.length ? deliveryParts.join(" / ") : t.none[language]}`);
+  const pending = [...state.installation.pending_checks, ...state.installation.items.filter((i) => i.status === "pending").map((i) => i.kind)];
+  if (pending.length) lines.push(`${t.pending[language]}: ${[...new Set(pending)].join("\u3001")}`);
+  if (historical.length) lines.push(`${t.quotes[language]}: ${historical.map((q) => `${q.currency} ${q.amount}`).join("\u3001")}`);
+  const orderConfirmed = state.conversion.order_status === "confirmed" || state.conversion.order_status === "completed";
+  const paymentPaid = state.conversion.payment_status === "paid";
+  if (language === "en") {
+    lines.push(orderConfirmed ? "Order: confirmed." : "Order: not yet confirmed.");
+    lines.push(paymentPaid ? "Payment: received." : "Payment: no confirmed payment on record yet.");
+  } else if (language === "zh-CN") {
+    lines.push(orderConfirmed ? "\u8BA2\u5355\uFF1A\u5DF2\u786E\u8BA4\u3002" : "\u8BA2\u5355\uFF1A\u5C1A\u672A\u786E\u8BA4\u3002");
+    lines.push(paymentPaid ? "\u4ED8\u6B3E\uFF1A\u5DF2\u786E\u8BA4\u6536\u5230\u3002" : "\u4ED8\u6B3E\uFF1A\u76EE\u524D\u672A\u6709\u5DF2\u4ED8\u6B3E\u8BB0\u5F55\u3002");
+  } else {
+    lines.push(orderConfirmed ? "\u8A02\u55AE\uFF1A\u5DF2\u78BA\u8A8D\u3002" : "\u8A02\u55AE\uFF1A\u5C1A\u672A\u78BA\u8A8D\u3002");
+    lines.push(paymentPaid ? "\u4ED8\u6B3E\uFF1A\u5DF2\u78BA\u8A8D\u6536\u5230\u3002" : "\u4ED8\u6B3E\uFF1A\u76EE\u524D\u672A\u6709\u5DF2\u4ED8\u6B3E\u8A18\u9304\u3002");
+  }
+  lines.push(t.tail[language]);
+  return lines.join("\n");
+}
+function buildQuantityAnswer(state, language) {
+  const active = state.entities.filter((e) => e.status !== "cancelled" && e.status !== "deferred");
+  if (!active.length) return null;
+  const total = active.reduce((sum, e) => sum + e.quantity, 0);
+  const breakdown = active.map((e) => `${entityLabel(e.entity_id, language)} x${e.quantity}`).join("\u3001");
+  if (language === "en") return `You currently have ${total} unit(s) in total: ${breakdown}.`;
+  if (language === "zh-CN") return `\u4F60\u76EE\u524D\u5408\u5171 ${total} \u4E2A\u5355\u4F4D\uFF1A${breakdown}\u3002`;
+  return `\u4F60\u800C\u5BB6\u5408\u5171 ${total} \u500B\u55AE\u4F4D\uFF1A${breakdown}\u3002`;
+}
+function buildKnownStateAnswer(language, statePath, value, state) {
+  if (statePath.startsWith("entities.") && statePath.endsWith(".quantity")) {
+    const answer = buildQuantityAnswer(state, language);
+    if (answer) return answer;
+  }
+  const rendered = typeof value === "object" ? JSON.stringify(value) : clean12(String(value), 300);
+  if (language === "en") return `From what you already told me: ${rendered}.`;
+  if (language === "zh-CN") return `\u6309\u4F60\u4E4B\u524D\u63D0\u4F9B\u7684\u8D44\u6599\uFF1A${rendered}\u3002`;
+  return `\u6309\u4F60\u4E4B\u524D\u63D0\u4F9B\u5605\u8CC7\u6599\uFF1A${rendered}\u3002`;
+}
+function formatCalculationNumber(value) {
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value);
+}
+function renderCalculationExpression(calculation) {
+  const parsed = calculation.expression.split(" + ").map((part) => {
+    const match = part.match(/^[^:]+:([0-9.]+)×([0-9.]+)$/);
+    return match ? { value: Number(match[1]), multiplier: Number(match[2]) } : null;
+  });
+  if (parsed.length && parsed.every(Boolean)) {
+    const terms = parsed;
+    const multiplier = terms[0].multiplier;
+    if (terms.every((term) => term.multiplier === multiplier)) {
+      const values = terms.map((term) => formatCalculationNumber(term.value)).join(" + ");
+      return `${formatCalculationNumber(multiplier)} \xD7 (${values}) = ${formatCalculationNumber(calculation.result)}`;
+    }
+  }
+  return `${calculation.expression} = ${formatCalculationNumber(calculation.result)}`;
+}
+function buildCalculationAnswer(language, calculation) {
+  const currency = calculation.currency ?? "HKD";
+  const rendered = renderCalculationExpression(calculation);
+  if (language === "en") return `Based only on the figures in this calculation: ${rendered} (${currency}). Latest prices, applicable fees and conditions still need to be confirmed.`;
+  if (language === "zh-CN") return `\u53EA\u6309\u4F60\u8FD9\u6B21\u63D0\u4F9B\u7684\u6570\u5B57\u8BA1\u7B97\uFF1A${rendered}\uFF08${currency}\uFF09\u3002\u6700\u65B0\u4EF7\u683C\u3001\u9002\u7528\u8D39\u7528\u53CA\u76F8\u5173\u6761\u4EF6\u4ECD\u9700\u786E\u8BA4\u3002`;
+  return `\u53EA\u6309\u4F60\u4ECA\u6B21\u63D0\u4F9B\u5605\u6578\u5B57\u8A08\uFF1A${rendered}\uFF08${currency}\uFF09\u3002\u6700\u65B0\u50F9\u683C\u3001\u9069\u7528\u8CBB\u7528\u540C\u76F8\u95DC\u689D\u4EF6\u4ECD\u7136\u8981\u78BA\u8A8D\u3002`;
+}
+function buildProfessionalConfirmationAnswer(language, state) {
+  const active = state.entities.filter((e) => e.status !== "cancelled" && e.status !== "deferred");
+  const known = active.length ? active.map((e) => `${entityLabel(e.entity_id, language)} x${e.quantity}`).join("\u3001") : "";
+  if (language === "en") return `${known ? `I still have your details on record: ${known}. ` : ""}For safety and accuracy, our technician needs to inspect the site in person before we can confirm whether the installation is suitable.`;
+  if (language === "zh-CN") return `${known ? `\u6211\u4EEC\u5DF2\u4FDD\u7559\u60A8\u4E4B\u524D\u63D0\u4F9B\u7684\u8D44\u6599\uFF1A${known}\u3002` : ""}\u4E3A\u786E\u4FDD\u5B89\u5168\u548C\u51C6\u786E\uFF0C\u9700\u8981\u5E08\u5085\u4E0A\u95E8\u68C0\u67E5\u7A97\u53E3\u5C3A\u5BF8\u3001\u627F\u6258\u53CA\u5B89\u88C5\u73AF\u5883\u540E\u518D\u786E\u8BA4\u662F\u5426\u9002\u5408\u5B89\u88C5\u3002`;
+  return `${known ? `\u6211\u54CB\u5DF2\u4FDD\u7559\u60A8\u4E4B\u524D\u63D0\u4F9B\u5605\u8CC7\u6599\uFF1A${known}\u3002` : ""}\u70BA\u78BA\u4FDD\u5B89\u5168\u540C\u6E96\u78BA\uFF0C\u9700\u8981\u5E2B\u5085\u4E0A\u9580\u6AA2\u67E5\u7A97\u53E3\u5C3A\u5BF8\u3001\u627F\u6258\u540C\u5B89\u88DD\u74B0\u5883\u5F8C\u5148\u53EF\u4EE5\u78BA\u8A8D\u662F\u5426\u9069\u5408\u5B89\u88DD\u3002`;
+}
+function buildCurrentPriceValidityAnswer(language) {
+  if (language === "en") return "Not necessarily. A previous quote is only a reference and does not guarantee the current price. The latest price, applicable fees and relevant conditions need to be confirmed again before they are final.";
+  if (language === "zh-CN") return "\u672A\u5FC5\u3002\u4F60\u4E4B\u524D\u770B\u5230\u7684\u62A5\u4EF7\u53EA\u53EF\u4F5C\u4E3A\u53C2\u8003\uFF0C\u5E76\u4E0D\u4EE3\u8868\u76EE\u524D\u4ECD\u662F\u540C\u4E00\u4EF7\u683C\u3002\u6700\u65B0\u4EF7\u683C\u3001\u9002\u7528\u8D39\u7528\u53CA\u76F8\u5173\u6761\u4EF6\u9700\u8981\u91CD\u65B0\u786E\u8BA4\u540E\u624D\u4F5C\u51C6\u3002";
+  return "\u672A\u5FC5\u3002\u4F60\u4E4B\u524D\u898B\u904E\u5605\u5831\u50F9\u53EA\u53EF\u4EE5\u4F5C\u53C3\u8003\uFF0C\u5514\u4EE3\u8868\u800C\u5BB6\u4ECD\u7136\u4FC2\u540C\u4E00\u500B\u50F9\u3002\u6700\u65B0\u50F9\u683C\u3001\u9069\u7528\u8CBB\u7528\u540C\u76F8\u95DC\u689D\u4EF6\u9700\u8981\u91CD\u65B0\u78BA\u8A8D\u5F8C\u5148\u4F5C\u6E96\u3002";
+}
+function buildPreorderUnpaidAnswer(language, state) {
+  const active = state.entities.filter((e) => e.status !== "cancelled" && e.status !== "deferred");
+  const known = active.length ? active.map((e) => `${entityLabel(e.entity_id, language)} x${e.quantity}`).join("\u3001") : "";
+  const nextStep = buildCapabilityAwarePreorderNextStep(state, language);
+  if (language === "en") return `${known ? `Got it \u2014 you want to reserve ${known}. ` : "Got it \u2014 you want to proceed. "}Since payment has not been made yet, this is not a completed or confirmed order. ${nextStep}`;
+  if (language === "zh-CN") return `${known ? `\u597D\u7684\uFF0C\u6211\u77E5\u9053\u4F60\u60F3\u9884\u8BA2${known}\u3002` : "\u597D\u7684\uFF0C\u6211\u77E5\u9053\u4F60\u60F3\u7EE7\u7EED\u9884\u8BA2\u3002"}\u7531\u4E8E\u76EE\u524D\u8FD8\u672A\u4ED8\u6B3E\uFF0C\u6240\u4EE5\u73B0\u5728\u8FD8\u4E0D\u7B97\u5DF2\u5B8C\u6210\u6216\u5DF2\u786E\u8BA4\u8BA2\u5355\u3002${nextStep}`;
+  return `${known ? `\u597D\uFF0C\u6211\u77E5\u9053\u4F60\u60F3\u9810\u8A02${known}\u3002` : "\u597D\uFF0C\u6211\u77E5\u9053\u4F60\u60F3\u7E7C\u7E8C\u9810\u8A02\u3002"}\u56E0\u70BA\u4F60\u4EF2\u672A\u4ED8\u6B3E\uFF0C\u6240\u4EE5\u800C\u5BB6\u672A\u7B97\u5B8C\u6210\u6216\u5DF2\u78BA\u8A8D\u8A02\u55AE\u3002${nextStep}`;
+}
+async function runCommerceStateRuntime(db, input) {
+  const text = clean12(input.text);
+  if (!text || !input.conversation_id || !input.company_id || !input.source_message_id) return null;
+  const language = input.language;
+  if (detectPreorderUnpaidIntent(text)) {
+    const loaded = await loadCommerceState(db, input.conversation_id);
+    const hasActiveEntity = loaded.state.entities.some(
+      (entity) => entity.status !== "cancelled" && entity.status !== "deferred"
+    );
+    if (hasActiveEntity) {
+      return {
+        authority: "CONVERSATION_STATE",
+        reply: buildPreorderUnpaidAnswer(language, loaded.state),
+        revision: loaded.revision,
+        persist_result: "read_only",
+        reason: "preorder_intent_acknowledged_without_order_or_payment_promotion",
+        route: "commerce_state_answer"
+      };
+    }
+  }
+  const historyTexts = (input.history ?? []).filter((turn) => turn.role === "visitor" || turn.role === "user" || turn.role === "customer").slice(0, MAX_HISTORY_TURNS).map((turn) => clean12(turn.content));
+  const conversationTexts = [text, ...historyTexts];
+  const deterministicHints = buildCommerceEntityHints(conversationTexts);
+  const semanticHints = semanticFrameToEntityHints(input.semantic_frame);
+  const industry = resolveIndustryRuntime({
+    texts: conversationTexts,
+    semantic_frame: input.semantic_frame,
+    industry_identifier: input.industry_identifier
+  });
+  const hints = mergeCommerceEntityHints(
+    semanticHints,
+    mergeCommerceEntityHints(industry.hints, deterministicHints)
+  );
+  const runtimeInput = industry.industry_id && !input.industry_identifier ? { ...input, industry_identifier: industry.industry_id } : input;
+  const persisted = await persistCommerceTurn(db, runtimeInput, hints);
+  const state = persisted.state;
+  const summaryIntent = detectTransactionSummaryIntent(text);
+  const wantsCalculation = detectExplicitCalculationRequest(text);
+  const historicalCalculation = wantsCalculation && calculationExplicitlyUsesHistory(text);
+  const calculationTexts = historicalCalculation ? conversationTexts : [text];
+  const calculation = wantsCalculation ? extractCommerceCalculationTerms(calculationTexts, state, { include_historical_state: historicalCalculation }) : { terms: [], currency: null };
+  const decision2 = resolveCommerceAnswerAuthority({
+    question: text,
+    state,
+    calculation_terms: calculation.terms,
+    calculation_currency: calculation.currency,
+    requires_professional_site_check: requiresProfessionalSiteCheck(text)
+  });
+  const base = { revision: persisted.revision, persist_result: persisted.result, reason: decision2.reason };
+  if (decision2.authority === "SAFE_PROFESSIONAL_CONFIRMATION") {
+    return { ...base, authority: decision2.authority, reply: buildProfessionalConfirmationAnswer(language, state), route: "commerce_state_answer" };
+  }
+  if (detectPreorderUnpaidIntent(text)) {
+    return { ...base, authority: "CONVERSATION_STATE", reason: "preorder_intent_acknowledged_without_order_or_payment_promotion", reply: buildPreorderUnpaidAnswer(language, state), route: "commerce_state_answer" };
+  }
+  if (decision2.authority === "CONVERSATION_STATE" && decision2.state_path) {
+    return { ...base, authority: decision2.authority, state_path: decision2.state_path, reply: buildKnownStateAnswer(language, decision2.state_path, decision2.known_value, state), route: "commerce_state_answer" };
+  }
+  if (decision2.authority === "DETERMINISTIC_CALCULATION" && decision2.calculation) {
+    return { ...base, authority: decision2.authority, calculation: decision2.calculation, reply: buildCalculationAnswer(language, decision2.calculation), route: "commerce_state_answer" };
+  }
+  if (detectCurrentPriceValidityQuestion(text)) {
+    return { ...base, authority: "CURRENT_KB_REQUIRED", reason: "previous_quote_not_authoritative_for_current_price", reply: buildCurrentPriceValidityAnswer(language), route: "commerce_state_answer" };
+  }
+  if (summaryIntent && (state.entities.length > 0 || state.quotes.length > 0)) {
+    return { ...base, authority: "CONVERSATION_STATE", reply: buildTransactionSummary(state, language), route: "commerce_transaction_summary" };
+  }
+  return {
+    ...base,
+    authority: decision2.authority === "CURRENT_KB_REQUIRED" ? "CURRENT_KB_REQUIRED" : decision2.authority,
+    reply: null,
+    route: "commerce_kb_required"
+  };
+}
+
+// supabase/functions/_shared/commerce-state-runtime.ts
+function cleanText(value) {
+  return typeof value === "string" ? value.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, 1600) : "";
+}
+function containsMoney(text) {
+  return /(?:HK\$|HKD|\$|元|價|价|費|费|收費|收费|fee|price)\s*(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,10})(?:\.[0-9]{1,2})?|(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,10})(?:\.[0-9]{1,2})?\s*(?:元|蚊|dollars?)/i.test(text);
+}
+function isHistoricalMoneyContext(text) {
+  return /(?:之前|以前|以往|舊|旧|歷史|历史|previous|historical|earlier|old)/i.test(text) && /(?:報價|报价|價|价|price|quote|quotation|收費|收费|fee|HK\$|HKD|\$|元|蚊|dollars?)/i.test(text);
+}
+function calculationExplicitlyUsesHistory2(text) {
+  return /(?:(?:之前|以前|以往|舊|旧|歷史|历史|previous|historical|earlier).{0,40}(?:數字|数字|價|价|報價|报价|price|quote|figure|amount).{0,40}(?:計|计|算|calculate|total|合共|總共|总共)|(?:計|计|算|calculate|total|合共|總共|总共).{0,40}(?:之前|以前|以往|舊|旧|歷史|历史|previous|historical|earlier))/i.test(text);
+}
+function enrichEllipticalCalculation(input) {
+  const current = cleanText(input.text);
+  if (!detectExplicitCalculationRequest(current)) return input;
+  if (containsMoney(current)) return input;
+  if (detectCurrentPriceValidityQuestion(current)) return input;
+  if (calculationExplicitlyUsesHistory2(current)) return input;
+  const history = (input.history ?? []).filter(
+    (turn) => turn.role === "visitor" || turn.role === "user" || turn.role === "customer"
+  );
+  for (const turn of history) {
+    const candidate = cleanText(turn.content);
+    if (!candidate || candidate === current) continue;
+    if (!containsMoney(candidate)) continue;
+    if (isHistoricalMoneyContext(candidate)) continue;
+    return {
+      ...input,
+      // Base runtime treats calculation turns as read-only state operations, so
+      // continuity figures can safely be appended for deterministic arithmetic.
+      text: `${current} ${candidate}`
+    };
+  }
+  return input;
+}
+async function runCommerceStateRuntime2(db, input) {
+  return await runCommerceStateRuntime(db, enrichEllipticalCalculation(input));
+}
+
+// supabase/functions/_shared/commerce-semantic-frame.ts
+var COMMERCE_SEMANTIC_FRAME_VERSION = "commerce-semantic-1.0.0";
+var OPERATIONS = /* @__PURE__ */ new Set([
+  "ADD_ITEM",
+  "SET_QUANTITY",
+  "UPDATE_ITEM",
+  "REMOVE_ITEM",
+  "CANCEL_ITEM",
+  "RESERVE",
+  "REQUEST_QUOTE",
+  "ASK_FACT",
+  "ASK_CALCULATION",
+  "CONFIRM",
+  "DEFER",
+  "NO_STATE_CHANGE"
+]);
+var KINDS = /* @__PURE__ */ new Set([
+  "physical_product",
+  "digital_good",
+  "service",
+  "rental",
+  "subscription",
+  "ticket",
+  "custom_item",
+  "b2b_product",
+  "unknown"
+]);
+var TRANSACTION_STATES = /* @__PURE__ */ new Set([
+  "none",
+  "draft",
+  "pending_confirmation",
+  "confirmed",
+  "completed",
+  "cancelled",
+  "unknown"
+]);
+var PAYMENT_STATES = /* @__PURE__ */ new Set([
+  "none",
+  "pending_quote",
+  "pending_payment",
+  "paid",
+  "failed",
+  "refunded",
+  "partially_refunded",
+  "unknown"
+]);
+var BOOKING_STATES = /* @__PURE__ */ new Set([
+  "none",
+  "requested",
+  "pending",
+  "booked",
+  "completed",
+  "cancelled",
+  "unknown"
+]);
+var FULFILLMENT_STATES = /* @__PURE__ */ new Set([
+  "none",
+  "requested",
+  "pending",
+  "scheduled",
+  "in_progress",
+  "fulfilled",
+  "cancelled",
+  "unknown"
+]);
+var COMMERCE_SEMANTIC_RESPONSE_SCHEMA = {
+  type: "object",
+  properties: {
+    version: { type: "string", enum: [COMMERCE_SEMANTIC_FRAME_VERSION] },
+    language: { type: "string" },
+    operation: { type: "string", enum: [...OPERATIONS] },
+    intent: { type: "string" },
+    topic: { type: ["string", "null"] },
+    entities: {
+      type: "array",
+      maxItems: 12,
+      items: {
+        type: "object",
+        properties: {
+          entity_ref: { type: "string" },
+          name: { type: "string" },
+          kind: { type: "string", enum: [...KINDS] },
+          category_hint: { type: ["string", "null"] },
+          sku: { type: ["string", "null"] },
+          model: { type: ["string", "null"] },
+          quantity: { type: ["number", "null"], minimum: 0 },
+          unit: { type: ["string", "null"] },
+          attributes: { type: "object", additionalProperties: { type: ["string", "number", "boolean", "null"] } },
+          constraints: { type: "object", additionalProperties: { type: ["string", "number", "boolean", "null"] } },
+          capabilities: {
+            type: "object",
+            properties: {
+              requires_delivery: { type: "boolean" },
+              supports_pickup: { type: "boolean" },
+              requires_installation: { type: "boolean" },
+              requires_booking: { type: "boolean" },
+              requires_quote: { type: "boolean" },
+              requires_site_check: { type: "boolean" },
+              digital_fulfilment: { type: "boolean" },
+              recurring_billing: { type: "boolean" },
+              rental_return: { type: "boolean" },
+              customization: { type: "boolean" }
+            },
+            required: [
+              "requires_delivery",
+              "supports_pickup",
+              "requires_installation",
+              "requires_booking",
+              "requires_quote",
+              "requires_site_check",
+              "digital_fulfilment",
+              "recurring_billing",
+              "rental_return",
+              "customization"
+            ]
+          },
+          confidence: { type: "number", minimum: 0, maximum: 1 }
+        },
+        required: [
+          "entity_ref",
+          "name",
+          "kind",
+          "category_hint",
+          "sku",
+          "model",
+          "quantity",
+          "unit",
+          "attributes",
+          "constraints",
+          "capabilities",
+          "confidence"
+        ]
+      }
+    },
+    referents: {
+      type: "array",
+      maxItems: 12,
+      items: {
+        type: "object",
+        properties: {
+          ref: { type: "string" },
+          source: { type: "string", enum: ["current_turn", "prior_turn", "persistent_state", "unknown"] },
+          confidence: { type: "number", minimum: 0, maximum: 1 }
+        },
+        required: ["ref", "source", "confidence"]
+      }
+    },
+    customer_correction: { type: "boolean" },
+    additive: { type: "boolean" },
+    explicit_negations: { type: "array", items: { type: "string" }, maxItems: 20 },
+    requested_facts: { type: "array", items: { type: "string" }, maxItems: 20 },
+    transaction_state: { type: "string", enum: [...TRANSACTION_STATES] },
+    payment_state: { type: "string", enum: [...PAYMENT_STATES] },
+    booking_state: { type: "string", enum: [...BOOKING_STATES] },
+    fulfillment_state: { type: "string", enum: [...FULFILLMENT_STATES] },
+    ambiguity: {
+      type: "object",
+      properties: {
+        is_ambiguous: { type: "boolean" },
+        reasons: { type: "array", items: { type: "string" }, maxItems: 12 },
+        clarification_question: { type: ["string", "null"] }
+      },
+      required: ["is_ambiguous", "reasons", "clarification_question"]
+    },
+    confidence: { type: "number", minimum: 0, maximum: 1 }
+  },
+  required: [
+    "version",
+    "language",
+    "operation",
+    "intent",
+    "topic",
+    "entities",
+    "referents",
+    "customer_correction",
+    "additive",
+    "explicit_negations",
+    "requested_facts",
+    "transaction_state",
+    "payment_state",
+    "booking_state",
+    "fulfillment_state",
+    "ambiguity",
+    "confidence"
+  ]
+};
+function isRecord5(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function clean13(value, max = 300) {
+  return typeof value === "string" ? value.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max) : "";
+}
+function clampConfidence(value) {
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0;
+}
+function primitiveMap(value) {
+  if (!isRecord5(value)) return {};
+  const out = {};
+  for (const [key, raw] of Object.entries(value).slice(0, 40)) {
+    const k = clean13(key, 80);
+    if (!k) continue;
+    if (raw === null || typeof raw === "string" || typeof raw === "number" || typeof raw === "boolean") {
+      out[k] = typeof raw === "string" ? clean13(raw, 300) : raw;
+    }
+  }
+  return out;
+}
+function bool(value) {
+  return value === true;
+}
+function normalizeCapabilities(raw) {
+  const r = isRecord5(raw) ? raw : {};
+  return {
+    requires_delivery: bool(r.requires_delivery),
+    supports_pickup: bool(r.supports_pickup),
+    requires_installation: bool(r.requires_installation),
+    requires_booking: bool(r.requires_booking),
+    requires_quote: bool(r.requires_quote),
+    requires_site_check: bool(r.requires_site_check),
+    digital_fulfilment: bool(r.digital_fulfilment),
+    recurring_billing: bool(r.recurring_billing),
+    rental_return: bool(r.rental_return),
+    customization: bool(r.customization)
+  };
+}
+function enumValue(value, allowed, fallback) {
+  const normalized = clean13(value, 60);
+  return allowed.has(normalized) ? normalized : fallback;
+}
+function normalizeAmbiguity(value, confidence) {
+  const raw = isRecord5(value) ? value : {};
+  const reasons = (Array.isArray(raw.reasons) ? raw.reasons : []).map((x) => clean13(x, 200)).filter(Boolean).slice(0, 12);
+  const lowConfidence = confidence < 0.62;
+  const explicitAmbiguous = raw.is_ambiguous === true;
+  if (lowConfidence && !reasons.includes("low_confidence")) reasons.push("low_confidence");
+  return {
+    is_ambiguous: explicitAmbiguous || lowConfidence,
+    reasons,
+    clarification_question: raw.clarification_question === null ? null : clean13(raw.clarification_question, 400) || null
+  };
+}
+function normalizeCommerceSemanticFrame(value) {
+  if (!isRecord5(value)) return null;
+  const rawOperation = clean13(value.operation, 40);
+  if (!OPERATIONS.has(rawOperation)) return null;
+  const entities = [];
+  for (const raw of Array.isArray(value.entities) ? value.entities.slice(0, 12) : []) {
+    if (!isRecord5(raw)) continue;
+    const kind = clean13(raw.kind, 40);
+    if (!KINDS.has(kind)) continue;
+    const name = clean13(raw.name, 200);
+    if (!name) continue;
+    const q = raw.quantity === null ? null : Number(raw.quantity);
+    const quantity = q === null || !Number.isFinite(q) || q < 0 ? null : q;
+    entities.push({
+      entity_ref: clean13(raw.entity_ref, 120) || `semantic:${entities.length + 1}`,
+      name,
+      kind,
+      category_hint: raw.category_hint === null ? null : clean13(raw.category_hint, 120) || null,
+      sku: raw.sku === null ? null : clean13(raw.sku, 120) || null,
+      model: raw.model === null ? null : clean13(raw.model, 120) || null,
+      quantity,
+      unit: raw.unit === null ? null : clean13(raw.unit, 60) || null,
+      attributes: primitiveMap(raw.attributes),
+      constraints: primitiveMap(raw.constraints),
+      capabilities: normalizeCapabilities(raw.capabilities),
+      confidence: clampConfidence(raw.confidence)
+    });
+  }
+  const referents = [];
+  for (const raw of Array.isArray(value.referents) ? value.referents.slice(0, 12) : []) {
+    if (!isRecord5(raw)) continue;
+    const source = clean13(raw.source, 40);
+    if (!["current_turn", "prior_turn", "persistent_state", "unknown"].includes(source)) continue;
+    const ref = clean13(raw.ref, 160);
+    if (!ref) continue;
+    referents.push({ ref, source, confidence: clampConfidence(raw.confidence) });
+  }
+  const confidence = clampConfidence(value.confidence);
+  const ambiguity = normalizeAmbiguity(value.ambiguity, confidence);
+  const operation = ambiguity.is_ambiguous ? "NO_STATE_CHANGE" : rawOperation;
+  return {
+    version: COMMERCE_SEMANTIC_FRAME_VERSION,
+    language: clean13(value.language, 40) || "und",
+    operation,
+    intent: clean13(value.intent, 160) || "unknown",
+    topic: value.topic === null ? null : clean13(value.topic, 160) || null,
+    entities,
+    referents,
+    customer_correction: value.customer_correction === true,
+    additive: value.additive === true,
+    explicit_negations: (Array.isArray(value.explicit_negations) ? value.explicit_negations : []).map((x) => clean13(x, 200)).filter(Boolean).slice(0, 20),
+    requested_facts: (Array.isArray(value.requested_facts) ? value.requested_facts : []).map((x) => clean13(x, 200)).filter(Boolean).slice(0, 20),
+    transaction_state: enumValue(value.transaction_state, TRANSACTION_STATES, "unknown"),
+    payment_state: enumValue(value.payment_state, PAYMENT_STATES, "unknown"),
+    booking_state: enumValue(value.booking_state, BOOKING_STATES, "unknown"),
+    fulfillment_state: enumValue(value.fulfillment_state, FULFILLMENT_STATES, "unknown"),
+    ambiguity,
+    confidence
+  };
+}
+
+// supabase/functions/_shared/commerce-semantic-interpreter.ts
+var SYSTEM = `You are a multilingual commerce semantic interpreter.
+Your job is ONLY to understand the customer's commerce meaning and return one JSON object matching the canonical commerce semantic frame.
+Do not answer the customer. Do not invent product facts, prices, availability, policies, T&C, delivery rules or company facts.
+Do not assume an industry taxonomy. Interpret unfamiliar products/services compositionally from the customer's words and context.
+Required JSON fields: version, language, operation, intent, topic, entities, referents, customer_correction, additive, explicit_negations, requested_facts, transaction_state, payment_state, booking_state, fulfillment_state, ambiguity, confidence.
+Each entity must contain: entity_ref, name, kind, category_hint, sku, model, quantity, unit, attributes, constraints, capabilities, confidence.
+ambiguity must contain: is_ambiguous, reasons, clarification_question.
+Allowed operation values: ADD_ITEM, SET_QUANTITY, UPDATE_ITEM, REMOVE_ITEM, CANCEL_ITEM, RESERVE, REQUEST_QUOTE, ASK_FACT, ASK_CALCULATION, CONFIRM, DEFER, NO_STATE_CHANGE.
+Allowed kind values: physical_product, digital_good, service, rental, subscription, ticket, custom_item, b2b_product, unknown.
+Allowed transaction_state values: none, draft, pending_confirmation, confirmed, completed, cancelled, unknown.
+Allowed payment_state values: none, pending_quote, pending_payment, paid, failed, refunded, partially_refunded, unknown.
+Allowed booking_state values: none, requested, pending, booked, completed, cancelled, unknown.
+Allowed fulfillment_state values: none, requested, pending, scheduled, in_progress, fulfilled, cancelled, unknown.
+Capabilities must contain booleans: requires_delivery, supports_pickup, requires_installation, requires_booking, requires_quote, requires_site_check, digital_fulfilment, recurring_billing, rental_return, customization.
+Core rules:
+1. Resolve ellipsis, pronouns and short follow-ups from recent customer context and persistent state only when confidence is sufficient. If two or more plausible referents/meanings remain, set ambiguity.is_ambiguous=true, explain concise reasons, provide a clarification_question, use NO_STATE_CHANGE and do not propose a mutation.
+2. Keep semantics language-neutral even though language records the customer's input language.
+3. name is the clean item/service name, excluding quantity, unit, color/size/date/time and transaction verbs when possible.
+4. Put arbitrary customer-authored properties in attributes and requirements/limits in constraints.
+5. Capabilities describe what the requested commerce object/operation requires; do not infer company support. A customer asking about delivery may imply requires_delivery only if the requested transaction itself needs delivery; asking whether pickup is allowed may set supports_pickup=true as a requested capability, not as a confirmed company fact.
+6. If a fact must come from KB/API (price, FAQ, policy, T&C, warranty, delivery rules, availability), put a concise semantic concept in requested_facts. Do NOT provide the answer.
+7. customer_correction=true only when the latest message supersedes a prior customer-authored fact. additive=true only when quantity/items are explicitly added rather than replaced.
+8. Negated transaction statements such as '\u672A\u4ED8\u6B3E', 'not paid yet', 'not booked', 'not confirmed' must appear in explicit_negations and must never become confirmations.
+9. Lifecycle fields are semantic observations, never authority to mutate state. Never emit paid, booked, confirmed, completed, scheduled or fulfilled unless the customer/context contains explicit evidence for that exact state. Future intent such as 'I will pay', 'book it later' or '\u5B89\u6392\u661F\u671F\u4E94' is not completion evidence.
+10. If the latest turn is only a factual/safety/policy question with no state mutation, use ASK_FACT or NO_STATE_CHANGE and do not invent a new commerce entity merely from the subject of the question when a prior referent is available.
+11. Unknown industries and unseen vocabulary are expected; never fall back to an industry list or synonym dictionary.
+12. Never invent add-ons/options/fees. Only include them when customer-authored context explicitly identifies them or persistent customer-authored state already contains them.
+13. If confidence is below 0.62, set ambiguity.is_ambiguous=true and operation=NO_STATE_CHANGE.
+Return JSON only.`;
+function clean14(value, max = 3e3) {
+  return typeof value === "string" ? value.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max) : "";
+}
+function isRecord6(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function buildPersistentCommerceStateSummary(row) {
+  if (!isRecord6(row) || !isRecord6(row.state)) return null;
+  const revision = typeof row.revision === "number" ? row.revision : Number(row.revision ?? 0);
+  const bounded2 = {
+    revision: Number.isFinite(revision) && revision >= 0 ? revision : 0,
+    state: row.state
+  };
+  try {
+    return JSON.stringify(bounded2).slice(0, 2400);
+  } catch {
+    return null;
+  }
+}
+async function loadPersistentCommerceStateSummary(input) {
+  const supplied = clean14(input.persistent_state_summary, 2400);
+  if (supplied) return supplied;
+  const supabaseUrl = clean14(Deno.env.get("SUPABASE_URL"), 600).replace(/\/$/, "");
+  if (!supabaseUrl || !input.conversation_id || !input.company_id) return null;
+  let adminKey = "";
+  try {
+    adminKey = getSupabaseAdminKey();
+  } catch {
+    return null;
+  }
+  const params = new URLSearchParams({
+    select: "revision,state",
+    conversation_id: `eq.${input.conversation_id}`,
+    company_id: `eq.${input.company_id}`,
+    limit: "1"
+  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 800);
+  try {
+    const response = await fetch(
+      `${supabaseUrl}/rest/v1/conversation_commerce_state?${params.toString()}`,
+      {
+        method: "GET",
+        headers: {
+          apikey: adminKey,
+          Authorization: `Bearer ${adminKey}`,
+          Accept: "application/json"
+        },
+        signal: controller.signal
+      }
+    );
+    if (!response.ok) return null;
+    const payload = await response.json();
+    if (!Array.isArray(payload) || payload.length === 0) return null;
+    return buildPersistentCommerceStateSummary(payload[0]);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+function buildUser(input, persistentStateSummary) {
+  const prior = (input.history ?? []).filter((x) => clean14(x.content) && clean14(x.content) !== clean14(input.latest)).slice(-12).map((x, i) => `${i + 1}. ${String(x.role || "unknown")}: ${clean14(x.content, 800)}`).join("\n");
+  return [
+    `Semantic frame version: ${COMMERCE_SEMANTIC_FRAME_VERSION}`,
+    `Latest customer turn: ${clean14(input.latest, 1600)}`,
+    prior ? `Recent conversation turns (oldest to newest):
+${prior}` : "Recent conversation turns: none",
+    persistentStateSummary ? `Persistent commerce state summary (customer-authored state only; do not treat as external facts):
+${clean14(persistentStateSummary, 2400)}` : "Persistent commerce state summary: none",
+    "Return one canonical semantic frame."
+  ].join("\n\n");
+}
+async function interpretCommerceSemantics(input) {
+  const latest = clean14(input.latest, 1600);
+  if (!latest) return { frame: null, source: "none", failure_code: null };
+  const persistentStateSummary = await loadPersistentCommerceStateSummary(input);
+  const result2 = await callModel({
+    purpose: "evaluation",
+    system: SYSTEM,
+    user: buildUser(input, persistentStateSummary),
+    maxTokens: 1800,
+    operationId: `commerce-semantic:${input.source_message_id}`,
+    companyId: input.company_id,
+    conversationId: input.conversation_id,
+    tag: "commerce-semantic-interpreter",
+    responseFormat: "json"
+  });
+  if (!result2.ok) {
+    return { frame: null, source: "none", failure_code: result2.code };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(result2.text);
+  } catch {
+    return { frame: null, source: "none", failure_code: "LLM_INVALID_OUTPUT" };
+  }
+  const frame = normalizeCommerceSemanticFrame(parsed);
+  if (!frame) {
+    return { frame: null, source: "none", failure_code: "LLM_INVALID_OUTPUT" };
+  }
+  return { frame, source: "llm", failure_code: null };
 }
 
 // supabase/functions/generate-reply/index.ts
@@ -6495,7 +9077,7 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
     _pr5HistoryRows ?? [],
     _pr5VisitorTurnCount ?? 0
   );
-  const _priorGroundedTransform = resolvePriorGroundedTransform(
+  const _priorGroundedTransform = resolvePriorGroundedTransform2(
     _h1LastMsg,
     _pr5HistoryRows ?? []
   );
@@ -6541,6 +9123,92 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
       }
     );
     if (_criticalE2Response) return _criticalE2Response;
+  }
+  let _a3SemanticFrame = null;
+  if (_criticalE2ExpectedTenantId) {
+    try {
+      const semanticResult = await interpretCommerceSemantics({
+        company_id: _criticalE2ExpectedTenantId,
+        conversation_id,
+        source_message_id,
+        latest: _h1LastMsg,
+        history: (_pr5HistoryRows ?? []).map((row) => ({
+          role: String(row.role ?? ""),
+          content: String(row.content ?? "")
+        }))
+      });
+      _a3SemanticFrame = semanticResult.frame;
+    } catch (error) {
+      console.error("[generate-reply] A3.1 semantic interpreter fallback", error instanceof Error ? error.name : "unknown_error");
+    }
+  }
+  let _a3Commerce = null;
+  if (_criticalE2ExpectedTenantId) {
+    try {
+      _a3Commerce = await runCommerceStateRuntime2(
+        supabaseAdmin,
+        {
+          conversation_id,
+          company_id: _criticalE2ExpectedTenantId,
+          source_message_id,
+          text: _h1LastMsg,
+          language: _visitorLang === "en" ? "en" : _visitorLang === "zh-CN" ? "zh-CN" : "zh-TW",
+          occurred_at: sourceVisitorMessage.created_at ?? null,
+          history: (_pr5HistoryRows ?? []).map((row) => ({
+            role: String(row.role ?? ""),
+            content: String(row.content ?? "")
+          })),
+          semantic_frame: _a3SemanticFrame
+        }
+      );
+    } catch (commerceError) {
+      console.error("[generate-reply] A3 commerce state runtime failed (non-blocking):", commerceError);
+      _a3Commerce = null;
+    }
+  }
+  if (_a3Commerce && _a3Commerce.reply) {
+    const commerceReply = _a3Commerce.reply;
+    const commerceCommit = await commitAiReplyWithControlGate(
+      supabaseAdmin,
+      conversation_id,
+      source_message_id,
+      commerceReply,
+      {
+        response_route: _a3Commerce.route,
+        escalation_action: "continue_ai",
+        handoff_required: false,
+        commerce_authority: _a3Commerce.authority,
+        commerce_state_revision: _a3Commerce.revision,
+        commerce_state_persist_result: _a3Commerce.persist_result,
+        commerce_reason: _a3Commerce.reason,
+        commerce_state_path: _a3Commerce.state_path ?? null,
+        commerce_calculation: _a3Commerce.calculation ?? null
+      }
+    );
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+    if (commerceCommit.ok) {
+      return new Response(
+        JSON.stringify({
+          success: true,
+          reply: commerceReply,
+          response_route: _a3Commerce.route,
+          commerce_authority: _a3Commerce.authority,
+          commerce_state_revision: _a3Commerce.revision,
+          handoff_required: false
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    if (["human_control", "resolved", "superseded_source"].includes(commerceCommit.result)) {
+      return new Response(
+        JSON.stringify({ success: true, skipped: commerceCommit.result }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    return new Response(
+      JSON.stringify({ success: false, error: `commerce_state_runtime_${commerceCommit.result}` }),
+      { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
   }
   const _criticalLocalRisk = classifyLocalTopicRisk(_h1LastMsg);
   const _canonicalTurn = classifyCanonicalConversationTurn(
@@ -6844,7 +9512,7 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
-  const _conversationMemoryReply = resolveConversationMemoryResponse(
+  const _conversationMemoryReply = resolveConversationMemoryResponse2(
     _h1LastMsg,
     _pr5HistoryRows ?? []
   );
@@ -6975,7 +9643,7 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
         _visitorLang
       );
     }
-    const _semanticRetrieval = buildCanonicalRetrievalQuery(
+    const _semanticRetrieval = buildCanonicalRetrievalQuery2(
       _h1LastMsg,
       _pr5HistoryRows ?? []
     );
