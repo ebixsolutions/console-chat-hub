@@ -43,6 +43,11 @@ import {
   semanticFrameToEntityHints,
   semanticFrameToStateEvents,
 } from "./commerce-semantic-adapter.ts";
+import { industryEntityLabel, resolveIndustryRuntime } from "./industry-runtime-adapter.ts";
+import {
+  HOME_APPLIANCE_CATEGORIES as CATEGORY_SPECS,
+  HOME_APPLIANCE_ROOMS as ROOM_SPECS,
+} from "./industry-profiles/home-appliance-v1.ts";
 
 export type CommerceLanguage = "zh-TW" | "zh-CN" | "en";
 
@@ -76,6 +81,7 @@ export interface CommerceRuntimeInput {
   history?: CommerceHistoryTurn[];
   occurred_at?: string | null;
   semantic_frame?: CommerceSemanticFrame | null;
+  industry_identifier?: string | null;
 }
 
 export interface CommerceRuntimeOutcome {
@@ -106,74 +112,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * A3 runtime extraction (generic capability layer + optional industry profiles)
  * ------------------------------------------------------------------ */
 
-interface CategorySpec {
-  key: string;
-  label: Record<CommerceLanguage, string>;
-  aliases: string[];
-}
-
-interface RoomSpec {
-  key: string;
-  label: Record<CommerceLanguage, string>;
-  aliases: string[];
-}
-
-const CATEGORY_SPECS: CategorySpec[] = [
-  {
-    key: "air_conditioner",
-    label: { "zh-TW": "冷氣機", "zh-CN": "空调", en: "air conditioner" },
-    aliases: ["冷氣", "冷气", "空調", "空调", "air con", "aircon", "air-con", "air conditioner", "ac unit"],
-  },
-  {
-    key: "refrigerator",
-    label: { "zh-TW": "雪櫃", "zh-CN": "冰箱", en: "refrigerator" },
-    aliases: ["雪櫃", "雪柜", "冰箱", "fridge", "refrigerator"],
-  },
-  {
-    key: "washing_machine",
-    label: { "zh-TW": "洗衣機", "zh-CN": "洗衣机", en: "washing machine" },
-    aliases: ["洗衣機", "洗衣机", "washer", "washing machine"],
-  },
-  {
-    key: "water_heater",
-    label: { "zh-TW": "熱水爐", "zh-CN": "热水器", en: "water heater" },
-    aliases: ["熱水爐", "热水器", "water heater"],
-  },
-  {
-    key: "television",
-    label: { "zh-TW": "電視", "zh-CN": "电视", en: "television" },
-    aliases: ["電視", "电视", "television", " tv"],
-  },
-];
-
-const ROOM_SPECS: RoomSpec[] = [
-  {
-    key: "living_room",
-    label: { "zh-TW": "客廳", "zh-CN": "客厅", en: "living room" },
-    aliases: ["客廳", "客厅", "living room", "lounge"],
-  },
-  {
-    key: "bedroom",
-    label: { "zh-TW": "睡房", "zh-CN": "卧室", en: "bedroom" },
-    aliases: ["睡房", "臥室", "卧室", "房間", "房间", "bedroom"],
-  },
-  {
-    key: "kitchen",
-    label: { "zh-TW": "廚房", "zh-CN": "厨房", en: "kitchen" },
-    aliases: ["廚房", "厨房", "kitchen"],
-  },
-];
-
-function matchedAliases(lower: string, aliases: string[]): string[] {
+function matchedAliases(lower: string, aliases: readonly string[]): string[] {
   return aliases.filter((alias) => alias.trim().length >= 2 && lower.includes(alias.trim().toLowerCase()));
 }
 
-function detectCategories(text: string): CategorySpec[] {
+function detectCategories(text: string) {
   const lower = clean(text).toLowerCase();
   return CATEGORY_SPECS.filter((spec) => matchedAliases(lower, spec.aliases).length > 0);
 }
 
-function detectRooms(text: string): RoomSpec[] {
+function detectRooms(text: string) {
   const lower = clean(text).toLowerCase();
   return ROOM_SPECS.filter((spec) => matchedAliases(lower, spec.aliases).length > 0);
 }
@@ -181,6 +129,8 @@ function detectRooms(text: string): RoomSpec[] {
 function entityLabel(entityId: string, language: CommerceLanguage): string {
   const generic = genericEntityLabelFromId(entityId);
   if (generic) return generic;
+  const industry = industryEntityLabel(entityId, language);
+  if (industry) return industry;
   const [categoryKey, roomKey] = entityId.split(":");
   const category = CATEGORY_SPECS.find((x) => x.key === categoryKey);
   const room = ROOM_SPECS.find((x) => x.key === roomKey);
@@ -659,7 +609,10 @@ export function reduceTurn(
     ? derivedRaw.filter((event) => event.type !== "SET_DELIVERY")
     : derivedRaw;
   const runtimeEvents = calculationTurn ? [] : deriveA3RuntimeEvents(input, hints, previous);
-  const reduced = reduceCommerceState(previous, [...semanticEvents, ...derived, ...runtimeEvents]);
+  const industryEvent: CommerceStateEvent[] = input.industry_identifier
+    ? [{ type: "SET_CONTEXT", language: input.language, industry: input.industry_identifier }]
+    : [];
+  const reduced = reduceCommerceState(previous, [...industryEvent, ...semanticEvents, ...derived, ...runtimeEvents]);
   const guard = enforceQuotationNotOrderEvents(clean(input.text), reduced);
   return guard.length ? reduceCommerceState(reduced, guard) : reduced;
 }
@@ -860,9 +813,20 @@ export async function runCommerceStateRuntime(
   const conversationTexts = [text, ...historyTexts];
   const deterministicHints = buildCommerceEntityHints(conversationTexts);
   const semanticHints = semanticFrameToEntityHints(input.semantic_frame);
-  const hints = mergeCommerceEntityHints(semanticHints, deterministicHints);
+  const industry = resolveIndustryRuntime({
+    texts: conversationTexts,
+    semantic_frame: input.semantic_frame,
+    industry_identifier: input.industry_identifier,
+  });
+  const hints = mergeCommerceEntityHints(
+    semanticHints,
+    mergeCommerceEntityHints(industry.hints, deterministicHints),
+  );
+  const runtimeInput = industry.industry_id && !input.industry_identifier
+    ? { ...input, industry_identifier: industry.industry_id }
+    : input;
 
-  const persisted = await persistCommerceTurn(db, input, hints);
+  const persisted = await persistCommerceTurn(db, runtimeInput, hints);
   const state = persisted.state;
 
   const summaryIntent = detectTransactionSummaryIntent(text);
