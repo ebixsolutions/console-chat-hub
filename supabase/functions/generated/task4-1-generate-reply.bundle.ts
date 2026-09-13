@@ -4700,8 +4700,8 @@ function normalizedAliases(hint) {
   return uniq([hint.entity_id, hint.category, hint.brand ?? "", hint.model ?? "", ...hint.aliases ?? []]).map((x) => x.toLowerCase());
 }
 function mentionedHints(text, hints) {
-  const lower = text.toLowerCase();
-  return hints.filter((hint) => normalizedAliases(hint).some((alias) => alias.length >= 2 && lower.includes(alias)));
+  const lower2 = text.toLowerCase();
+  return hints.filter((hint) => normalizedAliases(hint).some((alias) => alias.length >= 2 && lower2.includes(alias)));
 }
 function ensureHintEntityEvents(input, hints) {
   const p = provenance(input.source_message_id, input.occurred_at);
@@ -5527,9 +5527,9 @@ function clean11(value) {
   return typeof value === "string" ? value.normalize("NFKC").replace(/\s+/g, " ").trim() : "";
 }
 function matches(text, aliases) {
-  const lower = clean11(text).toLowerCase();
+  const lower2 = clean11(text).toLowerCase();
   return aliases.some(
-    (alias) => alias.trim().length >= 2 && lower.includes(alias.trim().toLowerCase())
+    (alias) => alias.trim().length >= 2 && lower2.includes(alias.trim().toLowerCase())
   );
 }
 function resolveIndustryRuntime(input) {
@@ -5602,16 +5602,16 @@ function clean12(value, max = 1600) {
 function isRecord4(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
-function matchedAliases(lower, aliases) {
-  return aliases.filter((alias) => alias.trim().length >= 2 && lower.includes(alias.trim().toLowerCase()));
+function matchedAliases(lower2, aliases) {
+  return aliases.filter((alias) => alias.trim().length >= 2 && lower2.includes(alias.trim().toLowerCase()));
 }
 function detectCategories(text) {
-  const lower = clean12(text).toLowerCase();
-  return HOME_APPLIANCE_CATEGORIES.filter((spec) => matchedAliases(lower, spec.aliases).length > 0);
+  const lower2 = clean12(text).toLowerCase();
+  return HOME_APPLIANCE_CATEGORIES.filter((spec) => matchedAliases(lower2, spec.aliases).length > 0);
 }
 function detectRooms(text) {
-  const lower = clean12(text).toLowerCase();
-  return HOME_APPLIANCE_ROOMS.filter((spec) => matchedAliases(lower, spec.aliases).length > 0);
+  const lower2 = clean12(text).toLowerCase();
+  return HOME_APPLIANCE_ROOMS.filter((spec) => matchedAliases(lower2, spec.aliases).length > 0);
 }
 function entityLabel(entityId2, language) {
   const generic = genericEntityLabelFromId(entityId2);
@@ -5660,21 +5660,21 @@ function buildCommerceEntityHints(texts) {
   return [...hints.values()];
 }
 function hintsMentionedInTurn(text, hints) {
-  const lower = clean12(text).toLowerCase();
+  const lower2 = clean12(text).toLowerCase();
   const rooms = detectRooms(text);
   const categories = detectCategories(text).map((x) => x.key);
   return hints.filter((hint) => {
     if (hint.entity_id.startsWith("generic:")) {
       return (hint.aliases ?? []).some((alias) => {
         const normalized = clean12(alias, 80).toLowerCase();
-        return normalized.length >= 2 && lower.includes(normalized);
+        return normalized.length >= 2 && lower2.includes(normalized);
       });
     }
     if (!categories.includes(hint.category)) return false;
     const [, roomKey] = hint.entity_id.split(":");
     if (!rooms.length) return true;
     if (roomKey === "unscoped") return false;
-    return rooms.some((room) => room.key === roomKey) || Boolean(lower) === false;
+    return rooms.some((room) => room.key === roomKey) || Boolean(lower2) === false;
   });
 }
 function hintRequiresBookingWithoutDelivery(hint) {
@@ -6709,6 +6709,526 @@ async function interpretCommerceSemantics(input) {
   return { frame, source: "llm", failure_code: null };
 }
 
+// supabase/functions/_shared/pre-send-conversion-supervisor.ts
+var CURRENT_PRICE_CLAIM = /(?:current|latest|today(?:'s)?|now|而家|現在|现在|目前|最新).{0,36}(?:price|quote|quotation|fee|價|价|報價|报价|收費|收费)|(?:price|quote|quotation|fee|價|价|報價|报价|收費|收费).{0,36}(?:current|latest|valid|confirmed|final|而家|現在|现在|目前|最新|有效|作準|作准|確認|确认)/i;
+var QUESTION2 = /[?？]|(?:what|which|when|where|who|how|please (?:tell|provide|confirm)|請問|请问|邊個|边个|邊度|边度|幾多|几多|多少|是否|係咪|是不是|請提供|请提供|請確認|请确认)/i;
+var RESTORE_OR_ACTIVE = /(?:restore|reinstate|put .{0,20} back|add .{0,20} back|proceed|continue|keep|include|remains? in|active|confirmed|安排|繼續|继续|照舊|照旧|保留|重新加入|加返|放返|仍然包括|仍包括|確認要|确认要|會處理|会处理)/i;
+var ORDER_CONFIRMED = /(?:order (?:is |has been )?(?:confirmed|completed|placed)|confirmed order|訂單已確認|订单已确认|已確認訂單|已确认订单|已落單|已下单|落單完成|下单完成)/i;
+var PAYMENT_COMPLETED = /(?:payment (?:is |has been )?(?:paid|received|completed|processed)|paid in full|付款已完成|付款完成|已付款|已收到付款|支付完成)/i;
+var DELIVERY_CONFIRMED = /(?:delivery (?:is |has been )?(?:confirmed|arranged|scheduled)|送貨已確認|送货已确认|已安排送貨|已安排送货|送貨安排已確認|送货安排已确认)/i;
+var DELIVERY_COMPLETED = /(?:delivery (?:is |has been )?(?:completed|delivered|fulfilled)|successfully delivered|送貨已完成|送货已完成|已送達|已送达|已經送貨|已经送货|派送完成)/i;
+var INSTALLATION_CONFIRMED = /(?:installation (?:is |has been )?(?:confirmed|arranged|scheduled)|安裝已確認|安装已确认|已安排安裝|已安排安装|安裝安排已確認|安装安排已确认)/i;
+var INSTALLATION_COMPLETED = /(?:installation (?:is |has been )?(?:completed|installed|finished|executed)|successfully installed|安裝已完成|安装已完成|已經安裝|已经安装|安裝完成|安装完成)/i;
+var GENERIC_COMPLETION = /(?:action|request|operation|process|booking|reservation).{0,24}(?:completed|processed|executed|done|finished)|(?:completed|processed|executed|done|finished).{0,24}(?:action|request|operation|process|booking|reservation)|(?:操作|動作|动作|請求|请求|流程|程序|預約|预约).{0,20}(?:已完成|完成咗|完成了|已執行|已执行|已處理|已处理)/i;
+function clean15(value, max = 65536) {
+  return typeof value === "string" ? value.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max) : "";
+}
+function lower(value) {
+  return clean15(value).toLowerCase();
+}
+function isRecord7(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function scalarText(value) {
+  if (typeof value === "string") return clean15(value, 300) || null;
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (typeof value === "boolean") return value ? "true" : "false";
+  return null;
+}
+function aliasesForKey(key) {
+  const normalized = key.replace(/[._-]+/g, " ").trim().toLowerCase();
+  const aliases = /* @__PURE__ */ new Set([normalized, key.toLowerCase()]);
+  const common = {
+    address: ["address", "delivery address", "\u5730\u5740", "\u9001\u8CA8\u5730\u5740", "\u9001\u8D27\u5730\u5740"],
+    recipient_name: ["recipient", "recipient name", "\u6536\u8CA8\u4EBA", "\u6536\u8D27\u4EBA"],
+    recipient_phone: [
+      "phone",
+      "contact number",
+      "telephone",
+      "\u96FB\u8A71",
+      "\u7535\u8BDD",
+      "\u806F\u7D61\u865F\u78BC",
+      "\u8054\u7EDC\u53F7\u7801"
+    ],
+    preferred_date: ["delivery date", "date", "\u9001\u8CA8\u65E5\u671F", "\u9001\u8D27\u65E5\u671F", "\u65E5\u671F"],
+    preferred_window: ["delivery time", "time slot", "\u9001\u8CA8\u6642\u9593", "\u9001\u8D27\u65F6\u95F4", "\u6642\u6BB5", "\u65F6\u6BB5"],
+    confirmed: ["confirmed", "confirmation", "\u78BA\u8A8D", "\u786E\u8BA4"],
+    quantity: ["quantity", "how many", "\u6578\u91CF", "\u6570\u91CF", "\u5E7E\u591A", "\u51E0\u591A"],
+    brand: ["brand", "\u54C1\u724C"],
+    model: ["model", "model number", "\u578B\u865F", "\u578B\u53F7"],
+    amount: ["amount", "price", "quote", "\u50F9\u9322", "\u4EF7\u94B1", "\u5831\u50F9", "\u62A5\u4EF7"],
+    currency: ["currency", "\u5E63\u5225", "\u5E01\u522B", "\u8CA8\u5E63", "\u8D27\u5E01"],
+    quote_type: ["quote type", "quotation type", "\u5831\u50F9\u985E\u578B", "\u62A5\u4EF7\u7C7B\u578B"],
+    validity_status: ["quote validity", "validity", "\u5831\u50F9\u6709\u6548\u72C0\u614B", "\u62A5\u4EF7\u6709\u6548\u72B6\u6001"],
+    current_intent: ["intent", "current intent", "\u76EE\u7684", "\u610F\u5716", "\u610F\u56FE"],
+    current_topic: ["topic", "current topic", "\u4E3B\u984C", "\u4E3B\u9898"],
+    current_industry: ["industry", "\u884C\u696D", "\u884C\u4E1A"],
+    unresolved_items: ["unresolved", "outstanding item", "\u5F85\u8655\u7406", "\u5F85\u5904\u7406", "\u672A\u89E3\u6C7A", "\u672A\u89E3\u51B3"],
+    funnel_stage: ["stage", "funnel stage", "\u968E\u6BB5", "\u9636\u6BB5"],
+    quotation_status: ["quotation status", "quote status", "\u5831\u50F9\u72C0\u614B", "\u62A5\u4EF7\u72B6\u6001"],
+    order_status: ["order status", "\u8A02\u55AE\u72C0\u614B", "\u8BA2\u5355\u72B6\u6001"],
+    payment_status: ["payment status", "\u4ED8\u6B3E\u72C0\u614B", "\u4ED8\u6B3E\u72B6\u6001", "\u652F\u4ED8\u72C0\u614B", "\u652F\u4ED8\u72B6\u6001"],
+    kind: ["installation item", "installation type", "\u5B89\u88DD\u9805\u76EE", "\u5B89\u88C5\u9879\u76EE"],
+    status: ["status", "\u72C0\u614B", "\u72B6\u6001"]
+  };
+  const leaf = key.split(/[._-]/).at(-1) ?? key;
+  for (const item of common[leaf] ?? []) aliases.add(item.toLowerCase());
+  return [...aliases].filter((item) => item.length >= 2);
+}
+function addFact(facts, path, value) {
+  const rendered = scalarText(value);
+  if (!rendered) return;
+  facts.push({ path, value: rendered, aliases: aliasesForKey(path) });
+}
+function addRecordFacts(facts, prefix, value) {
+  for (const [key, item] of Object.entries(value)) {
+    if (isRecord7(item)) addRecordFacts(facts, `${prefix}.${key}`, item);
+    else addFact(facts, `${prefix}.${key}`, item);
+  }
+}
+function collectKnownCommerceFacts(state) {
+  const facts = [];
+  addFact(facts, "current_intent", state.current_intent);
+  addFact(facts, "current_topic", state.current_topic);
+  addFact(facts, "current_industry", state.current_industry);
+  state.unresolved_items.forEach(
+    (item, index) => addFact(facts, `unresolved_items.${index}`, item)
+  );
+  addRecordFacts(facts, "customer_constraints", state.customer_constraints);
+  state.entities.forEach((entity, index) => {
+    addFact(facts, `entities.${index}.category`, entity.category);
+    addFact(facts, `entities.${index}.brand`, entity.brand);
+    addFact(facts, `entities.${index}.model`, entity.model);
+    addFact(facts, `entities.${index}.quantity`, entity.quantity);
+    addFact(facts, `entities.${index}.status`, entity.status);
+    addRecordFacts(facts, `entities.${index}.attributes`, entity.attributes);
+    addRecordFacts(facts, `entities.${index}.constraints`, entity.constraints);
+  });
+  state.quotes.forEach((quote, index) => {
+    addFact(facts, `quotes.${index}.amount`, quote.amount);
+    addFact(facts, `quotes.${index}.currency`, quote.currency);
+    addFact(facts, `quotes.${index}.quote_type`, quote.quote_type);
+    addFact(facts, `quotes.${index}.validity_status`, quote.validity_status);
+    addRecordFacts(facts, `quotes.${index}.conditions`, quote.conditions);
+  });
+  addFact(facts, "delivery.preferred_date", state.delivery.preferred_date);
+  addFact(facts, "delivery.preferred_window", state.delivery.preferred_window);
+  addFact(facts, "delivery.address", state.delivery.address);
+  addFact(facts, "delivery.recipient_name", state.delivery.recipient_name);
+  addFact(facts, "delivery.recipient_phone", state.delivery.recipient_phone);
+  addFact(facts, "delivery.confirmed", state.delivery.confirmed);
+  addRecordFacts(facts, "installation.site_conditions", state.installation.site_conditions);
+  state.installation.pending_checks.forEach(
+    (item, index) => addFact(facts, `installation.pending_checks.${index}`, item)
+  );
+  state.installation.items.forEach((item, index) => {
+    addFact(facts, `installation.items.${index}.kind`, item.kind);
+    addFact(facts, `installation.items.${index}.status`, item.status);
+    addRecordFacts(facts, `installation.items.${index}.details`, item.details);
+  });
+  addFact(facts, "conversion.funnel_stage", state.conversion.funnel_stage);
+  addFact(facts, "conversion.quotation_status", state.conversion.quotation_status);
+  addFact(facts, "conversion.order_status", state.conversion.order_status);
+  addFact(facts, "conversion.payment_status", state.conversion.payment_status);
+  return facts;
+}
+function entityAliases(entity) {
+  const values = [entity.entity_id, entity.category, entity.brand, entity.model];
+  for (const key of ["product_name", "display_name", "name", "sku"]) {
+    values.push(scalarText(entity.attributes[key]));
+  }
+  return [...new Set(values.map(lower).filter((item) => item.length >= 2))];
+}
+function mentionedEntityIds(text, state) {
+  const candidate = lower(text);
+  return state.entities.filter((entity) => entityAliases(entity).some((alias) => candidate.includes(alias))).map((entity) => entity.entity_id);
+}
+function extractMoneyMentions(text) {
+  const results = [];
+  const pattern = /(?:\b(HKD|USD|TWD)\b\s*|((?:HK|US|NT)\$|\$)\s*)?([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,10})(?:\.([0-9]{1,2}))?\s*(元|蚊|dollars?)?/gi;
+  let match;
+  while ((match = pattern.exec(text)) !== null) {
+    const amount = Number(`${match[3].replace(/,/g, "")}${match[4] ? `.${match[4]}` : ""}`);
+    if (!Number.isFinite(amount) || amount <= 0) continue;
+    const marker = `${match[1] ?? ""}${match[2] ?? ""}${match[5] ?? ""}`.toUpperCase();
+    const currency = marker.includes("USD") || marker.includes("US$") ? "USD" : marker.includes("TWD") || marker.includes("NT$") ? "TWD" : marker.includes("HKD") || marker.includes("HK$") || marker.includes("$") || /元|蚊/.test(marker) ? "HKD" : null;
+    results.push({ amount, currency });
+  }
+  return results;
+}
+function quoteMatchesClaim(quote, money, mentioned) {
+  if (quote.quote_type !== "current_verified" || quote.validity_status !== "current") return false;
+  if (quote.amount !== money.amount) return false;
+  if (!money.currency || quote.currency.toUpperCase() !== money.currency) return false;
+  if (quote.entity_id) return mentioned.includes(String(quote.entity_id));
+  return mentioned.length === 0;
+}
+function evaluateQuoteReality(text, state) {
+  if (!CURRENT_PRICE_CLAIM.test(text)) return null;
+  const money = extractMoneyMentions(text);
+  if (money.length === 0) {
+    return { decision: "block", code: "CURRENT_QUOTE_WITHOUT_VERIFIED_AMOUNT" };
+  }
+  const mentioned = mentionedEntityIds(text, state);
+  for (const item of money) {
+    if (!state.quotes.some((quote) => quoteMatchesClaim(quote, item, mentioned))) {
+      return {
+        decision: "block",
+        code: "CURRENT_QUOTE_NOT_PROVEN",
+        detail: `${item.currency ?? "currency_unknown"}:${item.amount}`
+      };
+    }
+  }
+  return null;
+}
+function evaluateTransactionReality(text, kind, state) {
+  if (DELIVERY_COMPLETED.test(text)) {
+    return {
+      decision: "block",
+      code: "DELIVERY_COMPLETION_NOT_CANONICALLY_PROVABLE"
+    };
+  }
+  if (INSTALLATION_COMPLETED.test(text)) {
+    return {
+      decision: "block",
+      code: "INSTALLATION_COMPLETION_NOT_CANONICALLY_PROVABLE"
+    };
+  }
+  if (DELIVERY_CONFIRMED.test(text) && state.delivery.confirmed !== true) {
+    return { decision: "block", code: "DELIVERY_CONFIRMATION_NOT_PROVEN" };
+  }
+  if (INSTALLATION_CONFIRMED.test(text) && !state.installation.items.some((item) => item.status === "confirmed")) {
+    return { decision: "block", code: "INSTALLATION_CONFIRMATION_NOT_PROVEN" };
+  }
+  if (ORDER_CONFIRMED.test(text) && state.conversion.order_status !== "confirmed" && state.conversion.order_status !== "completed") {
+    return { decision: "block", code: "ORDER_CONFIRMATION_NOT_PROVEN" };
+  }
+  if (PAYMENT_COMPLETED.test(text) && state.conversion.payment_status !== "paid") {
+    return { decision: "block", code: "PAYMENT_COMPLETION_NOT_PROVEN" };
+  }
+  if (GENERIC_COMPLETION.test(text)) {
+    const atomicHandoff = kind === "required_escalation_handoff" || kind === "explicit_handoff" || kind === "kb_fallback_handoff" || kind === "system_failure_handoff";
+    if (!atomicHandoff) {
+      return { decision: "block", code: "ACTION_COMPLETION_NOT_PROVEN" };
+    }
+  }
+  return null;
+}
+function evaluateKnownContext(text, state) {
+  if (!QUESTION2.test(text)) return null;
+  const questionClauses = text.split(/(?<=[?？.!！。])|\n+/).map(lower).filter((clause) => QUESTION2.test(clause));
+  for (const clause of questionClauses) {
+    for (const fact of collectKnownCommerceFacts(state)) {
+      if (fact.aliases.some((alias) => clause.includes(alias))) {
+        return {
+          decision: "block",
+          code: "KNOWN_CONTEXT_RECONFIRMATION",
+          detail: fact.path
+        };
+      }
+    }
+  }
+  return null;
+}
+function trimCorrectionPart(value) {
+  return clean15(value, 180).replace(/^[,，:：;；\s]+|[,，。.!！?？;；\s]+$/g, "");
+}
+function parseCorrection(value) {
+  const text = clean15(value, 500);
+  const patterns = [
+    /(?:唔係|唔系|不是|不係)\s*(.+?)\s*(?:而係|而系|而是)\s*(.+)$/i,
+    /(?:change|changed|correct|correction)(?:\s+it)?\s+from\s+(.+?)\s+to\s+(.+)$/i,
+    /(?:更正|改(?:返|成|做|為|为)?|actually|i meant)\s*[:：]?\s*(.+?)\s*(?:改為|改为|變成|变成|to|而係|而是)\s*(.+)$/i
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    const previous = trimCorrectionPart(match?.[1] ?? "");
+    const current = trimCorrectionPart(match?.[2] ?? "");
+    if (previous && current && previous !== current) {
+      return { previous, current };
+    }
+  }
+  return null;
+}
+function responseTouchesCommerce(text, state) {
+  if (extractMoneyMentions(text).length > 0) return true;
+  if (mentionedEntityIds(text, state).length > 0) return true;
+  return /(?:order|payment|quote|price|delivery|installation|quantity|model|brand|訂單|订单|付款|支付|報價|报价|價錢|价钱|送貨|送货|安裝|安装|數量|数量|型號|型号|品牌)/i.test(
+    text
+  );
+}
+function evaluateCorrections(text, state) {
+  if (state.latest_corrections.length === 0) return null;
+  const latest = state.latest_corrections.at(-1) ?? "";
+  const parsed = parseCorrection(latest);
+  if (!parsed) {
+    return responseTouchesCommerce(text, state) ? { decision: "indeterminate", code: "LATEST_CORRECTION_UNRESOLVED" } : null;
+  }
+  const candidate = lower(text);
+  const previous = lower(parsed.previous);
+  const current = lower(parsed.current);
+  if (previous && candidate.includes(previous) && !candidate.includes(current)) {
+    return {
+      decision: "block",
+      code: "SUPERSEDED_VALUE_REUSED",
+      detail: `${parsed.previous} -> ${parsed.current}`
+    };
+  }
+  return null;
+}
+function evaluateCancellation(text, state) {
+  const candidate = lower(text);
+  const activeLanguage = RESTORE_OR_ACTIVE.test(text);
+  if (!activeLanguage) return null;
+  const cancelledEntities = state.entities.filter((entity) => entity.status === "cancelled");
+  const activeEntities2 = state.entities.filter(
+    (entity) => entity.status !== "cancelled" && entity.status !== "deferred"
+  );
+  const mentionedCancelled = cancelledEntities.filter(
+    (entity) => entityAliases(entity).some((alias) => candidate.includes(alias))
+  );
+  if (mentionedCancelled.length > 0) {
+    return { decision: "block", code: "CANCELLED_ENTITY_RESTORATION" };
+  }
+  const pronoun = /(?:the one|that one|it\b|removed one|cancelled one|嗰個|果個|該項|该项|取消嗰|取消的|移除嗰|移除的)/i.test(
+    text
+  );
+  if (pronoun && cancelledEntities.length > 0) {
+    return activeEntities2.length === 0 ? { decision: "block", code: "CANCELLED_ENTITY_INDIRECT_RESTORATION" } : {
+      decision: "indeterminate",
+      code: "AMBIGUOUS_CANCELLED_ENTITY_REFERENCE"
+    };
+  }
+  const cancelledQuote = state.quotes.some(
+    (quote) => quote.validity_status === "invalid" || quote.validity_status === "expired" || quote.validity_status === "superseded"
+  );
+  if (cancelledQuote && /(?:quote|quotation|price|報價|报价|價錢|价钱)/i.test(text)) {
+    return { decision: "block", code: "INACTIVE_QUOTE_RESTORATION" };
+  }
+  if (state.conversion.order_status === "cancelled" && /(?:order|訂單|订单|落單|下单)/i.test(text)) {
+    return { decision: "block", code: "CANCELLED_ORDER_RESTORATION" };
+  }
+  if (state.installation.items.some((item) => item.status === "cancelled") && /(?:(?:cancelled|canceled|removed|取消|已取消).{0,28}(?:installation|install|安裝|安装)|(?:installation|install|安裝|安装).{0,28}(?:cancelled|canceled|removed|取消|已取消))/i.test(
+    text
+  )) {
+    return { decision: "block", code: "CANCELLED_INSTALLATION_RESTORATION" };
+  }
+  return null;
+}
+function evaluateB2BeforeCommit(input) {
+  const draft = clean15(input.proposed_response);
+  if (!draft) {
+    return { decision: "indeterminate", code: "EMPTY_PROPOSED_RESPONSE" };
+  }
+  if (!isConversationCommerceState(input.snapshot.state)) {
+    return {
+      decision: "indeterminate",
+      code: "INVALID_CANONICAL_COMMERCE_STATE"
+    };
+  }
+  const state = input.snapshot.state;
+  return evaluateCorrections(draft, state) ?? evaluateCancellation(draft, state) ?? evaluateQuoteReality(draft, state) ?? evaluateTransactionReality(draft, input.persistence_kind, state) ?? evaluateKnownContext(draft, state) ?? { decision: "allow", code: "B2_ALLOW" };
+}
+function queryErrorDetail(error) {
+  if (isRecord7(error)) {
+    return clean15(error.message ?? error.code, 180) || "query_error";
+  }
+  return clean15(error, 180) || "query_error";
+}
+async function loadB2Snapshot(client, conversation_id, source_message_id) {
+  try {
+    const conversationResult = await client.from("conversations").select("id, company_id").eq("id", conversation_id).maybeSingle();
+    if (conversationResult.error) {
+      return {
+        ok: false,
+        decision: {
+          decision: "indeterminate",
+          code: "CONVERSATION_SCOPE_LOOKUP_FAILED",
+          detail: queryErrorDetail(conversationResult.error)
+        }
+      };
+    }
+    if (!isRecord7(conversationResult.data)) {
+      return {
+        ok: false,
+        decision: {
+          decision: "indeterminate",
+          code: "CONVERSATION_SCOPE_NOT_FOUND"
+        }
+      };
+    }
+    const companyId = clean15(conversationResult.data.company_id, 160);
+    if (!companyId) {
+      return {
+        ok: false,
+        decision: {
+          decision: "indeterminate",
+          code: "CONVERSATION_COMPANY_UNRESOLVED"
+        }
+      };
+    }
+    const sourceResult = await client.from("messages").select("id, conversation_id, role").eq("id", source_message_id).eq("conversation_id", conversation_id).maybeSingle();
+    if (sourceResult.error) {
+      return {
+        ok: false,
+        decision: {
+          decision: "indeterminate",
+          code: "SOURCE_MESSAGE_LOOKUP_FAILED",
+          detail: queryErrorDetail(sourceResult.error)
+        }
+      };
+    }
+    if (!isRecord7(sourceResult.data) || clean15(sourceResult.data.id, 160) !== source_message_id || clean15(sourceResult.data.conversation_id, 160) !== conversation_id || sourceResult.data.role !== "visitor") {
+      return {
+        ok: false,
+        decision: { decision: "indeterminate", code: "SOURCE_MESSAGE_INVALID" }
+      };
+    }
+    const stateResult = await client.from("conversation_commerce_state").select("company_id, revision, source_message_id, state").eq("conversation_id", conversation_id).eq("company_id", companyId).maybeSingle();
+    if (stateResult.error) {
+      return {
+        ok: false,
+        decision: {
+          decision: "indeterminate",
+          code: "COMMERCE_STATE_LOOKUP_FAILED",
+          detail: queryErrorDetail(stateResult.error)
+        }
+      };
+    }
+    let state = createEmptyConversationCommerceState();
+    let revision = 0;
+    let stateSource = null;
+    if (stateResult.data !== null && stateResult.data !== void 0) {
+      if (!isRecord7(stateResult.data)) {
+        return {
+          ok: false,
+          decision: {
+            decision: "indeterminate",
+            code: "COMMERCE_STATE_INVALID_ROW"
+          }
+        };
+      }
+      if (clean15(stateResult.data.company_id, 160) !== companyId) {
+        return {
+          ok: false,
+          decision: {
+            decision: "indeterminate",
+            code: "COMMERCE_STATE_COMPANY_MISMATCH"
+          }
+        };
+      }
+      const rawRevision = typeof stateResult.data.revision === "number" ? stateResult.data.revision : Number(stateResult.data.revision);
+      if (!Number.isInteger(rawRevision) || rawRevision < 0) {
+        return {
+          ok: false,
+          decision: {
+            decision: "indeterminate",
+            code: "COMMERCE_STATE_REVISION_INVALID"
+          }
+        };
+      }
+      if (!isConversationCommerceState(stateResult.data.state)) {
+        return {
+          ok: false,
+          decision: {
+            decision: "indeterminate",
+            code: "INVALID_CANONICAL_COMMERCE_STATE"
+          }
+        };
+      }
+      state = structuredClone(stateResult.data.state);
+      revision = rawRevision;
+      stateSource = clean15(stateResult.data.source_message_id, 160) || null;
+    }
+    return {
+      ok: true,
+      snapshot: {
+        conversation_id,
+        company_id: companyId,
+        source_message_id,
+        commerce_state_revision: revision,
+        commerce_state_source_message_id: stateSource,
+        state
+      }
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      decision: {
+        decision: "indeterminate",
+        code: "SUPERVISOR_READ_ERROR",
+        detail: error instanceof Error ? error.name : "unknown_error"
+      }
+    };
+  }
+}
+function stableSnapshotFingerprint(snapshot) {
+  return JSON.stringify({
+    conversation_id: snapshot.conversation_id,
+    company_id: snapshot.company_id,
+    source_message_id: snapshot.source_message_id,
+    commerce_state_revision: snapshot.commerce_state_revision,
+    commerce_state_source_message_id: snapshot.commerce_state_source_message_id,
+    state: snapshot.state
+  });
+}
+async function executeB2PersistenceGate(input) {
+  const initial = await loadB2Snapshot(
+    input.client,
+    input.conversation_id,
+    input.source_message_id
+  );
+  if (!initial.ok) return { committed: false, decision: initial.decision };
+  if (input.expected_commerce_state_revision !== void 0 && input.expected_commerce_state_revision !== null && input.expected_commerce_state_revision !== initial.snapshot.commerce_state_revision) {
+    return {
+      committed: false,
+      snapshot: initial.snapshot,
+      decision: {
+        decision: "indeterminate",
+        code: "EXPECTED_COMMERCE_REVISION_MISMATCH"
+      }
+    };
+  }
+  let decision2;
+  try {
+    decision2 = evaluateB2BeforeCommit({
+      proposed_response: input.proposed_response,
+      persistence_kind: input.persistence_kind,
+      snapshot: initial.snapshot,
+      metadata: input.metadata ? structuredClone(input.metadata) : input.metadata
+    });
+  } catch (error) {
+    decision2 = {
+      decision: "indeterminate",
+      code: "SUPERVISOR_ERROR",
+      detail: error instanceof Error ? error.name : "unknown_error"
+    };
+  }
+  if (decision2.decision !== "allow") {
+    return { committed: false, decision: decision2, snapshot: initial.snapshot };
+  }
+  const revalidated = await loadB2Snapshot(
+    input.client,
+    input.conversation_id,
+    input.source_message_id
+  );
+  if (!revalidated.ok) {
+    return { committed: false, decision: revalidated.decision };
+  }
+  if (stableSnapshotFingerprint(initial.snapshot) !== stableSnapshotFingerprint(revalidated.snapshot)) {
+    return {
+      committed: false,
+      snapshot: revalidated.snapshot,
+      decision: {
+        decision: "indeterminate",
+        code: "COMMERCE_CONTEXT_CHANGED_BEFORE_COMMIT"
+      }
+    };
+  }
+  const value = await input.commit();
+  return { committed: true, decision: decision2, snapshot: revalidated.snapshot, value };
+}
+
 // supabase/functions/generate-reply/index.ts
 import {
   createClient as createClient3
@@ -6921,16 +7441,64 @@ function sourceMessageErrorResponse(result2) {
     headers: { ...corsHeaders, "Content-Type": "application/json" }
   });
 }
+function b2PreventedResponse(decision2, context = {}) {
+  const unavailable = decision2.decision === "indeterminate";
+  return new Response(
+    JSON.stringify({
+      success: false,
+      error: unavailable ? "b2_supervision_indeterminate" : "b2_supervision_blocked",
+      b2_decision: decision2.decision,
+      b2_code: decision2.code,
+      persistence_prevented: true,
+      ...context
+    }),
+    {
+      status: unavailable ? 503 : 409,
+      headers: { ...corsHeaders, "Content-Type": "application/json" }
+    }
+  );
+}
+async function executeB2RpcPersistence(supabaseAdmin, input, commit) {
+  return await executeB2PersistenceGate({
+    client: supabaseAdmin,
+    ...input,
+    commit
+  });
+}
 async function commitAiReplyWithControlGate(supabaseAdmin, conversation_id, source_message_id, content, metadata = null) {
   if (!source_message_id) {
     return { ok: false, result: "invalid_source_message" };
   }
-  const { data, error } = await supabaseAdmin.rpc("commit_ai_reply_tx", {
-    p_conversation_id: conversation_id,
-    p_source_message_id: source_message_id,
-    p_content: content,
-    p_metadata: metadata
-  });
+  const expectedRevision = typeof metadata?.commerce_state_revision === "number" ? metadata.commerce_state_revision : null;
+  const b2 = await executeB2RpcPersistence(
+    supabaseAdmin,
+    {
+      conversation_id,
+      source_message_id,
+      proposed_response: content,
+      persistence_kind: "ai_reply",
+      metadata,
+      expected_commerce_state_revision: expectedRevision
+    },
+    async () => await supabaseAdmin.rpc("commit_ai_reply_tx", {
+      p_conversation_id: conversation_id,
+      p_source_message_id: source_message_id,
+      p_content: content,
+      p_metadata: metadata
+    })
+  );
+  if (!b2.committed) {
+    console.warn("[generate-reply] B2 prevented AI reply persistence:", {
+      conversation_id,
+      decision: b2.decision.decision,
+      code: b2.decision.code
+    });
+    return {
+      ok: false,
+      result: b2.decision.decision === "block" ? "b2_block" : "b2_indeterminate"
+    };
+  }
+  const { data, error } = b2.value;
   if (error) {
     console.error("[generate-reply] commit_ai_reply_tx RPC error:", {
       conversation_id,
@@ -6995,7 +7563,7 @@ function classifyAuthoritativeThreat(text) {
       provider_version: E2_LOCAL_THREAT_CLASSIFIER_VERSION
     };
   }
-  const lower = normalized.toLowerCase();
+  const lower2 = normalized.toLowerCase();
   const explicitEnglishThreats = [
     /\b(?:i(?:'ll| will| am going to| am gonna| gonna| plan to| intend to)\s+)?(?:kill|shoot|stab|hurt|attack)\s+(?:you|him|her|them|someone|people|staff|agent|employee)\b/i,
     /\b(?:i(?:'ll| will| am going to| gonna)\s+)?bomb\s+(?:you|this place|the office|the store|the shop|your office|your store)\b/i,
@@ -7007,7 +7575,7 @@ function classifyAuthoritativeThreat(text) {
     /(?:我要|我會|我会|我打算).{0,8}(?:炸掉|炸了|放炸彈|放炸弹|引爆).{0,8}(?:你們|你们|你|公司|店|辦公室|办公室|門市|门市)/,
     /(?:我有炸彈|我有炸弹)/
   ];
-  const matched = explicitEnglishThreats.some((re) => re.test(lower)) || explicitChineseThreats.some((re) => re.test(normalized));
+  const matched = explicitEnglishThreats.some((re) => re.test(lower2)) || explicitChineseThreats.some((re) => re.test(normalized));
   if (!matched) return void 0;
   return {
     value: true,
@@ -7592,17 +8160,39 @@ async function evaluateAndPersistRequiredRulesLive(supabaseAdmin, params) {
     return null;
   }
   if (decision2.decision === "handoff" && decision2.matched_rule === "R2" && params.warm_handoff_question) {
-    const { data, error } = await supabaseAdmin.rpc("commit_ai_reply_tx", {
-      p_conversation_id: params.conversation_id,
-      p_source_message_id: params.source_message_id,
-      p_content: params.warm_handoff_question,
-      p_metadata: {
+    const b22 = await executeB2RpcPersistence(
+      supabaseAdmin,
+      {
+        conversation_id: params.conversation_id,
+        source_message_id: params.source_message_id,
+        proposed_response: params.warm_handoff_question,
+        persistence_kind: "required_escalation_clarification",
+        metadata: {
+          escalation_rule: "R2",
+          escalation_action: "collect_missing_handoff_facts",
+          response_route: "warm_handoff_data_collection",
+          handoff_required: false
+        }
+      },
+      async () => await supabaseAdmin.rpc("commit_ai_reply_tx", {
+        p_conversation_id: params.conversation_id,
+        p_source_message_id: params.source_message_id,
+        p_content: params.warm_handoff_question,
+        p_metadata: {
+          escalation_rule: "R2",
+          escalation_action: "collect_missing_handoff_facts",
+          response_route: "warm_handoff_data_collection",
+          handoff_required: false
+        }
+      })
+    );
+    if (!b22.committed) {
+      return b2PreventedResponse(b22.decision, {
         escalation_rule: "R2",
-        escalation_action: "collect_missing_handoff_facts",
-        response_route: "warm_handoff_data_collection",
-        handoff_required: false
-      }
-    });
+        clarification_persisted: false
+      });
+    }
+    const { data, error } = b22.value;
     if (error) {
       return new Response(
         JSON.stringify({
@@ -7649,16 +8239,40 @@ async function evaluateAndPersistRequiredRulesLive(supabaseAdmin, params) {
     );
   }
   if (decision2.decision === "clarify" && decision2.matched_rule === "R2" && enabled.has("R2")) {
-    const clarification = buildWorkflow5TopicalClarification(params.latest_message_content, params.visitor_language) ?? R2_CLARIFICATION_SAFE_WORDING[params.visitor_language];
-    const persisted2 = await persistRequiredEscalationClarification(
-      requiredEscalationRpcClient(supabaseAdmin),
+    const clarification = buildWorkflow5TopicalClarification(
+      params.latest_message_content,
+      params.visitor_language
+    ) ?? R2_CLARIFICATION_SAFE_WORDING[params.visitor_language];
+    const b22 = await executeB2RpcPersistence(
+      supabaseAdmin,
       {
         conversation_id: params.conversation_id,
         source_message_id: params.source_message_id,
-        decision: decision2,
-        safe_reply_content: clarification
-      }
+        proposed_response: clarification,
+        persistence_kind: "required_escalation_clarification",
+        metadata: {
+          escalation_rule: "R2",
+          escalation_action: "clarification",
+          handoff_required: false
+        }
+      },
+      async () => await persistRequiredEscalationClarification(
+        requiredEscalationRpcClient(supabaseAdmin),
+        {
+          conversation_id: params.conversation_id,
+          source_message_id: params.source_message_id,
+          decision: decision2,
+          safe_reply_content: clarification
+        }
+      )
     );
+    if (!b22.committed) {
+      return b2PreventedResponse(b22.decision, {
+        escalation_rule: "R2",
+        clarification_persisted: false
+      });
+    }
+    const persisted2 = b22.value;
     if (persisted2.ok) {
       await cleanupThinking(
         supabaseAdmin,
@@ -7732,15 +8346,36 @@ async function evaluateAndPersistRequiredRulesLive(supabaseAdmin, params) {
   }
   if (decision2.matched_rule !== "E2" && decision2.matched_rule !== "E1" && decision2.matched_rule !== "R2") return null;
   const safeReply = REQUIRED_ESCALATION_SAFE_WORDING[decision2.matched_rule][params.visitor_language];
-  const persisted = await persistRequiredEscalationHandoff(
-    requiredEscalationRpcClient(supabaseAdmin),
+  const b2 = await executeB2RpcPersistence(
+    supabaseAdmin,
     {
       conversation_id: params.conversation_id,
       source_message_id: params.source_message_id,
-      decision: decision2,
-      safe_reply_content: safeReply
-    }
+      proposed_response: safeReply,
+      persistence_kind: "required_escalation_handoff",
+      metadata: {
+        escalation_rule: decision2.matched_rule,
+        escalation_action: "handoff",
+        handoff_required: true
+      }
+    },
+    async () => await persistRequiredEscalationHandoff(
+      requiredEscalationRpcClient(supabaseAdmin),
+      {
+        conversation_id: params.conversation_id,
+        source_message_id: params.source_message_id,
+        decision: decision2,
+        safe_reply_content: safeReply
+      }
+    )
   );
+  if (!b2.committed) {
+    return b2PreventedResponse(b2.decision, {
+      escalation_rule: decision2.matched_rule,
+      handoff_persisted: false
+    });
+  }
+  const persisted = b2.value;
   if (persisted.ok) {
     await cleanupThinking(
       supabaseAdmin,
@@ -8032,14 +8667,28 @@ async function legacyGenerateReply(conversation_id, source_message_id) {
         }
       );
     }
-    const { data: handoffData, error: handoffError } = await supabaseAdmin.rpc(
-      "explicit_handoff_tx",
+    const b2 = await executeB2RpcPersistence(
+      supabaseAdmin,
       {
+        conversation_id,
+        source_message_id,
+        proposed_response: SAFE_HANDOFF_WORDING[handoffLang],
+        persistence_kind: "explicit_handoff",
+        metadata: { escalation_rule: "R1", handoff_required: true }
+      },
+      async () => await supabaseAdmin.rpc("explicit_handoff_tx", {
         p_conversation_id: conversation_id,
         p_safe_reply_content: SAFE_HANDOFF_WORDING[handoffLang],
         p_source_message_id: source_message_id
-      }
+      })
     );
+    if (!b2.committed) {
+      return b2PreventedResponse(b2.decision, {
+        escalation_rule: "R1",
+        handoff_persisted: false
+      });
+    }
+    const { data: handoffData, error: handoffError } = b2.value;
     if (handoffError) {
       return new Response(
         JSON.stringify({
@@ -8455,15 +9104,29 @@ async function handleKBFallback(supabaseAdmin, conversation_id, branchTag, sourc
       }
     );
   }
-  const { data: rpcData, error: rpcErr } = await supabaseAdmin.rpc(
-    "kb_fallback_handoff_tx",
+  const b2 = await executeB2RpcPersistence(
+    supabaseAdmin,
     {
+      conversation_id,
+      source_message_id,
+      proposed_response: safeText,
+      persistence_kind: "kb_fallback_handoff",
+      metadata: { branch: branchTag, handoff_required: true }
+    },
+    async () => await supabaseAdmin.rpc("kb_fallback_handoff_tx", {
       p_conversation_id: conversation_id,
       p_safe_reply_content: safeText,
       p_branch_tag: branchTag,
       p_source_message_id: source_message_id
-    }
+    })
   );
+  if (!b2.committed) {
+    return b2PreventedResponse(b2.decision, {
+      branch: branchTag,
+      handoff_persisted: false
+    });
+  }
+  const { data: rpcData, error: rpcErr } = b2.value;
   if (rpcErr) {
     return new Response(
       JSON.stringify({
@@ -8652,15 +9315,30 @@ async function handleS0Handoff(supabaseAdmin, conversation_id, source_message_id
       }
     );
   }
-  const { data: rpcData, error: rpcErr } = await supabaseAdmin.rpc(
-    "s0_handoff_tx",
+  const b2 = await executeB2RpcPersistence(
+    supabaseAdmin,
     {
+      conversation_id,
+      source_message_id,
+      proposed_response: safeReply,
+      persistence_kind: "system_failure_handoff",
+      metadata: { escalation_rule: "S0", failure_type, handoff_required: true }
+    },
+    async () => await supabaseAdmin.rpc("s0_handoff_tx", {
       p_conversation_id: conversation_id,
       p_safe_reply_content: safeReply,
       p_source_message_id: source_message_id,
       p_failure_type: failure_type
-    }
+    })
   );
+  if (!b2.committed) {
+    return b2PreventedResponse(b2.decision, {
+      escalation_rule: "S0",
+      failure_type,
+      handoff_persisted: false
+    });
+  }
+  const { data: rpcData, error: rpcErr } = b2.value;
   if (rpcErr) {
     return new Response(
       JSON.stringify({
@@ -8900,11 +9578,28 @@ async function persistExplicitR1IfRequested(supabaseAdmin, conversation_id, sour
       }
     );
   }
-  const { data, error } = await supabaseAdmin.rpc("explicit_handoff_tx", {
-    p_conversation_id: conversation_id,
-    p_safe_reply_content: SAFE_HANDOFF_WORDING[classified.language],
-    p_source_message_id: source_message_id
-  });
+  const b2 = await executeB2RpcPersistence(
+    supabaseAdmin,
+    {
+      conversation_id,
+      source_message_id,
+      proposed_response: SAFE_HANDOFF_WORDING[classified.language],
+      persistence_kind: "explicit_handoff",
+      metadata: { escalation_rule: "R1", handoff_required: true }
+    },
+    async () => await supabaseAdmin.rpc("explicit_handoff_tx", {
+      p_conversation_id: conversation_id,
+      p_safe_reply_content: SAFE_HANDOFF_WORDING[classified.language],
+      p_source_message_id: source_message_id
+    })
+  );
+  if (!b2.committed) {
+    return b2PreventedResponse(b2.decision, {
+      escalation_rule: "R1",
+      handoff_persisted: false
+    });
+  }
+  const { data, error } = b2.value;
   if (error) {
     return new Response(
       JSON.stringify({
@@ -9058,6 +9753,7 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
     return sourceMessageErrorResponse(sourceResult);
   }
   const sourceVisitorMessage = sourceResult.message;
+  const _h1SourceMessageId = sourceVisitorMessage.id;
   const _h1LastMsg = sourceVisitorMessage.content;
   const _closureResponse = await handleConversationClosureIfNeeded(
     supabaseAdmin,
@@ -9084,7 +9780,10 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
   const _conversationContinuityBlock = buildCanonicalContinuityBlock(
     _pr5HistoryRows ?? []
   );
-  const _visitorLang = resolveWorkflow5ConversationLanguage(_h1LastMsg, _pr5HistoryRows ?? []);
+  const _visitorLang = resolveWorkflow5ConversationLanguage(
+    _h1LastMsg,
+    _pr5HistoryRows ?? []
+  );
   const _w5ShortTopicHint = workflow5ShortTopicHint(_h1LastMsg);
   if (_w5ShortTopicHint === "membership tiers") {
     const topicalReply = _visitorLang === "en" ? "You\u2019re asking about membership tiers. I don\u2019t have enough confirmed published information to state the tier structure, inclusions, or limits, so I won\u2019t guess." : _visitorLang === "zh-CN" ? "\u4F60\u95EE\u7684\u662F\u4F1A\u5458\u7B49\u7EA7\u3002\u76EE\u524D\u6CA1\u6709\u8DB3\u591F\u5DF2\u786E\u8BA4\u7684\u5DF2\u53D1\u5E03\u8D44\u6599\u6765\u786E\u5B9A\u4F1A\u5458\u7B49\u7EA7\u7684\u67B6\u6784\u3001\u5305\u542B\u5185\u5BB9\u6216\u9650\u5236\uFF0C\u6240\u4EE5\u6211\u4E0D\u4F1A\u731C\u3002" : "\u4F60\u554F\u7684\u662F\u6703\u54E1\u7B49\u7D1A\u3002\u76EE\u524D\u672A\u6709\u8DB3\u5920\u5DF2\u78BA\u8A8D\u7684\u5DF2\u767C\u5E03\u8CC7\u6599\u53BB\u78BA\u5B9A\u6703\u54E1\u7B49\u7D1A\u7684\u67B6\u69CB\u3001\u5305\u542B\u5167\u5BB9\u6216\u9650\u5236\uFF0C\u6240\u4EE5\u6211\u5514\u6703\u4F30\u3002";
@@ -9093,12 +9792,45 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
       conversation_id,
       source_message_id,
       topicalReply,
-      { response_route: "workflow5_topical_recovery", escalation_action: "continue_ai", handoff_required: false, topic: _w5ShortTopicHint, factual_grounding_required: true, grounding_state: "published_evidence_unconfirmed" }
+      {
+        response_route: "workflow5_topical_recovery",
+        escalation_action: "continue_ai",
+        handoff_required: false,
+        topic: _w5ShortTopicHint,
+        factual_grounding_required: true,
+        grounding_state: "published_evidence_unconfirmed"
+      }
     );
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-    if (topicalCommit.ok) return new Response(JSON.stringify({ success: true, reply: topicalReply, response_route: "workflow5_topical_recovery", handoff_required: false }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-    if (["human_control", "resolved", "superseded_source"].includes(topicalCommit.result)) return new Response(JSON.stringify({ success: true, skipped: topicalCommit.result }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-    return new Response(JSON.stringify({ success: false, error: `workflow5_topical_recovery_${topicalCommit.result}` }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    if (topicalCommit.ok) {
+      return new Response(
+        JSON.stringify({
+          success: true,
+          reply: topicalReply,
+          response_route: "workflow5_topical_recovery",
+          handoff_required: false
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    if (["human_control", "resolved", "superseded_source"].includes(
+      topicalCommit.result
+    )) {
+      return new Response(
+        JSON.stringify({ success: true, skipped: topicalCommit.result }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: `workflow5_topical_recovery_${topicalCommit.result}`
+      }),
+      {
+        status: 409,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      }
+    );
   }
   const _criticalE2ExpectedTenantId = typeof conversation.company_id === "string" && conversation.company_id.length > 0 ? conversation.company_id : void 0;
   const _criticalE2ThreatSignal = classifyAuthoritativeThreat(_h1LastMsg);
@@ -9107,7 +9839,7 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
       supabaseAdmin,
       {
         conversation_id,
-        source_message_id,
+        source_message_id: _h1SourceMessageId,
         latest_message_content: _h1LastMsg,
         conversation_status: conversation.status,
         assigned_agent_id: conversation.assigned_agent_id ?? null,
@@ -9130,7 +9862,7 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
       const semanticResult = await interpretCommerceSemantics({
         company_id: _criticalE2ExpectedTenantId,
         conversation_id,
-        source_message_id,
+        source_message_id: _h1SourceMessageId,
         latest: _h1LastMsg,
         history: (_pr5HistoryRows ?? []).map((row) => ({
           role: String(row.role ?? ""),
@@ -9139,7 +9871,10 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
       });
       _a3SemanticFrame = semanticResult.frame;
     } catch (error) {
-      console.error("[generate-reply] A3.1 semantic interpreter fallback", error instanceof Error ? error.name : "unknown_error");
+      console.error(
+        "[generate-reply] A3.1 semantic interpreter fallback",
+        error instanceof Error ? error.name : "unknown_error"
+      );
     }
   }
   let _a3Commerce = null;
@@ -9150,7 +9885,7 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
         {
           conversation_id,
           company_id: _criticalE2ExpectedTenantId,
-          source_message_id,
+          source_message_id: _h1SourceMessageId,
           text: _h1LastMsg,
           language: _visitorLang === "en" ? "en" : _visitorLang === "zh-CN" ? "zh-CN" : "zh-TW",
           occurred_at: sourceVisitorMessage.created_at ?? null,
@@ -9162,7 +9897,10 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
         }
       );
     } catch (commerceError) {
-      console.error("[generate-reply] A3 commerce state runtime failed (non-blocking):", commerceError);
+      console.error(
+        "[generate-reply] A3 commerce state runtime failed (non-blocking):",
+        commerceError
+      );
       _a3Commerce = null;
     }
   }
@@ -9199,15 +9937,23 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
-    if (["human_control", "resolved", "superseded_source"].includes(commerceCommit.result)) {
+    if (["human_control", "resolved", "superseded_source"].includes(
+      commerceCommit.result
+    )) {
       return new Response(
         JSON.stringify({ success: true, skipped: commerceCommit.result }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
     return new Response(
-      JSON.stringify({ success: false, error: `commerce_state_runtime_${commerceCommit.result}` }),
-      { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      JSON.stringify({
+        success: false,
+        error: `commerce_state_runtime_${commerceCommit.result}`
+      }),
+      {
+        status: 409,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      }
     );
   }
   const _criticalLocalRisk = classifyLocalTopicRisk(_h1LastMsg);
