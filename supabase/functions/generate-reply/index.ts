@@ -67,9 +67,9 @@ import {
   buildCanonicalContinuityBlock,
   buildCanonicalRetrievalQuery,
   buildWorkflow5TopicalClarification,
-  workflow5ShortTopicHint,
   resolveConversationMemoryResponse,
   resolveWorkflow5ConversationLanguage,
+  workflow5ShortTopicHint,
 } from "../_shared/conversation-runtime-state.ts";
 import { classifyCanonicalConversationTurn } from "../_shared/conversation-semantic-contract.ts";
 import { selectCanonicalGrounding } from "../_shared/canonical-grounding.ts";
@@ -109,6 +109,12 @@ import {
 } from "../_shared/commerce-state-runtime.ts";
 import { interpretCommerceSemantics } from "../_shared/commerce-semantic-interpreter.ts";
 import type { CommerceSemanticFrame } from "../_shared/commerce-semantic-frame.ts";
+import {
+  type B2DatabaseClient,
+  type B2Decision,
+  type B2PersistenceKind,
+  executeB2PersistenceGate,
+} from "../_shared/pre-send-conversion-supervisor.ts";
 import {
   createClient,
   type SupabaseClient,
@@ -496,6 +502,48 @@ function sourceMessageErrorResponse(
   });
 }
 
+function b2PreventedResponse(
+  decision: B2Decision,
+  context: Record<string, unknown> = {},
+): Response {
+  const unavailable = decision.decision === "indeterminate";
+  return new Response(
+    JSON.stringify({
+      success: false,
+      error: unavailable
+        ? "b2_supervision_indeterminate"
+        : "b2_supervision_blocked",
+      b2_decision: decision.decision,
+      b2_code: decision.code,
+      persistence_prevented: true,
+      ...context,
+    }),
+    {
+      status: unavailable ? 503 : 409,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    },
+  );
+}
+
+async function executeB2RpcPersistence<T>(
+  supabaseAdmin: SupabaseAdminClient,
+  input: {
+    conversation_id: string;
+    source_message_id: string;
+    proposed_response: string;
+    persistence_kind: B2PersistenceKind;
+    metadata?: Record<string, unknown> | null;
+    expected_commerce_state_revision?: number | null;
+  },
+  commit: () => Promise<T>,
+) {
+  return await executeB2PersistenceGate({
+    client: supabaseAdmin as unknown as B2DatabaseClient,
+    ...input,
+    commit,
+  });
+}
+
 async function commitAiReplyWithControlGate(
   supabaseAdmin: SupabaseAdminClient,
   conversation_id: string,
@@ -514,6 +562,8 @@ async function commitAiReplyWithControlGate(
       | "source_already_replied"
       | "superseded_source"
       | "not_found"
+      | "b2_block"
+      | "b2_indeterminate"
       | "rpc_error"
       | "unexpected_result";
   }
@@ -522,12 +572,43 @@ async function commitAiReplyWithControlGate(
     return { ok: false, result: "invalid_source_message" };
   }
 
-  const { data, error } = await supabaseAdmin.rpc("commit_ai_reply_tx", {
-    p_conversation_id: conversation_id,
-    p_source_message_id: source_message_id,
-    p_content: content,
-    p_metadata: metadata,
-  });
+  const expectedRevision = typeof metadata?.commerce_state_revision === "number"
+    ? metadata.commerce_state_revision
+    : null;
+  const b2 = await executeB2RpcPersistence(
+    supabaseAdmin,
+    {
+      conversation_id,
+      source_message_id,
+      proposed_response: content,
+      persistence_kind: "ai_reply",
+      metadata,
+      expected_commerce_state_revision: expectedRevision,
+    },
+    async () =>
+      await supabaseAdmin.rpc("commit_ai_reply_tx", {
+        p_conversation_id: conversation_id,
+        p_source_message_id: source_message_id,
+        p_content: content,
+        p_metadata: metadata,
+      }),
+  );
+
+  if (!b2.committed) {
+    console.warn("[generate-reply] B2 prevented AI reply persistence:", {
+      conversation_id,
+      decision: b2.decision.decision,
+      code: b2.decision.code,
+    });
+    return {
+      ok: false,
+      result: b2.decision.decision === "block"
+        ? "b2_block"
+        : "b2_indeterminate",
+    };
+  }
+
+  const { data, error } = b2.value;
 
   if (error) {
     console.error("[generate-reply] commit_ai_reply_tx RPC error:", {
@@ -1518,17 +1599,40 @@ async function evaluateAndPersistRequiredRulesLive(
     decision.decision === "handoff" && decision.matched_rule === "R2" &&
     params.warm_handoff_question
   ) {
-    const { data, error } = await supabaseAdmin.rpc("commit_ai_reply_tx", {
-      p_conversation_id: params.conversation_id,
-      p_source_message_id: params.source_message_id,
-      p_content: params.warm_handoff_question,
-      p_metadata: {
-        escalation_rule: "R2",
-        escalation_action: "collect_missing_handoff_facts",
-        response_route: "warm_handoff_data_collection",
-        handoff_required: false,
+    const b2 = await executeB2RpcPersistence(
+      supabaseAdmin,
+      {
+        conversation_id: params.conversation_id,
+        source_message_id: params.source_message_id,
+        proposed_response: params.warm_handoff_question,
+        persistence_kind: "required_escalation_clarification",
+        metadata: {
+          escalation_rule: "R2",
+          escalation_action: "collect_missing_handoff_facts",
+          response_route: "warm_handoff_data_collection",
+          handoff_required: false,
+        },
       },
-    });
+      async () =>
+        await supabaseAdmin.rpc("commit_ai_reply_tx", {
+          p_conversation_id: params.conversation_id,
+          p_source_message_id: params.source_message_id,
+          p_content: params.warm_handoff_question,
+          p_metadata: {
+            escalation_rule: "R2",
+            escalation_action: "collect_missing_handoff_facts",
+            response_route: "warm_handoff_data_collection",
+            handoff_required: false,
+          },
+        }),
+    );
+    if (!b2.committed) {
+      return b2PreventedResponse(b2.decision, {
+        escalation_rule: "R2",
+        clarification_persisted: false,
+      });
+    }
+    const { data, error } = b2.value;
     if (error) {
       return new Response(
         JSON.stringify({
@@ -1582,18 +1686,42 @@ async function evaluateAndPersistRequiredRulesLive(
     decision.decision === "clarify" && decision.matched_rule === "R2" &&
     enabled.has("R2")
   ) {
-    const clarification =
-      buildWorkflow5TopicalClarification(params.latest_message_content, params.visitor_language) ??
+    const clarification = buildWorkflow5TopicalClarification(
+      params.latest_message_content,
+      params.visitor_language,
+    ) ??
       R2_CLARIFICATION_SAFE_WORDING[params.visitor_language];
-    const persisted = await persistRequiredEscalationClarification(
-      requiredEscalationRpcClient(supabaseAdmin),
+    const b2 = await executeB2RpcPersistence(
+      supabaseAdmin,
       {
         conversation_id: params.conversation_id,
         source_message_id: params.source_message_id,
-        decision,
-        safe_reply_content: clarification,
+        proposed_response: clarification,
+        persistence_kind: "required_escalation_clarification",
+        metadata: {
+          escalation_rule: "R2",
+          escalation_action: "clarification",
+          handoff_required: false,
+        },
       },
+      async () =>
+        await persistRequiredEscalationClarification(
+          requiredEscalationRpcClient(supabaseAdmin),
+          {
+            conversation_id: params.conversation_id,
+            source_message_id: params.source_message_id as string,
+            decision,
+            safe_reply_content: clarification,
+          },
+        ),
     );
+    if (!b2.committed) {
+      return b2PreventedResponse(b2.decision, {
+        escalation_rule: "R2",
+        clarification_persisted: false,
+      });
+    }
+    const persisted = b2.value;
 
     if (persisted.ok) {
       await cleanupThinking(
@@ -1694,16 +1822,37 @@ async function evaluateAndPersistRequiredRulesLive(
   const safeReply = REQUIRED_ESCALATION_SAFE_WORDING[decision.matched_rule][
     params.visitor_language
   ];
-
-  const persisted = await persistRequiredEscalationHandoff(
-    requiredEscalationRpcClient(supabaseAdmin),
+  const b2 = await executeB2RpcPersistence(
+    supabaseAdmin,
     {
       conversation_id: params.conversation_id,
       source_message_id: params.source_message_id,
-      decision,
-      safe_reply_content: safeReply,
+      proposed_response: safeReply,
+      persistence_kind: "required_escalation_handoff",
+      metadata: {
+        escalation_rule: decision.matched_rule,
+        escalation_action: "handoff",
+        handoff_required: true,
+      },
     },
+    async () =>
+      await persistRequiredEscalationHandoff(
+        requiredEscalationRpcClient(supabaseAdmin),
+        {
+          conversation_id: params.conversation_id,
+          source_message_id: params.source_message_id as string,
+          decision,
+          safe_reply_content: safeReply,
+        },
+      ),
   );
+  if (!b2.committed) {
+    return b2PreventedResponse(b2.decision, {
+      escalation_rule: decision.matched_rule,
+      handoff_persisted: false,
+    });
+  }
+  const persisted = b2.value;
 
   if (persisted.ok) {
     await cleanupThinking(
@@ -2063,14 +2212,29 @@ async function legacyGenerateReply(
       );
     }
 
-    const { data: handoffData, error: handoffError } = await supabaseAdmin.rpc(
-      "explicit_handoff_tx",
+    const b2 = await executeB2RpcPersistence(
+      supabaseAdmin,
       {
-        p_conversation_id: conversation_id,
-        p_safe_reply_content: SAFE_HANDOFF_WORDING[handoffLang],
-        p_source_message_id: source_message_id,
+        conversation_id,
+        source_message_id,
+        proposed_response: SAFE_HANDOFF_WORDING[handoffLang],
+        persistence_kind: "explicit_handoff",
+        metadata: { escalation_rule: "R1", handoff_required: true },
       },
+      async () =>
+        await supabaseAdmin.rpc("explicit_handoff_tx", {
+          p_conversation_id: conversation_id,
+          p_safe_reply_content: SAFE_HANDOFF_WORDING[handoffLang],
+          p_source_message_id: source_message_id,
+        }),
     );
+    if (!b2.committed) {
+      return b2PreventedResponse(b2.decision, {
+        escalation_rule: "R1",
+        handoff_persisted: false,
+      });
+    }
+    const { data: handoffData, error: handoffError } = b2.value;
 
     if (handoffError) {
       return new Response(
@@ -2626,15 +2790,30 @@ async function handleKBFallback(
     );
   }
 
-  const { data: rpcData, error: rpcErr } = await supabaseAdmin.rpc(
-    "kb_fallback_handoff_tx",
+  const b2 = await executeB2RpcPersistence(
+    supabaseAdmin,
     {
-      p_conversation_id: conversation_id,
-      p_safe_reply_content: safeText,
-      p_branch_tag: branchTag,
-      p_source_message_id: source_message_id,
+      conversation_id,
+      source_message_id,
+      proposed_response: safeText,
+      persistence_kind: "kb_fallback_handoff",
+      metadata: { branch: branchTag, handoff_required: true },
     },
+    async () =>
+      await supabaseAdmin.rpc("kb_fallback_handoff_tx", {
+        p_conversation_id: conversation_id,
+        p_safe_reply_content: safeText,
+        p_branch_tag: branchTag,
+        p_source_message_id: source_message_id,
+      }),
   );
+  if (!b2.committed) {
+    return b2PreventedResponse(b2.decision, {
+      branch: branchTag,
+      handoff_persisted: false,
+    });
+  }
+  const { data: rpcData, error: rpcErr } = b2.value;
   if (rpcErr) {
     return new Response(
       JSON.stringify({
@@ -2832,15 +3011,31 @@ async function handleS0Handoff(
     );
   }
 
-  const { data: rpcData, error: rpcErr } = await supabaseAdmin.rpc(
-    "s0_handoff_tx",
+  const b2 = await executeB2RpcPersistence(
+    supabaseAdmin,
     {
-      p_conversation_id: conversation_id,
-      p_safe_reply_content: safeReply,
-      p_source_message_id: source_message_id,
-      p_failure_type: failure_type,
+      conversation_id,
+      source_message_id,
+      proposed_response: safeReply,
+      persistence_kind: "system_failure_handoff",
+      metadata: { escalation_rule: "S0", failure_type, handoff_required: true },
     },
+    async () =>
+      await supabaseAdmin.rpc("s0_handoff_tx", {
+        p_conversation_id: conversation_id,
+        p_safe_reply_content: safeReply,
+        p_source_message_id: source_message_id,
+        p_failure_type: failure_type,
+      }),
   );
+  if (!b2.committed) {
+    return b2PreventedResponse(b2.decision, {
+      escalation_rule: "S0",
+      failure_type,
+      handoff_persisted: false,
+    });
+  }
+  const { data: rpcData, error: rpcErr } = b2.value;
   if (rpcErr) {
     return new Response(
       JSON.stringify({
@@ -3113,11 +3308,29 @@ async function persistExplicitR1IfRequested(
     );
   }
 
-  const { data, error } = await supabaseAdmin.rpc("explicit_handoff_tx", {
-    p_conversation_id: conversation_id,
-    p_safe_reply_content: SAFE_HANDOFF_WORDING[classified.language],
-    p_source_message_id: source_message_id,
-  });
+  const b2 = await executeB2RpcPersistence(
+    supabaseAdmin,
+    {
+      conversation_id,
+      source_message_id,
+      proposed_response: SAFE_HANDOFF_WORDING[classified.language],
+      persistence_kind: "explicit_handoff",
+      metadata: { escalation_rule: "R1", handoff_required: true },
+    },
+    async () =>
+      await supabaseAdmin.rpc("explicit_handoff_tx", {
+        p_conversation_id: conversation_id,
+        p_safe_reply_content: SAFE_HANDOFF_WORDING[classified.language],
+        p_source_message_id: source_message_id,
+      }),
+  );
+  if (!b2.committed) {
+    return b2PreventedResponse(b2.decision, {
+      escalation_rule: "R1",
+      handoff_persisted: false,
+    });
+  }
+  const { data, error } = b2.value;
   if (error) {
     return new Response(
       JSON.stringify({
@@ -3281,6 +3494,7 @@ async function orchestrationGenerateReply(
     return sourceMessageErrorResponse(sourceResult);
   }
   const sourceVisitorMessage = sourceResult.message;
+  const _h1SourceMessageId = sourceVisitorMessage.id;
   const _h1LastMsg = sourceVisitorMessage.content;
 
   const _closureResponse = await handleConversationClosureIfNeeded(
@@ -3327,7 +3541,10 @@ async function orchestrationGenerateReply(
     _pr5HistoryRows ?? [],
   );
 
-  const _visitorLang = resolveWorkflow5ConversationLanguage(_h1LastMsg, _pr5HistoryRows ?? []);
+  const _visitorLang = resolveWorkflow5ConversationLanguage(
+    _h1LastMsg,
+    _pr5HistoryRows ?? [],
+  );
   const _w5ShortTopicHint = workflow5ShortTopicHint(_h1LastMsg);
   if (_w5ShortTopicHint === "membership tiers") {
     const topicalReply = _visitorLang === "en"
@@ -3336,13 +3553,51 @@ async function orchestrationGenerateReply(
       ? "你问的是会员等级。目前没有足够已确认的已发布资料来确定会员等级的架构、包含内容或限制，所以我不会猜。"
       : "你問的是會員等級。目前未有足夠已確認的已發布資料去確定會員等級的架構、包含內容或限制，所以我唔會估。";
     const topicalCommit = await commitAiReplyWithControlGate(
-      supabaseAdmin, conversation_id, source_message_id, topicalReply,
-      { response_route: "workflow5_topical_recovery", escalation_action: "continue_ai", handoff_required: false, topic: _w5ShortTopicHint, factual_grounding_required: true, grounding_state: "published_evidence_unconfirmed" },
+      supabaseAdmin,
+      conversation_id,
+      source_message_id,
+      topicalReply,
+      {
+        response_route: "workflow5_topical_recovery",
+        escalation_action: "continue_ai",
+        handoff_required: false,
+        topic: _w5ShortTopicHint,
+        factual_grounding_required: true,
+        grounding_state: "published_evidence_unconfirmed",
+      },
     );
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-    if (topicalCommit.ok) return new Response(JSON.stringify({ success: true, reply: topicalReply, response_route: "workflow5_topical_recovery", handoff_required: false }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-    if (["human_control", "resolved", "superseded_source"].includes(topicalCommit.result)) return new Response(JSON.stringify({ success: true, skipped: topicalCommit.result }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-    return new Response(JSON.stringify({ success: false, error: `workflow5_topical_recovery_${topicalCommit.result}` }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    if (topicalCommit.ok) {
+      return new Response(
+        JSON.stringify({
+          success: true,
+          reply: topicalReply,
+          response_route: "workflow5_topical_recovery",
+          handoff_required: false,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    if (
+      ["human_control", "resolved", "superseded_source"].includes(
+        topicalCommit.result,
+      )
+    ) {
+      return new Response(
+        JSON.stringify({ success: true, skipped: topicalCommit.result }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: `workflow5_topical_recovery_${topicalCommit.result}`,
+      }),
+      {
+        status: 409,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
   }
   // P0 critical preflight: E2 must run before customer-context and generic clarification early returns.
   const _criticalE2ExpectedTenantId =
@@ -3356,7 +3611,7 @@ async function orchestrationGenerateReply(
       supabaseAdmin,
       {
         conversation_id,
-        source_message_id,
+        source_message_id: _h1SourceMessageId,
         latest_message_content: _h1LastMsg,
         conversation_status: conversation.status,
         assigned_agent_id: conversation.assigned_agent_id ?? null,
@@ -3383,7 +3638,7 @@ async function orchestrationGenerateReply(
       const semanticResult = await interpretCommerceSemantics({
         company_id: _criticalE2ExpectedTenantId,
         conversation_id,
-        source_message_id,
+        source_message_id: _h1SourceMessageId,
         latest: _h1LastMsg,
         history: (_pr5HistoryRows ?? []).map((row) => ({
           role: String((row as { role?: unknown }).role ?? ""),
@@ -3392,7 +3647,10 @@ async function orchestrationGenerateReply(
       });
       _a3SemanticFrame = semanticResult.frame;
     } catch (error) {
-      console.error("[generate-reply] A3.1 semantic interpreter fallback", error instanceof Error ? error.name : "unknown_error");
+      console.error(
+        "[generate-reply] A3.1 semantic interpreter fallback",
+        error instanceof Error ? error.name : "unknown_error",
+      );
     }
   }
 
@@ -3407,9 +3665,13 @@ async function orchestrationGenerateReply(
         {
           conversation_id,
           company_id: _criticalE2ExpectedTenantId,
-          source_message_id,
+          source_message_id: _h1SourceMessageId,
           text: _h1LastMsg,
-          language: _visitorLang === "en" ? "en" : _visitorLang === "zh-CN" ? "zh-CN" : "zh-TW",
+          language: _visitorLang === "en"
+            ? "en"
+            : _visitorLang === "zh-CN"
+            ? "zh-CN"
+            : "zh-TW",
           occurred_at: sourceVisitorMessage.created_at ?? null,
           history: (_pr5HistoryRows ?? []).map((row) => ({
             role: String((row as { role?: unknown }).role ?? ""),
@@ -3419,7 +3681,10 @@ async function orchestrationGenerateReply(
         },
       );
     } catch (commerceError) {
-      console.error("[generate-reply] A3 commerce state runtime failed (non-blocking):", commerceError);
+      console.error(
+        "[generate-reply] A3 commerce state runtime failed (non-blocking):",
+        commerceError,
+      );
       _a3Commerce = null;
     }
   }
@@ -3456,15 +3721,25 @@ async function orchestrationGenerateReply(
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
-    if (["human_control", "resolved", "superseded_source"].includes(commerceCommit.result)) {
+    if (
+      ["human_control", "resolved", "superseded_source"].includes(
+        commerceCommit.result,
+      )
+    ) {
       return new Response(
         JSON.stringify({ success: true, skipped: commerceCommit.result }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
     return new Response(
-      JSON.stringify({ success: false, error: `commerce_state_runtime_${commerceCommit.result}` }),
-      { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      JSON.stringify({
+        success: false,
+        error: `commerce_state_runtime_${commerceCommit.result}`,
+      }),
+      {
+        status: 409,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
     );
   }
   const _criticalLocalRisk = classifyLocalTopicRisk(_h1LastMsg);
