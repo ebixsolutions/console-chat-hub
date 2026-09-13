@@ -1,0 +1,772 @@
+/**
+ * B2 — fail-closed pre-send conversion supervisor.
+ *
+ * This module is deliberately read-only. It validates a proposed customer
+ * response against the latest canonical commerce snapshot, then repeats the
+ * tenant/source/revision read immediately before invoking the existing atomic
+ * persistence RPC. Only an `allow` decision can reach the callback.
+ */
+
+import {
+  type CommerceEntity,
+  type CommerceQuote,
+  type ConversationCommerceState,
+  createEmptyConversationCommerceState,
+  isConversationCommerceState,
+} from "./commerce-state-contract.ts";
+
+export type B2DecisionKind = "allow" | "block" | "indeterminate";
+
+export type B2PersistenceKind =
+  | "ai_reply"
+  | "required_escalation_clarification"
+  | "required_escalation_handoff"
+  | "explicit_handoff"
+  | "kb_fallback_handoff"
+  | "system_failure_handoff";
+
+export interface B2Decision {
+  decision: B2DecisionKind;
+  code: string;
+  detail?: string;
+}
+
+export interface B2CanonicalSnapshot {
+  conversation_id: string;
+  company_id: string;
+  source_message_id: string;
+  commerce_state_revision: number;
+  commerce_state_source_message_id: string | null;
+  state: ConversationCommerceState;
+}
+
+export interface B2EvaluationInput {
+  proposed_response: string;
+  persistence_kind: B2PersistenceKind;
+  snapshot: B2CanonicalSnapshot;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface B2QueryResult {
+  data: unknown;
+  error: unknown;
+}
+
+export interface B2QueryBuilder {
+  select(columns: string): B2QueryBuilder;
+  eq(column: string, value: string): B2QueryBuilder;
+  maybeSingle(): Promise<B2QueryResult>;
+}
+
+export interface B2DatabaseClient {
+  from(table: string): B2QueryBuilder;
+}
+
+export interface B2PersistenceInput<T> {
+  client: B2DatabaseClient;
+  conversation_id: string;
+  source_message_id: string;
+  proposed_response: string;
+  persistence_kind: B2PersistenceKind;
+  metadata?: Record<string, unknown> | null;
+  expected_commerce_state_revision?: number | null;
+  commit: () => Promise<T>;
+}
+
+export type B2PersistenceResult<T> =
+  | {
+      committed: true;
+      decision: B2Decision;
+      snapshot: B2CanonicalSnapshot;
+      value: T;
+    }
+  | {
+      committed: false;
+      decision: B2Decision;
+      snapshot?: B2CanonicalSnapshot;
+    };
+
+const CURRENT_PRICE_CLAIM =
+  /(?:current|latest|today(?:'s)?|now|而家|現在|现在|目前|最新).{0,36}(?:price|quote|quotation|fee|價|价|報價|报价|收費|收费)|(?:price|quote|quotation|fee|價|价|報價|报价|收費|收费).{0,36}(?:current|latest|valid|confirmed|final|而家|現在|现在|目前|最新|有效|作準|作准|確認|确认)/i;
+const QUESTION =
+  /[?？]|(?:what|which|when|where|who|how|please (?:tell|provide|confirm)|請問|请问|邊個|边个|邊度|边度|幾多|几多|多少|是否|係咪|是不是|請提供|请提供|請確認|请确认)/i;
+const RESTORE_OR_ACTIVE =
+  /(?:restore|reinstate|put .{0,20} back|add .{0,20} back|proceed|continue|keep|include|remains? in|active|confirmed|安排|繼續|继续|照舊|照旧|保留|重新加入|加返|放返|仍然包括|仍包括|確認要|确认要|會處理|会处理)/i;
+const ORDER_CONFIRMED =
+  /(?:order (?:is |has been )?(?:confirmed|completed|placed)|confirmed order|訂單已確認|订单已确认|已確認訂單|已确认订单|已落單|已下单|落單完成|下单完成)/i;
+const PAYMENT_COMPLETED =
+  /(?:payment (?:is |has been )?(?:paid|received|completed|processed)|paid in full|付款已完成|付款完成|已付款|已收到付款|支付完成)/i;
+const DELIVERY_CONFIRMED =
+  /(?:delivery (?:is |has been )?(?:confirmed|arranged|scheduled)|送貨已確認|送货已确认|已安排送貨|已安排送货|送貨安排已確認|送货安排已确认)/i;
+const DELIVERY_COMPLETED =
+  /(?:delivery (?:is |has been )?(?:completed|delivered|fulfilled)|successfully delivered|送貨已完成|送货已完成|已送達|已送达|已經送貨|已经送货|派送完成)/i;
+const INSTALLATION_CONFIRMED =
+  /(?:installation (?:is |has been )?(?:confirmed|arranged|scheduled)|安裝已確認|安装已确认|已安排安裝|已安排安装|安裝安排已確認|安装安排已确认)/i;
+const INSTALLATION_COMPLETED =
+  /(?:installation (?:is |has been )?(?:completed|installed|finished|executed)|successfully installed|安裝已完成|安装已完成|已經安裝|已经安装|安裝完成|安装完成)/i;
+const GENERIC_COMPLETION =
+  /(?:action|request|operation|process|booking|reservation).{0,24}(?:completed|processed|executed|done|finished)|(?:completed|processed|executed|done|finished).{0,24}(?:action|request|operation|process|booking|reservation)|(?:操作|動作|动作|請求|请求|流程|程序|預約|预约).{0,20}(?:已完成|完成咗|完成了|已執行|已执行|已處理|已处理)/i;
+
+function clean(value: unknown, max = 65_536): string {
+  return typeof value === "string"
+    ? value.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max)
+    : "";
+}
+
+function lower(value: unknown): string {
+  return clean(value).toLowerCase();
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function scalarText(value: unknown): string | null {
+  if (typeof value === "string") return clean(value, 300) || null;
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (typeof value === "boolean") return value ? "true" : "false";
+  return null;
+}
+
+function aliasesForKey(key: string): string[] {
+  const normalized = key
+    .replace(/[._-]+/g, " ")
+    .trim()
+    .toLowerCase();
+  const aliases = new Set([normalized, key.toLowerCase()]);
+  const common: Record<string, string[]> = {
+    address: ["address", "delivery address", "地址", "送貨地址", "送货地址"],
+    recipient_name: ["recipient", "recipient name", "收貨人", "收货人"],
+    recipient_phone: [
+      "phone",
+      "contact number",
+      "telephone",
+      "電話",
+      "电话",
+      "聯絡號碼",
+      "联络号码",
+    ],
+    preferred_date: ["delivery date", "date", "送貨日期", "送货日期", "日期"],
+    preferred_window: ["delivery time", "time slot", "送貨時間", "送货时间", "時段", "时段"],
+    confirmed: ["confirmed", "confirmation", "確認", "确认"],
+    quantity: ["quantity", "how many", "數量", "数量", "幾多", "几多"],
+    brand: ["brand", "品牌"],
+    model: ["model", "model number", "型號", "型号"],
+    amount: ["amount", "price", "quote", "價錢", "价钱", "報價", "报价"],
+    currency: ["currency", "幣別", "币别", "貨幣", "货币"],
+    quote_type: ["quote type", "quotation type", "報價類型", "报价类型"],
+    validity_status: ["quote validity", "validity", "報價有效狀態", "报价有效状态"],
+    current_intent: ["intent", "current intent", "目的", "意圖", "意图"],
+    current_topic: ["topic", "current topic", "主題", "主题"],
+    current_industry: ["industry", "行業", "行业"],
+    unresolved_items: ["unresolved", "outstanding item", "待處理", "待处理", "未解決", "未解决"],
+    funnel_stage: ["stage", "funnel stage", "階段", "阶段"],
+    quotation_status: ["quotation status", "quote status", "報價狀態", "报价状态"],
+    order_status: ["order status", "訂單狀態", "订单状态"],
+    payment_status: ["payment status", "付款狀態", "付款状态", "支付狀態", "支付状态"],
+    kind: ["installation item", "installation type", "安裝項目", "安装项目"],
+    status: ["status", "狀態", "状态"],
+  };
+  const leaf = key.split(/[._-]/).at(-1) ?? key;
+  for (const item of common[leaf] ?? []) aliases.add(item.toLowerCase());
+  return [...aliases].filter((item) => item.length >= 2);
+}
+
+interface KnownFact {
+  path: string;
+  value: string;
+  aliases: string[];
+}
+
+function addFact(facts: KnownFact[], path: string, value: unknown): void {
+  const rendered = scalarText(value);
+  if (!rendered) return;
+  facts.push({ path, value: rendered, aliases: aliasesForKey(path) });
+}
+
+function addRecordFacts(facts: KnownFact[], prefix: string, value: Record<string, unknown>): void {
+  for (const [key, item] of Object.entries(value)) {
+    if (isRecord(item)) addRecordFacts(facts, `${prefix}.${key}`, item);
+    else addFact(facts, `${prefix}.${key}`, item);
+  }
+}
+
+export function collectKnownCommerceFacts(state: ConversationCommerceState): KnownFact[] {
+  const facts: KnownFact[] = [];
+  addFact(facts, "current_intent", state.current_intent);
+  addFact(facts, "current_topic", state.current_topic);
+  addFact(facts, "current_industry", state.current_industry);
+  state.unresolved_items.forEach((item, index) =>
+    addFact(facts, `unresolved_items.${index}`, item),
+  );
+  addRecordFacts(facts, "customer_constraints", state.customer_constraints);
+  state.entities.forEach((entity, index) => {
+    addFact(facts, `entities.${index}.category`, entity.category);
+    addFact(facts, `entities.${index}.brand`, entity.brand);
+    addFact(facts, `entities.${index}.model`, entity.model);
+    addFact(facts, `entities.${index}.quantity`, entity.quantity);
+    addFact(facts, `entities.${index}.status`, entity.status);
+    addRecordFacts(facts, `entities.${index}.attributes`, entity.attributes);
+    addRecordFacts(facts, `entities.${index}.constraints`, entity.constraints);
+  });
+  state.quotes.forEach((quote, index) => {
+    addFact(facts, `quotes.${index}.amount`, quote.amount);
+    addFact(facts, `quotes.${index}.currency`, quote.currency);
+    addFact(facts, `quotes.${index}.quote_type`, quote.quote_type);
+    addFact(facts, `quotes.${index}.validity_status`, quote.validity_status);
+    addRecordFacts(facts, `quotes.${index}.conditions`, quote.conditions);
+  });
+  addFact(facts, "delivery.preferred_date", state.delivery.preferred_date);
+  addFact(facts, "delivery.preferred_window", state.delivery.preferred_window);
+  addFact(facts, "delivery.address", state.delivery.address);
+  addFact(facts, "delivery.recipient_name", state.delivery.recipient_name);
+  addFact(facts, "delivery.recipient_phone", state.delivery.recipient_phone);
+  addFact(facts, "delivery.confirmed", state.delivery.confirmed);
+  addRecordFacts(facts, "installation.site_conditions", state.installation.site_conditions);
+  state.installation.pending_checks.forEach((item, index) =>
+    addFact(facts, `installation.pending_checks.${index}`, item),
+  );
+  state.installation.items.forEach((item, index) => {
+    addFact(facts, `installation.items.${index}.kind`, item.kind);
+    addFact(facts, `installation.items.${index}.status`, item.status);
+    addRecordFacts(facts, `installation.items.${index}.details`, item.details);
+  });
+  addFact(facts, "conversion.funnel_stage", state.conversion.funnel_stage);
+  addFact(facts, "conversion.quotation_status", state.conversion.quotation_status);
+  addFact(facts, "conversion.order_status", state.conversion.order_status);
+  addFact(facts, "conversion.payment_status", state.conversion.payment_status);
+  return facts;
+}
+
+function entityAliases(entity: CommerceEntity): string[] {
+  const values = [entity.entity_id, entity.category, entity.brand, entity.model];
+  for (const key of ["product_name", "display_name", "name", "sku"]) {
+    values.push(scalarText(entity.attributes[key]));
+  }
+  return [...new Set(values.map(lower).filter((item) => item.length >= 2))];
+}
+
+function mentionedEntityIds(text: string, state: ConversationCommerceState): string[] {
+  const candidate = lower(text);
+  return state.entities
+    .filter((entity) => entityAliases(entity).some((alias) => candidate.includes(alias)))
+    .map((entity) => entity.entity_id);
+}
+
+interface MoneyMention {
+  amount: number;
+  currency: string | null;
+}
+
+function extractMoneyMentions(text: string): MoneyMention[] {
+  const results: MoneyMention[] = [];
+  const pattern =
+    /(?:\b(HKD|USD|TWD)\b\s*|((?:HK|US|NT)\$|\$)\s*)?([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,10})(?:\.([0-9]{1,2}))?\s*(元|蚊|dollars?)?/gi;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text)) !== null) {
+    const amount = Number(`${match[3].replace(/,/g, "")}${match[4] ? `.${match[4]}` : ""}`);
+    if (!Number.isFinite(amount) || amount <= 0) continue;
+    const marker = `${match[1] ?? ""}${match[2] ?? ""}${match[5] ?? ""}`.toUpperCase();
+    const currency =
+      marker.includes("USD") || marker.includes("US$")
+        ? "USD"
+        : marker.includes("TWD") || marker.includes("NT$")
+          ? "TWD"
+          : marker.includes("HKD") ||
+              marker.includes("HK$") ||
+              marker.includes("$") ||
+              /元|蚊/.test(marker)
+            ? "HKD"
+            : null;
+    results.push({ amount, currency });
+  }
+  return results;
+}
+
+function quoteMatchesClaim(
+  quote: CommerceQuote,
+  money: MoneyMention,
+  mentioned: string[],
+): boolean {
+  if (quote.quote_type !== "current_verified" || quote.validity_status !== "current") return false;
+  if (quote.amount !== money.amount) return false;
+  if (!money.currency || quote.currency.toUpperCase() !== money.currency) return false;
+  if (quote.entity_id) return mentioned.includes(String(quote.entity_id));
+  return mentioned.length === 0;
+}
+
+function evaluateQuoteReality(text: string, state: ConversationCommerceState): B2Decision | null {
+  if (!CURRENT_PRICE_CLAIM.test(text)) return null;
+  const money = extractMoneyMentions(text);
+  if (money.length === 0) {
+    return { decision: "block", code: "CURRENT_QUOTE_WITHOUT_VERIFIED_AMOUNT" };
+  }
+  const mentioned = mentionedEntityIds(text, state);
+  for (const item of money) {
+    if (!state.quotes.some((quote) => quoteMatchesClaim(quote, item, mentioned))) {
+      return {
+        decision: "block",
+        code: "CURRENT_QUOTE_NOT_PROVEN",
+        detail: `${item.currency ?? "currency_unknown"}:${item.amount}`,
+      };
+    }
+  }
+  return null;
+}
+
+function evaluateTransactionReality(
+  text: string,
+  kind: B2PersistenceKind,
+  state: ConversationCommerceState,
+): B2Decision | null {
+  if (DELIVERY_COMPLETED.test(text)) {
+    return {
+      decision: "block",
+      code: "DELIVERY_COMPLETION_NOT_CANONICALLY_PROVABLE",
+    };
+  }
+  if (INSTALLATION_COMPLETED.test(text)) {
+    return {
+      decision: "block",
+      code: "INSTALLATION_COMPLETION_NOT_CANONICALLY_PROVABLE",
+    };
+  }
+  if (DELIVERY_CONFIRMED.test(text) && state.delivery.confirmed !== true) {
+    return { decision: "block", code: "DELIVERY_CONFIRMATION_NOT_PROVEN" };
+  }
+  if (
+    INSTALLATION_CONFIRMED.test(text) &&
+    !state.installation.items.some((item) => item.status === "confirmed")
+  ) {
+    return { decision: "block", code: "INSTALLATION_CONFIRMATION_NOT_PROVEN" };
+  }
+  if (
+    ORDER_CONFIRMED.test(text) &&
+    state.conversion.order_status !== "confirmed" &&
+    state.conversion.order_status !== "completed"
+  ) {
+    return { decision: "block", code: "ORDER_CONFIRMATION_NOT_PROVEN" };
+  }
+  if (PAYMENT_COMPLETED.test(text) && state.conversion.payment_status !== "paid") {
+    return { decision: "block", code: "PAYMENT_COMPLETION_NOT_PROVEN" };
+  }
+  if (GENERIC_COMPLETION.test(text)) {
+    const atomicHandoff =
+      kind === "required_escalation_handoff" ||
+      kind === "explicit_handoff" ||
+      kind === "kb_fallback_handoff" ||
+      kind === "system_failure_handoff";
+    if (!atomicHandoff) {
+      return { decision: "block", code: "ACTION_COMPLETION_NOT_PROVEN" };
+    }
+  }
+  return null;
+}
+
+function evaluateKnownContext(text: string, state: ConversationCommerceState): B2Decision | null {
+  if (!QUESTION.test(text)) return null;
+  const questionClauses = text
+    .split(/(?<=[?？.!！。])|\n+/)
+    .map(lower)
+    .filter((clause) => QUESTION.test(clause));
+  for (const clause of questionClauses) {
+    for (const fact of collectKnownCommerceFacts(state)) {
+      if (fact.aliases.some((alias) => clause.includes(alias))) {
+        return {
+          decision: "block",
+          code: "KNOWN_CONTEXT_RECONFIRMATION",
+          detail: fact.path,
+        };
+      }
+    }
+  }
+  return null;
+}
+
+interface CorrectionPair {
+  previous: string;
+  current: string;
+}
+
+function trimCorrectionPart(value: string): string {
+  return clean(value, 180).replace(/^[,，:：;；\s]+|[,，。.!！?？;；\s]+$/g, "");
+}
+
+function parseCorrection(value: string): CorrectionPair | null {
+  const text = clean(value, 500);
+  const patterns = [
+    /(?:唔係|唔系|不是|不係)\s*(.+?)\s*(?:而係|而系|而是)\s*(.+)$/i,
+    /(?:change|changed|correct|correction)(?:\s+it)?\s+from\s+(.+?)\s+to\s+(.+)$/i,
+    /(?:更正|改(?:返|成|做|為|为)?|actually|i meant)\s*[:：]?\s*(.+?)\s*(?:改為|改为|變成|变成|to|而係|而是)\s*(.+)$/i,
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    const previous = trimCorrectionPart(match?.[1] ?? "");
+    const current = trimCorrectionPart(match?.[2] ?? "");
+    if (previous && current && previous !== current) {
+      return { previous, current };
+    }
+  }
+  return null;
+}
+
+function responseTouchesCommerce(text: string, state: ConversationCommerceState): boolean {
+  if (extractMoneyMentions(text).length > 0) return true;
+  if (mentionedEntityIds(text, state).length > 0) return true;
+  return /(?:order|payment|quote|price|delivery|installation|quantity|model|brand|訂單|订单|付款|支付|報價|报价|價錢|价钱|送貨|送货|安裝|安装|數量|数量|型號|型号|品牌)/i.test(
+    text,
+  );
+}
+
+function evaluateCorrections(text: string, state: ConversationCommerceState): B2Decision | null {
+  if (state.latest_corrections.length === 0) return null;
+  const latest = state.latest_corrections.at(-1) ?? "";
+  const parsed = parseCorrection(latest);
+  if (!parsed) {
+    return responseTouchesCommerce(text, state)
+      ? { decision: "indeterminate", code: "LATEST_CORRECTION_UNRESOLVED" }
+      : null;
+  }
+  const candidate = lower(text);
+  const previous = lower(parsed.previous);
+  const current = lower(parsed.current);
+  if (previous && candidate.includes(previous) && !candidate.includes(current)) {
+    return {
+      decision: "block",
+      code: "SUPERSEDED_VALUE_REUSED",
+      detail: `${parsed.previous} -> ${parsed.current}`,
+    };
+  }
+  return null;
+}
+
+function evaluateCancellation(text: string, state: ConversationCommerceState): B2Decision | null {
+  const candidate = lower(text);
+  const activeLanguage = RESTORE_OR_ACTIVE.test(text);
+  if (!activeLanguage) return null;
+
+  const cancelledEntities = state.entities.filter((entity) => entity.status === "cancelled");
+  const activeEntities = state.entities.filter(
+    (entity) => entity.status !== "cancelled" && entity.status !== "deferred",
+  );
+  const mentionedCancelled = cancelledEntities.filter((entity) =>
+    entityAliases(entity).some((alias) => candidate.includes(alias)),
+  );
+  if (mentionedCancelled.length > 0) {
+    return { decision: "block", code: "CANCELLED_ENTITY_RESTORATION" };
+  }
+  const pronoun =
+    /(?:the one|that one|it\b|removed one|cancelled one|嗰個|果個|該項|该项|取消嗰|取消的|移除嗰|移除的)/i.test(
+      text,
+    );
+  if (pronoun && cancelledEntities.length > 0) {
+    return activeEntities.length === 0
+      ? { decision: "block", code: "CANCELLED_ENTITY_INDIRECT_RESTORATION" }
+      : {
+          decision: "indeterminate",
+          code: "AMBIGUOUS_CANCELLED_ENTITY_REFERENCE",
+        };
+  }
+
+  const cancelledQuote = state.quotes.some(
+    (quote) =>
+      quote.validity_status === "invalid" ||
+      quote.validity_status === "expired" ||
+      quote.validity_status === "superseded",
+  );
+  if (cancelledQuote && /(?:quote|quotation|price|報價|报价|價錢|价钱)/i.test(text)) {
+    return { decision: "block", code: "INACTIVE_QUOTE_RESTORATION" };
+  }
+  if (
+    state.conversion.order_status === "cancelled" &&
+    /(?:order|訂單|订单|落單|下单)/i.test(text)
+  ) {
+    return { decision: "block", code: "CANCELLED_ORDER_RESTORATION" };
+  }
+  if (
+    state.installation.items.some((item) => item.status === "cancelled") &&
+    /(?:(?:cancelled|canceled|removed|取消|已取消).{0,28}(?:installation|install|安裝|安装)|(?:installation|install|安裝|安装).{0,28}(?:cancelled|canceled|removed|取消|已取消))/i.test(
+      text,
+    )
+  ) {
+    return { decision: "block", code: "CANCELLED_INSTALLATION_RESTORATION" };
+  }
+  return null;
+}
+
+export function evaluateB2BeforeCommit(input: B2EvaluationInput): B2Decision {
+  const draft = clean(input.proposed_response);
+  if (!draft) {
+    return { decision: "indeterminate", code: "EMPTY_PROPOSED_RESPONSE" };
+  }
+  if (!isConversationCommerceState(input.snapshot.state)) {
+    return {
+      decision: "indeterminate",
+      code: "INVALID_CANONICAL_COMMERCE_STATE",
+    };
+  }
+  const state = input.snapshot.state;
+  return (
+    evaluateCorrections(draft, state) ??
+    evaluateCancellation(draft, state) ??
+    evaluateQuoteReality(draft, state) ??
+    evaluateTransactionReality(draft, input.persistence_kind, state) ??
+    evaluateKnownContext(draft, state) ?? { decision: "allow", code: "B2_ALLOW" }
+  );
+}
+
+function queryErrorDetail(error: unknown): string {
+  if (isRecord(error)) {
+    return clean(error.message ?? error.code, 180) || "query_error";
+  }
+  return clean(error, 180) || "query_error";
+}
+
+async function loadB2Snapshot(
+  client: B2DatabaseClient,
+  conversation_id: string,
+  source_message_id: string,
+): Promise<
+  | { ok: true; snapshot: B2CanonicalSnapshot }
+  | {
+      ok: false;
+      decision: B2Decision;
+    }
+> {
+  try {
+    const conversationResult = await client
+      .from("conversations")
+      .select("id, company_id")
+      .eq("id", conversation_id)
+      .maybeSingle();
+    if (conversationResult.error) {
+      return {
+        ok: false,
+        decision: {
+          decision: "indeterminate",
+          code: "CONVERSATION_SCOPE_LOOKUP_FAILED",
+          detail: queryErrorDetail(conversationResult.error),
+        },
+      };
+    }
+    if (!isRecord(conversationResult.data)) {
+      return {
+        ok: false,
+        decision: {
+          decision: "indeterminate",
+          code: "CONVERSATION_SCOPE_NOT_FOUND",
+        },
+      };
+    }
+    const companyId = clean(conversationResult.data.company_id, 160);
+    if (!companyId) {
+      return {
+        ok: false,
+        decision: {
+          decision: "indeterminate",
+          code: "CONVERSATION_COMPANY_UNRESOLVED",
+        },
+      };
+    }
+
+    const sourceResult = await client
+      .from("messages")
+      .select("id, conversation_id, role")
+      .eq("id", source_message_id)
+      .eq("conversation_id", conversation_id)
+      .maybeSingle();
+    if (sourceResult.error) {
+      return {
+        ok: false,
+        decision: {
+          decision: "indeterminate",
+          code: "SOURCE_MESSAGE_LOOKUP_FAILED",
+          detail: queryErrorDetail(sourceResult.error),
+        },
+      };
+    }
+    if (
+      !isRecord(sourceResult.data) ||
+      clean(sourceResult.data.id, 160) !== source_message_id ||
+      clean(sourceResult.data.conversation_id, 160) !== conversation_id ||
+      sourceResult.data.role !== "visitor"
+    ) {
+      return {
+        ok: false,
+        decision: { decision: "indeterminate", code: "SOURCE_MESSAGE_INVALID" },
+      };
+    }
+
+    const stateResult = await client
+      .from("conversation_commerce_state")
+      .select("company_id, revision, source_message_id, state")
+      .eq("conversation_id", conversation_id)
+      .eq("company_id", companyId)
+      .maybeSingle();
+    if (stateResult.error) {
+      return {
+        ok: false,
+        decision: {
+          decision: "indeterminate",
+          code: "COMMERCE_STATE_LOOKUP_FAILED",
+          detail: queryErrorDetail(stateResult.error),
+        },
+      };
+    }
+
+    let state = createEmptyConversationCommerceState();
+    let revision = 0;
+    let stateSource: string | null = null;
+    if (stateResult.data !== null && stateResult.data !== undefined) {
+      if (!isRecord(stateResult.data)) {
+        return {
+          ok: false,
+          decision: {
+            decision: "indeterminate",
+            code: "COMMERCE_STATE_INVALID_ROW",
+          },
+        };
+      }
+      if (clean(stateResult.data.company_id, 160) !== companyId) {
+        return {
+          ok: false,
+          decision: {
+            decision: "indeterminate",
+            code: "COMMERCE_STATE_COMPANY_MISMATCH",
+          },
+        };
+      }
+      const rawRevision =
+        typeof stateResult.data.revision === "number"
+          ? stateResult.data.revision
+          : Number(stateResult.data.revision);
+      if (!Number.isInteger(rawRevision) || rawRevision < 0) {
+        return {
+          ok: false,
+          decision: {
+            decision: "indeterminate",
+            code: "COMMERCE_STATE_REVISION_INVALID",
+          },
+        };
+      }
+      if (!isConversationCommerceState(stateResult.data.state)) {
+        return {
+          ok: false,
+          decision: {
+            decision: "indeterminate",
+            code: "INVALID_CANONICAL_COMMERCE_STATE",
+          },
+        };
+      }
+      state = structuredClone(stateResult.data.state);
+      revision = rawRevision;
+      stateSource = clean(stateResult.data.source_message_id, 160) || null;
+    }
+
+    return {
+      ok: true,
+      snapshot: {
+        conversation_id,
+        company_id: companyId,
+        source_message_id,
+        commerce_state_revision: revision,
+        commerce_state_source_message_id: stateSource,
+        state,
+      },
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      decision: {
+        decision: "indeterminate",
+        code: "SUPERVISOR_READ_ERROR",
+        detail: error instanceof Error ? error.name : "unknown_error",
+      },
+    };
+  }
+}
+
+function stableSnapshotFingerprint(snapshot: B2CanonicalSnapshot): string {
+  return JSON.stringify({
+    conversation_id: snapshot.conversation_id,
+    company_id: snapshot.company_id,
+    source_message_id: snapshot.source_message_id,
+    commerce_state_revision: snapshot.commerce_state_revision,
+    commerce_state_source_message_id: snapshot.commerce_state_source_message_id,
+    state: snapshot.state,
+  });
+}
+
+/**
+ * Executes the complete read/evaluate/revalidate/commit sequence. The callback
+ * is never invoked for block, indeterminate, evaluation errors, tenant drift,
+ * source drift, or revision drift.
+ */
+export async function executeB2PersistenceGate<T>(
+  input: B2PersistenceInput<T>,
+): Promise<B2PersistenceResult<T>> {
+  const initial = await loadB2Snapshot(
+    input.client,
+    input.conversation_id,
+    input.source_message_id,
+  );
+  if (!initial.ok) return { committed: false, decision: initial.decision };
+
+  if (
+    input.expected_commerce_state_revision !== undefined &&
+    input.expected_commerce_state_revision !== null &&
+    input.expected_commerce_state_revision !== initial.snapshot.commerce_state_revision
+  ) {
+    return {
+      committed: false,
+      snapshot: initial.snapshot,
+      decision: {
+        decision: "indeterminate",
+        code: "EXPECTED_COMMERCE_REVISION_MISMATCH",
+      },
+    };
+  }
+
+  let decision: B2Decision;
+  try {
+    decision = evaluateB2BeforeCommit({
+      proposed_response: input.proposed_response,
+      persistence_kind: input.persistence_kind,
+      snapshot: initial.snapshot,
+      metadata: input.metadata ? structuredClone(input.metadata) : input.metadata,
+    });
+  } catch (error) {
+    decision = {
+      decision: "indeterminate",
+      code: "SUPERVISOR_ERROR",
+      detail: error instanceof Error ? error.name : "unknown_error",
+    };
+  }
+  if (decision.decision !== "allow") {
+    return { committed: false, decision, snapshot: initial.snapshot };
+  }
+
+  const revalidated = await loadB2Snapshot(
+    input.client,
+    input.conversation_id,
+    input.source_message_id,
+  );
+  if (!revalidated.ok) {
+    return { committed: false, decision: revalidated.decision };
+  }
+  if (
+    stableSnapshotFingerprint(initial.snapshot) !== stableSnapshotFingerprint(revalidated.snapshot)
+  ) {
+    return {
+      committed: false,
+      snapshot: revalidated.snapshot,
+      decision: {
+        decision: "indeterminate",
+        code: "COMMERCE_CONTEXT_CHANGED_BEFORE_COMMIT",
+      },
+    };
+  }
+
+  const value = await input.commit();
+  return { committed: true, decision, snapshot: revalidated.snapshot, value };
+}
