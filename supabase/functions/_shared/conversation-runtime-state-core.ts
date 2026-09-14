@@ -657,6 +657,23 @@ export function buildCanonicalRetrievalQuery(latestInput: string, newestFirst: R
   const semantic = classifyCanonicalConversationTurn(latest, newestFirst);
   if (!latest) return { query: "", mode: "standalone", latest: "", context_turns: [], state };
   const targetHint = retrievalTargetHint(latest);
+  const hasExplicitCurrentTarget =
+    /\b(?:smoke\s+test\s+)?(?:basic|growth|pro)\b|\b(?:product|model|sku)\s*[:#-]?\s*[a-z0-9][a-z0-9._/-]*|(?:香港|hong\s*kong|\bhk\b|台灣|台湾|taiwan|澳門|澳门|macau|macao|新加坡|singapore)/i.test(latest);
+  const currentTargetBoundary = hasExplicitCurrentTarget &&
+    (semantic.topic_action === "SWITCH" || semantic.topic_action === "CORRECT");
+  if (currentTargetBoundary) {
+    return {
+      query: [
+        `Current request: ${latest}`,
+        ...(targetHint ? [`Retrieval target: ${targetHint}`] : []),
+        "Authority boundary: use only evidence compatible with the current target; all incompatible prior targets are superseded for this turn.",
+      ].join("\n").slice(0, 1600),
+      mode: "standalone",
+      latest,
+      context_turns: [],
+      state: { ...state, jurisdiction: detectExplicitJurisdiction(latest) ?? state.jurisdiction },
+    };
+  }
   const earlyPrevious = newestFirst
     .filter((row) => CUSTOMER.has(String(row.role ?? "").toLowerCase()))
     .map((row) => clean(row.content))

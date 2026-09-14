@@ -1,4 +1,6 @@
 import type { KBFullChunk } from "./kb-client.ts";
+import type { CurrentGroundingTarget } from "./canonical-grounding.ts";
+import type { ReferenceAuthorityDecision } from "./commerce-state-authority.ts";
 
 export interface PersistedKBCitation {
   label: string;
@@ -7,6 +9,10 @@ export interface PersistedKBCitation {
   document_id: string;
   chunk_id?: string;
   chunk_type: "full_content";
+  target_entity_model: string[];
+  target_topics: string[];
+  authority_decision: string;
+  evidence_state: string;
 }
 
 export interface KBCitationMetadata extends Record<string, unknown> {
@@ -15,15 +21,59 @@ export interface KBCitationMetadata extends Record<string, unknown> {
     selected_document_id: string;
     evidence_chunk_ids: string[];
     evidence_count: number;
+    current_target: CurrentGroundingTarget;
+    authority_decision: string;
+    evidence_state: string;
   };
+}
+export interface CitationAuthorityBinding {
+  authorityDecision: ReferenceAuthorityDecision;
+  currentTarget: CurrentGroundingTarget;
+}
+
+function bindingKey(value: string): string {
+  return value.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
+function sourceBoundValues(current: string[], supported: string[]): string[] {
+  const supportedKeys = new Set(supported.map(bindingKey).filter(Boolean));
+  if (current.length === 0) return [...new Set(supported)];
+  return [
+    ...new Set(current.filter((value) => supportedKeys.has(bindingKey(value)))),
+  ];
 }
 
 export function buildCitationMetadata(
   chunks: KBFullChunk[],
   selectedDocumentId: string | null,
+  binding?: CitationAuthorityBinding,
 ): KBCitationMetadata | null {
   const selected = (selectedDocumentId ?? "").trim();
   if (!selected) return null;
+  if (!binding || binding.authorityDecision.selected_source_id !== selected) {
+    return null;
+  }
+  if (binding.authorityDecision.decision !== "USE_CURRENT_KB") return null;
+  const evidenceState = binding.authorityDecision.provenance.currentness ??
+    "unknown";
+  if (evidenceState !== "current") return null;
+  const targetEntityModel = sourceBoundValues(
+    binding.currentTarget.entity_ids,
+    binding.authorityDecision.provenance.entity_ids,
+  );
+  const targetTopics = sourceBoundValues(
+    binding.currentTarget.topic_ids,
+    binding.authorityDecision.provenance.topic_ids,
+  );
+  // Citation bindings describe the selected source, not every target mentioned
+  // by the customer. Explicit targets without source support are a lineage
+  // failure, never permission to overstate a citation's compatibility.
+  if (binding.currentTarget.explicit_entity && targetEntityModel.length === 0) {
+    return null;
+  }
+  if (binding.currentTarget.explicit_topic && targetTopics.length === 0) {
+    return null;
+  }
 
   const citations: PersistedKBCitation[] = [];
   const seen = new Set<string>();
@@ -38,13 +88,22 @@ export function buildCitationMetadata(
     const chunkId = typeof chunk.chunk_id === "string" && chunk.chunk_id.trim()
       ? chunk.chunk_id.trim()
       : undefined;
-    const dedupeKey = chunkId ? `${selected}:${chunkId}` : `${selected}:${chunk.content}`;
+    if (!chunkId) return null;
+    const dedupeKey = chunkId
+      ? `${selected}:${chunkId}`
+      : `${selected}:${chunk.content}`;
     if (seen.has(dedupeKey)) continue;
     seen.add(dedupeKey);
 
-    const rawLabel = typeof chunk.title === "string" ? chunk.title.trim().slice(0, 120) : "";
-    const rawSourceType = typeof chunk.source_type === "string" ? chunk.source_type.trim().slice(0, 40) : "";
-    const relevance: "high" | "medium" = chunk.score >= 0.85 ? "high" : "medium";
+    const rawLabel = typeof chunk.title === "string"
+      ? chunk.title.trim().slice(0, 120)
+      : "";
+    const rawSourceType = typeof chunk.source_type === "string"
+      ? chunk.source_type.trim().slice(0, 40)
+      : "";
+    const relevance: "high" | "medium" = chunk.score >= 0.85
+      ? "high"
+      : "medium";
 
     citations.push({
       label: rawLabel || "Knowledge Base source",
@@ -53,6 +112,10 @@ export function buildCitationMetadata(
       document_id: selected,
       ...(chunkId ? { chunk_id: chunkId } : {}),
       chunk_type: "full_content",
+      target_entity_model: [...targetEntityModel],
+      target_topics: [...targetTopics],
+      authority_decision: binding.authorityDecision.decision,
+      evidence_state: evidenceState,
     });
   }
 
@@ -62,8 +125,13 @@ export function buildCitationMetadata(
     citations,
     citation_lineage: {
       selected_document_id: selected,
-      evidence_chunk_ids: citations.flatMap((citation) => citation.chunk_id ? [citation.chunk_id] : []),
+      evidence_chunk_ids: citations.flatMap((citation) =>
+        citation.chunk_id ? [citation.chunk_id] : []
+      ),
       evidence_count: citations.length,
+      current_target: { ...binding.currentTarget },
+      authority_decision: binding.authorityDecision.decision,
+      evidence_state: evidenceState,
     },
   };
 }
