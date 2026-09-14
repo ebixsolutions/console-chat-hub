@@ -57,8 +57,10 @@ jobs:
           def value(r): return r.get('api_key') or r.get('key') or r.get('value')
           pubs=[value(r) for r in rows if str(r.get('type') or '').lower()=='publishable' and value(r)]
           secs=[value(r) for r in rows if str(r.get('type') or '').lower()=='secret' and value(r)]
-          assert pubs and secs, 'PROJECT_API_KEYS_UNAVAILABLE'
+          service_roles=[value(r) for r in rows if str(r.get('name') or '').lower()=='service_role' and value(r)]
+          assert pubs and secs and service_roles, 'PROJECT_API_KEYS_UNAVAILABLE'
           PUBLIC,SERVER=pubs[0],secs[0]
+          AUTH_ADMIN=service_roles[0]
 
           def call(url, method='GET', headers=None, body=None, timeout=180):
               data=None if body is None else json.dumps(body,ensure_ascii=False).encode()
@@ -73,6 +75,7 @@ jobs:
                   return e.code,payload
 
           H={'apikey':SERVER,'Authorization':'Bearer '+SERVER,'Content-Type':'application/json'}
+          AUTH_H={'apikey':AUTH_ADMIN,'Authorization':'Bearer '+AUTH_ADMIN,'Content-Type':'application/json'}
           def rest(table, query='', method='GET', body=None, prefer=None):
               h=dict(H)
               if prefer: h['Prefer']=prefer
@@ -85,7 +88,7 @@ jobs:
               global temp_uid
               if not temp_uid: return
               rest('company_membership','user_id=eq.'+temp_uid,'DELETE')
-              call(SUPA+'/auth/v1/admin/users/'+temp_uid,'DELETE',H,timeout=60)
+              call(SUPA+'/auth/v1/admin/users/'+temp_uid,'DELETE',AUTH_H,timeout=60)
               temp_uid=None
           atexit.register(cleanup_temp_identity)
 
@@ -94,7 +97,7 @@ jobs:
           if not (st==200 and session.get('access_token')):
               temp_email=f'b3-smoke-{int(time.time())}-{uuid.uuid4().hex[:8]}@test.invalid'
               temp_password=uuid.uuid4().hex+uuid.uuid4().hex
-              st,created=call(SUPA+'/auth/v1/admin/users','POST',H,{'email':temp_email,'password':temp_password,'email_confirm':True,'user_metadata':{'workstream':'AI-ABC-B3','controlled_test':True,'exclude_training':True}},60)
+              st,created=call(SUPA+'/auth/v1/admin/users','POST',AUTH_H,{'email':temp_email,'password':temp_password,'email_confirm':True,'user_metadata':{'workstream':'AI-ABC-B3','controlled_test':True,'exclude_training':True}},60)
               assert st==200 and created.get('id'),('TEMP_AUTH_CREATE',st)
               temp_uid=created['id']
               st,binding=rest('company_membership','', 'POST',{'company_id':COMPANY,'user_id':temp_uid,'role':'supervisor','is_active':True},'return=representation')
