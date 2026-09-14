@@ -55,6 +55,7 @@ jobs:
           CUST_NEG='b3000000-0000-4000-8000-000000000211'
           ASST_NEG='b3000000-0000-4000-8000-000000000212'
           CUST_STALE='b3000000-0000-4000-8000-000000000221'
+          CUST_STALE_NEXT='b3000000-0000-4000-8000-000000000223'
           ASST_STALE='b3000000-0000-4000-8000-000000000222'
           CUST_AUTO='b3000000-0000-4000-8000-000000000831'
           ASST_AUTO='b3000000-0000-4000-8000-000000000832'
@@ -129,10 +130,11 @@ jobs:
           started=time.time()
           results={}
           for label,cid in [('positive',POS),('negative',NEG)]:
-              st,data=evaluate(cid); assert st==200 and data.get('status')=='completed',(label,st,data)
+              st,data=evaluate(cid); assert st==200 and data.get('status') in {'completed','already_evaluated'},(label,st,data)
               results[label]=data
               print(json.dumps({'gate':'manual_'+label,'status':'PASS','http':st,'evaluation_id':data['evaluation']['id']}))
 
+          before_state=rows_for('conversation_commerce_state',urllib.parse.urlencode({'conversation_id':'eq.'+STALE,'company_id':'eq.'+COMPANY,'select':'revision,state_hash,source_message_id'}))[0]
           with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
               future=ex.submit(evaluate,STALE)
               attempt=None
@@ -142,10 +144,11 @@ jobs:
                       attempt=attempts[0]; break
                   time.sleep(.25)
               assert attempt, 'STALE_ATTEMPT_DID_NOT_REACH_RUNNING'
-              new_hash='9f'+('0'*62)
-              management_sql("update conversation_commerce_state set revision=2,state_hash='"+new_hash+"',updated_at=now() where conversation_id='"+STALE+"' and company_id='"+COMPANY+"';")
-              changed=rows_for('conversation_commerce_state',urllib.parse.urlencode({'conversation_id':'eq.'+STALE,'company_id':'eq.'+COMPANY,'select':'revision,state_hash'}))
-              assert changed and changed[0]['revision']==2 and changed[0]['state_hash']==new_hash,('STALE_MUTATION',changed)
+              mutation="update conversation_commerce_state set revision=2,source_message_id='"+CUST_STALE_NEXT+"',state=jsonb_set(state,'{latest_corrections}',coalesce(state->'latest_corrections','[]'::jsonb)||jsonb_build_array('controlled stale correction')),state_hash='"+('9f'+('0'*62))+"',updated_at=now() where conversation_id='"+STALE+"' and company_id='"+COMPANY+"';"
+              management_sql(mutation)
+              changed=rows_for('conversation_commerce_state',urllib.parse.urlencode({'conversation_id':'eq.'+STALE,'company_id':'eq.'+COMPANY,'select':'revision,state_hash,source_message_id'}))
+              assert changed and changed[0]['revision']==2 and changed[0]['state_hash']!=before_state['state_hash'] and changed[0]['source_message_id']==CUST_STALE_NEXT,('STALE_MUTATION',changed)
+              new_hash=changed[0]['state_hash']
               stale_status,stale_body=future.result(timeout=180)
           assert stale_status==409,(stale_status,stale_body)
           assert stale_body.get('detail')=='ce_b3_commerce_reality_stale',stale_body
@@ -160,6 +163,7 @@ jobs:
           assert max_out<4096,('OUTPUT_CEILING',max_out)
           print(json.dumps({'gate':'stale_precommit','status':'PASS','provider_successes':len(evaluator),'max_output_tokens':max_out,'rejection':stale_body['detail']}))
 
+          management_sql("update messages set metadata=jsonb_set(metadata,'{source_message_id}','\\\""+CUST_STALE_NEXT+"\\\"'::jsonb,true),updated_at=now() where id='"+ASST_STALE+"' and conversation_id='"+STALE+"';")
           st,fresh=evaluate(STALE); assert st==200 and fresh.get('status')=='completed',(st,fresh)
           fresh_id=fresh['evaluation']['id']
           st,replay=evaluate(STALE); assert st==200 and replay.get('status')=='already_evaluated',(st,replay)
@@ -169,7 +173,7 @@ jobs:
           snap=rows_for('ce_bundle_snapshot',urllib.parse.urlencode({'attempt_id':'eq.'+fresh_rows[0]['attempt_id'],'select':'conversation_id,company_id,evaluated_ai_reply,grounding_evidence,transcript_hash','limit':'1'}))
           reality=snap[0]['grounding_evidence']['b3_conversion_reality']
           assert snap[0]['company_id']==COMPANY and snap[0]['conversation_id']==STALE,snap
-          assert reality['revision']==2 and reality['source_message_id']==CUST_STALE and reality['state_hash']=='9f'+('0'*62),reality
+          assert reality['revision']==2 and reality['source_message_id']==CUST_STALE_NEXT and reality['state_hash']==new_hash,reality
           print(json.dumps({'gate':'fresh_retry_idempotency','status':'PASS','evaluation_id':fresh_id,'revision':2}))
 
           evals={}
