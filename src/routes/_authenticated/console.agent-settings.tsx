@@ -4,6 +4,7 @@ import { useCurrentRole } from "@/hooks/useCurrentRole";
 import { useConsoleLang } from "@/hooks/useEffectiveRole";
 import { LoadingState, PermissionDenied } from "@/components/console/PageStates";
 import { supabase } from "@/integrations/supabase/client";
+import { resolveAuthoritativeSupabaseBinding } from "@/integrations/supabase/runtime-authority.mjs";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
