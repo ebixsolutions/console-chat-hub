@@ -82,7 +82,7 @@ for(const file of [
 run("git",["diff","--check","origin/main...HEAD"]);
 run("npx",["--yes","deno","test","--allow-env","--allow-read","--node-modules-dir=manual",
   files.unitTest,files.integrationTest]);
-run("npx",["--yes","deno","check","--node-modules-dir=manual","--no-check=remote",
+run("npx",["--yes","deno","check","--node-modules-dir=auto","--no-check=remote",
   "--config","supabase/functions/deno.json",files.runtime,files.humanReadback]);
 run("npx",["eslint","--rule","prettier/prettier: off","--rule","@typescript-eslint/no-explicit-any: off",
   files.contract,files.unitTest,files.integrationTest,files.runtime,files.humanReadback,files.gate]);
