@@ -1783,6 +1783,23 @@ function parseJsonObjectLoose(raw) {
   return null;
 }
 
+// supabase/functions/_shared/vertex-generation-config.ts
+function buildVertexGenerationConfig(maxTokens, jsonOutput, responseSchema, thinkingBudget) {
+  if (!Number.isInteger(maxTokens) || maxTokens <= 0) {
+    throw new Error("vertex_max_tokens_invalid");
+  }
+  if (thinkingBudget !== void 0 && (!Number.isInteger(thinkingBudget) || thinkingBudget < 0)) {
+    throw new Error("vertex_thinking_budget_invalid");
+  }
+  return {
+    maxOutputTokens: maxTokens,
+    temperature: 0,
+    ...thinkingBudget !== void 0 ? { thinkingConfig: { thinkingBudget } } : {},
+    ...jsonOutput ? { responseMimeType: "application/json" } : {},
+    ...jsonOutput && responseSchema ? { responseSchema } : {}
+  };
+}
+
 // supabase/functions/_shared/llm-router.ts
 var ANTHROPIC_ENDPOINT = "https://api.anthropic.com/v1/messages";
 var ANTHROPIC_API_VERSION = "2023-06-01";
@@ -1799,10 +1816,7 @@ var REDACTIONS = [
   [/[\w.+-]+@[\w-]+\.[\w.-]+/g, "[EMAIL]"],
   [/\+?\d[\d\s\-()]{6,}\d/g, "[PHONE]"],
   [/\b(?:\d[ -]*?){13,19}\b/g, "[CARD]"],
-  [
-    /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
-    "[UUID]"
-  ],
+  [/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "[UUID]"],
   [/\bsk-[A-Za-z0-9_-]{10,}\b/g, "[SECRET]"],
   [/\bBearer\s+[A-Za-z0-9._-]{10,}\b/gi, "[SECRET]"]
 ];
@@ -1816,10 +1830,7 @@ function looksLikeInjection(input) {
   return INJECTION_RE.test(input);
 }
 function serviceClient() {
-  return createClient2(
-    Deno.env.get("SUPABASE_URL"),
-    getSupabaseAdminKey()
-  );
+  return createClient2(Deno.env.get("SUPABASE_URL"), getSupabaseAdminKey());
 }
 function log(tag, fields) {
   console.log(
@@ -1870,10 +1881,7 @@ function resolveGenerationMaxTokens() {
   const raw = (Deno.env.get("LLM_MAX_OUTPUT_TOKENS_GENERATION") ?? "").trim();
   const parsed = Number.parseInt(raw, 10);
   const candidate = Number.isFinite(parsed) && parsed > 0 ? parsed : GENERATION_MAX_TOKENS_DEFAULT;
-  return Math.max(
-    GENERATION_MAX_TOKENS_MIN,
-    Math.min(GENERATION_MAX_TOKENS_MAX, candidate)
-  );
+  return Math.max(GENERATION_MAX_TOKENS_MIN, Math.min(GENERATION_MAX_TOKENS_MAX, candidate));
 }
 function anthropicAdapter(apiKey, model, safeSystem, safeUser, maxTokens) {
   return {
@@ -1915,7 +1923,7 @@ async function vertexAccessToken(serviceAccountJson) {
   if (!value) throw new Error("vertex_token_unavailable");
   return value;
 }
-function vertexAdapter(serviceAccountJson, projectId, region, model, safeSystem, safeUser, maxTokens, jsonOutput, responseSchema) {
+function vertexAdapter(serviceAccountJson, projectId, region, model, safeSystem, safeUser, maxTokens, jsonOutput, responseSchema, thinkingBudget) {
   const url = `https://${region}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${region}/publishers/google/models/${model}:generateContent`;
   return {
     id: "vertex",
@@ -1931,12 +1939,12 @@ function vertexAdapter(serviceAccountJson, projectId, region, model, safeSystem,
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: safeSystem }] },
           contents: [{ role: "user", parts: [{ text: safeUser }] }],
-          generationConfig: {
-            maxOutputTokens: maxTokens,
-            temperature: 0,
-            ...jsonOutput ? { responseMimeType: "application/json" } : {},
-            ...jsonOutput && responseSchema ? { responseSchema } : {}
-          }
+          generationConfig: buildVertexGenerationConfig(
+            maxTokens,
+            jsonOutput,
+            responseSchema,
+            thinkingBudget
+          )
         })
       };
     },
@@ -1978,9 +1986,7 @@ function extractGroundingBlock(system) {
       const prior = system.slice(transformIndex + transformMarker.length).trim();
       if (prior) {
         const operationsLine = system.match(/^- Operations:\s*(.+)$/m)?.[1] ?? "";
-        const transformOperations = operationsLine.split("+").map(
-          (x) => x.trim()
-        ).filter(Boolean);
+        const transformOperations = operationsLine.split("+").map((x) => x.trim()).filter(Boolean);
         return {
           authority: "PRIOR_GROUNDED_ANSWER",
           evidence_text: prior.slice(0, 3e3),
@@ -2008,15 +2014,12 @@ function extractGroundingBlock(system) {
 function buildVerifierEvidenceAliases(grounding) {
   let next = 0;
   const allowed = [];
-  const aliased = grounding.evidence_text.replace(
-    /\[chunk:([^\]\s]+)\]/g,
-    () => {
-      next += 1;
-      const alias = `E${next}`;
-      allowed.push(alias);
-      return `[chunk:${alias}]`;
-    }
-  );
+  const aliased = grounding.evidence_text.replace(/\[chunk:([^\]\s]+)\]/g, () => {
+    next += 1;
+    const alias = `E${next}`;
+    allowed.push(alias);
+    return `[chunk:${alias}]`;
+  });
   return { evidence_text: aliased, allowed_ids: allowed };
 }
 function validateExactFactGrounding(answer, evidenceText, protectedChunkIds = [], conversationEvidenceText = "") {
@@ -2030,10 +2033,8 @@ function validateExactFactGrounding(answer, evidenceText, protectedChunkIds = []
       };
     }
   }
-  const evidenceNorm = canonicalExactToken(
-    `${evidenceText}
-${conversationEvidenceText}`
-  );
+  const evidenceNorm = canonicalExactToken(`${evidenceText}
+${conversationEvidenceText}`);
   const unsupported = /* @__PURE__ */ new Set();
   for (const match of answer.matchAll(EXACT_FACT_TOKEN_RE)) {
     const token = canonicalExactToken(match[0] ?? "");
@@ -2144,7 +2145,8 @@ async function verifyGroundedGeneration(call, provider, answer, grounding, timeo
           evidence_chunk_ids: { type: "ARRAY", items: { type: "STRING" } }
         },
         required: ["grounded", "unsupported_claims", "evidence_chunk_ids"]
-      }
+      },
+      void 0
     );
   } else {
     const key = Deno.env.get("ANTHROPIC_API_KEY");
@@ -2210,10 +2212,7 @@ async function verifyGroundedGeneration(call, provider, answer, grounding, timeo
       verifierUsage.output_tokens = parsed.output_tokens;
       verifierUsage.latency_ms = Date.now() - verifierStarted;
       if (!parsed.text || parsed.finish_reason === "MAX_TOKENS") break;
-      const decision2 = parseGroundingVerifierDecision(
-        parsed.text,
-        allowedVerifierIds
-      );
+      const decision2 = parseGroundingVerifierDecision(parsed.text, allowedVerifierIds);
       if (!decision2) {
         const parsedShape = parseJsonObjectLoose(parsed.text);
         log(call.tag, {
@@ -2301,9 +2300,7 @@ async function callModel(call) {
   const requestId = call.operationId;
   const provider = resolveProvider();
   const model = Deno.env.get(MODEL_ENV[call.purpose]);
-  const timeoutMs = Number(
-    Deno.env.get("LLM_TIMEOUT_MS") ?? DEFAULT_TIMEOUT_MS
-  );
+  const timeoutMs = Number(Deno.env.get("LLM_TIMEOUT_MS") ?? DEFAULT_TIMEOUT_MS);
   const nonEmpty2 = (v) => !!v && v.trim().length > 0;
   const configMissing = async (providerLabel, modelLabel) => {
     usage.latency_ms = Date.now() - started;
@@ -2313,15 +2310,7 @@ async function callModel(call) {
       provider: providerLabel,
       purpose: call.purpose
     });
-    await recordUsage(
-      call,
-      providerLabel,
-      modelLabel,
-      "failed",
-      0,
-      usage,
-      "LLM_CONFIG_MISSING"
-    );
+    await recordUsage(call, providerLabel, modelLabel, "failed", 0, usage, "LLM_CONFIG_MISSING");
     return {
       ok: false,
       code: "LLM_CONFIG_MISSING",
@@ -2346,15 +2335,7 @@ async function callModel(call) {
     if (looksLikeInjection(call.user)) {
       usage.latency_ms = Date.now() - started;
       log(call.tag, { event: "input_blocked", request_id: requestId });
-      await recordUsage(
-        call,
-        provider,
-        model,
-        "blocked",
-        0,
-        usage,
-        "LLM_INPUT_BLOCKED"
-      );
+      await recordUsage(call, provider, model, "blocked", 0, usage, "LLM_INPUT_BLOCKED");
       return {
         ok: false,
         code: "LLM_INPUT_BLOCKED",
@@ -2371,7 +2352,8 @@ async function callModel(call) {
       redact(call.user),
       call.maxTokens,
       call.responseFormat === "json",
-      call.responseSchema
+      call.responseSchema,
+      call.thinkingBudget
     );
   } else {
     const key = Deno.env.get("ANTHROPIC_API_KEY");
@@ -2381,15 +2363,7 @@ async function callModel(call) {
     if (looksLikeInjection(call.user)) {
       usage.latency_ms = Date.now() - started;
       log(call.tag, { event: "input_blocked", request_id: requestId });
-      await recordUsage(
-        call,
-        provider,
-        model,
-        "blocked",
-        0,
-        usage,
-        "LLM_INPUT_BLOCKED"
-      );
+      await recordUsage(call, provider, model, "blocked", 0, usage, "LLM_INPUT_BLOCKED");
       return {
         ok: false,
         code: "LLM_INPUT_BLOCKED",
@@ -2556,14 +2530,7 @@ async function callModel(call) {
         ms: usage.latency_ms,
         grounding_verified: grounding !== null
       });
-      await recordUsage(
-        call,
-        adapter.id,
-        adapter.model,
-        "success",
-        res.status,
-        usage
-      );
+      await recordUsage(call, adapter.id, adapter.model, "success", res.status, usage);
       return {
         ok: true,
         text: parsed.text,
