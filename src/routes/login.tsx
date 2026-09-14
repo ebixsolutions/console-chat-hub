@@ -41,8 +41,13 @@ function LoginPage() {
     let active = true;
     const loadAuthProviders = async () => {
       try {
-        const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/auth/v1/settings`, {
-          headers: { apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY },
+        const authBinding = resolveAuthoritativeSupabaseBinding({
+          url: import.meta.env.VITE_SUPABASE_URL,
+          projectId: import.meta.env.VITE_SUPABASE_PROJECT_ID,
+          publishableKey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+        });
+        const response = await fetch(`${authBinding.url}/auth/v1/settings`, {
+          headers: { apikey: authBinding.publishableKey },
         });
         const settings = response.ok ? await response.json() : null;
         if (active) setGoogleEnabled(settings?.external?.google === true);
