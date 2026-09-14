@@ -6,6 +6,7 @@ import { callModel, parseJsonObject } from "../_shared/llm-router.ts";
 import { selectCanonicalGrounding } from "../_shared/canonical-grounding.ts";
 import { buildCanonicalAssistRetrievalQuery } from "../_shared/conversation-runtime-state.ts";
 import { buildWarmHandoffPackage } from "../_shared/warm-handoff.ts";
+import { parsePersistedC2Handoff } from "../_shared/transaction-closure-handoff.ts";
 
 const PRE_ACTIVATION_ROLES: ReadonlySet<string> = new Set(["admin", "supervisor", "agent"]);
 const TOOL_TYPES = new Set(["translate", "grammar", "suggest_reply", "knowledge_helper", "check_policy", "handoff_context"]);
@@ -71,6 +72,31 @@ Deno.serve(async(req)=>{
   const scope=scopeResult.scope;const roles=new Set(scope.roles);const elevated=roles.has("admin")||roles.has("supervisor"),ordinaryAgent=roles.has("agent");if(!elevated&&!ordinaryAgent)return jsonRes({error:"forbidden"},403,req);
   const{data:conv,error:convErr}=await applyCompanyScope(supabaseAdmin.from("conversations").select("id, company_id, status, assigned_agent_id"),scope).eq("id",conversationId).maybeSingle();if(convErr)return jsonRes({error:"conversation_lookup_failed"},500,req);if(!conv)return jsonRes({error:"conversation_not_found"},404,req);if(conv.status==="resolved")return jsonRes({error:"conversation_resolved"},409,req);if(!elevated&&conv.assigned_agent_id!==agent.id)return jsonRes({error:"forbidden",detail:"not_assigned_to_conversation"},403,req);
   if(toolType==="handoff_context"){
+    const {data:persistedEvent,error:persistedError}=await supabaseAdmin
+      .from("handoff_event")
+      .select("ai_summary, source_message_id, created_at")
+      .eq("conversation_id",conversationId)
+      .not("ai_summary","is",null)
+      .order("created_at",{ascending:false})
+      .limit(1)
+      .maybeSingle();
+    if(persistedError)return jsonRes({success:false,error:"handoff_context_unavailable"},500,req);
+    const persisted=parsePersistedC2Handoff(persistedEvent?.ai_summary);
+    if(
+      persisted &&
+      persisted.structured_package.conversation_id===conversationId &&
+      persisted.structured_package.company_id===conv.company_id
+    ){
+      return jsonRes({
+        success:true,
+        tool_type:"handoff_context",
+        handoff_package:persisted.structured_package,
+        handoff_summary:persisted.summary_markdown,
+        generated_from_source_message_id:persisted.structured_package.generated_from_source_message_id,
+        commerce_state_revision:persisted.structured_package.commerce_state_revision,
+        source:"persisted_c2",
+      },200,req);
+    }
     const history=await loadAssistConversationHistory(supabaseAdmin,conversationId);
     if(history===null)return jsonRes({success:false,error:"handoff_context_unavailable"},500,req);
     const pkg=buildWarmHandoffPackage(history,"takeover");
