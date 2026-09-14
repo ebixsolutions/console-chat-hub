@@ -4,11 +4,19 @@
 // For user-authenticated queries (with RLS), use the auth middleware instead.
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
-import { assertAuthoritativeSupabaseRuntime } from './runtime-authority.mjs';
+import {
+  assertAuthoritativeSupabaseRuntime,
+  resolveAuthoritativeSupabaseBinding,
+} from './runtime-authority.mjs';
 
 function createSupabaseAdminClient() {
-  const SUPABASE_URL = process.env.SUPABASE_URL;
-  const SUPABASE_PROJECT_ID = process.env.SUPABASE_PROJECT_ID;
+  // Force the authoritative user-owned project; never a substituted backend.
+  const binding = resolveAuthoritativeSupabaseBinding({
+    url: process.env.SUPABASE_URL,
+    projectId: process.env.SUPABASE_PROJECT_ID,
+  });
+  const SUPABASE_URL = binding.url;
+  const SUPABASE_PROJECT_ID = binding.projectId;
   const SUPABASE_ADMIN_KEY = process.env.SUPABASE_SECRET_KEY;
 
   if (!SUPABASE_URL || !SUPABASE_ADMIN_KEY) {

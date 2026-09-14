@@ -1,9 +1,15 @@
 import { createClient } from "@supabase/supabase-js";
+import { resolveAuthoritativeSupabaseBinding } from "@/integrations/supabase/runtime-authority.mjs";
 import { defineTool, type ToolContext } from "@lovable.dev/mcp-js";
 import { z } from "zod";
 
 function supabaseForUser(ctx: ToolContext) {
-  return createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_PUBLISHABLE_KEY!, {
+  const binding = resolveAuthoritativeSupabaseBinding({
+    url: process.env.SUPABASE_URL,
+    projectId: process.env.SUPABASE_PROJECT_ID,
+    publishableKey: process.env.SUPABASE_PUBLISHABLE_KEY,
+  });
+  return createClient(binding.url, binding.publishableKey, {
     global: { headers: { Authorization: `Bearer ${ctx.getToken()}` } },
     auth: { persistSession: false, autoRefreshToken: false },
   });

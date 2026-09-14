@@ -5,32 +5,33 @@ import { brokeredPreviewStorage } from './previewAuthStorage';
 import {
   assertAuthoritativeFunctionsRuntime,
   assertAuthoritativeSupabaseRuntime,
+  resolveAuthoritativeSupabaseBinding,
 } from './runtime-authority.mjs';
 
 function createSupabaseClient() {
   // GitHub/main + the user-owned Supabase project are authoritative.
-  // Lovable may preview this source, but must never substitute its own backend.
-  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
-  const SUPABASE_PROJECT_ID = import.meta.env.VITE_SUPABASE_PROJECT_ID || process.env.SUPABASE_PROJECT_ID;
-  const SUPABASE_FUNCTIONS_URL = import.meta.env.VITE_SUPABASE_FUNCTIONS_URL;
-  const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_PUBLISHABLE_KEY;
+  // Lovable may preview this source, but must never substitute its own backend:
+  // any injected non-authoritative binding is discarded here.
+  const binding = resolveAuthoritativeSupabaseBinding({
+    url: import.meta.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL,
+    projectId:
+      import.meta.env.VITE_SUPABASE_PROJECT_ID || process.env.SUPABASE_PROJECT_ID,
+    publishableKey:
+      import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+      process.env.SUPABASE_PUBLISHABLE_KEY,
+    functionsUrl: import.meta.env.VITE_SUPABASE_FUNCTIONS_URL,
+  });
 
-  if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
-    const missing = [
-      ...(!SUPABASE_URL ? ['SUPABASE_URL'] : []),
-      ...(!SUPABASE_PUBLISHABLE_KEY ? ['SUPABASE_PUBLISHABLE_KEY'] : []),
-    ];
-    const message = `Missing authoritative Supabase environment variable(s): ${missing.join(', ')}.`;
-    console.error(`[Supabase] ${message}`);
+  if (!binding.url || !binding.publishableKey) {
+    const message = '[Supabase] Missing authoritative Supabase runtime binding.';
+    console.error(message);
     throw new Error(message);
   }
 
-  assertAuthoritativeSupabaseRuntime(SUPABASE_URL, SUPABASE_PROJECT_ID);
-  if (SUPABASE_FUNCTIONS_URL) {
-    assertAuthoritativeFunctionsRuntime(SUPABASE_FUNCTIONS_URL);
-  }
+  assertAuthoritativeSupabaseRuntime(binding.url, binding.projectId);
+  assertAuthoritativeFunctionsRuntime(binding.functionsUrl);
 
-  return createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+  return createClient<Database>(binding.url, binding.publishableKey, {
     auth: {
       storage: brokeredPreviewStorage(),
       persistSession: true,

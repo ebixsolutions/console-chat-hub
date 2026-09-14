@@ -2,9 +2,11 @@ import { auth, defineMcp } from "@lovable.dev/mcp-js";
 import whoamiTool from "./tools/whoami";
 import listConversationsTool from "./tools/list-conversations";
 import getConversationTool from "./tools/get-conversation";
+import { AUTHORITATIVE_SUPABASE_PROJECT_ID } from "@/integrations/supabase/runtime-authority.mjs";
 
 // Direct Supabase issuer (proxy hostnames are rejected by RFC 8414 issuer match).
-const projectRef = import.meta.env.VITE_SUPABASE_PROJECT_ID ?? "project-ref-unset";
+// Bound to the authoritative user-owned project, never an injected substitute.
+const projectRef = AUTHORITATIVE_SUPABASE_PROJECT_ID;
 
 export default defineMcp({
   name: "ai-chatbot-console-mcp",

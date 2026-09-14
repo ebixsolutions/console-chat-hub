@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { resolveAuthoritativeSupabaseBinding } from "@/integrations/supabase/runtime-authority.mjs";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
@@ -381,15 +382,10 @@ function WidgetPreviewContent({
   const canSaveLive =
     role === "admin" && !previewOnly && !loadingWidget;
 
-  const functionsUrl = import.meta.env
-    .VITE_SUPABASE_FUNCTIONS_URL as string | undefined;
-  const projectId = import.meta.env
-    .VITE_SUPABASE_PROJECT_ID as string | undefined;
-  const apiBase =
-    functionsUrl ||
-    (projectId
-      ? `https://${projectId}.supabase.co/functions/v1`
-      : "");
+  // Authoritative user-owned Supabase project only.
+  const apiBase = resolveAuthoritativeSupabaseBinding({
+    functionsUrl: import.meta.env.VITE_SUPABASE_FUNCTIONS_URL as string | undefined,
+  }).functionsUrl;
 
   const embedCode = useMemo(() => {
     if (
