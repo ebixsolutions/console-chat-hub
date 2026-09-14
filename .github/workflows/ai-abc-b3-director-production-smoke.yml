@@ -164,7 +164,7 @@ jobs:
           assert max_out<4096,('OUTPUT_CEILING',max_out)
           print(json.dumps({'gate':'stale_precommit','status':'PASS','provider_successes':len(evaluator),'max_output_tokens':max_out,'rejection':stale_body['detail']}))
 
-          management_sql("update messages set metadata=jsonb_set(metadata,'{source_message_id}','\\\""+CUST_STALE_NEXT+"\\\"'::jsonb,true),created_at=now()+interval '1 second',updated_at=now() where id='"+ASST_STALE+"' and conversation_id='"+STALE+"';")
+          management_sql("update messages set metadata=jsonb_set(metadata,'{source_message_id}',to_jsonb('"+CUST_STALE_NEXT+"'::text),true),created_at=now()+interval '1 second',updated_at=now() where id='"+ASST_STALE+"' and conversation_id='"+STALE+"';")
           st,fresh=evaluate(STALE); assert st==200 and fresh.get('status')=='completed',(st,fresh)
           fresh_id=fresh['evaluation']['id']
           st,replay=evaluate(STALE); assert st==200 and replay.get('status')=='already_evaluated',(st,replay)
