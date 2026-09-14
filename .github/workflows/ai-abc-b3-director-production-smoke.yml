@@ -46,18 +46,18 @@ jobs:
           BASE=SUPA+'/functions/v1'
           ORIGIN='https://console-chat-hub.lovable.app'
           COMPANY='3d6e17b5-ec79-4f75-aa7f-eaa824ff8493'
-          POS='b3000000-0000-4000-8000-000000000501'
-          NEG='b3000000-0000-4000-8000-000000000502'
-          STALE='b3000000-0000-4000-8000-000000000503'
-          AUTO='b3000000-0000-4000-8000-000000000504'
-          CUST_POS='b3000000-0000-4000-8000-000000000601'
-          ASST_POS='b3000000-0000-4000-8000-000000000602'
-          CUST_NEG='b3000000-0000-4000-8000-000000000611'
-          ASST_NEG='b3000000-0000-4000-8000-000000000612'
-          CUST_STALE='b3000000-0000-4000-8000-000000000621'
-          ASST_STALE='b3000000-0000-4000-8000-000000000622'
-          CUST_AUTO='b3000000-0000-4000-8000-000000000631'
-          ASST_AUTO='b3000000-0000-4000-8000-000000000632'
+          POS='b3000000-0000-4000-8000-000000000101'
+          NEG='b3000000-0000-4000-8000-000000000102'
+          STALE='b3000000-0000-4000-8000-000000000103'
+          AUTO='b3000000-0000-4000-8000-000000000704'
+          CUST_POS='b3000000-0000-4000-8000-000000000201'
+          ASST_POS='b3000000-0000-4000-8000-000000000202'
+          CUST_NEG='b3000000-0000-4000-8000-000000000211'
+          ASST_NEG='b3000000-0000-4000-8000-000000000212'
+          CUST_STALE='b3000000-0000-4000-8000-000000000221'
+          ASST_STALE='b3000000-0000-4000-8000-000000000222'
+          CUST_AUTO='b3000000-0000-4000-8000-000000000831'
+          ASST_AUTO='b3000000-0000-4000-8000-000000000832'
           CONTROLLED=[POS,NEG,STALE,AUTO]
           rows=json.load(open('/tmp/b3-keys.json'))
           def value(r): return r.get('api_key') or r.get('key') or r.get('value')
@@ -126,21 +126,13 @@ jobs:
           FH={'apikey':PUBLIC,'Authorization':'Bearer '+JWT,'Origin':ORIGIN,'Content-Type':'application/json'}
           def evaluate(cid): return call(BASE+'/conversation-evaluate','POST',FH,{'conversation_id':cid},180)
 
-          positive='已記錄目前 Product A 為 3 部；Product B 已取消。HKD 8,000 是歷史報價，訂單與付款仍待確認，安裝尚未完成；送貨地址已知，下一步是確認最新報價。'
-          negative='你的 Product A 是 2 部；Product B 會保留。現行報價是 HKD 8,000，訂單及安裝均已完成。請再提供送貨地址。你想找甚麼產品？'
-          def insert_assistant(cid, customer_id, assistant_id, text):
-              assistant={'id':assistant_id,'conversation_id':cid,'role':'assistant','content':text,'metadata':{'b2_outcome':'allow','response_route':'commerce_state_answer','controlled_test':True,'exclude_training':True,'source_message_id':customer_id},'is_recalled':False}
-              st,data=rest('messages','', 'POST',assistant,'return=representation'); assert st==201,(cid,'assistant',st,data)
-
           started=time.time()
           results={}
-          for label,cid,customer_id,assistant_id,text in [('positive',POS,CUST_POS,ASST_POS,positive),('negative',NEG,CUST_NEG,ASST_NEG,negative)]:
-              insert_assistant(cid,customer_id,assistant_id,text)
+          for label,cid in [('positive',POS),('negative',NEG)]:
               st,data=evaluate(cid); assert st==200 and data.get('status')=='completed',(label,st,data)
               results[label]=data
               print(json.dumps({'gate':'manual_'+label,'status':'PASS','http':st,'evaluation_id':data['evaluation']['id']}))
 
-          insert_assistant(STALE,CUST_STALE,ASST_STALE,negative)
           with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
               future=ex.submit(evaluate,STALE)
               attempt=None
