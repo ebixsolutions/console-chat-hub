@@ -100,7 +100,7 @@ for (const marker of [
 must(runtime.indexOf("executeB2PersistenceGate") < runtime.indexOf("commitAiReplyWithControlGate"), "b2_gate_not_bound");
 must((unitTest.match(/expectDecision\(/g) ?? []).length - 1 >= 20, "required_c1_matrix_missing");
 must((integrationTest.match(/Deno\.test\(/g) ?? []).length >= 5, "required_c1_integration_missing");
-must((read(files.round2Test).match(/Deno\.test\(/g) ?? []).length >= 19, "required_c1_round2_matrix_missing");
+must((read(files.round2Test).match(/Deno\.test\(/g) ?? []).length >= 20, "required_c1_round2_matrix_missing");
 
 for (const source of [authority, aggregation, grounding]) {
   must(!/\.(?:insert|update|upsert|delete)\s*\(/.test(source), "c1_authority_must_be_read_only");

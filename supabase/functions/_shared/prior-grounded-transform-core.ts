@@ -98,6 +98,11 @@ function targetOverlap(expected: string[], actual: string[]): boolean {
   return expected.some((value) => actualKeys.has(targetKey(value)));
 }
 
+function targetIntersection(expected: string[], actual: string[]): string[] {
+  const actualKeys = new Set(actual.map(targetKey).filter(Boolean));
+  return [...new Set(expected.filter((value) => actualKeys.has(targetKey(value))))];
+}
+
 function transformTargetCompatible(latest: string, prior: CurrentGroundingTarget | null): boolean {
   const requested = deriveCurrentGroundingTarget(latest);
   const hasExplicitBoundary = requested.explicit_entity || requested.explicit_topic || Boolean(requested.region);
@@ -307,11 +312,33 @@ export function resolvePriorGroundedTransform(
       const label = clean(c.label, 300) || "Knowledge Base source";
       const sourceType = clean(c.source_type, 80) || "unknown";
       const relevance = c.relevance === "high" ? "high" : c.relevance === "medium" ? "medium" : null;
+      const persistedEntityTargets = stringList(c.target_entity_model);
+      const persistedTopicTargets = stringList(c.target_topics);
+      const labelTarget = deriveCurrentGroundingTarget(label);
+      const citationEntityTargets = labelTarget.entity_ids.length > 0
+        ? persistedEntityTargets.length > 0
+          ? targetIntersection(persistedEntityTargets, labelTarget.entity_ids)
+          : labelTarget.entity_ids
+        : persistedEntityTargets.length > 0
+          ? persistedEntityTargets
+          : groundingTarget?.entity_ids ?? [];
+      const citationTopicTargets = labelTarget.topic_ids.length > 0
+        ? persistedTopicTargets.length > 0
+          ? targetIntersection(persistedTopicTargets, labelTarget.topic_ids)
+          : labelTarget.topic_ids
+        : persistedTopicTargets.length > 0
+          ? persistedTopicTargets
+          : groundingTarget?.topic_ids ?? [];
       if (
         documentId !== selected ||
         chunkType !== "full_content" ||
         !relevance ||
-        (chunkId && !lineageIds.includes(chunkId))
+        (chunkId && !lineageIds.includes(chunkId)) ||
+        (groundingTarget?.explicit_entity === true &&
+          !targetOverlap(citationEntityTargets, groundingTarget.entity_ids)) ||
+        (groundingTarget?.explicit_topic === true &&
+          citationTopicTargets.length > 0 &&
+          !targetOverlap(citationTopicTargets, groundingTarget.topic_ids))
       ) return null;
       citations.push({
         label,
@@ -320,8 +347,8 @@ export function resolvePriorGroundedTransform(
         document_id: documentId,
         ...(chunkId ? { chunk_id: chunkId } : {}),
         chunk_type: "full_content",
-        target_entity_model: groundingTarget?.entity_ids ?? [],
-        target_topics: groundingTarget?.topic_ids ?? [],
+        target_entity_model: citationEntityTargets,
+        target_topics: citationTopicTargets,
         authority_decision: typeof lineage?.authority_decision === "string"
           ? lineage.authority_decision
           : "PRIOR_GROUNDED_ANSWER",

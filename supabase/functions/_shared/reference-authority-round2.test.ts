@@ -368,6 +368,28 @@ Deno.test("C1 Director multi-entity citation binds only source-supported target"
   );
 });
 
+Deno.test("C1 Director prior transform cannot re-expand source-specific citation", () => {
+  const history = groundedHistory();
+  const metadata = history[0].metadata as Record<string, unknown>;
+  metadata.citations = [{
+    label: "Smoke Test Basic",
+    source_type: "plan",
+    relevance: "high",
+    document_id: "basic",
+    chunk_id: "basic-chunk",
+    chunk_type: "full_content",
+    target_entity_model: ["basic", "smoke test basic", "pro", "smoke test pro"],
+    target_topics: ["sku_limit"],
+  }];
+  const result = resolvePriorGroundedTransform(
+    "Summarize the Smoke Test Basic SKU limit answer.",
+    history,
+  );
+  const bound = result?.citations[0]?.target_entity_model ?? [];
+  assert(bound.includes("basic") && bound.includes("smoke test basic"), "Basic lineage lost");
+  assert(!bound.includes("pro") && !bound.includes("smoke test pro"), "transform re-expanded citation target");
+});
+
 Deno.test("C1 R2 fresh retry binds to fresh target", () => {
   const first = select(
     [document("basic", "Smoke Test Basic\nSKU limit: 50")],
