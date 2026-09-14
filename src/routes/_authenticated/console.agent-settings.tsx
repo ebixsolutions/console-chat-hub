@@ -169,12 +169,18 @@ async function callAgentMgmt<T = unknown>(
     if (!session?.access_token) {
       return { success: false, error: "Not authenticated", error_type: "unauthorized" };
     }
-    const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/agent-management`, {
+    const binding = resolveAuthoritativeSupabaseBinding({
+      url: import.meta.env.VITE_SUPABASE_URL,
+      projectId: import.meta.env.VITE_SUPABASE_PROJECT_ID,
+      publishableKey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+      functionsUrl: import.meta.env.VITE_SUPABASE_FUNCTIONS_URL,
+    });
+    const res = await fetch(`${binding.functionsUrl}/agent-management`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${session.access_token}`,
-        apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+        apikey: binding.publishableKey,
       },
       body: JSON.stringify({ action, ...payload }),
     });
