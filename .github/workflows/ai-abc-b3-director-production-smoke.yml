@@ -135,6 +135,7 @@ jobs:
               print(json.dumps({'gate':'manual_'+label,'status':'PASS','http':st,'evaluation_id':data['evaluation']['id']}))
 
           before_state=rows_for('conversation_commerce_state',urllib.parse.urlencode({'conversation_id':'eq.'+STALE,'company_id':'eq.'+COMPANY,'select':'revision,state_hash,source_message_id'}))[0]
+          next_revision=int(before_state['revision'])+1
           with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
               future=ex.submit(evaluate,STALE)
               attempt=None
@@ -144,10 +145,10 @@ jobs:
                       attempt=attempts[0]; break
                   time.sleep(.25)
               assert attempt, 'STALE_ATTEMPT_DID_NOT_REACH_RUNNING'
-              mutation="update conversation_commerce_state set revision=2,source_message_id='"+CUST_STALE_NEXT+"',state=jsonb_set(state,'{latest_corrections}',coalesce(state->'latest_corrections','[]'::jsonb)||jsonb_build_array('controlled stale correction')),state_hash='"+('9f'+('0'*62))+"',updated_at=now() where conversation_id='"+STALE+"' and company_id='"+COMPANY+"';"
+              mutation="update conversation_commerce_state set revision="+str(next_revision)+",source_message_id='"+CUST_STALE_NEXT+"',state=jsonb_set(state,'{latest_corrections}',coalesce(state->'latest_corrections','[]'::jsonb)||jsonb_build_array('controlled stale correction')),state_hash='"+('9f'+('0'*62))+"',updated_at=now() where conversation_id='"+STALE+"' and company_id='"+COMPANY+"';"
               management_sql(mutation)
               changed=rows_for('conversation_commerce_state',urllib.parse.urlencode({'conversation_id':'eq.'+STALE,'company_id':'eq.'+COMPANY,'select':'revision,state_hash,source_message_id'}))
-              assert changed and changed[0]['revision']==2 and changed[0]['state_hash']!=before_state['state_hash'] and changed[0]['source_message_id']==CUST_STALE_NEXT,('STALE_MUTATION',changed)
+              assert changed and changed[0]['revision']==next_revision and changed[0]['state_hash']!=before_state['state_hash'] and changed[0]['source_message_id']==CUST_STALE_NEXT,('STALE_MUTATION',changed)
               new_hash=changed[0]['state_hash']
               stale_status,stale_body=future.result(timeout=180)
           assert stale_status==409,(stale_status,stale_body)
@@ -173,8 +174,8 @@ jobs:
           snap=rows_for('ce_bundle_snapshot',urllib.parse.urlencode({'attempt_id':'eq.'+fresh_rows[0]['attempt_id'],'select':'conversation_id,company_id,evaluated_ai_reply,grounding_evidence,transcript_hash','limit':'1'}))
           reality=snap[0]['grounding_evidence']['b3_conversion_reality']
           assert snap[0]['company_id']==COMPANY and snap[0]['conversation_id']==STALE,snap
-          assert reality['revision']==2 and reality['source_message_id']==CUST_STALE_NEXT and reality['state_hash']==new_hash,reality
-          print(json.dumps({'gate':'fresh_retry_idempotency','status':'PASS','evaluation_id':fresh_id,'revision':2}))
+          assert reality['revision']==next_revision and reality['source_message_id']==CUST_STALE_NEXT and reality['state_hash']==new_hash,reality
+          print(json.dumps({'gate':'fresh_retry_idempotency','status':'PASS','evaluation_id':fresh_id,'revision':next_revision}))
 
           evals={}
           for label,cid in [('positive',POS),('negative',NEG)]:
