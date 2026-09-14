@@ -381,15 +381,10 @@ function WidgetPreviewContent({
   const canSaveLive =
     role === "admin" && !previewOnly && !loadingWidget;
 
-  const functionsUrl = import.meta.env
-    .VITE_SUPABASE_FUNCTIONS_URL as string | undefined;
-  const projectId = import.meta.env
-    .VITE_SUPABASE_PROJECT_ID as string | undefined;
-  const apiBase =
-    functionsUrl ||
-    (projectId
-      ? `https://${projectId}.supabase.co/functions/v1`
-      : "");
+  // Authoritative user-owned Supabase project only.
+  const apiBase = authoritativeFunctionsBase(
+    import.meta.env.VITE_SUPABASE_FUNCTIONS_URL as string | undefined,
+  );
 
   const embedCode = useMemo(() => {
     if (
