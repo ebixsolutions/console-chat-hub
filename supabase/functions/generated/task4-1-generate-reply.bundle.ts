@@ -123,13 +123,80 @@ function finite(v) {
 function nonEmpty(v) {
   return typeof v === "string" && v.trim() ? v.trim() : null;
 }
+function stringArray(value, maxItems = 24, maxLength = 160) {
+  if (!Array.isArray(value)) return [];
+  return [
+    ...new Set(
+      value.filter((item) => typeof item === "string").map((item) => item.normalize("NFKC").trim().slice(0, maxLength)).filter(Boolean)
+    )
+  ].slice(0, maxItems);
+}
+function authorityMetadata(doc) {
+  const metadata = isObj(doc.authority) ? doc.authority : isObj(doc.metadata) ? doc.metadata : {};
+  const first = (...values) => values.map(nonEmpty).find(Boolean) ?? null;
+  const firstIdentifier = (...values) => {
+    for (const value of values) {
+      const parsed = nonEmpty(value) ?? (typeof value === "number" && Number.isSafeInteger(value) ? String(value) : null);
+      if (parsed) return parsed;
+    }
+    return null;
+  };
+  const currentRaw = first(
+    metadata.currentness,
+    metadata.freshness_status,
+    doc.currentness,
+    doc.freshness_status
+  )?.toLowerCase();
+  const explicitCurrent = typeof metadata.is_current === "boolean" ? metadata.is_current : typeof doc.is_current === "boolean" ? doc.is_current : null;
+  const currentness = currentRaw === "historical" || currentRaw === "superseded" || currentRaw === "cancelled" || currentRaw === "current" ? currentRaw : explicitCurrent === false ? "historical" : explicitCurrent === true ? "current" : "unknown";
+  const rawClaims = Array.isArray(metadata.claims) ? metadata.claims : Array.isArray(doc.claims) ? doc.claims : [];
+  const claims = rawClaims.flatMap((claim) => {
+    if (!isObj(claim)) return [];
+    const key = first(claim.key, claim.fact_key);
+    const value = first(claim.value, claim.fact_value);
+    return key && value ? [{ key: key.slice(0, 200), value: value.slice(0, 500) }] : [];
+  }).slice(0, 24);
+  const versionRank = finite(
+    metadata.version_rank ?? metadata.version_number ?? doc.version_rank ?? doc.version_number
+  );
+  const sourcePriority = finite(metadata.source_priority ?? doc.source_priority);
+  return {
+    tenant_id: firstIdentifier(
+      metadata.tenant_id,
+      metadata.company_id,
+      doc.tenant_id,
+      doc.company_id
+    ),
+    publication_state: first(
+      metadata.publication_state,
+      metadata.status,
+      doc.publication_state,
+      doc.status
+    ),
+    currentness,
+    entity_ids: stringArray(metadata.entity_ids ?? metadata.models ?? doc.entity_ids ?? doc.models),
+    regions: stringArray(
+      metadata.regions ?? metadata.markets ?? doc.regions ?? doc.markets,
+      12,
+      80
+    ),
+    language: first(metadata.language, doc.language),
+    version: first(metadata.version, metadata.version_id, doc.version, doc.version_id),
+    version_rank: versionRank,
+    updated_at: first(metadata.updated_at, metadata.published_at, doc.updated_at, doc.published_at),
+    source_priority: sourcePriority,
+    claims
+  };
+}
 function parseDocumentCandidate(doc) {
   if (!isObj(doc)) return null;
   const documentId = nonEmpty(doc.document_id);
   const title = nonEmpty(doc.title) ?? "Knowledge Base document";
   const sourceType = nonEmpty(doc.source_type) ?? "knowledge";
   const documentScore = finite(doc.document_score);
-  if (!documentId || documentScore === null || !Array.isArray(doc.evidence)) return null;
+  if (!documentId || documentScore === null || !Array.isArray(doc.evidence)) {
+    return null;
+  }
   const chunks = [];
   const citations = [];
   const fullEvidence = [];
@@ -170,7 +237,8 @@ function parseDocumentCandidate(doc) {
     const score = finite(item.score);
     const chunkId = nonEmpty(item.chunk_id) ?? void 0;
     const chunkType = item.chunk_type;
-    if (!content || score === null || chunkType !== "rag_summary" && chunkType !== "full_content" && chunkType !== "faq_pair" && chunkType !== "section") return null;
+    if (!content || score === null || chunkType !== "rag_summary" && chunkType !== "full_content" && chunkType !== "faq_pair" && chunkType !== "section")
+      return null;
     if (chunkType === "rag_summary") {
       summaryCount += 1;
       if (summaryCount > MAX_SUMMARY_CHUNKS_PER_DOCUMENT) return null;
@@ -229,7 +297,8 @@ function parseDocumentCandidate(doc) {
       returned_full_content_count: fullEvidence.length,
       dropped_without_document_id: 0,
       dropped_without_content: 0
-    }
+    },
+    authority: authorityMetadata(doc)
   };
 }
 function parseAggregationResponse(data) {
@@ -245,12 +314,22 @@ function parseAggregationResponse(data) {
       return { ok: false, error_code: "KB_SCHEMA_INVALID" };
     }
     if (data.llm_context !== void 0 && data.llm_context !== null) {
-      if (!isObj(data.llm_context)) return { ok: false, error_code: "KB_SCHEMA_INVALID" };
+      if (!isObj(data.llm_context)) {
+        return { ok: false, error_code: "KB_SCHEMA_INVALID" };
+      }
       const sc = finite(data.llm_context.summary_count);
       const ec = finite(data.llm_context.evidence_count);
-      if (sc !== 0 || ec !== 0) return { ok: false, error_code: "KB_SCHEMA_INVALID" };
+      if (sc !== 0 || ec !== 0) {
+        return { ok: false, error_code: "KB_SCHEMA_INVALID" };
+      }
     }
-    return { ok: true, contextFound: false, chunks: [], citations: [], documents: [] };
+    return {
+      ok: true,
+      contextFound: false,
+      chunks: [],
+      citations: [],
+      documents: []
+    };
   }
   if (!Array.isArray(data.selected_documents) || data.selected_documents.length < 1 || data.selected_documents.length > MAX_SELECTED_DOCUMENTS) {
     return { ok: false, error_code: "KB_SCHEMA_INVALID" };
@@ -426,6 +505,9 @@ function singaporeCompanyIdFromScope(scope) {
   return Number.isSafeInteger(n) && n > 0 ? n : null;
 }
 function mapDocumentCandidate(candidate) {
+  const authorityStatus = candidate.authority.publication_state?.toLowerCase();
+  const authorityCurrentness = candidate.authority.currentness;
+  const chunkStatus = authorityStatus === "draft" || authorityStatus === "unpublished" ? "draft" : authorityCurrentness === "historical" || authorityCurrentness === "superseded" || authorityCurrentness === "cancelled" ? authorityCurrentness : "published";
   return {
     document_id: candidate.document_id,
     title: candidate.title,
@@ -440,11 +522,12 @@ function mapDocumentCandidate(candidate) {
       score: c.score,
       chunk_type: c.chunk_type,
       source_type: c.source_type,
-      status: "published"
+      status: chunkStatus
     })),
     citations: candidate.citations,
     llm_context: candidate.llm_context,
-    meta: candidate.meta
+    meta: candidate.meta,
+    authority: candidate.authority
   };
 }
 async function fetchKBRag(queryInput, scope, endpointCfg, opts) {
@@ -993,7 +1076,7 @@ var CUSTOMER = /* @__PURE__ */ new Set(["visitor", "customer", "user"]);
 var ASSISTANT = /* @__PURE__ */ new Set(["assistant", "ai"]);
 var TRIVIAL = /^(hi|hello|hey|你好|嗨|哈囉|早安|午安|晚安|ok|okay|好的|好|嗯|謝謝|谢谢|thanks|thank you)[!！。.？?，,\s]*$/i;
 var CORRECTION = /(我講錯|我说错|我說錯|我要更正|我想更正|更正一下|其實係|其实是|改返|改成|actually[,\s]+i meant|\bi meant\b|correction\s*[:：]|不是.+(?:而)?是|唔係.+係|(?:唔係|不是).{0,60}(?:我要問|我想問|想問|想问)|not .+ but .+)/i;
-var SIMPLIFY = /(?:簡單|简单)(?:一點|一点|啲|些|點|点)?(?:[。.!！?？\s]*$|.*(?:解釋|解释|講|讲|說|说|介紹|介绍))|(?:講|讲|說|说)(?:得|得再)?(?:簡單|简单)(?:一點|一点|啲|些|點|点)?|(?:用|講|讲|說|说)(?:香港客戶|香港客户|一般客戶|一般客户|客戶|客户)?(?:聽得懂|听得懂|明白|易明)?(?:的|嘅)?(?:人話|人话|白話|白话|口語|口语|貼地|贴地)(?:回答|講|讲|說|说)?|(?:講|讲|說|说|回答)(?:得)?(?:自然|口語|口语|貼地|贴地)(?:一點|一点|啲)?|(?:將|把|幫我|帮我)?(?:上一個|上一个|上一個答案|上一个答案|之前(?:個|个)?答案|前一個答案|前一个答案)?(?:答案|回答)?(?:改短|縮短|缩短)(?:一點|一点|啲|些|點|点)?|(?:改短|縮短|缩短)(?:一點|一点|啲|些|點|点)?(?:上一個|上一个|答案|回答)?|explain(?: it| that)? (?:more )?simply|make it simpler|\bsimpler\b|\bshorter\b|(?:say|explain|answer).*(?:plain|natural|everyday|customer-friendly) (?:language|words|terms)/i;
+var SIMPLIFY = /(?:簡單|简单)(?:一點|一点|啲|些|點|点)?(?:[。.!！?？\s]*$|.*(?:解釋|解释|講|讲|說|说|介紹|介绍))|(?:講|讲|說|说)(?:得|得再)?(?:簡單|简单)(?:一點|一点|啲|些|點|点)?|(?:用|講|讲|說|说)(?:香港客戶|香港客户|一般客戶|一般客户|客戶|客户)?(?:聽得懂|听得懂|明白|易明)?(?:的|嘅)?(?:人話|人话|白話|白话|口語|口语|貼地|贴地)(?:回答|講|讲|說|说)?|(?:講|讲|說|说|回答)(?:得)?(?:自然|口語|口语|貼地|贴地)(?:一點|一点|啲)?|(?:將|把|幫我|帮我)?(?:上一個|上一个|上一個答案|上一个答案|之前(?:個|个)?答案|前一個答案|前一个答案)?(?:答案|回答)?(?:改短|縮短|缩短)(?:一點|一点|啲|些|點|点)?|(?:改短|縮短|缩短)(?:一點|一点|啲|些|點|点)?(?:上一個|上一个|答案|回答)?|explain(?: it| that)? (?:more )?simply|make it simpler|\bsimpler\b|\bshort(?:en|er)\b|(?:say|explain|answer).*(?:plain|natural|everyday|customer-friendly) (?:language|words|terms)/i;
 var REPHRASE = /(換句話|换句话|另一種講法|另一种说法|改寫|改写|重新講|重新说|rephrase|rewrite|say that another way|word it differently)/i;
 var TRANSLATE = /(?:用|改用)(?:廣東話|广东话|繁體中文|繁体中文|簡體中文|简体中文|英文).*(?:講|讲|回答|答|解釋|解释|說|说|一次)?|\b(?:in|into)\s+(?:english|chinese|cantonese|traditional chinese|simplified chinese)\b|translate(?: that| it)?/i;
 var SUMMARY = /(?:總結|总结|概括|歸納|归纳).*(?:剛才|刚才|以上|之前|我們|我们|內容|内容|三點|三点)?|(?:根據|根据)?(?:已確認|已确认)(?:資料|资料).*(?:列|分成|整理成)?\s*(?:[一二兩两三四五六七八九十]|\d{1,2})\s*(?:點|点|項|项|條|条)|summari[sz]e(?: that| it| this| the above| what we discussed| our conversation)?/i;
@@ -3249,6 +3332,21 @@ function buildCanonicalRetrievalQuery(latestInput, newestFirst) {
   const semantic = classifyCanonicalConversationTurn(latest, newestFirst);
   if (!latest) return { query: "", mode: "standalone", latest: "", context_turns: [], state };
   const targetHint = retrievalTargetHint(latest);
+  const hasExplicitCurrentTarget = /\b(?:smoke\s+test\s+)?(?:basic|growth|pro)\b|\b(?:product|model|sku)\s*[:#-]?\s*[a-z0-9][a-z0-9._/-]*|(?:香港|hong\s*kong|\bhk\b|台灣|台湾|taiwan|澳門|澳门|macau|macao|新加坡|singapore)/i.test(latest);
+  const currentTargetBoundary = hasExplicitCurrentTarget && (semantic.topic_action === "SWITCH" || semantic.topic_action === "CORRECT");
+  if (currentTargetBoundary) {
+    return {
+      query: [
+        `Current request: ${latest}`,
+        ...targetHint ? [`Retrieval target: ${targetHint}`] : [],
+        "Authority boundary: use only evidence compatible with the current target; all incompatible prior targets are superseded for this turn."
+      ].join("\n").slice(0, 1600),
+      mode: "standalone",
+      latest,
+      context_turns: [],
+      state: { ...state, jurisdiction: detectExplicitJurisdiction(latest) ?? state.jurisdiction }
+    };
+  }
   const earlyPrevious = newestFirst.filter((row) => CUSTOMER2.has(String(row.role ?? "").toLowerCase())).map((row) => clean2(row.content)).filter((x) => x && x !== latest && x !== "__THINKING__");
   const earlyPublishedFactQuestion = /[?？]|(?:幾多|多少|幾錢|几钱|價錢|价钱|價格|价格|price|monthly|yearly|每月|每年|limit|上限|included|包括|有冇|有没有|係咪|是否|噪音|db|保養|保修|warranty|百分比|比例)|^(?:直接|再講|再说|tell me)/i.test(latest);
   if (targetHint && earlyPublishedFactQuestion) {
@@ -3480,12 +3578,12 @@ function correctedPlanSubject(text) {
   const correctionCue = /(?:其實|其实|唔係|不是|並非|并非|改問|改问|更正|instead|not\b|i\s+meant)/i;
   if (!correctionCue.test(latest)) return null;
   const explicitTarget = latest.match(
-    /(?:我要問|我要问|我想問|我想问|想問|想问|問嘅係|问的是|改問|改问|ask\s+about|i\s+(?:want|meant)\s+(?:to\s+)?(?:ask\s+about\s+)?)\s*(?:the\s+)?(Basic|Growth|Pro)(?:\s+(?:plan|方案))?/i
+    /(?:我要問|我要问|我想問|我想问|想問|想问|問嘅係|问的是|改問|改问|ask\s+about|i\s+(?:want|meant)\s+(?:to\s+)?(?:ask\s+about\s+)?)\s*(?:the\s+)?(?:smoke\s+test\s+)?(Basic|Growth|Pro)(?:\s+(?:plan|方案))?/i
   );
   const explicitPlan = normalizePlan(explicitTarget?.[1]);
   if (explicitPlan) return explicitPlan;
   const contrastTarget = latest.match(
-    /(?:而係|而是|instead(?:\s+of)?|but)\s*(?:the\s+)?(Basic|Growth|Pro)(?:\s+(?:plan|方案))?/i
+    /(?:而係|而是|instead(?:\s+of)?|but)\s*(?:the\s+)?(?:smoke\s+test\s+)?(Basic|Growth|Pro)(?:\s+(?:plan|方案))?/i
   );
   return normalizePlan(contrastTarget?.[1]);
 }
@@ -3567,11 +3665,503 @@ function buildCanonicalRetrievalQuery2(latestInput, newestFirst) {
   };
 }
 
+// supabase/functions/_shared/commerce-state-authority.ts
+function clean4(value, max = 1200) {
+  return typeof value === "string" ? value.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max) : "";
+}
+function isRecord(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function isKnownValue(value) {
+  return value !== void 0 && value !== null && value !== "";
+}
+function getCommerceStatePath(state, path) {
+  const parts = clean4(path, 300).split(".").filter(Boolean);
+  if (!parts.length) return void 0;
+  let current = state;
+  for (const part of parts) {
+    if (Array.isArray(current)) {
+      const index = Number(part);
+      if (!Number.isInteger(index) || index < 0 || index >= current.length) {
+        return void 0;
+      }
+      current = current[index];
+      continue;
+    }
+    if (!isRecord(current) || !(part in current)) return void 0;
+    current = current[part];
+  }
+  return current;
+}
+function calculateCommerceTerms(terms, currency) {
+  if (!terms.length) return null;
+  let total = 0;
+  const expressionParts = [];
+  for (const term of terms) {
+    if (!Number.isFinite(term.value)) return null;
+    const multiplier = term.multiplier ?? 1;
+    if (!Number.isFinite(multiplier)) return null;
+    total += term.value * multiplier;
+    expressionParts.push(`${term.label}:${term.value}\xD7${multiplier}`);
+  }
+  return {
+    expression: expressionParts.join(" + "),
+    result: Math.round((total + Number.EPSILON) * 100) / 100,
+    currency: currency ?? null
+  };
+}
+function questionLooksLikeCurrentBusinessFact(question) {
+  return /(?:而家|現在|现在|目前|最新|current|latest|今日|today).{0,30}(?:價|价|price|stock|庫存|库存|有貨|有货|available|政策|policy|收費|收费|fee|delivery|送貨|送货|保養|保修|warranty)/i.test(
+    question
+  );
+}
+function questionLooksLikeCustomerState(question) {
+  return /(?:我(?:而家|現在|现在|目前|最後|最后)?|my\s+(?:current|latest|final)?).{0,45}(?:幾多|多少|數量|数量|要咩|要什麼|要什么|地址|電話|电话|收貨人|收货人|日期|時間|时间|要求|需求|限制|狀態|状态|order|quote|quotation|quantity|address|phone|recipient|date|requirements?|constraints?|status)|(?:幫我|帮我|please).{0,30}(?:總結|总结|summari[sz]e).{0,30}(?:我|my)/i.test(
+    question
+  );
+}
+function questionLooksLikeCalculation(question) {
+  return /(?:加埋|合共|總共幾錢|总共多少钱|一共多少|total|how much.*(?:total|altogether)|calculate|計下|算下|計算|计算)/i.test(
+    question
+  );
+}
+function questionExplicitlyAsksQuantity(question) {
+  if (/(?:價|价|price|amount|金額|金额|幾錢|几钱|多少錢|多少钱|fee|收費|收费)/i.test(question))
+    return false;
+  return /(?:數量|数量|quantity|how many|幾多\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚)|多少\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚))/i.test(
+    question
+  );
+}
+function inferKnownCustomerStatePath(question, state) {
+  const candidates = [
+    [/(?:送貨地址|送货地址|地址|delivery address|address)/i, "delivery.address"],
+    [/(?:收貨人電話|收货人电话|recipient phone|contact phone)/i, "delivery.recipient_phone"],
+    [/(?:收貨人|收货人|recipient)/i, "delivery.recipient_name"],
+    [
+      /(?:送貨日期|送货日期|送貨時間|送货时间|delivery date|delivery time|preferred date)/i,
+      "delivery.preferred_date"
+    ],
+    [/(?:order status|訂單狀態|订单状态|落單狀態|下单状态)/i, "conversion.order_status"],
+    [/(?:quote status|quotation status|報價狀態|报价状态)/i, "conversion.quotation_status"],
+    [/(?:payment status|付款狀態|付款状态)/i, "conversion.payment_status"]
+  ];
+  for (const [pattern, path] of candidates) {
+    if (!pattern.test(question)) continue;
+    const value = getCommerceStatePath(state, path);
+    if (isKnownValue(value)) return { path, value };
+  }
+  if (questionExplicitlyAsksQuantity(question)) {
+    const active = state.entities.filter(
+      (entity) => entity.status !== "cancelled" && entity.status !== "deferred"
+    );
+    if (active.length === 1) {
+      return {
+        path: `entities.${state.entities.indexOf(active[0])}.quantity`,
+        value: active[0].quantity
+      };
+    }
+  }
+  return null;
+}
+function resolveCommerceAnswerAuthority(input) {
+  const question = clean4(input.question);
+  const explicitStatePath = clean4(input.requested_state_path ?? "", 300);
+  if (explicitStatePath) {
+    const known = getCommerceStatePath(input.state, explicitStatePath);
+    if (isKnownValue(known)) {
+      return {
+        authority: "CONVERSATION_STATE",
+        reason: "requested_customer_state_is_known",
+        known_value: known,
+        state_path: explicitStatePath
+      };
+    }
+  }
+  const inferred = inferKnownCustomerStatePath(question, input.state);
+  if (inferred) {
+    return {
+      authority: "CONVERSATION_STATE",
+      reason: "customer_state_inferred_and_known",
+      known_value: inferred.value,
+      state_path: inferred.path
+    };
+  }
+  if ((questionLooksLikeCalculation(question) || (input.calculation_terms?.length ?? 0) > 0) && input.calculation_terms?.length) {
+    const calculation = calculateCommerceTerms(input.calculation_terms, input.calculation_currency);
+    if (calculation) {
+      return {
+        authority: "DETERMINISTIC_CALCULATION",
+        reason: "calculation_fully_supported_by_known_terms",
+        calculation
+      };
+    }
+  }
+  if (input.requires_professional_site_check || input.unsafe_to_remote_confirm) {
+    return {
+      authority: "SAFE_PROFESSIONAL_CONFIRMATION",
+      reason: "remote_confirmation_not_safe_or_not_authoritative"
+    };
+  }
+  if (input.requires_current_business_fact || input.requires_current_price_or_stock || input.requires_policy_or_terms || questionLooksLikeCurrentBusinessFact(question)) {
+    return {
+      authority: "CURRENT_KB_REQUIRED",
+      reason: "current_business_fact_requires_authoritative_evidence"
+    };
+  }
+  if (questionLooksLikeCustomerState(question)) {
+    return {
+      authority: "INSUFFICIENT_INFORMATION",
+      reason: "customer_state_question_but_requested_fact_not_resolved",
+      state_path: explicitStatePath || null
+    };
+  }
+  return {
+    authority: "INSUFFICIENT_INFORMATION",
+    reason: "no_authoritative_source_selected"
+  };
+}
+var REFERENCE_AUTHORITY_RANK = {
+  CANONICAL_TRANSACTION: 500,
+  DETERMINISTIC_CALCULATION: 500,
+  CURRENT_KB: 400,
+  CUSTOMER_CONTEXT: 300,
+  HISTORICAL: 100,
+  MODEL_INFERENCE: 0
+};
+function boundedStrings(values, maxItems = 24, maxLength = 160) {
+  if (!Array.isArray(values)) return [];
+  return [
+    ...new Set(
+      values.filter((value) => typeof value === "string").map((value) => clean4(value, maxLength).toLowerCase()).filter(Boolean)
+    )
+  ].slice(0, maxItems);
+}
+function referenceCurrentness(candidate) {
+  if (candidate.currentness) return candidate.currentness;
+  if (candidate.authority_class === "HISTORICAL") return "historical";
+  if (candidate.authority_class === "CURRENT_KB") return "current";
+  return "unknown";
+}
+function normalizedPublicationState(candidate) {
+  return clean4(candidate.publication_state ?? "", 40).toLowerCase();
+}
+function isCurrentPublishedReference(candidate) {
+  if (candidate.authority_class !== "CURRENT_KB") return true;
+  const publication = normalizedPublicationState(candidate);
+  const currentness = referenceCurrentness(candidate);
+  return (publication === "" || publication === "published" || publication === "live") && currentness === "current";
+}
+function overlaps(expected, actual) {
+  if (!expected.length || !actual.length) return true;
+  const key = (value) => value.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+  const actualKeys = new Set(actual.map(key).filter(Boolean));
+  return expected.some((value) => actualKeys.has(key(value)));
+}
+function parseTimestamp(value) {
+  if (!value) return 0;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+function finiteOrZero(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+function normalizeClaimPart(value) {
+  return clean4(value, 500).toLowerCase();
+}
+function normalizedClaims(candidate) {
+  const claims = /* @__PURE__ */ new Map();
+  for (const claim of candidate.claims ?? []) {
+    const key = normalizeClaimPart(claim?.key ?? "");
+    const value = normalizeClaimPart(claim?.value ?? "");
+    if (key && value) claims.set(key, value);
+  }
+  return claims;
+}
+function hasInternalClaimConflict(candidate) {
+  const valuesByKey = /* @__PURE__ */ new Map();
+  for (const claim of candidate.claims ?? []) {
+    const key = normalizeClaimPart(claim?.key ?? "");
+    const value = normalizeClaimPart(claim?.value ?? "");
+    if (!key || !value) continue;
+    const values = valuesByKey.get(key) ?? /* @__PURE__ */ new Set();
+    values.add(value);
+    valuesByKey.set(key, values);
+  }
+  return [...valuesByKey.values()].some((values) => values.size > 1);
+}
+function bindingSpecificity(candidate, expectedEntities, expectedTopics, expectedRegion) {
+  const entities = boundedStrings(candidate.entity_ids);
+  const topics = boundedStrings(candidate.topic_ids);
+  const regions = boundedStrings(candidate.regions, 12, 80);
+  return (expectedEntities.length && entities.length && overlaps(expectedEntities, entities) ? 2 : 0) + (expectedTopics.length && topics.length && overlaps(expectedTopics, topics) ? 2 : 0) + (expectedRegion && regions.includes(expectedRegion) ? 1 : 0);
+}
+function comparableAuthorityTuple(candidate, expectedEntities, expectedTopics, expectedRegion) {
+  return [
+    REFERENCE_AUTHORITY_RANK[candidate.authority_class],
+    bindingSpecificity(candidate, expectedEntities, expectedTopics, expectedRegion),
+    finiteOrZero(candidate.source_priority),
+    finiteOrZero(candidate.version_rank),
+    parseTimestamp(candidate.updated_at)
+  ].join(":");
+}
+function conflictingTopSources(candidates, expectedEntities, expectedTopics, expectedRegion) {
+  if (candidates.length < 1) return [];
+  const topTuple = comparableAuthorityTuple(candidates[0], expectedEntities, expectedTopics, expectedRegion);
+  const peers = candidates.filter(
+    (candidate) => comparableAuthorityTuple(candidate, expectedEntities, expectedTopics, expectedRegion) === topTuple
+  );
+  const internallyConflicting = peers.filter(hasInternalClaimConflict).map((candidate) => candidate.source_id).sort();
+  if (internallyConflicting.length) return internallyConflicting;
+  if (peers.length < 2) return [];
+  const valuesByKey = /* @__PURE__ */ new Map();
+  for (const candidate of peers) {
+    for (const [key, value] of normalizedClaims(candidate)) {
+      const values = valuesByKey.get(key) ?? /* @__PURE__ */ new Map();
+      const sources = values.get(value) ?? /* @__PURE__ */ new Set();
+      sources.add(candidate.source_id);
+      values.set(value, sources);
+      valuesByKey.set(key, values);
+    }
+  }
+  const conflictIds = /* @__PURE__ */ new Set();
+  for (const values of valuesByKey.values()) {
+    if (values.size < 2) continue;
+    for (const sources of values.values()) {
+      for (const source of sources) conflictIds.add(source);
+    }
+  }
+  return [...conflictIds].sort();
+}
+function decisionForClass(authorityClass) {
+  if (authorityClass === "CANONICAL_TRANSACTION") return "USE_CANONICAL_STATE";
+  if (authorityClass === "DETERMINISTIC_CALCULATION") {
+    return "USE_DETERMINISTIC_CALCULATION";
+  }
+  if (authorityClass === "CURRENT_KB") return "USE_CURRENT_KB";
+  if (authorityClass === "CUSTOMER_CONTEXT") return "USE_CUSTOMER_CONTEXT";
+  if (authorityClass === "HISTORICAL") return "HISTORICAL_ONLY";
+  return "INSUFFICIENT_EVIDENCE";
+}
+function resolveReferenceAuthority(input) {
+  const expectedTenant = clean4(input.expected_tenant_id ?? "", 160).toLowerCase();
+  const expectedEntities = boundedStrings(input.expected_entity_ids);
+  const expectedTopics = boundedStrings(input.expected_topic_ids);
+  const expectedRegion = clean4(input.expected_region ?? "", 80).toLowerCase();
+  const requireExplicitTargetMatch = input.require_explicit_target_match === true;
+  const rejected = [];
+  const historical = [];
+  const eligible = [];
+  for (const candidate of input.candidates ?? []) {
+    const sourceId = clean4(candidate?.source_id ?? "", 200);
+    if (!sourceId) continue;
+    const tenant = clean4(candidate.tenant_id ?? "", 160).toLowerCase();
+    if (expectedTenant && tenant && tenant !== expectedTenant) {
+      rejected.push({ source_id: sourceId, reason: "wrong_tenant" });
+      continue;
+    }
+    const entities = boundedStrings(candidate.entity_ids);
+    if (expectedEntities.length > 0 && (requireExplicitTargetMatch && entities.length === 0 || !overlaps(expectedEntities, entities))) {
+      rejected.push({ source_id: sourceId, reason: "wrong_entity" });
+      continue;
+    }
+    const topics = boundedStrings(candidate.topic_ids);
+    if (expectedTopics.length > 0 && (requireExplicitTargetMatch && topics.length === 0 || !overlaps(expectedTopics, topics))) {
+      rejected.push({ source_id: sourceId, reason: "wrong_topic" });
+      continue;
+    }
+    const regions = boundedStrings(candidate.regions, 12, 80);
+    if (expectedRegion && regions.length && !regions.includes(expectedRegion)) {
+      rejected.push({ source_id: sourceId, reason: "wrong_region" });
+      continue;
+    }
+    const currentness = referenceCurrentness(candidate);
+    if (candidate.authority_class === "CANONICAL_TRANSACTION" && currentness === "cancelled") {
+      eligible.push(candidate);
+      continue;
+    }
+    if (candidate.authority_class === "HISTORICAL" || currentness === "historical" || currentness === "superseded" || currentness === "cancelled") {
+      historical.push(candidate);
+      rejected.push({ source_id: sourceId, reason: `${currentness}_evidence` });
+      continue;
+    }
+    if (!isCurrentPublishedReference(candidate)) {
+      rejected.push({
+        source_id: sourceId,
+        reason: "not_current_published_live"
+      });
+      continue;
+    }
+    if (candidate.authority_class === "MODEL_INFERENCE") {
+      rejected.push({
+        source_id: sourceId,
+        reason: "model_inference_not_authority"
+      });
+      continue;
+    }
+    eligible.push(candidate);
+  }
+  const selectable = input.requires_current_kb ? eligible.filter(
+    (candidate) => candidate.authority_class === "CANONICAL_TRANSACTION" || candidate.authority_class === "DETERMINISTIC_CALCULATION" || candidate.authority_class === "CURRENT_KB"
+  ) : eligible;
+  selectable.sort(
+    (a, b) => REFERENCE_AUTHORITY_RANK[b.authority_class] - REFERENCE_AUTHORITY_RANK[a.authority_class] || bindingSpecificity(b, expectedEntities, expectedTopics, expectedRegion) - bindingSpecificity(a, expectedEntities, expectedTopics, expectedRegion) || finiteOrZero(b.source_priority) - finiteOrZero(a.source_priority) || finiteOrZero(b.version_rank) - finiteOrZero(a.version_rank) || parseTimestamp(b.updated_at) - parseTimestamp(a.updated_at) || finiteOrZero(b.relevance_score) - finiteOrZero(a.relevance_score) || a.source_id.localeCompare(b.source_id)
+  );
+  const conflictSourceIds = conflictingTopSources(selectable, expectedEntities, expectedTopics, expectedRegion);
+  if (conflictSourceIds.length > 0) {
+    return {
+      decision: "CONFLICT_UNRESOLVED",
+      reason: "equal_authority_current_sources_conflict_without_precedence",
+      selected_source_id: null,
+      selected_authority_class: null,
+      conflict_source_ids: conflictSourceIds,
+      rejected,
+      provenance: {
+        tenant_id: expectedTenant || null,
+        entity_ids: expectedEntities,
+        topic_ids: expectedTopics,
+        region: expectedRegion || null,
+        source_type: null,
+        version: null,
+        currentness: null
+      }
+    };
+  }
+  const selected = selectable[0];
+  if (!selected) {
+    const historicalOnly = historical.length > 0;
+    return {
+      decision: input.requires_current_kb ? "CURRENT_KB_REQUIRED" : historicalOnly ? "HISTORICAL_ONLY" : "INSUFFICIENT_EVIDENCE",
+      reason: input.requires_current_kb ? "current_published_kb_evidence_not_available" : historicalOnly ? "only_historical_evidence_available" : "no_authoritative_evidence_available",
+      selected_source_id: null,
+      selected_authority_class: null,
+      conflict_source_ids: [],
+      rejected,
+      provenance: {
+        tenant_id: expectedTenant || null,
+        entity_ids: expectedEntities,
+        topic_ids: expectedTopics,
+        region: expectedRegion || null,
+        source_type: null,
+        version: null,
+        currentness: null
+      }
+    };
+  }
+  return {
+    decision: decisionForClass(selected.authority_class),
+    reason: "highest_bound_current_authority_selected",
+    selected_source_id: selected.source_id,
+    selected_authority_class: selected.authority_class,
+    conflict_source_ids: [],
+    rejected,
+    provenance: {
+      tenant_id: clean4(selected.tenant_id ?? "", 160) || expectedTenant || null,
+      entity_ids: boundedStrings(selected.entity_ids),
+      topic_ids: boundedStrings(selected.topic_ids),
+      region: boundedStrings(selected.regions, 12, 80)[0] ?? (expectedRegion || null),
+      source_type: clean4(selected.source_type, 80) || null,
+      version: clean4(selected.version ?? "", 120) || null,
+      currentness: referenceCurrentness(selected)
+    }
+  };
+}
+
 // supabase/functions/_shared/canonical-grounding.ts
 function modelTokens(text) {
-  return [...new Set(
-    (text.match(/\b[A-Z]{2,}[A-Z0-9]*[- ]?\d{2,}[A-Z0-9-]*\b/g) ?? []).map((x) => x.replace(/\s+/g, "").toUpperCase())
-  )];
+  return [
+    ...new Set(
+      (text.match(/\b[A-Z]{2,}[A-Z0-9]*[- ]?\d{2,}[A-Z0-9-]*\b/g) ?? []).map((x) => x.replace(/\s+/g, "").toUpperCase())
+    )
+  ];
+}
+function unique(values) {
+  return [
+    ...new Set(
+      values.map((value) => value?.normalize("NFKC").trim()).filter((value) => Boolean(value))
+    )
+  ];
+}
+function namedTargetTokens(text) {
+  const targets = [];
+  for (const match of text.matchAll(/\b(?:smoke\s+test\s+)?(basic|growth|pro)\b/gi)) {
+    const plan = match[1].toLowerCase();
+    targets.push(plan);
+    if (/smoke\s+test/i.test(match[0])) targets.push(`smoke test ${plan}`);
+  }
+  for (const match of text.matchAll(
+    /\b(product|model|sku)\s*[:#-]?\s*([a-z0-9][a-z0-9._/-]{0,80})\b/gi
+  )) {
+    targets.push(`${match[1].toLowerCase()} ${match[2].toLowerCase()}`);
+    targets.push(match[2].toLowerCase());
+  }
+  for (const match of text.matchAll(
+    /\b(order|transaction|invoice|shipment|booking|subscription|account|case|ticket|claim)\s*(?:number|no\.?|id|#|[:\uFF1A-])?\s*((?!(?:is|was|not|has|status|state|confirmed|paid|pending|cancelled|canceled|the|my|a)\b)[a-z0-9][a-z0-9._/-]{1,80})\b/gi
+  )) {
+    const kind = match[1].toLowerCase();
+    const identifier = match[2].toLowerCase();
+    targets.push(`${kind} ${identifier}`);
+    targets.push(identifier);
+  }
+  for (const match of text.matchAll(
+    /(?:\u8A02\u55AE|\u8BA2\u5355|\u4EA4\u6613|\u767C\u7968|\u53D1\u7968|\u904B\u55AE|\u8FD0\u5355|\u9810\u8A02|\u9884\u8BA2|\u8A02\u95B1|\u8BA2\u9605|\u5E33\u6236|\u8D26\u6237|\u500B\u6848|\u4E2A\u6848|\u5DE5\u55AE|\u5DE5\u5355|\u7D22\u511F|\u7D22\u8D54)\s*(?:\u7DE8\u865F|\u7F16\u53F7|id|#|[:\uFF1A-])?\s*([a-z0-9][a-z0-9._/-]{1,80})/gi
+  )) {
+    targets.push(match[0].toLowerCase().replace(/\s+/g, " ").trim());
+    targets.push(match[1].toLowerCase());
+  }
+  return unique([
+    ...targets,
+    ...modelTokens(text).map((value) => value.toLowerCase())
+  ]);
+}
+function topicTokens(text) {
+  const topics = [];
+  const rules = [
+    ["warranty", /(?:warranty|保養|保修)/i],
+    ["delivery", /(?:delivery|shipping|送貨|送货|物流|派送)/i],
+    ["returns", /(?:refund|return|退款|退貨|退货|換貨|换货)/i],
+    [
+      "price",
+      /(?:price|pricing|價錢|价钱|價格|价格|費用|费用|收費|收费|monthly|yearly|每月|每年)/i
+    ],
+    [
+      "sku_limit",
+      /(?:sku|商品|產品|产品).{0,20}(?:limit|上限)|(?:limit|上限).{0,20}(?:sku|商品|產品|产品)/i
+    ],
+    [
+      "staff_limit",
+      /(?:staff|admin(?:[- ]?seat)?|員工|员工|人手).{0,20}(?:limit|上限)|(?:limit|上限).{0,20}(?:staff|admin|員工|员工|人手)/i
+    ],
+    [
+      "features",
+      /(?:feature|included|功能|包括|包含|app|push|crm|會員|会员|ai\s*seo)/i
+    ],
+    [
+      "specification",
+      /(?:spec(?:ification)?s?|規格|规格|噪音|noise|\bdb\b|dimension|尺寸)/i
+    ],
+    ["payment", /(?:payment|付款|支付)/i],
+    [
+      "order_status",
+      /(?:(?:order|transaction|shipment|booking|subscription|case|ticket|claim|訂單|订单|交易|運單|运单|預訂|预订|訂閱|订阅|個案|个案|工單|工单).{0,40}(?:status|state|confirmed|paid|cancelled|canceled|pending|狀態|状态|確認|确认|付款|支付|取消|處理中|处理中)|(?:status|state|狀態|状态).{0,24}(?:order|transaction|shipment|booking|subscription|case|ticket|claim|訂單|订单|交易|運單|运单|預訂|预订|訂閱|订阅|個案|个案|工單|工单))/i
+    ]
+  ];
+  for (const [topic, pattern] of rules) {
+    if (pattern.test(text)) topics.push(topic);
+  }
+  return topics;
+}
+function deriveCurrentGroundingTarget(currentTurnText, retrievalText = currentTurnText, fallbackEntityIds = [], fallbackTopicIds = [], targetChanged = false) {
+  const explicitEntities = namedTargetTokens(currentTurnText);
+  const explicitTopics = topicTokens(currentTurnText);
+  const retrievalTopics = topicTokens(retrievalText);
+  return {
+    entity_ids: explicitEntities.length ? explicitEntities : unique(fallbackEntityIds),
+    topic_ids: explicitTopics.length ? explicitTopics : unique([...fallbackTopicIds, ...retrievalTopics]),
+    region: detectExplicitJurisdiction(currentTurnText) ?? null,
+    explicit_entity: explicitEntities.length > 0,
+    explicit_topic: explicitTopics.length > 0,
+    target_changed: targetChanged
+  };
 }
 function candidateText(document) {
   return [
@@ -3588,7 +4178,9 @@ function jurisdictions(text) {
   if (/(澳門|澳门|macau|macao)/i.test(text)) found.push("macau");
   if (/(新加坡|singapore)/i.test(text)) found.push("singapore");
   if (/(台灣|台湾|taiwan)/i.test(text)) found.push("taiwan");
-  if (/(中國大陸|中国大陆|內地|内地|mainland\s*china)/i.test(text)) found.push("mainland_china");
+  if (/(中國大陸|中国大陆|內地|内地|mainland\s*china)/i.test(text)) {
+    found.push("mainland_china");
+  }
   return found;
 }
 function assessApplicability(document, requestText) {
@@ -3635,8 +4227,12 @@ function strongLexicalEvidenceMatch(requestText, document) {
   const namedPlan = ["growth", "basic", "pro"].find(
     (plan) => new RegExp(`\\b${plan}\\b`, "i").test(request) && new RegExp(`\\b${plan}\\b`, "i").test(text)
   );
-  const requestHasPlanFact = /(?:sku|staff|admin|seat|app|push|crm|會員|会员|ai\s*seo|price|billing|monthly|yearly|limit|上限|費用|费用|價錢|价钱|價格|价格)/i.test(request);
-  const textHasPlanFact = /(?:sku|staff|admin|seat|app|push|crm|會員|会员|ai\s*seo|price|billing|monthly|yearly|limit|上限|費用|费用|價錢|价钱|價格|价格)/i.test(text);
+  const requestHasPlanFact = /(?:sku|staff|admin|seat|app|push|crm|會員|会员|ai\s*seo|price|billing|monthly|yearly|limit|上限|費用|费用|價錢|价钱|價格|价格)/i.test(
+    request
+  );
+  const textHasPlanFact = /(?:sku|staff|admin|seat|app|push|crm|會員|会员|ai\s*seo|price|billing|monthly|yearly|limit|上限|費用|费用|價錢|价钱|價格|价格)/i.test(
+    text
+  );
   if (namedPlan && requestHasPlanFact && textHasPlanFact) return true;
   const reqModels = modelTokens(requestText);
   if (reqModels.length > 0 && reqModels.some((model) => text.includes(model.toLowerCase()))) {
@@ -3649,7 +4245,9 @@ function lexicalRelevance(requestText, document) {
   const text = candidateText(document).normalize("NFKC").toLowerCase();
   let score = 0;
   const reqModels = modelTokens(requestText);
-  if (reqModels.some((model) => text.includes(model.toLowerCase()))) score += 12;
+  if (reqModels.some((model) => text.includes(model.toLowerCase()))) {
+    score += 12;
+  }
   const anchors = [
     "smoke test growth",
     "smoke test basic",
@@ -3678,33 +4276,81 @@ function lexicalRelevance(requestText, document) {
   for (const anchor of anchors) {
     if (request.includes(anchor) && text.includes(anchor)) score += 2;
   }
-  const latinTokens = [...new Set(request.match(/[a-z0-9][a-z0-9-]{2,}/g) ?? [])].filter((x) => !["current", "request", "retrieval", "target", "published", "customer", "context"].includes(x));
-  for (const token of latinTokens.slice(0, 20)) if (text.includes(token)) score += 0.25;
+  const latinTokens = [
+    ...new Set(request.match(/[a-z0-9][a-z0-9-]{2,}/g) ?? [])
+  ].filter(
+    (x) => ![
+      "current",
+      "request",
+      "retrieval",
+      "target",
+      "published",
+      "customer",
+      "context"
+    ].includes(
+      x
+    )
+  );
+  for (const token of latinTokens.slice(0, 20)) {
+    if (text.includes(token)) score += 0.25;
+  }
   return score;
+}
+function extractStructuredClaims(evidence) {
+  const claims = [];
+  for (const item of evidence) {
+    for (const line of item.content.split(/\r?\n/).slice(0, 120)) {
+      const match = line.match(
+        /^\s*[-*]?\s*([^:：=]{2,120})\s*[:：=]\s*(.{1,300})\s*$/u
+      );
+      if (!match) continue;
+      const key = match[1].normalize("NFKC").replace(/\s+/g, " ").trim();
+      const value = match[2].normalize("NFKC").replace(/\s+/g, " ").trim();
+      if (key && value) claims.push({ key, value });
+      if (claims.length >= 24) return claims;
+    }
+  }
+  return claims;
 }
 function selectCanonicalGrounding(documents, options = {}) {
   const minScore = Number.isFinite(options.minScore) ? Number(options.minScore) : 0;
   const policyOnly = options.policyOnly === true;
   const requirePublished = options.requirePublished !== false;
   const requestText = options.requestText ?? "";
+  const currentTurnText = options.currentTurnText ?? requestText;
+  const target = deriveCurrentGroundingTarget(
+    currentTurnText,
+    requestText,
+    options.expectedEntityIds ?? modelTokens(requestText),
+    options.expectedTopicIds ?? [],
+    options.targetChanged === true
+  );
+  const expectedEntityIds = target.entity_ids;
+  const expectedTopicIds = target.topic_ids;
+  const expectedRegion = options.expectedRegion ?? target.region ?? detectExplicitJurisdiction(requestText);
   const eligible = [];
   for (const document of documents ?? []) {
     if (document.llm_context.selected_document_id !== document.document_id) {
       return { ok: false, error: "KB_DOCUMENT_EVIDENCE_MISMATCH" };
     }
-    if (document.llm_context.full_content_evidence.some((e) => e.document_id !== document.document_id)) {
+    if (document.llm_context.full_content_evidence.some(
+      (e) => e.document_id !== document.document_id
+    )) {
       return { ok: false, error: "KB_DOCUMENT_EVIDENCE_MISMATCH" };
     }
     if (document.chunks.some((c) => c.document_id !== document.document_id)) {
       return { ok: false, error: "KB_DOCUMENT_EVIDENCE_MISMATCH" };
     }
-    const lexicalScore = lexicalRelevance(requestText, document);
-    const effectiveMinScore = strongLexicalEvidenceMatch(requestText, document) ? Math.min(minScore, STRONG_LEXICAL_SCORE_FLOOR) : minScore;
+    const currentTargetRequest = currentTurnText || requestText;
+    const lexicalScore = lexicalRelevance(currentTargetRequest, document);
+    const effectiveMinScore = strongLexicalEvidenceMatch(currentTargetRequest, document) ? Math.min(minScore, STRONG_LEXICAL_SCORE_FLOOR) : minScore;
     const chunks = document.chunks.filter(
       (c) => c.content.trim() && Number.isFinite(c.score) && c.score >= effectiveMinScore && (!requirePublished || c.status === "published") && (!policyOnly || c.source_type.toLowerCase().includes("policy"))
     );
     const fullContentIds = new Set(
-      chunks.filter((c) => c.chunk_type === "full_content").map((c) => c.chunk_id ?? c.content)
+      chunks.filter((c) => c.chunk_type === "full_content").map(
+        (c) => c.chunk_id ?? c.content
+      )
     );
     const evidence = document.llm_context.full_content_evidence.filter(
       (e) => e.content.trim() && Number.isFinite(e.score) && e.score >= effectiveMinScore && (!policyOnly || e.source_type.toLowerCase().includes("policy")) && fullContentIds.has(e.chunk_id ?? e.content)
@@ -3713,27 +4359,67 @@ function selectCanonicalGrounding(documents, options = {}) {
       return { ok: false, error: "KB_EVIDENCE_NOT_PUBLISHED" };
     }
     if (!evidence.length) continue;
-    const applicability = assessApplicability(document, requestText);
-    if (!applicability.accepted) continue;
+    const applicability = assessApplicability(document, currentTargetRequest);
+    const metadata = document.authority;
+    const declaredCurrentness = metadata?.currentness ?? "unknown";
+    const effectiveCurrentness = declaredCurrentness === "unknown" ? "current" : declaredCurrentness;
     eligible.push({
       document,
       chunks,
       evidence,
       applicability,
       evidenceScore: Math.max(...evidence.map((e) => e.score), 0),
-      lexicalScore
+      lexicalScore,
+      authorityCandidate: {
+        source_id: document.document_id,
+        source_type: document.source_type,
+        authority_class: effectiveCurrentness === "current" ? "CURRENT_KB" : "HISTORICAL",
+        tenant_id: metadata?.tenant_id ?? options.expectedTenantId ?? null,
+        publication_state: metadata?.publication_state ?? "published",
+        currentness: effectiveCurrentness,
+        entity_ids: unique([
+          ...metadata?.entity_ids ?? [],
+          ...namedTargetTokens(candidateText(document))
+        ]),
+        topic_ids: unique([
+          ...(metadata?.claims ?? []).map((claim) => claim.key),
+          ...topicTokens(candidateText(document)),
+          ...namedTargetTokens(candidateText(document))
+        ]),
+        regions: metadata?.regions?.length ? metadata.regions : applicability.document_jurisdictions.length ? applicability.document_jurisdictions : !applicability.accepted && applicability.request_jurisdiction ? ["unknown"] : [],
+        language: metadata?.language ?? null,
+        version: metadata?.version ?? null,
+        version_rank: metadata?.version_rank ?? null,
+        updated_at: metadata?.updated_at ?? null,
+        source_priority: metadata?.source_priority ?? null,
+        relevance_score: Math.max(
+          lexicalScore,
+          document.document_score,
+          Math.max(...evidence.map((e) => e.score), 0)
+        ),
+        claims: metadata?.claims?.length ? metadata.claims : extractStructuredClaims(evidence)
+      }
     });
   }
-  eligible.sort(
-    (a, b) => b.lexicalScore - a.lexicalScore || b.document.document_score - a.document.document_score || b.evidenceScore - a.evidenceScore || a.document.document_id.localeCompare(b.document.document_id)
-  );
-  const winner = eligible[0];
+  const authorityDecision = resolveReferenceAuthority({
+    candidates: eligible.map((candidate) => candidate.authorityCandidate),
+    expected_tenant_id: options.expectedTenantId ?? null,
+    expected_entity_ids: expectedEntityIds,
+    expected_topic_ids: expectedTopicIds,
+    expected_region: expectedRegion,
+    requires_current_kb: options.requiresCurrentKb !== false,
+    require_explicit_target_match: target.target_changed || target.explicit_entity || target.explicit_topic || Boolean(expectedRegion)
+  });
+  const winner = authorityDecision.selected_source_id ? eligible.find(
+    (candidate) => candidate.document.document_id === authorityDecision.selected_source_id && candidate.applicability.accepted
+  ) : void 0;
   return winner ? {
     ok: true,
     document: winner.document,
     chunks: winner.chunks,
     evidence: winner.evidence,
-    applicability: winner.applicability
+    applicability: winner.applicability,
+    authority_decision: authorityDecision
   } : {
     ok: true,
     document: null,
@@ -3744,14 +4430,45 @@ function selectCanonicalGrounding(documents, options = {}) {
       reason: "no_applicable_published_evidence",
       request_jurisdiction: detectExplicitJurisdiction(requestText),
       document_jurisdictions: []
-    }
+    },
+    authority_decision: authorityDecision
   };
 }
 
 // supabase/functions/_shared/citation-lineage.ts
-function buildCitationMetadata(chunks, selectedDocumentId) {
+function bindingKey(value) {
+  return value.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+}
+function sourceBoundValues(current, supported) {
+  const supportedKeys = new Set(supported.map(bindingKey).filter(Boolean));
+  if (current.length === 0) return [...new Set(supported)];
+  return [
+    ...new Set(current.filter((value) => supportedKeys.has(bindingKey(value))))
+  ];
+}
+function buildCitationMetadata(chunks, selectedDocumentId, binding) {
   const selected = (selectedDocumentId ?? "").trim();
   if (!selected) return null;
+  if (!binding || binding.authorityDecision.selected_source_id !== selected) {
+    return null;
+  }
+  if (binding.authorityDecision.decision !== "USE_CURRENT_KB") return null;
+  const evidenceState = binding.authorityDecision.provenance.currentness ?? "unknown";
+  if (evidenceState !== "current") return null;
+  const targetEntityModel = sourceBoundValues(
+    binding.currentTarget.entity_ids,
+    binding.authorityDecision.provenance.entity_ids
+  );
+  const targetTopics = sourceBoundValues(
+    binding.currentTarget.topic_ids,
+    binding.authorityDecision.provenance.topic_ids
+  );
+  if (binding.currentTarget.explicit_entity && targetEntityModel.length === 0) {
+    return null;
+  }
+  if (binding.currentTarget.explicit_topic && targetTopics.length === 0) {
+    return null;
+  }
   const citations = [];
   const seen = /* @__PURE__ */ new Set();
   for (const chunk of chunks) {
@@ -3761,6 +4478,7 @@ function buildCitationMetadata(chunks, selectedDocumentId) {
     if (!Number.isFinite(chunk.score)) continue;
     if (chunk.document_id !== selected) return null;
     const chunkId = typeof chunk.chunk_id === "string" && chunk.chunk_id.trim() ? chunk.chunk_id.trim() : void 0;
+    if (!chunkId) return null;
     const dedupeKey = chunkId ? `${selected}:${chunkId}` : `${selected}:${chunk.content}`;
     if (seen.has(dedupeKey)) continue;
     seen.add(dedupeKey);
@@ -3773,7 +4491,11 @@ function buildCitationMetadata(chunks, selectedDocumentId) {
       relevance,
       document_id: selected,
       ...chunkId ? { chunk_id: chunkId } : {},
-      chunk_type: "full_content"
+      chunk_type: "full_content",
+      target_entity_model: [...targetEntityModel],
+      target_topics: [...targetTopics],
+      authority_decision: binding.authorityDecision.decision,
+      evidence_state: evidenceState
     });
   }
   if (citations.length === 0) return null;
@@ -3781,8 +4503,13 @@ function buildCitationMetadata(chunks, selectedDocumentId) {
     citations,
     citation_lineage: {
       selected_document_id: selected,
-      evidence_chunk_ids: citations.flatMap((citation) => citation.chunk_id ? [citation.chunk_id] : []),
-      evidence_count: citations.length
+      evidence_chunk_ids: citations.flatMap(
+        (citation) => citation.chunk_id ? [citation.chunk_id] : []
+      ),
+      evidence_count: citations.length,
+      current_target: { ...binding.currentTarget },
+      authority_decision: binding.authorityDecision.decision,
+      evidence_state: evidenceState
     }
   };
 }
@@ -3797,7 +4524,7 @@ var TRANSFORMS = /* @__PURE__ */ new Set([
 var COMPOSITE_TRANSFORM_RULES = [
   ["TRANSLATE", /(?:用|改用)(?:廣東話|广东话|繁體中文|繁体中文|簡體中文|简体中文|英文)|\b(?:in|into)\s+(?:english|chinese|cantonese|traditional chinese|simplified chinese)\b|translate(?: that| it)?/i],
   ["SUMMARIZE", /(?:總結|总结|概括|歸納|归纳)|summari[sz]e/i],
-  ["SIMPLIFY", /(?:簡單|简单)(?:一點|一点|啲|些|點|点)?|\b(?:simpler|shorter)\b|explain(?: it| that)? (?:more )?simply/i],
+  ["SIMPLIFY", /(?:簡單|简单)(?:一點|一点|啲|些|點|点)?|\b(?:simpler|short(?:en|er))\b|explain(?: it| that)? (?:more )?simply/i],
   ["REPHRASE", /(?:換句話|换句话|另一種講法|另一种说法|改寫|改写|重新講|重新说|rephrase|rewrite|say that another way|word it differently)/i]
 ];
 var CHINESE_COUNT = {
@@ -3819,7 +4546,43 @@ var CURRENT_REQUIREMENTS_SUMMARY_SCOPE = /(?:(?:按|根據|根据|基於|基于|
 function record(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
-function clean4(value, max = 4e3) {
+function stringList(value) {
+  return Array.isArray(value) ? value.filter((item) => typeof item === "string" && item.trim().length > 0) : [];
+}
+function readGroundingTarget(value) {
+  const target = record(value);
+  if (!target) return null;
+  return {
+    entity_ids: stringList(target.entity_ids),
+    topic_ids: stringList(target.topic_ids),
+    region: typeof target.region === "string" && target.region.trim() ? target.region : null,
+    explicit_entity: target.explicit_entity === true,
+    explicit_topic: target.explicit_topic === true,
+    target_changed: target.target_changed === true
+  };
+}
+function targetKey(value) {
+  return value.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+}
+function targetOverlap(expected, actual) {
+  const actualKeys = new Set(actual.map(targetKey).filter(Boolean));
+  return expected.some((value) => actualKeys.has(targetKey(value)));
+}
+function targetIntersection(expected, actual) {
+  const actualKeys = new Set(actual.map(targetKey).filter(Boolean));
+  return [...new Set(expected.filter((value) => actualKeys.has(targetKey(value))))];
+}
+function transformTargetCompatible(latest, prior) {
+  const requested = deriveCurrentGroundingTarget(latest);
+  const hasExplicitBoundary = requested.explicit_entity || requested.explicit_topic || Boolean(requested.region);
+  if (!hasExplicitBoundary) return true;
+  if (!prior) return false;
+  if (requested.explicit_entity && !targetOverlap(requested.entity_ids, prior.entity_ids)) return false;
+  if (requested.explicit_topic && !targetOverlap(requested.topic_ids, prior.topic_ids)) return false;
+  if (requested.region && requested.region !== prior.region) return false;
+  return true;
+}
+function clean5(value, max = 4e3) {
   return typeof value === "string" ? value.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max) : "";
 }
 function normalizedChunkIds(value) {
@@ -3843,13 +4606,13 @@ function selectBroadSummaryAnchor(latest, newestFirst, anchor, requestedSummaryC
   for (const row of newestFirst) {
     const role = String(row.role ?? "").toLowerCase();
     if (role !== "assistant" && role !== "ai") continue;
-    const content = clean4(row.content);
+    const content = clean5(row.content);
     if (!content || content === "__THINKING__") continue;
     const meta2 = record(row.metadata);
     const lineage = record(meta2?.citation_lineage);
-    const selected = clean4(lineage?.selected_document_id, 200);
+    const selected = clean5(lineage?.selected_document_id, 200);
     const ids = normalizedChunkIds(lineage?.evidence_chunk_ids);
-    const sourceMessageId = clean4(meta2?.source_message_id, 200);
+    const sourceMessageId = clean5(meta2?.source_message_id, 200);
     if (!sourceMessageId || !sameLineage(anchor.document_id, anchorChunks, selected, ids)) continue;
     if (supportedPointCount(content) < minimumPoints) continue;
     return {
@@ -3891,7 +4654,7 @@ function fixedCountContract(context) {
   ];
 }
 function requestsCurrentCustomerRequirementsSummary(latest) {
-  return CURRENT_REQUIREMENTS_SUMMARY_SCOPE.test(clean4(latest, 1600));
+  return CURRENT_REQUIREMENTS_SUMMARY_SCOPE.test(clean5(latest, 1600));
 }
 function requestsNewFactualFacet(latest, priorAnswer) {
   const facets = [
@@ -3925,33 +4688,44 @@ function resolvePriorGroundedTransform(latest, newestFirst) {
   if (!anchor.document_id || sourceChunks.length === 0) return null;
   for (const row of newestFirst) {
     const role = String(row.role ?? "").toLowerCase();
-    const content = clean4(row.content);
-    if (role !== "assistant" && role !== "ai" || content !== clean4(anchor.content)) continue;
+    const content = clean5(row.content);
+    if (role !== "assistant" && role !== "ai" || content !== clean5(anchor.content)) continue;
     const meta2 = record(row.metadata);
     const lineage = record(meta2?.citation_lineage);
-    const selected = clean4(lineage?.selected_document_id, 200);
+    const selected = clean5(lineage?.selected_document_id, 200);
     const lineageIds = normalizedChunkIds(lineage?.evidence_chunk_ids);
-    const sourceMessageId = clean4(meta2?.source_message_id, 200);
+    const sourceMessageId = clean5(meta2?.source_message_id, 200);
+    const groundingTarget = readGroundingTarget(lineage?.current_target);
     if (selected !== anchor.document_id || sourceMessageId !== anchor.source_message_id || lineageIds.length !== sourceChunks.length || lineageIds.some((id) => !sourceChunks.includes(id))) return null;
+    if (!transformTargetCompatible(latest, groundingTarget)) return null;
     if (!Array.isArray(meta2?.citations) || meta2.citations.length === 0) return null;
     const citations = [];
     for (const item of meta2.citations.slice(0, 3)) {
       const c = record(item);
       if (!c) return null;
-      const documentId = clean4(c.document_id, 200);
-      const chunkId = clean4(c.chunk_id, 200);
-      const chunkType = clean4(c.chunk_type, 40);
-      const label = clean4(c.label, 300) || "Knowledge Base source";
-      const sourceType = clean4(c.source_type, 80) || "unknown";
+      const documentId = clean5(c.document_id, 200);
+      const chunkId = clean5(c.chunk_id, 200);
+      const chunkType = clean5(c.chunk_type, 40);
+      const label = clean5(c.label, 300) || "Knowledge Base source";
+      const sourceType = clean5(c.source_type, 80) || "unknown";
       const relevance = c.relevance === "high" ? "high" : c.relevance === "medium" ? "medium" : null;
-      if (documentId !== selected || chunkType !== "full_content" || !relevance || chunkId && !lineageIds.includes(chunkId)) return null;
+      const persistedEntityTargets = stringList(c.target_entity_model);
+      const persistedTopicTargets = stringList(c.target_topics);
+      const labelTarget = deriveCurrentGroundingTarget(label);
+      const citationEntityTargets = labelTarget.entity_ids.length > 0 ? persistedEntityTargets.length > 0 ? targetIntersection(persistedEntityTargets, labelTarget.entity_ids) : labelTarget.entity_ids : persistedEntityTargets.length > 0 ? persistedEntityTargets : groundingTarget?.entity_ids ?? [];
+      const citationTopicTargets = labelTarget.topic_ids.length > 0 ? persistedTopicTargets.length > 0 ? targetIntersection(persistedTopicTargets, labelTarget.topic_ids) : labelTarget.topic_ids : persistedTopicTargets.length > 0 ? persistedTopicTargets : groundingTarget?.topic_ids ?? [];
+      if (documentId !== selected || chunkType !== "full_content" || !relevance || chunkId && !lineageIds.includes(chunkId) || groundingTarget?.explicit_entity === true && !targetOverlap(citationEntityTargets, groundingTarget.entity_ids) || groundingTarget?.explicit_topic === true && citationTopicTargets.length > 0 && !targetOverlap(citationTopicTargets, groundingTarget.topic_ids)) return null;
       citations.push({
         label,
         source_type: sourceType,
         relevance,
         document_id: documentId,
         ...chunkId ? { chunk_id: chunkId } : {},
-        chunk_type: "full_content"
+        chunk_type: "full_content",
+        target_entity_model: citationEntityTargets,
+        target_topics: citationTopicTargets,
+        authority_decision: typeof lineage?.authority_decision === "string" ? lineage.authority_decision : "PRIOR_GROUNDED_ANSWER",
+        evidence_state: typeof lineage?.evidence_state === "string" ? lineage.evidence_state : "current"
       });
     }
     if (citations.length === 0) return null;
@@ -3962,6 +4736,9 @@ function resolvePriorGroundedTransform(latest, newestFirst) {
       selected_document_id: selected,
       evidence_chunk_ids: lineageIds,
       prior_source_message_id: sourceMessageId,
+      ...groundingTarget ? { grounding_target: groundingTarget } : {},
+      ...typeof lineage?.authority_decision === "string" ? { authority_decision: lineage.authority_decision } : {},
+      ...typeof lineage?.evidence_state === "string" ? { evidence_state: lineage.evidence_state } : {},
       ...requestedSummaryCount ? { requested_summary_count: requestedSummaryCount } : {},
       citations
     };
@@ -4027,12 +4804,22 @@ function buildPriorGroundedTransformBlock(context) {
 function buildInheritedTransformCitationMetadata(context) {
   if (!context) return null;
   const operations = resolvedOperations(context);
+  const inheritedTarget = context.grounding_target ?? deriveCurrentGroundingTarget(context.prior_answer);
   return {
-    citations: context.citations.map((citation) => ({ ...citation })),
+    citations: context.citations.map((citation) => ({
+      ...citation,
+      target_entity_model: citation.target_entity_model ?? inheritedTarget.entity_ids,
+      target_topics: citation.target_topics ?? inheritedTarget.topic_ids,
+      authority_decision: citation.authority_decision ?? "PRIOR_GROUNDED_ANSWER",
+      evidence_state: citation.evidence_state ?? "current"
+    })),
     citation_lineage: {
       selected_document_id: context.selected_document_id,
       evidence_chunk_ids: [...context.evidence_chunk_ids],
-      evidence_count: context.evidence_chunk_ids.length
+      evidence_count: context.evidence_chunk_ids.length,
+      current_target: inheritedTarget,
+      authority_decision: context.authority_decision ?? "PRIOR_GROUNDED_ANSWER",
+      evidence_state: context.evidence_state ?? "current"
     },
     transform_lineage: {
       operation: context.operation,
@@ -4099,17 +4886,17 @@ var MODEL_VALUE = /(?:型號|型号|model(?: number)?)[\s:：#-]*([A-Za-z0-9][A-
 var ORDER_VALUE = /(?:訂單(?:編號|號碼|号码)|订单(?:编号|号码)|order(?: number| no\.?| id)|order\s*#)[\s:：#-]*([A-Za-z0-9][A-Za-z0-9._\/-]{2,80})/i;
 var NO_MODEL = /(?:沒有|没有|冇|不知道|唔知|未知|no|don['’]?t have|do not have).{0,10}(?:型號|型号|model)/i;
 var NO_ORDER = /(?:沒有|没有|冇|不知道|唔知|未知|no|don['’]?t have|do not have).{0,12}(?:訂單(?:編號|號碼|号码)?|订单(?:编号|号码)?|order(?: number| no\.?| id)?)/i;
-function clean5(v, max = 500) {
+function clean6(v, max = 500) {
   return typeof v === "string" ? v.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max) : "";
 }
 function meta(v) {
   return v && typeof v === "object" && !Array.isArray(v) ? v : null;
 }
 function buildWarmHandoffPackage(rows, reason = "human_handoff") {
-  const usable = rows.filter((r) => clean5(r.content) && clean5(r.content) !== "__THINKING__");
+  const usable = rows.filter((r) => clean6(r.content) && clean6(r.content) !== "__THINKING__");
   const visitors = usable.filter((r) => ["visitor", "customer", "user"].includes(String(r.role || "").toLowerCase()));
-  const transcript = visitors.map((r) => clean5(r.content)).join(" ");
-  const last = clean5(visitors.at(-1)?.content);
+  const transcript = visitors.map((r) => clean6(r.content)).join(" ");
+  const last = clean6(visitors.at(-1)?.content);
   const known = [];
   const region = transcript.match(REGION)?.[0];
   if (region) known.push({ label: "Region", value: region });
@@ -4127,8 +4914,8 @@ function buildWarmHandoffPackage(rows, reason = "human_handoff") {
   if (ORDER_SUPPORT.test(transcript) && !order && !unavailable.includes("order_reference")) missing.push("order_reference");
   const collectionAttempted = usable.some((r) => meta(r.metadata)?.response_route === "warm_handoff_data_collection");
   const assistants = usable.filter((r) => String(r.role || "").toLowerCase() === "assistant");
-  const actions = assistants.filter((r) => meta(r.metadata)?.response_route !== "warm_handoff_data_collection").slice(-3).map((r) => clean5(r.content)).filter(Boolean);
-  const goal = last || clean5(visitors.at(-2)?.content) || "Customer requested human support";
+  const actions = assistants.filter((r) => meta(r.metadata)?.response_route !== "warm_handoff_data_collection").slice(-3).map((r) => clean6(r.content)).filter(Boolean);
+  const goal = last || clean6(visitors.at(-2)?.content) || "Customer requested human support";
   return {
     reason,
     customer_goal: goal,
@@ -4137,7 +4924,7 @@ function buildWarmHandoffPackage(rows, reason = "human_handoff") {
     missing_facts: missing,
     actions_already_tried: actions,
     last_customer_request: last,
-    conversation_summary: visitors.slice(-5).map((r) => clean5(r.content)).join(" / ").slice(0, 1500),
+    conversation_summary: visitors.slice(-5).map((r) => clean6(r.content)).join(" / ").slice(0, 1500),
     collection_already_attempted: collectionAttempted,
     ready_for_handoff: missing.length === 0 || collectionAttempted
   };
@@ -4162,7 +4949,7 @@ var ANGER = /(嬲|生氣|生气|憤怒|愤怒|火大|離譜|离谱|垃圾|廢話
 var REPETITION_FRUSTRATION = /(又問|再問|問過|问过|講過|说过|重複|重复|already told|asked already|again\?|stop asking|same question)/i;
 var REFUSED = /(不想再提供|唔想再答|不要再問|不要再问|不會再提供|不会再提供|不提供|拒絕提供|拒绝提供|won't provide|will not provide|don't ask|do not ask|not giving)/i;
 var CLARIFICATION_ROUTES = /* @__PURE__ */ new Set(["warm_handoff_data_collection", "kb_no_match_clarification"]);
-function clean6(v) {
+function clean7(v) {
   return typeof v === "string" ? v.normalize("NFKC").trim() : "";
 }
 function obj(v) {
@@ -4171,10 +4958,10 @@ function obj(v) {
 function deriveHandoffDecisionInput(rows, latestMessage, requiredMissing, opts = {}) {
   const visitors = rows.filter((r) => ["visitor", "customer", "user"].includes(String(r.role ?? "").toLowerCase()));
   const humanCount = visitors.filter((r) => {
-    const text = clean6(r.content);
+    const text = clean7(r.content);
     return HUMAN_REQUEST.test(text) && !HUMAN_INFO_QUESTION.test(text);
   }).length;
-  const transcript = visitors.map((r) => clean6(r.content)).join(" ");
+  const transcript = visitors.map((r) => clean7(r.content)).join(" ");
   const priorClarifications = rows.filter((r) => {
     const m = obj(r.metadata);
     return !!m && (CLARIFICATION_ROUTES.has(String(m.response_route ?? "")) || m.escalation_action === "clarification");
@@ -4450,17 +5237,17 @@ function createEmptyConversationCommerceState() {
     metadata: {}
   };
 }
-function isRecord(value) {
+function isRecord2(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 function isConversationCommerceState(value) {
-  if (!isRecord(value) || value.version !== COMMERCE_STATE_VERSION) return false;
+  if (!isRecord2(value) || value.version !== COMMERCE_STATE_VERSION) return false;
   if (!Array.isArray(value.latest_corrections)) return false;
   if (!Array.isArray(value.unresolved_items)) return false;
-  if (!isRecord(value.customer_constraints)) return false;
+  if (!isRecord2(value.customer_constraints)) return false;
   if (!Array.isArray(value.entities) || !Array.isArray(value.quotes)) return false;
-  if (!isRecord(value.delivery) || !isRecord(value.installation) || !isRecord(value.conversion)) return false;
-  if (!isRecord(value.metadata)) return false;
+  if (!isRecord2(value.delivery) || !isRecord2(value.installation) || !isRecord2(value.conversion)) return false;
+  if (!isRecord2(value.metadata)) return false;
   return true;
 }
 
@@ -4470,11 +5257,11 @@ var MAX_UNRESOLVED = 100;
 function clone(value) {
   return structuredClone(value);
 }
-function clean7(value, max = 1200) {
+function clean8(value, max = 1200) {
   return typeof value === "string" ? value.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max) : "";
 }
 function uniq(values) {
-  return [...new Set(values.map((x) => clean7(x, 300)).filter(Boolean))];
+  return [...new Set(values.map((x) => clean8(x, 300)).filter(Boolean))];
 }
 function provenance(source_message_id, occurred_at) {
   return {
@@ -4739,7 +5526,7 @@ function explicitDeliveryPatch(text) {
   return Object.keys(patch).length ? patch : null;
 }
 function deriveCommerceEventsFromCustomerTurn(input) {
-  const text = clean7(input.text);
+  const text = clean8(input.text);
   if (!text || !input.source_message_id) return [];
   const p = provenance(input.source_message_id, input.occurred_at);
   const hints = input.entity_hints ?? [];
@@ -4782,143 +5569,6 @@ function deriveCommerceEventsFromCustomerTurn(input) {
   const conversion = detectFunnel(text);
   if (conversion) events.push({ type: "SET_CONVERSION", patch: conversion });
   return events;
-}
-
-// supabase/functions/_shared/commerce-state-authority.ts
-function clean8(value, max = 1200) {
-  return typeof value === "string" ? value.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max) : "";
-}
-function isRecord2(value) {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-function isKnownValue(value) {
-  return value !== void 0 && value !== null && value !== "";
-}
-function getCommerceStatePath(state, path) {
-  const parts = clean8(path, 300).split(".").filter(Boolean);
-  if (!parts.length) return void 0;
-  let current = state;
-  for (const part of parts) {
-    if (Array.isArray(current)) {
-      const index = Number(part);
-      if (!Number.isInteger(index) || index < 0 || index >= current.length) return void 0;
-      current = current[index];
-      continue;
-    }
-    if (!isRecord2(current) || !(part in current)) return void 0;
-    current = current[part];
-  }
-  return current;
-}
-function calculateCommerceTerms(terms, currency) {
-  if (!terms.length) return null;
-  let total = 0;
-  const expressionParts = [];
-  for (const term of terms) {
-    if (!Number.isFinite(term.value)) return null;
-    const multiplier = term.multiplier ?? 1;
-    if (!Number.isFinite(multiplier)) return null;
-    total += term.value * multiplier;
-    expressionParts.push(`${term.label}:${term.value}\xD7${multiplier}`);
-  }
-  return {
-    expression: expressionParts.join(" + "),
-    result: Math.round((total + Number.EPSILON) * 100) / 100,
-    currency: currency ?? null
-  };
-}
-function questionLooksLikeCurrentBusinessFact(question) {
-  return /(?:而家|現在|现在|目前|最新|current|latest|今日|today).{0,30}(?:價|价|price|stock|庫存|库存|有貨|有货|available|政策|policy|收費|收费|fee|delivery|送貨|送货|保養|保修|warranty)/i.test(question);
-}
-function questionLooksLikeCustomerState(question) {
-  return /(?:我(?:而家|現在|现在|目前|最後|最后)?|my\s+(?:current|latest|final)?).{0,45}(?:幾多|多少|數量|数量|要咩|要什麼|要什么|地址|電話|电话|收貨人|收货人|日期|時間|时间|要求|需求|限制|狀態|状态|order|quote|quotation|quantity|address|phone|recipient|date|requirements?|constraints?|status)|(?:幫我|帮我|please).{0,30}(?:總結|总结|summari[sz]e).{0,30}(?:我|my)/i.test(question);
-}
-function questionLooksLikeCalculation(question) {
-  return /(?:加埋|合共|總共幾錢|总共多少钱|一共多少|total|how much.*(?:total|altogether)|calculate|計下|算下|計算|计算)/i.test(question);
-}
-function questionExplicitlyAsksQuantity(question) {
-  if (/(?:價|价|price|amount|金額|金额|幾錢|几钱|多少錢|多少钱|fee|收費|收费)/i.test(question)) return false;
-  return /(?:數量|数量|quantity|how many|幾多\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚)|多少\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚))/i.test(question);
-}
-function inferKnownCustomerStatePath(question, state) {
-  const candidates = [
-    [/(?:送貨地址|送货地址|地址|delivery address|address)/i, "delivery.address"],
-    [/(?:收貨人電話|收货人电话|recipient phone|contact phone)/i, "delivery.recipient_phone"],
-    [/(?:收貨人|收货人|recipient)/i, "delivery.recipient_name"],
-    [/(?:送貨日期|送货日期|送貨時間|送货时间|delivery date|delivery time|preferred date)/i, "delivery.preferred_date"],
-    [/(?:order status|訂單狀態|订单状态|落單狀態|下单状态)/i, "conversion.order_status"],
-    [/(?:quote status|quotation status|報價狀態|报价状态)/i, "conversion.quotation_status"],
-    [/(?:payment status|付款狀態|付款状态)/i, "conversion.payment_status"]
-  ];
-  for (const [pattern, path] of candidates) {
-    if (!pattern.test(question)) continue;
-    const value = getCommerceStatePath(state, path);
-    if (isKnownValue(value)) return { path, value };
-  }
-  if (questionExplicitlyAsksQuantity(question)) {
-    const active = state.entities.filter((entity) => entity.status !== "cancelled" && entity.status !== "deferred");
-    if (active.length === 1) {
-      return { path: `entities.${state.entities.indexOf(active[0])}.quantity`, value: active[0].quantity };
-    }
-  }
-  return null;
-}
-function resolveCommerceAnswerAuthority(input) {
-  const question = clean8(input.question);
-  const explicitStatePath = clean8(input.requested_state_path ?? "", 300);
-  if (explicitStatePath) {
-    const known = getCommerceStatePath(input.state, explicitStatePath);
-    if (isKnownValue(known)) {
-      return {
-        authority: "CONVERSATION_STATE",
-        reason: "requested_customer_state_is_known",
-        known_value: known,
-        state_path: explicitStatePath
-      };
-    }
-  }
-  const inferred = inferKnownCustomerStatePath(question, input.state);
-  if (inferred) {
-    return {
-      authority: "CONVERSATION_STATE",
-      reason: "customer_state_inferred_and_known",
-      known_value: inferred.value,
-      state_path: inferred.path
-    };
-  }
-  if ((questionLooksLikeCalculation(question) || (input.calculation_terms?.length ?? 0) > 0) && input.calculation_terms?.length) {
-    const calculation = calculateCommerceTerms(input.calculation_terms, input.calculation_currency);
-    if (calculation) {
-      return {
-        authority: "DETERMINISTIC_CALCULATION",
-        reason: "calculation_fully_supported_by_known_terms",
-        calculation
-      };
-    }
-  }
-  if (input.requires_professional_site_check || input.unsafe_to_remote_confirm) {
-    return {
-      authority: "SAFE_PROFESSIONAL_CONFIRMATION",
-      reason: "remote_confirmation_not_safe_or_not_authoritative"
-    };
-  }
-  if (input.requires_current_business_fact || input.requires_current_price_or_stock || input.requires_policy_or_terms || questionLooksLikeCurrentBusinessFact(question)) {
-    return {
-      authority: "CURRENT_KB_REQUIRED",
-      reason: "current_business_fact_requires_authoritative_evidence"
-    };
-  }
-  if (questionLooksLikeCustomerState(question)) {
-    return {
-      authority: "INSUFFICIENT_INFORMATION",
-      reason: "customer_state_question_but_requested_fact_not_resolved",
-      state_path: explicitStatePath || null
-    };
-  }
-  return {
-    authority: "INSUFFICIENT_INFORMATION",
-    reason: "no_authoritative_source_selected"
-  };
 }
 
 // supabase/functions/_shared/commerce-capability-runtime.ts
@@ -5798,16 +6448,16 @@ function extractCommerceCalculationTerms(texts, state, options) {
       amounts.push(quote.amount);
     }
   }
-  const unique = [];
+  const unique2 = [];
   const seen = /* @__PURE__ */ new Map();
   for (const amount of amounts) {
     const count = seen.get(amount) ?? 0;
     if (count < 2) {
       seen.set(amount, count + 1);
-      unique.push(amount);
+      unique2.push(amount);
     }
   }
-  if (!unique.length) return { terms: [], currency: null };
+  if (!unique2.length) return { terms: [], currency: null };
   const currentTurnMultiplier = parseCount(texts[0] ?? "");
   const activeEntities2 = state.entities.filter(
     (entity) => entity.status !== "cancelled" && entity.status !== "deferred"
@@ -5816,7 +6466,7 @@ function extractCommerceCalculationTerms(texts, state, options) {
   const multiplier = currentTurnMultiplier ?? stateMultiplier;
   const currency = state.quotes.find((q) => q.currency)?.currency ?? "HKD";
   return {
-    terms: unique.map((amount, index) => ({ label: `customer_term_${index + 1}`, value: amount, multiplier })),
+    terms: unique2.map((amount, index) => ({ label: `customer_term_${index + 1}`, value: amount, multiplier })),
     currency
   };
 }
@@ -7261,6 +7911,26 @@ var GROUNDING_RECOVERY_WORDING = {
   "zh-CN": "\u6211\u60F3\u518D\u786E\u8BA4\u4E00\u4E0B\u8D44\u6599\uFF0C\u907F\u514D\u7B54\u9519\u3002\u4F60\u6700\u60F3\u5148\u786E\u8BA4\u54EA\u4E00\u70B9\uFF1F",
   en: "I want to verify the information before answering so I don\u2019t give you something inaccurate. Which point would you like me to confirm first?"
 };
+var C1_AUTHORITY_CONFLICT_WORDING = {
+  "zh-TW": "\u6211\u627E\u5230\u5169\u9805\u540C\u7B49\u6709\u6548\u4F46\u5167\u5BB9\u4E0D\u4E00\u81F4\u7684\u73FE\u884C\u8CC7\u6599\uFF0C\u56E0\u6B64\u4E0D\u80FD\u5B89\u5168\u5730\u66FF\u4F60\u5224\u5B9A\u3002\u8ACB\u544A\u8A34\u6211\u4F60\u60F3\u6838\u5BE6\u7684\u5177\u9AD4\u9805\u76EE\u3001\u8CC7\u6599\u4F86\u6E90\u6216\u65E5\u671F\uFF0C\u6211\u6703\u518D\u7CBE\u78BA\u78BA\u8A8D\u3002",
+  "zh-CN": "\u6211\u627E\u5230\u4E24\u9879\u540C\u7B49\u6709\u6548\u4F46\u5185\u5BB9\u4E0D\u4E00\u81F4\u7684\u73B0\u884C\u8D44\u6599\uFF0C\u56E0\u6B64\u4E0D\u80FD\u5B89\u5168\u5730\u66FF\u4F60\u5224\u5B9A\u3002\u8BF7\u544A\u8BC9\u6211\u4F60\u60F3\u6838\u5B9E\u7684\u5177\u4F53\u9879\u76EE\u3001\u8D44\u6599\u6765\u6E90\u6216\u65E5\u671F\uFF0C\u6211\u4F1A\u518D\u7CBE\u786E\u786E\u8BA4\u3002",
+  en: "I found two equally authoritative current sources that disagree, so I cannot safely choose between them. Please specify the exact item, source, or date you want verified."
+};
+function referenceAuthorityMetadata(decision2) {
+  return {
+    contract: "AI-ABC-C1",
+    decision: decision2.decision,
+    reason: decision2.reason,
+    selected_source_id: decision2.selected_source_id,
+    selected_authority_class: decision2.selected_authority_class,
+    conflict_source_ids: decision2.conflict_source_ids,
+    rejected: decision2.rejected.map((item) => ({
+      source_id: item.source_id,
+      reason: item.reason
+    })),
+    provenance: decision2.provenance
+  };
+}
 function isHandoffIntent(text) {
   return classifyHandoffIntent(text).explicit_request;
 }
@@ -10321,6 +10991,8 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
   } : void 0;
   const _pr5P1Signals = validateP1PredictionSignals(_pr5P1Input);
   let finalPromptChunks = [];
+  let _c1AuthorityDecision = null;
+  let _c1CurrentTarget = null;
   let _kbDone = false;
   let ragResult = null;
   if (flags.ENABLE_KB && !_g1SkipKB) {
@@ -10462,14 +11134,45 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
     }
     const isHighRisk = _pr5LocalRisk?.level === "high";
     const minScore = isHighRisk ? 0.78 : 0.45;
+    const _semanticEntityIds = (_a3SemanticFrame?.entities ?? []).flatMap((entity) => [
+      entity.entity_ref,
+      entity.name,
+      entity.sku,
+      entity.model,
+      entity.category_hint
+    ]).filter(
+      (value) => typeof value === "string" && value.trim().length > 0
+    );
+    const _semanticTopicIds = [
+      _a3SemanticFrame?.topic,
+      ..._a3SemanticFrame?.requested_facts ?? []
+    ].filter(
+      (value) => typeof value === "string" && value.trim().length > 0
+    );
+    const _c1TargetChanged = _canonicalTurn.topic_action === "SWITCH" || _canonicalTurn.topic_action === "CORRECT" || _a3SemanticFrame?.customer_correction === true;
+    _c1CurrentTarget = deriveCurrentGroundingTarget(
+      _h1LastMsg,
+      userQuery,
+      _semanticEntityIds,
+      _semanticTopicIds,
+      _c1TargetChanged
+    );
     const _groundingSelection = selectCanonicalGrounding(
       ragResult.documents ?? [],
       {
         minScore,
         requirePublished: true,
-        requestText: userQuery
+        requestText: userQuery,
+        currentTurnText: _h1LastMsg,
+        expectedTenantId: _kbTenantResult.scope.singaporeTenantId,
+        expectedEntityIds: _c1CurrentTarget.entity_ids,
+        expectedTopicIds: _c1CurrentTarget.topic_ids,
+        expectedRegion: _c1CurrentTarget.region,
+        requiresCurrentKb: true,
+        targetChanged: _c1CurrentTarget.target_changed
       }
     );
+    _c1AuthorityDecision = _groundingSelection.ok ? _groundingSelection.authority_decision : null;
     const _scoreUsableChunks = _groundingSelection.ok ? _groundingSelection.chunks : [];
     const _explicitJurisdiction = extractExplicitJurisdictionConstraint(
       _h1LastMsg
@@ -10489,6 +11192,7 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
       max_score_used: usableChunks.length > 0 ? Math.max(...usableChunks.map((c) => c.score ?? 0)) : null,
       high_risk_topic: isHighRisk,
       min_threshold: minScore,
+      reference_authority: _c1AuthorityDecision ? referenceAuthorityMetadata(_c1AuthorityDecision) : null,
       citations: usableChunks.map((c) => ({
         doc_id: c.doc_id,
         chunk_id: c.chunk_id,
@@ -10499,7 +11203,7 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
     };
     ragResult.trace_metadata = traceMetadata;
     if (usableChunks.length === 0) {
-      _pr5RagMatchState = "partial_match";
+      _pr5RagMatchState = _c1AuthorityDecision?.decision === "CONFLICT_UNRESOLVED" ? "conflict" : "partial_match";
       const requiredResponse = await evaluateAndPersistRequiredRulesLive(
         supabaseAdmin,
         {
@@ -10536,6 +11240,60 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
           _h1LastMsg
         );
         if (r1Response) return r1Response;
+      }
+      if (_c1AuthorityDecision?.decision === "CONFLICT_UNRESOLVED") {
+        const conflictReply = C1_AUTHORITY_CONFLICT_WORDING[_visitorLang] ?? C1_AUTHORITY_CONFLICT_WORDING.en;
+        const committed2 = await commitAiReplyWithControlGate(
+          supabaseAdmin,
+          conversation_id,
+          source_message_id,
+          conflictReply,
+          {
+            response_route: "c1_authority_conflict_clarification",
+            handoff_required: false,
+            factual_grounding_required: true,
+            grounding_state: "authority_conflict_unresolved",
+            reference_authority: referenceAuthorityMetadata(
+              _c1AuthorityDecision
+            ),
+            current_grounding_target: _c1CurrentTarget
+          }
+        );
+        await cleanupThinking(
+          supabaseAdmin,
+          conversation_id,
+          source_message_id
+        );
+        if (!committed2.ok) {
+          if (["human_control", "resolved", "superseded_source"].includes(
+            committed2.result
+          )) {
+            return new Response(
+              JSON.stringify({ success: true, skipped: committed2.result }),
+              {
+                headers: { ...corsHeaders, "Content-Type": "application/json" }
+              }
+            );
+          }
+          return new Response(
+            JSON.stringify({
+              success: false,
+              error: `c1_authority_conflict_commit_${committed2.result}`
+            }),
+            {
+              status: 409,
+              headers: { ...corsHeaders, "Content-Type": "application/json" }
+            }
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            success: true,
+            response_route: "c1_authority_conflict_clarification",
+            handoff_required: false
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
       }
       const clarification = await attemptFirstNoMatchClarification(
         supabaseAdmin,
@@ -10949,10 +11707,18 @@ async function orchestrationGenerateReply(conversation_id, flags, source_message
     );
   }
   const aiReplyContent = llm.text;
-  const citationMeta = _priorGroundedTransform ? buildInheritedTransformCitationMetadata(_priorGroundedTransform) : finalPromptChunks.length > 0 ? buildCitationMetadata(
+  const citationMetaBase = _priorGroundedTransform ? buildInheritedTransformCitationMetadata(_priorGroundedTransform) : finalPromptChunks.length > 0 ? buildCitationMetadata(
     finalPromptChunks,
-    ragResult?.llm_context?.selected_document_id ?? null
+    ragResult?.llm_context?.selected_document_id ?? null,
+    _c1AuthorityDecision && _c1CurrentTarget ? {
+      authorityDecision: _c1AuthorityDecision,
+      currentTarget: _c1CurrentTarget
+    } : void 0
   ) : null;
+  const citationMeta = citationMetaBase && _c1AuthorityDecision ? {
+    ...citationMetaBase,
+    reference_authority: referenceAuthorityMetadata(_c1AuthorityDecision)
+  } : citationMetaBase;
   if (_priorGroundedTransform && !citationMeta) {
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return new Response(
@@ -11052,6 +11818,9 @@ function buildRagBlock(ragResult) {
     const sections = [
       "Knowledge Base grounding rules:",
       "- Answer ONLY from the evidence below.",
+      "- The server has already selected this evidence using tenant, entity, region, publication, currentness, source precedence, and version authority.",
+      "- Similarity indicates relevance only; it never overrides authority or currentness.",
+      "- Never use rejected, unselected, historical, superseded, or cancelled material as a current fact.",
       "- The RAG summary is orientation only; never use it alone for exact facts.",
       "- Prices, dates, dimensions, policy conditions, procedures, limits, and other exact facts MUST be supported by Full Content Evidence.",
       "- If Full Content Evidence does not support an exact claim, state that the knowledge base does not provide enough evidence and offer human assistance.",
