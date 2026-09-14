@@ -6,7 +6,13 @@
  * It never accepts a browser-supplied company id.
  */
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2.45.0";
+import { getSupabaseAdminKey } from "./supabase-admin-key.ts";
 import { callModel, parseJsonObject, redact, toCeErrorCode } from "./llm-router.ts";
+import {
+  ceEvaluatorProviderPolicy,
+  ceSignalsProviderPolicy,
+  validateCeProviderResponse,
+} from "./ce-provider-response.ts";
 import { fetchGrounding, type GroundingBundle } from "./ce-grounding.ts";
 import {
   buildCanonicalBundle,
@@ -24,7 +30,6 @@ import {
   EVALUATOR_SYSTEM_PROMPT,
   SIGNALS_SYSTEM_PROMPT,
   EVALUATOR_RESPONSE_SCHEMA,
-  validateEvaluatorOutput,
   validateSignalsOutput,
   deriveDiscrepancies,
   type CeDimension,
@@ -33,9 +38,15 @@ import {
   type SnapshotMessage,
   type TranscriptEntry,
 } from "./ce-contract.ts";
+import {
+  alignB3EvaluatorOutput,
+  bindConversionRealityToBundle,
+  loadCeConversionReality,
+  revalidateCeConversionReality,
+  type CeConversionReality,
+} from "./ce-conversion-reality.ts";
 
 const MAX_MESSAGES = 400;
-const EVALUATOR_MAX_TOKENS = 2600;
 const SYSTEM_ACTOR = "00000000-0000-0000-0000-000000000001";
 export const AUTOMATION_SOURCE_DEPLOYMENT = "nexusai-pr29-task2-auto-eval-1.0.0";
 
@@ -55,11 +66,11 @@ export const LOCAL_EVALUATOR_SYSTEM_PROMPT: Record<CeDimension, string> = {
     "Evaluate TONE: professionalism, empathy, clarity and register relative to the customer's state in the transcript. " +
     "Return ONLY JSON with score, justification, grounding_refs, evidence, recommended_correction. grounding_refs MUST be an empty array.",
   sales:
-    "Evaluate SALES EFFECTIVENESS from the conversation alone: needs discovery, relevance of options, useful next action, and no unnecessary pressure. " +
-    "For a pure support exchange, score neutral-to-good handling rather than inventing a sales opportunity. " +
+    "Evaluate SALES EFFECTIVENESS against the latest customer correction and current conversation reality: reuse known needs, preserve the current conversion stage, ask only the minimum necessary question, and never reward pressure or unsupported claims. " +
+    "Do not penalize a concise support answer or absence of upsell when that is the correct next step. Missing commercial data is unknown, not negative evidence. " +
     "Return ONLY JSON with score, justification, grounding_refs, evidence, recommended_correction. grounding_refs MUST be an empty array.",
   context:
-    "Evaluate CONTEXT RETENTION using only the transcript: whether the AI remembers prior facts, avoids re-asking answered questions, and responds to the latest customer need. " +
+    "Evaluate CONTEXT RETENTION using the latest valid customer correction: known facts must be retained; superseded and cancelled values suppressed; products, entities and regions isolated; quotation, order and action states kept distinct; and the current topic must outrank stale history. " +
     "Return ONLY JSON with score, justification, grounding_refs, evidence, recommended_correction. grounding_refs MUST be an empty array.",
   hallucination_risk:
     "Evaluate HALLUCINATION RISK where higher is worse. A specific claim not supported by the transcript or a verified human correction increases risk. " +
@@ -71,7 +82,10 @@ function stable(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
   if (value && typeof value === "object") {
     const o = value as Record<string, unknown>;
-    return `{${Object.keys(o).sort().map((k) => `${JSON.stringify(k)}:${stable(o[k])}`).join(",")}}`;
+    return `{${Object.keys(o)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${stable(o[k])}`)
+      .join(",")}}`;
   }
   return JSON.stringify(value);
 }
@@ -132,27 +146,40 @@ async function buildLocalBundle(args: {
     let included = true;
     let drop: string | null = null;
     if (i >= MAX_TRANSCRIPT_MESSAGES) {
-      included = false; drop = "message_limit"; body = "";
+      included = false;
+      drop = "message_limit";
+      body = "";
     } else {
       if (body.length > MAX_MESSAGE_CHARS) {
-        body = body.slice(0, MAX_MESSAGE_CHARS); drop = "message_truncated";
+        body = body.slice(0, MAX_MESSAGE_CHARS);
+        drop = "message_truncated";
       }
       if (used + body.length > MAX_TRANSCRIPT_CHARS) {
         const room = MAX_TRANSCRIPT_CHARS - used;
-        if (room <= 0) { included = false; drop = "transcript_limit"; body = ""; }
-        else { body = body.slice(0, room); drop = "transcript_truncated"; }
+        if (room <= 0) {
+          included = false;
+          drop = "transcript_limit";
+          body = "";
+        } else {
+          body = body.slice(0, room);
+          drop = "transcript_truncated";
+        }
       }
       if (included) used += body.length;
     }
     entries.push({
-      id: m.id, role, raw_role: m.role, created_at: m.created_at,
-      content: body, content_sha256: await sha256Hex(body),
-      original_chars: original, used_chars: body.length, included,
+      id: m.id,
+      role,
+      raw_role: m.role,
+      created_at: m.created_at,
+      content: body,
+      content_sha256: await sha256Hex(body),
+      original_chars: original,
+      used_chars: body.length,
+      included,
       drop_reason: drop,
       verified_human:
-        role === "human_agent" &&
-        m.sender_id !== null &&
-        m.sender_identity_verified_at !== null,
+        role === "human_agent" && m.sender_id !== null && m.sender_identity_verified_at !== null,
     });
   }
 
@@ -162,9 +189,7 @@ async function buildLocalBundle(args: {
   if (!kept.some((e) => e.role === "customer") || !evaluatedAi) {
     throw new Error("CONVERSATION_NOT_EVALUABLE");
   }
-  const humanAfter = kept.find(
-    (e) => e.verified_human && isStrictlyAfterMessage(e, evaluatedAi),
-  );
+  const humanAfter = kept.find((e) => e.verified_human && isStrictlyAfterMessage(e, evaluatedAi));
 
   const lines = [
     `CE-BUNDLE/${args.contractVersion}`,
@@ -183,17 +208,26 @@ async function buildLocalBundle(args: {
     `message_id=${evaluatedAi.id}`,
     `created_at=${evaluatedAi.created_at}`,
     `content_sha256=${evaluatedAi.content_sha256}`,
-    "content:", evaluatedAi.content,
+    "content:",
+    evaluatedAi.content,
     "## verified_human_response",
     `message_id=${humanAfter?.id ?? ""}`,
     `created_at=${humanAfter?.created_at ?? ""}`,
     `content_sha256=${humanAfter?.content_sha256 ?? ""}`,
-    "content:", humanAfter?.content ?? "",
+    "content:",
+    humanAfter?.content ?? "",
     "## transcript",
     `message_count=${kept.length}`,
   ];
   for (const e of kept) {
-    lines.push(`#${e.id}`, `role=${e.role}`, `created_at=${e.created_at}`, "content:", e.content, "--");
+    lines.push(
+      `#${e.id}`,
+      `role=${e.role}`,
+      `created_at=${e.created_at}`,
+      "content:",
+      e.content,
+      "--",
+    );
   }
   lines.push(
     "## evaluation_evidence",
@@ -215,11 +249,13 @@ async function buildLocalBundle(args: {
       created_at: evaluatedAi.created_at,
       content_sha256: evaluatedAi.content_sha256,
     },
-    verified_human_response: humanAfter ? {
-      id: humanAfter.id,
-      created_at: humanAfter.created_at,
-      content_sha256: humanAfter.content_sha256,
-    } : null,
+    verified_human_response: humanAfter
+      ? {
+          id: humanAfter.id,
+          created_at: humanAfter.created_at,
+          content_sha256: humanAfter.content_sha256,
+        }
+      : null,
     truncation: {
       messages_returned: entries.length,
       messages_included: kept.length,
@@ -243,19 +279,16 @@ async function runEvaluator(
     purpose: "evaluation",
     system: local ? LOCAL_EVALUATOR_SYSTEM_PROMPT[dimension] : EVALUATOR_SYSTEM_PROMPT[dimension],
     user: bundle,
-    maxTokens: EVALUATOR_MAX_TOKENS,
+    ...ceEvaluatorProviderPolicy(),
     operationId: `${operationId}:${dimension}`,
     companyId,
     conversationId,
     tag: `ce:auto:${dimension}`,
-    responseFormat: "json",
-    responseSchema: EVALUATOR_RESPONSE_SCHEMA,
   });
   if (!res.ok) return { ok: false as const, code: toCeErrorCode(res.code) };
-  const parsed = parseJsonObject(res.text);
-  const out = validateEvaluatorOutput(parsed, knownChunkIds);
-  if (!out) return { ok: false as const, code: "CE_PROVIDER_INVALID_OUTPUT" };
-  return { ok: true as const, ...out, model: res.model, raw: parsed! };
+  const validated = validateCeProviderResponse(res.text, knownChunkIds);
+  if (!validated.ok) return { ok: false as const, code: "CE_PROVIDER_INVALID_OUTPUT" };
+  return { ok: true as const, ...validated.value, model: res.model, raw: validated.raw };
 }
 
 async function runSignals(
@@ -269,12 +302,11 @@ async function runSignals(
     purpose: "evaluation",
     system: SIGNALS_SYSTEM_PROMPT,
     user: bundle,
-    maxTokens: EVALUATOR_MAX_TOKENS,
+    ...ceSignalsProviderPolicy(),
     operationId: `${operationId}:signals`,
     companyId,
     conversationId,
     tag: "ce:auto:signals",
-    responseFormat: "json",
   });
   if (!res.ok) return null;
   return validateSignalsOutput(parseJsonObject(res.text), transcript);
@@ -282,15 +314,25 @@ async function runSignals(
 
 async function failAttempt(admin: Db, local: boolean, attemptId: string, code: string) {
   if (local) {
-    await admin.rpc("fail_local_evaluation_v1", {
-      p_attempt_id: attemptId,
-      p_error: code,
-    }).then(() => undefined, () => undefined);
+    await admin
+      .rpc("fail_local_evaluation_v1", {
+        p_attempt_id: attemptId,
+        p_error: code,
+      })
+      .then(
+        () => undefined,
+        () => undefined,
+      );
   } else {
-    await admin.rpc("fail_evaluation", {
-      p_attempt_id: attemptId,
-      p_error: code,
-    }).then(() => undefined, () => undefined);
+    await admin
+      .rpc("fail_evaluation", {
+        p_attempt_id: attemptId,
+        p_error: code,
+      })
+      .then(
+        () => undefined,
+        () => undefined,
+      );
   }
 }
 
@@ -322,14 +364,15 @@ export async function processEvaluationJob(
 ): Promise<{ ok: boolean; code?: string; evaluationId?: string; freshness?: string }> {
   const operationId = `auto:${job.id}:${crypto.randomUUID()}`;
   const contractVersion = Deno.env.get("CE_CONTRACT_VERSION") ?? "";
-  const sourceDeployment =
-    Deno.env.get("CE_SOURCE_DEPLOYMENT") ?? AUTOMATION_SOURCE_DEPLOYMENT;
+  const sourceDeployment = Deno.env.get("CE_SOURCE_DEPLOYMENT") ?? AUTOMATION_SOURCE_DEPLOYMENT;
   const model = Deno.env.get("LLM_MODEL_EVALUATION") ?? "";
 
   try {
     const { data: conv, error: convErr } = await admin
       .from("conversations")
-      .select("id, company_id, status, priority, channel_config_id, created_at, resolved_at")
+      .select(
+        "id, company_id, status, priority, channel_config_id, created_at, resolved_at, assigned_agent_id",
+      )
       .eq("id", job.conversation_id)
       .maybeSingle();
     if (convErr || !conv) throw new Error("conversation_lookup_failed");
@@ -344,14 +387,21 @@ export async function processEvaluationJob(
       channelCompany = ch?.company_id ? String(ch.company_id) : null;
     }
     const companyId = conv.company_id ? String(conv.company_id) : channelCompany;
-    if (companyId && channelCompany && conv.company_id && String(conv.company_id) !== channelCompany) {
+    if (
+      companyId &&
+      channelCompany &&
+      conv.company_id &&
+      String(conv.company_id) !== channelCompany
+    ) {
       throw new Error("tenant_identity_conflict");
     }
     if ((job.company_id ?? null) !== (companyId ?? null)) throw new Error("tenant_job_mismatch");
 
     const { data: messages, error: msgErr } = await admin
       .from("messages")
-      .select("id, role, content, created_at, is_recalled, sender_id, sender_identity_verified_at")
+      .select(
+        "id, role, content, created_at, is_recalled, sender_id, sender_identity_verified_at, metadata",
+      )
       .eq("conversation_id", job.conversation_id)
       .order("created_at", { ascending: true })
       .order("id", { ascending: true })
@@ -364,7 +414,9 @@ export async function processEvaluationJob(
     let kbSnapshotId = "conversation-only";
     let policySnapshotId = "conversation-only";
     let groundingManifest: Record<string, unknown> = { mode: "conversation_only" };
-    let local = companyId === null;
+    const local = companyId === null;
+    let conversionReality: CeConversionReality | null = null;
+    let evaluatedAssistantMetadata: Record<string, unknown> | null = null;
 
     if (local) {
       bundle = await buildLocalBundle({
@@ -383,9 +435,11 @@ export async function processEvaluationJob(
         .maybeSingle();
       if (companyErr || !company || !company.is_active) throw new Error("company_unavailable");
 
-      const lastCustomer = [...(messages as SnapshotMessage[])].reverse().find((m) =>
-        !m.is_recalled && ["visitor","customer","user"].includes(m.role.toLowerCase())
-      );
+      const lastCustomer = [...(messages as SnapshotMessage[])]
+        .reverse()
+        .find(
+          (m) => !m.is_recalled && ["visitor", "customer", "user"].includes(m.role.toLowerCase()),
+        );
       const grounding = await fetchGrounding({
         conversationId: job.conversation_id,
         messageId: lastCustomer?.id,
@@ -410,6 +464,26 @@ export async function processEvaluationJob(
         grounding: g,
         contractVersion,
       });
+      const evaluatedAssistant = (messages as SnapshotMessage[]).find(
+        (message) => message.id === bundle.evaluated_ai_reply?.id,
+      );
+      const reality = await loadCeConversionReality(
+        admin as unknown as Parameters<typeof loadCeConversionReality>[0],
+        {
+          conversation_id: job.conversation_id,
+          company_id: canonicalCompanyId,
+          conversation_status: String(conv.status ?? ""),
+          assigned_agent_id: conv.assigned_agent_id ? String(conv.assigned_agent_id) : null,
+          evaluated_assistant: {
+            id: bundle.evaluated_ai_reply?.id ?? "",
+            metadata: evaluatedAssistant?.metadata ?? null,
+          },
+        },
+      );
+      if (!reality.ok) throw new Error(reality.code);
+      conversionReality = reality.reality;
+      evaluatedAssistantMetadata = evaluatedAssistant?.metadata ?? null;
+      bundle = await bindConversionRealityToBundle(bundle, conversionReality);
       kbSnapshotId = g.kb_snapshot_id;
       policySnapshotId = g.policy_snapshot_id;
       groundingManifest = g.manifest as unknown as Record<string, unknown>;
@@ -445,6 +519,13 @@ export async function processEvaluationJob(
     const initResult = String(initData.result ?? "");
     if (initResult === "already_evaluated") {
       const evaluationId = String(initData.evaluation_id ?? "");
+      if (conversionReality) {
+        const current = await revalidateCeConversionReality(
+          admin as unknown as Parameters<typeof revalidateCeConversionReality>[0],
+          conversionReality,
+        );
+        if (!current.ok) throw new Error(current.code);
+      }
       const { data: fresh } = await admin.rpc("ce_finalize_evaluation_freshness_v1", {
         p_conversation_id: job.conversation_id,
         p_evaluation_id: evaluationId,
@@ -455,7 +536,11 @@ export async function processEvaluationJob(
         p_success_at: new Date().toISOString(),
       });
       await admin.rpc("ce_complete_job_v1", { p_job_id: job.id });
-      return { ok: true, evaluationId, freshness: String((fresh as any)?.result ?? "current") };
+      return {
+        ok: true,
+        evaluationId,
+        freshness: String((fresh as Record<string, unknown> | null)?.result ?? "current"),
+      };
     }
     if (initResult === "already_in_progress") throw new Error("already_in_progress");
     if (initResult !== "initiated") throw new Error(initResult || "initiate_rejected");
@@ -464,9 +549,14 @@ export async function processEvaluationJob(
     const settled = await Promise.all(
       CE_DIMENSIONS.map((d) =>
         runEvaluator(
-          d, bundle.text, knownChunkIds, operationId,
-          companyId, job.conversation_id, local,
-        )
+          d,
+          bundle.text,
+          knownChunkIds,
+          operationId,
+          companyId,
+          job.conversation_id,
+          local,
+        ),
       ),
     );
     const failure = settled.find((x) => !x.ok) as { ok: false; code: string } | undefined;
@@ -475,10 +565,27 @@ export async function processEvaluationJob(
       throw new Error(failure.code);
     }
 
+    const aiText = bundle.evaluated_ai_reply
+      ? (bundle.transcript.find((e) => e.id === bundle.evaluated_ai_reply!.id)?.content ?? "")
+      : "";
+    const evaluated = settled.map((result, index) => {
+      if (!result.ok || !conversionReality) return result;
+      const dimension = CE_DIMENSIONS[index];
+      if (dimension !== "sales" && dimension !== "context") return result;
+      const aligned = alignB3EvaluatorOutput(
+        dimension,
+        result,
+        aiText,
+        conversionReality,
+        evaluatedAssistantMetadata,
+      );
+      return { ...result, ...aligned };
+    });
+
     const scores: Record<string, number> = {};
     const details: Record<string, unknown> = {};
     CE_DIMENSIONS.forEach((dimension, i) => {
-      const r = settled[i] as Extract<(typeof settled)[number], { ok: true }>;
+      const r = evaluated[i] as Extract<(typeof evaluated)[number], { ok: true }>;
       const weight = DIMENSION_WEIGHT[dimension];
       scores[dimension] = r.score;
       details[DIMENSION_TO_EVALUATOR_TYPE[dimension]] = {
@@ -486,9 +593,7 @@ export async function processEvaluationJob(
         raw_score: r.score,
         weight,
         weighted_score:
-          dimension === "hallucination_risk"
-            ? (100 - r.score) * weight
-            : r.score * weight,
+          dimension === "hallucination_risk" ? (100 - r.score) * weight : r.score * weight,
         justification: r.justification,
         recommended_correction: r.recommended_correction,
         model_version: r.model,
@@ -505,19 +610,20 @@ export async function processEvaluationJob(
     });
 
     const signals = await runSignals(
-      bundle.text, bundle.transcript, operationId, companyId, job.conversation_id,
+      bundle.text,
+      bundle.transcript,
+      operationId,
+      companyId,
+      job.conversation_id,
     );
-    const aiText = bundle.evaluated_ai_reply
-      ? bundle.transcript.find((e) => e.id === bundle.evaluated_ai_reply!.id)?.content ?? ""
-      : "";
     const humanText = bundle.verified_human_response
-      ? bundle.transcript.find((e) => e.id === bundle.verified_human_response!.id)?.content ?? ""
+      ? (bundle.transcript.find((e) => e.id === bundle.verified_human_response!.id)?.content ?? "")
       : "";
     const discrepancies = deriveDiscrepancies({
       evaluatedAiReply: aiText,
       verifiedHumanResponse: humanText,
       perDimension: CE_DIMENSIONS.map((dimension, i) => {
-        const r = settled[i] as Extract<(typeof settled)[number], { ok: true }>;
+        const r = evaluated[i] as Extract<(typeof evaluated)[number], { ok: true }>;
         return {
           evaluatorType: DIMENSION_TO_EVALUATOR_TYPE[dimension],
           score: r.score,
@@ -530,18 +636,31 @@ export async function processEvaluationJob(
     const snapshot = {
       transcript_hash: bundle.transcript_hash,
       canonical_input: redact(bundle.text),
-      normalized_transcript: bundle.transcript.filter((e) => e.included).map((e) => ({
-        id: e.id, role: e.role, raw_role: e.raw_role, created_at: e.created_at,
-        content: redact(e.content), content_sha256: e.content_sha256,
-        original_chars: e.original_chars, used_chars: e.used_chars,
-      })),
+      normalized_transcript: bundle.transcript
+        .filter((e) => e.included)
+        .map((e) => ({
+          id: e.id,
+          role: e.role,
+          raw_role: e.raw_role,
+          created_at: e.created_at,
+          content: redact(e.content),
+          content_sha256: e.content_sha256,
+          original_chars: e.original_chars,
+          used_chars: e.used_chars,
+        })),
       evaluated_ai_reply: bundle.evaluated_ai_reply
-        ? { ...bundle.evaluated_ai_reply, content: redact(aiText) } : null,
+        ? { ...bundle.evaluated_ai_reply, content: redact(aiText) }
+        : null,
       verified_human_response: bundle.verified_human_response
-        ? { ...bundle.verified_human_response, content: redact(humanText) } : null,
+        ? { ...bundle.verified_human_response, content: redact(humanText) }
+        : null,
       grounding_evidence: local
         ? { mode: "conversation_only" }
-        : { kb_snapshot_id: kbSnapshotId, policy_snapshot_id: policySnapshotId },
+        : {
+            kb_snapshot_id: kbSnapshotId,
+            policy_snapshot_id: policySnapshotId,
+            b3_conversion_reality: conversionReality,
+          },
       truncation_manifest: bundle.truncation,
     };
     const derived = {
@@ -549,6 +668,17 @@ export async function processEvaluationJob(
       next_steps: signals?.next_steps ?? [],
       discrepancies,
     };
+
+    if (conversionReality) {
+      const current = await revalidateCeConversionReality(
+        admin as unknown as Parameters<typeof revalidateCeConversionReality>[0],
+        conversionReality,
+      );
+      if (!current.ok) {
+        await failAttempt(admin, local, attemptId, current.code);
+        throw new Error(current.code);
+      }
+    }
 
     const complete = local
       ? await admin.rpc("complete_local_evaluation_v1", {
@@ -567,7 +697,10 @@ export async function processEvaluationJob(
           p_snapshot: snapshot,
           p_derived: derived,
         });
-    if (complete.error || String((complete.data as any)?.result ?? "") !== "success") {
+    if (
+      complete.error ||
+      String((complete.data as Record<string, unknown> | null)?.result ?? "") !== "success"
+    ) {
       const readBack = await readEvaluation(admin, local, attemptId);
       if (!readBack) {
         await failAttempt(admin, local, attemptId, "CE_AUTOMATION_PERSISTENCE_ERROR");
@@ -600,15 +733,14 @@ export async function processEvaluationJob(
     };
   } catch (e) {
     const code = e instanceof Error ? e.message.slice(0, 120) : "unknown";
-    await admin.rpc("ce_fail_job_v1", { p_job_id: job.id, p_error_code: code })
-      .then(() => undefined, () => undefined);
+    await admin.rpc("ce_fail_job_v1", { p_job_id: job.id, p_error_code: code }).then(
+      () => undefined,
+      () => undefined,
+    );
     return { ok: false, code };
   }
 }
 
 export function serviceClient(): Db {
-  return createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-  );
+  return createClient(Deno.env.get("SUPABASE_URL")!, getSupabaseAdminKey());
 }

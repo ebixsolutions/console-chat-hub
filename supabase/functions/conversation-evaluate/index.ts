@@ -15,7 +15,13 @@
  */
 
 import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2.45.0";
+import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
 import { callModel, parseJsonObject, redact, toCeErrorCode } from "../_shared/llm-router.ts";
+import {
+  ceEvaluatorProviderPolicy,
+  ceSignalsProviderPolicy,
+  validateCeProviderResponse,
+} from "../_shared/ce-provider-response.ts";
 import { fetchGrounding, type GroundingBundle } from "../_shared/ce-grounding.ts";
 import {
   buildCanonicalBundle,
@@ -37,11 +43,15 @@ import {
   type SnapshotConversation,
   type SnapshotMessage,
   type TranscriptEntry,
-  validateEvaluatorOutput,
   validateSignalsOutput,
-  describeEvaluatorRejection,
-  EVALUATOR_RESPONSE_SCHEMA,
 } from "../_shared/ce-contract.ts";
+import {
+  alignB3EvaluatorOutput,
+  bindConversionRealityToBundle,
+  loadCeConversionReality,
+  revalidateCeConversionReality,
+  type CeConversionReality,
+} from "../_shared/ce-conversion-reality.ts";
 
 const CE_EDGE_RUNTIME_VERSION = "ce-conversation-first-1.0.0";
 const PREVIEW_PROJECT_ID = "4dbf593e-577e-4af4-a553-460441c34473";
@@ -76,9 +86,6 @@ const REVIEW_ROLES = new Set(["admin", "supervisor"]);
 const MAX_BODY_BYTES = 8 * 1024;
 const MAX_MESSAGES = 400;
 const MAX_NOTE_CHARS = 1000;
-// Gemini charges reasoning tokens against maxOutputTokens, so the budget must
-// cover thinking plus the JSON object or the reply truncates mid-object.
-const EVALUATOR_MAX_TOKENS = 2600;
 const STALE_ATTEMPT_MINUTES = 15;
 const ALLOWED_FIELDS: Record<string, Set<string>> = {
   evaluate: new Set(["action", "conversation_id"]),
@@ -108,19 +115,37 @@ function corsFor(req: Request): Record<string, string> {
   };
 }
 function ok(body: Record<string, unknown>, req: Request, operationId: string): Response {
-  return new Response(JSON.stringify({ ...body, operation_id: operationId, runtime_version: CE_EDGE_RUNTIME_VERSION }), {
-    status: 200,
-    headers: { ...corsFor(req), "Content-Type": "application/json" },
-  });
+  return new Response(
+    JSON.stringify({
+      ...body,
+      operation_id: operationId,
+      runtime_version: CE_EDGE_RUNTIME_VERSION,
+    }),
+    {
+      status: 200,
+      headers: { ...corsFor(req), "Content-Type": "application/json" },
+    },
+  );
 }
 function fail(error: PublicError, req: Request, operationId: string, detail?: string): Response {
-  return new Response(JSON.stringify({ error, detail: detail ?? null, operation_id: operationId, runtime_version: CE_EDGE_RUNTIME_VERSION }), {
-    status: PUBLIC_ERRORS[error],
-    headers: { ...corsFor(req), "Content-Type": "application/json" },
-  });
+  return new Response(
+    JSON.stringify({
+      error,
+      detail: detail ?? null,
+      operation_id: operationId,
+      runtime_version: CE_EDGE_RUNTIME_VERSION,
+    }),
+    {
+      status: PUBLIC_ERRORS[error],
+      headers: { ...corsFor(req), "Content-Type": "application/json" },
+    },
+  );
 }
 function isUuid(v: unknown): v is string {
-  return typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+  return (
+    typeof v === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)
+  );
 }
 function parseBearer(header: string | null): string | null {
   if (!header) return null;
@@ -130,16 +155,24 @@ function parseBearer(header: string | null): string | null {
   if (token.length < 20 || token.length > 4096) return null;
   return token;
 }
-async function readBoundedJson(req: Request): Promise<{ ok: true; value: unknown } | { ok: false; reason: "too_large" | "unparsable" }> {
+async function readBoundedJson(
+  req: Request,
+): Promise<{ ok: true; value: unknown } | { ok: false; reason: "too_large" | "unparsable" }> {
   const declared = req.headers.get("content-length");
   if (declared && Number(declared) > MAX_BODY_BYTES) return { ok: false, reason: "too_large" };
   const raw = await req.text();
-  if (new TextEncoder().encode(raw).length > MAX_BODY_BYTES) return { ok: false, reason: "too_large" };
-  try { return { ok: true, value: JSON.parse(raw) }; }
-  catch { return { ok: false, reason: "unparsable" }; }
+  if (new TextEncoder().encode(raw).length > MAX_BODY_BYTES)
+    return { ok: false, reason: "too_large" };
+  try {
+    return { ok: true, value: JSON.parse(raw) };
+  } catch {
+    return { ok: false, reason: "unparsable" };
+  }
 }
 function log(fields: Record<string, unknown>): void {
-  console.log(JSON.stringify({ component: "conversation-evaluate", ts: new Date().toISOString(), ...fields }));
+  console.log(
+    JSON.stringify({ component: "conversation-evaluate", ts: new Date().toISOString(), ...fields }),
+  );
 }
 
 interface TenantContext {
@@ -162,11 +195,11 @@ const LOCAL_EVALUATOR_SYSTEM_PROMPT: Record<CeDimension, string> = {
     "Evaluate TONE: professionalism, empathy, clarity and register relative to the customer's state in the transcript. " +
     "Return ONLY JSON with score, justification, grounding_refs, evidence, recommended_correction. grounding_refs MUST be an empty array.",
   sales:
-    "Evaluate SALES EFFECTIVENESS from the conversation alone: needs discovery, relevance of options, useful next action, and no unnecessary pressure. " +
-    "For a pure support exchange, score neutral-to-good handling rather than inventing a sales opportunity. " +
+    "Evaluate SALES EFFECTIVENESS against the latest customer correction and current conversation reality: reuse known needs, preserve the current conversion stage, ask only the minimum necessary question, and never reward pressure or unsupported claims. " +
+    "Do not penalize a concise support answer or absence of upsell when that is the correct next step. Missing commercial data is unknown, not negative evidence. " +
     "Return ONLY JSON with score, justification, grounding_refs, evidence, recommended_correction. grounding_refs MUST be an empty array.",
   context:
-    "Evaluate CONTEXT RETENTION using only the transcript: whether the AI remembers prior facts, avoids re-asking answered questions, and responds to the latest customer need. " +
+    "Evaluate CONTEXT RETENTION using the latest valid customer correction: known facts must be retained; superseded and cancelled values suppressed; products, entities and regions isolated; quotation, order and action states kept distinct; and the current topic must outrank stale history. " +
     "Return ONLY JSON with score, justification, grounding_refs, evidence, recommended_correction. grounding_refs MUST be an empty array.",
   hallucination_risk:
     "Evaluate HALLUCINATION RISK where higher is worse. A specific claim not supported by the transcript or a verified human correction increases risk. " +
@@ -176,7 +209,9 @@ const LOCAL_EVALUATOR_SYSTEM_PROMPT: Record<CeDimension, string> = {
 
 interface EvaluationScope {
   mode: "canonical" | "conversation_local";
-  conversation: SnapshotConversation | (Omit<SnapshotConversation, "company_id"> & { company_id: string | null });
+  conversation:
+    | SnapshotConversation
+    | (Omit<SnapshotConversation, "company_id"> & { company_id: string | null });
   company: { company_id: string; external_workspace_id: string; external_tenant_id: string } | null;
   roles: string[];
 }
@@ -188,7 +223,9 @@ async function resolveEvaluationScope(
 ): Promise<{ ok: true; ctx: EvaluationScope } | { ok: false; error: PublicError; detail: string }> {
   const { data: conv, error: convErr } = await admin
     .from("conversations")
-    .select("id, company_id, status, priority, channel_config_id, created_at, resolved_at")
+    .select(
+      "id, company_id, status, priority, channel_config_id, created_at, resolved_at, assigned_agent_id",
+    )
     .eq("id", conversationId)
     .maybeSingle();
   if (convErr) return { ok: false, error: "internal_error", detail: "conversation_lookup_failed" };
@@ -201,7 +238,8 @@ async function resolveEvaluationScope(
       .select("company_id")
       .eq("id", conv.channel_config_id)
       .maybeSingle();
-    if (channelErr) return { ok: false, error: "internal_error", detail: "channel_company_lookup_failed" };
+    if (channelErr)
+      return { ok: false, error: "internal_error", detail: "channel_company_lookup_failed" };
     channelCompanyId = channel?.company_id ? String(channel.company_id) : null;
   }
 
@@ -218,7 +256,8 @@ async function resolveEvaluationScope(
       .eq("id", resolvedCompanyId)
       .maybeSingle();
     if (coErr) return { ok: false, error: "internal_error", detail: "company_lookup_failed" };
-    if (!company || !company.is_active) return { ok: false, error: "forbidden", detail: "company_inactive" };
+    if (!company || !company.is_active)
+      return { ok: false, error: "forbidden", detail: "company_inactive" };
 
     const { data: members, error: memErr } = await admin
       .from("company_membership")
@@ -227,7 +266,8 @@ async function resolveEvaluationScope(
       .eq("user_id", userId)
       .eq("is_active", true);
     if (memErr) return { ok: false, error: "internal_error", detail: "membership_lookup_failed" };
-    if (!members || members.length === 0) return { ok: false, error: "forbidden", detail: "not_a_member" };
+    if (!members || members.length === 0)
+      return { ok: false, error: "forbidden", detail: "not_a_member" };
 
     return {
       ok: true,
@@ -249,8 +289,10 @@ async function resolveEvaluationScope(
     .select("enabled")
     .eq("key", "ce_conversation_first_enabled")
     .maybeSingle();
-  if (flagErr) return { ok: false, error: "internal_error", detail: "conversation_first_flag_lookup_failed" };
-  if (!flag?.enabled) return { ok: false, error: "unavailable", detail: "conversation_first_disabled" };
+  if (flagErr)
+    return { ok: false, error: "internal_error", detail: "conversation_first_flag_lookup_failed" };
+  if (!flag?.enabled)
+    return { ok: false, error: "unavailable", detail: "conversation_first_disabled" };
 
   const { data: rolesRows, error: roleErr } = await admin
     .from("user_roles")
@@ -331,9 +373,7 @@ async function buildConversationOnlyBundle(args: {
       included,
       drop_reason: drop,
       verified_human:
-        role === "human_agent" &&
-        m.sender_id !== null &&
-        m.sender_identity_verified_at !== null,
+        role === "human_agent" && m.sender_id !== null && m.sender_identity_verified_at !== null,
     });
   }
 
@@ -344,9 +384,7 @@ async function buildConversationOnlyBundle(args: {
     throw new Error("CONVERSATION_NOT_EVALUABLE");
   }
 
-  const humanAfter = kept.find(
-    (e) => e.verified_human && isStrictlyAfterMessage(e, evaluatedAi),
-  );
+  const humanAfter = kept.find((e) => e.verified_human && isStrictlyAfterMessage(e, evaluatedAi));
 
   const lines = [
     `CE-BUNDLE/${args.contractVersion}`,
@@ -377,7 +415,14 @@ async function buildConversationOnlyBundle(args: {
     `message_count=${kept.length}`,
   ];
   for (const e of kept) {
-    lines.push(`#${e.id}`, `role=${e.role}`, `created_at=${e.created_at}`, "content:", e.content, "--");
+    lines.push(
+      `#${e.id}`,
+      `role=${e.role}`,
+      `created_at=${e.created_at}`,
+      "content:",
+      e.content,
+      "--",
+    );
   }
   lines.push(
     "## evaluation_evidence",
@@ -418,7 +463,6 @@ async function buildConversationOnlyBundle(args: {
   };
 }
 
-
 async function resolveTenant(
   admin: SupabaseClient,
   conversationId: string,
@@ -439,7 +483,8 @@ async function resolveTenant(
       .select("company_id")
       .eq("id", conv.channel_config_id)
       .maybeSingle();
-    if (channelErr) return { ok: false, error: "internal_error", detail: "channel_company_lookup_failed" };
+    if (channelErr)
+      return { ok: false, error: "internal_error", detail: "channel_company_lookup_failed" };
     channelCompanyId = channel?.company_id ? String(channel.company_id) : null;
   }
 
@@ -456,7 +501,8 @@ async function resolveTenant(
     .eq("id", resolvedCompanyId)
     .maybeSingle();
   if (coErr) return { ok: false, error: "internal_error", detail: "company_lookup_failed" };
-  if (!company || !company.is_active) return { ok: false, error: "forbidden", detail: "company_inactive" };
+  if (!company || !company.is_active)
+    return { ok: false, error: "forbidden", detail: "company_inactive" };
 
   // Canonical rule: after resolving ownership from conversation/channel, every
   // downstream authorization lookup MUST use resolvedCompanyId. Never fall back
@@ -468,7 +514,8 @@ async function resolveTenant(
     .eq("user_id", userId)
     .eq("is_active", true);
   if (memErr) return { ok: false, error: "internal_error", detail: "membership_lookup_failed" };
-  if (!members || members.length === 0) return { ok: false, error: "forbidden", detail: "not_a_member" };
+  if (!members || members.length === 0)
+    return { ok: false, error: "forbidden", detail: "not_a_member" };
 
   return {
     ok: true,
@@ -493,35 +540,46 @@ async function runEvaluator(
   conversationId: string,
   systemOverride?: string,
 ): Promise<
-  | { ok: true; score: number; justification: string; evidence: string[]; grounding_refs: string[]; recommended_correction: string; model: string; raw: Record<string, unknown> }
+  | {
+      ok: true;
+      score: number;
+      justification: string;
+      evidence: string[];
+      grounding_refs: string[];
+      recommended_correction: string;
+      model: string;
+      raw: Record<string, unknown>;
+    }
   | { ok: false; code: string }
 > {
   const res = await callModel({
     purpose: "evaluation",
     system: systemOverride ?? EVALUATOR_SYSTEM_PROMPT[dimension],
     user: bundleText,
-    maxTokens: EVALUATOR_MAX_TOKENS,
+    ...ceEvaluatorProviderPolicy(),
     operationId: `${operationId}:${dimension}`,
     companyId,
     conversationId,
     tag: `ce:${dimension}`,
-    responseFormat: "json",
-    responseSchema: EVALUATOR_RESPONSE_SCHEMA,
   });
   if (!res.ok) return { ok: false, code: toCeErrorCode(res.code) };
-  const parsed = parseJsonObject(res.text);
-  const validated = validateEvaluatorOutput(parsed, knownChunkIds);
-  if (!validated) {
+  const validated = validateCeProviderResponse(res.text, knownChunkIds);
+  if (!validated.ok) {
     // Shape-only diagnosis; never provider text or customer content.
     log({
       event: "evaluator_output_invalid",
       dimension,
       operation_id: operationId,
-      reason: describeEvaluatorRejection(parsed),
+      reason: validated.reason,
     });
     return { ok: false, code: "CE_PROVIDER_INVALID_OUTPUT" };
   }
-  return { ok: true, ...validated, model: res.model, raw: parsed as Record<string, unknown> };
+  return {
+    ok: true,
+    ...validated.value,
+    model: res.model,
+    raw: validated.raw,
+  };
 }
 
 async function runSignals(
@@ -535,12 +593,11 @@ async function runSignals(
     purpose: "evaluation",
     system: SIGNALS_SYSTEM_PROMPT,
     user: bundleText,
-    maxTokens: EVALUATOR_MAX_TOKENS,
+    ...ceSignalsProviderPolicy(),
     operationId: `${operationId}:signals`,
     companyId,
     conversationId,
     tag: "ce:signals",
-    responseFormat: "json",
   });
   if (!res.ok) {
     log({ event: "signals_unavailable", code: res.code, operation_id: operationId });
@@ -551,23 +608,43 @@ async function runSignals(
   return signals;
 }
 
-async function terminateAttempt(admin: SupabaseClient, attemptId: string, code: string, operationId: string): Promise<void> {
-  const { data, error } = await admin.rpc("fail_evaluation", { p_attempt_id: attemptId, p_error: code });
+async function terminateAttempt(
+  admin: SupabaseClient,
+  attemptId: string,
+  code: string,
+  operationId: string,
+): Promise<void> {
+  const { data, error } = await admin.rpc("fail_evaluation", {
+    p_attempt_id: attemptId,
+    p_error: code,
+  });
   const result = String(((data ?? {}) as Record<string, unknown>).result ?? "");
   if (error || result !== "failed") {
-    log({ event: "fail_rpc_unconfirmed", attempt_id: attemptId, result, operation_id: operationId });
-    await admin.rpc("reap_stale_evaluation_attempts", { p_older_than: "0 minutes" }).then(() => undefined, () => undefined);
+    log({
+      event: "fail_rpc_unconfirmed",
+      attempt_id: attemptId,
+      result,
+      operation_id: operationId,
+    });
+    await admin.rpc("reap_stale_evaluation_attempts", { p_older_than: "0 minutes" }).then(
+      () => undefined,
+      () => undefined,
+    );
   }
 }
-async function readBackEvaluation(admin: SupabaseClient, attemptId: string): Promise<Record<string, unknown> | null> {
+async function readBackEvaluation(
+  admin: SupabaseClient,
+  attemptId: string,
+): Promise<Record<string, unknown> | null> {
   const { data } = await admin
     .from("conversation_evaluation")
-    .select("id, conversation_id, overall_score, severity, review_status, training_eligible, has_verified_human_response, input_snapshot_hash, bundle_hash, evaluation_contract_version, created_at")
+    .select(
+      "id, conversation_id, overall_score, severity, review_status, training_eligible, has_verified_human_response, input_snapshot_hash, bundle_hash, evaluation_contract_version, created_at",
+    )
     .eq("attempt_id", attemptId)
     .maybeSingle();
   return (data as unknown as Record<string, unknown>) ?? null;
 }
-
 
 async function readBackLocalEvaluation(
   admin: SupabaseClient,
@@ -575,17 +652,23 @@ async function readBackLocalEvaluation(
 ): Promise<Record<string, unknown> | null> {
   const { data } = await admin
     .from("ce_local_evaluation")
-    .select("id, conversation_id, overall_score, severity, review_status, has_verified_human_response, input_snapshot_hash, bundle_hash, evaluation_contract_version, created_at")
+    .select(
+      "id, conversation_id, overall_score, severity, review_status, has_verified_human_response, input_snapshot_hash, bundle_hash, evaluation_contract_version, created_at",
+    )
     .eq("attempt_id", attemptId)
     .maybeSingle();
-  return data ? { ...(data as Record<string, unknown>), evaluation_source: "conversation_local" } : null;
+  return data
+    ? { ...(data as Record<string, unknown>), evaluation_source: "conversation_local" }
+    : null;
 }
 
 /** True when a Postgres error is the attempt uniqueness violation. */
 function isDuplicateAttempt(error: unknown): boolean {
   const e = (error ?? {}) as { code?: string; message?: string };
-  return e.code === "23505" ||
-    String(e.message ?? "").includes("ce_local_evaluation_attempt_conversation_id_input_snapshot_");
+  return (
+    e.code === "23505" ||
+    String(e.message ?? "").includes("ce_local_evaluation_attempt_conversation_id_input_snapshot_")
+  );
 }
 
 /**
@@ -623,7 +706,6 @@ async function clearSpentLocalAttempt(
 }
 
 async function handleEvaluate(
-
   req: Request,
   admin: SupabaseClient,
   userId: string,
@@ -643,7 +725,9 @@ async function handleEvaluate(
 
   const { data: msgs, error: msgErr } = await admin
     .from("messages")
-    .select("id, role, content, created_at, is_recalled, sender_id, sender_identity_verified_at")
+    .select(
+      "id, role, content, created_at, is_recalled, sender_id, sender_identity_verified_at, metadata",
+    )
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: true })
     .order("id", { ascending: true })
@@ -651,18 +735,23 @@ async function handleEvaluate(
 
   if (msgErr) return fail("internal_error", req, operationId, "messages_lookup_failed");
   if (!msgs || msgs.length === 0) return fail("conflict", req, operationId, "conversation_empty");
-  if (msgs.length > MAX_MESSAGES) return fail("payload_too_large", req, operationId, "conversation_too_long");
+  if (msgs.length > MAX_MESSAGES)
+    return fail("payload_too_large", req, operationId, "conversation_too_long");
 
   let bundle: CanonicalBundle;
   let knownChunkIds = new Set<string>();
   let kbSnapshotId = "conversation-only";
   let policySnapshotId = "conversation-only";
   let groundingManifest: Record<string, unknown> = { mode: "conversation_only" };
+  let conversionReality: CeConversionReality | null = null;
+  let evaluatedAssistantMetadata: Record<string, unknown> | null = null;
 
   if (mode === "canonical") {
-    const lastCustomer = [...(msgs as SnapshotMessage[])].reverse().find((m) =>
-      !m.is_recalled && ["visitor", "customer", "user"].includes(m.role.toLowerCase())
-    );
+    const lastCustomer = [...(msgs as SnapshotMessage[])]
+      .reverse()
+      .find(
+        (m) => !m.is_recalled && ["visitor", "customer", "user"].includes(m.role.toLowerCase()),
+      );
     const grounding = await fetchGrounding({
       conversationId,
       messageId: lastCustomer?.id,
@@ -684,6 +773,28 @@ async function handleEvaluate(
         grounding: bundleGrounding,
         contractVersion,
       });
+      const evaluatedAssistant = (msgs as SnapshotMessage[]).find(
+        (message) => message.id === bundle.evaluated_ai_reply?.id,
+      );
+      const reality = await loadCeConversionReality(
+        admin as unknown as Parameters<typeof loadCeConversionReality>[0],
+        {
+          conversation_id: conversationId,
+          company_id: company!.company_id,
+          conversation_status: String(conversation.status ?? ""),
+          assigned_agent_id: conversation.assigned_agent_id ?? null,
+          evaluated_assistant: {
+            id: bundle.evaluated_ai_reply?.id ?? "",
+            metadata: evaluatedAssistant?.metadata ?? null,
+          },
+        },
+      );
+      if (!reality.ok) {
+        return fail("conflict", req, operationId, reality.code.toLowerCase());
+      }
+      conversionReality = reality.reality;
+      evaluatedAssistantMetadata = evaluatedAssistant?.metadata ?? null;
+      bundle = await bindConversionRealityToBundle(bundle, conversionReality);
     } catch {
       return fail("forbidden", req, operationId, "tenant_mismatch");
     }
@@ -712,9 +823,14 @@ async function handleEvaluate(
   let attemptId: string;
 
   if (mode === "canonical") {
-    await admin.rpc("reap_stale_evaluation_attempts", {
-      p_older_than: `${STALE_ATTEMPT_MINUTES} minutes`,
-    }).then(() => undefined, () => undefined);
+    await admin
+      .rpc("reap_stale_evaluation_attempts", {
+        p_older_than: `${STALE_ATTEMPT_MINUTES} minutes`,
+      })
+      .then(
+        () => undefined,
+        () => undefined,
+      );
 
     const { data: initRaw, error: initErr } = await admin.rpc("initiate_evaluation_v2", {
       p_conversation_id: conversationId,
@@ -733,6 +849,13 @@ async function handleEvaluate(
     const init = (initRaw ?? {}) as Record<string, unknown>;
     const initResult = String(init.result ?? "");
     if (initResult === "already_evaluated") {
+      if (conversionReality) {
+        const current = await revalidateCeConversionReality(
+          admin as unknown as Parameters<typeof revalidateCeConversionReality>[0],
+          conversionReality,
+        );
+        if (!current.ok) return fail("conflict", req, operationId, current.code.toLowerCase());
+      }
       const { data: existing } = await admin
         .from("conversation_evaluation")
         .select("id, conversation_id, overall_score, severity, review_status, created_at")
@@ -740,12 +863,18 @@ async function handleEvaluate(
         .maybeSingle();
       return ok({ status: "already_evaluated", evaluation: existing ?? null }, req, operationId);
     }
-    if (initResult === "already_in_progress") return fail("conflict", req, operationId, "already_in_progress");
-    if (initResult === "feature_disabled") return fail("unavailable", req, operationId, "feature_disabled");
-    if (initResult === "tenant_unresolved") return fail("conflict", req, operationId, "tenant_unresolved");
-    if (initResult === "tenant_identity_conflict") return fail("conflict", req, operationId, "tenant_identity_conflict");
-    if (initResult === "tenant_forbidden") return fail("forbidden", req, operationId, "tenant_forbidden");
-    if (initResult !== "initiated" || !isUuid(init.attempt_id)) return fail("conflict", req, operationId, "initiate_rejected");
+    if (initResult === "already_in_progress")
+      return fail("conflict", req, operationId, "already_in_progress");
+    if (initResult === "feature_disabled")
+      return fail("unavailable", req, operationId, "feature_disabled");
+    if (initResult === "tenant_unresolved")
+      return fail("conflict", req, operationId, "tenant_unresolved");
+    if (initResult === "tenant_identity_conflict")
+      return fail("conflict", req, operationId, "tenant_identity_conflict");
+    if (initResult === "tenant_forbidden")
+      return fail("forbidden", req, operationId, "tenant_forbidden");
+    if (initResult !== "initiated" || !isUuid(init.attempt_id))
+      return fail("conflict", req, operationId, "initiate_rejected");
     attemptId = init.attempt_id as string;
   } else {
     const localInitiateArgs = {
@@ -776,11 +905,7 @@ async function handleEvaluate(
         code: (initErr as { code?: string }).code ?? "",
         operation_id: operationId,
       });
-      const cleared = await clearSpentLocalAttempt(
-        admin,
-        conversationId,
-        bundle.transcript_hash,
-      );
+      const cleared = await clearSpentLocalAttempt(admin, conversationId, bundle.transcript_hash);
       if (cleared) {
         const retry = await admin.rpc("initiate_local_evaluation_v1", localInitiateArgs);
         initRaw = retry.data;
@@ -805,15 +930,22 @@ async function handleEvaluate(
         .select("id, conversation_id, overall_score, severity, review_status, created_at")
         .eq("id", String(init.evaluation_id ?? ""))
         .maybeSingle();
-      return ok({
-        status: "already_evaluated",
-        evaluation: existing ? { ...existing, evaluation_source: "conversation_local" } : null,
-      }, req, operationId);
+      return ok(
+        {
+          status: "already_evaluated",
+          evaluation: existing ? { ...existing, evaluation_source: "conversation_local" } : null,
+        },
+        req,
+        operationId,
+      );
     }
-    if (result === "already_in_progress") return fail("conflict", req, operationId, "already_in_progress");
-    if (result === "feature_disabled") return fail("unavailable", req, operationId, "feature_disabled");
+    if (result === "already_in_progress")
+      return fail("conflict", req, operationId, "already_in_progress");
+    if (result === "feature_disabled")
+      return fail("unavailable", req, operationId, "feature_disabled");
     if (result === "forbidden") return fail("forbidden", req, operationId, "role_not_permitted");
-    if (result === "conversation_not_evaluable") return fail("conflict", req, operationId, "conversation_not_evaluable");
+    if (result === "conversation_not_evaluable")
+      return fail("conflict", req, operationId, "conversation_not_evaluable");
     if (result !== "initiated" || !isUuid(init.attempt_id)) {
       return fail("conflict", req, operationId, "local_initiate_rejected");
     }
@@ -830,7 +962,7 @@ async function handleEvaluate(
         company?.company_id ?? null,
         conversationId,
         mode === "conversation_local" ? LOCAL_EVALUATOR_SYSTEM_PROMPT[d] : undefined,
-      )
+      ),
     ),
   );
 
@@ -839,33 +971,67 @@ async function handleEvaluate(
     if (mode === "canonical") {
       await terminateAttempt(admin, attemptId, firstFailure.code, operationId);
     } else {
-      await admin.rpc("fail_local_evaluation_v1", {
-        p_attempt_id: attemptId,
-        p_error: firstFailure.code,
-      }).then(() => undefined, () => undefined);
+      await admin
+        .rpc("fail_local_evaluation_v1", {
+          p_attempt_id: attemptId,
+          p_error: firstFailure.code,
+        })
+        .then(
+          () => undefined,
+          () => undefined,
+        );
     }
     return fail("provider_failed", req, operationId, firstFailure.code);
   }
 
+  const aiText = bundle.evaluated_ai_reply
+    ? (bundle.transcript.find((e) => e.id === bundle.evaluated_ai_reply!.id)?.content ?? "")
+    : "";
+  const evaluated = settled.map((result, index) => {
+    if (!result.ok || !conversionReality) return result;
+    const dimension = CE_DIMENSIONS[index];
+    if (dimension !== "sales" && dimension !== "context") return result;
+    const aligned = alignB3EvaluatorOutput(
+      dimension,
+      result,
+      aiText,
+      conversionReality,
+      evaluatedAssistantMetadata,
+    );
+    return { ...result, ...aligned };
+  });
+
   const scores: Record<string, number> = {};
   const details: Record<string, unknown> = {};
   CE_DIMENSIONS.forEach((dimension, i) => {
-    const r = settled[i] as Extract<Awaited<ReturnType<typeof runEvaluator>>, { ok: true }>;
+    const r = evaluated[i] as Extract<(typeof evaluated)[number], { ok: true }>;
     scores[dimension] = r.score;
     details[DIMENSION_TO_EVALUATOR_TYPE[dimension]] = {
       evaluator_type: DIMENSION_TO_EVALUATOR_TYPE[dimension],
       raw_score: r.score,
-      weight: dimension === "accuracy" ? 0.25 :
-              dimension === "policy" ? 0.20 :
-              dimension === "tone" ? 0.20 :
-              dimension === "sales" ? 0.15 : 0.10,
+      weight:
+        dimension === "accuracy"
+          ? 0.25
+          : dimension === "policy"
+            ? 0.2
+            : dimension === "tone"
+              ? 0.2
+              : dimension === "sales"
+                ? 0.15
+                : 0.1,
       weighted_score:
         dimension === "hallucination_risk"
-          ? (100 - r.score) * 0.10
-          : r.score * (dimension === "accuracy" ? 0.25 :
-                       dimension === "policy" ? 0.20 :
-                       dimension === "tone" ? 0.20 :
-                       dimension === "sales" ? 0.15 : 0.10),
+          ? (100 - r.score) * 0.1
+          : r.score *
+            (dimension === "accuracy"
+              ? 0.25
+              : dimension === "policy"
+                ? 0.2
+                : dimension === "tone"
+                  ? 0.2
+                  : dimension === "sales"
+                    ? 0.15
+                    : 0.1),
       justification: r.justification,
       recommended_correction: r.recommended_correction,
       model_version: r.model,
@@ -889,18 +1055,15 @@ async function handleEvaluate(
     conversationId,
   );
 
-  const aiText = bundle.evaluated_ai_reply
-    ? bundle.transcript.find((e) => e.id === bundle.evaluated_ai_reply!.id)?.content ?? ""
-    : "";
   const humanText = bundle.verified_human_response
-    ? bundle.transcript.find((e) => e.id === bundle.verified_human_response!.id)?.content ?? ""
+    ? (bundle.transcript.find((e) => e.id === bundle.verified_human_response!.id)?.content ?? "")
     : "";
 
   const discrepancies = deriveDiscrepancies({
     evaluatedAiReply: aiText,
     verifiedHumanResponse: humanText,
     perDimension: CE_DIMENSIONS.map((dimension, i) => {
-      const r = settled[i] as Extract<Awaited<ReturnType<typeof runEvaluator>>, { ok: true }>;
+      const r = evaluated[i] as Extract<(typeof evaluated)[number], { ok: true }>;
       return {
         evaluatorType: DIMENSION_TO_EVALUATOR_TYPE[dimension],
         score: r.score,
@@ -913,16 +1076,18 @@ async function handleEvaluate(
   const snapshot = {
     transcript_hash: bundle.transcript_hash,
     canonical_input: redact(bundle.text),
-    normalized_transcript: bundle.transcript.filter((e) => e.included).map((e) => ({
-      id: e.id,
-      role: e.role,
-      raw_role: e.raw_role,
-      created_at: e.created_at,
-      content: redact(e.content),
-      content_sha256: e.content_sha256,
-      original_chars: e.original_chars,
-      used_chars: e.used_chars,
-    })),
+    normalized_transcript: bundle.transcript
+      .filter((e) => e.included)
+      .map((e) => ({
+        id: e.id,
+        role: e.role,
+        raw_role: e.raw_role,
+        created_at: e.created_at,
+        content: redact(e.content),
+        content_sha256: e.content_sha256,
+        original_chars: e.original_chars,
+        used_chars: e.used_chars,
+      })),
     evaluated_ai_reply: bundle.evaluated_ai_reply
       ? { ...bundle.evaluated_ai_reply, content: redact(aiText) }
       : null,
@@ -932,7 +1097,11 @@ async function handleEvaluate(
     grounding_evidence:
       mode === "conversation_local"
         ? { mode: "conversation_only" }
-        : { kb_snapshot_id: kbSnapshotId, policy_snapshot_id: policySnapshotId },
+        : {
+            kb_snapshot_id: kbSnapshotId,
+            policy_snapshot_id: policySnapshotId,
+            b3_conversion_reality: conversionReality,
+          },
     truncation_manifest: bundle.truncation,
   };
 
@@ -941,6 +1110,17 @@ async function handleEvaluate(
     next_steps: signals?.next_steps ?? [],
     discrepancies,
   };
+
+  if (conversionReality) {
+    const current = await revalidateCeConversionReality(
+      admin as unknown as Parameters<typeof revalidateCeConversionReality>[0],
+      conversionReality,
+    );
+    if (!current.ok) {
+      await terminateAttempt(admin, attemptId, current.code, operationId);
+      return fail("conflict", req, operationId, current.code.toLowerCase());
+    }
+  }
 
   if (mode === "conversation_local") {
     const { data: doneRaw, error: doneErr } = await admin.rpc("complete_local_evaluation_v1", {
@@ -951,23 +1131,35 @@ async function handleEvaluate(
       p_snapshot: snapshot,
       p_derived: derived,
     });
-    if (doneErr || String((doneRaw as Record<string, unknown> | null)?.result ?? "") !== "success") {
+    if (
+      doneErr ||
+      String((doneRaw as Record<string, unknown> | null)?.result ?? "") !== "success"
+    ) {
       const readBack = await readBackLocalEvaluation(admin, attemptId);
       if (readBack) return ok({ status: "completed", evaluation: readBack }, req, operationId);
-      await admin.rpc("fail_local_evaluation_v1", {
-        p_attempt_id: attemptId,
-        p_error: "CE_LOCAL_PERSISTENCE_ERROR",
-      }).then(() => undefined, () => undefined);
+      await admin
+        .rpc("fail_local_evaluation_v1", {
+          p_attempt_id: attemptId,
+          p_error: "CE_LOCAL_PERSISTENCE_ERROR",
+        })
+        .then(
+          () => undefined,
+          () => undefined,
+        );
       return fail("internal_error", req, operationId, "local_persist_failed");
     }
     const evaluation = await readBackLocalEvaluation(admin, attemptId);
     if (!evaluation) return fail("internal_error", req, operationId, "local_persist_unverified");
-    return ok({
-      status: "completed",
-      evaluation,
-      evaluation_source: "conversation_local",
-      grounding: { mode: "conversation_only" },
-    }, req, operationId);
+    return ok(
+      {
+        status: "completed",
+        evaluation,
+        evaluation_source: "conversation_local",
+        grounding: { mode: "conversation_only" },
+      },
+      req,
+      operationId,
+    );
   }
 
   const { data: doneRaw, error: doneErr } = await admin.rpc("complete_evaluation_v2", {
@@ -1019,14 +1211,17 @@ async function handleReview(
   if (body.note !== undefined && body.note !== null) {
     if (typeof body.note !== "string") return fail("invalid_request", req, operationId, "note");
     const trimmed = body.note.trim();
-    if (trimmed.length > MAX_NOTE_CHARS) return fail("invalid_request", req, operationId, "note_too_long");
+    if (trimmed.length > MAX_NOTE_CHARS)
+      return fail("invalid_request", req, operationId, "note_too_long");
     note = trimmed.length > 0 ? trimmed : null;
   }
-  if (decision === "reject" && !note) return fail("invalid_request", req, operationId, "note_required");
+  if (decision === "reject" && !note)
+    return fail("invalid_request", req, operationId, "note_required");
 
   const tenant = await resolveTenant(admin, conversationId as string, userId);
   if (!tenant.ok) return fail(tenant.error, req, operationId, tenant.detail);
-  if (!tenant.ctx.roles.some((r) => REVIEW_ROLES.has(r))) return fail("forbidden", req, operationId, "role_not_permitted");
+  if (!tenant.ctx.roles.some((r) => REVIEW_ROLES.has(r)))
+    return fail("forbidden", req, operationId, "role_not_permitted");
 
   const { data: raw, error } = await caller.rpc("review_evaluation", {
     p_evaluation_id: evaluationId,
@@ -1041,20 +1236,26 @@ async function handleReview(
   const out = (raw ?? {}) as Record<string, unknown>;
   const result = String(out.result ?? "");
   if (result === "success") {
-    return ok({
-      status: "reviewed",
-      from: out.from,
-      to: out.to,
-      reviewed_at: out.reviewed_at,
-      training_eligible: out.training_eligible,
-      outbox_created: out.outbox_created,
-    }, req, operationId);
+    return ok(
+      {
+        status: "reviewed",
+        from: out.from,
+        to: out.to,
+        reviewed_at: out.reviewed_at,
+        training_eligible: out.training_eligible,
+        outbox_created: out.outbox_created,
+      },
+      req,
+      operationId,
+    );
   }
   if (result === "not_found") return fail("not_found", req, operationId, "not_found");
   if (result === "scope_mismatch") return fail("conflict", req, operationId, "scope_mismatch");
-  if (result === "invalid_transition") return fail("conflict", req, operationId, "invalid_transition");
+  if (result === "invalid_transition")
+    return fail("conflict", req, operationId, "invalid_transition");
   if (result === "forbidden") return fail("forbidden", req, operationId, "role_not_permitted");
-  if (result === "tenant_unresolved") return fail("conflict", req, operationId, "tenant_unresolved");
+  if (result === "tenant_unresolved")
+    return fail("conflict", req, operationId, "tenant_unresolved");
   if (result === "note_required") return fail("invalid_request", req, operationId, "note_required");
   return fail("conflict", req, operationId, "review_rejected");
 }
@@ -1068,15 +1269,18 @@ Deno.serve(async (req) => {
   }
   if (req.method !== "POST") return fail("invalid_request", req, operationId, "method_not_allowed");
   if (origin && !isApprovedConsoleOrigin(origin)) {
-    return new Response(JSON.stringify({
-      error: "forbidden",
-      detail: "origin",
-      operation_id: operationId,
-      runtime_version: CE_EDGE_RUNTIME_VERSION,
-    }), {
-      status: 403,
-      headers: { "Content-Type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({
+        error: "forbidden",
+        detail: "origin",
+        operation_id: operationId,
+        runtime_version: CE_EDGE_RUNTIME_VERSION,
+      }),
+      {
+        status: 403,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
   }
 
   try {
@@ -1108,7 +1312,8 @@ Deno.serve(async (req) => {
         : fail("invalid_request", req, operationId, "body_unparsable");
     }
     const body = parsedBody.value;
-    if (!body || typeof body !== "object" || Array.isArray(body)) return fail("invalid_request", req, operationId, "body_shape");
+    if (!body || typeof body !== "object" || Array.isArray(body))
+      return fail("invalid_request", req, operationId, "body_shape");
     const record = body as Record<string, unknown>;
     const action = typeof record.action === "string" ? record.action : "evaluate";
     const allowed = ALLOWED_FIELDS[action];
@@ -1117,10 +1322,17 @@ Deno.serve(async (req) => {
       if (!allowed.has(key)) return fail("invalid_request", req, operationId, "unknown_field");
     }
 
-    const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const admin = createClient(Deno.env.get("SUPABASE_URL")!, getSupabaseAdminKey());
     if (action === "evaluate") {
-      if (!isUuid(record.conversation_id)) return fail("invalid_request", req, operationId, "conversation_id");
-      return await handleEvaluate(req, admin, userId, record.conversation_id as string, operationId);
+      if (!isUuid(record.conversation_id))
+        return fail("invalid_request", req, operationId, "conversation_id");
+      return await handleEvaluate(
+        req,
+        admin,
+        userId,
+        record.conversation_id as string,
+        operationId,
+      );
     }
     return await handleReview(req, admin, caller, userId, record, operationId);
   } catch (e) {

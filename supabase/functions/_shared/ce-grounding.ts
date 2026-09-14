@@ -87,8 +87,7 @@ export interface ManifestClass {
 }
 
 export type GroundingResult =
-  | { ok: true; bundle: GroundingBundle }
-  | { ok: false; code: GroundingFailure; detail?: string };
+  { ok: true; bundle: GroundingBundle } | { ok: false; code: GroundingFailure; detail?: string };
 
 export type GroundingFailure =
   | "GROUNDING_CONFIG_MISSING"
@@ -105,27 +104,20 @@ const MAX_BLOCK_CHARS = 12000;
 const MAX_CHUNKS_PER_CLASS = 8;
 
 export async function sha256Hex(input: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(input),
-  );
-  return Array.from(new Uint8Array(digest)).map((b) =>
-    b.toString(16).padStart(2, "0")
-  ).join("");
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
-function orderChunks<T extends { score: number; chunk_id: string }>(
-  chunks: T[],
-): T[] {
+function orderChunks<T extends { score: number; chunk_id: string }>(chunks: T[]): T[] {
   return chunks.slice().sort((a, b) => {
     if (a.score !== b.score) return b.score - a.score;
     return a.chunk_id < b.chunk_id ? -1 : a.chunk_id > b.chunk_id ? 1 : 0;
   });
 }
 
-async function buildClass(
-  raw: Array<Record<string, unknown>>,
-): Promise<{
+async function buildClass(raw: Array<Record<string, unknown>>): Promise<{
   chunks: GroundingChunk[];
   block: string;
   snapshotId: string;
@@ -200,13 +192,9 @@ async function buildClass(
 
   const includedChunks = out.filter((c) => c.included);
   const block = includedChunks
-    .map((c) =>
-      `[${c.citation_label}|${c.chunk_id}|v${c.version ?? "0"}]\n${c.content}`
-    )
+    .map((c) => `[${c.citation_label}|${c.chunk_id}|v${c.version ?? "0"}]\n${c.content}`)
     .join("\n\n");
-  const canonical = includedChunks.map((c) =>
-    `${c.chunk_id}:${c.content_sha256}`
-  ).join("\n");
+  const canonical = includedChunks.map((c) => `${c.chunk_id}:${c.content_sha256}`).join("\n");
   const snapshotId = `sha256:${await sha256Hex(canonical)}`;
 
   return {
@@ -239,12 +227,38 @@ function isPolicySource(sourceType: string): boolean {
   return sourceType.toLowerCase().includes("policy");
 }
 
-function evidenceRows(result: KBRagResponse, requestText: string, policyOnly = false): Array<Record<string, unknown>> {
-  const selected = selectCanonicalGrounding(result.documents ?? [], { requestText, policyOnly, requirePublished: true });
+function evidenceRows(
+  result: KBRagResponse,
+  requestText: string,
+  policyOnly = false,
+): Array<Record<string, unknown>> {
+  const selected = selectCanonicalGrounding(result.documents ?? [], {
+    requestText,
+    policyOnly,
+    requirePublished: true,
+  });
   if (!selected.ok || !selected.document) return [];
+  const selectedDocument = selected.document;
   return selected.evidence.map((item) => {
-    const matching = selected.chunks.find((c: KBFullChunk) => c.chunk_type === "full_content" && c.document_id === item.document_id && (!item.chunk_id || c.chunk_id === item.chunk_id));
-    return { chunk_id:item.chunk_id ?? matching?.chunk_id ?? "", document_id:selected.document.document_id, document_title:matching?.title ?? selected.document.title ?? "KB document", citation_label:matching?.title ?? selected.document.title ?? "KB document", source_type:item.source_type || matching?.source_type || "unknown", source_scope:policyOnly ? "policy" : "customer_answer", score:item.score, version:null, last_updated_at:null, freshness_status:"fresh", content:item.content };
+    const matching = selected.chunks.find(
+      (c: KBFullChunk) =>
+        c.chunk_type === "full_content" &&
+        c.document_id === item.document_id &&
+        (!item.chunk_id || c.chunk_id === item.chunk_id),
+    );
+    return {
+      chunk_id: item.chunk_id ?? matching?.chunk_id ?? "",
+      document_id: selectedDocument.document_id,
+      document_title: matching?.title ?? selectedDocument.title ?? "KB document",
+      citation_label: matching?.title ?? selectedDocument.title ?? "KB document",
+      source_type: item.source_type || matching?.source_type || "unknown",
+      source_scope: policyOnly ? "policy" : "customer_answer",
+      score: item.score,
+      version: null,
+      last_updated_at: null,
+      freshness_status: "fresh",
+      content: item.content,
+    };
   });
 }
 
@@ -304,12 +318,9 @@ async function runRag(
 
   let result: KBRagResponse;
   try {
-    result = await fetchKBRag(
-      { query: query.slice(0, 500), top_k: 12 },
-      tenant.scope,
-      endpoint,
-      { timeoutMs: 15000 },
-    );
+    result = await fetchKBRag({ query: query.slice(0, 500), top_k: 12 }, tenant.scope, endpoint, {
+      timeoutMs: 15000,
+    });
   } catch {
     return { ok: false, code: "GROUNDING_UNREACHABLE" };
   }
@@ -369,21 +380,19 @@ export async function fetchGrounding(args: {
   }
 
   let evidence = evidenceRows(primary.result, query);
-  let selectedDocumentIds = [...new Set(evidence.map((row) => String(row.document_id ?? "")).filter(Boolean))];
+  let selectedDocumentIds = [
+    ...new Set(evidence.map((row) => String(row.document_id ?? "")).filter(Boolean)),
+  ];
 
   let secondaryResult: KBRagResponse | null = null;
   if (
     args.requirePolicyEvidence &&
     !evidence.some((c) => isPolicySource(String(c.source_type ?? "")))
   ) {
-    const policyQuery =
-      `Applicable customer-service policy, rules, conditions, limits and procedures for: ${query}`;
+    const policyQuery = `Applicable customer-service policy, rules, conditions, limits and procedures for: ${query}`;
     const secondary = await runRag(policyQuery, args.conversationId);
     if (!secondary.ok) return secondary;
-    if (
-      secondary.aiCompanyId !== primary.aiCompanyId ||
-      secondary.tenantId !== primary.tenantId
-    ) {
+    if (secondary.aiCompanyId !== primary.aiCompanyId || secondary.tenantId !== primary.tenantId) {
       return {
         ok: false,
         code: "GROUNDING_TENANT_MISMATCH",
@@ -393,17 +402,15 @@ export async function fetchGrounding(args: {
     secondaryResult = secondary.result;
     const policyEvidence = evidenceRows(secondary.result, policyQuery, true);
     evidence = mergeEvidence(evidence, policyEvidence);
-    selectedDocumentIds.push(...policyEvidence.map((row) => String(row.document_id ?? "")).filter(Boolean));
+    selectedDocumentIds.push(
+      ...policyEvidence.map((row) => String(row.document_id ?? "")).filter(Boolean),
+    );
   }
 
   if (evidence.length === 0) return { ok: false, code: "GROUNDING_EMPTY" };
 
-  const policyRaw = evidence.filter((c) =>
-    isPolicySource(String(c.source_type ?? ""))
-  );
-  const kbRaw = evidence.filter((c) =>
-    !isPolicySource(String(c.source_type ?? ""))
-  );
+  const policyRaw = evidence.filter((c) => isPolicySource(String(c.source_type ?? "")));
+  const kbRaw = evidence.filter((c) => !isPolicySource(String(c.source_type ?? "")));
 
   if (args.requirePolicyEvidence && policyRaw.length === 0) {
     return { ok: false, code: "GROUNDING_POLICY_MISSING" };
@@ -424,8 +431,7 @@ export async function fetchGrounding(args: {
   }
 
   const includedCount =
-    kb.chunks.filter((c) => c.included).length +
-    policy.chunks.filter((c) => c.included).length;
+    kb.chunks.filter((c) => c.included).length + policy.chunks.filter((c) => c.included).length;
   if (includedCount === 0) return { ok: false, code: "GROUNDING_EMPTY" };
 
   selectedDocumentIds = [...new Set(selectedDocumentIds)];
@@ -448,8 +454,7 @@ export async function fetchGrounding(args: {
       manifest: {
         adapter: "singapore-kb-client",
         request_id: null,
-        retrieval_quality:
-          highest >= 0.85 ? "high" : highest >= 0.75 ? "medium" : "low",
+        retrieval_quality: highest >= 0.85 ? "high" : highest >= 0.75 ? "medium" : "low",
         no_answer: false,
         kb_gap_detected: kb.chunks.filter((c) => c.included).length === 0,
         conflict_detected: false,
