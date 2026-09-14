@@ -16,6 +16,10 @@
 
 import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2.45.0";
 import { callModel, parseJsonObject, redact, toCeErrorCode } from "../_shared/llm-router.ts";
+import {
+  CE_EVALUATOR_MAX_TOKENS,
+  validateCeProviderResponse,
+} from "../_shared/ce-provider-response.ts";
 import { fetchGrounding, type GroundingBundle } from "../_shared/ce-grounding.ts";
 import {
   buildCanonicalBundle,
@@ -37,9 +41,7 @@ import {
   type SnapshotConversation,
   type SnapshotMessage,
   type TranscriptEntry,
-  validateEvaluatorOutput,
   validateSignalsOutput,
-  describeEvaluatorRejection,
   EVALUATOR_RESPONSE_SCHEMA,
 } from "../_shared/ce-contract.ts";
 import {
@@ -85,7 +87,6 @@ const MAX_MESSAGES = 400;
 const MAX_NOTE_CHARS = 1000;
 // Gemini charges reasoning tokens against maxOutputTokens, so the budget must
 // cover thinking plus the JSON object or the reply truncates mid-object.
-const EVALUATOR_MAX_TOKENS = 2600;
 const STALE_ATTEMPT_MINUTES = 15;
 const ALLOWED_FIELDS: Record<string, Set<string>> = {
   evaluate: new Set(["action", "conversation_id"]),
@@ -556,7 +557,7 @@ async function runEvaluator(
     purpose: "evaluation",
     system: systemOverride ?? EVALUATOR_SYSTEM_PROMPT[dimension],
     user: bundleText,
-    maxTokens: EVALUATOR_MAX_TOKENS,
+    maxTokens: CE_EVALUATOR_MAX_TOKENS,
     operationId: `${operationId}:${dimension}`,
     companyId,
     conversationId,
@@ -565,19 +566,23 @@ async function runEvaluator(
     responseSchema: EVALUATOR_RESPONSE_SCHEMA,
   });
   if (!res.ok) return { ok: false, code: toCeErrorCode(res.code) };
-  const parsed = parseJsonObject(res.text);
-  const validated = validateEvaluatorOutput(parsed, knownChunkIds);
-  if (!validated) {
+  const validated = validateCeProviderResponse(res.text, knownChunkIds);
+  if (!validated.ok) {
     // Shape-only diagnosis; never provider text or customer content.
     log({
       event: "evaluator_output_invalid",
       dimension,
       operation_id: operationId,
-      reason: describeEvaluatorRejection(parsed),
+      reason: validated.reason,
     });
     return { ok: false, code: "CE_PROVIDER_INVALID_OUTPUT" };
   }
-  return { ok: true, ...validated, model: res.model, raw: parsed as Record<string, unknown> };
+  return {
+    ok: true,
+    ...validated.value,
+    model: res.model,
+    raw: validated.raw,
+  };
 }
 
 async function runSignals(
@@ -591,7 +596,7 @@ async function runSignals(
     purpose: "evaluation",
     system: SIGNALS_SYSTEM_PROMPT,
     user: bundleText,
-    maxTokens: EVALUATOR_MAX_TOKENS,
+    maxTokens: CE_EVALUATOR_MAX_TOKENS,
     operationId: `${operationId}:signals`,
     companyId,
     conversationId,

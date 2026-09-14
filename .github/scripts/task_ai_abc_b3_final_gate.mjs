@@ -15,6 +15,8 @@ const run = (command, args) => execFileSync(command, args, { stdio: "inherit" })
 const files = {
   adapter: "supabase/functions/_shared/ce-conversion-reality.ts",
   adapterTest: "supabase/functions/_shared/ce-conversion-reality.test.ts",
+  provider: "supabase/functions/_shared/ce-provider-response.ts",
+  providerTest: "supabase/functions/_shared/ce-provider-response.test.ts",
   contract: "supabase/functions/_shared/ce-contract.ts",
   grounding: "supabase/functions/_shared/ce-grounding.ts",
   worker: "supabase/functions/_shared/ce-automation-engine.ts",
@@ -33,6 +35,8 @@ const contract = read(files.contract);
 const worker = read(files.worker);
 const manual = read(files.manual);
 const test = read(files.adapterTest);
+const provider = read(files.provider);
+const providerTest = read(files.providerTest);
 
 for (const marker of [
   "loadCeConversionReality",
@@ -62,6 +66,19 @@ must(
   "kb_lifecycle_dependency_forbidden",
 );
 must((test.match(/Deno\.test\(/g) ?? []).length >= 20, "required_b3_test_matrix_missing");
+must(
+  (providerTest.match(/Deno\.test\(/g) ?? []).length >= 25,
+  "required_provider_output_matrix_missing",
+);
+must(provider.includes("CE_EVALUATOR_MAX_TOKENS = 4096"), "provider_budget_not_governed");
+must(
+  worker.includes("validateCeProviderResponse") && manual.includes("validateCeProviderResponse"),
+  "manual_automatic_provider_path_not_shared",
+);
+must(
+  !worker.includes("validateEvaluatorOutput") && !manual.includes("validateEvaluatorOutput"),
+  "independent_provider_validation_path_forbidden",
+);
 must(contract.includes("sales: 0.15") && contract.includes("context: 0.1"), "ce_weights_changed");
 must(contract.includes("never recommend automatic handoff solely"), "false_handoff_guard_missing");
 
@@ -107,9 +124,12 @@ try {
     "deno",
     "test",
     "--allow-read",
+    "--import-map",
+    importMap,
     files.b1Test,
     files.b2Test,
     files.adapterTest,
+    files.providerTest,
   ]);
   run("npx", [
     "--yes",
@@ -129,6 +149,8 @@ try {
     files.adapter,
     files.adapterTest,
     files.contract,
+    files.provider,
+    files.providerTest,
     files.grounding,
     files.worker,
     files.manual,

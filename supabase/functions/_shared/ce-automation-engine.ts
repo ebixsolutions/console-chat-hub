@@ -7,6 +7,7 @@
  */
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2.45.0";
 import { callModel, parseJsonObject, redact, toCeErrorCode } from "./llm-router.ts";
+import { CE_EVALUATOR_MAX_TOKENS, validateCeProviderResponse } from "./ce-provider-response.ts";
 import { fetchGrounding, type GroundingBundle } from "./ce-grounding.ts";
 import {
   buildCanonicalBundle,
@@ -24,7 +25,6 @@ import {
   EVALUATOR_SYSTEM_PROMPT,
   SIGNALS_SYSTEM_PROMPT,
   EVALUATOR_RESPONSE_SCHEMA,
-  validateEvaluatorOutput,
   validateSignalsOutput,
   deriveDiscrepancies,
   type CeDimension,
@@ -42,7 +42,6 @@ import {
 } from "./ce-conversion-reality.ts";
 
 const MAX_MESSAGES = 400;
-const EVALUATOR_MAX_TOKENS = 2600;
 const SYSTEM_ACTOR = "00000000-0000-0000-0000-000000000001";
 export const AUTOMATION_SOURCE_DEPLOYMENT = "nexusai-pr29-task2-auto-eval-1.0.0";
 
@@ -275,7 +274,7 @@ async function runEvaluator(
     purpose: "evaluation",
     system: local ? LOCAL_EVALUATOR_SYSTEM_PROMPT[dimension] : EVALUATOR_SYSTEM_PROMPT[dimension],
     user: bundle,
-    maxTokens: EVALUATOR_MAX_TOKENS,
+    maxTokens: CE_EVALUATOR_MAX_TOKENS,
     operationId: `${operationId}:${dimension}`,
     companyId,
     conversationId,
@@ -284,10 +283,9 @@ async function runEvaluator(
     responseSchema: EVALUATOR_RESPONSE_SCHEMA,
   });
   if (!res.ok) return { ok: false as const, code: toCeErrorCode(res.code) };
-  const parsed = parseJsonObject(res.text);
-  const out = validateEvaluatorOutput(parsed, knownChunkIds);
-  if (!out) return { ok: false as const, code: "CE_PROVIDER_INVALID_OUTPUT" };
-  return { ok: true as const, ...out, model: res.model, raw: parsed! };
+  const validated = validateCeProviderResponse(res.text, knownChunkIds);
+  if (!validated.ok) return { ok: false as const, code: "CE_PROVIDER_INVALID_OUTPUT" };
+  return { ok: true as const, ...validated.value, model: res.model, raw: validated.raw };
 }
 
 async function runSignals(
@@ -301,7 +299,7 @@ async function runSignals(
     purpose: "evaluation",
     system: SIGNALS_SYSTEM_PROMPT,
     user: bundle,
-    maxTokens: EVALUATOR_MAX_TOKENS,
+    maxTokens: CE_EVALUATOR_MAX_TOKENS,
     operationId: `${operationId}:signals`,
     companyId,
     conversationId,
