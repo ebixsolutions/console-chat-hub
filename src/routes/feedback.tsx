@@ -12,7 +12,7 @@ export const Route = createFileRoute("/feedback")({
   component: FeedbackPage,
 });
 
-const EF_URL = `${authoritativeFunctionsBase(import.meta.env.VITE_SUPABASE_FUNCTIONS_URL)}/submit-feedback-response`;
+const EF_URL = `${resolveAuthoritativeSupabaseBinding({ functionsUrl: import.meta.env.VITE_SUPABASE_FUNCTIONS_URL }).functionsUrl}/submit-feedback-response`;
 
 function FeedbackPage() {
   const { token } = useSearch({ from: "/feedback" });
