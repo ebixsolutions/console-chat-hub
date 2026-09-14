@@ -7,11 +7,7 @@
 // evidence is parsed and retained per document. Callers must select exactly one
 // winning document before exposing llm_context/policy evidence to the UI.
 
-export type AggregationChunkType =
-  | "rag_summary"
-  | "full_content"
-  | "faq_pair"
-  | "section";
+export type AggregationChunkType = "rag_summary" | "full_content" | "faq_pair" | "section";
 
 export interface AggregationChunk {
   document_id: string;
@@ -57,6 +53,20 @@ export interface AggregationMeta {
   dropped_without_content: number;
 }
 
+export interface AggregationAuthorityMetadata {
+  tenant_id: string | null;
+  publication_state: string | null;
+  currentness: "current" | "historical" | "superseded" | "cancelled" | "unknown";
+  entity_ids: string[];
+  regions: string[];
+  language: string | null;
+  version: string | null;
+  version_rank: number | null;
+  updated_at: string | null;
+  source_priority: number | null;
+  claims: Array<{ key: string; value: string }>;
+}
+
 export interface AggregationDocumentCandidate {
   document_id: string;
   title: string;
@@ -66,6 +76,7 @@ export interface AggregationDocumentCandidate {
   citations: AggregationCitation[];
   llm_context: AggregationInternalContext;
   meta: AggregationMeta;
+  authority: AggregationAuthorityMetadata;
 }
 
 export type ParsedAggregationResponse =
@@ -101,6 +112,99 @@ function nonEmpty(v: unknown): string | null {
   return typeof v === "string" && v.trim() ? v.trim() : null;
 }
 
+function stringArray(value: unknown, maxItems = 24, maxLength = 160): string[] {
+  if (!Array.isArray(value)) return [];
+  return [
+    ...new Set(
+      value
+        .filter((item): item is string => typeof item === "string")
+        .map((item) => item.normalize("NFKC").trim().slice(0, maxLength))
+        .filter(Boolean),
+    ),
+  ].slice(0, maxItems);
+}
+
+function authorityMetadata(doc: Obj): AggregationAuthorityMetadata {
+  const metadata = isObj(doc.authority) ? doc.authority : isObj(doc.metadata) ? doc.metadata : {};
+  const first = (...values: unknown[]) => values.map(nonEmpty).find(Boolean) ?? null;
+  const firstIdentifier = (...values: unknown[]) => {
+    for (const value of values) {
+      const parsed =
+        nonEmpty(value) ??
+        (typeof value === "number" && Number.isSafeInteger(value) ? String(value) : null);
+      if (parsed) return parsed;
+    }
+    return null;
+  };
+  const currentRaw = first(
+    metadata.currentness,
+    metadata.freshness_status,
+    doc.currentness,
+    doc.freshness_status,
+  )?.toLowerCase();
+  const explicitCurrent =
+    typeof metadata.is_current === "boolean"
+      ? metadata.is_current
+      : typeof doc.is_current === "boolean"
+        ? doc.is_current
+        : null;
+  const currentness =
+    currentRaw === "historical" ||
+    currentRaw === "superseded" ||
+    currentRaw === "cancelled" ||
+    currentRaw === "current"
+      ? currentRaw
+      : explicitCurrent === false
+        ? "historical"
+        : explicitCurrent === true
+          ? "current"
+          : "unknown";
+  const rawClaims = Array.isArray(metadata.claims)
+    ? metadata.claims
+    : Array.isArray(doc.claims)
+      ? doc.claims
+      : [];
+  const claims = rawClaims
+    .flatMap((claim): Array<{ key: string; value: string }> => {
+      if (!isObj(claim)) return [];
+      const key = first(claim.key, claim.fact_key);
+      const value = first(claim.value, claim.fact_value);
+      return key && value ? [{ key: key.slice(0, 200), value: value.slice(0, 500) }] : [];
+    })
+    .slice(0, 24);
+  const versionRank = finite(
+    metadata.version_rank ?? metadata.version_number ?? doc.version_rank ?? doc.version_number,
+  );
+  const sourcePriority = finite(metadata.source_priority ?? doc.source_priority);
+  return {
+    tenant_id: firstIdentifier(
+      metadata.tenant_id,
+      metadata.company_id,
+      doc.tenant_id,
+      doc.company_id,
+    ),
+    publication_state: first(
+      metadata.publication_state,
+      metadata.status,
+      doc.publication_state,
+      doc.status,
+    ),
+    currentness,
+    entity_ids: stringArray(metadata.entity_ids ?? metadata.models ?? doc.entity_ids ?? doc.models),
+    regions: stringArray(
+      metadata.regions ?? metadata.markets ?? doc.regions ?? doc.markets,
+      12,
+      80,
+    ),
+    language: first(metadata.language, doc.language),
+    version: first(metadata.version, metadata.version_id, doc.version, doc.version_id),
+    version_rank: versionRank,
+    updated_at: first(metadata.updated_at, metadata.published_at, doc.updated_at, doc.published_at),
+    source_priority: sourcePriority,
+    claims,
+  };
+}
+
 function parseDocumentCandidate(doc: unknown): AggregationDocumentCandidate | null {
   if (!isObj(doc)) return null;
 
@@ -108,7 +212,9 @@ function parseDocumentCandidate(doc: unknown): AggregationDocumentCandidate | nu
   const title = nonEmpty(doc.title) ?? "Knowledge Base document";
   const sourceType = nonEmpty(doc.source_type) ?? "knowledge";
   const documentScore = finite(doc.document_score);
-  if (!documentId || documentScore === null || !Array.isArray(doc.evidence)) return null;
+  if (!documentId || documentScore === null || !Array.isArray(doc.evidence)) {
+    return null;
+  }
 
   const chunks: AggregationChunk[] = [];
   const citations: AggregationCitation[] = [];
@@ -154,12 +260,14 @@ function parseDocumentCandidate(doc: unknown): AggregationDocumentCandidate | nu
     const chunkId = nonEmpty(item.chunk_id) ?? undefined;
     const chunkType = item.chunk_type;
     if (
-      !content || score === null ||
+      !content ||
+      score === null ||
       (chunkType !== "rag_summary" &&
-       chunkType !== "full_content" &&
-       chunkType !== "faq_pair" &&
-       chunkType !== "section")
-    ) return null;
+        chunkType !== "full_content" &&
+        chunkType !== "faq_pair" &&
+        chunkType !== "section")
+    )
+      return null;
 
     if (chunkType === "rag_summary") {
       summaryCount += 1;
@@ -223,6 +331,7 @@ function parseDocumentCandidate(doc: unknown): AggregationDocumentCandidate | nu
       dropped_without_document_id: 0,
       dropped_without_content: 0,
     },
+    authority: authorityMetadata(doc),
   };
 }
 
@@ -240,12 +349,22 @@ export function parseAggregationResponse(data: unknown): ParsedAggregationRespon
       return { ok: false, error_code: "KB_SCHEMA_INVALID" };
     }
     if (data.llm_context !== undefined && data.llm_context !== null) {
-      if (!isObj(data.llm_context)) return { ok: false, error_code: "KB_SCHEMA_INVALID" };
+      if (!isObj(data.llm_context)) {
+        return { ok: false, error_code: "KB_SCHEMA_INVALID" };
+      }
       const sc = finite(data.llm_context.summary_count);
       const ec = finite(data.llm_context.evidence_count);
-      if (sc !== 0 || ec !== 0) return { ok: false, error_code: "KB_SCHEMA_INVALID" };
+      if (sc !== 0 || ec !== 0) {
+        return { ok: false, error_code: "KB_SCHEMA_INVALID" };
+      }
     }
-    return { ok: true, contextFound: false, chunks: [], citations: [], documents: [] };
+    return {
+      ok: true,
+      contextFound: false,
+      chunks: [],
+      citations: [],
+      documents: [],
+    };
   }
 
   if (

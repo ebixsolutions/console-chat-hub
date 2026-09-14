@@ -34,6 +34,85 @@ export interface ResolveCommerceAuthorityInput {
   unsafe_to_remote_confirm?: boolean;
 }
 
+/**
+ * C1 extends the existing A2 authority contract to cover read-only reference
+ * evidence.  It deliberately contains no KB transport or persistence logic:
+ * callers provide bounded provenance and receive a deterministic decision.
+ */
+export type ReferenceAuthorityClass =
+  | "CANONICAL_TRANSACTION"
+  | "DETERMINISTIC_CALCULATION"
+  | "CURRENT_KB"
+  | "CUSTOMER_CONTEXT"
+  | "HISTORICAL"
+  | "MODEL_INFERENCE";
+
+export type ReferenceEvidenceCurrentness =
+  "current" | "historical" | "superseded" | "cancelled" | "unknown";
+
+export type ReferenceAuthorityDecisionKind =
+  | "USE_CANONICAL_STATE"
+  | "USE_DETERMINISTIC_CALCULATION"
+  | "USE_CURRENT_KB"
+  | "USE_CUSTOMER_CONTEXT"
+  | "HISTORICAL_ONLY"
+  | "CURRENT_KB_REQUIRED"
+  | "CONFLICT_UNRESOLVED"
+  | "INSUFFICIENT_EVIDENCE";
+
+export interface ReferenceFactClaim {
+  key: string;
+  value: string;
+}
+
+export interface ReferenceEvidenceCandidate {
+  source_id: string;
+  source_type: string;
+  authority_class: ReferenceAuthorityClass;
+  tenant_id?: string | null;
+  publication_state?: string | null;
+  currentness?: ReferenceEvidenceCurrentness;
+  entity_ids?: string[];
+  regions?: string[];
+  language?: string | null;
+  version?: string | null;
+  version_rank?: number | null;
+  updated_at?: string | null;
+  source_priority?: number | null;
+  relevance_score?: number | null;
+  claims?: ReferenceFactClaim[];
+}
+
+export interface ResolveReferenceAuthorityInput {
+  candidates: ReferenceEvidenceCandidate[];
+  expected_tenant_id?: string | null;
+  expected_entity_ids?: string[];
+  expected_region?: string | null;
+  requires_current_kb?: boolean;
+}
+
+export interface ReferenceAuthorityRejection {
+  source_id: string;
+  reason: string;
+}
+
+export interface ReferenceAuthorityDecision {
+  decision: ReferenceAuthorityDecisionKind;
+  reason: string;
+  selected_source_id: string | null;
+  selected_authority_class: ReferenceAuthorityClass | null;
+  conflict_source_ids: string[];
+  rejected: ReferenceAuthorityRejection[];
+  provenance: {
+    tenant_id: string | null;
+    entity_ids: string[];
+    region: string | null;
+    source_type: string | null;
+    version: string | null;
+    currentness: ReferenceEvidenceCurrentness | null;
+  };
+}
+
 function clean(value: unknown, max = 1200): string {
   return typeof value === "string"
     ? value.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max)
@@ -55,7 +134,9 @@ export function getCommerceStatePath(state: ConversationCommerceState, path: str
   for (const part of parts) {
     if (Array.isArray(current)) {
       const index = Number(part);
-      if (!Number.isInteger(index) || index < 0 || index >= current.length) return undefined;
+      if (!Number.isInteger(index) || index < 0 || index >= current.length) {
+        return undefined;
+      }
       current = current[index];
       continue;
     }
@@ -74,7 +155,12 @@ export function findCommerceEntity(
   const matches = state.entities.filter((entity) =>
     [entity.entity_id, entity.category, entity.brand ?? "", entity.model ?? ""]
       .map((x) => clean(x, 120).toLowerCase())
-      .some((x) => x === needle || (x.length >= 2 && x.includes(needle)) || (needle.length >= 2 && needle.includes(x)))
+      .some(
+        (x) =>
+          x === needle ||
+          (x.length >= 2 && x.includes(needle)) ||
+          (needle.length >= 2 && needle.includes(x)),
+      ),
   );
   return matches.length === 1 ? matches[0] : null;
 }
@@ -101,20 +187,29 @@ export function calculateCommerceTerms(
 }
 
 function questionLooksLikeCurrentBusinessFact(question: string): boolean {
-  return /(?:而家|現在|现在|目前|最新|current|latest|今日|today).{0,30}(?:價|价|price|stock|庫存|库存|有貨|有货|available|政策|policy|收費|收费|fee|delivery|送貨|送货|保養|保修|warranty)/i.test(question);
+  return /(?:而家|現在|现在|目前|最新|current|latest|今日|today).{0,30}(?:價|价|price|stock|庫存|库存|有貨|有货|available|政策|policy|收費|收费|fee|delivery|送貨|送货|保養|保修|warranty)/i.test(
+    question,
+  );
 }
 
 function questionLooksLikeCustomerState(question: string): boolean {
-  return /(?:我(?:而家|現在|现在|目前|最後|最后)?|my\s+(?:current|latest|final)?).{0,45}(?:幾多|多少|數量|数量|要咩|要什麼|要什么|地址|電話|电话|收貨人|收货人|日期|時間|时间|要求|需求|限制|狀態|状态|order|quote|quotation|quantity|address|phone|recipient|date|requirements?|constraints?|status)|(?:幫我|帮我|please).{0,30}(?:總結|总结|summari[sz]e).{0,30}(?:我|my)/i.test(question);
+  return /(?:我(?:而家|現在|现在|目前|最後|最后)?|my\s+(?:current|latest|final)?).{0,45}(?:幾多|多少|數量|数量|要咩|要什麼|要什么|地址|電話|电话|收貨人|收货人|日期|時間|时间|要求|需求|限制|狀態|状态|order|quote|quotation|quantity|address|phone|recipient|date|requirements?|constraints?|status)|(?:幫我|帮我|please).{0,30}(?:總結|总结|summari[sz]e).{0,30}(?:我|my)/i.test(
+    question,
+  );
 }
 
 function questionLooksLikeCalculation(question: string): boolean {
-  return /(?:加埋|合共|總共幾錢|总共多少钱|一共多少|total|how much.*(?:total|altogether)|calculate|計下|算下|計算|计算)/i.test(question);
+  return /(?:加埋|合共|總共幾錢|总共多少钱|一共多少|total|how much.*(?:total|altogether)|calculate|計下|算下|計算|计算)/i.test(
+    question,
+  );
 }
 
 function questionExplicitlyAsksQuantity(question: string): boolean {
-  if (/(?:價|价|price|amount|金額|金额|幾錢|几钱|多少錢|多少钱|fee|收費|收费)/i.test(question)) return false;
-  return /(?:數量|数量|quantity|how many|幾多\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚)|多少\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚))/i.test(question);
+  if (/(?:價|价|price|amount|金額|金额|幾錢|几钱|多少錢|多少钱|fee|收費|收费)/i.test(question))
+    return false;
+  return /(?:數量|数量|quantity|how many|幾多\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚)|多少\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚))/i.test(
+    question,
+  );
 }
 
 function inferKnownCustomerStatePath(
@@ -125,7 +220,10 @@ function inferKnownCustomerStatePath(
     [/(?:送貨地址|送货地址|地址|delivery address|address)/i, "delivery.address"],
     [/(?:收貨人電話|收货人电话|recipient phone|contact phone)/i, "delivery.recipient_phone"],
     [/(?:收貨人|收货人|recipient)/i, "delivery.recipient_name"],
-    [/(?:送貨日期|送货日期|送貨時間|送货时间|delivery date|delivery time|preferred date)/i, "delivery.preferred_date"],
+    [
+      /(?:送貨日期|送货日期|送貨時間|送货时间|delivery date|delivery time|preferred date)/i,
+      "delivery.preferred_date",
+    ],
     [/(?:order status|訂單狀態|订单状态|落單狀態|下单状态)/i, "conversion.order_status"],
     [/(?:quote status|quotation status|報價狀態|报价状态)/i, "conversion.quotation_status"],
     [/(?:payment status|付款狀態|付款状态)/i, "conversion.payment_status"],
@@ -138,9 +236,14 @@ function inferKnownCustomerStatePath(
   }
 
   if (questionExplicitlyAsksQuantity(question)) {
-    const active = state.entities.filter((entity) => entity.status !== "cancelled" && entity.status !== "deferred");
+    const active = state.entities.filter(
+      (entity) => entity.status !== "cancelled" && entity.status !== "deferred",
+    );
     if (active.length === 1) {
-      return { path: `entities.${state.entities.indexOf(active[0])}.quantity`, value: active[0].quantity };
+      return {
+        path: `entities.${state.entities.indexOf(active[0])}.quantity`,
+        value: active[0].quantity,
+      };
     }
   }
 
@@ -155,7 +258,9 @@ function inferKnownCustomerStatePath(
  * 4. Current business/product/policy facts require current KB/tool evidence.
  * 5. Otherwise fail safely instead of inventing facts.
  */
-export function resolveCommerceAnswerAuthority(input: ResolveCommerceAuthorityInput): CommerceAuthorityDecision {
+export function resolveCommerceAnswerAuthority(
+  input: ResolveCommerceAuthorityInput,
+): CommerceAuthorityDecision {
   const question = clean(input.question);
   const explicitStatePath = clean(input.requested_state_path ?? "", 300);
 
@@ -181,7 +286,10 @@ export function resolveCommerceAnswerAuthority(input: ResolveCommerceAuthorityIn
     };
   }
 
-  if ((questionLooksLikeCalculation(question) || (input.calculation_terms?.length ?? 0) > 0) && input.calculation_terms?.length) {
+  if (
+    (questionLooksLikeCalculation(question) || (input.calculation_terms?.length ?? 0) > 0) &&
+    input.calculation_terms?.length
+  ) {
     const calculation = calculateCommerceTerms(input.calculation_terms, input.calculation_currency);
     if (calculation) {
       return {
@@ -222,5 +330,321 @@ export function resolveCommerceAnswerAuthority(input: ResolveCommerceAuthorityIn
   return {
     authority: "INSUFFICIENT_INFORMATION",
     reason: "no_authoritative_source_selected",
+  };
+}
+
+const REFERENCE_AUTHORITY_RANK: Record<ReferenceAuthorityClass, number> = {
+  CANONICAL_TRANSACTION: 500,
+  DETERMINISTIC_CALCULATION: 500,
+  CURRENT_KB: 400,
+  CUSTOMER_CONTEXT: 300,
+  HISTORICAL: 100,
+  MODEL_INFERENCE: 0,
+};
+
+function boundedStrings(values: unknown, maxItems = 24, maxLength = 160): string[] {
+  if (!Array.isArray(values)) return [];
+  return [
+    ...new Set(
+      values
+        .filter((value): value is string => typeof value === "string")
+        .map((value) => clean(value, maxLength).toLowerCase())
+        .filter(Boolean),
+    ),
+  ].slice(0, maxItems);
+}
+
+function referenceCurrentness(candidate: ReferenceEvidenceCandidate): ReferenceEvidenceCurrentness {
+  if (candidate.currentness) return candidate.currentness;
+  if (candidate.authority_class === "HISTORICAL") return "historical";
+  if (candidate.authority_class === "CURRENT_KB") return "current";
+  return "unknown";
+}
+
+function normalizedPublicationState(candidate: ReferenceEvidenceCandidate): string {
+  return clean(candidate.publication_state ?? "", 40).toLowerCase();
+}
+
+function isCurrentPublishedReference(candidate: ReferenceEvidenceCandidate): boolean {
+  if (candidate.authority_class !== "CURRENT_KB") return true;
+  const publication = normalizedPublicationState(candidate);
+  const currentness = referenceCurrentness(candidate);
+  return (
+    (publication === "" || publication === "published" || publication === "live") &&
+    currentness === "current"
+  );
+}
+
+function overlaps(expected: string[], actual: string[]): boolean {
+  if (!expected.length || !actual.length) return true;
+  return expected.some((value) => actual.includes(value));
+}
+
+function parseTimestamp(value: string | null | undefined): number {
+  if (!value) return 0;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function finiteOrZero(value: number | null | undefined): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function normalizeClaimPart(value: string): string {
+  return clean(value, 500).toLowerCase();
+}
+
+function normalizedClaims(candidate: ReferenceEvidenceCandidate): Map<string, string> {
+  const claims = new Map<string, string>();
+  for (const claim of candidate.claims ?? []) {
+    const key = normalizeClaimPart(claim?.key ?? "");
+    const value = normalizeClaimPart(claim?.value ?? "");
+    if (key && value) claims.set(key, value);
+  }
+  return claims;
+}
+
+function hasInternalClaimConflict(candidate: ReferenceEvidenceCandidate): boolean {
+  const valuesByKey = new Map<string, Set<string>>();
+  for (const claim of candidate.claims ?? []) {
+    const key = normalizeClaimPart(claim?.key ?? "");
+    const value = normalizeClaimPart(claim?.value ?? "");
+    if (!key || !value) continue;
+    const values = valuesByKey.get(key) ?? new Set<string>();
+    values.add(value);
+    valuesByKey.set(key, values);
+  }
+  return [...valuesByKey.values()].some((values) => values.size > 1);
+}
+
+function bindingSpecificity(
+  candidate: ReferenceEvidenceCandidate,
+  expectedEntities: string[],
+  expectedRegion: string,
+): number {
+  const entities = boundedStrings(candidate.entity_ids);
+  const regions = boundedStrings(candidate.regions, 12, 80);
+  return (
+    (expectedEntities.length && entities.length && overlaps(expectedEntities, entities) ? 2 : 0) +
+    (expectedRegion && regions.includes(expectedRegion) ? 1 : 0)
+  );
+}
+
+function comparableAuthorityTuple(
+  candidate: ReferenceEvidenceCandidate,
+  expectedEntities: string[],
+  expectedRegion: string,
+): string {
+  return [
+    REFERENCE_AUTHORITY_RANK[candidate.authority_class],
+    bindingSpecificity(candidate, expectedEntities, expectedRegion),
+    finiteOrZero(candidate.source_priority),
+    finiteOrZero(candidate.version_rank),
+    parseTimestamp(candidate.updated_at),
+  ].join(":");
+}
+
+function conflictingTopSources(
+  candidates: ReferenceEvidenceCandidate[],
+  expectedEntities: string[],
+  expectedRegion: string,
+): string[] {
+  if (candidates.length < 1) return [];
+  const topTuple = comparableAuthorityTuple(candidates[0], expectedEntities, expectedRegion);
+  const peers = candidates.filter(
+    (candidate) =>
+      comparableAuthorityTuple(candidate, expectedEntities, expectedRegion) === topTuple,
+  );
+  const internallyConflicting = peers
+    .filter(hasInternalClaimConflict)
+    .map((candidate) => candidate.source_id)
+    .sort();
+  if (internallyConflicting.length) return internallyConflicting;
+  if (peers.length < 2) return [];
+
+  const valuesByKey = new Map<string, Map<string, Set<string>>>();
+  for (const candidate of peers) {
+    for (const [key, value] of normalizedClaims(candidate)) {
+      const values = valuesByKey.get(key) ?? new Map<string, Set<string>>();
+      const sources = values.get(value) ?? new Set<string>();
+      sources.add(candidate.source_id);
+      values.set(value, sources);
+      valuesByKey.set(key, values);
+    }
+  }
+
+  const conflictIds = new Set<string>();
+  for (const values of valuesByKey.values()) {
+    if (values.size < 2) continue;
+    for (const sources of values.values()) {
+      for (const source of sources) conflictIds.add(source);
+    }
+  }
+  return [...conflictIds].sort();
+}
+
+function decisionForClass(authorityClass: ReferenceAuthorityClass): ReferenceAuthorityDecisionKind {
+  if (authorityClass === "CANONICAL_TRANSACTION") return "USE_CANONICAL_STATE";
+  if (authorityClass === "DETERMINISTIC_CALCULATION") {
+    return "USE_DETERMINISTIC_CALCULATION";
+  }
+  if (authorityClass === "CURRENT_KB") return "USE_CURRENT_KB";
+  if (authorityClass === "CUSTOMER_CONTEXT") return "USE_CUSTOMER_CONTEXT";
+  if (authorityClass === "HISTORICAL") return "HISTORICAL_ONLY";
+  return "INSUFFICIENT_EVIDENCE";
+}
+
+/**
+ * Generic deterministic authority resolver shared by every industry.
+ * Relevance is the last tie-breaker and can never outrank tenant, binding,
+ * publication, currentness, authority class, source priority, or version.
+ */
+export function resolveReferenceAuthority(
+  input: ResolveReferenceAuthorityInput,
+): ReferenceAuthorityDecision {
+  const expectedTenant = clean(input.expected_tenant_id ?? "", 160).toLowerCase();
+  const expectedEntities = boundedStrings(input.expected_entity_ids);
+  const expectedRegion = clean(input.expected_region ?? "", 80).toLowerCase();
+  const rejected: ReferenceAuthorityRejection[] = [];
+  const historical: ReferenceEvidenceCandidate[] = [];
+  const eligible: ReferenceEvidenceCandidate[] = [];
+
+  for (const candidate of input.candidates ?? []) {
+    const sourceId = clean(candidate?.source_id ?? "", 200);
+    if (!sourceId) continue;
+    const tenant = clean(candidate.tenant_id ?? "", 160).toLowerCase();
+    if (expectedTenant && tenant && tenant !== expectedTenant) {
+      rejected.push({ source_id: sourceId, reason: "wrong_tenant" });
+      continue;
+    }
+    const entities = boundedStrings(candidate.entity_ids);
+    if (!overlaps(expectedEntities, entities)) {
+      rejected.push({ source_id: sourceId, reason: "wrong_entity" });
+      continue;
+    }
+    const regions = boundedStrings(candidate.regions, 12, 80);
+    if (expectedRegion && regions.length && !regions.includes(expectedRegion)) {
+      rejected.push({ source_id: sourceId, reason: "wrong_region" });
+      continue;
+    }
+    const currentness = referenceCurrentness(candidate);
+    // A cancelled canonical transaction is itself the current transaction
+    // truth. Keep it eligible so a generic KB candidate cannot resurrect it.
+    if (candidate.authority_class === "CANONICAL_TRANSACTION" && currentness === "cancelled") {
+      eligible.push(candidate);
+      continue;
+    }
+    if (
+      candidate.authority_class === "HISTORICAL" ||
+      currentness === "historical" ||
+      currentness === "superseded" ||
+      currentness === "cancelled"
+    ) {
+      historical.push(candidate);
+      rejected.push({ source_id: sourceId, reason: `${currentness}_evidence` });
+      continue;
+    }
+    if (!isCurrentPublishedReference(candidate)) {
+      rejected.push({
+        source_id: sourceId,
+        reason: "not_current_published_live",
+      });
+      continue;
+    }
+    if (candidate.authority_class === "MODEL_INFERENCE") {
+      rejected.push({
+        source_id: sourceId,
+        reason: "model_inference_not_authority",
+      });
+      continue;
+    }
+    eligible.push(candidate);
+  }
+
+  const selectable = input.requires_current_kb
+    ? eligible.filter(
+        (candidate) =>
+          candidate.authority_class === "CANONICAL_TRANSACTION" ||
+          candidate.authority_class === "DETERMINISTIC_CALCULATION" ||
+          candidate.authority_class === "CURRENT_KB",
+      )
+    : eligible;
+
+  selectable.sort(
+    (a, b) =>
+      REFERENCE_AUTHORITY_RANK[b.authority_class] - REFERENCE_AUTHORITY_RANK[a.authority_class] ||
+      bindingSpecificity(b, expectedEntities, expectedRegion) -
+        bindingSpecificity(a, expectedEntities, expectedRegion) ||
+      finiteOrZero(b.source_priority) - finiteOrZero(a.source_priority) ||
+      finiteOrZero(b.version_rank) - finiteOrZero(a.version_rank) ||
+      parseTimestamp(b.updated_at) - parseTimestamp(a.updated_at) ||
+      finiteOrZero(b.relevance_score) - finiteOrZero(a.relevance_score) ||
+      a.source_id.localeCompare(b.source_id),
+  );
+
+  const conflictSourceIds = conflictingTopSources(selectable, expectedEntities, expectedRegion);
+  if (conflictSourceIds.length > 0) {
+    return {
+      decision: "CONFLICT_UNRESOLVED",
+      reason: "equal_authority_current_sources_conflict_without_precedence",
+      selected_source_id: null,
+      selected_authority_class: null,
+      conflict_source_ids: conflictSourceIds,
+      rejected,
+      provenance: {
+        tenant_id: expectedTenant || null,
+        entity_ids: expectedEntities,
+        region: expectedRegion || null,
+        source_type: null,
+        version: null,
+        currentness: null,
+      },
+    };
+  }
+
+  const selected = selectable[0];
+  if (!selected) {
+    const historicalOnly = historical.length > 0;
+    return {
+      decision: input.requires_current_kb
+        ? "CURRENT_KB_REQUIRED"
+        : historicalOnly
+          ? "HISTORICAL_ONLY"
+          : "INSUFFICIENT_EVIDENCE",
+      reason: input.requires_current_kb
+        ? "current_published_kb_evidence_not_available"
+        : historicalOnly
+          ? "only_historical_evidence_available"
+          : "no_authoritative_evidence_available",
+      selected_source_id: null,
+      selected_authority_class: null,
+      conflict_source_ids: [],
+      rejected,
+      provenance: {
+        tenant_id: expectedTenant || null,
+        entity_ids: expectedEntities,
+        region: expectedRegion || null,
+        source_type: null,
+        version: null,
+        currentness: null,
+      },
+    };
+  }
+
+  return {
+    decision: decisionForClass(selected.authority_class),
+    reason: "highest_bound_current_authority_selected",
+    selected_source_id: selected.source_id,
+    selected_authority_class: selected.authority_class,
+    conflict_source_ids: [],
+    rejected,
+    provenance: {
+      tenant_id: clean(selected.tenant_id ?? "", 160) || expectedTenant || null,
+      entity_ids: boundedStrings(selected.entity_ids),
+      region: boundedStrings(selected.regions, 12, 80)[0] ?? (expectedRegion || null),
+      source_type: clean(selected.source_type, 80) || null,
+      version: clean(selected.version ?? "", 120) || null,
+      currentness: referenceCurrentness(selected),
+    },
   };
 }

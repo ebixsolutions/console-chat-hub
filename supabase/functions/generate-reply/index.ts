@@ -73,6 +73,7 @@ import {
 } from "../_shared/conversation-runtime-state.ts";
 import { classifyCanonicalConversationTurn } from "../_shared/conversation-semantic-contract.ts";
 import { selectCanonicalGrounding } from "../_shared/canonical-grounding.ts";
+import type { ReferenceAuthorityDecision } from "../_shared/commerce-state-authority.ts";
 import { buildCitationMetadata } from "../_shared/citation-lineage.ts";
 import {
   buildInheritedTransformCitationMetadata,
@@ -218,6 +219,34 @@ const GROUNDING_RECOVERY_WORDING: Record<"zh-TW" | "zh-CN" | "en", string> = {
   en:
     "I want to verify the information before answering so I don’t give you something inaccurate. Which point would you like me to confirm first?",
 };
+
+const C1_AUTHORITY_CONFLICT_WORDING: Record<"zh-TW" | "zh-CN" | "en", string> =
+  {
+    "zh-TW":
+      "我找到兩項同等有效但內容不一致的現行資料，因此不能安全地替你判定。請告訴我你想核實的具體項目、資料來源或日期，我會再精確確認。",
+    "zh-CN":
+      "我找到两项同等有效但内容不一致的现行资料，因此不能安全地替你判定。请告诉我你想核实的具体项目、资料来源或日期，我会再精确确认。",
+    en:
+      "I found two equally authoritative current sources that disagree, so I cannot safely choose between them. Please specify the exact item, source, or date you want verified.",
+  };
+
+function referenceAuthorityMetadata(
+  decision: ReferenceAuthorityDecision,
+): Record<string, unknown> {
+  return {
+    contract: "AI-ABC-C1",
+    decision: decision.decision,
+    reason: decision.reason,
+    selected_source_id: decision.selected_source_id,
+    selected_authority_class: decision.selected_authority_class,
+    conflict_source_ids: decision.conflict_source_ids,
+    rejected: decision.rejected.map((item) => ({
+      source_id: item.source_id,
+      reason: item.reason,
+    })),
+    provenance: decision.provenance,
+  };
+}
 
 const HANDOFF_STRONG_TRIGGERS: Record<string, string[]> = {
   "zh-TW": ["轉真人", "轉人工", "真人客服", "人工客服"],
@@ -4235,6 +4264,7 @@ async function orchestrationGenerateReply(
   const _pr5P1Signals = validateP1PredictionSignals(_pr5P1Input);
 
   let finalPromptChunks: KBFullChunk[] = [];
+  let _c1AuthorityDecision: ReferenceAuthorityDecision | null = null;
   let _kbDone = false;
   let ragResult: {
     success: boolean;
@@ -4433,8 +4463,24 @@ async function orchestrationGenerateReply(
         minScore,
         requirePublished: true,
         requestText: userQuery,
+        expectedTenantId: _kbTenantResult.scope.singaporeTenantId,
+        expectedEntityIds: (_a3SemanticFrame?.entities ?? [])
+          .flatMap((entity) => [
+            entity.entity_ref,
+            entity.name,
+            entity.sku,
+            entity.model,
+            entity.category_hint,
+          ])
+          .filter((value): value is string =>
+            typeof value === "string" && value.trim().length > 0
+          ),
+        requiresCurrentKb: true,
       },
     );
+    _c1AuthorityDecision = _groundingSelection.ok
+      ? _groundingSelection.authority_decision
+      : null;
     const _scoreUsableChunks = _groundingSelection.ok
       ? _groundingSelection.chunks
       : [];
@@ -4460,6 +4506,9 @@ async function orchestrationGenerateReply(
         : null,
       high_risk_topic: isHighRisk,
       min_threshold: minScore,
+      reference_authority: _c1AuthorityDecision
+        ? referenceAuthorityMetadata(_c1AuthorityDecision)
+        : null,
       citations: usableChunks.map((c) => ({
         doc_id: c.doc_id,
         chunk_id: c.chunk_id,
@@ -4470,7 +4519,10 @@ async function orchestrationGenerateReply(
     };
     ragResult.trace_metadata = traceMetadata;
     if (usableChunks.length === 0) {
-      _pr5RagMatchState = "partial_match";
+      _pr5RagMatchState = _c1AuthorityDecision?.decision ===
+          "CONFLICT_UNRESOLVED"
+        ? "conflict"
+        : "partial_match";
       const requiredResponse = await evaluateAndPersistRequiredRulesLive(
         supabaseAdmin,
         {
@@ -4507,6 +4559,62 @@ async function orchestrationGenerateReply(
           _h1LastMsg,
         );
         if (r1Response) return r1Response;
+      }
+      if (_c1AuthorityDecision?.decision === "CONFLICT_UNRESOLVED") {
+        const conflictReply = C1_AUTHORITY_CONFLICT_WORDING[_visitorLang] ??
+          C1_AUTHORITY_CONFLICT_WORDING.en;
+        const committed = await commitAiReplyWithControlGate(
+          supabaseAdmin,
+          conversation_id,
+          source_message_id,
+          conflictReply,
+          {
+            response_route: "c1_authority_conflict_clarification",
+            handoff_required: false,
+            factual_grounding_required: true,
+            grounding_state: "authority_conflict_unresolved",
+            reference_authority: referenceAuthorityMetadata(
+              _c1AuthorityDecision,
+            ),
+          },
+        );
+        await cleanupThinking(
+          supabaseAdmin,
+          conversation_id,
+          source_message_id,
+        );
+        if (!committed.ok) {
+          if (
+            ["human_control", "resolved", "superseded_source"].includes(
+              committed.result,
+            )
+          ) {
+            return new Response(
+              JSON.stringify({ success: true, skipped: committed.result }),
+              {
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+              },
+            );
+          }
+          return new Response(
+            JSON.stringify({
+              success: false,
+              error: `c1_authority_conflict_commit_${committed.result}`,
+            }),
+            {
+              status: 409,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            success: true,
+            response_route: "c1_authority_conflict_clarification",
+            handoff_required: false,
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
       }
       const clarification = await attemptFirstNoMatchClarification(
         supabaseAdmin,
@@ -5005,7 +5113,7 @@ async function orchestrationGenerateReply(
 
   const aiReplyContent = llm.text;
 
-  const citationMeta = _priorGroundedTransform
+  const citationMetaBase = _priorGroundedTransform
     ? buildInheritedTransformCitationMetadata(_priorGroundedTransform)
     : finalPromptChunks.length > 0
     ? buildCitationMetadata(
@@ -5013,6 +5121,12 @@ async function orchestrationGenerateReply(
       ragResult?.llm_context?.selected_document_id ?? null,
     )
     : null;
+  const citationMeta = citationMetaBase && _c1AuthorityDecision
+    ? {
+      ...citationMetaBase,
+      reference_authority: referenceAuthorityMetadata(_c1AuthorityDecision),
+    }
+    : citationMetaBase;
   if (_priorGroundedTransform && !citationMeta) {
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return new Response(
@@ -5159,6 +5273,9 @@ function buildRagBlock(
     const sections: string[] = [
       "Knowledge Base grounding rules:",
       "- Answer ONLY from the evidence below.",
+      "- The server has already selected this evidence using tenant, entity, region, publication, currentness, source precedence, and version authority.",
+      "- Similarity indicates relevance only; it never overrides authority or currentness.",
+      "- Never use rejected, unselected, historical, superseded, or cancelled material as a current fact.",
       "- The RAG summary is orientation only; never use it alone for exact facts.",
       "- Prices, dates, dimensions, policy conditions, procedures, limits, and other exact facts MUST be supported by Full Content Evidence.",
       "- If Full Content Evidence does not support an exact claim, state that the knowledge base does not provide enough evidence and offer human assistance.",

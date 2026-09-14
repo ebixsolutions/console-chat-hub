@@ -19,6 +19,7 @@ import {
 import {
   parseAggregationResponse,
   type AggregationDocumentCandidate,
+  type AggregationAuthorityMetadata,
 } from "./kb-aggregation-response.ts";
 
 export interface KBQueryInput { query: string; top_k: number }
@@ -37,7 +38,7 @@ export interface KBFullChunk {
   score: number;
   chunk_type: "rag_summary" | "full_content" | "faq_pair" | "section";
   source_type: string;
-  status: "published";
+  status: "published" | "historical" | "superseded" | "cancelled" | "draft";
 }
 export interface KBCitationChunk {
   display_label: string;
@@ -78,6 +79,9 @@ export interface KBDocumentCandidate {
   citations: KBCitationChunk[];
   llm_context: KBLLMContext;
   meta: KBRagMeta;
+  // Optional for backward-compatible in-process callers and old fixtures. The
+  // Singapore aggregation parser always supplies this object.
+  authority?: AggregationAuthorityMetadata;
 }
 export interface KBRagResponse {
   success: boolean;
@@ -311,6 +315,15 @@ export function singaporeCompanyIdFromScope(scope: KBResolvedScope): number | nu
 }
 
 function mapDocumentCandidate(candidate: AggregationDocumentCandidate): KBDocumentCandidate {
+  const authorityStatus = candidate.authority.publication_state?.toLowerCase();
+  const authorityCurrentness = candidate.authority.currentness;
+  const chunkStatus: KBFullChunk["status"] =
+    authorityStatus === "draft" || authorityStatus === "unpublished"
+      ? "draft"
+      : authorityCurrentness === "historical" || authorityCurrentness === "superseded" ||
+          authorityCurrentness === "cancelled"
+      ? authorityCurrentness
+      : "published";
   return {
     document_id: candidate.document_id,
     title: candidate.title,
@@ -325,11 +338,12 @@ function mapDocumentCandidate(candidate: AggregationDocumentCandidate): KBDocume
       score: c.score,
       chunk_type: c.chunk_type,
       source_type: c.source_type,
-      status: "published" as const,
+      status: chunkStatus,
     })),
     citations: candidate.citations,
     llm_context: candidate.llm_context,
     meta: candidate.meta,
+    authority: candidate.authority,
   };
 }
 

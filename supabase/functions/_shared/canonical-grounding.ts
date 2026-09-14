@@ -1,11 +1,20 @@
 import type { KBDocumentCandidate, KBFullChunk, KBLLMContextEvidence } from "./kb-client.ts";
 import { detectExplicitJurisdiction } from "./conversation-runtime-state.ts";
+import {
+  type ReferenceAuthorityDecision,
+  type ReferenceEvidenceCandidate,
+  resolveReferenceAuthority,
+} from "./commerce-state-authority.ts";
 
 export interface CanonicalGroundingOptions {
   minScore?: number;
   policyOnly?: boolean;
   requirePublished?: boolean;
   requestText?: string;
+  expectedTenantId?: string | null;
+  expectedEntityIds?: string[];
+  expectedRegion?: string | null;
+  requiresCurrentKb?: boolean;
 }
 export type CanonicalGroundingResult =
   | {
@@ -19,14 +28,21 @@ export type CanonicalGroundingResult =
         request_jurisdiction: string | null;
         document_jurisdictions: string[];
       };
+      authority_decision: ReferenceAuthorityDecision;
     }
-  | { ok: false; error: "KB_DOCUMENT_EVIDENCE_MISMATCH" | "KB_EVIDENCE_NOT_PUBLISHED" };
+  | {
+      ok: false;
+      error: "KB_DOCUMENT_EVIDENCE_MISMATCH" | "KB_EVIDENCE_NOT_PUBLISHED";
+    };
 
 function modelTokens(text: string): string[] {
-  return [...new Set(
-    (text.match(/\b[A-Z]{2,}[A-Z0-9]*[- ]?\d{2,}[A-Z0-9-]*\b/g) ?? [])
-      .map((x) => x.replace(/\s+/g, "").toUpperCase()),
-  )];
+  return [
+    ...new Set(
+      (text.match(/\b[A-Z]{2,}[A-Z0-9]*[- ]?\d{2,}[A-Z0-9-]*\b/g) ?? []).map((x) =>
+        x.replace(/\s+/g, "").toUpperCase(),
+      ),
+    ),
+  ];
 }
 function candidateText(document: KBDocumentCandidate): string {
   return [
@@ -34,7 +50,9 @@ function candidateText(document: KBDocumentCandidate): string {
     document.source_type,
     ...document.chunks.map((c) => `${c.title ?? ""} ${c.content}`),
     ...document.llm_context.full_content_evidence.map((e) => e.content),
-  ].join("\n").slice(0, 50000);
+  ]
+    .join("\n")
+    .slice(0, 50000);
 }
 function jurisdictions(text: string): string[] {
   const found: string[] = [];
@@ -43,7 +61,9 @@ function jurisdictions(text: string): string[] {
   if (/(澳門|澳门|macau|macao)/i.test(text)) found.push("macau");
   if (/(新加坡|singapore)/i.test(text)) found.push("singapore");
   if (/(台灣|台湾|taiwan)/i.test(text)) found.push("taiwan");
-  if (/(中國大陸|中国大陆|內地|内地|mainland\s*china)/i.test(text)) found.push("mainland_china");
+  if (/(中國大陸|中国大陆|內地|内地|mainland\s*china)/i.test(text)) {
+    found.push("mainland_china");
+  }
   return found;
 }
 function assessApplicability(document: KBDocumentCandidate, requestText: string) {
@@ -97,11 +117,18 @@ const STRONG_LEXICAL_SCORE_FLOOR = 0.05;
 function strongLexicalEvidenceMatch(requestText: string, document: KBDocumentCandidate): boolean {
   const request = requestText.normalize("NFKC").toLowerCase();
   const text = candidateText(document).normalize("NFKC").toLowerCase();
-  const namedPlan = ["growth", "basic", "pro"].find((plan) =>
-    new RegExp(`\\b${plan}\\b`, "i").test(request) && new RegExp(`\\b${plan}\\b`, "i").test(text)
+  const namedPlan = ["growth", "basic", "pro"].find(
+    (plan) =>
+      new RegExp(`\\b${plan}\\b`, "i").test(request) && new RegExp(`\\b${plan}\\b`, "i").test(text),
   );
-  const requestHasPlanFact = /(?:sku|staff|admin|seat|app|push|crm|會員|会员|ai\s*seo|price|billing|monthly|yearly|limit|上限|費用|费用|價錢|价钱|價格|价格)/i.test(request);
-  const textHasPlanFact = /(?:sku|staff|admin|seat|app|push|crm|會員|会员|ai\s*seo|price|billing|monthly|yearly|limit|上限|費用|费用|價錢|价钱|價格|价格)/i.test(text);
+  const requestHasPlanFact =
+    /(?:sku|staff|admin|seat|app|push|crm|會員|会员|ai\s*seo|price|billing|monthly|yearly|limit|上限|費用|费用|價錢|价钱|價格|价格)/i.test(
+      request,
+    );
+  const textHasPlanFact =
+    /(?:sku|staff|admin|seat|app|push|crm|會員|会员|ai\s*seo|price|billing|monthly|yearly|limit|上限|費用|费用|價錢|价钱|價格|价格)/i.test(
+      text,
+    );
   if (namedPlan && requestHasPlanFact && textHasPlanFact) return true;
 
   const reqModels = modelTokens(requestText);
@@ -116,20 +143,64 @@ function lexicalRelevance(requestText: string, document: KBDocumentCandidate): n
   const text = candidateText(document).normalize("NFKC").toLowerCase();
   let score = 0;
   const reqModels = modelTokens(requestText);
-  if (reqModels.some((model) => text.includes(model.toLowerCase()))) score += 12;
+  if (reqModels.some((model) => text.includes(model.toLowerCase()))) {
+    score += 12;
+  }
   const anchors = [
-    "smoke test growth", "smoke test basic", "smoke test pro",
-    "growth", "basic", "pro", "九龍", "九龙", "澳門", "澳门",
-    "退款", "退貨", "退货", "delivery", "shipping", "warranty",
-    "保養", "保修", "sku", "staff", "push", "crm", "ai seo",
+    "smoke test growth",
+    "smoke test basic",
+    "smoke test pro",
+    "growth",
+    "basic",
+    "pro",
+    "九龍",
+    "九龙",
+    "澳門",
+    "澳门",
+    "退款",
+    "退貨",
+    "退货",
+    "delivery",
+    "shipping",
+    "warranty",
+    "保養",
+    "保修",
+    "sku",
+    "staff",
+    "push",
+    "crm",
+    "ai seo",
   ];
   for (const anchor of anchors) {
     if (request.includes(anchor) && text.includes(anchor)) score += 2;
   }
-  const latinTokens = [...new Set(request.match(/[a-z0-9][a-z0-9-]{2,}/g) ?? [])]
-    .filter((x) => !["current", "request", "retrieval", "target", "published", "customer", "context"].includes(x));
-  for (const token of latinTokens.slice(0, 20)) if (text.includes(token)) score += 0.25;
+  const latinTokens = [...new Set(request.match(/[a-z0-9][a-z0-9-]{2,}/g) ?? [])].filter(
+    (x) =>
+      !["current", "request", "retrieval", "target", "published", "customer", "context"].includes(
+        x,
+      ),
+  );
+  for (const token of latinTokens.slice(0, 20)) {
+    if (text.includes(token)) score += 0.25;
+  }
   return score;
+}
+
+function extractStructuredClaims(
+  evidence: KBLLMContextEvidence[],
+): Array<{ key: string; value: string }> {
+  const claims: Array<{ key: string; value: string }> = [];
+  for (const item of evidence) {
+    for (const line of item.content.split(/\r?\n/).slice(0, 120)) {
+      const match = line.match(/^\s*[-*]?\s*([^:：=]{2,120})\s*[:：=]\s*(.{1,300})\s*$/u);
+      if (!match) continue;
+      const key = match[1].normalize("NFKC").replace(/\s+/g, " ").trim();
+      const value = match[2].normalize("NFKC").replace(/\s+/g, " ").trim();
+      if (key && value) claims.push({ key, value });
+      if (claims.length >= 24) return claims;
+    }
+  }
+  return claims;
 }
 
 export function selectCanonicalGrounding(
@@ -140,6 +211,10 @@ export function selectCanonicalGrounding(
   const policyOnly = options.policyOnly === true;
   const requirePublished = options.requirePublished !== false;
   const requestText = options.requestText ?? "";
+  const expectedEntityIds = options.expectedEntityIds?.length
+    ? options.expectedEntityIds
+    : modelTokens(requestText);
+  const expectedRegion = options.expectedRegion ?? detectExplicitJurisdiction(requestText);
   const eligible: Array<{
     document: KBDocumentCandidate;
     chunks: KBFullChunk[];
@@ -147,13 +222,16 @@ export function selectCanonicalGrounding(
     applicability: ReturnType<typeof assessApplicability>;
     evidenceScore: number;
     lexicalScore: number;
+    authorityCandidate: ReferenceEvidenceCandidate;
   }> = [];
 
   for (const document of documents ?? []) {
     if (document.llm_context.selected_document_id !== document.document_id) {
       return { ok: false, error: "KB_DOCUMENT_EVIDENCE_MISMATCH" };
     }
-    if (document.llm_context.full_content_evidence.some((e) => e.document_id !== document.document_id)) {
+    if (
+      document.llm_context.full_content_evidence.some((e) => e.document_id !== document.document_id)
+    ) {
       return { ok: false, error: "KB_DOCUMENT_EVIDENCE_MISMATCH" };
     }
     if (document.chunks.some((c) => c.document_id !== document.document_id)) {
@@ -164,22 +242,24 @@ export function selectCanonicalGrounding(
     const effectiveMinScore = strongLexicalEvidenceMatch(requestText, document)
       ? Math.min(minScore, STRONG_LEXICAL_SCORE_FLOOR)
       : minScore;
-    const chunks = document.chunks.filter((c) =>
-      c.content.trim() &&
-      Number.isFinite(c.score) &&
-      c.score >= effectiveMinScore &&
-      (!requirePublished || c.status === "published") &&
-      (!policyOnly || c.source_type.toLowerCase().includes("policy"))
+    const chunks = document.chunks.filter(
+      (c) =>
+        c.content.trim() &&
+        Number.isFinite(c.score) &&
+        c.score >= effectiveMinScore &&
+        (!requirePublished || c.status === "published") &&
+        (!policyOnly || c.source_type.toLowerCase().includes("policy")),
     );
     const fullContentIds = new Set(
       chunks.filter((c) => c.chunk_type === "full_content").map((c) => c.chunk_id ?? c.content),
     );
-    const evidence = document.llm_context.full_content_evidence.filter((e) =>
-      e.content.trim() &&
-      Number.isFinite(e.score) &&
-      e.score >= effectiveMinScore &&
-      (!policyOnly || e.source_type.toLowerCase().includes("policy")) &&
-      fullContentIds.has(e.chunk_id ?? e.content)
+    const evidence = document.llm_context.full_content_evidence.filter(
+      (e) =>
+        e.content.trim() &&
+        Number.isFinite(e.score) &&
+        e.score >= effectiveMinScore &&
+        (!policyOnly || e.source_type.toLowerCase().includes("policy")) &&
+        fullContentIds.has(e.chunk_id ?? e.content),
     );
 
     if (requirePublished && evidence.length > 0 && chunks.every((c) => c.status !== "published")) {
@@ -188,7 +268,15 @@ export function selectCanonicalGrounding(
     if (!evidence.length) continue;
 
     const applicability = assessApplicability(document, requestText);
-    if (!applicability.accepted) continue;
+    const metadata = document.authority;
+    const declaredCurrentness = metadata?.currentness ?? "unknown";
+    const effectiveCurrentness =
+      declaredCurrentness === "unknown"
+        ? // The authenticated Singapore endpoint is explicitly the published/live
+          // read path. Missing optional currentness metadata is bound to that
+          // server-side contract, never to a client assertion.
+          "current"
+        : declaredCurrentness;
     eligible.push({
       document,
       chunks,
@@ -196,16 +284,50 @@ export function selectCanonicalGrounding(
       applicability,
       evidenceScore: Math.max(...evidence.map((e) => e.score), 0),
       lexicalScore,
+      authorityCandidate: {
+        source_id: document.document_id,
+        source_type: document.source_type,
+        authority_class: effectiveCurrentness === "current" ? "CURRENT_KB" : "HISTORICAL",
+        tenant_id: metadata?.tenant_id ?? options.expectedTenantId ?? null,
+        publication_state: metadata?.publication_state ?? "published",
+        currentness: effectiveCurrentness,
+        entity_ids: metadata?.entity_ids ?? modelTokens(candidateText(document)),
+        regions: metadata?.regions?.length
+          ? metadata.regions
+          : applicability.document_jurisdictions.length
+            ? applicability.document_jurisdictions
+            : !applicability.accepted && applicability.request_jurisdiction
+              ? ["unknown"]
+              : [],
+        language: metadata?.language ?? null,
+        version: metadata?.version ?? null,
+        version_rank: metadata?.version_rank ?? null,
+        updated_at: metadata?.updated_at ?? null,
+        source_priority: metadata?.source_priority ?? null,
+        relevance_score: Math.max(
+          lexicalScore,
+          document.document_score,
+          Math.max(...evidence.map((e) => e.score), 0),
+        ),
+        claims: metadata?.claims?.length ? metadata.claims : extractStructuredClaims(evidence),
+      },
     });
   }
 
-  eligible.sort((a, b) =>
-    b.lexicalScore - a.lexicalScore ||
-    b.document.document_score - a.document.document_score ||
-    b.evidenceScore - a.evidenceScore ||
-    a.document.document_id.localeCompare(b.document.document_id)
-  );
-  const winner = eligible[0];
+  const authorityDecision = resolveReferenceAuthority({
+    candidates: eligible.map((candidate) => candidate.authorityCandidate),
+    expected_tenant_id: options.expectedTenantId ?? null,
+    expected_entity_ids: expectedEntityIds,
+    expected_region: expectedRegion,
+    requires_current_kb: options.requiresCurrentKb !== false,
+  });
+  const winner = authorityDecision.selected_source_id
+    ? eligible.find(
+        (candidate) =>
+          candidate.document.document_id === authorityDecision.selected_source_id &&
+          candidate.applicability.accepted,
+      )
+    : undefined;
   return winner
     ? {
         ok: true,
@@ -213,6 +335,7 @@ export function selectCanonicalGrounding(
         chunks: winner.chunks,
         evidence: winner.evidence,
         applicability: winner.applicability,
+        authority_decision: authorityDecision,
       }
     : {
         ok: true,
@@ -225,5 +348,6 @@ export function selectCanonicalGrounding(
           request_jurisdiction: detectExplicitJurisdiction(requestText),
           document_jurisdictions: [],
         },
+        authority_decision: authorityDecision,
       };
 }
