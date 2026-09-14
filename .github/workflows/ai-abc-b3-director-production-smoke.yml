@@ -1,5 +1,3 @@
-npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
-.github/workflows/ai-abc-b3-director-production-smoke.yml 18ms (unchanged)
 name: AI ABC B3 Director Production Smoke
 
 on:
@@ -33,7 +31,7 @@ jobs:
           test -n "$SUPABASE_ACCESS_TOKEN"
           test -n "$FINAL_SMOKE_AGENT_EMAIL"
           test -n "$FINAL_SMOKE_AGENT_PASSWORD"
-          export SUPABASE_URL="$VITE_SUPABASE_URL"
+          export SUPABASE_URL="https://$PROJECT_REF.supabase.co"
           export FUNCTIONS_URL="$VITE_SUPABASE_FUNCTIONS_URL"
           umask 077
           curl -fsS --retry 3 --retry-all-errors \
