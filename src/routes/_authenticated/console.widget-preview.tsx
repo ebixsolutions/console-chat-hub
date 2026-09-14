@@ -382,9 +382,9 @@ function WidgetPreviewContent({
     role === "admin" && !previewOnly && !loadingWidget;
 
   // Authoritative user-owned Supabase project only.
-  const apiBase = authoritativeFunctionsBase(
-    import.meta.env.VITE_SUPABASE_FUNCTIONS_URL as string | undefined,
-  );
+  const apiBase = resolveAuthoritativeSupabaseBinding({
+    functionsUrl: import.meta.env.VITE_SUPABASE_FUNCTIONS_URL as string | undefined,
+  }).functionsUrl;
 
   const embedCode = useMemo(() => {
     if (
