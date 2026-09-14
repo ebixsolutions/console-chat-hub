@@ -20,6 +20,7 @@ import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2.45.0";
 import { getSupabaseAdminKey } from "./supabase-admin-key.ts";
 import { GoogleAuth } from "npm:google-auth-library@9.15.0";
 import { parseJsonObjectLoose, parseVertexResponse } from "./vertex-parse.ts";
+import { buildVertexGenerationConfig } from "./vertex-generation-config.ts";
 
 export type LlmFailureCode =
   | "LLM_CONFIG_MISSING"
@@ -77,6 +78,12 @@ export interface LlmCall {
    * do not support constrained decoding, so rollback stays behaviour-preserving.
    */
   responseSchema?: Record<string, unknown>;
+  /**
+   * Optional Vertex Gemini thinking budget. Gemini 2.5 Flash supports 0 to
+   * disable thinking for deterministic, low-complexity structured tasks.
+   * Providers without thinking controls ignore this field.
+   */
+  thinkingBudget?: number;
 }
 
 type ProviderId = "vertex" | "anthropic";
@@ -292,6 +299,7 @@ function vertexAdapter(
   maxTokens: number,
   jsonOutput: boolean,
   responseSchema: Record<string, unknown> | undefined,
+  thinkingBudget: number | undefined,
 ): ProviderAdapter {
   const url =
     `https://${region}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${region}/publishers/google/models/${model}:generateContent`;
@@ -310,12 +318,12 @@ function vertexAdapter(
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: safeSystem }] },
           contents: [{ role: "user", parts: [{ text: safeUser }] }],
-          generationConfig: {
-            maxOutputTokens: maxTokens,
-            temperature: 0,
-            ...(jsonOutput ? { responseMimeType: "application/json" } : {}),
-            ...(jsonOutput && responseSchema ? { responseSchema } : {}),
-          },
+          generationConfig: buildVertexGenerationConfig(
+            maxTokens,
+            jsonOutput,
+            responseSchema,
+            thinkingBudget,
+          ),
         }),
       };
     },
@@ -609,6 +617,7 @@ async function verifyGroundedGeneration(
         },
         required: ["grounded", "unsupported_claims", "evidence_chunk_ids"],
       },
+      undefined,
     );
   } else {
     const key = Deno.env.get("ANTHROPIC_API_KEY");
@@ -856,6 +865,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
       call.maxTokens,
       call.responseFormat === "json",
       call.responseSchema,
+      call.thinkingBudget,
     );
   } else {
     const key = Deno.env.get("ANTHROPIC_API_KEY");

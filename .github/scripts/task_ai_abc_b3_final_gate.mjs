@@ -17,6 +17,8 @@ const files = {
   adapterTest: "supabase/functions/_shared/ce-conversion-reality.test.ts",
   provider: "supabase/functions/_shared/ce-provider-response.ts",
   providerTest: "supabase/functions/_shared/ce-provider-response.test.ts",
+  router: "supabase/functions/_shared/llm-router.ts",
+  vertexPolicy: "supabase/functions/_shared/vertex-generation-config.ts",
   contract: "supabase/functions/_shared/ce-contract.ts",
   grounding: "supabase/functions/_shared/ce-grounding.ts",
   worker: "supabase/functions/_shared/ce-automation-engine.ts",
@@ -37,6 +39,8 @@ const manual = read(files.manual);
 const test = read(files.adapterTest);
 const provider = read(files.provider);
 const providerTest = read(files.providerTest);
+const router = read(files.router);
+const vertexPolicy = read(files.vertexPolicy);
 
 for (const marker of [
   "loadCeConversionReality",
@@ -71,6 +75,19 @@ must(
   "required_provider_output_matrix_missing",
 );
 must(provider.includes("CE_EVALUATOR_MAX_TOKENS = 4096"), "provider_budget_not_governed");
+must(provider.includes("CE_EVALUATOR_THINKING_BUDGET = 0"), "provider_thinking_not_disabled");
+must(provider.includes("ceEvaluatorProviderPolicy"), "canonical_provider_policy_missing");
+must(
+  worker.includes("...ceEvaluatorProviderPolicy()") &&
+    manual.includes("...ceEvaluatorProviderPolicy()"),
+  "manual_automatic_provider_policy_not_shared",
+);
+must(
+  vertexPolicy.includes("thinkingConfig: { thinkingBudget }") &&
+    router.includes("call.thinkingBudget"),
+  "vertex_thinking_policy_not_wired",
+);
+must(contract.includes("Never include chain-of-thought"), "bounded_rationale_contract_missing");
 must(
   worker.includes("validateCeProviderResponse") && manual.includes("validateCeProviderResponse"),
   "manual_automatic_provider_path_not_shared",
@@ -151,6 +168,7 @@ try {
     files.contract,
     files.provider,
     files.providerTest,
+    files.vertexPolicy,
     files.grounding,
     files.worker,
     files.manual,

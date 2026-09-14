@@ -7,7 +7,11 @@
  */
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2.45.0";
 import { callModel, parseJsonObject, redact, toCeErrorCode } from "./llm-router.ts";
-import { CE_EVALUATOR_MAX_TOKENS, validateCeProviderResponse } from "./ce-provider-response.ts";
+import {
+  ceEvaluatorProviderPolicy,
+  ceSignalsProviderPolicy,
+  validateCeProviderResponse,
+} from "./ce-provider-response.ts";
 import { fetchGrounding, type GroundingBundle } from "./ce-grounding.ts";
 import {
   buildCanonicalBundle,
@@ -274,13 +278,11 @@ async function runEvaluator(
     purpose: "evaluation",
     system: local ? LOCAL_EVALUATOR_SYSTEM_PROMPT[dimension] : EVALUATOR_SYSTEM_PROMPT[dimension],
     user: bundle,
-    maxTokens: CE_EVALUATOR_MAX_TOKENS,
+    ...ceEvaluatorProviderPolicy(),
     operationId: `${operationId}:${dimension}`,
     companyId,
     conversationId,
     tag: `ce:auto:${dimension}`,
-    responseFormat: "json",
-    responseSchema: EVALUATOR_RESPONSE_SCHEMA,
   });
   if (!res.ok) return { ok: false as const, code: toCeErrorCode(res.code) };
   const validated = validateCeProviderResponse(res.text, knownChunkIds);
@@ -299,12 +301,11 @@ async function runSignals(
     purpose: "evaluation",
     system: SIGNALS_SYSTEM_PROMPT,
     user: bundle,
-    maxTokens: CE_EVALUATOR_MAX_TOKENS,
+    ...ceSignalsProviderPolicy(),
     operationId: `${operationId}:signals`,
     companyId,
     conversationId,
     tag: "ce:auto:signals",
-    responseFormat: "json",
   });
   if (!res.ok) return null;
   return validateSignalsOutput(parseJsonObject(res.text), transcript);

@@ -1,8 +1,16 @@
 import {
+  CE_CORRECTION_MAX_CHARS,
+  CE_EVIDENCE_MAX_CHARS,
   CE_EVALUATOR_MAX_TOKENS,
+  CE_EVALUATOR_THINKING_BUDGET,
+  CE_JUSTIFICATION_MAX_CHARS,
+  ceEvaluatorProviderPolicy,
+  ceSignalsProviderPolicy,
   normalizeCeProviderResponse,
   validateCeProviderResponse,
 } from "./ce-provider-response.ts";
+import { EVALUATOR_RESPONSE_SCHEMA } from "./ce-contract.ts";
+import { buildVertexGenerationConfig } from "./vertex-generation-config.ts";
 
 const known = new Set(["chunk-a"]);
 const canonical = {
@@ -167,9 +175,107 @@ Deno.test("provider 37 invalid output has no handoff side effect", () => {
   if (validateCeProviderResponse({ refusal: "blocked" }, known).ok) handoffs++;
   assert(handoffs === 0);
 });
-Deno.test("provider 38 governed evaluator budget covers Gemini reasoning", () =>
-  assert(CE_EVALUATOR_MAX_TOKENS >= 4096),
+Deno.test("provider 38 governed evaluator ceiling remains hard bounded", () =>
+  assert(CE_EVALUATOR_MAX_TOKENS === 4096),
 );
 Deno.test("provider 39 normalization never repairs truncation", () =>
   assert(normalizeCeProviderResponse('{"score":82') === null),
 );
+Deno.test("provider 40 canonical CE policy disables Gemini 2.5 Flash thinking", () => {
+  const policy = ceEvaluatorProviderPolicy();
+  assert(CE_EVALUATOR_THINKING_BUDGET === 0);
+  assert(policy.thinkingBudget === 0);
+});
+Deno.test("provider 41 automatic and manual evaluator policy is identical", () => {
+  const automatic = ceEvaluatorProviderPolicy();
+  const manual = ceEvaluatorProviderPolicy();
+  assert(JSON.stringify(automatic) === JSON.stringify(manual));
+  assert(automatic.responseSchema === EVALUATOR_RESPONSE_SCHEMA);
+});
+Deno.test("provider 42 signals share the canonical generation controls", () => {
+  const evaluator = ceEvaluatorProviderPolicy();
+  const signals = ceSignalsProviderPolicy();
+  assert(signals.maxTokens === evaluator.maxTokens);
+  assert(signals.thinkingBudget === evaluator.thinkingBudget);
+  assert(signals.responseFormat === evaluator.responseFormat);
+});
+Deno.test("provider 43 Vertex request preserves an explicit zero thinking budget", () => {
+  const policy = ceEvaluatorProviderPolicy();
+  const config = buildVertexGenerationConfig(
+    policy.maxTokens,
+    true,
+    policy.responseSchema,
+    policy.thinkingBudget,
+  );
+  assert(
+    JSON.stringify(config).includes('"thinkingConfig":{"thinkingBudget":0}'),
+    "thinking_config_missing",
+  );
+  assert(config.maxOutputTokens === CE_EVALUATOR_MAX_TOKENS);
+  assert(config.responseMimeType === "application/json");
+});
+Deno.test("provider 44 non-CE Vertex calls retain default thinking behavior", () => {
+  const config = buildVertexGenerationConfig(256, false, undefined, undefined);
+  assert(!("thinkingConfig" in config));
+});
+Deno.test("provider 45 invalid thinking budgets are rejected before request", () => {
+  let rejected = false;
+  try {
+    buildVertexGenerationConfig(256, true, undefined, -1);
+  } catch {
+    rejected = true;
+  }
+  assert(rejected);
+});
+Deno.test("provider 46 concise valid structured result is below configured ceiling", () => {
+  const result = valid(canonical);
+  assert(result.value.justification.length <= CE_JUSTIFICATION_MAX_CHARS);
+  assert(JSON.stringify(result.raw).length < CE_EVALUATOR_MAX_TOKENS);
+});
+Deno.test("provider 47 maximum bounded text lengths remain valid", () => {
+  assert(
+    validateCeProviderResponse(
+      {
+        ...canonical,
+        justification: "j".repeat(CE_JUSTIFICATION_MAX_CHARS),
+        evidence: ["e".repeat(CE_EVIDENCE_MAX_CHARS)],
+        recommended_correction: "c".repeat(CE_CORRECTION_MAX_CHARS),
+      },
+      known,
+    ).ok,
+  );
+});
+Deno.test("provider 48 overlong justification fails closed", () =>
+  assert(
+    !validateCeProviderResponse(
+      { ...canonical, justification: "j".repeat(CE_JUSTIFICATION_MAX_CHARS + 1) },
+      known,
+    ).ok,
+  ),
+);
+Deno.test("provider 49 overlong evidence fails closed", () =>
+  assert(
+    !validateCeProviderResponse(
+      { ...canonical, evidence: ["e".repeat(CE_EVIDENCE_MAX_CHARS + 1)] },
+      known,
+    ).ok,
+  ),
+);
+Deno.test("provider 50 overlong correction fails closed", () =>
+  assert(
+    !validateCeProviderResponse(
+      { ...canonical, recommended_correction: "c".repeat(CE_CORRECTION_MAX_CHARS + 1) },
+      known,
+    ).ok,
+  ),
+);
+Deno.test("provider 51 excessive evidence count fails closed", () =>
+  assert(
+    !validateCeProviderResponse({ ...canonical, evidence: ["one", "two", "three", "four"] }, known)
+      .ok,
+  ),
+);
+Deno.test("provider 52 timeout and provider errors cannot validate", () => {
+  assert(!validateCeProviderResponse({ error: "LLM_TIMEOUT" }, known).ok);
+  assert(!validateCeProviderResponse({ error: "LLM_NETWORK" }, known).ok);
+});

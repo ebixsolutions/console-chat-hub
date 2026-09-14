@@ -1,20 +1,44 @@
 /**
  * Canonical CE provider-output boundary shared by manual and automatic paths.
  *
- * Gemini accounts reasoning tokens inside maxOutputTokens. B3's larger
- * conversion-reality bundle caused otherwise valid constrained JSON to be
- * truncated at the former 2,600-token ceiling. Keep one governed budget for
- * both callers and fail closed unless a complete object satisfies the CE
- * contract.
+ * Gemini accounts reasoning tokens inside maxOutputTokens. CE evaluation is a
+ * deterministic scoring task, so its canonical policy disables Gemini 2.5
+ * Flash thinking and bounds every generated text field. Automatic and manual
+ * callers consume the same policy object and strict validation remains
+ * fail-closed.
  */
 import {
   describeEvaluatorRejection,
   type EvaluatorOutput,
   validateEvaluatorOutput,
 } from "./ce-contract.ts";
+import { EVALUATOR_RESPONSE_SCHEMA } from "./ce-contract.ts";
 import { parseJsonObjectLoose, parseVertexResponse } from "./vertex-parse.ts";
 
 export const CE_EVALUATOR_MAX_TOKENS = 4096;
+export const CE_EVALUATOR_THINKING_BUDGET = 0;
+export const CE_JUSTIFICATION_MAX_CHARS = 800;
+export const CE_EVIDENCE_MAX_CHARS = 500;
+export const CE_CORRECTION_MAX_CHARS = 800;
+
+const CE_PROVIDER_BASE_POLICY = Object.freeze({
+  maxTokens: CE_EVALUATOR_MAX_TOKENS,
+  thinkingBudget: CE_EVALUATOR_THINKING_BUDGET,
+  responseFormat: "json" as const,
+});
+
+/** One canonical structured provider policy for automatic and manual CE. */
+export function ceEvaluatorProviderPolicy() {
+  return {
+    ...CE_PROVIDER_BASE_POLICY,
+    responseSchema: EVALUATOR_RESPONSE_SCHEMA,
+  };
+}
+
+/** Signals use the same generation controls but have their own output shape. */
+export function ceSignalsProviderPolicy() {
+  return { ...CE_PROVIDER_BASE_POLICY };
+}
 
 type JsonObject = Record<string, unknown>;
 
