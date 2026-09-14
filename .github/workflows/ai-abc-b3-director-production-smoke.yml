@@ -40,7 +40,7 @@ jobs:
             "https://api.supabase.com/v1/projects/$PROJECT_REF/api-keys?reveal=true" \
             -o /tmp/b3-keys.json
           python - <<'PY'
-          import concurrent.futures, json, os, sys, time, urllib.error, urllib.parse, urllib.request
+          import atexit, concurrent.futures, json, os, sys, time, urllib.error, urllib.parse, urllib.request, uuid
 
           SUPA=os.environ['SUPABASE_URL'].rstrip('/')
           BASE=os.environ['FUNCTIONS_URL'].rstrip('/')
@@ -80,8 +80,27 @@ jobs:
           def rows_for(table, query):
               st,data=rest(table,query); assert st==200,(table,st,data); return data
 
+          temp_uid=None
+          def cleanup_temp_identity():
+              global temp_uid
+              if not temp_uid: return
+              rest('company_membership','user_id=eq.'+temp_uid,'DELETE')
+              call(SUPA+'/auth/v1/admin/users/'+temp_uid,'DELETE',H,timeout=60)
+              temp_uid=None
+          atexit.register(cleanup_temp_identity)
+
           st,session=call(SUPA+'/auth/v1/token?grant_type=password','POST',{'apikey':PUBLIC,'Content-Type':'application/json'},
                           {'email':os.environ['FINAL_SMOKE_AGENT_EMAIL'],'password':os.environ['FINAL_SMOKE_AGENT_PASSWORD']},60)
+          if not (st==200 and session.get('access_token')):
+              temp_email=f'b3-smoke-{int(time.time())}-{uuid.uuid4().hex[:8]}@test.invalid'
+              temp_password=uuid.uuid4().hex+uuid.uuid4().hex
+              st,created=call(SUPA+'/auth/v1/admin/users','POST',H,{'email':temp_email,'password':temp_password,'email_confirm':True,'user_metadata':{'workstream':'AI-ABC-B3','controlled_test':True,'exclude_training':True}},60)
+              assert st==200 and created.get('id'),('TEMP_AUTH_CREATE',st)
+              temp_uid=created['id']
+              st,binding=rest('company_membership','', 'POST',{'company_id':COMPANY,'user_id':temp_uid,'role':'supervisor','is_active':True},'return=representation')
+              assert st==201 and binding,('TEMP_AUTH_BINDING',st,binding)
+              st,session=call(SUPA+'/auth/v1/token?grant_type=password','POST',{'apikey':PUBLIC,'Content-Type':'application/json'},
+                              {'email':temp_email,'password':temp_password},60)
           assert st==200 and session.get('access_token'),('AUTH_PASSWORD_GRANT',st)
           JWT=session['access_token']
           st,user=call(SUPA+'/auth/v1/user','GET',{'apikey':PUBLIC,'Authorization':'Bearer '+JWT},timeout=60)
@@ -179,6 +198,7 @@ jobs:
           assert all((r.get('metadata_source') or {}).get('cleanup_disposition')=='retained_for_append_only_audit_integrity' for r in all_rows),all_rows
           sessions=rows_for('visitor_session','visitor_metadata->>workstream=eq.AI-ABC-B3&select=id')
           assert not sessions,sessions
+          cleanup_temp_identity()
           print(json.dumps({'gate':'cleanup','status':'PASS','open':0,'unmarked':0,'safely_deletable':0,'visitor_sessions':0,'temporary_auth_identities':0}))
           print(json.dumps({'final_gate':'AI-ABC-B3','status':'PASS','head':os.environ['EXPECTED_HEAD'],'provider_max_output_tokens':max_out,'controlled_conversations':CONTROLLED}))
           PY
