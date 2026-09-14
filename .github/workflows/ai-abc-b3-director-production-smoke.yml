@@ -46,18 +46,18 @@ jobs:
           BASE=SUPA+'/functions/v1'
           ORIGIN='https://console-chat-hub.lovable.app'
           COMPANY='3d6e17b5-ec79-4f75-aa7f-eaa824ff8493'
-          POS='b3000000-0000-4000-8000-000000000301'
-          NEG='b3000000-0000-4000-8000-000000000302'
-          STALE='b3000000-0000-4000-8000-000000000303'
-          AUTO='b3000000-0000-4000-8000-000000000304'
-          CUST_POS='b3000000-0000-4000-8000-000000000401'
-          ASST_POS='b3000000-0000-4000-8000-000000000402'
-          CUST_NEG='b3000000-0000-4000-8000-000000000411'
-          ASST_NEG='b3000000-0000-4000-8000-000000000412'
-          CUST_STALE='b3000000-0000-4000-8000-000000000421'
-          ASST_STALE='b3000000-0000-4000-8000-000000000422'
-          CUST_AUTO='b3000000-0000-4000-8000-000000000431'
-          ASST_AUTO='b3000000-0000-4000-8000-000000000432'
+          POS='b3000000-0000-4000-8000-000000000501'
+          NEG='b3000000-0000-4000-8000-000000000502'
+          STALE='b3000000-0000-4000-8000-000000000503'
+          AUTO='b3000000-0000-4000-8000-000000000504'
+          CUST_POS='b3000000-0000-4000-8000-000000000601'
+          ASST_POS='b3000000-0000-4000-8000-000000000602'
+          CUST_NEG='b3000000-0000-4000-8000-000000000611'
+          ASST_NEG='b3000000-0000-4000-8000-000000000612'
+          CUST_STALE='b3000000-0000-4000-8000-000000000621'
+          ASST_STALE='b3000000-0000-4000-8000-000000000622'
+          CUST_AUTO='b3000000-0000-4000-8000-000000000631'
+          ASST_AUTO='b3000000-0000-4000-8000-000000000632'
           CONTROLLED=[POS,NEG,STALE,AUTO]
           rows=json.load(open('/tmp/b3-keys.json'))
           def value(r): return r.get('api_key') or r.get('key') or r.get('value')
@@ -88,6 +88,12 @@ jobs:
               return call(f'{SUPA}/rest/v1/{table}{("?"+query) if query else ""}',method,h,body)
           def rows_for(table, query):
               st,data=rest(table,query); assert st==200,(table,st,data); return data
+          def management_sql(query):
+              url=f"https://api.supabase.com/v1/projects/{os.environ['PROJECT_REF']}/database/query"
+              headers={'Authorization':'Bearer '+os.environ['SUPABASE_ACCESS_TOKEN'],'Content-Type':'application/json'}
+              st,data=call(url,'POST',headers,{'query':query},60)
+              assert st in {200,201},('MANAGEMENT_SQL',st,data)
+              return data
 
           temp_uid=None
           def cleanup_temp_identity():
@@ -120,29 +126,21 @@ jobs:
           FH={'apikey':PUBLIC,'Authorization':'Bearer '+JWT,'Origin':ORIGIN,'Content-Type':'application/json'}
           def evaluate(cid): return call(BASE+'/conversation-evaluate','POST',FH,{'conversation_id':cid},180)
 
-          def create_fixture(cid, customer_id, assistant_id, assistant_text, path):
-              conv={'id':cid,'company_id':COMPANY,'status':'open','priority':'normal','tags':['controlled-smoke'],'metadata_source':{'workstream':'AI-ABC-B3','pr':9,'head':os.environ['EXPECTED_HEAD'],'path':path,'controlled_test':True,'exclude_training':True}}
-              st,data=rest('conversations','', 'POST',conv,'return=representation'); assert st==201,(path,'conversation',st,data)
-              customer={'id':customer_id,'conversation_id':cid,'role':'visitor','content':'B3 controlled test：Product A 不是 2 部而是 3 部；Product B 已取消；HKD 8,000 只是舊報價；送貨地址是 B3 controlled address；安裝尚未完成。','metadata':{'controlled_test':True,'exclude_training':True},'is_recalled':False}
-              st,data=rest('messages','', 'POST',customer,'return=representation'); assert st==201,(path,'customer',st,data)
-              state={'conversation_id':cid,'company_id':COMPANY,'revision':1,'source_message_id':customer_id,'state_hash':('a1' if path=='manual-positive' else 'b1' if path=='manual-negative' else 'c1')+('0'*62),'state':{'version':'commerce-state-1.0.0','current_industry':'home_appliance','current_intent':'quotation_followup','current_topic':'Product A','language':'zh-TW','entities':[{'entity_id':'product-a','category':'air_conditioner','model':'Product A','quantity':3,'status':'confirmed','attributes':{'capacity':'2P'},'constraints':{},'provenance':{'source_type':'customer','source_message_id':customer_id}},{'entity_id':'product-b','category':'air_conditioner','model':'Product B','quantity':1,'status':'cancelled','attributes':{},'constraints':{},'provenance':{'source_type':'customer','source_message_id':customer_id}}],'customer_constraints':{'budget':9000,'region':'HK'},'delivery':{'address':'B3 controlled address','confirmed':False,'provenance':{'source_type':'customer','source_message_id':customer_id}},'installation':{'items':[{'item_id':'install-a','entity_id':'product-a','kind':'installation','status':'pending','details':{},'provenance':{'source_type':'customer','source_message_id':customer_id}}],'site_conditions':{},'pending_checks':[]},'quotes':[{'quote_id':'historical-quote','entity_id':'product-a','quote_type':'customer_reported_historical','amount':8000,'currency':'HKD','validity_status':'historical','conditions':{},'provenance':{'source_type':'customer','source_message_id':customer_id}}],'conversion':{'funnel_stage':'quotation','quotation_status':'verified','order_status':'pending_confirmation','payment_status':'pending_payment','confirmed_entity_ids':['product-a'],'tentative_entity_ids':[],'cancelled_entity_ids':['product-b'],'next_best_action':'confirm quotation'},'latest_corrections':['不是 2 部而是 3 部'],'unresolved_items':[],'metadata':{'controlled_test':True,'exclude_training':True}}}
-              st,data=rest('conversation_commerce_state','', 'POST',state,'return=representation'); assert st==201,(path,'state',st,data)
-              assistant={'id':assistant_id,'conversation_id':cid,'role':'assistant','content':assistant_text,'metadata':{'b2_outcome':'allow','response_route':'commerce_state_answer','controlled_test':True,'exclude_training':True,'source_message_id':customer_id},'is_recalled':False}
-              st,data=rest('messages','', 'POST',assistant,'return=representation'); assert st==201,(path,'assistant',st,data)
-
           positive='已記錄目前 Product A 為 3 部；Product B 已取消。HKD 8,000 是歷史報價，訂單與付款仍待確認，安裝尚未完成；送貨地址已知，下一步是確認最新報價。'
           negative='你的 Product A 是 2 部；Product B 會保留。現行報價是 HKD 8,000，訂單及安裝均已完成。請再提供送貨地址。你想找甚麼產品？'
-          create_fixture(POS,CUST_POS,ASST_POS,positive,'manual-positive')
-          create_fixture(NEG,CUST_NEG,ASST_NEG,negative,'manual-negative')
-          create_fixture(STALE,CUST_STALE,ASST_STALE,negative,'manual-stale')
+          def insert_assistant(cid, customer_id, assistant_id, text):
+              assistant={'id':assistant_id,'conversation_id':cid,'role':'assistant','content':text,'metadata':{'b2_outcome':'allow','response_route':'commerce_state_answer','controlled_test':True,'exclude_training':True,'source_message_id':customer_id},'is_recalled':False}
+              st,data=rest('messages','', 'POST',assistant,'return=representation'); assert st==201,(cid,'assistant',st,data)
 
           started=time.time()
           results={}
-          for label,cid in [('positive',POS),('negative',NEG)]:
+          for label,cid,customer_id,assistant_id,text in [('positive',POS,CUST_POS,ASST_POS,positive),('negative',NEG,CUST_NEG,ASST_NEG,negative)]:
+              insert_assistant(cid,customer_id,assistant_id,text)
               st,data=evaluate(cid); assert st==200 and data.get('status')=='completed',(label,st,data)
               results[label]=data
               print(json.dumps({'gate':'manual_'+label,'status':'PASS','http':st,'evaluation_id':data['evaluation']['id']}))
 
+          insert_assistant(STALE,CUST_STALE,ASST_STALE,negative)
           with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
               future=ex.submit(evaluate,STALE)
               attempt=None
@@ -153,8 +151,9 @@ jobs:
                   time.sleep(.25)
               assert attempt, 'STALE_ATTEMPT_DID_NOT_REACH_RUNNING'
               new_hash='9f'+('0'*62)
-              st,data=rest('conversation_commerce_state','conversation_id=eq.'+STALE+'&company_id=eq.'+COMPANY,'PATCH',{'revision':2,'state_hash':new_hash,'updated_at':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime())},'return=representation')
-              assert st==200 and data and data[0]['revision']==2,('STALE_MUTATION',st,data)
+              management_sql("update conversation_commerce_state set revision=2,state_hash='"+new_hash+"',updated_at=now() where conversation_id='"+STALE+"' and company_id='"+COMPANY+"';")
+              changed=rows_for('conversation_commerce_state',urllib.parse.urlencode({'conversation_id':'eq.'+STALE,'company_id':'eq.'+COMPANY,'select':'revision,state_hash'}))
+              assert changed and changed[0]['revision']==2 and changed[0]['state_hash']==new_hash,('STALE_MUTATION',changed)
               stale_status,stale_body=future.result(timeout=180)
           assert stale_status==409,(stale_status,stale_body)
           assert stale_body.get('detail')=='ce_b3_commerce_reality_stale',stale_body
@@ -192,12 +191,6 @@ jobs:
           print(json.dumps({'gate':'conversion_reality_alignment','status':'PASS','positive':{'sales':evals['positive']['sales_score'],'context':evals['positive']['context_score']},'negative':{'sales':evals['negative']['sales_score'],'context':evals['negative']['context_score']}}))
 
           # Automatic final path: state exists before assistant insert; the existing trigger dispatches the worker.
-          conv={'id':AUTO,'company_id':COMPANY,'status':'open','priority':'normal','tags':['controlled-smoke'],'metadata_source':{'workstream':'AI-ABC-B3','pr':9,'head':os.environ['EXPECTED_HEAD'],'path':'automatic-final','controlled_test':True,'exclude_training':True}}
-          st,data=rest('conversations','', 'POST',conv,'return=representation'); assert st==201,(st,data)
-          customer={'id':CUST_AUTO,'conversation_id':AUTO,'role':'visitor','content':'B3 controlled automatic test：Product A 不是 2 部而是 3 部；Product B 已取消；HKD 8,000 只是舊報價；送貨地址是 B3 controlled address；安裝尚未完成。','metadata':{'controlled_test':True,'exclude_training':True},'is_recalled':False}
-          st,data=rest('messages','', 'POST',customer,'return=representation'); assert st==201,(st,data)
-          state={'conversation_id':AUTO,'company_id':COMPANY,'revision':1,'source_message_id':CUST_AUTO,'state_hash':'af'+('0'*62),'state':{'version':'commerce-state-1.0.0','current_industry':'home_appliance','current_intent':'quotation_followup','current_topic':'Product A','language':'zh-TW','entities':[{'entity_id':'product-a','category':'air_conditioner','model':'Product A','quantity':3,'status':'confirmed','attributes':{'capacity':'2P'},'constraints':{},'provenance':{'source_type':'customer','source_message_id':CUST_AUTO}},{'entity_id':'product-b','category':'air_conditioner','model':'Product B','quantity':1,'status':'cancelled','attributes':{},'constraints':{},'provenance':{'source_type':'customer','source_message_id':CUST_AUTO}}],'customer_constraints':{'budget':9000,'region':'HK'},'delivery':{'address':'B3 controlled address','confirmed':False,'provenance':{'source_type':'customer','source_message_id':CUST_AUTO}},'installation':{'items':[{'item_id':'install-a','entity_id':'product-a','kind':'installation','status':'pending','details':{},'provenance':{'source_type':'customer','source_message_id':CUST_AUTO}}],'site_conditions':{},'pending_checks':[]},'quotes':[{'quote_id':'historical-quote','entity_id':'product-a','quote_type':'customer_reported_historical','amount':8000,'currency':'HKD','validity_status':'historical','conditions':{},'provenance':{'source_type':'customer','source_message_id':CUST_AUTO}}],'conversion':{'funnel_stage':'quotation','quotation_status':'verified','order_status':'pending_confirmation','payment_status':'pending_payment','confirmed_entity_ids':['product-a'],'tentative_entity_ids':[],'cancelled_entity_ids':['product-b'],'next_best_action':'confirm quotation'},'latest_corrections':['不是 2 部而是 3 部'],'unresolved_items':[],'metadata':{'controlled_test':True,'exclude_training':True}}}
-          st,data=rest('conversation_commerce_state','', 'POST',state,'return=representation'); assert st==201,(st,data)
           assistant={'id':ASST_AUTO,'conversation_id':AUTO,'role':'assistant','content':'你的 Product A 是 2 部；Product B 會保留。現行報價是 HKD 8,000，訂單及安裝均已完成。請再提供送貨地址。你想找甚麼產品？','metadata':{'b2_outcome':'allow','response_route':'commerce_state_answer','controlled_test':True,'exclude_training':True,'source_message_id':CUST_AUTO},'is_recalled':False}
           st,data=rest('messages','', 'POST',assistant,'return=representation'); assert st==201,(st,data)
           job=None
