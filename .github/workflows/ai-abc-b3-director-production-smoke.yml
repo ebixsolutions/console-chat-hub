@@ -165,7 +165,13 @@ jobs:
           print(json.dumps({'gate':'stale_precommit','status':'PASS','provider_successes':len(evaluator),'max_output_tokens':max_out,'rejection':stale_body['detail']}))
 
           management_sql("update messages set metadata=jsonb_set(metadata,'{source_message_id}',to_jsonb('"+CUST_STALE_NEXT+"'::text),true),created_at=now()+interval '1 second',updated_at=now() where id='"+ASST_STALE+"' and conversation_id='"+STALE+"';")
-          st,fresh=evaluate(STALE); assert st==200 and fresh.get('status')=='completed',(st,fresh)
+          fresh=None
+          for retry in range(4):
+              st,fresh=evaluate(STALE)
+              if st==200 and fresh.get('status')=='completed': break
+              assert st==503 and fresh.get('detail')=='grounding_unavailable',(st,fresh)
+              time.sleep(2**retry)
+          assert st==200 and fresh.get('status')=='completed',(st,fresh)
           fresh_id=fresh['evaluation']['id']
           st,replay=evaluate(STALE); assert st==200 and replay.get('status')=='already_evaluated',(st,replay)
           assert replay.get('evaluation',{}).get('id')==fresh_id,(fresh,replay)
