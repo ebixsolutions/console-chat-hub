@@ -6,6 +6,7 @@
  * It never accepts a browser-supplied company id.
  */
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2.45.0";
+import { getSupabaseAdminKey } from "./supabase-admin-key.ts";
 import { callModel, parseJsonObject, redact, toCeErrorCode } from "./llm-router.ts";
 import {
   ceEvaluatorProviderPolicy,
@@ -741,5 +742,5 @@ export async function processEvaluationJob(
 }
 
 export function serviceClient(): Db {
-  return createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  return createClient(Deno.env.get("SUPABASE_URL")!, getSupabaseAdminKey());
 }

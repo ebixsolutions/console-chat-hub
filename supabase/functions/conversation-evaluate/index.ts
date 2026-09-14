@@ -15,6 +15,7 @@
  */
 
 import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2.45.0";
+import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
 import { callModel, parseJsonObject, redact, toCeErrorCode } from "../_shared/llm-router.ts";
 import {
   ceEvaluatorProviderPolicy,
@@ -1321,10 +1322,7 @@ Deno.serve(async (req) => {
       if (!allowed.has(key)) return fail("invalid_request", req, operationId, "unknown_field");
     }
 
-    const admin = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-    );
+    const admin = createClient(Deno.env.get("SUPABASE_URL")!, getSupabaseAdminKey());
     if (action === "evaluate") {
       if (!isUuid(record.conversation_id))
         return fail("invalid_request", req, operationId, "conversation_id");
