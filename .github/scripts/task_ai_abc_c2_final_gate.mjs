@@ -33,8 +33,21 @@ for(const marker of [
 for(const marker of [
   "c2_handoff_package_before_insert","C2_STALE_SOURCE_MESSAGE","FOR UPDATE","FOR SHARE",
   "conversation_commerce_state","handoff_event","source_message_id","ai_summary",
-  "transaction_pending","service_role",
+  "transaction_pending","service_role","C2_RPC_ACL_INVALID","C2_TRIGGER_FUNCTION_ACL_INVALID",
+  "C2_TRIGGER_BINDING_INVALID","pg_catalog.aclexplode","pg_catalog.has_function_privilege",
 ])must(migration.includes(marker),`c2_atomic_contract_missing:${marker}`);
+const rpcSignature="public.c2_commit_closure_tx(uuid,uuid,uuid,bigint,text,jsonb)";
+must(migration.includes(`REVOKE ALL ON FUNCTION ${rpcSignature}\n  FROM PUBLIC, anon, authenticated;`),
+  "c2_rpc_explicit_acl_revoke_missing");
+must(migration.includes(`GRANT EXECUTE ON FUNCTION ${rpcSignature} TO service_role;`),
+  "c2_rpc_service_role_grant_missing");
+must(migration.includes("REVOKE ALL ON FUNCTION public.c2_populate_handoff_package_tg()\n  FROM PUBLIC, anon, authenticated, service_role;"),
+  "c2_trigger_function_explicit_acl_revoke_missing");
+must((migration.match(/CREATE OR REPLACE FUNCTION public\.c2_/g)??[]).length===2,
+  "unexpected_c2_executable_object_count");
+must(!/ALTER\s+DEFAULT\s+PRIVILEGES/i.test(migration),"global_default_privilege_change_forbidden");
+must(!/ALTER\s+TABLE\s+public\.handoff_event|CREATE\s+POLICY|DROP\s+POLICY/i.test(migration),
+  "handoff_rls_or_policy_change_forbidden");
 for(const marker of ["parsePersistedC2Handoff","persisted_c2","handoff_package","handoff_summary"])
   must(readback.includes(marker),`c2_readback_missing:${marker}`);
 
@@ -94,6 +107,8 @@ const rollbackHash=(process.env.C2_ROLLBACK_SOURCE_HASH??"").trim();
 must(/^[a-f0-9]{64}$/.test(rollbackHash),"STOP:C2_ROLLBACK_SOURCE_HASH_NOT_PROVIDED");
 const phase=process.env.C2_GATE_PHASE==="production"?"production":"preproduction";
 if(phase==="production"){
+  must(process.env.C2_DB_ACL_READBACK==="PASS","FAIL:C2_DB_ACL_READBACK_NOT_PASS");
+  must(process.env.C2_DB_OBJECT_READBACK==="PASS","FAIL:C2_DB_OBJECT_READBACK_NOT_PASS");
   must(process.env.C2_PRODUCTION_SMOKE==="PASS","FAIL:C2_PRODUCTION_SMOKE_NOT_PASS");
   must(process.env.C2_AUTHENTICATED_READBACK==="PASS","FAIL:C2_AUTHENTICATED_READBACK_NOT_PASS");
   must(process.env.C2_CLEANUP_RESIDUAL==="0","FAIL:C2_CLEANUP_NOT_ZERO");
@@ -106,6 +121,7 @@ console.log(JSON.stringify({
   assertions:{
     closure_correctness:true,handoff_correctness:true,structured_package:true,
     markdown_projection:true,tenant_rbac:true,stale_rejection:true,idempotency_exactly_once:true,
+    db_acl_least_privilege:true,db_object_binding:true,
     takeover_suppression:true,explicit_return_to_ai_preserved:true,no_fabricated_facts:true,
     no_stale_citation:true,b2_preserved:true,frozen_a_b_c1_integrity:true,
     deterministic_tests:true,integration_tests:true,typecheck:true,lint:true,build:true,

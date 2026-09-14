@@ -216,6 +216,13 @@ BEGIN
 END;
 $function$;
 
+-- Trigger execution does not require application roles to retain direct EXECUTE
+-- after the trigger has been created. Supabase's public-schema default privileges
+-- explicitly grant new functions to anon/authenticated/service_role, so revoke
+-- every non-owner role for this internal trigger function.
+REVOKE ALL ON FUNCTION public.c2_populate_handoff_package_tg()
+  FROM PUBLIC, anon, authenticated, service_role;
+
 DROP TRIGGER IF EXISTS c2_handoff_package_before_insert ON public.handoff_event;
 CREATE TRIGGER c2_handoff_package_before_insert
 BEFORE INSERT ON public.handoff_event
@@ -355,5 +362,82 @@ BEGIN
 END;
 $function$;
 
-REVOKE ALL ON FUNCTION public.c2_commit_closure_tx(uuid,uuid,uuid,bigint,text,jsonb) FROM PUBLIC;
+-- Supabase grants anon/authenticated/service_role explicitly through default
+-- privileges; revoking PUBLIC alone does not remove those direct grants.
+REVOKE ALL ON FUNCTION public.c2_commit_closure_tx(uuid,uuid,uuid,bigint,text,jsonb)
+  FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.c2_commit_closure_tx(uuid,uuid,uuid,bigint,text,jsonb) TO service_role;
+
+-- Fail the migration atomically unless every C2 executable object has the exact
+-- least-privilege ACL and binding required by the production runtime.
+DO $c2_acl_assert$
+DECLARE
+  v_rpc oid;
+  v_trigger_function oid;
+  v_public_execute boolean;
+  v_trigger_count integer;
+BEGIN
+  SELECT p.oid INTO STRICT v_rpc
+  FROM pg_catalog.pg_proc p
+  JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'public'
+    AND p.proname = 'c2_commit_closure_tx'
+    AND pg_catalog.pg_get_function_identity_arguments(p.oid) =
+      'p_conversation_id uuid, p_company_id uuid, p_source_message_id uuid, p_expected_commerce_revision bigint, p_content text, p_metadata jsonb';
+
+  SELECT p.oid INTO STRICT v_trigger_function
+  FROM pg_catalog.pg_proc p
+  JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'public'
+    AND p.proname = 'c2_populate_handoff_package_tg'
+    AND pg_catalog.pg_get_function_identity_arguments(p.oid) = '';
+
+  IF (SELECT NOT p.prosecdef
+          OR pg_catalog.pg_get_userbyid(p.proowner) <> 'postgres'
+          OR p.proconfig IS DISTINCT FROM ARRAY['search_path=public, pg_temp']::text[]
+      FROM pg_catalog.pg_proc p WHERE p.oid = v_rpc) THEN
+    RAISE EXCEPTION 'C2_RPC_SECURITY_DEFINITION_INVALID';
+  END IF;
+  IF (SELECT NOT p.prosecdef
+          OR pg_catalog.pg_get_userbyid(p.proowner) <> 'postgres'
+          OR p.proconfig IS DISTINCT FROM ARRAY['search_path=public, pg_temp']::text[]
+      FROM pg_catalog.pg_proc p WHERE p.oid = v_trigger_function) THEN
+    RAISE EXCEPTION 'C2_TRIGGER_FUNCTION_SECURITY_DEFINITION_INVALID';
+  END IF;
+
+  SELECT EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_proc p,
+         LATERAL pg_catalog.aclexplode(
+           COALESCE(p.proacl, pg_catalog.acldefault('f', p.proowner))
+         ) acl
+    WHERE p.oid IN (v_rpc, v_trigger_function)
+      AND acl.grantee = 0
+      AND acl.privilege_type = 'EXECUTE'
+  ) INTO v_public_execute;
+
+  IF v_public_execute
+     OR pg_catalog.has_function_privilege('anon', v_rpc, 'EXECUTE')
+     OR pg_catalog.has_function_privilege('authenticated', v_rpc, 'EXECUTE')
+     OR NOT pg_catalog.has_function_privilege('service_role', v_rpc, 'EXECUTE') THEN
+    RAISE EXCEPTION 'C2_RPC_ACL_INVALID';
+  END IF;
+
+  IF pg_catalog.has_function_privilege('anon', v_trigger_function, 'EXECUTE')
+     OR pg_catalog.has_function_privilege('authenticated', v_trigger_function, 'EXECUTE')
+     OR pg_catalog.has_function_privilege('service_role', v_trigger_function, 'EXECUTE') THEN
+    RAISE EXCEPTION 'C2_TRIGGER_FUNCTION_ACL_INVALID';
+  END IF;
+
+  SELECT count(*) INTO v_trigger_count
+  FROM pg_catalog.pg_trigger t
+  WHERE NOT t.tgisinternal
+    AND t.tgname = 'c2_handoff_package_before_insert'
+    AND t.tgrelid = 'public.handoff_event'::regclass
+    AND t.tgfoid = v_trigger_function
+    AND t.tgtype = 7;
+  IF v_trigger_count <> 1 THEN
+    RAISE EXCEPTION 'C2_TRIGGER_BINDING_INVALID';
+  END IF;
+END;
+$c2_acl_assert$;
