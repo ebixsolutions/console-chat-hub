@@ -1,3 +1,5 @@
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+.github/workflows/ai-abc-b3-director-production-smoke.yml 18ms (unchanged)
 name: AI ABC B3 Director Production Smoke
 
 on:
@@ -75,7 +77,7 @@ jobs:
                   return e.code,payload
 
           H={'apikey':SERVER,'Authorization':'Bearer '+SERVER,'Content-Type':'application/json'}
-          AUTH_H={'apikey':AUTH_ADMIN,'Authorization':'Bearer '+AUTH_ADMIN,'Content-Type':'application/json'}
+          AUTH_H={'apikey':SERVER,'Authorization':'Bearer '+AUTH_ADMIN,'Content-Type':'application/json'}
           def rest(table, query='', method='GET', body=None, prefer=None):
               h=dict(H)
               if prefer: h['Prefer']=prefer
