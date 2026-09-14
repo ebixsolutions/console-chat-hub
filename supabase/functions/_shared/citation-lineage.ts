@@ -1,4 +1,6 @@
 import type { KBFullChunk } from "./kb-client.ts";
+import type { CurrentGroundingTarget } from "./canonical-grounding.ts";
+import type { ReferenceAuthorityDecision } from "./commerce-state-authority.ts";
 
 export interface PersistedKBCitation {
   label: string;
@@ -7,6 +9,10 @@ export interface PersistedKBCitation {
   document_id: string;
   chunk_id?: string;
   chunk_type: "full_content";
+  target_entity_model: string[];
+  target_topics: string[];
+  authority_decision: string;
+  evidence_state: string;
 }
 
 export interface KBCitationMetadata extends Record<string, unknown> {
@@ -15,15 +21,27 @@ export interface KBCitationMetadata extends Record<string, unknown> {
     selected_document_id: string;
     evidence_chunk_ids: string[];
     evidence_count: number;
+    current_target: CurrentGroundingTarget;
+    authority_decision: string;
+    evidence_state: string;
   };
+}
+export interface CitationAuthorityBinding {
+  authorityDecision: ReferenceAuthorityDecision;
+  currentTarget: CurrentGroundingTarget;
 }
 
 export function buildCitationMetadata(
   chunks: KBFullChunk[],
   selectedDocumentId: string | null,
+  binding?: CitationAuthorityBinding,
 ): KBCitationMetadata | null {
   const selected = (selectedDocumentId ?? "").trim();
   if (!selected) return null;
+  if (!binding || binding.authorityDecision.selected_source_id !== selected) return null;
+  if (binding.authorityDecision.decision !== "USE_CURRENT_KB") return null;
+  const evidenceState = binding.authorityDecision.provenance.currentness ?? "unknown";
+  if (evidenceState !== "current") return null;
 
   const citations: PersistedKBCitation[] = [];
   const seen = new Set<string>();
@@ -38,6 +56,7 @@ export function buildCitationMetadata(
     const chunkId = typeof chunk.chunk_id === "string" && chunk.chunk_id.trim()
       ? chunk.chunk_id.trim()
       : undefined;
+    if (!chunkId) return null;
     const dedupeKey = chunkId ? `${selected}:${chunkId}` : `${selected}:${chunk.content}`;
     if (seen.has(dedupeKey)) continue;
     seen.add(dedupeKey);
@@ -53,6 +72,10 @@ export function buildCitationMetadata(
       document_id: selected,
       ...(chunkId ? { chunk_id: chunkId } : {}),
       chunk_type: "full_content",
+      target_entity_model: [...binding.currentTarget.entity_ids],
+      target_topics: [...binding.currentTarget.topic_ids],
+      authority_decision: binding.authorityDecision.decision,
+      evidence_state: evidenceState,
     });
   }
 
@@ -64,6 +87,9 @@ export function buildCitationMetadata(
       selected_document_id: selected,
       evidence_chunk_ids: citations.flatMap((citation) => citation.chunk_id ? [citation.chunk_id] : []),
       evidence_count: citations.length,
+      current_target: { ...binding.currentTarget },
+      authority_decision: binding.authorityDecision.decision,
+      evidence_state: evidenceState,
     },
   };
 }

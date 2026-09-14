@@ -73,6 +73,7 @@ export interface ReferenceEvidenceCandidate {
   publication_state?: string | null;
   currentness?: ReferenceEvidenceCurrentness;
   entity_ids?: string[];
+  topic_ids?: string[];
   regions?: string[];
   language?: string | null;
   version?: string | null;
@@ -87,8 +88,10 @@ export interface ResolveReferenceAuthorityInput {
   candidates: ReferenceEvidenceCandidate[];
   expected_tenant_id?: string | null;
   expected_entity_ids?: string[];
+  expected_topic_ids?: string[];
   expected_region?: string | null;
   requires_current_kb?: boolean;
+  require_explicit_target_match?: boolean;
 }
 
 export interface ReferenceAuthorityRejection {
@@ -106,6 +109,7 @@ export interface ReferenceAuthorityDecision {
   provenance: {
     tenant_id: string | null;
     entity_ids: string[];
+    topic_ids: string[];
     region: string | null;
     source_type: string | null;
     version: string | null;
@@ -377,7 +381,9 @@ function isCurrentPublishedReference(candidate: ReferenceEvidenceCandidate): boo
 
 function overlaps(expected: string[], actual: string[]): boolean {
   if (!expected.length || !actual.length) return true;
-  return expected.some((value) => actual.includes(value));
+  const key = (value: string) => value.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+  const actualKeys = new Set(actual.map(key).filter(Boolean));
+  return expected.some((value) => actualKeys.has(key(value)));
 }
 
 function parseTimestamp(value: string | null | undefined): number {
@@ -420,12 +426,15 @@ function hasInternalClaimConflict(candidate: ReferenceEvidenceCandidate): boolea
 function bindingSpecificity(
   candidate: ReferenceEvidenceCandidate,
   expectedEntities: string[],
+  expectedTopics: string[],
   expectedRegion: string,
 ): number {
   const entities = boundedStrings(candidate.entity_ids);
+  const topics = boundedStrings(candidate.topic_ids);
   const regions = boundedStrings(candidate.regions, 12, 80);
   return (
     (expectedEntities.length && entities.length && overlaps(expectedEntities, entities) ? 2 : 0) +
+    (expectedTopics.length && topics.length && overlaps(expectedTopics, topics) ? 2 : 0) +
     (expectedRegion && regions.includes(expectedRegion) ? 1 : 0)
   );
 }
@@ -433,11 +442,12 @@ function bindingSpecificity(
 function comparableAuthorityTuple(
   candidate: ReferenceEvidenceCandidate,
   expectedEntities: string[],
+  expectedTopics: string[],
   expectedRegion: string,
 ): string {
   return [
     REFERENCE_AUTHORITY_RANK[candidate.authority_class],
-    bindingSpecificity(candidate, expectedEntities, expectedRegion),
+    bindingSpecificity(candidate, expectedEntities, expectedTopics, expectedRegion),
     finiteOrZero(candidate.source_priority),
     finiteOrZero(candidate.version_rank),
     parseTimestamp(candidate.updated_at),
@@ -447,13 +457,14 @@ function comparableAuthorityTuple(
 function conflictingTopSources(
   candidates: ReferenceEvidenceCandidate[],
   expectedEntities: string[],
+  expectedTopics: string[],
   expectedRegion: string,
 ): string[] {
   if (candidates.length < 1) return [];
-  const topTuple = comparableAuthorityTuple(candidates[0], expectedEntities, expectedRegion);
+  const topTuple = comparableAuthorityTuple(candidates[0], expectedEntities, expectedTopics, expectedRegion);
   const peers = candidates.filter(
     (candidate) =>
-      comparableAuthorityTuple(candidate, expectedEntities, expectedRegion) === topTuple,
+      comparableAuthorityTuple(candidate, expectedEntities, expectedTopics, expectedRegion) === topTuple,
   );
   const internallyConflicting = peers
     .filter(hasInternalClaimConflict)
@@ -504,7 +515,9 @@ export function resolveReferenceAuthority(
 ): ReferenceAuthorityDecision {
   const expectedTenant = clean(input.expected_tenant_id ?? "", 160).toLowerCase();
   const expectedEntities = boundedStrings(input.expected_entity_ids);
+  const expectedTopics = boundedStrings(input.expected_topic_ids);
   const expectedRegion = clean(input.expected_region ?? "", 80).toLowerCase();
+  const requireExplicitTargetMatch = input.require_explicit_target_match === true;
   const rejected: ReferenceAuthorityRejection[] = [];
   const historical: ReferenceEvidenceCandidate[] = [];
   const eligible: ReferenceEvidenceCandidate[] = [];
@@ -518,8 +531,13 @@ export function resolveReferenceAuthority(
       continue;
     }
     const entities = boundedStrings(candidate.entity_ids);
-    if (!overlaps(expectedEntities, entities)) {
+    if (expectedEntities.length > 0 && ((requireExplicitTargetMatch && entities.length === 0) || !overlaps(expectedEntities, entities))) {
       rejected.push({ source_id: sourceId, reason: "wrong_entity" });
+      continue;
+    }
+    const topics = boundedStrings(candidate.topic_ids);
+    if (expectedTopics.length > 0 && ((requireExplicitTargetMatch && topics.length === 0) || !overlaps(expectedTopics, topics))) {
+      rejected.push({ source_id: sourceId, reason: "wrong_topic" });
       continue;
     }
     const regions = boundedStrings(candidate.regions, 12, 80);
@@ -573,8 +591,8 @@ export function resolveReferenceAuthority(
   selectable.sort(
     (a, b) =>
       REFERENCE_AUTHORITY_RANK[b.authority_class] - REFERENCE_AUTHORITY_RANK[a.authority_class] ||
-      bindingSpecificity(b, expectedEntities, expectedRegion) -
-        bindingSpecificity(a, expectedEntities, expectedRegion) ||
+      bindingSpecificity(b, expectedEntities, expectedTopics, expectedRegion) -
+        bindingSpecificity(a, expectedEntities, expectedTopics, expectedRegion) ||
       finiteOrZero(b.source_priority) - finiteOrZero(a.source_priority) ||
       finiteOrZero(b.version_rank) - finiteOrZero(a.version_rank) ||
       parseTimestamp(b.updated_at) - parseTimestamp(a.updated_at) ||
@@ -582,7 +600,7 @@ export function resolveReferenceAuthority(
       a.source_id.localeCompare(b.source_id),
   );
 
-  const conflictSourceIds = conflictingTopSources(selectable, expectedEntities, expectedRegion);
+  const conflictSourceIds = conflictingTopSources(selectable, expectedEntities, expectedTopics, expectedRegion);
   if (conflictSourceIds.length > 0) {
     return {
       decision: "CONFLICT_UNRESOLVED",
@@ -594,6 +612,7 @@ export function resolveReferenceAuthority(
       provenance: {
         tenant_id: expectedTenant || null,
         entity_ids: expectedEntities,
+        topic_ids: expectedTopics,
         region: expectedRegion || null,
         source_type: null,
         version: null,
@@ -623,6 +642,7 @@ export function resolveReferenceAuthority(
       provenance: {
         tenant_id: expectedTenant || null,
         entity_ids: expectedEntities,
+        topic_ids: expectedTopics,
         region: expectedRegion || null,
         source_type: null,
         version: null,
@@ -641,6 +661,7 @@ export function resolveReferenceAuthority(
     provenance: {
       tenant_id: clean(selected.tenant_id ?? "", 160) || expectedTenant || null,
       entity_ids: boundedStrings(selected.entity_ids),
+      topic_ids: boundedStrings(selected.topic_ids),
       region: boundedStrings(selected.regions, 12, 80)[0] ?? (expectedRegion || null),
       source_type: clean(selected.source_type, 80) || null,
       version: clean(selected.version ?? "", 120) || null,

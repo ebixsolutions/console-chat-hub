@@ -217,13 +217,13 @@ function correctedPlanSubject(text: string): PublishedPlan | null {
   if (!correctionCue.test(latest)) return null;
 
   const explicitTarget = latest.match(
-    /(?:我要問|我要问|我想問|我想问|想問|想问|問嘅係|问的是|改問|改问|ask\s+about|i\s+(?:want|meant)\s+(?:to\s+)?(?:ask\s+about\s+)?)\s*(?:the\s+)?(Basic|Growth|Pro)(?:\s+(?:plan|方案))?/i,
+    /(?:我要問|我要问|我想問|我想问|想問|想问|問嘅係|问的是|改問|改问|ask\s+about|i\s+(?:want|meant)\s+(?:to\s+)?(?:ask\s+about\s+)?)\s*(?:the\s+)?(?:smoke\s+test\s+)?(Basic|Growth|Pro)(?:\s+(?:plan|方案))?/i,
   );
   const explicitPlan = normalizePlan(explicitTarget?.[1]);
   if (explicitPlan) return explicitPlan;
 
   const contrastTarget = latest.match(
-    /(?:而係|而是|instead(?:\s+of)?|but)\s*(?:the\s+)?(Basic|Growth|Pro)(?:\s+(?:plan|方案))?/i,
+    /(?:而係|而是|instead(?:\s+of)?|but)\s*(?:the\s+)?(?:smoke\s+test\s+)?(Basic|Growth|Pro)(?:\s+(?:plan|方案))?/i,
   );
   return normalizePlan(contrastTarget?.[1]);
 }

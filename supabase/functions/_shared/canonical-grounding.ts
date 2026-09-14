@@ -11,10 +11,21 @@ export interface CanonicalGroundingOptions {
   policyOnly?: boolean;
   requirePublished?: boolean;
   requestText?: string;
+  currentTurnText?: string;
   expectedTenantId?: string | null;
   expectedEntityIds?: string[];
+  expectedTopicIds?: string[];
   expectedRegion?: string | null;
   requiresCurrentKb?: boolean;
+  targetChanged?: boolean;
+}
+export interface CurrentGroundingTarget {
+  entity_ids: string[];
+  topic_ids: string[];
+  region: string | null;
+  explicit_entity: boolean;
+  explicit_topic: boolean;
+  target_changed: boolean;
 }
 export type CanonicalGroundingResult =
   | {
@@ -43,6 +54,57 @@ function modelTokens(text: string): string[] {
       ),
     ),
   ];
+}
+function unique(values: Array<string | null | undefined>): string[] {
+  return [...new Set(values.map((value) => value?.normalize("NFKC").trim()).filter((value): value is string => Boolean(value)))];
+}
+function namedTargetTokens(text: string): string[] {
+  const targets: string[] = [];
+  for (const match of text.matchAll(/\b(?:smoke\s+test\s+)?(basic|growth|pro)\b/gi)) {
+    const plan = match[1].toLowerCase();
+    targets.push(plan);
+    if (/smoke\s+test/i.test(match[0])) targets.push(`smoke test ${plan}`);
+  }
+  for (const match of text.matchAll(/\b(product|model|sku)\s*[:#-]?\s*([a-z0-9][a-z0-9._/-]{0,80})\b/gi)) {
+    targets.push(`${match[1].toLowerCase()} ${match[2].toLowerCase()}`);
+    targets.push(match[2].toLowerCase());
+  }
+  return unique([...targets, ...modelTokens(text).map((value) => value.toLowerCase())]);
+}
+function topicTokens(text: string): string[] {
+  const topics: string[] = [];
+  const rules: Array<[string, RegExp]> = [
+    ["warranty", /(?:warranty|保養|保修)/i],
+    ["delivery", /(?:delivery|shipping|送貨|送货|物流|派送)/i],
+    ["returns", /(?:refund|return|退款|退貨|退货|換貨|换货)/i],
+    ["price", /(?:price|pricing|價錢|价钱|價格|价格|費用|费用|收費|收费|monthly|yearly|每月|每年)/i],
+    ["sku_limit", /(?:sku|商品|產品|产品).{0,20}(?:limit|上限)|(?:limit|上限).{0,20}(?:sku|商品|產品|产品)/i],
+    ["staff_limit", /(?:staff|admin(?:[- ]?seat)?|員工|员工|人手).{0,20}(?:limit|上限)|(?:limit|上限).{0,20}(?:staff|admin|員工|员工|人手)/i],
+    ["features", /(?:feature|included|功能|包括|包含|app|push|crm|會員|会员|ai\s*seo)/i],
+    ["specification", /(?:spec(?:ification)?s?|規格|规格|噪音|noise|\bdb\b|dimension|尺寸)/i],
+    ["payment", /(?:payment|付款|支付)/i],
+  ];
+  for (const [topic, pattern] of rules) if (pattern.test(text)) topics.push(topic);
+  return topics;
+}
+export function deriveCurrentGroundingTarget(
+  currentTurnText: string,
+  retrievalText = currentTurnText,
+  fallbackEntityIds: string[] = [],
+  fallbackTopicIds: string[] = [],
+  targetChanged = false,
+): CurrentGroundingTarget {
+  const explicitEntities = namedTargetTokens(currentTurnText);
+  const explicitTopics = topicTokens(currentTurnText);
+  const retrievalTopics = topicTokens(retrievalText);
+  return {
+    entity_ids: explicitEntities.length ? explicitEntities : unique(fallbackEntityIds),
+    topic_ids: explicitTopics.length ? explicitTopics : unique([...fallbackTopicIds, ...retrievalTopics]),
+    region: detectExplicitJurisdiction(currentTurnText) ?? null,
+    explicit_entity: explicitEntities.length > 0,
+    explicit_topic: explicitTopics.length > 0,
+    target_changed: targetChanged,
+  };
 }
 function candidateText(document: KBDocumentCandidate): string {
   return [
@@ -211,10 +273,11 @@ export function selectCanonicalGrounding(
   const policyOnly = options.policyOnly === true;
   const requirePublished = options.requirePublished !== false;
   const requestText = options.requestText ?? "";
-  const expectedEntityIds = options.expectedEntityIds?.length
-    ? options.expectedEntityIds
-    : modelTokens(requestText);
-  const expectedRegion = options.expectedRegion ?? detectExplicitJurisdiction(requestText);
+  const currentTurnText = options.currentTurnText ?? requestText;
+  const target = deriveCurrentGroundingTarget(currentTurnText, requestText, options.expectedEntityIds ?? modelTokens(requestText), options.expectedTopicIds ?? [], options.targetChanged === true);
+  const expectedEntityIds = target.entity_ids;
+  const expectedTopicIds = target.topic_ids;
+  const expectedRegion = options.expectedRegion ?? target.region ?? detectExplicitJurisdiction(requestText);
   const eligible: Array<{
     document: KBDocumentCandidate;
     chunks: KBFullChunk[];
@@ -238,8 +301,9 @@ export function selectCanonicalGrounding(
       return { ok: false, error: "KB_DOCUMENT_EVIDENCE_MISMATCH" };
     }
 
-    const lexicalScore = lexicalRelevance(requestText, document);
-    const effectiveMinScore = strongLexicalEvidenceMatch(requestText, document)
+    const currentTargetRequest = currentTurnText || requestText;
+    const lexicalScore = lexicalRelevance(currentTargetRequest, document);
+    const effectiveMinScore = strongLexicalEvidenceMatch(currentTargetRequest, document)
       ? Math.min(minScore, STRONG_LEXICAL_SCORE_FLOOR)
       : minScore;
     const chunks = document.chunks.filter(
@@ -267,7 +331,7 @@ export function selectCanonicalGrounding(
     }
     if (!evidence.length) continue;
 
-    const applicability = assessApplicability(document, requestText);
+    const applicability = assessApplicability(document, currentTargetRequest);
     const metadata = document.authority;
     const declaredCurrentness = metadata?.currentness ?? "unknown";
     const effectiveCurrentness =
@@ -291,7 +355,8 @@ export function selectCanonicalGrounding(
         tenant_id: metadata?.tenant_id ?? options.expectedTenantId ?? null,
         publication_state: metadata?.publication_state ?? "published",
         currentness: effectiveCurrentness,
-        entity_ids: metadata?.entity_ids ?? modelTokens(candidateText(document)),
+        entity_ids: unique([...(metadata?.entity_ids ?? []), ...namedTargetTokens(candidateText(document))]),
+        topic_ids: unique([...(metadata?.claims ?? []).map((claim) => claim.key), ...topicTokens(candidateText(document)), ...namedTargetTokens(candidateText(document))]),
         regions: metadata?.regions?.length
           ? metadata.regions
           : applicability.document_jurisdictions.length
@@ -318,8 +383,10 @@ export function selectCanonicalGrounding(
     candidates: eligible.map((candidate) => candidate.authorityCandidate),
     expected_tenant_id: options.expectedTenantId ?? null,
     expected_entity_ids: expectedEntityIds,
+    expected_topic_ids: expectedTopicIds,
     expected_region: expectedRegion,
     requires_current_kb: options.requiresCurrentKb !== false,
+    require_explicit_target_match: target.target_changed || target.explicit_entity || target.explicit_topic || Boolean(expectedRegion),
   });
   const winner = authorityDecision.selected_source_id
     ? eligible.find(

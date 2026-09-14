@@ -3,6 +3,7 @@ import {
   type ConversationOperation,
   type SemanticHistoryRow,
 } from "./conversation-semantic-contract.ts";
+import { deriveCurrentGroundingTarget, type CurrentGroundingTarget } from "./canonical-grounding.ts";
 
 export type TransformOperation = "SIMPLIFY" | "REPHRASE" | "TRANSLATE" | "SUMMARIZE";
 
@@ -13,6 +14,9 @@ export interface PriorGroundedTransformContext {
   selected_document_id: string;
   evidence_chunk_ids: string[];
   prior_source_message_id: string;
+  grounding_target?: CurrentGroundingTarget;
+  authority_decision?: string;
+  evidence_state?: string;
   requested_summary_count?: number;
   citations: Array<{
     label: string;
@@ -21,6 +25,10 @@ export interface PriorGroundedTransformContext {
     document_id: string;
     chunk_id?: string;
     chunk_type: "full_content";
+    target_entity_model?: string[];
+    target_topics?: string[];
+    authority_decision?: string;
+    evidence_state?: string;
   }>;
 }
 
@@ -34,7 +42,7 @@ const TRANSFORMS = new Set<ConversationOperation>([
 const COMPOSITE_TRANSFORM_RULES: Array<[TransformOperation, RegExp]> = [
   ["TRANSLATE", /(?:用|改用)(?:廣東話|广东话|繁體中文|繁体中文|簡體中文|简体中文|英文)|\b(?:in|into)\s+(?:english|chinese|cantonese|traditional chinese|simplified chinese)\b|translate(?: that| it)?/i],
   ["SUMMARIZE", /(?:總結|总结|概括|歸納|归纳)|summari[sz]e/i],
-  ["SIMPLIFY", /(?:簡單|简单)(?:一點|一点|啲|些|點|点)?|\b(?:simpler|shorter)\b|explain(?: it| that)? (?:more )?simply/i],
+  ["SIMPLIFY", /(?:簡單|简单)(?:一點|一点|啲|些|點|点)?|\b(?:simpler|short(?:en|er))\b|explain(?: it| that)? (?:more )?simply/i],
   ["REPHRASE", /(?:換句話|换句话|另一種講法|另一种说法|改寫|改写|重新講|重新说|rephrase|rewrite|say that another way|word it differently)/i],
 ];
 
@@ -60,6 +68,45 @@ function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : [];
+}
+
+function readGroundingTarget(value: unknown): CurrentGroundingTarget | null {
+  const target = record(value);
+  if (!target) return null;
+  return {
+    entity_ids: stringList(target.entity_ids),
+    topic_ids: stringList(target.topic_ids),
+    region: typeof target.region === "string" && target.region.trim() ? target.region : null,
+    explicit_entity: target.explicit_entity === true,
+    explicit_topic: target.explicit_topic === true,
+    target_changed: target.target_changed === true,
+  };
+}
+
+function targetKey(value: string): string {
+  return value.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
+function targetOverlap(expected: string[], actual: string[]): boolean {
+  const actualKeys = new Set(actual.map(targetKey).filter(Boolean));
+  return expected.some((value) => actualKeys.has(targetKey(value)));
+}
+
+function transformTargetCompatible(latest: string, prior: CurrentGroundingTarget | null): boolean {
+  const requested = deriveCurrentGroundingTarget(latest);
+  const hasExplicitBoundary = requested.explicit_entity || requested.explicit_topic || Boolean(requested.region);
+  if (!hasExplicitBoundary) return true;
+  if (!prior) return false;
+  if (requested.explicit_entity && !targetOverlap(requested.entity_ids, prior.entity_ids)) return false;
+  if (requested.explicit_topic && !targetOverlap(requested.topic_ids, prior.topic_ids)) return false;
+  if (requested.region && requested.region !== prior.region) return false;
+  return true;
 }
 
 function clean(value: unknown, max = 4000): string {
@@ -240,12 +287,14 @@ export function resolvePriorGroundedTransform(
     const selected = clean(lineage?.selected_document_id, 200);
     const lineageIds = normalizedChunkIds(lineage?.evidence_chunk_ids);
     const sourceMessageId = clean(meta?.source_message_id, 200);
+    const groundingTarget = readGroundingTarget(lineage?.current_target);
     if (
       selected !== anchor.document_id ||
       sourceMessageId !== anchor.source_message_id ||
       lineageIds.length !== sourceChunks.length ||
       lineageIds.some((id) => !sourceChunks.includes(id))
     ) return null;
+    if (!transformTargetCompatible(latest, groundingTarget)) return null;
 
     if (!Array.isArray(meta?.citations) || meta.citations.length === 0) return null;
     const citations: PriorGroundedTransformContext["citations"] = [];
@@ -271,6 +320,14 @@ export function resolvePriorGroundedTransform(
         document_id: documentId,
         ...(chunkId ? { chunk_id: chunkId } : {}),
         chunk_type: "full_content",
+        target_entity_model: groundingTarget?.entity_ids ?? [],
+        target_topics: groundingTarget?.topic_ids ?? [],
+        authority_decision: typeof lineage?.authority_decision === "string"
+          ? lineage.authority_decision
+          : "PRIOR_GROUNDED_ANSWER",
+        evidence_state: typeof lineage?.evidence_state === "string"
+          ? lineage.evidence_state
+          : "current",
       });
     }
     if (citations.length === 0) return null;
@@ -282,6 +339,13 @@ export function resolvePriorGroundedTransform(
       selected_document_id: selected,
       evidence_chunk_ids: lineageIds,
       prior_source_message_id: sourceMessageId,
+      ...(groundingTarget ? { grounding_target: groundingTarget } : {}),
+      ...(typeof lineage?.authority_decision === "string"
+        ? { authority_decision: lineage.authority_decision }
+        : {}),
+      ...(typeof lineage?.evidence_state === "string"
+        ? { evidence_state: lineage.evidence_state }
+        : {}),
       ...(requestedSummaryCount ? { requested_summary_count: requestedSummaryCount } : {}),
       citations,
     };
@@ -364,12 +428,22 @@ export function buildInheritedTransformCitationMetadata(
 ): Record<string, unknown> | null {
   if (!context) return null;
   const operations = resolvedOperations(context);
+  const inheritedTarget = context.grounding_target ?? deriveCurrentGroundingTarget(context.prior_answer);
   return {
-    citations: context.citations.map((citation) => ({ ...citation })),
+    citations: context.citations.map((citation) => ({
+      ...citation,
+      target_entity_model: citation.target_entity_model ?? inheritedTarget.entity_ids,
+      target_topics: citation.target_topics ?? inheritedTarget.topic_ids,
+      authority_decision: citation.authority_decision ?? "PRIOR_GROUNDED_ANSWER",
+      evidence_state: citation.evidence_state ?? "current",
+    })),
     citation_lineage: {
       selected_document_id: context.selected_document_id,
       evidence_chunk_ids: [...context.evidence_chunk_ids],
       evidence_count: context.evidence_chunk_ids.length,
+      current_target: inheritedTarget,
+      authority_decision: context.authority_decision ?? "PRIOR_GROUNDED_ANSWER",
+      evidence_state: context.evidence_state ?? "current",
     },
     transform_lineage: {
       operation: context.operation,
