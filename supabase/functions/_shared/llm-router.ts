@@ -40,19 +40,19 @@ export interface LlmUsage {
 
 export type LlmResult =
   | {
-    ok: true;
-    text: string;
-    model: string;
-    usage: LlmUsage;
-    request_id: string;
-  }
+      ok: true;
+      text: string;
+      model: string;
+      usage: LlmUsage;
+      request_id: string;
+    }
   | {
-    ok: false;
-    code: LlmFailureCode;
-    status?: number;
-    request_id: string;
-    usage: LlmUsage;
-  };
+      ok: false;
+      code: LlmFailureCode;
+      status?: number;
+      request_id: string;
+      usage: LlmUsage;
+    };
 
 export type ModelPurpose = "evaluation" | "assist" | "generation";
 
@@ -106,10 +106,7 @@ const REDACTIONS: Array<[RegExp, string]> = [
   [/[\w.+-]+@[\w-]+\.[\w.-]+/g, "[EMAIL]"],
   [/\+?\d[\d\s\-()]{6,}\d/g, "[PHONE]"],
   [/\b(?:\d[ -]*?){13,19}\b/g, "[CARD]"],
-  [
-    /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
-    "[UUID]",
-  ],
+  [/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "[UUID]"],
   [/\bsk-[A-Za-z0-9_-]{10,}\b/g, "[SECRET]"],
   [/\bBearer\s+[A-Za-z0-9._-]{10,}\b/gi, "[SECRET]"],
 ];
@@ -129,10 +126,7 @@ export function looksLikeInjection(input: string): boolean {
 }
 
 function serviceClient(): SupabaseClient {
-  return createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    getSupabaseAdminKey(),
-  );
+  return createClient(Deno.env.get("SUPABASE_URL")!, getSupabaseAdminKey());
 }
 
 function log(tag: string, fields: Record<string, unknown>): void {
@@ -150,11 +144,7 @@ function resolveProvider(): ProviderId {
   const raw = (Deno.env.get("LLM_PROVIDER") ?? "").trim().toLowerCase();
   // Only these two are supported; anything else is a configuration error and is
   // reported as such rather than silently falling back to another provider.
-  return raw === "anthropic"
-    ? "anthropic"
-    : raw === "vertex"
-    ? "vertex"
-    : ("" as ProviderId);
+  return raw === "anthropic" ? "anthropic" : raw === "vertex" ? "vertex" : ("" as ProviderId);
 }
 
 async function recordUsage(
@@ -167,26 +157,28 @@ async function recordUsage(
   code?: string,
 ): Promise<void> {
   try {
-    await serviceClient().from("upstream_call_log").insert({
-      conversation_id: call.conversationId,
-      company_id: call.companyId,
-      upstream_service: "llm",
-      request_payload: {
-        request_id: call.operationId,
-        purpose: call.purpose,
-        provider,
-        model,
+    await serviceClient()
+      .from("upstream_call_log")
+      .insert({
+        conversation_id: call.conversationId,
         company_id: call.companyId,
-        outcome,
-        error_code: code ?? null,
-        input_tokens: usage.input_tokens,
-        output_tokens: usage.output_tokens,
-        attempts: usage.attempts,
-      },
-      response_status: httpStatus,
-      response_latency_ms: usage.latency_ms,
-      error_message: code ?? null,
-    });
+        upstream_service: "llm",
+        request_payload: {
+          request_id: call.operationId,
+          purpose: call.purpose,
+          provider,
+          model,
+          company_id: call.companyId,
+          outcome,
+          error_code: code ?? null,
+          input_tokens: usage.input_tokens,
+          output_tokens: usage.output_tokens,
+          attempts: usage.attempts,
+        },
+        response_status: httpStatus,
+        response_latency_ms: usage.latency_ms,
+        error_message: code ?? null,
+      });
   } catch (e) {
     log(call.tag, { event: "usage_log_failed", detail: (e as Error).name });
   }
@@ -203,13 +195,8 @@ export const GENERATION_MAX_TOKENS_MAX = 8192;
 export function resolveGenerationMaxTokens(): number {
   const raw = (Deno.env.get("LLM_MAX_OUTPUT_TOKENS_GENERATION") ?? "").trim();
   const parsed = Number.parseInt(raw, 10);
-  const candidate = Number.isFinite(parsed) && parsed > 0
-    ? parsed
-    : GENERATION_MAX_TOKENS_DEFAULT;
-  return Math.max(
-    GENERATION_MAX_TOKENS_MIN,
-    Math.min(GENERATION_MAX_TOKENS_MAX, candidate),
-  );
+  const candidate = Number.isFinite(parsed) && parsed > 0 ? parsed : GENERATION_MAX_TOKENS_DEFAULT;
+  return Math.max(GENERATION_MAX_TOKENS_MIN, Math.min(GENERATION_MAX_TOKENS_MAX, candidate));
 }
 
 interface ProviderRequest {
@@ -265,8 +252,10 @@ function anthropicAdapter(
       };
       const text = Array.isArray(obj.content)
         ? obj.content
-          .filter((b) => b?.type === "text" && typeof b.text === "string")
-          .map((b) => b.text as string).join("").trim()
+            .filter((b) => b?.type === "text" && typeof b.text === "string")
+            .map((b) => b.text as string)
+            .join("")
+            .trim()
         : "";
       return {
         text,
@@ -301,8 +290,7 @@ function vertexAdapter(
   responseSchema: Record<string, unknown> | undefined,
   thinkingBudget: number | undefined,
 ): ProviderAdapter {
-  const url =
-    `https://${region}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${region}/publishers/google/models/${model}:generateContent`;
+  const url = `https://${region}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${region}/publishers/google/models/${model}:generateContent`;
 
   return {
     id: "vertex",
@@ -357,7 +345,9 @@ const EXACT_FACT_TOKEN_RE =
   /(?:[$€£¥]|HKD|USD|EUR|GBP|JPY|TWD|NTD|RMB|CNY)?\s*\d+(?:[.,]\d+)?(?:\s*(?:%|percent|days?|hours?|minutes?|years?|months?|kg|g|lb|lbs|mm|cm|m|km|ml|l|公升|毫升|公斤|克|天|日|小時|小时|分鐘|分钟|年|月))?|\b(?=[A-Z0-9-]*[A-Z])(?=[A-Z0-9-]*\d)[A-Z0-9-]{4,}\b/giu;
 
 function canonicalExactToken(value: string): string {
-  return value.normalize("NFKC").toLowerCase()
+  return value
+    .normalize("NFKC")
+    .toLowerCase()
     .replace(/percent/g, "%")
     .replace(/(?:litres?|liters?|公升)/g, "l")
     .replace(/(?:millilitres?|milliliters?|毫升)/g, "ml")
@@ -368,7 +358,8 @@ function canonicalExactToken(value: string): string {
     .replace(/(?:days?|天|日)/g, "d")
     .replace(/(?:years?|年)/g, "y")
     .replace(/(?:months?|月)/g, "mo")
-    .replace(/[\s,]/g, "").trim();
+    .replace(/[\s,]/g, "")
+    .trim();
 }
 
 /** Customer-authored evidence only; assistant turns never become authority. */
@@ -387,22 +378,19 @@ export function extractCustomerConversationEvidence(input: string): string {
   return raw.slice(0, 3000);
 }
 
-export function extractGroundingBlock(
-  system: string,
-): ParsedGroundingBlock | null {
+export function extractGroundingBlock(system: string): ParsedGroundingBlock | null {
   const transformRules = "Prior Grounded Answer transform rules:";
   const transformMarker = "Prior Grounded Answer Evidence:\n";
   if (system.includes(transformRules)) {
     const transformIndex = system.lastIndexOf(transformMarker);
     if (transformIndex >= 0) {
-      const prior = system.slice(transformIndex + transformMarker.length)
-        .trim();
+      const prior = system.slice(transformIndex + transformMarker.length).trim();
       if (prior) {
-        const operationsLine = system.match(/^- Operations:\s*(.+)$/m)?.[1] ??
-          "";
-        const transformOperations = operationsLine.split("+").map((x) =>
-          x.trim()
-        ).filter(Boolean);
+        const operationsLine = system.match(/^- Operations:\s*(.+)$/m)?.[1] ?? "";
+        const transformOperations = operationsLine
+          .split("+")
+          .map((x) => x.trim())
+          .filter(Boolean);
         return {
           authority: "PRIOR_GROUNDED_ANSWER",
           evidence_text: prior.slice(0, 3000),
@@ -431,20 +419,18 @@ export function extractGroundingBlock(
   };
 }
 
-export function buildVerifierEvidenceAliases(
-  grounding: ParsedGroundingBlock,
-): { evidence_text: string; allowed_ids: string[] } {
+export function buildVerifierEvidenceAliases(grounding: ParsedGroundingBlock): {
+  evidence_text: string;
+  allowed_ids: string[];
+} {
   let next = 0;
   const allowed: string[] = [];
-  const aliased = grounding.evidence_text.replace(
-    /\[chunk:([^\]\s]+)\]/g,
-    () => {
-      next += 1;
-      const alias = `E${next}`;
-      allowed.push(alias);
-      return `[chunk:${alias}]`;
-    },
-  );
+  const aliased = grounding.evidence_text.replace(/\[chunk:([^\]\s]+)\]/g, () => {
+    next += 1;
+    const alias = `E${next}`;
+    allowed.push(alias);
+    return `[chunk:${alias}]`;
+  });
   return { evidence_text: aliased, allowed_ids: allowed };
 }
 
@@ -464,20 +450,20 @@ export function validateExactFactGrounding(
       };
     }
   }
-  const evidenceNorm = canonicalExactToken(
-    `${evidenceText}\n${conversationEvidenceText}`,
-  );
+  const evidenceNorm = canonicalExactToken(`${evidenceText}\n${conversationEvidenceText}`);
   const unsupported = new Set<string>();
   for (const match of answer.matchAll(EXACT_FACT_TOKEN_RE)) {
     const token = canonicalExactToken(match[0] ?? "");
     if (!token || /^\d$/.test(token)) continue;
     if (!evidenceNorm.includes(token)) unsupported.add(token);
   }
-  return unsupported.size === 0 ? { ok: true } : {
-    ok: false,
-    reason: "unsupported_exact_fact",
-    unsupported_tokens: [...unsupported],
-  };
+  return unsupported.size === 0
+    ? { ok: true }
+    : {
+        ok: false,
+        reason: "unsupported_exact_fact",
+        unsupported_tokens: [...unsupported],
+      };
 }
 
 export function parseGroundingVerifierDecision(
@@ -562,14 +548,11 @@ async function verifyGroundedGeneration(
     grounding.authority === "PRIOR_GROUNDED_ANSWER"
       ? "The authoritative evidence is a previously verified grounded answer. Judge whether product, company, policy, price, date, duration, eligibility, availability, procedure, jurisdiction, model/specification or other external factual claims remain supported by that evidence."
       : "The authoritative evidence is the supplied current Knowledge Base evidence. Product, company, policy, price, date, duration, eligibility, availability, procedure, jurisdiction, model/specification and other external factual claims must be supported by that authoritative evidence.",
-    grounding.authority === "PRIOR_GROUNDED_ANSWER" &&
-      grounding.transform_operations.length
-      ? `Requested transform operations: ${
-        grounding.transform_operations.join(" + ")
-      }.`
+    grounding.authority === "PRIOR_GROUNDED_ANSWER" && grounding.transform_operations.length
+      ? `Requested transform operations: ${grounding.transform_operations.join(" + ")}.`
       : "",
     grounding.authority === "PRIOR_GROUNDED_ANSWER" &&
-      grounding.transform_operations.includes("TRANSLATE")
+    grounding.transform_operations.includes("TRANSLATE")
       ? "For TRANSLATE, compare semantic meaning across languages rather than surface-word overlap. Direct translations of the same names, product categories, units, and relationships are supported when they preserve the source meaning; do not reject a faithful translation merely because its words differ from the source language."
       : "",
     "Conversation Context C1 is a separate, non-authoritative evidence class. It may support only facts explicitly supplied by the customer or already present as conversational state, including preferences, requested features, quantities/SKU counts, customer-provided order/reference ids, prior requests, and faithful recap/acknowledgement of those facts.",
@@ -687,10 +670,7 @@ async function verifyGroundedGeneration(
       verifierUsage.latency_ms = Date.now() - verifierStarted;
       if (!parsed.text || parsed.finish_reason === "MAX_TOKENS") break;
 
-      const decision = parseGroundingVerifierDecision(
-        parsed.text,
-        allowedVerifierIds,
-      );
+      const decision = parseGroundingVerifierDecision(parsed.text, allowedVerifierIds);
       if (!decision) {
         const parsedShape = parseJsonObjectLoose(parsed.text);
         log(call.tag, {
@@ -699,16 +679,18 @@ async function verifyGroundedGeneration(
           attempt,
           keys: parsedShape ? Object.keys(parsedShape).slice(0, 12) : [],
           grounded_type: parsedShape ? typeof parsedShape.grounded : "missing",
-          unsupported_claims_type: parsedShape == null
-            ? "missing"
-            : Array.isArray(parsedShape.unsupported_claims)
-            ? "array"
-            : typeof parsedShape.unsupported_claims,
-          evidence_chunk_ids_type: parsedShape == null
-            ? "missing"
-            : Array.isArray(parsedShape.evidence_chunk_ids)
-            ? "array"
-            : typeof parsedShape.evidence_chunk_ids,
+          unsupported_claims_type:
+            parsedShape == null
+              ? "missing"
+              : Array.isArray(parsedShape.unsupported_claims)
+                ? "array"
+                : typeof parsedShape.unsupported_claims,
+          evidence_chunk_ids_type:
+            parsedShape == null
+              ? "missing"
+              : Array.isArray(parsedShape.evidence_chunk_ids)
+                ? "array"
+                : typeof parsedShape.evidence_chunk_ids,
           finish_reason: parsed.finish_reason ?? null,
           block_reason: parsed.block_reason ?? null,
           output_tokens: parsed.output_tokens,
@@ -790,9 +772,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
 
   const provider = resolveProvider();
   const model = Deno.env.get(MODEL_ENV[call.purpose]);
-  const timeoutMs = Number(
-    Deno.env.get("LLM_TIMEOUT_MS") ?? DEFAULT_TIMEOUT_MS,
-  );
+  const timeoutMs = Number(Deno.env.get("LLM_TIMEOUT_MS") ?? DEFAULT_TIMEOUT_MS);
 
   const nonEmpty = (v: string | undefined) => !!v && v.trim().length > 0;
 
@@ -804,15 +784,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
       provider: providerLabel,
       purpose: call.purpose,
     });
-    await recordUsage(
-      call,
-      providerLabel,
-      modelLabel,
-      "failed",
-      0,
-      usage,
-      "LLM_CONFIG_MISSING",
-    );
+    await recordUsage(call, providerLabel, modelLabel, "failed", 0, usage, "LLM_CONFIG_MISSING");
     return {
       ok: false as const,
       code: "LLM_CONFIG_MISSING" as const,
@@ -839,15 +811,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
     if (looksLikeInjection(call.user)) {
       usage.latency_ms = Date.now() - started;
       log(call.tag, { event: "input_blocked", request_id: requestId });
-      await recordUsage(
-        call,
-        provider,
-        model!,
-        "blocked",
-        0,
-        usage,
-        "LLM_INPUT_BLOCKED",
-      );
+      await recordUsage(call, provider, model!, "blocked", 0, usage, "LLM_INPUT_BLOCKED");
       return {
         ok: false,
         code: "LLM_INPUT_BLOCKED",
@@ -875,15 +839,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
     if (looksLikeInjection(call.user)) {
       usage.latency_ms = Date.now() - started;
       log(call.tag, { event: "input_blocked", request_id: requestId });
-      await recordUsage(
-        call,
-        provider,
-        model!,
-        "blocked",
-        0,
-        usage,
-        "LLM_INPUT_BLOCKED",
-      );
+      await recordUsage(call, provider, model!, "blocked", 0, usage, "LLM_INPUT_BLOCKED");
       return {
         ok: false,
         code: "LLM_INPUT_BLOCKED",
@@ -1031,8 +987,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
             attempt,
             reason: groundingDecision.reason,
           });
-          const groundingErrorCode =
-            `LLM_OUTPUT_UNGROUNDED:${groundingDecision.reason}`;
+          const groundingErrorCode = `LLM_OUTPUT_UNGROUNDED:${groundingDecision.reason}`;
           await recordUsage(
             call,
             adapter.id,
@@ -1064,14 +1019,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
         ms: usage.latency_ms,
         grounding_verified: grounding !== null,
       });
-      await recordUsage(
-        call,
-        adapter.id,
-        adapter.model,
-        "success",
-        res.status,
-        usage,
-      );
+      await recordUsage(call, adapter.id, adapter.model, "success", res.status, usage);
       return {
         ok: true,
         text: parsed.text,

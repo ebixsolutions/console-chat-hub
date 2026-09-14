@@ -3,6 +3,7 @@ import {
   CE_EVIDENCE_MAX_CHARS,
   CE_EVALUATOR_MAX_TOKENS,
   CE_EVALUATOR_THINKING_BUDGET,
+  CE_JUSTIFICATION_MIN_CHARS,
   CE_JUSTIFICATION_MAX_CHARS,
   ceEvaluatorProviderPolicy,
   ceSignalsProviderPolicy,
@@ -115,7 +116,7 @@ Deno.test("provider 22 out of range score rejected", () =>
   assert(!validateCeProviderResponse({ ...canonical, score: 101 }, known).ok),
 );
 Deno.test("provider 23 short justification rejected", () =>
-  assert(!validateCeProviderResponse({ ...canonical, justification: "too short" }, known).ok),
+  assert(!validateCeProviderResponse({ ...canonical, justification: "brief" }, known).ok),
 );
 Deno.test("provider 24 missing evidence rejected", () =>
   assert(!validateCeProviderResponse({ ...canonical, evidence: undefined }, known).ok),
@@ -278,4 +279,24 @@ Deno.test("provider 51 excessive evidence count fails closed", () =>
 Deno.test("provider 52 timeout and provider errors cannot validate", () => {
   assert(!validateCeProviderResponse({ error: "LLM_TIMEOUT" }, known).ok);
   assert(!validateCeProviderResponse({ error: "LLM_NETWORK" }, known).ok);
+});
+Deno.test("provider 53 concise multilingual justification is valid", () => {
+  const result = validateCeProviderResponse(
+    { ...canonical, justification: "回覆符合目前交易狀態。" },
+    known,
+  );
+  assert(result.ok);
+  assert(CE_JUSTIFICATION_MIN_CHARS === 8);
+});
+Deno.test("provider 54 Vertex schema enforces validator text bounds", () => {
+  const properties = EVALUATOR_RESPONSE_SCHEMA.properties as Record<
+    string,
+    Record<string, unknown>
+  >;
+  assert(properties.justification.minLength === CE_JUSTIFICATION_MIN_CHARS);
+  assert(properties.justification.maxLength === CE_JUSTIFICATION_MAX_CHARS);
+  assert(
+    (properties.evidence.items as Record<string, unknown>).maxLength === CE_EVIDENCE_MAX_CHARS,
+  );
+  assert(properties.recommended_correction.maxLength === CE_CORRECTION_MAX_CHARS);
 });

@@ -17,6 +17,7 @@ import { parseJsonObjectLoose, parseVertexResponse } from "./vertex-parse.ts";
 
 export const CE_EVALUATOR_MAX_TOKENS = 4096;
 export const CE_EVALUATOR_THINKING_BUDGET = 0;
+export const CE_JUSTIFICATION_MIN_CHARS = 8;
 export const CE_JUSTIFICATION_MAX_CHARS = 800;
 export const CE_EVIDENCE_MAX_CHARS = 500;
 export const CE_CORRECTION_MAX_CHARS = 800;

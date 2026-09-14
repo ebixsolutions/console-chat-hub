@@ -339,7 +339,7 @@ export async function buildCanonicalBundle(args: {
 
 const OUTPUT_RULE =
   "Return ONLY one concise JSON object that follows the supplied response schema; no prose, code fences, " +
-  "hidden reasoning, or chain-of-thought. Keep justification to 20-800 characters, each evidence excerpt to " +
+  "hidden reasoning, or chain-of-thought. Keep justification to 8-800 characters, each evidence excerpt to " +
   "at most 500 characters, and recommended_correction to at most 800 characters. " +
   "evidence must hold 1 to 3 verbatim excerpts. grounding_refs must cite chunk_ids that appear in the " +
   "kb_evidence or policy_evidence sections; use an empty array only when the dimension genuinely needs no " +
@@ -415,20 +415,24 @@ export const EVALUATOR_RESPONSE_SCHEMA: Record<string, unknown> = {
     justification: {
       type: "STRING",
       description:
-        "Concise evidence-based rationale only, 20-800 characters. Never include chain-of-thought.",
+        "Concise evidence-based rationale only, 8-800 characters. Never include chain-of-thought.",
+      minLength: 8,
+      maxLength: 800,
     },
     evidence: {
       type: "ARRAY",
       items: {
         type: "STRING",
         description: "One verbatim bundle excerpt, at most 500 characters.",
+        minLength: 1,
+        maxLength: 500,
       },
       minItems: 1,
       maxItems: 3,
     },
     grounding_refs: {
       type: "ARRAY",
-      items: { type: "STRING" },
+      items: { type: "STRING", maxLength: 128 },
       maxItems: 10,
       description:
         "Only chunk IDs copied from supplied evidence; empty when external evidence is unnecessary.",
@@ -437,6 +441,7 @@ export const EVALUATOR_RESPONSE_SCHEMA: Record<string, unknown> = {
       type: "STRING",
       description:
         "Concise corrected reply, at most 800 characters; empty when no change is needed.",
+      maxLength: 800,
     },
   },
   required: ["score", "justification", "evidence", "grounding_refs", "recommended_correction"],
@@ -485,7 +490,7 @@ export function validateEvaluatorOutput(
         ? parsed.justify
         : "";
   const justification = justificationRaw.trim();
-  if (justification.length < 20 || justification.length > 800) return null;
+  if (justification.length < 8 || justification.length > 800) return null;
 
   const evidenceRaw = coerceEvidence(parsed.evidence);
   if (!evidenceRaw || evidenceRaw.length === 0) return null;
@@ -548,7 +553,7 @@ export function describeEvaluatorRejection(parsed: Record<string, unknown> | nul
         : null;
   if (jRaw === null) return "justification_not_string";
   const j = jRaw.trim();
-  if (j.length < 20 || j.length > 800) return "justification_length";
+  if (j.length < 8 || j.length > 800) return "justification_length";
   const evidence = coerceEvidence(parsed.evidence);
   if (!evidence) {
     const ev = parsed.evidence;
