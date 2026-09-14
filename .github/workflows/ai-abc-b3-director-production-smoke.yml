@@ -15,7 +15,7 @@ jobs:
     timeout-minutes: 25
     env:
       PROJECT_REF: nrfxhqabwblzxoushgnm
-      EXPECTED_HEAD: e6821d1ad3ede41a10b6c8e4904934e4da460e5d
+      EXPECTED_HEAD: 11fb5969b9da53497d4d3d76ce3c0e70bc051ace
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       FINAL_SMOKE_AGENT_EMAIL: ${{ secrets.FINAL_SMOKE_AGENT_EMAIL }}
       FINAL_SMOKE_AGENT_PASSWORD: ${{ secrets.FINAL_SMOKE_AGENT_PASSWORD }}
