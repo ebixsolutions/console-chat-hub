@@ -31,6 +31,18 @@ export interface CitationAuthorityBinding {
   currentTarget: CurrentGroundingTarget;
 }
 
+function bindingKey(value: string): string {
+  return value.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
+function sourceBoundValues(current: string[], supported: string[]): string[] {
+  const supportedKeys = new Set(supported.map(bindingKey).filter(Boolean));
+  if (current.length === 0) return [...new Set(supported)];
+  return [
+    ...new Set(current.filter((value) => supportedKeys.has(bindingKey(value)))),
+  ];
+}
+
 export function buildCitationMetadata(
   chunks: KBFullChunk[],
   selectedDocumentId: string | null,
@@ -38,10 +50,30 @@ export function buildCitationMetadata(
 ): KBCitationMetadata | null {
   const selected = (selectedDocumentId ?? "").trim();
   if (!selected) return null;
-  if (!binding || binding.authorityDecision.selected_source_id !== selected) return null;
+  if (!binding || binding.authorityDecision.selected_source_id !== selected) {
+    return null;
+  }
   if (binding.authorityDecision.decision !== "USE_CURRENT_KB") return null;
-  const evidenceState = binding.authorityDecision.provenance.currentness ?? "unknown";
+  const evidenceState = binding.authorityDecision.provenance.currentness ??
+    "unknown";
   if (evidenceState !== "current") return null;
+  const targetEntityModel = sourceBoundValues(
+    binding.currentTarget.entity_ids,
+    binding.authorityDecision.provenance.entity_ids,
+  );
+  const targetTopics = sourceBoundValues(
+    binding.currentTarget.topic_ids,
+    binding.authorityDecision.provenance.topic_ids,
+  );
+  // Citation bindings describe the selected source, not every target mentioned
+  // by the customer. Explicit targets without source support are a lineage
+  // failure, never permission to overstate a citation's compatibility.
+  if (binding.currentTarget.explicit_entity && targetEntityModel.length === 0) {
+    return null;
+  }
+  if (binding.currentTarget.explicit_topic && targetTopics.length === 0) {
+    return null;
+  }
 
   const citations: PersistedKBCitation[] = [];
   const seen = new Set<string>();
@@ -57,13 +89,21 @@ export function buildCitationMetadata(
       ? chunk.chunk_id.trim()
       : undefined;
     if (!chunkId) return null;
-    const dedupeKey = chunkId ? `${selected}:${chunkId}` : `${selected}:${chunk.content}`;
+    const dedupeKey = chunkId
+      ? `${selected}:${chunkId}`
+      : `${selected}:${chunk.content}`;
     if (seen.has(dedupeKey)) continue;
     seen.add(dedupeKey);
 
-    const rawLabel = typeof chunk.title === "string" ? chunk.title.trim().slice(0, 120) : "";
-    const rawSourceType = typeof chunk.source_type === "string" ? chunk.source_type.trim().slice(0, 40) : "";
-    const relevance: "high" | "medium" = chunk.score >= 0.85 ? "high" : "medium";
+    const rawLabel = typeof chunk.title === "string"
+      ? chunk.title.trim().slice(0, 120)
+      : "";
+    const rawSourceType = typeof chunk.source_type === "string"
+      ? chunk.source_type.trim().slice(0, 40)
+      : "";
+    const relevance: "high" | "medium" = chunk.score >= 0.85
+      ? "high"
+      : "medium";
 
     citations.push({
       label: rawLabel || "Knowledge Base source",
@@ -72,8 +112,8 @@ export function buildCitationMetadata(
       document_id: selected,
       ...(chunkId ? { chunk_id: chunkId } : {}),
       chunk_type: "full_content",
-      target_entity_model: [...binding.currentTarget.entity_ids],
-      target_topics: [...binding.currentTarget.topic_ids],
+      target_entity_model: [...targetEntityModel],
+      target_topics: [...targetTopics],
       authority_decision: binding.authorityDecision.decision,
       evidence_state: evidenceState,
     });
@@ -85,7 +125,9 @@ export function buildCitationMetadata(
     citations,
     citation_lineage: {
       selected_document_id: selected,
-      evidence_chunk_ids: citations.flatMap((citation) => citation.chunk_id ? [citation.chunk_id] : []),
+      evidence_chunk_ids: citations.flatMap((citation) =>
+        citation.chunk_id ? [citation.chunk_id] : []
+      ),
       evidence_count: citations.length,
       current_target: { ...binding.currentTarget },
       authority_decision: binding.authorityDecision.decision,
