@@ -3,7 +3,7 @@ import { useState } from "react";
 import { z } from "zod";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { authoritativeFunctionsBase } from "@/integrations/supabase/runtime-authority.mjs";
+import { resolveAuthoritativeSupabaseBinding } from "@/integrations/supabase/runtime-authority.mjs";
 
 const searchSchema = z.object({ token: z.string().optional() });
 
