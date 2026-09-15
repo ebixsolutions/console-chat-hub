@@ -5,13 +5,18 @@ on:
   push:
     branches:
       - director/ai-abc-c3-long-memory-final-cutover
+  pull_request:
+    types: [labeled]
 
 permissions:
   contents: read
 
+env:
+  C3_PROJECT_REF: nrfxhqabwblzxoushgnm
+
 jobs:
   c3-preproduction:
-    if: github.repository == 'ebixsolutions/console-chat-hub'
+    if: github.event_name == 'push' && github.repository == 'ebixsolutions/console-chat-hub'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     permissions:
@@ -55,14 +60,14 @@ jobs:
               const recallPath=dir+'conversation-recall.ts';
               let recallSource=newFiles[recallPath];
               recallSource=recallSource.replace('if (prior.stop?.reason === "CURRENT_KB_REQUIRED")','if (prior.stop && !prior.stop.handled && prior.stop.reason === "CURRENT_KB_REQUIRED")');
-              const lines=recallSource.split('\\n');
+              const lines=recallSource.split('\n');
               const sanitizerIndexes=[];
               for(let i=0;i<lines.length;i++){
                 if(lines[i].includes('return v.replace(/[') && lines[i].includes('u001f')) sanitizerIndexes.push(i);
               }
               if(sanitizerIndexes.length!==1)throw new Error('recall_control_sanitizer_boundary');
               lines[sanitizerIndexes[0]]='  if (typeof v === "string") return [...v].map((char) => char.charCodeAt(0) < 32 ? " " : char).join("").trim().slice(0, 1200);';
-              newFiles[recallPath]=lines.join('\\n');
+              newFiles[recallPath]=lines.join('\n');
             }
           `;
             let patched=s.replace(anchor,patch+anchor);
@@ -89,3 +94,194 @@ jobs:
           name: C3-recall-preproduction-report
           path: ${{ runner.temp }}/c3-recall-report
           if-no-files-found: ignore
+
+  c3-production-edge-transport:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action == 'labeled' &&
+      github.event.pull_request.number == 12 &&
+      github.actor == 'ebixsolutions' &&
+      github.event.label.name == format('c3-prod-{0}', github.event.pull_request.head.sha)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      AUTHORIZED_HEAD: ${{ github.event.pull_request.head.sha }}
+      AUTHORIZED_BRANCH: director/ai-abc-c3-long-memory-final-cutover
+    steps:
+      - name: Exact authorization / repository / target guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ github.repository }}" = "ebixsolutions/console-chat-hub"
+          test "${{ github.event.pull_request.head.ref }}" = "$AUTHORIZED_BRANCH"
+          [[ "$AUTHORIZED_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          test "${{ github.event.label.name }}" = "c3-prod-$AUTHORIZED_HEAD"
+          test "$C3_PROJECT_REF" = "nrfxhqabwblzxoushgnm"
+          test -n "${SUPABASE_ACCESS_TOKEN:-}"
+          echo C3_PRODUCTION_AUTHORIZATION_TRIGGER=PASS
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Exact checkout / tree / project / allowlist guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$AUTHORIZED_HEAD"
+          C3_AUTHORIZED_TREE="$(git rev-parse HEAD^{tree})"
+          [[ "$C3_AUTHORIZED_TREE" =~ ^[0-9a-f]{40}$ ]]
+          printf '%s\n' "$C3_AUTHORIZED_TREE" | tee /tmp/c3-authorized-tree.txt
+          test "$(git status --porcelain | wc -l | tr -d ' ')" = "0"
+          test "$(awk -F'"' '/^project_id = /{print $2}' supabase/config.toml)" = "$C3_PROJECT_REF"
+          for fn in generate-reply agent-assist; do
+            test -s "supabase/functions/$fn/index.ts"
+            section="$(awk -v f="$fn" '$0=="[functions." f "]"{on=1;next} /^\[/{on=0} on{print}' supabase/config.toml)"
+            grep -q '^verify_jwt = true$' <<<"$section"
+          done
+          printf '%s\n' generate-reply agent-assist > /tmp/c3-function-allowlist.txt
+          test "$(wc -l < /tmp/c3-function-allowlist.txt | tr -d ' ')" = "2"
+          echo C3_EXACT_CHECKOUT_GUARD=PASS
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.6
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Build exact checkout closure manifests without rewriting source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/c3_closure_manifest.py <<'PY'
+          import hashlib, pathlib, re, sys
+          root=pathlib.Path(sys.argv[1]).resolve(); entry=(root/sys.argv[2]).resolve(); out=pathlib.Path(sys.argv[3])
+          rx=re.compile(r'(?:from\s*|import\s*\()\s*["\x27]([^"\x27]+)["\x27]|^\s*import\s*["\x27]([^"\x27]+)["\x27]', re.M)
+          seen=set(); stack=[entry]
+          while stack:
+              p=stack.pop().resolve()
+              if p in seen: continue
+              if not p.is_file(): raise SystemExit(f'missing:{p}')
+              seen.add(p); text=p.read_text('utf-8')
+              for m in rx.finditer(text):
+                  spec=m.group(1) or m.group(2)
+                  if not spec or not spec.startswith('.'): continue
+                  q=(p.parent/spec).resolve(); candidates=[q]
+                  if not q.suffix: candidates += [q.with_suffix('.ts'), q/'index.ts']
+                  target=next((c for c in candidates if c.is_file()), None)
+                  if target is None: raise SystemExit(f'unresolved:{spec}:{p}')
+                  if root not in target.parents and target != root: raise SystemExit(f'escape:{target}')
+                  stack.append(target)
+          rows=[]
+          for p in sorted(seen,key=lambda x:x.relative_to(root).as_posix()):
+              rel=p.relative_to(root).as_posix(); data=p.read_bytes()
+              if not data: raise SystemExit(f'empty:{rel}')
+              rows.append((rel,hashlib.sha256(data).hexdigest()))
+          out.write_text(''.join(f'{h}  {r}\n' for r,h in rows),'utf-8')
+          print(f'CLOSURE_FILES={len(rows)}')
+          PY
+          python /tmp/c3_closure_manifest.py "$PWD" supabase/functions/generate-reply/index.ts /tmp/c3-generate-source.sha256
+          python /tmp/c3_closure_manifest.py "$PWD" supabase/functions/agent-assist/index.ts /tmp/c3-assist-source.sha256
+          test -s /tmp/c3-generate-source.sha256
+          test -s /tmp/c3-assist-source.sha256
+          deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+          deno check --node-modules-dir=auto supabase/functions/agent-assist/index.ts
+          test "$(git status --porcelain | wc -l | tr -d ' ')" = "0"
+          sha256sum /tmp/c3-generate-source.sha256 /tmp/c3-assist-source.sha256 | tee /tmp/c3-source-manifest-hashes.txt
+          echo C3_EXACT_SOURCE_CLOSURES=PASS
+
+      - name: Capture immediate pre-C3 Edge rollback closures
+        shell: bash
+        run: |
+          set -euo pipefail
+          R=/tmp/c3-edge-rollback
+          rm -rf "$R"; mkdir -p "$R/generate/supabase" "$R/assist/supabase"
+          cp supabase/config.toml "$R/generate/supabase/config.toml"
+          cp supabase/config.toml "$R/assist/supabase/config.toml"
+          supabase functions list --project-ref "$C3_PROJECT_REF" | tee "$R/predeploy-functions.txt"
+          for fn in generate-reply agent-assist receive-widget-message ce-evaluation-worker conversation-evaluate; do grep -q "$fn" "$R/predeploy-functions.txt"; done
+          (cd "$R/generate" && supabase functions download generate-reply --project-ref "$C3_PROJECT_REF" --use-api)
+          (cd "$R/assist" && supabase functions download agent-assist --project-ref "$C3_PROJECT_REF" --use-api)
+          test -s "$R/generate/supabase/functions/generate-reply/index.ts"
+          test -s "$R/assist/supabase/functions/agent-assist/index.ts"
+          echo C3_EDGE_ROLLBACK_SNAPSHOT=PASS
+
+      - name: Deploy exact generate-reply checkout closure
+        id: deploy_generate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$AUTHORIZED_HEAD"
+          test "$(git status --porcelain | wc -l | tr -d ' ')" = "0"
+          supabase functions deploy generate-reply --project-ref "$C3_PROJECT_REF" --use-api
+          echo C3_GENERATE_DEPLOY=PASS
+
+      - name: Read back and verify generate-reply closure
+        id: verify_generate
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=/tmp/c3-readback-generate; rm -rf "$D"; mkdir -p "$D/supabase"; cp supabase/config.toml "$D/supabase/config.toml"
+          (cd "$D" && supabase functions download generate-reply --project-ref "$C3_PROJECT_REF" --use-api)
+          python /tmp/c3_closure_manifest.py "$D" supabase/functions/generate-reply/index.ts /tmp/c3-generate-readback.sha256
+          diff -u /tmp/c3-generate-source.sha256 /tmp/c3-generate-readback.sha256
+          echo C3_GENERATE_READBACK=PASS
+
+      - name: Deploy exact agent-assist checkout closure
+        id: deploy_assist
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$AUTHORIZED_HEAD"
+          test "$(git status --porcelain | wc -l | tr -d ' ')" = "0"
+          supabase functions deploy agent-assist --project-ref "$C3_PROJECT_REF" --use-api
+          echo C3_ASSIST_DEPLOY=PASS
+
+      - name: Read back agent-assist closure and assert frozen Edge unchanged
+        id: verify_assist
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=/tmp/c3-readback-assist; rm -rf "$D"; mkdir -p "$D/supabase"; cp supabase/config.toml "$D/supabase/config.toml"
+          (cd "$D" && supabase functions download agent-assist --project-ref "$C3_PROJECT_REF" --use-api)
+          python /tmp/c3_closure_manifest.py "$D" supabase/functions/agent-assist/index.ts /tmp/c3-assist-readback.sha256
+          diff -u /tmp/c3-assist-source.sha256 /tmp/c3-assist-readback.sha256
+          supabase functions list --project-ref "$C3_PROJECT_REF" | tee /tmp/c3-postdeploy-functions.txt
+          for fn in receive-widget-message ce-evaluation-worker conversation-evaluate; do
+            pre="$(grep "$fn" /tmp/c3-edge-rollback/predeploy-functions.txt | head -1)"
+            post="$(grep "$fn" /tmp/c3-postdeploy-functions.txt | head -1)"
+            test -n "$pre" && test "$pre" = "$post"
+          done
+          echo C3_ASSIST_READBACK=PASS
+          echo C3_FROZEN_EDGE_UNCHANGED=PASS
+
+      - name: Roll back both Edge functions on deploy/readback failure
+        if: ${{ failure() && (steps.deploy_generate.outcome == 'failure' || steps.verify_generate.outcome == 'failure' || steps.deploy_assist.outcome == 'failure' || steps.verify_assist.outcome == 'failure') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          R=/tmp/c3-edge-rollback
+          test -s "$R/generate/supabase/functions/generate-reply/index.ts"
+          test -s "$R/assist/supabase/functions/agent-assist/index.ts"
+          (cd "$R/generate" && supabase functions deploy generate-reply --project-ref "$C3_PROJECT_REF" --use-api)
+          (cd "$R/assist" && supabase functions deploy agent-assist --project-ref "$C3_PROJECT_REF" --use-api)
+          echo C3_EDGE_ROLLBACK=PASS
+
+      - name: C3 production Edge transport final gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$AUTHORIZED_HEAD"
+          test -s /tmp/c3-authorized-tree.txt
+          test -s /tmp/c3-generate-source.sha256
+          test -s /tmp/c3-assist-source.sha256
+          test -s /tmp/c3-generate-readback.sha256
+          test -s /tmp/c3-assist-readback.sha256
+          test -s /tmp/c3-postdeploy-functions.txt
+          test "$(git status --porcelain | wc -l | tr -d ' ')" = "0"
+          echo C3_MIGRATION_REAPPLIED=NO
+          echo C3_EDGE_TRANSPORT_FINAL_GATE=PASS
