@@ -94,9 +94,9 @@ BEGIN
      OR NEW.memory->>'company_id' IS DISTINCT FROM NEW.company_id::text
      OR NEW.memory->>'source_message_id' IS DISTINCT FROM NEW.source_message_id::text
      OR (NEW.memory->>'memory_revision')::bigint IS DISTINCT FROM NEW.revision
-     OR CASE WHEN NEW.commerce_state_revision IS NULL
+     OR (CASE WHEN NEW.commerce_state_revision IS NULL
           THEN NEW.memory->>'commerce_state_revision' IS NOT NULL
-          ELSE (NEW.memory->>'commerce_state_revision')::bigint IS DISTINCT FROM NEW.commerce_state_revision END THEN
+          ELSE (NEW.memory->>'commerce_state_revision')::bigint IS DISTINCT FROM NEW.commerce_state_revision END) THEN
     RAISE EXCEPTION 'C3_MEMORY_LINEAGE_INVALID' USING ERRCODE = 'P0001';
   END IF;
   NEW.memory_hash := encode(extensions.digest(NEW.memory::text, 'sha256'), 'hex');
@@ -183,9 +183,9 @@ BEGIN
   IF p_memory->>'conversation_id' IS DISTINCT FROM p_conversation_id::text
      OR p_memory->>'company_id' IS DISTINCT FROM p_company_id::text
      OR p_memory->>'source_message_id' IS DISTINCT FROM p_source_message_id::text
-     OR CASE WHEN p_expected_commerce_revision IS NULL
+     OR (CASE WHEN p_expected_commerce_revision IS NULL
           THEN p_memory->>'commerce_state_revision' IS NOT NULL
-          ELSE (p_memory->>'commerce_state_revision')::bigint IS DISTINCT FROM p_expected_commerce_revision END
+          ELSE (p_memory->>'commerce_state_revision')::bigint IS DISTINCT FROM p_expected_commerce_revision END)
      OR (p_memory->>'memory_revision')::bigint IS DISTINCT FROM p_expected_memory_revision + 1
      OR (p_memory->>'updated_from_turn')::bigint IS DISTINCT FROM p_updated_from_turn THEN
     RETURN jsonb_build_object('result','lineage_invalid');

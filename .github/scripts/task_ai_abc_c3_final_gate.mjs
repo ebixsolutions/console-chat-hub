@@ -69,6 +69,8 @@ for(const marker of [
 ])must(migration.includes(marker),`migration_contract_missing:${marker}`);
 must(!/ALTER\s+DEFAULT\s+PRIVILEGES/i.test(migration),"broad_default_privilege_change_forbidden");
 must(!/DROP\s+TABLE\s+public\.(?:messages|conversations|conversation_commerce_state)|DELETE\s+FROM\s+public\.messages/i.test(migration),"destructive_history_change_forbidden");
+must(!/\bOR\s+CASE\b/i.test(migration),"plpgsql_case_boolean_operand_requires_parentheses");
+must((migration.match(/\bOR\s+\(CASE\s+WHEN\b/g)??[]).length===2,"plpgsql_case_boolean_fix_incomplete");
 must(migration.includes("REVOKE ALL ON FUNCTION public.c3_commit_conversation_memory_tx(uuid,uuid,uuid,bigint,bigint,jsonb,text,bigint)\n  FROM PUBLIC, anon, authenticated;"),"rpc_exact_revoke_missing");
 must(migration.includes("GRANT EXECUTE ON FUNCTION public.c3_commit_conversation_memory_tx(uuid,uuid,uuid,bigint,bigint,jsonb,text,bigint)\n  TO service_role;"),"rpc_service_role_only_missing");
 for(const fn of ["c3_enforce_conversation_memory_lineage_tg","c3_enrich_handoff_from_memory_tg"])
