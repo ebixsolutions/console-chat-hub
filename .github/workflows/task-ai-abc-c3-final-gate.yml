@@ -71,9 +71,9 @@ jobs:
   c3-preproduction:
     if: github.event_name == 'push' && github.repository == 'ebixsolutions/console-chat-hub'
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
     permissions:
-      contents: write
+      contents: read
     env:
       C3_GATE_PHASE: preproduction
       C3_LIVE_BASELINE_READBACK: PASS
@@ -125,48 +125,33 @@ jobs:
           git diff --cached --exit-code
           test -z "$(git ls-files --others --exclude-standard)"
           echo C3_MANIFEST_REGRESSION=PASS
-      - name: Apply exact C3 recall implementation and run preproduction gate
+      - name: Prepare pristine C3 final-gate checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          path: c3-final-gate-clean
+          clean: true
+      - name: Run C3 preproduction final gate from pristine checkout
         shell: bash
+        working-directory: c3-final-gate-clean
         run: |
-          node --input-type=module <<'NODE'
-          import fs from 'node:fs';
-          const p='.github/scripts/task_ai_abc_c3_recall_cutover.mjs';
-          if(fs.existsSync(p)){
-            const s=fs.readFileSync(p,'utf8');
-            const anchor='for(const [p,s] of Object.entries(newFiles))';
-            if(s.split(anchor).length!==2)throw new Error('compiler_patch_boundary');
-            const patch=`{
-              const recallPath=dir+'conversation-recall.ts';
-              let recallSource=newFiles[recallPath];
-              recallSource=recallSource.replace('if (prior.stop?.reason === "CURRENT_KB_REQUIRED")','if (prior.stop && !prior.stop.handled && prior.stop.reason === "CURRENT_KB_REQUIRED")');
-              const lines=recallSource.split('\\n');
-              const sanitizerIndexes=[];
-              for(let i=0;i<lines.length;i++){
-                if(lines[i].includes('return v.replace(/[') && lines[i].includes('u001f')) sanitizerIndexes.push(i);
-              }
-              if(sanitizerIndexes.length!==1)throw new Error('recall_control_sanitizer_boundary');
-              lines[sanitizerIndexes[0]]='  if (typeof v === "string") return [...v].map((char) => char.charCodeAt(0) < 32 ? " " : char).join("").trim().slice(0, 1200);';
-              newFiles[recallPath]=lines.join('\\n');
-            }
-          `;
-            let patched=s.replace(anchor,patch+anchor);
-            const rowGuard='if (commerceState) {\\n        _c3CommerceSnapshot';
-            if(patched.split(rowGuard).length!==2)throw new Error('snapshot_row_guard_boundary');
-            patched=patched.replace(rowGuard,'if (commerceState && commerceRow) {\\n        _c3CommerceSnapshot');
-            fs.writeFileSync(p,patched);
-          }
-          NODE
-          if test -f .github/scripts/task_ai_abc_c3_recall_cutover.mjs; then
-            node .github/scripts/task_ai_abc_c3_recall_cutover.mjs
-          else
-            node .github/scripts/task_ai_abc_c3_final_gate.mjs
-          fi
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          test "$(git rev-parse origin/main)" = "1f2d285c6ad2d406cdccee2de7fbf74547920e77"
+          git diff --name-only origin/main...HEAD | tee /tmp/c3-final-gate-committed-diff.txt
+          test "$(grep -cx 'deno.lock' /tmp/c3-final-gate-committed-diff.txt || true)" = "0"
+          npm ci
+          node .github/scripts/task_ai_abc_c3_final_gate.mjs
+          echo C3_PREPRODUCTION_FINAL_GATE=PASS
       - name: Capture tested source for authoritative review
         if: always()
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/c3-recall-report"
-          tar -czf "$RUNNER_TEMP/c3-recall-report/tested-source.tar.gz" supabase/functions/_shared supabase/functions/generate-reply supabase/functions/agent-assist supabase/functions/receive-widget-message supabase/functions/ce-evaluation-worker supabase/functions/conversation-evaluate .github/scripts/task_ai_abc_c3_final_gate.mjs
+          ROOT="$GITHUB_WORKSPACE/c3-final-gate-clean"
+          if test ! -d "$ROOT/.git"; then ROOT="$GITHUB_WORKSPACE"; fi
+          tar -C "$ROOT" -czf "$RUNNER_TEMP/c3-recall-report/tested-source.tar.gz" supabase/functions/_shared supabase/functions/generate-reply supabase/functions/agent-assist supabase/functions/receive-widget-message supabase/functions/ce-evaluation-worker supabase/functions/conversation-evaluate .github/scripts/task_ai_abc_c3_final_gate.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
