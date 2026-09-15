@@ -13,6 +13,59 @@ permissions:
 
 env:
   C3_PROJECT_REF: nrfxhqabwblzxoushgnm
+  C3_MANIFEST_BUILDER: |
+    import hashlib, pathlib, re, sys
+    root=pathlib.Path(sys.argv[1]).resolve()
+    entry=(root/sys.argv[2]).resolve()
+    out=pathlib.Path(sys.argv[3]).resolve()
+    rx=re.compile(r'(?:from\s*|import\s*\()\s*["\x27]([^"\x27]+)["\x27]|^\s*import\s*["\x27]([^"\x27]+)["\x27]', re.M)
+    seen=set()
+    stack=[entry]
+    while stack:
+        p=stack.pop().resolve()
+        if p in seen:
+            continue
+        if not p.is_file():
+            raise SystemExit(f'missing:{p}')
+        if root not in p.parents and p != root:
+            raise SystemExit(f'escape:{p}')
+        seen.add(p)
+        text=p.read_text('utf-8')
+        for m in rx.finditer(text):
+            spec=m.group(1) or m.group(2)
+            if not spec or not spec.startswith('.'):
+                continue
+            q=(p.parent/spec).resolve()
+            candidates=[q]
+            if not q.suffix:
+                candidates += [q.with_suffix('.ts'), q/'index.ts']
+            target=next((c for c in candidates if c.is_file()), None)
+            if target is None:
+                raise SystemExit(f'unresolved:{spec}:{p}')
+            if root not in target.parents and target != root:
+                raise SystemExit(f'escape:{target}')
+            stack.append(target)
+    rows=[]
+    paths=[]
+    for p in sorted(seen,key=lambda x:x.relative_to(root).as_posix()):
+        rel=p.relative_to(root).as_posix()
+        data=p.read_bytes()
+        if not data:
+            raise SystemExit(f'empty:{rel}')
+        paths.append(rel)
+        rows.append((rel,hashlib.sha256(data).hexdigest()))
+    if len(paths) != len(set(paths)):
+        raise SystemExit('duplicate_paths')
+    out.parent.mkdir(parents=True,exist_ok=True)
+    out.write_text(''.join(f'{h}  {r}\n' for r,h in rows),'utf-8')
+    for rel,h in rows:
+        p=root/rel
+        if not p.is_file():
+            raise SystemExit(f'missing_after_manifest:{rel}')
+        actual=hashlib.sha256(p.read_bytes()).hexdigest()
+        if actual != h:
+            raise SystemExit(f'hash_mismatch:{rel}')
+    print(f'CLOSURE_FILES={len(rows)}')
 
 jobs:
   c3-preproduction:
@@ -45,7 +98,33 @@ jobs:
         with:
           node-version: '22'
           cache: npm
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.6
       - run: npm ci
+      - name: Deterministic C3 Edge closure manifest regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$C3_MANIFEST_BUILDER" > /tmp/c3_closure_manifest.py
+          python /tmp/c3_closure_manifest.py "$PWD" supabase/functions/generate-reply/index.ts /tmp/c3-generate-a.sha256 | tee /tmp/c3-generate-count.txt
+          python /tmp/c3_closure_manifest.py "$PWD" supabase/functions/generate-reply/index.ts /tmp/c3-generate-b.sha256 >/tmp/c3-generate-count-rerun.txt
+          python /tmp/c3_closure_manifest.py "$PWD" supabase/functions/agent-assist/index.ts /tmp/c3-assist-a.sha256 | tee /tmp/c3-assist-count.txt
+          python /tmp/c3_closure_manifest.py "$PWD" supabase/functions/agent-assist/index.ts /tmp/c3-assist-b.sha256 >/tmp/c3-assist-count-rerun.txt
+          cmp /tmp/c3-generate-a.sha256 /tmp/c3-generate-b.sha256
+          cmp /tmp/c3-assist-a.sha256 /tmp/c3-assist-b.sha256
+          test "$(wc -l < /tmp/c3-generate-a.sha256 | tr -d ' ')" = "47"
+          test "$(wc -l < /tmp/c3-assist-a.sha256 | tr -d ' ')" = "22"
+          test "$(cut -d' ' -f3- /tmp/c3-generate-a.sha256 | LC_ALL=C sort | uniq -d | wc -l | tr -d ' ')" = "0"
+          test "$(cut -d' ' -f3- /tmp/c3-assist-a.sha256 | LC_ALL=C sort | uniq -d | wc -l | tr -d ' ')" = "0"
+          while read -r hash path; do test -f "$path"; test "$(sha256sum "$path" | awk '{print $1}')" = "$hash"; done < /tmp/c3-generate-a.sha256
+          while read -r hash path; do test -f "$path"; test "$(sha256sum "$path" | awk '{print $1}')" = "$hash"; done < /tmp/c3-assist-a.sha256
+          deno check --no-lock --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+          deno check --no-lock --node-modules-dir=auto supabase/functions/agent-assist/index.ts
+          git diff --exit-code
+          git diff --cached --exit-code
+          test -z "$(git ls-files --others --exclude-standard)"
+          echo C3_MANIFEST_REGRESSION=PASS
       - name: Apply exact C3 recall implementation and run preproduction gate
         shell: bash
         run: |
@@ -60,20 +139,20 @@ jobs:
               const recallPath=dir+'conversation-recall.ts';
               let recallSource=newFiles[recallPath];
               recallSource=recallSource.replace('if (prior.stop?.reason === "CURRENT_KB_REQUIRED")','if (prior.stop && !prior.stop.handled && prior.stop.reason === "CURRENT_KB_REQUIRED")');
-              const lines=recallSource.split('\n');
+              const lines=recallSource.split('\\n');
               const sanitizerIndexes=[];
               for(let i=0;i<lines.length;i++){
                 if(lines[i].includes('return v.replace(/[') && lines[i].includes('u001f')) sanitizerIndexes.push(i);
               }
               if(sanitizerIndexes.length!==1)throw new Error('recall_control_sanitizer_boundary');
               lines[sanitizerIndexes[0]]='  if (typeof v === "string") return [...v].map((char) => char.charCodeAt(0) < 32 ? " " : char).join("").trim().slice(0, 1200);';
-              newFiles[recallPath]=lines.join('\n');
+              newFiles[recallPath]=lines.join('\\n');
             }
           `;
             let patched=s.replace(anchor,patch+anchor);
-            const rowGuard='if (commerceState) {\n        _c3CommerceSnapshot';
+            const rowGuard='if (commerceState) {\\n        _c3CommerceSnapshot';
             if(patched.split(rowGuard).length!==2)throw new Error('snapshot_row_guard_boundary');
-            patched=patched.replace(rowGuard,'if (commerceState && commerceRow) {\n        _c3CommerceSnapshot');
+            patched=patched.replace(rowGuard,'if (commerceState && commerceRow) {\\n        _c3CommerceSnapshot');
             fs.writeFileSync(p,patched);
           }
           NODE
@@ -134,7 +213,9 @@ jobs:
           C3_AUTHORIZED_TREE="$(git rev-parse HEAD^{tree})"
           [[ "$C3_AUTHORIZED_TREE" =~ ^[0-9a-f]{40}$ ]]
           printf '%s\n' "$C3_AUTHORIZED_TREE" | tee /tmp/c3-authorized-tree.txt
-          test "$(git status --porcelain | wc -l | tr -d ' ')" = "0"
+          git diff --exit-code
+          git diff --cached --exit-code
+          test -z "$(git ls-files --others --exclude-standard)"
           test "$(awk -F'"' '/^project_id = /{print $2}' supabase/config.toml)" = "$C3_PROJECT_REF"
           for fn in generate-reply agent-assist; do
             test -s "supabase/functions/$fn/index.ts"
@@ -157,40 +238,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat > /tmp/c3_closure_manifest.py <<'PY'
-          import hashlib, pathlib, re, sys
-          root=pathlib.Path(sys.argv[1]).resolve(); entry=(root/sys.argv[2]).resolve(); out=pathlib.Path(sys.argv[3])
-          rx=re.compile(r'(?:from\s*|import\s*\()\s*["\x27]([^"\x27]+)["\x27]|^\s*import\s*["\x27]([^"\x27]+)["\x27]', re.M)
-          seen=set(); stack=[entry]
-          while stack:
-              p=stack.pop().resolve()
-              if p in seen: continue
-              if not p.is_file(): raise SystemExit(f'missing:{p}')
-              seen.add(p); text=p.read_text('utf-8')
-              for m in rx.finditer(text):
-                  spec=m.group(1) or m.group(2)
-                  if not spec or not spec.startswith('.'): continue
-                  q=(p.parent/spec).resolve(); candidates=[q]
-                  if not q.suffix: candidates += [q.with_suffix('.ts'), q/'index.ts']
-                  target=next((c for c in candidates if c.is_file()), None)
-                  if target is None: raise SystemExit(f'unresolved:{spec}:{p}')
-                  if root not in target.parents and target != root: raise SystemExit(f'escape:{target}')
-                  stack.append(target)
-          rows=[]
-          for p in sorted(seen,key=lambda x:x.relative_to(root).as_posix()):
-              rel=p.relative_to(root).as_posix(); data=p.read_bytes()
-              if not data: raise SystemExit(f'empty:{rel}')
-              rows.append((rel,hashlib.sha256(data).hexdigest()))
-          out.write_text(''.join(f'{h}  {r}\n' for r,h in rows),'utf-8')
-          print(f'CLOSURE_FILES={len(rows)}')
-          PY
-          python /tmp/c3_closure_manifest.py "$PWD" supabase/functions/generate-reply/index.ts /tmp/c3-generate-source.sha256
-          python /tmp/c3_closure_manifest.py "$PWD" supabase/functions/agent-assist/index.ts /tmp/c3-assist-source.sha256
-          test -s /tmp/c3-generate-source.sha256
-          test -s /tmp/c3-assist-source.sha256
-          deno check --node-modules-dir=auto supabase/functions/generate-reply/index.ts
-          deno check --node-modules-dir=auto supabase/functions/agent-assist/index.ts
-          test "$(git status --porcelain | wc -l | tr -d ' ')" = "0"
+          printf '%s\n' "$C3_MANIFEST_BUILDER" > /tmp/c3_closure_manifest.py
+          python /tmp/c3_closure_manifest.py "$PWD" supabase/functions/generate-reply/index.ts /tmp/c3-generate-source.sha256 | tee /tmp/c3-generate-count.txt
+          python /tmp/c3_closure_manifest.py "$PWD" supabase/functions/generate-reply/index.ts /tmp/c3-generate-source-rerun.sha256 >/tmp/c3-generate-count-rerun.txt
+          python /tmp/c3_closure_manifest.py "$PWD" supabase/functions/agent-assist/index.ts /tmp/c3-assist-source.sha256 | tee /tmp/c3-assist-count.txt
+          python /tmp/c3_closure_manifest.py "$PWD" supabase/functions/agent-assist/index.ts /tmp/c3-assist-source-rerun.sha256 >/tmp/c3-assist-count-rerun.txt
+          cmp /tmp/c3-generate-source.sha256 /tmp/c3-generate-source-rerun.sha256
+          cmp /tmp/c3-assist-source.sha256 /tmp/c3-assist-source-rerun.sha256
+          test "$(wc -l < /tmp/c3-generate-source.sha256 | tr -d ' ')" = "47"
+          test "$(wc -l < /tmp/c3-assist-source.sha256 | tr -d ' ')" = "22"
+          deno check --no-lock --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+          deno check --no-lock --node-modules-dir=auto supabase/functions/agent-assist/index.ts
+          git diff --exit-code
+          git diff --cached --exit-code
+          test -z "$(git ls-files --others --exclude-standard)"
           sha256sum /tmp/c3-generate-source.sha256 /tmp/c3-assist-source.sha256 | tee /tmp/c3-source-manifest-hashes.txt
           echo C3_EXACT_SOURCE_CLOSURES=PASS
 
@@ -216,7 +277,9 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$AUTHORIZED_HEAD"
-          test "$(git status --porcelain | wc -l | tr -d ' ')" = "0"
+          git diff --exit-code
+          git diff --cached --exit-code
+          test -z "$(git ls-files --others --exclude-standard)"
           supabase functions deploy generate-reply --project-ref "$C3_PROJECT_REF" --use-api
           echo C3_GENERATE_DEPLOY=PASS
 
@@ -237,7 +300,9 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$AUTHORIZED_HEAD"
-          test "$(git status --porcelain | wc -l | tr -d ' ')" = "0"
+          git diff --exit-code
+          git diff --cached --exit-code
+          test -z "$(git ls-files --others --exclude-standard)"
           supabase functions deploy agent-assist --project-ref "$C3_PROJECT_REF" --use-api
           echo C3_ASSIST_DEPLOY=PASS
 
@@ -282,6 +347,8 @@ jobs:
           test -s /tmp/c3-generate-readback.sha256
           test -s /tmp/c3-assist-readback.sha256
           test -s /tmp/c3-postdeploy-functions.txt
-          test "$(git status --porcelain | wc -l | tr -d ' ')" = "0"
+          git diff --exit-code
+          git diff --cached --exit-code
+          test -z "$(git ls-files --others --exclude-standard)"
           echo C3_MIGRATION_REAPPLIED=NO
           echo C3_EDGE_TRANSPORT_FINAL_GATE=PASS
