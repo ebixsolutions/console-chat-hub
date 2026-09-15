@@ -57,27 +57,27 @@ env:
     c3_manifest_assert(){ local n="$1" e="$2" a="$3"; if [ "$e" = "$a" ]; then echo "C3_MANIFEST_ASSERT|name=$n|expected=$e|actual=$a|result=PASS"; else echo "C3_MANIFEST_ASSERT|name=$n|expected=$e|actual=$a|result=FAIL"; return 1; fi; }
     c3_source_clean(){
       local phase="$1" expected_cli="$2" tracked staged approved unauthorized
-      tracked="$(git diff --name-only | sed '/^$/d' | wc -l | tr -d ' ')"
-      staged="$(git diff --cached --name-only | sed '/^$/d' | wc -l | tr -d ' ')"
-      approved="$(git ls-files --others --exclude-standard | grep -Fx "$C3_CLI_EPHEMERAL" | wc -l | tr -d ' ')"
-      unauthorized="$(git ls-files --others --exclude-standard | grep -Fvx "$C3_CLI_EPHEMERAL" | sed '/^$/d' | wc -l | tr -d ' ')"
+      tracked="$(git diff --name-only | awk 'NF{n++} END{print n+0}')"
+      staged="$(git diff --cached --name-only | awk 'NF{n++} END{print n+0}')"
+      approved="$(git ls-files --others --exclude-standard | awk -v p="$C3_CLI_EPHEMERAL" '$0==p{n++} END{print n+0}')"
+      unauthorized="$(git ls-files --others --exclude-standard | awk -v p="$C3_CLI_EPHEMERAL" 'NF && $0!=p{n++} END{print n+0}')"
       echo "C3_SOURCE_STATUS|phase=$phase"
       git status --porcelain || true
       c3_assert "${phase}_tracked_modified" 0 "$tracked"
       c3_assert "${phase}_staged" 0 "$staged"
       c3_assert "${phase}_approved_cli_ephemeral" "$expected_cli" "$approved"
       c3_assert "${phase}_unauthorized_untracked" 0 "$unauthorized"
-      if [ "$unauthorized" != 0 ]; then git ls-files --others --exclude-standard | grep -Fvx "$C3_CLI_EPHEMERAL" | sed 's/^/C3_SOURCE_OFFENDER|kind=unauthorized_untracked|path=/' || true; fi
+      if [ "$unauthorized" != 0 ]; then git ls-files --others --exclude-standard | awk -v p="$C3_CLI_EPHEMERAL" 'NF && $0!=p{print "C3_SOURCE_OFFENDER|kind=unauthorized_untracked|path=" $0}'; fi
       if git ls-files --error-unmatch "$C3_CLI_EPHEMERAL" >/dev/null 2>&1; then echo "C3_SOURCE_ASSERT|name=${phase}_cli_ephemeral_untracked|expected=untracked|actual=tracked|result=FAIL"; return 1; else echo "C3_SOURCE_ASSERT|name=${phase}_cli_ephemeral_untracked|expected=untracked|actual=untracked|result=PASS"; fi
     }
     c3_cli_delta(){
       local before="$1" after="$2" delta
-      delta="$(comm -13 "$before" "$after" | sed '/^$/d')"
-      if [ "$delta" = "$C3_CLI_EPHEMERAL" ]; then echo "C3_SOURCE_ASSERT|name=cli_setup_created_exact_path|expected=$C3_CLI_EPHEMERAL|actual=$delta|result=PASS"; else echo "C3_SOURCE_ASSERT|name=cli_setup_created_exact_path|expected=$C3_CLI_EPHEMERAL|actual=${delta:-NONE}|result=FAIL"; printf '%s\n' "$delta" | sed '/^$/d;s/^/C3_SOURCE_OFFENDER|kind=cli_setup_delta|path=/'; return 1; fi
+      delta="$(comm -13 "$before" "$after" | awk 'NF')"
+      if [ "$delta" = "$C3_CLI_EPHEMERAL" ]; then echo "C3_SOURCE_ASSERT|name=cli_setup_created_exact_path|expected=$C3_CLI_EPHEMERAL|actual=$delta|result=PASS"; else echo "C3_SOURCE_ASSERT|name=cli_setup_created_exact_path|expected=$C3_CLI_EPHEMERAL|actual=${delta:-NONE}|result=FAIL"; printf '%s\n' "$delta" | awk 'NF{print "C3_SOURCE_OFFENDER|kind=cli_setup_delta|path=" $0}'; return 1; fi
     }
     c3_closure_excludes_cli(){
       local g="$1" a="$2" hits
-      hits="$((grep -F "  $C3_CLI_EPHEMERAL" "$g"; grep -F "  $C3_CLI_EPHEMERAL" "$a") 2>/dev/null | wc -l | tr -d ' ')"
+      hits="$(awk -v p="$C3_CLI_EPHEMERAL" 'index($0,"  " p)>0{n++} END{print n+0}' "$g" "$a")"
       c3_assert cli_ephemeral_in_deploy_closure 0 "$hits"
     }
 
