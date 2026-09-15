@@ -13,65 +13,111 @@ permissions:
 
 env:
   C3_PROJECT_REF: nrfxhqabwblzxoushgnm
+  C3_FAILING_HEAD: f5758744526dcc59cc825de6ca81951b13de5967
   C3_MANIFEST_BUILDER: |
     import hashlib, pathlib, re, sys
     root=pathlib.Path(sys.argv[1]).resolve()
     entry=(root/sys.argv[2]).resolve()
     out=pathlib.Path(sys.argv[3]).resolve()
+    expected=int(sys.argv[4])
     rx=re.compile(r'(?:from\s*|import\s*\()\s*["\x27]([^"\x27]+)["\x27]|^\s*import\s*["\x27]([^"\x27]+)["\x27]', re.M)
-    seen=set()
-    stack=[entry]
+    seen=set(); stack=[entry]
+    missing=[]; empty=[]; unresolved=[]; escapes=[]
     while stack:
         p=stack.pop().resolve()
-        if p in seen:
-            continue
-        if not p.is_file():
-            raise SystemExit(f'missing:{p}')
+        if p in seen: continue
         if root not in p.parents and p != root:
-            raise SystemExit(f'escape:{p}')
+            escapes.append(str(p)); continue
+        if not p.is_file():
+            missing.append(str(p)); continue
+        data=p.read_bytes()
+        if not data: empty.append(str(p))
         seen.add(p)
-        text=p.read_text('utf-8')
+        text=data.decode('utf-8')
         for m in rx.finditer(text):
             spec=m.group(1) or m.group(2)
-            if not spec or not spec.startswith('.'):
-                continue
+            if not spec or not spec.startswith('.'): continue
             q=(p.parent/spec).resolve()
             candidates=[q]
-            if not q.suffix:
-                candidates += [q.with_suffix('.ts'), q/'index.ts']
+            if not q.suffix: candidates += [q.with_suffix('.ts'), q/'index.ts']
             target=next((c for c in candidates if c.is_file()), None)
             if target is None:
-                raise SystemExit(f'unresolved:{spec}:{p}')
+                unresolved.append(f'{p.relative_to(root).as_posix()}=>{spec}'); continue
             if root not in target.parents and target != root:
-                raise SystemExit(f'escape:{target}')
+                escapes.append(str(target)); continue
             stack.append(target)
     rows=[]
-    paths=[]
-    for p in sorted(seen,key=lambda x:x.relative_to(root).as_posix()):
-        rel=p.relative_to(root).as_posix()
-        data=p.read_bytes()
-        if not data:
-            raise SystemExit(f'empty:{rel}')
-        paths.append(rel)
+    for p in sorted(seen,key=lambda x:x.relative_to(root).as_posix().encode('utf-8')):
+        rel=p.relative_to(root).as_posix(); data=p.read_bytes()
         rows.append((rel,hashlib.sha256(data).hexdigest()))
-    if len(paths) != len(set(paths)):
-        raise SystemExit('duplicate_paths')
-    out.parent.mkdir(parents=True,exist_ok=True)
-    out.write_text(''.join(f'{h}  {r}\n' for r,h in rows),'utf-8')
+    duplicate=len(rows)-len({r for r,_ in rows})
+    serialized=''.join(f'{h}  {r}\n' for r,h in rows)
+    out.parent.mkdir(parents=True,exist_ok=True); out.write_text(serialized,'utf-8')
+    sha_mismatch=[]
     for rel,h in rows:
         p=root/rel
-        if not p.is_file():
-            raise SystemExit(f'missing_after_manifest:{rel}')
-        actual=hashlib.sha256(p.read_bytes()).hexdigest()
-        if actual != h:
-            raise SystemExit(f'hash_mismatch:{rel}')
-    print(f'CLOSURE_FILES={len(rows)}')
+        actual=hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else 'MISSING'
+        if actual != h: sha_mismatch.append(f'{rel}:{actual}')
+    parsed=[line for line in serialized.splitlines() if line.strip()]
+    checks=[
+      ('closure_discovery','success','success' if not (missing or unresolved or escapes) else 'error',not (missing or unresolved or escapes)),
+      ('file_count',expected,len(rows),len(rows)==expected),
+      ('duplicate_paths',0,duplicate,duplicate==0),
+      ('missing_files',0,len(missing),len(missing)==0),
+      ('empty_files',0,len(empty),len(empty)==0),
+      ('unresolved_dependencies',0,len(unresolved),len(unresolved)==0),
+      ('root_escapes',0,len(escapes),len(escapes)==0),
+      ('manifest_parse',len(rows),len(parsed),len(parsed)==len(rows)),
+      ('per_file_sha_recompute',0,len(sha_mismatch),len(sha_mismatch)==0),
+    ]
+    failed=False
+    for name,expected_v,actual_v,ok in checks:
+        print(f'C3_MANIFEST_ASSERT|name={name}|expected={expected_v}|actual={actual_v}|result={"PASS" if ok else "FAIL"}')
+        failed = failed or not ok
+    for label,items in [('missing',missing),('empty',empty),('unresolved',unresolved),('escape',escapes),('sha_mismatch',sha_mismatch)]:
+        for item in items[:20]: print(f'C3_MANIFEST_OFFENDER|kind={label}|value={item}')
+    print(f'C3_MANIFEST_DIGEST|sha256={hashlib.sha256(serialized.encode()).hexdigest()}|files={len(rows)}')
+    raise SystemExit(1 if failed else 0)
+  C3_ASSERT_LIB: |
+    c3_assert_eq() {
+      local name="$1" expected="$2" actual="$3"
+      if [ "$expected" = "$actual" ]; then
+        echo "C3_MANIFEST_ASSERT|name=$name|expected=$expected|actual=$actual|result=PASS"
+      else
+        echo "C3_MANIFEST_ASSERT|name=$name|expected=$expected|actual=$actual|result=FAIL"
+        return 1
+      fi
+    }
+    c3_source_status() {
+      local phase="$1"
+      echo "C3_SOURCE_STATUS|phase=$phase"
+      git status --porcelain || true
+      local tracked staged untracked
+      tracked="$(git diff --name-only | sed '/^$/d' | wc -l | tr -d ' ')"
+      staged="$(git diff --cached --name-only | sed '/^$/d' | wc -l | tr -d ' ')"
+      untracked="$(git ls-files --others --exclude-standard | sed '/^$/d' | wc -l | tr -d ' ')"
+      echo "C3_SOURCE_COUNTS|phase=$phase|tracked=$tracked|staged=$staged|untracked=$untracked"
+      if [ "$tracked" != "0" ]; then git diff --name-only | sed 's/^/C3_SOURCE_OFFENDER|kind=tracked|path=/' ; fi
+      if [ "$staged" != "0" ]; then git diff --cached --name-only | sed 's/^/C3_SOURCE_OFFENDER|kind=staged|path=/' ; fi
+      if [ "$untracked" != "0" ]; then git ls-files --others --exclude-standard | sed 's/^/C3_SOURCE_OFFENDER|kind=untracked|path=/' ; fi
+    }
+    c3_assert_clean() {
+      local phase="$1"
+      c3_source_status "$phase"
+      local tracked staged untracked
+      tracked="$(git diff --name-only | sed '/^$/d' | wc -l | tr -d ' ')"
+      staged="$(git diff --cached --name-only | sed '/^$/d' | wc -l | tr -d ' ')"
+      untracked="$(git ls-files --others --exclude-standard | sed '/^$/d' | wc -l | tr -d ' ')"
+      c3_assert_eq "${phase}_tracked_modified_deleted" 0 "$tracked"
+      c3_assert_eq "${phase}_tracked_staged" 0 "$staged"
+      c3_assert_eq "${phase}_unauthorized_untracked" 0 "$untracked"
+    }
 
 jobs:
   c3-preproduction:
     if: github.event_name == 'push' && github.repository == 'ebixsolutions/console-chat-hub'
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
     permissions:
       contents: read
     env:
@@ -91,39 +137,96 @@ jobs:
       C3_ASSIST_ROLLBACK_SOURCE_MISMATCH: '0'
       C3_ASSIST_BUNDLE_REBUILD_RECONCILED: PASS
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout historical failing SHA for root-cause reproduction
+        uses: actions/checkout@v4
         with:
+          ref: f5758744526dcc59cc825de6ca81951b13de5967
           fetch-depth: 0
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.6
+      - name: Reproduce historical production manifest gate with explicit telemetry
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$C3_FAILING_HEAD"
+          eval "$C3_ASSERT_LIB"
+          printf '%s\n' "$C3_MANIFEST_BUILDER" > "$RUNNER_TEMP/c3_closure_manifest.py"
+          FIRST_FAIL=""
+          probe() {
+            local name="$1"; shift
+            set +e; "$@"; local rc=$?; set -e
+            if [ "$rc" = "0" ]; then
+              echo "C3_MANIFEST_ASSERT|name=historical_$name|expected=0|actual=0|result=PASS"
+            else
+              echo "C3_MANIFEST_ASSERT|name=historical_$name|expected=0|actual=$rc|result=FAIL"
+              if [ -z "$FIRST_FAIL" ]; then FIRST_FAIL="$name"; fi
+            fi
+          }
+          probe generate_manifest_A python "$RUNNER_TEMP/c3_closure_manifest.py" "$PWD" supabase/functions/generate-reply/index.ts "$RUNNER_TEMP/hist-gen-a.sha256" 47
+          probe generate_manifest_B python "$RUNNER_TEMP/c3_closure_manifest.py" "$PWD" supabase/functions/generate-reply/index.ts "$RUNNER_TEMP/hist-gen-b.sha256" 47
+          probe assist_manifest_A python "$RUNNER_TEMP/c3_closure_manifest.py" "$PWD" supabase/functions/agent-assist/index.ts "$RUNNER_TEMP/hist-assist-a.sha256" 22
+          probe assist_manifest_B python "$RUNNER_TEMP/c3_closure_manifest.py" "$PWD" supabase/functions/agent-assist/index.ts "$RUNNER_TEMP/hist-assist-b.sha256" 22
+          probe generate_manifest_cmp cmp "$RUNNER_TEMP/hist-gen-a.sha256" "$RUNNER_TEMP/hist-gen-b.sha256"
+          probe assist_manifest_cmp cmp "$RUNNER_TEMP/hist-assist-a.sha256" "$RUNNER_TEMP/hist-assist-b.sha256"
+          probe generate_file_count test "$(wc -l < "$RUNNER_TEMP/hist-gen-a.sha256" | tr -d ' ')" = "47"
+          probe assist_file_count test "$(wc -l < "$RUNNER_TEMP/hist-assist-a.sha256" | tr -d ' ')" = "22"
+          c3_source_status before_generate_deno
+          probe generate_deno_check deno check --no-lock --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+          c3_source_status after_generate_deno
+          probe assist_deno_check deno check --no-lock --node-modules-dir=auto supabase/functions/agent-assist/index.ts
+          c3_source_status after_assist_deno
+          probe git_diff_clean git diff --exit-code
+          probe git_cached_diff_clean git diff --cached --exit-code
+          UNTRACKED="$(git ls-files --others --exclude-standard | sed '/^$/d' | wc -l | tr -d ' ')"
+          if [ "$UNTRACKED" = "0" ]; then
+            echo "C3_MANIFEST_ASSERT|name=historical_untracked_clean|expected=0|actual=0|result=PASS"
+          else
+            echo "C3_MANIFEST_ASSERT|name=historical_untracked_clean|expected=0|actual=$UNTRACKED|result=FAIL"
+            git ls-files --others --exclude-standard | sed 's/^/C3_SOURCE_OFFENDER|kind=untracked|path=/'
+            if [ -z "$FIRST_FAIL" ]; then FIRST_FAIL="untracked_clean"; fi
+          fi
+          echo "C3_HISTORICAL_FIRST_FAIL=${FIRST_FAIL:-NONE}"
+          test -n "$FIRST_FAIL"
+      - name: Checkout current exact repair SHA cleanly
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          clean: true
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.9.6
       - run: npm ci
       - name: Deterministic C3 Edge closure manifest regression
         shell: bash
         run: |
           set -euo pipefail
-          printf '%s\n' "$C3_MANIFEST_BUILDER" > /tmp/c3_closure_manifest.py
-          python /tmp/c3_closure_manifest.py "$PWD" supabase/functions/generate-reply/index.ts /tmp/c3-generate-a.sha256 | tee /tmp/c3-generate-count.txt
-          python /tmp/c3_closure_manifest.py "$PWD" supabase/functions/generate-reply/index.ts /tmp/c3-generate-b.sha256 >/tmp/c3-generate-count-rerun.txt
-          python /tmp/c3_closure_manifest.py "$PWD" supabase/functions/agent-assist/index.ts /tmp/c3-assist-a.sha256 | tee /tmp/c3-assist-count.txt
-          python /tmp/c3_closure_manifest.py "$PWD" supabase/functions/agent-assist/index.ts /tmp/c3-assist-b.sha256 >/tmp/c3-assist-count-rerun.txt
-          cmp /tmp/c3-generate-a.sha256 /tmp/c3-generate-b.sha256
-          cmp /tmp/c3-assist-a.sha256 /tmp/c3-assist-b.sha256
-          test "$(wc -l < /tmp/c3-generate-a.sha256 | tr -d ' ')" = "47"
-          test "$(wc -l < /tmp/c3-assist-a.sha256 | tr -d ' ')" = "22"
-          test "$(cut -d' ' -f3- /tmp/c3-generate-a.sha256 | LC_ALL=C sort | uniq -d | wc -l | tr -d ' ')" = "0"
-          test "$(cut -d' ' -f3- /tmp/c3-assist-a.sha256 | LC_ALL=C sort | uniq -d | wc -l | tr -d ' ')" = "0"
-          while read -r hash path; do test -f "$path"; test "$(sha256sum "$path" | awk '{print $1}')" = "$hash"; done < /tmp/c3-generate-a.sha256
-          while read -r hash path; do test -f "$path"; test "$(sha256sum "$path" | awk '{print $1}')" = "$hash"; done < /tmp/c3-assist-a.sha256
-          deno check --no-lock --node-modules-dir=auto supabase/functions/generate-reply/index.ts
-          deno check --no-lock --node-modules-dir=auto supabase/functions/agent-assist/index.ts
-          git diff --exit-code
-          git diff --cached --exit-code
-          test -z "$(git ls-files --others --exclude-standard)"
+          eval "$C3_ASSERT_LIB"
+          OUT="$RUNNER_TEMP/c3-manifest-current"
+          rm -rf "$OUT"; mkdir -p "$OUT"
+          case "$OUT" in "$PWD"/*) echo "C3_MANIFEST_ASSERT|name=generated_output_outside_checkout|expected=true|actual=false|result=FAIL"; exit 1;; *) echo "C3_MANIFEST_ASSERT|name=generated_output_outside_checkout|expected=true|actual=true|result=PASS";; esac
+          printf '%s\n' "$C3_MANIFEST_BUILDER" > "$OUT/c3_closure_manifest.py"
+          python "$OUT/c3_closure_manifest.py" "$PWD" supabase/functions/generate-reply/index.ts "$OUT/generate-A.sha256" 47
+          python "$OUT/c3_closure_manifest.py" "$PWD" supabase/functions/generate-reply/index.ts "$OUT/generate-B.sha256" 47
+          python "$OUT/c3_closure_manifest.py" "$PWD" supabase/functions/agent-assist/index.ts "$OUT/assist-A.sha256" 22
+          python "$OUT/c3_closure_manifest.py" "$PWD" supabase/functions/agent-assist/index.ts "$OUT/assist-B.sha256" 22
+          GEN_A="$(sha256sum "$OUT/generate-A.sha256" | awk '{print $1}')"; GEN_B="$(sha256sum "$OUT/generate-B.sha256" | awk '{print $1}')"
+          ASSIST_A="$(sha256sum "$OUT/assist-A.sha256" | awk '{print $1}')"; ASSIST_B="$(sha256sum "$OUT/assist-B.sha256" | awk '{print $1}')"
+          c3_assert_eq generate_manifest_sha256 "$GEN_A" "$GEN_B"
+          c3_assert_eq assist_manifest_sha256 "$ASSIST_A" "$ASSIST_B"
+          cmp "$OUT/generate-A.sha256" "$OUT/generate-B.sha256"
+          cmp "$OUT/assist-A.sha256" "$OUT/assist-B.sha256"
+          echo "C3_MANIFEST_ASSERT|name=manifest_byte_equality|expected=equal|actual=equal|result=PASS"
+          c3_assert_clean before_deno
+          set +e; deno check --no-lock --node-modules-dir=auto supabase/functions/generate-reply/index.ts; RC=$?; set -e
+          c3_assert_eq generate_deno_check_exit 0 "$RC"
+          c3_assert_clean after_generate_deno
+          set +e; deno check --no-lock --node-modules-dir=auto supabase/functions/agent-assist/index.ts; RC=$?; set -e
+          c3_assert_eq assist_deno_check_exit 0 "$RC"
+          c3_assert_clean after_assist_deno
+          c3_assert_clean final_source_cleanliness
           echo C3_MANIFEST_REGRESSION=PASS
       - name: Prepare pristine C3 final-gate checkout
         uses: actions/checkout@v4
@@ -139,8 +242,8 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${{ github.sha }}"
           test "$(git rev-parse origin/main)" = "1f2d285c6ad2d406cdccee2de7fbf74547920e77"
-          git diff --name-only origin/main...HEAD | tee /tmp/c3-final-gate-committed-diff.txt
-          test "$(grep -cx 'deno.lock' /tmp/c3-final-gate-committed-diff.txt || true)" = "0"
+          git diff --name-only origin/main...HEAD | tee "$RUNNER_TEMP/c3-final-gate-committed-diff.txt"
+          test "$(grep -cx 'deno.lock' "$RUNNER_TEMP/c3-final-gate-committed-diff.txt" || true)" = "0"
           npm ci
           node .github/scripts/task_ai_abc_c3_final_gate.mjs
           echo C3_PREPRODUCTION_FINAL_GATE=PASS
@@ -184,12 +287,10 @@ jobs:
           test "$C3_PROJECT_REF" = "nrfxhqabwblzxoushgnm"
           test -n "${SUPABASE_ACCESS_TOKEN:-}"
           echo C3_PRODUCTION_AUTHORIZATION_TRIGGER=PASS
-
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
-
       - name: Exact checkout / tree / project / allowlist guard
         shell: bash
         run: |
@@ -197,7 +298,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$AUTHORIZED_HEAD"
           C3_AUTHORIZED_TREE="$(git rev-parse HEAD^{tree})"
           [[ "$C3_AUTHORIZED_TREE" =~ ^[0-9a-f]{40}$ ]]
-          printf '%s\n' "$C3_AUTHORIZED_TREE" | tee /tmp/c3-authorized-tree.txt
+          printf '%s\n' "$C3_AUTHORIZED_TREE" | tee "$RUNNER_TEMP/c3-authorized-tree.txt"
           git diff --exit-code
           git diff --cached --exit-code
           test -z "$(git ls-files --others --exclude-standard)"
@@ -207,44 +308,52 @@ jobs:
             section="$(awk -v f="$fn" '$0=="[functions." f "]"{on=1;next} /^\[/{on=0} on{print}' supabase/config.toml)"
             grep -q '^verify_jwt = true$' <<<"$section"
           done
-          printf '%s\n' generate-reply agent-assist > /tmp/c3-function-allowlist.txt
-          test "$(wc -l < /tmp/c3-function-allowlist.txt | tr -d ' ')" = "2"
+          printf '%s\n' generate-reply agent-assist > "$RUNNER_TEMP/c3-function-allowlist.txt"
+          test "$(wc -l < "$RUNNER_TEMP/c3-function-allowlist.txt" | tr -d ' ')" = "2"
           echo C3_EXACT_CHECKOUT_GUARD=PASS
-
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.9.6
-
       - uses: supabase/setup-cli@v1
         with:
           version: latest
-
       - name: Build exact checkout closure manifests without rewriting source
         shell: bash
         run: |
           set -euo pipefail
-          printf '%s\n' "$C3_MANIFEST_BUILDER" > /tmp/c3_closure_manifest.py
-          python /tmp/c3_closure_manifest.py "$PWD" supabase/functions/generate-reply/index.ts /tmp/c3-generate-source.sha256 | tee /tmp/c3-generate-count.txt
-          python /tmp/c3_closure_manifest.py "$PWD" supabase/functions/generate-reply/index.ts /tmp/c3-generate-source-rerun.sha256 >/tmp/c3-generate-count-rerun.txt
-          python /tmp/c3_closure_manifest.py "$PWD" supabase/functions/agent-assist/index.ts /tmp/c3-assist-source.sha256 | tee /tmp/c3-assist-count.txt
-          python /tmp/c3_closure_manifest.py "$PWD" supabase/functions/agent-assist/index.ts /tmp/c3-assist-source-rerun.sha256 >/tmp/c3-assist-count-rerun.txt
-          cmp /tmp/c3-generate-source.sha256 /tmp/c3-generate-source-rerun.sha256
-          cmp /tmp/c3-assist-source.sha256 /tmp/c3-assist-source-rerun.sha256
-          test "$(wc -l < /tmp/c3-generate-source.sha256 | tr -d ' ')" = "47"
-          test "$(wc -l < /tmp/c3-assist-source.sha256 | tr -d ' ')" = "22"
-          deno check --no-lock --node-modules-dir=auto supabase/functions/generate-reply/index.ts
-          deno check --no-lock --node-modules-dir=auto supabase/functions/agent-assist/index.ts
-          git diff --exit-code
-          git diff --cached --exit-code
-          test -z "$(git ls-files --others --exclude-standard)"
-          sha256sum /tmp/c3-generate-source.sha256 /tmp/c3-assist-source.sha256 | tee /tmp/c3-source-manifest-hashes.txt
+          eval "$C3_ASSERT_LIB"
+          OUT="$RUNNER_TEMP/c3-manifest-production"
+          rm -rf "$OUT"; mkdir -p "$OUT"
+          case "$OUT" in "$PWD"/*) echo "C3_MANIFEST_ASSERT|name=generated_output_outside_checkout|expected=true|actual=false|result=FAIL"; exit 1;; *) echo "C3_MANIFEST_ASSERT|name=generated_output_outside_checkout|expected=true|actual=true|result=PASS";; esac
+          printf '%s\n' "$C3_MANIFEST_BUILDER" > "$OUT/c3_closure_manifest.py"
+          python "$OUT/c3_closure_manifest.py" "$PWD" supabase/functions/generate-reply/index.ts "$OUT/generate-A.sha256" 47
+          python "$OUT/c3_closure_manifest.py" "$PWD" supabase/functions/generate-reply/index.ts "$OUT/generate-B.sha256" 47
+          python "$OUT/c3_closure_manifest.py" "$PWD" supabase/functions/agent-assist/index.ts "$OUT/assist-A.sha256" 22
+          python "$OUT/c3_closure_manifest.py" "$PWD" supabase/functions/agent-assist/index.ts "$OUT/assist-B.sha256" 22
+          cp "$OUT/generate-A.sha256" "$RUNNER_TEMP/c3-generate-source.sha256"
+          cp "$OUT/assist-A.sha256" "$RUNNER_TEMP/c3-assist-source.sha256"
+          GEN_A="$(sha256sum "$OUT/generate-A.sha256" | awk '{print $1}')"; GEN_B="$(sha256sum "$OUT/generate-B.sha256" | awk '{print $1}')"
+          ASSIST_A="$(sha256sum "$OUT/assist-A.sha256" | awk '{print $1}')"; ASSIST_B="$(sha256sum "$OUT/assist-B.sha256" | awk '{print $1}')"
+          c3_assert_eq generate_manifest_sha256 "$GEN_A" "$GEN_B"
+          c3_assert_eq assist_manifest_sha256 "$ASSIST_A" "$ASSIST_B"
+          cmp "$OUT/generate-A.sha256" "$OUT/generate-B.sha256"
+          cmp "$OUT/assist-A.sha256" "$OUT/assist-B.sha256"
+          echo "C3_MANIFEST_ASSERT|name=manifest_byte_equality|expected=equal|actual=equal|result=PASS"
+          c3_assert_clean before_deno
+          set +e; deno check --no-lock --node-modules-dir=auto supabase/functions/generate-reply/index.ts; RC=$?; set -e
+          c3_assert_eq generate_deno_check_exit 0 "$RC"
+          c3_assert_clean after_generate_deno
+          set +e; deno check --no-lock --node-modules-dir=auto supabase/functions/agent-assist/index.ts; RC=$?; set -e
+          c3_assert_eq assist_deno_check_exit 0 "$RC"
+          c3_assert_clean after_assist_deno
+          c3_assert_clean final_source_cleanliness
+          sha256sum "$RUNNER_TEMP/c3-generate-source.sha256" "$RUNNER_TEMP/c3-assist-source.sha256" | tee "$RUNNER_TEMP/c3-source-manifest-hashes.txt"
           echo C3_EXACT_SOURCE_CLOSURES=PASS
-
       - name: Capture immediate pre-C3 Edge rollback closures
         shell: bash
         run: |
           set -euo pipefail
-          R=/tmp/c3-edge-rollback
+          R="$RUNNER_TEMP/c3-edge-rollback"
           rm -rf "$R"; mkdir -p "$R/generate/supabase" "$R/assist/supabase"
           cp supabase/config.toml "$R/generate/supabase/config.toml"
           cp supabase/config.toml "$R/assist/supabase/config.toml"
@@ -255,7 +364,6 @@ jobs:
           test -s "$R/generate/supabase/functions/generate-reply/index.ts"
           test -s "$R/assist/supabase/functions/agent-assist/index.ts"
           echo C3_EDGE_ROLLBACK_SNAPSHOT=PASS
-
       - name: Deploy exact generate-reply checkout closure
         id: deploy_generate
         shell: bash
@@ -267,18 +375,16 @@ jobs:
           test -z "$(git ls-files --others --exclude-standard)"
           supabase functions deploy generate-reply --project-ref "$C3_PROJECT_REF" --use-api
           echo C3_GENERATE_DEPLOY=PASS
-
       - name: Read back and verify generate-reply closure
         id: verify_generate
         shell: bash
         run: |
           set -euo pipefail
-          D=/tmp/c3-readback-generate; rm -rf "$D"; mkdir -p "$D/supabase"; cp supabase/config.toml "$D/supabase/config.toml"
+          D="$RUNNER_TEMP/c3-readback-generate"; rm -rf "$D"; mkdir -p "$D/supabase"; cp supabase/config.toml "$D/supabase/config.toml"
           (cd "$D" && supabase functions download generate-reply --project-ref "$C3_PROJECT_REF" --use-api)
-          python /tmp/c3_closure_manifest.py "$D" supabase/functions/generate-reply/index.ts /tmp/c3-generate-readback.sha256
-          diff -u /tmp/c3-generate-source.sha256 /tmp/c3-generate-readback.sha256
+          python "$RUNNER_TEMP/c3-manifest-production/c3_closure_manifest.py" "$D" supabase/functions/generate-reply/index.ts "$RUNNER_TEMP/c3-generate-readback.sha256" 47
+          diff -u "$RUNNER_TEMP/c3-generate-source.sha256" "$RUNNER_TEMP/c3-generate-readback.sha256"
           echo C3_GENERATE_READBACK=PASS
-
       - name: Deploy exact agent-assist checkout closure
         id: deploy_assist
         shell: bash
@@ -290,48 +396,45 @@ jobs:
           test -z "$(git ls-files --others --exclude-standard)"
           supabase functions deploy agent-assist --project-ref "$C3_PROJECT_REF" --use-api
           echo C3_ASSIST_DEPLOY=PASS
-
       - name: Read back agent-assist closure and assert frozen Edge unchanged
         id: verify_assist
         shell: bash
         run: |
           set -euo pipefail
-          D=/tmp/c3-readback-assist; rm -rf "$D"; mkdir -p "$D/supabase"; cp supabase/config.toml "$D/supabase/config.toml"
+          D="$RUNNER_TEMP/c3-readback-assist"; rm -rf "$D"; mkdir -p "$D/supabase"; cp supabase/config.toml "$D/supabase/config.toml"
           (cd "$D" && supabase functions download agent-assist --project-ref "$C3_PROJECT_REF" --use-api)
-          python /tmp/c3_closure_manifest.py "$D" supabase/functions/agent-assist/index.ts /tmp/c3-assist-readback.sha256
-          diff -u /tmp/c3-assist-source.sha256 /tmp/c3-assist-readback.sha256
-          supabase functions list --project-ref "$C3_PROJECT_REF" | tee /tmp/c3-postdeploy-functions.txt
+          python "$RUNNER_TEMP/c3-manifest-production/c3_closure_manifest.py" "$D" supabase/functions/agent-assist/index.ts "$RUNNER_TEMP/c3-assist-readback.sha256" 22
+          diff -u "$RUNNER_TEMP/c3-assist-source.sha256" "$RUNNER_TEMP/c3-assist-readback.sha256"
+          supabase functions list --project-ref "$C3_PROJECT_REF" | tee "$RUNNER_TEMP/c3-postdeploy-functions.txt"
           for fn in receive-widget-message ce-evaluation-worker conversation-evaluate; do
-            pre="$(grep "$fn" /tmp/c3-edge-rollback/predeploy-functions.txt | head -1)"
-            post="$(grep "$fn" /tmp/c3-postdeploy-functions.txt | head -1)"
+            pre="$(grep "$fn" "$RUNNER_TEMP/c3-edge-rollback/predeploy-functions.txt" | head -1)"
+            post="$(grep "$fn" "$RUNNER_TEMP/c3-postdeploy-functions.txt" | head -1)"
             test -n "$pre" && test "$pre" = "$post"
           done
           echo C3_ASSIST_READBACK=PASS
           echo C3_FROZEN_EDGE_UNCHANGED=PASS
-
       - name: Roll back both Edge functions on deploy/readback failure
         if: ${{ failure() && (steps.deploy_generate.outcome == 'failure' || steps.verify_generate.outcome == 'failure' || steps.deploy_assist.outcome == 'failure' || steps.verify_assist.outcome == 'failure') }}
         shell: bash
         run: |
           set -euo pipefail
-          R=/tmp/c3-edge-rollback
+          R="$RUNNER_TEMP/c3-edge-rollback"
           test -s "$R/generate/supabase/functions/generate-reply/index.ts"
           test -s "$R/assist/supabase/functions/agent-assist/index.ts"
           (cd "$R/generate" && supabase functions deploy generate-reply --project-ref "$C3_PROJECT_REF" --use-api)
           (cd "$R/assist" && supabase functions deploy agent-assist --project-ref "$C3_PROJECT_REF" --use-api)
           echo C3_EDGE_ROLLBACK=PASS
-
       - name: C3 production Edge transport final gate
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$AUTHORIZED_HEAD"
-          test -s /tmp/c3-authorized-tree.txt
-          test -s /tmp/c3-generate-source.sha256
-          test -s /tmp/c3-assist-source.sha256
-          test -s /tmp/c3-generate-readback.sha256
-          test -s /tmp/c3-assist-readback.sha256
-          test -s /tmp/c3-postdeploy-functions.txt
+          test -s "$RUNNER_TEMP/c3-authorized-tree.txt"
+          test -s "$RUNNER_TEMP/c3-generate-source.sha256"
+          test -s "$RUNNER_TEMP/c3-assist-source.sha256"
+          test -s "$RUNNER_TEMP/c3-generate-readback.sha256"
+          test -s "$RUNNER_TEMP/c3-assist-readback.sha256"
+          test -s "$RUNNER_TEMP/c3-postdeploy-functions.txt"
           git diff --exit-code
           git diff --cached --exit-code
           test -z "$(git ls-files --others --exclude-standard)"
