@@ -11,7 +11,7 @@ permissions:
 
 env:
   C3_PROJECT_REF: nrfxhqabwblzxoushgnm
-  C3_FAILING_HEAD: f5758744526dcc59cc825de6ca81951b13de5967
+  C3_CLI_EPHEMERAL: supabase/.temp/cli-latest
   C3_MANIFEST_BUILDER: |
     import hashlib, pathlib, re, sys
     root=pathlib.Path(sys.argv[1]).resolve(); entry=(root/sys.argv[2]).resolve(); out=pathlib.Path(sys.argv[3]).resolve(); expected=int(sys.argv[4])
@@ -53,14 +53,38 @@ env:
     print(f'C3_MANIFEST_DIGEST|sha256={hashlib.sha256(serialized.encode()).hexdigest()}|files={len(rows)}')
     raise SystemExit(1 if failed else 0)
   C3_ASSERT_LIB: |
-    c3_eq(){ local n="$1" e="$2" a="$3"; if [ "$e" = "$a" ]; then echo "C3_MANIFEST_ASSERT|name=$n|expected=$e|actual=$a|result=PASS"; else echo "C3_MANIFEST_ASSERT|name=$n|expected=$e|actual=$a|result=FAIL"; return 1; fi; }
-    c3_status(){ local p="$1"; echo "C3_SOURCE_STATUS|phase=$p"; git status --porcelain || true; local t s u; t="$(git diff --name-only|sed '/^$/d'|wc -l|tr -d ' ')"; s="$(git diff --cached --name-only|sed '/^$/d'|wc -l|tr -d ' ')"; u="$(git ls-files --others --exclude-standard|sed '/^$/d'|wc -l|tr -d ' ')"; echo "C3_SOURCE_COUNTS|phase=$p|tracked=$t|staged=$s|untracked=$u"; [ "$t" = 0 ] || git diff --name-only|sed 's/^/C3_SOURCE_OFFENDER|kind=tracked|path=/'; [ "$s" = 0 ] || git diff --cached --name-only|sed 's/^/C3_SOURCE_OFFENDER|kind=staged|path=/'; [ "$u" = 0 ] || git ls-files --others --exclude-standard|sed 's/^/C3_SOURCE_OFFENDER|kind=untracked|path=/'; }
-    c3_clean(){ local p="$1"; c3_status "$p"; local t s u; t="$(git diff --name-only|sed '/^$/d'|wc -l|tr -d ' ')"; s="$(git diff --cached --name-only|sed '/^$/d'|wc -l|tr -d ' ')"; u="$(git ls-files --others --exclude-standard|sed '/^$/d'|wc -l|tr -d ' ')"; c3_eq "${p}_tracked_modified_deleted" 0 "$t"; c3_eq "${p}_tracked_staged" 0 "$s"; c3_eq "${p}_unauthorized_untracked" 0 "$u"; }
+    c3_assert(){ local n="$1" e="$2" a="$3"; if [ "$e" = "$a" ]; then echo "C3_SOURCE_ASSERT|name=$n|expected=$e|actual=$a|result=PASS"; else echo "C3_SOURCE_ASSERT|name=$n|expected=$e|actual=$a|result=FAIL"; return 1; fi; }
+    c3_manifest_assert(){ local n="$1" e="$2" a="$3"; if [ "$e" = "$a" ]; then echo "C3_MANIFEST_ASSERT|name=$n|expected=$e|actual=$a|result=PASS"; else echo "C3_MANIFEST_ASSERT|name=$n|expected=$e|actual=$a|result=FAIL"; return 1; fi; }
+    c3_source_clean(){
+      local phase="$1" expected_cli="$2" tracked staged approved unauthorized
+      tracked="$(git diff --name-only | sed '/^$/d' | wc -l | tr -d ' ')"
+      staged="$(git diff --cached --name-only | sed '/^$/d' | wc -l | tr -d ' ')"
+      approved="$(git ls-files --others --exclude-standard | grep -Fx "$C3_CLI_EPHEMERAL" | wc -l | tr -d ' ')"
+      unauthorized="$(git ls-files --others --exclude-standard | grep -Fvx "$C3_CLI_EPHEMERAL" | sed '/^$/d' | wc -l | tr -d ' ')"
+      echo "C3_SOURCE_STATUS|phase=$phase"
+      git status --porcelain || true
+      c3_assert "${phase}_tracked_modified" 0 "$tracked"
+      c3_assert "${phase}_staged" 0 "$staged"
+      c3_assert "${phase}_approved_cli_ephemeral" "$expected_cli" "$approved"
+      c3_assert "${phase}_unauthorized_untracked" 0 "$unauthorized"
+      if [ "$unauthorized" != 0 ]; then git ls-files --others --exclude-standard | grep -Fvx "$C3_CLI_EPHEMERAL" | sed 's/^/C3_SOURCE_OFFENDER|kind=unauthorized_untracked|path=/' || true; fi
+      if git ls-files --error-unmatch "$C3_CLI_EPHEMERAL" >/dev/null 2>&1; then echo "C3_SOURCE_ASSERT|name=${phase}_cli_ephemeral_untracked|expected=untracked|actual=tracked|result=FAIL"; return 1; else echo "C3_SOURCE_ASSERT|name=${phase}_cli_ephemeral_untracked|expected=untracked|actual=untracked|result=PASS"; fi
+    }
+    c3_cli_delta(){
+      local before="$1" after="$2" delta
+      delta="$(comm -13 "$before" "$after" | sed '/^$/d')"
+      if [ "$delta" = "$C3_CLI_EPHEMERAL" ]; then echo "C3_SOURCE_ASSERT|name=cli_setup_created_exact_path|expected=$C3_CLI_EPHEMERAL|actual=$delta|result=PASS"; else echo "C3_SOURCE_ASSERT|name=cli_setup_created_exact_path|expected=$C3_CLI_EPHEMERAL|actual=${delta:-NONE}|result=FAIL"; printf '%s\n' "$delta" | sed '/^$/d;s/^/C3_SOURCE_OFFENDER|kind=cli_setup_delta|path=/'; return 1; fi
+    }
+    c3_closure_excludes_cli(){
+      local g="$1" a="$2" hits
+      hits="$((grep -F "  $C3_CLI_EPHEMERAL" "$g"; grep -F "  $C3_CLI_EPHEMERAL" "$a") 2>/dev/null | wc -l | tr -d ' ')"
+      c3_assert cli_ephemeral_in_deploy_closure 0 "$hits"
+    }
 
 jobs:
   c3-preproduction:
     if: github.event_name == 'push' && github.repository == 'ebixsolutions/console-chat-hub'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
       C3_GATE_PHASE: preproduction
@@ -79,55 +103,55 @@ jobs:
       C3_ASSIST_ROLLBACK_SOURCE_MISMATCH: '0'
       C3_ASSIST_BUNDLE_REBUILD_RECONCILED: PASS
     steps:
-      - name: Checkout historical failing SHA
-        uses: actions/checkout@v4
-        with: {ref: f5758744526dcc59cc825de6ca81951b13de5967, fetch-depth: 0}
-      - uses: denoland/setup-deno@v2
-        with: {deno-version: v2.9.6}
-      - name: Reproduce historical manifest gate with explicit telemetry
-        shell: bash
-        run: |
-          set -uo pipefail
-          eval "$C3_ASSERT_LIB"
-          DIAG="$RUNNER_TEMP/c3-historical-diagnostic.txt"; : > "$DIAG"; exec > >(tee -a "$DIAG") 2>&1
-          printf '%s\n' "$C3_MANIFEST_BUILDER" > "$RUNNER_TEMP/c3_builder.py"
-          FIRST_FAIL=""
-          probe(){ local name="$1"; shift; "$@"; local rc=$?; if [ "$rc" = 0 ]; then echo "C3_MANIFEST_ASSERT|name=historical_$name|expected=0|actual=0|result=PASS"; else echo "C3_MANIFEST_ASSERT|name=historical_$name|expected=0|actual=$rc|result=FAIL"; [ -n "$FIRST_FAIL" ] || FIRST_FAIL="$name"; fi; return 0; }
-          probe generate_A python "$RUNNER_TEMP/c3_builder.py" "$PWD" supabase/functions/generate-reply/index.ts "$RUNNER_TEMP/hgA" 47
-          probe generate_B python "$RUNNER_TEMP/c3_builder.py" "$PWD" supabase/functions/generate-reply/index.ts "$RUNNER_TEMP/hgB" 47
-          probe assist_A python "$RUNNER_TEMP/c3_builder.py" "$PWD" supabase/functions/agent-assist/index.ts "$RUNNER_TEMP/haA" 22
-          probe assist_B python "$RUNNER_TEMP/c3_builder.py" "$PWD" supabase/functions/agent-assist/index.ts "$RUNNER_TEMP/haB" 22
-          probe generate_cmp cmp "$RUNNER_TEMP/hgA" "$RUNNER_TEMP/hgB"
-          probe assist_cmp cmp "$RUNNER_TEMP/haA" "$RUNNER_TEMP/haB"
-          probe generate_count test "$(wc -l < "$RUNNER_TEMP/hgA"|tr -d ' ')" = 47
-          probe assist_count test "$(wc -l < "$RUNNER_TEMP/haA"|tr -d ' ')" = 22
-          c3_status before_generate_deno
-          probe generate_deno deno check --no-lock --node-modules-dir=auto supabase/functions/generate-reply/index.ts
-          c3_status after_generate_deno
-          probe assist_deno deno check --no-lock --node-modules-dir=auto supabase/functions/agent-assist/index.ts
-          c3_status after_assist_deno
-          probe git_diff git diff --exit-code
-          probe git_cached git diff --cached --exit-code
-          U="$(git ls-files --others --exclude-standard|sed '/^$/d'|wc -l|tr -d ' ')"; if [ "$U" = 0 ]; then echo 'C3_MANIFEST_ASSERT|name=historical_untracked|expected=0|actual=0|result=PASS'; else echo "C3_MANIFEST_ASSERT|name=historical_untracked|expected=0|actual=$U|result=FAIL"; git ls-files --others --exclude-standard|sed 's/^/C3_SOURCE_OFFENDER|kind=untracked|path=/'; [ -n "$FIRST_FAIL" ] || FIRST_FAIL=untracked; fi
-          echo "C3_HISTORICAL_FIRST_FAIL=${FIRST_FAIL:-NONE}"
-          echo "C3_HISTORICAL_REPRODUCTION=$([ -n "$FIRST_FAIL" ] && echo FAIL_REPRODUCED || echo NO_FAIL_REPRODUCED)"
-          exit 0
-      - name: Checkout current repair SHA cleanly
+      - name: Checkout exact repair SHA
         uses: actions/checkout@v4
         with: {ref: '${{ github.sha }}', fetch-depth: 0, clean: true}
+      - name: Record pristine source state before Supabase CLI setup
+        shell: bash
+        run: |
+          set -euo pipefail; eval "$C3_ASSERT_LIB"
+          git ls-files --others --exclude-standard | LC_ALL=C sort > "$RUNNER_TEMP/c3-before-cli-untracked.txt"
+          c3_source_clean before_cli_setup 0
+      - uses: denoland/setup-deno@v2
+        with: {deno-version: v2.9.6}
+      - name: Setup Supabase CLI in actual production order
+        uses: supabase/setup-cli@v1
+        with: {version: latest}
+      - name: Prove exact Supabase CLI setup artifact
+        shell: bash
+        run: |
+          set -euo pipefail; eval "$C3_ASSERT_LIB"
+          git ls-files --others --exclude-standard | LC_ALL=C sort > "$RUNNER_TEMP/c3-after-cli-untracked.txt"
+          c3_cli_delta "$RUNNER_TEMP/c3-before-cli-untracked.txt" "$RUNNER_TEMP/c3-after-cli-untracked.txt"
+          test -f "$C3_CLI_EPHEMERAL"
+          c3_source_clean after_cli_setup 1
+          supabase --version | tee "$RUNNER_TEMP/c3-supabase-version.txt"
+          c3_source_clean after_cli_version 1
       - uses: actions/setup-node@v4
         with: {node-version: '22', cache: npm}
       - run: npm ci
-      - name: Deterministic manifest and source-clean regression
+      - name: Production-order deterministic manifest / source-clean / Deno regression
         shell: bash
         run: |
           set -euo pipefail; eval "$C3_ASSERT_LIB"; OUT="$RUNNER_TEMP/c3-current"; rm -rf "$OUT"; mkdir -p "$OUT"
-          case "$OUT" in "$PWD"/*) echo 'C3_MANIFEST_ASSERT|name=temp_outside_checkout|expected=true|actual=false|result=FAIL'; exit 1;; *) echo 'C3_MANIFEST_ASSERT|name=temp_outside_checkout|expected=true|actual=true|result=PASS';; esac
+          case "$OUT" in "$PWD"/*) echo 'C3_SOURCE_ASSERT|name=temp_outside_checkout|expected=true|actual=false|result=FAIL'; exit 1;; *) echo 'C3_SOURCE_ASSERT|name=temp_outside_checkout|expected=true|actual=true|result=PASS';; esac
           printf '%s\n' "$C3_MANIFEST_BUILDER" > "$OUT/b.py"
-          python "$OUT/b.py" "$PWD" supabase/functions/generate-reply/index.ts "$OUT/gA" 47; python "$OUT/b.py" "$PWD" supabase/functions/generate-reply/index.ts "$OUT/gB" 47
-          python "$OUT/b.py" "$PWD" supabase/functions/agent-assist/index.ts "$OUT/aA" 22; python "$OUT/b.py" "$PWD" supabase/functions/agent-assist/index.ts "$OUT/aB" 22
-          GA="$(sha256sum "$OUT/gA"|awk '{print $1}')"; GB="$(sha256sum "$OUT/gB"|awk '{print $1}')"; AA="$(sha256sum "$OUT/aA"|awk '{print $1}')"; AB="$(sha256sum "$OUT/aB"|awk '{print $1}')"; c3_eq generate_manifest_sha256 "$GA" "$GB"; c3_eq assist_manifest_sha256 "$AA" "$AB"; cmp "$OUT/gA" "$OUT/gB"; cmp "$OUT/aA" "$OUT/aB"; echo 'C3_MANIFEST_ASSERT|name=byte_determinism|expected=equal|actual=equal|result=PASS'
-          c3_clean before_deno; deno check --no-lock --node-modules-dir=auto supabase/functions/generate-reply/index.ts; c3_clean after_generate_deno; deno check --no-lock --node-modules-dir=auto supabase/functions/agent-assist/index.ts; c3_clean after_assist_deno; c3_clean final_clean; echo C3_MANIFEST_REGRESSION=PASS
+          python "$OUT/b.py" "$PWD" supabase/functions/generate-reply/index.ts "$OUT/gA" 47
+          python "$OUT/b.py" "$PWD" supabase/functions/generate-reply/index.ts "$OUT/gB" 47
+          python "$OUT/b.py" "$PWD" supabase/functions/agent-assist/index.ts "$OUT/aA" 22
+          python "$OUT/b.py" "$PWD" supabase/functions/agent-assist/index.ts "$OUT/aB" 22
+          c3_manifest_assert generate_manifest_sha256 "$(sha256sum "$OUT/gA"|awk '{print $1}')" "$(sha256sum "$OUT/gB"|awk '{print $1}')"
+          c3_manifest_assert assist_manifest_sha256 "$(sha256sum "$OUT/aA"|awk '{print $1}')" "$(sha256sum "$OUT/aB"|awk '{print $1}')"
+          cmp "$OUT/gA" "$OUT/gB"; cmp "$OUT/aA" "$OUT/aB"
+          echo 'C3_MANIFEST_ASSERT|name=byte_determinism|expected=equal|actual=equal|result=PASS'
+          c3_closure_excludes_cli "$OUT/gA" "$OUT/aA"
+          c3_source_clean before_deno 1
+          deno check --no-lock --node-modules-dir=auto supabase/functions/generate-reply/index.ts
+          c3_source_clean after_generate_deno 1
+          deno check --no-lock --node-modules-dir=auto supabase/functions/agent-assist/index.ts
+          c3_source_clean after_assist_deno 1
+          c3_source_clean rollback_capture_preparation 1
+          echo C3_PRODUCTION_ORDER_TRANSPORT_REGRESSION=PASS
       - name: Prepare pristine C3 final-gate checkout
         uses: actions/checkout@v4
         with: {ref: '${{ github.sha }}', fetch-depth: 0, path: c3-final-gate-clean, clean: true}
@@ -136,14 +160,19 @@ jobs:
         working-directory: c3-final-gate-clean
         run: |
           set -euo pipefail; test "$(git rev-parse HEAD)" = "${{ github.sha }}"; test "$(git rev-parse origin/main)" = "1f2d285c6ad2d406cdccee2de7fbf74547920e77"; npm ci; node .github/scripts/task_ai_abc_c3_final_gate.mjs; echo C3_PREPRODUCTION_FINAL_GATE=PASS
-      - name: Capture C3 diagnostic evidence
+      - name: Capture C3 CLI isolation evidence
         if: always()
         shell: bash
         run: |
-          mkdir -p "$RUNNER_TEMP/c3-report"; cp "$RUNNER_TEMP/c3-historical-diagnostic.txt" "$RUNNER_TEMP/c3-report/" 2>/dev/null || true; ROOT="$GITHUB_WORKSPACE/c3-final-gate-clean"; [ -d "$ROOT/.git" ] || ROOT="$GITHUB_WORKSPACE"; tar -C "$ROOT" -czf "$RUNNER_TEMP/c3-report/tested-source.tar.gz" supabase/functions/_shared supabase/functions/generate-reply supabase/functions/agent-assist .github/scripts/task_ai_abc_c3_final_gate.mjs .github/workflows/task-ai-abc-c3-final-gate.yml
+          mkdir -p "$RUNNER_TEMP/c3-report"
+          cp "$RUNNER_TEMP/c3-before-cli-untracked.txt" "$RUNNER_TEMP/c3-report/" 2>/dev/null || true
+          cp "$RUNNER_TEMP/c3-after-cli-untracked.txt" "$RUNNER_TEMP/c3-report/" 2>/dev/null || true
+          cp "$RUNNER_TEMP/c3-supabase-version.txt" "$RUNNER_TEMP/c3-report/" 2>/dev/null || true
+          ROOT="$GITHUB_WORKSPACE/c3-final-gate-clean"; [ -d "$ROOT/.git" ] || ROOT="$GITHUB_WORKSPACE"
+          tar -C "$ROOT" -czf "$RUNNER_TEMP/c3-report/tested-source.tar.gz" supabase/functions/_shared supabase/functions/generate-reply supabase/functions/agent-assist .github/scripts/task_ai_abc_c3_final_gate.mjs .github/workflows/task-ai-abc-c3-final-gate.yml
       - uses: actions/upload-artifact@v4
         if: always()
-        with: {name: C3-manifest-root-cause-report, path: '${{ runner.temp }}/c3-report', if-no-files-found: error}
+        with: {name: C3-cli-temp-isolation-report, path: '${{ runner.temp }}/c3-report', if-no-files-found: error}
 
   c3-production-edge-transport:
     if: github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.pull_request.number == 12 && github.actor == 'ebixsolutions' && github.event.label.name == format('c3-prod-{0}', github.event.pull_request.head.sha)
@@ -163,17 +192,21 @@ jobs:
       - name: Exact checkout / project / allowlist guard
         shell: bash
         run: |
-          set -euo pipefail; test "$(git rev-parse HEAD)" = "$AUTHORIZED_HEAD"; git rev-parse 'HEAD^{tree}' | tee "$RUNNER_TEMP/c3-tree"; test "$(awk -F'"' '/^project_id = /{print $2}' supabase/config.toml)" = "$C3_PROJECT_REF"; for fn in generate-reply agent-assist; do test -s "supabase/functions/$fn/index.ts"; section="$(awk -v f="$fn" '$0=="[functions." f "]"{on=1;next} /^\[/{on=0} on{print}' supabase/config.toml)"; grep -q '^verify_jwt = true$' <<<"$section"; done; test -z "$(git status --porcelain)"; echo C3_EXACT_CHECKOUT_GUARD=PASS
+          set -euo pipefail; eval "$C3_ASSERT_LIB"; test "$(git rev-parse HEAD)" = "$AUTHORIZED_HEAD"; git rev-parse 'HEAD^{tree}' | tee "$RUNNER_TEMP/c3-tree"; test "$(awk -F'"' '/^project_id = /{print $2}' supabase/config.toml)" = "$C3_PROJECT_REF"; for fn in generate-reply agent-assist; do test -s "supabase/functions/$fn/index.ts"; section="$(awk -v f="$fn" '$0=="[functions." f "]"{on=1;next} /^\[/{on=0} on{print}' supabase/config.toml)"; grep -q '^verify_jwt = true$' <<<"$section"; done; c3_source_clean before_cli_setup 0; git ls-files --others --exclude-standard | LC_ALL=C sort > "$RUNNER_TEMP/c3-before-cli-untracked.txt"; echo C3_EXACT_CHECKOUT_GUARD=PASS
       - uses: denoland/setup-deno@v2
         with: {deno-version: v2.9.6}
       - uses: supabase/setup-cli@v1
         with: {version: latest}
+      - name: Prove and isolate exact Supabase CLI ephemeral state
+        shell: bash
+        run: |
+          set -euo pipefail; eval "$C3_ASSERT_LIB"; git ls-files --others --exclude-standard | LC_ALL=C sort > "$RUNNER_TEMP/c3-after-cli-untracked.txt"; c3_cli_delta "$RUNNER_TEMP/c3-before-cli-untracked.txt" "$RUNNER_TEMP/c3-after-cli-untracked.txt"; test -f "$C3_CLI_EPHEMERAL"; c3_source_clean after_cli_setup 1
       - name: Deterministic production manifest gate
         shell: bash
         run: |
           set -euo pipefail; eval "$C3_ASSERT_LIB"; OUT="$RUNNER_TEMP/c3-prod"; rm -rf "$OUT"; mkdir -p "$OUT"; printf '%s\n' "$C3_MANIFEST_BUILDER" > "$OUT/b.py"
           python "$OUT/b.py" "$PWD" supabase/functions/generate-reply/index.ts "$OUT/gA" 47; python "$OUT/b.py" "$PWD" supabase/functions/generate-reply/index.ts "$OUT/gB" 47; python "$OUT/b.py" "$PWD" supabase/functions/agent-assist/index.ts "$OUT/aA" 22; python "$OUT/b.py" "$PWD" supabase/functions/agent-assist/index.ts "$OUT/aB" 22
-          c3_eq generate_manifest_sha256 "$(sha256sum "$OUT/gA"|awk '{print $1}')" "$(sha256sum "$OUT/gB"|awk '{print $1}')"; c3_eq assist_manifest_sha256 "$(sha256sum "$OUT/aA"|awk '{print $1}')" "$(sha256sum "$OUT/aB"|awk '{print $1}')"; cmp "$OUT/gA" "$OUT/gB"; cmp "$OUT/aA" "$OUT/aB"; cp "$OUT/gA" "$RUNNER_TEMP/c3-generate-source.sha256"; cp "$OUT/aA" "$RUNNER_TEMP/c3-assist-source.sha256"; c3_clean before_deno; deno check --no-lock --node-modules-dir=auto supabase/functions/generate-reply/index.ts; c3_clean after_generate_deno; deno check --no-lock --node-modules-dir=auto supabase/functions/agent-assist/index.ts; c3_clean after_assist_deno; c3_clean final_clean; echo C3_EXACT_SOURCE_CLOSURES=PASS
+          c3_manifest_assert generate_manifest_sha256 "$(sha256sum "$OUT/gA"|awk '{print $1}')" "$(sha256sum "$OUT/gB"|awk '{print $1}')"; c3_manifest_assert assist_manifest_sha256 "$(sha256sum "$OUT/aA"|awk '{print $1}')" "$(sha256sum "$OUT/aB"|awk '{print $1}')"; cmp "$OUT/gA" "$OUT/gB"; cmp "$OUT/aA" "$OUT/aB"; cp "$OUT/gA" "$RUNNER_TEMP/c3-generate-source.sha256"; cp "$OUT/aA" "$RUNNER_TEMP/c3-assist-source.sha256"; c3_closure_excludes_cli "$OUT/gA" "$OUT/aA"; c3_source_clean before_deno 1; deno check --no-lock --node-modules-dir=auto supabase/functions/generate-reply/index.ts; c3_source_clean after_generate_deno 1; deno check --no-lock --node-modules-dir=auto supabase/functions/agent-assist/index.ts; c3_source_clean after_assist_deno 1; c3_source_clean final_clean 1; echo C3_EXACT_SOURCE_CLOSURES=PASS
       - name: Capture immediate rollback closures
         shell: bash
         run: |
@@ -202,4 +235,4 @@ jobs:
       - name: C3 production Edge transport final gate
         shell: bash
         run: |
-          set -euo pipefail; test "$(git rev-parse HEAD)" = "$AUTHORIZED_HEAD"; test -s "$RUNNER_TEMP/g-readback"; test -s "$RUNNER_TEMP/a-readback"; test -z "$(git status --porcelain)"; echo C3_MIGRATION_REAPPLIED=NO; echo C3_EDGE_TRANSPORT_FINAL_GATE=PASS
+          set -euo pipefail; eval "$C3_ASSERT_LIB"; test "$(git rev-parse HEAD)" = "$AUTHORIZED_HEAD"; test -s "$RUNNER_TEMP/g-readback"; test -s "$RUNNER_TEMP/a-readback"; c3_source_clean production_final 1; echo C3_MIGRATION_REAPPLIED=NO; echo C3_EDGE_TRANSPORT_FINAL_GATE=PASS
