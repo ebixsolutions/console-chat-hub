@@ -119,6 +119,18 @@ import {
 import { interpretCommerceSemantics } from "../_shared/commerce-semantic-interpreter.ts";
 import type { CommerceSemanticFrame } from "../_shared/commerce-semantic-frame.ts";
 import {
+  buildBoundedConversationContext,
+  composeBoundedGenerationEnvelope,
+  refreshConversationLongMemory,
+  resolveStructuredMemoryResponse,
+  type CanonicalConversationMemory,
+  type MemoryHistoryRow,
+} from "../_shared/conversation-long-memory.ts";
+import {
+  isConversationCommerceState,
+  type ConversationCommerceState,
+} from "../_shared/commerce-state-contract.ts";
+import {
   type B2DatabaseClient,
   type B2Decision,
   type B2PersistenceKind,
@@ -3629,7 +3641,7 @@ async function orchestrationGenerateReply(
   ] = await Promise.all([
     supabaseAdmin
       .from("messages")
-      .select("role, content, created_at, metadata")
+      .select("id, role, content, created_at, metadata")
       .eq("conversation_id", conversation_id)
       .eq("is_recalled", false)
       .neq("content", "__THINKING__")
@@ -3776,6 +3788,8 @@ async function orchestrationGenerateReply(
   // Runs AFTER the critical E2 safety branch and BEFORE CUSTOMER_CONTEXT_UPDATE,
   // generic clarification, conversation-memory shortcut and KB retrieval.
   let _a3Commerce: CommerceRuntimeOutcome | null = null;
+  let _c3Memory: CanonicalConversationMemory | null = null;
+  let _c3MemoryContext = "";
   if (_criticalE2ExpectedTenantId) {
     try {
       _a3Commerce = await runCommerceStateRuntime(
@@ -3804,6 +3818,72 @@ async function orchestrationGenerateReply(
         commerceError,
       );
       _a3Commerce = null;
+    }
+  }
+
+  // ===== AI-ABC-C3: canonical bounded long-conversation memory =====
+  // The source visitor turn is already durable and A3 has resolved canonical
+  // commerce state. Memory is committed now so it cannot become commerce
+  // authority and cannot bypass the existing B2 response-persistence gate.
+  if (_criticalE2ExpectedTenantId) {
+    try {
+      const [{ data: persistedMemory }, { data: commerceRow }] = await Promise.all([
+        supabaseAdmin.from("conversation_memory_state")
+          .select("source_message_id")
+          .eq("conversation_id", conversation_id)
+          .eq("company_id", _criticalE2ExpectedTenantId)
+          .maybeSingle(),
+        supabaseAdmin.from("conversation_commerce_state")
+          .select("revision,state")
+          .eq("conversation_id", conversation_id)
+          .eq("company_id", _criticalE2ExpectedTenantId)
+          .maybeSingle(),
+      ]);
+      let memoryHistory = (_pr5HistoryRows ?? []) as MemoryHistoryRow[];
+      if (!persistedMemory && (_pr5VisitorTurnCount ?? 0) > 50) {
+        const { data: rebuildRows } = await supabaseAdmin.from("messages")
+          .select("id,role,content,created_at,metadata")
+          .eq("conversation_id", conversation_id)
+          .eq("is_recalled", false)
+          .neq("content", "__THINKING__")
+          .or(sourceBoundaryFilter(sourceVisitorMessage))
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: false })
+          .limit(500);
+        memoryHistory = (rebuildRows ?? memoryHistory) as MemoryHistoryRow[];
+      }
+      const commerceState: ConversationCommerceState | null =
+        isConversationCommerceState(commerceRow?.state) ? commerceRow.state : null;
+      const memoryOutcome = await refreshConversationLongMemory(
+        supabaseAdmin as unknown as Parameters<typeof refreshConversationLongMemory>[0],
+        {
+          conversation_id,
+          company_id: _criticalE2ExpectedTenantId,
+          source_message_id: _h1SourceMessageId,
+          source_created_at: String(sourceVisitorMessage.created_at ?? new Date().toISOString()),
+          commerce_state_revision: commerceRow?.revision == null ? null : Number(commerceRow.revision),
+          commerce_state: commerceState,
+          newest_first: memoryHistory,
+          visitor_turn_count: _pr5VisitorTurnCount ?? 0,
+        },
+      );
+      if (memoryOutcome.ok) {
+        _c3Memory = memoryOutcome.memory;
+        _c3MemoryContext = buildBoundedConversationContext(
+          _c3Memory,
+          (_pr5HistoryRows ?? []) as MemoryHistoryRow[],
+        ).block;
+      } else {
+        console.warn("[generate-reply] C3 bounded memory degraded", {
+          conversation_id,
+          reason: memoryOutcome.reason,
+        });
+      }
+    } catch (memoryError) {
+      console.error(
+        "[generate-reply] C3 memory refresh failed safely",
+        memoryError instanceof Error ? memoryError.name : "unknown_error",
+      );
     }
   }
   if (_a3Commerce && _a3Commerce.reply) {
@@ -4222,10 +4302,10 @@ async function orchestrationGenerateReply(
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   }
-  const _conversationMemoryReply = resolveConversationMemoryResponse(
+  const _conversationMemoryReply = resolveStructuredMemoryResponse(
     _h1LastMsg,
-    _pr5HistoryRows ?? [],
-  );
+    _c3Memory,
+  ) ?? resolveConversationMemoryResponse(_h1LastMsg, _pr5HistoryRows ?? []);
   if (_conversationMemoryReply) {
     const committed = await commitAiReplyWithControlGate(
       supabaseAdmin,
@@ -5061,12 +5141,13 @@ async function orchestrationGenerateReply(
     latestHandoffReason,
     conversation.assigned_agent_id ?? null,
   );
-  const finalSystemPrompt = _priorGroundedTransform
+  let finalSystemPrompt = _priorGroundedTransform
     ? buildPriorGroundedTransformGenerationSystem(_priorGroundedTransform)
     : [
       basePrompt,
       CUSTOMER_CONVERSATION_POLICY,
       _conversationContinuityBlock,
+      _c3MemoryContext,
       returnToAiGuard,
       _customerAdvisoryBlock,
       _emotionReplyStrategyBlock,
@@ -5115,9 +5196,27 @@ async function orchestrationGenerateReply(
       conversation.company_id.length > 0
     ? conversation.company_id
     : null;
-  const _generationUserInput = _priorGroundedTransform
+  let _generationUserInput = _priorGroundedTransform
     ? buildPriorGroundedTransformGenerationUser(_h1LastMsg)
     : buildRouterConversationInput(modelMessages);
+  if (!_priorGroundedTransform && _c3Memory) {
+    const boundedEnvelope = composeBoundedGenerationEnvelope({
+      required_parts: [
+        basePrompt,
+        CUSTOMER_CONVERSATION_POLICY,
+        returnToAiGuard,
+        _customerAdvisoryBlock,
+        _emotionReplyStrategyBlock,
+        buildMaskedContextBlock(customerContext, opaqueCustomerRef),
+        buildRagBlock(ragResult),
+      ],
+      memory_part: _c3MemoryContext,
+      continuity_part: _conversationContinuityBlock,
+      user: _h1LastMsg,
+    });
+    finalSystemPrompt = boundedEnvelope.system;
+    _generationUserInput = boundedEnvelope.user;
+  }
 
   let llm = await callModel({
     purpose: "generation",

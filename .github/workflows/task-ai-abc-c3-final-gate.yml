@@ -1,0 +1,44 @@
+name: AI ABC C3 Final Gate
+
+on:
+  push:
+    branches:
+      - director/ai-abc-c3-long-memory-final-cutover
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'supabase/functions/_shared/conversation-long-memory.ts'
+      - 'supabase/functions/_shared/conversation-long-memory.test.ts'
+      - 'supabase/functions/_shared/conversation-long-memory.integration.test.ts'
+      - 'supabase/functions/generate-reply/index.ts'
+      - 'supabase/functions/agent-assist/index.ts'
+      - 'supabase/functions/deno.c3-check.json'
+      - 'supabase/migrations/20260915012938_ai_abc_c3_canonical_long_memory.sql'
+      - '.github/scripts/task_ai_abc_c3_final_gate.mjs'
+      - '.github/workflows/task-ai-abc-c3-final-gate.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  c3-preproduction:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      C3_GATE_PHASE: preproduction
+      C3_LIVE_BASELINE_READBACK: PASS
+      C3_SCHEMA_READ_ONLY_TRACE: PASS
+      C3_MIGRATION_HISTORY_COMPATIBILITY: PASS
+      C3_GENERATE_ROLLBACK_BUNDLE: 2d6ebf7a47c3c6df0c0d8a971bc91727759e08925dbb0c59f79211d549528caf
+      C3_ASSIST_ROLLBACK_BUNDLE: 21ff074000836a226f277ca8b87feae234ea061dbbde7016a19c3f289d9ce9c6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: node .github/scripts/task_ai_abc_c3_final_gate.mjs
