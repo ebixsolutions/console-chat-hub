@@ -1,3 +1,4 @@
+# Materialized C3 recall source verification trigger.
 name: AI ABC C3 Final Gate
 
 on:
