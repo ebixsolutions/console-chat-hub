@@ -1,4 +1,6 @@
--- AI-ABC-C2: atomic, source-bound handoff package and conservative AI closure.
+-- AI-ABC-C2 Director closure: atomic, source-bound handoff package and conservative AI closure.
+-- Forward-only replacement for the fully rolled-back Supervisor attempts recorded
+-- in production migration history. Current pre-C2 runtime has zero C2 DB objects.
 -- Rollback: DROP TRIGGER IF EXISTS c2_handoff_package_before_insert ON public.handoff_event;
 -- DROP FUNCTION IF EXISTS public.c2_populate_handoff_package_tg();
 -- DROP FUNCTION IF EXISTS public.c2_commit_closure_tx(uuid,uuid,uuid,bigint,text,jsonb);

@@ -83,3 +83,30 @@ Deno.test("C2 integration stale retry fails then fresh retry succeeds", () => {
   );
   assert(!stale.ok&&fresh.ok,"retry contract invalid");
 });
+
+Deno.test("C2 reconciles additively with authoritative agent-assist v34", async () => {
+  const source=await Deno.readTextFile(
+    new URL("../agent-assist/index.ts",import.meta.url),
+  );
+  for(const marker of [
+    "resolveConversationScope",
+    "applyCompanyScope",
+    "fetchKBRag",
+    "selectCanonicalGrounding",
+    "buildCanonicalAssistRetrievalQuery",
+    "buildWarmHandoffPackage",
+    "callAssistModel",
+    '"translate"',
+    '"grammar"',
+    '"suggest_reply"',
+    '"knowledge_helper"',
+    '"check_policy"',
+    '"handoff_context"',
+  ])assert(source.includes(marker),`agent-assist v34 behavior missing: ${marker}`);
+  const canonical=source.indexOf("parsePersistedC2Handoff(persistedEvent?.ai_summary)");
+  const fallback=source.indexOf('buildWarmHandoffPackage(history,"takeover")');
+  assert(canonical>=0&&fallback>canonical,
+    "persisted C2 truth must outrank derived warm-handoff presentation");
+  assert(source.includes("persisted.structured_package.company_id===conv.company_id"),
+    "persisted C2 tenant binding missing");
+});

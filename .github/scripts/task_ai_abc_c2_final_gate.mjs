@@ -7,6 +7,7 @@ const must=(value,message)=>{if(!value)throw new Error(message);};
 const read=(file)=>fs.readFileSync(file,"utf8");
 const sha=(file)=>crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 const run=(cmd,args,env={})=>execFileSync(cmd,args,{stdio:"inherit",env:{...process.env,...env}});
+const denoNodeModulesMode=process.env.C2_DENO_NODE_MODULES_MODE==="manual"?"manual":"auto";
 
 const files={
   contract:"supabase/functions/_shared/transaction-closure-handoff.ts",
@@ -14,12 +15,22 @@ const files={
   integrationTest:"supabase/functions/_shared/transaction-closure-handoff.integration.test.ts",
   runtime:"supabase/functions/generate-reply/index.ts",
   humanReadback:"supabase/functions/agent-assist/index.ts",
-  atomicMigration:"supabase/migrations/20260914150000_ai_abc_c2_closure_handoff.sql",
+  typecheckConfig:"supabase/functions/deno.c2-check.json",
+  atomicMigration:"supabase/migrations/20260915000000_ai_abc_c2_director_closure_handoff.sql",
   gate:".github/scripts/task_ai_abc_c2_final_gate.mjs",
 };
 for(const file of Object.values(files))must(fs.existsSync(file)&&fs.statSync(file).size>0,`missing_or_empty:${file}`);
 
 const contract=read(files.contract),runtime=read(files.runtime),readback=read(files.humanReadback),migration=read(files.atomicMigration);
+const agentAssistV34SourceSha256="88b1df2f24cf6fa2b7bbcd4d35b787e38c1835e40136679bff563fe7f770996e";
+const mainAgentAssist=execFileSync("git",["show","origin/main:supabase/functions/agent-assist/index.ts"]);
+must(crypto.createHash("sha256").update(mainAgentAssist).digest("hex")===agentAssistV34SourceSha256,
+  "agent_assist_v34_authoritative_main_baseline_changed");
+const agentAssistNumstat=execFileSync("git",[
+  "diff","--numstat","origin/main...HEAD","--","supabase/functions/agent-assist/index.ts",
+],{encoding:"utf8"}).trim();
+must(agentAssistNumstat==="26\t0\tsupabase/functions/agent-assist/index.ts",
+  `agent_assist_v34_reconciliation_not_additive:${agentAssistNumstat}`);
 for(const marker of [
   "C2_HANDOFF_SCHEMA_VERSION","C2ClosureState","WAITING_FOR_CUSTOMER","WAITING_FOR_HUMAN",
   "HANDOFF_REQUIRED","TRANSACTION_PENDING","RESOLVED","latest_corrections","active_entities",
@@ -50,6 +61,15 @@ must(!/ALTER\s+TABLE\s+public\.handoff_event|CREATE\s+POLICY|DROP\s+POLICY/i.tes
   "handoff_rls_or_policy_change_forbidden");
 for(const marker of ["parsePersistedC2Handoff","persisted_c2","handoff_package","handoff_summary"])
   must(readback.includes(marker),`c2_readback_missing:${marker}`);
+for(const marker of [
+  "resolveConversationScope","applyCompanyScope","fetchKBRag","selectCanonicalGrounding",
+  "buildCanonicalAssistRetrievalQuery","buildWarmHandoffPackage","callAssistModel",
+  '"translate"','"grammar"','"suggest_reply"','"knowledge_helper"','"check_policy"','"handoff_context"',
+])must(readback.includes(marker),`agent_assist_v34_behavior_missing:${marker}`);
+must(readback.indexOf("parsePersistedC2Handoff(persistedEvent?.ai_summary)") <
+  readback.indexOf('buildWarmHandoffPackage(history,"takeover")'),
+  "c2_package_must_precede_derived_warm_handoff");
+must(migration.includes("AI-ABC-C2 Director closure"),"director_migration_marker_missing");
 
 must((read(files.unitTest).match(/Deno\.test\(/g)??[]).length>=30,"c2_deterministic_matrix_missing");
 must((read(files.integrationTest).match(/Deno\.test\(/g)??[]).length>=2,"c2_integration_missing");
@@ -95,14 +115,16 @@ for(const file of [
 run("git",["diff","--check","origin/main...HEAD"]);
 run("npx",["--yes","deno","test","--allow-env","--allow-read","--node-modules-dir=manual",
   files.unitTest,files.integrationTest]);
-run("npx",["--yes","deno","check","--node-modules-dir=auto","--no-check=remote",
-  "--config","supabase/functions/deno.json",files.runtime,files.humanReadback]);
+run("npx",["--yes","deno","check",`--node-modules-dir=${denoNodeModulesMode}`,"--no-check=remote",
+  "--config",files.typecheckConfig,files.runtime,files.humanReadback]);
 run("npx",["eslint","--rule","prettier/prettier: off","--rule","@typescript-eslint/no-explicit-any: off",
   files.contract,files.unitTest,files.integrationTest,files.runtime,files.humanReadback,files.gate]);
 run("npm",["run","build"]);
 
 must(process.env.C2_LIVE_READ_ONLY_VALIDATION==="PASS","STOP:C2_LIVE_READ_ONLY_VALIDATION_NOT_PROVIDED");
 must(process.env.C2_RBAC_READ_ONLY_VALIDATION==="PASS","STOP:C2_RBAC_READ_ONLY_VALIDATION_NOT_PROVIDED");
+must(process.env.C2_AGENT_ASSIST_V34_READBACK==="PASS","STOP:C2_AGENT_ASSIST_V34_READBACK_NOT_PROVIDED");
+must(process.env.C2_MIGRATION_HISTORY_VALIDATION==="PASS","STOP:C2_MIGRATION_HISTORY_VALIDATION_NOT_PROVIDED");
 const rollbackHash=(process.env.C2_ROLLBACK_SOURCE_HASH??"").trim();
 must(/^[a-f0-9]{64}$/.test(rollbackHash),"STOP:C2_ROLLBACK_SOURCE_HASH_NOT_PROVIDED");
 const phase=process.env.C2_GATE_PHASE==="production"?"production":"preproduction";
@@ -125,7 +147,10 @@ console.log(JSON.stringify({
     takeover_suppression:true,explicit_return_to_ai_preserved:true,no_fabricated_facts:true,
     no_stale_citation:true,b2_preserved:true,frozen_a_b_c1_integrity:true,
     deterministic_tests:true,integration_tests:true,typecheck:true,lint:true,build:true,
-    live_read_only_validation:true,rollback_readiness:{live_bundle_sha256:rollbackHash},
+    live_read_only_validation:true,agent_assist_v34_reconciled:true,
+    migration_history_compatible:true,
+    rollback_readiness:{generate_reply_live_bundle_sha256:rollbackHash,
+      agent_assist_v34_bundle_sha256:"a19379b86ed25ce316b6a08296073cdc9536176d865f083fa6a956ab760f5124"},
     production_smoke:phase==="preproduction"?"AUTHORIZATION_PENDING":true,
   },
 },null,2));
