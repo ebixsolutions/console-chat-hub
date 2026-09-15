@@ -51,7 +51,11 @@ jobs:
             const anchor='for(const [p,s] of Object.entries(newFiles))';
             if(s.split(anchor).length!==2)throw new Error('compiler_patch_boundary');
             const patch=`newFiles[dir+'conversation-recall.ts']=newFiles[dir+'conversation-recall.ts'].replace('if (prior.stop?.reason === "CURRENT_KB_REQUIRED")','if (prior.stop && !prior.stop.handled && prior.stop.reason === "CURRENT_KB_REQUIRED")');\n`;
-            fs.writeFileSync(p,s.replace(anchor,patch+anchor));
+            let patched=s.replace(anchor,patch+anchor);
+            const rowGuard='if (commerceState) {\n        _c3CommerceSnapshot';
+            if(patched.split(rowGuard).length!==2)throw new Error('snapshot_row_guard_boundary');
+            patched=patched.replace(rowGuard,'if (commerceState && commerceRow) {\n        _c3CommerceSnapshot');
+            fs.writeFileSync(p,patched);
           }
           NODE
           if test -f .github/scripts/task_ai_abc_c3_recall_cutover.mjs; then
