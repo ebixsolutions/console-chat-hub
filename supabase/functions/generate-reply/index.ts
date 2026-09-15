@@ -101,6 +101,10 @@ import {
   buildConversationClosureReply,
   classifyConversationClosure,
 } from "../_shared/conversation-closure.ts";
+import {
+  buildC2PendingClosureReply,
+  decideTransactionClosure,
+} from "../_shared/transaction-closure-handoff.ts";
 import { buildRealtimeR3SentimentSignals } from "../_shared/runtime-signal-lifecycle.ts";
 import {
   buildEmotionReplyStrategyContext,
@@ -2048,26 +2052,36 @@ async function handleConversationClosureIfNeeded(
   latestMessage: string,
 ): Promise<Response | null> {
   const classification = classifyConversationClosure(latestMessage);
-  const content = buildConversationClosureReply(classification);
-  if (!content || classification.kind === "none") return null;
+  if (classification.kind === "none") return null;
   const { data: conversation } = await supabaseAdmin.from("conversations")
-    .select("status, assigned_agent_id").eq("id", conversation_id)
+    .select("status, assigned_agent_id, company_id").eq("id", conversation_id)
     .maybeSingle();
   if (
-    !conversation || conversation.status === "resolved" ||
+    !conversation || !conversation.company_id ||
+    conversation.status === "resolved" ||
     isHumanControlState(
       String(conversation.status ?? ""),
       conversation.assigned_agent_id ?? null,
     )
   ) return null;
-  const { data: prior } = await supabaseAdmin.from("messages").select(
-    "role, metadata, content, created_at",
-  ).eq("conversation_id", conversation_id).eq("is_recalled", false).neq(
-    "content",
-    "__THINKING__",
-  ).order("created_at", { ascending: false }).limit(4);
+
+  const [{ data: prior }, { data: commerce }] = await Promise.all([
+    supabaseAdmin.from("messages").select(
+      "role, metadata, content, created_at",
+    ).eq("conversation_id", conversation_id).eq("is_recalled", false).neq(
+      "content",
+      "__THINKING__",
+    ).order("created_at", { ascending: false }).limit(4),
+    supabaseAdmin.from("conversation_commerce_state").select(
+      "company_id, revision, source_message_id, state",
+    ).eq("conversation_id", conversation_id).eq(
+      "company_id",
+      conversation.company_id,
+    ).maybeSingle(),
+  ]);
   const previousAssistant = (prior ?? []).find((r: any) =>
-    r.role === "assistant" && String(r.content ?? "") !== content
+    r.role === "assistant" &&
+    String(r.content ?? "") !== buildConversationClosureReply(classification)
   );
   const pm = previousAssistant?.metadata &&
       typeof previousAssistant.metadata === "object"
@@ -2081,49 +2095,120 @@ async function handleConversationClosureIfNeeded(
       "system_error_handoff",
     ].includes(String(pm?.response_route ?? ""))
   ) return null;
+
+  const closure = decideTransactionClosure({
+    utterance_kind: classification.kind,
+    commerce_state: commerce?.state ?? null,
+    handoff_active: false,
+    handoff_required: false,
+    professional_confirmation_required: false,
+  });
+  const content = closure.may_resolve
+    ? buildConversationClosureReply(classification)
+    : classification.kind === "closure_candidate"
+    ? buildConversationClosureReply(classification)
+    : buildC2PendingClosureReply(classification.language, closure.blockers);
+  if (!content) return null;
+
+  const metadata = {
+    response_route: closure.may_resolve
+      ? "c2_transaction_closure"
+      : "conversation_closure",
+    closure_state: closure.state,
+    closure_reason: closure.reason,
+    closure_blockers: closure.blockers,
+    commerce_state_revision: typeof commerce?.revision === "number"
+      ? commerce.revision
+      : null,
+    feedback_eligible_candidate: closure.may_resolve,
+    handoff_required: false,
+  };
+
+  if (closure.may_resolve) {
+    if (!source_message_id) return null;
+    const b2 = await executeB2RpcPersistence(
+      supabaseAdmin,
+      {
+        conversation_id,
+        source_message_id,
+        proposed_response: content,
+        persistence_kind: "ai_reply",
+        metadata,
+        expected_commerce_state_revision: metadata.commerce_state_revision,
+      },
+      async () =>
+        await supabaseAdmin.rpc("c2_commit_closure_tx", {
+          p_conversation_id: conversation_id,
+          p_company_id: conversation.company_id,
+          p_source_message_id: source_message_id,
+          p_expected_commerce_revision: metadata.commerce_state_revision,
+          p_content: content,
+          p_metadata: metadata,
+        }),
+    );
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+    if (!b2.committed) {
+      return b2PreventedResponse(b2.decision, {
+        response_route: "c2_transaction_closure",
+        closure_state: closure.state,
+      });
+    }
+    const { data, error } = b2.value;
+    if (error) {
+      return new Response(
+        JSON.stringify({ success: false, error: "c2_closure_rpc_error" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    const result = String(data?.result ?? "unknown");
+    if (result === "success" || result === "idempotent") {
+      return new Response(
+        JSON.stringify({
+          success: true,
+          response_route: "c2_transaction_closure",
+          closure_state: "RESOLVED",
+          idempotent: result === "idempotent",
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    if (["human_control", "resolved", "superseded_source", "transaction_pending", "handoff_pending"].includes(result)) {
+      return new Response(
+        JSON.stringify({ success: true, skipped: result }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    return new Response(
+      JSON.stringify({ success: false, error: `c2_closure_${result}` }),
+      { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+
   const committed = await commitAiReplyWithControlGate(
     supabaseAdmin,
     conversation_id,
     source_message_id,
     content,
-    {
-      response_route: "conversation_closure",
-      closure_state: classification.kind === "closure_candidate"
-        ? "awaiting_more_help"
-        : "completed",
-      closure_reason: classification.reason,
-      feedback_eligible_candidate: classification.kind !== "closure_candidate",
-      handoff_required: false,
-    },
+    metadata,
   );
   await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
   if (!committed.ok) {
-    if (
-      ["human_control", "resolved", "superseded_source"].includes(
-        committed.result,
-      )
-    ) {
+    if (["human_control", "resolved", "superseded_source"].includes(committed.result)) {
       return new Response(
         JSON.stringify({ success: true, skipped: committed.result }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
     return new Response(
-      JSON.stringify({
-        success: false,
-        error: `conversation_closure_${committed.result}`,
-      }),
-      {
-        status: 409,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      },
+      JSON.stringify({ success: false, error: `conversation_closure_${committed.result}` }),
+      { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   }
   return new Response(
     JSON.stringify({
       success: true,
       response_route: "conversation_closure",
-      closure_state: classification.kind,
+      closure_state: closure.state,
     }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } },
   );

@@ -1,0 +1,44 @@
+name: AI ABC C2 Final Gate
+
+on:
+  push:
+    branches:
+      - director/ai-abc-c2-transaction-closure-handoff
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'supabase/functions/_shared/transaction-closure-handoff.ts'
+      - 'supabase/functions/_shared/transaction-closure-handoff.test.ts'
+      - 'supabase/functions/_shared/transaction-closure-handoff.integration.test.ts'
+      - 'supabase/functions/generate-reply/index.ts'
+      - 'supabase/functions/agent-assist/index.ts'
+      - 'supabase/functions/deno.c2-check.json'
+      - 'supabase/migrations/20260915000000_ai_abc_c2_director_closure_handoff.sql'
+      - '.github/scripts/task_ai_abc_c2_final_gate.mjs'
+      - '.github/workflows/task-ai-abc-c2-final-gate.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  c2-preproduction:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      C2_GATE_PHASE: preproduction
+      C2_LIVE_READ_ONLY_VALIDATION: PASS
+      C2_RBAC_READ_ONLY_VALIDATION: PASS
+      C2_AGENT_ASSIST_V34_READBACK: PASS
+      C2_MIGRATION_HISTORY_VALIDATION: PASS
+      C2_ROLLBACK_SOURCE_HASH: 04f92959ae7190820d95227c05d74a869c20953f86cc1e535e238bb81bc542a0
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: node .github/scripts/task_ai_abc_c2_final_gate.mjs
