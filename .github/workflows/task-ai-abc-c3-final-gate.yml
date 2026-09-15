@@ -60,7 +60,7 @@ jobs:
                 if(lines[i].includes('return v.replace(/[') && lines[i].includes('u001f')) sanitizerIndexes.push(i);
               }
               if(sanitizerIndexes.length!==1)throw new Error('recall_control_sanitizer_boundary');
-              lines[sanitizerIndexes[0]]='    return [...v].map((char) => char.charCodeAt(0) < 32 ? " " : char).join("").trim().slice(0, 1200);';
+              lines[sanitizerIndexes[0]]='  if (typeof v === "string") return [...v].map((char) => char.charCodeAt(0) < 32 ? " " : char).join("").trim().slice(0, 1200);';
               newFiles[recallPath]=lines.join('\\n');
             }
           `;
