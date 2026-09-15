@@ -73,8 +73,8 @@ import {
 } from "../_shared/conversation-runtime-state.ts";
 import { classifyCanonicalConversationTurn } from "../_shared/conversation-semantic-contract.ts";
 import {
-  deriveCurrentGroundingTarget,
   type CurrentGroundingTarget,
+  deriveCurrentGroundingTarget,
   selectCanonicalGrounding,
 } from "../_shared/canonical-grounding.ts";
 import type { ReferenceAuthorityDecision } from "../_shared/commerce-state-authority.ts";
@@ -120,16 +120,23 @@ import { interpretCommerceSemantics } from "../_shared/commerce-semantic-interpr
 import type { CommerceSemanticFrame } from "../_shared/commerce-semantic-frame.ts";
 import {
   buildBoundedConversationContext,
+  type CanonicalConversationMemory,
   composeBoundedGenerationEnvelope,
+  type MemoryHistoryRow,
   refreshConversationLongMemory,
   resolveStructuredMemoryResponse,
-  type CanonicalConversationMemory,
-  type MemoryHistoryRow,
 } from "../_shared/conversation-long-memory.ts";
 import {
-  isConversationCommerceState,
   type ConversationCommerceState,
+  isConversationCommerceState,
 } from "../_shared/commerce-state-contract.ts";
+import {
+  historicalQuoteValidityReply,
+  isRecoverableTerminalError,
+  isRecoverableTerminalStatus,
+  runWithTerminalDeadline,
+  terminalRecoveryReply,
+} from "../_shared/generation-terminal-guard.ts";
 import {
   type B2DatabaseClient,
   type B2Decision,
@@ -2006,6 +2013,8 @@ Deno.serve(async (req) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  let parsedConversationId: string | null = null;
+  let parsedSourceMessageId: string | null = null;
   try {
     const body = await req.json();
     const { conversation_id, source_message_id } = body ?? {};
@@ -2018,6 +2027,10 @@ Deno.serve(async (req) => {
         },
       );
     }
+    parsedConversationId = String(conversation_id);
+    parsedSourceMessageId = typeof source_message_id === "string"
+      ? source_message_id
+      : null;
 
     const ENABLE_KB = Deno.env.get("ENABLE_KB_ADAPTER") !== "false";
     const ENABLE_COACH = Deno.env.get("ENABLE_COACH_PROMPT_ADAPTER") === "true";
@@ -2030,32 +2043,190 @@ Deno.serve(async (req) => {
       Deno.env.get("ESC_SHADOW_MODE") === "true" ||
       Deno.env.get("ESC_ENABLE_REQUIRED_RULES_LIVE") === "true";
 
-    if (
-      !ENABLE_KB &&
-      !ENABLE_COACH &&
-      !ENABLE_C360 &&
-      !ENABLE_TOOL_EXEC &&
-      !ENABLE_PR5_ESCALATION_RUNTIME
-    ) {
-      return await legacyGenerateReply(
-        conversation_id,
-        source_message_id ?? null,
-      );
-    }
+    const result = await runWithTerminalDeadline(
+      async (requestSignal) => {
+        if (
+          !ENABLE_KB &&
+          !ENABLE_COACH &&
+          !ENABLE_C360 &&
+          !ENABLE_TOOL_EXEC &&
+          !ENABLE_PR5_ESCALATION_RUNTIME
+        ) {
+          return await legacyGenerateReply(
+            parsedConversationId!,
+            parsedSourceMessageId,
+            requestSignal,
+          );
+        }
 
-    return await orchestrationGenerateReply(
-      conversation_id,
-      { ENABLE_KB, ENABLE_COACH, ENABLE_C360, ENABLE_TOOL_EXEC },
-      source_message_id ?? null,
+        return await orchestrationGenerateReply(
+          parsedConversationId!,
+          { ENABLE_KB, ENABLE_COACH, ENABLE_C360, ENABLE_TOOL_EXEC },
+          parsedSourceMessageId,
+          requestSignal,
+        );
+      },
+      async () =>
+        await persistTerminalRecovery(
+          parsedConversationId!,
+          parsedSourceMessageId,
+          "generation_work_budget_exhausted",
+        ),
     );
+    return result.kind === "deadline"
+      ? result.value
+      : await recoverTerminalResponseIfNeeded(
+        result.value,
+        parsedConversationId,
+        parsedSourceMessageId,
+      );
   } catch (error) {
     console.error("[generate-reply] unexpected error:", error);
+    if (parsedConversationId && parsedSourceMessageId) {
+      return await persistTerminalRecovery(
+        parsedConversationId,
+        parsedSourceMessageId,
+        error instanceof Error ? error.name : "unexpected_error",
+      );
+    }
     return new Response(JSON.stringify({ error: "Internal server error" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 });
+
+async function responseErrorCode(response: Response): Promise<string | null> {
+  try {
+    const payload = await response.clone().json();
+    if (!payload || typeof payload !== "object") return null;
+    const value = (payload as Record<string, unknown>).error;
+    return typeof value === "string" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+async function recoverTerminalResponseIfNeeded(
+  response: Response,
+  conversationId: string,
+  sourceMessageId: string | null,
+): Promise<Response> {
+  const errorCode = await responseErrorCode(response);
+  if (
+    !(isRecoverableTerminalStatus(response.status) &&
+      isRecoverableTerminalError(errorCode)) &&
+    !(response.status === 409 && isRecoverableTerminalError(errorCode))
+  ) return response;
+  return await persistTerminalRecovery(
+    conversationId,
+    sourceMessageId,
+    errorCode ?? `http_${response.status}`,
+    response,
+  );
+}
+
+async function persistTerminalRecovery(
+  conversationId: string,
+  sourceMessageId: string | null,
+  reason: string,
+  originalResponse?: Response,
+): Promise<Response> {
+  if (!sourceMessageId) {
+    return originalResponse ?? new Response(
+      JSON.stringify({
+        success: false,
+        error: "terminal_recovery_source_required",
+      }),
+      {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
+  }
+  try {
+    const admin = createClient(
+      Deno.env.get("SUPABASE_URL") ?? "",
+      getSupabaseAdminKey(),
+    );
+    const source = await loadSourceVisitorMessage(
+      admin,
+      conversationId,
+      sourceMessageId,
+    );
+    if (!source.ok) {
+      await cleanupThinking(admin, conversationId, sourceMessageId);
+      return originalResponse ?? sourceMessageErrorResponse(source);
+    }
+    const language = detectVisitorLanguage(source.message.content);
+    const reply = terminalRecoveryReply(language);
+    const committed = await commitAiReplyWithControlGate(
+      admin,
+      conversationId,
+      sourceMessageId,
+      reply,
+      {
+        response_route: "terminal_failure_recovery",
+        handoff_required: false,
+        factual_grounding_required: false,
+        degraded: true,
+        source_error_code: reason.slice(0, 120),
+      },
+    );
+    await cleanupThinking(admin, conversationId, sourceMessageId);
+    if (committed.ok) {
+      return new Response(
+        JSON.stringify({
+          success: true,
+          reply,
+          degraded: true,
+          response_route: "terminal_failure_recovery",
+          idempotent: committed.idempotent,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    if (
+      [
+        "source_already_replied",
+        "human_control",
+        "resolved",
+        "superseded_source",
+      ]
+        .includes(committed.result)
+    ) {
+      return new Response(
+        JSON.stringify({ success: true, skipped: committed.result }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    return originalResponse ?? new Response(
+      JSON.stringify({
+        success: false,
+        error: `terminal_recovery_${committed.result}`,
+      }),
+      {
+        status: 503,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
+  } catch (error) {
+    console.error("[generate-reply] terminal recovery failed closed:", {
+      conversation_id: conversationId,
+      reason: error instanceof Error ? error.name : "unknown_error",
+    });
+    return originalResponse ?? new Response(
+      JSON.stringify({
+        success: false,
+        error: "terminal_recovery_unavailable",
+      }),
+      {
+        status: 503,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
+  }
+}
 
 async function handleConversationClosureIfNeeded(
   supabaseAdmin: SupabaseAdminClient,
@@ -2169,7 +2340,10 @@ async function handleConversationClosureIfNeeded(
     if (error) {
       return new Response(
         JSON.stringify({ success: false, error: "c2_closure_rpc_error" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
       );
     }
     const result = String(data?.result ?? "unknown");
@@ -2184,7 +2358,15 @@ async function handleConversationClosureIfNeeded(
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
-    if (["human_control", "resolved", "superseded_source", "transaction_pending", "handoff_pending"].includes(result)) {
+    if (
+      [
+        "human_control",
+        "resolved",
+        "superseded_source",
+        "transaction_pending",
+        "handoff_pending",
+      ].includes(result)
+    ) {
       return new Response(
         JSON.stringify({ success: true, skipped: result }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
@@ -2192,7 +2374,10 @@ async function handleConversationClosureIfNeeded(
     }
     return new Response(
       JSON.stringify({ success: false, error: `c2_closure_${result}` }),
-      { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      {
+        status: 409,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
     );
   }
 
@@ -2205,15 +2390,25 @@ async function handleConversationClosureIfNeeded(
   );
   await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
   if (!committed.ok) {
-    if (["human_control", "resolved", "superseded_source"].includes(committed.result)) {
+    if (
+      ["human_control", "resolved", "superseded_source"].includes(
+        committed.result,
+      )
+    ) {
       return new Response(
         JSON.stringify({ success: true, skipped: committed.result }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
     return new Response(
-      JSON.stringify({ success: false, error: `conversation_closure_${committed.result}` }),
-      { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      JSON.stringify({
+        success: false,
+        error: `conversation_closure_${committed.result}`,
+      }),
+      {
+        status: 409,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
     );
   }
   return new Response(
@@ -2229,6 +2424,7 @@ async function handleConversationClosureIfNeeded(
 async function legacyGenerateReply(
   conversation_id: string,
   source_message_id: string | null,
+  requestSignal?: AbortSignal,
 ): Promise<Response> {
   const supabaseAdmin = createClient(
     Deno.env.get("SUPABASE_URL") ?? "",
@@ -2532,6 +2728,7 @@ ${legacyReturnToAiGuard}`;
     conversationId: conversation_id,
     tag: "generate-reply-legacy",
     responseFormat: "text",
+    signal: requestSignal,
   });
 
   if (!llm.ok) {
@@ -3564,6 +3761,7 @@ async function orchestrationGenerateReply(
   conversation_id: string,
   flags: FlagSet,
   source_message_id: string | null,
+  requestSignal?: AbortSignal,
 ): Promise<Response> {
   const supabaseAdmin = createClient(
     Deno.env.get("SUPABASE_URL") ?? "",
@@ -3774,6 +3972,7 @@ async function orchestrationGenerateReply(
           role: String((row as { role?: unknown }).role ?? ""),
           content: String((row as { content?: unknown }).content ?? ""),
         })),
+        signal: requestSignal,
       });
       _a3SemanticFrame = semanticResult.frame;
     } catch (error) {
@@ -3827,18 +4026,19 @@ async function orchestrationGenerateReply(
   // authority and cannot bypass the existing B2 response-persistence gate.
   if (_criticalE2ExpectedTenantId) {
     try {
-      const [{ data: persistedMemory }, { data: commerceRow }] = await Promise.all([
-        supabaseAdmin.from("conversation_memory_state")
-          .select("source_message_id")
-          .eq("conversation_id", conversation_id)
-          .eq("company_id", _criticalE2ExpectedTenantId)
-          .maybeSingle(),
-        supabaseAdmin.from("conversation_commerce_state")
-          .select("revision,state")
-          .eq("conversation_id", conversation_id)
-          .eq("company_id", _criticalE2ExpectedTenantId)
-          .maybeSingle(),
-      ]);
+      const [{ data: persistedMemory }, { data: commerceRow }] = await Promise
+        .all([
+          supabaseAdmin.from("conversation_memory_state")
+            .select("source_message_id")
+            .eq("conversation_id", conversation_id)
+            .eq("company_id", _criticalE2ExpectedTenantId)
+            .maybeSingle(),
+          supabaseAdmin.from("conversation_commerce_state")
+            .select("revision,state")
+            .eq("conversation_id", conversation_id)
+            .eq("company_id", _criticalE2ExpectedTenantId)
+            .maybeSingle(),
+        ]);
       let memoryHistory = (_pr5HistoryRows ?? []) as MemoryHistoryRow[];
       if (!persistedMemory && (_pr5VisitorTurnCount ?? 0) > 50) {
         const { data: rebuildRows } = await supabaseAdmin.from("messages")
@@ -3853,15 +4053,23 @@ async function orchestrationGenerateReply(
         memoryHistory = (rebuildRows ?? memoryHistory) as MemoryHistoryRow[];
       }
       const commerceState: ConversationCommerceState | null =
-        isConversationCommerceState(commerceRow?.state) ? commerceRow.state : null;
+        isConversationCommerceState(commerceRow?.state)
+          ? commerceRow.state
+          : null;
       const memoryOutcome = await refreshConversationLongMemory(
-        supabaseAdmin as unknown as Parameters<typeof refreshConversationLongMemory>[0],
+        supabaseAdmin as unknown as Parameters<
+          typeof refreshConversationLongMemory
+        >[0],
         {
           conversation_id,
           company_id: _criticalE2ExpectedTenantId,
           source_message_id: _h1SourceMessageId,
-          source_created_at: String(sourceVisitorMessage.created_at ?? new Date().toISOString()),
-          commerce_state_revision: commerceRow?.revision == null ? null : Number(commerceRow.revision),
+          source_created_at: String(
+            sourceVisitorMessage.created_at ?? new Date().toISOString(),
+          ),
+          commerce_state_revision: commerceRow?.revision == null
+            ? null
+            : Number(commerceRow.revision),
           commerce_state: commerceState,
           newest_first: memoryHistory,
           visitor_turn_count: _pr5VisitorTurnCount ?? 0,
@@ -3887,7 +4095,10 @@ async function orchestrationGenerateReply(
     }
   }
   if (_a3Commerce && _a3Commerce.reply) {
-    const commerceReply = _a3Commerce.reply;
+    const commerceReply = _a3Commerce.reason ===
+        "previous_quote_not_authoritative_for_current_price"
+      ? historicalQuoteValidityReply(_visitorLang)
+      : _a3Commerce.reply;
     const commerceCommit = await commitAiReplyWithControlGate(
       supabaseAdmin,
       conversation_id,
@@ -4526,7 +4737,12 @@ async function orchestrationGenerateReply(
         retrieval_quality: "failed",
         chunks: [],
       }
-      : await callKBAdapter(conversation_id, userQuery, _kbTenantResult.scope);
+      : await callKBAdapter(
+        conversation_id,
+        userQuery,
+        _kbTenantResult.scope,
+        requestSignal,
+      );
     if (!ragResult || !ragResult.success) {
       if (_deferR1ForE1) {
         const r1Response = await persistExplicitR1IfRequested(
@@ -4644,8 +4860,7 @@ async function orchestrationGenerateReply(
     ].filter((value): value is string =>
       typeof value === "string" && value.trim().length > 0
     );
-    const _c1TargetChanged =
-      _canonicalTurn.topic_action === "SWITCH" ||
+    const _c1TargetChanged = _canonicalTurn.topic_action === "SWITCH" ||
       _canonicalTurn.topic_action === "CORRECT" ||
       _a3SemanticFrame?.customer_correction === true;
     _c1CurrentTarget = deriveCurrentGroundingTarget(
@@ -4991,6 +5206,7 @@ async function orchestrationGenerateReply(
             source_message_id ?? "none"
           }`,
         },
+        { signal: requestSignal },
       );
     }
   }
@@ -5229,6 +5445,7 @@ async function orchestrationGenerateReply(
     conversationId: conversation_id,
     tag: "generate-reply-orchestration",
     responseFormat: "text",
+    signal: requestSignal,
   });
 
   // A verifier rejection on a prior-grounded transform is not yet proof of an
@@ -5249,6 +5466,7 @@ async function orchestrationGenerateReply(
       conversationId: conversation_id,
       tag: "generate-reply-orchestration-transform-retry",
       responseFormat: "text",
+      signal: requestSignal,
     });
   }
 
@@ -5835,6 +6053,7 @@ async function callKBAdapter(
   _conversation_id: string,
   userMessage: string,
   scope: KBResolvedScope,
+  signal?: AbortSignal,
 ): Promise<{
   success: boolean;
   no_answer?: boolean;
@@ -5871,7 +6090,7 @@ async function callKBAdapter(
     { query: userMessage, top_k: 5 },
     scope,
     endpointCfg,
-    { timeoutMs: 15000 },
+    { timeoutMs: 15000, signal },
   );
   if (!result.success) {
     return { success: false, no_answer: true, retrieval_quality: "failed" };

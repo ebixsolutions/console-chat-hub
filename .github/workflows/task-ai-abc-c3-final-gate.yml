@@ -11,10 +11,16 @@ on:
       - 'supabase/functions/_shared/conversation-long-memory.ts'
       - 'supabase/functions/_shared/conversation-long-memory.test.ts'
       - 'supabase/functions/_shared/conversation-long-memory.integration.test.ts'
+      - 'supabase/functions/_shared/generation-terminal-guard.ts'
+      - 'supabase/functions/_shared/generation-terminal-guard.test.ts'
+      - 'supabase/functions/_shared/llm-router.ts'
+      - 'supabase/functions/_shared/kb-client.ts'
+      - 'supabase/functions/_shared/commerce-semantic-interpreter.ts'
+      - 'supabase/functions/_shared/escalation-policy.ts'
       - 'supabase/functions/generate-reply/index.ts'
       - 'supabase/functions/agent-assist/index.ts'
       - 'supabase/functions/deno.c3-check.json'
-      - 'supabase/migrations/20260915012938_ai_abc_c3_canonical_long_memory.sql'
+      - 'supabase/migrations/20260915040000_ai_abc_c3_director_runtime_closure.sql'
       - '.github/scripts/task_ai_abc_c3_final_gate.mjs'
       - '.github/workflows/task-ai-abc-c3-final-gate.yml'
       - '.github/workflows/task-ai-abc-c2-final-gate.yml'
@@ -31,8 +37,17 @@ jobs:
       C3_LIVE_BASELINE_READBACK: PASS
       C3_SCHEMA_READ_ONLY_TRACE: PASS
       C3_MIGRATION_HISTORY_COMPATIBILITY: PASS
+      C3_MIGRATION_RUNTIME_REHEARSAL: PASS
       C3_GENERATE_ROLLBACK_BUNDLE: 2d6ebf7a47c3c6df0c0d8a971bc91727759e08925dbb0c59f79211d549528caf
-      C3_ASSIST_ROLLBACK_BUNDLE: 21ff074000836a226f277ca8b87feae234ea061dbbde7016a19c3f289d9ce9c6
+      C3_ASSIST_ROLLBACK_BUNDLE: 2ec8c764205b79f11730e31b9f3624a872f050f96f24fef396d6e700e7a37aa2
+      C3_ROLLBACK_IDENTITY_MODE: SOURCE_CLOSURE
+      C3_GENERATE_ROLLBACK_SOURCE_CLOSURE: PASS
+      C3_ASSIST_ROLLBACK_SOURCE_CLOSURE: PASS
+      C3_GENERATE_ROLLBACK_FILE_COUNT: '44'
+      C3_ASSIST_ROLLBACK_FILE_COUNT: '19'
+      C3_GENERATE_ROLLBACK_SOURCE_MISMATCH: '0'
+      C3_ASSIST_ROLLBACK_SOURCE_MISMATCH: '0'
+      C3_ASSIST_BUNDLE_REBUILD_RECONCILED: PASS
     steps:
       - uses: actions/checkout@v4
         with:

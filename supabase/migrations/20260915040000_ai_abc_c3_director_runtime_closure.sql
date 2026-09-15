@@ -1,4 +1,6 @@
 -- AI-ABC-C3 — tenant-bound, revisioned structured conversation memory.
+-- Forward closure version after the earlier C3 apply/rollback history; the
+-- prior 20260915012938 version is intentionally not replayed in production.
 -- The memory is a bounded projection. Canonical commerce state and current KB
 -- remain higher authority. Raw message history is retained unchanged.
 -- Exact rollback closure (execute in this order):
