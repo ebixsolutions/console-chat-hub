@@ -5056,6 +5056,59 @@ function buildConversationClosureReply(c) {
   return c.language === "en" ? "You're very welcome. Thank you for contacting us." : c.language === "zh-CN" ? "\u597D\u7684\uFF0C\u4E0D\u7528\u5BA2\u6C14\u3002\u8C22\u8C22\u4F60\u8054\u7EDC\u6211\u4EEC\uFF01" : "\u597D\u7684\uFF0C\u4E0D\u7528\u5BA2\u6C23\u3002\u8B1D\u8B1D\u4F60\u806F\u7D61\u6211\u5011\uFF01";
 }
 
+// supabase/functions/_shared/transaction-closure-handoff.ts
+var clean8 = (value, max = 500) => typeof value === "string" ? value.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max) : "";
+var unique2 = (values, max = 50) => [...new Set(values.map((value) => clean8(value, 300)).filter(Boolean))].slice(0, max);
+function transactionBlockers(state, options = {}) {
+  if (options.handoff_active) return ["handoff_active"];
+  if (options.professional_confirmation_required) return ["professional_confirmation_required"];
+  if (!state) return [];
+  const blockers = [...state.unresolved_items, ...state.installation.pending_checks];
+  const active = state.entities.filter(
+    (entity) => entity.status !== "cancelled" && entity.status !== "deferred"
+  );
+  if (active.some((entity) => entity.status === "tentative")) blockers.push("tentative_entity");
+  if (["draft", "pending_verification"].includes(state.conversion.quotation_status)) {
+    blockers.push("quotation_pending");
+  }
+  if (["draft", "pending_confirmation"].includes(state.conversion.order_status)) {
+    blockers.push("order_pending");
+  }
+  if (["pending_quote", "pending_payment"].includes(state.conversion.payment_status)) {
+    blockers.push("payment_pending");
+  }
+  if (state.installation.items.some((item) => item.status === "pending")) {
+    blockers.push("installation_pending");
+  }
+  if (clean8(state.conversion.next_best_action)) blockers.push("next_action_pending");
+  return unique2(blockers);
+}
+function decideTransactionClosure(input) {
+  if (input.handoff_required) {
+    return { state: "HANDOFF_REQUIRED", may_resolve: false, blockers: ["handoff_required"], reason: "deterministic_handoff_authority" };
+  }
+  if (input.handoff_active) {
+    return { state: "WAITING_FOR_HUMAN", may_resolve: false, blockers: ["handoff_active"], reason: "human_control_active" };
+  }
+  const blockers = transactionBlockers(input.commerce_state, input);
+  if (input.utterance_kind === "closure_candidate") {
+    return { state: "WAITING_FOR_CUSTOMER", may_resolve: false, blockers, reason: "acknowledgement_is_not_resolution" };
+  }
+  if (input.utterance_kind === "none") {
+    return { state: blockers.length ? "TRANSACTION_PENDING" : "OPEN", may_resolve: false, blockers, reason: "no_explicit_closure" };
+  }
+  if (blockers.length) {
+    return { state: "TRANSACTION_PENDING", may_resolve: false, blockers, reason: "canonical_requirements_remain" };
+  }
+  return { state: "RESOLVED", may_resolve: true, blockers: [], reason: "explicit_closure_and_no_canonical_blockers" };
+}
+function buildC2PendingClosureReply(language, blockers) {
+  const item = clean8(blockers[0], 180) || "the remaining requirement";
+  if (language === "en") return `Before we close this, ${item} is still pending. I can keep helping with that, or arrange the already-authorized human follow-up where applicable.`;
+  if (language === "zh-CN") return `\u7ED3\u675F\u5BF9\u8BDD\u524D\uFF0C\u4ECD\u9700\u5904\u7406\uFF1A${item}\u3002\u6211\u53EF\u4EE5\u7EE7\u7EED\u534F\u52A9\uFF0C\u6216\u6309\u73B0\u6709\u6388\u6743\u5B89\u6392\u4EBA\u5DE5\u8DDF\u8FDB\u3002`;
+  return `\u7D50\u675F\u5C0D\u8A71\u524D\uFF0C\u4ECD\u9700\u8655\u7406\uFF1A${item}\u3002\u6211\u53EF\u4EE5\u7E7C\u7E8C\u5354\u52A9\uFF0C\u6216\u6309\u73FE\u6709\u6388\u6B0A\u5B89\u6392\u771F\u4EBA\u8DDF\u9032\u3002`;
+}
+
 // supabase/functions/_shared/runtime-signal-lifecycle.ts
 var PROVIDER_VERSION = "current-turn-emotion-v2.0";
 var STRONG_ANGER = /(嬲|憤怒|愤怒|火大|離譜|离谱|垃圾|廢物|废物|荒謬|荒谬|angry|furious|irate|rage|ridiculous|unacceptable|bullshit)/i;
@@ -5257,11 +5310,11 @@ var MAX_UNRESOLVED = 100;
 function clone(value) {
   return structuredClone(value);
 }
-function clean8(value, max = 1200) {
+function clean9(value, max = 1200) {
   return typeof value === "string" ? value.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max) : "";
 }
 function uniq(values) {
-  return [...new Set(values.map((x) => clean8(x, 300)).filter(Boolean))];
+  return [...new Set(values.map((x) => clean9(x, 300)).filter(Boolean))];
 }
 function provenance(source_message_id, occurred_at) {
   return {
@@ -5526,7 +5579,7 @@ function explicitDeliveryPatch(text) {
   return Object.keys(patch).length ? patch : null;
 }
 function deriveCommerceEventsFromCustomerTurn(input) {
-  const text = clean8(input.text);
+  const text = clean9(input.text);
   if (!text || !input.source_message_id) return [];
   const p = provenance(input.source_message_id, input.occurred_at);
   const hints = input.entity_hints ?? [];
@@ -5574,7 +5627,7 @@ function deriveCommerceEventsFromCustomerTurn(input) {
 // supabase/functions/_shared/commerce-capability-runtime.ts
 var COUNT_TOKEN = "[\u4E00\u4E8C\u5169\u4E24\u4E09\u56DB\u4E94\u516D\u4E03\u516B\u4E5D\u5341]|\\d{1,4}";
 var GENERIC_UNIT = "\u4EF6|\u500B|\u4E2A|\u76D2|\u7BB1|\u5305|\u888B|\u6A3D|\u74F6|\u652F|\u679D|\u672C|\u518A|\u518C|\u5957|\u5C0D|\u5BF9|\u96D9|\u53CC|\u689D|\u6761|\u5F35|\u5F20|\u53F0|\u90E8|\u4EFD|\u4F4D|\u5E2D|\u9593|\u95F4|\u665A|\u6B21|\u5802|\u8AB2|\u8BFE|units?|pcs?|pieces?|items?|boxes?|bottles?|packs?|bags?|pairs?|sets?|seats?|nights?|sessions?|lessons?";
-function clean9(value, max = 1200) {
+function clean10(value, max = 1200) {
   return typeof value === "string" ? value.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max) : "";
 }
 function countValue(raw) {
@@ -5596,7 +5649,7 @@ function countValue(raw) {
   return map[raw] ?? null;
 }
 function trimCandidate(raw) {
-  return clean9(raw, 80).replace(/(?:請|请)?(?:報價|报价|幾錢|几钱|多少錢|多少钱|price|quote|quotation|total|合共|總共|总共).*$/i, "").replace(/(?:星期[一二三四五六日天]|週[一二三四五六日天]|周[一二三四五六日天]|monday|tuesday|wednesday|thursday|friday|saturday|sunday)/gi, " ").replace(/(?:HK\$|HKD|US\$|USD|NT\$|TWD|\$)\s*[0-9].*$/i, "").replace(/[，。！？,.!?;；:：]+$/g, "").replace(/\s+/g, " ").trim();
+  return clean10(raw, 80).replace(/(?:請|请)?(?:報價|报价|幾錢|几钱|多少錢|多少钱|price|quote|quotation|total|合共|總共|总共).*$/i, "").replace(/(?:星期[一二三四五六日天]|週[一二三四五六日天]|周[一二三四五六日天]|monday|tuesday|wednesday|thursday|friday|saturday|sunday)/gi, " ").replace(/(?:HK\$|HKD|US\$|USD|NT\$|TWD|\$)\s*[0-9].*$/i, "").replace(/[，。！？,.!?;；:：]+$/g, "").replace(/\s+/g, " ").trim();
 }
 function canonicalGenericName(raw) {
   let value = trimCandidate(raw).replace(/^(?:黑色|白色|紅色|红色|藍色|蓝色|綠色|绿色|黃色|黄色|粉紅|粉红|紫色|灰色|black|white|red|blue|green|yellow|pink|purple|grey|gray)\s*/i, "").replace(/^(?:small|medium|large|xl|xxl|xs)\s+/i, "").replace(/^(?:size\s*[xsml0-9-]+)\s+/i, "").trim();
@@ -5609,11 +5662,11 @@ function slugify(raw) {
   return canonicalGenericName(raw).toLowerCase().replace(/["'`]/g, "").replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "").slice(0, 80);
 }
 function extractSku(text) {
-  const match = clean9(text).match(/(?:SKU|貨號|货号|型號|型号|model)\s*(?:=|:|：|#)?\s*([A-Z0-9][A-Z0-9._\/-]{1,39})/i);
+  const match = clean10(text).match(/(?:SKU|貨號|货号|型號|型号|model)\s*(?:=|:|：|#)?\s*([A-Z0-9][A-Z0-9._\/-]{1,39})/i);
   return match?.[1] ? match[1].trim() : null;
 }
 function extractVariant(text) {
-  const t = clean9(text);
+  const t = clean10(text);
   const variant = {};
   const size = t.match(/(?:size|尺寸|尺碼|尺码)\s*(?:=|:|：)?\s*([A-Z0-9-]{1,12})/i) ?? t.match(/\b([XSML]{1,4})\s*碼/i);
   if (size?.[1]) variant.size = size[1];
@@ -5626,7 +5679,7 @@ function extractVariant(text) {
   return variant;
 }
 function inferKind(text, unit, quantity) {
-  const t = clean9(text).toLowerCase();
+  const t = clean10(text).toLowerCase();
   if (/(?:下載|下载|電子版|电子版|digital|download|software|license|licence|ebook|e-book|activation key|啟用碼|激活码)/i.test(t)) return "digital_good";
   if (/(?:預約|预约|appointment|book(?:ing)?|reserve|reservation|服務|服务|剪髮|剪发|療程|疗程|consultation|session|lesson|class)/i.test(t) || /^(?:位|席|次|堂|課|课|sessions?|lessons?|seats?)$/i.test(unit ?? "")) return "service";
   if (quantity >= 20 && /(?:批發|批发|MOQ|minimum order|wholesale|報價|报价|quotation|quote)/i.test(t)) return "b2b_product";
@@ -5634,7 +5687,7 @@ function inferKind(text, unit, quantity) {
   return "unknown";
 }
 function inferCommerceCapabilities(text, kind) {
-  const t = clean9(text).toLowerCase();
+  const t = clean10(text).toLowerCase();
   const requiresInstallation = /(?:安裝|安装|install(?:ation)?|mount(?:ing)?|setup|拆機|拆机)/i.test(t);
   const requiresSiteCheck = requiresInstallation && /(?:上門|上门|site|onsite|on-site|窗口|窗台|牆|墙|承重|電壓|电压|排水|師傅|师傅|technician|survey)/i.test(t);
   const requiresBooking = kind === "service" || /(?:預約|预约|appointment|book(?:ing)?|reserve|reservation|時段|时段|slot)/i.test(t);
@@ -5660,7 +5713,7 @@ function mergeCapabilities(a, b) {
   };
 }
 function extractGenericCommerceEntity(text) {
-  const t = clean9(text);
+  const t = clean10(text);
   if (!t) return null;
   const action = "(?:\u6211\u8981|\u6211\u60F3\u8981|\u60F3\u8CB7|\u60F3\u4E70|\u8981\u8CB7|\u8981\u4E70|\u8CB7|\u4E70|\u9700\u8981|\u8A02\u8CFC|\u8BA2\u8D2D|\u8A02|\u8BA2|\u9810\u8A02|\u9884\u8BA2|\u9810\u7D04|\u9884\u7EA6|\u53E6\u5916\u52A0|\u518D\u52A0|\u52A0\u591A|\u65B0\u589E|I\\s+(?:want|need)|want|need|buy|order|pre[- ]?order|book|reserve|add)";
   const zhOrUnit = new RegExp(`${action}\\s*(${COUNT_TOKEN})\\s*(${GENERIC_UNIT})?\\s*([^\uFF0C\u3002\uFF01\uFF1F,.!?;\uFF1B]{1,60})`, "i");
@@ -5676,7 +5729,7 @@ function extractGenericCommerceEntity(text) {
   const kind = inferKind(t, unit, quantity);
   const capabilities = inferCommerceCapabilities(t, kind);
   const category = kind === "service" ? "service" : kind === "digital_good" ? "digital_good" : kind === "b2b_product" ? "b2b_product" : "generic_product";
-  const aliases = [...new Set([canonicalName, rawName].map((x) => clean9(x, 80)).filter(Boolean))];
+  const aliases = [...new Set([canonicalName, rawName].map((x) => clean10(x, 80)).filter(Boolean))];
   return {
     entity_id: `generic:${slug}`,
     category,
@@ -5775,14 +5828,14 @@ function buildCapabilityAwarePreorderNextStep(state, language) {
 }
 
 // supabase/functions/_shared/commerce-semantic-adapter.ts
-function clean10(value, max = 200) {
+function clean11(value, max = 200) {
   return typeof value === "string" ? value.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max) : "";
 }
 function slugify2(raw) {
-  return clean10(raw, 160).toLowerCase().replace(/["'`]/g, "").replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "").slice(0, 80);
+  return clean11(raw, 160).toLowerCase().replace(/["'`]/g, "").replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "").slice(0, 80);
 }
 function categoryFor(entity) {
-  if (entity.category_hint) return clean10(entity.category_hint, 80) || "generic_product";
+  if (entity.category_hint) return clean11(entity.category_hint, 80) || "generic_product";
   switch (entity.kind) {
     case "digital_good":
       return "digital_good";
@@ -5805,7 +5858,7 @@ function categoryFor(entity) {
   }
 }
 function entityId(entity) {
-  const explicit = clean10(entity.entity_ref, 120);
+  const explicit = clean11(entity.entity_ref, 120);
   if (explicit && !/^(?:semantic|current|prior|item|entity):?\d*$/i.test(explicit)) {
     return explicit.startsWith("generic:") ? explicit : `generic:${slugify2(explicit)}`;
   }
@@ -5823,7 +5876,7 @@ function semanticFrameToEntityHints(frame) {
     out.push({
       entity_id: id,
       category: categoryFor(entity),
-      aliases: [...new Set([entity.name, entity.entity_ref, entity.sku ?? "", entity.model ?? ""].map((x) => clean10(x, 160)).filter(Boolean))],
+      aliases: [...new Set([entity.name, entity.entity_ref, entity.sku ?? "", entity.model ?? ""].map((x) => clean11(x, 160)).filter(Boolean))],
       quantity: entity.quantity ?? void 0,
       model: entity.model,
       attributes: {
@@ -5850,9 +5903,9 @@ function mergeCommerceEntityHints(semantic, deterministic) {
   const map = /* @__PURE__ */ new Map();
   for (const hint of deterministic) map.set(hint.entity_id, hint);
   for (const hint of semantic) {
-    const semanticAliases = (hint.aliases ?? []).map((x) => clean10(x).toLowerCase()).filter(Boolean);
+    const semanticAliases = (hint.aliases ?? []).map((x) => clean11(x).toLowerCase()).filter(Boolean);
     const compatible = [...map.values()].find((candidate) => {
-      const aliases = [candidate.entity_id, candidate.category, ...candidate.aliases ?? []].map((x) => clean10(x).toLowerCase()).filter(Boolean);
+      const aliases = [candidate.entity_id, candidate.category, ...candidate.aliases ?? []].map((x) => clean11(x).toLowerCase()).filter(Boolean);
       return semanticAliases.some((a) => aliases.some((b) => a === b || a.includes(b) || b.includes(a)));
     });
     const key = compatible?.entity_id ?? hint.entity_id;
@@ -5880,9 +5933,9 @@ function activeEntities(state) {
   return state.entities.filter((x) => x.status !== "cancelled" && x.status !== "deferred");
 }
 function resolveHintId(entity, hints, previous) {
-  const wanted = [entity.name, entity.entity_ref, entity.sku ?? "", entity.model ?? ""].map((x) => clean10(x).toLowerCase()).filter(Boolean);
+  const wanted = [entity.name, entity.entity_ref, entity.sku ?? "", entity.model ?? ""].map((x) => clean11(x).toLowerCase()).filter(Boolean);
   const hinted = hints.find((hint) => {
-    const aliases = [hint.entity_id, hint.category, ...hint.aliases ?? []].map((x) => clean10(x).toLowerCase()).filter(Boolean);
+    const aliases = [hint.entity_id, hint.category, ...hint.aliases ?? []].map((x) => clean11(x).toLowerCase()).filter(Boolean);
     return wanted.some((a) => aliases.some((b) => a === b || a.includes(b) || b.includes(a)));
   });
   if (hinted) return hinted.entity_id;
@@ -6140,11 +6193,11 @@ var HOME_APPLIANCE_PROFILE_V1 = Object.freeze({
 
 // supabase/functions/_shared/industry-runtime-adapter.ts
 var INDUSTRY_AGENT_REGISTRY = createIndustryRegistry([HOME_APPLIANCE_PROFILE_V1]);
-function clean11(value) {
+function clean12(value) {
   return typeof value === "string" ? value.normalize("NFKC").replace(/\s+/g, " ").trim() : "";
 }
 function matches(text, aliases) {
-  const lower2 = clean11(text).toLowerCase();
+  const lower2 = clean12(text).toLowerCase();
   return aliases.some(
     (alias) => alias.trim().length >= 2 && lower2.includes(alias.trim().toLowerCase())
   );
@@ -6154,7 +6207,7 @@ function resolveIndustryRuntime(input) {
   const detected = input.texts.some(
     (text) => HOME_APPLIANCE_CATEGORIES.some((category) => matches(text, category.aliases))
   ) ? HOME_APPLIANCE_PROFILE_V1 : null;
-  const hasExplicitIdentifier = Boolean(clean11(input.industry_identifier));
+  const hasExplicitIdentifier = Boolean(clean12(input.industry_identifier));
   const profile = hasExplicitIdentifier ? explicit : detected;
   if (!profile) return { industry_id: null, profile: null, hints: [] };
   const hints = /* @__PURE__ */ new Map();
@@ -6193,7 +6246,7 @@ function resolveIndustryRuntime(input) {
     if (!validateIndustrySchemaValues(profile.schema, values).valid) continue;
     const semanticHint = [...hints.values()].find(
       (hint) => (hint.aliases ?? []).some(
-        (alias) => clean11(entity.name).toLowerCase().includes(clean11(alias).toLowerCase())
+        (alias) => clean12(entity.name).toLowerCase().includes(clean12(alias).toLowerCase())
       )
     );
     if (semanticHint)
@@ -6213,7 +6266,7 @@ function industryEntityLabel(entityId2, language) {
 // supabase/functions/_shared/commerce-state-runtime-base.ts
 var COMMERCE_STATE_RPC = "upsert_conversation_commerce_state_v1";
 var MAX_HISTORY_TURNS = 24;
-function clean12(value, max = 1600) {
+function clean13(value, max = 1600) {
   return typeof value === "string" ? value.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max) : "";
 }
 function isRecord4(value) {
@@ -6223,11 +6276,11 @@ function matchedAliases(lower2, aliases) {
   return aliases.filter((alias) => alias.trim().length >= 2 && lower2.includes(alias.trim().toLowerCase()));
 }
 function detectCategories(text) {
-  const lower2 = clean12(text).toLowerCase();
+  const lower2 = clean13(text).toLowerCase();
   return HOME_APPLIANCE_CATEGORIES.filter((spec) => matchedAliases(lower2, spec.aliases).length > 0);
 }
 function detectRooms(text) {
-  const lower2 = clean12(text).toLowerCase();
+  const lower2 = clean13(text).toLowerCase();
   return HOME_APPLIANCE_ROOMS.filter((spec) => matchedAliases(lower2, spec.aliases).length > 0);
 }
 function entityLabel(entityId2, language) {
@@ -6238,14 +6291,14 @@ function entityLabel(entityId2, language) {
   const [categoryKey, roomKey] = entityId2.split(":");
   const category = HOME_APPLIANCE_CATEGORIES.find((x) => x.key === categoryKey);
   const room = HOME_APPLIANCE_ROOMS.find((x) => x.key === roomKey);
-  const categoryText = category ? category.label[language] : clean12(categoryKey, 60);
+  const categoryText = category ? category.label[language] : clean13(categoryKey, 60);
   if (!room) return categoryText;
   return language === "en" ? `${room.label.en} ${categoryText}` : `${room.label[language]}${categoryText}`;
 }
 function buildCommerceEntityHints(texts) {
   const hints = /* @__PURE__ */ new Map();
   for (const raw of texts) {
-    const text = clean12(raw);
+    const text = clean13(raw);
     if (!text) continue;
     const categories = detectCategories(text);
     if (categories.length) {
@@ -6277,13 +6330,13 @@ function buildCommerceEntityHints(texts) {
   return [...hints.values()];
 }
 function hintsMentionedInTurn(text, hints) {
-  const lower2 = clean12(text).toLowerCase();
+  const lower2 = clean13(text).toLowerCase();
   const rooms = detectRooms(text);
   const categories = detectCategories(text).map((x) => x.key);
   return hints.filter((hint) => {
     if (hint.entity_id.startsWith("generic:")) {
       return (hint.aliases ?? []).some((alias) => {
-        const normalized = clean12(alias, 80).toLowerCase();
+        const normalized = clean13(alias, 80).toLowerCase();
         return normalized.length >= 2 && lower2.includes(normalized);
       });
     }
@@ -6322,11 +6375,11 @@ function countTokenValue(raw) {
   return map[raw] ?? null;
 }
 function detectQuantityCorrectionSignal(text) {
-  const t = clean12(text);
+  const t = clean13(text);
   return /(?:更正|改(?:做|成|為|为|返)?|變成|变成|唔係.+?(?:而係|係|系)|不是.+?(?:而是|是)|不係.+?(?:而係|係)|actually|change(?:\s+it)?\s+to|make\s+it)/i.test(t);
 }
 function parseCount(text) {
-  const t = clean12(text);
+  const t = clean13(text);
   if (!t) return null;
   const correctionPatterns = [
     new RegExp(`(?:\u5514\u4FC2|\u5514\u7CFB|\u4E0D\u662F|\u4E0D\u4FC2)\\s*(?:${COUNT_TOKEN2})\\s*(?:${COUNT_UNIT})?.{0,24}?(?:\u800C\u4FC2|\u800C\u7CFB|\u800C\u662F|\u4FC2|\u7CFB|\u662F)\\s*(${COUNT_TOKEN2})\\s*(?:${COUNT_UNIT})`, "i"),
@@ -6401,10 +6454,10 @@ function quotationOnlySignal(text) {
   return /(?:報價|报价|quotation|quote|未落單|未下单|未正式|唔係落單|不是下单|先問價|先问价)/i.test(text);
 }
 function detectTransactionSummaryIntent(text) {
-  return /(?:幫我總結|帮我总结|總結一下|总结一下|幫我整理|帮我整理|整理(?:一下)?(?:比|畀|給|给)?同事|同事跟進|同事跟进|summar(?:y|ise|ize)|recap|hand over to)/i.test(clean12(text));
+  return /(?:幫我總結|帮我总结|總結一下|总结一下|幫我整理|帮我整理|整理(?:一下)?(?:比|畀|給|给)?同事|同事跟進|同事跟进|summar(?:y|ise|ize)|recap|hand over to)/i.test(clean13(text));
 }
 function detectCurrentPriceValidityQuestion(text) {
-  const t = clean12(text);
+  const t = clean13(text);
   if (!t) return false;
   const historical = /(?:之前|以前|以往|舊|旧|歷史|历史|previous|earlier|old)/i.test(t);
   const price = /(?:報價|报价|價|价|price|quote|quotation|收費|收费|fee)/i.test(t);
@@ -6413,7 +6466,7 @@ function detectCurrentPriceValidityQuestion(text) {
   return historical && price && (current || validity);
 }
 function detectPreorderUnpaidIntent(text) {
-  const t = clean12(text);
+  const t = clean13(text);
   if (!t) return false;
   const preorder = /(?:想預訂|想预订|想訂|想订|要預訂|要预订|預訂|预订|想預約|想预约|要預約|要预约|預約|预约|reserve|reservation|book(?:ing)?|pre[- ]?order|want to order|place an order)/i.test(t);
   return preorder && scanNegatedTransaction(t).negated_payment;
@@ -6431,12 +6484,12 @@ function parseMoneyTerms(text) {
   return amounts;
 }
 function detectExplicitCalculationRequest(text) {
-  return /(?:加埋|合共|總共|总共|一共|總數|总数|埋一齊|埋一起|total|altogether|calculate|計下|计下|算下|計算|计算|how much.*(?:total|altogether))/i.test(clean12(text));
+  return /(?:加埋|合共|總共|总共|一共|總數|总数|埋一齊|埋一起|total|altogether|calculate|計下|计下|算下|計算|计算|how much.*(?:total|altogether))/i.test(clean13(text));
 }
 function extractCommerceCalculationTerms(texts, state, options) {
   const amounts = [];
   for (const raw of texts) {
-    const text = clean12(raw);
+    const text = clean13(raw);
     if (!text) continue;
     for (const amount of parseMoneyTerms(text)) amounts.push(amount);
   }
@@ -6448,16 +6501,16 @@ function extractCommerceCalculationTerms(texts, state, options) {
       amounts.push(quote.amount);
     }
   }
-  const unique2 = [];
+  const unique3 = [];
   const seen = /* @__PURE__ */ new Map();
   for (const amount of amounts) {
     const count = seen.get(amount) ?? 0;
     if (count < 2) {
       seen.set(amount, count + 1);
-      unique2.push(amount);
+      unique3.push(amount);
     }
   }
-  if (!unique2.length) return { terms: [], currency: null };
+  if (!unique3.length) return { terms: [], currency: null };
   const currentTurnMultiplier = parseCount(texts[0] ?? "");
   const activeEntities2 = state.entities.filter(
     (entity) => entity.status !== "cancelled" && entity.status !== "deferred"
@@ -6466,12 +6519,12 @@ function extractCommerceCalculationTerms(texts, state, options) {
   const multiplier = currentTurnMultiplier ?? stateMultiplier;
   const currency = state.quotes.find((q) => q.currency)?.currency ?? "HKD";
   return {
-    terms: unique2.map((amount, index) => ({ label: `customer_term_${index + 1}`, value: amount, multiplier })),
+    terms: unique3.map((amount, index) => ({ label: `customer_term_${index + 1}`, value: amount, multiplier })),
     currency
   };
 }
 function calculationExplicitlyUsesHistory(text) {
-  const t = clean12(text);
+  const t = clean13(text);
   if (!t) return false;
   return /(?:(?:之前|以前|以往|舊|旧|歷史|历史|previous|historical|earlier).{0,40}(?:數字|数字|價|价|報價|报价|price|quote|figure|amount).{0,40}(?:計|计|算|calculate|total|合共|總共|总共)|(?:計|计|算|calculate|total|合共|總共|总共).{0,40}(?:之前|以前|以往|舊|旧|歷史|历史|previous|historical|earlier))/i.test(t);
 }
@@ -6486,7 +6539,7 @@ async function loadCommerceState(db, conversation_id) {
   };
 }
 function deriveA3RuntimeEvents(input, hints, previous) {
-  const text = clean12(input.text);
+  const text = clean13(input.text);
   const events = [];
   const provenance3 = {
     source_type: "customer",
@@ -6577,13 +6630,13 @@ function enforceQuotationNotOrderEvents(text, state) {
   return events;
 }
 function detectExplicitEntityCreationSignal(text) {
-  const t = clean12(text);
+  const t = clean13(text);
   if (!t) return false;
   if (parseCount(t) !== null) return true;
   return /(?:另外|再加|再要|加多|加一|加個|加个|多要|多買|多买|新增|想買|想买|要買|要买|購買|购买|訂購|订购|落單|下單|下单|需要|我要|加裝|加装|安裝多|添置|add\s|buy\s|purchase|order\s|need\s|want\s|another|extra|additional)/i.test(t);
 }
 function detectAdditiveEntityCreationSignal(text) {
-  const t = clean12(text);
+  const t = clean13(text);
   if (!t) return false;
   return /(?:另外\s*(?:加|要|買|买|訂|订|新增|加裝|加装)|再加|再要|加多|多要|多買|多买|新增多|加裝多|加装多|another|extra|additional|add\s+(?:another|one|two|three|\d))/i.test(t);
 }
@@ -6626,7 +6679,7 @@ function reduceTurn(previous, input, rawHints) {
   const runtimeEvents = calculationTurn ? [] : deriveA3RuntimeEvents(input, hints, previous);
   const industryEvent = input.industry_identifier ? [{ type: "SET_CONTEXT", language: input.language, industry: input.industry_identifier }] : [];
   const reduced = reduceCommerceState(previous, [...industryEvent, ...semanticEvents, ...derived, ...runtimeEvents]);
-  const guard = enforceQuotationNotOrderEvents(clean12(input.text), reduced);
+  const guard = enforceQuotationNotOrderEvents(clean13(input.text), reduced);
   return guard.length ? reduceCommerceState(reduced, guard) : reduced;
 }
 function rpcResult(data) {
@@ -6690,7 +6743,7 @@ function buildTransactionSummary(state, language) {
   lines.push(`${t.items[language]}: ${active.length ? active.map((e) => `${entityLabel(e.entity_id, language)} x${e.quantity} (${statusLabel(e.status, language)})`).join("\u3001") : t.none[language]}`);
   if (inactive.length) lines.push(`${t.removed[language]}: ${inactive.map((e) => `${entityLabel(e.entity_id, language)} (${statusLabel(e.status, language)})`).join("\u3001")}`);
   const delivery = state.delivery;
-  const deliveryParts = [delivery.preferred_date, delivery.preferred_window, delivery.address, delivery.recipient_name, delivery.recipient_phone].map((x) => clean12(x, 180)).filter(Boolean);
+  const deliveryParts = [delivery.preferred_date, delivery.preferred_window, delivery.address, delivery.recipient_name, delivery.recipient_phone].map((x) => clean13(x, 180)).filter(Boolean);
   lines.push(`${t.delivery[language]}: ${deliveryParts.length ? deliveryParts.join(" / ") : t.none[language]}`);
   const pending = [...state.installation.pending_checks, ...state.installation.items.filter((i) => i.status === "pending").map((i) => i.kind)];
   if (pending.length) lines.push(`${t.pending[language]}: ${[...new Set(pending)].join("\u3001")}`);
@@ -6724,7 +6777,7 @@ function buildKnownStateAnswer(language, statePath, value, state) {
     const answer = buildQuantityAnswer(state, language);
     if (answer) return answer;
   }
-  const rendered = typeof value === "object" ? JSON.stringify(value) : clean12(String(value), 300);
+  const rendered = typeof value === "object" ? JSON.stringify(value) : clean13(String(value), 300);
   if (language === "en") return `From what you already told me: ${rendered}.`;
   if (language === "zh-CN") return `\u6309\u4F60\u4E4B\u524D\u63D0\u4F9B\u7684\u8D44\u6599\uFF1A${rendered}\u3002`;
   return `\u6309\u4F60\u4E4B\u524D\u63D0\u4F9B\u5605\u8CC7\u6599\uFF1A${rendered}\u3002`;
@@ -6775,7 +6828,7 @@ function buildPreorderUnpaidAnswer(language, state) {
   return `${known ? `\u597D\uFF0C\u6211\u77E5\u9053\u4F60\u60F3\u9810\u8A02${known}\u3002` : "\u597D\uFF0C\u6211\u77E5\u9053\u4F60\u60F3\u7E7C\u7E8C\u9810\u8A02\u3002"}\u56E0\u70BA\u4F60\u4EF2\u672A\u4ED8\u6B3E\uFF0C\u6240\u4EE5\u800C\u5BB6\u672A\u7B97\u5B8C\u6210\u6216\u5DF2\u78BA\u8A8D\u8A02\u55AE\u3002${nextStep}`;
 }
 async function runCommerceStateRuntime(db, input) {
-  const text = clean12(input.text);
+  const text = clean13(input.text);
   if (!text || !input.conversation_id || !input.company_id || !input.source_message_id) return null;
   const language = input.language;
   if (detectPreorderUnpaidIntent(text)) {
@@ -6794,7 +6847,7 @@ async function runCommerceStateRuntime(db, input) {
       };
     }
   }
-  const historyTexts = (input.history ?? []).filter((turn) => turn.role === "visitor" || turn.role === "user" || turn.role === "customer").slice(0, MAX_HISTORY_TURNS).map((turn) => clean12(turn.content));
+  const historyTexts = (input.history ?? []).filter((turn) => turn.role === "visitor" || turn.role === "user" || turn.role === "customer").slice(0, MAX_HISTORY_TURNS).map((turn) => clean13(turn.content));
   const conversationTexts = [text, ...historyTexts];
   const deterministicHints = buildCommerceEntityHints(conversationTexts);
   const semanticHints = semanticFrameToEntityHints(input.semantic_frame);
@@ -7078,7 +7131,7 @@ var COMMERCE_SEMANTIC_RESPONSE_SCHEMA = {
 function isRecord5(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
-function clean13(value, max = 300) {
+function clean14(value, max = 300) {
   return typeof value === "string" ? value.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max) : "";
 }
 function clampConfidence(value) {
@@ -7089,10 +7142,10 @@ function primitiveMap(value) {
   if (!isRecord5(value)) return {};
   const out = {};
   for (const [key, raw] of Object.entries(value).slice(0, 40)) {
-    const k = clean13(key, 80);
+    const k = clean14(key, 80);
     if (!k) continue;
     if (raw === null || typeof raw === "string" || typeof raw === "number" || typeof raw === "boolean") {
-      out[k] = typeof raw === "string" ? clean13(raw, 300) : raw;
+      out[k] = typeof raw === "string" ? clean14(raw, 300) : raw;
     }
   }
   return out;
@@ -7116,43 +7169,43 @@ function normalizeCapabilities(raw) {
   };
 }
 function enumValue(value, allowed, fallback) {
-  const normalized = clean13(value, 60);
+  const normalized = clean14(value, 60);
   return allowed.has(normalized) ? normalized : fallback;
 }
 function normalizeAmbiguity(value, confidence) {
   const raw = isRecord5(value) ? value : {};
-  const reasons = (Array.isArray(raw.reasons) ? raw.reasons : []).map((x) => clean13(x, 200)).filter(Boolean).slice(0, 12);
+  const reasons = (Array.isArray(raw.reasons) ? raw.reasons : []).map((x) => clean14(x, 200)).filter(Boolean).slice(0, 12);
   const lowConfidence = confidence < 0.62;
   const explicitAmbiguous = raw.is_ambiguous === true;
   if (lowConfidence && !reasons.includes("low_confidence")) reasons.push("low_confidence");
   return {
     is_ambiguous: explicitAmbiguous || lowConfidence,
     reasons,
-    clarification_question: raw.clarification_question === null ? null : clean13(raw.clarification_question, 400) || null
+    clarification_question: raw.clarification_question === null ? null : clean14(raw.clarification_question, 400) || null
   };
 }
 function normalizeCommerceSemanticFrame(value) {
   if (!isRecord5(value)) return null;
-  const rawOperation = clean13(value.operation, 40);
+  const rawOperation = clean14(value.operation, 40);
   if (!OPERATIONS.has(rawOperation)) return null;
   const entities = [];
   for (const raw of Array.isArray(value.entities) ? value.entities.slice(0, 12) : []) {
     if (!isRecord5(raw)) continue;
-    const kind = clean13(raw.kind, 40);
+    const kind = clean14(raw.kind, 40);
     if (!KINDS.has(kind)) continue;
-    const name = clean13(raw.name, 200);
+    const name = clean14(raw.name, 200);
     if (!name) continue;
     const q = raw.quantity === null ? null : Number(raw.quantity);
     const quantity = q === null || !Number.isFinite(q) || q < 0 ? null : q;
     entities.push({
-      entity_ref: clean13(raw.entity_ref, 120) || `semantic:${entities.length + 1}`,
+      entity_ref: clean14(raw.entity_ref, 120) || `semantic:${entities.length + 1}`,
       name,
       kind,
-      category_hint: raw.category_hint === null ? null : clean13(raw.category_hint, 120) || null,
-      sku: raw.sku === null ? null : clean13(raw.sku, 120) || null,
-      model: raw.model === null ? null : clean13(raw.model, 120) || null,
+      category_hint: raw.category_hint === null ? null : clean14(raw.category_hint, 120) || null,
+      sku: raw.sku === null ? null : clean14(raw.sku, 120) || null,
+      model: raw.model === null ? null : clean14(raw.model, 120) || null,
       quantity,
-      unit: raw.unit === null ? null : clean13(raw.unit, 60) || null,
+      unit: raw.unit === null ? null : clean14(raw.unit, 60) || null,
       attributes: primitiveMap(raw.attributes),
       constraints: primitiveMap(raw.constraints),
       capabilities: normalizeCapabilities(raw.capabilities),
@@ -7162,9 +7215,9 @@ function normalizeCommerceSemanticFrame(value) {
   const referents = [];
   for (const raw of Array.isArray(value.referents) ? value.referents.slice(0, 12) : []) {
     if (!isRecord5(raw)) continue;
-    const source = clean13(raw.source, 40);
+    const source = clean14(raw.source, 40);
     if (!["current_turn", "prior_turn", "persistent_state", "unknown"].includes(source)) continue;
-    const ref = clean13(raw.ref, 160);
+    const ref = clean14(raw.ref, 160);
     if (!ref) continue;
     referents.push({ ref, source, confidence: clampConfidence(raw.confidence) });
   }
@@ -7173,16 +7226,16 @@ function normalizeCommerceSemanticFrame(value) {
   const operation = ambiguity.is_ambiguous ? "NO_STATE_CHANGE" : rawOperation;
   return {
     version: COMMERCE_SEMANTIC_FRAME_VERSION,
-    language: clean13(value.language, 40) || "und",
+    language: clean14(value.language, 40) || "und",
     operation,
-    intent: clean13(value.intent, 160) || "unknown",
-    topic: value.topic === null ? null : clean13(value.topic, 160) || null,
+    intent: clean14(value.intent, 160) || "unknown",
+    topic: value.topic === null ? null : clean14(value.topic, 160) || null,
     entities,
     referents,
     customer_correction: value.customer_correction === true,
     additive: value.additive === true,
-    explicit_negations: (Array.isArray(value.explicit_negations) ? value.explicit_negations : []).map((x) => clean13(x, 200)).filter(Boolean).slice(0, 20),
-    requested_facts: (Array.isArray(value.requested_facts) ? value.requested_facts : []).map((x) => clean13(x, 200)).filter(Boolean).slice(0, 20),
+    explicit_negations: (Array.isArray(value.explicit_negations) ? value.explicit_negations : []).map((x) => clean14(x, 200)).filter(Boolean).slice(0, 20),
+    requested_facts: (Array.isArray(value.requested_facts) ? value.requested_facts : []).map((x) => clean14(x, 200)).filter(Boolean).slice(0, 20),
     transaction_state: enumValue(value.transaction_state, TRANSACTION_STATES, "unknown"),
     payment_state: enumValue(value.payment_state, PAYMENT_STATES, "unknown"),
     booking_state: enumValue(value.booking_state, BOOKING_STATES, "unknown"),
@@ -7222,7 +7275,7 @@ Core rules:
 12. Never invent add-ons/options/fees. Only include them when customer-authored context explicitly identifies them or persistent customer-authored state already contains them.
 13. If confidence is below 0.62, set ambiguity.is_ambiguous=true and operation=NO_STATE_CHANGE.
 Return JSON only.`;
-function clean14(value, max = 3e3) {
+function clean15(value, max = 3e3) {
   return typeof value === "string" ? value.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max) : "";
 }
 function isRecord6(value) {
@@ -7242,9 +7295,9 @@ function buildPersistentCommerceStateSummary(row) {
   }
 }
 async function loadPersistentCommerceStateSummary(input) {
-  const supplied = clean14(input.persistent_state_summary, 2400);
+  const supplied = clean15(input.persistent_state_summary, 2400);
   if (supplied) return supplied;
-  const supabaseUrl = clean14(Deno.env.get("SUPABASE_URL"), 600).replace(/\/$/, "");
+  const supabaseUrl = clean15(Deno.env.get("SUPABASE_URL"), 600).replace(/\/$/, "");
   if (!supabaseUrl || !input.conversation_id || !input.company_id) return null;
   let adminKey = "";
   try {
@@ -7284,19 +7337,19 @@ async function loadPersistentCommerceStateSummary(input) {
   }
 }
 function buildUser(input, persistentStateSummary) {
-  const prior = (input.history ?? []).filter((x) => clean14(x.content) && clean14(x.content) !== clean14(input.latest)).slice(-12).map((x, i) => `${i + 1}. ${String(x.role || "unknown")}: ${clean14(x.content, 800)}`).join("\n");
+  const prior = (input.history ?? []).filter((x) => clean15(x.content) && clean15(x.content) !== clean15(input.latest)).slice(-12).map((x, i) => `${i + 1}. ${String(x.role || "unknown")}: ${clean15(x.content, 800)}`).join("\n");
   return [
     `Semantic frame version: ${COMMERCE_SEMANTIC_FRAME_VERSION}`,
-    `Latest customer turn: ${clean14(input.latest, 1600)}`,
+    `Latest customer turn: ${clean15(input.latest, 1600)}`,
     prior ? `Recent conversation turns (oldest to newest):
 ${prior}` : "Recent conversation turns: none",
     persistentStateSummary ? `Persistent commerce state summary (customer-authored state only; do not treat as external facts):
-${clean14(persistentStateSummary, 2400)}` : "Persistent commerce state summary: none",
+${clean15(persistentStateSummary, 2400)}` : "Persistent commerce state summary: none",
     "Return one canonical semantic frame."
   ].join("\n\n");
 }
 async function interpretCommerceSemantics(input) {
-  const latest = clean14(input.latest, 1600);
+  const latest = clean15(input.latest, 1600);
   if (!latest) return { frame: null, source: "none", failure_code: null };
   const persistentStateSummary = await loadPersistentCommerceStateSummary(input);
   const result2 = await callModel({
@@ -7337,17 +7390,17 @@ var DELIVERY_COMPLETED = /(?:delivery (?:is |has been )?(?:completed|delivered|f
 var INSTALLATION_CONFIRMED = /(?:installation (?:is |has been )?(?:confirmed|arranged|scheduled)|安裝已確認|安装已确认|已安排安裝|已安排安装|安裝安排已確認|安装安排已确认)/i;
 var INSTALLATION_COMPLETED = /(?:installation (?:is |has been )?(?:completed|installed|finished|executed)|successfully installed|安裝已完成|安装已完成|已經安裝|已经安装|安裝完成|安装完成)/i;
 var GENERIC_COMPLETION = /(?:action|request|operation|process|booking|reservation).{0,24}(?:completed|processed|executed|done|finished)|(?:completed|processed|executed|done|finished).{0,24}(?:action|request|operation|process|booking|reservation)|(?:操作|動作|动作|請求|请求|流程|程序|預約|预约).{0,20}(?:已完成|完成咗|完成了|已執行|已执行|已處理|已处理)/i;
-function clean15(value, max = 65536) {
+function clean16(value, max = 65536) {
   return typeof value === "string" ? value.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max) : "";
 }
 function lower(value) {
-  return clean15(value).toLowerCase();
+  return clean16(value).toLowerCase();
 }
 function isRecord7(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 function scalarText(value) {
-  if (typeof value === "string") return clean15(value, 300) || null;
+  if (typeof value === "string") return clean16(value, 300) || null;
   if (typeof value === "number" && Number.isFinite(value)) return String(value);
   if (typeof value === "boolean") return value ? "true" : "false";
   return null;
@@ -7548,10 +7601,10 @@ function evaluateKnownContext(text, state) {
   return null;
 }
 function trimCorrectionPart(value) {
-  return clean15(value, 180).replace(/^[,，:：;；\s]+|[,，。.!！?？;；\s]+$/g, "");
+  return clean16(value, 180).replace(/^[,，:：;；\s]+|[,，。.!！?？;；\s]+$/g, "");
 }
 function parseCorrection(value) {
-  const text = clean15(value, 500);
+  const text = clean16(value, 500);
   const patterns = [
     /(?:唔係|唔系|不是|不係)\s*(.+?)\s*(?:而係|而系|而是)\s*(.+)$/i,
     /(?:change|changed|correct|correction)(?:\s+it)?\s+from\s+(.+?)\s+to\s+(.+)$/i,
@@ -7633,7 +7686,7 @@ function evaluateCancellation(text, state) {
   return null;
 }
 function evaluateB2BeforeCommit(input) {
-  const draft = clean15(input.proposed_response);
+  const draft = clean16(input.proposed_response);
   if (!draft) {
     return { decision: "indeterminate", code: "EMPTY_PROPOSED_RESPONSE" };
   }
@@ -7648,9 +7701,9 @@ function evaluateB2BeforeCommit(input) {
 }
 function queryErrorDetail(error) {
   if (isRecord7(error)) {
-    return clean15(error.message ?? error.code, 180) || "query_error";
+    return clean16(error.message ?? error.code, 180) || "query_error";
   }
-  return clean15(error, 180) || "query_error";
+  return clean16(error, 180) || "query_error";
 }
 async function loadB2Snapshot(client, conversation_id, source_message_id) {
   try {
@@ -7674,7 +7727,7 @@ async function loadB2Snapshot(client, conversation_id, source_message_id) {
         }
       };
     }
-    const companyId = clean15(conversationResult.data.company_id, 160);
+    const companyId = clean16(conversationResult.data.company_id, 160);
     if (!companyId) {
       return {
         ok: false,
@@ -7695,7 +7748,7 @@ async function loadB2Snapshot(client, conversation_id, source_message_id) {
         }
       };
     }
-    if (!isRecord7(sourceResult.data) || clean15(sourceResult.data.id, 160) !== source_message_id || clean15(sourceResult.data.conversation_id, 160) !== conversation_id || sourceResult.data.role !== "visitor") {
+    if (!isRecord7(sourceResult.data) || clean16(sourceResult.data.id, 160) !== source_message_id || clean16(sourceResult.data.conversation_id, 160) !== conversation_id || sourceResult.data.role !== "visitor") {
       return {
         ok: false,
         decision: { decision: "indeterminate", code: "SOURCE_MESSAGE_INVALID" }
@@ -7725,7 +7778,7 @@ async function loadB2Snapshot(client, conversation_id, source_message_id) {
           }
         };
       }
-      if (clean15(stateResult.data.company_id, 160) !== companyId) {
+      if (clean16(stateResult.data.company_id, 160) !== companyId) {
         return {
           ok: false,
           decision: {
@@ -7755,7 +7808,7 @@ async function loadB2Snapshot(client, conversation_id, source_message_id) {
       }
       state = structuredClone(stateResult.data.state);
       revision = rawRevision;
-      stateSource = clean15(stateResult.data.source_message_id, 160) || null;
+      stateSource = clean16(stateResult.data.source_message_id, 160) || null;
     }
     return {
       ok: true,
@@ -9151,21 +9204,28 @@ Deno.serve(async (req) => {
 });
 async function handleConversationClosureIfNeeded(supabaseAdmin, conversation_id, source_message_id, latestMessage) {
   const classification = classifyConversationClosure(latestMessage);
-  const content = buildConversationClosureReply(classification);
-  if (!content || classification.kind === "none") return null;
-  const { data: conversation } = await supabaseAdmin.from("conversations").select("status, assigned_agent_id").eq("id", conversation_id).maybeSingle();
-  if (!conversation || conversation.status === "resolved" || isHumanControlState(
+  if (classification.kind === "none") return null;
+  const { data: conversation } = await supabaseAdmin.from("conversations").select("status, assigned_agent_id, company_id").eq("id", conversation_id).maybeSingle();
+  if (!conversation || !conversation.company_id || conversation.status === "resolved" || isHumanControlState(
     String(conversation.status ?? ""),
     conversation.assigned_agent_id ?? null
   )) return null;
-  const { data: prior } = await supabaseAdmin.from("messages").select(
-    "role, metadata, content, created_at"
-  ).eq("conversation_id", conversation_id).eq("is_recalled", false).neq(
-    "content",
-    "__THINKING__"
-  ).order("created_at", { ascending: false }).limit(4);
+  const [{ data: prior }, { data: commerce }] = await Promise.all([
+    supabaseAdmin.from("messages").select(
+      "role, metadata, content, created_at"
+    ).eq("conversation_id", conversation_id).eq("is_recalled", false).neq(
+      "content",
+      "__THINKING__"
+    ).order("created_at", { ascending: false }).limit(4),
+    supabaseAdmin.from("conversation_commerce_state").select(
+      "company_id, revision, source_message_id, state"
+    ).eq("conversation_id", conversation_id).eq(
+      "company_id",
+      conversation.company_id
+    ).maybeSingle()
+  ]);
   const previousAssistant = (prior ?? []).find(
-    (r) => r.role === "assistant" && String(r.content ?? "") !== content
+    (r) => r.role === "assistant" && String(r.content ?? "") !== buildConversationClosureReply(classification)
   );
   const pm = previousAssistant?.metadata && typeof previousAssistant.metadata === "object" ? previousAssistant.metadata : null;
   if (!previousAssistant || pm?.handoff_required === true || [
@@ -9173,45 +9233,107 @@ async function handleConversationClosureIfNeeded(supabaseAdmin, conversation_id,
     "kb_no_match_clarification",
     "system_error_handoff"
   ].includes(String(pm?.response_route ?? ""))) return null;
+  const closure = decideTransactionClosure({
+    utterance_kind: classification.kind,
+    commerce_state: commerce?.state ?? null,
+    handoff_active: false,
+    handoff_required: false,
+    professional_confirmation_required: false
+  });
+  const content = closure.may_resolve ? buildConversationClosureReply(classification) : classification.kind === "closure_candidate" ? buildConversationClosureReply(classification) : buildC2PendingClosureReply(classification.language, closure.blockers);
+  if (!content) return null;
+  const metadata = {
+    response_route: closure.may_resolve ? "c2_transaction_closure" : "conversation_closure",
+    closure_state: closure.state,
+    closure_reason: closure.reason,
+    closure_blockers: closure.blockers,
+    commerce_state_revision: typeof commerce?.revision === "number" ? commerce.revision : null,
+    feedback_eligible_candidate: closure.may_resolve,
+    handoff_required: false
+  };
+  if (closure.may_resolve) {
+    if (!source_message_id) return null;
+    const b2 = await executeB2RpcPersistence(
+      supabaseAdmin,
+      {
+        conversation_id,
+        source_message_id,
+        proposed_response: content,
+        persistence_kind: "ai_reply",
+        metadata,
+        expected_commerce_state_revision: metadata.commerce_state_revision
+      },
+      async () => await supabaseAdmin.rpc("c2_commit_closure_tx", {
+        p_conversation_id: conversation_id,
+        p_company_id: conversation.company_id,
+        p_source_message_id: source_message_id,
+        p_expected_commerce_revision: metadata.commerce_state_revision,
+        p_content: content,
+        p_metadata: metadata
+      })
+    );
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+    if (!b2.committed) {
+      return b2PreventedResponse(b2.decision, {
+        response_route: "c2_transaction_closure",
+        closure_state: closure.state
+      });
+    }
+    const { data, error } = b2.value;
+    if (error) {
+      return new Response(
+        JSON.stringify({ success: false, error: "c2_closure_rpc_error" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    const result2 = String(data?.result ?? "unknown");
+    if (result2 === "success" || result2 === "idempotent") {
+      return new Response(
+        JSON.stringify({
+          success: true,
+          response_route: "c2_transaction_closure",
+          closure_state: "RESOLVED",
+          idempotent: result2 === "idempotent"
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    if (["human_control", "resolved", "superseded_source", "transaction_pending", "handoff_pending"].includes(result2)) {
+      return new Response(
+        JSON.stringify({ success: true, skipped: result2 }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    return new Response(
+      JSON.stringify({ success: false, error: `c2_closure_${result2}` }),
+      { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
   const committed = await commitAiReplyWithControlGate(
     supabaseAdmin,
     conversation_id,
     source_message_id,
     content,
-    {
-      response_route: "conversation_closure",
-      closure_state: classification.kind === "closure_candidate" ? "awaiting_more_help" : "completed",
-      closure_reason: classification.reason,
-      feedback_eligible_candidate: classification.kind !== "closure_candidate",
-      handoff_required: false
-    }
+    metadata
   );
   await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
   if (!committed.ok) {
-    if (["human_control", "resolved", "superseded_source"].includes(
-      committed.result
-    )) {
+    if (["human_control", "resolved", "superseded_source"].includes(committed.result)) {
       return new Response(
         JSON.stringify({ success: true, skipped: committed.result }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
     return new Response(
-      JSON.stringify({
-        success: false,
-        error: `conversation_closure_${committed.result}`
-      }),
-      {
-        status: 409,
-        headers: { ...corsHeaders, "Content-Type": "application/json" }
-      }
+      JSON.stringify({ success: false, error: `conversation_closure_${committed.result}` }),
+      { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
   return new Response(
     JSON.stringify({
       success: true,
       response_route: "conversation_closure",
-      closure_state: classification.kind
+      closure_state: closure.state
     }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } }
   );
