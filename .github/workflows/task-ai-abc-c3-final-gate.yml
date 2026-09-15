@@ -50,7 +50,7 @@ jobs:
             const s=fs.readFileSync(p,'utf8');
             const anchor='for(const [p,s] of Object.entries(newFiles))';
             if(s.split(anchor).length!==2)throw new Error('compiler_patch_boundary');
-            const patch=`newFiles[dir+'conversation-recall.ts']=newFiles[dir+'conversation-recall.ts'].replace('if (prior.stop?.reason === "CURRENT_KB_REQUIRED")','if (prior.stop && !prior.stop.handled && prior.stop.reason === "CURRENT_KB_REQUIRED")');\n`;
+            const patch=`newFiles[dir+'conversation-recall.ts']=newFiles[dir+'conversation-recall.ts'].replace('if (prior.stop?.reason === "CURRENT_KB_REQUIRED")','if (prior.stop && !prior.stop.handled && prior.stop.reason === "CURRENT_KB_REQUIRED")');\nnewFiles[dir+'conversation-recall.ts']=newFiles[dir+'conversation-recall.ts'].replace('return v.replace(/[\\r\\n\\u0000-\\u001f]/g, " ").trim().slice(0, 1200);','return [...v].map((char) => char.charCodeAt(0) < 32 ? " " : char).join("").trim().slice(0, 1200);');\n`;
             let patched=s.replace(anchor,patch+anchor);
             const rowGuard='if (commerceState) {\n        _c3CommerceSnapshot';
             if(patched.split(rowGuard).length!==2)throw new Error('snapshot_row_guard_boundary');
