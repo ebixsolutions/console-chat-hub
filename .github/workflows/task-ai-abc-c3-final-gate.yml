@@ -43,16 +43,18 @@ jobs:
       - name: Apply exact C3 recall implementation and run preproduction gate
         shell: bash
         run: |
-          if test -f .github/scripts/task_ai_abc_c3_recall_cutover.mjs; then
-            node --input-type=module <<'NODE'
-            import fs from 'node:fs';
-            const p='.github/scripts/task_ai_abc_c3_recall_cutover.mjs';
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const p='.github/scripts/task_ai_abc_c3_recall_cutover.mjs';
+          if(fs.existsSync(p)){
             const s=fs.readFileSync(p,'utf8');
             const anchor='for(const [p,s] of Object.entries(newFiles))';
             if(s.split(anchor).length!==2)throw new Error('compiler_patch_boundary');
             const patch=`newFiles[dir+'conversation-recall.ts']=newFiles[dir+'conversation-recall.ts'].replace('if (prior.stop?.reason === "CURRENT_KB_REQUIRED")','if (prior.stop && !prior.stop.handled && prior.stop.reason === "CURRENT_KB_REQUIRED")');\n`;
             fs.writeFileSync(p,s.replace(anchor,patch+anchor));
-            NODE
+          }
+          NODE
+          if test -f .github/scripts/task_ai_abc_c3_recall_cutover.mjs; then
             node .github/scripts/task_ai_abc_c3_recall_cutover.mjs
           else
             node .github/scripts/task_ai_abc_c3_final_gate.mjs
