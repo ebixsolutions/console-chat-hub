@@ -1,3 +1,4 @@
+import { resolveConversationRecall, renderConversationRecall } from "./conversation-recall.ts";
 import type { ConversationCommerceState } from "./commerce-state-contract.ts";
 import {
   projectConversationRuntimeState,
@@ -385,20 +386,15 @@ export function buildConversationMemoryMarkdown(memory: CanonicalConversationMem
   ].join("\n").slice(0, C3_MEMORY_CONTEXT_CHAR_BUDGET);
 }
 
-export function resolveStructuredMemoryResponse(
-  latestInput: string,
-  memory: CanonicalConversationMemory | null,
-): string | null {
+/** Compatibility API; all classification and selection live in one resolver. */
+export function resolveStructuredMemoryResponse(latestInput: string, memory: CanonicalConversationMemory | null): string | null {
   if (!memory) return null;
-  const latest = clean(latestInput, 800);
-  if (!latest || /(?:請記住|请记住|please\s+remember|remember\s+that)/i.test(latest)) return null;
-  const asksFirst = /(?:一開始|一开始|最初).*(?:問|需求)|(?:first|original).*(?:question|request|goal)/i.test(latest);
-  if (asksFirst && memory.current_goal) return memory.current_goal;
-  const asksCorrection = /(?:最新|最後|最后|之前).*(?:更正|改正)|latest\s+correction|what.*correct/i.test(latest);
-  if (asksCorrection && memory.latest_corrections.length) return memory.latest_corrections[0];
-  const asksSummary = /(?:總結|总结|整理|summari[sz]e).*(?:需求|對話|对话|conversation|requirements?|state)|(?:目前|現在|现在|current).*(?:需求|狀態|状态|requirements?|state)/i.test(latest);
-  if (asksSummary) return buildConversationMemoryMarkdown(memory);
-  return null;
+  const decision = resolveConversationRecall({
+    question: latestInput, memory, commerce: null,
+    conversation_id: memory.conversation_id, company_id: memory.company_id,
+    source_message_id: memory.source_message_id,
+  });
+  return renderConversationRecall(decision, /[\u4e00-\u9fff]/.test(latestInput) ? "zh-TW" : "en");
 }
 
 export function buildBoundedConversationContext(
@@ -417,7 +413,7 @@ export function buildBoundedConversationContext(
   }
   const memoryBlock = memory ? buildConversationMemoryMarkdown(memory).slice(0, C3_MEMORY_CONTEXT_CHAR_BUDGET) : "";
   const block = [
-    memoryBlock ? "Canonical structured conversation memory (derived; lower authority than commerce state and current KB):\n" + memoryBlock : "",
+    memoryBlock ? "Canonical structured conversation memory (customer-owned facts: canonical commerce, latest valid correction, current customer memory; external business facts still require current published KB):\n" + memoryBlock : "",
     recent.length ? "Recent raw turns (bounded; latest nuance only):\n" + recent.join("\n") : "",
   ].filter(Boolean).join("\n\n");
   return {

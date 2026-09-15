@@ -1,3 +1,4 @@
+import { prepareConversationRecall, type RecallCommerceSnapshot } from "../_shared/conversation-recall.ts";
 // B7 generate-reply — L5b orchestration skeleton + Task A.1A Deterministic Handoff Patch
 //
 // Source of truth: Contract 11 §3.1 + Contract 07 + Contract 03 §1.1 + Contract 08
@@ -124,7 +125,6 @@ import {
   composeBoundedGenerationEnvelope,
   type MemoryHistoryRow,
   refreshConversationLongMemory,
-  resolveStructuredMemoryResponse,
 } from "../_shared/conversation-long-memory.ts";
 import {
   type ConversationCommerceState,
@@ -3989,6 +3989,7 @@ async function orchestrationGenerateReply(
   let _a3Commerce: CommerceRuntimeOutcome | null = null;
   let _c3Memory: CanonicalConversationMemory | null = null;
   let _c3MemoryContext = "";
+  let _c3CommerceSnapshot: RecallCommerceSnapshot | null = null;
   if (_criticalE2ExpectedTenantId) {
     try {
       _a3Commerce = await runCommerceStateRuntime(
@@ -4034,7 +4035,7 @@ async function orchestrationGenerateReply(
             .eq("company_id", _criticalE2ExpectedTenantId)
             .maybeSingle(),
           supabaseAdmin.from("conversation_commerce_state")
-            .select("revision,state")
+            .select("conversation_id,company_id,source_message_id,revision,state")
             .eq("conversation_id", conversation_id)
             .eq("company_id", _criticalE2ExpectedTenantId)
             .maybeSingle(),
@@ -4056,6 +4057,15 @@ async function orchestrationGenerateReply(
         isConversationCommerceState(commerceRow?.state)
           ? commerceRow.state
           : null;
+      if (commerceState && commerceRow) {
+        _c3CommerceSnapshot = {
+          conversation_id: String(commerceRow.conversation_id),
+          company_id: String(commerceRow.company_id),
+          source_message_id: String(commerceRow.source_message_id ?? ""),
+          revision: Number(commerceRow.revision),
+          state: commerceState,
+        };
+      }
       const memoryOutcome = await refreshConversationLongMemory(
         supabaseAdmin as unknown as Parameters<
           typeof refreshConversationLongMemory
@@ -4093,6 +4103,44 @@ async function orchestrationGenerateReply(
         memoryError instanceof Error ? memoryError.name : "unknown_error",
       );
     }
+  }
+  // C3 fact ownership routing: after E2/A3 and durable memory, before commerce
+  // reply shortcuts, context clarification and current-KB/C1 resolution.
+  const _c3Recall = prepareConversationRecall({
+    conversation_id,
+    company_id: _criticalE2ExpectedTenantId ?? "",
+    source_message_id: _h1SourceMessageId,
+    question: _h1LastMsg,
+    memory: _c3Memory,
+    commerce: _c3CommerceSnapshot,
+    explicit_handoff: isHandoffIntent(_h1LastMsg),
+    referents: _a3SemanticFrame?.referents ?? [],
+    recent_questions: ((_pr5HistoryRows ?? []) as MemoryHistoryRow[])
+      .filter(row => row.role === "visitor" && row.id !== _h1SourceMessageId)
+      .slice(0, 12).map(row => String(row.content ?? "")),
+  }, _visitorLang);
+  if (_c3Recall.reply) {
+    const recallCommit = await commitAiReplyWithControlGate(
+      supabaseAdmin, conversation_id, _h1SourceMessageId,
+      _c3Recall.reply, _c3Recall.metadata,
+    );
+    await cleanupThinking(supabaseAdmin, conversation_id, _h1SourceMessageId);
+    if (recallCommit.ok) {
+      return new Response(JSON.stringify({
+        success: true, reply: _c3Recall.reply,
+        response_route: _c3Recall.metadata.response_route,
+        recall_authority: _c3Recall.metadata.recall_authority,
+        recall_fact_type: _c3Recall.metadata.recall_fact_type,
+        handoff_required: false, idempotent: recallCommit.idempotent,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+    if (["human_control", "resolved", "superseded_source", "source_already_replied"].includes(recallCommit.result)) {
+      return new Response(JSON.stringify({ success: true, skipped: recallCommit.result }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+    return new Response(JSON.stringify({success: false,
+      error: `conversation_memory_commit_${recallCommit.result}`}),
+      { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
   if (_a3Commerce && _a3Commerce.reply) {
     const commerceReply = _a3Commerce.reason ===
@@ -4513,10 +4561,11 @@ async function orchestrationGenerateReply(
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   }
-  const _conversationMemoryReply = resolveStructuredMemoryResponse(
-    _h1LastMsg,
-    _c3Memory,
-  ) ?? resolveConversationMemoryResponse(_h1LastMsg, _pr5HistoryRows ?? []);
+  const _conversationMemoryReply = !_c3Recall.decision.handled &&
+      _c3Recall.decision.reason === "NOT_A_RECALL_QUERY" &&
+      _c3Recall.decision.detail !== "HANDOFF_PRECEDENCE"
+    ? resolveConversationMemoryResponse(_h1LastMsg, _pr5HistoryRows ?? [])
+    : null;
   if (_conversationMemoryReply) {
     const committed = await commitAiReplyWithControlGate(
       supabaseAdmin,

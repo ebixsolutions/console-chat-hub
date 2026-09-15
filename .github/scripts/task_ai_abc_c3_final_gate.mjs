@@ -20,6 +20,9 @@ const runDeno = (args) => {
 };
 
 const files = {
+  recall: "supabase/functions/_shared/conversation-recall.ts",
+  recallUnit: "supabase/functions/_shared/conversation-recall.test.ts",
+  recallIntegration: "supabase/functions/_shared/conversation-recall.integration.test.ts",
   memory: "supabase/functions/_shared/conversation-long-memory.ts",
   unit: "supabase/functions/_shared/conversation-long-memory.test.ts",
   integration:
@@ -110,7 +113,7 @@ for (
     "refreshConversationLongMemory(",
     "buildBoundedConversationContext(",
     "composeBoundedGenerationEnvelope(",
-    "resolveStructuredMemoryResponse(",
+    "prepareConversationRecall(",
     "let finalSystemPrompt",
     "executeB2RpcPersistence",
     "commitAiReplyWithControlGate",
@@ -309,11 +312,12 @@ for (
 
 run("git", ["diff", "--check", "origin/main...HEAD"]);
 runDeno(["test", "--no-lock", files.unit, files.terminalTest]);
-runDeno(["test", "--no-lock", "--allow-read", files.integration]);
+runDeno(["test", "--no-lock", "--allow-read", files.integration, files.recallIntegration]);
 runDeno([
   "check",
   "--no-lock",
   files.memory,
+  files.recall,
   files.terminalGuard,
   files.terminalTest,
 ]);
@@ -334,6 +338,9 @@ run("npx", [
   "--rule",
   "@typescript-eslint/no-explicit-any: off",
   files.memory,
+  files.recall,
+  files.recallUnit,
+  files.recallIntegration,
   files.unit,
   files.integration,
   files.terminalGuard,
