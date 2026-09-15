@@ -22,11 +22,13 @@ const files={
   migration:"supabase/migrations/20260915012938_ai_abc_c3_canonical_long_memory.sql",
   gate:".github/scripts/task_ai_abc_c3_final_gate.mjs",
   workflow:".github/workflows/task-ai-abc-c3-final-gate.yml",
+  c2WorkflowRouting:".github/workflows/task-ai-abc-c2-final-gate.yml",
 };
 for(const file of Object.values(files))must(fs.existsSync(file)&&fs.statSync(file).size>0,`missing_or_empty:${file}`);
 
 const memory=read(files.memory),unit=read(files.unit),integration=read(files.integration);
 const generate=read(files.generate),assist=read(files.assist),migration=read(files.migration);
+const c2WorkflowRouting=read(files.c2WorkflowRouting);
 
 for(const marker of [
   "conversation-memory-1.0.0","CanonicalConversationMemory","buildCanonicalConversationMemory",
@@ -56,6 +58,7 @@ for(const marker of [
 ])must(assist.includes(marker),`agent_assist_compatibility_missing:${marker}`);
 must(assist.indexOf("parsePersistedC2Handoff(persistedEvent?.ai_summary)")<assist.indexOf('buildWarmHandoffPackage(history,"takeover")'),"persisted_c2_must_precede_warm_handoff");
 must(!assist.includes(".limit(200)"),"agent_assist_raw_history_not_bounded");
+must(c2WorkflowRouting.includes("github.head_ref == 'director/ai-abc-c2-transaction-closure-handoff'"),"frozen_c2_gate_not_branch_scoped");
 
 for(const marker of [
   "conversation_memory_state","conversation_memory_state_event","ENABLE ROW LEVEL SECURITY",

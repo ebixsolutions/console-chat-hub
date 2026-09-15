@@ -17,6 +17,7 @@ on:
       - 'supabase/migrations/20260915012938_ai_abc_c3_canonical_long_memory.sql'
       - '.github/scripts/task_ai_abc_c3_final_gate.mjs'
       - '.github/workflows/task-ai-abc-c3-final-gate.yml'
+      - '.github/workflows/task-ai-abc-c2-final-gate.yml'
 
 permissions:
   contents: read
