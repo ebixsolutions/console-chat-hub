@@ -63,7 +63,7 @@ jobs:
               lines[sanitizerIndexes[0]]='    return [...v].map((char) => char.charCodeAt(0) < 32 ? " " : char).join("").trim().slice(0, 1200);';
               newFiles[recallPath]=lines.join('\\n');
             }
-`;
+          `;
             let patched=s.replace(anchor,patch+anchor);
             const rowGuard='if (commerceState) {\n        _c3CommerceSnapshot';
             if(patched.split(rowGuard).length!==2)throw new Error('snapshot_row_guard_boundary');
