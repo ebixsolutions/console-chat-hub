@@ -294,7 +294,7 @@ jobs:
           set -euo pipefail; eval "$C3_ASSERT_LIB"; c3_source_clean before_deno 1
           deno check --no-lock --node-modules-dir=auto supabase/functions/generate-reply/index.ts
           deno check --no-lock --node-modules-dir=auto supabase/functions/agent-assist/index.ts
-          deno test --no-lock --node-modules-dir=auto supabase/functions/_shared/conversation-long-memory.test.ts supabase/functions/_shared/conversation-long-memory.integration.test.ts supabase/functions/_shared/generation-terminal-guard.test.ts
+          deno test --no-lock --allow-read --node-modules-dir=auto supabase/functions/_shared/conversation-long-memory.test.ts supabase/functions/_shared/conversation-long-memory.integration.test.ts supabase/functions/_shared/generation-terminal-guard.test.ts
           c3_source_clean after_deno 1
           git worktree add --detach "$RUNNER_TEMP/c3-build-checkout" "$GITHUB_SHA"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/c3-build-checkout/node_modules"
