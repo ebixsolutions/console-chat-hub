@@ -103,6 +103,16 @@ const expectReject = (name, mutate, pattern) => {
 assert.equal(verifyEvidence(validEvidence(), contractInfo, options).pass, true);
 console.log("C3_NONPRODUCTION_CONTROL|name=mock_100_turn_complete_evidence|result=PASS");
 {
+  const workflow = fs.readFileSync(".github/workflows/task-ai-abc-c3-final-gate.yml", "utf8");
+  const gate = fs.readFileSync(".github/scripts/task_ai_abc_c3_final_gate.mjs", "utf8");
+  assert.match(workflow, /C3_CURRENT_LIVE_SOURCE_PARITY: NOT_APPLICABLE/);
+  assert.match(workflow, /C3_SOURCE_DEPLOYMENT_BOUNDARY: PASS/);
+  assert.match(workflow, /expected_changed=\{'_shared\/conversation-long-memory\.ts','_shared\/conversation-recall\.ts'\}/);
+  assert.match(workflow, /C3_DEPLOYMENT_ALLOWLIST=generate-reply,agent-assist/);
+  assert.match(gate, /liveSourceParity \|\| sourceDeploymentBoundary/);
+  console.log("C3_NONPRODUCTION_CONTROL|name=source_vs_deployment_identity_boundary|result=PASS");
+}
+{
   const equivalent = validEvidence();
   equivalent.scenarios.find((row) => row.id === "T98").actual_reply = "報價階段: 草擬中\n訂單階段: 未建立\n尚未形成正式訂單。";
   equivalent.scenarios.find((row) => row.id === "C3-CONTROL-13").actual_reply = "請指明要核對的項目或時間點；我不會把舊記錄或推測當作答案。";

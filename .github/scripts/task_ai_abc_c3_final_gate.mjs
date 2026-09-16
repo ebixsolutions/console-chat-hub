@@ -398,9 +398,13 @@ if (phase === "preproduction") {
     process.env.C3_CURRENT_LIVE_DURABLE_CAPTURE === "PASS",
     "current_live_v108_v43_durable_capture_not_verified",
   );
+  const liveSourceParity = process.env.C3_CURRENT_LIVE_SOURCE_PARITY === "PASS";
+  const sourceDeploymentBoundary =
+    process.env.C3_CURRENT_LIVE_SOURCE_PARITY === "NOT_APPLICABLE" &&
+    process.env.C3_SOURCE_DEPLOYMENT_BOUNDARY === "PASS";
   must(
-    process.env.C3_CURRENT_LIVE_SOURCE_PARITY === "PASS",
-    "current_live_v108_v43_source_parity_not_verified",
+    liveSourceParity || sourceDeploymentBoundary,
+    "current_live_source_identity_or_deployment_boundary_not_verified",
   );
   rollbackAssertion = {
     identity: "INTERIM_LIVE_RECOVERY_BASELINE",
