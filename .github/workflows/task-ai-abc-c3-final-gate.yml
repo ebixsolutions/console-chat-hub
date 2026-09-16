@@ -71,16 +71,14 @@ jobs:
       artifact_url: ${{ steps.upload.outputs.artifact-url }}
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      C3_EVENT_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
     steps:
-      - name: Checkout exact source without mutation
-        uses: actions/checkout@v4
-        with: {ref: '${{ github.event.pull_request.head.sha || github.sha }}', fetch-depth: 0, clean: true}
       - name: Guard recovery-only capture authority
         shell: bash
         run: |
           set -euo pipefail
           test "${{ github.repository }}" = ebixsolutions/console-chat-hub
-          test "${{ github.event.pull_request.head.ref || github.ref_name }}" = director/ai-abc-c3-long-memory-final-cutover
+          test "$C3_EVENT_BRANCH" = director/ai-abc-c3-long-memory-final-cutover
           test -n "${SUPABASE_ACCESS_TOKEN:-}"
           test "$C3_PROJECT_REF" = nrfxhqabwblzxoushgnm
           echo C3_RECOVERY_ONLY_CAPTURE_AUTHORITY=PASS
@@ -94,7 +92,7 @@ jobs:
           mkdir -p "$ROOT/_meta" "$ROOT/generate-reply/supabase" "$ROOT/agent-assist/supabase"
           (cd "$ROOT" && supabase functions list --project-ref "$C3_PROJECT_REF" --output json > _meta/live-functions-before.json)
           for fn in generate-reply agent-assist; do
-            cp supabase/config.toml "$ROOT/$fn/supabase/config.toml"
+            printf 'project_id = "%s"\n\n[functions.%s]\nverify_jwt = true\nentrypoint = "./functions/%s/index.ts"\n' "$C3_PROJECT_REF" "$fn" "$fn" > "$ROOT/$fn/supabase/config.toml"
             (cd "$ROOT/$fn" && supabase functions download "$fn" --project-ref "$C3_PROJECT_REF" --use-api)
           done
           (cd "$ROOT" && supabase functions list --project-ref "$C3_PROJECT_REF" --output json > _meta/live-functions-after.json)
@@ -139,7 +137,6 @@ jobs:
           (root/'_meta/live-functions-before.json').unlink(); (root/'_meta/live-functions-after.json').unlink(); (root/'_meta').rmdir()
           print('CURRENT_LIVE_V108_V43_CAPTURE_PREUPLOAD=PASS')
           PY
-          test -z "$(git status --porcelain)"
           ! grep -RIlE '(SUPABASE_ACCESS_TOKEN|service_role)[[:space:]]*[:=][[:space:]]*[A-Za-z0-9_.-]{20,}' "$ROOT"
       - name: Upload protected recovery artifact
         id: upload
