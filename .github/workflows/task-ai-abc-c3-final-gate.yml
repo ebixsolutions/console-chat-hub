@@ -34,26 +34,30 @@ env:
   C3_PROJECT_REF: nrfxhqabwblzxoushgnm
   C3_CAPTURE_NAME: C3-current-live-v108-v43-recovery-baseline
   C3_CAPTURE_RETENTION_DAYS: '30'
+  C3_CLI_EPHEMERAL: supabase/.temp/cli-latest
   C3_ASSERT_LIB: |
     c3_assert(){ local n="$1" e="$2" a="$3"; if [ "$e" = "$a" ]; then echo "C3_SOURCE_ASSERT|name=$n|expected=$e|actual=$a|result=PASS"; else echo "C3_SOURCE_ASSERT|name=$n|expected=$e|actual=$a|result=FAIL"; return 1; fi; }
     c3_source_clean(){
-      local phase="$1" tracked staged unauthorized failed=0 offenders
+      local phase="$1" expected_cli="$2" tracked staged approved unauthorized failed=0 offenders
       tracked="$(git diff --name-only | awk 'NF{n++} END{print n+0}')"
       staged="$(git diff --cached --name-only | awk 'NF{n++} END{print n+0}')"
-      offenders="$(git ls-files --others --exclude-standard | awk 'NF{print}')"
+      approved="$(git ls-files --others --exclude-standard | awk -v p="$C3_CLI_EPHEMERAL" '$0==p{n++} END{print n+0}')"
+      offenders="$(git ls-files --others --exclude-standard | awk -v p="$C3_CLI_EPHEMERAL" 'NF && $0!=p{print}')"
       unauthorized="$(printf '%s\n' "$offenders" | awk 'NF{n++} END{print n+0}')"
       echo "C3_SOURCE_STATUS|phase=$phase"
       git status --porcelain || true
       printf '%s\n' "$offenders" | awk 'NF{print "C3_SOURCE_OFFENDER|kind=unauthorized_untracked|path=" $0}'
       c3_assert "${phase}_tracked_modified" 0 "$tracked" || failed=1
       c3_assert "${phase}_staged" 0 "$staged" || failed=1
+      c3_assert "${phase}_exact_cli_ephemeral" "$expected_cli" "$approved" || failed=1
       c3_assert "${phase}_unauthorized_untracked" 0 "$unauthorized" || failed=1
+      if git ls-files --error-unmatch "$C3_CLI_EPHEMERAL" >/dev/null 2>&1; then echo "C3_SOURCE_ASSERT|name=${phase}_cli_ephemeral_untracked|expected=untracked|actual=tracked|result=FAIL"; failed=1; else echo "C3_SOURCE_ASSERT|name=${phase}_cli_ephemeral_untracked|expected=untracked|actual=untracked|result=PASS"; fi
       return "$failed"
     }
     c3_cli_delta(){
       local before="$1" after="$2" delta
       delta="$(comm -13 "$before" "$after" | awk 'NF')"
-      if [ -z "$delta" ]; then echo "C3_SOURCE_ASSERT|name=cli_checkout_delta|expected=NONE|actual=NONE|result=PASS"; else printf '%s\n' "$delta" | awk 'NF{print "C3_SOURCE_OFFENDER|kind=cli_setup_delta|path=" $0}'; echo "C3_SOURCE_ASSERT|name=cli_checkout_delta|expected=NONE|actual=$delta|result=FAIL"; return 1; fi
+      if [ "$delta" = "$C3_CLI_EPHEMERAL" ]; then echo "C3_SOURCE_ASSERT|name=cli_setup_created_exact_path|expected=$C3_CLI_EPHEMERAL|actual=$delta|result=PASS"; else printf '%s\n' "$delta" | awk 'NF{print "C3_SOURCE_OFFENDER|kind=cli_setup_delta|path=" $0}'; echo "C3_SOURCE_ASSERT|name=cli_setup_created_exact_path|expected=$C3_CLI_EPHEMERAL|actual=${delta:-NONE}|result=FAIL"; return 1; fi
     }
 
 jobs:
@@ -215,7 +219,7 @@ jobs:
         run: |
           set -euo pipefail; eval "$C3_ASSERT_LIB"
           git ls-files --others --exclude-standard | LC_ALL=C sort > "$RUNNER_TEMP/before-cli"
-          c3_source_clean before_cli_setup
+          c3_source_clean before_cli_setup 0
       - uses: denoland/setup-deno@v2
         with: {deno-version: v2.9.6}
       - uses: supabase/setup-cli@v1
@@ -226,7 +230,7 @@ jobs:
           set -euo pipefail; eval "$C3_ASSERT_LIB"
           git ls-files --others --exclude-standard | LC_ALL=C sort > "$RUNNER_TEMP/after-cli"
           c3_cli_delta "$RUNNER_TEMP/before-cli" "$RUNNER_TEMP/after-cli"
-          c3_source_clean after_cli_setup
+          c3_source_clean after_cli_setup 1
       - uses: actions/setup-node@v4
         with: {node-version: '22', cache: npm}
       - run: npm ci
@@ -287,15 +291,15 @@ jobs:
       - name: Deno, C3 tests, build and source cleanliness
         shell: bash
         run: |
-          set -euo pipefail; eval "$C3_ASSERT_LIB"; c3_source_clean before_deno
+          set -euo pipefail; eval "$C3_ASSERT_LIB"; c3_source_clean before_deno 1
           deno check --no-lock --node-modules-dir=auto supabase/functions/generate-reply/index.ts
           deno check --no-lock --node-modules-dir=auto supabase/functions/agent-assist/index.ts
           deno test --no-lock --node-modules-dir=auto supabase/functions/_shared/conversation-long-memory.test.ts supabase/functions/_shared/conversation-long-memory.integration.test.ts supabase/functions/_shared/generation-terminal-guard.test.ts
-          c3_source_clean after_deno
+          c3_source_clean after_deno 1
           git worktree add --detach "$RUNNER_TEMP/c3-build-checkout" "$GITHUB_SHA"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/c3-build-checkout/node_modules"
           (cd "$RUNNER_TEMP/c3-build-checkout" && npm run build)
-          c3_source_clean after_build
+          c3_source_clean after_build 1
           echo C3_NONPRODUCTION_REGRESSION=PASS
       - name: Run pristine C3 source final gate
         shell: bash
@@ -480,7 +484,7 @@ jobs:
             print(f'C3_FROZEN_READBACK_ASSERT|function={exp["function"]}|result={"PASS" if ok else "FAIL"}')
             if not ok: raise SystemExit(1)
           PY
-          c3_source_clean production_final
+          c3_source_clean production_final 1
           echo C3_POST_DEPLOYMENT_P0_FINAL_GATE=PASS
       - name: Failure-safe recovery after all post-deployment P0 gates
         id: recovery
