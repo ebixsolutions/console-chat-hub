@@ -321,7 +321,7 @@ runDeno([
   files.terminalGuard,
   files.terminalTest,
 ]);
-if (process.env.CI) {
+if (process.env.CI && process.env.C3_EDGE_TYPECHECK_PREVERIFIED !== "PASS") {
   runDeno([
     "check",
     "--no-lock",
@@ -526,7 +526,10 @@ console.log(JSON.stringify(
         ? "INTERIM_V108_V43_DURABLE_CAPTURE"
         : true,
       migration_runtime_rehearsal: true,
-      edge_typecheck: process.env.CI ? true : "CI_REQUIRED",
+      edge_typecheck: process.env.CI ||
+          process.env.C3_EDGE_TYPECHECK_PREVERIFIED === "PASS"
+        ? true
+        : "CI_REQUIRED",
       production_100_turn: phase === "production"
         ? true
         : "AUTHORIZATION_PENDING",

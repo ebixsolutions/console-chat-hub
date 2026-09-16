@@ -211,6 +211,7 @@ jobs:
       C3_RECOVERY_INTERIM_BASELINE: PASS
       C3_CURRENT_LIVE_DURABLE_CAPTURE: PASS
       C3_CURRENT_LIVE_SOURCE_PARITY: PASS
+      C3_EDGE_TYPECHECK_PREVERIFIED: PASS
     steps:
       - uses: actions/checkout@v4
         with: {ref: '${{ github.sha }}', fetch-depth: 0, clean: true}
@@ -292,9 +293,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail; eval "$C3_ASSERT_LIB"; c3_source_clean before_deno 1
-          deno check --no-lock supabase/functions/generate-reply/index.ts
-          deno check --no-lock supabase/functions/agent-assist/index.ts
-          deno test --no-lock --allow-read supabase/functions/_shared/conversation-long-memory.test.ts supabase/functions/_shared/conversation-long-memory.integration.test.ts supabase/functions/_shared/generation-terminal-guard.test.ts
+          git worktree add --detach "$RUNNER_TEMP/c3-deno-checkout" "$GITHUB_SHA"
+          (cd "$RUNNER_TEMP/c3-deno-checkout" && deno check --no-lock --node-modules-dir=auto supabase/functions/generate-reply/index.ts)
+          (cd "$RUNNER_TEMP/c3-deno-checkout" && deno check --no-lock --node-modules-dir=auto supabase/functions/agent-assist/index.ts)
+          (cd "$RUNNER_TEMP/c3-deno-checkout" && deno test --no-lock --allow-read --node-modules-dir=auto supabase/functions/_shared/conversation-long-memory.test.ts supabase/functions/_shared/conversation-long-memory.integration.test.ts supabase/functions/_shared/generation-terminal-guard.test.ts)
           c3_source_clean after_deno 1
           git worktree add --detach "$RUNNER_TEMP/c3-build-checkout" "$GITHUB_SHA"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/c3-build-checkout/node_modules"
