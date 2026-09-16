@@ -8,12 +8,13 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: Secret-free preflight, separately authorized live validation, cleanup-only, or recovery
+        description: Secret-free preflight, isolated nonproduction quality, separately authorized live validation, cleanup-only, or recovery
         required: true
         default: preflight_offline
         type: choice
         options:
           - preflight_offline
+          - nonproduction_external_quality
           - validation_only
           - evidence_finalize
           - cleanup_only
@@ -150,6 +151,57 @@ env:
     }
 
 jobs:
+  c3-nonproduction-external-quality:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.mode == 'nonproduction_external_quality' &&
+      github.actor == 'ebixsolutions'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    environment: c3-nonproduction-free
+    env:
+      C3_NONPROD_SUPABASE_PROJECT_REF: ${{ secrets.C3_NONPROD_SUPABASE_PROJECT_REF }}
+      C3_NONPROD_SUPABASE_URL: ${{ secrets.C3_NONPROD_SUPABASE_URL }}
+      C3_NONPROD_SUPABASE_ACCESS_TOKEN: ${{ secrets.C3_NONPROD_SUPABASE_ACCESS_TOKEN }}
+      C3_NONPROD_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.C3_NONPROD_SUPABASE_SERVICE_ROLE_KEY }}
+      C3_NONPROD_TEST_AGENT_EMAIL: ${{ secrets.C3_NONPROD_TEST_AGENT_EMAIL }}
+      C3_NONPROD_TEST_AGENT_PASSWORD: ${{ secrets.C3_NONPROD_TEST_AGENT_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: '${{ github.sha }}', fetch-depth: 0, clean: true}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - name: Reject production identity and bind exact runtime candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${C3_NONPROD_SUPABASE_PROJECT_REF:-}" = nbtowfuvvfqpxqydyoby
+          test "$C3_NONPROD_SUPABASE_PROJECT_REF" != nrfxhqabwblzxoushgnm
+          test "${C3_NONPROD_SUPABASE_URL:-}" = "https://$C3_NONPROD_SUPABASE_PROJECT_REF.supabase.co"
+          case "$C3_NONPROD_SUPABASE_URL" in *nrfxhqabwblzxoushgnm*) exit 1;; esac
+          test -n "${C3_NONPROD_SUPABASE_ACCESS_TOKEN:-}"
+          test -n "${C3_NONPROD_SUPABASE_SERVICE_ROLE_KEY:-}"
+          test -n "${C3_NONPROD_TEST_AGENT_EMAIL:-}"
+          test -n "${C3_NONPROD_TEST_AGENT_PASSWORD:-}"
+          node .github/scripts/c3_nonproduction_external_quality.mjs preflight
+      - name: Verify frozen held-out dataset and anti-fake controls
+        run: |
+          set -euo pipefail
+          node .github/scripts/c3_nonproduction_external_quality.mjs verify-dataset
+          node .github/scripts/c3_nonproduction_external_quality.test.mjs
+      - name: Run isolated HTTP entrypoints and exact-ID cleanup
+        run: node .github/scripts/c3_nonproduction_external_quality.mjs run "$RUNNER_TEMP/c3-nonproduction-http-evidence.json"
+      - name: Reverify immutable evidence
+        run: node .github/scripts/c3_nonproduction_external_quality.mjs verify-evidence "$RUNNER_TEMP/c3-nonproduction-http-evidence.json"
+      - name: Upload isolated evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: c3-nonproduction-http-evidence-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/c3-nonproduction-http-evidence.json
+          if-no-files-found: warn
+          retention-days: 30
+
   c3-validation-preflight-offline:
     if: >-
       github.event_name == 'push' ||

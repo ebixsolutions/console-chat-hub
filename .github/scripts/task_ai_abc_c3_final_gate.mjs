@@ -61,6 +61,12 @@ const files = {
   serviceQualityEvaluation: ".github/scripts/c3_service_quality_nonproduction.ts",
   serviceQualityVerifier: ".github/scripts/c3_service_quality_evidence.mjs",
   requirementEvidenceMatrix: ".github/scripts/c3_requirement_evidence_matrix.json",
+  nonproductionBootstrap: "sql/c3-nonproduction/00_repository_baseline.sql",
+  nonproductionSecurityClosure: "sql/c3-nonproduction/01_security_readback_closure.sql",
+  nonproductionCleanup: "sql/c3-nonproduction/99_cleanup_exact_fixture_ids.sql",
+  nonproductionDataset: ".github/scripts/c3_nonproduction_heldout_dataset.json",
+  nonproductionRunner: ".github/scripts/c3_nonproduction_external_quality.mjs",
+  nonproductionRunnerTest: ".github/scripts/c3_nonproduction_external_quality.test.mjs",
   task42DeployWorkflow: ".github/workflows/task4-2-deploy-live-console-edge.yml",
 };
 for (const file of Object.values(files)) {
