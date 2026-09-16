@@ -260,6 +260,48 @@ Deno.test("C3 unknown fact decisions never acquire inferred values", () => {
   assert(!d.handled && !("value" in d));
 });
 
+Deno.test("C3 reconstructed acceptance failures use customer-owned history (non-production replay)", async () => {
+  const { buildCanonicalConversationMemory } = await import("./conversation-long-memory.ts");
+  const contract = JSON.parse(Deno.readTextFileSync(new URL("../../../.github/scripts/c3_validation_scenarios.json", import.meta.url)));
+  const ids = new Set(["T06", "T17", "T40", "T50", "T57", "T58", "T68", "T69", "T71", "C3-CONTROL-14"]);
+  for (const row of contract.scenarios.filter((item: { id: string }) => ids.has(item.id))) {
+    const seed = recallFixture(row.input);
+    const commerceState = structuredClone(seed.commerce!.state);
+    commerceState.entities = [];
+    commerceState.quotes = [];
+    commerceState.customer_constraints = {};
+    commerceState.delivery.address = row.id === "T40" ? "長沙灣幸福邨A座12樓" : row.id === "T57" ? "幸福邨A座12樓" : null;
+    commerceState.delivery.preferred_date = null;
+    commerceState.delivery.preferred_window = null;
+    const source = seed.source_message_id;
+    const setup = row.setup_turns.map((content: string, index: number) => ({
+      id: `10000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+      role: "visitor",
+      content,
+    }));
+    const memory = buildCanonicalConversationMemory({
+      previous: null,
+      conversation_id: seed.conversation_id,
+      company_id: seed.company_id,
+      source_message_id: source,
+      commerce_state_revision: 20,
+      commerce_state: commerceState,
+      newest_first: [{ id: source, role: "visitor", content: row.input }, ...setup.reverse()],
+      visitor_turn_count: setup.length + 1,
+      source_created_at: "2026-09-16T00:00:00Z",
+      next_memory_revision: 1,
+    });
+    const result = prepareConversationRecall({ ...seed, memory, commerce: { ...seed.commerce!, state: commerceState } });
+    assert(result.decision.handled && result.reply, `${row.id}: ${JSON.stringify(result.decision)}`);
+    const normalized = result.reply.normalize("NFKC").toLowerCase();
+    const contains = (value: string) => normalized.includes(value.normalize("NFKC").toLowerCase());
+    assert(!(row.expected.include_all ?? []).some((value: string) => !contains(value)), `${row.id}:include_all:${result.reply}`);
+    assert(!row.expected.include_any || row.expected.include_any.some(contains), `${row.id}:include_any:${result.reply}`);
+    assert(!row.expected.include_any_secondary || row.expected.include_any_secondary.some(contains), `${row.id}:include_any_secondary:${result.reply}`);
+    assert(!(row.expected.exclude_any ?? []).some(contains), `${row.id}:exclude_any:${result.reply}`);
+  }
+});
+
 Deno.test("C3 synthetic 100-turn bounded-memory routing continuity (not production replay)", async () => {
   const { buildCanonicalConversationMemory } = await import(
     "./conversation-long-memory.ts"

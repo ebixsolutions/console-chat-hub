@@ -492,11 +492,19 @@ class Harness:
         suppressed = observed.get("suppressed") is True
         handoff = observed.get("handoff") or {}
         conversation = observed.get("conversation") or {}
+        customer_source_id = observed["customer"]["id"]
+        assistant_source_id = None if suppressed else metadata.get("source_message_id")
+        source_bound = suppressed or assistant_source_id == customer_source_id
+        persisted_result = "suppressed_human_control" if suppressed else ("success" if source_bound else "unobserved")
         return {
             "id": row["id"], "contract_version": CONTRACT_VERSION,
             "input": row["input"], "expected": row["expected"],
             "actual_reply": "" if suppressed else observed["assistant"].get("content") or "",
             "response_route": "human_control" if suppressed else str(metadata.get("response_route") or metadata.get("route") or "normal"),
+            "recall_authority": None if suppressed else metadata.get("recall_authority"),
+            "recall_fact_type": None if suppressed else metadata.get("recall_fact_type"),
+            "recall_reason": None if suppressed else metadata.get("recall_reason"),
+            "recall_provenance": [] if suppressed else metadata.get("recall_provenance") or [],
             "customer_source_message_id": observed["customer"]["id"],
             "assistant_message_id": None if suppressed else observed["assistant"]["id"],
             "response_suppressed": suppressed,
@@ -511,7 +519,13 @@ class Harness:
             } if suppressed else None),
             "memory_revision": (memory or {}).get("revision"),
             "commerce_revision": (commerce or {}).get("revision"),
-            "b2": {"persistence_result": "suppressed_human_control" if suppressed else metadata.get("b2_persistence_result") or metadata.get("commit_result") or "unobserved"},
+            "source_binding": {
+                "assistant_source_message_id": assistant_source_id,
+                "memory_source_message_id": (memory or {}).get("source_message_id"),
+                "commerce_source_message_id": (commerce or {}).get("source_message_id"),
+                "exact_customer_source_match": source_bound,
+            },
+            "b2": {"persistence_result": persisted_result, "evidence": "persisted_assistant_exact_source_binding" if source_bound and not suppressed else "human_control_suppression" if suppressed else "unobserved"},
             "observed_at": utc_now(), "conversation_id": fixture["conversation_id"],
         }
 

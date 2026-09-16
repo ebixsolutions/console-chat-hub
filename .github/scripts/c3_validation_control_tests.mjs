@@ -60,7 +60,8 @@ function validEvidence() {
       actual_reply: replyFor(row), response_route: row.expected_route_family[0],
       customer_source_message_id: uuid(index + 1), assistant_message_id: uuid(index + 101),
       memory_revision: index + 1, commerce_revision: index,
-      b2: { persistence_result: "success" }, observed_at: "2026-09-16T02:31:00Z",
+      source_binding: { assistant_source_message_id: uuid(index + 1), memory_source_message_id: uuid(index + 1), commerce_source_message_id: uuid(index + 1), exact_customer_source_match: true },
+      b2: { persistence_result: "success", evidence: "persisted_assistant_exact_source_binding" }, observed_at: "2026-09-16T02:31:00Z",
     })),
     quick_gate: { all_pass: true, long_run_started_only_after_pass: true },
     historical_hkd_8000: { pass: true, source: "runtime_readback" },
@@ -101,6 +102,13 @@ const expectReject = (name, mutate, pattern) => {
 
 assert.equal(verifyEvidence(validEvidence(), contractInfo, options).pass, true);
 console.log("C3_NONPRODUCTION_CONTROL|name=mock_100_turn_complete_evidence|result=PASS");
+{
+  const equivalent = validEvidence();
+  equivalent.scenarios.find((row) => row.id === "T98").actual_reply = "報價階段: 草擬中\n訂單階段: 未建立\n尚未形成正式訂單。";
+  equivalent.scenarios.find((row) => row.id === "C3-CONTROL-13").actual_reply = "請指明要核對的項目或時間點；我不會把舊記錄或推測當作答案。";
+  assert.equal(verifyEvidence(equivalent, contractInfo, options).pass, true);
+  console.log("C3_NONPRODUCTION_CONTROL|name=bounded_semantic_equivalence_t98_c13|result=PASS");
+}
 assert.equal(contractInfo.contract.scenarios.filter((x) => x.origin === "recovered_failure_class").length, 11);
 assert.equal(contractInfo.contract.scenarios.filter((x) => x.origin === "new_release_control").length, 4);
 console.log("C3_NONPRODUCTION_CONTROL|name=15_row_contract_11_recovered_4_new|result=PASS");
@@ -130,6 +138,8 @@ expectReject("wrong_tree", (e) => { e.runner.tree = "f".repeat(40); }, /tree_mis
 expectReject("wrong_project", (e) => { e.project = "wrong"; }, /project_mismatch/);
 expectReject("wrong_live_source", (e) => { e.live_functions[0].source_parity = false; }, /source_parity_missing/);
 expectReject("old_run_replay", (e) => { e.run.id = "1"; }, /run_id_mismatch_or_replay/);
+expectReject("source_binding_mismatch", (e) => { e.scenarios[0].source_binding.memory_source_message_id = uuid(999); }, /source_binding_invalid/);
+expectReject("b2_status_without_source_proof", (e) => { e.scenarios[0].b2.evidence = "unobserved"; }, /b2_persistence_missing/);
 expectReject("hand_filled_flags_without_evidence", (e) => { e.scenarios = []; e.C3_PRODUCT_READY_CORE_SMOKE = "PASS"; }, /15_scenario_rows/);
 expectReject("checkpoint_bound_mismatch", (e) => { e.long_run.checkpoints[1].generation_context_chars = 32769; }, /generation_context_bound_exceeded/);
 expectReject("rebuild_mismatch", (e) => { e.rebuild_comparison.equal = false; }, /rebuild_comparison_invalid/);

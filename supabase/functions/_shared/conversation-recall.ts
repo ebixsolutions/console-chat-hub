@@ -163,6 +163,8 @@ const FIELDS: Partial<Record<RecallFact, string[]>> = {
     "週六",
     "周六",
     "saturday",
+    "送貨安排",
+    "送货安排",
   ],
   quotation_status: ["quotation", "quote", "報價", "报价"],
   order_status: ["order", "訂單", "订单", "落單", "落单", "下單", "下单"],
@@ -205,6 +207,8 @@ const FIELDS: Partial<Record<RecallFact, string[]>> = {
     "整理需求",
     "目前需求",
     "current requirements",
+    "分開說明",
+    "分开说明",
   ],
   entity_status: [
     "item status",
@@ -212,6 +216,7 @@ const FIELDS: Partial<Record<RecallFact, string[]>> = {
     "canceled item",
     "deferred",
     "取消的",
+    "被取消",
     "暫緩",
     "暂缓",
     "延後",
@@ -220,7 +225,7 @@ const FIELDS: Partial<Record<RecallFact, string[]>> = {
 };
 const KEY_ALIASES: Partial<Record<RecallFact, string[]>> = {
   quantity: ["quantity", "requested_quantity", "item_quantity"],
-  address: ["address", "delivery_address", "shipping_address"],
+  address: ["address", "delivery_address", "shipping_address", "corrected_delivery_address"],
   recipient: ["recipient", "recipient_name", "contact_name", "收貨人姓名"],
   contact: [
     "recipient_phone",
@@ -389,6 +394,8 @@ const ASK = [
   "read back",
   "readback",
   "tell me",
+  "說明",
+  "说明",
   "確認一下",
   "核對",
   "核对",
@@ -704,7 +711,7 @@ function correctedValue(text: string, f: RecallFact): unknown {
   if (!hasField(text, f) || /[?？]/.test(text)) return null;
   // One assignment grammar for retained corrections; never parse the incoming question as a value.
   const assigned = text.match(
-    /(?:而是|而係|而系|改為|改为|改成|改做|更改為|\bto\b)\s*([^;；。]+)$/i,
+    /(?:而是|而係|而系|改為|改为|改成|改做|更改為|(?:不是|唔係)[^，,。]{1,80}[，,]\s*(?:而)?(?:是|係)|\bto\b)\s*([^;；。]+)[。.!！]?$/i,
   )?.[1];
   const matched =
     aliases(f).map((a) => ({ a, at: norm(text).indexOf(norm(a)) })).filter(
@@ -937,7 +944,7 @@ function memoryCandidates(
     add(
       `current_customer_facts.${i}.value`,
       value,
-      2,
+      keyNorm(x.key).startsWith("corrected") ? -1 : 2,
       x.entity_id ?? null,
       x.region ?? null,
       x.source_message_id ?? null,
@@ -995,6 +1002,13 @@ function memoryCandidates(
   if (f === "correction") {
     add("latest_corrections.0", m.latest_corrections[0], 1);
   }
+  if (f === "entity_status") {
+    for (let i = 0; i < m.cancelled_or_superseded.length; i++) {
+      const fact = m.cancelled_or_superseded[i];
+      if (fact.authority !== "customer" && fact.authority !== "canonical_commerce") continue;
+      add(`cancelled_or_superseded.${i}`, fact.entity_id ?? fact.value, 1, null, fact.region ?? null, fact.source_message_id ?? null);
+    }
+  }
   return out;
 }
 
@@ -1005,8 +1019,20 @@ export function resolveConversationRecall(
     return fail("NOT_A_RECALL_QUERY", "HANDOFF_PRECEDENCE");
   }
   const parsed = parseQuery(input.question, input.recent_questions);
-  if (parsed.stop) return parsed.stop;
-  const facts = parsed.facts, m = input.memory, c = input.commerce;
+  const m = input.memory, c = input.commerce;
+  const requestedAmounts = (input.question.match(/\d[\d,]*(?:\.\d+)?/g) ?? []).map((v) => Number(v.replace(/,/g, "")));
+  const retainedHistoricalAmount = (m?.historical_facts ?? []).some((fact) => {
+    const value = object(fact.value);
+    return fact.authority === "historical" && /quote/i.test(fact.key) &&
+      typeof value?.amount === "number" && requestedAmounts.includes(value.amount);
+  });
+  const historicalValidityReadback = Boolean(parsed.stop && !parsed.stop.handled &&
+    parsed.stop.reason === "CURRENT_KB_REQUIRED") &&
+    retainedHistoricalAmount &&
+    any(input.question, ["當作", "当作", "treat as"]) &&
+    any(input.question, ["現售價", "现售价", "current price"]);
+  if (parsed.stop && !historicalValidityReadback) return parsed.stop;
+  const facts = historicalValidityReadback ? ["historical_exclusion" as RecallFact] : parsed.facts;
   if (!input.company_id || !input.conversation_id || !input.source_message_id) {
     return fail("AMBIGUOUS", "MISSING_SCOPE", facts);
   }
@@ -1090,7 +1116,13 @@ export function resolveConversationRecall(
         q.validity_status === "current" &&
         (!amounts.length || amounts.includes(q.amount))
       );
-      if (!old.length || current) {
+      const retainedOld = (m?.historical_facts ?? []).filter((fact) => {
+        const value = object(fact.value);
+        const amount = typeof value?.amount === "number" ? value.amount : null;
+        return fact.authority === "historical" && /quote/i.test(fact.key) &&
+          (!amounts.length || (amount !== null && amounts.includes(amount)));
+      });
+      if ((!old.length && !retainedOld.length) || current) {
         return fail("AMBIGUOUS", "HISTORICAL_EXCLUSION_NOT_PROVEN", facts);
       }
       evidence.push({
@@ -1098,6 +1130,7 @@ export function resolveConversationRecall(
         state_path: "quotes.historical_excluded",
         value: {
           excluded_quote_ids: old.map((q) => q.quote_id),
+          retained_historical_facts: retainedOld.map((fact) => fact.key),
           reusable_as_current: false,
         },
         authority: "CANONICAL_COMMERCE_STATE",
@@ -1105,7 +1138,7 @@ export function resolveConversationRecall(
         region: null,
         evidence_source_message_id: old.length === 1
           ? old[0].provenance.source_message_id ?? null
-          : null,
+          : retainedOld.length === 1 ? retainedOld[0].source_message_id ?? null : null,
         temporal_scope: "excluded",
         source_kind: "canonical_quote_validity",
       });
@@ -1129,6 +1162,8 @@ export function resolveConversationRecall(
           transaction: c ? c.state.conversion : m.transaction_summary,
           preferences: m.customer_preferences,
           constraints: m.active_constraints,
+          regions: m.current_regions,
+          customer_facts: m.current_customer_facts,
         },
         authority: c ? "CANONICAL_COMMERCE_STATE" : "CURRENT_CUSTOMER_MEMORY",
         entity_id: null,
@@ -1142,7 +1177,7 @@ export function resolveConversationRecall(
     if (
       ["quantity", "horsepower", "brand_constraint", "room_size"].includes(f) &&
       c && c.state.entities.length > 1 && selected.length !== 1 &&
-      !any(input.question, ["all", "total", "全部", "合共", "總共"])
+      !any(input.question, ["all", "total", "全部", "合共", "總共", "分別", "分别", "兩間", "两间", "兩部", "两部"])
     ) return fail("AMBIGUOUS", "ENTITY_REFERENCE_AMBIGUOUS", facts);
     if (
       f === "quantity" &&
@@ -1281,6 +1316,24 @@ function display(v: unknown): string {
   }
   return o ? JSON.stringify(o) : String(v);
 }
+function displayRegions(value: unknown, languageIndex: number): string {
+  if (!Array.isArray(value)) return display(value);
+  const labels: Record<string, [string, string, string]> = {
+    hong_kong: ["香港", "香港", "Hong Kong"],
+    taiwan: ["台灣", "台湾", "Taiwan"],
+    macau: ["澳門", "澳门", "Macau"],
+    singapore: ["新加坡", "新加坡", "Singapore"],
+  };
+  return value.map((entry) => {
+    const row = object(entry);
+    const id = String(row?.region ?? "");
+    const scope = String(row?.temporal_scope ?? "");
+    const localizedScope = scope === "future"
+      ? ["未來", "未来", "future"][languageIndex]
+      : ["目前", "目前", "current"][languageIndex];
+    return `${labels[id]?.[languageIndex] ?? id} (${localizedScope})`;
+  }).join("；");
+}
 export function renderConversationRecall(
   decision: ConversationRecallDecision,
   language: string = "zh-TW",
@@ -1312,6 +1365,10 @@ export function renderConversationRecall(
         display(v.preferences),
         "### Customer Constraints",
         display(v.constraints),
+        "### Market Scope",
+        displayRegions(v.regions, l),
+        "### Customer Facts",
+        display(v.customer_facts),
       );
       continue;
     }

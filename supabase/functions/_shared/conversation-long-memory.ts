@@ -165,6 +165,77 @@ function customerPreferences(rows: MemoryHistoryRow[]): string[] {
   return uniqueStrings(result.reverse(), MAX_FACTS);
 }
 
+function smallCustomerCount(raw: string): number | null {
+  if (/^\d{1,4}$/.test(raw)) return Number(raw);
+  return ({ 一: 1, 二: 2, 兩: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 } as Record<string, number>)[raw] ?? null;
+}
+
+/** Deterministic customer-owned C3 facts, projected oldest-to-newest. */
+function retainedCustomerFacts(rows: MemoryHistoryRow[]): {
+  current: ConversationMemoryFact[];
+  historical: ConversationMemoryFact[];
+  superseded: ConversationMemoryFact[];
+} {
+  const current: ConversationMemoryFact[] = [];
+  const historical: ConversationMemoryFact[] = [];
+  const superseded: ConversationMemoryFact[] = [];
+  const add = (target: ConversationMemoryFact[], key: string, value: unknown, row: MemoryHistoryRow, entity_id?: string | null, region?: string | null) =>
+    target.push({ key, value, authority: target === historical ? "historical" : "customer", source_message_id: clean(row.id, 80) || null, entity_id: entity_id ?? null, region: region ?? null });
+
+  for (const row of [...rows].reverse()) {
+    if (!CUSTOMER_ROLES.has(String(row.role ?? "").toLowerCase())) continue;
+    const text = clean(row.content, 1000);
+    if (!text || /[?？]/.test(text)) continue;
+    const region = /(?:香港|hong\s*kong|\bhk\b)/i.test(text) ? "hong_kong"
+      : /(?:台灣|台湾|taiwan)/i.test(text) ? "taiwan"
+      : /(?:澳門|澳门|macau|macao)/i.test(text) ? "macau"
+      : /(?:新加坡|singapore)/i.test(text) ? "singapore" : null;
+    const total = text.match(/(?:合共|總共|总共|目前要買|目前要买|currently(?:\s+need|\s+buy)?)\s*([一二兩两三四五六七八九十]|\d{1,4})\s*(?:部|台|件|units?)/i)
+      ?? text.match(/只保留[^。!?！？]{0,60}?([一二兩两三四五六七八九十]|\d{1,4})\s*(?:部|台|件|units?)/i);
+    if (total?.[1]) {
+      const value = smallCustomerCount(total[1]);
+      if (value !== null) add(current, "quantity", value, row, null, region);
+    }
+    const cancelled = text.match(/([^，。,.!?！？]{1,30}?)(?:那部|嗰部|那個|那个)?\s*(?:暫時|暂时)?\s*(?:取消|唔要|不要)/i);
+    if (cancelled?.[1]) add(superseded, "cancelled item", cancelled[1].replace(/^(?:更正|correction)[:：]?\s*/i, "").trim(), row);
+    const correctedAddress = text.match(/(?:不是|唔係)\s*[^，,。]{1,60}[，,]\s*(?:而)?(?:是|係)\s*([^。!?！？]{2,180})/i)
+      ?? text.match(/(?:更正|改為|改为|改成)\s*(?:地址)?\s*(?:為|为|是|係|=|:|：)?\s*([^。!?！？]{3,180})/i);
+    const address = correctedAddress?.[1] ?? text.match(/(?:送貨地址|送货地址|地址)\s*(?:是|係|為|为|=|:|：)?\s*([^。!?！？]{3,180})/i)?.[1];
+    if (address) add(current, correctedAddress ? "corrected_delivery_address" : "delivery_address", address.trim(), row);
+    const roomFacts = [...text.matchAll(/([^，,。]{1,16}?(?:房|客廳|客厅))\s*(?:要|是|係|為|为)?\s*(\d+(?:\.\d+)?)\s*(?:平方呎|平方尺|sq\s*ft|sqft)/gi)].map((m) => `${m[1].trim()} ${m[2]}平方呎`);
+    if (roomFacts.length) add(current, "room_size", roomFacts, row);
+    const horsepowerFacts = [...text.matchAll(/([^，,。]{1,16}?(?:房|客廳|客厅|型號|型号|model))\s*(?:要|是|係|為|为)?\s*(\d+(?:\.\d+)?)\s*匹/gi)].map((m) => `${m[1].trim()} ${m[2]}匹`);
+    if (horsepowerFacts.length) add(current, "horsepower", horsepowerFacts, row);
+    if (/(?:品牌)\s*(?:不是|並非|并非|唔係)\s*(?:必須|必须)|(?:品牌不限|不指定品牌|no\s+brand\s+(?:is\s+)?(?:required|mandatory))/i.test(text)) add(current, "brand_required", false, row);
+    if (/(?:偏好|希望|prefer).{0,30}(?:送貨|送货|delivery)|(?:送貨|送货|delivery).{0,30}(?:偏好|希望|prefer)/i.test(text)) add(current, "delivery_preference", text, row);
+    const oldQuote = text.match(/(?:港幣|港币|HKD|HK\$)\s*([0-9][0-9,]*(?:\.\d+)?)/i);
+    if (oldQuote?.[1] && /(?:以前|之前|舊|旧|歷史|历史|口頭報價|口头报价|previous|historical|old)/i.test(text)) add(historical, "historical_quote", { amount: Number(oldQuote[1].replace(/,/g, "")), currency: "HKD", reusable_as_current: false }, row);
+  }
+  return { current: stableFacts(current, MAX_FACTS), historical: stableFacts(historical, MAX_HISTORY), superseded: stableFacts(superseded, MAX_HISTORY) };
+}
+
+function retainedCustomerRegions(rows: MemoryHistoryRow[]): CanonicalConversationMemory["current_regions"] {
+  let current: string | null = null;
+  const future = new Set<string>();
+  for (const row of [...rows].reverse()) {
+    if (!CUSTOMER_ROLES.has(String(row.role ?? "").toLowerCase())) continue;
+    const text = clean(row.content, 1000);
+    if (!text || /[?？]/.test(text) || /^(?:請|请).{0,12}(?:讀回|读回|說明|说明|核對|核对|總結|总结)/i.test(text)) continue;
+    const region = /(?:香港|hong\s*kong|\bhk\b)/i.test(text) ? "hong_kong"
+      : /(?:台灣|台湾|taiwan)/i.test(text) ? "taiwan"
+      : /(?:澳門|澳门|macau|macao)/i.test(text) ? "macau"
+      : /(?:新加坡|singapore)/i.test(text) ? "singapore" : null;
+    if (!region) continue;
+    if (/(?:之後|之后|以後|以后|未來|未来|明年|next\s+year|later|future).{0,40}(?:可能|maybe|may|might|plan|做|進入|进入|need|discussion)/i.test(text)) future.add(region);
+    else if (/(?:目前|而家|現在|现在|這次|这次|currently|current)/i.test(text)) current = region;
+  }
+  if (current) future.delete(current);
+  return [
+    ...(current ? [{ region: current, temporal_scope: "current" as const }] : []),
+    ...[...future].map((region) => ({ region, temporal_scope: "future" as const })),
+  ].slice(0, MAX_REGIONS);
+}
+
 function lineage(rows: MemoryHistoryRow[]) {
   const result: CanonicalConversationMemory["grounded_reference_lineage"] = [];
   for (const row of rows) {
@@ -287,18 +358,21 @@ export function buildCanonicalConversationMemory(args: {
 }): CanonicalConversationMemory {
   const runtime = projectConversationRuntimeState(args.newest_first);
   const commerce = projectCommerce(args.commerce_state);
+  const retained = retainedCustomerFacts(args.newest_first);
+  const retainedRegions = retainedCustomerRegions(args.newest_first);
   const prior = args.previous &&
       args.previous.conversation_id === args.conversation_id &&
       args.previous.company_id === args.company_id
     ? args.previous
     : null;
-  const currentRegions = [
+  const runtimeRegions = [
     ...(runtime.current_requirements.current_market
       ? [{ region: runtime.current_requirements.current_market, temporal_scope: "current" as const }]
       : []),
     ...runtime.current_requirements.future_markets.map((region) => ({ region, temporal_scope: "future" as const })),
   ].filter((item, index, all) => all.findIndex((x) => x.region === item.region && x.temporal_scope === item.temporal_scope) === index)
     .slice(0, MAX_REGIONS);
+  const currentRegions = retainedRegions.length ? retainedRegions : runtimeRegions;
   const requirementFacts: ConversationMemoryFact[] = Object.entries(runtime.current_requirements)
     .filter(([, value]) => value !== null && (!Array.isArray(value) || value.length > 0))
     .map(([key, value]) => ({ key, value, authority: "customer", source_message_id: args.source_message_id }));
@@ -319,6 +393,7 @@ export function buildCanonicalConversationMemory(args: {
     current_customer_facts: stableFacts([
       ...(prior?.current_customer_facts ?? []),
       ...requirementFacts,
+      ...retained.current,
     ], MAX_FACTS),
     customer_preferences: uniqueStrings([
       ...customerPreferences(args.newest_first),
@@ -331,8 +406,8 @@ export function buildCanonicalConversationMemory(args: {
     ], MAX_CONSTRAINTS),
     current_regions: currentRegions.length ? currentRegions : (prior?.current_regions ?? []).slice(0, MAX_REGIONS),
     transaction_summary: commerce.transaction_summary,
-    historical_facts: stableFacts([...(prior?.historical_facts ?? []), ...commerce.historical_facts], MAX_HISTORY),
-    cancelled_or_superseded: stableFacts([...(prior?.cancelled_or_superseded ?? []), ...commerce.cancelled_or_superseded], MAX_HISTORY),
+    historical_facts: stableFacts([...(prior?.historical_facts ?? []), ...commerce.historical_facts, ...retained.historical], MAX_HISTORY),
+    cancelled_or_superseded: stableFacts([...(prior?.cancelled_or_superseded ?? []), ...commerce.cancelled_or_superseded, ...retained.superseded], MAX_HISTORY),
     open_questions: uniqueStrings([...runtime.unresolved_questions, ...(args.commerce_state?.unresolved_items ?? [])], MAX_OPEN),
     pending_actions: commerce.pending_actions,
     prior_topics: uniqueStrings([...runtime.prior_topics.slice().reverse(), ...(prior?.prior_topics ?? [])], MAX_TOPICS).reverse(),
