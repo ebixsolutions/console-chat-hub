@@ -12,6 +12,11 @@ execFileSync("python", [
   "--out", "/tmp/c3-db-readback-contract-test",
   "--contract", contractPath,
 ], { stdio: "inherit" });
+execFileSync("python", [
+  ".github/scripts/c3_validation_only_runner.py", "runtime-contract-test",
+  "--out", "/tmp/c3-runtime-wait-contract-test",
+  "--contract", contractPath,
+], { stdio: "inherit" });
 const head = "1".repeat(40);
 const tree = "2".repeat(40);
 const runId = "35045000000";
@@ -100,6 +105,23 @@ assert.equal(contractInfo.contract.scenarios.filter((x) => x.origin === "recover
 assert.equal(contractInfo.contract.scenarios.filter((x) => x.origin === "new_release_control").length, 4);
 console.log("C3_NONPRODUCTION_CONTROL|name=15_row_contract_11_recovered_4_new|result=PASS");
 
+{
+  const suppressed = validEvidence();
+  const row = suppressed.scenarios.find((item) => item.id === "C3-CONTROL-15");
+  row.actual_reply = "";
+  row.response_route = "human_control";
+  row.assistant_message_id = null;
+  row.response_suppressed = true;
+  row.b2.persistence_result = "suppressed_human_control";
+  row.suppression_evidence = {
+    reason: "existing_explicit_R1_handoff", handoff_event_id: uuid(800),
+    handoff_source_message_id: uuid(801), handoff_safe_reply: "真人客服已轉交接手",
+    conversation_status: "pending", resolved_at: null, assistant_after_source: false,
+  };
+  assert.equal(verifyEvidence(suppressed, contractInfo, options).pass, true);
+  console.log("C3_NONPRODUCTION_CONTROL|name=expected_human_control_suppression_evidence|result=PASS");
+}
+
 expectReject("missing_row", (e) => e.scenarios.pop(), /15_scenario_rows/);
 expectReject("duplicate_row", (e) => { e.scenarios[14] = structuredClone(e.scenarios[0]); }, /duplicate_scenario_row/);
 expectReject("wrong_head", (e) => { e.runner.head = "f".repeat(40); }, /head_mismatch/);
@@ -113,6 +135,13 @@ expectReject("rebuild_mismatch", (e) => { e.rebuild_comparison.equal = false; },
 expectReject("cleanup_failure", (e) => { e.cleanup.completed = false; }, /cleanup_evidence_missing/);
 expectReject("quick_failure_blocks_long_run", (e) => { e.quick_gate.all_pass = false; }, /quick_first_sequence_invalid/);
 expectReject("synthetic_rejected_by_production", (e) => { e.mode = "synthetic_nonproduction"; }, /synthetic_or_nonproduction_evidence_rejected/);
+expectReject("suppression_without_persisted_handoff", (e) => {
+  const row = e.scenarios.find((item) => item.id === "C3-CONTROL-15");
+  row.response_suppressed = true;
+  row.assistant_message_id = null;
+  row.b2.persistence_result = "suppressed_human_control";
+  row.suppression_evidence = { reason: "existing_explicit_R1_handoff" };
+}, /suppression_evidence_invalid/);
 
 const runner = fs.readFileSync(".github/scripts/c3_validation_only_runner.py", "utf8");
 for (const forbidden of ["functions" + " deploy", "db" + " push", "migration" + " up", "apply_" + "migration", "rollback" + " deploy"]) {
@@ -123,6 +152,8 @@ assert.ok(runner.includes("finally:"));
 assert.ok(runner.includes("cleanup_manifest"));
 assert.ok(runner.includes("recovered_from\":\"exact_durable_visitor_session_marker"));
 assert.ok(runner.includes("visitor_metadata->>c3_validation_marker"));
+assert.ok(runner.includes("fixture[\"customer_source_message_ids\"].append(customer[\"id\"])"));
+assert.ok(runner.includes("C3_RUNTIME_WAIT|"));
 console.log("C3_NONPRODUCTION_CONTROL|name=runner_quick_first_and_cleanup_finally|result=PASS");
 console.log("C3_NONPRODUCTION_CONTROL|name=interrupted_runner_manifest_recovery|result=PASS");
 console.log("C3_NONPRODUCTION_CONTROL|name=validation_runner_no_deploy_migration_rollback|result=PASS");

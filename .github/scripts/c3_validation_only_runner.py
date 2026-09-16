@@ -122,6 +122,23 @@ def write_json(path: Path, value: object) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
 
 
+def classify_runtime_wait(*, allow_human_suppression: bool, customer_persisted: bool,
+                          assistant_persisted: bool, handoff_present: bool,
+                          conversation_status: str | None, resolved_at: str | None,
+                          deadline_expired: bool) -> str:
+    """Classify a widget send from persisted evidence, never from HTTP acceptance alone."""
+    if assistant_persisted and customer_persisted and deadline_expired:
+        return "assistant_persisted_after_deadline"
+    if assistant_persisted and customer_persisted:
+        return "assistant_persisted"
+    if (allow_human_suppression and customer_persisted and handoff_present
+            and conversation_status == "pending" and resolved_at is None):
+        return "expected_human_control_suppression"
+    if deadline_expired:
+        return "assistant_response_timeout" if customer_persisted else "customer_persistence_timeout"
+    return "continue_waiting"
+
+
 def request(url: str, method: str = "GET", body: object | None = None, headers: dict[str, str] | None = None, timeout: int = 120):
     data = None if body is None else json.dumps(body, ensure_ascii=False).encode()
     merged = {"User-Agent": "ai-abc-c3-validation-only/1.0", **(headers or {})}
@@ -276,7 +293,8 @@ class Harness:
     def poll(self, fixture):
         return self.function("widget-poll-messages", {"conversation_id": fixture["conversation_id"], "session_token": fixture["session_token"]})
 
-    def send(self, fixture, content: str, timeout_seconds=120):
+    def send(self, fixture, content: str, timeout_seconds=120, *, scenario_id="unspecified",
+             allow_human_suppression=False):
         before_status, before_payload = self.poll(fixture)
         before = []
         if before_status == 200 and before_payload and before_payload.get("success"):
@@ -290,29 +308,115 @@ class Harness:
         )
         if status >= 300 or not payload or payload.get("success") is not True:
             raise RuntimeError(f"widget_send_failed:http_{status}:{payload}")
+        send_accepted_at = utc_now()
         deadline = time.time() + timeout_seconds
         latest = None
+        customer = None
+        handoff = None
+        conversation = None
+        poll_attempts = 0
+        last_poll_success_at = None
+        last_poll_error = "none"
+        wait_started = time.time()
+        terminal = "continue_waiting"
         while time.time() < deadline:
+            poll_attempts += 1
             poll_status, polled = self.poll(fixture)
             if poll_status == 200 and polled and polled.get("success"):
+                last_poll_success_at = utc_now()
+                last_poll_error = "none"
                 assistants = [m for m in polled["data"].get("messages", []) if m.get("role") == "assistant"]
                 if len(assistants) > len(before):
                     latest = assistants[-1]
-                    break
+            else:
+                last_poll_error = f"widget_poll_http_{poll_status}"
+
+            read_status, messages = self.staff_rest("messages", {
+                "conversation_id": f"eq.{fixture['conversation_id']}",
+                "select": "id,role,content,metadata,created_at", "order": "created_at.desc", "limit": "12",
+            })
+            if read_status == 200 and isinstance(messages, list):
+                customer = next((m for m in messages
+                    if m.get("role") in ("visitor", "customer", "user")
+                    and (m.get("metadata") or {}).get("client_message_id") == key), customer)
+                if customer and customer.get("id") and customer["id"] not in fixture["customer_source_message_ids"]:
+                    fixture["customer_source_message_ids"].append(customer["id"])
+                    self.persist_manifest()
+            else:
+                last_poll_error = f"staff_message_readback_http_{read_status}"
+
+            if allow_human_suppression and customer:
+                conversation_status, conversations = self.staff_rest("conversations", {
+                    "id": f"eq.{fixture['conversation_id']}", "select": "status,resolved_at",
+                })
+                handoff_status, handoffs = self.staff_rest("handoff_event", {
+                    "conversation_id": f"eq.{fixture['conversation_id']}",
+                    "select": "id,source_message_id,escalation_rule,safe_reply_content,created_at",
+                    "order": "created_at.desc", "limit": "1",
+                })
+                if conversation_status == 200 and isinstance(conversations, list) and len(conversations) == 1:
+                    conversation = conversations[0]
+                if handoff_status == 200 and isinstance(handoffs, list) and handoffs:
+                    handoff = handoffs[0]
+
+            terminal = classify_runtime_wait(
+                allow_human_suppression=allow_human_suppression,
+                customer_persisted=bool(customer), assistant_persisted=bool(latest),
+                handoff_present=bool(handoff and handoff.get("escalation_rule") == "R1"),
+                conversation_status=(conversation or {}).get("status"),
+                resolved_at=(conversation or {}).get("resolved_at"), deadline_expired=False,
+            )
+            if terminal != "continue_waiting":
+                break
             time.sleep(1.25)
-        if latest is None:
-            raise RuntimeError("assistant_response_timeout")
-        status, messages = self.staff_rest("messages", {"conversation_id": f"eq.{fixture['conversation_id']}", "select": "id,role,content,metadata,created_at", "order": "created_at.desc", "limit": "8"})
+        deadline_expired = terminal == "continue_waiting" and latest is None
+        if deadline_expired:
+            final_poll_status, final_polled = self.poll(fixture)
+            poll_attempts += 1
+            if final_poll_status == 200 and final_polled and final_polled.get("success"):
+                last_poll_success_at = utc_now()
+                assistants = [m for m in final_polled["data"].get("messages", []) if m.get("role") == "assistant"]
+                if len(assistants) > len(before):
+                    latest = assistants[-1]
+            else:
+                last_poll_error = f"widget_poll_http_{final_poll_status}"
+        terminal = classify_runtime_wait(
+            allow_human_suppression=allow_human_suppression,
+            customer_persisted=bool(customer), assistant_persisted=bool(latest),
+            handoff_present=bool(handoff and handoff.get("escalation_rule") == "R1"),
+            conversation_status=(conversation or {}).get("status"),
+            resolved_at=(conversation or {}).get("resolved_at"), deadline_expired=deadline_expired,
+        )
+        elapsed_ms = int((time.time() - wait_started) * 1000)
+        result = "PASS" if terminal in ("assistant_persisted", "expected_human_control_suppression") else "FAIL"
+        print(
+            "C3_RUNTIME_WAIT|"
+            f"scenario={scenario_id}|source_message_id={(customer or {}).get('id') or 'unavailable'}|"
+            f"send_accepted_at={send_accepted_at}|customer_persisted_at={(customer or {}).get('created_at') or 'unavailable'}|"
+            f"poll_attempts={poll_attempts}|last_poll_success_at={last_poll_success_at or 'none'}|"
+            f"last_poll_error={last_poll_error}|terminal_status={terminal}|elapsed_ms={elapsed_ms}|result={result}"
+        )
+        if latest and latest.get("id") and latest["id"] not in fixture["assistant_message_ids"]:
+            fixture["assistant_message_ids"].append(latest["id"])
+            self.persist_manifest()
+        if terminal not in ("assistant_persisted", "expected_human_control_suppression"):
+            raise RuntimeError(terminal)
+        if not customer or not customer.get("id"):
+            raise RuntimeError("authoritative_customer_message_readback_missing")
+        if terminal == "expected_human_control_suppression":
+            return {"sent_at": sent_at, "customer": customer, "assistant": None,
+                    "suppressed": True, "conversation": conversation, "handoff": handoff}
+        status, messages = self.staff_rest("messages", {
+            "conversation_id": f"eq.{fixture['conversation_id']}",
+            "select": "id,role,content,metadata,created_at", "order": "created_at.desc", "limit": "12",
+        })
         if status != 200 or not isinstance(messages, list):
             raise RuntimeError(f"staff_message_readback_failed:http_{status}")
-        customer = next((m for m in messages or [] if m.get("role") in ("visitor", "customer", "user") and m.get("content") == content), None)
-        assistant = next((m for m in messages or [] if m.get("id") == latest.get("id")), latest)
-        if not customer or not customer.get("id") or not assistant.get("id"):
-            raise RuntimeError("authoritative_message_readback_missing")
-        fixture["customer_source_message_ids"].append(customer["id"])
-        fixture["assistant_message_ids"].append(assistant["id"])
+        assistant = next((m for m in messages if m.get("id") == latest.get("id")), latest)
+        if not assistant or not assistant.get("id"):
+            raise RuntimeError("authoritative_assistant_message_readback_missing")
         self.persist_manifest()
-        return {"sent_at": sent_at, "customer": customer, "assistant": assistant}
+        return {"sent_at": sent_at, "customer": customer, "assistant": assistant, "suppressed": False}
 
     def state_readback(self, conversation_id: str):
         memory_status, memory = self.staff_rest("conversation_memory_state", {"conversation_id": f"eq.{conversation_id}", "select": "*"})
@@ -324,20 +428,32 @@ class Harness:
     def scenario(self, row):
         fixture = self.create_fixture(f"scenario:{row['id']}")
         for turn in row["setup_turns"]:
-            self.send(fixture, turn)
-        observed = self.send(fixture, row["input"])
+            self.send(fixture, turn, scenario_id=f"{row['id']}:setup")
+        observed = self.send(fixture, row["input"], scenario_id=row["id"],
+                             allow_human_suppression=row["id"] == "C3-CONTROL-15")
         memory, commerce = self.state_readback(fixture["conversation_id"])
-        metadata = observed["assistant"].get("metadata") or {}
+        metadata = (observed.get("assistant") or {}).get("metadata") or {}
+        suppressed = observed.get("suppressed") is True
+        handoff = observed.get("handoff") or {}
+        conversation = observed.get("conversation") or {}
         return {
             "id": row["id"], "contract_version": CONTRACT_VERSION,
             "input": row["input"], "expected": row["expected"],
-            "actual_reply": observed["assistant"].get("content") or "",
-            "response_route": str(metadata.get("response_route") or metadata.get("route") or "normal"),
+            "actual_reply": "" if suppressed else observed["assistant"].get("content") or "",
+            "response_route": "human_control" if suppressed else str(metadata.get("response_route") or metadata.get("route") or "normal"),
             "customer_source_message_id": observed["customer"]["id"],
-            "assistant_message_id": observed["assistant"]["id"],
+            "assistant_message_id": None if suppressed else observed["assistant"]["id"],
+            "response_suppressed": suppressed,
+            "suppression_evidence": ({
+                "reason": "existing_explicit_R1_handoff", "handoff_event_id": handoff.get("id"),
+                "handoff_source_message_id": handoff.get("source_message_id"),
+                "handoff_safe_reply": handoff.get("safe_reply_content"),
+                "conversation_status": conversation.get("status"), "resolved_at": conversation.get("resolved_at"),
+                "assistant_after_source": False,
+            } if suppressed else None),
             "memory_revision": (memory or {}).get("revision"),
             "commerce_revision": (commerce or {}).get("revision"),
-            "b2": {"persistence_result": metadata.get("b2_persistence_result") or metadata.get("commit_result") or "unobserved"},
+            "b2": {"persistence_result": "suppressed_human_control" if suppressed else metadata.get("b2_persistence_result") or metadata.get("commit_result") or "unobserved"},
             "observed_at": utc_now(), "conversation_id": fixture["conversation_id"],
         }
 
@@ -364,7 +480,12 @@ class Harness:
             "superseded_source_rejection", "c1_current_fact_authority", "c2_handoff_precedence",
             "agent_assist_tenant_safe", "return_to_ai_explicit_only", "no_direct_persistence_bypass",
         ]
-        b2_observed = all(row.get("b2", {}).get("persistence_result") in ("success", "idempotent") for row in scenarios)
+        b2_observed = all(
+            row.get("b2", {}).get("persistence_result") in ("success", "idempotent")
+            or (row.get("id") == "C3-CONTROL-15" and row.get("response_suppressed") is True
+                and row.get("b2", {}).get("persistence_result") == "suppressed_human_control")
+            for row in scenarios
+        )
         memory_observed = all(isinstance(row.get("memory_revision"), int) and row["memory_revision"] >= 1 for row in scenarios)
         # Only facts that are actually present in runtime/DB readback may pass here.  Missing
         # terminal, retry, tenant-negative, or handoff observations remain explicit gaps and
@@ -676,8 +797,8 @@ def cleanup_manifest(manifest_path: Path, supabase_url: str, server_key: str, ac
 
     # The state/event tables deliberately grant service_role SELECT only. Cleanup therefore
     # uses the authenticated Management API SQL endpoint, inside one exact-ID transaction.
-    # Any unexpected CE/training/learning record aborts before the first DELETE so a fixture
-    # can never silently enter a learning pipeline and then be erased as ordinary test data.
+    # Training-eligible/candidate/outbox records abort before the first DELETE. Ordinary CE
+    # rows created automatically for exclude_training fixtures are exact-ID cleanup targets.
     conv_values = ",".join(f"('{value}'::uuid)" for value in ids) or "(null::uuid)"
     session_values = ",".join(f"('{value}'::uuid)" for value in session_ids) or "(null::uuid)"
     sql = f"""
@@ -686,17 +807,29 @@ def cleanup_manifest(manifest_path: Path, supabase_url: str, server_key: str, ac
     begin
       if exists (
         with target(id) as (values {conv_values})
-        select 1 from public.ce_evaluation_job j join target t on t.id=j.conversation_id
-      ) then raise exception 'c3_cleanup_active_job_detected'; end if;
-      if exists (
-        with target(id) as (values {conv_values})
         select 1 from public.conversation_evaluation e join target t on t.id=e.conversation_id
-      ) then raise exception 'c3_cleanup_evaluation_or_training_detected'; end if;
+        where e.training_eligible
+      ) then raise exception 'c3_cleanup_training_eligible_detected'; end if;
       if exists (
         with target(id) as (values {conv_values})
         select 1 from public.hf3_learning_case l join target t on t.id=l.conversation_id
+        where l.training_candidate
       ) then raise exception 'c3_cleanup_learning_candidate_detected'; end if;
+      if exists (
+        with target(id) as (values {conv_values})
+        select 1 from public.evaluation_training_outbox o
+        join public.conversation_evaluation e on e.id=o.evaluation_id
+        join target t on t.id=e.conversation_id
+      ) then raise exception 'c3_cleanup_training_outbox_detected'; end if;
     end $cleanup_guard$;
+    with target(id) as (values {conv_values})
+      delete from public.hf3_learning_case l using target t where l.conversation_id=t.id;
+    with target(id) as (values {conv_values})
+      delete from public.conversation_evaluation e using target t where e.conversation_id=t.id;
+    with target(id) as (values {conv_values})
+      delete from public.conversation_evaluation_attempt a using target t where a.conversation_id=t.id;
+    with target(id) as (values {conv_values})
+      delete from public.ce_evaluation_job j using target t where j.conversation_id=t.id;
     with target(id) as (values {conv_values})
       delete from public.conversation_memory_state_event e using target t where e.conversation_id=t.id;
     with target(id) as (values {conv_values})
@@ -800,9 +933,39 @@ def run_db_readback_contract_tests() -> None:
     print("C3_DB_READBACK_CONTRACT_TESTS=PASS")
 
 
+def run_runtime_wait_contract_tests() -> None:
+    base = dict(allow_human_suppression=False, customer_persisted=True,
+                assistant_persisted=False, handoff_present=False,
+                conversation_status="open", resolved_at=None, deadline_expired=False)
+
+    def check(name: str, expected: str, **changes) -> None:
+        actual = classify_runtime_wait(**{**base, **changes})
+        assert actual == expected, (name, expected, actual)
+        print(f"C3_RUNTIME_WAIT_CONTRACT|name={name}|expected={expected}|actual={actual}|result=PASS")
+
+    check("quick_normal_reply", "assistant_persisted", assistant_persisted=True)
+    check("expected_human_control_suppression", "expected_human_control_suppression",
+          allow_human_suppression=True, handoff_present=True, conversation_status="pending")
+    check("delayed_reply_within_budget_initial_wait", "continue_waiting")
+    check("delayed_reply_within_budget_terminal", "assistant_persisted", assistant_persisted=True)
+    check("never_arrives_timeout", "assistant_response_timeout", deadline_expired=True)
+    check("late_after_runner_deadline", "assistant_persisted_after_deadline",
+          assistant_persisted=True, deadline_expired=True)
+    check("poll_error_then_recovery_initial_wait", "continue_waiting")
+    check("poll_error_then_recovery_terminal", "assistant_persisted", assistant_persisted=True)
+    check("customer_not_persisted", "customer_persistence_timeout",
+          customer_persisted=False, deadline_expired=True)
+    check("suppression_missing_handoff", "assistant_response_timeout",
+          allow_human_suppression=True, conversation_status="pending", deadline_expired=True)
+    check("suppression_resolved_is_invalid", "assistant_response_timeout",
+          allow_human_suppression=True, handoff_present=True, conversation_status="pending",
+          resolved_at="2026-09-16T00:00:00Z", deadline_expired=True)
+    print("C3_RUNTIME_WAIT_CONTRACT_TESTS=PASS")
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("validate", "cleanup", "db-readback", "db-contract-test"))
+    parser.add_argument("command", choices=("validate", "cleanup", "db-readback", "db-contract-test", "runtime-contract-test"))
     parser.add_argument("--out", required=True)
     parser.add_argument("--contract", required=True)
     parser.add_argument("--artifact-root")
@@ -812,6 +975,9 @@ def main():
     out = Path(args.out).resolve()
     if args.command == "db-contract-test":
         run_db_readback_contract_tests()
+        return
+    if args.command == "runtime-contract-test":
+        run_runtime_wait_contract_tests()
         return
     if args.command == "db-readback":
         harness = Harness(out, Path(args.contract).resolve(), Path(args.artifact_root or ".").resolve())

@@ -70,7 +70,19 @@ function evaluateText(row, actualReply) {
 function verifyScenario(contractRow, evidenceRow, { requireLiveProduction }) {
   if (evidenceRow.id !== contractRow.id) fail(`scenario_id_mismatch:${contractRow.id}`);
   if (evidenceRow.contract_version !== "ai-abc-c3-release-acceptance-2026-09-16.1") fail(`scenario_contract_version_mismatch:${contractRow.id}`);
-  const reply = requiredString(evidenceRow.actual_reply, `${contractRow.id}.actual_reply`);
+  const expectedSuppression = contractRow.id === "C3-CONTROL-15" && evidenceRow.response_suppressed === true;
+  const suppression = evidenceRow.suppression_evidence;
+  if (expectedSuppression) {
+    if (!suppression || suppression.reason !== "existing_explicit_R1_handoff"
+        || !isUuid(suppression.handoff_event_id) || !isUuid(suppression.handoff_source_message_id)
+        || suppression.conversation_status !== "pending" || suppression.resolved_at !== null
+        || suppression.assistant_after_source !== false) fail(`scenario_suppression_evidence_invalid:${contractRow.id}`);
+  } else if (evidenceRow.response_suppressed === true) {
+    fail(`scenario_unexpected_suppression:${contractRow.id}`);
+  }
+  const reply = expectedSuppression
+    ? requiredString(suppression.handoff_safe_reply, `${contractRow.id}.suppression_evidence.handoff_safe_reply`)
+    : requiredString(evidenceRow.actual_reply, `${contractRow.id}.actual_reply`);
   const route = requiredString(evidenceRow.response_route, `${contractRow.id}.response_route`);
   const routeAllowed = contractRow.expected_route_family.some((family) => normalized(route).includes(normalized(family)));
   if (!routeAllowed) fail(`scenario_route_family_mismatch:${contractRow.id}:${route}`);
@@ -78,10 +90,15 @@ function verifyScenario(contractRow, evidenceRow, { requireLiveProduction }) {
   for (const check of textChecks) if (!check.pass) fail(`scenario_text_assertion_failed:${contractRow.id}:${check.name}`);
   if (requireLiveProduction) {
     if (!isUuid(evidenceRow.customer_source_message_id)) fail(`scenario_source_message_invalid:${contractRow.id}`);
-    if (!isUuid(evidenceRow.assistant_message_id)) fail(`scenario_assistant_message_invalid:${contractRow.id}`);
+    if (expectedSuppression) {
+      if (evidenceRow.assistant_message_id !== null) fail(`scenario_suppressed_assistant_must_be_null:${contractRow.id}`);
+    } else if (!isUuid(evidenceRow.assistant_message_id)) fail(`scenario_assistant_message_invalid:${contractRow.id}`);
     if (!Number.isInteger(evidenceRow.memory_revision) || evidenceRow.memory_revision < 1) fail(`scenario_memory_revision_invalid:${contractRow.id}`);
     if (!(evidenceRow.commerce_revision === null || (Number.isInteger(evidenceRow.commerce_revision) && evidenceRow.commerce_revision >= 0))) fail(`scenario_commerce_revision_invalid:${contractRow.id}`);
-    if (!evidenceRow.b2 || !["success", "idempotent"].includes(evidenceRow.b2.persistence_result)) fail(`scenario_b2_persistence_missing:${contractRow.id}`);
+    const validPersistence = expectedSuppression
+      ? evidenceRow.b2?.persistence_result === "suppressed_human_control"
+      : ["success", "idempotent"].includes(evidenceRow.b2?.persistence_result);
+    if (!validPersistence) fail(`scenario_b2_persistence_missing:${contractRow.id}`);
     requiredString(evidenceRow.observed_at, `${contractRow.id}.observed_at`);
   }
   return { id: contractRow.id, route, checks: textChecks };
