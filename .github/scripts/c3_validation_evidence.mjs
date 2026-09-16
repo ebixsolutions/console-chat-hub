@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { verifyServiceQuality } from "./c3_service_quality_evidence.mjs";
 
 export const EVIDENCE_SCHEMA_VERSION = "ai-abc-c3-validation-evidence-1.0.0";
 export const PROJECT_REF = "nrfxhqabwblzxoushgnm";
@@ -134,7 +135,12 @@ function verifyScenario(contractRow, evidenceRow, { requireLiveProduction }) {
     }
     const validPersistence = expectedSuppression
       ? evidenceRow.b2?.persistence_result === "suppressed_human_control"
-      : ["success", "idempotent"].includes(evidenceRow.b2?.persistence_result) && evidenceRow.b2?.evidence === "persisted_assistant_exact_source_binding";
+      : ["success", "idempotent"].includes(evidenceRow.b2?.persistence_result) &&
+        evidenceRow.b2?.evidence === "server_persisted_b2_gate_and_commit_source" &&
+        evidenceRow.b2?.gate_contract === "executeB2PersistenceGate:allow_after_revalidation" &&
+        evidenceRow.b2?.commit_source === "commit_ai_reply_tx" &&
+        evidenceRow.b2?.source_message_id === evidenceRow.customer_source_message_id &&
+        evidenceRow.b2?.persisted_message_id === evidenceRow.assistant_message_id;
     if (!validPersistence) fail(`scenario_b2_persistence_missing:${contractRow.id}`);
     requiredString(evidenceRow.observed_at, `${contractRow.id}.observed_at`);
   }
@@ -242,6 +248,8 @@ export function verifyEvidence(evidence, contractInfo, options = {}) {
   });
 
   if (requireLiveProduction) {
+    const qualityRubric = JSON.parse(fs.readFileSync(".github/scripts/c3_service_quality_rubric.json", "utf8"));
+    verifyServiceQuality(evidence.service_quality, qualityRubric, { requireRuntime: true });
     const longRun = evidence.long_run;
     if (!longRun || longRun.fresh !== true || longRun.transport_successes < 100 || longRun.unique_customer_source_messages < 100 || longRun.assistant_persistences < 100) fail("fresh_100_turn_completion_invalid");
     if (!Array.isArray(longRun.semantic_checks) || longRun.semantic_checks.length !== 15) fail("long_run_semantic_checks_invalid");

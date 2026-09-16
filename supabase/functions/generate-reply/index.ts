@@ -1,6 +1,7 @@
 import { prepareConversationRecall, type RecallCommerceSnapshot } from "../_shared/conversation-recall.ts";
 import {
   buildServicePlanPromptBlock,
+  applyServiceTone,
   planConversationService,
   renderServicePlanReply,
   renderServiceRecovery,
@@ -639,6 +640,16 @@ async function commitAiReplyWithControlGate(
   const expectedRevision = typeof metadata?.commerce_state_revision === "number"
     ? metadata.commerce_state_revision
     : null;
+  // This marker is persisted only by the commit callback that
+  // executeB2PersistenceGate invokes after an allow decision and exact snapshot
+  // revalidation. It gives validation readback a server-persisted proof of the
+  // gate and RPC path; assistant-row presence alone is not B2 evidence.
+  const b2CommitEvidence = {
+    ...(metadata ?? {}),
+    b2_gate_contract: "executeB2PersistenceGate:allow_after_revalidation",
+    b2_commit_source: "commit_ai_reply_tx",
+    b2_source_message_id: source_message_id,
+  };
   const b2 = await executeB2RpcPersistence(
     supabaseAdmin,
     {
@@ -646,7 +657,7 @@ async function commitAiReplyWithControlGate(
       source_message_id,
       proposed_response: content,
       persistence_kind: "ai_reply",
-      metadata,
+      metadata: b2CommitEvidence,
       expected_commerce_state_revision: expectedRevision,
     },
     async () =>
@@ -654,7 +665,7 @@ async function commitAiReplyWithControlGate(
         p_conversation_id: conversation_id,
         p_source_message_id: source_message_id,
         p_content: content,
-        p_metadata: metadata,
+        p_metadata: b2CommitEvidence,
       }),
   );
 
@@ -4183,13 +4194,13 @@ async function orchestrationGenerateReply(
     exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
     explicit_handoff: isHandoffIntent(_h1LastMsg),
   });
-  const _c3PlannedReply = renderServicePlanReply(
+  const _c3PlannedReply = applyServiceTone(_c3ServicePlan, renderServicePlanReply(
     _c3ServicePlan,
     _c3Recall.reply,
     _c3RecentServiceMessages,
   ) ?? (!_c3Recall.decision.handled && _c3Recall.decision.reason === "AMBIGUOUS"
     ? renderTargetedServiceQuestion(_c3ServicePlan, _visitorLang)
-    : null);
+    : null));
   if (_c3PlannedReply) {
     const serviceMetadata = {
       ..._c3Recall.metadata,
@@ -4208,6 +4219,9 @@ async function orchestrationGenerateReply(
         _c3ServicePlan.clarification_previously_asked,
       knowledge_state: _c3ServicePlan.knowledge_state,
       safe_assumptions: _c3ServicePlan.safe_assumptions,
+      emotion_trace: _c3ServicePlan.emotion_trace ?? null,
+      entitlement_status: _c3ServicePlan.entitlement_status,
+      entitlement_trace: _c3ServicePlan.entitlement_trace ?? null,
     };
     const recallCommit = await commitAiReplyWithControlGate(
       supabaseAdmin, conversation_id, _h1SourceMessageId,

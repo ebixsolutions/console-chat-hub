@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
 import { readContract, verifyEvidence } from "./c3_validation_evidence.mjs";
+import { verifyHumanCalibration, verifyServiceQuality } from "./c3_service_quality_evidence.mjs";
 
 const must = (value, message) => {
   if (!value) throw new Error(message);
@@ -55,6 +56,8 @@ const files = {
   releaseIdentityTest: ".github/scripts/c3_release_identity.test.mjs",
   serviceQualityRubric: ".github/scripts/c3_service_quality_rubric.json",
   serviceQualityCalibration: ".github/scripts/c3_service_quality_human_calibration.json",
+  serviceQualityEvaluation: ".github/scripts/c3_service_quality_nonproduction.ts",
+  serviceQualityVerifier: ".github/scripts/c3_service_quality_evidence.mjs",
   requirementEvidenceMatrix: ".github/scripts/c3_requirement_evidence_matrix.json",
   task42DeployWorkflow: ".github/workflows/task4-2-deploy-live-console-edge.yml",
 };
@@ -314,8 +317,7 @@ const qualityRubric = JSON.parse(read(files.serviceQualityRubric));
 must(qualityRubric.target?.weighted_score_min === 95, "quality_target_not_95");
 must(qualityRubric.target?.critical_p0_allowed === 0, "quality_p0_not_zero");
 const calibration = JSON.parse(read(files.serviceQualityCalibration));
-must(calibration.status === "AWAITING_HUMAN_CALIBRATION", "human_calibration_must_not_be_preclaimed");
-must(Array.isArray(calibration.samples) && calibration.samples.length >= 20, "human_calibration_sample_count_invalid");
+const humanCalibration = verifyHumanCalibration(calibration, { requireCompleted: false });
 
 for (
   const file of [
@@ -344,6 +346,14 @@ for (
 run("git", ["diff", "--check", "origin/main...HEAD"]);
 runDeno(["test", "--no-lock", files.unit, files.terminalTest]);
 runDeno(["test", "--no-lock", files.servicePlannerTest]);
+const qualityEvidencePath = process.env.C3_SERVICE_QUALITY_EVIDENCE_PATH?.trim() ||
+  `${process.env.RUNNER_TEMP || "/tmp"}/c3-service-quality-nonproduction.json`;
+runDeno(["run", "--no-lock", "--allow-read", "--allow-write", files.serviceQualityEvaluation, qualityEvidencePath]);
+const nonproductionQuality = verifyServiceQuality(
+  JSON.parse(read(qualityEvidencePath)),
+  qualityRubric,
+  { requireRuntime: false },
+);
 runDeno(["test", "--no-lock", "--allow-read", files.integration, files.recallIntegration]);
 runDeno([
   "check",
@@ -388,6 +398,7 @@ run("npx", [
   files.gate,
   files.evidenceVerifier,
   files.validationControlTests,
+  files.serviceQualityVerifier,
   files.mergeGuard,
   files.releaseIdentity,
   files.releaseIdentityTest,
@@ -445,6 +456,7 @@ if (phase === "preproduction") {
 }
 let productionEvidence = null;
 if (phase === "production") {
+  verifyHumanCalibration(calibration, { requireCompleted: true });
   const evidencePath = process.env.C3_EVIDENCE_PATH?.trim();
   const contractPath = process.env.C3_SCENARIO_CONTRACT_PATH?.trim() ||
     files.validationContract;
@@ -534,9 +546,15 @@ console.log(JSON.stringify(
       production_runtime_evidence: phase === "production"
         ? productionEvidence
         : "AUTHORIZATION_PENDING",
+      nonproduction_held_out_quality: nonproductionQuality,
+      human_calibration: humanCalibration.status,
       rollback: rollbackAssertion,
     },
   },
   null,
   2,
 ));
+if (phase === "preproduction") {
+  console.error("C3_FINAL_GATE|result=STOP|reason=production_and_human_calibration_authorization_required|exit_code=78");
+  process.exitCode = 78;
+}

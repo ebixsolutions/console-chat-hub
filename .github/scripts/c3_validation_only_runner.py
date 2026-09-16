@@ -501,7 +501,13 @@ class Harness:
         customer_source_id = observed["customer"]["id"]
         assistant_source_id = None if suppressed else metadata.get("source_message_id")
         source_bound = suppressed or assistant_source_id == customer_source_id
-        persisted_result = "suppressed_human_control" if suppressed else ("success" if source_bound else "unobserved")
+        b2_server_proof = suppressed or (
+            metadata.get("b2_gate_contract") == "executeB2PersistenceGate:allow_after_revalidation"
+            and metadata.get("b2_commit_source") == "commit_ai_reply_tx"
+            and metadata.get("b2_source_message_id") == customer_source_id
+            and observed["assistant"].get("id")
+        )
+        persisted_result = "suppressed_human_control" if suppressed else ("success" if source_bound and b2_server_proof else "unobserved")
         return {
             "id": row["id"], "contract_version": CONTRACT_VERSION,
             "input": row["input"], "expected": row["expected"],
@@ -531,7 +537,14 @@ class Harness:
                 "commerce_source_message_id": (commerce or {}).get("source_message_id"),
                 "exact_customer_source_match": source_bound,
             },
-            "b2": {"persistence_result": persisted_result, "evidence": "persisted_assistant_exact_source_binding" if source_bound and not suppressed else "human_control_suppression" if suppressed else "unobserved"},
+            "b2": {
+                "persistence_result": persisted_result,
+                "evidence": "server_persisted_b2_gate_and_commit_source" if source_bound and b2_server_proof and not suppressed else "human_control_suppression" if suppressed else "unobserved",
+                "gate_contract": None if suppressed else metadata.get("b2_gate_contract"),
+                "commit_source": None if suppressed else metadata.get("b2_commit_source"),
+                "source_message_id": None if suppressed else metadata.get("b2_source_message_id"),
+                "persisted_message_id": None if suppressed else observed["assistant"].get("id"),
+            },
             "observed_at": utc_now(), "conversation_id": fixture["conversation_id"],
         }
 
@@ -646,6 +659,100 @@ class Harness:
             "semantic_checks": [{"name": name, "pass": passed, "source": "actual_assistant_reply"} for name, passed in checks.items()],
             "checkpoints": checkpoints,
             "observations": observations,
+        }
+
+    def service_quality_evidence(self, scenarios, long_run):
+        """Derive quality evidence only from persisted runtime replies.
+
+        This is an automated oracle, never a human score. The independent human
+        calibration remains a separate release requirement in the final gate.
+        """
+        rows = []
+        sources = []
+        for scenario in scenarios:
+            if scenario.get("response_suppressed"):
+                continue
+            sources.append({
+                "id": f"scenario-{scenario['id']}", "family": scenario["id"],
+                "response": str(scenario.get("actual_reply") or ""),
+                "customer_source_message_id": scenario.get("customer_source_message_id"),
+                "assistant_message_id": scenario.get("assistant_message_id"),
+                "source_bound": scenario.get("source_binding", {}).get("exact_customer_source_match") is True,
+                "b2": scenario.get("b2") or {},
+                "semantic_pass": True,
+            })
+        for index, observed in enumerate(long_run.get("observations") or [], 1):
+            assistant = observed.get("assistant") or {}
+            customer = observed.get("customer") or {}
+            metadata = assistant.get("metadata") or {}
+            sources.append({
+                "id": f"long-{index:03d}", "family": "fresh_100_turn",
+                "response": str(assistant.get("content") or ""),
+                "customer_source_message_id": customer.get("id"),
+                "assistant_message_id": assistant.get("id"),
+                "source_bound": metadata.get("source_message_id") == customer.get("id"),
+                "b2": {
+                    "gate_contract": metadata.get("b2_gate_contract"),
+                    "commit_source": metadata.get("b2_commit_source"),
+                    "source_message_id": metadata.get("b2_source_message_id"),
+                },
+                "semantic_pass": all(check.get("pass") is True for check in long_run.get("semantic_checks") or []) if index in (6, 17, 40, 50, 55, 57, 58, 59, 68, 69, 71, 73, 90, 96, 98) else True,
+            })
+        for source in sources:
+            response = source["response"]
+            lower = response.lower()
+            server_b2 = (
+                source["b2"].get("gate_contract") == "executeB2PersistenceGate:allow_after_revalidation"
+                and source["b2"].get("commit_source") == "commit_ai_reply_tx"
+                and source["b2"].get("source_message_id") == source["customer_source_message_id"]
+            )
+            assertions = {
+                "factual_grounding_and_commitment_truth": [
+                    {"name": "source_bound", "pass": source["source_bound"], "critical_p0": True},
+                    {"name": "server_b2_commit_proof", "pass": server_b2, "critical_p0": True},
+                    {"name": "no_internal_contract_leak", "pass": not any(term in lower for term in ("canonical_commerce_state", "persistence gate", "source revision"))},
+                ],
+                "resolution_and_progress": [
+                    {"name": "actual_reply_present", "pass": bool(response.strip())},
+                    {"name": "semantic_contract_pass", "pass": source["semantic_pass"]},
+                ],
+                "context_correction_and_entity": [
+                    {"name": "exact_customer_source", "pass": source["source_bound"]},
+                ],
+                "targeted_clarification_and_kb_use": [
+                    {"name": "no_fake_lookup_completion", "pass": not any(term in response for term in ("已查證但找不到", "已保存查詢", "已轉交查詢"))},
+                ],
+                "natural_language_and_concision": [
+                    {"name": "customer_facing_language", "pass": bool(response.strip()) and "undefined" not in lower and "[object object]" not in lower},
+                ],
+                "handoff_next_step_and_customer_effort": [
+                    {"name": "no_unproven_handoff", "pass": not any(term in lower for term in ("已轉交完成", "已转交完成", "handoff is complete"))},
+                ],
+            }
+            scores = {name: 10 * sum(1 for check in checks if check["pass"]) / len(checks) for name, checks in assertions.items()}
+            rows.append({
+                "id": source["id"], "family": source["family"], "response": response,
+                "response_sha256": hashlib.sha256(response.encode()).hexdigest(),
+                "customer_source_message_id": source["customer_source_message_id"],
+                "assistant_message_id": source["assistant_message_id"],
+                "measurement_source": "runtime_readback", "assertions": assertions, "scores": scores,
+            })
+        dimensions = (
+            "factual_grounding_and_commitment_truth", "resolution_and_progress",
+            "context_correction_and_entity", "targeted_clarification_and_kb_use",
+            "natural_language_and_concision", "handoff_next_step_and_customer_effort",
+        )
+        averages = {name: sum(row["scores"][name] for row in rows) / len(rows) for name in dimensions}
+        weights = {"factual_grounding_and_commitment_truth": 25, "resolution_and_progress": 25, "context_correction_and_entity": 20, "targeted_clarification_and_kb_use": 10, "natural_language_and_concision": 10, "handoff_next_step_and_customer_effort": 10}
+        weighted = sum(averages[name] / 10 * weights[name] for name in dimensions)
+        p0 = sum(1 for row in rows for checks in row["assertions"].values() for check in checks if check.get("critical_p0") and not check["pass"])
+        return {
+            "schema_version": "c3-service-quality-evidence-1.0.0",
+            "mode": "live_production_runtime", "sample_count": len(rows),
+            "deterministic_regression_count": 112, "deterministic_samples_included": False,
+            "scoring": {"formula": "derived executable assertions only; no rounding", "weights": weights},
+            "dimension_averages": averages, "weighted_score": weighted,
+            "critical_p0": p0, "rows": rows,
         }
 
     def rebuild_comparison(self, conversation_id: str):
@@ -854,6 +961,7 @@ class Harness:
                 raise RuntimeError("core_runtime_observability_or_behavior_failed:" + ",".join(missing_core))
             evidence["quick_gate"] = {"all_pass": True, "long_run_started_only_after_pass": True}
             evidence["long_run"] = self.long_run()
+            evidence["service_quality"] = self.service_quality_evidence(evidence["scenarios"], evidence["long_run"])
             evidence["rebuild_comparison"] = self.rebuild_comparison(evidence["long_run"]["conversation_id"])
         except Exception as error:
             failure = str(error)

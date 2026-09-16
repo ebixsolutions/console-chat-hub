@@ -15,6 +15,7 @@ import {
   type CanonicalConversationMemory,
 } from "../_shared/conversation-long-memory.ts";
 import {
+  applyServiceTone,
   planConversationService,
   renderTargetedServiceQuestion,
   type ServiceDialoguePlan,
@@ -178,7 +179,8 @@ Deno.serve(async(req)=>{
       if(recallRoute.reply)return jsonRes({success:true,tool_type:"suggest_reply",draft_only:true,
         knowledge_grounded:false,scope_mode:scope.mode,selected_document_id:null,
         response_route:recallRoute.metadata.response_route,recall_authority:recallRoute.metadata.recall_authority,
-        result:{suggestions:[{content:recallRoute.reply,tone_label:"Informative"}]}},200,req);
+        emotion_trace:servicePlan.emotion_trace??null,entitlement_status:servicePlan.entitlement_status,
+        result:{suggestions:[{content:applyServiceTone(servicePlan,recallRoute.reply),tone_label:servicePlan.emotion_trace?"Empathetic":"Informative"}]}},200,req);
     }
   }
   const kbPrefix=toolType==="suggest_reply"?"suggest":toolType==="knowledge_helper"?"knowledge":"policy";

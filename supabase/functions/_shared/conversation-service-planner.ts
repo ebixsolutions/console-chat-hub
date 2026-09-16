@@ -38,11 +38,17 @@ export interface ServiceRecallDecision {
 }
 
 export interface ServiceDialoguePlan {
-  version: "c3-service-plan-1.0.0";
+  version: "c3-service-plan-1.1.0";
   language: ServiceLanguage;
   action: ServiceDialogueAction;
   customer_goal: string;
-  known_facts: Array<{ name: string; value: string; authority: string }>;
+  known_facts: Array<{
+    name: string;
+    label: string;
+    value: string;
+    authority: string;
+    status: "provided" | "confirmed" | "draft" | "not_started";
+  }>;
   missing_slots: string[];
   clarification_target: string | null;
   clarification_previously_asked: boolean;
@@ -50,14 +56,26 @@ export interface ServiceDialoguePlan {
   kb_query: string | null;
   handoff_requested: boolean;
   safe_assumptions: string[];
+  emotion_trace?: { kind: string; intensity: string; source: string };
+  entitlement_trace?: { name: string; value: string; authority: string; source: string };
+  entitlement_status: "trusted" | "unavailable";
   calculation?: {
-    operands: number[];
+    terms: Array<{ label: string; amount: number; charge_basis: "per_unit" | "per_order"; source: string }>;
     quantity: number;
     per_unit_total: number;
+    per_order_total: number;
     total: number;
-    currency: "HKD";
+    currency: string;
     historical_only: true;
   };
+}
+
+export interface ServiceCalculationTerm {
+  label: string;
+  amount: number;
+  currency: string;
+  charge_basis: "per_unit" | "per_order";
+  source: "customer_message" | "canonical_commerce_state";
 }
 
 export interface ServicePlanInput {
@@ -70,6 +88,10 @@ export interface ServicePlanInput {
   clarification_attempts?: number;
   exact_same_intent_repeated?: boolean;
   explicit_handoff?: boolean;
+  calculation_terms?: ServiceCalculationTerm[];
+  calculation_quantity?: number;
+  emotion?: { kind: string; intensity?: string; source: string } | null;
+  entitlement?: { name: string; value: string; authority: "TRUSTED_CRM"; source: string } | null;
 }
 
 const clean = (value: unknown, limit = 180) =>
@@ -81,59 +103,82 @@ const has = (text: string, values: string[]) =>
 
 function knownFacts(input: ServicePlanInput) {
   const facts: ServiceDialoguePlan["known_facts"] = [];
-  const add = (name: string, value: unknown, authority: string) => {
+  const add = (
+    name: string,
+    label: string,
+    value: unknown,
+    authority: string,
+    status: ServiceDialoguePlan["known_facts"][number]["status"] = "provided",
+  ) => {
     const rendered = clean(value);
     if (rendered && !facts.some((item) => item.name === name && item.value === rendered)) {
-      facts.push({ name, value: rendered, authority });
+      facts.push({ name, label, value: rendered, authority, status });
     }
   };
   const state = input.commerce;
   if (state) {
-    add("current_intent", state.current_intent, "CANONICAL_COMMERCE_STATE");
-    add("current_topic", state.current_topic, "CANONICAL_COMMERCE_STATE");
-    add("delivery_address", state.delivery.address, "CANONICAL_COMMERCE_STATE");
-    add("recipient_name", state.delivery.recipient_name, "CANONICAL_COMMERCE_STATE");
-    add("delivery_preference", state.delivery.preferred_date, "CUSTOMER_PREFERENCE");
-    add("quotation_status", state.conversion.quotation_status, "CANONICAL_COMMERCE_STATE");
-    add("order_status", state.conversion.order_status, "CANONICAL_COMMERCE_STATE");
+    add("current_intent", "目前目標", state.current_intent, "CANONICAL_COMMERCE_STATE");
+    add("current_topic", "查詢項目", state.current_topic, "CANONICAL_COMMERCE_STATE");
+    add("delivery_address", "送貨地址", state.delivery.address, "CANONICAL_COMMERCE_STATE", state.delivery.confirmed ? "confirmed" : "provided");
+    add("recipient_name", "收件人", state.delivery.recipient_name, "CANONICAL_COMMERCE_STATE");
+    add("delivery_preference", "希望送貨日期", state.delivery.preferred_date, "CUSTOMER_PREFERENCE");
+    add("quotation_status", "報價狀態", state.conversion.quotation_status, "CANONICAL_COMMERCE_STATE", state.conversion.quotation_status === "draft" ? "draft" : "provided");
+    add("order_status", "訂單狀態", state.conversion.order_status, "CANONICAL_COMMERCE_STATE", state.conversion.order_status === "none" ? "not_started" : "provided");
     for (const entity of state.entities.filter((item) => !["cancelled", "deferred"].includes(item.status))) {
-      add(`entity:${entity.entity_id}:quantity`, entity.quantity, "CANONICAL_COMMERCE_STATE");
-      add(`entity:${entity.entity_id}:model`, entity.attributes.model, "CUSTOMER_PROVIDED");
-      add(`entity:${entity.entity_id}:room_size`, entity.attributes.room_size, "CUSTOMER_PROVIDED");
-      add(`entity:${entity.entity_id}:horsepower`, entity.attributes.horsepower, "CUSTOMER_REQUIREMENT");
+      add(`entity:${entity.entity_id}:quantity`, "數量", entity.quantity, "CANONICAL_COMMERCE_STATE");
+      add(`entity:${entity.entity_id}:model`, "型號", entity.attributes.model, "CUSTOMER_PROVIDED");
+      add(`entity:${entity.entity_id}:room_size`, "使用面積", entity.attributes.room_size, "CUSTOMER_PROVIDED");
+      add(`entity:${entity.entity_id}:horsepower`, "所需匹數", entity.attributes.horsepower, "CUSTOMER_REQUIREMENT");
     }
   }
   if (input.memory) {
-    add("customer_goal", input.memory.current_goal, "CURRENT_CUSTOMER_MEMORY");
-    add("current_topic", input.memory.current_topic, "CURRENT_CUSTOMER_MEMORY");
+    add("customer_goal", "目前目標", input.memory.current_goal, "CURRENT_CUSTOMER_MEMORY");
+    add("current_topic", "查詢項目", input.memory.current_topic, "CURRENT_CUSTOMER_MEMORY");
     for (const preference of input.memory.customer_preferences) {
-      add("customer_preference", preference, "CURRENT_CUSTOMER_MEMORY");
+      add("customer_preference", "偏好", preference, "CURRENT_CUSTOMER_MEMORY");
     }
     for (const constraint of input.memory.active_constraints) {
-      add("customer_constraint", constraint, "CURRENT_CUSTOMER_MEMORY");
+      add("customer_constraint", "重要限制", constraint, "CURRENT_CUSTOMER_MEMORY");
     }
   }
   return facts.slice(0, 12);
 }
 
-function historicalCalculation(question: string): ServiceDialoguePlan["calculation"] | null {
+function historicalCalculation(question: string, input: ServicePlanInput): ServiceDialoguePlan["calculation"] | null {
   if (!has(question, ["試算", "试算", "假設", "假设", "舊", "旧", "historical", "estimate"])) return null;
-  const numbers = (question.match(/(?:HKD|HK\$|\$)?\s*\d[\d,]*(?:\.\d+)?/gi) ?? [])
-    .map((value) => Number(value.replace(/[^\d.]/g, "")))
-    .filter((value) => Number.isFinite(value) && value > 0);
-  const quantityMatch = question.match(/(?:×|x|乘|共|合共|total\s+for)\s*(\d+)|(?:兩|两|2)\s*(?:部|件|台|units?)/i);
-  const quantity = quantityMatch?.[1] ? Number(quantityMatch[1]) : quantityMatch ? 2 : 1;
-  const operands = numbers.filter((value, index) => !(quantity > 1 && index === numbers.length - 1 && value === quantity));
-  if (operands.length < 2) return null;
-  const perUnit = operands.reduce((sum, value) => sum + value, 0);
+  const terms = (input.calculation_terms ?? []).filter((term) =>
+    Number.isFinite(term.amount) && term.amount > 0 && clean(term.label) && clean(term.currency)
+  );
+  if (terms.length < 1) return null;
+  const currencies = new Set(terms.map((term) => term.currency.toUpperCase()));
+  if (currencies.size !== 1) return null;
+  const quantity = Number.isInteger(input.calculation_quantity) && Number(input.calculation_quantity) > 0
+    ? Number(input.calculation_quantity)
+    : 1;
+  const perUnit = terms.filter((term) => term.charge_basis === "per_unit").reduce((sum, term) => sum + term.amount, 0);
+  const perOrder = terms.filter((term) => term.charge_basis === "per_order").reduce((sum, term) => sum + term.amount, 0);
   return {
-    operands,
+    terms: terms.map((term) => ({ label: clean(term.label, 80), amount: term.amount, charge_basis: term.charge_basis, source: term.source })),
     quantity,
     per_unit_total: perUnit,
-    total: perUnit * quantity,
-    currency: "HKD",
+    per_order_total: perOrder,
+    total: perUnit * quantity + perOrder,
+    currency: [...currencies][0],
     historical_only: true,
   };
+}
+
+function factSatisfiesSlot(facts: ServiceDialoguePlan["known_facts"], slot: string | null): boolean {
+  if (!slot) return false;
+  const names: Record<string, RegExp> = {
+    model_or_product_link: /:model(?:\n|$)|product_link/,
+    room_size_or_dimensions: /:room_size(?:\n|$)|dimensions/,
+    region: /region|market/,
+    applicable_date: /delivery_preference|date/,
+    intended_use: /current_intent|customer_goal/,
+    budget_range: /budget/,
+  };
+  return names[slot]?.test(facts.map((fact) => fact.name).join("\n")) ?? false;
 }
 
 function requestedSlot(question: string): string | null {
@@ -161,11 +206,16 @@ function buildKbQuery(question: string, input: ServicePlanInput): string {
 
 export function planConversationService(input: ServicePlanInput): ServiceDialoguePlan {
   const question = clean(input.question, 2400);
+  const observedEmotion = input.emotion ?? (
+      /(?:失望|嬲|憤怒|愤怒|生氣|生气|frustrat|angry|furious|disappoint)/i.test(question)
+        ? { kind: /(?:嬲|憤怒|愤怒|生氣|生气|angry|furious)/i.test(question) ? "angry" : "frustrated", intensity: "customer_expressed", source: "current_customer_turn" }
+        : null
+    );
   const facts = knownFacts(input);
   const clarificationTarget = requestedSlot(question);
   const repeated = (input.clarification_attempts ?? 0) >= 2 || input.exact_same_intent_repeated === true;
   const base = {
-    version: "c3-service-plan-1.0.0" as const,
+    version: "c3-service-plan-1.1.0" as const,
     language: input.language,
     customer_goal: clean(input.memory?.current_goal || input.commerce?.current_intent || question, 240),
     known_facts: facts,
@@ -176,16 +226,19 @@ export function planConversationService(input: ServicePlanInput): ServiceDialogu
     kb_query: null as string | null,
     handoff_requested: input.explicit_handoff === true,
     safe_assumptions: [] as string[],
+    ...(observedEmotion && clean(observedEmotion.kind) ? { emotion_trace: { kind: clean(observedEmotion.kind, 40), intensity: clean(observedEmotion.intensity ?? "unknown", 20), source: clean(observedEmotion.source, 80) } } : {}),
+    ...(input.entitlement?.authority === "TRUSTED_CRM" ? { entitlement_trace: { name: clean(input.entitlement.name, 80), value: clean(input.entitlement.value, 120), authority: input.entitlement.authority, source: clean(input.entitlement.source, 80) } } : {}),
+    entitlement_status: input.entitlement?.authority === "TRUSTED_CRM" ? "trusted" as const : "unavailable" as const,
   };
   if (input.explicit_handoff) return { ...base, action: "explicit_handoff" };
 
-  const calculation = historicalCalculation(question);
+  const calculation = historicalCalculation(question, input);
   if (calculation) {
     return {
       ...base,
       action: "historical_calculation",
       calculation,
-      safe_assumptions: ["customer_provided_historical_amounts", "per_unit_unless_customer_confirms_otherwise"],
+      safe_assumptions: ["typed_historical_amounts_only", "charge_basis_explicit"],
     };
   }
   if (has(question, ["短啲", "短一點", "短一点", "shorten", "more concise"])) {
@@ -196,13 +249,14 @@ export function planConversationService(input: ServicePlanInput): ServiceDialogu
   }
   if (input.recall.handled) return { ...base, action: "direct_answer" };
   if (input.recall.reason === "CURRENT_KB_REQUIRED") {
+    const missingTarget = factSatisfiesSlot(facts, clarificationTarget) ? null : clarificationTarget;
     return {
       ...base,
       action: repeated ? "bounded_kb_refinement" : "published_kb_lookup",
       knowledge_state: "lookup_required",
       kb_query: buildKbQuery(question, input),
-      clarification_target: clarificationTarget,
-      missing_slots: clarificationTarget ? [clarificationTarget] : [],
+      clarification_target: missingTarget,
+      missing_slots: missingTarget ? [missingTarget] : [],
     };
   }
   if (input.recall.reason === "AMBIGUOUS") {
@@ -217,6 +271,7 @@ export function planConversationService(input: ServicePlanInput): ServiceDialogu
     };
   }
   const target = clarificationTarget ?? "customer_goal";
+  if (factSatisfiesSlot(facts, target)) return { ...base, action: "partial_answer_then_question" };
   return {
     ...base,
     action: repeated ? "offer_handoff_or_reframe" : facts.length ? "partial_answer_then_question" : "targeted_clarification",
@@ -247,22 +302,40 @@ export function renderServicePlanReply(
   if (plan.action === "direct_answer") return recallReply;
   if (plan.action === "historical_calculation" && plan.calculation) {
     const c = plan.calculation;
-    const expression = `(${c.operands.map(formatMoney).join(" + ")}) × ${c.quantity} = HKD ${formatMoney(c.total)}`;
+    const perUnit = c.terms.filter((term) => term.charge_basis === "per_unit");
+    const perOrder = c.terms.filter((term) => term.charge_basis === "per_order");
+    const unitExpression = perUnit.length
+      ? `(${perUnit.map((term) => `${term.label} ${formatMoney(term.amount)}`).join(" + ")}) × ${c.quantity}`
+      : "0";
+    const orderExpression = perOrder.length
+      ? ` + ${perOrder.map((term) => `${term.label} ${formatMoney(term.amount)}`).join(" + ")}`
+      : "";
+    const expression = `${unitExpression}${orderExpression} = ${c.currency} ${formatMoney(c.total)}`;
     return [
-      `按你提供的舊數字，假設各項都是每部收費：${expression}。這只是歷史條件試算，不是現行正式報價；如有項目是整單收費，總額會不同。`,
-      `按你提供的旧数字，假设各项都是每台收费：${expression}。这只是历史条件试算，不是当前正式报价；如有项目是整单收费，总额会不同。`,
-      `Using your historical figures and assuming every item is charged per unit: ${expression}. This is a conditional historical calculation, not a current quotation; the total changes if any item is charged once per order.`,
+      `按你提供並已標明收費單位的舊數字：${expression}。這只是歷史條件試算，不是現行正式報價。`,
+      `按你提供并已标明收费单位的旧数字：${expression}。这只是历史条件试算，不是当前正式报价。`,
+      `Using only the historical amounts with an explicit charge basis: ${expression}. This is a conditional historical calculation, not a current quotation.`,
     ][l];
   }
   if (plan.action === "shorten_previous_answer") {
     const prior = [...recentMessages].reverse().find((item) => item.role === "assistant" && clean(item.content));
     if (!prior) return null;
-    const sentences = clean(prior.content, 1200).split(/(?<=[。！？.!?])\s*/).filter(Boolean).slice(0, 2);
-    return sentences.join(" ").slice(0, 360);
+    const sentences = clean(prior.content, 1600).split(/(?<=[。！？.!?])\s*/).filter(Boolean);
+    const safety = sentences.filter((sentence) => /(?:不|未|尚未|不能|不可|並非|并非|唔|冇|沒有|没有|仍需|待核|核實|核实|not|isn't|is not|cannot|can't|unconfirmed|pending|subject to|限制|假設|假设)/i.test(sentence));
+    const selected = [...new Set([sentences[0], ...safety])].filter(Boolean);
+    return selected.join(" ").slice(0, 600);
   }
   if (plan.action === "current_state_checklist") {
-    const known = plan.known_facts.slice(0, 6).map((fact) => `✓ ${fact.name}: ${fact.value}`);
-    const missing = plan.missing_slots.map((slot) => `□ ${slot}`);
+    const statusLabels: Record<string, string[]> = {
+      confirmed: ["已確認", "已确认", "confirmed"],
+      provided: ["已提供，待最終確認", "已提供，待最终确认", "provided, awaiting final confirmation"],
+      draft: ["草擬中", "草拟中", "draft"],
+      not_started: ["尚未建立", "尚未建立", "not created"],
+    };
+    const known = plan.known_facts.slice(0, 6).map((fact) =>
+      `• ${fact.label}：${fact.value}（${statusLabels[fact.status]?.[l] ?? statusLabels.provided[l]}）`
+    );
+    const missing = plan.missing_slots.map((slot) => `• ${labels[slot]?.[l] ?? labels.customer_goal[l]}`);
     const heading = ["付款／落單前清單", "付款／下单前清单", "Pre-payment checklist"][l];
     return [heading, ...known, ...missing].join("\n").slice(0, 1600);
   }
@@ -276,6 +349,13 @@ function planLanguageIndex(plan: ServiceDialoguePlan, messages: Array<{ role: st
 
 export function renderTargetedServiceQuestion(plan: ServiceDialoguePlan, language: ServiceLanguage): string {
   const l = language === "en" ? 2 : language === "zh-CN" ? 1 : 0;
+  if (plan.action === "explicit_handoff") {
+    return [
+      "收到你想聯絡真人客服的要求；目前尚未完成交接，請等候系統確認。",
+      "收到你想联系人工客服的要求；目前尚未完成交接，请等候系统确认。",
+      "I understand that you want human support. The handoff is not complete yet; please wait for the system confirmation.",
+    ][l];
+  }
   if (plan.action === "offer_handoff_or_reframe") {
     return [
       "目前未有新的關鍵資料，我不想重複問同一問題。你可以提供更具體的型號／項目，或選擇由真人客服接手；目前尚未執行轉交。",
@@ -286,9 +366,20 @@ export function renderTargetedServiceQuestion(plan: ServiceDialoguePlan, languag
   const target = plan.clarification_target ?? plan.missing_slots[0] ?? "customer_goal";
   const question = labels[target]?.[l] ?? labels.customer_goal[l];
   const prefix = plan.known_facts.length
-    ? ["我已保留你之前提供的資料。", "我已保留你之前提供的资料。", "I have kept the information you already provided."][l]
+    ? ["根據這段對話已有的資料，", "根据这段对话已有的资料，", "Based on the information available in this conversation, "][l]
     : "";
-  return `${prefix}${prefix ? " " : ""}${question}`;
+  const empathy = plan.emotion_trace?.kind && /(?:frustrat|angry|disappoint|失望|憤怒|愤怒)/i.test(plan.emotion_trace.kind)
+    ? ["我明白這個情況令人失望。", "我明白这个情况令人失望。", "I understand that this situation is frustrating."][l]
+    : "";
+  return `${empathy}${empathy ? " " : ""}${prefix}${prefix ? " " : ""}${question}`;
+}
+
+export function applyServiceTone(plan: ServiceDialoguePlan, reply: string | null): string | null {
+  if (!reply || !plan.emotion_trace?.kind || !/(?:frustrat|angry|disappoint|失望|憤怒|愤怒)/i.test(plan.emotion_trace.kind)) return reply;
+  const prefix = plan.language === "en" ? "I understand that this situation is frustrating. "
+    : plan.language === "zh-CN" ? "我明白这个情况令人失望。 "
+    : "我明白這個情況令人失望。 ";
+  return reply.startsWith(prefix.trim()) ? reply : `${prefix}${reply}`;
 }
 
 export function renderServiceRecovery(
@@ -306,19 +397,27 @@ export function renderServiceRecovery(
   }
   if (state === "tool_failure") {
     return [
-      "我已保留你提供的內容，但目前未能核實商家的最新資料。你可以稍後再查，或選擇由真人客服接手；目前尚未執行轉交。",
-      "我已保留你提供的内容，但目前无法核实商家的最新资料。你可以稍后再查，或选择由人工客服接手；目前尚未执行转交。",
-      "I have kept what you provided, but I cannot verify the merchant's latest information right now. You can retry later or choose human support; no handoff has been performed yet.",
+      "查詢工具目前未能完成，所以我不能核實商家的最新資料；本次沒有進行資料寫入或真人交接。你可以稍後再試，或選擇由真人客服接手。",
+      "查询工具目前未能完成，所以我无法核实商家的最新资料；本次没有进行资料写入或人工交接。你可以稍后再试，或选择由人工客服接手。",
+      "The lookup tool did not complete, so I cannot verify the merchant's latest information or claim that anything was saved or handed off. You can retry later or choose human support; no handoff has been performed yet.",
     ][l];
   }
   if (plan.action === "bounded_kb_refinement" || plan.clarification_previously_asked) {
     return [
-      "我已按現有型號、地區及問題查過，但未找到可核實的現行資料。我不會重複問同一問題；你可以提供產品頁／更精確型號，或選擇由真人客服接手，目前尚未執行轉交。",
-      "我已按现有型号、地区及问题查过，但未找到可核实的当前资料。我不会重复问同一问题；你可以提供产品页／更精确型号，或选择由人工客服接手，目前尚未执行转交。",
-      "I checked using the known model, region, and question but found no verifiable current answer. I will not repeat the same question; you can share a product page or exact model, or choose human support. No handoff has been performed yet.",
+      "這次知識庫查詢沒有返回可核實的現行資料。我不會重複問同一問題；你可以提供產品頁／更精確型號，或選擇由真人客服接手，目前尚未執行轉交。",
+      "这次知识库查询没有返回可核实的当前资料。我不会重复问同一问题；你可以提供产品页／更精确型号，或选择由人工客服接手，目前尚未执行转交。",
+      "This knowledge-base lookup returned no verifiable current answer. I will not repeat the same question; you can share a product page or exact model, or choose human support. No handoff has been performed yet.",
     ][l];
   }
   const question = renderTargetedServiceQuestion(plan, language);
+  const knownModel = plan.known_facts.find((fact) => fact.name.endsWith(":model"));
+  if (knownModel) {
+    return [
+      `這次知識庫查詢沒有返回 ${knownModel.value} 的可核實現行資料。你可以提供產品頁、適用地區或日期，讓我縮窄範圍；目前沒有執行保存或轉交。`,
+      `这次知识库查询没有返回 ${knownModel.value} 的可核实当前资料。你可以提供产品页、适用地区或日期，让我缩小范围；目前没有执行保存或转交。`,
+      `This knowledge-base lookup returned no verifiable current information for ${knownModel.value}. You can share the product page, region, or applicable date to narrow the scope; nothing was saved or handed off.`,
+    ][l];
+  }
   return [
     `我未找到可核實的現行資料。${question}`,
     `我未找到可核实的当前资料。${question}`,
@@ -335,6 +434,9 @@ export function buildServicePlanPromptBlock(plan: ServiceDialoguePlan): string {
     `missing_slots=${JSON.stringify(plan.missing_slots)}`,
     `knowledge_state=${plan.knowledge_state}`,
     `kb_query=${plan.kb_query ?? "none"}`,
-    "Rules: answer known facts first; ask at most one decision-changing question; do not expose internal terms; do not add prices, promises, quantities, completed actions, or handoff claims.",
+    `emotion_trace=${JSON.stringify(plan.emotion_trace ?? null)}`,
+    `trusted_entitlement_trace=${JSON.stringify(plan.entitlement_trace ?? null)}`,
+    `entitlement_status=${plan.entitlement_status}`,
+    "Rules: answer known facts first; ask at most one genuinely missing decision-changing question; do not expose internal terms; do not add prices, promises, quantities, completed actions, saved-state claims, entitlement claims, or handoff claims. Emotion may change tone only. Entitlements require TRUSTED_CRM authority.",
   ].join("\n").slice(0, 4096);
 }

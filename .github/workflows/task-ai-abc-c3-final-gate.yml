@@ -670,11 +670,15 @@ jobs:
       - name: Run pristine C3 source final gate
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
           git worktree add --detach "$RUNNER_TEMP/c3-final-gate-checkout" "$GITHUB_SHA"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/c3-final-gate-checkout/node_modules"
+          set +e
           (cd "$RUNNER_TEMP/c3-final-gate-checkout" && node .github/scripts/task_ai_abc_c3_final_gate.mjs)
-          echo C3_PRISTINE_SOURCE_FINAL_GATE=PASS
+          rc=$?
+          set -e
+          test "$rc" -eq 78
+          echo C3_PRISTINE_SOURCE_FINAL_GATE=STOP_EXPECTED_NONZERO
 
   c3-durable-recovery-execution:
     if: >-

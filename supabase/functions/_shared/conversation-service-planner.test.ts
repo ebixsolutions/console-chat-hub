@@ -1,4 +1,5 @@
 import {
+  applyServiceTone,
   planConversationService,
   renderServicePlanReply,
   renderServiceRecovery,
@@ -83,16 +84,8 @@ const families: Family[] = [
   { id: "explicit_handoff", question: "我要真人客服", action: "explicit_handoff", recall: { handled: false, reason: "NOT_A_RECALL_QUERY", detail: "HANDOFF_PRECEDENCE" }, explicit_handoff: true },
 ];
 
-Deno.test("C3 service-quality fixed 112-response executable rubric", () => {
+Deno.test("C3 deterministic 112-case regression does not claim held-out quality", () => {
   const observations: Array<Record<string, unknown>> = [];
-  const dimensionTotals = {
-    factual_grounding_and_commitment_truth: 0,
-    resolution_and_progress: 0,
-    context_correction_and_entity: 0,
-    targeted_clarification_and_kb_use: 0,
-    natural_language_and_concision: 0,
-    handoff_next_step_and_customer_effort: 0,
-  };
   for (const family of families) {
     for (let index = 0; index < paraphrases.length; index++) {
       const language = languages[index % languages.length];
@@ -107,6 +100,14 @@ Deno.test("C3 service-quality fixed 112-response executable rubric", () => {
         recent_messages: recent,
         clarification_attempts: family.clarification_attempts ?? 0,
         explicit_handoff: family.explicit_handoff,
+        ...(family.id === "historical_calculation" ? {
+          calculation_quantity: 2,
+          calculation_terms: [
+            { label: "舊機價", amount: 5600, currency: "HKD", charge_basis: "per_unit" as const, source: "customer_message" as const },
+            { label: "舊安裝費", amount: 550, currency: "HKD", charge_basis: "per_unit" as const, source: "customer_message" as const },
+            { label: "舊鋁架費", amount: 550, currency: "HKD", charge_basis: "per_unit" as const, source: "customer_message" as const },
+          ],
+        } : {}),
       });
       assert(plan.action === family.action, `${family.id}:${plan.action}`);
       const response = renderServicePlanReply(plan, family.reply ?? null, recent) ??
@@ -122,36 +123,51 @@ Deno.test("C3 service-quality fixed 112-response executable rubric", () => {
       if (family.id === "customer_correction" || family.id === "cross_topic") {
         assert(response.includes("B座") && !response.includes("A座"), "correction_revival");
       }
-      const scores = {
-        factual_grounding_and_commitment_truth: 10,
-        resolution_and_progress: plan.action && response.trim() ? 10 : 0,
-        context_correction_and_entity: plan.known_facts.some((fact) => fact.authority && fact.value) ? 10 : 0,
-        targeted_clarification_and_kb_use: plan.action === "published_kb_lookup"
-          ? (plan.kb_query?.includes("AC-TEST") ? 10 : 0)
-          : plan.missing_slots.length <= 1 ? 10 : 0,
-        natural_language_and_concision: response.length <= 1600 && !/(canonical|source revision|persistence gate)/i.test(response) ? 10 : 0,
-        handoff_next_step_and_customer_effort: !/(已轉交|已转交|has been handed off)/i.test(response) ? 10 : 0,
-      };
-      for (const key of Object.keys(scores) as Array<keyof typeof scores>) {
-        assert(scores[key] >= (key === "factual_grounding_and_commitment_truth" || key === "resolution_and_progress" || key === "natural_language_and_concision" ? 9.5 : 9), `${family.id}:${key}`);
-        dimensionTotals[key] += scores[key];
-      }
-      observations.push({ id: `${family.id}-${index + 1}`, family: family.id, question, response, action: plan.action, scores });
+      observations.push({ id: `${family.id}-${index + 1}`, family: family.id, question, response, action: plan.action });
     }
   }
   assert(observations.length === 112, `sample_count:${observations.length}`);
-  const weights = {
-    factual_grounding_and_commitment_truth: 25,
-    resolution_and_progress: 25,
-    context_correction_and_entity: 20,
-    targeted_clarification_and_kb_use: 10,
-    natural_language_and_concision: 10,
-    handoff_next_step_and_customer_effort: 10,
-  };
-  const averages = Object.fromEntries(Object.entries(dimensionTotals).map(([key, total]) => [key, total / observations.length]));
-  const weighted = Object.entries(weights).reduce((sum, [key, weight]) => sum + (averages[key] / 10) * weight, 0);
-  assert(weighted >= 95, `weighted:${weighted}`);
-  console.log(`C3_SERVICE_QUALITY|version=c3-service-quality-2026-09-16.1|mode=nonproduction_executable|responses=${observations.length}|weighted_score=${weighted.toFixed(1)}|critical_p0=0|human_calibration=AWAITING|dimension_averages=${JSON.stringify(averages)}`);
+  console.log(`C3_DETERMINISTIC_REGRESSION|cases=${observations.length}|quality_score=NOT_MEASURED|held_out=false|result=PASS`);
+});
+
+Deno.test("C3 historical calculation uses typed monetary terms and explicit charge basis", () => {
+  const base = { question: "舊價：機價5600每部、安裝550每部、鋁架550每單，共2部；型號AC-2026、180平方呎、日期2026-09-16", language: "zh-TW" as const, recall: { handled: false, reason: "CURRENT_KB_REQUIRED" as const }, memory: null, commerce };
+  const plan = planConversationService({ ...base, calculation_quantity: 2, calculation_terms: [
+    { label: "機價", amount: 5600, currency: "HKD", charge_basis: "per_unit", source: "customer_message" },
+    { label: "安裝", amount: 550, currency: "HKD", charge_basis: "per_unit", source: "customer_message" },
+    { label: "鋁架", amount: 550, currency: "HKD", charge_basis: "per_order", source: "customer_message" },
+  ] });
+  assert(plan.calculation?.total === 12850, JSON.stringify(plan.calculation));
+  assert(!JSON.stringify(plan.calculation).includes("2026") && !JSON.stringify(plan.calculation).includes("180"), "non_monetary_number_leak");
+});
+
+Deno.test("C3 shortening preserves negation, uncertainty and current-price limits", () => {
+  const plan = planConversationService({ question: "短啲", language: "zh-TW", recall: { handled: false }, memory: null, commerce });
+  const reply = renderServicePlanReply(plan, null, [{ role: "assistant", content: "舊機價是 HKD 5,600。這不是現行報價。訂單尚未確認。實際工程費仍需核實。" }]) ?? "";
+  assert(reply.includes("不是現行報價") && reply.includes("尚未確認") && reply.includes("仍需核實"), reply);
+});
+
+Deno.test("C3 known slot is not re-asked and checklist hides internal keys", () => {
+  const plan = planConversationService({ question: "型號資料", language: "zh-TW", recall: { handled: false, reason: "CURRENT_KB_REQUIRED" }, memory: null, commerce });
+  assert(!plan.missing_slots.includes("model_or_product_link"), JSON.stringify(plan.missing_slots));
+  const checklist = renderServicePlanReply({ ...plan, action: "current_state_checklist" }, null) ?? "";
+  assert(!checklist.includes("entity:") && !checklist.includes("current_intent"), checklist);
+  assert(checklist.includes("草擬中") && !checklist.includes("✓"), checklist);
+});
+
+Deno.test("C3 tool failure does not claim lookup, save or handoff completion", () => {
+  const plan = planConversationService({ question: "查保養", language: "zh-TW", recall: { handled: false, reason: "CURRENT_KB_REQUIRED" }, memory: null, commerce });
+  const reply = renderServiceRecovery(plan, "tool_failure", "zh-TW");
+  assert(reply.includes("工具") && reply.includes("未能完成"), reply);
+  assert(!/(已查|已保存|已轉交)/.test(reply), reply);
+});
+
+Deno.test("C3 emotion is source-traced while untrusted entitlement stays unavailable", () => {
+  const plan = planConversationService({ question: "我好失望，下一步係咩？", language: "zh-TW", recall: { handled: true }, memory: null, commerce });
+  assert(plan.emotion_trace?.source === "current_customer_turn", JSON.stringify(plan.emotion_trace));
+  assert(plan.entitlement_status === "unavailable" && plan.entitlement_trace === undefined, JSON.stringify(plan));
+  const reply = applyServiceTone(plan, "下一步是核對現行保養資料。") ?? "";
+  assert(reply.startsWith("我明白這個情況令人失望"), reply);
 });
 
 Deno.test("C3 no-match, conflict and tool-failure recovery remain useful and truthful", () => {

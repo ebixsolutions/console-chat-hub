@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
+import crypto from "node:crypto";
 import { readContract, verifyEvidence, EVIDENCE_SCHEMA_VERSION, VALIDATED_FUNCTIONS } from "./c3_validation_evidence.mjs";
 import { classifyMergeEvent } from "./c3_merge_no_redeploy_guard.mjs";
 
@@ -46,6 +47,28 @@ const coreNames = [
   "agent_assist_tenant_safe", "return_to_ai_explicit_only", "no_direct_persistence_bypass",
 ];
 
+function validRuntimeQuality() {
+  const dimensions = ["factual_grounding_and_commitment_truth", "resolution_and_progress", "context_correction_and_entity", "targeted_clarification_and_kb_use", "natural_language_and_concision", "handoff_next_step_and_customer_effort"];
+  const rows = Array.from({ length: 100 }, (_, index) => {
+    const response = `Observed governed response ${index + 1}`;
+    const assertions = Object.fromEntries(dimensions.map((dimension) => [dimension, [{ name: `${dimension}_runtime_observation`, pass: true }]]));
+    return {
+      id: `runtime-${index + 1}`, family: "control_fixture", response,
+      response_sha256: crypto.createHash("sha256").update(response).digest("hex"),
+      customer_source_message_id: uuid(index + 2000), assistant_message_id: uuid(index + 3000),
+      measurement_source: "runtime_readback", assertions,
+      scores: Object.fromEntries(dimensions.map((dimension) => [dimension, 10])),
+    };
+  });
+  return {
+    schema_version: "c3-service-quality-evidence-1.0.0", mode: "live_production_runtime",
+    sample_count: 100, deterministic_regression_count: 112, deterministic_samples_included: false,
+    scoring: { formula: "derived executable assertions only; no rounding" },
+    dimension_averages: Object.fromEntries(dimensions.map((dimension) => [dimension, 10])),
+    weighted_score: 100, critical_p0: 0, rows,
+  };
+}
+
 function validEvidence() {
   const sourceIds = Array.from({ length: 100 }, (_, index) => uuid(index + 1000));
   return {
@@ -70,6 +93,7 @@ function validEvidence() {
       };
     }),
     db_security: { pass: true, source: "management_api_read_only_sql", checks: { rls: true } },
+    service_quality: validRuntimeQuality(),
     scenarios: contractInfo.contract.scenarios.map((row, index) => ({
       id: row.id, contract_version: contractInfo.contract.contract_version,
       actual_reply: replyFor(row), response_route: row.id === "C3-CONTROL-13" ? "canonical_memory_clarification" : row.id === "T98" ? "canonical_memory_recall" : row.expected_route_family[0],
@@ -80,7 +104,11 @@ function validEvidence() {
       customer_source_message_id: uuid(index + 1), assistant_message_id: uuid(index + 101),
       memory_revision: index + 1, commerce_revision: index,
       source_binding: { assistant_source_message_id: uuid(index + 1), memory_source_message_id: uuid(index + 1), commerce_source_message_id: uuid(index + 1), exact_customer_source_match: true },
-      b2: { persistence_result: "success", evidence: "persisted_assistant_exact_source_binding" }, observed_at: "2026-09-16T02:31:00Z",
+      b2: {
+        persistence_result: "success", evidence: "server_persisted_b2_gate_and_commit_source",
+        gate_contract: "executeB2PersistenceGate:allow_after_revalidation", commit_source: "commit_ai_reply_tx",
+        source_message_id: uuid(index + 1), persisted_message_id: uuid(index + 101),
+      }, observed_at: "2026-09-16T02:31:00Z",
     })),
     quick_gate: { all_pass: true, long_run_started_only_after_pass: true },
     historical_hkd_8000: { pass: true, source: "runtime_readback" },
@@ -178,6 +206,17 @@ expectReject("release_replay", (e) => { e.release_identity.release_digest = "sha
 expectReject("old_run_replay", (e) => { e.run.id = "1"; }, /run_id_mismatch_or_replay/);
 expectReject("source_binding_mismatch", (e) => { e.scenarios[0].source_binding.memory_source_message_id = uuid(999); }, /source_binding_invalid/);
 expectReject("b2_status_without_source_proof", (e) => { e.scenarios[0].b2.evidence = "unobserved"; }, /b2_persistence_missing/);
+expectReject("quality_nonempty_reply_is_not_resolution_proof", (e) => {
+  e.service_quality.rows[0].assertions.resolution_and_progress[0].pass = false;
+}, /quality_(?:score_not_derived|average_not_derived|dimension_below_threshold)/);
+expectReject("quality_length_is_not_naturalness_proof", (e) => {
+  e.service_quality.rows[0].assertions.natural_language_and_concision = [];
+}, /quality_assertions_invalid/);
+expectReject("quality_fixed_score_rejected", (e) => {
+  e.service_quality.rows[0].scores.factual_grounding_and_commitment_truth = 10;
+  e.service_quality.rows[0].assertions.factual_grounding_and_commitment_truth[0].pass = false;
+}, /quality_score_not_derived/);
+expectReject("quality_deterministic_reuse_rejected", (e) => { e.service_quality.deterministic_samples_included = true; }, /deterministic_cases_must_not_be_held_out/);
 expectReject("known_single_fact_replaced_by_clarification", (e) => {
   const row = e.scenarios.find((item) => item.id === "T06");
   row.actual_reply = "請指明要核對的項目。"; row.response_route = "canonical_memory_clarification";
