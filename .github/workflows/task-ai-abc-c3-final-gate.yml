@@ -131,6 +131,14 @@ jobs:
           set -euo pipefail
           python -c "import ast,pathlib; ast.parse(pathlib.Path('.github/scripts/c3_validation_only_runner.py').read_text())"
           node .github/scripts/c3_validation_control_tests.mjs
+      - name: Production DB security readback preflight (read-only, no fixtures)
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          set -euo pipefail
+          python .github/scripts/c3_validation_only_runner.py db-readback \
+            --out "$RUNNER_TEMP/c3-db-security-readback" \
+            --contract .github/scripts/c3_validation_scenarios.json
       - name: Prove event routing is preflight-only
         shell: bash
         run: |

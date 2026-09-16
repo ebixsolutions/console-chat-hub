@@ -7,6 +7,11 @@ import { classifyMergeEvent } from "./c3_merge_no_redeploy_guard.mjs";
 
 const contractPath = ".github/scripts/c3_validation_scenarios.json";
 const contractInfo = readContract(contractPath);
+execFileSync("python", [
+  ".github/scripts/c3_validation_only_runner.py", "db-contract-test",
+  "--out", "/tmp/c3-db-readback-contract-test",
+  "--contract", contractPath,
+], { stdio: "inherit" });
 const head = "1".repeat(40);
 const tree = "2".repeat(40);
 const runId = "35045000000";

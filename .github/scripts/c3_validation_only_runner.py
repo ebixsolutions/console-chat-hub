@@ -34,6 +34,80 @@ LIVE_EXPECTED = {
     "agent-assist": (43, "eeadc5c9dfb35c51e8778756fcae96ff0c0fc68fc68599ade565ef7479e4e4cb"),
 }
 
+DB_READBACK_ENDPOINT = "projects/{project}/database/query"
+DB_READBACK_SAFE_NAME = "management_database_query_read_only"
+# The Management API currently documents 201 for this POST. 200 is retained as the
+# previously observed compatible response, but no other 2xx status is accepted.
+DB_READBACK_SUCCESS_STATUSES = (200, 201)
+DB_SECURITY_ASSERTIONS = (
+    "c3_migration_applied",
+    "memory_table_exists",
+    "event_table_exists",
+    "memory_rls",
+    "event_rls",
+    "staff_membership_policy",
+    "c3_rpc_exists",
+    "c3_service_role_execute",
+    "c3_public_denied",
+    "c3_anon_denied",
+    "c3_authenticated_denied",
+    "lineage_trigger",
+    "c3_handoff_trigger",
+    "handoff_event_exists",
+    "handoff_event_rls",
+    "c2_rpc_exists",
+    "c2_service_role_execute",
+    "c2_public_denied",
+    "c2_anon_denied",
+    "c2_authenticated_denied",
+    "c2_handoff_trigger",
+    "c2_trigger_function_exists",
+    "c2_trigger_public_denied",
+    "c2_trigger_anon_denied",
+    "c2_trigger_authenticated_denied",
+    "c2_trigger_service_role_denied",
+)
+
+
+def safe_type(value: object) -> str:
+    if value is None:
+        return "null"
+    return type(value).__name__
+
+
+def validate_db_security_response(status: int, payload: object, emit=print) -> dict[str, bool]:
+    endpoint = DB_READBACK_SAFE_NAME
+    if status not in DB_READBACK_SUCCESS_STATUSES:
+        emit(f"C3_DB_READBACK|endpoint={endpoint}|method=POST|status={status}|result=FAIL")
+        raise RuntimeError(f"db_security_readback_unavailable:http_{status}")
+
+    row_count = len(payload) if isinstance(payload, list) else -1
+    row = payload[0] if isinstance(payload, list) and len(payload) == 1 else None
+    present = sum(1 for key in DB_SECURITY_ASSERTIONS if isinstance(row, dict) and key in row)
+    if not isinstance(row, dict) or present != len(DB_SECURITY_ASSERTIONS):
+        emit(
+            "C3_DB_PAYLOAD|"
+            f"status={status}|top_level_type={safe_type(payload)}|row_count={row_count}|"
+            f"required_key_count={len(DB_SECURITY_ASSERTIONS)}|present_required_keys={present}|result=FAIL"
+        )
+        emit(f"C3_DB_READBACK|endpoint={endpoint}|method=POST|status={status}|result=FAIL")
+        raise RuntimeError("db_security_readback_invalid_payload")
+
+    failures = []
+    for name in DB_SECURITY_ASSERTIONS:
+        actual = row.get(name)
+        result = "PASS" if actual is True else "FAIL"
+        emit(f"C3_DB_ASSERT|name={name}|expected=true|actual={str(actual).lower()}|result={result}")
+        if actual is not True:
+            failures.append(name)
+    emit(
+        f"C3_DB_READBACK|endpoint={endpoint}|method=POST|status={status}|"
+        f"result={'PASS' if not failures else 'FAIL'}"
+    )
+    if failures:
+        raise RuntimeError("db_security_drift:" + ",".join(failures))
+    return {name: True for name in DB_SECURITY_ASSERTIONS}
+
 
 def utc_now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -463,25 +537,37 @@ class Harness:
     def db_security_readback(self):
         query = """
         select
+          exists(select 1 from supabase_migrations.schema_migrations where version='20260915091441') as c3_migration_applied,
           to_regclass('public.conversation_memory_state') is not null as memory_table_exists,
           to_regclass('public.conversation_memory_state_event') is not null as event_table_exists,
-          (select relrowsecurity from pg_class where oid='public.conversation_memory_state'::regclass) as memory_rls,
-          (select relrowsecurity from pg_class where oid='public.conversation_memory_state_event'::regclass) as event_rls,
-          exists(select 1 from pg_policies where schemaname='public' and tablename='conversation_memory_state' and policyname='conversation_memory_state_select_staff' and qual like '%is_company_member%') as staff_membership_policy,
-          has_function_privilege('service_role','public.c3_commit_conversation_memory_tx(uuid,uuid,uuid,bigint,bigint,jsonb,text,bigint)','EXECUTE') as service_role_execute,
-          not has_function_privilege('anon','public.c3_commit_conversation_memory_tx(uuid,uuid,uuid,bigint,bigint,jsonb,text,bigint)','EXECUTE') as anon_denied,
-          not has_function_privilege('authenticated','public.c3_commit_conversation_memory_tx(uuid,uuid,uuid,bigint,bigint,jsonb,text,bigint)','EXECUTE') as authenticated_denied,
-          exists(select 1 from pg_trigger where tgname='c3_conversation_memory_lineage_before_write' and tgenabled<>'D') as lineage_trigger,
-          exists(select 1 from pg_trigger where tgname='c3_enrich_handoff_from_memory_before_insert' and tgenabled<>'D') as c3_handoff_trigger,
-          exists(select 1 from pg_trigger where tgname='c2_handoff_package_before_insert' and tgenabled<>'D') as c2_handoff_trigger,
-          exists(select 1 from supabase_migrations.schema_migrations where version='20260915091441') as c3_migration_applied
+          coalesce((select relrowsecurity from pg_class where oid=to_regclass('public.conversation_memory_state')),false) as memory_rls,
+          coalesce((select relrowsecurity from pg_class where oid=to_regclass('public.conversation_memory_state_event')),false) as event_rls,
+          exists(select 1 from pg_policies where schemaname='public' and tablename='conversation_memory_state' and policyname='conversation_memory_state_select_staff' and qual like '%is_company_member%' and qual like '%company_id%') as staff_membership_policy,
+          to_regprocedure('public.c3_commit_conversation_memory_tx(uuid,uuid,uuid,bigint,bigint,jsonb,text,bigint)') is not null as c3_rpc_exists,
+          coalesce(has_function_privilege('service_role',to_regprocedure('public.c3_commit_conversation_memory_tx(uuid,uuid,uuid,bigint,bigint,jsonb,text,bigint)'),'EXECUTE'),false) as c3_service_role_execute,
+          not exists(select 1 from pg_proc p cross join lateral aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a where p.oid=to_regprocedure('public.c3_commit_conversation_memory_tx(uuid,uuid,uuid,bigint,bigint,jsonb,text,bigint)') and a.grantee=0 and a.privilege_type='EXECUTE') as c3_public_denied,
+          not coalesce(has_function_privilege('anon',to_regprocedure('public.c3_commit_conversation_memory_tx(uuid,uuid,uuid,bigint,bigint,jsonb,text,bigint)'),'EXECUTE'),true) as c3_anon_denied,
+          not coalesce(has_function_privilege('authenticated',to_regprocedure('public.c3_commit_conversation_memory_tx(uuid,uuid,uuid,bigint,bigint,jsonb,text,bigint)'),'EXECUTE'),true) as c3_authenticated_denied,
+          exists(select 1 from pg_trigger where tgname='c3_conversation_memory_lineage_before_write' and tgrelid=to_regclass('public.conversation_memory_state') and tgenabled<>'D') as lineage_trigger,
+          exists(select 1 from pg_trigger where tgname='c3_enrich_handoff_from_memory_before_insert' and tgrelid=to_regclass('public.handoff_event') and tgenabled<>'D') as c3_handoff_trigger,
+          to_regclass('public.handoff_event') is not null as handoff_event_exists,
+          coalesce((select relrowsecurity from pg_class where oid=to_regclass('public.handoff_event')),false) as handoff_event_rls,
+          to_regprocedure('public.c2_commit_closure_tx(uuid,uuid,uuid,bigint,text,jsonb)') is not null as c2_rpc_exists,
+          coalesce(has_function_privilege('service_role',to_regprocedure('public.c2_commit_closure_tx(uuid,uuid,uuid,bigint,text,jsonb)'),'EXECUTE'),false) as c2_service_role_execute,
+          not exists(select 1 from pg_proc p cross join lateral aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a where p.oid=to_regprocedure('public.c2_commit_closure_tx(uuid,uuid,uuid,bigint,text,jsonb)') and a.grantee=0 and a.privilege_type='EXECUTE') as c2_public_denied,
+          not coalesce(has_function_privilege('anon',to_regprocedure('public.c2_commit_closure_tx(uuid,uuid,uuid,bigint,text,jsonb)'),'EXECUTE'),true) as c2_anon_denied,
+          not coalesce(has_function_privilege('authenticated',to_regprocedure('public.c2_commit_closure_tx(uuid,uuid,uuid,bigint,text,jsonb)'),'EXECUTE'),true) as c2_authenticated_denied,
+          exists(select 1 from pg_trigger where tgname='c2_handoff_package_before_insert' and tgrelid=to_regclass('public.handoff_event') and tgenabled<>'D') as c2_handoff_trigger,
+          to_regprocedure('public.c2_populate_handoff_package_tg()') is not null as c2_trigger_function_exists,
+          not exists(select 1 from pg_proc p cross join lateral aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a where p.oid=to_regprocedure('public.c2_populate_handoff_package_tg()') and a.grantee=0 and a.privilege_type='EXECUTE') as c2_trigger_public_denied,
+          not coalesce(has_function_privilege('anon',to_regprocedure('public.c2_populate_handoff_package_tg()'),'EXECUTE'),true) as c2_trigger_anon_denied,
+          not coalesce(has_function_privilege('authenticated',to_regprocedure('public.c2_populate_handoff_package_tg()'),'EXECUTE'),true) as c2_trigger_authenticated_denied,
+          not coalesce(has_function_privilege('service_role',to_regprocedure('public.c2_populate_handoff_package_tg()'),'EXECUTE'),true) as c2_trigger_service_role_denied
         """
-        status, payload = self.management(f"projects/{PROJECT}/database/query", "POST", {"query": query})
-        if status != 200 or not isinstance(payload, list) or len(payload) != 1:
-            raise RuntimeError(f"db_security_readback_unavailable:http_{status}")
-        row = payload[0]
-        if not row or not all(value is True for value in row.values()):
-            raise RuntimeError("db_security_drift:" + json.dumps(row, sort_keys=True))
+        status, payload = self.management(
+            DB_READBACK_ENDPOINT.format(project=PROJECT), "POST", {"query": query, "read_only": True}
+        )
+        row = validate_db_security_response(status, payload)
         return {"pass": True, "source": "management_api_read_only_sql", "checks": row, "observed_at": utc_now()}
 
     def cleanup(self):
@@ -565,6 +651,29 @@ def cleanup_manifest(manifest_path: Path, supabase_url: str, server_key: str, ac
     if not access_token:
         raise RuntimeError("credential_missing:SUPABASE_ACCESS_TOKEN")
 
+    if not ids and not session_ids:
+        readback = {
+            "safely_deletable_residue": 0,
+            "active_conversations": 0,
+            "active_jobs": 0,
+            "retained_audit_count": 0,
+            "training_eligible": 0,
+            "learning_candidates": 0,
+        }
+        attempt = {
+            "at": utc_now(), "exact_conversation_ids": [], "exact_visitor_session_ids": [],
+            "readback": readback, "result": "completed_no_owned_fixtures",
+        }
+        manifest.setdefault("cleanup_attempts", []).append(attempt)
+        manifest["cleanup_completed"] = True
+        write_json(manifest_path, manifest)
+        return {
+            "completed": True, "source": "exact_fixture_manifest",
+            "fixture_manifest_sha256": sha256_bytes(manifest_path.read_bytes()),
+            "readback_source": "empty_exact_manifest_no_production_delete",
+            "fixture_state": "no_owned_fixtures", "exclude_training": True, **readback,
+        }
+
     # The state/event tables deliberately grant service_role SELECT only. Cleanup therefore
     # uses the authenticated Management API SQL endpoint, inside one exact-ID transaction.
     # Any unexpected CE/training/learning record aborts before the first DELETE so a fixture
@@ -628,7 +737,7 @@ def cleanup_manifest(manifest_path: Path, supabase_url: str, server_key: str, ac
         f"https://api.supabase.com/v1/projects/{PROJECT}/database/query", "POST", {"query": sql},
         {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
     )
-    if status != 200 or not isinstance(payload, list) or len(payload) != 1:
+    if status not in DB_READBACK_SUCCESS_STATUSES or not isinstance(payload, list) or len(payload) != 1:
         raise RuntimeError(f"cleanup_transaction_or_readback_failed:http_{status}")
     readback = payload[0]
     required_counts = ["safely_deletable_residue", "active_conversations", "active_jobs", "retained_audit_count", "training_eligible", "learning_candidates"]
@@ -649,9 +758,51 @@ def cleanup_manifest(manifest_path: Path, supabase_url: str, server_key: str, ac
     }
 
 
+def run_db_readback_contract_tests() -> None:
+    valid = {name: True for name in DB_SECURITY_ASSERTIONS}
+
+    def expect_pass(name: str, status: int, payload: object) -> None:
+        telemetry = []
+        assert validate_db_security_response(status, payload, telemetry.append) == valid
+        assert any(
+            line == f"C3_DB_READBACK|endpoint={DB_READBACK_SAFE_NAME}|method=POST|status={status}|result=PASS"
+            for line in telemetry
+        )
+        assert sum(line.startswith("C3_DB_ASSERT|") for line in telemetry) == len(DB_SECURITY_ASSERTIONS)
+        print(f"C3_DB_CONTRACT_TEST|name={name}|result=PASS")
+
+    def expect_fail(name: str, status: int, payload: object, reason: str) -> None:
+        try:
+            validate_db_security_response(status, payload, lambda _line: None)
+        except RuntimeError as error:
+            assert reason in str(error), (name, error)
+        else:
+            raise AssertionError(f"{name}:expected_failure")
+        print(f"C3_DB_CONTRACT_TEST|name={name}|result=PASS")
+
+    expect_pass("valid_200_valid_body", 200, [valid])
+    expect_pass("valid_201_valid_body", 201, [valid])
+    expect_fail("allowed_status_malformed_body", 201, {"result": valid}, "invalid_payload")
+    missing = dict(valid)
+    missing.pop("c3_migration_applied")
+    expect_fail("allowed_status_missing_required_rows", 201, [missing], "invalid_payload")
+    for status in (401, 403, 404, 500):
+        expect_fail(f"http_{status}", status, [valid], f"http_{status}")
+    rls_disabled = dict(valid)
+    rls_disabled["memory_rls"] = False
+    expect_fail("rls_disabled", 201, [rls_disabled], "memory_rls")
+    rpc_grant = dict(valid)
+    rpc_grant["c3_service_role_execute"] = False
+    expect_fail("rpc_grant_mismatch", 201, [rpc_grant], "c3_service_role_execute")
+    c2_drift = dict(valid)
+    c2_drift["c2_handoff_trigger"] = False
+    expect_fail("c2_boundary_drift", 201, [c2_drift], "c2_handoff_trigger")
+    print("C3_DB_READBACK_CONTRACT_TESTS=PASS")
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("validate", "cleanup"))
+    parser.add_argument("command", choices=("validate", "cleanup", "db-readback", "db-contract-test"))
     parser.add_argument("--out", required=True)
     parser.add_argument("--contract", required=True)
     parser.add_argument("--artifact-root")
@@ -659,6 +810,15 @@ def main():
     parser.add_argument("--marker")
     args = parser.parse_args()
     out = Path(args.out).resolve()
+    if args.command == "db-contract-test":
+        run_db_readback_contract_tests()
+        return
+    if args.command == "db-readback":
+        harness = Harness(out, Path(args.contract).resolve(), Path(args.artifact_root or ".").resolve())
+        result = harness.db_security_readback()
+        write_json(out / "db-security-evidence.json", result)
+        print("C3_DB_SECURITY_READBACK_PREFLIGHT=PASS")
+        return
     if args.command == "cleanup":
         key = os.environ.get("C3_SERVER_KEY", "")
         if not key:
