@@ -154,6 +154,8 @@ assert.ok(runner.includes("recovered_from\":\"exact_durable_visitor_session_mark
 assert.ok(runner.includes("visitor_metadata->>c3_validation_marker"));
 assert.ok(runner.includes("fixture[\"customer_source_message_ids\"].append(customer[\"id\"])"));
 assert.ok(runner.includes("C3_RUNTIME_WAIT|"));
+assert.ok(runner.includes("a.resource_id=t.id) as retained_audit_count"));
+assert.equal(runner.includes("a.resource_id=t.id::text"), false);
 console.log("C3_NONPRODUCTION_CONTROL|name=runner_quick_first_and_cleanup_finally|result=PASS");
 console.log("C3_NONPRODUCTION_CONTROL|name=interrupted_runner_manifest_recovery|result=PASS");
 console.log("C3_NONPRODUCTION_CONTROL|name=validation_runner_no_deploy_migration_rollback|result=PASS");

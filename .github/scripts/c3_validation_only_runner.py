@@ -856,7 +856,7 @@ def cleanup_manifest(manifest_path: Path, supabase_url: str, server_key: str, ac
       (select count(*)::int from public.ce_evaluation_job j join conversation_target t on t.id=j.conversation_id) as active_jobs,
       (select count(*)::int from public.conversation_evaluation e join conversation_target t on t.id=e.conversation_id where e.training_eligible) as training_eligible,
       (select count(*)::int from public.hf3_learning_case l join conversation_target t on t.id=l.conversation_id where l.training_candidate) as learning_candidates,
-      (select count(*)::int from public.audit_log a join conversation_target t on a.resource_id=t.id::text) as retained_audit_count,
+      (select count(*)::int from public.audit_log a join conversation_target t on a.resource_id=t.id) as retained_audit_count,
       ((select count(*) from public.messages m join conversation_target t on t.id=m.conversation_id) +
        (select count(*) from public.handoff_event h join conversation_target t on t.id=h.conversation_id) +
        (select count(*) from public.conversation_memory_state s join conversation_target t on t.id=s.conversation_id) +
