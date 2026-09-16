@@ -6,20 +6,7 @@ import { fileURLToPath } from "node:url";
 
 export const EVIDENCE_SCHEMA_VERSION = "ai-abc-c3-validation-evidence-1.0.0";
 export const PROJECT_REF = "nrfxhqabwblzxoushgnm";
-export const LIVE_EXPECTED = Object.freeze({
-  "generate-reply": {
-    version: 108,
-    bundle: "f5c85c002c99ca7f094d1e1c9b1cb7349e44e73a159a8970b78a6b2a2bf7e397",
-    verify_jwt: true,
-    import_map: false,
-  },
-  "agent-assist": {
-    version: 43,
-    bundle: "eeadc5c9dfb35c51e8778756fcae96ff0c0fc68fc68599ade565ef7479e4e4cb",
-    verify_jwt: true,
-    import_map: false,
-  },
-});
+export const VALIDATED_FUNCTIONS = Object.freeze(["generate-reply", "agent-assist"]);
 
 const sha256 = (value) => crypto.createHash("sha256").update(value).digest("hex");
 const fail = (message) => {
@@ -154,16 +141,25 @@ function verifyScenario(contractRow, evidenceRow, { requireLiveProduction }) {
   return { id: contractRow.id, route, checks: textChecks };
 }
 
-function verifyLiveIdentity(evidence) {
+function verifyLiveIdentity(evidence, options) {
   if (!Array.isArray(evidence.live_functions)) fail("live_functions_missing");
-  for (const [name, expected] of Object.entries(LIVE_EXPECTED)) {
+  const release = evidence.release_identity;
+  if (!release || !/^([0-9a-f]{64})$/.test(String(release.release_id ?? "")) ||
+      !/^sha256:[0-9a-f]{64}$/.test(String(release.release_digest ?? ""))) fail("release_identity_missing");
+  if (options.expectedReleaseId && release.release_id !== options.expectedReleaseId) fail("release_id_mismatch");
+  if (options.expectedReleaseDigest && release.release_digest !== options.expectedReleaseDigest) fail("release_digest_mismatch");
+  if (options.expectedDeploymentRunId && String(release.deployment_run_id) !== String(options.expectedDeploymentRunId)) fail("release_deployment_run_mismatch");
+  if (release.target_head !== evidence.runner?.head || release.target_tree !== evidence.runner?.tree) fail("release_target_commit_mismatch");
+  for (const name of VALIDATED_FUNCTIONS) {
+    const expected = release.functions?.[name];
+    if (!expected) fail(`release_function_identity_missing:${name}`);
     const actual = evidence.live_functions.find((row) => row.function === name);
     if (!actual) fail(`live_function_missing:${name}`);
     for (const key of ["version", "verify_jwt", "import_map"]) {
       if (actual[key] !== expected[key]) fail(`live_function_${key}_mismatch:${name}`);
     }
-    if (actual.status !== "ACTIVE" || actual.bundle !== expected.bundle) fail(`live_function_identity_mismatch:${name}`);
-    if (!actual.source_manifest_sha256 || actual.source_parity !== true) fail(`live_function_source_parity_missing:${name}`);
+    if (actual.status !== "ACTIVE" || actual.bundle !== expected.bundle || expected.status !== "ACTIVE") fail(`live_function_identity_mismatch:${name}`);
+    if (actual.source_manifest_sha256 !== expected.manifest_sha256 || actual.source_parity !== true) fail(`live_function_source_parity_missing:${name}`);
   }
 }
 
@@ -229,7 +225,7 @@ export function verifyEvidence(evidence, contractInfo, options = {}) {
   requiredString(evidence.created_at, "created_at");
   if (Date.parse(evidence.created_at) < Date.parse(evidence.run.started_at)) fail("evidence_time_precedes_run");
   if (evidence.artifact?.id === undefined || !/^sha256:[0-9a-f]{64}$/.test(String(evidence.artifact?.digest ?? ""))) fail("durable_artifact_identity_missing");
-  verifyLiveIdentity(evidence);
+  verifyLiveIdentity(evidence, options);
   if (requireLiveProduction && (evidence.db_security?.pass !== true || evidence.db_security?.source !== "management_api_read_only_sql")) {
     fail("db_security_readback_missing_or_untrusted");
   }
@@ -280,6 +276,9 @@ function main() {
     expectedProject: args["expected-project"],
     expectedRunId: args["expected-run-id"],
     expectedAttempt: args["expected-attempt"],
+    expectedReleaseId: args["expected-release-id"],
+    expectedReleaseDigest: args["expected-release-digest"],
+    expectedDeploymentRunId: args["expected-deployment-run-id"],
   });
   console.log(`C3_EVIDENCE_VERIFIER|result=PASS|contract_sha256=${result.contract_sha256}|rows=${result.scenario_results.length}`);
 }

@@ -26,26 +26,44 @@ on:
         required: false
         type: string
       validation_authorization:
-        description: Exact c3-validation-HEAD-TREE authorization
+        description: Exact c3-validation-HEAD-TREE-RELEASE_ID authorization
+        required: false
+        type: string
+      deployment_run_id:
+        description: Parent deployment run holding the durable release identity
+        required: false
+        type: string
+      deployment_attempt:
+        description: Exact parent deployment run attempt
+        required: false
+        default: '1'
+        type: string
+      release_id:
+        description: Exact release execution identity
+        required: false
+        type: string
+      release_digest:
+        description: Exact sha256 digest of RELEASE.json
         required: false
         type: string
       artifact_run_id:
-        description: Run ID holding the verified v108/v43 recovery artifact
+        description: Parent deployment run holding the release baseline artifact
         required: false
-        default: '35045329983'
         type: string
       artifact_id:
-        description: Exact durable recovery artifact ID
+        description: Exact release baseline artifact ID
         required: false
-        default: '10427225513'
         type: string
       artifact_digest:
-        description: Exact sha256 digest of the durable recovery artifact
+        description: Exact release baseline artifact sha256 digest
         required: false
-        default: 'sha256:0bf7ac37f8217242899e1be128cd39362e893910468a4203383ba6dfc12cbea4'
         type: string
       cleanup_source_run_id:
         description: Validation run containing a fixture manifest for cleanup-only recovery
+        required: false
+        type: string
+      validation_run_id:
+        description: Failed validation child run authorizing release-scoped recovery
         required: false
         type: string
       cleanup_fixture_marker:
@@ -56,6 +74,14 @@ on:
         description: Exact c3-recovery-<selected commit SHA> authorization
         required: false
         type: string
+      recovery_scope:
+        description: Recover a failed validation release or an interrupted deployment intent
+        required: true
+        default: release
+        type: choice
+        options:
+          - release
+          - intent
       recover_generate_reply:
         description: Recover generate-reply from the durable snapshot
         required: true
@@ -175,6 +201,11 @@ jobs:
       C3_EXPECTED_TREE: ${{ inputs.expected_tree }}
       C3_ARTIFACT_ID: ${{ inputs.artifact_id }}
       C3_ARTIFACT_DIGEST: ${{ inputs.artifact_digest }}
+      C3_ARTIFACT_RUN_ID: ${{ inputs.artifact_run_id }}
+      C3_RELEASE_ID: ${{ inputs.release_id }}
+      C3_RELEASE_DIGEST: ${{ inputs.release_digest }}
+      C3_DEPLOYMENT_RUN_ID: ${{ inputs.deployment_run_id }}
+      C3_DEPLOYMENT_ATTEMPT: ${{ inputs.deployment_attempt }}
     steps:
       - uses: actions/checkout@v4
         with: {ref: '${{ github.sha }}', fetch-depth: 0, clean: true}
@@ -186,12 +217,16 @@ jobs:
           test "${{ github.ref_name }}" = director/ai-abc-c3-long-memory-final-cutover
           test "$(git rev-parse HEAD)" = "$C3_EXPECTED_HEAD"
           test "$(git rev-parse HEAD^{tree})" = "$C3_EXPECTED_TREE"
-          test "${{ inputs.validation_authorization }}" = "c3-validation-$C3_EXPECTED_HEAD-$C3_EXPECTED_TREE"
+          test "${{ inputs.validation_authorization }}" = "c3-validation-$C3_EXPECTED_HEAD-$C3_EXPECTED_TREE-$C3_RELEASE_ID"
+          test -n "$C3_DEPLOYMENT_RUN_ID"
+          test -n "$C3_RELEASE_ID"
+          test -n "$C3_RELEASE_DIGEST"
           test -n "${SUPABASE_ACCESS_TOKEN:-}"
           test -n "${FINAL_SMOKE_AGENT_EMAIL:-}"
           test -n "${FINAL_SMOKE_AGENT_PASSWORD:-}"
-          test "${{ inputs.artifact_id }}" = 10427225513
-          test "${{ inputs.artifact_digest }}" = sha256:0bf7ac37f8217242899e1be128cd39362e893910468a4203383ba6dfc12cbea4
+          test -n "$C3_ARTIFACT_ID"
+          test "$C3_ARTIFACT_RUN_ID" = "$C3_DEPLOYMENT_RUN_ID"
+          test -n "$C3_ARTIFACT_DIGEST"
           echo C3_VALIDATION_ONLY_AUTHORIZATION=PASS
       - uses: actions/setup-node@v4
         with: {node-version: '22'}
@@ -241,6 +276,32 @@ jobs:
             assert len(exp)==count and exp==act
           print('C3_VALIDATION_DURABLE_BASELINE=PASS')
           PY
+      - name: Download and authorize exact durable release identity
+        uses: actions/download-artifact@v4
+        with:
+          name: C3-release-identity-${{ inputs.expected_head }}
+          path: ${{ runner.temp }}/c3-release-identity
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.deployment_run_id }}
+      - name: Bind validation child to parent deployment and actual target
+        shell: bash
+        run: |
+          set -euo pipefail
+          node .github/scripts/c3_release_identity.mjs authorize-validation \
+            --release "$RUNNER_TEMP/c3-release-identity/RELEASE.json" \
+            --head "$C3_EXPECTED_HEAD" --tree "$C3_EXPECTED_TREE" \
+            --deployment-run-id "$C3_DEPLOYMENT_RUN_ID" \
+            --deployment-attempt "$C3_DEPLOYMENT_ATTEMPT" \
+            --release-id "$C3_RELEASE_ID" --release-digest "$C3_RELEASE_DIGEST" \
+            --authorization "${{ inputs.validation_authorization }}"
+          python - "$RUNNER_TEMP/c3-release-identity/RELEASE.json" <<'PY'
+          import json,os,sys
+          release=json.load(open(sys.argv[1])); baseline=release['baseline']
+          assert str(baseline['artifact_id'])==os.environ['C3_ARTIFACT_ID']
+          assert baseline['artifact_digest']==os.environ['C3_ARTIFACT_DIGEST']
+          assert str(baseline['artifact_run_id'])==os.environ['C3_ARTIFACT_RUN_ID']
+          print('C3_VALIDATION_BASELINE_RELEASE_BINDING=PASS')
+          PY
       - name: Run existing-live validation only
         id: live_validation
         continue-on-error: true
@@ -250,7 +311,8 @@ jobs:
           python .github/scripts/c3_validation_only_runner.py validate \
             --out "$RUNNER_TEMP/c3-validation-evidence" \
             --contract .github/scripts/c3_validation_scenarios.json \
-            --artifact-root "$RUNNER_TEMP/c3-validation-baseline"
+            --artifact-root "$RUNNER_TEMP/c3-validation-baseline" \
+            --release-root "$RUNNER_TEMP/c3-release-identity"
       - name: Verify actual runtime evidence and execute evidence-based production final gate
         if: always() && steps.live_validation.outcome == 'success'
         shell: bash
@@ -261,7 +323,9 @@ jobs:
             --evidence "$E" --contract .github/scripts/c3_validation_scenarios.json \
             --expected-head "$C3_EXPECTED_HEAD" --expected-tree "$C3_EXPECTED_TREE" \
             --expected-project nrfxhqabwblzxoushgnm --expected-run-id "$GITHUB_RUN_ID" \
-            --expected-attempt "$GITHUB_RUN_ATTEMPT"
+            --expected-attempt "$GITHUB_RUN_ATTEMPT" --expected-release-id "$C3_RELEASE_ID" \
+            --expected-release-digest "$C3_RELEASE_DIGEST" \
+            --expected-deployment-run-id "$C3_DEPLOYMENT_RUN_ID"
           C3_GATE_PHASE=production C3_EVIDENCE_PATH="$E" \
           C3_SCENARIO_CONTRACT_PATH=.github/scripts/c3_validation_scenarios.json \
           C3_EXPECTED_PROJECT=nrfxhqabwblzxoushgnm C3_EXPECTED_RUN_ID="$GITHUB_RUN_ID" \
@@ -441,6 +505,8 @@ jobs:
     timeout-minutes: 10
     outputs:
       verified: ${{ steps.verify.outputs.verified }}
+      artifact_id: ${{ needs.c3-current-live-capture.outputs.artifact_id }}
+      artifact_digest: ${{ needs.c3-current-live-capture.outputs.artifact_digest }}
     steps:
       - name: Download durable snapshot on another clean runner
         uses: actions/download-artifact@v4
@@ -524,28 +590,34 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python - "$RUNNER_TEMP/c3-live-parity" <<'PY'
+          mkdir -p "$RUNNER_TEMP/c3-target-parity"
+          for fn in generate-reply agent-assist; do
+            node .github/scripts/c3_release_identity.mjs target --function "$fn" \
+              --source-root supabase/functions --template "$RUNNER_TEMP/c3-live-parity/$fn/MANIFEST.json" \
+              --head "$GITHUB_SHA" --tree "$(git rev-parse HEAD^{tree})" \
+              --out "$RUNNER_TEMP/c3-target-parity/$fn.json"
+          done
+          python - "$RUNNER_TEMP/c3-live-parity" "$RUNNER_TEMP/c3-target-parity" <<'PY'
           import hashlib,json,pathlib,sys
-          root=pathlib.Path(sys.argv[1]); repo=pathlib.Path('supabase/functions')
-          expected_changed={'_shared/conversation-long-memory.ts','_shared/conversation-recall.ts'}
+          root=pathlib.Path(sys.argv[1]); target=pathlib.Path(sys.argv[2]); repo=pathlib.Path('supabase/functions')
+          expected_changed={'_shared/conversation-long-memory.ts','_shared/conversation-recall.ts','_shared/conversation-service-planner.ts','generate-reply/index.ts','agent-assist/index.ts'}
+          common={'_shared/conversation-long-memory.ts','_shared/conversation-recall.ts','_shared/conversation-service-planner.ts'}
+          expected_by_function={'generate-reply':common|{'generate-reply/index.ts'},'agent-assist':common|{'agent-assist/index.ts'}}
           failed=False; changed_by_function={}
           for fn in ('generate-reply','agent-assist'):
             manifest=json.loads((root/fn/'MANIFEST.json').read_text())
-            changed=[]; proposed=[]
-            for row in manifest['files']:
-              path=repo/row['path']; actual=hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else 'MISSING'
-              ok=actual==row['sha256']
-              print(f'C3_LIVE_REPO_PARITY|function={fn}|path={row["path"]}|result={"PASS" if ok else "FAIL"}')
-              if not ok: changed.append(row['path'])
-              proposed.append((row['path'],actual))
-            actual_changed=set(changed); boundary_ok=actual_changed==expected_changed
+            proposed_manifest=json.loads((target/f'{fn}.json').read_text())
+            before={row['path']:row['sha256'] for row in manifest['files']}; after={row['path']:row['sha256'] for row in proposed_manifest['files']}
+            changed=sorted(path for path in set(before)|set(after) if before.get(path)!=after.get(path))
+            proposed=sorted(after.items())
+            actual_changed=set(changed); boundary_ok=actual_changed==expected_by_function[fn]
             closure_hash=hashlib.sha256(''.join(f'{path}\0{digest}\n' for path,digest in sorted(proposed)).encode()).hexdigest()
-            print(f'C3_DEPLOYMENT_BOUNDARY|function={fn}|expected_changed={len(expected_changed)}|actual_changed={len(actual_changed)}|result={"PASS" if boundary_ok else "FAIL"}')
+            print(f'C3_DEPLOYMENT_BOUNDARY|function={fn}|expected_changed={len(expected_by_function[fn])}|actual_changed={len(actual_changed)}|result={"PASS" if boundary_ok else "FAIL"}')
             print(f'C3_PROPOSED_CLOSURE|function={fn}|manifest_sha256={closure_hash}|result={"PASS" if boundary_ok else "FAIL"}')
             for path in sorted(actual_changed): print(f'C3_DEPLOYMENT_CHANGED_PATH|function={fn}|path={path}')
             changed_by_function[fn]=actual_changed; failed=failed or not boundary_ok
           if failed: raise SystemExit(1)
-          assert changed_by_function['generate-reply']==changed_by_function['agent-assist']==expected_changed
+          assert expected_changed==changed_by_function['generate-reply']|changed_by_function['agent-assist']
           print('C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE')
           print('C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS')
           print('C3_DEPLOYMENT_ALLOWLIST=generate-reply,agent-assist')
@@ -607,7 +679,8 @@ jobs:
   c3-durable-recovery-execution:
     if: >-
       github.event_name == 'workflow_dispatch' && inputs.mode == 'recovery' && github.actor == 'ebixsolutions' &&
-      inputs.recovery_authorization == format('c3-recovery-{0}', github.sha) &&
+      ((inputs.recovery_scope == 'release' && inputs.recovery_authorization == format('c3-recovery-{0}-{1}', inputs.release_id, inputs.validation_run_id)) ||
+       (inputs.recovery_scope == 'intent' && inputs.recovery_authorization == format('c3-recovery-intent-{0}-{1}', inputs.release_id, inputs.deployment_run_id))) &&
       (inputs.recover_generate_reply || inputs.recover_agent_assist)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -620,10 +693,80 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "${{ inputs.recovery_authorization }}" = "c3-recovery-${{ github.sha }}"
+          if [ "${{ inputs.recovery_scope }}" = release ]; then
+            test "${{ inputs.recovery_authorization }}" = "c3-recovery-${{ inputs.release_id }}-${{ inputs.validation_run_id }}"
+          else
+            test "${{ inputs.recovery_authorization }}" = "c3-recovery-intent-${{ inputs.release_id }}-${{ inputs.deployment_run_id }}"
+          fi
           test "${{ github.ref_name }}" = director/ai-abc-c3-long-memory-final-cutover
           test -n "${SUPABASE_ACCESS_TOKEN:-}"
           echo C3_EXPLICIT_RECOVERY_AUTHORIZATION=PASS
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - name: Download parent release identity
+        if: inputs.recovery_scope == 'release'
+        uses: actions/download-artifact@v4
+        with:
+          name: C3-release-identity-${{ inputs.expected_head }}
+          path: ${{ runner.temp }}/replacement-release
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.deployment_run_id }}
+      - name: Download interrupted deployment intent
+        if: inputs.recovery_scope == 'intent'
+        uses: actions/download-artifact@v4
+        with:
+          name: C3-release-intent-${{ inputs.expected_head }}
+          path: ${{ runner.temp }}/replacement-intent
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.deployment_run_id }}
+      - name: Download failed validation evidence
+        if: inputs.recovery_scope == 'release'
+        uses: actions/download-artifact@v4
+        with:
+          name: C3-validation-production-evidence-${{ inputs.expected_head }}
+          path: ${{ runner.temp }}/failed-validation
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.validation_run_id }}
+      - name: Verify parent-child release and failed validation identity
+        if: inputs.recovery_scope == 'release'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node .github/scripts/c3_release_identity.mjs verify-release \
+            --release "$RUNNER_TEMP/replacement-release/RELEASE.json" \
+            --head "${{ inputs.expected_head }}" --tree "${{ inputs.expected_tree }}" \
+            --deployment-run-id "${{ inputs.deployment_run_id }}" \
+            --root "$RUNNER_TEMP/replacement-release"
+          python - "$RUNNER_TEMP/replacement-release/RELEASE.json" "$RUNNER_TEMP/failed-validation/evidence.json" <<'PY'
+          import json,sys
+          release=json.load(open(sys.argv[1])); evidence=json.load(open(sys.argv[2]))
+          assert release['release_id']=='${{ inputs.release_id }}'
+          assert release['release_digest']=='${{ inputs.release_digest }}'
+          assert str(release['baseline']['artifact_id'])=='${{ inputs.artifact_id }}'
+          assert release['baseline']['artifact_digest']=='${{ inputs.artifact_digest }}'
+          assert str(evidence['run']['id'])=='${{ inputs.validation_run_id }}'
+          assert evidence['release_identity']['release_id']==release['release_id']
+          assert evidence.get('failure_reason') or evidence.get('cleanup',{}).get('completed') is not True
+          print('C3_CROSS_RUN_RECOVERY_PARENT_CHILD=PASS')
+          PY
+      - name: Verify interrupted deployment intent identity
+        if: inputs.recovery_scope == 'intent'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node .github/scripts/c3_release_identity.mjs verify-intent \
+            --intent "$RUNNER_TEMP/replacement-intent/INTENT.json" \
+            --head "${{ inputs.expected_head }}" --tree "${{ inputs.expected_tree }}" \
+            --deployment-run-id "${{ inputs.deployment_run_id }}"
+          python - "$RUNNER_TEMP/replacement-intent/INTENT.json" <<'PY'
+          import json,sys
+          intent=json.load(open(sys.argv[1]))
+          assert intent['intent_id']=='${{ inputs.release_id }}'
+          assert intent['intent_digest']=='${{ inputs.release_digest }}'
+          assert str(intent['baseline']['artifact_id'])=='${{ inputs.artifact_id }}'
+          assert intent['baseline']['artifact_digest']=='${{ inputs.artifact_digest }}'
+          print('C3_INTERRUPTED_DEPLOYMENT_INTENT_RECOVERY=PASS')
+          PY
       - name: Download prior-run durable snapshot on replacement runner
         uses: actions/download-artifact@v4
         with:
@@ -649,6 +792,40 @@ jobs:
           PY
       - uses: supabase/setup-cli@v1
         with: {version: latest}
+      - name: Fail closed on external drift before exact recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          IDENTITY_ROOT="$RUNNER_TEMP/replacement-release"
+          if [ "${{ inputs.recovery_scope }}" = intent ]; then IDENTITY_ROOT="$RUNNER_TEMP/replacement-intent"; fi
+          for fn in generate-reply agent-assist; do
+            D="$RUNNER_TEMP/recovery-live-$fn"; mkdir -p "$D/supabase"; cp supabase/config.toml "$D/supabase/config.toml"
+            (cd "$D" && supabase functions download "$fn" --project-ref "$C3_PROJECT_REF" --use-api)
+          done
+          supabase functions list --project-ref "$C3_PROJECT_REF" --output json > "$RUNNER_TEMP/recovery-live-list.json"
+          python - "$IDENTITY_ROOT" "$RUNNER_TEMP" "${{ inputs.recovery_scope }}" <<'PY'
+          import hashlib,json,pathlib,sys
+          root=pathlib.Path(sys.argv[1]); temp=pathlib.Path(sys.argv[2]); scope=sys.argv[3]
+          identity=json.load(open(root/('RELEASE.json' if scope=='release' else 'INTENT.json')))
+          raw=json.load(open(temp/'recovery-live-list.json')); rows=raw.get('functions',raw) if isinstance(raw,dict) else raw
+          for fn in ('generate-reply','agent-assist'):
+            source=temp/f'recovery-live-{fn}'/'supabase/functions'
+            live={p.relative_to(source).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in source.rglob('*') if p.is_file()}
+            target={x['path']:x['sha256'] for x in identity['target']['functions'][fn]['files']}
+            baseline={x['path']:x['sha256'] for x in identity['baseline']['functions'][fn]['files']}
+            classification='target' if live==target else 'baseline' if live==baseline else 'external_drift'
+            meta=next((x for x in rows if (x.get('slug') or x.get('name'))==fn),None)
+            config_ok=bool(meta and meta.get('status')=='ACTIVE' and meta.get('verify_jwt') is True and meta.get('import_map') is not True)
+            if scope=='release':
+              expected=identity['actual']['functions'][fn]
+              config_ok=config_ok and int(meta.get('version',-1))==expected['version'] and meta.get('ezbr_sha256')==expected['bundle']
+              if classification!='target': raise SystemExit(f'recovery_external_or_parallel_drift:{fn}:{classification}')
+            elif classification=='external_drift': raise SystemExit(f'recovery_external_or_parallel_drift:{fn}')
+            if not config_ok: raise SystemExit(f'recovery_live_config_drift:{fn}')
+            (temp/f'recovery-class-{fn}').write_text(classification)
+            print(f'C3_RECOVERY_LIVE_CLASSIFICATION|function={fn}|identity={classification}|result=PASS')
+          PY
+          echo C3_RECOVERY_LIVE_TARGET_DRIFT_CHECK=PASS
       - name: Execute explicitly authorized recovery and independent verification
         shell: bash
         run: |
@@ -665,8 +842,8 @@ jobs:
           PY
             then echo "C3_RECOVERY_RESULT|function=$fn|result=PASS"; else echo "C3_RECOVERY_RESULT|function=$fn|result=FAIL|stage=identity"; return 1; fi
           }
-          if [ "${{ inputs.recover_generate_reply }}" = true ]; then recover generate-reply || failed=1; fi
-          if [ "${{ inputs.recover_agent_assist }}" = true ]; then recover agent-assist || failed=1; fi
+          if [ "${{ inputs.recover_generate_reply }}" = true ] && [ "$(cat "$RUNNER_TEMP/recovery-class-generate-reply")" = target ]; then recover generate-reply || failed=1; fi
+          if [ "${{ inputs.recover_agent_assist }}" = true ] && [ "$(cat "$RUNNER_TEMP/recovery-class-agent-assist")" = target ]; then recover agent-assist || failed=1; fi
           exit "$failed"
 
   c3-production-edge-transport:
@@ -686,6 +863,8 @@ jobs:
         with: {ref: '${{ github.event.pull_request.head.sha }}', fetch-depth: 0, clean: true}
       - uses: supabase/setup-cli@v1
         with: {version: latest}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
       - name: Re-download durable baseline before first forward write
         uses: actions/download-artifact@v4
         with: {name: '${{ env.C3_CAPTURE_NAME }}', path: '${{ runner.temp }}/baseline'}
@@ -698,22 +877,82 @@ jobs:
           test -s "$RUNNER_TEMP/baseline/CAPTURE.json"
           test -s "$RUNNER_TEMP/baseline/generate-reply/MANIFEST.json"
           test -s "$RUNNER_TEMP/baseline/agent-assist/MANIFEST.json"
-          python - "$RUNNER_TEMP/baseline" "$RUNNER_TEMP/forward" <<'PY'
+          mkdir -p "$RUNNER_TEMP/release/target/generate-reply" "$RUNNER_TEMP/release/target/agent-assist"
+          for fn in generate-reply agent-assist; do
+            node .github/scripts/c3_release_identity.mjs target \
+              --function "$fn" --source-root supabase/functions \
+              --template "$RUNNER_TEMP/baseline/$fn/MANIFEST.json" \
+              --head "$AUTHORIZED_HEAD" --tree "$(git rev-parse HEAD^{tree})" \
+              --out "$RUNNER_TEMP/release/target/$fn/MANIFEST.json"
+          done
+          python - "$RUNNER_TEMP/baseline" "$RUNNER_TEMP/forward" "$RUNNER_TEMP/release/target" <<'PY'
           import hashlib,json,pathlib,shutil,sys
-          baseline=pathlib.Path(sys.argv[1]); forward=pathlib.Path(sys.argv[2]); repo=pathlib.Path('supabase/functions')
+          baseline=pathlib.Path(sys.argv[1]); forward=pathlib.Path(sys.argv[2]); target=pathlib.Path(sys.argv[3]); repo=pathlib.Path('supabase/functions')
           for fn in ('generate-reply','agent-assist'):
             manifest=json.loads((baseline/fn/'MANIFEST.json').read_text()); source=baseline/fn/'supabase/functions'
             exp={x['path']:x['sha256'] for x in manifest['files']}; act={p.relative_to(source).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in source.rglob('*') if p.is_file()}
             if exp!=act: raise SystemExit(f'durable_baseline_hash_mismatch:{fn}')
+            proposed=json.loads((target/fn/'MANIFEST.json').read_text())
             work=forward/fn; (work/'supabase/functions').mkdir(parents=True); shutil.copy2('supabase/config.toml',work/'supabase/config.toml')
-            for rel in exp:
+            for rel in [row['path'] for row in proposed['files']]:
               src=repo/rel; dst=work/'supabase/functions'/rel; dst.parent.mkdir(parents=True,exist_ok=True); shutil.copy2(src,dst)
           PY
+          python - "$RUNNER_TEMP/baseline" "$RUNNER_TEMP/release" <<'PY'
+          import hashlib,json,os,pathlib,sys
+          baseline=pathlib.Path(sys.argv[1]); release=pathlib.Path(sys.argv[2])
+          def load(path): return json.loads(path.read_text())
+          def baseline_manifest(fn):
+            path=baseline/fn/'MANIFEST.json'; value=load(path)
+            value.setdefault('manifest_sha256',hashlib.sha256(path.read_bytes()).hexdigest()); return value
+          tree=os.popen('git rev-parse HEAD^{tree}').read().strip()
+          value={
+            'head':os.environ['AUTHORIZED_HEAD'],'tree':tree,
+            'deployment_run_id':os.environ['GITHUB_RUN_ID'],'deployment_attempt':os.environ['GITHUB_RUN_ATTEMPT'],
+            'baseline':{
+              'artifact_id':'${{ needs.c3-current-live-roundtrip.outputs.artifact_id }}',
+              'artifact_digest':'${{ needs.c3-current-live-roundtrip.outputs.artifact_digest }}',
+              'artifact_run_id':os.environ['GITHUB_RUN_ID'],
+              'functions':{fn:baseline_manifest(fn) for fn in ('generate-reply','agent-assist')}},
+            'target':{'head':os.environ['AUTHORIZED_HEAD'],'tree':tree,
+              'functions':{fn:load(release/'target'/fn/'MANIFEST.json') for fn in ('generate-reply','agent-assist')}},
+          }
+          (release/'intent-input.json').write_text(json.dumps(value,indent=2)+'\n')
+          PY
+          node .github/scripts/c3_release_identity.mjs create-intent \
+            --input "$RUNNER_TEMP/release/intent-input.json" --out "$RUNNER_TEMP/release/INTENT.json"
           echo ready=PASS >> "$GITHUB_OUTPUT"
           echo C3_DURABLE_BASELINE_BEFORE_FIRST_FORWARD_WRITE=PASS
+      - name: Upload durable target intent before first forward write
+        id: intent_upload
+        if: steps.baseline.outputs.ready == 'PASS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: C3-release-intent-${{ github.event.pull_request.head.sha }}
+          path: |
+            ${{ runner.temp }}/release/INTENT.json
+            ${{ runner.temp }}/release/target
+          if-no-files-found: error
+          retention-days: 30
+      - name: Download target intent to a clean round-trip path
+        if: steps.intent_upload.outcome == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: C3-release-intent-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/intent-roundtrip
+      - name: Verify target intent remote round-trip before first write
+        id: intent_roundtrip
+        if: steps.intent_upload.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node .github/scripts/c3_release_identity.mjs verify-intent \
+            --intent "$RUNNER_TEMP/intent-roundtrip/INTENT.json" --head "$AUTHORIZED_HEAD" \
+            --tree "$(git rev-parse HEAD^{tree})" --deployment-run-id "$GITHUB_RUN_ID"
+          test "$(sha256sum "$RUNNER_TEMP/release/INTENT.json"|cut -d' ' -f1)" = "$(sha256sum "$RUNNER_TEMP/intent-roundtrip/INTENT.json"|cut -d' ' -f1)"
+          echo verified=PASS >> "$GITHUB_OUTPUT"
       - name: Deploy generate-reply
         id: deploy_generate
-        if: steps.baseline.outputs.ready == 'PASS'
+        if: steps.intent_roundtrip.outputs.verified == 'PASS'
         continue-on-error: true
         shell: bash
         run: |
@@ -727,13 +966,14 @@ jobs:
         run: |
           set -euo pipefail; D="$RUNNER_TEMP/post-generate"; mkdir -p "$D/supabase"; cp supabase/config.toml "$D/supabase/config.toml"
           (cd "$D" && supabase functions download generate-reply --project-ref "$C3_PROJECT_REF" --use-api)
-          python - "$RUNNER_TEMP/baseline/generate-reply/MANIFEST.json" "$D/supabase/functions" > "$RUNNER_TEMP/generate-identity" <<'PY'
-          import hashlib,json,pathlib,sys
-          m=json.loads(pathlib.Path(sys.argv[1]).read_text()); root=pathlib.Path(sys.argv[2])
-          exp={x['path']:x['sha256'] for x in m['files']}; act={p.relative_to(root).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in root.rglob('*') if p.is_file()}
-          print('baseline' if exp==act else 'affected')
-          PY
-          echo completed=true >> "$GITHUB_OUTPUT"; echo "identity=$(cat "$RUNNER_TEMP/generate-identity")" >> "$GITHUB_OUTPUT"
+          (cd "$RUNNER_TEMP" && supabase functions list --project-ref "$C3_PROJECT_REF" --output json > post-generate-list.json)
+          node .github/scripts/c3_release_identity.mjs actual --function generate-reply \
+            --source-root "$D/supabase/functions" --target "$RUNNER_TEMP/release/target/generate-reply/MANIFEST.json" \
+            --metadata "$RUNNER_TEMP/post-generate-list.json" \
+            --out "$RUNNER_TEMP/release/actual/generate-reply/MANIFEST.json"
+          mkdir -p "$RUNNER_TEMP/release/actual/generate-reply/supabase"
+          cp -R "$D/supabase/functions" "$RUNNER_TEMP/release/actual/generate-reply/supabase/functions"
+          echo completed=true >> "$GITHUB_OUTPUT"; echo identity=target >> "$GITHUB_OUTPUT"
       - name: Deploy agent-assist after known generate readback
         id: deploy_assist
         if: steps.deploy_generate.outputs.command_result == 'success' && steps.readback_generate.outputs.completed == 'true'
@@ -750,13 +990,74 @@ jobs:
         run: |
           set -euo pipefail; D="$RUNNER_TEMP/post-assist"; mkdir -p "$D/supabase"; cp supabase/config.toml "$D/supabase/config.toml"
           (cd "$D" && supabase functions download agent-assist --project-ref "$C3_PROJECT_REF" --use-api)
-          python - "$RUNNER_TEMP/baseline/agent-assist/MANIFEST.json" "$D/supabase/functions" > "$RUNNER_TEMP/assist-identity" <<'PY'
-          import hashlib,json,pathlib,sys
-          m=json.loads(pathlib.Path(sys.argv[1]).read_text()); root=pathlib.Path(sys.argv[2])
-          exp={x['path']:x['sha256'] for x in m['files']}; act={p.relative_to(root).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in root.rglob('*') if p.is_file()}
-          print('baseline' if exp==act else 'affected')
+          (cd "$RUNNER_TEMP" && supabase functions list --project-ref "$C3_PROJECT_REF" --output json > post-assist-list.json)
+          node .github/scripts/c3_release_identity.mjs actual --function agent-assist \
+            --source-root "$D/supabase/functions" --target "$RUNNER_TEMP/release/target/agent-assist/MANIFEST.json" \
+            --metadata "$RUNNER_TEMP/post-assist-list.json" \
+            --out "$RUNNER_TEMP/release/actual/agent-assist/MANIFEST.json"
+          mkdir -p "$RUNNER_TEMP/release/actual/agent-assist/supabase"
+          cp -R "$D/supabase/functions" "$RUNNER_TEMP/release/actual/agent-assist/supabase/functions"
+          echo completed=true >> "$GITHUB_OUTPUT"; echo identity=target >> "$GITHUB_OUTPUT"
+      - name: Assemble baseline-target-actual release identity
+        id: release_identity
+        if: always() && steps.readback_generate.outcome == 'success' && steps.readback_assist.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - "$RUNNER_TEMP/baseline" "$RUNNER_TEMP/release" <<'PY'
+          import hashlib,json,os,pathlib,sys
+          baseline=pathlib.Path(sys.argv[1]); release=pathlib.Path(sys.argv[2])
+          def load(path): return json.loads(path.read_text())
+          def load_baseline(path):
+            value=load(path)
+            value.setdefault('manifest_sha256',hashlib.sha256(path.read_bytes()).hexdigest())
+            return value
+          payload={
+            'head':os.environ['AUTHORIZED_HEAD'],'tree':os.popen('git rev-parse HEAD^{tree}').read().strip(),
+            'deployment_run_id':os.environ['GITHUB_RUN_ID'],'deployment_attempt':os.environ['GITHUB_RUN_ATTEMPT'],
+            'baseline':{
+              'artifact_id':'${{ needs.c3-current-live-roundtrip.outputs.artifact_id }}',
+              'artifact_digest':'${{ needs.c3-current-live-roundtrip.outputs.artifact_digest }}',
+              'artifact_run_id':os.environ['GITHUB_RUN_ID'],
+              'functions':{fn:load_baseline(baseline/fn/'MANIFEST.json') for fn in ('generate-reply','agent-assist')},
+            },
+            'target':{'head':os.environ['AUTHORIZED_HEAD'],'tree':os.popen('git rev-parse HEAD^{tree}').read().strip(),
+              'functions':{fn:load(release/'target'/fn/'MANIFEST.json') for fn in ('generate-reply','agent-assist')}},
+            'actual':{'functions':{fn:load(release/'actual'/fn/'MANIFEST.json') for fn in ('generate-reply','agent-assist')}},
+            'cleanup_manifest_name':f'C3-validation-production-evidence-{os.environ["AUTHORIZED_HEAD"]}/fixture-manifest.json',
+          }
+          (release/'release-input.json').write_text(json.dumps(payload,indent=2)+'\n')
           PY
-          echo completed=true >> "$GITHUB_OUTPUT"; echo "identity=$(cat "$RUNNER_TEMP/assist-identity")" >> "$GITHUB_OUTPUT"
+          node .github/scripts/c3_release_identity.mjs create-release \
+            --input "$RUNNER_TEMP/release/release-input.json" --out "$RUNNER_TEMP/release/RELEASE.json"
+          echo ready=PASS >> "$GITHUB_OUTPUT"
+      - name: Upload durable release execution identity
+        id: release_upload
+        if: steps.release_identity.outputs.ready == 'PASS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: C3-release-identity-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/release
+          if-no-files-found: error
+          retention-days: 30
+      - name: Remote round-trip release identity on clean path
+        if: steps.release_upload.outcome == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: C3-release-identity-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/release-roundtrip
+      - name: Verify remote release identity round-trip
+        id: release_roundtrip
+        if: steps.release_upload.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(sha256sum "$RUNNER_TEMP/release/RELEASE.json" | cut -d' ' -f1)" = "$(sha256sum "$RUNNER_TEMP/release-roundtrip/RELEASE.json" | cut -d' ' -f1)"
+          node .github/scripts/c3_release_identity.mjs verify-release \
+            --release "$RUNNER_TEMP/release-roundtrip/RELEASE.json" --head "$AUTHORIZED_HEAD" \
+            --tree "$(git rev-parse HEAD^{tree})" --deployment-run-id "$GITHUB_RUN_ID" \
+            --root "$RUNNER_TEMP/release-roundtrip"
+          echo verified=PASS >> "$GITHUB_OUTPUT"
       - name: Post-deployment P0 final transport gate
         id: final_gate
         if: always()
@@ -768,6 +1069,7 @@ jobs:
           test "${{ steps.readback_generate.outputs.completed }}" = true
           test "${{ steps.deploy_assist.outputs.command_result }}" = success
           test "${{ steps.readback_assist.outputs.completed }}" = true
+          test "${{ steps.release_roundtrip.outputs.verified }}" = PASS
           (cd "$RUNNER_TEMP" && supabase functions list --project-ref "$C3_PROJECT_REF" --output json > post-functions.json)
           python - "$RUNNER_TEMP/baseline/CAPTURE.json" "$RUNNER_TEMP/post-functions.json" <<'PY'
           import json,sys

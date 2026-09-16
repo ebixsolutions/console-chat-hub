@@ -1,4 +1,12 @@
 import { prepareConversationRecall, type RecallCommerceSnapshot } from "../_shared/conversation-recall.ts";
+import {
+  buildServicePlanPromptBlock,
+  planConversationService,
+  renderServicePlanReply,
+  renderServiceRecovery,
+  renderTargetedServiceQuestion,
+  type ServiceDialoguePlan,
+} from "../_shared/conversation-service-planner.ts";
 // B7 generate-reply — L5b orchestration skeleton + Task A.1A Deterministic Handoff Patch
 //
 // Source of truth: Contract 11 §3.1 + Contract 07 + Contract 03 §1.1 + Contract 08
@@ -2995,6 +3003,7 @@ async function attemptFirstNoMatchClarification(
     Parameters<typeof isFirstNoMatchClarificationEligible>[0],
     "branch_tag" | "source_message_id"
   >,
+  servicePlan: ServiceDialoguePlan,
   traceMetadata: Record<string, unknown>,
 ): Promise<Response | null> {
   if (
@@ -3007,7 +3016,8 @@ async function attemptFirstNoMatchClarification(
     return null;
   }
 
-  const content = KB_NO_MATCH_CLARIFICATION_TEXT[visitorLang] ??
+  const content = renderTargetedServiceQuestion(servicePlan, visitorLang) ||
+    KB_NO_MATCH_CLARIFICATION_TEXT[visitorLang] ||
     KB_NO_MATCH_CLARIFICATION_TEXT["zh-TW"];
   // Same atomic exactly-once gate as every other AI reply: human-control /
   // resolved / superseded races cannot produce a duplicate or late clarification.
@@ -3065,6 +3075,44 @@ async function attemptFirstNoMatchClarification(
     }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } },
   );
+}
+
+async function persistC3ServiceRecovery(
+  supabaseAdmin: SupabaseAdminClient,
+  conversationId: string,
+  sourceMessageId: string,
+  plan: ServiceDialoguePlan,
+  state: "no_match" | "tool_failure" | "conflict",
+  language: "zh-TW" | "zh-CN" | "en",
+  traceMetadata: Record<string, unknown>,
+): Promise<Response> {
+  const content = renderServiceRecovery(plan, state, language);
+  const metadata = {
+    ...traceMetadata,
+    response_route: `c3_service_${state}`,
+    service_plan_version: plan.version,
+    service_action: plan.action,
+    missing_slots: plan.missing_slots,
+    clarification_target: plan.clarification_target,
+    knowledge_state: state,
+    factual_grounding_required: false,
+    conversation_grounded: plan.known_facts.length > 0,
+    handoff_required: false,
+  };
+  const committed = await commitAiReplyWithControlGate(
+    supabaseAdmin, conversationId, sourceMessageId, content, metadata,
+  );
+  await cleanupThinking(supabaseAdmin, conversationId, sourceMessageId);
+  if (!committed.ok) {
+    return new Response(JSON.stringify({ success: true, skipped: committed.result }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  return new Response(JSON.stringify({
+    success: true, reply: content, response_route: metadata.response_route,
+    service_action: plan.action, handoff_required: false,
+    idempotent: committed.idempotent,
+  }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
 async function handleKBFallback(
@@ -4119,18 +4167,57 @@ async function orchestrationGenerateReply(
       .filter(row => row.role === "visitor" && row.id !== _h1SourceMessageId)
       .slice(0, 12).map(row => String(row.content ?? "")),
   }, _visitorLang);
-  if (_c3Recall.reply) {
+  const _c3RecentServiceMessages = ((_pr5HistoryRows ?? []) as MemoryHistoryRow[])
+    .map((row) => ({ role: row.role, content: String(row.content ?? "") }));
+  const _c3ServicePlan: ServiceDialoguePlan = planConversationService({
+    question: _h1LastMsg,
+    language: _visitorLang,
+    recall: _c3Recall.decision,
+    memory: _c3Memory,
+    commerce: _c3CommerceSnapshot?.state ?? null,
+    recent_messages: _c3RecentServiceMessages,
+    clarification_attempts: _pr5History.clarification_attempts,
+    exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
+    explicit_handoff: isHandoffIntent(_h1LastMsg),
+  });
+  const _c3PlannedReply = renderServicePlanReply(
+    _c3ServicePlan,
+    _c3Recall.reply,
+    _c3RecentServiceMessages,
+  ) ?? (!_c3Recall.decision.handled && _c3Recall.decision.reason === "AMBIGUOUS"
+    ? renderTargetedServiceQuestion(_c3ServicePlan, _visitorLang)
+    : null);
+  if (_c3PlannedReply) {
+    const serviceMetadata = {
+      ..._c3Recall.metadata,
+      response_route: _c3ServicePlan.action === "historical_calculation"
+        ? "c3_historical_conditional_calculation"
+        : _c3ServicePlan.action === "shorten_previous_answer"
+        ? "c3_grounded_shorten"
+        : _c3ServicePlan.action === "current_state_checklist"
+        ? "c3_current_state_checklist"
+        : _c3Recall.metadata.response_route,
+      service_plan_version: _c3ServicePlan.version,
+      service_action: _c3ServicePlan.action,
+      missing_slots: _c3ServicePlan.missing_slots,
+      clarification_target: _c3ServicePlan.clarification_target,
+      clarification_previously_asked:
+        _c3ServicePlan.clarification_previously_asked,
+      knowledge_state: _c3ServicePlan.knowledge_state,
+      safe_assumptions: _c3ServicePlan.safe_assumptions,
+    };
     const recallCommit = await commitAiReplyWithControlGate(
       supabaseAdmin, conversation_id, _h1SourceMessageId,
-      _c3Recall.reply, _c3Recall.metadata,
+      _c3PlannedReply, serviceMetadata,
     );
     await cleanupThinking(supabaseAdmin, conversation_id, _h1SourceMessageId);
     if (recallCommit.ok) {
       return new Response(JSON.stringify({
-        success: true, reply: _c3Recall.reply,
-        response_route: _c3Recall.metadata.response_route,
+        success: true, reply: _c3PlannedReply,
+        response_route: serviceMetadata.response_route,
         recall_authority: _c3Recall.metadata.recall_authority,
         recall_fact_type: _c3Recall.metadata.recall_fact_type,
+        service_action: _c3ServicePlan.action,
         handoff_required: false, idempotent: recallCommit.idempotent,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
@@ -4778,7 +4865,7 @@ async function orchestrationGenerateReply(
       _h1LastMsg,
       _pr5HistoryRows ?? [],
     );
-    const userQuery = _semanticRetrieval.query;
+    const userQuery = _c3ServicePlan.kb_query || _semanticRetrieval.query;
     ragResult = !userQuery
       ? {
         success: true,
@@ -4811,13 +4898,9 @@ async function orchestrationGenerateReply(
           _visitorLang,
         );
       }
-      return await handleKBFallback(
-        supabaseAdmin,
-        conversation_id,
-        "KB_API_FAIL",
-        source_message_id,
-        { rag_api_status: "failure" },
-        _visitorLang,
+      return await persistC3ServiceRecovery(
+        supabaseAdmin, conversation_id, source_message_id, _c3ServicePlan,
+        "tool_failure", _visitorLang, { rag_api_status: "failure" },
       );
     }
     if (
@@ -4877,16 +4960,13 @@ async function orchestrationGenerateReply(
           exact_same_intent_repeated:
             _pr5History.exact_same_intent_repeated === true,
         },
+        _c3ServicePlan,
         { rag_api_status: "success_empty" },
       );
       if (clarification) return clarification;
-      return await handleKBFallback(
-        supabaseAdmin,
-        conversation_id,
-        "KB_EMPTY",
-        source_message_id,
-        { rag_api_status: "success_empty" },
-        _visitorLang,
+      return await persistC3ServiceRecovery(
+        supabaseAdmin, conversation_id, source_message_id, _c3ServicePlan,
+        "no_match", _visitorLang, { rag_api_status: "success_empty" },
       );
     }
 
@@ -5089,9 +5169,14 @@ async function orchestrationGenerateReply(
           exact_same_intent_repeated:
             _pr5History.exact_same_intent_repeated === true,
         },
+        _c3ServicePlan,
         traceMetadata,
       );
       if (clarification) return clarification;
+      if (!isHighRisk) return await persistC3ServiceRecovery(
+        supabaseAdmin, conversation_id, source_message_id, _c3ServicePlan,
+        "no_match", _visitorLang, traceMetadata,
+      );
       return await handleKBFallback(
         supabaseAdmin,
         conversation_id,
@@ -5156,9 +5241,15 @@ async function orchestrationGenerateReply(
           exact_same_intent_repeated:
             _pr5History.exact_same_intent_repeated === true,
         },
+        _c3ServicePlan,
         { ...traceMetadata, answerability: "missing_full_content_evidence" },
       );
       if (clarification) return clarification;
+      if (!isHighRisk) return await persistC3ServiceRecovery(
+        supabaseAdmin, conversation_id, source_message_id, _c3ServicePlan,
+        "no_match", _visitorLang,
+        { ...traceMetadata, answerability: "missing_full_content_evidence" },
+      );
       return await handleKBFallback(
         supabaseAdmin,
         conversation_id,
@@ -5411,6 +5502,7 @@ async function orchestrationGenerateReply(
     : [
       basePrompt,
       CUSTOMER_CONVERSATION_POLICY,
+      buildServicePlanPromptBlock(_c3ServicePlan),
       _conversationContinuityBlock,
       _c3MemoryContext,
       returnToAiGuard,
@@ -5469,6 +5561,7 @@ async function orchestrationGenerateReply(
       required_parts: [
         basePrompt,
         CUSTOMER_CONVERSATION_POLICY,
+        buildServicePlanPromptBlock(_c3ServicePlan),
         returnToAiGuard,
         _customerAdvisoryBlock,
         _emotionReplyStrategyBlock,

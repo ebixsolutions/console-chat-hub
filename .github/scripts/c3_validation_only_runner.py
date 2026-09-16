@@ -29,10 +29,7 @@ ORIGIN = "https://console-chat-hub.lovable.app"
 CHANNEL = "b0000000-0000-0000-0000-000000000001"
 SCHEMA = "ai-abc-c3-validation-evidence-1.0.0"
 CONTRACT_VERSION = "ai-abc-c3-release-acceptance-2026-09-16.1"
-LIVE_EXPECTED = {
-    "generate-reply": (108, "f5c85c002c99ca7f094d1e1c9b1cb7349e44e73a159a8970b78a6b2a2bf7e397"),
-    "agent-assist": (43, "eeadc5c9dfb35c51e8778756fcae96ff0c0fc68fc68599ade565ef7479e4e4cb"),
-}
+VALIDATED_FUNCTIONS = ("generate-reply", "agent-assist")
 
 DB_READBACK_ENDPOINT = "projects/{project}/database/query"
 DB_READBACK_SAFE_NAME = "management_database_query_read_only"
@@ -161,10 +158,19 @@ def request(url: str, method: str = "GET", body: object | None = None, headers: 
 
 
 class Harness:
-    def __init__(self, out: Path, contract_path: Path, artifact_root: Path):
+    def __init__(self, out: Path, contract_path: Path, artifact_root: Path, release_root: Path | None = None):
         self.out = out
         self.contract_path = contract_path
         self.artifact_root = artifact_root
+        self.release_root = release_root
+        self.release_identity = None
+        if release_root is not None:
+            release_file = release_root / "RELEASE.json"
+            if not release_file.is_file():
+                raise RuntimeError("release_identity_missing")
+            self.release_identity = json.loads(release_file.read_text())
+            if self.release_identity.get("schema_version") != "ai-abc-c3-release-identity-1.0.0":
+                raise RuntimeError("release_identity_schema_invalid")
         self.manifest_path = out / "fixture-manifest.json"
         self.evidence_path = out / "evidence.json"
         self.access_token = os.environ.get("SUPABASE_ACCESS_TOKEN", "")
@@ -699,6 +705,8 @@ class Harness:
         }
 
     def live_readback(self):
+        if self.release_identity is None or self.release_root is None:
+            raise RuntimeError("target_release_identity_required")
         with tempfile.TemporaryDirectory(prefix="c3-live-") as temp:
             root = Path(temp)
             listed = subprocess.run(["supabase", "functions", "list", "--project-ref", PROJECT, "--output", "json"], check=True, capture_output=True, text=True)
@@ -707,23 +715,38 @@ class Harness:
             if not isinstance(rows, list):
                 raise RuntimeError("live_function_list_shape_invalid")
             output = []
-            for name, (version, bundle) in LIVE_EXPECTED.items():
+            for name in VALIDATED_FUNCTIONS:
                 work = root / name
                 (work / "supabase").mkdir(parents=True)
                 (work / "supabase" / "config.toml").write_text(f'project_id = "{PROJECT}"\n')
                 subprocess.run(["supabase", "functions", "download", name, "--project-ref", PROJECT, "--use-api"], cwd=work, check=True, capture_output=True, text=True)
                 meta = next((x for x in rows if (x.get("slug") or x.get("name")) == name), None)
-                artifact_manifest = json.loads((self.artifact_root / name / "MANIFEST.json").read_text())
-                expected = {x["path"]: x["sha256"] for x in artifact_manifest["files"]}
+                target_path = self.release_root / "target" / name / "MANIFEST.json"
+                if not target_path.is_file():
+                    raise RuntimeError(f"target_manifest_missing:{name}")
+                target_manifest = json.loads(target_path.read_text())
+                expected = {x["path"]: x["sha256"] for x in target_manifest["files"]}
                 source = work / "supabase" / "functions"
                 actual = {p.relative_to(source).as_posix(): sha256_bytes(p.read_bytes()) for p in source.rglob("*") if p.is_file()}
                 if expected != actual:
-                    raise RuntimeError(f"live_source_artifact_parity_failed:{name}")
+                    raise RuntimeError(f"live_source_target_parity_failed:{name}")
+                observed = self.release_identity.get("actual", {}).get("functions", {}).get(name, {})
+                expected_version = observed.get("version")
+                expected_bundle = observed.get("bundle")
+                source_parity = (
+                    isinstance(expected_version, int) and int(meta.get("version", -1)) == expected_version and
+                    isinstance(expected_bundle, str) and meta.get("ezbr_sha256") == expected_bundle and
+                    meta.get("status") == "ACTIVE" and meta.get("verify_jwt") is True and
+                    meta.get("import_map") is not True
+                )
+                if not source_parity:
+                    raise RuntimeError(f"live_configuration_or_bundle_target_mismatch:{name}")
                 output.append({
                     "function": name, "version": int(meta.get("version", -1)), "status": meta.get("status"),
                     "verify_jwt": meta.get("verify_jwt"), "import_map": meta.get("import_map") is True,
-                    "bundle": meta.get("ezbr_sha256"), "source_manifest_sha256": sha256_bytes((self.artifact_root / name / "MANIFEST.json").read_bytes()),
-                    "source_parity": int(meta.get("version", -1)) == version and meta.get("ezbr_sha256") == bundle,
+                    "bundle": meta.get("ezbr_sha256"),
+                    "source_manifest_sha256": target_manifest.get("manifest_sha256") or sha256_bytes(target_path.read_bytes()),
+                    "source_parity": source_parity,
                 })
             return output
 
@@ -779,6 +802,24 @@ class Harness:
             "runner": {"head": os.environ["C3_EXPECTED_HEAD"], "tree": os.environ["C3_EXPECTED_TREE"]},
             "scenario_contract": {"version": CONTRACT_VERSION, "sha256": sha256_bytes(self.contract_raw)},
             "artifact": {"id": int(os.environ["C3_ARTIFACT_ID"]), "digest": os.environ["C3_ARTIFACT_DIGEST"]},
+            "release_identity": {
+                "release_id": self.release_identity.get("release_id") if self.release_identity else None,
+                "release_digest": self.release_identity.get("release_digest") if self.release_identity else None,
+                "deployment_run_id": self.release_identity.get("deployment_run_id") if self.release_identity else None,
+                "deployment_attempt": self.release_identity.get("deployment_attempt") if self.release_identity else None,
+                "target_head": self.release_identity.get("head") if self.release_identity else None,
+                "target_tree": self.release_identity.get("tree") if self.release_identity else None,
+                "functions": {
+                    name: {
+                        "version": self.release_identity.get("actual", {}).get("functions", {}).get(name, {}).get("version"),
+                        "status": self.release_identity.get("actual", {}).get("functions", {}).get(name, {}).get("status"),
+                        "bundle": self.release_identity.get("actual", {}).get("functions", {}).get(name, {}).get("bundle"),
+                        "verify_jwt": self.release_identity.get("actual", {}).get("functions", {}).get(name, {}).get("verify_jwt"),
+                        "import_map": self.release_identity.get("actual", {}).get("functions", {}).get(name, {}).get("import_map"),
+                        "manifest_sha256": self.release_identity.get("target", {}).get("functions", {}).get(name, {}).get("manifest_sha256"),
+                    } for name in VALIDATED_FUNCTIONS
+                } if self.release_identity else {},
+            },
             "live_functions": [], "db_security": None, "scenarios": [], "quick_gate": {"all_pass": False, "long_run_started_only_after_pass": False},
             "historical_hkd_8000": {"pass": False, "source": "not_run"}, "core_checks": [],
             "long_run": None, "rebuild_comparison": None, "cleanup": None, "created_at": utc_now(),
@@ -797,6 +838,9 @@ class Harness:
                 "--contract", str(self.contract_path), "--expected-head", evidence["runner"]["head"],
                 "--expected-tree", evidence["runner"]["tree"], "--expected-project", PROJECT,
                 "--expected-run-id", str(evidence["run"]["id"]), "--expected-attempt", str(evidence["run"]["attempt"]),
+                "--expected-release-id", evidence["release_identity"]["release_id"],
+                "--expected-release-digest", evidence["release_identity"]["release_digest"],
+                "--expected-deployment-run-id", str(evidence["release_identity"]["deployment_run_id"]),
                 "--allow-synthetic", "true",
             ], capture_output=True, text=True)
             if verifier.returncode != 0:
@@ -1049,6 +1093,7 @@ def main():
     parser.add_argument("--out", required=True)
     parser.add_argument("--contract", required=True)
     parser.add_argument("--artifact-root")
+    parser.add_argument("--release-root")
     parser.add_argument("--manifest")
     parser.add_argument("--marker")
     args = parser.parse_args()
@@ -1098,7 +1143,9 @@ def main():
         return
     if not args.artifact_root:
         raise SystemExit("--artifact-root required for validate")
-    Harness(out, Path(args.contract).resolve(), Path(args.artifact_root).resolve()).validate()
+    if not args.release_root:
+        raise SystemExit("--release-root required for validate")
+    Harness(out, Path(args.contract).resolve(), Path(args.artifact_root).resolve(), Path(args.release_root).resolve()).validate()
     print("C3_VALIDATION_ONLY_RUNNER|result=PASS")
 
 

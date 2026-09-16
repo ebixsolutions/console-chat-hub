@@ -38,6 +38,8 @@ const files = {
   escalationPolicy: "supabase/functions/_shared/escalation-policy.ts",
   generate: "supabase/functions/generate-reply/index.ts",
   assist: "supabase/functions/agent-assist/index.ts",
+  servicePlanner: "supabase/functions/_shared/conversation-service-planner.ts",
+  servicePlannerTest: "supabase/functions/_shared/conversation-service-planner.test.ts",
   typecheck: "supabase/functions/deno.c3-check.json",
   migration:
     "supabase/migrations/20260915040000_ai_abc_c3_director_runtime_closure.sql",
@@ -49,6 +51,11 @@ const files = {
   evidenceVerifier: ".github/scripts/c3_validation_evidence.mjs",
   validationControlTests: ".github/scripts/c3_validation_control_tests.mjs",
   mergeGuard: ".github/scripts/c3_merge_no_redeploy_guard.mjs",
+  releaseIdentity: ".github/scripts/c3_release_identity.mjs",
+  releaseIdentityTest: ".github/scripts/c3_release_identity.test.mjs",
+  serviceQualityRubric: ".github/scripts/c3_service_quality_rubric.json",
+  serviceQualityCalibration: ".github/scripts/c3_service_quality_human_calibration.json",
+  requirementEvidenceMatrix: ".github/scripts/c3_requirement_evidence_matrix.json",
   task42DeployWorkflow: ".github/workflows/task4-2-deploy-live-console-edge.yml",
 };
 for (const file of Object.values(files)) {
@@ -294,6 +301,22 @@ must(
   "kb_lifecycle_change_forbidden",
 );
 
+const servicePlanner = read(files.servicePlanner);
+for (const marker of [
+  "planConversationService", "partial_answer_then_question", "bounded_kb_refinement",
+  "historical_calculation", "offer_handoff_or_reframe", "renderTargetedServiceQuestion",
+]) must(servicePlanner.includes(marker), `service_planner_contract_missing:${marker}`);
+for (const marker of ["planConversationService(", "buildServicePlanPromptBlock("]) {
+  must(generate.includes(marker), `generate_service_planner_integration_missing:${marker}`);
+}
+must(assist.includes("planConversationService("), "assist_service_planner_integration_missing");
+const qualityRubric = JSON.parse(read(files.serviceQualityRubric));
+must(qualityRubric.target?.weighted_score_min === 95, "quality_target_not_95");
+must(qualityRubric.target?.critical_p0_allowed === 0, "quality_p0_not_zero");
+const calibration = JSON.parse(read(files.serviceQualityCalibration));
+must(calibration.status === "AWAITING_HUMAN_CALIBRATION", "human_calibration_must_not_be_preclaimed");
+must(Array.isArray(calibration.samples) && calibration.samples.length >= 20, "human_calibration_sample_count_invalid");
+
 for (
   const file of [
     "supabase/functions/_shared/commerce-state-contract.ts",
@@ -320,6 +343,7 @@ for (
 
 run("git", ["diff", "--check", "origin/main...HEAD"]);
 runDeno(["test", "--no-lock", files.unit, files.terminalTest]);
+runDeno(["test", "--no-lock", files.servicePlannerTest]);
 runDeno(["test", "--no-lock", "--allow-read", files.integration, files.recallIntegration]);
 runDeno([
   "check",
@@ -328,6 +352,8 @@ runDeno([
   files.recall,
   files.terminalGuard,
   files.terminalTest,
+  files.servicePlanner,
+  files.servicePlannerTest,
 ]);
 if (process.env.CI) {
   runDeno([
@@ -363,9 +389,12 @@ run("npx", [
   files.evidenceVerifier,
   files.validationControlTests,
   files.mergeGuard,
+  files.releaseIdentity,
+  files.releaseIdentityTest,
 ]);
 run("python", ["-c", "import ast,pathlib,sys; ast.parse(pathlib.Path(sys.argv[1]).read_text())", files.validationRunner]);
 run("node", [files.validationControlTests]);
+run("node", [files.releaseIdentityTest]);
 run("npm", ["run", "build"]);
 
 const phase = process.env.C3_GATE_PHASE === "production"
@@ -428,6 +457,9 @@ if (phase === "production") {
     expectedProject: process.env.C3_EXPECTED_PROJECT,
     expectedRunId: process.env.C3_EXPECTED_RUN_ID,
     expectedAttempt: process.env.C3_EXPECTED_RUN_ATTEMPT,
+    expectedReleaseId: process.env.C3_RELEASE_ID,
+    expectedReleaseDigest: process.env.C3_RELEASE_DIGEST,
+    expectedDeploymentRunId: process.env.C3_DEPLOYMENT_RUN_ID,
   });
   must(verified.pass === true, "FAIL:C3_RUNTIME_EVIDENCE_NOT_VERIFIED");
   productionEvidence = {
@@ -438,10 +470,10 @@ if (phase === "production") {
     attempt: evidence.run.attempt,
   };
   rollbackAssertion = {
-    identity: "INTERIM_LIVE_RECOVERY_BASELINE",
-    classification: "NOT_PRODUCT_READY",
-    generate_reply: { version: 108, source_closure: "EVIDENCE_VERIFIED" },
-    agent_assist: { version: 43, source_closure: "EVIDENCE_VERIFIED" },
+    identity: evidence.release_identity.release_id,
+    classification: "RELEASE_ACTUAL_TARGET_EVIDENCE_VERIFIED",
+    generate_reply: evidence.release_identity.functions["generate-reply"],
+    agent_assist: evidence.release_identity.functions["agent-assist"],
     prior_v107_v42_exact_closure: "UNRECOVERED",
   };
   console.log(`C3_PRODUCTION_EVIDENCE_GATE|result=PASS|rows=${verified.scenario_results.length}|contract_sha256=${verified.contract_sha256}`);

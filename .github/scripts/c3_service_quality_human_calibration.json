@@ -1,0 +1,27 @@
+{
+  "version": "c3-service-quality-human-calibration-2026-09-16.1",
+  "status": "AWAITING_HUMAN_CALIBRATION",
+  "reviewer_context": "Hong Kong customer-service language and usefulness; reviewer must not see implementation route names or automated scores.",
+  "samples": [
+    {"id":"HQ01","family":"known_fact_direct","turn":"我而家要幾多部冷氣？"},
+    {"id":"HQ02","family":"partial_answer_targeted_question","turn":"兩部我知，邊款適合客廳？"},
+    {"id":"HQ03","family":"correction","turn":"唔係A座，係B座12樓。依家地址係咩？"},
+    {"id":"HQ04","family":"kb_query_refinement","turn":"AC-TEST香港保養幾耐？"},
+    {"id":"HQ05","family":"kb_no_match","turn":"搵唔到呢款資料，下一步點做？"},
+    {"id":"HQ06","family":"true_conflict","turn":"同一型號同一地區兩份現行保養資料相反，點核對？"},
+    {"id":"HQ07","family":"historical_calculation","turn":"用舊數字試算：(5600+550+550)每部，共2部。"},
+    {"id":"HQ08","family":"unit_ambiguity","turn":"安裝550同鋁架550係每部定每單？"},
+    {"id":"HQ09","family":"product_filter","turn":"客廳180呎，品牌不限，幫我篩選。"},
+    {"id":"HQ10","family":"reschedule_policy","turn":"原本想星期六送，改期有冇費用？"},
+    {"id":"HQ11","family":"summary","turn":"總結我而家嘅要求。"},
+    {"id":"HQ12","family":"shorten","turn":"短啲。"},
+    {"id":"HQ13","family":"checklist","turn":"付款前畀個checklist我。"},
+    {"id":"HQ14","family":"cross_topic_recovery","turn":"講完洗衣機，返去冷氣：更正後地址係邊？"},
+    {"id":"HQ15","family":"negative_constraint","turn":"品牌係咪一定要指定？"},
+    {"id":"HQ16","family":"engineering_uncertainty","turn":"幅石屎牆一定拆得？工程費幾多？"},
+    {"id":"HQ17","family":"explicit_handoff","turn":"我想而家轉真人客服。"},
+    {"id":"HQ18","family":"human_suppression","turn":"真人已接手後再問產品價錢。"},
+    {"id":"HQ19","family":"tool_failure","turn":"查唔到最新資料時，你而家可以幫我做咩？"},
+    {"id":"HQ20","family":"repeat_without_progress","turn":"已經問過兩次但冇新資料，下一步呢？"}
+  ]
+}

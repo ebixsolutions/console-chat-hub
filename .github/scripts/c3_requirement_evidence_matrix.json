@@ -1,0 +1,15 @@
+{
+  "version": "ai-abc-c3-joint-delivery-2026-09-16.1",
+  "status": "candidate_nonproduction_verified",
+  "requirements": [
+    {"id":"REL-IDENTITY","failure_class":"baseline_target_actual_conflation","source":[".github/scripts/c3_release_identity.mjs",".github/workflows/task-ai-abc-c3-final-gate.yml"],"regression":"release identity control suite","required_result":"PASS","actual_result":"PASS"},
+    {"id":"REL-RECOVERY","failure_class":"post_transport_failure_not_recoverable","source":[".github/scripts/c3_release_identity.mjs",".github/workflows/task-ai-abc-c3-final-gate.yml"],"regression":"cross-run recovery simulations","required_result":"PASS","actual_result":"PASS_NONPRODUCTION_SIMULATION"},
+    {"id":"DIALOGUE-PLAN","failure_class":"generic_fallback_before_useful_action","source":["supabase/functions/_shared/conversation-service-planner.ts","supabase/functions/generate-reply/index.ts"],"regression":"112-response executable service rubric","required_result":"PASS","actual_result":"PASS_112_OF_112"},
+    {"id":"KNOWN-FACT","failure_class":"known_fact_replaced_by_clarification","source":["supabase/functions/_shared/conversation-recall.ts","supabase/functions/_shared/conversation-service-planner.ts"],"regression":"15-row acceptance plus planner direct-answer family","required_result":"PASS","actual_result":"PASS"},
+    {"id":"CORRECTION","failure_class":"superseded_value_revival","source":["supabase/functions/_shared/conversation-long-memory.ts","supabase/functions/_shared/conversation-recall.ts"],"regression":"correction and cross-topic families","required_result":"PASS","actual_result":"PASS"},
+    {"id":"KB-ACTION","failure_class":"no_match_conflict_or_tool_failure_dead_end","source":["supabase/functions/_shared/conversation-service-planner.ts","supabase/functions/generate-reply/index.ts"],"regression":"no-match/conflict/tool-failure recovery tests","required_result":"PASS","actual_result":"PASS"},
+    {"id":"QUALITY-95","failure_class":"unmeasured_quality_claim","source":[".github/scripts/c3_service_quality_rubric.json","supabase/functions/_shared/conversation-service-planner.test.ts"],"regression":"fixed nonproduction score and critical-P0 gate","required_result":">=95 and P0=0","actual_result":"100.0_AUTOMATED_NONPRODUCTION;P0=0"},
+    {"id":"HUMAN-CAL","failure_class":"self_scored_quality","source":[".github/scripts/c3_service_quality_human_calibration.json"],"regression":"20 blinded HK service samples","required_result":"AWAITING_HUMAN_CALIBRATION until reviewed","actual_result":"AWAITING_HUMAN_CALIBRATION"},
+    {"id":"SECURITY","failure_class":"C1_B2_C2_or_human_control_regression","source":[".github/scripts/task_ai_abc_c3_final_gate.mjs"],"regression":"frozen hash, B2, C2, RBAC and final gate","required_result":"PASS","actual_result":"PASS_254_TESTS;PASS_LOCAL_FINAL_GATE;FINAL_HEAD_CI_PENDING"}
+  ]
+}

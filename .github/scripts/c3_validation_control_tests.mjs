@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
-import { readContract, verifyEvidence, EVIDENCE_SCHEMA_VERSION, LIVE_EXPECTED } from "./c3_validation_evidence.mjs";
+import { readContract, verifyEvidence, EVIDENCE_SCHEMA_VERSION, VALIDATED_FUNCTIONS } from "./c3_validation_evidence.mjs";
 import { classifyMergeEvent } from "./c3_merge_no_redeploy_guard.mjs";
 
 const contractPath = ".github/scripts/c3_validation_scenarios.json";
@@ -21,6 +21,13 @@ const head = "1".repeat(40);
 const tree = "2".repeat(40);
 const runId = "35045000000";
 const attempt = "1";
+const deploymentRunId = "35070000000";
+const releaseId = "3".repeat(64);
+const releaseDigest = "sha256:" + "4".repeat(64);
+const releaseFunctions = Object.freeze({
+  "generate-reply": { version: 109, status: "ACTIVE", bundle: "5".repeat(64), verify_jwt: true, import_map: false, manifest_sha256: "6".repeat(64) },
+  "agent-assist": { version: 44, status: "ACTIVE", bundle: "7".repeat(64), verify_jwt: true, import_map: false, manifest_sha256: "8".repeat(64) },
+});
 const uuid = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const replyFor = (row) => {
   const expected = row.expected ?? {};
@@ -48,12 +55,20 @@ function validEvidence() {
     project: "nrfxhqabwblzxoushgnm",
     run: { id: runId, attempt, started_at: "2026-09-16T02:30:00Z" },
     runner: { head, tree },
+    release_identity: {
+      release_id: releaseId, release_digest: releaseDigest, deployment_run_id: deploymentRunId,
+      deployment_attempt: "1", target_head: head, target_tree: tree, functions: structuredClone(releaseFunctions),
+    },
     scenario_contract: { version: contractInfo.contract.contract_version, sha256: contractInfo.sha256 },
     artifact: { id: 10427225513, digest: "sha256:" + "a".repeat(64) },
-    live_functions: Object.entries(LIVE_EXPECTED).map(([name, row]) => ({
-      function: name, version: row.version, status: "ACTIVE", verify_jwt: row.verify_jwt,
-      import_map: row.import_map, bundle: row.bundle, source_manifest_sha256: "b".repeat(64), source_parity: true,
-    })),
+    live_functions: VALIDATED_FUNCTIONS.map((name) => {
+      const row = releaseFunctions[name];
+      return {
+        function: name, version: row.version, status: "ACTIVE", verify_jwt: row.verify_jwt,
+        import_map: row.import_map, bundle: row.bundle,
+        source_manifest_sha256: row.manifest_sha256, source_parity: true,
+      };
+    }),
     db_security: { pass: true, source: "management_api_read_only_sql", checks: { rls: true } },
     scenarios: contractInfo.contract.scenarios.map((row, index) => ({
       id: row.id, contract_version: contractInfo.contract.contract_version,
@@ -96,7 +111,11 @@ function validEvidence() {
   };
 }
 
-const options = { expectedHead: head, expectedTree: tree, expectedProject: "nrfxhqabwblzxoushgnm", expectedRunId: runId, expectedAttempt: attempt };
+const options = {
+  expectedHead: head, expectedTree: tree, expectedProject: "nrfxhqabwblzxoushgnm",
+  expectedRunId: runId, expectedAttempt: attempt, expectedReleaseId: releaseId,
+  expectedReleaseDigest: releaseDigest, expectedDeploymentRunId: deploymentRunId,
+};
 const expectReject = (name, mutate, pattern) => {
   const evidence = structuredClone(validEvidence());
   mutate(evidence);
@@ -111,7 +130,9 @@ console.log("C3_NONPRODUCTION_CONTROL|name=mock_100_turn_complete_evidence|resul
   const gate = fs.readFileSync(".github/scripts/task_ai_abc_c3_final_gate.mjs", "utf8");
   assert.match(workflow, /C3_CURRENT_LIVE_SOURCE_PARITY: NOT_APPLICABLE/);
   assert.match(workflow, /C3_SOURCE_DEPLOYMENT_BOUNDARY: PASS/);
-  assert.match(workflow, /expected_changed=\{'_shared\/conversation-long-memory\.ts','_shared\/conversation-recall\.ts'\}/);
+  assert.match(workflow, /conversation-service-planner\.ts/);
+  assert.match(workflow, /C3-release-identity-/);
+  assert.match(workflow, /authorize-validation/);
   assert.match(workflow, /C3_DEPLOYMENT_ALLOWLIST=generate-reply,agent-assist/);
   assert.match(gate, /liveSourceParity \|\| sourceDeploymentBoundary/);
   console.log("C3_NONPRODUCTION_CONTROL|name=source_vs_deployment_identity_boundary|result=PASS");
@@ -151,6 +172,9 @@ expectReject("wrong_head", (e) => { e.runner.head = "f".repeat(40); }, /head_mis
 expectReject("wrong_tree", (e) => { e.runner.tree = "f".repeat(40); }, /tree_mismatch/);
 expectReject("wrong_project", (e) => { e.project = "wrong"; }, /project_mismatch/);
 expectReject("wrong_live_source", (e) => { e.live_functions[0].source_parity = false; }, /source_parity_missing/);
+expectReject("baseline_target_mixup", (e) => { e.live_functions[0].source_manifest_sha256 = "9".repeat(64); }, /source_parity_missing/);
+expectReject("wrong_release_parent", (e) => { e.release_identity.deployment_run_id = "1"; }, /release_deployment_run_mismatch/);
+expectReject("release_replay", (e) => { e.release_identity.release_digest = "sha256:" + "a".repeat(64); }, /release_digest_mismatch/);
 expectReject("old_run_replay", (e) => { e.run.id = "1"; }, /run_id_mismatch_or_replay/);
 expectReject("source_binding_mismatch", (e) => { e.scenarios[0].source_binding.memory_source_message_id = uuid(999); }, /source_binding_invalid/);
 expectReject("b2_status_without_source_proof", (e) => { e.scenarios[0].b2.evidence = "unobserved"; }, /b2_persistence_missing/);
@@ -201,6 +225,7 @@ assert.equal(runner.includes("a.resource_id=t.id::text"), false);
 console.log("C3_NONPRODUCTION_CONTROL|name=runner_quick_first_and_cleanup_finally|result=PASS");
 console.log("C3_NONPRODUCTION_CONTROL|name=interrupted_runner_manifest_recovery|result=PASS");
 console.log("C3_NONPRODUCTION_CONTROL|name=validation_runner_no_deploy_migration_rollback|result=PASS");
+execFileSync("node", [".github/scripts/c3_release_identity.test.mjs"], { stdio: "inherit" });
 
 const c3Workflow = fs.readFileSync(".github/workflows/task-ai-abc-c3-final-gate.yml", "utf8");
 const validationStart = c3Workflow.indexOf("\n  c3-validation-only:\n") + 1;

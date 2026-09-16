@@ -1,0 +1,45 @@
+{
+  "version": "c3-service-quality-2026-09-16.1",
+  "target": {
+    "weighted_score_min": 95,
+    "dimension_average_min": {
+      "factual_grounding_and_commitment_truth": 9.5,
+      "resolution_and_progress": 9.5,
+      "context_correction_and_entity": 9.0,
+      "targeted_clarification_and_kb_use": 9.0,
+      "natural_language_and_concision": 9.5,
+      "handoff_next_step_and_customer_effort": 9.0
+    },
+    "critical_p0_allowed": 0
+  },
+  "weights": {
+    "factual_grounding_and_commitment_truth": 25,
+    "resolution_and_progress": 25,
+    "context_correction_and_entity": 20,
+    "targeted_clarification_and_kb_use": 10,
+    "natural_language_and_concision": 10,
+    "handoff_next_step_and_customer_effort": 10
+  },
+  "critical_p0": [
+    "wrong_current_address_or_quantity",
+    "invented_current_price_or_engineering_confirmation",
+    "false_order_or_action_confirmation",
+    "false_handoff_confirmation",
+    "correction_or_cancellation_revival",
+    "cross_tenant_or_human_control_bypass",
+    "known_answer_replaced_by_dead_end_fallback",
+    "reasking_valid_known_information",
+    "unproven_kb_conflict_claim"
+  ],
+  "evidence_policy": {
+    "automated_nonproduction": "Executable assertions over actual candidate planner/renderer outputs; not a production score.",
+    "production": "Must be measured again from source-bound post-deploy runtime evidence.",
+    "human_calibration": "At least 20 blinded Hong Kong customer-service samples; AWAITING until reviewed by QA/user.",
+    "forbidden": [
+      "implementation_agent_self_rating_as_human_review",
+      "post-run_oracle_or_weight_changes",
+      "removing_failed_cases",
+      "using_question_count_or_reply_length_as_quality"
+    ]
+  }
+}
