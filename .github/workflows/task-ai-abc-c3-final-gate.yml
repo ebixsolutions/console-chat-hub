@@ -72,40 +72,20 @@ on:
         required: false
         default: '1'
         type: string
-      validation_artifact_id:
-        description: Exact runtime validation evidence artifact ID
-        required: false
-        type: string
-      validation_artifact_digest:
-        description: Exact runtime validation evidence artifact digest
+      validation_artifact_identity:
+        description: JSON with exact runtime evidence artifact id and digest
         required: false
         type: string
       finalization_authorization:
         description: Exact c3-evidence-finalize-HEAD-TREE-RELEASE_ID-VALIDATION_RUN authorization
         required: false
         type: string
-      quality_artifact_run_id:
-        description: Run containing the external quality assessment artifact
+      quality_artifact_identity:
+        description: JSON with external quality artifact id, digest and run_id
         required: false
         type: string
-      quality_artifact_id:
-        description: Exact external quality assessment artifact ID
-        required: false
-        type: string
-      quality_artifact_digest:
-        description: Exact external quality assessment artifact digest
-        required: false
-        type: string
-      human_artifact_run_id:
-        description: Run containing the external human calibration artifact
-        required: false
-        type: string
-      human_artifact_id:
-        description: Exact external human calibration artifact ID
-        required: false
-        type: string
-      human_artifact_digest:
-        description: Exact external human calibration artifact digest
+      human_artifact_identity:
+        description: JSON with external human artifact id, digest and run_id
         required: false
         type: string
       cleanup_fixture_marker:
@@ -400,7 +380,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "${{ inputs.expected_head }}"
           test "$(git rev-parse HEAD^{tree})" = "${{ inputs.expected_tree }}"
           test "${{ inputs.finalization_authorization }}" = "c3-evidence-finalize-${{ inputs.expected_head }}-${{ inputs.expected_tree }}-${{ inputs.release_id }}-${{ inputs.validation_run_id }}"
-          for value in '${{ inputs.validation_run_id }}' '${{ inputs.validation_artifact_id }}' '${{ inputs.validation_artifact_digest }}' '${{ inputs.quality_artifact_id }}' '${{ inputs.quality_artifact_digest }}' '${{ inputs.quality_artifact_run_id }}' '${{ inputs.human_artifact_id }}' '${{ inputs.human_artifact_digest }}' '${{ inputs.human_artifact_run_id }}'; do test -n "$value"; done
+          for value in '${{ inputs.validation_run_id }}' '${{ inputs.validation_artifact_identity }}' '${{ inputs.quality_artifact_identity }}' '${{ inputs.human_artifact_identity }}'; do test -n "$value"; done
           echo C3_EVIDENCE_FINALIZATION_AUTHORIZATION=PASS
       - uses: actions/setup-node@v4
         with: {node-version: '22'}
@@ -408,18 +388,14 @@ jobs:
         with: {deno-version: v2.9.6}
       - run: npm ci
       - name: Validate external artifact metadata
+        id: artifact_identity
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          QUALITY_ID: ${{ inputs.quality_artifact_id }}
-          QUALITY_DIGEST: ${{ inputs.quality_artifact_digest }}
-          QUALITY_RUN: ${{ inputs.quality_artifact_run_id }}
-          HUMAN_ID: ${{ inputs.human_artifact_id }}
-          HUMAN_DIGEST: ${{ inputs.human_artifact_digest }}
-          HUMAN_RUN: ${{ inputs.human_artifact_run_id }}
+          QUALITY_SPEC: ${{ inputs.quality_artifact_identity }}
+          HUMAN_SPEC: ${{ inputs.human_artifact_identity }}
           RELEASE_ID: ${{ inputs.release_id }}
           EXPECTED_HEAD: ${{ inputs.expected_head }}
-          VALIDATION_ID: ${{ inputs.validation_artifact_id }}
-          VALIDATION_DIGEST: ${{ inputs.validation_artifact_digest }}
+          VALIDATION_SPEC: ${{ inputs.validation_artifact_identity }}
           VALIDATION_RUN: ${{ inputs.validation_run_id }}
         shell: bash
         run: |
@@ -427,18 +403,24 @@ jobs:
           python - <<'PY'
           import json,os,urllib.request
           repo=os.environ['GITHUB_REPOSITORY']; token=os.environ['GITHUB_TOKEN']
+          specs={kind:json.loads(os.environ[kind+'_SPEC']) for kind in ('VALIDATION','QUALITY','HUMAN')}
+          specs['VALIDATION']['run_id']=os.environ['VALIDATION_RUN']
           for kind in ('VALIDATION','QUALITY','HUMAN'):
-            aid=os.environ[kind+'_ID']
+            spec=specs[kind]; aid=str(spec['id']); digest=str(spec['digest']); run_id=str(spec['run_id'])
+            assert set(spec)=={'id','digest','run_id'} if kind!='VALIDATION' else {'id','digest','run_id'}
+            assert aid.isdigit() and run_id.isdigit() and digest.startswith('sha256:') and len(digest)==71
             expected_name={'VALIDATION':'C3-validation-production-evidence-'+os.environ['GITHUB_SHA'],'QUALITY':'C3-quality-assessment-'+os.environ['RELEASE_ID'],'HUMAN':'C3-human-calibration-'+os.environ['RELEASE_ID']}[kind]
             request=urllib.request.Request(f'https://api.github.com/repos/{repo}/actions/artifacts/{aid}',headers={'Authorization':'Bearer '+token,'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28','User-Agent':'c3-evidence-finalize/1.0'})
             artifact=json.load(urllib.request.urlopen(request))
             assert artifact['id']==int(aid) and artifact['name']==expected_name and artifact.get('expired') is False
-            assert artifact.get('digest')==os.environ[kind+'_DIGEST']
-            assert str(artifact.get('workflow_run',{}).get('id'))==os.environ[kind+'_RUN']
-            run_request=urllib.request.Request(f'https://api.github.com/repos/{repo}/actions/runs/{os.environ[kind+"_RUN"]}',headers={'Authorization':'Bearer '+token,'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28','User-Agent':'c3-evidence-finalize/1.0'})
+            assert artifact.get('digest')==digest
+            assert str(artifact.get('workflow_run',{}).get('id'))==run_id
+            run_request=urllib.request.Request(f'https://api.github.com/repos/{repo}/actions/runs/{run_id}',headers={'Authorization':'Bearer '+token,'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28','User-Agent':'c3-evidence-finalize/1.0'})
             run=json.load(urllib.request.urlopen(run_request))
             assert run.get('head_sha')==os.environ['EXPECTED_HEAD'] and run.get('actor',{}).get('login')=='ebixsolutions' and run.get('conclusion')=='success'
             print(f'C3_EXTERNAL_ARTIFACT|kind={kind.lower()}|id={aid}|digest={artifact["digest"]}|result=PASS')
+            with open(os.environ['GITHUB_OUTPUT'],'a') as output:
+              print(f'{kind.lower()}_id={aid}',file=output); print(f'{kind.lower()}_digest={digest}',file=output); print(f'{kind.lower()}_run={run_id}',file=output)
           PY
       - name: Download runtime evidence
         uses: actions/download-artifact@v4
@@ -453,14 +435,14 @@ jobs:
           name: C3-quality-assessment-${{ inputs.release_id }}
           path: ${{ runner.temp }}/c3-quality-assessment
           github-token: ${{ github.token }}
-          run-id: ${{ inputs.quality_artifact_run_id }}
+          run-id: ${{ steps.artifact_identity.outputs.quality_run }}
       - name: Download external human calibration
         uses: actions/download-artifact@v4
         with:
           name: C3-human-calibration-${{ inputs.release_id }}
           path: ${{ runner.temp }}/c3-human-calibration
           github-token: ${{ github.token }}
-          run-id: ${{ inputs.human_artifact_run_id }}
+          run-id: ${{ steps.artifact_identity.outputs.human_run }}
       - name: Bind external assessments and execute unique production final gate
         env:
           C3_EXPECTED_HEAD: ${{ inputs.expected_head }}
@@ -470,9 +452,9 @@ jobs:
           C3_DEPLOYMENT_RUN_ID: ${{ inputs.deployment_run_id }}
           C3_VALIDATION_RUN_ID: ${{ inputs.validation_run_id }}
           C3_VALIDATION_RUN_ATTEMPT: ${{ inputs.validation_run_attempt }}
-          C3_QUALITY_ARTIFACT_ID: ${{ inputs.quality_artifact_id }}
-          C3_QUALITY_ARTIFACT_DIGEST: ${{ inputs.quality_artifact_digest }}
-          C3_QUALITY_ARTIFACT_RUN_ID: ${{ inputs.quality_artifact_run_id }}
+          C3_QUALITY_ARTIFACT_ID: ${{ steps.artifact_identity.outputs.quality_id }}
+          C3_QUALITY_ARTIFACT_DIGEST: ${{ steps.artifact_identity.outputs.quality_digest }}
+          C3_QUALITY_ARTIFACT_RUN_ID: ${{ steps.artifact_identity.outputs.quality_run }}
         shell: bash
         run: |
           set -euo pipefail
