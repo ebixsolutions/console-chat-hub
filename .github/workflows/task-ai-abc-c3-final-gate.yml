@@ -7,13 +7,54 @@ on:
     types: [labeled]
   workflow_dispatch:
     inputs:
+      mode:
+        description: Secret-free preflight, separately authorized live validation, cleanup-only, or recovery
+        required: true
+        default: preflight_offline
+        type: choice
+        options:
+          - preflight_offline
+          - validation_only
+          - cleanup_only
+          - recovery
+      expected_head:
+        description: Exact authorized validation HEAD
+        required: false
+        type: string
+      expected_tree:
+        description: Exact authorized validation TREE
+        required: false
+        type: string
+      validation_authorization:
+        description: Exact c3-validation-HEAD-TREE authorization
+        required: false
+        type: string
       artifact_run_id:
         description: Run ID holding the verified v108/v43 recovery artifact
-        required: true
+        required: false
+        default: '35045329983'
+        type: string
+      artifact_id:
+        description: Exact durable recovery artifact ID
+        required: false
+        default: '10427225513'
+        type: string
+      artifact_digest:
+        description: Exact sha256 digest of the durable recovery artifact
+        required: false
+        default: 'sha256:0bf7ac37f8217242899e1be128cd39362e893910468a4203383ba6dfc12cbea4'
+        type: string
+      cleanup_source_run_id:
+        description: Validation run containing a fixture manifest for cleanup-only recovery
+        required: false
+        type: string
+      cleanup_fixture_marker:
+        description: Exact deterministic fixture marker if the prior runner vanished before artifact upload
+        required: false
         type: string
       recovery_authorization:
         description: Exact c3-recovery-<selected commit SHA> authorization
-        required: true
+        required: false
         type: string
       recover_generate_reply:
         description: Recover generate-reply from the durable snapshot
@@ -61,9 +102,235 @@ env:
     }
 
 jobs:
+  c3-validation-preflight-offline:
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && inputs.mode == 'preflight_offline')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      HAS_SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN != '' }}
+      HAS_FINAL_SMOKE_AGENT_EMAIL: ${{ secrets.FINAL_SMOKE_AGENT_EMAIL != '' }}
+      HAS_FINAL_SMOKE_AGENT_PASSWORD: ${{ secrets.FINAL_SMOKE_AGENT_PASSWORD != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: '${{ github.sha }}', fetch-depth: 0, clean: true}
+      - name: Record exact preflight identity and credential presence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          echo "C3_PREFLIGHT_IDENTITY|head=$(git rev-parse HEAD)|tree=$(git rev-parse HEAD^{tree})"
+          echo "C3_CREDENTIAL_PRESENCE|name=SUPABASE_ACCESS_TOKEN|present=$HAS_SUPABASE_ACCESS_TOKEN"
+          echo "C3_CREDENTIAL_PRESENCE|name=FINAL_SMOKE_AGENT_EMAIL|present=$HAS_FINAL_SMOKE_AGENT_EMAIL"
+          echo "C3_CREDENTIAL_PRESENCE|name=FINAL_SMOKE_AGENT_PASSWORD|present=$HAS_FINAL_SMOKE_AGENT_PASSWORD"
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - name: Validation evidence, anti-fake, sequencing, cleanup and merge-guard controls
+        run: |
+          set -euo pipefail
+          python -c "import ast,pathlib; ast.parse(pathlib.Path('.github/scripts/c3_validation_only_runner.py').read_text())"
+          node .github/scripts/c3_validation_control_tests.mjs
+      - name: Prove event routing is preflight-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('.github/workflows/task-ai-abc-c3-final-gate.yml').read_text()
+          start=p.index('\n  c3-validation-only:\n')+1
+          end=p.index('\n  c3-validation-cleanup-only:\n',start)
+          block=p[start:end]
+          assert "github.event_name == 'workflow_dispatch'" in block
+          assert "inputs.mode == 'validation_only'" in block
+          assert "github.actor == 'ebixsolutions'" in block
+          for forbidden in ('functions deploy','db push','migration up','rollback deploy','apply_migration'):
+              assert forbidden not in block.lower(), forbidden
+          print('C3_VALIDATION_EVENT_ROUTING=PASS')
+          PY
+      - name: Preflight-only terminal marker
+        run: echo 'C3_VALIDATION_PREFLIGHT_OFFLINE=PASS; production_validation=SKIPPED; production_writes=0'
+
+  c3-validation-only:
+    if: >-
+      github.event_name == 'workflow_dispatch' && inputs.mode == 'validation_only' &&
+      github.actor == 'ebixsolutions'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      FINAL_SMOKE_AGENT_EMAIL: ${{ secrets.FINAL_SMOKE_AGENT_EMAIL }}
+      FINAL_SMOKE_AGENT_PASSWORD: ${{ secrets.FINAL_SMOKE_AGENT_PASSWORD }}
+      VITE_SUPABASE_URL: https://nrfxhqabwblzxoushgnm.supabase.co
+      VITE_SUPABASE_FUNCTIONS_URL: https://nrfxhqabwblzxoushgnm.supabase.co/functions/v1
+      C3_EXPECTED_HEAD: ${{ inputs.expected_head }}
+      C3_EXPECTED_TREE: ${{ inputs.expected_tree }}
+      C3_ARTIFACT_ID: ${{ inputs.artifact_id }}
+      C3_ARTIFACT_DIGEST: ${{ inputs.artifact_digest }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: '${{ github.sha }}', fetch-depth: 0, clean: true}
+      - name: Guard exact validation-only authorization
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ github.repository }}" = ebixsolutions/console-chat-hub
+          test "${{ github.ref_name }}" = director/ai-abc-c3-long-memory-final-cutover
+          test "$(git rev-parse HEAD)" = "$C3_EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^{tree})" = "$C3_EXPECTED_TREE"
+          test "${{ inputs.validation_authorization }}" = "c3-validation-$C3_EXPECTED_HEAD-$C3_EXPECTED_TREE"
+          test -n "${SUPABASE_ACCESS_TOKEN:-}"
+          test -n "${FINAL_SMOKE_AGENT_EMAIL:-}"
+          test -n "${FINAL_SMOKE_AGENT_PASSWORD:-}"
+          test "${{ inputs.artifact_id }}" = 10427225513
+          test "${{ inputs.artifact_digest }}" = sha256:0bf7ac37f8217242899e1be128cd39362e893910468a4203383ba6dfc12cbea4
+          echo C3_VALIDATION_ONLY_AUTHORIZATION=PASS
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - uses: denoland/setup-deno@v2
+        with: {deno-version: v2.9.6}
+      - uses: supabase/setup-cli@v1
+        with: {version: latest}
+      - run: npm ci
+      - name: Bind durable artifact inputs to GitHub artifact metadata
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json,os,urllib.request
+          artifact_id=os.environ['C3_ARTIFACT_ID']; repo=os.environ['GITHUB_REPOSITORY']; token=os.environ['GITHUB_TOKEN']
+          request=urllib.request.Request(
+            f'https://api.github.com/repos/{repo}/actions/artifacts/{artifact_id}',
+            headers={'Authorization':'Bearer '+token,'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28','User-Agent':'c3-validation-only/1.0'})
+          artifact=json.load(urllib.request.urlopen(request))
+          assert artifact['id']==int(artifact_id)
+          assert artifact['name']==os.environ['C3_CAPTURE_NAME']
+          assert artifact.get('expired') is False
+          assert str(artifact.get('workflow_run',{}).get('id'))=='${{ inputs.artifact_run_id }}'
+          assert artifact.get('digest')==os.environ['C3_ARTIFACT_DIGEST']
+          print(f'C3_VALIDATION_ARTIFACT_IDENTITY|id={artifact_id}|digest={artifact["digest"]}|run_id=${{ inputs.artifact_run_id }}|result=PASS')
+          PY
+      - name: Download exact durable baseline outside checkout
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.C3_CAPTURE_NAME }}
+          path: ${{ runner.temp }}/c3-validation-baseline
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.artifact_run_id }}
+      - name: Verify durable baseline before fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - "$RUNNER_TEMP/c3-validation-baseline" <<'PY'
+          import hashlib,json,pathlib,sys
+          root=pathlib.Path(sys.argv[1]); cap=json.loads((root/'CAPTURE.json').read_text())
+          assert cap['project']=='nrfxhqabwblzxoushgnm'
+          for fn,count in {'generate-reply':47,'agent-assist':22}.items():
+            m=json.loads((root/fn/'MANIFEST.json').read_text()); src=root/fn/'supabase/functions'
+            exp={x['path']:x['sha256'] for x in m['files']}; act={p.relative_to(src).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in src.rglob('*') if p.is_file()}
+            assert len(exp)==count and exp==act
+          print('C3_VALIDATION_DURABLE_BASELINE=PASS')
+          PY
+      - name: Run existing-live validation only
+        id: live_validation
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -uo pipefail
+          python .github/scripts/c3_validation_only_runner.py validate \
+            --out "$RUNNER_TEMP/c3-validation-evidence" \
+            --contract .github/scripts/c3_validation_scenarios.json \
+            --artifact-root "$RUNNER_TEMP/c3-validation-baseline"
+      - name: Verify actual runtime evidence and execute evidence-based production final gate
+        if: always() && steps.live_validation.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          E="$RUNNER_TEMP/c3-validation-evidence/evidence.json"
+          node .github/scripts/c3_validation_evidence.mjs verify \
+            --evidence "$E" --contract .github/scripts/c3_validation_scenarios.json \
+            --expected-head "$C3_EXPECTED_HEAD" --expected-tree "$C3_EXPECTED_TREE" \
+            --expected-project nrfxhqabwblzxoushgnm --expected-run-id "$GITHUB_RUN_ID" \
+            --expected-attempt "$GITHUB_RUN_ATTEMPT"
+          C3_GATE_PHASE=production C3_EVIDENCE_PATH="$E" \
+          C3_SCENARIO_CONTRACT_PATH=.github/scripts/c3_validation_scenarios.json \
+          C3_EXPECTED_PROJECT=nrfxhqabwblzxoushgnm C3_EXPECTED_RUN_ID="$GITHUB_RUN_ID" \
+          C3_EXPECTED_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
+          node .github/scripts/task_ai_abc_c3_final_gate.mjs
+      - name: Upload fixture manifest and evidence for cleanup recovery
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: C3-validation-production-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}/c3-validation-evidence
+          if-no-files-found: error
+          retention-days: 30
+      - name: Validation-only result
+        if: always()
+        run: test '${{ steps.live_validation.outcome }}' = success
+
+  c3-validation-cleanup-only:
+    if: >-
+      github.event_name == 'workflow_dispatch' && inputs.mode == 'cleanup_only' &&
+      github.actor == 'ebixsolutions'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      VITE_SUPABASE_URL: https://nrfxhqabwblzxoushgnm.supabase.co
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: '${{ github.sha }}', fetch-depth: 0, clean: true}
+      - name: Guard cleanup-only authorization
+        run: |
+          set -euo pipefail
+          test "${{ inputs.validation_authorization }}" = "c3-cleanup-${{ inputs.cleanup_source_run_id }}-${{ inputs.expected_head }}"
+          test "$(git rev-parse HEAD)" = "${{ inputs.expected_head }}"
+          test "$(git rev-parse HEAD^{tree})" = "${{ inputs.expected_tree }}"
+          test -n "${SUPABASE_ACCESS_TOKEN:-}"
+      - name: Download prior fixture manifest
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: C3-validation-production-evidence-${{ inputs.expected_head }}
+          path: ${{ runner.temp }}/c3-cleanup-source
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.cleanup_source_run_id }}
+      - name: Recover project server key without exposing it
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json,os,urllib.request
+          r=urllib.request.Request('https://api.supabase.com/v1/projects/nrfxhqabwblzxoushgnm/api-keys?reveal=true',headers={'Authorization':'Bearer '+os.environ['SUPABASE_ACCESS_TOKEN']})
+          rows=json.load(urllib.request.urlopen(r)); key=next((x.get('api_key') or x.get('key') or x.get('value') for x in rows if str(x.get('type','')).lower()=='secret'),None)
+          if not key: raise SystemExit('server_key_unavailable')
+          with open(os.environ['GITHUB_ENV'],'a') as f: f.write('C3_SERVER_KEY='+key+'\n')
+          print('C3_CREDENTIAL_PRESENCE|name=project_secret_key|present=true')
+          PY
+      - name: Execute exact manifest cleanup on replacement runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          python .github/scripts/c3_validation_only_runner.py cleanup \
+            --out "$RUNNER_TEMP/c3-cleanup-evidence" \
+            --contract .github/scripts/c3_validation_scenarios.json \
+            --manifest "$RUNNER_TEMP/c3-cleanup-source/fixture-manifest.json" \
+            --marker "${{ inputs.cleanup_fixture_marker }}"
+      - name: Upload cleanup evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: C3-validation-cleanup-${{ inputs.cleanup_source_run_id }}
+          path: ${{ runner.temp }}/c3-cleanup-evidence
+          if-no-files-found: error
+          retention-days: 30
+
   c3-current-live-capture:
     if: >-
-      (github.event_name == 'push' && github.repository == 'ebixsolutions/console-chat-hub') ||
+      (github.event_name == 'workflow_dispatch' && inputs.mode == 'recovery') ||
       (github.event_name == 'pull_request' && github.event.action == 'labeled' &&
        github.event.pull_request.number == 12 && github.actor == 'ebixsolutions' &&
        github.event.label.name == format('c3-prod-{0}', github.event.pull_request.head.sha))
@@ -198,8 +465,11 @@ jobs:
           echo 'verified=PASS' >> "$GITHUB_OUTPUT"
 
   c3-preproduction:
-    needs: c3-current-live-roundtrip
-    if: github.event_name == 'push' && github.repository == 'ebixsolutions/console-chat-hub'
+    needs: c3-validation-preflight-offline
+    if: >-
+      github.repository == 'ebixsolutions/console-chat-hub' &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'workflow_dispatch' && inputs.mode == 'preflight_offline'))
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -211,7 +481,6 @@ jobs:
       C3_RECOVERY_INTERIM_BASELINE: PASS
       C3_CURRENT_LIVE_DURABLE_CAPTURE: PASS
       C3_CURRENT_LIVE_SOURCE_PARITY: PASS
-      C3_EDGE_TYPECHECK_PREVERIFIED: PASS
     steps:
       - uses: actions/checkout@v4
         with: {ref: '${{ github.sha }}', fetch-depth: 0, clean: true}
@@ -240,6 +509,8 @@ jobs:
         with:
           name: ${{ env.C3_CAPTURE_NAME }}
           path: ${{ runner.temp }}/c3-live-parity
+          github-token: ${{ github.token }}
+          run-id: '35045329983'
       - name: Verify current live source closure equals repository runtime
         shell: bash
         run: |
@@ -314,7 +585,7 @@ jobs:
 
   c3-durable-recovery-execution:
     if: >-
-      github.event_name == 'workflow_dispatch' && github.actor == 'ebixsolutions' &&
+      github.event_name == 'workflow_dispatch' && inputs.mode == 'recovery' && github.actor == 'ebixsolutions' &&
       inputs.recovery_authorization == format('c3-recovery-{0}', github.sha) &&
       (inputs.recover_generate_reply || inputs.recover_agent_assist)
     runs-on: ubuntu-24.04

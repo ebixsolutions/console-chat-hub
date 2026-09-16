@@ -2,6 +2,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
+import { readContract, verifyEvidence } from "./c3_validation_evidence.mjs";
 
 const must = (value, message) => {
   if (!value) throw new Error(message);
@@ -16,7 +17,8 @@ const run = (cmd, args, env = {}) =>
   });
 const runDeno = (args) => {
   const binary = process.env.DENO_BIN?.trim();
-  return binary ? run(binary, args) : run("npx", ["--yes", "deno", ...args]);
+  if (binary) return run(binary, args);
+  return process.env.CI ? run("deno", args) : run("npx", ["--yes", "deno", ...args]);
 };
 
 const files = {
@@ -42,6 +44,12 @@ const files = {
   gate: ".github/scripts/task_ai_abc_c3_final_gate.mjs",
   workflow: ".github/workflows/task-ai-abc-c3-final-gate.yml",
   c2WorkflowRouting: ".github/workflows/task-ai-abc-c2-final-gate.yml",
+  validationContract: ".github/scripts/c3_validation_scenarios.json",
+  validationRunner: ".github/scripts/c3_validation_only_runner.py",
+  evidenceVerifier: ".github/scripts/c3_validation_evidence.mjs",
+  validationControlTests: ".github/scripts/c3_validation_control_tests.mjs",
+  mergeGuard: ".github/scripts/c3_merge_no_redeploy_guard.mjs",
+  task42DeployWorkflow: ".github/workflows/task4-2-deploy-live-console-edge.yml",
 };
 for (const file of Object.values(files)) {
   must(
@@ -321,7 +329,7 @@ runDeno([
   files.terminalGuard,
   files.terminalTest,
 ]);
-if (process.env.CI && process.env.C3_EDGE_TYPECHECK_PREVERIFIED !== "PASS") {
+if (process.env.CI) {
   runDeno([
     "check",
     "--no-lock",
@@ -352,29 +360,40 @@ run("npx", [
   files.generate,
   files.assist,
   files.gate,
+  files.evidenceVerifier,
+  files.validationControlTests,
+  files.mergeGuard,
 ]);
+run("python", ["-c", "import ast,pathlib,sys; ast.parse(pathlib.Path(sys.argv[1]).read_text())", files.validationRunner]);
+run("node", [files.validationControlTests]);
 run("npm", ["run", "build"]);
 
-must(
-  process.env.C3_LIVE_BASELINE_READBACK === "PASS",
-  "STOP:C3_LIVE_BASELINE_READBACK_NOT_PROVIDED",
-);
-must(
-  process.env.C3_SCHEMA_READ_ONLY_TRACE === "PASS",
-  "STOP:C3_SCHEMA_READ_ONLY_TRACE_NOT_PROVIDED",
-);
-must(
-  process.env.C3_MIGRATION_HISTORY_COMPATIBILITY === "PASS",
-  "STOP:C3_MIGRATION_HISTORY_COMPATIBILITY_NOT_PROVIDED",
-);
-must(
-  process.env.C3_MIGRATION_RUNTIME_REHEARSAL === "PASS",
-  "STOP:C3_MIGRATION_RUNTIME_REHEARSAL_NOT_PROVIDED",
-);
-const interimRecoveryBaseline =
-  process.env.C3_RECOVERY_INTERIM_BASELINE === "PASS";
+const phase = process.env.C3_GATE_PHASE === "production"
+  ? "production"
+  : "preproduction";
 let rollbackAssertion;
-if (interimRecoveryBaseline) {
+if (phase === "preproduction") {
+  must(
+    process.env.C3_LIVE_BASELINE_READBACK === "PASS",
+    "STOP:C3_LIVE_BASELINE_READBACK_NOT_PROVIDED",
+  );
+  must(
+    process.env.C3_SCHEMA_READ_ONLY_TRACE === "PASS",
+    "STOP:C3_SCHEMA_READ_ONLY_TRACE_NOT_PROVIDED",
+  );
+  must(
+    process.env.C3_MIGRATION_HISTORY_COMPATIBILITY === "PASS",
+    "STOP:C3_MIGRATION_HISTORY_COMPATIBILITY_NOT_PROVIDED",
+  );
+  must(
+    process.env.C3_MIGRATION_RUNTIME_REHEARSAL === "PASS",
+    "STOP:C3_MIGRATION_RUNTIME_REHEARSAL_NOT_PROVIDED",
+  );
+  const interimRecoveryBaseline = process.env.C3_RECOVERY_INTERIM_BASELINE === "PASS";
+  must(
+    interimRecoveryBaseline,
+    "STOP:C3_INTERIM_RECOVERY_BASELINE_NOT_PROVIDED",
+  );
   must(
     process.env.C3_CURRENT_LIVE_DURABLE_CAPTURE === "PASS",
     "current_live_v108_v43_durable_capture_not_verified",
@@ -390,91 +409,38 @@ if (interimRecoveryBaseline) {
     agent_assist: { version: 43, source_closure: "DURABLY_CAPTURED" },
     prior_v107_v42_exact_closure: "UNRECOVERED",
   };
-} else {
-  const generateBaseline =
-    (process.env.C3_GENERATE_ROLLBACK_BUNDLE ?? "").trim();
-  const assistBaseline =
-    (process.env.C3_ASSIST_ROLLBACK_BUNDLE ?? "").trim();
-  must(
-    generateBaseline ===
-      "2d6ebf7a47c3c6df0c0d8a971bc91727759e08925dbb0c59f79211d549528caf",
-    "generate_rollback_baseline_mismatch",
-  );
-  must(
-    assistBaseline ===
-      "2ec8c764205b79f11730e31b9f3624a872f050f96f24fef396d6e700e7a37aa2",
-    "assist_rollback_baseline_mismatch",
-  );
-  must(
-    process.env.C3_ROLLBACK_IDENTITY_MODE === "SOURCE_CLOSURE",
-    "rollback_identity_must_use_source_closure",
-  );
-  must(
-    process.env.C3_GENERATE_ROLLBACK_SOURCE_CLOSURE === "PASS",
-    "generate_rollback_source_closure_mismatch",
-  );
-  must(
-    process.env.C3_ASSIST_ROLLBACK_SOURCE_CLOSURE === "PASS",
-    "assist_rollback_source_closure_mismatch",
-  );
-  must(
-    process.env.C3_GENERATE_ROLLBACK_FILE_COUNT === "44",
-    "generate_rollback_file_count_mismatch",
-  );
-  must(
-    process.env.C3_ASSIST_ROLLBACK_FILE_COUNT === "19",
-    "assist_rollback_file_count_mismatch",
-  );
-  must(
-    process.env.C3_GENERATE_ROLLBACK_SOURCE_MISMATCH === "0",
-    "generate_rollback_source_mismatch",
-  );
-  must(
-    process.env.C3_ASSIST_ROLLBACK_SOURCE_MISMATCH === "0",
-    "assist_rollback_source_mismatch",
-  );
-  must(
-    process.env.C3_ASSIST_BUNDLE_REBUILD_RECONCILED === "PASS",
-    "assist_bundle_rebuild_not_reconciled",
-  );
-  rollbackAssertion = {
-    identity: "SOURCE_CLOSURE",
-    generate_reply_bundle_observed: generateBaseline,
-    agent_assist_bundle_observed: assistBaseline,
-  };
 }
-
-const phase = process.env.C3_GATE_PHASE === "production"
-  ? "production"
-  : "preproduction";
+let productionEvidence = null;
 if (phase === "production") {
-  for (
-    const key of [
-      "C3_DB_SECURITY_READBACK",
-      "C3_EDGE_SOURCE_READBACK",
-      "C3_TENANT_RBAC",
-      "C3_FRESH_100_TURN_SMOKE",
-      "C3_PRODUCT_READY_CORE_SMOKE",
-    ]
-  ) {
-    must(process.env[key] === "PASS", `FAIL:${key}_NOT_PASS`);
-  }
-  must(process.env.C3_CLEANUP_RESIDUAL === "0", "FAIL:C3_CLEANUP_NOT_ZERO");
-  const checkpoints = JSON.parse(process.env.C3_100_TURN_CHECKPOINTS ?? "null");
-  must(
-    Array.isArray(checkpoints) && checkpoints.length === 3,
-    "FAIL:C3_CHECKPOINTS_MISSING",
-  );
-  must(
-    checkpoints.every((x) => x && [20, 50].includes(x.turn) || x?.turn >= 100),
-    "FAIL:C3_CHECKPOINT_TURNS_INVALID",
-  );
-  must(
-    checkpoints.every((x) =>
-      Number(x.context_chars) <= 32768 && Number(x.memory_chars) <= 16384
-    ),
-    "FAIL:C3_CONTEXT_BUDGET_EXCEEDED",
-  );
+  const evidencePath = process.env.C3_EVIDENCE_PATH?.trim();
+  const contractPath = process.env.C3_SCENARIO_CONTRACT_PATH?.trim() ||
+    files.validationContract;
+  must(evidencePath && fs.existsSync(evidencePath), "FAIL:C3_RUNTIME_EVIDENCE_MISSING");
+  const evidence = JSON.parse(read(evidencePath));
+  const verified = verifyEvidence(evidence, readContract(contractPath), {
+    requireLiveProduction: true,
+    expectedHead: process.env.C3_EXPECTED_HEAD,
+    expectedTree: process.env.C3_EXPECTED_TREE,
+    expectedProject: process.env.C3_EXPECTED_PROJECT,
+    expectedRunId: process.env.C3_EXPECTED_RUN_ID,
+    expectedAttempt: process.env.C3_EXPECTED_RUN_ATTEMPT,
+  });
+  must(verified.pass === true, "FAIL:C3_RUNTIME_EVIDENCE_NOT_VERIFIED");
+  productionEvidence = {
+    verified: true,
+    rows: verified.scenario_results.length,
+    contract_sha256: verified.contract_sha256,
+    run_id: evidence.run.id,
+    attempt: evidence.run.attempt,
+  };
+  rollbackAssertion = {
+    identity: "INTERIM_LIVE_RECOVERY_BASELINE",
+    classification: "NOT_PRODUCT_READY",
+    generate_reply: { version: 108, source_closure: "EVIDENCE_VERIFIED" },
+    agent_assist: { version: 43, source_closure: "EVIDENCE_VERIFIED" },
+    prior_v107_v42_exact_closure: "UNRECOVERED",
+  };
+  console.log(`C3_PRODUCTION_EVIDENCE_GATE|result=PASS|rows=${verified.scenario_results.length}|contract_sha256=${verified.contract_sha256}`);
 }
 
 console.log(JSON.stringify(
@@ -488,7 +454,8 @@ console.log(JSON.stringify(
       event_ledger: "public.conversation_memory_state_event",
       context_char_budget: 32768,
       memory_json_char_budget: 16384,
-      recent_raw_turn_limit: 12,
+      recent_raw_message_limit: 12,
+      recent_raw_window_unit: "messages",
       recent_raw_char_budget: 10000,
       compaction_triggers:
         "every durable customer turn plus source/revision guarded periodic convergence",
@@ -522,16 +489,14 @@ console.log(JSON.stringify(
       build: true,
       historical_quote_currentness: true,
       terminal_response_budget_ms: 90000,
-      source_closure_rollback_identity: interimRecoveryBaseline
-        ? "INTERIM_V108_V43_DURABLE_CAPTURE"
-        : true,
+      source_closure_rollback_identity: "INTERIM_V108_V43_DURABLE_CAPTURE",
       migration_runtime_rehearsal: true,
-      edge_typecheck: process.env.CI ||
-          process.env.C3_EDGE_TYPECHECK_PREVERIFIED === "PASS"
-        ? true
-        : "CI_REQUIRED",
+      edge_typecheck: process.env.CI ? true : "CI_REQUIRED",
       production_100_turn: phase === "production"
         ? true
+        : "AUTHORIZATION_PENDING",
+      production_runtime_evidence: phase === "production"
+        ? productionEvidence
         : "AUTHORIZATION_PENDING",
       rollback: rollbackAssertion,
     },
