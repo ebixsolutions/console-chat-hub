@@ -1,3 +1,4 @@
+import { prepareConversationRecall, type RecallCommerceSnapshot } from "../_shared/conversation-recall.ts";
 // B7 generate-reply — L5b orchestration skeleton + Task A.1A Deterministic Handoff Patch
 //
 // Source of truth: Contract 11 §3.1 + Contract 07 + Contract 03 §1.1 + Contract 08
@@ -73,8 +74,8 @@ import {
 } from "../_shared/conversation-runtime-state.ts";
 import { classifyCanonicalConversationTurn } from "../_shared/conversation-semantic-contract.ts";
 import {
-  deriveCurrentGroundingTarget,
   type CurrentGroundingTarget,
+  deriveCurrentGroundingTarget,
   selectCanonicalGrounding,
 } from "../_shared/canonical-grounding.ts";
 import type { ReferenceAuthorityDecision } from "../_shared/commerce-state-authority.ts";
@@ -118,6 +119,24 @@ import {
 } from "../_shared/commerce-state-runtime.ts";
 import { interpretCommerceSemantics } from "../_shared/commerce-semantic-interpreter.ts";
 import type { CommerceSemanticFrame } from "../_shared/commerce-semantic-frame.ts";
+import {
+  buildBoundedConversationContext,
+  type CanonicalConversationMemory,
+  composeBoundedGenerationEnvelope,
+  type MemoryHistoryRow,
+  refreshConversationLongMemory,
+} from "../_shared/conversation-long-memory.ts";
+import {
+  type ConversationCommerceState,
+  isConversationCommerceState,
+} from "../_shared/commerce-state-contract.ts";
+import {
+  historicalQuoteValidityReply,
+  isRecoverableTerminalError,
+  isRecoverableTerminalStatus,
+  runWithTerminalDeadline,
+  terminalRecoveryReply,
+} from "../_shared/generation-terminal-guard.ts";
 import {
   type B2DatabaseClient,
   type B2Decision,
@@ -1994,6 +2013,8 @@ Deno.serve(async (req) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  let parsedConversationId: string | null = null;
+  let parsedSourceMessageId: string | null = null;
   try {
     const body = await req.json();
     const { conversation_id, source_message_id } = body ?? {};
@@ -2006,6 +2027,10 @@ Deno.serve(async (req) => {
         },
       );
     }
+    parsedConversationId = String(conversation_id);
+    parsedSourceMessageId = typeof source_message_id === "string"
+      ? source_message_id
+      : null;
 
     const ENABLE_KB = Deno.env.get("ENABLE_KB_ADAPTER") !== "false";
     const ENABLE_COACH = Deno.env.get("ENABLE_COACH_PROMPT_ADAPTER") === "true";
@@ -2018,32 +2043,190 @@ Deno.serve(async (req) => {
       Deno.env.get("ESC_SHADOW_MODE") === "true" ||
       Deno.env.get("ESC_ENABLE_REQUIRED_RULES_LIVE") === "true";
 
-    if (
-      !ENABLE_KB &&
-      !ENABLE_COACH &&
-      !ENABLE_C360 &&
-      !ENABLE_TOOL_EXEC &&
-      !ENABLE_PR5_ESCALATION_RUNTIME
-    ) {
-      return await legacyGenerateReply(
-        conversation_id,
-        source_message_id ?? null,
-      );
-    }
+    const result = await runWithTerminalDeadline(
+      async (requestSignal) => {
+        if (
+          !ENABLE_KB &&
+          !ENABLE_COACH &&
+          !ENABLE_C360 &&
+          !ENABLE_TOOL_EXEC &&
+          !ENABLE_PR5_ESCALATION_RUNTIME
+        ) {
+          return await legacyGenerateReply(
+            parsedConversationId!,
+            parsedSourceMessageId,
+            requestSignal,
+          );
+        }
 
-    return await orchestrationGenerateReply(
-      conversation_id,
-      { ENABLE_KB, ENABLE_COACH, ENABLE_C360, ENABLE_TOOL_EXEC },
-      source_message_id ?? null,
+        return await orchestrationGenerateReply(
+          parsedConversationId!,
+          { ENABLE_KB, ENABLE_COACH, ENABLE_C360, ENABLE_TOOL_EXEC },
+          parsedSourceMessageId,
+          requestSignal,
+        );
+      },
+      async () =>
+        await persistTerminalRecovery(
+          parsedConversationId!,
+          parsedSourceMessageId,
+          "generation_work_budget_exhausted",
+        ),
     );
+    return result.kind === "deadline"
+      ? result.value
+      : await recoverTerminalResponseIfNeeded(
+        result.value,
+        parsedConversationId,
+        parsedSourceMessageId,
+      );
   } catch (error) {
     console.error("[generate-reply] unexpected error:", error);
+    if (parsedConversationId && parsedSourceMessageId) {
+      return await persistTerminalRecovery(
+        parsedConversationId,
+        parsedSourceMessageId,
+        error instanceof Error ? error.name : "unexpected_error",
+      );
+    }
     return new Response(JSON.stringify({ error: "Internal server error" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 });
+
+async function responseErrorCode(response: Response): Promise<string | null> {
+  try {
+    const payload = await response.clone().json();
+    if (!payload || typeof payload !== "object") return null;
+    const value = (payload as Record<string, unknown>).error;
+    return typeof value === "string" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+async function recoverTerminalResponseIfNeeded(
+  response: Response,
+  conversationId: string,
+  sourceMessageId: string | null,
+): Promise<Response> {
+  const errorCode = await responseErrorCode(response);
+  if (
+    !(isRecoverableTerminalStatus(response.status) &&
+      isRecoverableTerminalError(errorCode)) &&
+    !(response.status === 409 && isRecoverableTerminalError(errorCode))
+  ) return response;
+  return await persistTerminalRecovery(
+    conversationId,
+    sourceMessageId,
+    errorCode ?? `http_${response.status}`,
+    response,
+  );
+}
+
+async function persistTerminalRecovery(
+  conversationId: string,
+  sourceMessageId: string | null,
+  reason: string,
+  originalResponse?: Response,
+): Promise<Response> {
+  if (!sourceMessageId) {
+    return originalResponse ?? new Response(
+      JSON.stringify({
+        success: false,
+        error: "terminal_recovery_source_required",
+      }),
+      {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
+  }
+  try {
+    const admin = createClient(
+      Deno.env.get("SUPABASE_URL") ?? "",
+      getSupabaseAdminKey(),
+    );
+    const source = await loadSourceVisitorMessage(
+      admin,
+      conversationId,
+      sourceMessageId,
+    );
+    if (!source.ok) {
+      await cleanupThinking(admin, conversationId, sourceMessageId);
+      return originalResponse ?? sourceMessageErrorResponse(source);
+    }
+    const language = detectVisitorLanguage(source.message.content);
+    const reply = terminalRecoveryReply(language);
+    const committed = await commitAiReplyWithControlGate(
+      admin,
+      conversationId,
+      sourceMessageId,
+      reply,
+      {
+        response_route: "terminal_failure_recovery",
+        handoff_required: false,
+        factual_grounding_required: false,
+        degraded: true,
+        source_error_code: reason.slice(0, 120),
+      },
+    );
+    await cleanupThinking(admin, conversationId, sourceMessageId);
+    if (committed.ok) {
+      return new Response(
+        JSON.stringify({
+          success: true,
+          reply,
+          degraded: true,
+          response_route: "terminal_failure_recovery",
+          idempotent: committed.idempotent,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    if (
+      [
+        "source_already_replied",
+        "human_control",
+        "resolved",
+        "superseded_source",
+      ]
+        .includes(committed.result)
+    ) {
+      return new Response(
+        JSON.stringify({ success: true, skipped: committed.result }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    return originalResponse ?? new Response(
+      JSON.stringify({
+        success: false,
+        error: `terminal_recovery_${committed.result}`,
+      }),
+      {
+        status: 503,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
+  } catch (error) {
+    console.error("[generate-reply] terminal recovery failed closed:", {
+      conversation_id: conversationId,
+      reason: error instanceof Error ? error.name : "unknown_error",
+    });
+    return originalResponse ?? new Response(
+      JSON.stringify({
+        success: false,
+        error: "terminal_recovery_unavailable",
+      }),
+      {
+        status: 503,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
+  }
+}
 
 async function handleConversationClosureIfNeeded(
   supabaseAdmin: SupabaseAdminClient,
@@ -2157,7 +2340,10 @@ async function handleConversationClosureIfNeeded(
     if (error) {
       return new Response(
         JSON.stringify({ success: false, error: "c2_closure_rpc_error" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
       );
     }
     const result = String(data?.result ?? "unknown");
@@ -2172,7 +2358,15 @@ async function handleConversationClosureIfNeeded(
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
-    if (["human_control", "resolved", "superseded_source", "transaction_pending", "handoff_pending"].includes(result)) {
+    if (
+      [
+        "human_control",
+        "resolved",
+        "superseded_source",
+        "transaction_pending",
+        "handoff_pending",
+      ].includes(result)
+    ) {
       return new Response(
         JSON.stringify({ success: true, skipped: result }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
@@ -2180,7 +2374,10 @@ async function handleConversationClosureIfNeeded(
     }
     return new Response(
       JSON.stringify({ success: false, error: `c2_closure_${result}` }),
-      { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      {
+        status: 409,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
     );
   }
 
@@ -2193,15 +2390,25 @@ async function handleConversationClosureIfNeeded(
   );
   await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
   if (!committed.ok) {
-    if (["human_control", "resolved", "superseded_source"].includes(committed.result)) {
+    if (
+      ["human_control", "resolved", "superseded_source"].includes(
+        committed.result,
+      )
+    ) {
       return new Response(
         JSON.stringify({ success: true, skipped: committed.result }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
     return new Response(
-      JSON.stringify({ success: false, error: `conversation_closure_${committed.result}` }),
-      { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      JSON.stringify({
+        success: false,
+        error: `conversation_closure_${committed.result}`,
+      }),
+      {
+        status: 409,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
     );
   }
   return new Response(
@@ -2217,6 +2424,7 @@ async function handleConversationClosureIfNeeded(
 async function legacyGenerateReply(
   conversation_id: string,
   source_message_id: string | null,
+  requestSignal?: AbortSignal,
 ): Promise<Response> {
   const supabaseAdmin = createClient(
     Deno.env.get("SUPABASE_URL") ?? "",
@@ -2520,6 +2728,7 @@ ${legacyReturnToAiGuard}`;
     conversationId: conversation_id,
     tag: "generate-reply-legacy",
     responseFormat: "text",
+    signal: requestSignal,
   });
 
   if (!llm.ok) {
@@ -3552,6 +3761,7 @@ async function orchestrationGenerateReply(
   conversation_id: string,
   flags: FlagSet,
   source_message_id: string | null,
+  requestSignal?: AbortSignal,
 ): Promise<Response> {
   const supabaseAdmin = createClient(
     Deno.env.get("SUPABASE_URL") ?? "",
@@ -3629,7 +3839,7 @@ async function orchestrationGenerateReply(
   ] = await Promise.all([
     supabaseAdmin
       .from("messages")
-      .select("role, content, created_at, metadata")
+      .select("id, role, content, created_at, metadata")
       .eq("conversation_id", conversation_id)
       .eq("is_recalled", false)
       .neq("content", "__THINKING__")
@@ -3762,6 +3972,7 @@ async function orchestrationGenerateReply(
           role: String((row as { role?: unknown }).role ?? ""),
           content: String((row as { content?: unknown }).content ?? ""),
         })),
+        signal: requestSignal,
       });
       _a3SemanticFrame = semanticResult.frame;
     } catch (error) {
@@ -3776,6 +3987,9 @@ async function orchestrationGenerateReply(
   // Runs AFTER the critical E2 safety branch and BEFORE CUSTOMER_CONTEXT_UPDATE,
   // generic clarification, conversation-memory shortcut and KB retrieval.
   let _a3Commerce: CommerceRuntimeOutcome | null = null;
+  let _c3Memory: CanonicalConversationMemory | null = null;
+  let _c3MemoryContext = "";
+  let _c3CommerceSnapshot: RecallCommerceSnapshot | null = null;
   if (_criticalE2ExpectedTenantId) {
     try {
       _a3Commerce = await runCommerceStateRuntime(
@@ -3806,8 +4020,133 @@ async function orchestrationGenerateReply(
       _a3Commerce = null;
     }
   }
+
+  // ===== AI-ABC-C3: canonical bounded long-conversation memory =====
+  // The source visitor turn is already durable and A3 has resolved canonical
+  // commerce state. Memory is committed now so it cannot become commerce
+  // authority and cannot bypass the existing B2 response-persistence gate.
+  if (_criticalE2ExpectedTenantId) {
+    try {
+      const [{ data: persistedMemory }, { data: commerceRow }] = await Promise
+        .all([
+          supabaseAdmin.from("conversation_memory_state")
+            .select("source_message_id")
+            .eq("conversation_id", conversation_id)
+            .eq("company_id", _criticalE2ExpectedTenantId)
+            .maybeSingle(),
+          supabaseAdmin.from("conversation_commerce_state")
+            .select("conversation_id,company_id,source_message_id,revision,state")
+            .eq("conversation_id", conversation_id)
+            .eq("company_id", _criticalE2ExpectedTenantId)
+            .maybeSingle(),
+        ]);
+      let memoryHistory = (_pr5HistoryRows ?? []) as MemoryHistoryRow[];
+      if (!persistedMemory && (_pr5VisitorTurnCount ?? 0) > 50) {
+        const { data: rebuildRows } = await supabaseAdmin.from("messages")
+          .select("id,role,content,created_at,metadata")
+          .eq("conversation_id", conversation_id)
+          .eq("is_recalled", false)
+          .neq("content", "__THINKING__")
+          .or(sourceBoundaryFilter(sourceVisitorMessage))
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: false })
+          .limit(500);
+        memoryHistory = (rebuildRows ?? memoryHistory) as MemoryHistoryRow[];
+      }
+      const commerceState: ConversationCommerceState | null =
+        isConversationCommerceState(commerceRow?.state)
+          ? commerceRow.state
+          : null;
+      if (commerceState && commerceRow) {
+        _c3CommerceSnapshot = {
+          conversation_id: String(commerceRow.conversation_id),
+          company_id: String(commerceRow.company_id),
+          source_message_id: String(commerceRow.source_message_id ?? ""),
+          revision: Number(commerceRow.revision),
+          state: commerceState,
+        };
+      }
+      const memoryOutcome = await refreshConversationLongMemory(
+        supabaseAdmin as unknown as Parameters<
+          typeof refreshConversationLongMemory
+        >[0],
+        {
+          conversation_id,
+          company_id: _criticalE2ExpectedTenantId,
+          source_message_id: _h1SourceMessageId,
+          source_created_at: String(
+            sourceVisitorMessage.created_at ?? new Date().toISOString(),
+          ),
+          commerce_state_revision: commerceRow?.revision == null
+            ? null
+            : Number(commerceRow.revision),
+          commerce_state: commerceState,
+          newest_first: memoryHistory,
+          visitor_turn_count: _pr5VisitorTurnCount ?? 0,
+        },
+      );
+      if (memoryOutcome.ok) {
+        _c3Memory = memoryOutcome.memory;
+        _c3MemoryContext = buildBoundedConversationContext(
+          _c3Memory,
+          (_pr5HistoryRows ?? []) as MemoryHistoryRow[],
+        ).block;
+      } else {
+        console.warn("[generate-reply] C3 bounded memory degraded", {
+          conversation_id,
+          reason: memoryOutcome.reason,
+        });
+      }
+    } catch (memoryError) {
+      console.error(
+        "[generate-reply] C3 memory refresh failed safely",
+        memoryError instanceof Error ? memoryError.name : "unknown_error",
+      );
+    }
+  }
+  // C3 fact ownership routing: after E2/A3 and durable memory, before commerce
+  // reply shortcuts, context clarification and current-KB/C1 resolution.
+  const _c3Recall = prepareConversationRecall({
+    conversation_id,
+    company_id: _criticalE2ExpectedTenantId ?? "",
+    source_message_id: _h1SourceMessageId,
+    question: _h1LastMsg,
+    memory: _c3Memory,
+    commerce: _c3CommerceSnapshot,
+    explicit_handoff: isHandoffIntent(_h1LastMsg),
+    referents: _a3SemanticFrame?.referents ?? [],
+    recent_questions: ((_pr5HistoryRows ?? []) as MemoryHistoryRow[])
+      .filter(row => row.role === "visitor" && row.id !== _h1SourceMessageId)
+      .slice(0, 12).map(row => String(row.content ?? "")),
+  }, _visitorLang);
+  if (_c3Recall.reply) {
+    const recallCommit = await commitAiReplyWithControlGate(
+      supabaseAdmin, conversation_id, _h1SourceMessageId,
+      _c3Recall.reply, _c3Recall.metadata,
+    );
+    await cleanupThinking(supabaseAdmin, conversation_id, _h1SourceMessageId);
+    if (recallCommit.ok) {
+      return new Response(JSON.stringify({
+        success: true, reply: _c3Recall.reply,
+        response_route: _c3Recall.metadata.response_route,
+        recall_authority: _c3Recall.metadata.recall_authority,
+        recall_fact_type: _c3Recall.metadata.recall_fact_type,
+        handoff_required: false, idempotent: recallCommit.idempotent,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+    if (["human_control", "resolved", "superseded_source", "source_already_replied"].includes(recallCommit.result)) {
+      return new Response(JSON.stringify({ success: true, skipped: recallCommit.result }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+    return new Response(JSON.stringify({success: false,
+      error: `conversation_memory_commit_${recallCommit.result}`}),
+      { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
   if (_a3Commerce && _a3Commerce.reply) {
-    const commerceReply = _a3Commerce.reply;
+    const commerceReply = _a3Commerce.reason ===
+        "previous_quote_not_authoritative_for_current_price"
+      ? historicalQuoteValidityReply(_visitorLang)
+      : _a3Commerce.reply;
     const commerceCommit = await commitAiReplyWithControlGate(
       supabaseAdmin,
       conversation_id,
@@ -4222,10 +4561,11 @@ async function orchestrationGenerateReply(
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   }
-  const _conversationMemoryReply = resolveConversationMemoryResponse(
-    _h1LastMsg,
-    _pr5HistoryRows ?? [],
-  );
+  const _conversationMemoryReply = !_c3Recall.decision.handled &&
+      _c3Recall.decision.reason === "NOT_A_RECALL_QUERY" &&
+      _c3Recall.decision.detail !== "HANDOFF_PRECEDENCE"
+    ? resolveConversationMemoryResponse(_h1LastMsg, _pr5HistoryRows ?? [])
+    : null;
   if (_conversationMemoryReply) {
     const committed = await commitAiReplyWithControlGate(
       supabaseAdmin,
@@ -4446,7 +4786,12 @@ async function orchestrationGenerateReply(
         retrieval_quality: "failed",
         chunks: [],
       }
-      : await callKBAdapter(conversation_id, userQuery, _kbTenantResult.scope);
+      : await callKBAdapter(
+        conversation_id,
+        userQuery,
+        _kbTenantResult.scope,
+        requestSignal,
+      );
     if (!ragResult || !ragResult.success) {
       if (_deferR1ForE1) {
         const r1Response = await persistExplicitR1IfRequested(
@@ -4564,8 +4909,7 @@ async function orchestrationGenerateReply(
     ].filter((value): value is string =>
       typeof value === "string" && value.trim().length > 0
     );
-    const _c1TargetChanged =
-      _canonicalTurn.topic_action === "SWITCH" ||
+    const _c1TargetChanged = _canonicalTurn.topic_action === "SWITCH" ||
       _canonicalTurn.topic_action === "CORRECT" ||
       _a3SemanticFrame?.customer_correction === true;
     _c1CurrentTarget = deriveCurrentGroundingTarget(
@@ -4911,6 +5255,7 @@ async function orchestrationGenerateReply(
             source_message_id ?? "none"
           }`,
         },
+        { signal: requestSignal },
       );
     }
   }
@@ -5061,12 +5406,13 @@ async function orchestrationGenerateReply(
     latestHandoffReason,
     conversation.assigned_agent_id ?? null,
   );
-  const finalSystemPrompt = _priorGroundedTransform
+  let finalSystemPrompt = _priorGroundedTransform
     ? buildPriorGroundedTransformGenerationSystem(_priorGroundedTransform)
     : [
       basePrompt,
       CUSTOMER_CONVERSATION_POLICY,
       _conversationContinuityBlock,
+      _c3MemoryContext,
       returnToAiGuard,
       _customerAdvisoryBlock,
       _emotionReplyStrategyBlock,
@@ -5115,9 +5461,27 @@ async function orchestrationGenerateReply(
       conversation.company_id.length > 0
     ? conversation.company_id
     : null;
-  const _generationUserInput = _priorGroundedTransform
+  let _generationUserInput = _priorGroundedTransform
     ? buildPriorGroundedTransformGenerationUser(_h1LastMsg)
     : buildRouterConversationInput(modelMessages);
+  if (!_priorGroundedTransform && _c3Memory) {
+    const boundedEnvelope = composeBoundedGenerationEnvelope({
+      required_parts: [
+        basePrompt,
+        CUSTOMER_CONVERSATION_POLICY,
+        returnToAiGuard,
+        _customerAdvisoryBlock,
+        _emotionReplyStrategyBlock,
+        buildMaskedContextBlock(customerContext, opaqueCustomerRef),
+        buildRagBlock(ragResult),
+      ],
+      memory_part: _c3MemoryContext,
+      continuity_part: _conversationContinuityBlock,
+      user: _h1LastMsg,
+    });
+    finalSystemPrompt = boundedEnvelope.system;
+    _generationUserInput = boundedEnvelope.user;
+  }
 
   let llm = await callModel({
     purpose: "generation",
@@ -5130,6 +5494,7 @@ async function orchestrationGenerateReply(
     conversationId: conversation_id,
     tag: "generate-reply-orchestration",
     responseFormat: "text",
+    signal: requestSignal,
   });
 
   // A verifier rejection on a prior-grounded transform is not yet proof of an
@@ -5150,6 +5515,7 @@ async function orchestrationGenerateReply(
       conversationId: conversation_id,
       tag: "generate-reply-orchestration-transform-retry",
       responseFormat: "text",
+      signal: requestSignal,
     });
   }
 
@@ -5736,6 +6102,7 @@ async function callKBAdapter(
   _conversation_id: string,
   userMessage: string,
   scope: KBResolvedScope,
+  signal?: AbortSignal,
 ): Promise<{
   success: boolean;
   no_answer?: boolean;
@@ -5772,7 +6139,7 @@ async function callKBAdapter(
     { query: userMessage, top_k: 5 },
     scope,
     endpointCfg,
-    { timeoutMs: 15000 },
+    { timeoutMs: 15000, signal },
   );
   if (!result.success) {
     return { success: false, no_answer: true, retrieval_quality: "failed" };
