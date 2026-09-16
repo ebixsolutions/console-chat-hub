@@ -3080,7 +3080,7 @@ async function attemptFirstNoMatchClarification(
 async function persistC3ServiceRecovery(
   supabaseAdmin: SupabaseAdminClient,
   conversationId: string,
-  sourceMessageId: string,
+  sourceMessageId: string | null,
   plan: ServiceDialoguePlan,
   state: "no_match" | "tool_failure" | "conflict",
   language: "zh-TW" | "zh-CN" | "en",
@@ -4168,7 +4168,10 @@ async function orchestrationGenerateReply(
       .slice(0, 12).map(row => String(row.content ?? "")),
   }, _visitorLang);
   const _c3RecentServiceMessages = ((_pr5HistoryRows ?? []) as MemoryHistoryRow[])
-    .map((row) => ({ role: row.role, content: String(row.content ?? "") }));
+    .map((row) => ({
+      role: typeof row.role === "string" ? row.role : "unknown",
+      content: String(row.content ?? ""),
+    }));
   const _c3ServicePlan: ServiceDialoguePlan = planConversationService({
     question: _h1LastMsg,
     language: _visitorLang,
