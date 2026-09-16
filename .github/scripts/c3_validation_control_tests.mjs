@@ -57,7 +57,11 @@ function validEvidence() {
     db_security: { pass: true, source: "management_api_read_only_sql", checks: { rls: true } },
     scenarios: contractInfo.contract.scenarios.map((row, index) => ({
       id: row.id, contract_version: contractInfo.contract.contract_version,
-      actual_reply: replyFor(row), response_route: row.expected_route_family[0],
+      actual_reply: replyFor(row), response_route: row.id === "C3-CONTROL-13" ? "canonical_memory_clarification" : row.id === "T98" ? "canonical_memory_recall" : row.expected_route_family[0],
+      recall_authority: row.id === "C3-CONTROL-13" || row.id === "C3-CONTROL-15" ? null : "CURRENT_CUSTOMER_MEMORY",
+      recall_fact_type: row.id === "T98" ? "quotation_status+order_status" : row.id === "C3-CONTROL-13" || row.id === "C3-CONTROL-15" ? null : "summary",
+      recall_reason: row.id === "C3-CONTROL-13" ? "ENTITY_REFERENCE_AMBIGUOUS" : null,
+      recall_provenance: row.id === "C3-CONTROL-13" || row.id === "C3-CONTROL-15" ? [] : [{ fact_type: row.id === "T98" ? "order_status" : "summary", authority: "CURRENT_CUSTOMER_MEMORY", source_message_id: uuid(index + 1) }],
       customer_source_message_id: uuid(index + 1), assistant_message_id: uuid(index + 101),
       memory_revision: index + 1, commerce_revision: index,
       source_binding: { assistant_source_message_id: uuid(index + 1), memory_source_message_id: uuid(index + 1), commerce_source_message_id: uuid(index + 1), exact_customer_source_match: true },
@@ -150,6 +154,18 @@ expectReject("wrong_live_source", (e) => { e.live_functions[0].source_parity = f
 expectReject("old_run_replay", (e) => { e.run.id = "1"; }, /run_id_mismatch_or_replay/);
 expectReject("source_binding_mismatch", (e) => { e.scenarios[0].source_binding.memory_source_message_id = uuid(999); }, /source_binding_invalid/);
 expectReject("b2_status_without_source_proof", (e) => { e.scenarios[0].b2.evidence = "unobserved"; }, /b2_persistence_missing/);
+expectReject("known_single_fact_replaced_by_clarification", (e) => {
+  const row = e.scenarios.find((item) => item.id === "T06");
+  row.actual_reply = "請指明要核對的項目。"; row.response_route = "canonical_memory_clarification";
+}, /scenario_(?:route_family_mismatch|text_assertion_failed):T06/);
+expectReject("ambiguous_referent_arbitrarily_selected", (e) => {
+  const row = e.scenarios.find((item) => item.id === "C3-CONTROL-13");
+  row.actual_reply = "ALPHA 是 1.5匹。";
+}, /scenario_text_assertion_failed:C3-CONTROL-13:ambiguous_referent_has_no_selected_value/);
+expectReject("contradictory_unbuilt_and_confirmed_order", (e) => {
+  const row = e.scenarios.find((item) => item.id === "T98");
+  row.actual_reply = "報價階段；尚未形成正式訂單，但已確認訂單。";
+}, /scenario_text_assertion_failed:T98:no_contradictory_confirmed_order/);
 expectReject("hand_filled_flags_without_evidence", (e) => { e.scenarios = []; e.C3_PRODUCT_READY_CORE_SMOKE = "PASS"; }, /15_scenario_rows/);
 expectReject("checkpoint_bound_mismatch", (e) => { e.long_run.checkpoints[1].generation_context_chars = 32769; }, /generation_context_bound_exceeded/);
 expectReject("rebuild_mismatch", (e) => { e.rebuild_comparison.equal = false; }, /rebuild_comparison_invalid/);

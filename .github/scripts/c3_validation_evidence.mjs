@@ -68,6 +68,18 @@ function evaluateText(row, actualReply) {
   if (Array.isArray(expected.exclude_any)) {
     checks.push({ name: "exclude_any", pass: expected.exclude_any.every((v) => !contains(actualReply, v)) });
   }
+  if (row.id === "C3-CONTROL-13") {
+    checks.push({
+      name: "ambiguous_referent_has_no_selected_value",
+      pass: !/(?:alpha|beta).{0,24}\d+(?:\.\d+)?\s*(?:匹|hp)|\d+(?:\.\d+)?\s*(?:匹|hp).{0,24}(?:alpha|beta)/i.test(normalized(actualReply)),
+    });
+  }
+  if (row.id === "T98") {
+    checks.push({
+      name: "no_contradictory_confirmed_order",
+      pass: !["已確認訂單", "已确认订单", "confirmed order", "order is confirmed"].some((v) => contains(actualReply, v)),
+    });
+  }
   return checks;
 }
 
@@ -91,6 +103,12 @@ function verifyScenario(contractRow, evidenceRow, { requireLiveProduction }) {
   const route = requiredString(evidenceRow.response_route, `${contractRow.id}.response_route`);
   const routeAllowed = contractRow.expected_route_family.some((family) => normalized(route).includes(normalized(family)));
   if (!routeAllowed) fail(`scenario_route_family_mismatch:${contractRow.id}:${route}`);
+  if (contractRow.id === "C3-CONTROL-13" && normalized(route) !== "canonical_memory_clarification") {
+    fail(`scenario_clarification_route_invalid:${contractRow.id}:${route}`);
+  }
+  if (contractRow.id === "T98" && normalized(route) !== "canonical_memory_recall") {
+    fail(`scenario_order_status_route_invalid:${contractRow.id}:${route}`);
+  }
   const textChecks = evaluateText(contractRow, reply);
   for (const check of textChecks) if (!check.pass) fail(`scenario_text_assertion_failed:${contractRow.id}:${check.name}`);
   if (requireLiveProduction) {
@@ -112,6 +130,20 @@ function verifyScenario(contractRow, evidenceRow, { requireLiveProduction }) {
       if (!Array.isArray(evidenceRow.recall_provenance) || evidenceRow.recall_provenance.length === 0) fail(`scenario_recall_provenance_missing:${contractRow.id}`);
       if (["T17", "T40", "T57"].includes(contractRow.id) &&
           !evidenceRow.recall_provenance.some((item) => isUuid(item?.source_message_id))) fail(`scenario_correction_lineage_missing:${contractRow.id}`);
+    }
+    if (contractRow.id === "C3-CONTROL-13" && evidenceRow.recall_reason !== "ENTITY_REFERENCE_AMBIGUOUS") {
+      fail(`scenario_clarification_reason_invalid:${contractRow.id}`);
+    }
+    if (contractRow.id === "T98") {
+      const factType = normalized(evidenceRow.recall_fact_type);
+      if (!factType.includes("quotation_status") || !factType.includes("order_status")) {
+        fail(`scenario_order_status_fact_type_invalid:${contractRow.id}`);
+      }
+      const proven = evidenceRow.recall_provenance.some((item) =>
+        ["quotation_status", "order_status"].includes(item?.fact_type) &&
+        ["CANONICAL_COMMERCE_STATE", "CURRENT_CUSTOMER_MEMORY"].includes(item?.authority)
+      );
+      if (!proven) fail(`scenario_order_status_provenance_invalid:${contractRow.id}`);
     }
     const validPersistence = expectedSuppression
       ? evidenceRow.b2?.persistence_result === "suppressed_human_control"
