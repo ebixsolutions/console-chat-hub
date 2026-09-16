@@ -75,6 +75,7 @@ function verifyScenario(contractRow, evidenceRow, { requireLiveProduction }) {
   if (expectedSuppression) {
     if (!suppression || suppression.reason !== "existing_explicit_R1_handoff"
         || !isUuid(suppression.handoff_event_id) || !isUuid(suppression.handoff_source_message_id)
+        || suppression.receive_control_state !== "human_control" || suppression.receive_ai_reply_pending !== false
         || suppression.conversation_status !== "pending" || suppression.resolved_at !== null
         || suppression.assistant_after_source !== false) fail(`scenario_suppression_evidence_invalid:${contractRow.id}`);
   } else if (evidenceRow.response_suppressed === true) {

@@ -124,6 +124,7 @@ def write_json(path: Path, value: object) -> None:
 
 def classify_runtime_wait(*, allow_human_suppression: bool, customer_persisted: bool,
                           new_assistant_count: int, handoff_present: bool,
+                          receive_control_state: str | None, receive_ai_reply_pending: bool | None,
                           conversation_status: str | None, resolved_at: str | None,
                           deadline_expired: bool) -> str:
     """Classify a widget send from persisted evidence, never from HTTP acceptance alone."""
@@ -134,6 +135,7 @@ def classify_runtime_wait(*, allow_human_suppression: bool, customer_persisted: 
     if new_assistant_count == 1 and customer_persisted:
         return "assistant_persisted"
     if (allow_human_suppression and customer_persisted and handoff_present
+            and receive_control_state == "human_control" and receive_ai_reply_pending is False
             and conversation_status == "pending" and resolved_at is None):
         return "expected_human_control_suppression"
     if deadline_expired:
@@ -313,6 +315,9 @@ class Harness:
         if status >= 300 or not payload or payload.get("success") is not True:
             raise RuntimeError(f"widget_send_failed:http_{status}:{payload}")
         send_accepted_at = utc_now()
+        receive_data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        receive_control_state = receive_data.get("control_state")
+        receive_ai_reply_pending = receive_data.get("ai_reply_pending")
         latest = None
         new_assistant_count = 0
         customer = None
@@ -374,6 +379,8 @@ class Harness:
                 allow_human_suppression=allow_human_suppression,
                 customer_persisted=bool(customer), new_assistant_count=new_assistant_count,
                 handoff_present=bool(handoff and handoff.get("escalation_rule") == "R1"),
+                receive_control_state=receive_control_state,
+                receive_ai_reply_pending=receive_ai_reply_pending,
                 conversation_status=(conversation or {}).get("status"),
                 resolved_at=(conversation or {}).get("resolved_at"), deadline_expired=False,
             )
@@ -401,6 +408,8 @@ class Harness:
             allow_human_suppression=allow_human_suppression,
             customer_persisted=bool(customer), new_assistant_count=new_assistant_count,
             handoff_present=bool(handoff and handoff.get("escalation_rule") == "R1"),
+            receive_control_state=receive_control_state,
+            receive_ai_reply_pending=receive_ai_reply_pending,
             conversation_status=(conversation or {}).get("status"),
             resolved_at=(conversation or {}).get("resolved_at"), deadline_expired=deadline_expired,
         )
@@ -426,6 +435,7 @@ class Harness:
             f"send_accepted_at={send_accepted_at}|customer_persisted_at={(customer or {}).get('created_at') or 'unavailable'}|"
             f"poll_attempts={poll_attempts}|last_poll_success_at={last_poll_success_at or 'none'}|"
             f"last_poll_error={last_poll_error}|assistant_count={new_assistant_count}|"
+            f"receive_control_state={receive_control_state or 'unknown'}|receive_ai_reply_pending={str(receive_ai_reply_pending).lower()}|"
             f"ai_generating={str(ai_generating).lower()}|conversation_status={(conversation or {}).get('status') or 'unknown'}|"
             f"terminal_status={terminal}|elapsed_ms={elapsed_ms}|result={result}"
         )
@@ -436,6 +446,7 @@ class Harness:
                 f"last_messages={last_message_ids_types}|route={((latest or {}).get('metadata') or {}).get('response_route') or 'unavailable'}|"
                 f"memory_revision={memory_revision}|commerce_revision={commerce_revision}|"
                 f"expected_deadline_ms={timeout_seconds * 1000}|poll_count={poll_attempts}|"
+                f"receive_control_state={receive_control_state or 'unknown'}|receive_ai_reply_pending={str(receive_ai_reply_pending).lower()}|"
                 f"assistant_count={new_assistant_count}|ai_generating={str(ai_generating).lower()}|"
                 f"conversation_status={(conversation or {}).get('status') or 'unknown'}|result=FAIL"
             )
@@ -448,7 +459,9 @@ class Harness:
             raise RuntimeError("authoritative_customer_message_readback_missing")
         if terminal == "expected_human_control_suppression":
             return {"sent_at": sent_at, "customer": customer, "assistant": None,
-                    "suppressed": True, "conversation": conversation, "handoff": handoff}
+                    "suppressed": True, "conversation": conversation, "handoff": handoff,
+                    "receive_control_state": receive_control_state,
+                    "receive_ai_reply_pending": receive_ai_reply_pending}
         status, messages = self.staff_rest("messages", {
             "conversation_id": f"eq.{fixture['conversation_id']}",
             "select": "id,role,content,metadata,created_at", "order": "created_at.desc", "limit": "12",
@@ -489,6 +502,8 @@ class Harness:
             "response_suppressed": suppressed,
             "suppression_evidence": ({
                 "reason": "existing_explicit_R1_handoff", "handoff_event_id": handoff.get("id"),
+                "receive_control_state": observed.get("receive_control_state"),
+                "receive_ai_reply_pending": observed.get("receive_ai_reply_pending"),
                 "handoff_source_message_id": handoff.get("source_message_id"),
                 "handoff_safe_reply": handoff.get("safe_reply_content"),
                 "conversation_status": conversation.get("status"), "resolved_at": conversation.get("resolved_at"),
@@ -979,6 +994,7 @@ def run_db_readback_contract_tests() -> None:
 def run_runtime_wait_contract_tests() -> None:
     base = dict(allow_human_suppression=False, customer_persisted=True,
                 new_assistant_count=0, handoff_present=False,
+                receive_control_state="ai", receive_ai_reply_pending=True,
                 conversation_status="open", resolved_at=None, deadline_expired=False)
 
     def check(name: str, expected: str, **changes) -> None:
@@ -988,7 +1004,8 @@ def run_runtime_wait_contract_tests() -> None:
 
     check("quick_normal_reply", "assistant_persisted", new_assistant_count=1)
     check("expected_human_control_suppression", "expected_human_control_suppression",
-          allow_human_suppression=True, handoff_present=True, conversation_status="pending")
+          allow_human_suppression=True, handoff_present=True, conversation_status="pending",
+          receive_control_state="human_control", receive_ai_reply_pending=False)
     check("delayed_reply_within_budget_initial_wait", "continue_waiting")
     check("delayed_reply_within_budget_terminal", "assistant_persisted", new_assistant_count=1)
     check("never_arrives_timeout", "assistant_response_timeout", deadline_expired=True)
@@ -1000,10 +1017,15 @@ def run_runtime_wait_contract_tests() -> None:
     check("customer_not_persisted", "customer_persistence_timeout",
           customer_persisted=False, deadline_expired=True)
     check("suppression_missing_handoff", "assistant_response_timeout",
-          allow_human_suppression=True, conversation_status="pending", deadline_expired=True)
+          allow_human_suppression=True, conversation_status="pending", deadline_expired=True,
+          receive_control_state="human_control", receive_ai_reply_pending=False)
     check("suppression_resolved_is_invalid", "assistant_response_timeout",
           allow_human_suppression=True, handoff_present=True, conversation_status="pending",
+          receive_control_state="human_control", receive_ai_reply_pending=False,
           resolved_at="2026-09-16T00:00:00Z", deadline_expired=True)
+    check("suppression_receive_contract_mismatch", "assistant_response_timeout",
+          allow_human_suppression=True, handoff_present=True, conversation_status="pending",
+          deadline_expired=True)
     print("C3_RUNTIME_WAIT_CONTRACT_TESTS=PASS")
 
 

@@ -116,6 +116,7 @@ console.log("C3_NONPRODUCTION_CONTROL|name=15_row_contract_11_recovered_4_new|re
   row.suppression_evidence = {
     reason: "existing_explicit_R1_handoff", handoff_event_id: uuid(800),
     handoff_source_message_id: uuid(801), handoff_safe_reply: "真人客服已轉交接手",
+    receive_control_state: "human_control", receive_ai_reply_pending: false,
     conversation_status: "pending", resolved_at: null, assistant_after_source: false,
   };
   assert.equal(verifyEvidence(suppressed, contractInfo, options).pass, true);
