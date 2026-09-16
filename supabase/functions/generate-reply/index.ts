@@ -1,13 +1,20 @@
-import { prepareConversationRecall, type RecallCommerceSnapshot } from "../_shared/conversation-recall.ts";
 import {
-  buildServicePlanPromptBlock,
+  prepareConversationRecall,
+  type RecallCommerceSnapshot,
+} from "../_shared/conversation-recall.ts";
+import {
   applyServiceTone,
+  buildServicePlanPromptBlock,
   planConversationService,
   renderServicePlanReply,
   renderServiceRecovery,
   renderTargetedServiceQuestion,
   type ServiceDialoguePlan,
 } from "../_shared/conversation-service-planner.ts";
+import {
+  applyServiceRuntimeDerivation,
+  deriveServiceRuntimeInputs,
+} from "../_shared/conversation-service-runtime.ts";
 // B7 generate-reply — L5b orchestration skeleton + Task A.1A Deterministic Handoff Patch
 //
 // Source of truth: Contract 11 §3.1 + Contract 07 + Contract 03 §1.1 + Contract 08
@@ -3111,19 +3118,32 @@ async function persistC3ServiceRecovery(
     handoff_required: false,
   };
   const committed = await commitAiReplyWithControlGate(
-    supabaseAdmin, conversationId, sourceMessageId, content, metadata,
+    supabaseAdmin,
+    conversationId,
+    sourceMessageId,
+    content,
+    metadata,
   );
   await cleanupThinking(supabaseAdmin, conversationId, sourceMessageId);
   if (!committed.ok) {
-    return new Response(JSON.stringify({ success: true, skipped: committed.result }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({ success: true, skipped: committed.result }),
+      {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
   }
-  return new Response(JSON.stringify({
-    success: true, reply: content, response_route: metadata.response_route,
-    service_action: plan.action, handoff_required: false,
-    idempotent: committed.idempotent,
-  }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  return new Response(
+    JSON.stringify({
+      success: true,
+      reply: content,
+      response_route: metadata.response_route,
+      service_action: plan.action,
+      handoff_required: false,
+      idempotent: committed.idempotent,
+    }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+  );
 }
 
 async function handleKBFallback(
@@ -4094,7 +4114,9 @@ async function orchestrationGenerateReply(
             .eq("company_id", _criticalE2ExpectedTenantId)
             .maybeSingle(),
           supabaseAdmin.from("conversation_commerce_state")
-            .select("conversation_id,company_id,source_message_id,revision,state")
+            .select(
+              "conversation_id,company_id,source_message_id,revision,state",
+            )
             .eq("conversation_id", conversation_id)
             .eq("company_id", _criticalE2ExpectedTenantId)
             .maybeSingle(),
@@ -4175,32 +4197,52 @@ async function orchestrationGenerateReply(
     explicit_handoff: isHandoffIntent(_h1LastMsg),
     referents: _a3SemanticFrame?.referents ?? [],
     recent_questions: ((_pr5HistoryRows ?? []) as MemoryHistoryRow[])
-      .filter(row => row.role === "visitor" && row.id !== _h1SourceMessageId)
-      .slice(0, 12).map(row => String(row.content ?? "")),
+      .filter((row) => row.role === "visitor" && row.id !== _h1SourceMessageId)
+      .slice(0, 12).map((row) => String(row.content ?? "")),
   }, _visitorLang);
-  const _c3RecentServiceMessages = ((_pr5HistoryRows ?? []) as MemoryHistoryRow[])
-    .map((row) => ({
-      role: typeof row.role === "string" ? row.role : "unknown",
-      content: String(row.content ?? ""),
-    }));
-  const _c3ServicePlan: ServiceDialoguePlan = planConversationService({
+  const _c3RecentServiceMessages =
+    ((_pr5HistoryRows ?? []) as MemoryHistoryRow[])
+      .map((row) => ({
+        role: typeof row.role === "string" ? row.role : "unknown",
+        content: String(row.content ?? ""),
+      }));
+  const _c3RuntimeInputs = deriveServiceRuntimeInputs({
     question: _h1LastMsg,
-    language: _visitorLang,
-    recall: _c3Recall.decision,
-    memory: _c3Memory,
-    commerce: _c3CommerceSnapshot?.state ?? null,
     recent_messages: _c3RecentServiceMessages,
-    clarification_attempts: _pr5History.clarification_attempts,
-    exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
-    explicit_handoff: isHandoffIntent(_h1LastMsg),
+    commerce: _c3CommerceSnapshot?.state ?? null,
+    trusted_customer_context: null,
+    expected_conversation_id: conversation_id,
+    expected_company_id: _criticalE2ExpectedTenantId ?? "",
   });
-  const _c3PlannedReply = applyServiceTone(_c3ServicePlan, renderServicePlanReply(
+  const _c3ServicePlan: ServiceDialoguePlan = planConversationService(
+    applyServiceRuntimeDerivation({
+      question: _h1LastMsg,
+      language: _visitorLang,
+      recall: _c3Recall.decision,
+      memory: _c3Memory,
+      commerce: _c3CommerceSnapshot?.state ?? null,
+      recent_messages: _c3RecentServiceMessages,
+      clarification_attempts: _pr5History.clarification_attempts,
+      exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
+      explicit_handoff: isHandoffIntent(_h1LastMsg),
+    }, _c3RuntimeInputs),
+  );
+  const _c3PlannedReply = applyServiceTone(
     _c3ServicePlan,
-    _c3Recall.reply,
-    _c3RecentServiceMessages,
-  ) ?? (!_c3Recall.decision.handled && _c3Recall.decision.reason === "AMBIGUOUS"
-    ? renderTargetedServiceQuestion(_c3ServicePlan, _visitorLang)
-    : null));
+    renderServicePlanReply(
+      _c3ServicePlan,
+      _c3Recall.reply,
+      _c3RecentServiceMessages,
+    ) ??
+      ([
+          "targeted_clarification",
+          "partial_answer_then_question",
+          "offer_handoff_or_reframe",
+          "explicit_handoff",
+        ].includes(_c3ServicePlan.action)
+        ? renderTargetedServiceQuestion(_c3ServicePlan, _visitorLang)
+        : null),
+  );
   if (_c3PlannedReply) {
     const serviceMetadata = {
       ..._c3Recall.metadata,
@@ -4222,29 +4264,55 @@ async function orchestrationGenerateReply(
       emotion_trace: _c3ServicePlan.emotion_trace ?? null,
       entitlement_status: _c3ServicePlan.entitlement_status,
       entitlement_trace: _c3ServicePlan.entitlement_trace ?? null,
+      service_runtime_version: _c3RuntimeInputs.version,
+      calculation_input_status: _c3RuntimeInputs.calculation_status,
     };
     const recallCommit = await commitAiReplyWithControlGate(
-      supabaseAdmin, conversation_id, _h1SourceMessageId,
-      _c3PlannedReply, serviceMetadata,
+      supabaseAdmin,
+      conversation_id,
+      _h1SourceMessageId,
+      _c3PlannedReply,
+      serviceMetadata,
     );
     await cleanupThinking(supabaseAdmin, conversation_id, _h1SourceMessageId);
     if (recallCommit.ok) {
-      return new Response(JSON.stringify({
-        success: true, reply: _c3PlannedReply,
-        response_route: serviceMetadata.response_route,
-        recall_authority: _c3Recall.metadata.recall_authority,
-        recall_fact_type: _c3Recall.metadata.recall_fact_type,
-        service_action: _c3ServicePlan.action,
-        handoff_required: false, idempotent: recallCommit.idempotent,
-      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(
+        JSON.stringify({
+          success: true,
+          reply: _c3PlannedReply,
+          response_route: serviceMetadata.response_route,
+          recall_authority: _c3Recall.metadata.recall_authority,
+          recall_fact_type: _c3Recall.metadata.recall_fact_type,
+          service_action: _c3ServicePlan.action,
+          handoff_required: false,
+          idempotent: recallCommit.idempotent,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
     }
-    if (["human_control", "resolved", "superseded_source", "source_already_replied"].includes(recallCommit.result)) {
-      return new Response(JSON.stringify({ success: true, skipped: recallCommit.result }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    if (
+      [
+        "human_control",
+        "resolved",
+        "superseded_source",
+        "source_already_replied",
+      ].includes(recallCommit.result)
+    ) {
+      return new Response(
+        JSON.stringify({ success: true, skipped: recallCommit.result }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
     }
-    return new Response(JSON.stringify({success: false,
-      error: `conversation_memory_commit_${recallCommit.result}`}),
-      { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: `conversation_memory_commit_${recallCommit.result}`,
+      }),
+      {
+        status: 409,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
   }
   if (_a3Commerce && _a3Commerce.reply) {
     const commerceReply = _a3Commerce.reason ===
@@ -4916,8 +4984,13 @@ async function orchestrationGenerateReply(
         );
       }
       return await persistC3ServiceRecovery(
-        supabaseAdmin, conversation_id, source_message_id, _c3ServicePlan,
-        "tool_failure", _visitorLang, { rag_api_status: "failure" },
+        supabaseAdmin,
+        conversation_id,
+        source_message_id,
+        _c3ServicePlan,
+        "tool_failure",
+        _visitorLang,
+        { rag_api_status: "failure" },
       );
     }
     if (
@@ -4982,8 +5055,13 @@ async function orchestrationGenerateReply(
       );
       if (clarification) return clarification;
       return await persistC3ServiceRecovery(
-        supabaseAdmin, conversation_id, source_message_id, _c3ServicePlan,
-        "no_match", _visitorLang, { rag_api_status: "success_empty" },
+        supabaseAdmin,
+        conversation_id,
+        source_message_id,
+        _c3ServicePlan,
+        "no_match",
+        _visitorLang,
+        { rag_api_status: "success_empty" },
       );
     }
 
@@ -5190,10 +5268,17 @@ async function orchestrationGenerateReply(
         traceMetadata,
       );
       if (clarification) return clarification;
-      if (!isHighRisk) return await persistC3ServiceRecovery(
-        supabaseAdmin, conversation_id, source_message_id, _c3ServicePlan,
-        "no_match", _visitorLang, traceMetadata,
-      );
+      if (!isHighRisk) {
+        return await persistC3ServiceRecovery(
+          supabaseAdmin,
+          conversation_id,
+          source_message_id,
+          _c3ServicePlan,
+          "no_match",
+          _visitorLang,
+          traceMetadata,
+        );
+      }
       return await handleKBFallback(
         supabaseAdmin,
         conversation_id,
@@ -5262,11 +5347,17 @@ async function orchestrationGenerateReply(
         { ...traceMetadata, answerability: "missing_full_content_evidence" },
       );
       if (clarification) return clarification;
-      if (!isHighRisk) return await persistC3ServiceRecovery(
-        supabaseAdmin, conversation_id, source_message_id, _c3ServicePlan,
-        "no_match", _visitorLang,
-        { ...traceMetadata, answerability: "missing_full_content_evidence" },
-      );
+      if (!isHighRisk) {
+        return await persistC3ServiceRecovery(
+          supabaseAdmin,
+          conversation_id,
+          source_message_id,
+          _c3ServicePlan,
+          "no_match",
+          _visitorLang,
+          { ...traceMetadata, answerability: "missing_full_content_evidence" },
+        );
+      }
       return await handleKBFallback(
         supabaseAdmin,
         conversation_id,

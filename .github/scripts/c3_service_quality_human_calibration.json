@@ -1,28 +1,48 @@
 {
-  "version": "c3-service-quality-human-calibration-2026-09-16.2",
+  "version": "c3-service-quality-human-calibration-2026-09-16.3",
   "status": "AWAITING_HUMAN_CALIBRATION",
-  "reviewer_context": "Blinded Hong Kong customer-service review. Reviewers receive full context and actual candidate output, but no route names or automated scores.",
-  "reviews": [],
-  "samples": [
-    {"id":"HQ01","family":"correction","customer_context":"送貨地址由A座更正為幸福邨B座1樓；兩部冷氣仍在草擬報價。","customer_turn":"更正後送貨地址係邊？","actual_response_or_action":"更正後送貨地址是幸福邨B座1樓。","source_binding":"heldout HO-001; candidate source hash in held-out evidence","response_sha256":"22daaf9ed8aec84be497d244bbc5c2270d0ebd93550b37683aef869de718b61e","coverage":["correction","context"]},
-    {"id":"HQ02","family":"partial","customer_context":"對話有多個可能項目，『嗰部』指涉不明。","customer_turn":"嗰部適唔適合？","actual_response_or_action":"根據這段對話已有的資料， 你指的是哪一件產品或哪個項目？","source_binding":"heldout HO-002; candidate source hash in held-out evidence","response_sha256":"be41326ab46e0c900ab8cc0b96fb8478be76a2af1816ac878af0ac763f8df872","coverage":["ambiguity","clarification"]},
-    {"id":"HQ03","family":"calculation","customer_context":"舊機價每部5601、安裝每部550、訂單費每單300，共兩部；不是現行報價。","customer_turn":"用舊數字試算，兩部冷氣","actual_response_or_action":"按你提供並已標明收費單位的舊數字：(舊機價 5,601 + 舊安裝費 550) × 2 + 舊訂單費 300 = HKD 12,602。這只是歷史條件試算，不是現行正式報價。","source_binding":"heldout HO-003; typed customer terms","response_sha256":"829492483fa24297b993669687d493aeff384d701a2d94ef8090da9f44348908","coverage":["calculation","currency","unit"]},
-    {"id":"HQ04","family":"shorten","customer_context":"上一答覆含舊價、非現行報價、訂單未確認和工程費待核實。","customer_turn":"短啲","actual_response_or_action":"舊機價是 HKD 5,600。 這不是現行報價。 訂單尚未確認。 實際工程費仍需核實。","source_binding":"heldout HO-004; prior assistant context","response_sha256":"5c72c195b6efb02704212cb2e12ed4e2c63df499d3408a6b4f4d2e2174138b25","coverage":["shortening","negation"]},
-    {"id":"HQ05","family":"checklist","customer_context":"方案1、地址、收件人和日期已提供待確認；報價仍為草擬。","customer_turn":"付款前清單","actual_response_or_action":"付款／落單前清單\n• 目前目標：為客廳選擇冷氣方案 1（已提供，待最終確認）\n• 查詢項目：冷氣（已提供，待最終確認）\n• 送貨地址：幸福邨B座1樓（已提供，待最終確認）\n• 收件人：測試客戶1（已提供，待最終確認）\n• 希望送貨日期：星期六（已提供，待最終確認）\n• 報價狀態：draft（草擬中）","source_binding":"heldout HO-005; candidate source hash in held-out evidence","response_sha256":"eed72bc8b405510f385de4c40d05699451da11208ade6e6d4aac38cb508da0cf","coverage":["checklist","status"]},
-    {"id":"HQ06","family":"no_match","customer_context":"型號AC-1001已知；知識庫沒有返回可核實的現行保養資料。","customer_turn":"AC-1001現行保養？","actual_response_or_action":"這次知識庫查詢沒有返回 AC-1001 的可核實現行資料。你可以提供產品頁、適用地區或日期，讓我縮窄範圍；目前沒有執行保存或轉交。","source_binding":"heldout HO-006; no-match observation","response_sha256":"5e57dc7dc9267ea1c86ad2cf22f98028b2bfbd75a8a47b95b6ce014d3d197689","coverage":["kb_no_match","next_step"]},
-    {"id":"HQ07","family":"conflict","customer_context":"同一型號、地區和時點有兩份同權威但內容相反的現行資料。","customer_turn":"AC-1001香港保養資料互相衝突","actual_response_or_action":"我找到針對同一項目及適用範圍、但內容相反的現行資料。請告訴我要以哪個型號、地區或日期核對；我不會自行選一項當答案。","source_binding":"heldout HO-007; conflict observation","response_sha256":"0b6d48e8be0d7c539cc998aa7ffcdd318f08ea4cc35b238674b7ffe400fa9dcc","coverage":["kb_conflict","authority"]},
-    {"id":"HQ08","family":"tool_failure","customer_context":"型號已知，但查現行存貨的工具未完成。","customer_turn":"AC-1001現行存貨？","actual_response_or_action":"查詢工具目前未能完成，所以我不能核實商家的最新資料；本次沒有進行資料寫入或真人交接。你可以稍後再試，或選擇由真人客服接手。","source_binding":"heldout HO-008; tool failure observation","response_sha256":"8f8e2b55bc457249d119796359456be5a544e862764951efcafdabc78350de98","coverage":["tool_failure","truthfulness"]},
-    {"id":"HQ09","family":"handoff","customer_context":"客戶明確要求真人；真正交接仍須經既有handoff與持久化路徑。","customer_turn":"我要真人客服","actual_response_or_action":"收到你想聯絡真人客服的要求；目前尚未完成交接，請等候系統確認。","source_binding":"heldout HO-009; explicit_handoff action; runtime separately governed","response_sha256":"d530b4e8658fe9722f7558c13b9fbf095dd699898599c7bce6c05f607b3e451a","coverage":["handoff","truthfulness"]},
-    {"id":"HQ10","family":"emotion_entitlement","customer_context":"客戶高度失望；可信CRM顯示priority_support eligible，但未授權承諾。","customer_turn":"我好失望，請按已核實權益講下一步","actual_response_or_action":"我明白這個情況令人失望。 根據這段對話已有的資料， 你想核對哪個項目或哪個時間點？","source_binding":"heldout HO-010; current-turn emotion and trusted CRM trace","response_sha256":"6c9fed352c74f2ec68a1bdc3df0feef16ccf34cb02acb1a6d906dd2ed83ae048","coverage":["emotion","entitlement"]},
-    {"id":"HQ11","family":"correction","customer_context":"地址已更正為幸福邨B座2樓，舊A座不可復活。","customer_turn":"更正後送貨地址係邊？","actual_response_or_action":"更正後送貨地址是幸福邨B座2樓。","source_binding":"heldout HO-011; candidate source hash in held-out evidence","response_sha256":"65ee5978f4389120268cb34e7ab4f731804fbe1e365178a2cb1b690b5bd0aad4","coverage":["correction","context"]},
-    {"id":"HQ12","family":"partial","customer_context":"有多個可能指涉產品，不能任選一個。","customer_turn":"嗰部適唔適合？","actual_response_or_action":"根據這段對話已有的資料， 你指的是哪一件產品或哪個項目？","source_binding":"heldout HO-012; candidate source hash in held-out evidence","response_sha256":"be41326ab46e0c900ab8cc0b96fb8478be76a2af1816ac878af0ac763f8df872","coverage":["ambiguity","clarification"]},
-    {"id":"HQ13","family":"calculation","customer_context":"舊機價每部5602、安裝每部550、訂單費每單300，共兩部。","customer_turn":"用舊數字試算，兩部冷氣","actual_response_or_action":"按你提供並已標明收費單位的舊數字：(舊機價 5,602 + 舊安裝費 550) × 2 + 舊訂單費 300 = HKD 12,604。這只是歷史條件試算，不是現行正式報價。","source_binding":"heldout HO-013; typed customer terms","response_sha256":"b4ee60d444aebdcb8676941d8c74ede60fb8ce717dd9bd6e2ef19b021f4f8aa9","coverage":["calculation","currency","unit"]},
-    {"id":"HQ14","family":"shorten","customer_context":"否定、未確認與待核實限制不可因縮短而遺失。","customer_turn":"短啲","actual_response_or_action":"舊機價是 HKD 5,600。 這不是現行報價。 訂單尚未確認。 實際工程費仍需核實。","source_binding":"heldout HO-014; prior assistant context","response_sha256":"5c72c195b6efb02704212cb2e12ed4e2c63df499d3408a6b4f4d2e2174138b25","coverage":["shortening","negation"]},
-    {"id":"HQ15","family":"checklist","customer_context":"方案2仍草擬，不得用勾號暗示訂單或付款完成。","customer_turn":"付款前清單","actual_response_or_action":"付款／落單前清單\n• 目前目標：為客廳選擇冷氣方案 2（已提供，待最終確認）\n• 查詢項目：冷氣（已提供，待最終確認）\n• 送貨地址：幸福邨B座2樓（已提供，待最終確認）\n• 收件人：測試客戶2（已提供，待最終確認）\n• 希望送貨日期：星期六（已提供，待最終確認）\n• 報價狀態：draft（草擬中）","source_binding":"heldout HO-015; candidate source hash in held-out evidence","response_sha256":"93089a96a80950f5218ee897c88ff08c338f67b6f620a2465c3fa84134f44d8b","coverage":["checklist","status"]},
-    {"id":"HQ16","family":"no_match","customer_context":"型號AC-1002已知，但現行保養查詢無匹配。","customer_turn":"AC-1002現行保養？","actual_response_or_action":"這次知識庫查詢沒有返回 AC-1002 的可核實現行資料。你可以提供產品頁、適用地區或日期，讓我縮窄範圍；目前沒有執行保存或轉交。","source_binding":"heldout HO-016; no-match observation","response_sha256":"c75241bce4512f43fa03a2b6b89543477f42da0e3960e69df714a7ed5a31983b","coverage":["kb_no_match","next_step"]},
-    {"id":"HQ17","family":"conflict","customer_context":"同scope現行來源矛盾，不能自行挑選。","customer_turn":"AC-1002香港保養資料互相衝突","actual_response_or_action":"我找到針對同一項目及適用範圍、但內容相反的現行資料。請告訴我要以哪個型號、地區或日期核對；我不會自行選一項當答案。","source_binding":"heldout HO-017; conflict observation","response_sha256":"0b6d48e8be0d7c539cc998aa7ffcdd318f08ea4cc35b238674b7ffe400fa9dcc","coverage":["kb_conflict","authority"]},
-    {"id":"HQ18","family":"tool_failure","customer_context":"工具失敗，必須明說未核實且不虛稱保存或交接。","customer_turn":"AC-1002現行存貨？","actual_response_or_action":"查詢工具目前未能完成，所以我不能核實商家的最新資料；本次沒有進行資料寫入或真人交接。你可以稍後再試，或選擇由真人客服接手。","source_binding":"heldout HO-018; tool failure observation","response_sha256":"8f8e2b55bc457249d119796359456be5a544e862764951efcafdabc78350de98","coverage":["tool_failure","truthfulness"]},
-    {"id":"HQ19","family":"handoff","customer_context":"明確真人要求；須等待持久化結果才能宣稱完成。","customer_turn":"我要真人客服","actual_response_or_action":"收到你想聯絡真人客服的要求；目前尚未完成交接，請等候系統確認。","source_binding":"heldout HO-019; explicit_handoff action; runtime separately governed","response_sha256":"d530b4e8658fe9722f7558c13b9fbf095dd699898599c7bce6c05f607b3e451a","coverage":["handoff","truthfulness"]},
-    {"id":"HQ20","family":"emotion_entitlement","customer_context":"失望情緒與可信CRM權益並存；語氣可調整，權益不可變成承諾。","customer_turn":"我好失望，請按已核實權益講下一步","actual_response_or_action":"我明白這個情況令人失望。 根據這段對話已有的資料， 你想核對哪個項目或哪個時間點？","source_binding":"heldout HO-020; current-turn emotion and trusted CRM trace","response_sha256":"6c9fed352c74f2ec68a1bdc3df0feef16ccf34cb02acb1a6d906dd2ed83ae048","coverage":["emotion","entitlement"]}
-  ]
+  "reviews_embedded": false,
+  "review_artifact_policy": {
+    "artifact_schema": "c3-human-calibration-review-artifact-1.0.0",
+    "candidate_binding_required": [
+      "head",
+      "tree",
+      "release_id",
+      "generate_reply_manifest_sha256",
+      "agent_assist_manifest_sha256",
+      "sample_manifest_sha256",
+      "rubric_sha256"
+    ],
+    "immutable_raw_reviews": true,
+    "runtime_candidate_must_not_be_modified_to_record_reviews": true
+  },
+  "sampling_plan": {
+    "minimum_distinct_samples": 20,
+    "unit": "full_conversation_context_plus_actual_response_or_action",
+    "blinded": true,
+    "minimum_distinct_reviewers": 2,
+    "required_cross_coverage": [
+      "emotion+verified_entitlement+handoff",
+      "emotion+self_claimed_entitlement",
+      "unknown_entitlement+handoff",
+      "correction+memory",
+      "kb_no_match_or_failure+next_step"
+    ],
+    "required_review_fields": [
+      "sample_id",
+      "reviewer.source",
+      "reviewer.reviewer_id",
+      "reviewer.provenance",
+      "reviewed_at",
+      "blinded",
+      "context_sha256",
+      "response_sha256",
+      "six_dimension_scores_and_reasons"
+    ]
+  },
+  "completion_semantics": {
+    "collection_completed": "All required distinct candidate-bound samples have valid external human reviews.",
+    "calibration_pass": "Collection completed, rubric thresholds met, and major disagreement resolved or absent.",
+    "status_string_alone_is_never_sufficient": true
+  }
 }

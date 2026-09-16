@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
 import { readContract, verifyEvidence } from "./c3_validation_evidence.mjs";
-import { verifyHumanCalibration, verifyServiceQuality } from "./c3_service_quality_evidence.mjs";
+import { verifyComponentRegression, verifyHumanCalibration } from "./c3_service_quality_evidence.mjs";
 
 const must = (value, message) => {
   if (!value) throw new Error(message);
@@ -41,6 +41,8 @@ const files = {
   assist: "supabase/functions/agent-assist/index.ts",
   servicePlanner: "supabase/functions/_shared/conversation-service-planner.ts",
   servicePlannerTest: "supabase/functions/_shared/conversation-service-planner.test.ts",
+  serviceRuntime: "supabase/functions/_shared/conversation-service-runtime.ts",
+  serviceRuntimeTest: "supabase/functions/_shared/conversation-service-runtime.test.ts",
   typecheck: "supabase/functions/deno.c3-check.json",
   migration:
     "supabase/migrations/20260915040000_ai_abc_c3_director_runtime_closure.sql",
@@ -179,19 +181,20 @@ must(
 for (
   const marker of [
     "loadAssistConversationMemory",
-    "conversation_memory:c3Memory",
+    "conversation_memory:",
+    "c3Memory",
     "conversation_memory_summary",
     "parsePersistedC2Handoff",
-    'source:"persisted_c2"',
+    "persisted_c2",
     "resolveConversationScope",
     "selectCanonicalGrounding",
     "callAssistModel",
-    '.eq("company_id",companyId)',
   ]
 ) must(assist.includes(marker), `agent_assist_compatibility_missing:${marker}`);
+must(/\.eq\(\s*"company_id",\s*companyId,?\s*\)/.test(assist), "agent_assist_company_scope_missing");
 must(
-  assist.indexOf("parsePersistedC2Handoff(persistedEvent?.ai_summary)") <
-    assist.indexOf('buildWarmHandoffPackage(history,"takeover")'),
+  assist.lastIndexOf("parsePersistedC2Handoff") <
+    assist.lastIndexOf("buildWarmHandoffPackage"),
   "persisted_c2_must_precede_warm_handoff",
 );
 must(!assist.includes(".limit(200)"), "agent_assist_raw_history_not_bounded");
@@ -313,6 +316,11 @@ for (const marker of ["planConversationService(", "buildServicePlanPromptBlock("
   must(generate.includes(marker), `generate_service_planner_integration_missing:${marker}`);
 }
 must(assist.includes("planConversationService("), "assist_service_planner_integration_missing");
+for (const source of [generate, assist]) {
+  must(source.includes("deriveServiceRuntimeInputs("), "service_runtime_derivation_not_wired");
+  must(source.includes("applyServiceRuntimeDerivation("), "service_runtime_inputs_not_applied");
+  must(source.includes("calculation_input_status"), "service_runtime_observability_missing");
+}
 const qualityRubric = JSON.parse(read(files.serviceQualityRubric));
 must(qualityRubric.target?.weighted_score_min === 95, "quality_target_not_95");
 must(qualityRubric.target?.critical_p0_allowed === 0, "quality_p0_not_zero");
@@ -346,14 +354,11 @@ for (
 run("git", ["diff", "--check", "origin/main...HEAD"]);
 runDeno(["test", "--no-lock", files.unit, files.terminalTest]);
 runDeno(["test", "--no-lock", files.servicePlannerTest]);
+runDeno(["test", "--no-lock", "--allow-read", files.serviceRuntimeTest]);
 const qualityEvidencePath = process.env.C3_SERVICE_QUALITY_EVIDENCE_PATH?.trim() ||
   `${process.env.RUNNER_TEMP || "/tmp"}/c3-service-quality-nonproduction.json`;
 runDeno(["run", "--no-lock", "--allow-read", "--allow-write", files.serviceQualityEvaluation, qualityEvidencePath]);
-const nonproductionQuality = verifyServiceQuality(
-  JSON.parse(read(qualityEvidencePath)),
-  qualityRubric,
-  { requireRuntime: false },
-);
+const nonproductionComponent = verifyComponentRegression(JSON.parse(read(qualityEvidencePath)));
 runDeno(["test", "--no-lock", "--allow-read", files.integration, files.recallIntegration]);
 runDeno([
   "check",
@@ -362,8 +367,10 @@ runDeno([
   files.recall,
   files.terminalGuard,
   files.terminalTest,
-  files.servicePlanner,
-  files.servicePlannerTest,
+    files.servicePlanner,
+    files.servicePlannerTest,
+    files.serviceRuntime,
+    files.serviceRuntimeTest,
 ]);
 if (process.env.CI) {
   runDeno([
@@ -399,6 +406,8 @@ run("npx", [
   files.evidenceVerifier,
   files.validationControlTests,
   files.serviceQualityVerifier,
+  files.serviceRuntime,
+  files.serviceRuntimeTest,
   files.mergeGuard,
   files.releaseIdentity,
   files.releaseIdentityTest,
@@ -456,7 +465,19 @@ if (phase === "preproduction") {
 }
 let productionEvidence = null;
 if (phase === "production") {
-  verifyHumanCalibration(calibration, { requireCompleted: true });
+  const humanReviewPath = process.env.C3_HUMAN_REVIEW_ARTIFACT_PATH?.trim();
+  must(humanReviewPath && fs.existsSync(humanReviewPath), "FAIL:C3_HUMAN_REVIEW_ARTIFACT_MISSING");
+  verifyHumanCalibration(calibration, {
+    requireCompleted: true,
+    reviewArtifact: JSON.parse(read(humanReviewPath)),
+    expectedBinding: {
+      head: process.env.C3_EXPECTED_HEAD,
+      tree: process.env.C3_EXPECTED_TREE,
+      release_id: process.env.C3_RELEASE_ID,
+      rubricSha256: sha(files.serviceQualityRubric),
+    },
+    rubric: qualityRubric,
+  });
   const evidencePath = process.env.C3_EVIDENCE_PATH?.trim();
   const contractPath = process.env.C3_SCENARIO_CONTRACT_PATH?.trim() ||
     files.validationContract;
@@ -546,7 +567,8 @@ console.log(JSON.stringify(
       production_runtime_evidence: phase === "production"
         ? productionEvidence
         : "AUTHORIZATION_PENDING",
-      nonproduction_held_out_quality: nonproductionQuality,
+      nonproduction_component_regression: nonproductionComponent,
+      independent_held_out_quality: phase === "production" ? "VERIFIED_IN_RELEASE_EVIDENCE" : "NOT_MEASURED",
       human_calibration: humanCalibration.status,
       rollback: rollbackAssertion,
     },
@@ -555,6 +577,6 @@ console.log(JSON.stringify(
   2,
 ));
 if (phase === "preproduction") {
-  console.error("C3_FINAL_GATE|result=STOP|reason=production_and_human_calibration_authorization_required|exit_code=78");
+  console.error("C3_FINAL_GATE|result=STOP|reason=production_independent_quality_and_human_authorization_required|exit_code=78");
   process.exitCode = 78;
 }

@@ -32,9 +32,9 @@
     "unproven_kb_conflict_claim"
   ],
   "evidence_policy": {
-    "automated_nonproduction": "Executable assertions over actual candidate planner/renderer outputs; not a production score.",
-    "production": "Must be measured again from source-bound post-deploy runtime evidence.",
-    "human_calibration": "At least 20 blinded Hong Kong customer-service samples; AWAITING until reviewed by QA/user.",
+    "automated_nonproduction": "Deterministic component and runtime-wiring assertions only; quality remains NOT_MEASURED.",
+    "production": "Requires a precommitted independent dataset and rubric, source-bound runtime observations, and the immutable raw output of an external grader bound to the same HEAD, TREE, release, run, attempt and closure manifests.",
+    "human_calibration": "Requires an external candidate-bound review artifact covering at least 20 distinct blinded Hong Kong customer-service samples and two reviewers; AWAITING until valid reviews are collected and threshold/disagreement checks pass.",
     "forbidden": [
       "implementation_agent_self_rating_as_human_review",
       "post-run_oracle_or_weight_changes",

@@ -249,7 +249,41 @@ export function verifyEvidence(evidence, contractInfo, options = {}) {
 
   if (requireLiveProduction) {
     const qualityRubric = JSON.parse(fs.readFileSync(".github/scripts/c3_service_quality_rubric.json", "utf8"));
-    verifyServiceQuality(evidence.service_quality, qualityRubric, { requireRuntime: true });
+    if (!evidence.quality_contract || !/^[0-9a-f]{64}$/.test(String(evidence.quality_contract.dataset_sha256 ?? "")) || !/^[0-9a-f]{64}$/.test(String(evidence.quality_contract.rubric_sha256 ?? ""))) fail("quality_contract_binding_missing");
+    const qualityTransport = evidence.quality_contract.transport_artifact;
+    if (!qualityTransport || !/^\d+$/.test(String(qualityTransport.id ?? "")) || !/^\d+$/.test(String(qualityTransport.run_id ?? "")) || !/^sha256:[0-9a-f]{64}$/.test(String(qualityTransport.digest ?? ""))) fail("quality_transport_artifact_binding_missing");
+    const rubricSha256 = crypto.createHash("sha256").update(fs.readFileSync(".github/scripts/c3_service_quality_rubric.json")).digest("hex");
+    if (evidence.quality_contract.rubric_sha256 !== rubricSha256) fail("quality_contract_rubric_mismatch");
+    const runtimeObservations = new Map();
+    for (const row of evidence.scenarios) {
+      if (!row.response_suppressed) runtimeObservations.set(row.customer_source_message_id, {
+        assistant_message_id: row.assistant_message_id,
+        response: row.actual_reply,
+        release_id: evidence.release_identity.release_id,
+      });
+    }
+    for (const observed of evidence.long_run?.observations ?? []) {
+      const customer = observed.customer ?? {}, assistant = observed.assistant ?? {};
+      runtimeObservations.set(customer.id, {
+        assistant_message_id: assistant.id,
+        response: assistant.content,
+        release_id: evidence.release_identity.release_id,
+      });
+    }
+    verifyServiceQuality(evidence.service_quality, qualityRubric, {
+      requireRuntime: true,
+      binding: {
+        head: evidence.runner.head,
+        tree: evidence.runner.tree,
+        release_id: evidence.release_identity.release_id,
+        run_id: evidence.run.id,
+        attempt: evidence.run.attempt,
+        dataset_sha256: evidence.quality_contract.dataset_sha256,
+        rubric_sha256: rubricSha256,
+        closure_manifests: Object.fromEntries(Object.entries(evidence.release_identity.functions).map(([name, fn]) => [name, fn.manifest_sha256])),
+      },
+      runtimeObservations,
+    });
     const longRun = evidence.long_run;
     if (!longRun || longRun.fresh !== true || longRun.transport_successes < 100 || longRun.unique_customer_source_messages < 100 || longRun.assistant_persistences < 100) fail("fresh_100_turn_completion_invalid");
     if (!Array.isArray(longRun.semantic_checks) || longRun.semantic_checks.length !== 15) fail("long_run_semantic_checks_invalid");

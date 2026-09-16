@@ -165,7 +165,7 @@ Deno.test("C3 tool failure does not claim lookup, save or handoff completion", (
 Deno.test("C3 emotion is source-traced while untrusted entitlement stays unavailable", () => {
   const plan = planConversationService({ question: "我好失望，下一步係咩？", language: "zh-TW", recall: { handled: true }, memory: null, commerce });
   assert(plan.emotion_trace?.source === "current_customer_turn", JSON.stringify(plan.emotion_trace));
-  assert(plan.entitlement_status === "unavailable" && plan.entitlement_trace === undefined, JSON.stringify(plan));
+  assert(plan.entitlement_status === "unknown" && plan.entitlement_trace === undefined, JSON.stringify(plan));
   const reply = applyServiceTone(plan, "下一步是核對現行保養資料。") ?? "";
   assert(reply.startsWith("我明白這個情況令人失望"), reply);
 });

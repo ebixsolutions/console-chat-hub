@@ -228,16 +228,13 @@ Deno.test("C3 assist uses same resolver after RBAC and before its KB dependency"
   const source = Deno.readTextFileSync(
     new URL("../agent-assist/index.ts", import.meta.url),
   );
-  const start = source.indexOf(
-    "const recallRoute = prepareConversationRecall(",
-  );
-  assert(start > source.indexOf('detail:"not_assigned_to_conversation"'));
-  assert(start > source.indexOf('if(toolType==="handoff_context")'));
-  assert(start < source.indexOf("const kbPrefix="));
+  const start = source.indexOf("const recallRoute = prepareConversationRecall(");
+  const kbStart = source.indexOf("const kbPrefix");
+  assert(start > source.indexOf("not_assigned_to_conversation"));
+  assert(start > source.indexOf("handoff_context"));
+  assert(start < kbStart);
   assert(
-    source.slice(start, source.indexOf("const kbPrefix=")).includes(
-      "draft_only:true",
-    ),
+    /draft_only:\s*true/.test(source.slice(start, kbStart)),
   );
 });
 Deno.test("C3 legacy structured API delegates rather than adding a second resolver", () => {

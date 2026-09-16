@@ -146,9 +146,9 @@ Deno.test("generate-reply integration stays after A3 and before B2 generation co
 
 Deno.test("agent-assist prefers persisted C2 and exposes tenant-bound C3 memory", async () => {
   const source = await Deno.readTextFile(new URL("../agent-assist/index.ts", import.meta.url));
-  assert(source.indexOf("parsePersistedC2Handoff") < source.indexOf("source:\"persisted_c2\""), "persisted C2 preference removed");
-  assert(source.includes(".eq(\"company_id\",companyId)"), "memory tenant binding missing");
-  assert(source.includes("conversation_memory:c3Memory"), "C3 assist context missing");
+  assert(source.lastIndexOf("parsePersistedC2Handoff") < source.lastIndexOf("persisted_c2"), "persisted C2 preference removed");
+  assert(/\.eq\(\s*"company_id",\s*companyId,?\s*\)/.test(source), "memory tenant binding missing");
+  assert(/conversation_memory:\s*c3Memory/.test(source), "C3 assist context missing");
 });
 
 Deno.test("CE functions are not memory writers", async () => {

@@ -662,12 +662,13 @@ class Harness:
         }
 
     def service_quality_evidence(self, scenarios, long_run):
-        """Derive quality evidence only from persisted runtime replies.
-
-        This is an automated oracle, never a human score. The independent human
-        calibration remains a separate release requirement in the final gate.
-        """
-        rows = []
+        """Create source-bound runtime observations; never self-assign quality scores."""
+        external_path = os.environ.get("C3_EXTERNAL_QUALITY_ASSESSMENT_PATH", "").strip()
+        if external_path:
+            path = Path(external_path)
+            if not path.is_file():
+                raise RuntimeError("external_quality_assessment_missing")
+            return json.loads(path.read_text())
         sources = []
         for scenario in scenarios:
             if scenario.get("response_suppressed"):
@@ -679,7 +680,7 @@ class Harness:
                 "assistant_message_id": scenario.get("assistant_message_id"),
                 "source_bound": scenario.get("source_binding", {}).get("exact_customer_source_match") is True,
                 "b2": scenario.get("b2") or {},
-                "semantic_pass": True,
+                "observation_kind": "quick_semantic_scenario",
             })
         for index, observed in enumerate(long_run.get("observations") or [], 1):
             assistant = observed.get("assistant") or {}
@@ -696,63 +697,18 @@ class Harness:
                     "commit_source": metadata.get("b2_commit_source"),
                     "source_message_id": metadata.get("b2_source_message_id"),
                 },
-                "semantic_pass": all(check.get("pass") is True for check in long_run.get("semantic_checks") or []) if index in (6, 17, 40, 50, 55, 57, 58, 59, 68, 69, 71, 73, 90, 96, 98) else True,
+                "observation_kind": "fresh_100_turn",
             })
-        for source in sources:
-            response = source["response"]
-            lower = response.lower()
-            server_b2 = (
-                source["b2"].get("gate_contract") == "executeB2PersistenceGate:allow_after_revalidation"
-                and source["b2"].get("commit_source") == "commit_ai_reply_tx"
-                and source["b2"].get("source_message_id") == source["customer_source_message_id"]
-            )
-            assertions = {
-                "factual_grounding_and_commitment_truth": [
-                    {"name": "source_bound", "pass": source["source_bound"], "critical_p0": True},
-                    {"name": "server_b2_commit_proof", "pass": server_b2, "critical_p0": True},
-                    {"name": "no_internal_contract_leak", "pass": not any(term in lower for term in ("canonical_commerce_state", "persistence gate", "source revision"))},
-                ],
-                "resolution_and_progress": [
-                    {"name": "actual_reply_present", "pass": bool(response.strip())},
-                    {"name": "semantic_contract_pass", "pass": source["semantic_pass"]},
-                ],
-                "context_correction_and_entity": [
-                    {"name": "exact_customer_source", "pass": source["source_bound"]},
-                ],
-                "targeted_clarification_and_kb_use": [
-                    {"name": "no_fake_lookup_completion", "pass": not any(term in response for term in ("已查證但找不到", "已保存查詢", "已轉交查詢"))},
-                ],
-                "natural_language_and_concision": [
-                    {"name": "customer_facing_language", "pass": bool(response.strip()) and "undefined" not in lower and "[object object]" not in lower},
-                ],
-                "handoff_next_step_and_customer_effort": [
-                    {"name": "no_unproven_handoff", "pass": not any(term in lower for term in ("已轉交完成", "已转交完成", "handoff is complete"))},
-                ],
-            }
-            scores = {name: 10 * sum(1 for check in checks if check["pass"]) / len(checks) for name, checks in assertions.items()}
-            rows.append({
-                "id": source["id"], "family": source["family"], "response": response,
-                "response_sha256": hashlib.sha256(response.encode()).hexdigest(),
-                "customer_source_message_id": source["customer_source_message_id"],
-                "assistant_message_id": source["assistant_message_id"],
-                "measurement_source": "runtime_readback", "assertions": assertions, "scores": scores,
-            })
-        dimensions = (
-            "factual_grounding_and_commitment_truth", "resolution_and_progress",
-            "context_correction_and_entity", "targeted_clarification_and_kb_use",
-            "natural_language_and_concision", "handoff_next_step_and_customer_effort",
-        )
-        averages = {name: sum(row["scores"][name] for row in rows) / len(rows) for name in dimensions}
-        weights = {"factual_grounding_and_commitment_truth": 25, "resolution_and_progress": 25, "context_correction_and_entity": 20, "targeted_clarification_and_kb_use": 10, "natural_language_and_concision": 10, "handoff_next_step_and_customer_effort": 10}
-        weighted = sum(averages[name] / 10 * weights[name] for name in dimensions)
-        p0 = sum(1 for row in rows for checks in row["assertions"].values() for check in checks if check.get("critical_p0") and not check["pass"])
         return {
-            "schema_version": "c3-service-quality-evidence-1.0.0",
-            "mode": "live_production_runtime", "sample_count": len(rows),
-            "deterministic_regression_count": 112, "deterministic_samples_included": False,
-            "scoring": {"formula": "derived executable assertions only; no rounding", "weights": weights},
-            "dimension_averages": averages, "weighted_score": weighted,
-            "critical_p0": p0, "rows": rows,
+            "schema_version": "c3-service-quality-observations-2.0.0",
+            "mode": "live_production_runtime_observations",
+            "quality_status": "NOT_MEASURED",
+            "sample_count": len(sources),
+            "rows": [{
+                **source,
+                "response_sha256": hashlib.sha256(source["response"].encode()).hexdigest(),
+            } for source in sources],
+            "reason": "Independent candidate-bound grader artifact not supplied; transport and deterministic checks are not customer-service quality scores.",
         }
 
     def rebuild_comparison(self, conversation_id: str):
@@ -961,7 +917,30 @@ class Harness:
                 raise RuntimeError("core_runtime_observability_or_behavior_failed:" + ",".join(missing_core))
             evidence["quick_gate"] = {"all_pass": True, "long_run_started_only_after_pass": True}
             evidence["long_run"] = self.long_run()
+            if evidence["long_run"].get("transport_successes", 0) < 100:
+                raise RuntimeError("long_run_transport_incomplete")
+            if evidence["long_run"].get("semantic_total") != 15 or evidence["long_run"].get("semantic_correct") != 15:
+                raise RuntimeError("long_run_semantic_contract_failed")
             evidence["service_quality"] = self.service_quality_evidence(evidence["scenarios"], evidence["long_run"])
+            rubric_sha256 = hashlib.sha256(Path(".github/scripts/c3_service_quality_rubric.json").read_bytes()).hexdigest()
+            external_binding = evidence["service_quality"].get("binding") or {}
+            observation_rows = evidence["service_quality"].get("rows") or []
+            dataset_sha256 = str(external_binding.get("dataset_sha256") or hashlib.sha256(
+                json.dumps([
+                    {
+                        "id": row.get("id"),
+                        "customer_source_message_id": row.get("customer_source_message_id"),
+                        "assistant_message_id": row.get("assistant_message_id"),
+                        "response_sha256": row.get("response_sha256"),
+                    }
+                    for row in observation_rows
+                ], sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest())
+            evidence["quality_contract"] = {
+                "dataset_sha256": dataset_sha256,
+                "rubric_sha256": rubric_sha256,
+                "assessment_status": evidence["service_quality"].get("quality_status", "NOT_MEASURED"),
+            }
             evidence["rebuild_comparison"] = self.rebuild_comparison(evidence["long_run"]["conversation_id"])
         except Exception as error:
             failure = str(error)
