@@ -371,50 +371,78 @@ must(
   process.env.C3_MIGRATION_RUNTIME_REHEARSAL === "PASS",
   "STOP:C3_MIGRATION_RUNTIME_REHEARSAL_NOT_PROVIDED",
 );
-const generateBaseline = (process.env.C3_GENERATE_ROLLBACK_BUNDLE ?? "").trim();
-const assistBaseline = (process.env.C3_ASSIST_ROLLBACK_BUNDLE ?? "").trim();
-must(
-  generateBaseline ===
-    "2d6ebf7a47c3c6df0c0d8a971bc91727759e08925dbb0c59f79211d549528caf",
-  "generate_rollback_baseline_mismatch",
-);
-must(
-  assistBaseline ===
-    "2ec8c764205b79f11730e31b9f3624a872f050f96f24fef396d6e700e7a37aa2",
-  "assist_rollback_baseline_mismatch",
-);
-must(
-  process.env.C3_ROLLBACK_IDENTITY_MODE === "SOURCE_CLOSURE",
-  "rollback_identity_must_use_source_closure",
-);
-must(
-  process.env.C3_GENERATE_ROLLBACK_SOURCE_CLOSURE === "PASS",
-  "generate_rollback_source_closure_mismatch",
-);
-must(
-  process.env.C3_ASSIST_ROLLBACK_SOURCE_CLOSURE === "PASS",
-  "assist_rollback_source_closure_mismatch",
-);
-must(
-  process.env.C3_GENERATE_ROLLBACK_FILE_COUNT === "44",
-  "generate_rollback_file_count_mismatch",
-);
-must(
-  process.env.C3_ASSIST_ROLLBACK_FILE_COUNT === "19",
-  "assist_rollback_file_count_mismatch",
-);
-must(
-  process.env.C3_GENERATE_ROLLBACK_SOURCE_MISMATCH === "0",
-  "generate_rollback_source_mismatch",
-);
-must(
-  process.env.C3_ASSIST_ROLLBACK_SOURCE_MISMATCH === "0",
-  "assist_rollback_source_mismatch",
-);
-must(
-  process.env.C3_ASSIST_BUNDLE_REBUILD_RECONCILED === "PASS",
-  "assist_bundle_rebuild_not_reconciled",
-);
+const interimRecoveryBaseline =
+  process.env.C3_RECOVERY_INTERIM_BASELINE === "PASS";
+let rollbackAssertion;
+if (interimRecoveryBaseline) {
+  must(
+    process.env.C3_CURRENT_LIVE_DURABLE_CAPTURE === "PASS",
+    "current_live_v108_v43_durable_capture_not_verified",
+  );
+  must(
+    process.env.C3_CURRENT_LIVE_SOURCE_PARITY === "PASS",
+    "current_live_v108_v43_source_parity_not_verified",
+  );
+  rollbackAssertion = {
+    identity: "INTERIM_LIVE_RECOVERY_BASELINE",
+    classification: "NOT_PRODUCT_READY",
+    generate_reply: { version: 108, source_closure: "DURABLY_CAPTURED" },
+    agent_assist: { version: 43, source_closure: "DURABLY_CAPTURED" },
+    prior_v107_v42_exact_closure: "UNRECOVERED",
+  };
+} else {
+  const generateBaseline =
+    (process.env.C3_GENERATE_ROLLBACK_BUNDLE ?? "").trim();
+  const assistBaseline =
+    (process.env.C3_ASSIST_ROLLBACK_BUNDLE ?? "").trim();
+  must(
+    generateBaseline ===
+      "2d6ebf7a47c3c6df0c0d8a971bc91727759e08925dbb0c59f79211d549528caf",
+    "generate_rollback_baseline_mismatch",
+  );
+  must(
+    assistBaseline ===
+      "2ec8c764205b79f11730e31b9f3624a872f050f96f24fef396d6e700e7a37aa2",
+    "assist_rollback_baseline_mismatch",
+  );
+  must(
+    process.env.C3_ROLLBACK_IDENTITY_MODE === "SOURCE_CLOSURE",
+    "rollback_identity_must_use_source_closure",
+  );
+  must(
+    process.env.C3_GENERATE_ROLLBACK_SOURCE_CLOSURE === "PASS",
+    "generate_rollback_source_closure_mismatch",
+  );
+  must(
+    process.env.C3_ASSIST_ROLLBACK_SOURCE_CLOSURE === "PASS",
+    "assist_rollback_source_closure_mismatch",
+  );
+  must(
+    process.env.C3_GENERATE_ROLLBACK_FILE_COUNT === "44",
+    "generate_rollback_file_count_mismatch",
+  );
+  must(
+    process.env.C3_ASSIST_ROLLBACK_FILE_COUNT === "19",
+    "assist_rollback_file_count_mismatch",
+  );
+  must(
+    process.env.C3_GENERATE_ROLLBACK_SOURCE_MISMATCH === "0",
+    "generate_rollback_source_mismatch",
+  );
+  must(
+    process.env.C3_ASSIST_ROLLBACK_SOURCE_MISMATCH === "0",
+    "assist_rollback_source_mismatch",
+  );
+  must(
+    process.env.C3_ASSIST_BUNDLE_REBUILD_RECONCILED === "PASS",
+    "assist_bundle_rebuild_not_reconciled",
+  );
+  rollbackAssertion = {
+    identity: "SOURCE_CLOSURE",
+    generate_reply_bundle_observed: generateBaseline,
+    agent_assist_bundle_observed: assistBaseline,
+  };
+}
 
 const phase = process.env.C3_GATE_PHASE === "production"
   ? "production"
@@ -494,17 +522,15 @@ console.log(JSON.stringify(
       build: true,
       historical_quote_currentness: true,
       terminal_response_budget_ms: 90000,
-      source_closure_rollback_identity: true,
+      source_closure_rollback_identity: interimRecoveryBaseline
+        ? "INTERIM_V108_V43_DURABLE_CAPTURE"
+        : true,
       migration_runtime_rehearsal: true,
       edge_typecheck: process.env.CI ? true : "CI_REQUIRED",
       production_100_turn: phase === "production"
         ? true
         : "AUTHORIZATION_PENDING",
-      rollback: {
-        identity: "SOURCE_CLOSURE",
-        generate_reply_bundle_observed: generateBaseline,
-        agent_assist_bundle_observed: assistBaseline,
-      },
+      rollback: rollbackAssertion,
     },
   },
   null,
