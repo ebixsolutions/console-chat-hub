@@ -123,13 +123,15 @@ def write_json(path: Path, value: object) -> None:
 
 
 def classify_runtime_wait(*, allow_human_suppression: bool, customer_persisted: bool,
-                          assistant_persisted: bool, handoff_present: bool,
+                          new_assistant_count: int, handoff_present: bool,
                           conversation_status: str | None, resolved_at: str | None,
                           deadline_expired: bool) -> str:
     """Classify a widget send from persisted evidence, never from HTTP acceptance alone."""
-    if assistant_persisted and customer_persisted and deadline_expired:
+    if new_assistant_count > 1:
+        return "duplicate_assistant_response"
+    if new_assistant_count == 1 and customer_persisted and deadline_expired:
         return "assistant_persisted_after_deadline"
-    if assistant_persisted and customer_persisted:
+    if new_assistant_count == 1 and customer_persisted:
         return "assistant_persisted"
     if (allow_human_suppression and customer_persisted and handoff_present
             and conversation_status == "pending" and resolved_at is None):
@@ -301,6 +303,8 @@ class Harness:
             before = [m for m in before_payload["data"].get("messages", []) if m.get("role") == "assistant"]
         key = str(uuid.uuid4())
         sent_at = utc_now()
+        wait_started = time.time()
+        deadline = wait_started + timeout_seconds
         status, payload = self.function(
             "receive-widget-message",
             {"conversation_id": fixture["conversation_id"], "session_token": fixture["session_token"], "content": content},
@@ -309,24 +313,31 @@ class Harness:
         if status >= 300 or not payload or payload.get("success") is not True:
             raise RuntimeError(f"widget_send_failed:http_{status}:{payload}")
         send_accepted_at = utc_now()
-        deadline = time.time() + timeout_seconds
         latest = None
+        new_assistant_count = 0
         customer = None
         handoff = None
         conversation = None
         poll_attempts = 0
         last_poll_success_at = None
         last_poll_error = "none"
-        wait_started = time.time()
         terminal = "continue_waiting"
+        ai_generating = None
+        last_message_ids_types = "none"
         while time.time() < deadline:
             poll_attempts += 1
             poll_status, polled = self.poll(fixture)
             if poll_status == 200 and polled and polled.get("success"):
                 last_poll_success_at = utc_now()
                 last_poll_error = "none"
-                assistants = [m for m in polled["data"].get("messages", []) if m.get("role") == "assistant"]
-                if len(assistants) > len(before):
+                polled_messages = polled["data"].get("messages", [])
+                assistants = [m for m in polled_messages if m.get("role") == "assistant"]
+                new_assistant_count = max(0, len(assistants) - len(before))
+                ai_generating = bool(polled["data"].get("ai_generating"))
+                last_message_ids_types = ",".join(
+                    f"{m.get('id', 'unknown')}:{m.get('role', 'unknown')}" for m in polled_messages[-4:]
+                ) or "none"
+                if new_assistant_count:
                     latest = assistants[-1]
             else:
                 last_poll_error = f"widget_poll_http_{poll_status}"
@@ -361,7 +372,7 @@ class Harness:
 
             terminal = classify_runtime_wait(
                 allow_human_suppression=allow_human_suppression,
-                customer_persisted=bool(customer), assistant_persisted=bool(latest),
+                customer_persisted=bool(customer), new_assistant_count=new_assistant_count,
                 handoff_present=bool(handoff and handoff.get("escalation_rule") == "R1"),
                 conversation_status=(conversation or {}).get("status"),
                 resolved_at=(conversation or {}).get("resolved_at"), deadline_expired=False,
@@ -375,27 +386,59 @@ class Harness:
             poll_attempts += 1
             if final_poll_status == 200 and final_polled and final_polled.get("success"):
                 last_poll_success_at = utc_now()
-                assistants = [m for m in final_polled["data"].get("messages", []) if m.get("role") == "assistant"]
-                if len(assistants) > len(before):
+                polled_messages = final_polled["data"].get("messages", [])
+                assistants = [m for m in polled_messages if m.get("role") == "assistant"]
+                new_assistant_count = max(0, len(assistants) - len(before))
+                ai_generating = bool(final_polled["data"].get("ai_generating"))
+                last_message_ids_types = ",".join(
+                    f"{m.get('id', 'unknown')}:{m.get('role', 'unknown')}" for m in polled_messages[-4:]
+                ) or "none"
+                if new_assistant_count:
                     latest = assistants[-1]
             else:
                 last_poll_error = f"widget_poll_http_{final_poll_status}"
         terminal = classify_runtime_wait(
             allow_human_suppression=allow_human_suppression,
-            customer_persisted=bool(customer), assistant_persisted=bool(latest),
+            customer_persisted=bool(customer), new_assistant_count=new_assistant_count,
             handoff_present=bool(handoff and handoff.get("escalation_rule") == "R1"),
             conversation_status=(conversation or {}).get("status"),
             resolved_at=(conversation or {}).get("resolved_at"), deadline_expired=deadline_expired,
         )
         elapsed_ms = int((time.time() - wait_started) * 1000)
+        if conversation is None:
+            conversation_status, conversations = self.staff_rest("conversations", {
+                "id": f"eq.{fixture['conversation_id']}", "select": "status,resolved_at",
+            })
+            if conversation_status == 200 and isinstance(conversations, list) and len(conversations) == 1:
+                conversation = conversations[0]
+        memory_status, memory_rows = self.staff_rest("conversation_memory_state", {
+            "conversation_id": f"eq.{fixture['conversation_id']}", "select": "revision",
+        })
+        commerce_status, commerce_rows = self.staff_rest("conversation_commerce_state", {
+            "conversation_id": f"eq.{fixture['conversation_id']}", "select": "revision",
+        })
+        memory_revision = memory_rows[0].get("revision") if memory_status == 200 and isinstance(memory_rows, list) and memory_rows else None
+        commerce_revision = commerce_rows[0].get("revision") if commerce_status == 200 and isinstance(commerce_rows, list) and commerce_rows else None
         result = "PASS" if terminal in ("assistant_persisted", "expected_human_control_suppression") else "FAIL"
         print(
             "C3_RUNTIME_WAIT|"
             f"scenario={scenario_id}|source_message_id={(customer or {}).get('id') or 'unavailable'}|"
             f"send_accepted_at={send_accepted_at}|customer_persisted_at={(customer or {}).get('created_at') or 'unavailable'}|"
             f"poll_attempts={poll_attempts}|last_poll_success_at={last_poll_success_at or 'none'}|"
-            f"last_poll_error={last_poll_error}|terminal_status={terminal}|elapsed_ms={elapsed_ms}|result={result}"
+            f"last_poll_error={last_poll_error}|assistant_count={new_assistant_count}|"
+            f"ai_generating={str(ai_generating).lower()}|conversation_status={(conversation or {}).get('status') or 'unknown'}|"
+            f"terminal_status={terminal}|elapsed_ms={elapsed_ms}|result={result}"
         )
+        if result == "FAIL":
+            print(
+                "C3_RUNTIME_TIMEOUT|"
+                f"scenario={scenario_id}|source_message_id={(customer or {}).get('id') or 'unavailable'}|"
+                f"last_messages={last_message_ids_types}|route={((latest or {}).get('metadata') or {}).get('response_route') or 'unavailable'}|"
+                f"memory_revision={memory_revision}|commerce_revision={commerce_revision}|"
+                f"expected_deadline_ms={timeout_seconds * 1000}|poll_count={poll_attempts}|"
+                f"assistant_count={new_assistant_count}|ai_generating={str(ai_generating).lower()}|"
+                f"conversation_status={(conversation or {}).get('status') or 'unknown'}|result=FAIL"
+            )
         if latest and latest.get("id") and latest["id"] not in fixture["assistant_message_ids"]:
             fixture["assistant_message_ids"].append(latest["id"])
             self.persist_manifest()
@@ -935,7 +978,7 @@ def run_db_readback_contract_tests() -> None:
 
 def run_runtime_wait_contract_tests() -> None:
     base = dict(allow_human_suppression=False, customer_persisted=True,
-                assistant_persisted=False, handoff_present=False,
+                new_assistant_count=0, handoff_present=False,
                 conversation_status="open", resolved_at=None, deadline_expired=False)
 
     def check(name: str, expected: str, **changes) -> None:
@@ -943,16 +986,17 @@ def run_runtime_wait_contract_tests() -> None:
         assert actual == expected, (name, expected, actual)
         print(f"C3_RUNTIME_WAIT_CONTRACT|name={name}|expected={expected}|actual={actual}|result=PASS")
 
-    check("quick_normal_reply", "assistant_persisted", assistant_persisted=True)
+    check("quick_normal_reply", "assistant_persisted", new_assistant_count=1)
     check("expected_human_control_suppression", "expected_human_control_suppression",
           allow_human_suppression=True, handoff_present=True, conversation_status="pending")
     check("delayed_reply_within_budget_initial_wait", "continue_waiting")
-    check("delayed_reply_within_budget_terminal", "assistant_persisted", assistant_persisted=True)
+    check("delayed_reply_within_budget_terminal", "assistant_persisted", new_assistant_count=1)
     check("never_arrives_timeout", "assistant_response_timeout", deadline_expired=True)
     check("late_after_runner_deadline", "assistant_persisted_after_deadline",
-          assistant_persisted=True, deadline_expired=True)
+          new_assistant_count=1, deadline_expired=True)
     check("poll_error_then_recovery_initial_wait", "continue_waiting")
-    check("poll_error_then_recovery_terminal", "assistant_persisted", assistant_persisted=True)
+    check("poll_error_then_recovery_terminal", "assistant_persisted", new_assistant_count=1)
+    check("duplicate_response", "duplicate_assistant_response", new_assistant_count=2)
     check("customer_not_persisted", "customer_persistence_timeout",
           customer_persisted=False, deadline_expired=True)
     check("suppression_missing_handoff", "assistant_response_timeout",
