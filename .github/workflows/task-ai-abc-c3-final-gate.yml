@@ -126,8 +126,9 @@ permissions:
 
 env:
   C3_PROJECT_REF: nrfxhqabwblzxoushgnm
-  C3_CAPTURE_NAME: C3-current-live-v108-v43-recovery-baseline
+  C3_CAPTURE_NAME: C3-current-live-v112-v43-recovery-baseline
   C3_CAPTURE_RETENTION_DAYS: '30'
+  C3_CLI_VERSION: '2.117.0'
   C3_CLI_EPHEMERAL: supabase/.temp/cli-latest
   C3_ASSERT_LIB: |
     c3_assert(){ local n="$1" e="$2" a="$3"; if [ "$e" = "$a" ]; then echo "C3_SOURCE_ASSERT|name=$n|expected=$e|actual=$a|result=PASS"; else echo "C3_SOURCE_ASSERT|name=$n|expected=$e|actual=$a|result=FAIL"; return 1; fi; }
@@ -324,7 +325,7 @@ jobs:
       - uses: denoland/setup-deno@v2
         with: {deno-version: v2.9.6}
       - uses: supabase/setup-cli@v1
-        with: {version: latest}
+        with: {version: '2.117.0'}
       - run: npm ci
       - name: Bind durable artifact inputs to GitHub artifact metadata
         env:
@@ -632,8 +633,8 @@ jobs:
           test "$C3_PROJECT_REF" = nrfxhqabwblzxoushgnm
           echo C3_RECOVERY_ONLY_CAPTURE_AUTHORITY=PASS
       - uses: supabase/setup-cli@v1
-        with: {version: latest}
-      - name: Download exact current live v108 and v43 closures
+        with: {version: '2.117.0'}
+      - name: Download exact current live v112 and v43 closures
         shell: bash
         run: |
           set -euo pipefail
@@ -650,7 +651,7 @@ jobs:
           root=pathlib.Path(sys.argv[1]); before=json.loads((root/'_meta/live-functions-before.json').read_text()); after=json.loads((root/'_meta/live-functions-after.json').read_text())
           rows=before.get('functions',before) if isinstance(before,dict) else before
           after_rows=after.get('functions',after) if isinstance(after,dict) else after
-          expected={'generate-reply':(108,'f5c85c002c99ca7f094d1e1c9b1cb7349e44e73a159a8970b78a6b2a2bf7e397'),'agent-assist':(43,'eeadc5c9dfb35c51e8778756fcae96ff0c0fc68fc68599ade565ef7479e4e4cb')}
+          expected={'generate-reply':(112,'b089958882da0aaeeb8c09b295060124fc66f94c4b8b70e18aec38001fc7c052'),'agent-assist':(43,'eeadc5c9dfb35c51e8778756fcae96ff0c0fc68fc68599ade565ef7479e4e4cb')}
           index={'classification':'INTERIM LIVE RECOVERY BASELINE — NOT PRODUCT-READY','project':'nrfxhqabwblzxoushgnm','captured_at':os.environ['CAPTURED_AT'],'functions':[],'frozen_functions':[]}
           frozen={'receive-widget-message':(23,False,'3674faf3499a319269c8d9fda63bd1e7ee6ca770219b2f701854f33863d1af08'),'ce-evaluation-worker':(25,False,'626ade7e2dcd45d56314e986e1394ab70ca41e4e52f416e01324885011a682f2'),'conversation-evaluate':(20,True,'2176d2412fe921c0d3ab47abc04daa324d2101f54548ce9c29f8de95e2b7496d')}
           rx=re.compile(r'(?:from\s*|import\s*\()\s*["\x27]([^"\x27]+)["\x27]|^\s*import\s*["\x27]([^"\x27]+)["\x27]',re.M)
@@ -684,7 +685,7 @@ jobs:
             index['frozen_functions'].append({'function':fn,'version':version,'verify_jwt':verify_jwt,'import_map':False,'bundle':bundle,'status':'ACTIVE'})
           (root/'CAPTURE.json').write_text(json.dumps(index,indent=2,sort_keys=True)+'\n')
           (root/'_meta/live-functions-before.json').unlink(); (root/'_meta/live-functions-after.json').unlink(); (root/'_meta').rmdir()
-          print('CURRENT_LIVE_V108_V43_CAPTURE_PREUPLOAD=PASS')
+          print('CURRENT_LIVE_V112_V43_CAPTURE_PREUPLOAD=PASS')
           PY
           ! grep -RIlE '(SUPABASE_ACCESS_TOKEN|service_role)[[:space:]]*[:=][[:space:]]*[A-Za-z0-9_.-]{20,}' "$ROOT"
       - name: Upload protected recovery artifact
@@ -728,7 +729,7 @@ jobs:
           import hashlib,json,pathlib,sys
           root=pathlib.Path(sys.argv[1]); cap=json.loads((root/'CAPTURE.json').read_text())
           assert cap['classification']=='INTERIM LIVE RECOVERY BASELINE — NOT PRODUCT-READY' and cap['project']=='nrfxhqabwblzxoushgnm'
-          expected={'generate-reply':(108,'f5c85c002c99ca7f094d1e1c9b1cb7349e44e73a159a8970b78a6b2a2bf7e397'),'agent-assist':(43,'eeadc5c9dfb35c51e8778756fcae96ff0c0fc68fc68599ade565ef7479e4e4cb')}
+          expected={'generate-reply':(112,'b089958882da0aaeeb8c09b295060124fc66f94c4b8b70e18aec38001fc7c052'),'agent-assist':(43,'eeadc5c9dfb35c51e8778756fcae96ff0c0fc68fc68599ade565ef7479e4e4cb')}
           failed=False
           for fn,(version,bundle) in expected.items():
             base=root/fn; manifest=json.loads((base/'MANIFEST.json').read_text()); cfg=json.loads((base/'CONFIGURATION.json').read_text()); source=base/'supabase/functions'
@@ -740,7 +741,7 @@ jobs:
             for kind,items in [('missing',missing),('unexpected',unexpected),('mismatch',mismatch)]:
               for item in items: print(f'C3_ROUNDTRIP_OFFENDER|function={fn}|kind={kind}|path={item}')
           if failed: raise SystemExit(1)
-          print('CURRENT_LIVE_V108_V43_DURABLE_CAPTURE=PASS')
+          print('CURRENT_LIVE_V112_V43_DURABLE_CAPTURE=PASS')
           PY
           echo 'verified=PASS' >> "$GITHUB_OUTPUT"
 
@@ -774,7 +775,7 @@ jobs:
       - uses: denoland/setup-deno@v2
         with: {deno-version: v2.9.6}
       - uses: supabase/setup-cli@v1
-        with: {version: latest}
+        with: {version: '2.117.0'}
       - name: Verify exact CLI ephemeral isolation
         shell: bash
         run: |
@@ -788,7 +789,7 @@ jobs:
       - name: Download verified live snapshot outside checkout
         uses: actions/download-artifact@v4
         with:
-          name: ${{ env.C3_CAPTURE_NAME }}
+          name: C3-current-live-v108-v43-recovery-baseline
           path: ${{ runner.temp }}/c3-live-parity
           github-token: ${{ github.token }}
           run-id: '35045329983'
@@ -1027,7 +1028,7 @@ jobs:
           import hashlib,json,pathlib,sys
           root=pathlib.Path(sys.argv[1]); cap=json.loads((root/'CAPTURE.json').read_text())
           assert cap['classification']=='INTERIM LIVE RECOVERY BASELINE — NOT PRODUCT-READY'
-          expected={'generate-reply':(108,'f5c85c002c99ca7f094d1e1c9b1cb7349e44e73a159a8970b78a6b2a2bf7e397'),'agent-assist':(43,'eeadc5c9dfb35c51e8778756fcae96ff0c0fc68fc68599ade565ef7479e4e4cb')}
+          expected={'generate-reply':(112,'b089958882da0aaeeb8c09b295060124fc66f94c4b8b70e18aec38001fc7c052'),'agent-assist':(43,'eeadc5c9dfb35c51e8778756fcae96ff0c0fc68fc68599ade565ef7479e4e4cb')}
           for fn,(version,bundle) in expected.items():
             manifest=json.loads((root/fn/'MANIFEST.json').read_text()); cfg=json.loads((root/fn/'CONFIGURATION.json').read_text()); source=root/fn/'supabase/functions'
             exp={x['path']:x['sha256'] for x in manifest['files']}; act={p.relative_to(source).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in source.rglob('*') if p.is_file()}
@@ -1035,7 +1036,7 @@ jobs:
           print('C3_REPLACEMENT_RUNNER_DURABLE_ARTIFACT_VERIFIED=PASS')
           PY
       - uses: supabase/setup-cli@v1
-        with: {version: latest}
+        with: {version: '2.117.0'}
       - name: Fail closed on external drift before exact recovery
         shell: bash
         run: |
@@ -1078,13 +1079,14 @@ jobs:
             local fn="$1" d="$RUNNER_TEMP/replacement-readback-$1"; rm -rf "$d"; mkdir -p "$d/supabase"; cp "$GITHUB_WORKSPACE/supabase/config.toml" "$d/supabase/config.toml"
             if ! (cd "$R/$fn" && supabase functions deploy "$fn" --project-ref "$C3_PROJECT_REF" --use-api); then echo "C3_RECOVERY_RESULT|function=$fn|result=FAIL|stage=deploy"; return 1; fi
             if ! (cd "$d" && supabase functions download "$fn" --project-ref "$C3_PROJECT_REF" --use-api); then echo "C3_RECOVERY_RESULT|function=$fn|result=FAIL|stage=readback"; return 1; fi
-            if python - "$R/$fn/MANIFEST.json" "$d/supabase/functions" <<'PY'
-          import hashlib,json,pathlib,sys
-          m=json.loads(pathlib.Path(sys.argv[1]).read_text()); root=pathlib.Path(sys.argv[2])
-          exp={x['path']:x['sha256'] for x in m['files']}; act={p.relative_to(root).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in root.rglob('*') if p.is_file()}
-          if exp!=act: raise SystemExit(1)
-          PY
-            then echo "C3_RECOVERY_RESULT|function=$fn|result=PASS"; else echo "C3_RECOVERY_RESULT|function=$fn|result=FAIL|stage=identity"; return 1; fi
+            supabase functions list --project-ref "$C3_PROJECT_REF" --output json > "$d/functions.json" || return 1
+            if node "$GITHUB_WORKSPACE/.github/scripts/c3_release_identity.mjs" rollback --function "$fn" \
+              --source-root "$d/supabase/functions" --baseline "$R/$fn/MANIFEST.json" \
+              --configuration "$R/$fn/CONFIGURATION.json" --metadata "$d/functions.json"; then
+              echo "C3_RECOVERY_RESULT|function=$fn|source=EXACT|configuration=EXACT|bundle=EXACT|result=PASS"
+            else
+              echo "C3_RECOVERY_RESULT|function=$fn|result=FAIL|stage=exact_runtime_identity"; return 1
+            fi
           }
           if [ "${{ inputs.recover_generate_reply }}" = true ] && [ "$(cat "$RUNNER_TEMP/recovery-class-generate-reply")" = target ]; then recover generate-reply || failed=1; fi
           if [ "${{ inputs.recover_agent_assist }}" = true ] && [ "$(cat "$RUNNER_TEMP/recovery-class-agent-assist")" = target ]; then recover agent-assist || failed=1; fi
@@ -1106,7 +1108,7 @@ jobs:
       - uses: actions/checkout@v4
         with: {ref: '${{ github.event.pull_request.head.sha }}', fetch-depth: 0, clean: true}
       - uses: supabase/setup-cli@v1
-        with: {version: latest}
+        with: {version: '2.117.0'}
       - uses: actions/setup-node@v4
         with: {node-version: '22'}
       - name: Re-download durable baseline before first forward write
@@ -1118,6 +1120,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$AUTHORIZED_HEAD"
+          test "$(supabase --version)" = "$C3_CLI_VERSION"
           test -s "$RUNNER_TEMP/baseline/CAPTURE.json"
           test -s "$RUNNER_TEMP/baseline/generate-reply/MANIFEST.json"
           test -s "$RUNNER_TEMP/baseline/agent-assist/MANIFEST.json"
@@ -1141,6 +1144,11 @@ jobs:
             for rel in [row['path'] for row in proposed['files']]:
               src=repo/rel; dst=work/'supabase/functions'/rel; dst.parent.mkdir(parents=True,exist_ok=True); shutil.copy2(src,dst)
           PY
+          for fn in generate-reply agent-assist; do
+            node .github/scripts/c3_release_identity.mjs package --function "$fn" \
+              --source-root "$RUNNER_TEMP/forward/$fn/supabase/functions" \
+              --target "$RUNNER_TEMP/release/target/$fn/MANIFEST.json"
+          done
           python - "$RUNNER_TEMP/baseline" "$RUNNER_TEMP/release" <<'PY'
           import hashlib,json,os,pathlib,sys
           baseline=pathlib.Path(sys.argv[1]); release=pathlib.Path(sys.argv[2])
@@ -1339,12 +1347,10 @@ jobs:
           verify_restored(){
             local fn="$1" d="$RUNNER_TEMP/recovered-$1"; rm -rf "$d"; mkdir -p "$d/supabase"; cp supabase/config.toml "$d/supabase/config.toml"
             (cd "$d" && supabase functions download "$fn" --project-ref "$C3_PROJECT_REF" --use-api) || return 1
-            python - "$R/$fn/MANIFEST.json" "$d/supabase/functions" <<'PY'
-          import hashlib,json,pathlib,sys
-          m=json.loads(pathlib.Path(sys.argv[1]).read_text()); root=pathlib.Path(sys.argv[2])
-          exp={x['path']:x['sha256'] for x in m['files']}; act={p.relative_to(root).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in root.rglob('*') if p.is_file()}
-          if exp!=act: raise SystemExit(1)
-          PY
+            supabase functions list --project-ref "$C3_PROJECT_REF" --output json > "$d/functions.json" || return 1
+            node .github/scripts/c3_release_identity.mjs rollback --function "$fn" \
+              --source-root "$d/supabase/functions" --baseline "$R/$fn/MANIFEST.json" \
+              --configuration "$R/$fn/CONFIGURATION.json" --metadata "$d/functions.json"
           }
           if [ "${{ steps.deploy_generate.outputs.attempted }}" = true ] && [ "${{ steps.readback_generate.outputs.identity }}" != baseline ]; then
             if (cd "$R/generate-reply" && supabase functions deploy generate-reply --project-ref "$C3_PROJECT_REF" --use-api) && verify_restored generate-reply; then echo 'C3_RECOVERY_RESULT|function=generate-reply|result=PASS'; else echo 'C3_RECOVERY_RESULT|function=generate-reply|result=FAIL'; failed=1; fi

@@ -6,7 +6,10 @@ import {
   type SupportedLocale,
   type SupportedMarket,
 } from "./deterministic-commerce-engine.ts";
-import type { AggregationAuthorityMetadata } from "./kb-aggregation-response.ts";
+import {
+  createAggregationAuthorityMetadata,
+  type AggregationAuthorityMetadata,
+} from "./kb-aggregation-response.ts";
 
 export interface KBQueryInput {
   query: string;
@@ -277,7 +280,7 @@ export async function fetchKBRag(
       dropped_without_document_id: 0,
       dropped_without_content: 0,
     };
-    const authority: AggregationAuthorityMetadata = {
+    const authority: AggregationAuthorityMetadata = createAggregationAuthorityMetadata({
       tenant_id: scope.singaporeTenantId,
       publication_state: "published",
       currentness: "current",
@@ -289,7 +292,7 @@ export async function fetchKBRag(
       updated_at: null,
       source_priority: null,
       claims: [],
-    };
+    });
     return {
       document_id: documentId,
       title: rows[0]?.title ?? "",

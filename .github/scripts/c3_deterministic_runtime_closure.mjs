@@ -2,6 +2,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { resolveLocalModule, runtimeLocalImports } from "./c3_module_graph.mjs";
 
 const ROOTS = [
   "supabase/functions/generate-reply/index.ts",
@@ -21,13 +22,7 @@ const must = (value, message) => {
   if (!value) throw new Error(message);
 };
 
-export function localImports(source) {
-  const imports = [];
-  const pattern =
-    /(?:import|export)\s+(?:type\s+)?(?:[\s\S]*?\s+from\s+)?["'](\.{1,2}\/[^"']+)["']/g;
-  for (const match of source.matchAll(pattern)) imports.push(match[1]);
-  return imports;
-}
+export const localImports = runtimeLocalImports;
 
 export function verifyDeterministicClosure({ root = process.cwd(), roots = ROOTS } = {}) {
   const visited = new Set();
@@ -42,7 +37,8 @@ export function verifyDeterministicClosure({ root = process.cwd(), roots = ROOTS
     must(!/\bimport\s*\(/u.test(source), `dynamic_import_forbidden:${relative}`);
     must(!FORBIDDEN_REMOTE.test(source), `external_model_endpoint_reachable:${relative}`);
     for (const specifier of localImports(source)) {
-      const target = path.resolve(path.dirname(file), specifier);
+      const target = resolveLocalModule(root, file, specifier);
+      must(target, `closure_dependency_missing:${relative}:${specifier}`);
       must(
         !FORBIDDEN_FILES.some((name) => target.endsWith(name)),
         `model_router_reachable:${relative}:${specifier}`,

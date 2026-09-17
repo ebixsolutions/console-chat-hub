@@ -10,6 +10,9 @@ assert.equal(result.external_model_calls, 0);
 assert.equal(result.external_api_cost_usd, 0);
 assert.match(result.closure_sha256, /^[0-9a-f]{64}$/);
 assert(localImports('import { x } from "./x.ts";').includes("./x.ts"));
+assert(!localImports('import type { X } from "./type-only.ts";').includes("./type-only.ts"));
+assert(!localImports('import { type X } from "./type-only.ts";').includes("./type-only.ts"));
+assert(localImports('import { type X, y } from "./mixed.ts";').includes("./mixed.ts"));
 
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "c3-closure-"));
 try {

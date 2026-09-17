@@ -3,10 +3,16 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { runtimeDependencyClosure, runtimeLocalImports } from "./c3_module_graph.mjs";
 
 export const RELEASE_SCHEMA = "ai-abc-c3-release-identity-1.0.0";
 export const INTENT_SCHEMA = "ai-abc-c3-release-intent-1.0.0";
 export const FUNCTIONS = Object.freeze(["generate-reply", "agent-assist"]);
+export const SUPABASE_CLI_VERSION = "2.117.0";
+const REQUIRED_RUNTIME_FILES = Object.freeze({
+  "generate-reply": ["_shared/kb-aggregation-response.ts"],
+  "agent-assist": ["_shared/kb-aggregation-response.ts"],
+});
 const sha = (value) => crypto.createHash("sha256").update(value).digest("hex");
 const fail = (message) => { throw new Error(message); };
 const required = (value, name) => {
@@ -36,36 +42,16 @@ function normalizeBaselineIdentity(value) {
   return baseline;
 }
 
-function dependencyClosurePaths(root, entrypoint) {
-  const pending = [entrypoint];
-  const seen = new Set();
-  while (pending.length) {
-    const relative = pending.pop();
-    if (seen.has(relative)) continue;
-    const absolute = path.resolve(root, relative);
-    if (!absolute.startsWith(`${root}${path.sep}`) || !fs.existsSync(absolute) || !fs.statSync(absolute).isFile()) {
-      fail(`target_file_missing_or_unsafe:${relative}`);
-    }
-    seen.add(relative);
-    const source = fs.readFileSync(absolute, "utf8");
-    const imports = [...source.matchAll(/(?:from\s*|import\s*\()\s*["'](\.[^"']+)["']/g)].map((match) => match[1]);
-    for (const specifier of imports) {
-      const unresolved = path.resolve(path.dirname(absolute), specifier);
-      const candidates = path.extname(unresolved) ? [unresolved] : [`${unresolved}.ts`, `${unresolved}.json`, path.join(unresolved, "index.ts")];
-      const found = candidates.find((candidate) => fs.existsSync(candidate) && fs.statSync(candidate).isFile());
-      if (!found || !found.startsWith(`${root}${path.sep}`)) fail(`relative_dependency_missing_or_unsafe:${relative}:${specifier}`);
-      pending.push(path.relative(root, found).split(path.sep).join("/"));
-    }
-  }
-  return [...seen].sort();
-}
-
 export function createTargetManifest({ functionName, sourceRoot, template, head, tree }) {
   if (!FUNCTIONS.includes(functionName)) fail(`function_not_allowed:${functionName}`);
   const root = path.resolve(sourceRoot);
   if (template && (!Array.isArray(template.files) || template.files.length === 0)) fail("closure_template_files_missing");
   const entrypoint = `${functionName}/index.ts`;
-  const files = dependencyClosurePaths(root, entrypoint).map((relative) => {
+  const closure = runtimeDependencyClosure({ root, entrypoints: [entrypoint] });
+  for (const requiredFile of REQUIRED_RUNTIME_FILES[functionName]) {
+    if (!closure.includes(requiredFile)) fail(`required_runtime_dependency_not_reachable:${functionName}:${requiredFile}`);
+  }
+  const files = closure.map((relative) => {
     const absolute = path.resolve(root, relative);
     if (!absolute.startsWith(`${root}${path.sep}`) || !fs.statSync(absolute).isFile()) fail(`target_file_missing_or_unsafe:${relative}`);
     return { path: relative, sha256: sha(fs.readFileSync(absolute)) };
@@ -80,14 +66,107 @@ export function createTargetManifest({ functionName, sourceRoot, template, head,
     entrypoint,
     verify_jwt: true,
     import_map: false,
+    dependency_kind: "runtime_module_graph",
+    deployment_toolchain: { supabase_cli: SUPABASE_CLI_VERSION, bundle_method: "management_api" },
     file_count: files.length,
     files,
   };
   return { ...manifest, manifest_sha256: sha(Buffer.from(canonicalJson(manifest) + "\n")) };
 }
 
+function manifestFileMap(manifest) {
+  if (!manifest || !Array.isArray(manifest.files) || manifest.files.length === 0) fail("manifest_files_missing");
+  return new Map(manifest.files.map((row) => [row.path, row.sha256]));
+}
+
+function sourceFileMap(sourceRoot) {
+  const root = path.resolve(sourceRoot);
+  const files = new Map();
+  const visit = (directory) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) visit(absolute);
+      else if (entry.isFile()) files.set(path.relative(root, absolute).split(path.sep).join("/"), sha(fs.readFileSync(absolute)));
+    }
+  };
+  if (!fs.existsSync(root)) fail("source_root_missing");
+  visit(root);
+  return files;
+}
+
+function compareFileMaps(expected, actual, label) {
+  const missing = [...expected.keys()].filter((key) => !actual.has(key));
+  const unexpected = [...actual.keys()].filter((key) => !expected.has(key));
+  const mismatch = [...expected].filter(([key, value]) => actual.has(key) && actual.get(key) !== value).map(([key]) => key);
+  if (missing.length || unexpected.length || mismatch.length) {
+    fail(`${label}:missing=${missing.length}:unexpected=${unexpected.length}:hash=${mismatch.length}`);
+  }
+  return { missing: 0, unexpected: 0, hash_mismatch: 0 };
+}
+
+export function verifyDeploymentPackage({ functionName, sourceRoot, target }) {
+  if (target.function !== functionName) fail(`deployment_package_function_mismatch:${functionName}`);
+  const expected = manifestFileMap(target);
+  const actual = sourceFileMap(sourceRoot);
+  compareFileMaps(expected, actual, `deployment_package_source_mismatch:${functionName}`);
+  const rebuilt = createTargetManifest({
+    functionName,
+    sourceRoot,
+    template: target,
+    head: target.head,
+    tree: target.tree,
+  });
+  if (rebuilt.manifest_sha256 !== target.manifest_sha256) fail(`deployment_package_manifest_mismatch:${functionName}`);
+  return { function: functionName, file_count: actual.size, manifest_sha256: target.manifest_sha256, result: "PASS" };
+}
+
+export function verifyRollbackIdentity({ functionName, sourceRoot, baselineManifest, baselineConfiguration, metadata }) {
+  if (baselineManifest.function !== functionName) fail(`rollback_function_mismatch:${functionName}`);
+  compareFileMaps(
+    manifestFileMap(baselineManifest),
+    sourceFileMap(sourceRoot),
+    `rollback_source_mismatch:${functionName}`,
+  );
+  const expectedBundle = required(
+    baselineConfiguration.observed_bundle_sha256 ?? baselineManifest.observed_bundle_sha256,
+    "baseline.observed_bundle_sha256",
+  );
+  const observedBundle = required(metadata.ezbr_sha256, "metadata.ezbr_sha256");
+  const expectedEntrypoint = `${functionName}/index.ts`;
+  const baselineConfigValid = baselineConfiguration.status === "ACTIVE" &&
+    baselineConfiguration.verify_jwt === true &&
+    baselineConfiguration.import_map === false &&
+    baselineConfiguration.entrypoint === expectedEntrypoint;
+  if (!baselineConfigValid) fail(`rollback_baseline_configuration_invalid:${functionName}`);
+  const configExact = metadata.status === "ACTIVE" &&
+    metadata.verify_jwt === true &&
+    metadata.import_map === false &&
+    String(metadata.entrypoint_path ?? "").endsWith(`/${expectedEntrypoint}`);
+  if (!configExact) fail(`rollback_configuration_mismatch:${functionName}`);
+  if (observedBundle !== expectedBundle) fail(`rollback_bundle_mismatch:${functionName}:expected=${expectedBundle}:actual=${observedBundle}`);
+  const baselineVersion = Number(baselineConfiguration.version ?? baselineManifest.version);
+  const restoredVersion = Number(metadata.version);
+  if (!Number.isInteger(baselineVersion) || !Number.isInteger(restoredVersion) || restoredVersion <= baselineVersion) {
+    fail(`rollback_version_transition_invalid:${functionName}`);
+  }
+  return {
+    function: functionName,
+    source_identity: "EXACT",
+    configuration_identity: "EXACT",
+    bundle_identity: "EXACT",
+    baseline_version: baselineVersion,
+    restored_version: restoredVersion,
+    version_identity: "NEW_PLATFORM_VERSION",
+    result: "PASS",
+  };
+}
+
 export function verifyActualAgainstTarget(target, actual) {
-  for (const key of ["project", "function", "verify_jwt", "import_map", "file_count"]) {
+  for (const key of ["project", "function", "verify_jwt", "import_map", "dependency_kind", "deployment_toolchain", "file_count"]) {
+    if (key === "deployment_toolchain") {
+      if (canonicalJson(actual[key]) !== canonicalJson(target[key])) fail(`actual_target_${key}_mismatch:${target.function}`);
+      continue;
+    }
     if (actual[key] !== target[key]) fail(`actual_target_${key}_mismatch:${target.function}`);
   }
   const expected = new Map(target.files.map((row) => [row.path, row.sha256]));
@@ -274,6 +353,32 @@ function main() {
     verifyActualAgainstTarget(target, observed);
     write(required(args.out, "--out"), observed);
     console.log(`C3_ACTUAL_MANIFEST|function=${observed.function}|version=${observed.version}|sha256=${observed.manifest_sha256}|result=PASS`);
+    return;
+  }
+  if (args.command === "package") {
+    const target = json(required(args.target, "--target"));
+    const result = verifyDeploymentPackage({
+      functionName: required(args.function, "--function"),
+      sourceRoot: required(args["source-root"], "--source-root"),
+      target,
+    });
+    console.log(`C3_DEPLOYMENT_PACKAGE|function=${result.function}|files=${result.file_count}|sha256=${result.manifest_sha256}|result=PASS`);
+    return;
+  }
+  if (args.command === "rollback") {
+    const rawMetadata = json(required(args.metadata, "--metadata"));
+    const rows = Array.isArray(rawMetadata) ? rawMetadata : rawMetadata.functions;
+    const functionName = required(args.function, "--function");
+    const metadata = rows?.find((row) => (row.slug ?? row.name) === functionName);
+    if (!metadata) fail(`rollback_metadata_missing:${functionName}`);
+    const result = verifyRollbackIdentity({
+      functionName,
+      sourceRoot: required(args["source-root"], "--source-root"),
+      baselineManifest: json(required(args.baseline, "--baseline")),
+      baselineConfiguration: json(required(args.configuration, "--configuration")),
+      metadata,
+    });
+    console.log(`C3_ROLLBACK_IDENTITY|function=${result.function}|source=${result.source_identity}|configuration=${result.configuration_identity}|bundle=${result.bundle_identity}|baseline_version=${result.baseline_version}|restored_version=${result.restored_version}|result=PASS`);
     return;
   }
   if (args.command === "create-release") {

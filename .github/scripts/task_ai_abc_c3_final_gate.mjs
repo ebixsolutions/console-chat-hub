@@ -42,6 +42,7 @@ const files = {
   deterministicEngineTest: "supabase/functions/_shared/deterministic-commerce-engine.test.ts",
   deterministicRouter: "supabase/functions/_shared/deterministic-runtime-router.ts",
   deterministicKbClient: "supabase/functions/_shared/deterministic-kb-client.ts",
+  kbAggregationResponse: "supabase/functions/_shared/kb-aggregation-response.ts",
   deterministicCeGrounding: "supabase/functions/_shared/ce-grounding.ts",
   deterministicCanonicalGrounding: "supabase/functions/_shared/canonical-grounding.ts",
   deterministicCitationLineage: "supabase/functions/_shared/citation-lineage.ts",
@@ -80,6 +81,7 @@ const files = {
   mergeGuard: ".github/scripts/c3_merge_no_redeploy_guard.mjs",
   releaseIdentity: ".github/scripts/c3_release_identity.mjs",
   releaseIdentityTest: ".github/scripts/c3_release_identity.test.mjs",
+  moduleGraph: ".github/scripts/c3_module_graph.mjs",
   serviceQualityRubric: ".github/scripts/c3_service_quality_rubric.json",
   serviceQualityCalibration: ".github/scripts/c3_service_quality_human_calibration.json",
   serviceQualityEvaluation: ".github/scripts/c3_service_quality_nonproduction.ts",
@@ -489,6 +491,11 @@ run("npx", [
   files.mergeGuard,
   files.releaseIdentity,
   files.releaseIdentityTest,
+  files.moduleGraph,
+  files.deterministicClosure,
+  files.deterministicClosureTest,
+  files.deterministicKbClient,
+  files.kbAggregationResponse,
   files.realCustomerDatasetVerifier,
   files.realCustomerDatasetTest,
   files.independentGraderVerifier,
@@ -575,7 +582,7 @@ if (phase === "preproduction") {
   );
   must(
     process.env.C3_CURRENT_LIVE_DURABLE_CAPTURE === "PASS",
-    "current_live_v108_v43_durable_capture_not_verified",
+    "current_live_v112_v43_durable_capture_not_verified",
   );
   const liveSourceParity = process.env.C3_CURRENT_LIVE_SOURCE_PARITY === "PASS";
   const sourceDeploymentBoundary =
@@ -588,7 +595,7 @@ if (phase === "preproduction") {
   rollbackAssertion = {
     identity: "INTERIM_LIVE_RECOVERY_BASELINE",
     classification: "NOT_PRODUCT_READY",
-    generate_reply: { version: 108, source_closure: "DURABLY_CAPTURED" },
+    generate_reply: { version: 112, source_closure: "DURABLY_CAPTURED", bundle_identity: "CAPTURED" },
     agent_assist: { version: 43, source_closure: "DURABLY_CAPTURED" },
     prior_v107_v42_exact_closure: "UNRECOVERED",
   };
@@ -688,7 +695,7 @@ console.log(JSON.stringify(
       build: true,
       historical_quote_currentness: true,
       terminal_response_budget_ms: 90000,
-      source_closure_rollback_identity: "INTERIM_V108_V43_DURABLE_CAPTURE",
+      source_closure_rollback_identity: "INTERIM_V112_V43_DURABLE_CAPTURE_WITH_EXACT_BUNDLE_VERIFICATION",
       migration_runtime_rehearsal: true,
       edge_typecheck: process.env.CI ? true : "CI_REQUIRED",
       production_100_turn: phase === "production"
