@@ -4,6 +4,9 @@ import fs from "node:fs";
 import { execFileSync } from "node:child_process";
 import { readContract, verifyEvidence } from "./c3_validation_evidence.mjs";
 import { verifyComponentRegression, verifyHumanCalibration } from "./c3_service_quality_evidence.mjs";
+import { verifyCommittedState as verifyRealCustomerCommittedState, verifyFreezeManifest } from "./c3_real_customer_dataset.mjs";
+import { verifyIndependentGraderArtifact } from "./c3_nonproduction_independent_grader.mjs";
+import { verifyHumanCalibration as verifyBlindHumanCalibration } from "./c3_human_blind_calibration.mjs";
 
 const must = (value, message) => {
   if (!value) throw new Error(message);
@@ -78,6 +81,17 @@ const files = {
   nonproductionRunner: ".github/scripts/c3_nonproduction_external_quality.mjs",
   nonproductionRunnerTest: ".github/scripts/c3_nonproduction_external_quality.test.mjs",
   nonproductionRuntimeIdentity: ".github/scripts/c3_nonproduction_runtime_identity.json",
+  realCustomerSourceRegistry: ".github/scripts/c3_real_customer_source_registry.json",
+  realCustomerDatasetSchema: ".github/scripts/c3_real_customer_heldout_dataset_v1.schema.json",
+  realCustomerDataset: ".github/scripts/c3_real_customer_heldout_dataset_v1.json",
+  realCustomerFreeze: ".github/scripts/c3_real_customer_freeze_manifest_v1.json",
+  realCustomerDatasetVerifier: ".github/scripts/c3_real_customer_dataset.mjs",
+  realCustomerDatasetTest: ".github/scripts/c3_real_customer_dataset.test.mjs",
+  independentGraderVerifier: ".github/scripts/c3_nonproduction_independent_grader.mjs",
+  independentGraderTest: ".github/scripts/c3_nonproduction_independent_grader.test.mjs",
+  humanBlindCalibration: ".github/scripts/c3_human_blind_calibration.mjs",
+  humanBlindCalibrationTest: ".github/scripts/c3_human_blind_calibration.test.mjs",
+  realCustomerEvidenceDoc: ".github/docs/c3-real-customer-quality-evidence.md",
   task42DeployWorkflow: ".github/workflows/task4-2-deploy-live-console-edge.yml",
 };
 for (const file of Object.values(files)) {
@@ -348,6 +362,9 @@ must(qualityRubric.target?.weighted_score_min === 95, "quality_target_not_95");
 must(qualityRubric.target?.critical_p0_allowed === 0, "quality_p0_not_zero");
 const calibration = JSON.parse(read(files.serviceQualityCalibration));
 const humanCalibration = verifyHumanCalibration(calibration, { requireCompleted: false });
+const realCustomerDataset = verifyRealCustomerCommittedState();
+must(["READY", "BLOCKED"].includes(realCustomerDataset.status), "real_customer_dataset_status_invalid");
+must(realCustomerDataset.actual_case_count <= 100, "real_customer_dataset_count_invalid");
 
 for (
   const file of [
@@ -441,15 +458,58 @@ run("npx", [
   files.mergeGuard,
   files.releaseIdentity,
   files.releaseIdentityTest,
+  files.realCustomerDatasetVerifier,
+  files.realCustomerDatasetTest,
+  files.independentGraderVerifier,
+  files.independentGraderTest,
+  files.humanBlindCalibration,
+  files.humanBlindCalibrationTest,
 ]);
 run("python", ["-c", "import ast,pathlib,sys; ast.parse(pathlib.Path(sys.argv[1]).read_text())", files.validationRunner]);
 run("node", [files.validationControlTests]);
 run("node", [files.releaseIdentityTest]);
+run("node", [files.realCustomerDatasetTest]);
+run("node", [files.independentGraderTest]);
+run("node", [files.humanBlindCalibrationTest]);
 run("npm", ["run", "build"]);
 
 const phase = process.env.C3_GATE_PHASE === "production"
   ? "production"
   : "preproduction";
+let realCustomerQualityComplete = false;
+let verifiedRealCustomerQuality = null;
+if (realCustomerDataset.status === "READY") {
+  const requiredPaths = {
+    runtime: process.env.C3_REAL_CUSTOMER_RUNTIME_ARTIFACT_PATH?.trim(),
+    rawGrader: process.env.C3_RAW_GRADER_ARTIFACT_PATH?.trim(),
+    humanPacket: process.env.C3_HUMAN_BLIND_PACKET_PATH?.trim(),
+    humanReviews: process.env.C3_HUMAN_BLIND_REVIEW_ARTIFACT_PATH?.trim(),
+  };
+  for (const [name, file] of Object.entries(requiredPaths)) must(file && fs.existsSync(file), `real_customer_artifact_missing:${name}`);
+  const candidate = { head: process.env.C3_EXPECTED_HEAD, tree: process.env.C3_EXPECTED_TREE };
+  const dataset = JSON.parse(read(files.realCustomerDataset));
+  const registry = JSON.parse(read(files.realCustomerSourceRegistry));
+  const freeze = JSON.parse(read(files.realCustomerFreeze));
+  verifyFreezeManifest(freeze, dataset, registry, candidate);
+  const grader = verifyIndependentGraderArtifact({
+    raw: JSON.parse(read(requiredPaths.rawGrader)),
+    runtime: JSON.parse(read(requiredPaths.runtime)),
+    dataset,
+    freeze,
+    rubric: qualityRubric,
+    expectedCandidate: candidate,
+    rawArtifactSha256: process.env.C3_RAW_GRADER_CANONICAL_SHA256,
+  });
+  must(grader.pass === true, "real_customer_quality_threshold_not_met");
+  const human = verifyBlindHumanCalibration({
+    artifact: JSON.parse(read(requiredPaths.humanReviews)),
+    packet: JSON.parse(read(requiredPaths.humanPacket)),
+    expectedCandidate: candidate,
+    rubric: qualityRubric,
+  });
+  realCustomerQualityComplete = human.status === "CALIBRATED";
+  verifiedRealCustomerQuality = { grader, human };
+}
 let rollbackAssertion;
 if (phase === "preproduction") {
   must(
@@ -546,7 +606,7 @@ console.log(JSON.stringify(
   {
     gate: "AI_ABC_C3_FINAL_GATE",
     phase,
-    status: phase === "preproduction" ? "STOP_AUTHORIZATION_REQUIRED" : "PASS",
+    status: realCustomerQualityComplete && phase === "production" ? "PASS" : "STOP_AUTHORIZATION_REQUIRED",
     closure_contract: {
       memory_version: "conversation-memory-1.0.0",
       storage: "public.conversation_memory_state",
@@ -598,15 +658,21 @@ console.log(JSON.stringify(
         ? productionEvidence
         : "AUTHORIZATION_PENDING",
       nonproduction_component_regression: nonproductionComponent,
-      independent_held_out_quality: phase === "production" ? "VERIFIED_IN_RELEASE_EVIDENCE" : "NOT_MEASURED",
+      independent_held_out_quality: realCustomerQualityComplete ? "VERIFIED_REAL_CUSTOMER" : "NOT_MEASURED",
       human_calibration: humanCalibration.status,
+      real_customer_dataset: realCustomerDataset.status,
+      real_customer_case_count: realCustomerDataset.actual_case_count,
+      real_customer_quality_score: realCustomerQualityComplete ? verifiedRealCustomerQuality.grader.weighted_score : "NOT_MEASURED",
+      real_customer_human_calibration: realCustomerQualityComplete ? "CALIBRATED" : "AWAITING",
+      verified_real_customer_quality: verifiedRealCustomerQuality,
+      product_ready: realCustomerQualityComplete && phase === "production",
       rollback: rollbackAssertion,
     },
   },
   null,
   2,
 ));
-if (phase === "preproduction") {
+if (!realCustomerQualityComplete || phase === "preproduction") {
   console.error("C3_FINAL_GATE|result=STOP|reason=production_independent_quality_and_human_authorization_required|exit_code=78");
   process.exitCode = 78;
 }

@@ -46,8 +46,9 @@ export function sourceClosureManifest(entry) {
 export function loadFrozenDataset(file = DATASET_PATH) {
   const bytes = fs.readFileSync(file);
   const value = JSON.parse(bytes);
-  if (value.schema_version !== "c3-nonproduction-heldout-1.0.0") fail("dataset_schema_invalid");
+  if (value.schema_version !== "c3-synthetic-regression-dataset-1.1.0") fail("dataset_schema_invalid");
   if (value.repository !== "ebixsolutions/console-chat-hub") fail("dataset_repository_invalid");
+  if (value.source_type !== "synthetic_regression" || value.quality_score !== "NOT_MEASURED" || value.held_out_real_customer !== false || value.quality_denominator_eligible !== false) fail("dataset_synthetic_classification_invalid");
   if (value.candidate?.base_head !== BASE_HEAD || value.candidate?.base_tree !== BASE_TREE || value.candidate?.binding_mode !== "workflow_checkout_and_closure_manifest") fail("dataset_candidate_invalid");
   if (value.frozen_before_responses !== true || value.response_count_at_freeze !== 0) fail("dataset_not_prefrozen");
   if (!Array.isArray(value.cases) || value.cases.length < 100 || value.case_count !== value.cases.length) fail("dataset_case_count_invalid");
@@ -59,6 +60,7 @@ export function loadFrozenDataset(file = DATASET_PATH) {
     if (typeof row.customer_message !== "string" || row.customer_message.trim().length < 20) fail(`dataset_message_invalid:${row.id}`);
     if (!['short','medium','long'].includes(row.conversation_length)) fail(`dataset_length_invalid:${row.id}`);
     if (!['generate-reply','agent-assist'].includes(row.endpoint)) fail(`dataset_endpoint_invalid:${row.id}`);
+    if (row.source_type !== "synthetic_regression" || row.quality_score !== "NOT_MEASURED" || row.held_out_real_customer !== false) fail(`dataset_case_classification_invalid:${row.id}`);
     if (row.context_contract?.synthetic !== true || row.context_contract?.must_not_assume !== true) fail(`dataset_context_invalid:${row.id}`);
     if (!Array.isArray(row.oracle?.critical_prohibitions) || !row.oracle.critical_prohibitions.includes("invent_facts")) fail(`dataset_oracle_invalid:${row.id}`);
     ids.add(row.id); categories.add(row.category); endpoints.add(row.endpoint);
@@ -160,6 +162,7 @@ async function cleanupBaseFixtures(base, key, userId) {
 
 export function verifyEvidence(evidence, datasetHash) {
   if (evidence.schema_version !== "c3-nonproduction-http-evidence-1.0.0") fail("evidence_schema_invalid");
+  if (evidence.source_type !== "synthetic_regression" || evidence.quality_score !== "NOT_MEASURED" || evidence.held_out_real_customer !== false || evidence.quality_denominator_eligible !== false) fail("evidence_synthetic_classification_invalid");
   validateIsolation(evidence.binding);
   const generate = sourceClosureManifest("generate-reply/index.ts");
   const assist = sourceClosureManifest("agent-assist/index.ts");
@@ -207,7 +210,7 @@ async function executeHeldout(dataset, binding, outFile) {
       const customerRef=`cus_${sha(Buffer.from(row.id)).slice(0,24)}`;
       conversationIds.push(conversationId); messageIds.push(sourceMessageId); visitorIds.push(visitorId); crmCustomerIds.push(crmCustomerId);
       await restInsert(base,serviceKey,"visitor_session",[{id:visitorId,session_token:`c3-${row.id}`,channel_config_id:BASE_FIXTURE.channel,visitor_fingerprint:`synthetic-${row.id}`,visitor_metadata:{synthetic:true,case_id:row.id,customer_ref:customerRef}}]);
-      await request(`${base}/rest/v1/conversations`,{method:"POST",headers:restHeaders(serviceKey),body:JSON.stringify({id:conversationId,visitor_session_id:visitorId,channel_config_id:BASE_FIXTURE.channel,status:row.endpoint==="agent-assist"?"pending":"open",assigned_agent_id:row.endpoint==="agent-assist"?agentId:null,company_id:companyId,language:"en",metadata_source:{source:"c3_nonproduction_heldout",synthetic:true,case_id:row.id}})});
+      await request(`${base}/rest/v1/conversations`,{method:"POST",headers:restHeaders(serviceKey),body:JSON.stringify({id:conversationId,visitor_session_id:visitorId,channel_config_id:BASE_FIXTURE.channel,status:row.endpoint==="agent-assist"?"pending":"open",assigned_agent_id:row.endpoint==="agent-assist"?agentId:null,company_id:companyId,language:"en",metadata_source:{source:"c3_synthetic_regression",synthetic:true,held_out_real_customer:false,case_id:row.id}})});
       await restInsert(base,serviceKey,"c3_nonprod_crm_customer",[{id:crmCustomerId,company_id:companyId,conversation_id:conversationId,customer_ref:customerRef,source_identity:"c3-customer360-db-v1",context:{synthetic:true,case_id:row.id},is_active:true}]);
       const authority=row.context_contract.source_authority;
       if(authority==="trusted_crm_required"||row.id==="c3-ho-094"||row.id==="c3-ho-095"){
@@ -218,7 +221,7 @@ async function executeHeldout(dataset, binding, outFile) {
       const history=[];
       for(let n=0;n<row.context_contract.prior_turns;n++){const id=fixtureUuid(row.id,`history-${n}`);messageIds.push(id);history.push({id,conversation_id:conversationId,role:n%2===0?"visitor":"assistant",content:n%2===0?`Synthetic prior customer turn ${n+1} for ${row.category}.`:`Synthetic prior assistant acknowledgement ${n+1}; no external claim.`,metadata:{synthetic:true,case_id:row.id}});}
       if(history.length) await request(`${base}/rest/v1/messages`,{method:"POST",headers:restHeaders(serviceKey),body:JSON.stringify(history)});
-      await request(`${base}/rest/v1/messages`,{method:"POST",headers:restHeaders(serviceKey),body:JSON.stringify({id:sourceMessageId,conversation_id:conversationId,role:"visitor",content:row.customer_message,metadata:{synthetic:true,held_out:true,case_id:row.id}})});
+      await request(`${base}/rest/v1/messages`,{method:"POST",headers:restHeaders(serviceKey),body:JSON.stringify({id:sourceMessageId,conversation_id:conversationId,role:"visitor",content:row.customer_message,metadata:{synthetic:true,held_out_real_customer:false,quality_score:"NOT_MEASURED",case_id:row.id}})});
       const payload=row.endpoint==="generate-reply"?{conversation_id:conversationId,source_message_id:sourceMessageId}:{tool_type:"suggest_reply",conversation_id:conversationId,content:row.customer_message,context_mode:"full"};
       const context={case_id:row.id,category:row.category,conversation_length:row.conversation_length,prior_turns:row.context_contract.prior_turns,oracle:row.oracle};
       const result=await request(`${base}/functions/v1/${row.endpoint}`,{method:"POST",headers:{apikey:serviceKey,Authorization:`Bearer ${accessToken}`,"Content-Type":"application/json"},body:JSON.stringify(payload)});
@@ -241,7 +244,7 @@ async function executeHeldout(dataset, binding, outFile) {
     request(`${base}/rest/v1/company?id=eq.${BASE_FIXTURE.company}&select=id`,{headers:restHeaders(serviceKey,{Prefer:"",Range:"0-0"})}),
   ]);
   const zeroResidual=Array.isArray(readback.body)&&readback.body.length===0&&residualChecks.every((item)=>Array.isArray(item.body)&&item.body.length===0);
-  const evidence={schema_version:"c3-nonproduction-http-evidence-1.0.0",binding:{...binding,dataset_sha256:dataset.sha256},started_at:new Date().toISOString(),completed_at:new Date().toISOString(),observations,cleanup:{checked_ids:observations.length,zero_residual:zeroResidual}};
+  const evidence={schema_version:"c3-nonproduction-http-evidence-1.0.0",source_type:"synthetic_regression",quality_score:"NOT_MEASURED",held_out_real_customer:false,quality_denominator_eligible:false,binding:{...binding,dataset_sha256:dataset.sha256},started_at:new Date().toISOString(),completed_at:new Date().toISOString(),observations,cleanup:{checked_ids:observations.length,zero_residual:zeroResidual}};
   fs.writeFileSync(outFile,JSON.stringify(evidence,null,2)+"\n",{mode:0o600});
   verifyEvidence(evidence,dataset.sha256);
 }
@@ -252,7 +255,7 @@ function identity() {
 
 async function main() {
   const command=process.argv[2]??""; const dataset=loadFrozenDataset();
-  if(command==="verify-dataset"){console.log(`C3_NONPROD_DATASET|cases=${dataset.value.case_count}|sha256=${dataset.sha256}|responses_at_freeze=0|result=PASS`);return;}
+  if(command==="verify-dataset"){console.log(`C3_SYNTHETIC_REGRESSION_DATASET|cases=${dataset.value.case_count}|sha256=${dataset.sha256}|quality_score=NOT_MEASURED|held_out_real_customer=false|responses_at_freeze=0|result=PASS`);return;}
   if(command==="preflight"){const checkout=identity();const generate=sourceClosureManifest("generate-reply/index.ts"),assist=sourceClosureManifest("agent-assist/index.ts");const binding={projectRef:process.env.C3_NONPROD_SUPABASE_PROJECT_REF,projectUrl:process.env.C3_NONPROD_SUPABASE_URL,head:checkout.head,tree:checkout.tree,workflowHead:checkout.head,workflowTree:checkout.tree};validateIsolation(binding);console.log(`C3_NONPROD_PREFLIGHT|ref=${NONPRODUCTION_REF}|runtime_head=${checkout.head}|runtime_tree=${checkout.tree}|generate_manifest=${generate.sha256}|assist_manifest=${assist.sha256}|dataset_sha256=${dataset.sha256}|result=PASS`);return;}
   if(command==="run"){const checkout=identity();const binding={projectRef:process.env.C3_NONPROD_SUPABASE_PROJECT_REF,projectUrl:process.env.C3_NONPROD_SUPABASE_URL,head:checkout.head,tree:checkout.tree,workflowHead:checkout.head,workflowTree:checkout.tree,generate_reply_manifest:sourceClosureManifest("generate-reply/index.ts").sha256,agent_assist_manifest:sourceClosureManifest("agent-assist/index.ts").sha256};validateIsolation(binding);const authorization=`c3-nonprod-model-${checkout.head}-${checkout.tree}`;if(process.env.C3_NONPROD_MODEL_AUTHORIZATION!==authorization)fail("zero_cost_model_authorization_missing");await executeHeldout(dataset,binding,process.argv[3]??"c3-nonproduction-http-evidence.json");console.log(`C3_NONPROD_HTTP|responses=${dataset.value.case_count}|cleanup=PASS|result=PASS`);return;}
   if(command==="verify-evidence"){verifyEvidence(JSON.parse(fs.readFileSync(process.argv[3],"utf8")),dataset.sha256);console.log("C3_NONPROD_EVIDENCE|result=PASS");return;}

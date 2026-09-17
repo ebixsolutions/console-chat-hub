@@ -1,5 +1,5 @@
 {
-  "schema_version": "c3-nonproduction-heldout-1.0.0",
+  "schema_version": "c3-synthetic-regression-dataset-1.1.0",
   "repository": "ebixsolutions/console-chat-hub",
   "candidate": {
     "base_head": "efbe6b2f9ef333da8845260534bdc5ba41524bf8",
@@ -45,7 +45,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-002",
@@ -70,7 +73,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-003",
@@ -95,7 +101,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-004",
@@ -120,7 +129,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-005",
@@ -145,7 +157,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-006",
@@ -170,7 +185,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-007",
@@ -195,7 +213,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-008",
@@ -220,7 +241,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-009",
@@ -245,7 +269,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-010",
@@ -270,7 +297,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-011",
@@ -295,7 +325,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-012",
@@ -320,7 +353,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-013",
@@ -345,7 +381,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-014",
@@ -370,7 +409,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-015",
@@ -395,7 +437,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-016",
@@ -420,7 +465,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-017",
@@ -445,7 +493,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-018",
@@ -470,7 +521,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-019",
@@ -495,7 +549,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-020",
@@ -520,7 +577,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-021",
@@ -545,7 +605,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-022",
@@ -570,7 +633,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-023",
@@ -595,7 +661,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-024",
@@ -620,7 +689,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-025",
@@ -645,7 +717,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-026",
@@ -670,7 +745,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-027",
@@ -695,7 +773,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-028",
@@ -720,7 +801,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-029",
@@ -745,7 +829,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-030",
@@ -770,7 +857,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-031",
@@ -795,7 +885,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-032",
@@ -820,7 +913,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-033",
@@ -845,7 +941,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-034",
@@ -870,7 +969,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-035",
@@ -895,7 +997,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-036",
@@ -920,7 +1025,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-037",
@@ -945,7 +1053,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-038",
@@ -970,7 +1081,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-039",
@@ -995,7 +1109,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-040",
@@ -1020,7 +1137,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-041",
@@ -1045,7 +1165,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-042",
@@ -1070,7 +1193,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-043",
@@ -1095,7 +1221,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-044",
@@ -1120,7 +1249,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-045",
@@ -1145,7 +1277,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-046",
@@ -1170,7 +1305,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-047",
@@ -1195,7 +1333,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-048",
@@ -1220,7 +1361,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-049",
@@ -1245,7 +1389,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-050",
@@ -1270,7 +1417,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-051",
@@ -1295,7 +1445,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-052",
@@ -1320,7 +1473,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-053",
@@ -1345,7 +1501,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-054",
@@ -1370,7 +1529,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-055",
@@ -1395,7 +1557,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-056",
@@ -1420,7 +1585,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-057",
@@ -1445,7 +1613,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-058",
@@ -1470,7 +1641,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-059",
@@ -1495,7 +1669,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-060",
@@ -1520,7 +1697,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-061",
@@ -1545,7 +1725,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-062",
@@ -1570,7 +1753,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-063",
@@ -1595,7 +1781,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-064",
@@ -1620,7 +1809,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-065",
@@ -1645,7 +1837,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-066",
@@ -1670,7 +1865,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-067",
@@ -1695,7 +1893,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-068",
@@ -1720,7 +1921,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-069",
@@ -1745,7 +1949,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-070",
@@ -1770,7 +1977,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-071",
@@ -1795,7 +2005,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-072",
@@ -1820,7 +2033,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-073",
@@ -1845,7 +2061,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-074",
@@ -1870,7 +2089,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-075",
@@ -1895,7 +2117,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-076",
@@ -1920,7 +2145,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-077",
@@ -1945,7 +2173,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-078",
@@ -1970,7 +2201,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-079",
@@ -1995,7 +2229,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-080",
@@ -2020,7 +2257,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-081",
@@ -2045,7 +2285,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-082",
@@ -2070,7 +2313,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-083",
@@ -2095,7 +2341,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-084",
@@ -2120,7 +2369,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-085",
@@ -2145,7 +2397,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-086",
@@ -2170,7 +2425,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-087",
@@ -2195,7 +2453,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-088",
@@ -2220,7 +2481,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-089",
@@ -2245,7 +2509,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-090",
@@ -2270,7 +2537,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-091",
@@ -2295,7 +2565,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-092",
@@ -2320,7 +2593,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-093",
@@ -2345,7 +2621,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-094",
@@ -2370,7 +2649,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-095",
@@ -2395,7 +2677,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-096",
@@ -2420,7 +2705,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-097",
@@ -2445,7 +2733,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-098",
@@ -2470,7 +2761,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-099",
@@ -2495,7 +2789,10 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     },
     {
       "id": "c3-ho-100",
@@ -2520,7 +2817,15 @@
           "invent_entitlement",
           "claim_unexecuted_tool_success"
         ]
-      }
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
     }
-  ]
+  ],
+  "source_type": "synthetic_regression",
+  "quality_score": "NOT_MEASURED",
+  "held_out_real_customer": false,
+  "quality_denominator_eligible": false,
+  "classification_note": "Deterministic and synthetic runtime regression only; permanently excluded from real-customer quality scoring."
 }

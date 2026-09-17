@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: Secret-free preflight, isolated nonproduction quality, separately authorized live validation, cleanup-only, or recovery
+        description: Secret-free preflight, synthetic nonproduction regression, separately authorized live validation, cleanup-only, or recovery
         required: true
         default: preflight_offline
         type: choice
@@ -189,20 +189,20 @@ jobs:
           test -n "${C3_NONPROD_TEST_AGENT_EMAIL:-}"
           test -n "${C3_NONPROD_TEST_AGENT_PASSWORD:-}"
           node .github/scripts/c3_nonproduction_external_quality.mjs preflight
-      - name: Verify frozen held-out dataset and anti-fake controls
+      - name: Verify synthetic regression dataset and anti-fake controls
         run: |
           set -euo pipefail
           node .github/scripts/c3_nonproduction_external_quality.mjs verify-dataset
           node .github/scripts/c3_nonproduction_external_quality.test.mjs
-      - name: Run isolated HTTP entrypoints and exact-ID cleanup
+      - name: Run isolated synthetic HTTP regression and exact-ID cleanup
         run: node .github/scripts/c3_nonproduction_external_quality.mjs run "$RUNNER_TEMP/c3-nonproduction-http-evidence.json"
-      - name: Reverify immutable evidence
+      - name: Reverify immutable synthetic runtime evidence
         run: node .github/scripts/c3_nonproduction_external_quality.mjs verify-evidence "$RUNNER_TEMP/c3-nonproduction-http-evidence.json"
-      - name: Upload isolated evidence
+      - name: Upload isolated synthetic regression evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: c3-nonproduction-http-evidence-${{ github.sha }}-${{ github.run_attempt }}
+          name: c3-synthetic-regression-http-evidence-${{ github.sha }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/c3-nonproduction-http-evidence.json
           if-no-files-found: warn
           retention-days: 30
@@ -236,6 +236,12 @@ jobs:
           set -euo pipefail
           python -c "import ast,pathlib; ast.parse(pathlib.Path('.github/scripts/c3_validation_only_runner.py').read_text())"
           node .github/scripts/c3_validation_control_tests.mjs
+          node .github/scripts/c3_nonproduction_external_quality.mjs verify-dataset
+          node .github/scripts/c3_real_customer_dataset.mjs verify-registry
+          node .github/scripts/c3_real_customer_dataset.mjs verify-dataset
+          node .github/scripts/c3_real_customer_dataset.test.mjs
+          node .github/scripts/c3_nonproduction_independent_grader.test.mjs
+          node .github/scripts/c3_human_blind_calibration.test.mjs
       - name: Production DB security readback preflight (read-only, no fixtures)
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
