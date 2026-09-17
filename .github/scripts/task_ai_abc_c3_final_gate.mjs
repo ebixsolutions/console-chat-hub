@@ -43,6 +43,13 @@ const files = {
   servicePlannerTest: "supabase/functions/_shared/conversation-service-planner.test.ts",
   serviceRuntime: "supabase/functions/_shared/conversation-service-runtime.ts",
   serviceRuntimeTest: "supabase/functions/_shared/conversation-service-runtime.test.ts",
+  customer360EntitlementClient: "supabase/functions/_shared/customer360-entitlement-client.ts",
+  customer360EntitlementContract: "supabase/functions/_shared/customer360-entitlement-contract.ts",
+  customer360EntitlementClientTest: "supabase/functions/_shared/customer360-entitlement-client.test.ts",
+  nonproductionSecret: "supabase/functions/_shared/nonproduction-secret.ts",
+  nonproductionKbRuntime: "supabase/functions/kb-nonproduction-runtime/index.ts",
+  nonproductionCustomer360Upstream: "supabase/functions/customer360-nonproduction-upstream/index.ts",
+  customer360Adapter: "supabase/functions/customer360-adapter/index.ts",
   typecheck: "supabase/functions/deno.c3-check.json",
   migration:
     "supabase/migrations/20260915040000_ai_abc_c3_director_runtime_closure.sql",
@@ -63,10 +70,14 @@ const files = {
   requirementEvidenceMatrix: ".github/scripts/c3_requirement_evidence_matrix.json",
   nonproductionBootstrap: "sql/c3-nonproduction/00_repository_baseline.sql",
   nonproductionSecurityClosure: "sql/c3-nonproduction/01_security_readback_closure.sql",
+  nonproductionKbCrmContract: "sql/c3-nonproduction/02_kb_crm_contract.sql",
+  nonproductionSyntheticFixture: "sql/c3-nonproduction/03_synthetic_fixture.sql",
+  nonproductionRpcParity: "sql/c3-nonproduction/04_runtime_rpc_parity.sql",
   nonproductionCleanup: "sql/c3-nonproduction/99_cleanup_exact_fixture_ids.sql",
   nonproductionDataset: ".github/scripts/c3_nonproduction_heldout_dataset.json",
   nonproductionRunner: ".github/scripts/c3_nonproduction_external_quality.mjs",
   nonproductionRunnerTest: ".github/scripts/c3_nonproduction_external_quality.test.mjs",
+  nonproductionRuntimeIdentity: ".github/scripts/c3_nonproduction_runtime_identity.json",
   task42DeployWorkflow: ".github/workflows/task4-2-deploy-live-console-edge.yml",
 };
 for (const file of Object.values(files)) {
@@ -308,6 +319,11 @@ for (
 ) must(!changed.includes(forbidden), `frozen_runtime_changed:${forbidden}`);
 must(
   !changed.some((file) =>
+    ![
+      files.nonproductionKbRuntime,
+      files.nonproductionKbCrmContract,
+      files.nonproductionSyntheticFixture,
+    ].includes(file) &&
     /(kb.*(?:publish|review|vector)|training-kb|review-executor)/i.test(file)
   ),
   "kb_lifecycle_change_forbidden",
@@ -361,6 +377,7 @@ run("git", ["diff", "--check", "origin/main...HEAD"]);
 runDeno(["test", "--no-lock", files.unit, files.terminalTest]);
 runDeno(["test", "--no-lock", files.servicePlannerTest]);
 runDeno(["test", "--no-lock", "--allow-read", files.serviceRuntimeTest]);
+runDeno(["test", "--no-lock", files.customer360EntitlementClientTest]);
 const qualityEvidencePath = process.env.C3_SERVICE_QUALITY_EVIDENCE_PATH?.trim() ||
   `${process.env.RUNNER_TEMP || "/tmp"}/c3-service-quality-nonproduction.json`;
 runDeno(["run", "--no-lock", "--allow-read", "--allow-write", files.serviceQualityEvaluation, qualityEvidencePath]);
@@ -377,6 +394,13 @@ runDeno([
     files.servicePlannerTest,
     files.serviceRuntime,
     files.serviceRuntimeTest,
+    files.customer360EntitlementClient,
+    files.customer360EntitlementContract,
+    files.customer360EntitlementClientTest,
+    files.nonproductionSecret,
+    files.nonproductionKbRuntime,
+    files.nonproductionCustomer360Upstream,
+    files.customer360Adapter,
 ]);
 if (process.env.CI) {
   runDeno([

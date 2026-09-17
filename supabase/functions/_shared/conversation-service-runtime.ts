@@ -25,6 +25,7 @@ export interface ServerCustomerContext {
   company_id: string;
   customer_ref: string;
   request_id: string;
+  source_identity: string;
   degraded: false;
   entitlements?: Array<{
     name: string;
@@ -196,7 +197,8 @@ export function resolveTrustedServiceEntitlement(input: {
     context.degraded !== false ||
     context.conversation_id !== input.expected_conversation_id ||
     context.company_id !== input.expected_company_id ||
-    !clean(context.customer_ref) || !clean(context.request_id)
+    !clean(context.customer_ref) || !clean(context.request_id) ||
+    !clean(context.source_identity)
   ) return null;
   const now = (input.now ?? new Date()).getTime();
   const candidates = (context.entitlements ?? []).filter((row) => {
@@ -222,9 +224,9 @@ export function resolveTrustedServiceEntitlement(input: {
     name: clean(row.name, 80),
     value: clean(row.value, 120),
     authority: "TRUSTED_CRM",
-    source: `customer360-adapter:${clean(context.request_id, 80)}:${
-      clean(context.customer_ref, 128)
-    }`,
+    source: `customer360-adapter:${clean(context.source_identity, 80)}:${
+      clean(context.request_id, 80)
+    }:${clean(context.customer_ref, 128)}`,
   };
 }
 

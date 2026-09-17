@@ -21,6 +21,7 @@ import {
   type AggregationDocumentCandidate,
   parseAggregationResponse,
 } from "./kb-aggregation-response.ts";
+import { isC3NonproductionProject } from "./nonproduction-secret.ts";
 
 export interface KBQueryInput {
   query: string;
@@ -109,6 +110,7 @@ export interface KBEndpointConfig {
   tenantTokens: Record<string, string>;
   tenantApiKeys: Record<string, string>;
   apiKeyHeaderMode: KBAuthHeaderMode;
+  localProjectAuth?: boolean;
 }
 export interface KBPreActivationActor {
   userId: string;
@@ -168,6 +170,21 @@ export function parseStringMap(
 }
 
 export function resolveKBEndpoint(): KBEndpointConfig | null {
+  if (isC3NonproductionProject()) {
+    const projectUrl = Deno.env.get("SUPABASE_URL")?.trim().replace(/\/+$/, "");
+    const normalized = projectUrl
+      ? normalizeBaseUrl(`${projectUrl}/functions/v1/kb-nonproduction-runtime`)
+      : null;
+    if (!normalized) return null;
+    return {
+      ...normalized,
+      jwtTtlSec: 300,
+      tenantTokens: {},
+      tenantApiKeys: {},
+      apiKeyHeaderMode: "authorization",
+      localProjectAuth: true,
+    };
+  }
   const configured = Deno.env.get("KB_SINGAPORE_BASE_URL") ??
     Deno.env.get("KB_RAG_ENDPOINT") ??
     Deno.env.get("KB_RAG_BASE_URL") ??
@@ -354,13 +371,28 @@ export async function resolveTenantScope(
       return { resolved: false, reason: "KB_TENANT_MAPPING_UNRESOLVED" };
     }
 
-    const tenantMap = parseStringMap(
-      Deno.env.get("KB_SINGAPORE_TENANT_MAP_JSON"),
-    );
-    if (tenantMap === null) {
-      return { resolved: false, reason: "KB_TENANT_MAPPING_CONFIG_INVALID" };
+    let singaporeTenantId: string | undefined;
+    if (isC3NonproductionProject()) {
+      const { data: tenant, error: tenantError } = await sb
+        .from("c3_nonprod_kb_tenant")
+        .select("external_tenant_id,is_active")
+        .eq("company_id", String(company.id))
+        .maybeSingle();
+      if (tenantError) {
+        return { resolved: false, reason: "KB_CONVERSATION_LOOKUP_FAILED" };
+      }
+      singaporeTenantId = tenant?.is_active === true
+        ? String(tenant.external_tenant_id ?? "").trim()
+        : undefined;
+    } else {
+      const tenantMap = parseStringMap(
+        Deno.env.get("KB_SINGAPORE_TENANT_MAP_JSON"),
+      );
+      if (tenantMap === null) {
+        return { resolved: false, reason: "KB_TENANT_MAPPING_CONFIG_INVALID" };
+      }
+      singaporeTenantId = tenantMap[String(company.id)]?.trim();
     }
-    const singaporeTenantId = tenantMap[String(company.id)]?.trim();
     if (!singaporeTenantId) {
       return { resolved: false, reason: "KB_TENANT_MAPPING_UNRESOLVED" };
     }
@@ -451,7 +483,9 @@ export async function fetchKBRag(
     };
   }
 
-  const credential = await resolveSingaporeCredential(scope, endpointCfg);
+  const credential = endpointCfg.localProjectAuth
+    ? { ok: true as const, kind: "bearer" as const, value: getSupabaseAdminKey() }
+    : await resolveSingaporeCredential(scope, endpointCfg);
   if (!credential.ok) {
     return {
       success: false,

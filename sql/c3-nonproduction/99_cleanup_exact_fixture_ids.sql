@@ -3,6 +3,19 @@
 -- c3_nonproduction_external_quality.mjs.
 BEGIN;
 
+DELETE FROM public.c3_nonprod_crm_entitlement WHERE id BETWEEN
+  'c3000000-0000-4000-8000-000000001500' AND 'c3000000-0000-4000-8000-000000001599';
+DELETE FROM public.c3_nonprod_crm_customer WHERE id BETWEEN
+  'c3000000-0000-4000-8000-000000001400' AND 'c3000000-0000-4000-8000-000000001499';
+DELETE FROM public.c3_nonprod_kb_chunk WHERE id BETWEEN
+  'c3000000-0000-4000-8000-000000001300' AND 'c3000000-0000-4000-8000-000000001399';
+DELETE FROM public.c3_nonprod_kb_document_version WHERE id BETWEEN
+  'c3000000-0000-4000-8000-000000001200' AND 'c3000000-0000-4000-8000-000000001299';
+DELETE FROM public.c3_nonprod_kb_document WHERE id BETWEEN
+  'c3000000-0000-4000-8000-000000001100' AND 'c3000000-0000-4000-8000-000000001199';
+DELETE FROM public.c3_nonprod_kb_tenant WHERE id BETWEEN
+  'c3000000-0000-4000-8000-000000001000' AND 'c3000000-0000-4000-8000-000000001099';
+
 DELETE FROM public.conversation_memory_state_event WHERE conversation_id IN (
   'c3000000-0000-4000-8000-000000000005','c3000000-0000-4000-8000-000000000150');
 DELETE FROM public.conversation_memory_state WHERE conversation_id IN (
@@ -35,10 +48,14 @@ DELETE FROM public.user_roles WHERE user_id='c3000000-0000-4000-8000-00000000010
 DELETE FROM public.agent_profile WHERE id='c3000000-0000-4000-8000-000000000110';
 DELETE FROM auth.identities WHERE user_id='c3000000-0000-4000-8000-000000000101';
 DELETE FROM auth.users WHERE id='c3000000-0000-4000-8000-000000000101';
+DELETE FROM vault.secrets WHERE name='c3_test_agent_password';
+DELETE FROM vault.secrets WHERE name='c3_test_agent_access_token';
 DELETE FROM public.company WHERE id IN (
   'c3000000-0000-4000-8000-000000000001','c3000000-0000-4000-8000-000000000002');
 DELETE FROM net._http_response WHERE id IN (
-  SELECT request_id FROM public.c3_nonproduction_http_probe WHERE run_id='c3-smoke-2c1b9566');
-DELETE FROM public.c3_nonproduction_http_probe WHERE run_id='c3-smoke-2c1b9566';
+  SELECT request_id FROM public.c3_nonproduction_http_probe
+  WHERE run_id IN ('c3-smoke-2c1b9566','c3-kb-crm-contract'));
+DELETE FROM public.c3_nonproduction_http_probe
+WHERE run_id IN ('c3-smoke-2c1b9566','c3-kb-crm-contract');
 
 COMMIT;

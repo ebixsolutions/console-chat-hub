@@ -103,6 +103,7 @@ Deno.test("C3 entitlement accepts only server-bound active exact-scope CRM evide
       company_id: "co1",
       customer_ref: "cus_1234567890abcdef",
       request_id: "req-1",
+      source_identity: "ai-chatbot-c3-nonproduction",
       degraded: false,
       entitlements: [{
         name: "priority_support",
@@ -126,6 +127,7 @@ Deno.test("C3 entitlement accepts only server-bound active exact-scope CRM evide
         company_id: "co1",
         customer_ref: "cus_1234567890abcdef",
         request_id: "req-1",
+        source_identity: "ai-chatbot-c3-nonproduction",
         degraded: false,
         entitlements: [{
           name: "priority_support",
@@ -142,6 +144,39 @@ Deno.test("C3 entitlement accepts only server-bound active exact-scope CRM evide
   );
 });
 
+Deno.test("C3 entitlement fails closed for expired inactive scope mismatch conflict and missing source identity", () => {
+  const base = {
+    source: "customer360-adapter" as const,
+    conversation_id: "c1",
+    company_id: "co1",
+    customer_ref: "cus_1234567890abcdef",
+    request_id: "req-1",
+    source_identity: "ai-chatbot-c3-nonproduction",
+    degraded: false as const,
+  };
+  const resolve = (entitlements: Array<Record<string, unknown>>, override: Record<string, unknown> = {}) =>
+    resolveTrustedServiceEntitlement({
+      context: { ...base, ...override, entitlements } as any,
+      expected_conversation_id: "c1",
+      expected_company_id: "co1",
+      requested_scope: "customer_support",
+      now: new Date("2026-09-16T00:00:00Z"),
+    });
+  const active = {
+    name: "priority_support",
+    value: "eligible",
+    scope: "customer_support",
+    status: "active" as const,
+    valid_from: "2026-01-01T00:00:00Z",
+    valid_until: "2027-01-01T00:00:00Z",
+  };
+  assertEquals(resolve([{ ...active, valid_until: "2026-01-02T00:00:00Z" }]), null);
+  assertEquals(resolve([{ ...active, status: "inactive" }]), null);
+  assertEquals(resolve([{ ...active, scope: "billing" }]), null);
+  assertEquals(resolve([active, { ...active, value: "not-eligible" }]), null);
+  assertEquals(resolve([active], { source_identity: "" }), null);
+});
+
 Deno.test("C3 both Edge entrypoints consume runtime derivation before planning", async () => {
   for (
     const file of [
@@ -152,6 +187,8 @@ Deno.test("C3 both Edge entrypoints consume runtime derivation before planning",
     const source = await Deno.readTextFile(file);
     assertMatch(source, /deriveServiceRuntimeInputs\(/);
     assertMatch(source, /applyServiceRuntimeDerivation\(/);
+    assertMatch(source, /fetchTrustedCustomerContext\(/);
+    assertMatch(source, /trusted_customer_context:\s*(?:_c3TrustedCustomerContext|trustedCustomerContext)/);
     assertMatch(source, /calculation_input_status/);
   }
 });

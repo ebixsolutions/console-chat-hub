@@ -27,6 +27,10 @@ on:
         description: Exact authorized validation TREE
         required: false
         type: string
+      nonproduction_model_authorization:
+        description: Exact C3 zero-cost isolated generation credential authorization token
+        required: false
+        type: string
       validation_authorization:
         description: Exact c3-validation-HEAD-TREE-RELEASE_ID authorization
         required: false
@@ -166,6 +170,7 @@ jobs:
       C3_NONPROD_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.C3_NONPROD_SUPABASE_SERVICE_ROLE_KEY }}
       C3_NONPROD_TEST_AGENT_EMAIL: ${{ secrets.C3_NONPROD_TEST_AGENT_EMAIL }}
       C3_NONPROD_TEST_AGENT_PASSWORD: ${{ secrets.C3_NONPROD_TEST_AGENT_PASSWORD }}
+      C3_NONPROD_MODEL_AUTHORIZATION: ${{ inputs.nonproduction_model_authorization }}
     steps:
       - uses: actions/checkout@v4
         with: {ref: '${{ github.sha }}', fetch-depth: 0, clean: true}

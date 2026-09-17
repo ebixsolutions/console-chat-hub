@@ -35,6 +35,7 @@ import {
   applyServiceRuntimeDerivation,
   deriveServiceRuntimeInputs,
 } from "../_shared/conversation-service-runtime.ts";
+import { fetchTrustedCustomerContext } from "../_shared/customer360-entitlement-client.ts";
 
 const PRE_ACTIVATION_ROLES: ReadonlySet<string> = new Set([
   "admin",
@@ -643,11 +644,15 @@ Deno.serve(async (req) => {
           content: String(row.content ?? ""),
           id: String(row.id ?? ""),
         }));
+        const trustedCustomerContext = await fetchTrustedCustomerContext({
+          conversation_id: conversationId,
+          company_id: conv.company_id,
+        });
         const serviceRuntime = deriveServiceRuntimeInputs({
           question: content,
           recent_messages: serviceMessages,
           commerce: recallSnapshot?.state ?? null,
-          trusted_customer_context: null,
+          trusted_customer_context: trustedCustomerContext,
           expected_conversation_id: conversationId,
           expected_company_id: conv.company_id,
         });

@@ -15,6 +15,7 @@ import {
   applyServiceRuntimeDerivation,
   deriveServiceRuntimeInputs,
 } from "../_shared/conversation-service-runtime.ts";
+import { fetchTrustedCustomerContext } from "../_shared/customer360-entitlement-client.ts";
 // B7 generate-reply — L5b orchestration skeleton + Task A.1A Deterministic Handoff Patch
 //
 // Source of truth: Contract 11 §3.1 + Contract 07 + Contract 03 §1.1 + Contract 08
@@ -4206,11 +4207,15 @@ async function orchestrationGenerateReply(
         role: typeof row.role === "string" ? row.role : "unknown",
         content: String(row.content ?? ""),
       }));
+  const _c3TrustedCustomerContext = await fetchTrustedCustomerContext({
+    conversation_id,
+    company_id: _criticalE2ExpectedTenantId ?? "",
+  });
   const _c3RuntimeInputs = deriveServiceRuntimeInputs({
     question: _h1LastMsg,
     recent_messages: _c3RecentServiceMessages,
     commerce: _c3CommerceSnapshot?.state ?? null,
-    trusted_customer_context: null,
+    trusted_customer_context: _c3TrustedCustomerContext,
     expected_conversation_id: conversation_id,
     expected_company_id: _criticalE2ExpectedTenantId ?? "",
   });

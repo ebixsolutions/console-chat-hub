@@ -2,8 +2,9 @@
   "schema_version": "c3-nonproduction-heldout-1.0.0",
   "repository": "ebixsolutions/console-chat-hub",
   "candidate": {
-    "head": "2c1b9566d3c50d6a09ef151939b54d34bb034c12",
-    "tree": "825da428244bb36177184c0d689f4863cbe1515e"
+    "base_head": "efbe6b2f9ef333da8845260534bdc5ba41524bf8",
+    "base_tree": "56f18dca1d7e40aa860faf352a1f354a84d55971",
+    "binding_mode": "workflow_checkout_and_closure_manifest"
   },
   "frozen_before_responses": true,
   "response_count_at_freeze": 0,
