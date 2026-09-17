@@ -805,41 +805,60 @@ jobs:
           done
           python - "$RUNNER_TEMP/c3-live-parity" "$RUNNER_TEMP/c3-target-parity" <<'PY'
           import hashlib,json,pathlib,sys
-          root=pathlib.Path(sys.argv[1]); target=pathlib.Path(sys.argv[2]); repo=pathlib.Path('supabase/functions')
-          allowed_shared={
+          root=pathlib.Path(sys.argv[1]); target=pathlib.Path(sys.argv[2])
+          allowed_target_shared={
             '_shared/conversation-long-memory.ts','_shared/conversation-recall.ts',
             '_shared/conversation-service-planner.ts','_shared/conversation-service-runtime.ts',
             '_shared/customer360-entitlement-client.ts','_shared/customer360-entitlement-contract.ts',
-            '_shared/kb-client.ts','_shared/nonproduction-secret.ts',
-            '_shared/canonical-grounding.ts','_shared/ce-automation-engine.ts',
-            '_shared/ce-grounding.ts','_shared/citation-lineage.ts',
+            '_shared/nonproduction-secret.ts','_shared/canonical-grounding.ts',
+            '_shared/ce-automation-engine.ts','_shared/ce-grounding.ts',
+            '_shared/citation-lineage.ts','_shared/commerce-semantic-frame.ts',
             '_shared/commerce-semantic-interpreter.ts','_shared/escalation-policy.ts',
             '_shared/deterministic-commerce-engine.ts','_shared/deterministic-kb-client.ts',
             '_shared/deterministic-runtime-router.ts'
           }
-          required_shared={
+          required_target_shared={
             '_shared/deterministic-commerce-engine.ts','_shared/deterministic-kb-client.ts',
             '_shared/deterministic-runtime-router.ts'
           }
-          failed=False; changed_by_function={}
+          required_removed_shared={
+            '_shared/kb-client.ts','_shared/kb-auth.ts','_shared/llm-router.ts',
+            '_shared/vertex-generation-config.ts','_shared/vertex-parse.ts'
+          }
+          failed=False
           for fn in ('generate-reply','agent-assist'):
             manifest=json.loads((root/fn/'MANIFEST.json').read_text())
             proposed_manifest=json.loads((target/f'{fn}.json').read_text())
-            before={row['path']:row['sha256'] for row in manifest['files']}; after={row['path']:row['sha256'] for row in proposed_manifest['files']}
-            changed=sorted(path for path in set(before)|set(after) if before.get(path)!=after.get(path))
-            proposed=sorted(after.items())
-            actual_changed=set(changed)
-            allowed=allowed_shared|{f'{fn}/index.ts'}
-            required=required_shared|{f'{fn}/index.ts'}
-            boundary_ok=required<=actual_changed<=allowed
-            closure_hash=hashlib.sha256(''.join(f'{path}\0{digest}\n' for path,digest in sorted(proposed)).encode()).hexdigest()
-            print(f'C3_DEPLOYMENT_BOUNDARY|function={fn}|required_changed={len(required)}|allowed_changed={len(allowed)}|actual_changed={len(actual_changed)}|result={"PASS" if boundary_ok else "FAIL"}')
-            print(f'C3_PROPOSED_CLOSURE|function={fn}|manifest_sha256={closure_hash}|result={"PASS" if boundary_ok else "FAIL"}')
-            for path in sorted(actual_changed): print(f'C3_DEPLOYMENT_CHANGED_PATH|function={fn}|path={path}')
-            changed_by_function[fn]=actual_changed; failed=failed or not boundary_ok
+            before={row['path']:row['sha256'] for row in manifest['files']}
+            after={row['path']:row['sha256'] for row in proposed_manifest['files']}
+            before_paths=set(before); after_paths=set(after)
+            added=after_paths-before_paths
+            removed=before_paths-after_paths
+            modified={path for path in before_paths&after_paths if before[path]!=after[path]}
+            actual_changed=added|removed|modified
+            entry=f'{fn}/index.ts'
+            allowed_changed=allowed_target_shared|required_removed_shared|{entry}
+            required_changed=required_target_shared|required_removed_shared|{entry}
+            target_required_ok=required_target_shared<=after_paths
+            legacy_removed_ok=required_removed_shared<=removed and not (required_removed_shared&after_paths)
+            boundary_ok=(
+              required_changed<=actual_changed<=allowed_changed and
+              target_required_ok and legacy_removed_ok
+            )
+            closure_hash=hashlib.sha256(''.join(f'{path}\0{digest}\n' for path,digest in sorted(after.items())).encode()).hexdigest()
+            print(f'C3_DEPLOYMENT_BOUNDARY|function={fn}|required_changed={len(required_changed)}|allowed_changed={len(allowed_changed)}|actual_changed={len(actual_changed)}|added={len(added)}|modified={len(modified)}|removed={len(removed)}|result={"PASS" if boundary_ok else "FAIL"}')
+            print(f'C3_PROPOSED_CLOSURE|function={fn}|manifest_sha256={closure_hash}|legacy_model_paths=ABSENT|result={"PASS" if boundary_ok else "FAIL"}')
+            for path in sorted(added): print(f'C3_DEPLOYMENT_PATH|function={fn}|kind=added|path={path}')
+            for path in sorted(modified): print(f'C3_DEPLOYMENT_PATH|function={fn}|kind=modified|path={path}')
+            for path in sorted(removed): print(f'C3_DEPLOYMENT_PATH|function={fn}|kind=removed|path={path}')
+            for path in sorted(required_removed_shared):
+              ok=path in removed and path not in after_paths
+              print(f'C3_LEGACY_DEPENDENCY_REMOVAL|function={fn}|path={path}|result={"PASS" if ok else "FAIL"}')
+            failed=failed or not boundary_ok
           if failed: raise SystemExit(1)
           print('C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE')
           print('C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS')
+          print('C3_DETERMINISTIC_LEGACY_DEPENDENCY_REMOVAL=PASS')
           print('C3_DEPLOYMENT_ALLOWLIST=generate-reply,agent-assist')
           PY
       - name: Non-production A-H recovery control-flow regression
@@ -1244,8 +1263,7 @@ jobs:
               'artifact_id':'${{ needs.c3-current-live-roundtrip.outputs.artifact_id }}',
               'artifact_digest':'${{ needs.c3-current-live-roundtrip.outputs.artifact_digest }}',
               'artifact_run_id':os.environ['GITHUB_RUN_ID'],
-              'functions':{fn:load_baseline(baseline/fn/'MANIFEST.json') for fn in ('generate-reply','agent-assist')},
-            },
+              'functions':{fn:load_baseline(baseline/fn/'MANIFEST.json') for fn in ('generate-reply','agent-assist')}},
             'target':{'head':os.environ['AUTHORIZED_HEAD'],'tree':os.popen('git rev-parse HEAD^{tree}').read().strip(),
               'functions':{fn:load(release/'target'/fn/'MANIFEST.json') for fn in ('generate-reply','agent-assist')}},
             'actual':{'functions':{fn:load(release/'actual'/fn/'MANIFEST.json') for fn in ('generate-reply','agent-assist')}},
