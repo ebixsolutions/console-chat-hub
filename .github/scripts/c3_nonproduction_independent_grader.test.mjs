@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { DIMENSIONS, EVIDENCE_TYPE, verifyIndependentGraderArtifact, verifyImmutableEnvelope } from "./c3_nonproduction_independent_grader.mjs";
+import { DERIVED_EVIDENCE_TYPE, DIMENSIONS, EVIDENCE_TYPE, verifyIndependentGraderArtifact, verifyImmutableEnvelope } from "./c3_nonproduction_independent_grader.mjs";
 import { hashObject } from "./c3_real_customer_dataset.mjs";
 
 const rubric = JSON.parse(fs.readFileSync(new URL("./c3_service_quality_rubric.json", import.meta.url), "utf8"));
@@ -13,9 +13,10 @@ const observations = cases.map((row, index) => {
   const request = { input: index }, context = { facts: [index] }, response = { answer: `unique-${index}` };
   return { case_id: row.case_id, case_sha256: hashObject(row), request, request_sha256: hashObject(request), context, context_sha256: hashObject(context), response, response_sha256: hashObject(response) };
 });
-const runtime = { candidate: { ...candidate, run_id: "runtime-run", run_attempt: 1 }, observations };
+const runtime = { dataset_evidence_type: "A_CLASS_FULL_REAL_CUSTOMER_DIALOGUE", candidate: { ...candidate, run_id: "runtime-run", run_attempt: 1 }, observations };
 const raw = {
   evidence_type: EVIDENCE_TYPE,
+  dataset_evidence_type: "A_CLASS_FULL_REAL_CUSTOMER_DIALOGUE",
   candidate: { ...candidate, run_id: "grader-run", run_attempt: 1 },
   author: { role: "independent_external_grader", self_assessment: false },
   grader: { provider: "TEST_ONLY_UNSET_PROVIDER", model: "TEST_ONLY_UNSET_MODEL", version: "TEST_ONLY", credential_scope_id: "test-only-no-secret", method: "external model rubric assessment" },
@@ -48,5 +49,15 @@ const emptyReason = clone(raw); emptyReason.case_results[0].reason = "";
 assert.throws(() => verify(emptyReason), /grader_reason_empty_or_insufficient/);
 const self = clone(raw); self.author.role = "implementation_agent";
 assert.throws(() => verify(self), /grader_self_assessment_forbidden/);
+
+const derivedDataset = { source_type: "DERIVED_ONLY", cases };
+const derivedRuntime = { ...clone(runtime), dataset_evidence_type: "REAL_CASE_DERIVED_INTERIM" };
+const derivedRaw = { ...clone(raw), evidence_type: DERIVED_EVIDENCE_TYPE, dataset_evidence_type: "REAL_CASE_DERIVED_INTERIM", dataset_sha256: hashObject(derivedDataset) };
+const derivedFreeze = { dataset_sha256: hashObject(derivedDataset) };
+const derivedResult = verifyIndependentGraderArtifact({ raw: derivedRaw, runtime: derivedRuntime, dataset: derivedDataset, freeze: derivedFreeze, rubric, expectedCandidate: candidate, rawArtifactSha256: hashObject(derivedRaw) });
+assert.equal(derivedResult.dataset_evidence_type, "REAL_CASE_DERIVED_INTERIM");
+assert.equal(derivedResult.product_ready_evidence, false);
+const wrongDerivedType = clone(derivedRaw); wrongDerivedType.evidence_type = EVIDENCE_TYPE;
+assert.throws(() => verifyIndependentGraderArtifact({ raw: wrongDerivedType, runtime: derivedRuntime, dataset: derivedDataset, freeze: derivedFreeze, rubric, expectedCandidate: candidate, rawArtifactSha256: hashObject(wrongDerivedType) }), /grader_evidence_type_invalid/);
 
 console.log("C3_INDEPENDENT_GRADER_TESTS=PASS");

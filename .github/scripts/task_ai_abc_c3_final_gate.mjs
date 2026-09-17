@@ -4,7 +4,7 @@ import fs from "node:fs";
 import { execFileSync } from "node:child_process";
 import { readContract, verifyEvidence } from "./c3_validation_evidence.mjs";
 import { verifyComponentRegression, verifyHumanCalibration } from "./c3_service_quality_evidence.mjs";
-import { verifyCommittedState as verifyRealCustomerCommittedState, verifyFreezeManifest } from "./c3_real_customer_dataset.mjs";
+import { verifyCommittedDerivedState, verifyCommittedState as verifyRealCustomerCommittedState, verifyFreezeManifest } from "./c3_real_customer_dataset.mjs";
 import { verifyIndependentGraderArtifact } from "./c3_nonproduction_independent_grader.mjs";
 import { verifyHumanCalibration as verifyBlindHumanCalibration } from "./c3_human_blind_calibration.mjs";
 
@@ -92,6 +92,10 @@ const files = {
   humanBlindCalibration: ".github/scripts/c3_human_blind_calibration.mjs",
   humanBlindCalibrationTest: ".github/scripts/c3_human_blind_calibration.test.mjs",
   realCustomerEvidenceDoc: ".github/docs/c3-real-customer-quality-evidence.md",
+  derivedScreening: ".github/scripts/c3_real_case_derived_screening_v1.json",
+  derivedDataset: ".github/scripts/c3_real_case_derived_dataset_v1.json",
+  derivedFreeze: ".github/scripts/c3_real_case_derived_freeze_manifest_v1.json",
+  derivedReviewPreparation: ".github/scripts/c3_real_case_derived_review_preparation_v1.json",
   task42DeployWorkflow: ".github/workflows/task4-2-deploy-live-console-edge.yml",
 };
 for (const file of Object.values(files)) {
@@ -365,6 +369,11 @@ const humanCalibration = verifyHumanCalibration(calibration, { requireCompleted:
 const realCustomerDataset = verifyRealCustomerCommittedState();
 must(["READY", "BLOCKED"].includes(realCustomerDataset.status), "real_customer_dataset_status_invalid");
 must(realCustomerDataset.actual_case_count <= 100, "real_customer_dataset_count_invalid");
+const derivedFreezeIdentity = JSON.parse(read(files.derivedFreeze)).prepared_from_candidate;
+const derivedDataset = verifyCommittedDerivedState(derivedFreezeIdentity);
+must(derivedDataset.derived_case_count === 100, "derived_dataset_count_invalid");
+must(derivedDataset.original_a_class_eligible_dialogue_count === 0, "derived_dataset_must_not_change_a_class_count");
+must(derivedDataset.derived_score === "NOT_MEASURED" && derivedDataset.human_calibration === "AWAITING" && derivedDataset.product_ready === false, "derived_dataset_gate_isolation_invalid");
 
 for (
   const file of [

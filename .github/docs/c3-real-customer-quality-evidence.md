@@ -35,3 +35,24 @@ The reviewed candidates are all blocked:
 `c3_human_blind_calibration.mjs` creates a 20-case packet without model identity, grader output, other reviewer output, expected results or oracle labels. Completed evidence needs at least two independent humans and 40 bound records; at least one reviewer must have Hong Kong customer-service or QA experience. The verifier computes Krippendorff's alpha with a threshold of 0.80 and requires a third blind adjudicator for a dimension gap above two points, P0 disagreement or PASS/FAIL conflict. Unit-test fixtures are explicitly test-only and are not human evidence.
 
 The final gate exits nonzero until the real dataset is READY and separately verified real-customer execution, independent grading and blind human calibration are supplied. Deterministic and synthetic tests cannot change the quality state.
+
+## Adopted interim: real-case derived evaluation
+
+`C3_REAL_CASE_DERIVED_EVALUATION_INTERIM_v1.0` is implemented as an independent auxiliary evaluation profile. It does not replace, satisfy, or contribute to the Tier-A complete real-human customer↔agent dialogue denominator.
+
+The fixed TweetSumm source is commit `4903b0f20665a59e4b5494abd83d8735893c0333`. TweetSumm states that its dataset is released under CDLA-Sharing-1.0 and asks users to cite *A Dialog Summarization Dataset for Customer Service*. The committed derived dataset uses only the publisher-provided human abstractive summaries and metadata. It does not store raw tweets, handles, URLs, or the upstream Customer Support on Twitter dialogue text. This is a use of the licensed TweetSumm summary dataset, not a workaround for upstream content restrictions.
+
+The reproducible screening ledger contains all 251 keyword candidates. Each entry is source-file, source-line, conversation-ID, source-record-hash and summary-basis-hash bound, with an explicit selected/excluded decision. One hundred distinct ecommerce cases remain after rejecting non-commerce domains, insufficient facts and near duplicates. Every case is marked `DERIVED_ONLY`, preserves the explicit human-summary fact, records its derived question and transformation history, keeps historical agent action as reference-only, records unknown state, and forbids unsupported action or resolution claims. Market remains `UNKNOWN` throughout.
+
+Freeze state:
+
+- `DERIVED_CASE_COUNT=100`
+- `ORIGINAL_A_CLASS_ELIGIBLE_DIALOGUE_COUNT=0`
+- `RESPONSES_AT_FREEZE=0`
+- `DERIVED_SCORE=NOT_MEASURED`
+- `HUMAN_CALIBRATION=AWAITING`
+- `PRODUCT_READY=false`
+
+The derived freeze binds the starting candidate, source commit, screening ledger, dataset, rubric and every case hash. The independent-grader verifier uses a distinct derived evidence type and explicitly returns `product_ready_evidence=false`; the original A-class evidence type remains unchanged. The 20-case human packet is only `REVIEW_PREPARATION`: it defines two independent reviewer slots and at least 40 future records but contains no response, reviewer identity, review, reason, score or calibration claim.
+
+No generation or grader provider/model/version/credential is selected by these files. Execution requires a new exact final HEAD/TREE authorization plus separate zero-cost, nonproduction-only generation and independent-grader identities. Human review begins only after immutable responses exist.

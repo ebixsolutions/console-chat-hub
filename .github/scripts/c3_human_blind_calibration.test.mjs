@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { DIMENSIONS } from "./c3_nonproduction_independent_grader.mjs";
-import { generateBlindPacket, krippendorffAlpha, verifyHumanCalibration } from "./c3_human_blind_calibration.mjs";
+import { generateBlindPacket, krippendorffAlpha, verifyDerivedReviewPreparation, verifyHumanCalibration } from "./c3_human_blind_calibration.mjs";
 import { hashObject } from "./c3_real_customer_dataset.mjs";
 
 const rubric = JSON.parse(fs.readFileSync(new URL("./c3_service_quality_rubric.json", import.meta.url), "utf8"));
@@ -52,5 +52,12 @@ for (let index = 0; index < packet.samples.length; index += 1) {
   lowAlpha.reviews.push(review(sample, lowAlpha.reviewers[2], index, 7, true));
 }
 assert.throws(() => verifyHumanCalibration({ artifact: lowAlpha, packet, expectedCandidate: candidate, rubric }), /human_alpha_below_threshold/);
+
+const derivedDataset = JSON.parse(fs.readFileSync(new URL("./c3_real_case_derived_dataset_v1.json", import.meta.url), "utf8"));
+const derivedFreeze = JSON.parse(fs.readFileSync(new URL("./c3_real_case_derived_freeze_manifest_v1.json", import.meta.url), "utf8"));
+const derivedPreparation = JSON.parse(fs.readFileSync(new URL("./c3_real_case_derived_review_preparation_v1.json", import.meta.url), "utf8"));
+assert.equal(verifyDerivedReviewPreparation({ preparation: derivedPreparation, dataset: derivedDataset, freeze: derivedFreeze, rubric }).status, "REVIEW_PREPARATION");
+const fakeCompleted = structuredClone(derivedPreparation); fakeCompleted.actual_reviewer_count = 2;
+assert.throws(() => verifyDerivedReviewPreparation({ preparation: fakeCompleted, dataset: derivedDataset, freeze: derivedFreeze, rubric }), /derived_review_preparation_counts_invalid/);
 
 console.log("C3_HUMAN_BLIND_CALIBRATION_TESTS=PASS");

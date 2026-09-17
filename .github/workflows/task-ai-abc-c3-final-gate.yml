@@ -239,6 +239,7 @@ jobs:
           node .github/scripts/c3_nonproduction_external_quality.mjs verify-dataset
           node .github/scripts/c3_real_customer_dataset.mjs verify-registry
           node .github/scripts/c3_real_customer_dataset.mjs verify-dataset
+          node .github/scripts/c3_real_customer_dataset.mjs verify-derived 3a15223c96c3909e014fc095f3bd39256438df02 6dd0af943f9f6bce870eebc16db24c5cc766f6a0
           node .github/scripts/c3_real_customer_dataset.test.mjs
           node .github/scripts/c3_nonproduction_independent_grader.test.mjs
           node .github/scripts/c3_human_blind_calibration.test.mjs

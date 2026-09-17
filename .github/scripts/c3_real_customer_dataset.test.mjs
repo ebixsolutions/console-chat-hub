@@ -3,11 +3,16 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import {
   DATASET_PATH,
+  DERIVED_DATASET_PATH,
+  DERIVED_FREEZE_PATH,
+  DERIVED_REVIEW_PREPARATION_PATH,
+  DERIVED_SCREENING_PATH,
   REGISTRY_PATH,
   createFreezeManifest,
   hashObject,
   sha256,
   verifyCommittedState,
+  verifyDerivedArtifacts,
   verifyFreezeManifest,
   verifyRealCustomerDataset,
   verifySourceBinding,
@@ -101,3 +106,21 @@ expectThrow(() => verifyFreezeManifest(tampered, dataset, registry, candidate), 
 expectThrow(() => verifyFreezeManifest(freeze, dataset, registry, { ...candidate, head: "3".repeat(40) }), /freeze_cross_release/);
 
 console.log("C3_REAL_CUSTOMER_DATASET_TESTS=PASS");
+
+const derivedScreening = read(DERIVED_SCREENING_PATH);
+const derivedDataset = read(DERIVED_DATASET_PATH);
+const derivedFreeze = read(DERIVED_FREEZE_PATH);
+const derivedReviewPreparation = read(DERIVED_REVIEW_PREPARATION_PATH);
+const derivedCandidate = derivedFreeze.prepared_from_candidate;
+const derivedResult = verifyDerivedArtifacts({ screening: derivedScreening, dataset: derivedDataset, freeze: derivedFreeze, reviewPreparation: derivedReviewPreparation }, derivedCandidate);
+assert.equal(derivedResult.derived_case_count, 100);
+assert.equal(derivedResult.original_a_class_eligible_dialogue_count, 0);
+assert.equal(derivedResult.product_ready, false);
+const derivedResponse = clone(derivedDataset); derivedResponse.cases[0].response = "forbidden";
+expectThrow(() => verifyDerivedArtifacts({ screening: derivedScreening, dataset: derivedResponse, freeze: derivedFreeze, reviewPreparation: derivedReviewPreparation }, derivedCandidate), /derived_response_before_freeze/);
+const derivedMarket = clone(derivedDataset); derivedMarket.cases[0].market = "US";
+expectThrow(() => verifyDerivedArtifacts({ screening: derivedScreening, dataset: derivedMarket, freeze: derivedFreeze, reviewPreparation: derivedReviewPreparation }, derivedCandidate), /derived_case_classification_invalid/);
+const derivedTamper = clone(derivedFreeze); derivedTamper.case_hashes[0].sha256 = "0".repeat(64);
+expectThrow(() => verifyDerivedArtifacts({ screening: derivedScreening, dataset: derivedDataset, freeze: derivedTamper, reviewPreparation: derivedReviewPreparation }, derivedCandidate), /derived_freeze_case_hash_invalid/);
+
+console.log("C3_REAL_CASE_DERIVED_DATASET_TESTS=PASS");

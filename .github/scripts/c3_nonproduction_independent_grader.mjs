@@ -3,6 +3,7 @@ import fs from "node:fs";
 import { canonicalJson, GIT40, hashObject, HEX64 } from "./c3_real_customer_dataset.mjs";
 
 export const EVIDENCE_TYPE = "c3-nonproduction-independent-grader-1.0.0";
+export const DERIVED_EVIDENCE_TYPE = "c3-nonproduction-independent-grader-derived-1.0.0";
 export const DIMENSIONS = [
   "factual_grounding_and_commitment_truth",
   "resolution_and_progress",
@@ -22,7 +23,11 @@ function verifyIdentity(value, expected) {
 
 export function verifyIndependentGraderArtifact({ raw, runtime, dataset, freeze, rubric, expectedCandidate, rawArtifactSha256 }) {
   if (!HEX64.test(rawArtifactSha256) || hashObject(raw) !== rawArtifactSha256) fail("grader_raw_artifact_tamper");
-  if (raw.evidence_type !== EVIDENCE_TYPE || raw.evidence_type === "c3-service-quality-assessment-2.0.0") fail("grader_evidence_type_invalid");
+  const derivedOnly = dataset.source_type === "DERIVED_ONLY";
+  const expectedEvidenceType = derivedOnly ? DERIVED_EVIDENCE_TYPE : EVIDENCE_TYPE;
+  const expectedDatasetEvidenceType = derivedOnly ? "REAL_CASE_DERIVED_INTERIM" : "A_CLASS_FULL_REAL_CUSTOMER_DIALOGUE";
+  if (raw.evidence_type !== expectedEvidenceType || raw.evidence_type === "c3-service-quality-assessment-2.0.0") fail("grader_evidence_type_invalid");
+  if (raw.dataset_evidence_type !== expectedDatasetEvidenceType || runtime.dataset_evidence_type !== expectedDatasetEvidenceType) fail("grader_dataset_evidence_type_invalid");
   verifyIdentity(raw.candidate, expectedCandidate);
   verifyIdentity(runtime.candidate, expectedCandidate);
   if (raw.candidate.run_id === runtime.candidate.run_id) fail("grader_not_independent_run");
@@ -66,7 +71,9 @@ export function verifyIndependentGraderArtifact({ raw, runtime, dataset, freeze,
   const dimensionScores = Object.fromEntries(DIMENSIONS.map((dimension) => [dimension, Number((sums[dimension] / dataset.cases.length).toFixed(6))]));
   const weightedScore = Number((DIMENSIONS.reduce((sum, dimension) => sum + dimensionScores[dimension] * rubric.weights[dimension], 0) / 10).toFixed(6));
   return {
-    evidence_type: "c3-nonproduction-independent-grader-verified-1.0.0",
+    evidence_type: derivedOnly ? "c3-nonproduction-independent-grader-derived-verified-1.0.0" : "c3-nonproduction-independent-grader-verified-1.0.0",
+    dataset_evidence_type: expectedDatasetEvidenceType,
+    product_ready_evidence: derivedOnly ? false : undefined,
     candidate: expectedCandidate,
     dataset_sha256: raw.dataset_sha256,
     raw_artifact_sha256: hashObject(raw),

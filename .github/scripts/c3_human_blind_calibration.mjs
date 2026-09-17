@@ -42,6 +42,18 @@ export function generateBlindPacket({ dataset, runtime, rubric, selectedCaseIds,
   };
 }
 
+export function verifyDerivedReviewPreparation({ preparation, dataset, freeze, rubric }) {
+  if (preparation?.schema_version !== "c3-real-case-derived-review-preparation-1.0.0" || preparation.status !== "REVIEW_PREPARATION" || preparation.evaluation_type !== "REAL_CASE_DERIVED_INTERIM") fail("derived_review_preparation_schema_invalid");
+  if (dataset?.source_type !== "DERIVED_ONLY" || dataset?.evaluation_type !== "REAL_CASE_DERIVED_INTERIM" || freeze?.source_type !== "DERIVED_ONLY") fail("derived_review_preparation_dataset_type_invalid");
+  if (preparation.dataset_sha256 !== hashObject(dataset) || preparation.dataset_sha256 !== freeze.dataset_sha256 || preparation.rubric_sha256 !== hashObject(rubric) || preparation.rubric_sha256 !== freeze.rubric_sha256) fail("derived_review_preparation_binding_invalid");
+  if (!Array.isArray(preparation.selected_case_ids) || preparation.selected_case_ids.length !== 20 || new Set(preparation.selected_case_ids).size !== 20) fail("derived_review_preparation_requires_20_distinct_cases");
+  const caseIds = new Set(dataset.cases.map((row) => row.case_id));
+  if (preparation.selected_case_ids.some((caseId) => !caseIds.has(caseId))) fail("derived_review_preparation_unknown_case");
+  if (preparation.minimum_independent_human_reviewers !== 2 || preparation.minimum_review_records_after_responses_exist !== 40 || preparation.actual_response_count !== 0 || preparation.actual_reviewer_count !== 0 || preparation.actual_review_record_count !== 0) fail("derived_review_preparation_counts_invalid");
+  if (!Object.values(preparation.blindness ?? {}).every((value) => value === true) || preparation.form_template?.scores_or_reviews_prepopulated !== false) fail("derived_review_preparation_blindness_invalid");
+  return { status: "REVIEW_PREPARATION", selected_case_count: 20, actual_response_count: 0, actual_reviewer_count: 0, actual_review_record_count: 0 };
+}
+
 export function krippendorffAlpha(units, { metric = "interval" } = {}) {
   const usable = units.filter((ratings) => Array.isArray(ratings) && ratings.length >= 2);
   const values = usable.flat();

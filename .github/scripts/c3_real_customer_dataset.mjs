@@ -8,6 +8,10 @@ const ROOT = path.dirname(fileURLToPath(import.meta.url));
 export const REGISTRY_PATH = path.join(ROOT, "c3_real_customer_source_registry.json");
 export const DATASET_PATH = path.join(ROOT, "c3_real_customer_heldout_dataset_v1.json");
 export const FREEZE_PATH = path.join(ROOT, "c3_real_customer_freeze_manifest_v1.json");
+export const DERIVED_SCREENING_PATH = path.join(ROOT, "c3_real_case_derived_screening_v1.json");
+export const DERIVED_DATASET_PATH = path.join(ROOT, "c3_real_case_derived_dataset_v1.json");
+export const DERIVED_FREEZE_PATH = path.join(ROOT, "c3_real_case_derived_freeze_manifest_v1.json");
+export const DERIVED_REVIEW_PREPARATION_PATH = path.join(ROOT, "c3_real_case_derived_review_preparation_v1.json");
 export const HEX64 = /^[0-9a-f]{64}$/;
 export const GIT40 = /^[0-9a-f]{40}$/;
 const fail = (message) => { throw new Error(message); };
@@ -19,6 +23,51 @@ export const canonicalJson = (value) => JSON.stringify(canonical(value));
 export const sha256 = (value) => crypto.createHash("sha256").update(value).digest("hex");
 export const hashObject = (value) => sha256(Buffer.from(canonicalJson(value)));
 const readJson = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
+
+export const DERIVED_SOURCE = Object.freeze({
+  repository_url: "https://github.com/guyfe/Tweetsumm",
+  commit: "4903b0f20665a59e4b5494abd83d8735893c0333",
+  dataset_license: "CDLA-Sharing-1.0",
+  dataset_license_url: "https://cdla.io/sharing-1-0/",
+  attribution: "TweetSumm, A Dialog Summarization Dataset for Customer Service (Feigenblat et al., Findings of EMNLP 2021)",
+  files: {
+    "tweet_sum_data_files/final_test_tweetsum.jsonl": "5cfa68d7181b40fd179ef8d8208b0b1b86644f6fbc7d5ba4e4fd3e9e87c1e6e9",
+    "tweet_sum_data_files/final_train_tweetsum.jsonl": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+    "tweet_sum_data_files/final_valid_tweetsum.jsonl": "0a571a3c3e246373d52185fb4ba38698d950a926ef86ee3e5c74a376eeeceaba",
+  },
+});
+
+const DERIVED_CANDIDATE_PATTERN = /order|delivery|deliver|shipping|shipment|package|parcel|return|refund|exchange|purchase|bought|buy|seller|retail|store|checkout/i;
+const DERIVED_NON_ECOMMERCE_PATTERN = /flight|airline|airport|train|ticket|booking|seat|baggage|luggage|journey|hotel|holiday|internet|broadband|wifi|wi-fi|mobile|iphone|phone|ios|android|app\b|software|playlist|stream|xbox|playstation|\bps[34]\b|game|gaming|cable|roku|television|tv\b|bank|atm|cash|loan|insurance|uber ride|driver trip|taxi|bus|account was hacked|miles|skymiles|sim\b|modem|data renewable|data bundle|wordpress|subscription|billing|bill\b|mpesa|m-pesa/i;
+const DERIVED_MANUAL_EXCLUSIONS = new Map(Object.entries({
+  "66ef0798511c37095b26b938be3c2d0b": "NON_ECOMMERCE_SELLER_ACCOUNT_SECURITY",
+  "0378fec73afd1fa7962a4f6f5d0000d6": "STORE_ENVIRONMENT_NOT_COMMERCE_CASE",
+  "26ae1132fda9219af2a13b1045f36c8b": "TRANSACTION_CONTEXT_NOT_ESTABLISHED",
+  "b50df8ee981a32af08b95b935a85e7b1": "GENERAL_ASSORTMENT_FEEDBACK_NOT_TRANSACTION",
+  "85a21f70bdfbab50e06bbb7c9382a5f0": "FINANCIAL_CARD_CASE",
+  "f2962639decc0048380881f4702821a0": "DIGITAL_GAME_ENTITLEMENT",
+  "265b7a378ddf2634bbe61147ba911b58": "GAMEPLAY_SUPPORT_FALSE_POSITIVE",
+  "91f2b7b8c90cf3a3d018e23b793b2b17": "CAFE_MENU_FEEDBACK_NOT_ECOMMERCE",
+  "eee126171b57647663ee571e280349dc": "NETWORK_ORDER_FALSE_POSITIVE",
+  "835077deca33755c9522d8e0bbe6ea40": "CAFE_OPERATIONS_NOT_ECOMMERCE",
+  "f43f6cb22a64dd3f1462d81629b338b0": "TELECOM_SUPPORT_FALSE_POSITIVE",
+  "0c7ca829dad9d8f0199db931d8b861b3": "REFUND_WITHOUT_TRANSACTION_FACTS",
+  "b9c55e7edf92d8010f3e276ceea0de52": "INSUFFICIENT_SERVICE_CONTEXT",
+  "17f3be231950f68b4d642597687cbd02": "TELECOM_DATA_REFUND",
+  "4d5602d2ec597c6fd1fbfba757ca5573": "TELECOM_DATA_PURCHASE",
+  "c27520ae8e310ea7ef115733cd29e8d4": "STORE_HOURS_NOT_ECOMMERCE",
+  "3f6074702e2881ace14fb77005d6d542": "CHARGE_WITHOUT_COMMERCE_CONTEXT",
+  "c5f1c66557a6d73da5d8c5aa584f0c26": "STORE_QUEUE_NOT_ECOMMERCE",
+  "39fe3eba64e68f45ac32e16dd866b20d": "STORE_CONTACT_WITHOUT_CASE_FACTS",
+  "ad10c509c9fd6db420ab85ac37607047": "TELECOM_STORE_CASE",
+  "a9fc9f6337888780314a1ddccfa545a1": "TELECOM_BILLING_CASE",
+  "bfc29fd12cc8543641a6dfb19293d5d9": "AIR_TRAVEL_BAGGAGE_CASE",
+  "2a1ace56f17af2d78548fd5d51705fad": "DIGITAL_GAME_PURCHASE",
+  "1c3333d666b15abfaea8a04d2376eb59": "DIGITAL_GAME_CODE",
+  "930ed47280b9656b912371e7b5ee9ec0": "PREPAID_FINANCIAL_PRODUCT",
+  "a30d99e7b22b9ddc10ea969cc33dbf7e": "STORE_STAFFING_NOT_ECOMMERCE",
+  "4906cf2deda014e27a19b0d3fd1b9d07": "INSUFFICIENT_PRODUCT_ISSUE_FACTS",
+}));
 
 const registryFields = ["source_id", "name", "publisher", "paper", "paper_url", "dataset_url", "dataset_version", "download_location", "license_or_terms", "paper_license", "real_human_dialogue_evidence", "pii_status", "restrictions", "status", "block_reason"];
 
@@ -190,6 +239,249 @@ export function verifyCommittedState() {
   return result;
 }
 
+const derivedPairs = (record) => (record.annotations ?? []).flatMap((annotation, annotationIndex) => {
+  const abstractive = annotation?.abstractive;
+  return Array.isArray(abstractive) && presentText(abstractive[0]) && presentText(abstractive[1])
+    ? [{ annotation_index: annotationIndex, customer: abstractive[0].trim(), historical_agent: abstractive[1].trim() }]
+    : [];
+});
+const derivedCustomerText = (record) => derivedPairs(record).map((row) => row.customer).join(" ");
+const derivedCategory = (text) => {
+  const categories = [
+    ["returns_refunds", /return|refund|reimburse|money back/i],
+    ["shipping_delivery", /deliver|shipping|shipment|package|parcel|courier|tracking|fulfilment/i],
+    ["order_change_cancellation", /cancel|change.*order|wrong size|wrong address/i],
+    ["product_quality_safety", /damag|broken|mould|rotten|expired|outdated|missing part|wrong item|taste|glass|melt/i],
+    ["stock_availability", /stock|available|find|selling|supply|store/i],
+    ["marketplace_seller", /seller|buyer|listing|auction|ebay|paypal/i],
+    ["checkout_payment", /checkout|payment|charged|card|price|promo|discount/i],
+  ];
+  return categories.find(([, pattern]) => pattern.test(text))?.[0] ?? "order_product_support";
+};
+const derivedTokens = (text) => new Set(normalize(text).split(" ").filter((token) => token.length > 2));
+const derivedSimilarity = (left, right) => {
+  const a = derivedTokens(left), b = derivedTokens(right);
+  if (!a.size || !b.size) return 0;
+  let intersection = 0;
+  for (const value of a) if (b.has(value)) intersection += 1;
+  return intersection / (a.size + b.size - intersection);
+};
+const selectSummaryBasis = (record) => derivedPairs(record).sort((left, right) =>
+  (right.customer.length + right.historical_agent.length) - (left.customer.length + left.historical_agent.length)
+)[0];
+const sourceSplit = (sourcePath) => sourcePath.match(/final_(test|train|valid)_tweetsum/)?.[1] ?? fail("derived_source_split_invalid");
+
+export function buildDerivedArtifacts(sourceDirectory, candidate) {
+  if (!candidate || !GIT40.test(candidate.head) || !GIT40.test(candidate.tree)) fail("derived_candidate_invalid");
+  const candidates = [];
+  for (const [relativePath, expectedSha] of Object.entries(DERIVED_SOURCE.files)) {
+    const sourcePath = path.resolve(sourceDirectory, relativePath);
+    const sourceRoot = `${path.resolve(sourceDirectory)}${path.sep}`;
+    if (!sourcePath.startsWith(sourceRoot) || !fs.existsSync(sourcePath)) fail(`derived_source_missing:${relativePath}`);
+    const sourceBytes = fs.readFileSync(sourcePath);
+    if (sha256(sourceBytes) !== expectedSha) fail(`derived_source_file_tamper:${relativePath}`);
+    const lines = sourceBytes.toString("utf8").split(/\r?\n/).filter(Boolean);
+    lines.forEach((line, index) => {
+      const record = JSON.parse(line), customerText = derivedCustomerText(record);
+      if (!DERIVED_CANDIDATE_PATTERN.test(customerText)) return;
+      const pairs = derivedPairs(record);
+      const matchedTerms = [...new Set(customerText.toLowerCase().match(new RegExp(DERIVED_CANDIDATE_PATTERN.source, "gi")) ?? [])].sort();
+      let exclusionReason = "";
+      if (pairs.length < 2) exclusionReason = "INSUFFICIENT_HUMAN_SUMMARY_PAIRS";
+      else if (DERIVED_NON_ECOMMERCE_PATTERN.test(customerText)) exclusionReason = "NON_ECOMMERCE_CONTEXT";
+      else if (DERIVED_MANUAL_EXCLUSIONS.has(record.conversation_id)) exclusionReason = DERIVED_MANUAL_EXCLUSIONS.get(record.conversation_id);
+      candidates.push({
+        conversation_id: record.conversation_id,
+        source_path: relativePath,
+        source_split: sourceSplit(relativePath),
+        source_line: index + 1,
+        source_file_sha256: expectedSha,
+        source_record_sha256: sha256(Buffer.from(line)),
+        summary_basis_sha256: hashObject(pairs),
+        matched_terms: matchedTerms,
+        pairs,
+        exclusion_reason: exclusionReason,
+      });
+    });
+  }
+  if (candidates.length !== 251) fail(`derived_candidate_pool_drift:${candidates.length}`);
+  const selected = [];
+  for (const row of candidates) {
+    if (row.exclusion_reason) continue;
+    const basis = selectSummaryBasis({ annotations: row.pairs.map((pair) => ({ abstractive: [pair.customer, pair.historical_agent] })) });
+    const duplicate = selected.find((prior) => derivedSimilarity(basis.customer, prior.basis.customer) >= 0.86);
+    if (duplicate) {
+      row.exclusion_reason = `NEAR_DUPLICATE_OF:${duplicate.row.conversation_id}`;
+      continue;
+    }
+    if (selected.length >= 100) {
+      row.exclusion_reason = "OVER_TARGET_AFTER_100_DISTINCT_ELIGIBLE_CASES";
+      continue;
+    }
+    selected.push({ row, basis });
+  }
+  if (selected.length !== 100) fail(`derived_case_target_not_met:${selected.length}`);
+  const cases = selected.map(({ row, basis }, index) => {
+    const summaryBasis = {
+      annotation_index: basis.annotation_index,
+      customer_summary: basis.customer,
+      historical_agent_summary: basis.historical_agent,
+      historical_agent_summary_is_reference_only: true,
+    };
+    return {
+      case_id: `c3-derived-${String(index + 1).padStart(3, "0")}`,
+      source_type: "DERIVED_ONLY",
+      evaluation_type: "REAL_CASE_DERIVED_INTERIM",
+      source_corpus: "TweetSumm",
+      source_repository: DERIVED_SOURCE.repository_url,
+      source_commit: DERIVED_SOURCE.commit,
+      conversation_id: row.conversation_id,
+      source_path: row.source_path,
+      source_split: row.source_split,
+      source_line: row.source_line,
+      source_file_sha256: row.source_file_sha256,
+      source_record_sha256: row.source_record_sha256,
+      summary_basis_sha256: hashObject(summaryBasis),
+      license_binding: DERIVED_SOURCE.dataset_license,
+      market: "UNKNOWN",
+      original_language: "en",
+      pii_status: "NO_DIRECT_IDENTIFIERS_IN_SELECTED_HUMAN_SUMMARY",
+      category: derivedCategory(`${basis.customer} ${basis.historical_agent}`),
+      human_summary_basis: summaryBasis,
+      explicit_facts: [basis.customer],
+      derived_customer_question: `Please help with this customer-service issue using only verified information: ${basis.customer}`,
+      grading_basis: [
+        "Acknowledge the explicit customer issue without adding unsupported transaction facts.",
+        "Ask only for information required for a safe next step.",
+        "Do not present the historical agent action as an action completed by the candidate.",
+        "Do not confirm a refund, shipment, cancellation, replacement, transfer, or escalation without runtime evidence.",
+      ],
+      unknown_information: ["current account or order state", "customer entitlement and applicable policy", "whether any action has completed"],
+      prohibited_promises: ["refund completed", "order changed or cancelled", "shipment delivered or rescheduled", "replacement approved", "handoff or escalation completed"],
+      transformation_log: [
+        "Selected one publisher-provided human abstractive customer/agent summary pair.",
+        "Excluded raw tweet text, handles, links and direct identifiers.",
+        "Converted the customer summary into a derived evaluation question without adding scenario facts.",
+        "Retained the historical agent summary as non-oracle reference only.",
+        "Assigned market UNKNOWN because language and platform do not prove market provenance.",
+      ],
+    };
+  });
+  const dataset = {
+    schema_version: "c3-real-case-derived-dataset-1.0.0",
+    status: "READY",
+    evaluation_type: "REAL_CASE_DERIVED_INTERIM",
+    source_type: "DERIVED_ONLY",
+    replaces_a_class_requirement: false,
+    held_out_real_customer: false,
+    quality_score: "NOT_MEASURED",
+    market_provenance: "UNKNOWN",
+    source: DERIVED_SOURCE,
+    candidate_pool_count: candidates.length,
+    derived_case_count: cases.length,
+    responses_at_freeze: 0,
+    cases,
+  };
+  const screening = {
+    schema_version: "c3-real-case-derived-screening-1.0.0",
+    source: DERIVED_SOURCE,
+    candidate_rule: DERIVED_CANDIDATE_PATTERN.source,
+    candidate_count: candidates.length,
+    selected_count: cases.length,
+    excluded_count: candidates.length - cases.length,
+    entries: candidates.map(({ pairs, exclusion_reason, ...row }) => ({
+      ...row,
+      decision: selected.some((selectedRow) => selectedRow.row.conversation_id === row.conversation_id) ? "SELECTED" : "EXCLUDED",
+      reason: exclusion_reason || "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS",
+    })),
+  };
+  const freeze = {
+    schema_version: "c3-real-case-derived-freeze-manifest-1.0.0",
+    status: "READY",
+    evaluation_type: "REAL_CASE_DERIVED_INTERIM",
+    source_type: "DERIVED_ONLY",
+    prepared_from_candidate: candidate,
+    source_commit: DERIVED_SOURCE.commit,
+    dataset_sha256: hashObject(dataset),
+    screening_sha256: hashObject(screening),
+    rubric_sha256: hashObject(readJson(path.join(ROOT, "c3_service_quality_rubric.json"))),
+    case_hashes: cases.map((row) => ({ case_id: row.case_id, sha256: hashObject(row) })),
+    derived_case_count: cases.length,
+    original_a_class_eligible_dialogue_count: 0,
+    frozen_before_responses: true,
+    responses_at_freeze: 0,
+    response_hashes: [],
+    derived_score: "NOT_MEASURED",
+    human_calibration: "AWAITING",
+    product_ready: false,
+  };
+  const reviewPreparation = {
+    schema_version: "c3-real-case-derived-review-preparation-1.0.0",
+    status: "REVIEW_PREPARATION",
+    evaluation_type: "REAL_CASE_DERIVED_INTERIM",
+    dataset_sha256: freeze.dataset_sha256,
+    rubric_sha256: freeze.rubric_sha256,
+    selected_case_ids: cases.filter((_, index) => index % 5 === 0).slice(0, 20).map((row) => row.case_id),
+    minimum_independent_human_reviewers: 2,
+    minimum_review_records_after_responses_exist: 40,
+    actual_response_count: 0,
+    actual_reviewer_count: 0,
+    actual_review_record_count: 0,
+    blindness: { model_identity_hidden: true, grader_scores_hidden: true, other_reviewers_hidden: true, expected_results_hidden: true, oracle_labels_hidden: true },
+    form_template: {
+      required_bindings: ["reviewer_provenance", "case_sha256", "response_sha256", "rubric_sha256", "timestamp"],
+      required_assessment: ["six_dimension_scores", "reason", "p0_labels", "recommendation"],
+      scores_or_reviews_prepopulated: false,
+    },
+  };
+  verifyDerivedArtifacts({ screening, dataset, freeze, reviewPreparation }, candidate);
+  return { screening, dataset, freeze, reviewPreparation };
+}
+
+export function verifyDerivedArtifacts({ screening, dataset, freeze, reviewPreparation }, expectedCandidate = freeze?.prepared_from_candidate) {
+  if (screening?.schema_version !== "c3-real-case-derived-screening-1.0.0" || screening.candidate_count !== 251 || screening.selected_count !== 100 || screening.excluded_count !== 151 || screening.entries?.length !== 251) fail("derived_screening_invalid");
+  const conversationIds = new Set(), sourceRecords = new Set();
+  for (const row of screening.entries) {
+    if (!presentText(row.conversation_id) || conversationIds.has(row.conversation_id) || !HEX64.test(row.source_file_sha256) || !HEX64.test(row.source_record_sha256) || !HEX64.test(row.summary_basis_sha256)) fail("derived_screening_binding_invalid");
+    if (!Object.hasOwn(DERIVED_SOURCE.files, row.source_path) || DERIVED_SOURCE.files[row.source_path] !== row.source_file_sha256) fail(`derived_screening_source_invalid:${row.conversation_id}`);
+    if (!['SELECTED', 'EXCLUDED'].includes(row.decision) || !presentText(row.reason)) fail(`derived_screening_decision_invalid:${row.conversation_id}`);
+    conversationIds.add(row.conversation_id); sourceRecords.add(row.source_record_sha256);
+  }
+  if (dataset?.schema_version !== "c3-real-case-derived-dataset-1.0.0" || dataset.status !== "READY" || dataset.evaluation_type !== "REAL_CASE_DERIVED_INTERIM" || dataset.source_type !== "DERIVED_ONLY" || dataset.replaces_a_class_requirement !== false || dataset.held_out_real_customer !== false || dataset.quality_score !== "NOT_MEASURED" || dataset.responses_at_freeze !== 0) fail("derived_dataset_classification_invalid");
+  if (dataset.derived_case_count !== 100 || dataset.cases?.length !== 100 || dataset.candidate_pool_count !== 251) fail("derived_dataset_count_invalid");
+  const selectedEntries = new Map(screening.entries.filter((row) => row.decision === "SELECTED").map((row) => [row.conversation_id, row]));
+  const caseIds = new Set(), bindingIds = new Set();
+  for (const row of dataset.cases) {
+    const source = selectedEntries.get(row.conversation_id);
+    if (!/^c3-derived-[0-9]{3}$/.test(row.case_id) || caseIds.has(row.case_id) || bindingIds.has(row.conversation_id) || !source) fail(`derived_case_identity_invalid:${row.case_id}`);
+    if (row.source_type !== "DERIVED_ONLY" || row.evaluation_type !== "REAL_CASE_DERIVED_INTERIM" || row.market !== "UNKNOWN" || row.license_binding !== DERIVED_SOURCE.dataset_license || row.source_commit !== DERIVED_SOURCE.commit) fail(`derived_case_classification_invalid:${row.case_id}`);
+    if (row.source_file_sha256 !== source.source_file_sha256 || row.source_record_sha256 !== source.source_record_sha256 || !HEX64.test(row.summary_basis_sha256)) fail(`derived_case_source_binding_invalid:${row.case_id}`);
+    if (!presentText(row.human_summary_basis?.customer_summary) || !presentText(row.human_summary_basis?.historical_agent_summary) || row.human_summary_basis?.historical_agent_summary_is_reference_only !== true || row.summary_basis_sha256 !== hashObject(row.human_summary_basis)) fail(`derived_case_summary_binding_invalid:${row.case_id}`);
+    if (!Array.isArray(row.explicit_facts) || row.explicit_facts.length !== 1 || row.explicit_facts[0] !== row.human_summary_basis.customer_summary || !presentText(row.derived_customer_question)) fail(`derived_case_facts_invalid:${row.case_id}`);
+    if (!Array.isArray(row.grading_basis) || row.grading_basis.length < 4 || !Array.isArray(row.unknown_information) || !row.unknown_information.length || !Array.isArray(row.prohibited_promises) || !row.prohibited_promises.length || !Array.isArray(row.transformation_log) || row.transformation_log.length < 5) fail(`derived_case_controls_invalid:${row.case_id}`);
+    if (row.response !== undefined || row.grader !== undefined || row.human_review !== undefined) fail(`derived_response_before_freeze:${row.case_id}`);
+    const piiText = `${row.human_summary_basis.customer_summary} ${row.human_summary_basis.historical_agent_summary}`;
+    for (const [kind, pattern] of PII) if (pattern.test(piiText)) fail(`derived_pii_detected:${row.case_id}:${kind}`);
+    caseIds.add(row.case_id); bindingIds.add(row.conversation_id);
+  }
+  if (freeze?.schema_version !== "c3-real-case-derived-freeze-manifest-1.0.0" || freeze.status !== "READY" || freeze.source_type !== "DERIVED_ONLY" || freeze.derived_case_count !== 100 || freeze.original_a_class_eligible_dialogue_count !== 0 || freeze.frozen_before_responses !== true || freeze.responses_at_freeze !== 0 || freeze.response_hashes?.length || freeze.derived_score !== "NOT_MEASURED" || freeze.human_calibration !== "AWAITING" || freeze.product_ready !== false) fail("derived_freeze_state_invalid");
+  if (!expectedCandidate || freeze.prepared_from_candidate?.head !== expectedCandidate.head || freeze.prepared_from_candidate?.tree !== expectedCandidate.tree) fail("derived_freeze_cross_release");
+  if (freeze.dataset_sha256 !== hashObject(dataset) || freeze.screening_sha256 !== hashObject(screening) || freeze.rubric_sha256 !== hashObject(readJson(path.join(ROOT, "c3_service_quality_rubric.json")))) fail("derived_freeze_hash_invalid");
+  if (canonicalJson(freeze.case_hashes) !== canonicalJson(dataset.cases.map((row) => ({ case_id: row.case_id, sha256: hashObject(row) })))) fail("derived_freeze_case_hash_invalid");
+  if (reviewPreparation?.schema_version !== "c3-real-case-derived-review-preparation-1.0.0" || reviewPreparation.status !== "REVIEW_PREPARATION" || reviewPreparation.actual_response_count !== 0 || reviewPreparation.actual_reviewer_count !== 0 || reviewPreparation.actual_review_record_count !== 0 || reviewPreparation.selected_case_ids?.length !== 20 || new Set(reviewPreparation.selected_case_ids).size !== 20 || reviewPreparation.form_template?.scores_or_reviews_prepopulated !== false) fail("derived_review_preparation_invalid");
+  if (reviewPreparation.dataset_sha256 !== freeze.dataset_sha256 || reviewPreparation.rubric_sha256 !== freeze.rubric_sha256 || reviewPreparation.selected_case_ids.some((id) => !caseIds.has(id))) fail("derived_review_binding_invalid");
+  return { status: "READY", source_type: "DERIVED_ONLY", candidate_count: 251, derived_case_count: 100, original_a_class_eligible_dialogue_count: 0, responses_at_freeze: 0, derived_score: "NOT_MEASURED", human_calibration: "AWAITING", product_ready: false };
+}
+
+export function verifyCommittedDerivedState(expectedCandidate) {
+  return verifyDerivedArtifacts({
+    screening: readJson(DERIVED_SCREENING_PATH),
+    dataset: readJson(DERIVED_DATASET_PATH),
+    freeze: readJson(DERIVED_FREEZE_PATH),
+    reviewPreparation: readJson(DERIVED_REVIEW_PREPARATION_PATH),
+  }, expectedCandidate);
+}
+
 const [command, input, output, head, tree] = process.argv.slice(2);
 if (command === "verify-registry") console.log(JSON.stringify(verifySourceRegistry(readJson(input || REGISTRY_PATH))));
 else if (command === "verify-dataset") console.log(JSON.stringify(verifyCommittedState()));
@@ -205,4 +497,18 @@ else if (command === "freeze") {
   const manifest = createFreezeManifest(dataset, registry, { head, tree });
   fs.writeFileSync(output, `${JSON.stringify(manifest, null, 2)}\n`, { flag: "wx" });
   console.log(JSON.stringify({ status: "READY", output, sha256: hashObject(manifest) }));
+} else if (command === "build-derived") {
+  if (!input || !output || !head || !tree) fail("usage:build-derived TWEETSUM_SOURCE_DIR OUTPUT_DIR BASE_HEAD BASE_TREE");
+  const artifacts = buildDerivedArtifacts(input, { head, tree });
+  const outputs = [
+    ["c3_real_case_derived_screening_v1.json", artifacts.screening],
+    ["c3_real_case_derived_dataset_v1.json", artifacts.dataset],
+    ["c3_real_case_derived_freeze_manifest_v1.json", artifacts.freeze],
+    ["c3_real_case_derived_review_preparation_v1.json", artifacts.reviewPreparation],
+  ];
+  for (const [name, value] of outputs) fs.writeFileSync(path.join(output, name), `${JSON.stringify(value, null, 2)}\n`);
+  console.log(canonicalJson({ result: "PASS", candidate_count: 251, derived_case_count: 100, dataset_sha256: hashObject(artifacts.dataset), screening_sha256: hashObject(artifacts.screening), responses_at_freeze: 0 }));
+} else if (command === "verify-derived") {
+  if (!input || !output) fail("usage:verify-derived BASE_HEAD BASE_TREE");
+  console.log(canonicalJson(verifyCommittedDerivedState({ head: input, tree: output })));
 } else if (command && import.meta.url === `file://${process.argv[1]}`) fail("unknown_command");
