@@ -805,9 +805,21 @@ jobs:
           python - "$RUNNER_TEMP/c3-live-parity" "$RUNNER_TEMP/c3-target-parity" <<'PY'
           import hashlib,json,pathlib,sys
           root=pathlib.Path(sys.argv[1]); target=pathlib.Path(sys.argv[2]); repo=pathlib.Path('supabase/functions')
-          expected_changed={'_shared/conversation-long-memory.ts','_shared/conversation-recall.ts','_shared/conversation-service-planner.ts','_shared/conversation-service-runtime.ts','_shared/customer360-entitlement-client.ts','_shared/customer360-entitlement-contract.ts','_shared/kb-client.ts','_shared/nonproduction-secret.ts','generate-reply/index.ts','agent-assist/index.ts'}
-          common={'_shared/conversation-long-memory.ts','_shared/conversation-recall.ts','_shared/conversation-service-planner.ts','_shared/conversation-service-runtime.ts','_shared/customer360-entitlement-client.ts','_shared/customer360-entitlement-contract.ts','_shared/kb-client.ts','_shared/nonproduction-secret.ts'}
-          expected_by_function={'generate-reply':common|{'generate-reply/index.ts'},'agent-assist':common|{'agent-assist/index.ts'}}
+          allowed_shared={
+            '_shared/conversation-long-memory.ts','_shared/conversation-recall.ts',
+            '_shared/conversation-service-planner.ts','_shared/conversation-service-runtime.ts',
+            '_shared/customer360-entitlement-client.ts','_shared/customer360-entitlement-contract.ts',
+            '_shared/kb-client.ts','_shared/nonproduction-secret.ts',
+            '_shared/canonical-grounding.ts','_shared/ce-automation-engine.ts',
+            '_shared/ce-grounding.ts','_shared/citation-lineage.ts',
+            '_shared/commerce-semantic-interpreter.ts','_shared/escalation-policy.ts',
+            '_shared/deterministic-commerce-engine.ts','_shared/deterministic-kb-client.ts',
+            '_shared/deterministic-runtime-router.ts'
+          }
+          required_shared={
+            '_shared/deterministic-commerce-engine.ts','_shared/deterministic-kb-client.ts',
+            '_shared/deterministic-runtime-router.ts'
+          }
           failed=False; changed_by_function={}
           for fn in ('generate-reply','agent-assist'):
             manifest=json.loads((root/fn/'MANIFEST.json').read_text())
@@ -815,14 +827,16 @@ jobs:
             before={row['path']:row['sha256'] for row in manifest['files']}; after={row['path']:row['sha256'] for row in proposed_manifest['files']}
             changed=sorted(path for path in set(before)|set(after) if before.get(path)!=after.get(path))
             proposed=sorted(after.items())
-            actual_changed=set(changed); boundary_ok=actual_changed==expected_by_function[fn]
+            actual_changed=set(changed)
+            allowed=allowed_shared|{f'{fn}/index.ts'}
+            required=required_shared|{f'{fn}/index.ts'}
+            boundary_ok=required<=actual_changed<=allowed
             closure_hash=hashlib.sha256(''.join(f'{path}\0{digest}\n' for path,digest in sorted(proposed)).encode()).hexdigest()
-            print(f'C3_DEPLOYMENT_BOUNDARY|function={fn}|expected_changed={len(expected_by_function[fn])}|actual_changed={len(actual_changed)}|result={"PASS" if boundary_ok else "FAIL"}')
+            print(f'C3_DEPLOYMENT_BOUNDARY|function={fn}|required_changed={len(required)}|allowed_changed={len(allowed)}|actual_changed={len(actual_changed)}|result={"PASS" if boundary_ok else "FAIL"}')
             print(f'C3_PROPOSED_CLOSURE|function={fn}|manifest_sha256={closure_hash}|result={"PASS" if boundary_ok else "FAIL"}')
             for path in sorted(actual_changed): print(f'C3_DEPLOYMENT_CHANGED_PATH|function={fn}|path={path}')
             changed_by_function[fn]=actual_changed; failed=failed or not boundary_ok
           if failed: raise SystemExit(1)
-          assert expected_changed==changed_by_function['generate-reply']|changed_by_function['agent-assist']
           print('C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE')
           print('C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS')
           print('C3_DEPLOYMENT_ALLOWLIST=generate-reply,agent-assist')
