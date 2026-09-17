@@ -8,7 +8,6 @@ const json = (status: number, body: unknown) => new Response(JSON.stringify(body
   status,
   headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
 });
-
 Deno.serve(async (req: Request) => {
   if (!isC3NonproductionProject()) return json(503, { success: false, error: "nonproduction_identity_required" });
   if (req.method !== "POST") return json(405, { success: false, error: "method_not_allowed" });
@@ -59,4 +58,3 @@ Deno.serve(async (req: Request) => {
     entitlements: entitlements ?? [],
   });
 });
-

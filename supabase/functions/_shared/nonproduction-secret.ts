@@ -11,7 +11,6 @@ export function isC3NonproductionProject(): boolean {
     return false;
   }
 }
-
 export async function resolveServerSecret(
   environmentName: string,
   nonproductionVaultName: string,
@@ -34,4 +33,3 @@ export async function resolveServerSecret(
   });
   return !error && typeof data === "string" && data.trim() ? data.trim() : null;
 }
-
