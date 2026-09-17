@@ -794,8 +794,8 @@ jobs:
           python - "$RUNNER_TEMP/c3-live-parity" "$RUNNER_TEMP/c3-target-parity" <<'PY'
           import hashlib,json,pathlib,sys
           root=pathlib.Path(sys.argv[1]); target=pathlib.Path(sys.argv[2]); repo=pathlib.Path('supabase/functions')
-          expected_changed={'_shared/conversation-long-memory.ts','_shared/conversation-recall.ts','_shared/conversation-service-planner.ts','_shared/conversation-service-runtime.ts','generate-reply/index.ts','agent-assist/index.ts'}
-          common={'_shared/conversation-long-memory.ts','_shared/conversation-recall.ts','_shared/conversation-service-planner.ts','_shared/conversation-service-runtime.ts'}
+          expected_changed={'_shared/conversation-long-memory.ts','_shared/conversation-recall.ts','_shared/conversation-service-planner.ts','_shared/conversation-service-runtime.ts','_shared/customer360-entitlement-client.ts','_shared/customer360-entitlement-contract.ts','_shared/kb-client.ts','_shared/nonproduction-secret.ts','generate-reply/index.ts','agent-assist/index.ts'}
+          common={'_shared/conversation-long-memory.ts','_shared/conversation-recall.ts','_shared/conversation-service-planner.ts','_shared/conversation-service-runtime.ts','_shared/customer360-entitlement-client.ts','_shared/customer360-entitlement-contract.ts','_shared/kb-client.ts','_shared/nonproduction-secret.ts'}
           expected_by_function={'generate-reply':common|{'generate-reply/index.ts'},'agent-assist':common|{'agent-assist/index.ts'}}
           failed=False; changed_by_function={}
           for fn in ('generate-reply','agent-assist'):
