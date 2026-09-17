@@ -24,6 +24,18 @@ const canonical = (value) => {
 export const canonicalJson = (value) => JSON.stringify(canonical(value));
 export const digestObject = (value) => `sha256:${sha(canonicalJson(value))}`;
 
+function normalizeArtifactDigest(value) {
+  const raw = String(value ?? "").trim();
+  return /^[0-9a-f]{64}$/.test(raw) ? `sha256:${raw}` : raw;
+}
+
+function normalizeBaselineIdentity(value) {
+  if (!value || typeof value !== "object") fail("baseline_artifact_identity_invalid");
+  const baseline = { ...value, artifact_digest: normalizeArtifactDigest(value.artifact_digest) };
+  if (!/^sha256:[0-9a-f]{64}$/.test(baseline.artifact_digest)) fail("baseline_artifact_identity_invalid");
+  return baseline;
+}
+
 function dependencyClosurePaths(root, entrypoint) {
   const pending = [entrypoint];
   const seen = new Set();
@@ -93,8 +105,7 @@ export function verifyActualAgainstTarget(target, actual) {
 }
 
 export function createReleaseIdentity(input) {
-  const baseline = input.baseline;
-  if (!baseline || !/^sha256:[0-9a-f]{64}$/.test(String(baseline.artifact_digest ?? ""))) fail("baseline_artifact_identity_invalid");
+  const baseline = normalizeBaselineIdentity(input.baseline);
   const target = input.target;
   if (!target || target.head !== input.head || target.tree !== input.tree) fail("target_commit_identity_mismatch");
   for (const fn of FUNCTIONS) {
@@ -118,8 +129,7 @@ export function createReleaseIdentity(input) {
 }
 
 export function createReleaseIntent(input) {
-  const baseline = input.baseline;
-  if (!baseline || !/^sha256:[0-9a-f]{64}$/.test(String(baseline.artifact_digest ?? ""))) fail("baseline_artifact_identity_invalid");
+  const baseline = normalizeBaselineIdentity(input.baseline);
   if (!input.target || input.target.head !== input.head || input.target.tree !== input.tree) fail("target_commit_identity_mismatch");
   for (const fn of FUNCTIONS) if (!input.target.functions?.[fn]?.manifest_sha256) fail(`target_manifest_missing:${fn}`);
   const core = {
