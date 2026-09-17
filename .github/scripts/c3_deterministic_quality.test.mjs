@@ -12,19 +12,12 @@ import { DIMENSIONS } from "./c3_nonproduction_independent_grader.mjs";
 
 const read = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
 const dataset = read(".github/scripts/c3_real_case_derived_dataset_v1.json");
-const overlay = read(
-  ".github/scripts/c3_deterministic_objective_oracle_v1.json",
-);
-const freeze = read(
-  ".github/scripts/c3_deterministic_objective_freeze_v1.json",
-);
+const overlay = read(".github/scripts/c3_deterministic_objective_oracle_v1.json");
+const freeze = read(".github/scripts/c3_deterministic_objective_freeze_v1.json");
 const rubric = read(".github/scripts/c3_service_quality_rubric.json");
 const expectedCandidate = { head: "a".repeat(40), tree: "b".repeat(40) };
 
-assert.equal(
-  verifyObjectiveOracle({ dataset, overlay, freeze }).quality_score,
-  "NOT_MEASURED",
-);
+assert.equal(verifyObjectiveOracle({ dataset, overlay, freeze }).quality_score, "NOT_MEASURED");
 const runtime = {
   schema_version: "c3-deterministic-objective-runtime-1.0.0",
   evidence_type: "DETERMINISTIC_CONFORMANCE_ONLY",
@@ -147,10 +140,7 @@ const excluded = [
   "rule_author",
 ];
 const passingScores = Object.fromEntries(
-  DIMENSIONS.map((
-    dimension,
-    index,
-  ) => [dimension, [9.6, 9.6, 9.4, 9.4, 9.6, 9.4][index]]),
+  DIMENSIONS.map((dimension, index) => [dimension, [9.6, 9.6, 9.4, 9.4, 9.6, 9.4][index]]),
 );
 const artifact = {
   schema_version: "c3-deterministic-full-human-review-1.0.0",
@@ -179,7 +169,7 @@ const artifact = {
       scores: passingScores,
       p0_labels: [],
       recommendation: "PASS",
-    }))
+    })),
   ),
 };
 const verified = verifyFullHumanReview({

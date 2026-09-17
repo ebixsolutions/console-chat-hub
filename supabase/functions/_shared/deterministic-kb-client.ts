@@ -99,11 +99,9 @@ export type TenantResolutionReason =
   | "KB_TENANT_IDENTITY_CONFLICT"
   | "KB_DEMO_DISABLED";
 export type TenantResolutionResult =
-  | { resolved: true; scope: KBResolvedScope }
-  | { resolved: false; reason: TenantResolutionReason };
+  { resolved: true; scope: KBResolvedScope } | { resolved: false; reason: TenantResolutionReason };
 
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function resolveKBEndpoint(): KBEndpointConfig {
   return { mode: "postgres_fts" };
 }
@@ -119,11 +117,15 @@ export async function resolveTenantScope(
   let key = "";
   try {
     key = getSupabaseAdminKey();
-  } catch { /* fail closed below */ }
+  } catch {
+    /* fail closed below */
+  }
   if (!url || !key) return { resolved: false, reason: "KB_DB_CONFIG_MISSING" };
   const admin = createClient(url, key);
-  const { data: conversation, error } = await admin.from("conversations")
-    .select("company_id,channel_config_id").eq("id", conversationId)
+  const { data: conversation, error } = await admin
+    .from("conversations")
+    .select("company_id,channel_config_id")
+    .eq("id", conversationId)
     .maybeSingle();
   if (error) {
     return { resolved: false, reason: "KB_CONVERSATION_LOOKUP_FAILED" };
@@ -133,30 +135,29 @@ export async function resolveTenantScope(
   }
   let channelCompany: string | null = null;
   if (conversation.channel_config_id) {
-    const { data: channel, error: channelError } = await admin.from(
-      "channel_config",
-    ).select("company_id").eq("id", conversation.channel_config_id)
+    const { data: channel, error: channelError } = await admin
+      .from("channel_config")
+      .select("company_id")
+      .eq("id", conversation.channel_config_id)
       .maybeSingle();
     if (channelError) {
       return { resolved: false, reason: "KB_CONVERSATION_LOOKUP_FAILED" };
     }
-    channelCompany = typeof channel?.company_id === "string"
-      ? channel.company_id
-      : null;
+    channelCompany = typeof channel?.company_id === "string" ? channel.company_id : null;
   }
-  const conversationCompany = typeof conversation.company_id === "string"
-    ? conversation.company_id
-    : null;
-  if (
-    conversationCompany && channelCompany &&
-    conversationCompany !== channelCompany
-  ) return { resolved: false, reason: "KB_TENANT_IDENTITY_CONFLICT" };
+  const conversationCompany =
+    typeof conversation.company_id === "string" ? conversation.company_id : null;
+  if (conversationCompany && channelCompany && conversationCompany !== channelCompany)
+    return { resolved: false, reason: "KB_TENANT_IDENTITY_CONFLICT" };
   const companyId = conversationCompany ?? channelCompany;
   if (!companyId || !UUID_RE.test(companyId)) {
     return { resolved: false, reason: "KB_TENANT_MAPPING_UNRESOLVED" };
   }
-  const { data: company, error: companyError } = await admin.from("company")
-    .select("id,is_active").eq("id", companyId).maybeSingle();
+  const { data: company, error: companyError } = await admin
+    .from("company")
+    .select("id,is_active")
+    .eq("id", companyId)
+    .maybeSingle();
   if (companyError) {
     return { resolved: false, reason: "KB_CONVERSATION_LOOKUP_FAILED" };
   }
@@ -197,14 +198,20 @@ export async function fetchKBRag(
   const market = queryInput.market ?? explicitMarket(query);
   const locale = queryInput.locale ?? detectLocale(query);
   if (
-    !scope.aiCompanyId || !UUID_RE.test(scope.aiCompanyId) ||
-    scope.mode !== "canonical" || market === "UNKNOWN" || query.length < 2
-  ) return empty("KB_FTS_SCOPE_OR_MARKET_UNRESOLVED");
+    !scope.aiCompanyId ||
+    !UUID_RE.test(scope.aiCompanyId) ||
+    scope.mode !== "canonical" ||
+    market === "UNKNOWN" ||
+    query.length < 2
+  )
+    return empty("KB_FTS_SCOPE_OR_MARKET_UNRESOLVED");
   const url = Deno.env.get("SUPABASE_URL");
   let key = "";
   try {
     key = getSupabaseAdminKey();
-  } catch { /* fail closed below */ }
+  } catch {
+    /* fail closed below */
+  }
   if (!url || !key || _opts?.signal?.aborted) {
     return empty("KB_FTS_CONFIG_OR_SIGNAL_INVALID");
   }
@@ -218,9 +225,12 @@ export async function fetchKBRag(
     p_limit: Math.min(Math.max(queryInput.top_k, 1), 10),
   });
   if (
-    error || !Array.isArray(data) || data.length === 0 ||
+    error ||
+    !Array.isArray(data) ||
+    data.length === 0 ||
     data.some((row) => row.ambiguous_match === true)
-  ) return empty(error ? "KB_FTS_RPC_FAILED" : "KB_FTS_NO_UNAMBIGUOUS_MATCH");
+  )
+    return empty(error ? "KB_FTS_RPC_FAILED" : "KB_FTS_NO_UNAMBIGUOUS_MATCH");
   const chunks: KBFullChunk[] = data.map((row) => ({
     document_id: String(row.document_id),
     doc_id: String(row.document_id),
@@ -234,69 +244,64 @@ export async function fetchKBRag(
   }));
   const byDocument = new Map<string, KBFullChunk[]>();
   for (const chunk of chunks) {
-    byDocument.set(chunk.document_id, [
-      ...(byDocument.get(chunk.document_id) ?? []),
-      chunk,
-    ]);
+    byDocument.set(chunk.document_id, [...(byDocument.get(chunk.document_id) ?? []), chunk]);
   }
-  const documents: KBDocumentCandidate[] = [...byDocument.entries()].map(
-    ([documentId, rows]) => {
-      const citations = rows.map((row) => ({
-        display_label: row.title || documentId,
+  const documents: KBDocumentCandidate[] = [...byDocument.entries()].map(([documentId, rows]) => {
+    const citations = rows.map((row) => ({
+      display_label: row.title || documentId,
+      content: row.content,
+      score: row.score,
+      source_type: row.source_type,
+      document_id: documentId,
+      chunk_id: row.chunk_id,
+      chunk_type: row.chunk_type,
+    }));
+    const context = {
+      selected_document_id: documentId,
+      orientation_summary: null,
+      full_content_evidence: rows.map((row) => ({
+        document_id: documentId,
+        chunk_id: row.chunk_id,
         content: row.content,
         score: row.score,
         source_type: row.source_type,
-        document_id: documentId,
-        chunk_id: row.chunk_id,
-        chunk_type: row.chunk_type,
-      }));
-      const context = {
-        selected_document_id: documentId,
-        orientation_summary: null,
-        full_content_evidence: rows.map((row) => ({
-          document_id: documentId,
-          chunk_id: row.chunk_id,
-          content: row.content,
-          score: row.score,
-          source_type: row.source_type,
-        })),
-      };
-      const scores = rows.map((row) => row.score).sort((a, b) => b - a);
-      const meta = {
-        document_score: scores[0] ?? 0,
-        highest_chunk_score: scores[0] ?? 0,
-        second_highest_chunk_score: scores[1] ?? 0,
-        returned_summary_count: 0,
-        returned_full_content_count: rows.length,
-        dropped_without_document_id: 0,
-        dropped_without_content: 0,
-      };
-      const authority: AggregationAuthorityMetadata = {
-        tenant_id: scope.singaporeTenantId,
-        publication_state: "published",
-        currentness: "current",
-        entity_ids: [],
-        regions: [market],
-        language: locale,
-        version: null,
-        version_rank: null,
-        updated_at: null,
-        source_priority: null,
-        claims: [],
-      };
-      return {
-        document_id: documentId,
-        title: rows[0]?.title ?? "",
-        source_type: "postgres_fts",
-        document_score: meta.document_score,
-        chunks: rows,
-        citations,
-        llm_context: context,
-        meta,
-        authority,
-      };
-    },
-  );
+      })),
+    };
+    const scores = rows.map((row) => row.score).sort((a, b) => b - a);
+    const meta = {
+      document_score: scores[0] ?? 0,
+      highest_chunk_score: scores[0] ?? 0,
+      second_highest_chunk_score: scores[1] ?? 0,
+      returned_summary_count: 0,
+      returned_full_content_count: rows.length,
+      dropped_without_document_id: 0,
+      dropped_without_content: 0,
+    };
+    const authority: AggregationAuthorityMetadata = {
+      tenant_id: scope.singaporeTenantId,
+      publication_state: "published",
+      currentness: "current",
+      entity_ids: [],
+      regions: [market],
+      language: locale,
+      version: null,
+      version_rank: null,
+      updated_at: null,
+      source_priority: null,
+      claims: [],
+    };
+    return {
+      document_id: documentId,
+      title: rows[0]?.title ?? "",
+      source_type: "postgres_fts",
+      document_score: meta.document_score,
+      chunks: rows,
+      citations,
+      llm_context: context,
+      meta,
+      authority,
+    };
+  });
   const only = documents.length === 1 ? documents[0] : null;
   return {
     success: true,
@@ -305,16 +310,14 @@ export async function fetchKBRag(
     documents,
     ...(only
       ? {
-        llm_context: only.llm_context,
-        meta: only.meta,
-        selected_document_id: only.document_id,
-      }
+          llm_context: only.llm_context,
+          meta: only.meta,
+          selected_document_id: only.document_id,
+        }
       : {}),
   };
 }
 
-export function singaporeCompanyIdFromScope(
-  _scope: KBResolvedScope,
-): number | null {
+export function singaporeCompanyIdFromScope(_scope: KBResolvedScope): number | null {
   return null;
 }

@@ -3,10 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import {
-  localImports,
-  verifyDeterministicClosure,
-} from "./c3_deterministic_runtime_closure.mjs";
+import { localImports, verifyDeterministicClosure } from "./c3_deterministic_runtime_closure.mjs";
 
 const result = verifyDeterministicClosure();
 assert.equal(result.external_model_calls, 0);
@@ -17,10 +14,7 @@ assert(localImports('import { x } from "./x.ts";').includes("./x.ts"));
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "c3-closure-"));
 try {
   fs.mkdirSync(path.join(fixture, "x"));
-  fs.writeFileSync(
-    path.join(fixture, "x", "root.ts"),
-    'import "./llm-router.ts";\n',
-  );
+  fs.writeFileSync(path.join(fixture, "x", "root.ts"), 'import "./llm-router.ts";\n');
   fs.writeFileSync(path.join(fixture, "x", "llm-router.ts"), "export {};\n");
   assert.throws(
     () => verifyDeterministicClosure({ root: fixture, roots: ["x/root.ts"] }),
@@ -34,10 +28,7 @@ try {
     () => verifyDeterministicClosure({ root: fixture, roots: ["x/root.ts"] }),
     /external_model_endpoint_reachable/,
   );
-  fs.writeFileSync(
-    path.join(fixture, "x", "root.ts"),
-    'await import("./safe.ts");\n',
-  );
+  fs.writeFileSync(path.join(fixture, "x", "root.ts"), 'await import("./safe.ts");\n');
   assert.throws(
     () => verifyDeterministicClosure({ root: fixture, roots: ["x/root.ts"] }),
     /dynamic_import_forbidden/,

@@ -36,10 +36,7 @@ const redactions: Array<[RegExp, string]> = [
   [/\b[\w.+-]+@[\w-]+\.[\w.-]+\b/g, "[EMAIL]"],
   [/\+?\d[\d\s\-()]{6,}\d/g, "[PHONE]"],
   [/\b(?:\d[ -]*?){13,19}\b/g, "[CARD]"],
-  [
-    /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
-    "[UUID]",
-  ],
+  [/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "[UUID]"],
 ];
 
 export function redact(input: string): string {
@@ -52,18 +49,14 @@ export function redact(input: string): string {
 export function parseJsonObject(raw: string): Record<string, unknown> | null {
   try {
     const value = JSON.parse(raw);
-    return value && typeof value === "object" && !Array.isArray(value)
-      ? value
-      : null;
+    return value && typeof value === "object" && !Array.isArray(value) ? value : null;
   } catch {
     const start = raw.indexOf("{");
     const end = raw.lastIndexOf("}");
     if (start < 0 || end <= start) return null;
     try {
       const value = JSON.parse(raw.slice(start, end + 1));
-      return value && typeof value === "object" && !Array.isArray(value)
-        ? value
-        : null;
+      return value && typeof value === "object" && !Array.isArray(value) ? value : null;
     } catch {
       return null;
     }
@@ -75,9 +68,7 @@ export function resolveGenerationMaxTokens(): number {
 }
 
 export function toCeErrorCode(code: DeterministicFailureCode): string {
-  return code === "LLM_INPUT_BLOCKED"
-    ? "CE_PROVIDER_INPUT_BLOCKED"
-    : "CE_PROVIDER_INVALID_OUTPUT";
+  return code === "LLM_INPUT_BLOCKED" ? "CE_PROVIDER_INPUT_BLOCKED" : "CE_PROVIDER_INVALID_OUTPUT";
 }
 
 function latestCustomerText(user: string): string {
@@ -87,19 +78,15 @@ function latestCustomerText(user: string): string {
     ),
   ];
   if (turnMatches.length) return normalizeCustomerText(turnMatches.at(-1)?.[1]);
-  for (
-    const label of [
-      "Latest customer turn:",
-      "Customer message:",
-      "CURRENT REQUEST:",
-      "Text to check:",
-    ]
-  ) {
+  for (const label of [
+    "Latest customer turn:",
+    "Customer message:",
+    "CURRENT REQUEST:",
+    "Text to check:",
+  ]) {
     const index = user.lastIndexOf(label);
     if (index >= 0) {
-      return normalizeCustomerText(
-        user.slice(index + label.length).split("\n\n")[0],
-      );
+      return normalizeCustomerText(user.slice(index + label.length).split("\n\n")[0]);
     }
   }
   return normalizeCustomerText(user.slice(-2000));
@@ -109,25 +96,23 @@ function semanticFrame(text: string) {
   const classification = classifyIntent(text);
   const entities = extractEntities(text);
   const lower = text.toLowerCase();
-  const correction = /更正|改返|改為|改为|actually|correction|not that/iu.test(
-    text,
-  );
+  const correction = /更正|改返|改為|改为|actually|correction|not that/iu.test(text);
   const cancellation = /取消|唔要|不要了|cancel/iu.test(text);
   const operation = cancellation
     ? "CANCEL_ITEM"
     : correction
-    ? "UPDATE_ITEM"
-    : classification.intent === "calculation"
-    ? "ASK_CALCULATION"
-    : [
-        "shipping_delivery",
-        "stock_availability",
-        "returns_refunds",
-        "checkout_payment",
-        "crm_entitlement_vip",
-      ].includes(classification.intent)
-    ? "ASK_FACT"
-    : "NO_STATE_CHANGE";
+      ? "UPDATE_ITEM"
+      : classification.intent === "calculation"
+        ? "ASK_CALCULATION"
+        : [
+              "shipping_delivery",
+              "stock_availability",
+              "returns_refunds",
+              "checkout_payment",
+              "crm_entitlement_vip",
+            ].includes(classification.intent)
+          ? "ASK_FACT"
+          : "NO_STATE_CHANGE";
   const capabilities = {
     requires_delivery: classification.intent === "shipping_delivery",
     supports_pickup: /pickup|自取|自提/iu.test(text),
@@ -146,52 +131,47 @@ function semanticFrame(text: string) {
     operation,
     intent: classification.intent,
     topic: classification.intent === "unknown" ? null : classification.intent,
-    entities: entities.filter((entity) =>
-      entity.kind === "sku_or_model" || entity.kind === "quantity"
-    ).map((entity, index) => ({
-      entity_ref: `det-${index + 1}`,
-      name: String(entity.value),
-      kind: "unknown",
-      category_hint: null,
-      sku: entity.kind === "sku_or_model" ? String(entity.value) : null,
-      model: entity.kind === "sku_or_model" ? String(entity.value) : null,
-      quantity: entity.kind === "quantity" ? Number(entity.value) : null,
-      unit: entity.kind === "quantity" ? "unit" : null,
-      attributes: {},
-      constraints: {},
-      capabilities,
-      confidence: classification.confidence,
-    })),
+    entities: entities
+      .filter((entity) => entity.kind === "sku_or_model" || entity.kind === "quantity")
+      .map((entity, index) => ({
+        entity_ref: `det-${index + 1}`,
+        name: String(entity.value),
+        kind: "unknown",
+        category_hint: null,
+        sku: entity.kind === "sku_or_model" ? String(entity.value) : null,
+        model: entity.kind === "sku_or_model" ? String(entity.value) : null,
+        quantity: entity.kind === "quantity" ? Number(entity.value) : null,
+        unit: entity.kind === "quantity" ? "unit" : null,
+        attributes: {},
+        constraints: {},
+        capabilities,
+        confidence: classification.confidence,
+      })),
     referents: [],
     customer_correction: correction,
     additive: /另外|再加|additional|another/iu.test(text),
-    explicit_negations: [
-      ...lower.matchAll(/\b(?:not|never|no)\b|未|冇|沒有|没有|唔/giu),
-    ].map((match) => match[0]).slice(0, 20),
-    requested_facts: classification.intent === "unknown"
-      ? []
-      : [classification.intent],
+    explicit_negations: [...lower.matchAll(/\b(?:not|never|no)\b|未|冇|沒有|没有|唔/giu)]
+      .map((match) => match[0])
+      .slice(0, 20),
+    requested_facts: classification.intent === "unknown" ? [] : [classification.intent],
     transaction_state: cancellation ? "cancelled" : "unknown",
     payment_state: /未付款|not paid/iu.test(text) ? "none" : "unknown",
     booking_state: /未預約|未预约|not booked/iu.test(text) ? "none" : "unknown",
-    fulfillment_state: /未送到|not delivered/iu.test(text)
-      ? "pending"
-      : "unknown",
+    fulfillment_state: /未送到|not delivered/iu.test(text) ? "pending" : "unknown",
     ambiguity: {
       is_ambiguous: classification.confidence < 0.62,
       reasons: classification.confidence < 0.62 ? ["low_confidence"] : [],
-      clarification_question: classification.confidence < 0.62
-        ? "Please clarify the product or order you mean."
-        : null,
+      clarification_question:
+        classification.confidence < 0.62 ? "Please clarify the product or order you mean." : null,
     },
     confidence: classification.confidence,
   };
 }
 
 function signalPayload(user: string) {
-  const ids = [
-    ...user.matchAll(/#([0-9a-f-]{8,})\s*\nrole=(?:customer|visitor)/giu),
-  ].map((match) => match[1]).slice(0, 40);
+  const ids = [...user.matchAll(/#([0-9a-f-]{8,})\s*\nrole=(?:customer|visitor)/giu)]
+    .map((match) => match[1])
+    .slice(0, 40);
   return {
     emotion: ids.map((id, index) => ({
       message_id: id,
@@ -200,20 +180,19 @@ function signalPayload(user: string) {
       sentiment_score: 0,
       trigger_label: "deterministic_no_unverified_emotion_inference",
     })),
-    next_steps: [{
-      ordinal: 0,
-      title: "Review verified facts",
-      detail:
-        "Use only tenant-scoped KB, CRM and canonical conversation state before taking action.",
-      owner_role: "agent",
-    }],
+    next_steps: [
+      {
+        ordinal: 0,
+        title: "Review verified facts",
+        detail:
+          "Use only tenant-scoped KB, CRM and canonical conversation state before taking action.",
+        owner_role: "agent",
+      },
+    ],
   };
 }
 
-function deterministicJson(
-  call: DeterministicCall,
-  text: string,
-): Record<string, unknown> {
+function deterministicJson(call: DeterministicCall, text: string): Record<string, unknown> {
   if (call.tag.includes("commerce-semantic")) return semanticFrame(text);
   if (call.tag.includes("signals")) return signalPayload(call.user);
   if (call.tag.includes("kb-query-expansion")) return { queries: [] };
@@ -223,8 +202,7 @@ function deterministicJson(
   if (call.tag.includes("policy")) {
     return {
       status: "insufficient_evidence",
-      summary:
-        "Deterministic policy matching found no exact approved policy binding.",
+      summary: "Deterministic policy matching found no exact approved policy binding.",
     };
   }
   if (call.tag.startsWith("ce:")) {
@@ -232,9 +210,7 @@ function deterministicJson(
       score: 50,
       justification:
         "Deterministic runtime evaluation is conservative and is not quality-gate evidence.",
-      evidence: [
-        redact(text).slice(0, 480) || "No customer-visible text supplied.",
-      ],
+      evidence: [redact(text).slice(0, 480) || "No customer-visible text supplied."],
       grounding_refs: [],
       recommended_correction: "",
     };
@@ -251,28 +227,28 @@ function deterministicJson(
 
 export async function callModel(call: DeterministicCall): Promise<
   | {
-    ok: true;
-    text: string;
-    model: string;
-    usage: {
-      input_tokens: 0;
-      output_tokens: 0;
-      latency_ms: number;
-      attempts: 1;
-    };
-    request_id: string;
-  }
+      ok: true;
+      text: string;
+      model: string;
+      usage: {
+        input_tokens: 0;
+        output_tokens: 0;
+        latency_ms: number;
+        attempts: 1;
+      };
+      request_id: string;
+    }
   | {
-    ok: false;
-    code: DeterministicFailureCode;
-    request_id: string;
-    usage: {
-      input_tokens: 0;
-      output_tokens: 0;
-      latency_ms: number;
-      attempts: 0;
-    };
-  }
+      ok: false;
+      code: DeterministicFailureCode;
+      request_id: string;
+      usage: {
+        input_tokens: 0;
+        output_tokens: 0;
+        latency_ms: number;
+        attempts: 0;
+      };
+    }
 > {
   const started = Date.now();
   if (call.signal?.aborted) {
@@ -285,9 +261,10 @@ export async function callModel(call: DeterministicCall): Promise<
   }
   const text = latestCustomerText(call.user);
   try {
-    const output = call.responseFormat === "json"
-      ? JSON.stringify(deterministicJson(call, text))
-      : runDeterministicCommerceEngine({ text, market: "UNKNOWN" }).response;
+    const output =
+      call.responseFormat === "json"
+        ? JSON.stringify(deterministicJson(call, text))
+        : runDeterministicCommerceEngine({ text, market: "UNKNOWN" }).response;
     return {
       ok: true,
       text: output,

@@ -35,13 +35,7 @@ export interface EvidenceSpan {
 }
 
 export interface DeterministicEntity {
-  kind:
-    | "order_reference"
-    | "sku_or_model"
-    | "quantity"
-    | "amount"
-    | "currency"
-    | "date";
+  kind: "order_reference" | "sku_or_model" | "quantity" | "amount" | "currency" | "date";
   value: string | number;
   span: EvidenceSpan;
 }
@@ -95,9 +89,7 @@ const governance = {
 
 export async function sha256Hex(value: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", encoder.encode(value));
-  return [...new Uint8Array(digest)].map((byte) =>
-    byte.toString(16).padStart(2, "0")
-  ).join("");
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function canonical(value: unknown): string {
@@ -105,12 +97,12 @@ function canonical(value: unknown): string {
     Array.isArray(item)
       ? item.map(normalize)
       : item && typeof item === "object"
-      ? Object.fromEntries(
-        Object.entries(item as Record<string, unknown>).sort(([a], [b]) =>
-          a.localeCompare(b)
-        ).map(([key, child]) => [key, normalize(child)]),
-      )
-      : item;
+        ? Object.fromEntries(
+            Object.entries(item as Record<string, unknown>)
+              .sort(([a], [b]) => a.localeCompare(b))
+              .map(([key, child]) => [key, normalize(child)]),
+          )
+        : item;
   return JSON.stringify(normalize(value));
 }
 
@@ -200,9 +192,7 @@ const rawRules: Array<Omit<IntentRule, "content_sha256">> = [
     locale: "*",
     market: "*",
     priority: 60,
-    patterns: [
-      /付款|支付|結帳|结账|信用卡|信用咭|payment|checkout|card declined|pay now/iu,
-    ],
+    patterns: [/付款|支付|結帳|结账|信用卡|信用咭|payment|checkout|card declined|pay now/iu],
   },
   {
     ...governance,
@@ -211,9 +201,7 @@ const rawRules: Array<Omit<IntentRule, "content_sha256">> = [
     locale: "*",
     market: "*",
     priority: 55,
-    patterns: [
-      /第三方賣家|第三方卖家|商戶|商户|賣家|卖家|third.party seller|marketplace|seller/iu,
-    ],
+    patterns: [/第三方賣家|第三方卖家|商戶|商户|賣家|卖家|third.party seller|marketplace|seller/iu],
   },
   {
     ...governance,
@@ -222,9 +210,7 @@ const rawRules: Array<Omit<IntentRule, "content_sha256">> = [
     locale: "*",
     market: "*",
     priority: 50,
-    patterns: [
-      /會員|会员|VIP|會籍|会籍|entitlement|member(?:ship)?|benefit|tier/iu,
-    ],
+    patterns: [/會員|会员|VIP|會籍|会籍|entitlement|member(?:ship)?|benefit|tier/iu],
   },
   {
     ...governance,
@@ -233,9 +219,7 @@ const rawRules: Array<Omit<IntentRule, "content_sha256">> = [
     locale: "*",
     market: "*",
     priority: 45,
-    patterns: [
-      /計算|计算|合共|總共|总共|幾錢|几钱|多少錢|多少钱|calculate|total|how much/iu,
-    ],
+    patterns: [/計算|计算|合共|總共|总共|幾錢|几钱|多少錢|多少钱|calculate|total|how much/iu],
   },
   {
     ...governance,
@@ -244,9 +228,7 @@ const rawRules: Array<Omit<IntentRule, "content_sha256">> = [
     locale: "*",
     market: "*",
     priority: 40,
-    patterns: [
-      /損壞|损坏|爛|坏|過期|过期|質量|质量|damaged|broken|expired|quality|missing part/iu,
-    ],
+    patterns: [/損壞|损坏|爛|坏|過期|过期|質量|质量|damaged|broken|expired|quality|missing part/iu],
   },
   {
     ...governance,
@@ -255,15 +237,11 @@ const rawRules: Array<Omit<IntentRule, "content_sha256">> = [
     locale: "*",
     market: "*",
     priority: 30,
-    patterns: [
-      /訂單|订单|產品|产品|型號|型号|order|product|model|password reset/iu,
-    ],
+    patterns: [/訂單|订单|產品|产品|型號|型号|order|product|model|password reset/iu],
   },
 ];
 
-async function bindRule(
-  rule: Omit<IntentRule, "content_sha256">,
-): Promise<IntentRule> {
+async function bindRule(rule: Omit<IntentRule, "content_sha256">): Promise<IntentRule> {
   const identity = {
     rule_id: rule.rule_id,
     intent: rule.intent,
@@ -295,30 +273,24 @@ const bodies: Record<SupportedLocale, Record<string, string>> = {
       "I can check the current entitlement only from the verified customer record. Please confirm the relevant account or order reference.",
   },
   "zh-HK": {
-    reference:
-      "我可以幫你跟進。請提供訂單編號或確實產品／型號，等我可以核對正確記錄，唔會估資料。",
+    reference: "我可以幫你跟進。請提供訂單編號或確實產品／型號，等我可以核對正確記錄，唔會估資料。",
     market: "請問今次查詢適用美國、香港定台灣市場？我唔會套用其他市場嘅政策。",
     handoff_offer:
       "根據已核實資料，我仍然未能判定正確處理方式。你想唔想由真人客服跟進？目前尚未轉交。",
-    handoff_pending:
-      "收到你嘅確認。我而家會提出真人客服轉交要求，但要等系統確認後先算完成。",
+    handoff_pending: "收到你嘅確認。我而家會提出真人客服轉交要求，但要等系統確認後先算完成。",
     safety:
       "請先停止使用產品；如安全可行，請截斷電源。我會按受管流程處理安全問題，目前未確認退款或更換。",
-    entitlement:
-      "我只可以根據已核實嘅客戶記錄查核現有權益。請提供相關帳戶或訂單編號。",
+    entitlement: "我只可以根據已核實嘅客戶記錄查核現有權益。請提供相關帳戶或訂單編號。",
   },
   "zh-TW": {
-    reference:
-      "我可以協助處理。請提供訂單編號或確切產品／型號，讓我核對正確紀錄，不會猜測資料。",
+    reference: "我可以協助處理。請提供訂單編號或確切產品／型號，讓我核對正確紀錄，不會猜測資料。",
     market: "請問這次查詢適用美國、香港或台灣市場？我不會套用其他市場的政策。",
     handoff_offer:
       "根據已核實資訊，我仍無法判定正確處理方式。你是否希望由真人客服接手？目前尚未轉交。",
-    handoff_pending:
-      "已收到你的確認。我現在會提出真人客服轉交要求，但需等系統確認後才算完成。",
+    handoff_pending: "已收到你的確認。我現在會提出真人客服轉交要求，但需等系統確認後才算完成。",
     safety:
       "請先停止使用產品；若安全可行，請切斷電源。我會依受管流程處理安全問題，目前尚未確認退款或更換。",
-    entitlement:
-      "我只能依已核實的客戶紀錄查核目前權益。請提供相關帳戶或訂單編號。",
+    entitlement: "我只能依已核實的客戶紀錄查核目前權益。請提供相關帳戶或訂單編號。",
   },
 };
 
@@ -335,11 +307,7 @@ for (const locale of ["en-US", "zh-HK", "zh-TW"] as const) {
       required_slots: [],
       required_facts: [],
       forbidden_facts: [],
-      prohibited_claims: [
-        "action_completed",
-        "refund_confirmed",
-        "handoff_completed",
-      ],
+      prohibited_claims: ["action_completed", "refund_confirmed", "handoff_completed"],
       body: bodies[locale].reference,
     },
     {
@@ -438,7 +406,8 @@ export function validateGovernedRegistry(
   now = new Date(),
 ): { active_rule_count: number; active_template_count: number } {
   const active = <T extends GovernedRecord>(row: T) =>
-    !row.revoked && row.author !== row.human_approver &&
+    !row.revoked &&
+    row.author !== row.human_approver &&
     ["qa", "supervisor", "admin"].includes(row.approver_role) &&
     HEX64.test(row.content_sha256) &&
     Date.parse(row.approved_at) <= now.getTime() &&
@@ -451,7 +420,10 @@ export function validateGovernedRegistry(
       throw new Error(`${label}_collision`);
     }
   };
-  unique(activeRules.map((row) => `${row.rule_id}:${row.version}`), "rule");
+  unique(
+    activeRules.map((row) => `${row.rule_id}:${row.version}`),
+    "rule",
+  );
   unique(
     activeTemplates.map((row) => `${row.template_id}:${row.version}`),
     "template",
@@ -466,22 +438,27 @@ export function validateGovernedRegistry(
 }
 
 export function normalizeCustomerText(value: unknown): string {
-  return String(value ?? "").normalize("NFKC").replace(
-    /[\u0000-\u001f\u007f]/g,
-    " ",
-  ).replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/\s+/g, " ").trim()
-    .slice(0, 4000);
+  return (
+    String(value ?? "")
+      .normalize("NFKC")
+      // Deliberately strip C0/DEL controls before rule and span evaluation.
+      // eslint-disable-next-line no-control-regex
+      .replace(/[\u0000-\u001f\u007f]/g, " ")
+      .replace(/[“”]/g, '"')
+      .replace(/[‘’]/g, "'")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 4000)
+  );
 }
 
-export function detectLocale(
-  text: string,
-  hint?: string | null,
-): SupportedLocale {
+export function detectLocale(text: string, hint?: string | null): SupportedLocale {
   if (hint === "en-US" || hint === "zh-HK" || hint === "zh-TW") return hint;
   if (
     /\b(?:the|please|order|delivery|refund|help|my)\b/iu.test(text) &&
     !/[\u3400-\u9fff]/u.test(text)
-  ) return "en-US";
+  )
+    return "en-US";
   if (/[嘅喺咗冇唔啲嚟佢哋點樣仲邊]/u.test(text)) return "zh-HK";
   return "zh-TW";
 }
@@ -496,57 +473,56 @@ function matchSpan(
   const match = new RegExp(pattern.source, flags).exec(text);
   return match
     ? {
-      rule_id: ruleId,
-      kind,
-      start: match.index,
-      end: match.index + match[0].length,
-      text: match[0],
-    }
+        rule_id: ruleId,
+        kind,
+        start: match.index,
+        end: match.index + match[0].length,
+        text: match[0],
+      }
     : null;
 }
 
-export function classifyIntent(
-  textInput: string,
-): {
+export function classifyIntent(textInput: string): {
   intent: CommerceIntent;
   confidence: number;
   evidence: EvidenceSpan[];
   alternatives: CommerceIntent[];
 } {
   const text = normalizeCustomerText(textInput);
-  const matches = INTENT_RULES.filter((rule) => !rule.revoked).flatMap(
-    (rule) => {
-      const span = rule.patterns.map((pattern) =>
-        matchSpan(
-          text,
-          rule.rule_id,
-          rule.intent === "explicit_human_request" ? "handoff" : "intent",
-          pattern,
+  const matches = INTENT_RULES.filter((rule) => !rule.revoked)
+    .flatMap((rule) => {
+      const span = rule.patterns
+        .map((pattern) =>
+          matchSpan(
+            text,
+            rule.rule_id,
+            rule.intent === "explicit_human_request" ? "handoff" : "intent",
+            pattern,
+          ),
         )
-      ).find(Boolean);
+        .find(Boolean);
       return span ? [{ rule, span }] : [];
-    },
-  ).sort((a, b) =>
-    b.rule.priority - a.rule.priority ||
-    a.rule.rule_id.localeCompare(b.rule.rule_id)
-  );
+    })
+    .sort(
+      (a, b) => b.rule.priority - a.rule.priority || a.rule.rule_id.localeCompare(b.rule.rule_id),
+    );
   if (!matches.length) {
     return { intent: "unknown", confidence: 0, evidence: [], alternatives: [] };
   }
   const first = matches[0];
   const alternatives = [
     ...new Set(
-      matches.slice(1).map((item) => item.rule.intent).filter((intent) =>
-        intent !== first.rule.intent
-      ),
+      matches
+        .slice(1)
+        .map((item) => item.rule.intent)
+        .filter((intent) => intent !== first.rule.intent),
     ),
   ];
   return {
     intent: first.rule.intent,
-    confidence: alternatives.length
-      ? 0.72
-      : Math.min(0.99, 0.78 + first.rule.priority / 500),
-    evidence: matches.filter((item) => item.rule.intent === first.rule.intent)
+    confidence: alternatives.length ? 0.72 : Math.min(0.99, 0.78 + first.rule.priority / 500),
+    evidence: matches
+      .filter((item) => item.rule.intent === first.rule.intent)
       .map((item) => item.span),
     alternatives,
   };
@@ -555,12 +531,7 @@ export function classifyIntent(
 export function extractEntities(textInput: string): DeterministicEntity[] {
   const text = normalizeCustomerText(textInput);
   const definitions: Array<
-    [
-      DeterministicEntity["kind"],
-      string,
-      RegExp,
-      (value: string) => string | number,
-    ]
+    [DeterministicEntity["kind"], string, RegExp, (value: string) => string | number]
   > = [
     [
       "order_reference",
@@ -591,10 +562,7 @@ export function extractEntities(textInput: string): DeterministicEntity[] {
       "E-CURRENCY",
       /\b(HKD|TWD|USD)\b|(?:HK\$|NT\$|US\$)/iu,
       (value) =>
-        value.toUpperCase().replace("HK$", "HKD").replace("NT$", "TWD").replace(
-          "US$",
-          "USD",
-        ),
+        value.toUpperCase().replace("HK$", "HKD").replace("NT$", "TWD").replace("US$", "USD"),
     ],
     [
       "date",
@@ -629,25 +597,29 @@ export function extractEntities(textInput: string): DeterministicEntity[] {
 }
 
 function escapeSlot(value: unknown): string {
-  return normalizeCustomerText(value).replaceAll("&", "&amp;").replaceAll(
-    "<",
-    "&lt;",
-  ).replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
+  return normalizeCustomerText(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 function approvedTemplate(id: string, now: Date): ApprovedTemplate | null {
-  const item = RESPONSE_TEMPLATES.find((template) =>
-    template.template_id === id
-  );
+  const item = RESPONSE_TEMPLATES.find((template) => template.template_id === id);
   if (
-    !item || item.revoked || item.author === item.human_approver ||
+    !item ||
+    item.revoked ||
+    item.author === item.human_approver ||
     !HEX64.test(item.content_sha256)
-  ) return null;
+  )
+    return null;
   const current = now.getTime();
   if (
     Date.parse(item.effective_from) > current ||
     (item.effective_until && Date.parse(item.effective_until) <= current)
-  ) return null;
+  )
+    return null;
   return item;
 }
 
@@ -658,14 +630,12 @@ export interface DeterministicEngineInput {
   clarification_attempts?: number;
   customer_confirms_handoff?: boolean;
   safety_or_compliance_risk?: boolean;
-  crm_entitlements?: Array<
-    {
-      name: string;
-      value: string;
-      status: "active" | "expired";
-      scope_matches: boolean;
-    }
-  >;
+  crm_entitlements?: Array<{
+    name: string;
+    value: string;
+    status: "active" | "expired";
+    scope_matches: boolean;
+  }>;
   verified_facts?: Record<string, string | number | boolean>;
   memory_turns?: Array<{ role: string; content: string }>;
   commerce_state?: {
@@ -702,9 +672,11 @@ export function resolveBoundedReference(
 ): { text: string; used_memory: boolean; inspected_turns: number } {
   const current = normalizeCustomerText(currentText);
   const bounded = memoryTurns.slice(-12);
-  const elliptical = current.length <= 36 &&
-    /^(?:佢|嗰個|這個|那个|它|改|取消|係|是|yes|no|it|that|this|same|cancel|change)/iu
-      .test(current);
+  const elliptical =
+    current.length <= 36 &&
+    /^(?:佢|嗰個|這個|那个|它|改|取消|係|是|yes|no|it|that|this|same|cancel|change)/iu.test(
+      current,
+    );
   if (!elliptical) {
     return {
       text: current,
@@ -712,42 +684,34 @@ export function resolveBoundedReference(
       inspected_turns: bounded.length,
     };
   }
-  const prior = [...bounded].reverse().find((turn) =>
-    turn.role === "visitor" || turn.role === "customer"
-  );
+  const prior = [...bounded]
+    .reverse()
+    .find((turn) => turn.role === "visitor" || turn.role === "customer");
   const context = normalizeCustomerText(
-    prior?.content || commerceState?.current_topic ||
-      commerceState?.current_intent || "",
+    prior?.content || commerceState?.current_topic || commerceState?.current_intent || "",
   );
   return context
     ? {
-      text: `${context} ${current}`.slice(0, 4000),
-      used_memory: true,
-      inspected_turns: bounded.length,
-    }
+        text: `${context} ${current}`.slice(0, 4000),
+        used_memory: true,
+        inspected_turns: bounded.length,
+      }
     : { text: current, used_memory: false, inspected_turns: bounded.length };
 }
 
 export function runDeterministicCommerceEngine(
   input: DeterministicEngineInput,
 ): DeterministicEngineResult {
-  validateGovernedRegistry(
-    INTENT_RULES,
-    RESPONSE_TEMPLATES,
-    input.now ?? new Date(),
-  );
-  const resolved = resolveBoundedReference(
-    input.text,
-    input.memory_turns,
-    input.commerce_state,
-  );
+  validateGovernedRegistry(INTENT_RULES, RESPONSE_TEMPLATES, input.now ?? new Date());
+  const resolved = resolveBoundedReference(input.text, input.memory_turns, input.commerce_state);
   const text = resolved.text;
   const locale = detectLocale(text, input.locale_hint);
   const classification = classifyIntent(text);
   const entities = extractEntities(text);
   const now = input.now ?? new Date();
   const explicitHuman = classification.intent === "explicit_human_request";
-  const risk = input.safety_or_compliance_risk === true ||
+  const risk =
+    input.safety_or_compliance_risk === true ||
     classification.evidence.some((span) => span.rule_id === "R-SAFETY-095");
   const attempts = Math.max(0, Math.floor(input.clarification_attempts ?? 0));
   let suffix = "REFERENCE",
@@ -765,17 +729,18 @@ export function runDeterministicCommerceEngine(
     suffix = "SAFETY";
     action = "answer";
   } else if (classification.intent === "crm_entitlement_vip") {
-    const trusted = (input.crm_entitlements ?? []).find((row) =>
-      row.status === "active" && row.scope_matches
+    const trusted = (input.crm_entitlements ?? []).find(
+      (row) => row.status === "active" && row.scope_matches,
     );
     if (trusted) {
       const safeName = escapeSlot(trusted.name),
         safeValue = escapeSlot(trusted.value);
-      const response = locale === "en-US"
-        ? `The verified customer record lists ${safeName} as ${safeValue}. This does not confirm any transaction or refund.`
-        : locale === "zh-HK"
-        ? `已核實客戶記錄顯示${safeName}為${safeValue}；呢項資料唔代表任何交易或退款已完成。`
-        : `已核實的客戶紀錄顯示${safeName}為${safeValue}；這不代表任何交易或退款已完成。`;
+      const response =
+        locale === "en-US"
+          ? `The verified customer record lists ${safeName} as ${safeValue}. This does not confirm any transaction or refund.`
+          : locale === "zh-HK"
+            ? `已核實客戶記錄顯示${safeName}為${safeValue}；呢項資料唔代表任何交易或退款已完成。`
+            : `已核實的客戶紀錄顯示${safeName}為${safeValue}；這不代表任何交易或退款已完成。`;
       const template = approvedTemplate(`T-${locale}-ENTITLEMENT`, now);
       if (!template) throw new Error("approved_template_unavailable");
       return {
@@ -802,29 +767,28 @@ export function runDeterministicCommerceEngine(
   ) {
     suffix = "MARKET";
   } else if (classification.intent === "calculation") {
-    const amounts = entities.filter((item) => item.kind === "amount").map((
-      item,
-    ) => Number(item.value));
+    const amounts = entities
+      .filter((item) => item.kind === "amount")
+      .map((item) => Number(item.value));
     const currencies = [
       ...new Set(
-        entities.filter((item) => item.kind === "currency").map((item) =>
-          String(item.value)
-        ),
+        entities.filter((item) => item.kind === "currency").map((item) => String(item.value)),
       ),
     ];
     if (amounts.length && currencies.length === 1) {
       const total = amounts.reduce((sum, value) => sum + value, 0);
-      const response = locale === "en-US"
-        ? `Using only the amounts you supplied, the total is ${currencies[0]} ${
-          total.toFixed(2)
-        }. This is a calculation, not a current quotation or payment confirmation.`
-        : locale === "zh-HK"
-        ? `只按你提供嘅金額計算，合共係 ${currencies[0]} ${
-          total.toFixed(2)
-        }。呢個只係計算，唔係現行報價或付款確認。`
-        : `僅依你提供的金額計算，合計為 ${currencies[0]} ${
-          total.toFixed(2)
-        }。這只是計算，不是目前報價或付款確認。`;
+      const response =
+        locale === "en-US"
+          ? `Using only the amounts you supplied, the total is ${currencies[0]} ${total.toFixed(
+              2,
+            )}. This is a calculation, not a current quotation or payment confirmation.`
+          : locale === "zh-HK"
+            ? `只按你提供嘅金額計算，合共係 ${currencies[0]} ${total.toFixed(
+                2,
+              )}。呢個只係計算，唔係現行報價或付款確認。`
+            : `僅依你提供的金額計算，合計為 ${currencies[0]} ${total.toFixed(
+                2,
+              )}。這只是計算，不是目前報價或付款確認。`;
       const template = approvedTemplate(`T-${locale}-REFERENCE`, now);
       if (!template) throw new Error("approved_template_unavailable");
       return {
@@ -866,9 +830,10 @@ export function runDeterministicCommerceEngine(
   };
 }
 
-export async function registryIdentity(): Promise<
-  { rule_pack_sha256: string; template_pack_sha256: string }
-> {
+export async function registryIdentity(): Promise<{
+  rule_pack_sha256: string;
+  template_pack_sha256: string;
+}> {
   return {
     rule_pack_sha256: await sha256Hex(
       canonical(

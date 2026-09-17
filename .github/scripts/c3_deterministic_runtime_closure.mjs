@@ -29,9 +29,7 @@ export function localImports(source) {
   return imports;
 }
 
-export function verifyDeterministicClosure(
-  { root = process.cwd(), roots = ROOTS } = {},
-) {
+export function verifyDeterministicClosure({ root = process.cwd(), roots = ROOTS } = {}) {
   const visited = new Set();
   const queue = roots.map((file) => path.resolve(root, file));
   while (queue.length) {
@@ -41,33 +39,23 @@ export function verifyDeterministicClosure(
     visited.add(file);
     const source = fs.readFileSync(file, "utf8");
     const relative = path.relative(root, file).replaceAll(path.sep, "/");
-    must(
-      !/\bimport\s*\(/u.test(source),
-      `dynamic_import_forbidden:${relative}`,
-    );
-    must(
-      !FORBIDDEN_REMOTE.test(source),
-      `external_model_endpoint_reachable:${relative}`,
-    );
+    must(!/\bimport\s*\(/u.test(source), `dynamic_import_forbidden:${relative}`);
+    must(!FORBIDDEN_REMOTE.test(source), `external_model_endpoint_reachable:${relative}`);
     for (const specifier of localImports(source)) {
       const target = path.resolve(path.dirname(file), specifier);
       must(
         !FORBIDDEN_FILES.some((name) => target.endsWith(name)),
         `model_router_reachable:${relative}:${specifier}`,
       );
-      if (
-        target.endsWith(".ts") || target.endsWith(".js") ||
-        target.endsWith(".mjs")
-      ) queue.push(target);
+      if (target.endsWith(".ts") || target.endsWith(".js") || target.endsWith(".mjs"))
+        queue.push(target);
     }
   }
-  const files = [...visited].map((file) =>
-    path.relative(root, file).replaceAll(path.sep, "/")
-  ).sort();
+  const files = [...visited]
+    .map((file) => path.relative(root, file).replaceAll(path.sep, "/"))
+    .sort();
   must(
-    files.includes(
-      "supabase/functions/_shared/deterministic-runtime-router.ts",
-    ),
+    files.includes("supabase/functions/_shared/deterministic-runtime-router.ts"),
     "deterministic_router_not_reachable",
   );
   const manifest = files.map((file) => ({
@@ -87,8 +75,7 @@ export function verifyDeterministicClosure(
 
 if (
   process.argv[1] &&
-  path.resolve(process.argv[1]) ===
-    path.resolve(new URL(import.meta.url).pathname)
+  path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)
 ) {
   const result = verifyDeterministicClosure();
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

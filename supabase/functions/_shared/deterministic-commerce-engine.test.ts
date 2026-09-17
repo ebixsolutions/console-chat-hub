@@ -42,32 +42,27 @@ Deno.test("intent synonyms and written Cantonese are deterministic", () => {
     ["產品冒煙，有危險", "product_quality_safety"],
   ];
   for (const [text, intent] of rows) {
-    assert(
-      classifyIntent(text).intent === intent,
-      `${text}:${classifyIntent(text).intent}`,
-    );
+    assert(classifyIntent(text).intent === intent, `${text}:${classifyIntent(text).intent}`);
   }
 });
 
 Deno.test("entity extraction preserves spans and typed values", () => {
-  const text =
-    "Order number ABC-12345, model XY-9, quantity 2 units, USD 19.50";
+  const text = "Order number ABC-12345, model XY-9, quantity 2 units, USD 19.50";
   const rows = extractEntities(text);
   assert(
-    rows.some((row) =>
-      row.kind === "order_reference" && row.value === "ABC-12345"
-    ),
+    rows.some((row) => row.kind === "order_reference" && row.value === "ABC-12345"),
     "order",
   );
   assert(
     rows.some((row) => row.kind === "sku_or_model" && row.value === "XY-9"),
     "model",
   );
-  assert(rows.some((row) => row.kind === "quantity" && row.value === 2), "qty");
   assert(
-    rows.every((row) =>
-      text.slice(row.span.start, row.span.end) === row.span.text
-    ),
+    rows.some((row) => row.kind === "quantity" && row.value === 2),
+    "qty",
+  );
+  assert(
+    rows.every((row) => text.slice(row.span.start, row.span.end) === row.span.text),
     "span",
   );
 });
@@ -94,10 +89,7 @@ Deno.test("low confidence clarifies once then offers human without claiming comp
     clarification_attempts: 2,
   });
   assert(first.action === "clarify", "first_clarify");
-  assert(
-    second.action === "offer_handoff" && !second.requires_atomic_handoff,
-    "offer_only",
-  );
+  assert(second.action === "offer_handoff" && !second.requires_atomic_handoff, "offer_only");
   assert(!/已轉交|已转交|handed off/i.test(second.response), "false_handoff");
 });
 
@@ -111,18 +103,12 @@ Deno.test("explicit human requires confirmation and atomic RPC before completion
     market: "US",
     customer_confirms_handoff: true,
   });
-  assert(
-    offer.action === "offer_handoff" && !offer.requires_atomic_handoff,
-    "offer",
-  );
+  assert(offer.action === "offer_handoff" && !offer.requires_atomic_handoff, "offer");
   assert(
     confirmed.action === "handoff_pending" && confirmed.requires_atomic_handoff,
     "pending_rpc",
   );
-  assert(
-    !confirmed.response.includes("has been handed"),
-    "no_completion_before_rpc",
-  );
+  assert(!confirmed.response.includes("has been handed"), "no_completion_before_rpc");
 });
 
 Deno.test("safety answer forbids refund or replacement promises", () => {
@@ -131,55 +117,51 @@ Deno.test("safety answer forbids refund or replacement promises", () => {
     market: "US",
   });
   assert(
-    result.action === "answer" &&
-      result.prohibited_claims.includes("refund_confirmed"),
+    result.action === "answer" && result.prohibited_claims.includes("refund_confirmed"),
     "safety",
   );
-  assert(
-    result.response.includes("no replacement or refund is confirmed"),
-    "no_promise",
-  );
+  assert(result.response.includes("no replacement or refund is confirmed"), "no_promise");
 });
 
 Deno.test("CRM accepts only active scope-matched entitlement", () => {
   const expired = runDeterministicCommerceEngine({
     text: "What are my VIP benefits?",
     market: "US",
-    crm_entitlements: [{
-      name: "VIP",
-      value: "free delivery",
-      status: "expired",
-      scope_matches: true,
-    }],
+    crm_entitlements: [
+      {
+        name: "VIP",
+        value: "free delivery",
+        status: "expired",
+        scope_matches: true,
+      },
+    ],
   });
   const mismatch = runDeterministicCommerceEngine({
     text: "What are my VIP benefits?",
     market: "US",
-    crm_entitlements: [{
-      name: "VIP",
-      value: "free delivery",
-      status: "active",
-      scope_matches: false,
-    }],
+    crm_entitlements: [
+      {
+        name: "VIP",
+        value: "free delivery",
+        status: "active",
+        scope_matches: false,
+      },
+    ],
   });
   const active = runDeterministicCommerceEngine({
     text: "What are my VIP benefits?",
     market: "US",
-    crm_entitlements: [{
-      name: "VIP",
-      value: "free delivery",
-      status: "active",
-      scope_matches: true,
-    }],
+    crm_entitlements: [
+      {
+        name: "VIP",
+        value: "free delivery",
+        status: "active",
+        scope_matches: true,
+      },
+    ],
   });
-  assert(
-    expired.action === "clarify" && mismatch.action === "clarify",
-    "fail_closed",
-  );
-  assert(
-    active.action === "answer" && active.response.includes("free delivery"),
-    "trusted_only",
-  );
+  assert(expired.action === "clarify" && mismatch.action === "clarify", "fail_closed");
+  assert(active.action === "answer" && active.response.includes("free delivery"), "trusted_only");
 });
 
 Deno.test("calculation requires one explicit currency and never confirms quote/payment", () => {
@@ -191,33 +173,21 @@ Deno.test("calculation requires one explicit currency and never confirms quote/p
     text: "Calculate USD 10 and HKD 20 total",
     market: "US",
   });
-  assert(
-    valid.action === "answer" && valid.response.includes("USD 30.00"),
-    "sum",
-  );
+  assert(valid.action === "answer" && valid.response.includes("USD 30.00"), "sum");
   assert(valid.prohibited_claims.includes("payment_confirmed"), "guard");
   assert(mixed.action === "clarify", "mixed_currency");
 });
 
 Deno.test("100+ turns are bounded to twelve and latest correction wins", () => {
-  const turns = Array.from(
-    { length: 101 },
-    (_, index) => ({
-      role: "customer",
-      content: index === 100
-        ? "Order ABC-99999 delivery"
-        : `old order OLD-${index}`,
-    }),
-  );
+  const turns = Array.from({ length: 101 }, (_, index) => ({
+    role: "customer",
+    content: index === 100 ? "Order ABC-99999 delivery" : `old order OLD-${index}`,
+  }));
   const resolved = resolveBoundedReference("cancel that", turns, {
     current_topic: "OLD",
   });
   assert(resolved.used_memory && resolved.inspected_turns === 12, "bounded");
-  assert(
-    resolved.text.includes("ABC-99999") &&
-      resolved.text.endsWith("cancel that"),
-    "latest",
-  );
+  assert(resolved.text.includes("ABC-99999") && resolved.text.endsWith("cancel that"), "latest");
   assert(
     classifyIntent(resolved.text).intent === "correction_cancellation",
     "correction_precedence",
@@ -228,24 +198,18 @@ Deno.test("registry governance is approved, non-self-approved, active and hash-b
   for (const row of [...INTENT_RULES, ...RESPONSE_TEMPLATES]) {
     assert(row.author !== row.human_approver, "self_approval");
     assert(["qa", "supervisor", "admin"].includes(row.approver_role), "role");
-    assert(
-      /^[0-9a-f]{64}$/.test(row.content_sha256) && !row.revoked,
-      "hash_or_revocation",
-    );
+    assert(/^[0-9a-f]{64}$/.test(row.content_sha256) && !row.revoked, "hash_or_revocation");
   }
   const identity = await registryIdentity();
   assert(/^[0-9a-f]{64}$/.test(identity.rule_pack_sha256), "rule_pack_hash");
-  assert(
-    /^[0-9a-f]{64}$/.test(identity.template_pack_sha256),
-    "template_pack_hash",
-  );
+  assert(/^[0-9a-f]{64}$/.test(identity.template_pack_sha256), "template_pack_hash");
 });
 
 Deno.test("template collision and revocation fail closed", () => {
   const now = new Date("2026-09-17T12:00:00Z");
   assert(
-    validateGovernedRegistry(INTENT_RULES, RESPONSE_TEMPLATES, now)
-      .active_template_count === RESPONSE_TEMPLATES.length,
+    validateGovernedRegistry(INTENT_RULES, RESPONSE_TEMPLATES, now).active_template_count ===
+      RESPONSE_TEMPLATES.length,
     "active_registry",
   );
   const duplicate = [...RESPONSE_TEMPLATES, RESPONSE_TEMPLATES[0]];
