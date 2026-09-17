@@ -7,6 +7,8 @@ import { verifyComponentRegression, verifyHumanCalibration } from "./c3_service_
 import { verifyCommittedDerivedState, verifyCommittedState as verifyRealCustomerCommittedState, verifyFreezeManifest } from "./c3_real_customer_dataset.mjs";
 import { verifyIndependentGraderArtifact } from "./c3_nonproduction_independent_grader.mjs";
 import { verifyHumanCalibration as verifyBlindHumanCalibration } from "./c3_human_blind_calibration.mjs";
+import { verifyObjectiveOracle } from "./c3_deterministic_quality.mjs";
+import { verifyDeterministicClosure } from "./c3_deterministic_runtime_closure.mjs";
 
 const must = (value, message) => {
   if (!value) throw new Error(message);
@@ -36,12 +38,22 @@ const files = {
   terminalGuard: "supabase/functions/_shared/generation-terminal-guard.ts",
   terminalTest: "supabase/functions/_shared/generation-terminal-guard.test.ts",
   llmRouter: "supabase/functions/_shared/llm-router.ts",
+  deterministicEngine: "supabase/functions/_shared/deterministic-commerce-engine.ts",
+  deterministicEngineTest: "supabase/functions/_shared/deterministic-commerce-engine.test.ts",
+  deterministicRouter: "supabase/functions/_shared/deterministic-runtime-router.ts",
+  deterministicKbClient: "supabase/functions/_shared/deterministic-kb-client.ts",
+  deterministicCeGrounding: "supabase/functions/_shared/ce-grounding.ts",
+  deterministicCanonicalGrounding: "supabase/functions/_shared/canonical-grounding.ts",
+  deterministicCitationLineage: "supabase/functions/_shared/citation-lineage.ts",
   kbClient: "supabase/functions/_shared/kb-client.ts",
   semanticInterpreter:
     "supabase/functions/_shared/commerce-semantic-interpreter.ts",
+  ceAutomation: "supabase/functions/_shared/ce-automation-engine.ts",
   escalationPolicy: "supabase/functions/_shared/escalation-policy.ts",
   generate: "supabase/functions/generate-reply/index.ts",
   assist: "supabase/functions/agent-assist/index.ts",
+  conversationEvaluate: "supabase/functions/conversation-evaluate/index.ts",
+  kbSearchProxy: "supabase/functions/kb-search-proxy/index.ts",
   servicePlanner: "supabase/functions/_shared/conversation-service-planner.ts",
   servicePlannerTest: "supabase/functions/_shared/conversation-service-planner.test.ts",
   serviceRuntime: "supabase/functions/_shared/conversation-service-runtime.ts",
@@ -56,6 +68,8 @@ const files = {
   typecheck: "supabase/functions/deno.c3-check.json",
   migration:
     "supabase/migrations/20260915040000_ai_abc_c3_director_runtime_closure.sql",
+  deterministicMigration:
+    "supabase/migrations/20260917062606_c3_deterministic_commerce_fts_governance.sql",
   gate: ".github/scripts/task_ai_abc_c3_final_gate.mjs",
   workflow: ".github/workflows/task-ai-abc-c3-final-gate.yml",
   c2WorkflowRouting: ".github/workflows/task-ai-abc-c2-final-gate.yml",
@@ -96,6 +110,14 @@ const files = {
   derivedDataset: ".github/scripts/c3_real_case_derived_dataset_v1.json",
   derivedFreeze: ".github/scripts/c3_real_case_derived_freeze_manifest_v1.json",
   derivedReviewPreparation: ".github/scripts/c3_real_case_derived_review_preparation_v1.json",
+  deterministicOracle: ".github/scripts/c3_deterministic_objective_oracle_v1.json",
+  deterministicFreeze: ".github/scripts/c3_deterministic_objective_freeze_v1.json",
+  deterministicQuality: ".github/scripts/c3_deterministic_quality.mjs",
+  deterministicQualityTest: ".github/scripts/c3_deterministic_quality.test.mjs",
+  deterministicHumanReviewSchema: ".github/scripts/c3_deterministic_human_review.schema.json",
+  deterministicClosure: ".github/scripts/c3_deterministic_runtime_closure.mjs",
+  deterministicClosureTest: ".github/scripts/c3_deterministic_runtime_closure.test.mjs",
+  deterministicFtsTest: ".github/scripts/c3_deterministic_fts.test.mjs",
   task42DeployWorkflow: ".github/workflows/task4-2-deploy-live-console-edge.yml",
 };
 for (const file of Object.values(files)) {
@@ -325,14 +347,13 @@ for (const file of Object.values(files)) {
 }
 must(
   changed.filter((file) => file.startsWith("supabase/migrations/")).length ===
-    1,
+    2,
   "migration_count_invalid",
 );
 for (
   const forbidden of [
     "supabase/functions/receive-widget-message/index.ts",
     "supabase/functions/ce-evaluation-worker/index.ts",
-    "supabase/functions/conversation-evaluate/index.ts",
   ]
 ) must(!changed.includes(forbidden), `frozen_runtime_changed:${forbidden}`);
 must(
@@ -380,8 +401,6 @@ for (
     "supabase/functions/_shared/commerce-state-contract.ts",
     "supabase/functions/_shared/commerce-state-reducer.ts",
     "supabase/functions/_shared/commerce-state-runtime.ts",
-    "supabase/functions/_shared/canonical-grounding.ts",
-    "supabase/functions/_shared/citation-lineage.ts",
     "supabase/functions/_shared/pre-send-conversion-supervisor.ts",
     "supabase/functions/_shared/transaction-closure-handoff.ts",
     "supabase/migrations/20260915000000_ai_abc_c2_director_closure_handoff.sql",
@@ -389,7 +408,6 @@ for (
     "supabase/functions/return-to-ai/index.ts",
     "supabase/functions/receive-widget-message/index.ts",
     "supabase/functions/ce-evaluation-worker/index.ts",
-    "supabase/functions/conversation-evaluate/index.ts",
   ]
 ) {
   const baseline = execFileSync("git", ["show", `origin/main:${file}`]);
@@ -401,6 +419,7 @@ for (
 
 run("git", ["diff", "--check", "origin/main...HEAD"]);
 runDeno(["test", "--no-lock", files.unit, files.terminalTest]);
+runDeno(["test", "--no-lock", files.deterministicEngineTest]);
 runDeno(["test", "--no-lock", files.servicePlannerTest]);
 runDeno(["test", "--no-lock", "--allow-read", files.serviceRuntimeTest]);
 runDeno(["test", "--no-lock", files.customer360EntitlementClientTest]);
@@ -427,6 +446,9 @@ runDeno([
     files.nonproductionKbRuntime,
     files.nonproductionCustomer360Upstream,
     files.customer360Adapter,
+    files.deterministicEngine,
+    files.deterministicRouter,
+    files.deterministicKbClient,
 ]);
 if (process.env.CI) {
   runDeno([
@@ -480,6 +502,15 @@ run("node", [files.releaseIdentityTest]);
 run("node", [files.realCustomerDatasetTest]);
 run("node", [files.independentGraderTest]);
 run("node", [files.humanBlindCalibrationTest]);
+run("node", [files.deterministicClosureTest]);
+run("node", [files.deterministicFtsTest]);
+run("node", [files.deterministicQualityTest]);
+const deterministicClosure = verifyDeterministicClosure();
+const deterministicObjective = verifyObjectiveOracle({
+  dataset: JSON.parse(read(files.derivedDataset)),
+  overlay: JSON.parse(read(files.deterministicOracle)),
+  freeze: JSON.parse(read(files.deterministicFreeze)),
+});
 run("npm", ["run", "build"]);
 
 const phase = process.env.C3_GATE_PHASE === "production"
@@ -668,6 +699,11 @@ console.log(JSON.stringify(
         : "AUTHORIZATION_PENDING",
       nonproduction_component_regression: nonproductionComponent,
       independent_held_out_quality: realCustomerQualityComplete ? "VERIFIED_REAL_CUSTOMER" : "NOT_MEASURED",
+      deterministic_runtime_closure: deterministicClosure,
+      deterministic_objective_conformance_contract: deterministicObjective,
+      deterministic_external_model_calls: 0,
+      deterministic_external_api_cost_usd: "0.00",
+      full_human_quality_reviews: "AWAITING_200_RECORDS",
       human_calibration: humanCalibration.status,
       real_customer_dataset: realCustomerDataset.status,
       real_customer_case_count: realCustomerDataset.actual_case_count,

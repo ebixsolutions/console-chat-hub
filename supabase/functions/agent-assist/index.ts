@@ -7,14 +7,14 @@ import {
   fetchKBRag,
   resolveKBEndpoint,
   resolveTenantScope,
-} from "../_shared/kb-client.ts";
+} from "../_shared/deterministic-kb-client.ts";
 import { validateAgent } from "../_shared/agent.ts";
 import {
   applyCompanyScope,
   resolveConversationScope,
 } from "../_shared/pre-activation-scope.ts";
 import { supabaseCorsHeaders } from "../_shared/supabase-cors.ts";
-import { callModel, parseJsonObject } from "../_shared/llm-router.ts";
+import { callModel, parseJsonObject } from "../_shared/deterministic-runtime-router.ts";
 import { selectCanonicalGrounding } from "../_shared/canonical-grounding.ts";
 import { buildCanonicalAssistRetrievalQuery } from "../_shared/conversation-runtime-state.ts";
 import { buildWarmHandoffPackage } from "../_shared/warm-handoff.ts";

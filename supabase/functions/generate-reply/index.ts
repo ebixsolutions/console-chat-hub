@@ -44,7 +44,7 @@ import {
   type KBResolvedScope,
   resolveKBEndpoint,
   resolveTenantScope,
-} from "../_shared/kb-client.ts";
+} from "../_shared/deterministic-kb-client.ts";
 import { evaluateEscalationShadow } from "../_shared/escalation-shadow.ts";
 import {
   persistRequiredEscalationClarification,
@@ -69,7 +69,7 @@ import {
   callModel,
   type LlmFailureCode,
   resolveGenerationMaxTokens,
-} from "../_shared/llm-router.ts";
+} from "../_shared/deterministic-runtime-router.ts";
 import {
   buildCustomerAdvisoryContext,
   buildCustomerContextAcknowledgement,
@@ -364,7 +364,7 @@ async function writeTraces(
     model_used: string;
   },
 ): Promise<void> {
-  // upstream_call_log is owned exclusively by _shared/llm-router.ts. Keeping a
+  // upstream_call_log is owned exclusively by the runtime routing boundary. Keeping a
   // second provider-specific write here would double-count usage and falsely
   // label Vertex calls as Anthropic.
   try {

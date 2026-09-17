@@ -243,6 +243,10 @@ jobs:
           node .github/scripts/c3_real_customer_dataset.test.mjs
           node .github/scripts/c3_nonproduction_independent_grader.test.mjs
           node .github/scripts/c3_human_blind_calibration.test.mjs
+          node .github/scripts/c3_deterministic_runtime_closure.test.mjs
+          node .github/scripts/c3_deterministic_fts.test.mjs
+          node .github/scripts/c3_deterministic_quality.test.mjs
+          node .github/scripts/c3_deterministic_quality.mjs verify-oracle .github/scripts/c3_real_case_derived_dataset_v1.json .github/scripts/c3_deterministic_objective_oracle_v1.json .github/scripts/c3_deterministic_objective_freeze_v1.json
       - name: Production DB security readback preflight (read-only, no fixtures)
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
@@ -862,6 +866,7 @@ jobs:
           (cd "$RUNNER_TEMP/c3-deno-checkout" && deno check --no-lock --node-modules-dir=auto supabase/functions/generate-reply/index.ts)
           (cd "$RUNNER_TEMP/c3-deno-checkout" && deno check --no-lock --node-modules-dir=auto supabase/functions/agent-assist/index.ts)
           (cd "$RUNNER_TEMP/c3-deno-checkout" && deno test --no-lock --allow-read --node-modules-dir=auto supabase/functions/_shared/conversation-long-memory.test.ts supabase/functions/_shared/conversation-long-memory.integration.test.ts supabase/functions/_shared/generation-terminal-guard.test.ts)
+          (cd "$RUNNER_TEMP/c3-deno-checkout" && deno test --no-lock supabase/functions/_shared/deterministic-commerce-engine.test.ts)
           c3_source_clean after_deno 1
           git worktree add --detach "$RUNNER_TEMP/c3-build-checkout" "$GITHUB_SHA"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/c3-build-checkout/node_modules"

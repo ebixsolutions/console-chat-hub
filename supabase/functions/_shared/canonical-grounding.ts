@@ -2,7 +2,7 @@ import type {
   KBDocumentCandidate,
   KBFullChunk,
   KBLLMContextEvidence,
-} from "./kb-client.ts";
+} from "./deterministic-kb-client.ts";
 import { detectExplicitJurisdiction } from "./conversation-runtime-state.ts";
 import {
   type ReferenceAuthorityDecision,

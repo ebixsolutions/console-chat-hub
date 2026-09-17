@@ -1,4 +1,4 @@
-import { callModel } from "./llm-router.ts";
+import { callModel } from "./deterministic-runtime-router.ts";
 import { getSupabaseAdminKey } from "./supabase-admin-key.ts";
 import {
   COMMERCE_SEMANTIC_FRAME_VERSION,
@@ -23,7 +23,7 @@ export interface CommerceSemanticInterpretInput {
 
 export interface CommerceSemanticInterpretResult {
   frame: CommerceSemanticFrame | null;
-  source: "llm" | "none";
+  source: "deterministic" | "none";
   failure_code: string | null;
 }
 
@@ -220,5 +220,5 @@ export async function interpretCommerceSemantics(
   if (!frame) {
     return { frame: null, source: "none", failure_code: "LLM_INVALID_OUTPUT" };
   }
-  return { frame, source: "llm", failure_code: null };
+  return { frame, source: "deterministic", failure_code: null };
 }

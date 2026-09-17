@@ -1,13 +1,13 @@
 /**
  * PR29 Task 2 — shared automatic Conversation Evaluation engine.
  *
- * All model calls still go through _shared/llm-router.ts. This engine exists so
+ * All scoring helpers are network-free deterministic compatibility outputs. This engine exists so
  * cron and authenticated CE dwell/manual requests execute the same queue job.
  * It never accepts a browser-supplied company id.
  */
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2.45.0";
 import { getSupabaseAdminKey } from "./supabase-admin-key.ts";
-import { callModel, parseJsonObject, redact, toCeErrorCode } from "./llm-router.ts";
+import { callModel, parseJsonObject, redact, toCeErrorCode } from "./deterministic-runtime-router.ts";
 import {
   ceEvaluatorProviderPolicy,
   ceSignalsProviderPolicy,
