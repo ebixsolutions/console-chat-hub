@@ -7,7 +7,10 @@ import {
   prepareConversationRecall,
   resolveConversationRecall,
 } from "./conversation-recall.ts";
-import { recallFixture } from "./conversation-recall.test.ts";
+import {
+  recallFixture,
+  t17ProductionFailureFixture,
+} from "./conversation-recall.test.ts";
 
 function assert(v: unknown, m = "assertion failed"): asserts v {
   if (!v) throw new Error(m);
@@ -55,6 +58,31 @@ Deno.test("C3 routing metadata does not duplicate contact values", () => {
   const r = prepareConversationRecall(recallFixture("我的收貨人和電話？"));
   assert(r.reply?.includes("90000001"));
   assert(!JSON.stringify(r.metadata).includes("90000001"));
+});
+Deno.test("C3 exact T17 repaired reply passes frozen B2 persistence gate", () => {
+  const input = t17ProductionFailureFixture();
+  const route = prepareConversationRecall(input, "zh-TW");
+  assert(route.decision.handled && route.reply, JSON.stringify(route.decision));
+  assert(
+    (route.reply.includes("2") || route.reply.includes("兩")) &&
+      route.reply.includes("客廳") &&
+      /取消/.test(route.reply),
+    route.reply,
+  );
+  const b2 = evaluateB2BeforeCommit({
+    proposed_response: route.reply,
+    persistence_kind: "ai_reply",
+    snapshot: {
+      conversation_id: input.conversation_id,
+      company_id: input.company_id,
+      source_message_id: input.source_message_id,
+      commerce_state_revision: input.commerce!.revision,
+      commerce_state_source_message_id: input.commerce!.source_message_id,
+      state: input.commerce!.state,
+    },
+    metadata: route.metadata,
+  });
+  assert(b2.decision === "allow", `${b2.code}: ${route.reply}`);
 });
 Deno.test("C3 current official facts still have no recall reply", () => {
   const r = prepareConversationRecall(

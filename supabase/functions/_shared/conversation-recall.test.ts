@@ -4,8 +4,18 @@ import {
   renderConversationRecall,
   resolveConversationRecall,
 } from "./conversation-recall.ts";
-import type { ConversationCommerceState } from "./commerce-state-contract.ts";
-import type { CanonicalConversationMemory } from "./conversation-long-memory.ts";
+import {
+  type ConversationCommerceState,
+  createEmptyConversationCommerceState,
+} from "./commerce-state-contract.ts";
+import {
+  buildCommerceEntityHints,
+  reduceTurn,
+} from "./commerce-state-runtime.ts";
+import {
+  buildCanonicalConversationMemory,
+  type CanonicalConversationMemory,
+} from "./conversation-long-memory.ts";
 
 function assert(value: unknown, message = "assertion failed"): asserts value {
   if (!value) throw new Error(message);
@@ -164,6 +174,66 @@ function answer(q: string, mutate?: (input: ConversationRecallInput) => void) {
   return { d, reply };
 }
 
+export function t17ProductionFailureFixture(
+  question = "現在實際保留幾多部冷氣？只回答數量和被取消項目。",
+): ConversationRecallInput {
+  const conversation_id = "17000000-0000-4000-8000-000000000001";
+  const company_id = "17000000-0000-4000-8000-000000000002";
+  const turns = [
+    "我要三部冷氣：細房、大房和客廳各一部。",
+    "更正：客廳那部暫時取消，只保留兩間房的兩部。",
+    question,
+  ];
+  let state = createEmptyConversationCommerceState();
+  for (let index = 0; index < turns.length; index++) {
+    const source_message_id = `17000000-0000-4000-8000-00000000010${index}`;
+    state = reduceTurn(state, {
+      conversation_id,
+      company_id,
+      source_message_id,
+      text: turns[index],
+      language: "zh-TW",
+      history: turns.slice(0, index).map((content) => ({
+        role: "visitor",
+        content,
+      })),
+    }, buildCommerceEntityHints([
+      turns[index],
+      ...turns.slice(0, index).reverse(),
+    ]));
+  }
+  const source_message_id = "17000000-0000-4000-8000-000000000102";
+  const memory = buildCanonicalConversationMemory({
+    conversation_id,
+    company_id,
+    source_message_id,
+    commerce_state_revision: 3,
+    commerce_state: state,
+    newest_first: turns.slice().reverse().map((content, index) => ({
+      id: `17000000-0000-4000-8000-00000000020${index}`,
+      role: "visitor",
+      content,
+    })),
+    visitor_turn_count: 3,
+    source_created_at: "2026-09-17T00:00:00Z",
+    next_memory_revision: 3,
+  });
+  return {
+    conversation_id,
+    company_id,
+    source_message_id,
+    question,
+    memory,
+    commerce: {
+      conversation_id,
+      company_id,
+      source_message_id,
+      revision: 3,
+      state,
+    },
+  };
+}
+
 // Regression scenarios derived from the supplied production failure categories.
 // They are NOT the unavailable original production transcript or a production replay.
 Deno.test("C3 semantic T06 initial AC quantity", () => {
@@ -176,6 +246,85 @@ Deno.test("C3 semantic T06 initial AC quantity", () => {
 Deno.test("C3 semantic T17 corrected active quantity excludes deferred item", () => {
   const { d, reply } = answer("更正後冷氣數量是多少？");
   assert(d.value === 2 && !reply.includes("3"));
+});
+Deno.test("C3 T17 exact production reproduction retains two and excludes living room", () => {
+  const input = t17ProductionFailureFixture();
+  assert(
+    input.commerce?.state.entities.length === 1 &&
+      input.commerce.state.entities[0].status === "cancelled",
+    "fixture must reproduce the collapsed inactive canonical entity",
+  );
+  const decision = resolveConversationRecall(input);
+  assert(decision.handled, JSON.stringify(decision));
+  const reply = renderConversationRecall(decision, "zh-TW") ?? "";
+  assert(
+    (reply.includes("2") || reply.includes("兩")) && reply.includes("客廳") &&
+      /取消/.test(reply) && !reply.includes("3 部"),
+    reply,
+  );
+});
+Deno.test("C3 T17 canonical active correction outranks stale inactive quantity", () => {
+  const input = t17ProductionFailureFixture();
+  const cancelled = input.commerce!.state.entities[0];
+  cancelled.quantity = 99;
+  input.commerce!.state.entities.push({
+    ...cancelled,
+    entity_id: "air_conditioner:unscoped",
+    quantity: 2,
+    status: "tentative",
+    provenance: {
+      source_type: "customer",
+      source_message_id: "17000000-0000-4000-8000-000000000101",
+    },
+  });
+  input.memory!.active_entities = [{
+    entity_id: "air_conditioner:unscoped",
+    type: "air_conditioner",
+    brand: null,
+    model: null,
+    quantity: 2,
+    status: "active",
+    region: null,
+    current_requirements: {},
+    transaction_state: {},
+  }];
+  const decision = resolveConversationRecall(input);
+  assert(decision.handled, JSON.stringify(decision));
+  const quantity = decision.provenance.evidence.find((e) =>
+    e.fact_type === "quantity"
+  );
+  const cancelledStatus = decision.provenance.evidence.find((e) =>
+    e.fact_type === "entity_status"
+  );
+  assert(
+    quantity?.value === 2 &&
+      quantity.entity_id === "air_conditioner:unscoped" &&
+      cancelledStatus?.entity_id === "air_conditioner:living_room",
+    JSON.stringify(decision),
+  );
+});
+Deno.test("C3 T17 explicit retained correction ignores inactive stored quantity", () => {
+  const input = t17ProductionFailureFixture();
+  input.commerce!.state.entities[0].quantity = 99;
+  const decision = resolveConversationRecall(input);
+  assert(decision.handled, JSON.stringify(decision));
+  const quantity = decision.provenance.evidence.find((e) =>
+    e.fact_type === "quantity"
+  );
+  assert(
+    quantity?.value === 2 && quantity.entity_id === null &&
+      quantity.source_kind === "retained_customer_correction_checkpoint",
+    JSON.stringify(decision),
+  );
+});
+Deno.test("C3 T17 direct inactive quantity remains genuinely ambiguous", () => {
+  const input = t17ProductionFailureFixture("客廳冷氣有幾多部？");
+  const decision = resolveConversationRecall(input);
+  assert(
+    !decision.handled && decision.reason === "AMBIGUOUS" &&
+      decision.detail === "INACTIVE_ENTITY_NOT_CURRENT_QUANTITY",
+    JSON.stringify(decision),
+  );
 });
 Deno.test("C3 semantic T40 corrected B-block address", () => {
   const { reply, d } = answer("我更正後的收貨地址是什麼？");

@@ -747,6 +747,74 @@ function correctedValue(text: string, f: RecallFact): unknown {
   }
   return usable(v) ? v : null;
 }
+
+function retainedQuantity(text: string): number | null {
+  const match = norm(text).match(
+    /(?:只|僅|仅|目前|現在|现在|而家|實際|实际)?\s*(?:保留|留下|剩下|剩餘|剩余|餘下|余下|keep|kept|retain|retained|remain(?:ing)?)\D{0,48}?([一二兩两三四五六七八九十]|\d{1,4})\s*(?:部|台|件|個|个|套|units?|items?)/i,
+  );
+  if (!match?.[1]) return null;
+  if (/^\d+$/.test(match[1])) return Number(match[1]);
+  return ({
+    一: 1,
+    二: 2,
+    兩: 2,
+    两: 2,
+    三: 3,
+    四: 4,
+    五: 5,
+    六: 6,
+    七: 7,
+    八: 8,
+    九: 9,
+    十: 10,
+  } as Record<string, number>)[match[1]] ?? null;
+}
+
+function asksRetainedQuantity(question: string): boolean {
+  return hasField(question, "quantity") &&
+    /(?:實際|实际|目前|現在|现在|而家|current|actual)?\s*(?:保留|留下|剩下|剩餘|剩余|餘下|余下|keep|kept|retain|retained|remain(?:ing)?)/i
+      .test(norm(question));
+}
+
+function asksInactiveEntityStatus(question: string): boolean {
+  return hasField(question, "entity_status") &&
+    /(?:被)?(?:取消|暫緩|暂缓)|cancelled item|canceled item|deferred/i.test(
+      norm(question),
+    );
+}
+
+function latestRetainedQuantity(
+  memory: CanonicalConversationMemory | null,
+): { value: number; index: number } | null {
+  if (!memory) return null;
+  for (let index = 0; index < memory.latest_corrections.length; index++) {
+    const value = retainedQuantity(memory.latest_corrections[index]);
+    if (value !== null) return { value, index };
+  }
+  return null;
+}
+
+function correctedInactiveEntityLabel(
+  input: ConversationRecallInput,
+  entity: CommerceEntity,
+): string | null {
+  if (!["cancelled", "deferred"].includes(entity.status)) return null;
+  const inactive = input.commerce?.state.entities.filter((candidate) =>
+    ["cancelled", "deferred"].includes(candidate.status)
+  ) ?? [];
+  if (inactive.length !== 1 || inactive[0].entity_id !== entity.entity_id) {
+    return null;
+  }
+  for (const correction of input.memory?.latest_corrections ?? []) {
+    const match = correction.match(
+      /(?:更正\s*[:：,，]?\s*)?([^，,。;；]{1,60}?)(?:暫時|暂时)?\s*(?:取消|暫緩|暂缓|cancel(?:led|ed)?|defer(?:red)?)/i,
+    );
+    const label = match?.[1]?.replace(/^(?:更正\s*[:：,，]?\s*)/i, "")
+      .trim();
+    if (label) return label;
+  }
+  return null;
+}
 interface Candidate extends RecallEvidence {
   rank: number;
 }
@@ -778,7 +846,7 @@ function canonicalCandidates(
       entity_label: entity
         ? String(
           entity.attributes?.display_name ?? entity.attributes?.name ??
-            entity.category,
+            correctedInactiveEntityLabel(input, entity) ?? entity.category,
         )
         : null,
       region: typeof entity?.attributes?.region === "string"
@@ -917,6 +985,20 @@ function memoryCandidates(
       rank,
     });
   };
+  if (f === "quantity" && asksRetainedQuantity(input.question)) {
+    const retained = latestRetainedQuantity(m);
+    if (retained) {
+      add(
+        `latest_corrections.${retained.index}.retained_quantity`,
+        retained.value,
+        1,
+        null,
+        null,
+        null,
+        "retained_customer_correction_checkpoint",
+      );
+    }
+  }
   for (let i = 0; i < m.latest_corrections.length; i++) {
     const text = m.latest_corrections[i];
     const namedEntities = (input.commerce?.state.entities ?? []).filter((e) =>
@@ -1097,10 +1179,16 @@ export function resolveConversationRecall(
   const evidence: RecallEvidence[] = [];
   for (const slot of slots) {
     const f = slot.fact;
-    const selected = selectEntities(
+    let selected = selectEntities(
       { ...input, question: slot.question },
       c?.state.entities ?? [],
     );
+    if (f === "entity_status" && asksInactiveEntityStatus(slot.question)) {
+      const inactive = selected.filter((entity) =>
+        ["cancelled", "deferred"].includes(entity.status)
+      );
+      if (inactive.length) selected = inactive;
+    }
     if (f === "historical_exclusion") {
       const amounts = (input.question.match(/\d[\d,]*(?:\.\d+)?/g) ?? []).map(
         (v) => Number(v.replace(/,/g, "")),
@@ -1177,11 +1265,13 @@ export function resolveConversationRecall(
     if (
       ["quantity", "horsepower", "brand_constraint", "room_size"].includes(f) &&
       c && c.state.entities.length > 1 && selected.length !== 1 &&
-      !any(input.question, ["all", "total", "全部", "合共", "總共", "分別", "分别", "兩間", "两间", "兩部", "两部"])
+      !any(input.question, ["all", "total", "全部", "合共", "總共", "分別", "分别", "兩間", "两间", "兩部", "两部"]) &&
+      !(f === "quantity" && asksRetainedQuantity(slot.question))
     ) return fail("AMBIGUOUS", "ENTITY_REFERENCE_AMBIGUOUS", facts);
     if (
       f === "quantity" &&
-      selected.some((e) => ["cancelled", "deferred"].includes(e.status))
+      selected.some((e) => ["cancelled", "deferred"].includes(e.status)) &&
+      !(asksRetainedQuantity(slot.question) && latestRetainedQuantity(m))
     ) return fail("AMBIGUOUS", "INACTIVE_ENTITY_NOT_CURRENT_QUANTITY", facts);
     if (
       f === "quantity" &&
@@ -1372,7 +1462,24 @@ export function renderConversationRecall(
       );
       continue;
     }
-    let v = display(e.value);
+    const retainedCorrectionQuantity = e.fact_type === "quantity" &&
+      e.source_kind === "retained_customer_correction_checkpoint";
+    const retainedNumberWords: Record<number, [string, string, string]> = {
+      1: ["一", "一", "one"],
+      2: ["兩", "两", "two"],
+      3: ["三", "三", "three"],
+      4: ["四", "四", "four"],
+      5: ["五", "五", "five"],
+      6: ["六", "六", "six"],
+      7: ["七", "七", "seven"],
+      8: ["八", "八", "eight"],
+      9: ["九", "九", "nine"],
+      10: ["十", "十", "ten"],
+    };
+    let v = retainedCorrectionQuantity && typeof e.value === "number" &&
+        retainedNumberWords[e.value]
+      ? retainedNumberWords[e.value][l]
+      : display(e.value);
     if (e.fact_type.endsWith("_status") && typeof e.value === "string") {
       v = STATUS_TEXT[e.value]?.[l] ?? v;
     }
@@ -1391,7 +1498,11 @@ export function renderConversationRecall(
         : ["尚未確認", "尚未确认", "not confirmed"][l];
     }
     lines.push(
-      `${LABELS[e.fact_type]?.[l] ?? e.fact_type}${
+      `${
+        retainedCorrectionQuantity
+          ? ["實際保留", "实际保留", "Actually retained"][l]
+          : LABELS[e.fact_type]?.[l] ?? e.fact_type
+      }${
         e.entity_id ? ` (${e.entity_label ?? e.entity_id})` : ""
       }: ${v}${e.fact_type === "quantity" ? l === 2 ? " units" : " 部" : ""}`,
     );
