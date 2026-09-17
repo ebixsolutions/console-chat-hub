@@ -2,14 +2,23 @@
   "schema_version": "c3-nonproduction-runtime-identity-1.0.0",
   "project_ref": "nbtowfuvvfqpxqydyoby",
   "production_ref_rejected": "nrfxhqabwblzxoushgnm",
-  "source_binding": "final_workflow_head_tree_and_closure_manifests",
-  "observed_at": "2026-09-17T00:15:00Z",
+  "source_binding": "runtime_source_head_tree_and_recursive_closure_manifests",
+  "runtime_source_head": "d9a68a835c4e8d14483a63e93dbad5a754cb6940",
+  "runtime_source_tree": "e396b7196989d39077a94a63cc4871cc540ebf66",
+  "observed_at": "2026-09-17T00:36:00Z",
+  "recursive_source_closure_sha256": {
+    "generate-reply": "717ee4de892dc0dfd67f69d4f667b66b22d972b9b087bb39ff48fa5f09725ce3",
+    "agent-assist": "e700b165a386d75d2ccd7932e7454d2876784b9aaf142f2b59ab68c3e32b8f48",
+    "kb-nonproduction-runtime": "2a9c0fff3d1fc094c5f0f8f48a74b7e14b01e17b3cc1c1911b0f2842831e7394",
+    "customer360-adapter": "6165486d051f1d42367e6b009463cd68b998cde4c335cc527a61b92277bb6759",
+    "customer360-nonproduction-upstream": "8139f5cfbe267bce5723d524c71fd24a7b01bd45a4aa8e0d68793f5698846f1c"
+  },
   "functions": {
-    "generate-reply": { "version": 3, "verify_jwt": true, "bundle_sha256": "db906c1aa5fd7304703ddc3a74ca1d0b5bbdd60bae7897052a6eb866ee085d00" },
-    "agent-assist": { "version": 3, "verify_jwt": true, "bundle_sha256": "51920dab55c5232b42269109172c7189a7f640381ca14b248ac833e47cc8e4a6" },
-    "kb-nonproduction-runtime": { "version": 2, "verify_jwt": false, "custom_auth": "vault_token_or_same_project_service_role", "bundle_sha256": "a842772b7bda76d8cec6f9ec529927490a89e3f6e3f229756c0c80dd440d62d9" },
-    "customer360-adapter": { "version": 3, "verify_jwt": false, "custom_auth": "vault_internal_token", "bundle_sha256": "a1011aadcd9d6d8ffeb6a9e0d1f164d3212e748c47ca887476a5a577e2c5af0e" },
-    "customer360-nonproduction-upstream": { "version": 1, "verify_jwt": false, "custom_auth": "vault_upstream_token", "bundle_sha256": "35824f598f675efa4747561263f2ee715a7663a14fcd1ee7c33d743f00576d18" }
+    "generate-reply": { "version": 4, "verify_jwt": true, "bundle_sha256": "debc7c16c5120e3ecd3afcf779c3b4bae0c11c22c13cafb804973c2b87fd427d" },
+    "agent-assist": { "version": 4, "verify_jwt": true, "bundle_sha256": "77a138cd401517bbdd1c3bf7e9ce6e00e6b42ceff846dad40b4770493f03cae6" },
+    "kb-nonproduction-runtime": { "version": 3, "verify_jwt": false, "custom_auth": "vault_token_or_same_project_service_role", "bundle_sha256": "047110d5356555d7aa951f6750d638241a0ffff4f1ab02ab89edca236e65deb4" },
+    "customer360-adapter": { "version": 4, "verify_jwt": false, "custom_auth": "vault_internal_token", "bundle_sha256": "e711a110842cf001c6a06824c0849fbebb0dfab157946daf287b83bd951fc259" },
+    "customer360-nonproduction-upstream": { "version": 2, "verify_jwt": false, "custom_auth": "vault_upstream_token", "bundle_sha256": "75532cc98930b369124501c9a30a344b197895a5e549fab8e3204ecd30bd795d" }
   },
   "quality_status": "NOT_RUN_MODEL_CONFIG_MISSING",
   "embedding_status": "NOT_RUN"
