@@ -96,7 +96,7 @@ Deno.test("C3 quantity recall remains unknown without an explicit scoped count",
 
 Deno.test("C3 exact canonical turn 17 supersedes the tentative correction before B2", () => {
   let state = createEmptyConversationCommerceState();
-  for (let index = 0; index < canonicalTurns1To17.length; index++) {
+  for (let index = 0; index < canonicalTurns1To17.length - 1; index++) {
     const text = canonicalTurns1To17[index];
     state = reduceTurn(state, {
       conversation_id: "17000000-0000-4000-8000-000000000001",
@@ -118,22 +118,33 @@ Deno.test("C3 exact canonical turn 17 supersedes the tentative correction before
     JSON.stringify(state.latest_corrections),
   );
 
-  // The production semantic frame resolves the two active room entities; this
-  // assertion targets the B2 classification that previously rejected that
-  // already-resolved canonical answer because turn 14 remained ledger-latest.
   const active = state.entities[0];
   assert(active, "missing active entity");
-  active.quantity = 2;
-  state.entities.push({
-    ...structuredClone(active),
-    entity_id: "air_conditioner:living_room",
-    quantity: 1,
-    status: "deferred",
-    provenance: {
-      source_type: "customer",
-      source_message_id: "17000000-0000-4000-8000-000000000016",
+  assert(active.quantity === 2, JSON.stringify(state.entities));
+  assert(
+    state.entities.some((entity) =>
+      entity.entity_id === "air_conditioner:living_room" &&
+      ["cancelled", "deferred"].includes(entity.status)
+    ),
+    JSON.stringify(state.entities),
+  );
+  const recall = prepareConversationRecall({
+    conversation_id: "17000000-0000-4000-8000-000000000001",
+    company_id: "17000000-0000-4000-8000-000000000002",
+    source_message_id: "17000000-0000-4000-8000-000000000017",
+    question: canonicalTurns1To17[16],
+    memory: null,
+    commerce: {
+      conversation_id: "17000000-0000-4000-8000-000000000001",
+      company_id: "17000000-0000-4000-8000-000000000002",
+      source_message_id: "17000000-0000-4000-8000-000000000017",
+      revision: 17,
+      state,
     },
-  });
+  }, "zh-TW");
+  assert(recall.decision.handled, JSON.stringify(recall.decision));
+  assert(recall.decision.value === 2, JSON.stringify(recall.decision));
+  assert(recall.reply?.includes("2 部"), recall.reply ?? "missing reply");
   const decision = evaluateB2BeforeCommit({
     proposed_response: "你而家實際買 2 部冷氣；客廳嗰部已暫緩，不計入數量。",
     persistence_kind: "ai_reply",

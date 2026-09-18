@@ -707,6 +707,10 @@ function selectEntities(
   );
   return active.length === 1 ? active : [];
 }
+
+function isCurrentEntity(entity: CommerceEntity): boolean {
+  return !["cancelled", "deferred"].includes(entity.status);
+}
 function correctedValue(text: string, f: RecallFact): unknown {
   if (!hasField(text, f) || /[?？]/.test(text)) return null;
   // One assignment grammar for retained corrections; never parse the incoming question as a value.
@@ -1188,6 +1192,12 @@ export function resolveConversationRecall(
         ["cancelled", "deferred"].includes(entity.status)
       );
       if (inactive.length) selected = inactive;
+    } else {
+      // Current-reference recall must classify ambiguity from current entities
+      // only. An explicitly named or category-matched cancelled/deferred entity
+      // remains historical evidence, but cannot compete with the authoritative
+      // active aggregate and create a false current-reference ambiguity.
+      selected = selected.filter(isCurrentEntity);
     }
     if (f === "historical_exclusion") {
       const amounts = (input.question.match(/\d[\d,]*(?:\.\d+)?/g) ?? []).map(
@@ -1264,7 +1274,8 @@ export function resolveConversationRecall(
     }
     if (
       ["quantity", "horsepower", "brand_constraint", "room_size"].includes(f) &&
-      c && c.state.entities.length > 1 && selected.length !== 1 &&
+      c && c.state.entities.filter(isCurrentEntity).length > 1 &&
+      selected.length !== 1 &&
       !any(input.question, ["all", "total", "全部", "合共", "總共", "分別", "分别", "兩間", "两间", "兩部", "两部"]) &&
       !(f === "quantity" && asksRetainedQuantity(slot.question))
     ) return fail("AMBIGUOUS", "ENTITY_REFERENCE_AMBIGUOUS", facts);

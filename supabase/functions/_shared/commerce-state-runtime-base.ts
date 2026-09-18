@@ -189,8 +189,13 @@ function hintsMentionedInTurn(text: string, hints: CommerceTurnEntityHint[]): Co
         return normalized.length >= 2 && lower.includes(normalized);
       });
     }
-    if (!categories.includes(hint.category)) return false;
     const [, roomKey] = hint.entity_id.split(":");
+    if (!categories.includes(hint.category)) {
+      // A scoped follow-up can refer to an already-known commerce entity by
+      // room alone (for example, cancelling "the living-room one").
+      return rooms.length > 0 && roomKey !== "unscoped" &&
+        rooms.some((room) => room.key === roomKey);
+    }
     if (!rooms.length) return true;
     if (roomKey === "unscoped") return false;
     return rooms.some((room) => room.key === roomKey) || Boolean(lower) === false;
@@ -241,6 +246,13 @@ function parseCount(text: string): number | null {
   );
   if (!m?.[1]) return null;
   return countTokenValue(m[1]);
+}
+
+function isAllocationBreakdown(text: string): boolean {
+  const matches = clean(text).match(
+    /(?:[一二兩两三四五六七八九十]|\d{1,4})\s*(?:部|台|件|個|个|套|units?|items?)/gi,
+  );
+  return (matches?.length ?? 0) > 1;
 }
 
 /**
@@ -483,6 +495,7 @@ function deriveA3RuntimeEvents(
   const additive = detectAdditiveEntityCreationSignal(text);
   const explicitCreation = detectExplicitEntityCreationSignal(text);
   const correction = detectQuantityCorrectionSignal(text);
+  const allocationBreakdown = correction && isAllocationBreakdown(text);
   const addressCorrection = parseAddressReplacementCorrection(text);
 
   // The semantic adapter owns entity mutation when its frame is authoritative,
@@ -502,7 +515,10 @@ function deriveA3RuntimeEvents(
     });
   }
 
-  if (correction && quantity !== null && mentioned.length === 0) {
+  if (
+    correction && !allocationBreakdown && quantity !== null &&
+    mentioned.length === 0
+  ) {
     const active = previous.entities.filter(
       (entity) => entity.status !== "cancelled" && entity.status !== "deferred",
     );
@@ -534,10 +550,42 @@ function deriveA3RuntimeEvents(
   for (const hint of mentioned) {
     if (cancelled) {
       events.push({ type: "SET_ENTITY_STATUS", entity_id: hint.entity_id, status: "cancelled", provenance });
+      const existing = previous.entities.find((entity) =>
+        entity.entity_id === hint.entity_id
+      );
+      const aggregate = previous.entities.find((entity) =>
+        entity.category === hint.category &&
+        entity.entity_id.endsWith(":unscoped") &&
+        entity.status !== "cancelled" && entity.status !== "deferred"
+      );
+      if (!existing && aggregate && aggregate.quantity > 0) {
+        events.push({
+          type: "SET_ENTITY_QUANTITY",
+          entity_id: aggregate.entity_id,
+          quantity: Math.max(0, aggregate.quantity - (hint.quantity ?? 1)),
+          provenance,
+        });
+      }
       continue;
     }
     if (deferred) {
       events.push({ type: "SET_ENTITY_STATUS", entity_id: hint.entity_id, status: "deferred", provenance });
+      const existing = previous.entities.find((entity) =>
+        entity.entity_id === hint.entity_id
+      );
+      const aggregate = previous.entities.find((entity) =>
+        entity.category === hint.category &&
+        entity.entity_id.endsWith(":unscoped") &&
+        entity.status !== "cancelled" && entity.status !== "deferred"
+      );
+      if (!existing && aggregate && aggregate.quantity > 0) {
+        events.push({
+          type: "SET_ENTITY_QUANTITY",
+          entity_id: aggregate.entity_id,
+          quantity: Math.max(0, aggregate.quantity - (hint.quantity ?? 1)),
+          provenance,
+        });
+      }
       continue;
     }
     if (quantity !== null && (additive || mentioned.length === 1)) {
@@ -629,13 +677,56 @@ export function filterGhostUnscopedHints(
   });
 }
 
+function materializeRoomOnlyReferenceHints(
+  text: string,
+  state: ConversationCommerceState,
+  hints: CommerceTurnEntityHint[],
+): CommerceTurnEntityHint[] {
+  const rooms = detectRooms(text);
+  if (
+    rooms.length === 0 || detectCategories(text).length > 0 ||
+    (!detectCancellation(text) && !detectDeferral(text))
+  ) return hints;
+
+  const aggregateCategories = [...new Set(
+    state.entities.filter((entity) =>
+      entity.entity_id.endsWith(":unscoped") &&
+      entity.status !== "cancelled" && entity.status !== "deferred"
+    ).map((entity) => entity.category),
+  )];
+  // A room-only reference is resolvable only when the current state supplies
+  // one authoritative aggregate category. Multiple active categories remain
+  // ambiguous and must not be guessed here.
+  if (aggregateCategories.length !== 1) return hints;
+
+  const category = aggregateCategories[0];
+  const next = new Map(hints.map((hint) => [hint.entity_id, hint]));
+  for (const room of rooms) {
+    const entity_id = `${category}:${room.key}`;
+    if (!next.has(entity_id)) {
+      next.set(entity_id, {
+        entity_id,
+        category,
+        quantity: 1,
+        aliases: [...room.aliases],
+      });
+    }
+  }
+  return [...next.values()];
+}
+
 export function reduceTurn(
   previous: ConversationCommerceState,
   input: CommerceRuntimeInput,
   rawHints: CommerceTurnEntityHint[],
 ): ConversationCommerceState {
   const calculationTurn = detectExplicitCalculationRequest(input.text);
-  const hints = calculationTurn ? [] : filterGhostUnscopedHints(input.text, previous, rawHints);
+  const resolvedHints = calculationTurn
+    ? []
+    : materializeRoomOnlyReferenceHints(input.text, previous, rawHints);
+  const hints = calculationTurn
+    ? []
+    : filterGhostUnscopedHints(input.text, previous, resolvedHints);
   const mentioned = calculationTurn ? [] : hintsMentionedInTurn(input.text, hints);
   const bookingWithoutDelivery = mentioned.some(hintRequiresBookingWithoutDelivery);
   const semanticAuthoritative = !calculationTurn && Boolean(input.semantic_frame && input.semantic_frame.confidence >= 0.72);
@@ -652,9 +743,16 @@ export function reduceTurn(
     entity_hints: hints,
     current_language: input.language,
   });
-  const derived = bookingWithoutDelivery
-    ? derivedRaw.filter((event) => event.type !== "SET_DELIVERY")
+  const allocationBreakdown = detectQuantityCorrectionSignal(input.text) &&
+    isAllocationBreakdown(input.text);
+  const derivedWithoutAllocationOverwrite = allocationBreakdown
+    ? derivedRaw.filter((event) => event.type !== "SET_ENTITY_QUANTITY")
     : derivedRaw;
+  const derived = bookingWithoutDelivery
+    ? derivedWithoutAllocationOverwrite.filter((event) =>
+      event.type !== "SET_DELIVERY"
+    )
+    : derivedWithoutAllocationOverwrite;
   const runtimeEvents = calculationTurn ? [] : deriveA3RuntimeEvents(input, hints, previous);
   const industryEvent: CommerceStateEvent[] = input.industry_identifier
     ? [{ type: "SET_CONTEXT", language: input.language, industry: input.industry_identifier }]
