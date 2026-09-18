@@ -1187,6 +1187,19 @@ export function resolveConversationRecall(
       { ...input, question: slot.question },
       c?.state.entities ?? [],
     );
+    const selectedOnlyInactive = selected.length > 0 && selected.every(
+      (entity) => !isCurrentEntity(entity),
+    );
+    if (
+      f === "quantity" && selectedOnlyInactive &&
+      !(asksRetainedQuantity(slot.question) && latestRetainedQuantity(m))
+    ) {
+      return fail(
+        "AMBIGUOUS",
+        "INACTIVE_ENTITY_NOT_CURRENT_QUANTITY",
+        facts,
+      );
+    }
     if (f === "entity_status" && asksInactiveEntityStatus(slot.question)) {
       const inactive = selected.filter((entity) =>
         ["cancelled", "deferred"].includes(entity.status)
