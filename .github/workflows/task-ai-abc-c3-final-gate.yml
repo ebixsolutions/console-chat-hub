@@ -816,10 +816,12 @@ jobs:
             '_shared/citation-lineage.ts','_shared/commerce-semantic-frame.ts',
             '_shared/commerce-semantic-interpreter.ts','_shared/escalation-policy.ts',
             '_shared/deterministic-commerce-engine.ts','_shared/deterministic-kb-client.ts',
+            '_shared/current-fact-evidence.ts',
             '_shared/deterministic-runtime-router.ts','_shared/kb-aggregation-response.ts'
           }
           required_target_shared={
             '_shared/deterministic-commerce-engine.ts','_shared/deterministic-kb-client.ts',
+            '_shared/current-fact-evidence.ts',
             '_shared/deterministic-runtime-router.ts','_shared/kb-aggregation-response.ts'
           }
           required_removed_shared={
