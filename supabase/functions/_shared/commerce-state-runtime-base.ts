@@ -455,6 +455,15 @@ function deriveA3RuntimeEvents(
   const explicitCreation = detectExplicitEntityCreationSignal(text);
   const correction = detectQuantityCorrectionSignal(text);
 
+  // The semantic adapter owns entity mutation when its frame is authoritative,
+  // but B2 still needs the customer's exact correction ledger. Record explicit
+  // quantity corrections here so a later, superseded tentative statement cannot
+  // remain the apparent "latest" correction merely because semantic extraction
+  // handled the entity updates.
+  if (correction) {
+    events.push({ type: "ADD_CORRECTION", correction: text });
+  }
+
   if (correction && quantity !== null && mentioned.length === 0) {
     const active = previous.entities.filter(
       (entity) => entity.status !== "cancelled" && entity.status !== "deferred",

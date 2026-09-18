@@ -11,10 +11,90 @@ import {
   recallFixture,
   t17ProductionFailureFixture,
 } from "./conversation-recall.test.ts";
+import {
+  buildCommerceEntityHints,
+  reduceTurn,
+} from "./commerce-state-runtime.ts";
+import { createEmptyConversationCommerceState } from "./commerce-state-contract.ts";
 
 function assert(v: unknown, m = "assertion failed"): asserts v {
   if (!v) throw new Error(m);
 }
+
+const canonicalTurns1To17 = [
+  "Hi，想問冷氣，兩間房加個廳，唔知買咩匹數好。",
+  "兩間房大概80呎同100呎，廳180呎，全部窗口位，本身都係窗口機。",
+  "細房應該1匹，大房同廳我唔知。",
+  "我唔想太貴，格力、美的、Panasonic都得。",
+  "仲有呀，我屋企下午西斜得幾勁。",
+  "你而家記得我要幾多部冷氣？",
+  "先唔好理個廳，我想問細房有冇1匹窗口變頻。",
+  "Panasonic有冇？",
+  "如果產品頁有機價，係咪即係包安裝？",
+  "哦，即係機價同安裝要分開確認啦。",
+  "我之前問你同事，佢話格力 GWF12P $5788，安裝550，鋁架550。",
+  "之後胡小姐又話如果兩部可以5600一部。",
+  "咁兩部連安裝同架，按我頭先提供嘅舊報價計幾錢？",
+  "等等，我而家可能唔係兩部匹半喎。",
+  "改做一部1匹，一部1.5匹。",
+  "客廳嗰部暫時唔買住。",
+  "咁我而家實際買幾多部冷氣？",
+] as const;
+
+Deno.test("C3 exact canonical turn 17 supersedes the tentative correction before B2", () => {
+  let state = createEmptyConversationCommerceState();
+  for (let index = 0; index < canonicalTurns1To17.length; index++) {
+    const text = canonicalTurns1To17[index];
+    state = reduceTurn(state, {
+      conversation_id: "17000000-0000-4000-8000-000000000001",
+      company_id: "17000000-0000-4000-8000-000000000002",
+      source_message_id: `17000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+      text,
+      language: "zh-TW",
+      history: canonicalTurns1To17.slice(0, index).reverse().map((content) => ({
+        role: "visitor",
+        content,
+      })),
+    }, buildCommerceEntityHints([
+      text,
+      ...canonicalTurns1To17.slice(0, index).reverse(),
+    ]));
+  }
+  assert(
+    state.latest_corrections.at(-1)?.startsWith("改做一部1匹") === true,
+    JSON.stringify(state.latest_corrections),
+  );
+
+  // The production semantic frame resolves the two active room entities; this
+  // assertion targets the B2 classification that previously rejected that
+  // already-resolved canonical answer because turn 14 remained ledger-latest.
+  const active = state.entities[0];
+  assert(active, "missing active entity");
+  active.quantity = 2;
+  state.entities.push({
+    ...structuredClone(active),
+    entity_id: "air_conditioner:living_room",
+    quantity: 1,
+    status: "deferred",
+    provenance: {
+      source_type: "customer",
+      source_message_id: "17000000-0000-4000-8000-000000000016",
+    },
+  });
+  const decision = evaluateB2BeforeCommit({
+    proposed_response: "你而家實際買 2 部冷氣；客廳嗰部已暫緩，不計入數量。",
+    persistence_kind: "ai_reply",
+    snapshot: {
+      conversation_id: "17000000-0000-4000-8000-000000000001",
+      company_id: "17000000-0000-4000-8000-000000000002",
+      source_message_id: "17000000-0000-4000-8000-000000000017",
+      commerce_state_revision: 17,
+      commerce_state_source_message_id: "17000000-0000-4000-8000-000000000017",
+      state,
+    },
+  });
+  assert(decision.decision === "allow", JSON.stringify(decision));
+});
 const questions = [
   "一開始我要幾部冷氣？",
   "更正後冷氣數量是多少？",

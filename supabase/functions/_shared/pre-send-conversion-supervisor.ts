@@ -407,6 +407,21 @@ function parseCorrection(value: string): CorrectionPair | null {
       return { previous, current };
     }
   }
+
+  // A replacement-only correction can be fully deterministic even when the
+  // customer does not repeat the superseded value (for example, "改做一部1匹，
+  // 一部1.5匹"). Treat it as resolved only when it carries a concrete assignment;
+  // vague references such as "記住我最新嗰個更正" must remain indeterminate.
+  const replacement = text.match(
+    /(?:更正|改(?:做|成|為|为|返)?|變成|变成|change(?:\s+it)?\s+to|make\s+it|actually|i meant)\s*[:：,，]?\s*(.+)$/i,
+  );
+  const current = trimCorrectionPart(replacement?.[1] ?? "");
+  const concreteAssignment = /(?:\d{1,4}|[一二兩两三四五六七八九十])\s*(?:部|台|件|個|个|套|units?|pcs?|pieces?|items?)|(?:quantity|數量|数量|地址|address|型號|型号|model|品牌|brand)\s*(?:係|是|=|:|：)/i.test(
+    current,
+  );
+  if (current && concreteAssignment) {
+    return { previous: "", current };
+  }
   return null;
 }
 

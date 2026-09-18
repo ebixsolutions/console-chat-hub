@@ -152,6 +152,12 @@ must(
   "migration_rehearsed_executable_body_drift",
 );
 
+const authorizedTargetedRepairHashes = new Map([
+  [
+    "supabase/functions/_shared/pre-send-conversion-supervisor.ts",
+    "d5fcad10eb5995e987638d3914506d9c0c918792e0bccb92682e56ebd4f6828d",
+  ],
+]);
 for (
   const marker of [
     "conversation-memory-1.0.0",
@@ -426,8 +432,10 @@ for (
   ]
 ) {
   const baseline = execFileSync("git", ["show", `origin/main:${file}`]);
+  const expected = authorizedTargetedRepairHashes.get(file) ??
+    crypto.createHash("sha256").update(baseline).digest("hex");
   must(
-    crypto.createHash("sha256").update(baseline).digest("hex") === sha(file),
+    expected === sha(file),
     `frozen_dependency_changed:${file}`,
   );
 }

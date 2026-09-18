@@ -312,6 +312,19 @@ Deno.test("B2 correction priority blocks a superseded value", () => {
   );
 });
 
+Deno.test("B2 accepts a concrete replacement-only correction", () => {
+  const state = stateFixture();
+  state.latest_corrections = [
+    "等等，我而家可能唔係兩部匹半喎。",
+    "改做一部1匹，一部1.5匹。",
+  ];
+  assertEquals(
+    decision("你而家實際買 2 部冷氣；已取消嗰部不計入數量。", state).decision,
+    "allow",
+    "concrete replacement correction",
+  );
+});
+
 Deno.test("B2 unresolved correction is fail-closed only for commerce-touching drafts", () => {
   const state = stateFixture();
   state.latest_corrections = ["記住我最新嗰個更正"];
