@@ -251,6 +251,17 @@ function matches(haystackLower: string, raw: string, terms: string[]): string[] 
   return hit;
 }
 
+function hasScopedHandoffNegation(raw: string): boolean {
+  return raw.split(/[，,。.!！?？;；]+/).some((clause) => {
+    const lower = clause.toLowerCase();
+    const mentionsHuman = matches(lower, clause, [
+      ...HUMAN_TERMS_ZH,
+      ...HUMAN_TERMS_EN,
+    ]).length > 0;
+    return mentionsHuman && matches(lower, clause, NEGATION_MARKERS).length > 0;
+  });
+}
+
 /**
  * Canonical classifier. Category precedence is deliberate and conservative:
  * negation > conditional/future > reference/report > informational question >
@@ -278,7 +289,10 @@ export function classifyHandoffIntent(text: string): HandoffIntentClassification
 
   if (!mentions) return base;
 
-  if (matches(lower, raw, NEGATION_MARKERS).length > 0) {
+  // Negation is authoritative only when it occurs in the same clause as the
+  // human-handoff mention. A separate instruction such as "不要當作已完成"
+  // must not cancel an explicit "我要真人客服" request.
+  if (hasScopedHandoffNegation(raw)) {
     return { ...base, category: "negated_request", pure_handoff_negation: true };
   }
 

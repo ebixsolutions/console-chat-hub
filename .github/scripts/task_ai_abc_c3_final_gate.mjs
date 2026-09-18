@@ -46,6 +46,9 @@ const files = {
     "supabase/functions/_shared/current-fact-evidence.ts",
   currentFactEvidenceTest:
     "supabase/functions/_shared/current-fact-evidence.test.ts",
+  handoffIntent: "supabase/functions/_shared/handoff-intent.ts",
+  preSendConversionSupervisorTest:
+    "supabase/functions/_shared/pre-send-conversion-supervisor.test.ts",
   kbAggregationResponse: "supabase/functions/_shared/kb-aggregation-response.ts",
   deterministicCeGrounding: "supabase/functions/_shared/ce-grounding.ts",
   deterministicCanonicalGrounding: "supabase/functions/_shared/canonical-grounding.ts",
@@ -240,6 +243,12 @@ must(
   terminalTest.includes("fallback was not exactly once"),
   "terminal_exactly_once_regression_missing",
 );
+for (const marker of [
+  "const _explicitHandoffRequested = isHandoffIntent(_h1LastMsg)",
+  "if (_c3PlannedReply && !_explicitHandoffRequested)",
+  "if (_a3Commerce && _a3Commerce.reply && !_explicitHandoffRequested)",
+  'response_route: "explicit_handoff"',
+]) must(generate.includes(marker), `explicit_handoff_precedence_missing:${marker}`);
 
 for (
   const marker of [
@@ -427,6 +436,12 @@ run("git", ["diff", "--check", "origin/main...HEAD"]);
 runDeno(["test", "--no-lock", files.unit, files.terminalTest]);
 runDeno(["test", "--no-lock", files.deterministicEngineTest]);
 runDeno(["test", "--no-lock", files.currentFactEvidenceTest]);
+runDeno([
+  "test",
+  "--no-lock",
+  "--allow-read",
+  files.preSendConversionSupervisorTest,
+]);
 runDeno(["test", "--no-lock", files.servicePlannerTest]);
 runDeno(["test", "--no-lock", "--allow-read", files.serviceRuntimeTest]);
 runDeno(["test", "--no-lock", files.customer360EntitlementClientTest]);
@@ -457,6 +472,7 @@ runDeno([
     files.deterministicRouter,
     files.deterministicKbClient,
     files.currentFactEvidence,
+    files.handoffIntent,
 ]);
 if (process.env.CI) {
   runDeno([
@@ -501,6 +517,8 @@ run("npx", [
   files.deterministicClosure,
   files.deterministicClosureTest,
   files.deterministicKbClient,
+  files.handoffIntent,
+  files.preSendConversionSupervisorTest,
   files.kbAggregationResponse,
   files.realCustomerDatasetVerifier,
   files.realCustomerDatasetTest,

@@ -233,17 +233,19 @@ Deno.test("C3 source audit recall precedes commerce reply, context shortcuts and
     new URL("../generate-reply/index.ts", import.meta.url),
   );
   const start = source.indexOf("const _c3Recall = prepareConversationRecall(");
+  const commerceReplyMarker =
+    "if (_a3Commerce && _a3Commerce.reply && !_explicitHandoffRequested)";
   assert(start > source.indexOf("refreshConversationLongMemory("));
   for (
     const marker of [
-      "if (_a3Commerce && _a3Commerce.reply)",
+      commerceReplyMarker,
       'if (_canonicalTurn.operation === "CUSTOMER_CONTEXT_UPDATE")',
       "await callKBAdapter(",
     ]
   ) assert(start < source.indexOf(marker, start), `precedence: ${marker}`);
   const block = source.slice(
     start,
-    source.indexOf("if (_a3Commerce && _a3Commerce.reply)", start),
+    source.indexOf(commerceReplyMarker, start),
   );
   assert(block.includes("commitAiReplyWithControlGate("));
   assert(!/\.insert\(|\.rpc\(/.test(block), "direct persistence bypass");

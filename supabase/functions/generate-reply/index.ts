@@ -3836,6 +3836,8 @@ async function persistExplicitR1IfRequested(
         JSON.stringify({
           success: true,
           escalation_rule: "R1",
+          response_route: "explicit_handoff",
+          handoff_required: true,
           handoff_persisted: true,
           rpc_result: "success",
         }),
@@ -3846,6 +3848,8 @@ async function persistExplicitR1IfRequested(
         JSON.stringify({
           success: true,
           escalation_rule: "R1",
+          response_route: "explicit_handoff",
+          handoff_required: true,
           handoff_persisted: true,
           rpc_result: "already_handled",
         }),
@@ -4027,7 +4031,10 @@ async function orchestrationGenerateReply(
     _h1LastMsg,
     _pr5HistoryRows ?? [],
   );
-  const _w5ShortTopicHint = workflow5ShortTopicHint(_h1LastMsg);
+  const _explicitHandoffRequested = isHandoffIntent(_h1LastMsg);
+  const _w5ShortTopicHint = _explicitHandoffRequested
+    ? null
+    : workflow5ShortTopicHint(_h1LastMsg);
   if (_w5ShortTopicHint === "membership tiers") {
     const topicalReply = _visitorLang === "en"
       ? "You’re asking about membership tiers. I don’t have enough confirmed published information to state the tier structure, inclusions, or limits, so I won’t guess."
@@ -4269,7 +4276,7 @@ async function orchestrationGenerateReply(
     question: _h1LastMsg,
     memory: _c3Memory,
     commerce: _c3CommerceSnapshot,
-    explicit_handoff: isHandoffIntent(_h1LastMsg),
+    explicit_handoff: _explicitHandoffRequested,
     referents: _a3SemanticFrame?.referents ?? [],
     recent_questions: ((_pr5HistoryRows ?? []) as MemoryHistoryRow[])
       .filter((row) => row.role === "visitor" && row.id !== _h1SourceMessageId)
@@ -4303,7 +4310,7 @@ async function orchestrationGenerateReply(
       recent_messages: _c3RecentServiceMessages,
       clarification_attempts: _pr5History.clarification_attempts,
       exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
-      explicit_handoff: isHandoffIntent(_h1LastMsg),
+      explicit_handoff: _explicitHandoffRequested,
     }, _c3RuntimeInputs),
   );
   const _c3PlannedReply = applyServiceTone(
@@ -4322,7 +4329,11 @@ async function orchestrationGenerateReply(
         ? renderTargetedServiceQuestion(_c3ServicePlan, _visitorLang)
         : null),
   );
-  if (_c3PlannedReply) {
+  // A service plan may describe an explicit handoff, but it is not authorized
+  // to persist one. Let R1 continue to the existing B2-supervised
+  // explicit_handoff_tx path instead of committing a clarification-shaped AI
+  // reply that leaves the conversation under AI control.
+  if (_c3PlannedReply && !_explicitHandoffRequested) {
     const serviceMetadata = {
       ..._c3Recall.metadata,
       response_route: _c3ServicePlan.action === "historical_calculation"
@@ -4393,7 +4404,7 @@ async function orchestrationGenerateReply(
       },
     );
   }
-  if (_a3Commerce && _a3Commerce.reply) {
+  if (_a3Commerce && _a3Commerce.reply && !_explicitHandoffRequested) {
     const commerceReply = _a3Commerce.reason ===
         "previous_quote_not_authoritative_for_current_price"
       ? historicalQuoteValidityReply(_visitorLang)

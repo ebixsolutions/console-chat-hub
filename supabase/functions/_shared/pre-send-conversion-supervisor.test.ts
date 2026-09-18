@@ -11,6 +11,8 @@ import {
   type ConversationCommerceState,
   createEmptyConversationCommerceState,
 } from "./commerce-state-contract.ts";
+import { classifyHandoffIntent } from "./handoff-intent.ts";
+import { classifyConversationTurn } from "./conversation-intelligence.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -706,4 +708,81 @@ Deno.test("generate-reply wires every customer-visible persistence RPC through B
     const prefix = source.slice(Math.max(0, (match.index ?? 0) - 900), match.index ?? 0);
     assert(prefix.includes("executeB2RpcPersistence"), `${match[1]} bypasses B2`);
   }
+});
+
+Deno.test("C3 explicit human requests bypass canonical clarification and reach governed R1 persistence", async () => {
+  const exactRequests = [
+    "我要真人客服接手處理，而且在問題解決前不要當作已完成。",
+    "請轉交真人並保持未解決狀態。",
+  ];
+  for (const request of exactRequests) {
+    const classified = classifyHandoffIntent(request);
+    assert(classified.explicit_request, `exact handoff request not classified: ${request}`);
+  }
+  assert(
+    classifyHandoffIntent("不要轉真人客服，你直接回答我就好").pure_handoff_negation,
+    "true handoff negation must remain non-escalating",
+  );
+  assert(
+    classifyConversationTurn("我有一個問題").should_clarify_before_kb,
+    "genuine non-handoff ambiguity must still clarify",
+  );
+
+  const source = await Deno.readTextFile(
+    new URL("../generate-reply/index.ts", import.meta.url),
+  );
+  const recall = source.indexOf("const _c3Recall = prepareConversationRecall");
+  const guardedRecallCommit = source.indexOf(
+    "if (_c3PlannedReply && !_explicitHandoffRequested)",
+  );
+  const guardedCommerceCommit = source.indexOf(
+    "if (_a3Commerce && _a3Commerce.reply && !_explicitHandoffRequested)",
+  );
+  const governedR1 = source.indexOf(
+    "const r1Response = await persistExplicitR1IfRequested",
+    guardedRecallCommit,
+  );
+  assert(recall >= 0, "canonical recall path missing");
+  assert(guardedRecallCommit > recall, "canonical reply lacks explicit-handoff precedence guard");
+  assert(guardedCommerceCommit > guardedRecallCommit, "commerce reply lacks explicit-handoff precedence guard");
+  assert(governedR1 > guardedCommerceCommit, "governed R1 persistence is not reachable after guarded shortcuts");
+
+  const r1 = source.indexOf("async function persistExplicitR1IfRequested");
+  const successContract = source.slice(
+    source.indexOf('case "success":', r1),
+    source.indexOf('case "already_resolved":', r1),
+  );
+  for (const marker of [
+    'response_route: "explicit_handoff"',
+    "handoff_required: true",
+    "handoff_persisted: true",
+  ]) assert(successContract.includes(marker), `R1 success contract missing: ${marker}`);
+});
+
+Deno.test("C3 explicit handoff persistence is B2-supervised and source-idempotent", async () => {
+  const persistedSources = new Set<string>();
+  let handoffEvents = 0;
+  const persist = async () => {
+    if (persistedSources.has(SOURCE_ID)) return { result: "already_handled" };
+    persistedSources.add(SOURCE_ID);
+    handoffEvents += 1;
+    return { result: "success" };
+  };
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const result = await executeB2PersistenceGate({
+      client: new MockClient(),
+      conversation_id: CONVERSATION_ID,
+      source_message_id: SOURCE_ID,
+      proposed_response: "我們已將你的對話轉交真人客服。",
+      persistence_kind: "explicit_handoff",
+      metadata: {
+        escalation_rule: "R1",
+        response_route: "explicit_handoff",
+        handoff_required: true,
+      },
+      commit: persist,
+    });
+    assert(result.committed, `governed handoff attempt ${attempt + 1} blocked`);
+  }
+  assertEquals(handoffEvents, 1, "same source must create exactly one handoff event");
 });
