@@ -41,6 +41,59 @@ const canonicalTurns1To17 = [
   "咁我而家實際買幾多部冷氣？",
 ] as const;
 
+Deno.test("C3 exact canonical T006 recalls aggregate quantity from prior room allocation", () => {
+  let state = createEmptyConversationCommerceState();
+  for (let index = 0; index < 6; index++) {
+    const text = canonicalTurns1To17[index];
+    state = reduceTurn(state, {
+      conversation_id: "06000000-0000-4000-8000-000000000001",
+      company_id: "06000000-0000-4000-8000-000000000002",
+      source_message_id: `06000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+      text,
+      language: "zh-TW",
+      history: canonicalTurns1To17.slice(0, index).reverse().map((content) => ({
+        role: "visitor",
+        content,
+      })),
+    }, buildCommerceEntityHints([
+      text,
+      ...canonicalTurns1To17.slice(0, index).reverse(),
+    ]));
+  }
+
+  const input = {
+    conversation_id: "06000000-0000-4000-8000-000000000001",
+    company_id: "06000000-0000-4000-8000-000000000002",
+    source_message_id: "06000000-0000-4000-8000-000000000006",
+    question: canonicalTurns1To17[5],
+    memory: null,
+    commerce: {
+      conversation_id: "06000000-0000-4000-8000-000000000001",
+      company_id: "06000000-0000-4000-8000-000000000002",
+      source_message_id: "06000000-0000-4000-8000-000000000006",
+      revision: 6,
+      state,
+    },
+  };
+  const route = prepareConversationRecall(input, "zh-TW");
+  assert(route.decision.handled, JSON.stringify(route.decision));
+  assert(route.decision.value === 3, JSON.stringify(route.decision));
+  assert(route.reply?.includes("3 部"), route.reply ?? "missing reply");
+});
+
+Deno.test("C3 quantity recall remains unknown without an explicit scoped count", () => {
+  const input = recallFixture("我而家要幾多部冷氣？");
+  input.commerce!.state.entities = [];
+  input.memory!.active_entities = [];
+  input.memory!.current_customer_facts = [];
+  const decision = resolveConversationRecall(input);
+  assert(
+    !decision.handled && decision.reason === "AMBIGUOUS" &&
+      decision.detail === "MISSING_QUANTITY",
+    JSON.stringify(decision),
+  );
+});
+
 Deno.test("C3 exact canonical turn 17 supersedes the tentative correction before B2", () => {
   let state = createEmptyConversationCommerceState();
   for (let index = 0; index < canonicalTurns1To17.length; index++) {

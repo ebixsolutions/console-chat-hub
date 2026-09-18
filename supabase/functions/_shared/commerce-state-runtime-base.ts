@@ -243,6 +243,34 @@ function parseCount(text: string): number | null {
   return countTokenValue(m[1]);
 }
 
+/**
+ * A room counter is not itself a product-unit counter.  For room-scoped
+ * appliances, however, an explicit allocation such as "two rooms plus a
+ * living room" is authoritative evidence for the requested aggregate.  Keep
+ * this separate from parseCount so isolated room sizes/counts never become a
+ * product quantity, and require both a recognised commerce category and at
+ * least one explicitly counted room group.
+ */
+export function parseSpaceScopedCommerceQuantity(text: string): number | null {
+  const t = clean(text);
+  if (!t || detectCategories(t).length === 0) return null;
+
+  const countedRoom = t.match(
+    /([一二兩两三四五六七八九十]|\d{1,2})\s*(?:間|间)\s*(?:睡房|臥室|卧室|房間|房间|客房|房)/i,
+  );
+  const base = countedRoom?.[1] ? countTokenValue(countedRoom[1]) : null;
+  if (base === null || base < 1) return null;
+
+  const remainder = t.slice((countedRoom?.index ?? 0) + countedRoom![0].length);
+  const additionalSpaces = [
+    /(?:一\s*(?:個|个|間|间)|(?:個|个))?\s*(?:客廳|客厅|廳|厅)/i,
+    /(?:一\s*(?:個|个|間|间)|(?:個|个))?\s*(?:廚房|厨房)/i,
+    /(?:an?\s+)?(?:living\s+room|lounge|kitchen)/i,
+  ].reduce((sum, pattern) => sum + (pattern.test(remainder) ? 1 : 0), 0);
+
+  return additionalSpaces > 0 ? base + additionalSpaces : null;
+}
+
 function detectCancellation(text: string): boolean {
   return /(?:取消|唔要|不要|唔買|不买|不買|cancel|remove it|drop it)/i.test(text);
 }
@@ -449,7 +477,7 @@ function deriveA3RuntimeEvents(
     recorded_at: input.occurred_at ?? null,
   };
   const mentioned = hintsMentionedInTurn(text, hints);
-  const quantity = parseCount(text);
+  const quantity = parseSpaceScopedCommerceQuantity(text) ?? parseCount(text);
   const cancelled = detectCancellation(text);
   const deferred = detectDeferral(text);
   const additive = detectAdditiveEntityCreationSignal(text);
