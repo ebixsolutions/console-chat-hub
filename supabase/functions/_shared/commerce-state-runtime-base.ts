@@ -25,6 +25,7 @@ import {
   type CommerceStateEvent,
   type CommerceTurnEntityHint,
   deriveCommerceEventsFromCustomerTurn,
+  parseAddressReplacementCorrection,
   reduceCommerceState,
 } from "./commerce-state-reducer.ts";
 import {
@@ -454,14 +455,23 @@ function deriveA3RuntimeEvents(
   const additive = detectAdditiveEntityCreationSignal(text);
   const explicitCreation = detectExplicitEntityCreationSignal(text);
   const correction = detectQuantityCorrectionSignal(text);
+  const addressCorrection = parseAddressReplacementCorrection(text);
 
   // The semantic adapter owns entity mutation when its frame is authoritative,
   // but B2 still needs the customer's exact correction ledger. Record explicit
   // quantity corrections here so a later, superseded tentative statement cannot
   // remain the apparent "latest" correction merely because semantic extraction
   // handled the entity updates.
-  if (correction) {
+  if (correction || addressCorrection) {
     events.push({ type: "ADD_CORRECTION", correction: text });
+  }
+
+  if (addressCorrection) {
+    events.push({
+      type: "SET_DELIVERY",
+      patch: { address: addressCorrection.current },
+      provenance,
+    });
   }
 
   if (correction && quantity !== null && mentioned.length === 0) {

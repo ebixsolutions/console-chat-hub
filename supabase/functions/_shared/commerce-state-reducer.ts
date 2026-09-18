@@ -349,14 +349,65 @@ function correctionText(text: string): string | null {
   return null;
 }
 
+export function parseAddressReplacementCorrection(
+  value: string,
+): { previous: string | null; current: string } | null {
+  const text = clean(value, 500);
+  const trimPart = (part: string) =>
+    clean(part, 180).replace(/^[,，:：;；\s]+|[,，。.!！?？;；\s]+$/g, "");
+  const addressContext = /(?:地址|送貨地址|送货地址|收貨地址|收货地址|送貨地點|送货地点|delivery address|delivery location)/i;
+  const addressValue = /(?:邨|村|苑|座|樓|楼|層|层|室|街|道|路|號|号|大廈|大厦|中心|building|block|floor|room|road|street|avenue)/i;
+
+  const paired = text.match(
+    /^(?:(?:地址|送貨地址|送货地址|收貨地址|收货地址|delivery address)\s*)?(?:唔係|唔系|不是|不係)\s*(.+?)\s*(?:而係|而系|而是)\s*(.+)$/i,
+  );
+  if (paired) {
+    const previous = trimPart(paired[1] ?? "");
+    const current = trimPart(paired[2] ?? "");
+    if (
+      previous && current && previous !== current &&
+      (addressContext.test(text) || addressValue.test(previous) || addressValue.test(current))
+    ) return { previous, current };
+  }
+
+  const fromTo = text.match(
+    /^(?:(?:地址|送貨地址|送货地址|收貨地址|收货地址|送貨地點|送货地点|delivery address|delivery location)\s*)?(?:由|from)\s*(.+?)\s*(?:更正為|更正为|改為|改为|改成|to)\s*(.+)$/i,
+  ) ?? text.match(
+    /^(?:change|correct)\s+(?:(?:the|my)\s+)?(?:address|delivery address|delivery location)\s+from\s+(.+?)\s+to\s+(.+)$/i,
+  );
+  if (fromTo) {
+    const previous = trimPart(fromTo[1] ?? "");
+    const current = trimPart(fromTo[2] ?? "");
+    if (previous && current && previous !== current) return { previous, current };
+  }
+
+  const replacement = text.match(
+    /^(?:更正|改(?:為|为|成|做|返)?|變成|变成|change(?:\s+it)?\s+to|make\s+it)\s*(?:(?:地址|送貨地址|送货地址|收貨地址|收货地址|delivery address)\s*)?(?:為|为|是|係|=|:|：)?\s*(.+)$/i,
+  );
+  const current = trimPart(replacement?.[1] ?? "");
+  if (current && (addressContext.test(text) || addressValue.test(current))) {
+    return { previous: null, current };
+  }
+  const fieldFirst = text.match(
+    /^(?:地址|送貨地址|送货地址|收貨地址|收货地址|送貨地點|送货地点|delivery address|delivery location)\s*(?:更正為|更正为|改為|改为|改成|change(?:d)?\s+to|correct(?:ed)?\s+to)\s*(.+)$/i,
+  ) ?? text.match(
+    /^(?:change|correct)\s+(?:(?:the|my)\s+)?(?:address|delivery address|delivery location)\s+to\s+(.+)$/i,
+  );
+  const fieldCurrent = trimPart(fieldFirst?.[1] ?? "");
+  if (fieldCurrent) return { previous: null, current: fieldCurrent };
+  return null;
+}
+
 function explicitDeliveryPatch(text: string): Partial<ConversationCommerceState["delivery"]> | null {
   const patch: Partial<ConversationCommerceState["delivery"]> = {};
   const phone = text.match(/(?:電話|电话|phone|contact)\s*(?:係|是|=|:|：)?\s*([+\d][\d\s-]{6,20})/i);
   if (phone?.[1]) patch.recipient_phone = phone[1].replace(/\s+/g, " ").trim();
   const recipient = text.match(/(?:收貨人|收货人|recipient)\s*(?:係|是|=|:|：)?\s*([^，。,.!?！？]{1,40})/i);
   if (recipient?.[1]) patch.recipient_name = recipient[1].trim();
+  const replacement = parseAddressReplacementCorrection(text);
   const address = text.match(/(?:地址|送貨地址|送货地址|delivery address)\s*(?:係|是|=|:|：)?\s*([^。!?！？]{3,180})/i);
-  if (address?.[1]) patch.address = address[1].trim();
+  if (replacement) patch.address = replacement.current;
+  else if (address?.[1]) patch.address = address[1].trim();
   const date = text.match(/(?:送貨|送货|delivery|deliver|appointment|預約|预约).{0,20}(星期[一二三四五六日天]|週[一二三四五六日天]|周[一二三四五六日天]|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d{4}-\d{2}-\d{2})/i);
   if (date?.[1]) patch.preferred_date = date[1];
   return Object.keys(patch).length ? patch : null;

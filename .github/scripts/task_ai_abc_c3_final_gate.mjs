@@ -47,6 +47,9 @@ const files = {
   currentFactEvidenceTest:
     "supabase/functions/_shared/current-fact-evidence.test.ts",
   handoffIntent: "supabase/functions/_shared/handoff-intent.ts",
+  commerceStateReducer: "supabase/functions/_shared/commerce-state-reducer.ts",
+  commerceStateRuntimeBase: "supabase/functions/_shared/commerce-state-runtime-base.ts",
+  preSendConversionSupervisor: "supabase/functions/_shared/pre-send-conversion-supervisor.ts",
   preSendConversionSupervisorTest:
     "supabase/functions/_shared/pre-send-conversion-supervisor.test.ts",
   kbAggregationResponse: "supabase/functions/_shared/kb-aggregation-response.ts",
@@ -154,8 +157,12 @@ must(
 
 const authorizedTargetedRepairHashes = new Map([
   [
+    "supabase/functions/_shared/commerce-state-reducer.ts",
+    "ffa7a142f83a70953d9e9a51512d3d4cc6bd46e1bcd226d1648976dbf78d2b25",
+  ],
+  [
     "supabase/functions/_shared/pre-send-conversion-supervisor.ts",
-    "d5fcad10eb5995e987638d3914506d9c0c918792e0bccb92682e56ebd4f6828d",
+    "a446ab6f07d9b94e5e4124d7a8ab5f9815d638dd7772085504097a1f87b169e2",
   ],
 ]);
 for (

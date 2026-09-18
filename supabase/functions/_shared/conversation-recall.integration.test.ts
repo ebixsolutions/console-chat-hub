@@ -164,6 +164,95 @@ Deno.test("C3 exact T17 repaired reply passes frozen B2 persistence gate", () =>
   });
   assert(b2.decision === "allow", `${b2.code}: ${route.reply}`);
 });
+
+Deno.test("C3 exact T57 corrected address survives state, memory, B2, and recall", async () => {
+  const { buildCanonicalConversationMemory } = await import("./conversation-long-memory.ts");
+  const conversation_id = "57000000-0000-4000-8000-000000000001";
+  const company_id = "57000000-0000-4000-8000-000000000002";
+  const turns = [
+    "地址是幸福邨A座12樓。",
+    "更正為幸福邨B座12樓。",
+    "另外想問保養安排。",
+    "回到送貨資料，最新地址是哪裡？",
+  ];
+  let state = createEmptyConversationCommerceState();
+  for (let index = 0; index < turns.length - 1; index++) {
+    state = reduceTurn(state, {
+      conversation_id,
+      company_id,
+      source_message_id: `57000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+      text: turns[index],
+      language: "zh-TW",
+      semantic_frame: index === 1
+        ? {
+          version: "commerce-semantic-1.0.0",
+          language: "zh-TW",
+          operation: "NO_STATE_CHANGE",
+          intent: "correct delivery address",
+          topic: "delivery address",
+          entities: [],
+          referents: [],
+          customer_correction: true,
+          additive: false,
+          explicit_negations: [],
+          requested_facts: [],
+          transaction_state: "none",
+          payment_state: "none",
+          booking_state: "none",
+          fulfillment_state: "none",
+          ambiguity: { is_ambiguous: false, reasons: [], clarification_question: null },
+          confidence: 0.95,
+        }
+        : null,
+    }, []);
+  }
+  assert(state.delivery.address === "幸福邨B座12樓", JSON.stringify(state.delivery));
+  assert(state.latest_corrections.at(-1) === turns[1], JSON.stringify(state.latest_corrections));
+
+  const source_message_id = "57000000-0000-4000-8000-000000000004";
+  const memory = buildCanonicalConversationMemory({
+    conversation_id,
+    company_id,
+    source_message_id,
+    commerce_state_revision: 3,
+    commerce_state: state,
+    newest_first: turns.slice().reverse().map((content, index) => ({
+      id: index === 0 ? source_message_id : `57000000-0000-4000-8000-${String(100 + index).padStart(12, "0")}`,
+      role: "visitor",
+      content,
+    })),
+    visitor_turn_count: turns.length,
+    source_created_at: "2026-09-18T00:00:00Z",
+    next_memory_revision: 4,
+  });
+  const input = {
+    ...recallFixture(turns.at(-1)),
+    conversation_id,
+    company_id,
+    source_message_id,
+    question: turns.at(-1)!,
+    memory,
+    commerce: { conversation_id, company_id, source_message_id, revision: 3, state },
+  };
+  const route = prepareConversationRecall(input, "zh-TW");
+  assert(route.decision.handled && route.reply, JSON.stringify(route.decision));
+  assert(route.reply.includes("幸福邨B座12樓"), route.reply);
+  assert(!route.reply.includes("幸福邨A座12樓"), route.reply);
+  const b2 = evaluateB2BeforeCommit({
+    proposed_response: route.reply,
+    persistence_kind: "ai_reply",
+    snapshot: {
+      conversation_id,
+      company_id,
+      source_message_id,
+      commerce_state_revision: 3,
+      commerce_state_source_message_id: source_message_id,
+      state,
+    },
+    metadata: route.metadata,
+  });
+  assert(b2.decision === "allow", JSON.stringify(b2));
+});
 Deno.test("C3 current official facts still have no recall reply", () => {
   const r = prepareConversationRecall(
     recallFixture("What is the official warranty?"),

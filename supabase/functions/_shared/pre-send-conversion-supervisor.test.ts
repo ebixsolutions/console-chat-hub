@@ -325,6 +325,41 @@ Deno.test("B2 accepts a concrete replacement-only correction", () => {
   );
 });
 
+Deno.test("B2 deterministically allows a replacement-only address correction", () => {
+  const state = stateFixture();
+  state.delivery.address = "幸福邨B座12樓";
+  state.latest_corrections = ["更正為幸福邨B座12樓。"];
+  assertEquals(
+    decision("最新地址是幸福邨B座12樓。", state).decision,
+    "allow",
+    "address replacement correction",
+  );
+  state.delivery.address = "九龍彌敦道100號";
+  state.latest_corrections = ["送貨地點改為九龍彌敦道100號。"];
+  assertEquals(
+    decision("送貨地點是九龍彌敦道100號。", state).decision,
+    "allow",
+    "location replacement correction",
+  );
+});
+
+Deno.test("B2 blocks a superseded address and fails closed on unresolved address correction", () => {
+  const state = stateFixture();
+  state.delivery.address = "幸福邨B座12樓";
+  state.latest_corrections = ["地址唔係幸福邨A座12樓，而係幸福邨B座12樓。"];
+  assertEquals(
+    decision("最新地址是幸福邨A座12樓。", state).code,
+    "SUPERSEDED_VALUE_REUSED",
+    "superseded address",
+  );
+  state.latest_corrections = ["更正地址。"];
+  assertEquals(
+    decision("最新地址是幸福邨B座12樓。", state).decision,
+    "indeterminate",
+    "unresolved address correction",
+  );
+});
+
 Deno.test("B2 unresolved correction is fail-closed only for commerce-touching drafts", () => {
   const state = stateFixture();
   state.latest_corrections = ["記住我最新嗰個更正"];

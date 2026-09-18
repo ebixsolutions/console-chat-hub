@@ -14,6 +14,7 @@ import {
   createEmptyConversationCommerceState,
   isConversationCommerceState,
 } from "./commerce-state-contract.ts";
+import { parseAddressReplacementCorrection } from "./commerce-state-reducer.ts";
 
 export type B2DecisionKind = "allow" | "block" | "indeterminate";
 
@@ -394,6 +395,10 @@ function trimCorrectionPart(value: string): string {
 
 function parseCorrection(value: string): CorrectionPair | null {
   const text = clean(value, 500);
+  const address = parseAddressReplacementCorrection(text);
+  if (address) {
+    return { previous: address.previous ?? "", current: address.current };
+  }
   const patterns = [
     /(?:唔係|唔系|不是|不係)\s*(.+?)\s*(?:而係|而系|而是)\s*(.+)$/i,
     /(?:change|changed|correct|correction)(?:\s+it)?\s+from\s+(.+?)\s+to\s+(.+)$/i,
