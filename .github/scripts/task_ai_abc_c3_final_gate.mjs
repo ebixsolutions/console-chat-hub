@@ -42,6 +42,10 @@ const files = {
   deterministicEngineTest: "supabase/functions/_shared/deterministic-commerce-engine.test.ts",
   deterministicRouter: "supabase/functions/_shared/deterministic-runtime-router.ts",
   deterministicKbClient: "supabase/functions/_shared/deterministic-kb-client.ts",
+  currentFactEvidence:
+    "supabase/functions/_shared/current-fact-evidence.ts",
+  currentFactEvidenceTest:
+    "supabase/functions/_shared/current-fact-evidence.test.ts",
   kbAggregationResponse: "supabase/functions/_shared/kb-aggregation-response.ts",
   deterministicCeGrounding: "supabase/functions/_shared/ce-grounding.ts",
   deterministicCanonicalGrounding: "supabase/functions/_shared/canonical-grounding.ts",
@@ -422,6 +426,7 @@ for (
 run("git", ["diff", "--check", "origin/main...HEAD"]);
 runDeno(["test", "--no-lock", files.unit, files.terminalTest]);
 runDeno(["test", "--no-lock", files.deterministicEngineTest]);
+runDeno(["test", "--no-lock", files.currentFactEvidenceTest]);
 runDeno(["test", "--no-lock", files.servicePlannerTest]);
 runDeno(["test", "--no-lock", "--allow-read", files.serviceRuntimeTest]);
 runDeno(["test", "--no-lock", files.customer360EntitlementClientTest]);
@@ -451,6 +456,7 @@ runDeno([
     files.deterministicEngine,
     files.deterministicRouter,
     files.deterministicKbClient,
+    files.currentFactEvidence,
 ]);
 if (process.env.CI) {
   runDeno([

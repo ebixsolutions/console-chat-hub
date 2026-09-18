@@ -45,6 +45,12 @@ import {
   resolveKBEndpoint,
   resolveTenantScope,
 } from "../_shared/deterministic-kb-client.ts";
+import {
+  canAnswerBoundedNoCurrentEvidence,
+  classifyCurrentFactEvidence,
+  NO_CURRENT_EVIDENCE_ROUTE,
+  renderBoundedNoCurrentEvidence,
+} from "../_shared/current-fact-evidence.ts";
 import { evaluateEscalationShadow } from "../_shared/escalation-shadow.ts";
 import {
   persistRequiredEscalationClarification,
@@ -1515,6 +1521,7 @@ async function evaluateAndPersistRequiredRulesLive(
     visitor_language: "zh-TW" | "zh-CN" | "en";
     expected_tenant_id?: string;
     suppress_r2_for_prior_grounded_transform?: boolean;
+    suppress_r2_for_bounded_no_current_evidence?: boolean;
     warm_handoff_question?: string;
     rag_match_state?: RagMatchState;
     topic_risk_level?: TopicRiskLevel;
@@ -1669,10 +1676,11 @@ async function evaluateAndPersistRequiredRulesLive(
     activation: { enabled },
   });
 
-  // A pure transformation of an already verified grounded answer is not a new KB gap.
-  // Suppress only R2 for this turn; E2/E1/R1/S0 keep their frozen priority and behavior.
+  // A pure transform and a bounded no-current-evidence answer are not unresolved
+  // escalation loops. Suppress only R2; E2/E1/R1/S0 retain frozen priority.
   if (
-    params.suppress_r2_for_prior_grounded_transform === true &&
+    (params.suppress_r2_for_prior_grounded_transform === true ||
+      params.suppress_r2_for_bounded_no_current_evidence === true) &&
     decision.matched_rule === "R2"
   ) {
     return null;
@@ -3141,6 +3149,72 @@ async function persistC3ServiceRecovery(
       response_route: metadata.response_route,
       service_action: plan.action,
       handoff_required: false,
+      idempotent: committed.idempotent,
+    }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+  );
+}
+
+async function persistBoundedNoCurrentEvidence(
+  supabaseAdmin: SupabaseAdminClient,
+  conversationId: string,
+  sourceMessageId: string | null,
+  plan: ServiceDialoguePlan,
+  language: "zh-TW" | "zh-CN" | "en",
+  traceMetadata: Record<string, unknown>,
+): Promise<Response> {
+  const content = renderBoundedNoCurrentEvidence(language);
+  const metadata = {
+    ...traceMetadata,
+    response_route: NO_CURRENT_EVIDENCE_ROUTE,
+    service_plan_version: plan.version,
+    service_action: "direct_answer",
+    knowledge_state: "no_match",
+    grounding_state: "no_current_evidence",
+    factual_grounding_required: true,
+    historical_evidence_promoted: false,
+    handoff_required: false,
+  };
+  const committed = await commitAiReplyWithControlGate(
+    supabaseAdmin,
+    conversationId,
+    sourceMessageId,
+    content,
+    metadata,
+  );
+  await cleanupThinking(supabaseAdmin, conversationId, sourceMessageId);
+  if (!committed.ok) {
+    if (
+      ["human_control", "resolved", "superseded_source"].includes(
+        committed.result,
+      )
+    ) {
+      return new Response(
+        JSON.stringify({ success: true, skipped: committed.result }),
+        {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
+      );
+    }
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: `no_current_evidence_commit_${committed.result}`,
+      }),
+      {
+        status: 409,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
+  }
+  return new Response(
+    JSON.stringify({
+      success: true,
+      reply: content,
+      no_answer: true,
+      handoff_required: false,
+      response_route: NO_CURRENT_EVIDENCE_ROUTE,
+      grounding_state: "no_current_evidence",
       idempotent: committed.idempotent,
     }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } },
@@ -4918,6 +4992,20 @@ async function orchestrationGenerateReply(
     trace_metadata?: Record<string, unknown>;
   } | null = null;
 
+  const _boundedNoCurrentEvidenceDecision = classifyCurrentFactEvidence({
+    knowledge_state: _c3ServicePlan.knowledge_state,
+    current_evidence_count: 0,
+  });
+  const _canPersistBoundedNoCurrentEvidence = canAnswerBoundedNoCurrentEvidence(
+    {
+      decision: _boundedNoCurrentEvidenceDecision,
+      high_risk: _pr5LocalRisk?.level === "high",
+      explicit_human_request: isHandoffIntent(_h1LastMsg),
+      threat: _pr5ThreatSignal?.value === true,
+      compliance_requires_human_review: _pr5ComplianceSignal?.value === true,
+    },
+  );
+
   if (flags.ENABLE_KB && !_g1SkipKB) {
     const _kbTenantResult = await resolveTenantScope(
       conversation_id,
@@ -5027,6 +5115,8 @@ async function orchestrationGenerateReply(
           exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
           threat_flag: _pr5ThreatSignal,
           compliance_jurisdiction_requires_human_review: _pr5ComplianceSignal,
+          suppress_r2_for_bounded_no_current_evidence:
+            _canPersistBoundedNoCurrentEvidence,
         },
       );
       if (requiredResponse) return requiredResponse;
@@ -5039,6 +5129,19 @@ async function orchestrationGenerateReply(
         );
         if (r1Response) return r1Response;
       }
+      if (_canPersistBoundedNoCurrentEvidence) {
+        return await persistBoundedNoCurrentEvidence(
+          supabaseAdmin,
+          conversation_id,
+          source_message_id,
+          _c3ServicePlan,
+          _visitorLang,
+          {
+            rag_api_status: "success_empty",
+            evidence_decision: _boundedNoCurrentEvidenceDecision.kind,
+          },
+        );
+      }
       const clarification = await attemptFirstNoMatchClarification(
         supabaseAdmin,
         conversation_id,
@@ -5049,8 +5152,7 @@ async function orchestrationGenerateReply(
           high_risk: _pr5LocalRisk?.level === "high",
           explicit_human_request: isHandoffIntent(_h1LastMsg),
           threat_flag: _pr5ThreatSignal?.value === true,
-          compliance_requires_human_review:
-            _pr5ComplianceSignal?.value === true,
+          compliance_requires_human_review: _pr5ComplianceSignal?.value === true,
           clarification_attempts: _pr5History.clarification_attempts,
           exact_same_intent_repeated:
             _pr5History.exact_same_intent_repeated === true,
@@ -5159,6 +5261,9 @@ async function orchestrationGenerateReply(
           "CONFLICT_UNRESOLVED"
         ? "conflict"
         : "partial_match";
+      const boundedNoEvidenceWithoutConflict =
+        _canPersistBoundedNoCurrentEvidence &&
+        _c1AuthorityDecision?.decision !== "CONFLICT_UNRESOLVED";
       const requiredResponse = await evaluateAndPersistRequiredRulesLive(
         supabaseAdmin,
         {
@@ -5184,6 +5289,8 @@ async function orchestrationGenerateReply(
           exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
           threat_flag: _pr5ThreatSignal,
           compliance_jurisdiction_requires_human_review: _pr5ComplianceSignal,
+          suppress_r2_for_bounded_no_current_evidence:
+            boundedNoEvidenceWithoutConflict,
         },
       );
       if (requiredResponse) return requiredResponse;
@@ -5195,6 +5302,19 @@ async function orchestrationGenerateReply(
           _h1LastMsg,
         );
         if (r1Response) return r1Response;
+      }
+      if (boundedNoEvidenceWithoutConflict) {
+        return await persistBoundedNoCurrentEvidence(
+          supabaseAdmin,
+          conversation_id,
+          source_message_id,
+          _c3ServicePlan,
+          _visitorLang,
+          {
+            ...traceMetadata,
+            evidence_decision: _boundedNoCurrentEvidenceDecision.kind,
+          },
+        );
       }
       if (_c1AuthorityDecision?.decision === "CONFLICT_UNRESOLVED") {
         const conflictReply = C1_AUTHORITY_CONFLICT_WORDING[_visitorLang] ??
@@ -5263,8 +5383,7 @@ async function orchestrationGenerateReply(
           high_risk: isHighRisk,
           explicit_human_request: isHandoffIntent(_h1LastMsg),
           threat_flag: _pr5ThreatSignal?.value === true,
-          compliance_requires_human_review:
-            _pr5ComplianceSignal?.value === true,
+          compliance_requires_human_review: _pr5ComplianceSignal?.value === true,
           clarification_attempts: _pr5History.clarification_attempts,
           exact_same_intent_repeated:
             _pr5History.exact_same_intent_repeated === true,
@@ -5320,6 +5439,8 @@ async function orchestrationGenerateReply(
           exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
           threat_flag: _pr5ThreatSignal,
           compliance_jurisdiction_requires_human_review: _pr5ComplianceSignal,
+          suppress_r2_for_bounded_no_current_evidence:
+            _canPersistBoundedNoCurrentEvidence,
         },
       );
       if (requiredResponse) return requiredResponse;
@@ -5332,6 +5453,20 @@ async function orchestrationGenerateReply(
         );
         if (r1Response) return r1Response;
       }
+      if (_canPersistBoundedNoCurrentEvidence) {
+        return await persistBoundedNoCurrentEvidence(
+          supabaseAdmin,
+          conversation_id,
+          source_message_id,
+          _c3ServicePlan,
+          _visitorLang,
+          {
+            ...traceMetadata,
+            answerability: "missing_full_content_evidence",
+            evidence_decision: _boundedNoCurrentEvidenceDecision.kind,
+          },
+        );
+      }
       const clarification = await attemptFirstNoMatchClarification(
         supabaseAdmin,
         conversation_id,
@@ -5342,8 +5477,7 @@ async function orchestrationGenerateReply(
           high_risk: isHighRisk,
           explicit_human_request: isHandoffIntent(_h1LastMsg),
           threat_flag: _pr5ThreatSignal?.value === true,
-          compliance_requires_human_review:
-            _pr5ComplianceSignal?.value === true,
+          compliance_requires_human_review: _pr5ComplianceSignal?.value === true,
           clarification_attempts: _pr5History.clarification_attempts,
           exact_same_intent_repeated:
             _pr5History.exact_same_intent_repeated === true,

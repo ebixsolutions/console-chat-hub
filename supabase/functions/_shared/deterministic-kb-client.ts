@@ -10,6 +10,7 @@ import {
   createAggregationAuthorityMetadata,
   type AggregationAuthorityMetadata,
 } from "./kb-aggregation-response.ts";
+import { classifyDeterministicSearchOutcome } from "./current-fact-evidence.ts";
 
 export interface KBQueryInput {
   query: string;
@@ -93,6 +94,14 @@ export interface KBRagResponse {
 }
 export interface KBEndpointConfig {
   mode: "postgres_fts";
+}
+interface DeterministicKBSearchRow {
+  document_id: unknown;
+  chunk_id: unknown;
+  title?: unknown;
+  content?: unknown;
+  rank?: unknown;
+  ambiguous_match?: boolean;
 }
 export type TenantResolutionReason =
   | "KB_DB_CONFIG_MISSING"
@@ -190,12 +199,19 @@ export async function fetchKBRag(
   _endpoint: KBEndpointConfig,
   _opts?: { timeoutMs?: number; signal?: AbortSignal },
 ): Promise<KBRagResponse> {
-  const empty = (error_code?: string): KBRagResponse => ({
+  const failure = (error_code: string): KBRagResponse => ({
     success: false,
     chunks: [],
     citations: [],
     documents: [],
-    ...(error_code ? { error_code } : {}),
+    error_code,
+  });
+  const noCurrentEvidence = (error_code: string): KBRagResponse => ({
+    success: true,
+    chunks: [],
+    citations: [],
+    documents: [],
+    error_code,
   });
   const query = queryInput.query.normalize("NFKC").trim().slice(0, 500);
   const market = queryInput.market ?? explicitMarket(query);
@@ -203,11 +219,10 @@ export async function fetchKBRag(
   if (
     !scope.aiCompanyId ||
     !UUID_RE.test(scope.aiCompanyId) ||
-    scope.mode !== "canonical" ||
-    market === "UNKNOWN" ||
-    query.length < 2
-  )
-    return empty("KB_FTS_SCOPE_OR_MARKET_UNRESOLVED");
+    scope.mode !== "canonical"
+  ) {
+    return failure("KB_FTS_SCOPE_INVALID");
+  }
   const url = Deno.env.get("SUPABASE_URL");
   let key = "";
   try {
@@ -216,7 +231,18 @@ export async function fetchKBRag(
     /* fail closed below */
   }
   if (!url || !key || _opts?.signal?.aborted) {
-    return empty("KB_FTS_CONFIG_OR_SIGNAL_INVALID");
+    return failure("KB_FTS_CONFIG_OR_SIGNAL_INVALID");
+  }
+  if (
+    classifyDeterministicSearchOutcome({
+      market_resolved: market !== "UNKNOWN",
+      query_length: query.length,
+    }) === "no_current_evidence"
+  ) {
+    if (market === "UNKNOWN") {
+      return noCurrentEvidence("KB_FTS_MARKET_UNRESOLVED");
+    }
+    return noCurrentEvidence("KB_FTS_QUERY_INSUFFICIENT");
   }
   const admin = createClient(url, key);
   const { data, error } = await admin.rpc("c3_deterministic_kb_search", {
@@ -227,14 +253,23 @@ export async function fetchKBRag(
     p_query: query,
     p_limit: Math.min(Math.max(queryInput.top_k, 1), 10),
   });
-  if (
-    error ||
-    !Array.isArray(data) ||
-    data.length === 0 ||
-    data.some((row) => row.ambiguous_match === true)
-  )
-    return empty(error ? "KB_FTS_RPC_FAILED" : "KB_FTS_NO_UNAMBIGUOUS_MATCH");
-  const chunks: KBFullChunk[] = data.map((row) => ({
+  const rows = Array.isArray(data)
+    ? data as DeterministicKBSearchRow[]
+    : null;
+  const searchOutcome = classifyDeterministicSearchOutcome({
+    market_resolved: true,
+    query_length: query.length,
+    rpc_failed: Boolean(error) || rows === null,
+    row_count: rows?.length,
+    ambiguous_match: rows?.some((row) => row.ambiguous_match === true),
+  });
+  if (searchOutcome === "operational_failure") {
+    return failure("KB_FTS_RPC_FAILED");
+  }
+  if (searchOutcome === "no_current_evidence") {
+    return noCurrentEvidence("KB_FTS_NO_UNAMBIGUOUS_MATCH");
+  }
+  const chunks: KBFullChunk[] = (rows ?? []).map((row) => ({
     document_id: String(row.document_id),
     doc_id: String(row.document_id),
     chunk_id: String(row.chunk_id),
