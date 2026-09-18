@@ -492,6 +492,13 @@ function deriveA3RuntimeEvents(
   const quantity = parseSpaceScopedCommerceQuantity(text) ?? parseCount(text);
   const cancelled = detectCancellation(text);
   const deferred = detectDeferral(text);
+  const semanticAuthoritative = Boolean(
+    input.semantic_frame && input.semantic_frame.confidence >= 0.72,
+  );
+  const activeAggregates = previous.entities.filter((entity) =>
+    entity.entity_id.endsWith(":unscoped") &&
+    entity.status !== "cancelled" && entity.status !== "deferred"
+  );
   const additive = detectAdditiveEntityCreationSignal(text);
   const explicitCreation = detectExplicitEntityCreationSignal(text);
   const correction = detectQuantityCorrectionSignal(text);
@@ -548,16 +555,43 @@ function deriveA3RuntimeEvents(
   }
 
   for (const hint of mentioned) {
+    const existing = previous.entities.find((entity) =>
+      entity.entity_id === hint.entity_id
+    );
+    const aggregate = previous.entities.find((entity) =>
+      entity.category === hint.category &&
+      entity.entity_id.endsWith(":unscoped") &&
+      entity.status !== "cancelled" && entity.status !== "deferred"
+    );
+    const scopedEntity = hint.entity_id.startsWith(`${hint.category}:`) &&
+      !hint.entity_id.endsWith(":unscoped");
+    const canMaterializeSemanticScope = semanticAuthoritative && !existing &&
+      scopedEntity && activeAggregates.length === 1 &&
+      activeAggregates[0].category === hint.category;
+
+    if ((cancelled || deferred) && canMaterializeSemanticScope) {
+      events.push({
+        type: "ENSURE_ENTITY",
+        entity: {
+          entity_id: hint.entity_id,
+          category: hint.category,
+          brand: hint.brand ?? null,
+          model: hint.model ?? null,
+          quantity: hint.quantity ?? 1,
+          status: "tentative",
+          attributes: { ...(hint.attributes ?? {}) },
+          constraints: { ...(hint.constraints ?? {}) },
+          provenance,
+        },
+      });
+    }
+
     if (cancelled) {
+      // A semantic-authoritative mutation may only target a durable entity or
+      // the uniquely materialized scoped entity above. Ambiguous references
+      // stay read-only so downstream clarification remains fail-closed.
+      if (semanticAuthoritative && !existing && !canMaterializeSemanticScope) continue;
       events.push({ type: "SET_ENTITY_STATUS", entity_id: hint.entity_id, status: "cancelled", provenance });
-      const existing = previous.entities.find((entity) =>
-        entity.entity_id === hint.entity_id
-      );
-      const aggregate = previous.entities.find((entity) =>
-        entity.category === hint.category &&
-        entity.entity_id.endsWith(":unscoped") &&
-        entity.status !== "cancelled" && entity.status !== "deferred"
-      );
       if (!existing && aggregate && aggregate.quantity > 0) {
         events.push({
           type: "SET_ENTITY_QUANTITY",
@@ -569,15 +603,8 @@ function deriveA3RuntimeEvents(
       continue;
     }
     if (deferred) {
+      if (semanticAuthoritative && !existing && !canMaterializeSemanticScope) continue;
       events.push({ type: "SET_ENTITY_STATUS", entity_id: hint.entity_id, status: "deferred", provenance });
-      const existing = previous.entities.find((entity) =>
-        entity.entity_id === hint.entity_id
-      );
-      const aggregate = previous.entities.find((entity) =>
-        entity.category === hint.category &&
-        entity.entity_id.endsWith(":unscoped") &&
-        entity.status !== "cancelled" && entity.status !== "deferred"
-      );
       if (!existing && aggregate && aggregate.quantity > 0) {
         events.push({
           type: "SET_ENTITY_QUANTITY",
@@ -700,7 +727,26 @@ function materializeRoomOnlyReferenceHints(
   if (aggregateCategories.length !== 1) return hints;
 
   const category = aggregateCategories[0];
-  const next = new Map(hints.map((hint) => [hint.entity_id, hint]));
+  const canonicalEntityIds = new Set(rooms.map((room) => `${category}:${room.key}`));
+  const roomAliases = rooms.flatMap((room) => room.aliases)
+    .map((alias) => clean(alias, 80).toLowerCase())
+    .filter(Boolean);
+  // A semantic frame can describe the same scoped phrase with a generated
+  // entity id (for example, generic:<room phrase>). Once the aggregate and
+  // room make the reference deterministic, discard that non-persisted shadow
+  // before events are built; otherwise it can fail mutation before the
+  // canonical scoped entity is materialized and leave reply routing unaware
+  // that the requested action was successfully resolved.
+  const next = new Map(hints.filter((hint) => {
+    if (hint.category !== category || canonicalEntityIds.has(hint.entity_id)) return true;
+    if (state.entities.some((entity) => entity.entity_id === hint.entity_id)) return true;
+    return !(hint.aliases ?? []).some((alias) => {
+      const normalized = clean(alias, 80).toLowerCase();
+      return normalized && roomAliases.some((roomAlias) =>
+        normalized.includes(roomAlias) || roomAlias.includes(normalized)
+      );
+    });
+  }).map((hint) => [hint.entity_id, hint]));
   for (const room of rooms) {
     const entity_id = `${category}:${room.key}`;
     if (!next.has(entity_id)) {

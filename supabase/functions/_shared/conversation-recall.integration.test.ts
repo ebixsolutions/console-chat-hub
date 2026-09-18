@@ -214,6 +214,52 @@ Deno.test("C3 exact T016 resolved cancellation reply outranks generic clarificat
     text: canonicalTurns1To17[15],
     language: "zh-TW",
     history: canonicalTurns1To17.slice(0, 15).reverse().map((content) => ({ role: "visitor", content })),
+    // Production passes the semantic interpreter envelope as well as the raw
+    // utterance. Its generated entity reference must collapse onto the same
+    // canonical scoped entity instead of surviving as a mutation shadow.
+    semantic_frame: {
+      version: "commerce-semantic-1.0.0",
+      language: "zh-TW",
+      operation: "DEFER",
+      intent: "defer a room-scoped item",
+      topic: "air conditioner",
+      entities: [{
+        entity_ref: "current:1",
+        name: "客廳嗰部",
+        kind: "physical_product",
+        category_hint: "air_conditioner",
+        sku: null,
+        model: null,
+        quantity: 1,
+        unit: "部",
+        attributes: {},
+        constraints: {},
+        capabilities: {
+          requires_delivery: false,
+          supports_pickup: false,
+          requires_installation: false,
+          requires_booking: false,
+          requires_quote: false,
+          requires_site_check: false,
+          digital_fulfilment: false,
+          recurring_billing: false,
+          rental_return: false,
+          customization: false,
+        },
+        confidence: 0.95,
+      }],
+      referents: [{ ref: "客廳嗰部", source: "persistent_state", confidence: 0.95 }],
+      customer_correction: false,
+      additive: false,
+      explicit_negations: [],
+      requested_facts: [],
+      transaction_state: "none",
+      payment_state: "none",
+      booking_state: "none",
+      fulfillment_state: "none",
+      ambiguity: { is_ambiguous: false, reasons: [], clarification_question: null },
+      confidence: 0.95,
+    },
   });
   const livingRoom = persisted.entities.find((entity) => entity.entity_id === "air_conditioner:living_room");
   const activeQuantity = persisted.entities.filter((entity) => !["cancelled", "deferred"].includes(entity.status)).reduce((total, entity) => total + entity.quantity, 0);
@@ -223,13 +269,10 @@ Deno.test("C3 exact T016 resolved cancellation reply outranks generic clarificat
   const reply = outcome?.reply ?? "";
   assert(!/[?？]|最想完成/.test(reply), reply);
 
-  const source = await Deno.readTextFile(new URL("../generate-reply/index.ts", import.meta.url));
-  const resolvedGuard = source.indexOf("const _c3ResolvedCommerceStateChange");
-  const plannedReply = source.indexOf("if (_c3PlannedReply && !_explicitHandoffRequested)");
-  const commerceReply = source.indexOf("if (_a3Commerce && _a3Commerce.reply && !_explicitHandoffRequested)");
-  assert(resolvedGuard >= 0 && plannedReply > resolvedGuard, "resolved cancellation guard missing");
-  assert(source.slice(resolvedGuard, plannedReply).includes("_c3ResolvedCommerceStateChange ? null"), "generic clarification still overrides resolved cancellation");
-  assert(commerceReply > plannedReply, "resolved commerce response route missing");
+  const route = outcome?.reason === "explicit_entity_status_change_applied" && outcome.reply
+    ? outcome.route
+    : "canonical_memory_clarification";
+  assert(route === "commerce_state_answer", `unexpected response route: ${route}`);
 });
 
 Deno.test("C3 genuinely ambiguous cancellation still requests clarification", () => {
