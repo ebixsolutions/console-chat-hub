@@ -19,6 +19,7 @@ import {
 } from "./commerce-state-runtime.ts";
 import { createEmptyConversationCommerceState } from "./commerce-state-contract.ts";
 import { planConversationService, renderTargetedServiceQuestion } from "./conversation-service-planner.ts";
+import { buildCanonicalConversationMemory } from "./conversation-long-memory.ts";
 
 function assert(v: unknown, m = "assertion failed"): asserts v {
   if (!v) throw new Error(m);
@@ -93,6 +94,94 @@ Deno.test("C3 quantity recall remains unknown without an explicit scoped count",
   assert(
     !decision.handled && decision.reason === "AMBIGUOUS" &&
       decision.detail === "MISSING_QUANTITY",
+    JSON.stringify(decision),
+  );
+});
+
+Deno.test("C3 exact T050 recalls all retained room sizes written with shared colloquial units", () => {
+  const seed = recallFixture("幾大？");
+  const source = seed.source_message_id;
+  const memory = buildCanonicalConversationMemory({
+    previous: null,
+    conversation_id: seed.conversation_id,
+    company_id: seed.company_id,
+    source_message_id: source,
+    commerce_state_revision: seed.commerce!.revision,
+    commerce_state: seed.commerce!.state,
+    newest_first: [
+      { id: source, role: "visitor", content: "幾大？" },
+      { id: "50000000-0000-4000-8000-000000000049", role: "visitor", content: "唔洗再問我房幾大，我頭先講過。" },
+      { id: "50000000-0000-4000-8000-000000000002", role: "visitor", content: "兩間房大概80呎同100呎，廳180呎，全部窗口位，本身都係窗口機。" },
+    ],
+    visitor_turn_count: 50,
+    source_created_at: "2026-09-18T00:00:00Z",
+    next_memory_revision: 1,
+  });
+  const result = prepareConversationRecall({
+    ...seed,
+    question: "幾大？",
+    memory,
+    recent_questions: ["唔洗再問我房幾大，我頭先講過。"],
+  }, "zh-TW");
+  assert(result.decision.handled, JSON.stringify(result.decision));
+  assert(result.reply?.includes("80") && result.reply.includes("100"), result.reply ?? "missing reply");
+  assert(!result.reply?.includes("180"), result.reply ?? "missing reply");
+  assert(result.metadata.response_route === "canonical_memory_recall", JSON.stringify(result.metadata));
+  assert(!/[?？]|最想完成/.test(result.reply ?? ""), result.reply ?? "missing reply");
+});
+
+Deno.test("C3 missing room sizes remain ambiguous instead of being inferred", () => {
+  const input = recallFixture("幾大？");
+  input.commerce!.state.entities = [];
+  input.memory!.active_entities = [];
+  input.memory!.current_customer_facts = [];
+  input.recent_questions = ["唔洗再問我房幾大，我頭先講過。"];
+  const decision = resolveConversationRecall(input);
+  assert(
+    !decision.handled && decision.reason === "AMBIGUOUS" &&
+      decision.detail === "MISSING_ROOM_SIZE",
+    JSON.stringify(decision),
+  );
+});
+
+Deno.test("C3 context-resolved English compact size paraphrase uses the canonical room-size slot", () => {
+  const input = recallFixture("how big?");
+  input.commerce!.state.entities = [];
+  input.memory!.active_entities = [];
+  input.memory!.current_customer_facts = [{
+    key: "room_size",
+    value: [
+      { member_id: "room:a", group: "room", value: "120 square feet" },
+      { member_id: "room:b", group: "room", value: "140 square feet" },
+      { member_id: "living_room:a", group: "living_room", value: "220 square feet" },
+    ],
+    authority: "customer",
+    source_message_id: "51000000-0000-4000-8000-000000000002",
+    entity_id: null,
+    region: null,
+  }];
+  input.recent_questions = ["What was the bedroom size I gave you?"];
+  const result = prepareConversationRecall(input, "en");
+  assert(result.decision.handled, JSON.stringify(result.decision));
+  assert(result.decision.fact_type === "room_size", JSON.stringify(result.decision));
+  assert(result.reply?.includes("120") && result.reply.includes("140"), result.reply ?? "missing reply");
+  assert(!result.reply?.includes("220"), result.reply ?? "missing reply");
+});
+
+Deno.test("C3 incompatible current room sizes for one entity remain conflicting", () => {
+  const input = recallFixture("What was the room size?");
+  input.memory!.current_customer_facts = [{
+    key: "room_size",
+    value: "200 sqft",
+    authority: "customer",
+    source_message_id: "52000000-0000-4000-8000-000000000002",
+    entity_id: "ac-wall",
+    region: "hong_kong",
+  }];
+  const decision = resolveConversationRecall(input);
+  assert(
+    !decision.handled && decision.reason === "AMBIGUOUS" &&
+      decision.detail === "CONFLICTING_ROOM_SIZE",
     JSON.stringify(decision),
   );
 });

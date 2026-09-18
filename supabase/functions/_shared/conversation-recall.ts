@@ -584,6 +584,16 @@ function parseQuery(
     facts = facts.filter((f) => f !== "constraints" && f !== "preferences");
   }
   if (facts.length > 1) facts = facts.filter((f) => f !== "correction");
+  const compactSizeQuestion = /^(?:幾大|几大|多大|大小)(?:呢)?[?？]?$|^(?:what\s+size|how\s+big)(?:\s+(?:is|are)\s+(?:it|that|they|those))?[?？]?$/i
+    .test(q.trim());
+  const contextualSizeReferent = recentQuestions.slice(0, 12).some((text) =>
+    hasField(text, "room_size") ||
+    /(?:房|房間|房间|客廳|客厅|廳|厅|room|bedroom|living\s+room|space|area|dimensions?).{0,24}(?:幾大|几大|多大|大小|size|big|dimensions?)/i
+      .test(text)
+  );
+  if (!facts.length && compactSizeQuestion && contextualSizeReferent) {
+    facts = ["room_size"];
+  }
   if (
     !facts.length &&
     /^(?:咁|那|那個|那个|這個|这个|嗰個|它|幾多|多少|what about it|what about that|how many|and that|that one)[^。.!！]{0,30}[?？呢]?$/i
@@ -821,6 +831,57 @@ function correctedInactiveEntityLabel(
 }
 interface Candidate extends RecallEvidence {
   rank: number;
+}
+interface ScopedCollectionMember {
+  member_id: string;
+  group: string;
+  value: unknown;
+}
+function scopedCollectionMembers(value: unknown): ScopedCollectionMember[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    const row = object(entry);
+    return typeof row?.member_id === "string" &&
+        typeof row.group === "string" && usable(row.value)
+      ? [{
+        member_id: row.member_id,
+        group: row.group,
+        value: row.value,
+      }]
+      : [];
+  });
+}
+function contextualRoomSizeGroup(input: ConversationRecallInput): string | null {
+  for (const text of [input.question, ...(input.recent_questions ?? []).slice(0, 12)]) {
+    if (/(?:客廳|客厅|廳|厅|living\s+room)/i.test(text)) return "living_room";
+    if (/(?:房|房間|房间|room|bedroom)/i.test(text)) return "room";
+  }
+  return null;
+}
+function resolvedRoomSizeCollection(
+  input: ConversationRecallInput,
+  candidates: Candidate[],
+): Candidate | null {
+  const group = contextualRoomSizeGroup(input);
+  if (!group) return null;
+  const collections = candidates.map((candidate) => ({
+    candidate,
+    members: candidate.entity_id === null
+      ? scopedCollectionMembers(candidate.value)
+      : [],
+  })).filter((entry) => entry.members.length > 0);
+  if (collections.length !== 1) return null;
+  const applicable = collections[0].members.filter((member) =>
+    member.group === group
+  );
+  if (applicable.length === 0) return null;
+  return {
+    ...collections[0].candidate,
+    value: applicable.map((member) => ({
+      member_id: member.member_id,
+      value: member.value,
+    })),
+  };
 }
 function canonicalCandidates(
   input: ConversationRecallInput,
@@ -1327,6 +1388,15 @@ export function resolveConversationRecall(
       return fail("AMBIGUOUS", `MISSING_${f.toUpperCase()}`, facts);
     }
     const best = candidates.filter((x) => x.rank === candidates[0].rank);
+    const resolvedCollection = f === "room_size"
+      ? resolvedRoomSizeCollection(input, best)
+      : null;
+    if (resolvedCollection) {
+      const fact: RecallEvidence = { ...resolvedCollection };
+      delete (fact as Partial<Candidate>).rank;
+      evidence.push(fact);
+      continue;
+    }
     const unique = new Map(
       best.map((x) => [`${x.entity_id ?? ""}|${JSON.stringify(x.value)}`, x]),
     );

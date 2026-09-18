@@ -170,6 +170,45 @@ function smallCustomerCount(raw: string): number | null {
   return ({ 一: 1, 二: 2, 兩: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 } as Record<string, number>)[raw] ?? null;
 }
 
+function retainedRoomSizes(text: string): Array<{
+  member_id: string;
+  group: "room" | "living_room";
+  label: string;
+  value: string;
+}> {
+  const facts: Array<{
+    member_id: string;
+    group: "room" | "living_room";
+    label: string;
+    value: string;
+  }> = [];
+  const groupCounts = new Map<string, number>();
+  for (const clause of text.split(/[，,。;；]/)) {
+    const label = clause.match(
+      /([^，,。;；]{0,20}?(?:客廳|客厅|兩間房|两间房|房間|房间|間房|间房|細房|细房|大房|睡房|廳|厅|living\s+room|bedrooms?|rooms?))/i,
+    )?.[1]?.trim();
+    if (!label) continue;
+    const group = /(?:客廳|客厅|廳|厅|living\s+room)/i.test(label)
+      ? "living_room" as const
+      : "room" as const;
+    for (
+      const measurement of clause.matchAll(
+        /(\d+(?:\.\d+)?)\s*(?:平方呎|平方尺|sq\s*ft|sqft|呎|尺)/gi,
+      )
+    ) {
+      const index = (groupCounts.get(group) ?? 0) + 1;
+      groupCounts.set(group, index);
+      facts.push({
+        member_id: `${group}:${index}`,
+        group,
+        label,
+        value: `${measurement[1]}平方呎`,
+      });
+    }
+  }
+  return facts;
+}
+
 /** Deterministic customer-owned C3 facts, projected oldest-to-newest. */
 function retainedCustomerFacts(rows: MemoryHistoryRow[]): {
   current: ConversationMemoryFact[];
@@ -202,7 +241,7 @@ function retainedCustomerFacts(rows: MemoryHistoryRow[]): {
       ?? text.match(/(?:更正|改為|改为|改成)\s*(?:地址)?\s*(?:為|为|是|係|=|:|：)?\s*([^。!?！？]{3,180})/i);
     const address = correctedAddress?.[1] ?? text.match(/(?:送貨地址|送货地址|地址)\s*(?:是|係|為|为|=|:|：)?\s*([^。!?！？]{3,180})/i)?.[1];
     if (address) add(current, correctedAddress ? "corrected_delivery_address" : "delivery_address", address.trim(), row);
-    const roomFacts = [...text.matchAll(/([^，,。]{1,16}?(?:房|客廳|客厅))\s*(?:要|是|係|為|为)?\s*(\d+(?:\.\d+)?)\s*(?:平方呎|平方尺|sq\s*ft|sqft)/gi)].map((m) => `${m[1].trim()} ${m[2]}平方呎`);
+    const roomFacts = retainedRoomSizes(text);
     if (roomFacts.length) add(current, "room_size", roomFacts, row);
     const horsepowerFacts = [...text.matchAll(/([^，,。]{1,16}?(?:房|客廳|客厅|型號|型号|model))\s*(?:要|是|係|為|为)?\s*(\d+(?:\.\d+)?)\s*匹/gi)].map((m) => `${m[1].trim()} ${m[2]}匹`);
     if (horsepowerFacts.length) add(current, "horsepower", horsepowerFacts, row);
