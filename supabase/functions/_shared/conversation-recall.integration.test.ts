@@ -14,8 +14,11 @@ import {
 import {
   buildCommerceEntityHints,
   reduceTurn,
+  runCommerceStateRuntime,
+  type CommerceStateDbClient,
 } from "./commerce-state-runtime.ts";
 import { createEmptyConversationCommerceState } from "./commerce-state-contract.ts";
+import { planConversationService, renderTargetedServiceQuestion } from "./conversation-service-planner.ts";
 
 function assert(v: unknown, m = "assertion failed"): asserts v {
   if (!v) throw new Error(m);
@@ -92,6 +95,65 @@ Deno.test("C3 quantity recall remains unknown without an explicit scoped count",
       decision.detail === "MISSING_QUANTITY",
     JSON.stringify(decision),
   );
+});
+
+Deno.test("C3 exact T016 resolved cancellation reply outranks generic clarification", async () => {
+  let prior = createEmptyConversationCommerceState();
+  for (let index = 0; index < 15; index++) {
+    const text = canonicalTurns1To17[index];
+    prior = reduceTurn(prior, {
+      conversation_id: "16000000-0000-4000-8000-000000000001",
+      company_id: "16000000-0000-4000-8000-000000000002",
+      source_message_id: `16000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+      text,
+      language: "zh-TW",
+      history: canonicalTurns1To17.slice(0, index).reverse().map((content) => ({ role: "visitor", content })),
+    }, buildCommerceEntityHints([text, ...canonicalTurns1To17.slice(0, index).reverse()]));
+  }
+  let persisted = prior;
+  const db: CommerceStateDbClient = {
+    from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { revision: 15, state: prior }, error: null }) }) }) }),
+    rpc: async (_name, params) => {
+      persisted = params.p_state as typeof prior;
+      return { data: { result: "success", applied_revision: 16 }, error: null };
+    },
+  };
+  const outcome = await runCommerceStateRuntime(db, {
+    conversation_id: "16000000-0000-4000-8000-000000000001",
+    company_id: "16000000-0000-4000-8000-000000000002",
+    source_message_id: "16000000-0000-4000-8000-000000000016",
+    text: canonicalTurns1To17[15],
+    language: "zh-TW",
+    history: canonicalTurns1To17.slice(0, 15).reverse().map((content) => ({ role: "visitor", content })),
+  });
+  const livingRoom = persisted.entities.find((entity) => entity.entity_id === "air_conditioner:living_room");
+  const activeQuantity = persisted.entities.filter((entity) => !["cancelled", "deferred"].includes(entity.status)).reduce((total, entity) => total + entity.quantity, 0);
+  assert(livingRoom?.status === "cancelled", JSON.stringify(persisted.entities));
+  assert(activeQuantity === 2, JSON.stringify(persisted.entities));
+  assert(outcome?.reason === "explicit_entity_status_change_applied" && outcome.reply?.includes("已取消") && outcome.reply.includes("2 部"), JSON.stringify(outcome));
+  const reply = outcome?.reply ?? "";
+  assert(!/[?？]|最想完成/.test(reply), reply);
+
+  const source = await Deno.readTextFile(new URL("../generate-reply/index.ts", import.meta.url));
+  const resolvedGuard = source.indexOf("const _c3ResolvedCommerceStateChange");
+  const plannedReply = source.indexOf("if (_c3PlannedReply && !_explicitHandoffRequested)");
+  const commerceReply = source.indexOf("if (_a3Commerce && _a3Commerce.reply && !_explicitHandoffRequested)");
+  assert(resolvedGuard >= 0 && plannedReply > resolvedGuard, "resolved cancellation guard missing");
+  assert(source.slice(resolvedGuard, plannedReply).includes("_c3ResolvedCommerceStateChange ? null"), "generic clarification still overrides resolved cancellation");
+  assert(commerceReply > plannedReply, "resolved commerce response route missing");
+});
+
+Deno.test("C3 genuinely ambiguous cancellation still requests clarification", () => {
+  const question = "其中一部暫時唔買住。";
+  const input = recallFixture(question);
+  input.commerce!.state.entities = [
+    { ...input.commerce!.state.entities[0], entity_id: "air_conditioner:bedroom_a", quantity: 1, status: "tentative" },
+    { ...input.commerce!.state.entities[0], entity_id: "air_conditioner:bedroom_b", quantity: 1, status: "tentative" },
+  ];
+  const recall = resolveConversationRecall(input);
+  const plan = planConversationService({ question, language: "zh-TW", recall, memory: input.memory, commerce: input.commerce!.state });
+  assert(["targeted_clarification", "partial_answer_then_question"].includes(plan.action), JSON.stringify(plan));
+  assert(/[?？]/.test(renderTargetedServiceQuestion(plan, "zh-TW")), JSON.stringify(plan));
 });
 
 Deno.test("C3 exact canonical turn 17 supersedes the tentative correction before B2", () => {

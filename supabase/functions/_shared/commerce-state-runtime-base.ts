@@ -878,6 +878,26 @@ function buildKnownStateAnswer(language: CommerceLanguage, statePath: string, va
   return `按你之前提供嘅資料：${rendered}。`;
 }
 
+function buildResolvedEntityStatusChangeAnswer(input: CommerceRuntimeInput, state: ConversationCommerceState): string | null {
+  if (!detectCancellation(input.text) && !detectDeferral(input.text)) return null;
+  const changed = state.entities.filter((entity) =>
+    ["cancelled", "deferred"].includes(entity.status) &&
+    entity.provenance.source_message_id === input.source_message_id
+  );
+  // Only this turn's uniquely resolved entity may bypass clarification.
+  if (changed.length !== 1) return null;
+  const entity = changed[0];
+  const activeQuantity = state.entities.filter((candidate) =>
+    candidate.category === entity.category &&
+    !["cancelled", "deferred"].includes(candidate.status)
+  ).reduce((total, candidate) => total + candidate.quantity, 0);
+  const label = entityLabel(entity.entity_id, input.language);
+  const status = statusLabel(entity.status, input.language);
+  if (input.language === "en") return `${label} is ${status}. The current active quantity is ${activeQuantity}.`;
+  if (input.language === "zh-CN") return `${label}${status}；目前有效数量为 ${activeQuantity} 部。`;
+  return `${label}${status}；而家有效數量係 ${activeQuantity} 部。`;
+}
+
 function formatCalculationNumber(value: number): string {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value);
 }
@@ -990,6 +1010,19 @@ export async function runCommerceStateRuntime(
   });
 
   const base = { revision: persisted.revision, persist_result: persisted.result, reason: decision.reason };
+
+  const resolvedStatusChangeReply = persisted.result === "success"
+    ? buildResolvedEntityStatusChangeAnswer(runtimeInput, state)
+    : null;
+  if (resolvedStatusChangeReply) {
+    return {
+      ...base,
+      authority: "CONVERSATION_STATE",
+      reason: "explicit_entity_status_change_applied",
+      reply: resolvedStatusChangeReply,
+      route: "commerce_state_answer",
+    };
+  }
 
   if (decision.authority === "SAFE_PROFESSIONAL_CONFIRMATION") {
     return { ...base, authority: decision.authority, reply: buildProfessionalConfirmationAnswer(language, state), route: "commerce_state_answer" };
