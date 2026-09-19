@@ -37,14 +37,13 @@ class MockClient {
   committedEvents = 0;
   calls: Array<{ fn: string; params: Record<string, unknown> }> = [];
   from(table: string) {
-    const owner = this;
     const chain: any = {
       select() { return chain; }, eq() { return chain; },
       maybeSingle: async () => ({
         data: table === "conversation_memory_state"
-          ? owner.existing
+          ? this.existing
           : table === "conversation_memory_state_event"
-          ? owner.event
+          ? this.event
           : null,
         error: null,
       }),
