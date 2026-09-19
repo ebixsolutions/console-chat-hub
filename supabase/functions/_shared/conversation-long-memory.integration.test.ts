@@ -29,19 +29,52 @@ function prior(): CanonicalConversationMemory {
 
 class MockClient {
   existing: any = null;
+  event: any = null;
   rpcResult: any = { result: "success", current_revision: 1, idempotent: false };
   rpcResults: any[] = [];
   rpcError: unknown = null;
+  commitOnRpcError = false;
+  committedEvents = 0;
   calls: Array<{ fn: string; params: Record<string, unknown> }> = [];
   from(table: string) {
+    const owner = this;
     const chain: any = {
       select() { return chain; }, eq() { return chain; },
-      maybeSingle: async () => ({ data: table === "conversation_memory_state" ? this.existing : null, error: null }),
+      maybeSingle: async () => ({
+        data: table === "conversation_memory_state"
+          ? owner.existing
+          : table === "conversation_memory_state_event"
+          ? owner.event
+          : null,
+        error: null,
+      }),
     };
     return chain;
   }
   async rpc(fn: string, params: Record<string, unknown>) {
     this.calls.push({ fn, params });
+    if (this.commitOnRpcError && this.rpcError) {
+      const memoryHash = "b".repeat(64);
+      this.existing = {
+        conversation_id: params.p_conversation_id,
+        company_id: params.p_company_id,
+        revision: Number(params.p_expected_memory_revision) + 1,
+        source_message_id: params.p_source_message_id,
+        commerce_state_revision: params.p_expected_commerce_revision,
+        memory: structuredClone(params.p_memory),
+        markdown_projection: params.p_markdown_projection,
+        memory_hash: memoryHash,
+      };
+      this.event = {
+        conversation_id: params.p_conversation_id,
+        company_id: params.p_company_id,
+        source_message_id: params.p_source_message_id,
+        applied_revision: Number(params.p_expected_memory_revision) + 1,
+        commerce_state_revision: params.p_expected_commerce_revision,
+        memory_hash: memoryHash,
+      };
+      this.committedEvents += 1;
+    }
     return { data: this.rpcResults.length ? this.rpcResults.shift() : this.rpcResult, error: this.rpcError };
   }
 }
@@ -62,7 +95,6 @@ Deno.test("integration commits memory through one guarded RPC", async () => {
   equal(client.calls.length, 1, "RPC count");
   equal(client.calls[0].fn, "c3_commit_conversation_memory_tx", "RPC name");
 });
-
 Deno.test("integration binds exact tenant conversation source and commerce revision", async () => {
   const client = new MockClient();
   await refreshConversationLongMemory(client as any, input());
@@ -119,6 +151,39 @@ Deno.test("integration fails safely on transport error", async () => {
   client.rpcError = new Error("offline");
   const result = await refreshConversationLongMemory(client as any, input());
   assert(!result.ok && result.reason === "memory_commit_transport", "transport error accepted");
+});
+
+Deno.test("transport acknowledgement loss with the exact durable memory commit classifies committed", async () => {
+  const client = new MockClient();
+  client.rpcError = new Error("ack_lost");
+  client.commitOnRpcError = true;
+  const result = await refreshConversationLongMemory(client as any, input());
+  assert(result.ok && result.idempotent, "authoritative committed receipt was not recovered");
+  equal(result.revision, 1, "recovered revision");
+  equal(client.calls.length, 1, "ambiguous mutation was retried");
+  equal(client.committedEvents, 1, "duplicate state event");
+});
+
+Deno.test("transport acknowledgement loss without an exact durable commit remains fail-closed", async () => {
+  const client = new MockClient();
+  client.rpcError = new Error("ack_lost");
+  const result = await refreshConversationLongMemory(client as any, input());
+  assert(!result.ok && result.reason === "memory_commit_transport", "missing commit was accepted");
+  equal(client.calls.length, 1, "unknown mutation was retried");
+});
+
+Deno.test("replay after recovered acknowledgement loss creates no duplicate revision or event", async () => {
+  const client = new MockClient();
+  client.rpcError = new Error("ack_lost");
+  client.commitOnRpcError = true;
+  const first = await refreshConversationLongMemory(client as any, input());
+  assert(first.ok && first.idempotent, "initial readback recovery failed");
+  client.rpcError = null;
+  client.commitOnRpcError = false;
+  const replay = await refreshConversationLongMemory(client as any, input());
+  assert(replay.ok && replay.idempotent, "replay was not idempotent");
+  equal(client.calls.length, 1, "replay issued a duplicate mutation");
+  equal(client.committedEvents, 1, "replay duplicated the state event");
 });
 
 Deno.test("integration chain feeds structured memory plus bounded recent turns", () => {

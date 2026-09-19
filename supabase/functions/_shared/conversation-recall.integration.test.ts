@@ -84,7 +84,6 @@ Deno.test("C3 exact canonical T006 recalls aggregate quantity from prior room al
   assert(route.decision.value === 3, JSON.stringify(route.decision));
   assert(route.reply?.includes("3 部"), route.reply ?? "missing reply");
 });
-
 Deno.test("C3 quantity recall remains unknown without an explicit scoped count", () => {
   const input = recallFixture("我而家要幾多部冷氣？");
   input.commerce!.state.entities = [];
@@ -100,6 +99,11 @@ Deno.test("C3 quantity recall remains unknown without an explicit scoped count",
 
 Deno.test("C3 exact T050 recalls all retained room sizes written with shared colloquial units", () => {
   const seed = recallFixture("幾大？");
+  // Exact earlier correction shape present at T050. It is intentionally not
+  // parseable as a replacement pair, but it is unrelated to room dimensions.
+  seed.commerce!.state.latest_corrections = [
+    "其實一部舊機拆，另一間房本身冇機。",
+  ];
   const source = seed.source_message_id;
   const memory = buildCanonicalConversationMemory({
     previous: null,
@@ -128,6 +132,23 @@ Deno.test("C3 exact T050 recalls all retained room sizes written with shared col
   assert(!result.reply?.includes("180"), result.reply ?? "missing reply");
   assert(result.metadata.response_route === "canonical_memory_recall", JSON.stringify(result.metadata));
   assert(!/[?？]|最想完成/.test(result.reply ?? ""), result.reply ?? "missing reply");
+  const b2 = evaluateB2BeforeCommit({
+    proposed_response: result.reply ?? "",
+    persistence_kind: "ai_reply",
+    snapshot: {
+      conversation_id: seed.conversation_id,
+      company_id: seed.company_id,
+      source_message_id: source,
+      commerce_state_revision: seed.commerce!.revision,
+      commerce_state_source_message_id: seed.commerce!.source_message_id,
+      state: seed.commerce!.state,
+    },
+    metadata: result.metadata,
+  });
+  assert(
+    b2.decision === "allow",
+    `T050 entered terminal B2 recovery: ${JSON.stringify(b2)}`,
+  );
 });
 
 Deno.test("C3 missing room sizes remain ambiguous instead of being inferred", () => {

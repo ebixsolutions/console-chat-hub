@@ -166,6 +166,7 @@ import {
   type B2PersistenceKind,
   executeB2PersistenceGate,
 } from "../_shared/pre-send-conversion-supervisor.ts";
+import { readExactAiReplyCommit } from "../_shared/authoritative-commit-readback.ts";
 import {
   createClient,
   type SupabaseClient,
@@ -192,7 +193,6 @@ function requiredEscalationRpcClient(client: SupabaseAdminClient) {
     },
   };
 }
-
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -699,12 +699,28 @@ async function commitAiReplyWithControlGate(
 
   const { data, error } = b2.value;
 
+  const recoverAmbiguousAcknowledgement = async () => {
+    const receipt = await readExactAiReplyCommit(supabaseAdmin, {
+      conversation_id,
+      source_message_id,
+      content,
+    });
+    return receipt.status === "committed"
+      ? {
+          ok: true as const,
+          message_id: receipt.value.message_id,
+          idempotent: true,
+        }
+      : null;
+  };
+
   if (error) {
     console.error("[generate-reply] commit_ai_reply_tx RPC error:", {
       conversation_id,
       code: error.code,
     });
-    return { ok: false, result: "rpc_error" };
+    return await recoverAmbiguousAcknowledgement() ??
+      { ok: false, result: "rpc_error" };
   }
 
   const payload = data ?? {};
@@ -712,19 +728,23 @@ async function commitAiReplyWithControlGate(
 
   switch (result) {
     case "success":
+      if (typeof payload.message_id !== "string") {
+        return await recoverAmbiguousAcknowledgement() ??
+          { ok: false, result: "unexpected_result" };
+      }
       return {
         ok: true,
-        message_id: typeof payload.message_id === "string"
-          ? payload.message_id
-          : null,
+        message_id: payload.message_id,
         idempotent: false,
       };
     case "idempotent":
+      if (typeof payload.message_id !== "string") {
+        return await recoverAmbiguousAcknowledgement() ??
+          { ok: false, result: "unexpected_result" };
+      }
       return {
         ok: true,
-        message_id: typeof payload.message_id === "string"
-          ? payload.message_id
-          : null,
+        message_id: payload.message_id,
         idempotent: true,
       };
     case "human_control":
@@ -736,7 +756,8 @@ async function commitAiReplyWithControlGate(
     case "not_found":
       return { ok: false, result };
     default:
-      return { ok: false, result: "unexpected_result" };
+      return await recoverAmbiguousAcknowledgement() ??
+        { ok: false, result: "unexpected_result" };
   }
 }
 
@@ -1028,7 +1049,12 @@ async function loadAuthoritativeR3SentimentSignals(
     .limit(20);
   if (pointsError || !points || points.length === 0) return undefined;
 
-  const usable = points.map((p) => ({
+  const usable = (points as Array<{
+    turn_index?: unknown;
+    sentiment_score?: unknown;
+    sentiment?: unknown;
+    trigger_label?: unknown;
+  }>).map((p) => ({
     turn_index: typeof p.turn_index === "number" ? p.turn_index : -1,
     score: isFiniteScore(p.sentiment_score)
       ? Number(p.sentiment_score)
@@ -4129,7 +4155,7 @@ async function orchestrationGenerateReply(
         conversation_id,
         source_message_id: _h1SourceMessageId,
         latest: _h1LastMsg,
-        history: (_pr5HistoryRows ?? []).map((row) => ({
+        history: (_pr5HistoryRows ?? []).map((row: MemoryHistoryRow) => ({
           role: String((row as { role?: unknown }).role ?? ""),
           content: String((row as { content?: unknown }).content ?? ""),
         })),
@@ -4166,7 +4192,7 @@ async function orchestrationGenerateReply(
             ? "zh-CN"
             : "zh-TW",
           occurred_at: sourceVisitorMessage.created_at ?? null,
-          history: (_pr5HistoryRows ?? []).map((row) => ({
+          history: (_pr5HistoryRows ?? []).map((row: MemoryHistoryRow) => ({
             role: String((row as { role?: unknown }).role ?? ""),
             content: String((row as { content?: unknown }).content ?? ""),
           })),

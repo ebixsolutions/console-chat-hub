@@ -262,7 +262,6 @@ Deno.test("B2 known-context discovery covers the full canonical surface", () => 
   ])
     assert(paths.has(expected), `missing known fact ${expected}`);
 });
-
 Deno.test("B2 blocks asking for a known delivery address", () => {
   assertEquals(
     decision("What is your delivery address?").code,
@@ -372,6 +371,16 @@ Deno.test("B2 unresolved correction is fail-closed only for commerce-touching dr
     decision("Thanks for the update.", state).decision,
     "allow",
     "unrelated acknowledgement",
+  );
+  assertEquals(
+    decision("你提供的房間面積是80平方呎和100平方呎。", state).decision,
+    "allow",
+    "bare room measurements are not monetary commerce claims",
+  );
+  assertEquals(
+    decision("The current price is 5000.", state).decision,
+    "indeterminate",
+    "unmarked price remains commerce-touching and fail-closed",
   );
 });
 

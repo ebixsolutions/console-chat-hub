@@ -4,6 +4,7 @@ import {
   projectConversationRuntimeState,
   type RuntimeHistoryRow,
 } from "./conversation-runtime-state-core.ts";
+import { readExactConversationMemoryCommit } from "./authoritative-commit-readback.ts";
 
 export const CONVERSATION_MEMORY_VERSION = "conversation-memory-1.0.0" as const;
 export const C3_CONTEXT_INPUT_CHAR_BUDGET = 32_768;
@@ -33,7 +34,6 @@ export interface ConversationMemoryFact {
   entity_id?: string | null;
   region?: string | null;
 }
-
 export interface ConversationMemoryEntity {
   entity_id: string;
   type: string;
@@ -590,6 +590,31 @@ export async function refreshConversationLongMemory(client: LongMemoryDbClient, 
     next_memory_revision: expectedRevision + 1,
   });
   const markdown = buildConversationMemoryMarkdown(memory);
+  const recoverAmbiguousCommit = async (
+    candidateMemory: CanonicalConversationMemory,
+    candidateMarkdown: string,
+    revision: number,
+  ) => {
+    const receipt = await readExactConversationMemoryCommit(client, {
+      conversation_id: args.conversation_id,
+      company_id: args.company_id,
+      source_message_id: args.source_message_id,
+      revision,
+      commerce_state_revision: args.commerce_state_revision,
+      memory: candidateMemory,
+      markdown_projection: candidateMarkdown,
+    });
+    if (receipt.status !== "committed" || !isCanonicalConversationMemory(receipt.value.memory)) {
+      return null;
+    }
+    return {
+      ok: true as const,
+      memory: receipt.value.memory,
+      markdown: receipt.value.markdown_projection,
+      revision: receipt.value.revision,
+      idempotent: true,
+    };
+  };
   const { data, error } = await client.rpc("c3_commit_conversation_memory_tx", {
     p_conversation_id: args.conversation_id,
     p_company_id: args.company_id,
@@ -600,7 +625,10 @@ export async function refreshConversationLongMemory(client: LongMemoryDbClient, 
     p_markdown_projection: markdown,
     p_updated_from_turn: args.visitor_turn_count,
   });
-  if (error) return { ok: false, reason: "memory_commit_transport" };
+  if (error) {
+    return await recoverAmbiguousCommit(memory, markdown, expectedRevision + 1) ??
+      { ok: false, reason: "memory_commit_transport" };
+  }
   const result = clean(data?.result, 80);
   if (result === "revision_conflict") {
     const { data: fresh, error: freshError } = await client.from("conversation_memory_state")
@@ -629,12 +657,19 @@ export async function refreshConversationLongMemory(client: LongMemoryDbClient, 
       p_markdown_projection: retryMarkdown,
       p_updated_from_turn: args.visitor_turn_count,
     });
-    if (retry.error) return { ok: false, reason: "memory_retry_transport" };
+    if (retry.error) {
+      return await recoverAmbiguousCommit(retryMemory, retryMarkdown, retryRevision + 1) ??
+        { ok: false, reason: "memory_retry_transport" };
+    }
     if (clean(retry.data?.result, 80) !== "success") {
-      return { ok: false, reason: clean(retry.data?.result, 80) || "memory_retry_failed" };
+      return await recoverAmbiguousCommit(retryMemory, retryMarkdown, retryRevision + 1) ??
+        { ok: false, reason: clean(retry.data?.result, 80) || "memory_retry_failed" };
     }
     return { ok: true, memory: retryMemory, markdown: retryMarkdown, revision: Number(retry.data.current_revision ?? retry.data.applied_revision), idempotent: Boolean(retry.data.idempotent) };
   }
-  if (result !== "success") return { ok: false, reason: result || "memory_commit_unknown" };
+  if (result !== "success") {
+    return await recoverAmbiguousCommit(memory, markdown, expectedRevision + 1) ??
+      { ok: false, reason: result || "memory_commit_unknown" };
+  }
   return { ok: true, memory, markdown, revision: Number(data.current_revision ?? data.applied_revision), idempotent: Boolean(data.idempotent) };
 }

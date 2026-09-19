@@ -31,7 +31,6 @@ export interface B2Decision {
   code: string;
   detail?: string;
 }
-
 export interface B2CanonicalSnapshot {
   conversation_id: string;
   company_id: string;
@@ -261,6 +260,9 @@ interface MoneyMention {
 
 function extractMoneyMentions(text: string): MoneyMention[] {
   const results: MoneyMention[] = [];
+  const hasMoneyContext =
+    /(?:price|quote|quotation|amount|fee|cost|dollars?|價|价|報價|报价|收費|收费|金額|金额|費用|费用)/i
+      .test(text);
   const pattern =
     /(?:\b(HKD|USD|TWD)\b\s*|((?:HK|US|NT)\$|\$)\s*)?([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,10})(?:\.([0-9]{1,2}))?\s*(元|蚊|dollars?)?/gi;
   let match: RegExpExecArray | null;
@@ -268,6 +270,10 @@ function extractMoneyMentions(text: string): MoneyMention[] {
     const amount = Number(`${match[3].replace(/,/g, "")}${match[4] ? `.${match[4]}` : ""}`);
     if (!Number.isFinite(amount) || amount <= 0) continue;
     const marker = `${match[1] ?? ""}${match[2] ?? ""}${match[5] ?? ""}`.toUpperCase();
+    // Bare measurements, quantities, dates and model numbers are not money.
+    // Keep an unmarked number only when the response itself makes a monetary
+    // claim; quote evaluation will still fail closed when currency is absent.
+    if (!marker && !hasMoneyContext) continue;
     const currency =
       marker.includes("USD") || marker.includes("US$")
         ? "USD"
@@ -433,7 +439,7 @@ function parseCorrection(value: string): CorrectionPair | null {
 function responseTouchesCommerce(text: string, state: ConversationCommerceState): boolean {
   if (extractMoneyMentions(text).length > 0) return true;
   if (mentionedEntityIds(text, state).length > 0) return true;
-  return /(?:order|payment|quote|price|delivery|installation|quantity|model|brand|訂單|订单|付款|支付|報價|报价|價錢|价钱|送貨|送货|安裝|安装|數量|数量|型號|型号|品牌)/i.test(
+  return /(?:order|payment|quote|price|delivery|installation|quantity|model|brand|address|recipient|phone|訂單|订单|付款|支付|報價|报价|價錢|价钱|送貨|送货|安裝|安装|數量|数量|型號|型号|品牌|地址|收貨人|收货人|電話|电话)/i.test(
     text,
   );
 }

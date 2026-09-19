@@ -52,6 +52,10 @@ const files = {
   preSendConversionSupervisor: "supabase/functions/_shared/pre-send-conversion-supervisor.ts",
   preSendConversionSupervisorTest:
     "supabase/functions/_shared/pre-send-conversion-supervisor.test.ts",
+  authoritativeCommitReadback:
+    "supabase/functions/_shared/authoritative-commit-readback.ts",
+  authoritativeCommitReadbackTest:
+    "supabase/functions/_shared/authoritative-commit-readback.test.ts",
   kbAggregationResponse: "supabase/functions/_shared/kb-aggregation-response.ts",
   deterministicCeGrounding: "supabase/functions/_shared/ce-grounding.ts",
   deterministicCanonicalGrounding: "supabase/functions/_shared/canonical-grounding.ts",
@@ -162,7 +166,7 @@ const authorizedTargetedRepairHashes = new Map([
   ],
   [
     "supabase/functions/_shared/pre-send-conversion-supervisor.ts",
-    "a446ab6f07d9b94e5e4124d7a8ab5f9815d638dd7772085504097a1f87b169e2",
+    "f2b894c236c606fee41beb02e6a8ef63a611428938e888679e019268ecee9b6e",
   ],
 ]);
 for (
@@ -456,6 +460,7 @@ runDeno([
   "--no-lock",
   "--allow-read",
   files.preSendConversionSupervisorTest,
+  files.authoritativeCommitReadbackTest,
 ]);
 runDeno(["test", "--no-lock", files.servicePlannerTest]);
 runDeno(["test", "--no-lock", "--allow-read", files.serviceRuntimeTest]);
@@ -488,6 +493,8 @@ runDeno([
     files.deterministicKbClient,
     files.currentFactEvidence,
     files.handoffIntent,
+    files.authoritativeCommitReadback,
+    files.authoritativeCommitReadbackTest,
 ]);
 if (process.env.CI) {
   runDeno([
@@ -533,6 +540,8 @@ run("npx", [
   files.deterministicClosureTest,
   files.deterministicKbClient,
   files.handoffIntent,
+  files.authoritativeCommitReadback,
+  files.authoritativeCommitReadbackTest,
   files.preSendConversionSupervisorTest,
   files.kbAggregationResponse,
   files.realCustomerDatasetVerifier,
