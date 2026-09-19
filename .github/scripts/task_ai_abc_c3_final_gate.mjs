@@ -236,11 +236,14 @@ for (
 ) must(generate.includes(marker), `generate_runtime_missing:${marker}`);
 for (const marker of [
   "buildResolvedAddressCorrectionAnswer",
+  "resolveCommittedAddressCorrection",
+  "authoritative_address_correction_resolved",
   "explicit_address_correction_applied",
   "previous_state",
 ]) must(commerceRuntime.includes(marker), `commerce_correction_reply_missing:${marker}`);
 must(
-  generate.includes('"explicit_address_correction_applied"'),
+  generate.includes("resolveCommittedAddressCorrection({") &&
+    generate.includes("_c3ResolvedAddressCorrection"),
   "resolved_address_correction_must_outrank_clarification",
 );
 must(
@@ -277,7 +280,7 @@ must(
 for (const marker of [
   "const _explicitHandoffRequested = isHandoffIntent(_h1LastMsg)",
   "if (_c3PlannedReply && !_explicitHandoffRequested)",
-  "if (_a3Commerce && _a3Commerce.reply && !_explicitHandoffRequested)",
+  "if (_c3CommerceReply && !_explicitHandoffRequested)",
   'response_route: "explicit_handoff"',
 ]) must(generate.includes(marker), `explicit_handoff_precedence_missing:${marker}`);
 

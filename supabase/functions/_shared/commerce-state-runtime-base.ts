@@ -96,6 +96,43 @@ export interface CommerceRuntimeOutcome {
   route: "commerce_state_answer" | "commerce_transaction_summary" | "commerce_kb_required";
 }
 
+export interface CommittedAddressCorrectionResolution {
+  status: "RESOLVED";
+  operation: "FULL_REPLACE" | "SCOPED_COMPONENT_UPDATE";
+  address: string;
+  source_message_id: string;
+  reply: string;
+  reason: "authoritative_address_correction_resolved";
+}
+
+export interface CommittedAddressCorrectionEvidence {
+  text: string;
+  source_message_id: string;
+  language: CommerceLanguage;
+  memory: {
+    source_message_id: string;
+    commerce_state_revision: number | null;
+    current_customer_facts: Array<{
+      key: string;
+      value: unknown;
+      authority: string;
+      source_message_id?: string | null;
+    }>;
+    cancelled_or_superseded: Array<{
+      key: string;
+      value: unknown;
+      source_message_id?: string | null;
+    }>;
+    latest_corrections: string[];
+    open_questions: string[];
+  } | null;
+  commerce: {
+    source_message_id: string;
+    revision: number;
+    state: ConversationCommerceState;
+  } | null;
+}
+
 const COMMERCE_STATE_RPC = "upsert_conversation_commerce_state_v1" as const;
 const MAX_HISTORY_TURNS = 24;
 
@@ -978,6 +1015,92 @@ export function buildResolvedAddressCorrectionAnswer(
   if (input.language === "en") return `I've updated the delivery address to ${address}.`;
   if (input.language === "zh-CN") return `已更新送货地址为${address}。`;
   return `已更新送貨地址為${address}。`;
+}
+
+/**
+ * Post-commit correction precedence contract.
+ *
+ * A semantic ambiguity bit is pre-commit advisory data. It may not force a
+ * clarification after both canonical stores prove the exact correction was
+ * committed for this source message. Conversely, a reply is only resolved when
+ * memory and commerce independently bind the same complete value/revision and
+ * the previous scoped value is durably superseded.
+ */
+export function resolveCommittedAddressCorrection(
+  input: CommittedAddressCorrectionEvidence,
+): CommittedAddressCorrectionResolution | null {
+  const correction = parseAddressReplacementCorrection(input.text);
+  const memory = input.memory;
+  const commerce = input.commerce;
+  if (!correction || !memory || !commerce) return null;
+  if (
+    memory.source_message_id !== input.source_message_id ||
+    commerce.source_message_id !== input.source_message_id ||
+    memory.commerce_state_revision !== commerce.revision ||
+    memory.open_questions.length > 0 ||
+    commerce.state.unresolved_items.length > 0
+  ) return null;
+
+  const address = clean(commerce.state.delivery.address, 300);
+  if (
+    !address ||
+    commerce.state.delivery.provenance?.source_message_id !==
+      input.source_message_id
+  ) return null;
+  const addressKeys = new Set([
+    "address",
+    "delivery_address",
+    "shipping_address",
+    "corrected_delivery_address",
+  ]);
+  const memoryCurrent = memory.current_customer_facts.find((fact) =>
+    addressKeys.has(clean(fact.key, 120)) &&
+    clean(fact.value, 300) === address &&
+    fact.authority === "canonical_commerce" &&
+    fact.source_message_id === input.source_message_id
+  );
+  if (!memoryCurrent) return null;
+  const correctionLedgerMatches = memory.latest_corrections.some((entry) => {
+    const parsed = parseAddressReplacementCorrection(entry);
+    return Boolean(
+      parsed && parsed.operation === correction.operation &&
+        clean(parsed.previous, 180) === clean(correction.previous, 180) &&
+        clean(parsed.current, 180) === clean(correction.current, 180),
+    );
+  });
+  if (!correctionLedgerMatches) return null;
+
+  const current = clean(correction.current, 180);
+  if (correction.operation === "SCOPED_COMPONENT_UPDATE") {
+    const previous = clean(correction.previous, 180);
+    const superseded = memory.cancelled_or_superseded.some((fact) =>
+      fact.key === "superseded_delivery_address" &&
+      typeof fact.value === "string" &&
+      clean(fact.value, 300).toLocaleLowerCase().includes(
+        previous.toLocaleLowerCase(),
+      ) &&
+      fact.source_message_id !== input.source_message_id
+    );
+    if (
+      !previous || !current || !superseded || address === current ||
+      !address.toLocaleLowerCase().includes(current.toLocaleLowerCase()) ||
+      address.toLocaleLowerCase().includes(previous.toLocaleLowerCase())
+    ) return null;
+  } else if (!current || address !== current) return null;
+
+  const reply = input.language === "en"
+    ? `I've updated the delivery address to ${address}.`
+    : input.language === "zh-CN"
+    ? `已更新送货地址为${address}。`
+    : `已更新送貨地址為${address}。`;
+  return {
+    status: "RESOLVED",
+    operation: correction.operation,
+    address,
+    source_message_id: input.source_message_id,
+    reply,
+    reason: "authoritative_address_correction_resolved",
+  };
 }
 
 function formatCalculationNumber(value: number): string {

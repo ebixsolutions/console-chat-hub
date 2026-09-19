@@ -14,6 +14,7 @@ import {
 import {
   buildCommerceEntityHints,
   reduceTurn,
+  resolveCommittedAddressCorrection,
   runCommerceStateRuntime,
   type CommerceStateDbClient,
 } from "./commerce-state-runtime.ts";
@@ -700,6 +701,286 @@ Deno.test("C3 T040 committed scoped correction answers from post-commit state wi
   assert(b2.decision === "allow", JSON.stringify(b2));
 });
 
+Deno.test("C3 captured v138 T040 envelope does not let stale semantic ambiguity re-ask after commit", async () => {
+  const previous = createEmptyConversationCommerceState();
+  const firstSource = "97740415-fdfb-4cfc-a72c-325967751050";
+  previous.delivery.address = "長沙灣幸福邨A座12樓";
+  previous.delivery.provenance = {
+    source_type: "customer",
+    source_message_id: firstSource,
+    recorded_at: "2026-09-19T14:13:12.974273+00:00",
+  };
+  const frame = authoritativeAddressFrame(true);
+  frame.operation = "NO_STATE_CHANGE";
+  frame.ambiguity = {
+    is_ambiguous: true,
+    reasons: ["pre-commit semantic referent unresolved"],
+    clarification_question: "你想更正哪一個地址？",
+  };
+  const source = "054918e3-72d3-4afb-9b19-d714f414c293";
+  const result = await executeAddressCorrection(
+    previous,
+    "唔係A座，係B座，我打錯",
+    source,
+    frame,
+  );
+  assert(result.persisted.delivery.address === "長沙灣幸福邨B座12樓", JSON.stringify(result.persisted.delivery));
+  assert(result.outcome?.persist_result === "success", JSON.stringify(result.outcome));
+  assert(result.outcome.reason === "no_authoritative_source_selected", JSON.stringify(result.outcome));
+  assert(result.outcome.route === "commerce_kb_required", JSON.stringify(result.outcome));
+  assert(result.outcome.reply === null, JSON.stringify(result.outcome));
+
+  const previousMemory = buildCanonicalConversationMemory({
+    previous: null,
+    conversation_id: "40000000-0000-4000-8000-000000000001",
+    company_id: "40000000-0000-4000-8000-000000000002",
+    source_message_id: firstSource,
+    commerce_state_revision: 40,
+    commerce_state: previous,
+    newest_first: [{
+      id: firstSource,
+      role: "visitor",
+      content: "送貨地址是長沙灣幸福邨A座12樓。",
+    }],
+    visitor_turn_count: 1,
+    source_created_at: "2026-09-19T14:13:12.974273+00:00",
+    next_memory_revision: 1,
+  });
+  const memory = buildCanonicalConversationMemory({
+    previous: previousMemory,
+    conversation_id: "40000000-0000-4000-8000-000000000001",
+    company_id: "40000000-0000-4000-8000-000000000002",
+    source_message_id: source,
+    commerce_state_revision: 41,
+    commerce_state: result.persisted,
+    newest_first: [
+      { id: source, role: "visitor", content: "唔係A座，係B座，我打錯" },
+      {
+        id: firstSource,
+        role: "visitor",
+        content: "送貨地址是長沙灣幸福邨A座12樓。",
+      },
+    ],
+    visitor_turn_count: 2,
+    source_created_at: "2026-09-19T14:13:27.357992+00:00",
+    next_memory_revision: 2,
+  });
+  const commerce = {
+    conversation_id: "40000000-0000-4000-8000-000000000001",
+    company_id: "40000000-0000-4000-8000-000000000002",
+    source_message_id: source,
+    revision: 41,
+    state: result.persisted,
+  };
+  const recall = prepareConversationRecall({
+    conversation_id: commerce.conversation_id,
+    company_id: commerce.company_id,
+    source_message_id: source,
+    question: "唔係A座，係B座，我打錯",
+    memory,
+    commerce,
+  }, "zh-TW");
+  const plan = planConversationService({
+    question: "唔係A座，係B座，我打錯",
+    language: "zh-TW",
+    recall: recall.decision,
+    memory,
+    commerce: result.persisted,
+  });
+  assert(recall.metadata.response_route === "canonical_memory_clarification", JSON.stringify(recall.metadata));
+  assert(plan.action === "partial_answer_then_question", JSON.stringify(plan));
+  assert(plan.missing_slots.includes("customer_goal"), JSON.stringify(plan));
+  assert(renderTargetedServiceQuestion(plan, "zh-TW").includes("最想完成"), JSON.stringify(plan));
+
+  const resolved = resolveCommittedAddressCorrection({
+    text: "唔係A座，係B座，我打錯",
+    source_message_id: source,
+    language: "zh-TW",
+    memory,
+    commerce,
+  });
+  assert(resolved?.status === "RESOLVED", JSON.stringify(resolved));
+  assert(resolved.operation === "SCOPED_COMPONENT_UPDATE", JSON.stringify(resolved));
+  assert(resolved.address === "長沙灣幸福邨B座12樓", JSON.stringify(resolved));
+  assert(
+    resolved.reply === "已更新送貨地址為長沙灣幸福邨B座12樓。" &&
+      !/[?？]|最想完成/.test(resolved.reply),
+    JSON.stringify(resolved),
+  );
+  const b2 = evaluateB2BeforeCommit({
+    proposed_response: resolved.reply,
+    persistence_kind: "ai_reply",
+    snapshot: {
+      conversation_id: commerce.conversation_id,
+      company_id: commerce.company_id,
+      source_message_id: source,
+      commerce_state_revision: commerce.revision,
+      commerce_state_source_message_id: commerce.source_message_id,
+      state: commerce.state,
+    },
+    metadata: {
+      response_route: "commerce_state_answer",
+      correction_resolution: resolved.status,
+      correction_source_message_id: resolved.source_message_id,
+    },
+  });
+  assert(b2.decision === "allow", JSON.stringify(b2));
+});
+
+Deno.test("C3 committed correction resolution fails closed on provenance, convergence, or missing-info gaps", () => {
+  const source = "45000000-0000-4000-8000-000000000040";
+  const firstSource = "45000000-0000-4000-8000-000000000001";
+  const state = createEmptyConversationCommerceState();
+  state.delivery.address = "長沙灣幸福邨B座12樓";
+  state.delivery.provenance = {
+    source_type: "customer",
+    source_message_id: source,
+    recorded_at: "2026-09-19T14:13:27.357992+00:00",
+  };
+  const evidence = {
+    text: "唔係A座，係B座，我打錯",
+    source_message_id: source,
+    language: "zh-TW" as const,
+    memory: {
+      source_message_id: source,
+      commerce_state_revision: 41,
+      current_customer_facts: [{
+        key: "corrected_delivery_address",
+        value: "長沙灣幸福邨B座12樓",
+        authority: "canonical_commerce",
+        source_message_id: source,
+      }],
+      cancelled_or_superseded: [{
+        key: "superseded_delivery_address",
+        value: "長沙灣幸福邨A座12樓",
+        source_message_id: firstSource,
+      }],
+      latest_corrections: ["唔係A座,係B座,我打錯"],
+      open_questions: [] as string[],
+    },
+    commerce: { source_message_id: source, revision: 41, state },
+  };
+  assert(resolveCommittedAddressCorrection(evidence)?.status === "RESOLVED");
+  assert(
+    resolveCommittedAddressCorrection({
+      ...evidence,
+      commerce: {
+        ...evidence.commerce,
+        state: {
+          ...state,
+          delivery: {
+            ...state.delivery,
+            provenance: {
+              ...state.delivery.provenance!,
+              source_message_id: firstSource,
+            },
+          },
+        },
+      },
+    }) === null,
+    "source-message/provenance mismatch must fail closed",
+  );
+  assert(
+    resolveCommittedAddressCorrection({
+      ...evidence,
+      memory: {
+        ...evidence.memory,
+        current_customer_facts: [{
+          ...evidence.memory.current_customer_facts[0],
+          value: "長沙灣幸福邨C座12樓",
+        }],
+      },
+    }) === null,
+    "Memory/Commerce disagreement must fail closed",
+  );
+  assert(
+    resolveCommittedAddressCorrection({
+      ...evidence,
+      memory: {
+        ...evidence.memory,
+        open_questions: ["請提供樓層"],
+      },
+    }) === null,
+    "genuinely missing required information must preserve clarification",
+  );
+});
+
+Deno.test("C3 post-commit correction resolution covers scoped block floor unit and full replacement", () => {
+  const firstSource = "46000000-0000-4000-8000-000000000001";
+  const cases = [
+    {
+      source: "46000000-0000-4000-8000-000000000002",
+      text: "唔係A座，係B座",
+      previous: "長沙灣幸福邨A座12樓1201室",
+      current: "長沙灣幸福邨B座12樓1201室",
+      operation: "SCOPED_COMPONENT_UPDATE",
+    },
+    {
+      source: "46000000-0000-4000-8000-000000000003",
+      text: "唔係12樓，而係15樓",
+      previous: "長沙灣幸福邨B座12樓1201室",
+      current: "長沙灣幸福邨B座15樓1201室",
+      operation: "SCOPED_COMPONENT_UPDATE",
+    },
+    {
+      source: "46000000-0000-4000-8000-000000000004",
+      text: "不是1201室，是1508室",
+      previous: "長沙灣幸福邨B座15樓1201室",
+      current: "長沙灣幸福邨B座15樓1508室",
+      operation: "SCOPED_COMPONENT_UPDATE",
+    },
+    {
+      source: "46000000-0000-4000-8000-000000000005",
+      text: "地址改做九龍灣XX大廈3樓",
+      previous: "長沙灣幸福邨B座15樓1508室",
+      current: "九龍灣XX大廈3樓",
+      operation: "FULL_REPLACE",
+    },
+  ] as const;
+
+  for (const [index, item] of cases.entries()) {
+    const state = createEmptyConversationCommerceState();
+    state.delivery.address = item.current;
+    state.delivery.provenance = {
+      source_type: "customer",
+      source_message_id: item.source,
+      recorded_at: "2026-09-19T14:13:27.357992+00:00",
+    };
+    const resolved = resolveCommittedAddressCorrection({
+      text: item.text,
+      source_message_id: item.source,
+      language: "zh-TW",
+      memory: {
+        source_message_id: item.source,
+        commerce_state_revision: 42 + index,
+        current_customer_facts: [{
+          key: "corrected_delivery_address",
+          value: item.current,
+          authority: "canonical_commerce",
+          source_message_id: item.source,
+        }],
+        cancelled_or_superseded: [{
+          key: "superseded_delivery_address",
+          value: item.previous,
+          source_message_id: firstSource,
+        }],
+        latest_corrections: [item.text],
+        open_questions: [],
+      },
+      commerce: {
+        source_message_id: item.source,
+        revision: 42 + index,
+        state,
+      },
+    });
+    assert(resolved?.status === "RESOLVED", JSON.stringify({ item, resolved }));
+    assert(resolved.operation === item.operation, JSON.stringify(resolved));
+    assert(resolved.address === item.current, JSON.stringify(resolved));
+    assert(resolved.reply.includes(item.current), JSON.stringify(resolved));
+    assert(!/[?？]|最想完成/.test(resolved.reply), resolved.reply);
+  }
+});
+
 Deno.test("C3 completed block floor and unit corrections acknowledge the complete address", async () => {
   let state = createEmptyConversationCommerceState();
   state.delivery.address = "長沙灣幸福邨A座12樓1201室";
@@ -982,7 +1263,7 @@ Deno.test("C3 source audit recall precedes commerce reply, context shortcuts and
   );
   const start = source.indexOf("const _c3Recall = prepareConversationRecall(");
   const commerceReplyMarker =
-    "if (_a3Commerce && _a3Commerce.reply && !_explicitHandoffRequested)";
+    "if (_c3CommerceReply && !_explicitHandoffRequested)";
   assert(start > source.indexOf("refreshConversationLongMemory("));
   for (
     const marker of [
@@ -1001,7 +1282,10 @@ Deno.test("C3 source audit recall precedes commerce reply, context shortcuts and
     source.includes('_c3Recall.decision.reason === "NOT_A_RECALL_QUERY"'),
     "raw fallback authority guard absent",
   );
-  const resolvedAddress = source.indexOf('"explicit_address_correction_applied"', start);
+  const resolvedAddress = source.indexOf(
+    "resolveCommittedAddressCorrection({",
+    start,
+  );
   const plannedReply = source.indexOf("const _c3PlannedReply", start);
   assert(resolvedAddress > start && resolvedAddress < plannedReply, "post-commit address correction must clear stale clarification before reply planning");
 });

@@ -138,6 +138,7 @@ import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
 import {
   type CommerceRuntimeOutcome,
   type CommerceStateDbClient,
+  resolveCommittedAddressCorrection,
   runCommerceStateRuntime,
 } from "../_shared/commerce-state-runtime.ts";
 import { interpretCommerceSemantics } from "../_shared/commerce-semantic-interpreter.ts";
@@ -4339,10 +4340,21 @@ async function orchestrationGenerateReply(
       explicit_handoff: _explicitHandoffRequested,
     }, _c3RuntimeInputs),
   );
-  const _c3ResolvedCommerceStateChange = [
-    "explicit_entity_status_change_applied",
-    "explicit_address_correction_applied",
-  ].includes(_a3Commerce?.reason ?? "") && Boolean(_a3Commerce?.reply);
+  const _c3ResolvedAddressCorrection = resolveCommittedAddressCorrection({
+    text: _h1LastMsg,
+    source_message_id: _h1SourceMessageId,
+    language: _visitorLang === "en"
+      ? "en"
+      : _visitorLang === "zh-CN"
+      ? "zh-CN"
+      : "zh-TW",
+    memory: _c3Memory,
+    commerce: _c3CommerceSnapshot,
+  });
+  const _c3ResolvedCommerceStateChange =
+    (_a3Commerce?.reason === "explicit_entity_status_change_applied" &&
+      Boolean(_a3Commerce.reply)) ||
+    Boolean(_c3ResolvedAddressCorrection);
   const _c3PlannedReply = _c3ResolvedCommerceStateChange ? null : applyServiceTone(
     _c3ServicePlan,
     renderServicePlanReply(
@@ -4434,26 +4446,49 @@ async function orchestrationGenerateReply(
       },
     );
   }
-  if (_a3Commerce && _a3Commerce.reply && !_explicitHandoffRequested) {
-    const commerceReply = _a3Commerce.reason ===
+  const _c3CommerceReply = _c3ResolvedAddressCorrection?.reply ??
+    (_a3Commerce?.reason === "explicit_address_correction_applied"
+      ? null
+      : _a3Commerce?.reply ?? null);
+  if (_c3CommerceReply && !_explicitHandoffRequested) {
+    const commerceReply = _a3Commerce?.reason ===
         "previous_quote_not_authoritative_for_current_price"
       ? historicalQuoteValidityReply(_visitorLang)
-      : _a3Commerce.reply;
+      : _c3CommerceReply;
+    const commerceRoute = _c3ResolvedAddressCorrection
+      ? "commerce_state_answer"
+      : _a3Commerce!.route;
+    const commerceAuthority = _c3ResolvedAddressCorrection
+      ? "CONVERSATION_STATE"
+      : _a3Commerce!.authority;
+    const commerceRevision = _c3ResolvedAddressCorrection
+      ? _c3CommerceSnapshot!.revision
+      : _a3Commerce!.revision;
+    const commercePersistResult = _c3ResolvedAddressCorrection
+      ? "authoritative_post_commit_readback"
+      : _a3Commerce!.persist_result;
+    const commerceReason = _c3ResolvedAddressCorrection?.reason ??
+      _a3Commerce!.reason;
     const commerceCommit = await commitAiReplyWithControlGate(
       supabaseAdmin,
       conversation_id,
       source_message_id,
       commerceReply,
       {
-        response_route: _a3Commerce.route,
+        response_route: commerceRoute,
         escalation_action: "continue_ai",
         handoff_required: false,
-        commerce_authority: _a3Commerce.authority,
-        commerce_state_revision: _a3Commerce.revision,
-        commerce_state_persist_result: _a3Commerce.persist_result,
-        commerce_reason: _a3Commerce.reason,
-        commerce_state_path: _a3Commerce.state_path ?? null,
-        commerce_calculation: _a3Commerce.calculation ?? null,
+        commerce_authority: commerceAuthority,
+        commerce_state_revision: commerceRevision,
+        commerce_state_persist_result: commercePersistResult,
+        commerce_reason: commerceReason,
+        commerce_state_path: _a3Commerce?.state_path ?? null,
+        commerce_calculation: _a3Commerce?.calculation ?? null,
+        correction_resolution: _c3ResolvedAddressCorrection?.status ?? null,
+        correction_operation:
+          _c3ResolvedAddressCorrection?.operation ?? null,
+        correction_source_message_id:
+          _c3ResolvedAddressCorrection?.source_message_id ?? null,
       },
     );
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
@@ -4462,9 +4497,9 @@ async function orchestrationGenerateReply(
         JSON.stringify({
           success: true,
           reply: commerceReply,
-          response_route: _a3Commerce.route,
-          commerce_authority: _a3Commerce.authority,
-          commerce_state_revision: _a3Commerce.revision,
+          response_route: commerceRoute,
+          commerce_authority: commerceAuthority,
+          commerce_state_revision: commerceRevision,
           handoff_required: false,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },

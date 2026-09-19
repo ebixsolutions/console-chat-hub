@@ -819,7 +819,7 @@ Deno.test("C3 explicit human requests bypass canonical clarification and reach g
     "if (_c3PlannedReply && !_explicitHandoffRequested)",
   );
   const guardedCommerceCommit = source.indexOf(
-    "if (_a3Commerce && _a3Commerce.reply && !_explicitHandoffRequested)",
+    "if (_c3CommerceReply && !_explicitHandoffRequested)",
   );
   const governedR1 = source.indexOf(
     "const r1Response = await persistExplicitR1IfRequested",
