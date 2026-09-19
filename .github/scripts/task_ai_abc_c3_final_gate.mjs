@@ -150,6 +150,7 @@ const terminalGuard = read(files.terminalGuard),
   terminalTest = read(files.terminalTest);
 const generate = read(files.generate),
   assist = read(files.assist),
+  commerceRuntime = read(files.commerceStateRuntimeBase),
   migration = read(files.migration);
 const c2WorkflowRouting = read(files.c2WorkflowRouting);
 const migrationExecutableBody = migration.split("\n").slice(3).join("\n");
@@ -166,7 +167,7 @@ const authorizedTargetedRepairHashes = new Map([
   ],
   [
     "supabase/functions/_shared/commerce-state-runtime-base.ts",
-    "dde1f4ac6313ca589c82013f1d7037cee08fc1ab7fe607bd9774edb51bd24011",
+    "b5e6a562aae7cd6a14b6131bd7b02289401a67bf9c6b93f5717efa626c44e15a",
   ],
   [
     "supabase/functions/_shared/pre-send-conversion-supervisor.ts",
@@ -233,6 +234,15 @@ for (
     "signal: requestSignal",
   ]
 ) must(generate.includes(marker), `generate_runtime_missing:${marker}`);
+for (const marker of [
+  "buildResolvedAddressCorrectionAnswer",
+  "explicit_address_correction_applied",
+  "previous_state",
+]) must(commerceRuntime.includes(marker), `commerce_correction_reply_missing:${marker}`);
+must(
+  generate.includes('"explicit_address_correction_applied"'),
+  "resolved_address_correction_must_outrank_clarification",
+);
 must(
   generate.indexOf("runCommerceStateRuntime(") <
     generate.indexOf("refreshConversationLongMemory("),

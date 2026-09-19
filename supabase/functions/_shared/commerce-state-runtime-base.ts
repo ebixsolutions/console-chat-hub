@@ -826,10 +826,11 @@ export async function persistCommerceTurn(
   db: CommerceStateDbClient,
   input: CommerceRuntimeInput,
   hints: CommerceTurnEntityHint[],
-): Promise<{ state: ConversationCommerceState; revision: number; result: string }> {
+): Promise<{ previous_state: ConversationCommerceState; state: ConversationCommerceState; revision: number; result: string }> {
   const loaded = await loadCommerceState(db, input.conversation_id);
   let expected = loaded.revision;
-  let next = reduceTurn(loaded.state, input, hints);
+  let previous = loaded.state;
+  let next = reduceTurn(previous, input, hints);
 
   for (let attempt = 0; attempt < 2; attempt++) {
     const { data, error } = await db.rpc(COMMERCE_STATE_RPC, {
@@ -839,18 +840,19 @@ export async function persistCommerceTurn(
       p_source_message_id: input.source_message_id,
       p_state: next,
     });
-    if (error) return { state: next, revision: expected, result: "rpc_transport_error" };
+    if (error) return { previous_state: previous, state: next, revision: expected, result: "rpc_transport_error" };
     const parsed = rpcResult(data);
-    if (parsed.result === "success") return { state: next, revision: parsed.applied_revision ?? expected + 1, result: "success" };
+    if (parsed.result === "success") return { previous_state: previous, state: next, revision: parsed.applied_revision ?? expected + 1, result: "success" };
     if (parsed.result === "revision_conflict" && attempt === 0) {
       const reloaded = await loadCommerceState(db, input.conversation_id);
       expected = reloaded.revision;
-      next = reduceTurn(reloaded.state, input, hints);
+      previous = reloaded.state;
+      next = reduceTurn(previous, input, hints);
       continue;
     }
-    return { state: next, revision: expected, result: parsed.result };
+    return { previous_state: previous, state: next, revision: expected, result: parsed.result };
   }
-  return { state: next, revision: expected, result: "revision_conflict" };
+  return { previous_state: previous, state: next, revision: expected, result: "revision_conflict" };
 }
 
 function statusLabel(status: string, language: CommerceLanguage): string {
@@ -949,6 +951,33 @@ function buildResolvedEntityStatusChangeAnswer(input: CommerceRuntimeInput, stat
   if (input.language === "en") return `${label} is ${status}. The current active quantity is ${activeQuantity}.`;
   if (input.language === "zh-CN") return `${label}${status}；目前有效数量为 ${activeQuantity} 部。`;
   return `${label}${status}；而家有效數量係 ${activeQuantity} 部。`;
+}
+
+export function buildResolvedAddressCorrectionAnswer(
+  input: CommerceRuntimeInput,
+  previous: ConversationCommerceState,
+  state: ConversationCommerceState,
+): string | null {
+  const correction = parseAddressReplacementCorrection(input.text);
+  if (!correction || input.semantic_frame?.ambiguity.is_ambiguous === true) return null;
+  const address = clean(state.delivery.address, 300);
+  if (!address || state.delivery.provenance?.source_message_id !== input.source_message_id) return null;
+
+  if (correction.operation === "SCOPED_COMPONENT_UPDATE") {
+    const prior = clean(previous.delivery.address, 300);
+    const previousComponent = clean(correction.previous, 180);
+    const currentComponent = clean(correction.current, 180);
+    if (
+      !prior || !previousComponent || !currentComponent ||
+      !prior.toLocaleLowerCase().includes(previousComponent.toLocaleLowerCase()) ||
+      address === currentComponent || address === prior ||
+      !address.toLocaleLowerCase().includes(currentComponent.toLocaleLowerCase())
+    ) return null;
+  } else if (address !== clean(correction.current, 300)) return null;
+
+  if (input.language === "en") return `I've updated the delivery address to ${address}.`;
+  if (input.language === "zh-CN") return `已更新送货地址为${address}。`;
+  return `已更新送貨地址為${address}。`;
 }
 
 function formatCalculationNumber(value: number): string {
@@ -1073,6 +1102,19 @@ export async function runCommerceStateRuntime(
       authority: "CONVERSATION_STATE",
       reason: "explicit_entity_status_change_applied",
       reply: resolvedStatusChangeReply,
+      route: "commerce_state_answer",
+    };
+  }
+
+  const resolvedAddressCorrectionReply = persisted.result === "success"
+    ? buildResolvedAddressCorrectionAnswer(runtimeInput, persisted.previous_state, state)
+    : null;
+  if (resolvedAddressCorrectionReply) {
+    return {
+      ...base,
+      authority: "CONVERSATION_STATE",
+      reason: "explicit_address_correction_applied",
+      reply: resolvedAddressCorrectionReply,
       route: "commerce_state_answer",
     };
   }

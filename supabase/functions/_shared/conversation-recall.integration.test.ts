@@ -48,6 +48,35 @@ function authoritativeAddressFrame(customer_correction: boolean): CommerceSemant
   };
 }
 
+async function executeAddressCorrection(
+  previous: ReturnType<typeof createEmptyConversationCommerceState>,
+  text: string,
+  source_message_id: string,
+  semantic_frame: CommerceSemanticFrame = authoritativeAddressFrame(true),
+) {
+  let persisted = previous;
+  const db: CommerceStateDbClient = {
+    from: () => ({
+      select: () => ({
+        eq: () => ({ maybeSingle: async () => ({ data: { revision: 40, state: previous }, error: null }) }),
+      }),
+    }),
+    rpc: async (_name, params) => {
+      persisted = params.p_state as typeof previous;
+      return { data: { result: "success", applied_revision: 41 }, error: null };
+    },
+  };
+  const outcome = await runCommerceStateRuntime(db, {
+    conversation_id: "40000000-0000-4000-8000-000000000001",
+    company_id: "40000000-0000-4000-8000-000000000002",
+    source_message_id,
+    text,
+    language: "zh-TW",
+    semantic_frame,
+  });
+  return { outcome, persisted };
+}
+
 const canonicalTurns1To17 = [
   "Hi，想問冷氣，兩間房加個廳，唔知買咩匹數好。",
   "兩間房大概80呎同100呎，廳180呎，全部窗口位，本身都係窗口機。",
@@ -645,6 +674,114 @@ Deno.test("C3 production-parity T040 converges scoped address correction across 
   assert(b2.decision === "allow", JSON.stringify(b2));
 });
 
+Deno.test("C3 T040 committed scoped correction answers from post-commit state without re-asking", async () => {
+  const previous = createEmptyConversationCommerceState();
+  previous.delivery.address = "長沙灣幸福邨A座12樓";
+  const source_message_id = "40000000-0000-4000-8000-000000000040";
+  const { outcome, persisted } = await executeAddressCorrection(previous, "唔係A座，係B座，我打錯", source_message_id);
+  assert(persisted.delivery.address === "長沙灣幸福邨B座12樓", JSON.stringify(persisted.delivery));
+  assert(outcome?.reason === "explicit_address_correction_applied", JSON.stringify(outcome));
+  assert(outcome.route === "commerce_state_answer", JSON.stringify(outcome));
+  assert(outcome.reply === "已更新送貨地址為長沙灣幸福邨B座12樓。", outcome.reply ?? "missing reply");
+  assert(!/[?？]|最想完成|提供.*地址/.test(outcome.reply), outcome.reply);
+
+  const b2 = evaluateB2BeforeCommit({
+    proposed_response: outcome.reply,
+    persistence_kind: "ai_reply",
+    snapshot: {
+      conversation_id: "40000000-0000-4000-8000-000000000001",
+      company_id: "40000000-0000-4000-8000-000000000002",
+      source_message_id,
+      commerce_state_revision: 41,
+      commerce_state_source_message_id: source_message_id,
+      state: persisted,
+    },
+  });
+  assert(b2.decision === "allow", JSON.stringify(b2));
+});
+
+Deno.test("C3 completed block floor and unit corrections acknowledge the complete address", async () => {
+  let state = createEmptyConversationCommerceState();
+  state.delivery.address = "長沙灣幸福邨A座12樓1201室";
+  const cases = [
+    ["唔係A座，係B座", "長沙灣幸福邨B座12樓1201室"],
+    ["唔係12樓，而係15樓", "長沙灣幸福邨B座15樓1201室"],
+    ["不是1201室，是1508室", "長沙灣幸福邨B座15樓1508室"],
+  ] as const;
+  for (let index = 0; index < cases.length; index += 1) {
+    const [text, expected] = cases[index];
+    const result = await executeAddressCorrection(
+      state,
+      text,
+      `41000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+    );
+    state = result.persisted;
+    assert(state.delivery.address === expected, JSON.stringify(state.delivery));
+    assert(
+      result.outcome?.reason === "explicit_address_correction_applied" &&
+        result.outcome.reply?.includes(expected) &&
+        !/[?？]|最想完成/.test(result.outcome.reply),
+      JSON.stringify(result.outcome),
+    );
+  }
+});
+
+Deno.test("C3 complete full-address replacement acknowledges without clarification", async () => {
+  const previous = createEmptyConversationCommerceState();
+  previous.delivery.address = "長沙灣幸福邨B座15樓1508室";
+  const { outcome, persisted } = await executeAddressCorrection(
+    previous,
+    "地址改做九龍灣XX大廈3樓",
+    "43000000-0000-4000-8000-000000000001",
+  );
+  assert(persisted.delivery.address === "九龍灣XX大廈3樓", JSON.stringify(persisted.delivery));
+  assert(
+    outcome?.reason === "explicit_address_correction_applied" &&
+      outcome.reply?.includes("九龍灣XX大廈3樓") && !/[?？]/.test(outcome.reply),
+    JSON.stringify(outcome),
+  );
+});
+
+Deno.test("C3 incomplete or ambiguous scoped correction preserves clarification", async () => {
+  const incomplete = createEmptyConversationCommerceState();
+  incomplete.delivery.address = "A座";
+  const incompleteResult = await executeAddressCorrection(
+    incomplete,
+    "唔係A座，係B座",
+    "44000000-0000-4000-8000-000000000001",
+  );
+  assert(incompleteResult.persisted.delivery.address === "B座", JSON.stringify(incompleteResult.persisted.delivery));
+  assert(!incompleteResult.outcome?.reply, JSON.stringify(incompleteResult.outcome));
+
+  const ambiguousFrame = authoritativeAddressFrame(true);
+  ambiguousFrame.ambiguity = {
+    is_ambiguous: true,
+    reasons: ["multiple address referents"],
+    clarification_question: "你想更正哪一個送貨地址？",
+  };
+  const ambiguous = createEmptyConversationCommerceState();
+  ambiguous.delivery.address = "長沙灣幸福邨A座12樓";
+  const ambiguousResult = await executeAddressCorrection(
+    ambiguous,
+    "唔係A座，係B座",
+    "44000000-0000-4000-8000-000000000002",
+    ambiguousFrame,
+  );
+  assert(!ambiguousResult.outcome?.reply, JSON.stringify(ambiguousResult.outcome));
+
+  for (const [question, commerce] of [
+    ["唔係A座，係B座", incompleteResult.persisted],
+    ["唔係A座，係B座", ambiguousResult.persisted],
+  ] as const) {
+    const input = recallFixture(question);
+    input.commerce!.state = commerce;
+    const recall = resolveConversationRecall(input);
+    const plan = planConversationService({ question, language: "zh-TW", recall, memory: input.memory, commerce });
+    assert(["targeted_clarification", "partial_answer_then_question"].includes(plan.action), JSON.stringify(plan));
+    assert(/[?？]/.test(renderTargetedServiceQuestion(plan, "zh-TW")), JSON.stringify(plan));
+  }
+});
+
 Deno.test("C3 scoped address mutation preserves block floor unit and supports explicit replacement", () => {
   const conversation_id = "41000000-0000-4000-8000-000000000001";
   const company_id = "41000000-0000-4000-8000-000000000002";
@@ -864,6 +1001,9 @@ Deno.test("C3 source audit recall precedes commerce reply, context shortcuts and
     source.includes('_c3Recall.decision.reason === "NOT_A_RECALL_QUERY"'),
     "raw fallback authority guard absent",
   );
+  const resolvedAddress = source.indexOf('"explicit_address_correction_applied"', start);
+  const plannedReply = source.indexOf("const _c3PlannedReply", start);
+  assert(resolvedAddress > start && resolvedAddress < plannedReply, "post-commit address correction must clear stale clarification before reply planning");
 });
 Deno.test("C3 assist uses same resolver after RBAC and before its KB dependency", () => {
   const source = Deno.readTextFileSync(

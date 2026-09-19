@@ -4339,9 +4339,10 @@ async function orchestrationGenerateReply(
       explicit_handoff: _explicitHandoffRequested,
     }, _c3RuntimeInputs),
   );
-  const _c3ResolvedCommerceStateChange =
-    _a3Commerce?.reason === "explicit_entity_status_change_applied" &&
-    Boolean(_a3Commerce.reply);
+  const _c3ResolvedCommerceStateChange = [
+    "explicit_entity_status_change_applied",
+    "explicit_address_correction_applied",
+  ].includes(_a3Commerce?.reason ?? "") && Boolean(_a3Commerce?.reply);
   const _c3PlannedReply = _c3ResolvedCommerceStateChange ? null : applyServiceTone(
     _c3ServicePlan,
     renderServicePlanReply(
