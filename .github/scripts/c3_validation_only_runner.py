@@ -661,54 +661,79 @@ class Harness:
             "observations": observations,
         }
 
-    def service_quality_evidence(self, scenarios, long_run):
-        """Create source-bound runtime observations; never self-assign quality scores."""
-        external_path = os.environ.get("C3_EXTERNAL_QUALITY_ASSESSMENT_PATH", "").strip()
-        if external_path:
-            path = Path(external_path)
-            if not path.is_file():
-                raise RuntimeError("external_quality_assessment_missing")
-            return json.loads(path.read_text())
-        sources = []
-        for scenario in scenarios:
-            if scenario.get("response_suppressed"):
-                continue
-            sources.append({
-                "id": f"scenario-{scenario['id']}", "family": scenario["id"],
-                "response": str(scenario.get("actual_reply") or ""),
-                "customer_source_message_id": scenario.get("customer_source_message_id"),
-                "assistant_message_id": scenario.get("assistant_message_id"),
-                "source_bound": scenario.get("source_binding", {}).get("exact_customer_source_match") is True,
-                "b2": scenario.get("b2") or {},
-                "observation_kind": "quick_semantic_scenario",
-            })
+    def deterministic_machine_quality(self, long_run, evidence):
+        """Compute hard, replay-resistant metrics; subjective A-F quality stays human-only."""
+        known_answer_turns = {6, 17, 40, 50, 55, 57, 58, 59, 68, 69, 71, 73, 90, 96, 98}
+        dead_end = re.compile(r"^(?:sorry[, .]*|抱歉[，,。 ]*)?(?:i (?:cannot|can't) help|我(?:不能|無法|无法)協助|請稍後再試)[。.!]?$", re.I)
+        reask = re.compile(r"(?:請|请).{0,10}(?:再|重新).{0,10}(?:提供|確認|确认|說明|说明)|could you (?:re)?provide", re.I)
+        rows = []
         for index, observed in enumerate(long_run.get("observations") or [], 1):
             assistant = observed.get("assistant") or {}
             customer = observed.get("customer") or {}
             metadata = assistant.get("metadata") or {}
-            sources.append({
-                "id": f"long-{index:03d}", "family": "fresh_100_turn",
-                "response": str(assistant.get("content") or ""),
+            response = str(assistant.get("content") or "")
+            route = str(metadata.get("response_route") or "normal")
+            generic_dead_end = bool(dead_end.fullmatch(response.strip()))
+            rows.append({
+                "id": f"long-{index:03d}",
                 "customer_source_message_id": customer.get("id"),
                 "assistant_message_id": assistant.get("id"),
+                "response_sha256": hashlib.sha256(response.encode()).hexdigest(),
+                "response_route": route,
                 "source_bound": metadata.get("source_message_id") == customer.get("id"),
                 "b2": {
                     "gate_contract": metadata.get("b2_gate_contract"),
                     "commit_source": metadata.get("b2_commit_source"),
                     "source_message_id": metadata.get("b2_source_message_id"),
                 },
-                "observation_kind": "fresh_100_turn",
+                "assertions": {
+                    "known_answer_dead_end": generic_dead_end,
+                    "unnecessary_reask": index in known_answer_turns and bool(reask.search(response)),
+                    "general_support_fallback": "fallback" in route.lower() or generic_dead_end,
+                },
+            })
+        dataset_rows = [{key: row.get(key) for key in ("id", "customer_source_message_id", "assistant_message_id", "response_sha256")} for row in rows]
+        dataset_sha256 = hashlib.sha256(json.dumps(dataset_rows, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        failed_semantics = sum(1 for row in long_run.get("semantic_checks") or [] if row.get("pass") is not True)
+        fallback_count = sum(1 for row in rows if row["assertions"]["general_support_fallback"])
+        human_samples = []
+        for index, observed in enumerate(long_run.get("observations") or [], 1):
+            if index % 5:
+                continue
+            customer, assistant = observed.get("customer") or {}, observed.get("assistant") or {}
+            context = {"customer_turn": str(customer.get("content") or "")}
+            human_samples.append({
+                "id": f"human-turn-{index:03d}", "runtime_observation_id": f"long-{index:03d}",
+                "customer_source_message_id": customer.get("id"), "assistant_message_id": assistant.get("id"),
+                "context_sha256": hashlib.sha256(json.dumps(context, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
+                "response_sha256": hashlib.sha256(str(assistant.get("content") or "").encode()).hexdigest(),
             })
         return {
-            "schema_version": "c3-service-quality-observations-2.0.0",
-            "mode": "live_production_runtime_observations",
-            "quality_status": "NOT_MEASURED",
-            "sample_count": len(sources),
-            "rows": [{
-                **source,
-                "response_sha256": hashlib.sha256(source["response"].encode()).hexdigest(),
-            } for source in sources],
-            "reason": "Independent candidate-bound grader artifact not supplied; transport and deterministic checks are not customer-service quality scores.",
+            "schema_version": "c3-deterministic-machine-quality-1.0.0",
+            "mode": "live_production_deterministic",
+            "status": "PASS" if failed_semantics == 0 and not any(row["assertions"]["known_answer_dead_end"] or row["assertions"]["unnecessary_reask"] for row in rows) and fallback_count / len(rows) < .05 else "FAIL",
+            "subjective_quality_status": "AWAITING_INDEPENDENT_HUMAN_REVIEW",
+            "binding": {
+                "head": evidence["runner"]["head"], "tree": evidence["runner"]["tree"],
+                "release_id": evidence["release_identity"]["release_id"],
+                "run_id": str(evidence["run"]["id"]), "attempt": str(evidence["run"]["attempt"]),
+                "scenario_contract_sha256": evidence["scenario_contract"]["sha256"],
+                "rubric_sha256": hashlib.sha256(Path(".github/scripts/c3_service_quality_rubric.json").read_bytes()).hexdigest(),
+                "closure_manifests": {name: row["manifest_sha256"] for name, row in evidence["release_identity"]["functions"].items()},
+            },
+            "dataset_sha256": dataset_sha256, "sample_count": len(rows), "rows": rows,
+            "human_review_preparation": {
+                "status": "AWAITING_INDEPENDENT_HUMAN_REVIEW", "sample_count": len(human_samples),
+                "minimum_independent_reviewers": 2, "rubric_sha256": hashlib.sha256(Path(".github/scripts/c3_service_quality_rubric.json").read_bytes()).hexdigest(),
+                "samples": human_samples,
+            },
+            "metrics": {
+                "p0_count": failed_semantics + sum(1 for row in rows if row["assertions"]["known_answer_dead_end"]) + sum(1 for row in rows if row["assertions"]["unnecessary_reask"]),
+                "known_answer_dead_end": sum(1 for row in rows if row["assertions"]["known_answer_dead_end"]),
+                "unnecessary_reask": sum(1 for row in rows if row["assertions"]["unnecessary_reask"]),
+                "fallback_count": fallback_count, "fallback_denominator": len(rows),
+                "fallback_rate": fallback_count / len(rows) if rows else 1,
+            },
         }
 
     def rebuild_comparison(self, conversation_id: str):
@@ -885,7 +910,7 @@ class Harness:
             },
             "live_functions": [], "db_security": None, "scenarios": [], "quick_gate": {"all_pass": False, "long_run_started_only_after_pass": False},
             "historical_hkd_8000": {"pass": False, "source": "not_run"}, "core_checks": [],
-            "long_run": None, "rebuild_comparison": None, "cleanup": None, "created_at": utc_now(),
+            "long_run": None, "machine_quality": None, "rebuild_comparison": None, "cleanup": None, "created_at": utc_now(),
         }
         failure = None
         try:
@@ -921,26 +946,7 @@ class Harness:
                 raise RuntimeError("long_run_transport_incomplete")
             if evidence["long_run"].get("semantic_total") != 15 or evidence["long_run"].get("semantic_correct") != 15:
                 raise RuntimeError("long_run_semantic_contract_failed")
-            evidence["service_quality"] = self.service_quality_evidence(evidence["scenarios"], evidence["long_run"])
-            rubric_sha256 = hashlib.sha256(Path(".github/scripts/c3_service_quality_rubric.json").read_bytes()).hexdigest()
-            external_binding = evidence["service_quality"].get("binding") or {}
-            observation_rows = evidence["service_quality"].get("rows") or []
-            dataset_sha256 = str(external_binding.get("dataset_sha256") or hashlib.sha256(
-                json.dumps([
-                    {
-                        "id": row.get("id"),
-                        "customer_source_message_id": row.get("customer_source_message_id"),
-                        "assistant_message_id": row.get("assistant_message_id"),
-                        "response_sha256": row.get("response_sha256"),
-                    }
-                    for row in observation_rows
-                ], sort_keys=True, separators=(",", ":")).encode()
-            ).hexdigest())
-            evidence["quality_contract"] = {
-                "dataset_sha256": dataset_sha256,
-                "rubric_sha256": rubric_sha256,
-                "assessment_status": evidence["service_quality"].get("quality_status", "NOT_MEASURED"),
-            }
+            evidence["machine_quality"] = self.deterministic_machine_quality(evidence["long_run"], evidence)
             evidence["rebuild_comparison"] = self.rebuild_comparison(evidence["long_run"]["conversation_id"])
         except Exception as error:
             failure = str(error)

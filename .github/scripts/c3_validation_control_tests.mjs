@@ -4,7 +4,7 @@ import fs from "node:fs";
 import { execFileSync } from "node:child_process";
 import crypto from "node:crypto";
 import { readContract, verifyEvidence, EVIDENCE_SCHEMA_VERSION, VALIDATED_FUNCTIONS } from "./c3_validation_evidence.mjs";
-import { DIMENSIONS, verifyHumanCalibration, verifyServiceQuality } from "./c3_service_quality_evidence.mjs";
+import { DIMENSIONS, verifyHumanCalibration } from "./c3_service_quality_evidence.mjs";
 import { classifyMergeEvent } from "./c3_merge_no_redeploy_guard.mjs";
 
 const contractPath = ".github/scripts/c3_validation_scenarios.json";
@@ -56,41 +56,42 @@ const coreNames = [
   "agent_assist_tenant_safe", "return_to_ai_explicit_only", "no_direct_persistence_bypass",
 ];
 
-function validRuntimeQuality(evidence) {
+function validMachineQuality(evidence) {
+  const knownAnswerTurns = new Set([6, 17, 40, 50, 55, 57, 58, 59, 68, 69, 71, 73, 90, 96, 98]);
   const rows = evidence.long_run.observations.map((observed, index) => {
     const response = observed.assistant.content;
-    const context = { preceding_turns: [`Context ${index + 1}`], customer_turn: observed.customer.content };
-    const graderInput = { id: `runtime-${index + 1}`, context, response, action: { type: "reply" }, oracle: { expected_progress: `Outcome ${index + 1}` } };
-    const graderRaw = {
-      sample_id: `runtime-${index + 1}`,
-      dimensions: Object.fromEntries(DIMENSIONS.map((dimension) => [dimension, { score: 10, reason: `External rubric reason for ${dimension} sample ${index + 1}` }])),
-    };
+    const metadata = observed.assistant.metadata;
+    const deadEnd = /^(?:sorry[, .]*|抱歉[，,。 ]*)?(?:i (?:cannot|can't) help|我(?:不能|無法|无法)協助|請稍後再試)[。.!]?$/i.test(response.trim());
+    const reask = knownAnswerTurns.has(index + 1) && /(?:請|请).{0,10}(?:再|重新).{0,10}(?:提供|確認|确认|說明|说明)|could you (?:re)?provide/i.test(response);
     return {
-      id: `runtime-${index + 1}`, family: `business_family_${index + 1}`, response, context,
-      action: graderInput.action, oracle: graderInput.oracle,
-      response_sha256: hash(response), context_sha256: hash(context),
-      grader_input_sha256: hash(graderInput), grader_raw_output: graderRaw,
-      grader_raw_output_sha256: hash(graderRaw),
+      id: `long-${String(index + 1).padStart(3, "0")}`,
       customer_source_message_id: observed.customer.id, assistant_message_id: observed.assistant.id,
-      p0_observations: rubric.critical_p0.map((name) => ({ name, result: "PASS", reason: `Observed no ${name}`, evidence_ref: `${observed.assistant.id}:${name}` })),
-      scores: Object.fromEntries(DIMENSIONS.map((dimension) => [dimension, 10])),
+      response_sha256: hash(response), response_route: metadata.response_route, source_bound: metadata.source_message_id === observed.customer.id,
+      b2: { gate_contract: metadata.b2_gate_contract, commit_source: metadata.b2_commit_source, source_message_id: metadata.b2_source_message_id },
+      assertions: { known_answer_dead_end: deadEnd, unnecessary_reask: reask, general_support_fallback: /fallback/i.test(metadata.response_route) || deadEnd },
     };
   });
+  const deadEnds = rows.filter((row) => row.assertions.known_answer_dead_end).length;
+  const reasks = rows.filter((row) => row.assertions.unnecessary_reask).length;
+  const fallbacks = rows.filter((row) => row.assertions.general_support_fallback).length;
+  const humanSamples = evidence.long_run.observations.flatMap((observed, index) => (index + 1) % 5 ? [] : [{
+    id: `human-turn-${String(index + 1).padStart(3, "0")}`,
+    runtime_observation_id: `long-${String(index + 1).padStart(3, "0")}`,
+    customer_source_message_id: observed.customer.id, assistant_message_id: observed.assistant.id,
+    context_sha256: hash({ customer_turn: observed.customer.content }), response_sha256: hash(observed.assistant.content),
+  }]);
   return {
-    schema_version: "c3-service-quality-assessment-2.0.0", mode: "live_production_independent_assessment", quality_status: "MEASURED",
+    schema_version: "c3-deterministic-machine-quality-1.0.0", mode: "live_production_deterministic", status: "PASS",
+    subjective_quality_status: "AWAITING_INDEPENDENT_HUMAN_REVIEW",
     binding: {
       head, tree, release_id: releaseId, run_id: runId, attempt,
-      dataset_sha256: evidence.quality_contract.dataset_sha256, rubric_sha256: rubricSha256,
+      scenario_contract_sha256: contractInfo.sha256, rubric_sha256: rubricSha256,
       closure_manifests: Object.fromEntries(Object.entries(releaseFunctions).map(([name, row]) => [name, row.manifest_sha256])),
     },
-    grader_provenance: {
-      source: "external_quality_grader", provider: "controlled-test-provider", model: "controlled-test-grader",
-      model_version: "1", prompt_sha256: "9".repeat(64), rubric_sha256: rubricSha256,
-      artifact_digest: "sha256:" + "a".repeat(64), run_id: runId, attempt,
-    },
-    sample_count: rows.length,
-    dimension_averages: Object.fromEntries(DIMENSIONS.map((dimension) => [dimension, 10])),
-    weighted_score: 100, critical_p0: 0, rows,
+    dataset_sha256: hash(rows.map(({ id, customer_source_message_id, assistant_message_id, response_sha256 }) => ({ id, customer_source_message_id, assistant_message_id, response_sha256 }))),
+    sample_count: rows.length, rows,
+    human_review_preparation: { status: "AWAITING_INDEPENDENT_HUMAN_REVIEW", sample_count: 20, minimum_independent_reviewers: 2, rubric_sha256: rubricSha256, samples: humanSamples },
+    metrics: { p0_count: deadEnds + reasks, known_answer_dead_end: deadEnds, unnecessary_reask: reasks, fallback_count: fallbacks, fallback_denominator: rows.length, fallback_rate: fallbacks / rows.length },
   };
 }
 
@@ -143,7 +144,11 @@ function validEvidence() {
       semantic_checks: Array.from({ length: 15 }, (_, index) => ({ name: `long-${index + 1}`, pass: true, source: "actual_assistant_reply" })),
       observations: sourceIds.map((sourceId, index) => ({
         customer: { id: sourceId, content: `Business-purpose customer turn ${index + 1}` },
-        assistant: { id: uuid(index + 4000), content: `Observed governed response ${index + 1}` },
+        assistant: { id: uuid(index + 4000), content: `Observed governed response ${index + 1}`, metadata: {
+          response_route: "normal", source_message_id: sourceId,
+          b2_gate_contract: "executeB2PersistenceGate:allow_after_revalidation",
+          b2_commit_source: "commit_ai_reply_tx", b2_source_message_id: sourceId,
+        } },
       })),
       checkpoints: [20, 50, 105].map((turn, index) => ({
         turn, context_chars: 20000 + index, generation_context_chars: 20000 + index,
@@ -165,11 +170,7 @@ function validEvidence() {
     },
     created_at: "2026-09-16T03:00:00Z",
   };
-  evidence.quality_contract = {
-    dataset_sha256: "d".repeat(64), rubric_sha256: rubricSha256,
-    transport_artifact: { id: "10499000001", run_id: "35099000001", digest: "sha256:" + "e".repeat(64) },
-  };
-  evidence.service_quality = validRuntimeQuality(evidence);
+  evidence.machine_quality = validMachineQuality(evidence);
   return evidence;
 }
 
@@ -238,6 +239,7 @@ for (const [name, mutate, pattern] of [
   ["human_nonexistent_sample_rejected", (a) => { a.collection.reviews[0].sample_id = "missing"; }, /human_review_sample_missing/],
   ["human_duplicate_sample_rejected", (a) => { a.collection.reviews[1].sample_id = a.collection.reviews[0].sample_id; }, /human_duplicate_sample_review/],
   ["human_reviewer_provenance_rejected", (a) => { a.collection.reviews[0].reviewer.provenance = ""; }, /human_reviewer/],
+  ["implementation_agent_human_self_certification_rejected", (a) => { a.collection.reviews[0].reviewer.source = "implementation_agent"; }, /human_reviewer/],
   ["human_missing_time_rejected", (a) => { a.collection.reviews[0].reviewed_at = ""; }, /human_blinding_or_time_invalid/],
   ["human_missing_reason_rejected", (a) => { a.collection.reviews[0].dimensions[DIMENSIONS[0]].reason = ""; }, /human_review_reason/],
   ["human_null_score_rejected", (a) => { a.collection.reviews[0].dimensions[DIMENSIONS[0]].score = null; }, /human_review_score_invalid/],
@@ -252,6 +254,10 @@ for (const [name, mutate, pattern] of [
 
 assert.equal(verifyEvidence(validEvidence(), contractInfo, options).pass, true);
 console.log("C3_NONPRODUCTION_CONTROL|name=synthetic_verifier_positive_control_not_release_evidence|result=PASS");
+assert.equal(rubric.target.weighted_score_min, 95);
+assert.equal(rubric.target.critical_p0_allowed, 0);
+assert.deepEqual(Object.values(rubric.target.dimension_average_min), [9.5, 9.5, 9, 9, 9.5, 9]);
+console.log("C3_NONPRODUCTION_CONTROL|name=frozen_95_and_dimension_thresholds_preserved|result=PASS");
 {
   const workflow = fs.readFileSync(".github/workflows/task-ai-abc-c3-final-gate.yml", "utf8");
   const gate = fs.readFileSync(".github/scripts/task_ai_abc_c3_final_gate.mjs", "utf8");
@@ -305,35 +311,19 @@ expectReject("release_replay", (e) => { e.release_identity.release_digest = "sha
 expectReject("old_run_replay", (e) => { e.run.id = "1"; }, /run_id_mismatch_or_replay/);
 expectReject("source_binding_mismatch", (e) => { e.scenarios[0].source_binding.memory_source_message_id = uuid(999); }, /source_binding_invalid/);
 expectReject("b2_status_without_source_proof", (e) => { e.scenarios[0].b2.evidence = "unobserved"; }, /b2_persistence_missing/);
-expectReject("quality_arbitrary_true_assertions_and_fake_ids_rejected", (e) => {
-  e.service_quality = {
-    schema_version: "c3-service-quality-evidence-1.0.0", mode: "live_production_runtime",
-    rows: Array.from({ length: 100 }, (_, index) => ({ id: `fake-${index}`, assertions: { anything: [{ pass: true }] } })),
-  };
-}, /quality_assessment_schema_invalid/);
-expectReject("quality_wrong_candidate_binding_rejected", (e) => { e.service_quality.binding.head = "f".repeat(40); }, /quality_head_binding_mismatch/);
-expectReject("quality_wrong_release_binding_rejected", (e) => { e.service_quality.binding.release_id = "e".repeat(64); }, /quality_release_id_binding_mismatch/);
-expectReject("quality_wrong_run_attempt_rejected", (e) => { e.service_quality.binding.attempt = "2"; }, /quality_attempt_binding_mismatch/);
-expectReject("quality_runtime_id_forgery_rejected", (e) => { e.service_quality.rows[0].customer_source_message_id = uuid(999999); }, /quality_runtime_observation_mismatch/);
-expectReject("quality_response_context_grader_mismatch_rejected", (e) => { e.service_quality.rows[0].context.customer_turn = "replaced"; }, /quality_context_hash_mismatch/);
-expectReject("quality_missing_required_p0_rejected", (e) => { e.service_quality.rows[0].p0_observations.pop(); }, /quality_p0_observation_invalid/);
-expectReject("quality_duplicate_response_rejected", (e) => {
-  const source = e.service_quality.rows[0];
-  const target = e.service_quality.rows[1];
-  target.response = source.response; target.response_sha256 = source.response_sha256;
-  e.long_run.observations[1].assistant.content = source.response;
-}, /quality_duplicate_response_or_context/);
-expectReject("quality_response_rehash_does_not_rebind_grader", (e) => {
-  const row = e.service_quality.rows[0];
-  row.response = "Replacement answer"; row.response_sha256 = hash(row.response);
-  e.long_run.observations[0].assistant.content = row.response;
-}, /quality_grader_input_mismatch/);
-expectReject("quality_generic_dead_end_cannot_score_high", (e) => {
-  const row = e.service_quality.rows[0];
-  row.response = "我無法協助。"; row.response_sha256 = hash(row.response);
-  e.long_run.observations[0].assistant.content = row.response;
-  row.grader_input_sha256 = hash({ id: row.id, context: row.context, response: row.response, action: row.action, oracle: row.oracle });
-}, /quality_generic_dead_end_overgraded/);
+expectReject("machine_arbitrary_true_assertions_and_fake_ids_rejected", (e) => { e.machine_quality.rows[0].customer_source_message_id = uuid(999999); }, /machine_quality_runtime_observation_mismatch/);
+expectReject("machine_wrong_candidate_binding_rejected", (e) => { e.machine_quality.binding.head = "f".repeat(40); }, /machine_quality_head_binding_mismatch/);
+expectReject("machine_wrong_release_binding_rejected", (e) => { e.machine_quality.binding.release_id = "e".repeat(64); }, /machine_quality_release_id_binding_mismatch/);
+expectReject("machine_wrong_run_attempt_rejected", (e) => { e.machine_quality.binding.attempt = "2"; }, /machine_quality_attempt_binding_mismatch/);
+expectReject("machine_cross_release_closure_rejected", (e) => { e.machine_quality.binding.closure_manifests["generate-reply"] = "e".repeat(64); }, /machine_quality_closure_binding_mismatch/);
+expectReject("machine_response_substitution_rejected", (e) => { e.long_run.observations[0].assistant.content = "Replacement answer"; }, /machine_quality_runtime_observation_mismatch/);
+expectReject("machine_dataset_rehash_without_binding_rejected", (e) => { e.machine_quality.dataset_sha256 = "f".repeat(64); }, /machine_quality_dataset_hash_mismatch/);
+expectReject("implementation_agent_subjective_self_certification_rejected", (e) => { e.machine_quality.weighted_score = 100; }, /machine_quality_subjective_self_certification_forbidden/);
+expectReject("human_review_response_substitution_rejected", (e) => { e.machine_quality.human_review_preparation.samples[0].response_sha256 = "f".repeat(64); }, /human_review_preparation_invalid/);
+expectReject("machine_generic_dead_end_fails_closed", (e) => {
+  e.long_run.observations[0].assistant.content = "我無法協助。";
+  const rebuilt = validMachineQuality(e); e.machine_quality = rebuilt;
+}, /machine_quality_threshold_failed/);
 expectReject("known_single_fact_replaced_by_clarification", (e) => {
   const row = e.scenarios.find((item) => item.id === "T06");
   row.actual_reply = "請指明要核對的項目。"; row.response_route = "canonical_memory_clarification";
@@ -394,7 +384,10 @@ assert.ok(validationBlock.includes("github.actor == 'ebixsolutions'"));
 assert.ok(validationBlock.includes('test "$(git rev-parse HEAD)" = "$C3_EXPECTED_HEAD"'));
 assert.ok(validationBlock.includes('test "$(git rev-parse HEAD^{tree})" = "$C3_EXPECTED_TREE"'));
 assert.ok(c3Workflow.includes("inputs.mode == 'evidence_finalize'"));
-assert.ok(c3Workflow.includes("C3_QUALITY_ARTIFACT_DIGEST"));
+assert.equal(c3Workflow.includes("C3_QUALITY_ARTIFACT_DIGEST"), false);
+assert.equal(c3Workflow.includes("quality_artifact_identity"), false);
+assert.equal(validationBlock.includes("external_quality_grader"), false);
+assert.equal(validationBlock.includes("C3_EXTERNAL_QUALITY_ASSESSMENT_PATH"), false);
 assert.ok(c3Workflow.includes("C3_HUMAN_REVIEW_ARTIFACT_PATH"));
 assert.ok(c3Workflow.includes("production_independent_quality_and_human_authorization_required") || fs.readFileSync(".github/scripts/task_ai_abc_c3_final_gate.mjs", "utf8").includes("production_independent_quality_and_human_authorization_required"));
 for (const forbidden of ["functions deploy", "db push", "migration up", "rollback deploy", "apply_migration"]) {

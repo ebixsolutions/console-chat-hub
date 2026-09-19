@@ -3,7 +3,6 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { verifyServiceQuality } from "./c3_service_quality_evidence.mjs";
 
 export const EVIDENCE_SCHEMA_VERSION = "ai-abc-c3-validation-evidence-1.0.0";
 export const PROJECT_REF = "nrfxhqabwblzxoushgnm";
@@ -20,6 +19,91 @@ const requiredString = (value, name) => {
 const normalized = (value) => String(value ?? "").normalize("NFKC").toLowerCase();
 const contains = (text, value) => normalized(text).includes(normalized(value));
 const isUuid = (value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value ?? ""));
+const canonical = (value) => Array.isArray(value)
+  ? `[${value.map(canonical).join(",")}]`
+  : value && typeof value === "object"
+  ? `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`
+  : JSON.stringify(value);
+const machineRow = (observed, index) => {
+  const customer = observed?.customer ?? {};
+  const assistant = observed?.assistant ?? {};
+  const metadata = assistant.metadata ?? {};
+  const response = String(assistant.content ?? "");
+  const route = String(metadata.response_route ?? "normal");
+  const genericDeadEnd = /^(?:sorry[, .]*|抱歉[，,。 ]*)?(?:i (?:cannot|can't) help|我(?:不能|無法|无法)協助|請稍後再試)[。.!]?$/i.test(response.trim());
+  const knownAnswerTurns = new Set([6, 17, 40, 50, 55, 57, 58, 59, 68, 69, 71, 73, 90, 96, 98]);
+  const unnecessaryReask = knownAnswerTurns.has(index + 1) && /(?:請|请).{0,10}(?:再|重新).{0,10}(?:提供|確認|确认|說明|说明)|could you (?:re)?provide/i.test(response);
+  const fallback = /fallback/i.test(route) || genericDeadEnd;
+  return {
+    id: `long-${String(index + 1).padStart(3, "0")}`,
+    customer_source_message_id: customer.id,
+    assistant_message_id: assistant.id,
+    response_sha256: sha256(response),
+    response_route: route,
+    source_bound: metadata.source_message_id === customer.id,
+    b2: {
+      gate_contract: metadata.b2_gate_contract,
+      commit_source: metadata.b2_commit_source,
+      source_message_id: metadata.b2_source_message_id,
+    },
+    assertions: {
+      known_answer_dead_end: genericDeadEnd,
+      unnecessary_reask: unnecessaryReask,
+      general_support_fallback: fallback,
+    },
+  };
+};
+
+function verifyDeterministicMachineQuality(evidence) {
+  const quality = evidence.machine_quality;
+  if (quality?.schema_version !== "c3-deterministic-machine-quality-1.0.0" || quality.mode !== "live_production_deterministic" || quality.status !== "PASS") fail("machine_quality_schema_invalid");
+  if (quality.subjective_quality_status !== "AWAITING_INDEPENDENT_HUMAN_REVIEW") fail("machine_quality_human_boundary_invalid");
+  for (const forbidden of ["dimension_averages", "weighted_score", "scores", "grader_provenance"]) {
+    if (Object.prototype.hasOwnProperty.call(quality, forbidden)) fail(`machine_quality_subjective_self_certification_forbidden:${forbidden}`);
+  }
+  const binding = quality.binding ?? {};
+  const expectedBinding = {
+    head: evidence.runner.head, tree: evidence.runner.tree,
+    release_id: evidence.release_identity.release_id,
+    run_id: String(evidence.run.id), attempt: String(evidence.run.attempt),
+    scenario_contract_sha256: evidence.scenario_contract.sha256,
+    rubric_sha256: sha256(fs.readFileSync(".github/scripts/c3_service_quality_rubric.json")),
+  };
+  for (const [key, value] of Object.entries(expectedBinding)) if (String(binding[key]) !== String(value)) fail(`machine_quality_${key}_binding_mismatch`);
+  const expectedClosures = Object.fromEntries(Object.entries(evidence.release_identity.functions).map(([name, fn]) => [name, fn.manifest_sha256]));
+  if (canonical(binding.closure_manifests) !== canonical(expectedClosures)) fail("machine_quality_closure_binding_mismatch");
+  const expectedRows = (evidence.long_run?.observations ?? []).map(machineRow);
+  if (!Array.isArray(quality.rows) || quality.rows.length !== expectedRows.length || quality.sample_count !== expectedRows.length || quality.sample_count < 100) fail("machine_quality_sample_count_invalid");
+  if (canonical(quality.rows) !== canonical(expectedRows)) fail("machine_quality_runtime_observation_mismatch");
+  const datasetSha256 = sha256(canonical(expectedRows.map(({ id, customer_source_message_id, assistant_message_id, response_sha256 }) => ({ id, customer_source_message_id, assistant_message_id, response_sha256 }))));
+  if (quality.dataset_sha256 !== datasetSha256) fail("machine_quality_dataset_hash_mismatch");
+  if (expectedRows.some((row) => !row.source_bound || !isUuid(row.customer_source_message_id) || !isUuid(row.assistant_message_id) || row.b2.source_message_id !== row.customer_source_message_id || !row.b2.gate_contract || !row.b2.commit_source)) fail("machine_quality_source_or_b2_binding_invalid");
+  const expectedHumanSamples = (evidence.long_run?.observations ?? []).flatMap((observed, index) => {
+    if ((index + 1) % 5) return [];
+    const customer = observed?.customer ?? {}, assistant = observed?.assistant ?? {};
+    return [{
+      id: `human-turn-${String(index + 1).padStart(3, "0")}`,
+      runtime_observation_id: `long-${String(index + 1).padStart(3, "0")}`,
+      customer_source_message_id: customer.id, assistant_message_id: assistant.id,
+      context_sha256: sha256(canonical({ customer_turn: String(customer.content ?? "") })),
+      response_sha256: sha256(String(assistant.content ?? "")),
+    }];
+  });
+  const preparation = quality.human_review_preparation;
+  if (preparation?.status !== "AWAITING_INDEPENDENT_HUMAN_REVIEW" || preparation.sample_count !== 20 || preparation.minimum_independent_reviewers !== 2 || preparation.rubric_sha256 !== expectedBinding.rubric_sha256 || canonical(preparation.samples) !== canonical(expectedHumanSamples)) fail("human_review_preparation_invalid");
+  const knownAnswerDeadEnd = expectedRows.filter((row) => row.assertions.known_answer_dead_end).length;
+  const unnecessaryReask = expectedRows.filter((row) => row.assertions.unnecessary_reask).length;
+  const derived = {
+    p0_count: (evidence.long_run.semantic_checks ?? []).filter((row) => row.pass !== true).length + knownAnswerDeadEnd + unnecessaryReask,
+    known_answer_dead_end: knownAnswerDeadEnd,
+    unnecessary_reask: unnecessaryReask,
+    fallback_count: expectedRows.filter((row) => row.assertions.general_support_fallback).length,
+    fallback_denominator: expectedRows.length,
+  };
+  derived.fallback_rate = derived.fallback_count / derived.fallback_denominator;
+  if (canonical(quality.metrics) !== canonical(derived)) fail("machine_quality_metric_derivation_mismatch");
+  if (derived.p0_count !== 0 || derived.known_answer_dead_end !== 0 || derived.unnecessary_reask !== 0 || derived.fallback_rate >= 0.05) fail("machine_quality_threshold_failed");
+}
 
 export function readContract(contractPath) {
   const raw = fs.readFileSync(contractPath);
@@ -248,48 +332,13 @@ export function verifyEvidence(evidence, contractInfo, options = {}) {
   });
 
   if (requireLiveProduction) {
-    const qualityRubric = JSON.parse(fs.readFileSync(".github/scripts/c3_service_quality_rubric.json", "utf8"));
-    if (!evidence.quality_contract || !/^[0-9a-f]{64}$/.test(String(evidence.quality_contract.dataset_sha256 ?? "")) || !/^[0-9a-f]{64}$/.test(String(evidence.quality_contract.rubric_sha256 ?? ""))) fail("quality_contract_binding_missing");
-    const qualityTransport = evidence.quality_contract.transport_artifact;
-    if (!qualityTransport || !/^\d+$/.test(String(qualityTransport.id ?? "")) || !/^\d+$/.test(String(qualityTransport.run_id ?? "")) || !/^sha256:[0-9a-f]{64}$/.test(String(qualityTransport.digest ?? ""))) fail("quality_transport_artifact_binding_missing");
-    const rubricSha256 = crypto.createHash("sha256").update(fs.readFileSync(".github/scripts/c3_service_quality_rubric.json")).digest("hex");
-    if (evidence.quality_contract.rubric_sha256 !== rubricSha256) fail("quality_contract_rubric_mismatch");
-    const runtimeObservations = new Map();
-    for (const row of evidence.scenarios) {
-      if (!row.response_suppressed) runtimeObservations.set(row.customer_source_message_id, {
-        assistant_message_id: row.assistant_message_id,
-        response: row.actual_reply,
-        release_id: evidence.release_identity.release_id,
-      });
-    }
-    for (const observed of evidence.long_run?.observations ?? []) {
-      const customer = observed.customer ?? {}, assistant = observed.assistant ?? {};
-      runtimeObservations.set(customer.id, {
-        assistant_message_id: assistant.id,
-        response: assistant.content,
-        release_id: evidence.release_identity.release_id,
-      });
-    }
-    verifyServiceQuality(evidence.service_quality, qualityRubric, {
-      requireRuntime: true,
-      binding: {
-        head: evidence.runner.head,
-        tree: evidence.runner.tree,
-        release_id: evidence.release_identity.release_id,
-        run_id: evidence.run.id,
-        attempt: evidence.run.attempt,
-        dataset_sha256: evidence.quality_contract.dataset_sha256,
-        rubric_sha256: rubricSha256,
-        closure_manifests: Object.fromEntries(Object.entries(evidence.release_identity.functions).map(([name, fn]) => [name, fn.manifest_sha256])),
-      },
-      runtimeObservations,
-    });
     const longRun = evidence.long_run;
     if (!longRun || longRun.fresh !== true || longRun.transport_successes < 100 || longRun.unique_customer_source_messages < 100 || longRun.assistant_persistences < 100) fail("fresh_100_turn_completion_invalid");
     if (!Array.isArray(longRun.semantic_checks) || longRun.semantic_checks.length !== 15) fail("long_run_semantic_checks_invalid");
     if (longRun.semantic_checks.some((row) => row.pass !== true || row.source !== "actual_assistant_reply")) fail("long_run_semantic_correctness_incomplete");
     if (longRun.semantic_total !== 15 || longRun.semantic_correct !== 15) fail("long_run_semantic_count_invalid");
     if (new Set(longRun.customer_source_message_ids ?? []).size !== longRun.unique_customer_source_messages) fail("long_run_source_message_uniqueness_invalid");
+    verifyDeterministicMachineQuality(evidence);
     verifyCheckpoints(evidence, contractInfo.contract);
     verifyCoreAndRebuild(evidence);
     verifyCleanup(evidence);

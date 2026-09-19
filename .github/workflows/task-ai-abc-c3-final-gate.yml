@@ -85,10 +85,6 @@ on:
         description: Exact c3-evidence-finalize-HEAD-TREE-RELEASE_ID-VALIDATION_RUN authorization
         required: false
         type: string
-      quality_artifact_identity:
-        description: JSON with external quality artifact id, digest and run_id
-        required: false
-        type: string
       human_artifact_identity:
         description: JSON with external human artifact id, digest and run_id
         required: false
@@ -405,7 +401,7 @@ jobs:
             --contract .github/scripts/c3_validation_scenarios.json \
             --artifact-root "$RUNNER_TEMP/c3-validation-baseline" \
             --release-root "$RUNNER_TEMP/c3-release-identity"
-      - name: Verify runtime observation capture is ready for independent assessment
+      - name: Verify deterministic quality closure is ready for independent human review
         if: always() && steps.live_validation.outcome == 'success'
         shell: bash
         run: |
@@ -413,13 +409,22 @@ jobs:
           E="$RUNNER_TEMP/c3-validation-evidence/evidence.json"
           python - "$E" <<'PY'
           import json,os,sys
-          e=json.load(open(sys.argv[1])); q=e.get('service_quality') or {}; long=e.get('long_run') or {}; cleanup=e.get('cleanup') or {}
+          e=json.load(open(sys.argv[1])); q=e.get('machine_quality') or {}; long=e.get('long_run') or {}; cleanup=e.get('cleanup') or {}
           assert e['runner']=={'head':os.environ['C3_EXPECTED_HEAD'],'tree':os.environ['C3_EXPECTED_TREE']}
-          assert q.get('schema_version')=='c3-service-quality-observations-2.0.0'
-          assert q.get('quality_status')=='NOT_MEASURED' and len(q.get('rows') or [])>=100
+          assert q.get('schema_version')=='c3-deterministic-machine-quality-1.0.0'
+          assert q.get('status')=='PASS' and q.get('subjective_quality_status')=='AWAITING_INDEPENDENT_HUMAN_REVIEW'
+          metrics=q.get('metrics') or {}
+          assert q.get('sample_count',0)>=100
+          assert metrics.get('p0_count')==metrics.get('known_answer_dead_end')==metrics.get('unnecessary_reask')==0
+          assert metrics.get('fallback_denominator')==q.get('sample_count') and metrics.get('fallback_rate')==metrics.get('fallback_count')/metrics.get('fallback_denominator')
+          assert metrics['fallback_rate'] < .05
+          assert all(k not in q for k in ('dimension_averages','weighted_score','scores','grader_provenance'))
+          preparation=q.get('human_review_preparation') or {}
+          assert preparation.get('status')=='AWAITING_INDEPENDENT_HUMAN_REVIEW' and preparation.get('sample_count')==20 and preparation.get('minimum_independent_reviewers')==2
+          assert len(preparation.get('samples') or [])==20 and all(len(row.get('context_sha256',''))==len(row.get('response_sha256',''))==64 for row in preparation['samples'])
           assert long.get('transport_successes',0)>=100 and long.get('semantic_correct')==long.get('semantic_total')==15
           assert cleanup.get('completed') is True and cleanup.get('safely_deletable_residue')==0
-          print('C3_RUNTIME_OBSERVATION_CAPTURE|result=PASS|quality=NOT_MEASURED|next=external_assessment_and_human_calibration')
+          print('C3_DETERMINISTIC_QUALITY_GATE|result=PASS|subjective=AWAITING_INDEPENDENT_HUMAN_REVIEW|next=human_calibration')
           PY
       - name: Upload fixture manifest and evidence for cleanup recovery
         if: always()
@@ -450,7 +455,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "${{ inputs.expected_head }}"
           test "$(git rev-parse HEAD^{tree})" = "${{ inputs.expected_tree }}"
           test "${{ inputs.finalization_authorization }}" = "c3-evidence-finalize-${{ inputs.expected_head }}-${{ inputs.expected_tree }}-${{ inputs.release_id }}-${{ inputs.validation_run_id }}"
-          for value in '${{ inputs.validation_run_id }}' '${{ inputs.validation_artifact_identity }}' '${{ inputs.quality_artifact_identity }}' '${{ inputs.human_artifact_identity }}'; do test -n "$value"; done
+          for value in '${{ inputs.validation_run_id }}' '${{ inputs.validation_artifact_identity }}' '${{ inputs.human_artifact_identity }}'; do test -n "$value"; done
           echo C3_EVIDENCE_FINALIZATION_AUTHORIZATION=PASS
       - uses: actions/setup-node@v4
         with: {node-version: '22'}
@@ -461,7 +466,6 @@ jobs:
         id: artifact_identity
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          QUALITY_SPEC: ${{ inputs.quality_artifact_identity }}
           HUMAN_SPEC: ${{ inputs.human_artifact_identity }}
           RELEASE_ID: ${{ inputs.release_id }}
           EXPECTED_HEAD: ${{ inputs.expected_head }}
@@ -473,13 +477,13 @@ jobs:
           python - <<'PY'
           import json,os,urllib.request
           repo=os.environ['GITHUB_REPOSITORY']; token=os.environ['GITHUB_TOKEN']
-          specs={kind:json.loads(os.environ[kind+'_SPEC']) for kind in ('VALIDATION','QUALITY','HUMAN')}
+          specs={kind:json.loads(os.environ[kind+'_SPEC']) for kind in ('VALIDATION','HUMAN')}
           specs['VALIDATION']['run_id']=os.environ['VALIDATION_RUN']
-          for kind in ('VALIDATION','QUALITY','HUMAN'):
+          for kind in ('VALIDATION','HUMAN'):
             spec=specs[kind]; aid=str(spec['id']); digest=str(spec['digest']); run_id=str(spec['run_id'])
             assert set(spec)=={'id','digest','run_id'} if kind!='VALIDATION' else {'id','digest','run_id'}
             assert aid.isdigit() and run_id.isdigit() and digest.startswith('sha256:') and len(digest)==71
-            expected_name={'VALIDATION':'C3-validation-production-evidence-'+os.environ['GITHUB_SHA'],'QUALITY':'C3-quality-assessment-'+os.environ['RELEASE_ID'],'HUMAN':'C3-human-calibration-'+os.environ['RELEASE_ID']}[kind]
+            expected_name={'VALIDATION':'C3-validation-production-evidence-'+os.environ['GITHUB_SHA'],'HUMAN':'C3-human-calibration-'+os.environ['RELEASE_ID']}[kind]
             request=urllib.request.Request(f'https://api.github.com/repos/{repo}/actions/artifacts/{aid}',headers={'Authorization':'Bearer '+token,'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28','User-Agent':'c3-evidence-finalize/1.0'})
             artifact=json.load(urllib.request.urlopen(request))
             assert artifact['id']==int(aid) and artifact['name']==expected_name and artifact.get('expired') is False
@@ -499,13 +503,6 @@ jobs:
           path: ${{ runner.temp }}/c3-runtime-evidence
           github-token: ${{ github.token }}
           run-id: ${{ inputs.validation_run_id }}
-      - name: Download independent quality assessment
-        uses: actions/download-artifact@v4
-        with:
-          name: C3-quality-assessment-${{ inputs.release_id }}
-          path: ${{ runner.temp }}/c3-quality-assessment
-          github-token: ${{ github.token }}
-          run-id: ${{ steps.artifact_identity.outputs.quality_run }}
       - name: Download external human calibration
         uses: actions/download-artifact@v4
         with:
@@ -513,7 +510,7 @@ jobs:
           path: ${{ runner.temp }}/c3-human-calibration
           github-token: ${{ github.token }}
           run-id: ${{ steps.artifact_identity.outputs.human_run }}
-      - name: Bind external assessments and execute unique production final gate
+      - name: Bind independent human calibration and execute unique production final gate
         env:
           C3_EXPECTED_HEAD: ${{ inputs.expected_head }}
           C3_EXPECTED_TREE: ${{ inputs.expected_tree }}
@@ -522,29 +519,13 @@ jobs:
           C3_DEPLOYMENT_RUN_ID: ${{ inputs.deployment_run_id }}
           C3_VALIDATION_RUN_ID: ${{ inputs.validation_run_id }}
           C3_VALIDATION_RUN_ATTEMPT: ${{ inputs.validation_run_attempt }}
-          C3_QUALITY_ARTIFACT_ID: ${{ steps.artifact_identity.outputs.quality_id }}
-          C3_QUALITY_ARTIFACT_DIGEST: ${{ steps.artifact_identity.outputs.quality_digest }}
-          C3_QUALITY_ARTIFACT_RUN_ID: ${{ steps.artifact_identity.outputs.quality_run }}
         shell: bash
         run: |
           set -euo pipefail
           E="$(find "$RUNNER_TEMP/c3-runtime-evidence" -name evidence.json -type f -print -quit)"
-          Q="$(find "$RUNNER_TEMP/c3-quality-assessment" -name quality-assessment.json -type f -print -quit)"
           H="$(find "$RUNNER_TEMP/c3-human-calibration" -name human-calibration.json -type f -print -quit)"
-          test -n "$E"; test -n "$Q"; test -n "$H"
-          python - "$E" "$Q" "$RUNNER_TEMP/c3-final-evidence.json" <<'PY'
-          import json,os,sys
-          evidence=json.load(open(sys.argv[1])); quality=json.load(open(sys.argv[2]))
-          evidence['service_quality']=quality
-          evidence['quality_contract']={
-            'dataset_sha256':quality['binding']['dataset_sha256'],
-            'rubric_sha256':quality['binding']['rubric_sha256'],
-            'assessment_status':'MEASURED',
-            'transport_artifact':{'id':os.environ['C3_QUALITY_ARTIFACT_ID'],'digest':os.environ['C3_QUALITY_ARTIFACT_DIGEST'],'run_id':os.environ['C3_QUALITY_ARTIFACT_RUN_ID']},
-          }
-          json.dump(evidence,open(sys.argv[3],'w'),indent=2,sort_keys=True)
-          PY
-          C3_GATE_PHASE=production C3_EVIDENCE_PATH="$RUNNER_TEMP/c3-final-evidence.json" \
+          test -n "$E"; test -n "$H"
+          C3_GATE_PHASE=production C3_EVIDENCE_PATH="$E" \
           C3_HUMAN_REVIEW_ARTIFACT_PATH="$H" \
           C3_SCENARIO_CONTRACT_PATH=.github/scripts/c3_validation_scenarios.json \
           C3_EXPECTED_PROJECT=nrfxhqabwblzxoushgnm C3_EXPECTED_RUN_ID="$C3_VALIDATION_RUN_ID" \

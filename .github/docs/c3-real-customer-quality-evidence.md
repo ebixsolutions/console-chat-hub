@@ -30,11 +30,11 @@ The reviewed candidates are all blocked:
 
 `c3_real_customer_dataset.mjs` verifies source binding, license binding, customer/agent human-role attestation, PII rejection, exact and semantic duplicates, translation equivalence review, source/case hashes, coverage and response-before-freeze rejection. Its freeze command uses exclusive creation and binds candidate HEAD/TREE, registry, dataset and every case hash. It cannot make a dataset READY unless all 100 cases meet the coverage contract.
 
-`c3_nonproduction_independent_grader.mjs` does not call a provider and contains no provider, model, version or credential default. It requires the immutable raw artifact's expected canonical SHA-256, then binds its independent run identity, exact candidate, dataset, cases, requests, contexts and responses. It rejects self-reported aggregates and pass flags, replay, cross-release evidence, substituted responses, empty reasons, implementation-agent self-ratings, regex/length heuristics and fixed perfect scores. The repository computes all weighted and dimension aggregates.
+`c3_nonproduction_independent_grader.mjs` remains an isolated nonproduction research verifier. It is not reachable from, and is not a prerequisite for, the production deterministic quality run. No external grader endpoint, credential or artifact is required by that run.
 
 `c3_human_blind_calibration.mjs` creates a 20-case packet without model identity, grader output, other reviewer output, expected results or oracle labels. Completed evidence needs at least two independent humans and 40 bound records; at least one reviewer must have Hong Kong customer-service or QA experience. The verifier computes Krippendorff's alpha with a threshold of 0.80 and requires a third blind adjudicator for a dimension gap above two points, P0 disagreement or PASS/FAIL conflict. Unit-test fixtures are explicitly test-only and are not human evidence.
 
-The final gate exits nonzero until the real dataset is READY and separately verified real-customer execution, independent grading and blind human calibration are supplied. Deterministic and synthetic tests cannot change the quality state.
+The production deterministic run may complete when its candidate-bound hard gate passes. Its output keeps subjective A-F quality at `AWAITING_INDEPENDENT_HUMAN_REVIEW`; only bound blind human calibration can satisfy the 95-point and dimension thresholds. Deterministic and synthetic tests cannot self-certify those scores.
 
 ## Adopted interim: real-case derived evaluation
 
