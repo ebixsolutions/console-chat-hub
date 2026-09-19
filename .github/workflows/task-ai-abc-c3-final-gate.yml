@@ -808,6 +808,7 @@ jobs:
           import hashlib,json,pathlib,sys
           root=pathlib.Path(sys.argv[1]); target=pathlib.Path(sys.argv[2])
           allowed_target_shared={
+            '_shared/authoritative-commit-readback.ts',
             '_shared/conversation-long-memory.ts','_shared/conversation-recall.ts',
             '_shared/conversation-service-planner.ts','_shared/conversation-service-runtime.ts',
             '_shared/customer360-entitlement-client.ts','_shared/customer360-entitlement-contract.ts',
