@@ -532,6 +532,94 @@ Deno.test("C3 exact T57 corrected address survives state, memory, B2, and recall
   });
   assert(b2.decision === "allow", JSON.stringify(b2));
 });
+
+Deno.test("C3 production-parity T040 converges scoped address correction across commerce, memory, recall, and B2", () => {
+  const conversation_id = "40000000-0000-4000-8000-000000000001";
+  const company_id = "40000000-0000-4000-8000-000000000002";
+  const turns = [
+    "送貨地址是長沙灣幸福邨A座12樓。",
+    "唔係A座，係B座，我打錯。",
+    "幫我讀返地址。",
+  ];
+  let state = createEmptyConversationCommerceState();
+  for (let index = 0; index < turns.length; index += 1) {
+    state = reduceTurn(state, {
+      conversation_id,
+      company_id,
+      source_message_id: `40000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+      text: turns[index],
+      language: "zh-TW",
+      history: turns.slice(0, index).reverse().map((content) => ({
+        role: "visitor",
+        content,
+      })),
+    }, []);
+  }
+  assert(
+    state.delivery.address === "長沙灣幸福邨B座12樓",
+    JSON.stringify(state.delivery),
+  );
+  assert(!state.delivery.address.includes("A座"), state.delivery.address);
+
+  const source_message_id = "40000000-0000-4000-8000-000000000003";
+  const memory = buildCanonicalConversationMemory({
+    conversation_id,
+    company_id,
+    source_message_id,
+    commerce_state_revision: 40,
+    commerce_state: state,
+    newest_first: turns.slice().reverse().map((content, index) => ({
+      id: `40000000-0000-4000-8000-${String(3 - index).padStart(12, "0")}`,
+      role: "visitor",
+      content,
+    })),
+    visitor_turn_count: 40,
+    source_created_at: "2026-09-19T00:00:00Z",
+    next_memory_revision: 40,
+  });
+  const currentAddresses = memory.current_customer_facts.filter((fact) =>
+    ["address", "delivery_address", "shipping_address", "corrected_delivery_address"]
+      .includes(fact.key)
+  );
+  assert(currentAddresses.length === 1, JSON.stringify(currentAddresses));
+  assert(currentAddresses[0].value === state.delivery.address, JSON.stringify(currentAddresses));
+  assert(
+    !JSON.stringify(currentAddresses).includes("A座"),
+    JSON.stringify(currentAddresses),
+  );
+
+  const route = prepareConversationRecall({
+    conversation_id,
+    company_id,
+    source_message_id,
+    question: turns[2],
+    memory,
+    commerce: {
+      conversation_id,
+      company_id,
+      source_message_id,
+      revision: 40,
+      state,
+    },
+  }, "zh-TW");
+  assert(route.decision.handled && route.reply, JSON.stringify(route.decision));
+  assert(route.reply.includes("B座") && route.reply.includes("12樓"), route.reply);
+  assert(!route.reply.includes("A座"), route.reply);
+  const b2 = evaluateB2BeforeCommit({
+    proposed_response: route.reply,
+    persistence_kind: "ai_reply",
+    snapshot: {
+      conversation_id,
+      company_id,
+      source_message_id,
+      commerce_state_revision: 40,
+      commerce_state_source_message_id: source_message_id,
+      state,
+    },
+    metadata: route.metadata,
+  });
+  assert(b2.decision === "allow", JSON.stringify(b2));
+});
 Deno.test("C3 current official facts still have no recall reply", () => {
   const r = prepareConversationRecall(
     recallFixture("What is the official warranty?"),

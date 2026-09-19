@@ -25,6 +25,7 @@ import {
   type CommerceStateEvent,
   type CommerceTurnEntityHint,
   deriveCommerceEventsFromCustomerTurn,
+  applyAddressReplacementCorrection,
   parseAddressReplacementCorrection,
   reduceCommerceState,
 } from "./commerce-state-reducer.ts";
@@ -517,7 +518,12 @@ function deriveA3RuntimeEvents(
   if (addressCorrection) {
     events.push({
       type: "SET_DELIVERY",
-      patch: { address: addressCorrection.current },
+      patch: {
+        address: applyAddressReplacementCorrection(
+          previous.delivery.address,
+          addressCorrection,
+        ),
+      },
       provenance,
     });
   }

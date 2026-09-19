@@ -5,6 +5,10 @@ import {
   type RuntimeHistoryRow,
 } from "./conversation-runtime-state-core.ts";
 import { readExactConversationMemoryCommit } from "./authoritative-commit-readback.ts";
+import {
+  applyAddressReplacementCorrection,
+  parseAddressReplacementCorrection,
+} from "./commerce-state-reducer.ts";
 
 export const CONVERSATION_MEMORY_VERSION = "conversation-memory-1.0.0" as const;
 export const C3_CONTEXT_INPUT_CHAR_BUDGET = 32_768;
@@ -220,6 +224,7 @@ function retainedCustomerFacts(rows: MemoryHistoryRow[]): {
   const superseded: ConversationMemoryFact[] = [];
   const add = (target: ConversationMemoryFact[], key: string, value: unknown, row: MemoryHistoryRow, entity_id?: string | null, region?: string | null) =>
     target.push({ key, value, authority: target === historical ? "historical" : "customer", source_message_id: clean(row.id, 80) || null, entity_id: entity_id ?? null, region: region ?? null });
+  let currentAddress: ConversationMemoryFact | null = null;
 
   for (const row of [...rows].reverse()) {
     if (!CUSTOMER_ROLES.has(String(row.role ?? "").toLowerCase())) continue;
@@ -237,10 +242,35 @@ function retainedCustomerFacts(rows: MemoryHistoryRow[]): {
     }
     const cancelled = text.match(/([^，。,.!?！？]{1,30}?)(?:那部|嗰部|那個|那个)?\s*(?:暫時|暂时)?\s*(?:取消|唔要|不要)/i);
     if (cancelled?.[1]) add(superseded, "cancelled item", cancelled[1].replace(/^(?:更正|correction)[:：]?\s*/i, "").trim(), row);
-    const correctedAddress = text.match(/(?:不是|唔係)\s*[^，,。]{1,60}[，,]\s*(?:而)?(?:是|係)\s*([^。!?！？]{2,180})/i)
-      ?? text.match(/(?:更正|改為|改为|改成)\s*(?:地址)?\s*(?:為|为|是|係|=|:|：)?\s*([^。!?！？]{3,180})/i);
-    const address = correctedAddress?.[1] ?? text.match(/(?:送貨地址|送货地址|地址)\s*(?:是|係|為|为|=|:|：)?\s*([^。!?！？]{3,180})/i)?.[1];
-    if (address) add(current, correctedAddress ? "corrected_delivery_address" : "delivery_address", address.trim(), row);
+    const addressCorrection = parseAddressReplacementCorrection(text);
+    const statedAddress = text.match(/(?:送貨地址|送货地址|地址)\s*(?:是|係|為|为|=|:|：)?\s*([^。!?！？]{3,180})/i)?.[1];
+    const address: string = addressCorrection
+      ? applyAddressReplacementCorrection(
+        typeof currentAddress?.value === "string" ? currentAddress.value : null,
+        addressCorrection,
+      )
+      : clean(statedAddress, 180);
+    if (address) {
+      if (currentAddress && currentAddress.value !== address) {
+        superseded.push({
+          ...currentAddress,
+          key: "superseded_delivery_address",
+        });
+        const index = current.indexOf(currentAddress);
+        if (index >= 0) current.splice(index, 1);
+      }
+      currentAddress = {
+        key: addressCorrection
+          ? "corrected_delivery_address"
+          : "delivery_address",
+        value: address,
+        authority: "customer",
+        source_message_id: clean(row.id, 80) || null,
+        entity_id: null,
+        region,
+      };
+      current.push(currentAddress);
+    }
     const roomFacts = retainedRoomSizes(text);
     if (roomFacts.length) add(current, "room_size", roomFacts, row);
     const horsepowerFacts = [...text.matchAll(/([^，,。]{1,16}?(?:房|客廳|客厅|型號|型号|model))\s*(?:要|是|係|為|为)?\s*(\d+(?:\.\d+)?)\s*匹/gi)].map((m) => `${m[1].trim()} ${m[2]}匹`);
@@ -412,6 +442,53 @@ export function buildCanonicalConversationMemory(args: {
   ].filter((item, index, all) => all.findIndex((x) => x.region === item.region && x.temporal_scope === item.temporal_scope) === index)
     .slice(0, MAX_REGIONS);
   const currentRegions = retainedRegions.length ? retainedRegions : runtimeRegions;
+  const addressKeys = new Set([
+    "address",
+    "delivery_address",
+    "shipping_address",
+    "corrected_delivery_address",
+  ]);
+  const commerceAddress = clean(args.commerce_state?.delivery.address, 300);
+  const retainedAddress = [...retained.current].reverse().find((fact) =>
+    addressKeys.has(clean(fact.key, 120)) && typeof fact.value === "string"
+  );
+  // Customer correction history is the source of truth when it contains a
+  // newer scoped replacement. The commerce reducer should converge to the same
+  // value, but a stale projection must never overwrite the correction while
+  // memory is being rebuilt.
+  const retainedAddressValue = clean(retainedAddress?.value, 300);
+  const commerceCoversRetainedCorrection = Boolean(
+    retainedAddressValue && commerceAddress &&
+      commerceAddress.toLocaleLowerCase().includes(
+        retainedAddressValue.toLocaleLowerCase(),
+      ),
+  );
+  const currentAddress = commerceCoversRetainedCorrection
+    ? commerceAddress
+    : retainedAddressValue || commerceAddress;
+  const priorAddressFacts = (prior?.current_customer_facts ?? []).filter((fact) =>
+    addressKeys.has(clean(fact.key, 120))
+  );
+  const currentAddressFact: ConversationMemoryFact | null = currentAddress
+    ? {
+      key: retainedAddressValue && retainedAddress
+        ? retainedAddress.key
+        : "delivery_address",
+      value: currentAddress,
+      authority: retainedAddressValue && !commerceCoversRetainedCorrection
+        ? "customer"
+        : "canonical_commerce",
+      source_message_id: retainedAddressValue && !commerceCoversRetainedCorrection
+        ? retainedAddress?.source_message_id ?? null
+        : clean(args.commerce_state?.delivery.provenance?.source_message_id, 80) ||
+          null,
+      entity_id: null,
+      region: retainedAddress?.region ?? null,
+    }
+    : null;
+  const supersededPriorAddresses = priorAddressFacts
+    .filter((fact) => clean(fact.value, 300) && clean(fact.value, 300) !== currentAddress)
+    .map((fact) => ({ ...fact, key: "superseded_delivery_address" }));
   const requirementFacts: ConversationMemoryFact[] = Object.entries(runtime.current_requirements)
     .filter(([, value]) => value !== null && (!Array.isArray(value) || value.length > 0))
     .map(([key, value]) => ({ key, value, authority: "customer", source_message_id: args.source_message_id }));
@@ -430,9 +507,14 @@ export function buildCanonicalConversationMemory(args: {
       ...(prior?.latest_corrections ?? []),
     ], MAX_CORRECTIONS),
     current_customer_facts: stableFacts([
-      ...(prior?.current_customer_facts ?? []),
+      ...(prior?.current_customer_facts ?? []).filter((fact) =>
+        !addressKeys.has(clean(fact.key, 120))
+      ),
       ...requirementFacts,
-      ...retained.current,
+      ...retained.current.filter((fact) =>
+        !addressKeys.has(clean(fact.key, 120))
+      ),
+      ...(currentAddressFact ? [currentAddressFact] : []),
     ], MAX_FACTS),
     customer_preferences: uniqueStrings([
       ...customerPreferences(args.newest_first),
@@ -446,7 +528,12 @@ export function buildCanonicalConversationMemory(args: {
     current_regions: currentRegions.length ? currentRegions : (prior?.current_regions ?? []).slice(0, MAX_REGIONS),
     transaction_summary: commerce.transaction_summary,
     historical_facts: stableFacts([...(prior?.historical_facts ?? []), ...commerce.historical_facts, ...retained.historical], MAX_HISTORY),
-    cancelled_or_superseded: stableFacts([...(prior?.cancelled_or_superseded ?? []), ...commerce.cancelled_or_superseded, ...retained.superseded], MAX_HISTORY),
+    cancelled_or_superseded: stableFacts([
+      ...(prior?.cancelled_or_superseded ?? []),
+      ...supersededPriorAddresses,
+      ...commerce.cancelled_or_superseded,
+      ...retained.superseded,
+    ], MAX_HISTORY),
     open_questions: uniqueStrings([...runtime.unresolved_questions, ...(args.commerce_state?.unresolved_items ?? [])], MAX_OPEN),
     pending_actions: commerce.pending_actions,
     prior_topics: uniqueStrings([...runtime.prior_topics.slice().reverse(), ...(prior?.prior_topics ?? [])], MAX_TOPICS).reverse(),

@@ -359,6 +359,32 @@ Deno.test("B2 blocks a superseded address and fails closed on unresolved address
   );
 });
 
+Deno.test("B2 exact T040 correction is resolved from authoritative state and commits once", async () => {
+  const state = stateFixture();
+  state.delivery.address = "長沙灣幸福邨B座12樓";
+  state.delivery.provenance = {
+    source_type: "customer",
+    source_message_id: SOURCE_ID,
+  };
+  state.latest_corrections = ["唔係A座，係B座，我打錯。"];
+  let commits = 0;
+  const result = await executeB2PersistenceGate({
+    client: new MockClient({ state, revision: 40 }),
+    conversation_id: CONVERSATION_ID,
+    source_message_id: SOURCE_ID,
+    proposed_response: "你最新送貨地址係長沙灣幸福邨B座12樓。",
+    persistence_kind: "ai_reply",
+    expected_commerce_state_revision: 40,
+    commit: async () => {
+      commits += 1;
+      return { result: "success" };
+    },
+  });
+  assert(result.committed, JSON.stringify(result));
+  assertEquals(result.decision.decision, "allow", "T040 B2 decision");
+  assertEquals(commits, 1, "T040 commit count");
+});
+
 Deno.test("B2 unresolved correction is fail-closed only for commerce-touching drafts", () => {
   const state = stateFixture();
   state.latest_corrections = ["記住我最新嗰個更正"];

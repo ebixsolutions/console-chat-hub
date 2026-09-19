@@ -354,12 +354,18 @@ export function parseAddressReplacementCorrection(
 ): { previous: string | null; current: string } | null {
   const text = clean(value, 500);
   const trimPart = (part: string) =>
-    clean(part, 180).replace(/^[,，:：;；\s]+|[,，。.!！?？;；\s]+$/g, "");
+    clean(part, 180)
+      .replace(/^[,，:：;；\s]+|[,，。.!！?？;；\s]+$/g, "")
+      .replace(
+        /[,，;；]?\s*(?:我(?:打|講|说|寫|写)錯(?:咗|左|了)?|係我錯|是我錯|是我错|i\s+(?:was|am)\s+wrong|my\s+mistake|sorry)\s*$/i,
+        "",
+      )
+      .replace(/[,，。.!！?？;；\s]+$/g, "");
   const addressContext = /(?:地址|送貨地址|送货地址|收貨地址|收货地址|送貨地點|送货地点|delivery address|delivery location)/i;
   const addressValue = /(?:邨|村|苑|座|樓|楼|層|层|室|街|道|路|號|号|大廈|大厦|中心|building|block|floor|room|road|street|avenue)/i;
 
   const paired = text.match(
-    /^(?:(?:地址|送貨地址|送货地址|收貨地址|收货地址|delivery address)\s*)?(?:唔係|唔系|不是|不係)\s*(.+?)\s*(?:而係|而系|而是)\s*(.+)$/i,
+    /^(?:(?:更正|修正|correction)\s*)?(?:(?:地址|送貨地址|送货地址|收貨地址|收货地址|delivery address)\s*[:：,，]?\s*)?(?:唔係|唔系|不是|不係|not)\s*(.+?)\s*[,，;；]?\s*(?:而)?(?:係|系|是|but\s+(?:it\s+is\s+)?|instead\s+it\s+is\s+)\s*(.+)$/i,
   );
   if (paired) {
     const previous = trimPart(paired[1] ?? "");
@@ -396,6 +402,36 @@ export function parseAddressReplacementCorrection(
   const fieldCurrent = trimPart(fieldFirst?.[1] ?? "");
   if (fieldCurrent) return { previous: null, current: fieldCurrent };
   return null;
+}
+
+/**
+ * Applies a scoped address correction without discarding unaffected address
+ * components. Overlap removal prevents `A座12樓 -> B座12樓12樓` when the
+ * customer repeats a suffix already present in the durable address.
+ */
+export function applyAddressReplacementCorrection(
+  previousAddress: string | null | undefined,
+  correction: { previous: string | null; current: string },
+): string {
+  const prior = clean(previousAddress, 300);
+  const oldPart = clean(correction.previous, 180);
+  const current = clean(correction.current, 180);
+  if (!prior || !oldPart) return current;
+  const index = prior.toLocaleLowerCase().indexOf(oldPart.toLocaleLowerCase());
+  if (index < 0) return current;
+  const prefix = prior.slice(0, index);
+  let suffix = prior.slice(index + oldPart.length);
+  const maxOverlap = Math.min(current.length, suffix.length);
+  for (let size = maxOverlap; size > 0; size -= 1) {
+    if (
+      current.slice(-size).toLocaleLowerCase() ===
+        suffix.slice(0, size).toLocaleLowerCase()
+    ) {
+      suffix = suffix.slice(size);
+      break;
+    }
+  }
+  return clean(`${prefix}${current}${suffix}`, 300);
 }
 
 function explicitDeliveryPatch(text: string): Partial<ConversationCommerceState["delivery"]> | null {
