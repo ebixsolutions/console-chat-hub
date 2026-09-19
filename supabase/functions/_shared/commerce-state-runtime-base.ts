@@ -25,6 +25,7 @@ import {
   type CommerceStateEvent,
   type CommerceTurnEntityHint,
   deriveCommerceEventsFromCustomerTurn,
+  parseAddressReplacementCorrection,
   reduceCommerceState,
 } from "./commerce-state-reducer.ts";
 import {
@@ -93,6 +94,43 @@ export interface CommerceRuntimeOutcome {
   state_path?: string | null;
   calculation?: { expression: string; result: number; currency?: string | null } | null;
   route: "commerce_state_answer" | "commerce_transaction_summary" | "commerce_kb_required";
+}
+
+export interface CommittedAddressCorrectionResolution {
+  status: "RESOLVED";
+  operation: "FULL_REPLACE" | "SCOPED_COMPONENT_UPDATE";
+  address: string;
+  source_message_id: string;
+  reply: string;
+  reason: "authoritative_address_correction_resolved";
+}
+
+export interface CommittedAddressCorrectionEvidence {
+  text: string;
+  source_message_id: string;
+  language: CommerceLanguage;
+  memory: {
+    source_message_id: string;
+    commerce_state_revision: number | null;
+    current_customer_facts: Array<{
+      key: string;
+      value: unknown;
+      authority: string;
+      source_message_id?: string | null;
+    }>;
+    cancelled_or_superseded: Array<{
+      key: string;
+      value: unknown;
+      source_message_id?: string | null;
+    }>;
+    latest_corrections: string[];
+    open_questions: string[];
+  } | null;
+  commerce: {
+    source_message_id: string;
+    revision: number;
+    state: ConversationCommerceState;
+  } | null;
 }
 
 const COMMERCE_STATE_RPC = "upsert_conversation_commerce_state_v1" as const;
@@ -188,8 +226,13 @@ function hintsMentionedInTurn(text: string, hints: CommerceTurnEntityHint[]): Co
         return normalized.length >= 2 && lower.includes(normalized);
       });
     }
-    if (!categories.includes(hint.category)) return false;
     const [, roomKey] = hint.entity_id.split(":");
+    if (!categories.includes(hint.category)) {
+      // A scoped follow-up can refer to an already-known commerce entity by
+      // room alone (for example, cancelling "the living-room one").
+      return rooms.length > 0 && roomKey !== "unscoped" &&
+        rooms.some((room) => room.key === roomKey);
+    }
     if (!rooms.length) return true;
     if (roomKey === "unscoped") return false;
     return rooms.some((room) => room.key === roomKey) || Boolean(lower) === false;
@@ -240,6 +283,41 @@ function parseCount(text: string): number | null {
   );
   if (!m?.[1]) return null;
   return countTokenValue(m[1]);
+}
+
+function isAllocationBreakdown(text: string): boolean {
+  const matches = clean(text).match(
+    /(?:[一二兩两三四五六七八九十]|\d{1,4})\s*(?:部|台|件|個|个|套|units?|items?)/gi,
+  );
+  return (matches?.length ?? 0) > 1;
+}
+
+/**
+ * A room counter is not itself a product-unit counter.  For room-scoped
+ * appliances, however, an explicit allocation such as "two rooms plus a
+ * living room" is authoritative evidence for the requested aggregate.  Keep
+ * this separate from parseCount so isolated room sizes/counts never become a
+ * product quantity, and require both a recognised commerce category and at
+ * least one explicitly counted room group.
+ */
+export function parseSpaceScopedCommerceQuantity(text: string): number | null {
+  const t = clean(text);
+  if (!t || detectCategories(t).length === 0) return null;
+
+  const countedRoom = t.match(
+    /([一二兩两三四五六七八九十]|\d{1,2})\s*(?:間|间)\s*(?:睡房|臥室|卧室|房間|房间|客房|房)/i,
+  );
+  const base = countedRoom?.[1] ? countTokenValue(countedRoom[1]) : null;
+  if (base === null || base < 1) return null;
+
+  const remainder = t.slice((countedRoom?.index ?? 0) + countedRoom![0].length);
+  const additionalSpaces = [
+    /(?:一\s*(?:個|个|間|间)|(?:個|个))?\s*(?:客廳|客厅|廳|厅)/i,
+    /(?:一\s*(?:個|个|間|间)|(?:個|个))?\s*(?:廚房|厨房)/i,
+    /(?:an?\s+)?(?:living\s+room|lounge|kitchen)/i,
+  ].reduce((sum, pattern) => sum + (pattern.test(remainder) ? 1 : 0), 0);
+
+  return additionalSpaces > 0 ? base + additionalSpaces : null;
 }
 
 function detectCancellation(text: string): boolean {
@@ -448,14 +526,44 @@ function deriveA3RuntimeEvents(
     recorded_at: input.occurred_at ?? null,
   };
   const mentioned = hintsMentionedInTurn(text, hints);
-  const quantity = parseCount(text);
+  const quantity = parseSpaceScopedCommerceQuantity(text) ?? parseCount(text);
   const cancelled = detectCancellation(text);
   const deferred = detectDeferral(text);
+  const semanticAuthoritative = Boolean(
+    input.semantic_frame && input.semantic_frame.confidence >= 0.72,
+  );
+  const activeAggregates = previous.entities.filter((entity) =>
+    entity.entity_id.endsWith(":unscoped") &&
+    entity.status !== "cancelled" && entity.status !== "deferred"
+  );
   const additive = detectAdditiveEntityCreationSignal(text);
   const explicitCreation = detectExplicitEntityCreationSignal(text);
   const correction = detectQuantityCorrectionSignal(text);
+  const allocationBreakdown = correction && isAllocationBreakdown(text);
+  const addressCorrection = parseAddressReplacementCorrection(text);
 
-  if (correction && quantity !== null && mentioned.length === 0) {
+  // The semantic adapter owns entity mutation when its frame is authoritative,
+  // but B2 still needs the customer's exact correction ledger. Record explicit
+  // quantity corrections here so a later, superseded tentative statement cannot
+  // remain the apparent "latest" correction merely because semantic extraction
+  // handled the entity updates.
+  if (correction || addressCorrection) {
+    events.push({ type: "ADD_CORRECTION", correction: text });
+  }
+
+  if (addressCorrection) {
+    events.push({
+      type: "SET_DELIVERY",
+      patch: {},
+      address_update: addressCorrection,
+      provenance,
+    });
+  }
+
+  if (
+    correction && !allocationBreakdown && quantity !== null &&
+    mentioned.length === 0
+  ) {
     const active = previous.entities.filter(
       (entity) => entity.status !== "cancelled" && entity.status !== "deferred",
     );
@@ -485,12 +593,64 @@ function deriveA3RuntimeEvents(
   }
 
   for (const hint of mentioned) {
+    const existing = previous.entities.find((entity) =>
+      entity.entity_id === hint.entity_id
+    );
+    const aggregate = previous.entities.find((entity) =>
+      entity.category === hint.category &&
+      entity.entity_id.endsWith(":unscoped") &&
+      entity.status !== "cancelled" && entity.status !== "deferred"
+    );
+    const scopedEntity = hint.entity_id.startsWith(`${hint.category}:`) &&
+      !hint.entity_id.endsWith(":unscoped");
+    const canMaterializeSemanticScope = semanticAuthoritative && !existing &&
+      scopedEntity && activeAggregates.length === 1 &&
+      activeAggregates[0].category === hint.category;
+
+    if ((cancelled || deferred) && canMaterializeSemanticScope) {
+      events.push({
+        type: "ENSURE_ENTITY",
+        entity: {
+          entity_id: hint.entity_id,
+          category: hint.category,
+          brand: hint.brand ?? null,
+          model: hint.model ?? null,
+          quantity: hint.quantity ?? 1,
+          status: "tentative",
+          attributes: { ...(hint.attributes ?? {}) },
+          constraints: { ...(hint.constraints ?? {}) },
+          provenance,
+        },
+      });
+    }
+
     if (cancelled) {
+      // A semantic-authoritative mutation may only target a durable entity or
+      // the uniquely materialized scoped entity above. Ambiguous references
+      // stay read-only so downstream clarification remains fail-closed.
+      if (semanticAuthoritative && !existing && !canMaterializeSemanticScope) continue;
       events.push({ type: "SET_ENTITY_STATUS", entity_id: hint.entity_id, status: "cancelled", provenance });
+      if (!existing && aggregate && aggregate.quantity > 0) {
+        events.push({
+          type: "SET_ENTITY_QUANTITY",
+          entity_id: aggregate.entity_id,
+          quantity: Math.max(0, aggregate.quantity - (hint.quantity ?? 1)),
+          provenance,
+        });
+      }
       continue;
     }
     if (deferred) {
+      if (semanticAuthoritative && !existing && !canMaterializeSemanticScope) continue;
       events.push({ type: "SET_ENTITY_STATUS", entity_id: hint.entity_id, status: "deferred", provenance });
+      if (!existing && aggregate && aggregate.quantity > 0) {
+        events.push({
+          type: "SET_ENTITY_QUANTITY",
+          entity_id: aggregate.entity_id,
+          quantity: Math.max(0, aggregate.quantity - (hint.quantity ?? 1)),
+          provenance,
+        });
+      }
       continue;
     }
     if (quantity !== null && (additive || mentioned.length === 1)) {
@@ -582,13 +742,75 @@ export function filterGhostUnscopedHints(
   });
 }
 
+function materializeRoomOnlyReferenceHints(
+  text: string,
+  state: ConversationCommerceState,
+  hints: CommerceTurnEntityHint[],
+): CommerceTurnEntityHint[] {
+  const rooms = detectRooms(text);
+  if (
+    rooms.length === 0 || detectCategories(text).length > 0 ||
+    (!detectCancellation(text) && !detectDeferral(text))
+  ) return hints;
+
+  const aggregateCategories = [...new Set(
+    state.entities.filter((entity) =>
+      entity.entity_id.endsWith(":unscoped") &&
+      entity.status !== "cancelled" && entity.status !== "deferred"
+    ).map((entity) => entity.category),
+  )];
+  // A room-only reference is resolvable only when the current state supplies
+  // one authoritative aggregate category. Multiple active categories remain
+  // ambiguous and must not be guessed here.
+  if (aggregateCategories.length !== 1) return hints;
+
+  const category = aggregateCategories[0];
+  const canonicalEntityIds = new Set(rooms.map((room) => `${category}:${room.key}`));
+  const roomAliases = rooms.flatMap((room) => room.aliases)
+    .map((alias) => clean(alias, 80).toLowerCase())
+    .filter(Boolean);
+  // A semantic frame can describe the same scoped phrase with a generated
+  // entity id (for example, generic:<room phrase>). Once the aggregate and
+  // room make the reference deterministic, discard that non-persisted shadow
+  // before events are built; otherwise it can fail mutation before the
+  // canonical scoped entity is materialized and leave reply routing unaware
+  // that the requested action was successfully resolved.
+  const next = new Map(hints.filter((hint) => {
+    if (hint.category !== category || canonicalEntityIds.has(hint.entity_id)) return true;
+    if (state.entities.some((entity) => entity.entity_id === hint.entity_id)) return true;
+    return !(hint.aliases ?? []).some((alias) => {
+      const normalized = clean(alias, 80).toLowerCase();
+      return normalized && roomAliases.some((roomAlias) =>
+        normalized.includes(roomAlias) || roomAlias.includes(normalized)
+      );
+    });
+  }).map((hint) => [hint.entity_id, hint]));
+  for (const room of rooms) {
+    const entity_id = `${category}:${room.key}`;
+    if (!next.has(entity_id)) {
+      next.set(entity_id, {
+        entity_id,
+        category,
+        quantity: 1,
+        aliases: [...room.aliases],
+      });
+    }
+  }
+  return [...next.values()];
+}
+
 export function reduceTurn(
   previous: ConversationCommerceState,
   input: CommerceRuntimeInput,
   rawHints: CommerceTurnEntityHint[],
 ): ConversationCommerceState {
   const calculationTurn = detectExplicitCalculationRequest(input.text);
-  const hints = calculationTurn ? [] : filterGhostUnscopedHints(input.text, previous, rawHints);
+  const resolvedHints = calculationTurn
+    ? []
+    : materializeRoomOnlyReferenceHints(input.text, previous, rawHints);
+  const hints = calculationTurn
+    ? []
+    : filterGhostUnscopedHints(input.text, previous, resolvedHints);
   const mentioned = calculationTurn ? [] : hintsMentionedInTurn(input.text, hints);
   const bookingWithoutDelivery = mentioned.some(hintRequiresBookingWithoutDelivery);
   const semanticAuthoritative = !calculationTurn && Boolean(input.semantic_frame && input.semantic_frame.confidence >= 0.72);
@@ -598,16 +820,29 @@ export function reduceTurn(
   const semanticEvents = bookingWithoutDelivery
     ? semanticEventsRaw.filter((event) => event.type !== "SET_DELIVERY")
     : semanticEventsRaw;
-  const derivedRaw = calculationTurn || semanticAuthoritative ? [] : deriveCommerceEventsFromCustomerTurn({
+  const deterministicEvents = calculationTurn ? [] : deriveCommerceEventsFromCustomerTurn({
     text: input.text,
     source_message_id: input.source_message_id,
     occurred_at: input.occurred_at ?? null,
     entity_hints: hints,
     current_language: input.language,
   });
-  const derived = bookingWithoutDelivery
-    ? derivedRaw.filter((event) => event.type !== "SET_DELIVERY")
+  // Semantic interpretation owns entity mutations, but it has no address
+  // component contract. Keep deterministic delivery events so a complete
+  // address is present before a later scoped correction is merged.
+  const derivedRaw = semanticAuthoritative
+    ? deterministicEvents.filter((event) => event.type === "SET_DELIVERY")
+    : deterministicEvents;
+  const allocationBreakdown = detectQuantityCorrectionSignal(input.text) &&
+    isAllocationBreakdown(input.text);
+  const derivedWithoutAllocationOverwrite = allocationBreakdown
+    ? derivedRaw.filter((event) => event.type !== "SET_ENTITY_QUANTITY")
     : derivedRaw;
+  const derived = bookingWithoutDelivery
+    ? derivedWithoutAllocationOverwrite.filter((event) =>
+      event.type !== "SET_DELIVERY"
+    )
+    : derivedWithoutAllocationOverwrite;
   const runtimeEvents = calculationTurn ? [] : deriveA3RuntimeEvents(input, hints, previous);
   const industryEvent: CommerceStateEvent[] = input.industry_identifier
     ? [{ type: "SET_CONTEXT", language: input.language, industry: input.industry_identifier }]
@@ -628,10 +863,11 @@ export async function persistCommerceTurn(
   db: CommerceStateDbClient,
   input: CommerceRuntimeInput,
   hints: CommerceTurnEntityHint[],
-): Promise<{ state: ConversationCommerceState; revision: number; result: string }> {
+): Promise<{ previous_state: ConversationCommerceState; state: ConversationCommerceState; revision: number; result: string }> {
   const loaded = await loadCommerceState(db, input.conversation_id);
   let expected = loaded.revision;
-  let next = reduceTurn(loaded.state, input, hints);
+  let previous = loaded.state;
+  let next = reduceTurn(previous, input, hints);
 
   for (let attempt = 0; attempt < 2; attempt++) {
     const { data, error } = await db.rpc(COMMERCE_STATE_RPC, {
@@ -641,18 +877,19 @@ export async function persistCommerceTurn(
       p_source_message_id: input.source_message_id,
       p_state: next,
     });
-    if (error) return { state: next, revision: expected, result: "rpc_transport_error" };
+    if (error) return { previous_state: previous, state: next, revision: expected, result: "rpc_transport_error" };
     const parsed = rpcResult(data);
-    if (parsed.result === "success") return { state: next, revision: parsed.applied_revision ?? expected + 1, result: "success" };
+    if (parsed.result === "success") return { previous_state: previous, state: next, revision: parsed.applied_revision ?? expected + 1, result: "success" };
     if (parsed.result === "revision_conflict" && attempt === 0) {
       const reloaded = await loadCommerceState(db, input.conversation_id);
       expected = reloaded.revision;
-      next = reduceTurn(reloaded.state, input, hints);
+      previous = reloaded.state;
+      next = reduceTurn(previous, input, hints);
       continue;
     }
-    return { state: next, revision: expected, result: parsed.result };
+    return { previous_state: previous, state: next, revision: expected, result: parsed.result };
   }
-  return { state: next, revision: expected, result: "revision_conflict" };
+  return { previous_state: previous, state: next, revision: expected, result: "revision_conflict" };
 }
 
 function statusLabel(status: string, language: CommerceLanguage): string {
@@ -731,6 +968,139 @@ function buildKnownStateAnswer(language: CommerceLanguage, statePath: string, va
   if (language === "en") return `From what you already told me: ${rendered}.`;
   if (language === "zh-CN") return `按你之前提供的资料：${rendered}。`;
   return `按你之前提供嘅資料：${rendered}。`;
+}
+
+function buildResolvedEntityStatusChangeAnswer(input: CommerceRuntimeInput, state: ConversationCommerceState): string | null {
+  if (!detectCancellation(input.text) && !detectDeferral(input.text)) return null;
+  const changed = state.entities.filter((entity) =>
+    ["cancelled", "deferred"].includes(entity.status) &&
+    entity.provenance.source_message_id === input.source_message_id
+  );
+  // Only this turn's uniquely resolved entity may bypass clarification.
+  if (changed.length !== 1) return null;
+  const entity = changed[0];
+  const activeQuantity = state.entities.filter((candidate) =>
+    candidate.category === entity.category &&
+    !["cancelled", "deferred"].includes(candidate.status)
+  ).reduce((total, candidate) => total + candidate.quantity, 0);
+  const label = entityLabel(entity.entity_id, input.language);
+  const status = statusLabel(entity.status, input.language);
+  if (input.language === "en") return `${label} is ${status}. The current active quantity is ${activeQuantity}.`;
+  if (input.language === "zh-CN") return `${label}${status}；目前有效数量为 ${activeQuantity} 部。`;
+  return `${label}${status}；而家有效數量係 ${activeQuantity} 部。`;
+}
+
+export function buildResolvedAddressCorrectionAnswer(
+  input: CommerceRuntimeInput,
+  previous: ConversationCommerceState,
+  state: ConversationCommerceState,
+): string | null {
+  const correction = parseAddressReplacementCorrection(input.text);
+  if (!correction || input.semantic_frame?.ambiguity.is_ambiguous === true) return null;
+  const address = clean(state.delivery.address, 300);
+  if (!address || state.delivery.provenance?.source_message_id !== input.source_message_id) return null;
+
+  if (correction.operation === "SCOPED_COMPONENT_UPDATE") {
+    const prior = clean(previous.delivery.address, 300);
+    const previousComponent = clean(correction.previous, 180);
+    const currentComponent = clean(correction.current, 180);
+    if (
+      !prior || !previousComponent || !currentComponent ||
+      !prior.toLocaleLowerCase().includes(previousComponent.toLocaleLowerCase()) ||
+      address === currentComponent || address === prior ||
+      !address.toLocaleLowerCase().includes(currentComponent.toLocaleLowerCase())
+    ) return null;
+  } else if (address !== clean(correction.current, 300)) return null;
+
+  if (input.language === "en") return `I've updated the delivery address to ${address}.`;
+  if (input.language === "zh-CN") return `已更新送货地址为${address}。`;
+  return `已更新送貨地址為${address}。`;
+}
+
+/**
+ * Post-commit correction precedence contract.
+ *
+ * A semantic ambiguity bit is pre-commit advisory data. It may not force a
+ * clarification after both canonical stores prove the exact correction was
+ * committed for this source message. Conversely, a reply is only resolved when
+ * memory and commerce independently bind the same complete value/revision and
+ * the previous scoped value is durably superseded.
+ */
+export function resolveCommittedAddressCorrection(
+  input: CommittedAddressCorrectionEvidence,
+): CommittedAddressCorrectionResolution | null {
+  const correction = parseAddressReplacementCorrection(input.text);
+  const memory = input.memory;
+  const commerce = input.commerce;
+  if (!correction || !memory || !commerce) return null;
+  if (
+    memory.source_message_id !== input.source_message_id ||
+    commerce.source_message_id !== input.source_message_id ||
+    memory.commerce_state_revision !== commerce.revision ||
+    memory.open_questions.length > 0 ||
+    commerce.state.unresolved_items.length > 0
+  ) return null;
+
+  const address = clean(commerce.state.delivery.address, 300);
+  if (
+    !address ||
+    commerce.state.delivery.provenance?.source_message_id !==
+      input.source_message_id
+  ) return null;
+  const addressKeys = new Set([
+    "address",
+    "delivery_address",
+    "shipping_address",
+    "corrected_delivery_address",
+  ]);
+  const memoryCurrent = memory.current_customer_facts.find((fact) =>
+    addressKeys.has(clean(fact.key, 120)) &&
+    clean(fact.value, 300) === address &&
+    fact.authority === "canonical_commerce" &&
+    fact.source_message_id === input.source_message_id
+  );
+  if (!memoryCurrent) return null;
+  const correctionLedgerMatches = memory.latest_corrections.some((entry) => {
+    const parsed = parseAddressReplacementCorrection(entry);
+    return Boolean(
+      parsed && parsed.operation === correction.operation &&
+        clean(parsed.previous, 180) === clean(correction.previous, 180) &&
+        clean(parsed.current, 180) === clean(correction.current, 180),
+    );
+  });
+  if (!correctionLedgerMatches) return null;
+
+  const current = clean(correction.current, 180);
+  if (correction.operation === "SCOPED_COMPONENT_UPDATE") {
+    const previous = clean(correction.previous, 180);
+    const superseded = memory.cancelled_or_superseded.some((fact) =>
+      fact.key === "superseded_delivery_address" &&
+      typeof fact.value === "string" &&
+      clean(fact.value, 300).toLocaleLowerCase().includes(
+        previous.toLocaleLowerCase(),
+      ) &&
+      fact.source_message_id !== input.source_message_id
+    );
+    if (
+      !previous || !current || !superseded || address === current ||
+      !address.toLocaleLowerCase().includes(current.toLocaleLowerCase()) ||
+      address.toLocaleLowerCase().includes(previous.toLocaleLowerCase())
+    ) return null;
+  } else if (!current || address !== current) return null;
+
+  const reply = input.language === "en"
+    ? `I've updated the delivery address to ${address}.`
+    : input.language === "zh-CN"
+    ? `已更新送货地址为${address}。`
+    : `已更新送貨地址為${address}。`;
+  return {
+    status: "RESOLVED",
+    operation: correction.operation,
+    address,
+    source_message_id: input.source_message_id,
+    reply,
+    reason: "authoritative_address_correction_resolved",
+  };
 }
 
 function formatCalculationNumber(value: number): string {
@@ -845,6 +1215,32 @@ export async function runCommerceStateRuntime(
   });
 
   const base = { revision: persisted.revision, persist_result: persisted.result, reason: decision.reason };
+
+  const resolvedStatusChangeReply = persisted.result === "success"
+    ? buildResolvedEntityStatusChangeAnswer(runtimeInput, state)
+    : null;
+  if (resolvedStatusChangeReply) {
+    return {
+      ...base,
+      authority: "CONVERSATION_STATE",
+      reason: "explicit_entity_status_change_applied",
+      reply: resolvedStatusChangeReply,
+      route: "commerce_state_answer",
+    };
+  }
+
+  const resolvedAddressCorrectionReply = persisted.result === "success"
+    ? buildResolvedAddressCorrectionAnswer(runtimeInput, persisted.previous_state, state)
+    : null;
+  if (resolvedAddressCorrectionReply) {
+    return {
+      ...base,
+      authority: "CONVERSATION_STATE",
+      reason: "explicit_address_correction_applied",
+      reply: resolvedAddressCorrectionReply,
+      route: "commerce_state_answer",
+    };
+  }
 
   if (decision.authority === "SAFE_PROFESSIONAL_CONFIRMATION") {
     return { ...base, authority: decision.authority, reply: buildProfessionalConfirmationAnswer(language, state), route: "commerce_state_answer" };

@@ -25,7 +25,12 @@ export type CommerceStateEvent =
   | { type: "REMOVE_ENTITY_CONSTRAINT"; entity_id: string; key: string; provenance: CommerceProvenance }
   | { type: "ADD_QUOTE"; quote: CommerceQuote }
   | { type: "SET_QUOTE_VALIDITY"; quote_id: string; validity_status: CommerceQuote["validity_status"] }
-  | { type: "SET_DELIVERY"; patch: Partial<ConversationCommerceState["delivery"]>; provenance: CommerceProvenance }
+  | {
+    type: "SET_DELIVERY";
+    patch: Partial<ConversationCommerceState["delivery"]>;
+    provenance: CommerceProvenance;
+    address_update?: AddressMutation;
+  }
   | { type: "UPSERT_INSTALLATION_ITEM"; item: CommerceInstallationItem }
   | { type: "SET_SITE_CONDITION"; key: string; value: unknown }
   | { type: "SET_PENDING_CHECKS"; checks: string[] }
@@ -59,6 +64,20 @@ export interface CommerceTurnInterpretationInput {
 
 const MAX_CORRECTIONS = 50;
 const MAX_UNRESOLVED = 100;
+
+export type AddressMutation =
+  | {
+    operation: "FULL_REPLACE";
+    previous: null;
+    current: string;
+    preserve_unmentioned_components: false;
+  }
+  | {
+    operation: "SCOPED_COMPONENT_UPDATE";
+    previous: string;
+    current: string;
+    preserve_unmentioned_components: true;
+  };
 
 function clone<T>(value: T): T {
   return structuredClone(value);
@@ -218,7 +237,15 @@ export function reduceCommerceState(
         break;
       }
       case "SET_DELIVERY": {
-        next.delivery = { ...next.delivery, ...clone(event.patch), provenance: clone(event.provenance) };
+        const address = event.address_update
+          ? applyAddressReplacementCorrection(next.delivery.address, event.address_update)
+          : undefined;
+        next.delivery = {
+          ...next.delivery,
+          ...clone(event.patch),
+          ...(address ? { address } : {}),
+          provenance: clone(event.provenance),
+        };
         break;
       }
       case "UPSERT_INSTALLATION_ITEM": {
@@ -349,14 +376,127 @@ function correctionText(text: string): string | null {
   return null;
 }
 
+export function parseAddressReplacementCorrection(
+  value: string,
+): AddressMutation | null {
+  const text = clean(value, 500);
+  const trimPart = (part: string) =>
+    clean(part, 180)
+      .replace(/^[,，:：;；\s]+|[,，。.!！?？;；\s]+$/g, "")
+      .replace(
+        /[,，;；]?\s*(?:我(?:打|講|说|寫|写)錯(?:咗|左|了)?|係我錯|是我錯|是我错|i\s+(?:was|am)\s+wrong|my\s+mistake|sorry)\s*$/i,
+        "",
+      )
+      .replace(/[,，。.!！?？;；\s]+$/g, "");
+  const addressContext = /(?:地址|送貨地址|送货地址|收貨地址|收货地址|送貨地點|送货地点|delivery address|delivery location)/i;
+  const addressValue = /(?:邨|村|苑|座|樓|楼|層|层|室|街|道|路|號|号|大廈|大厦|中心|building|block|floor|room|road|street|avenue)/i;
+
+  const paired = text.match(
+    /^(?:(?:更正|修正|correction)\s*)?(?:(?:地址|送貨地址|送货地址|收貨地址|收货地址|delivery address)\s*[:：,，]?\s*)?(?:唔係|唔系|不是|不係|not)\s*(.+?)\s*[,，;；]?\s*(?:而)?(?:係|系|是|but\s+(?:it\s+is\s+)?|instead\s+it\s+is\s+)\s*(.+)$/i,
+  );
+  if (paired) {
+    const previous = trimPart(paired[1] ?? "");
+    const current = trimPart(paired[2] ?? "");
+    if (
+      previous && current && previous !== current &&
+      (addressContext.test(text) || addressValue.test(previous) || addressValue.test(current))
+    ) {
+      return {
+        operation: "SCOPED_COMPONENT_UPDATE",
+        previous,
+        current,
+        preserve_unmentioned_components: true,
+      };
+    }
+  }
+
+  const fromTo = text.match(
+    /^(?:(?:地址|送貨地址|送货地址|收貨地址|收货地址|送貨地點|送货地点|delivery address|delivery location)\s*)?(?:由|from)\s*(.+?)\s*(?:更正為|更正为|改為|改为|改成|to)\s*(.+)$/i,
+  ) ?? text.match(
+    /^(?:change|correct)\s+(?:(?:the|my)\s+)?(?:address|delivery address|delivery location)\s+from\s+(.+?)\s+to\s+(.+)$/i,
+  );
+  if (fromTo) {
+    const previous = trimPart(fromTo[1] ?? "");
+    const current = trimPart(fromTo[2] ?? "");
+    if (previous && current && previous !== current) {
+      return {
+        operation: "SCOPED_COMPONENT_UPDATE",
+        previous,
+        current,
+        preserve_unmentioned_components: true,
+      };
+    }
+  }
+
+  const replacement = text.match(
+    /^(?:更正|改(?:為|为|成|做|返)?|變成|变成|change(?:\s+it)?\s+to|make\s+it)\s*(?:(?:地址|送貨地址|送货地址|收貨地址|收货地址|delivery address)\s*)?(?:為|为|是|係|=|:|：)?\s*(.+)$/i,
+  );
+  const current = trimPart(replacement?.[1] ?? "");
+  if (current && (addressContext.test(text) || addressValue.test(current))) {
+    return {
+      operation: "FULL_REPLACE",
+      previous: null,
+      current,
+      preserve_unmentioned_components: false,
+    };
+  }
+  const fieldFirst = text.match(
+    /^(?:地址|送貨地址|送货地址|收貨地址|收货地址|送貨地點|送货地点|delivery address|delivery location)\s*(?:更正為|更正为|改為|改为|改成|改做|change(?:d)?\s+to|correct(?:ed)?\s+to)\s*(.+)$/i,
+  ) ?? text.match(
+    /^(?:change|correct)\s+(?:(?:the|my)\s+)?(?:address|delivery address|delivery location)\s+to\s+(.+)$/i,
+  );
+  const fieldCurrent = trimPart(fieldFirst?.[1] ?? "");
+  if (fieldCurrent) {
+    return {
+      operation: "FULL_REPLACE",
+      previous: null,
+      current: fieldCurrent,
+      preserve_unmentioned_components: false,
+    };
+  }
+  return null;
+}
+
+/**
+ * Applies a scoped address correction without discarding unaffected address
+ * components. Overlap removal prevents `A座12樓 -> B座12樓12樓` when the
+ * customer repeats a suffix already present in the durable address.
+ */
+export function applyAddressReplacementCorrection(
+  previousAddress: string | null | undefined,
+  correction: AddressMutation,
+): string {
+  const prior = clean(previousAddress, 300);
+  const oldPart = clean(correction.previous, 180);
+  const current = clean(correction.current, 180);
+  if (correction.operation === "FULL_REPLACE") return current;
+  if (!prior || !oldPart) return prior;
+  const index = prior.toLocaleLowerCase().indexOf(oldPart.toLocaleLowerCase());
+  if (index < 0) return prior;
+  const prefix = prior.slice(0, index);
+  let suffix = prior.slice(index + oldPart.length);
+  const maxOverlap = Math.min(current.length, suffix.length);
+  for (let size = maxOverlap; size > 0; size -= 1) {
+    if (
+      current.slice(-size).toLocaleLowerCase() ===
+        suffix.slice(0, size).toLocaleLowerCase()
+    ) {
+      suffix = suffix.slice(size);
+      break;
+    }
+  }
+  return clean(`${prefix}${current}${suffix}`, 300);
+}
+
 function explicitDeliveryPatch(text: string): Partial<ConversationCommerceState["delivery"]> | null {
   const patch: Partial<ConversationCommerceState["delivery"]> = {};
   const phone = text.match(/(?:電話|电话|phone|contact)\s*(?:係|是|=|:|：)?\s*([+\d][\d\s-]{6,20})/i);
   if (phone?.[1]) patch.recipient_phone = phone[1].replace(/\s+/g, " ").trim();
   const recipient = text.match(/(?:收貨人|收货人|recipient)\s*(?:係|是|=|:|：)?\s*([^，。,.!?！？]{1,40})/i);
   if (recipient?.[1]) patch.recipient_name = recipient[1].trim();
+  const replacement = parseAddressReplacementCorrection(text);
   const address = text.match(/(?:地址|送貨地址|送货地址|delivery address)\s*(?:係|是|=|:|：)?\s*([^。!?！？]{3,180})/i);
-  if (address?.[1]) patch.address = address[1].trim();
+  if (!replacement && address?.[1]) patch.address = address[1].trim();
   const date = text.match(/(?:送貨|送货|delivery|deliver|appointment|預約|预约).{0,20}(星期[一二三四五六日天]|週[一二三四五六日天]|周[一二三四五六日天]|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d{4}-\d{2}-\d{2})/i);
   if (date?.[1]) patch.preferred_date = date[1];
   return Object.keys(patch).length ? patch : null;
@@ -407,6 +547,15 @@ export function deriveCommerceEventsFromCustomerTurn(input: CommerceTurnInterpre
 
   const delivery = explicitDeliveryPatch(text);
   if (delivery) events.push({ type: "SET_DELIVERY", patch: delivery, provenance: p });
+  const addressUpdate = parseAddressReplacementCorrection(text);
+  if (addressUpdate) {
+    events.push({
+      type: "SET_DELIVERY",
+      patch: {},
+      address_update: addressUpdate,
+      provenance: p,
+    });
+  }
 
   const conversion = detectFunnel(text);
   if (conversion) events.push({ type: "SET_CONVERSION", patch: conversion });

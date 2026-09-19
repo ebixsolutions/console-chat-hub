@@ -11,6 +11,8 @@ import {
   type ConversationCommerceState,
   createEmptyConversationCommerceState,
 } from "./commerce-state-contract.ts";
+import { classifyHandoffIntent } from "./handoff-intent.ts";
+import { classifyConversationTurn } from "./conversation-intelligence.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -260,7 +262,6 @@ Deno.test("B2 known-context discovery covers the full canonical surface", () => 
   ])
     assert(paths.has(expected), `missing known fact ${expected}`);
 });
-
 Deno.test("B2 blocks asking for a known delivery address", () => {
   assertEquals(
     decision("What is your delivery address?").code,
@@ -310,6 +311,80 @@ Deno.test("B2 correction priority blocks a superseded value", () => {
   );
 });
 
+Deno.test("B2 accepts a concrete replacement-only correction", () => {
+  const state = stateFixture();
+  state.latest_corrections = [
+    "等等，我而家可能唔係兩部匹半喎。",
+    "改做一部1匹，一部1.5匹。",
+  ];
+  assertEquals(
+    decision("你而家實際買 2 部冷氣；已取消嗰部不計入數量。", state).decision,
+    "allow",
+    "concrete replacement correction",
+  );
+});
+
+Deno.test("B2 deterministically allows a replacement-only address correction", () => {
+  const state = stateFixture();
+  state.delivery.address = "幸福邨B座12樓";
+  state.latest_corrections = ["更正為幸福邨B座12樓。"];
+  assertEquals(
+    decision("最新地址是幸福邨B座12樓。", state).decision,
+    "allow",
+    "address replacement correction",
+  );
+  state.delivery.address = "九龍彌敦道100號";
+  state.latest_corrections = ["送貨地點改為九龍彌敦道100號。"];
+  assertEquals(
+    decision("送貨地點是九龍彌敦道100號。", state).decision,
+    "allow",
+    "location replacement correction",
+  );
+});
+
+Deno.test("B2 blocks a superseded address and fails closed on unresolved address correction", () => {
+  const state = stateFixture();
+  state.delivery.address = "幸福邨B座12樓";
+  state.latest_corrections = ["地址唔係幸福邨A座12樓，而係幸福邨B座12樓。"];
+  assertEquals(
+    decision("最新地址是幸福邨A座12樓。", state).code,
+    "SUPERSEDED_VALUE_REUSED",
+    "superseded address",
+  );
+  state.latest_corrections = ["更正地址。"];
+  assertEquals(
+    decision("最新地址是幸福邨B座12樓。", state).decision,
+    "indeterminate",
+    "unresolved address correction",
+  );
+});
+
+Deno.test("B2 exact T040 correction is resolved from authoritative state and commits once", async () => {
+  const state = stateFixture();
+  state.delivery.address = "長沙灣幸福邨B座12樓";
+  state.delivery.provenance = {
+    source_type: "customer",
+    source_message_id: SOURCE_ID,
+  };
+  state.latest_corrections = ["唔係A座，係B座，我打錯。"];
+  let commits = 0;
+  const result = await executeB2PersistenceGate({
+    client: new MockClient({ state, revision: 40 }),
+    conversation_id: CONVERSATION_ID,
+    source_message_id: SOURCE_ID,
+    proposed_response: "你最新送貨地址係長沙灣幸福邨B座12樓。",
+    persistence_kind: "ai_reply",
+    expected_commerce_state_revision: 40,
+    commit: async () => {
+      commits += 1;
+      return { result: "success" };
+    },
+  });
+  assert(result.committed, JSON.stringify(result));
+  assertEquals(result.decision.decision, "allow", "T040 B2 decision");
+  assertEquals(commits, 1, "T040 commit count");
+});
+
 Deno.test("B2 unresolved correction is fail-closed only for commerce-touching drafts", () => {
   const state = stateFixture();
   state.latest_corrections = ["記住我最新嗰個更正"];
@@ -322,6 +397,16 @@ Deno.test("B2 unresolved correction is fail-closed only for commerce-touching dr
     decision("Thanks for the update.", state).decision,
     "allow",
     "unrelated acknowledgement",
+  );
+  assertEquals(
+    decision("你提供的房間面積是80平方呎和100平方呎。", state).decision,
+    "allow",
+    "bare room measurements are not monetary commerce claims",
+  );
+  assertEquals(
+    decision("The current price is 5000.", state).decision,
+    "indeterminate",
+    "unmarked price remains commerce-touching and fail-closed",
   );
 });
 
@@ -706,4 +791,81 @@ Deno.test("generate-reply wires every customer-visible persistence RPC through B
     const prefix = source.slice(Math.max(0, (match.index ?? 0) - 900), match.index ?? 0);
     assert(prefix.includes("executeB2RpcPersistence"), `${match[1]} bypasses B2`);
   }
+});
+
+Deno.test("C3 explicit human requests bypass canonical clarification and reach governed R1 persistence", async () => {
+  const exactRequests = [
+    "我要真人客服接手處理，而且在問題解決前不要當作已完成。",
+    "請轉交真人並保持未解決狀態。",
+  ];
+  for (const request of exactRequests) {
+    const classified = classifyHandoffIntent(request);
+    assert(classified.explicit_request, `exact handoff request not classified: ${request}`);
+  }
+  assert(
+    classifyHandoffIntent("不要轉真人客服，你直接回答我就好").pure_handoff_negation,
+    "true handoff negation must remain non-escalating",
+  );
+  assert(
+    classifyConversationTurn("我有一個問題").should_clarify_before_kb,
+    "genuine non-handoff ambiguity must still clarify",
+  );
+
+  const source = await Deno.readTextFile(
+    new URL("../generate-reply/index.ts", import.meta.url),
+  );
+  const recall = source.indexOf("const _c3Recall = prepareConversationRecall");
+  const guardedRecallCommit = source.indexOf(
+    "if (_c3PlannedReply && !_explicitHandoffRequested)",
+  );
+  const guardedCommerceCommit = source.indexOf(
+    "if (_c3CommerceReply && !_explicitHandoffRequested)",
+  );
+  const governedR1 = source.indexOf(
+    "const r1Response = await persistExplicitR1IfRequested",
+    guardedRecallCommit,
+  );
+  assert(recall >= 0, "canonical recall path missing");
+  assert(guardedRecallCommit > recall, "canonical reply lacks explicit-handoff precedence guard");
+  assert(guardedCommerceCommit > guardedRecallCommit, "commerce reply lacks explicit-handoff precedence guard");
+  assert(governedR1 > guardedCommerceCommit, "governed R1 persistence is not reachable after guarded shortcuts");
+
+  const r1 = source.indexOf("async function persistExplicitR1IfRequested");
+  const successContract = source.slice(
+    source.indexOf('case "success":', r1),
+    source.indexOf('case "already_resolved":', r1),
+  );
+  for (const marker of [
+    'response_route: "explicit_handoff"',
+    "handoff_required: true",
+    "handoff_persisted: true",
+  ]) assert(successContract.includes(marker), `R1 success contract missing: ${marker}`);
+});
+
+Deno.test("C3 explicit handoff persistence is B2-supervised and source-idempotent", async () => {
+  const persistedSources = new Set<string>();
+  let handoffEvents = 0;
+  const persist = async () => {
+    if (persistedSources.has(SOURCE_ID)) return { result: "already_handled" };
+    persistedSources.add(SOURCE_ID);
+    handoffEvents += 1;
+    return { result: "success" };
+  };
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const result = await executeB2PersistenceGate({
+      client: new MockClient(),
+      conversation_id: CONVERSATION_ID,
+      source_message_id: SOURCE_ID,
+      proposed_response: "我們已將你的對話轉交真人客服。",
+      persistence_kind: "explicit_handoff",
+      metadata: {
+        escalation_rule: "R1",
+        response_route: "explicit_handoff",
+        handoff_required: true,
+      },
+      commit: persist,
+    });
+    assert(result.committed, `governed handoff attempt ${attempt + 1} blocked`);
+  }
+  assertEquals(handoffEvents, 1, "same source must create exactly one handoff event");
 });

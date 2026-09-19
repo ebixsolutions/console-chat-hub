@@ -1,3 +1,21 @@
+import {
+  prepareConversationRecall,
+  type RecallCommerceSnapshot,
+} from "../_shared/conversation-recall.ts";
+import {
+  applyServiceTone,
+  buildServicePlanPromptBlock,
+  planConversationService,
+  renderServicePlanReply,
+  renderServiceRecovery,
+  renderTargetedServiceQuestion,
+  type ServiceDialoguePlan,
+} from "../_shared/conversation-service-planner.ts";
+import {
+  applyServiceRuntimeDerivation,
+  deriveServiceRuntimeInputs,
+} from "../_shared/conversation-service-runtime.ts";
+import { fetchTrustedCustomerContext } from "../_shared/customer360-entitlement-client.ts";
 // B7 generate-reply — L5b orchestration skeleton + Task A.1A Deterministic Handoff Patch
 //
 // Source of truth: Contract 11 §3.1 + Contract 07 + Contract 03 §1.1 + Contract 08
@@ -26,7 +44,13 @@ import {
   type KBResolvedScope,
   resolveKBEndpoint,
   resolveTenantScope,
-} from "../_shared/kb-client.ts";
+} from "../_shared/deterministic-kb-client.ts";
+import {
+  canAnswerBoundedNoCurrentEvidence,
+  classifyCurrentFactEvidence,
+  NO_CURRENT_EVIDENCE_ROUTE,
+  renderBoundedNoCurrentEvidence,
+} from "../_shared/current-fact-evidence.ts";
 import { evaluateEscalationShadow } from "../_shared/escalation-shadow.ts";
 import {
   persistRequiredEscalationClarification,
@@ -51,7 +75,7 @@ import {
   callModel,
   type LlmFailureCode,
   resolveGenerationMaxTokens,
-} from "../_shared/llm-router.ts";
+} from "../_shared/deterministic-runtime-router.ts";
 import {
   buildCustomerAdvisoryContext,
   buildCustomerContextAcknowledgement,
@@ -73,8 +97,8 @@ import {
 } from "../_shared/conversation-runtime-state.ts";
 import { classifyCanonicalConversationTurn } from "../_shared/conversation-semantic-contract.ts";
 import {
-  deriveCurrentGroundingTarget,
   type CurrentGroundingTarget,
+  deriveCurrentGroundingTarget,
   selectCanonicalGrounding,
 } from "../_shared/canonical-grounding.ts";
 import type { ReferenceAuthorityDecision } from "../_shared/commerce-state-authority.ts";
@@ -114,16 +138,36 @@ import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
 import {
   type CommerceRuntimeOutcome,
   type CommerceStateDbClient,
+  resolveCommittedAddressCorrection,
   runCommerceStateRuntime,
 } from "../_shared/commerce-state-runtime.ts";
 import { interpretCommerceSemantics } from "../_shared/commerce-semantic-interpreter.ts";
 import type { CommerceSemanticFrame } from "../_shared/commerce-semantic-frame.ts";
+import {
+  buildBoundedConversationContext,
+  type CanonicalConversationMemory,
+  composeBoundedGenerationEnvelope,
+  type MemoryHistoryRow,
+  refreshConversationLongMemory,
+} from "../_shared/conversation-long-memory.ts";
+import {
+  type ConversationCommerceState,
+  isConversationCommerceState,
+} from "../_shared/commerce-state-contract.ts";
+import {
+  historicalQuoteValidityReply,
+  isRecoverableTerminalError,
+  isRecoverableTerminalStatus,
+  runWithTerminalDeadline,
+  terminalRecoveryReply,
+} from "../_shared/generation-terminal-guard.ts";
 import {
   type B2DatabaseClient,
   type B2Decision,
   type B2PersistenceKind,
   executeB2PersistenceGate,
 } from "../_shared/pre-send-conversion-supervisor.ts";
+import { readExactAiReplyCommit } from "../_shared/authoritative-commit-readback.ts";
 import {
   createClient,
   type SupabaseClient,
@@ -150,7 +194,6 @@ function requiredEscalationRpcClient(client: SupabaseAdminClient) {
     },
   };
 }
-
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -328,7 +371,7 @@ async function writeTraces(
     model_used: string;
   },
 ): Promise<void> {
-  // upstream_call_log is owned exclusively by _shared/llm-router.ts. Keeping a
+  // upstream_call_log is owned exclusively by the runtime routing boundary. Keeping a
   // second provider-specific write here would double-count usage and falsely
   // label Vertex calls as Anthropic.
   try {
@@ -612,6 +655,16 @@ async function commitAiReplyWithControlGate(
   const expectedRevision = typeof metadata?.commerce_state_revision === "number"
     ? metadata.commerce_state_revision
     : null;
+  // This marker is persisted only by the commit callback that
+  // executeB2PersistenceGate invokes after an allow decision and exact snapshot
+  // revalidation. It gives validation readback a server-persisted proof of the
+  // gate and RPC path; assistant-row presence alone is not B2 evidence.
+  const b2CommitEvidence = {
+    ...(metadata ?? {}),
+    b2_gate_contract: "executeB2PersistenceGate:allow_after_revalidation",
+    b2_commit_source: "commit_ai_reply_tx",
+    b2_source_message_id: source_message_id,
+  };
   const b2 = await executeB2RpcPersistence(
     supabaseAdmin,
     {
@@ -619,7 +672,7 @@ async function commitAiReplyWithControlGate(
       source_message_id,
       proposed_response: content,
       persistence_kind: "ai_reply",
-      metadata,
+      metadata: b2CommitEvidence,
       expected_commerce_state_revision: expectedRevision,
     },
     async () =>
@@ -627,7 +680,7 @@ async function commitAiReplyWithControlGate(
         p_conversation_id: conversation_id,
         p_source_message_id: source_message_id,
         p_content: content,
-        p_metadata: metadata,
+        p_metadata: b2CommitEvidence,
       }),
   );
 
@@ -647,12 +700,28 @@ async function commitAiReplyWithControlGate(
 
   const { data, error } = b2.value;
 
+  const recoverAmbiguousAcknowledgement = async () => {
+    const receipt = await readExactAiReplyCommit(supabaseAdmin, {
+      conversation_id,
+      source_message_id,
+      content,
+    });
+    return receipt.status === "committed"
+      ? {
+          ok: true as const,
+          message_id: receipt.value.message_id,
+          idempotent: true,
+        }
+      : null;
+  };
+
   if (error) {
     console.error("[generate-reply] commit_ai_reply_tx RPC error:", {
       conversation_id,
       code: error.code,
     });
-    return { ok: false, result: "rpc_error" };
+    return await recoverAmbiguousAcknowledgement() ??
+      { ok: false, result: "rpc_error" };
   }
 
   const payload = data ?? {};
@@ -660,19 +729,23 @@ async function commitAiReplyWithControlGate(
 
   switch (result) {
     case "success":
+      if (typeof payload.message_id !== "string") {
+        return await recoverAmbiguousAcknowledgement() ??
+          { ok: false, result: "unexpected_result" };
+      }
       return {
         ok: true,
-        message_id: typeof payload.message_id === "string"
-          ? payload.message_id
-          : null,
+        message_id: payload.message_id,
         idempotent: false,
       };
     case "idempotent":
+      if (typeof payload.message_id !== "string") {
+        return await recoverAmbiguousAcknowledgement() ??
+          { ok: false, result: "unexpected_result" };
+      }
       return {
         ok: true,
-        message_id: typeof payload.message_id === "string"
-          ? payload.message_id
-          : null,
+        message_id: payload.message_id,
         idempotent: true,
       };
     case "human_control":
@@ -684,7 +757,8 @@ async function commitAiReplyWithControlGate(
     case "not_found":
       return { ok: false, result };
     default:
-      return { ok: false, result: "unexpected_result" };
+      return await recoverAmbiguousAcknowledgement() ??
+        { ok: false, result: "unexpected_result" };
   }
 }
 
@@ -976,7 +1050,12 @@ async function loadAuthoritativeR3SentimentSignals(
     .limit(20);
   if (pointsError || !points || points.length === 0) return undefined;
 
-  const usable = points.map((p) => ({
+  const usable = (points as Array<{
+    turn_index?: unknown;
+    sentiment_score?: unknown;
+    sentiment?: unknown;
+    trigger_label?: unknown;
+  }>).map((p) => ({
     turn_index: typeof p.turn_index === "number" ? p.turn_index : -1,
     score: isFiniteScore(p.sentiment_score)
       ? Number(p.sentiment_score)
@@ -1469,6 +1548,7 @@ async function evaluateAndPersistRequiredRulesLive(
     visitor_language: "zh-TW" | "zh-CN" | "en";
     expected_tenant_id?: string;
     suppress_r2_for_prior_grounded_transform?: boolean;
+    suppress_r2_for_bounded_no_current_evidence?: boolean;
     warm_handoff_question?: string;
     rag_match_state?: RagMatchState;
     topic_risk_level?: TopicRiskLevel;
@@ -1623,10 +1703,11 @@ async function evaluateAndPersistRequiredRulesLive(
     activation: { enabled },
   });
 
-  // A pure transformation of an already verified grounded answer is not a new KB gap.
-  // Suppress only R2 for this turn; E2/E1/R1/S0 keep their frozen priority and behavior.
+  // A pure transform and a bounded no-current-evidence answer are not unresolved
+  // escalation loops. Suppress only R2; E2/E1/R1/S0 retain frozen priority.
   if (
-    params.suppress_r2_for_prior_grounded_transform === true &&
+    (params.suppress_r2_for_prior_grounded_transform === true ||
+      params.suppress_r2_for_bounded_no_current_evidence === true) &&
     decision.matched_rule === "R2"
   ) {
     return null;
@@ -1994,6 +2075,8 @@ Deno.serve(async (req) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  let parsedConversationId: string | null = null;
+  let parsedSourceMessageId: string | null = null;
   try {
     const body = await req.json();
     const { conversation_id, source_message_id } = body ?? {};
@@ -2006,6 +2089,10 @@ Deno.serve(async (req) => {
         },
       );
     }
+    parsedConversationId = String(conversation_id);
+    parsedSourceMessageId = typeof source_message_id === "string"
+      ? source_message_id
+      : null;
 
     const ENABLE_KB = Deno.env.get("ENABLE_KB_ADAPTER") !== "false";
     const ENABLE_COACH = Deno.env.get("ENABLE_COACH_PROMPT_ADAPTER") === "true";
@@ -2018,32 +2105,190 @@ Deno.serve(async (req) => {
       Deno.env.get("ESC_SHADOW_MODE") === "true" ||
       Deno.env.get("ESC_ENABLE_REQUIRED_RULES_LIVE") === "true";
 
-    if (
-      !ENABLE_KB &&
-      !ENABLE_COACH &&
-      !ENABLE_C360 &&
-      !ENABLE_TOOL_EXEC &&
-      !ENABLE_PR5_ESCALATION_RUNTIME
-    ) {
-      return await legacyGenerateReply(
-        conversation_id,
-        source_message_id ?? null,
-      );
-    }
+    const result = await runWithTerminalDeadline(
+      async (requestSignal) => {
+        if (
+          !ENABLE_KB &&
+          !ENABLE_COACH &&
+          !ENABLE_C360 &&
+          !ENABLE_TOOL_EXEC &&
+          !ENABLE_PR5_ESCALATION_RUNTIME
+        ) {
+          return await legacyGenerateReply(
+            parsedConversationId!,
+            parsedSourceMessageId,
+            requestSignal,
+          );
+        }
 
-    return await orchestrationGenerateReply(
-      conversation_id,
-      { ENABLE_KB, ENABLE_COACH, ENABLE_C360, ENABLE_TOOL_EXEC },
-      source_message_id ?? null,
+        return await orchestrationGenerateReply(
+          parsedConversationId!,
+          { ENABLE_KB, ENABLE_COACH, ENABLE_C360, ENABLE_TOOL_EXEC },
+          parsedSourceMessageId,
+          requestSignal,
+        );
+      },
+      async () =>
+        await persistTerminalRecovery(
+          parsedConversationId!,
+          parsedSourceMessageId,
+          "generation_work_budget_exhausted",
+        ),
     );
+    return result.kind === "deadline"
+      ? result.value
+      : await recoverTerminalResponseIfNeeded(
+        result.value,
+        parsedConversationId,
+        parsedSourceMessageId,
+      );
   } catch (error) {
     console.error("[generate-reply] unexpected error:", error);
+    if (parsedConversationId && parsedSourceMessageId) {
+      return await persistTerminalRecovery(
+        parsedConversationId,
+        parsedSourceMessageId,
+        error instanceof Error ? error.name : "unexpected_error",
+      );
+    }
     return new Response(JSON.stringify({ error: "Internal server error" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 });
+
+async function responseErrorCode(response: Response): Promise<string | null> {
+  try {
+    const payload = await response.clone().json();
+    if (!payload || typeof payload !== "object") return null;
+    const value = (payload as Record<string, unknown>).error;
+    return typeof value === "string" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+async function recoverTerminalResponseIfNeeded(
+  response: Response,
+  conversationId: string,
+  sourceMessageId: string | null,
+): Promise<Response> {
+  const errorCode = await responseErrorCode(response);
+  if (
+    !(isRecoverableTerminalStatus(response.status) &&
+      isRecoverableTerminalError(errorCode)) &&
+    !(response.status === 409 && isRecoverableTerminalError(errorCode))
+  ) return response;
+  return await persistTerminalRecovery(
+    conversationId,
+    sourceMessageId,
+    errorCode ?? `http_${response.status}`,
+    response,
+  );
+}
+
+async function persistTerminalRecovery(
+  conversationId: string,
+  sourceMessageId: string | null,
+  reason: string,
+  originalResponse?: Response,
+): Promise<Response> {
+  if (!sourceMessageId) {
+    return originalResponse ?? new Response(
+      JSON.stringify({
+        success: false,
+        error: "terminal_recovery_source_required",
+      }),
+      {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
+  }
+  try {
+    const admin = createClient(
+      Deno.env.get("SUPABASE_URL") ?? "",
+      getSupabaseAdminKey(),
+    );
+    const source = await loadSourceVisitorMessage(
+      admin,
+      conversationId,
+      sourceMessageId,
+    );
+    if (!source.ok) {
+      await cleanupThinking(admin, conversationId, sourceMessageId);
+      return originalResponse ?? sourceMessageErrorResponse(source);
+    }
+    const language = detectVisitorLanguage(source.message.content);
+    const reply = terminalRecoveryReply(language);
+    const committed = await commitAiReplyWithControlGate(
+      admin,
+      conversationId,
+      sourceMessageId,
+      reply,
+      {
+        response_route: "terminal_failure_recovery",
+        handoff_required: false,
+        factual_grounding_required: false,
+        degraded: true,
+        source_error_code: reason.slice(0, 120),
+      },
+    );
+    await cleanupThinking(admin, conversationId, sourceMessageId);
+    if (committed.ok) {
+      return new Response(
+        JSON.stringify({
+          success: true,
+          reply,
+          degraded: true,
+          response_route: "terminal_failure_recovery",
+          idempotent: committed.idempotent,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    if (
+      [
+        "source_already_replied",
+        "human_control",
+        "resolved",
+        "superseded_source",
+      ]
+        .includes(committed.result)
+    ) {
+      return new Response(
+        JSON.stringify({ success: true, skipped: committed.result }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    return originalResponse ?? new Response(
+      JSON.stringify({
+        success: false,
+        error: `terminal_recovery_${committed.result}`,
+      }),
+      {
+        status: 503,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
+  } catch (error) {
+    console.error("[generate-reply] terminal recovery failed closed:", {
+      conversation_id: conversationId,
+      reason: error instanceof Error ? error.name : "unknown_error",
+    });
+    return originalResponse ?? new Response(
+      JSON.stringify({
+        success: false,
+        error: "terminal_recovery_unavailable",
+      }),
+      {
+        status: 503,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
+  }
+}
 
 async function handleConversationClosureIfNeeded(
   supabaseAdmin: SupabaseAdminClient,
@@ -2157,7 +2402,10 @@ async function handleConversationClosureIfNeeded(
     if (error) {
       return new Response(
         JSON.stringify({ success: false, error: "c2_closure_rpc_error" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
       );
     }
     const result = String(data?.result ?? "unknown");
@@ -2172,7 +2420,15 @@ async function handleConversationClosureIfNeeded(
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
-    if (["human_control", "resolved", "superseded_source", "transaction_pending", "handoff_pending"].includes(result)) {
+    if (
+      [
+        "human_control",
+        "resolved",
+        "superseded_source",
+        "transaction_pending",
+        "handoff_pending",
+      ].includes(result)
+    ) {
       return new Response(
         JSON.stringify({ success: true, skipped: result }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
@@ -2180,7 +2436,10 @@ async function handleConversationClosureIfNeeded(
     }
     return new Response(
       JSON.stringify({ success: false, error: `c2_closure_${result}` }),
-      { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      {
+        status: 409,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
     );
   }
 
@@ -2193,15 +2452,25 @@ async function handleConversationClosureIfNeeded(
   );
   await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
   if (!committed.ok) {
-    if (["human_control", "resolved", "superseded_source"].includes(committed.result)) {
+    if (
+      ["human_control", "resolved", "superseded_source"].includes(
+        committed.result,
+      )
+    ) {
       return new Response(
         JSON.stringify({ success: true, skipped: committed.result }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
     return new Response(
-      JSON.stringify({ success: false, error: `conversation_closure_${committed.result}` }),
-      { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      JSON.stringify({
+        success: false,
+        error: `conversation_closure_${committed.result}`,
+      }),
+      {
+        status: 409,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
     );
   }
   return new Response(
@@ -2217,6 +2486,7 @@ async function handleConversationClosureIfNeeded(
 async function legacyGenerateReply(
   conversation_id: string,
   source_message_id: string | null,
+  requestSignal?: AbortSignal,
 ): Promise<Response> {
   const supabaseAdmin = createClient(
     Deno.env.get("SUPABASE_URL") ?? "",
@@ -2520,6 +2790,7 @@ ${legacyReturnToAiGuard}`;
     conversationId: conversation_id,
     tag: "generate-reply-legacy",
     responseFormat: "text",
+    signal: requestSignal,
   });
 
   if (!llm.ok) {
@@ -2786,6 +3057,7 @@ async function attemptFirstNoMatchClarification(
     Parameters<typeof isFirstNoMatchClarificationEligible>[0],
     "branch_tag" | "source_message_id"
   >,
+  servicePlan: ServiceDialoguePlan,
   traceMetadata: Record<string, unknown>,
 ): Promise<Response | null> {
   if (
@@ -2798,7 +3070,8 @@ async function attemptFirstNoMatchClarification(
     return null;
   }
 
-  const content = KB_NO_MATCH_CLARIFICATION_TEXT[visitorLang] ??
+  const content = renderTargetedServiceQuestion(servicePlan, visitorLang) ||
+    KB_NO_MATCH_CLARIFICATION_TEXT[visitorLang] ||
     KB_NO_MATCH_CLARIFICATION_TEXT["zh-TW"];
   // Same atomic exactly-once gate as every other AI reply: human-control /
   // resolved / superseded races cannot produce a duplicate or late clarification.
@@ -2853,6 +3126,123 @@ async function attemptFirstNoMatchClarification(
         clarification_persisted: true,
         idempotent: commit.idempotent,
       },
+    }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+  );
+}
+
+async function persistC3ServiceRecovery(
+  supabaseAdmin: SupabaseAdminClient,
+  conversationId: string,
+  sourceMessageId: string | null,
+  plan: ServiceDialoguePlan,
+  state: "no_match" | "tool_failure" | "conflict",
+  language: "zh-TW" | "zh-CN" | "en",
+  traceMetadata: Record<string, unknown>,
+): Promise<Response> {
+  const content = renderServiceRecovery(plan, state, language);
+  const metadata = {
+    ...traceMetadata,
+    response_route: `c3_service_${state}`,
+    service_plan_version: plan.version,
+    service_action: plan.action,
+    missing_slots: plan.missing_slots,
+    clarification_target: plan.clarification_target,
+    knowledge_state: state,
+    factual_grounding_required: false,
+    conversation_grounded: plan.known_facts.length > 0,
+    handoff_required: false,
+  };
+  const committed = await commitAiReplyWithControlGate(
+    supabaseAdmin,
+    conversationId,
+    sourceMessageId,
+    content,
+    metadata,
+  );
+  await cleanupThinking(supabaseAdmin, conversationId, sourceMessageId);
+  if (!committed.ok) {
+    return new Response(
+      JSON.stringify({ success: true, skipped: committed.result }),
+      {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
+  }
+  return new Response(
+    JSON.stringify({
+      success: true,
+      reply: content,
+      response_route: metadata.response_route,
+      service_action: plan.action,
+      handoff_required: false,
+      idempotent: committed.idempotent,
+    }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+  );
+}
+
+async function persistBoundedNoCurrentEvidence(
+  supabaseAdmin: SupabaseAdminClient,
+  conversationId: string,
+  sourceMessageId: string | null,
+  plan: ServiceDialoguePlan,
+  language: "zh-TW" | "zh-CN" | "en",
+  traceMetadata: Record<string, unknown>,
+): Promise<Response> {
+  const content = renderBoundedNoCurrentEvidence(language);
+  const metadata = {
+    ...traceMetadata,
+    response_route: NO_CURRENT_EVIDENCE_ROUTE,
+    service_plan_version: plan.version,
+    service_action: "direct_answer",
+    knowledge_state: "no_match",
+    grounding_state: "no_current_evidence",
+    factual_grounding_required: true,
+    historical_evidence_promoted: false,
+    handoff_required: false,
+  };
+  const committed = await commitAiReplyWithControlGate(
+    supabaseAdmin,
+    conversationId,
+    sourceMessageId,
+    content,
+    metadata,
+  );
+  await cleanupThinking(supabaseAdmin, conversationId, sourceMessageId);
+  if (!committed.ok) {
+    if (
+      ["human_control", "resolved", "superseded_source"].includes(
+        committed.result,
+      )
+    ) {
+      return new Response(
+        JSON.stringify({ success: true, skipped: committed.result }),
+        {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
+      );
+    }
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: `no_current_evidence_commit_${committed.result}`,
+      }),
+      {
+        status: 409,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
+  }
+  return new Response(
+    JSON.stringify({
+      success: true,
+      reply: content,
+      no_answer: true,
+      handoff_required: false,
+      response_route: NO_CURRENT_EVIDENCE_ROUTE,
+      grounding_state: "no_current_evidence",
+      idempotent: committed.idempotent,
     }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } },
   );
@@ -3473,6 +3863,8 @@ async function persistExplicitR1IfRequested(
         JSON.stringify({
           success: true,
           escalation_rule: "R1",
+          response_route: "explicit_handoff",
+          handoff_required: true,
           handoff_persisted: true,
           rpc_result: "success",
         }),
@@ -3483,6 +3875,8 @@ async function persistExplicitR1IfRequested(
         JSON.stringify({
           success: true,
           escalation_rule: "R1",
+          response_route: "explicit_handoff",
+          handoff_required: true,
           handoff_persisted: true,
           rpc_result: "already_handled",
         }),
@@ -3552,6 +3946,7 @@ async function orchestrationGenerateReply(
   conversation_id: string,
   flags: FlagSet,
   source_message_id: string | null,
+  requestSignal?: AbortSignal,
 ): Promise<Response> {
   const supabaseAdmin = createClient(
     Deno.env.get("SUPABASE_URL") ?? "",
@@ -3629,7 +4024,7 @@ async function orchestrationGenerateReply(
   ] = await Promise.all([
     supabaseAdmin
       .from("messages")
-      .select("role, content, created_at, metadata")
+      .select("id, role, content, created_at, metadata")
       .eq("conversation_id", conversation_id)
       .eq("is_recalled", false)
       .neq("content", "__THINKING__")
@@ -3663,7 +4058,10 @@ async function orchestrationGenerateReply(
     _h1LastMsg,
     _pr5HistoryRows ?? [],
   );
-  const _w5ShortTopicHint = workflow5ShortTopicHint(_h1LastMsg);
+  const _explicitHandoffRequested = isHandoffIntent(_h1LastMsg);
+  const _w5ShortTopicHint = _explicitHandoffRequested
+    ? null
+    : workflow5ShortTopicHint(_h1LastMsg);
   if (_w5ShortTopicHint === "membership tiers") {
     const topicalReply = _visitorLang === "en"
       ? "You’re asking about membership tiers. I don’t have enough confirmed published information to state the tier structure, inclusions, or limits, so I won’t guess."
@@ -3758,10 +4156,11 @@ async function orchestrationGenerateReply(
         conversation_id,
         source_message_id: _h1SourceMessageId,
         latest: _h1LastMsg,
-        history: (_pr5HistoryRows ?? []).map((row) => ({
+        history: (_pr5HistoryRows ?? []).map((row: MemoryHistoryRow) => ({
           role: String((row as { role?: unknown }).role ?? ""),
           content: String((row as { content?: unknown }).content ?? ""),
         })),
+        signal: requestSignal,
       });
       _a3SemanticFrame = semanticResult.frame;
     } catch (error) {
@@ -3776,6 +4175,9 @@ async function orchestrationGenerateReply(
   // Runs AFTER the critical E2 safety branch and BEFORE CUSTOMER_CONTEXT_UPDATE,
   // generic clarification, conversation-memory shortcut and KB retrieval.
   let _a3Commerce: CommerceRuntimeOutcome | null = null;
+  let _c3Memory: CanonicalConversationMemory | null = null;
+  let _c3MemoryContext = "";
+  let _c3CommerceSnapshot: RecallCommerceSnapshot | null = null;
   if (_criticalE2ExpectedTenantId) {
     try {
       _a3Commerce = await runCommerceStateRuntime(
@@ -3791,7 +4193,7 @@ async function orchestrationGenerateReply(
             ? "zh-CN"
             : "zh-TW",
           occurred_at: sourceVisitorMessage.created_at ?? null,
-          history: (_pr5HistoryRows ?? []).map((row) => ({
+          history: (_pr5HistoryRows ?? []).map((row: MemoryHistoryRow) => ({
             role: String((row as { role?: unknown }).role ?? ""),
             content: String((row as { content?: unknown }).content ?? ""),
           })),
@@ -3806,23 +4208,287 @@ async function orchestrationGenerateReply(
       _a3Commerce = null;
     }
   }
-  if (_a3Commerce && _a3Commerce.reply) {
-    const commerceReply = _a3Commerce.reply;
+
+  // ===== AI-ABC-C3: canonical bounded long-conversation memory =====
+  // The source visitor turn is already durable and A3 has resolved canonical
+  // commerce state. Memory is committed now so it cannot become commerce
+  // authority and cannot bypass the existing B2 response-persistence gate.
+  if (_criticalE2ExpectedTenantId) {
+    try {
+      const [{ data: persistedMemory }, { data: commerceRow }] = await Promise
+        .all([
+          supabaseAdmin.from("conversation_memory_state")
+            .select("source_message_id")
+            .eq("conversation_id", conversation_id)
+            .eq("company_id", _criticalE2ExpectedTenantId)
+            .maybeSingle(),
+          supabaseAdmin.from("conversation_commerce_state")
+            .select(
+              "conversation_id,company_id,source_message_id,revision,state",
+            )
+            .eq("conversation_id", conversation_id)
+            .eq("company_id", _criticalE2ExpectedTenantId)
+            .maybeSingle(),
+        ]);
+      let memoryHistory = (_pr5HistoryRows ?? []) as MemoryHistoryRow[];
+      if (!persistedMemory && (_pr5VisitorTurnCount ?? 0) > 50) {
+        const { data: rebuildRows } = await supabaseAdmin.from("messages")
+          .select("id,role,content,created_at,metadata")
+          .eq("conversation_id", conversation_id)
+          .eq("is_recalled", false)
+          .neq("content", "__THINKING__")
+          .or(sourceBoundaryFilter(sourceVisitorMessage))
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: false })
+          .limit(500);
+        memoryHistory = (rebuildRows ?? memoryHistory) as MemoryHistoryRow[];
+      }
+      const commerceState: ConversationCommerceState | null =
+        isConversationCommerceState(commerceRow?.state)
+          ? commerceRow.state
+          : null;
+      if (commerceState && commerceRow) {
+        _c3CommerceSnapshot = {
+          conversation_id: String(commerceRow.conversation_id),
+          company_id: String(commerceRow.company_id),
+          source_message_id: String(commerceRow.source_message_id ?? ""),
+          revision: Number(commerceRow.revision),
+          state: commerceState,
+        };
+      }
+      const memoryOutcome = await refreshConversationLongMemory(
+        supabaseAdmin as unknown as Parameters<
+          typeof refreshConversationLongMemory
+        >[0],
+        {
+          conversation_id,
+          company_id: _criticalE2ExpectedTenantId,
+          source_message_id: _h1SourceMessageId,
+          source_created_at: String(
+            sourceVisitorMessage.created_at ?? new Date().toISOString(),
+          ),
+          commerce_state_revision: commerceRow?.revision == null
+            ? null
+            : Number(commerceRow.revision),
+          commerce_state: commerceState,
+          newest_first: memoryHistory,
+          visitor_turn_count: _pr5VisitorTurnCount ?? 0,
+        },
+      );
+      if (memoryOutcome.ok) {
+        _c3Memory = memoryOutcome.memory;
+        _c3MemoryContext = buildBoundedConversationContext(
+          _c3Memory,
+          (_pr5HistoryRows ?? []) as MemoryHistoryRow[],
+        ).block;
+      } else {
+        console.warn("[generate-reply] C3 bounded memory degraded", {
+          conversation_id,
+          reason: memoryOutcome.reason,
+        });
+      }
+    } catch (memoryError) {
+      console.error(
+        "[generate-reply] C3 memory refresh failed safely",
+        memoryError instanceof Error ? memoryError.name : "unknown_error",
+      );
+    }
+  }
+  // C3 fact ownership routing: after E2/A3 and durable memory, before commerce
+  // reply shortcuts, context clarification and current-KB/C1 resolution.
+  const _c3Recall = prepareConversationRecall({
+    conversation_id,
+    company_id: _criticalE2ExpectedTenantId ?? "",
+    source_message_id: _h1SourceMessageId,
+    question: _h1LastMsg,
+    memory: _c3Memory,
+    commerce: _c3CommerceSnapshot,
+    explicit_handoff: _explicitHandoffRequested,
+    referents: _a3SemanticFrame?.referents ?? [],
+    recent_questions: ((_pr5HistoryRows ?? []) as MemoryHistoryRow[])
+      .filter((row) => row.role === "visitor" && row.id !== _h1SourceMessageId)
+      .slice(0, 12).map((row) => String(row.content ?? "")),
+  }, _visitorLang);
+  const _c3RecentServiceMessages =
+    ((_pr5HistoryRows ?? []) as MemoryHistoryRow[])
+      .map((row) => ({
+        role: typeof row.role === "string" ? row.role : "unknown",
+        content: String(row.content ?? ""),
+      }));
+  const _c3TrustedCustomerContext = await fetchTrustedCustomerContext({
+    conversation_id,
+    company_id: _criticalE2ExpectedTenantId ?? "",
+  });
+  const _c3RuntimeInputs = deriveServiceRuntimeInputs({
+    question: _h1LastMsg,
+    recent_messages: _c3RecentServiceMessages,
+    commerce: _c3CommerceSnapshot?.state ?? null,
+    trusted_customer_context: _c3TrustedCustomerContext,
+    expected_conversation_id: conversation_id,
+    expected_company_id: _criticalE2ExpectedTenantId ?? "",
+  });
+  const _c3ServicePlan: ServiceDialoguePlan = planConversationService(
+    applyServiceRuntimeDerivation({
+      question: _h1LastMsg,
+      language: _visitorLang,
+      recall: _c3Recall.decision,
+      memory: _c3Memory,
+      commerce: _c3CommerceSnapshot?.state ?? null,
+      recent_messages: _c3RecentServiceMessages,
+      clarification_attempts: _pr5History.clarification_attempts,
+      exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
+      explicit_handoff: _explicitHandoffRequested,
+    }, _c3RuntimeInputs),
+  );
+  const _c3ResolvedAddressCorrection = resolveCommittedAddressCorrection({
+    text: _h1LastMsg,
+    source_message_id: _h1SourceMessageId,
+    language: _visitorLang === "en"
+      ? "en"
+      : _visitorLang === "zh-CN"
+      ? "zh-CN"
+      : "zh-TW",
+    memory: _c3Memory,
+    commerce: _c3CommerceSnapshot,
+  });
+  const _c3ResolvedCommerceStateChange =
+    (_a3Commerce?.reason === "explicit_entity_status_change_applied" &&
+      Boolean(_a3Commerce.reply)) ||
+    Boolean(_c3ResolvedAddressCorrection);
+  const _c3PlannedReply = _c3ResolvedCommerceStateChange ? null : applyServiceTone(
+    _c3ServicePlan,
+    renderServicePlanReply(
+      _c3ServicePlan,
+      _c3Recall.reply,
+      _c3RecentServiceMessages,
+    ) ??
+      ([
+          "targeted_clarification",
+          "partial_answer_then_question",
+          "offer_handoff_or_reframe",
+          "explicit_handoff",
+        ].includes(_c3ServicePlan.action)
+        ? renderTargetedServiceQuestion(_c3ServicePlan, _visitorLang)
+        : null),
+  );
+  // A service plan may describe an explicit handoff, but it is not authorized
+  // to persist one. Let R1 continue to the existing B2-supervised
+  // explicit_handoff_tx path instead of committing a clarification-shaped AI
+  // reply that leaves the conversation under AI control.
+  if (_c3PlannedReply && !_explicitHandoffRequested) {
+    const serviceMetadata = {
+      ..._c3Recall.metadata,
+      response_route: _c3ServicePlan.action === "historical_calculation"
+        ? "c3_historical_conditional_calculation"
+        : _c3ServicePlan.action === "shorten_previous_answer"
+        ? "c3_grounded_shorten"
+        : _c3ServicePlan.action === "current_state_checklist"
+        ? "c3_current_state_checklist"
+        : _c3Recall.metadata.response_route,
+      service_plan_version: _c3ServicePlan.version,
+      service_action: _c3ServicePlan.action,
+      missing_slots: _c3ServicePlan.missing_slots,
+      clarification_target: _c3ServicePlan.clarification_target,
+      clarification_previously_asked:
+        _c3ServicePlan.clarification_previously_asked,
+      knowledge_state: _c3ServicePlan.knowledge_state,
+      safe_assumptions: _c3ServicePlan.safe_assumptions,
+      emotion_trace: _c3ServicePlan.emotion_trace ?? null,
+      entitlement_status: _c3ServicePlan.entitlement_status,
+      entitlement_trace: _c3ServicePlan.entitlement_trace ?? null,
+      service_runtime_version: _c3RuntimeInputs.version,
+      calculation_input_status: _c3RuntimeInputs.calculation_status,
+    };
+    const recallCommit = await commitAiReplyWithControlGate(
+      supabaseAdmin,
+      conversation_id,
+      _h1SourceMessageId,
+      _c3PlannedReply,
+      serviceMetadata,
+    );
+    await cleanupThinking(supabaseAdmin, conversation_id, _h1SourceMessageId);
+    if (recallCommit.ok) {
+      return new Response(
+        JSON.stringify({
+          success: true,
+          reply: _c3PlannedReply,
+          response_route: serviceMetadata.response_route,
+          recall_authority: _c3Recall.metadata.recall_authority,
+          recall_fact_type: _c3Recall.metadata.recall_fact_type,
+          service_action: _c3ServicePlan.action,
+          handoff_required: false,
+          idempotent: recallCommit.idempotent,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    if (
+      [
+        "human_control",
+        "resolved",
+        "superseded_source",
+        "source_already_replied",
+      ].includes(recallCommit.result)
+    ) {
+      return new Response(
+        JSON.stringify({ success: true, skipped: recallCommit.result }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: `conversation_memory_commit_${recallCommit.result}`,
+      }),
+      {
+        status: 409,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
+  }
+  const _c3CommerceReply = _c3ResolvedAddressCorrection?.reply ??
+    (_a3Commerce?.reason === "explicit_address_correction_applied"
+      ? null
+      : _a3Commerce?.reply ?? null);
+  if (_c3CommerceReply && !_explicitHandoffRequested) {
+    const commerceReply = _a3Commerce?.reason ===
+        "previous_quote_not_authoritative_for_current_price"
+      ? historicalQuoteValidityReply(_visitorLang)
+      : _c3CommerceReply;
+    const commerceRoute = _c3ResolvedAddressCorrection
+      ? "commerce_state_answer"
+      : _a3Commerce!.route;
+    const commerceAuthority = _c3ResolvedAddressCorrection
+      ? "CONVERSATION_STATE"
+      : _a3Commerce!.authority;
+    const commerceRevision = _c3ResolvedAddressCorrection
+      ? _c3CommerceSnapshot!.revision
+      : _a3Commerce!.revision;
+    const commercePersistResult = _c3ResolvedAddressCorrection
+      ? "authoritative_post_commit_readback"
+      : _a3Commerce!.persist_result;
+    const commerceReason = _c3ResolvedAddressCorrection?.reason ??
+      _a3Commerce!.reason;
     const commerceCommit = await commitAiReplyWithControlGate(
       supabaseAdmin,
       conversation_id,
       source_message_id,
       commerceReply,
       {
-        response_route: _a3Commerce.route,
+        response_route: commerceRoute,
         escalation_action: "continue_ai",
         handoff_required: false,
-        commerce_authority: _a3Commerce.authority,
-        commerce_state_revision: _a3Commerce.revision,
-        commerce_state_persist_result: _a3Commerce.persist_result,
-        commerce_reason: _a3Commerce.reason,
-        commerce_state_path: _a3Commerce.state_path ?? null,
-        commerce_calculation: _a3Commerce.calculation ?? null,
+        commerce_authority: commerceAuthority,
+        commerce_state_revision: commerceRevision,
+        commerce_state_persist_result: commercePersistResult,
+        commerce_reason: commerceReason,
+        commerce_state_path: _a3Commerce?.state_path ?? null,
+        commerce_calculation: _a3Commerce?.calculation ?? null,
+        correction_resolution: _c3ResolvedAddressCorrection?.status ?? null,
+        correction_operation:
+          _c3ResolvedAddressCorrection?.operation ?? null,
+        correction_source_message_id:
+          _c3ResolvedAddressCorrection?.source_message_id ?? null,
       },
     );
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
@@ -3831,9 +4497,9 @@ async function orchestrationGenerateReply(
         JSON.stringify({
           success: true,
           reply: commerceReply,
-          response_route: _a3Commerce.route,
-          commerce_authority: _a3Commerce.authority,
-          commerce_state_revision: _a3Commerce.revision,
+          response_route: commerceRoute,
+          commerce_authority: commerceAuthority,
+          commerce_state_revision: commerceRevision,
           handoff_required: false,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
@@ -4222,10 +4888,11 @@ async function orchestrationGenerateReply(
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   }
-  const _conversationMemoryReply = resolveConversationMemoryResponse(
-    _h1LastMsg,
-    _pr5HistoryRows ?? [],
-  );
+  const _conversationMemoryReply = !_c3Recall.decision.handled &&
+      _c3Recall.decision.reason === "NOT_A_RECALL_QUERY" &&
+      _c3Recall.decision.detail !== "HANDOFF_PRECEDENCE"
+    ? resolveConversationMemoryResponse(_h1LastMsg, _pr5HistoryRows ?? [])
+    : null;
   if (_conversationMemoryReply) {
     const committed = await commitAiReplyWithControlGate(
       supabaseAdmin,
@@ -4401,6 +5068,20 @@ async function orchestrationGenerateReply(
     trace_metadata?: Record<string, unknown>;
   } | null = null;
 
+  const _boundedNoCurrentEvidenceDecision = classifyCurrentFactEvidence({
+    knowledge_state: _c3ServicePlan.knowledge_state,
+    current_evidence_count: 0,
+  });
+  const _canPersistBoundedNoCurrentEvidence = canAnswerBoundedNoCurrentEvidence(
+    {
+      decision: _boundedNoCurrentEvidenceDecision,
+      high_risk: _pr5LocalRisk?.level === "high",
+      explicit_human_request: isHandoffIntent(_h1LastMsg),
+      threat: _pr5ThreatSignal?.value === true,
+      compliance_requires_human_review: _pr5ComplianceSignal?.value === true,
+    },
+  );
+
   if (flags.ENABLE_KB && !_g1SkipKB) {
     const _kbTenantResult = await resolveTenantScope(
       conversation_id,
@@ -4438,7 +5119,7 @@ async function orchestrationGenerateReply(
       _h1LastMsg,
       _pr5HistoryRows ?? [],
     );
-    const userQuery = _semanticRetrieval.query;
+    const userQuery = _c3ServicePlan.kb_query || _semanticRetrieval.query;
     ragResult = !userQuery
       ? {
         success: true,
@@ -4446,7 +5127,12 @@ async function orchestrationGenerateReply(
         retrieval_quality: "failed",
         chunks: [],
       }
-      : await callKBAdapter(conversation_id, userQuery, _kbTenantResult.scope);
+      : await callKBAdapter(
+        conversation_id,
+        userQuery,
+        _kbTenantResult.scope,
+        requestSignal,
+      );
     if (!ragResult || !ragResult.success) {
       if (_deferR1ForE1) {
         const r1Response = await persistExplicitR1IfRequested(
@@ -4466,13 +5152,14 @@ async function orchestrationGenerateReply(
           _visitorLang,
         );
       }
-      return await handleKBFallback(
+      return await persistC3ServiceRecovery(
         supabaseAdmin,
         conversation_id,
-        "KB_API_FAIL",
         source_message_id,
-        { rag_api_status: "failure" },
+        _c3ServicePlan,
+        "tool_failure",
         _visitorLang,
+        { rag_api_status: "failure" },
       );
     }
     if (
@@ -4504,6 +5191,8 @@ async function orchestrationGenerateReply(
           exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
           threat_flag: _pr5ThreatSignal,
           compliance_jurisdiction_requires_human_review: _pr5ComplianceSignal,
+          suppress_r2_for_bounded_no_current_evidence:
+            _canPersistBoundedNoCurrentEvidence,
         },
       );
       if (requiredResponse) return requiredResponse;
@@ -4516,6 +5205,19 @@ async function orchestrationGenerateReply(
         );
         if (r1Response) return r1Response;
       }
+      if (_canPersistBoundedNoCurrentEvidence) {
+        return await persistBoundedNoCurrentEvidence(
+          supabaseAdmin,
+          conversation_id,
+          source_message_id,
+          _c3ServicePlan,
+          _visitorLang,
+          {
+            rag_api_status: "success_empty",
+            evidence_decision: _boundedNoCurrentEvidenceDecision.kind,
+          },
+        );
+      }
       const clarification = await attemptFirstNoMatchClarification(
         supabaseAdmin,
         conversation_id,
@@ -4526,22 +5228,23 @@ async function orchestrationGenerateReply(
           high_risk: _pr5LocalRisk?.level === "high",
           explicit_human_request: isHandoffIntent(_h1LastMsg),
           threat_flag: _pr5ThreatSignal?.value === true,
-          compliance_requires_human_review:
-            _pr5ComplianceSignal?.value === true,
+          compliance_requires_human_review: _pr5ComplianceSignal?.value === true,
           clarification_attempts: _pr5History.clarification_attempts,
           exact_same_intent_repeated:
             _pr5History.exact_same_intent_repeated === true,
         },
+        _c3ServicePlan,
         { rag_api_status: "success_empty" },
       );
       if (clarification) return clarification;
-      return await handleKBFallback(
+      return await persistC3ServiceRecovery(
         supabaseAdmin,
         conversation_id,
-        "KB_EMPTY",
         source_message_id,
-        { rag_api_status: "success_empty" },
+        _c3ServicePlan,
+        "no_match",
         _visitorLang,
+        { rag_api_status: "success_empty" },
       );
     }
 
@@ -4564,8 +5267,7 @@ async function orchestrationGenerateReply(
     ].filter((value): value is string =>
       typeof value === "string" && value.trim().length > 0
     );
-    const _c1TargetChanged =
-      _canonicalTurn.topic_action === "SWITCH" ||
+    const _c1TargetChanged = _canonicalTurn.topic_action === "SWITCH" ||
       _canonicalTurn.topic_action === "CORRECT" ||
       _a3SemanticFrame?.customer_correction === true;
     _c1CurrentTarget = deriveCurrentGroundingTarget(
@@ -4635,6 +5337,9 @@ async function orchestrationGenerateReply(
           "CONFLICT_UNRESOLVED"
         ? "conflict"
         : "partial_match";
+      const boundedNoEvidenceWithoutConflict =
+        _canPersistBoundedNoCurrentEvidence &&
+        _c1AuthorityDecision?.decision !== "CONFLICT_UNRESOLVED";
       const requiredResponse = await evaluateAndPersistRequiredRulesLive(
         supabaseAdmin,
         {
@@ -4660,6 +5365,8 @@ async function orchestrationGenerateReply(
           exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
           threat_flag: _pr5ThreatSignal,
           compliance_jurisdiction_requires_human_review: _pr5ComplianceSignal,
+          suppress_r2_for_bounded_no_current_evidence:
+            boundedNoEvidenceWithoutConflict,
         },
       );
       if (requiredResponse) return requiredResponse;
@@ -4671,6 +5378,19 @@ async function orchestrationGenerateReply(
           _h1LastMsg,
         );
         if (r1Response) return r1Response;
+      }
+      if (boundedNoEvidenceWithoutConflict) {
+        return await persistBoundedNoCurrentEvidence(
+          supabaseAdmin,
+          conversation_id,
+          source_message_id,
+          _c3ServicePlan,
+          _visitorLang,
+          {
+            ...traceMetadata,
+            evidence_decision: _boundedNoCurrentEvidenceDecision.kind,
+          },
+        );
       }
       if (_c1AuthorityDecision?.decision === "CONFLICT_UNRESOLVED") {
         const conflictReply = C1_AUTHORITY_CONFLICT_WORDING[_visitorLang] ??
@@ -4739,15 +5459,26 @@ async function orchestrationGenerateReply(
           high_risk: isHighRisk,
           explicit_human_request: isHandoffIntent(_h1LastMsg),
           threat_flag: _pr5ThreatSignal?.value === true,
-          compliance_requires_human_review:
-            _pr5ComplianceSignal?.value === true,
+          compliance_requires_human_review: _pr5ComplianceSignal?.value === true,
           clarification_attempts: _pr5History.clarification_attempts,
           exact_same_intent_repeated:
             _pr5History.exact_same_intent_repeated === true,
         },
+        _c3ServicePlan,
         traceMetadata,
       );
       if (clarification) return clarification;
+      if (!isHighRisk) {
+        return await persistC3ServiceRecovery(
+          supabaseAdmin,
+          conversation_id,
+          source_message_id,
+          _c3ServicePlan,
+          "no_match",
+          _visitorLang,
+          traceMetadata,
+        );
+      }
       return await handleKBFallback(
         supabaseAdmin,
         conversation_id,
@@ -4784,6 +5515,8 @@ async function orchestrationGenerateReply(
           exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
           threat_flag: _pr5ThreatSignal,
           compliance_jurisdiction_requires_human_review: _pr5ComplianceSignal,
+          suppress_r2_for_bounded_no_current_evidence:
+            _canPersistBoundedNoCurrentEvidence,
         },
       );
       if (requiredResponse) return requiredResponse;
@@ -4796,6 +5529,20 @@ async function orchestrationGenerateReply(
         );
         if (r1Response) return r1Response;
       }
+      if (_canPersistBoundedNoCurrentEvidence) {
+        return await persistBoundedNoCurrentEvidence(
+          supabaseAdmin,
+          conversation_id,
+          source_message_id,
+          _c3ServicePlan,
+          _visitorLang,
+          {
+            ...traceMetadata,
+            answerability: "missing_full_content_evidence",
+            evidence_decision: _boundedNoCurrentEvidenceDecision.kind,
+          },
+        );
+      }
       const clarification = await attemptFirstNoMatchClarification(
         supabaseAdmin,
         conversation_id,
@@ -4806,15 +5553,26 @@ async function orchestrationGenerateReply(
           high_risk: isHighRisk,
           explicit_human_request: isHandoffIntent(_h1LastMsg),
           threat_flag: _pr5ThreatSignal?.value === true,
-          compliance_requires_human_review:
-            _pr5ComplianceSignal?.value === true,
+          compliance_requires_human_review: _pr5ComplianceSignal?.value === true,
           clarification_attempts: _pr5History.clarification_attempts,
           exact_same_intent_repeated:
             _pr5History.exact_same_intent_repeated === true,
         },
+        _c3ServicePlan,
         { ...traceMetadata, answerability: "missing_full_content_evidence" },
       );
       if (clarification) return clarification;
+      if (!isHighRisk) {
+        return await persistC3ServiceRecovery(
+          supabaseAdmin,
+          conversation_id,
+          source_message_id,
+          _c3ServicePlan,
+          "no_match",
+          _visitorLang,
+          { ...traceMetadata, answerability: "missing_full_content_evidence" },
+        );
+      }
       return await handleKBFallback(
         supabaseAdmin,
         conversation_id,
@@ -4911,6 +5669,7 @@ async function orchestrationGenerateReply(
             source_message_id ?? "none"
           }`,
         },
+        { signal: requestSignal },
       );
     }
   }
@@ -5061,12 +5820,14 @@ async function orchestrationGenerateReply(
     latestHandoffReason,
     conversation.assigned_agent_id ?? null,
   );
-  const finalSystemPrompt = _priorGroundedTransform
+  let finalSystemPrompt = _priorGroundedTransform
     ? buildPriorGroundedTransformGenerationSystem(_priorGroundedTransform)
     : [
       basePrompt,
       CUSTOMER_CONVERSATION_POLICY,
+      buildServicePlanPromptBlock(_c3ServicePlan),
       _conversationContinuityBlock,
+      _c3MemoryContext,
       returnToAiGuard,
       _customerAdvisoryBlock,
       _emotionReplyStrategyBlock,
@@ -5115,9 +5876,28 @@ async function orchestrationGenerateReply(
       conversation.company_id.length > 0
     ? conversation.company_id
     : null;
-  const _generationUserInput = _priorGroundedTransform
+  let _generationUserInput = _priorGroundedTransform
     ? buildPriorGroundedTransformGenerationUser(_h1LastMsg)
     : buildRouterConversationInput(modelMessages);
+  if (!_priorGroundedTransform && _c3Memory) {
+    const boundedEnvelope = composeBoundedGenerationEnvelope({
+      required_parts: [
+        basePrompt,
+        CUSTOMER_CONVERSATION_POLICY,
+        buildServicePlanPromptBlock(_c3ServicePlan),
+        returnToAiGuard,
+        _customerAdvisoryBlock,
+        _emotionReplyStrategyBlock,
+        buildMaskedContextBlock(customerContext, opaqueCustomerRef),
+        buildRagBlock(ragResult),
+      ],
+      memory_part: _c3MemoryContext,
+      continuity_part: _conversationContinuityBlock,
+      user: _h1LastMsg,
+    });
+    finalSystemPrompt = boundedEnvelope.system;
+    _generationUserInput = boundedEnvelope.user;
+  }
 
   let llm = await callModel({
     purpose: "generation",
@@ -5130,6 +5910,7 @@ async function orchestrationGenerateReply(
     conversationId: conversation_id,
     tag: "generate-reply-orchestration",
     responseFormat: "text",
+    signal: requestSignal,
   });
 
   // A verifier rejection on a prior-grounded transform is not yet proof of an
@@ -5150,6 +5931,7 @@ async function orchestrationGenerateReply(
       conversationId: conversation_id,
       tag: "generate-reply-orchestration-transform-retry",
       responseFormat: "text",
+      signal: requestSignal,
     });
   }
 
@@ -5736,6 +6518,7 @@ async function callKBAdapter(
   _conversation_id: string,
   userMessage: string,
   scope: KBResolvedScope,
+  signal?: AbortSignal,
 ): Promise<{
   success: boolean;
   no_answer?: boolean;
@@ -5772,7 +6555,7 @@ async function callKBAdapter(
     { query: userMessage, top_k: 5 },
     scope,
     endpointCfg,
-    { timeoutMs: 15000 },
+    { timeoutMs: 15000, signal },
   );
   if (!result.success) {
     return { success: false, no_answer: true, retrieval_quality: "failed" };

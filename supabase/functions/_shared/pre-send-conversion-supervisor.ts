@@ -14,6 +14,7 @@ import {
   createEmptyConversationCommerceState,
   isConversationCommerceState,
 } from "./commerce-state-contract.ts";
+import { parseAddressReplacementCorrection } from "./commerce-state-reducer.ts";
 
 export type B2DecisionKind = "allow" | "block" | "indeterminate";
 
@@ -30,7 +31,6 @@ export interface B2Decision {
   code: string;
   detail?: string;
 }
-
 export interface B2CanonicalSnapshot {
   conversation_id: string;
   company_id: string;
@@ -260,6 +260,9 @@ interface MoneyMention {
 
 function extractMoneyMentions(text: string): MoneyMention[] {
   const results: MoneyMention[] = [];
+  const hasMoneyContext =
+    /(?:price|quote|quotation|amount|fee|cost|dollars?|價|价|報價|报价|收費|收费|金額|金额|費用|费用)/i
+      .test(text);
   const pattern =
     /(?:\b(HKD|USD|TWD)\b\s*|((?:HK|US|NT)\$|\$)\s*)?([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,10})(?:\.([0-9]{1,2}))?\s*(元|蚊|dollars?)?/gi;
   let match: RegExpExecArray | null;
@@ -267,6 +270,10 @@ function extractMoneyMentions(text: string): MoneyMention[] {
     const amount = Number(`${match[3].replace(/,/g, "")}${match[4] ? `.${match[4]}` : ""}`);
     if (!Number.isFinite(amount) || amount <= 0) continue;
     const marker = `${match[1] ?? ""}${match[2] ?? ""}${match[5] ?? ""}`.toUpperCase();
+    // Bare measurements, quantities, dates and model numbers are not money.
+    // Keep an unmarked number only when the response itself makes a monetary
+    // claim; quote evaluation will still fail closed when currency is absent.
+    if (!marker && !hasMoneyContext) continue;
     const currency =
       marker.includes("USD") || marker.includes("US$")
         ? "USD"
@@ -394,6 +401,10 @@ function trimCorrectionPart(value: string): string {
 
 function parseCorrection(value: string): CorrectionPair | null {
   const text = clean(value, 500);
+  const address = parseAddressReplacementCorrection(text);
+  if (address) {
+    return { previous: address.previous ?? "", current: address.current };
+  }
   const patterns = [
     /(?:唔係|唔系|不是|不係)\s*(.+?)\s*(?:而係|而系|而是)\s*(.+)$/i,
     /(?:change|changed|correct|correction)(?:\s+it)?\s+from\s+(.+?)\s+to\s+(.+)$/i,
@@ -407,13 +418,28 @@ function parseCorrection(value: string): CorrectionPair | null {
       return { previous, current };
     }
   }
+
+  // A replacement-only correction can be fully deterministic even when the
+  // customer does not repeat the superseded value (for example, "改做一部1匹，
+  // 一部1.5匹"). Treat it as resolved only when it carries a concrete assignment;
+  // vague references such as "記住我最新嗰個更正" must remain indeterminate.
+  const replacement = text.match(
+    /(?:更正|改(?:做|成|為|为|返)?|變成|变成|change(?:\s+it)?\s+to|make\s+it|actually|i meant)\s*[:：,，]?\s*(.+)$/i,
+  );
+  const current = trimCorrectionPart(replacement?.[1] ?? "");
+  const concreteAssignment = /(?:\d{1,4}|[一二兩两三四五六七八九十])\s*(?:部|台|件|個|个|套|units?|pcs?|pieces?|items?)|(?:quantity|數量|数量|地址|address|型號|型号|model|品牌|brand)\s*(?:係|是|=|:|：)/i.test(
+    current,
+  );
+  if (current && concreteAssignment) {
+    return { previous: "", current };
+  }
   return null;
 }
 
 function responseTouchesCommerce(text: string, state: ConversationCommerceState): boolean {
   if (extractMoneyMentions(text).length > 0) return true;
   if (mentionedEntityIds(text, state).length > 0) return true;
-  return /(?:order|payment|quote|price|delivery|installation|quantity|model|brand|訂單|订单|付款|支付|報價|报价|價錢|价钱|送貨|送货|安裝|安装|數量|数量|型號|型号|品牌)/i.test(
+  return /(?:order|payment|quote|price|delivery|installation|quantity|model|brand|address|recipient|phone|訂單|订单|付款|支付|報價|报价|價錢|价钱|送貨|送货|安裝|安装|數量|数量|型號|型号|品牌|地址|收貨人|收货人|電話|电话)/i.test(
     text,
   );
 }
