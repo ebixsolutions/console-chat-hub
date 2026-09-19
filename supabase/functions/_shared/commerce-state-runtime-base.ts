@@ -25,7 +25,6 @@ import {
   type CommerceStateEvent,
   type CommerceTurnEntityHint,
   deriveCommerceEventsFromCustomerTurn,
-  applyAddressReplacementCorrection,
   parseAddressReplacementCorrection,
   reduceCommerceState,
 } from "./commerce-state-reducer.ts";
@@ -518,12 +517,8 @@ function deriveA3RuntimeEvents(
   if (addressCorrection) {
     events.push({
       type: "SET_DELIVERY",
-      patch: {
-        address: applyAddressReplacementCorrection(
-          previous.delivery.address,
-          addressCorrection,
-        ),
-      },
+      patch: {},
+      address_update: addressCorrection,
       provenance,
     });
   }
@@ -788,13 +783,19 @@ export function reduceTurn(
   const semanticEvents = bookingWithoutDelivery
     ? semanticEventsRaw.filter((event) => event.type !== "SET_DELIVERY")
     : semanticEventsRaw;
-  const derivedRaw = calculationTurn || semanticAuthoritative ? [] : deriveCommerceEventsFromCustomerTurn({
+  const deterministicEvents = calculationTurn ? [] : deriveCommerceEventsFromCustomerTurn({
     text: input.text,
     source_message_id: input.source_message_id,
     occurred_at: input.occurred_at ?? null,
     entity_hints: hints,
     current_language: input.language,
   });
+  // Semantic interpretation owns entity mutations, but it has no address
+  // component contract. Keep deterministic delivery events so a complete
+  // address is present before a later scoped correction is merged.
+  const derivedRaw = semanticAuthoritative
+    ? deterministicEvents.filter((event) => event.type === "SET_DELIVERY")
+    : deterministicEvents;
   const allocationBreakdown = detectQuantityCorrectionSignal(input.text) &&
     isAllocationBreakdown(input.text);
   const derivedWithoutAllocationOverwrite = allocationBreakdown

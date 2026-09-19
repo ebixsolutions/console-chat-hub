@@ -162,7 +162,11 @@ must(
 const authorizedTargetedRepairHashes = new Map([
   [
     "supabase/functions/_shared/commerce-state-reducer.ts",
-    "575ef06ca9400d88a3aefe7b20056cb74e90472e5c70ef385aed10daf2a9d621",
+    "800b153d29b543809f28021673536d1257b59b6b7b7f103e747debfd2d04f544",
+  ],
+  [
+    "supabase/functions/_shared/commerce-state-runtime-base.ts",
+    "dde1f4ac6313ca589c82013f1d7037cee08fc1ab7fe607bd9774edb51bd24011",
   ],
   [
     "supabase/functions/_shared/pre-send-conversion-supervisor.ts",

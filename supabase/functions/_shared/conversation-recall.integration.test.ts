@@ -18,11 +18,34 @@ import {
   type CommerceStateDbClient,
 } from "./commerce-state-runtime.ts";
 import { createEmptyConversationCommerceState } from "./commerce-state-contract.ts";
+import type { CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 import { planConversationService, renderTargetedServiceQuestion } from "./conversation-service-planner.ts";
 import { buildCanonicalConversationMemory } from "./conversation-long-memory.ts";
 
 function assert(v: unknown, m = "assertion failed"): asserts v {
   if (!v) throw new Error(m);
+}
+
+function authoritativeAddressFrame(customer_correction: boolean): CommerceSemanticFrame {
+  return {
+    version: "commerce-semantic-1.0.0",
+    language: "zh-TW",
+    operation: "NO_STATE_CHANGE",
+    intent: customer_correction ? "correct delivery address" : "set delivery address",
+    topic: "delivery address",
+    entities: [],
+    referents: [],
+    customer_correction,
+    additive: false,
+    explicit_negations: [],
+    requested_facts: [],
+    transaction_state: "none",
+    payment_state: "none",
+    booking_state: "none",
+    fulfillment_state: "none",
+    ambiguity: { is_ambiguous: false, reasons: [], clarification_question: null },
+    confidence: 0.95,
+  };
 }
 
 const canonicalTurns1To17 = [
@@ -549,6 +572,7 @@ Deno.test("C3 production-parity T040 converges scoped address correction across 
       source_message_id: `40000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
       text: turns[index],
       language: "zh-TW",
+      semantic_frame: authoritativeAddressFrame(index === 1),
       history: turns.slice(0, index).reverse().map((content) => ({
         role: "visitor",
         content,
@@ -620,6 +644,57 @@ Deno.test("C3 production-parity T040 converges scoped address correction across 
   });
   assert(b2.decision === "allow", JSON.stringify(b2));
 });
+
+Deno.test("C3 scoped address mutation preserves block floor unit and supports explicit replacement", () => {
+  const conversation_id = "41000000-0000-4000-8000-000000000001";
+  const company_id = "41000000-0000-4000-8000-000000000002";
+  let revision = 0;
+  let state = createEmptyConversationCommerceState();
+  const turn = (text: string, correction: boolean) => {
+    revision += 1;
+    state = reduceTurn(state, {
+      conversation_id,
+      company_id,
+      source_message_id: `41000000-0000-4000-8000-${String(revision).padStart(12, "0")}`,
+      text,
+      language: "zh-TW",
+      semantic_frame: authoritativeAddressFrame(correction),
+    }, []);
+  };
+
+  turn("送貨地址是長沙灣幸福邨A座12樓1201室。", false);
+  turn("唔係A座，係B座。", true);
+  assert(String(state.delivery.address) === "長沙灣幸福邨B座12樓1201室", JSON.stringify(state.delivery));
+
+  turn("唔係12樓，而係15樓。", true);
+  assert(String(state.delivery.address) === "長沙灣幸福邨B座15樓1201室", JSON.stringify(state.delivery));
+
+  turn("不是1201室，是1508室。", true);
+  assert(String(state.delivery.address) === "長沙灣幸福邨B座15樓1508室", JSON.stringify(state.delivery));
+
+  turn("地址改做九龍灣XX大廈3樓。", true);
+  assert(String(state.delivery.address) === "九龍灣XX大廈3樓", JSON.stringify(state.delivery));
+  assert(!String(state.delivery.address).includes("幸福邨"), String(state.delivery.address));
+});
+
+Deno.test("C3 scoped address mutation without prior context stays unknown", () => {
+  const state = reduceTurn(createEmptyConversationCommerceState(), {
+    conversation_id: "42000000-0000-4000-8000-000000000001",
+    company_id: "42000000-0000-4000-8000-000000000002",
+    source_message_id: "42000000-0000-4000-8000-000000000003",
+    text: "唔係A座，係B座。",
+    language: "zh-TW",
+    semantic_frame: authoritativeAddressFrame(true),
+  }, []);
+  assert(!state.delivery.address, JSON.stringify(state.delivery));
+  assert(
+    state.latest_corrections.length === 1 &&
+      state.latest_corrections[0].includes("A座") &&
+      state.latest_corrections[0].includes("B座"),
+    JSON.stringify(state.latest_corrections),
+  );
+});
+
 Deno.test("C3 current official facts still have no recall reply", () => {
   const r = prepareConversationRecall(
     recallFixture("What is the official warranty?"),
