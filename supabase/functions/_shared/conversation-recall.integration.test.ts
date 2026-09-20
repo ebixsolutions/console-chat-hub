@@ -2129,7 +2129,7 @@ function turn48SemanticFrame(language: "zh-TW" | "en" = "zh-TW", ambiguous = fal
 
 function turn48CommerceState() {
   const state = turn55CommerceState();
-  state.installation.pending_checks = ["installation_site_check"];
+  state.installation.pending_checks = ["window_opening_check", "installation_site_check"];
   state.installation.items = [];
   state.unresolved_items = ["confirm installation feasibility after site check"];
   state.current_topic = "installation";
@@ -2194,12 +2194,22 @@ async function executeTurn48Fixture(
 Deno.test("C3 captured production turn 48 resolves pending technician count read-only before clarification", async () => {
   const previous = turn48CommerceState();
   const provenanceBefore = JSON.stringify(previous.entities.map((entity) => entity.provenance));
-  const result = await executeTurn48Fixture("我而家有幾多項要師傅確認？", { previous });
+  // v144 production classified the unspecific entity referent as ambiguous even
+  // though the customer explicitly requested the global pending aggregate.
+  const result = await executeTurn48Fixture("我而家有幾多項要師傅確認？", {
+    previous,
+    semantic_frame: turn48SemanticFrame("zh-TW", true),
+  });
   assert(isReadOnlyCurrentStateAggregateQuery("我而家有幾多項要師傅確認？", turn48SemanticFrame()));
   assert(result.outcome?.route === "commerce_state_answer", JSON.stringify(result.outcome));
   assert(result.outcome?.reason === "read_only_current_state_aggregate_query_resolved", JSON.stringify(result.outcome));
   assert(result.outcome?.state_path === "installation.pending_checks");
-  assert(result.outcome?.reply?.includes("1") && result.outcome.reply.includes("安裝現場檢查"), result.outcome?.reply ?? "missing reply");
+  assert(
+    result.outcome?.reply?.includes("2") &&
+      result.outcome.reply.includes("窗口尺寸檢查") &&
+      result.outcome.reply.includes("安裝現場檢查"),
+    result.outcome?.reply ?? "missing reply",
+  );
   assert(!/[?？]|最想完成/.test(result.outcome?.reply ?? ""));
   assert(result.outcome?.persist_result === "read_only" && result.outcome.revision === 40);
   assert(result.rpcCalls === 0, `aggregate query created ${result.rpcCalls} semantic event(s)`);
@@ -2215,12 +2225,16 @@ Deno.test("C3 pending technician aggregate count and list queries preserve zero,
   ] as const) {
     const result = await executeTurn48Fixture(text, { language, semantic_frame: turn48SemanticFrame(language === "en" ? "en" : "zh-TW") });
     assert(result.outcome?.reason === "read_only_current_state_aggregate_query_resolved", `${text}:${JSON.stringify(result.outcome)}`);
-    assert(result.outcome?.reply?.includes("1"), result.outcome?.reply ?? text);
+    assert(result.outcome?.reply?.includes("2"), result.outcome?.reply ?? text);
     assert(result.rpcCalls === 0 && JSON.stringify(result.persisted) === result.before);
   }
 
   const list = await executeTurn48Fixture("仲有邊啲要師傅確認？");
-  assert(list.outcome?.reply?.includes("安裝現場檢查"));
+  assert(
+    list.outcome?.reply?.includes("窗口尺寸檢查") &&
+      list.outcome.reply.includes("安裝現場檢查"),
+    list.outcome?.reply ?? "missing global pending list",
+  );
   assert(list.rpcCalls === 0);
 
   const zeroState = turn48CommerceState();
@@ -2231,7 +2245,11 @@ Deno.test("C3 pending technician aggregate count and list queries preserve zero,
 
   const unknown = await executeTurn48Fixture("仲有邊啲要師傅確認？", { revision: 0 });
   assert(unknown.outcome?.reason === "read_only_current_state_aggregate_query_unresolved");
-  assert(unknown.outcome?.reply?.includes("邊件產品或邊項安裝") && !unknown.outcome.reply.includes("最想完成"));
+  assert(
+    unknown.outcome?.reply?.includes("未有可核實") &&
+      !unknown.outcome.reply.includes("邊件產品") &&
+      !unknown.outcome.reply.includes("最想完成"),
+  );
   assert(unknown.rpcCalls === 0);
 
   const ambiguous = await executeTurn48Fixture("呢兩件貨邊啲要師傅確認？", { semantic_frame: turn48SemanticFrame("zh-TW", true) });
@@ -2254,4 +2272,66 @@ Deno.test("C3 pending technician aggregate count and list queries preserve zero,
   const replay = await executeTurn48Fixture("我而家有幾多項要師傅確認？", { previous: first.persisted, source_message_id: "d4c905ae-35bf-4c4b-bc5b-c9e377e70fc7" });
   assert(first.rpcCalls === 0 && replay.rpcCalls === 0);
   assert(first.before === JSON.stringify(replay.persisted));
+});
+
+Deno.test("C3 pending technician aggregates distinguish global scope from entity scope", async () => {
+  const scopedState = turn48CommerceState();
+  scopedState.entities.push({
+    entity_id: "refrigerator:unscoped",
+    category: "refrigerator",
+    brand: null,
+    model: null,
+    quantity: 1,
+    status: "tentative",
+    attributes: {},
+    constraints: {},
+    provenance: {
+      source_type: "customer",
+      source_message_id: "48a00000-0000-4000-8000-000000000021",
+    },
+  });
+  scopedState.installation.items = [
+    {
+      item_id: "fridge-opening",
+      kind: "window_opening_check",
+      entity_id: "refrigerator:unscoped",
+      status: "pending",
+      details: {},
+      provenance: {
+        source_type: "customer",
+        source_message_id: "48a00000-0000-4000-8000-000000000045",
+      },
+    },
+    {
+      item_id: "ac-site",
+      kind: "installation_site_check",
+      entity_id: "air_conditioner:unscoped",
+      status: "pending",
+      details: {},
+      provenance: {
+        source_type: "customer",
+        source_message_id: "48a00000-0000-4000-8000-000000000047",
+      },
+    },
+  ];
+  const itemProvenance = JSON.stringify(scopedState.installation.items.map((item) => item.provenance));
+
+  const scoped = await executeTurn48Fixture("呢部雪櫃仲有幾多項要師傅確認？", {
+    previous: scopedState,
+    semantic_frame: turn48SemanticFrame(),
+  });
+  assert(scoped.outcome?.reason === "read_only_current_state_aggregate_query_resolved", JSON.stringify(scoped.outcome));
+  assert(scoped.outcome?.reply?.includes("1") && scoped.outcome.reply.includes("窗口尺寸檢查"));
+  assert(!scoped.outcome?.reply?.includes("安裝現場檢查"));
+  assert(scoped.outcome?.state_path === "installation.items[entity_id=refrigerator:unscoped]");
+  assert(scoped.rpcCalls === 0 && JSON.stringify(scoped.persisted) === scoped.before);
+  assert(JSON.stringify(scoped.persisted.installation.items.map((item) => item.provenance)) === itemProvenance);
+
+  const ambiguous = await executeTurn48Fixture("呢部仲有幾多項要師傅確認？", {
+    previous: scopedState,
+    semantic_frame: turn48SemanticFrame("zh-TW", true),
+  });
+  assert(ambiguous.outcome?.reason === "read_only_current_state_aggregate_query_unresolved");
+  assert(ambiguous.outcome?.reply?.includes("邊件產品或邊項安裝"));
+  assert(ambiguous.rpcCalls === 0 && JSON.stringify(ambiguous.persisted) === ambiguous.before);
 });

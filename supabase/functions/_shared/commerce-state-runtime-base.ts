@@ -180,6 +180,10 @@ type PendingCheckAggregateResolution = {
   state_path: string | null;
 };
 
+type PendingCheckAggregateScope =
+  | { mode: "global" }
+  | { mode: "entity"; entity_id: string | null };
+
 function pendingCheckLabel(check: string, language: CommerceLanguage): string {
   const labels: Record<string, Record<CommerceLanguage, string>> = {
     installation_site_check: { "zh-TW": "安裝現場檢查", "zh-CN": "安装现场检查", en: "installation site check" },
@@ -191,23 +195,111 @@ function pendingCheckLabel(check: string, language: CommerceLanguage): string {
   return labels[check]?.[language] ?? clean(check, 120).replaceAll("_", " ");
 }
 
+function resolvePendingCheckAggregateScope(
+  input: CommerceRuntimeInput,
+  state: ConversationCommerceState,
+): PendingCheckAggregateScope {
+  const text = clean(input.text);
+  const lower = text.toLowerCase();
+  const categories = detectCategories(text).map((category) => category.key);
+  const rooms = detectRooms(text).map((room) => room.key);
+  const semanticRefs = input.semantic_frame?.entities.flatMap((entity) => [
+    clean(entity.entity_ref, 160),
+    clean(entity.name, 160),
+    clean(entity.category_hint, 160),
+  ]).filter((value) => {
+    const normalized = value.toLowerCase();
+    return normalized.length >= 2 &&
+      !["product", "item", "installation", "產品", "产品", "安裝", "安装"].includes(normalized) &&
+      lower.includes(normalized);
+  }) ?? [];
+  const explicitDeictic = /(?:呢|這|这|嗰|那)(?:一|兩|两|二|\d+)?(?:部|件|個|个|樣|样|位)|\bthis\s+(?:one|item|unit|product|installation|refrigerator|fridge|air\s*conditioner)\b|\bfor\s+(?:this|the)\b/i.test(text);
+  const explicitScope = categories.length > 0 || rooms.length > 0 ||
+    semanticRefs.length > 0 || explicitDeictic;
+  if (!explicitScope) return { mode: "global" };
+
+  const active = state.entities.filter((entity) =>
+    entity.status !== "cancelled" && entity.status !== "deferred"
+  );
+  let candidates = active.filter((entity) => {
+    if (categories.length && !categories.includes(entity.category)) return false;
+    if (rooms.length) {
+      const room = entity.entity_id.split(":")[1] ?? "";
+      if (!rooms.includes(room)) return false;
+    }
+    if (semanticRefs.length) {
+      const values = [entity.entity_id, entity.category].map((value) => clean(value, 160).toLowerCase());
+      if (!semanticRefs.some((ref) => {
+        const normalized = ref.toLowerCase();
+        return values.some((value) => value === normalized || value.includes(normalized) || normalized.includes(value));
+      }) && !categories.length && !rooms.length) return false;
+    }
+    return true;
+  });
+  if (!categories.length && !rooms.length && !semanticRefs.length && explicitDeictic) {
+    candidates = active;
+  }
+  return { mode: "entity", entity_id: candidates.length === 1 ? candidates[0].entity_id : null };
+}
+
+function hasPendingCheckDomainAmbiguity(input: CommerceRuntimeInput): boolean {
+  if (input.semantic_frame?.ambiguity.is_ambiguous !== true) return false;
+  return input.semantic_frame.ambiguity.reasons.some((reason) =>
+    /(?:incompatible|different|multiple)\s+(?:meaning|interpretation|domain)|(?:師傅|师傅|technician|professional).*(?:意思|含義|含义|meaning|ambiguous)/i.test(
+      clean(reason, 240),
+    )
+  );
+}
+
+function pendingCheckUnknownReply(
+  language: CommerceLanguage,
+  mode: PendingCheckAggregateScope["mode"],
+): string {
+  if (mode === "global") {
+    if (language === "en") return "I can't confirm the current pending technician-check total because no authoritative pending-check state is available yet.";
+    if (language === "zh-CN") return "目前没有可核实的待师傅确认状态，所以暂时无法确认总数。";
+    return "而家未有可核實嘅待師傅確認狀態，所以暫時未能確認總數。";
+  }
+  if (language === "en") return "Which product or installation do you mean? I can check its pending technician items without changing them.";
+  if (language === "zh-CN") return "你是指哪件产品或哪项安装？我可以只查看对应的待师傅确认项目，不会更改它们。";
+  return "你係指邊件產品或邊項安裝？我可以只查看對應嘅待師傅確認項目，唔會更改佢哋。";
+}
+
 function resolvePendingCheckAggregateQuery(
   input: CommerceRuntimeInput,
   state: ConversationCommerceState,
   revision: number,
 ): PendingCheckAggregateResolution | null {
   if (!isReadOnlyCurrentStateAggregateQuery(input.text, input.semantic_frame)) return null;
-  if (revision === 0 || input.semantic_frame?.ambiguity.is_ambiguous === true) {
-    const reply = input.language === "en"
-      ? "Which product or installation do you mean? I can check its pending technician items without changing them."
-      : input.language === "zh-CN"
-      ? "你是指哪件产品或哪项安装？我可以只查看对应的待师傅确认项目，不会更改它们。"
-      : "你係指邊件產品或邊項安裝？我可以只查看對應嘅待師傅確認項目，唔會更改佢哋。";
+  const scope = resolvePendingCheckAggregateScope(input, state);
+  if (
+    revision === 0 ||
+    (scope.mode === "global" && hasPendingCheckDomainAmbiguity(input)) ||
+    (scope.mode === "entity" &&
+      (scope.entity_id === null || hasPendingCheckDomainAmbiguity(input)))
+  ) {
+    const reply = pendingCheckUnknownReply(input.language, scope.mode);
     return { authority: "INSUFFICIENT_INFORMATION", reason: "read_only_current_state_aggregate_query_unresolved", reply, state_path: null };
   }
+  const scopedItems = state.installation.items.filter((item) =>
+    item.status === "pending" &&
+    (scope.mode === "global" || item.entity_id === scope.entity_id)
+  );
+  if (
+    scope.mode === "entity" &&
+    state.installation.pending_checks.length > 0 &&
+    !state.installation.items.some((item) => Boolean(item.entity_id))
+  ) {
+    return {
+      authority: "INSUFFICIENT_INFORMATION",
+      reason: "read_only_current_state_aggregate_query_unresolved",
+      reply: pendingCheckUnknownReply(input.language, scope.mode),
+      state_path: null,
+    };
+  }
   const pending = [...new Set([
-    ...state.installation.pending_checks,
-    ...state.installation.items.filter((item) => item.status === "pending").map((item) => item.kind),
+    ...(scope.mode === "global" ? state.installation.pending_checks : []),
+    ...scopedItems.map((item) => item.kind),
   ].map((item) => clean(item, 160)).filter(Boolean))];
   const labels = pending.map((item) => pendingCheckLabel(item, input.language));
   const asksForList = /(?:邊啲|边啲|哪些|which\s+(?:checks?|items?)|what\s+(?:still\s+)?(?:needs?|requires?))/i.test(input.text);
@@ -223,7 +315,14 @@ function resolvePendingCheckAggregateQuery(
   } else {
     reply = pending.length === 0 ? "而家冇待師傅確認嘅項目。" : asksForList ? `待師傅確認嘅係：${labels.join("、")}。` : `而家有 ${pending.length} 項要師傅確認：${labels.join("、")}。`;
   }
-  return { authority: "CONVERSATION_STATE", reason: "read_only_current_state_aggregate_query_resolved", reply, state_path: "installation.pending_checks" };
+  return {
+    authority: "CONVERSATION_STATE",
+    reason: "read_only_current_state_aggregate_query_resolved",
+    reply,
+    state_path: scope.mode === "global"
+      ? "installation.pending_checks"
+      : `installation.items[entity_id=${scope.entity_id}]`,
+  };
 }
 
 function semanticCategoryKeys(frame: CommerceSemanticFrame | null | undefined): string[] {
