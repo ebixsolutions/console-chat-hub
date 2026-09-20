@@ -2215,6 +2215,14 @@ Deno.test("C3 captured production turn 48 resolves pending technician count read
   assert(result.rpcCalls === 0, `aggregate query created ${result.rpcCalls} semantic event(s)`);
   assert(JSON.stringify(result.persisted) === result.before);
   assert(JSON.stringify(result.persisted.entities.map((entity) => entity.provenance)) === provenanceBefore);
+
+  const priorEnvelope = await executeTurn48Fixture("我而家有幾多項要師傅確認？", {
+    previous,
+    semantic_frame: turn48SemanticFrame("zh-TW"),
+    source_message_id: "d4c905ae-35bf-4c4b-bc5b-c9e377e70fc7",
+  });
+  assert(priorEnvelope.outcome?.reason === "read_only_current_state_aggregate_query_resolved");
+  assert(priorEnvelope.rpcCalls === 0 && JSON.stringify(priorEnvelope.persisted) === priorEnvelope.before);
 });
 
 Deno.test("C3 pending technician aggregate count and list queries preserve zero, unknown, mutation and replay boundaries", async () => {
