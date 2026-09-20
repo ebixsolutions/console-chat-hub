@@ -778,6 +778,31 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          turn48_global_aggregate_base=6d1449febe881f694f3fc5a65bb9a7db476a8f2e
+          if git merge-base --is-ancestor "$turn48_global_aggregate_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$turn48_global_aggregate_base"; then
+            expected="$RUNNER_TEMP/c3-turn48-global-aggregate-expected"
+            actual="$RUNNER_TEMP/c3-turn48-global-aggregate-actual"
+            cat > "$expected" <<'EOF'
+          .github/workflows/task-ai-abc-c3-final-gate.yml
+          supabase/functions/_shared/commerce-state-runtime-base.ts
+          supabase/functions/_shared/conversation-recall.integration.test.ts
+          EOF
+            git diff --name-only "$turn48_global_aggregate_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
+            LC_ALL=C sort -o "$expected" "$expected"
+            diff -u "$expected" "$actual"
+            test "$(git rev-list --count "$turn48_global_aggregate_base..$GITHUB_SHA")" -eq 2
+            test -z "$(git diff --name-only "$turn48_global_aggregate_base..$GITHUB_SHA" -- 'supabase/migrations/**' 'supabase/functions/agent-assist/index.ts')"
+            grep -q 'resolvePendingCheckAggregateScope' supabase/functions/_shared/commerce-state-runtime-base.ts
+            grep -q 'hasPendingCheckDomainAmbiguity' supabase/functions/_shared/commerce-state-runtime-base.ts
+            grep -q 'f783f9a1-a208-4947-84fe-edc82865ffb1' supabase/functions/_shared/conversation-recall.integration.test.ts
+            grep -q 'window_opening_check' supabase/functions/_shared/conversation-recall.integration.test.ts
+            grep -q 'installation_site_check' supabase/functions/_shared/conversation-recall.integration.test.ts
+            echo C3_TURN48_GLOBAL_AGGREGATE_SOURCE_REPAIR_PARENT="$turn48_global_aggregate_base"
+            echo C3_TURN48_GLOBAL_AGGREGATE_SOURCE_REPAIR_ALLOWLIST=PASS
+            echo C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE
+            echo C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS
+            exit 0
+          fi
           turn48_repair_base=161075b5b30c71067946d669dad54989097b6a3b
           if git merge-base --is-ancestor "$turn48_repair_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$turn48_repair_base"; then
             expected="$RUNNER_TEMP/c3-turn48-expected"

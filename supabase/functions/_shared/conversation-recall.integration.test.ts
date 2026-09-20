@@ -2173,9 +2173,9 @@ async function executeTurn48Fixture(
     },
   };
   const outcome = await runCommerceStateRuntime(db, {
-    conversation_id: "19484609-961e-4f5f-b1c6-b731afb79313",
+    conversation_id: "0c5250ae-e810-419c-99d0-3c1737007af7",
     company_id: "3d6e17b5-ec79-4f75-aa7f-eaa824ff8493",
-    source_message_id: options.source_message_id ?? "d4c905ae-35bf-4c4b-bc5b-c9e377e70fc7",
+    source_message_id: options.source_message_id ?? "f783f9a1-a208-4947-84fe-edc82865ffb1",
     text,
     language: options.language ?? "zh-TW",
     history: [
@@ -2269,7 +2269,7 @@ Deno.test("C3 pending technician aggregate count and list queries preserve zero,
   assert(cancelled.persisted.installation.pending_checks.includes("installation_site_check"));
 
   const first = await executeTurn48Fixture("我而家有幾多項要師傅確認？");
-  const replay = await executeTurn48Fixture("我而家有幾多項要師傅確認？", { previous: first.persisted, source_message_id: "d4c905ae-35bf-4c4b-bc5b-c9e377e70fc7" });
+  const replay = await executeTurn48Fixture("我而家有幾多項要師傅確認？", { previous: first.persisted, source_message_id: "f783f9a1-a208-4947-84fe-edc82865ffb1" });
   assert(first.rpcCalls === 0 && replay.rpcCalls === 0);
   assert(first.before === JSON.stringify(replay.persisted));
 });
