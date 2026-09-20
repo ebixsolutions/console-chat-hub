@@ -19,6 +19,7 @@ import {
   type CommerceStateDbClient,
 } from "./commerce-state-runtime.ts";
 import { createEmptyConversationCommerceState } from "./commerce-state-contract.ts";
+import { isReadOnlyCurrentStateAggregateQuery } from "./commerce-state-authority.ts";
 import type { CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 import { planConversationService, renderTargetedServiceQuestion } from "./conversation-service-planner.ts";
 import { buildCanonicalConversationMemory } from "./conversation-long-memory.ts";
@@ -2099,3 +2100,158 @@ Deno.test(
     assert(cancelled.rpcCalls === 0);
   },
 );
+
+function turn48SemanticFrame(language: "zh-TW" | "en" = "zh-TW", ambiguous = false): CommerceSemanticFrame {
+  return {
+    version: "commerce-semantic-1.0.0",
+    language,
+    operation: "ASK_FACT",
+    intent: "recall pending technician confirmation aggregate",
+    topic: "installation",
+    entities: [],
+    referents: [{ ref: "pending technician checks", source: "persistent_state", confidence: ambiguous ? 0.5 : 0.96 }],
+    customer_correction: false,
+    additive: false,
+    explicit_negations: [],
+    requested_facts: [],
+    transaction_state: "none",
+    payment_state: "none",
+    booking_state: "none",
+    fulfillment_state: "none",
+    ambiguity: {
+      is_ambiguous: ambiguous,
+      reasons: ambiguous ? ["multiple installation referents"] : [],
+      clarification_question: ambiguous ? "Which installation?" : null,
+    },
+    confidence: 0.55,
+  };
+}
+
+function turn48CommerceState() {
+  const state = turn55CommerceState();
+  state.installation.pending_checks = ["installation_site_check"];
+  state.installation.items = [];
+  state.unresolved_items = ["confirm installation feasibility after site check"];
+  state.current_topic = "installation";
+  state.metadata = {
+    captured_turn: 47,
+    fallback_reason: "NO_SUPPORTED_FACT_SLOT",
+    source_message_id: "48a00000-0000-4000-8000-000000000047",
+  };
+  return state;
+}
+
+async function executeTurn48Fixture(
+  text: string,
+  options: {
+    previous?: ReturnType<typeof turn48CommerceState>;
+    semantic_frame?: CommerceSemanticFrame | null;
+    revision?: number;
+    language?: "zh-TW" | "zh-CN" | "en";
+    source_message_id?: string;
+  } = {},
+) {
+  const previous = options.previous ?? turn48CommerceState();
+  const before = JSON.stringify(previous);
+  let persisted = previous;
+  let rpcCalls = 0;
+  const db: CommerceStateDbClient = {
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          maybeSingle: async () => ({
+            data: options.revision === 0 ? null : { revision: options.revision ?? 40, state: previous },
+            error: null,
+          }),
+        }),
+      }),
+    }),
+    rpc: async (_name, params) => {
+      rpcCalls += 1;
+      persisted = params.p_state as typeof previous;
+      return { data: { result: "success", applied_revision: 41 }, error: null };
+    },
+  };
+  const outcome = await runCommerceStateRuntime(db, {
+    conversation_id: "19484609-961e-4f5f-b1c6-b731afb79313",
+    company_id: "3d6e17b5-ec79-4f75-aa7f-eaa824ff8493",
+    source_message_id: options.source_message_id ?? "d4c905ae-35bf-4c4b-bc5b-c9e377e70fc7",
+    text,
+    language: options.language ?? "zh-TW",
+    history: [
+      { role: "visitor", content: "窗口同安裝位要師傅上門睇。" },
+      { role: "visitor", content: "客廳嗰部取消，冷氣而家兩部。" },
+      { role: "visitor", content: "雪櫃闊度唔可以超過595mm。" },
+    ],
+    semantic_frame: options.semantic_frame === undefined
+      ? turn48SemanticFrame(options.language === "en" ? "en" : "zh-TW")
+      : options.semantic_frame,
+    industry_identifier: "home_appliance",
+  });
+  return { before, outcome, persisted, rpcCalls };
+}
+
+Deno.test("C3 captured production turn 48 resolves pending technician count read-only before clarification", async () => {
+  const previous = turn48CommerceState();
+  const provenanceBefore = JSON.stringify(previous.entities.map((entity) => entity.provenance));
+  const result = await executeTurn48Fixture("我而家有幾多項要師傅確認？", { previous });
+  assert(isReadOnlyCurrentStateAggregateQuery("我而家有幾多項要師傅確認？", turn48SemanticFrame()));
+  assert(result.outcome?.route === "commerce_state_answer", JSON.stringify(result.outcome));
+  assert(result.outcome?.reason === "read_only_current_state_aggregate_query_resolved", JSON.stringify(result.outcome));
+  assert(result.outcome?.state_path === "installation.pending_checks");
+  assert(result.outcome?.reply?.includes("1") && result.outcome.reply.includes("安裝現場檢查"), result.outcome?.reply ?? "missing reply");
+  assert(!/[?？]|最想完成/.test(result.outcome?.reply ?? ""));
+  assert(result.outcome?.persist_result === "read_only" && result.outcome.revision === 40);
+  assert(result.rpcCalls === 0, `aggregate query created ${result.rpcCalls} semantic event(s)`);
+  assert(JSON.stringify(result.persisted) === result.before);
+  assert(JSON.stringify(result.persisted.entities.map((entity) => entity.provenance)) === provenanceBefore);
+});
+
+Deno.test("C3 pending technician aggregate count and list queries preserve zero, unknown, mutation and replay boundaries", async () => {
+  for (const [text, language] of [
+    ["我而家有幾多項要師傅確認？", "zh-TW"],
+    ["仲有幾多項未確認？", "zh-TW"],
+    ["How many checks are still pending?", "en"],
+  ] as const) {
+    const result = await executeTurn48Fixture(text, { language, semantic_frame: turn48SemanticFrame(language === "en" ? "en" : "zh-TW") });
+    assert(result.outcome?.reason === "read_only_current_state_aggregate_query_resolved", `${text}:${JSON.stringify(result.outcome)}`);
+    assert(result.outcome?.reply?.includes("1"), result.outcome?.reply ?? text);
+    assert(result.rpcCalls === 0 && JSON.stringify(result.persisted) === result.before);
+  }
+
+  const list = await executeTurn48Fixture("仲有邊啲要師傅確認？");
+  assert(list.outcome?.reply?.includes("安裝現場檢查"));
+  assert(list.rpcCalls === 0);
+
+  const zeroState = turn48CommerceState();
+  zeroState.installation.pending_checks = [];
+  const zero = await executeTurn48Fixture("我而家有幾多項要師傅確認？", { previous: zeroState });
+  assert(zero.outcome?.reply?.includes("冇待師傅確認"));
+  assert(zero.rpcCalls === 0);
+
+  const unknown = await executeTurn48Fixture("仲有邊啲要師傅確認？", { revision: 0 });
+  assert(unknown.outcome?.reason === "read_only_current_state_aggregate_query_unresolved");
+  assert(unknown.outcome?.reply?.includes("邊件產品或邊項安裝") && !unknown.outcome.reply.includes("最想完成"));
+  assert(unknown.rpcCalls === 0);
+
+  const ambiguous = await executeTurn48Fixture("呢兩件貨邊啲要師傅確認？", { semantic_frame: turn48SemanticFrame("zh-TW", true) });
+  assert(ambiguous.outcome?.reason === "read_only_current_state_aggregate_query_unresolved");
+  assert(ambiguous.rpcCalls === 0);
+
+  const added = await executeTurn48Fixture("新增一項排水檢查，請師傅確認。", { semantic_frame: null, source_message_id: "48a00000-0000-4000-8000-000000000048" });
+  assert(added.rpcCalls === 1);
+  assert(added.persisted.installation.pending_checks.includes("drainage_check"));
+  assert(added.persisted.installation.pending_checks.includes("installation_site_check"));
+
+  const cancelledState = turn48CommerceState();
+  cancelledState.installation.pending_checks.push("drainage_check");
+  const cancelled = await executeTurn48Fixture("取消排水檢查。", { previous: cancelledState, semantic_frame: null, source_message_id: "48a00000-0000-4000-8000-000000000049" });
+  assert(cancelled.rpcCalls === 1);
+  assert(!cancelled.persisted.installation.pending_checks.includes("drainage_check"));
+  assert(cancelled.persisted.installation.pending_checks.includes("installation_site_check"));
+
+  const first = await executeTurn48Fixture("我而家有幾多項要師傅確認？");
+  const replay = await executeTurn48Fixture("我而家有幾多項要師傅確認？", { previous: first.persisted, source_message_id: "d4c905ae-35bf-4c4b-bc5b-c9e377e70fc7" });
+  assert(first.rpcCalls === 0 && replay.rpcCalls === 0);
+  assert(first.before === JSON.stringify(replay.persisted));
+});

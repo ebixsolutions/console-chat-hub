@@ -778,6 +778,33 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          turn48_repair_base=161075b5b30c71067946d669dad54989097b6a3b
+          if git merge-base --is-ancestor "$turn48_repair_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$turn48_repair_base"; then
+            expected="$RUNNER_TEMP/c3-turn48-expected"
+            actual="$RUNNER_TEMP/c3-turn48-actual"
+            cat > "$expected" <<'EOF'
+          .github/scripts/task_ai_abc_c3_final_gate.mjs
+          .github/workflows/task-ai-abc-c3-final-gate.yml
+          supabase/functions/_shared/commerce-state-authority.ts
+          supabase/functions/_shared/commerce-state-runtime-base.ts
+          supabase/functions/_shared/conversation-recall.integration.test.ts
+          supabase/functions/generate-reply/index.ts
+          EOF
+            git diff --name-only "$turn48_repair_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
+            LC_ALL=C sort -o "$expected" "$expected"
+            diff -u "$expected" "$actual"
+            test "$(git rev-list --count "$turn48_repair_base..$GITHUB_SHA")" -eq 1
+            test -z "$(git diff --name-only "$turn48_repair_base..$GITHUB_SHA" -- 'supabase/migrations/**' 'supabase/functions/agent-assist/index.ts')"
+            grep -q 'READ_ONLY_CURRENT_STATE_AGGREGATE_QUERY' supabase/functions/_shared/commerce-state-authority.ts
+            grep -q 'read_only_current_state_aggregate_query_resolved' supabase/functions/_shared/commerce-state-runtime-base.ts
+            grep -q 'd4c905ae-35bf-4c4b-bc5b-c9e377e70fc7' supabase/functions/_shared/conversation-recall.integration.test.ts
+            grep -q 'read_only_current_state_aggregate_query_resolved' supabase/functions/generate-reply/index.ts
+            echo C3_TURN48_SOURCE_REPAIR_PARENT="$turn48_repair_base"
+            echo C3_TURN48_SOURCE_REPAIR_ALLOWLIST=PASS
+            echo C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE
+            echo C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS
+            exit 0
+          fi
           turn27_repair_base=3810effa3c145462fb8f49af9932322a07a8ae65
           if git merge-base --is-ancestor "$turn27_repair_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$turn27_repair_base"; then
             expected="$RUNNER_TEMP/c3-turn27-expected"

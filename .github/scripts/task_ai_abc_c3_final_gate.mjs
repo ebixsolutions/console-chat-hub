@@ -250,11 +250,14 @@ for (const marker of [
   "READ_ONLY_MEMORY_OR_CURRENT_STATE_RECALL",
   "read_only_current_state_query_resolved",
   "read_only_memory_or_current_state_recall_resolved",
+  "read_only_current_state_aggregate_query_resolved",
+  "read_only_current_state_aggregate_query_unresolved",
 ]) must(commerceRuntime.includes(marker), `commerce_read_only_contract_missing:${marker}`);
 for (const marker of [
   "questionExplicitlyAsksQuantity",
   "inferEntityStatusPath",
   "isReadOnlyMemoryOrCurrentStateRecall",
+  "isReadOnlyCurrentStateAggregateQuery",
 ]) must(commerceAuthority.includes(marker), `commerce_known_answer_authority_missing:${marker}`);
 for (const marker of [
   "59b89c91-f150-4120-b226-a2944f0eb2da",
@@ -272,6 +275,12 @@ for (const marker of [
   "C3 attribute-compatible referent routing is fail-closed across topic switches and quantities",
   "customer_constraints.refrigerator.width",
 ]) must(recallIntegration.includes(marker), `turn27_regression_missing:${marker}`);
+for (const marker of [
+  "d4c905ae-35bf-4c4b-bc5b-c9e377e70fc7",
+  "C3 captured production turn 48 resolves pending technician count read-only before clarification",
+  "read_only_current_state_aggregate_query_resolved",
+  "installation.pending_checks",
+]) must(recallIntegration.includes(marker), `turn48_regression_missing:${marker}`);
 for (const marker of [
   "read_only_attribute_constraint_query_resolved",
   "resolveAttributeQueryCategory",

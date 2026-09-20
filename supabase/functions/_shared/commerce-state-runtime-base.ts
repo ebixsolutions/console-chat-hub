@@ -33,6 +33,7 @@ import {
   type CommerceCalculationTerm,
   type CommerceDimensionAttribute,
   inferCommerceDimensionAttribute,
+  isReadOnlyCurrentStateAggregateQuery,
   isReadOnlyMemoryOrCurrentStateRecall,
   parseCommerceDimensionMeasurement,
   resolveCommerceAnswerAuthority,
@@ -171,6 +172,59 @@ type AttributeConstraintQueryResolution = {
   reply: string;
   state_path: string | null;
 };
+
+type PendingCheckAggregateResolution = {
+  authority: CommerceAnswerAuthority;
+  reason: "read_only_current_state_aggregate_query_resolved" | "read_only_current_state_aggregate_query_unresolved";
+  reply: string;
+  state_path: string | null;
+};
+
+function pendingCheckLabel(check: string, language: CommerceLanguage): string {
+  const labels: Record<string, Record<CommerceLanguage, string>> = {
+    installation_site_check: { "zh-TW": "安裝現場檢查", "zh-CN": "安装现场检查", en: "installation site check" },
+    window_opening_check: { "zh-TW": "窗口尺寸檢查", "zh-CN": "窗口尺寸检查", en: "window-opening check" },
+    wall_structure_check: { "zh-TW": "牆身承托檢查", "zh-CN": "墙体承托检查", en: "wall-structure check" },
+    electrical_supply_check: { "zh-TW": "電力供應檢查", "zh-CN": "电力供应检查", en: "electrical-supply check" },
+    drainage_check: { "zh-TW": "排水檢查", "zh-CN": "排水检查", en: "drainage check" },
+  };
+  return labels[check]?.[language] ?? clean(check, 120).replaceAll("_", " ");
+}
+
+function resolvePendingCheckAggregateQuery(
+  input: CommerceRuntimeInput,
+  state: ConversationCommerceState,
+  revision: number,
+): PendingCheckAggregateResolution | null {
+  if (!isReadOnlyCurrentStateAggregateQuery(input.text, input.semantic_frame)) return null;
+  if (revision === 0 || input.semantic_frame?.ambiguity.is_ambiguous === true) {
+    const reply = input.language === "en"
+      ? "Which product or installation do you mean? I can check its pending technician items without changing them."
+      : input.language === "zh-CN"
+      ? "你是指哪件产品或哪项安装？我可以只查看对应的待师傅确认项目，不会更改它们。"
+      : "你係指邊件產品或邊項安裝？我可以只查看對應嘅待師傅確認項目，唔會更改佢哋。";
+    return { authority: "INSUFFICIENT_INFORMATION", reason: "read_only_current_state_aggregate_query_unresolved", reply, state_path: null };
+  }
+  const pending = [...new Set([
+    ...state.installation.pending_checks,
+    ...state.installation.items.filter((item) => item.status === "pending").map((item) => item.kind),
+  ].map((item) => clean(item, 160)).filter(Boolean))];
+  const labels = pending.map((item) => pendingCheckLabel(item, input.language));
+  const asksForList = /(?:邊啲|边啲|哪些|which\s+(?:checks?|items?)|what\s+(?:still\s+)?(?:needs?|requires?))/i.test(input.text);
+  let reply: string;
+  if (input.language === "en") {
+    reply = pending.length === 0
+      ? "There are currently no pending technician-confirmation items."
+      : asksForList
+      ? `The pending technician-confirmation item${pending.length === 1 ? " is" : "s are"}: ${labels.join(", ")}.`
+      : `There ${pending.length === 1 ? "is" : "are"} currently ${pending.length} pending technician-confirmation item${pending.length === 1 ? "" : "s"}: ${labels.join(", ")}.`;
+  } else if (input.language === "zh-CN") {
+    reply = pending.length === 0 ? "目前没有待师傅确认的项目。" : asksForList ? `待师傅确认的是：${labels.join("、")}。` : `目前有 ${pending.length} 项待师傅确认：${labels.join("、")}。`;
+  } else {
+    reply = pending.length === 0 ? "而家冇待師傅確認嘅項目。" : asksForList ? `待師傅確認嘅係：${labels.join("、")}。` : `而家有 ${pending.length} 項要師傅確認：${labels.join("、")}。`;
+  }
+  return { authority: "CONVERSATION_STATE", reason: "read_only_current_state_aggregate_query_resolved", reply, state_path: "installation.pending_checks" };
+}
 
 function semanticCategoryKeys(frame: CommerceSemanticFrame | null | undefined): string[] {
   if (!frame) return [];
@@ -652,6 +706,7 @@ export function isReadOnlyCurrentStateQuery(
   text: string,
   semanticFrame?: CommerceSemanticFrame | null,
 ): boolean {
+  if (isReadOnlyCurrentStateAggregateQuery(text, semanticFrame)) return true;
   if (isReadOnlyMemoryOrCurrentStateRecall(text, semanticFrame)) return true;
   if (!isReadOnlyCommerceQuestion(text, semanticFrame)) return false;
   const t = clean(text);
@@ -1042,7 +1097,12 @@ function deriveA3RuntimeEvents(
   }
 
   const checks = detectSiteChecks(text);
-  if (checks.length) events.push({ type: "SET_PENDING_CHECKS", checks });
+  if (checks.length) {
+    const nextChecks = detectCancellation(text)
+      ? previous.installation.pending_checks.filter((check) => !checks.includes(check))
+      : [...previous.installation.pending_checks, ...checks];
+    events.push({ type: "SET_PENDING_CHECKS", checks: [...new Set(nextChecks)] });
+  }
   return events;
 }
 
@@ -1555,6 +1615,17 @@ export async function runCommerceStateRuntime(
   if (!text || !input.conversation_id || !input.company_id || !input.source_message_id) return null;
 
   const language = input.language;
+
+  // Aggregate technician-check questions resolve from the committed snapshot
+  // before generic quantity routing or persistence, so a read cannot create a
+  // semantic event or rebind the pending facts' provenance.
+  if (isReadOnlyCurrentStateAggregateQuery(text, input.semantic_frame)) {
+    const loaded = await loadCommerceState(db, input.conversation_id);
+    const aggregateResolution = resolvePendingCheckAggregateQuery(input, loaded.state, loaded.revision);
+    if (aggregateResolution) {
+      return { ...aggregateResolution, revision: loaded.revision, persist_result: "read_only", route: "commerce_state_answer" };
+    }
+  }
 
   // Dimension/attribute questions must be bound before the generic recall
   // shortcut. Otherwise an article such as "一部598mm" can be mistaken for

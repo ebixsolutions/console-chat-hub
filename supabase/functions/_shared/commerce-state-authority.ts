@@ -301,6 +301,29 @@ export function isReadOnlyMemoryOrCurrentStateRecall(
     (recallLanguage || interrogative);
 }
 
+/**
+ * READ_ONLY_CURRENT_STATE_AGGREGATE_QUERY covers questions about the already
+ * recorded set of technician/professional checks. A count/list mention is a
+ * fact target, not authority to add, cancel, or otherwise rewrite a check.
+ */
+export function isReadOnlyCurrentStateAggregateQuery(
+  question: string,
+  semantic?: { operation?: string | null; requested_facts?: string[] | null } | null,
+): boolean {
+  const text = clean(question);
+  if (!text || explicitCustomerMutation(text)) return false;
+  const requested = (semantic?.requested_facts ?? []).join(" ");
+  const semanticRead = ["ASK_FACT", "NO_STATE_CHANGE"].includes(String(semantic?.operation ?? ""));
+  const technicianDomain = /(?:師傅|师傅|技師|技师|專業人員|专业人员|technician|professional|site\s*(?:check|survey)|onsite\s*(?:check|survey)|上門(?:確認|检查|檢查)|上门(?:确认|检查))/i.test(text) ||
+    /(?:pending\s+(?:checks?|items?)|(?:checks?|items?)\s+(?:are\s+)?still\s+pending)/i.test(text) ||
+    /(?:幾多|几多|多少|邊啲|边啲|哪些).{0,20}(?:未確認|未确认|待確認|待确认)/i.test(text) ||
+    /(?:pending_(?:technician_)?checks?|professional_confirmation|installation\.pending_checks)/i.test(requested);
+  const aggregateOrList = /(?:幾多\s*(?:項|個位|個|个)|几多\s*(?:项|个位|个)|多少\s*(?:項|项|個|个)|仲有\s*(?:幾多|几多|邊啲|边啲)|還有\s*(?:多少|哪些)|还有\s*(?:多少|哪些)|邊啲|边啲|哪些|how many\s+(?:checks?|items?)|which\s+(?:checks?|items?)|what\s+(?:still\s+)?(?:needs?|requires?).{0,24}(?:confirmation|checking)|what\s+is\s+still\s+pending)/i.test(text) ||
+    /(?:pending_(?:technician_)?checks?|professional_confirmation)/i.test(requested);
+  const interrogative = /[?？]/.test(text) || aggregateOrList;
+  return technicianDomain && aggregateOrList && (semanticRead || interrogative);
+}
+
 function questionLooksLikeCalculation(question: string): boolean {
   return /(?:加埋|合共|總共幾錢|总共多少钱|一共多少|total|how much.*(?:total|altogether)|calculate|計下|算下|計算|计算)/i.test(
     question,
