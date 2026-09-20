@@ -48,6 +48,7 @@ const files = {
     "supabase/functions/_shared/current-fact-evidence.test.ts",
   handoffIntent: "supabase/functions/_shared/handoff-intent.ts",
   commerceStateReducer: "supabase/functions/_shared/commerce-state-reducer.ts",
+  commerceStateAuthority: "supabase/functions/_shared/commerce-state-authority.ts",
   commerceStateRuntimeBase: "supabase/functions/_shared/commerce-state-runtime-base.ts",
   preSendConversionSupervisor: "supabase/functions/_shared/pre-send-conversion-supervisor.ts",
   preSendConversionSupervisorTest:
@@ -145,11 +146,13 @@ for (const file of Object.values(files)) {
 
 const memory = read(files.memory),
   unit = read(files.unit),
-  integration = read(files.integration);
+  integration = read(files.integration),
+  recallIntegration = read(files.recallIntegration);
 const terminalGuard = read(files.terminalGuard),
   terminalTest = read(files.terminalTest);
 const generate = read(files.generate),
   assist = read(files.assist),
+  commerceAuthority = read(files.commerceStateAuthority),
   commerceRuntime = read(files.commerceStateRuntimeBase),
   migration = read(files.migration);
 const c2WorkflowRouting = read(files.c2WorkflowRouting);
@@ -167,7 +170,7 @@ const authorizedTargetedRepairHashes = new Map([
   ],
   [
     "supabase/functions/_shared/commerce-state-runtime-base.ts",
-    "b5e6a562aae7cd6a14b6131bd7b02289401a67bf9c6b93f5717efa626c44e15a",
+    "576334dd6f1cfaffd4715bce71722757b7453e5cfcb2a6ef7cfd48edcdd7d377",
   ],
   [
     "supabase/functions/_shared/pre-send-conversion-supervisor.ts",
@@ -241,10 +244,29 @@ for (const marker of [
   "explicit_address_correction_applied",
   "previous_state",
 ]) must(commerceRuntime.includes(marker), `commerce_correction_reply_missing:${marker}`);
+for (const marker of [
+  "READ_ONLY_CURRENT_STATE_QUERY",
+  "isReadOnlyCurrentStateQuery",
+  "read_only_current_state_query_resolved",
+]) must(commerceRuntime.includes(marker), `commerce_read_only_contract_missing:${marker}`);
+for (const marker of [
+  "questionExplicitlyAsksQuantity",
+  "inferEntityStatusPath",
+]) must(commerceAuthority.includes(marker), `commerce_known_answer_authority_missing:${marker}`);
+for (const marker of [
+  "59b89c91-f150-4120-b226-a2944f0eb2da",
+  "generic:定兩部",
+  "C3 captured production turn 55 known quantity is read-only and outranks clarification",
+]) must(recallIntegration.includes(marker), `turn55_regression_missing:${marker}`);
 must(
   generate.includes("resolveCommittedAddressCorrection({") &&
     generate.includes("_c3ResolvedAddressCorrection"),
   "resolved_address_correction_must_outrank_clarification",
+);
+must(
+  generate.includes("_c3ResolvedReadOnlyCurrentState") &&
+    generate.includes('read_only_current_state_query_resolved'),
+  "known_read_only_answer_must_outrank_clarification",
 );
 must(
   generate.indexOf("runCommerceStateRuntime(") <

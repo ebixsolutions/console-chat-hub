@@ -4355,7 +4355,15 @@ async function orchestrationGenerateReply(
     (_a3Commerce?.reason === "explicit_entity_status_change_applied" &&
       Boolean(_a3Commerce.reply)) ||
     Boolean(_c3ResolvedAddressCorrection);
-  const _c3PlannedReply = _c3ResolvedCommerceStateChange ? null : applyServiceTone(
+  const _c3ResolvedReadOnlyCurrentState =
+    _a3Commerce?.reason === "read_only_current_state_query_resolved" &&
+    _a3Commerce.route === "commerce_state_answer" &&
+    _a3Commerce.authority === "CONVERSATION_STATE" &&
+    Boolean(_a3Commerce.reply);
+  const _c3PlannedReply =
+    (_c3ResolvedCommerceStateChange || _c3ResolvedReadOnlyCurrentState)
+      ? null
+      : applyServiceTone(
     _c3ServicePlan,
     renderServicePlanReply(
       _c3ServicePlan,

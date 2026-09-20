@@ -285,6 +285,59 @@ function parseCount(text: string): number | null {
   return countTokenValue(m[1]);
 }
 
+function looksInterrogative(text: string): boolean {
+  const t = clean(text);
+  return /[?？]/.test(t) ||
+    /(?:係咪|系咪|是否|有冇|有沒有|有没有|幾多|几多|多少|邊個|边个|哪個|哪个|咩|什麼|什么|定係|定系|仲係|仲系|還是|还是|how many|what(?:'s| is)|which|is it|do i|did i|have i|current|status)/i.test(t);
+}
+
+function hasExplicitSupportedMutation(text: string): boolean {
+  const t = clean(text);
+  if (!t) return false;
+  if (parseAddressReplacementCorrection(t)) return true;
+  if (
+    /(?:更正|改(?:做|成|為|为|返)|變成|变成|再加|加多|新增|另外加|我要|我想(?:買|买|訂|订)|想(?:買|买|訂|订)|要(?:買|买|訂|订)|落單|下單|下单)/i.test(t) ||
+    /(?:幫我|帮我|請|请).{0,24}(?:改|加|取消|移除|刪除|删除|設定|设置|買|买|訂|订)/i.test(t) ||
+    /(?:change|set|make|add|buy|purchase|order|cancel|remove)\b/i.test(t)
+  ) return true;
+  if (!looksInterrogative(t) && (detectCancellation(t) || detectDeferral(t))) return true;
+  // A bare counted statement remains a supported SET/ADD input. The same
+  // words inside a question are mentions, not mutation authority.
+  return !looksInterrogative(t) && parseCount(t) !== null;
+}
+
+/**
+ * Shared fail-closed contract for factual questions. An interrogative cannot
+ * authorize commerce mutation merely because it contains an entity or count.
+ * Explicit supported mutation language still wins (including polite requests
+ * phrased with a question mark).
+ */
+export function isReadOnlyCommerceQuestion(
+  text: string,
+  semanticFrame?: CommerceSemanticFrame | null,
+): boolean {
+  const semanticRead = semanticFrame?.operation === "ASK_FACT" ||
+    semanticFrame?.operation === "ASK_CALCULATION" ||
+    semanticFrame?.operation === "NO_STATE_CHANGE";
+  return (semanticRead || looksInterrogative(text)) &&
+    !hasExplicitSupportedMutation(text);
+}
+
+/** READ_ONLY_CURRENT_STATE_QUERY is distinct from every mutation operation. */
+export function isReadOnlyCurrentStateQuery(
+  text: string,
+  semanticFrame?: CommerceSemanticFrame | null,
+): boolean {
+  if (!isReadOnlyCommerceQuestion(text, semanticFrame)) return false;
+  const t = clean(text);
+  const requested = (semanticFrame?.requested_facts ?? []).join(" ");
+  const quantity = /(?:數量|数量|quantity|how many|幾多|几多|多少|(?:[一二兩两三四五六七八九十]|\d{1,4})\s*(?:部|台|件|個|个|套|units?|items?).{0,20}?(?:定|還是|还是|or)\s*(?:[一二兩两三四五六七八九十]|\d{1,4})\s*(?:部|台|件|個|个|套|units?|items?))/i.test(t) ||
+    /(?:quantity|current_quantity)/i.test(requested);
+  const status = /(?:狀態|状态|status|已取消|取消咗|取消了|仲要|仍然要|still active|cancelled|canceled)/i.test(t) ||
+    /(?:status|current_state)/i.test(requested);
+  return quantity || status;
+}
+
 function isAllocationBreakdown(text: string): boolean {
   const matches = clean(text).match(
     /(?:[一二兩两三四五六七八九十]|\d{1,4})\s*(?:部|台|件|個|个|套|units?|items?)/gi,
@@ -804,6 +857,12 @@ export function reduceTurn(
   input: CommerceRuntimeInput,
   rawHints: CommerceTurnEntityHint[],
 ): ConversationCommerceState {
+  // READ_ONLY_CURRENT_STATE_QUERY (and other factual interrogatives) emits no
+  // state events. Persistence may still record this source-message revision,
+  // but its canonical state payload remains byte-for-byte unchanged.
+  if (isReadOnlyCurrentStateQuery(input.text, input.semantic_frame)) {
+    return previous;
+  }
   const calculationTurn = detectExplicitCalculationRequest(input.text);
   const resolvedHints = calculationTurn
     ? []
@@ -1198,6 +1257,10 @@ export async function runCommerceStateRuntime(
 
   const persisted = await persistCommerceTurn(db, runtimeInput, hints);
   const state = persisted.state;
+  const readOnlyCurrentStateQuery = isReadOnlyCurrentStateQuery(
+    text,
+    input.semantic_frame,
+  );
 
   const summaryIntent = detectTransactionSummaryIntent(text);
   const wantsCalculation = detectExplicitCalculationRequest(text);
@@ -1214,7 +1277,14 @@ export async function runCommerceStateRuntime(
     requires_professional_site_check: requiresProfessionalSiteCheck(text),
   });
 
-  const base = { revision: persisted.revision, persist_result: persisted.result, reason: decision.reason };
+  const base = {
+    revision: persisted.revision,
+    persist_result: persisted.result,
+    reason: decision.authority === "CONVERSATION_STATE" &&
+        readOnlyCurrentStateQuery
+      ? "read_only_current_state_query_resolved"
+      : decision.reason,
+  };
 
   const resolvedStatusChangeReply = persisted.result === "success"
     ? buildResolvedEntityStatusChangeAnswer(runtimeInput, state)

@@ -1288,6 +1288,20 @@ Deno.test("C3 source audit recall precedes commerce reply, context shortcuts and
   );
   const plannedReply = source.indexOf("const _c3PlannedReply", start);
   assert(resolvedAddress > start && resolvedAddress < plannedReply, "post-commit address correction must clear stale clarification before reply planning");
+  const resolvedReadOnly = source.indexOf(
+    "const _c3ResolvedReadOnlyCurrentState",
+    start,
+  );
+  assert(
+    resolvedReadOnly > start && resolvedReadOnly < plannedReply,
+    "known read-only commerce answer must clear stale clarification before reply planning",
+  );
+  const planningWindow = source.slice(resolvedReadOnly, plannedReply + 500);
+  assert(
+    planningWindow.includes("read_only_current_state_query_resolved") &&
+      planningWindow.includes("_c3ResolvedReadOnlyCurrentState"),
+    "known-state answer precedence contract absent",
+  );
 });
 Deno.test("C3 assist uses same resolver after RBAC and before its KB dependency", () => {
   const source = Deno.readTextFileSync(
@@ -1408,4 +1422,276 @@ Deno.test("C3 synthetic 100-turn bounded-memory routing continuity (not producti
     );
     previous = memory;
   }
+});
+
+function turn55CommerceState() {
+  const state = createEmptyConversationCommerceState();
+  state.language = "zh-TW";
+  state.current_intent = "purchase_air_conditioner";
+  state.current_topic = "air_conditioner";
+  state.current_industry = "home_appliance";
+  state.latest_corrections = [
+    "改做一部1匹，一部1.5匹。",
+    "客廳嗰部暫時唔買住。",
+  ];
+  state.entities = [
+    {
+      entity_id: "air_conditioner:unscoped",
+      category: "air_conditioner",
+      brand: null,
+      model: null,
+      quantity: 2,
+      status: "tentative",
+      attributes: { correction_lineage: "two-active-units" },
+      constraints: {},
+      provenance: {
+        source_type: "customer",
+        source_message_id: "55a00000-0000-4000-8000-000000000015",
+      },
+    },
+    {
+      entity_id: "air_conditioner:living_room",
+      category: "air_conditioner",
+      brand: null,
+      model: null,
+      quantity: 1,
+      status: "cancelled",
+      attributes: { correction_lineage: "living-room-cancelled" },
+      constraints: {},
+      provenance: {
+        source_type: "customer",
+        source_message_id: "55a00000-0000-4000-8000-000000000016",
+      },
+    },
+  ];
+  state.quotes = [{
+    quote_id: "customer:066a0e16-d07b-47e6-ab16-88694d49b1fb:0",
+    entity_id: null,
+    amount: 5788,
+    currency: "HKD",
+    quote_type: "customer_reported_historical",
+    validity_status: "historical",
+    source_label: "customer_reported",
+    conditions: { historical: true, unverified: false },
+    provenance: {
+      source_type: "customer",
+      source_message_id: "066a0e16-d07b-47e6-ab16-88694d49b1fb",
+    },
+  }];
+  state.delivery.address = "長沙灣幸福邨B座12樓";
+  state.delivery.provenance = {
+    source_type: "customer",
+    source_message_id: "813a3f34-ee61-4c5b-9e75-45de0ac5d2e0",
+  };
+  state.installation.pending_checks = ["installation_site_check"];
+  state.conversion.funnel_stage = "quotation";
+  state.conversion.quotation_status = "draft";
+  state.conversion.tentative_entity_ids = ["air_conditioner:unscoped"];
+  state.conversion.cancelled_entity_ids = ["air_conditioner:living_room"];
+  return state;
+}
+
+function turn55SemanticFrame(): CommerceSemanticFrame {
+  return {
+    version: "commerce-semantic-1.0.0",
+    language: "zh-TW",
+    operation: "ASK_FACT",
+    intent: "recall current purchased quantity",
+    topic: "air_conditioner",
+    entities: [],
+    referents: [{ ref: "最後買嘅冷氣", source: "persistent_state", confidence: 0.96 }],
+    customer_correction: false,
+    additive: false,
+    explicit_negations: [],
+    requested_facts: ["current_quantity"],
+    transaction_state: "none",
+    payment_state: "none",
+    booking_state: "none",
+    fulfillment_state: "none",
+    ambiguity: { is_ambiguous: false, reasons: [], clarification_question: null },
+    // Captured production fell through the deterministic extractor because the
+    // semantic envelope was below the authoritative mutation threshold.
+    confidence: 0.55,
+  };
+}
+
+async function executeCommerceFixture(
+  previous: ReturnType<typeof turn55CommerceState>,
+  text: string,
+  source_message_id: string,
+  semantic_frame: CommerceSemanticFrame | null = turn55SemanticFrame(),
+) {
+  let persisted = previous;
+  let rpcCalls = 0;
+  const db: CommerceStateDbClient = {
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          maybeSingle: async () => ({ data: { revision: 54, state: previous }, error: null }),
+        }),
+      }),
+    }),
+    rpc: async (_name, params) => {
+      rpcCalls += 1;
+      persisted = params.p_state as typeof previous;
+      return { data: { result: "success", applied_revision: 55 }, error: null };
+    },
+  };
+  const outcome = await runCommerceStateRuntime(db, {
+    conversation_id: "95d4e67f-b896-47a2-bd64-b3f44dcf23f1",
+    company_id: "3d6e17b5-ec79-4f75-aa7f-eaa824ff8493",
+    source_message_id,
+    text,
+    language: "zh-TW",
+    history: [
+      { role: "visitor", content: "改做一部1匹，一部1.5匹。" },
+      { role: "visitor", content: "客廳嗰部暫時唔買住。" },
+      { role: "visitor", content: "咁我而家實際買幾多部冷氣？" },
+    ],
+    semantic_frame,
+    industry_identifier: "home_appliance",
+  });
+  return { outcome, persisted, rpcCalls };
+}
+
+Deno.test("C3 captured production turn 55 known quantity is read-only and outranks clarification", async () => {
+  const previous = turn55CommerceState();
+  const before = JSON.stringify(previous);
+  const source = "59b89c91-f150-4120-b226-a2944f0eb2da";
+  const result = await executeCommerceFixture(
+    previous,
+    "我最後係買三部定兩部？",
+    source,
+  );
+  assert(result.outcome?.route === "commerce_state_answer", JSON.stringify(result.outcome));
+  assert(result.outcome.reason === "read_only_current_state_query_resolved", JSON.stringify(result.outcome));
+  assert(result.outcome.state_path === "entities.0.quantity", JSON.stringify(result.outcome));
+  assert(result.outcome.reply?.includes("2") && !/[?？]|最想完成/.test(result.outcome.reply), result.outcome.reply ?? "missing reply");
+  assert(result.outcome.revision === 55 && result.outcome.persist_result === "success", JSON.stringify(result.outcome));
+  assert(JSON.stringify(result.persisted) === before, JSON.stringify(result.persisted));
+  assert(result.persisted.entities.length === 2, JSON.stringify(result.persisted.entities));
+  assert(!result.persisted.entities.some((entity) => entity.entity_id === "generic:定兩部"), JSON.stringify(result.persisted.entities));
+  assert(!result.persisted.entities.some((entity) => entity.quantity === 3), JSON.stringify(result.persisted.entities));
+});
+
+Deno.test("C3 read-only current-state query class preserves mutations, ambiguity, scope, and replay contracts", async () => {
+  const known = await executeCommerceFixture(
+    turn55CommerceState(),
+    "我而家實際買幾多部冷氣？",
+    "55b00000-0000-4000-8000-000000000001",
+  );
+  assert(known.outcome?.reason === "read_only_current_state_query_resolved" && known.outcome.reply?.includes("2"), JSON.stringify(known.outcome));
+  assert(known.persisted.entities.length === 2, JSON.stringify(known.persisted.entities));
+
+  const status = await executeCommerceFixture(
+    turn55CommerceState(),
+    "客廳嗰部而家係咪已取消？",
+    "55b00000-0000-4000-8000-000000000002",
+  );
+  assert(status.outcome?.reason === "read_only_current_state_query_resolved", JSON.stringify(status.outcome));
+  assert(status.outcome.reply?.includes("cancelled") || status.outcome.reply?.includes("取消"), status.outcome?.reply ?? "missing reply");
+  assert(status.persisted.entities.find((entity) => entity.entity_id.endsWith("living_room"))?.status === "cancelled", JSON.stringify(status.persisted));
+
+  const numbered = await executeCommerceFixture(
+    turn55CommerceState(),
+    "冷氣而家係三部定兩部？",
+    "55b00000-0000-4000-8000-000000000003",
+  );
+  assert(numbered.outcome?.reply?.includes("2"), JSON.stringify(numbered.outcome));
+  assert(!numbered.persisted.entities.some((entity) => entity.quantity === 3), JSON.stringify(numbered.persisted.entities));
+
+  const setFrame = turn55SemanticFrame();
+  setFrame.operation = "SET_QUANTITY";
+  setFrame.intent = "set current quantity";
+  setFrame.entities = [{
+    entity_ref: "air_conditioner:unscoped",
+    name: "冷氣",
+    kind: "physical_product",
+    category_hint: "air_conditioner",
+    sku: null,
+    model: null,
+    quantity: 3,
+    unit: "部",
+    attributes: {},
+    constraints: {},
+    capabilities: {
+      requires_delivery: false,
+      supports_pickup: false,
+      requires_installation: false,
+      requires_booking: false,
+      requires_quote: false,
+      requires_site_check: false,
+      digital_fulfilment: false,
+      recurring_billing: false,
+      rental_return: false,
+      customization: false,
+    },
+    confidence: 0.98,
+  }];
+  const set = await executeCommerceFixture(
+    turn55CommerceState(),
+    "可以幫我將冷氣改做三部嗎？",
+    "55b00000-0000-4000-8000-000000000004",
+    setFrame,
+  );
+  assert(set.persisted.entities.find((entity) => entity.entity_id.endsWith(":unscoped"))?.quantity === 3, JSON.stringify(set.persisted));
+
+  const addFrame = structuredClone(setFrame);
+  addFrame.operation = "ADD_ITEM";
+  addFrame.intent = "add another unit";
+  addFrame.additive = true;
+  addFrame.entities[0].quantity = 1;
+  const add = await executeCommerceFixture(
+    turn55CommerceState(),
+    "可以幫我再加一部冷氣嗎？",
+    "55b00000-0000-4000-8000-000000000005",
+    addFrame,
+  );
+  assert(add.persisted.entities.find((entity) => entity.entity_id.endsWith(":unscoped"))?.quantity === 3, JSON.stringify(add.persisted));
+
+  const ambiguousState = turn55CommerceState();
+  ambiguousState.entities[0] = { ...ambiguousState.entities[0], entity_id: "air_conditioner:bedroom_a", quantity: 1 };
+  ambiguousState.entities.push({ ...ambiguousState.entities[0], entity_id: "air_conditioner:bedroom_b" });
+  const ambiguousFrame = turn55SemanticFrame();
+  ambiguousFrame.ambiguity = { is_ambiguous: true, reasons: ["multiple active entities"], clarification_question: "你指邊一部？" };
+  const ambiguousBefore = JSON.stringify(ambiguousState);
+  const ambiguous = await executeCommerceFixture(
+    ambiguousState,
+    "嗰部而家係一部定兩部？",
+    "55b00000-0000-4000-8000-000000000006",
+    ambiguousFrame,
+  );
+  assert(ambiguous.outcome?.reply === null, JSON.stringify(ambiguous.outcome));
+  assert(JSON.stringify(ambiguous.persisted) === ambiguousBefore, JSON.stringify(ambiguous.persisted));
+
+  const genericQuestionState = createEmptyConversationCommerceState();
+  const generic = await executeCommerceFixture(
+    genericQuestionState,
+    "我係買兩部打印機定三部？",
+    "55b00000-0000-4000-8000-000000000007",
+    null,
+  );
+  assert(generic.persisted.entities.length === 0, JSON.stringify(generic.persisted.entities));
+
+  assert(known.outcome?.reply?.includes("2") && !known.outcome.reply.includes("3"), known.outcome?.reply ?? "missing reply");
+
+  const replayState = turn55CommerceState();
+  let replayRpcCalls = 0;
+  const replayDb: CommerceStateDbClient = {
+    from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { revision: 55, state: replayState }, error: null }) }) }) }),
+    rpc: async () => {
+      replayRpcCalls += 1;
+      return { data: { result: "source_message_already_applied", applied_revision: 55 }, error: null };
+    },
+  };
+  const replay = await runCommerceStateRuntime(replayDb, {
+    conversation_id: "95d4e67f-b896-47a2-bd64-b3f44dcf23f1",
+    company_id: "3d6e17b5-ec79-4f75-aa7f-eaa824ff8493",
+    source_message_id: "59b89c91-f150-4120-b226-a2944f0eb2da",
+    text: "我最後係買三部定兩部？",
+    language: "zh-TW",
+    semantic_frame: turn55SemanticFrame(),
+  });
+  assert(replayRpcCalls === 1 && replay?.revision === 55, JSON.stringify(replay));
+  assert(JSON.stringify(replayState) === JSON.stringify(turn55CommerceState()), JSON.stringify(replayState));
 });

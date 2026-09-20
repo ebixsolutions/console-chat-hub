@@ -211,9 +211,35 @@ function questionLooksLikeCalculation(question: string): boolean {
 function questionExplicitlyAsksQuantity(question: string): boolean {
   if (/(?:價|价|price|amount|金額|金额|幾錢|几钱|多少錢|多少钱|fee|收費|收费)/i.test(question))
     return false;
-  return /(?:數量|数量|quantity|how many|幾多\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚)|多少\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚))/i.test(
+  return /(?:數量|数量|quantity|how many|幾多\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚)|多少\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚)|(?:[一二兩两三四五六七八九十]|\d{1,4})\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚).{0,20}?(?:定|還是|还是|or)\s*(?:[一二兩两三四五六七八九十]|\d{1,4})\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚))/i.test(
     question,
   );
+}
+
+function inferEntityStatusPath(
+  question: string,
+  state: ConversationCommerceState,
+): { path: string; value: unknown } | null {
+  if (!/(?:狀態|状态|status|已取消|取消咗|取消了|仲要|仍然要|still active|cancelled|canceled)/i.test(question)) {
+    return null;
+  }
+  const normalized = clean(question).toLowerCase();
+  const roomKeys: Array<[RegExp, string]> = [
+    [/(?:客廳|客厅|living\s*room|lounge)/i, "living_room"],
+    [/(?:睡房|臥室|卧室|bedroom)/i, "bedroom"],
+    [/(?:廚房|厨房|kitchen)/i, "kitchen"],
+  ];
+  const room = roomKeys.find(([pattern]) => pattern.test(normalized))?.[1] ?? null;
+  let matches = state.entities.filter((entity) => {
+    if (room && entity.entity_id.includes(room)) return true;
+    return [entity.entity_id, entity.category, entity.brand ?? "", entity.model ?? ""]
+      .map((value) => clean(value).toLowerCase())
+      .some((value) => value.length >= 2 && normalized.includes(value));
+  });
+  if (!matches.length && state.entities.length === 1) matches = [state.entities[0]];
+  if (matches.length !== 1) return null;
+  const index = state.entities.indexOf(matches[0]);
+  return { path: `entities.${index}.status`, value: matches[0].status };
 }
 
 function inferKnownCustomerStatePath(
@@ -238,6 +264,9 @@ function inferKnownCustomerStatePath(
     const value = getCommerceStatePath(state, path);
     if (isKnownValue(value)) return { path, value };
   }
+
+  const entityStatus = inferEntityStatusPath(question, state);
+  if (entityStatus) return entityStatus;
 
   if (questionExplicitlyAsksQuantity(question)) {
     const active = state.entities.filter(
