@@ -215,6 +215,58 @@ function quantityRecallTarget(question: string): boolean {
   );
 }
 
+export type CommerceDimensionAttribute = "width" | "height" | "depth";
+
+export interface CommerceDimensionMeasurement {
+  attribute: CommerceDimensionAttribute | null;
+  value: number;
+  unit: "mm" | "cm" | "in";
+  value_mm: number;
+}
+
+function dimensionAttributeFromText(text: string): CommerceDimensionAttribute | null {
+  if (/(?:闊|寬|宽|width)/i.test(text)) return "width";
+  if (/(?:高|高度|height)/i.test(text)) return "height";
+  if (/(?:深|深度|depth)/i.test(text)) return "depth";
+  return null;
+}
+
+export function parseCommerceDimensionMeasurement(
+  question: string,
+): CommerceDimensionMeasurement | null {
+  const text = clean(question);
+  const match = text.match(
+    /(\d{1,5}(?:\.\d+)?)\s*(mm|毫米|cm|厘米|公分|inches?|inch|吋)/i,
+  );
+  if (!match) return null;
+  const value = Number(match[1]);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  const rawUnit = match[2].toLowerCase();
+  const unit: CommerceDimensionMeasurement["unit"] =
+    rawUnit === "mm" || rawUnit === "毫米"
+      ? "mm"
+      : rawUnit === "cm" || rawUnit === "厘米" || rawUnit === "公分"
+      ? "cm"
+      : "in";
+  const multiplier = unit === "mm" ? 1 : unit === "cm" ? 10 : 25.4;
+  return {
+    attribute: dimensionAttributeFromText(text),
+    value,
+    unit,
+    value_mm: Math.round(value * multiplier * 1000) / 1000,
+  };
+}
+
+export function inferCommerceDimensionAttribute(
+  question: string,
+  semantic?: { requested_facts?: string[] | null } | null,
+): CommerceDimensionAttribute | null {
+  const direct = dimensionAttributeFromText(clean(question));
+  if (direct) return direct;
+  const requested = (semantic?.requested_facts ?? []).join(" ");
+  return dimensionAttributeFromText(requested);
+}
+
 /**
  * Shared READ_ONLY_MEMORY_OR_CURRENT_STATE_RECALL contract. A counted noun in
  * an interrogative/recall utterance is a fact target, never mutation authority.
@@ -232,8 +284,16 @@ export function isReadOnlyMemoryOrCurrentStateRecall(
   const interrogative = /[?？]|呢\s*$|嗎\s*$|吗\s*$|(?:幾多|几多|多少|how many|what quantity|what.*(?:have|settled))/i.test(text);
   const deicticQuantity = recallLanguage &&
     /(?:嗰|那|這|这|呢)\s*(?:件|個|个|部|台|套)/i.test(text);
-  const quantity = quantityRecallTarget(text) || deicticQuantity ||
-    /(?:quantity|current_quantity)/i.test(requested);
+  const dimensionMeasurement = parseCommerceDimensionMeasurement(text);
+  const explicitQuantityFact = /(?:quantity|current_quantity)/i.test(requested) ||
+    /(?:數量|数量|quantity|how many|幾多|几多|多少)/i.test(text) ||
+    /(?:[一二兩两三四五六七八九十]|\d{1,4})\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚).{0,20}?(?:定|還是|还是|or)\s*(?:[一二兩两三四五六七八九十]|\d{1,4})\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚)/i.test(text);
+  // A product article followed by a dimension (for example, "一部598mm")
+  // is not a quantity fact. It remains available to attribute-compatible
+  // entity/constraint routing instead of inheriting a known quantity.
+  const quantity = (!dimensionMeasurement || explicitQuantityFact) &&
+    (quantityRecallTarget(text) || deicticQuantity ||
+      /(?:quantity|current_quantity)/i.test(requested));
   const status = /(?:狀態|状态|status|係咪取消|是否取消|仲要|仍然要|still active|cancelled|canceled)/i.test(text) ||
     /(?:status|current_state)/i.test(requested);
   return (semanticRead || recallLanguage || interrogative) &&

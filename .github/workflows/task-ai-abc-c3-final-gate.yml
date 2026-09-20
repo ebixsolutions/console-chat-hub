@@ -778,6 +778,33 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          turn27_repair_base=3810effa3c145462fb8f49af9932322a07a8ae65
+          if git merge-base --is-ancestor "$turn27_repair_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$turn27_repair_base"; then
+            expected="$RUNNER_TEMP/c3-turn27-expected"
+            actual="$RUNNER_TEMP/c3-turn27-actual"
+            cat > "$expected" <<'EOF'
+          .github/scripts/task_ai_abc_c3_final_gate.mjs
+          .github/workflows/task-ai-abc-c3-final-gate.yml
+          supabase/functions/_shared/commerce-state-authority.ts
+          supabase/functions/_shared/commerce-state-runtime-base.ts
+          supabase/functions/_shared/conversation-recall.integration.test.ts
+          supabase/functions/generate-reply/index.ts
+          EOF
+            git diff --name-only "$turn27_repair_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
+            LC_ALL=C sort -o "$expected" "$expected"
+            diff -u "$expected" "$actual"
+            test "$(git rev-list --count "$turn27_repair_base..$GITHUB_SHA")" -eq 1
+            test -z "$(git diff --name-only "$turn27_repair_base..$GITHUB_SHA" -- 'supabase/migrations/**' 'supabase/functions/agent-assist/index.ts')"
+            grep -q 'read_only_attribute_constraint_query_resolved' supabase/functions/_shared/commerce-state-runtime-base.ts
+            grep -q 'inferCommerceDimensionAttribute' supabase/functions/_shared/commerce-state-authority.ts
+            grep -q 'cab996a5-f99b-4f66-b89e-3bb0e73e5ecc' supabase/functions/_shared/conversation-recall.integration.test.ts
+            grep -q '_c3TargetedAttributeClarification' supabase/functions/generate-reply/index.ts
+            echo C3_TURN27_SOURCE_REPAIR_PARENT="$turn27_repair_base"
+            echo C3_TURN27_SOURCE_REPAIR_ALLOWLIST=PASS
+            echo C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE
+            echo C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS
+            exit 0
+          fi
           # The durable snapshot below predates the already-authorized v140/v56
           # cutover. For this exact source-only Turn-55 repair, bind the gate to
           # its authorized parent and exact allowlist instead of pretending the

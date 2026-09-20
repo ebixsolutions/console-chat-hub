@@ -170,7 +170,7 @@ const authorizedTargetedRepairHashes = new Map([
   ],
   [
     "supabase/functions/_shared/commerce-state-runtime-base.ts",
-    "576334dd6f1cfaffd4715bce71722757b7453e5cfcb2a6ef7cfd48edcdd7d377",
+    "34b81a984dd6eff9bce963d98208448c549822c34671ee8e9107ebd0bf3c42d5",
   ],
   [
     "supabase/functions/_shared/pre-send-conversion-supervisor.ts",
@@ -266,6 +266,23 @@ for (const marker of [
   "C3 captured production turn 25 memory recall is read-only and outranks clarification",
   "read-only recall created",
 ]) must(recallIntegration.includes(marker), `turn25_regression_missing:${marker}`);
+for (const marker of [
+  "cab996a5-f99b-4f66-b89e-3bb0e73e5ecc",
+  "C3 captured production turn 27 rejects AC quantity and resolves refrigerator width constraint",
+  "C3 attribute-compatible referent routing is fail-closed across topic switches and quantities",
+  "customer_constraints.refrigerator.width",
+]) must(recallIntegration.includes(marker), `turn27_regression_missing:${marker}`);
+for (const marker of [
+  "read_only_attribute_constraint_query_resolved",
+  "resolveAttributeQueryCategory",
+  "compatibleQuantityStatePath",
+  "parseCommerceDimensionMeasurement",
+]) must(commerceRuntime.includes(marker), `attribute_compatibility_contract_missing:${marker}`);
+must(
+  commerceAuthority.includes("A product article followed by a dimension") &&
+    commerceAuthority.includes("inferCommerceDimensionAttribute"),
+  "dimension_must_not_be_quantity_recall",
+);
 must(
   generate.includes("resolveCommittedAddressCorrection({") &&
     generate.includes("_c3ResolvedAddressCorrection"),

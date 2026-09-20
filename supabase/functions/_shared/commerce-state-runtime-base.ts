@@ -31,7 +31,10 @@ import {
 import {
   type CommerceAnswerAuthority,
   type CommerceCalculationTerm,
+  type CommerceDimensionAttribute,
+  inferCommerceDimensionAttribute,
   isReadOnlyMemoryOrCurrentStateRecall,
+  parseCommerceDimensionMeasurement,
   resolveCommerceAnswerAuthority,
 } from "./commerce-state-authority.ts";
 import {
@@ -159,6 +162,318 @@ function detectCategories(text: string) {
   const lower = clean(text).toLowerCase();
   return CATEGORY_SPECS.filter((spec) => matchedAliases(lower, spec.aliases).length > 0);
 }
+
+type AttributeConstraintQueryResolution = {
+  authority: CommerceAnswerAuthority;
+  reason:
+    | "read_only_attribute_constraint_query_resolved"
+    | "read_only_attribute_constraint_query_unresolved";
+  reply: string;
+  state_path: string | null;
+};
+
+function semanticCategoryKeys(frame: CommerceSemanticFrame | null | undefined): string[] {
+  if (!frame) return [];
+  const values = [
+    frame.topic,
+    ...frame.entities.flatMap((entity) => [
+      entity.category_hint ?? "",
+      entity.entity_ref ?? "",
+      entity.name ?? "",
+    ]),
+    ...frame.referents.map((referent) => referent.ref),
+  ];
+  const keys = new Set<string>();
+  for (const value of values) {
+    const normalized = clean(value, 160).toLowerCase();
+    if (!normalized) continue;
+    const exact = CATEGORY_SPECS.find((spec) => spec.key === normalized);
+    if (exact) keys.add(exact.key);
+    for (const category of detectCategories(normalized)) keys.add(category.key);
+  }
+  return [...keys];
+}
+
+function explicitCategoryKeys(text: string): string[] {
+  return [...new Set(detectCategories(text).map((category) => category.key))];
+}
+
+function resolveAttributeQueryCategory(input: CommerceRuntimeInput): {
+  category: string | null;
+  ambiguous: boolean;
+} {
+  // Current-turn semantics outrank stale topic inheritance.  A unique explicit
+  // category in the utterance is the strongest binding, followed by the
+  // schema-constrained semantic frame, then the nearest prior customer topic.
+  const current = explicitCategoryKeys(input.text);
+  if (current.length > 1) return { category: null, ambiguous: true };
+  if (current.length === 1) return { category: current[0], ambiguous: false };
+
+  const semantic = semanticCategoryKeys(input.semantic_frame);
+  if (semantic.length > 1) return { category: null, ambiguous: true };
+  if (semantic.length === 1) return { category: semantic[0], ambiguous: false };
+
+  for (const turn of input.history ?? []) {
+    if (!["visitor", "user", "customer"].includes(turn.role)) continue;
+    const recent = explicitCategoryKeys(turn.content);
+    if (recent.length > 1) return { category: null, ambiguous: true };
+    if (recent.length === 1) return { category: recent[0], ambiguous: false };
+  }
+  return { category: null, ambiguous: false };
+}
+
+function dimensionConstraintKey(attribute: CommerceDimensionAttribute): string[] {
+  return [`max_${attribute}_mm`, `${attribute}_max_mm`, `${attribute}_mm`, attribute];
+}
+
+function numericConstraint(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) return value;
+  if (typeof value !== "string") return null;
+  return (
+    parseCommerceDimensionMeasurement(value)?.value_mm ??
+    (/^\d+(?:\.\d+)?$/.test(value.trim()) ? Number(value) : null)
+  );
+}
+
+function stateDimensionConstraint(
+  state: ConversationCommerceState,
+  category: string,
+  attribute: CommerceDimensionAttribute,
+): { value_mm: number; path: string } | null {
+  const active = state.entities.filter(
+    (entity) =>
+      entity.category === category && entity.status !== "cancelled" && entity.status !== "deferred",
+  );
+  if (active.length === 1) {
+    const entityIndex = state.entities.indexOf(active[0]);
+    for (const key of dimensionConstraintKey(attribute)) {
+      const value = numericConstraint(active[0].constraints[key]);
+      if (value !== null) {
+        return { value_mm: value, path: `entities.${entityIndex}.constraints.${key}` };
+      }
+    }
+  }
+
+  const categoryConstraints = state.customer_constraints[category];
+  if (isRecord(categoryConstraints)) {
+    for (const key of dimensionConstraintKey(attribute)) {
+      const value = numericConstraint(categoryConstraints[key]);
+      if (value !== null) {
+        return { value_mm: value, path: `customer_constraints.${category}.${key}` };
+      }
+    }
+  }
+  return null;
+}
+
+function maximumConstraintLanguage(text: string): boolean {
+  return /(?:樓下|楼下|以下|上限|最多|唔好超過|不要超過|不超過|不超过|不能超過|不能超过|至多|≤|<=|at most|no more than|maximum|max\.?|under)/i.test(
+    text,
+  );
+}
+
+function contextualConstraintAttribute(
+  history: CommerceHistoryTurn[],
+  index: number,
+  category: string,
+): CommerceDimensionAttribute | null {
+  const direct = inferCommerceDimensionAttribute(history[index]?.content ?? "");
+  if (direct) return direct;
+  // A terse correction such as "595mm以下先啱" inherits only from the
+  // nearest older compatible dimension statement.  A conflicting explicit
+  // category closes the window instead of allowing cross-entity carryover.
+  for (let offset = index + 1; offset < Math.min(history.length, index + 6); offset += 1) {
+    const turn = history[offset];
+    if (!["visitor", "user", "customer"].includes(turn.role)) continue;
+    const categories = explicitCategoryKeys(turn.content);
+    if (categories.length && !categories.includes(category)) break;
+    const inherited = inferCommerceDimensionAttribute(turn.content);
+    if (inherited) return inherited;
+  }
+  return null;
+}
+
+function historyDimensionConstraint(
+  input: CommerceRuntimeInput,
+  category: string,
+  attribute: CommerceDimensionAttribute,
+): { value_mm: number; path: string } | null {
+  const history = (input.history ?? [])
+    .filter((turn) => ["visitor", "user", "customer"].includes(turn.role))
+    .slice(0, MAX_HISTORY_TURNS);
+  for (let index = 0; index < history.length; index += 1) {
+    const turn = history[index];
+    const categories = explicitCategoryKeys(turn.content);
+    if (categories.length && !categories.includes(category)) continue;
+    const measurement = parseCommerceDimensionMeasurement(turn.content);
+    if (!measurement || !maximumConstraintLanguage(turn.content)) continue;
+    const candidateAttribute =
+      measurement.attribute ?? contextualConstraintAttribute(history, index, category);
+    if (candidateAttribute !== attribute) continue;
+    return {
+      value_mm: measurement.value_mm,
+      path: `customer_constraints.${category}.${attribute}`,
+    };
+  }
+  return null;
+}
+
+function categoryLabel(category: string, language: CommerceLanguage): string {
+  const spec = CATEGORY_SPECS.find((candidate) => candidate.key === category);
+  return spec?.label[language] ?? category;
+}
+
+function dimensionLabel(attribute: CommerceDimensionAttribute, language: CommerceLanguage): string {
+  const labels = {
+    width: { "zh-TW": "闊度", "zh-CN": "宽度", en: "width" },
+    height: { "zh-TW": "高度", "zh-CN": "高度", en: "height" },
+    depth: { "zh-TW": "深度", "zh-CN": "深度", en: "depth" },
+  } as const;
+  return labels[attribute][language];
+}
+
+function formatMillimetres(value: number): string {
+  return Number.isInteger(value) ? String(value) : String(Math.round(value * 10) / 10);
+}
+
+function resolveReadOnlyAttributeConstraintQuery(
+  input: CommerceRuntimeInput,
+  state: ConversationCommerceState,
+): AttributeConstraintQueryResolution | null {
+  if (!isReadOnlyCommerceQuestion(input.text, input.semantic_frame)) return null;
+  const measurement = parseCommerceDimensionMeasurement(input.text);
+  if (!measurement) return null;
+
+  const categoryResolution = resolveAttributeQueryCategory(input);
+  const attribute =
+    inferCommerceDimensionAttribute(input.text, input.semantic_frame) ??
+    (() => {
+      const history = (input.history ?? []).filter((turn) =>
+        ["visitor", "user", "customer"].includes(turn.role),
+      );
+      for (let index = 0; index < history.length; index += 1) {
+        const candidate = contextualConstraintAttribute(
+          history,
+          index,
+          categoryResolution.category ?? "",
+        );
+        if (candidate) return candidate;
+      }
+      return null;
+    })();
+
+  if (categoryResolution.ambiguous || !categoryResolution.category) {
+    const value = `${measurement.value}${measurement.unit}`;
+    const reply =
+      input.language === "en"
+        ? `Which product is the ${value} measurement for? I will compare it only with that product's current dimension constraint.`
+        : input.language === "zh-CN"
+          ? `这个 ${value} 尺寸是指哪类产品？我只会用该产品目前的尺寸限制来比较。`
+          : `呢個 ${value} 尺寸係指邊類產品？我只會用該產品目前嘅尺寸限制去比較。`;
+    return {
+      authority: "INSUFFICIENT_INFORMATION",
+      reason: "read_only_attribute_constraint_query_unresolved",
+      reply,
+      state_path: null,
+    };
+  }
+
+  const category = categoryResolution.category;
+  if (!attribute) {
+    const product = categoryLabel(category, input.language);
+    const reply =
+      input.language === "en"
+        ? `For the ${product}, does ${measurement.value}${measurement.unit} refer to its width, height or depth?`
+        : input.language === "zh-CN"
+          ? `你说的${product} ${measurement.value}${measurement.unit} 是指宽度、高度还是深度？`
+          : `你講嘅${product} ${measurement.value}${measurement.unit} 係指闊度、高度定深度？`;
+    return {
+      authority: "INSUFFICIENT_INFORMATION",
+      reason: "read_only_attribute_constraint_query_unresolved",
+      reply,
+      state_path: null,
+    };
+  }
+
+  const constraint =
+    stateDimensionConstraint(state, category, attribute) ??
+    historyDimensionConstraint(input, category, attribute);
+  if (!constraint) {
+    const product = categoryLabel(category, input.language);
+    const dimension = dimensionLabel(attribute, input.language);
+    const reply =
+      input.language === "en"
+        ? `What is your current ${product} ${dimension} limit? I cannot safely compare ${measurement.value}${measurement.unit} with another product's state.`
+        : input.language === "zh-CN"
+          ? `你目前的${product}${dimension}上限是多少？我不能用其他产品的状态来判断 ${measurement.value}${measurement.unit}。`
+          : `你目前嘅${product}${dimension}上限係幾多？我唔可以用其他產品嘅狀態去判斷 ${measurement.value}${measurement.unit}。`;
+    return {
+      authority: "INSUFFICIENT_INFORMATION",
+      reason: "read_only_attribute_constraint_query_unresolved",
+      reply,
+      state_path: null,
+    };
+  }
+
+  const candidateMm = measurement.value_mm;
+  const limitMm = constraint.value_mm;
+  const candidate = formatMillimetres(candidateMm);
+  const limit = formatMillimetres(limitMm);
+  const exceeds = candidateMm > limitMm;
+  const reply =
+    input.language === "en"
+      ? exceeds
+        ? `${candidate} mm exceeds your current ${limit} mm ${dimensionLabel(attribute, "en")} limit, so it is not recommended under the current requirement.`
+        : `${candidate} mm is within your current ${limit} mm ${dimensionLabel(attribute, "en")} limit, so it can be considered on that dimension.`
+      : input.language === "zh-CN"
+        ? exceeds
+          ? `${candidate}mm 超过你目前设定的 ${limit}mm ${dimensionLabel(attribute, "zh-CN")}上限，所以按现有条件不建议考虑。`
+          : `${candidate}mm 没有超过你目前设定的 ${limit}mm ${dimensionLabel(attribute, "zh-CN")}上限，所以按这个尺寸条件可以考虑。`
+        : exceeds
+          ? `${candidate}mm 超過你目前設定嘅 ${limit}mm ${dimensionLabel(attribute, "zh-TW")}上限，所以按現有條件唔建議考慮。`
+          : `${candidate}mm 冇超過你目前設定嘅 ${limit}mm ${dimensionLabel(attribute, "zh-TW")}上限，所以按呢個尺寸條件可以考慮。`;
+  return {
+    authority: "CONVERSATION_STATE",
+    reason: "read_only_attribute_constraint_query_resolved",
+    reply,
+    state_path: constraint.path,
+  };
+}
+
+function compatibleQuantityStatePath(
+  input: CommerceRuntimeInput,
+  state: ConversationCommerceState,
+): string | null {
+  const requested = (input.semantic_frame?.requested_facts ?? []).join(" ");
+  if (
+    /(?:狀態|状态|status|已取消|取消咗|取消了|仲要|仍然要|still active|cancelled|canceled)/i.test(
+      input.text,
+    ) ||
+    /(?:status|current_state)/i.test(requested)
+  )
+    return null;
+  const asksQuantity =
+    /(?:quantity|current_quantity)/i.test(requested) ||
+    /(?:數量|数量|quantity|how many|幾多|几多|多少)/i.test(input.text) ||
+    /(?:記唔記得|记不记得|記得嗎|记得吗|仲記得|还记得|還記得|頭先|头先|do you remember|remind me).{0,30}(?:[一二兩两三四五六七八九十]|\d{1,4})\s*(?:部|台|件|個|个|套)/i.test(
+      input.text,
+    ) ||
+    /(?:[一二兩两三四五六七八九十]|\d{1,4})\s*(?:部|台|件|個|个|套).{0,20}(?:定|還是|还是|or).{0,20}(?:[一二兩两三四五六七八九十]|\d{1,4})\s*(?:部|台|件|個|个|套)/i.test(
+      input.text,
+    );
+  if (!asksQuantity) return null;
+  const resolved = resolveAttributeQueryCategory(input);
+  if (resolved.ambiguous || !resolved.category) return null;
+  const compatible = state.entities.filter(
+    (entity) =>
+      entity.category === resolved.category &&
+      entity.status !== "cancelled" &&
+      entity.status !== "deferred",
+  );
+  if (compatible.length !== 1) return null;
+  return `entities.${state.entities.indexOf(compatible[0])}.quantity`;
+}
+
 
 function detectRooms(text: string) {
   const lower = clean(text).toLowerCase();
@@ -296,6 +611,14 @@ function hasExplicitSupportedMutation(text: string): boolean {
   const t = clean(text);
   if (!t) return false;
   if (parseAddressReplacementCorrection(t)) return true;
+  const strongMutation = /(?:更正|改(?:做|成|為|为|返)|變成|变成|再加|加多|新增|另外加|取消|移除|刪除|删除|change\s+(?:it\s+)?to|set\s+(?:it\s+)?to|add\s+(?:another|one|two|three|\d)|cancel|remove)/i.test(t);
+  if (strongMutation) return true;
+  // Deliberative questions such as "要唔要考慮？" ask for advice; the
+  // embedded 要/不要 alternation is not a BUY/CANCEL instruction.
+  if (
+    looksInterrogative(t) &&
+    /(?:要唔要|要不要|應唔應該|应不应该|需唔需要|需不需要|值唔值得|值不值得|should\s+i|do\s+i\s+need\s+to|worth\s+considering)/i.test(t)
+  ) return false;
   if (
     /(?:更正|改(?:做|成|為|为|返)|變成|变成|再加|加多|新增|另外加|我要|我想(?:買|买|訂|订)|想(?:買|买|訂|订)|要(?:買|买|訂|订)|落單|下單|下单)/i.test(t) ||
     /(?:幫我|帮我|請|请).{0,24}(?:改|加|取消|移除|刪除|删除|設定|设置|買|买|訂|订)/i.test(t) ||
@@ -1022,6 +1345,15 @@ function buildQuantityAnswer(state: ConversationCommerceState, language: Commerc
 
 function buildKnownStateAnswer(language: CommerceLanguage, statePath: string, value: unknown, state: ConversationCommerceState): string {
   if (statePath.startsWith("entities.") && statePath.endsWith(".quantity")) {
+    const index = Number(statePath.split(".")[1]);
+    const entity = Number.isInteger(index) ? state.entities[index] : null;
+    if (entity && entity.status !== "cancelled" && entity.status !== "deferred") {
+      const quantity = typeof value === "number" ? value : entity.quantity;
+      const label = entityLabel(entity.entity_id, language);
+      if (language === "en") return `Your current ${label} quantity is ${quantity}.`;
+      if (language === "zh-CN") return `你目前的${label}数量是 ${quantity} 部。`;
+      return `你而家嘅${label}數量係 ${quantity} 部。`;
+    }
     const answer = buildQuantityAnswer(state, language);
     if (answer) return answer;
   }
@@ -1223,6 +1555,29 @@ export async function runCommerceStateRuntime(
   if (!text || !input.conversation_id || !input.company_id || !input.source_message_id) return null;
 
   const language = input.language;
+
+  // Dimension/attribute questions must be bound before the generic recall
+  // shortcut. Otherwise an article such as "一部598mm" can be mistaken for
+  // a quantity target and inherit the first active entity's known quantity.
+  if (
+    parseCommerceDimensionMeasurement(text) &&
+    isReadOnlyCommerceQuestion(text, input.semantic_frame)
+  ) {
+    const loaded = await loadCommerceState(db, input.conversation_id);
+    const attributeResolution = resolveReadOnlyAttributeConstraintQuery(
+      input,
+      loaded.state,
+    );
+    if (attributeResolution) {
+      return {
+        ...attributeResolution,
+        revision: loaded.revision,
+        persist_result: "read_only",
+        route: "commerce_state_answer",
+      };
+    }
+  }
+
   if (detectPreorderUnpaidIntent(text)) {
     const loaded = await loadCommerceState(db, input.conversation_id);
     const hasActiveEntity = loaded.state.entities.some(
@@ -1246,9 +1601,11 @@ export async function runCommerceStateRuntime(
   // this question rather than the customer turn that supplied the fact.
   if (isReadOnlyMemoryOrCurrentStateRecall(text, input.semantic_frame)) {
     const loaded = await loadCommerceState(db, input.conversation_id);
+    const requestedStatePath = compatibleQuantityStatePath(input, loaded.state);
     const decision = resolveCommerceAnswerAuthority({
       question: text,
       state: loaded.state,
+      requested_state_path: requestedStatePath,
       calculation_terms: [],
       calculation_currency: null,
       requires_professional_site_check: false,

@@ -4209,8 +4209,12 @@ async function orchestrationGenerateReply(
     }
   }
   const _c3ReadOnlyMemoryOrCurrentStateRecall =
-    _a3Commerce?.reason ===
-      "read_only_memory_or_current_state_recall_resolved" &&
+    _a3Commerce !== null &&
+    [
+      "read_only_memory_or_current_state_recall_resolved",
+      "read_only_attribute_constraint_query_resolved",
+      "read_only_attribute_constraint_query_unresolved",
+    ].includes(_a3Commerce.reason) &&
     _a3Commerce.persist_result === "read_only";
 
   // ===== AI-ABC-C3: canonical bounded long-conversation memory =====
@@ -4366,12 +4370,21 @@ async function orchestrationGenerateReply(
     [
       "read_only_current_state_query_resolved",
       "read_only_memory_or_current_state_recall_resolved",
+      "read_only_attribute_constraint_query_resolved",
     ].includes(_a3Commerce.reason) &&
     _a3Commerce.route === "commerce_state_answer" &&
     _a3Commerce.authority === "CONVERSATION_STATE" &&
     Boolean(_a3Commerce.reply);
+  const _c3TargetedAttributeClarification =
+    _a3Commerce?.reason ===
+      "read_only_attribute_constraint_query_unresolved" &&
+    _a3Commerce.persist_result === "read_only" &&
+    Boolean(_a3Commerce.reply);
   const _c3PlannedReply =
-    (_c3ResolvedCommerceStateChange || _c3ResolvedReadOnlyCurrentState)
+    (
+        _c3ResolvedCommerceStateChange || _c3ResolvedReadOnlyCurrentState ||
+        _c3TargetedAttributeClarification
+      )
       ? null
       : applyServiceTone(
     _c3ServicePlan,

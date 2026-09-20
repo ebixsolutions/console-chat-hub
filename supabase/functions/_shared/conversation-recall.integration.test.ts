@@ -1862,3 +1862,240 @@ Deno.test("C3 memory/current-state recall class covers Cantonese, English, statu
   assert(first.rpcCalls === 0 && replay.rpcCalls === 0);
   assert(first.outcome?.revision === replay.outcome?.revision && first.outcome?.reply === replay.outcome?.reply);
 });
+
+function turn27SemanticFrame(
+  topic = "refrigerator",
+  requested_facts: string[] = ["width"],
+): CommerceSemanticFrame {
+  return {
+    version: "commerce-semantic-1.0.0",
+    language: "zh-TW",
+    operation: "ASK_FACT",
+    intent: "compare a product dimension against the current constraint",
+    topic,
+    entities: [],
+    referents: [{ ref: "一部598mm", source: "prior_turn", confidence: 0.94 }],
+    customer_correction: false,
+    additive: false,
+    explicit_negations: [],
+    requested_facts,
+    transaction_state: "none",
+    payment_state: "none",
+    booking_state: "none",
+    fulfillment_state: "none",
+    ambiguity: { is_ambiguous: false, reasons: [], clarification_question: null },
+    confidence: 0.94,
+  };
+}
+
+const turn27ProductionHistory = [
+  { role: "visitor", content: "好。咁雪櫃繼續。" },
+  { role: "visitor", content: "頭先冷氣嗰兩部你仲記唔記得？" },
+  { role: "visitor", content: "等陣，係595mm樓下先啱，我個位得600，想留返位。" },
+  { role: "visitor", content: "我最緊要唔好超過600闊，深少少冇所謂。" },
+  { role: "visitor", content: "Panasonic有冇合適方向？" },
+  { role: "visitor", content: "順便問埋雪櫃，想要三門，600mm樓下闊。" },
+] as const;
+
+async function executeTurn27Fixture(
+  text: string,
+  semantic_frame: CommerceSemanticFrame | null = turn27SemanticFrame(),
+  history: Array<{ role: string; content: string }> = [...turn27ProductionHistory],
+  previous = turn55CommerceState(),
+) {
+  const before = JSON.stringify(previous);
+  let persisted = previous;
+  let rpcCalls = 0;
+  const db: CommerceStateDbClient = {
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          maybeSingle: async () => ({ data: { revision: 21, state: previous }, error: null }),
+        }),
+      }),
+    }),
+    rpc: async (_name, params) => {
+      rpcCalls += 1;
+      persisted = params.p_state as typeof previous;
+      return { data: { result: "success", applied_revision: 22 }, error: null };
+    },
+  };
+  const outcome = await runCommerceStateRuntime(db, {
+    conversation_id: "36d27e7c-45c2-4f85-9845-914e2fe9fe3f",
+    company_id: "3d6e17b5-ec79-4f75-aa7f-eaa824ff8493",
+    source_message_id: "cab996a5-f99b-4f66-b89e-3bb0e73e5ecc",
+    text,
+    language: /[a-z]/i.test(text) && !/[\u3400-\u9fff]/u.test(text) ? "en" : "zh-TW",
+    history,
+    semantic_frame,
+    industry_identifier: "home_appliance",
+  });
+  return { before, outcome, persisted, rpcCalls };
+}
+
+Deno.test(
+  "C3 captured production turn 27 rejects AC quantity and resolves refrigerator width constraint",
+  async () => {
+    const result = await executeTurn27Fixture("如果有一部598mm，我要唔要考慮？");
+    assert(result.outcome?.route === "commerce_state_answer", JSON.stringify(result.outcome));
+    assert(
+      result.outcome?.reason === "read_only_attribute_constraint_query_resolved",
+      JSON.stringify(result.outcome),
+    );
+    assert(
+      result.outcome?.state_path === "customer_constraints.refrigerator.width",
+      JSON.stringify(result.outcome),
+    );
+    assert(
+      result.outcome?.reply?.includes("598") && result.outcome.reply.includes("595"),
+      result.outcome?.reply ?? "missing reply",
+    );
+    assert(
+      !/(?:冷氣|空調|air conditioner).{0,20}(?:x?2|兩部|2 個)/i.test(result.outcome?.reply ?? ""),
+      result.outcome?.reply ?? "missing reply",
+    );
+    assert(
+      result.outcome?.persist_result === "read_only" && result.outcome.revision === 21,
+      JSON.stringify(result.outcome),
+    );
+    assert(result.rpcCalls === 0, `attribute query created ${result.rpcCalls} semantic event(s)`);
+    assert(JSON.stringify(result.persisted) === result.before, JSON.stringify(result.persisted));
+    assert(
+      result.persisted.entities[0].quantity === 2 &&
+        result.persisted.entities[1].status === "cancelled",
+    );
+  },
+);
+
+Deno.test(
+  "C3 attribute-compatible referent routing is fail-closed across topic switches and quantities",
+  async () => {
+    const multi = turn55CommerceState();
+    multi.entities.push({
+      entity_id: "refrigerator:unscoped",
+      category: "refrigerator",
+      brand: null,
+      model: null,
+      quantity: 1,
+      status: "researching",
+      attributes: {},
+      constraints: { max_width_mm: 595 },
+      provenance: {
+        source_type: "customer",
+        source_message_id: "27a00000-0000-4000-8000-000000000001",
+      },
+    });
+
+    const fridge = await executeTurn27Fixture(
+      "雪櫃如果有一部598mm，我要唔要考慮？",
+      turn27SemanticFrame(),
+      [...turn27ProductionHistory],
+      multi,
+    );
+    assert(
+      fridge.outcome?.state_path === "entities.2.constraints.max_width_mm",
+      JSON.stringify(fridge.outcome),
+    );
+    assert(fridge.outcome?.reply?.includes("598") && fridge.outcome.reply.includes("595"));
+
+    const quantityFrame = turn27SemanticFrame("air_conditioner", ["current_quantity"]);
+    const acQuantity = await executeTurn27Fixture(
+      "我而家有幾多部冷氣？",
+      quantityFrame,
+      [...turn27ProductionHistory],
+      multi,
+    );
+    assert(
+      acQuantity.outcome?.state_path === "entities.0.quantity",
+      JSON.stringify(acQuantity.outcome),
+    );
+    assert(
+      acQuantity.outcome?.reply?.includes("2") && !acQuantity.outcome.reply.includes("雪櫃"),
+      acQuantity.outcome?.reply ?? "missing reply",
+    );
+
+    for (const [text, fact, limit] of [
+      ["雪櫃高度1820mm得唔得？", "height", "1800"],
+      ["雪櫃深度680mm得唔得？", "depth", "650"],
+    ] as const) {
+      const dimension = await executeTurn27Fixture(
+        text,
+        turn27SemanticFrame("refrigerator", [fact]),
+        [
+          { role: "visitor", content: "雪櫃繼續。" },
+          {
+            role: "visitor",
+            content: `雪櫃${fact === "height" ? "高度" : "深度"}最多${limit}mm。`,
+          },
+        ],
+        multi,
+      );
+      assert(
+        dimension.outcome?.state_path === `customer_constraints.refrigerator.${fact}`,
+        JSON.stringify(dimension.outcome),
+      );
+      assert(
+        dimension.outcome?.reply?.includes(limit),
+        dimension.outcome?.reply ?? "missing reply",
+      );
+      assert(dimension.rpcCalls === 0 && JSON.stringify(dimension.persisted) === dimension.before);
+    }
+
+    const incompatible = await executeTurn27Fixture(
+      "高度1820mm得唔得？",
+      turn27SemanticFrame("", ["height"]),
+      [],
+      multi,
+    );
+    assert(
+      incompatible.outcome?.reason === "read_only_attribute_constraint_query_unresolved",
+      JSON.stringify(incompatible.outcome),
+    );
+    assert(
+      incompatible.outcome?.reply?.includes("邊類產品") ||
+        incompatible.outcome?.reply?.includes("which product"),
+      incompatible.outcome?.reply ?? "missing reply",
+    );
+    assert(
+      !incompatible.outcome?.state_path?.includes("entities.0.quantity"),
+      JSON.stringify(incompatible.outcome),
+    );
+
+    const switched = await executeTurn27Fixture(
+      "轉返雪櫃先，如果係598mm呢？",
+      turn27SemanticFrame("refrigerator", ["width"]),
+      [{ role: "visitor", content: "冷氣而家係兩部。" }, ...turn27ProductionHistory],
+      multi,
+    );
+    assert(
+      switched.outcome?.state_path === "entities.2.constraints.max_width_mm",
+      JSON.stringify(switched.outcome),
+    );
+
+    const returned = await executeTurn27Fixture(
+      "講返雪櫃，598mm嗰部呢？",
+      turn27SemanticFrame("refrigerator", ["width"]),
+      [{ role: "visitor", content: "冷氣嗰兩部我記得。" }, ...turn27ProductionHistory],
+      multi,
+    );
+    assert(
+      returned.outcome?.state_path === "entities.2.constraints.max_width_mm",
+      JSON.stringify(returned.outcome),
+    );
+    assert(returned.rpcCalls === 0 && JSON.stringify(returned.persisted) === returned.before);
+
+    const cancelledOnly = turn55CommerceState();
+    cancelledOnly.entities[0] = { ...cancelledOnly.entities[0], status: "cancelled" };
+    const cancelled = await executeTurn27Fixture(
+      "我而家有幾多部冷氣？",
+      quantityFrame,
+      [],
+      cancelledOnly,
+    );
+    assert(
+      cancelled.outcome?.reply == null || !cancelled.outcome.reply.includes("2"),
+      JSON.stringify(cancelled.outcome),
+    );
+    assert(cancelled.rpcCalls === 0);
+  },
+);
