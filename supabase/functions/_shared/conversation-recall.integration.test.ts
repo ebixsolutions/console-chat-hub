@@ -1298,7 +1298,7 @@ Deno.test("C3 source audit recall precedes commerce reply, context shortcuts and
   );
   const planningWindow = source.slice(resolvedReadOnly, plannedReply + 500);
   assert(
-    planningWindow.includes("read_only_current_state_query_resolved") &&
+    planningWindow.includes("read_only_memory_or_current_state_recall_resolved") &&
       planningWindow.includes("_c3ResolvedReadOnlyCurrentState"),
     "known-state answer precedence contract absent",
   );
@@ -1564,10 +1564,11 @@ Deno.test("C3 captured production turn 55 known quantity is read-only and outran
     source,
   );
   assert(result.outcome?.route === "commerce_state_answer", JSON.stringify(result.outcome));
-  assert(result.outcome.reason === "read_only_current_state_query_resolved", JSON.stringify(result.outcome));
+  assert(result.outcome.reason === "read_only_memory_or_current_state_recall_resolved", JSON.stringify(result.outcome));
   assert(result.outcome.state_path === "entities.0.quantity", JSON.stringify(result.outcome));
   assert(result.outcome.reply?.includes("2") && !/[?？]|最想完成/.test(result.outcome.reply), result.outcome.reply ?? "missing reply");
-  assert(result.outcome.revision === 55 && result.outcome.persist_result === "success", JSON.stringify(result.outcome));
+  assert(result.outcome.revision === 54 && result.outcome.persist_result === "read_only", JSON.stringify(result.outcome));
+  assert(result.rpcCalls === 0, `read-only quantity query created ${result.rpcCalls} semantic event(s)`);
   assert(JSON.stringify(result.persisted) === before, JSON.stringify(result.persisted));
   assert(result.persisted.entities.length === 2, JSON.stringify(result.persisted.entities));
   assert(!result.persisted.entities.some((entity) => entity.entity_id === "generic:定兩部"), JSON.stringify(result.persisted.entities));
@@ -1580,7 +1581,7 @@ Deno.test("C3 read-only current-state query class preserves mutations, ambiguity
     "我而家實際買幾多部冷氣？",
     "55b00000-0000-4000-8000-000000000001",
   );
-  assert(known.outcome?.reason === "read_only_current_state_query_resolved" && known.outcome.reply?.includes("2"), JSON.stringify(known.outcome));
+  assert(known.outcome?.reason === "read_only_memory_or_current_state_recall_resolved" && known.outcome.reply?.includes("2"), JSON.stringify(known.outcome));
   assert(known.persisted.entities.length === 2, JSON.stringify(known.persisted.entities));
 
   const status = await executeCommerceFixture(
@@ -1588,7 +1589,7 @@ Deno.test("C3 read-only current-state query class preserves mutations, ambiguity
     "客廳嗰部而家係咪已取消？",
     "55b00000-0000-4000-8000-000000000002",
   );
-  assert(status.outcome?.reason === "read_only_current_state_query_resolved", JSON.stringify(status.outcome));
+  assert(status.outcome?.reason === "read_only_memory_or_current_state_recall_resolved", JSON.stringify(status.outcome));
   assert(status.outcome.reply?.includes("cancelled") || status.outcome.reply?.includes("取消"), status.outcome?.reply ?? "missing reply");
   assert(status.persisted.entities.find((entity) => entity.entity_id.endsWith("living_room"))?.status === "cancelled", JSON.stringify(status.persisted));
 
@@ -1692,6 +1693,172 @@ Deno.test("C3 read-only current-state query class preserves mutations, ambiguity
     language: "zh-TW",
     semantic_frame: turn55SemanticFrame(),
   });
-  assert(replayRpcCalls === 1 && replay?.revision === 55, JSON.stringify(replay));
+  assert(replayRpcCalls === 0 && replay?.revision === 55 && replay.persist_result === "read_only", JSON.stringify(replay));
   assert(JSON.stringify(replayState) === JSON.stringify(turn55CommerceState()), JSON.stringify(replayState));
+});
+
+function turn25SemanticFrame(): CommerceSemanticFrame {
+  return {
+    version: "commerce-semantic-1.0.0",
+    language: "zh-TW",
+    operation: "ASK_FACT",
+    intent: "remember the current air-conditioner quantity",
+    topic: "air_conditioner",
+    entities: [{
+      entity_ref: "air_conditioner:unscoped",
+      name: "冷氣嗰兩部",
+      kind: "physical_product",
+      category_hint: "air_conditioner",
+      sku: null,
+      model: null,
+      quantity: 2,
+      unit: "部",
+      attributes: {},
+      constraints: {},
+      capabilities: {
+        requires_delivery: false,
+        supports_pickup: false,
+        requires_installation: false,
+        requires_booking: false,
+        requires_quote: false,
+        requires_site_check: false,
+        digital_fulfilment: false,
+        recurring_billing: false,
+        rental_return: false,
+        customization: false,
+      },
+      confidence: 0.96,
+    }],
+    referents: [{ ref: "頭先冷氣嗰兩部", source: "persistent_state", confidence: 0.96 }],
+    customer_correction: false,
+    additive: false,
+    explicit_negations: [],
+    // Production supplied no supported recall slot, which previously allowed
+    // NO_SUPPORTED_FACT_SLOT and customer_goal clarification to win.
+    requested_facts: [],
+    transaction_state: "none",
+    payment_state: "none",
+    booking_state: "none",
+    fulfillment_state: "none",
+    ambiguity: { is_ambiguous: false, reasons: [], clarification_question: null },
+    confidence: 0.96,
+  };
+}
+
+async function executeTurn25Fixture(
+  text: string,
+  semantic_frame: CommerceSemanticFrame | null = turn25SemanticFrame(),
+  previous = turn55CommerceState(),
+) {
+  const originalProvenance = structuredClone(previous.entities[0].provenance);
+  let persisted = previous;
+  let rpcCalls = 0;
+  const db: CommerceStateDbClient = {
+    from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { revision: 24, state: previous }, error: null }) }) }) }),
+    rpc: async (_name, params) => {
+      rpcCalls += 1;
+      persisted = params.p_state as typeof previous;
+      return { data: { result: "success", applied_revision: 25 }, error: null };
+    },
+  };
+  const source = "35bea890-7c24-41c2-9e3d-7b5aa56f5afb";
+  const outcome = await runCommerceStateRuntime(db, {
+    conversation_id: "fbfc51ee-32a0-41dc-9ff5-451c5a8bf4e9",
+    company_id: "3d6e17b5-ec79-4f75-aa7f-eaa824ff8493",
+    source_message_id: source,
+    text,
+    language: /[a-z]/i.test(text) && !/[\u3400-\u9fff]/u.test(text) ? "en" : "zh-TW",
+    history: [
+      { role: "visitor", content: "改做一部1匹，一部1.5匹。" },
+      { role: "visitor", content: "客廳嗰部暫時唔買住。" },
+      { role: "visitor", content: "咁我而家實際買幾多部冷氣？" },
+    ],
+    semantic_frame,
+    industry_identifier: "home_appliance",
+  });
+  return { outcome, persisted, rpcCalls, source, originalProvenance };
+}
+
+Deno.test("C3 captured production turn 25 memory recall is read-only and outranks clarification", async () => {
+  const previous = turn55CommerceState();
+  const before = JSON.stringify(previous);
+  const result = await executeTurn25Fixture("頭先冷氣嗰兩部你仲記唔記得？", turn25SemanticFrame(), previous);
+  assert(result.outcome?.authority === "CONVERSATION_STATE", JSON.stringify(result.outcome));
+  assert(result.outcome?.route === "commerce_state_answer", JSON.stringify(result.outcome));
+  assert(result.outcome?.reason === "read_only_memory_or_current_state_recall_resolved", JSON.stringify(result.outcome));
+  assert(result.outcome?.reply?.includes("2") && !/[?？]|最想完成/.test(result.outcome.reply), result.outcome?.reply ?? "missing reply");
+  assert(result.outcome?.persist_result === "read_only" && result.outcome.revision === 24, JSON.stringify(result.outcome));
+  assert(result.rpcCalls === 0, `read-only recall created ${result.rpcCalls} semantic event(s)`);
+  assert(JSON.stringify(result.persisted) === before, JSON.stringify(result.persisted));
+  assert(JSON.stringify(result.persisted.entities[0].provenance) === JSON.stringify(result.originalProvenance), JSON.stringify(result.persisted.entities[0].provenance));
+  assert(result.persisted.entities[0].provenance.source_message_id !== result.source, JSON.stringify(result.persisted.entities[0].provenance));
+  assert(result.persisted.entities.filter((entity) => !["cancelled", "deferred"].includes(entity.status)).reduce((sum, entity) => sum + entity.quantity, 0) === 2);
+  assert(result.persisted.entities.find((entity) => entity.entity_id === "air_conditioner:living_room")?.status === "cancelled");
+
+  const recall = prepareConversationRecall({
+    conversation_id: "fbfc51ee-32a0-41dc-9ff5-451c5a8bf4e9",
+    company_id: "3d6e17b5-ec79-4f75-aa7f-eaa824ff8493",
+    source_message_id: result.source,
+    question: "頭先冷氣嗰兩部你仲記唔記得？",
+    memory: null,
+    commerce: {
+      conversation_id: "fbfc51ee-32a0-41dc-9ff5-451c5a8bf4e9",
+      company_id: "3d6e17b5-ec79-4f75-aa7f-eaa824ff8493",
+      source_message_id: "55a00000-0000-4000-8000-000000000016",
+      revision: 24,
+      state: previous,
+    },
+  }, "zh-TW");
+  assert(recall.decision.handled && recall.decision.value === 2, JSON.stringify(recall.decision));
+  assert(recall.metadata.response_route === "canonical_memory_recall", JSON.stringify(recall.metadata));
+  assert(recall.reply?.includes("2 部") && !/[?？]|最想完成/.test(recall.reply), recall.reply ?? "missing reply");
+});
+
+Deno.test("C3 memory/current-state recall class covers Cantonese, English, status, ambiguity, mutation controls, and replay", async () => {
+  for (const text of [
+    "頭先嗰兩部呢？",
+    "我之前最後話要幾多部？",
+    "你記得我最後要幾多部嗎？",
+    "Do you remember how many I settled on?",
+    "Remind me what quantity I have now.",
+  ]) {
+    const result = await executeTurn25Fixture(text, null);
+    assert(result.outcome?.reason === "read_only_memory_or_current_state_recall_resolved", `${text}:${JSON.stringify(result.outcome)}`);
+    assert(result.outcome?.reply?.includes("2"), `${text}:${result.outcome?.reply}`);
+    assert(result.rpcCalls === 0, `${text}:rpc=${result.rpcCalls}`);
+    assert(JSON.stringify(result.persisted.entities[0].provenance) === JSON.stringify(result.originalProvenance), `${text}:provenance rebound`);
+  }
+
+  const status = await executeTurn25Fixture("你仲記唔記得客廳嗰部係咪取消咗？", null);
+  assert(
+    (status.outcome?.reply?.includes("取消") || status.outcome?.reply?.includes("cancelled")) &&
+      status.rpcCalls === 0,
+    JSON.stringify(status.outcome),
+  );
+
+  const ambiguousState = turn55CommerceState();
+  ambiguousState.entities[0] = { ...ambiguousState.entities[0], entity_id: "air_conditioner:bedroom_a", quantity: 1 };
+  ambiguousState.entities.push({ ...ambiguousState.entities[0], entity_id: "air_conditioner:bedroom_b" });
+  const ambiguous = await executeTurn25Fixture("頭先嗰部你仲記唔記得？", null, ambiguousState);
+  assert(ambiguous.outcome?.reply === null && ambiguous.rpcCalls === 0, JSON.stringify(ambiguous.outcome));
+
+  const setFrame = turn25SemanticFrame();
+  setFrame.operation = "SET_QUANTITY";
+  setFrame.intent = "set quantity";
+  setFrame.entities[0].quantity = 3;
+  const set = await executeTurn25Fixture("唔係兩部，改做三部", setFrame);
+  assert(set.rpcCalls === 1 && set.persisted.entities[0].quantity === 3, JSON.stringify(set.persisted));
+
+  const addFrame = structuredClone(setFrame);
+  addFrame.operation = "ADD_ITEM";
+  addFrame.intent = "add another unit";
+  addFrame.additive = true;
+  addFrame.entities[0].quantity = 1;
+  const add = await executeTurn25Fixture("加多一部", addFrame);
+  assert(add.rpcCalls === 1 && add.persisted.entities[0].quantity === 3, JSON.stringify(add.persisted));
+
+  const first = await executeTurn25Fixture("頭先冷氣嗰兩部你仲記唔記得？", turn25SemanticFrame());
+  const replay = await executeTurn25Fixture("頭先冷氣嗰兩部你仲記唔記得？", turn25SemanticFrame());
+  assert(first.rpcCalls === 0 && replay.rpcCalls === 0);
+  assert(first.outcome?.revision === replay.outcome?.revision && first.outcome?.reply === replay.outcome?.reply);
 });

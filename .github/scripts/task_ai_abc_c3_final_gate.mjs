@@ -247,17 +247,25 @@ for (const marker of [
 for (const marker of [
   "READ_ONLY_CURRENT_STATE_QUERY",
   "isReadOnlyCurrentStateQuery",
+  "READ_ONLY_MEMORY_OR_CURRENT_STATE_RECALL",
   "read_only_current_state_query_resolved",
+  "read_only_memory_or_current_state_recall_resolved",
 ]) must(commerceRuntime.includes(marker), `commerce_read_only_contract_missing:${marker}`);
 for (const marker of [
   "questionExplicitlyAsksQuantity",
   "inferEntityStatusPath",
+  "isReadOnlyMemoryOrCurrentStateRecall",
 ]) must(commerceAuthority.includes(marker), `commerce_known_answer_authority_missing:${marker}`);
 for (const marker of [
   "59b89c91-f150-4120-b226-a2944f0eb2da",
   "generic:定兩部",
   "C3 captured production turn 55 known quantity is read-only and outranks clarification",
 ]) must(recallIntegration.includes(marker), `turn55_regression_missing:${marker}`);
+for (const marker of [
+  "35bea890-7c24-41c2-9e3d-7b5aa56f5afb",
+  "C3 captured production turn 25 memory recall is read-only and outranks clarification",
+  "read-only recall created",
+]) must(recallIntegration.includes(marker), `turn25_regression_missing:${marker}`);
 must(
   generate.includes("resolveCommittedAddressCorrection({") &&
     generate.includes("_c3ResolvedAddressCorrection"),
@@ -265,8 +273,14 @@ must(
 );
 must(
   generate.includes("_c3ResolvedReadOnlyCurrentState") &&
-    generate.includes('read_only_current_state_query_resolved'),
+    generate.includes('read_only_memory_or_current_state_recall_resolved'),
   "known_read_only_answer_must_outrank_clarification",
+);
+must(
+  generate.includes("_c3ReadOnlyMemoryOrCurrentStateRecall") &&
+    generate.includes("? null") &&
+    generate.includes(": await refreshConversationLongMemory("),
+  "read_only_recall_must_not_rebind_memory_provenance",
 );
 must(
   generate.indexOf("runCommerceStateRuntime(") <

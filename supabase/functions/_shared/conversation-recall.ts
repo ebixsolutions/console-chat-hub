@@ -3,6 +3,7 @@ import type {
   CommerceEntity,
   ConversationCommerceState,
 } from "./commerce-state-contract.ts";
+import { isReadOnlyMemoryOrCurrentStateRecall } from "./commerce-state-authority.ts";
 import type { CanonicalConversationMemory } from "./conversation-long-memory.ts";
 
 export type RecallFact =
@@ -520,6 +521,13 @@ function parseQuery(
   let facts = (Object.keys(FIELDS) as RecallFact[]).filter((f) =>
     hasField(q, f)
   );
+  if (!facts.length && isReadOnlyMemoryOrCurrentStateRecall(q)) {
+    facts = [
+      /(?:狀態|状态|status|係咪取消|是否取消|仲要|仍然要|still active|cancelled|canceled)/i.test(q)
+        ? "entity_status"
+        : "quantity",
+    ];
+  }
   // A compact slot question is a recall request, not an instruction to change state.
   const compact = q.replace(/[?？:：\s]/g, "").length <= 24 &&
     facts.length > 0 &&

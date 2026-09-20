@@ -782,6 +782,34 @@ jobs:
           # cutover. For this exact source-only Turn-55 repair, bind the gate to
           # its authorized parent and exact allowlist instead of pretending the
           # old v108/v43 capture is the current production baseline.
+          turn25_repair_base=0540e55381cc1294c9dce3de198f2548cc4f5e4a
+          if git merge-base --is-ancestor "$turn25_repair_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$turn25_repair_base"; then
+            expected="$RUNNER_TEMP/c3-turn25-expected"
+            actual="$RUNNER_TEMP/c3-turn25-actual"
+            cat > "$expected" <<'EOF'
+          .github/scripts/task_ai_abc_c3_final_gate.mjs
+          .github/workflows/task-ai-abc-c3-final-gate.yml
+          supabase/functions/_shared/commerce-state-authority.ts
+          supabase/functions/_shared/commerce-state-runtime-base.ts
+          supabase/functions/_shared/conversation-recall.integration.test.ts
+          supabase/functions/_shared/conversation-recall.ts
+          supabase/functions/generate-reply/index.ts
+          EOF
+            git diff --name-only "$turn25_repair_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
+            LC_ALL=C sort -o "$expected" "$expected"
+            diff -u "$expected" "$actual"
+            test "$(git rev-list --count "$turn25_repair_base..$GITHUB_SHA")" -eq 1
+            test -z "$(git diff --name-only "$turn25_repair_base..$GITHUB_SHA" -- 'supabase/migrations/**' 'supabase/functions/agent-assist/index.ts')"
+            grep -q 'READ_ONLY_MEMORY_OR_CURRENT_STATE_RECALL' supabase/functions/_shared/commerce-state-runtime-base.ts
+            grep -q 'isReadOnlyMemoryOrCurrentStateRecall' supabase/functions/_shared/commerce-state-authority.ts
+            grep -q 'read_only_memory_or_current_state_recall_resolved' supabase/functions/generate-reply/index.ts
+            grep -q '35bea890-7c24-41c2-9e3d-7b5aa56f5afb' supabase/functions/_shared/conversation-recall.integration.test.ts
+            echo C3_TURN25_SOURCE_REPAIR_PARENT="$turn25_repair_base"
+            echo C3_TURN25_SOURCE_REPAIR_ALLOWLIST=PASS
+            echo C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE
+            echo C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS
+            exit 0
+          fi
           repair_base=99f96c115f00f5e6eec2c9f2dc28df43a327f5c6
           if git merge-base --is-ancestor "$repair_base" "$GITHUB_SHA"; then
             expected="$RUNNER_TEMP/c3-turn55-expected"

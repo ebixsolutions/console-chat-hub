@@ -31,6 +31,7 @@ import {
 import {
   type CommerceAnswerAuthority,
   type CommerceCalculationTerm,
+  isReadOnlyMemoryOrCurrentStateRecall,
   resolveCommerceAnswerAuthority,
 } from "./commerce-state-authority.ts";
 import {
@@ -328,6 +329,7 @@ export function isReadOnlyCurrentStateQuery(
   text: string,
   semanticFrame?: CommerceSemanticFrame | null,
 ): boolean {
+  if (isReadOnlyMemoryOrCurrentStateRecall(text, semanticFrame)) return true;
   if (!isReadOnlyCommerceQuestion(text, semanticFrame)) return false;
   const t = clean(text);
   const requested = (semanticFrame?.requested_facts ?? []).join(" ");
@@ -1236,6 +1238,46 @@ export async function runCommerceStateRuntime(
         route: "commerce_state_answer",
       };
     }
+  }
+
+  // READ_ONLY_MEMORY_OR_CURRENT_STATE_RECALL is resolved from the already
+  // committed snapshot. Do not call the state RPC: even an identical payload
+  // would create a semantic event/revision and could rebind fact provenance to
+  // this question rather than the customer turn that supplied the fact.
+  if (isReadOnlyMemoryOrCurrentStateRecall(text, input.semantic_frame)) {
+    const loaded = await loadCommerceState(db, input.conversation_id);
+    const decision = resolveCommerceAnswerAuthority({
+      question: text,
+      state: loaded.state,
+      calculation_terms: [],
+      calculation_currency: null,
+      requires_professional_site_check: false,
+    });
+    if (decision.authority === "CONVERSATION_STATE" && decision.state_path) {
+      return {
+        authority: decision.authority,
+        state_path: decision.state_path,
+        reply: buildKnownStateAnswer(
+          language,
+          decision.state_path,
+          decision.known_value,
+          loaded.state,
+        ),
+        revision: loaded.revision,
+        persist_result: "read_only",
+        reason: "read_only_memory_or_current_state_recall_resolved",
+        route: "commerce_state_answer",
+      };
+    }
+    return {
+      authority: decision.authority,
+      state_path: decision.state_path ?? null,
+      reply: null,
+      revision: loaded.revision,
+      persist_result: "read_only",
+      reason: "read_only_memory_or_current_state_recall_unresolved",
+      route: "commerce_state_answer",
+    };
   }
 
   const historyTexts = (input.history ?? []).filter((turn) => turn.role === "visitor" || turn.role === "user" || turn.role === "customer").slice(0, MAX_HISTORY_TURNS).map((turn) => clean(turn.content));

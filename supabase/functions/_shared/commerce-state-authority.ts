@@ -202,6 +202,45 @@ function questionLooksLikeCustomerState(question: string): boolean {
   );
 }
 
+function explicitCustomerMutation(question: string): boolean {
+  const text = clean(question);
+  return /(?:更正|改(?:做|成|為|为|返)|變成|变成|加多|再加|新增|另外加|唔係.+?(?:改|而係|而系)|不是.+?(?:改|而是)|而家要|現在要|现在要|目前要)\s*(?:[一二兩两三四五六七八九十]|\d{1,4})?\s*(?:部|台|件|個|个|套)?/i.test(text) ||
+    /(?:取消|移除|刪除|删除)\s*(?:其中|呢|這|这|嗰|那|一|[一二兩两三四五六七八九十]|\d)/i.test(text) ||
+    /\b(?:change|set|make)\b.{0,24}\bto\b|\badd\b(?:\s+(?:another|one|two|three|\d+))?|\b(?:please\s+)?(?:cancel|remove)\b/i.test(text);
+}
+
+function quantityRecallTarget(question: string): boolean {
+  return /(?:數量|数量|quantity|how many|幾多\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚)|多少\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚)|(?:[一二兩两三四五六七八九十]|\d{1,4})\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚))/i.test(
+    question,
+  );
+}
+
+/**
+ * Shared READ_ONLY_MEMORY_OR_CURRENT_STATE_RECALL contract. A counted noun in
+ * an interrogative/recall utterance is a fact target, never mutation authority.
+ * Explicit SET/ADD/CANCEL language remains outside this class.
+ */
+export function isReadOnlyMemoryOrCurrentStateRecall(
+  question: string,
+  semantic?: { operation?: string | null; requested_facts?: string[] | null } | null,
+): boolean {
+  const text = clean(question);
+  if (!text || explicitCustomerMutation(text)) return false;
+  const requested = (semantic?.requested_facts ?? []).join(" ");
+  const semanticRead = ["ASK_FACT", "NO_STATE_CHANGE"].includes(String(semantic?.operation ?? ""));
+  const recallLanguage = /(?:記唔記得|记不记得|記得嗎|记得吗|仲記得|还记得|還記得|頭先|头先|之前最後|之前最后|最後話|最后说|提我|提醒我|do you remember|remind me|settled on|have now)/i.test(text);
+  const interrogative = /[?？]|呢\s*$|嗎\s*$|吗\s*$|(?:幾多|几多|多少|how many|what quantity|what.*(?:have|settled))/i.test(text);
+  const deicticQuantity = recallLanguage &&
+    /(?:嗰|那|這|这|呢)\s*(?:件|個|个|部|台|套)/i.test(text);
+  const quantity = quantityRecallTarget(text) || deicticQuantity ||
+    /(?:quantity|current_quantity)/i.test(requested);
+  const status = /(?:狀態|状态|status|係咪取消|是否取消|仲要|仍然要|still active|cancelled|canceled)/i.test(text) ||
+    /(?:status|current_state)/i.test(requested);
+  return (semanticRead || recallLanguage || interrogative) &&
+    (quantity || status) &&
+    (recallLanguage || interrogative);
+}
+
 function questionLooksLikeCalculation(question: string): boolean {
   return /(?:加埋|合共|總共幾錢|总共多少钱|一共多少|total|how much.*(?:total|altogether)|calculate|計下|算下|計算|计算)/i.test(
     question,
@@ -211,9 +250,8 @@ function questionLooksLikeCalculation(question: string): boolean {
 function questionExplicitlyAsksQuantity(question: string): boolean {
   if (/(?:價|价|price|amount|金額|金额|幾錢|几钱|多少錢|多少钱|fee|收費|收费)/i.test(question))
     return false;
-  return /(?:數量|数量|quantity|how many|幾多\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚)|多少\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚)|(?:[一二兩两三四五六七八九十]|\d{1,4})\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚).{0,20}?(?:定|還是|还是|or)\s*(?:[一二兩两三四五六七八九十]|\d{1,4})\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚))/i.test(
-    question,
-  );
+  return /(?:數量|数量|quantity|how many|幾多\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚)|多少\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚)|(?:[一二兩两三四五六七八九十]|\d{1,4})\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚).{0,20}?(?:定|還是|还是|or)\s*(?:[一二兩两三四五六七八九十]|\d{1,4})\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚))/i.test(question) ||
+    (isReadOnlyMemoryOrCurrentStateRecall(question) && quantityRecallTarget(question));
 }
 
 function inferEntityStatusPath(

@@ -4208,6 +4208,10 @@ async function orchestrationGenerateReply(
       _a3Commerce = null;
     }
   }
+  const _c3ReadOnlyMemoryOrCurrentStateRecall =
+    _a3Commerce?.reason ===
+      "read_only_memory_or_current_state_recall_resolved" &&
+    _a3Commerce.persist_result === "read_only";
 
   // ===== AI-ABC-C3: canonical bounded long-conversation memory =====
   // The source visitor turn is already durable and A3 has resolved canonical
@@ -4256,32 +4260,34 @@ async function orchestrationGenerateReply(
           state: commerceState,
         };
       }
-      const memoryOutcome = await refreshConversationLongMemory(
-        supabaseAdmin as unknown as Parameters<
-          typeof refreshConversationLongMemory
-        >[0],
-        {
-          conversation_id,
-          company_id: _criticalE2ExpectedTenantId,
-          source_message_id: _h1SourceMessageId,
-          source_created_at: String(
-            sourceVisitorMessage.created_at ?? new Date().toISOString(),
-          ),
-          commerce_state_revision: commerceRow?.revision == null
-            ? null
-            : Number(commerceRow.revision),
-          commerce_state: commerceState,
-          newest_first: memoryHistory,
-          visitor_turn_count: _pr5VisitorTurnCount ?? 0,
-        },
-      );
-      if (memoryOutcome.ok) {
+      const memoryOutcome = _c3ReadOnlyMemoryOrCurrentStateRecall
+        ? null
+        : await refreshConversationLongMemory(
+          supabaseAdmin as unknown as Parameters<
+            typeof refreshConversationLongMemory
+          >[0],
+          {
+            conversation_id,
+            company_id: _criticalE2ExpectedTenantId,
+            source_message_id: _h1SourceMessageId,
+            source_created_at: String(
+              sourceVisitorMessage.created_at ?? new Date().toISOString(),
+            ),
+            commerce_state_revision: commerceRow?.revision == null
+              ? null
+              : Number(commerceRow.revision),
+            commerce_state: commerceState,
+            newest_first: memoryHistory,
+            visitor_turn_count: _pr5VisitorTurnCount ?? 0,
+          },
+        );
+      if (memoryOutcome?.ok) {
         _c3Memory = memoryOutcome.memory;
         _c3MemoryContext = buildBoundedConversationContext(
           _c3Memory,
           (_pr5HistoryRows ?? []) as MemoryHistoryRow[],
         ).block;
-      } else {
+      } else if (memoryOutcome) {
         console.warn("[generate-reply] C3 bounded memory degraded", {
           conversation_id,
           reason: memoryOutcome.reason,
@@ -4356,7 +4362,11 @@ async function orchestrationGenerateReply(
       Boolean(_a3Commerce.reply)) ||
     Boolean(_c3ResolvedAddressCorrection);
   const _c3ResolvedReadOnlyCurrentState =
-    _a3Commerce?.reason === "read_only_current_state_query_resolved" &&
+    _a3Commerce !== null &&
+    [
+      "read_only_current_state_query_resolved",
+      "read_only_memory_or_current_state_recall_resolved",
+    ].includes(_a3Commerce.reason) &&
     _a3Commerce.route === "commerce_state_answer" &&
     _a3Commerce.authority === "CONVERSATION_STATE" &&
     Boolean(_a3Commerce.reply);
