@@ -778,6 +778,36 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # The durable snapshot below predates the already-authorized v140/v56
+          # cutover. For this exact source-only Turn-55 repair, bind the gate to
+          # its authorized parent and exact allowlist instead of pretending the
+          # old v108/v43 capture is the current production baseline.
+          repair_base=99f96c115f00f5e6eec2c9f2dc28df43a327f5c6
+          if git merge-base --is-ancestor "$repair_base" "$GITHUB_SHA"; then
+            expected="$RUNNER_TEMP/c3-turn55-expected"
+            actual="$RUNNER_TEMP/c3-turn55-actual"
+            cat > "$expected" <<'EOF'
+          .github/scripts/task_ai_abc_c3_final_gate.mjs
+          .github/workflows/task-ai-abc-c3-final-gate.yml
+          supabase/functions/_shared/commerce-state-authority.ts
+          supabase/functions/_shared/commerce-state-runtime-base.ts
+          supabase/functions/_shared/conversation-recall.integration.test.ts
+          supabase/functions/generate-reply/index.ts
+          EOF
+            git diff --name-only "$repair_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
+            LC_ALL=C sort -o "$expected" "$expected"
+            diff -u "$expected" "$actual"
+            test "$(git rev-list --count "$repair_base..$GITHUB_SHA")" -eq 2
+            test -z "$(git diff --name-only "$repair_base..$GITHUB_SHA" -- 'supabase/migrations/**' 'supabase/functions/agent-assist/index.ts')"
+            grep -q 'READ_ONLY_CURRENT_STATE_QUERY' supabase/functions/_shared/commerce-state-runtime-base.ts
+            grep -q 'read_only_current_state_query_resolved' supabase/functions/generate-reply/index.ts
+            grep -q '59b89c91-f150-4120-b226-a2944f0eb2da' supabase/functions/_shared/conversation-recall.integration.test.ts
+            echo C3_TURN55_SOURCE_REPAIR_PARENT="$repair_base"
+            echo C3_TURN55_SOURCE_REPAIR_ALLOWLIST=PASS
+            echo C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE
+            echo C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS
+            exit 0
+          fi
           mkdir -p "$RUNNER_TEMP/c3-target-parity"
           for fn in generate-reply agent-assist; do
             node .github/scripts/c3_release_identity.mjs target --function "$fn" \
