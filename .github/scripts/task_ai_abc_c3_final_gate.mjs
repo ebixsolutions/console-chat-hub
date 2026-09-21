@@ -55,6 +55,10 @@ const files = {
   preSendConversionSupervisor: "supabase/functions/_shared/pre-send-conversion-supervisor.ts",
   preSendConversionSupervisorTest:
     "supabase/functions/_shared/pre-send-conversion-supervisor.test.ts",
+  resolutionContract:
+    "supabase/functions/_shared/conversation-resolution-contract.ts",
+  resolutionContractTest:
+    "supabase/functions/_shared/conversation-resolution-contract.test.ts",
   authoritativeCommitReadback:
     "supabase/functions/_shared/authoritative-commit-readback.ts",
   authoritativeCommitReadbackTest:
@@ -138,6 +142,8 @@ const files = {
   deterministicClosureTest: ".github/scripts/c3_deterministic_runtime_closure.test.mjs",
   deterministicFtsTest: ".github/scripts/c3_deterministic_fts.test.mjs",
   task42DeployWorkflow: ".github/workflows/task4-2-deploy-live-console-edge.yml",
+  canonical103Fixture: ".github/scripts/c3_canonical_103_turns.json",
+  canonical103Replay: ".github/scripts/c3_canonical_103_source_replay.ts",
 };
 for (const file of Object.values(files)) {
   must(
@@ -156,9 +162,17 @@ const generate = read(files.generate),
   assist = read(files.assist),
   commerceAuthority = read(files.commerceStateAuthority),
   commerceRuntime = read(files.commerceStateRuntimeBase),
+  resolutionContract = read(files.resolutionContract),
   preSendConversionSupervisor = read(files.preSendConversionSupervisor),
   migration = read(files.migration);
 const c2WorkflowRouting = read(files.c2WorkflowRouting);
+const canonical103Fixture = JSON.parse(read(files.canonical103Fixture));
+must(
+  canonical103Fixture.frozen === true &&
+    canonical103Fixture.turn_count === 103 &&
+    canonical103Fixture.turns?.length === 103,
+  "canonical_103_fixture_invalid",
+);
 const migrationExecutableBody = migration.split("\n").slice(3).join("\n");
 must(
   crypto.createHash("sha256").update(migrationExecutableBody).digest("hex") ===
@@ -173,11 +187,11 @@ const authorizedTargetedRepairHashes = new Map([
   ],
   [
     "supabase/functions/_shared/commerce-state-runtime-base.ts",
-    "34b81a984dd6eff9bce963d98208448c549822c34671ee8e9107ebd0bf3c42d5",
+    "1af665d1125d2509d3ef2fca63371d8608d37c76cca8fd27b60554ab7c434025",
   ],
   [
     "supabase/functions/_shared/pre-send-conversion-supervisor.ts",
-    "3c18f86a06ed4c79dccf1aeb082828b375935b1d889ed0d88d997dad2d0acc7a",
+    "5e41148b518e9022129521f58d11570eba7d83f7947057a207ab6216f1e8e6ab",
   ],
 ]);
 for (
@@ -318,12 +332,13 @@ must(
   "resolved_address_correction_must_outrank_clarification",
 );
 must(
-  generate.includes("_c3ResolvedReadOnlyCurrentState") &&
-    generate.includes('read_only_memory_or_current_state_recall_resolved'),
+  generate.includes("_c3Resolution = resolveCanonicalCommerceResolution") &&
+    generate.includes("_c3Resolution.bypass_service_plan") &&
+    resolutionContract.includes("AUTHORITATIVE_READ_ONLY"),
   "known_read_only_answer_must_outrank_clarification",
 );
 must(
-  generate.includes("_c3ReadOnlyMemoryOrCurrentStateRecall") &&
+  generate.includes("_c3PreMemoryResolution.skip_memory_refresh") &&
     generate.includes("? null") &&
     generate.includes(": await refreshConversationLongMemory("),
   "read_only_recall_must_not_rebind_memory_provenance",
@@ -558,6 +573,7 @@ runDeno([
   "test",
   "--no-lock",
   "--allow-read",
+  files.resolutionContractTest,
   files.preSendConversionSupervisorTest,
   files.authoritativeCommitReadbackTest,
 ]);
@@ -569,6 +585,7 @@ const qualityEvidencePath = process.env.C3_SERVICE_QUALITY_EVIDENCE_PATH?.trim()
 runDeno(["run", "--no-lock", "--allow-read", "--allow-write", files.serviceQualityEvaluation, qualityEvidencePath]);
 const nonproductionComponent = verifyComponentRegression(JSON.parse(read(qualityEvidencePath)));
 runDeno(["test", "--no-lock", "--allow-read", files.integration, files.recallIntegration]);
+runDeno(["run", "--no-lock", "--allow-read", files.canonical103Replay]);
 runDeno([
   "check",
   "--no-lock",
@@ -594,6 +611,9 @@ runDeno([
     files.handoffIntent,
     files.authoritativeCommitReadback,
     files.authoritativeCommitReadbackTest,
+    files.resolutionContract,
+    files.resolutionContractTest,
+    files.canonical103Replay,
 ]);
 if (process.env.CI) {
   runDeno([
@@ -642,6 +662,9 @@ run("npx", [
   files.authoritativeCommitReadback,
   files.authoritativeCommitReadbackTest,
   files.preSendConversionSupervisorTest,
+  files.resolutionContract,
+  files.resolutionContractTest,
+  files.canonical103Replay,
   files.kbAggregationResponse,
   files.realCustomerDatasetVerifier,
   files.realCustomerDatasetTest,

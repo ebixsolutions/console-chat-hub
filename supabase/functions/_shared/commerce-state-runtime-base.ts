@@ -1413,6 +1413,17 @@ export async function persistCommerceTurn(
   let next = reduceTurn(previous, input, hints);
 
   for (let attempt = 0; attempt < 2; attempt++) {
+    // A conversational turn that does not alter the canonical commerce state
+    // has no mutation receipt by design. Preserve revision and provenance, and
+    // let the B2 readback contract prove the authoritative no-op.
+    if (JSON.stringify(next) === JSON.stringify(previous)) {
+      return {
+        previous_state: previous,
+        state: previous,
+        revision: expected,
+        result: "no_semantic_change",
+      };
+    }
     const { data, error } = await db.rpc(COMMERCE_STATE_RPC, {
       p_conversation_id: input.conversation_id,
       p_company_id: input.company_id,

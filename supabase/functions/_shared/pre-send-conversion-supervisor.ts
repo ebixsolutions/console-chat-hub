@@ -254,10 +254,27 @@ export function classifyCommerceStatePersistenceResult(
     case "source_message_already_applied":
       return "IDEMPOTENT";
     case "read_only":
+    case "no_semantic_change":
       return "NO_SEMANTIC_CHANGE";
     default:
       return "INDETERMINATE";
   }
+}
+
+export function buildB2AuthoritativeReadbackProof(
+  state: ConversationCommerceState,
+  statePath: string,
+): Record<string, unknown> | null {
+  const path = clean(statePath, 240);
+  if (path === "installation.pending_checks") {
+    return {
+      state_path: path,
+      values: [...state.installation.pending_checks],
+      count: state.installation.pending_checks.length,
+    };
+  }
+  const fact = collectKnownCommerceFacts(state).find((item) => item.path === path);
+  return fact ? { state_path: path, value: fact.value } : null;
 }
 
 /**
@@ -291,6 +308,23 @@ export function classifyB2AuthoritativePersistence(
   ) return "INDETERMINATE";
 
   const statePath = clean(metadata.commerce_state_path, 240);
+  const expectedProof = buildB2AuthoritativeReadbackProof(input.snapshot.state, statePath);
+  if (
+    !expectedProof ||
+    JSON.stringify(metadata.commerce_state_readback_proof) !==
+      JSON.stringify(expectedProof)
+  ) return "INDETERMINATE";
+
+  if (statePath === "installation.pending_checks") {
+    const values = input.snapshot.state.installation.pending_checks;
+    const response = clean(input.proposed_response);
+    const claimedCount = response.match(/(?:^|\D)(\d{1,4})\s*(?:項|项|items?|checks?)/i);
+    if (!claimedCount || Number(claimedCount[1]) !== values.length) {
+      return "INDETERMINATE";
+    }
+    return "NO_SEMANTIC_CHANGE";
+  }
+
   const fact = collectKnownCommerceFacts(input.snapshot.state).find((item) => item.path === statePath);
   if (!fact || !clean(input.proposed_response).includes(fact.value)) return "INDETERMINATE";
 

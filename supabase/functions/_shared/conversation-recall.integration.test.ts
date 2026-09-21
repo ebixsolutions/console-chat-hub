@@ -1,6 +1,8 @@
 /** Offline integration against frozen B2 and the real runtime source. No live API calls. */
 import {
+  buildB2AuthoritativeReadbackProof,
   classifyB2AuthoritativePersistence,
+  classifyCommerceStatePersistenceResult,
   evaluateB2BeforeCommit,
   executeB2PersistenceGate,
 } from "./pre-send-conversion-supervisor.ts";
@@ -14,6 +16,7 @@ import {
 } from "./conversation-recall.test.ts";
 import {
   buildCommerceEntityHints,
+  persistCommerceTurn,
   reduceTurn,
   resolveCommittedAddressCorrection,
   runCommerceStateRuntime,
@@ -1291,7 +1294,7 @@ Deno.test("C3 source audit recall precedes commerce reply, context shortcuts and
   const plannedReply = source.indexOf("const _c3PlannedReply", start);
   assert(resolvedAddress > start && resolvedAddress < plannedReply, "post-commit address correction must clear stale clarification before reply planning");
   const resolvedReadOnly = source.indexOf(
-    "const _c3ResolvedReadOnlyCurrentState",
+    "const _c3Resolution = resolveCanonicalCommerceResolution",
     start,
   );
   assert(
@@ -1300,9 +1303,49 @@ Deno.test("C3 source audit recall precedes commerce reply, context shortcuts and
   );
   const planningWindow = source.slice(resolvedReadOnly, plannedReply + 500);
   assert(
-    planningWindow.includes("read_only_memory_or_current_state_recall_resolved") &&
-      planningWindow.includes("_c3ResolvedReadOnlyCurrentState"),
+      planningWindow.includes("_c3Resolution.bypass_service_plan"),
     "known-state answer precedence contract absent",
+  );
+});
+
+Deno.test("C3 no-op conversational turns do not create commerce revisions or provenance", async () => {
+  const state = turn55CommerceState();
+  const before = JSON.stringify(state);
+  let rpcCalls = 0;
+  const db: CommerceStateDbClient = {
+    from() {
+      return {
+        select() {
+          return {
+            eq() {
+              return {
+                async maybeSingle() {
+                  return { data: { revision: 55, state }, error: null };
+                },
+              };
+            },
+          };
+        },
+      };
+    },
+    async rpc() {
+      rpcCalls += 1;
+      return { data: null, error: null };
+    },
+  };
+  const result = await persistCommerceTurn(db, {
+    conversation_id: "95d4e67f-b896-47a2-bd64-b3f44dcf23f1",
+    company_id: "3d6e17b5-ec79-4f75-aa7f-eaa824ff8493",
+    source_message_id: "55a00000-0000-4000-8000-000000000056",
+    text: "多謝。",
+    language: "zh-TW",
+  }, []);
+  assert(result.result === "no_semantic_change");
+  assert(result.revision === 55 && rpcCalls === 0);
+  assert(JSON.stringify(result.state) === before);
+  assert(
+    classifyCommerceStatePersistenceResult(result.result) ===
+      "NO_SEMANTIC_CHANGE",
   );
 });
 Deno.test("C3 assist uses same resolver after RBAC and before its KB dependency", () => {
@@ -1583,6 +1626,10 @@ Deno.test("C3 captured production turn 55 known quantity is read-only and outran
     commerce_state_persistence_classification: "NO_SEMANTIC_CHANGE",
     commerce_reason: result.outcome.reason,
     commerce_state_path: result.outcome.state_path,
+    commerce_state_readback_proof: buildB2AuthoritativeReadbackProof(
+      result.persisted,
+      result.outcome.state_path ?? "",
+    ),
   };
   const snapshot = {
     conversation_id: "95d4e67f-b896-47a2-bd64-b3f44dcf23f1",

@@ -162,12 +162,14 @@ import {
   terminalRecoveryReply,
 } from "../_shared/generation-terminal-guard.ts";
 import {
+  buildB2AuthoritativeReadbackProof,
   type B2DatabaseClient,
   type B2Decision,
   type B2PersistenceKind,
   classifyCommerceStatePersistenceResult,
   executeB2PersistenceGate,
 } from "../_shared/pre-send-conversion-supervisor.ts";
+import { resolveCanonicalCommerceResolution } from "../_shared/conversation-resolution-contract.ts";
 import { readExactAiReplyCommit } from "../_shared/authoritative-commit-readback.ts";
 import {
   createClient,
@@ -4209,16 +4211,10 @@ async function orchestrationGenerateReply(
       _a3Commerce = null;
     }
   }
-  const _c3ReadOnlyMemoryOrCurrentStateRecall =
-    _a3Commerce !== null &&
-    [
-      "read_only_memory_or_current_state_recall_resolved",
-      "read_only_attribute_constraint_query_resolved",
-      "read_only_attribute_constraint_query_unresolved",
-      "read_only_current_state_aggregate_query_resolved",
-      "read_only_current_state_aggregate_query_unresolved",
-    ].includes(_a3Commerce.reason) &&
-    _a3Commerce.persist_result === "read_only";
+  const _c3PreMemoryResolution = resolveCanonicalCommerceResolution({
+    outcome: _a3Commerce,
+    authoritative_address_correction: false,
+  });
 
   // ===== AI-ABC-C3: canonical bounded long-conversation memory =====
   // The source visitor turn is already durable and A3 has resolved canonical
@@ -4267,7 +4263,7 @@ async function orchestrationGenerateReply(
           state: commerceState,
         };
       }
-      const memoryOutcome = _c3ReadOnlyMemoryOrCurrentStateRecall
+      const memoryOutcome = _c3PreMemoryResolution.skip_memory_refresh
         ? null
         : await refreshConversationLongMemory(
           supabaseAdmin as unknown as Parameters<
@@ -4364,33 +4360,12 @@ async function orchestrationGenerateReply(
     memory: _c3Memory,
     commerce: _c3CommerceSnapshot,
   });
-  const _c3ResolvedCommerceStateChange =
-    (_a3Commerce?.reason === "explicit_entity_status_change_applied" &&
-      Boolean(_a3Commerce.reply)) ||
-    Boolean(_c3ResolvedAddressCorrection);
-  const _c3ResolvedReadOnlyCurrentState =
-    _a3Commerce !== null &&
-    [
-      "read_only_current_state_query_resolved",
-      "read_only_memory_or_current_state_recall_resolved",
-      "read_only_attribute_constraint_query_resolved",
-      "read_only_current_state_aggregate_query_resolved",
-    ].includes(_a3Commerce.reason) &&
-    _a3Commerce.route === "commerce_state_answer" &&
-    _a3Commerce.authority === "CONVERSATION_STATE" &&
-    Boolean(_a3Commerce.reply);
-  const _c3TargetedAttributeClarification = _a3Commerce !== null &&
-    [
-      "read_only_attribute_constraint_query_unresolved",
-      "read_only_current_state_aggregate_query_unresolved",
-    ].includes(_a3Commerce.reason) &&
-    _a3Commerce.persist_result === "read_only" &&
-    Boolean(_a3Commerce.reply);
+  const _c3Resolution = resolveCanonicalCommerceResolution({
+    outcome: _a3Commerce,
+    authoritative_address_correction: Boolean(_c3ResolvedAddressCorrection),
+  });
   const _c3PlannedReply =
-    (
-        _c3ResolvedCommerceStateChange || _c3ResolvedReadOnlyCurrentState ||
-        _c3TargetedAttributeClarification
-      )
+    _c3Resolution.bypass_service_plan
       ? null
       : applyServiceTone(
     _c3ServicePlan,
@@ -4524,6 +4499,13 @@ async function orchestrationGenerateReply(
           commercePersistenceClassification,
         commerce_reason: commerceReason,
         commerce_state_path: _a3Commerce?.state_path ?? null,
+        commerce_state_readback_proof: _c3CommerceSnapshot &&
+            _a3Commerce?.state_path
+          ? buildB2AuthoritativeReadbackProof(
+            _c3CommerceSnapshot.state,
+            _a3Commerce.state_path,
+          )
+          : null,
         commerce_calculation: _a3Commerce?.calculation ?? null,
         correction_resolution: _c3ResolvedAddressCorrection?.status ?? null,
         correction_operation:

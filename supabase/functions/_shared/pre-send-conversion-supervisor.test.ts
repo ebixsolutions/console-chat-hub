@@ -3,6 +3,7 @@ import {
   type B2PersistenceKind,
   type B2QueryBuilder,
   type B2QueryResult,
+  buildB2AuthoritativeReadbackProof,
   classifyB2AuthoritativePersistence,
   classifyCommerceStatePersistenceResult,
   collectKnownCommerceFacts,
@@ -761,6 +762,46 @@ Deno.test("B2 read-only recovery stays truly indeterminate without exact authori
   assert(!result.committed, "failed authoritative readback must not commit");
   assertEquals(result.decision.decision, "indeterminate", "true indeterminate decision");
   assertEquals(commits, 0, "true indeterminate callback count");
+});
+
+Deno.test("B2 aggregate readback proves NO_SEMANTIC_CHANGE without a mutation receipt", () => {
+  const state = stateFixture();
+  state.installation.pending_checks = [
+    "window_opening_check",
+    "installation_site_check",
+  ];
+  const metadata = {
+    response_route: "commerce_state_answer",
+    commerce_authority: "CONVERSATION_STATE",
+    commerce_state_revision: 7,
+    commerce_state_persist_result: "no_semantic_change",
+    commerce_state_persistence_classification: "NO_SEMANTIC_CHANGE",
+    commerce_reason: "read_only_current_state_aggregate_query_resolved",
+    commerce_state_path: "installation.pending_checks",
+    commerce_state_readback_proof: buildB2AuthoritativeReadbackProof(
+      state,
+      "installation.pending_checks",
+    ),
+  };
+  const evaluation = {
+    proposed_response: "而家有 2 項要師傅確認：窗口開口檢查同安裝位置檢查。",
+    persistence_kind: "ai_reply" as const,
+    snapshot: snapshot(state),
+    metadata,
+  };
+  assertEquals(
+    classifyB2AuthoritativePersistence(evaluation),
+    "NO_SEMANTIC_CHANGE",
+    "aggregate authoritative proof classification",
+  );
+  assertEquals(
+    classifyB2AuthoritativePersistence({
+      ...evaluation,
+      proposed_response: "而家有 3 項要師傅確認。",
+    }),
+    "INDETERMINATE",
+    "wrong aggregate count must remain indeterminate",
+  );
 });
 
 Deno.test("B2 validates the source role and tenant binding", async () => {

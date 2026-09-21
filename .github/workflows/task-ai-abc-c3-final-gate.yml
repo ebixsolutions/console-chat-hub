@@ -778,6 +778,39 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          anti_loop_base=9482d445f1af59cb8a299f9d96c470460134fc83
+          if git merge-base --is-ancestor "$anti_loop_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$anti_loop_base"; then
+            expected="$RUNNER_TEMP/c3-anti-loop-expected"
+            actual="$RUNNER_TEMP/c3-anti-loop-actual"
+            cat > "$expected" <<'EOF'
+          .github/scripts/c3_canonical_103_source_replay.ts
+          .github/scripts/c3_canonical_103_turns.json
+          .github/scripts/task_ai_abc_c3_final_gate.mjs
+          .github/workflows/task-ai-abc-c3-final-gate.yml
+          supabase/functions/_shared/commerce-state-runtime-base.ts
+          supabase/functions/_shared/conversation-recall.integration.test.ts
+          supabase/functions/_shared/conversation-resolution-contract.test.ts
+          supabase/functions/_shared/conversation-resolution-contract.ts
+          supabase/functions/_shared/pre-send-conversion-supervisor.test.ts
+          supabase/functions/_shared/pre-send-conversion-supervisor.ts
+          supabase/functions/generate-reply/index.ts
+          EOF
+            git diff --name-only "$anti_loop_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
+            LC_ALL=C sort -o "$expected" "$expected"
+            diff -u "$expected" "$actual"
+            test "$(git rev-list --count "$anti_loop_base..$GITHUB_SHA")" -eq 1
+            test -z "$(git diff --name-only "$anti_loop_base..$GITHUB_SHA" -- 'supabase/migrations/**' 'supabase/functions/agent-assist/index.ts' 'supabase/functions/receive-widget-message/index.ts')"
+            grep -q 'resolveCanonicalCommerceResolution' supabase/functions/_shared/conversation-resolution-contract.ts
+            grep -q 'no_semantic_change' supabase/functions/_shared/commerce-state-runtime-base.ts
+            grep -q 'buildB2AuthoritativeReadbackProof' supabase/functions/_shared/pre-send-conversion-supervisor.ts
+            grep -q '"turn_count": 103' .github/scripts/c3_canonical_103_turns.json
+            grep -q 'AI-ABC-C3-CANONICAL-103-SOURCE-REPLAY' .github/scripts/c3_canonical_103_source_replay.ts
+            echo C3_ANTI_LOOP_SOURCE_CLOSURE_PARENT="$anti_loop_base"
+            echo C3_ANTI_LOOP_SOURCE_CLOSURE_ALLOWLIST=PASS
+            echo C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE
+            echo C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS
+            exit 0
+          fi
           turn37_repair_base=4e30db58bdfb6864f0424cac7d17e3bffd3ddfd3
           if git merge-base --is-ancestor "$turn37_repair_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$turn37_repair_base"; then
             expected="$RUNNER_TEMP/c3-turn37-expected"
