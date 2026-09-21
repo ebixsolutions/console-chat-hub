@@ -778,6 +778,34 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          turn37_repair_base=4e30db58bdfb6864f0424cac7d17e3bffd3ddfd3
+          if git merge-base --is-ancestor "$turn37_repair_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$turn37_repair_base"; then
+            expected="$RUNNER_TEMP/c3-turn37-expected"
+            actual="$RUNNER_TEMP/c3-turn37-actual"
+            cat > "$expected" <<'EOF'
+          .github/scripts/task_ai_abc_c3_final_gate.mjs
+          .github/workflows/task-ai-abc-c3-final-gate.yml
+          scripts/task9-turn37-contract-test.py
+          scripts/task9-tungyu-100turn-production-smoke.py
+          supabase/functions/_shared/current-fact-evidence.test.ts
+          supabase/functions/_shared/current-fact-evidence.ts
+          supabase/functions/_shared/deterministic-kb-client.ts
+          supabase/functions/generate-reply/index.ts
+          EOF
+            git diff --name-only "$turn37_repair_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
+            LC_ALL=C sort -o "$expected" "$expected"
+            diff -u "$expected" "$actual"
+            test "$(git rev-list --count "$turn37_repair_base..$GITHUB_SHA")" -eq 1
+            test -z "$(git diff --name-only "$turn37_repair_base..$GITHUB_SHA" -- 'supabase/migrations/**' 'supabase/functions/agent-assist/index.ts' 'supabase/functions/receive-widget-message/index.ts')"
+            grep -q 'canonicalTenantScopeFromAuthoritativeCompany' supabase/functions/_shared/deterministic-kb-client.ts
+            grep -q 'c688c8a0-1708-4737-bf00-cbe2981b202b' scripts/task9-turn37-contract-test.py
+            grep -q 'HUMAN_CONTROL_SUPPRESSED' scripts/task9-tungyu-100turn-production-smoke.py
+            echo C3_TURN37_SOURCE_REPAIR_PARENT="$turn37_repair_base"
+            echo C3_TURN37_SOURCE_REPAIR_ALLOWLIST=PASS
+            echo C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE
+            echo C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS
+            exit 0
+          fi
           turn48_global_aggregate_base=6d1449febe881f694f3fc5a65bb9a7db476a8f2e
           if git merge-base --is-ancestor "$turn48_global_aggregate_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$turn48_global_aggregate_base"; then
             expected="$RUNNER_TEMP/c3-turn48-global-aggregate-expected"

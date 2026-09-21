@@ -42,6 +42,8 @@ const files = {
   deterministicEngineTest: "supabase/functions/_shared/deterministic-commerce-engine.test.ts",
   deterministicRouter: "supabase/functions/_shared/deterministic-runtime-router.ts",
   deterministicKbClient: "supabase/functions/_shared/deterministic-kb-client.ts",
+  turn37Harness: "scripts/task9-tungyu-100turn-production-smoke.py",
+  turn37HarnessTest: "scripts/task9-turn37-contract-test.py",
   currentFactEvidence:
     "supabase/functions/_shared/current-fact-evidence.ts",
   currentFactEvidenceTest:
@@ -259,6 +261,15 @@ for (const marker of [
   "NO_SEMANTIC_CHANGE",
   "B2_ALLOW_NO_SEMANTIC_CHANGE_AFTER_AUTHORITATIVE_READBACK",
 ]) must(preSendConversionSupervisor.includes(marker), `b2_read_only_readback_contract_missing:${marker}`);
+for (const marker of [
+  "canonicalTenantScopeFromAuthoritativeCompany",
+  "authoritativeCompanyId",
+]) must(read(files.deterministicKbClient).includes(marker), `turn36_scope_repair_missing:${marker}`);
+for (const marker of [
+  "HUMAN_CONTROL_SUPPRESSED",
+  "classify_ingress_terminal",
+  "if terminal:",
+]) must(read(files.turn37Harness).includes(marker), `turn37_harness_contract_missing:${marker}`);
 for (const marker of [
   "questionExplicitlyAsksQuantity",
   "inferEntityStatusPath",
@@ -640,6 +651,7 @@ run("npx", [
   files.humanBlindCalibrationTest,
 ]);
 run("python", ["-c", "import ast,pathlib,sys; ast.parse(pathlib.Path(sys.argv[1]).read_text())", files.validationRunner]);
+run("python", [files.turn37HarnessTest]);
 run("node", [files.validationControlTests]);
 run("node", [files.releaseIdentityTest]);
 run("node", [files.realCustomerDatasetTest]);

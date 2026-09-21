@@ -5127,6 +5127,7 @@ async function orchestrationGenerateReply(
     const _kbTenantResult = await resolveTenantScope(
       conversation_id,
       _widgetLiveTestActor,
+      conversation.company_id,
     );
     if (!_kbTenantResult.resolved) {
       if (_deferR1ForE1) {

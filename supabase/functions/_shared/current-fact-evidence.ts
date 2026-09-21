@@ -11,6 +11,24 @@ export type CurrentFactEvidenceDecision =
   | { kind: "no_current_evidence"; historical_only: boolean }
   | { kind: "operational_failure" };
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function canonicalTenantScopeFromAuthoritativeCompany(
+  companyId: unknown,
+): {
+  mode: "canonical";
+  aiCompanyId: string;
+  singaporeTenantId: string;
+} | null {
+  if (typeof companyId !== "string" || !UUID_RE.test(companyId)) return null;
+  return {
+    mode: "canonical",
+    aiCompanyId: companyId,
+    singaporeTenantId: companyId,
+  };
+}
+
 export function classifyDeterministicSearchOutcome(input: {
   market_resolved: boolean;
   query_length: number;

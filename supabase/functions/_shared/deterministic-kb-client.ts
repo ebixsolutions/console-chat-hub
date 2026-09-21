@@ -10,7 +10,10 @@ import {
   createAggregationAuthorityMetadata,
   type AggregationAuthorityMetadata,
 } from "./kb-aggregation-response.ts";
-import { classifyDeterministicSearchOutcome } from "./current-fact-evidence.ts";
+import {
+  canonicalTenantScopeFromAuthoritativeCompany,
+  classifyDeterministicSearchOutcome,
+} from "./current-fact-evidence.ts";
 
 export interface KBQueryInput {
   query: string;
@@ -118,10 +121,24 @@ export function resolveKBEndpoint(): KBEndpointConfig {
   return { mode: "postgres_fts" };
 }
 
+/**
+ * Reuse the company scope already read from the authoritative conversation row.
+ *
+ * generate-reply loads and control-checks that row before KB routing. Re-reading
+ * the same conversation through a second client made an otherwise valid turn
+ * look like KB_SCOPE_GATE when the duplicate lookup was transiently unavailable.
+ * The FTS call remains bound to the exact conversation company on both tenant
+ * parameters, so this removes no tenant boundary.
+ */
 export async function resolveTenantScope(
   conversationId: string | null,
   _actor?: KBPreActivationActor,
+  authoritativeCompanyId?: unknown,
 ): Promise<TenantResolutionResult> {
+  const authoritative = canonicalTenantScopeFromAuthoritativeCompany(
+    authoritativeCompanyId,
+  );
+  if (authoritative) return { resolved: true, scope: authoritative };
   if (!conversationId || !UUID_RE.test(conversationId)) {
     return { resolved: false, reason: "KB_DEMO_DISABLED" };
   }
