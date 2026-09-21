@@ -3,6 +3,8 @@ import {
   type B2PersistenceKind,
   type B2QueryBuilder,
   type B2QueryResult,
+  classifyB2AuthoritativePersistence,
+  classifyCommerceStatePersistenceResult,
   collectKnownCommerceFacts,
   evaluateB2BeforeCommit,
   executeB2PersistenceGate,
@@ -716,6 +718,49 @@ Deno.test("B2 source lookup failure and thrown supervisor reads are fail-closed"
     assertEquals(result.decision.decision, "indeterminate", "read failure decision");
     assertEquals(commits, 0, "read failure callback count");
   }
+});
+
+Deno.test("B2 read-only recovery stays truly indeterminate without exact authoritative proof", async () => {
+  assertEquals(classifyCommerceStatePersistenceResult("success"), "COMMITTED", "committed classification");
+  assertEquals(classifyCommerceStatePersistenceResult("source_message_already_applied"), "IDEMPOTENT", "idempotent classification");
+  assertEquals(classifyCommerceStatePersistenceResult("read_only"), "NO_SEMANTIC_CHANGE", "read-only classification");
+  assertEquals(classifyCommerceStatePersistenceResult("rpc_transport_error"), "INDETERMINATE", "uncertain classification");
+  const state = stateFixture();
+  state.latest_corrections = ["uncanonicalized correction"];
+  const metadata = {
+    response_route: "commerce_state_answer",
+    commerce_authority: "CONVERSATION_STATE",
+    commerce_state_revision: 7,
+    commerce_state_persist_result: "read_only",
+    commerce_state_persistence_classification: "NO_SEMANTIC_CHANGE",
+    commerce_reason: "read_only_memory_or_current_state_recall_resolved",
+    commerce_state_path: "entities.99.quantity",
+  };
+  const evaluation = {
+    proposed_response: "Your current quantity is 2 units.",
+    persistence_kind: "ai_reply" as const,
+    snapshot: snapshot(state),
+    metadata,
+  };
+  assertEquals(classifyB2AuthoritativePersistence(evaluation), "INDETERMINATE", "invalid authoritative path classification");
+  assertEquals(evaluateB2BeforeCommit(evaluation).code, "LATEST_CORRECTION_UNRESOLVED", "invalid read-only evidence must stay indeterminate");
+  let commits = 0;
+  const result = await executeB2PersistenceGate({
+    client: new MockClient({ sourceError: { message: "offline" } }),
+    conversation_id: CONVERSATION_ID,
+    source_message_id: SOURCE_ID,
+    proposed_response: evaluation.proposed_response,
+    persistence_kind: "ai_reply",
+    metadata: { ...metadata, commerce_state_path: "entities.0.quantity" },
+    expected_commerce_state_revision: 7,
+    commit: async () => {
+      commits += 1;
+      return "forbidden";
+    },
+  });
+  assert(!result.committed, "failed authoritative readback must not commit");
+  assertEquals(result.decision.decision, "indeterminate", "true indeterminate decision");
+  assertEquals(commits, 0, "true indeterminate callback count");
 });
 
 Deno.test("B2 validates the source role and tenant binding", async () => {

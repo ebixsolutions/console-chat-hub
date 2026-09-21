@@ -165,6 +165,7 @@ import {
   type B2DatabaseClient,
   type B2Decision,
   type B2PersistenceKind,
+  classifyCommerceStatePersistenceResult,
   executeB2PersistenceGate,
 } from "../_shared/pre-send-conversion-supervisor.ts";
 import { readExactAiReplyCommit } from "../_shared/authoritative-commit-readback.ts";
@@ -4503,6 +4504,8 @@ async function orchestrationGenerateReply(
     const commercePersistResult = _c3ResolvedAddressCorrection
       ? "authoritative_post_commit_readback"
       : _a3Commerce!.persist_result;
+    const commercePersistenceClassification =
+      classifyCommerceStatePersistenceResult(commercePersistResult);
     const commerceReason = _c3ResolvedAddressCorrection?.reason ??
       _a3Commerce!.reason;
     const commerceCommit = await commitAiReplyWithControlGate(
@@ -4517,6 +4520,8 @@ async function orchestrationGenerateReply(
         commerce_authority: commerceAuthority,
         commerce_state_revision: commerceRevision,
         commerce_state_persist_result: commercePersistResult,
+        commerce_state_persistence_classification:
+          commercePersistenceClassification,
         commerce_reason: commerceReason,
         commerce_state_path: _a3Commerce?.state_path ?? null,
         commerce_calculation: _a3Commerce?.calculation ?? null,

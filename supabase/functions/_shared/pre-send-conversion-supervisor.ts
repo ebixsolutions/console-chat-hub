@@ -31,6 +31,11 @@ export interface B2Decision {
   code: string;
   detail?: string;
 }
+export type B2AuthoritativePersistenceClassification =
+  | "COMMITTED"
+  | "IDEMPOTENT"
+  | "NO_SEMANTIC_CHANGE"
+  | "INDETERMINATE";
 export interface B2CanonicalSnapshot {
   conversation_id: string;
   company_id: string;
@@ -236,6 +241,73 @@ export function collectKnownCommerceFacts(state: ConversationCommerceState): Kno
   addFact(facts, "conversion.order_status", state.conversion.order_status);
   addFact(facts, "conversion.payment_status", state.conversion.payment_status);
   return facts;
+}
+
+export function classifyCommerceStatePersistenceResult(
+  result: unknown,
+): B2AuthoritativePersistenceClassification {
+  switch (clean(result, 120)) {
+    case "success":
+    case "authoritative_post_commit_readback":
+      return "COMMITTED";
+    case "idempotent":
+    case "source_message_already_applied":
+      return "IDEMPOTENT";
+    case "read_only":
+      return "NO_SEMANTIC_CHANGE";
+    default:
+      return "INDETERMINATE";
+  }
+}
+
+/**
+ * A read-only commerce answer has no mutation receipt by design. It may only
+ * recover an otherwise indeterminate B2 evaluation when the authoritative
+ * snapshot proves the exact revision, active state path, and rendered value.
+ * Transport/readback failures and snapshot drift remain fail-closed.
+ */
+export function classifyB2AuthoritativePersistence(
+  input: B2EvaluationInput,
+): B2AuthoritativePersistenceClassification {
+  const metadata = input.metadata;
+  if (!isRecord(metadata)) return "INDETERMINATE";
+  const classification = classifyCommerceStatePersistenceResult(
+    metadata.commerce_state_persist_result,
+  );
+  if (
+    metadata.commerce_state_persistence_classification !== classification ||
+    Number(metadata.commerce_state_revision) !== input.snapshot.commerce_state_revision
+  ) return "INDETERMINATE";
+  if (classification !== "NO_SEMANTIC_CHANGE") {
+    return input.snapshot.commerce_state_source_message_id ===
+        input.snapshot.source_message_id
+      ? classification
+      : "INDETERMINATE";
+  }
+  if (
+    metadata.response_route !== "commerce_state_answer" ||
+    metadata.commerce_authority !== "CONVERSATION_STATE" ||
+    !clean(metadata.commerce_reason, 180).startsWith("read_only_")
+  ) return "INDETERMINATE";
+
+  const statePath = clean(metadata.commerce_state_path, 240);
+  const fact = collectKnownCommerceFacts(input.snapshot.state).find((item) => item.path === statePath);
+  if (!fact || !clean(input.proposed_response).includes(fact.value)) return "INDETERMINATE";
+
+  const quantityPath = statePath.match(/^entities\.(\d+)\.quantity$/);
+  if (quantityPath) {
+    const entity = input.snapshot.state.entities[Number(quantityPath[1])];
+    if (!entity || entity.status === "cancelled" || entity.status === "deferred") {
+      return "INDETERMINATE";
+    }
+    const claimedQuantities = [...clean(input.proposed_response).matchAll(
+      /([0-9]{1,4})\s*(?:部|台|件|個|个|套|units?|items?)/gi,
+    )].map((match) => Number(match[1]));
+    if (claimedQuantities.length !== 1 || claimedQuantities[0] !== Number(fact.value)) {
+      return "INDETERMINATE";
+    }
+  }
+  return "NO_SEMANTIC_CHANGE";
 }
 
 function entityAliases(entity: CommerceEntity): string[] {
@@ -532,12 +604,21 @@ export function evaluateB2BeforeCommit(input: B2EvaluationInput): B2Decision {
     };
   }
   const state = input.snapshot.state;
+  const correctionDecision = evaluateCorrections(draft, state);
+  const authoritativeNoSemanticChange =
+    correctionDecision?.decision === "indeterminate" &&
+    classifyB2AuthoritativePersistence(input) === "NO_SEMANTIC_CHANGE";
   return (
-    evaluateCorrections(draft, state) ??
+    (authoritativeNoSemanticChange ? null : correctionDecision) ??
     evaluateCancellation(draft, state) ??
     evaluateQuoteReality(draft, state) ??
     evaluateTransactionReality(draft, input.persistence_kind, state) ??
-    evaluateKnownContext(draft, state) ?? { decision: "allow", code: "B2_ALLOW" }
+    evaluateKnownContext(draft, state) ?? {
+      decision: "allow",
+      code: authoritativeNoSemanticChange
+        ? "B2_ALLOW_NO_SEMANTIC_CHANGE_AFTER_AUTHORITATIVE_READBACK"
+        : "B2_ALLOW",
+    }
   );
 }
 

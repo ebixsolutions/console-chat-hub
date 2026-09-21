@@ -1,5 +1,6 @@
 /** Offline integration against frozen B2 and the real runtime source. No live API calls. */
 import {
+  classifyB2AuthoritativePersistence,
   evaluateB2BeforeCommit,
   executeB2PersistenceGate,
 } from "./pre-send-conversion-supervisor.ts";
@@ -1574,6 +1575,69 @@ Deno.test("C3 captured production turn 55 known quantity is read-only and outran
   assert(result.persisted.entities.length === 2, JSON.stringify(result.persisted.entities));
   assert(!result.persisted.entities.some((entity) => entity.entity_id === "generic:定兩部"), JSON.stringify(result.persisted.entities));
   assert(!result.persisted.entities.some((entity) => entity.quantity === 3), JSON.stringify(result.persisted.entities));
+  const metadata = {
+    response_route: "commerce_state_answer",
+    commerce_authority: result.outcome.authority,
+    commerce_state_revision: result.outcome.revision,
+    commerce_state_persist_result: result.outcome.persist_result,
+    commerce_state_persistence_classification: "NO_SEMANTIC_CHANGE",
+    commerce_reason: result.outcome.reason,
+    commerce_state_path: result.outcome.state_path,
+  };
+  const snapshot = {
+    conversation_id: "95d4e67f-b896-47a2-bd64-b3f44dcf23f1",
+    company_id: "3d6e17b5-ec79-4f75-aa7f-eaa824ff8493",
+    source_message_id: source,
+    commerce_state_revision: 54,
+    commerce_state_source_message_id: "55a00000-0000-4000-8000-000000000054",
+    state: result.persisted,
+  };
+  const b2Input = {
+    proposed_response: result.outcome.reply ?? "",
+    persistence_kind: "ai_reply" as const,
+    snapshot,
+    metadata,
+  };
+  assert(classifyB2AuthoritativePersistence(b2Input) === "NO_SEMANTIC_CHANGE", "Turn-55 read-only state was not classified as NO_SEMANTIC_CHANGE");
+  const b2 = evaluateB2BeforeCommit(b2Input);
+  assert(b2.decision === "allow" && b2.code === "B2_ALLOW_NO_SEMANTIC_CHANGE_AFTER_AUTHORITATIVE_READBACK", `Turn-55 entered terminal B2 recovery: ${JSON.stringify(b2)}`);
+  let assistantCommits = 0;
+  const b2Client = {
+    from(table: string) {
+      return {
+        select() { return this; },
+        eq() { return this; },
+        async maybeSingle() {
+          return {
+            error: null,
+            data: table === "conversations"
+              ? { id: snapshot.conversation_id, company_id: snapshot.company_id }
+              : table === "messages"
+              ? { id: source, conversation_id: snapshot.conversation_id, role: "visitor" }
+              : { company_id: snapshot.company_id, revision: snapshot.commerce_state_revision, source_message_id: snapshot.commerce_state_source_message_id, state: snapshot.state },
+          };
+        },
+      };
+    },
+  };
+  const persistedReply = await executeB2PersistenceGate({
+    client: b2Client,
+    conversation_id: snapshot.conversation_id,
+    source_message_id: source,
+    proposed_response: b2Input.proposed_response,
+    persistence_kind: "ai_reply",
+    metadata,
+    expected_commerce_state_revision: 54,
+    commit: async () => {
+      assistantCommits += 1;
+      return { result: "success", message_id: "turn-55-assistant" };
+    },
+  });
+  assert(persistedReply.committed && assistantCommits === 1 && persistedReply.decision.code === "B2_ALLOW_NO_SEMANTIC_CHANGE_AFTER_AUTHORITATIVE_READBACK", `Turn-55 B2 receipt invalid: ${JSON.stringify(persistedReply)}`);
+  assert(JSON.stringify(result.persisted) === before, "Turn-55 state hash changed");
+  assert(result.persisted.entities.filter((entity) => entity.status !== "cancelled" && entity.status !== "deferred").reduce((total, entity) => total + entity.quantity, 0) === 2, "Turn-55 cancelled entity was included");
+  const p0 = Number(result.outcome.route !== "commerce_state_answer" || b2.decision !== "allow" || result.rpcCalls !== 0);
+  assert(p0 === 0, `Turn-55 P0=${p0}`);
 });
 
 Deno.test("C3 read-only current-state query class preserves mutations, ambiguity, scope, and replay contracts", async () => {

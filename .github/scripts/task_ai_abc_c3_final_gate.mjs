@@ -154,6 +154,7 @@ const generate = read(files.generate),
   assist = read(files.assist),
   commerceAuthority = read(files.commerceStateAuthority),
   commerceRuntime = read(files.commerceStateRuntimeBase),
+  preSendConversionSupervisor = read(files.preSendConversionSupervisor),
   migration = read(files.migration);
 const c2WorkflowRouting = read(files.c2WorkflowRouting);
 const migrationExecutableBody = migration.split("\n").slice(3).join("\n");
@@ -174,7 +175,7 @@ const authorizedTargetedRepairHashes = new Map([
   ],
   [
     "supabase/functions/_shared/pre-send-conversion-supervisor.ts",
-    "f2b894c236c606fee41beb02e6a8ef63a611428938e888679e019268ecee9b6e",
+    "3c18f86a06ed4c79dccf1aeb082828b375935b1d889ed0d88d997dad2d0acc7a",
   ],
 ]);
 for (
@@ -254,6 +255,11 @@ for (const marker of [
   "read_only_current_state_aggregate_query_unresolved",
 ]) must(commerceRuntime.includes(marker), `commerce_read_only_contract_missing:${marker}`);
 for (const marker of [
+  "classifyB2AuthoritativePersistence",
+  "NO_SEMANTIC_CHANGE",
+  "B2_ALLOW_NO_SEMANTIC_CHANGE_AFTER_AUTHORITATIVE_READBACK",
+]) must(preSendConversionSupervisor.includes(marker), `b2_read_only_readback_contract_missing:${marker}`);
+for (const marker of [
   "questionExplicitlyAsksQuantity",
   "inferEntityStatusPath",
   "isReadOnlyMemoryOrCurrentStateRecall",
@@ -263,6 +269,9 @@ for (const marker of [
   "59b89c91-f150-4120-b226-a2944f0eb2da",
   "generic:定兩部",
   "C3 captured production turn 55 known quantity is read-only and outranks clarification",
+  "Turn-55 state hash changed",
+  "Turn-55 B2 receipt invalid",
+  "Turn-55 P0=",
 ]) must(recallIntegration.includes(marker), `turn55_regression_missing:${marker}`);
 for (const marker of [
   "35bea890-7c24-41c2-9e3d-7b5aa56f5afb",
