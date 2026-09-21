@@ -273,9 +273,9 @@ function retainedCustomerFacts(rows: MemoryHistoryRow[]): {
     }
     const roomFacts = retainedRoomSizes(text);
     if (roomFacts.length) add(current, "room_size", roomFacts, row);
-    const horsepowerFacts = [...text.matchAll(/([^，,。]{1,16}?(?:房|客廳|客厅|型號|型号|model))\s*(?:要|是|係|為|为)?\s*(\d+(?:\.\d+)?)\s*匹/gi)].map((m) => `${m[1].trim()} ${m[2]}匹`);
+    const horsepowerFacts = [...text.matchAll(/(?:([^，,。]{1,16}?(?:房|客廳|客厅|型號|型号|model))\s*(?:要|是|係|為|为)?\s*)?(\d+(?:\.\d+)?)\s*匹/gi)].map((m) => `${m[1]?.trim() ? `${m[1].trim()} ` : ""}${m[2]}匹`);
     if (horsepowerFacts.length) add(current, "horsepower", horsepowerFacts, row);
-    if (/(?:品牌)\s*(?:不是|並非|并非|唔係)\s*(?:必須|必须)|(?:品牌不限|不指定品牌|no\s+brand\s+(?:is\s+)?(?:required|mandatory))/i.test(text)) add(current, "brand_required", false, row);
+    if (/(?:品牌)\s*(?:不是|並非|并非|唔係)\s*(?:必須|必须)|(?:品牌不限|不指定品牌|no\s+brand\s+(?:is\s+)?(?:required|mandatory))|(?:[\p{L}\p{N}-]+[、,，]){1,}[\p{L}\p{N}-]+(?:都得|均可|皆可|any\s+(?:is|are)\s+fine)/iu.test(text)) add(current, "brand_required", false, row);
     if (/(?:偏好|希望|prefer).{0,30}(?:送貨|送货|delivery)|(?:送貨|送货|delivery).{0,30}(?:偏好|希望|prefer)/i.test(text)) add(current, "delivery_preference", text, row);
     const oldQuote = text.match(/(?:港幣|港币|HKD|HK\$)\s*([0-9][0-9,]*(?:\.\d+)?)/i);
     if (oldQuote?.[1] && /(?:以前|之前|舊|旧|歷史|历史|口頭報價|口头报价|previous|historical|old)/i.test(text)) add(historical, "historical_quote", { amount: Number(oldQuote[1].replace(/,/g, "")), currency: "HKD", reusable_as_current: false }, row);

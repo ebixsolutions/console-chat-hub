@@ -108,6 +108,24 @@ function semanticFrame(turn: number, text: string): CommerceSemanticFrame | null
   } else if (turn === 40 || turn === 57 || turn === 103) {
     topic = "delivery address";
     requested.push("address");
+  } else if (turn === 56) {
+    topic = "refrigerator"; requested.push("constraints");
+  } else if (turn === 58) {
+    topic = "delivery"; requested.push("preferred_date");
+  } else if (turn === 59) {
+    topic = "installation"; requested.push("old_machine_removal_count");
+  } else if (turn === 68) {
+    topic = "air_conditioner"; requested.push("horsepower");
+  } else if (turn === 69) {
+    topic = "air_conditioner"; requested.push("brand_constraint");
+  } else if (turn === 71) {
+    topic = "historical quote"; requested.push("current_price");
+  } else if (turn === 90) {
+    topic = "air_conditioner"; requested.push("current_quantity");
+  } else if (turn === 91) {
+    topic = "transaction"; requested.push("summary");
+  } else if (turn === 96) {
+    topic = "delivery"; requested.push("address", "recipient", "recipient_phone");
   } else if (turn === 48 || turn === 101) {
     topic = "installation";
     requested.push("pending_checks");
@@ -155,6 +173,21 @@ const checkpoints = new Map<number, (reply: string, outcome: unknown) => boolean
   [48, (reply) => /(?:2|兩)/.test(reply) && /窗口/.test(reply) && /安裝/.test(reply)],
   [50, (reply) => reply.includes("80") && reply.includes("100")],
   [55, (reply) => /(?:2|兩)/.test(reply) && !/[?？]/.test(reply)],
+  [56, (reply) => /(?:595|600)/.test(reply) && !/(?:冷氣|空調).{0,20}(?:2|兩)/.test(reply)],
+  [57, (reply) => /B座|Ｂ座/.test(reply) && !reply.includes("A座")],
+  [58, (reply) => /星期六|週六|周六|Saturday/i.test(reply)],
+  [59, (reply) => /(?:1|一)/.test(reply) && !/[?？]/.test(reply)],
+  [68, (reply) => /1匹/.test(reply) && /1\.5匹/.test(reply)],
+  [69, (reply) => /(?:並非|唔係|不是|not mandatory|not required)/i.test(reply)],
+  [71, (reply) => /(?:未必|不一定|not necessarily)/i.test(reply) && /(?:確認|确认|confirm)/i.test(reply)],
+  [73, (reply) => /(?:唔會當現價|不会当作现价|not be used as a current price)/i.test(reply)],
+  [76, (reply) => /(?:唔會當現價|不会当作现价|not be used as a current price)/i.test(reply)],
+  [80, (reply) => /(?:1\.|1。)/.test(reply) && /(?:付款|payment)/i.test(reply)],
+  [90, (reply) => /(?:2|兩)/.test(reply) && !/[?？]/.test(reply)],
+  [91, (reply) => /(?:項目|项目|Items)/.test(reply) && /(?:訂單|订单|Order)/.test(reply)],
+  [95, (_reply) => state.delivery.recipient_phone === "6987 6543"],
+  [96, (reply) => /陳太/.test(reply) && /6987 6543/.test(reply)],
+  [98, (reply) => /(?:報價階段|报价阶段|quotation stage)/i.test(reply) && /(?:唔係已確認訂單|不是已确认订单|not a confirmed order)/i.test(reply)],
   [101, (reply) => /(?:2|兩)/.test(reply) && /窗口/.test(reply) && /安裝/.test(reply)],
   [102, (reply) => /(?:2|兩)/.test(reply) && !/[?？]/.test(reply)],
   [103, (reply) => /B座|Ｂ座/.test(reply) && !reply.includes("A座")],
@@ -292,6 +325,27 @@ for (let index = 0; index < fixture.turns.length; index++) {
       revision,
       no_semantic_change: beforeRevision === revision,
     };
+  }
+  if (reply) {
+    const metadata = outcome?.persist_result === "read_only" && outcome.authority === "CONVERSATION_STATE" && outcome.state_path
+      ? {
+        response_route: outcome.route,
+        commerce_authority: outcome.authority,
+        commerce_state_revision: outcome.revision,
+        commerce_state_persist_result: outcome.persist_result,
+        commerce_state_persistence_classification: "NO_SEMANTIC_CHANGE",
+        commerce_reason: outcome.reason,
+        commerce_state_path: outcome.state_path,
+        commerce_state_readback_proof: buildB2AuthoritativeReadbackProof(state, outcome.state_path),
+      }
+      : null;
+    const b2 = evaluateB2BeforeCommit({
+      proposed_response: reply,
+      persistence_kind: "ai_reply",
+      snapshot: { conversation_id: conversationId, company_id: companyId, source_message_id: id, commerce_state_revision: revision, commerce_state_source_message_id: stateSourceMessageId, state },
+      metadata,
+    });
+    assert(b2.decision === "allow", `turn_${turn}_b2_${b2.decision}:${b2.code}:${state.latest_corrections.at(-1) ?? "none"}`);
   }
   if (
     outcome?.persist_result === "read_only" &&

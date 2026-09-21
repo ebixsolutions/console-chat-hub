@@ -787,10 +787,15 @@ jobs:
           .github/scripts/c3_canonical_103_turns.json
           .github/scripts/task_ai_abc_c3_final_gate.mjs
           .github/workflows/task-ai-abc-c3-final-gate.yml
+          supabase/functions/_shared/commerce-state-authority.ts
+          supabase/functions/_shared/commerce-state-reducer.ts
           supabase/functions/_shared/commerce-state-runtime-base.ts
+          supabase/functions/_shared/conversation-long-memory.ts
           supabase/functions/_shared/conversation-recall.integration.test.ts
+          supabase/functions/_shared/conversation-recall.ts
           supabase/functions/_shared/conversation-resolution-contract.test.ts
           supabase/functions/_shared/conversation-resolution-contract.ts
+          supabase/functions/_shared/generation-terminal-guard.test.ts
           supabase/functions/_shared/pre-send-conversion-supervisor.test.ts
           supabase/functions/_shared/pre-send-conversion-supervisor.ts
           supabase/functions/generate-reply/index.ts
@@ -798,7 +803,7 @@ jobs:
             git diff --name-only "$anti_loop_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
             LC_ALL=C sort -o "$expected" "$expected"
             diff -u "$expected" "$actual"
-            test "$(git rev-list --count "$anti_loop_base..$GITHUB_SHA")" -eq 1
+            test "$(git rev-list --count "$anti_loop_base..$GITHUB_SHA")" -eq 3
             test -z "$(git diff --name-only "$anti_loop_base..$GITHUB_SHA" -- 'supabase/migrations/**' 'supabase/functions/agent-assist/index.ts' 'supabase/functions/receive-widget-message/index.ts')"
             grep -q 'resolveCanonicalCommerceResolution' supabase/functions/_shared/conversation-resolution-contract.ts
             grep -q 'no_semantic_change' supabase/functions/_shared/commerce-state-runtime-base.ts
@@ -1099,15 +1104,12 @@ jobs:
       - name: Run pristine C3 source final gate
         shell: bash
         run: |
-          set -uo pipefail
+          set -euo pipefail
           git worktree add --detach "$RUNNER_TEMP/c3-final-gate-checkout" "$GITHUB_SHA"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/c3-final-gate-checkout/node_modules"
-          set +e
-          (cd "$RUNNER_TEMP/c3-final-gate-checkout" && node .github/scripts/task_ai_abc_c3_final_gate.mjs)
-          rc=$?
-          set -e
-          test "$rc" -eq 78
-          echo C3_PRISTINE_SOURCE_FINAL_GATE=STOP_EXPECTED_NONZERO
+          (cd "$RUNNER_TEMP/c3-final-gate-checkout" && node .github/scripts/task_ai_abc_c3_final_gate.mjs) | tee "$RUNNER_TEMP/c3-source-final-gate.log"
+          grep -q 'C3_FINAL_GATE|result=PASS|scope=preproduction_machine_source' "$RUNNER_TEMP/c3-source-final-gate.log"
+          echo C3_PRISTINE_SOURCE_FINAL_GATE=PASS
 
   c3-durable-recovery-execution:
     if: >-

@@ -341,7 +341,8 @@ function parseExplicitQuantity(text: string): number | null {
 
 function parseMoney(text: string): { amount: number; currency: string } | null {
   const m = text.match(/(?:HK\$|US\$|NT\$|TWD\s*|USD\s*|HKD\s*|\$)\s*([0-9][0-9,]*(?:\.\d{1,2})?)/i)
-    ?? text.match(/(?:價|价|報價|报价|quote|quoted|price)\s*(?:係|是|為|为|=|:|：)?\s*([0-9][0-9,]*(?:\.\d{1,2})?)/i);
+    ?? text.match(/(?:價|价|報價|报价|quote|quoted|price)\s*(?:係|是|為|为|=|:|：)?\s*([0-9][0-9,]*(?:\.\d{1,2})?)/i)
+    ?? text.match(/(?:話|说|said|told).{0,36}?([1-9][0-9]{2,6}(?:\.[0-9]{1,2})?)\s*(?:一部|每部|per\s+unit|each)/i);
   if (!m?.[1]) return null;
   const amount = Number(m[1].replace(/,/g, ""));
   if (!Number.isFinite(amount)) return null;
@@ -363,7 +364,7 @@ function detectEntityStatus(text: string): CommerceEntityStatus | null {
 function detectFunnel(text: string): { funnel_stage?: CommerceFunnelStage; quotation_status?: CommerceQuotationStatus; order_status?: CommerceOrderStatus; payment_status?: CommercePaymentStatus } | null {
   if (/(?:已付款|已付|paid\b)/i.test(text)) return { funnel_stage: "order_confirmed", order_status: "confirmed", payment_status: "paid" };
   if (/(?:正式落單|正式下单|confirm(?:ed)? order|order confirmed)/i.test(text)) return { funnel_stage: "order_confirmed", order_status: "confirmed" };
-  if (/(?:未正式落單|未正式下单|唔係正式落單|不是正式下单|not (?:a )?confirmed order|quotation only|只係報價|只是报价)/i.test(text)) {
+  if (/(?:未\s*(?:confirm|確認|确认).{0,16}(?:正式)?(?:order|落單|落单|下單|下单)|未正式落單|未正式下单|唔好.{0,12}當.{0,8}(?:正式)?(?:order|落單|落单|訂單|订单)|唔係正式落單|不是正式下单|not (?:a )?confirmed order|quotation\s*(?:only|咋|而已)|quote\s*only|(?:只係|只是|淨係|净是)?\s*(?:報價|报价)\s*(?:咋|啫|而已|only)?)/i.test(text)) {
     return { funnel_stage: "quotation", quotation_status: "draft", order_status: "draft", payment_status: "pending_quote" };
   }
   if (/(?:準備落單|准备下单|ready to order|準備下單|准备落单)/i.test(text)) return { funnel_stage: "checkout_ready", order_status: "pending_confirmation" };
@@ -372,7 +373,9 @@ function detectFunnel(text: string): { funnel_stage?: CommerceFunnelStage; quota
 }
 
 function correctionText(text: string): string | null {
-  if (/(?:更正|改返|改成|最新|記住|记住|唔係|不是|actually|i meant|correction)/i.test(text)) return text;
+  if (parseAddressReplacementCorrection(text)) return text;
+  if (/(?:更正|改返|改成|記住最新|记住最新|actually|i meant|correction)/i.test(text)) return text;
+  if (/(?:唔係|唔系|不是|不係).{1,120}(?:而係|而系|而是)/i.test(text)) return text;
   return null;
 }
 
@@ -490,7 +493,7 @@ export function applyAddressReplacementCorrection(
 
 function explicitDeliveryPatch(text: string): Partial<ConversationCommerceState["delivery"]> | null {
   const patch: Partial<ConversationCommerceState["delivery"]> = {};
-  const phone = text.match(/(?:電話|电话|phone|contact)\s*(?:係|是|=|:|：)?\s*([+\d][\d\s-]{6,20})/i);
+  const phone = text.match(/(?:電話|电话|phone|contact)[^\d+]{0,40}([+\d][\d\s-]{6,20})/i);
   if (phone?.[1]) patch.recipient_phone = phone[1].replace(/\s+/g, " ").trim();
   const recipient = text.match(/(?:收貨人|收货人|recipient)\s*(?:係|是|=|:|：)?\s*([^，。,.!?！？]{1,40})/i);
   if (recipient?.[1]) patch.recipient_name = recipient[1].trim();
@@ -527,7 +530,7 @@ export function deriveCommerceEventsFromCustomerTurn(input: CommerceTurnInterpre
   const money = parseMoney(text);
   if (money) {
     const entityId = mentioned.length === 1 ? mentioned[0].entity_id : null;
-    const historical = /(?:之前|上次|舊價|旧价|歷史|历史|previous|historical|last time)/i.test(text);
+    const historical = /(?:之前|之後.+?(?:話|说|said|told)|上次|舊價|旧价|歷史|历史|previous|historical|last time|(?:同事|小姐|先生).{0,20}(?:話|说|said|told))/i.test(text);
     const explicitlyUnverified = /(?:唔肯定|不確定|不确定|未confirm|未確認|未确认|unverified|not sure)/i.test(text);
     events.push({
       type: "ADD_QUOTE",

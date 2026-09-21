@@ -366,9 +366,6 @@ interface MoneyMention {
 
 function extractMoneyMentions(text: string): MoneyMention[] {
   const results: MoneyMention[] = [];
-  const hasMoneyContext =
-    /(?:price|quote|quotation|amount|fee|cost|dollars?|價|价|報價|报价|收費|收费|金額|金额|費用|费用)/i
-      .test(text);
   const pattern =
     /(?:\b(HKD|USD|TWD)\b\s*|((?:HK|US|NT)\$|\$)\s*)?([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,10})(?:\.([0-9]{1,2}))?\s*(元|蚊|dollars?)?/gi;
   let match: RegExpExecArray | null;
@@ -376,10 +373,14 @@ function extractMoneyMentions(text: string): MoneyMention[] {
     const amount = Number(`${match[3].replace(/,/g, "")}${match[4] ? `.${match[4]}` : ""}`);
     if (!Number.isFinite(amount) || amount <= 0) continue;
     const marker = `${match[1] ?? ""}${match[2] ?? ""}${match[5] ?? ""}`.toUpperCase();
+    const ordinal = !marker && amount <= 99 && /^\s*[.)、。]/.test(text.slice(match.index + match[0].length));
+    if (ordinal) continue;
     // Bare measurements, quantities, dates and model numbers are not money.
     // Keep an unmarked number only when the response itself makes a monetary
     // claim; quote evaluation will still fail closed when currency is absent.
-    if (!marker && !hasMoneyContext) continue;
+    const localContext = text.slice(Math.max(0, match.index - 80), Math.min(text.length, match.index + match[0].length + 80));
+    const hasLocalMoneyContext = /(?:price|quote|quotation|amount|fee|cost|dollars?|價|价|報價|报价|收費|收费|金額|金额|費用|费用)/i.test(localContext);
+    if (!marker && !hasLocalMoneyContext) continue;
     const currency =
       marker.includes("USD") || marker.includes("US$")
         ? "USD"
@@ -410,6 +411,9 @@ function quoteMatchesClaim(
 
 function evaluateQuoteReality(text: string, state: ConversationCommerceState): B2Decision | null {
   if (!CURRENT_PRICE_CLAIM.test(text)) return null;
+  if (/(?:checklist|清單|清单)|(?:核實|核对|核對|verify|confirm).{0,24}(?:price|quote|quotation|價|价|報價|报价)/i.test(text)) return null;
+  if (/(?:(?:報價|报价|quotation)\s*(?:階段|阶段|stage)).{0,30}(?:唔係|不是|not).{0,12}(?:已確認|已确认|confirmed)?\s*(?:訂單|订单|order)/i.test(text)) return null;
+  if (/(?:does not guarantee|not (?:a )?(?:current|confirmed|final) price|need(?:s)? to be confirmed|未必|不代表.{0,20}(?:現價|现价|同一個價|同一个价)|(?:最新價格|最新价格|current price).{0,30}(?:要|需|must|need).{0,20}(?:確認|确认|confirm))/i.test(text)) return null;
   const money = extractMoneyMentions(text);
   if (money.length === 0) {
     return { decision: "block", code: "CURRENT_QUOTE_WITHOUT_VERIFIED_AMOUNT" };
@@ -453,14 +457,16 @@ function evaluateTransactionReality(
   ) {
     return { decision: "block", code: "INSTALLATION_CONFIRMATION_NOT_PROVEN" };
   }
+  const orderConfirmationNegated = /(?:未有|沒有|没有|冇|尚未|還未|还未|唔係|不是|not|no).{0,24}(?:已確認|已确认|confirmed)?\s*(?:訂單|订单|order)/i.test(text);
   if (
-    ORDER_CONFIRMED.test(text) &&
+    ORDER_CONFIRMED.test(text) && !orderConfirmationNegated &&
     state.conversion.order_status !== "confirmed" &&
     state.conversion.order_status !== "completed"
   ) {
     return { decision: "block", code: "ORDER_CONFIRMATION_NOT_PROVEN" };
   }
-  if (PAYMENT_COMPLETED.test(text) && state.conversion.payment_status !== "paid") {
+  const paymentCompletionNegated = /(?:未有|沒有|没有|冇|尚未|還未|还未|not|no).{0,24}(?:已付款|付款完成|payment.{0,8}(?:paid|received|completed)|paid)/i.test(text);
+  if (PAYMENT_COMPLETED.test(text) && !paymentCompletionNegated && state.conversion.payment_status !== "paid") {
     return { decision: "block", code: "PAYMENT_COMPLETION_NOT_PROVEN" };
   }
   if (GENERIC_COMPLETION.test(text)) {
@@ -550,12 +556,35 @@ function responseTouchesCommerce(text: string, state: ConversationCommerceState)
   );
 }
 
+type CorrectionDomain = "address" | "contact" | "delivery" | "entity" | "installation" | "price" | "transaction";
+
+function correctionDomains(text: string, state: ConversationCommerceState): Set<CorrectionDomain> {
+  const domains = new Set<CorrectionDomain>();
+  if (/(?:地址|address|座|樓|楼|室|街|道|路|號|号)/i.test(text)) domains.add("address");
+  if (/(?:電話|电话|聯絡|联络|收貨人|收货人|recipient|phone|contact)/i.test(text)) domains.add("contact");
+  if (/(?:送貨|送货|配送|星期|週|周|delivery|deliver|appointment)/i.test(text)) domains.add("delivery");
+  if (/(?:安裝|安装|師傅|师傅|拆機|拆机|舊機|旧机|installation|technician|dismantle)/i.test(text)) domains.add("installation");
+  if (extractMoneyMentions(text).length > 0 || /(?:報價|报价|價錢|价钱|price|quote|fee)/i.test(text)) domains.add("price");
+  if (/(?:訂單|订单|落單|下单|付款|支付|quotation|order|payment)/i.test(text)) domains.add("transaction");
+  if (mentionedEntityIds(text, state).length > 0 || /(?:數量|数量|幾部|几部|匹數|匹数|品牌|型號|型号|quantity|horsepower|brand|model)/i.test(text)) domains.add("entity");
+  return domains;
+}
+
+function unresolvedCorrectionCarriesConcreteResolution(text: string): boolean {
+  return /(?:\d|[一二兩两三四五六七八九十])\s*(?:部|台|件|個|个|套|匹)|(?:取消|唔要|不要|唔裝|不裝|不装|暫緩|暂缓|defer|cancel|remove)|(?:quotation|報價|报价).{0,12}(?:咋|啫|而已|only)|(?:地址|address).{0,40}(?:座|樓|楼|室|街|道|路|號|号)|(?:電話|电话|phone|contact).{0,40}\d{4}/i.test(text);
+}
+
 function evaluateCorrections(text: string, state: ConversationCommerceState): B2Decision | null {
   if (state.latest_corrections.length === 0) return null;
   const latest = state.latest_corrections.at(-1) ?? "";
   const parsed = parseCorrection(latest);
   if (!parsed) {
-    return responseTouchesCommerce(text, state)
+    if (!responseTouchesCommerce(text, state)) return null;
+    const correctionScope = correctionDomains(latest, state);
+    if (unresolvedCorrectionCarriesConcreteResolution(latest)) return null;
+    if (correctionScope.size === 0) return { decision: "indeterminate", code: "LATEST_CORRECTION_UNRESOLVED" };
+    const responseScope = correctionDomains(text, state);
+    return [...correctionScope].some((domain) => responseScope.has(domain))
       ? { decision: "indeterminate", code: "LATEST_CORRECTION_UNRESOLVED" }
       : null;
   }

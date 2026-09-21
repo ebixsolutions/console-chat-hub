@@ -134,10 +134,7 @@ Deno.test("C3 historical quote validity reply passes frozen B2 without asserting
         state,
       },
     });
-    assert(
-      frozenDecision.code === "CURRENT_QUOTE_WITHOUT_VERIFIED_AMOUNT",
-      `${language} did not reproduce the turn-5 B2 root cause`,
-    );
+    assert(frozenDecision.decision === "allow", `${language} authoritative historical-price disclaimer was blocked`);
     const reply = historicalQuoteValidityReply(language);
     const decision = evaluateB2BeforeCommit({
       proposed_response: reply,

@@ -296,8 +296,9 @@ export function isReadOnlyMemoryOrCurrentStateRecall(
       /(?:quantity|current_quantity)/i.test(requested));
   const status = /(?:狀態|状态|status|係咪取消|是否取消|仲要|仍然要|still active|cancelled|canceled)/i.test(text) ||
     /(?:status|current_state)/i.test(requested);
+  const currentAttribute = /(?:地址|address|收貨人|收货人|recipient|電話|电话|phone|contact|送(?:貨|货)?.{0,8}(?:星期|邊日|边日|日期|幾時|几时)|delivery\s*(?:day|date)|匹數|匹数|幾匹|几匹|horsepower|\bhp\b|舊機|旧机|舊冷氣|旧空调).*(?:[?？]|呢\s*$)|(?:address|recipient|recipient_phone|preferred_date|horsepower|old_machine_removal_count)/i.test(`${text} ${requested}`);
   return (semanticRead || recallLanguage || interrogative) &&
-    (quantity || status) &&
+    (quantity || status || currentAttribute) &&
     (recallLanguage || interrogative);
 }
 

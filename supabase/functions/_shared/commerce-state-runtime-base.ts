@@ -598,6 +598,29 @@ function compatibleQuantityStatePath(
   state: ConversationCommerceState,
 ): string | null {
   const requested = (input.semantic_frame?.requested_facts ?? []).join(" ");
+  const text = clean(input.text);
+  const deliveryFields: Array<[RegExp, keyof ConversationCommerceState["delivery"]]> = [
+    [/(?:地址|address|邊座|哪座)/i, "address"],
+    [/(?:收貨人|收货人|recipient)/i, "recipient_name"],
+    [/(?:電話|电话|phone|contact)/i, "recipient_phone"],
+    [/(?:送(?:貨|货)?.{0,8}(?:星期|邊日|边日|日期|幾時|几时)|delivery\s*(?:day|date)|preferred_date)/i, "preferred_date"],
+  ];
+  for (const [pattern, field] of deliveryFields) {
+    if ((pattern.test(text) || new RegExp(String(field), "i").test(requested)) && state.delivery[field] != null) return `delivery.${field}`;
+  }
+  if (/(?:舊機|旧机|舊冷氣|旧空调).{0,12}(?:拆|移除)|(?:拆|移除).{0,12}(?:舊機|旧机)/i.test(text)) {
+    const count = state.installation.site_conditions["old_machine_removal_count"];
+    if (typeof count === "number" && Number.isFinite(count)) return "installation.site_conditions.old_machine_removal_count";
+  }
+  if (/(?:匹數|匹数|幾匹|几匹|horsepower|\bhp\b)/i.test(text + " " + requested)) {
+    const resolved = resolveAttributeQueryCategory(input);
+    if (!resolved.ambiguous && resolved.category) {
+      const compatible = state.entities.filter((entity) => entity.category === resolved.category && entity.status !== "cancelled" && entity.status !== "deferred");
+      const facts = compatible.map((entity) => ({ index: state.entities.indexOf(entity), value: entity.attributes["horsepower"] })).filter((item) => item.value != null);
+      if (facts.length === 1) return `entities.${facts[0].index}.attributes.horsepower`;
+    }
+    return null;
+  }
   if (
     /(?:狀態|状态|status|已取消|取消咗|取消了|仲要|仍然要|still active|cancelled|canceled)/i.test(
       input.text,
@@ -936,6 +959,10 @@ function quotationOnlySignal(text: string): boolean {
   return /(?:報價|报价|quotation|quote|未落單|未下单|未正式|唔係落單|不是下单|先問價|先问价)/i.test(text);
 }
 
+function explicitQuotationOnlySignal(text: string): boolean {
+  return /(?:quotation|報價|报价)\s*(?:咋|啫|而已|only)|(?:只係|只是|淨係|净是)\s*(?:quotation|報價|报价)|(?:未\s*(?:confirm|確認|确认).{0,18}(?:正式)?(?:order|落單|落单|下單|下单)|唔好.{0,12}當.{0,8}(?:正式)?(?:order|落單|落单|訂單|订单))/i.test(text);
+}
+
 export function detectTransactionSummaryIntent(text: string): boolean {
   return /(?:幫我總結|帮我总结|總結一下|总结一下|幫我整理|帮我整理|整理(?:一下)?(?:比|畀|給|给)?同事|同事跟進|同事跟进|summar(?:y|ise|ize)|recap|hand over to)/i.test(clean(text));
 }
@@ -948,6 +975,36 @@ export function detectCurrentPriceValidityQuestion(text: string): boolean {
   const current = /(?:而家|現在|现在|目前|最新|仲係|还是|仍然|current|latest|still)/i.test(t);
   const validity = /(?:一定|作準|作准|有效|同價|同价|一樣|一样|same|valid|guarantee|guaranteed)/i.test(t);
   return historical && price && (current || validity);
+}
+
+function asksToReuseRecordedPrice(text: string, state: ConversationCommerceState): boolean {
+  if (!/[?？]/.test(text)) return false;
+  const amounts = (text.match(/\d[\d,]*(?:\.\d+)?/g) ?? []).map((value) => Number(value.replace(/,/g, "")));
+  return amounts.length > 0 && state.quotes.some((quote) => amounts.includes(quote.amount) && (quote.quote_type !== "current_verified" || quote.validity_status !== "current"));
+}
+
+function historicalPriceExclusionInstruction(text: string): boolean {
+  return /(?:唔好|不要|不可|不能|not|don'?t).{0,30}(?:當|当|用|沿用|treat|use).{0,30}(?:正式價|正式价|現價|现价|落單|下单|order|current\s*price)|(?:舊價|旧价|old\s*(?:price|quote)).{0,30}(?:唔好|不要|not|don'?t).{0,20}(?:用|沿用|use)/i.test(text);
+}
+
+function buildHistoricalPriceExclusionAnswer(language: CommerceLanguage): string {
+  if (language === "en") return "Understood. Recorded or previous prices will stay historical only and will not be used as a current price or to place an order.";
+  if (language === "zh-CN") return "明白。已记录或之前的价格只会保留作历史参考，不会当作现价或用来下单。";
+  return "明白。已記錄或之前嘅價錢只會保留做歷史參考，唔會當現價或用嚟落單。";
+}
+
+function paymentChecklistIntent(text: string): boolean {
+  return /(?:付款|支付|payment).{0,24}(?:前|之前|before).{0,24}(?:checklist|清單|清单|核對|核对)|(?:checklist|清單|清单).{0,24}(?:付款|支付|payment)/i.test(text);
+}
+
+function buildPaymentChecklist(state: ConversationCommerceState, language: CommerceLanguage): string {
+  const pending = [...new Set([...state.installation.pending_checks, ...state.installation.items.filter((item) => item.status === "pending").map((item) => item.kind)])];
+  const items = language === "en"
+    ? ["Confirm the final item list and quantities", "Confirm the current written quote and all fees", "Confirm delivery details", pending.length ? "Complete the outstanding technician checks" : "Confirm whether any technician check is still required", "Confirm the order before payment"]
+    : language === "zh-CN"
+    ? ["核对最终产品及数量", "核实当前书面报价和所有费用", "核对收货资料", pending.length ? "完成待师傅确认项目" : "确认是否仍需师傅检查", "付款前再次确认订单"]
+    : ["核對最終產品同數量", "核實最新書面報價同所有費用", "核對收貨資料", pending.length ? "完成待師傅確認項目" : "確認係咪仲需要師傅檢查", "付款前再確認訂單"];
+  return items.map((item, index) => `${index + 1}. ${item}`).join("\n");
 }
 
 export function detectPreorderUnpaidIntent(text: string): boolean {
@@ -1070,7 +1127,7 @@ function deriveA3RuntimeEvents(
   );
   const additive = detectAdditiveEntityCreationSignal(text);
   const explicitCreation = detectExplicitEntityCreationSignal(text);
-  const correction = detectQuantityCorrectionSignal(text);
+  const correction = quantity !== null && detectQuantityCorrectionSignal(text);
   const allocationBreakdown = correction && isAllocationBreakdown(text);
   const addressCorrection = parseAddressReplacementCorrection(text);
 
@@ -1090,6 +1147,28 @@ function deriveA3RuntimeEvents(
       address_update: addressCorrection,
       provenance,
     });
+  }
+
+  const weekday = text.match(/(星期[一二三四五六日天]|週[一二三四五六日天]|周[一二三四五六日天]|monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i)?.[1];
+  const deliveryContext = (input.history ?? []).slice(-MAX_HISTORY_TURNS).some((turn) => /(?:送貨|送货|配送|delivery|deliver)/i.test(turn.content));
+  if (weekday && deliveryContext && !/[?？]/.test(text)) events.push({ type: "SET_DELIVERY", patch: { preferred_date: weekday }, provenance });
+
+  const horsepower = [...text.matchAll(/(\d+(?:\.\d+)?)\s*匹/gi)].map((match) => `${match[1]}匹`);
+  if (horsepower.length > 0 && !/[?？]/.test(text)) {
+    const categories = [...new Set(hints.map((hint) => hint.category))];
+    const active = previous.entities.filter((entity) => entity.status !== "cancelled" && entity.status !== "deferred" && (categories.length === 0 || categories.includes(entity.category)));
+    const target = active.length === 1 ? active[0] : active.find((entity) => entity.category === "air_conditioner" && entity.entity_id.endsWith(":unscoped"));
+    if (target) events.push({ type: "SET_ENTITY_ATTRIBUTE", entity_id: target.entity_id, key: "horsepower", value: [...new Set(horsepower)].join("、"), provenance });
+  }
+
+  if (/(?:舊機|旧机|舊冷氣|旧空调)/i.test(text) && /(?:拆|移除|冇機|没机|no\s+(?:old\s+)?unit)/i.test(text) && !/[?？]/.test(text)) {
+    const explicit = text.match(/([一二兩两三四五六七八九十]|\d{1,2})\s*部\s*(?:舊機|旧机)/i)?.[1];
+    const removalCount = explicit ? countTokenValue(explicit) : /(?:一部|one\s+(?:old\s+)?unit)/i.test(text) ? 1 : null;
+    if (removalCount !== null) events.push({ type: "SET_SITE_CONDITION", key: "old_machine_removal_count", value: removalCount });
+  }
+
+  if (/(?:[\p{L}\p{N}-]+[、,，]){1,}[\p{L}\p{N}-]+(?:都得|均可|皆可|any\s+(?:is|are)\s+fine)/iu.test(text)) {
+    events.push({ type: "SET_CUSTOMER_CONSTRAINT", key: "brand_required", value: false });
   }
 
   if (
@@ -1900,6 +1979,23 @@ export async function runCommerceStateRuntime(
     return { ...base, authority: "CONVERSATION_STATE", reason: "preorder_intent_acknowledged_without_order_or_payment_promotion", reply: buildPreorderUnpaidAnswer(language, state), route: "commerce_state_answer" };
   }
 
+  if (explicitQuotationOnlySignal(text)) {
+    const reply = language === "en"
+      ? "Understood. This remains at the quotation stage and is not a confirmed order."
+      : language === "zh-CN"
+      ? "明白，目前只属报价阶段，不是已确认订单。"
+      : "明白，而家只係報價階段，唔係已確認訂單。";
+    return { ...base, authority: "CONVERSATION_STATE", reason: "quotation_only_state_acknowledged", reply, route: "commerce_state_answer" };
+  }
+
+  if (historicalPriceExclusionInstruction(text)) {
+    return { ...base, authority: "CONVERSATION_STATE", reason: "historical_price_exclusion_acknowledged", reply: buildHistoricalPriceExclusionAnswer(language), route: "commerce_state_answer" };
+  }
+
+  if (paymentChecklistIntent(text)) {
+    return { ...base, authority: "CONVERSATION_STATE", reason: "payment_checklist_from_current_state", reply: buildPaymentChecklist(state, language), route: "commerce_transaction_summary" };
+  }
+
   if (decision.authority === "CONVERSATION_STATE" && decision.state_path) {
     return { ...base, authority: decision.authority, state_path: decision.state_path, reply: buildKnownStateAnswer(language, decision.state_path, decision.known_value, state), route: "commerce_state_answer" };
   }
@@ -1908,7 +2004,7 @@ export async function runCommerceStateRuntime(
     return { ...base, authority: decision.authority, calculation: decision.calculation, reply: buildCalculationAnswer(language, decision.calculation), route: "commerce_state_answer" };
   }
 
-  if (detectCurrentPriceValidityQuestion(text)) {
+  if (detectCurrentPriceValidityQuestion(text) || asksToReuseRecordedPrice(text, state)) {
     return { ...base, authority: "CURRENT_KB_REQUIRED", reason: "previous_quote_not_authoritative_for_current_price", reply: buildCurrentPriceValidityAnswer(language), route: "commerce_state_answer" };
   }
 

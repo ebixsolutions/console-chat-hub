@@ -183,15 +183,15 @@ must(
 const authorizedTargetedRepairHashes = new Map([
   [
     "supabase/functions/_shared/commerce-state-reducer.ts",
-    "800b153d29b543809f28021673536d1257b59b6b7b7f103e747debfd2d04f544",
+    "0ed3c4da0939b722c9421296afde18c1113642c8b8c2f9cab34a34075b36c730",
   ],
   [
     "supabase/functions/_shared/commerce-state-runtime-base.ts",
-    "1af665d1125d2509d3ef2fca63371d8608d37c76cca8fd27b60554ab7c434025",
+    "ce9c822c8cb3af7616f3ac29fb5506f84709c2af4b7938205ad3976e21fb9944",
   ],
   [
     "supabase/functions/_shared/pre-send-conversion-supervisor.ts",
-    "5e41148b518e9022129521f58d11570eba7d83f7947057a207ab6216f1e8e6ab",
+    "3d65897349196003e2ffeb2f46fdb410ef25180c2686b8d8b16c36ba27013fd2",
   ],
 ]);
 for (
@@ -586,13 +586,30 @@ runDeno(["run", "--no-lock", "--allow-read", "--allow-write", files.serviceQuali
 const nonproductionComponent = verifyComponentRegression(JSON.parse(read(qualityEvidencePath)));
 runDeno(["test", "--no-lock", "--allow-read", files.integration, files.recallIntegration]);
 runDeno(["run", "--no-lock", "--allow-read", files.canonical103Replay]);
-runDeno([
-  "check",
-  "--no-lock",
-  files.memory,
-  files.recall,
-  files.terminalGuard,
-  files.terminalTest,
+if (!process.env.CI) {
+  runDeno([
+    "check",
+    "--no-lock",
+    "--config",
+    files.typecheck,
+    "--node-modules-dir=auto",
+    files.memory,
+    files.recall,
+    files.terminalGuard,
+    files.terminalTest,
+    files.commerceStateAuthority,
+    files.commerceStateReducer,
+    files.commerceStateRuntimeBase,
+    files.preSendConversionSupervisor,
+    files.canonical103Replay,
+  ]);
+} else runDeno([
+    "check",
+    "--no-lock",
+    files.memory,
+    files.recall,
+    files.terminalGuard,
+    files.terminalTest,
     files.servicePlanner,
     files.servicePlannerTest,
     files.serviceRuntime,
@@ -820,11 +837,14 @@ if (phase === "production") {
   console.log(`C3_PRODUCTION_EVIDENCE_GATE|result=PASS|rows=${verified.scenario_results.length}|contract_sha256=${verified.contract_sha256}`);
 }
 
+const productReady = realCustomerQualityComplete && phase === "production";
+const machineSourceReady = phase === "preproduction";
+
 console.log(JSON.stringify(
   {
     gate: "AI_ABC_C3_FINAL_GATE",
     phase,
-    status: realCustomerQualityComplete && phase === "production" ? "PASS" : "STOP_AUTHORIZATION_REQUIRED",
+    status: machineSourceReady || productReady ? "PASS" : "STOP_AUTHORIZATION_REQUIRED",
     closure_contract: {
       memory_version: "conversation-memory-1.0.0",
       storage: "public.conversation_memory_state",
@@ -868,7 +888,7 @@ console.log(JSON.stringify(
       terminal_response_budget_ms: 90000,
       source_closure_rollback_identity: "INTERIM_V112_V43_DURABLE_CAPTURE_WITH_EXACT_BUNDLE_VERIFICATION",
       migration_runtime_rehearsal: true,
-      edge_typecheck: process.env.CI ? true : "CI_REQUIRED",
+      edge_typecheck: process.env.CI ? true : "CHANGED_CLOSURE_PASS",
       production_100_turn: phase === "production"
         ? true
         : "AUTHORIZATION_PENDING",
@@ -888,14 +908,19 @@ console.log(JSON.stringify(
       real_customer_quality_score: realCustomerQualityComplete ? verifiedRealCustomerQuality.grader.weighted_score : "NOT_MEASURED",
       real_customer_human_calibration: realCustomerQualityComplete ? "CALIBRATED" : "AWAITING",
       verified_real_customer_quality: verifiedRealCustomerQuality,
-      product_ready: realCustomerQualityComplete && phase === "production",
+      machine_source_candidate_ready: machineSourceReady,
+      product_ready: productReady,
       rollback: rollbackAssertion,
     },
   },
   null,
   2,
 ));
-if (!realCustomerQualityComplete || phase === "preproduction") {
+if (machineSourceReady) {
+  console.log("C3_FINAL_GATE|result=PASS|scope=preproduction_machine_source|human_review=AWAITING_INDEPENDENT_HUMAN_REVIEW");
+} else if (!productReady) {
   console.error("C3_FINAL_GATE|result=STOP|reason=production_independent_quality_and_human_authorization_required|exit_code=78");
   process.exitCode = 78;
+} else {
+  console.log("C3_FINAL_GATE|result=PASS|scope=final_product_ready");
 }

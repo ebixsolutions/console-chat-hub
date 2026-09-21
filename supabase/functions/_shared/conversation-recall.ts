@@ -101,8 +101,8 @@ const FIELDS: Partial<Record<RecallFact, string[]>> = {
     "幾多部",
     "几多部",
   ],
-  address: ["address", "地址", "邊座", "哪座", "邊度收貨", "哪里收货"],
-  recipient: ["recipient", "收貨人", "收货人", "收件人", "誰收", "誰人收"],
+  address: ["address", "地址", "邊座", "哪座", "邊度收貨", "哪里收货", "收貨資料", "收货资料", "delivery details"],
+  recipient: ["recipient", "收貨人", "收货人", "收件人", "誰收", "誰人收", "收貨資料", "收货资料", "delivery details"],
   contact: [
     "phone",
     "telephone",
@@ -113,6 +113,9 @@ const FIELDS: Partial<Record<RecallFact, string[]>> = {
     "联络",
     "手機號",
     "手机号",
+    "收貨資料",
+    "收货资料",
+    "delivery details",
   ],
   room_size: [
     "room size",
@@ -1010,6 +1013,13 @@ function canonicalCandidates(
       );
     }
   }
+  if (f === "constraints") {
+    for (const entity of selected.filter(isCurrentEntity)) {
+      if (Object.keys(entity.constraints).length > 0) {
+        add(`entities.${s.entities.indexOf(entity)}.constraints`, entity.constraints, entity, "customer_owned_canonical_property", 0);
+      }
+    }
+  }
   return out;
 }
 function memoryCandidates(
@@ -1148,7 +1158,15 @@ function memoryCandidates(
       }
     }
   }
-  if (f === "constraints") add("active_constraints", m.active_constraints, 2);
+  if (f === "constraints") {
+    const scoped = selectedIds.size === 0
+      ? m.active_constraints
+      : m.active_constraints.filter((text) => {
+        const named = (input.commerce?.state.entities ?? []).filter((entity) => any(text, entityAliases(entity)));
+        return named.length === 0 || named.some((entity) => selectedIds.has(entity.entity_id));
+      });
+    add("active_constraints", scoped, 2);
+  }
   if (f === "preferences") {
     add("customer_preferences", m.customer_preferences, 2);
   }
