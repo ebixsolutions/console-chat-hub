@@ -89,3 +89,23 @@ Deno.test("shared resolution contract prioritizes committed corrections and canc
   });
   assert(cancellation.kind === "AUTHORITATIVE_MUTATION", "cancellation unresolved");
 });
+
+Deno.test("shared resolution contract gives all complete runtime envelopes precedence", () => {
+  for (const [reason, route, persistResult] of [
+    ["historical_price_exclusion_acknowledged", "commerce_state_answer", "no_semantic_change"],
+    ["previous_quote_not_authoritative_for_current_price", "commerce_state_answer", "no_semantic_change"],
+    ["read_only_transaction_summary_resolved", "commerce_transaction_summary", "no_semantic_change"],
+    ["payment_checklist_from_current_state", "commerce_transaction_summary", "success"],
+  ] as const) {
+    const decision = resolveCanonicalCommerceResolution({
+      outcome: outcome(reason, { route, persist_result: persistResult }),
+      authoritative_address_correction: false,
+    });
+    assert(decision.bypass_service_plan, reason);
+    assert(decision.reply_authoritative, reason);
+    assert(
+      decision.no_semantic_change === (persistResult === "no_semantic_change"),
+      reason,
+    );
+  }
+});

@@ -21,6 +21,7 @@ import {
 } from "../../supabase/functions/_shared/conversation-long-memory.ts";
 import {
   buildB2AuthoritativeReadbackProof,
+  classifyCommerceStatePersistenceResult,
   classifyB2AuthoritativePersistence,
   evaluateB2BeforeCommit,
 } from "../../supabase/functions/_shared/pre-send-conversion-supervisor.ts";
@@ -33,6 +34,11 @@ import {
   canonicalTenantScopeFromAuthoritativeCompany,
   classifyCurrentFactEvidence,
 } from "../../supabase/functions/_shared/current-fact-evidence.ts";
+import {
+  planConversationService,
+  renderServicePlanReply,
+  renderTargetedServiceQuestion,
+} from "../../supabase/functions/_shared/conversation-service-planner.ts";
 
 function assert(value: unknown, message: string): asserts value {
   if (!value) throw new Error(message);
@@ -201,6 +207,7 @@ let terminalFailures = 0;
 let fallbackCount = 0;
 let completed = 0;
 const knownResults: Record<string, unknown> = {};
+const capturedProductionFailureTurns = new Set([58, 71, 73, 76, 91]);
 
 for (let index = 0; index < fixture.turns.length; index++) {
   const turn = index + 1;
@@ -295,12 +302,44 @@ for (let index = 0; index < fixture.turns.length; index++) {
     },
     "zh-TW",
   );
-  const reply = outcome?.reply ?? recall.reply ?? "";
-  const route = outcome?.reply
-    ? outcome.route
-    : recall.reply
+  const servicePlan = planConversationService({
+    question: text,
+    language: "zh-TW",
+    recall: recall.decision,
+    memory,
+    commerce: state,
+    recent_messages: history.map((row) => ({
+      role: String(row.role ?? ""),
+      content: String(row.content ?? ""),
+    })),
+  });
+  const serviceReply = renderServicePlanReply(servicePlan, recall.reply, []) ??
+    ([
+      "targeted_clarification",
+      "partial_answer_then_question",
+      "offer_handoff_or_reframe",
+      "explicit_handoff",
+    ].includes(servicePlan.action)
+      ? renderTargetedServiceQuestion(servicePlan, "zh-TW")
+      : null);
+  const authoritativeRuntimeReply = resolution.bypass_service_plan && outcome?.reply
+    ? outcome.reply
+    : null;
+  const reply = authoritativeRuntimeReply ?? serviceReply ?? outcome?.reply ?? recall.reply ?? "";
+  const route = authoritativeRuntimeReply
+    ? outcome!.route
+    : serviceReply
       ? String(recall.metadata.response_route)
-      : "orchestration_pass_through";
+      : outcome?.reply
+        ? outcome.route
+        : recall.reply
+          ? String(recall.metadata.response_route)
+          : "orchestration_pass_through";
+  if (capturedProductionFailureTurns.has(turn)) {
+    assert(Boolean(outcome?.reply), `turn_${turn}_captured_envelope_missing_runtime_reply`);
+    assert(resolution.bypass_service_plan, `turn_${turn}_clarification_precedence_regression`);
+    assert(reply === outcome?.reply, `turn_${turn}_runtime_reply_not_selected`);
+  }
   if (/terminal_failure_recovery|terminal_recovery/i.test(route)) {
     terminalFailures += 1;
   }
@@ -327,16 +366,20 @@ for (let index = 0; index < fixture.turns.length; index++) {
     };
   }
   if (reply) {
-    const metadata = outcome?.persist_result === "read_only" && outcome.authority === "CONVERSATION_STATE" && outcome.state_path
+    const selectedOutcome = authoritativeRuntimeReply ? outcome : null;
+    const metadata = authoritativeRuntimeReply
       ? {
-        response_route: outcome.route,
-        commerce_authority: outcome.authority,
-        commerce_state_revision: outcome.revision,
-        commerce_state_persist_result: outcome.persist_result,
-        commerce_state_persistence_classification: "NO_SEMANTIC_CHANGE",
-        commerce_reason: outcome.reason,
-        commerce_state_path: outcome.state_path,
-        commerce_state_readback_proof: buildB2AuthoritativeReadbackProof(state, outcome.state_path),
+        response_route: selectedOutcome!.route,
+        commerce_authority: selectedOutcome!.authority,
+        commerce_state_revision: selectedOutcome!.revision,
+        commerce_state_persist_result: selectedOutcome!.persist_result,
+        commerce_state_persistence_classification:
+          classifyCommerceStatePersistenceResult(selectedOutcome!.persist_result),
+        commerce_reason: selectedOutcome!.reason,
+        commerce_state_path: selectedOutcome!.state_path ?? null,
+        commerce_state_readback_proof: selectedOutcome!.state_path
+          ? buildB2AuthoritativeReadbackProof(state, selectedOutcome!.state_path)
+          : null,
       }
       : null;
     const b2 = evaluateB2BeforeCommit({
@@ -385,6 +428,23 @@ for (let index = 0; index < fixture.turns.length; index++) {
   }
   completed += 1;
 }
+
+const livingRoom = state.entities.find((entity) =>
+  entity.entity_id === "air_conditioner:living_room"
+);
+const unscopedAirConditioner = state.entities.find((entity) =>
+  entity.entity_id === "air_conditioner:unscoped"
+);
+assert(livingRoom?.status === "cancelled", "turn_88_living_room_not_cancelled");
+assert(livingRoom?.attributes.horsepower === "2匹", "turn_85_scoped_horsepower_missing");
+assert(
+  unscopedAirConditioner?.attributes.horsepower !== "2匹",
+  "turn_85_cross_entity_horsepower_contamination",
+);
+assert(
+  /星期六|週六|周六|Saturday/i.test(String(state.delivery.preferred_date ?? "")),
+  "turn_37_delivery_preference_writer_reader_mismatch",
+);
 
 const turn36Scope = canonicalTenantScopeFromAuthoritativeCompany(companyId);
 assert(turn36Scope?.aiCompanyId === companyId, "turn36_authoritative_scope_failed");

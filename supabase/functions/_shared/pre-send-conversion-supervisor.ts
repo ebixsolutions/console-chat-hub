@@ -266,6 +266,25 @@ export function buildB2AuthoritativeReadbackProof(
   statePath: string,
 ): Record<string, unknown> | null {
   const path = clean(statePath, 240);
+  if (path === "commerce.authoritative_projection") {
+    return {
+      state_path: path,
+      entities: state.entities.map((entity) => ({
+        entity_id: entity.entity_id,
+        quantity: entity.quantity,
+        status: entity.status,
+        attributes: entity.attributes,
+        constraints: entity.constraints,
+      })),
+      delivery: state.delivery,
+      installation: state.installation,
+      conversion: state.conversion,
+      quotes: state.quotes,
+      customer_constraints: state.customer_constraints,
+      unresolved_items: state.unresolved_items,
+      latest_corrections: state.latest_corrections,
+    };
+  }
   if (path === "installation.pending_checks") {
     return {
       state_path: path,
@@ -302,9 +321,15 @@ export function classifyB2AuthoritativePersistence(
       : "INDETERMINATE";
   }
   if (
-    metadata.response_route !== "commerce_state_answer" ||
-    metadata.commerce_authority !== "CONVERSATION_STATE" ||
-    !clean(metadata.commerce_reason, 180).startsWith("read_only_")
+    !["commerce_state_answer", "commerce_transaction_summary"].includes(
+      clean(metadata.response_route, 120),
+    ) ||
+    ![
+      "CONVERSATION_STATE",
+      "DETERMINISTIC_CALCULATION",
+      "SAFE_PROFESSIONAL_CONFIRMATION",
+      "CURRENT_KB_REQUIRED",
+    ].includes(clean(metadata.commerce_authority, 120))
   ) return "INDETERMINATE";
 
   const statePath = clean(metadata.commerce_state_path, 240);
@@ -322,6 +347,10 @@ export function classifyB2AuthoritativePersistence(
     if (!claimedCount || Number(claimedCount[1]) !== values.length) {
       return "INDETERMINATE";
     }
+    return "NO_SEMANTIC_CHANGE";
+  }
+
+  if (statePath === "commerce.authoritative_projection") {
     return "NO_SEMANTIC_CHANGE";
   }
 

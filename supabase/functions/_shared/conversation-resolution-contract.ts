@@ -28,6 +28,27 @@ const READ_ONLY_TARGETED_CLARIFICATION = new Set([
 
 const READ_ONLY_REASONS = new Set([...READ_ONLY_RESOLVED, ...READ_ONLY_TARGETED_CLARIFICATION]);
 
+const AUTHORITATIVE_ROUTES = new Set([
+  "commerce_state_answer",
+  "commerce_transaction_summary",
+]);
+
+const AUTHORITATIVE_REPLY_AUTHORITIES = new Set([
+  "CONVERSATION_STATE",
+  "DETERMINISTIC_CALCULATION",
+  "SAFE_PROFESSIONAL_CONFIRMATION",
+  "CURRENT_KB_REQUIRED",
+]);
+
+const RESOLVED_PERSISTENCE_RESULTS = new Set([
+  "success",
+  "authoritative_post_commit_readback",
+  "idempotent",
+  "source_message_already_applied",
+  "read_only",
+  "no_semantic_change",
+]);
+
 export function isCanonicalReadOnlyCommerceReason(reason: unknown): boolean {
   return typeof reason === "string" && READ_ONLY_REASONS.has(reason);
 }
@@ -84,16 +105,27 @@ export function resolveCanonicalCommerceResolution(input: {
       no_semantic_change: true,
     };
   }
-  const resolvedMutation =
-    outcome.reason === "explicit_entity_status_change_applied" &&
-    outcome.route === "commerce_state_answer" &&
-    outcome.authority === "CONVERSATION_STATE" &&
+  // Commerce runtime replies are already selected from committed state,
+  // deterministic customer-provided arithmetic, or a bounded professional
+  // confirmation.  Once that envelope is complete it must win over the
+  // generic dialogue planner; otherwise an unrelated memory fact can replace
+  // an acknowledgement, summary, or scoped state answer with a clarification.
+  const resolvedReply =
+    AUTHORITATIVE_ROUTES.has(outcome.route) &&
+    AUTHORITATIVE_REPLY_AUTHORITIES.has(outcome.authority) &&
+    RESOLVED_PERSISTENCE_RESULTS.has(outcome.persist_result) &&
     Boolean(outcome.reply);
+  const noSemanticChange = outcome.persist_result === "read_only" ||
+    outcome.persist_result === "no_semantic_change";
   return {
-    kind: resolvedMutation ? "AUTHORITATIVE_MUTATION" : "UNRESOLVED",
-    bypass_service_plan: resolvedMutation,
-    skip_memory_refresh: false,
-    reply_authoritative: resolvedMutation,
-    no_semantic_change: false,
+    kind: resolvedReply
+      ? noSemanticChange
+        ? "AUTHORITATIVE_READ_ONLY"
+        : "AUTHORITATIVE_MUTATION"
+      : "UNRESOLVED",
+    bypass_service_plan: resolvedReply,
+    skip_memory_refresh: resolvedReply && noSemanticChange,
+    reply_authoritative: resolvedReply,
+    no_semantic_change: resolvedReply && noSemanticChange,
   };
 }

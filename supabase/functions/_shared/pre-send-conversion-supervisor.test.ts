@@ -955,3 +955,43 @@ Deno.test("C3 explicit handoff persistence is B2-supervised and source-idempoten
   }
   assertEquals(handoffEvents, 1, "same source must create exactly one handoff event");
 });
+
+Deno.test("B2 accepts deterministic no-change summary after exact authoritative projection readback", () => {
+  const state = stateFixture();
+  const metadata = {
+    response_route: "commerce_transaction_summary",
+    commerce_authority: "CONVERSATION_STATE",
+    commerce_state_revision: 7,
+    commerce_state_persist_result: "no_semantic_change",
+    commerce_state_persistence_classification: "NO_SEMANTIC_CHANGE",
+    commerce_reason: "read_only_transaction_summary_resolved",
+    commerce_state_path: "commerce.authoritative_projection",
+    commerce_state_readback_proof: buildB2AuthoritativeReadbackProof(
+      state,
+      "commerce.authoritative_projection",
+    ),
+  };
+  const input = {
+    proposed_response: "項目: 冷氣 x2。訂單：尚未確認。付款：目前未有已付款記錄。",
+    persistence_kind: "ai_reply" as const,
+    snapshot: {
+      conversation_id: CONVERSATION_ID,
+      company_id: COMPANY_ID,
+      source_message_id: SOURCE_ID,
+      commerce_state_revision: 7,
+      commerce_state_source_message_id: "prior-source",
+      state,
+    },
+    metadata,
+  };
+  assertEquals(
+    classifyB2AuthoritativePersistence(input),
+    "NO_SEMANTIC_CHANGE",
+    "projection readback classification",
+  );
+  assertEquals(
+    evaluateB2BeforeCommit(input).decision,
+    "allow",
+    "projection readback B2 decision",
+  );
+});

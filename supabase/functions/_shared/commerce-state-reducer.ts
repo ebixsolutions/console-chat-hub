@@ -354,9 +354,10 @@ function parseMoney(text: string): { amount: number; currency: string } | null {
 }
 
 function detectEntityStatus(text: string): CommerceEntityStatus | null {
-  if (/(?:取消|唔要|不要|不買|不买|唔買|cancel(?:led)?|remove it|drop it)/i.test(text)) return "cancelled";
+  if (/(?:取消|唔要|不要|不買|不买|唔買|唔裝|不裝|不装|cancel(?:led)?|remove it|drop it|not install|won't install|do not install)/i.test(text)) return "cancelled";
   if (/(?:暫時唔|暫時不|暂时不|稍後先|稍后再|defer|later|hold off)/i.test(text)) return "deferred";
   if (/(?:確認要|确认要|確定要|确定要|就要|confirmed?|keep it|take it)/i.test(text)) return "confirmed";
+  if (/(?:恢復|恢复|加返|要返|裝返|装返|都係(?:要|買|买|裝|装)|都要(?:買|买|裝|装)|裝埋|装埋|重新(?:加入|安裝|安装)|reactivate|restore|add (?:it|that|the .+?) back|include (?:it|that|the .+?)|go ahead with)/i.test(text)) return "tentative";
   if (/(?:考慮|考虑|睇下|看看|研究|research|consider)/i.test(text)) return "researching";
   return null;
 }
@@ -376,6 +377,10 @@ function correctionText(text: string): string | null {
   if (parseAddressReplacementCorrection(text)) return text;
   if (/(?:更正|改返|改成|記住最新|记住最新|actually|i meant|correction)/i.test(text)) return text;
   if (/(?:唔係|唔系|不是|不係).{1,120}(?:而係|而系|而是)/i.test(text)) return text;
+  if (
+    /(?:唔係|唔系|不是|不係|actually|i meant)/i.test(text) &&
+    /(?:取消|唔要|不要|唔裝|不裝|不装|暫緩|暂缓|defer|cancel|remove)/i.test(text)
+  ) return text;
   return null;
 }
 

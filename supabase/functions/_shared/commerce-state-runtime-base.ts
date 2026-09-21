@@ -656,6 +656,19 @@ function detectRooms(text: string) {
   return ROOM_SPECS.filter((spec) => matchedAliases(lower, spec.aliases).length > 0);
 }
 
+function detectReferencedRooms(text: string) {
+  const rooms = new Map(detectRooms(text).map((room) => [room.key, room]));
+  // Cantonese commonly shortens 客廳 to 個廳/我個廳 in a follow-up.  Treat
+  // that as a referent only; buildCommerceEntityHints continues to require a
+  // full room alias, so a first-turn aggregate such as "兩間房加個廳" is not
+  // collapsed into one scoped entity.
+  if (/(?:我(?:個|个)?|呢(?:個|个)|這(?:個|个)|这(?:个|個)|嗰(?:個|个)|果(?:個|个))?\s*(?:個|个)?(?:廳|厅)(?!房)/i.test(clean(text))) {
+    const livingRoom = ROOM_SPECS.find((room) => room.key === "living_room");
+    if (livingRoom) rooms.set(livingRoom.key, livingRoom);
+  }
+  return [...rooms.values()];
+}
+
 function entityLabel(entityId: string, language: CommerceLanguage): string {
   const generic = genericEntityLabelFromId(entityId);
   if (generic) return generic;
@@ -709,8 +722,10 @@ export function buildCommerceEntityHints(texts: string[]): CommerceTurnEntityHin
 
 function hintsMentionedInTurn(text: string, hints: CommerceTurnEntityHint[]): CommerceTurnEntityHint[] {
   const lower = clean(text).toLowerCase();
-  const rooms = detectRooms(text);
   const categories = detectCategories(text).map((x) => x.key);
+  const rooms = categories.length > 0
+    ? detectRooms(text)
+    : detectReferencedRooms(text);
   return hints.filter((hint) => {
     if (hint.entity_id.startsWith("generic:")) {
       return (hint.aliases ?? []).some((alias) => {
@@ -801,6 +816,12 @@ function hasExplicitSupportedMutation(text: string): boolean {
     /(?:change|set|make|add|buy|purchase|order|cancel|remove)\b/i.test(t)
   ) return true;
   if (!looksInterrogative(t) && (detectCancellation(t) || detectDeferral(t))) return true;
+  if (!looksInterrogative(t) && detectEntityReactivation(t)) return true;
+  if (
+    !looksInterrogative(t) &&
+    /(?:星期[一二三四五六日天]|週[一二三四五六日天]|周[一二三四五六日天]|monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i.test(t) &&
+    /(?:首選|首选|改(?:做|成|為|为)|安排|prefer|preferred|make it|set it)/i.test(t)
+  ) return true;
   // A bare counted statement remains a supported SET/ADD input. The same
   // words inside a question are mentions, not mutation authority.
   return !looksInterrogative(t) && parseCount(t) !== null;
@@ -876,11 +897,19 @@ export function parseSpaceScopedCommerceQuantity(text: string): number | null {
 }
 
 function detectCancellation(text: string): boolean {
-  return /(?:取消|唔要|不要|唔買|不买|不買|cancel|remove it|drop it)/i.test(text);
+  return /(?:取消|唔要|不要|唔買|不买|不買|唔裝|不裝|不装|cancel|remove it|drop it|not install|won't install|do not install)/i.test(text);
 }
 
 function detectDeferral(text: string): boolean {
   return /(?:暫時唔|暫時不|暂时不|稍後先|稍后再|later|hold off|defer)/i.test(text);
+}
+
+function detectEntityReactivation(text: string): boolean {
+  const t = clean(text);
+  if (!t || looksInterrogative(t) || detectCancellation(t) || detectDeferral(t)) {
+    return false;
+  }
+  return /(?:恢復|恢复|加返|要返|裝返|装返|都係(?:要|買|买|裝|装)|都要(?:買|买|裝|装)|裝埋|装埋|重新(?:加入|安裝|安装)|reactivate|restore|add (?:it|that|the .+?) back|include (?:it|that|the .+?)|go ahead with)/i.test(t);
 }
 
 const SITE_CHECK_PATTERNS: Array<[RegExp, string]> = [
@@ -1118,6 +1147,7 @@ function deriveA3RuntimeEvents(
   const quantity = parseSpaceScopedCommerceQuantity(text) ?? parseCount(text);
   const cancelled = detectCancellation(text);
   const deferred = detectDeferral(text);
+  const reactivated = detectEntityReactivation(text);
   const semanticAuthoritative = Boolean(
     input.semantic_frame && input.semantic_frame.confidence >= 0.72,
   );
@@ -1157,7 +1187,20 @@ function deriveA3RuntimeEvents(
   if (horsepower.length > 0 && !/[?？]/.test(text)) {
     const categories = [...new Set(hints.map((hint) => hint.category))];
     const active = previous.entities.filter((entity) => entity.status !== "cancelled" && entity.status !== "deferred" && (categories.length === 0 || categories.includes(entity.category)));
-    const target = active.length === 1 ? active[0] : active.find((entity) => entity.category === "air_conditioner" && entity.entity_id.endsWith(":unscoped"));
+    const scopedMentionIds = [...new Set(mentioned
+      .filter((hint) => !hint.entity_id.endsWith(":unscoped"))
+      .map((hint) => hint.entity_id))];
+    const scopedTarget = scopedMentionIds.length === 1
+      ? previous.entities.find((entity) =>
+        entity.entity_id === scopedMentionIds[0] &&
+        (!["cancelled", "deferred"].includes(entity.status) || reactivated)
+      )
+      : null;
+    const target = scopedTarget ?? (scopedMentionIds.length === 0
+      ? active.length === 1
+        ? active[0]
+        : active.find((entity) => entity.category === "air_conditioner" && entity.entity_id.endsWith(":unscoped"))
+      : null);
     if (target) events.push({ type: "SET_ENTITY_ATTRIBUTE", entity_id: target.entity_id, key: "horsepower", value: [...new Set(horsepower)].join("、"), provenance });
   }
 
@@ -1264,6 +1307,14 @@ function deriveA3RuntimeEvents(
       }
       continue;
     }
+    if (reactivated && existing && ["cancelled", "deferred"].includes(existing.status)) {
+      events.push({
+        type: "SET_ENTITY_STATUS",
+        entity_id: hint.entity_id,
+        status: "tentative",
+        provenance,
+      });
+    }
     if (quantity !== null && (additive || mentioned.length === 1)) {
       const existing = previous.entities.find((entity) => entity.entity_id === hint.entity_id);
       const nextQuantity = additive && existing ? existing.quantity + quantity : quantity;
@@ -1363,10 +1414,13 @@ function materializeRoomOnlyReferenceHints(
   state: ConversationCommerceState,
   hints: CommerceTurnEntityHint[],
 ): CommerceTurnEntityHint[] {
-  const rooms = detectRooms(text);
+  const rooms = detectReferencedRooms(text);
+  const scopedAttributeAssignment = !looksInterrogative(text) &&
+    /(?:\d+(?:\.\d+)?\s*匹|horsepower|\bhp\b)/i.test(text);
   if (
     rooms.length === 0 || detectCategories(text).length > 0 ||
-    (!detectCancellation(text) && !detectDeferral(text))
+    (!detectCancellation(text) && !detectDeferral(text) &&
+      !detectEntityReactivation(text) && !scopedAttributeAssignment)
   ) return hints;
 
   const aggregateCategories = [...new Set(
@@ -1850,6 +1904,7 @@ export async function runCommerceStateRuntime(
         revision: loaded.revision,
         persist_result: "read_only",
         reason: "preorder_intent_acknowledged_without_order_or_payment_promotion",
+        state_path: "commerce.authoritative_projection",
         route: "commerce_state_answer",
       };
     }
@@ -1976,7 +2031,7 @@ export async function runCommerceStateRuntime(
   }
 
   if (detectPreorderUnpaidIntent(text)) {
-    return { ...base, authority: "CONVERSATION_STATE", reason: "preorder_intent_acknowledged_without_order_or_payment_promotion", reply: buildPreorderUnpaidAnswer(language, state), route: "commerce_state_answer" };
+    return { ...base, authority: "CONVERSATION_STATE", reason: "preorder_intent_acknowledged_without_order_or_payment_promotion", state_path: "commerce.authoritative_projection", reply: buildPreorderUnpaidAnswer(language, state), route: "commerce_state_answer" };
   }
 
   if (explicitQuotationOnlySignal(text)) {
@@ -1985,15 +2040,15 @@ export async function runCommerceStateRuntime(
       : language === "zh-CN"
       ? "明白，目前只属报价阶段，不是已确认订单。"
       : "明白，而家只係報價階段，唔係已確認訂單。";
-    return { ...base, authority: "CONVERSATION_STATE", reason: "quotation_only_state_acknowledged", reply, route: "commerce_state_answer" };
+    return { ...base, authority: "CONVERSATION_STATE", reason: "quotation_only_state_acknowledged", state_path: "commerce.authoritative_projection", reply, route: "commerce_state_answer" };
   }
 
   if (historicalPriceExclusionInstruction(text)) {
-    return { ...base, authority: "CONVERSATION_STATE", reason: "historical_price_exclusion_acknowledged", reply: buildHistoricalPriceExclusionAnswer(language), route: "commerce_state_answer" };
+    return { ...base, authority: "CONVERSATION_STATE", reason: "historical_price_exclusion_acknowledged", state_path: "commerce.authoritative_projection", reply: buildHistoricalPriceExclusionAnswer(language), route: "commerce_state_answer" };
   }
 
   if (paymentChecklistIntent(text)) {
-    return { ...base, authority: "CONVERSATION_STATE", reason: "payment_checklist_from_current_state", reply: buildPaymentChecklist(state, language), route: "commerce_transaction_summary" };
+    return { ...base, authority: "CONVERSATION_STATE", reason: "payment_checklist_from_current_state", state_path: "commerce.authoritative_projection", reply: buildPaymentChecklist(state, language), route: "commerce_transaction_summary" };
   }
 
   if (decision.authority === "CONVERSATION_STATE" && decision.state_path) {
@@ -2005,11 +2060,11 @@ export async function runCommerceStateRuntime(
   }
 
   if (detectCurrentPriceValidityQuestion(text) || asksToReuseRecordedPrice(text, state)) {
-    return { ...base, authority: "CURRENT_KB_REQUIRED", reason: "previous_quote_not_authoritative_for_current_price", reply: buildCurrentPriceValidityAnswer(language), route: "commerce_state_answer" };
+    return { ...base, authority: "CURRENT_KB_REQUIRED", reason: "previous_quote_not_authoritative_for_current_price", state_path: "commerce.authoritative_projection", reply: buildCurrentPriceValidityAnswer(language), route: "commerce_state_answer" };
   }
 
   if (summaryIntent && (state.entities.length > 0 || state.quotes.length > 0)) {
-    return { ...base, authority: "CONVERSATION_STATE", reply: buildTransactionSummary(state, language), route: "commerce_transaction_summary" };
+    return { ...base, authority: "CONVERSATION_STATE", reason: "read_only_transaction_summary_resolved", state_path: "commerce.authoritative_projection", reply: buildTransactionSummary(state, language), route: "commerce_transaction_summary" };
   }
 
   return {
