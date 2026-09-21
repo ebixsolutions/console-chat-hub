@@ -784,13 +784,17 @@ jobs:
             actual="$RUNNER_TEMP/c3-turn48-global-aggregate-actual"
             cat > "$expected" <<'EOF'
           .github/workflows/task-ai-abc-c3-final-gate.yml
+          .github/scripts/task_ai_abc_c3_final_gate.mjs
           supabase/functions/_shared/commerce-state-runtime-base.ts
           supabase/functions/_shared/conversation-recall.integration.test.ts
+          supabase/functions/_shared/pre-send-conversion-supervisor.test.ts
+          supabase/functions/_shared/pre-send-conversion-supervisor.ts
+          supabase/functions/generate-reply/index.ts
           EOF
             git diff --name-only "$turn48_global_aggregate_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
             LC_ALL=C sort -o "$expected" "$expected"
             diff -u "$expected" "$actual"
-            test "$(git rev-list --count "$turn48_global_aggregate_base..$GITHUB_SHA")" -eq 3
+            test "$(git rev-list --count "$turn48_global_aggregate_base..$GITHUB_SHA")" -eq 5
             test -z "$(git diff --name-only "$turn48_global_aggregate_base..$GITHUB_SHA" -- 'supabase/migrations/**' 'supabase/functions/agent-assist/index.ts')"
             grep -q 'resolvePendingCheckAggregateScope' supabase/functions/_shared/commerce-state-runtime-base.ts
             grep -q 'hasPendingCheckDomainAmbiguity' supabase/functions/_shared/commerce-state-runtime-base.ts
