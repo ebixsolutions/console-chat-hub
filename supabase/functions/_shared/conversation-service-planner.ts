@@ -26,8 +26,18 @@ export type ServiceDialogueAction =
   | "published_kb_lookup"
   | "bounded_kb_refinement"
   | "partial_answer_then_question"
+  | "customer_issue_next_step"
   | "offer_handoff_or_reframe"
   | "explicit_handoff";
+
+export type ServiceIssueKind =
+  | "account_access"
+  | "order_change"
+  | "refund_or_product_quality"
+  | "delivery_or_collection"
+  | "stock_or_store_availability"
+  | "marketplace_or_product_support"
+  | "general_customer_issue";
 
 export interface ServiceRecallDecision {
   handled: boolean;
@@ -80,6 +90,7 @@ export interface ServiceDialoguePlan {
     currency: string;
     historical_only: true;
   };
+  issue_kind?: ServiceIssueKind;
 }
 
 export interface ServiceCalculationTerm {
@@ -358,6 +369,37 @@ function buildKbQuery(question: string, input: ServicePlanInput): string {
   return [...new Set(parts)].join(" ").slice(0, 500);
 }
 
+/**
+ * Thin shared semantic layer for a fully described customer-service issue.
+ * It selects a safe next-step family only; it never reads or mutates state and
+ * never claims that an order, refund, delivery, cancellation or handoff exists.
+ */
+function classifyCustomerIssue(question: string): ServiceIssueKind | null {
+  const text = clean(question, 2400);
+  if (text.length < 24) return null;
+  if (/(?:password|login|log in|sign in|reset email|account access|密碼|密码|登入|登錄|登录|重設電郵|重置邮件)/i.test(text)) {
+    return "account_access";
+  }
+  if (/(?:change (?:the )?address|wrong (?:size|item)|cancel.{0,40}\border\b|requested cancellation|取消訂單|取消订单|更改地址|改地址|尺碼錯|尺寸错)/i.test(text)) {
+    return "order_change";
+  }
+  if (/(?:out of date|expired|expiry|refund|return|damaged|broken|missing (?:part|item|feature)|not protected|wrong (?:plug|part|product)|food.{0,30}(?:bad|fresh|satisfied)|退款|退貨|退货|過期|过期|損壞|损坏|缺件|品質|质量)/i.test(text)) {
+    return "refund_or_product_quality";
+  }
+  if (/(?:in stock|out of stock|stock availability|popular brands|store.{0,40}(?:stock|deliveries)|availability|現貨|现货|庫存|库存|門市有貨|门店有货)/i.test(text)) {
+    return "stock_or_store_availability";
+  }
+  if (/(?:delivery|delivered|dispatch|shipment|tracking|parcel|package|lost in transit|arriv|collection|courier|送貨|送货|配送|派送|物流|包裹|到貨|到货|取件)/i.test(text)) {
+    return "delivery_or_collection";
+  }
+  if (/(?:third[- ]party seller|marketplace|seller|product support|laptop|feature|model|產品|产品|賣家|卖家|功能)/i.test(text)) {
+    return "marketplace_or_product_support";
+  }
+  return /(?:customer|complain|issue|problem|help|service|disappoint|not satisfied|客戶|客户|投訴|投诉|問題|问题|協助|协助|失望)/i.test(text)
+    ? "general_customer_issue"
+    : null;
+}
+
 export function planConversationService(
   input: ServicePlanInput,
 ): ServiceDialoguePlan {
@@ -488,6 +530,20 @@ export function planConversationService(
       clarification_target: target,
     };
   }
+  const issueKind = classifyCustomerIssue(question);
+  if (issueKind) {
+    return {
+      ...base,
+      action: "customer_issue_next_step",
+      issue_kind: issueKind,
+      missing_slots: [],
+      clarification_target: null,
+      safe_assumptions: [
+        "no_live_account_or_order_state",
+        "no_completed_action_without_runtime_evidence",
+      ],
+    };
+  }
   const target = clarificationTarget ?? "customer_goal";
   if (factSatisfiesSlot(facts, target)) {
     return { ...base, action: "partial_answer_then_question" };
@@ -576,6 +632,46 @@ export function renderServicePlanReply(
 ): string | null {
   const l = planLanguageIndex(plan, recentMessages);
   if (plan.action === "direct_answer") return recallReply;
+  if (plan.action === "customer_issue_next_step" && plan.issue_kind) {
+    const responses: Record<ServiceIssueKind, [string, string, string]> = {
+      account_access: [
+        "我明白你遇到帳戶登入或重設問題。目前我看不到帳戶或電郵派送狀態；請先檢查垃圾郵件，並提供電郵網域（毋須提供完整地址或密碼），以便核對下一步。",
+        "我明白你遇到账户登录或重置问题。目前我看不到账户或邮件发送状态；请先检查垃圾邮件，并提供邮箱域名（无需提供完整地址或密码），以便核对下一步。",
+        "I understand the account-access or reset issue. I cannot see the live account or email-delivery status here. Please check spam/junk and share only the email domain—not the full address or password—so the next check can be narrowed down.",
+      ],
+      order_change: [
+        "我明白你要更改或取消訂單。目前我不能核實或修改即時訂單；請提供訂單／參考編號及受影響項目，以便先確認仍可處理的範圍。現階段不會假設更改已生效。",
+        "我明白你要更改或取消订单。目前我无法核实或修改实时订单；请提供订单／参考编号及受影响项目，以便先确认仍可处理的范围。现阶段不会假设更改已生效。",
+        "I understand that you need to change or cancel an order. I cannot verify or alter the live order here. Please share the order/reference number and affected item(s) so the available options can be checked; I will not assume the change has taken effect.",
+      ],
+      refund_or_product_quality: [
+        "很抱歉產品狀況不符合預期。目前我不能核實退款、退貨或訂單狀態；請提供訂單／參考編號，以及相關相片、到期日或缺漏資料。若涉及安全或過期問題，請先停止使用產品，等待核實。",
+        "很抱歉产品状况不符合预期。目前我无法核实退款、退货或订单状态；请提供订单／参考编号，以及相关照片、到期日或缺漏资料。若涉及安全或过期问题，请先停止使用产品，等待核实。",
+        "I’m sorry the product was not as expected. I cannot verify a refund, return, or live order status here. Please share the order/reference number plus any relevant photo, expiry date, or missing-item detail. If this may be a safety or expiry issue, stop using the product until it is checked.",
+      ],
+      delivery_or_collection: [
+        "我明白送貨、取件或追蹤資料出現問題。目前我看不到即時物流狀態；請提供訂單／包裹參考編號及最新追蹤訊息或時間，以便核對下一步。我不會在未核實前假設已送達或已取消。",
+        "我明白送货、取件或追踪资料出现问题。目前我看不到实时物流状态；请提供订单／包裹参考编号及最新追踪信息或时间，以便核对下一步。我不会在未核实前假设已送达或已取消。",
+        "I understand there is a delivery, collection, or tracking problem. I cannot see the live shipment status here. Please share the order/parcel reference and latest tracking message or timestamp so the next step can be checked; I will not assume delivery or cancellation occurred.",
+      ],
+      stock_or_store_availability: [
+        "我明白你想核對門市或商品供應。目前我未有可核實的即時庫存；請提供完整產品名稱／型號、門市或地區及所需日期，我再按該範圍核對。",
+        "我明白你想核对门店或商品供应。目前我没有可核实的实时库存；请提供完整产品名称／型号、门店或地区及所需日期，我再按该范围核对。",
+        "I understand that you want to check store or product availability. I do not have verified live stock here. Please share the exact product/model, store or region, and required date so that specific scope can be checked.",
+      ],
+      marketplace_or_product_support: [
+        "我明白商品或第三方賣家交付內容與預期不符。目前我不能核實訂單或賣家處理狀態；請提供訂單／參考編號、商品型號及不符之處，以便核對可行的下一步。",
+        "我明白商品或第三方卖家交付内容与预期不符。目前我无法核实订单或卖家处理状态；请提供订单／参考编号、商品型号及不符之处，以便核对可行的下一步。",
+        "I understand that the product or third-party seller outcome did not match what was expected. I cannot verify the live order or seller action here. Please share the order/reference number, product model, and the specific mismatch so the available next step can be checked.",
+      ],
+      general_customer_issue: [
+        "我明白你遇到客戶服務問題。目前我不能核實即時帳戶、訂單或處理狀態；請提供相關訂單／個案參考編號及受影響項目，以便核對下一步。我不會在未有證據前聲稱任何處理已完成。",
+        "我明白你遇到客户服务问题。目前我无法核实实时账户、订单或处理状态；请提供相关订单／个案参考编号及受影响项目，以便核对下一步。我不会在没有证据前声称任何处理已完成。",
+        "I understand the customer-service issue. I cannot verify the live account, order, or case status here. Please share the relevant order/case reference and affected item so the next step can be checked; I will not claim that any action has completed without evidence.",
+      ],
+    };
+    return responses[plan.issue_kind][l];
+  }
   if (plan.action === "historical_calculation" && plan.calculation) {
     const c = plan.calculation;
     const perUnit = c.terms.filter((term) => term.charge_basis === "per_unit");
@@ -674,13 +770,6 @@ export function renderTargetedServiceQuestion(
   const target = plan.clarification_target ?? plan.missing_slots[0] ??
     "customer_goal";
   const question = labels[target]?.[l] ?? labels.customer_goal[l];
-  const prefix = plan.known_facts.length
-    ? [
-      "根據這段對話已有的資料，",
-      "根据这段对话已有的资料，",
-      "Based on the information available in this conversation, ",
-    ][l]
-    : "";
   const empathy = plan.emotion_trace?.kind &&
       /(?:frustrat|angry|disappoint|失望|憤怒|愤怒)/i.test(
         plan.emotion_trace.kind,
@@ -691,9 +780,7 @@ export function renderTargetedServiceQuestion(
       "I understand that this situation is frustrating.",
     ][l]
     : "";
-  return `${empathy}${empathy ? " " : ""}${prefix}${
-    prefix ? " " : ""
-  }${question}`;
+  return `${empathy}${empathy ? " " : ""}${question}`;
 }
 
 export function applyServiceTone(
@@ -753,6 +840,16 @@ export function renderServiceRecovery(
       `這次知識庫查詢沒有返回 ${knownModel.value} 的可核實現行資料。你可以提供產品頁、適用地區或日期，讓我縮窄範圍；目前沒有執行保存或轉交。`,
       `这次知识库查询没有返回 ${knownModel.value} 的可核实当前资料。你可以提供产品页、适用地区或日期，让我缩小范围；目前没有执行保存或转交。`,
       `This knowledge-base lookup returned no verifiable current information for ${knownModel.value}. You can share the product page, region, or applicable date to narrow the scope; nothing was saved or handed off.`,
+    ][l];
+  }
+  const hasTargetedRefinement = Boolean(
+    plan.clarification_target && plan.clarification_target !== "customer_goal",
+  );
+  if (!hasTargetedRefinement) {
+    return [
+      "我未找到可核實的現行資料。你可以提供產品頁、完整型號，以及適用地區或日期，我再按該範圍核對；目前沒有執行保存或轉交。",
+      "我未找到可核实的当前资料。你可以提供产品页、完整型号，以及适用地区或日期，我再按该范围核对；目前没有执行保存或转交。",
+      "I could not find a verifiable current answer. You can share the product page, exact model, and applicable region or date so I can check that scope; nothing was saved or handed off.",
     ][l];
   }
   return [

@@ -186,6 +186,62 @@ Deno.test("C3 no-match, conflict and tool-failure recovery remain useful and tru
   }
 });
 
+Deno.test("C3 clear KB no-match stays useful without machine framing or generic goal re-ask", () => {
+  const plan = planConversationService({
+    question: "iPhone 16 Pro Max 256GB 而家有冇現貨？",
+    language: "zh-TW",
+    recall: {
+      handled: false,
+      reason: "CURRENT_KB_REQUIRED",
+      detail: "EXTERNAL_OR_MIXED_FACT",
+    },
+    memory: null,
+    commerce: null,
+  });
+  const reply = renderServiceRecovery(plan, "no_match", "zh-TW");
+  assert(/未找到/.test(reply) && /產品頁|完整型號|地區|日期/.test(reply), reply);
+  assert(!/最想完成|根據這段對話已有的資料/.test(reply), reply);
+
+  const targeted = renderTargetedServiceQuestion({
+    ...plan,
+    action: "targeted_clarification",
+    known_facts: [{
+      name: "entity:model",
+      label: "型號",
+      value: "AC-TEST",
+      authority: "CONVERSATION_STATE",
+      status: "provided",
+    }],
+    missing_slots: ["region"],
+    clarification_target: "region",
+  }, "zh-TW");
+  assert(targeted === "這項查詢適用哪個地區？", targeted);
+});
+
+Deno.test("C3 described customer issues receive one safe actionable next step", () => {
+  for (const [question, expected] of [
+    ["My password reset email never arrives and I cannot sign in.", "email domain"],
+    ["The parcel is marked lost in transit and delivery is overdue.", "parcel reference"],
+    ["I asked to cancel the wrong-size order but it was dispatched.", "order/reference"],
+    ["The food expires tomorrow and I need help with a refund.", "expiry date"],
+    ["Is this exact model in stock at the local store?", "exact product/model"],
+    ["The third-party seller's laptop is missing advertised features.", "product model"],
+  ] as const) {
+    const plan = planConversationService({
+      question,
+      language: "en",
+      recall: { handled: false, reason: "NOT_A_RECALL_QUERY" },
+      memory: null,
+      commerce: null,
+    });
+    assert(plan.action === "customer_issue_next_step", `${question}:${plan.action}`);
+    const reply = renderServicePlanReply(plan, null) ?? "";
+    assert(reply.includes(expected), `${question}:${reply}`);
+    assert(!/What would you most like|Based on the information available/.test(reply), reply);
+    assert(!/(has been refunded|has been cancelled|was delivered|handoff completed)/i.test(reply), reply);
+  }
+});
+
 Deno.test("C3 repeated clarification selects a new strategy without automatic handoff", () => {
   const plan = planConversationService({
     question: "嗰個呢？",
