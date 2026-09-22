@@ -242,6 +242,21 @@ Deno.test("C3 described customer issues receive one safe actionable next step", 
   }
 });
 
+Deno.test("C3 shared contextual fallback never emits a generic goal or item re-ask", () => {
+  for (const [question, detail] of [
+    ["我最緊要唔好超過600闊，深少少冇所謂。", "CUSTOMER_STATEMENT_NOT_QUERY"],
+    ["Panasonic有冇合適方向？", "NO_SUPPORTED_FACT_SLOT"],
+    ["送星期幾？", "MISSING_DELIVERY_PREFERENCE"],
+    ["幫我簡單講一次我而家要咩。", "NO_SUPPORTED_FACT_SLOT"],
+  ] as const) {
+    const plan = planConversationService({ question, language: "zh-TW", recall: { handled: false, reason: "NOT_A_RECALL_QUERY", detail }, memory: null, commerce });
+    const reply = renderServicePlanReply(plan, null) ?? renderTargetedServiceQuestion(plan, "zh-TW");
+    assert(!/你今次最想完成哪一件事|你想核對哪個項目或哪個時間點/.test(reply), reply);
+    assert(/明白|目前資料|核實/.test(reply), reply);
+    assert(!/已確認|已保存|已轉交/.test(reply), reply);
+  }
+});
+
 Deno.test("C3 repeated clarification selects a new strategy without automatic handoff", () => {
   const plan = planConversationService({
     question: "嗰個呢？",

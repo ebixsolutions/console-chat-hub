@@ -91,6 +91,10 @@ export interface ServiceDialoguePlan {
     historical_only: true;
   };
   issue_kind?: ServiceIssueKind;
+  /** The current customer turn, retained only for bounded natural rendering. */
+  customer_turn?: string;
+  recall_reason?: ServiceRecallDecision["reason"];
+  recall_detail?: string;
 }
 
 export interface ServiceCalculationTerm {
@@ -377,25 +381,44 @@ function buildKbQuery(question: string, input: ServicePlanInput): string {
 function classifyCustomerIssue(question: string): ServiceIssueKind | null {
   const text = clean(question, 2400);
   if (text.length < 24) return null;
-  if (/(?:password|login|log in|sign in|reset email|account access|密碼|密码|登入|登錄|登录|重設電郵|重置邮件)/i.test(text)) {
+  if (
+    /(?:password|login|log in|sign in|reset email|account access|密碼|密码|登入|登錄|登录|重設電郵|重置邮件)/i
+      .test(text)
+  ) {
     return "account_access";
   }
-  if (/(?:change (?:the )?address|wrong (?:size|item)|cancel.{0,40}\border\b|requested cancellation|取消訂單|取消订单|更改地址|改地址|尺碼錯|尺寸错)/i.test(text)) {
+  if (
+    /(?:change (?:the )?address|wrong (?:size|item)|cancel.{0,40}\border\b|requested cancellation|取消訂單|取消订单|更改地址|改地址|尺碼錯|尺寸错)/i
+      .test(text)
+  ) {
     return "order_change";
   }
-  if (/(?:out of date|expired|expiry|refund|return|damaged|broken|missing (?:part|item|feature)|not protected|wrong (?:plug|part|product)|food.{0,30}(?:bad|fresh|satisfied)|退款|退貨|退货|過期|过期|損壞|损坏|缺件|品質|质量)/i.test(text)) {
+  if (
+    /(?:out of date|expired|expiry|refund|return|damaged|broken|missing (?:part|item|feature)|not protected|wrong (?:plug|part|product)|food.{0,30}(?:bad|fresh|satisfied)|退款|退貨|退货|過期|过期|損壞|损坏|缺件|品質|质量)/i
+      .test(text)
+  ) {
     return "refund_or_product_quality";
   }
-  if (/(?:in stock|out of stock|stock availability|popular brands|store.{0,40}(?:stock|deliveries)|availability|現貨|现货|庫存|库存|門市有貨|门店有货)/i.test(text)) {
+  if (
+    /(?:in stock|out of stock|stock availability|popular brands|store.{0,40}(?:stock|deliveries)|availability|現貨|现货|庫存|库存|門市有貨|门店有货)/i
+      .test(text)
+  ) {
     return "stock_or_store_availability";
   }
-  if (/(?:delivery|delivered|dispatch|shipment|tracking|parcel|package|lost in transit|arriv|collection|courier|送貨|送货|配送|派送|物流|包裹|到貨|到货|取件)/i.test(text)) {
+  if (
+    /(?:delivery|delivered|dispatch|shipment|tracking|parcel|package|lost in transit|arriv|collection|courier|送貨|送货|配送|派送|物流|包裹|到貨|到货|取件)/i
+      .test(text)
+  ) {
     return "delivery_or_collection";
   }
-  if (/(?:third[- ]party seller|marketplace|seller|product support|laptop|feature|model|產品|产品|賣家|卖家|功能)/i.test(text)) {
+  if (
+    /(?:third[- ]party seller|marketplace|seller|product support|laptop|feature|model|產品|产品|賣家|卖家|功能)/i
+      .test(text)
+  ) {
     return "marketplace_or_product_support";
   }
-  return /(?:customer|complain|issue|problem|help|service|disappoint|not satisfied|客戶|客户|投訴|投诉|問題|问题|協助|协助|失望)/i.test(text)
+  return /(?:customer|complain|issue|problem|help|service|disappoint|not satisfied|客戶|客户|投訴|投诉|問題|问题|協助|协助|失望)/i
+      .test(text)
     ? "general_customer_issue"
     : null;
 }
@@ -458,6 +481,9 @@ export function planConversationService(
     entitlement_status: input.entitlement?.authority === "TRUSTED_CRM"
       ? "trusted" as const
       : "unknown" as const,
+    customer_turn: question,
+    recall_reason: input.recall.reason,
+    recall_detail: clean(input.recall.detail, 100) || undefined,
   };
   if (input.explicit_handoff) return { ...base, action: "explicit_handoff" };
 
@@ -625,6 +651,80 @@ const labels: Record<string, [string, string, string]> = {
   ],
 };
 
+function renderContextualServiceReply(
+  plan: ServiceDialoguePlan,
+  languageIndex: number,
+): string {
+  const turn = clean(plan.customer_turn || plan.customer_goal, 320);
+  const summaryIntent =
+    /(?:總結|总结|講一次|讲一次|列一次|讀返|读返|而家有咩|现在有什么|目前需求|準備報價|准备报价|what (?:do i|are we)|summari[sz]e|list (?:it|them))/i
+      .test(turn);
+  const questionIntent =
+    /[?？]|(?:有冇|有沒有|有没有|係咪|是不是|幾|几|邊|哪|咩|什么|點|怎么|如何|可唔可以|能不能|記唔記得|记不记得|do |does |did |is |are |can |could |what |which |when |where |how )/i
+      .test(turn);
+  const genericTarget = !plan.clarification_target ||
+    ["customer_goal", "specific_item_or_time"].includes(
+      plan.clarification_target,
+    );
+
+  if (summaryIntent && plan.known_facts.length) {
+    const safeFacts = plan.known_facts.filter((fact) =>
+      !["current_intent", "customer_goal", "quotation_status", "order_status"]
+        .includes(fact.name)
+    );
+    const facts = (safeFacts.length ? safeFacts : plan.known_facts).slice(0, 6)
+      .map((fact) => `${fact.label}：${fact.value}`).join("；");
+    return [
+      `目前資料係：${facts}。其餘未確定細節仍要再核實。`,
+      `目前资料是：${facts}。其余未确定细节仍需核实。`,
+      `Here is the current information: ${facts}. Any remaining uncertain detail still needs verification.`,
+    ][languageIndex];
+  }
+
+  if (!questionIntent && genericTarget) {
+    return [
+      "明白，我會按你啱啱提供嘅最新要求繼續；其餘未確定細節仍要再核實。",
+      "明白，我会按你刚才提供的最新要求继续；其余未确定细节仍需核实。",
+      "Understood. I will continue using the latest requirement you provided; any remaining uncertain detail still needs verification.",
+    ][languageIndex];
+  }
+
+  if (genericTarget) {
+    const usefulScope = /(?:送貨|送货|delivery|日期|星期|when)/i.test(turn)
+      ? [
+        "型號／項目、地區同日期",
+        "型号／项目、地区和日期",
+        "item/model, region, and date",
+      ]
+      : /(?:產品|产品|型號|型号|品牌|雪櫃|雪柜|冷氣|冷气|洗衣機|洗衣机|product|model|brand)/i
+          .test(turn)
+      ? [
+        "完整型號、產品頁同適用地區",
+        "完整型号、产品页和适用地区",
+        "exact model, product page, and applicable region",
+      ]
+      : [
+        "相關項目、適用範圍同日期",
+        "相关项目、适用范围和日期",
+        "the relevant item, scope, and date",
+      ];
+    return [
+      `呢項我暫時未有可核實嘅現行資料直接答你。提供${
+        usefulScope[0]
+      }後，可以按該範圍核對；現時仍待核實。`,
+      `这项我暂时没有可核实的当前资料直接回答。提供${
+        usefulScope[1]
+      }后，可以按该范围核对；目前仍待核实。`,
+      `I do not yet have a verifiable current answer for this. With ${
+        usefulScope[2]
+      }, it can be checked in that scope; I will not treat it as confirmed before verification.`,
+    ][languageIndex];
+  }
+
+  return labels[plan.clarification_target!]?.[languageIndex] ??
+    labels.customer_goal[languageIndex];
+}
+
 export function renderServicePlanReply(
   plan: ServiceDialoguePlan,
   recallReply: string | null,
@@ -632,6 +732,17 @@ export function renderServicePlanReply(
 ): string | null {
   const l = planLanguageIndex(plan, recentMessages);
   if (plan.action === "direct_answer") return recallReply;
+  if (
+    ["targeted_clarification", "partial_answer_then_question"].includes(
+      plan.action,
+    ) &&
+    (!plan.clarification_target ||
+      ["customer_goal", "specific_item_or_time"].includes(
+        plan.clarification_target,
+      ))
+  ) {
+    return renderContextualServiceReply(plan, l);
+  }
   if (plan.action === "customer_issue_next_step" && plan.issue_kind) {
     const responses: Record<ServiceIssueKind, [string, string, string]> = {
       account_access: [
