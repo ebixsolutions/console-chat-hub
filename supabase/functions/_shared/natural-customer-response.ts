@@ -1,0 +1,174 @@
+import { classifyConversationalRoute } from "./conversational-routing.ts";
+
+export type NaturalResponseLanguage = "zh-TW" | "zh-CN" | "en";
+
+export type NaturalCustomerIntent =
+  | { kind: "greeting"; product: null }
+  | { kind: "product_shopping"; product: string | null }
+  | { kind: "product_availability"; product: string | null }
+  | { kind: "none"; product: null };
+
+const MAX_PRODUCT_LABEL_LENGTH = 80;
+
+function chineseProductPrefix(product: string): string {
+  return /^[\p{Script=Latin}\d]/u.test(product) ? ` ${product}` : product;
+}
+
+function chinesePossessiveParticle(
+  product: string,
+  particle: "嘅" | "的",
+): string {
+  return /^[\p{Script=Latin}\d]/u.test(product) ? ` ${particle}` : particle;
+}
+
+function cleanProductLabel(value: string | undefined): string | null {
+  if (!value) return null;
+  const cleaned = value
+    .normalize("NFKC")
+    .replace(/^[\s,，:：;；一個一部一件一款]+/u, "")
+    .replace(
+      /(?:嘅)?(?:產品|商品)?(?:資料)?(?:嗎|呢|呀|啊)?[?？!！.。\s]*$/u,
+      "",
+    )
+    .replace(/^(?:an?|any|some|the)\s+/i, "")
+    .replace(/\s+(?:available|in stock|for sale)$/i, "")
+    .replace(/[?？!！.。]+$/u, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleaned || cleaned.length > MAX_PRODUCT_LABEL_LENGTH) return null;
+  if (
+    /^(?:產品|商品|貨|嘢|東西|东西|product|item|something|anything)$/i.test(
+      cleaned,
+    )
+  ) return null;
+  return cleaned;
+}
+
+function extractShoppingProduct(text: string): string | null {
+  const chinese = text.match(
+    /(?:我|本人)?(?:想|要|打算|準備|准备|考慮|考虑|希望)(?:買|买|購買|购买|訂購|订购|訂|订|入手)\s*(.+?)[?？!！.。]*$/iu,
+  );
+  if (chinese) return cleanProductLabel(chinese[1]);
+
+  const english = text.match(
+    /(?:i\s+)?(?:want|would like|need|plan|hope|am looking)(?:\s+to)?\s+(?:buy|purchase|order|get)\s+(.+?)[?!.]*$/i,
+  );
+  return cleanProductLabel(english?.[1]);
+}
+
+function extractAvailabilityProduct(text: string): string | null {
+  const chinesePatterns = [
+    /(?:你(?:哋|們|们)?|店內|店内|呢度|這裡|这里)?\s*(?:有冇|有無|有沒有|有没有|是否有)\s*(.+?)(?:賣|卖|售賣|售卖|出售|現貨|现货|庫存|库存)?[?？!！.。]*$/iu,
+    /(?:你(?:哋|們|们)?|店內|店内|呢度|這裡|这里)?\s*(?:賣唔賣|卖不卖|有售)\s*(.+?)[?？!！.。]*$/iu,
+    /(.+?)(?:有冇|有沒有|有没有)(?:現貨|现货|庫存|库存|售賣|售卖)?[?？!！.。]*$/iu,
+  ];
+  for (const pattern of chinesePatterns) {
+    const match = text.match(pattern);
+    const product = cleanProductLabel(match?.[1]);
+    if (product) return product;
+  }
+
+  const englishPatterns = [
+    /(?:do\s+you|does\s+(?:the\s+)?(?:shop|store)|have\s+you)\s+(?:have|carry|sell|stock)\s+(.+?)[?!.]*$/i,
+    /(?:is|are)\s+(?:there\s+)?(?:any\s+)?(.+?)\s+(?:available|in stock|for sale)[?!.]*$/i,
+    /(?:do\s+you\s+have)\s+(.+?)[?!.]*$/i,
+  ];
+  for (const pattern of englishPatterns) {
+    const match = text.match(pattern);
+    const product = cleanProductLabel(match?.[1]);
+    if (product) return product;
+  }
+  return null;
+}
+
+export function classifyNaturalCustomerIntent(
+  text: string,
+): NaturalCustomerIntent {
+  const normalized = (text ?? "").normalize("NFKC").trim();
+  if (!normalized) return { kind: "none", product: null };
+
+  const conversational = classifyConversationalRoute(normalized);
+  if (
+    conversational.kind === "conversational" &&
+    conversational.subtype === "greeting"
+  ) {
+    return { kind: "greeting", product: null };
+  }
+
+  const availabilityProduct = extractAvailabilityProduct(normalized);
+  if (availabilityProduct) {
+    return { kind: "product_availability", product: availabilityProduct };
+  }
+
+  const shoppingProduct = extractShoppingProduct(normalized);
+  if (
+    shoppingProduct ||
+    /(?:想|要|打算|準備|准备|考慮|考虑|希望)(?:買|买|購買|购买|訂購|订购|入手)|(?:want|would like|plan|hope|looking)(?:\s+to)?\s+(?:buy|purchase|order|get)/i
+      .test(normalized)
+  ) {
+    return { kind: "product_shopping", product: shoppingProduct };
+  }
+
+  return { kind: "none", product: null };
+}
+
+export function requiresCurrentMerchantEvidence(
+  intent: NaturalCustomerIntent,
+): boolean {
+  return intent.kind === "product_availability";
+}
+
+export function renderNaturalImmediateResponse(
+  intent: NaturalCustomerIntent,
+  language: NaturalResponseLanguage,
+): string | null {
+  if (intent.kind === "greeting") {
+    if (language === "en") return "Hi! How can I help?";
+    if (language === "zh-CN") return "你好！有什么可以帮你？";
+    return "你好！有咩可以幫你？";
+  }
+  if (intent.kind !== "product_shopping") return null;
+
+  if (language === "en") {
+    return intent.product
+      ? `Sure. Which ${intent.product} model are you looking for? If you have not decided yet, I can first check whether the store has relevant product information.`
+      : "Sure. What kind of product are you looking for? I can first check what relevant product information the store currently has.";
+  }
+  if (language === "zh-CN") {
+    return intent.product
+      ? `可以。你想找哪一款${
+        chineseProductPrefix(intent.product)
+      }？如果还没决定，我可以先帮你查目前店内有没有相关产品资料。`
+      : "可以。你想找哪一类产品？我可以先帮你查目前店内有没有相关产品资料。";
+  }
+  return intent.product
+    ? `可以。你想搵邊款${
+      chineseProductPrefix(intent.product)
+    }？如果你未決定，我可以先幫你查目前店內有冇相關產品資料。`
+    : "可以。你想搵邊類產品？我可以先幫你查目前店內有冇相關產品資料。";
+}
+
+export function renderNaturalNoCurrentEvidence(
+  intent: NaturalCustomerIntent,
+  language: NaturalResponseLanguage,
+): string | null {
+  if (intent.kind !== "product_availability") return null;
+  const product = intent.product;
+  if (language === "en") {
+    return product
+      ? `I cannot find current store product information for ${product}, so I cannot confirm whether it is sold here. If you have a specific model, I can check again.`
+      : "I cannot find relevant current store product information, so I cannot confirm availability. If you have a specific product or model, I can check again.";
+  }
+  if (language === "zh-CN") {
+    return product
+      ? `我目前找不到店内有${chineseProductPrefix(product)}${
+        chinesePossessiveParticle(product, "的")
+      }产品资料，所以暂时无法确认有没有售卖。如果你有指定型号，我可以再帮你查。`
+      : "我目前找不到店内相关产品资料，所以暂时无法确认有没有售卖。如果你有指定产品或型号，我可以再帮你查。";
+  }
+  return product
+    ? `我而家搵唔到店內有${chineseProductPrefix(product)}${
+      chinesePossessiveParticle(product, "嘅")
+    }產品資料，所以暫時未能確認有冇售賣。你有指定型號的話，我可以再幫你查。`
+    : "我而家搵唔到店內相關產品資料，所以暫時未能確認有冇售賣。你有指定產品或型號的話，我可以再幫你查。";
+}

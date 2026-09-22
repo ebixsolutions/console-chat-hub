@@ -88,10 +88,10 @@ export function renderBoundedNoCurrentEvidence(
   language: "zh-TW" | "zh-CN" | "en",
 ): string {
   if (language === "zh-CN") {
-    return "我目前没有可核实的当前资料，所以答案是：目前不知道／无法确认。历史资料不能当作当前事实，我也不会猜测。";
+    return "我目前找不到足够的最新资料，所以暂时无法确认。旧资料不会当作当前事实，我也不会猜测。";
   }
   if (language === "en") {
-    return "I do not have verifiable current information, so the bounded answer is: unknown / not currently confirmed. Historical information is not treated as a current fact, and I will not guess.";
+    return "I cannot find enough current information to confirm this yet. I will not treat older information as current or guess the answer.";
   }
-  return "我目前沒有可核實的現行資料，所以答案是：目前不知道／未能確認。歷史資料不能當作目前事實，我也不會猜測。";
+  return "我而家搵唔到足夠嘅現行資料，所以暫時未能確認。舊資料唔會當成現況，我亦唔會估。";
 }

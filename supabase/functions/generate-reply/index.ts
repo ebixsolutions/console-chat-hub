@@ -51,6 +51,13 @@ import {
   NO_CURRENT_EVIDENCE_ROUTE,
   renderBoundedNoCurrentEvidence,
 } from "../_shared/current-fact-evidence.ts";
+import {
+  classifyNaturalCustomerIntent,
+  type NaturalCustomerIntent,
+  renderNaturalImmediateResponse,
+  renderNaturalNoCurrentEvidence,
+  requiresCurrentMerchantEvidence,
+} from "../_shared/natural-customer-response.ts";
 import { evaluateEscalationShadow } from "../_shared/escalation-shadow.ts";
 import {
   persistRequiredEscalationClarification,
@@ -3192,8 +3199,10 @@ async function persistBoundedNoCurrentEvidence(
   plan: ServiceDialoguePlan,
   language: "zh-TW" | "zh-CN" | "en",
   traceMetadata: Record<string, unknown>,
+  naturalIntent: NaturalCustomerIntent = { kind: "none", product: null },
 ): Promise<Response> {
-  const content = renderBoundedNoCurrentEvidence(language);
+  const content = renderNaturalNoCurrentEvidence(naturalIntent, language) ??
+    renderBoundedNoCurrentEvidence(language);
   const metadata = {
     ...traceMetadata,
     response_route: NO_CURRENT_EVIDENCE_ROUTE,
@@ -3245,6 +3254,73 @@ async function persistBoundedNoCurrentEvidence(
       handoff_required: false,
       response_route: NO_CURRENT_EVIDENCE_ROUTE,
       grounding_state: "no_current_evidence",
+      idempotent: committed.idempotent,
+    }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+  );
+}
+
+async function persistNaturalImmediateResponse(
+  supabaseAdmin: SupabaseAdminClient,
+  conversationId: string,
+  sourceMessageId: string | null,
+  intent: NaturalCustomerIntent,
+  language: "zh-TW" | "zh-CN" | "en",
+): Promise<Response | null> {
+  const content = renderNaturalImmediateResponse(intent, language);
+  if (!content) return null;
+  const responseRoute = intent.kind === "greeting"
+    ? "natural_greeting"
+    : "product_shopping_intent";
+  const committed = await commitAiReplyWithControlGate(
+    supabaseAdmin,
+    conversationId,
+    sourceMessageId,
+    content,
+    {
+      response_route: responseRoute,
+      natural_response_contract: "c3-natural-customer-response-v1",
+      natural_intent: intent.kind,
+      product_reference_present: Boolean(intent.product),
+      factual_grounding_required: false,
+      commerce_state_persist_result: "read_only",
+      commerce_state_persistence_classification: "NO_SEMANTIC_CHANGE",
+      handoff_required: false,
+    },
+  );
+  await cleanupThinking(supabaseAdmin, conversationId, sourceMessageId);
+  if (!committed.ok) {
+    if (
+      [
+        "human_control",
+        "resolved",
+        "superseded_source",
+        "source_already_replied",
+      ]
+        .includes(committed.result)
+    ) {
+      return new Response(
+        JSON.stringify({ success: true, skipped: committed.result }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: `natural_response_commit_${committed.result}`,
+      }),
+      {
+        status: 409,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
+  }
+  return new Response(
+    JSON.stringify({
+      success: true,
+      reply: content,
+      response_route: responseRoute,
+      handoff_required: false,
       idempotent: committed.idempotent,
     }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } },
@@ -4148,11 +4224,23 @@ async function orchestrationGenerateReply(
     );
     if (_criticalE2Response) return _criticalE2Response;
   }
+  const _naturalCustomerIntent = classifyNaturalCustomerIntent(_h1LastMsg);
+  const _naturalImmediateResponse = await persistNaturalImmediateResponse(
+    supabaseAdmin,
+    conversation_id,
+    _h1SourceMessageId,
+    _naturalCustomerIntent,
+    _visitorLang,
+  );
+  if (_naturalImmediateResponse) return _naturalImmediateResponse;
   // ===== TASK A3.1: multilingual universal semantic interpreter =====
   // LLM proposes a schema-constrained, language-neutral semantic frame only.
   // It never writes commerce state and never supplies external product/policy facts.
   let _a3SemanticFrame: CommerceSemanticFrame | null = null;
-  if (_criticalE2ExpectedTenantId) {
+  if (
+    _criticalE2ExpectedTenantId &&
+    !requiresCurrentMerchantEvidence(_naturalCustomerIntent)
+  ) {
     try {
       const semanticResult = await interpretCommerceSemantics({
         company_id: _criticalE2ExpectedTenantId,
@@ -4181,7 +4269,10 @@ async function orchestrationGenerateReply(
   let _c3Memory: CanonicalConversationMemory | null = null;
   let _c3MemoryContext = "";
   let _c3CommerceSnapshot: RecallCommerceSnapshot | null = null;
-  if (_criticalE2ExpectedTenantId) {
+  if (
+    _criticalE2ExpectedTenantId &&
+    !requiresCurrentMerchantEvidence(_naturalCustomerIntent)
+  ) {
     try {
       _a3Commerce = await runCommerceStateRuntime(
         supabaseAdmin as unknown as CommerceStateDbClient,
@@ -4340,7 +4431,14 @@ async function orchestrationGenerateReply(
     applyServiceRuntimeDerivation({
       question: _h1LastMsg,
       language: _visitorLang,
-      recall: _c3Recall.decision,
+      recall: requiresCurrentMerchantEvidence(_naturalCustomerIntent) &&
+          !_c3Recall.decision.handled
+        ? {
+          ..._c3Recall.decision,
+          reason: "CURRENT_KB_REQUIRED",
+          detail: "PRODUCT_AVAILABILITY_QUERY",
+        }
+        : _c3Recall.decision,
       memory: _c3Memory,
       commerce: _c3CommerceSnapshot?.state ?? null,
       recent_messages: _c3RecentServiceMessages,
@@ -5240,6 +5338,7 @@ async function orchestrationGenerateReply(
             rag_api_status: "success_empty",
             evidence_decision: _boundedNoCurrentEvidenceDecision.kind,
           },
+          _naturalCustomerIntent,
         );
       }
       const clarification = await attemptFirstNoMatchClarification(
@@ -5414,6 +5513,7 @@ async function orchestrationGenerateReply(
             ...traceMetadata,
             evidence_decision: _boundedNoCurrentEvidenceDecision.kind,
           },
+          _naturalCustomerIntent,
         );
       }
       if (_c1AuthorityDecision?.decision === "CONFLICT_UNRESOLVED") {
@@ -5565,6 +5665,7 @@ async function orchestrationGenerateReply(
             answerability: "missing_full_content_evidence",
             evidence_decision: _boundedNoCurrentEvidenceDecision.kind,
           },
+          _naturalCustomerIntent,
         );
       }
       const clarification = await attemptFirstNoMatchClarification(

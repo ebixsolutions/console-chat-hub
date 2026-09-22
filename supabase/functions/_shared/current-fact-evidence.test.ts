@@ -35,8 +35,9 @@ Deno.test("exact KB current-fact failure becomes bounded unknown without handoff
     "ordinary no-current-evidence must remain under AI control",
   );
   const reply = renderBoundedNoCurrentEvidence("zh-TW");
-  assert(reply.includes("不知道") && reply.includes("未能確認"), reply);
-  assert(reply.includes("歷史資料不能當作目前事實"), reply);
+  assert(reply.includes("搵唔到") && reply.includes("未能確認"), reply);
+  assert(reply.includes("舊資料唔會當成現況"), reply);
+  assert(!reply.includes("答案是") && !reply.includes("bounded"), reply);
   assert(!reply.includes("轉接") && !reply.includes("客服"), reply);
   assert(NO_CURRENT_EVIDENCE_ROUTE === "kb_no_current_evidence", "route");
 });
@@ -145,7 +146,10 @@ Deno.test("true KB operational failure remains eligible for S0", () => {
     query_length: 12,
     rpc_failed: true,
   });
-  assert(failure === "operational_failure", "true failure must remain S0-eligible");
+  assert(
+    failure === "operational_failure",
+    "true failure must remain S0-eligible",
+  );
   assert(
     canonicalTenantScopeFromAuthoritativeCompany(null) === null,
     "missing authoritative scope must not be invented",
