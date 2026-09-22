@@ -23,7 +23,11 @@ import {
   type CommerceStateDbClient,
 } from "./commerce-state-runtime.ts";
 import { createEmptyConversationCommerceState } from "./commerce-state-contract.ts";
-import { isReadOnlyCurrentStateAggregateQuery } from "./commerce-state-authority.ts";
+import {
+  isDeliveryScheduleCurrentFactQuery,
+  isReadOnlyCurrentStateAggregateQuery,
+  isReadOnlyMemoryOrCurrentStateRecall,
+} from "./commerce-state-authority.ts";
 import type { CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 import { planConversationService, renderTargetedServiceQuestion } from "./conversation-service-planner.ts";
 import { buildCanonicalConversationMemory } from "./conversation-long-memory.ts";
@@ -31,6 +35,131 @@ import { buildCanonicalConversationMemory } from "./conversation-long-memory.ts"
 function assert(v: unknown, m = "assertion failed"): asserts v {
   if (!v) throw new Error(m);
 }
+
+Deno.test("C3 captured production T58 resolves known delivery day read-only before clarification", async () => {
+  const committed = createEmptyConversationCommerceState();
+  committed.current_topic = "冷氣送貨";
+  committed.delivery.preferred_date = "星期六";
+  committed.delivery.address = "香港九龍幸福邨B座12樓";
+  committed.delivery.provenance = {
+    source_type: "customer",
+    source_message_id: "58000000-0000-4000-8000-000000000037",
+  };
+  committed.entities.push({
+    entity_id: "air_conditioner:living_room",
+    category: "air_conditioner",
+    quantity: 2,
+    status: "researching",
+    attributes: { room: "living_room" },
+    constraints: {},
+    provenance: {
+      source_type: "customer",
+      source_message_id: "58000000-0000-4000-8000-000000000017",
+    },
+  });
+  committed.metadata = { region: "hong_kong" };
+  const before = JSON.stringify(committed);
+  let rpcCalls = 0;
+  const db: CommerceStateDbClient = {
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          maybeSingle: async () => ({
+            data: {
+              revision: 37,
+              state: committed,
+              source_message_id: "58000000-0000-4000-8000-000000000037",
+            },
+            error: null,
+          }),
+        }),
+      }),
+    }),
+    rpc: async () => {
+      rpcCalls += 1;
+      throw new Error("read-only delivery recall attempted persistence");
+    },
+  };
+  const frame: CommerceSemanticFrame = {
+    version: "commerce-semantic-1.0.0",
+    language: "zh-TW",
+    operation: "ASK_FACT",
+    intent: "read authoritative current delivery schedule",
+    topic: "delivery",
+    entities: [],
+    referents: [],
+    customer_correction: false,
+    additive: false,
+    explicit_negations: [],
+    requested_facts: ["preferred_date"],
+    transaction_state: "none",
+    payment_state: "none",
+    booking_state: "none",
+    fulfillment_state: "none",
+    ambiguity: {
+      is_ambiguous: false,
+      reasons: [],
+      clarification_question: null,
+    },
+    confidence: 0.98,
+  };
+
+  for (const [index, text] of [
+    "送星期幾？",
+    "而家安排邊日送？",
+    "請問配送日期係邊日？",
+    "What is the current delivery day?",
+  ].entries()) {
+    assert(isDeliveryScheduleCurrentFactQuery(text), `delivery fact not detected: ${text}`);
+    assert(isReadOnlyMemoryOrCurrentStateRecall(text, frame), `delivery fact not read-only: ${text}`);
+    const outcome = await runCommerceStateRuntime(db, {
+      conversation_id: "58000000-0000-4000-8000-000000000001",
+      company_id: "58000000-0000-4000-8000-000000000002",
+      source_message_id: `58000000-0000-4000-8000-${String(58 + index).padStart(12, "0")}`,
+      text,
+      language: "zh-TW",
+      semantic_frame: frame,
+    });
+    assert(outcome, `delivery runtime returned no outcome: ${text}`);
+    assert(outcome.authority === "CONVERSATION_STATE", `${text}:${outcome.authority}`);
+    assert(outcome.state_path === "delivery.preferred_date", `${text}:${outcome.state_path}`);
+    assert(outcome.persist_result === "read_only", `${text}:${outcome.persist_result}`);
+    assert(/星期六|週六|周六|Saturday/i.test(outcome.reply ?? ""), `${text}:${outcome.reply}`);
+    assert(!/[?？]/.test(outcome.reply ?? ""), `delivery answer re-asked: ${outcome.reply}`);
+  }
+
+  assert(rpcCalls === 0, `delivery read-only recall wrote ${rpcCalls} times`);
+  assert(JSON.stringify(committed) === before, "delivery recall changed state, scope, entity or provenance");
+});
+
+Deno.test("C3 genuinely missing delivery date remains unresolved and reschedule stays outside recall", async () => {
+  const committed = createEmptyConversationCommerceState();
+  const db: CommerceStateDbClient = {
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          maybeSingle: async () => ({ data: { revision: 4, state: committed }, error: null }),
+        }),
+      }),
+    }),
+    rpc: async () => {
+      throw new Error("missing-date read attempted persistence");
+    },
+  };
+  const outcome = await runCommerceStateRuntime(db, {
+    conversation_id: "58000000-0000-4000-8000-000000000011",
+    company_id: "58000000-0000-4000-8000-000000000012",
+    source_message_id: "58000000-0000-4000-8000-000000000058",
+    text: "送星期幾？",
+    language: "zh-TW",
+  });
+  assert(outcome, "missing-date runtime returned no outcome");
+  assert(outcome.authority === "INSUFFICIENT_INFORMATION", outcome.authority);
+  assert(outcome.reply === null, `missing delivery date fabricated: ${outcome.reply}`);
+  for (const text of ["星期六送貨可唔可以改期？", "取消星期六送貨", "What is the rescheduling policy?"]) {
+    assert(!isDeliveryScheduleCurrentFactQuery(text), `mutation/policy misclassified: ${text}`);
+  }
+});
 
 function authoritativeAddressFrame(customer_correction: boolean): CommerceSemanticFrame {
   return {

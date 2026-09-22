@@ -268,6 +268,26 @@ export function inferCommerceDimensionAttribute(
 }
 
 /**
+ * Shared delivery/schedule current-fact target.  This recognises bounded
+ * read-only questions about the already-authoritative delivery preference;
+ * policy, reschedule and mutation requests stay outside this contract.
+ */
+export function isDeliveryScheduleCurrentFactQuery(question: string): boolean {
+  const text = clean(question);
+  if (!text || explicitCustomerMutation(text)) return false;
+  if (/(?:改期|更改|改做|取消|政策|可唔可以改|能不能改|reschedul|change|cancel|policy)/i.test(text)) {
+    return false;
+  }
+  const interrogative = /[?？]|(?:幾時|几时|何時|何时|邊日|边日|星期幾|星期几|哪天|what|which|when)/i.test(text);
+  const deliveryAndSchedule =
+    /(?:送(?:貨|货)?|配送|派送).{0,12}(?:星期幾|星期几|邊日|边日|哪天|日期|時間|时间|幾時|几时)/i.test(text) ||
+    /(?:星期幾|星期几|邊日|边日|哪天|日期|幾時|几时).{0,12}(?:送(?:貨|货)?|配送|派送)/i.test(text) ||
+    /(?:current\s+)?delivery\s+(?:day|date|time|schedule)|when\s+(?:is|will).{0,12}(?:delivery|deliver)/i.test(text) ||
+    /(?:preferred_date|delivery_preference)/i.test(text);
+  return interrogative && deliveryAndSchedule;
+}
+
+/**
  * Shared READ_ONLY_MEMORY_OR_CURRENT_STATE_RECALL contract. A counted noun in
  * an interrogative/recall utterance is a fact target, never mutation authority.
  * Explicit SET/ADD/CANCEL language remains outside this class.
@@ -296,7 +316,8 @@ export function isReadOnlyMemoryOrCurrentStateRecall(
       /(?:quantity|current_quantity)/i.test(requested));
   const status = /(?:狀態|状态|status|係咪取消|是否取消|仲要|仍然要|still active|cancelled|canceled)/i.test(text) ||
     /(?:status|current_state)/i.test(requested);
-  const currentAttribute = /(?:地址|address|收貨人|收货人|recipient|電話|电话|phone|contact|送(?:貨|货)?.{0,8}(?:星期|邊日|边日|日期|幾時|几时)|delivery\s*(?:day|date)|匹數|匹数|幾匹|几匹|horsepower|\bhp\b|舊機|旧机|舊冷氣|旧空调).*(?:[?？]|呢\s*$)|(?:address|recipient|recipient_phone|preferred_date|horsepower|old_machine_removal_count)/i.test(`${text} ${requested}`);
+  const currentAttribute = isDeliveryScheduleCurrentFactQuery(text) ||
+    /(?:地址|address|收貨人|收货人|recipient|電話|电话|phone|contact|匹數|匹数|幾匹|几匹|horsepower|\bhp\b|舊機|旧机|舊冷氣|旧空调).*(?:[?？]|呢\s*$)|(?:address|recipient|recipient_phone|preferred_date|horsepower|old_machine_removal_count)/i.test(`${text} ${requested}`);
   return (semanticRead || recallLanguage || interrogative) &&
     (quantity || status || currentAttribute) &&
     (recallLanguage || interrogative);
@@ -368,6 +389,12 @@ function inferKnownCustomerStatePath(
   question: string,
   state: ConversationCommerceState,
 ): { path: string; value: unknown } | null {
+  if (isDeliveryScheduleCurrentFactQuery(question)) {
+    const value = getCommerceStatePath(state, "delivery.preferred_date");
+    if (isKnownValue(value)) {
+      return { path: "delivery.preferred_date", value };
+    }
+  }
   const candidates: Array<[RegExp, string]> = [
     [/(?:送貨地址|送货地址|地址|delivery address|address)/i, "delivery.address"],
     [/(?:收貨人電話|收货人电话|recipient phone|contact phone)/i, "delivery.recipient_phone"],
