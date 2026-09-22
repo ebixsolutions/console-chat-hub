@@ -448,6 +448,13 @@ export function buildCanonicalConversationMemory(args: {
     "shipping_address",
     "corrected_delivery_address",
   ]);
+  const deliveryPreferenceKeys = new Set([
+    "delivery_preference",
+    "preferred_date",
+    "preferred_delivery_day",
+    "delivery_day",
+    "delivery_date",
+  ]);
   const commerceAddress = clean(args.commerce_state?.delivery.address, 300);
   const retainedAddress = [...retained.current].reverse().find((fact) =>
     addressKeys.has(clean(fact.key, 120)) && typeof fact.value === "string"
@@ -486,6 +493,22 @@ export function buildCanonicalConversationMemory(args: {
       region: retainedAddress?.region ?? null,
     }
     : null;
+  const commerceDeliveryPreference = clean(
+    args.commerce_state?.delivery.preferred_date,
+    180,
+  );
+  const currentDeliveryPreferenceFact: ConversationMemoryFact | null =
+    commerceDeliveryPreference
+      ? {
+          key: "delivery_preference",
+          value: commerceDeliveryPreference,
+          authority: "canonical_commerce",
+          source_message_id:
+            clean(args.commerce_state?.delivery.provenance?.source_message_id, 80) || null,
+          entity_id: null,
+          region: null,
+        }
+      : null;
   const supersededPriorAddresses = priorAddressFacts
     .filter((fact) => clean(fact.value, 300) && clean(fact.value, 300) !== currentAddress)
     .map((fact) => ({ ...fact, key: "superseded_delivery_address" }));
@@ -508,13 +531,18 @@ export function buildCanonicalConversationMemory(args: {
     ], MAX_CORRECTIONS),
     current_customer_facts: stableFacts([
       ...(prior?.current_customer_facts ?? []).filter((fact) =>
-        !addressKeys.has(clean(fact.key, 120))
+        !addressKeys.has(clean(fact.key, 120)) &&
+        !(currentDeliveryPreferenceFact &&
+          deliveryPreferenceKeys.has(clean(fact.key, 120)))
       ),
       ...requirementFacts,
       ...retained.current.filter((fact) =>
-        !addressKeys.has(clean(fact.key, 120))
+        !addressKeys.has(clean(fact.key, 120)) &&
+        !(currentDeliveryPreferenceFact &&
+          deliveryPreferenceKeys.has(clean(fact.key, 120)))
       ),
       ...(currentAddressFact ? [currentAddressFact] : []),
+      ...(currentDeliveryPreferenceFact ? [currentDeliveryPreferenceFact] : []),
     ], MAX_FACTS),
     customer_preferences: uniqueStrings([
       ...customerPreferences(args.newest_first),

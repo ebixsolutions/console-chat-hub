@@ -36,6 +36,165 @@ function assert(v: unknown, m = "assertion failed"): asserts v {
   if (!v) throw new Error(m);
 }
 
+Deno.test("C3 captured production T58 persists the delivery preference before read-only recall", async () => {
+  let committed = createEmptyConversationCommerceState();
+  let revision = 0;
+  let rpcCalls = 0;
+  const db: CommerceStateDbClient = {
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          maybeSingle: async () => ({
+            data: revision > 0
+              ? { revision, state: structuredClone(committed) }
+              : null,
+            error: null,
+          }),
+        }),
+      }),
+    }),
+    rpc: async (_fn, params) => {
+      rpcCalls += 1;
+      committed = structuredClone(
+        params.p_state as ReturnType<typeof createEmptyConversationCommerceState>,
+      );
+      revision += 1;
+      return { data: { result: "success", applied_revision: revision }, error: null };
+    },
+  };
+  const filler = Array.from(
+    { length: 30 },
+    (_, index) => `之前資料 ${index + 1}`,
+  );
+  const deliveryTurns = [
+    "送貨一般點計？",
+    "我長沙灣，舊樓，不過有lift。",
+    "想冷氣同雪櫃同一日送。",
+    "最好星期五。",
+    "如果我落單後想改星期六得唔得？",
+    "假設今日星期三，原本星期五送，我今晚改星期六，政策上要注意咩？",
+    "算啦，星期六做首選。",
+  ];
+  const allTurns = [...filler, ...deliveryTurns];
+
+  for (let index = filler.length; index < allTurns.length; index += 1) {
+    const text = allTurns[index];
+    await runCommerceStateRuntime(db, {
+      conversation_id: "58000000-0000-4000-8000-000000000101",
+      company_id: "58000000-0000-4000-8000-000000000102",
+      source_message_id: `58000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+      text,
+      language: "zh-TW",
+      history: allTurns.slice(0, index).reverse().map((content) => ({
+        role: "visitor",
+        content,
+      })),
+    });
+  }
+
+  const preferenceSource = "58000000-0000-4000-8000-000000000037";
+  assert(committed.delivery.preferred_date === "星期六", JSON.stringify(committed.delivery));
+  assert(
+    committed.delivery.provenance?.source_message_id === preferenceSource,
+    JSON.stringify(committed.delivery.provenance),
+  );
+
+  const memory = buildCanonicalConversationMemory({
+    conversation_id: "58000000-0000-4000-8000-000000000101",
+    company_id: "58000000-0000-4000-8000-000000000102",
+    source_message_id: preferenceSource,
+    commerce_state_revision: revision,
+    commerce_state: committed,
+    newest_first: allTurns.slice().reverse().map((content, index) => ({
+      id: `58000000-0000-4000-8001-${String(allTurns.length - index).padStart(12, "0")}`,
+      role: "visitor",
+      content,
+    })),
+    visitor_turn_count: allTurns.length,
+    source_created_at: "2026-09-22T00:00:00Z",
+    next_memory_revision: allTurns.length,
+  });
+  const memoryPreference = memory.current_customer_facts.find((fact) =>
+    fact.key === "delivery_preference"
+  );
+  assert(memoryPreference?.value === "星期六", JSON.stringify(memoryPreference));
+  assert(memoryPreference?.authority === "canonical_commerce", JSON.stringify(memoryPreference));
+
+  const beforeRecall = JSON.stringify(committed);
+  const writesBeforeRecall = rpcCalls;
+  const outcome = await runCommerceStateRuntime(db, {
+    conversation_id: "58000000-0000-4000-8000-000000000101",
+    company_id: "58000000-0000-4000-8000-000000000102",
+    source_message_id: "58000000-0000-4000-8000-000000000058",
+    text: "送星期幾？",
+    language: "zh-TW",
+  });
+  assert(outcome?.authority === "CONVERSATION_STATE", JSON.stringify(outcome));
+  assert(outcome?.state_path === "delivery.preferred_date", JSON.stringify(outcome));
+  assert(outcome?.reply === "而家記錄嘅首選送貨日係星期六。", outcome?.reply ?? "missing reply");
+  assert(outcome?.persist_result === "read_only", JSON.stringify(outcome));
+  assert(rpcCalls === writesBeforeRecall, "T58 recall performed a semantic write");
+  assert(JSON.stringify(committed) === beforeRecall, "T58 recall mutated state");
+
+  // Replaying the exact preference source is a semantic no-op and must not
+  // produce a second writer event/revision.
+  const replay = await runCommerceStateRuntime(db, {
+    conversation_id: "58000000-0000-4000-8000-000000000101",
+    company_id: "58000000-0000-4000-8000-000000000102",
+    source_message_id: preferenceSource,
+    text: "算啦，星期六做首選。",
+    language: "zh-TW",
+    history: allTurns.slice(0, -1).reverse().map((content) => ({
+      role: "visitor",
+      content,
+    })),
+  });
+  assert(replay?.persist_result === "no_semantic_change", JSON.stringify(replay));
+  assert(rpcCalls === writesBeforeRecall, "idempotent preference replay wrote again");
+});
+
+Deno.test("C3 delivery preference mutation excludes policy questions and cancellation", () => {
+  const base = createEmptyConversationCommerceState();
+  base.language = "zh-TW";
+  base.delivery.preferred_date = "星期五";
+  const context = [{ role: "visitor", content: "想同一日送貨。" }];
+  const changed = reduceTurn(base, {
+    conversation_id: "58000000-0000-4000-8000-000000000201",
+    company_id: "58000000-0000-4000-8000-000000000202",
+    source_message_id: "58000000-0000-4000-8000-000000000203",
+    text: "改做星期六送貨。",
+    language: "zh-TW",
+    history: context,
+  }, []);
+  assert(changed.delivery.preferred_date === "星期六", JSON.stringify(changed.delivery));
+
+  const corrected = reduceTurn(changed, {
+    conversation_id: "58000000-0000-4000-8000-000000000201",
+    company_id: "58000000-0000-4000-8000-000000000202",
+    source_message_id: "58000000-0000-4000-8000-000000000204",
+    text: "唔要星期六，改星期日送貨。",
+    language: "zh-TW",
+    history: context,
+  }, []);
+  assert(corrected.delivery.preferred_date === "星期日", JSON.stringify(corrected.delivery));
+
+  for (const [index, text] of [
+    "星期日送貨可唔可以改期？",
+    "取消星期日送貨",
+    "What is the rescheduling policy for Sunday delivery?",
+  ].entries()) {
+    const after = reduceTurn(corrected, {
+      conversation_id: "58000000-0000-4000-8000-000000000201",
+      company_id: "58000000-0000-4000-8000-000000000202",
+      source_message_id: `58000000-0000-4000-8000-${String(205 + index).padStart(12, "0")}`,
+      text,
+      language: index === 2 ? "en" : "zh-TW",
+      history: context,
+    }, []);
+    assert(after.delivery.preferred_date === "星期日", `${text}:${JSON.stringify(after.delivery)}`);
+  }
+});
+
 Deno.test("C3 captured production T58 resolves known delivery day read-only before clarification", async () => {
   const committed = createEmptyConversationCommerceState();
   committed.current_topic = "冷氣送貨";

@@ -25,6 +25,7 @@ import {
   type CommerceStateEvent,
   type CommerceTurnEntityHint,
   deriveCommerceEventsFromCustomerTurn,
+  extractDeliveryPreference,
   parseAddressReplacementCorrection,
   reduceCommerceState,
 } from "./commerce-state-reducer.ts";
@@ -1179,9 +1180,21 @@ function deriveA3RuntimeEvents(
     });
   }
 
-  const weekday = text.match(/(星期[一二三四五六日天]|週[一二三四五六日天]|周[一二三四五六日天]|monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i)?.[1];
-  const deliveryContext = (input.history ?? []).slice(-MAX_HISTORY_TURNS).some((turn) => /(?:送貨|送货|配送|delivery|deliver)/i.test(turn.content));
-  if (weekday && deliveryContext && !/[?？]/.test(text)) events.push({ type: "SET_DELIVERY", patch: { preferred_date: weekday }, provenance });
+  // generate-reply supplies newest-first history.  Reading the tail here used
+  // the oldest turns and dropped the immediately preceding delivery context in
+  // long conversations (captured production T058).  Keep the bounded newest
+  // window and let the shared extractor reject questions/policy/cancellation.
+  const deliveryContext = (input.history ?? []).slice(0, MAX_HISTORY_TURNS).some((turn) =>
+    /(?:送貨|送货|配送|派送|delivery|deliver)/i.test(turn.content)
+  );
+  const preferredDeliveryDate = extractDeliveryPreference(text, deliveryContext);
+  if (preferredDeliveryDate) {
+    events.push({
+      type: "SET_DELIVERY",
+      patch: { preferred_date: preferredDeliveryDate },
+      provenance,
+    });
+  }
 
   const horsepower = [...text.matchAll(/(\d+(?:\.\d+)?)\s*匹/gi)].map((match) => `${match[1]}匹`);
   if (horsepower.length > 0 && !/[?？]/.test(text)) {
@@ -1661,6 +1674,11 @@ function buildKnownStateAnswer(language: CommerceLanguage, statePath: string, va
     if (answer) return answer;
   }
   const rendered = typeof value === "object" ? JSON.stringify(value) : clean(String(value), 300);
+  if (statePath === "delivery.preferred_date") {
+    if (language === "en") return `Your recorded preferred delivery day is ${rendered}.`;
+    if (language === "zh-CN") return `目前记录的首选送货日期是${rendered}。`;
+    return `而家記錄嘅首選送貨日係${rendered}。`;
+  }
   if (language === "en") return `From what you already told me: ${rendered}.`;
   if (language === "zh-CN") return `按你之前提供的资料：${rendered}。`;
   return `按你之前提供嘅資料：${rendered}。`;

@@ -496,6 +496,33 @@ export function applyAddressReplacementCorrection(
   return clean(`${prefix}${current}${suffix}`, 300);
 }
 
+/**
+ * Extracts an explicit customer delivery-day preference without treating a
+ * question, policy enquiry, or cancellation as mutation authority.  Elliptical
+ * turns such as "星期六做首選" require a delivery context supplied by the
+ * caller; self-contained delivery statements do not.
+ */
+export function extractDeliveryPreference(
+  value: string,
+  hasDeliveryContext = false,
+): string | null {
+  const text = clean(value, 500);
+  if (!text || /[?？]/.test(text)) return null;
+  if (/(?:政策|規則|规则|可唔可以改|能不能改|可否更改|reschedul(?:e|ing)\s+policy|change\s+policy)/i.test(text)) {
+    return null;
+  }
+  const dates = [...text.matchAll(
+    /(星期[一二三四五六日天]|週[一二三四五六日天]|周[一二三四五六日天]|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d{4}-\d{2}-\d{2})/gi,
+  )].map((match) => match[1]);
+  const date = dates.at(-1);
+  if (!date) return null;
+  const directDelivery = /(?:送貨|送货|配送|派送|delivery|deliver|appointment|預約|预约)/i.test(text);
+  const preferenceMutation = /(?:最好|首選|首选|優先|优先|偏好|希望|安排|定(?:喺|在|於|于)?|改(?:做|成|為|为)|prefer(?:red)?|make\s+it|set\s+it)/i.test(text);
+  const cancellation = /(?:取消|唔要|不要|撤銷|撤销|cancel|remove)/i.test(text);
+  if (cancellation && dates.length === 1 && !preferenceMutation) return null;
+  return directDelivery || (hasDeliveryContext && preferenceMutation) ? date : null;
+}
+
 function explicitDeliveryPatch(text: string): Partial<ConversationCommerceState["delivery"]> | null {
   const patch: Partial<ConversationCommerceState["delivery"]> = {};
   const phone = text.match(/(?:電話|电话|phone|contact)[^\d+]{0,40}([+\d][\d\s-]{6,20})/i);
@@ -505,8 +532,8 @@ function explicitDeliveryPatch(text: string): Partial<ConversationCommerceState[
   const replacement = parseAddressReplacementCorrection(text);
   const address = text.match(/(?:地址|送貨地址|送货地址|delivery address)\s*(?:係|是|=|:|：)?\s*([^。!?！？]{3,180})/i);
   if (!replacement && address?.[1]) patch.address = address[1].trim();
-  const date = text.match(/(?:送貨|送货|delivery|deliver|appointment|預約|预约).{0,20}(星期[一二三四五六日天]|週[一二三四五六日天]|周[一二三四五六日天]|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d{4}-\d{2}-\d{2})/i);
-  if (date?.[1]) patch.preferred_date = date[1];
+  const preferredDate = extractDeliveryPreference(text);
+  if (preferredDate) patch.preferred_date = preferredDate;
   return Object.keys(patch).length ? patch : null;
 }
 
