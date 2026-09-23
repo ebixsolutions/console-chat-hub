@@ -24,6 +24,20 @@ const assert: (value: unknown, message: string) => asserts value = (
 const forbidden =
   /你今次最想完成哪一件事|根據這段對話已有的資料|canonical|bounded answer|knowledge-base lookup/i;
 
+Deno.test("C3 greeting classifier renders natural zh-TW greeting without swallowing product intent", () => {
+  for (const text of ["Hi", "你好", "早晨", "Hi / 你好", "Hello，早晨"]) {
+    const intent = classifyNaturalCustomerIntent(text);
+    assert(intent.kind === "greeting", `${text}:${JSON.stringify(intent)}`);
+    assert(
+      renderNaturalImmediateResponse(intent, "zh-TW") === "你好！有咩可以幫你？",
+      text,
+    );
+  }
+  const text = "Hi，想問冷氣，兩間房加個廳，唔知買咩匹數好";
+  const intent = classifyNaturalCustomerIntent(text);
+  assert(intent.kind === "product_guidance", `${text}:${JSON.stringify(intent)}`);
+});
+
 Deno.test("C3 natural-response 8 killer contract preserves shared precedence", () => {
   const availability = classifyNaturalCustomerIntent("你有沒有 iPhone?");
   assert(
