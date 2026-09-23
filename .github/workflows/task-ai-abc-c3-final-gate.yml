@@ -785,6 +785,7 @@ jobs:
             cat > "$expected" <<'EOF'
           .github/scripts/c3_deterministic_runtime_closure.mjs
           .github/scripts/c3_deterministic_runtime_closure.test.mjs
+          .github/scripts/c3_canonical_103_source_replay.ts
           .github/scripts/task_ai_abc_c3_final_gate.mjs
           .github/workflows/task-ai-abc-c3-final-gate.yml
           supabase/functions/_shared/conversation-recall.integration.test.ts
@@ -792,7 +793,7 @@ jobs:
             git diff --name-only "$w4_preflight_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
             LC_ALL=C sort -o "$expected" "$expected"
             diff -u "$expected" "$actual"
-            test "$(git rev-list --count "$w4_preflight_base..$GITHUB_SHA")" -eq 3
+            test "$(git rev-list --count "$w4_preflight_base..$GITHUB_SHA")" -eq 4
             test -z "$(git diff --name-only "$w4_preflight_base..$GITHUB_SHA" -- 'supabase/functions/**' ':!supabase/functions/_shared/conversation-recall.integration.test.ts' 'supabase/migrations/**')"
             grep -q 'FORBIDDEN_MODEL_REMOTE' .github/scripts/c3_deterministic_runtime_closure.mjs
             grep -q 'dead-model.ts' .github/scripts/c3_deterministic_runtime_closure.test.mjs

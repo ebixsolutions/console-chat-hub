@@ -372,7 +372,19 @@ for (let index = 0; index < fixture.turns.length; index++) {
   if (capturedProductionFailureTurns.has(turn)) {
     if (turn === 1) {
       assert(Boolean(naturalGuidanceReply), "turn_1_natural_guidance_missing");
-      assert(reply === naturalGuidanceReply, "turn_1_natural_guidance_not_selected");
+      const contextualGuidanceSelected =
+        outcome?.route === "product_guidance" &&
+        resolution.bypass_service_plan &&
+        reply === outcome.reply;
+      assert(
+        reply === naturalGuidanceReply || contextualGuidanceSelected,
+        "turn_1_product_guidance_not_selected",
+      );
+      assert(route === "product_guidance", "turn_1_product_guidance_route_missing");
+      assert(
+        /(?:面積|日照|窗口|安裝)/.test(reply),
+        "turn_1_useful_sizing_question_missing",
+      );
     } else {
       assert(Boolean(outcome?.reply), `turn_${turn}_captured_envelope_missing_runtime_reply:${JSON.stringify(outcome)}`);
       assert(resolution.bypass_service_plan, `turn_${turn}_clarification_precedence_regression`);
