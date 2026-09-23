@@ -180,6 +180,7 @@ import {
   classifyCommerceStatePersistenceResult,
   executeB2PersistenceGate,
   type B2KbPriceProof,
+  type B2TrustedTargetedClarification,
 } from "../_shared/pre-send-conversion-supervisor.ts";
 import { resolveCanonicalCommerceResolution } from "../_shared/conversation-resolution-contract.ts";
 import { readExactAiReplyCommit } from "../_shared/authoritative-commit-readback.ts";
@@ -629,6 +630,7 @@ async function executeB2RpcPersistence<T>(
     persistence_kind: B2PersistenceKind;
     metadata?: Record<string, unknown> | null;
     trusted_kb_price_proof?: B2KbPriceProof | null;
+    trusted_targeted_clarification?: B2TrustedTargetedClarification | null;
     expected_commerce_state_revision?: number | null;
   },
   commit: () => Promise<T>,
@@ -647,6 +649,7 @@ async function commitAiReplyWithControlGate(
   content: string,
   metadata: Record<string, unknown> | null = null,
   trustedKbPriceProof: B2KbPriceProof | null = null,
+  trustedTargetedClarification: B2TrustedTargetedClarification | null = null,
 ): Promise<
   | { ok: true; message_id: string | null; idempotent: boolean }
   | {
@@ -691,6 +694,7 @@ async function commitAiReplyWithControlGate(
       persistence_kind: "ai_reply",
       metadata: b2CommitEvidence,
       trusted_kb_price_proof: trustedKbPriceProof,
+      trusted_targeted_clarification: trustedTargetedClarification,
       expected_commerce_state_revision: expectedRevision,
     },
     async () =>
@@ -4637,6 +4641,16 @@ async function orchestrationGenerateReply(
         correction_source_message_id:
           _c3ResolvedAddressCorrection?.source_message_id ?? null,
       },
+      null,
+      _a3Commerce?.reason === "contextual_targeted_clarification" &&
+          _a3Commerce.persist_result === "read_only" &&
+          _a3Commerce.contextual_decision
+        ? {
+          reply: _a3Commerce.reply ?? "",
+          revision: _a3Commerce.revision,
+          contextual_decision: _a3Commerce.contextual_decision,
+        }
+        : null,
     );
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     if (commerceCommit.ok) {

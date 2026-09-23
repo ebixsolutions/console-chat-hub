@@ -16,6 +16,7 @@ import {
 } from "./commerce-state-contract.ts";
 import { parseAddressReplacementCorrection } from "./commerce-state-reducer.ts";
 import { currentKbSellingPrice, exactKbModelIds } from "./canonical-kb-direct-answer.ts";
+import type { ContextualDecision } from "./contextual-customer-update.ts";
 
 export type B2DecisionKind = "allow" | "block" | "indeterminate";
 
@@ -53,6 +54,14 @@ export interface B2EvaluationInput {
   metadata?: Record<string, unknown> | null;
   /** Private server-side evidence, never accepted from a customer request or persisted. */
   trusted_kb_price_proof?: B2KbPriceProof | null;
+  /** Private result from the server Commerce runtime, never request metadata. */
+  trusted_targeted_clarification?: B2TrustedTargetedClarification | null;
+}
+
+export interface B2TrustedTargetedClarification {
+  reply: string;
+  revision: number;
+  contextual_decision: ContextualDecision;
 }
 
 export interface B2KbPriceProof {
@@ -93,6 +102,7 @@ export interface B2PersistenceInput<T> {
   persistence_kind: B2PersistenceKind;
   metadata?: Record<string, unknown> | null;
   trusted_kb_price_proof?: B2KbPriceProof | null;
+  trusted_targeted_clarification?: B2TrustedTargetedClarification | null;
   expected_commerce_state_revision?: number | null;
   commit: () => Promise<T>;
 }
@@ -617,6 +627,30 @@ function evaluateKnownContext(text: string, state: ConversationCommerceState): B
   return null;
 }
 
+function isTrustedTargetedReadOnlyClarification(input: B2EvaluationInput, draft: string): boolean {
+  const proof = input.trusted_targeted_clarification;
+  const metadata = input.metadata;
+  if (!proof || !isRecord(metadata) || input.persistence_kind !== "ai_reply") return false;
+  const decision = proof.contextual_decision;
+  return metadata.response_route === "commerce_state_answer" &&
+    metadata.commerce_reason === "contextual_targeted_clarification" &&
+    metadata.commerce_state_persist_result === "read_only" &&
+    metadata.commerce_state_persistence_classification === "NO_SEMANTIC_CHANGE" &&
+    metadata.commerce_state_revision === input.snapshot.commerce_state_revision &&
+    proof.revision === input.snapshot.commerce_state_revision &&
+    decision.route === "targeted_clarification" && decision.updates.length === 0 &&
+    JSON.stringify(metadata.contextual_decision) === JSON.stringify(decision) &&
+    clean(proof.reply) === draft && clean(decision.reply) === draft &&
+    !metadata.commerce_state_path && !metadata.commerce_state_readback_proof &&
+    !metadata.commerce_calculation && !metadata.correction_resolution &&
+    !metadata.correction_operation && !metadata.correction_source_message_id &&
+    !ORDER_CONFIRMED.test(draft) && !PAYMENT_COMPLETED.test(draft) &&
+    !DELIVERY_CONFIRMED.test(draft) && !DELIVERY_COMPLETED.test(draft) &&
+    !INSTALLATION_CONFIRMED.test(draft) && !INSTALLATION_COMPLETED.test(draft) &&
+    !GENERIC_COMPLETION.test(draft) && !CURRENT_PRICE_CLAIM.test(draft) &&
+    extractMoneyMentions(draft).length === 0;
+}
+
 interface CorrectionPair {
   previous: string;
   current: string;
@@ -791,14 +825,17 @@ export function evaluateB2BeforeCommit(input: B2EvaluationInput): B2Decision {
   const authoritativeNoSemanticChange =
     correctionDecision?.decision === "indeterminate" &&
     classifyB2AuthoritativePersistence(input) === "NO_SEMANTIC_CHANGE";
+  const trustedTargetedClarification = isTrustedTargetedReadOnlyClarification(input, draft);
   return (
     (authoritativeNoSemanticChange ? null : correctionDecision) ??
     evaluateCancellation(draft, state) ??
     (kbPriceDecision ? null : evaluateQuoteReality(draft, state, input)) ??
     evaluateTransactionReality(draft, input.persistence_kind, state) ??
-    evaluateKnownContext(draft, state) ?? {
+    (trustedTargetedClarification ? null : evaluateKnownContext(draft, state)) ?? {
       decision: "allow",
-      code: kbPriceDecision?.code ?? (authoritativeNoSemanticChange
+      code: kbPriceDecision?.code ?? (trustedTargetedClarification
+        ? "B2_ALLOW_TARGETED_READ_ONLY_CLARIFICATION"
+        : authoritativeNoSemanticChange
         ? "B2_ALLOW_NO_SEMANTIC_CHANGE_AFTER_AUTHORITATIVE_READBACK"
         : "B2_ALLOW"),
     }
@@ -1025,6 +1062,7 @@ export async function executeB2PersistenceGate<T>(
       snapshot: initial.snapshot,
       metadata: input.metadata ? structuredClone(input.metadata) : input.metadata,
       trusted_kb_price_proof: input.trusted_kb_price_proof,
+      trusted_targeted_clarification: input.trusted_targeted_clarification,
     });
   } catch (error) {
     decision = {

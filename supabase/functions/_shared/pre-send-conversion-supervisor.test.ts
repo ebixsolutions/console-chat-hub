@@ -304,6 +304,80 @@ Deno.test("B2 blocks asking for known quote and installation facts", () => {
   );
 });
 
+Deno.test("B2 T1-T5: bounded server Commerce clarification skips only known-context alias", async () => {
+  const reply = "你講緊邊種產品？請確認有幾間房同幾個客廳要各一部。";
+  const contextualDecision = {
+    route: "targeted_clarification" as const,
+    reason: "SCOPE_CONTEXT_MISSING",
+    reply,
+    updates: [] as [],
+  };
+  const proof = { reply, revision: 0, contextual_decision: contextualDecision };
+  const metadata = {
+    response_route: "commerce_state_answer",
+    commerce_reason: "contextual_targeted_clarification",
+    commerce_state_revision: 0,
+    commerce_state_persist_result: "read_only",
+    commerce_state_persistence_classification: "NO_SEMANTIC_CHANGE",
+    contextual_decision: contextualDecision,
+    commerce_state_path: null,
+    commerce_state_readback_proof: null,
+  };
+  const empty = createEmptyConversationCommerceState();
+  const input = {
+    proposed_response: reply,
+    persistence_kind: "ai_reply" as const,
+    snapshot: snapshot(empty, 0),
+    metadata,
+    trusted_targeted_clarification: proof,
+  };
+  assertEquals(evaluateB2BeforeCommit(input).code, "B2_ALLOW_TARGETED_READ_ONLY_CLARIFICATION", "T1 B2 allow");
+  let commits = 0;
+  const result = await executeB2PersistenceGate({
+    client: new MockClient({ state: null }),
+    conversation_id: CONVERSATION_ID,
+    source_message_id: SOURCE_ID,
+    proposed_response: reply,
+    persistence_kind: "ai_reply",
+    metadata,
+    trusted_targeted_clarification: proof,
+    expected_commerce_state_revision: 0,
+    commit: async () => { commits++; return "ai_reply_only"; },
+  });
+  assert(result.committed, "T1 should commit only the AI reply");
+  assertEquals(result.decision.code, "B2_ALLOW_TARGETED_READ_ONLY_CLARIFICATION", "T1 revalidated decision");
+  assertEquals(result.snapshot.commerce_state_revision, 0, "T1 revision zero");
+  assertEquals(result.snapshot.state.entities.length, 0, "T1 no entity creation");
+  assertEquals(commits, 1, "T1 reply commit count");
+  console.log("T1|" + reply + "|B2_ALLOW_TARGETED_READ_ONLY_CLARIFICATION|revision=0|entities=0");
+
+  assertEquals(evaluateB2BeforeCommit({ ...input, trusted_targeted_clarification: null }).code,
+    "KNOWN_CONTEXT_RECONFIRMATION", "T2 metadata alone must not exempt");
+  console.log("T2|KNOWN_CONTEXT_RECONFIRMATION");
+
+  const unsafe = (changed: string) => ({
+    ...input,
+    proposed_response: changed,
+    metadata: { ...metadata, contextual_decision: { ...contextualDecision, reply: changed } },
+    trusted_targeted_clarification: {
+      ...proof, reply: changed,
+      contextual_decision: { ...contextualDecision, reply: changed },
+    },
+  });
+  assertEquals(evaluateB2BeforeCommit(unsafe("請確認有幾間房；訂單已確認。")).code,
+    "ORDER_CONFIRMATION_NOT_PROVEN", "T3 transaction guard remains");
+  console.log("T3|ORDER_CONFIRMATION_NOT_PROVEN");
+  assertEquals(evaluateB2BeforeCommit(unsafe("請確認有幾間房；目前售價 HK$6,980。")).code,
+    "CURRENT_QUOTE_NOT_PROVEN", "T4 price guard remains");
+  console.log("T4|CURRENT_QUOTE_NOT_PROVEN");
+  assertEquals(evaluateB2BeforeCommit({
+    ...input, proposed_response: "Can you confirm the order status?",
+    snapshot: snapshot(stateFixture()), metadata: null,
+    trusted_targeted_clarification: null,
+  }).code, "KNOWN_CONTEXT_RECONFIRMATION", "T5 ordinary known re-ask blocked");
+  console.log("T5|KNOWN_CONTEXT_RECONFIRMATION");
+});
+
 Deno.test("B2 correction priority blocks a superseded value", () => {
   const state = stateFixture();
   state.latest_corrections = ["不是 3 部而是 2 部"];
