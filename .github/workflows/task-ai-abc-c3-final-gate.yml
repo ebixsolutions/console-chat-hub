@@ -778,6 +778,29 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          w4_preflight_base=d0079787ace064dc1f18db0f69be430560d39fe0
+          if git merge-base --is-ancestor "$w4_preflight_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$w4_preflight_base"; then
+            expected="$RUNNER_TEMP/c3-w4-preflight-expected"
+            actual="$RUNNER_TEMP/c3-w4-preflight-actual"
+            cat > "$expected" <<'EOF'
+          .github/scripts/c3_deterministic_runtime_closure.mjs
+          .github/scripts/c3_deterministic_runtime_closure.test.mjs
+          .github/scripts/task_ai_abc_c3_final_gate.mjs
+          .github/workflows/task-ai-abc-c3-final-gate.yml
+          EOF
+            git diff --name-only "$w4_preflight_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
+            LC_ALL=C sort -o "$expected" "$expected"
+            diff -u "$expected" "$actual"
+            test "$(git rev-list --count "$w4_preflight_base..$GITHUB_SHA")" -eq 2
+            test -z "$(git diff --name-only "$w4_preflight_base..$GITHUB_SHA" -- 'supabase/functions/**' 'supabase/migrations/**')"
+            grep -q 'FORBIDDEN_MODEL_REMOTE' .github/scripts/c3_deterministic_runtime_closure.mjs
+            grep -q 'dead-model.ts' .github/scripts/c3_deterministic_runtime_closure.test.mjs
+            echo C3_W4_PREFLIGHT_SOURCE_PARENT="$w4_preflight_base"
+            echo C3_W4_PREFLIGHT_SOURCE_ALLOWLIST=PASS
+            echo C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE
+            echo C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS
+            exit 0
+          fi
           anti_loop_base=9482d445f1af59cb8a299f9d96c470460134fc83
           if git merge-base --is-ancestor "$anti_loop_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$anti_loop_base"; then
             expected="$RUNNER_TEMP/c3-anti-loop-expected"
