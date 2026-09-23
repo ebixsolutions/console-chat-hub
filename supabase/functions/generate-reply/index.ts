@@ -111,6 +111,10 @@ import {
 import type { ReferenceAuthorityDecision } from "../_shared/commerce-state-authority.ts";
 import { buildCitationMetadata } from "../_shared/citation-lineage.ts";
 import {
+  resolveCanonicalKbDirectAnswer,
+  type CanonicalKbDirectAnswer,
+} from "../_shared/canonical-kb-direct-answer.ts";
+import {
   buildInheritedTransformCitationMetadata,
   buildPriorGroundedTransformBlock,
   buildPriorGroundedTransformGenerationSystem,
@@ -5157,6 +5161,7 @@ async function orchestrationGenerateReply(
   const _pr5P1Signals = validateP1PredictionSignals(_pr5P1Input);
 
   let finalPromptChunks: KBFullChunk[] = [];
+  let _canonicalKbDirectAnswer: CanonicalKbDirectAnswer | null = null;
   let _c1AuthorityDecision: ReferenceAuthorityDecision | null = null;
   let _c1CurrentTarget: CurrentGroundingTarget | null = null;
   let _kbDone = false;
@@ -5751,6 +5756,11 @@ async function orchestrationGenerateReply(
       : undefined;
 
     finalPromptChunks = usableFullContent;
+    _canonicalKbDirectAnswer = resolveCanonicalKbDirectAnswer({
+      request: _h1LastMsg,
+      selection: _groundingSelection,
+      language: _visitorLang,
+    });
     _kbDone = true;
   }
   if (!flags.ENABLE_KB || _g1SkipKB) _kbDone = true;
@@ -5891,6 +5901,43 @@ async function orchestrationGenerateReply(
       _h1LastMsg,
     );
     if (r1Response) return r1Response;
+  }
+
+  if (_canonicalKbDirectAnswer && _c1AuthorityDecision && _c1CurrentTarget &&
+    !_priorGroundedTransform) {
+    const citation = buildCitationMetadata(
+      _canonicalKbDirectAnswer.evidence_chunks,
+      ragResult?.llm_context?.selected_document_id ?? null,
+      { authorityDecision: _c1AuthorityDecision, currentTarget: _c1CurrentTarget },
+    );
+    // No answer without exact source and chunk lineage.
+    if (citation) {
+      const route = "canonical_kb_direct_answer";
+      const committed = await commitAiReplyWithControlGate(
+        supabaseAdmin,
+        conversation_id,
+        source_message_id,
+        _canonicalKbDirectAnswer.reply,
+        {
+          ...citation,
+          reference_authority: referenceAuthorityMetadata(_c1AuthorityDecision),
+          response_route: route,
+          answer_kind: _canonicalKbDirectAnswer.kind,
+          rag_api_status: "success",
+        },
+      );
+      await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+      if (!committed.ok) {
+        if (["human_control", "resolved", "superseded_source"].includes(committed.result)) {
+          return new Response(JSON.stringify({ success: true, skipped: committed.result }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+        return new Response(JSON.stringify({ success: false, error: `canonical_kb_direct_answer_commit_${committed.result}` }),
+          { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ success: true, response_route: route, idempotent: committed.idempotent }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
   }
 
   if (Deno.env.get("ESC_SHADOW_MODE") === "true") {
