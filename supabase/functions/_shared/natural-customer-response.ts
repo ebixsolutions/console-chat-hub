@@ -43,7 +43,13 @@ export function classifyProductFactualQuery(text: string): Extract<NaturalCustom
 }
 
 export function isProductSupportProblem(text: string): boolean {
-  return /(?:開唔到機|开不了机|開不了機|不能開機|无法开机|唔著|故障|維修|维修|壞咗|坏了|損壞|损坏|缺少功能|缺失功能|功能失效|兼容問題|兼容问题|相容問題|賣家投訴|卖家投诉|not\s+working|malfunction|broken|damaged|missing\s+(?:advertised\s+)?(?:features?|parts?)|compatibility\s+issue|seller\s+(?:problem|complaint)|product\s+support)/i.test(text);
+  return isProductOperationFailure(text) ||
+    /(?:故障|維修|维修|壞咗|坏了|損壞|损坏|缺少功能|缺失功能|功能失效|兼容問題|兼容问题|相容問題|賣家投訴|卖家投诉|malfunction|broken|damaged|missing\s+(?:advertised\s+)?(?:features?|parts?)|compatibility\s+issue|seller\s+(?:problem|complaint)|product\s+support)/i.test(text);
+}
+
+/** A reported operating failure, distinct from a question about product features. */
+export function isProductOperationFailure(text: string): boolean {
+  return /(?:開唔到機|开不了机|開不了機|不能開機|无法开机|唔著|(?:機|机|產品|产品).{0,8}(?:開唔到|开不了|唔著)|not\s+working|won['’]?t\s+(?:start|turn\s+on)|(?:does\s+not|doesn['’]?t)\s+turn\s+on)/i.test(text);
 }
 
 function chineseProductPrefix(product: string): string {

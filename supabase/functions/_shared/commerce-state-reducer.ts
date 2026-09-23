@@ -364,11 +364,13 @@ function detectEntityStatus(text: string): CommerceEntityStatus | null {
 }
 
 function detectFunnel(text: string): { funnel_stage?: CommerceFunnelStage; quotation_status?: CommerceQuotationStatus; order_status?: CommerceOrderStatus; payment_status?: CommercePaymentStatus } | null {
-  if (/(?:已付款|已付|paid\b)/i.test(text)) return { funnel_stage: "order_confirmed", order_status: "confirmed", payment_status: "paid" };
-  if (/(?:正式落單|正式下单|confirm(?:ed)? order|order confirmed)/i.test(text)) return { funnel_stage: "order_confirmed", order_status: "confirmed" };
+  // A negated transaction phrase contains the same positive words. Classify
+  // the bounded negation first so a quotation never confirms an order.
   if (/(?:未\s*(?:confirm|確認|确认).{0,16}(?:正式)?(?:order|落單|落单|下單|下单)|未正式落單|未正式下单|唔好.{0,12}當.{0,8}(?:正式)?(?:order|落單|落单|訂單|订单)|唔係正式落單|不是正式下单|not (?:a )?confirmed order|quotation\s*(?:only|咋|而已)|quote\s*only|(?:只係|只是|淨係|净是)?\s*(?:報價|报价)\s*(?:咋|啫|而已|only)?)/i.test(text)) {
     return { funnel_stage: "quotation", quotation_status: "draft", order_status: "draft", payment_status: "pending_quote" };
   }
+  if (/(?:已付款|已付|paid\b)/i.test(text)) return { funnel_stage: "order_confirmed", order_status: "confirmed", payment_status: "paid" };
+  if (/(?:正式落單|正式下单|confirm(?:ed)? order|order confirmed)/i.test(text)) return { funnel_stage: "order_confirmed", order_status: "confirmed" };
   if (/(?:準備落單|准备下单|ready to order|準備下單|准备落单)/i.test(text)) return { funnel_stage: "checkout_ready", order_status: "pending_confirmation" };
   if (/(?:報價|报价|quotation|quote)/i.test(text)) return { funnel_stage: "quotation", quotation_status: "draft" };
   return null;

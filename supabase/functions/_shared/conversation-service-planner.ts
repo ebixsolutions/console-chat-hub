@@ -8,7 +8,7 @@
  */
 import type { ConversationCommerceState } from "./commerce-state-contract.ts";
 import type { CanonicalConversationMemory } from "./conversation-long-memory.ts";
-import { isProductSupportProblem } from "./natural-customer-response.ts";
+import { exactProductIdentifiers, isProductOperationFailure, isProductSupportProblem } from "./natural-customer-response.ts";
 
 export type ServiceLanguage = "zh-TW" | "zh-CN" | "en";
 export type ServiceKnowledgeState =
@@ -37,6 +37,7 @@ export type ServiceIssueKind =
   | "refund_or_product_quality"
   | "delivery_or_collection"
   | "stock_or_store_availability"
+  | "product_operation_failure"
   | "marketplace_or_product_support"
   | "general_customer_issue";
 
@@ -383,6 +384,7 @@ function classifyCustomerIssue(question: string): ServiceIssueKind | null {
   const text = clean(question, 2400);
   const productProblem = isProductSupportProblem(text);
   if (text.length < 24 && !productProblem) return null;
+  if (isProductOperationFailure(text)) return "product_operation_failure";
   if (
     /(?:password|login|log in|sign in|reset email|account access|密碼|密码|登入|登錄|登录|重設電郵|重置邮件)/i
       .test(text)
@@ -833,7 +835,16 @@ export function renderServicePlanReply(
     return renderContextualServiceReply(plan, l);
   }
   if (plan.action === "customer_issue_next_step" && plan.issue_kind) {
-    const responses: Record<ServiceIssueKind, [string, string, string]> = {
+    if (plan.issue_kind === "product_operation_failure") {
+      const models = exactProductIdentifiers(plan.customer_turn ?? "");
+      const subject = models.length === 1 ? models[0] : null;
+      return l === 2
+        ? `I understand ${subject ? `${subject} ` : "the product "}does not turn on. Does it show any indicator light or error message when you try to start it?`
+        : l === 1
+        ? `你提到${subject ? ` ${subject} ` : "产品"}无法开机。尝试开机时有显示灯或错误提示吗？`
+        : `你提到${subject ? ` ${subject} ` : "部機"}開唔到機。試開機時有冇燈號或錯誤提示？`;
+    }
+    const responses: Record<Exclude<ServiceIssueKind, "product_operation_failure">, [string, string, string]> = {
       account_access: [
         "我明白你遇到帳戶登入或重設問題。目前我看不到帳戶或電郵派送狀態；請先檢查垃圾郵件，並提供電郵網域（毋須提供完整地址或密碼），以便核對下一步。",
         "我明白你遇到账户登录或重置问题。目前我看不到账户或邮件发送状态；请先检查垃圾邮件，并提供邮箱域名（无需提供完整地址或密码），以便核对下一步。",

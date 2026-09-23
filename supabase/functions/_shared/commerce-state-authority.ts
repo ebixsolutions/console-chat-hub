@@ -317,7 +317,7 @@ export function isReadOnlyMemoryOrCurrentStateRecall(
   const status = /(?:狀態|状态|status|係咪取消|是否取消|仲要|仍然要|still active|cancelled|canceled)/i.test(text) ||
     /(?:status|current_state)/i.test(requested);
   const currentAttribute = isDeliveryScheduleCurrentFactQuery(text) ||
-    /(?:地址|address|收貨人|收货人|recipient|電話|电话|phone|contact|匹數|匹数|幾匹|几匹|horsepower|\bhp\b|舊機|旧机|舊冷氣|旧空调).*(?:[?？]|呢\s*$)|(?:address|recipient|recipient_phone|preferred_date|horsepower|old_machine_removal_count)/i.test(`${text} ${requested}`);
+    /(?:地址|address|收貨人|收货人|recipient|電話|电话|phone|contact|匹數|匹数|幾匹|几匹|horsepower|\bhp\b|舊機|旧机).*(?:[?？]|呢\s*$)|(?:address|recipient|recipient_phone|preferred_date|horsepower|old_machine_removal_count)/i.test(`${text} ${requested}`);
   return (semanticRead || recallLanguage || interrogative) &&
     (quantity || status || currentAttribute) &&
     (recallLanguage || interrogative);

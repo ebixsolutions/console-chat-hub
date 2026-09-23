@@ -99,10 +99,27 @@ Deno.test("P5 actual product malfunction remains a support case", () => {
   const plan = planConversationService({ question, language: "zh-TW",
     recall: { handled: false, reason: "NOT_A_RECALL_QUERY" }, memory: null, commerce: null });
   assert(intent.kind === "none" && !requiresCurrentMerchantEvidence(intent), `P5:intent:${JSON.stringify(intent)}`);
-  assert(plan.action === "customer_issue_next_step" && plan.issue_kind === "marketplace_or_product_support", `P5:${JSON.stringify(plan)}`);
+  assert(plan.action === "customer_issue_next_step" && plan.issue_kind === "product_operation_failure", `P5:${JSON.stringify(plan)}`);
   const reply = renderServicePlanReply(plan, null);
-  assert(reply && !/已完成|已確認訂單/.test(reply), `P5:reply:${reply}`);
+  assert(reply?.includes("CW-SUL70BA") && reply.includes("開唔到機") &&
+    /燈號|錯誤提示/.test(reply) &&
+    !/賣家|交付內容|訂單|提供.*型號|已完成|已確認/.test(reply), `P5:reply:${reply}`);
   console.log(`P5|${plan.action}|${plan.issue_kind}|${reply}`);
+});
+
+Deno.test("operating failure remains a shared symptom clarification without a model re-ask", () => {
+  for (const [question, language, model] of [
+    ["ABC-12345 won't turn on. What should I do?", "en", "ABC-12345"],
+    ["ABC-12345 无法开机，怎么办？", "zh-CN", "ABC-12345"],
+    ["部機開唔到機，點處理？", "zh-TW", null],
+  ] as const) {
+    const plan = planConversationService({ question, language,
+      recall: { handled: false, reason: "NOT_A_RECALL_QUERY" }, memory: null, commerce: null });
+    const reply = renderServicePlanReply(plan, null) ?? "";
+    assert(plan.issue_kind === "product_operation_failure" &&
+      (model === null || reply.includes(model)) &&
+      !/product model|提供.*型號|交付內容|third-party seller/.test(reply), `${question}:${reply}`);
+  }
 });
 
 Deno.test("P6 nonexistent exact model gets honest unknown without a model re-ask", () => {
