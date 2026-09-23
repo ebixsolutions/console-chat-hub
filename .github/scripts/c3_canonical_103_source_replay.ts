@@ -39,6 +39,10 @@ import {
   renderServicePlanReply,
   renderTargetedServiceQuestion,
 } from "../../supabase/functions/_shared/conversation-service-planner.ts";
+import {
+  classifyNaturalCustomerIntent,
+  renderNaturalImmediateResponse,
+} from "../../supabase/functions/_shared/natural-customer-response.ts";
 
 function assert(value: unknown, message: string): asserts value {
   if (!value) throw new Error(message);
@@ -54,6 +58,14 @@ const fixture = JSON.parse(
 };
 assert(fixture.frozen === true && fixture.turn_count === 103, "fixture_invalid");
 assert(fixture.turns.length === 103, "fixture_turn_count_invalid");
+const capturedFailures = JSON.parse(
+  Deno.readTextFileSync(new URL("./c3_captured_production_failure_envelopes.json", import.meta.url)),
+) as { frozen: boolean; failures: Array<{ turn: number; text: string; required_contract: string }> };
+assert(capturedFailures.frozen === true, "captured_failures_not_frozen");
+assert(capturedFailures.failures.length === 11, "captured_failure_count_invalid");
+for (const failure of capturedFailures.failures) {
+  assert(fixture.turns[failure.turn - 1] === failure.text, `captured_failure_text_drift_T${failure.turn}`);
+}
 
 const conversationId = "10300000-0000-4000-8000-000000000001";
 const companyId = "10300000-0000-4000-8000-000000000002";
@@ -105,7 +117,10 @@ function turnTimestamp(turn: number): string {
 function semanticFrame(turn: number, text: string): CommerceSemanticFrame | null {
   const requested: string[] = [];
   let topic = "";
-  if (turn === 25 || turn === 55 || turn === 102) {
+  if (turn === 1) {
+    topic = "air_conditioner";
+    requested.push("horsepower_guidance");
+  } else if (turn === 25 || turn === 55 || turn === 102) {
     topic = "air_conditioner";
     requested.push("current_quantity");
   } else if (turn === 27) {
@@ -167,6 +182,9 @@ function semanticFrame(turn: number, text: string): CommerceSemanticFrame | null
 }
 
 const checkpoints = new Map<number, (reply: string, outcome: unknown) => boolean>([
+  [1, (reply) => /冷氣/.test(reply) && /(?:用途|尺寸|空間|安裝)/.test(reply) && !/canonical|根據這段對話已有的資料/i.test(reply)],
+  [13, (reply) => /13,?400/.test(reply) && /(?:今次提供|最新價格|舊報價|歷史)/.test(reply)],
+  [20, (reply) => /(?:項目|冷氣)/.test(reply) && !/canonical|customer_|air_conditioner/i.test(reply)],
   [25, (reply) => /(?:2|兩)/.test(reply) && !/[?？]/.test(reply)],
   [
     27,
@@ -175,6 +193,7 @@ const checkpoints = new Map<number, (reply: string, outcome: unknown) => boolean
       /(?:595|600)/.test(reply) &&
       !/(?:冷氣|空調).{0,20}(?:2|兩)/.test(reply),
   ],
+  [30, (reply) => /(?:項目|冷氣|雪櫃)/.test(reply) && !/canonical|customer_|air_conditioner/i.test(reply)],
   [40, (reply) => /B座|Ｂ座/.test(reply) && !reply.includes("A座")],
   [48, (reply) => /(?:2|兩)/.test(reply) && /窗口/.test(reply) && /安裝/.test(reply)],
   [50, (reply) => reply.includes("80") && reply.includes("100")],
@@ -183,14 +202,18 @@ const checkpoints = new Map<number, (reply: string, outcome: unknown) => boolean
   [57, (reply) => /B座|Ｂ座/.test(reply) && !reply.includes("A座")],
   [58, (reply) => /星期六|週六|周六|Saturday/i.test(reply)],
   [59, (reply) => /(?:1|一)/.test(reply) && !/[?？]/.test(reply)],
+  [60, (reply) => /(?:窗口|安裝)/.test(reply) && !/[?？]/.test(reply)],
+  [65, (reply) => /冷氣/.test(reply) && /雪櫃/.test(reply) && /洗衣機/.test(reply)],
+  [67, (reply) => /冷氣/.test(reply) && /雪櫃/.test(reply) && !/洗衣機/.test(reply)],
   [68, (reply) => /1匹/.test(reply) && /1\.5匹/.test(reply)],
   [69, (reply) => /(?:並非|唔係|不是|not mandatory|not required)/i.test(reply)],
   [71, (reply) => /(?:未必|不一定|not necessarily)/i.test(reply) && /(?:確認|确认|confirm)/i.test(reply)],
   [73, (reply) => /(?:唔會當現價|不会当作现价|not be used as a current price)/i.test(reply)],
+  [74, (reply) => /5,?600|5,?788/.test(reply) && /(?:歷史|来源|來源|source)/i.test(reply) && !/品牌並非|品牌并非/.test(reply)],
   [76, (reply) => /(?:唔會當現價|不会当作现价|not be used as a current price)/i.test(reply)],
   [80, (reply) => /(?:1\.|1。)/.test(reply) && /(?:付款|payment)/i.test(reply)],
-  [90, (reply) => /(?:2|兩)/.test(reply) && !/[?？]/.test(reply)],
-  [91, (reply) => /(?:項目|项目|Items)/.test(reply) && /(?:訂單|订单|Order)/.test(reply)],
+  [90, (reply) => /(?:2|兩)/.test(reply) && !/[?？]/.test(reply) && !/air_conditioner|quantity\s*\(/i.test(reply)],
+  [91, (reply) => /(?:項目|项目|Items)/.test(reply) && /(?:訂單|订单|Order)/.test(reply) && !/window_opening_check|installation_site_check|air_conditioner/i.test(reply)],
   [95, (_reply) => state.delivery.recipient_phone === "6987 6543"],
   [96, (reply) => /陳太/.test(reply) && /6987 6543/.test(reply)],
   [98, (reply) => /(?:報價階段|报价阶段|quotation stage)/i.test(reply) && /(?:唔係已確認訂單|不是已确认订单|not a confirmed order)/i.test(reply)],
@@ -207,7 +230,13 @@ let terminalFailures = 0;
 let fallbackCount = 0;
 let completed = 0;
 const knownResults: Record<string, unknown> = {};
-const capturedProductionFailureTurns = new Set([58, 71, 73, 76, 91]);
+const capturedProductionFailureTurns = new Set([
+  ...capturedFailures.failures.map((failure) => failure.turn),
+  58,
+  71,
+  73,
+  76,
+]);
 
 for (let index = 0; index < fixture.turns.length; index++) {
   const turn = index + 1;
@@ -227,7 +256,6 @@ for (let index = 0; index < fixture.turns.length; index++) {
       language: "zh-TW",
       history: history
         .slice()
-        .reverse()
         .map((row) => ({
           role: String(row.role ?? ""),
           content: String(row.content ?? ""),
@@ -322,13 +350,19 @@ for (let index = 0; index < fixture.turns.length; index++) {
     ].includes(servicePlan.action)
       ? renderTargetedServiceQuestion(servicePlan, "zh-TW")
       : null);
+  const naturalIntent = classifyNaturalCustomerIntent(text);
+  const naturalGuidanceReply = naturalIntent.kind === "product_guidance"
+    ? renderNaturalImmediateResponse(naturalIntent, "zh-TW")
+    : null;
   const authoritativeRuntimeReply = resolution.bypass_service_plan && outcome?.reply
     ? outcome.reply
     : null;
-  const reply = authoritativeRuntimeReply ?? serviceReply ?? outcome?.reply ?? recall.reply ?? "";
+  const reply = authoritativeRuntimeReply ?? naturalGuidanceReply ?? serviceReply ?? outcome?.reply ?? recall.reply ?? "";
   const route = authoritativeRuntimeReply
     ? outcome!.route
-    : serviceReply
+    : naturalGuidanceReply
+      ? "product_guidance"
+      : serviceReply
       ? String(recall.metadata.response_route)
       : outcome?.reply
         ? outcome.route
@@ -336,9 +370,14 @@ for (let index = 0; index < fixture.turns.length; index++) {
           ? String(recall.metadata.response_route)
           : "orchestration_pass_through";
   if (capturedProductionFailureTurns.has(turn)) {
-    assert(Boolean(outcome?.reply), `turn_${turn}_captured_envelope_missing_runtime_reply`);
-    assert(resolution.bypass_service_plan, `turn_${turn}_clarification_precedence_regression`);
-    assert(reply === outcome?.reply, `turn_${turn}_runtime_reply_not_selected`);
+    if (turn === 1) {
+      assert(Boolean(naturalGuidanceReply), "turn_1_natural_guidance_missing");
+      assert(reply === naturalGuidanceReply, "turn_1_natural_guidance_not_selected");
+    } else {
+      assert(Boolean(outcome?.reply), `turn_${turn}_captured_envelope_missing_runtime_reply:${JSON.stringify(outcome)}`);
+      assert(resolution.bypass_service_plan, `turn_${turn}_clarification_precedence_regression`);
+      assert(reply === outcome?.reply, `turn_${turn}_runtime_reply_not_selected`);
+    }
   }
   if (/terminal_failure_recovery|terminal_recovery/i.test(route)) {
     terminalFailures += 1;
@@ -435,11 +474,19 @@ const livingRoom = state.entities.find((entity) =>
 const unscopedAirConditioner = state.entities.find((entity) =>
   entity.entity_id === "air_conditioner:unscoped"
 );
+const refrigerator = state.entities.find((entity) => entity.entity_id === "refrigerator:unscoped");
+const washingMachine = state.entities.find((entity) => entity.entity_id === "washing_machine:unscoped");
 assert(livingRoom?.status === "cancelled", "turn_88_living_room_not_cancelled");
 assert(livingRoom?.attributes.horsepower === "2匹", "turn_85_scoped_horsepower_missing");
 assert(
   unscopedAirConditioner?.attributes.horsepower !== "2匹",
   "turn_85_cross_entity_horsepower_contamination",
+);
+assert(refrigerator, "refrigerator_entity_not_persisted");
+assert(washingMachine?.status === "deferred", "washing_machine_not_persisted_or_deferred");
+assert(
+  !Object.keys(refrigerator.constraints).some((key) => /horsepower|air_conditioner/i.test(key)),
+  "refrigerator_cross_entity_constraint_contamination",
 );
 assert(
   /星期六|週六|周六|Saturday/i.test(String(state.delivery.preferred_date ?? "")),

@@ -144,6 +144,12 @@ const files = {
   task42DeployWorkflow: ".github/workflows/task4-2-deploy-live-console-edge.yml",
   canonical103Fixture: ".github/scripts/c3_canonical_103_turns.json",
   canonical103Replay: ".github/scripts/c3_canonical_103_source_replay.ts",
+  capturedProductionFailures:
+    ".github/scripts/c3_captured_production_failure_envelopes.json",
+  naturalCustomerResponse:
+    "supabase/functions/_shared/natural-customer-response.ts",
+  naturalCustomerResponseTest:
+    "supabase/functions/_shared/natural-customer-response.test.ts",
 };
 for (const file of Object.values(files)) {
   must(
@@ -173,6 +179,14 @@ must(
     canonical103Fixture.turns?.length === 103,
   "canonical_103_fixture_invalid",
 );
+const capturedProductionFailures = JSON.parse(
+  read(files.capturedProductionFailures),
+);
+must(
+  capturedProductionFailures.frozen === true &&
+    capturedProductionFailures.failures?.length === 11,
+  "captured_production_failures_invalid",
+);
 const migrationExecutableBody = migration.split("\n").slice(3).join("\n");
 must(
   crypto.createHash("sha256").update(migrationExecutableBody).digest("hex") ===
@@ -187,7 +201,7 @@ const authorizedTargetedRepairHashes = new Map([
   ],
   [
     "supabase/functions/_shared/commerce-state-runtime-base.ts",
-    "96b0e39702fa935b876d41fbf80b0f28a96b373d29a376b81bcadd49f7537f7d",
+    "350e4d677f586396b2ef2375ff6242d6aa6df540e496b1d89877e318f1467d4e",
   ],
   [
     "supabase/functions/_shared/pre-send-conversion-supervisor.ts",
@@ -585,6 +599,13 @@ const qualityEvidencePath = process.env.C3_SERVICE_QUALITY_EVIDENCE_PATH?.trim()
 runDeno(["run", "--no-lock", "--allow-read", "--allow-write", files.serviceQualityEvaluation, qualityEvidencePath]);
 const nonproductionComponent = verifyComponentRegression(JSON.parse(read(qualityEvidencePath)));
 runDeno(["test", "--no-lock", "--allow-read", files.integration, files.recallIntegration]);
+runDeno([
+  "test",
+  "--no-lock",
+  "--allow-env",
+  "--allow-read",
+  files.naturalCustomerResponseTest,
+]);
 runDeno(["run", "--no-lock", "--allow-read", files.canonical103Replay]);
 if (!process.env.CI) {
   runDeno([
@@ -600,6 +621,8 @@ if (!process.env.CI) {
     files.commerceStateAuthority,
     files.commerceStateReducer,
     files.commerceStateRuntimeBase,
+    files.naturalCustomerResponse,
+    files.naturalCustomerResponseTest,
     files.preSendConversionSupervisor,
     files.canonical103Replay,
   ]);
@@ -682,6 +705,8 @@ run("npx", [
   files.resolutionContract,
   files.resolutionContractTest,
   files.canonical103Replay,
+  files.naturalCustomerResponse,
+  files.naturalCustomerResponseTest,
   files.kbAggregationResponse,
   files.realCustomerDatasetVerifier,
   files.realCustomerDatasetTest,

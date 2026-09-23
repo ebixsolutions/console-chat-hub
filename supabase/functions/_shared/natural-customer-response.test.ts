@@ -4,6 +4,15 @@ import {
   renderNaturalNoCurrentEvidence,
   requiresCurrentMerchantEvidence,
 } from "./natural-customer-response.ts";
+import {
+  type CommerceStateDbClient,
+  runCommerceStateRuntime,
+} from "./commerce-state-runtime.ts";
+import {
+  type ConversationCommerceState,
+  createEmptyConversationCommerceState,
+} from "./commerce-state-contract.ts";
+import type { CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 
 const assert: (value: unknown, message: string) => asserts value = (
   value,
@@ -178,6 +187,17 @@ Deno.test("C3 20-case customer demo natural-response gate", () => {
   );
 });
 
+Deno.test("C3 mixed greeting product guidance stays natural without hiding the commerce writer", () => {
+  const intent = classifyNaturalCustomerIntent(
+    "Hi，想問冷氣，兩間房加個廳，唔知買咩匹數好。",
+  );
+  assert(intent.kind === "product_guidance", JSON.stringify(intent));
+  assert(intent.product === "冷氣", JSON.stringify(intent));
+  const reply = renderNaturalImmediateResponse(intent, "zh-TW") ?? "";
+  assert(/冷氣/.test(reply) && /用途|尺寸|空間|安裝/.test(reply), reply);
+  assert(!forbidden.test(reply), reply);
+});
+
 Deno.test("C3 natural-response negatives preserve correction cancellation handoff and recall", () => {
   for (
     const text of [
@@ -192,4 +212,147 @@ Deno.test("C3 natural-response negatives preserve correction cancellation handof
     const intent = classifyNaturalCustomerIntent(text);
     assert(intent.kind === "none", `${text}:${JSON.stringify(intent)}`);
   }
+});
+
+Deno.test("C3 production-parity semantic ASK_FACT still persists and scopes product research", async () => {
+  let state = createEmptyConversationCommerceState();
+  let revision = 0;
+  const db: CommerceStateDbClient = {
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          maybeSingle: async () => ({
+            data: revision ? { revision, state } : null,
+            error: null,
+          }),
+        }),
+      }),
+    }),
+    rpc: async (_name, params) => {
+      state = params.p_state as ConversationCommerceState;
+      revision += 1;
+      return {
+        data: { result: "success", applied_revision: revision },
+        error: null,
+      };
+    },
+  };
+  const semantic = (
+    topic: string,
+    requested: string[],
+  ): CommerceSemanticFrame => ({
+    version: "commerce-semantic-1.0.0",
+    language: "zh-TW",
+    operation: "ASK_FACT",
+    intent: "product research",
+    topic,
+    entities: [],
+    referents: [],
+    customer_correction: false,
+    additive: false,
+    explicit_negations: [],
+    requested_facts: requested,
+    transaction_state: "none",
+    payment_state: "none",
+    booking_state: "none",
+    fulfillment_state: "none",
+    ambiguity: {
+      is_ambiguous: false,
+      reasons: [],
+      clarification_question: null,
+    },
+    confidence: 0.94,
+  });
+  const run = (
+    id: number,
+    text: string,
+    frame: CommerceSemanticFrame | null,
+    history: Array<{ role: string; content: string }>,
+  ) =>
+    runCommerceStateRuntime(db, {
+      conversation_id: "21000000-0000-4000-8000-000000000001",
+      company_id: "21000000-0000-4000-8000-000000000002",
+      source_message_id: `21000000-0000-4000-8000-${
+        String(id).padStart(12, "0")
+      }`,
+      text,
+      language: "zh-TW",
+      history,
+      semantic_frame: frame,
+      industry_identifier: "home_appliance",
+    });
+
+  const initial = await run(
+    21,
+    "順便問埋雪櫃，想要三門，600mm樓下闊。",
+    semantic("refrigerator", ["width"]),
+    [],
+  );
+  const fridge = state.entities.find((entity) =>
+    entity.category === "refrigerator"
+  );
+  assert(
+    fridge?.constraints.max_width_mm === 600,
+    `${JSON.stringify(initial)}:${JSON.stringify(state.entities)}`,
+  );
+
+  const constraint = await run(
+    56,
+    "雪櫃限制呢？",
+    semantic("refrigerator", ["constraints"]),
+    [
+      { role: "visitor", content: "順便問埋雪櫃，想要三門，600mm樓下闊。" },
+    ],
+  );
+  assert(constraint?.reply?.includes("600"), JSON.stringify(constraint));
+  assert(
+    !/冷氣|air_conditioner/i.test(constraint?.reply ?? ""),
+    constraint?.reply ?? "",
+  );
+
+  await run(
+    61,
+    "再問埋洗衣機，我位得600闊。",
+    semantic("washing_machine", ["width"]),
+    [
+      { role: "visitor", content: "雪櫃限制呢？" },
+    ],
+  );
+  const washer = state.entities.find((entity) =>
+    entity.category === "washing_machine"
+  );
+  assert(
+    washer?.constraints.max_width_mm === 600,
+    JSON.stringify(state.entities),
+  );
+
+  const correction = await run(63, "之前雪櫃嗰個闊度限制取消啦。", null, [
+    { role: "visitor", content: "前置式，8kg左右。" },
+    { role: "visitor", content: "再問埋洗衣機，我位得600闊。" },
+  ]);
+  const correctedFridge = state.entities.find((entity) =>
+    entity.category === "refrigerator"
+  );
+  const unchangedWasher = state.entities.find((entity) =>
+    entity.category === "washing_machine"
+  );
+  assert(
+    correctedFridge?.status !== "cancelled",
+    JSON.stringify(correctedFridge),
+  );
+  assert(
+    correctedFridge?.constraints.max_width_mm === undefined,
+    `${JSON.stringify(correction)}:${JSON.stringify(correctedFridge)}`,
+  );
+  assert(
+    unchangedWasher?.constraints.max_width_mm === 600,
+    JSON.stringify(unchangedWasher),
+  );
+
+  await run(66, "洗衣機未決定買住。", null, []);
+  assert(
+    state.entities.find((entity) => entity.category === "washing_machine")
+      ?.status === "deferred",
+    JSON.stringify(state.entities),
+  );
 });

@@ -5,6 +5,7 @@ export type NaturalResponseLanguage = "zh-TW" | "zh-CN" | "en";
 export type NaturalCustomerIntent =
   | { kind: "greeting"; product: null }
   | { kind: "product_shopping"; product: string | null }
+  | { kind: "product_guidance"; product: string | null }
   | { kind: "product_availability"; product: string | null }
   | { kind: "none"; product: null };
 
@@ -56,6 +57,31 @@ function extractShoppingProduct(text: string): string | null {
   return cleanProductLabel(english?.[1]);
 }
 
+function stripLeadingGreeting(text: string): string {
+  return text.replace(
+    /^(?:(?:hi|hello|hey|good\s+(?:morning|afternoon|evening))|(?:你好|您好|嗨|哈囉|哈啰|早晨|早安|午安|晚安))[\s,，:：!！。.]*/iu,
+    "",
+  ).trim();
+}
+
+function extractGuidanceProduct(text: string): string | null {
+  const chinese = text.match(
+    /(?:想問|想问|想了解|想睇|想看|請教|请教)\s*([^，,。.!！?？]{1,48}?)(?=\s*(?:，|,|。|\?|？|點揀|点选|點選|揀邊|选哪|買咩|买什么|邊款|哪款|邊種|哪种|要幾|要几))/iu,
+  );
+  if (chinese) return cleanProductLabel(chinese[1]);
+  const english = text.match(
+    /(?:help|advice|guidance|recommendation)s?\s+(?:with|on|for)\s+([^,.!?]{1,48})/i,
+  );
+  return cleanProductLabel(english?.[1]);
+}
+
+function looksLikeProductGuidance(text: string): boolean {
+  return /(?:買咩|买什么|揀邊|选哪|點揀|点选|點選|邊款|哪款|邊種|哪种|幾大|几大|幾多匹|几匹|合適|合适|推薦|推荐|建議|建议|what\s+should\s+i\s+(?:buy|choose|get)|which\s+(?:model|size|option)|recommend|advi[cs]e)/iu
+    .test(
+      text,
+    );
+}
+
 function extractAvailabilityProduct(text: string): string | null {
   const chinesePatterns = [
     /(?:你(?:哋|們|们)?|店內|店内|呢度|這裡|这里)?\s*(?:有冇|有無|有沒有|有没有|是否有)\s*(.+?)(?:賣|卖|售賣|售卖|出售|現貨|现货|庫存|库存)?[?？!！.。]*$/iu,
@@ -87,26 +113,46 @@ export function classifyNaturalCustomerIntent(
   const normalized = (text ?? "").normalize("NFKC").trim();
   if (!normalized) return { kind: "none", product: null };
 
+  // A greeting may prefix a real customer goal.  Classify the meaningful
+  // remainder first so "Hi, I need help choosing ..." cannot be reduced to a
+  // greeting-only response or fall through to generic clarification.
+  const meaningful = stripLeadingGreeting(normalized) || normalized;
+
+  const availabilityProduct = extractAvailabilityProduct(meaningful);
+  if (availabilityProduct) {
+    return { kind: "product_availability", product: availabilityProduct };
+  }
+
+  const shoppingProduct = extractShoppingProduct(meaningful);
+  if (
+    shoppingProduct ||
+    /(?:想|要|打算|準備|准备|考慮|考虑|希望)(?:買|买|購買|购买|訂購|订购|入手)|(?:want|would like|plan|hope|looking)(?:\s+to)?\s+(?:buy|purchase|order|get)/i
+      .test(meaningful)
+  ) {
+    return { kind: "product_shopping", product: shoppingProduct };
+  }
+
+  if (looksLikeProductGuidance(meaningful)) {
+    const product = extractGuidanceProduct(meaningful);
+    if (
+      !product &&
+      !/(?:想問|想问|想了解|想睇|想看|請教|请教|推薦|推荐|建議|建议|help|advice|guidance|recommend|what\s+should\s+i\s+(?:buy|choose|get)|which\s+(?:model|option))/iu
+        .test(
+          meaningful,
+        )
+    ) return { kind: "none", product: null };
+    return {
+      kind: "product_guidance",
+      product,
+    };
+  }
+
   const conversational = classifyConversationalRoute(normalized);
   if (
     conversational.kind === "conversational" &&
     conversational.subtype === "greeting"
   ) {
     return { kind: "greeting", product: null };
-  }
-
-  const availabilityProduct = extractAvailabilityProduct(normalized);
-  if (availabilityProduct) {
-    return { kind: "product_availability", product: availabilityProduct };
-  }
-
-  const shoppingProduct = extractShoppingProduct(normalized);
-  if (
-    shoppingProduct ||
-    /(?:想|要|打算|準備|准备|考慮|考虑|希望)(?:買|买|購買|购买|訂購|订购|入手)|(?:want|would like|plan|hope|looking)(?:\s+to)?\s+(?:buy|purchase|order|get)/i
-      .test(normalized)
-  ) {
-    return { kind: "product_shopping", product: shoppingProduct };
   }
 
   return { kind: "none", product: null };
@@ -126,6 +172,25 @@ export function renderNaturalImmediateResponse(
     if (language === "en") return "Hi! How can I help?";
     if (language === "zh-CN") return "你好！有什么可以帮你？";
     return "你好！有咩可以幫你？";
+  }
+  if (intent.kind === "product_guidance") {
+    if (language === "en") {
+      return intent.product
+        ? `Sure — I can help narrow down the right ${intent.product}. Tell me the intended use, relevant size or space, and any budget or installation limits, and I’ll work from those details.`
+        : "Sure — I can help narrow down the right option. Tell me the intended use, relevant size or space, and any budget or installation limits.";
+    }
+    if (language === "zh-CN") {
+      return intent.product
+        ? `可以，我可以帮你筛选合适的${
+          chineseProductPrefix(intent.product)
+        }。告诉我用途、相关尺寸或空间，以及预算或安装限制，我会按这些资料帮你整理。`
+        : "可以，我可以帮你筛选合适的选择。告诉我用途、相关尺寸或空间，以及预算或安装限制。";
+    }
+    return intent.product
+      ? `可以，我可以幫你揀合適嘅${
+        chineseProductPrefix(intent.product)
+      }。你話我知用途、相關尺寸或空間，同埋預算或安裝限制，我會按呢啲資料幫你整理。`
+      : "可以，我可以幫你揀合適嘅選擇。你話我知用途、相關尺寸或空間，同埋預算或安裝限制。";
   }
   if (intent.kind !== "product_shopping") return null;
 

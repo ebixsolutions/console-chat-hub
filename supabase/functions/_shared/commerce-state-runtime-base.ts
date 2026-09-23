@@ -271,7 +271,10 @@ function resolvePendingCheckAggregateQuery(
   state: ConversationCommerceState,
   revision: number,
 ): PendingCheckAggregateResolution | null {
-  if (!isReadOnlyCurrentStateAggregateQuery(input.text, input.semantic_frame)) return null;
+  if (
+    !isReadOnlyCurrentStateAggregateQuery(input.text, input.semantic_frame) &&
+    !/(?:有咩|有什么|what).{0,18}(?:仲未|還沒|还没|未|not yet|outstanding|pending).{0,12}(?:confirm|確認|确认)|(?:仲未|還沒|还没|not yet).{0,12}(?:confirm|確認|确认).{0,12}(?:有咩|有什么|what)/i.test(input.text)
+  ) return null;
   const scope = resolvePendingCheckAggregateScope(input, state);
   if (
     revision === 0 ||
@@ -424,6 +427,24 @@ function maximumConstraintLanguage(text: string): boolean {
   return /(?:樓下|楼下|以下|上限|最多|唔好超過|不要超過|不超過|不超过|不能超過|不能超过|至多|≤|<=|at most|no more than|maximum|max\.?|under)/i.test(
     text,
   );
+}
+
+function parseProductDimension(text: string): {
+  attribute: CommerceDimensionAttribute | null;
+  value: number;
+  unit: "mm";
+  value_mm: number;
+} | ReturnType<typeof parseCommerceDimensionMeasurement> {
+  const explicit = parseCommerceDimensionMeasurement(text);
+  if (explicit) return explicit;
+  const compact = clean(text).match(/(\d{2,4}(?:\.\d+)?)\s*(闊|宽|高|深)(?:度)?/i);
+  if (!compact) return null;
+  const value = Number(compact[1]);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  const attribute: CommerceDimensionAttribute = /闊|宽/i.test(compact[2])
+    ? "width"
+    : /高/i.test(compact[2]) ? "height" : "depth";
+  return { attribute, value, unit: "mm", value_mm: value };
 }
 
 function contextualConstraintAttribute(
@@ -902,7 +923,23 @@ function detectCancellation(text: string): boolean {
 }
 
 function detectDeferral(text: string): boolean {
-  return /(?:暫時唔|暫時不|暂时不|稍後先|稍后再|later|hold off|defer)/i.test(text);
+  return /(?:暫時唔|暫時不|暂时不|未決定(?:買|购|購|要)?住|未决定(?:买|购|要)?|稍後先|稍后再|later|hold off|defer|not decided yet)/i.test(text);
+}
+
+function dimensionConstraintCancellation(text: string): boolean {
+  return /(?:(?:闊度|宽度|高度|深度|尺寸|dimension|width|height|depth).{0,18}(?:限制|上限|constraint|limit).{0,12}(?:取消|唔要|不要|remove|cancel)|(?:取消|唔要|不要|remove|cancel).{0,12}(?:闊度|宽度|高度|深度|尺寸|dimension|width|height|depth).{0,18}(?:限制|上限|constraint|limit)?)/i.test(clean(text));
+}
+
+function establishesDurableProductResearch(text: string): boolean {
+  const t = clean(text);
+  if (explicitCategoryKeys(t).length !== 1) return false;
+  if (
+    looksInterrogative(t) && parseCommerceDimensionMeasurement(t) &&
+    !/(?:我位得|位置得|上限|最多|唔好超過|不要超过|at most|maximum)/i.test(t)
+  ) return false;
+  if (detectExplicitEntityCreationSignal(t)) return true;
+  if (dimensionConstraintCancellation(t) || parseSpaceScopedCommerceQuantity(t) !== null) return true;
+  return /(?:想問|想问|問埋|问埋|想要|我位得|位置|限制|上限|樓下|楼下|以下|接受|照舊|照旧|三門|三门|前置式|\d+\s*kg|買咩|买什么|邊款|哪款|recommend|advice|considering)/i.test(t);
 }
 
 function detectEntityReactivation(text: string): boolean {
@@ -994,7 +1031,67 @@ function explicitQuotationOnlySignal(text: string): boolean {
 }
 
 export function detectTransactionSummaryIntent(text: string): boolean {
-  return /(?:幫我總結|帮我总结|總結一下|总结一下|幫我整理|帮我整理|整理(?:一下)?(?:比|畀|給|给)?同事|同事跟進|同事跟进|summar(?:y|ise|ize)|recap|hand over to)/i.test(clean(text));
+  return /(?:幫我總結|帮我总结|總結一下|总结一下|幫我整理|帮我整理|簡單講一次|简单说一次|成單而家有咩|整張單而家有咩|整理(?:一下)?(?:比|畀|給|给)?同事|同事跟進|同事跟进|summar(?:y|ise|ize)|recap|what(?:'s| is) in (?:the|my) (?:quote|order)|hand over to)/i.test(clean(text));
+}
+
+function detectsConstraintRecall(text: string): boolean {
+  if (dimensionConstraintCancellation(text)) return false;
+  return /(?:限制|條件|条件|要求|constraint|limit|requirement).{0,8}(?:呢|係咩|是什么|有咩|what)?[?？]?$/i.test(clean(text));
+}
+
+function detectsPortfolioRecall(text: string): boolean {
+  return /(?:(?:總共|总共|依家|而家|目前|currently).{0,18}(?:睇緊|看着|考慮|考虑|considering).{0,10}(?:咩|什么|what)|(?:睇緊|看着|considering).{0,10}(?:咩電器|什么电器|what))/i.test(clean(text));
+}
+
+function detectsQuoteReadyRecall(text: string): boolean {
+  if (detectTransactionSummaryIntent(text)) return false;
+  return /(?:真正|實際|实际|而家|目前|currently).{0,16}(?:準備|准备|ready).{0,8}(?:報價|报价|quote).{0,12}(?:係咩|是什么|有咩|what)|(?:準備|准备|ready).{0,8}(?:報價|报价|quote)/i.test(clean(text));
+}
+
+function detectsQuoteProvenanceRecall(text: string): boolean {
+  return /(?:邊個|边个|哪些|which).{0,12}(?:價|价|price|quote).{0,12}(?:有來源|有来源|source|來源|来源)/i.test(clean(text));
+}
+
+function detectsBrandRequirementRecall(text: string): boolean {
+  return /(?:品牌|牌子|brand).{0,16}(?:一定|指定|必須|必须|required|mandatory)|(?:一定|指定|必須|必须|required|mandatory).{0,16}(?:品牌|牌子|brand)/i.test(clean(text));
+}
+
+function buildEntityPortfolioAnswer(state: ConversationCommerceState, language: CommerceLanguage, quoteReadyOnly: boolean): string {
+  const entities = state.entities.filter((entity) => entity.status !== "cancelled" && (!quoteReadyOnly || entity.status !== "deferred"));
+  const labels = entities.map((entity) => `${entityLabel(entity.entity_id, language)} x${entity.quantity}`);
+  if (language === "en") return labels.length ? `${quoteReadyOnly ? "The currently active items are" : "You are currently considering"}: ${labels.join(", ")}.` : `There are currently no ${quoteReadyOnly ? "active items" : "items under consideration"}.`;
+  if (language === "zh-CN") return labels.length ? `${quoteReadyOnly ? "目前有效项目是" : "你目前正在考虑的是"}：${labels.join("、")}。` : `目前没有${quoteReadyOnly ? "有效" : "正在考虑"}的产品。`;
+  return labels.length ? `${quoteReadyOnly ? "而家有效嘅項目係" : "你而家睇緊嘅係"}：${labels.join("、")}。` : `而家未有${quoteReadyOnly ? "有效" : "考慮中"}嘅產品。`;
+}
+
+function buildScopedConstraintAnswer(input: CommerceRuntimeInput, state: ConversationCommerceState): { reply: string; path: string } | null {
+  const categoryResolution = resolveAttributeQueryCategory(input);
+  if (categoryResolution.ambiguous || !categoryResolution.category) return null;
+  const category = categoryResolution.category;
+  const active = state.entities.filter((entity) => entity.category === category && entity.status !== "cancelled" && entity.status !== "deferred");
+  if (active.length !== 1) return null;
+  const entity = active[0];
+  const labels: string[] = [];
+  for (const [key, raw] of Object.entries(entity.constraints)) {
+    const value = numericConstraint(raw);
+    const match = key.match(/^(?:max|excluded)_(width|height|depth)_mm$/);
+    if (value === null || !match) continue;
+    const dimension = dimensionLabel(match[1] as CommerceDimensionAttribute, input.language);
+    if (input.language === "en") labels.push(key.startsWith("excluded_") ? `${dimension} ${formatMillimetres(value)} mm is excluded` : `${dimension} up to ${formatMillimetres(value)} mm`);
+    else if (input.language === "zh-CN") labels.push(key.startsWith("excluded_") ? `${dimension}不接受 ${formatMillimetres(value)}mm` : `${dimension}上限 ${formatMillimetres(value)}mm`);
+    else labels.push(key.startsWith("excluded_") ? `${dimension}唔接受 ${formatMillimetres(value)}mm` : `${dimension}上限 ${formatMillimetres(value)}mm`);
+  }
+  if (!labels.length) return null;
+  const product = categoryLabel(category, input.language);
+  const reply = input.language === "en" ? `The current ${product} constraint is: ${labels.join(", ")}.` : input.language === "zh-CN" ? `目前${product}的限制是：${labels.join("、")}。` : `而家${product}嘅限制係：${labels.join("、")}。`;
+  return { reply, path: `entities.${state.entities.indexOf(entity)}.constraints` };
+}
+
+function buildQuoteProvenanceAnswer(state: ConversationCommerceState, language: CommerceLanguage): string {
+  const values = state.quotes.filter((quote) => quote.quote_type === "customer_reported_historical").map((quote) => `${quote.currency} ${quote.amount}`);
+  if (language === "en") return values.length ? `The sourced figures on record are the historical prices you provided: ${values.join(", ")}. They are references, not verified current prices.` : "There is no sourced price on record yet, so I cannot confirm a current price.";
+  if (language === "zh-CN") return values.length ? `目前有来源的数字是你提供的历史报价：${values.join("、")}。这些只作参考，并非已核实的现价。` : "目前没有已记录来源的价格，所以暂时无法确认现价。";
+  return values.length ? `目前有來源嘅數字係你提供過嘅歷史報價：${values.join("、")}。呢啲只係參考，唔係已核實嘅現價。` : "目前未有已記錄來源嘅價錢，所以暫時未能確認現價。";
 }
 
 export function detectCurrentPriceValidityQuestion(text: string): boolean {
@@ -1058,7 +1155,7 @@ function parseMoneyTerms(text: string): number[] {
 }
 
 export function detectExplicitCalculationRequest(text: string): boolean {
-  return /(?:加埋|合共|總共|总共|一共|總數|总数|埋一齊|埋一起|total|altogether|calculate|計下|计下|算下|計算|计算|how much.*(?:total|altogether))/i.test(clean(text));
+  return /(?:加埋|合共|總共|总共|一共|總數|总数|埋一齊|埋一起|total|altogether|calculate|計下|计下|算下|計算|计算|計幾錢|计多少钱|算幾錢|算多少钱|how much.*(?:total|altogether)|(?:按|用).{0,24}(?:報價|报价|price|quote).{0,24}(?:計|计|算))/i.test(clean(text));
 }
 
 export function extractCommerceCalculationTerms(
@@ -1067,17 +1164,23 @@ export function extractCommerceCalculationTerms(
   options?: { include_historical_state?: boolean },
 ): { terms: CommerceCalculationTerm[]; currency: string | null } {
   const amounts: number[] = [];
-  for (const raw of texts) {
-    const text = clean(raw);
-    if (!text) continue;
-    for (const amount of parseMoneyTerms(text)) amounts.push(amount);
-  }
   if (options?.include_historical_state) {
-    const textAmounts = new Set(amounts);
-    for (const quote of state.quotes) {
-      if (quote.quote_type !== "customer_reported_historical") continue;
-      if (textAmounts.has(quote.amount)) continue;
-      amounts.push(quote.amount);
+    const latestHistorical = state.quotes.filter((quote) => quote.quote_type === "customer_reported_historical").at(-1);
+    if (latestHistorical) amounts.push(latestHistorical.amount);
+    for (const raw of texts) {
+      const text = clean(raw);
+      const costPattern = /(?:安裝|安装|鋁架|铝架|支架|架|拆機|拆机|運費|运费|送貨費|送货费|installation|frame|bracket|delivery\s*fee)\s*(?:費|费|係|是|:|：)?\s*(\d[\d,]*(?:\.\d+)?)/gi;
+      let match: RegExpExecArray | null;
+      while ((match = costPattern.exec(text)) !== null) {
+        const amount = Number(match[1].replaceAll(",", ""));
+        if (Number.isFinite(amount) && amount > 0) amounts.push(amount);
+      }
+    }
+  } else {
+    for (const raw of texts) {
+      const text = clean(raw);
+      if (!text) continue;
+      for (const amount of parseMoneyTerms(text)) amounts.push(amount);
     }
   }
   const unique: number[] = [];
@@ -1146,7 +1249,8 @@ function deriveA3RuntimeEvents(
   };
   const mentioned = hintsMentionedInTurn(text, hints);
   const quantity = parseSpaceScopedCommerceQuantity(text) ?? parseCount(text);
-  const cancelled = detectCancellation(text);
+  const constraintCancellation = dimensionConstraintCancellation(text);
+  const cancelled = detectCancellation(text) && !constraintCancellation;
   const deferred = detectDeferral(text);
   const reactivated = detectEntityReactivation(text);
   const semanticAuthoritative = Boolean(
@@ -1157,7 +1261,7 @@ function deriveA3RuntimeEvents(
     entity.status !== "cancelled" && entity.status !== "deferred"
   );
   const additive = detectAdditiveEntityCreationSignal(text);
-  const explicitCreation = detectExplicitEntityCreationSignal(text);
+  const explicitCreation = detectExplicitEntityCreationSignal(text) || establishesDurableProductResearch(text);
   const correction = quantity !== null && detectQuantityCorrectionSignal(text);
   const allocationBreakdown = correction && isAllocationBreakdown(text);
   const addressCorrection = parseAddressReplacementCorrection(text);
@@ -1178,6 +1282,40 @@ function deriveA3RuntimeEvents(
       address_update: addressCorrection,
       provenance,
     });
+  }
+
+  const currentCategories = explicitCategoryKeys(text);
+  if (currentCategories.length === 1 && establishesDurableProductResearch(text)) {
+    events.push({ type: "SET_CONTEXT", topic: currentCategories[0] });
+  }
+
+  // Persist dimension constraints against the same uniquely scoped product
+  // used by the reader, preventing cross-entity carryover.
+  const dimensionCategory = resolveAttributeQueryCategory(input);
+  if (!dimensionCategory.ambiguous && dimensionCategory.category && !looksInterrogative(text)) {
+    const category = dimensionCategory.category;
+    const target = previous.entities.find((entity) =>
+      entity.category === category && entity.status !== "cancelled" && entity.status !== "deferred"
+    ) ?? mentioned.find((hint) => hint.category === category);
+    if (target) {
+      if (constraintCancellation) {
+        const attribute = inferCommerceDimensionAttribute(text) ?? "width";
+        for (const key of dimensionConstraintKey(attribute)) {
+          events.push({ type: "REMOVE_ENTITY_CONSTRAINT", entity_id: target.entity_id, key, provenance });
+        }
+      } else {
+        const measurement = parseProductDimension(text);
+        const attribute = measurement
+          ? inferCommerceDimensionAttribute(text, input.semantic_frame) ?? contextualConstraintAttribute(input.history ?? [], 0, category)
+          : null;
+        if (measurement && attribute && (maximumConstraintLanguage(text) || /(?:位得|位置得|接受|照舊|照旧|fit|accept)/i.test(text))) {
+          events.push({ type: "SET_ENTITY_CONSTRAINT", entity_id: target.entity_id, key: `max_${attribute}_mm`, value: measurement.value_mm, provenance });
+        }
+        if (measurement && attribute && /(?:就唔好|就不要|唔接受|不接受|排除|exclude|reject)/i.test(text)) {
+          events.push({ type: "SET_ENTITY_CONSTRAINT", entity_id: target.entity_id, key: `excluded_${attribute}_mm`, value: measurement.value_mm, provenance });
+        }
+      }
+    }
   }
 
   // generate-reply supplies newest-first history.  Reading the tail here used
@@ -1401,7 +1539,7 @@ export function filterGhostUnscopedHints(
   state: ConversationCommerceState,
   hints: CommerceTurnEntityHint[],
 ): CommerceTurnEntityHint[] {
-  const explicitCreation = detectExplicitEntityCreationSignal(text);
+  const explicitCreation = detectExplicitEntityCreationSignal(text) || establishesDurableProductResearch(text);
   const additive = detectAdditiveEntityCreationSignal(text);
   const categories = new Set(detectCategories(text).map((category) => category.key));
   const rooms = detectRooms(text);
@@ -1426,6 +1564,7 @@ function materializeRoomOnlyReferenceHints(
   text: string,
   state: ConversationCommerceState,
   hints: CommerceTurnEntityHint[],
+  history: CommerceHistoryTurn[] = [],
 ): CommerceTurnEntityHint[] {
   const rooms = detectReferencedRooms(text);
   const scopedAttributeAssignment = !looksInterrogative(text) &&
@@ -1436,12 +1575,22 @@ function materializeRoomOnlyReferenceHints(
       !detectEntityReactivation(text) && !scopedAttributeAssignment)
   ) return hints;
 
-  const aggregateCategories = [...new Set(
+  let aggregateCategories = [...new Set(
     state.entities.filter((entity) =>
       entity.entity_id.endsWith(":unscoped") &&
       entity.status !== "cancelled" && entity.status !== "deferred"
     ).map((entity) => entity.category),
   )];
+  if (aggregateCategories.length > 1) {
+    for (const turn of history) {
+      if (!["visitor", "user", "customer"].includes(turn.role)) continue;
+      const recent = explicitCategoryKeys(turn.content).filter((category) => aggregateCategories.includes(category));
+      if (recent.length === 1) {
+        aggregateCategories = recent;
+        break;
+      }
+    }
+  }
   // A room-only reference is resolvable only when the current state supplies
   // one authoritative aggregate category. Multiple active categories remain
   // ambiguous and must not be guessed here.
@@ -1490,13 +1639,14 @@ export function reduceTurn(
   // READ_ONLY_CURRENT_STATE_QUERY (and other factual interrogatives) emits no
   // state events. Persistence may still record this source-message revision,
   // but its canonical state payload remains byte-for-byte unchanged.
-  if (isReadOnlyCurrentStateQuery(input.text, input.semantic_frame)) {
+  const durableResearchTurn = establishesDurableProductResearch(input.text);
+  if (isReadOnlyCurrentStateQuery(input.text, input.semantic_frame) && !durableResearchTurn) {
     return previous;
   }
   const calculationTurn = detectExplicitCalculationRequest(input.text);
   const resolvedHints = calculationTurn
     ? []
-    : materializeRoomOnlyReferenceHints(input.text, previous, rawHints);
+    : materializeRoomOnlyReferenceHints(input.text, previous, rawHints, input.history ?? []);
   const hints = calculationTurn
     ? []
     : filterGhostUnscopedHints(input.text, previous, resolvedHints);
@@ -1520,13 +1670,19 @@ export function reduceTurn(
   // component contract. Keep deterministic delivery events so a complete
   // address is present before a later scoped correction is merged.
   const derivedRaw = semanticAuthoritative
-    ? deterministicEvents.filter((event) => event.type === "SET_DELIVERY")
+    ? deterministicEvents.filter((event) =>
+      event.type === "SET_DELIVERY" ||
+      (durableResearchTurn && (event.type === "ENSURE_ENTITY" || event.type === "SET_CONTEXT"))
+    )
     : deterministicEvents;
+  const derivedWithoutConstraintCancellation = dimensionConstraintCancellation(input.text)
+    ? derivedRaw.filter((event) => event.type !== "SET_ENTITY_STATUS")
+    : derivedRaw;
   const allocationBreakdown = detectQuantityCorrectionSignal(input.text) &&
     isAllocationBreakdown(input.text);
   const derivedWithoutAllocationOverwrite = allocationBreakdown
-    ? derivedRaw.filter((event) => event.type !== "SET_ENTITY_QUANTITY")
-    : derivedRaw;
+    ? derivedWithoutConstraintCancellation.filter((event) => event.type !== "SET_ENTITY_QUANTITY")
+    : derivedWithoutConstraintCancellation;
   const derived = bookingWithoutDelivery
     ? derivedWithoutAllocationOverwrite.filter((event) =>
       event.type !== "SET_DELIVERY"
@@ -1625,13 +1781,26 @@ export function buildTransactionSummary(
   } as const;
 
   lines.push(t.head[language]);
-  lines.push(`${t.items[language]}: ${active.length ? active.map((e) => `${entityLabel(e.entity_id, language)} x${e.quantity} (${statusLabel(e.status, language)})`).join("、") : t.none[language]}`);
+  const renderEntity = (entity: ConversationCommerceState["entities"][number]) => {
+    const constraints = Object.entries(entity.constraints).flatMap(([key, raw]) => {
+      const value = numericConstraint(raw);
+      const match = key.match(/^(?:max|excluded)_(width|height|depth)_mm$/);
+      if (value === null || !match) return [];
+      const dimension = dimensionLabel(match[1] as CommerceDimensionAttribute, language);
+      const prefix = key.startsWith("excluded_") ? language === "en" ? "exclude" : language === "zh-CN" ? "不接受" : "唔接受" : language === "en" ? "max" : "上限";
+      return [`${dimension}${prefix} ${formatMillimetres(value)}mm`];
+    });
+    const horsepower = clean(entity.attributes.horsepower, 80);
+    const details = [horsepower, ...constraints].filter(Boolean);
+    return `${entityLabel(entity.entity_id, language)} x${entity.quantity} (${statusLabel(entity.status, language)}${details.length ? `；${details.join("、")}` : ""})`;
+  };
+  lines.push(`${t.items[language]}: ${active.length ? active.map(renderEntity).join("、") : t.none[language]}`);
   if (inactive.length) lines.push(`${t.removed[language]}: ${inactive.map((e) => `${entityLabel(e.entity_id, language)} (${statusLabel(e.status, language)})`).join("、")}`);
   const delivery = state.delivery;
   const deliveryParts = [delivery.preferred_date, delivery.preferred_window, delivery.address, delivery.recipient_name, delivery.recipient_phone].map((x) => clean(x, 180)).filter(Boolean);
   lines.push(`${t.delivery[language]}: ${deliveryParts.length ? deliveryParts.join(" / ") : t.none[language]}`);
   const pending = [...state.installation.pending_checks, ...state.installation.items.filter((i) => i.status === "pending").map((i) => i.kind)];
-  if (pending.length) lines.push(`${t.pending[language]}: ${[...new Set(pending)].join("、")}`);
+  if (pending.length) lines.push(`${t.pending[language]}: ${[...new Set(pending)].map((item) => pendingCheckLabel(item, language)).join("、")}`);
   if (historical.length) lines.push(`${t.quotes[language]}: ${historical.map((q) => `${q.currency} ${q.amount}`).join("、")}`);
   const orderConfirmed = state.conversion.order_status === "confirmed" || state.conversion.order_status === "completed";
   const paymentPaid = state.conversion.payment_status === "paid";
@@ -1877,10 +2046,29 @@ export async function runCommerceStateRuntime(
 
   const language = input.language;
 
+  // Resolve known scoped/aggregate facts before generic clarification.
+  if (detectsConstraintRecall(text) || detectsPortfolioRecall(text) || detectsQuoteReadyRecall(text) || detectsQuoteProvenanceRecall(text) || detectsBrandRequirementRecall(text)) {
+    const loaded = await loadCommerceState(db, input.conversation_id);
+    if (detectsConstraintRecall(text)) {
+      const resolved = buildScopedConstraintAnswer(input, loaded.state);
+      if (resolved) return { authority: "CONVERSATION_STATE", reply: resolved.reply, revision: loaded.revision, persist_result: "read_only", reason: "read_only_scoped_constraint_recall_resolved", state_path: resolved.path, route: "commerce_state_answer" };
+    }
+    if (detectsPortfolioRecall(text) || detectsQuoteReadyRecall(text)) {
+      const quoteReady = detectsQuoteReadyRecall(text);
+      return { authority: "CONVERSATION_STATE", reply: buildEntityPortfolioAnswer(loaded.state, language, quoteReady), revision: loaded.revision, persist_result: "read_only", reason: quoteReady ? "read_only_quote_ready_entities_resolved" : "read_only_entity_portfolio_resolved", state_path: "commerce.authoritative_projection", route: "commerce_state_answer" };
+    }
+    if (detectsQuoteProvenanceRecall(text)) return { authority: "CONVERSATION_STATE", reply: buildQuoteProvenanceAnswer(loaded.state, language), revision: loaded.revision, persist_result: "read_only", reason: "read_only_quote_provenance_resolved", state_path: "commerce.authoritative_projection", route: "commerce_state_answer" };
+    if (detectsBrandRequirementRecall(text) && typeof loaded.state.customer_constraints.brand_required === "boolean") {
+      const required = loaded.state.customer_constraints.brand_required;
+      const reply = language === "en" ? required ? "Yes. A specific brand is currently required." : "No. You said a specific brand is not mandatory." : language === "zh-CN" ? required ? "是，目前必须指定品牌。" : "不是，你之前说品牌并非必须指定。" : required ? "係，而家必須指定品牌。" : "唔係，你之前講過品牌並非必須指定。";
+      return { authority: "CONVERSATION_STATE", reply, revision: loaded.revision, persist_result: "read_only", reason: "read_only_brand_requirement_resolved", state_path: "customer_constraints.brand_required", route: "commerce_state_answer" };
+    }
+  }
+
   // Aggregate technician-check questions resolve from the committed snapshot
   // before generic quantity routing or persistence, so a read cannot create a
   // semantic event or rebind the pending facts' provenance.
-  if (isReadOnlyCurrentStateAggregateQuery(text, input.semantic_frame)) {
+  if (isReadOnlyCurrentStateAggregateQuery(text, input.semantic_frame) || /(?:有咩|有什么|what).{0,18}(?:仲未|還沒|还没|未|not yet|outstanding|pending).{0,12}(?:confirm|確認|确认)/i.test(text)) {
     const loaded = await loadCommerceState(db, input.conversation_id);
     const aggregateResolution = resolvePendingCheckAggregateQuery(input, loaded.state, loaded.revision);
     if (aggregateResolution) {
@@ -1893,7 +2081,8 @@ export async function runCommerceStateRuntime(
   // a quantity target and inherit the first active entity's known quantity.
   if (
     parseCommerceDimensionMeasurement(text) &&
-    isReadOnlyCommerceQuestion(text, input.semantic_frame)
+    isReadOnlyCommerceQuestion(text, input.semantic_frame) &&
+    !establishesDurableProductResearch(text)
   ) {
     const loaded = await loadCommerceState(db, input.conversation_id);
     const attributeResolution = resolveReadOnlyAttributeConstraintQuery(
@@ -1932,7 +2121,7 @@ export async function runCommerceStateRuntime(
   // committed snapshot. Do not call the state RPC: even an identical payload
   // would create a semantic event/revision and could rebind fact provenance to
   // this question rather than the customer turn that supplied the fact.
-  if (isReadOnlyMemoryOrCurrentStateRecall(text, input.semantic_frame)) {
+  if (isReadOnlyMemoryOrCurrentStateRecall(text, input.semantic_frame) && !detectExplicitCalculationRequest(text)) {
     const loaded = await loadCommerceState(db, input.conversation_id);
     const requestedStatePath = compatibleQuantityStatePath(input, loaded.state);
     const decision = resolveCommerceAnswerAuthority({

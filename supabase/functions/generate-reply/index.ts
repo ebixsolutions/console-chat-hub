@@ -3267,6 +3267,9 @@ async function persistNaturalImmediateResponse(
   intent: NaturalCustomerIntent,
   language: "zh-TW" | "zh-CN" | "en",
 ): Promise<Response | null> {
+  // Product guidance can establish durable Commerce entities/constraints.
+  // It therefore renders only after the shared Commerce writer has run.
+  if (intent.kind === "product_guidance") return null;
   const content = renderNaturalImmediateResponse(intent, language);
   if (!content) return null;
   const responseRoute = intent.kind === "greeting"
@@ -4462,10 +4465,14 @@ async function orchestrationGenerateReply(
     outcome: _a3Commerce,
     authoritative_address_correction: Boolean(_c3ResolvedAddressCorrection),
   });
+  const _naturalGuidanceReply = _naturalCustomerIntent.kind ===
+      "product_guidance"
+    ? renderNaturalImmediateResponse(_naturalCustomerIntent, _visitorLang)
+    : null;
   const _c3PlannedReply =
     _c3Resolution.bypass_service_plan
       ? null
-      : applyServiceTone(
+      : _naturalGuidanceReply ?? applyServiceTone(
     _c3ServicePlan,
     renderServicePlanReply(
       _c3ServicePlan,
@@ -4488,7 +4495,9 @@ async function orchestrationGenerateReply(
   if (_c3PlannedReply && !_explicitHandoffRequested) {
     const serviceMetadata = {
       ..._c3Recall.metadata,
-      response_route: _c3ServicePlan.action === "historical_calculation"
+      response_route: _naturalGuidanceReply
+        ? "product_guidance"
+        : _c3ServicePlan.action === "historical_calculation"
         ? "c3_historical_conditional_calculation"
         : _c3ServicePlan.action === "shorten_previous_answer"
         ? "c3_grounded_shorten"
@@ -4508,6 +4517,12 @@ async function orchestrationGenerateReply(
       entitlement_trace: _c3ServicePlan.entitlement_trace ?? null,
       service_runtime_version: _c3RuntimeInputs.version,
       calculation_input_status: _c3RuntimeInputs.calculation_status,
+      natural_response_contract: _naturalGuidanceReply
+        ? "c3-natural-customer-response-v2"
+        : undefined,
+      natural_intent: _naturalGuidanceReply
+        ? _naturalCustomerIntent.kind
+        : undefined,
     };
     const recallCommit = await commitAiReplyWithControlGate(
       supabaseAdmin,
