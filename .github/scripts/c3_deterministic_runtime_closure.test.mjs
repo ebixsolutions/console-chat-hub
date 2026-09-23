@@ -31,6 +31,34 @@ try {
     () => verifyDeterministicClosure({ root: fixture, roots: ["x/root.ts"] }),
     /external_model_endpoint_reachable/,
   );
+  fs.writeFileSync(
+    path.join(fixture, "x", "root.ts"),
+    'import "./kb-client.ts";\nimport "../supabase/functions/_shared/deterministic-runtime-router.ts";\n',
+  );
+  fs.mkdirSync(path.join(fixture, "supabase", "functions", "_shared"), { recursive: true });
+  fs.writeFileSync(
+    path.join(fixture, "supabase", "functions", "_shared", "deterministic-runtime-router.ts"),
+    "export {};\n",
+  );
+  fs.writeFileSync(
+    path.join(fixture, "x", "kb-client.ts"),
+    'const endpoint = "https://py.ebixmall.com/py-knowledge-base/api/v1/rag/context-search";\nconst configured = "KB_RAG_ENDPOINT";\n',
+  );
+  fs.writeFileSync(
+    path.join(fixture, "x", "dead-model.ts"),
+    'const endpoint = "https://api.anthropic.com/v1/messages";\n',
+  );
+  const kbOnly = verifyDeterministicClosure({ root: fixture, roots: ["x/root.ts"] });
+  assert(kbOnly.files.some(({ file }) => file === "x/kb-client.ts"));
+  assert(!kbOnly.files.some(({ file }) => file === "x/dead-model.ts"));
+  fs.writeFileSync(
+    path.join(fixture, "x", "root.ts"),
+    'import "./kb-client.ts";\nimport "./dead-model.ts";\nimport "../supabase/functions/_shared/deterministic-runtime-router.ts";\n',
+  );
+  assert.throws(
+    () => verifyDeterministicClosure({ root: fixture, roots: ["x/root.ts"] }),
+    /external_model_endpoint_reachable:x\/dead-model\.ts/,
+  );
   fs.writeFileSync(path.join(fixture, "x", "root.ts"), 'await import("./safe.ts");\n');
   assert.throws(
     () => verifyDeterministicClosure({ root: fixture, roots: ["x/root.ts"] }),

@@ -14,8 +14,12 @@ const ROOTS = [
   "supabase/functions/_shared/escalation-policy.ts",
 ];
 const FORBIDDEN_FILES = ["llm-router.ts", "vertex-generation-config.ts"];
-const FORBIDDEN_REMOTE =
-  /(?:generativelanguage\.googleapis\.com|api\.anthropic\.com|api\.openai\.com|py\.ebixmall\.com|context-search|KB_RAG_ENDPOINT|openai-compatible|ollama|vllm|huggingface)/iu;
+// This gate prohibits generation/model endpoints in the executable closure.
+// Merchant KB retrieval is an evidence transport, not a model invocation; its
+// tenant-scoped adapter is deliberately allowed and remains governed by the
+// separate KB authority, citation and isolation gates.
+const FORBIDDEN_MODEL_REMOTE =
+  /(?:generativelanguage\.googleapis\.com|api\.anthropic\.com|api\.openai\.com|openai-compatible|ollama|vllm|huggingface)/iu;
 const HASH = /^[0-9a-f]{64}$/;
 const sha = (value) => crypto.createHash("sha256").update(value).digest("hex");
 const must = (value, message) => {
@@ -35,7 +39,7 @@ export function verifyDeterministicClosure({ root = process.cwd(), roots = ROOTS
     const source = fs.readFileSync(file, "utf8");
     const relative = path.relative(root, file).replaceAll(path.sep, "/");
     must(!/\bimport\s*\(/u.test(source), `dynamic_import_forbidden:${relative}`);
-    must(!FORBIDDEN_REMOTE.test(source), `external_model_endpoint_reachable:${relative}`);
+    must(!FORBIDDEN_MODEL_REMOTE.test(source), `external_model_endpoint_reachable:${relative}`);
     for (const specifier of localImports(source)) {
       const target = resolveLocalModule(root, file, specifier);
       must(target, `closure_dependency_missing:${relative}:${specifier}`);

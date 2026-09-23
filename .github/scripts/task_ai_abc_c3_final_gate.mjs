@@ -67,6 +67,11 @@ const files = {
   deterministicCeGrounding: "supabase/functions/_shared/ce-grounding.ts",
   deterministicCanonicalGrounding: "supabase/functions/_shared/canonical-grounding.ts",
   deterministicCitationLineage: "supabase/functions/_shared/citation-lineage.ts",
+  canonicalKbB2PriceTest: "supabase/functions/_shared/canonical-kb-b2-price.test.ts",
+  canonicalKbDirectAnswer: "supabase/functions/_shared/canonical-kb-direct-answer.ts",
+  canonicalKbDirectAnswerTest: "supabase/functions/_shared/canonical-kb-direct-answer.test.ts",
+  canonicalKbRetrievalTest: "supabase/functions/_shared/kb-canonical-retrieval.test.ts",
+  productFactualQueryTest: "supabase/functions/_shared/product-factual-query.test.ts",
   kbClient: "supabase/functions/_shared/kb-client.ts",
   semanticInterpreter:
     "supabase/functions/_shared/commerce-semantic-interpreter.ts",
@@ -80,6 +85,12 @@ const files = {
   servicePlannerTest: "supabase/functions/_shared/conversation-service-planner.test.ts",
   serviceRuntime: "supabase/functions/_shared/conversation-service-runtime.ts",
   serviceRuntimeTest: "supabase/functions/_shared/conversation-service-runtime.test.ts",
+  contextualCustomerUpdate: "supabase/functions/_shared/contextual-customer-update.ts",
+  contextualCustomerUpdateTest: "supabase/functions/_shared/contextual-customer-update.test.ts",
+  conversationalRouting: "supabase/functions/_shared/conversational-routing.ts",
+  conversationalRoutingTest: "supabase/functions/_shared/conversational-routing.test.ts",
+  industryRuntimeAdapter: "supabase/functions/_shared/industry-runtime-adapter.ts",
+  homeApplianceProfile: "supabase/functions/_shared/industry-profiles/home-appliance-v1.ts",
   customer360EntitlementClient: "supabase/functions/_shared/customer360-entitlement-client.ts",
   customer360EntitlementContract: "supabase/functions/_shared/customer360-entitlement-contract.ts",
   customer360EntitlementClientTest: "supabase/functions/_shared/customer360-entitlement-client.test.ts",
@@ -118,6 +129,7 @@ const files = {
   nonproductionRunner: ".github/scripts/c3_nonproduction_external_quality.mjs",
   nonproductionRunnerTest: ".github/scripts/c3_nonproduction_external_quality.test.mjs",
   nonproductionRuntimeIdentity: ".github/scripts/c3_nonproduction_runtime_identity.json",
+  customerDemo20Source: ".github/scripts/c3_customer_demo_20_source.ts",
   realCustomerSourceRegistry: ".github/scripts/c3_real_customer_source_registry.json",
   realCustomerDatasetSchema: ".github/scripts/c3_real_customer_heldout_dataset_v1.schema.json",
   realCustomerDataset: ".github/scripts/c3_real_customer_heldout_dataset_v1.json",
@@ -197,15 +209,15 @@ must(
 const authorizedTargetedRepairHashes = new Map([
   [
     "supabase/functions/_shared/commerce-state-reducer.ts",
-    "39e62844352a061a1b82073d10256daf4ec9930bda98a20291bc997e81ab4357",
+    "e03bd84248a6b3a0a5128bf18e780c361c442c02243b6eb866dad5359c45bbcb",
   ],
   [
     "supabase/functions/_shared/commerce-state-runtime-base.ts",
-    "350e4d677f586396b2ef2375ff6242d6aa6df540e496b1d89877e318f1467d4e",
+    "d36deffa857d996f81494d6cb2349eb3d58ebbde1c2cd4ef1622bbd6ad7892ca",
   ],
   [
     "supabase/functions/_shared/pre-send-conversion-supervisor.ts",
-    "2d9886c28fe40a0392011310030925cae34a52e1f62e059c4e7c1aa8a5f1e944",
+    "58bbfaed8a1acf5c6cc4a1415fdcb2e6a777c884d6929611c8764a389b350880",
   ],
 ]);
 for (
