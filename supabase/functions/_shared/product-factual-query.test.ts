@@ -65,7 +65,8 @@ for (const [id, question, language] of [
     assert(intent.kind === "product_factual_query" && requiresCurrentMerchantEvidence(intent), `${id}:intent:${JSON.stringify(intent)}`);
     assert(plan.action === "published_kb_lookup" && plan.knowledge_state === "lookup_required", `${id}:route:${plan.action}`);
     assert(selection.ok && answer && citation, `${id}:grounded_answer_missing`);
-    assert(answer.reply.includes("CW-SUL70BA") && answer.reply.includes("3/4匹"), `${id}:known_facts:${answer.reply}`);
+    assert(answer.reply.includes("CW-SUL70BA") &&
+      answer.reply.includes(language === "en" ? "3/4 HP" : "3/4匹"), `${id}:known_facts:${answer.reply}`);
     if (id === "P2") assert(answer.reply.includes("功能：變頻 淨冷"), `P2:features:${answer.reply}`);
     assert(citation.citation_lineage.selected_document_id === documentId &&
       citation.citation_lineage.evidence_chunk_ids[0] === chunkId, `${id}:citation`);
@@ -92,6 +93,58 @@ for (const [id, question, language] of [
     console.log(`${id}|${plan.action}|canonical_kb_direct_answer|${answer.reply}`);
   });
 }
+
+for (const [id, question, language] of [
+  ["E1", "Is CW-SUL70BA suitable for an 80 sq ft room?", "en"],
+  ["E2", "What features does CW-SUL70BA have?", "en"],
+  ["E3", "What horsepower is CW-SUL70BA?", "en"],
+  ["E4", "CW-SUL70BA 有咩功能？", "zh-TW"],
+  ["E5", "CW-SUL70BA suitable for 80呎嗎？", "zh-TW"],
+  ["E6", "Is CW-SUL70BA suitable for an 80 sq ft room?", "en"],
+] as const) {
+  Deno.test(`${id} evidence-preserving customer-language rendering`, () => {
+    const { answer, citation } = routeAndAnswer(question, language);
+    assert(answer && citation, `${id}:missing_grounded_answer`);
+    assert(answer.reply.includes("CW-SUL70BA"), `${id}:model_changed`);
+    if (language === "en") {
+      assert(!/[\p{Script=Han}]/u.test(answer.reply.replace(/樂聲牌/gu, "")), `${id}:mixed_description:${answer.reply}`);
+      assert(answer.reply.includes("3/4 HP") &&
+        (id === "E3" || answer.reply.includes("Inverter LITE")), `${id}:fact_lost:${answer.reply}`);
+    }
+    if (id === "E1" || id === "E5" || id === "E6") {
+      assert(/does not directly state a suitable room area|未有直接列出適用面積/u.test(answer.reply) &&
+        answer.reply.includes(language === "en" ? "80 sq ft" : "80呎") &&
+        answer.reply.includes("HK$5,680"), `${id}:unknown_or_number_changed:${answer.reply}`);
+    }
+    if (id === "E2") assert(/cooling-only|inverter/iu.test(answer.reply), `${id}:features_missing`);
+    if (id === "E4") assert(answer.reply.includes("功能：變頻 淨冷"), `${id}:zh_regression`);
+    assert(citation.citation_lineage.evidence_chunk_ids[0] === chunkId, `${id}:lineage`);
+    console.log(`${id}|canonical_kb_direct_answer|${answer.reply}`);
+  });
+}
+
+Deno.test("E7/E8 variant descriptions are bounded by evidence and cannot promote internal prices", () => {
+  const variant = content.replaceAll("CW-SUL70BA", "ZX-AB12345")
+    .replaceAll("PANASONIC 樂聲", "ACME")
+    .replaceAll("3/4匹", "1.5匹").replace("5680", "7290");
+  const replacement = { ...document, title: "ACME ZX-AB12345",
+    chunks: [{ ...chunk, title: "ACME ZX-AB12345", content: variant }],
+    llm_context: { ...document.llm_context,
+      full_content_evidence: [{ ...document.llm_context.full_content_evidence[0], content: variant }] },
+    authority: { ...document.authority!, entity_ids: ["ZX-AB12345"] } };
+  const alt = routeAndAnswer("Is ZX-AB12345 suitable for an 80 sq ft room?", "en", [replacement]);
+  assert(alt.answer?.reply.includes("1.5 HP") && alt.answer.reply.includes("HK$7,290") &&
+    alt.answer.reply.includes("80 sq ft") && !/3750|4038|變頻|淨冷|窗口機/.test(alt.answer.reply),
+    `E7:numeric_or_language_change:${alt.answer?.reply}`);
+  const unknownDescription = variant.replace("1.5匹Inverter LITE變頻式淨冷窗口機", "1.5匹未識別技術");
+  const unknown = { ...replacement, chunks: [{ ...replacement.chunks[0], content: unknownDescription }],
+    llm_context: { ...replacement.llm_context, full_content_evidence: [{ ...replacement.llm_context.full_content_evidence[0], content: unknownDescription }] } };
+  const bounded = routeAndAnswer("Is ZX-AB12345 suitable for an 80 sq ft room?", "en", [unknown]);
+  assert(bounded.answer?.reply.includes("80 sq ft") && !/1.5 HP|未識別|技術|3750|4038/.test(bounded.answer.reply),
+    `E8:unverified_translation:${bounded.answer?.reply}`);
+  console.log(`E7|${alt.answer?.reply}`);
+  console.log(`E8|${bounded.answer?.reply}`);
+});
 
 Deno.test("P5 actual product malfunction remains a support case", () => {
   const question = "CW-SUL70BA 開唔到機，點處理？";

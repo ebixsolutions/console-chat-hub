@@ -93,6 +93,50 @@ function safeProductDescription(content: string, model: string): string | null {
   return detail && detail.length <= 80 ? detail : null;
 }
 
+// Rendering authority is deliberately smaller than evidence authority: only
+// recognized source terms may be expressed in English. Unrecognized product
+// prose is omitted, never passed through as mixed-language text or guessed.
+function englishProductDescription(description: string | null): string | null {
+  if (!description) return null;
+  let rest = description.normalize("NFKC").trim();
+  const terms: string[] = [];
+  const horsepower = /^(\d+(?:\.\d+)?(?:\/\d+)?)\s*(?:匹|HP)\s*/iu.exec(rest);
+  if (horsepower) {
+    terms.push(`${horsepower[1]} HP`);
+    rest = rest.slice(horsepower[0].length);
+  }
+  const inverter = /^Inverter\s+LITE\s*/iu.exec(rest);
+  if (inverter) {
+    terms.push("Inverter LITE");
+    rest = rest.slice(inverter[0].length);
+  }
+  const variable = /^變頻式?\s*/u.exec(rest);
+  if (variable) {
+    if (!inverter) terms.push("inverter");
+    rest = rest.slice(variable[0].length);
+  }
+  const cooling = /^淨冷\s*/u.exec(rest);
+  if (cooling) {
+    terms.push("cooling-only");
+    rest = rest.slice(cooling[0].length);
+  }
+  const windowUnit = /^窗口(?:式)?(?:冷氣)?機\s*/u.exec(rest);
+  if (windowUnit) {
+    terms.push("window air conditioner");
+    rest = rest.slice(windowUnit[0].length);
+  }
+  return !rest && terms.length ? terms.join(" ") : null;
+}
+
+function englishProductFeatures(features: string | null): string | null {
+  if (!features) return null;
+  const tokens = features.normalize("NFKC").trim().split(/[\s,，、;；]+/u);
+  const vocabulary: Record<string, string> = { "變頻": "inverter", "變頻式": "inverter", "淨冷": "cooling-only" };
+  return tokens.length && tokens.every((token) => token in vocabulary)
+    ? [...new Set(tokens.map((token) => vocabulary[token]))].join(" and ")
+    : null;
+}
+
 /** A bounded fact from selected, published, current Full Content Evidence only. */
 export function resolveCanonicalKbDirectAnswer(input: {
   request: string;
@@ -166,9 +210,10 @@ export function resolveCanonicalKbDirectAnswer(input: {
     const description = safeProductDescription(selected.content, model);
     const product = [safeBrand, model].filter(Boolean).join(" ");
     const detail = description ? `，${description}` : "";
+    const englishDescription = englishProductDescription(description);
     const pricePhrase = displayPrice ? (language === "en" ? ` The listed selling price is ${displayPrice}.` : `產品資料售價為 ${displayPrice}。`) : "";
     const reply = language === "en"
-      ? `Yes, ${product}${description ? `: ${description}` : ""} is listed in our product records.${pricePhrase} Live stock has not been confirmed.`
+      ? `Yes, ${product} is listed in our product records.${englishDescription ? ` It is described as a ${englishDescription}.` : ""}${pricePhrase} Live stock has not been confirmed.`
       : language === "zh-CN"
       ? `有，${product}${detail}。${pricePhrase}现有资料未确认实时库存。`
       : `有，${product}${detail}。${pricePhrase}現有資料未確認即時庫存。`;
@@ -185,6 +230,7 @@ export function resolveCanonicalKbDirectAnswer(input: {
     const safeBrand = brand && !/[\d$<>]/.test(brand) && brand.length <= 40 ? brand : null;
     const description = safeProductDescription(selected.content, model);
     const summary = description?.split(/[，,。]/u)[0]?.trim() || null;
+    const englishSummary = englishProductDescription(summary);
     const featureField = labelledValue(selected.content, /功能|features?/i);
     const safeFeatures = featureField && featureField.length <= 50 &&
       !/(?:成本|特價|特价|售價|售价|庫存|库存|stock|[$<>])/i.test(featureField)
@@ -206,17 +252,19 @@ export function resolveCanonicalKbDirectAnswer(input: {
       const detail = factual.fact === "features" && safeFeatures
         ? `${summary}；${language === "en" ? "features" : "功能"}：${safeFeatures}`
         : summary;
+      const englishFeatures = factual.fact === "features" ? englishProductFeatures(safeFeatures) : null;
+      if (language === "en" && !englishSummary && !englishFeatures) return null;
       return evidence("product_record", language === "en"
-        ? `The current product record describes ${product} as ${detail}.`
+        ? `The current product record describes ${product}${englishSummary ? ` as ${englishSummary}` : ""}${englishFeatures ? `; its listed features are ${englishFeatures}` : ""}.`
         : language === "zh-CN"
         ? `现行产品资料列出 ${product}：${detail}。`
         : `現行產品資料列出 ${product}：${detail}。`, selected);
     }
     if (factual.fact === "suitability") {
-      if (!summary) return null;
+      if (!summary && language !== "en") return null;
       const room = request.match(/\b\d{1,4}\s*(?:平方[呎尺]|[呎尺]|sq\.?\s*ft|square\s*feet)/iu)?.[0] ?? null;
       const reply = language === "en"
-        ? `${product} is listed as ${summary}.${displayPrice ? ` The product record lists a selling price of ${displayPrice}.` : ""} The current product information does not directly state a suitable room area, so I cannot confirm whether it is sufficient${room ? ` for ${room}` : " for that room"}. Sun exposure and other room conditions would help assess it.`
+        ? `${product}${englishSummary ? ` is listed as a ${englishSummary}` : " has a current product record"}.${displayPrice ? ` The product record lists a selling price of ${displayPrice}.` : ""} The current product information does not directly state a suitable room area, so I cannot confirm whether it is sufficient${room ? ` for ${room}` : " for that room"}. Sun exposure and other room conditions would help assess it.`
         : language === "zh-CN"
         ? `${product} 是${summary}。${displayPrice ? `产品资料售价为 ${displayPrice}。` : ""}现有产品资料未直接列出适用面积，所以不能确认${room ? `${room}房间` : "这个房间"}是否够用；日照等条件也需考虑。`
         : `${product} 係${summary}。${displayPrice ? `產品資料售價為 ${displayPrice}。` : ""}現有產品資料未有直接列出適用面積，所以未能確認${room ? `${room}房` : "呢間房"}夠唔夠用；亦要睇日照等條件。`;
