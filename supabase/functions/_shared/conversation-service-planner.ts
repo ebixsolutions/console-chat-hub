@@ -8,6 +8,7 @@
  */
 import type { ConversationCommerceState } from "./commerce-state-contract.ts";
 import type { CanonicalConversationMemory } from "./conversation-long-memory.ts";
+import { isProductSupportProblem } from "./natural-customer-response.ts";
 
 export type ServiceLanguage = "zh-TW" | "zh-CN" | "en";
 export type ServiceKnowledgeState =
@@ -380,7 +381,8 @@ function buildKbQuery(question: string, input: ServicePlanInput): string {
  */
 function classifyCustomerIssue(question: string): ServiceIssueKind | null {
   const text = clean(question, 2400);
-  if (text.length < 24) return null;
+  const productProblem = isProductSupportProblem(text);
+  if (text.length < 24 && !productProblem) return null;
   if (
     /(?:password|login|log in|sign in|reset email|account access|密碼|密码|登入|登錄|登录|重設電郵|重置邮件)/i
       .test(text)
@@ -412,7 +414,7 @@ function classifyCustomerIssue(question: string): ServiceIssueKind | null {
     return "delivery_or_collection";
   }
   if (
-    /(?:third[- ]party seller|marketplace|seller|product support|laptop|feature|model|產品|产品|賣家|卖家|功能)/i
+    productProblem || /(?:third[- ]party seller|marketplace|seller|賣家|卖家).{0,50}(?:problem|issue|complain|support|投訴|投诉|問題|问题|協助|协助)/i
       .test(text)
   ) {
     return "marketplace_or_product_support";

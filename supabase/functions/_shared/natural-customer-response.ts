@@ -7,6 +7,7 @@ export type NaturalCustomerIntent =
   | { kind: "product_shopping"; product: string | null }
   | { kind: "product_guidance"; product: string | null; two_bedrooms_and_living_room?: boolean }
   | { kind: "product_availability"; product: string | null }
+  | { kind: "product_factual_query"; product: string; fact: "features" | "horsepower" | "suitability" | "price" | "specification" | "model_info" }
   | { kind: "none"; product: null };
 
 const MAX_PRODUCT_LABEL_LENGTH = 80;
@@ -18,6 +19,31 @@ export function exactProductIdentifiers(product: string | null): string[] {
     /(?<![A-Z0-9])(?:[A-Z][A-Z0-9]*-[A-Z0-9]+(?:-[A-Z0-9]+)*|[A-Z]{2,}[A-Z0-9]*\d{2,}[A-Z0-9]*|[A-Z]\d{3,}[A-Z0-9]*)(?![A-Z0-9])/giu,
   ) ?? [];
   return [...new Set(tokens.filter((token) => token.length >= 5 && /\d/u.test(token) && /[A-Z]/iu.test(token)))];
+}
+
+/** A specific model and an actual merchant fact request are both required. */
+export function classifyProductFactualQuery(text: string): Extract<NaturalCustomerIntent, { kind: "product_factual_query" }> | null {
+  const normalized = text.normalize("NFKC").trim();
+  const models = exactProductIdentifiers(normalized);
+  if (models.length !== 1 || isProductSupportProblem(normalized)) return null;
+  const fact = /(?:適合|适合|夠用|够用|啱用|合用|suitab|enough|work\s+for|fit\s+(?:in|for)|appropriate\s+for)/i.test(normalized)
+    ? "suitability"
+    : /(?:售價|售价|幾錢|几钱|價錢|价钱|price|how\s+much)/i.test(normalized)
+    ? "price"
+    : /(?:幾多匹|几多匹|多少匹|幾匹|几匹|匹數|匹数|horsepower|\bHP\b)/i.test(normalized)
+    ? "horsepower"
+    : /(?:功能|feature|特點|特点|特色)/i.test(normalized)
+    ? "features"
+    : /(?:規格|规格|specs?|尺寸|dimension|capacity|容量|重量|weight|功率|power|電壓|电压|voltage|噪音)/i.test(normalized)
+    ? "specification"
+    : /(?:型號|型号|model|產品資料|产品资料|product\s+(?:information|details))/i.test(normalized)
+    ? "model_info"
+    : null;
+  return fact ? { kind: "product_factual_query", product: models[0], fact } : null;
+}
+
+export function isProductSupportProblem(text: string): boolean {
+  return /(?:開唔到機|开不了机|開不了機|不能開機|无法开机|唔著|故障|維修|维修|壞咗|坏了|損壞|损坏|缺少功能|缺失功能|功能失效|兼容問題|兼容问题|相容問題|賣家投訴|卖家投诉|not\s+working|malfunction|broken|damaged|missing\s+(?:advertised\s+)?(?:features?|parts?)|compatibility\s+issue|seller\s+(?:problem|complaint)|product\s+support)/i.test(text);
 }
 
 function chineseProductPrefix(product: string): string {
@@ -137,6 +163,9 @@ export function classifyNaturalCustomerIntent(
     return { kind: "product_availability", product: availabilityProduct };
   }
 
+  const factualQuery = classifyProductFactualQuery(meaningful);
+  if (factualQuery) return factualQuery;
+
   const shoppingProduct = extractShoppingProduct(meaningful);
   if (
     shoppingProduct ||
@@ -176,7 +205,8 @@ export function classifyNaturalCustomerIntent(
 export function requiresCurrentMerchantEvidence(
   intent: NaturalCustomerIntent,
 ): boolean {
-  return intent.kind === "product_availability";
+  // Product-specific facts must use the same current, tenant-scoped KB gate.
+  return intent.kind === "product_availability" || intent.kind === "product_factual_query";
 }
 
 export function renderNaturalImmediateResponse(
@@ -246,6 +276,12 @@ export function renderNaturalNoCurrentEvidence(
   intent: NaturalCustomerIntent,
   language: NaturalResponseLanguage,
 ): string | null {
+  if (intent.kind === "product_factual_query") {
+    const model = intent.product;
+    if (language === "en") return `I cannot find verifiable current product information for ${model}, so I cannot confirm its features or suitability. I will not guess.`;
+    if (language === "zh-CN") return `我目前找不到 ${model} 的可核实当前产品资料，所以无法确认功能或适用情况。我不会猜测。`;
+    return `我而家搵唔到 ${model} 嘅可核實現行產品資料，所以未能確認功能或適用情況。我唔會估。`;
+  }
   if (intent.kind !== "product_availability") return null;
   const product = intent.product;
   const identifiers = exactProductIdentifiers(product);

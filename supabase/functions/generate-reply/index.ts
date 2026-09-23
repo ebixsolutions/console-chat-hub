@@ -4449,11 +4449,14 @@ async function orchestrationGenerateReply(
       question: _h1LastMsg,
       language: _visitorLang,
       recall: requiresCurrentMerchantEvidence(_naturalCustomerIntent) &&
-          !_c3Recall.decision.handled
+          (_naturalCustomerIntent.kind === "product_factual_query" || !_c3Recall.decision.handled)
         ? {
-          ..._c3Recall.decision,
+          handled: false,
           reason: "CURRENT_KB_REQUIRED",
-          detail: "PRODUCT_AVAILABILITY_QUERY",
+          detail: _naturalCustomerIntent.kind === "product_factual_query"
+            ? "EXACT_PRODUCT_FACT_QUERY"
+            : "PRODUCT_AVAILABILITY_QUERY",
+          requested_facts: [],
         }
         : _c3Recall.decision,
       memory: _c3Memory,
@@ -4693,7 +4696,8 @@ async function orchestrationGenerateReply(
     _pr5HistoryRows ?? [],
     { explicit_handoff: isHandoffIntent(_h1LastMsg) },
   );
-  if (_canonicalTurn.operation === "CUSTOMER_CONTEXT_UPDATE") {
+  if (_canonicalTurn.operation === "CUSTOMER_CONTEXT_UPDATE" &&
+      !requiresCurrentMerchantEvidence(_naturalCustomerIntent)) {
     const acknowledgement =
       _canonicalTurn.reason === "customer_context_requirements_request"
         ? buildCustomerContextRequirementsResponse(
@@ -4751,6 +4755,7 @@ async function orchestrationGenerateReply(
   const _turnClassification = classifyConversationTurn(_h1LastMsg);
   if (
     !_w5ShortTopicHint &&
+    !requiresCurrentMerchantEvidence(_naturalCustomerIntent) &&
     _turnClassification.should_clarify_before_kb &&
     !isHandoffIntent(_h1LastMsg) && _criticalLocalRisk?.level !== "high"
   ) {
@@ -5005,7 +5010,8 @@ async function orchestrationGenerateReply(
     _pr5R3Sentiment?.emotion_kind === "positive_recovery"
       ? resolvePositiveRecoveryAcknowledgement(_h1LastMsg, _visitorLang)
       : null;
-  if (_positiveRecoveryAcknowledgement) {
+  if (_positiveRecoveryAcknowledgement &&
+      !requiresCurrentMerchantEvidence(_naturalCustomerIntent)) {
     const committed = await commitAiReplyWithControlGate(
       supabaseAdmin,
       conversation_id,
@@ -5049,7 +5055,8 @@ async function orchestrationGenerateReply(
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   }
-  const _conversationMemoryReply = !_c3Recall.decision.handled &&
+  const _conversationMemoryReply = !requiresCurrentMerchantEvidence(_naturalCustomerIntent) &&
+      !_c3Recall.decision.handled &&
       _c3Recall.decision.reason === "NOT_A_RECALL_QUERY" &&
       _c3Recall.decision.detail !== "HANDOFF_PRECEDENCE"
     ? resolveConversationMemoryResponse(_h1LastMsg, _pr5HistoryRows ?? [])

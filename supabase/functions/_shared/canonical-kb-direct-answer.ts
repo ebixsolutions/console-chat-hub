@@ -1,5 +1,6 @@
 import type { CanonicalGroundingResult } from "./canonical-grounding.ts";
 import type { KBFullChunk } from "./deterministic-kb-client.ts";
+import { classifyProductFactualQuery } from "./natural-customer-response.ts";
 
 export interface CanonicalKbDirectAnswer {
   kind: "product_record" | "price" | "price_unknown" | "specification" | "policy";
@@ -173,6 +174,55 @@ export function resolveCanonicalKbDirectAnswer(input: {
       : `有，${product}${detail}。${pricePhrase}現有資料未確認即時庫存。`;
     return { ...evidence(priceFact ? "price" : "product_record", reply, selected),
       ...(priceFact ? { price_fact: priceFact } : {}) };
+  }
+
+  const factual = classifyProductFactualQuery(request);
+  if (factual && productRecord && factual.product === model) {
+    // Only the selected Full Content may supply a product description, brand
+    // or selling price. Do not infer recommended room area from horsepower.
+    const selected = priceEvidence?.chunk ?? chunks[0];
+    const brand = labelledValue(selected.content, /品牌|brand/i);
+    const safeBrand = brand && !/[\d$<>]/.test(brand) && brand.length <= 40 ? brand : null;
+    const description = safeProductDescription(selected.content, model);
+    const summary = description?.split(/[，,。]/u)[0]?.trim() || null;
+    const featureField = labelledValue(selected.content, /功能|features?/i);
+    const safeFeatures = featureField && featureField.length <= 50 &&
+      !/(?:成本|特價|特价|售價|售价|庫存|库存|stock|[$<>])/i.test(featureField)
+      ? featureField : null;
+    const horsepower = summary?.match(/(?:^|[^\d])(\d+(?:\.\d+)?(?:\/\d+)?)\s*(?:匹|HP)/iu)?.[1] ?? null;
+    const product = [safeBrand, model].filter(Boolean).join(" ");
+
+    if (factual.fact === "horsepower") {
+      if (!horsepower) return null;
+      return evidence("specification", language === "en"
+        ? `${product} is listed as ${horsepower} HP in the current product description.`
+        : language === "zh-CN"
+        ? `现行产品描述列出 ${product} 为 ${horsepower}匹。`
+        : `現行產品描述列出 ${product} 係 ${horsepower}匹。`, selected);
+    }
+    if (factual.fact === "features" || factual.fact === "model_info" ||
+      (factual.fact === "specification" && /(?:規格|规格|specs?)/iu.test(request))) {
+      if (!summary) return null;
+      const detail = factual.fact === "features" && safeFeatures
+        ? `${summary}；${language === "en" ? "features" : "功能"}：${safeFeatures}`
+        : summary;
+      return evidence("product_record", language === "en"
+        ? `The current product record describes ${product} as ${detail}.`
+        : language === "zh-CN"
+        ? `现行产品资料列出 ${product}：${detail}。`
+        : `現行產品資料列出 ${product}：${detail}。`, selected);
+    }
+    if (factual.fact === "suitability") {
+      if (!summary) return null;
+      const room = request.match(/\b\d{1,4}\s*(?:平方[呎尺]|[呎尺]|sq\.?\s*ft|square\s*feet)/iu)?.[0] ?? null;
+      const reply = language === "en"
+        ? `${product} is listed as ${summary}.${displayPrice ? ` The product record lists a selling price of ${displayPrice}.` : ""} The current product information does not directly state a suitable room area, so I cannot confirm whether it is sufficient${room ? ` for ${room}` : " for that room"}. Sun exposure and other room conditions would help assess it.`
+        : language === "zh-CN"
+        ? `${product} 是${summary}。${displayPrice ? `产品资料售价为 ${displayPrice}。` : ""}现有产品资料未直接列出适用面积，所以不能确认${room ? `${room}房间` : "这个房间"}是否够用；日照等条件也需考虑。`
+        : `${product} 係${summary}。${displayPrice ? `產品資料售價為 ${displayPrice}。` : ""}現有產品資料未有直接列出適用面積，所以未能確認${room ? `${room}房` : "呢間房"}夠唔夠用；亦要睇日照等條件。`;
+      return { ...evidence(priceFact ? "price" : "product_record", reply, selected),
+        ...(priceFact ? { price_fact: priceFact } : {}) };
+    }
   }
 
   // Exact field questions must have an explicit matching label and value in

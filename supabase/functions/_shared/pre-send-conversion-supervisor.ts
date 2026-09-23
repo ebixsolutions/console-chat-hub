@@ -432,6 +432,11 @@ function extractMoneyMentions(text: string): MoneyMention[] {
     // selling-price sentence appears nearby in the same short response.
     if (/[A-Za-z0-9]/.test(text[match.index - 1] ?? "") ||
       /[A-Za-z]/.test(text[match.index + match[0].length] ?? "")) continue;
+    // Fractions and room measurements remain measurements even in a reply
+    // that also cites a KB selling price (for example 3/4匹 and 80呎).
+    if (!match[1] && !match[2] && !match[5] &&
+      (text[match.index - 1] === "/" || text[match.index + match[0].length] === "/" ||
+        /^\s*(?:平方[呎尺]|[呎尺]|sq\.?\s*ft|square\s*feet|BTU(?:\/h)?)/iu.test(text.slice(match.index + match[0].length)))) continue;
     const amount = Number(`${match[3].replace(/,/g, "")}${match[4] ? `.${match[4]}` : ""}`);
     if (!Number.isFinite(amount) || amount <= 0) continue;
     const marker = `${match[1] ?? ""}${match[2] ?? ""}${match[5] ?? ""}`.toUpperCase();
