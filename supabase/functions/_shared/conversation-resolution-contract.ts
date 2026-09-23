@@ -24,6 +24,7 @@ const READ_ONLY_RESOLVED = new Set([
 const READ_ONLY_TARGETED_CLARIFICATION = new Set([
   "read_only_attribute_constraint_query_unresolved",
   "read_only_current_state_aggregate_query_unresolved",
+  "contextual_targeted_clarification",
 ]);
 
 const READ_ONLY_REASONS = new Set([...READ_ONLY_RESOLVED, ...READ_ONLY_TARGETED_CLARIFICATION]);
@@ -31,6 +32,8 @@ const READ_ONLY_REASONS = new Set([...READ_ONLY_RESOLVED, ...READ_ONLY_TARGETED_
 const AUTHORITATIVE_ROUTES = new Set([
   "commerce_state_answer",
   "commerce_transaction_summary",
+  "product_guidance",
+  "contextual_scoped_update",
 ]);
 
 const AUTHORITATIVE_REPLY_AUTHORITIES = new Set([

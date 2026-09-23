@@ -4611,6 +4611,7 @@ async function orchestrationGenerateReply(
         commerce_state_persistence_classification:
           commercePersistenceClassification,
         commerce_reason: commerceReason,
+        contextual_decision: _a3Commerce?.contextual_decision ?? null,
         commerce_state_path: _a3Commerce?.state_path ?? null,
         commerce_state_readback_proof: _c3CommerceSnapshot &&
             _a3Commerce?.state_path

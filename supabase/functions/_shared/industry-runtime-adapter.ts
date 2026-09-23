@@ -1,4 +1,6 @@
 import type { CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
+import type { ConversationCommerceState } from "./commerce-state-contract.ts";
+import type { ContextualCandidate } from "./contextual-customer-update.ts";
 import type { CommerceTurnEntityHint } from "./commerce-state-reducer.ts";
 import { createIndustryRegistry, type IndustryProfile } from "./industry-agent-registry.ts";
 import { validateIndustrySchemaValues } from "./industry-schema.ts";
@@ -6,11 +8,31 @@ import {
   HOME_APPLIANCE_CATEGORIES,
   HOME_APPLIANCE_PROFILE_V1,
   HOME_APPLIANCE_ROOMS,
+  homeApplianceContextualCandidate,
 } from "./industry-profiles/home-appliance-v1.ts";
 
 export type IndustryLanguage = "zh-TW" | "zh-CN" | "en";
 
 export const INDUSTRY_AGENT_REGISTRY = createIndustryRegistry([HOME_APPLIANCE_PROFILE_V1]);
+
+export function resolveIndustryContextualCandidate(input: {
+  text: string;
+  history: readonly string[];
+  state: ConversationCommerceState;
+  language: IndustryLanguage;
+}): ContextualCandidate | null {
+  const profile = resolveIndustryRuntime({
+    texts: [input.text, ...input.history],
+    industry_identifier: input.state.current_industry,
+  }).profile;
+  if (profile && profile.id !== HOME_APPLIANCE_PROFILE_V1.id) return null;
+  const candidate = homeApplianceContextualCandidate(input);
+  // A room-only phrase without a selected profile can request clarification,
+  // but cannot authoritatively bind to an unknown product or service domain.
+  return !profile && candidate?.action === "scoped_update"
+    ? { ...candidate, context_sufficient: false }
+    : candidate;
+}
 
 export interface IndustryRuntimeResolution {
   industry_id: string | null;

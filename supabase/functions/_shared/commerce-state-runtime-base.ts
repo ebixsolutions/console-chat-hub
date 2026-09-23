@@ -50,7 +50,9 @@ import {
   semanticFrameToEntityHints,
   semanticFrameToStateEvents,
 } from "./commerce-semantic-adapter.ts";
-import { industryEntityLabel, resolveIndustryRuntime } from "./industry-runtime-adapter.ts";
+import { industryEntityLabel, resolveIndustryContextualCandidate, resolveIndustryRuntime } from "./industry-runtime-adapter.ts";
+import { contextualUpdateEvents, resolveContextualCustomerUpdate } from "./contextual-customer-update.ts";
+import type { ContextualDecision } from "./contextual-customer-update.ts";
 import {
   HOME_APPLIANCE_CATEGORIES as CATEGORY_SPECS,
   HOME_APPLIANCE_ROOMS as ROOM_SPECS,
@@ -99,7 +101,8 @@ export interface CommerceRuntimeOutcome {
   reason: string;
   state_path?: string | null;
   calculation?: { expression: string; result: number; currency?: string | null } | null;
-  route: "commerce_state_answer" | "commerce_transaction_summary" | "commerce_kb_required";
+  route: "commerce_state_answer" | "commerce_transaction_summary" | "commerce_kb_required" | "product_guidance" | "contextual_scoped_update";
+  contextual_decision?: ContextualDecision;
 }
 
 export interface CommittedAddressCorrectionResolution {
@@ -1643,6 +1646,13 @@ export function reduceTurn(
   if (isReadOnlyCurrentStateQuery(input.text, input.semantic_frame) && !durableResearchTurn) {
     return previous;
   }
+  const contextual = resolveContextualTurn(input, previous);
+  if (contextual.route === "targeted_clarification") return previous;
+  if (contextual.route === "contextual_scoped_update") {
+    return reduceCommerceState(previous, contextualUpdateEvents(
+      contextual, previous, input.source_message_id, input.occurred_at,
+    ));
+  }
   const calculationTurn = detectExplicitCalculationRequest(input.text);
   const resolvedHints = calculationTurn
     ? []
@@ -1695,6 +1705,23 @@ export function reduceTurn(
   const reduced = reduceCommerceState(previous, [...industryEvent, ...semanticEvents, ...derived, ...runtimeEvents]);
   const guard = enforceQuotationNotOrderEvents(clean(input.text), reduced);
   return guard.length ? reduceCommerceState(reduced, guard) : reduced;
+}
+
+function resolveContextualTurn(
+  input: CommerceRuntimeInput,
+  state: ConversationCommerceState,
+): ContextualDecision {
+  const history = (input.history ?? [])
+    .filter((turn) => ["visitor", "user", "customer"].includes(turn.role))
+    .slice(0, MAX_HISTORY_TURNS).map((turn) => clean(turn.content));
+  const candidate = resolveIndustryContextualCandidate({
+    text: input.text, history, state, language: input.language,
+  });
+  return resolveContextualCustomerUpdate({
+    candidate,
+    state,
+    read_only: isReadOnlyCurrentStateQuery(input.text, input.semantic_frame),
+  });
 }
 
 function rpcResult(data: unknown): { result: string; applied_revision: number | null } {
@@ -2046,6 +2073,20 @@ export async function runCommerceStateRuntime(
 
   const language = input.language;
 
+  // Bind adapter-extracted scopes against committed context before semantic
+  // inference, so ambiguity is read-only and a unique update can win the
+  // shared reply precedence without a phrase-specific generate-reply branch.
+  const contextualBefore = await loadCommerceState(db, input.conversation_id);
+  const contextualDecision = resolveContextualTurn(input, contextualBefore.state);
+  if (contextualDecision.route === "targeted_clarification") {
+    return {
+      authority: "CONVERSATION_STATE", reply: contextualDecision.reply,
+      revision: contextualBefore.revision, persist_result: "read_only",
+      reason: "contextual_targeted_clarification",
+      route: "commerce_state_answer", contextual_decision: contextualDecision,
+    };
+  }
+
   // Resolve known scoped/aggregate facts before generic clarification.
   if (detectsConstraintRecall(text) || detectsPortfolioRecall(text) || detectsQuoteReadyRecall(text) || detectsQuoteProvenanceRecall(text) || detectsBrandRequirementRecall(text)) {
     const loaded = await loadCommerceState(db, input.conversation_id);
@@ -2178,6 +2219,21 @@ export async function runCommerceStateRuntime(
 
   const persisted = await persistCommerceTurn(db, runtimeInput, hints);
   const state = persisted.state;
+  if (
+    (contextualDecision.route === "product_guidance" ||
+      contextualDecision.route === "contextual_scoped_update") &&
+    ["success", "no_semantic_change", "source_message_already_applied"].includes(persisted.result)
+  ) {
+    return {
+      authority: "CONVERSATION_STATE",
+      reply: contextualDecision.reply,
+      revision: persisted.revision,
+      persist_result: persisted.result,
+      reason: contextualDecision.reason,
+      route: contextualDecision.route,
+      contextual_decision: contextualDecision,
+    };
+  }
   const readOnlyCurrentStateQuery = isReadOnlyCurrentStateQuery(
     text,
     input.semantic_frame,
