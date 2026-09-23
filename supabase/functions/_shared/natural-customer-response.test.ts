@@ -1,5 +1,6 @@
 import {
   classifyNaturalCustomerIntent,
+  exactProductIdentifiers,
   renderNaturalImmediateResponse,
   renderNaturalNoCurrentEvidence,
   requiresCurrentMerchantEvidence,
@@ -23,6 +24,49 @@ const assert: (value: unknown, message: string) => asserts value = (
 
 const forbidden =
   /你今次最想完成哪一件事|根據這段對話已有的資料|canonical|bounded answer|knowledge-base lookup/i;
+
+Deno.test("A3 exact identifier no-current-evidence never re-asks for the supplied model", () => {
+  for (const row of [
+    { text: "有沒有 NONEXISTENT-999999？", language: "zh-TW" as const,
+      identifier: "NONEXISTENT-999999", reask: /指定型號|提供型號|型號的話/u },
+    { text: "Do you have ABC-12345?", language: "en" as const,
+      identifier: "ABC-12345", reask: /specific model|provide.*model/i },
+    { text: "有没有品牌 ZX9000？", language: "zh-CN" as const,
+      identifier: "ZX9000", reask: /指定型号|提供型号/u },
+    { text: "有沒有 ACME 冷氣 CW-SUL90BA？", language: "zh-TW" as const,
+      identifier: "CW-SUL90BA", reask: /指定型號|提供型號/u },
+  ]) {
+    const intent = classifyNaturalCustomerIntent(row.text);
+    assert(intent.kind === "product_availability", `${row.text}:${JSON.stringify(intent)}`);
+    assert(exactProductIdentifiers(intent.product).includes(row.identifier), `${row.text}:identifier`);
+    const reply = renderNaturalNoCurrentEvidence(intent, row.language) ?? "";
+    assert(reply.includes(row.identifier) && /未能確認|无法确认|cannot confirm/i.test(reply), reply);
+    assert(!row.reask.test(reply) && !/有現貨|in stock now|已確認有售/i.test(reply), reply);
+    console.log(`A3 ${row.language}: ${reply}`);
+  }
+});
+
+Deno.test("A3 broad or absent product keeps targeted clarification possible", () => {
+  const broad = classifyNaturalCustomerIntent("你哋有冇 Panasonic 冷氣？");
+  assert(broad.kind === "product_availability" &&
+    exactProductIdentifiers(broad.product).length === 0, JSON.stringify(broad));
+  const broadReply = renderNaturalNoCurrentEvidence(broad, "zh-TW") ?? "";
+  assert(/指定型號/.test(broadReply) && /Panasonic 冷氣/.test(broadReply), broadReply);
+  console.log("A3 broad:", broadReply);
+
+  const absent = classifyNaturalCustomerIntent("你哋有冇？");
+  assert(absent.kind === "product_availability" && absent.product === null, JSON.stringify(absent));
+  const targeted = renderNaturalImmediateResponse(absent, "zh-TW") ?? "";
+  assert(targeted === "你想查邊類產品或邊個型號？", targeted);
+  console.log("A3 absent:", targeted);
+  const englishAbsent = classifyNaturalCustomerIntent("Do you have?");
+  assert(englishAbsent.kind === "product_availability" && englishAbsent.product === null, JSON.stringify(englishAbsent));
+  assert(renderNaturalImmediateResponse(englishAbsent, "en") === "Which product or model would you like me to check?", "english_targeted_clarification");
+
+  for (const text of ["Panasonic 冷氣", "coffee grinder", "17", "A12", "S26", "三門雪櫃"]) {
+    assert(exactProductIdentifiers(text).length === 0, `${text}:false_model`);
+  }
+});
 
 Deno.test("C3 greeting classifier renders natural zh-TW greeting without swallowing product intent", () => {
   for (const text of ["Hi", "你好", "早晨", "Hi / 你好", "Hello，早晨"]) {

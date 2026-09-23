@@ -3282,6 +3282,8 @@ async function persistNaturalImmediateResponse(
   if (!content) return null;
   const responseRoute = intent.kind === "greeting"
     ? "natural_greeting"
+    : intent.kind === "product_availability"
+    ? "product_availability_clarification"
     : "product_shopping_intent";
   const committed = await commitAiReplyWithControlGate(
     supabaseAdmin,

@@ -11,6 +11,15 @@ export type NaturalCustomerIntent =
 
 const MAX_PRODUCT_LABEL_LENGTH = 80;
 
+/** Product-like codes must contain letters and a meaningful numeric part. */
+export function exactProductIdentifiers(product: string | null): string[] {
+  if (!product) return [];
+  const tokens = product.normalize("NFKC").match(
+    /(?<![A-Z0-9])(?:[A-Z][A-Z0-9]*-[A-Z0-9]+(?:-[A-Z0-9]+)*|[A-Z]{2,}[A-Z0-9]*\d{2,}[A-Z0-9]*|[A-Z]\d{3,}[A-Z0-9]*)(?![A-Z0-9])/giu,
+  ) ?? [];
+  return [...new Set(tokens.filter((token) => token.length >= 5 && /\d/u.test(token) && /[A-Z]/iu.test(token)))];
+}
+
 function chineseProductPrefix(product: string): string {
   return /^[\p{Script=Latin}\d]/u.test(product) ? ` ${product}` : product;
 }
@@ -118,6 +127,11 @@ export function classifyNaturalCustomerIntent(
   // greeting-only response or fall through to generic clarification.
   const meaningful = stripLeadingGreeting(normalized) || normalized;
 
+  if (/^(?:(?:你(?:哋|們|们)?|店內|店内|呢度|這裡|这里)\s*)?(?:有冇|有無|有沒有|有没有|是否有)\s*[?？!！.。]*$/iu.test(meaningful) ||
+    /^(?:do\s+you|does\s+(?:the\s+)?(?:shop|store))\s+(?:have|carry|sell|stock)\s*[?!.]*$/iu.test(meaningful)) {
+    return { kind: "product_availability", product: null };
+  }
+
   const availabilityProduct = extractAvailabilityProduct(meaningful);
   if (availabilityProduct) {
     return { kind: "product_availability", product: availabilityProduct };
@@ -169,6 +183,11 @@ export function renderNaturalImmediateResponse(
   intent: NaturalCustomerIntent,
   language: NaturalResponseLanguage,
 ): string | null {
+  if (intent.kind === "product_availability" && !intent.product) {
+    if (language === "en") return "Which product or model would you like me to check?";
+    if (language === "zh-CN") return "你想查哪类产品或哪个型号？";
+    return "你想查邊類產品或邊個型號？";
+  }
   if (intent.kind === "greeting") {
     if (language === "en") return "Hi! How can I help?";
     if (language === "zh-CN") return "你好！有什么可以帮你？";
@@ -229,6 +248,19 @@ export function renderNaturalNoCurrentEvidence(
 ): string | null {
   if (intent.kind !== "product_availability") return null;
   const product = intent.product;
+  const identifiers = exactProductIdentifiers(product);
+  if (identifiers.length) {
+    const subject = identifiers.length === 1 ? identifiers[0] : product!;
+    if (language === "en") {
+      return `I cannot find current product information for ${subject}, so I cannot confirm whether it is sold here. I will not guess.`;
+    }
+    if (language === "zh-CN") {
+      return `我目前找不到${subject}的现行产品资料，所以暂时无法确认有没有售卖。我不会猜测。`;
+    }
+    return `我而家搵唔到${chineseProductPrefix(subject)}${
+      chinesePossessiveParticle(subject, "嘅")
+    }現行產品資料，所以暫時未能確認有冇售賣。我唔會估。`;
+  }
   if (language === "en") {
     return product
       ? `I cannot find current store product information for ${product}, so I cannot confirm whether it is sold here. If you have a specific model, I can check again.`
