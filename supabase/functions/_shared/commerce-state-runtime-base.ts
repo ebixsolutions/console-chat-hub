@@ -2011,7 +2011,7 @@ function buildCalculationAnswer(language: CommerceLanguage, calculation: { expre
   const rendered = renderCalculationExpression(calculation);
   if (language === "en") return `Based only on the figures in this calculation: ${rendered} (${currency}). Latest prices, applicable fees and conditions still need to be confirmed.`;
   if (language === "zh-CN") return `只按你这次提供的数字计算：${rendered}（${currency}）。最新价格、适用费用及相关条件仍需确认。`;
-  return `只按你今次提供嘅數字計：${rendered}（${currency}）。最新價格、適用費用同相關條件仍然要確認。`;
+  return `按你提供嘅歷史報價試算：${rendered}（${currency}）。呢個唔係現行正式報價；最新價格、適用費用同相關條件仍然要確認。`;
 }
 
 function buildProfessionalConfirmationAnswer(language: CommerceLanguage, state: ConversationCommerceState): string {

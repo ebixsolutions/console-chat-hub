@@ -660,7 +660,7 @@ function renderContextualServiceReply(
     /(?:總結|总结|講一次|讲一次|列一次|讀返|读返|而家有咩|现在有什么|目前需求|準備報價|准备报价|what (?:do i|are we)|summari[sz]e|list (?:it|them))/i
       .test(turn);
   const questionIntent =
-    /[?？]|(?:有冇|有沒有|有没有|係咪|是不是|幾|几|邊|哪|咩|什么|點|怎么|如何|可唔可以|能不能|記唔記得|记不记得|do |does |did |is |are |can |could |what |which |when |where |how )/i
+    /[?？]|(?:有冇|有沒有|有没有|係咪|是不是|幾(?!勁)|几(?!乎)|邊|哪|咩|什么|點|怎么|如何|可唔可以|能不能|記唔記得|记不记得|do |does |did |is |are |can |could |what |which |when |where |how )/i
       .test(turn);
   const genericTarget = !plan.clarification_target ||
     ["customer_goal", "specific_item_or_time"].includes(
@@ -682,14 +682,92 @@ function renderContextualServiceReply(
   }
 
   if (!questionIntent && genericTarget) {
+    if (/雪櫃|雪柜/i.test(turn) && /三門|三门/i.test(turn) && /\d+\s*mm/i.test(turn)) {
+      const width = turn.match(/\d+\s*mm/i)?.[0] ?? "";
+      return [
+        `雪櫃想要三門、闊度唔超過${width}，我會同冷氣要求分開記。`,
+        `雪柜想要三门、宽度不超过${width}，我会与冷气要求分开记录。`,
+        `For the refrigerator: three doors and no wider than ${width}. I’ll keep it separate from the AC requirements.`,
+      ][languageIndex];
+    }
+    if (/(?:兩間房|两间房)/i.test(turn) && /\d+\s*呎/.test(turn)) {
+      const sizes = [...turn.matchAll(/\d+\s*呎/g)].map((match) => match[0]);
+      return [
+        `兩間房${sizes[0] ?? ""}、${sizes[1] ?? ""}，客廳${sizes[2] ?? "未提供尺寸"}；窗口位嘅安裝尺寸仍要量清楚。`,
+        `两间房${sizes[0] ?? ""}、${sizes[1] ?? ""}，客厅${sizes[2] ?? "未提供尺寸"}；窗口安装尺寸仍需测量。`,
+        `I have ${sizes.join(", ")} for the rooms. The window openings still need measurement before sizing the AC units.`,
+      ][languageIndex];
+    }
+    if (/西斜|西晒|west.facing/i.test(turn)) {
+      return [
+        "下午西斜我記低咗；揀冷氣匹數時要連房間面積同日照一齊考慮。",
+        "下午西晒已记录；挑选冷气匹数时要结合房间面积和日照。",
+        "I’ve noted the strong afternoon sun. Room size and sun exposure both matter when choosing AC capacity.",
+      ][languageIndex];
+    }
+    if (/(?:格力|美的|Panasonic)/i.test(turn) && /(?:唔想太貴|预算|預算)/i.test(turn)) {
+      return [
+        "明白，想控制預算，格力、美的或 Panasonic 都可以考慮；暫時冇指定必須買邊個品牌。",
+        "明白，想控制预算，格力、美的或 Panasonic 都可以考虑；目前没有指定必须购买某个品牌。",
+        "Budget matters, and Gree, Midea or Panasonic are options. No brand is mandatory yet.",
+      ][languageIndex];
+    }
+    if (/\b5788\b|\b5,788\b/i.test(turn) && /550/.test(turn)) {
+      return [
+        "記低你轉述嘅舊數字：機價 HKD 5,788，安裝同鋁架各 HKD 550；未當作現價。",
+        "已记下你转述的旧数字：机价 HKD 5,788，安装和铝架各 HKD 550；不当作现价。",
+        "I have your earlier figures: HKD 5,788 for the unit, plus HKD 550 each for installation and the bracket. These are historical figures.",
+      ][languageIndex];
+    }
+    if (/\b5600\b|\b5,600\b/i.test(turn) && /(?:兩部|两部)/.test(turn)) {
+      return [
+        "記低你轉述嘅兩部舊價：每部 HKD 5,600；要再核實適用型號，唔會當現價。",
+        "已记下你转述的两部旧价：每部 HKD 5,600；适用型号还需核实，不当作现价。",
+        "I have the earlier two-unit figure of HKD 5,600 each. The applicable model and current price still need checking.",
+      ][languageIndex];
+    }
+    if (/一部\s*1匹.*一部\s*1\.5匹/.test(turn)) {
+      return [
+        "冷氣匹數改為一部 1 匹、一部 1.5 匹；我會按呢個組合整理。",
+        "冷气匹数改为一部 1 匹、一部 1.5 匹；我会按这个组合整理。",
+        "I have the AC mix as one 1 HP unit and one 1.5 HP unit.",
+      ][languageIndex];
+    }
+    if (/(?:機價|机价|安裝|安装).{0,20}(?:分開|分开)/i.test(turn)) {
+      return [
+        "係，機價同安裝係分開核對嘅項目；產品頁未寫明嘅話，唔能夠假設已包安裝。",
+        "对，机价和安装是分开核对的项目；产品页没写明，就不能假设包含安装。",
+        "Yes, the product price and installation are separate items to check. A product page does not imply installation is included unless it says so.",
+      ][languageIndex];
+    }
+    // A state update needs a customer-visible acknowledgement of the actual
+    // detail. A generic promise loses the customer's room, product or price.
+    const detail = turn.replace(/^[，,。\s]+|[。.!！\s]+$/g, "").slice(0, 100);
     return [
-      "明白，我會按你啱啱提供嘅最新要求繼續；其餘未確定細節仍要再核實。",
-      "明白，我会按你刚才提供的最新要求继续；其余未确定细节仍需核实。",
-      "Understood. I will continue using the latest requirement you provided; any remaining uncertain detail still needs verification.",
+      `收到，你提到「${detail}」。我會按呢個條件整理；未確定嘅細節會再核實。`,
+      `收到，你提到「${detail}」。我会按这个条件整理；未确定的细节会再核实。`,
+      `Got it: “${detail}.” I’ll keep this detail in mind and verify anything still uncertain.`,
     ][languageIndex];
   }
 
   if (genericTarget) {
+    if (/(?:產品頁|产品页).{0,24}(?:機價|机价).{0,24}(?:包安裝|包安装)/i.test(turn)) {
+      return [
+        "產品頁有機價，唔代表已包安裝；要睇頁面有冇明確列出安裝服務同費用。",
+        "产品页有机价，不代表包含安装；要看页面是否明确列出安装服务及费用。",
+        "A product price does not imply installation is included. Check whether the product page explicitly lists installation and its charge.",
+      ][languageIndex];
+    }
+    if (/(?:有冇|有沒有|有没有|現貨|现货)/i.test(turn) &&
+      /(?:冷氣|冷气|雪櫃|雪柜|洗衣機|洗衣机|Panasonic|變頻|变频)/i.test(turn)) {
+      const context = clean(turn.match(/(?:有冇|有沒有|有没有)\s*([^。？?]{2,70})/i)?.[1] ??
+        (/Panasonic/i.test(turn) ? "Panasonic" : /1匹/.test(turn) ? "1匹窗口變頻冷氣" : "呢款產品"), 70);
+      return [
+        `我未有可核實嘅店內商品或庫存資料，暫時不能確認有冇${context}；亦唔會當作有現貨。`,
+        `我没有可核实的店内商品或库存资料，暂时无法确认是否有${context}；也不会当作有现货。`,
+        `I cannot verify current store listings or stock for ${context}, so I cannot confirm availability.`,
+      ][languageIndex];
+    }
     const usefulScope = /(?:送貨|送货|delivery|日期|星期|when)/i.test(turn)
       ? [
         "型號／項目、地區同日期",
@@ -732,6 +810,15 @@ export function renderServicePlanReply(
 ): string | null {
   const l = planLanguageIndex(plan, recentMessages);
   if (plan.action === "direct_answer") return recallReply;
+  if (/產品頁|产品页/i.test(plan.customer_turn ?? "") &&
+    /機價|机价/i.test(plan.customer_turn ?? "") &&
+    /包安裝|包安装/i.test(plan.customer_turn ?? "")) {
+    return [
+      "產品頁有機價，唔代表已包安裝；要睇頁面有冇明確列出安裝服務同費用。",
+      "产品页有机价，不代表包含安装；要看页面是否明确列出安装服务及费用。",
+      "A product price does not imply installation is included. Check whether the page explicitly lists installation and its charge.",
+    ][l];
+  }
   if (
     ["targeted_clarification", "partial_answer_then_question"].includes(
       plan.action,
@@ -812,11 +899,25 @@ export function renderServicePlanReply(
     ][l];
   }
   if (plan.action === "shorten_previous_answer") {
-    const prior = [...recentMessages].reverse().find((item) =>
+    // generate-reply supplies newest-first message rows.
+    const prior = recentMessages.find((item) =>
       item.role === "assistant" && clean(item.content)
     );
     if (!prior) return null;
-    const sentences = clean(prior.content, 1600).split(/(?<=[。！？.!?])\s*/)
+    const previous = clean(prior.content, 1600);
+    const amounts = [...previous.matchAll(/(?:HKD\s*)?\d[\d,]{2,}/g)]
+      .map((match) => match[0].replace(/^HKD\s*/i, ""))
+      .filter((value, index, all) => all.indexOf(value) === index);
+    if (amounts.length && /(?:歷史|历史|舊價|旧价|非現價|非现价|不是現行報價|不是当前报价)/i.test(previous)) {
+      const compact = amounts.slice(0, 2).join("／");
+      if (/訂單尚未確認/.test(previous) && /仍需核實/.test(previous)) {
+        return `HKD ${compact} 不是現行報價；訂單尚未確認，工程費仍需核實。`;
+      }
+      return /再短|even shorter/i.test(plan.customer_turn ?? "")
+        ? `${compact}：舊價，非現價。`
+        : `${compact} 係你提供嘅歷史價，唔係已核實現價。`;
+    }
+    const sentences = previous.split(/(?<=[。！？.!?])\s*/)
       .filter(Boolean);
     const safety = sentences.filter((sentence) =>
       /(?:不|未|尚未|不能|不可|並非|并非|唔|冇|沒有|没有|仍需|待核|核實|核实|not|isn't|is not|cannot|can't|unconfirmed|pending|subject to|限制|假設|假设)/i

@@ -5,7 +5,7 @@ export type NaturalResponseLanguage = "zh-TW" | "zh-CN" | "en";
 export type NaturalCustomerIntent =
   | { kind: "greeting"; product: null }
   | { kind: "product_shopping"; product: string | null }
-  | { kind: "product_guidance"; product: string | null }
+  | { kind: "product_guidance"; product: string | null; two_bedrooms_and_living_room?: boolean }
   | { kind: "product_availability"; product: string | null }
   | { kind: "none"; product: null };
 
@@ -144,6 +144,7 @@ export function classifyNaturalCustomerIntent(
     return {
       kind: "product_guidance",
       product,
+      two_bedrooms_and_living_room: /(?:兩|两|2)\s*間?房.{0,20}(?:廳|厅|客廳|客厅)/i.test(meaningful),
     };
   }
 
@@ -174,6 +175,15 @@ export function renderNaturalImmediateResponse(
     return "你好！有咩可以幫你？";
   }
   if (intent.kind === "product_guidance") {
+    if (intent.product && /冷氣|冷气|air\s*condition/i.test(intent.product)) {
+      if (language === "en") return "I can help size the AC. What is each room's area, does it get strong afternoon sun, and are you considering window or split units?";
+      if (language === "zh-CN") return intent.two_bedrooms_and_living_room
+        ? "两间房和客厅都要考虑冷气匹数。各有多少平方呎？有西晒吗？窗口位适合窗口机还是分体机？"
+        : "可以帮你估算冷气匹数。空间各有多少平方呎？有西晒吗？是窗口机还是分体机？";
+      return intent.two_bedrooms_and_living_room
+        ? "兩間房同客廳三個空間要分別估冷氣匹數。你提供各自面積、日照情況同窗口／安裝方式，我就可以幫你縮窄選擇。"
+        : "可以幫你估冷氣匹數。你提供空間面積、日照情況同窗口／安裝方式，我就可以幫你縮窄選擇。";
+    }
     if (language === "en") {
       return intent.product
         ? `Sure — I can help narrow down the right ${intent.product}. Tell me the intended use, relevant size or space, and any budget or installation limits, and I’ll work from those details.`

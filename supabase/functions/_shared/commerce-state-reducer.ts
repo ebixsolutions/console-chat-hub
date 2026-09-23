@@ -334,7 +334,8 @@ function parseSmallCount(raw: string): number | null {
 }
 
 function parseExplicitQuantity(text: string): number | null {
-  const m = text.match(/(?:qty|quantity|數量|数量|共|總共|总共|要|需要|買|买|訂|订|改做|改成|change to)\s*(?:係|是|=|:|：)?\s*([一二兩两三四五六七八九十]|\d{1,4})\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚|night|nights|pcs?|pieces?|units?|items?)?/i)
+  const m = text.match(/(?:qty|quantity|數量|数量|共|總共|总共)\s*(?:係|是|=|:|：)?\s*([一二兩两三四五六七八九十]|\d{1,4})(?!門|门)/i)
+    ?? text.match(/(?:要|需要|買|买|訂|订|改做|改成|change to)\s*(?:係|是|=|:|：)?\s*([一二兩两三四五六七八九十]|\d{1,4})\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚|night|nights|pcs?|pieces?|units?|items?)/i)
     ?? text.match(/([一二兩两三四五六七八九十]|\d{1,4})\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚|night|nights|pcs?|pieces?|units?|items?)\b/i);
   return m?.[1] ? parseSmallCount(m[1]) : null;
 }

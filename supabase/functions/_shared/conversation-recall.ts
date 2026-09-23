@@ -1199,11 +1199,9 @@ export function resolveConversationRecall(
     return fact.authority === "historical" && /quote/i.test(fact.key) &&
       typeof value?.amount === "number" && requestedAmounts.includes(value.amount);
   });
-  const historicalValidityReadback = Boolean(parsed.stop && !parsed.stop.handled &&
-    parsed.stop.reason === "CURRENT_KB_REQUIRED") &&
-    retainedHistoricalAmount &&
-    any(input.question, ["當作", "当作", "treat as"]) &&
-    any(input.question, ["現售價", "现售价", "current price"]);
+  const historicalValidityReadback = retainedHistoricalAmount &&
+    any(input.question, ["當作", "当作", "直接當", "可唔可以直接", "treat as", "apply to"]) &&
+    any(input.question, ["價", "价", "price", "quote"]);
   if (parsed.stop && !historicalValidityReadback) return parsed.stop;
   const facts = historicalValidityReadback ? ["historical_exclusion" as RecallFact] : parsed.facts;
   if (!input.company_id || !input.conversation_id || !input.source_message_id) {
@@ -1617,6 +1615,14 @@ export function renderConversationRecall(
         ? ["已確認", "已确认", "confirmed"][l]
         : ["尚未確認", "尚未确认", "not confirmed"][l];
     }
+    if (e.fact_type === "delivery_preference") {
+      lines.push([
+        `記低咗：${v}係你首選送貨日，不代表已確認配送安排。`,
+        `已记录：${v}是首选送货日，不代表配送安排已确认。`,
+        `I have ${v} as your preferred delivery day; the delivery is not booked.`,
+      ][l]);
+      continue;
+    }
     lines.push(
       `${
         retainedCorrectionQuantity
@@ -1626,15 +1632,6 @@ export function renderConversationRecall(
         e.entity_id ? ` (${e.entity_label ?? e.entity_id})` : ""
       }: ${v}${e.fact_type === "quantity" ? l === 2 ? " units" : " 部" : ""}`,
     );
-    if (e.fact_type === "delivery_preference") {
-      lines.push(
-        [
-          "這是偏好記錄，不代表配送排期已落實。",
-          "这是偏好记录，不代表配送排期已落实。",
-          "This records a preference, not a committed delivery schedule.",
-        ][l],
-      );
-    }
   }
   // Avoid asserting an order merely because a quotation exists.
   const order = decision.provenance.evidence.find((e) =>
