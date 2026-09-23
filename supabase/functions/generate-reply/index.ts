@@ -44,7 +44,7 @@ import {
   type KBResolvedScope,
   resolveKBEndpoint,
   resolveTenantScope,
-} from "../_shared/deterministic-kb-client.ts";
+} from "../_shared/kb-client.ts";
 import {
   canAnswerBoundedNoCurrentEvidence,
   classifyCurrentFactEvidence,

@@ -308,6 +308,7 @@ async function resolvePreActivationScope(
 export async function resolveTenantScope(
   conversationId: string | null,
   actor?: KBPreActivationActor,
+  authoritativeCompanyId?: unknown,
 ): Promise<TenantResolutionResult> {
   if (conversationId) {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -355,6 +356,13 @@ export async function resolveTenantScope(
       return { resolved: false, reason: "KB_TENANT_IDENTITY_CONFLICT" };
     }
     const resolvedCompanyId = conversationCompanyId ?? channelCompanyId;
+    // The calling runtime has already loaded the authoritative conversation.
+    // A second lookup must agree before mapping that company to Singapore KB.
+    if (authoritativeCompanyId != null &&
+      (typeof authoritativeCompanyId !== "string" ||
+        authoritativeCompanyId !== resolvedCompanyId)) {
+      return { resolved: false, reason: "KB_TENANT_IDENTITY_CONFLICT" };
+    }
     if (!resolvedCompanyId) {
       const trustedActor = actor ??
         trustedWidgetLiveTestActor(conv.metadata_source);
@@ -576,6 +584,20 @@ export async function fetchKBRag(
   }
   if (!parsed.contextFound) {
     return { success: true, chunks: [], citations: [], documents: [] };
+  }
+
+  // A tenant mismatch returned by the remote service is an integrity failure.
+  // Do not expose even candidate snippets to the answer or trace pipeline.
+  if (parsed.documents.some((doc) =>
+    doc.authority.tenant_id && doc.authority.tenant_id !== scope.singaporeTenantId
+  )) {
+    return {
+      success: false,
+      chunks: [],
+      citations: [],
+      documents: [],
+      error_code: "KB_AUTH_TENANT_MISMATCH",
+    };
   }
 
   const documents = parsed.documents.map(mapDocumentCandidate);
