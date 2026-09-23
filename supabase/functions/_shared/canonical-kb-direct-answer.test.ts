@@ -12,7 +12,9 @@ function assert(value: unknown, message: string): asserts value {
 
 const documentId = "4f446f53b7cf4dd58a85a84f4d39c39e";
 const chunkId = "17d99f7de3dd43d6ae431ed0c128d0f0";
-const content = "商品型號:CW-SUL90BA 商品圖片:28 成本:4620 銷售價:6980 特價:4908 品牌:PANASONIC 樂聲牌 描述:PANASONIC 樂聲 CW-SUL90BA 1.0匹Inverter LITE";
+// Exact Full Content returned by the live tenant 34 Knowledge search for the
+// selected published document/chunk, including the intervening export fields.
+const content = "工作表：商品設定_20260813 162932 ID: 7945 狀態: 開啟 商品型號: CW-SUL90BA 商品圖片: 28 成本: 4620 銷售價: 6980 特價: 4908 匹數 (多聯分體式): 29 品牌: PANASONIC 樂聲牌 附加項目: 否 新增日期: 46247 標籤: 32 描述: PANASONIC 樂聲 CW-SUL90BA 1.0匹Inverter LITE變頻式淨冷窗口機，採用香港專利左出風設計、R32製冷劑及四合一抗菌過濾網，製冷能力8,870BTU/h，設左右自動送風、睡眠模式及1.5L/h抽濕功能，菲律賓製造，獲香港1級能源標籤並提供3年全機及5年壓縮機保用。 功能: 變頻 淨冷 匹數: 1匹 氣體: 36 風數: 37";
 const chunk: KBDocumentCandidate["chunks"][number] = {
   document_id: documentId, doc_id: documentId, chunk_id: chunkId,
   content, title: "PANASONIC 樂聲 CW-SUL90BA", score: 0.93,
@@ -53,11 +55,47 @@ Deno.test("A1 exact known product answers record existence, no stock and exact c
   assert(resolved.reply.includes("PANASONIC") && resolved.reply.includes("1.0匹") &&
     resolved.reply.includes("HK$6,980") && resolved.reply.includes("未確認即時庫存"), "customer_value_or_stock_error");
   assert(!/我搵到|成本|特價|4620|4908/.test(resolved.reply), "retrieval_centric_or_internal_price");
+  assert(resolved.reply.includes("PANASONIC 樂聲牌 CW-SUL90BA") &&
+    !resolved.reply.includes("附加項目"), "brand_field_boundary_failed");
   assert(resolved.kind === "price" && resolved.price_fact?.value === 6980, "summary_price_proof_missing");
   assert(!/請提供|訂單編號/.test(resolved.reply), "unnecessary_reask");
   assert(citation?.citation_lineage.selected_document_id === documentId &&
     citation.citation_lineage.evidence_chunk_ids[0] === chunkId, "citation_lineage_missing");
   console.log("A1 reply:", resolved.reply, "lineage:", JSON.stringify(citation?.citation_lineage));
+});
+
+Deno.test("field parser accepts label delimiters and safely adjacent fields", () => {
+  const variants = [
+    "商品型號:CW-SUL90BA 品牌:PANASONIC 樂聲牌 銷售價:6980 描述:CW-SUL90BA 1.0匹 Inverter LITE",
+    "商品型号：CW-SUL90BA 品牌：PANASONIC 樂聲牌 销售价：6980 描述：CW-SUL90BA 1.0匹 Inverter LITE",
+    "商品型號 = CW-SUL90BA 品牌 = PANASONIC 樂聲牌 銷售價 = 6980 描述 = CW-SUL90BA 1.0匹 Inverter LITE",
+    "商品型號:CW-SUL90BA\n品牌:PANASONIC 樂聲牌\n銷售價:6980\n描述:CW-SUL90BA 1.0匹 Inverter LITE",
+    "商品型號:CW-SUL90BA\t品牌:PANASONIC 樂聲牌\t銷售價:6980\t描述:CW-SUL90BA 1.0匹 Inverter LITE",
+    "商品型號:CW-SUL90BA | 品牌:PANASONIC 樂聲牌; 銷售價:6980 | 描述:CW-SUL90BA 1.0匹 Inverter LITE",
+    "product model=CW-SUL90BA brand=PANASONIC 樂聲牌 selling price=6980 description=CW-SUL90BA 1.0匹 Inverter LITE",
+    "商品型號:CW-SUL90BA品牌:PANASONIC 樂聲牌銷售價:6980描述:CW-SUL90BA 1.0匹 Inverter LITE",
+  ];
+  for (const variant of variants) {
+    const source = { ...doc, chunks: [{ ...chunk, content: variant }],
+      llm_context: { ...doc.llm_context, full_content_evidence: [{ ...doc.llm_context.full_content_evidence[0], content: variant }] } };
+    const { resolved } = answer("有沒有 PANASONIC 樂聲 CW-SUL90BA", [source]);
+    assert(resolved?.reply.includes("PANASONIC 樂聲牌 CW-SUL90BA") &&
+      resolved.reply.includes("HK$6,980") && resolved.reply.includes("1.0匹") &&
+      !/4620|4908|附加項目|selling price/.test(resolved.reply), `field_variant_failed: ${variant}; actual=${resolved?.reply}`);
+  }
+});
+
+Deno.test("missing or malformed brand never guessed; next field cannot leak", () => {
+  for (const variant of [
+    "商品型號:CW-SUL90BA 銷售價:6980 描述:CW-SUL90BA 1.0匹",
+    "商品型號:CW-SUL90BA 品牌 PANASONIC 樂聲牌 銷售價:6980 描述:CW-SUL90BA 1.0匹",
+    "商品型號:CW-SUL90BA 品牌: 附加項目: 否 銷售價:6980 描述:CW-SUL90BA 1.0匹",
+  ]) {
+    const source = { ...doc, chunks: [{ ...chunk, content: variant }],
+      llm_context: { ...doc.llm_context, full_content_evidence: [{ ...doc.llm_context.full_content_evidence[0], content: variant }] } };
+    const { resolved } = answer("有沒有 CW-SUL90BA", [source]);
+    assert(resolved && !/PANASONIC|附加項目|樂聲牌/.test(resolved.reply), `guessed_brand: ${variant}`);
+  }
 });
 
 Deno.test("A2 price uses only explicit selling price, not cost or special price", () => {
@@ -72,9 +110,9 @@ Deno.test("A2 price uses only explicit selling price, not cost or special price"
   assert(unknown.resolved?.kind === "price_unknown" && unknown.resolved.reply.includes("冇可核實嘅售價") &&
     unknown.citation?.citations[0].chunk_id === chunkId, "invented_price_or_missing_lineage");
   const foreignCurrency = { ...doc,
-    chunks: [{ ...chunk, content: content.replace("銷售價:6980", "銷售價:SGD 6980") }],
+    chunks: [{ ...chunk, content: content.replace("銷售價: 6980", "銷售價: SGD 6980") }],
     llm_context: { ...doc.llm_context, full_content_evidence: [{ ...doc.llm_context.full_content_evidence[0],
-      content: content.replace("銷售價:6980", "銷售價:SGD 6980") }] } };
+      content: content.replace("銷售價: 6980", "銷售價: SGD 6980") }] } };
   assert(answer("CW-SUL90BA 售價幾多？", [foreignCurrency]).resolved?.kind === "price_unknown", "currency_fabrication");
 });
 

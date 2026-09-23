@@ -16,16 +16,56 @@ export function exactKbModelIds(text: string): string[] {
   ) ?? []).filter((id) => /\d/.test(id)))];
 }
 
+// Adjacent fields in exported product rows can omit separators altogether.
+// Keep this vocabulary for that case; separated fields also use the generic
+// label boundary below, so new exported columns cannot run into known values.
+const ADJACENT_KB_LABELS = /商品型號|商品型号|產品型號|产品型号|商品圖片|商品图片|銷售價|销售价|售價|售价|特價|特价|成本|品牌|描述|產品描述|产品描述|附加項目|附加项目|新增日期|标签|標籤|功能|匹數|匹数|氣體|气体|風數|风数|庫存|库存|selling\s*price|list\s*price|product\s*(?:name|model)|description|brand|stock|price|dimension|weight|power|voltage|capacity|尺寸|重量|功率|電壓|电压|噪音|容量|退貨政策|退货政策|保養政策|保修政策|return\s+policy|warranty\s+policy/i;
+const SEPARATED_KB_LABEL = /^([\p{Script=Han}]{1,12}(?:\s*\([^)]{1,30}\))?|[a-z][a-z ]{0,25})\s*[:=]/iu;
+const ADJACENT_KB_FIELD = new RegExp(`^(?:${ADJACENT_KB_LABELS.source})\\s*[:=]`, "iu");
+const KNOWN_KB_LABEL_IN_TEXT = new RegExp(ADJACENT_KB_LABELS.source, "iu");
+
+function separatedFieldStarts(text: string): boolean {
+  const match = SEPARATED_KB_LABEL.exec(text);
+  if (!match) return false;
+  const embedded = KNOWN_KB_LABEL_IN_TEXT.exec(match[1]);
+  // "樂聲牌銷售價:" is a value followed by an adjacent known label, not
+  // a new unknown field named "樂聲牌銷售價".
+  return !embedded || embedded.index === 0;
+}
+
 function labelledValue(content: string, labels: RegExp): string | null {
-  // Match a whole field label; stop before the next field on the same line.
   const line = content.normalize("NFKC");
-  const match = line.match(new RegExp(
-    `(?:^|[\\s|;,])(?:${labels.source})\\s*[:=]\\s*([^\\n\\r|;,]{1,100})`,
-    "iu",
-  ));
+  let match = new RegExp(`(?:^|[\\s|;,])(?:${labels.source})\\s*[:=]\\s*`, "iu").exec(line);
+  if (!match) {
+    // An exported row may concatenate two labelled fields without whitespace.
+    // Only accept that form after another complete, recognized field.
+    const adjacent = new RegExp(`(?:${labels.source})\\s*[:=]\\s*`, "giu");
+    for (const candidate of line.matchAll(adjacent)) {
+      if (candidate.index > 0 &&
+        new RegExp(`(?:^|[\\s|;,])(?:${ADJACENT_KB_LABELS.source})\\s*[:=]`, "iu").test(line.slice(0, candidate.index))) {
+        match = candidate;
+        break;
+      }
+    }
+  }
   if (!match) return null;
-  const value = match[1].split(/\s+(?=(?:商品型號|商品型号|產品型號|产品型号|商品圖片|商品图片|成本|銷售價|销售价|售價|售价|特價|特价|品牌|描述|description|brand|stock|庫存|库存|price)\s*[:=])/iu)[0]
-    .trim();
+  const start = match.index + match[0].length;
+  if (separatedFieldStarts(line.slice(start))) return null;
+  let end = Math.min(line.length, start + 500);
+  for (let i = start; i < end; i++) {
+    if (/[\n\r|;,]/u.test(line[i])) { end = i; break; }
+    if (i > start && /\s/u.test(line[i - 1]) && separatedFieldStarts(line.slice(i))) {
+      end = i - 1;
+      break;
+    }
+    // A known label immediately following the value has no punctuation or
+    // whitespace boundary. Require a complete label and its delimiter.
+    if (i > start && ADJACENT_KB_FIELD.test(line.slice(i))) {
+      end = i;
+      break;
+    }
+  }
+  const value = line.slice(start, end).trim();
   return value && !/^(?:unknown|n\/a|未提供|待定)$/i.test(value)
     ? value.slice(0, 90)
     : null;
