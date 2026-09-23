@@ -15,6 +15,7 @@ import {
   isConversationCommerceState,
 } from "./commerce-state-contract.ts";
 import { parseAddressReplacementCorrection } from "./commerce-state-reducer.ts";
+import { currentKbSellingPrice, exactKbModelIds } from "./canonical-kb-direct-answer.ts";
 
 export type B2DecisionKind = "allow" | "block" | "indeterminate";
 
@@ -50,6 +51,23 @@ export interface B2EvaluationInput {
   persistence_kind: B2PersistenceKind;
   snapshot: B2CanonicalSnapshot;
   metadata?: Record<string, unknown> | null;
+  /** Private server-side evidence, never accepted from a customer request or persisted. */
+  trusted_kb_price_proof?: B2KbPriceProof | null;
+}
+
+export interface B2KbPriceProof {
+  field: "selling_price";
+  value: number;
+  currency: "HKD";
+  model: string;
+  document_id: string;
+  chunk_id: string;
+  tenant_id: string;
+  company_id: string;
+  currentness: "current";
+  authority_decision: "USE_CURRENT_KB";
+  request: string;
+  full_content: string;
 }
 
 export interface B2QueryResult {
@@ -74,6 +92,7 @@ export interface B2PersistenceInput<T> {
   proposed_response: string;
   persistence_kind: B2PersistenceKind;
   metadata?: Record<string, unknown> | null;
+  trusted_kb_price_proof?: B2KbPriceProof | null;
   expected_commerce_state_revision?: number | null;
   commit: () => Promise<T>;
 }
@@ -399,6 +418,10 @@ function extractMoneyMentions(text: string): MoneyMention[] {
     /(?:\b(HKD|USD|TWD)\b\s*|((?:HK|US|NT)\$|\$)\s*)?([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,10})(?:\.([0-9]{1,2}))?\s*(元|蚊|dollars?)?/gi;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(text)) !== null) {
+    // Model identifiers and measurements are never prices, even when a
+    // selling-price sentence appears nearby in the same short response.
+    if (/[A-Za-z0-9]/.test(text[match.index - 1] ?? "") ||
+      /[A-Za-z]/.test(text[match.index + match[0].length] ?? "")) continue;
     const amount = Number(`${match[3].replace(/,/g, "")}${match[4] ? `.${match[4]}` : ""}`);
     if (!Number.isFinite(amount) || amount <= 0) continue;
     const marker = `${match[1] ?? ""}${match[2] ?? ""}${match[5] ?? ""}`.toUpperCase();
@@ -409,6 +432,7 @@ function extractMoneyMentions(text: string): MoneyMention[] {
     // claim; quote evaluation will still fail closed when currency is absent.
     const localContext = text.slice(Math.max(0, match.index - 80), Math.min(text.length, match.index + match[0].length + 80));
     const hasLocalMoneyContext = /(?:price|quote|quotation|amount|fee|cost|dollars?|價|价|報價|报价|收費|收费|金額|金额|費用|费用)/i.test(localContext);
+    if (!marker && /^(?:匹|HP|P|cm|mm|kg|吋|瓦|年)/i.test(text.slice(match.index + match[0].length).trimStart())) continue;
     if (!marker && !hasLocalMoneyContext) continue;
     const currency =
       marker.includes("USD") || marker.includes("US$")
@@ -438,7 +462,69 @@ function quoteMatchesClaim(
   return mentioned.length === 0;
 }
 
-function evaluateQuoteReality(text: string, state: ConversationCommerceState): B2Decision | null {
+function evaluateCurrentKbSellingPrice(input: B2EvaluationInput, draft: string): B2Decision {
+  const block = (code: string): B2Decision => ({ decision: "block", code });
+  const proof = input.trusted_kb_price_proof;
+  const metadata = input.metadata;
+  if (input.persistence_kind !== "ai_reply" || !proof || !isRecord(metadata) ||
+    metadata.response_route !== "canonical_kb_direct_answer" || metadata.answer_kind !== "price") {
+    return block("CURRENT_KB_PRICE_PROOF_MISSING");
+  }
+  const authority = metadata.reference_authority;
+  const provenance = isRecord(authority) ? authority.provenance : null;
+  const lineage = metadata.citation_lineage;
+  const citations = metadata.citations;
+  const publicProof = metadata.kb_fact_proof;
+  const { full_content, request, company_id, ...publicFields } = proof;
+  if (!isRecord(authority) || !isRecord(provenance) || !isRecord(lineage) ||
+    !Array.isArray(citations) || citations.length !== 1 || !isRecord(citations[0]) ||
+    !isRecord(publicProof) ||
+    JSON.stringify(publicProof) !== JSON.stringify(publicFields) ||
+    proof.field !== "selling_price" || proof.currency !== "HKD" ||
+    proof.authority_decision !== "USE_CURRENT_KB" || proof.currentness !== "current" ||
+    authority.decision !== "USE_CURRENT_KB" || provenance.currentness !== "current" ||
+    provenance.region !== "hong_kong" || provenance.tenant_id !== proof.tenant_id ||
+    authority.selected_source_id !== proof.document_id ||
+    company_id !== input.snapshot.company_id || !proof.tenant_id ||
+    lineage.selected_document_id !== proof.document_id || lineage.evidence_count !== 1 ||
+    lineage.authority_decision !== "USE_CURRENT_KB" || lineage.evidence_state !== "current" ||
+    !Array.isArray(lineage.evidence_chunk_ids) || lineage.evidence_chunk_ids.length !== 1 ||
+    lineage.evidence_chunk_ids[0] !== proof.chunk_id ||
+    citations[0].document_id !== proof.document_id || citations[0].chunk_id !== proof.chunk_id ||
+    citations[0].chunk_type !== "full_content" ||
+    citations[0].authority_decision !== "USE_CURRENT_KB" || citations[0].evidence_state !== "current") {
+    return block("CURRENT_KB_PRICE_LINEAGE_INVALID");
+  }
+  const model = exactKbModelIds(request);
+  const target = isRecord(lineage.current_target) ? lineage.current_target : null;
+  const normalized = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const modelKey = normalized(proof.model);
+  const suffixKey = normalized(proof.model.split("-").at(-1) ?? "");
+  if (model.length !== 1 || model[0] !== proof.model ||
+    !exactKbModelIds(full_content).includes(proof.model) ||
+    !target || !Array.isArray(target.entity_ids) ||
+    !target.entity_ids.some((id) => typeof id === "string" &&
+      [modelKey, suffixKey].includes(normalized(id))) ||
+    currentKbSellingPrice(full_content) !== proof.value ||
+    !Number.isFinite(proof.value) || proof.value <= 0) {
+    return block("CURRENT_KB_PRICE_FACT_MISMATCH");
+  }
+  const money = extractMoneyMentions(draft);
+  const exactPrice = `HK$${proof.value.toLocaleString("en-US")}`;
+  if (money.length !== 1 || money[0].currency !== "HKD" ||
+    money[0].amount !== proof.value || !draft.includes(exactPrice) ||
+    /(?:成本|特價|特价|cost|special\s*price|有現貨|有现货|in stock)/i.test(draft)) {
+    return block("CURRENT_KB_PRICE_RESPONSE_MISMATCH");
+  }
+  return { decision: "allow", code: "B2_ALLOW_CURRENT_KB_SELLING_PRICE" };
+}
+
+function evaluateQuoteReality(text: string, state: ConversationCommerceState, input: B2EvaluationInput): B2Decision | null {
+  if (input.metadata?.response_route === "canonical_kb_direct_answer" &&
+    input.metadata.answer_kind === "price" || input.trusted_kb_price_proof) {
+    const result = evaluateCurrentKbSellingPrice(input, text);
+    return result.decision === "allow" ? null : result;
+  }
   if (!CURRENT_PRICE_CLAIM.test(text)) return null;
   if (/(?:checklist|清單|清单)|(?:核實|核对|核對|verify|confirm).{0,24}(?:price|quote|quotation|價|价|報價|报价)/i.test(text)) return null;
   if (/(?:(?:報價|报价|quotation)\s*(?:階段|阶段|stage)).{0,30}(?:唔係|不是|not).{0,12}(?:已確認|已确认|confirmed)?\s*(?:訂單|订单|order)/i.test(text)) return null;
@@ -696,6 +782,11 @@ export function evaluateB2BeforeCommit(input: B2EvaluationInput): B2Decision {
     };
   }
   const state = input.snapshot.state;
+  const kbPriceDecision = input.metadata?.response_route === "canonical_kb_direct_answer" &&
+      input.metadata.answer_kind === "price" || input.trusted_kb_price_proof
+    ? evaluateCurrentKbSellingPrice(input, draft)
+    : null;
+  if (kbPriceDecision?.decision === "block") return kbPriceDecision;
   const correctionDecision = evaluateCorrections(draft, state);
   const authoritativeNoSemanticChange =
     correctionDecision?.decision === "indeterminate" &&
@@ -703,13 +794,13 @@ export function evaluateB2BeforeCommit(input: B2EvaluationInput): B2Decision {
   return (
     (authoritativeNoSemanticChange ? null : correctionDecision) ??
     evaluateCancellation(draft, state) ??
-    evaluateQuoteReality(draft, state) ??
+    (kbPriceDecision ? null : evaluateQuoteReality(draft, state, input)) ??
     evaluateTransactionReality(draft, input.persistence_kind, state) ??
     evaluateKnownContext(draft, state) ?? {
       decision: "allow",
-      code: authoritativeNoSemanticChange
+      code: kbPriceDecision?.code ?? (authoritativeNoSemanticChange
         ? "B2_ALLOW_NO_SEMANTIC_CHANGE_AFTER_AUTHORITATIVE_READBACK"
-        : "B2_ALLOW",
+        : "B2_ALLOW"),
     }
   );
 }
@@ -933,6 +1024,7 @@ export async function executeB2PersistenceGate<T>(
       persistence_kind: input.persistence_kind,
       snapshot: initial.snapshot,
       metadata: input.metadata ? structuredClone(input.metadata) : input.metadata,
+      trusted_kb_price_proof: input.trusted_kb_price_proof,
     });
   } catch (error) {
     decision = {

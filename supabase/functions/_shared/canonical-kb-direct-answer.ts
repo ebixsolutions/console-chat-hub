@@ -5,11 +5,12 @@ export interface CanonicalKbDirectAnswer {
   kind: "product_record" | "price" | "price_unknown" | "specification" | "policy";
   reply: string;
   evidence_chunks: KBFullChunk[];
+  price_fact?: { model: string; value: number; currency: "HKD"; document_id: string; chunk_id: string; full_content: string };
 }
 
 type Language = "zh-TW" | "zh-CN" | "en";
 
-function modelIds(text: string): string[] {
+export function exactKbModelIds(text: string): string[] {
   return [...new Set((text.normalize("NFKC").toUpperCase().match(
     /\b(?:[A-Z][A-Z0-9]*-[A-Z0-9]+(?:-[A-Z0-9]+)*|[A-Z]{2,}[A-Z0-9]*\d{2,}[A-Z0-9]*)\b/g,
   ) ?? []).filter((id) => /\d/.test(id)))];
@@ -23,21 +24,32 @@ function labelledValue(content: string, labels: RegExp): string | null {
     "iu",
   ));
   if (!match) return null;
-  const value = match[1].split(/\s+(?=[\p{L}][\p{L}\p{N} ()/-]{0,32}\s*[:=])/u)[0]
+  const value = match[1].split(/\s+(?=(?:商品型號|商品型号|產品型號|产品型号|商品圖片|商品图片|成本|銷售價|销售价|售價|售价|特價|特价|品牌|描述|description|brand|stock|庫存|库存|price)\s*[:=])/iu)[0]
     .trim();
   return value && !/^(?:unknown|n\/a|未提供|待定)$/i.test(value)
     ? value.slice(0, 90)
     : null;
 }
 
-function priceValue(content: string): string | null {
+export function currentKbSellingPrice(content: string): number | null {
   const raw = labelledValue(content, /銷售價|销售价|售價|售价|selling\s*price|list\s*price|price/i);
   if (!raw) return null;
-  const amount = raw.match(/(?:HK\$|HKD\s*|S\$|SGD\s*|\$)?\s*\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|(?:HK\$|HKD\s*|S\$|SGD\s*|\$)?\s*\d{3,8}(?:\.\d{1,2})?/i);
-  if (!amount || !/^\s*(?:HK\$|HKD\s*|S\$|SGD\s*|\$)?\s*\d/i.test(raw)) return null;
+  if (/^(?:USD|US\$|SGD|S\$|NT\$|TWD)/i.test(raw)) return null;
+  const amount = raw.match(/(?:HK\$|HKD\s*|\$)?\s*\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|(?:HK\$|HKD\s*|\$)?\s*\d{3,8}(?:\.\d{1,2})?/i);
+  if (!amount || !/^\s*(?:HK\$|HKD\s*|\$)?\s*\d/i.test(raw)) return null;
   const remainder = raw.slice(amount[0].length).trim();
   if (remainder && !/^(?:元|港元|新幣|SGD|HKD)$/i.test(remainder)) return null;
-  return amount[0].trim();
+  const value = Number(amount[0].replace(/[^\d.]/g, ""));
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function safeProductDescription(content: string, model: string): string | null {
+  const raw = labelledValue(content, /描述|產品描述|产品描述|description/i);
+  if (!raw || /(?:成本|特價|特价|銷售價|售价|庫存|库存|stock|<|>)/i.test(raw)) return null;
+  const afterModel = raw.toUpperCase().indexOf(model);
+  const detail = (afterModel >= 0 ? raw.slice(afterModel + model.length) : raw)
+    .replace(/^[\s,，:：.\-]+/, "").replace(/\s+/g, " ").trim();
+  return detail && detail.length <= 80 ? detail : null;
 }
 
 /** A bounded fact from selected, published, current Full Content Evidence only. */
@@ -54,14 +66,14 @@ export function resolveCanonicalKbDirectAnswer(input: {
     selection.authority_decision.selected_source_id !== selection.document.document_id) return null;
 
   const request = input.request.normalize("NFKC");
-  const ids = modelIds(request);
+  const ids = exactKbModelIds(request);
   // Never infer which of several models the customer meant.
   if (ids.length !== 1) return null;
   const model = ids[0];
   const chunks = selection.chunks.filter((chunk) =>
     chunk.chunk_type === "full_content" && chunk.status === "published" &&
     chunk.document_id === selection.document!.document_id &&
-    Boolean(chunk.chunk_id) && modelIds(chunk.content).includes(model) &&
+    Boolean(chunk.chunk_id) && exactKbModelIds(chunk.content).includes(model) &&
     selection.evidence.some((e) =>
       e.document_id === chunk.document_id && e.chunk_id === chunk.chunk_id &&
       e.content === chunk.content
@@ -70,25 +82,33 @@ export function resolveCanonicalKbDirectAnswer(input: {
   if (!chunks.length) return null;
   const productRecord = /product|商品|產品|产品/i.test(selection.document.source_type) ||
     chunks.some((chunk) => /(?:商品型號|商品型号|產品型號|产品型号|product\s*(?:name|model|entry))/i.test(chunk.content));
-  const identityVerified = modelIds(selection.document.title).includes(model) ||
+  const identityVerified = exactKbModelIds(selection.document.title).includes(model) ||
     chunks.some((chunk) => {
       const field = labelledValue(chunk.content,
         /商品型號|商品型号|產品型號|产品型号|product\s*(?:name|model)/i);
-      return field !== null && modelIds(field).includes(model);
+      return field !== null && exactKbModelIds(field).includes(model);
     });
   if (!identityVerified) return null;
   const evidence = (kind: CanonicalKbDirectAnswer["kind"], reply: string, chunk: KBFullChunk): CanonicalKbDirectAnswer =>
     ({ kind, reply, evidence_chunks: [chunk] });
+  const priceEvidence = chunks.map((chunk) => ({ chunk, price: currentKbSellingPrice(chunk.content) }))
+    .find(({ price }) => price !== null);
+  const priceFact = priceEvidence?.price !== null && priceEvidence?.price !== undefined &&
+      selection.authority_decision.provenance.region === "hong_kong" && priceEvidence.chunk.chunk_id
+    ? { model, value: priceEvidence.price, currency: "HKD" as const,
+      document_id: priceEvidence.chunk.document_id, chunk_id: priceEvidence.chunk.chunk_id,
+      full_content: priceEvidence.chunk.content }
+    : null;
+  const displayPrice = priceFact ? `HK$${priceFact.value.toLocaleString("en-US")}` : null;
 
   if (/(?:售價|售价|賣幾錢|卖几钱|價錢|价钱|price|how\s+much)/i.test(request)) {
     if (!productRecord) return null;
-    for (const chunk of chunks) {
-      const price = priceValue(chunk.content);
-      if (price) return evidence("price", language === "en"
-        ? `The current product record lists ${model} at ${price}. Please confirm the checkout price before purchase.`
+    if (priceFact && displayPrice && priceEvidence) {
+      return { ...evidence("price", language === "en"
+        ? `The current product record lists ${model} at ${displayPrice}. Please confirm the checkout price before purchase.`
         : language === "zh-CN"
-        ? `目前产品资料列出 ${model} 售价为 ${price}；实际结算价请再确认。`
-        : `目前產品資料列出 ${model} 售價為 ${price}；實際結帳價請再確認。`, chunk);
+        ? `目前产品资料列出 ${model} 售价为 ${displayPrice}；实际结算价请再确认。`
+        : `目前產品資料列出 ${model} 售價為 ${displayPrice}；實際結帳價請再確認。`, priceEvidence.chunk), price_fact: priceFact };
     }
     return evidence("price_unknown", language === "en"
       ? `I found a product record for ${model}, but it does not state a verifiable selling price.`
@@ -99,11 +119,20 @@ export function resolveCanonicalKbDirectAnswer(input: {
 
   if (/(?:有沒有|有没有|有冇|有無|有无|do\s+you\s+(?:have|carry)|available)/i.test(request)) {
     if (!productRecord) return null;
-    return evidence("product_record", language === "en"
-      ? `I found a product record for ${model}. This record does not confirm live stock availability.`
+    const selected = priceEvidence?.chunk ?? chunks[0];
+    const brand = labelledValue(selected.content, /品牌|brand/i);
+    const safeBrand = brand && !/[\d$<>]/.test(brand) && brand.length <= 40 ? brand : null;
+    const description = safeProductDescription(selected.content, model);
+    const product = [safeBrand, model].filter(Boolean).join(" ");
+    const detail = description ? `，${description}` : "";
+    const pricePhrase = displayPrice ? (language === "en" ? ` The listed selling price is ${displayPrice}.` : `產品資料售價為 ${displayPrice}。`) : "";
+    const reply = language === "en"
+      ? `Yes, ${product}${description ? `: ${description}` : ""} is listed in our product records.${pricePhrase} Live stock has not been confirmed.`
       : language === "zh-CN"
-      ? `我找到 ${model} 的产品资料；这份记录不能确认实时库存或现货。`
-      : `我搵到 ${model} 嘅產品資料；呢份記錄未能確認即時庫存或現貨。`, chunks[0]);
+      ? `有，${product}${detail}。${pricePhrase}现有资料未确认实时库存。`
+      : `有，${product}${detail}。${pricePhrase}現有資料未確認即時庫存。`;
+    return { ...evidence(priceFact ? "price" : "product_record", reply, selected),
+      ...(priceFact ? { price_fact: priceFact } : {}) };
   }
 
   // Exact field questions must have an explicit matching label and value in

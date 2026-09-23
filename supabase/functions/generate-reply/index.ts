@@ -179,6 +179,7 @@ import {
   type B2PersistenceKind,
   classifyCommerceStatePersistenceResult,
   executeB2PersistenceGate,
+  type B2KbPriceProof,
 } from "../_shared/pre-send-conversion-supervisor.ts";
 import { resolveCanonicalCommerceResolution } from "../_shared/conversation-resolution-contract.ts";
 import { readExactAiReplyCommit } from "../_shared/authoritative-commit-readback.ts";
@@ -627,6 +628,7 @@ async function executeB2RpcPersistence<T>(
     proposed_response: string;
     persistence_kind: B2PersistenceKind;
     metadata?: Record<string, unknown> | null;
+    trusted_kb_price_proof?: B2KbPriceProof | null;
     expected_commerce_state_revision?: number | null;
   },
   commit: () => Promise<T>,
@@ -644,6 +646,7 @@ async function commitAiReplyWithControlGate(
   source_message_id: string | null,
   content: string,
   metadata: Record<string, unknown> | null = null,
+  trustedKbPriceProof: B2KbPriceProof | null = null,
 ): Promise<
   | { ok: true; message_id: string | null; idempotent: boolean }
   | {
@@ -687,6 +690,7 @@ async function commitAiReplyWithControlGate(
       proposed_response: content,
       persistence_kind: "ai_reply",
       metadata: b2CommitEvidence,
+      trusted_kb_price_proof: trustedKbPriceProof,
       expected_commerce_state_revision: expectedRevision,
     },
     async () =>
@@ -5162,6 +5166,7 @@ async function orchestrationGenerateReply(
 
   let finalPromptChunks: KBFullChunk[] = [];
   let _canonicalKbDirectAnswer: CanonicalKbDirectAnswer | null = null;
+  let _canonicalKbTenantId: string | null = null;
   let _c1AuthorityDecision: ReferenceAuthorityDecision | null = null;
   let _c1CurrentTarget: CurrentGroundingTarget | null = null;
   let _kbDone = false;
@@ -5761,6 +5766,7 @@ async function orchestrationGenerateReply(
       selection: _groundingSelection,
       language: _visitorLang,
     });
+    _canonicalKbTenantId = _kbTenantResult.scope.singaporeTenantId;
     _kbDone = true;
   }
   if (!flags.ENABLE_KB || _g1SkipKB) _kbDone = true;
@@ -5913,6 +5919,22 @@ async function orchestrationGenerateReply(
     // No answer without exact source and chunk lineage.
     if (citation) {
       const route = "canonical_kb_direct_answer";
+      const priceFact = _canonicalKbDirectAnswer.price_fact;
+      const trustedProof: B2KbPriceProof | null = priceFact && _canonicalKbTenantId &&
+        typeof conversation.company_id === "string"
+        ? { field: "selling_price", value: priceFact.value, currency: priceFact.currency,
+          model: priceFact.model, document_id: priceFact.document_id, chunk_id: priceFact.chunk_id,
+          tenant_id: _canonicalKbTenantId, company_id: conversation.company_id,
+          currentness: "current", authority_decision: "USE_CURRENT_KB",
+          request: _h1LastMsg, full_content: priceFact.full_content }
+        : null;
+      const publicPriceProof = trustedProof
+        ? { field: trustedProof.field, value: trustedProof.value, currency: trustedProof.currency,
+          model: trustedProof.model, document_id: trustedProof.document_id,
+          chunk_id: trustedProof.chunk_id, tenant_id: trustedProof.tenant_id,
+          currentness: trustedProof.currentness,
+          authority_decision: trustedProof.authority_decision }
+        : null;
       const committed = await commitAiReplyWithControlGate(
         supabaseAdmin,
         conversation_id,
@@ -5923,8 +5945,10 @@ async function orchestrationGenerateReply(
           reference_authority: referenceAuthorityMetadata(_c1AuthorityDecision),
           response_route: route,
           answer_kind: _canonicalKbDirectAnswer.kind,
+          ...(publicPriceProof ? { kb_fact_proof: publicPriceProof } : {}),
           rag_api_status: "success",
         },
+        trustedProof,
       );
       await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
       if (!committed.ok) {
