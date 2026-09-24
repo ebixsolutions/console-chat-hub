@@ -137,6 +137,19 @@ function englishProductFeatures(features: string | null): string | null {
     : null;
 }
 
+// A mixed-language brand field can contain a grounded Latin brand followed by
+// a local-market alias. English output may retain that exact Latin identity;
+// it must not translate or transliterate the alias. If no unambiguous Latin
+// prefix exists, the verified model alone is the safe product identity.
+function customerProductIdentity(brand: string | null, model: string, language: Language): string {
+  const safeBrand = brand && !/[\d$<>]/.test(brand) && brand.length <= 40 ? brand : null;
+  if (language !== "en") return [safeBrand, model].filter(Boolean).join(" ");
+  const latin = safeBrand?.normalize("NFKC").trim().match(
+    /^([A-Za-z][A-Za-z0-9&.'-]*(?:\s+(?:&\s+)?[A-Za-z][A-Za-z0-9&.'-]*)*)(?=\s*[\p{Script=Han}]|$)/u,
+  )?.[1] ?? null;
+  return [latin, model].filter(Boolean).join(" ");
+}
+
 /** A bounded fact from selected, published, current Full Content Evidence only. */
 export function resolveCanonicalKbDirectAnswer(input: {
   request: string;
@@ -206,9 +219,8 @@ export function resolveCanonicalKbDirectAnswer(input: {
     if (!productRecord) return null;
     const selected = priceEvidence?.chunk ?? chunks[0];
     const brand = labelledValue(selected.content, /品牌|brand/i);
-    const safeBrand = brand && !/[\d$<>]/.test(brand) && brand.length <= 40 ? brand : null;
     const description = safeProductDescription(selected.content, model);
-    const product = [safeBrand, model].filter(Boolean).join(" ");
+    const product = customerProductIdentity(brand, model, language);
     const detail = description ? `，${description}` : "";
     const englishDescription = englishProductDescription(description);
     const pricePhrase = displayPrice ? (language === "en" ? ` The listed selling price is ${displayPrice}.` : `產品資料售價為 ${displayPrice}。`) : "";
@@ -227,7 +239,6 @@ export function resolveCanonicalKbDirectAnswer(input: {
     // or selling price. Do not infer recommended room area from horsepower.
     const selected = priceEvidence?.chunk ?? chunks[0];
     const brand = labelledValue(selected.content, /品牌|brand/i);
-    const safeBrand = brand && !/[\d$<>]/.test(brand) && brand.length <= 40 ? brand : null;
     const description = safeProductDescription(selected.content, model);
     const summary = description?.split(/[，,。]/u)[0]?.trim() || null;
     const englishSummary = englishProductDescription(summary);
@@ -236,7 +247,7 @@ export function resolveCanonicalKbDirectAnswer(input: {
       !/(?:成本|特價|特价|售價|售价|庫存|库存|stock|[$<>])/i.test(featureField)
       ? featureField : null;
     const horsepower = summary?.match(/(?:^|[^\d])(\d+(?:\.\d+)?(?:\/\d+)?)\s*(?:匹|HP)/iu)?.[1] ?? null;
-    const product = [safeBrand, model].filter(Boolean).join(" ");
+    const product = customerProductIdentity(brand, model, language);
 
     if (factual.fact === "horsepower") {
       if (!horsepower) return null;

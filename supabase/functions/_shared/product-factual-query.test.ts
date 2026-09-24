@@ -67,6 +67,8 @@ for (const [id, question, language] of [
     assert(selection.ok && answer && citation, `${id}:grounded_answer_missing`);
     assert(answer.reply.includes("CW-SUL70BA") &&
       answer.reply.includes(language === "en" ? "3/4 HP" : "3/4匹"), `${id}:known_facts:${answer.reply}`);
+    if (id === "P4") assert(answer.reply.startsWith("PANASONIC CW-SUL70BA") &&
+      !/[\p{Script=Han}]/u.test(answer.reply), `P4:english_brand:${answer.reply}`);
     if (id === "P2") assert(answer.reply.includes("功能：變頻 淨冷"), `P2:features:${answer.reply}`);
     assert(citation.citation_lineage.selected_document_id === documentId &&
       citation.citation_lineage.evidence_chunk_ids[0] === chunkId, `${id}:citation`);
@@ -107,7 +109,8 @@ for (const [id, question, language] of [
     assert(answer && citation, `${id}:missing_grounded_answer`);
     assert(answer.reply.includes("CW-SUL70BA"), `${id}:model_changed`);
     if (language === "en") {
-      assert(!/[\p{Script=Han}]/u.test(answer.reply.replace(/樂聲牌/gu, "")), `${id}:mixed_description:${answer.reply}`);
+      assert(!/[\p{Script=Han}]/u.test(answer.reply), `${id}:mixed_description:${answer.reply}`);
+      assert(answer.reply.includes("PANASONIC CW-SUL70BA"), `${id}:canonical_brand:${answer.reply}`);
       assert(answer.reply.includes("3/4 HP") &&
         (id === "E3" || answer.reply.includes("Inverter LITE")), `${id}:fact_lost:${answer.reply}`);
     }
@@ -122,6 +125,31 @@ for (const [id, question, language] of [
     console.log(`${id}|canonical_kb_direct_answer|${answer.reply}`);
   });
 }
+
+Deno.test("English brand identity keeps only grounded Latin prefix across brands", () => {
+  for (const [field, expected] of [
+    ["PANASONIC 樂聲牌", "PANASONIC CW-SUL70BA"],
+    ["ACME 未知地區別名", "ACME CW-SUL70BA"],
+    ["未知地區別名", "CW-SUL70BA"],
+    ["ACME & SONS 本地名稱", "ACME & SONS CW-SUL70BA"],
+  ] as const) {
+    const variant = content.replace("品牌: PANASONIC 樂聲牌", `品牌: ${field}`);
+    const source = { ...document, chunks: [{ ...chunk, content: variant }],
+      llm_context: { ...document.llm_context,
+        full_content_evidence: [{ ...document.llm_context.full_content_evidence[0], content: variant }] } };
+    const english = routeAndAnswer("Is CW-SUL70BA suitable for an 80 sq ft room?", "en", [source]);
+    const chinese = routeAndAnswer("CW-SUL70BA 適合80呎嗎？", "zh-TW", [source]);
+    assert(english.answer?.reply.startsWith(expected) &&
+      !/[\p{Script=Han}]/u.test(english.answer.reply) &&
+      english.answer.reply.includes("3/4 HP") && english.answer.reply.includes("HK$5,680") &&
+      english.answer.reply.includes("80 sq ft") &&
+      english.citation?.citation_lineage.evidence_chunk_ids[0] === chunkId,
+      `english_brand_or_evidence:${field}:${english.answer?.reply}`);
+    assert(chinese.answer?.reply.startsWith(`${field} CW-SUL70BA`) &&
+      chinese.answer.reply.includes("3/4匹") && chinese.answer.reply.includes("HK$5,680"),
+      `chinese_brand_changed:${field}:${chinese.answer?.reply}`);
+  }
+});
 
 Deno.test("E7/E8 variant descriptions are bounded by evidence and cannot promote internal prices", () => {
   const variant = content.replaceAll("CW-SUL70BA", "ZX-AB12345")
