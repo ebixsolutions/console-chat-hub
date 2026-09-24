@@ -53,7 +53,15 @@ import {
 import { industryEntityLabel, resolveIndustryContextualCandidate, resolveIndustryCustomerJourney, resolveIndustryRuntime } from "./industry-runtime-adapter.ts";
 import { contextualUpdateEvents, resolveContextualCustomerUpdate } from "./contextual-customer-update.ts";
 import type { ContextualDecision } from "./contextual-customer-update.ts";
-import { planCustomerJourney, type CustomerJourneyPlan } from "./customer-journey-orchestration.ts";
+import {
+  activeCustomerGoal,
+  planCustomerJourney,
+  type CustomerJourneyPlan,
+} from "./customer-journey-orchestration.ts";
+import {
+  b2JourneyTransactionBoundary,
+  type B2TrustedJourneyProgress,
+} from "./b2-journey-progress-contract.ts";
 import {
   HOME_APPLIANCE_CATEGORIES as CATEGORY_SPECS,
   HOME_APPLIANCE_ROOMS as ROOM_SPECS,
@@ -104,6 +112,8 @@ export interface CommerceRuntimeOutcome {
   calculation?: { expression: string; result: number; currency?: string | null } | null;
   route: "commerce_state_answer" | "commerce_transaction_summary" | "commerce_kb_required" | "product_guidance" | "contextual_scoped_update";
   contextual_decision?: ContextualDecision;
+  /** Private in-process B2 evidence. Never persist this object as metadata. */
+  trusted_journey_progress?: B2TrustedJourneyProgress;
 }
 
 export interface CommittedAddressCorrectionResolution {
@@ -1769,7 +1779,13 @@ export async function persistCommerceTurn(
   db: CommerceStateDbClient,
   input: CommerceRuntimeInput,
   hints: CommerceTurnEntityHint[],
-): Promise<{ previous_state: ConversationCommerceState; state: ConversationCommerceState; revision: number; result: string }> {
+): Promise<{
+  previous_state: ConversationCommerceState;
+  state: ConversationCommerceState;
+  previous_revision: number;
+  revision: number;
+  result: string;
+}> {
   const loaded = await loadCommerceState(db, input.conversation_id);
   let expected = loaded.revision;
   let previous = loaded.state;
@@ -1783,6 +1799,7 @@ export async function persistCommerceTurn(
       return {
         previous_state: previous,
         state: previous,
+        previous_revision: expected,
         revision: expected,
         result: "no_semantic_change",
       };
@@ -1794,9 +1811,25 @@ export async function persistCommerceTurn(
       p_source_message_id: input.source_message_id,
       p_state: next,
     });
-    if (error) return { previous_state: previous, state: next, revision: expected, result: "rpc_transport_error" };
+    if (error) {
+      return {
+        previous_state: previous,
+        state: next,
+        previous_revision: expected,
+        revision: expected,
+        result: "rpc_transport_error",
+      };
+    }
     const parsed = rpcResult(data);
-    if (parsed.result === "success") return { previous_state: previous, state: next, revision: parsed.applied_revision ?? expected + 1, result: "success" };
+    if (parsed.result === "success") {
+      return {
+        previous_state: previous,
+        state: next,
+        previous_revision: expected,
+        revision: parsed.applied_revision ?? expected + 1,
+        result: "success",
+      };
+    }
     if (parsed.result === "revision_conflict" && attempt === 0) {
       const reloaded = await loadCommerceState(db, input.conversation_id);
       expected = reloaded.revision;
@@ -1804,9 +1837,136 @@ export async function persistCommerceTurn(
       next = reduceTurn(previous, input, hints);
       continue;
     }
-    return { previous_state: previous, state: next, revision: expected, result: parsed.result };
+    return {
+      previous_state: previous,
+      state: next,
+      previous_revision: expected,
+      revision: expected,
+      result: parsed.result,
+    };
   }
-  return { previous_state: previous, state: next, revision: expected, result: "revision_conflict" };
+  return {
+    previous_state: previous,
+    state: next,
+    previous_revision: expected,
+    revision: expected,
+    result: "revision_conflict",
+  };
+}
+
+function buildTrustedJourneyProgress(input: {
+  runtime_input: CommerceRuntimeInput;
+  persisted: Awaited<ReturnType<typeof persistCommerceTurn>>;
+  journey: CustomerJourneyPlan;
+  contextual: ContextualDecision;
+  reply: string;
+  route: "product_guidance" | "contextual_scoped_update";
+  reason: string;
+}): B2TrustedJourneyProgress | undefined {
+  const { runtime_input, persisted } = input;
+  if (
+    persisted.result !== "success" ||
+    persisted.revision !== persisted.previous_revision + 1
+  ) return undefined;
+  const transaction_before = b2JourneyTransactionBoundary(
+    persisted.previous_state,
+  );
+  const transaction_after = b2JourneyTransactionBoundary(persisted.state);
+  if (JSON.stringify(transaction_before) !== JSON.stringify(transaction_after)) {
+    return undefined;
+  }
+
+  if (
+    input.contextual.route === "contextual_scoped_update" &&
+    input.route === "contextual_scoped_update"
+  ) {
+    const contextual = input.contextual;
+    const entity = persisted.state.entities.find((candidate) =>
+      candidate.entity_id === contextual.entity_id &&
+      candidate.category === contextual.topic &&
+      candidate.status !== "cancelled" && candidate.status !== "deferred"
+    );
+    const committed = entity?.attributes.scoped_customer_updates;
+    if (!entity || !Array.isArray(committed) || !contextual.updates.length) {
+      return undefined;
+    }
+    const goal = activeCustomerGoal(persisted.state, entity.category)?.goal;
+    return {
+      contract: "journey-progress-after-accepted-update-v1",
+      update_kind: "contextual_scoped_update",
+      company_id: runtime_input.company_id,
+      source_message_id: runtime_input.source_message_id,
+      source_text: runtime_input.text,
+      previous_revision: persisted.previous_revision,
+      committed_revision: persisted.revision,
+      entity_id: entity.entity_id,
+      category: entity.category,
+      journey_stage: goal?.journey_stage ?? "requirements_update",
+      next_missing_slot: goal?.missing[0] ?? null,
+      response_decision: "confirm_controlled_update",
+      response_route: input.route,
+      response_reason: input.reason,
+      reply: input.reply,
+      accepted_updates: structuredClone(contextual.updates),
+      committed_updates: structuredClone(committed),
+      ...(contextual.aggregate_quantity === undefined
+        ? {}
+        : { aggregate_quantity: contextual.aggregate_quantity }),
+      transaction_before,
+      transaction_after,
+    };
+  }
+
+  if (
+    input.journey.status !== "advance" || !input.journey.entity_id ||
+    !input.journey.goal || input.route !== "product_guidance"
+  ) return undefined;
+  const previous = activeCustomerGoal(
+    persisted.previous_state,
+    input.journey.goal.category,
+  )?.goal;
+  const committed = activeCustomerGoal(
+    persisted.state,
+    input.journey.goal.category,
+  );
+  if (
+    !committed || committed.entity_id !== input.journey.entity_id ||
+    committed.goal.source_message_id !== runtime_input.source_message_id
+  ) return undefined;
+  const previousCollected = previous?.collected ?? [];
+  const acceptedSlots = committed.goal.collected.filter((slot) =>
+    !previousCollected.includes(slot)
+  );
+  const previousCorrections = persisted.previous_state.latest_corrections;
+  const acceptedCorrections = persisted.state.latest_corrections.filter((item) =>
+    !previousCorrections.includes(item)
+  );
+  if (!acceptedSlots.length && !acceptedCorrections.length) return undefined;
+  return {
+    contract: "journey-progress-after-accepted-update-v1",
+    update_kind: "customer_goal",
+    company_id: runtime_input.company_id,
+    source_message_id: runtime_input.source_message_id,
+    source_text: runtime_input.text,
+    previous_revision: persisted.previous_revision,
+    committed_revision: persisted.revision,
+    entity_id: committed.entity_id,
+    category: committed.goal.category,
+    journey_stage: committed.goal.journey_stage,
+    next_missing_slot: committed.goal.missing[0] ?? null,
+    response_decision: committed.goal.response_intent,
+    response_route: input.route,
+    response_reason: input.reason,
+    reply: input.reply,
+    previous_collected: [...previousCollected],
+    committed_collected: [...committed.goal.collected],
+    previous_missing: [...(previous?.missing ?? [])],
+    committed_missing: [...committed.goal.missing],
+    accepted_slots: acceptedSlots,
+    accepted_corrections: acceptedCorrections,
+    transaction_before,
+    transaction_after,
+  };
 }
 
 function statusLabel(status: string, language: CommerceLanguage): string {
@@ -2264,14 +2424,24 @@ export async function runCommerceStateRuntime(
       contextualDecision.route === "contextual_scoped_update") &&
     ["success", "no_semantic_change", "source_message_already_applied"].includes(persisted.result)
   ) {
+    const reply = contextualDecision.reply;
     return {
       authority: "CONVERSATION_STATE",
-      reply: contextualDecision.reply,
+      reply,
       revision: persisted.revision,
       persist_result: persisted.result,
       reason: contextualDecision.reason,
       route: contextualDecision.route,
       contextual_decision: contextualDecision,
+      trusted_journey_progress: buildTrustedJourneyProgress({
+        runtime_input: runtimeInput,
+        persisted,
+        journey: customerJourney,
+        contextual: contextualDecision,
+        reply,
+        route: contextualDecision.route,
+        reason: contextualDecision.reason,
+      }),
     };
   }
   if (
@@ -2280,13 +2450,23 @@ export async function runCommerceStateRuntime(
     customerJourney.reply &&
     ["success", "no_semantic_change", "source_message_already_applied"].includes(persisted.result)
   ) {
+    const reply = customerJourney.reply;
     return {
       authority: "CONVERSATION_STATE",
-      reply: customerJourney.reply,
+      reply,
       revision: persisted.revision,
       persist_result: persisted.result,
       reason: customerJourney.reason,
       route: "product_guidance",
+      trusted_journey_progress: buildTrustedJourneyProgress({
+        runtime_input: runtimeInput,
+        persisted,
+        journey: customerJourney,
+        contextual: contextualDecision,
+        reply,
+        route: "product_guidance",
+        reason: customerJourney.reason,
+      }),
     };
   }
   const readOnlyCurrentStateQuery = isReadOnlyCurrentStateQuery(

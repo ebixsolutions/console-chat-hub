@@ -17,6 +17,11 @@ import {
 import { parseAddressReplacementCorrection } from "./commerce-state-reducer.ts";
 import { currentKbSellingPrice, exactKbModelIds } from "./canonical-kb-direct-answer.ts";
 import type { ContextualDecision } from "./contextual-customer-update.ts";
+import {
+  b2JourneyTransactionBoundary,
+  type B2TrustedJourneyProgress,
+} from "./b2-journey-progress-contract.ts";
+import { activeCustomerGoal } from "./customer-journey-orchestration.ts";
 
 export type B2DecisionKind = "allow" | "block" | "indeterminate";
 
@@ -42,6 +47,7 @@ export interface B2CanonicalSnapshot {
   conversation_id: string;
   company_id: string;
   source_message_id: string;
+  source_message_content?: string;
   commerce_state_revision: number;
   commerce_state_source_message_id: string | null;
   state: ConversationCommerceState;
@@ -56,6 +62,8 @@ export interface B2EvaluationInput {
   trusted_kb_price_proof?: B2KbPriceProof | null;
   /** Private result from the server Commerce runtime, never request metadata. */
   trusted_targeted_clarification?: B2TrustedTargetedClarification | null;
+  /** Private Commerce-runtime receipt, never accepted from request metadata. */
+  trusted_journey_progress?: B2TrustedJourneyProgress | null;
 }
 
 export interface B2TrustedTargetedClarification {
@@ -103,6 +111,7 @@ export interface B2PersistenceInput<T> {
   metadata?: Record<string, unknown> | null;
   trusted_kb_price_proof?: B2KbPriceProof | null;
   trusted_targeted_clarification?: B2TrustedTargetedClarification | null;
+  trusted_journey_progress?: B2TrustedJourneyProgress | null;
   expected_commerce_state_revision?: number | null;
   commit: () => Promise<T>;
 }
@@ -185,6 +194,9 @@ function aliasesForKey(key: string): string[] {
     confirmed: ["confirmed", "confirmation", "確認", "确认"],
     quantity: ["quantity", "how many", "數量", "数量", "幾多", "几多"],
     brand: ["brand", "品牌"],
+    category: ["category", "product type", "產品類型", "产品类型", "產品種類", "产品种类"],
+    room_sizes: ["room sizes", "room areas", "房間面積", "房间面积", "各空間面積", "各空间面积"],
+    installation_type: ["installation type", "installation arrangement", "安裝方式", "安装方式", "窗口位", "分體位", "分体位"],
     model: ["model", "model number", "型號", "型号"],
     amount: ["amount", "price", "quote", "價錢", "价钱", "報價", "报价"],
     currency: ["currency", "幣別", "币别", "貨幣", "货币"],
@@ -203,6 +215,8 @@ function aliasesForKey(key: string): string[] {
   };
   const leaf = key.split(/[._-]/).at(-1) ?? key;
   for (const item of common[leaf] ?? []) aliases.add(item.toLowerCase());
+  const semanticKey = key.replace(/[.\s-]+/g, "_").toLowerCase();
+  for (const item of common[semanticKey] ?? []) aliases.add(item.toLowerCase());
   return [...aliases].filter((item) => item.length >= 2);
 }
 
@@ -215,12 +229,23 @@ interface KnownFact {
 function addFact(facts: KnownFact[], path: string, value: unknown): void {
   const rendered = scalarText(value);
   if (!rendered) return;
-  facts.push({ path, value: rendered, aliases: aliasesForKey(path) });
+  facts.push({
+    path,
+    value: rendered,
+    aliases: [...new Set([...aliasesForKey(path), ...aliasesForKey(rendered)])],
+  });
 }
 
 function addRecordFacts(facts: KnownFact[], prefix: string, value: Record<string, unknown>): void {
   for (const [key, item] of Object.entries(value)) {
     if (isRecord(item)) addRecordFacts(facts, `${prefix}.${key}`, item);
+    else if (Array.isArray(item)) {
+      item.forEach((entry, index) =>
+        isRecord(entry)
+          ? addRecordFacts(facts, `${prefix}.${key}.${index}`, entry)
+          : addFact(facts, `${prefix}.${key}.${index}`, entry)
+      );
+    }
     else addFact(facts, `${prefix}.${key}`, item);
   }
 }
@@ -656,6 +681,101 @@ function isTrustedTargetedReadOnlyClarification(input: B2EvaluationInput, draft:
     extractMoneyMentions(draft).length === 0;
 }
 
+function equalJson(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function isTrustedJourneyProgressAfterAcceptedUpdate(
+  input: B2EvaluationInput,
+  draft: string,
+): boolean {
+  const proof = input.trusted_journey_progress;
+  const metadata = input.metadata;
+  if (!proof || !isRecord(metadata) || input.persistence_kind !== "ai_reply") return false;
+  if (
+    proof.contract !== "journey-progress-after-accepted-update-v1" ||
+    proof.company_id !== input.snapshot.company_id ||
+    proof.source_message_id !== input.snapshot.source_message_id ||
+    clean(proof.source_text) !== clean(input.snapshot.source_message_content) ||
+    proof.committed_revision !== input.snapshot.commerce_state_revision ||
+    proof.previous_revision + 1 !== proof.committed_revision ||
+    input.snapshot.commerce_state_source_message_id !== proof.source_message_id ||
+    clean(proof.reply) !== draft ||
+    metadata.response_route !== proof.response_route ||
+    metadata.commerce_reason !== proof.response_reason ||
+    metadata.commerce_authority !== "CONVERSATION_STATE" ||
+    metadata.commerce_state_persist_result !== "success" ||
+    metadata.commerce_state_persistence_classification !== "COMMITTED" ||
+    Number(metadata.commerce_state_revision) !== proof.committed_revision ||
+    !equalJson(proof.transaction_before, proof.transaction_after) ||
+    !equalJson(
+      proof.transaction_after,
+      b2JourneyTransactionBoundary(input.snapshot.state),
+    )
+  ) return false;
+
+  const entity = input.snapshot.state.entities.find((candidate) =>
+    candidate.entity_id === proof.entity_id && candidate.category === proof.category
+  );
+  if (!entity || entity.status === "cancelled" || entity.status === "deferred") return false;
+
+  if (proof.update_kind === "customer_goal") {
+    const active = activeCustomerGoal(input.snapshot.state, proof.category);
+    if (!active || active.entity_id !== proof.entity_id) return false;
+    const goal = active.goal;
+    const acceptedSlots = proof.committed_collected.filter((slot) =>
+      !proof.previous_collected.includes(slot)
+    );
+    if (
+      goal.source_message_id !== proof.source_message_id ||
+      goal.category !== proof.category ||
+      goal.journey_stage !== proof.journey_stage ||
+      goal.response_intent !== proof.response_decision ||
+      (goal.missing[0] ?? null) !== proof.next_missing_slot ||
+      !equalJson(goal.collected, proof.committed_collected) ||
+      !equalJson(goal.missing, proof.committed_missing) ||
+      !equalJson(acceptedSlots, proof.accepted_slots) ||
+      (!proof.accepted_slots.length && !proof.accepted_corrections.length) ||
+      !proof.response_reason.startsWith("CUSTOMER_JOURNEY_") ||
+      metadata.contextual_decision !== null
+    ) return false;
+    for (const correction of proof.accepted_corrections) {
+      if (!input.snapshot.state.latest_corrections.includes(correction)) return false;
+    }
+    return true;
+  }
+
+  const contextualMetadata = isRecord(metadata.contextual_decision)
+    ? metadata.contextual_decision
+    : null;
+  if (
+    proof.response_route !== "contextual_scoped_update" ||
+    proof.response_decision !== "confirm_controlled_update" ||
+    proof.response_reason !== "UNIQUE_COMPATIBLE_CONTEXT" ||
+    !proof.accepted_updates.length ||
+    !contextualMetadata ||
+    contextualMetadata.route !== proof.response_route ||
+    contextualMetadata.reason !== proof.response_reason ||
+    contextualMetadata.reply !== proof.reply ||
+    contextualMetadata.topic !== proof.category ||
+    contextualMetadata.entity_id !== proof.entity_id ||
+    !equalJson(contextualMetadata.updates, proof.accepted_updates) ||
+    contextualMetadata.aggregate_quantity !== proof.aggregate_quantity
+  ) return false;
+  const committed = Array.isArray(entity.attributes.scoped_customer_updates)
+    ? entity.attributes.scoped_customer_updates
+    : [];
+  if (!equalJson(committed, proof.committed_updates)) return false;
+  for (const update of proof.accepted_updates) {
+    const matched = proof.committed_updates.find((candidate) =>
+      candidate.scope === update.scope && candidate.attribute === update.attribute
+    );
+    if (!matched || !equalJson(matched, update)) return false;
+  }
+  return proof.aggregate_quantity === undefined ||
+    entity.quantity === proof.aggregate_quantity;
+}
+
 interface CorrectionPair {
   previous: string;
   current: string;
@@ -831,14 +951,22 @@ export function evaluateB2BeforeCommit(input: B2EvaluationInput): B2Decision {
     correctionDecision?.decision === "indeterminate" &&
     classifyB2AuthoritativePersistence(input) === "NO_SEMANTIC_CHANGE";
   const trustedTargetedClarification = isTrustedTargetedReadOnlyClarification(input, draft);
+  const trustedJourneyProgress = isTrustedJourneyProgressAfterAcceptedUpdate(
+    input,
+    draft,
+  );
   return (
     (authoritativeNoSemanticChange ? null : correctionDecision) ??
     evaluateCancellation(draft, state) ??
     (kbPriceDecision ? null : evaluateQuoteReality(draft, state, input)) ??
     evaluateTransactionReality(draft, input.persistence_kind, state) ??
-    (trustedTargetedClarification ? null : evaluateKnownContext(draft, state)) ?? {
+    (trustedTargetedClarification || trustedJourneyProgress
+      ? null
+      : evaluateKnownContext(draft, state)) ?? {
       decision: "allow",
-      code: kbPriceDecision?.code ?? (trustedTargetedClarification
+      code: kbPriceDecision?.code ?? (trustedJourneyProgress
+        ? "B2_ALLOW_JOURNEY_PROGRESS_AFTER_ACCEPTED_UPDATE"
+        : trustedTargetedClarification
         ? "B2_ALLOW_TARGETED_READ_ONLY_CLARIFICATION"
         : authoritativeNoSemanticChange
         ? "B2_ALLOW_NO_SEMANTIC_CHANGE_AFTER_AUTHORITATIVE_READBACK"
@@ -903,7 +1031,7 @@ async function loadB2Snapshot(
 
     const sourceResult = await client
       .from("messages")
-      .select("id, conversation_id, role")
+      .select("id, conversation_id, role, content")
       .eq("id", source_message_id)
       .eq("conversation_id", conversation_id)
       .maybeSingle();
@@ -1001,6 +1129,7 @@ async function loadB2Snapshot(
         conversation_id,
         company_id: companyId,
         source_message_id,
+        source_message_content: clean(sourceResult.data.content),
         commerce_state_revision: revision,
         commerce_state_source_message_id: stateSource,
         state,
@@ -1023,6 +1152,7 @@ function stableSnapshotFingerprint(snapshot: B2CanonicalSnapshot): string {
     conversation_id: snapshot.conversation_id,
     company_id: snapshot.company_id,
     source_message_id: snapshot.source_message_id,
+    source_message_content: snapshot.source_message_content,
     commerce_state_revision: snapshot.commerce_state_revision,
     commerce_state_source_message_id: snapshot.commerce_state_source_message_id,
     state: snapshot.state,
@@ -1068,6 +1198,7 @@ export async function executeB2PersistenceGate<T>(
       metadata: input.metadata ? structuredClone(input.metadata) : input.metadata,
       trusted_kb_price_proof: input.trusted_kb_price_proof,
       trusted_targeted_clarification: input.trusted_targeted_clarification,
+      trusted_journey_progress: input.trusted_journey_progress,
     });
   } catch (error) {
     decision = {

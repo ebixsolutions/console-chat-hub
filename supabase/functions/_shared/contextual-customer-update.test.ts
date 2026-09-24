@@ -12,6 +12,7 @@ import {
 } from "./commerce-state-runtime.ts";
 import { resolveCanonicalCommerceResolution } from "./conversation-resolution-contract.ts";
 import { activeCustomerGoal } from "./customer-journey-orchestration.ts";
+import { evaluateB2BeforeCommit } from "./pre-send-conversion-supervisor.ts";
 
 function assert(value: unknown, message: string): asserts value {
   if (!value) throw new Error(message);
@@ -233,6 +234,180 @@ Deno.test("W11 production-shaped T1-T5 advances one durable AC purchase journey"
   console.log(`W11-T3|${replies[2].route}|${replies[2].reply}`);
   console.log(`W11-T4|${replies[3].route}|${replies[3].reply}`);
   console.log(`W11-T5|${update.route}|${update.reply}`);
+});
+
+Deno.test("W13 T1-T5 committed journey progress carries bounded B2 authorization", async () => {
+  const f = fixture();
+  const turns = [
+    "Hello，屋企想換冷氣，兩間睡房加個客廳，應該點揀好？",
+    "細房大概80呎，大房100呎，個廳就180呎。",
+    "三個位都有窗口位，而家裝緊嘅都係窗口機。",
+    "另外個廳下晝西斜幾勁，揀機時要點考慮？",
+    "數量先記低：客廳一部，兩間房每間各一部。",
+  ];
+  for (let i = 0; i < turns.length; i++) {
+    const outcome = await f.ask(turns[i], turns.slice(0, i).reverse());
+    const current = f.snapshot();
+    const proof = outcome.trusted_journey_progress;
+    assert(proof, `T${i + 1}:missing_private_proof:${JSON.stringify(outcome)}`);
+    const verdict = evaluateB2BeforeCommit({
+      proposed_response: outcome.reply ?? "",
+      persistence_kind: "ai_reply",
+      snapshot: {
+        conversation_id: "conversation",
+        company_id: "company",
+        source_message_id: `source-${i + 1}`,
+        source_message_content: turns[i],
+        commerce_state_revision: current.revision,
+        commerce_state_source_message_id: `source-${i + 1}`,
+        state: current.state,
+      },
+      metadata: {
+        response_route: outcome.route,
+        commerce_reason: outcome.reason,
+        commerce_authority: outcome.authority,
+        commerce_state_revision: outcome.revision,
+        commerce_state_persist_result: outcome.persist_result,
+        commerce_state_persistence_classification: "COMMITTED",
+        contextual_decision: outcome.contextual_decision ?? null,
+      },
+      trusted_journey_progress: proof,
+    });
+    const expectedCode = i >= 1
+      ? "B2_ALLOW_JOURNEY_PROGRESS_AFTER_ACCEPTED_UPDATE"
+      : "B2_ALLOW";
+    assert(
+      verdict.decision === "allow" && verdict.code === expectedCode,
+      `T${i + 1}:B2:${JSON.stringify(verdict)}`,
+    );
+    if (i < 4) {
+      assert(outcome.route === "product_guidance", `T${i + 1}:route`);
+    } else {
+      assert(
+        outcome.route === "contextual_scoped_update" &&
+          outcome.reason === "UNIQUE_COMPATIBLE_CONTEXT",
+        `T5:${JSON.stringify(outcome)}`,
+      );
+    }
+    console.log(
+      `W13-T${i + 1}|${outcome.route}|${outcome.reply}|revision=${current.revision}|${verdict.code}`,
+    );
+  }
+  const state = f.snapshot().state;
+  const entity = state.entities.find((candidate) =>
+    candidate.entity_id === "air_conditioner:unscoped"
+  );
+  assert(entity?.quantity === 3, JSON.stringify(entity));
+  const scoped = entity.attributes.scoped_customer_updates as ScopedCustomerValue[];
+  assert(
+    scoped.length === 3 && scoped.every((item) => item.value === 1),
+    JSON.stringify(scoped),
+  );
+  assert(
+    state.conversion.order_status === "none" &&
+      state.conversion.payment_status === "none" &&
+      state.conversion.quotation_status === "none" && state.quotes.length === 0,
+    "W13 transaction boundary",
+  );
+});
+
+Deno.test("W13 journey authorization fails closed across tenant, revision, entity, replay and transaction drift", async () => {
+  const f = fixture();
+  const t1 = "Hello，屋企想換冷氣，兩間睡房加個客廳，應該點揀好？";
+  const t2 = "細房大概80呎，大房100呎，個廳就180呎。";
+  await f.ask(t1);
+  const outcome = await f.ask(t2, [t1]);
+  const current = f.snapshot();
+  const proof = outcome.trusted_journey_progress;
+  assert(proof?.update_kind === "customer_goal", JSON.stringify(proof));
+  const metadata = {
+    response_route: outcome.route,
+    commerce_reason: outcome.reason,
+    commerce_authority: outcome.authority,
+    commerce_state_revision: outcome.revision,
+    commerce_state_persist_result: outcome.persist_result,
+    commerce_state_persistence_classification: "COMMITTED",
+    contextual_decision: null,
+  };
+  const snapshot = {
+    conversation_id: "conversation",
+    company_id: "company",
+    source_message_id: "source-2",
+    source_message_content: t2,
+    commerce_state_revision: current.revision,
+    commerce_state_source_message_id: "source-2",
+    state: current.state,
+  };
+  const evaluate = (overrides: Record<string, unknown> = {}) =>
+    evaluateB2BeforeCommit({
+      proposed_response: outcome.reply ?? "",
+      persistence_kind: "ai_reply",
+      snapshot,
+      metadata,
+      trusted_journey_progress: proof,
+      ...overrides,
+    });
+
+  assert(
+    evaluate().code === "B2_ALLOW_JOURNEY_PROGRESS_AFTER_ACCEPTED_UPDATE",
+    "valid_proof_rejected",
+  );
+  const blockedWithoutReceipt = evaluate({ trusted_journey_progress: null });
+  assert(
+    blockedWithoutReceipt.decision === "block" &&
+      blockedWithoutReceipt.code === "KNOWN_CONTEXT_RECONFIRMATION",
+    JSON.stringify(blockedWithoutReceipt),
+  );
+  const repeatedSizes = evaluate({
+    proposed_response: "請再確認細房、大房同客廳嘅房間面積？",
+    trusted_journey_progress: null,
+  });
+  assert(repeatedSizes.code === "KNOWN_CONTEXT_RECONFIRMATION", JSON.stringify(repeatedSizes));
+  const repeatedProduct = evaluate({
+    proposed_response: "你講緊邊種產品類型？",
+    trusted_journey_progress: null,
+  });
+  assert(repeatedProduct.code === "KNOWN_CONTEXT_RECONFIRMATION", JSON.stringify(repeatedProduct));
+
+  for (const [label, tampered] of [
+    ["tenant", { ...proof, company_id: "another-company" }],
+    ["revision", { ...proof, committed_revision: proof.committed_revision + 1 }],
+    ["entity", { ...proof, entity_id: "refrigerator:unscoped", category: "refrigerator" }],
+    ["replay", { ...proof, source_message_id: "source-from-another-turn" }],
+    ["source_text", { ...proof, source_text: "another customer turn" }],
+  ] as const) {
+    const verdict = evaluate({ trusted_journey_progress: tampered });
+    assert(verdict.decision !== "allow", `${label}:${JSON.stringify(verdict)}`);
+  }
+
+  const staleState = structuredClone(current.state);
+  staleState.latest_corrections = ["大房唔係100呎而係110呎"];
+  const stale = evaluate({
+    proposed_response: "大房而家係100呎。",
+    snapshot: { ...snapshot, state: staleState },
+    trusted_journey_progress: null,
+  });
+  assert(stale.code === "SUPERSEDED_VALUE_REUSED", JSON.stringify(stale));
+
+  const cancelledState = structuredClone(current.state);
+  cancelledState.entities[0].status = "cancelled";
+  const cancelled = evaluate({
+    snapshot: { ...snapshot, state: cancelledState },
+  });
+  assert(cancelled.decision !== "allow", JSON.stringify(cancelled));
+
+  const fakeNextStep = evaluate({
+    proposed_response: "下一步請再確認房間面積？",
+    trusted_journey_progress: null,
+  });
+  assert(fakeNextStep.code === "KNOWN_CONTEXT_RECONFIRMATION", JSON.stringify(fakeNextStep));
+  const falseTransaction = evaluate({
+    proposed_response: "資料已記低，訂單已確認。下一步請確認安裝方式？",
+  });
+  assert(falseTransaction.code === "ORDER_CONFIRMATION_NOT_PROVEN", JSON.stringify(falseTransaction));
+  console.log(
+    "W13-NEGATIVE|known_reask=BLOCK|product_reask=BLOCK|commit_failure=BLOCK|stale=BLOCK|cancelled=BLOCK|cross_entity=BLOCK|tenant_revision_replay=BLOCK|transaction=BLOCK",
+  );
 });
 
 Deno.test("W11 entity switch, room correction and cancellation stay scoped", async () => {

@@ -25,6 +25,7 @@ Deno.test("W9 multi-intent product facts retain every compatible facet", () => {
   assert(citation.citation_lineage.selected_document_id === documentId &&
     citation.citation_lineage.evidence_chunk_ids[0] === chunkId, "lineage_lost");
   assert(!/3750|4038|現貨|有貨|80呎房(?:適合|夠用。)/.test(answer.reply), `unsafe_composite:${answer.reply}`);
+  console.log(`W13-T6|published_kb_lookup|canonical_kb_direct_answer|${answer.reply}`);
 });
 
 Deno.test("W9 multi-intent unsupported facets fail safe instead of disappearing", () => {

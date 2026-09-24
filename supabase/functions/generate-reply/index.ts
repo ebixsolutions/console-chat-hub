@@ -182,6 +182,7 @@ import {
   type B2KbPriceProof,
   type B2TrustedTargetedClarification,
 } from "../_shared/pre-send-conversion-supervisor.ts";
+import type { B2TrustedJourneyProgress } from "../_shared/b2-journey-progress-contract.ts";
 import { resolveCanonicalCommerceResolution } from "../_shared/conversation-resolution-contract.ts";
 import { readExactAiReplyCommit } from "../_shared/authoritative-commit-readback.ts";
 import {
@@ -631,6 +632,7 @@ async function executeB2RpcPersistence<T>(
     metadata?: Record<string, unknown> | null;
     trusted_kb_price_proof?: B2KbPriceProof | null;
     trusted_targeted_clarification?: B2TrustedTargetedClarification | null;
+    trusted_journey_progress?: B2TrustedJourneyProgress | null;
     expected_commerce_state_revision?: number | null;
   },
   commit: () => Promise<T>,
@@ -650,6 +652,7 @@ async function commitAiReplyWithControlGate(
   metadata: Record<string, unknown> | null = null,
   trustedKbPriceProof: B2KbPriceProof | null = null,
   trustedTargetedClarification: B2TrustedTargetedClarification | null = null,
+  trustedJourneyProgress: B2TrustedJourneyProgress | null = null,
 ): Promise<
   | { ok: true; message_id: string | null; idempotent: boolean }
   | {
@@ -695,6 +698,7 @@ async function commitAiReplyWithControlGate(
       metadata: b2CommitEvidence,
       trusted_kb_price_proof: trustedKbPriceProof,
       trusted_targeted_clarification: trustedTargetedClarification,
+      trusted_journey_progress: trustedJourneyProgress,
       expected_commerce_state_revision: expectedRevision,
     },
     async () =>
@@ -4654,6 +4658,7 @@ async function orchestrationGenerateReply(
           contextual_decision: _a3Commerce.contextual_decision,
         }
         : null,
+      _a3Commerce?.trusted_journey_progress ?? null,
     );
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     if (commerceCommit.ok) {

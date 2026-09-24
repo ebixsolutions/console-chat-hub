@@ -52,6 +52,8 @@ const files = {
   commerceStateReducer: "supabase/functions/_shared/commerce-state-reducer.ts",
   commerceStateAuthority: "supabase/functions/_shared/commerce-state-authority.ts",
   commerceStateRuntimeBase: "supabase/functions/_shared/commerce-state-runtime-base.ts",
+  b2JourneyProgressContract:
+    "supabase/functions/_shared/b2-journey-progress-contract.ts",
   preSendConversionSupervisor: "supabase/functions/_shared/pre-send-conversion-supervisor.ts",
   preSendConversionSupervisorTest:
     "supabase/functions/_shared/pre-send-conversion-supervisor.test.ts",
@@ -215,11 +217,11 @@ const authorizedTargetedRepairHashes = new Map([
   ],
   [
     "supabase/functions/_shared/commerce-state-runtime-base.ts",
-    "d36deffa857d996f81494d6cb2349eb3d58ebbde1c2cd4ef1622bbd6ad7892ca",
+    "6b39675a8bf59579a3c68aabdb6273af1c339bfdb86e0940b4a4cf15edd7bb7d",
   ],
   [
     "supabase/functions/_shared/pre-send-conversion-supervisor.ts",
-    "58bbfaed8a1acf5c6cc4a1415fdcb2e6a777c884d6929611c8764a389b350880",
+    "e8523687fcd9c17f762c21dc1c814d2f8be10a083a52ec01f13fe627ae1e20c3",
   ],
 ]);
 for (
@@ -640,6 +642,7 @@ if (!process.env.CI) {
     files.commerceStateAuthority,
     files.commerceStateReducer,
     files.commerceStateRuntimeBase,
+    files.b2JourneyProgressContract,
     files.customerJourneyOrchestration,
     files.customerJourneyOrchestrationTest,
     files.naturalCustomerResponse,
@@ -722,6 +725,7 @@ run("npx", [
   files.handoffIntent,
   files.authoritativeCommitReadback,
   files.authoritativeCommitReadbackTest,
+  files.b2JourneyProgressContract,
   files.preSendConversionSupervisorTest,
   files.resolutionContract,
   files.resolutionContractTest,

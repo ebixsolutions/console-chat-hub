@@ -16,6 +16,7 @@ import {
 } from "./commerce-state-contract.ts";
 import { classifyHandoffIntent } from "./handoff-intent.ts";
 import { classifyConversationTurn } from "./conversation-intelligence.ts";
+import { b2JourneyTransactionBoundary } from "./b2-journey-progress-contract.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -168,6 +169,7 @@ interface MockOptions {
   secondStateSourceId?: string | null;
   conversationCompanyId?: string | null;
   sourceRole?: string;
+  sourceContent?: string;
   sourceError?: unknown;
   throwOnTable?: string;
 }
@@ -220,6 +222,7 @@ class MockClient implements B2DatabaseClient {
           id: SOURCE_ID,
           conversation_id: CONVERSATION_ID,
           role: this.options.sourceRole ?? "visitor",
+          content: this.options.sourceContent ?? "fixture customer turn",
         },
         error: null,
       };
@@ -302,6 +305,116 @@ Deno.test("B2 blocks asking for known quote and installation facts", () => {
     "KNOWN_CONTEXT_RECONFIRMATION",
     "known installation",
   );
+});
+
+Deno.test("W13 B2 commits only revision-bound progress to a different journey slot", async () => {
+  const sourceText = "細房大概80呎，大房100呎，個廳就180呎。";
+  const reply = "三個空間面積已分開記低。下一步要確認各位置係窗口位、分體位，定係其他安裝方式？";
+  const state = createEmptyConversationCommerceState();
+  state.current_intent = "replace_existing_appliance";
+  state.current_topic = "air_conditioner";
+  state.current_industry = "home_appliance";
+  state.entities = [{
+    entity_id: "air_conditioner:unscoped",
+    category: "air_conditioner",
+    quantity: 1,
+    status: "researching",
+    attributes: {
+      customer_goal: {
+        category: "air_conditioner",
+        objective: "replace_existing_appliance",
+        journey_stage: "sizing_guidance",
+        collected: ["space_plan", "room_sizes"],
+        missing: ["installation_type", "sunlight", "sizing_decision", "suitable_models"],
+        response_intent: "request_highest_value_missing_information",
+        source_message_id: SOURCE_ID,
+        updated_at: null,
+      },
+    },
+    constraints: {},
+    provenance: { source_type: "customer", source_message_id: SOURCE_ID },
+  }];
+  const boundary = b2JourneyTransactionBoundary(state);
+  const proof = {
+    contract: "journey-progress-after-accepted-update-v1" as const,
+    update_kind: "customer_goal" as const,
+    company_id: COMPANY_ID,
+    source_message_id: SOURCE_ID,
+    source_text: sourceText,
+    previous_revision: 1,
+    committed_revision: 2,
+    entity_id: "air_conditioner:unscoped",
+    category: "air_conditioner",
+    journey_stage: "sizing_guidance",
+    next_missing_slot: "installation_type",
+    response_decision: "request_highest_value_missing_information" as const,
+    response_route: "product_guidance" as const,
+    response_reason: "CUSTOMER_JOURNEY_REQUEST_HIGHEST_VALUE_MISSING_INFORMATION",
+    reply,
+    previous_collected: ["space_plan"],
+    committed_collected: ["space_plan", "room_sizes"],
+    previous_missing: ["room_sizes", "installation_type", "sunlight", "sizing_decision", "suitable_models"],
+    committed_missing: ["installation_type", "sunlight", "sizing_decision", "suitable_models"],
+    accepted_slots: ["room_sizes"],
+    accepted_corrections: [],
+    transaction_before: boundary,
+    transaction_after: boundary,
+  };
+  const metadata = {
+    response_route: "product_guidance",
+    commerce_reason: proof.response_reason,
+    commerce_authority: "CONVERSATION_STATE",
+    commerce_state_revision: 2,
+    commerce_state_persist_result: "success",
+    commerce_state_persistence_classification: "COMMITTED",
+    contextual_decision: null,
+  };
+  let commits = 0;
+  const result = await executeB2PersistenceGate({
+    client: new MockClient({
+      state,
+      revision: 2,
+      stateSourceId: SOURCE_ID,
+      sourceContent: sourceText,
+    }),
+    conversation_id: CONVERSATION_ID,
+    source_message_id: SOURCE_ID,
+    proposed_response: reply,
+    persistence_kind: "ai_reply",
+    metadata,
+    trusted_journey_progress: proof,
+    expected_commerce_state_revision: 2,
+    commit: async () => {
+      commits += 1;
+      return "committed";
+    },
+  });
+  assert(result.committed, JSON.stringify(result));
+  assertEquals(
+    result.decision.code,
+    "B2_ALLOW_JOURNEY_PROGRESS_AFTER_ACCEPTED_UPDATE",
+    "bounded journey code",
+  );
+  assertEquals(commits, 1, "commit exactly once");
+
+  const replay = await executeB2PersistenceGate({
+    client: new MockClient({
+      state,
+      revision: 2,
+      stateSourceId: "another-source",
+      sourceContent: sourceText,
+    }),
+    conversation_id: CONVERSATION_ID,
+    source_message_id: SOURCE_ID,
+    proposed_response: reply,
+    persistence_kind: "ai_reply",
+    metadata,
+    trusted_journey_progress: proof,
+    expected_commerce_state_revision: 2,
+    commit: async () => "must-not-commit",
+  });
+  assert(!replay.committed && replay.decision.decision === "block", JSON.stringify(replay));
+  console.log("W13-B2|accepted_update=ALLOW|replayed_receipt=BLOCK");
 });
 
 Deno.test("B2 T1-T5: bounded server Commerce clarification skips only known-context alias", async () => {
