@@ -1,6 +1,7 @@
 import type { CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 import type { ConversationCommerceState } from "./commerce-state-contract.ts";
 import type { ContextualCandidate } from "./contextual-customer-update.ts";
+import type { CustomerJourneySignal } from "./customer-journey-orchestration.ts";
 import type { CommerceTurnEntityHint } from "./commerce-state-reducer.ts";
 import { createIndustryRegistry, type IndustryProfile } from "./industry-agent-registry.ts";
 import { validateIndustrySchemaValues } from "./industry-schema.ts";
@@ -8,6 +9,7 @@ import {
   HOME_APPLIANCE_CATEGORIES,
   HOME_APPLIANCE_PROFILE_V1,
   HOME_APPLIANCE_ROOMS,
+  homeApplianceCustomerJourneySignal,
   homeApplianceContextualCandidate,
 } from "./industry-profiles/home-appliance-v1.ts";
 
@@ -32,6 +34,19 @@ export function resolveIndustryContextualCandidate(input: {
   return !profile && candidate?.action === "scoped_update"
     ? { ...candidate, context_sufficient: false }
     : candidate;
+}
+
+export function resolveIndustryCustomerJourney(input: {
+  text: string;
+  state: ConversationCommerceState;
+  language: IndustryLanguage;
+}): CustomerJourneySignal | null {
+  const profile = resolveIndustryRuntime({
+    texts: [input.text],
+    industry_identifier: input.state.current_industry,
+  }).profile;
+  if (profile && profile.id !== HOME_APPLIANCE_PROFILE_V1.id) return null;
+  return homeApplianceCustomerJourneySignal(input);
 }
 
 export interface IndustryRuntimeResolution {

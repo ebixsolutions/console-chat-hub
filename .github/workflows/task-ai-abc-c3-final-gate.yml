@@ -778,6 +778,33 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          w11_journey_base=739bba447e89dffb63e08e06f211e007b668773a
+          if git merge-base --is-ancestor "$w11_journey_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$w11_journey_base"; then
+            expected="$RUNNER_TEMP/c3-w11-journey-expected"
+            actual="$RUNNER_TEMP/c3-w11-journey-actual"
+            cat > "$expected" <<'EOF'
+          .github/scripts/task_ai_abc_c3_final_gate.mjs
+          .github/workflows/task-ai-abc-c3-final-gate.yml
+          supabase/functions/_shared/commerce-state-runtime-base.ts
+          supabase/functions/_shared/contextual-customer-update.test.ts
+          supabase/functions/_shared/customer-journey-orchestration.test.ts
+          supabase/functions/_shared/customer-journey-orchestration.ts
+          supabase/functions/_shared/industry-profiles/home-appliance-v1.ts
+          supabase/functions/_shared/industry-runtime-adapter.ts
+          EOF
+            git diff --name-only "$w11_journey_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
+            LC_ALL=C sort -o "$expected" "$expected"
+            diff -u "$expected" "$actual"
+            test "$(git rev-list --count "$w11_journey_base..$GITHUB_SHA")" -eq 1
+            test -z "$(git diff --name-only "$w11_journey_base..$GITHUB_SHA" -- 'supabase/migrations/**' 'supabase/functions/agent-assist/index.ts' 'supabase/functions/receive-widget-message/index.ts' 'supabase/functions/generate-reply/index.ts')"
+            grep -q 'W11 production-shaped T1-T5 advances one durable AC purchase journey' supabase/functions/_shared/contextual-customer-update.test.ts
+            grep -q 'multi-intent product facts retain every compatible facet' supabase/functions/_shared/product-factual-query.test.ts
+            echo C3_W11_JOURNEY_SOURCE_PARENT="$w11_journey_base"
+            echo C3_W11_JOURNEY_SOURCE_ALLOWLIST=PASS
+            echo C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE
+            echo C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS
+            exit 0
+          fi
           w9_continuous_base=931db977dbbb06f46efbb614b6c4b284c2350457
           if git merge-base --is-ancestor "$w9_continuous_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$w9_continuous_base"; then
             expected="$RUNNER_TEMP/c3-w9-continuous-expected"

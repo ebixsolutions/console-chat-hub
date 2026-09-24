@@ -50,9 +50,10 @@ import {
   semanticFrameToEntityHints,
   semanticFrameToStateEvents,
 } from "./commerce-semantic-adapter.ts";
-import { industryEntityLabel, resolveIndustryContextualCandidate, resolveIndustryRuntime } from "./industry-runtime-adapter.ts";
+import { industryEntityLabel, resolveIndustryContextualCandidate, resolveIndustryCustomerJourney, resolveIndustryRuntime } from "./industry-runtime-adapter.ts";
 import { contextualUpdateEvents, resolveContextualCustomerUpdate } from "./contextual-customer-update.ts";
 import type { ContextualDecision } from "./contextual-customer-update.ts";
+import { planCustomerJourney, type CustomerJourneyPlan } from "./customer-journey-orchestration.ts";
 import {
   HOME_APPLIANCE_CATEGORIES as CATEGORY_SPECS,
   HOME_APPLIANCE_ROOMS as ROOM_SPECS,
@@ -1653,6 +1654,7 @@ export function reduceTurn(
       contextual, previous, input.source_message_id, input.occurred_at,
     ));
   }
+  const journey = resolveCustomerJourneyTurn(input, previous);
   const calculationTurn = detectExplicitCalculationRequest(input.text);
   const resolvedHints = calculationTurn
     ? []
@@ -1666,7 +1668,7 @@ export function reduceTurn(
   const semanticEventsRaw = semanticAuthoritative
     ? semanticFrameToStateEvents(input.semantic_frame, previous, hints, input.source_message_id, input.occurred_at ?? null)
     : [];
-  const semanticEvents = bookingWithoutDelivery
+  let semanticEvents = bookingWithoutDelivery
     ? semanticEventsRaw.filter((event) => event.type !== "SET_DELIVERY")
     : semanticEventsRaw;
   const deterministicEvents = calculationTurn ? [] : deriveCommerceEventsFromCustomerTurn({
@@ -1693,16 +1695,35 @@ export function reduceTurn(
   const derivedWithoutAllocationOverwrite = allocationBreakdown
     ? derivedWithoutConstraintCancellation.filter((event) => event.type !== "SET_ENTITY_QUANTITY")
     : derivedWithoutConstraintCancellation;
-  const derived = bookingWithoutDelivery
+  let derived = bookingWithoutDelivery
     ? derivedWithoutAllocationOverwrite.filter((event) =>
       event.type !== "SET_DELIVERY"
     )
     : derivedWithoutAllocationOverwrite;
-  const runtimeEvents = calculationTurn ? [] : deriveA3RuntimeEvents(input, hints, previous);
+  let runtimeEvents = calculationTurn ? [] : deriveA3RuntimeEvents(input, hints, previous);
+  // A goal turn owns one durable aggregate entity. Room mentions are scopes of
+  // that purchase goal, not separate products that can make later binding
+  // ambiguous.
+  if (journey.status === "advance" && journey.entity_id) {
+    const compatible = (event: CommerceStateEvent): boolean => {
+      if (event.type === "ENSURE_ENTITY" || event.type === "ADD_ENTITY") {
+        return event.entity.entity_id === journey.entity_id;
+      }
+      if (
+        event.type === "UPDATE_ENTITY" || event.type === "SET_ENTITY_STATUS" ||
+        event.type === "SET_ENTITY_QUANTITY" || event.type === "SET_ENTITY_ATTRIBUTE" ||
+        event.type === "SET_ENTITY_CONSTRAINT" || event.type === "REMOVE_ENTITY_CONSTRAINT"
+      ) return event.entity_id === journey.entity_id;
+      return true;
+    };
+    semanticEvents = semanticEvents.filter(compatible);
+    derived = derived.filter(compatible);
+    runtimeEvents = runtimeEvents.filter(compatible);
+  }
   const industryEvent: CommerceStateEvent[] = input.industry_identifier
     ? [{ type: "SET_CONTEXT", language: input.language, industry: input.industry_identifier }]
     : [];
-  const reduced = reduceCommerceState(previous, [...industryEvent, ...semanticEvents, ...derived, ...runtimeEvents]);
+  const reduced = reduceCommerceState(previous, [...industryEvent, ...journey.events, ...semanticEvents, ...derived, ...runtimeEvents]);
   const guard = enforceQuotationNotOrderEvents(clean(input.text), reduced);
   return guard.length ? reduceCommerceState(reduced, guard) : reduced;
 }
@@ -1721,6 +1742,19 @@ function resolveContextualTurn(
     candidate,
     state,
     read_only: isReadOnlyCurrentStateQuery(input.text, input.semantic_frame),
+  });
+}
+
+function resolveCustomerJourneyTurn(
+  input: CommerceRuntimeInput,
+  state: ConversationCommerceState,
+): CustomerJourneyPlan {
+  const signal = resolveIndustryCustomerJourney({
+    text: input.text, state, language: input.language,
+  });
+  return planCustomerJourney({
+    signal, state, source_message_id: input.source_message_id,
+    occurred_at: input.occurred_at,
   });
 }
 
@@ -2078,6 +2112,7 @@ export async function runCommerceStateRuntime(
   // shared reply precedence without a phrase-specific generate-reply branch.
   const contextualBefore = await loadCommerceState(db, input.conversation_id);
   const contextualDecision = resolveContextualTurn(input, contextualBefore.state);
+  const customerJourney = resolveCustomerJourneyTurn(input, contextualBefore.state);
   if (contextualDecision.route === "targeted_clarification") {
     return {
       authority: "CONVERSATION_STATE", reply: contextualDecision.reply,
@@ -2162,7 +2197,12 @@ export async function runCommerceStateRuntime(
   // committed snapshot. Do not call the state RPC: even an identical payload
   // would create a semantic event/revision and could rebind fact provenance to
   // this question rather than the customer turn that supplied the fact.
-  if (isReadOnlyMemoryOrCurrentStateRecall(text, input.semantic_frame) && !detectExplicitCalculationRequest(text)) {
+  if (
+    isReadOnlyMemoryOrCurrentStateRecall(text, input.semantic_frame) &&
+    !detectExplicitCalculationRequest(text) &&
+    contextualDecision.route !== "product_guidance" &&
+    customerJourney.status !== "advance"
+  ) {
     const loaded = await loadCommerceState(db, input.conversation_id);
     const requestedStatePath = compatibleQuantityStatePath(input, loaded.state);
     const decision = resolveCommerceAnswerAuthority({
@@ -2232,6 +2272,21 @@ export async function runCommerceStateRuntime(
       reason: contextualDecision.reason,
       route: contextualDecision.route,
       contextual_decision: contextualDecision,
+    };
+  }
+  if (
+    contextualDecision.route === "none" &&
+    customerJourney.status === "advance" &&
+    customerJourney.reply &&
+    ["success", "no_semantic_change", "source_message_already_applied"].includes(persisted.result)
+  ) {
+    return {
+      authority: "CONVERSATION_STATE",
+      reply: customerJourney.reply,
+      revision: persisted.revision,
+      persist_result: persisted.result,
+      reason: customerJourney.reason,
+      route: "product_guidance",
     };
   }
   const readOnlyCurrentStateQuery = isReadOnlyCurrentStateQuery(

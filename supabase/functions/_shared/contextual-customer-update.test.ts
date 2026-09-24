@@ -11,6 +11,7 @@ import {
   type CommerceStateDbClient,
 } from "./commerce-state-runtime.ts";
 import { resolveCanonicalCommerceResolution } from "./conversation-resolution-contract.ts";
+import { activeCustomerGoal } from "./customer-journey-orchestration.ts";
 
 function assert(value: unknown, message: string): asserts value {
   if (!value) throw new Error(message);
@@ -189,6 +190,79 @@ Deno.test("W9 established AC context survives intervening service and memory tur
   assert(scoped.length === 3 && scoped.every((value) => value.attribute === "quantity" && value.value === 1), JSON.stringify(scoped));
   assert(snapshot.state.conversion.order_status === "none" && snapshot.state.conversion.payment_status === "none" &&
     snapshot.state.conversion.quotation_status === "none" && snapshot.state.quotes.length === 0, "transaction_promoted");
+});
+
+Deno.test("W11 production-shaped T1-T5 advances one durable AC purchase journey", async () => {
+  const f = fixture();
+  const turns = [
+    "Hello，屋企想換冷氣，兩間睡房加個客廳，應該點揀好？",
+    "細房大概80呎，大房100呎，個廳就180呎。",
+    "三個位都有窗口位，而家裝緊嘅都係窗口機。",
+    "另外個廳下晝西斜幾勁，揀機時要點考慮？",
+  ];
+  const replies = [];
+  for (let i = 0; i < turns.length; i++) {
+    const reply = await f.ask(turns[i], turns.slice(0, i).reverse());
+    replies.push(reply);
+    assert(reply.route === "product_guidance", `T${i + 1}:${JSON.stringify(reply)}`);
+    assert(!/收到，你提到|未確定嘅細節會再核實|提供相關項目、適用範圍同日期/.test(reply.reply ?? ""), `passive:T${i + 1}:${reply.reply}`);
+  }
+  assert(/平方呎/.test(replies[0].reply ?? ""), String(replies[0].reply));
+  assert(/窗口位|安裝方式/.test(replies[1].reply ?? ""), String(replies[1].reply));
+  assert(/下午日照|西斜/.test(replies[2].reply ?? ""), String(replies[2].reply));
+  assert(/西斜會增加.*負荷/.test(replies[3].reply ?? "") && /唔會.*保證匹數/.test(replies[3].reply ?? ""), String(replies[3].reply));
+
+  const beforeQuantity = f.snapshot();
+  const activeBefore = beforeQuantity.state.entities.filter((entity) => entity.status !== "cancelled" && entity.status !== "deferred");
+  assert(activeBefore.length === 1 && activeBefore[0].entity_id === "air_conditioner:unscoped", JSON.stringify(activeBefore));
+  const goal = activeCustomerGoal(beforeQuantity.state, "air_conditioner")?.goal;
+  assert(goal?.objective === "replace_existing_appliance" && goal.journey_stage === "sizing_guidance", JSON.stringify(goal));
+  assert(["room_sizes", "installation_type", "sunlight"].every((item) => goal.collected.includes(item)), JSON.stringify(goal));
+  assert(goal.missing.join(",") === "sizing_decision,suitable_models", JSON.stringify(goal));
+
+  const t5 = "數量先記低：客廳一部，兩間房每間各一部。";
+  const update = await f.ask(t5, turns.slice().reverse());
+  assert(update.route === "contextual_scoped_update" && update.reason === "UNIQUE_COMPATIBLE_CONTEXT", JSON.stringify(update));
+  assert(update.reply === "記低客廳一部、兩間房各一部，共三部；呢個係選購要求，未落單。", String(update.reply));
+  const state = f.snapshot().state;
+  assert(state.entities.length === 1 && state.entities[0].quantity === 3, JSON.stringify(state.entities));
+  assert(state.conversion.order_status === "none" && state.conversion.payment_status === "none" &&
+    state.conversion.quotation_status === "none" && state.quotes.length === 0, "transaction_promoted");
+  console.log(`W11-T1|${replies[0].route}|${replies[0].reply}`);
+  console.log(`W11-T2|${replies[1].route}|${replies[1].reply}`);
+  console.log(`W11-T3|${replies[2].route}|${replies[2].reply}`);
+  console.log(`W11-T4|${replies[3].route}|${replies[3].reply}`);
+  console.log(`W11-T5|${update.route}|${update.reply}`);
+});
+
+Deno.test("W11 entity switch, room correction and cancellation stay scoped", async () => {
+  const f = fixture();
+  const ac = "屋企想換冷氣，兩間睡房加個客廳，應該點揀？";
+  await f.ask(ac);
+  await f.ask("細房80呎，大房100呎，客廳180呎。", [ac]);
+  await f.ask("全部都有窗口位，而家都係窗口機。", ["細房80呎，大房100呎，客廳180呎。", ac]);
+  await f.ask("客廳下晝西斜。", ["全部都有窗口位，而家都係窗口機。", "細房80呎，大房100呎，客廳180呎。", ac]);
+
+  const fridge = await f.ask("另外雪櫃我想睇下，擺位闊度唔超過595mm。", ["客廳下晝西斜。", ac]);
+  assert(fridge.route === "product_guidance", JSON.stringify(fridge));
+  const switched = f.snapshot().state;
+  assert(switched.current_topic === "refrigerator" && switched.entities.filter((entity) => entity.status !== "cancelled" && entity.status !== "deferred").length === 2, JSON.stringify(switched.entities));
+
+  const beforeAmbiguous = JSON.stringify(f.snapshot());
+  const ambiguous = await f.ask("房各一部", ["另外雪櫃我想睇下，擺位闊度唔超過595mm。", ac]);
+  assert(ambiguous.reason === "contextual_targeted_clarification" && ambiguous.persist_result === "read_only", JSON.stringify(ambiguous));
+  assert(JSON.stringify(f.snapshot()) === beforeAmbiguous, "fridge_inherited_ac_quantity");
+
+  const corrected = await f.ask("返返冷氣，更正大房係110呎，唔係100呎。", ["另外雪櫃我想睇下，擺位闊度唔超過595mm。", ac]);
+  assert(corrected.route === "product_guidance", JSON.stringify(corrected));
+  assert(f.snapshot().state.latest_corrections.at(-1)?.includes("110呎"), JSON.stringify(f.snapshot().state.latest_corrections));
+
+  await f.ask("雪櫃暫時唔買，先取消。", ["返返冷氣，更正大房係110呎，唔係100呎。", ac]);
+  const cancelled = f.snapshot().state.entities.find((entity) => entity.category === "refrigerator");
+  assert(cancelled?.status === "cancelled" || cancelled?.status === "deferred", JSON.stringify(cancelled));
+  await f.ask("冷氣繼續按頭先要求處理。", ["雪櫃暫時唔買，先取消。", ac]);
+  const after = f.snapshot().state.entities.find((entity) => entity.category === "refrigerator");
+  assert(after?.status === cancelled.status, "cancelled_entity_revived");
 });
 
 Deno.test("W9 fresh and incompatible quantity references remain targeted and read-only", async () => {

@@ -87,6 +87,8 @@ const files = {
   serviceRuntimeTest: "supabase/functions/_shared/conversation-service-runtime.test.ts",
   contextualCustomerUpdate: "supabase/functions/_shared/contextual-customer-update.ts",
   contextualCustomerUpdateTest: "supabase/functions/_shared/contextual-customer-update.test.ts",
+  customerJourneyOrchestration: "supabase/functions/_shared/customer-journey-orchestration.ts",
+  customerJourneyOrchestrationTest: "supabase/functions/_shared/customer-journey-orchestration.test.ts",
   conversationalRouting: "supabase/functions/_shared/conversational-routing.ts",
   conversationalRoutingTest: "supabase/functions/_shared/conversational-routing.test.ts",
   industryRuntimeAdapter: "supabase/functions/_shared/industry-runtime-adapter.ts",
@@ -620,6 +622,7 @@ runDeno([
   "--allow-read",
   files.naturalCustomerResponseTest,
   files.contextualCustomerUpdateTest,
+  files.customerJourneyOrchestrationTest,
   files.productFactualQueryTest,
 ]);
 runDeno(["run", "--no-lock", "--allow-read", files.canonical103Replay]);
@@ -637,6 +640,8 @@ if (!process.env.CI) {
     files.commerceStateAuthority,
     files.commerceStateReducer,
     files.commerceStateRuntimeBase,
+    files.customerJourneyOrchestration,
+    files.customerJourneyOrchestrationTest,
     files.naturalCustomerResponse,
     files.naturalCustomerResponseTest,
     files.preSendConversionSupervisor,
