@@ -122,6 +122,8 @@ const variants = [
   ["B", "係廳一部，房各一部"],
   ["C", "客廳一部，兩間房各一部"],
   ["E", "廤一部，兩間房各一部"],
+  ["W9-1", "數量記住：個廳要1部，兩個睡房每間1部"],
+  ["W9-2", "客厅放一台，两间卧室每间各一台"],
 ] as const;
 
 Deno.test("home appliance A: useful guidance rather than generic clarification", async () => {
@@ -167,6 +169,40 @@ Deno.test("home appliance typo without unique context stays read-only", async ()
   const reply = await f.ask("廤一部，兩間房各一部");
   assert(reply.reason === "contextual_targeted_clarification", JSON.stringify(reply));
   assert(f.snapshot().revision === 0 && f.snapshot().state.entities.length === 0, "typo_guessed_without_context");
+});
+
+Deno.test("W9 established AC context survives intervening service and memory turns", async () => {
+  const f = fixture();
+  const opening = introduction;
+  await f.ask(opening);
+  await f.ask("細房80呎，大房100呎，客廳180呎。", [opening]);
+  await f.ask("三個位都有窗口，而家都用窗口機。", ["細房80呎，大房100呎，客廳180呎。", opening]);
+  await f.ask("客廳下晝西斜。", ["三個位都有窗口，而家都用窗口機。", "細房80呎，大房100呎，客廳180呎。", opening]);
+  const text = "數量先記低：客廳一部，兩間房每間各一部。";
+  const reply = await f.ask(text, ["客廳下晝西斜。", "三個位都有窗口，而家都用窗口機。", "細房80呎，大房100呎，客廳180呎。", opening]);
+  const snapshot = f.snapshot();
+  assert(reply.route === "contextual_scoped_update" && reply.reason === "UNIQUE_COMPATIBLE_CONTEXT", JSON.stringify(reply));
+  assert(snapshot.state.current_topic === "air_conditioner", "topic_lost");
+  const active = snapshot.state.entities.filter((entity) => entity.status !== "cancelled" && entity.status !== "deferred");
+  assert(active.length === 1 && active[0].category === "air_conditioner" && active[0].quantity === 3, JSON.stringify(active));
+  const scoped = active[0].attributes.scoped_customer_updates as ScopedCustomerValue[];
+  assert(scoped.length === 3 && scoped.every((value) => value.attribute === "quantity" && value.value === 1), JSON.stringify(scoped));
+  assert(snapshot.state.conversion.order_status === "none" && snapshot.state.conversion.payment_status === "none" &&
+    snapshot.state.conversion.quotation_status === "none" && snapshot.state.quotes.length === 0, "transaction_promoted");
+});
+
+Deno.test("W9 fresh and incompatible quantity references remain targeted and read-only", async () => {
+  const fresh = fixture();
+  const freshBefore = JSON.stringify(fresh.snapshot());
+  const freshReply = await fresh.ask("客廳一部，兩間房每間各一部");
+  assert(freshReply.reason === "contextual_targeted_clarification" && freshReply.persist_result === "read_only", JSON.stringify(freshReply));
+  assert(JSON.stringify(fresh.snapshot()) === freshBefore, "fresh_context_mutated");
+
+  const refrigerator = fixture(stateWith(["refrigerator"]));
+  const fridgeBefore = JSON.stringify(refrigerator.snapshot());
+  const incompatible = await refrigerator.ask("客廳一部，兩間房每間各一部", [introduction]);
+  assert(incompatible.reason === "contextual_targeted_clarification", JSON.stringify(incompatible));
+  assert(JSON.stringify(refrigerator.snapshot()) === fridgeBefore, "incompatible_context_inherited");
 });
 
 Deno.test("live runtime read-only recall preserves state and source provenance", async () => {

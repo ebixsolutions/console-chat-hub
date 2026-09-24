@@ -82,6 +82,25 @@ Deno.test("C3 greeting classifier renders natural zh-TW greeting without swallow
   assert(intent.kind === "product_guidance", `${text}:${JSON.stringify(intent)}`);
 });
 
+Deno.test("W9 shared product-guidance semantics do not require an exact model", () => {
+  const cases = [
+    ["Hello，想幫屋企換冷氣，兩間房連個廳，想知應該點揀。", "zh-TW", "冷氣"],
+    ["两间卧室和客厅想装空调，应该怎样选？", "zh-CN", null],
+    ["How should I choose an air conditioner for two bedrooms and a living room?", "en", "air conditioner"],
+    ["想換雪櫃，應該如何選？", "zh-TW", "雪櫃"],
+  ] as const;
+  for (const [text, language, expectedProduct] of cases) {
+    const intent = classifyNaturalCustomerIntent(text);
+    assert(intent.kind === "product_guidance", `${text}:${JSON.stringify(intent)}`);
+    if (expectedProduct) assert(intent.product === expectedProduct, `${text}:product:${intent.product}`);
+    const reply = renderNaturalImmediateResponse(intent, language) ?? "";
+    assert(reply.length > 0 && !/完整型號|產品頁|适用地区|product page|region/i.test(reply), `${text}:reply:${reply}`);
+  }
+  const ac = classifyNaturalCustomerIntent("Hello，想幫屋企換冷氣，兩間房連個廳，想知應該點揀。");
+  const reply = renderNaturalImmediateResponse(ac, "zh-TW") ?? "";
+  assert(/兩間房|客廳/.test(reply) && /面積/.test(reply) && /日照/.test(reply) && /窗口|安裝/.test(reply), reply);
+});
+
 Deno.test("C3 natural-response 8 killer contract preserves shared precedence", () => {
   const availability = classifyNaturalCustomerIntent("你有沒有 iPhone?");
   assert(

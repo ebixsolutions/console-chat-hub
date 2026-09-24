@@ -10,9 +10,36 @@ import {
 import { evaluateB2BeforeCommit, type B2KbPriceProof } from "./pre-send-conversion-supervisor.ts";
 import type { KBDocumentCandidate } from "./deterministic-kb-client.ts";
 
-const assert = (condition: unknown, detail: string): asserts condition => {
+const assert: (condition: unknown, detail: string) => asserts condition = (condition, detail) => {
   if (!condition) throw new Error(detail);
 };
+
+Deno.test("W9 multi-intent product facts retain every compatible facet", () => {
+  const question = "細房我見到 CW-SUL70BA，佢有咩功能、係幾多匹？80呎用落夠唔夠？";
+  const { intent, selection, answer, citation } = routeAndAnswer(question);
+  assert(intent.kind === "product_factual_query", JSON.stringify(intent));
+  assert(intent.facts.join(",") === "features,horsepower,suitability", JSON.stringify(intent.facts));
+  assert(selection.ok && answer && citation, "missing_grounded_composite");
+  assert(answer.reply === "現行產品資料列出 PANASONIC 樂聲牌 CW-SUL70BA：3/4匹Inverter LITE變頻式淨冷窗口機；功能：變頻 淨冷。 PANASONIC 樂聲牌 CW-SUL70BA 嘅匹數係 3/4匹。 產品資料售價為 HK$5,680。 現有產品資料未有直接列出適用面積，所以未能確認80呎房夠唔夠用；亦要睇日照等條件。", answer.reply);
+  assert(answer.price_fact?.value === 5680 && answer.price_fact.model === "CW-SUL70BA", "price_proof_lost");
+  assert(citation.citation_lineage.selected_document_id === documentId &&
+    citation.citation_lineage.evidence_chunk_ids[0] === chunkId, "lineage_lost");
+  assert(!/3750|4038|現貨|有貨|80呎房(?:適合|夠用。)/.test(answer.reply), `unsafe_composite:${answer.reply}`);
+});
+
+Deno.test("W9 multi-intent unsupported facets fail safe instead of disappearing", () => {
+  const sparseContent = content
+    .replace("3/4匹Inverter LITE變頻式淨冷窗口機", "Inverter LITE變頻式淨冷窗口機")
+    .replace(" 匹數: 3/4匹", " 匹數: 未提供");
+  const sparse = { ...document, chunks: [{ ...chunk, content: sparseContent }],
+    llm_context: { ...document.llm_context,
+      full_content_evidence: [{ ...document.llm_context.full_content_evidence[0], content: sparseContent }] } };
+  const { answer } = routeAndAnswer("CW-SUL70BA 有咩功能、幾多匹，同埋80呎適唔適合？", "zh-TW", [sparse]);
+  assert(answer, "sparse_composite_missing");
+  assert(/功能：變頻 淨冷/.test(answer.reply) && /未有列出.*可核實匹數/.test(answer.reply) &&
+    /未有直接列出適用面積/.test(answer.reply), answer.reply);
+  assert(!/3\/4匹/.test(answer.reply), `invented_horsepower:${answer.reply}`);
+});
 
 // Full Content displayed by the tenant-scoped Knowledge panel for this model.
 // IDs below are fixture IDs: the test proves citation binding, not a live chunk ID.
@@ -207,7 +234,7 @@ Deno.test("P6 nonexistent exact model gets honest unknown without a model re-ask
   const question = "NONEXISTENT-999999 有咩功能？";
   const { intent, plan, selection, answer } = routeAndAnswer(question, "zh-TW", []);
   assert(intent.kind === "product_factual_query" && plan.action === "published_kb_lookup", `P6:route:${JSON.stringify(intent)}`);
-  assert(selection.document === null && selection.evidence.length === 0 && answer === null, "P6:invented_evidence");
+  assert(selection.ok && selection.document === null && selection.evidence.length === 0 && answer === null, "P6:invented_evidence");
   const reply = renderNaturalNoCurrentEvidence(intent, "zh-TW") ?? "";
   assert(reply.includes("NONEXISTENT-999999") && /搵唔到|唔會估/.test(reply), `P6:unknown:${reply}`);
   assert(!/請提供型號|指定型號|你有型號|現貨|售價/.test(reply), `P6:reask:${reply}`);

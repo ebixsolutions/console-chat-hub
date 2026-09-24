@@ -2,12 +2,20 @@ import { classifyConversationalRoute } from "./conversational-routing.ts";
 
 export type NaturalResponseLanguage = "zh-TW" | "zh-CN" | "en";
 
+export type ProductFactualFacet =
+  | "features"
+  | "horsepower"
+  | "suitability"
+  | "price"
+  | "specification"
+  | "model_info";
+
 export type NaturalCustomerIntent =
   | { kind: "greeting"; product: null }
   | { kind: "product_shopping"; product: string | null }
   | { kind: "product_guidance"; product: string | null; two_bedrooms_and_living_room?: boolean }
   | { kind: "product_availability"; product: string | null }
-  | { kind: "product_factual_query"; product: string; fact: "features" | "horsepower" | "suitability" | "price" | "specification" | "model_info" }
+  | { kind: "product_factual_query"; product: string; fact: ProductFactualFacet; facts: ProductFactualFacet[] }
   | { kind: "none"; product: null };
 
 const MAX_PRODUCT_LABEL_LENGTH = 80;
@@ -26,20 +34,26 @@ export function classifyProductFactualQuery(text: string): Extract<NaturalCustom
   const normalized = text.normalize("NFKC").trim();
   const models = exactProductIdentifiers(normalized);
   if (models.length !== 1 || isProductSupportProblem(normalized)) return null;
-  const fact = /(?:適合|适合|夠用|够用|啱用|合用|suitab|enough|work\s+for|fit\s+(?:in|for)|appropriate\s+for)/i.test(normalized)
+  const matchers: Array<[ProductFactualFacet, RegExp]> = [
+    ["features", /(?:功能|feature|特點|特点|特色)/i],
+    ["horsepower", /(?:幾多匹|几多匹|多少匹|幾匹|几匹|匹數|匹数|horsepower|\bHP\b)/i],
+    ["price", /(?:售價|售价|幾錢|几钱|價錢|价钱|price|how\s+much)/i],
+    ["specification", /(?:規格|规格|specs?|尺寸|dimension|capacity|容量|重量|weight|功率|power|電壓|电压|voltage|噪音)/i],
+    ["model_info", /(?:型號|型号|model|產品資料|产品资料|product\s+(?:information|details))/i],
+    ["suitability", /(?:適合|适合|適唔適合|适不适合|夠用|够用|夠唔夠|够不够|啱用|合用|合唔合適|合不合适|suitab|enough|work\s+for|fit\s+(?:in|for)|appropriate\s+for)/i],
+  ];
+  const facts = matchers.filter(([, pattern]) => pattern.test(normalized)).map(([fact]) => fact);
+  if (!facts.length) return null;
+  // Keep the legacy single-fact precedence for existing consumers while also
+  // exposing every compatible facet so renderers cannot silently drop one.
+  const fact = facts.includes("suitability")
     ? "suitability"
-    : /(?:售價|售价|幾錢|几钱|價錢|价钱|price|how\s+much)/i.test(normalized)
+    : facts.includes("price")
     ? "price"
-    : /(?:幾多匹|几多匹|多少匹|幾匹|几匹|匹數|匹数|horsepower|\bHP\b)/i.test(normalized)
+    : facts.includes("horsepower")
     ? "horsepower"
-    : /(?:功能|feature|特點|特点|特色)/i.test(normalized)
-    ? "features"
-    : /(?:規格|规格|specs?|尺寸|dimension|capacity|容量|重量|weight|功率|power|電壓|电压|voltage|噪音)/i.test(normalized)
-    ? "specification"
-    : /(?:型號|型号|model|產品資料|产品资料|product\s+(?:information|details))/i.test(normalized)
-    ? "model_info"
-    : null;
-  return fact ? { kind: "product_factual_query", product: models[0], fact } : null;
+    : facts[0];
+  return { kind: "product_factual_query", product: models[0], fact, facts };
 }
 
 export function isProductSupportProblem(text: string): boolean {
@@ -110,14 +124,26 @@ function extractGuidanceProduct(text: string): string | null {
     /(?:想問|想问|想了解|想睇|想看|請教|请教)\s*([^，,。.!！?？]{1,48}?)(?=\s*(?:，|,|。|\?|？|點揀|点选|點選|揀邊|选哪|買咩|买什么|邊款|哪款|邊種|哪种|要幾|要几))/iu,
   );
   if (chinese) return cleanProductLabel(chinese[1]);
+  const chineseSelection = text.match(
+    /(?:想|要|打算|準備|准备|考慮|考虑|希望)?(?:幫|帮)?(?:屋企|家裡|家里|公司|辦公室|办公室)?\s*(?:換|换|買|买|選購|选购|揀|選|选|搵|找)\s*(?:一部|一台|個|个)?\s*([^，,。.!！?？]{1,32}?)(?=\s*(?:，|,|。|\?|？|俾|給|给|for|兩|两|2|三|3|點樣|怎样|怎樣|如何|邊款|哪款|$))/iu,
+  );
+  if (chineseSelection) return cleanProductLabel(chineseSelection[1]);
+  const chineseHow = text.match(
+    /(?:點樣|怎样|怎樣|如何|怎么)\s*(?:揀|選|选|選擇|选择|挑選|挑选)\s*(?:一部|一台|個|个)?\s*([^，,。.!！?？]{1,32})/iu,
+  );
+  if (chineseHow) return cleanProductLabel(chineseHow[1]);
   const english = text.match(
     /(?:help|advice|guidance|recommendation)s?\s+(?:with|on|for)\s+([^,.!?]{1,48})/i,
   );
-  return cleanProductLabel(english?.[1]);
+  if (english) return cleanProductLabel(english[1]);
+  const englishSelection = text.match(
+    /(?:how\s+(?:should|can|do)\s+i\s+)?(?:choose|select|pick|shop\s+for)\s+(?:an?|the|some)?\s*([^,.!?]{1,48}?)(?=\s+for\s+(?:two|three|the|my|our|a|an|\d)|[,.!?]|$)/i,
+  );
+  return cleanProductLabel(englishSelection?.[1]);
 }
 
 function looksLikeProductGuidance(text: string): boolean {
-  return /(?:買咩|买什么|揀邊|选哪|點揀|点选|點選|邊款|哪款|邊種|哪种|幾大|几大|幾多匹|几匹|合適|合适|推薦|推荐|建議|建议|what\s+should\s+i\s+(?:buy|choose|get)|which\s+(?:model|size|option)|recommend|advi[cs]e)/iu
+  return /(?:買咩|买什么|揀邊|选哪|點(?:樣)?揀|怎樣選|怎样选|如何選|如何选|怎么选|點選|邊款|哪款|邊種|哪种|幾大|几大|幾多匹|几匹|合適|合适|推薦|推荐|建議|建议|what\s+should\s+i\s+(?:buy|choose|get)|how\s+(?:should|can|do)\s+i\s+(?:choose|select|pick)|which\s+(?:model|size|option)|recommend|advi[cs]e)/iu
     .test(
       text,
     );
@@ -183,13 +209,13 @@ export function classifyNaturalCustomerIntent(
 
   if (looksLikeProductGuidance(meaningful)) {
     const product = extractGuidanceProduct(meaningful);
-    if (
-      !product &&
-      !/(?:想問|想问|想了解|想睇|想看|請教|请教|推薦|推荐|建議|建议|help|advice|guidance|recommend|what\s+should\s+i\s+(?:buy|choose|get)|which\s+(?:model|option))/iu
-        .test(
-          meaningful,
-        )
-    ) return { kind: "none", product: null };
+    // Bare sizing shorthand such as "how big?" may be a contextual recall
+    // query and must remain available to the state resolver. A model-free turn
+    // is guidance only when the customer actually asks to choose/recommend.
+    if (!product &&
+      !/(?:想問|想问|想了解|想睇|想看|請教|请教|推薦|推荐|建議|建议|點(?:樣)?揀|怎樣選|怎样选|如何選|如何选|怎么选|help|advice|guidance|recommend|what\s+should\s+i\s+(?:buy|choose|get)|how\s+(?:should|can|do)\s+i\s+(?:choose|select|pick)|which\s+(?:model|option))/iu.test(meaningful)) {
+      return { kind: "none", product: null };
+    }
     return {
       kind: "product_guidance",
       product,

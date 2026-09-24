@@ -778,6 +778,34 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          w9_continuous_base=931db977dbbb06f46efbb614b6c4b284c2350457
+          if git merge-base --is-ancestor "$w9_continuous_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$w9_continuous_base"; then
+            expected="$RUNNER_TEMP/c3-w9-continuous-expected"
+            actual="$RUNNER_TEMP/c3-w9-continuous-actual"
+            cat > "$expected" <<'EOF'
+          .github/scripts/task_ai_abc_c3_final_gate.mjs
+          .github/workflows/task-ai-abc-c3-final-gate.yml
+          supabase/functions/_shared/canonical-kb-direct-answer.ts
+          supabase/functions/_shared/contextual-customer-update.test.ts
+          supabase/functions/_shared/industry-profiles/home-appliance-v1.ts
+          supabase/functions/_shared/natural-customer-response.test.ts
+          supabase/functions/_shared/natural-customer-response.ts
+          supabase/functions/_shared/product-factual-query.test.ts
+          EOF
+            git diff --name-only "$w9_continuous_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
+            LC_ALL=C sort -o "$expected" "$expected"
+            diff -u "$expected" "$actual"
+            test "$(git rev-list --count "$w9_continuous_base..$GITHUB_SHA")" -eq 1
+            test -z "$(git diff --name-only "$w9_continuous_base..$GITHUB_SHA" -- 'supabase/migrations/**' 'supabase/functions/agent-assist/index.ts' 'supabase/functions/receive-widget-message/index.ts' 'supabase/functions/generate-reply/index.ts')"
+            grep -q 'facts: ProductFactualFacet\[\]' supabase/functions/_shared/natural-customer-response.ts
+            grep -q 'W9 established AC context survives intervening service and memory turns' supabase/functions/_shared/contextual-customer-update.test.ts
+            grep -q 'W9 multi-intent product facts retain every compatible facet' supabase/functions/_shared/product-factual-query.test.ts
+            echo C3_W9_CONTINUOUS_SOURCE_PARENT="$w9_continuous_base"
+            echo C3_W9_CONTINUOUS_SOURCE_ALLOWLIST=PASS
+            echo C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE
+            echo C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS
+            exit 0
+          fi
           w6_brand_base=fe85bb05b39e6b6a7b5a01f5c5eaeb3fb70c9a64
           if git merge-base --is-ancestor "$w6_brand_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$w6_brand_base"; then
             expected="$RUNNER_TEMP/c3-w6-brand-expected"

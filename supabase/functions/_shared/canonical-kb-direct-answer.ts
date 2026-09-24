@@ -248,6 +248,71 @@ export function resolveCanonicalKbDirectAnswer(input: {
       ? featureField : null;
     const horsepower = summary?.match(/(?:^|[^\d])(\d+(?:\.\d+)?(?:\/\d+)?)\s*(?:匹|HP)/iu)?.[1] ?? null;
     const product = customerProductIdentity(brand, model, language);
+    const requestedFacts = new Set(factual.facts);
+
+    if (requestedFacts.size > 1) {
+      const room = request.match(/\b\d{1,4}\s*(?:平方[呎尺]|[呎尺]|sq\.?\s*ft|square\s*feet)/iu)?.[0] ?? null;
+      const includeProductDetail = requestedFacts.has("features") || requestedFacts.has("model_info");
+      const includePrice = requestedFacts.has("price") || requestedFacts.has("suitability");
+      const parts: string[] = [];
+      if (language === "en") {
+        if (includeProductDetail) {
+          if (englishSummary || englishProductFeatures(safeFeatures)) {
+            const translatedFeatures = englishProductFeatures(safeFeatures);
+            parts.push(`The current product record describes ${product}${englishSummary ? ` as ${englishSummary}` : ""}${translatedFeatures ? `; its listed features are ${translatedFeatures}` : ""}.`);
+          } else parts.push(`The current product record does not provide verifiable English feature details for ${product}.`);
+        }
+        if (requestedFacts.has("horsepower")) {
+          parts.push(horsepower
+            ? `${product} is listed as ${horsepower} HP.`
+            : `The current product information does not state verifiable horsepower for ${product}.`);
+        }
+        if (includePrice) {
+          parts.push(displayPrice
+            ? `The product record lists a selling price of ${displayPrice}.`
+            : `The current product information does not state a verifiable selling price.`);
+        }
+        if (requestedFacts.has("suitability")) {
+          parts.push(`The current product information does not directly state a suitable room area, so I cannot confirm whether it is sufficient${room ? ` for ${room}` : " for that room"}. Sun exposure and other room conditions would help assess it.`);
+        }
+      } else if (language === "zh-CN") {
+        if (includeProductDetail) {
+          parts.push(summary || safeFeatures
+            ? `现行产品资料列出 ${product}${summary ? `：${summary}` : ""}${safeFeatures ? `；功能：${safeFeatures}` : ""}。`
+            : `现有产品资料未有列出 ${product} 的可核实功能。`);
+        }
+        if (requestedFacts.has("horsepower")) parts.push(horsepower
+          ? `${product} 的匹数为 ${horsepower}匹。`
+          : `现有产品资料未有列出 ${product} 的可核实匹数。`);
+        if (includePrice) parts.push(displayPrice
+          ? `产品资料售价为 ${displayPrice}。`
+          : "现有产品资料未有列出可核实售价。");
+        if (requestedFacts.has("suitability")) parts.push(`现有产品资料未直接列出适用面积，所以不能确认${room ? `${room}房间` : "这个房间"}是否够用；日照等条件也需考虑。`);
+      } else {
+        if (includeProductDetail) {
+          parts.push(summary || safeFeatures
+            ? `現行產品資料列出 ${product}${summary ? `：${summary}` : ""}${safeFeatures ? `；功能：${safeFeatures}` : ""}。`
+            : `現有產品資料未有列出 ${product} 嘅可核實功能。`);
+        }
+        if (requestedFacts.has("horsepower")) parts.push(horsepower
+          ? `${product} 嘅匹數係 ${horsepower}匹。`
+          : `現有產品資料未有列出 ${product} 嘅可核實匹數。`);
+        if (includePrice) parts.push(displayPrice
+          ? `產品資料售價為 ${displayPrice}。`
+          : "現有產品資料未有列出可核實售價。");
+        if (requestedFacts.has("suitability")) parts.push(`現有產品資料未有直接列出適用面積，所以未能確認${room ? `${room}房` : "呢間房"}夠唔夠用；亦要睇日照等條件。`);
+      }
+      if (!parts.length) return null;
+      const kind: CanonicalKbDirectAnswer["kind"] = includePrice && priceFact
+        ? "price"
+        : requestedFacts.has("horsepower")
+        ? "specification"
+        : "product_record";
+      return {
+        ...evidence(kind, parts.join(" "), selected),
+        ...(includePrice && priceFact ? { price_fact: priceFact } : {}),
+      };
+    }
 
     if (factual.fact === "horsepower") {
       if (!horsepower) return null;

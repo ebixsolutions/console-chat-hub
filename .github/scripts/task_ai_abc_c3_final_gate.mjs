@@ -614,9 +614,13 @@ runDeno(["test", "--no-lock", "--allow-read", files.integration, files.recallInt
 runDeno([
   "test",
   "--no-lock",
+  "--config",
+  files.typecheck,
   "--allow-env",
   "--allow-read",
   files.naturalCustomerResponseTest,
+  files.contextualCustomerUpdateTest,
+  files.productFactualQueryTest,
 ]);
 runDeno(["run", "--no-lock", "--allow-read", files.canonical103Replay]);
 if (!process.env.CI) {

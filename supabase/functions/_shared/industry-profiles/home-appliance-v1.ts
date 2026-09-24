@@ -130,6 +130,18 @@ export const HOME_APPLIANCE_PROFILE_V1: IndustryProfile = Object.freeze({
   }),
 });
 
+function hasTwoBedroomLivingContext(text: string): boolean {
+  return /(?:兩|两|二|2)\s*(?:間|间|个|個)?\s*(?:睡?房|臥室|卧室).{0,30}(?:客廳|客厅|廳|厅)|(?:客廳|客厅|廳|厅).{0,30}(?:兩|两|二|2)\s*(?:間|间|个|個)?\s*(?:睡?房|臥室|卧室)|two\s+bedrooms?.{0,30}(?:living\s+room|lounge)|(?:living\s+room|lounge).{0,30}two\s+bedrooms?/iu.test(text);
+}
+
+function hasOneEachBedroomAllocation(text: string): boolean {
+  return /(?:兩|两|二|2)\s*(?:間|间|个|個)?\s*(?:睡?房|臥室|卧室)\s*(?:(?:每|各)\s*(?:間|间|个|個)?\s*)?(?:各\s*)?(?:要|需|放|裝|装)?\s*(?:一|1)\s*(?:部|台)|(?:睡?房|臥室|卧室)(?:間|间)?\s*(?:每\s*(?:間|间|个|個)?|各)\s*(?:要|需|放|裝|装)?\s*(?:一|1)\s*(?:部|台)|each\s+(?:of\s+the\s+)?two\s+bedrooms?\s+(?:gets?|needs?|has)?\s*(?:one|1)\s+(?:unit)?|two\s+bedrooms?\s*,?\s*(?:one|1)\s+(?:unit\s+)?each/iu.test(text);
+}
+
+function hasOneLivingRoomAllocation(text: string): boolean {
+  return /(?:客廳|客厅|廳|厅|廤)\s*(?:要|需|放|裝|装)?\s*(?:一|1)\s*(?:部|台)|(?:one|1)\s+(?:unit\s+)?(?:for|in)\s+(?:the\s+)?(?:living\s+room|lounge)|(?:living\s+room|lounge)\s*(?:gets?|needs?|has)?\s*(?:one|1)\s+(?:unit)?/iu.test(text);
+}
+
 /** Optional profile vocabulary for the universal contextual update contract. */
 export function homeApplianceContextualCandidate(input: {
   text: string;
@@ -144,8 +156,8 @@ export function homeApplianceContextualCandidate(input: {
   );
   if (explicit.length > 1) return null;
   const topic = explicit[0]?.key ?? input.state.current_topic;
-  const roomContext = /(?:兩|两|2)\s*間?房.{0,24}(?:廳|厅)|(?:廳|厅).{0,24}(?:兩|两|2)\s*間?房/i.test(customerHistory);
-  const currentRoomContext = /(?:兩|两|2)\s*間?房.{0,24}(?:廳|厅)|(?:廳|厅).{0,24}(?:兩|两|2)\s*間?房/i.test(text);
+  const roomContext = hasTwoBedroomLivingContext(customerHistory);
+  const currentRoomContext = hasTwoBedroomLivingContext(text);
   const language = input.language;
   const sizingQuestion = /(?:想問|想问|請教|请教|想了解|how|help).{0,30}(?:匹數|匹数|冷氣|冷气|air\s*condition)/i.test(text)
     && /(?:匹數|匹数|sizing|capacity)/i.test(text)
@@ -162,8 +174,8 @@ export function homeApplianceContextualCandidate(input: {
       clarification: "",
     };
   }
-  const bedroomAllocation = /(?:兩|两|2)\s*間?房\s*各\s*一\s*部|房(?:間)?\s*各\s*一\s*部/i.test(text);
-  const livingAllocation = /(?:客廳|客厅|廳|厅|廤)\s*一\s*部/i.test(text);
+  const bedroomAllocation = hasOneEachBedroomAllocation(text);
+  const livingAllocation = hasOneLivingRoomAllocation(text);
   if (!bedroomAllocation && !livingAllocation) return null;
   if (/[?？]/.test(text)) return null;
   const clarification = language === "en"
