@@ -778,6 +778,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          w6_brand_base=fe85bb05b39e6b6a7b5a01f5c5eaeb3fb70c9a64
+          if git merge-base --is-ancestor "$w6_brand_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$w6_brand_base"; then
+            expected="$RUNNER_TEMP/c3-w6-brand-expected"
+            actual="$RUNNER_TEMP/c3-w6-brand-actual"
+            cat > "$expected" <<'EOF'
+          .github/workflows/task-ai-abc-c3-final-gate.yml
+          supabase/functions/_shared/canonical-kb-direct-answer.ts
+          supabase/functions/_shared/product-factual-query.test.ts
+          EOF
+            git diff --name-only "$w6_brand_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
+            LC_ALL=C sort -o "$expected" "$expected"
+            diff -u "$expected" "$actual"
+            test "$(git rev-list --count "$w6_brand_base..$GITHUB_SHA")" -eq 2
+            test -z "$(git diff --name-only "$w6_brand_base..$GITHUB_SHA" -- 'supabase/functions/**' ':!supabase/functions/_shared/canonical-kb-direct-answer.ts' ':!supabase/functions/_shared/product-factual-query.test.ts' 'supabase/migrations/**')"
+            echo C3_W6_BRAND_SOURCE_PARENT="$w6_brand_base"
+            echo C3_W6_BRAND_SOURCE_ALLOWLIST=PASS
+            echo C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE
+            echo C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS
+            exit 0
+          fi
           w4_preflight_base=d0079787ace064dc1f18db0f69be430560d39fe0
           if git merge-base --is-ancestor "$w4_preflight_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$w4_preflight_base"; then
             expected="$RUNNER_TEMP/c3-w4-preflight-expected"
