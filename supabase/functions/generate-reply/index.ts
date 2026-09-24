@@ -52,6 +52,7 @@ import {
   renderBoundedNoCurrentEvidence,
 } from "../_shared/current-fact-evidence.ts";
 import {
+  arbitrateAnaphoricProductFollowUp,
   classifyNaturalCustomerIntent,
   type NaturalCustomerIntent,
   renderNaturalImmediateResponse,
@@ -111,8 +112,8 @@ import {
 import type { ReferenceAuthorityDecision } from "../_shared/commerce-state-authority.ts";
 import { buildCitationMetadata } from "../_shared/citation-lineage.ts";
 import {
-  resolveCanonicalKbDirectAnswer,
   type CanonicalKbDirectAnswer,
+  resolveCanonicalKbDirectAnswer,
 } from "../_shared/canonical-kb-direct-answer.ts";
 import {
   buildInheritedTransformCitationMetadata,
@@ -173,14 +174,14 @@ import {
   terminalRecoveryReply,
 } from "../_shared/generation-terminal-guard.ts";
 import {
-  buildB2AuthoritativeReadbackProof,
   type B2DatabaseClient,
   type B2Decision,
+  type B2KbPriceProof,
   type B2PersistenceKind,
+  type B2TrustedTargetedClarification,
+  buildB2AuthoritativeReadbackProof,
   classifyCommerceStatePersistenceResult,
   executeB2PersistenceGate,
-  type B2KbPriceProof,
-  type B2TrustedTargetedClarification,
 } from "../_shared/pre-send-conversion-supervisor.ts";
 import type { B2TrustedJourneyProgress } from "../_shared/b2-journey-progress-contract.ts";
 import { resolveCanonicalCommerceResolution } from "../_shared/conversation-resolution-contract.ts";
@@ -734,10 +735,10 @@ async function commitAiReplyWithControlGate(
     });
     return receipt.status === "committed"
       ? {
-          ok: true as const,
-          message_id: receipt.value.message_id,
-          idempotent: true,
-        }
+        ok: true as const,
+        message_id: receipt.value.message_id,
+        idempotent: true,
+      }
       : null;
   };
 
@@ -3292,6 +3293,8 @@ async function persistNaturalImmediateResponse(
     ? "natural_greeting"
     : intent.kind === "product_availability"
     ? "product_availability_clarification"
+    : intent.kind === "product_factual_clarification"
+    ? "product_referent_clarification"
     : "product_shopping_intent";
   const committed = await commitAiReplyWithControlGate(
     supabaseAdmin,
@@ -3303,6 +3306,13 @@ async function persistNaturalImmediateResponse(
       natural_response_contract: "c3-natural-customer-response-v1",
       natural_intent: intent.kind,
       product_reference_present: Boolean(intent.product),
+      product_referent_candidates:
+        intent.kind === "product_factual_clarification"
+          ? intent.candidates
+          : undefined,
+      product_referent_reason: intent.kind === "product_factual_clarification"
+        ? intent.reason
+        : undefined,
       factual_grounding_required: false,
       commerce_state_persist_result: "read_only",
       commerce_state_persistence_classification: "NO_SEMANTIC_CHANGE",
@@ -4246,11 +4256,28 @@ async function orchestrationGenerateReply(
     if (_criticalE2Response) return _criticalE2Response;
   }
   const _naturalCustomerIntent = classifyNaturalCustomerIntent(_h1LastMsg);
+  const _productFollowUpArbitration = arbitrateAnaphoricProductFollowUp(
+    _h1LastMsg,
+    ((_pr5HistoryRows ?? []) as MemoryHistoryRow[]).map((row) => ({
+      role: String(row.role ?? ""),
+      content: String(row.content ?? ""),
+    })),
+  );
+  const _effectiveNaturalCustomerIntent: NaturalCustomerIntent =
+    _productFollowUpArbitration.kind === "resolved" ||
+      _productFollowUpArbitration.kind === "clarification"
+      ? _productFollowUpArbitration.intent
+      : _naturalCustomerIntent;
+  // This query is server-derived from a recent explicit model. It affects
+  // factual routing/retrieval/proof only; customer history remains unchanged.
+  const _productFactualRequest = _productFollowUpArbitration.kind === "resolved"
+    ? _productFollowUpArbitration.grounded_question
+    : _h1LastMsg;
   const _naturalImmediateResponse = await persistNaturalImmediateResponse(
     supabaseAdmin,
     conversation_id,
     _h1SourceMessageId,
-    _naturalCustomerIntent,
+    _effectiveNaturalCustomerIntent,
     _visitorLang,
   );
   if (_naturalImmediateResponse) return _naturalImmediateResponse;
@@ -4260,7 +4287,7 @@ async function orchestrationGenerateReply(
   let _a3SemanticFrame: CommerceSemanticFrame | null = null;
   if (
     _criticalE2ExpectedTenantId &&
-    !requiresCurrentMerchantEvidence(_naturalCustomerIntent)
+    !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent)
   ) {
     try {
       const semanticResult = await interpretCommerceSemantics({
@@ -4292,7 +4319,7 @@ async function orchestrationGenerateReply(
   let _c3CommerceSnapshot: RecallCommerceSnapshot | null = null;
   if (
     _criticalE2ExpectedTenantId &&
-    !requiresCurrentMerchantEvidence(_naturalCustomerIntent)
+    !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent)
   ) {
     try {
       _a3Commerce = await runCommerceStateRuntime(
@@ -4421,7 +4448,7 @@ async function orchestrationGenerateReply(
     conversation_id,
     company_id: _criticalE2ExpectedTenantId ?? "",
     source_message_id: _h1SourceMessageId,
-    question: _h1LastMsg,
+    question: _productFactualRequest,
     memory: _c3Memory,
     commerce: _c3CommerceSnapshot,
     explicit_handoff: _explicitHandoffRequested,
@@ -4441,7 +4468,7 @@ async function orchestrationGenerateReply(
     company_id: _criticalE2ExpectedTenantId ?? "",
   });
   const _c3RuntimeInputs = deriveServiceRuntimeInputs({
-    question: _h1LastMsg,
+    question: _productFactualRequest,
     recent_messages: _c3RecentServiceMessages,
     commerce: _c3CommerceSnapshot?.state ?? null,
     trusted_customer_context: _c3TrustedCustomerContext,
@@ -4450,19 +4477,22 @@ async function orchestrationGenerateReply(
   });
   const _c3ServicePlan: ServiceDialoguePlan = planConversationService(
     applyServiceRuntimeDerivation({
-      question: _h1LastMsg,
+      question: _productFactualRequest,
       language: _visitorLang,
-      recall: requiresCurrentMerchantEvidence(_naturalCustomerIntent) &&
-          (_naturalCustomerIntent.kind === "product_factual_query" || !_c3Recall.decision.handled)
-        ? {
-          handled: false,
-          reason: "CURRENT_KB_REQUIRED",
-          detail: _naturalCustomerIntent.kind === "product_factual_query"
-            ? "EXACT_PRODUCT_FACT_QUERY"
-            : "PRODUCT_AVAILABILITY_QUERY",
-          requested_facts: [],
-        }
-        : _c3Recall.decision,
+      recall:
+        requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent) &&
+          (_effectiveNaturalCustomerIntent.kind === "product_factual_query" ||
+            !_c3Recall.decision.handled)
+          ? {
+            handled: false,
+            reason: "CURRENT_KB_REQUIRED",
+            detail:
+              _effectiveNaturalCustomerIntent.kind === "product_factual_query"
+                ? "EXACT_PRODUCT_FACT_QUERY"
+                : "PRODUCT_AVAILABILITY_QUERY",
+            requested_facts: [],
+          }
+          : _c3Recall.decision,
       memory: _c3Memory,
       commerce: _c3CommerceSnapshot?.state ?? null,
       recent_messages: _c3RecentServiceMessages,
@@ -4486,29 +4516,31 @@ async function orchestrationGenerateReply(
     outcome: _a3Commerce,
     authoritative_address_correction: Boolean(_c3ResolvedAddressCorrection),
   });
-  const _naturalGuidanceReply = _naturalCustomerIntent.kind ===
+  const _naturalGuidanceReply = _effectiveNaturalCustomerIntent.kind ===
       "product_guidance"
-    ? renderNaturalImmediateResponse(_naturalCustomerIntent, _visitorLang)
+    ? renderNaturalImmediateResponse(
+      _effectiveNaturalCustomerIntent,
+      _visitorLang,
+    )
     : null;
-  const _c3PlannedReply =
-    _c3Resolution.bypass_service_plan
-      ? null
-      : _naturalGuidanceReply ?? applyServiceTone(
-    _c3ServicePlan,
-    renderServicePlanReply(
+  const _c3PlannedReply = _c3Resolution.bypass_service_plan
+    ? null
+    : _naturalGuidanceReply ?? applyServiceTone(
       _c3ServicePlan,
-      _c3Recall.reply,
-      _c3RecentServiceMessages,
-    ) ??
-      ([
-          "targeted_clarification",
-          "partial_answer_then_question",
-          "offer_handoff_or_reframe",
-          "explicit_handoff",
-        ].includes(_c3ServicePlan.action)
-        ? renderTargetedServiceQuestion(_c3ServicePlan, _visitorLang)
-        : null),
-  );
+      renderServicePlanReply(
+        _c3ServicePlan,
+        _c3Recall.reply,
+        _c3RecentServiceMessages,
+      ) ??
+        ([
+            "targeted_clarification",
+            "partial_answer_then_question",
+            "offer_handoff_or_reframe",
+            "explicit_handoff",
+          ].includes(_c3ServicePlan.action)
+          ? renderTargetedServiceQuestion(_c3ServicePlan, _visitorLang)
+          : null),
+    );
   // A service plan may describe an explicit handoff, but it is not authorized
   // to persist one. Let R1 continue to the existing B2-supervised
   // explicit_handoff_tx path instead of committing a clarification-shaped AI
@@ -4542,7 +4574,7 @@ async function orchestrationGenerateReply(
         ? "c3-natural-customer-response-v2"
         : undefined,
       natural_intent: _naturalGuidanceReply
-        ? _naturalCustomerIntent.kind
+        ? _effectiveNaturalCustomerIntent.kind
         : undefined,
     };
     const recallCommit = await commitAiReplyWithControlGate(
@@ -4643,15 +4675,14 @@ async function orchestrationGenerateReply(
           : null,
         commerce_calculation: _a3Commerce?.calculation ?? null,
         correction_resolution: _c3ResolvedAddressCorrection?.status ?? null,
-        correction_operation:
-          _c3ResolvedAddressCorrection?.operation ?? null,
+        correction_operation: _c3ResolvedAddressCorrection?.operation ?? null,
         correction_source_message_id:
           _c3ResolvedAddressCorrection?.source_message_id ?? null,
       },
       null,
       _a3Commerce?.reason === "contextual_targeted_clarification" &&
-          _a3Commerce.persist_result === "read_only" &&
-          _a3Commerce.contextual_decision
+        _a3Commerce.persist_result === "read_only" &&
+        _a3Commerce.contextual_decision
         ? {
           reply: _a3Commerce.reply ?? "",
           revision: _a3Commerce.revision,
@@ -4701,8 +4732,10 @@ async function orchestrationGenerateReply(
     _pr5HistoryRows ?? [],
     { explicit_handoff: isHandoffIntent(_h1LastMsg) },
   );
-  if (_canonicalTurn.operation === "CUSTOMER_CONTEXT_UPDATE" &&
-      !requiresCurrentMerchantEvidence(_naturalCustomerIntent)) {
+  if (
+    _canonicalTurn.operation === "CUSTOMER_CONTEXT_UPDATE" &&
+    !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent)
+  ) {
     const acknowledgement =
       _canonicalTurn.reason === "customer_context_requirements_request"
         ? buildCustomerContextRequirementsResponse(
@@ -4760,7 +4793,7 @@ async function orchestrationGenerateReply(
   const _turnClassification = classifyConversationTurn(_h1LastMsg);
   if (
     !_w5ShortTopicHint &&
-    !requiresCurrentMerchantEvidence(_naturalCustomerIntent) &&
+    !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent) &&
     _turnClassification.should_clarify_before_kb &&
     !isHandoffIntent(_h1LastMsg) && _criticalLocalRisk?.level !== "high"
   ) {
@@ -5015,8 +5048,10 @@ async function orchestrationGenerateReply(
     _pr5R3Sentiment?.emotion_kind === "positive_recovery"
       ? resolvePositiveRecoveryAcknowledgement(_h1LastMsg, _visitorLang)
       : null;
-  if (_positiveRecoveryAcknowledgement &&
-      !requiresCurrentMerchantEvidence(_naturalCustomerIntent)) {
+  if (
+    _positiveRecoveryAcknowledgement &&
+    !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent)
+  ) {
     const committed = await commitAiReplyWithControlGate(
       supabaseAdmin,
       conversation_id,
@@ -5060,12 +5095,13 @@ async function orchestrationGenerateReply(
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   }
-  const _conversationMemoryReply = !requiresCurrentMerchantEvidence(_naturalCustomerIntent) &&
+  const _conversationMemoryReply =
+    !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent) &&
       !_c3Recall.decision.handled &&
       _c3Recall.decision.reason === "NOT_A_RECALL_QUERY" &&
       _c3Recall.decision.detail !== "HANDOFF_PRECEDENCE"
-    ? resolveConversationMemoryResponse(_h1LastMsg, _pr5HistoryRows ?? [])
-    : null;
+      ? resolveConversationMemoryResponse(_h1LastMsg, _pr5HistoryRows ?? [])
+      : null;
   if (_conversationMemoryReply) {
     const committed = await commitAiReplyWithControlGate(
       supabaseAdmin,
@@ -5292,7 +5328,7 @@ async function orchestrationGenerateReply(
       );
     }
     const _semanticRetrieval = buildCanonicalRetrievalQuery(
-      _h1LastMsg,
+      _productFactualRequest,
       _pr5HistoryRows ?? [],
     );
     const userQuery = _c3ServicePlan.kb_query || _semanticRetrieval.query;
@@ -5392,7 +5428,7 @@ async function orchestrationGenerateReply(
             rag_api_status: "success_empty",
             evidence_decision: _boundedNoCurrentEvidenceDecision.kind,
           },
-          _naturalCustomerIntent,
+          _effectiveNaturalCustomerIntent,
         );
       }
       const clarification = await attemptFirstNoMatchClarification(
@@ -5405,7 +5441,8 @@ async function orchestrationGenerateReply(
           high_risk: _pr5LocalRisk?.level === "high",
           explicit_human_request: isHandoffIntent(_h1LastMsg),
           threat_flag: _pr5ThreatSignal?.value === true,
-          compliance_requires_human_review: _pr5ComplianceSignal?.value === true,
+          compliance_requires_human_review:
+            _pr5ComplianceSignal?.value === true,
           clarification_attempts: _pr5History.clarification_attempts,
           exact_same_intent_repeated:
             _pr5History.exact_same_intent_repeated === true,
@@ -5448,7 +5485,7 @@ async function orchestrationGenerateReply(
       _canonicalTurn.topic_action === "CORRECT" ||
       _a3SemanticFrame?.customer_correction === true;
     _c1CurrentTarget = deriveCurrentGroundingTarget(
-      _h1LastMsg,
+      _productFactualRequest,
       userQuery,
       _semanticEntityIds,
       _semanticTopicIds,
@@ -5567,7 +5604,7 @@ async function orchestrationGenerateReply(
             ...traceMetadata,
             evidence_decision: _boundedNoCurrentEvidenceDecision.kind,
           },
-          _naturalCustomerIntent,
+          _effectiveNaturalCustomerIntent,
         );
       }
       if (_c1AuthorityDecision?.decision === "CONFLICT_UNRESOLVED") {
@@ -5637,7 +5674,8 @@ async function orchestrationGenerateReply(
           high_risk: isHighRisk,
           explicit_human_request: isHandoffIntent(_h1LastMsg),
           threat_flag: _pr5ThreatSignal?.value === true,
-          compliance_requires_human_review: _pr5ComplianceSignal?.value === true,
+          compliance_requires_human_review:
+            _pr5ComplianceSignal?.value === true,
           clarification_attempts: _pr5History.clarification_attempts,
           exact_same_intent_repeated:
             _pr5History.exact_same_intent_repeated === true,
@@ -5719,7 +5757,7 @@ async function orchestrationGenerateReply(
             answerability: "missing_full_content_evidence",
             evidence_decision: _boundedNoCurrentEvidenceDecision.kind,
           },
-          _naturalCustomerIntent,
+          _effectiveNaturalCustomerIntent,
         );
       }
       const clarification = await attemptFirstNoMatchClarification(
@@ -5732,7 +5770,8 @@ async function orchestrationGenerateReply(
           high_risk: isHighRisk,
           explicit_human_request: isHandoffIntent(_h1LastMsg),
           threat_flag: _pr5ThreatSignal?.value === true,
-          compliance_requires_human_review: _pr5ComplianceSignal?.value === true,
+          compliance_requires_human_review:
+            _pr5ComplianceSignal?.value === true,
           clarification_attempts: _pr5History.clarification_attempts,
           exact_same_intent_repeated:
             _pr5History.exact_same_intent_repeated === true,
@@ -5790,7 +5829,7 @@ async function orchestrationGenerateReply(
 
     finalPromptChunks = usableFullContent;
     _canonicalKbDirectAnswer = resolveCanonicalKbDirectAnswer({
-      request: _h1LastMsg,
+      request: _productFactualRequest,
       selection: _groundingSelection,
       language: _visitorLang,
     });
@@ -5937,31 +5976,52 @@ async function orchestrationGenerateReply(
     if (r1Response) return r1Response;
   }
 
-  if (_canonicalKbDirectAnswer && _c1AuthorityDecision && _c1CurrentTarget &&
-    !_priorGroundedTransform) {
+  if (
+    _canonicalKbDirectAnswer && _c1AuthorityDecision && _c1CurrentTarget &&
+    !_priorGroundedTransform
+  ) {
     const citation = buildCitationMetadata(
       _canonicalKbDirectAnswer.evidence_chunks,
       ragResult?.llm_context?.selected_document_id ?? null,
-      { authorityDecision: _c1AuthorityDecision, currentTarget: _c1CurrentTarget },
+      {
+        authorityDecision: _c1AuthorityDecision,
+        currentTarget: _c1CurrentTarget,
+      },
     );
     // No answer without exact source and chunk lineage.
     if (citation) {
       const route = "canonical_kb_direct_answer";
       const priceFact = _canonicalKbDirectAnswer.price_fact;
-      const trustedProof: B2KbPriceProof | null = priceFact && _canonicalKbTenantId &&
-        typeof conversation.company_id === "string"
-        ? { field: "selling_price", value: priceFact.value, currency: priceFact.currency,
-          model: priceFact.model, document_id: priceFact.document_id, chunk_id: priceFact.chunk_id,
-          tenant_id: _canonicalKbTenantId, company_id: conversation.company_id,
-          currentness: "current", authority_decision: "USE_CURRENT_KB",
-          request: _h1LastMsg, full_content: priceFact.full_content }
-        : null;
+      const trustedProof: B2KbPriceProof | null =
+        priceFact && _canonicalKbTenantId &&
+          typeof conversation.company_id === "string"
+          ? {
+            field: "selling_price",
+            value: priceFact.value,
+            currency: priceFact.currency,
+            model: priceFact.model,
+            document_id: priceFact.document_id,
+            chunk_id: priceFact.chunk_id,
+            tenant_id: _canonicalKbTenantId,
+            company_id: conversation.company_id,
+            currentness: "current",
+            authority_decision: "USE_CURRENT_KB",
+            request: _productFactualRequest,
+            full_content: priceFact.full_content,
+          }
+          : null;
       const publicPriceProof = trustedProof
-        ? { field: trustedProof.field, value: trustedProof.value, currency: trustedProof.currency,
-          model: trustedProof.model, document_id: trustedProof.document_id,
-          chunk_id: trustedProof.chunk_id, tenant_id: trustedProof.tenant_id,
+        ? {
+          field: trustedProof.field,
+          value: trustedProof.value,
+          currency: trustedProof.currency,
+          model: trustedProof.model,
+          document_id: trustedProof.document_id,
+          chunk_id: trustedProof.chunk_id,
+          tenant_id: trustedProof.tenant_id,
           currentness: trustedProof.currentness,
-          authority_decision: trustedProof.authority_decision }
+          authority_decision: trustedProof.authority_decision,
+        }
         : null;
       const committed = await commitAiReplyWithControlGate(
         supabaseAdmin,
@@ -5973,6 +6033,16 @@ async function orchestrationGenerateReply(
           reference_authority: referenceAuthorityMetadata(_c1AuthorityDecision),
           response_route: route,
           answer_kind: _canonicalKbDirectAnswer.kind,
+          product_follow_up_arbitration:
+            _productFollowUpArbitration.kind === "resolved"
+              ? {
+                decision: "CURRENT_KB_REQUIRED",
+                referent: _productFollowUpArbitration.intent.product,
+                attributes: _productFollowUpArbitration.intent.facts,
+                source_turn_offset:
+                  _productFollowUpArbitration.source_turn_offset,
+              }
+              : null,
           ...(publicPriceProof ? { kb_fact_proof: publicPriceProof } : {}),
           rag_api_status: "success",
         },
@@ -5980,15 +6050,35 @@ async function orchestrationGenerateReply(
       );
       await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
       if (!committed.ok) {
-        if (["human_control", "resolved", "superseded_source"].includes(committed.result)) {
-          return new Response(JSON.stringify({ success: true, skipped: committed.result }),
-            { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        if (
+          ["human_control", "resolved", "superseded_source"].includes(
+            committed.result,
+          )
+        ) {
+          return new Response(
+            JSON.stringify({ success: true, skipped: committed.result }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
         }
-        return new Response(JSON.stringify({ success: false, error: `canonical_kb_direct_answer_commit_${committed.result}` }),
-          { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: `canonical_kb_direct_answer_commit_${committed.result}`,
+          }),
+          {
+            status: 409,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          },
+        );
       }
-      return new Response(JSON.stringify({ success: true, response_route: route, idempotent: committed.idempotent }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(
+        JSON.stringify({
+          success: true,
+          response_route: route,
+          idempotent: committed.idempotent,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
     }
   }
 

@@ -778,6 +778,34 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          w15_anaphoric_base=18595a2298c39dc45db323e4670e93484f7d8b8d
+          if git merge-base --is-ancestor "$w15_anaphoric_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$w15_anaphoric_base"; then
+            expected="$RUNNER_TEMP/c3-w15-anaphoric-expected"
+            actual="$RUNNER_TEMP/c3-w15-anaphoric-actual"
+            cat > "$expected" <<'EOF'
+          .github/scripts/task_ai_abc_c3_final_gate.mjs
+          .github/workflows/task-ai-abc-c3-final-gate.yml
+          supabase/functions/_shared/contextual-customer-update.test.ts
+          supabase/functions/_shared/conversation-recall.integration.test.ts
+          supabase/functions/_shared/natural-customer-response.ts
+          supabase/functions/_shared/product-factual-query.test.ts
+          supabase/functions/_shared/product-follow-up-arbitration.test.ts
+          supabase/functions/generate-reply/index.ts
+          EOF
+            git diff --name-only "$w15_anaphoric_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
+            LC_ALL=C sort -o "$expected" "$expected"
+            diff -u "$expected" "$actual"
+            test "$(git rev-list --count "$w15_anaphoric_base..$GITHUB_SHA")" -eq 1
+            test -z "$(git diff --name-only "$w15_anaphoric_base..$GITHUB_SHA" -- 'supabase/migrations/**' 'supabase/functions/agent-assist/index.ts' 'supabase/functions/receive-widget-message/index.ts')"
+            grep -q 'arbitrateAnaphoricProductFollowUp' supabase/functions/_shared/natural-customer-response.ts
+            grep -q 'W15 sequential T1-T8 preserves journey then prioritizes factual follow-up' supabase/functions/_shared/contextual-customer-update.test.ts
+            grep -q 'W15 T7 anaphoric current-price follow-up binds model, KB lineage and B2' supabase/functions/_shared/product-factual-query.test.ts
+            echo C3_W15_ANAPHORIC_SOURCE_PARENT="$w15_anaphoric_base"
+            echo C3_W15_ANAPHORIC_SOURCE_ALLOWLIST=PASS
+            echo C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE
+            echo C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS
+            exit 0
+          fi
           w11_journey_base=739bba447e89dffb63e08e06f211e007b668773a
           if git merge-base --is-ancestor "$w11_journey_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$w11_journey_base"; then
             expected="$RUNNER_TEMP/c3-w11-journey-expected"

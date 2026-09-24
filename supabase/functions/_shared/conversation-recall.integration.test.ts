@@ -1561,7 +1561,7 @@ Deno.test("C3 source audit recall precedes commerce reply, context shortcuts and
   for (
     const marker of [
       commerceReplyMarker,
-      'if (_canonicalTurn.operation === "CUSTOMER_CONTEXT_UPDATE"',
+      '_canonicalTurn.operation === "CUSTOMER_CONTEXT_UPDATE"',
       "await callKBAdapter(",
     ]
   ) assert(start < source.indexOf(marker, start), `precedence: ${marker}`);

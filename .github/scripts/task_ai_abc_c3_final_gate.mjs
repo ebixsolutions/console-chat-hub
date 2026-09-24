@@ -74,6 +74,8 @@ const files = {
   canonicalKbDirectAnswerTest: "supabase/functions/_shared/canonical-kb-direct-answer.test.ts",
   canonicalKbRetrievalTest: "supabase/functions/_shared/kb-canonical-retrieval.test.ts",
   productFactualQueryTest: "supabase/functions/_shared/product-factual-query.test.ts",
+  productFollowUpArbitrationTest:
+    "supabase/functions/_shared/product-follow-up-arbitration.test.ts",
   kbClient: "supabase/functions/_shared/kb-client.ts",
   semanticInterpreter:
     "supabase/functions/_shared/commerce-semantic-interpreter.ts",
@@ -626,6 +628,7 @@ runDeno([
   files.contextualCustomerUpdateTest,
   files.customerJourneyOrchestrationTest,
   files.productFactualQueryTest,
+  files.productFollowUpArbitrationTest,
 ]);
 runDeno(["run", "--no-lock", "--allow-read", files.canonical103Replay]);
 if (!process.env.CI) {

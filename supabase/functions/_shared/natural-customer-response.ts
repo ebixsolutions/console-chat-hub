@@ -13,9 +13,24 @@ export type ProductFactualFacet =
 export type NaturalCustomerIntent =
   | { kind: "greeting"; product: null }
   | { kind: "product_shopping"; product: string | null }
-  | { kind: "product_guidance"; product: string | null; two_bedrooms_and_living_room?: boolean }
+  | {
+    kind: "product_guidance";
+    product: string | null;
+    two_bedrooms_and_living_room?: boolean;
+  }
   | { kind: "product_availability"; product: string | null }
-  | { kind: "product_factual_query"; product: string; fact: ProductFactualFacet; facts: ProductFactualFacet[] }
+  | {
+    kind: "product_factual_query";
+    product: string;
+    fact: ProductFactualFacet;
+    facts: ProductFactualFacet[];
+  }
+  | {
+    kind: "product_factual_clarification";
+    product: null;
+    candidates: string[];
+    reason: string;
+  }
   | { kind: "none"; product: null };
 
 const MAX_PRODUCT_LABEL_LENGTH = 80;
@@ -26,24 +41,57 @@ export function exactProductIdentifiers(product: string | null): string[] {
   const tokens = product.normalize("NFKC").match(
     /(?<![A-Z0-9])(?:[A-Z][A-Z0-9]*-[A-Z0-9]+(?:-[A-Z0-9]+)*|[A-Z]{2,}[A-Z0-9]*\d{2,}[A-Z0-9]*|[A-Z]\d{3,}[A-Z0-9]*)(?![A-Z0-9])/giu,
   ) ?? [];
-  return [...new Set(tokens.filter((token) => token.length >= 5 && /\d/u.test(token) && /[A-Z]/iu.test(token)))];
+  return [
+    ...new Set(
+      tokens.filter((token) =>
+        token.length >= 5 && /\d/u.test(token) && /[A-Z]/iu.test(token)
+      ),
+    ),
+  ];
 }
 
 /** A specific model and an actual merchant fact request are both required. */
-export function classifyProductFactualQuery(text: string): Extract<NaturalCustomerIntent, { kind: "product_factual_query" }> | null {
+export function classifyProductFactualQuery(
+  text: string,
+): Extract<NaturalCustomerIntent, { kind: "product_factual_query" }> | null {
   const normalized = text.normalize("NFKC").trim();
   const models = exactProductIdentifiers(normalized);
   if (models.length !== 1 || isProductSupportProblem(normalized)) return null;
+  const facts = productFactualFacets(normalized);
+  if (!facts.length) return null;
+  return productFactualIntent(models[0], facts);
+}
+
+function productFactualFacets(text: string): ProductFactualFacet[] {
   const matchers: Array<[ProductFactualFacet, RegExp]> = [
     ["features", /(?:功能|feature|特點|特点|特色)/i],
-    ["horsepower", /(?:幾多匹|几多匹|多少匹|幾匹|几匹|匹數|匹数|horsepower|\bHP\b)/i],
+    [
+      "horsepower",
+      /(?:幾多匹|几多匹|多少匹|幾匹|几匹|匹數|匹数|horsepower|\bHP\b)/i,
+    ],
     ["price", /(?:售價|售价|幾錢|几钱|價錢|价钱|price|how\s+much)/i],
-    ["specification", /(?:規格|规格|specs?|尺寸|dimension|capacity|容量|重量|weight|功率|power|電壓|电压|voltage|噪音)/i],
-    ["model_info", /(?:型號|型号|model|產品資料|产品资料|product\s+(?:information|details))/i],
-    ["suitability", /(?:適合|适合|適唔適合|适不适合|夠用|够用|夠唔夠|够不够|啱用|合用|合唔合適|合不合适|suitab|enough|work\s+for|fit\s+(?:in|for)|appropriate\s+for)/i],
+    [
+      "specification",
+      /(?:規格|规格|specs?|尺寸|dimension|capacity|容量|重量|weight|功率|power|電壓|电压|voltage|噪音)/i,
+    ],
+    [
+      "model_info",
+      /(?:型號|型号|model|產品資料|产品资料|product\s+(?:information|details))/i,
+    ],
+    [
+      "suitability",
+      /(?:適合|适合|適唔適合|适不适合|夠用|够用|夠唔夠|够不够|啱用|合用|合唔合適|合不合适|suitab|enough|work\s+for|fit\s+(?:in|for)|appropriate\s+for)/i,
+    ],
   ];
-  const facts = matchers.filter(([, pattern]) => pattern.test(normalized)).map(([fact]) => fact);
-  if (!facts.length) return null;
+  return matchers.filter(([, pattern]) => pattern.test(text)).map(([fact]) =>
+    fact
+  );
+}
+
+function productFactualIntent(
+  product: string,
+  facts: ProductFactualFacet[],
+): Extract<NaturalCustomerIntent, { kind: "product_factual_query" }> {
   // Keep the legacy single-fact precedence for existing consumers while also
   // exposing every compatible facet so renderers cannot silently drop one.
   const fact = facts.includes("suitability")
@@ -53,17 +101,150 @@ export function classifyProductFactualQuery(text: string): Extract<NaturalCustom
     : facts.includes("horsepower")
     ? "horsepower"
     : facts[0];
-  return { kind: "product_factual_query", product: models[0], fact, facts };
+  return { kind: "product_factual_query", product, fact, facts };
+}
+
+export interface ProductFollowUpHistoryMessage {
+  role: string;
+  content: string;
+}
+
+export type ProductFollowUpArbitration =
+  | { kind: "not_applicable" }
+  | {
+    kind: "resolved";
+    intent: Extract<NaturalCustomerIntent, { kind: "product_factual_query" }>;
+    grounded_question: string;
+    source_turn_offset: number;
+  }
+  | {
+    kind: "clarification";
+    intent: Extract<
+      NaturalCustomerIntent,
+      { kind: "product_factual_clarification" }
+    >;
+  };
+
+const PRODUCT_ANAPHOR =
+  /(?:呢|這|这|嗰|那)(?:一)?(?:部|款|個|个)|(?:佢|它)(?!們|们)|\b(?:this\s+one|that\s+(?:one|model)|it)\b/iu;
+const PRODUCT_CONTEXT_SWITCH =
+  /(?:轉(?:去|睇|問)|转(?:去|看|问)|講返|讲回|switch(?:ing)?\s+to|move(?:ing)?\s+to|back\s+to)\s*(?:另一|另一个|another|the)?\s*(?:產品|产品|product|category)?|(?:雪櫃|冰箱|refrigerator|fridge|洗衣機|洗衣机|washer|washing\s+machine|電視|电视|television|\bTV\b|焗爐|烤箱|oven)/iu;
+const INACTIVE_REFERENT =
+  /(?:取消|唔要|不要|刪除|删除|暫緩|暂缓|遲啲先|迟点再|cancel(?:led)?|defer(?:red)?|no\s+longer|not\s+that)/iu;
+
+/**
+ * Resolve product identity and requested factual attribute independently.
+ * This is deliberately read-only: it may bind a recent explicit model to a
+ * factual KB query, but it cannot create a product, revive an inactive item,
+ * or choose between competing models.
+ */
+export function arbitrateAnaphoricProductFollowUp(
+  text: string,
+  newestFirstHistory: ProductFollowUpHistoryMessage[],
+): ProductFollowUpArbitration {
+  const normalized = text.normalize("NFKC").trim();
+  if (
+    !PRODUCT_ANAPHOR.test(normalized) || isProductSupportProblem(normalized)
+  ) {
+    return { kind: "not_applicable" };
+  }
+  const facts = productFactualFacets(normalized);
+  if (!facts.length || exactProductIdentifiers(normalized).length > 0) {
+    return { kind: "not_applicable" };
+  }
+
+  const visitors = newestFirstHistory.filter((row) =>
+    row.role === "visitor" && row.content.trim().length > 0
+  ).slice(0, 8);
+  let focusBarrier = false;
+  for (let offset = 0; offset < visitors.length; offset += 1) {
+    const prior = visitors[offset].content.normalize("NFKC");
+    const models = exactProductIdentifiers(prior);
+    if (!models.length) {
+      // A later category switch without an explicit model invalidates an older
+      // model focus. It must not inherit the previous category's product.
+      if (PRODUCT_CONTEXT_SWITCH.test(prior)) focusBarrier = true;
+      continue;
+    }
+    if (focusBarrier) {
+      return {
+        kind: "clarification",
+        intent: {
+          kind: "product_factual_clarification",
+          product: null,
+          candidates: [],
+          reason: "INCOMPATIBLE_RECENT_PRODUCT_CONTEXT",
+        },
+      };
+    }
+    if (models.length !== 1) {
+      return {
+        kind: "clarification",
+        intent: {
+          kind: "product_factual_clarification",
+          product: null,
+          candidates: models,
+          reason: "MULTIPLE_COMPATIBLE_PRODUCT_REFERENTS",
+        },
+      };
+    }
+    const product = models[0];
+    if (INACTIVE_REFERENT.test(prior)) {
+      return {
+        kind: "clarification",
+        intent: {
+          kind: "product_factual_clarification",
+          product: null,
+          candidates: [],
+          reason: "INACTIVE_OR_SUPERSEDED_PRODUCT_REFERENT",
+        },
+      };
+    }
+    const newerTurns = visitors.slice(0, offset).map((row) => row.content).join(
+      "\n",
+    );
+    if (
+      INACTIVE_REFERENT.test(newerTurns) &&
+      (newerTurns.includes(product) || PRODUCT_ANAPHOR.test(newerTurns))
+    ) {
+      return {
+        kind: "clarification",
+        intent: {
+          kind: "product_factual_clarification",
+          product: null,
+          candidates: [],
+          reason: "INACTIVE_OR_SUPERSEDED_PRODUCT_REFERENT",
+        },
+      };
+    }
+    return {
+      kind: "resolved",
+      intent: productFactualIntent(product, facts),
+      grounded_question: `${product} ${normalized}`,
+      source_turn_offset: offset,
+    };
+  }
+  return {
+    kind: "clarification",
+    intent: {
+      kind: "product_factual_clarification",
+      product: null,
+      candidates: [],
+      reason: "NO_RECENT_EXPLICIT_PRODUCT_REFERENT",
+    },
+  };
 }
 
 export function isProductSupportProblem(text: string): boolean {
   return isProductOperationFailure(text) ||
-    /(?:故障|維修|维修|壞咗|坏了|損壞|损坏|缺少功能|缺失功能|功能失效|兼容問題|兼容问题|相容問題|賣家投訴|卖家投诉|malfunction|broken|damaged|missing\s+(?:advertised\s+)?(?:features?|parts?)|compatibility\s+issue|seller\s+(?:problem|complaint)|product\s+support)/i.test(text);
+    /(?:故障|維修|维修|壞咗|坏了|損壞|损坏|缺少功能|缺失功能|功能失效|兼容問題|兼容问题|相容問題|賣家投訴|卖家投诉|malfunction|broken|damaged|missing\s+(?:advertised\s+)?(?:features?|parts?)|compatibility\s+issue|seller\s+(?:problem|complaint)|product\s+support)/i
+      .test(text);
 }
 
 /** A reported operating failure, distinct from a question about product features. */
 export function isProductOperationFailure(text: string): boolean {
-  return /(?:開唔到機|开不了机|開不了機|不能開機|无法开机|唔著|(?:機|机|產品|产品).{0,8}(?:開唔到|开不了|唔著)|not\s+working|won['’]?t\s+(?:start|turn\s+on)|(?:does\s+not|doesn['’]?t)\s+turn\s+on)/i.test(text);
+  return /(?:開唔到機|开不了机|開不了機|不能開機|无法开机|唔著|(?:機|机|產品|产品).{0,8}(?:開唔到|开不了|唔著)|not\s+working|won['’]?t\s+(?:start|turn\s+on)|(?:does\s+not|doesn['’]?t)\s+turn\s+on)/i
+    .test(text);
 }
 
 function chineseProductPrefix(product: string): string {
@@ -185,8 +366,12 @@ export function classifyNaturalCustomerIntent(
   // greeting-only response or fall through to generic clarification.
   const meaningful = stripLeadingGreeting(normalized) || normalized;
 
-  if (/^(?:(?:你(?:哋|們|们)?|店內|店内|呢度|這裡|这里)\s*)?(?:有冇|有無|有沒有|有没有|是否有)\s*[?？!！.。]*$/iu.test(meaningful) ||
-    /^(?:do\s+you|does\s+(?:the\s+)?(?:shop|store))\s+(?:have|carry|sell|stock)\s*[?!.]*$/iu.test(meaningful)) {
+  if (
+    /^(?:(?:你(?:哋|們|们)?|店內|店内|呢度|這裡|这里)\s*)?(?:有冇|有無|有沒有|有没有|是否有)\s*[?？!！.。]*$/iu
+      .test(meaningful) ||
+    /^(?:do\s+you|does\s+(?:the\s+)?(?:shop|store))\s+(?:have|carry|sell|stock)\s*[?!.]*$/iu
+      .test(meaningful)
+  ) {
     return { kind: "product_availability", product: null };
   }
 
@@ -212,14 +397,18 @@ export function classifyNaturalCustomerIntent(
     // Bare sizing shorthand such as "how big?" may be a contextual recall
     // query and must remain available to the state resolver. A model-free turn
     // is guidance only when the customer actually asks to choose/recommend.
-    if (!product &&
-      !/(?:想問|想问|想了解|想睇|想看|請教|请教|推薦|推荐|建議|建议|點(?:樣)?揀|怎樣選|怎样选|如何選|如何选|怎么选|help|advice|guidance|recommend|what\s+should\s+i\s+(?:buy|choose|get)|how\s+(?:should|can|do)\s+i\s+(?:choose|select|pick)|which\s+(?:model|option))/iu.test(meaningful)) {
+    if (
+      !product &&
+      !/(?:想問|想问|想了解|想睇|想看|請教|请教|推薦|推荐|建議|建议|點(?:樣)?揀|怎樣選|怎样选|如何選|如何选|怎么选|help|advice|guidance|recommend|what\s+should\s+i\s+(?:buy|choose|get)|how\s+(?:should|can|do)\s+i\s+(?:choose|select|pick)|which\s+(?:model|option))/iu
+        .test(meaningful)
+    ) {
       return { kind: "none", product: null };
     }
     return {
       kind: "product_guidance",
       product,
-      two_bedrooms_and_living_room: /(?:兩|两|2)\s*間?房.{0,20}(?:廳|厅|客廳|客厅)/i.test(meaningful),
+      two_bedrooms_and_living_room:
+        /(?:兩|两|2)\s*間?房.{0,20}(?:廳|厅|客廳|客厅)/i.test(meaningful),
     };
   }
 
@@ -238,7 +427,8 @@ export function requiresCurrentMerchantEvidence(
   intent: NaturalCustomerIntent,
 ): boolean {
   // Product-specific facts must use the same current, tenant-scoped KB gate.
-  return intent.kind === "product_availability" || intent.kind === "product_factual_query";
+  return intent.kind === "product_availability" ||
+    intent.kind === "product_factual_query";
 }
 
 export function renderNaturalImmediateResponse(
@@ -246,9 +436,22 @@ export function renderNaturalImmediateResponse(
   language: NaturalResponseLanguage,
 ): string | null {
   if (intent.kind === "product_availability" && !intent.product) {
-    if (language === "en") return "Which product or model would you like me to check?";
+    if (language === "en") {
+      return "Which product or model would you like me to check?";
+    }
     if (language === "zh-CN") return "你想查哪类产品或哪个型号？";
     return "你想查邊類產品或邊個型號？";
+  }
+  if (intent.kind === "product_factual_clarification") {
+    if (intent.candidates.length > 1) {
+      const choices = intent.candidates.join(" / ");
+      if (language === "en") return `Which model do you mean: ${choices}?`;
+      if (language === "zh-CN") return `你指的是哪个型号：${choices}？`;
+      return `你指邊個型號：${choices}？`;
+    }
+    if (language === "en") return "Which current product or model do you mean?";
+    if (language === "zh-CN") return "你指的是哪个当前产品或型号？";
+    return "你指邊個現行產品或型號？";
   }
   if (intent.kind === "greeting") {
     if (language === "en") return "Hi! How can I help?";
@@ -257,10 +460,14 @@ export function renderNaturalImmediateResponse(
   }
   if (intent.kind === "product_guidance") {
     if (intent.product && /冷氣|冷气|air\s*condition/i.test(intent.product)) {
-      if (language === "en") return "I can help size the AC. What is each room's area, does it get strong afternoon sun, and are you considering window or split units?";
-      if (language === "zh-CN") return intent.two_bedrooms_and_living_room
-        ? "两间房和客厅都要考虑冷气匹数。各有多少平方呎？有西晒吗？窗口位适合窗口机还是分体机？"
-        : "可以帮你估算冷气匹数。空间各有多少平方呎？有西晒吗？是窗口机还是分体机？";
+      if (language === "en") {
+        return "I can help size the AC. What is each room's area, does it get strong afternoon sun, and are you considering window or split units?";
+      }
+      if (language === "zh-CN") {
+        return intent.two_bedrooms_and_living_room
+          ? "两间房和客厅都要考虑冷气匹数。各有多少平方呎？有西晒吗？窗口位适合窗口机还是分体机？"
+          : "可以帮你估算冷气匹数。空间各有多少平方呎？有西晒吗？是窗口机还是分体机？";
+      }
       return intent.two_bedrooms_and_living_room
         ? "兩間房同客廳三個空間要分別估冷氣匹數。你提供各自面積、日照情況同窗口／安裝方式，我就可以幫你縮窄選擇。"
         : "可以幫你估冷氣匹數。你提供空間面積、日照情況同窗口／安裝方式，我就可以幫你縮窄選擇。";
@@ -310,8 +517,12 @@ export function renderNaturalNoCurrentEvidence(
 ): string | null {
   if (intent.kind === "product_factual_query") {
     const model = intent.product;
-    if (language === "en") return `I cannot find verifiable current product information for ${model}, so I cannot confirm its features or suitability. I will not guess.`;
-    if (language === "zh-CN") return `我目前找不到 ${model} 的可核实当前产品资料，所以无法确认功能或适用情况。我不会猜测。`;
+    if (language === "en") {
+      return `I cannot find verifiable current product information for ${model}, so I cannot confirm its features or suitability. I will not guess.`;
+    }
+    if (language === "zh-CN") {
+      return `我目前找不到 ${model} 的可核实当前产品资料，所以无法确认功能或适用情况。我不会猜测。`;
+    }
     return `我而家搵唔到 ${model} 嘅可核實現行產品資料，所以未能確認功能或適用情況。我唔會估。`;
   }
   if (intent.kind !== "product_availability") return null;
