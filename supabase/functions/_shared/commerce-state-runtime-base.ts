@@ -63,6 +63,9 @@ import {
   b2JourneyTransactionBoundary,
   type B2TrustedCorrectionCommit,
   type B2TrustedJourneyProgress,
+  type B2TrustedLifecycleCommit,
+  resolveEntityLifecyclePlan,
+  verifyEntityLifecycleTransition,
 } from "./b2-journey-progress-contract.ts";
 import {
   HOME_APPLIANCE_CATEGORIES as CATEGORY_SPECS,
@@ -123,6 +126,7 @@ export interface CommerceRuntimeOutcome {
   /** Private in-process B2 evidence. Never persist this object as metadata. */
   trusted_journey_progress?: B2TrustedJourneyProgress;
   trusted_correction_commit?: B2TrustedCorrectionCommit;
+  trusted_lifecycle_commit?: B2TrustedLifecycleCommit;
 }
 
 export interface CommittedAddressCorrectionResolution {
@@ -1741,6 +1745,19 @@ export function reduceTurn(
   input: CommerceRuntimeInput,
   rawHints: CommerceTurnEntityHint[],
 ): ConversationCommerceState {
+  const lifecycle = resolveEntityLifecyclePlan(input.text, previous);
+  if (lifecycle.kind === "ambiguous") return previous;
+  if (lifecycle.kind === "mutation") {
+    const events: CommerceStateEvent[] = lifecycle.plans.map((plan) => ({
+      type: "SET_ENTITY_STATUS",
+      entity_id: previous.entities.find((entity) => entity.category === plan.target_category &&
+        entity.status !== "cancelled" && entity.status !== "deferred")!.entity_id,
+      status: plan.action,
+      provenance: { source_type: "customer", source_message_id: input.source_message_id, recorded_at: input.occurred_at ?? null },
+    }));
+    if (lifecycle.plans[0].focus_category) events.push({ type: "SET_CONTEXT", topic: lifecycle.plans[0].focus_category });
+    return reduceCommerceState(previous, events);
+  }
   // A verified factual return to an earlier product changes topic focus only.
   // Room words in that question must not materialize extra purchase entities.
   if (
@@ -2438,6 +2455,13 @@ export async function runCommerceStateRuntime(
   // inference, so ambiguity is read-only and a unique update can win the
   // shared reply precedence without a phrase-specific generate-reply branch.
   const contextualBefore = await loadCommerceState(db, input.conversation_id);
+  if (resolveEntityLifecyclePlan(text, contextualBefore.state).kind === "ambiguous") {
+    return { authority: "CONVERSATION_STATE", reply: language === "en"
+      ? "Which product should I pause? Please name the product category."
+      : "想暫緩邊一類產品？請講明係冷氣定雪櫃。",
+      revision: contextualBefore.revision, persist_result: "read_only",
+      reason: "ambiguous_lifecycle_target", route: "commerce_state_answer" };
+  }
   const contextualDecision = resolveContextualTurn(input, contextualBefore.state);
   const customerJourney = resolveCustomerJourneyTurn(input, contextualBefore.state);
   if (contextualDecision.route === "targeted_clarification") {
@@ -2587,6 +2611,33 @@ export async function runCommerceStateRuntime(
 
   const persisted = await persistCommerceTurn(db, runtimeInput, hints);
   const state = persisted.state;
+  const lifecycleVerified = persisted.result === "success"
+    ? verifyEntityLifecycleTransition(text, persisted.previous_state, state, input.source_message_id)
+    : { valid: false } as const;
+  if (lifecycleVerified.valid) {
+    const focus = lifecycleVerified.plans[0].focus_category;
+    const target = lifecycleVerified.plans.map((plan) => plan.target_category === "refrigerator" ? "雪櫃" : plan.target_category === "air_conditioner" ? "冷氣" : plan.target_category).join("同");
+    const reply = language === "en"
+      ? `Okay, ${target} is ${lifecycleVerified.plans[0].action === "deferred" ? "paused" : "cancelled"}. ${focus ? `We can continue with ${focus}; its requirements remain in place.` : "The other product requirements remain in place."}`
+      : `好，${target}${lifecycleVerified.plans[0].action === "deferred" ? "先暫停" : "已取消"}；${focus ? `而家繼續處理${focus === "air_conditioner" ? "冷氣" : focus === "refrigerator" ? "雪櫃" : focus}，之前嘅要求同數量會保留。` : "其他產品嘅要求同數量會保留。"}`;
+    return {
+      authority: "CONVERSATION_STATE", reply, revision: persisted.revision,
+      persist_result: "success", reason: "authoritative_scoped_lifecycle_applied", route: "commerce_state_answer",
+      trusted_lifecycle_commit: {
+        contract: "entity-lifecycle-commit-v1", company_id: input.company_id,
+        source_message_id: input.source_message_id, source_text: text,
+        previous_revision: persisted.previous_revision, committed_revision: persisted.revision,
+        plans: lifecycleVerified.plans, target_entity_ids: lifecycleVerified.targetIds,
+        previous_state: structuredClone(persisted.previous_state), committed_state: structuredClone(state),
+        reply, transaction_before: b2JourneyTransactionBoundary(persisted.previous_state),
+        transaction_after: b2JourneyTransactionBoundary(state),
+      },
+    };
+  }
+  if (resolveEntityLifecyclePlan(text, persisted.previous_state).kind === "mutation") {
+    return { authority: "CONVERSATION_STATE", reply: null, revision: persisted.revision,
+      persist_result: persisted.result, reason: "unverified_lifecycle_commit", route: "commerce_state_answer" };
+  }
   const committedRoomCorrection = buildTrustedRoomCorrection(runtimeInput, persisted);
   if (committedRoomCorrection) {
     return {

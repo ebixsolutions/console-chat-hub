@@ -17,7 +17,7 @@ import {
 import { resolveCanonicalCommerceResolution } from "./conversation-resolution-contract.ts";
 import { activeCustomerGoal } from "./customer-journey-orchestration.ts";
 import { prepareConversationRecall } from "./conversation-recall.ts";
-import { buildCanonicalConversationMemory, verifyCommittedRoomCorrectionMemory } from "./conversation-long-memory.ts";
+import { buildCanonicalConversationMemory, verifyCommittedRoomCorrectionMemory, verifyCommittedLifecycleMemory, type CanonicalConversationMemory } from "./conversation-long-memory.ts";
 import {
   arbitrateAnaphoricProductFollowUp,
   classifyNaturalCustomerIntent,
@@ -817,11 +817,59 @@ Deno.test("W19 sequential T1-T16 source replay preserves customer journey, KB an
       ?.attributes.room_sizes as Record<string, string>).large_bedroom === "110平方呎",
     "wrong_old_value_promoted");
   console.log(`W20-T10|${t10.route}|${t10.reply}|revision=${t10State.revision}|B2=${t10B2().code}|negative=PASS`);
-  const t11 = await ask("雪櫃暫時唔買，先取消。");
+  const beforeDeferral = structuredClone(f.snapshot().state);
+  const beforeDeferralRevision = f.snapshot().revision;
+  const t11 = await ask("雪櫃暫時唔換住，先搞冷氣。");
   const afterCancellation = f.snapshot().state;
   const refrigerator = afterCancellation.entities.find((entity) => entity.category === "refrigerator");
   const ac = afterCancellation.entities.find((entity) => entity.category === "air_conditioner");
-  assert((refrigerator?.status === "cancelled" || refrigerator?.status === "deferred") && ac?.quantity === 3, JSON.stringify({ t11, refrigerator, ac }));
+  assert(t11.reason === "authoritative_scoped_lifecycle_applied" && t11.persist_result === "success" &&
+    t11.trusted_lifecycle_commit && f.snapshot().revision === beforeDeferralRevision + 1 &&
+    refrigerator?.status === "deferred" && ac?.quantity === 3 && ac.status === "researching" &&
+    afterCancellation.entities.length === beforeDeferral.entities.length &&
+    JSON.stringify(ac) === JSON.stringify(beforeDeferral.entities.find((entity) => entity.category === "air_conditioner")) &&
+    afterCancellation.current_topic === "air_conditioner" &&
+    JSON.stringify(ac.attributes.scoped_customer_updates).includes("living_room") &&
+    !afterCancellation.entities.some((entity) => /air_conditioner:(?:living_room|bedroom)$/.test(entity.entity_id)) &&
+    t11.reply?.includes("雪櫃先暫停") && t11.reply.includes("冷氣"), JSON.stringify({ t11, refrigerator, ac }));
+  const t11Proof = t11.trusted_lifecycle_commit!;
+  const t11Memory = buildCanonicalConversationMemory({
+    conversation_id: "conversation", company_id: "company", source_message_id: t11Proof.source_message_id,
+    commerce_state_revision: f.snapshot().revision, commerce_state: afterCancellation,
+    newest_first: turns.slice().reverse().map((content, index) => ({ id: index === 0 ? t11Proof.source_message_id : `history-${index}`, role: "visitor", content })),
+    visitor_turn_count: turns.length, source_created_at: "2026-09-25T00:00:00.000Z", next_memory_revision: turns.length,
+  });
+  assert(verifyCommittedLifecycleMemory({ memory: t11Memory, receipt: t11Proof,
+    commerce: { company_id: "company", source_message_id: t11Proof.source_message_id, revision: f.snapshot().revision, state: afterCancellation } }), "t11_memory_parity");
+  for (const [name, memory] of [
+    ["missing_active_ac", { ...t11Memory, active_entities: [] }],
+    ["missing_deferred_fridge", { ...t11Memory, cancelled_or_superseded: [] }],
+    ["wrong_revision", { ...t11Memory, commerce_state_revision: f.snapshot().revision - 1 }],
+  ] as Array<[string, CanonicalConversationMemory]>) assert(!verifyCommittedLifecycleMemory({ memory, receipt: t11Proof,
+    commerce: { company_id: "company", source_message_id: t11Proof.source_message_id, revision: f.snapshot().revision, state: afterCancellation } }), `t11_memory_${name}_accepted`);
+  const t11Snapshot = { conversation_id: "conversation", company_id: "company", source_message_id: t11Proof.source_message_id,
+    source_message_content: t11Proof.source_text, commerce_state_revision: f.snapshot().revision,
+    commerce_state_source_message_id: t11Proof.source_message_id, state: afterCancellation };
+  const t11Metadata = { response_route: t11.route, commerce_reason: t11.reason, commerce_authority: t11.authority,
+    commerce_state_revision: t11.revision, commerce_state_persist_result: t11.persist_result,
+    commerce_state_persistence_classification: "COMMITTED" };
+  const t11B2 = (overrides: Record<string, unknown> = {}) => evaluateB2BeforeCommit({
+    proposed_response: t11.reply ?? "", persistence_kind: "ai_reply", snapshot: t11Snapshot,
+    metadata: t11Metadata, trusted_lifecycle_commit: t11Proof, ...overrides,
+  });
+  assert(t11B2().code === "B2_ALLOW_COMMITTED_SCOPED_LIFECYCLE", JSON.stringify(t11B2()));
+  for (const [name, overrides] of [
+    ["no_proof", { trusted_lifecycle_commit: null }],
+    ["failed_commit", { metadata: { ...t11Metadata, commerce_state_persist_result: "rpc_transport_error" } }],
+    ["stale", { trusted_lifecycle_commit: { ...t11Proof, committed_revision: t11Proof.previous_revision } }],
+    ["replay", { trusted_lifecycle_commit: { ...t11Proof, source_message_id: "other-turn" } }],
+    ["tenant", { trusted_lifecycle_commit: { ...t11Proof, company_id: "other" } }],
+    ["scope", { trusted_lifecycle_commit: { ...t11Proof, target_entity_ids: ["air_conditioner:unscoped"] } }],
+    ["quantity", { snapshot: { ...t11Snapshot, state: { ...afterCancellation, entities: afterCancellation.entities.map((entity) => entity.category === "air_conditioner" ? { ...entity, quantity: 2 } : entity) } } }],
+    ["ghost", { snapshot: { ...t11Snapshot, state: { ...afterCancellation, entities: [...afterCancellation.entities, { ...ac!, entity_id: "air_conditioner:bedroom" }] } } }],
+    ["order", { proposed_response: `${t11.reply} 訂單已確認。` }],
+  ] as const) assert(t11B2(overrides).decision !== "allow", `t11_${name}_accepted`);
+  console.log(`W21-T11|${t11.route}|${t11.reply}|revision=${f.snapshot().revision}|entities=${afterCancellation.entities.length}|quantity=${ac.quantity}|B2=${t11B2().code}`);
 
   const t12 = "而家我冷氣要求係點？";
   const allTurns = [...turns, t12];
@@ -871,6 +919,66 @@ Deno.test("W19 sequential T1-T16 source replay preserves customer journey, KB an
   console.log(`W19-T15|kb_no_current_evidence|${t15Reply}`);
   console.log(`W19-T16|canonical_kb_direct_answer|${t16Answer?.reply}`);
   console.log(`W17-T1|${t1.route}|${t1.reply}`); console.log(`W17-T2|${t2.route}|${t2.reply}`); console.log(`W17-T3|${t3.route}|${t3.reply}`); console.log(`W17-T4|${t4.route}|${t4.reply}`); console.log(`W17-T5|${t5.route}|${t5.reply}`); console.log("W17-T6|CURRENT_KB_REQUIRED|features+horsepower+suitability"); console.log("W17-T7|CURRENT_KB_REQUIRED|price:CW-SUL70BA"); console.log(`W17-T8|${t8.route}|${t8.reply}`); console.log("W17-T9|CURRENT_KB_REQUIRED|CW-SUL70BA|horsepower+model_info"); console.log(`W17-T10|${t10.route}|${t10.reply}`); console.log(`W17-T11|${t11.route}|${t11.reply}`); console.log(`W17-T12|${recall.metadata.response_route}|${recall.reply}`);
+});
+
+Deno.test("W21 entity lifecycle scope, ambiguous target, reversal, cancellation and no silent reactivation", async () => {
+  const initial = stateWith(["air_conditioner", "refrigerator"]);
+  initial.entities[0].entity_id = "air_conditioner:unscoped";
+  initial.entities[1].entity_id = "refrigerator:unscoped";
+  initial.entities[0].status = "researching";
+  initial.entities[0].attributes = { room_sizes: { small_bedroom: "80平方呎", large_bedroom: "110平方呎", living_room: "180平方呎" }, scoped_customer_updates: values };
+  initial.entities[1].constraints = { max_width_mm: 595 };
+  const ask = async (question: string) => {
+    const f = fixture(structuredClone(initial));
+    const before = structuredClone(f.snapshot());
+    const result = await f.ask(question);
+    return { before, after: f.snapshot(), result, f };
+  };
+  const forward = await ask("雪櫃暫時唔換住，先搞冷氣。");
+  assert(forward.after.state.entities[0].status === "researching" &&
+    JSON.stringify(forward.after.state.entities[0]) === JSON.stringify(initial.entities[0]) &&
+    forward.after.state.entities[1].status === "deferred" &&
+    forward.after.state.entities.length === 2 &&
+    forward.after.state.entities[0].quantity === 3 &&
+    forward.result.trusted_lifecycle_commit?.target_entity_ids[0] === "refrigerator:unscoped", "forward_scope");
+  const reverse = await ask("冷氣暫時唔換住，先搞雪櫃。");
+  assert(reverse.after.state.entities[0].status === "deferred" &&
+    JSON.stringify(reverse.after.state.entities[1]) === JSON.stringify(initial.entities[1]) &&
+    reverse.after.state.current_topic === "refrigerator" &&
+    reverse.after.state.entities.length === 2, "reverse_scope");
+  const both = await ask("兩樣都暫時唔換。");
+  assert(both.after.state.entities.every((entity) => entity.status === "deferred") &&
+    both.result.trusted_lifecycle_commit?.target_entity_ids.length === 2, "both_explicit");
+  const ambiguous = await ask("暫時唔換住。");
+  assert(ambiguous.result.reason === "ambiguous_lifecycle_target" &&
+    ambiguous.after.revision === ambiguous.before.revision &&
+    JSON.stringify(ambiguous.after.state) === JSON.stringify(ambiguous.before.state), "ambiguous_mutated");
+  const cancelled = await ask("雪櫃取消。");
+  assert(cancelled.after.state.entities[1].status === "cancelled" &&
+    JSON.stringify(cancelled.after.state.entities[0]) === JSON.stringify(initial.entities[0]) &&
+    cancelled.result.trusted_lifecycle_commit?.plans[0].action === "cancelled", JSON.stringify(cancelled));
+  const deferred = await forward.f.ask("講返雪櫃。", ["雪櫃暫時唔換住，先搞冷氣。"]);
+  assert(forward.f.snapshot().state.entities[1].status === "deferred" &&
+    forward.f.snapshot().state.entities.length === 2 && !deferred.trusted_lifecycle_commit,
+    JSON.stringify({ deferred, state: forward.f.snapshot() }));
+  const failedCommit = await runCommerceStateRuntime({
+    from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({
+      data: { revision: 1, state: initial }, error: null,
+    }) }) }) }),
+    rpc: async () => ({ data: null, error: { message: "failed CAS" } }),
+  }, { company_id: "company", conversation_id: "conversation", source_message_id: "failed-lifecycle",
+    text: "雪櫃暫時唔換住，先搞冷氣。", language: "zh-TW" });
+  assert(failedCommit?.persist_result === "rpc_transport_error" &&
+    !failedCommit.trusted_lifecycle_commit && failedCommit.reply === null,
+    "failed_commit_authorized_reply");
+  for (const outcome of [forward, reverse, both, cancelled]) {
+    assert(outcome.after.state.quotes.length === 0 &&
+      outcome.after.state.conversion.order_status === "none" &&
+      outcome.after.state.conversion.payment_status === "none" &&
+      outcome.after.state.conversion.quotation_status === "none" &&
+      outcome.after.state.entities.length === 2, "lifecycle_transaction_or_ghost");
+  }
+  console.log("W21-LIFECYCLE|forward=PASS|reverse=PASS|both=PASS|ambiguous=PASS|cancel=PASS|deferred_return=PASS|ghost=0|transaction=none");
 });
 
 Deno.test("W17 trusted topic restoration fails closed on entity, topic, history, and activity drift", () => {

@@ -163,6 +163,7 @@ import {
   type MemoryHistoryRow,
   refreshConversationLongMemory,
   verifyCommittedRoomCorrectionMemory,
+  verifyCommittedLifecycleMemory,
 } from "../_shared/conversation-long-memory.ts";
 import {
   type ConversationCommerceState,
@@ -185,7 +186,7 @@ import {
   classifyCommerceStatePersistenceResult,
   executeB2PersistenceGate,
 } from "../_shared/pre-send-conversion-supervisor.ts";
-import type { B2TrustedCorrectionCommit, B2TrustedJourneyProgress } from "../_shared/b2-journey-progress-contract.ts";
+import type { B2TrustedCorrectionCommit, B2TrustedJourneyProgress, B2TrustedLifecycleCommit } from "../_shared/b2-journey-progress-contract.ts";
 import { resolveCanonicalCommerceResolution } from "../_shared/conversation-resolution-contract.ts";
 import { readExactAiReplyCommit } from "../_shared/authoritative-commit-readback.ts";
 import {
@@ -637,6 +638,7 @@ async function executeB2RpcPersistence<T>(
     trusted_targeted_clarification?: B2TrustedTargetedClarification | null;
     trusted_journey_progress?: B2TrustedJourneyProgress | null;
     trusted_correction_commit?: B2TrustedCorrectionCommit | null;
+    trusted_lifecycle_commit?: B2TrustedLifecycleCommit | null;
     expected_commerce_state_revision?: number | null;
   },
   commit: () => Promise<T>,
@@ -658,6 +660,7 @@ async function commitAiReplyWithControlGate(
   trustedTargetedClarification: B2TrustedTargetedClarification | null = null,
   trustedJourneyProgress: B2TrustedJourneyProgress | null = null,
   trustedCorrectionCommit: B2TrustedCorrectionCommit | null = null,
+  trustedLifecycleCommit: B2TrustedLifecycleCommit | null = null,
 ): Promise<
   | { ok: true; message_id: string | null; idempotent: boolean }
   | {
@@ -705,6 +708,7 @@ async function commitAiReplyWithControlGate(
       trusted_targeted_clarification: trustedTargetedClarification,
       trusted_journey_progress: trustedJourneyProgress,
       trusted_correction_commit: trustedCorrectionCommit,
+      trusted_lifecycle_commit: trustedLifecycleCommit,
       expected_commerce_state_revision: expectedRevision,
     },
     async () =>
@@ -4550,6 +4554,13 @@ async function orchestrationGenerateReply(
       { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   }
+  const _c3LifecycleReceipt = _a3Commerce?.trusted_lifecycle_commit ?? null;
+  if (_c3LifecycleReceipt && !verifyCommittedLifecycleMemory({
+    memory: _c3Memory, receipt: _c3LifecycleReceipt, commerce: _c3CommerceSnapshot,
+  })) {
+    return new Response(JSON.stringify({ success: false, error: "lifecycle_memory_commerce_mismatch" }),
+      { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
   const _c3Resolution = resolveCanonicalCommerceResolution({
     outcome: _a3Commerce,
     authoritative_address_correction: Boolean(_c3ResolvedAddressCorrection),
@@ -4729,6 +4740,7 @@ async function orchestrationGenerateReply(
         : null,
       _a3Commerce?.trusted_journey_progress ?? null,
       _c3VerifiedCorrectionReceipt,
+      _c3LifecycleReceipt,
     );
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     if (commerceCommit.ok) {

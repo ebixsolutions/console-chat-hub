@@ -1,6 +1,6 @@
 import { resolveConversationRecall, renderConversationRecall } from "./conversation-recall.ts";
 import type { ConversationCommerceState } from "./commerce-state-contract.ts";
-import type { B2TrustedCorrectionCommit } from "./b2-journey-progress-contract.ts";
+import { type B2TrustedCorrectionCommit, type B2TrustedLifecycleCommit, verifyEntityLifecycleTransition } from "./b2-journey-progress-contract.ts";
 import {
   projectConversationRuntimeState,
   type RuntimeHistoryRow,
@@ -81,6 +81,33 @@ export function verifyCommittedRoomCorrectionMemory(input: {
     fact.value.value === receipt.previous_value
   );
   return Boolean(current && superseded);
+}
+
+export function verifyCommittedLifecycleMemory(input: {
+  memory: CanonicalConversationMemory | null;
+  receipt: B2TrustedLifecycleCommit | null;
+  commerce: { company_id: string; source_message_id: string | null; revision: number; state: ConversationCommerceState } | null;
+}): boolean {
+  const { memory, receipt, commerce } = input;
+  if (!memory || !receipt || !commerce || memory.company_id !== receipt.company_id ||
+    commerce.company_id !== receipt.company_id ||
+    memory.source_message_id !== receipt.source_message_id ||
+    commerce.source_message_id !== receipt.source_message_id ||
+    memory.commerce_state_revision !== receipt.committed_revision ||
+    commerce.revision !== receipt.committed_revision ||
+    JSON.stringify(commerce.state) !== JSON.stringify(receipt.committed_state) ||
+    !verifyEntityLifecycleTransition(receipt.source_text, receipt.previous_state,
+      commerce.state, receipt.source_message_id).valid) return false;
+  return commerce.state.entities.every((entity) => {
+    const active = memory.active_entities.filter((item) => item.entity_id === entity.entity_id);
+    const inactive = memory.cancelled_or_superseded.filter((item) =>
+      item.key === `entity:${entity.entity_id}` && item.value === entity.status);
+    return entity.status === "cancelled" || entity.status === "deferred"
+      ? active.length === 0 && inactive.length === 1
+      : active.length === 1 && active[0].quantity === entity.quantity &&
+        JSON.stringify(active[0].current_requirements) ===
+          JSON.stringify({ ...entity.attributes, ...entity.constraints });
+  });
 }
 export interface ConversationMemoryEntity {
   entity_id: string;

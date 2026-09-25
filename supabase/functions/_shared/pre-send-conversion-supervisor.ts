@@ -21,6 +21,8 @@ import {
   b2JourneyTransactionBoundary,
   type B2TrustedCorrectionCommit,
   type B2TrustedJourneyProgress,
+  type B2TrustedLifecycleCommit,
+  verifyEntityLifecycleTransition,
 } from "./b2-journey-progress-contract.ts";
 import { roomSizeCorrection } from "./conversation-long-memory.ts";
 import { activeCustomerGoal } from "./customer-journey-orchestration.ts";
@@ -67,6 +69,7 @@ export interface B2EvaluationInput {
   /** Private Commerce-runtime receipt, never accepted from request metadata. */
   trusted_journey_progress?: B2TrustedJourneyProgress | null;
   trusted_correction_commit?: B2TrustedCorrectionCommit | null;
+  trusted_lifecycle_commit?: B2TrustedLifecycleCommit | null;
 }
 
 export interface B2TrustedTargetedClarification {
@@ -116,6 +119,7 @@ export interface B2PersistenceInput<T> {
   trusted_targeted_clarification?: B2TrustedTargetedClarification | null;
   trusted_journey_progress?: B2TrustedJourneyProgress | null;
   trusted_correction_commit?: B2TrustedCorrectionCommit | null;
+  trusted_lifecycle_commit?: B2TrustedLifecycleCommit | null;
   expected_commerce_state_revision?: number | null;
   commit: () => Promise<T>;
 }
@@ -737,6 +741,38 @@ function isTrustedCorrectionCommit(input: B2EvaluationInput, draft: string): boo
     equalJson(entity[0].attributes.room_sizes, proof.committed_values);
 }
 
+function isTrustedLifecycleCommit(input: B2EvaluationInput, draft: string): boolean {
+  const proof = input.trusted_lifecycle_commit;
+  const metadata = input.metadata;
+  if (!proof || !isRecord(metadata) || input.persistence_kind !== "ai_reply" ||
+    proof.contract !== "entity-lifecycle-commit-v1" ||
+    proof.company_id !== input.snapshot.company_id ||
+    proof.source_message_id !== input.snapshot.source_message_id ||
+    clean(proof.source_text) !== clean(input.snapshot.source_message_content) ||
+    proof.previous_revision + 1 !== proof.committed_revision ||
+    proof.committed_revision !== input.snapshot.commerce_state_revision ||
+    input.snapshot.commerce_state_source_message_id !== proof.source_message_id ||
+    !equalJson(proof.committed_state, input.snapshot.state) ||
+    !equalJson(proof.transaction_before, b2JourneyTransactionBoundary(proof.previous_state)) ||
+    !equalJson(proof.transaction_after, b2JourneyTransactionBoundary(input.snapshot.state)) ||
+    !equalJson(proof.transaction_before, proof.transaction_after) ||
+    clean(proof.reply) !== draft ||
+    metadata.response_route !== "commerce_state_answer" ||
+    metadata.commerce_reason !== "authoritative_scoped_lifecycle_applied" ||
+    metadata.commerce_authority !== "CONVERSATION_STATE" ||
+    metadata.commerce_state_persist_result !== "success" ||
+    metadata.commerce_state_persistence_classification !== "COMMITTED" ||
+    Number(metadata.commerce_state_revision) !== proof.committed_revision ||
+    ORDER_CONFIRMED.test(draft) || PAYMENT_COMPLETED.test(draft) ||
+    DELIVERY_CONFIRMED.test(draft) || DELIVERY_COMPLETED.test(draft) ||
+    INSTALLATION_CONFIRMED.test(draft) || INSTALLATION_COMPLETED.test(draft) ||
+    extractMoneyMentions(draft).length > 0) return false;
+  const transition = verifyEntityLifecycleTransition(proof.source_text, proof.previous_state,
+    input.snapshot.state, proof.source_message_id);
+  return transition.valid && equalJson(transition.plans, proof.plans) &&
+    equalJson(transition.targetIds, proof.target_entity_ids);
+}
+
 function isTrustedJourneyProgressAfterAcceptedUpdate(
   input: B2EvaluationInput,
   draft: string,
@@ -1008,21 +1044,27 @@ export function evaluateB2BeforeCommit(input: B2EvaluationInput): B2Decision {
     draft,
   );
   const trustedCorrection = isTrustedCorrectionCommit(input, draft);
+  const trustedLifecycle = isTrustedLifecycleCommit(input, draft);
+  if ((input.trusted_lifecycle_commit || input.metadata?.commerce_reason === "authoritative_scoped_lifecycle_applied") && !trustedLifecycle) {
+    return { decision: "block", code: "UNPROVEN_LIFECYCLE_COMMIT" };
+  }
   if (
     (input.trusted_correction_commit ||
       input.metadata?.commerce_reason === "authoritative_scoped_correction_applied") &&
     !trustedCorrection
   ) return { decision: "block", code: "UNPROVEN_CORRECTION_COMMIT" };
   return (
-    (authoritativeNoSemanticChange ? null : correctionDecision) ??
+    (authoritativeNoSemanticChange || trustedLifecycle ? null : correctionDecision) ??
     evaluateCancellation(draft, state) ??
     (kbPriceDecision ? null : evaluateQuoteReality(draft, state, input)) ??
     evaluateTransactionReality(draft, input.persistence_kind, state) ??
-    (trustedTargetedClarification || trustedJourneyProgress || trustedCorrection
+    (trustedTargetedClarification || trustedJourneyProgress || trustedCorrection || trustedLifecycle
       ? null
       : evaluateKnownContext(draft, state)) ?? {
       decision: "allow",
-      code: kbPriceDecision?.code ?? (trustedCorrection
+      code: kbPriceDecision?.code ?? (trustedLifecycle
+        ? "B2_ALLOW_COMMITTED_SCOPED_LIFECYCLE"
+        : trustedCorrection
         ? "B2_ALLOW_COMMITTED_SCOPED_CORRECTION"
         : trustedJourneyProgress
         ? "B2_ALLOW_JOURNEY_PROGRESS_AFTER_ACCEPTED_UPDATE"
@@ -1260,6 +1302,7 @@ export async function executeB2PersistenceGate<T>(
       trusted_targeted_clarification: input.trusted_targeted_clarification,
       trusted_journey_progress: input.trusted_journey_progress,
       trusted_correction_commit: input.trusted_correction_commit,
+      trusted_lifecycle_commit: input.trusted_lifecycle_commit,
     });
   } catch (error) {
     decision = {
