@@ -160,6 +160,7 @@ import type { CommerceSemanticFrame } from "../_shared/commerce-semantic-frame.t
 import {
   buildBoundedConversationContext,
   type CanonicalConversationMemory,
+  isCanonicalConversationMemory,
   composeBoundedGenerationEnvelope,
   type MemoryHistoryRow,
   refreshConversationLongMemory,
@@ -184,7 +185,9 @@ import {
   type B2KbPriceProof,
   type B2PersistenceKind,
   type B2TrustedTargetedClarification,
+  type B2TrustedReadOnlyRecap,
   buildB2AuthoritativeReadbackProof,
+  buildB2ReadOnlyRecapProof,
   classifyCommerceStatePersistenceResult,
   executeB2PersistenceGate,
 } from "../_shared/pre-send-conversion-supervisor.ts";
@@ -641,6 +644,7 @@ async function executeB2RpcPersistence<T>(
     trusted_journey_progress?: B2TrustedJourneyProgress | null;
     trusted_correction_commit?: B2TrustedCorrectionCommit | null;
     trusted_lifecycle_commit?: B2TrustedLifecycleCommit | null;
+    trusted_read_only_recap?: B2TrustedReadOnlyRecap | null;
     expected_commerce_state_revision?: number | null;
   },
   commit: (snapshot: B2CanonicalSnapshot) => Promise<T>,
@@ -663,6 +667,7 @@ async function commitAiReplyWithControlGate(
   trustedJourneyProgress: B2TrustedJourneyProgress | null = null,
   trustedCorrectionCommit: B2TrustedCorrectionCommit | null = null,
   trustedLifecycleCommit: B2TrustedLifecycleCommit | null = null,
+  trustedReadOnlyRecap: B2TrustedReadOnlyRecap | null = null,
 ): Promise<
   | { ok: true; message_id: string | null; idempotent: boolean }
   | {
@@ -717,6 +722,7 @@ async function commitAiReplyWithControlGate(
       trusted_journey_progress: trustedJourneyProgress,
       trusted_correction_commit: trustedCorrectionCommit,
       trusted_lifecycle_commit: trustedLifecycleCommit,
+      trusted_read_only_recap: trustedReadOnlyRecap,
       expected_commerce_state_revision: expectedRevision,
     },
     async (snapshot) => {
@@ -4350,6 +4356,8 @@ async function orchestrationGenerateReply(
   let _a3Commerce: CommerceRuntimeOutcome | null = null;
   let _c3Memory: CanonicalConversationMemory | null = null;
   let _c3MemoryContext = "";
+  let _c3ReadOnlyMemoryHash: string | null = null;
+  let _c3ReadOnlyMemorySource: string | null = null;
   let _c3CommerceSnapshot: RecallCommerceSnapshot | null = null;
   if (
     _criticalE2ExpectedTenantId &&
@@ -4411,7 +4419,7 @@ async function orchestrationGenerateReply(
       const [{ data: persistedMemory }, { data: commerceRow }] = await Promise
         .all([
           supabaseAdmin.from("conversation_memory_state")
-            .select("source_message_id")
+            .select("conversation_id,company_id,revision,source_message_id,commerce_state_revision,memory,memory_hash")
             .eq("conversation_id", conversation_id)
             .eq("company_id", _criticalE2ExpectedTenantId)
             .maybeSingle(),
@@ -4448,6 +4456,24 @@ async function orchestrationGenerateReply(
           revision: Number(commerceRow.revision),
           state: commerceState,
         };
+      }
+      const readOnlyRecap = _a3Commerce?.reason ===
+        "read_only_current_requirements_recap";
+      if (readOnlyRecap && persistedMemory && commerceRow &&
+        isCanonicalConversationMemory(persistedMemory.memory) &&
+        persistedMemory.conversation_id === conversation_id &&
+        persistedMemory.company_id === _criticalE2ExpectedTenantId &&
+        persistedMemory.memory.conversation_id === conversation_id &&
+        persistedMemory.memory.company_id === _criticalE2ExpectedTenantId &&
+        Number(persistedMemory.revision) === persistedMemory.memory.memory_revision &&
+        Number(persistedMemory.commerce_state_revision) === Number(commerceRow.revision) &&
+        persistedMemory.memory.commerce_state_revision === Number(commerceRow.revision)) {
+        _c3Memory = persistedMemory.memory;
+        _c3ReadOnlyMemoryHash = String(persistedMemory.memory_hash ?? "");
+        _c3ReadOnlyMemorySource = String(persistedMemory.source_message_id ?? "");
+        _c3MemoryContext = buildBoundedConversationContext(
+          _c3Memory, memoryHistory,
+        ).block;
       }
       const memoryOutcome = _c3PreMemoryResolution.skip_memory_refresh
         ? null
@@ -4627,7 +4653,13 @@ async function orchestrationGenerateReply(
       _visitorLang,
     )
     : null;
-  const _c3PlannedReply = _c3Resolution.bypass_service_plan
+  const _c3IsGroundedReadOnlyRecap = _a3Commerce?.reason ===
+      "read_only_current_requirements_recap" &&
+    _c3Recall.decision.handled && _c3Recall.decision.fact_type === "summary" &&
+    Boolean(_c3Memory && _c3CommerceSnapshot && _c3ReadOnlyMemoryHash);
+  const _c3PlannedReply = _c3IsGroundedReadOnlyRecap
+    ? _c3Recall.reply
+    : _c3Resolution.bypass_service_plan
     ? null
     : _naturalGuidanceReply ?? applyServiceTone(
       _c3ServicePlan,
@@ -4650,9 +4682,24 @@ async function orchestrationGenerateReply(
   // explicit_handoff_tx path instead of committing a clarification-shaped AI
   // reply that leaves the conversation under AI control.
   if (_c3PlannedReply && !_explicitHandoffRequested) {
+    const readOnlyRecapProof = _c3IsGroundedReadOnlyRecap && _c3Memory &&
+        _c3CommerceSnapshot && _c3ReadOnlyMemoryHash && _c3ReadOnlyMemorySource
+      ? await buildB2ReadOnlyRecapProof({
+        conversation_id, company_id: _criticalE2ExpectedTenantId ?? "",
+        source_message_id: _h1SourceMessageId,
+        commerce_revision: _c3CommerceSnapshot.revision,
+        commerce_state: _c3CommerceSnapshot.state,
+        memory_revision: _c3Memory.memory_revision,
+        memory_hash: _c3ReadOnlyMemoryHash,
+        memory_source_message_id: _c3ReadOnlyMemorySource,
+        memory: _c3Memory,
+        reply: _c3PlannedReply,
+      }) : null;
     const serviceMetadata = {
       ..._c3Recall.metadata,
-      response_route: _naturalGuidanceReply
+      response_route: readOnlyRecapProof
+        ? "canonical_memory_recall"
+        : _naturalGuidanceReply
         ? "product_guidance"
         : _c3ServicePlan.action === "historical_calculation"
         ? "c3_historical_conditional_calculation"
@@ -4680,6 +4727,14 @@ async function orchestrationGenerateReply(
       natural_intent: _naturalGuidanceReply
         ? _effectiveNaturalCustomerIntent.kind
         : undefined,
+      ...(readOnlyRecapProof ? {
+        recap_read_only: true,
+        commerce_state_persist_result: "read_only",
+        commerce_state_persistence_classification: "NO_SEMANTIC_CHANGE",
+        recap_commerce_hash: readOnlyRecapProof.commerce_hash,
+        recap_memory_hash: readOnlyRecapProof.memory_hash,
+        recap_response_hash: readOnlyRecapProof.response_hash,
+      } : {}),
     };
     const recallCommit = await commitAiReplyWithControlGate(
       supabaseAdmin,
@@ -4687,6 +4742,8 @@ async function orchestrationGenerateReply(
       _h1SourceMessageId,
       _c3PlannedReply,
       serviceMetadata,
+      null, null, null, null, null,
+      readOnlyRecapProof,
     );
     await cleanupThinking(supabaseAdmin, conversation_id, _h1SourceMessageId);
     if (recallCommit.ok) {

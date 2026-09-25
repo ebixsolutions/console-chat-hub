@@ -4,6 +4,7 @@ import {
   type B2QueryBuilder,
   type B2QueryResult,
   buildB2AuthoritativeReadbackProof,
+  buildB2ReadOnlyRecapProof,
   classifyB2AuthoritativePersistence,
   classifyCommerceStatePersistenceResult,
   collectKnownCommerceFacts,
@@ -172,6 +173,8 @@ interface MockOptions {
   sourceContent?: string;
   sourceError?: unknown;
   throwOnTable?: string;
+  memoryRow?: Record<string, unknown>;
+  secondMemoryRevision?: number;
 }
 
 class MockBuilder implements B2QueryBuilder {
@@ -194,6 +197,7 @@ class MockBuilder implements B2QueryBuilder {
 
 class MockClient implements B2DatabaseClient {
   private stateReads = 0;
+  private memoryReads = 0;
   public readonly calls: Array<{ table: string; filters: Record<string, string> }> = [];
   constructor(private readonly options: MockOptions = {}) {}
   from(table: string): B2QueryBuilder {
@@ -247,6 +251,14 @@ class MockClient implements B2DatabaseClient {
         },
         error: null,
       };
+    }
+    if (table === "conversation_memory_state") {
+      this.memoryReads += 1;
+      return { data: this.options.memoryRow
+        ? { ...this.options.memoryRow,
+          revision: this.memoryReads > 1 && this.options.secondMemoryRevision !== undefined
+            ? this.options.secondMemoryRevision : this.options.memoryRow.revision }
+        : null, error: null };
     }
     return { data: null, error: { message: "unexpected_table" } };
   }
@@ -949,6 +961,79 @@ Deno.test("B2 read-only recovery stays truly indeterminate without exact authori
   assert(!result.committed, "failed authoritative readback must not commit");
   assertEquals(result.decision.decision, "indeterminate", "true indeterminate decision");
   assertEquals(commits, 0, "true indeterminate callback count");
+});
+
+Deno.test("T12 captured correction recap is read-only and bound to Commerce plus prior Memory", async () => {
+  const captured = JSON.parse(await Deno.readTextFile(
+    new URL("./fixtures/t11-synthetic-jsonb-reorder.json", import.meta.url),
+  ));
+  const state = captured.post.state as ConversationCommerceState;
+  const memory = { ...captured.memory, conversation_id: CONVERSATION_ID,
+    company_id: COMPANY_ID, source_message_id: captured.source.id };
+  const prior = captured.source.id as string;
+  const reply = "現時冷氣要求：細房80平方呎、大房110平方呎、客廳180平方呎。三個位置都有窗口位，現有都係窗口機。客廳下午西斜。客廳一部、兩間房各一部，共三部；目前只係選購要求，未落單。細房研究緊 CW-SUL70BA；80平方呎是否適用仍未有足夠資料確認。";
+  const proof = await buildB2ReadOnlyRecapProof({
+    conversation_id: CONVERSATION_ID, company_id: COMPANY_ID,
+    source_message_id: SOURCE_ID, commerce_revision: 9,
+    commerce_state: state, memory_revision: memory.memory_revision,
+    memory_hash: "captured-memory-hash", memory_source_message_id: prior,
+    memory, reply,
+  });
+  const metadata = { response_route: "canonical_memory_recall", recall_fact_type: "summary",
+    recap_read_only: true, commerce_state_revision: 9,
+    commerce_state_persist_result: "read_only", commerce_state_persistence_classification: "NO_SEMANTIC_CHANGE",
+    conversation_memory_revision: memory.memory_revision,
+    recap_commerce_hash: proof.commerce_hash, recap_memory_hash: proof.memory_hash,
+    recap_response_hash: proof.response_hash };
+  const memoryRow = { conversation_id: CONVERSATION_ID, company_id: COMPANY_ID,
+    revision: memory.memory_revision, source_message_id: prior,
+    commerce_state_revision: 9, memory_hash: proof.memory_hash, memory };
+  const client = new MockClient({ state, revision: 9, stateSourceId: prior, memoryRow,
+    sourceContent: "而家我冷氣要求係點？" });
+  let committed = 0;
+  const approved = await executeB2PersistenceGate({ client, conversation_id: CONVERSATION_ID,
+    source_message_id: SOURCE_ID, proposed_response: reply, persistence_kind: "ai_reply",
+    metadata, trusted_read_only_recap: proof, expected_commerce_state_revision: 9,
+    commit: async () => { committed += 1; return "success"; } });
+  assertEquals(approved.decision.code, "B2_ALLOW_AUTHORITATIVE_READ_ONLY_RECAP", "T12 B2 decision");
+  assert(approved.committed && committed === 1, "T12 reply failed to commit");
+  assertEquals(client.calls.filter((x) => x.table === "conversation_memory_state").length, 2,
+    "Memory must be re-read before reply commit");
+  const evaluate = (draft: string, change: Record<string, unknown> = {}) =>
+    evaluateB2BeforeCommit({ proposed_response: draft, persistence_kind: "ai_reply",
+      snapshot: { ...snapshot(state, 9), commerce_state_source_message_id: prior },
+      metadata, trusted_read_only_recap: proof, ...change });
+  for (const [label, draft] of [
+    ["stale_100", reply.replace("110平方呎", "100平方呎")],
+    ["fridge_revival", `${reply} 雪櫃而家仍要換。`],
+    ["false_order", `${reply} 訂單已確認。`],
+    ["fake_update", `${reply} 已更新記錄。`],
+  ]) assert(evaluate(draft).decision !== "allow", label);
+  for (const [label, overrides] of [
+    ["wrong_tenant", { trusted_read_only_recap: { ...proof, company_id: "other" } }],
+    ["wrong_conversation", { trusted_read_only_recap: { ...proof, conversation_id: "other" } }],
+    ["wrong_source", { trusted_read_only_recap: { ...proof, source_message_id: "other" } }],
+    ["response_substitution", { metadata: { ...metadata, recap_response_hash: "other" } }],
+    ["wrong_revision", { trusted_read_only_recap: { ...proof, commerce_revision: 8 } }],
+  ] as const) assert(evaluate(reply, overrides).decision !== "allow", label);
+  for (const [label, options] of [
+    ["newer_commerce", { secondRevision: 10 }],
+    ["newer_memory", { secondMemoryRevision: memory.memory_revision + 1 }],
+    ["other_tenant", { conversationCompanyId: "other" }],
+    ["other_source", { sourceRole: "assistant" }],
+  ] as const) {
+    let writes = 0;
+    const verdict = await executeB2PersistenceGate({
+      client: new MockClient({ state, revision: 9, stateSourceId: prior, memoryRow,
+        sourceContent: "而家我冷氣要求係點？", ...options }),
+      conversation_id: CONVERSATION_ID, source_message_id: SOURCE_ID,
+      proposed_response: reply, persistence_kind: "ai_reply", metadata,
+      trusted_read_only_recap: proof, expected_commerce_state_revision: 9,
+      commit: async () => { writes++; return "forbidden"; },
+    });
+    assert(!verdict.committed && writes === 0, `${label}: stale recap committed`);
+  }
+  console.log("W23-T12|READ_ONLY|Commerce=9→9|Memory=11→11|B2_ALLOW_AUTHORITATIVE_READ_ONLY_RECAP|negative=PASS");
 });
 
 Deno.test("B2 aggregate readback proves NO_SEMANTIC_CHANGE without a mutation receipt", () => {

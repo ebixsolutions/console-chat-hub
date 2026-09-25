@@ -25,8 +25,9 @@ import {
   verifyEntityLifecycleTransition,
 } from "./b2-journey-progress-contract.ts";
 import { roomSizeCorrection } from "./conversation-long-memory.ts";
+import { isCanonicalConversationMemory, type CanonicalConversationMemory } from "./conversation-long-memory.ts";
 import { activeCustomerGoal } from "./customer-journey-orchestration.ts";
-import { sameCanonicalJson } from "./canonical-json.ts";
+import { canonicalJson, sameCanonicalJson } from "./canonical-json.ts";
 
 export type B2DecisionKind = "allow" | "block" | "indeterminate";
 
@@ -71,6 +72,87 @@ export interface B2EvaluationInput {
   trusted_journey_progress?: B2TrustedJourneyProgress | null;
   trusted_correction_commit?: B2TrustedCorrectionCommit | null;
   trusted_lifecycle_commit?: B2TrustedLifecycleCommit | null;
+  trusted_read_only_recap?: B2TrustedReadOnlyRecap | null;
+}
+
+export interface B2TrustedReadOnlyRecap {
+  contract: "current-state-read-only-recap-v1";
+  conversation_id: string;
+  company_id: string;
+  source_message_id: string;
+  commerce_revision: number;
+  commerce_hash: string;
+  commerce_state: ConversationCommerceState;
+  memory_revision: number;
+  memory_hash: string;
+  memory_source_message_id: string;
+  memory: CanonicalConversationMemory;
+  response_hash: string;
+  reply: string;
+}
+
+async function hashRecapValue(value: string): Promise<string> {
+  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+export async function buildB2ReadOnlyRecapProof(input: Omit<B2TrustedReadOnlyRecap,
+  "contract" | "commerce_hash" | "response_hash">): Promise<B2TrustedReadOnlyRecap> {
+  return {
+    ...input, contract: "current-state-read-only-recap-v1",
+    commerce_hash: await hashRecapValue(canonicalJson(input.commerce_state)),
+    response_hash: await hashRecapValue(input.reply),
+  };
+}
+
+function isTrustedReadOnlyRecap(input: B2EvaluationInput, draft: string): boolean {
+  const p = input.trusted_read_only_recap;
+  const m = input.metadata;
+  const s = input.snapshot;
+  if (!p || !m || p.contract !== "current-state-read-only-recap-v1" ||
+    input.persistence_kind !== "ai_reply" || m.response_route !== "canonical_memory_recall" ||
+    m.recall_fact_type !== "summary" || m.recap_read_only !== true ||
+    m.commerce_state_persist_result !== "read_only" ||
+    m.commerce_state_persistence_classification !== "NO_SEMANTIC_CHANGE" ||
+    m.recap_commerce_hash !== p.commerce_hash ||
+    m.recap_memory_hash !== p.memory_hash ||
+    m.recap_response_hash !== p.response_hash ||
+    m.conversation_memory_revision !== p.memory_revision ||
+    p.conversation_id !== s.conversation_id || p.company_id !== s.company_id ||
+    p.source_message_id !== s.source_message_id ||
+    p.commerce_revision !== s.commerce_state_revision ||
+    !sameCanonicalJson(p.commerce_state, s.state) ||
+    !isCanonicalConversationMemory(p.memory) ||
+    p.memory.conversation_id !== s.conversation_id ||
+    p.memory.company_id !== s.company_id ||
+    p.memory.source_message_id !== p.memory_source_message_id ||
+    p.memory.memory_revision !== p.memory_revision ||
+    p.memory.commerce_state_revision !== s.commerce_state_revision ||
+    clean(p.reply) !== draft ||
+    /(?:已更新|已更正|已記低|已記錄|saved|updated|changed|recorded)/i.test(draft)) return false;
+  const active = s.state.entities.filter((e) => e.status !== "cancelled" && e.status !== "deferred");
+  if (!active.length || !active.every((e) =>
+    p.memory.active_entities.some((me) => me.entity_id === e.entity_id && me.quantity === e.quantity)
+  )) return false;
+  const inactive = s.state.entities.filter((e) => e.status === "cancelled" || e.status === "deferred");
+  if (inactive.some((e) => new RegExp(`(?:${e.category === "refrigerator" ? "雪櫃|冰箱|refrigerator" : e.category}).{0,18}(?:而家|現在|目前|current|active|繼續處理|仍要)`, "i").test(draft))) return false;
+  for (const entity of active) {
+    const sizes = entity.attributes.room_sizes;
+    if (sizes && typeof sizes === "object" && !Array.isArray(sizes)) {
+      for (const value of Object.values(sizes)) {
+        if (typeof value === "string" && !draft.includes(value)) return false;
+      }
+    }
+    if (entity.quantity > 0 && /(?:共|total|數量|数量)/i.test(draft) &&
+      !new RegExp(`(?:共|total|數量|数量).{0,10}(?:${entity.quantity}|${["零", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十"][entity.quantity] ?? "(?!)"})\\s*(?:部|台|units?)`, "i").test(draft)) return false;
+  }
+  for (const fact of p.memory.cancelled_or_superseded) {
+    if (fact.key !== "superseded_room_size") continue;
+    const old = fact.value && typeof fact.value === "object" &&
+      (fact.value as Record<string, unknown>).value;
+    if (typeof old === "string" && draft.includes(old)) return false;
+  }
+  return true;
 }
 
 export interface B2TrustedTargetedClarification {
@@ -121,6 +203,7 @@ export interface B2PersistenceInput<T> {
   trusted_journey_progress?: B2TrustedJourneyProgress | null;
   trusted_correction_commit?: B2TrustedCorrectionCommit | null;
   trusted_lifecycle_commit?: B2TrustedLifecycleCommit | null;
+  trusted_read_only_recap?: B2TrustedReadOnlyRecap | null;
   expected_commerce_state_revision?: number | null;
   commit: (snapshot: B2CanonicalSnapshot) => Promise<T>;
 }
@@ -876,6 +959,8 @@ function trimCorrectionPart(value: string): string {
 
 function parseCorrection(value: string): CorrectionPair | null {
   const text = clean(value, 500);
+  const room = roomSizeCorrection(text);
+  if (room) return { previous: room.old_value, current: room.new_value };
   const address = parseAddressReplacementCorrection(text);
   if (address) {
     return { previous: address.previous ?? "", current: address.current };
@@ -954,7 +1039,14 @@ function evaluateCorrections(text: string, state: ConversationCommerceState): B2
   const candidate = lower(text);
   const previous = lower(parsed.previous);
   const current = lower(parsed.current);
-  if (previous && candidate.includes(previous) && !candidate.includes(current)) {
+  const priorAliases = previous.match(/^(\d+(?:\.\d+)?)平方呎$/)
+    ? [previous, previous.replace("平方呎", "呎"), previous.replace("平方呎", "平方尺")]
+    : [previous];
+  const currentAliases = current.match(/^(\d+(?:\.\d+)?)平方呎$/)
+    ? [current, current.replace("平方呎", "呎"), current.replace("平方呎", "平方尺")]
+    : [current];
+  if (previous && priorAliases.some((alias) => candidate.includes(alias)) &&
+    !currentAliases.some((alias) => candidate.includes(alias))) {
     return {
       decision: "block",
       code: "SUPERSEDED_VALUE_REUSED",
@@ -1036,6 +1128,9 @@ export function evaluateB2BeforeCommit(input: B2EvaluationInput): B2Decision {
     : null;
   if (kbPriceDecision?.decision === "block") return kbPriceDecision;
   const correctionDecision = evaluateCorrections(draft, state);
+  const trustedReadOnlyRecap = isTrustedReadOnlyRecap(input, draft);
+  if ((input.trusted_read_only_recap || input.metadata?.recap_read_only === true) &&
+    !trustedReadOnlyRecap) return { decision: "block", code: "UNPROVEN_READ_ONLY_RECAP" };
   const authoritativeNoSemanticChange =
     correctionDecision?.decision === "indeterminate" &&
     classifyB2AuthoritativePersistence(input) === "NO_SEMANTIC_CHANGE";
@@ -1055,15 +1150,17 @@ export function evaluateB2BeforeCommit(input: B2EvaluationInput): B2Decision {
     !trustedCorrection
   ) return { decision: "block", code: "UNPROVEN_CORRECTION_COMMIT" };
   return (
-    (authoritativeNoSemanticChange || trustedLifecycle ? null : correctionDecision) ??
+    (authoritativeNoSemanticChange || trustedLifecycle || trustedReadOnlyRecap ? null : correctionDecision) ??
     evaluateCancellation(draft, state) ??
     (kbPriceDecision ? null : evaluateQuoteReality(draft, state, input)) ??
     evaluateTransactionReality(draft, input.persistence_kind, state) ??
-    (trustedTargetedClarification || trustedJourneyProgress || trustedCorrection || trustedLifecycle
+    (trustedTargetedClarification || trustedJourneyProgress || trustedCorrection || trustedLifecycle || trustedReadOnlyRecap
       ? null
       : evaluateKnownContext(draft, state)) ?? {
       decision: "allow",
-      code: kbPriceDecision?.code ?? (trustedLifecycle
+      code: kbPriceDecision?.code ?? (trustedReadOnlyRecap
+        ? "B2_ALLOW_AUTHORITATIVE_READ_ONLY_RECAP"
+        : trustedLifecycle
         ? "B2_ALLOW_COMMITTED_SCOPED_LIFECYCLE"
         : trustedCorrection
         ? "B2_ALLOW_COMMITTED_SCOPED_CORRECTION"
@@ -1251,7 +1348,7 @@ async function loadB2Snapshot(
 }
 
 function stableSnapshotFingerprint(snapshot: B2CanonicalSnapshot): string {
-  return JSON.stringify({
+  return canonicalJson({
     conversation_id: snapshot.conversation_id,
     company_id: snapshot.company_id,
     source_message_id: snapshot.source_message_id,
@@ -1260,6 +1357,38 @@ function stableSnapshotFingerprint(snapshot: B2CanonicalSnapshot): string {
     commerce_state_source_message_id: snapshot.commerce_state_source_message_id,
     state: snapshot.state,
   });
+}
+
+async function validateReadOnlyRecapReadback(
+  client: B2DatabaseClient,
+  snapshot: B2CanonicalSnapshot,
+  proof: B2TrustedReadOnlyRecap,
+  response: string,
+): Promise<B2Decision | null> {
+  if (proof.conversation_id !== snapshot.conversation_id ||
+    proof.company_id !== snapshot.company_id ||
+    proof.source_message_id !== snapshot.source_message_id ||
+    proof.commerce_revision !== snapshot.commerce_state_revision ||
+    proof.commerce_hash !== await hashRecapValue(canonicalJson(snapshot.state)) ||
+    proof.response_hash !== await hashRecapValue(response)) {
+    return { decision: "block", code: "READ_ONLY_RECAP_SCOPE_OR_HASH_MISMATCH" };
+  }
+  const result = await client.from("conversation_memory_state")
+    .select("conversation_id,company_id,revision,source_message_id,commerce_state_revision,memory,memory_hash")
+    .eq("conversation_id", snapshot.conversation_id)
+    .eq("company_id", snapshot.company_id).maybeSingle();
+  const row = result.data as Record<string, unknown> | null;
+  if (result.error || !row || !isCanonicalConversationMemory(row.memory) ||
+    row.conversation_id !== snapshot.conversation_id ||
+    row.company_id !== snapshot.company_id ||
+    row.source_message_id !== proof.memory_source_message_id ||
+    Number(row.revision) !== proof.memory_revision ||
+    row.memory_hash !== proof.memory_hash ||
+    Number(row.commerce_state_revision) !== snapshot.commerce_state_revision ||
+    !sameCanonicalJson(row.memory, proof.memory)) {
+    return { decision: "indeterminate", code: "READ_ONLY_RECAP_MEMORY_CHANGED" };
+  }
+  return null;
 }
 
 /**
@@ -1292,6 +1421,14 @@ export async function executeB2PersistenceGate<T>(
     };
   }
 
+  if (input.trusted_read_only_recap) {
+    const invalid = await validateReadOnlyRecapReadback(
+      input.client, initial.snapshot, input.trusted_read_only_recap,
+      input.proposed_response,
+    );
+    if (invalid) return { committed: false, decision: invalid, snapshot: initial.snapshot };
+  }
+
   let decision: B2Decision;
   try {
     decision = evaluateB2BeforeCommit({
@@ -1304,6 +1441,7 @@ export async function executeB2PersistenceGate<T>(
       trusted_journey_progress: input.trusted_journey_progress,
       trusted_correction_commit: input.trusted_correction_commit,
       trusted_lifecycle_commit: input.trusted_lifecycle_commit,
+      trusted_read_only_recap: input.trusted_read_only_recap,
     });
   } catch (error) {
     decision = {
@@ -1335,6 +1473,14 @@ export async function executeB2PersistenceGate<T>(
         code: "COMMERCE_CONTEXT_CHANGED_BEFORE_COMMIT",
       },
     };
+  }
+
+  if (input.trusted_read_only_recap) {
+    const invalid = await validateReadOnlyRecapReadback(
+      input.client, revalidated.snapshot, input.trusted_read_only_recap,
+      input.proposed_response,
+    );
+    if (invalid) return { committed: false, decision: invalid, snapshot: revalidated.snapshot };
   }
 
   const value = await input.commit(revalidated.snapshot);

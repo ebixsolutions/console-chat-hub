@@ -872,9 +872,16 @@ Deno.test("W19 sequential T1-T16 source replay preserves customer journey, KB an
   console.log(`W21-T11|${t11.route}|${t11.reply}|revision=${f.snapshot().revision}|entities=${afterCancellation.entities.length}|quantity=${ac.quantity}|B2=${t11B2().code}`);
 
   const t12 = "而家我冷氣要求係點？";
-  const allTurns = [...turns, t12];
-  const memory = buildCanonicalConversationMemory({ conversation_id: "conversation", company_id: "company", source_message_id: "source-t12", commerce_state_revision: f.snapshot().revision, commerce_state: afterCancellation, newest_first: allTurns.slice().reverse().map((content, index) => ({ id: `history-${index}`, role: "visitor", content })), visitor_turn_count: allTurns.length, source_created_at: "2026-09-24T00:00:00.000Z", next_memory_revision: allTurns.length });
-  const recall = prepareConversationRecall({ conversation_id: "conversation", company_id: "company", source_message_id: "source-t12", question: t12, memory, commerce: { conversation_id: "conversation", company_id: "company", source_message_id: "source-t11", revision: f.snapshot().revision, state: afterCancellation }, recent_questions: turns.slice().reverse() }, "zh-TW");
+  const revisionBeforeRecap = f.snapshot().revision;
+  const stateBeforeRecap = structuredClone(f.snapshot().state);
+  const recapOutcome = await ask(t12);
+  assert(recapOutcome.reason === "read_only_current_requirements_recap" &&
+    recapOutcome.persist_result === "read_only" &&
+    f.snapshot().revision === revisionBeforeRecap &&
+    JSON.stringify(f.snapshot().state) === JSON.stringify(stateBeforeRecap),
+    `T12_FALSE_MUTATION:${JSON.stringify(recapOutcome)}`);
+  const memory = t11Memory;
+  const recall = prepareConversationRecall({ conversation_id: "conversation", company_id: "company", source_message_id: "source-t12", question: t12, memory, commerce: { conversation_id: "conversation", company_id: "company", source_message_id: t11Proof.source_message_id, revision: f.snapshot().revision, state: afterCancellation }, recent_questions: turns.slice(0,-1).reverse() }, "zh-TW");
   assert(recall.decision.handled && recall.reply && ["80平方呎", "110平方呎", "180平方呎", "窗口", "西斜", "共三部", "CW-SUL70BA"].every((item) => recall.reply!.includes(item)) && !recall.reply.includes("100平方呎") && !recall.reply.includes("雪櫃") && !recall.reply.includes("refrigerator:unscoped"), JSON.stringify(recall));
   assert(afterCancellation.conversion.order_status === "none" && afterCancellation.conversion.payment_status === "none" && afterCancellation.conversion.quotation_status === "none" && afterCancellation.quotes.length === 0, "transaction_promoted");
   const kbContent = "工作表：商品設定_20260813 162932 ID: 7944 狀態: 開啟 商品型號: CW-SUL70BA 商品圖片: 39 成本: 3750 銷售價: 5680 特價: 4038 匹數 (多聯分體式): 29 品牌: PANASONIC 樂聲牌 附加項目: 否 新增日期: 46247 標籤: 32 描述: PANASONIC 樂聲 CW-SUL70BA 3/4匹Inverter LITE變頻式淨冷窗口機，採用香港專利左出風設計、R32製冷劑及四合一抗菌過濾網，製冷能力7,400BTU/h，設左右自動送風、睡眠模式及獨立抽濕，獲香港1級能源標籤，提供3年全機及5年壓縮機保用。 功能: 變頻 淨冷 匹數: 3/4匹 氣體: 36 風數: 42";

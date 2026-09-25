@@ -35,6 +35,7 @@ import {
   type CommerceCalculationTerm,
   type CommerceDimensionAttribute,
   inferCommerceDimensionAttribute,
+  isCurrentRequirementsRecap,
   isReadOnlyCurrentStateAggregateQuery,
   isReadOnlyMemoryOrCurrentStateRecall,
   parseCommerceDimensionMeasurement,
@@ -915,6 +916,7 @@ export function isReadOnlyCurrentStateQuery(
   text: string,
   semanticFrame?: CommerceSemanticFrame | null,
 ): boolean {
+  if (isCurrentRequirementsRecap(text)) return true;
   if (isReadOnlyCurrentStateAggregateQuery(text, semanticFrame)) return true;
   if (isReadOnlyMemoryOrCurrentStateRecall(text, semanticFrame)) return true;
   if (!isReadOnlyCommerceQuestion(text, semanticFrame)) return false;
@@ -2455,6 +2457,11 @@ export async function runCommerceStateRuntime(
   // inference, so ambiguity is read-only and a unique update can win the
   // shared reply precedence without a phrase-specific generate-reply branch.
   const contextualBefore = await loadCommerceState(db, input.conversation_id);
+  if (isCurrentRequirementsRecap(text)) {
+    return { authority: "CONVERSATION_STATE", reply: null,
+      revision: contextualBefore.revision, persist_result: "read_only",
+      reason: "read_only_current_requirements_recap", route: "commerce_state_answer" };
+  }
   if (resolveEntityLifecyclePlan(text, contextualBefore.state).kind === "ambiguous") {
     return { authority: "CONVERSATION_STATE", reply: language === "en"
       ? "Which product should I pause? Please name the product category."

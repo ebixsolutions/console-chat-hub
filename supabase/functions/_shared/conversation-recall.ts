@@ -3,7 +3,7 @@ import type {
   CommerceEntity,
   ConversationCommerceState,
 } from "./commerce-state-contract.ts";
-import { isReadOnlyMemoryOrCurrentStateRecall } from "./commerce-state-authority.ts";
+import { isCurrentRequirementsRecap, isReadOnlyMemoryOrCurrentStateRecall } from "./commerce-state-authority.ts";
 import type { CanonicalConversationMemory } from "./conversation-long-memory.ts";
 
 export type RecallFact =
@@ -1222,7 +1222,11 @@ export function resolveConversationRecall(
     (m.version !== "conversation-memory-1.0.0" ||
       m.company_id !== input.company_id ||
       m.conversation_id !== input.conversation_id ||
-      m.source_message_id !== input.source_message_id ||
+      (m.source_message_id !== input.source_message_id &&
+        !(isCurrentRequirementsRecap(input.question) && c &&
+          m.source_message_id === c.source_message_id &&
+          m.source_message_id !== input.source_message_id &&
+          m.commerce_state_revision === c.revision)) ||
       !Number.isInteger(m.memory_revision) || m.memory_revision < 1)
   ) return fail("AMBIGUOUS", "MEMORY_SCOPE_OR_SOURCE_MISMATCH", facts);
   if (
