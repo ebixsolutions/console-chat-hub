@@ -213,6 +213,14 @@ function retainedRoomSizes(text: string): Array<{
   return facts;
 }
 
+function roomSizeCorrection(text: string): { label: string; old_value: string; new_value: string } | null {
+  const match = text.normalize("NFKC").match(
+    /([^，,。;；]{0,20}?(?:客廳|客厅|細房|细房|大房|睡房|房間|房间|living\s+room|bedroom|room))[^。!?！？]{0,32}?(?:唔係|不是|並非|并非|not)\s*(\d+(?:\.\d+)?)\s*(?:平方呎|平方尺|sq\s*ft|sqft|呎|尺)[^。!?！？]{0,24}?(?:係|是|改為|改为|更正為|更正为|to)\s*(\d+(?:\.\d+)?)\s*(?:平方呎|平方尺|sq\s*ft|sqft|呎|尺)/iu,
+  );
+  if (!match) return null;
+  return { label: match[1].trim(), old_value: `${match[2]}平方呎`, new_value: `${match[3]}平方呎` };
+}
+
 /** Deterministic customer-owned C3 facts, projected oldest-to-newest. */
 function retainedCustomerFacts(rows: MemoryHistoryRow[]): {
   current: ConversationMemoryFact[];
@@ -225,6 +233,7 @@ function retainedCustomerFacts(rows: MemoryHistoryRow[]): {
   const add = (target: ConversationMemoryFact[], key: string, value: unknown, row: MemoryHistoryRow, entity_id?: string | null, region?: string | null) =>
     target.push({ key, value, authority: target === historical ? "historical" : "customer", source_message_id: clean(row.id, 80) || null, entity_id: entity_id ?? null, region: region ?? null });
   let currentAddress: ConversationMemoryFact | null = null;
+  let currentRoomSizes: ConversationMemoryFact | null = null;
 
   for (const row of [...rows].reverse()) {
     if (!CUSTOMER_ROLES.has(String(row.role ?? "").toLowerCase())) continue;
@@ -271,8 +280,27 @@ function retainedCustomerFacts(rows: MemoryHistoryRow[]): {
       };
       current.push(currentAddress);
     }
+    const correction = roomSizeCorrection(text);
     const roomFacts = retainedRoomSizes(text);
-    if (roomFacts.length) add(current, "room_size", roomFacts, row);
+    if (correction && currentRoomSizes && Array.isArray(currentRoomSizes.value)) {
+      const previous = currentRoomSizes.value as Array<{ member_id: string; group: "room" | "living_room"; label: string; value: string }>;
+      const correctedIndex = previous.findIndex((fact) => fact.label.normalize("NFKC").includes(correction.label) || correction.label.includes(fact.label.normalize("NFKC")) || fact.value === correction.old_value);
+      if (correctedIndex >= 0) {
+        const next = previous.map((fact, index) => index === correctedIndex ? { ...fact, value: correction.new_value } : { ...fact });
+        superseded.push({ key: "superseded_room_size", value: { label: previous[correctedIndex].label, value: previous[correctedIndex].value }, authority: "customer", source_message_id: clean(row.id, 80) || null, entity_id: null, region });
+        const currentIndex = current.indexOf(currentRoomSizes);
+        if (currentIndex >= 0) current.splice(currentIndex, 1);
+        currentRoomSizes = { key: "room_size", value: next, authority: "customer", source_message_id: clean(row.id, 80) || null, entity_id: null, region };
+        current.push(currentRoomSizes);
+      }
+    } else if (roomFacts.length) {
+      if (currentRoomSizes) {
+        const currentIndex = current.indexOf(currentRoomSizes);
+        if (currentIndex >= 0) current.splice(currentIndex, 1);
+      }
+      currentRoomSizes = { key: "room_size", value: roomFacts, authority: "customer", source_message_id: clean(row.id, 80) || null, entity_id: null, region };
+      current.push(currentRoomSizes);
+    }
     const horsepowerFacts = [...text.matchAll(/(?:([^，,。]{1,16}?(?:房|客廳|客厅|型號|型号|model))\s*(?:要|是|係|為|为)?\s*)?(\d+(?:\.\d+)?)\s*匹/gi)].map((m) => `${m[1]?.trim() ? `${m[1].trim()} ` : ""}${m[2]}匹`);
     if (horsepowerFacts.length) add(current, "horsepower", horsepowerFacts, row);
     if (/(?:品牌)\s*(?:不是|並非|并非|唔係)\s*(?:必須|必须)|(?:品牌不限|不指定品牌|no\s+brand\s+(?:is\s+)?(?:required|mandatory))|(?:[\p{L}\p{N}-]+[、,，]){1,}[\p{L}\p{N}-]+(?:都得|均可|皆可|any\s+(?:is|are)\s+fine)/iu.test(text)) add(current, "brand_required", false, row);

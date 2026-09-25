@@ -4261,7 +4261,10 @@ async function orchestrationGenerateReply(
     ((_pr5HistoryRows ?? []) as MemoryHistoryRow[]).map((row) => ({
       role: String(row.role ?? ""),
       content: String(row.content ?? ""),
+      conversation_id,
+      company_id: _criticalE2ExpectedTenantId ?? "",
     })),
+    _criticalE2ExpectedTenantId ? { conversation_id, company_id: _criticalE2ExpectedTenantId } : undefined,
   );
   const _effectiveNaturalCustomerIntent: NaturalCustomerIntent =
     _productFollowUpArbitration.kind === "resolved" ||
@@ -4287,7 +4290,10 @@ async function orchestrationGenerateReply(
   let _a3SemanticFrame: CommerceSemanticFrame | null = null;
   if (
     _criticalE2ExpectedTenantId &&
-    !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent)
+    (!requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent) ||
+      (_productFollowUpArbitration.kind === "resolved" &&
+        _productFollowUpArbitration.resolution_strategy === "PER_TOPIC_REFERENT_HISTORY" &&
+        Boolean(_productFollowUpArbitration.resolved_topic)))
   ) {
     try {
       const semanticResult = await interpretCommerceSemantics({
@@ -4319,7 +4325,10 @@ async function orchestrationGenerateReply(
   let _c3CommerceSnapshot: RecallCommerceSnapshot | null = null;
   if (
     _criticalE2ExpectedTenantId &&
-    !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent)
+    (!requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent) ||
+      (_productFollowUpArbitration.kind === "resolved" &&
+        _productFollowUpArbitration.resolution_strategy === "PER_TOPIC_REFERENT_HISTORY" &&
+        Boolean(_productFollowUpArbitration.resolved_topic)))
   ) {
     try {
       _a3Commerce = await runCommerceStateRuntime(
@@ -4340,6 +4349,16 @@ async function orchestrationGenerateReply(
             content: String((row as { content?: unknown }).content ?? ""),
           })),
           semantic_frame: _a3SemanticFrame,
+          trusted_product_topic_focus:
+            _productFollowUpArbitration.kind === "resolved" &&
+              _productFollowUpArbitration.resolution_strategy === "PER_TOPIC_REFERENT_HISTORY" &&
+              _productFollowUpArbitration.resolved_topic
+              ? {
+                topic: _productFollowUpArbitration.resolved_topic,
+                product: _productFollowUpArbitration.intent.product,
+                resolution_strategy: "PER_TOPIC_REFERENT_HISTORY",
+              }
+              : null,
         },
       );
     } catch (commerceError) {
@@ -6041,6 +6060,8 @@ async function orchestrationGenerateReply(
                 attributes: _productFollowUpArbitration.intent.facts,
                 source_turn_offset:
                   _productFollowUpArbitration.source_turn_offset,
+                resolved_topic: _productFollowUpArbitration.resolved_topic,
+                resolution_strategy: _productFollowUpArbitration.resolution_strategy,
               }
               : null,
           ...(publicPriceProof ? { kb_fact_proof: publicPriceProof } : {}),

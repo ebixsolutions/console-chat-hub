@@ -585,6 +585,12 @@ Deno.test("C3 summary uses bounded structured projection", () => {
       !reply.includes("5600"),
   );
 });
+Deno.test("C3 Cantonese and English requirement-recap paraphrases use structured recall", () => {
+  for (const question of ["而家我冷氣要求係點？", "Can you recap my current air conditioner requirements?"]) {
+    const { reply } = answer(question);
+    assert(reply.includes("### Active Entities") && !reply.includes("washer-front"), `${question}:${reply}`);
+  }
+});
 Deno.test("C3 renderer never invents unsupported decision", () =>
   assert(
     renderConversationRecall({

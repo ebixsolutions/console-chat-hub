@@ -100,6 +100,12 @@ export interface CommerceRuntimeInput {
   occurred_at?: string | null;
   semantic_frame?: CommerceSemanticFrame | null;
   industry_identifier?: string | null;
+  /** Server-derived only: restores focus to one verified active topic. */
+  trusted_product_topic_focus?: {
+    topic: string;
+    product: string;
+    resolution_strategy: "PER_TOPIC_REFERENT_HISTORY";
+  } | null;
 }
 
 export interface CommerceRuntimeOutcome {
@@ -367,6 +373,23 @@ function semanticCategoryKeys(frame: CommerceSemanticFrame | null | undefined): 
 
 function explicitCategoryKeys(text: string): string[] {
   return [...new Set(detectCategories(text).map((category) => category.key))];
+}
+
+export function validateTrustedProductTopicFocus(
+  input: CommerceRuntimeInput,
+  state: ConversationCommerceState,
+): { valid: true } | { valid: false; reason: string } {
+  const focus = input.trusted_product_topic_focus;
+  if (!focus) return { valid: false, reason: "FOCUS_MISSING" };
+  if (focus.resolution_strategy !== "PER_TOPIC_REFERENT_HISTORY") return { valid: false, reason: "UNTRUSTED_RESOLUTION_STRATEGY" };
+  const explicitTopics = explicitCategoryKeys(input.text);
+  if (explicitTopics.length !== 1 || explicitTopics[0] !== focus.topic) return { valid: false, reason: "EXPLICIT_TOPIC_MISMATCH" };
+  const matchingActiveEntities = state.entities.filter((entity) => entity.category === focus.topic && entity.status !== "cancelled" && entity.status !== "deferred");
+  if (matchingActiveEntities.length !== 1) return { valid: false, reason: "ACTIVE_TOPIC_ENTITY_NOT_UNIQUE" };
+  const product = clean(focus.product).toUpperCase();
+  if (product.length < 5 || !/[A-Z]/.test(product) || !/\d/.test(product)) return { valid: false, reason: "INVALID_EXPLICIT_PRODUCT" };
+  if (!(input.history ?? []).some((turn) => clean(turn.content).toUpperCase().includes(product))) return { valid: false, reason: "PRODUCT_NOT_IN_SCOPED_HISTORY" };
+  return { valid: true };
 }
 
 function resolveAttributeQueryCategory(input: CommerceRuntimeInput): {
@@ -1280,6 +1303,11 @@ function deriveA3RuntimeEvents(
   const allocationBreakdown = correction && isAllocationBreakdown(text);
   const addressCorrection = parseAddressReplacementCorrection(text);
 
+  const trustedTopicFocus = input.trusted_product_topic_focus;
+  if (trustedTopicFocus && validateTrustedProductTopicFocus(input, previous).valid) {
+    events.push({ type: "SET_CONTEXT", topic: trustedTopicFocus.topic });
+  }
+
   // The semantic adapter owns entity mutation when its frame is authoritative,
   // but B2 still needs the customer's exact correction ledger. Record explicit
   // quantity corrections here so a later, superseded tentative statement cannot
@@ -1654,7 +1682,7 @@ export function reduceTurn(
   // state events. Persistence may still record this source-message revision,
   // but its canonical state payload remains byte-for-byte unchanged.
   const durableResearchTurn = establishesDurableProductResearch(input.text);
-  if (isReadOnlyCurrentStateQuery(input.text, input.semantic_frame) && !durableResearchTurn) {
+  if (isReadOnlyCurrentStateQuery(input.text, input.semantic_frame) && !durableResearchTurn && !input.trusted_product_topic_focus) {
     return previous;
   }
   const contextual = resolveContextualTurn(input, previous);
@@ -1665,7 +1693,7 @@ export function reduceTurn(
     ));
   }
   const journey = resolveCustomerJourneyTurn(input, previous);
-  const calculationTurn = detectExplicitCalculationRequest(input.text);
+  const calculationTurn = !input.trusted_product_topic_focus && detectExplicitCalculationRequest(input.text);
   const resolvedHints = calculationTurn
     ? []
     : materializeRoomOnlyReferenceHints(input.text, previous, rawHints, input.history ?? []);
@@ -2359,6 +2387,7 @@ export async function runCommerceStateRuntime(
   // this question rather than the customer turn that supplied the fact.
   if (
     isReadOnlyMemoryOrCurrentStateRecall(text, input.semantic_frame) &&
+    !input.trusted_product_topic_focus &&
     !detectExplicitCalculationRequest(text) &&
     contextualDecision.route !== "product_guidance" &&
     customerJourney.status !== "advance"

@@ -78,6 +78,16 @@ Deno.test("latest correction wins and remains bounded", () => {
   assert(memory.latest_corrections.length <= 8, "corrections unbounded");
 });
 
+Deno.test("room-size correction replaces the superseded value in current memory", () => {
+  const memory = build({ rows: [
+    { id: "correction", role: "visitor", content: "大房面積更正返，唔係100呎，係110呎。" },
+    { id: "sizes", role: "visitor", content: "細房大概80呎，大房100呎，個廳就180呎。" },
+  ] });
+  const roomSizes = memory.current_customer_facts.find((fact) => fact.key === "room_size");
+  assert(JSON.stringify(roomSizes?.value).includes("110平方呎") && !JSON.stringify(roomSizes?.value).includes("100平方呎"), JSON.stringify(roomSizes));
+  assert(memory.cancelled_or_superseded.some((fact) => fact.key === "superseded_room_size" && JSON.stringify(fact.value).includes("100平方呎")), JSON.stringify(memory.cancelled_or_superseded));
+});
+
 Deno.test("cancelled entity never remains active", () => {
   const state = commerce();
   state.entities.push({ entity_id: "a", category: "aircon", quantity: 3, status: "cancelled", attributes: {}, constraints: {}, provenance: { source_type: "customer" } });

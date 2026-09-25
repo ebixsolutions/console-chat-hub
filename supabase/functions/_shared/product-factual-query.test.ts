@@ -170,6 +170,21 @@ Deno.test("W15 T7 anaphoric current-price follow-up binds model, KB lineage and 
   );
 });
 
+Deno.test("W17 T9 restores AC referent after refrigerator and answers model plus horsepower", () => {
+  const arbitration = arbitrateAnaphoricProductFollowUp("講返頭先嗰部冷氣，細房研究緊邊個型號同幾多匹？", [
+    { role: "visitor", content: "另外雪櫃都想換，擺位闊度最多595mm，想搵雙門款。", conversation_id: "fixture-conversation", company_id: "fixture-company" },
+    { role: "visitor", content: "細房我見到 CW-SUL70BA，佢有咩功能、係幾多匹？80呎用落夠唔夠？", conversation_id: "fixture-conversation", company_id: "fixture-company" },
+    { role: "visitor", content: "屋企想換冷氣，兩間睡房加個客廳。", conversation_id: "fixture-conversation", company_id: "fixture-company" },
+  ], { conversation_id: "fixture-conversation", company_id: "fixture-company" });
+  assert(arbitration.kind === "resolved", JSON.stringify(arbitration));
+  const { intent, selection, answer, citation } = routeAndAnswer(arbitration.grounded_question);
+  assert(intent.kind === "product_factual_query" && intent.product === "CW-SUL70BA" && intent.facts.includes("model_info") && intent.facts.includes("horsepower"), JSON.stringify(intent));
+  assert(selection.ok && answer && citation, "T9:grounded_answer_missing");
+  assert(answer.reply === "現行產品資料列出 PANASONIC 樂聲牌 CW-SUL70BA：3/4匹Inverter LITE變頻式淨冷窗口機；功能：變頻 淨冷。 PANASONIC 樂聲牌 CW-SUL70BA 嘅匹數係 3/4匹。", answer.reply);
+  assert(arbitration.resolved_topic === "air_conditioner" && arbitration.resolution_strategy === "PER_TOPIC_REFERENT_HISTORY" && citation.citation_lineage.selected_document_id === documentId && citation.citation_lineage.evidence_chunk_ids[0] === chunkId, JSON.stringify({ arbitration, citation }));
+  console.log(`W17-T9|CURRENT_KB_REQUIRED|canonical_kb_direct_answer|${answer.reply}`);
+});
+
 // Full Content displayed by the tenant-scoped Knowledge panel for this model.
 // IDs below are fixture IDs: the test proves citation binding, not a live chunk ID.
 const content =

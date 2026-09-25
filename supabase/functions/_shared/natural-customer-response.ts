@@ -107,6 +107,13 @@ function productFactualIntent(
 export interface ProductFollowUpHistoryMessage {
   role: string;
   content: string;
+  conversation_id?: string;
+  company_id?: string;
+}
+
+export interface ProductFollowUpScope {
+  conversation_id: string;
+  company_id: string;
 }
 
 export type ProductFollowUpArbitration =
@@ -116,6 +123,10 @@ export type ProductFollowUpArbitration =
     intent: Extract<NaturalCustomerIntent, { kind: "product_factual_query" }>;
     grounded_question: string;
     source_turn_offset: number;
+    resolved_topic: string | null;
+    resolution_strategy:
+      | "RECENT_GLOBAL_REFERENT"
+      | "PER_TOPIC_REFERENT_HISTORY";
   }
   | {
     kind: "clarification";
@@ -132,6 +143,84 @@ const PRODUCT_CONTEXT_SWITCH =
 const INACTIVE_REFERENT =
   /(?:取消|唔要|不要|刪除|删除|暫緩|暂缓|遲啲先|迟点再|cancel(?:led)?|defer(?:red)?|no\s+longer|not\s+that)/iu;
 
+const PRODUCT_TOPIC_PATTERNS: ReadonlyArray<readonly [string, RegExp]> = [
+  ["air_conditioner", /(?:冷氣(?:機)?|冷气(?:机)?|空調|空调|air\s*conditioner|\bAC\b)/iu],
+  ["refrigerator", /(?:雪櫃|雪柜|冰箱|refrigerator|fridge)/iu],
+  ["washing_machine", /(?:洗衣機|洗衣机|washing\s*machine|washer)/iu],
+  ["television", /(?:電視|电视|television|\bTV\b)/iu],
+  ["oven", /(?:焗爐|焗炉|烤箱|oven)/iu],
+];
+
+function explicitProductTopics(text: string): string[] {
+  return PRODUCT_TOPIC_PATTERNS.filter(([, pattern]) => pattern.test(text))
+    .map(([topic]) => topic);
+}
+
+function inferredProductTopic(text: string): string | null {
+  const explicit = explicitProductTopics(text);
+  if (explicit.length === 1) return explicit[0];
+  if (/(?:幾多匹|几多匹|多少匹|幾匹|几匹|匹數|匹数|horsepower|\bHP\b|冷房|製冷|制冷)/iu.test(text)) {
+    return "air_conditioner";
+  }
+  return null;
+}
+
+function scopedProductHistory(
+  history: ProductFollowUpHistoryMessage[],
+  scope?: ProductFollowUpScope,
+): ProductFollowUpHistoryMessage[] {
+  if (!scope) return history;
+  return history.filter((row) =>
+    (row.conversation_id === undefined || row.conversation_id === scope.conversation_id) &&
+    (row.company_id === undefined || row.company_id === scope.company_id)
+  );
+}
+
+function arbitratePerTopicProductReferent(
+  normalized: string,
+  facts: ProductFactualFacet[],
+  visitors: ProductFollowUpHistoryMessage[],
+): ProductFollowUpArbitration | null {
+  const requestedTopics = explicitProductTopics(normalized);
+  if (!requestedTopics.length) return null;
+  if (requestedTopics.length !== 1) {
+    return { kind: "clarification", intent: { kind: "product_factual_clarification", product: null, candidates: [], reason: "MULTIPLE_REQUESTED_PRODUCT_TOPICS" } };
+  }
+  const requestedTopic = requestedTopics[0];
+  const activeByTopic = new Map<string, Map<string, number>>();
+  let focusTopic: string | null = null;
+  for (let offset = visitors.length - 1; offset >= 0; offset -= 1) {
+    const prior = visitors[offset].content.normalize("NFKC");
+    const explicitTopics = explicitProductTopics(prior);
+    if (explicitTopics.length === 1) focusTopic = explicitTopics[0];
+    else if (explicitTopics.length > 1) focusTopic = null;
+    const topic = explicitTopics.length === 1 ? explicitTopics[0] : inferredProductTopic(prior) ?? focusTopic;
+    if (!topic) continue;
+    const models = exactProductIdentifiers(prior);
+    const bucket = activeByTopic.get(topic) ?? new Map<string, number>();
+    activeByTopic.set(topic, bucket);
+    if (INACTIVE_REFERENT.test(prior)) {
+      if (models.length) for (const model of models) bucket.delete(model);
+      else if (explicitTopics.length === 1 && (PRODUCT_ANAPHOR.test(prior) || /(?:產品|产品|product|item)/iu.test(prior))) bucket.clear();
+      continue;
+    }
+    for (const model of models) bucket.set(model, offset);
+  }
+  const candidates = [...(activeByTopic.get(requestedTopic)?.keys() ?? [])];
+  if (candidates.length !== 1) {
+    return { kind: "clarification", intent: { kind: "product_factual_clarification", product: null, candidates, reason: candidates.length > 1 ? "MULTIPLE_COMPATIBLE_PRODUCT_REFERENTS_FOR_TOPIC" : "NO_ACTIVE_PRODUCT_REFERENT_FOR_REQUESTED_TOPIC" } };
+  }
+  const product = candidates[0];
+  return {
+    kind: "resolved",
+    intent: productFactualIntent(product, facts),
+    grounded_question: `${product} ${normalized}`,
+    source_turn_offset: activeByTopic.get(requestedTopic)?.get(product) ?? visitors.length,
+    resolved_topic: requestedTopic,
+    resolution_strategy: "PER_TOPIC_REFERENT_HISTORY",
+  };
+}
+
 /**
  * Resolve product identity and requested factual attribute independently.
  * This is deliberately read-only: it may bind a recent explicit model to a
@@ -141,6 +230,7 @@ const INACTIVE_REFERENT =
 export function arbitrateAnaphoricProductFollowUp(
   text: string,
   newestFirstHistory: ProductFollowUpHistoryMessage[],
+  scope?: ProductFollowUpScope,
 ): ProductFollowUpArbitration {
   const normalized = text.normalize("NFKC").trim();
   if (
@@ -153,9 +243,11 @@ export function arbitrateAnaphoricProductFollowUp(
     return { kind: "not_applicable" };
   }
 
-  const visitors = newestFirstHistory.filter((row) =>
+  const visitors = scopedProductHistory(newestFirstHistory, scope).filter((row) =>
     row.role === "visitor" && row.content.trim().length > 0
   ).slice(0, 8);
+  const perTopic = arbitratePerTopicProductReferent(normalized, facts, visitors);
+  if (perTopic) return perTopic;
   let focusBarrier = false;
   for (let offset = 0; offset < visitors.length; offset += 1) {
     const prior = visitors[offset].content.normalize("NFKC");
@@ -222,6 +314,8 @@ export function arbitrateAnaphoricProductFollowUp(
       intent: productFactualIntent(product, facts),
       grounded_question: `${product} ${normalized}`,
       source_turn_offset: offset,
+      resolved_topic: inferredProductTopic(prior),
+      resolution_strategy: "RECENT_GLOBAL_REFERENT",
     };
   }
   return {

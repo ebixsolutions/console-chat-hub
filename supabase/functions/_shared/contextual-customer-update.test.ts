@@ -12,9 +12,12 @@ import { reduceCommerceState } from "./commerce-state-reducer.ts";
 import {
   type CommerceStateDbClient,
   runCommerceStateRuntime,
+  validateTrustedProductTopicFocus,
 } from "./commerce-state-runtime.ts";
 import { resolveCanonicalCommerceResolution } from "./conversation-resolution-contract.ts";
 import { activeCustomerGoal } from "./customer-journey-orchestration.ts";
+import { prepareConversationRecall } from "./conversation-recall.ts";
+import { buildCanonicalConversationMemory } from "./conversation-long-memory.ts";
 import {
   arbitrateAnaphoricProductFollowUp,
   classifyNaturalCustomerIntent,
@@ -232,7 +235,7 @@ function fixture(initial = createEmptyConversationCommerceState()) {
     },
   };
   let turn = 0;
-  const ask = async (text: string, history: string[] = []) => {
+  const ask = async (text: string, history: string[] = [], trusted_product_topic_focus?: { topic: string; product: string; resolution_strategy: "PER_TOPIC_REFERENT_HISTORY" }) => {
     turn += 1;
     const result = await runCommerceStateRuntime(db, {
       company_id: "company",
@@ -241,6 +244,7 @@ function fixture(initial = createEmptyConversationCommerceState()) {
       text,
       language: "zh-TW",
       history: history.map((content) => ({ role: "visitor", content })),
+      trusted_product_topic_focus,
     });
     assert(result, "runtime_empty");
     return result;
@@ -653,6 +657,68 @@ Deno.test("W15 sequential T1-T8 preserves journey then prioritizes factual follo
     "W15-SEQUENTIAL|T1-T5=PASS|T6=features+horsepower+suitability|T7=CURRENT_KB_REQUIRED:price:CW-SUL70BA|T8=refrigerator_isolated",
   );
   console.log(`W15-T8|${t8.route}|${t8.reply}`);
+});
+
+Deno.test("W17 sequential T1-T12 restores topic referent and preserves scoped correction/cancellation", async () => {
+  const f = fixture();
+  const turns: string[] = [];
+  const ask = async (text: string) => { const outcome = await f.ask(text, turns.slice().reverse()); turns.push(text); return outcome; };
+  const t1 = await ask("Hello，屋企想換冷氣，兩間睡房加個客廳，應該點揀好？");
+  const t2 = await ask("細房大概80呎，大房100呎，個廳就180呎。");
+  const t3 = await ask("三個位都有窗口位，而家裝緊嘅都係窗口機。");
+  const t4 = await ask("另外個廳下晝西斜幾勁，揀機時要點考慮？");
+  const t5 = await ask("數量先記低：客廳一部，兩間房每間各一部。");
+  assert([t1, t2, t3, t4].every((turn) => turn.route === "product_guidance") && t5.route === "contextual_scoped_update" && t5.reason === "UNIQUE_COMPATIBLE_CONTEXT", JSON.stringify({ t1, t2, t3, t4, t5 }));
+
+  const t6 = "細房我見到 CW-SUL70BA，佢有咩功能、係幾多匹？80呎用落夠唔夠？";
+  const t6Intent = classifyNaturalCustomerIntent(t6); turns.push(t6);
+  assert(t6Intent.kind === "product_factual_query" && t6Intent.facts.join(",") === "features,horsepower,suitability", JSON.stringify(t6Intent));
+  const t7 = "咁呢部而家賣幾錢？";
+  const t7Result = arbitrateAnaphoricProductFollowUp(t7, turns.slice().reverse().map((content) => ({ role: "visitor", content }))); turns.push(t7);
+  assert(t7Result.kind === "resolved" && t7Result.intent.product === "CW-SUL70BA" && t7Result.intent.fact === "price", JSON.stringify(t7Result));
+
+  const t8 = await ask("另外雪櫃都想換，擺位闊度最多595mm，想搵雙門款。");
+  const switched = f.snapshot().state;
+  const acAfterSwitch = switched.entities.find((entity) => entity.category === "air_conditioner");
+  const fridgeAfterSwitch = switched.entities.find((entity) => entity.category === "refrigerator");
+  assert(t8.route === "product_guidance" && acAfterSwitch?.quantity === 3 && fridgeAfterSwitch?.quantity === 1 && !JSON.stringify(fridgeAfterSwitch).includes("180") && !JSON.stringify(fridgeAfterSwitch).includes("sunlight"), JSON.stringify({ t8, entities: switched.entities }));
+
+  const t9 = "講返頭先嗰部冷氣，細房研究緊邊個型號同幾多匹？";
+  const t9Result = arbitrateAnaphoricProductFollowUp(t9, turns.slice().reverse().map((content) => ({ role: "visitor", content, conversation_id: "conversation", company_id: "company" })), { conversation_id: "conversation", company_id: "company" });
+  const t9Focus = { topic: "air_conditioner", product: "CW-SUL70BA", resolution_strategy: "PER_TOPIC_REFERENT_HISTORY" as const };
+  const focusValidation = validateTrustedProductTopicFocus({ conversation_id: "conversation", company_id: "company", source_message_id: "source-t9", text: t9, language: "zh-TW", history: turns.slice().reverse().map((content) => ({ role: "visitor", content })), trusted_product_topic_focus: t9Focus }, f.snapshot().state);
+  assert(focusValidation.valid, JSON.stringify(focusValidation));
+  const t9State = await f.ask(t9, turns.slice().reverse(), t9Focus); turns.push(t9);
+  assert(t9Result.kind === "resolved" && t9Result.intent.product === "CW-SUL70BA" && t9Result.intent.facts.includes("model_info") && t9Result.intent.facts.includes("horsepower") && t9Result.resolved_topic === "air_conditioner" && f.snapshot().state.current_topic === "air_conditioner", JSON.stringify({ t9Result, t9State }));
+
+  const t10 = await ask("大房面積更正返，唔係100呎，係110呎。");
+  assert(t10.persist_result === "success" && f.snapshot().state.current_topic === "air_conditioner" && f.snapshot().state.latest_corrections.some((value) => value.includes("110呎") && value.includes("100呎")), JSON.stringify({ t10, state: f.snapshot().state }));
+  const t11 = await ask("雪櫃暫時唔買，先取消。");
+  const afterCancellation = f.snapshot().state;
+  const refrigerator = afterCancellation.entities.find((entity) => entity.category === "refrigerator");
+  const ac = afterCancellation.entities.find((entity) => entity.category === "air_conditioner");
+  assert((refrigerator?.status === "cancelled" || refrigerator?.status === "deferred") && ac?.quantity === 3, JSON.stringify({ t11, refrigerator, ac }));
+
+  const t12 = "而家我冷氣要求係點？";
+  const allTurns = [...turns, t12];
+  const memory = buildCanonicalConversationMemory({ conversation_id: "conversation", company_id: "company", source_message_id: "source-t12", commerce_state_revision: f.snapshot().revision, commerce_state: afterCancellation, newest_first: allTurns.slice().reverse().map((content, index) => ({ id: `history-${index}`, role: "visitor", content })), visitor_turn_count: allTurns.length, source_created_at: "2026-09-24T00:00:00.000Z", next_memory_revision: allTurns.length });
+  const recall = prepareConversationRecall({ conversation_id: "conversation", company_id: "company", source_message_id: "source-t12", question: t12, memory, commerce: { conversation_id: "conversation", company_id: "company", source_message_id: "source-t11", revision: f.snapshot().revision, state: afterCancellation } }, "zh-TW");
+  assert(recall.decision.handled && recall.reply && recall.reply.includes("110") && !recall.reply.includes("100平方呎") && !recall.reply.includes("refrigerator:unscoped"), JSON.stringify(recall));
+  assert(afterCancellation.conversion.order_status === "none" && afterCancellation.conversion.payment_status === "none" && afterCancellation.conversion.quotation_status === "none" && afterCancellation.quotes.length === 0, "transaction_promoted");
+  console.log(`W17-T1|${t1.route}|${t1.reply}`); console.log(`W17-T2|${t2.route}|${t2.reply}`); console.log(`W17-T3|${t3.route}|${t3.reply}`); console.log(`W17-T4|${t4.route}|${t4.reply}`); console.log(`W17-T5|${t5.route}|${t5.reply}`); console.log("W17-T6|CURRENT_KB_REQUIRED|features+horsepower+suitability"); console.log("W17-T7|CURRENT_KB_REQUIRED|price:CW-SUL70BA"); console.log(`W17-T8|${t8.route}|${t8.reply}`); console.log("W17-T9|CURRENT_KB_REQUIRED|CW-SUL70BA|horsepower+model_info"); console.log(`W17-T10|${t10.route}|${t10.reply}`); console.log(`W17-T11|${t11.route}|${t11.reply}`); console.log(`W17-T12|${recall.metadata.response_route}|${recall.reply}`);
+});
+
+Deno.test("W17 trusted topic restoration fails closed on entity, topic, history, and activity drift", () => {
+  const base = createEmptyConversationCommerceState();
+  base.entities.push({ entity_id: "air_conditioner:unscoped", category: "air_conditioner", quantity: 3, status: "researching", attributes: {}, constraints: {}, provenance: { source_type: "customer" } });
+  const input = { conversation_id: "conversation", company_id: "company", source_message_id: "source", text: "講返頭先嗰部冷氣，佢係幾多匹？", language: "zh-TW" as const, history: [{ role: "visitor", content: "我研究緊 CW-SUL70BA 冷氣。" }], trusted_product_topic_focus: { topic: "air_conditioner", product: "CW-SUL70BA", resolution_strategy: "PER_TOPIC_REFERENT_HISTORY" as const } };
+  assert(validateTrustedProductTopicFocus(input, base).valid, "valid_focus_rejected");
+  assert(!validateTrustedProductTopicFocus({ ...input, text: "講返雪櫃，佢幾多匹？" }, base).valid, "cross_entity_topic_accepted");
+  assert(!validateTrustedProductTopicFocus({ ...input, history: [] }, base).valid, "missing_history_accepted");
+  const competing = structuredClone(base); competing.entities.push({ ...competing.entities[0], entity_id: "air_conditioner:bedroom_1" });
+  assert(!validateTrustedProductTopicFocus(input, competing).valid, "competing_active_entity_accepted");
+  const cancelled = structuredClone(base); cancelled.entities[0].status = "cancelled";
+  assert(!validateTrustedProductTopicFocus(input, cancelled).valid, "cancelled_entity_revived");
 });
 
 Deno.test("W13 journey authorization fails closed across tenant, revision, entity, replay and transaction drift", async () => {

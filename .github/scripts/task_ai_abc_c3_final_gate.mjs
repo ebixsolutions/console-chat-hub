@@ -74,6 +74,7 @@ const files = {
   canonicalKbDirectAnswerTest: "supabase/functions/_shared/canonical-kb-direct-answer.test.ts",
   canonicalKbRetrievalTest: "supabase/functions/_shared/kb-canonical-retrieval.test.ts",
   productFactualQueryTest: "supabase/functions/_shared/product-factual-query.test.ts",
+  productReferentHistoryTest: "supabase/functions/_shared/product-referent-history.test.ts",
   productFollowUpArbitrationTest:
     "supabase/functions/_shared/product-follow-up-arbitration.test.ts",
   kbClient: "supabase/functions/_shared/kb-client.ts",
@@ -219,7 +220,7 @@ const authorizedTargetedRepairHashes = new Map([
   ],
   [
     "supabase/functions/_shared/commerce-state-runtime-base.ts",
-    "6b39675a8bf59579a3c68aabdb6273af1c339bfdb86e0940b4a4cf15edd7bb7d",
+    "e9c2a521a473fe0da6193b4076796ac03e5c783eeb96762093edea2583da01ba",
   ],
   [
     "supabase/functions/_shared/pre-send-conversion-supervisor.ts",
@@ -628,6 +629,7 @@ runDeno([
   files.contextualCustomerUpdateTest,
   files.customerJourneyOrchestrationTest,
   files.productFactualQueryTest,
+  files.productReferentHistoryTest,
   files.productFollowUpArbitrationTest,
 ]);
 runDeno(["run", "--no-lock", "--allow-read", files.canonical103Replay]);

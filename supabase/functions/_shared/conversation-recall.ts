@@ -210,7 +210,17 @@ const FIELDS: Partial<Record<RecallFact, string[]>> = {
     "总结",
     "整理需求",
     "目前需求",
+    "而家要求",
+    "現在要求",
+    "要求係點",
+    "要求是什麼",
+    "需求係點",
+    "需求是什么",
     "current requirements",
+    "what are my requirements",
+    "recap my requirements",
+    "requirements recap",
+    "recap",
     "分開說明",
     "分开说明",
   ],
@@ -1342,20 +1352,27 @@ export function resolveConversationRecall(
     }
     if (f === "summary") {
       if (!m) return fail("AMBIGUOUS", "MEMORY_UNAVAILABLE", facts);
+      const rawSummaryEntities = c ? (selected.length ? selected.filter((entity) => isCurrentEntity(entity)) : c.state.entities.filter((entity) => isCurrentEntity(entity))) : [];
+      const aggregateCategories = new Set(rawSummaryEntities.filter((entity) => entity.entity_id.endsWith(":unscoped")).map((entity) => entity.category));
+      const summaryEntities = rawSummaryEntities.filter((entity) => entity.entity_id.endsWith(":unscoped") || !aggregateCategories.has(entity.category));
+      const transaction = c ? {
+        funnel_stage: c.state.conversion.funnel_stage,
+        quotation_status: c.state.conversion.quotation_status,
+        order_status: c.state.conversion.order_status,
+        payment_status: c.state.conversion.payment_status,
+      } : m.transaction_summary;
       evidence.push({
         fact_type: f,
         state_path: "current_memory_projection",
         value: {
           goal: m.current_goal,
           entities: c
-            ? c.state.entities.filter((e) =>
-              !["cancelled", "deferred"].includes(e.status)
-            ).map((e) => ({ entity_id: e.entity_id, quantity: e.quantity }))
+            ? summaryEntities.map((e) => ({ entity_id: e.entity_id, quantity: e.quantity }))
             : m.active_entities.map((e) => ({
               entity_id: e.entity_id,
               quantity: e.quantity,
             })),
-          transaction: c ? c.state.conversion : m.transaction_summary,
+          transaction,
           preferences: m.customer_preferences,
           constraints: m.active_constraints,
           regions: m.current_regions,
