@@ -614,6 +614,7 @@ for (
 run("git", ["diff", "--check", "origin/main...HEAD"]);
 runDeno(["test", "--no-lock", files.unit, files.terminalTest]);
 runDeno(["test", "--no-lock", "--allow-read", "supabase/functions/_shared/revision-bound-reply.test.ts"]);
+runDeno(["test", "--no-lock", "--allow-read", "supabase/functions/_shared/t12-round2-production-shaped.test.ts"]);
 runDeno(["test", "--no-lock", files.deterministicEngineTest]);
 runDeno(["test", "--no-lock", files.currentFactEvidenceTest]);
 runDeno([

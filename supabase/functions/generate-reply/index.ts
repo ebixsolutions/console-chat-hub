@@ -148,7 +148,7 @@ import {
   resolvePositiveRecoveryAcknowledgement,
 } from "../_shared/emotion-reply-strategy.ts";
 import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
-import { bindAuthorizedReply, resumeCommittedLifecycleReply } from "../_shared/revision-bound-reply.ts";
+import { bindAuthorizedReply, hasUnresolvedLifecycleReplyForSource, resumeCommittedLifecycleReply } from "../_shared/revision-bound-reply.ts";
 import {
   type CommerceRuntimeOutcome,
   type CommerceStateDbClient,
@@ -4520,7 +4520,6 @@ async function orchestrationGenerateReply(
   // If Commerce and Memory already committed this exact source on a prior
   // attempt, reuse their bounded server-derived receipt. Never run a second
   // lifecycle mutation and never authorize against a newer revision.
-  const _pendingLifecycle = _c3Memory?.pending_lifecycle_reply;
   const _resumableLifecycle = !_a3Commerce?.trusted_lifecycle_commit
     ? resumeCommittedLifecycleReply({
       conversation_id, company_id: _criticalE2ExpectedTenantId ?? "",
@@ -4539,14 +4538,19 @@ async function orchestrationGenerateReply(
       trusted_lifecycle_commit: _resumableLifecycle,
     };
   }
-  if ((_pendingLifecycle && !_a3Commerce?.trusted_lifecycle_commit) ||
+  // The durable receipt belongs to its original customer turn. A later
+  // read-only turn can use the committed state without resuming that reply.
+  const _sameTurnLifecyclePending = hasUnresolvedLifecycleReplyForSource(
+    _c3Memory, _h1SourceMessageId, _a3Commerce?.trusted_lifecycle_commit ?? null,
+  );
+  if (_sameTurnLifecyclePending ||
     (_c3CommerceSnapshot?.source_message_id === _h1SourceMessageId &&
       !_a3Commerce?.trusted_lifecycle_commit &&
       _a3Commerce?.reason === "ambiguous_lifecycle_target")) {
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return new Response(JSON.stringify({
       success: false,
-      error: _pendingLifecycle
+      error: _sameTurnLifecyclePending
         ? "lifecycle_reply_stale_revalidate"
         : "lifecycle_reply_receipt_unavailable",
     }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });

@@ -4,6 +4,16 @@ import { verifyCommittedLifecycleMemory,
   type CanonicalConversationMemory } from "./conversation-long-memory.ts";
 import type { ConversationCommerceState } from "./commerce-state-contract.ts";
 
+/** A pending reply receipt guards only the visitor turn that created it. */
+export function hasUnresolvedLifecycleReplyForSource(
+  memory: CanonicalConversationMemory | null,
+  source_message_id: string,
+  trusted_lifecycle_commit: B2TrustedLifecycleCommit | null,
+): boolean {
+  return memory?.pending_lifecycle_reply?.source_message_id === source_message_id &&
+    !trusted_lifecycle_commit;
+}
+
 /** A durable same-source receipt can resume only while its exact revision is current. */
 export function resumeCommittedLifecycleReply(input: {
   conversation_id: string;
