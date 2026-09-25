@@ -785,6 +785,7 @@ jobs:
             cat > "$expected" <<'EOF'
           .github/scripts/task_ai_abc_c3_final_gate.mjs
           .github/workflows/task-ai-abc-c3-final-gate.yml
+          supabase/functions/_shared/canonical-grounding.ts
           supabase/functions/_shared/commerce-state-runtime-base.ts
           supabase/functions/_shared/contextual-customer-update.test.ts
           supabase/functions/_shared/conversation-long-memory.test.ts
@@ -793,6 +794,7 @@ jobs:
           supabase/functions/_shared/conversation-recall.ts
           supabase/functions/_shared/natural-customer-response.ts
           supabase/functions/_shared/product-factual-query.test.ts
+          supabase/functions/_shared/product-kb-semantic-contract.ts
           supabase/functions/_shared/product-referent-history.test.ts
           supabase/functions/generate-reply/index.ts
           EOF
@@ -800,8 +802,9 @@ jobs:
             LC_ALL=C sort -o "$expected" "$expected"
             diff -u "$expected" "$actual"
             test -z "$(git diff --name-only "$w17_referent_base..$GITHUB_SHA" -- 'supabase/migrations/**' 'supabase/functions/agent-assist/index.ts' 'supabase/functions/receive-widget-message/index.ts')"
-            grep -q 'W17 sequential T1-T12 restores topic referent' supabase/functions/_shared/contextual-customer-update.test.ts
+            grep -q 'W19 sequential T1-T16 source replay' supabase/functions/_shared/contextual-customer-update.test.ts
             grep -q 'W17 T9 restores AC referent' supabase/functions/_shared/product-factual-query.test.ts
+            grep -q 'W19 live T9 canonical referent/facets bind query and KB evidence' supabase/functions/_shared/product-factual-query.test.ts
             echo C3_W17_REFERENT_SOURCE_ALLOWLIST=PASS
             echo C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE
             echo C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS
