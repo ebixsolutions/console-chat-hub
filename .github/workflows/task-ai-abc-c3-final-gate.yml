@@ -778,6 +778,35 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          w17_referent_base=1dba39af35d3b643144bd581a6d4c24eecbe62e8
+          if git merge-base --is-ancestor "$w17_referent_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$w17_referent_base"; then
+            expected="$RUNNER_TEMP/c3-w17-referent-expected"
+            actual="$RUNNER_TEMP/c3-w17-referent-actual"
+            cat > "$expected" <<'EOF'
+          .github/scripts/task_ai_abc_c3_final_gate.mjs
+          .github/workflows/task-ai-abc-c3-final-gate.yml
+          supabase/functions/_shared/commerce-state-runtime-base.ts
+          supabase/functions/_shared/contextual-customer-update.test.ts
+          supabase/functions/_shared/conversation-long-memory.test.ts
+          supabase/functions/_shared/conversation-long-memory.ts
+          supabase/functions/_shared/conversation-recall.test.ts
+          supabase/functions/_shared/conversation-recall.ts
+          supabase/functions/_shared/natural-customer-response.ts
+          supabase/functions/_shared/product-factual-query.test.ts
+          supabase/functions/_shared/product-referent-history.test.ts
+          supabase/functions/generate-reply/index.ts
+          EOF
+            git diff --name-only "$w17_referent_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
+            LC_ALL=C sort -o "$expected" "$expected"
+            diff -u "$expected" "$actual"
+            test -z "$(git diff --name-only "$w17_referent_base..$GITHUB_SHA" -- 'supabase/migrations/**' 'supabase/functions/agent-assist/index.ts' 'supabase/functions/receive-widget-message/index.ts')"
+            grep -q 'W17 sequential T1-T12 restores topic referent' supabase/functions/_shared/contextual-customer-update.test.ts
+            grep -q 'W17 T9 restores AC referent' supabase/functions/_shared/product-factual-query.test.ts
+            echo C3_W17_REFERENT_SOURCE_ALLOWLIST=PASS
+            echo C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE
+            echo C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS
+            exit 0
+          fi
           w15_anaphoric_base=18595a2298c39dc45db323e4670e93484f7d8b8d
           if git merge-base --is-ancestor "$w15_anaphoric_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$w15_anaphoric_base"; then
             expected="$RUNNER_TEMP/c3-w15-anaphoric-expected"
