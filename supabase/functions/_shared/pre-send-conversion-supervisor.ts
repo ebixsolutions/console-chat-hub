@@ -19,8 +19,10 @@ import { currentKbSellingPrice, exactKbModelIds } from "./canonical-kb-direct-an
 import type { ContextualDecision } from "./contextual-customer-update.ts";
 import {
   b2JourneyTransactionBoundary,
+  type B2TrustedCorrectionCommit,
   type B2TrustedJourneyProgress,
 } from "./b2-journey-progress-contract.ts";
+import { roomSizeCorrection } from "./conversation-long-memory.ts";
 import { activeCustomerGoal } from "./customer-journey-orchestration.ts";
 
 export type B2DecisionKind = "allow" | "block" | "indeterminate";
@@ -64,6 +66,7 @@ export interface B2EvaluationInput {
   trusted_targeted_clarification?: B2TrustedTargetedClarification | null;
   /** Private Commerce-runtime receipt, never accepted from request metadata. */
   trusted_journey_progress?: B2TrustedJourneyProgress | null;
+  trusted_correction_commit?: B2TrustedCorrectionCommit | null;
 }
 
 export interface B2TrustedTargetedClarification {
@@ -112,6 +115,7 @@ export interface B2PersistenceInput<T> {
   trusted_kb_price_proof?: B2KbPriceProof | null;
   trusted_targeted_clarification?: B2TrustedTargetedClarification | null;
   trusted_journey_progress?: B2TrustedJourneyProgress | null;
+  trusted_correction_commit?: B2TrustedCorrectionCommit | null;
   expected_commerce_state_revision?: number | null;
   commit: () => Promise<T>;
 }
@@ -685,6 +689,54 @@ function equalJson(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function isTrustedCorrectionCommit(input: B2EvaluationInput, draft: string): boolean {
+  const proof = input.trusted_correction_commit;
+  const metadata = input.metadata;
+  if (!proof || !isRecord(metadata) || input.persistence_kind !== "ai_reply") return false;
+  const parsed = roomSizeCorrection(input.snapshot.source_message_content ?? "");
+  if (!parsed || proof.contract !== "scoped-correction-commit-v1" ||
+    proof.field !== "room_size" || proof.category !== "air_conditioner" ||
+    !(
+      proof.scope === "large_bedroom" && /(?:大房|large\s*bedroom)/i.test(parsed.label) ||
+      proof.scope === "small_bedroom" && /(?:細房|细房|小房|small\s*bedroom)/i.test(parsed.label) ||
+      proof.scope === "living_room" && /(?:客廳|客厅|個廳|个厅|living\s*room)/i.test(parsed.label)
+    ) ||
+    proof.company_id !== input.snapshot.company_id ||
+    proof.source_message_id !== input.snapshot.source_message_id ||
+    clean(proof.source_text) !== clean(input.snapshot.source_message_content) ||
+    proof.correction !== clean(input.snapshot.source_message_content) ||
+    proof.previous_value !== parsed.old_value || proof.current_value !== parsed.new_value ||
+    proof.previous_revision + 1 !== proof.committed_revision ||
+    proof.committed_revision !== input.snapshot.commerce_state_revision ||
+    input.snapshot.commerce_state_source_message_id !== proof.source_message_id ||
+    proof.previous_values[proof.scope] !== proof.previous_value ||
+    proof.committed_values[proof.scope] !== proof.current_value ||
+    Object.keys(proof.previous_values).length !== Object.keys(proof.committed_values).length ||
+    Object.keys(proof.previous_values).some((key) =>
+      key !== proof.scope && proof.previous_values[key] !== proof.committed_values[key]
+    ) ||
+    !input.snapshot.state.latest_corrections.includes(proof.correction) ||
+    !equalJson(proof.transaction_before, proof.transaction_after) ||
+    !equalJson(proof.transaction_after, b2JourneyTransactionBoundary(input.snapshot.state)) ||
+    clean(proof.reply) !== draft ||
+    metadata.response_route !== "commerce_state_answer" ||
+    metadata.commerce_reason !== "authoritative_scoped_correction_applied" ||
+    metadata.commerce_authority !== "CONVERSATION_STATE" ||
+    metadata.commerce_state_persist_result !== "success" ||
+    metadata.commerce_state_persistence_classification !== "COMMITTED" ||
+    Number(metadata.commerce_state_revision) !== proof.committed_revision ||
+    ORDER_CONFIRMED.test(draft) || PAYMENT_COMPLETED.test(draft) ||
+    DELIVERY_CONFIRMED.test(draft) || DELIVERY_COMPLETED.test(draft) ||
+    INSTALLATION_CONFIRMED.test(draft) || INSTALLATION_COMPLETED.test(draft) ||
+    extractMoneyMentions(draft).length > 0) return false;
+  const entity = input.snapshot.state.entities.filter((candidate) =>
+    candidate.category === proof.category &&
+    candidate.status !== "cancelled" && candidate.status !== "deferred"
+  );
+  return entity.length === 1 && entity[0].entity_id === proof.entity_id &&
+    equalJson(entity[0].attributes.room_sizes, proof.committed_values);
+}
+
 function isTrustedJourneyProgressAfterAcceptedUpdate(
   input: B2EvaluationInput,
   draft: string,
@@ -955,16 +1007,24 @@ export function evaluateB2BeforeCommit(input: B2EvaluationInput): B2Decision {
     input,
     draft,
   );
+  const trustedCorrection = isTrustedCorrectionCommit(input, draft);
+  if (
+    (input.trusted_correction_commit ||
+      input.metadata?.commerce_reason === "authoritative_scoped_correction_applied") &&
+    !trustedCorrection
+  ) return { decision: "block", code: "UNPROVEN_CORRECTION_COMMIT" };
   return (
     (authoritativeNoSemanticChange ? null : correctionDecision) ??
     evaluateCancellation(draft, state) ??
     (kbPriceDecision ? null : evaluateQuoteReality(draft, state, input)) ??
     evaluateTransactionReality(draft, input.persistence_kind, state) ??
-    (trustedTargetedClarification || trustedJourneyProgress
+    (trustedTargetedClarification || trustedJourneyProgress || trustedCorrection
       ? null
       : evaluateKnownContext(draft, state)) ?? {
       decision: "allow",
-      code: kbPriceDecision?.code ?? (trustedJourneyProgress
+      code: kbPriceDecision?.code ?? (trustedCorrection
+        ? "B2_ALLOW_COMMITTED_SCOPED_CORRECTION"
+        : trustedJourneyProgress
         ? "B2_ALLOW_JOURNEY_PROGRESS_AFTER_ACCEPTED_UPDATE"
         : trustedTargetedClarification
         ? "B2_ALLOW_TARGETED_READ_ONLY_CLARIFICATION"
@@ -1199,6 +1259,7 @@ export async function executeB2PersistenceGate<T>(
       trusted_kb_price_proof: input.trusted_kb_price_proof,
       trusted_targeted_clarification: input.trusted_targeted_clarification,
       trusted_journey_progress: input.trusted_journey_progress,
+      trusted_correction_commit: input.trusted_correction_commit,
     });
   } catch (error) {
     decision = {

@@ -21,6 +21,7 @@ import {
   createEmptyConversationCommerceState,
   isConversationCommerceState,
 } from "./commerce-state-contract.ts";
+import { retainedRoomSizes, roomSizeCorrection } from "./conversation-long-memory.ts";
 import {
   type CommerceStateEvent,
   type CommerceTurnEntityHint,
@@ -60,6 +61,7 @@ import {
 } from "./customer-journey-orchestration.ts";
 import {
   b2JourneyTransactionBoundary,
+  type B2TrustedCorrectionCommit,
   type B2TrustedJourneyProgress,
 } from "./b2-journey-progress-contract.ts";
 import {
@@ -120,6 +122,7 @@ export interface CommerceRuntimeOutcome {
   contextual_decision?: ContextualDecision;
   /** Private in-process B2 evidence. Never persist this object as metadata. */
   trusted_journey_progress?: B2TrustedJourneyProgress;
+  trusted_correction_commit?: B2TrustedCorrectionCommit;
 }
 
 export interface CommittedAddressCorrectionResolution {
@@ -1673,11 +1676,83 @@ function materializeRoomOnlyReferenceHints(
   return [...next.values()];
 }
 
+function roomScope(label: string): "small_bedroom" | "large_bedroom" | "living_room" | null {
+  if (/(?:細房|细房|小房|small\s*bedroom)/i.test(label)) return "small_bedroom";
+  if (/(?:大房|large\s*bedroom)/i.test(label)) return "large_bedroom";
+  if (/(?:客廳|客厅|個廳|个厅|living\s*room)/i.test(label)) return "living_room";
+  return null;
+}
+
+function scopedRoomValues(value: unknown): Record<string, string> | null {
+  if (!isRecord(value)) return null;
+  const entries = Object.entries(value);
+  if (!entries.length || entries.some(([key, raw]) =>
+    !["small_bedroom", "large_bedroom", "living_room"].includes(key) ||
+    typeof raw !== "string" || !/^\d+(?:\.\d+)?平方呎$/.test(raw)
+  )) return null;
+  return Object.fromEntries(entries) as Record<string, string>;
+}
+
+function deriveScopedRoomSizeEvents(
+  input: CommerceRuntimeInput,
+  previous: ConversationCommerceState,
+): CommerceStateEvent[] {
+  if (/[?？]/.test(input.text)) return [];
+  const correction = roomSizeCorrection(input.text);
+  const observations = correction ? [] : retainedRoomSizes(input.text);
+  if (!correction && !observations.length) return [];
+  // Room measurements belong to the active AC goal, never to the currently
+  // active refrigerator or a cancelled/ambiguous air-conditioner entity.
+  const active = previous.entities.filter((entity) =>
+    entity.category === "air_conditioner" &&
+    entity.status !== "cancelled" && entity.status !== "deferred"
+  );
+  if (active.length !== 1) return [];
+  const entity = active[0];
+  const before = scopedRoomValues(entity.attributes.room_sizes);
+  const values: Record<string, string> = { ...(before ?? {}) };
+  if (correction) {
+    const scope = roomScope(correction.label);
+    if (!scope || !before || before[scope] !== correction.old_value ||
+      correction.old_value === correction.new_value) return [];
+    values[scope] = correction.new_value;
+  } else {
+    for (const fact of observations) {
+      const scope = roomScope(fact.label);
+      if (!scope || (values[scope] && values[scope] !== fact.value)) return [];
+      values[scope] = fact.value;
+    }
+    if (Object.keys(values).length === Object.keys(before ?? {}).length &&
+      Object.entries(values).every(([scope, value]) => before?.[scope] === value)) return [];
+  }
+  const provenance = {
+    source_type: "customer" as const,
+    source_message_id: input.source_message_id,
+    recorded_at: input.occurred_at ?? null,
+  };
+  return [
+    { type: "SET_ENTITY_ATTRIBUTE", entity_id: entity.entity_id, key: "room_sizes", value: values, provenance },
+    ...(correction ? [{ type: "ADD_CORRECTION" as const, correction: clean(input.text) }] : []),
+  ];
+}
+
 export function reduceTurn(
   previous: ConversationCommerceState,
   input: CommerceRuntimeInput,
   rawHints: CommerceTurnEntityHint[],
 ): ConversationCommerceState {
+  // A verified factual return to an earlier product changes topic focus only.
+  // Room words in that question must not materialize extra purchase entities.
+  if (
+    input.trusted_product_topic_focus &&
+    looksInterrogative(input.text) &&
+    validateTrustedProductTopicFocus(input, previous).valid
+  ) {
+    return reduceCommerceState(previous, [{
+      type: "SET_CONTEXT",
+      topic: input.trusted_product_topic_focus.topic,
+    }]);
+  }
   // READ_ONLY_CURRENT_STATE_QUERY (and other factual interrogatives) emits no
   // state events. Persistence may still record this source-message revision,
   // but its canonical state payload remains byte-for-byte unchanged.
@@ -1738,7 +1813,10 @@ export function reduceTurn(
       event.type !== "SET_DELIVERY"
     )
     : derivedWithoutAllocationOverwrite;
-  let runtimeEvents = calculationTurn ? [] : deriveA3RuntimeEvents(input, hints, previous);
+  let runtimeEvents = calculationTurn ? [] : [
+    ...deriveA3RuntimeEvents(input, hints, previous),
+    ...deriveScopedRoomSizeEvents(input, previous),
+  ];
   // A goal turn owns one durable aggregate entity. Room mentions are scopes of
   // that purchase goal, not separate products that can make later binding
   // ambiguous.
@@ -1992,6 +2070,67 @@ function buildTrustedJourneyProgress(input: {
     committed_missing: [...committed.goal.missing],
     accepted_slots: acceptedSlots,
     accepted_corrections: acceptedCorrections,
+    transaction_before,
+    transaction_after,
+  };
+}
+
+function buildTrustedRoomCorrection(
+  input: CommerceRuntimeInput,
+  persisted: Awaited<ReturnType<typeof persistCommerceTurn>>,
+): B2TrustedCorrectionCommit | null {
+  const correction = roomSizeCorrection(input.text);
+  const scope = correction && roomScope(correction.label);
+  if (!correction || !scope || persisted.result !== "success" ||
+    persisted.revision !== persisted.previous_revision + 1) return null;
+  const before = persisted.previous_state.entities.filter((entity) =>
+    entity.category === "air_conditioner" &&
+    entity.status !== "cancelled" && entity.status !== "deferred"
+  );
+  const after = persisted.state.entities.filter((entity) =>
+    entity.category === "air_conditioner" &&
+    entity.status !== "cancelled" && entity.status !== "deferred"
+  );
+  if (before.length !== 1 || after.length !== 1 ||
+    before[0].entity_id !== after[0].entity_id) return null;
+  const previous_values = scopedRoomValues(before[0].attributes.room_sizes);
+  const committed_values = scopedRoomValues(after[0].attributes.room_sizes);
+  if (!previous_values || !committed_values ||
+    previous_values[scope] !== correction.old_value ||
+    committed_values[scope] !== correction.new_value ||
+    Object.keys(previous_values).some((key) =>
+      key !== scope && previous_values[key] !== committed_values[key]
+    ) ||
+    persisted.previous_state.latest_corrections.includes(clean(input.text)) ||
+    !persisted.state.latest_corrections.includes(clean(input.text))) return null;
+  const transaction_before = b2JourneyTransactionBoundary(persisted.previous_state);
+  const transaction_after = b2JourneyTransactionBoundary(persisted.state);
+  if (JSON.stringify(transaction_before) !== JSON.stringify(transaction_after)) return null;
+  const room = scope === "small_bedroom" ? { traditional: "細房", simplified: "小房" }
+    : scope === "large_bedroom" ? { traditional: "大房", simplified: "大房" }
+    : { traditional: "客廳", simplified: "客厅" };
+  const reply = input.language === "en"
+    ? `Updated the ${scope.replaceAll("_", " ")} from ${correction.old_value} to ${correction.new_value}.`
+    : input.language === "zh-CN"
+    ? `已把${room.simplified}面积由${correction.old_value}更正为${correction.new_value}。`
+    : `已將${room.traditional}面積由${correction.old_value}更正為${correction.new_value}，舊數字唔再作現時要求。`;
+  return {
+    contract: "scoped-correction-commit-v1",
+    company_id: input.company_id,
+    source_message_id: input.source_message_id,
+    source_text: input.text,
+    previous_revision: persisted.previous_revision,
+    committed_revision: persisted.revision,
+    entity_id: after[0].entity_id,
+    category: "air_conditioner",
+    scope,
+    field: "room_size",
+    previous_value: correction.old_value,
+    current_value: correction.new_value,
+    previous_values,
+    committed_values,
+    correction: clean(input.text),
+    reply,
     transaction_before,
     transaction_after,
   };
@@ -2448,6 +2587,18 @@ export async function runCommerceStateRuntime(
 
   const persisted = await persistCommerceTurn(db, runtimeInput, hints);
   const state = persisted.state;
+  const committedRoomCorrection = buildTrustedRoomCorrection(runtimeInput, persisted);
+  if (committedRoomCorrection) {
+    return {
+      authority: "CONVERSATION_STATE",
+      reply: committedRoomCorrection.reply,
+      revision: persisted.revision,
+      persist_result: persisted.result,
+      reason: "authoritative_scoped_correction_applied",
+      route: "commerce_state_answer",
+      trusted_correction_commit: committedRoomCorrection,
+    };
+  }
   if (
     (contextualDecision.route === "product_guidance" ||
       contextualDecision.route === "contextual_scoped_update") &&

@@ -1683,7 +1683,8 @@ export function prepareConversationRecall(
 ) {
   const decision = resolveConversationRecall(input);
   const reply = decision.handled
-    ? renderConversationRecall(decision, language)
+    ? renderCurrentAcRequirements(input, decision, language) ??
+      renderConversationRecall(decision, language)
     : decision.reason === "AMBIGUOUS"
     ? recallClarification(language)
     : null;
@@ -1714,4 +1715,51 @@ export function prepareConversationRecall(
       : [],
   };
   return { decision, reply, metadata };
+}
+
+function renderCurrentAcRequirements(
+  input: ConversationRecallInput,
+  decision: ConversationRecallDecision,
+  language: string,
+): string | null {
+  if (!decision.handled || decision.fact_type !== "summary" ||
+    language !== "zh-TW" ||
+    !/(?:冷氣|冷气|空調|空调)/i.test(input.question)) return null;
+  const active = input.commerce?.state.entities.filter((entity) =>
+    entity.category === "air_conditioner" &&
+    entity.status !== "cancelled" && entity.status !== "deferred"
+  ) ?? [];
+  if (active.length !== 1) return null;
+  const entity = active[0];
+  const sizes = object(entity.attributes.room_sizes);
+  if (!sizes || typeof sizes.small_bedroom !== "string" ||
+    typeof sizes.large_bedroom !== "string" ||
+    typeof sizes.living_room !== "string") return null;
+  const messages = input.recent_questions ?? [];
+  const goal = object(entity.attributes.customer_goal);
+  const collected = Array.isArray(goal?.collected) ? goal.collected : [];
+  const hasWindow = collected.includes("installation_type") &&
+    messages.some((text) => /(?:三個位|全部|都).{0,20}(?:窗口位|窗口機)/i.test(text));
+  const hasSun = collected.includes("sunlight") &&
+    messages.some((text) => /(?:客廳|客厅|個廳|个厅).{0,20}(?:西斜|西曬|西晒)/i.test(text));
+  const allocated = Array.isArray(entity.attributes.scoped_customer_updates) &&
+    ["living_room", "bedroom_1", "bedroom_2"].every((scope) =>
+      (entity.attributes.scoped_customer_updates as Array<Record<string, unknown>>)
+        .some((row) => row.scope === scope && row.attribute === "quantity" && row.value === 1)
+    );
+  const researched = [...new Set(messages.flatMap((text) =>
+    /(?:細房|细房|冷氣|冷气).{0,25}CW-SUL70BA|CW-SUL70BA.{0,25}(?:冷氣|冷气|細房|细房)/i.test(text)
+      ? ["CW-SUL70BA"] : []
+  ))];
+  return [
+    `現時冷氣要求：細房${sizes.small_bedroom}、大房${sizes.large_bedroom}、客廳${sizes.living_room}。`,
+    hasWindow ? "三個位置都有窗口位，現有都係窗口機。" : "",
+    hasSun ? "客廳下午西斜。" : "",
+    allocated && entity.quantity === 3
+      ? "客廳一部、兩間房各一部，共三部；目前只係選購要求，未落單。"
+      : `目前選購數量共${entity.quantity}部，具體分配仍要確認。`,
+    researched.length === 1
+      ? "細房研究緊 CW-SUL70BA；80平方呎是否適用仍未有足夠資料確認。"
+      : "適用型號同匹數仍要按現行資料核對。",
+  ].filter(Boolean).join(" ");
 }

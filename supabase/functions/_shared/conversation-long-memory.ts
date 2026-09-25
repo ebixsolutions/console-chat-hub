@@ -1,5 +1,6 @@
 import { resolveConversationRecall, renderConversationRecall } from "./conversation-recall.ts";
 import type { ConversationCommerceState } from "./commerce-state-contract.ts";
+import type { B2TrustedCorrectionCommit } from "./b2-journey-progress-contract.ts";
 import {
   projectConversationRuntimeState,
   type RuntimeHistoryRow,
@@ -37,6 +38,49 @@ export interface ConversationMemoryFact {
   source_message_id?: string | null;
   entity_id?: string | null;
   region?: string | null;
+}
+
+/** Exact post-commit Memory ↔ Commerce parity; a reply cannot supply its own proof. */
+export function verifyCommittedRoomCorrectionMemory(input: {
+  memory: CanonicalConversationMemory | null;
+  receipt: B2TrustedCorrectionCommit | null;
+  commerce: { company_id: string; source_message_id: string | null; revision: number } | null;
+}): boolean {
+  const { memory, receipt, commerce } = input;
+  if (!memory || !receipt || !commerce ||
+    memory.company_id !== receipt.company_id ||
+    commerce.company_id !== receipt.company_id ||
+    memory.source_message_id !== receipt.source_message_id ||
+    commerce.source_message_id !== receipt.source_message_id ||
+    memory.commerce_state_revision !== receipt.committed_revision ||
+    commerce.revision !== receipt.committed_revision ||
+    !memory.latest_corrections.includes(receipt.correction)) return false;
+  const scopeMatches = (label: string) =>
+    receipt.scope === "large_bedroom" ? /(?:大房|large\s*bedroom)/i.test(label)
+    : receipt.scope === "small_bedroom" ? /(?:細房|细房|小房|small\s*bedroom)/i.test(label)
+    : receipt.scope === "living_room" ? /(?:客廳|客厅|個廳|个厅|living\s*room)/i.test(label)
+    : false;
+  const current = memory.current_customer_facts.find((fact) =>
+    fact.key === "room_size" &&
+    fact.source_message_id === receipt.source_message_id &&
+    Array.isArray(fact.value) &&
+    fact.value.some((item: unknown) =>
+      Boolean(item && typeof item === "object" &&
+        "label" in item && "value" in item &&
+        typeof item.label === "string" &&
+        scopeMatches(item.label) &&
+        item.value === receipt.current_value))
+  );
+  const superseded = memory.cancelled_or_superseded.some((fact) =>
+    fact.key === "superseded_room_size" &&
+    fact.source_message_id === receipt.source_message_id &&
+    fact.value !== null && typeof fact.value === "object" &&
+    "label" in fact.value && "value" in fact.value &&
+    typeof fact.value.label === "string" &&
+    scopeMatches(fact.value.label) &&
+    fact.value.value === receipt.previous_value
+  );
+  return Boolean(current && superseded);
 }
 export interface ConversationMemoryEntity {
   entity_id: string;
@@ -174,7 +218,7 @@ function smallCustomerCount(raw: string): number | null {
   return ({ 一: 1, 二: 2, 兩: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 } as Record<string, number>)[raw] ?? null;
 }
 
-function retainedRoomSizes(text: string): Array<{
+export function retainedRoomSizes(text: string): Array<{
   member_id: string;
   group: "room" | "living_room";
   label: string;
@@ -213,9 +257,9 @@ function retainedRoomSizes(text: string): Array<{
   return facts;
 }
 
-function roomSizeCorrection(text: string): { label: string; old_value: string; new_value: string } | null {
+export function roomSizeCorrection(text: string): { label: string; old_value: string; new_value: string } | null {
   const match = text.normalize("NFKC").match(
-    /([^，,。;；]{0,20}?(?:客廳|客厅|細房|细房|大房|睡房|房間|房间|living\s+room|bedroom|room))[^。!?！？]{0,32}?(?:唔係|不是|並非|并非|not)\s*(\d+(?:\.\d+)?)\s*(?:平方呎|平方尺|sq\s*ft|sqft|呎|尺)[^。!?！？]{0,24}?(?:係|是|改為|改为|更正為|更正为|to)\s*(\d+(?:\.\d+)?)\s*(?:平方呎|平方尺|sq\s*ft|sqft|呎|尺)/iu,
+    /([^，,。;；]{0,20}?(?:客廳|客厅|細房|细房|大房|睡房|房間|房间|living\s+room|bedroom|room))[^。!?！？]{0,32}?(?:唔係|不是|並非|并非|not)\s*(\d+(?:\.\d+)?)\s*(?:平方呎|平方尺|sq\s*ft|sqft|呎|尺)[^。!?！？]{0,24}?(?:應該係|应该是|而係|而是|係|是|改為|改为|更正為|更正为|to)\s*(\d+(?:\.\d+)?)\s*(?:平方呎|平方尺|sq\s*ft|sqft|呎|尺)/iu,
   );
   if (!match) return null;
   return { label: match[1].trim(), old_value: `${match[2]}平方呎`, new_value: `${match[3]}平方呎` };

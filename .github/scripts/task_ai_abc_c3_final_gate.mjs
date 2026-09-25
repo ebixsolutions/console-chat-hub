@@ -225,7 +225,7 @@ const authorizedTargetedRepairHashes = new Map([
   ],
   [
     "supabase/functions/_shared/pre-send-conversion-supervisor.ts",
-    "e8523687fcd9c17f762c21dc1c814d2f8be10a083a52ec01f13fe627ae1e20c3",
+    "69b9552c901c6504ddb91efb8f8339240805586aa5418ac2dc529db38f29ec46",
   ],
 ]);
 for (

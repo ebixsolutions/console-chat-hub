@@ -70,3 +70,25 @@ export interface B2TrustedScopedJourneyProgress
 export type B2TrustedJourneyProgress =
   | B2TrustedGoalJourneyProgress
   | B2TrustedScopedJourneyProgress;
+
+/** In-process receipt for a single scoped correction, after the Commerce CAS commit. */
+export interface B2TrustedCorrectionCommit {
+  contract: "scoped-correction-commit-v1";
+  company_id: string;
+  source_message_id: string;
+  source_text: string;
+  previous_revision: number;
+  committed_revision: number;
+  entity_id: string;
+  category: string;
+  scope: string;
+  field: "room_size";
+  previous_value: string;
+  current_value: string;
+  previous_values: Record<string, string>;
+  committed_values: Record<string, string>;
+  correction: string;
+  reply: string;
+  transaction_before: B2JourneyTransactionBoundary;
+  transaction_after: B2JourneyTransactionBoundary;
+}

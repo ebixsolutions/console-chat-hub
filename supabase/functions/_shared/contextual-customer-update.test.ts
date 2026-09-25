@@ -17,7 +17,7 @@ import {
 import { resolveCanonicalCommerceResolution } from "./conversation-resolution-contract.ts";
 import { activeCustomerGoal } from "./customer-journey-orchestration.ts";
 import { prepareConversationRecall } from "./conversation-recall.ts";
-import { buildCanonicalConversationMemory } from "./conversation-long-memory.ts";
+import { buildCanonicalConversationMemory, verifyCommittedRoomCorrectionMemory } from "./conversation-long-memory.ts";
 import {
   arbitrateAnaphoricProductFollowUp,
   classifyNaturalCustomerIntent,
@@ -697,8 +697,126 @@ Deno.test("W19 sequential T1-T16 source replay preserves customer journey, KB an
   const t9State = await f.ask(t9, turns.slice().reverse(), t9Focus); turns.push(t9);
   assert(t9Result.kind === "resolved" && t9Result.intent.product === "CW-SUL70BA" && t9Result.intent.facts.includes("model_info") && t9Result.intent.facts.includes("horsepower") && t9Result.resolved_topic === "air_conditioner" && f.snapshot().state.current_topic === "air_conditioner", JSON.stringify({ t9Result, t9State }));
 
-  const t10 = await ask("大房面積更正返，唔係100呎，係110呎。");
-  assert(t10.persist_result === "success" && f.snapshot().state.current_topic === "air_conditioner" && f.snapshot().state.latest_corrections.some((value) => value.includes("110呎") && value.includes("100呎")), JSON.stringify({ t10, state: f.snapshot().state }));
+  const t10 = await ask("大房唔係100呎，應該係110呎。");
+  assert(t10.persist_result === "success" && t10.trusted_correction_commit?.previous_value === "100平方呎" && t10.trusted_correction_commit?.current_value === "110平方呎" && f.snapshot().state.current_topic === "air_conditioner" && f.snapshot().state.latest_corrections.some((value) => value.includes("110呎") && value.includes("100呎")), JSON.stringify({ t10, state: f.snapshot().state }));
+  const t10Proof = t10.trusted_correction_commit!;
+  const t10State = f.snapshot();
+  assert(t10Proof.category === "air_conditioner" && t10Proof.scope === "large_bedroom" &&
+    t10Proof.field === "room_size" && t10Proof.previous_values.large_bedroom === "100平方呎" &&
+    t10Proof.committed_values.large_bedroom === "110平方呎" &&
+    t10State.state.entities.find((entity) => entity.entity_id === t10Proof.entity_id)?.attributes.room_sizes &&
+    t10State.revision === t10Proof.previous_revision + 1, "t10_scoped_commit");
+  const t10Memory = buildCanonicalConversationMemory({
+    conversation_id: "conversation", company_id: "company",
+    source_message_id: t10Proof.source_message_id,
+    commerce_state_revision: t10State.revision,
+    commerce_state: t10State.state,
+    newest_first: turns.slice().reverse().map((content, index) => ({
+      id: index === 0 ? t10Proof.source_message_id : `source-${turns.length - index}`, role: "visitor", content,
+    })),
+    visitor_turn_count: turns.length,
+    source_created_at: "2026-09-25T00:00:00.000Z",
+    next_memory_revision: turns.length,
+  });
+  const t10Current = t10Memory.current_customer_facts.find((fact) => fact.key === "room_size");
+  assert(Array.isArray(t10Current?.value) &&
+    t10Current.value.some((item) => item.label === "大房" && item.value === "110平方呎") &&
+    t10Memory.cancelled_or_superseded.some((fact) =>
+      fact.key === "superseded_room_size" &&
+      (fact.value as { value?: string }).value === "100平方呎"
+    ) && t10Memory.commerce_state_revision === t10State.revision, "t10_memory_commerce_disagree");
+  const exactReadback = {
+    memory: t10Memory, receipt: t10Proof,
+    commerce: { company_id: "company", source_message_id: t10Proof.source_message_id, revision: t10State.revision },
+  };
+  assert(verifyCommittedRoomCorrectionMemory(exactReadback), "t10_memory_receipt_rejected");
+  for (const [label, readback] of ([
+    ["missing_memory", { ...exactReadback, memory: null }],
+    ["wrong_tenant", { ...exactReadback, commerce: { ...exactReadback.commerce, company_id: "other" } }],
+    ["wrong_turn", { ...exactReadback, commerce: { ...exactReadback.commerce, source_message_id: "other" } }],
+    ["stale_memory", { ...exactReadback, memory: { ...t10Memory, commerce_state_revision: t10State.revision - 1 } }],
+    ["missing_superseded", { ...exactReadback, memory: { ...t10Memory, cancelled_or_superseded: [] } }],
+    ["missing_current", { ...exactReadback, memory: { ...t10Memory, current_customer_facts: [] } }],
+  ] as Array<[string, Parameters<typeof verifyCommittedRoomCorrectionMemory>[0]]>)) assert(!verifyCommittedRoomCorrectionMemory(readback), `memory_${label}_accepted`);
+  const t10Metadata = {
+    response_route: t10.route, commerce_reason: t10.reason,
+    commerce_authority: t10.authority,
+    commerce_state_revision: t10.revision,
+    commerce_state_persist_result: t10.persist_result,
+    commerce_state_persistence_classification: "COMMITTED",
+  };
+  const t10Snapshot = {
+    conversation_id: "conversation", company_id: "company",
+    source_message_id: t10Proof.source_message_id,
+    source_message_content: t10Proof.source_text,
+    commerce_state_revision: t10State.revision,
+    commerce_state_source_message_id: t10Proof.source_message_id,
+    state: t10State.state,
+  };
+  const t10B2 = (overrides: Record<string, unknown> = {}) =>
+    evaluateB2BeforeCommit({
+      proposed_response: t10.reply ?? "",
+      persistence_kind: "ai_reply",
+      snapshot: t10Snapshot, metadata: t10Metadata,
+      trusted_correction_commit: t10Proof,
+      ...overrides,
+    });
+  assert(t10B2().code === "B2_ALLOW_COMMITTED_SCOPED_CORRECTION", JSON.stringify(t10B2()));
+  for (const [label, overrides] of [
+    ["no_receipt", { trusted_correction_commit: null }],
+    ["failed_commit", { metadata: { ...t10Metadata, commerce_state_persist_result: "rpc_transport_error" } }],
+    ["stale_revision", { trusted_correction_commit: { ...t10Proof, committed_revision: t10Proof.previous_revision } }],
+    ["replay", { trusted_correction_commit: { ...t10Proof, source_message_id: "another-turn" } }],
+    ["tenant", { trusted_correction_commit: { ...t10Proof, company_id: "other-company" } }],
+    ["scope", { trusted_correction_commit: { ...t10Proof, scope: "small_bedroom" } }],
+    ["entity", { trusted_correction_commit: { ...t10Proof, entity_id: "refrigerator:unscoped" } }],
+    ["text_only", { proposed_response: t10.reply ?? "", trusted_correction_commit: null }],
+    ["order", { proposed_response: `${t10.reply} 訂單已確認。` }],
+  ] as const) {
+    const decision = t10B2(overrides);
+    assert(decision.decision !== "allow", `${label}:${JSON.stringify(decision)}`);
+  }
+  const cancelledCorrectionState = structuredClone(t10State.state);
+  cancelledCorrectionState.entities.find((entity) => entity.entity_id === t10Proof.entity_id)!.status = "cancelled";
+  assert(t10B2({ snapshot: { ...t10Snapshot, state: cancelledCorrectionState } }).decision !== "allow", "cancelled_correction_accepted");
+  const ambiguousCorrectionState = structuredClone(t10State.state);
+  ambiguousCorrectionState.entities.push({
+    ...structuredClone(ambiguousCorrectionState.entities.find((entity) => entity.entity_id === t10Proof.entity_id)!),
+    entity_id: "air_conditioner:other",
+  });
+  assert(t10B2({ snapshot: { ...t10Snapshot, state: ambiguousCorrectionState } }).decision !== "allow", "ambiguous_correction_accepted");
+  const failedCommit = await runCommerceStateRuntime({
+    from: () => ({
+      select: () => ({ eq: () => ({ maybeSingle: async () =>
+        ({ data: { revision: t10State.revision, state: t10State.state }, error: null })
+      }) }),
+    }),
+    rpc: async () => ({ data: null, error: { message: "simulated CAS failure" } }),
+  }, {
+    company_id: "company", conversation_id: "conversation",
+    source_message_id: "failed-source", text: "大房唔係110呎，應該係120呎。",
+    language: "zh-TW",
+  });
+  assert(failedCommit?.persist_result === "rpc_transport_error" &&
+    !failedCommit.trusted_correction_commit &&
+    t10State.state.entities.find((entity) => entity.entity_id === t10Proof.entity_id)
+      ?.attributes.room_sizes &&
+    !JSON.stringify(t10State.state).includes("120平方呎"), "failed_commit_created_proof");
+  const staleOld = await runCommerceStateRuntime({
+    from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () =>
+      ({ data: { revision: t10State.revision, state: t10State.state }, error: null })
+    }) }) }),
+    rpc: async (_fn, params) => ({ data: { result: "success", applied_revision: t10State.revision + 1 }, error: null }),
+  }, {
+    company_id: "company", conversation_id: "conversation",
+    source_message_id: "wrong-old", text: "大房唔係99呎，應該係120呎。",
+    language: "zh-TW",
+  });
+  assert(staleOld && !staleOld.trusted_correction_commit &&
+    (t10State.state.entities.find((entity) => entity.entity_id === t10Proof.entity_id)
+      ?.attributes.room_sizes as Record<string, string>).large_bedroom === "110平方呎",
+    "wrong_old_value_promoted");
+  console.log(`W20-T10|${t10.route}|${t10.reply}|revision=${t10State.revision}|B2=${t10B2().code}|negative=PASS`);
   const t11 = await ask("雪櫃暫時唔買，先取消。");
   const afterCancellation = f.snapshot().state;
   const refrigerator = afterCancellation.entities.find((entity) => entity.category === "refrigerator");
@@ -708,8 +826,8 @@ Deno.test("W19 sequential T1-T16 source replay preserves customer journey, KB an
   const t12 = "而家我冷氣要求係點？";
   const allTurns = [...turns, t12];
   const memory = buildCanonicalConversationMemory({ conversation_id: "conversation", company_id: "company", source_message_id: "source-t12", commerce_state_revision: f.snapshot().revision, commerce_state: afterCancellation, newest_first: allTurns.slice().reverse().map((content, index) => ({ id: `history-${index}`, role: "visitor", content })), visitor_turn_count: allTurns.length, source_created_at: "2026-09-24T00:00:00.000Z", next_memory_revision: allTurns.length });
-  const recall = prepareConversationRecall({ conversation_id: "conversation", company_id: "company", source_message_id: "source-t12", question: t12, memory, commerce: { conversation_id: "conversation", company_id: "company", source_message_id: "source-t11", revision: f.snapshot().revision, state: afterCancellation } }, "zh-TW");
-  assert(recall.decision.handled && recall.reply && recall.reply.includes("110") && !recall.reply.includes("100平方呎") && !recall.reply.includes("refrigerator:unscoped"), JSON.stringify(recall));
+  const recall = prepareConversationRecall({ conversation_id: "conversation", company_id: "company", source_message_id: "source-t12", question: t12, memory, commerce: { conversation_id: "conversation", company_id: "company", source_message_id: "source-t11", revision: f.snapshot().revision, state: afterCancellation }, recent_questions: turns.slice().reverse() }, "zh-TW");
+  assert(recall.decision.handled && recall.reply && ["80平方呎", "110平方呎", "180平方呎", "窗口", "西斜", "共三部", "CW-SUL70BA"].every((item) => recall.reply!.includes(item)) && !recall.reply.includes("100平方呎") && !recall.reply.includes("雪櫃") && !recall.reply.includes("refrigerator:unscoped"), JSON.stringify(recall));
   assert(afterCancellation.conversion.order_status === "none" && afterCancellation.conversion.payment_status === "none" && afterCancellation.conversion.quotation_status === "none" && afterCancellation.quotes.length === 0, "transaction_promoted");
   const kbContent = "工作表：商品設定_20260813 162932 ID: 7944 狀態: 開啟 商品型號: CW-SUL70BA 商品圖片: 39 成本: 3750 銷售價: 5680 特價: 4038 匹數 (多聯分體式): 29 品牌: PANASONIC 樂聲牌 附加項目: 否 新增日期: 46247 標籤: 32 描述: PANASONIC 樂聲 CW-SUL70BA 3/4匹Inverter LITE變頻式淨冷窗口機，採用香港專利左出風設計、R32製冷劑及四合一抗菌過濾網，製冷能力7,400BTU/h，設左右自動送風、睡眠模式及獨立抽濕，獲香港1級能源標籤，提供3年全機及5年壓縮機保用。 功能: 變頻 淨冷 匹數: 3/4匹 氣體: 36 風數: 42";
   const kbDoc: KBDocumentCandidate = {
