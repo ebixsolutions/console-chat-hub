@@ -778,6 +778,37 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          w22_reply_base=3054095ac4fd9303e673db3435fb4fbc0440ce09
+          if git merge-base --is-ancestor "$w22_reply_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$w22_reply_base"; then
+            expected="$RUNNER_TEMP/c3-w22-reply-expected"
+            actual="$RUNNER_TEMP/c3-w22-reply-actual"
+            cat > "$expected" <<'EOF'
+          .github/scripts/task_ai_abc_c3_final_gate.mjs
+          .github/workflows/task-ai-abc-c3-final-gate.yml
+          sql/c3-nonproduction/05_t11_reply_revision_guard_test.sql
+          supabase/functions/_shared/authoritative-commit-readback.ts
+          supabase/functions/_shared/b2-journey-progress-contract.ts
+          supabase/functions/_shared/canonical-json.ts
+          supabase/functions/_shared/conversation-long-memory.ts
+          supabase/functions/_shared/fixtures/t11-synthetic-jsonb-reorder.json
+          supabase/functions/_shared/pre-send-conversion-supervisor.ts
+          supabase/functions/_shared/revision-bound-reply.test.ts
+          supabase/functions/_shared/revision-bound-reply.ts
+          supabase/functions/generate-reply/index.ts
+          supabase/migrations/20260925093000_c3_t11_revision_bound_ai_reply.sql
+          supabase/migrations/rollback/20260925093000_c3_t11_revision_bound_ai_reply.rollback.sql
+          EOF
+            git diff --name-only "$w22_reply_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
+            LC_ALL=C sort -o "$expected" "$expected"
+            diff -u "$expected" "$actual"
+            test -z "$(git diff --name-only "$w22_reply_base..$GITHUB_SHA" -- 'supabase/functions/agent-assist/index.ts' 'supabase/functions/receive-widget-message/index.ts')"
+            grep -q 'stale_authorized_revision' supabase/migrations/20260925093000_c3_t11_revision_bound_ai_reply.sql
+            grep -q 'W19 sequential T1-T16 source replay' supabase/functions/_shared/contextual-customer-update.test.ts
+            echo C3_W22_REVISION_BOUND_REPLY_ALLOWLIST=PASS
+            echo C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE
+            echo C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS
+            exit 0
+          fi
           w17_referent_base=1dba39af35d3b643144bd581a6d4c24eecbe62e8
           if git merge-base --is-ancestor "$w17_referent_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$w17_referent_base"; then
             expected="$RUNNER_TEMP/c3-w17-referent-expected"

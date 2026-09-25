@@ -226,7 +226,7 @@ const authorizedTargetedRepairHashes = new Map([
   ],
   [
     "supabase/functions/_shared/pre-send-conversion-supervisor.ts",
-    "d6f2f63efaca37d2923310c0800c8b4b78646ec29dd6b0ff9f6b3d62259bdf63",
+    "d47a5515c09a3fb17119016f299dd86fdb8a16bd01c3523263dd0f05a5a51c29",
   ],
 ]);
 for (
@@ -514,7 +514,18 @@ must(
   "forward_migration_history_contract_missing",
 );
 
-const allowed = new Set(Object.values(files));
+const t11AtomicRepairFiles = [
+  ".github/scripts/task_ai_abc_c3_final_gate.mjs",
+  ".github/workflows/task-ai-abc-c3-final-gate.yml",
+  "sql/c3-nonproduction/05_t11_reply_revision_guard_test.sql",
+  "supabase/functions/_shared/canonical-json.ts",
+  "supabase/functions/_shared/fixtures/t11-synthetic-jsonb-reorder.json",
+  "supabase/functions/_shared/revision-bound-reply.ts",
+  "supabase/functions/_shared/revision-bound-reply.test.ts",
+  "supabase/migrations/20260925093000_c3_t11_revision_bound_ai_reply.sql",
+  "supabase/migrations/rollback/20260925093000_c3_t11_revision_bound_ai_reply.rollback.sql",
+];
+const allowed = new Set([...Object.values(files), ...t11AtomicRepairFiles]);
 const changed = execFileSync("git", [
   "diff",
   "--name-only",
@@ -528,7 +539,7 @@ for (const file of Object.values(files)) {
 }
 must(
   changed.filter((file) => file.startsWith("supabase/migrations/")).length ===
-    2,
+    4,
   "migration_count_invalid",
 );
 for (
@@ -602,6 +613,7 @@ for (
 
 run("git", ["diff", "--check", "origin/main...HEAD"]);
 runDeno(["test", "--no-lock", files.unit, files.terminalTest]);
+runDeno(["test", "--no-lock", "--allow-read", "supabase/functions/_shared/revision-bound-reply.test.ts"]);
 runDeno(["test", "--no-lock", files.deterministicEngineTest]);
 runDeno(["test", "--no-lock", files.currentFactEvidenceTest]);
 runDeno([

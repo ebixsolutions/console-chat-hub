@@ -148,6 +148,7 @@ import {
   resolvePositiveRecoveryAcknowledgement,
 } from "../_shared/emotion-reply-strategy.ts";
 import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
+import { bindAuthorizedReply, resumeCommittedLifecycleReply } from "../_shared/revision-bound-reply.ts";
 import {
   type CommerceRuntimeOutcome,
   type CommerceStateDbClient,
@@ -178,6 +179,7 @@ import {
 } from "../_shared/generation-terminal-guard.ts";
 import {
   type B2DatabaseClient,
+  type B2CanonicalSnapshot,
   type B2Decision,
   type B2KbPriceProof,
   type B2PersistenceKind,
@@ -641,7 +643,7 @@ async function executeB2RpcPersistence<T>(
     trusted_lifecycle_commit?: B2TrustedLifecycleCommit | null;
     expected_commerce_state_revision?: number | null;
   },
-  commit: () => Promise<T>,
+  commit: (snapshot: B2CanonicalSnapshot) => Promise<T>,
 ) {
   return await executeB2PersistenceGate({
     client: supabaseAdmin as unknown as B2DatabaseClient,
@@ -671,6 +673,11 @@ async function commitAiReplyWithControlGate(
       | "invalid_source_message"
       | "invalid_content"
       | "source_already_replied"
+      | "response_substitution"
+      | "response_hash_mismatch"
+      | "invalid_b2_revision_proof"
+      | "stale_authorized_revision"
+      | "tenant_mismatch"
       | "superseded_source"
       | "not_found"
       | "b2_block"
@@ -696,6 +703,7 @@ async function commitAiReplyWithControlGate(
     b2_commit_source: "commit_ai_reply_tx",
     b2_source_message_id: source_message_id,
   };
+  let attemptedEvidence: Record<string, unknown> | null = null;
   const b2 = await executeB2RpcPersistence(
     supabaseAdmin,
     {
@@ -711,13 +719,15 @@ async function commitAiReplyWithControlGate(
       trusted_lifecycle_commit: trustedLifecycleCommit,
       expected_commerce_state_revision: expectedRevision,
     },
-    async () =>
-      await supabaseAdmin.rpc("commit_ai_reply_tx", {
+    async (snapshot) => {
+      attemptedEvidence = await bindAuthorizedReply(snapshot, content, b2CommitEvidence);
+      return await supabaseAdmin.rpc("commit_ai_reply_tx", {
         p_conversation_id: conversation_id,
         p_source_message_id: source_message_id,
         p_content: content,
-        p_metadata: b2CommitEvidence,
-      }),
+        p_metadata: attemptedEvidence,
+      });
+    },
   );
 
   if (!b2.committed) {
@@ -741,6 +751,10 @@ async function commitAiReplyWithControlGate(
       conversation_id,
       source_message_id,
       content,
+      authorized_revision: attemptedEvidence?.b2_expected_revision as number | undefined,
+      company_id: attemptedEvidence?.b2_expected_company_id as string | undefined,
+      response_hash: attemptedEvidence?.b2_response_hash as string | undefined,
+      idempotency_key: attemptedEvidence?.b2_idempotency_key as string | undefined,
     });
     return receipt.status === "committed"
       ? {
@@ -789,6 +803,11 @@ async function commitAiReplyWithControlGate(
     case "invalid_source_message":
     case "invalid_content":
     case "source_already_replied":
+    case "response_substitution":
+    case "response_hash_mismatch":
+    case "invalid_b2_revision_proof":
+    case "stale_authorized_revision":
+    case "tenant_mismatch":
     case "superseded_source":
     case "not_found":
       return { ok: false, result };
@@ -1767,17 +1786,17 @@ async function evaluateAndPersistRequiredRulesLive(
           handoff_required: false,
         },
       },
-      async () =>
+      async (snapshot) =>
         await supabaseAdmin.rpc("commit_ai_reply_tx", {
           p_conversation_id: params.conversation_id,
           p_source_message_id: params.source_message_id,
           p_content: params.warm_handoff_question,
-          p_metadata: {
+          p_metadata: await bindAuthorizedReply(snapshot, params.warm_handoff_question!, {
             escalation_rule: "R2",
             escalation_action: "collect_missing_handoff_facts",
             response_route: "warm_handoff_data_collection",
             handoff_required: false,
-          },
+          }),
         }),
     );
     if (!b2.committed) {
@@ -4447,6 +4466,7 @@ async function orchestrationGenerateReply(
               ? null
               : Number(commerceRow.revision),
             commerce_state: commerceState,
+            pending_lifecycle_reply: _a3Commerce?.trusted_lifecycle_commit ?? null,
             newest_first: memoryHistory,
             visitor_turn_count: _pr5VisitorTurnCount ?? 0,
           },
@@ -4469,6 +4489,41 @@ async function orchestrationGenerateReply(
         memoryError instanceof Error ? memoryError.name : "unknown_error",
       );
     }
+  }
+  // C3 fact ownership routing: after E2/A3 and durable memory, before commerce
+  // If Commerce and Memory already committed this exact source on a prior
+  // attempt, reuse their bounded server-derived receipt. Never run a second
+  // lifecycle mutation and never authorize against a newer revision.
+  const _pendingLifecycle = _c3Memory?.pending_lifecycle_reply;
+  const _resumableLifecycle = !_a3Commerce?.trusted_lifecycle_commit
+    ? resumeCommittedLifecycleReply({
+      conversation_id, company_id: _criticalE2ExpectedTenantId ?? "",
+      source_message_id: _h1SourceMessageId, memory: _c3Memory,
+      commerce: _c3CommerceSnapshot,
+    })
+    : null;
+  if (_resumableLifecycle) {
+    _a3Commerce = {
+      authority: "CONVERSATION_STATE",
+      reply: _resumableLifecycle.reply,
+      revision: _resumableLifecycle.committed_revision,
+      persist_result: "success",
+      reason: "authoritative_scoped_lifecycle_applied",
+      route: "commerce_state_answer",
+      trusted_lifecycle_commit: _resumableLifecycle,
+    };
+  }
+  if ((_pendingLifecycle && !_a3Commerce?.trusted_lifecycle_commit) ||
+    (_c3CommerceSnapshot?.source_message_id === _h1SourceMessageId &&
+      !_a3Commerce?.trusted_lifecycle_commit &&
+      _a3Commerce?.reason === "ambiguous_lifecycle_target")) {
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+    return new Response(JSON.stringify({
+      success: false,
+      error: _pendingLifecycle
+        ? "lifecycle_reply_stale_revalidate"
+        : "lifecycle_reply_receipt_unavailable",
+    }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
   // C3 fact ownership routing: after E2/A3 and durable memory, before commerce
   // reply shortcuts, context clarification and current-KB/C1 resolution.

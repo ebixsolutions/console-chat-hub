@@ -169,10 +169,14 @@ export async function readExactAiReplyCommit(
     conversation_id: string;
     source_message_id: string;
     content: string;
+    authorized_revision?: number;
+    company_id?: string;
+    response_hash?: string;
+    idempotency_key?: string;
   },
 ): Promise<AuthoritativeCommitReadback<{ message_id: string }>> {
   return await boundedReadback<{ message_id: string }>(async () => {
-    const result = await client.from("messages")
+    let query = client.from("messages")
       .select("id,conversation_id,role,content,is_recalled,metadata")
       .eq("conversation_id", expected.conversation_id)
       .eq("role", "assistant")
@@ -184,8 +188,14 @@ export async function readExactAiReplyCommit(
       .eq(
         "metadata->>b2_gate_contract",
         "executeB2PersistenceGate:allow_after_revalidation",
-      )
-      .maybeSingle();
+      );
+    if (expected.authorized_revision !== undefined) {
+      query = query.eq("metadata->>b2_expected_revision", String(expected.authorized_revision))
+        .eq("metadata->>b2_expected_company_id", expected.company_id ?? "")
+        .eq("metadata->>b2_response_hash", expected.response_hash ?? "")
+        .eq("metadata->>b2_idempotency_key", expected.idempotency_key ?? "");
+    }
+    const result = await query.maybeSingle();
     if (result.error) {
       return {
         status: "indeterminate",
@@ -211,7 +221,12 @@ export async function readExactAiReplyCommit(
         expected.source_message_id &&
       metadata.b2_commit_source === "commit_ai_reply_tx" &&
       metadata.b2_gate_contract ===
-        "executeB2PersistenceGate:allow_after_revalidation";
+        "executeB2PersistenceGate:allow_after_revalidation" &&
+      (expected.authorized_revision === undefined || (
+        Number(metadata.b2_expected_revision) === expected.authorized_revision &&
+        metadata.b2_expected_company_id === expected.company_id &&
+        metadata.b2_response_hash === expected.response_hash &&
+        metadata.b2_idempotency_key === expected.idempotency_key));
     return exact ? { status: "committed", value: { message_id: messageId } } : {
       status: "indeterminate",
       reason: "ai_reply_readback_identity_mismatch",

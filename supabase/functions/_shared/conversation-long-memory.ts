@@ -1,5 +1,6 @@
 import { resolveConversationRecall, renderConversationRecall } from "./conversation-recall.ts";
 import type { ConversationCommerceState } from "./commerce-state-contract.ts";
+import { sameCanonicalJson } from "./canonical-json.ts";
 import { type B2TrustedCorrectionCommit, type B2TrustedLifecycleCommit, verifyEntityLifecycleTransition } from "./b2-journey-progress-contract.ts";
 import {
   projectConversationRuntimeState,
@@ -95,7 +96,7 @@ export function verifyCommittedLifecycleMemory(input: {
     commerce.source_message_id !== receipt.source_message_id ||
     memory.commerce_state_revision !== receipt.committed_revision ||
     commerce.revision !== receipt.committed_revision ||
-    JSON.stringify(commerce.state) !== JSON.stringify(receipt.committed_state) ||
+    !sameCanonicalJson(commerce.state, receipt.committed_state) ||
     !verifyEntityLifecycleTransition(receipt.source_text, receipt.previous_state,
       commerce.state, receipt.source_message_id).valid) return false;
   return commerce.state.entities.every((entity) => {
@@ -105,8 +106,8 @@ export function verifyCommittedLifecycleMemory(input: {
     return entity.status === "cancelled" || entity.status === "deferred"
       ? active.length === 0 && inactive.length === 1
       : active.length === 1 && active[0].quantity === entity.quantity &&
-        JSON.stringify(active[0].current_requirements) ===
-          JSON.stringify({ ...entity.attributes, ...entity.constraints });
+        sameCanonicalJson(active[0].current_requirements,
+          { ...entity.attributes, ...entity.constraints });
   });
 }
 export interface ConversationMemoryEntity {
@@ -122,6 +123,8 @@ export interface ConversationMemoryEntity {
 }
 
 export interface CanonicalConversationMemory {
+  /** Server-derived receipt kept in the existing bounded memory row for same-source reply retry. */
+  pending_lifecycle_reply?: B2TrustedLifecycleCommit;
   version: typeof CONVERSATION_MEMORY_VERSION;
   memory_revision: number;
   conversation_id: string;
@@ -513,6 +516,7 @@ function fitMemory(memory: CanonicalConversationMemory): CanonicalConversationMe
 }
 
 export function buildCanonicalConversationMemory(args: {
+  pending_lifecycle_reply?: B2TrustedLifecycleCommit | null;
   previous?: CanonicalConversationMemory | null;
   conversation_id: string;
   company_id: string;
@@ -675,7 +679,19 @@ export function buildCanonicalConversationMemory(args: {
     updated_from_turn: Math.max(0, args.visitor_turn_count),
     updated_at: args.source_created_at,
   };
-  return fitMemory(memory);
+  const fitted = fitMemory(memory);
+  if (args.pending_lifecycle_reply) {
+    fitted.pending_lifecycle_reply = structuredClone(args.pending_lifecycle_reply);
+    if (JSON.stringify(fitted).length > C3_MEMORY_JSON_CHAR_BUDGET) {
+      fitted.prior_topics = fitted.prior_topics.slice(-4);
+      fitted.open_questions = fitted.open_questions.slice(0, 3);
+      fitted.grounded_reference_lineage = fitted.grounded_reference_lineage.slice(0, 3);
+    }
+    if (JSON.stringify(fitted).length > C3_MEMORY_JSON_CHAR_BUDGET) {
+      throw new Error("C3_LIFECYCLE_RECEIPT_EXCEEDS_MEMORY_BUDGET");
+    }
+  }
+  return fitted;
 }
 
 export function isCanonicalConversationMemory(value: unknown): value is CanonicalConversationMemory {
@@ -778,6 +794,7 @@ export function composeBoundedGenerationEnvelope(args: {
 }
 
 export async function refreshConversationLongMemory(client: LongMemoryDbClient, args: {
+  pending_lifecycle_reply?: B2TrustedLifecycleCommit | null;
   conversation_id: string;
   company_id: string;
   source_message_id: string;

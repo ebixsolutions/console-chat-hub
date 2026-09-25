@@ -1,5 +1,6 @@
 import type { ConversationCommerceState } from "./commerce-state-contract.ts";
 import type { ScopedCustomerValue } from "./contextual-customer-update.ts";
+import { sameCanonicalJson } from "./canonical-json.ts";
 import type { CustomerJourneyResponseIntent } from "./customer-journey-orchestration.ts";
 import { HOME_APPLIANCE_CATEGORIES } from "./industry-profiles/home-appliance-v1.ts";
 
@@ -111,18 +112,15 @@ export function verifyEntityLifecycleTransition(
     ...resolved.plans.filter((plan) => plan.action === "cancelled").flatMap((plan) =>
       targetIds.filter((id) => before.entities.find((entity) => entity.entity_id === id)?.category === plan.target_category)),
   ])];
-  const stable = (value: unknown): string => JSON.stringify(value, (_key, item) =>
-    item && typeof item === "object" && !Array.isArray(item)
-      ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
-  if (stable(expected) !== stable(after)) return { valid: false };
+  if (!sameCanonicalJson(expected, after)) return { valid: false };
   for (const [index, entity] of before.entities.entries()) {
     const committed = after.entities[index];
     if (entity.entity_id !== committed.entity_id || entity.category !== committed.category ||
       entity.quantity !== committed.quantity ||
-      JSON.stringify(entity.attributes) !== JSON.stringify(committed.attributes) ||
-      JSON.stringify(entity.constraints) !== JSON.stringify(committed.constraints) ||
+      !sameCanonicalJson(entity.attributes, committed.attributes) ||
+      !sameCanonicalJson(entity.constraints, committed.constraints) ||
       entity.model !== committed.model || entity.brand !== committed.brand ||
-      (!targetIds.includes(entity.entity_id) && JSON.stringify(entity) !== JSON.stringify(committed))) return { valid: false };
+      (!targetIds.includes(entity.entity_id) && !sameCanonicalJson(entity, committed))) return { valid: false };
   }
   return { valid: true, plans: resolved.plans, targetIds };
 }

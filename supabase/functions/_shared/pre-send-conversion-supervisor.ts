@@ -26,6 +26,7 @@ import {
 } from "./b2-journey-progress-contract.ts";
 import { roomSizeCorrection } from "./conversation-long-memory.ts";
 import { activeCustomerGoal } from "./customer-journey-orchestration.ts";
+import { sameCanonicalJson } from "./canonical-json.ts";
 
 export type B2DecisionKind = "allow" | "block" | "indeterminate";
 
@@ -121,7 +122,7 @@ export interface B2PersistenceInput<T> {
   trusted_correction_commit?: B2TrustedCorrectionCommit | null;
   trusted_lifecycle_commit?: B2TrustedLifecycleCommit | null;
   expected_commerce_state_revision?: number | null;
-  commit: () => Promise<T>;
+  commit: (snapshot: B2CanonicalSnapshot) => Promise<T>;
 }
 
 export type B2PersistenceResult<T> =
@@ -690,7 +691,7 @@ function isTrustedTargetedReadOnlyClarification(input: B2EvaluationInput, draft:
 }
 
 function equalJson(left: unknown, right: unknown): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
+  return sameCanonicalJson(left, right);
 }
 
 function isTrustedCorrectionCommit(input: B2EvaluationInput, draft: string): boolean {
@@ -1336,6 +1337,6 @@ export async function executeB2PersistenceGate<T>(
     };
   }
 
-  const value = await input.commit();
+  const value = await input.commit(revalidated.snapshot);
   return { committed: true, decision, snapshot: revalidated.snapshot, value };
 }
