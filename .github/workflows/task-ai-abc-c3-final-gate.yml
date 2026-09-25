@@ -785,6 +785,7 @@ jobs:
             cat > "$expected" <<'EOF'
           .github/scripts/task_ai_abc_c3_final_gate.mjs
           .github/workflows/task-ai-abc-c3-final-gate.yml
+          supabase/functions/_shared/b2-journey-progress-contract.ts
           supabase/functions/_shared/canonical-grounding.ts
           supabase/functions/_shared/commerce-state-runtime-base.ts
           supabase/functions/_shared/contextual-customer-update.test.ts
@@ -792,7 +793,9 @@ jobs:
           supabase/functions/_shared/conversation-long-memory.ts
           supabase/functions/_shared/conversation-recall.test.ts
           supabase/functions/_shared/conversation-recall.ts
+          supabase/functions/_shared/conversation-runtime-state-core.ts
           supabase/functions/_shared/natural-customer-response.ts
+          supabase/functions/_shared/pre-send-conversion-supervisor.ts
           supabase/functions/_shared/product-factual-query.test.ts
           supabase/functions/_shared/product-kb-semantic-contract.ts
           supabase/functions/_shared/product-referent-history.test.ts
