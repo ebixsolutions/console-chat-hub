@@ -20,6 +20,7 @@ import {
   evaluateB2BeforeCommit,
 } from "./pre-send-conversion-supervisor.ts";
 import type { KBDocumentCandidate } from "./deterministic-kb-client.ts";
+import { productKbSemanticContract } from "./product-kb-semantic-contract.ts";
 
 const assert: (condition: unknown, detail: string) => asserts condition = (
   condition,
@@ -183,6 +184,48 @@ Deno.test("W17 T9 restores AC referent after refrigerator and answers model plus
   assert(answer.reply === "現行產品資料列出 PANASONIC 樂聲牌 CW-SUL70BA：3/4匹Inverter LITE變頻式淨冷窗口機；功能：變頻 淨冷。 PANASONIC 樂聲牌 CW-SUL70BA 嘅匹數係 3/4匹。", answer.reply);
   assert(arbitration.resolved_topic === "air_conditioner" && arbitration.resolution_strategy === "PER_TOPIC_REFERENT_HISTORY" && citation.citation_lineage.selected_document_id === documentId && citation.citation_lineage.evidence_chunk_ids[0] === chunkId, JSON.stringify({ arbitration, citation }));
   console.log(`W17-T9|CURRENT_KB_REQUIRED|canonical_kb_direct_answer|${answer.reply}`);
+});
+
+Deno.test("W19 live T9 canonical referent/facets bind query and KB evidence despite service topic", () => {
+  const question = "講返頭先嗰部冷氣，細房研究緊邊個型號同幾多匹？";
+  const history = [
+    { role: "visitor", content: "另外雪櫃都想換，擺位闊度最多595mm，想搵雙門款。" },
+    { role: "visitor", content: "細房我見到 CW-SUL70BA，佢有咩功能、係幾多匹？80呎用落夠唔夠？" },
+  ];
+  const resolved = arbitrateAnaphoricProductFollowUp(question, history);
+  assert(resolved.kind === "resolved", JSON.stringify(resolved));
+  const contract = productKbSemanticContract(resolved.intent, resolved.resolved_topic, question);
+  assert(contract?.referent === "CW-SUL70BA" && contract.category === "air_conditioner" &&
+    contract.facets.includes("model_info") && contract.facets.includes("horsepower") &&
+    !contract.query.includes("雪櫃") && contract.topic_ids.join() === "product_facts", JSON.stringify(contract));
+  const target = deriveCurrentGroundingTarget(resolved.grounded_question, contract.query, contract.entity_ids, contract.topic_ids, true);
+  const selection = selectCanonicalGrounding([document], {
+    requestText: contract.query, currentTurnText: question, minScore: 0.45,
+    requirePublished: true, expectedTenantId: "34", expectedEntityIds: target.entity_ids,
+    expectedTopicIds: target.topic_ids, requiresCurrentKb: true, targetChanged: true,
+  });
+  const answer = resolveCanonicalKbDirectAnswer({ request: resolved.grounded_question, selection, language: "zh-TW" });
+  assert(selection.ok && selection.authority_decision.decision === "USE_CURRENT_KB" &&
+    answer?.reply.includes("CW-SUL70BA") && answer.reply.includes("3/4匹") &&
+    !answer.reply.includes("雪櫃"), JSON.stringify({ selection, answer }));
+});
+
+Deno.test("W19 factual topic never overrides support, order or Commerce quantity", () => {
+  for (const question of ["CW-SUL70BA 開唔到機，點處理？", "CW-SUL70BA 訂單狀態係點？", "我而家要幾多部？"]) {
+    const intent = classifyNaturalCustomerIntent(question);
+    assert(productKbSemanticContract(intent, null, question) === null, JSON.stringify({ question, intent }));
+  }
+});
+
+Deno.test("W19 explicit model return ignores intervening refrigerator topic", () => {
+  const question = "返返去 CW-SUL70BA，佢係幾多匹？";
+  const intent = classifyNaturalCustomerIntent(question);
+  const contract = productKbSemanticContract(intent, null, question);
+  assert(contract?.referent === "CW-SUL70BA" && contract.facets.includes("horsepower") && !contract.query.includes("refrigerator"), JSON.stringify({ intent, contract }));
+  const target = deriveCurrentGroundingTarget(question, contract.query, contract.entity_ids, contract.topic_ids, true);
+  const selected = selectCanonicalGrounding([document], { requestText: contract.query, currentTurnText: question, minScore: 0.45, requirePublished: true, expectedTenantId: "34", expectedEntityIds: target.entity_ids, expectedTopicIds: target.topic_ids, requiresCurrentKb: true });
+  const answer = resolveCanonicalKbDirectAnswer({ request: question, selection: selected, language: "zh-TW" });
+  assert(selected.ok && answer?.reply.includes("3/4匹"), JSON.stringify({ selected, answer }));
 });
 
 // Full Content displayed by the tenant-scoped Knowledge panel for this model.

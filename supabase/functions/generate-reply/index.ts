@@ -59,6 +59,7 @@ import {
   renderNaturalNoCurrentEvidence,
   requiresCurrentMerchantEvidence,
 } from "../_shared/natural-customer-response.ts";
+import { productKbSemanticContract } from "../_shared/product-kb-semantic-contract.ts";
 import { evaluateEscalationShadow } from "../_shared/escalation-shadow.ts";
 import {
   persistRequiredEscalationClarification,
@@ -5350,7 +5351,14 @@ async function orchestrationGenerateReply(
       _productFactualRequest,
       _pr5HistoryRows ?? [],
     );
-    const userQuery = _c3ServicePlan.kb_query || _semanticRetrieval.query;
+    const _productKbContract = productKbSemanticContract(
+      _effectiveNaturalCustomerIntent,
+      _productFollowUpArbitration.kind === "resolved"
+        ? _productFollowUpArbitration.resolved_topic
+        : null,
+      _h1LastMsg,
+    );
+    const userQuery = _productKbContract?.query || _c3ServicePlan.kb_query || _semanticRetrieval.query;
     ragResult = !userQuery
       ? {
         success: true,
@@ -5506,8 +5514,8 @@ async function orchestrationGenerateReply(
     _c1CurrentTarget = deriveCurrentGroundingTarget(
       _productFactualRequest,
       userQuery,
-      _semanticEntityIds,
-      _semanticTopicIds,
+      _productKbContract?.entity_ids ?? _semanticEntityIds,
+      _productKbContract?.topic_ids ?? _semanticTopicIds,
       _c1TargetChanged,
     );
     const _groundingSelection = selectCanonicalGrounding(

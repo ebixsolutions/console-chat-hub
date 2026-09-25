@@ -57,3 +57,14 @@ Deno.test("W17 tenant or conversation scope mismatch fails closed", () => {
   const result = arbitrateAnaphoricProductFollowUp("講返頭先部冷氣，佢幾多匹？", [row("CW-SUL70BA 冷氣係3/4匹。", { company_id: "other" })], scope);
   assert(result.kind === "clarification", JSON.stringify(result));
 });
+
+Deno.test("W19 paraphrased category returns bind the same AC without fridge leakage", () => {
+  const history = [row("雪櫃想搵雙門款。"), row("細房 CW-SUL70BA 冷氣係幾多匹？")];
+  for (const question of [
+    "講返頭先部冷氣，係幾多匹？",
+    "the AC we discussed earlier, what is its horsepower?",
+  ]) {
+    const result = arbitrateAnaphoricProductFollowUp(question, history, scope);
+    assert(result.kind === "resolved" && result.intent.product === "CW-SUL70BA" && result.resolved_topic === "air_conditioner", `${question}:${JSON.stringify(result)}`);
+  }
+});

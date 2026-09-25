@@ -137,7 +137,7 @@ export type ProductFollowUpArbitration =
   };
 
 const PRODUCT_ANAPHOR =
-  /(?:呢|這|这|嗰|那)(?:一)?(?:部|款|個|个)|(?:佢|它)(?!們|们)|\b(?:this\s+one|that\s+(?:one|model)|it)\b/iu;
+  /(?:呢|這|这|嗰|那)(?:一)?(?:部|款|個|个)|(?:頭先|头先|之前)(?:嗰|那)?(?:部|款|個|个)|(?:佢|它)(?!們|们)|\b(?:this\s+one|that\s+(?:one|model)|it|the\s+AC\s+we\s+discussed\s+earlier)\b/iu;
 const PRODUCT_CONTEXT_SWITCH =
   /(?:轉(?:去|睇|問)|转(?:去|看|问)|講返|讲回|switch(?:ing)?\s+to|move(?:ing)?\s+to|back\s+to)\s*(?:另一|另一个|another|the)?\s*(?:產品|产品|product|category)?|(?:雪櫃|冰箱|refrigerator|fridge|洗衣機|洗衣机|washer|washing\s+machine|電視|电视|television|\bTV\b|焗爐|烤箱|oven)/iu;
 const INACTIVE_REFERENT =

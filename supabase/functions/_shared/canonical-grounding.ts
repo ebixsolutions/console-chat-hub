@@ -473,6 +473,7 @@ export function selectCanonicalGrounding(
           ...namedTargetTokens(candidateText(document)),
         ]),
         topic_ids: unique([
+          ...(document.source_type.toLowerCase() === "product" ? ["product_facts"] : []),
           ...(metadata?.claims ?? []).map((claim) => claim.key),
           ...topicTokens(candidateText(document)),
           ...namedTargetTokens(candidateText(document)),

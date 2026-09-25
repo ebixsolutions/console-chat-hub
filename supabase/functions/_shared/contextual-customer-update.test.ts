@@ -24,6 +24,12 @@ import {
   requiresCurrentMerchantEvidence,
 } from "./natural-customer-response.ts";
 import { evaluateB2BeforeCommit } from "./pre-send-conversion-supervisor.ts";
+import { planConversationService, renderServicePlanReply } from "./conversation-service-planner.ts";
+import { renderNaturalNoCurrentEvidence } from "./natural-customer-response.ts";
+import { productKbSemanticContract } from "./product-kb-semantic-contract.ts";
+import { deriveCurrentGroundingTarget, selectCanonicalGrounding } from "./canonical-grounding.ts";
+import { resolveCanonicalKbDirectAnswer } from "./canonical-kb-direct-answer.ts";
+import type { KBDocumentCandidate } from "./deterministic-kb-client.ts";
 
 function assert(value: unknown, message: string): asserts value {
   if (!value) throw new Error(message);
@@ -659,7 +665,7 @@ Deno.test("W15 sequential T1-T8 preserves journey then prioritizes factual follo
   console.log(`W15-T8|${t8.route}|${t8.reply}`);
 });
 
-Deno.test("W17 sequential T1-T12 restores topic referent and preserves scoped correction/cancellation", async () => {
+Deno.test("W19 sequential T1-T16 source replay preserves customer journey, KB and transaction boundaries", async () => {
   const f = fixture();
   const turns: string[] = [];
   const ask = async (text: string) => { const outcome = await f.ask(text, turns.slice().reverse()); turns.push(text); return outcome; };
@@ -705,6 +711,47 @@ Deno.test("W17 sequential T1-T12 restores topic referent and preserves scoped co
   const recall = prepareConversationRecall({ conversation_id: "conversation", company_id: "company", source_message_id: "source-t12", question: t12, memory, commerce: { conversation_id: "conversation", company_id: "company", source_message_id: "source-t11", revision: f.snapshot().revision, state: afterCancellation } }, "zh-TW");
   assert(recall.decision.handled && recall.reply && recall.reply.includes("110") && !recall.reply.includes("100平方呎") && !recall.reply.includes("refrigerator:unscoped"), JSON.stringify(recall));
   assert(afterCancellation.conversion.order_status === "none" && afterCancellation.conversion.payment_status === "none" && afterCancellation.conversion.quotation_status === "none" && afterCancellation.quotes.length === 0, "transaction_promoted");
+  const kbContent = "工作表：商品設定_20260813 162932 ID: 7944 狀態: 開啟 商品型號: CW-SUL70BA 商品圖片: 39 成本: 3750 銷售價: 5680 特價: 4038 匹數 (多聯分體式): 29 品牌: PANASONIC 樂聲牌 附加項目: 否 新增日期: 46247 標籤: 32 描述: PANASONIC 樂聲 CW-SUL70BA 3/4匹Inverter LITE變頻式淨冷窗口機，採用香港專利左出風設計、R32製冷劑及四合一抗菌過濾網，製冷能力7,400BTU/h，設左右自動送風、睡眠模式及獨立抽濕，獲香港1級能源標籤，提供3年全機及5年壓縮機保用。 功能: 變頻 淨冷 匹數: 3/4匹 氣體: 36 風數: 42";
+  const kbDoc: KBDocumentCandidate = {
+    document_id: "fixture-cw", title: "PANASONIC 樂聲牌 CW-SUL70BA", source_type: "Product", document_score: 0.99,
+    chunks: [{ document_id: "fixture-cw", chunk_id: "fixture-chunk", title: "CW-SUL70BA", content: kbContent, score: 0.99, chunk_type: "full_content", source_type: "Product", status: "published" }],
+    citations: [], meta: { document_score: 0.99, highest_chunk_score: 0.99, second_highest_chunk_score: 0, returned_summary_count: 0, returned_full_content_count: 1, dropped_without_document_id: 0, dropped_without_content: 0 },
+    llm_context: { selected_document_id: "fixture-cw", orientation_summary: null, full_content_evidence: [{ document_id: "fixture-cw", chunk_id: "fixture-chunk", content: kbContent, score: 0.99, source_type: "Product" }] },
+  };
+  const factualAnswer = (request: string, intent: ReturnType<typeof classifyNaturalCustomerIntent>, category: string | null, language: "zh-TW" | "en", documents: KBDocumentCandidate[]) => {
+    const contract = productKbSemanticContract(intent, category, request);
+    assert(contract, `missing_product_contract:${request}`);
+    const target = deriveCurrentGroundingTarget(request, contract.query, contract.entity_ids, contract.topic_ids, true);
+    const selection = selectCanonicalGrounding(documents, { requestText: contract.query, currentTurnText: request, minScore: 0.45, requirePublished: true, expectedTenantId: "34", expectedEntityIds: target.entity_ids, expectedTopicIds: target.topic_ids, requiresCurrentKb: true, targetChanged: true });
+    return resolveCanonicalKbDirectAnswer({ request, selection, language });
+  };
+  assert(t9Result.kind === "resolved", "T9 referent missing");
+  const t9Answer = factualAnswer(t9Result.grounded_question, t9Result.intent, t9Result.resolved_topic, "zh-TW", [kbDoc]);
+  assert(t9Answer?.reply.includes("CW-SUL70BA") && t9Answer.reply.includes("3/4匹"), JSON.stringify(t9Answer));
+  const t13 = "舊報價假設機價每部5600、安裝每部550、鋁架每單550，共2部，試算幾多？";
+  const t13Plan = planConversationService({ question: t13, language: "zh-TW", recall: { handled: false, reason: "CURRENT_KB_REQUIRED" }, memory: null, commerce: afterCancellation, calculation_quantity: 2, calculation_terms: [
+    { label: "機價", amount: 5600, currency: "HKD", charge_basis: "per_unit", source: "customer_message" },
+    { label: "安裝", amount: 550, currency: "HKD", charge_basis: "per_unit", source: "customer_message" },
+    { label: "鋁架", amount: 550, currency: "HKD", charge_basis: "per_order", source: "customer_message" },
+  ] });
+  assert(t13Plan.action === "historical_calculation" && t13Plan.calculation?.total === 12850 && t13Plan.calculation.historical_only, JSON.stringify(t13Plan)); turns.push(t13);
+  const t14 = "CW-SUL70BA 開唔到機，點處理？";
+  const t14Plan = planConversationService({ question: t14, language: "zh-TW", recall: { handled: false, reason: "NOT_A_RECALL_QUERY" }, memory: null, commerce: afterCancellation });
+  const t14Reply = renderServicePlanReply(t14Plan, null) ?? "";
+  assert(t14Plan.issue_kind === "product_operation_failure" && /燈號|錯誤提示/.test(t14Reply) && productKbSemanticContract(classifyNaturalCustomerIntent(t14), null, t14) === null, JSON.stringify(t14Plan)); turns.push(t14);
+  const t15 = "NONEXISTENT-999999 有咩功能？";
+  const t15Intent = classifyNaturalCustomerIntent(t15);
+  const t15Reply = renderNaturalNoCurrentEvidence(t15Intent, "zh-TW") ?? "";
+  assert(factualAnswer(t15, t15Intent, null, "zh-TW", []) === null && t15Reply.includes("NONEXISTENT-999999") && !/請提供型號/.test(t15Reply), t15Reply); turns.push(t15);
+  const t16 = "Is CW-SUL70BA suitable for an 80 sq ft bedroom, and what is its horsepower?";
+  const t16Answer = factualAnswer(t16, classifyNaturalCustomerIntent(t16), null, "en", [kbDoc]);
+  assert(t16Answer?.reply.includes("PANASONIC CW-SUL70BA") && t16Answer.reply.includes("3/4 HP") && /does not directly state a suitable room area/.test(t16Answer.reply) && !t16Answer.reply.includes("樂聲"), JSON.stringify(t16Answer)); turns.push(t16);
+  assert(f.snapshot().state.conversion.order_status === "none" && f.snapshot().state.conversion.payment_status === "none" && f.snapshot().state.conversion.quotation_status === "none", "false_transaction");
+  console.log(`W19-T9|canonical_kb_direct_answer|${t9Answer?.reply}`);
+  console.log(`W19-T13|${t13Plan.action}|${t13Plan.calculation?.total}|historical_only`);
+  console.log(`W19-T14|${t14Plan.issue_kind}|${t14Reply}`);
+  console.log(`W19-T15|kb_no_current_evidence|${t15Reply}`);
+  console.log(`W19-T16|canonical_kb_direct_answer|${t16Answer?.reply}`);
   console.log(`W17-T1|${t1.route}|${t1.reply}`); console.log(`W17-T2|${t2.route}|${t2.reply}`); console.log(`W17-T3|${t3.route}|${t3.reply}`); console.log(`W17-T4|${t4.route}|${t4.reply}`); console.log(`W17-T5|${t5.route}|${t5.reply}`); console.log("W17-T6|CURRENT_KB_REQUIRED|features+horsepower+suitability"); console.log("W17-T7|CURRENT_KB_REQUIRED|price:CW-SUL70BA"); console.log(`W17-T8|${t8.route}|${t8.reply}`); console.log("W17-T9|CURRENT_KB_REQUIRED|CW-SUL70BA|horsepower+model_info"); console.log(`W17-T10|${t10.route}|${t10.reply}`); console.log(`W17-T11|${t11.route}|${t11.reply}`); console.log(`W17-T12|${recall.metadata.response_route}|${recall.reply}`);
 });
 
