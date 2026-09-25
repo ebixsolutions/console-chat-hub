@@ -520,8 +520,10 @@ const t11AtomicRepairFiles = [
   "sql/c3-nonproduction/05_t11_reply_revision_guard_test.sql",
   "supabase/functions/_shared/canonical-json.ts",
   "supabase/functions/_shared/fixtures/t11-synthetic-jsonb-reorder.json",
+  "supabase/functions/_shared/fixtures/t12-round2-production-shaped.json",
   "supabase/functions/_shared/revision-bound-reply.ts",
   "supabase/functions/_shared/revision-bound-reply.test.ts",
+  "supabase/functions/_shared/t12-round2-production-shaped.test.ts",
   "supabase/migrations/20260925093000_c3_t11_revision_bound_ai_reply.sql",
   "supabase/migrations/rollback/20260925093000_c3_t11_revision_bound_ai_reply.rollback.sql",
 ];
