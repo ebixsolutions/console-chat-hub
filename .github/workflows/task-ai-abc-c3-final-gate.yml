@@ -796,10 +796,12 @@ jobs:
           supabase/functions/_shared/conversation-recall.ts
           supabase/functions/_shared/conversation-resolution-contract.ts
           supabase/functions/_shared/fixtures/t11-synthetic-jsonb-reorder.json
+          supabase/functions/_shared/fixtures/t12-round2-production-shaped.json
           supabase/functions/_shared/pre-send-conversion-supervisor.test.ts
           supabase/functions/_shared/pre-send-conversion-supervisor.ts
           supabase/functions/_shared/revision-bound-reply.test.ts
           supabase/functions/_shared/revision-bound-reply.ts
+          supabase/functions/_shared/t12-round2-production-shaped.test.ts
           supabase/functions/generate-reply/index.ts
           supabase/migrations/20260925093000_c3_t11_revision_bound_ai_reply.sql
           supabase/migrations/rollback/20260925093000_c3_t11_revision_bound_ai_reply.rollback.sql
