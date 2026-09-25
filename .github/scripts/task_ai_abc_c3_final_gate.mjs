@@ -32,6 +32,7 @@ const files = {
   recallUnit: "supabase/functions/_shared/conversation-recall.test.ts",
   recallIntegration: "supabase/functions/_shared/conversation-recall.integration.test.ts",
   memory: "supabase/functions/_shared/conversation-long-memory.ts",
+  conversationRuntimeStateCore: "supabase/functions/_shared/conversation-runtime-state-core.ts",
   unit: "supabase/functions/_shared/conversation-long-memory.test.ts",
   integration:
     "supabase/functions/_shared/conversation-long-memory.integration.test.ts",
