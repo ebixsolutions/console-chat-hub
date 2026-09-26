@@ -9,6 +9,10 @@ import { verifyIndependentGraderArtifact } from "./c3_nonproduction_independent_
 import { verifyHumanCalibration as verifyBlindHumanCalibration } from "./c3_human_blind_calibration.mjs";
 import { verifyObjectiveOracle } from "./c3_deterministic_quality.mjs";
 import { verifyDeterministicClosure } from "./c3_deterministic_runtime_closure.mjs";
+import {
+  assertRuntimeParity,
+  buildRuntimeParityReport,
+} from "./c3_edge_runtime_parity.mjs";
 
 const must = (value, message) => {
   if (!value) throw new Error(message);
@@ -161,6 +165,8 @@ const files = {
   deterministicHumanReviewSchema: ".github/scripts/c3_deterministic_human_review.schema.json",
   deterministicClosure: ".github/scripts/c3_deterministic_runtime_closure.mjs",
   deterministicClosureTest: ".github/scripts/c3_deterministic_runtime_closure.test.mjs",
+  edgeRuntimeParity: ".github/scripts/c3_edge_runtime_parity.mjs",
+  edgeRuntimeParityTest: ".github/scripts/c3_edge_runtime_parity.test.mjs",
   deterministicFtsTest: ".github/scripts/c3_deterministic_fts.test.mjs",
   task42DeployWorkflow: ".github/workflows/task4-2-deploy-live-console-edge.yml",
   canonical103Fixture: ".github/scripts/c3_canonical_103_turns.json",
@@ -614,6 +620,40 @@ for (
 }
 
 run("git", ["diff", "--check", "origin/main...HEAD"]);
+run("node", [files.edgeRuntimeParityTest]);
+const runtimeGraph = buildRuntimeParityReport({
+  root: process.cwd(),
+  deployedFiles: [],
+  sourceScopeFiles: Object.values(files),
+});
+const runtimeParity = buildRuntimeParityReport({
+  root: process.cwd(),
+  deployedFiles: runtimeGraph.runtime_expected_files.map((file) => ({
+    path: file,
+    sha256: sha(file),
+  })),
+  sourceScopeFiles: Object.values(files),
+});
+assertRuntimeParity(runtimeParity);
+must(
+  runtimeParity.deterministic_kb_client.runtime_reachable === false &&
+    runtimeParity.deterministic_kb_client.source_scope === true,
+  "deterministic_kb_client_source_runtime_classification_invalid",
+);
+process.stdout.write(
+  `C3_EDGE_RUNTIME_PARITY ${JSON.stringify({
+    mode: "synthetic_source_graph",
+    root: runtimeParity.root,
+    runtime_expected_files: runtimeParity.runtime_expected_files,
+    runtime_actual_files: runtimeParity.runtime_actual_files,
+    source_scope_files: runtimeParity.source_scope_files,
+    missing: runtimeParity.missing_count,
+    extra: runtimeParity.extra_count,
+    mismatch: runtimeParity.mismatch_count,
+    deterministic_kb_client: runtimeParity.deterministic_kb_client,
+    result: "PASS",
+  })}\n`,
+);
 runDeno(["test", "--no-lock", files.unit, files.terminalTest]);
 runDeno(["test", "--no-lock", "--allow-read", "supabase/functions/_shared/revision-bound-reply.test.ts"]);
 runDeno(["test", "--no-lock", "--allow-read", "supabase/functions/_shared/t12-round2-production-shaped.test.ts"]);

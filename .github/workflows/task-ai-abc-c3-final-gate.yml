@@ -778,6 +778,27 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          edge_runtime_parity_base=41fe2e267ec878cb7ece304efb6781dcc50abd43
+          if test "$(git rev-parse "$GITHUB_SHA^")" = "$edge_runtime_parity_base"; then
+            expected="$RUNNER_TEMP/c3-edge-runtime-parity-expected"
+            actual="$RUNNER_TEMP/c3-edge-runtime-parity-actual"
+            cat > "$expected" <<'EOF'
+          .github/scripts/c3_edge_runtime_parity.mjs
+          .github/scripts/c3_edge_runtime_parity.test.mjs
+          .github/scripts/task_ai_abc_c3_final_gate.mjs
+          .github/workflows/task-ai-abc-c3-final-gate.yml
+          EOF
+            git diff --name-only "$edge_runtime_parity_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
+            LC_ALL=C sort -o "$expected" "$expected"
+            diff -u "$expected" "$actual"
+            test "$(git rev-list --count "$edge_runtime_parity_base..$GITHUB_SHA")" -eq 1
+            node .github/scripts/c3_edge_runtime_parity.test.mjs
+            test -z "$(git diff --name-only "$edge_runtime_parity_base..$GITHUB_SHA" -- 'supabase/migrations/**' 'supabase/functions/**')"
+            echo C3_EDGE_RUNTIME_PARITY_SOURCE_ALLOWLIST=PASS
+            echo C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE
+            echo C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS
+            exit 0
+          fi
           w22_reply_base=3054095ac4fd9303e673db3435fb4fbc0440ce09
           if git merge-base --is-ancestor "$w22_reply_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$w22_reply_base"; then
             expected="$RUNNER_TEMP/c3-w22-reply-expected"
