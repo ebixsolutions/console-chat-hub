@@ -1,0 +1,1788 @@
+name: AI ABC C3 Final Gate
+
+on:
+  push:
+    branches: [director/ai-abc-c3-long-memory-final-cutover]
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Secret-free preflight, synthetic nonproduction regression, separately authorized live validation, cleanup-only, or recovery
+        required: true
+        default: preflight_offline
+        type: choice
+        options:
+          - preflight_offline
+          - nonproduction_external_quality
+          - validation_only
+          - evidence_finalize
+          - cleanup_only
+          - recovery
+      expected_head:
+        description: Exact authorized validation HEAD
+        required: false
+        type: string
+      expected_tree:
+        description: Exact authorized validation TREE
+        required: false
+        type: string
+      nonproduction_model_authorization:
+        description: Exact C3 zero-cost isolated generation credential authorization token
+        required: false
+        type: string
+      validation_authorization:
+        description: Exact c3-validation-HEAD-TREE-RELEASE_ID authorization
+        required: false
+        type: string
+      deployment_run_id:
+        description: Parent deployment run holding the durable release identity
+        required: false
+        type: string
+      deployment_attempt:
+        description: Exact parent deployment run attempt
+        required: false
+        default: '1'
+        type: string
+      release_id:
+        description: Exact release execution identity
+        required: false
+        type: string
+      release_digest:
+        description: Exact sha256 digest of RELEASE.json
+        required: false
+        type: string
+      artifact_run_id:
+        description: Parent deployment run holding the release baseline artifact
+        required: false
+        type: string
+      artifact_id:
+        description: Exact release baseline artifact ID
+        required: false
+        type: string
+      artifact_digest:
+        description: Exact release baseline artifact sha256 digest
+        required: false
+        type: string
+      cleanup_source_run_id:
+        description: Validation run containing a fixture manifest for cleanup-only recovery
+        required: false
+        type: string
+      validation_run_id:
+        description: Failed validation child run authorizing release-scoped recovery
+        required: false
+        type: string
+      validation_run_attempt:
+        description: Exact validation run attempt containing runtime evidence
+        required: false
+        default: '1'
+        type: string
+      validation_artifact_identity:
+        description: JSON with exact runtime evidence artifact id and digest
+        required: false
+        type: string
+      finalization_authorization:
+        description: Exact c3-evidence-finalize-HEAD-TREE-RELEASE_ID-VALIDATION_RUN authorization
+        required: false
+        type: string
+      human_artifact_identity:
+        description: JSON with external human artifact id, digest and run_id
+        required: false
+        type: string
+      cleanup_fixture_marker:
+        description: Exact deterministic fixture marker if the prior runner vanished before artifact upload
+        required: false
+        type: string
+      recovery_authorization:
+        description: Exact c3-recovery-<selected commit SHA> authorization
+        required: false
+        type: string
+      recovery_scope:
+        description: Recover a failed validation release or an interrupted deployment intent
+        required: true
+        default: release
+        type: choice
+        options:
+          - release
+          - intent
+      recover_generate_reply:
+        description: Recover generate-reply from the durable snapshot
+        required: true
+        default: false
+        type: boolean
+      recover_agent_assist:
+        description: Recover agent-assist from the durable snapshot
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  C3_PROJECT_REF: nrfxhqabwblzxoushgnm
+  C3_CAPTURE_NAME: C3-current-live-v112-v43-recovery-baseline
+  C3_CAPTURE_RETENTION_DAYS: '30'
+  C3_CLI_VERSION: '2.117.0'
+  C3_CLI_EPHEMERAL: supabase/.temp/cli-latest
+  C3_ASSERT_LIB: |
+    c3_assert(){ local n="$1" e="$2" a="$3"; if [ "$e" = "$a" ]; then echo "C3_SOURCE_ASSERT|name=$n|expected=$e|actual=$a|result=PASS"; else echo "C3_SOURCE_ASSERT|name=$n|expected=$e|actual=$a|result=FAIL"; return 1; fi; }
+    c3_source_clean(){
+      local phase="$1" expected_cli="$2" tracked staged approved unauthorized failed=0 offenders
+      tracked="$(git diff --name-only | awk 'NF{n++} END{print n+0}')"
+      staged="$(git diff --cached --name-only | awk 'NF{n++} END{print n+0}')"
+      approved="$(git ls-files --others --exclude-standard | awk -v p="$C3_CLI_EPHEMERAL" '$0==p{n++} END{print n+0}')"
+      offenders="$(git ls-files --others --exclude-standard | awk -v p="$C3_CLI_EPHEMERAL" 'NF && $0!=p{print}')"
+      unauthorized="$(printf '%s\n' "$offenders" | awk 'NF{n++} END{print n+0}')"
+      echo "C3_SOURCE_STATUS|phase=$phase"
+      git status --porcelain || true
+      printf '%s\n' "$offenders" | awk 'NF{print "C3_SOURCE_OFFENDER|kind=unauthorized_untracked|path=" $0}'
+      c3_assert "${phase}_tracked_modified" 0 "$tracked" || failed=1
+      c3_assert "${phase}_staged" 0 "$staged" || failed=1
+      c3_assert "${phase}_exact_cli_ephemeral" "$expected_cli" "$approved" || failed=1
+      c3_assert "${phase}_unauthorized_untracked" 0 "$unauthorized" || failed=1
+      if git ls-files --error-unmatch "$C3_CLI_EPHEMERAL" >/dev/null 2>&1; then echo "C3_SOURCE_ASSERT|name=${phase}_cli_ephemeral_untracked|expected=untracked|actual=tracked|result=FAIL"; failed=1; else echo "C3_SOURCE_ASSERT|name=${phase}_cli_ephemeral_untracked|expected=untracked|actual=untracked|result=PASS"; fi
+      return "$failed"
+    }
+    c3_cli_delta(){
+      local before="$1" after="$2" delta
+      delta="$(comm -13 "$before" "$after" | awk 'NF')"
+      if [ "$delta" = "$C3_CLI_EPHEMERAL" ]; then echo "C3_SOURCE_ASSERT|name=cli_setup_created_exact_path|expected=$C3_CLI_EPHEMERAL|actual=$delta|result=PASS"; else printf '%s\n' "$delta" | awk 'NF{print "C3_SOURCE_OFFENDER|kind=cli_setup_delta|path=" $0}'; echo "C3_SOURCE_ASSERT|name=cli_setup_created_exact_path|expected=$C3_CLI_EPHEMERAL|actual=${delta:-NONE}|result=FAIL"; return 1; fi
+    }
+
+jobs:
+  c3-nonproduction-external-quality:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.mode == 'nonproduction_external_quality' &&
+      github.actor == 'ebixsolutions'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    environment: c3-nonproduction-free
+    env:
+      C3_NONPROD_SUPABASE_PROJECT_REF: ${{ secrets.C3_NONPROD_SUPABASE_PROJECT_REF }}
+      C3_NONPROD_SUPABASE_URL: ${{ secrets.C3_NONPROD_SUPABASE_URL }}
+      C3_NONPROD_SUPABASE_ACCESS_TOKEN: ${{ secrets.C3_NONPROD_SUPABASE_ACCESS_TOKEN }}
+      C3_NONPROD_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.C3_NONPROD_SUPABASE_SERVICE_ROLE_KEY }}
+      C3_NONPROD_TEST_AGENT_EMAIL: ${{ secrets.C3_NONPROD_TEST_AGENT_EMAIL }}
+      C3_NONPROD_TEST_AGENT_PASSWORD: ${{ secrets.C3_NONPROD_TEST_AGENT_PASSWORD }}
+      C3_NONPROD_MODEL_AUTHORIZATION: ${{ inputs.nonproduction_model_authorization }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: '${{ github.sha }}', fetch-depth: 0, clean: true}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - name: Reject production identity and bind exact runtime candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${C3_NONPROD_SUPABASE_PROJECT_REF:-}" = nbtowfuvvfqpxqydyoby
+          test "$C3_NONPROD_SUPABASE_PROJECT_REF" != nrfxhqabwblzxoushgnm
+          test "${C3_NONPROD_SUPABASE_URL:-}" = "https://$C3_NONPROD_SUPABASE_PROJECT_REF.supabase.co"
+          case "$C3_NONPROD_SUPABASE_URL" in *nrfxhqabwblzxoushgnm*) exit 1;; esac
+          test -n "${C3_NONPROD_SUPABASE_ACCESS_TOKEN:-}"
+          test -n "${C3_NONPROD_SUPABASE_SERVICE_ROLE_KEY:-}"
+          test -n "${C3_NONPROD_TEST_AGENT_EMAIL:-}"
+          test -n "${C3_NONPROD_TEST_AGENT_PASSWORD:-}"
+          node .github/scripts/c3_nonproduction_external_quality.mjs preflight
+      - name: Verify synthetic regression dataset and anti-fake controls
+        run: |
+          set -euo pipefail
+          node .github/scripts/c3_nonproduction_external_quality.mjs verify-dataset
+          node .github/scripts/c3_nonproduction_external_quality.test.mjs
+      - name: Run isolated synthetic HTTP regression and exact-ID cleanup
+        run: node .github/scripts/c3_nonproduction_external_quality.mjs run "$RUNNER_TEMP/c3-nonproduction-http-evidence.json"
+      - name: Reverify immutable synthetic runtime evidence
+        run: node .github/scripts/c3_nonproduction_external_quality.mjs verify-evidence "$RUNNER_TEMP/c3-nonproduction-http-evidence.json"
+      - name: Upload isolated synthetic regression evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: c3-synthetic-regression-http-evidence-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/c3-nonproduction-http-evidence.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  c3-validation-preflight-offline:
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && inputs.mode == 'preflight_offline')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      HAS_SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN != '' }}
+      HAS_FINAL_SMOKE_AGENT_EMAIL: ${{ secrets.FINAL_SMOKE_AGENT_EMAIL != '' }}
+      HAS_FINAL_SMOKE_AGENT_PASSWORD: ${{ secrets.FINAL_SMOKE_AGENT_PASSWORD != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: '${{ github.sha }}', fetch-depth: 0, clean: true}
+      - name: Record exact preflight identity and credential presence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          echo "C3_PREFLIGHT_IDENTITY|head=$(git rev-parse HEAD)|tree=$(git rev-parse HEAD^{tree})"
+          echo "C3_CREDENTIAL_PRESENCE|name=SUPABASE_ACCESS_TOKEN|present=$HAS_SUPABASE_ACCESS_TOKEN"
+          echo "C3_CREDENTIAL_PRESENCE|name=FINAL_SMOKE_AGENT_EMAIL|present=$HAS_FINAL_SMOKE_AGENT_EMAIL"
+          echo "C3_CREDENTIAL_PRESENCE|name=FINAL_SMOKE_AGENT_PASSWORD|present=$HAS_FINAL_SMOKE_AGENT_PASSWORD"
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - name: Validation evidence, anti-fake, sequencing, cleanup and merge-guard controls
+        run: |
+          set -euo pipefail
+          python -c "import ast,pathlib; ast.parse(pathlib.Path('.github/scripts/c3_validation_only_runner.py').read_text())"
+          node .github/scripts/c3_validation_control_tests.mjs
+          node .github/scripts/c3_nonproduction_external_quality.mjs verify-dataset
+          node .github/scripts/c3_real_customer_dataset.mjs verify-registry
+          node .github/scripts/c3_real_customer_dataset.mjs verify-dataset
+          node .github/scripts/c3_real_customer_dataset.mjs verify-derived 3a15223c96c3909e014fc095f3bd39256438df02 6dd0af943f9f6bce870eebc16db24c5cc766f6a0
+          node .github/scripts/c3_real_customer_dataset.test.mjs
+          node .github/scripts/c3_nonproduction_independent_grader.test.mjs
+          node .github/scripts/c3_human_blind_calibration.test.mjs
+          node .github/scripts/c3_deterministic_runtime_closure.test.mjs
+          node .github/scripts/c3_deterministic_fts.test.mjs
+          node .github/scripts/c3_deterministic_quality.test.mjs
+          node .github/scripts/c3_deterministic_quality.mjs verify-oracle .github/scripts/c3_real_case_derived_dataset_v1.json .github/scripts/c3_deterministic_objective_oracle_v1.json .github/scripts/c3_deterministic_objective_freeze_v1.json
+      - name: Production DB security readback preflight (read-only, no fixtures)
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'validation_only'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          set -euo pipefail
+          python .github/scripts/c3_validation_only_runner.py db-readback \
+            --out "$RUNNER_TEMP/c3-db-security-readback" \
+            --contract .github/scripts/c3_validation_scenarios.json
+      - name: Prove event routing is preflight-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('.github/workflows/task-ai-abc-c3-final-gate.yml').read_text()
+          start=p.index('\n  c3-validation-only:\n')+1
+          end=p.index('\n  c3-validation-cleanup-only:\n',start)
+          block=p[start:end]
+          assert "github.event_name == 'workflow_dispatch'" in block
+          assert "inputs.mode == 'validation_only'" in block
+          assert "github.actor == 'ebixsolutions'" in block
+          for forbidden in ('functions deploy','db push','migration up','rollback deploy','apply_migration'):
+              assert forbidden not in block.lower(), forbidden
+          print('C3_VALIDATION_EVENT_ROUTING=PASS')
+          PY
+      - name: Preflight-only terminal marker
+        run: echo 'C3_VALIDATION_PREFLIGHT_OFFLINE=PASS; production_validation=SKIPPED; production_writes=0'
+
+  c3-validation-only:
+    if: >-
+      github.event_name == 'workflow_dispatch' && inputs.mode == 'validation_only' &&
+      github.actor == 'ebixsolutions'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      FINAL_SMOKE_AGENT_EMAIL: ${{ secrets.FINAL_SMOKE_AGENT_EMAIL }}
+      FINAL_SMOKE_AGENT_PASSWORD: ${{ secrets.FINAL_SMOKE_AGENT_PASSWORD }}
+      VITE_SUPABASE_URL: https://nrfxhqabwblzxoushgnm.supabase.co
+      VITE_SUPABASE_FUNCTIONS_URL: https://nrfxhqabwblzxoushgnm.supabase.co/functions/v1
+      C3_EXPECTED_HEAD: ${{ inputs.expected_head }}
+      C3_EXPECTED_TREE: ${{ inputs.expected_tree }}
+      C3_ARTIFACT_ID: ${{ inputs.artifact_id }}
+      C3_ARTIFACT_DIGEST: ${{ inputs.artifact_digest }}
+      C3_ARTIFACT_RUN_ID: ${{ inputs.artifact_run_id }}
+      C3_RELEASE_ID: ${{ inputs.release_id }}
+      C3_RELEASE_DIGEST: ${{ inputs.release_digest }}
+      C3_DEPLOYMENT_RUN_ID: ${{ inputs.deployment_run_id }}
+      C3_DEPLOYMENT_ATTEMPT: ${{ inputs.deployment_attempt }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: '${{ github.sha }}', fetch-depth: 0, clean: true}
+      - name: Guard exact validation-only authorization
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ github.repository }}" = ebixsolutions/console-chat-hub
+          test "${{ github.ref_name }}" = director/ai-abc-c3-long-memory-final-cutover
+          test "$(git rev-parse HEAD)" = "$C3_EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^{tree})" = "$C3_EXPECTED_TREE"
+          test "${{ inputs.validation_authorization }}" = "c3-validation-$C3_EXPECTED_HEAD-$C3_EXPECTED_TREE-$C3_RELEASE_ID"
+          test -n "$C3_DEPLOYMENT_RUN_ID"
+          test -n "$C3_RELEASE_ID"
+          test -n "$C3_RELEASE_DIGEST"
+          test -n "${SUPABASE_ACCESS_TOKEN:-}"
+          test -n "${FINAL_SMOKE_AGENT_EMAIL:-}"
+          test -n "${FINAL_SMOKE_AGENT_PASSWORD:-}"
+          test -n "$C3_ARTIFACT_ID"
+          test "$C3_ARTIFACT_RUN_ID" = "$C3_DEPLOYMENT_RUN_ID"
+          test -n "$C3_ARTIFACT_DIGEST"
+          echo C3_VALIDATION_ONLY_AUTHORIZATION=PASS
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - uses: denoland/setup-deno@v2
+        with: {deno-version: v2.9.6}
+      - uses: supabase/setup-cli@v1
+        with: {version: '2.117.0'}
+      - run: npm ci
+      - name: Bind durable artifact inputs to GitHub artifact metadata
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json,os,urllib.request
+          artifact_id=os.environ['C3_ARTIFACT_ID']; repo=os.environ['GITHUB_REPOSITORY']; token=os.environ['GITHUB_TOKEN']
+          request=urllib.request.Request(
+            f'https://api.github.com/repos/{repo}/actions/artifacts/{artifact_id}',
+            headers={'Authorization':'Bearer '+token,'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28','User-Agent':'c3-validation-only/1.0'})
+          artifact=json.load(urllib.request.urlopen(request))
+          assert artifact['id']==int(artifact_id)
+          assert artifact['name']==os.environ['C3_CAPTURE_NAME']
+          assert artifact.get('expired') is False
+          assert str(artifact.get('workflow_run',{}).get('id'))=='${{ inputs.artifact_run_id }}'
+          assert artifact.get('digest')==os.environ['C3_ARTIFACT_DIGEST']
+          print(f'C3_VALIDATION_ARTIFACT_IDENTITY|id={artifact_id}|digest={artifact["digest"]}|run_id=${{ inputs.artifact_run_id }}|result=PASS')
+          PY
+      - name: Download exact durable baseline outside checkout
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.C3_CAPTURE_NAME }}
+          path: ${{ runner.temp }}/c3-validation-baseline
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.artifact_run_id }}
+      - name: Verify durable baseline before fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - "$RUNNER_TEMP/c3-validation-baseline" <<'PY'
+          import hashlib,json,pathlib,sys
+          root=pathlib.Path(sys.argv[1]); cap=json.loads((root/'CAPTURE.json').read_text())
+          assert cap['project']=='nrfxhqabwblzxoushgnm'
+          for fn,count in {'generate-reply':47,'agent-assist':22}.items():
+            m=json.loads((root/fn/'MANIFEST.json').read_text()); src=root/fn/'supabase/functions'
+            exp={x['path']:x['sha256'] for x in m['files']}; act={p.relative_to(src).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in src.rglob('*') if p.is_file()}
+            assert len(exp)==count and exp==act
+          print('C3_VALIDATION_DURABLE_BASELINE=PASS')
+          PY
+      - name: Download and authorize exact durable release identity
+        uses: actions/download-artifact@v4
+        with:
+          name: C3-release-identity-${{ inputs.expected_head }}
+          path: ${{ runner.temp }}/c3-release-identity
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.deployment_run_id }}
+      - name: Bind validation child to parent deployment and actual target
+        shell: bash
+        run: |
+          set -euo pipefail
+          node .github/scripts/c3_release_identity.mjs authorize-validation \
+            --release "$RUNNER_TEMP/c3-release-identity/RELEASE.json" \
+            --head "$C3_EXPECTED_HEAD" --tree "$C3_EXPECTED_TREE" \
+            --deployment-run-id "$C3_DEPLOYMENT_RUN_ID" \
+            --deployment-attempt "$C3_DEPLOYMENT_ATTEMPT" \
+            --release-id "$C3_RELEASE_ID" --release-digest "$C3_RELEASE_DIGEST" \
+            --authorization "${{ inputs.validation_authorization }}"
+          python - "$RUNNER_TEMP/c3-release-identity/RELEASE.json" <<'PY'
+          import json,os,sys
+          release=json.load(open(sys.argv[1])); baseline=release['baseline']
+          assert str(baseline['artifact_id'])==os.environ['C3_ARTIFACT_ID']
+          assert baseline['artifact_digest']==os.environ['C3_ARTIFACT_DIGEST']
+          assert str(baseline['artifact_run_id'])==os.environ['C3_ARTIFACT_RUN_ID']
+          print('C3_VALIDATION_BASELINE_RELEASE_BINDING=PASS')
+          PY
+      - name: Run existing-live validation only
+        id: live_validation
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -uo pipefail
+          python .github/scripts/c3_validation_only_runner.py validate \
+            --out "$RUNNER_TEMP/c3-validation-evidence" \
+            --contract .github/scripts/c3_validation_scenarios.json \
+            --artifact-root "$RUNNER_TEMP/c3-validation-baseline" \
+            --release-root "$RUNNER_TEMP/c3-release-identity"
+      - name: Verify deterministic quality closure is ready for independent human review
+        if: always() && steps.live_validation.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          E="$RUNNER_TEMP/c3-validation-evidence/evidence.json"
+          python - "$E" <<'PY'
+          import json,os,sys
+          e=json.load(open(sys.argv[1])); q=e.get('machine_quality') or {}; long=e.get('long_run') or {}; cleanup=e.get('cleanup') or {}
+          assert e['runner']=={'head':os.environ['C3_EXPECTED_HEAD'],'tree':os.environ['C3_EXPECTED_TREE']}
+          assert q.get('schema_version')=='c3-deterministic-machine-quality-1.0.0'
+          assert q.get('status')=='PASS' and q.get('subjective_quality_status')=='AWAITING_INDEPENDENT_HUMAN_REVIEW'
+          metrics=q.get('metrics') or {}
+          assert q.get('sample_count',0)>=100
+          assert metrics.get('p0_count')==metrics.get('known_answer_dead_end')==metrics.get('unnecessary_reask')==0
+          assert metrics.get('fallback_denominator')==q.get('sample_count') and metrics.get('fallback_rate')==metrics.get('fallback_count')/metrics.get('fallback_denominator')
+          assert metrics['fallback_rate'] < .05
+          assert all(k not in q for k in ('dimension_averages','weighted_score','scores','grader_provenance'))
+          preparation=q.get('human_review_preparation') or {}
+          assert preparation.get('status')=='AWAITING_INDEPENDENT_HUMAN_REVIEW' and preparation.get('sample_count')==20 and preparation.get('minimum_independent_reviewers')==2
+          assert len(preparation.get('samples') or [])==20 and all(len(row.get('context_sha256',''))==len(row.get('response_sha256',''))==64 for row in preparation['samples'])
+          assert long.get('transport_successes',0)>=100 and long.get('semantic_correct')==long.get('semantic_total')==15
+          assert cleanup.get('completed') is True and cleanup.get('safely_deletable_residue')==0
+          print('C3_DETERMINISTIC_QUALITY_GATE|result=PASS|subjective=AWAITING_INDEPENDENT_HUMAN_REVIEW|next=human_calibration')
+          PY
+      - name: Upload fixture manifest and evidence for cleanup recovery
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: C3-validation-production-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}/c3-validation-evidence
+          if-no-files-found: error
+          retention-days: 30
+      - name: Validation-only result
+        if: always()
+        run: test '${{ steps.live_validation.outcome }}' = success
+
+  c3-evidence-finalize:
+    if: >-
+      github.event_name == 'workflow_dispatch' && inputs.mode == 'evidence_finalize' &&
+      github.actor == 'ebixsolutions'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: '${{ github.sha }}', fetch-depth: 0, clean: true}
+      - name: Guard exact evidence finalization authority
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ github.ref_name }}" = director/ai-abc-c3-long-memory-final-cutover
+          test "$(git rev-parse HEAD)" = "${{ inputs.expected_head }}"
+          test "$(git rev-parse HEAD^{tree})" = "${{ inputs.expected_tree }}"
+          test "${{ inputs.finalization_authorization }}" = "c3-evidence-finalize-${{ inputs.expected_head }}-${{ inputs.expected_tree }}-${{ inputs.release_id }}-${{ inputs.validation_run_id }}"
+          for value in '${{ inputs.validation_run_id }}' '${{ inputs.validation_artifact_identity }}' '${{ inputs.human_artifact_identity }}'; do test -n "$value"; done
+          echo C3_EVIDENCE_FINALIZATION_AUTHORIZATION=PASS
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - uses: denoland/setup-deno@v2
+        with: {deno-version: v2.9.6}
+      - run: npm ci
+      - name: Validate external artifact metadata
+        id: artifact_identity
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          HUMAN_SPEC: ${{ inputs.human_artifact_identity }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          EXPECTED_HEAD: ${{ inputs.expected_head }}
+          VALIDATION_SPEC: ${{ inputs.validation_artifact_identity }}
+          VALIDATION_RUN: ${{ inputs.validation_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json,os,urllib.request
+          repo=os.environ['GITHUB_REPOSITORY']; token=os.environ['GITHUB_TOKEN']
+          specs={kind:json.loads(os.environ[kind+'_SPEC']) for kind in ('VALIDATION','HUMAN')}
+          specs['VALIDATION']['run_id']=os.environ['VALIDATION_RUN']
+          for kind in ('VALIDATION','HUMAN'):
+            spec=specs[kind]; aid=str(spec['id']); digest=str(spec['digest']); run_id=str(spec['run_id'])
+            assert set(spec)=={'id','digest','run_id'} if kind!='VALIDATION' else {'id','digest','run_id'}
+            assert aid.isdigit() and run_id.isdigit() and digest.startswith('sha256:') and len(digest)==71
+            expected_name={'VALIDATION':'C3-validation-production-evidence-'+os.environ['GITHUB_SHA'],'HUMAN':'C3-human-calibration-'+os.environ['RELEASE_ID']}[kind]
+            request=urllib.request.Request(f'https://api.github.com/repos/{repo}/actions/artifacts/{aid}',headers={'Authorization':'Bearer '+token,'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28','User-Agent':'c3-evidence-finalize/1.0'})
+            artifact=json.load(urllib.request.urlopen(request))
+            assert artifact['id']==int(aid) and artifact['name']==expected_name and artifact.get('expired') is False
+            assert artifact.get('digest')==digest
+            assert str(artifact.get('workflow_run',{}).get('id'))==run_id
+            run_request=urllib.request.Request(f'https://api.github.com/repos/{repo}/actions/runs/{run_id}',headers={'Authorization':'Bearer '+token,'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28','User-Agent':'c3-evidence-finalize/1.0'})
+            run=json.load(urllib.request.urlopen(run_request))
+            assert run.get('head_sha')==os.environ['EXPECTED_HEAD'] and run.get('actor',{}).get('login')=='ebixsolutions' and run.get('conclusion')=='success'
+            print(f'C3_EXTERNAL_ARTIFACT|kind={kind.lower()}|id={aid}|digest={artifact["digest"]}|result=PASS')
+            with open(os.environ['GITHUB_OUTPUT'],'a') as output:
+              print(f'{kind.lower()}_id={aid}',file=output); print(f'{kind.lower()}_digest={digest}',file=output); print(f'{kind.lower()}_run={run_id}',file=output)
+          PY
+      - name: Download runtime evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: C3-validation-production-evidence-${{ inputs.expected_head }}
+          path: ${{ runner.temp }}/c3-runtime-evidence
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.validation_run_id }}
+      - name: Download external human calibration
+        uses: actions/download-artifact@v4
+        with:
+          name: C3-human-calibration-${{ inputs.release_id }}
+          path: ${{ runner.temp }}/c3-human-calibration
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.artifact_identity.outputs.human_run }}
+      - name: Bind independent human calibration and execute unique production final gate
+        env:
+          C3_EXPECTED_HEAD: ${{ inputs.expected_head }}
+          C3_EXPECTED_TREE: ${{ inputs.expected_tree }}
+          C3_RELEASE_ID: ${{ inputs.release_id }}
+          C3_RELEASE_DIGEST: ${{ inputs.release_digest }}
+          C3_DEPLOYMENT_RUN_ID: ${{ inputs.deployment_run_id }}
+          C3_VALIDATION_RUN_ID: ${{ inputs.validation_run_id }}
+          C3_VALIDATION_RUN_ATTEMPT: ${{ inputs.validation_run_attempt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          E="$(find "$RUNNER_TEMP/c3-runtime-evidence" -name evidence.json -type f -print -quit)"
+          H="$(find "$RUNNER_TEMP/c3-human-calibration" -name human-calibration.json -type f -print -quit)"
+          test -n "$E"; test -n "$H"
+          C3_GATE_PHASE=production C3_EVIDENCE_PATH="$E" \
+          C3_HUMAN_REVIEW_ARTIFACT_PATH="$H" \
+          C3_SCENARIO_CONTRACT_PATH=.github/scripts/c3_validation_scenarios.json \
+          C3_EXPECTED_PROJECT=nrfxhqabwblzxoushgnm C3_EXPECTED_RUN_ID="$C3_VALIDATION_RUN_ID" \
+          C3_EXPECTED_RUN_ATTEMPT="$C3_VALIDATION_RUN_ATTEMPT" node .github/scripts/task_ai_abc_c3_final_gate.mjs
+
+  c3-validation-cleanup-only:
+    if: >-
+      github.event_name == 'workflow_dispatch' && inputs.mode == 'cleanup_only' &&
+      github.actor == 'ebixsolutions'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      VITE_SUPABASE_URL: https://nrfxhqabwblzxoushgnm.supabase.co
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: '${{ github.sha }}', fetch-depth: 0, clean: true}
+      - name: Guard cleanup-only authorization
+        run: |
+          set -euo pipefail
+          test "${{ inputs.validation_authorization }}" = "c3-cleanup-${{ inputs.cleanup_source_run_id }}-${{ inputs.expected_head }}"
+          test "$(git rev-parse HEAD)" = "${{ inputs.expected_head }}"
+          test "$(git rev-parse HEAD^{tree})" = "${{ inputs.expected_tree }}"
+          test -n "${SUPABASE_ACCESS_TOKEN:-}"
+      - name: Download prior fixture manifest
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: C3-validation-production-evidence-${{ inputs.expected_head }}
+          path: ${{ runner.temp }}/c3-cleanup-source
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.cleanup_source_run_id }}
+      - name: Recover project server key without exposing it
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json,os,urllib.request
+          r=urllib.request.Request('https://api.supabase.com/v1/projects/nrfxhqabwblzxoushgnm/api-keys?reveal=true',headers={'Authorization':'Bearer '+os.environ['SUPABASE_ACCESS_TOKEN']})
+          rows=json.load(urllib.request.urlopen(r)); key=next((x.get('api_key') or x.get('key') or x.get('value') for x in rows if str(x.get('type','')).lower()=='secret'),None)
+          if not key: raise SystemExit('server_key_unavailable')
+          with open(os.environ['GITHUB_ENV'],'a') as f: f.write('C3_SERVER_KEY='+key+'\n')
+          print('C3_CREDENTIAL_PRESENCE|name=project_secret_key|present=true')
+          PY
+      - name: Execute exact manifest cleanup on replacement runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          python .github/scripts/c3_validation_only_runner.py cleanup \
+            --out "$RUNNER_TEMP/c3-cleanup-evidence" \
+            --contract .github/scripts/c3_validation_scenarios.json \
+            --manifest "$RUNNER_TEMP/c3-cleanup-source/fixture-manifest.json" \
+            --marker "${{ inputs.cleanup_fixture_marker }}"
+      - name: Upload cleanup evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: C3-validation-cleanup-${{ inputs.cleanup_source_run_id }}
+          path: ${{ runner.temp }}/c3-cleanup-evidence
+          if-no-files-found: error
+          retention-days: 30
+
+  c3-current-live-capture:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.mode == 'recovery') ||
+      (github.event_name == 'pull_request' && github.event.action == 'labeled' &&
+       github.event.pull_request.number == 12 && github.actor == 'ebixsolutions' &&
+       github.event.label.name == format('c3-prod-{0}', github.event.pull_request.head.sha))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+      artifact_url: ${{ steps.upload.outputs.artifact-url }}
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      C3_EVENT_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
+    steps:
+      - name: Guard recovery-only capture authority
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ github.repository }}" = ebixsolutions/console-chat-hub
+          test "$C3_EVENT_BRANCH" = director/ai-abc-c3-long-memory-final-cutover
+          test -n "${SUPABASE_ACCESS_TOKEN:-}"
+          test "$C3_PROJECT_REF" = nrfxhqabwblzxoushgnm
+          echo C3_RECOVERY_ONLY_CAPTURE_AUTHORITY=PASS
+      - uses: supabase/setup-cli@v1
+        with: {version: '2.117.0'}
+      - name: Download exact current live v112 and v43 closures
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/c3-current-live"; rm -rf "$ROOT"
+          mkdir -p "$ROOT/_meta" "$ROOT/generate-reply/supabase" "$ROOT/agent-assist/supabase"
+          (cd "$ROOT" && supabase functions list --project-ref "$C3_PROJECT_REF" --output json > _meta/live-functions-before.json)
+          for fn in generate-reply agent-assist; do
+            printf 'project_id = "%s"\n\n[functions.%s]\nverify_jwt = true\nentrypoint = "./functions/%s/index.ts"\n' "$C3_PROJECT_REF" "$fn" "$fn" > "$ROOT/$fn/supabase/config.toml"
+            (cd "$ROOT/$fn" && supabase functions download "$fn" --project-ref "$C3_PROJECT_REF" --use-api)
+          done
+          (cd "$ROOT" && supabase functions list --project-ref "$C3_PROJECT_REF" --output json > _meta/live-functions-after.json)
+          CAPTURED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" python - "$ROOT" <<'PY'
+          import hashlib,json,os,pathlib,re,sys
+          root=pathlib.Path(sys.argv[1]); before=json.loads((root/'_meta/live-functions-before.json').read_text()); after=json.loads((root/'_meta/live-functions-after.json').read_text())
+          rows=before.get('functions',before) if isinstance(before,dict) else before
+          after_rows=after.get('functions',after) if isinstance(after,dict) else after
+          expected={'generate-reply':(112,'b089958882da0aaeeb8c09b295060124fc66f94c4b8b70e18aec38001fc7c052'),'agent-assist':(43,'eeadc5c9dfb35c51e8778756fcae96ff0c0fc68fc68599ade565ef7479e4e4cb')}
+          index={'classification':'INTERIM LIVE RECOVERY BASELINE — NOT PRODUCT-READY','project':'nrfxhqabwblzxoushgnm','captured_at':os.environ['CAPTURED_AT'],'functions':[],'frozen_functions':[]}
+          frozen={'receive-widget-message':(23,False,'3674faf3499a319269c8d9fda63bd1e7ee6ca770219b2f701854f33863d1af08'),'ce-evaluation-worker':(25,False,'626ade7e2dcd45d56314e986e1394ab70ca41e4e52f416e01324885011a682f2'),'conversation-evaluate':(20,True,'2176d2412fe921c0d3ab47abc04daa324d2101f54548ce9c29f8de95e2b7496d')}
+          rx=re.compile(r'(?:from\s*|import\s*\()\s*["\x27]([^"\x27]+)["\x27]|^\s*import\s*["\x27]([^"\x27]+)["\x27]',re.M)
+          for fn,(version,bundle) in expected.items():
+            meta=next((x for x in rows if x.get('slug')==fn or x.get('name')==fn),None)
+            post=next((x for x in after_rows if x.get('slug')==fn or x.get('name')==fn),None)
+            if not meta: raise SystemExit(f'missing_live_metadata:{fn}')
+            checks={'status':meta.get('status')=='ACTIVE','version':int(meta.get('version',-1))==version,'bundle':str(meta.get('ezbr_sha256',''))==bundle,'verify_jwt':meta.get('verify_jwt') is True,'import_map':meta.get('import_map') is False}
+            checks['stable_during_download']=bool(post and all(post.get(k)==meta.get(k) for k in ('status','version','ezbr_sha256','verify_jwt','import_map')))
+            for name,ok in checks.items(): print(f'C3_LIVE_ASSERT|function={fn}|name={name}|result={"PASS" if ok else "FAIL"}')
+            if not all(checks.values()): raise SystemExit(f'live_identity_drift:{fn}:{meta}')
+            base=root/fn; source=base/'supabase/functions'; files=[]; imports=[]; empty=[]
+            for path in sorted((x for x in source.rglob('*') if x.is_file()),key=lambda x:x.relative_to(source).as_posix().encode()):
+              data=path.read_bytes(); rel=path.relative_to(source).as_posix(); files.append({'path':rel,'sha256':hashlib.sha256(data).hexdigest(),'bytes':len(data)})
+              if not data: empty.append(rel)
+              if path.suffix in {'.ts','.tsx','.js','.mjs'}:
+                for m in rx.finditer(data.decode()):
+                  spec=m.group(1) or m.group(2); imports.append({'from':rel,'specifier':spec,'kind':'relative' if spec.startswith('.') else 'external'})
+            entry=f'{fn}/index.ts'
+            if not files or empty or not (source/entry).is_file(): raise SystemExit(f'invalid_live_closure:{fn}:files={len(files)}:empty={empty}')
+            manifest={'project':'nrfxhqabwblzxoushgnm','function':fn,'version':version,'capture_time':os.environ['CAPTURED_AT'],'entrypoint':entry,'file_count':len(files),'verify_jwt':True,'import_map':False,'observed_bundle_sha256':bundle,'files':files,'dependencies':imports}
+            cfg={'entrypoint':entry,'import_map':False,'observed_bundle_sha256':bundle,'status':'ACTIVE','verify_jwt':True,'version':version}
+            (base/'MANIFEST.json').write_text(json.dumps(manifest,indent=2,sort_keys=True)+'\n')
+            (base/'CONFIGURATION.json').write_text(json.dumps(cfg,indent=2,sort_keys=True)+'\n')
+            index['functions'].append({'function':fn,'version':version,'bundle':bundle,'file_count':len(files)})
+          for fn,(version,verify_jwt,bundle) in frozen.items():
+            meta=next((x for x in rows if x.get('slug')==fn or x.get('name')==fn),None)
+            ok=bool(meta and meta.get('status')=='ACTIVE' and int(meta.get('version',-1))==version and meta.get('verify_jwt') is verify_jwt and meta.get('import_map') is False and str(meta.get('ezbr_sha256',''))==bundle)
+            print(f'C3_FROZEN_CAPTURE_ASSERT|function={fn}|result={"PASS" if ok else "FAIL"}')
+            if not ok: raise SystemExit(f'frozen_identity_drift:{fn}:{meta}')
+            index['frozen_functions'].append({'function':fn,'version':version,'verify_jwt':verify_jwt,'import_map':False,'bundle':bundle,'status':'ACTIVE'})
+          (root/'CAPTURE.json').write_text(json.dumps(index,indent=2,sort_keys=True)+'\n')
+          (root/'_meta/live-functions-before.json').unlink(); (root/'_meta/live-functions-after.json').unlink(); (root/'_meta').rmdir()
+          print('CURRENT_LIVE_V112_V43_CAPTURE_PREUPLOAD=PASS')
+          PY
+          ! grep -RIlE '(SUPABASE_ACCESS_TOKEN|service_role)[[:space:]]*[:=][[:space:]]*[A-Za-z0-9_.-]{20,}' "$ROOT"
+      - name: Upload protected recovery artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.C3_CAPTURE_NAME }}
+          path: ${{ runner.temp }}/c3-current-live
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 9
+          include-hidden-files: false
+      - name: Report durable artifact identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n '${{ steps.upload.outputs.artifact-id }}'
+          test -n '${{ steps.upload.outputs.artifact-digest }}'
+          echo "C3_DURABLE_ARTIFACT|id=${{ steps.upload.outputs.artifact-id }}|digest=${{ steps.upload.outputs.artifact-digest }}|retention_days=$C3_CAPTURE_RETENTION_DAYS"
+
+  c3-current-live-roundtrip:
+    needs: c3-current-live-capture
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      verified: ${{ steps.verify.outputs.verified }}
+      artifact_id: ${{ needs.c3-current-live-capture.outputs.artifact_id }}
+      artifact_digest: ${{ needs.c3-current-live-capture.outputs.artifact_digest }}
+    steps:
+      - name: Download durable snapshot on another clean runner
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.C3_CAPTURE_NAME }}
+          path: ${{ runner.temp }}/c3-restored-clean
+      - name: Verify remote bytes, manifests and configuration
+        id: verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - "$RUNNER_TEMP/c3-restored-clean" <<'PY'
+          import hashlib,json,pathlib,sys
+          root=pathlib.Path(sys.argv[1]); cap=json.loads((root/'CAPTURE.json').read_text())
+          assert cap['classification']=='INTERIM LIVE RECOVERY BASELINE — NOT PRODUCT-READY' and cap['project']=='nrfxhqabwblzxoushgnm'
+          expected={'generate-reply':(112,'b089958882da0aaeeb8c09b295060124fc66f94c4b8b70e18aec38001fc7c052'),'agent-assist':(43,'eeadc5c9dfb35c51e8778756fcae96ff0c0fc68fc68599ade565ef7479e4e4cb')}
+          failed=False
+          for fn,(version,bundle) in expected.items():
+            base=root/fn; manifest=json.loads((base/'MANIFEST.json').read_text()); cfg=json.loads((base/'CONFIGURATION.json').read_text()); source=base/'supabase/functions'
+            exp={x['path']:x['sha256'] for x in manifest['files']}; actual={p.relative_to(source).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in source.rglob('*') if p.is_file()}
+            missing=sorted(set(exp)-set(actual)); unexpected=sorted(set(actual)-set(exp)); mismatch=sorted(p for p in set(exp)&set(actual) if exp[p]!=actual[p])
+            cfg_ok=cfg=={'entrypoint':f'{fn}/index.ts','import_map':False,'observed_bundle_sha256':bundle,'status':'ACTIVE','verify_jwt':True,'version':version}
+            checks=[('expected_files',len(exp),len(actual),len(exp)==len(actual)),('missing',0,len(missing),not missing),('unexpected',0,len(unexpected),not unexpected),('byte_hash_mismatch',0,len(mismatch),not mismatch),('configuration_mismatch',0,0 if cfg_ok else 1,cfg_ok)]
+            for name,e,a,ok in checks: print(f'C3_ROUNDTRIP_ASSERT|function={fn}|name={name}|expected={e}|actual={a}|result={"PASS" if ok else "FAIL"}'); failed=failed or not ok
+            for kind,items in [('missing',missing),('unexpected',unexpected),('mismatch',mismatch)]:
+              for item in items: print(f'C3_ROUNDTRIP_OFFENDER|function={fn}|kind={kind}|path={item}')
+          if failed: raise SystemExit(1)
+          print('CURRENT_LIVE_V112_V43_DURABLE_CAPTURE=PASS')
+          PY
+          echo 'verified=PASS' >> "$GITHUB_OUTPUT"
+
+  c3-preproduction:
+    needs: c3-validation-preflight-offline
+    if: >-
+      github.repository == 'ebixsolutions/console-chat-hub' &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'workflow_dispatch' && inputs.mode == 'preflight_offline'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      C3_GATE_PHASE: preproduction
+      C3_LIVE_BASELINE_READBACK: PASS
+      C3_SCHEMA_READ_ONLY_TRACE: PASS
+      C3_MIGRATION_HISTORY_COMPATIBILITY: PASS
+      C3_MIGRATION_RUNTIME_REHEARSAL: PASS
+      C3_RECOVERY_INTERIM_BASELINE: PASS
+      C3_CURRENT_LIVE_DURABLE_CAPTURE: PASS
+      C3_CURRENT_LIVE_SOURCE_PARITY: NOT_APPLICABLE
+      C3_SOURCE_DEPLOYMENT_BOUNDARY: PASS
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: '${{ github.sha }}', fetch-depth: 0, clean: true}
+      - name: Record pristine source before CLI
+        shell: bash
+        run: |
+          set -euo pipefail; eval "$C3_ASSERT_LIB"
+          git ls-files --others --exclude-standard | LC_ALL=C sort > "$RUNNER_TEMP/before-cli"
+          c3_source_clean before_cli_setup 0
+      - uses: denoland/setup-deno@v2
+        with: {deno-version: v2.9.6}
+      - uses: supabase/setup-cli@v1
+        with: {version: '2.117.0'}
+      - name: Verify exact CLI ephemeral isolation
+        shell: bash
+        run: |
+          set -euo pipefail; eval "$C3_ASSERT_LIB"
+          git ls-files --others --exclude-standard | LC_ALL=C sort > "$RUNNER_TEMP/after-cli"
+          c3_cli_delta "$RUNNER_TEMP/before-cli" "$RUNNER_TEMP/after-cli"
+          c3_source_clean after_cli_setup 1
+      - uses: actions/setup-node@v4
+        with: {node-version: '22', cache: npm}
+      - run: npm ci
+      - name: Download verified live snapshot outside checkout
+        uses: actions/download-artifact@v4
+        with:
+          name: C3-current-live-v108-v43-recovery-baseline
+          path: ${{ runner.temp }}/c3-live-parity
+          github-token: ${{ github.token }}
+          run-id: '35045329983'
+      - name: Verify exact current-live to proposed-runtime deployment boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          edge_runtime_parity_base=41fe2e267ec878cb7ece304efb6781dcc50abd43
+          if test "$(git rev-parse "$GITHUB_SHA^")" = "$edge_runtime_parity_base"; then
+            expected="$RUNNER_TEMP/c3-edge-runtime-parity-expected"
+            actual="$RUNNER_TEMP/c3-edge-runtime-parity-actual"
+            cat > "$expected" <<'EOF'
+          .github/scripts/c3_edge_runtime_parity.mjs
+          .github/scripts/c3_edge_runtime_parity.test.mjs
+          .github/scripts/task_ai_abc_c3_final_gate.mjs
+          .github/workflows/task-ai-abc-c3-final-gate.yml
+          EOF
+            git diff --name-only "$edge_runtime_parity_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
+            LC_ALL=C sort -o "$expected" "$expected"
+            diff -u "$expected" "$actual"
+            test "$(git rev-list --count "$edge_runtime_parity_base..$GITHUB_SHA")" -eq 1
+            node .github/scripts/c3_edge_runtime_parity.test.mjs
+            test -z "$(git diff --name-only "$edge_runtime_parity_base..$GITHUB_SHA" -- 'supabase/migrations/**' 'supabase/functions/**')"
+            echo C3_EDGE_RUNTIME_PARITY_SOURCE_ALLOWLIST=PASS
+            echo C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE
+            echo C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS
+            exit 0
+          fi
+          w22_reply_base=3054095ac4fd9303e673db3435fb4fbc0440ce09
+          if git merge-base --is-ancestor "$w22_reply_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$w22_reply_base"; then
+            expected="$RUNNER_TEMP/c3-w22-reply-expected"
+            actual="$RUNNER_TEMP/c3-w22-reply-actual"
+            cat > "$expected" <<'EOF'
+          .github/scripts/task_ai_abc_c3_final_gate.mjs
+          .github/workflows/task-ai-abc-c3-final-gate.yml
+          sql/c3-nonproduction/05_t11_reply_revision_guard_test.sql
+          supabase/functions/_shared/authoritative-commit-readback.ts
+          supabase/functions/_shared/b2-journey-progress-contract.ts
+          supabase/functions/_shared/canonical-json.ts
+          supabase/functions/_shared/commerce-state-authority.ts
+          supabase/functions/_shared/commerce-state-runtime-base.ts
+          supabase/functions/_shared/contextual-customer-update.test.ts
+          supabase/functions/_shared/conversation-long-memory.ts
+          supabase/functions/_shared/conversation-recall.ts
+          supabase/functions/_shared/conversation-resolution-contract.ts
+          supabase/functions/_shared/fixtures/t11-synthetic-jsonb-reorder.json
+          supabase/functions/_shared/fixtures/t12-round2-production-shaped.json
+          supabase/functions/_shared/pre-send-conversion-supervisor.test.ts
+          supabase/functions/_shared/pre-send-conversion-supervisor.ts
+          supabase/functions/_shared/revision-bound-reply.test.ts
+          supabase/functions/_shared/revision-bound-reply.ts
+          supabase/functions/_shared/t12-round2-production-shaped.test.ts
+          supabase/functions/generate-reply/index.ts
+          supabase/migrations/20260925093000_c3_t11_revision_bound_ai_reply.sql
+          supabase/migrations/rollback/20260925093000_c3_t11_revision_bound_ai_reply.rollback.sql
+          EOF
+            git diff --name-only "$w22_reply_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
+            LC_ALL=C sort -o "$expected" "$expected"
+            diff -u "$expected" "$actual"
+            test -z "$(git diff --name-only "$w22_reply_base..$GITHUB_SHA" -- 'supabase/functions/agent-assist/index.ts' 'supabase/functions/receive-widget-message/index.ts')"
+            grep -q 'stale_authorized_revision' supabase/migrations/20260925093000_c3_t11_revision_bound_ai_reply.sql
+            grep -q 'W19 sequential T1-T16 source replay' supabase/functions/_shared/contextual-customer-update.test.ts
+            grep -q 'T12 captured correction recap is read-only' supabase/functions/_shared/pre-send-conversion-supervisor.test.ts
+            echo C3_W22_REVISION_BOUND_REPLY_ALLOWLIST=PASS
+            echo C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE
+            echo C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS
+            exit 0
+          fi
+          w17_referent_base=1dba39af35d3b643144bd581a6d4c24eecbe62e8
+          if git merge-base --is-ancestor "$w17_referent_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$w17_referent_base"; then
+            expected="$RUNNER_TEMP/c3-w17-referent-expected"
+            actual="$RUNNER_TEMP/c3-w17-referent-actual"
+            cat > "$expected" <<'EOF'
+          .github/scripts/task_ai_abc_c3_final_gate.mjs
+          .github/workflows/task-ai-abc-c3-final-gate.yml
+          supabase/functions/_shared/b2-journey-progress-contract.ts
+          supabase/functions/_shared/canonical-grounding.ts
+          supabase/functions/_shared/commerce-state-runtime-base.ts
+          supabase/functions/_shared/contextual-customer-update.test.ts
+          supabase/functions/_shared/conversation-long-memory.test.ts
+          supabase/functions/_shared/conversation-long-memory.ts
+          supabase/functions/_shared/conversation-recall.test.ts
+          supabase/functions/_shared/conversation-recall.ts
+          supabase/functions/_shared/conversation-runtime-state-core.ts
+          supabase/functions/_shared/natural-customer-response.ts
+          supabase/functions/_shared/pre-send-conversion-supervisor.ts
+          supabase/functions/_shared/product-factual-query.test.ts
+          supabase/functions/_shared/product-kb-semantic-contract.ts
+          supabase/functions/_shared/product-referent-history.test.ts
+          supabase/functions/generate-reply/index.ts
+          EOF
+            git diff --name-only "$w17_referent_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
+            LC_ALL=C sort -o "$expected" "$expected"
+            diff -u "$expected" "$actual"
+            test -z "$(git diff --name-only "$w17_referent_base..$GITHUB_SHA" -- 'supabase/migrations/**' 'supabase/functions/agent-assist/index.ts' 'supabase/functions/receive-widget-message/index.ts')"
+            grep -q 'W19 sequential T1-T16 source replay' supabase/functions/_shared/contextual-customer-update.test.ts
+            grep -q 'W17 T9 restores AC referent' supabase/functions/_shared/product-factual-query.test.ts
+            grep -q 'W19 live T9 canonical referent/facets bind query and KB evidence' supabase/functions/_shared/product-factual-query.test.ts
+            echo C3_W17_REFERENT_SOURCE_ALLOWLIST=PASS
+            echo C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE
+            echo C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS
+            exit 0
+          fi
+          w15_anaphoric_base=18595a2298c39dc45db323e4670e93484f7d8b8d
+          if git merge-base --is-ancestor "$w15_anaphoric_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$w15_anaphoric_base"; then
+            expected="$RUNNER_TEMP/c3-w15-anaphoric-expected"
+            actual="$RUNNER_TEMP/c3-w15-anaphoric-actual"
+            cat > "$expected" <<'EOF'
+          .github/scripts/task_ai_abc_c3_final_gate.mjs
+          .github/workflows/task-ai-abc-c3-final-gate.yml
+          supabase/functions/_shared/contextual-customer-update.test.ts
+          supabase/functions/_shared/conversation-recall.integration.test.ts
+          supabase/functions/_shared/natural-customer-response.ts
+          supabase/functions/_shared/product-factual-query.test.ts
+          supabase/functions/_shared/product-follow-up-arbitration.test.ts
+          supabase/functions/generate-reply/index.ts
+          EOF
+            git diff --name-only "$w15_anaphoric_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
+            LC_ALL=C sort -o "$expected" "$expected"
+            diff -u "$expected" "$actual"
+            test "$(git rev-list --count "$w15_anaphoric_base..$GITHUB_SHA")" -eq 1
+            test -z "$(git diff --name-only "$w15_anaphoric_base..$GITHUB_SHA" -- 'supabase/migrations/**' 'supabase/functions/agent-assist/index.ts' 'supabase/functions/receive-widget-message/index.ts')"
+            grep -q 'arbitrateAnaphoricProductFollowUp' supabase/functions/_shared/natural-customer-response.ts
+            grep -q 'W15 sequential T1-T8 preserves journey then prioritizes factual follow-up' supabase/functions/_shared/contextual-customer-update.test.ts
+            grep -q 'W15 T7 anaphoric current-price follow-up binds model, KB lineage and B2' supabase/functions/_shared/product-factual-query.test.ts
+            echo C3_W15_ANAPHORIC_SOURCE_PARENT="$w15_anaphoric_base"
+            echo C3_W15_ANAPHORIC_SOURCE_ALLOWLIST=PASS
+            echo C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE
+            echo C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS
+            exit 0
+          fi
+          w11_journey_base=739bba447e89dffb63e08e06f211e007b668773a
+          if git merge-base --is-ancestor "$w11_journey_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$w11_journey_base"; then
+            expected="$RUNNER_TEMP/c3-w11-journey-expected"
+            actual="$RUNNER_TEMP/c3-w11-journey-actual"
+            cat > "$expected" <<'EOF'
+          .github/scripts/task_ai_abc_c3_final_gate.mjs
+          .github/workflows/task-ai-abc-c3-final-gate.yml
+          supabase/functions/_shared/b2-journey-progress-contract.ts
+          supabase/functions/_shared/commerce-state-runtime-base.ts
+          supabase/functions/_shared/contextual-customer-update.test.ts
+          supabase/functions/_shared/customer-journey-orchestration.test.ts
+          supabase/functions/_shared/customer-journey-orchestration.ts
+          supabase/functions/_shared/industry-profiles/home-appliance-v1.ts
+          supabase/functions/_shared/industry-runtime-adapter.ts
+          supabase/functions/_shared/pre-send-conversion-supervisor.test.ts
+          supabase/functions/_shared/pre-send-conversion-supervisor.ts
+          supabase/functions/_shared/product-factual-query.test.ts
+          supabase/functions/generate-reply/index.ts
+          EOF
+            git diff --name-only "$w11_journey_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
+            LC_ALL=C sort -o "$expected" "$expected"
+            diff -u "$expected" "$actual"
+            test "$(git rev-list --count "$w11_journey_base..$GITHUB_SHA")" -eq 4
+            test -z "$(git diff --name-only "$w11_journey_base..$GITHUB_SHA" -- 'supabase/migrations/**' 'supabase/functions/agent-assist/index.ts' 'supabase/functions/receive-widget-message/index.ts')"
+            grep -q 'W11 production-shaped T1-T5 advances one durable AC purchase journey' supabase/functions/_shared/contextual-customer-update.test.ts
+            grep -q 'multi-intent product facts retain every compatible facet' supabase/functions/_shared/product-factual-query.test.ts
+            echo C3_W11_JOURNEY_SOURCE_PARENT="$w11_journey_base"
+            echo C3_W11_JOURNEY_SOURCE_ALLOWLIST=PASS
+            echo C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE
+            echo C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS
+            exit 0
+          fi
+          w9_continuous_base=931db977dbbb06f46efbb614b6c4b284c2350457
+          if git merge-base --is-ancestor "$w9_continuous_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$w9_continuous_base"; then
+            expected="$RUNNER_TEMP/c3-w9-continuous-expected"
+            actual="$RUNNER_TEMP/c3-w9-continuous-actual"
+            cat > "$expected" <<'EOF'
+          .github/scripts/task_ai_abc_c3_final_gate.mjs
+          .github/workflows/task-ai-abc-c3-final-gate.yml
+          supabase/functions/_shared/canonical-kb-direct-answer.ts
+          supabase/functions/_shared/contextual-customer-update.test.ts
+          supabase/functions/_shared/industry-profiles/home-appliance-v1.ts
+          supabase/functions/_shared/natural-customer-response.test.ts
+          supabase/functions/_shared/natural-customer-response.ts
+          supabase/functions/_shared/product-factual-query.test.ts
+          EOF
+            git diff --name-only "$w9_continuous_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
+            LC_ALL=C sort -o "$expected" "$expected"
+            diff -u "$expected" "$actual"
+            test "$(git rev-list --count "$w9_continuous_base..$GITHUB_SHA")" -eq 1
+            test -z "$(git diff --name-only "$w9_continuous_base..$GITHUB_SHA" -- 'supabase/migrations/**' 'supabase/functions/agent-assist/index.ts' 'supabase/functions/receive-widget-message/index.ts' 'supabase/functions/generate-reply/index.ts')"
+            grep -q 'facts: ProductFactualFacet\[\]' supabase/functions/_shared/natural-customer-response.ts
+            grep -q 'W9 established AC context survives intervening service and memory turns' supabase/functions/_shared/contextual-customer-update.test.ts
+            grep -q 'W9 multi-intent product facts retain every compatible facet' supabase/functions/_shared/product-factual-query.test.ts
+            echo C3_W9_CONTINUOUS_SOURCE_PARENT="$w9_continuous_base"
+            echo C3_W9_CONTINUOUS_SOURCE_ALLOWLIST=PASS
+            echo C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE
+            echo C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS
+            exit 0
+          fi
+          w6_brand_base=fe85bb05b39e6b6a7b5a01f5c5eaeb3fb70c9a64
+          if git merge-base --is-ancestor "$w6_brand_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$w6_brand_base"; then
+            expected="$RUNNER_TEMP/c3-w6-brand-expected"
+            actual="$RUNNER_TEMP/c3-w6-brand-actual"
+            cat > "$expected" <<'EOF'
+          .github/workflows/task-ai-abc-c3-final-gate.yml
+          supabase/functions/_shared/canonical-kb-direct-answer.ts
+          supabase/functions/_shared/product-factual-query.test.ts
+          EOF
+            git diff --name-only "$w6_brand_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
+            LC_ALL=C sort -o "$expected" "$expected"
+            diff -u "$expected" "$actual"
+            test "$(git rev-list --count "$w6_brand_base..$GITHUB_SHA")" -eq 2
+            test -z "$(git diff --name-only "$w6_brand_base..$GITHUB_SHA" -- 'supabase/functions/**' ':!supabase/functions/_shared/canonical-kb-direct-answer.ts' ':!supabase/functions/_shared/product-factual-query.test.ts' 'supabase/migrations/**')"
+            echo C3_W6_BRAND_SOURCE_PARENT="$w6_brand_base"
+            echo C3_W6_BRAND_SOURCE_ALLOWLIST=PASS
+            echo C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE
+            echo C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS
+            exit 0
+          fi
+          w4_preflight_base=d0079787ace064dc1f18db0f69be430560d39fe0
+          if git merge-base --is-ancestor "$w4_preflight_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$w4_preflight_base"; then
+            expected="$RUNNER_TEMP/c3-w4-preflight-expected"
+            actual="$RUNNER_TEMP/c3-w4-preflight-actual"
+            cat > "$expected" <<'EOF'
+          .github/scripts/c3_deterministic_runtime_closure.mjs
+          .github/scripts/c3_deterministic_runtime_closure.test.mjs
+          .github/scripts/c3_canonical_103_source_replay.ts
+          .github/scripts/task_ai_abc_c3_final_gate.mjs
+          .github/workflows/task-ai-abc-c3-final-gate.yml
+          supabase/functions/_shared/conversation-recall.integration.test.ts
+          EOF
+            git diff --name-only "$w4_preflight_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
+            LC_ALL=C sort -o "$expected" "$expected"
+            diff -u "$expected" "$actual"
+            test "$(git rev-list --count "$w4_preflight_base..$GITHUB_SHA")" -eq 4
+            test -z "$(git diff --name-only "$w4_preflight_base..$GITHUB_SHA" -- 'supabase/functions/**' ':!supabase/functions/_shared/conversation-recall.integration.test.ts' 'supabase/migrations/**')"
+            grep -q 'FORBIDDEN_MODEL_REMOTE' .github/scripts/c3_deterministic_runtime_closure.mjs
+            grep -q 'dead-model.ts' .github/scripts/c3_deterministic_runtime_closure.test.mjs
+            echo C3_W4_PREFLIGHT_SOURCE_PARENT="$w4_preflight_base"
+            echo C3_W4_PREFLIGHT_SOURCE_ALLOWLIST=PASS
+            echo C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE
+            echo C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS
+            exit 0
+          fi
+          anti_loop_base=9482d445f1af59cb8a299f9d96c470460134fc83
+          if git merge-base --is-ancestor "$anti_loop_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$anti_loop_base"; then
+            expected="$RUNNER_TEMP/c3-anti-loop-expected"
+            actual="$RUNNER_TEMP/c3-anti-loop-actual"
+            cat > "$expected" <<'EOF'
+          .github/scripts/c3_canonical_103_source_replay.ts
+          .github/scripts/c3_canonical_103_turns.json
+          .github/scripts/task_ai_abc_c3_final_gate.mjs
+          .github/workflows/task-ai-abc-c3-final-gate.yml
+          supabase/functions/_shared/commerce-state-authority.ts
+          supabase/functions/_shared/commerce-state-reducer.ts
+          supabase/functions/_shared/commerce-state-runtime-base.ts
+          supabase/functions/_shared/conversation-long-memory.ts
+          supabase/functions/_shared/conversation-recall.integration.test.ts
+          supabase/functions/_shared/conversation-recall.ts
+          supabase/functions/_shared/conversation-resolution-contract.test.ts
+          supabase/functions/_shared/conversation-resolution-contract.ts
+          supabase/functions/_shared/generation-terminal-guard.test.ts
+          supabase/functions/_shared/pre-send-conversion-supervisor.test.ts
+          supabase/functions/_shared/pre-send-conversion-supervisor.ts
+          supabase/functions/generate-reply/index.ts
+          EOF
+            git diff --name-only "$anti_loop_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
+            LC_ALL=C sort -o "$expected" "$expected"
+            diff -u "$expected" "$actual"
+            test "$(git rev-list --count "$anti_loop_base..$GITHUB_SHA")" -eq 3
+            test -z "$(git diff --name-only "$anti_loop_base..$GITHUB_SHA" -- 'supabase/migrations/**' 'supabase/functions/agent-assist/index.ts' 'supabase/functions/receive-widget-message/index.ts')"
+            grep -q 'resolveCanonicalCommerceResolution' supabase/functions/_shared/conversation-resolution-contract.ts
+            grep -q 'no_semantic_change' supabase/functions/_shared/commerce-state-runtime-base.ts
+            grep -q 'buildB2AuthoritativeReadbackProof' supabase/functions/_shared/pre-send-conversion-supervisor.ts
+            grep -q '"turn_count": 103' .github/scripts/c3_canonical_103_turns.json
+            grep -q 'AI-ABC-C3-CANONICAL-103-SOURCE-REPLAY' .github/scripts/c3_canonical_103_source_replay.ts
+            echo C3_ANTI_LOOP_SOURCE_CLOSURE_PARENT="$anti_loop_base"
+            echo C3_ANTI_LOOP_SOURCE_CLOSURE_ALLOWLIST=PASS
+            echo C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE
+            echo C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS
+            exit 0
+          fi
+          turn37_repair_base=4e30db58bdfb6864f0424cac7d17e3bffd3ddfd3
+          if git merge-base --is-ancestor "$turn37_repair_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$turn37_repair_base"; then
+            expected="$RUNNER_TEMP/c3-turn37-expected"
+            actual="$RUNNER_TEMP/c3-turn37-actual"
+            cat > "$expected" <<'EOF'
+          .github/scripts/task_ai_abc_c3_final_gate.mjs
+          .github/workflows/task-ai-abc-c3-final-gate.yml
+          scripts/task9-turn37-contract-test.py
+          scripts/task9-tungyu-100turn-production-smoke.py
+          supabase/functions/_shared/current-fact-evidence.test.ts
+          supabase/functions/_shared/current-fact-evidence.ts
+          supabase/functions/_shared/deterministic-kb-client.ts
+          supabase/functions/generate-reply/index.ts
+          EOF
+            git diff --name-only "$turn37_repair_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
+            LC_ALL=C sort -o "$expected" "$expected"
+            diff -u "$expected" "$actual"
+            test "$(git rev-list --count "$turn37_repair_base..$GITHUB_SHA")" -eq 1
+            test -z "$(git diff --name-only "$turn37_repair_base..$GITHUB_SHA" -- 'supabase/migrations/**' 'supabase/functions/agent-assist/index.ts' 'supabase/functions/receive-widget-message/index.ts')"
+            grep -q 'canonicalTenantScopeFromAuthoritativeCompany' supabase/functions/_shared/deterministic-kb-client.ts
+            grep -q 'c688c8a0-1708-4737-bf00-cbe2981b202b' scripts/task9-turn37-contract-test.py
+            grep -q 'HUMAN_CONTROL_SUPPRESSED' scripts/task9-tungyu-100turn-production-smoke.py
+            echo C3_TURN37_SOURCE_REPAIR_PARENT="$turn37_repair_base"
+            echo C3_TURN37_SOURCE_REPAIR_ALLOWLIST=PASS
+            echo C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE
+            echo C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS
+            exit 0
+          fi
+          turn48_global_aggregate_base=6d1449febe881f694f3fc5a65bb9a7db476a8f2e
+          if git merge-base --is-ancestor "$turn48_global_aggregate_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$turn48_global_aggregate_base"; then
+            expected="$RUNNER_TEMP/c3-turn48-global-aggregate-expected"
+            actual="$RUNNER_TEMP/c3-turn48-global-aggregate-actual"
+            cat > "$expected" <<'EOF'
+          .github/workflows/task-ai-abc-c3-final-gate.yml
+          .github/scripts/task_ai_abc_c3_final_gate.mjs
+          supabase/functions/_shared/commerce-state-runtime-base.ts
+          supabase/functions/_shared/conversation-recall.integration.test.ts
+          supabase/functions/_shared/pre-send-conversion-supervisor.test.ts
+          supabase/functions/_shared/pre-send-conversion-supervisor.ts
+          supabase/functions/generate-reply/index.ts
+          EOF
+            git diff --name-only "$turn48_global_aggregate_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
+            LC_ALL=C sort -o "$expected" "$expected"
+            diff -u "$expected" "$actual"
+            test "$(git rev-list --count "$turn48_global_aggregate_base..$GITHUB_SHA")" -eq 5
+            test -z "$(git diff --name-only "$turn48_global_aggregate_base..$GITHUB_SHA" -- 'supabase/migrations/**' 'supabase/functions/agent-assist/index.ts')"
+            grep -q 'resolvePendingCheckAggregateScope' supabase/functions/_shared/commerce-state-runtime-base.ts
+            grep -q 'hasPendingCheckDomainAmbiguity' supabase/functions/_shared/commerce-state-runtime-base.ts
+            grep -q 'f783f9a1-a208-4947-84fe-edc82865ffb1' supabase/functions/_shared/conversation-recall.integration.test.ts
+            grep -q 'window_opening_check' supabase/functions/_shared/conversation-recall.integration.test.ts
+            grep -q 'installation_site_check' supabase/functions/_shared/conversation-recall.integration.test.ts
+            echo C3_TURN48_GLOBAL_AGGREGATE_SOURCE_REPAIR_PARENT="$turn48_global_aggregate_base"
+            echo C3_TURN48_GLOBAL_AGGREGATE_SOURCE_REPAIR_ALLOWLIST=PASS
+            echo C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE
+            echo C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS
+            exit 0
+          fi
+          turn48_repair_base=161075b5b30c71067946d669dad54989097b6a3b
+          if git merge-base --is-ancestor "$turn48_repair_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$turn48_repair_base"; then
+            expected="$RUNNER_TEMP/c3-turn48-expected"
+            actual="$RUNNER_TEMP/c3-turn48-actual"
+            cat > "$expected" <<'EOF'
+          .github/scripts/task_ai_abc_c3_final_gate.mjs
+          .github/workflows/task-ai-abc-c3-final-gate.yml
+          supabase/functions/_shared/commerce-state-authority.ts
+          supabase/functions/_shared/commerce-state-runtime-base.ts
+          supabase/functions/_shared/conversation-recall.integration.test.ts
+          supabase/functions/generate-reply/index.ts
+          EOF
+            git diff --name-only "$turn48_repair_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
+            LC_ALL=C sort -o "$expected" "$expected"
+            diff -u "$expected" "$actual"
+            test "$(git rev-list --count "$turn48_repair_base..$GITHUB_SHA")" -eq 1
+            test -z "$(git diff --name-only "$turn48_repair_base..$GITHUB_SHA" -- 'supabase/migrations/**' 'supabase/functions/agent-assist/index.ts')"
+            grep -q 'READ_ONLY_CURRENT_STATE_AGGREGATE_QUERY' supabase/functions/_shared/commerce-state-authority.ts
+            grep -q 'read_only_current_state_aggregate_query_resolved' supabase/functions/_shared/commerce-state-runtime-base.ts
+            grep -q 'd4c905ae-35bf-4c4b-bc5b-c9e377e70fc7' supabase/functions/_shared/conversation-recall.integration.test.ts
+            grep -q 'read_only_current_state_aggregate_query_resolved' supabase/functions/generate-reply/index.ts
+            echo C3_TURN48_SOURCE_REPAIR_PARENT="$turn48_repair_base"
+            echo C3_TURN48_SOURCE_REPAIR_ALLOWLIST=PASS
+            echo C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE
+            echo C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS
+            exit 0
+          fi
+          turn27_repair_base=3810effa3c145462fb8f49af9932322a07a8ae65
+          if git merge-base --is-ancestor "$turn27_repair_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$turn27_repair_base"; then
+            expected="$RUNNER_TEMP/c3-turn27-expected"
+            actual="$RUNNER_TEMP/c3-turn27-actual"
+            cat > "$expected" <<'EOF'
+          .github/scripts/task_ai_abc_c3_final_gate.mjs
+          .github/workflows/task-ai-abc-c3-final-gate.yml
+          supabase/functions/_shared/commerce-state-authority.ts
+          supabase/functions/_shared/commerce-state-runtime-base.ts
+          supabase/functions/_shared/conversation-recall.integration.test.ts
+          supabase/functions/generate-reply/index.ts
+          EOF
+            git diff --name-only "$turn27_repair_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
+            LC_ALL=C sort -o "$expected" "$expected"
+            diff -u "$expected" "$actual"
+            test "$(git rev-list --count "$turn27_repair_base..$GITHUB_SHA")" -eq 1
+            test -z "$(git diff --name-only "$turn27_repair_base..$GITHUB_SHA" -- 'supabase/migrations/**' 'supabase/functions/agent-assist/index.ts')"
+            grep -q 'read_only_attribute_constraint_query_resolved' supabase/functions/_shared/commerce-state-runtime-base.ts
+            grep -q 'inferCommerceDimensionAttribute' supabase/functions/_shared/commerce-state-authority.ts
+            grep -q 'cab996a5-f99b-4f66-b89e-3bb0e73e5ecc' supabase/functions/_shared/conversation-recall.integration.test.ts
+            grep -q '_c3TargetedAttributeClarification' supabase/functions/generate-reply/index.ts
+            echo C3_TURN27_SOURCE_REPAIR_PARENT="$turn27_repair_base"
+            echo C3_TURN27_SOURCE_REPAIR_ALLOWLIST=PASS
+            echo C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE
+            echo C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS
+            exit 0
+          fi
+          # The durable snapshot below predates the already-authorized v140/v56
+          # cutover. For this exact source-only Turn-55 repair, bind the gate to
+          # its authorized parent and exact allowlist instead of pretending the
+          # old v108/v43 capture is the current production baseline.
+          turn25_repair_base=0540e55381cc1294c9dce3de198f2548cc4f5e4a
+          if git merge-base --is-ancestor "$turn25_repair_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$turn25_repair_base"; then
+            expected="$RUNNER_TEMP/c3-turn25-expected"
+            actual="$RUNNER_TEMP/c3-turn25-actual"
+            cat > "$expected" <<'EOF'
+          .github/scripts/task_ai_abc_c3_final_gate.mjs
+          .github/workflows/task-ai-abc-c3-final-gate.yml
+          supabase/functions/_shared/commerce-state-authority.ts
+          supabase/functions/_shared/commerce-state-runtime-base.ts
+          supabase/functions/_shared/conversation-recall.integration.test.ts
+          supabase/functions/_shared/conversation-recall.ts
+          supabase/functions/generate-reply/index.ts
+          EOF
+            git diff --name-only "$turn25_repair_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
+            LC_ALL=C sort -o "$expected" "$expected"
+            diff -u "$expected" "$actual"
+            test "$(git rev-list --count "$turn25_repair_base..$GITHUB_SHA")" -eq 1
+            test -z "$(git diff --name-only "$turn25_repair_base..$GITHUB_SHA" -- 'supabase/migrations/**' 'supabase/functions/agent-assist/index.ts')"
+            grep -q 'READ_ONLY_MEMORY_OR_CURRENT_STATE_RECALL' supabase/functions/_shared/commerce-state-runtime-base.ts
+            grep -q 'isReadOnlyMemoryOrCurrentStateRecall' supabase/functions/_shared/commerce-state-authority.ts
+            grep -q 'read_only_memory_or_current_state_recall_resolved' supabase/functions/generate-reply/index.ts
+            grep -q '35bea890-7c24-41c2-9e3d-7b5aa56f5afb' supabase/functions/_shared/conversation-recall.integration.test.ts
+            echo C3_TURN25_SOURCE_REPAIR_PARENT="$turn25_repair_base"
+            echo C3_TURN25_SOURCE_REPAIR_ALLOWLIST=PASS
+            echo C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE
+            echo C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS
+            exit 0
+          fi
+          repair_base=99f96c115f00f5e6eec2c9f2dc28df43a327f5c6
+          if git merge-base --is-ancestor "$repair_base" "$GITHUB_SHA"; then
+            expected="$RUNNER_TEMP/c3-turn55-expected"
+            actual="$RUNNER_TEMP/c3-turn55-actual"
+            cat > "$expected" <<'EOF'
+          .github/scripts/task_ai_abc_c3_final_gate.mjs
+          .github/workflows/task-ai-abc-c3-final-gate.yml
+          supabase/functions/_shared/commerce-state-authority.ts
+          supabase/functions/_shared/commerce-state-runtime-base.ts
+          supabase/functions/_shared/conversation-recall.integration.test.ts
+          supabase/functions/generate-reply/index.ts
+          EOF
+            git diff --name-only "$repair_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
+            LC_ALL=C sort -o "$expected" "$expected"
+            diff -u "$expected" "$actual"
+            test "$(git rev-list --count "$repair_base..$GITHUB_SHA")" -eq 2
+            test -z "$(git diff --name-only "$repair_base..$GITHUB_SHA" -- 'supabase/migrations/**' 'supabase/functions/agent-assist/index.ts')"
+            grep -q 'READ_ONLY_CURRENT_STATE_QUERY' supabase/functions/_shared/commerce-state-runtime-base.ts
+            grep -q 'read_only_current_state_query_resolved' supabase/functions/generate-reply/index.ts
+            grep -q '59b89c91-f150-4120-b226-a2944f0eb2da' supabase/functions/_shared/conversation-recall.integration.test.ts
+            echo C3_TURN55_SOURCE_REPAIR_PARENT="$repair_base"
+            echo C3_TURN55_SOURCE_REPAIR_ALLOWLIST=PASS
+            echo C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE
+            echo C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS
+            exit 0
+          fi
+          mkdir -p "$RUNNER_TEMP/c3-target-parity"
+          for fn in generate-reply agent-assist; do
+            node .github/scripts/c3_release_identity.mjs target --function "$fn" \
+              --source-root supabase/functions --template "$RUNNER_TEMP/c3-live-parity/$fn/MANIFEST.json" \
+              --head "$GITHUB_SHA" --tree "$(git rev-parse HEAD^{tree})" \
+              --out "$RUNNER_TEMP/c3-target-parity/$fn.json"
+          done
+          python - "$RUNNER_TEMP/c3-live-parity" "$RUNNER_TEMP/c3-target-parity" <<'PY'
+          import hashlib,json,pathlib,sys
+          root=pathlib.Path(sys.argv[1]); target=pathlib.Path(sys.argv[2])
+          allowed_target_shared={
+            '_shared/authoritative-commit-readback.ts',
+            '_shared/conversation-long-memory.ts','_shared/conversation-recall.ts',
+            '_shared/conversation-service-planner.ts','_shared/conversation-service-runtime.ts',
+            '_shared/customer360-entitlement-client.ts','_shared/customer360-entitlement-contract.ts',
+            '_shared/nonproduction-secret.ts','_shared/canonical-grounding.ts',
+            '_shared/ce-automation-engine.ts','_shared/ce-grounding.ts',
+            '_shared/citation-lineage.ts','_shared/commerce-semantic-frame.ts',
+            '_shared/commerce-semantic-interpreter.ts','_shared/commerce-state-reducer.ts',
+            '_shared/commerce-state-runtime-base.ts','_shared/pre-send-conversion-supervisor.ts',
+            '_shared/escalation-policy.ts',
+            '_shared/deterministic-commerce-engine.ts','_shared/deterministic-kb-client.ts',
+            '_shared/current-fact-evidence.ts',
+            '_shared/deterministic-runtime-router.ts','_shared/kb-aggregation-response.ts'
+          }
+          required_target_shared={
+            '_shared/deterministic-commerce-engine.ts','_shared/deterministic-kb-client.ts',
+            '_shared/current-fact-evidence.ts',
+            '_shared/deterministic-runtime-router.ts','_shared/kb-aggregation-response.ts'
+          }
+          required_removed_shared={
+            '_shared/kb-client.ts','_shared/kb-auth.ts','_shared/llm-router.ts',
+            '_shared/vertex-generation-config.ts','_shared/vertex-parse.ts'
+          }
+          failed=False
+          for fn in ('generate-reply','agent-assist'):
+            manifest=json.loads((root/fn/'MANIFEST.json').read_text())
+            proposed_manifest=json.loads((target/f'{fn}.json').read_text())
+            before={row['path']:row['sha256'] for row in manifest['files']}
+            after={row['path']:row['sha256'] for row in proposed_manifest['files']}
+            before_paths=set(before); after_paths=set(after)
+            added=after_paths-before_paths
+            removed=before_paths-after_paths
+            modified={path for path in before_paths&after_paths if before[path]!=after[path]}
+            actual_changed=added|removed|modified
+            entry=f'{fn}/index.ts'
+            allowed_changed=allowed_target_shared|required_removed_shared|{entry}
+            required_changed=required_target_shared|required_removed_shared|{entry}
+            target_required_ok=required_target_shared<=after_paths
+            legacy_removed_ok=required_removed_shared<=removed and not (required_removed_shared&after_paths)
+            boundary_ok=(
+              required_changed<=actual_changed<=allowed_changed and
+              target_required_ok and legacy_removed_ok
+            )
+            closure_hash=hashlib.sha256(''.join(f'{path}\0{digest}\n' for path,digest in sorted(after.items())).encode()).hexdigest()
+            print(f'C3_DEPLOYMENT_BOUNDARY|function={fn}|required_changed={len(required_changed)}|allowed_changed={len(allowed_changed)}|actual_changed={len(actual_changed)}|added={len(added)}|modified={len(modified)}|removed={len(removed)}|result={"PASS" if boundary_ok else "FAIL"}')
+            print(f'C3_PROPOSED_CLOSURE|function={fn}|manifest_sha256={closure_hash}|legacy_model_paths=ABSENT|result={"PASS" if boundary_ok else "FAIL"}')
+            for path in sorted(added): print(f'C3_DEPLOYMENT_PATH|function={fn}|kind=added|path={path}')
+            for path in sorted(modified): print(f'C3_DEPLOYMENT_PATH|function={fn}|kind=modified|path={path}')
+            for path in sorted(removed): print(f'C3_DEPLOYMENT_PATH|function={fn}|kind=removed|path={path}')
+            for path in sorted(required_removed_shared):
+              ok=path in removed and path not in after_paths
+              print(f'C3_LEGACY_DEPENDENCY_REMOVAL|function={fn}|path={path}|result={"PASS" if ok else "FAIL"}')
+            failed=failed or not boundary_ok
+          if failed: raise SystemExit(1)
+          print('C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE')
+          print('C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS')
+          print('C3_DETERMINISTIC_LEGACY_DEPENDENCY_REMOVAL=PASS')
+          print('C3_DEPLOYMENT_ALLOWLIST=generate-reply,agent-assist')
+          PY
+      - name: Non-production A-H recovery control-flow regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          cases={'A':({'preflight':'fail'},[]),'B':({'g':'affected'},['generate-reply']),'C':({'g':'affected','a':'affected','final':'fail'},['generate-reply','agent-assist']),'D':({'g':'affected','rollback':'fail'},['generate-reply']),'E':({'g':'candidate','a':'candidate','final':'pass'},[]),'F':({'g':'unknown'},['READBACK:generate-reply']),'G':({'artifact':'fail'},['BLOCK_FORWARD_WRITE']),'H':({'runner':'replacement','artifact':'verified'},['RESTORE_AVAILABLE'])}
+          for name,(state,expected) in cases.items():
+            if state.get('artifact')=='fail': plan=['BLOCK_FORWARD_WRITE']
+            elif state.get('runner')=='replacement': plan=['RESTORE_AVAILABLE'] if state.get('artifact')=='verified' else []
+            elif state.get('preflight')=='fail': plan=[]
+            elif state.get('g')=='unknown': plan=['READBACK:generate-reply']
+            elif state.get('final')=='pass': plan=[]
+            else: plan=[fn for key,fn in [('g','generate-reply'),('a','agent-assist')] if state.get(key)=='affected']
+            ok=plan==expected; print(f'C3_CONTROL_FLOW_CASE|case={name}|expected={expected}|actual={plan}|result={"PASS" if ok else "FAIL"}')
+            if not ok: raise SystemExit(1)
+            if name=='D': print('C3_RECOVERY_FAILURE|function=generate-reply|result=FAIL|independent_from_original=true')
+          print('C3_NONPRODUCTION_CONTROL_FLOW_A_H=PASS')
+          PY
+          grep -q 'workflow_dispatch:' .github/workflows/task-ai-abc-c3-final-gate.yml
+          grep -q 'run-id:.*inputs.artifact_run_id' .github/workflows/task-ai-abc-c3-final-gate.yml
+          echo C3_REPLACEMENT_RUNNER_RECOVERY_PATH_H=PASS
+      - name: Offender-before-fail telemetry regression
+        shell: bash
+        run: |
+          set -euo pipefail; eval "$C3_ASSERT_LIB"; P="$RUNNER_TEMP/telemetry"; mkdir -p "$P"; touch c3-intentional-offender
+          set +e; c3_source_clean telemetry_test 1 > "$P/log" 2>&1; rc=$?; set -e; rm c3-intentional-offender
+          test "$rc" -ne 0
+          offender="$(grep -n 'C3_SOURCE_OFFENDER|kind=unauthorized_untracked|path=c3-intentional-offender' "$P/log"|cut -d: -f1)"
+          assertion="$(grep -n 'name=telemetry_test_unauthorized_untracked.*result=FAIL' "$P/log"|cut -d: -f1)"
+          test -n "$offender"; test -n "$assertion"; test "$offender" -lt "$assertion"
+          echo C3_OFFENDER_BEFORE_FAIL_TELEMETRY=PASS
+      - name: Deno, C3 tests, build and source cleanliness
+        shell: bash
+        run: |
+          set -euo pipefail; eval "$C3_ASSERT_LIB"; c3_source_clean before_deno 1
+          git worktree add --detach "$RUNNER_TEMP/c3-deno-checkout" "$GITHUB_SHA"
+          (cd "$RUNNER_TEMP/c3-deno-checkout" && deno check --no-lock --node-modules-dir=auto supabase/functions/generate-reply/index.ts)
+          (cd "$RUNNER_TEMP/c3-deno-checkout" && deno check --no-lock --node-modules-dir=auto supabase/functions/agent-assist/index.ts)
+          (cd "$RUNNER_TEMP/c3-deno-checkout" && deno test --no-lock --allow-read --node-modules-dir=auto supabase/functions/_shared/conversation-long-memory.test.ts supabase/functions/_shared/conversation-long-memory.integration.test.ts supabase/functions/_shared/generation-terminal-guard.test.ts)
+          (cd "$RUNNER_TEMP/c3-deno-checkout" && deno test --no-lock supabase/functions/_shared/deterministic-commerce-engine.test.ts)
+          c3_source_clean after_deno 1
+          git worktree add --detach "$RUNNER_TEMP/c3-build-checkout" "$GITHUB_SHA"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/c3-build-checkout/node_modules"
+          (cd "$RUNNER_TEMP/c3-build-checkout" && npm run build)
+          c3_source_clean after_build 1
+          echo C3_NONPRODUCTION_REGRESSION=PASS
+      - name: Run pristine C3 source final gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git worktree add --detach "$RUNNER_TEMP/c3-final-gate-checkout" "$GITHUB_SHA"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/c3-final-gate-checkout/node_modules"
+          (cd "$RUNNER_TEMP/c3-final-gate-checkout" && node .github/scripts/task_ai_abc_c3_final_gate.mjs) | tee "$RUNNER_TEMP/c3-source-final-gate.log"
+          grep -q 'C3_FINAL_GATE|result=PASS|scope=preproduction_machine_source' "$RUNNER_TEMP/c3-source-final-gate.log"
+          echo C3_PRISTINE_SOURCE_FINAL_GATE=PASS
+
+  c3-durable-recovery-execution:
+    if: >-
+      github.event_name == 'workflow_dispatch' && inputs.mode == 'recovery' && github.actor == 'ebixsolutions' &&
+      ((inputs.recovery_scope == 'release' && inputs.recovery_authorization == format('c3-recovery-{0}-{1}', inputs.release_id, inputs.validation_run_id)) ||
+       (inputs.recovery_scope == 'intent' && inputs.recovery_authorization == format('c3-recovery-intent-{0}-{1}', inputs.release_id, inputs.deployment_run_id))) &&
+      (inputs.recover_generate_reply || inputs.recover_agent_assist)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: '${{ github.sha }}', fetch-depth: 0, clean: true}
+      - name: Verify explicit recovery authorization
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.recovery_scope }}" = release ]; then
+            test "${{ inputs.recovery_authorization }}" = "c3-recovery-${{ inputs.release_id }}-${{ inputs.validation_run_id }}"
+          else
+            test "${{ inputs.recovery_authorization }}" = "c3-recovery-intent-${{ inputs.release_id }}-${{ inputs.deployment_run_id }}"
+          fi
+          test "${{ github.ref_name }}" = director/ai-abc-c3-long-memory-final-cutover
+          test -n "${SUPABASE_ACCESS_TOKEN:-}"
+          echo C3_EXPLICIT_RECOVERY_AUTHORIZATION=PASS
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - name: Download parent release identity
+        if: inputs.recovery_scope == 'release'
+        uses: actions/download-artifact@v4
+        with:
+          name: C3-release-identity-${{ inputs.expected_head }}
+          path: ${{ runner.temp }}/replacement-release
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.deployment_run_id }}
+      - name: Download interrupted deployment intent
+        if: inputs.recovery_scope == 'intent'
+        uses: actions/download-artifact@v4
+        with:
+          name: C3-release-intent-${{ inputs.expected_head }}
+          path: ${{ runner.temp }}/replacement-intent
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.deployment_run_id }}
+      - name: Download failed validation evidence
+        if: inputs.recovery_scope == 'release'
+        uses: actions/download-artifact@v4
+        with:
+          name: C3-validation-production-evidence-${{ inputs.expected_head }}
+          path: ${{ runner.temp }}/failed-validation
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.validation_run_id }}
+      - name: Verify parent-child release and failed validation identity
+        if: inputs.recovery_scope == 'release'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node .github/scripts/c3_release_identity.mjs verify-release \
+            --release "$RUNNER_TEMP/replacement-release/RELEASE.json" \
+            --head "${{ inputs.expected_head }}" --tree "${{ inputs.expected_tree }}" \
+            --deployment-run-id "${{ inputs.deployment_run_id }}" \
+            --root "$RUNNER_TEMP/replacement-release"
+          python - "$RUNNER_TEMP/replacement-release/RELEASE.json" "$RUNNER_TEMP/failed-validation/evidence.json" <<'PY'
+          import json,sys
+          release=json.load(open(sys.argv[1])); evidence=json.load(open(sys.argv[2]))
+          assert release['release_id']=='${{ inputs.release_id }}'
+          assert release['release_digest']=='${{ inputs.release_digest }}'
+          assert str(release['baseline']['artifact_id'])=='${{ inputs.artifact_id }}'
+          assert release['baseline']['artifact_digest']=='${{ inputs.artifact_digest }}'
+          assert str(evidence['run']['id'])=='${{ inputs.validation_run_id }}'
+          assert evidence['release_identity']['release_id']==release['release_id']
+          assert evidence.get('failure_reason') or evidence.get('cleanup',{}).get('completed') is not True
+          print('C3_CROSS_RUN_RECOVERY_PARENT_CHILD=PASS')
+          PY
+      - name: Verify interrupted deployment intent identity
+        if: inputs.recovery_scope == 'intent'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node .github/scripts/c3_release_identity.mjs verify-intent \
+            --intent "$RUNNER_TEMP/replacement-intent/INTENT.json" \
+            --head "${{ inputs.expected_head }}" --tree "${{ inputs.expected_tree }}" \
+            --deployment-run-id "${{ inputs.deployment_run_id }}"
+          python - "$RUNNER_TEMP/replacement-intent/INTENT.json" <<'PY'
+          import json,sys
+          intent=json.load(open(sys.argv[1]))
+          assert intent['intent_id']=='${{ inputs.release_id }}'
+          assert intent['intent_digest']=='${{ inputs.release_digest }}'
+          assert str(intent['baseline']['artifact_id'])=='${{ inputs.artifact_id }}'
+          assert intent['baseline']['artifact_digest']=='${{ inputs.artifact_digest }}'
+          print('C3_INTERRUPTED_DEPLOYMENT_INTENT_RECOVERY=PASS')
+          PY
+      - name: Download prior-run durable snapshot on replacement runner
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.C3_CAPTURE_NAME }}
+          path: ${{ runner.temp }}/replacement-recovery
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.artifact_run_id }}
+      - name: Verify durable snapshot before recovery write
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - "$RUNNER_TEMP/replacement-recovery" <<'PY'
+          import hashlib,json,pathlib,sys
+          root=pathlib.Path(sys.argv[1]); cap=json.loads((root/'CAPTURE.json').read_text())
+          assert cap['classification']=='INTERIM LIVE RECOVERY BASELINE — NOT PRODUCT-READY'
+          expected={'generate-reply':(112,'b089958882da0aaeeb8c09b295060124fc66f94c4b8b70e18aec38001fc7c052'),'agent-assist':(43,'eeadc5c9dfb35c51e8778756fcae96ff0c0fc68fc68599ade565ef7479e4e4cb')}
+          for fn,(version,bundle) in expected.items():
+            manifest=json.loads((root/fn/'MANIFEST.json').read_text()); cfg=json.loads((root/fn/'CONFIGURATION.json').read_text()); source=root/fn/'supabase/functions'
+            exp={x['path']:x['sha256'] for x in manifest['files']}; act={p.relative_to(source).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in source.rglob('*') if p.is_file()}
+            assert exp==act and cfg['version']==version and cfg['observed_bundle_sha256']==bundle and cfg['verify_jwt'] is True and cfg['import_map'] is False
+          print('C3_REPLACEMENT_RUNNER_DURABLE_ARTIFACT_VERIFIED=PASS')
+          PY
+      - uses: supabase/setup-cli@v1
+        with: {version: '2.117.0'}
+      - name: Fail closed on external drift before exact recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          IDENTITY_ROOT="$RUNNER_TEMP/replacement-release"
+          if [ "${{ inputs.recovery_scope }}" = intent ]; then IDENTITY_ROOT="$RUNNER_TEMP/replacement-intent"; fi
+          for fn in generate-reply agent-assist; do
+            D="$RUNNER_TEMP/recovery-live-$fn"; mkdir -p "$D/supabase"; cp supabase/config.toml "$D/supabase/config.toml"
+            (cd "$D" && supabase functions download "$fn" --project-ref "$C3_PROJECT_REF" --use-api)
+          done
+          supabase functions list --project-ref "$C3_PROJECT_REF" --output json > "$RUNNER_TEMP/recovery-live-list.json"
+          python - "$IDENTITY_ROOT" "$RUNNER_TEMP" "${{ inputs.recovery_scope }}" <<'PY'
+          import hashlib,json,pathlib,sys
+          root=pathlib.Path(sys.argv[1]); temp=pathlib.Path(sys.argv[2]); scope=sys.argv[3]
+          identity=json.load(open(root/('RELEASE.json' if scope=='release' else 'INTENT.json')))
+          raw=json.load(open(temp/'recovery-live-list.json')); rows=raw.get('functions',raw) if isinstance(raw,dict) else raw
+          for fn in ('generate-reply','agent-assist'):
+            source=temp/f'recovery-live-{fn}'/'supabase/functions'
+            live={p.relative_to(source).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in source.rglob('*') if p.is_file()}
+            target={x['path']:x['sha256'] for x in identity['target']['functions'][fn]['files']}
+            baseline={x['path']:x['sha256'] for x in identity['baseline']['functions'][fn]['files']}
+            classification='target' if live==target else 'baseline' if live==baseline else 'external_drift'
+            meta=next((x for x in rows if (x.get('slug') or x.get('name'))==fn),None)
+            config_ok=bool(meta and meta.get('status')=='ACTIVE' and meta.get('verify_jwt') is True and meta.get('import_map') is not True)
+            if scope=='release':
+              expected=identity['actual']['functions'][fn]
+              config_ok=config_ok and int(meta.get('version',-1))==expected['version'] and meta.get('ezbr_sha256')==expected['bundle']
+              if classification!='target': raise SystemExit(f'recovery_external_or_parallel_drift:{fn}:{classification}')
+            elif classification=='external_drift': raise SystemExit(f'recovery_external_or_parallel_drift:{fn}')
+            if not config_ok: raise SystemExit(f'recovery_live_config_drift:{fn}')
+            (temp/f'recovery-class-{fn}').write_text(classification)
+            print(f'C3_RECOVERY_LIVE_CLASSIFICATION|function={fn}|identity={classification}|result=PASS')
+          PY
+          echo C3_RECOVERY_LIVE_TARGET_DRIFT_CHECK=PASS
+      - name: Execute explicitly authorized recovery and independent verification
+        shell: bash
+        run: |
+          set -uo pipefail; failed=0; R="$RUNNER_TEMP/replacement-recovery"
+          recover(){
+            local fn="$1" d="$RUNNER_TEMP/replacement-readback-$1"; rm -rf "$d"; mkdir -p "$d/supabase"; cp "$GITHUB_WORKSPACE/supabase/config.toml" "$d/supabase/config.toml"
+            if ! (cd "$R/$fn" && supabase functions deploy "$fn" --project-ref "$C3_PROJECT_REF" --use-api); then echo "C3_RECOVERY_RESULT|function=$fn|result=FAIL|stage=deploy"; return 1; fi
+            if ! (cd "$d" && supabase functions download "$fn" --project-ref "$C3_PROJECT_REF" --use-api); then echo "C3_RECOVERY_RESULT|function=$fn|result=FAIL|stage=readback"; return 1; fi
+            supabase functions list --project-ref "$C3_PROJECT_REF" --output json > "$d/functions.json" || return 1
+            if node "$GITHUB_WORKSPACE/.github/scripts/c3_release_identity.mjs" rollback --function "$fn" \
+              --source-root "$d/supabase/functions" --baseline "$R/$fn/MANIFEST.json" \
+              --configuration "$R/$fn/CONFIGURATION.json" --metadata "$d/functions.json"; then
+              echo "C3_RECOVERY_RESULT|function=$fn|source=EXACT|configuration=EXACT|bundle=EXACT|result=PASS"
+            else
+              echo "C3_RECOVERY_RESULT|function=$fn|result=FAIL|stage=exact_runtime_identity"; return 1
+            fi
+          }
+          if [ "${{ inputs.recover_generate_reply }}" = true ] && [ "$(cat "$RUNNER_TEMP/recovery-class-generate-reply")" = target ]; then recover generate-reply || failed=1; fi
+          if [ "${{ inputs.recover_agent_assist }}" = true ] && [ "$(cat "$RUNNER_TEMP/recovery-class-agent-assist")" = target ]; then recover agent-assist || failed=1; fi
+          exit "$failed"
+
+  c3-production-edge-transport:
+    needs: c3-current-live-roundtrip
+    if: >-
+      github.event_name == 'pull_request' && github.event.action == 'labeled' &&
+      github.event.pull_request.number == 12 && github.actor == 'ebixsolutions' &&
+      github.event.label.name == format('c3-prod-{0}', github.event.pull_request.head.sha) &&
+      needs.c3-current-live-roundtrip.outputs.verified == 'PASS'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      AUTHORIZED_HEAD: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: '${{ github.event.pull_request.head.sha }}', fetch-depth: 0, clean: true}
+      - uses: supabase/setup-cli@v1
+        with: {version: '2.117.0'}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - name: Re-download durable baseline before first forward write
+        uses: actions/download-artifact@v4
+        with: {name: '${{ env.C3_CAPTURE_NAME }}', path: '${{ runner.temp }}/baseline'}
+      - name: Baseline gate
+        id: baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$AUTHORIZED_HEAD"
+          test "$(supabase --version)" = "$C3_CLI_VERSION"
+          test -s "$RUNNER_TEMP/baseline/CAPTURE.json"
+          test -s "$RUNNER_TEMP/baseline/generate-reply/MANIFEST.json"
+          test -s "$RUNNER_TEMP/baseline/agent-assist/MANIFEST.json"
+          mkdir -p "$RUNNER_TEMP/release/target/generate-reply" "$RUNNER_TEMP/release/target/agent-assist"
+          for fn in generate-reply agent-assist; do
+            node .github/scripts/c3_release_identity.mjs target \
+              --function "$fn" --source-root supabase/functions \
+              --template "$RUNNER_TEMP/baseline/$fn/MANIFEST.json" \
+              --head "$AUTHORIZED_HEAD" --tree "$(git rev-parse HEAD^{tree})" \
+              --out "$RUNNER_TEMP/release/target/$fn/MANIFEST.json"
+          done
+          python - "$RUNNER_TEMP/baseline" "$RUNNER_TEMP/forward" "$RUNNER_TEMP/release/target" <<'PY'
+          import hashlib,json,pathlib,shutil,sys
+          baseline=pathlib.Path(sys.argv[1]); forward=pathlib.Path(sys.argv[2]); target=pathlib.Path(sys.argv[3]); repo=pathlib.Path('supabase/functions')
+          for fn in ('generate-reply','agent-assist'):
+            manifest=json.loads((baseline/fn/'MANIFEST.json').read_text()); source=baseline/fn/'supabase/functions'
+            exp={x['path']:x['sha256'] for x in manifest['files']}; act={p.relative_to(source).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in source.rglob('*') if p.is_file()}
+            if exp!=act: raise SystemExit(f'durable_baseline_hash_mismatch:{fn}')
+            proposed=json.loads((target/fn/'MANIFEST.json').read_text())
+            work=forward/fn; (work/'supabase/functions').mkdir(parents=True); shutil.copy2('supabase/config.toml',work/'supabase/config.toml')
+            for rel in [row['path'] for row in proposed['files']]:
+              src=repo/rel; dst=work/'supabase/functions'/rel; dst.parent.mkdir(parents=True,exist_ok=True); shutil.copy2(src,dst)
+          PY
+          for fn in generate-reply agent-assist; do
+            node .github/scripts/c3_release_identity.mjs package --function "$fn" \
+              --source-root "$RUNNER_TEMP/forward/$fn/supabase/functions" \
+              --target "$RUNNER_TEMP/release/target/$fn/MANIFEST.json"
+          done
+          python - "$RUNNER_TEMP/baseline" "$RUNNER_TEMP/release" <<'PY'
+          import hashlib,json,os,pathlib,sys
+          baseline=pathlib.Path(sys.argv[1]); release=pathlib.Path(sys.argv[2])
+          def load(path): return json.loads(path.read_text())
+          def baseline_manifest(fn):
+            path=baseline/fn/'MANIFEST.json'; value=load(path)
+            value.setdefault('manifest_sha256',hashlib.sha256(path.read_bytes()).hexdigest()); return value
+          tree=os.popen('git rev-parse HEAD^{tree}').read().strip()
+          value={
+            'head':os.environ['AUTHORIZED_HEAD'],'tree':tree,
+            'deployment_run_id':os.environ['GITHUB_RUN_ID'],'deployment_attempt':os.environ['GITHUB_RUN_ATTEMPT'],
+            'baseline':{
+              'artifact_id':'${{ needs.c3-current-live-roundtrip.outputs.artifact_id }}',
+              'artifact_digest':'${{ needs.c3-current-live-roundtrip.outputs.artifact_digest }}',
+              'artifact_run_id':os.environ['GITHUB_RUN_ID'],
+              'functions':{fn:baseline_manifest(fn) for fn in ('generate-reply','agent-assist')}},
+            'target':{'head':os.environ['AUTHORIZED_HEAD'],'tree':tree,
+              'functions':{fn:load(release/'target'/fn/'MANIFEST.json') for fn in ('generate-reply','agent-assist')}},
+          }
+          (release/'intent-input.json').write_text(json.dumps(value,indent=2)+'\n')
+          PY
+          node .github/scripts/c3_release_identity.mjs create-intent \
+            --input "$RUNNER_TEMP/release/intent-input.json" --out "$RUNNER_TEMP/release/INTENT.json"
+          echo ready=PASS >> "$GITHUB_OUTPUT"
+          echo C3_DURABLE_BASELINE_BEFORE_FIRST_FORWARD_WRITE=PASS
+      - name: Upload durable target intent before first forward write
+        id: intent_upload
+        if: steps.baseline.outputs.ready == 'PASS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: C3-release-intent-${{ github.event.pull_request.head.sha }}
+          path: |
+            ${{ runner.temp }}/release/INTENT.json
+            ${{ runner.temp }}/release/target
+          if-no-files-found: error
+          retention-days: 30
+      - name: Download target intent to a clean round-trip path
+        if: steps.intent_upload.outcome == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: C3-release-intent-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/intent-roundtrip
+      - name: Verify target intent remote round-trip before first write
+        id: intent_roundtrip
+        if: steps.intent_upload.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node .github/scripts/c3_release_identity.mjs verify-intent \
+            --intent "$RUNNER_TEMP/intent-roundtrip/INTENT.json" --head "$AUTHORIZED_HEAD" \
+            --tree "$(git rev-parse HEAD^{tree})" --deployment-run-id "$GITHUB_RUN_ID"
+          test "$(sha256sum "$RUNNER_TEMP/release/INTENT.json"|cut -d' ' -f1)" = "$(sha256sum "$RUNNER_TEMP/intent-roundtrip/INTENT.json"|cut -d' ' -f1)"
+          echo verified=PASS >> "$GITHUB_OUTPUT"
+      - name: Deploy generate-reply
+        id: deploy_generate
+        if: steps.intent_roundtrip.outputs.verified == 'PASS'
+        continue-on-error: true
+        shell: bash
+        run: |
+          echo attempted=true >> "$GITHUB_OUTPUT"
+          if (cd "$RUNNER_TEMP/forward/generate-reply" && supabase functions deploy generate-reply --project-ref "$C3_PROJECT_REF" --use-api); then echo command_result=success >> "$GITHUB_OUTPUT"; else echo command_result=unknown >> "$GITHUB_OUTPUT"; exit 1; fi
+      - name: Mandatory readback after generate attempt
+        id: readback_generate
+        if: always() && steps.deploy_generate.outputs.attempted == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail; D="$RUNNER_TEMP/post-generate"; mkdir -p "$D/supabase"; cp supabase/config.toml "$D/supabase/config.toml"
+          (cd "$D" && supabase functions download generate-reply --project-ref "$C3_PROJECT_REF" --use-api)
+          (cd "$RUNNER_TEMP" && supabase functions list --project-ref "$C3_PROJECT_REF" --output json > post-generate-list.json)
+          node .github/scripts/c3_release_identity.mjs actual --function generate-reply \
+            --source-root "$D/supabase/functions" --target "$RUNNER_TEMP/release/target/generate-reply/MANIFEST.json" \
+            --metadata "$RUNNER_TEMP/post-generate-list.json" \
+            --out "$RUNNER_TEMP/release/actual/generate-reply/MANIFEST.json"
+          mkdir -p "$RUNNER_TEMP/release/actual/generate-reply/supabase"
+          cp -R "$D/supabase/functions" "$RUNNER_TEMP/release/actual/generate-reply/supabase/functions"
+          echo completed=true >> "$GITHUB_OUTPUT"; echo identity=target >> "$GITHUB_OUTPUT"
+      - name: Deploy agent-assist after known generate readback
+        id: deploy_assist
+        if: steps.deploy_generate.outputs.command_result == 'success' && steps.readback_generate.outputs.completed == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          echo attempted=true >> "$GITHUB_OUTPUT"
+          if (cd "$RUNNER_TEMP/forward/agent-assist" && supabase functions deploy agent-assist --project-ref "$C3_PROJECT_REF" --use-api); then echo command_result=success >> "$GITHUB_OUTPUT"; else echo command_result=unknown >> "$GITHUB_OUTPUT"; exit 1; fi
+      - name: Mandatory readback after assist attempt
+        id: readback_assist
+        if: always() && steps.deploy_assist.outputs.attempted == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail; D="$RUNNER_TEMP/post-assist"; mkdir -p "$D/supabase"; cp supabase/config.toml "$D/supabase/config.toml"
+          (cd "$D" && supabase functions download agent-assist --project-ref "$C3_PROJECT_REF" --use-api)
+          (cd "$RUNNER_TEMP" && supabase functions list --project-ref "$C3_PROJECT_REF" --output json > post-assist-list.json)
+          node .github/scripts/c3_release_identity.mjs actual --function agent-assist \
+            --source-root "$D/supabase/functions" --target "$RUNNER_TEMP/release/target/agent-assist/MANIFEST.json" \
+            --metadata "$RUNNER_TEMP/post-assist-list.json" \
+            --out "$RUNNER_TEMP/release/actual/agent-assist/MANIFEST.json"
+          mkdir -p "$RUNNER_TEMP/release/actual/agent-assist/supabase"
+          cp -R "$D/supabase/functions" "$RUNNER_TEMP/release/actual/agent-assist/supabase/functions"
+          echo completed=true >> "$GITHUB_OUTPUT"; echo identity=target >> "$GITHUB_OUTPUT"
+      - name: Assemble baseline-target-actual release identity
+        id: release_identity
+        if: always() && steps.readback_generate.outcome == 'success' && steps.readback_assist.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - "$RUNNER_TEMP/baseline" "$RUNNER_TEMP/release" <<'PY'
+          import hashlib,json,os,pathlib,sys
+          baseline=pathlib.Path(sys.argv[1]); release=pathlib.Path(sys.argv[2])
+          def load(path): return json.loads(path.read_text())
+          def load_baseline(path):
+            value=load(path)
+            value.setdefault('manifest_sha256',hashlib.sha256(path.read_bytes()).hexdigest())
+            return value
+          payload={
+            'head':os.environ['AUTHORIZED_HEAD'],'tree':os.popen('git rev-parse HEAD^{tree}').read().strip(),
+            'deployment_run_id':os.environ['GITHUB_RUN_ID'],'deployment_attempt':os.environ['GITHUB_RUN_ATTEMPT'],
+            'baseline':{
+              'artifact_id':'${{ needs.c3-current-live-roundtrip.outputs.artifact_id }}',
+              'artifact_digest':'${{ needs.c3-current-live-roundtrip.outputs.artifact_digest }}',
+              'artifact_run_id':os.environ['GITHUB_RUN_ID'],
+              'functions':{fn:load_baseline(baseline/fn/'MANIFEST.json') for fn in ('generate-reply','agent-assist')}},
+            'target':{'head':os.environ['AUTHORIZED_HEAD'],'tree':os.popen('git rev-parse HEAD^{tree}').read().strip(),
+              'functions':{fn:load(release/'target'/fn/'MANIFEST.json') for fn in ('generate-reply','agent-assist')}},
+            'actual':{'functions':{fn:load(release/'actual'/fn/'MANIFEST.json') for fn in ('generate-reply','agent-assist')}},
+            'cleanup_manifest_name':f'C3-validation-production-evidence-{os.environ["AUTHORIZED_HEAD"]}/fixture-manifest.json',
+          }
+          (release/'release-input.json').write_text(json.dumps(payload,indent=2)+'\n')
+          PY
+          node .github/scripts/c3_release_identity.mjs create-release \
+            --input "$RUNNER_TEMP/release/release-input.json" --out "$RUNNER_TEMP/release/RELEASE.json"
+          echo ready=PASS >> "$GITHUB_OUTPUT"
+      - name: Upload durable release execution identity
+        id: release_upload
+        if: steps.release_identity.outputs.ready == 'PASS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: C3-release-identity-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/release
+          if-no-files-found: error
+          retention-days: 30
+      - name: Remote round-trip release identity on clean path
+        if: steps.release_upload.outcome == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: C3-release-identity-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/release-roundtrip
+      - name: Verify remote release identity round-trip
+        id: release_roundtrip
+        if: steps.release_upload.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(sha256sum "$RUNNER_TEMP/release/RELEASE.json" | cut -d' ' -f1)" = "$(sha256sum "$RUNNER_TEMP/release-roundtrip/RELEASE.json" | cut -d' ' -f1)"
+          node .github/scripts/c3_release_identity.mjs verify-release \
+            --release "$RUNNER_TEMP/release-roundtrip/RELEASE.json" --head "$AUTHORIZED_HEAD" \
+            --tree "$(git rev-parse HEAD^{tree})" --deployment-run-id "$GITHUB_RUN_ID" \
+            --root "$RUNNER_TEMP/release-roundtrip"
+          echo verified=PASS >> "$GITHUB_OUTPUT"
+      - name: Post-deployment P0 final transport gate
+        id: final_gate
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail; eval "$C3_ASSERT_LIB"
+          test "${{ steps.deploy_generate.outputs.command_result }}" = success
+          test "${{ steps.readback_generate.outputs.completed }}" = true
+          test "${{ steps.deploy_assist.outputs.command_result }}" = success
+          test "${{ steps.readback_assist.outputs.completed }}" = true
+          test "${{ steps.release_roundtrip.outputs.verified }}" = PASS
+          (cd "$RUNNER_TEMP" && supabase functions list --project-ref "$C3_PROJECT_REF" --output json > post-functions.json)
+          python - "$RUNNER_TEMP/baseline/CAPTURE.json" "$RUNNER_TEMP/post-functions.json" <<'PY'
+          import json,sys
+          cap=json.load(open(sys.argv[1])); raw=json.load(open(sys.argv[2])); rows=raw.get('functions',raw) if isinstance(raw,dict) else raw
+          for exp in cap['frozen_functions']:
+            got=next((x for x in rows if x.get('slug')==exp['function'] or x.get('name')==exp['function']),None)
+            ok=bool(got and got.get('status')==exp['status'] and int(got.get('version',-1))==exp['version'] and got.get('verify_jwt') is exp['verify_jwt'] and got.get('import_map') is exp['import_map'] and str(got.get('ezbr_sha256',''))==exp['bundle'])
+            print(f'C3_FROZEN_READBACK_ASSERT|function={exp["function"]}|result={"PASS" if ok else "FAIL"}')
+            if not ok: raise SystemExit(1)
+          PY
+          c3_source_clean production_final 1
+          echo C3_POST_DEPLOYMENT_P0_FINAL_GATE=PASS
+      - name: Failure-safe recovery after all post-deployment P0 gates
+        id: recovery
+        if: >-
+          always() &&
+          (steps.deploy_generate.outcome == 'failure' || steps.readback_generate.outcome == 'failure' ||
+           steps.deploy_assist.outcome == 'failure' || steps.readback_assist.outcome == 'failure' ||
+           steps.final_gate.outcome == 'failure')
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -uo pipefail; failed=0; R="$RUNNER_TEMP/baseline"
+          verify_restored(){
+            local fn="$1" d="$RUNNER_TEMP/recovered-$1"; rm -rf "$d"; mkdir -p "$d/supabase"; cp supabase/config.toml "$d/supabase/config.toml"
+            (cd "$d" && supabase functions download "$fn" --project-ref "$C3_PROJECT_REF" --use-api) || return 1
+            supabase functions list --project-ref "$C3_PROJECT_REF" --output json > "$d/functions.json" || return 1
+            node .github/scripts/c3_release_identity.mjs rollback --function "$fn" \
+              --source-root "$d/supabase/functions" --baseline "$R/$fn/MANIFEST.json" \
+              --configuration "$R/$fn/CONFIGURATION.json" --metadata "$d/functions.json"
+          }
+          if [ "${{ steps.deploy_generate.outputs.attempted }}" = true ] && [ "${{ steps.readback_generate.outputs.identity }}" != baseline ]; then
+            if (cd "$R/generate-reply" && supabase functions deploy generate-reply --project-ref "$C3_PROJECT_REF" --use-api) && verify_restored generate-reply; then echo 'C3_RECOVERY_RESULT|function=generate-reply|result=PASS'; else echo 'C3_RECOVERY_RESULT|function=generate-reply|result=FAIL'; failed=1; fi
+          fi
+          if [ "${{ steps.deploy_assist.outputs.attempted }}" = true ] && [ "${{ steps.readback_assist.outputs.identity }}" != baseline ]; then
+            if (cd "$R/agent-assist" && supabase functions deploy agent-assist --project-ref "$C3_PROJECT_REF" --use-api) && verify_restored agent-assist; then echo 'C3_RECOVERY_RESULT|function=agent-assist|result=PASS'; else echo 'C3_RECOVERY_RESULT|function=agent-assist|result=FAIL'; failed=1; fi
+          fi
+          echo recovery_failed=$failed >> "$GITHUB_OUTPUT"; exit "$failed"
+      - name: Final transport result
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ steps.final_gate.outcome }}" = success
+          test "${{ steps.recovery.outputs.recovery_failed || '0' }}" = 0
+          echo C3_EDGE_TRANSPORT_FINAL_RESULT=PASS

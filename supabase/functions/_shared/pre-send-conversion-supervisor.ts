@@ -14,6 +14,20 @@ import {
   createEmptyConversationCommerceState,
   isConversationCommerceState,
 } from "./commerce-state-contract.ts";
+import { parseAddressReplacementCorrection } from "./commerce-state-reducer.ts";
+import { currentKbSellingPrice, exactKbModelIds } from "./canonical-kb-direct-answer.ts";
+import type { ContextualDecision } from "./contextual-customer-update.ts";
+import {
+  b2JourneyTransactionBoundary,
+  type B2TrustedCorrectionCommit,
+  type B2TrustedJourneyProgress,
+  type B2TrustedLifecycleCommit,
+  verifyEntityLifecycleTransition,
+} from "./b2-journey-progress-contract.ts";
+import { roomSizeCorrection } from "./conversation-long-memory.ts";
+import { isCanonicalConversationMemory, type CanonicalConversationMemory } from "./conversation-long-memory.ts";
+import { activeCustomerGoal } from "./customer-journey-orchestration.ts";
+import { canonicalJson, sameCanonicalJson } from "./canonical-json.ts";
 
 export type B2DecisionKind = "allow" | "block" | "indeterminate";
 
@@ -30,11 +44,16 @@ export interface B2Decision {
   code: string;
   detail?: string;
 }
-
+export type B2AuthoritativePersistenceClassification =
+  | "COMMITTED"
+  | "IDEMPOTENT"
+  | "NO_SEMANTIC_CHANGE"
+  | "INDETERMINATE";
 export interface B2CanonicalSnapshot {
   conversation_id: string;
   company_id: string;
   source_message_id: string;
+  source_message_content?: string;
   commerce_state_revision: number;
   commerce_state_source_message_id: string | null;
   state: ConversationCommerceState;
@@ -45,6 +64,116 @@ export interface B2EvaluationInput {
   persistence_kind: B2PersistenceKind;
   snapshot: B2CanonicalSnapshot;
   metadata?: Record<string, unknown> | null;
+  /** Private server-side evidence, never accepted from a customer request or persisted. */
+  trusted_kb_price_proof?: B2KbPriceProof | null;
+  /** Private result from the server Commerce runtime, never request metadata. */
+  trusted_targeted_clarification?: B2TrustedTargetedClarification | null;
+  /** Private Commerce-runtime receipt, never accepted from request metadata. */
+  trusted_journey_progress?: B2TrustedJourneyProgress | null;
+  trusted_correction_commit?: B2TrustedCorrectionCommit | null;
+  trusted_lifecycle_commit?: B2TrustedLifecycleCommit | null;
+  trusted_read_only_recap?: B2TrustedReadOnlyRecap | null;
+}
+
+export interface B2TrustedReadOnlyRecap {
+  contract: "current-state-read-only-recap-v1";
+  conversation_id: string;
+  company_id: string;
+  source_message_id: string;
+  commerce_revision: number;
+  commerce_hash: string;
+  commerce_state: ConversationCommerceState;
+  memory_revision: number;
+  memory_hash: string;
+  memory_source_message_id: string;
+  memory: CanonicalConversationMemory;
+  response_hash: string;
+  reply: string;
+}
+
+async function hashRecapValue(value: string): Promise<string> {
+  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+export async function buildB2ReadOnlyRecapProof(input: Omit<B2TrustedReadOnlyRecap,
+  "contract" | "commerce_hash" | "response_hash">): Promise<B2TrustedReadOnlyRecap> {
+  return {
+    ...input, contract: "current-state-read-only-recap-v1",
+    commerce_hash: await hashRecapValue(canonicalJson(input.commerce_state)),
+    response_hash: await hashRecapValue(input.reply),
+  };
+}
+
+function isTrustedReadOnlyRecap(input: B2EvaluationInput, draft: string): boolean {
+  const p = input.trusted_read_only_recap;
+  const m = input.metadata;
+  const s = input.snapshot;
+  if (!p || !m || p.contract !== "current-state-read-only-recap-v1" ||
+    input.persistence_kind !== "ai_reply" || m.response_route !== "canonical_memory_recall" ||
+    m.recall_fact_type !== "summary" || m.recap_read_only !== true ||
+    m.commerce_state_persist_result !== "read_only" ||
+    m.commerce_state_persistence_classification !== "NO_SEMANTIC_CHANGE" ||
+    m.recap_commerce_hash !== p.commerce_hash ||
+    m.recap_memory_hash !== p.memory_hash ||
+    m.recap_response_hash !== p.response_hash ||
+    m.conversation_memory_revision !== p.memory_revision ||
+    p.conversation_id !== s.conversation_id || p.company_id !== s.company_id ||
+    p.source_message_id !== s.source_message_id ||
+    p.commerce_revision !== s.commerce_state_revision ||
+    !sameCanonicalJson(p.commerce_state, s.state) ||
+    !isCanonicalConversationMemory(p.memory) ||
+    p.memory.conversation_id !== s.conversation_id ||
+    p.memory.company_id !== s.company_id ||
+    p.memory.source_message_id !== p.memory_source_message_id ||
+    p.memory.memory_revision !== p.memory_revision ||
+    p.memory.commerce_state_revision !== s.commerce_state_revision ||
+    clean(p.reply) !== draft ||
+    /(?:已更新|已更正|已記低|已記錄|saved|updated|changed|recorded)/i.test(draft)) return false;
+  const active = s.state.entities.filter((e) => e.status !== "cancelled" && e.status !== "deferred");
+  if (!active.length || !active.every((e) =>
+    p.memory.active_entities.some((me) => me.entity_id === e.entity_id && me.quantity === e.quantity)
+  )) return false;
+  const inactive = s.state.entities.filter((e) => e.status === "cancelled" || e.status === "deferred");
+  if (inactive.some((e) => new RegExp(`(?:${e.category === "refrigerator" ? "雪櫃|冰箱|refrigerator" : e.category}).{0,18}(?:而家|現在|目前|current|active|繼續處理|仍要)`, "i").test(draft))) return false;
+  for (const entity of active) {
+    const sizes = entity.attributes.room_sizes;
+    if (sizes && typeof sizes === "object" && !Array.isArray(sizes)) {
+      for (const value of Object.values(sizes)) {
+        if (typeof value === "string" && !draft.includes(value)) return false;
+      }
+    }
+    if (entity.quantity > 0 && /(?:共|total|數量|数量)/i.test(draft) &&
+      !new RegExp(`(?:共|total|數量|数量).{0,10}(?:${entity.quantity}|${["零", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十"][entity.quantity] ?? "(?!)"})\\s*(?:部|台|units?)`, "i").test(draft)) return false;
+  }
+  for (const fact of p.memory.cancelled_or_superseded) {
+    if (fact.key !== "superseded_room_size") continue;
+    const old = fact.value && typeof fact.value === "object" &&
+      (fact.value as Record<string, unknown>).value;
+    if (typeof old === "string" && draft.includes(old)) return false;
+  }
+  return true;
+}
+
+export interface B2TrustedTargetedClarification {
+  reply: string;
+  revision: number;
+  contextual_decision: ContextualDecision;
+}
+
+export interface B2KbPriceProof {
+  field: "selling_price";
+  value: number;
+  currency: "HKD";
+  model: string;
+  document_id: string;
+  chunk_id: string;
+  tenant_id: string;
+  company_id: string;
+  currentness: "current";
+  authority_decision: "USE_CURRENT_KB";
+  request: string;
+  full_content: string;
 }
 
 export interface B2QueryResult {
@@ -69,8 +198,14 @@ export interface B2PersistenceInput<T> {
   proposed_response: string;
   persistence_kind: B2PersistenceKind;
   metadata?: Record<string, unknown> | null;
+  trusted_kb_price_proof?: B2KbPriceProof | null;
+  trusted_targeted_clarification?: B2TrustedTargetedClarification | null;
+  trusted_journey_progress?: B2TrustedJourneyProgress | null;
+  trusted_correction_commit?: B2TrustedCorrectionCommit | null;
+  trusted_lifecycle_commit?: B2TrustedLifecycleCommit | null;
+  trusted_read_only_recap?: B2TrustedReadOnlyRecap | null;
   expected_commerce_state_revision?: number | null;
-  commit: () => Promise<T>;
+  commit: (snapshot: B2CanonicalSnapshot) => Promise<T>;
 }
 
 export type B2PersistenceResult<T> =
@@ -151,6 +286,9 @@ function aliasesForKey(key: string): string[] {
     confirmed: ["confirmed", "confirmation", "確認", "确认"],
     quantity: ["quantity", "how many", "數量", "数量", "幾多", "几多"],
     brand: ["brand", "品牌"],
+    category: ["category", "product type", "產品類型", "产品类型", "產品種類", "产品种类"],
+    room_sizes: ["room sizes", "room areas", "房間面積", "房间面积", "各空間面積", "各空间面积"],
+    installation_type: ["installation type", "installation arrangement", "安裝方式", "安装方式", "窗口位", "分體位", "分体位"],
     model: ["model", "model number", "型號", "型号"],
     amount: ["amount", "price", "quote", "價錢", "价钱", "報價", "报价"],
     currency: ["currency", "幣別", "币别", "貨幣", "货币"],
@@ -169,6 +307,8 @@ function aliasesForKey(key: string): string[] {
   };
   const leaf = key.split(/[._-]/).at(-1) ?? key;
   for (const item of common[leaf] ?? []) aliases.add(item.toLowerCase());
+  const semanticKey = key.replace(/[.\s-]+/g, "_").toLowerCase();
+  for (const item of common[semanticKey] ?? []) aliases.add(item.toLowerCase());
   return [...aliases].filter((item) => item.length >= 2);
 }
 
@@ -181,12 +321,23 @@ interface KnownFact {
 function addFact(facts: KnownFact[], path: string, value: unknown): void {
   const rendered = scalarText(value);
   if (!rendered) return;
-  facts.push({ path, value: rendered, aliases: aliasesForKey(path) });
+  facts.push({
+    path,
+    value: rendered,
+    aliases: [...new Set([...aliasesForKey(path), ...aliasesForKey(rendered)])],
+  });
 }
 
 function addRecordFacts(facts: KnownFact[], prefix: string, value: Record<string, unknown>): void {
   for (const [key, item] of Object.entries(value)) {
     if (isRecord(item)) addRecordFacts(facts, `${prefix}.${key}`, item);
+    else if (Array.isArray(item)) {
+      item.forEach((entry, index) =>
+        isRecord(entry)
+          ? addRecordFacts(facts, `${prefix}.${key}.${index}`, entry)
+          : addFact(facts, `${prefix}.${key}.${index}`, entry)
+      );
+    }
     else addFact(facts, `${prefix}.${key}`, item);
   }
 }
@@ -238,6 +389,136 @@ export function collectKnownCommerceFacts(state: ConversationCommerceState): Kno
   return facts;
 }
 
+export function classifyCommerceStatePersistenceResult(
+  result: unknown,
+): B2AuthoritativePersistenceClassification {
+  switch (clean(result, 120)) {
+    case "success":
+    case "authoritative_post_commit_readback":
+      return "COMMITTED";
+    case "idempotent":
+    case "source_message_already_applied":
+      return "IDEMPOTENT";
+    case "read_only":
+    case "no_semantic_change":
+      return "NO_SEMANTIC_CHANGE";
+    default:
+      return "INDETERMINATE";
+  }
+}
+
+export function buildB2AuthoritativeReadbackProof(
+  state: ConversationCommerceState,
+  statePath: string,
+): Record<string, unknown> | null {
+  const path = clean(statePath, 240);
+  if (path === "commerce.authoritative_projection") {
+    return {
+      state_path: path,
+      entities: state.entities.map((entity) => ({
+        entity_id: entity.entity_id,
+        quantity: entity.quantity,
+        status: entity.status,
+        attributes: entity.attributes,
+        constraints: entity.constraints,
+      })),
+      delivery: state.delivery,
+      installation: state.installation,
+      conversion: state.conversion,
+      quotes: state.quotes,
+      customer_constraints: state.customer_constraints,
+      unresolved_items: state.unresolved_items,
+      latest_corrections: state.latest_corrections,
+    };
+  }
+  if (path === "installation.pending_checks") {
+    return {
+      state_path: path,
+      values: [...state.installation.pending_checks],
+      count: state.installation.pending_checks.length,
+    };
+  }
+  const fact = collectKnownCommerceFacts(state).find((item) => item.path === path);
+  return fact ? { state_path: path, value: fact.value } : null;
+}
+
+/**
+ * A read-only commerce answer has no mutation receipt by design. It may only
+ * recover an otherwise indeterminate B2 evaluation when the authoritative
+ * snapshot proves the exact revision, active state path, and rendered value.
+ * Transport/readback failures and snapshot drift remain fail-closed.
+ */
+export function classifyB2AuthoritativePersistence(
+  input: B2EvaluationInput,
+): B2AuthoritativePersistenceClassification {
+  const metadata = input.metadata;
+  if (!isRecord(metadata)) return "INDETERMINATE";
+  const classification = classifyCommerceStatePersistenceResult(
+    metadata.commerce_state_persist_result,
+  );
+  if (
+    metadata.commerce_state_persistence_classification !== classification ||
+    Number(metadata.commerce_state_revision) !== input.snapshot.commerce_state_revision
+  ) return "INDETERMINATE";
+  if (classification !== "NO_SEMANTIC_CHANGE") {
+    return input.snapshot.commerce_state_source_message_id ===
+        input.snapshot.source_message_id
+      ? classification
+      : "INDETERMINATE";
+  }
+  if (
+    !["commerce_state_answer", "commerce_transaction_summary"].includes(
+      clean(metadata.response_route, 120),
+    ) ||
+    ![
+      "CONVERSATION_STATE",
+      "DETERMINISTIC_CALCULATION",
+      "SAFE_PROFESSIONAL_CONFIRMATION",
+      "CURRENT_KB_REQUIRED",
+    ].includes(clean(metadata.commerce_authority, 120))
+  ) return "INDETERMINATE";
+
+  const statePath = clean(metadata.commerce_state_path, 240);
+  const expectedProof = buildB2AuthoritativeReadbackProof(input.snapshot.state, statePath);
+  if (
+    !expectedProof ||
+    JSON.stringify(metadata.commerce_state_readback_proof) !==
+      JSON.stringify(expectedProof)
+  ) return "INDETERMINATE";
+
+  if (statePath === "installation.pending_checks") {
+    const values = input.snapshot.state.installation.pending_checks;
+    const response = clean(input.proposed_response);
+    const claimedCount = response.match(/(?:^|\D)(\d{1,4})\s*(?:項|项|items?|checks?)/i);
+    if (!claimedCount || Number(claimedCount[1]) !== values.length) {
+      return "INDETERMINATE";
+    }
+    return "NO_SEMANTIC_CHANGE";
+  }
+
+  if (statePath === "commerce.authoritative_projection") {
+    return "NO_SEMANTIC_CHANGE";
+  }
+
+  const fact = collectKnownCommerceFacts(input.snapshot.state).find((item) => item.path === statePath);
+  if (!fact || !clean(input.proposed_response).includes(fact.value)) return "INDETERMINATE";
+
+  const quantityPath = statePath.match(/^entities\.(\d+)\.quantity$/);
+  if (quantityPath) {
+    const entity = input.snapshot.state.entities[Number(quantityPath[1])];
+    if (!entity || entity.status === "cancelled" || entity.status === "deferred") {
+      return "INDETERMINATE";
+    }
+    const claimedQuantities = [...clean(input.proposed_response).matchAll(
+      /([0-9]{1,4})\s*(?:部|台|件|個|个|套|units?|items?)/gi,
+    )].map((match) => Number(match[1]));
+    if (claimedQuantities.length !== 1 || claimedQuantities[0] !== Number(fact.value)) {
+      return "INDETERMINATE";
+    }
+  }
+  return "NO_SEMANTIC_CHANGE";
+}
+
 function entityAliases(entity: CommerceEntity): string[] {
   const values = [entity.entity_id, entity.category, entity.brand, entity.model];
   for (const key of ["product_name", "display_name", "name", "sku"]) {
@@ -264,9 +545,27 @@ function extractMoneyMentions(text: string): MoneyMention[] {
     /(?:\b(HKD|USD|TWD)\b\s*|((?:HK|US|NT)\$|\$)\s*)?([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,10})(?:\.([0-9]{1,2}))?\s*(元|蚊|dollars?)?/gi;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(text)) !== null) {
+    // Model identifiers and measurements are never prices, even when a
+    // selling-price sentence appears nearby in the same short response.
+    if (/[A-Za-z0-9]/.test(text[match.index - 1] ?? "") ||
+      /[A-Za-z]/.test(text[match.index + match[0].length] ?? "")) continue;
+    // Fractions and room measurements remain measurements even in a reply
+    // that also cites a KB selling price (for example 3/4匹 and 80呎).
+    if (!match[1] && !match[2] && !match[5] &&
+      (text[match.index - 1] === "/" || text[match.index + match[0].length] === "/" ||
+        /^\s*(?:平方[呎尺]|[呎尺]|sq\.?\s*ft|square\s*feet|BTU(?:\/h)?)/iu.test(text.slice(match.index + match[0].length)))) continue;
     const amount = Number(`${match[3].replace(/,/g, "")}${match[4] ? `.${match[4]}` : ""}`);
     if (!Number.isFinite(amount) || amount <= 0) continue;
     const marker = `${match[1] ?? ""}${match[2] ?? ""}${match[5] ?? ""}`.toUpperCase();
+    const ordinal = !marker && amount <= 99 && /^\s*[.)、。]/.test(text.slice(match.index + match[0].length));
+    if (ordinal) continue;
+    // Bare measurements, quantities, dates and model numbers are not money.
+    // Keep an unmarked number only when the response itself makes a monetary
+    // claim; quote evaluation will still fail closed when currency is absent.
+    const localContext = text.slice(Math.max(0, match.index - 80), Math.min(text.length, match.index + match[0].length + 80));
+    const hasLocalMoneyContext = /(?:price|quote|quotation|amount|fee|cost|dollars?|價|价|報價|报价|收費|收费|金額|金额|費用|费用)/i.test(localContext);
+    if (!marker && /^(?:匹|HP|P|cm|mm|kg|吋|瓦|年)/i.test(text.slice(match.index + match[0].length).trimStart())) continue;
+    if (!marker && !hasLocalMoneyContext) continue;
     const currency =
       marker.includes("USD") || marker.includes("US$")
         ? "USD"
@@ -295,8 +594,73 @@ function quoteMatchesClaim(
   return mentioned.length === 0;
 }
 
-function evaluateQuoteReality(text: string, state: ConversationCommerceState): B2Decision | null {
+function evaluateCurrentKbSellingPrice(input: B2EvaluationInput, draft: string): B2Decision {
+  const block = (code: string): B2Decision => ({ decision: "block", code });
+  const proof = input.trusted_kb_price_proof;
+  const metadata = input.metadata;
+  if (input.persistence_kind !== "ai_reply" || !proof || !isRecord(metadata) ||
+    metadata.response_route !== "canonical_kb_direct_answer" || metadata.answer_kind !== "price") {
+    return block("CURRENT_KB_PRICE_PROOF_MISSING");
+  }
+  const authority = metadata.reference_authority;
+  const provenance = isRecord(authority) ? authority.provenance : null;
+  const lineage = metadata.citation_lineage;
+  const citations = metadata.citations;
+  const publicProof = metadata.kb_fact_proof;
+  const { full_content, request, company_id, ...publicFields } = proof;
+  if (!isRecord(authority) || !isRecord(provenance) || !isRecord(lineage) ||
+    !Array.isArray(citations) || citations.length !== 1 || !isRecord(citations[0]) ||
+    !isRecord(publicProof) ||
+    JSON.stringify(publicProof) !== JSON.stringify(publicFields) ||
+    proof.field !== "selling_price" || proof.currency !== "HKD" ||
+    proof.authority_decision !== "USE_CURRENT_KB" || proof.currentness !== "current" ||
+    authority.decision !== "USE_CURRENT_KB" || provenance.currentness !== "current" ||
+    provenance.region !== "hong_kong" || provenance.tenant_id !== proof.tenant_id ||
+    authority.selected_source_id !== proof.document_id ||
+    company_id !== input.snapshot.company_id || !proof.tenant_id ||
+    lineage.selected_document_id !== proof.document_id || lineage.evidence_count !== 1 ||
+    lineage.authority_decision !== "USE_CURRENT_KB" || lineage.evidence_state !== "current" ||
+    !Array.isArray(lineage.evidence_chunk_ids) || lineage.evidence_chunk_ids.length !== 1 ||
+    lineage.evidence_chunk_ids[0] !== proof.chunk_id ||
+    citations[0].document_id !== proof.document_id || citations[0].chunk_id !== proof.chunk_id ||
+    citations[0].chunk_type !== "full_content" ||
+    citations[0].authority_decision !== "USE_CURRENT_KB" || citations[0].evidence_state !== "current") {
+    return block("CURRENT_KB_PRICE_LINEAGE_INVALID");
+  }
+  const model = exactKbModelIds(request);
+  const target = isRecord(lineage.current_target) ? lineage.current_target : null;
+  const normalized = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const modelKey = normalized(proof.model);
+  const suffixKey = normalized(proof.model.split("-").at(-1) ?? "");
+  if (model.length !== 1 || model[0] !== proof.model ||
+    !exactKbModelIds(full_content).includes(proof.model) ||
+    !target || !Array.isArray(target.entity_ids) ||
+    !target.entity_ids.some((id) => typeof id === "string" &&
+      [modelKey, suffixKey].includes(normalized(id))) ||
+    currentKbSellingPrice(full_content) !== proof.value ||
+    !Number.isFinite(proof.value) || proof.value <= 0) {
+    return block("CURRENT_KB_PRICE_FACT_MISMATCH");
+  }
+  const money = extractMoneyMentions(draft);
+  const exactPrice = `HK$${proof.value.toLocaleString("en-US")}`;
+  if (money.length !== 1 || money[0].currency !== "HKD" ||
+    money[0].amount !== proof.value || !draft.includes(exactPrice) ||
+    /(?:成本|特價|特价|cost|special\s*price|有現貨|有现货|in stock)/i.test(draft)) {
+    return block("CURRENT_KB_PRICE_RESPONSE_MISMATCH");
+  }
+  return { decision: "allow", code: "B2_ALLOW_CURRENT_KB_SELLING_PRICE" };
+}
+
+function evaluateQuoteReality(text: string, state: ConversationCommerceState, input: B2EvaluationInput): B2Decision | null {
+  if (input.metadata?.response_route === "canonical_kb_direct_answer" &&
+    input.metadata.answer_kind === "price" || input.trusted_kb_price_proof) {
+    const result = evaluateCurrentKbSellingPrice(input, text);
+    return result.decision === "allow" ? null : result;
+  }
   if (!CURRENT_PRICE_CLAIM.test(text)) return null;
+  if (/(?:checklist|清單|清单)|(?:核實|核对|核對|verify|confirm).{0,24}(?:price|quote|quotation|價|价|報價|报价)/i.test(text)) return null;
+  if (/(?:(?:報價|报价|quotation)\s*(?:階段|阶段|stage)).{0,30}(?:唔係|不是|not).{0,12}(?:已確認|已确认|confirmed)?\s*(?:訂單|订单|order)/i.test(text)) return null;
+  if (/(?:does not guarantee|not (?:a )?(?:current|confirmed|final) price|need(?:s)? to be confirmed|未必|不代表.{0,20}(?:現價|现价|同一個價|同一个价)|(?:最新價格|最新价格|current price).{0,30}(?:要|需|must|need).{0,20}(?:確認|确认|confirm))/i.test(text)) return null;
   const money = extractMoneyMentions(text);
   if (money.length === 0) {
     return { decision: "block", code: "CURRENT_QUOTE_WITHOUT_VERIFIED_AMOUNT" };
@@ -340,14 +704,16 @@ function evaluateTransactionReality(
   ) {
     return { decision: "block", code: "INSTALLATION_CONFIRMATION_NOT_PROVEN" };
   }
+  const orderConfirmationNegated = /(?:未有|沒有|没有|冇|尚未|還未|还未|唔係|不是|not|no).{0,24}(?:已確認|已确认|confirmed)?\s*(?:訂單|订单|order)/i.test(text);
   if (
-    ORDER_CONFIRMED.test(text) &&
+    ORDER_CONFIRMED.test(text) && !orderConfirmationNegated &&
     state.conversion.order_status !== "confirmed" &&
     state.conversion.order_status !== "completed"
   ) {
     return { decision: "block", code: "ORDER_CONFIRMATION_NOT_PROVEN" };
   }
-  if (PAYMENT_COMPLETED.test(text) && state.conversion.payment_status !== "paid") {
+  const paymentCompletionNegated = /(?:未有|沒有|没有|冇|尚未|還未|还未|not|no).{0,24}(?:已付款|付款完成|payment.{0,8}(?:paid|received|completed)|paid)/i.test(text);
+  if (PAYMENT_COMPLETED.test(text) && !paymentCompletionNegated && state.conversion.payment_status !== "paid") {
     return { decision: "block", code: "PAYMENT_COMPLETION_NOT_PROVEN" };
   }
   if (GENERIC_COMPLETION.test(text)) {
@@ -383,6 +749,205 @@ function evaluateKnownContext(text: string, state: ConversationCommerceState): B
   return null;
 }
 
+function isTrustedTargetedReadOnlyClarification(input: B2EvaluationInput, draft: string): boolean {
+  const proof = input.trusted_targeted_clarification;
+  const metadata = input.metadata;
+  if (!proof || !isRecord(metadata) || input.persistence_kind !== "ai_reply") return false;
+  const decision = proof.contextual_decision;
+  return metadata.response_route === "commerce_state_answer" &&
+    metadata.commerce_reason === "contextual_targeted_clarification" &&
+    metadata.commerce_state_persist_result === "read_only" &&
+    metadata.commerce_state_persistence_classification === "NO_SEMANTIC_CHANGE" &&
+    metadata.commerce_state_revision === input.snapshot.commerce_state_revision &&
+    proof.revision === input.snapshot.commerce_state_revision &&
+    decision.route === "targeted_clarification" && decision.updates.length === 0 &&
+    JSON.stringify(metadata.contextual_decision) === JSON.stringify(decision) &&
+    clean(proof.reply) === draft && clean(decision.reply) === draft &&
+    !metadata.commerce_state_path && !metadata.commerce_state_readback_proof &&
+    !metadata.commerce_calculation && !metadata.correction_resolution &&
+    !metadata.correction_operation && !metadata.correction_source_message_id &&
+    !ORDER_CONFIRMED.test(draft) && !PAYMENT_COMPLETED.test(draft) &&
+    !DELIVERY_CONFIRMED.test(draft) && !DELIVERY_COMPLETED.test(draft) &&
+    !INSTALLATION_CONFIRMED.test(draft) && !INSTALLATION_COMPLETED.test(draft) &&
+    !GENERIC_COMPLETION.test(draft) && !CURRENT_PRICE_CLAIM.test(draft) &&
+    extractMoneyMentions(draft).length === 0;
+}
+
+function equalJson(left: unknown, right: unknown): boolean {
+  return sameCanonicalJson(left, right);
+}
+
+function isTrustedCorrectionCommit(input: B2EvaluationInput, draft: string): boolean {
+  const proof = input.trusted_correction_commit;
+  const metadata = input.metadata;
+  if (!proof || !isRecord(metadata) || input.persistence_kind !== "ai_reply") return false;
+  const parsed = roomSizeCorrection(input.snapshot.source_message_content ?? "");
+  if (!parsed || proof.contract !== "scoped-correction-commit-v1" ||
+    proof.field !== "room_size" || proof.category !== "air_conditioner" ||
+    !(
+      proof.scope === "large_bedroom" && /(?:大房|large\s*bedroom)/i.test(parsed.label) ||
+      proof.scope === "small_bedroom" && /(?:細房|细房|小房|small\s*bedroom)/i.test(parsed.label) ||
+      proof.scope === "living_room" && /(?:客廳|客厅|個廳|个厅|living\s*room)/i.test(parsed.label)
+    ) ||
+    proof.company_id !== input.snapshot.company_id ||
+    proof.source_message_id !== input.snapshot.source_message_id ||
+    clean(proof.source_text) !== clean(input.snapshot.source_message_content) ||
+    proof.correction !== clean(input.snapshot.source_message_content) ||
+    proof.previous_value !== parsed.old_value || proof.current_value !== parsed.new_value ||
+    proof.previous_revision + 1 !== proof.committed_revision ||
+    proof.committed_revision !== input.snapshot.commerce_state_revision ||
+    input.snapshot.commerce_state_source_message_id !== proof.source_message_id ||
+    proof.previous_values[proof.scope] !== proof.previous_value ||
+    proof.committed_values[proof.scope] !== proof.current_value ||
+    Object.keys(proof.previous_values).length !== Object.keys(proof.committed_values).length ||
+    Object.keys(proof.previous_values).some((key) =>
+      key !== proof.scope && proof.previous_values[key] !== proof.committed_values[key]
+    ) ||
+    !input.snapshot.state.latest_corrections.includes(proof.correction) ||
+    !equalJson(proof.transaction_before, proof.transaction_after) ||
+    !equalJson(proof.transaction_after, b2JourneyTransactionBoundary(input.snapshot.state)) ||
+    clean(proof.reply) !== draft ||
+    metadata.response_route !== "commerce_state_answer" ||
+    metadata.commerce_reason !== "authoritative_scoped_correction_applied" ||
+    metadata.commerce_authority !== "CONVERSATION_STATE" ||
+    metadata.commerce_state_persist_result !== "success" ||
+    metadata.commerce_state_persistence_classification !== "COMMITTED" ||
+    Number(metadata.commerce_state_revision) !== proof.committed_revision ||
+    ORDER_CONFIRMED.test(draft) || PAYMENT_COMPLETED.test(draft) ||
+    DELIVERY_CONFIRMED.test(draft) || DELIVERY_COMPLETED.test(draft) ||
+    INSTALLATION_CONFIRMED.test(draft) || INSTALLATION_COMPLETED.test(draft) ||
+    extractMoneyMentions(draft).length > 0) return false;
+  const entity = input.snapshot.state.entities.filter((candidate) =>
+    candidate.category === proof.category &&
+    candidate.status !== "cancelled" && candidate.status !== "deferred"
+  );
+  return entity.length === 1 && entity[0].entity_id === proof.entity_id &&
+    equalJson(entity[0].attributes.room_sizes, proof.committed_values);
+}
+
+function isTrustedLifecycleCommit(input: B2EvaluationInput, draft: string): boolean {
+  const proof = input.trusted_lifecycle_commit;
+  const metadata = input.metadata;
+  if (!proof || !isRecord(metadata) || input.persistence_kind !== "ai_reply" ||
+    proof.contract !== "entity-lifecycle-commit-v1" ||
+    proof.company_id !== input.snapshot.company_id ||
+    proof.source_message_id !== input.snapshot.source_message_id ||
+    clean(proof.source_text) !== clean(input.snapshot.source_message_content) ||
+    proof.previous_revision + 1 !== proof.committed_revision ||
+    proof.committed_revision !== input.snapshot.commerce_state_revision ||
+    input.snapshot.commerce_state_source_message_id !== proof.source_message_id ||
+    !equalJson(proof.committed_state, input.snapshot.state) ||
+    !equalJson(proof.transaction_before, b2JourneyTransactionBoundary(proof.previous_state)) ||
+    !equalJson(proof.transaction_after, b2JourneyTransactionBoundary(input.snapshot.state)) ||
+    !equalJson(proof.transaction_before, proof.transaction_after) ||
+    clean(proof.reply) !== draft ||
+    metadata.response_route !== "commerce_state_answer" ||
+    metadata.commerce_reason !== "authoritative_scoped_lifecycle_applied" ||
+    metadata.commerce_authority !== "CONVERSATION_STATE" ||
+    metadata.commerce_state_persist_result !== "success" ||
+    metadata.commerce_state_persistence_classification !== "COMMITTED" ||
+    Number(metadata.commerce_state_revision) !== proof.committed_revision ||
+    ORDER_CONFIRMED.test(draft) || PAYMENT_COMPLETED.test(draft) ||
+    DELIVERY_CONFIRMED.test(draft) || DELIVERY_COMPLETED.test(draft) ||
+    INSTALLATION_CONFIRMED.test(draft) || INSTALLATION_COMPLETED.test(draft) ||
+    extractMoneyMentions(draft).length > 0) return false;
+  const transition = verifyEntityLifecycleTransition(proof.source_text, proof.previous_state,
+    input.snapshot.state, proof.source_message_id);
+  return transition.valid && equalJson(transition.plans, proof.plans) &&
+    equalJson(transition.targetIds, proof.target_entity_ids);
+}
+
+function isTrustedJourneyProgressAfterAcceptedUpdate(
+  input: B2EvaluationInput,
+  draft: string,
+): boolean {
+  const proof = input.trusted_journey_progress;
+  const metadata = input.metadata;
+  if (!proof || !isRecord(metadata) || input.persistence_kind !== "ai_reply") return false;
+  if (
+    proof.contract !== "journey-progress-after-accepted-update-v1" ||
+    proof.company_id !== input.snapshot.company_id ||
+    proof.source_message_id !== input.snapshot.source_message_id ||
+    clean(proof.source_text) !== clean(input.snapshot.source_message_content) ||
+    proof.committed_revision !== input.snapshot.commerce_state_revision ||
+    proof.previous_revision + 1 !== proof.committed_revision ||
+    input.snapshot.commerce_state_source_message_id !== proof.source_message_id ||
+    clean(proof.reply) !== draft ||
+    metadata.response_route !== proof.response_route ||
+    metadata.commerce_reason !== proof.response_reason ||
+    metadata.commerce_authority !== "CONVERSATION_STATE" ||
+    metadata.commerce_state_persist_result !== "success" ||
+    metadata.commerce_state_persistence_classification !== "COMMITTED" ||
+    Number(metadata.commerce_state_revision) !== proof.committed_revision ||
+    !equalJson(proof.transaction_before, proof.transaction_after) ||
+    !equalJson(
+      proof.transaction_after,
+      b2JourneyTransactionBoundary(input.snapshot.state),
+    )
+  ) return false;
+
+  const entity = input.snapshot.state.entities.find((candidate) =>
+    candidate.entity_id === proof.entity_id && candidate.category === proof.category
+  );
+  if (!entity || entity.status === "cancelled" || entity.status === "deferred") return false;
+
+  if (proof.update_kind === "customer_goal") {
+    const active = activeCustomerGoal(input.snapshot.state, proof.category);
+    if (!active || active.entity_id !== proof.entity_id) return false;
+    const goal = active.goal;
+    const acceptedSlots = proof.committed_collected.filter((slot) =>
+      !proof.previous_collected.includes(slot)
+    );
+    if (
+      goal.source_message_id !== proof.source_message_id ||
+      goal.category !== proof.category ||
+      goal.journey_stage !== proof.journey_stage ||
+      goal.response_intent !== proof.response_decision ||
+      (goal.missing[0] ?? null) !== proof.next_missing_slot ||
+      !equalJson(goal.collected, proof.committed_collected) ||
+      !equalJson(goal.missing, proof.committed_missing) ||
+      !equalJson(acceptedSlots, proof.accepted_slots) ||
+      (!proof.accepted_slots.length && !proof.accepted_corrections.length) ||
+      !proof.response_reason.startsWith("CUSTOMER_JOURNEY_") ||
+      metadata.contextual_decision !== null
+    ) return false;
+    for (const correction of proof.accepted_corrections) {
+      if (!input.snapshot.state.latest_corrections.includes(correction)) return false;
+    }
+    return true;
+  }
+
+  const contextualMetadata = isRecord(metadata.contextual_decision)
+    ? metadata.contextual_decision
+    : null;
+  if (
+    proof.response_route !== "contextual_scoped_update" ||
+    proof.response_decision !== "confirm_controlled_update" ||
+    proof.response_reason !== "UNIQUE_COMPATIBLE_CONTEXT" ||
+    !proof.accepted_updates.length ||
+    !contextualMetadata ||
+    contextualMetadata.route !== proof.response_route ||
+    contextualMetadata.reason !== proof.response_reason ||
+    contextualMetadata.reply !== proof.reply ||
+    contextualMetadata.topic !== proof.category ||
+    contextualMetadata.entity_id !== proof.entity_id ||
+    !equalJson(contextualMetadata.updates, proof.accepted_updates) ||
+    contextualMetadata.aggregate_quantity !== proof.aggregate_quantity
+  ) return false;
+  const committed = Array.isArray(entity.attributes.scoped_customer_updates)
+    ? entity.attributes.scoped_customer_updates
+    : [];
+  if (!equalJson(committed, proof.committed_updates)) return false;
+  for (const update of proof.accepted_updates) {
+    const matched = proof.committed_updates.find((candidate) =>
+      candidate.scope === update.scope && candidate.attribute === update.attribute
+    );
+    if (!matched || !equalJson(matched, update)) return false;
+  }
+  return proof.aggregate_quantity === undefined ||
+    entity.quantity === proof.aggregate_quantity;
+}
+
 interface CorrectionPair {
   previous: string;
   current: string;
@@ -394,6 +959,12 @@ function trimCorrectionPart(value: string): string {
 
 function parseCorrection(value: string): CorrectionPair | null {
   const text = clean(value, 500);
+  const room = roomSizeCorrection(text);
+  if (room) return { previous: room.old_value, current: room.new_value };
+  const address = parseAddressReplacementCorrection(text);
+  if (address) {
+    return { previous: address.previous ?? "", current: address.current };
+  }
   const patterns = [
     /(?:唔係|唔系|不是|不係)\s*(.+?)\s*(?:而係|而系|而是)\s*(.+)$/i,
     /(?:change|changed|correct|correction)(?:\s+it)?\s+from\s+(.+?)\s+to\s+(.+)$/i,
@@ -407,15 +978,48 @@ function parseCorrection(value: string): CorrectionPair | null {
       return { previous, current };
     }
   }
+
+  // A replacement-only correction can be fully deterministic even when the
+  // customer does not repeat the superseded value (for example, "改做一部1匹，
+  // 一部1.5匹"). Treat it as resolved only when it carries a concrete assignment;
+  // vague references such as "記住我最新嗰個更正" must remain indeterminate.
+  const replacement = text.match(
+    /(?:更正|改(?:做|成|為|为|返)?|變成|变成|change(?:\s+it)?\s+to|make\s+it|actually|i meant)\s*[:：,，]?\s*(.+)$/i,
+  );
+  const current = trimCorrectionPart(replacement?.[1] ?? "");
+  const concreteAssignment = /(?:\d{1,4}|[一二兩两三四五六七八九十])\s*(?:部|台|件|個|个|套|units?|pcs?|pieces?|items?)|(?:quantity|數量|数量|地址|address|型號|型号|model|品牌|brand)\s*(?:係|是|=|:|：)/i.test(
+    current,
+  );
+  if (current && concreteAssignment) {
+    return { previous: "", current };
+  }
   return null;
 }
 
 function responseTouchesCommerce(text: string, state: ConversationCommerceState): boolean {
   if (extractMoneyMentions(text).length > 0) return true;
   if (mentionedEntityIds(text, state).length > 0) return true;
-  return /(?:order|payment|quote|price|delivery|installation|quantity|model|brand|訂單|订单|付款|支付|報價|报价|價錢|价钱|送貨|送货|安裝|安装|數量|数量|型號|型号|品牌)/i.test(
+  return /(?:order|payment|quote|price|delivery|installation|quantity|model|brand|address|recipient|phone|訂單|订单|付款|支付|報價|报价|價錢|价钱|送貨|送货|安裝|安装|數量|数量|型號|型号|品牌|地址|收貨人|收货人|電話|电话)/i.test(
     text,
   );
+}
+
+type CorrectionDomain = "address" | "contact" | "delivery" | "entity" | "installation" | "price" | "transaction";
+
+function correctionDomains(text: string, state: ConversationCommerceState): Set<CorrectionDomain> {
+  const domains = new Set<CorrectionDomain>();
+  if (/(?:地址|address|座|樓|楼|室|街|道|路|號|号)/i.test(text)) domains.add("address");
+  if (/(?:電話|电话|聯絡|联络|收貨人|收货人|recipient|phone|contact)/i.test(text)) domains.add("contact");
+  if (/(?:送貨|送货|配送|星期|週|周|delivery|deliver|appointment)/i.test(text)) domains.add("delivery");
+  if (/(?:安裝|安装|師傅|师傅|拆機|拆机|舊機|旧机|installation|technician|dismantle)/i.test(text)) domains.add("installation");
+  if (extractMoneyMentions(text).length > 0 || /(?:報價|报价|價錢|价钱|price|quote|fee)/i.test(text)) domains.add("price");
+  if (/(?:訂單|订单|落單|下单|付款|支付|quotation|order|payment)/i.test(text)) domains.add("transaction");
+  if (mentionedEntityIds(text, state).length > 0 || /(?:數量|数量|幾部|几部|匹數|匹数|品牌|型號|型号|quantity|horsepower|brand|model)/i.test(text)) domains.add("entity");
+  return domains;
+}
+
+function unresolvedCorrectionCarriesConcreteResolution(text: string): boolean {
+  return /(?:\d|[一二兩两三四五六七八九十])\s*(?:部|台|件|個|个|套|匹)|(?:取消|唔要|不要|唔裝|不裝|不装|暫緩|暂缓|defer|cancel|remove)|(?:quotation|報價|报价).{0,12}(?:咋|啫|而已|only)|(?:地址|address).{0,40}(?:座|樓|楼|室|街|道|路|號|号)|(?:電話|电话|phone|contact).{0,40}\d{4}/i.test(text);
 }
 
 function evaluateCorrections(text: string, state: ConversationCommerceState): B2Decision | null {
@@ -423,14 +1027,26 @@ function evaluateCorrections(text: string, state: ConversationCommerceState): B2
   const latest = state.latest_corrections.at(-1) ?? "";
   const parsed = parseCorrection(latest);
   if (!parsed) {
-    return responseTouchesCommerce(text, state)
+    if (!responseTouchesCommerce(text, state)) return null;
+    const correctionScope = correctionDomains(latest, state);
+    if (unresolvedCorrectionCarriesConcreteResolution(latest)) return null;
+    if (correctionScope.size === 0) return { decision: "indeterminate", code: "LATEST_CORRECTION_UNRESOLVED" };
+    const responseScope = correctionDomains(text, state);
+    return [...correctionScope].some((domain) => responseScope.has(domain))
       ? { decision: "indeterminate", code: "LATEST_CORRECTION_UNRESOLVED" }
       : null;
   }
   const candidate = lower(text);
   const previous = lower(parsed.previous);
   const current = lower(parsed.current);
-  if (previous && candidate.includes(previous) && !candidate.includes(current)) {
+  const priorAliases = previous.match(/^(\d+(?:\.\d+)?)平方呎$/)
+    ? [previous, previous.replace("平方呎", "呎"), previous.replace("平方呎", "平方尺")]
+    : [previous];
+  const currentAliases = current.match(/^(\d+(?:\.\d+)?)平方呎$/)
+    ? [current, current.replace("平方呎", "呎"), current.replace("平方呎", "平方尺")]
+    : [current];
+  if (previous && priorAliases.some((alias) => candidate.includes(alias)) &&
+    !currentAliases.some((alias) => candidate.includes(alias))) {
     return {
       decision: "block",
       code: "SUPERSEDED_VALUE_REUSED",
@@ -506,12 +1122,56 @@ export function evaluateB2BeforeCommit(input: B2EvaluationInput): B2Decision {
     };
   }
   const state = input.snapshot.state;
+  const kbPriceDecision = input.metadata?.response_route === "canonical_kb_direct_answer" &&
+      input.metadata.answer_kind === "price" || input.trusted_kb_price_proof
+    ? evaluateCurrentKbSellingPrice(input, draft)
+    : null;
+  if (kbPriceDecision?.decision === "block") return kbPriceDecision;
+  const correctionDecision = evaluateCorrections(draft, state);
+  const trustedReadOnlyRecap = isTrustedReadOnlyRecap(input, draft);
+  if ((input.trusted_read_only_recap || input.metadata?.recap_read_only === true) &&
+    !trustedReadOnlyRecap) return { decision: "block", code: "UNPROVEN_READ_ONLY_RECAP" };
+  const authoritativeNoSemanticChange =
+    correctionDecision?.decision === "indeterminate" &&
+    classifyB2AuthoritativePersistence(input) === "NO_SEMANTIC_CHANGE";
+  const trustedTargetedClarification = isTrustedTargetedReadOnlyClarification(input, draft);
+  const trustedJourneyProgress = isTrustedJourneyProgressAfterAcceptedUpdate(
+    input,
+    draft,
+  );
+  const trustedCorrection = isTrustedCorrectionCommit(input, draft);
+  const trustedLifecycle = isTrustedLifecycleCommit(input, draft);
+  if ((input.trusted_lifecycle_commit || input.metadata?.commerce_reason === "authoritative_scoped_lifecycle_applied") && !trustedLifecycle) {
+    return { decision: "block", code: "UNPROVEN_LIFECYCLE_COMMIT" };
+  }
+  if (
+    (input.trusted_correction_commit ||
+      input.metadata?.commerce_reason === "authoritative_scoped_correction_applied") &&
+    !trustedCorrection
+  ) return { decision: "block", code: "UNPROVEN_CORRECTION_COMMIT" };
   return (
-    evaluateCorrections(draft, state) ??
+    (authoritativeNoSemanticChange || trustedLifecycle || trustedReadOnlyRecap ? null : correctionDecision) ??
     evaluateCancellation(draft, state) ??
-    evaluateQuoteReality(draft, state) ??
+    (kbPriceDecision ? null : evaluateQuoteReality(draft, state, input)) ??
     evaluateTransactionReality(draft, input.persistence_kind, state) ??
-    evaluateKnownContext(draft, state) ?? { decision: "allow", code: "B2_ALLOW" }
+    (trustedTargetedClarification || trustedJourneyProgress || trustedCorrection || trustedLifecycle || trustedReadOnlyRecap
+      ? null
+      : evaluateKnownContext(draft, state)) ?? {
+      decision: "allow",
+      code: kbPriceDecision?.code ?? (trustedReadOnlyRecap
+        ? "B2_ALLOW_AUTHORITATIVE_READ_ONLY_RECAP"
+        : trustedLifecycle
+        ? "B2_ALLOW_COMMITTED_SCOPED_LIFECYCLE"
+        : trustedCorrection
+        ? "B2_ALLOW_COMMITTED_SCOPED_CORRECTION"
+        : trustedJourneyProgress
+        ? "B2_ALLOW_JOURNEY_PROGRESS_AFTER_ACCEPTED_UPDATE"
+        : trustedTargetedClarification
+        ? "B2_ALLOW_TARGETED_READ_ONLY_CLARIFICATION"
+        : authoritativeNoSemanticChange
+        ? "B2_ALLOW_NO_SEMANTIC_CHANGE_AFTER_AUTHORITATIVE_READBACK"
+        : "B2_ALLOW"),
+    }
   );
 }
 
@@ -571,7 +1231,7 @@ async function loadB2Snapshot(
 
     const sourceResult = await client
       .from("messages")
-      .select("id, conversation_id, role")
+      .select("id, conversation_id, role, content")
       .eq("id", source_message_id)
       .eq("conversation_id", conversation_id)
       .maybeSingle();
@@ -669,6 +1329,7 @@ async function loadB2Snapshot(
         conversation_id,
         company_id: companyId,
         source_message_id,
+        source_message_content: clean(sourceResult.data.content),
         commerce_state_revision: revision,
         commerce_state_source_message_id: stateSource,
         state,
@@ -687,14 +1348,47 @@ async function loadB2Snapshot(
 }
 
 function stableSnapshotFingerprint(snapshot: B2CanonicalSnapshot): string {
-  return JSON.stringify({
+  return canonicalJson({
     conversation_id: snapshot.conversation_id,
     company_id: snapshot.company_id,
     source_message_id: snapshot.source_message_id,
+    source_message_content: snapshot.source_message_content,
     commerce_state_revision: snapshot.commerce_state_revision,
     commerce_state_source_message_id: snapshot.commerce_state_source_message_id,
     state: snapshot.state,
   });
+}
+
+async function validateReadOnlyRecapReadback(
+  client: B2DatabaseClient,
+  snapshot: B2CanonicalSnapshot,
+  proof: B2TrustedReadOnlyRecap,
+  response: string,
+): Promise<B2Decision | null> {
+  if (proof.conversation_id !== snapshot.conversation_id ||
+    proof.company_id !== snapshot.company_id ||
+    proof.source_message_id !== snapshot.source_message_id ||
+    proof.commerce_revision !== snapshot.commerce_state_revision ||
+    proof.commerce_hash !== await hashRecapValue(canonicalJson(snapshot.state)) ||
+    proof.response_hash !== await hashRecapValue(response)) {
+    return { decision: "block", code: "READ_ONLY_RECAP_SCOPE_OR_HASH_MISMATCH" };
+  }
+  const result = await client.from("conversation_memory_state")
+    .select("conversation_id,company_id,revision,source_message_id,commerce_state_revision,memory,memory_hash")
+    .eq("conversation_id", snapshot.conversation_id)
+    .eq("company_id", snapshot.company_id).maybeSingle();
+  const row = result.data as Record<string, unknown> | null;
+  if (result.error || !row || !isCanonicalConversationMemory(row.memory) ||
+    row.conversation_id !== snapshot.conversation_id ||
+    row.company_id !== snapshot.company_id ||
+    row.source_message_id !== proof.memory_source_message_id ||
+    Number(row.revision) !== proof.memory_revision ||
+    row.memory_hash !== proof.memory_hash ||
+    Number(row.commerce_state_revision) !== snapshot.commerce_state_revision ||
+    !sameCanonicalJson(row.memory, proof.memory)) {
+    return { decision: "indeterminate", code: "READ_ONLY_RECAP_MEMORY_CHANGED" };
+  }
+  return null;
 }
 
 /**
@@ -727,6 +1421,14 @@ export async function executeB2PersistenceGate<T>(
     };
   }
 
+  if (input.trusted_read_only_recap) {
+    const invalid = await validateReadOnlyRecapReadback(
+      input.client, initial.snapshot, input.trusted_read_only_recap,
+      input.proposed_response,
+    );
+    if (invalid) return { committed: false, decision: invalid, snapshot: initial.snapshot };
+  }
+
   let decision: B2Decision;
   try {
     decision = evaluateB2BeforeCommit({
@@ -734,6 +1436,12 @@ export async function executeB2PersistenceGate<T>(
       persistence_kind: input.persistence_kind,
       snapshot: initial.snapshot,
       metadata: input.metadata ? structuredClone(input.metadata) : input.metadata,
+      trusted_kb_price_proof: input.trusted_kb_price_proof,
+      trusted_targeted_clarification: input.trusted_targeted_clarification,
+      trusted_journey_progress: input.trusted_journey_progress,
+      trusted_correction_commit: input.trusted_correction_commit,
+      trusted_lifecycle_commit: input.trusted_lifecycle_commit,
+      trusted_read_only_recap: input.trusted_read_only_recap,
     });
   } catch (error) {
     decision = {
@@ -767,6 +1475,14 @@ export async function executeB2PersistenceGate<T>(
     };
   }
 
-  const value = await input.commit();
+  if (input.trusted_read_only_recap) {
+    const invalid = await validateReadOnlyRecapReadback(
+      input.client, revalidated.snapshot, input.trusted_read_only_recap,
+      input.proposed_response,
+    );
+    if (invalid) return { committed: false, decision: invalid, snapshot: revalidated.snapshot };
+  }
+
+  const value = await input.commit(revalidated.snapshot);
   return { committed: true, decision, snapshot: revalidated.snapshot, value };
 }

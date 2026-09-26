@@ -3,6 +3,10 @@ import {
   type B2PersistenceKind,
   type B2QueryBuilder,
   type B2QueryResult,
+  buildB2AuthoritativeReadbackProof,
+  buildB2ReadOnlyRecapProof,
+  classifyB2AuthoritativePersistence,
+  classifyCommerceStatePersistenceResult,
   collectKnownCommerceFacts,
   evaluateB2BeforeCommit,
   executeB2PersistenceGate,
@@ -11,6 +15,9 @@ import {
   type ConversationCommerceState,
   createEmptyConversationCommerceState,
 } from "./commerce-state-contract.ts";
+import { classifyHandoffIntent } from "./handoff-intent.ts";
+import { classifyConversationTurn } from "./conversation-intelligence.ts";
+import { b2JourneyTransactionBoundary } from "./b2-journey-progress-contract.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -163,8 +170,11 @@ interface MockOptions {
   secondStateSourceId?: string | null;
   conversationCompanyId?: string | null;
   sourceRole?: string;
+  sourceContent?: string;
   sourceError?: unknown;
   throwOnTable?: string;
+  memoryRow?: Record<string, unknown>;
+  secondMemoryRevision?: number;
 }
 
 class MockBuilder implements B2QueryBuilder {
@@ -187,6 +197,7 @@ class MockBuilder implements B2QueryBuilder {
 
 class MockClient implements B2DatabaseClient {
   private stateReads = 0;
+  private memoryReads = 0;
   public readonly calls: Array<{ table: string; filters: Record<string, string> }> = [];
   constructor(private readonly options: MockOptions = {}) {}
   from(table: string): B2QueryBuilder {
@@ -215,6 +226,7 @@ class MockClient implements B2DatabaseClient {
           id: SOURCE_ID,
           conversation_id: CONVERSATION_ID,
           role: this.options.sourceRole ?? "visitor",
+          content: this.options.sourceContent ?? "fixture customer turn",
         },
         error: null,
       };
@@ -240,6 +252,14 @@ class MockClient implements B2DatabaseClient {
         error: null,
       };
     }
+    if (table === "conversation_memory_state") {
+      this.memoryReads += 1;
+      return { data: this.options.memoryRow
+        ? { ...this.options.memoryRow,
+          revision: this.memoryReads > 1 && this.options.secondMemoryRevision !== undefined
+            ? this.options.secondMemoryRevision : this.options.memoryRow.revision }
+        : null, error: null };
+    }
     return { data: null, error: { message: "unexpected_table" } };
   }
 }
@@ -260,7 +280,6 @@ Deno.test("B2 known-context discovery covers the full canonical surface", () => 
   ])
     assert(paths.has(expected), `missing known fact ${expected}`);
 });
-
 Deno.test("B2 blocks asking for a known delivery address", () => {
   assertEquals(
     decision("What is your delivery address?").code,
@@ -300,6 +319,190 @@ Deno.test("B2 blocks asking for known quote and installation facts", () => {
   );
 });
 
+Deno.test("W13 B2 commits only revision-bound progress to a different journey slot", async () => {
+  const sourceText = "細房大概80呎，大房100呎，個廳就180呎。";
+  const reply = "三個空間面積已分開記低。下一步要確認各位置係窗口位、分體位，定係其他安裝方式？";
+  const state = createEmptyConversationCommerceState();
+  state.current_intent = "replace_existing_appliance";
+  state.current_topic = "air_conditioner";
+  state.current_industry = "home_appliance";
+  state.entities = [{
+    entity_id: "air_conditioner:unscoped",
+    category: "air_conditioner",
+    quantity: 1,
+    status: "researching",
+    attributes: {
+      customer_goal: {
+        category: "air_conditioner",
+        objective: "replace_existing_appliance",
+        journey_stage: "sizing_guidance",
+        collected: ["space_plan", "room_sizes"],
+        missing: ["installation_type", "sunlight", "sizing_decision", "suitable_models"],
+        response_intent: "request_highest_value_missing_information",
+        source_message_id: SOURCE_ID,
+        updated_at: null,
+      },
+    },
+    constraints: {},
+    provenance: { source_type: "customer", source_message_id: SOURCE_ID },
+  }];
+  const boundary = b2JourneyTransactionBoundary(state);
+  const proof = {
+    contract: "journey-progress-after-accepted-update-v1" as const,
+    update_kind: "customer_goal" as const,
+    company_id: COMPANY_ID,
+    source_message_id: SOURCE_ID,
+    source_text: sourceText,
+    previous_revision: 1,
+    committed_revision: 2,
+    entity_id: "air_conditioner:unscoped",
+    category: "air_conditioner",
+    journey_stage: "sizing_guidance",
+    next_missing_slot: "installation_type",
+    response_decision: "request_highest_value_missing_information" as const,
+    response_route: "product_guidance" as const,
+    response_reason: "CUSTOMER_JOURNEY_REQUEST_HIGHEST_VALUE_MISSING_INFORMATION",
+    reply,
+    previous_collected: ["space_plan"],
+    committed_collected: ["space_plan", "room_sizes"],
+    previous_missing: ["room_sizes", "installation_type", "sunlight", "sizing_decision", "suitable_models"],
+    committed_missing: ["installation_type", "sunlight", "sizing_decision", "suitable_models"],
+    accepted_slots: ["room_sizes"],
+    accepted_corrections: [],
+    transaction_before: boundary,
+    transaction_after: boundary,
+  };
+  const metadata = {
+    response_route: "product_guidance",
+    commerce_reason: proof.response_reason,
+    commerce_authority: "CONVERSATION_STATE",
+    commerce_state_revision: 2,
+    commerce_state_persist_result: "success",
+    commerce_state_persistence_classification: "COMMITTED",
+    contextual_decision: null,
+  };
+  let commits = 0;
+  const result = await executeB2PersistenceGate({
+    client: new MockClient({
+      state,
+      revision: 2,
+      stateSourceId: SOURCE_ID,
+      sourceContent: sourceText,
+    }),
+    conversation_id: CONVERSATION_ID,
+    source_message_id: SOURCE_ID,
+    proposed_response: reply,
+    persistence_kind: "ai_reply",
+    metadata,
+    trusted_journey_progress: proof,
+    expected_commerce_state_revision: 2,
+    commit: async () => {
+      commits += 1;
+      return "committed";
+    },
+  });
+  assert(result.committed, JSON.stringify(result));
+  assertEquals(
+    result.decision.code,
+    "B2_ALLOW_JOURNEY_PROGRESS_AFTER_ACCEPTED_UPDATE",
+    "bounded journey code",
+  );
+  assertEquals(commits, 1, "commit exactly once");
+
+  const replay = await executeB2PersistenceGate({
+    client: new MockClient({
+      state,
+      revision: 2,
+      stateSourceId: "another-source",
+      sourceContent: sourceText,
+    }),
+    conversation_id: CONVERSATION_ID,
+    source_message_id: SOURCE_ID,
+    proposed_response: reply,
+    persistence_kind: "ai_reply",
+    metadata,
+    trusted_journey_progress: proof,
+    expected_commerce_state_revision: 2,
+    commit: async () => "must-not-commit",
+  });
+  assert(!replay.committed && replay.decision.decision === "block", JSON.stringify(replay));
+  console.log("W13-B2|accepted_update=ALLOW|replayed_receipt=BLOCK");
+});
+
+Deno.test("B2 T1-T5: bounded server Commerce clarification skips only known-context alias", async () => {
+  const reply = "你講緊邊種產品？請確認有幾間房同幾個客廳要各一部。";
+  const contextualDecision = {
+    route: "targeted_clarification" as const,
+    reason: "SCOPE_CONTEXT_MISSING",
+    reply,
+    updates: [] as [],
+  };
+  const proof = { reply, revision: 0, contextual_decision: contextualDecision };
+  const metadata = {
+    response_route: "commerce_state_answer",
+    commerce_reason: "contextual_targeted_clarification",
+    commerce_state_revision: 0,
+    commerce_state_persist_result: "read_only",
+    commerce_state_persistence_classification: "NO_SEMANTIC_CHANGE",
+    contextual_decision: contextualDecision,
+    commerce_state_path: null,
+    commerce_state_readback_proof: null,
+  };
+  const empty = createEmptyConversationCommerceState();
+  const input = {
+    proposed_response: reply,
+    persistence_kind: "ai_reply" as const,
+    snapshot: snapshot(empty, 0),
+    metadata,
+    trusted_targeted_clarification: proof,
+  };
+  assertEquals(evaluateB2BeforeCommit(input).code, "B2_ALLOW_TARGETED_READ_ONLY_CLARIFICATION", "T1 B2 allow");
+  let commits = 0;
+  const result = await executeB2PersistenceGate({
+    client: new MockClient({ state: null }),
+    conversation_id: CONVERSATION_ID,
+    source_message_id: SOURCE_ID,
+    proposed_response: reply,
+    persistence_kind: "ai_reply",
+    metadata,
+    trusted_targeted_clarification: proof,
+    expected_commerce_state_revision: 0,
+    commit: async () => { commits++; return "ai_reply_only"; },
+  });
+  assert(result.committed, "T1 should commit only the AI reply");
+  assertEquals(result.decision.code, "B2_ALLOW_TARGETED_READ_ONLY_CLARIFICATION", "T1 revalidated decision");
+  assertEquals(result.snapshot.commerce_state_revision, 0, "T1 revision zero");
+  assertEquals(result.snapshot.state.entities.length, 0, "T1 no entity creation");
+  assertEquals(commits, 1, "T1 reply commit count");
+  console.log("T1|" + reply + "|B2_ALLOW_TARGETED_READ_ONLY_CLARIFICATION|revision=0|entities=0");
+
+  assertEquals(evaluateB2BeforeCommit({ ...input, trusted_targeted_clarification: null }).code,
+    "KNOWN_CONTEXT_RECONFIRMATION", "T2 metadata alone must not exempt");
+  console.log("T2|KNOWN_CONTEXT_RECONFIRMATION");
+
+  const unsafe = (changed: string) => ({
+    ...input,
+    proposed_response: changed,
+    metadata: { ...metadata, contextual_decision: { ...contextualDecision, reply: changed } },
+    trusted_targeted_clarification: {
+      ...proof, reply: changed,
+      contextual_decision: { ...contextualDecision, reply: changed },
+    },
+  });
+  assertEquals(evaluateB2BeforeCommit(unsafe("請確認有幾間房；訂單已確認。")).code,
+    "ORDER_CONFIRMATION_NOT_PROVEN", "T3 transaction guard remains");
+  console.log("T3|ORDER_CONFIRMATION_NOT_PROVEN");
+  assertEquals(evaluateB2BeforeCommit(unsafe("請確認有幾間房；目前售價 HK$6,980。")).code,
+    "CURRENT_QUOTE_NOT_PROVEN", "T4 price guard remains");
+  console.log("T4|CURRENT_QUOTE_NOT_PROVEN");
+  assertEquals(evaluateB2BeforeCommit({
+    ...input, proposed_response: "Can you confirm the order status?",
+    snapshot: snapshot(stateFixture()), metadata: null,
+    trusted_targeted_clarification: null,
+  }).code, "KNOWN_CONTEXT_RECONFIRMATION", "T5 ordinary known re-ask blocked");
+  console.log("T5|KNOWN_CONTEXT_RECONFIRMATION");
+});
+
 Deno.test("B2 correction priority blocks a superseded value", () => {
   const state = stateFixture();
   state.latest_corrections = ["不是 3 部而是 2 部"];
@@ -308,6 +511,80 @@ Deno.test("B2 correction priority blocks a superseded value", () => {
     "SUPERSEDED_VALUE_REUSED",
     "correction",
   );
+});
+
+Deno.test("B2 accepts a concrete replacement-only correction", () => {
+  const state = stateFixture();
+  state.latest_corrections = [
+    "等等，我而家可能唔係兩部匹半喎。",
+    "改做一部1匹，一部1.5匹。",
+  ];
+  assertEquals(
+    decision("你而家實際買 2 部冷氣；已取消嗰部不計入數量。", state).decision,
+    "allow",
+    "concrete replacement correction",
+  );
+});
+
+Deno.test("B2 deterministically allows a replacement-only address correction", () => {
+  const state = stateFixture();
+  state.delivery.address = "幸福邨B座12樓";
+  state.latest_corrections = ["更正為幸福邨B座12樓。"];
+  assertEquals(
+    decision("最新地址是幸福邨B座12樓。", state).decision,
+    "allow",
+    "address replacement correction",
+  );
+  state.delivery.address = "九龍彌敦道100號";
+  state.latest_corrections = ["送貨地點改為九龍彌敦道100號。"];
+  assertEquals(
+    decision("送貨地點是九龍彌敦道100號。", state).decision,
+    "allow",
+    "location replacement correction",
+  );
+});
+
+Deno.test("B2 blocks a superseded address and fails closed on unresolved address correction", () => {
+  const state = stateFixture();
+  state.delivery.address = "幸福邨B座12樓";
+  state.latest_corrections = ["地址唔係幸福邨A座12樓，而係幸福邨B座12樓。"];
+  assertEquals(
+    decision("最新地址是幸福邨A座12樓。", state).code,
+    "SUPERSEDED_VALUE_REUSED",
+    "superseded address",
+  );
+  state.latest_corrections = ["更正地址。"];
+  assertEquals(
+    decision("最新地址是幸福邨B座12樓。", state).decision,
+    "indeterminate",
+    "unresolved address correction",
+  );
+});
+
+Deno.test("B2 exact T040 correction is resolved from authoritative state and commits once", async () => {
+  const state = stateFixture();
+  state.delivery.address = "長沙灣幸福邨B座12樓";
+  state.delivery.provenance = {
+    source_type: "customer",
+    source_message_id: SOURCE_ID,
+  };
+  state.latest_corrections = ["唔係A座，係B座，我打錯。"];
+  let commits = 0;
+  const result = await executeB2PersistenceGate({
+    client: new MockClient({ state, revision: 40 }),
+    conversation_id: CONVERSATION_ID,
+    source_message_id: SOURCE_ID,
+    proposed_response: "你最新送貨地址係長沙灣幸福邨B座12樓。",
+    persistence_kind: "ai_reply",
+    expected_commerce_state_revision: 40,
+    commit: async () => {
+      commits += 1;
+      return { result: "success" };
+    },
+  });
+  assert(result.committed, JSON.stringify(result));
+  assertEquals(result.decision.decision, "allow", "T040 B2 decision");
+  assertEquals(commits, 1, "T040 commit count");
 });
 
 Deno.test("B2 unresolved correction is fail-closed only for commerce-touching drafts", () => {
@@ -322,6 +599,16 @@ Deno.test("B2 unresolved correction is fail-closed only for commerce-touching dr
     decision("Thanks for the update.", state).decision,
     "allow",
     "unrelated acknowledgement",
+  );
+  assertEquals(
+    decision("你提供的房間面積是80平方呎和100平方呎。", state).decision,
+    "allow",
+    "bare room measurements are not monetary commerce claims",
+  );
+  assertEquals(
+    decision("The current price is 5000.", state).decision,
+    "indeterminate",
+    "unmarked price remains commerce-touching and fail-closed",
   );
 });
 
@@ -633,6 +920,162 @@ Deno.test("B2 source lookup failure and thrown supervisor reads are fail-closed"
   }
 });
 
+Deno.test("B2 read-only recovery stays truly indeterminate without exact authoritative proof", async () => {
+  assertEquals(classifyCommerceStatePersistenceResult("success"), "COMMITTED", "committed classification");
+  assertEquals(classifyCommerceStatePersistenceResult("source_message_already_applied"), "IDEMPOTENT", "idempotent classification");
+  assertEquals(classifyCommerceStatePersistenceResult("read_only"), "NO_SEMANTIC_CHANGE", "read-only classification");
+  assertEquals(classifyCommerceStatePersistenceResult("rpc_transport_error"), "INDETERMINATE", "uncertain classification");
+  const state = stateFixture();
+  state.latest_corrections = ["uncanonicalized correction"];
+  const metadata = {
+    response_route: "commerce_state_answer",
+    commerce_authority: "CONVERSATION_STATE",
+    commerce_state_revision: 7,
+    commerce_state_persist_result: "read_only",
+    commerce_state_persistence_classification: "NO_SEMANTIC_CHANGE",
+    commerce_reason: "read_only_memory_or_current_state_recall_resolved",
+    commerce_state_path: "entities.99.quantity",
+  };
+  const evaluation = {
+    proposed_response: "Your current quantity is 2 units.",
+    persistence_kind: "ai_reply" as const,
+    snapshot: snapshot(state),
+    metadata,
+  };
+  assertEquals(classifyB2AuthoritativePersistence(evaluation), "INDETERMINATE", "invalid authoritative path classification");
+  assertEquals(evaluateB2BeforeCommit(evaluation).code, "LATEST_CORRECTION_UNRESOLVED", "invalid read-only evidence must stay indeterminate");
+  let commits = 0;
+  const result = await executeB2PersistenceGate({
+    client: new MockClient({ sourceError: { message: "offline" } }),
+    conversation_id: CONVERSATION_ID,
+    source_message_id: SOURCE_ID,
+    proposed_response: evaluation.proposed_response,
+    persistence_kind: "ai_reply",
+    metadata: { ...metadata, commerce_state_path: "entities.0.quantity" },
+    expected_commerce_state_revision: 7,
+    commit: async () => {
+      commits += 1;
+      return "forbidden";
+    },
+  });
+  assert(!result.committed, "failed authoritative readback must not commit");
+  assertEquals(result.decision.decision, "indeterminate", "true indeterminate decision");
+  assertEquals(commits, 0, "true indeterminate callback count");
+});
+
+Deno.test("T12 captured correction recap is read-only and bound to Commerce plus prior Memory", async () => {
+  const captured = JSON.parse(await Deno.readTextFile(
+    new URL("./fixtures/t11-synthetic-jsonb-reorder.json", import.meta.url),
+  ));
+  const state = captured.post.state as ConversationCommerceState;
+  const memory = { ...captured.memory, conversation_id: CONVERSATION_ID,
+    company_id: COMPANY_ID, source_message_id: captured.source.id };
+  const prior = captured.source.id as string;
+  const reply = "現時冷氣要求：細房80平方呎、大房110平方呎、客廳180平方呎。三個位置都有窗口位，現有都係窗口機。客廳下午西斜。客廳一部、兩間房各一部，共三部；目前只係選購要求，未落單。細房研究緊 CW-SUL70BA；80平方呎是否適用仍未有足夠資料確認。";
+  const proof = await buildB2ReadOnlyRecapProof({
+    conversation_id: CONVERSATION_ID, company_id: COMPANY_ID,
+    source_message_id: SOURCE_ID, commerce_revision: 9,
+    commerce_state: state, memory_revision: memory.memory_revision,
+    memory_hash: "captured-memory-hash", memory_source_message_id: prior,
+    memory, reply,
+  });
+  const metadata = { response_route: "canonical_memory_recall", recall_fact_type: "summary",
+    recap_read_only: true, commerce_state_revision: 9,
+    commerce_state_persist_result: "read_only", commerce_state_persistence_classification: "NO_SEMANTIC_CHANGE",
+    conversation_memory_revision: memory.memory_revision,
+    recap_commerce_hash: proof.commerce_hash, recap_memory_hash: proof.memory_hash,
+    recap_response_hash: proof.response_hash };
+  const memoryRow = { conversation_id: CONVERSATION_ID, company_id: COMPANY_ID,
+    revision: memory.memory_revision, source_message_id: prior,
+    commerce_state_revision: 9, memory_hash: proof.memory_hash, memory };
+  const client = new MockClient({ state, revision: 9, stateSourceId: prior, memoryRow,
+    sourceContent: "而家我冷氣要求係點？" });
+  let committed = 0;
+  const approved = await executeB2PersistenceGate({ client, conversation_id: CONVERSATION_ID,
+    source_message_id: SOURCE_ID, proposed_response: reply, persistence_kind: "ai_reply",
+    metadata, trusted_read_only_recap: proof, expected_commerce_state_revision: 9,
+    commit: async () => { committed += 1; return "success"; } });
+  assertEquals(approved.decision.code, "B2_ALLOW_AUTHORITATIVE_READ_ONLY_RECAP", "T12 B2 decision");
+  assert(approved.committed && committed === 1, "T12 reply failed to commit");
+  assertEquals(client.calls.filter((x) => x.table === "conversation_memory_state").length, 2,
+    "Memory must be re-read before reply commit");
+  const evaluate = (draft: string, change: Record<string, unknown> = {}) =>
+    evaluateB2BeforeCommit({ proposed_response: draft, persistence_kind: "ai_reply",
+      snapshot: { ...snapshot(state, 9), commerce_state_source_message_id: prior },
+      metadata, trusted_read_only_recap: proof, ...change });
+  for (const [label, draft] of [
+    ["stale_100", reply.replace("110平方呎", "100平方呎")],
+    ["fridge_revival", `${reply} 雪櫃而家仍要換。`],
+    ["false_order", `${reply} 訂單已確認。`],
+    ["fake_update", `${reply} 已更新記錄。`],
+  ]) assert(evaluate(draft).decision !== "allow", label);
+  for (const [label, overrides] of [
+    ["wrong_tenant", { trusted_read_only_recap: { ...proof, company_id: "other" } }],
+    ["wrong_conversation", { trusted_read_only_recap: { ...proof, conversation_id: "other" } }],
+    ["wrong_source", { trusted_read_only_recap: { ...proof, source_message_id: "other" } }],
+    ["response_substitution", { metadata: { ...metadata, recap_response_hash: "other" } }],
+    ["wrong_revision", { trusted_read_only_recap: { ...proof, commerce_revision: 8 } }],
+  ] as const) assert(evaluate(reply, overrides).decision !== "allow", label);
+  for (const [label, options] of [
+    ["newer_commerce", { secondRevision: 10 }],
+    ["newer_memory", { secondMemoryRevision: memory.memory_revision + 1 }],
+    ["other_tenant", { conversationCompanyId: "other" }],
+    ["other_source", { sourceRole: "assistant" }],
+  ] as const) {
+    let writes = 0;
+    const verdict = await executeB2PersistenceGate({
+      client: new MockClient({ state, revision: 9, stateSourceId: prior, memoryRow,
+        sourceContent: "而家我冷氣要求係點？", ...options }),
+      conversation_id: CONVERSATION_ID, source_message_id: SOURCE_ID,
+      proposed_response: reply, persistence_kind: "ai_reply", metadata,
+      trusted_read_only_recap: proof, expected_commerce_state_revision: 9,
+      commit: async () => { writes++; return "forbidden"; },
+    });
+    assert(!verdict.committed && writes === 0, `${label}: stale recap committed`);
+  }
+  console.log("W23-T12|READ_ONLY|Commerce=9→9|Memory=11→11|B2_ALLOW_AUTHORITATIVE_READ_ONLY_RECAP|negative=PASS");
+});
+
+Deno.test("B2 aggregate readback proves NO_SEMANTIC_CHANGE without a mutation receipt", () => {
+  const state = stateFixture();
+  state.installation.pending_checks = [
+    "window_opening_check",
+    "installation_site_check",
+  ];
+  const metadata = {
+    response_route: "commerce_state_answer",
+    commerce_authority: "CONVERSATION_STATE",
+    commerce_state_revision: 7,
+    commerce_state_persist_result: "no_semantic_change",
+    commerce_state_persistence_classification: "NO_SEMANTIC_CHANGE",
+    commerce_reason: "read_only_current_state_aggregate_query_resolved",
+    commerce_state_path: "installation.pending_checks",
+    commerce_state_readback_proof: buildB2AuthoritativeReadbackProof(
+      state,
+      "installation.pending_checks",
+    ),
+  };
+  const evaluation = {
+    proposed_response: "而家有 2 項要師傅確認：窗口開口檢查同安裝位置檢查。",
+    persistence_kind: "ai_reply" as const,
+    snapshot: snapshot(state),
+    metadata,
+  };
+  assertEquals(
+    classifyB2AuthoritativePersistence(evaluation),
+    "NO_SEMANTIC_CHANGE",
+    "aggregate authoritative proof classification",
+  );
+  assertEquals(
+    classifyB2AuthoritativePersistence({
+      ...evaluation,
+      proposed_response: "而家有 3 項要師傅確認。",
+    }),
+    "INDETERMINATE",
+    "wrong aggregate count must remain indeterminate",
+  );
+});
+
 Deno.test("B2 validates the source role and tenant binding", async () => {
   for (const client of [
     new MockClient({ sourceRole: "assistant" }),
@@ -706,4 +1149,121 @@ Deno.test("generate-reply wires every customer-visible persistence RPC through B
     const prefix = source.slice(Math.max(0, (match.index ?? 0) - 900), match.index ?? 0);
     assert(prefix.includes("executeB2RpcPersistence"), `${match[1]} bypasses B2`);
   }
+});
+
+Deno.test("C3 explicit human requests bypass canonical clarification and reach governed R1 persistence", async () => {
+  const exactRequests = [
+    "我要真人客服接手處理，而且在問題解決前不要當作已完成。",
+    "請轉交真人並保持未解決狀態。",
+  ];
+  for (const request of exactRequests) {
+    const classified = classifyHandoffIntent(request);
+    assert(classified.explicit_request, `exact handoff request not classified: ${request}`);
+  }
+  assert(
+    classifyHandoffIntent("不要轉真人客服，你直接回答我就好").pure_handoff_negation,
+    "true handoff negation must remain non-escalating",
+  );
+  assert(
+    classifyConversationTurn("我有一個問題").should_clarify_before_kb,
+    "genuine non-handoff ambiguity must still clarify",
+  );
+
+  const source = await Deno.readTextFile(
+    new URL("../generate-reply/index.ts", import.meta.url),
+  );
+  const recall = source.indexOf("const _c3Recall = prepareConversationRecall");
+  const guardedRecallCommit = source.indexOf(
+    "if (_c3PlannedReply && !_explicitHandoffRequested)",
+  );
+  const guardedCommerceCommit = source.indexOf(
+    "if (_c3CommerceReply && !_explicitHandoffRequested)",
+  );
+  const governedR1 = source.indexOf(
+    "const r1Response = await persistExplicitR1IfRequested",
+    guardedRecallCommit,
+  );
+  assert(recall >= 0, "canonical recall path missing");
+  assert(guardedRecallCommit > recall, "canonical reply lacks explicit-handoff precedence guard");
+  assert(guardedCommerceCommit > guardedRecallCommit, "commerce reply lacks explicit-handoff precedence guard");
+  assert(governedR1 > guardedCommerceCommit, "governed R1 persistence is not reachable after guarded shortcuts");
+
+  const r1 = source.indexOf("async function persistExplicitR1IfRequested");
+  const successContract = source.slice(
+    source.indexOf('case "success":', r1),
+    source.indexOf('case "already_resolved":', r1),
+  );
+  for (const marker of [
+    'response_route: "explicit_handoff"',
+    "handoff_required: true",
+    "handoff_persisted: true",
+  ]) assert(successContract.includes(marker), `R1 success contract missing: ${marker}`);
+});
+
+Deno.test("C3 explicit handoff persistence is B2-supervised and source-idempotent", async () => {
+  const persistedSources = new Set<string>();
+  let handoffEvents = 0;
+  const persist = async () => {
+    if (persistedSources.has(SOURCE_ID)) return { result: "already_handled" };
+    persistedSources.add(SOURCE_ID);
+    handoffEvents += 1;
+    return { result: "success" };
+  };
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const result = await executeB2PersistenceGate({
+      client: new MockClient(),
+      conversation_id: CONVERSATION_ID,
+      source_message_id: SOURCE_ID,
+      proposed_response: "我們已將你的對話轉交真人客服。",
+      persistence_kind: "explicit_handoff",
+      metadata: {
+        escalation_rule: "R1",
+        response_route: "explicit_handoff",
+        handoff_required: true,
+      },
+      commit: persist,
+    });
+    assert(result.committed, `governed handoff attempt ${attempt + 1} blocked`);
+  }
+  assertEquals(handoffEvents, 1, "same source must create exactly one handoff event");
+});
+
+Deno.test("B2 accepts deterministic no-change summary after exact authoritative projection readback", () => {
+  const state = stateFixture();
+  const metadata = {
+    response_route: "commerce_transaction_summary",
+    commerce_authority: "CONVERSATION_STATE",
+    commerce_state_revision: 7,
+    commerce_state_persist_result: "no_semantic_change",
+    commerce_state_persistence_classification: "NO_SEMANTIC_CHANGE",
+    commerce_reason: "read_only_transaction_summary_resolved",
+    commerce_state_path: "commerce.authoritative_projection",
+    commerce_state_readback_proof: buildB2AuthoritativeReadbackProof(
+      state,
+      "commerce.authoritative_projection",
+    ),
+  };
+  const input = {
+    proposed_response: "項目: 冷氣 x2。訂單：尚未確認。付款：目前未有已付款記錄。",
+    persistence_kind: "ai_reply" as const,
+    snapshot: {
+      conversation_id: CONVERSATION_ID,
+      company_id: COMPANY_ID,
+      source_message_id: SOURCE_ID,
+      commerce_state_revision: 7,
+      commerce_state_source_message_id: "prior-source",
+      state,
+    },
+    metadata,
+  };
+  assertEquals(
+    classifyB2AuthoritativePersistence(input),
+    "NO_SEMANTIC_CHANGE",
+    "projection readback classification",
+  );
+  assertEquals(
+    evaluateB2BeforeCommit(input).decision,
+    "allow",
+    "projection readback B2 decision",
+  );
 });

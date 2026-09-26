@@ -12,6 +12,8 @@ on:
 
 permissions:
   contents: read
+  actions: read
+  pull-requests: read
 
 jobs:
   deploy:
@@ -24,6 +26,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: main
+          fetch-depth: 0
+      - name: Classify C3 PR 12 merge before any deployment
+        id: c3_guard
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node .github/scripts/c3_merge_no_redeploy_guard.mjs
       - name: Verify CLI and target
         shell: bash
         run: |
@@ -31,11 +39,71 @@ jobs:
           test -n "${SUPABASE_ACCESS_TOKEN:-}"
           npx --yes supabase@latest --version
           grep -q 'nrfxhqabwblzxoushgnm' .env
+      - name: Verify C3 production evidence and exact live closure before no-redeploy decision
+        if: steps.c3_guard.outputs.mode == 'c3_no_redeploy_candidate'
+        id: c3_no_redeploy
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          C3_PR_HEAD: ${{ steps.c3_guard.outputs.pr_head }}
+          C3_PR_TREE: ${{ steps.c3_guard.outputs.pr_tree }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/c3-merge-guard"; mkdir -p "$ROOT/evidence" "$ROOT/live"
+          python - "$ROOT" <<'PY'
+          import hashlib,json,os,pathlib,urllib.request,zipfile,sys
+          root=pathlib.Path(sys.argv[1]); repo=os.environ['GITHUB_REPOSITORY']; head=os.environ['C3_PR_HEAD']; token=os.environ['GITHUB_TOKEN']
+          headers={'Authorization':'Bearer '+token,'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28','User-Agent':'c3-merge-guard/1.0'}
+          def get(url): return json.load(urllib.request.urlopen(urllib.request.Request(url,headers=headers)))
+          name='C3-validation-production-evidence-'+head
+          listing=get(f'https://api.github.com/repos/{repo}/actions/artifacts?name={name}&per_page=100')
+          candidates=[a for a in listing.get('artifacts',[]) if not a.get('expired') and a.get('workflow_run',{}).get('head_sha')==head]
+          if len(candidates)!=1: raise SystemExit(f'C3_EVIDENCE_ARTIFACT_CARDINALITY:{len(candidates)}')
+          artifact=candidates[0]; run=get(f'https://api.github.com/repos/{repo}/actions/runs/{artifact["workflow_run"]["id"]}')
+          if run.get('event')!='workflow_dispatch' or run.get('conclusion')!='success' or run.get('head_sha')!=head: raise SystemExit('C3_EVIDENCE_RUN_NOT_AUTHORIZED_SUCCESS')
+          req=urllib.request.Request(artifact['archive_download_url'],headers=headers)
+          data=urllib.request.urlopen(req).read(); digest='sha256:'+hashlib.sha256(data).hexdigest()
+          if artifact.get('digest') and digest!=artifact['digest']: raise SystemExit('C3_EVIDENCE_ARTIFACT_DIGEST_MISMATCH')
+          archive=root/'evidence.zip'; archive.write_bytes(data)
+          with zipfile.ZipFile(archive) as z: z.extractall(root/'evidence')
+          (root/'artifact-meta.json').write_text(json.dumps({'artifact_id':artifact['id'],'digest':digest,'run_id':run['id'],'run_attempt':run['run_attempt'],'name':name},sort_keys=True))
+          print(f'C3_MERGE_EVIDENCE_ARTIFACT|id={artifact["id"]}|run_id={run["id"]}|digest={digest}')
+          PY
+          META="$ROOT/artifact-meta.json"
+          node .github/scripts/c3_validation_evidence.mjs verify \
+            --evidence "$ROOT/evidence/evidence.json" \
+            --contract .github/scripts/c3_validation_scenarios.json \
+            --expected-head "$C3_PR_HEAD" --expected-tree "$C3_PR_TREE" \
+            --expected-project nrfxhqabwblzxoushgnm \
+            --expected-run-id "$(python -c 'import json,sys;print(json.load(open(sys.argv[1]))["run_id"])' "$META")" \
+            --expected-attempt "$(python -c 'import json,sys;print(json.load(open(sys.argv[1]))["run_attempt"])' "$META")"
+          for fn in agent-assist return-to-ai; do
+            D="$ROOT/live/$fn"; mkdir -p "$D/supabase"; cp supabase/config.toml "$D/supabase/config.toml"
+            (cd "$D" && npx --yes supabase@latest functions download "$fn" --project-ref "$PROJECT_REF" --use-api)
+          done
+          python - "$ROOT/live" <<'PY'
+          import hashlib,pathlib,sys
+          root=pathlib.Path(sys.argv[1]); repo=pathlib.Path('supabase/functions')
+          for fn in ('agent-assist','return-to-ai'):
+            source=root/fn/'supabase/functions'; files=[p for p in source.rglob('*') if p.is_file()]
+            if not files: raise SystemExit(f'C3_LIVE_CLOSURE_EMPTY:{fn}')
+            for live in files:
+              rel=live.relative_to(source); expected=repo/rel
+              if not expected.is_file() or hashlib.sha256(live.read_bytes()).digest()!=hashlib.sha256(expected.read_bytes()).digest():
+                raise SystemExit(f'C3_LIVE_REPO_PARITY_FAIL:{fn}:{rel}')
+            print(f'C3_LIVE_REPO_PARITY|function={fn}|files={len(files)}|result=PASS')
+          PY
+          echo skip_deploy=true >> "$GITHUB_OUTPUT"
+          echo reason=C3_VALIDATED_LIVE_RUNTIME_ALREADY_PRESENT >> "$GITHUB_OUTPUT"
+          echo C3_MERGE_NO_REDEPLOY_GATE=PASS
       - name: Deploy agent-assist
+        if: steps.c3_guard.outputs.mode != 'c3_no_redeploy_candidate'
         run: npx --yes supabase@latest functions deploy agent-assist --project-ref "$PROJECT_REF"
       - name: Deploy return-to-ai
+        if: steps.c3_guard.outputs.mode != 'c3_no_redeploy_candidate'
         run: npx --yes supabase@latest functions deploy return-to-ai --project-ref "$PROJECT_REF"
       - name: Verify deployed functions
+        if: steps.c3_guard.outputs.mode != 'c3_no_redeploy_candidate'
         shell: bash
         run: |
           set -euo pipefail
@@ -50,3 +118,9 @@ jobs:
               assert str(row.get('status','')).upper()=='ACTIVE', row
               print(f'PASS {name} ACTIVE version={row.get("version")}')
           PY
+      - name: Report C3 no-redeploy result
+        if: steps.c3_guard.outputs.mode == 'c3_no_redeploy_candidate'
+        run: |
+          test '${{ steps.c3_no_redeploy.outputs.skip_deploy }}' = true
+          test '${{ steps.c3_no_redeploy.outputs.reason }}' = C3_VALIDATED_LIVE_RUNTIME_ALREADY_PRESENT
+          echo 'C3_VALIDATED_LIVE_RUNTIME_ALREADY_PRESENT; agent-assist=SKIPPED; return-to-ai=SKIPPED'

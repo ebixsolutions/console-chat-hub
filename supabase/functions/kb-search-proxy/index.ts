@@ -4,8 +4,8 @@ import {
   fetchKBRag,
   type KBDocumentCandidate,
   type KBResolvedScope,
-} from "../_shared/kb-client.ts";
-import { callModel, parseJsonObject } from "../_shared/llm-router.ts";
+} from "../_shared/deterministic-kb-client.ts";
+import { callModel, parseJsonObject } from "../_shared/deterministic-runtime-router.ts";
 import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { supabaseCorsHeaders } from "../_shared/supabase-cors.ts";

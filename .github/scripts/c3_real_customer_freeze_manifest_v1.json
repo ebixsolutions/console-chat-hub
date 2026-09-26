@@ -1,0 +1,13 @@
+{
+  "schema_version": "c3-real-customer-freeze-manifest-1.0.0",
+  "status": "BLOCKED",
+  "dataset": "c3_real_customer_heldout_dataset_v1.json",
+  "actual_case_count": 0,
+  "frozen_before_responses": true,
+  "response_count_at_freeze": 0,
+  "response_hashes": [],
+  "quality_score": "NOT_MEASURED",
+  "human_calibration": "AWAITING",
+  "product_ready": false,
+  "note": "This placeholder is not a READY freeze. A builder-generated manifest must bind an approved 100-case dataset before execution."
+}

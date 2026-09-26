@@ -1,0 +1,11 @@
+{
+  "schema_version": "c3-deterministic-objective-freeze-1.0.0",
+  "dataset_sha256": "61dab2ed87a2e20052b6c8512fa4649682106cc4e147f3cc8a247a4a7475f454",
+  "overlay_sha256": "3b022f23754b7ecbb086ee547428dc5d6bbf7381710ae2c704c691797c09395a",
+  "case_count": 100,
+  "responses_at_freeze": 0,
+  "quality_score": "NOT_MEASURED",
+  "human_full_review_status": "AWAITING_200_RECORDS",
+  "calibration_status": "AWAITING_40_RECORDS",
+  "product_ready": false
+}

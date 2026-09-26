@@ -202,6 +202,157 @@ function questionLooksLikeCustomerState(question: string): boolean {
   );
 }
 
+function explicitCustomerMutation(question: string): boolean {
+  const text = clean(question);
+  return /(?:更正|改(?:做|成|為|为|返)|變成|变成|加多|再加|新增|另外加|唔係.+?(?:改|而係|而系)|不是.+?(?:改|而是)|而家要|現在要|现在要|目前要)\s*(?:[一二兩两三四五六七八九十]|\d{1,4})?\s*(?:部|台|件|個|个|套)?/i.test(text) ||
+    /(?:取消|移除|刪除|删除)\s*(?:其中|呢|這|这|嗰|那|一|[一二兩两三四五六七八九十]|\d)/i.test(text) ||
+    /\b(?:change|set|make)\b.{0,24}\bto\b|\badd\b(?:\s+(?:another|one|two|three|\d+))?|\b(?:please\s+)?(?:cancel|remove)\b/i.test(text);
+}
+
+function quantityRecallTarget(question: string): boolean {
+  return /(?:數量|数量|quantity|how many|幾多\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚)|多少\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚)|(?:[一二兩两三四五六七八九十]|\d{1,4})\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚))/i.test(
+    question,
+  );
+}
+
+export type CommerceDimensionAttribute = "width" | "height" | "depth";
+
+export interface CommerceDimensionMeasurement {
+  attribute: CommerceDimensionAttribute | null;
+  value: number;
+  unit: "mm" | "cm" | "in";
+  value_mm: number;
+}
+
+function dimensionAttributeFromText(text: string): CommerceDimensionAttribute | null {
+  if (/(?:闊|寬|宽|width)/i.test(text)) return "width";
+  if (/(?:高|高度|height)/i.test(text)) return "height";
+  if (/(?:深|深度|depth)/i.test(text)) return "depth";
+  return null;
+}
+
+export function parseCommerceDimensionMeasurement(
+  question: string,
+): CommerceDimensionMeasurement | null {
+  const text = clean(question);
+  const match = text.match(
+    /(\d{1,5}(?:\.\d+)?)\s*(mm|毫米|cm|厘米|公分|inches?|inch|吋)/i,
+  );
+  if (!match) return null;
+  const value = Number(match[1]);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  const rawUnit = match[2].toLowerCase();
+  const unit: CommerceDimensionMeasurement["unit"] =
+    rawUnit === "mm" || rawUnit === "毫米"
+      ? "mm"
+      : rawUnit === "cm" || rawUnit === "厘米" || rawUnit === "公分"
+      ? "cm"
+      : "in";
+  const multiplier = unit === "mm" ? 1 : unit === "cm" ? 10 : 25.4;
+  return {
+    attribute: dimensionAttributeFromText(text),
+    value,
+    unit,
+    value_mm: Math.round(value * multiplier * 1000) / 1000,
+  };
+}
+
+export function inferCommerceDimensionAttribute(
+  question: string,
+  semantic?: { requested_facts?: string[] | null } | null,
+): CommerceDimensionAttribute | null {
+  const direct = dimensionAttributeFromText(clean(question));
+  if (direct) return direct;
+  const requested = (semantic?.requested_facts ?? []).join(" ");
+  return dimensionAttributeFromText(requested);
+}
+
+/**
+ * Shared delivery/schedule current-fact target.  This recognises bounded
+ * read-only questions about the already-authoritative delivery preference;
+ * policy, reschedule and mutation requests stay outside this contract.
+ */
+export function isDeliveryScheduleCurrentFactQuery(question: string): boolean {
+  const text = clean(question);
+  if (!text || explicitCustomerMutation(text)) return false;
+  if (/(?:改期|更改|改做|取消|政策|可唔可以改|能不能改|reschedul|change|cancel|policy)/i.test(text)) {
+    return false;
+  }
+  const interrogative = /[?？]|(?:幾時|几时|何時|何时|邊日|边日|星期幾|星期几|哪天|what|which|when)/i.test(text);
+  const deliveryAndSchedule =
+    /(?:送(?:貨|货)?|配送|派送).{0,12}(?:星期幾|星期几|邊日|边日|哪天|日期|時間|时间|幾時|几时)/i.test(text) ||
+    /(?:星期幾|星期几|邊日|边日|哪天|日期|幾時|几时).{0,12}(?:送(?:貨|货)?|配送|派送)/i.test(text) ||
+    /(?:current\s+)?delivery\s+(?:day|date|time|schedule)|when\s+(?:is|will).{0,12}(?:delivery|deliver)/i.test(text) ||
+    /(?:preferred_date|delivery_preference)/i.test(text);
+  return interrogative && deliveryAndSchedule;
+}
+
+/**
+ * Shared READ_ONLY_MEMORY_OR_CURRENT_STATE_RECALL contract. A counted noun in
+ * an interrogative/recall utterance is a fact target, never mutation authority.
+ * Explicit SET/ADD/CANCEL language remains outside this class.
+ */
+export function isReadOnlyMemoryOrCurrentStateRecall(
+  question: string,
+  semantic?: { operation?: string | null; requested_facts?: string[] | null } | null,
+): boolean {
+  const text = clean(question);
+  if (!text || explicitCustomerMutation(text)) return false;
+  const requested = (semantic?.requested_facts ?? []).join(" ");
+  const semanticRead = ["ASK_FACT", "NO_STATE_CHANGE"].includes(String(semantic?.operation ?? ""));
+  const recallLanguage = /(?:記唔記得|记不记得|記得嗎|记得吗|仲記得|还记得|還記得|頭先|头先|之前最後|之前最后|最後話|最后说|提我|提醒我|do you remember|remind me|settled on|have now)/i.test(text);
+  const interrogative = /[?？]|呢\s*$|嗎\s*$|吗\s*$|(?:幾多|几多|多少|how many|what quantity|what.*(?:have|settled))/i.test(text);
+  const deicticQuantity = recallLanguage &&
+    /(?:嗰|那|這|这|呢)\s*(?:件|個|个|部|台|套)/i.test(text);
+  const dimensionMeasurement = parseCommerceDimensionMeasurement(text);
+  const explicitQuantityFact = /(?:quantity|current_quantity)/i.test(requested) ||
+    /(?:數量|数量|quantity|how many|幾多|几多|多少)/i.test(text) ||
+    /(?:[一二兩两三四五六七八九十]|\d{1,4})\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚).{0,20}?(?:定|還是|还是|or)\s*(?:[一二兩两三四五六七八九十]|\d{1,4})\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚)/i.test(text);
+  // A product article followed by a dimension (for example, "一部598mm")
+  // is not a quantity fact. It remains available to attribute-compatible
+  // entity/constraint routing instead of inheriting a known quantity.
+  const quantity = (!dimensionMeasurement || explicitQuantityFact) &&
+    (quantityRecallTarget(text) || deicticQuantity ||
+      /(?:quantity|current_quantity)/i.test(requested));
+  const status = /(?:狀態|状态|status|係咪取消|是否取消|仲要|仍然要|still active|cancelled|canceled)/i.test(text) ||
+    /(?:status|current_state)/i.test(requested);
+  const currentAttribute = isDeliveryScheduleCurrentFactQuery(text) ||
+    /(?:地址|address|收貨人|收货人|recipient|電話|电话|phone|contact|匹數|匹数|幾匹|几匹|horsepower|\bhp\b|舊機|旧机).*(?:[?？]|呢\s*$)|(?:address|recipient|recipient_phone|preferred_date|horsepower|old_machine_removal_count)/i.test(`${text} ${requested}`);
+  return (semanticRead || recallLanguage || interrogative) &&
+    (quantity || status || currentAttribute) &&
+    (recallLanguage || interrogative);
+}
+
+/** A question asking for the currently retained requirements supplies no new fact. */
+export function isCurrentRequirementsRecap(question: string): boolean {
+  const text = clean(question);
+  if (!text || explicitCustomerMutation(text)) return false;
+  return /(?:而家|現在|现在|目前|最新).{0,18}(?:要求|需求|需要).{0,12}(?:係點|系点|是甚麼|是什么|有咩|有哪些|\?|？)|(?:要求|需求|需要).{0,12}(?:係點|系点|是甚麼|是什么|有咩|有哪些|\?|？)|(?:recap|summari[sz]e|summary|what(?:'s| is)).{0,40}(?:current|latest|my).{0,30}(?:requirements?|needs?)|(?:current|latest)\s+(?:requirements?|needs?)\s*(?:summary|recap|\?|$)/i.test(text);
+}
+
+/**
+ * READ_ONLY_CURRENT_STATE_AGGREGATE_QUERY covers questions about the already
+ * recorded set of technician/professional checks. A count/list mention is a
+ * fact target, not authority to add, cancel, or otherwise rewrite a check.
+ */
+export function isReadOnlyCurrentStateAggregateQuery(
+  question: string,
+  semantic?: { operation?: string | null; requested_facts?: string[] | null } | null,
+): boolean {
+  const text = clean(question);
+  if (!text || explicitCustomerMutation(text)) return false;
+  const requested = (semantic?.requested_facts ?? []).join(" ");
+  const semanticRead = ["ASK_FACT", "NO_STATE_CHANGE"].includes(String(semantic?.operation ?? ""));
+  const technicianDomain = /(?:師傅|师傅|技師|技师|專業人員|专业人员|technician|professional|site\s*(?:check|survey)|onsite\s*(?:check|survey)|上門(?:確認|检查|檢查)|上门(?:确认|检查))/i.test(text) ||
+    /(?:pending\s+(?:checks?|items?)|(?:checks?|items?)\s+(?:are\s+)?still\s+pending)/i.test(text) ||
+    /(?:幾多|几多|多少|邊啲|边啲|哪些).{0,20}(?:未確認|未确认|待確認|待确认)/i.test(text) ||
+    /(?:pending_(?:technician_)?checks?|professional_confirmation|installation\.pending_checks)/i.test(requested);
+  const aggregateOrList = /(?:幾多\s*(?:項|個位|個|个)|几多\s*(?:项|个位|个)|多少\s*(?:項|项|個|个)|仲有\s*(?:幾多|几多|邊啲|边啲)|還有\s*(?:多少|哪些)|还有\s*(?:多少|哪些)|邊啲|边啲|哪些|how many\s+(?:checks?|items?)|which\s+(?:checks?|items?)|what\s+(?:still\s+)?(?:needs?|requires?).{0,24}(?:confirmation|checking)|what\s+is\s+still\s+pending)/i.test(text) ||
+    /(?:pending_(?:technician_)?checks?|professional_confirmation)/i.test(requested);
+  const interrogative = /[?？]/.test(text) || aggregateOrList;
+  return technicianDomain && aggregateOrList && (semanticRead || interrogative);
+}
+
 function questionLooksLikeCalculation(question: string): boolean {
   return /(?:加埋|合共|總共幾錢|总共多少钱|一共多少|total|how much.*(?:total|altogether)|calculate|計下|算下|計算|计算)/i.test(
     question,
@@ -211,15 +362,46 @@ function questionLooksLikeCalculation(question: string): boolean {
 function questionExplicitlyAsksQuantity(question: string): boolean {
   if (/(?:價|价|price|amount|金額|金额|幾錢|几钱|多少錢|多少钱|fee|收費|收费)/i.test(question))
     return false;
-  return /(?:數量|数量|quantity|how many|幾多\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚)|多少\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚))/i.test(
-    question,
-  );
+  return /(?:數量|数量|quantity|how many|幾多\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚)|多少\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚)|(?:[一二兩两三四五六七八九十]|\d{1,4})\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚).{0,20}?(?:定|還是|还是|or)\s*(?:[一二兩两三四五六七八九十]|\d{1,4})\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚))/i.test(question) ||
+    (isReadOnlyMemoryOrCurrentStateRecall(question) && quantityRecallTarget(question));
+}
+
+function inferEntityStatusPath(
+  question: string,
+  state: ConversationCommerceState,
+): { path: string; value: unknown } | null {
+  if (!/(?:狀態|状态|status|已取消|取消咗|取消了|仲要|仍然要|still active|cancelled|canceled)/i.test(question)) {
+    return null;
+  }
+  const normalized = clean(question).toLowerCase();
+  const roomKeys: Array<[RegExp, string]> = [
+    [/(?:客廳|客厅|living\s*room|lounge)/i, "living_room"],
+    [/(?:睡房|臥室|卧室|bedroom)/i, "bedroom"],
+    [/(?:廚房|厨房|kitchen)/i, "kitchen"],
+  ];
+  const room = roomKeys.find(([pattern]) => pattern.test(normalized))?.[1] ?? null;
+  let matches = state.entities.filter((entity) => {
+    if (room && entity.entity_id.includes(room)) return true;
+    return [entity.entity_id, entity.category, entity.brand ?? "", entity.model ?? ""]
+      .map((value) => clean(value).toLowerCase())
+      .some((value) => value.length >= 2 && normalized.includes(value));
+  });
+  if (!matches.length && state.entities.length === 1) matches = [state.entities[0]];
+  if (matches.length !== 1) return null;
+  const index = state.entities.indexOf(matches[0]);
+  return { path: `entities.${index}.status`, value: matches[0].status };
 }
 
 function inferKnownCustomerStatePath(
   question: string,
   state: ConversationCommerceState,
 ): { path: string; value: unknown } | null {
+  if (isDeliveryScheduleCurrentFactQuery(question)) {
+    const value = getCommerceStatePath(state, "delivery.preferred_date");
+    if (isKnownValue(value)) {
+      return { path: "delivery.preferred_date", value };
+    }
+  }
   const candidates: Array<[RegExp, string]> = [
     [/(?:送貨地址|送货地址|地址|delivery address|address)/i, "delivery.address"],
     [/(?:收貨人電話|收货人电话|recipient phone|contact phone)/i, "delivery.recipient_phone"],
@@ -238,6 +420,9 @@ function inferKnownCustomerStatePath(
     const value = getCommerceStatePath(state, path);
     if (isKnownValue(value)) return { path, value };
   }
+
+  const entityStatus = inferEntityStatusPath(question, state);
+  if (entityStatus) return entityStatus;
 
   if (questionExplicitlyAsksQuantity(question)) {
     const active = state.entities.filter(

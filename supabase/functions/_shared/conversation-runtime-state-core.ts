@@ -44,7 +44,7 @@ export interface CanonicalRetrievalQuery {
 const CUSTOMER = new Set(["visitor", "customer", "user"]);
 const ASSISTANT = new Set(["assistant", "ai", "human_agent"]);
 const EXPLICIT_CORRECTION = /(我講錯|我说错|我說錯|我要更正|我想更正|更正一下[：:]?|更正[：:]|其實係|其实是|改返|改成|actually[,\s]+i meant|i meant|correction\s*[:：])/i;
-const CONTRAST_CORRECTION = /(唔係[^，。,.!?！？]{1,80}[，,]\s*係|不是[^，。,.!?！？]{1,80}[，,]\s*(?:而)?是|not .+ but .+)/i;
+const CONTRAST_CORRECTION = /(唔係[^，。,.!?！？]{1,80}[，,]\s*(?:應該)?係|不是[^，。,.!?！？]{1,80}[，,]\s*(?:應該|而)?是|not .+ but .+)/i;
 const LATEST_VALUE_CORRECTION = /(?:記住|记住)?\s*(?:最新|目前|現在|现在)\s*(?:係|是|為|为)?\s*[^，。,.!?！？]{1,50}(?:，|,)\s*(?:唔係|不是|而不是|not)\s*[^，。,.!?！？]{1,50}/i;
 
 function isCorrectionText(text: string): boolean {
