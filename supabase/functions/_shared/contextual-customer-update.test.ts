@@ -29,6 +29,7 @@ import { renderNaturalNoCurrentEvidence } from "./natural-customer-response.ts";
 import { productKbSemanticContract } from "./product-kb-semantic-contract.ts";
 import { deriveCurrentGroundingTarget, selectCanonicalGrounding } from "./canonical-grounding.ts";
 import { resolveCanonicalKbDirectAnswer } from "./canonical-kb-direct-answer.ts";
+import { deriveTypedCustomerCalculation } from "./conversation-service-runtime.ts";
 import type { KBDocumentCandidate } from "./deterministic-kb-client.ts";
 
 function assert(value: unknown, message: string): asserts value {
@@ -901,13 +902,11 @@ Deno.test("W19 sequential T1-T16 source replay preserves customer journey, KB an
   assert(t9Result.kind === "resolved", "T9 referent missing");
   const t9Answer = factualAnswer(t9Result.grounded_question, t9Result.intent, t9Result.resolved_topic, "zh-TW", [kbDoc]);
   assert(t9Answer?.reply.includes("CW-SUL70BA") && t9Answer.reply.includes("3/4匹"), JSON.stringify(t9Answer));
-  const t13 = "舊報價假設機價每部5600、安裝每部550、鋁架每單550，共2部，試算幾多？";
-  const t13Plan = planConversationService({ question: t13, language: "zh-TW", recall: { handled: false, reason: "CURRENT_KB_REQUIRED" }, memory: null, commerce: afterCancellation, calculation_quantity: 2, calculation_terms: [
-    { label: "機價", amount: 5600, currency: "HKD", charge_basis: "per_unit", source: "customer_message" },
-    { label: "安裝", amount: 550, currency: "HKD", charge_basis: "per_unit", source: "customer_message" },
-    { label: "鋁架", amount: 550, currency: "HKD", charge_basis: "per_order", source: "customer_message" },
-  ] });
-  assert(t13Plan.action === "historical_calculation" && t13Plan.calculation?.total === 12850 && t13Plan.calculation.historical_only, JSON.stringify(t13Plan)); turns.push(t13);
+  const t13 = "如果用返之前每部 HK$5,680 嗰個歷史價，兩部再加 HK$1,490，合共幾多？";
+  const t13Typed = deriveTypedCustomerCalculation({ question: t13, current_source_message_id: "source-t13" });
+  const t13Plan = planConversationService({ question: t13, language: "zh-TW", recall: { handled: false, reason: "CURRENT_KB_REQUIRED" }, memory: null, commerce: afterCancellation, calculation_quantity: t13Typed.quantity, calculation_terms: t13Typed.terms });
+  const t13Reply = renderServicePlanReply(t13Plan, null) ?? "";
+  assert(t13Typed.status === "ready" && t13Typed.terms.length === 2 && t13Typed.terms.every((term) => term.source_message_id === "source-t13") && t13Plan.action === "historical_calculation" && t13Plan.calculation?.total === 12850 && t13Plan.calculation.historical_only && /HK\$ 12,850/.test(t13Reply) && /歷史條件試算/.test(t13Reply), JSON.stringify({t13Typed,t13Plan,t13Reply})); turns.push(t13);
   const t14 = "CW-SUL70BA 開唔到機，點處理？";
   const t14Plan = planConversationService({ question: t14, language: "zh-TW", recall: { handled: false, reason: "NOT_A_RECALL_QUERY" }, memory: null, commerce: afterCancellation });
   const t14Reply = renderServicePlanReply(t14Plan, null) ?? "";
@@ -916,12 +915,12 @@ Deno.test("W19 sequential T1-T16 source replay preserves customer journey, KB an
   const t15Intent = classifyNaturalCustomerIntent(t15);
   const t15Reply = renderNaturalNoCurrentEvidence(t15Intent, "zh-TW") ?? "";
   assert(factualAnswer(t15, t15Intent, null, "zh-TW", []) === null && t15Reply.includes("NONEXISTENT-999999") && !/請提供型號/.test(t15Reply), t15Reply); turns.push(t15);
-  const t16 = "Is CW-SUL70BA suitable for an 80 sq ft bedroom, and what is its horsepower?";
+  const t16 = "For the CW-SUL70BA we discussed, what horsepower is it, and can you confirm whether it is suitable for an 80 sq ft bedroom?";
   const t16Answer = factualAnswer(t16, classifyNaturalCustomerIntent(t16), null, "en", [kbDoc]);
   assert(t16Answer?.reply.includes("PANASONIC CW-SUL70BA") && t16Answer.reply.includes("3/4 HP") && /does not directly state a suitable room area/.test(t16Answer.reply) && !t16Answer.reply.includes("樂聲"), JSON.stringify(t16Answer)); turns.push(t16);
   assert(f.snapshot().state.conversion.order_status === "none" && f.snapshot().state.conversion.payment_status === "none" && f.snapshot().state.conversion.quotation_status === "none", "false_transaction");
   console.log(`W19-T9|canonical_kb_direct_answer|${t9Answer?.reply}`);
-  console.log(`W19-T13|${t13Plan.action}|${t13Plan.calculation?.total}|historical_only`);
+  console.log(`W19-T13|${t13Plan.action}|${t13Plan.calculation?.total}|historical_only|${t13Reply}`);
   console.log(`W19-T14|${t14Plan.issue_kind}|${t14Reply}`);
   console.log(`W19-T15|kb_no_current_evidence|${t15Reply}`);
   console.log(`W19-T16|canonical_kb_direct_answer|${t16Answer?.reply}`);

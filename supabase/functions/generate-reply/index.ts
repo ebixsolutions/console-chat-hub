@@ -16,6 +16,7 @@ import {
   deriveServiceRuntimeInputs,
 } from "../_shared/conversation-service-runtime.ts";
 import { fetchTrustedCustomerContext } from "../_shared/customer360-entitlement-client.ts";
+import { isHistoricalOrConditionalCustomerCalculationRequest } from "../_shared/conversation-service-runtime.ts";
 // B7 generate-reply — L5b orchestration skeleton + Task A.1A Deterministic Handoff Patch
 //
 // Source of truth: Contract 11 §3.1 + Contract 07 + Contract 03 §1.1 + Contract 08
@@ -186,8 +187,10 @@ import {
   type B2PersistenceKind,
   type B2TrustedTargetedClarification,
   type B2TrustedReadOnlyRecap,
+  type B2TrustedCustomerCalculation,
   buildB2AuthoritativeReadbackProof,
   buildB2ReadOnlyRecapProof,
+  buildB2TrustedCustomerCalculation,
   classifyCommerceStatePersistenceResult,
   executeB2PersistenceGate,
 } from "../_shared/pre-send-conversion-supervisor.ts";
@@ -645,6 +648,7 @@ async function executeB2RpcPersistence<T>(
     trusted_correction_commit?: B2TrustedCorrectionCommit | null;
     trusted_lifecycle_commit?: B2TrustedLifecycleCommit | null;
     trusted_read_only_recap?: B2TrustedReadOnlyRecap | null;
+    trusted_customer_calculation?: B2TrustedCustomerCalculation | null;
     expected_commerce_state_revision?: number | null;
   },
   commit: (snapshot: B2CanonicalSnapshot) => Promise<T>,
@@ -668,6 +672,7 @@ async function commitAiReplyWithControlGate(
   trustedCorrectionCommit: B2TrustedCorrectionCommit | null = null,
   trustedLifecycleCommit: B2TrustedLifecycleCommit | null = null,
   trustedReadOnlyRecap: B2TrustedReadOnlyRecap | null = null,
+  trustedCustomerCalculation: B2TrustedCustomerCalculation | null = null,
 ): Promise<
   | { ok: true; message_id: string | null; idempotent: boolean }
   | {
@@ -723,6 +728,7 @@ async function commitAiReplyWithControlGate(
       trusted_correction_commit: trustedCorrectionCommit,
       trusted_lifecycle_commit: trustedLifecycleCommit,
       trusted_read_only_recap: trustedReadOnlyRecap,
+      trusted_customer_calculation: trustedCustomerCalculation,
       expected_commerce_state_revision: expectedRevision,
     },
     async (snapshot) => {
@@ -4325,6 +4331,7 @@ async function orchestrationGenerateReply(
   if (
     _criticalE2ExpectedTenantId &&
     (!requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent) ||
+      isHistoricalOrConditionalCustomerCalculationRequest(_h1LastMsg) ||
       (_productFollowUpArbitration.kind === "resolved" &&
         _productFollowUpArbitration.resolution_strategy === "PER_TOPIC_REFERENT_HISTORY" &&
         Boolean(_productFollowUpArbitration.resolved_topic)))
@@ -4575,6 +4582,7 @@ async function orchestrationGenerateReply(
       .map((row) => ({
         role: typeof row.role === "string" ? row.role : "unknown",
         content: String(row.content ?? ""),
+        id: typeof row.id === "string" ? row.id : null,
       }));
   const _c3TrustedCustomerContext = await fetchTrustedCustomerContext({
     conversation_id,
@@ -4582,6 +4590,7 @@ async function orchestrationGenerateReply(
   });
   const _c3RuntimeInputs = deriveServiceRuntimeInputs({
     question: _productFactualRequest,
+    current_source_message_id: _h1SourceMessageId,
     recent_messages: _c3RecentServiceMessages,
     commerce: _c3CommerceSnapshot?.state ?? null,
     trusted_customer_context: _c3TrustedCustomerContext,
@@ -4699,6 +4708,14 @@ async function orchestrationGenerateReply(
         memory: _c3Memory,
         reply: _c3PlannedReply,
       }) : null;
+    const customerCalculationProof = _c3ServicePlan.action === "historical_calculation" &&
+        _criticalE2ExpectedTenantId && _a3Commerce?.reason === "read_only_customer_calculation"
+      ? await buildB2TrustedCustomerCalculation({
+        conversation_id, company_id: _criticalE2ExpectedTenantId,
+        source_message_id: _h1SourceMessageId,
+        commerce_revision: _a3Commerce.revision,
+        source_message_content: _h1LastMsg, reply: _c3PlannedReply,
+      }) : null;
     const serviceMetadata = {
       ..._c3Recall.metadata,
       response_route: readOnlyRecapProof
@@ -4725,6 +4742,13 @@ async function orchestrationGenerateReply(
       entitlement_trace: _c3ServicePlan.entitlement_trace ?? null,
       service_runtime_version: _c3RuntimeInputs.version,
       calculation_input_status: _c3RuntimeInputs.calculation_status,
+      ...(customerCalculationProof ? {
+        calculation_type: customerCalculationProof.calculation_type,
+        calculation_authority: customerCalculationProof.authority,
+        current_price_authority: customerCalculationProof.current_price_authority,
+        transaction_mutation: customerCalculationProof.transaction_mutation,
+        calculation_result: customerCalculationProof.result,
+      } : {}),
       natural_response_contract: _naturalGuidanceReply
         ? "c3-natural-customer-response-v2"
         : undefined,
@@ -4748,6 +4772,7 @@ async function orchestrationGenerateReply(
       serviceMetadata,
       null, null, null, null, null,
       readOnlyRecapProof,
+      customerCalculationProof,
     );
     await cleanupThinking(supabaseAdmin, conversation_id, _h1SourceMessageId);
     if (recallCommit.ok) {

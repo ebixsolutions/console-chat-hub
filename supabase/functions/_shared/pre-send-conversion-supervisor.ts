@@ -15,6 +15,7 @@ import {
   isConversationCommerceState,
 } from "./commerce-state-contract.ts";
 import { parseAddressReplacementCorrection } from "./commerce-state-reducer.ts";
+import { deriveTypedCustomerCalculation, isHistoricalOrConditionalCustomerCalculationRequest } from "./conversation-service-runtime.ts";
 import { currentKbSellingPrice, exactKbModelIds } from "./canonical-kb-direct-answer.ts";
 import type { ContextualDecision } from "./contextual-customer-update.ts";
 import {
@@ -73,6 +74,56 @@ export interface B2EvaluationInput {
   trusted_correction_commit?: B2TrustedCorrectionCommit | null;
   trusted_lifecycle_commit?: B2TrustedLifecycleCommit | null;
   trusted_read_only_recap?: B2TrustedReadOnlyRecap | null;
+  trusted_customer_calculation?: B2TrustedCustomerCalculation | null;
+}
+
+export interface B2TrustedCustomerCalculation {
+  contract: "customer-supplied-read-only-calculation-v1";
+  calculation_type: "historical_or_conditional";
+  arithmetic_operation: "multiply_then_add" | "addition";
+  inputs: Array<{ amount: number; currency: string; multiplier: number; charge_basis: "per_unit" | "per_order"; source_message_id: string }>;
+  quantity: number;
+  result: number;
+  currency: string;
+  authority: "customer_supplied_historical_or_hypothetical";
+  current_price_authority: "NONE";
+  transaction_mutation: "NONE";
+  conversation_id: string;
+  company_id: string;
+  source_message_id: string;
+  commerce_revision: number;
+  response_binding: string;
+}
+
+async function calculationResponseBinding(reply: string): Promise<string> {
+  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(reply));
+  return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+export async function buildB2TrustedCustomerCalculation(input: {
+  conversation_id: string; company_id: string; source_message_id: string;
+  commerce_revision: number; source_message_content: string; reply: string;
+}): Promise<B2TrustedCustomerCalculation | null> {
+  if (!isHistoricalOrConditionalCustomerCalculationRequest(input.source_message_content)) return null;
+  const parsed = deriveTypedCustomerCalculation({
+    question: input.source_message_content,
+    current_source_message_id: input.source_message_id,
+  });
+  if (parsed.status !== "ready" || !parsed.terms.length) return null;
+  const quantity = parsed.quantity ?? 1;
+  const inputs = parsed.terms.map((term) => ({ amount: term.amount, currency: term.currency,
+    multiplier: term.charge_basis === "per_unit" ? quantity : 1,
+    charge_basis: term.charge_basis, source_message_id: term.source_message_id ?? input.source_message_id }));
+  const result = inputs.reduce((sum, term) => sum + term.amount * term.multiplier, 0);
+  return { contract: "customer-supplied-read-only-calculation-v1",
+    calculation_type: "historical_or_conditional",
+    arithmetic_operation: inputs.some((term) => term.multiplier > 1) ? "multiply_then_add" : "addition",
+    inputs, quantity, result, currency: parsed.terms[0].currency,
+    authority: "customer_supplied_historical_or_hypothetical",
+    current_price_authority: "NONE", transaction_mutation: "NONE",
+    conversation_id: input.conversation_id, company_id: input.company_id,
+    source_message_id: input.source_message_id, commerce_revision: input.commerce_revision,
+    response_binding: await calculationResponseBinding(input.reply) };
 }
 
 export interface B2TrustedReadOnlyRecap {
@@ -204,8 +255,41 @@ export interface B2PersistenceInput<T> {
   trusted_correction_commit?: B2TrustedCorrectionCommit | null;
   trusted_lifecycle_commit?: B2TrustedLifecycleCommit | null;
   trusted_read_only_recap?: B2TrustedReadOnlyRecap | null;
+  trusted_customer_calculation?: B2TrustedCustomerCalculation | null;
   expected_commerce_state_revision?: number | null;
   commit: (snapshot: B2CanonicalSnapshot) => Promise<T>;
+}
+
+function isTrustedCustomerCalculation(input: B2EvaluationInput, draft: string): boolean {
+  const p = input.trusted_customer_calculation;
+  const s = input.snapshot;
+  const m = input.metadata;
+  if (!p || !m || input.persistence_kind !== "ai_reply" ||
+    p.contract !== "customer-supplied-read-only-calculation-v1" ||
+    p.calculation_type !== "historical_or_conditional" || p.authority !== "customer_supplied_historical_or_hypothetical" ||
+    p.current_price_authority !== "NONE" || p.transaction_mutation !== "NONE" ||
+    p.conversation_id !== s.conversation_id || p.company_id !== s.company_id ||
+    p.source_message_id !== s.source_message_id || p.commerce_revision !== s.commerce_state_revision ||
+    m.calculation_authority !== p.authority || m.current_price_authority !== "NONE" ||
+    m.transaction_mutation !== "NONE" || m.calculation_type !== p.calculation_type ||
+    !isHistoricalOrConditionalCustomerCalculationRequest(s.source_message_content ?? "")) return false;
+  const parsed = deriveTypedCustomerCalculation({question: s.source_message_content ?? "", current_source_message_id: s.source_message_id});
+  if (parsed.status !== "ready" || parsed.terms.length !== p.inputs.length) return false;
+  const quantity = parsed.quantity ?? 1;
+  const expected = parsed.terms.map((term) => ({amount: term.amount, currency: term.currency,
+    multiplier: term.charge_basis === "per_unit" ? quantity : 1,
+    charge_basis: term.charge_basis, source_message_id: term.source_message_id ?? s.source_message_id}));
+  const operation = expected.some((term) => term.multiplier > 1) ? "multiply_then_add" : "addition";
+  if (JSON.stringify(expected) !== JSON.stringify(p.inputs) || p.quantity !== quantity ||
+    p.currency !== parsed.terms[0].currency ||
+    p.arithmetic_operation !== operation ||
+    p.result !== expected.reduce((sum, term) => sum + term.amount * term.multiplier, 0)) return false;
+  const amounts = [...draft.matchAll(/\d[\d,]*/g)].map((match) => Number(match[0].replace(/,/g, "")));
+  if (![...new Set(expected.map((term) => term.amount)), p.result].every((amount) => amounts.includes(amount))) return false;
+  if (!/(?:歷史|历史|舊|旧|條件|条件|試算|试算|hypothetical|historical|conditional|calculation)/i.test(draft)) return false;
+  const promotedText = draft.replace(/(?:不是|並非|唔代表|不代表|不等於|not\s+(?:a\s+)?(?:current|formal|official)?\s*(?:quotation|quote|order|payment)).{0,28}(?:現行|現時|目前|current|formal|official)?\s*(?:正式)?\s*(?:報價|报价|quotation|quote|訂單|订单|order|付款|payment)/gi, "");
+  if (CURRENT_PRICE_CLAIM.test(promotedText) || /(?:正式報價|正式报价|報價已確認|报价已确认|已報價|已报价|落單|下單|下单|訂單|订单|預訂|预订|預約|预约|付款|支付|購買|购买|quotation\s+(?:issued|created|confirmed)|place an order|order\s+(?:confirmed|created|placed)|purchase(?:d)?|payment\s+(?:processed|completed)|pay now|booked|reservation\s+confirmed)/i.test(promotedText)) return false;
+  return true;
 }
 
 export type B2PersistenceResult<T> =
@@ -1129,6 +1213,9 @@ export function evaluateB2BeforeCommit(input: B2EvaluationInput): B2Decision {
   if (kbPriceDecision?.decision === "block") return kbPriceDecision;
   const correctionDecision = evaluateCorrections(draft, state);
   const trustedReadOnlyRecap = isTrustedReadOnlyRecap(input, draft);
+  const trustedCustomerCalculation = isTrustedCustomerCalculation(input, draft);
+  if ((input.trusted_customer_calculation || input.metadata?.calculation_type === "historical_or_conditional") &&
+    !trustedCustomerCalculation) return { decision: "block", code: "UNPROVEN_CUSTOMER_CALCULATION" };
   if ((input.trusted_read_only_recap || input.metadata?.recap_read_only === true) &&
     !trustedReadOnlyRecap) return { decision: "block", code: "UNPROVEN_READ_ONLY_RECAP" };
   const authoritativeNoSemanticChange =
@@ -1150,11 +1237,11 @@ export function evaluateB2BeforeCommit(input: B2EvaluationInput): B2Decision {
     !trustedCorrection
   ) return { decision: "block", code: "UNPROVEN_CORRECTION_COMMIT" };
   return (
-    (authoritativeNoSemanticChange || trustedLifecycle || trustedReadOnlyRecap ? null : correctionDecision) ??
+    (authoritativeNoSemanticChange || trustedLifecycle || trustedReadOnlyRecap || trustedCustomerCalculation ? null : correctionDecision) ??
     evaluateCancellation(draft, state) ??
-    (kbPriceDecision ? null : evaluateQuoteReality(draft, state, input)) ??
+    (kbPriceDecision || trustedCustomerCalculation ? null : evaluateQuoteReality(draft, state, input)) ??
     evaluateTransactionReality(draft, input.persistence_kind, state) ??
-    (trustedTargetedClarification || trustedJourneyProgress || trustedCorrection || trustedLifecycle || trustedReadOnlyRecap
+    (trustedTargetedClarification || trustedJourneyProgress || trustedCorrection || trustedLifecycle || trustedReadOnlyRecap || trustedCustomerCalculation
       ? null
       : evaluateKnownContext(draft, state)) ?? {
       decision: "allow",
@@ -1168,6 +1255,8 @@ export function evaluateB2BeforeCommit(input: B2EvaluationInput): B2Decision {
         ? "B2_ALLOW_JOURNEY_PROGRESS_AFTER_ACCEPTED_UPDATE"
         : trustedTargetedClarification
         ? "B2_ALLOW_TARGETED_READ_ONLY_CLARIFICATION"
+        : trustedCustomerCalculation
+        ? "B2_ALLOW_BOUNDED_READ_ONLY_CUSTOMER_CALCULATION"
         : authoritativeNoSemanticChange
         ? "B2_ALLOW_NO_SEMANTIC_CHANGE_AFTER_AUTHORITATIVE_READBACK"
         : "B2_ALLOW"),
@@ -1428,6 +1517,10 @@ export async function executeB2PersistenceGate<T>(
     );
     if (invalid) return { committed: false, decision: invalid, snapshot: initial.snapshot };
   }
+  if (input.trusted_customer_calculation &&
+    input.trusted_customer_calculation.response_binding !== await calculationResponseBinding(input.proposed_response)) {
+    return { committed: false, decision: { decision: "block", code: "CUSTOMER_CALCULATION_RESPONSE_BINDING_MISMATCH" }, snapshot: initial.snapshot };
+  }
 
   let decision: B2Decision;
   try {
@@ -1442,6 +1535,7 @@ export async function executeB2PersistenceGate<T>(
       trusted_correction_commit: input.trusted_correction_commit,
       trusted_lifecycle_commit: input.trusted_lifecycle_commit,
       trusted_read_only_recap: input.trusted_read_only_recap,
+      trusted_customer_calculation: input.trusted_customer_calculation,
     });
   } catch (error) {
     decision = {
@@ -1481,6 +1575,10 @@ export async function executeB2PersistenceGate<T>(
       input.proposed_response,
     );
     if (invalid) return { committed: false, decision: invalid, snapshot: revalidated.snapshot };
+  }
+  if (input.trusted_customer_calculation &&
+    input.trusted_customer_calculation.response_binding !== await calculationResponseBinding(input.proposed_response)) {
+    return { committed: false, decision: { decision: "block", code: "CUSTOMER_CALCULATION_RESPONSE_BINDING_MISMATCH" }, snapshot: revalidated.snapshot };
   }
 
   const value = await input.commit(revalidated.snapshot);

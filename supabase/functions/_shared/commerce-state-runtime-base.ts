@@ -54,6 +54,7 @@ import {
 } from "./commerce-semantic-adapter.ts";
 import { industryEntityLabel, resolveIndustryContextualCandidate, resolveIndustryCustomerJourney, resolveIndustryRuntime } from "./industry-runtime-adapter.ts";
 import { contextualUpdateEvents, resolveContextualCustomerUpdate } from "./contextual-customer-update.ts";
+import { deriveTypedCustomerCalculation, isHistoricalOrConditionalCustomerCalculationRequest } from "./conversation-service-runtime.ts";
 import type { ContextualDecision } from "./contextual-customer-update.ts";
 import {
   activeCustomerGoal,
@@ -2597,6 +2598,35 @@ export async function runCommerceStateRuntime(
       reason: "read_only_memory_or_current_state_recall_unresolved",
       route: "commerce_state_answer",
     };
+  }
+
+  // A historical/conditional calculation over values supplied in this turn
+  // is read-only: derive a bounded answer from the source message and return
+  // before any Commerce persistence call.
+  if (isHistoricalOrConditionalCustomerCalculationRequest(text)) {
+    const loaded = await loadCommerceState(db, input.conversation_id);
+    const typed = deriveTypedCustomerCalculation({
+      question: text,
+      current_source_message_id: input.source_message_id,
+    });
+    if (typed.status === "ready" && typed.terms.length) {
+      const quantity = typed.quantity ?? 1;
+      const perUnit = typed.terms.filter((term) => term.charge_basis === "per_unit")
+        .reduce((sum, term) => sum + term.amount, 0);
+      const perOrder = typed.terms.filter((term) => term.charge_basis === "per_order")
+        .reduce((sum, term) => sum + term.amount, 0);
+      const result = perUnit * quantity + perOrder;
+      return {
+        authority: "CONVERSATION_STATE", reply: null,
+        revision: loaded.revision, persist_result: "read_only",
+        reason: "read_only_customer_calculation",
+        route: "commerce_state_answer",
+        calculation: {
+          expression: `${perUnit} × ${quantity} + ${perOrder}`,
+          result, currency: typed.terms[0].currency,
+        },
+      };
+    }
   }
 
   const historyTexts = (input.history ?? []).filter((turn) => turn.role === "visitor" || turn.role === "user" || turn.role === "customer").slice(0, MAX_HISTORY_TURNS).map((turn) => clean(turn.content));

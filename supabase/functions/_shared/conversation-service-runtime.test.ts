@@ -1,4 +1,6 @@
 import { createEmptyConversationCommerceState } from "./commerce-state-contract.ts";
+import { runCommerceStateRuntime, type CommerceStateDbClient } from "./commerce-state-runtime.ts";
+import { resolveCanonicalCommerceResolution } from "./conversation-resolution-contract.ts";
 import {
   applyServiceRuntimeDerivation,
   deriveServiceRuntimeInputs,
@@ -41,6 +43,7 @@ function run(
 ) {
   const runtime = deriveServiceRuntimeInputs({
     question,
+    current_source_message_id: "t13-source",
     recent_messages,
     commerce,
     trusted_customer_context: null,
@@ -63,13 +66,60 @@ function run(
   };
 }
 
+Deno.test("generic current-message historical calculation retains explicit operands and charge basis", () => {
+  const value = run("如果用返之前每部 HK$5,680 嗰個歷史價，兩部再加 HK$1,490，合共幾多？");
+  assertEquals(value.runtime.calculation_status, "ready");
+  assertEquals(value.plan.calculation?.total, 12850);
+  assertMatch(value.reply, /HK\$ 5,680/);
+  assertMatch(value.reply, /HK\$ 1,490/);
+  assertMatch(value.reply, /HK\$ 12,850/);
+  assertMatch(value.reply, /歷史條件試算/);
+  assertEquals(value.runtime.calculation_terms.every((term) => term.source_message_id === "t13-source"), true);
+});
+
+Deno.test("exact T13 production-shaped Commerce and service path is read-only", async () => {
+  const source = "如果用返之前每部 HK$5,680 嗰個歷史價，兩部再加 HK$1,490，合共幾多？";
+  const state = structuredClone(commerce);
+  const before = JSON.stringify(state);
+  let writes = 0;
+  const db: CommerceStateDbClient = {
+    from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({
+      data: { revision: 9, state: structuredClone(state) }, error: null,
+    }) }) }) }),
+    rpc: async () => { writes++; return { data: null, error: null }; },
+  };
+  const outcome = await runCommerceStateRuntime(db, {
+    conversation_id: "c1", company_id: "co1", source_message_id: "t13-source",
+    text: source, language: "zh-TW",
+  });
+  assertEquals(outcome?.reason, "read_only_customer_calculation");
+  assertEquals(outcome?.persist_result, "read_only");
+  assertEquals(outcome?.revision, 9);
+  assertEquals(outcome?.calculation?.result, 12850);
+  assertEquals(writes, 0);
+  assertEquals(JSON.stringify(state), before);
+  const resolution = resolveCanonicalCommerceResolution({ outcome, authoritative_address_correction: false });
+  assertEquals(resolution.skip_memory_refresh, true);
+  assertEquals(resolution.no_semantic_change, true);
+  const runtime = deriveServiceRuntimeInputs({ question: source, current_source_message_id: "t13-source",
+    commerce: state, trusted_customer_context: null, expected_conversation_id: "c1", expected_company_id: "co1" });
+  assertEquals(runtime.calculation_result, 12850);
+  const plan = planConversationService(applyServiceRuntimeDerivation({ question: source,
+    language: "zh-TW", recall: { handled: false }, memory: null, commerce: state }, runtime));
+  const response = renderServicePlanReply(plan, null) ?? "";
+  assertEquals(plan.calculation?.total, 12850);
+  assertMatch(response, /HK\$ 12,850/);
+  assertMatch(response, /歷史條件試算/);
+  assertMatch(response, /不是現行正式報價/);
+});
+
 Deno.test("C3 real caller adapter derives typed per-unit and per-order calculation", () => {
   const value = run(
     "用舊數字試算2部：舊機價每部 HKD 5,600，安裝每部 HKD 550，鋁架整單 HKD 550",
   );
   assertEquals(value.runtime.calculation_status, "ready");
   assertEquals(value.plan.calculation?.total, 12850);
-  assertMatch(value.reply, /HKD 12,850/);
+  assertMatch(value.reply, /HK\$ 12,850/);
   assertMatch(value.reply, /不是現行正式報價/);
 });
 

@@ -29,6 +29,7 @@ const READ_ONLY_TARGETED_CLARIFICATION = new Set([
 
 const READ_ONLY_REASONS = new Set([...READ_ONLY_RESOLVED, ...READ_ONLY_TARGETED_CLARIFICATION]);
 READ_ONLY_REASONS.add("read_only_current_requirements_recap");
+READ_ONLY_REASONS.add("read_only_customer_calculation");
 
 const AUTHORITATIVE_ROUTES = new Set([
   "commerce_state_answer",

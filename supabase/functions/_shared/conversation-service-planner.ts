@@ -105,6 +105,7 @@ export interface ServiceCalculationTerm {
   currency: string;
   charge_basis: "per_unit" | "per_order";
   source: "customer_message" | "canonical_commerce_state";
+  source_message_id?: string;
 }
 
 export interface ServicePlanInput {
@@ -278,6 +279,13 @@ function historicalCalculation(
       "试算",
       "假設",
       "假设",
+      "如果",
+      "若果",
+      "若按",
+      "conditional",
+      "hypothetical",
+      "assuming",
+      "if",
       "舊",
       "旧",
       "historical",
@@ -309,6 +317,7 @@ function historicalCalculation(
       amount: term.amount,
       charge_basis: term.charge_basis,
       source: term.source,
+      ...(term.source_message_id ? { source_message_id: term.source_message_id } : {}),
     })),
     quantity,
     per_unit_total: perUnit,
@@ -889,22 +898,17 @@ export function renderServicePlanReply(
     const perOrder = c.terms.filter((term) =>
       term.charge_basis === "per_order"
     );
+    const money = (amount: number) => `${c.currency === "HKD" ? "HK$" : c.currency === "USD" ? "US$" : c.currency} ${formatMoney(amount)}`;
     const unitExpression = perUnit.length
-      ? `(${
-        perUnit.map((term) => `${term.label} ${formatMoney(term.amount)}`).join(
-          " + ",
-        )
-      }) × ${c.quantity}`
+      ? `(${perUnit.map((term) => money(term.amount)).join(" + ")}) × ${c.quantity}`
       : "0";
     const orderExpression = perOrder.length
       ? ` + ${
-        perOrder.map((term) => `${term.label} ${formatMoney(term.amount)}`)
+        perOrder.map((term) => money(term.amount))
           .join(" + ")
       }`
       : "";
-    const expression = `${unitExpression}${orderExpression} = ${c.currency} ${
-      formatMoney(c.total)
-    }`;
+    const expression = `${unitExpression}${orderExpression} = ${money(c.total)}`;
     return [
       `按你提供並已標明收費單位的舊數字：${expression}。這只是歷史條件試算，不是現行正式報價。`,
       `按你提供并已标明收费单位的旧数字：${expression}。这只是历史条件试算，不是当前正式报价。`,

@@ -5,6 +5,7 @@ import {
   type B2QueryResult,
   buildB2AuthoritativeReadbackProof,
   buildB2ReadOnlyRecapProof,
+  buildB2TrustedCustomerCalculation,
   classifyB2AuthoritativePersistence,
   classifyCommerceStatePersistenceResult,
   collectKnownCommerceFacts,
@@ -18,6 +19,8 @@ import {
 import { classifyHandoffIntent } from "./handoff-intent.ts";
 import { classifyConversationTurn } from "./conversation-intelligence.ts";
 import { b2JourneyTransactionBoundary } from "./b2-journey-progress-contract.ts";
+import { deriveTypedCustomerCalculation } from "./conversation-service-runtime.ts";
+import { planConversationService, renderServicePlanReply } from "./conversation-service-planner.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -279,6 +282,88 @@ Deno.test("B2 known-context discovery covers the full canonical surface", () => 
     "conversion.payment_status",
   ])
     assert(paths.has(expected), `missing known fact ${expected}`);
+});
+
+Deno.test("B2 allows only a source-bound read-only historical calculation", async () => {
+  const source = "如果用返之前每部 HK$5,680 嗰個歷史價，兩部再加 HK$1,490，合共幾多？";
+  const beforeState = stateFixture();
+  const stateBefore = structuredClone(beforeState);
+  const classified = classifyConversationTurn(source);
+  const typed = deriveTypedCustomerCalculation({ question: source, current_source_message_id: SOURCE_ID });
+  const plan = planConversationService({ question: source, language: "zh-TW",
+    recall: { handled: false, reason: "CURRENT_KB_REQUIRED" }, memory: null, commerce: beforeState,
+    calculation_quantity: typed.quantity, calculation_terms: typed.terms });
+  const reply = renderServicePlanReply(plan, null) ?? "";
+  assert(typed.status === "ready" && typed.result === 12850 && typed.quantity === 2,
+    `T13 extraction failed: ${JSON.stringify({ classified, typed })}`);
+  assert(plan.action === "historical_calculation" && plan.calculation?.total === 12850 &&
+    plan.calculation.historical_only && /歷史|試算/.test(reply) && /12,850/.test(reply),
+    `T13 response composition failed: ${JSON.stringify({ plan, reply })}`);
+  assert(typed.calculation_type === "historical_or_conditional" &&
+    typed.authority === "customer_supplied_historical_or_hypothetical" &&
+    typed.current_price_authority === "NONE" && typed.transaction_mutation === "NONE",
+    `T13 authority promotion: ${JSON.stringify(typed)}`);
+  const snapshotValue = { ...snapshot(beforeState, 9), source_message_content: source };
+  const proof = await buildB2TrustedCustomerCalculation({
+    conversation_id: CONVERSATION_ID, company_id: COMPANY_ID, source_message_id: SOURCE_ID,
+    commerce_revision: 9, source_message_content: source, reply,
+  });
+  assert(proof && proof.result === 12850 && proof.inputs.length === 2, "calculation proof missing");
+  const metadata = { calculation_type: "historical_or_conditional",
+    calculation_authority: "customer_supplied_historical_or_hypothetical",
+    current_price_authority: "NONE", transaction_mutation: "NONE" };
+  const evaluate = (draft = reply, trusted = proof, snap = snapshotValue, meta = metadata) =>
+    evaluateB2BeforeCommit({ proposed_response: draft, persistence_kind: "ai_reply",
+      snapshot: snap, metadata: meta, trusted_customer_calculation: trusted });
+  assertEquals(evaluate(reply, proof, snapshotValue).code, "B2_ALLOW_BOUNDED_READ_ONLY_CUSTOMER_CALCULATION", "bounded calc allow");
+  assertEquals(evaluate(reply.replace("12,850", "12,851")).decision, "block", "arithmetic mismatch");
+  assertEquals(evaluate(reply.replace("HK$5,680", "HK$5,681")).decision, "block", "response operand substitution");
+  assertEquals(evaluate(reply.replace("歷史數字", "現時核實售價")).decision, "block", "current-price promotion");
+  assertEquals(evaluate(reply, { ...proof, company_id: "other" }).decision, "block", "wrong tenant");
+  assertEquals(evaluate(reply, { ...proof, source_message_id: "other" }).decision, "block", "wrong source");
+  assertEquals(evaluate(reply, { ...proof, conversation_id: "other" }).decision, "block", "wrong conversation");
+  assertEquals(evaluate(reply, { ...proof, inputs: proof.inputs.map((term, i) => i ? term : { ...term, amount: 42 }) }).decision, "block", "fabricated input");
+  assertEquals(evaluate(reply, { ...proof, result: 999 }).decision, "block", "fabricated result");
+
+  const client = new MockClient({ state: beforeState, revision: 9, sourceContent: source });
+  let commits = 0;
+  const positive = await executeB2PersistenceGate({ client, conversation_id: CONVERSATION_ID,
+    source_message_id: SOURCE_ID, proposed_response: reply, persistence_kind: "ai_reply",
+    metadata, trusted_customer_calculation: proof, expected_commerce_state_revision: 9,
+    commit: async () => { commits++; return "committed"; } });
+  assert(positive.committed && commits === 1 && positive.decision.code === "B2_ALLOW_BOUNDED_READ_ONLY_CUSTOMER_CALCULATION", "valid source calculation did not pass gate");
+  assertEquals(beforeState, stateBefore, "T13 Commerce semantic state changed");
+  assertEquals(client.calls.filter((call) => call.table === "conversation_commerce_state").length, 2,
+    "T13 Commerce was not revalidated immediately before reply persistence");
+  assertEquals(client.calls.filter((call) => call.table === "conversation_memory_state").length, 0,
+    "pure T13 calculation must not refresh or mutate semantic Memory");
+  commits = 0;
+  const substituted = await executeB2PersistenceGate({ client: new MockClient({ state: createEmptyConversationCommerceState(), revision: 7, sourceContent: source }),
+    conversation_id: CONVERSATION_ID, source_message_id: SOURCE_ID,
+    proposed_response: reply.replace("12,850", "12,851"), persistence_kind: "ai_reply",
+    metadata, trusted_customer_calculation: proof, expected_commerce_state_revision: 7,
+    commit: async () => { commits++; return "forbidden"; } });
+  assert(!substituted.committed && commits === 0 && substituted.decision.code === "CUSTOMER_CALCULATION_RESPONSE_BINDING_MISMATCH", "response substitution committed");
+  const stale = await executeB2PersistenceGate({ client: new MockClient({ state: beforeState, revision: 9,
+    secondRevision: 10, sourceContent: source }), conversation_id: CONVERSATION_ID,
+    source_message_id: SOURCE_ID, proposed_response: reply, persistence_kind: "ai_reply", metadata,
+    trusted_customer_calculation: proof, expected_commerce_state_revision: 9,
+    commit: async () => { commits++; return "forbidden"; } });
+  assert(!stale.committed && commits === 0, "stale revision reached reply persistence");
+  for (const [label, draft, extra] of [
+    ["transaction promotion", `${reply} 訂單已確認並已付款。`, {}],
+    ["current price promotion", reply.replace("只係", "係現時核實售價，只係") , {}],
+    ["hidden business mutation", reply, { meta: { ...metadata, transaction_mutation: "ORDER" } }],
+  ] as const) {
+    let callbackCount = 0;
+    const blocked = await executeB2PersistenceGate({ client: new MockClient({ state: beforeState,
+      revision: 9, sourceContent: source }), conversation_id: CONVERSATION_ID,
+      source_message_id: SOURCE_ID, proposed_response: draft, persistence_kind: "ai_reply",
+      metadata: extra.meta ?? metadata, trusted_customer_calculation: proof,
+      expected_commerce_state_revision: 9,
+      commit: async () => { callbackCount++; return "forbidden"; } });
+    assert(!blocked.committed && callbackCount === 0, `${label} reached persistence: ${blocked.decision.code}`);
+  }
 });
 Deno.test("B2 blocks asking for a known delivery address", () => {
   assertEquals(

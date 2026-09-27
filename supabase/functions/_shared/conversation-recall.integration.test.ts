@@ -31,10 +31,33 @@ import {
 import type { CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 import { planConversationService, renderTargetedServiceQuestion } from "./conversation-service-planner.ts";
 import { buildCanonicalConversationMemory } from "./conversation-long-memory.ts";
+import { resolveCanonicalCommerceResolution } from "./conversation-resolution-contract.ts";
 
 function assert(v: unknown, m = "assertion failed"): asserts v {
   if (!v) throw new Error(m);
 }
+
+Deno.test("T13 production-shaped historical calculation is read-only and yields HKD 12,850", async () => {
+  const source = "如果用返之前每部 HK$5,680 嗰個歷史價，兩部再加 HK$1,490，合共幾多？";
+  const initialState = createEmptyConversationCommerceState();
+  let rpcCalls = 0;
+  const db: CommerceStateDbClient = {
+    from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({
+      data: { revision: 9, state: structuredClone(initialState) }, error: null,
+    }) }) }) }),
+    rpc: async () => { rpcCalls++; return { data: null, error: null }; },
+  };
+  const beforeState = JSON.stringify(initialState);
+  const outcome = await runCommerceStateRuntime(db, {
+    conversation_id: "t13-conversation", company_id: "t13-tenant",
+    source_message_id: "t13-source", text: source, language: "zh-TW",
+  });
+  assert(outcome?.reason === "read_only_customer_calculation" && outcome.persist_result === "read_only", JSON.stringify(outcome));
+  assert(outcome.revision === 9 && outcome.calculation?.result === 12850 && outcome.calculation.currency === "HKD", JSON.stringify(outcome.calculation));
+  assert(rpcCalls === 0 && JSON.stringify(initialState) === beforeState, "Commerce calculation mutated state");
+  const resolution = resolveCanonicalCommerceResolution({ outcome, authoritative_address_correction: false });
+  assert(resolution.skip_memory_refresh && resolution.no_semantic_change && !resolution.bypass_service_plan, JSON.stringify(resolution));
+});
 
 Deno.test("C3 captured production T58 persists the delivery preference before read-only recall", async () => {
   let committed = createEmptyConversationCommerceState();

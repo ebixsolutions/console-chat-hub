@@ -786,6 +786,7 @@ jobs:
           .github/scripts/c3_edge_runtime_parity.mjs
           .github/scripts/c3_edge_runtime_parity.test.mjs
           .github/scripts/task_ai_abc_c3_final_gate.mjs
+          .github/scripts/c3_validation_control_tests.mjs
           .github/workflows/task-ai-abc-c3-final-gate.yml
           EOF
             git diff --name-only "$edge_runtime_parity_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
@@ -795,6 +796,35 @@ jobs:
             node .github/scripts/c3_edge_runtime_parity.test.mjs
             test -z "$(git diff --name-only "$edge_runtime_parity_base..$GITHUB_SHA" -- 'supabase/migrations/**' 'supabase/functions/**')"
             echo C3_EDGE_RUNTIME_PARITY_SOURCE_ALLOWLIST=PASS
+            echo C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE
+            echo C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS
+            exit 0
+          fi
+          t13_historical_calculation_base=5e034b30ccbdc37311e6a94a141e9010cb5a5301
+          if git merge-base --is-ancestor "$t13_historical_calculation_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$t13_historical_calculation_base"; then
+            expected="$RUNNER_TEMP/c3-t13-historical-calculation-expected"
+            actual="$RUNNER_TEMP/c3-t13-historical-calculation-actual"
+            cat > "$expected" <<'EOF'
+          .github/scripts/task_ai_abc_c3_final_gate.mjs
+          .github/workflows/task-ai-abc-c3-final-gate.yml
+          supabase/functions/_shared/commerce-state-runtime-base.ts
+          supabase/functions/_shared/contextual-customer-update.test.ts
+          supabase/functions/_shared/conversation-recall.integration.test.ts
+          supabase/functions/_shared/conversation-resolution-contract.ts
+          supabase/functions/_shared/conversation-service-planner.ts
+          supabase/functions/_shared/conversation-service-runtime.test.ts
+          supabase/functions/_shared/conversation-service-runtime.ts
+          supabase/functions/_shared/pre-send-conversion-supervisor.test.ts
+          supabase/functions/_shared/pre-send-conversion-supervisor.ts
+          supabase/functions/generate-reply/index.ts
+          EOF
+          git diff --name-only "$t13_historical_calculation_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
+            LC_ALL=C sort -o "$expected" "$expected"
+            diff -u "$expected" "$actual"
+            test -z "$(git diff --name-only "$t13_historical_calculation_base..$GITHUB_SHA" -- 'supabase/migrations/**' 'supabase/functions/agent-assist/index.ts' 'supabase/functions/receive-widget-message/index.ts')"
+            grep -q 'exact T13 production-shaped Commerce and service path is read-only' supabase/functions/_shared/conversation-service-runtime.test.ts
+            grep -q 'B2 accepts a prior canonical state source and revalidates it before persistence' supabase/functions/_shared/pre-send-conversion-supervisor.test.ts
+            echo C3_T13_HISTORICAL_CALCULATION_ALLOWLIST=PASS
             echo C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE
             echo C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS
             exit 0
@@ -1324,6 +1354,13 @@ jobs:
           (cd "$RUNNER_TEMP/c3-deno-checkout" && deno check --no-lock --node-modules-dir=auto supabase/functions/agent-assist/index.ts)
           (cd "$RUNNER_TEMP/c3-deno-checkout" && deno test --no-lock --allow-read --node-modules-dir=auto supabase/functions/_shared/conversation-long-memory.test.ts supabase/functions/_shared/conversation-long-memory.integration.test.ts supabase/functions/_shared/generation-terminal-guard.test.ts)
           (cd "$RUNNER_TEMP/c3-deno-checkout" && deno test --no-lock supabase/functions/_shared/deterministic-commerce-engine.test.ts)
+          (cd "$RUNNER_TEMP/c3-deno-checkout" && deno test --no-lock --allow-read --node-modules-dir=auto \
+            supabase/functions/_shared/conversation-service-runtime.test.ts \
+            supabase/functions/_shared/conversation-service-planner.test.ts \
+            supabase/functions/_shared/pre-send-conversion-supervisor.test.ts \
+            supabase/functions/_shared/contextual-customer-update.test.ts \
+            supabase/functions/_shared/product-factual-query.test.ts \
+            supabase/functions/_shared/conversation-recall.integration.test.ts)
           c3_source_clean after_deno 1
           git worktree add --detach "$RUNNER_TEMP/c3-build-checkout" "$GITHUB_SHA"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/c3-build-checkout/node_modules"

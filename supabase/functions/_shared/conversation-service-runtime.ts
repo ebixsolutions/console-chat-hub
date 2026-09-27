@@ -12,6 +12,92 @@ export interface ServiceRuntimeMessage {
   id?: string | null;
 }
 
+export interface TypedCustomerCalculationTerm extends ServiceCalculationTerm {
+  source: "customer_message";
+  source_message_id?: string;
+}
+export interface TypedCustomerCalculation {
+  terms: TypedCustomerCalculationTerm[];
+  quantity?: number;
+  status: "not_requested" | "ready" | "missing_explicit_basis" | "missing_quantity" | "mixed_currency" | "no_typed_amounts";
+  calculation_type?: "historical_or_conditional";
+  authority?: "customer_supplied_historical_or_hypothetical";
+  current_price_authority?: "NONE";
+  transaction_mutation?: "NONE";
+  arithmetic_operation?: "multiply_then_add" | "addition";
+  currency?: string;
+  result?: number;
+}
+
+const CALCULATION_REQUEST = /(?:試算|试算|假設|假设|計算|计算|加埋|合共|總共|总共|一共|總數|总数|計下|计下|算下|計幾錢|计多少钱|算幾錢|算多少钱|calculate|estimate|total|altogether|how much)/i;
+const HISTORICAL_OR_CONDITIONAL = /(?:舊|旧|之前|以前|歷史|历史|假設|假设|如果|若果|若按|按你提供|historical|previous|earlier|conditional|hypothetical|\bif\b|\bassuming\b)/i;
+const MONEY_TOKEN = /\b(HKD|USD|TWD)\b\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)|((?:HK|US|NT)\$|\$)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)|([0-9][0-9,]*(?:\.[0-9]{1,2})?)\s*(HKD|USD|TWD)\b/gi;
+const PER_UNIT = /(?:每\s*(?:部|件|個|个|台|份|位|張|张|晚|夜|日|天|次|堂|節|节|場|场|session|night|day|booking|unit|item|piece|seat)|per\s+(?:unit|item|piece|session|night|day|booking|seat)|(?:×|x|\*)\s*[1-9][0-9]{0,3}\s*$)/i;
+const PER_ORDER = /(?:每\s*(?:單|单|張單|张单|order)|整\s*(?:單|单)|per\s+order|one[- ]?off|一次性)/i;
+const ADD_ON = /(?:再加|加上|加埋|另外加|加多|另加|plus|add(?:ed)?\s+(?:an?\s+)?(?:additional\s+)?(?:amount|fee|charge|adjustment)?|and\s+add)/i;
+const SUBTOTAL_COMPONENT = /(?:subtotal|sub-total|adjustment|小計|小计|總額|总额|合計|合计|amount due|grand total)/i;
+
+function calcClean(value: unknown, limit = 2400): string {
+  return String(value ?? "").normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, limit);
+}
+function quantityValue(raw: string): number | null {
+  const map: Record<string, number> = { "一": 1, "二": 2, "兩": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10 };
+  if (/^\d{1,4}$/.test(raw)) return Number(raw);
+  return map[raw] ?? null;
+}
+export function isReadOnlyCustomerCalculationRequest(text: string): boolean {
+  const value = calcClean(text);
+  MONEY_TOKEN.lastIndex = 0;
+  const hasMoney = MONEY_TOKEN.test(value);
+  MONEY_TOKEN.lastIndex = 0;
+  return CALCULATION_REQUEST.test(value) && hasMoney && HISTORICAL_OR_CONDITIONAL.test(value) &&
+    !/(?:落單|下單|下单|付款|支付|購買|购买|訂購|订购|正式報價|正式报价|place an order|checkout|pay now|purchase now|book now)/i.test(value);
+}
+export function isHistoricalOrConditionalCustomerCalculationRequest(text: string): boolean {
+  return isReadOnlyCustomerCalculationRequest(text);
+}
+export function deriveTypedCustomerCalculation(input: {
+  question: string; current_source_message_id?: string; recent_messages?: ServiceRuntimeMessage[];
+  fallback_quantity?: number; fallback_quantity_source_message_id?: string;
+}): TypedCustomerCalculation {
+  const question = calcClean(input.question);
+  if (!isReadOnlyCustomerCalculationRequest(question)) return { terms: [], status: "not_requested" };
+  const pieces = question.replace(/([0-9]),(?=[0-9])/g, "$1∯").split(/[，,；;。\n]+/).map((item) => calcClean(item.replace(/∯/g, ",")));
+  const terms: TypedCustomerCalculationTerm[] = [];
+  for (const piece of pieces.filter((item) => /\d/.test(item))) {
+    MONEY_TOKEN.lastIndex = 0;
+    const matches = [...piece.matchAll(MONEY_TOKEN)];
+    MONEY_TOKEN.lastIndex = 0;
+    if (!matches.length) continue;
+    const perUnit = PER_UNIT.test(piece);
+    const perOrder = PER_ORDER.test(piece) || ADD_ON.test(piece) || SUBTOTAL_COMPONENT.test(piece);
+    if (!perUnit && !perOrder) return { terms: [], status: "missing_explicit_basis" };
+    for (const match of matches) {
+      const marker = (match[1] ?? match[3] ?? match[6] ?? "HKD").toUpperCase();
+      const raw = match[2] ?? match[4] ?? match[5];
+      const amount = Number(raw?.replace(/,/g, ""));
+      if (!Number.isFinite(amount) || amount <= 0) continue;
+      terms.push({ label: perUnit ? "historical unit amount" : ADD_ON.test(piece) ? "customer-supplied adjustment" : "customer-supplied amount",
+        amount, currency: marker.includes("US") ? "USD" : marker.includes("TWD") || marker.includes("NT$") ? "TWD" : "HKD",
+        charge_basis: perUnit ? "per_unit" : "per_order", source: "customer_message",
+        ...(input.current_source_message_id ? { source_message_id: input.current_source_message_id } : {}) });
+    }
+  }
+  if (!terms.length) return { terms: [], status: "no_typed_amounts" };
+  if (new Set(terms.map((term) => term.currency)).size > 1) return { terms: [], status: "mixed_currency" };
+  const qtyMatch = question.match(/(?:共|總共|总共|數量|数量|qty|quantity)?\s*(一|二|兩|两|三|四|五|六|七|八|九|十|\d{1,4})\s*(?:部|台|件|個|个|份|位|晚|夜|日|天|次|unit|units|item|items|session|sessions|night|nights)/i);
+  const explicit = qtyMatch ? quantityValue(qtyMatch[1]) : null;
+  const fallback = Number.isInteger(input.fallback_quantity) && Number(input.fallback_quantity) > 0 ? Number(input.fallback_quantity) : null;
+  const quantity = explicit ?? fallback ?? undefined;
+  if (terms.some((term) => term.charge_basis === "per_unit") && !quantity) return { terms: [], status: "missing_quantity" };
+  return { terms, ...(quantity ? { quantity } : {}), status: "ready",
+    calculation_type: "historical_or_conditional", authority: "customer_supplied_historical_or_hypothetical",
+    current_price_authority: "NONE", transaction_mutation: "NONE",
+    arithmetic_operation: terms.some((term) => term.charge_basis === "per_unit") ? "multiply_then_add" : "addition",
+    currency: terms[0].currency,
+    result: terms.reduce((sum, term) => sum + term.amount * (term.charge_basis === "per_unit" ? quantity ?? 1 : 1), 0) };
+}
+
 export interface TrustedServiceEntitlement {
   name: string;
   value: string;
@@ -48,6 +134,13 @@ export interface ServiceRuntimeDerivation {
     | "missing_quantity"
     | "mixed_currency"
     | "no_typed_amounts";
+  calculation_type?: "historical_or_conditional";
+  authority?: "customer_supplied_historical_or_hypothetical";
+  current_price_authority?: "NONE";
+  transaction_mutation?: "NONE";
+  arithmetic_operation?: "multiply_then_add" | "addition";
+  calculation_currency?: string;
+  calculation_result?: number;
   entitlement: TrustedServiceEntitlement | null;
   entitlement_status: "trusted" | "unknown";
 }
@@ -57,132 +150,6 @@ const clean = (value: unknown, limit = 1000) =>
     0,
     limit,
   );
-
-const CALCULATION_REQUEST =
-  /(?:試算|试算|假設|假设|計算|计算|加埋|合共|總共|总共|calculate|estimate|total)/i;
-const HISTORICAL_CONTEXT =
-  /(?:舊|旧|之前|以前|歷史|历史|previous|historical|old|earlier)/i;
-const MONEY_MARKER =
-  /(?:HKD|HK\$|USD|US\$)\s*[0-9]|[0-9][0-9,.]*\s*(?:HKD|HK\$|USD|US\$)/i;
-const PER_UNIT = /(?:每\s*(?:部|件|個|个|台|unit)|per\s+(?:unit|item|piece))/i;
-const PER_ORDER =
-  /(?:每\s*(?:單|单|張單|张单|order)|整\s*(?:單|单)|per\s+order)/i;
-
-function moneyInClause(
-  clause: string,
-): { amount: number; currency: string } | null {
-  const before = clause.match(/\b(HKD|USD)\b|(?:HK\$|US\$)/i);
-  const amount = clause.match(
-    /(?:HKD|USD|HK\$|US\$)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)|([0-9][0-9,]*(?:\.[0-9]{1,2})?)\s*(?:HKD|USD|HK\$|US\$)/i,
-  );
-  if (!before || !amount) return null;
-  const value = Number((amount[1] ?? amount[2]).replace(/,/g, ""));
-  if (!Number.isFinite(value) || value <= 0) return null;
-  const marker = before[0].toUpperCase();
-  return { amount: value, currency: marker.includes("US") ? "USD" : "HKD" };
-}
-
-function termLabel(clause: string, index: number): string {
-  const label = clean(clause, 100)
-    .replace(/(?:HKD|USD|HK\$|US\$)\s*[0-9][0-9,]*(?:\.[0-9]{1,2})?/ig, "")
-    .replace(/[0-9][0-9,]*(?:\.[0-9]{1,2})?\s*(?:HKD|USD|HK\$|US\$)/ig, "")
-    .replace(PER_UNIT, "")
-    .replace(PER_ORDER, "")
-    .replace(/[：:()（）]/g, " ")
-    .trim();
-  return label.slice(0, 60) || `歷史金額 ${index + 1}`;
-}
-
-function explicitQuantity(
-  question: string,
-  commerce: ConversationCommerceState | null,
-): number | undefined {
-  const match = clean(question).match(
-    /(?:共|總共|总共|數量|数量|qty|quantity)?\s*([1-9][0-9]{0,3})\s*(?:部|件|個|个|台|units?|items?|pieces?)/i,
-  );
-  if (match) return Number(match[1]);
-  const active = (commerce?.entities ?? []).filter((entity) =>
-    !["cancelled", "deferred"].includes(entity.status)
-  );
-  if (
-    active.length === 1 && Number.isInteger(active[0].quantity) &&
-    active[0].quantity > 0
-  ) return active[0].quantity;
-  return undefined;
-}
-
-export function deriveTypedHistoricalCalculation(input: {
-  question: string;
-  recent_messages?: ServiceRuntimeMessage[];
-  commerce: ConversationCommerceState | null;
-}): Pick<
-  ServiceRuntimeDerivation,
-  "calculation_terms" | "calculation_quantity" | "calculation_status"
-> {
-  const question = clean(input.question, 2400);
-  if (
-    !CALCULATION_REQUEST.test(question) || !HISTORICAL_CONTEXT.test(question)
-  ) {
-    return { calculation_terms: [], calculation_status: "not_requested" };
-  }
-  const customerTexts = [
-    question,
-    ...(input.recent_messages ?? [])
-      .filter((row) => /^(?:visitor|customer|user)$/i.test(row.role))
-      .map((row) => clean(row.content, 2400)),
-  ]
-    .filter((text) => HISTORICAL_CONTEXT.test(text) || MONEY_MARKER.test(text));
-  const clauses = customerTexts.flatMap((text) =>
-    text
-      .replace(/([0-9]),(?=[0-9])/g, "$1∯")
-      .split(/[，,；;。\n]+/)
-      .map((part) => clean(part.replace(/∯/g, ","), 300))
-      .filter(Boolean)
-  );
-  const moneyClauses = clauses.filter((clause) => MONEY_MARKER.test(clause));
-  if (!moneyClauses.length) {
-    return { calculation_terms: [], calculation_status: "no_typed_amounts" };
-  }
-  if (
-    moneyClauses.some((clause) =>
-      !PER_UNIT.test(clause) && !PER_ORDER.test(clause)
-    )
-  ) {
-    return {
-      calculation_terms: [],
-      calculation_status: "missing_explicit_basis",
-    };
-  }
-  const parsed = moneyClauses.map((clause, index) => {
-    const money = moneyInClause(clause);
-    if (!money) return null;
-    return {
-      label: termLabel(clause, index),
-      amount: money.amount,
-      currency: money.currency,
-      charge_basis: PER_UNIT.test(clause)
-        ? "per_unit" as const
-        : "per_order" as const,
-      source: "customer_message" as const,
-    };
-  });
-  if (parsed.some((term) => term === null)) {
-    return { calculation_terms: [], calculation_status: "no_typed_amounts" };
-  }
-  const terms = parsed as ServiceCalculationTerm[];
-  if (new Set(terms.map((term) => term.currency)).size !== 1) {
-    return { calculation_terms: [], calculation_status: "mixed_currency" };
-  }
-  const quantity = explicitQuantity(question, input.commerce);
-  if (terms.some((term) => term.charge_basis === "per_unit") && !quantity) {
-    return { calculation_terms: [], calculation_status: "missing_quantity" };
-  }
-  return {
-    calculation_terms: terms,
-    ...(quantity ? { calculation_quantity: quantity } : {}),
-    calculation_status: "ready",
-  };
-}
 
 export function resolveTrustedServiceEntitlement(input: {
   context: ServerCustomerContext | null;
@@ -232,6 +199,7 @@ export function resolveTrustedServiceEntitlement(input: {
 
 export function deriveServiceRuntimeInputs(input: {
   question: string;
+  current_source_message_id?: string;
   recent_messages?: ServiceRuntimeMessage[];
   commerce: ConversationCommerceState | null;
   trusted_customer_context?: ServerCustomerContext | null;
@@ -239,7 +207,32 @@ export function deriveServiceRuntimeInputs(input: {
   expected_company_id: string;
   entitlement_scope?: string;
 }): ServiceRuntimeDerivation {
-  const calculation = deriveTypedHistoricalCalculation(input);
+  const typed = deriveTypedCustomerCalculation({
+    question: input.question,
+    current_source_message_id: input.current_source_message_id,
+    recent_messages: input.recent_messages,
+    fallback_quantity: (() => {
+      const active = (input.commerce?.entities ?? []).filter((entity) =>
+        !["cancelled", "deferred"].includes(entity.status)
+      );
+      return active.length === 1 ? active[0].quantity : undefined;
+    })(),
+    fallback_quantity_source_message_id: input.commerce?.entities.length === 1
+      ? input.commerce.entities[0].provenance.source_message_id ?? undefined
+      : undefined,
+  });
+  const calculation = {
+    calculation_terms: typed.terms,
+    calculation_quantity: typed.quantity,
+    calculation_status: typed.status,
+    calculation_type: typed.calculation_type,
+    authority: typed.authority,
+    current_price_authority: typed.current_price_authority,
+    transaction_mutation: typed.transaction_mutation,
+    arithmetic_operation: typed.arithmetic_operation,
+    calculation_currency: typed.currency,
+    calculation_result: typed.result,
+  };
   const entitlement = resolveTrustedServiceEntitlement({
     context: input.trusted_customer_context ?? null,
     expected_conversation_id: input.expected_conversation_id,

@@ -264,6 +264,10 @@ console.log("C3_NONPRODUCTION_CONTROL|name=frozen_95_and_dimension_thresholds_pr
   assert.match(workflow, /C3_CURRENT_LIVE_SOURCE_PARITY: NOT_APPLICABLE/);
   assert.match(workflow, /C3_SOURCE_DEPLOYMENT_BOUNDARY: PASS/);
   assert.match(workflow, /conversation-service-planner\.ts/);
+  assert.match(workflow, /t13_historical_calculation_base=5e034b30ccbdc37311e6a94a141e9010cb5a5301/);
+  assert.match(workflow, /C3_T13_HISTORICAL_CALCULATION_ALLOWLIST=PASS/);
+  assert.ok(workflow.indexOf("t13_historical_calculation_base=5e034b30ccbdc37311e6a94a141e9010cb5a5301") < workflow.indexOf("w22_reply_base=3054095ac4fd9303e673db3435fb4fbc0440ce09"));
+  assert.match(workflow, /t13_historical_calculation_base\.\.\$GITHUB_SHA.*'supabase\/migrations\/\*\*'/s);
   assert.match(workflow, /C3-release-identity-/);
   assert.match(workflow, /authorize-validation/);
   assert.match(workflow, /C3_DEPLOYMENT_ALLOWLIST=generate-reply,agent-assist/);
