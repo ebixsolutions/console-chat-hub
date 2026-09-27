@@ -297,7 +297,8 @@ Deno.test("B2 allows only a source-bound read-only historical calculation", asyn
   assert(typed.status === "ready" && typed.result === 12850 && typed.quantity === 2,
     `T13 extraction failed: ${JSON.stringify({ classified, typed })}`);
   assert(plan.action === "historical_calculation" && plan.calculation?.total === 12850 &&
-    plan.calculation.historical_only && /歷史|試算/.test(reply) && /12,850/.test(reply),
+    plan.calculation.historical_only && /\(HK\$\s*5,680\)\s*×\s*2\s*\+\s*HK\$\s*1,490\s*=\s*HK\$\s*12,850/.test(reply) &&
+    /歷史|試算/.test(reply) && /12,850/.test(reply),
     `T13 response composition failed: ${JSON.stringify({ plan, reply })}`);
   assert(typed.calculation_type === "historical_or_conditional" &&
     typed.authority === "customer_supplied_historical_or_hypothetical" &&
@@ -317,7 +318,9 @@ Deno.test("B2 allows only a source-bound read-only historical calculation", asyn
       snapshot: snap, metadata: meta, trusted_customer_calculation: trusted });
   assertEquals(evaluate(reply, proof, snapshotValue).code, "B2_ALLOW_BOUNDED_READ_ONLY_CUSTOMER_CALCULATION", "bounded calc allow");
   assertEquals(evaluate(reply.replace("12,850", "12,851")).decision, "block", "arithmetic mismatch");
-  assertEquals(evaluate(reply.replace("HK$5,680", "HK$5,681")).decision, "block", "response operand substitution");
+  const alteredOperandReply = reply.replace(/HK\$\s*5,680/, "HK$ 5,681");
+  assert(alteredOperandReply !== reply, "response operand substitution fixture did not change the reply");
+  assertEquals(evaluate(alteredOperandReply).decision, "block", "response operand substitution");
   assertEquals(evaluate(reply.replace("歷史數字", "現時核實售價")).decision, "block", "current-price promotion");
   assertEquals(evaluate(reply, { ...proof, company_id: "other" }).decision, "block", "wrong tenant");
   assertEquals(evaluate(reply, { ...proof, source_message_id: "other" }).decision, "block", "wrong source");
@@ -344,6 +347,14 @@ Deno.test("B2 allows only a source-bound read-only historical calculation", asyn
     metadata, trusted_customer_calculation: proof, expected_commerce_state_revision: 7,
     commit: async () => { commits++; return "forbidden"; } });
   assert(!substituted.committed && commits === 0 && substituted.decision.code === "CUSTOMER_CALCULATION_RESPONSE_BINDING_MISMATCH", "response substitution committed");
+  const operandSubstituted = await executeB2PersistenceGate({ client: new MockClient({ state: beforeState,
+    revision: 9, sourceContent: source }), conversation_id: CONVERSATION_ID,
+    source_message_id: SOURCE_ID, proposed_response: alteredOperandReply, persistence_kind: "ai_reply",
+    metadata, trusted_customer_calculation: proof, expected_commerce_state_revision: 9,
+    commit: async () => { commits++; return "forbidden"; } });
+  assert(!operandSubstituted.committed && commits === 0 &&
+    operandSubstituted.decision.code === "CUSTOMER_CALCULATION_RESPONSE_BINDING_MISMATCH",
+    "operand substitution reached reply persistence");
   const stale = await executeB2PersistenceGate({ client: new MockClient({ state: beforeState, revision: 9,
     secondRevision: 10, sourceContent: source }), conversation_id: CONVERSATION_ID,
     source_message_id: SOURCE_ID, proposed_response: reply, persistence_kind: "ai_reply", metadata,
