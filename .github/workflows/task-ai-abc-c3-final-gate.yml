@@ -786,7 +786,6 @@ jobs:
           .github/scripts/c3_edge_runtime_parity.mjs
           .github/scripts/c3_edge_runtime_parity.test.mjs
           .github/scripts/task_ai_abc_c3_final_gate.mjs
-          .github/scripts/c3_validation_control_tests.mjs
           .github/workflows/task-ai-abc-c3-final-gate.yml
           EOF
             git diff --name-only "$edge_runtime_parity_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
@@ -804,7 +803,8 @@ jobs:
           if git merge-base --is-ancestor "$t13_historical_calculation_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$t13_historical_calculation_base"; then
             expected="$RUNNER_TEMP/c3-t13-historical-calculation-expected"
             actual="$RUNNER_TEMP/c3-t13-historical-calculation-actual"
-            cat > "$expected" <<'EOF'
+          cat > "$expected" <<'EOF'
+          .github/scripts/c3_validation_control_tests.mjs
           .github/scripts/task_ai_abc_c3_final_gate.mjs
           .github/workflows/task-ai-abc-c3-final-gate.yml
           supabase/functions/_shared/commerce-state-runtime-base.ts
