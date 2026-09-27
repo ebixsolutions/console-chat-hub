@@ -321,7 +321,9 @@ Deno.test("B2 allows only a source-bound read-only historical calculation", asyn
   const alteredOperandReply = reply.replace(/HK\$\s*5,680/, "HK$ 5,681");
   assert(alteredOperandReply !== reply, "response operand substitution fixture did not change the reply");
   assertEquals(evaluate(alteredOperandReply).decision, "block", "response operand substitution");
-  assertEquals(evaluate(reply.replace("歷史數字", "現時核實售價")).decision, "block", "current-price promotion");
+  const promotedPriceReply = `${reply} 目前價格已確認為 HK$5,680。`;
+  assert(promotedPriceReply !== reply, "current-price promotion fixture did not change the reply");
+  assertEquals(evaluate(promotedPriceReply).decision, "block", "current-price promotion");
   assertEquals(evaluate(reply, { ...proof, company_id: "other" }).decision, "block", "wrong tenant");
   assertEquals(evaluate(reply, { ...proof, source_message_id: "other" }).decision, "block", "wrong source");
   assertEquals(evaluate(reply, { ...proof, conversation_id: "other" }).decision, "block", "wrong conversation");
@@ -363,7 +365,7 @@ Deno.test("B2 allows only a source-bound read-only historical calculation", asyn
   assert(!stale.committed && commits === 0, "stale revision reached reply persistence");
   for (const [label, draft, extra] of [
     ["transaction promotion", `${reply} 訂單已確認並已付款。`, {}],
-    ["current price promotion", reply.replace("只係", "係現時核實售價，只係") , {}],
+    ["current price promotion", promotedPriceReply, {}],
     ["hidden business mutation", reply, { meta: { ...metadata, transaction_mutation: "ORDER" } }],
   ] as const) {
     let callbackCount = 0;
