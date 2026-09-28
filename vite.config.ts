@@ -25,7 +25,9 @@ export default defineConfig({
     // application source are unchanged; this alias requires explicit dev mode.
     resolve: isolatedBrowserAuth ? {
       alias: [{
-        find: /runtime-authority\.mjs$/,
+        // Match the entire import specifier. A suffix-only regex leaves
+        // "./" in front of the absolute replacement and breaks SSR loading.
+        find: /^(?:.*\/)?runtime-authority\.mjs$/,
         replacement: fileURLToPath(new URL("./tests/e2e/c3_local_auth_authority.mjs", import.meta.url)),
       }],
     } : undefined,
