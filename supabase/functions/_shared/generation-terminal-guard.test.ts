@@ -33,10 +33,13 @@ Deno.test("C3 generation budget leaves a deterministic terminal reserve", () => 
 Deno.test("C3 deadline aborts work and returns one safe fallback", async () => {
   let aborted = false;
   let fallbackCalls = 0;
+  let settleWork!: () => void;
+  const workSettled = new Promise<void>((resolve) => settleWork = resolve);
   const result = await runWithTerminalDeadline(
     async (signal) => {
       signal.addEventListener("abort", () => aborted = true, { once: true });
       await new Promise((resolve) => setTimeout(resolve, 30));
+      settleWork();
       return "late";
     },
     async () => {
@@ -51,6 +54,7 @@ Deno.test("C3 deadline aborts work and returns one safe fallback", async () => {
   );
   assert(aborted, "in-flight work was not aborted");
   assert(fallbackCalls === 1, "fallback was not exactly once");
+  await workSettled;
 });
 
 Deno.test("C3 completed work does not invoke fallback", async () => {

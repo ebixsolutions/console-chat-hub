@@ -16,6 +16,7 @@
     "supabase/functions/_shared/b2-journey-progress-contract.ts",
     "supabase/functions/_shared/commerce-state-runtime-base.ts",
     "supabase/functions/_shared/contextual-customer-update.test.ts",
+    "supabase/functions/_shared/generation-terminal-guard.test.ts",
     "supabase/functions/_shared/conversation-intelligence.ts",
     "supabase/functions/_shared/conversation-long-memory.ts",
     "supabase/functions/_shared/conversation-recall.test.ts",
