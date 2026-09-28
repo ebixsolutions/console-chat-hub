@@ -1841,7 +1841,7 @@ jobs:
 
   c3-director-generic-core-isolated-final:
     if: github.event_name == 'push' && github.ref == 'refs/heads/director/ai-abc-c3-long-memory-final-cutover'
-    needs: c3-validation-preflight-offline
+    needs: [c3-validation-preflight-offline, c3-preproduction]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -1861,6 +1861,7 @@ jobs:
     env:
       CI: 'true'
       C3_ISOLATED_DB_URL: postgres://postgres:c3-isolated-only@127.0.0.1:5432/c3closure
+      C3_EXISTING_C3_PREPRODUCTION_RESULT: ${{ needs.c3-preproduction.result }}
     steps:
       - uses: actions/checkout@v4
         with: {ref: '${{ github.sha }}', fetch-depth: 0, clean: true}

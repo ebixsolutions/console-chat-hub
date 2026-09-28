@@ -63,7 +63,6 @@ const commands = [
     "supabase/functions/_shared/transaction-closure-handoff.test.ts",
     "supabase/functions/_shared/pre-send-conversion-supervisor.test.ts"]],
   ["node", [".github/scripts/task_a2_commerce_reducer_authority_final_gate.mjs"]],
-  ["node", [".github/scripts/task_ai_abc_c3_final_gate.mjs"]],
   ["./node_modules/.bin/tsc", ["--noEmit", "--project", "tsconfig.json"]],
   ["npm", ["run", "build"]],
 ];
@@ -72,6 +71,22 @@ for (const [cmd, args] of commands) {
     env: { ...process.env, CI: "true" } });
   console.log(JSON.stringify({ command: [cmd, ...args], exit_code: result.status, signal: result.signal }));
   if (result.status !== 0) fail("command_failed", [cmd, ...args].join(" "));
+}
+// The existing C3 preproduction gate requires a separate historical live
+// readback contract. Its same-head CI job must succeed before this isolated
+// job starts; never forge the readback markers inside a credential-free job.
+if (process.env.CI) {
+  if (process.env.C3_EXISTING_C3_PREPRODUCTION_RESULT !== "success" ||
+      process.env.GITHUB_SHA !== git("rev-parse", "HEAD") ||
+      !process.env.GITHUB_RUN_ID) fail("existing_c3_exact_candidate_job_missing");
+  console.log(JSON.stringify({ assertion: "existing_c3_exact_candidate_job",
+    result: "PASS", head: process.env.GITHUB_SHA,
+    run_id: process.env.GITHUB_RUN_ID, dependency: "c3-preproduction" }));
+} else {
+  const priorC3 = spawnSync("node", [".github/scripts/task_ai_abc_c3_final_gate.mjs"],
+    { stdio: "inherit", timeout: 240000, env: process.env });
+  console.log(JSON.stringify({ command: "existing C3 preproduction gate", exit_code: priorC3.status }));
+  if (priorC3.status !== 0) fail("existing_c3_gate_failed");
 }
 // Vite regenerates a tracked route tree even without route changes.
 const committedRouteTree = execFileSync("git", ["show", "HEAD:src/routeTree.gen.ts"]);
