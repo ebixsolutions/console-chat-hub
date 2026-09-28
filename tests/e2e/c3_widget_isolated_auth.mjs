@@ -127,7 +127,12 @@ try {
   assert(history.status === 200 && historyBody.success === true &&
     Array.isArray(historyBody.history), `Live AI Test shared Auth path failed: HTTP ${history.status}`);
   const invalid = await replayConfig("invalid-local-token");
-  assert(invalid.status >= 400, `invalid token accepted with HTTP ${invalid.status}`);
+  const invalidBody = await invalid.text();
+  assert(invalid.status >= 400 && !invalidBody.includes("C3 owned channel"),
+    `invalid token response: HTTP ${invalid.status}; method=${config.method}; ` +
+      `owned_channel=${invalidBody.includes("C3 owned channel")}; ` +
+      `unauthorized=${/unauthorized|invalid.token/i.test(invalidBody)}; ` +
+      `server=${serverOutput.replace(/Bearer\s+\S+/gi, "Bearer [redacted]")}`);
   const agentAuth = createClient(origin, anon, { auth: { persistSession: false } });
   const { data: agentLogin, error: agentError } = await agentAuth.auth.signInWithPassword({
     email: users.agent.email, password });
