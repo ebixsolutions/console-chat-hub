@@ -5758,7 +5758,8 @@ async function orchestrationGenerateReply(
         );
       }
       if (_c1AuthorityDecision?.decision === "CONFLICT_UNRESOLVED") {
-        const knownCustomerConditions = _c3CommerceSnapshot?.company_id === _criticalE2ExpectedTenantId &&
+        const knownCustomerConditions = _c3CommerceSnapshot !== null &&
+            _c3CommerceSnapshot.company_id === _criticalE2ExpectedTenantId &&
             _c3CommerceSnapshot.conversation_id === conversation_id
           ? acknowledgeCurrentCustomerDimensions(_c3CommerceSnapshot.state, _visitorLang)
           : null;

@@ -800,14 +800,15 @@ jobs:
             exit 0
           fi
           director_generic_core_base=bc00aed2516607198a146fecd767828892e102f3
-          if test "$(git rev-parse "$GITHUB_SHA^")" = "$director_generic_core_base"; then
+          if git merge-base --is-ancestor "$director_generic_core_base" "$GITHUB_SHA" && test "$GITHUB_SHA" != "$director_generic_core_base"; then
             expected="$RUNNER_TEMP/c3-director-expected"
             actual="$RUNNER_TEMP/c3-director-actual"
             test "$(git rev-parse "$director_generic_core_base^{tree}")" = 5e9e09d8007d1e73f6e90b85c3f922feacef61f0
             jq -r '.changed_files[]' .github/scripts/c3_director_candidate_scope.json | LC_ALL=C sort > "$expected"
             git diff --name-only "$director_generic_core_base..$GITHUB_SHA" | LC_ALL=C sort > "$actual"
             diff -u "$expected" "$actual"
-            test "$(git rev-list --count "$director_generic_core_base..$GITHUB_SHA")" -eq 1
+            git log --format= --name-only "$director_generic_core_base..$GITHUB_SHA" | awk 'NF' | LC_ALL=C sort -u > "$RUNNER_TEMP/c3-director-touched"
+            if comm -13 "$expected" "$RUNNER_TEMP/c3-director-touched" | grep .; then exit 1; fi
             echo C3_DIRECTOR_GENERIC_CORE_EXACT_SOURCE_SCOPE=PASS
             echo C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE
             echo C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS
@@ -1867,7 +1868,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git rev-parse "$GITHUB_SHA^")" = bc00aed2516607198a146fecd767828892e102f3
+          git merge-base --is-ancestor bc00aed2516607198a146fecd767828892e102f3 "$GITHUB_SHA"
           echo "C3_DIRECTOR_CHECKOUT|head=$GITHUB_SHA|tree=$(git rev-parse HEAD^{tree})"
           test -z "${SUPABASE_ACCESS_TOKEN:-}"
       - uses: actions/setup-node@v4

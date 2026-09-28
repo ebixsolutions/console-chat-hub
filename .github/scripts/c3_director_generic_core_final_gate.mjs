@@ -16,10 +16,15 @@ if (baseline !== "bc00aed2516607198a146fecd767828892e102f3" ||
 function git(...args) { return execFileSync("git", args, { encoding: "utf8", timeout: 15000 }).trim(); }
 function fail(code, detail = "") { throw new Error(`C3_DIRECTOR_GATE|${code}|${detail}`); }
 function sha(data) { return createHash("sha256").update(data).digest("hex"); }
+function unapprovedWorkingTree() {
+  // supabase/setup-cli creates precisely this ephemeral CLI discovery file.
+  return git("status", "--porcelain", "--untracked-files=all").split("\n")
+    .filter((row) => row && row !== "?? supabase/.temp/cli-latest");
+}
 if (git("rev-parse", `${baseline}^{tree}`) !== baselineTree) fail("baseline_tree_mismatch");
 if (git("rev-parse", "--abbrev-ref", "HEAD") !== "director/ai-abc-c3-long-memory-final-cutover" && !process.env.CI) fail("branch_mismatch");
 if (git("merge-base", baseline, "HEAD") !== baseline) fail("candidate_not_descended_from_baseline");
-if (git("status", "--porcelain")) fail("uncommitted_candidate", "Commit exact candidate before final gate");
+if (unapprovedWorkingTree().length) fail("uncommitted_candidate", JSON.stringify(unapprovedWorkingTree()));
 const changed = git("diff", "--name-only", baseline, "HEAD").split("\n").filter(Boolean).sort();
 if (JSON.stringify(changed) !== JSON.stringify([...scope].sort())) fail("changed_file_scope", JSON.stringify(changed));
 const sourceHashes = {};
@@ -86,5 +91,5 @@ const browser = spawnSync("bash", ["tests/e2e/c3_widget_isolated_setup.sh"], {
 });
 console.log(JSON.stringify({ command: "isolated Widget browser Auth end-to-end", exit_code: browser.status, signal: browser.signal }));
 if (browser.status !== 0) fail("isolated_widget_auth_failed");
-if (git("status", "--porcelain")) fail("post_gate_source_dirty");
+if (unapprovedWorkingTree().length) fail("post_gate_source_dirty", JSON.stringify(unapprovedWorkingTree()));
 console.log(`C3_DIRECTOR_GENERIC_CORE_FINAL_GATE|result=PASS|head=${git("rev-parse", "HEAD")}|tree=${git("rev-parse", "HEAD^{tree}")}`);
