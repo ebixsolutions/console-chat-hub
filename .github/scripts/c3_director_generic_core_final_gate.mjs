@@ -56,10 +56,10 @@ console.log(JSON.stringify({ assertion: "candidate_identity", head: git("rev-par
 
 const commands = [
   ["git", ["diff", "--check", baseline, "HEAD"]],
-  ["deno", ["test", "--no-lock", "--node-modules-dir=auto", "supabase/functions/_shared/natural-dialogue-generic-core.test.ts",
+  ["deno", ["test", "--no-lock", "--node-modules-dir=manual", "supabase/functions/_shared/natural-dialogue-generic-core.test.ts",
     "tests/edge/verified-widget-auth.test.ts"]],
-  ["deno", ["test", "--no-lock", "--node-modules-dir=auto", "supabase/functions/_shared/contextual-customer-update.test.ts"]],
-  ["deno", ["test", "--no-lock", "--node-modules-dir=auto", "supabase/functions/_shared/conversation-recall.integration.test.ts",
+  ["deno", ["test", "--no-lock", "--node-modules-dir=manual", "supabase/functions/_shared/contextual-customer-update.test.ts"]],
+  ["deno", ["test", "--no-lock", "--node-modules-dir=manual", "supabase/functions/_shared/conversation-recall.integration.test.ts",
     "supabase/functions/_shared/transaction-closure-handoff.test.ts",
     "supabase/functions/_shared/pre-send-conversion-supervisor.test.ts"]],
   ["node", [".github/scripts/task_a2_commerce_reducer_authority_final_gate.mjs"]],

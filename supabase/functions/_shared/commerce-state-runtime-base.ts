@@ -994,7 +994,7 @@ function establishesDurableProductResearch(text: string): boolean {
   ) return false;
   if (detectExplicitEntityCreationSignal(t)) return true;
   if (dimensionConstraintCancellation(t) || parseSpaceScopedCommerceQuantity(t) !== null) return true;
-  return /(?:想問|想问|問埋|问埋|想要|我位得|位置|限制|上限|樓下|楼下|以下|接受|照舊|照旧|三門|三门|前置式|\d+\s*kg|買咩|买什么|邊款|哪款|recommend|advice|considering)/i.test(t);
+  return /(?:想問|想问|問埋|问埋|想要|想揀|想选|want to choose|want to select|我位得|位置|限制|上限|樓下|楼下|以下|接受|照舊|照旧|三門|三门|前置式|\d+\s*kg|買咩|买什么|邊款|哪款|recommend|advice|considering)/i.test(t);
 }
 
 function detectEntityReactivation(text: string): boolean {
@@ -1608,7 +1608,9 @@ export function filterGhostUnscopedHints(
   return hints.filter((hint) => {
     if (!categories.has(hint.category)) return true;
     const roomKey = hint.entity_id.split(":")[1];
-    if (rooms.length > 0 && roomKey === "unscoped") return false;
+    if (rooms.length > 0 && roomKey === "unscoped" &&
+      !(establishesDurableProductResearch(text) &&
+        !state.entities.some((entity) => entity.category === hint.category))) return false;
     if (additive && rooms.length === 0) return roomKey === "unscoped";
     if (roomKey !== "unscoped") return true;
     if (state.entities.some((e) => e.entity_id === hint.entity_id)) return true;
@@ -1915,13 +1917,27 @@ export function reduceTurn(
   const segmented = input.text.replace(/\.\s+/g, "。").replace(/,(?=\s*[^\d])/g, "，");
   const clauses = (segmented.match(/[^，；;。!?！？]+[!?！？]?/g) ?? [])
     .map((part) => part.trim()).filter(Boolean);
+  if (clauses.length === 1 && /[?？]/.test(clauses[0]) &&
+    /(?:暫緩|暂缓|defer|pause|cancel|取消|唔要|不要)/i.test(clauses[0]) &&
+    resolveEntityLifecyclePlan(clauses[0], previous).kind === "none") return previous;
   const semanticCustomerConditions = Boolean(input.semantic_frame?.entities.some((entity) =>
     Object.keys(entity.constraints).length > 0
   ));
+  // An enumeration inside one operation (room counts, models, or a two-item
+  // correction) must retain the whole-turn parser's aggregate interpretation.
+  // Split only when at least two clauses independently express an operation or
+  // customer condition; the other clauses may then supply a question or focus.
+  const independentOperations = clauses.filter((clause) =>
+    /(?:暫緩|暂缓|先擺低|先放低|defer|pause|hold off|取消|cancel|更正|改咗|改為|改做|量錯|其實係|actually|correct|change|最多|上限|at most|maximum|想|需要|want|need)/i.test(clause)
+  ).length;
   if (clauses.length < 2 || clauses.length > 8 ||
-    (!semanticCustomerConditions &&
-      !/(?:暫緩|暂缓|先擺低|先放低|defer|pause|hold off|取消|cancel|更正|改咗|改為|actually|correct|change|最多|上限|at most|maximum|想|需要|want|need)/i.test(input.text))) {
-    return restoreExplicitReturnTopic(reduceSingleTurn(previous, input, rawHints), input.text);
+    independentOperations < 2 && !semanticCustomerConditions) {
+    let whole = reduceSingleTurn(previous, input, rawHints);
+    if (!isHistoricalOrConditionalCustomerCalculationRequest(input.text)) {
+      const scoped = deriveScopedRoomSizeEvents(input, whole);
+      if (scoped.length) whole = reduceCommerceState(whole, scoped);
+    }
+    return restoreExplicitReturnTopic(whole, input.text);
   }
   let state = previous;
   for (const [index, clause] of clauses.entries()) {
