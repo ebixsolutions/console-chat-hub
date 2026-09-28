@@ -6,8 +6,14 @@ import type { Database } from './types'
 import { resolveAuthoritativeSupabaseBinding } from './runtime-authority.mjs'
 import { verifiedSupabaseUserId } from './verified-user'
 
-
-
+function rejectUnauthorized(message: string): never {
+  // Server functions serialize ordinary thrown Errors in a successful RPC
+  // envelope. A Response preserves the HTTP authentication boundary as 401.
+  throw Response.json({ error: message }, {
+    status: 401,
+    headers: { 'Cache-Control': 'no-store' },
+  })
+}
 export const requireSupabaseAuth = createMiddleware({ type: 'function' }).server(
   async ({ next }) => {
     // The user-owned Supabase project is the only authoritative runtime.
@@ -29,22 +35,22 @@ export const requireSupabaseAuth = createMiddleware({ type: 'function' }).server
     const request = getRequest();
 
     if (!request?.headers) {
-      throw new Error('Unauthorized: No request headers available');
+      rejectUnauthorized('Unauthorized: No request headers available');
     }
 
     const authHeader = request.headers.get('authorization');
 
     if (!authHeader) {
-      throw new Error('Unauthorized: No authorization header provided');
+      rejectUnauthorized('Unauthorized: No authorization header provided');
     }
 
     if (!authHeader.startsWith('Bearer ')) {
-      throw new Error('Unauthorized: Only Bearer tokens are supported');
+      rejectUnauthorized('Unauthorized: Only Bearer tokens are supported');
     }
 
     const token = authHeader.replace('Bearer ', '');
     if (!token) {
-      throw new Error('Unauthorized: No token provided');
+      rejectUnauthorized('Unauthorized: No token provided');
     }
 
     const supabase = createClient<Database>(
@@ -67,7 +73,15 @@ export const requireSupabaseAuth = createMiddleware({ type: 'function' }).server
     // Match the Widget Live AI Test's authoritative getUser verification.
     // The token is still sent to PostgREST, where RLS and membership checks
     // remain in force. A JWT payload alone never authorizes a company role.
-    const userId = await verifiedSupabaseUserId(supabase.auth, token);
+    let userId: string;
+    try {
+      userId = await verifiedSupabaseUserId(supabase.auth, token);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'Unauthorized: Invalid token') {
+        rejectUnauthorized(error.message);
+      }
+      throw error;
+    }
 
     return next({
       context: {
