@@ -55,12 +55,24 @@ try {
   browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
   const protectedRequests = [];
+  const observedResponses = [];
   page.on("response", (response) => {
     const request = response.request();
     const headers = request.headers();
     if (response.url().startsWith(appOrigin) && headers.authorization?.startsWith("Bearer ")) {
-      protectedRequests.push({ endpoint: new URL(response.url()).pathname, status: response.status(),
-        url: response.url() }); // Never log Authorization or session.
+      // The Widget issues several server functions. Bind the negative role
+      // checks to the response that actually returned this channel, while
+      // preserving its HTTP method and TanStack transport headers.
+      observedResponses.push((async () => {
+        const body = await response.text().catch(() => "");
+        protectedRequests.push({ endpoint: new URL(response.url()).pathname,
+          status: response.status(), url: response.url(), method: request.method(),
+          payload: request.postData(),
+          transportHeaders: Object.fromEntries(Object.entries(headers).filter(([name]) =>
+            name === "accept" || name === "content-type" || name === "origin" ||
+            name.startsWith("x-tanstack-") || name.startsWith("x-tsr-"))),
+          returnedOwnedChannel: body.includes("C3 owned channel") });
+      })()); // Never log Authorization, session, or response body.
     }
   });
   await page.goto(`${appOrigin}/login?redirect=%2Fconsole%2Fwidget-preview`);
@@ -70,8 +82,17 @@ try {
   await page.getByRole("heading", { name: "Widget Preview" }).waitFor({ timeout: 30000 });
   await page.getByText("C3 owned channel").first().waitFor({ timeout: 30000 });
   assert(!(await page.getByText("Config: Unauthorized: Invalid token").count()), "Widget token failure persists");
-  const config = protectedRequests.find((r) => r.status === 200);
-  assert(config, `no authorized Widget config request: ${JSON.stringify(protectedRequests)}`);
+  await Promise.all(observedResponses);
+  const config = protectedRequests.find((r) => r.status === 200 && r.returnedOwnedChannel);
+  assert(config, `no authorized Widget config response: ${JSON.stringify(protectedRequests.map(
+    ({ endpoint, status, method, returnedOwnedChannel }) =>
+      ({ endpoint, status, method, returnedOwnedChannel })))}`);
+  const replayConfig = (token) => fetch(config.url, {
+    method: config.method,
+    headers: { ...config.transportHeaders, Authorization: `Bearer ${token}` },
+    ...(config.method === "GET" || config.method === "HEAD" ? {} : { body: config.payload }),
+    signal: AbortSignal.timeout(30000),
+  });
   let refreshCalls = 0;
   page.on("request", (request) => {
     if (request.url().startsWith(`${origin}/auth/v1/token`) &&
@@ -105,16 +126,18 @@ try {
   const historyBody = await history.json();
   assert(history.status === 200 && historyBody.success === true &&
     Array.isArray(historyBody.history), `Live AI Test shared Auth path failed: HTTP ${history.status}`);
-  const invalid = await fetch(config.url, { headers: { Authorization: "Bearer invalid-local-token" } });
+  const invalid = await replayConfig("invalid-local-token");
   assert(invalid.status >= 400, `invalid token accepted with HTTP ${invalid.status}`);
   const agentAuth = createClient(origin, anon, { auth: { persistSession: false } });
   const { data: agentLogin, error: agentError } = await agentAuth.auth.signInWithPassword({
     email: users.agent.email, password });
   assert(!agentError && agentLogin.session, "agent session absent");
-  const denied = await fetch(config.url, { headers: { Authorization: `Bearer ${agentLogin.session.access_token}` } });
+  const denied = await replayConfig(agentLogin.session.access_token);
   const deniedBody = await denied.text();
-  assert(!deniedBody.includes("C3 owned channel") && deniedBody.includes("forbidden"),
-    `same tenant agent read config: HTTP ${denied.status}`);
+  assert(denied.status === 200 && !deniedBody.includes("C3 owned channel") &&
+    deniedBody.includes("forbidden"),
+    `same tenant agent read config: HTTP ${denied.status}; method=${config.method}; ` +
+      `server=${serverOutput.replace(/Bearer\s+\S+/gi, "Bearer [redacted]")}`);
   const foreign = await fetch(`${origin}/rest/v1/channel_config?select=id&id=eq.dddddddd-dddd-4ddd-8ddd-dddddddddddd`, {
     headers: { apikey: anon, Authorization: `Bearer ${ownerLogin.session.access_token}` },
   });
