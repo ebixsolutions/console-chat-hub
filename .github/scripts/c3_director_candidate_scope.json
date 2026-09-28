@@ -6,6 +6,7 @@
     ".github/scripts/c3_director_generic_core_final_gate.mjs",
     ".github/scripts/task_ai_abc_c3_final_gate.mjs",
     ".github/workflows/task-ai-abc-c3-final-gate.yml",
+    "sql/c3-nonproduction/00_repository_baseline.sql",
     "sql/c3-nonproduction/06_director_handoff_runtime_test.sql",
     "sql/c3-nonproduction/07_director_widget_auth_seed.sql",
     "src/integrations/supabase/auth-middleware.ts",
