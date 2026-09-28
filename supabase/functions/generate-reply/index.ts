@@ -153,6 +153,7 @@ import { bindAuthorizedReply, hasUnresolvedLifecycleReplyForSource, resumeCommit
 import {
   type CommerceRuntimeOutcome,
   type CommerceStateDbClient,
+  acknowledgeCurrentCustomerDimensions,
   resolveCommittedAddressCorrection,
   runCommerceStateRuntime,
 } from "../_shared/commerce-state-runtime.ts";
@@ -3891,66 +3892,9 @@ async function persistExplicitR1IfRequested(
       conversation_id,
     );
   }
-  if (
-    classified.rule === "R1" && !handoffHistoryError &&
-    hf1Decision.handoff_mode === "optional_clarification_then_handoff" &&
-    !pkg.collection_already_attempted
-  ) {
-    const question = buildMissingFactsQuestion(pkg, classified.language);
-    if (question) {
-      const collected = await commitAiReplyWithControlGate(
-        supabaseAdmin,
-        conversation_id,
-        source_message_id,
-        question,
-        {
-          escalation_rule: "R1",
-          escalation_action: "collect_missing_handoff_facts",
-          response_route: "warm_handoff_data_collection",
-          handoff_required: false,
-          hf1_decision: hf1Decision,
-        },
-      );
-      if (collected.ok) {
-        await cleanupThinking(
-          supabaseAdmin,
-          conversation_id,
-          source_message_id,
-        );
-        return new Response(
-          JSON.stringify({
-            success: true,
-            escalation_rule: "R1",
-            response_route: "warm_handoff_data_collection",
-            handoff_required: false,
-            handoff_mode: hf1Decision.handoff_mode,
-            missing_info_policy: hf1Decision.missing_info_policy,
-          }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-        );
-      }
-      if (
-        ["human_control", "resolved", "superseded_source"].includes(
-          collected.result,
-        )
-      ) {
-        return new Response(
-          JSON.stringify({ success: true, skipped: collected.result }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-        );
-      }
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: `r1_optional_clarification_${collected.result}`,
-        }),
-        {
-          status: 409,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        },
-      );
-    }
-  }
+  // An explicit present-tense human request is never delayed for optional
+  // collection. The R1 transaction records the request and current context;
+  // a human can ask for any genuinely missing item after accepting control.
   if (!source_message_id) {
     return new Response(
       JSON.stringify({
@@ -4316,21 +4260,18 @@ async function orchestrationGenerateReply(
   const _productFactualRequest = _productFollowUpArbitration.kind === "resolved"
     ? _productFollowUpArbitration.grounded_question
     : _h1LastMsg;
-  const _naturalImmediateResponse = await persistNaturalImmediateResponse(
-    supabaseAdmin,
-    conversation_id,
-    _h1SourceMessageId,
-    _effectiveNaturalCustomerIntent,
-    _visitorLang,
-  );
-  if (_naturalImmediateResponse) return _naturalImmediateResponse;
+  // A request for merchant facts can also carry customer-owned constraints.
+  // Route the bounded state writer before KB arbitration on such mixed turns;
+  // the KB still owns every external product or policy claim.
+  const _customerOwnedDelta = !isHistoricalOrConditionalCustomerCalculationRequest(_h1LastMsg) &&
+    /(?:想|需要|最多|上限|大約|大概|其實|更正|改咗|改為|先擺低|暫緩|暫時唔|prefer|preference|need|want|maximum|at most|actually|correct|defer|pause)/i.test(_h1LastMsg);
   // ===== TASK A3.1: multilingual universal semantic interpreter =====
   // LLM proposes a schema-constrained, language-neutral semantic frame only.
   // It never writes commerce state and never supplies external product/policy facts.
   let _a3SemanticFrame: CommerceSemanticFrame | null = null;
   if (
     _criticalE2ExpectedTenantId &&
-    (!requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent) ||
+    (!requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent) || _customerOwnedDelta ||
       isHistoricalOrConditionalCustomerCalculationRequest(_h1LastMsg) ||
       (_productFollowUpArbitration.kind === "resolved" &&
         _productFollowUpArbitration.resolution_strategy === "PER_TOPIC_REFERENT_HISTORY" &&
@@ -4368,7 +4309,7 @@ async function orchestrationGenerateReply(
   let _c3CommerceSnapshot: RecallCommerceSnapshot | null = null;
   if (
     _criticalE2ExpectedTenantId &&
-    (!requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent) ||
+    (!requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent) || _customerOwnedDelta ||
       (_productFollowUpArbitration.kind === "resolved" &&
         _productFollowUpArbitration.resolution_strategy === "PER_TOPIC_REFERENT_HISTORY" &&
         Boolean(_productFollowUpArbitration.resolved_topic)))
@@ -4659,6 +4600,16 @@ async function orchestrationGenerateReply(
     outcome: _a3Commerce,
     authoritative_address_correction: Boolean(_c3ResolvedAddressCorrection),
   });
+  // A product clarification may coexist with customer-owned changes. Commit
+  // those changes and refresh bounded context before emitting an AI reply.
+  // Explicit R1 is handled by its control transaction farther below.
+  if (!_explicitHandoffRequested) {
+    const immediate = await persistNaturalImmediateResponse(
+      supabaseAdmin, conversation_id, _h1SourceMessageId,
+      _effectiveNaturalCustomerIntent, _visitorLang,
+    );
+    if (immediate) return immediate;
+  }
   const _naturalGuidanceReply = _effectiveNaturalCustomerIntent.kind ===
       "product_guidance"
     ? renderNaturalImmediateResponse(
@@ -5807,8 +5758,12 @@ async function orchestrationGenerateReply(
         );
       }
       if (_c1AuthorityDecision?.decision === "CONFLICT_UNRESOLVED") {
-        const conflictReply = C1_AUTHORITY_CONFLICT_WORDING[_visitorLang] ??
-          C1_AUTHORITY_CONFLICT_WORDING.en;
+        const knownCustomerConditions = _c3CommerceSnapshot?.company_id === _criticalE2ExpectedTenantId &&
+            _c3CommerceSnapshot.conversation_id === conversation_id
+          ? acknowledgeCurrentCustomerDimensions(_c3CommerceSnapshot.state, _visitorLang)
+          : null;
+        const conflictReply = (knownCustomerConditions ?? "") +
+          (C1_AUTHORITY_CONFLICT_WORDING[_visitorLang] ?? C1_AUTHORITY_CONFLICT_WORDING.en);
         const committed = await commitAiReplyWithControlGate(
           supabaseAdmin,
           conversation_id,

@@ -215,6 +215,8 @@ const PRESENT_REQUEST_MARKERS = [
   "幫我接",
   "帮我接",
   "我要",
+  "我想轉",
+  "我想转",
   "我想要",
   "我需要",
   "轉我",
@@ -267,7 +269,7 @@ function hasScopedHandoffNegation(raw: string): boolean {
  * negation > conditional/future > reference/report > informational question >
  * explicit present request > bare mention.
  */
-export function classifyHandoffIntent(text: string): HandoffIntentClassification {
+function classifyHandoffClause(text: string): HandoffIntentClassification {
   const raw = normalize(text);
   const lower = raw.toLowerCase();
   const language = detectHandoffLanguageHint(raw);
@@ -316,6 +318,19 @@ export function classifyHandoffIntent(text: string): HandoffIntentClassification
   }
 
   return { ...base, category: "mention_only" };
+}
+
+export function classifyHandoffIntent(text: string): HandoffIntentClassification {
+  const language = detectHandoffLanguageHint(text);
+  const clauses = text.split(/[，,。.!！;；\n]+/).map((part) => part.trim()).filter(Boolean);
+  const decisions = (clauses.length ? clauses : [text]).map(classifyHandoffClause);
+  const explicit = decisions.find((decision) => decision.explicit_request);
+  const negated = decisions.find((decision) => decision.pure_handoff_negation);
+  if (explicit && negated) return { ...negated, language };
+  if (explicit) return { ...explicit, language };
+  if (negated) return { ...negated, language };
+  const mentioned = decisions.find((decision) => decision.mentions_human_handoff);
+  return mentioned ? { ...mentioned, language } : classifyHandoffClause(text);
 }
 
 /** Backwards-compatible boolean gate: R1 eligibility only. */

@@ -392,7 +392,15 @@ export function validateTrustedProductTopicFocus(
   if (!focus) return { valid: false, reason: "FOCUS_MISSING" };
   if (focus.resolution_strategy !== "PER_TOPIC_REFERENT_HISTORY") return { valid: false, reason: "UNTRUSTED_RESOLUTION_STRATEGY" };
   const explicitTopics = explicitCategoryKeys(input.text);
-  if (explicitTopics.length !== 1 || explicitTopics[0] !== focus.topic) return { valid: false, reason: "EXPLICIT_TOPIC_MISMATCH" };
+  const returning = input.text.split(/[，；;。!?！？]/).find((part) =>
+    /(?:講返|说回|講回|返去|回到|back to|return to)/i.test(part)
+  );
+  const returnTopics = returning ? explicitCategoryKeys(returning) : [];
+  if (!(explicitTopics.length === 1 && explicitTopics[0] === focus.topic) &&
+    !(returning && (returnTopics.length === 0 ||
+      (returnTopics.length === 1 && returnTopics[0] === focus.topic)))) {
+    return { valid: false, reason: "EXPLICIT_TOPIC_MISMATCH" };
+  }
   const matchingActiveEntities = state.entities.filter((entity) => entity.category === focus.topic && entity.status !== "cancelled" && entity.status !== "deferred");
   if (matchingActiveEntities.length !== 1) return { valid: false, reason: "ACTIVE_TOPIC_ENTITY_NOT_UNIQUE" };
   const product = clean(focus.product).toUpperCase();
@@ -1358,7 +1366,8 @@ function deriveA3RuntimeEvents(
       } else {
         const measurement = parseProductDimension(text);
         const attribute = measurement
-          ? inferCommerceDimensionAttribute(text, input.semantic_frame) ?? contextualConstraintAttribute(input.history ?? [], 0, category)
+          ? inferCommerceDimensionAttribute(text, input.semantic_frame) ??
+            measurement.attribute ?? contextualConstraintAttribute(input.history ?? [], 0, category)
           : null;
         if (measurement && attribute && (maximumConstraintLanguage(text) || /(?:位得|位置得|接受|照舊|照旧|fit|accept)/i.test(text))) {
           events.push({ type: "SET_ENTITY_CONSTRAINT", entity_id: target.entity_id, key: `max_${attribute}_mm`, value: measurement.value_mm, provenance });
@@ -1683,10 +1692,11 @@ function materializeRoomOnlyReferenceHints(
   return [...next.values()];
 }
 
-function roomScope(label: string): "small_bedroom" | "large_bedroom" | "living_room" | null {
+function roomScope(label: string): "small_bedroom" | "large_bedroom" | "living_room" | "study" | null {
   if (/(?:細房|细房|小房|small\s*bedroom)/i.test(label)) return "small_bedroom";
   if (/(?:大房|large\s*bedroom)/i.test(label)) return "large_bedroom";
   if (/(?:客廳|客厅|個廳|个厅|living\s*room)/i.test(label)) return "living_room";
+  if (/(?:書房|书房|study)/i.test(label)) return "study";
   return null;
 }
 
@@ -1694,7 +1704,7 @@ function scopedRoomValues(value: unknown): Record<string, string> | null {
   if (!isRecord(value)) return null;
   const entries = Object.entries(value);
   if (!entries.length || entries.some(([key, raw]) =>
-    !["small_bedroom", "large_bedroom", "living_room"].includes(key) ||
+    !["small_bedroom", "large_bedroom", "living_room", "study"].includes(key) ||
     typeof raw !== "string" || !/^\d+(?:\.\d+)?平方呎$/.test(raw)
   )) return null;
   return Object.fromEntries(entries) as Record<string, string>;
@@ -1704,9 +1714,9 @@ function deriveScopedRoomSizeEvents(
   input: CommerceRuntimeInput,
   previous: ConversationCommerceState,
 ): CommerceStateEvent[] {
-  if (/[?？]/.test(input.text)) return [];
-  const correction = roomSizeCorrection(input.text);
-  const observations = correction ? [] : retainedRoomSizes(input.text);
+  const declarative = input.text.split(/[?？]/)[0];
+  const correction = roomSizeCorrection(declarative);
+  const observations = correction ? [] : retainedRoomSizes(declarative);
   if (!correction && !observations.length) return [];
   // Room measurements belong to the active AC goal, never to the currently
   // active refrigerator or a cancelled/ambiguous air-conditioner entity.
@@ -1726,7 +1736,13 @@ function deriveScopedRoomSizeEvents(
   } else {
     for (const fact of observations) {
       const scope = roomScope(fact.label);
-      if (!scope || (values[scope] && values[scope] !== fact.value)) return [];
+      if (!scope) continue;
+      if (values[scope] && values[scope] !== fact.value) {
+        // A new value may replace the old scoped observation only when the
+        // customer explicitly says this is a correction. The old value stays
+        // historical, and unrelated room scopes remain untouched.
+        if (!/(?:量錯|量错|改咗|改了|更正|其實係|其实是|actually|correction|i meant)/i.test(declarative)) return [];
+      }
       values[scope] = fact.value;
     }
     if (Object.keys(values).length === Object.keys(before ?? {}).length &&
@@ -1739,11 +1755,14 @@ function deriveScopedRoomSizeEvents(
   };
   return [
     { type: "SET_ENTITY_ATTRIBUTE", entity_id: entity.entity_id, key: "room_sizes", value: values, provenance },
-    ...(correction ? [{ type: "ADD_CORRECTION" as const, correction: clean(input.text) }] : []),
+    ...(correction || observations.some((fact) => {
+      const scope = roomScope(fact.label);
+      return scope && before?.[scope] && before[scope] !== fact.value;
+    }) ? [{ type: "ADD_CORRECTION" as const, correction: clean(declarative) }] : []),
   ];
 }
 
-export function reduceTurn(
+function reduceSingleTurn(
   previous: ConversationCommerceState,
   input: CommerceRuntimeInput,
   rawHints: CommerceTurnEntityHint[],
@@ -1862,6 +1881,142 @@ export function reduceTurn(
   const reduced = reduceCommerceState(previous, [...industryEvent, ...journey.events, ...semanticEvents, ...derived, ...runtimeEvents]);
   const guard = enforceQuotationNotOrderEvents(clean(input.text), reduced);
   return guard.length ? reduceCommerceState(reduced, guard) : reduced;
+}
+
+function restoreExplicitReturnTopic(
+  state: ConversationCommerceState,
+  text: string,
+): ConversationCommerceState {
+  const clause = text.split(/[，；;。!?！？]/).find((part) =>
+    /(?:講返|说回|講回|返去|回到|back to|return to|about that)/i.test(part)
+  );
+  if (!clause) return state;
+  const lower = clause.toLowerCase();
+  const matches = state.entities.filter((entity) =>
+    entity.status !== "deferred" && entity.status !== "cancelled" &&
+    [entity.category, entity.model, entity.attributes.product_name].some((value) =>
+      typeof value === "string" && value.trim().length >= 2 &&
+      lower.includes(value.trim().toLowerCase()))
+  );
+  return matches.length === 1
+    ? reduceCommerceState(state, [{ type: "SET_CONTEXT", topic: matches[0].category }])
+    : state;
+}
+
+/** Reduce independent clauses in one CAS write, retaining the same source ID.
+ * A factual question is never allowed to veto the preceding customer-owned
+ * operations. An unresolved lifecycle target rejects the whole event set.
+ */
+export function reduceTurn(
+  previous: ConversationCommerceState,
+  input: CommerceRuntimeInput,
+  rawHints: CommerceTurnEntityHint[],
+): ConversationCommerceState {
+  const segmented = input.text.replace(/\.\s+/g, "。").replace(/,(?=\s*[^\d])/g, "，");
+  const clauses = (segmented.match(/[^，；;。!?！？]+[!?！？]?/g) ?? [])
+    .map((part) => part.trim()).filter(Boolean);
+  const semanticCustomerConditions = Boolean(input.semantic_frame?.entities.some((entity) =>
+    Object.keys(entity.constraints).length > 0
+  ));
+  if (clauses.length < 2 || clauses.length > 8 ||
+    (!semanticCustomerConditions &&
+      !/(?:暫緩|暂缓|先擺低|先放低|defer|pause|hold off|取消|cancel|更正|改咗|改為|actually|correct|change|最多|上限|at most|maximum|想|需要|want|need)/i.test(input.text))) {
+    return restoreExplicitReturnTopic(reduceSingleTurn(previous, input, rawHints), input.text);
+  }
+  let state = previous;
+  for (const [index, clause] of clauses.entries()) {
+    if (resolveEntityLifecyclePlan(clause, state).kind === "ambiguous") return previous;
+    const hints = rawHints.filter((hint) => {
+      if (state.entities.some((entity) => entity.entity_id === hint.entity_id)) return true;
+      // A location or customer condition about an existing aggregate is not
+      // another purchase entity. Only an explicit additional item can open a
+      // new scoped entity in that category.
+      return !state.entities.some((entity) =>
+        entity.category === hint.category && entity.entity_id.endsWith(":unscoped")
+      ) || detectAdditiveEntityCreationSignal(clause);
+    });
+    state = reduceSingleTurn(state, {
+      ...input,
+      text: clause,
+      history: index > 0
+        ? [{ role: "visitor", content: clauses.slice(0, index).join("。") }, ...(input.history ?? [])]
+        : input.history,
+      // A frame describing the whole turn cannot authorize a different
+      // clause's state mutation. Each clause uses the deterministic reducer.
+      semantic_frame: null,
+    }, hints);
+  }
+  // A schema-constrained semantic frame may describe a customer preference
+  // while its factual question is routed to KB. Bind only customer constraints
+  // to one existing, named entity; never copy a proposed merchant fact.
+  if (input.semantic_frame && input.semantic_frame.confidence >= 0.72 &&
+    !input.semantic_frame.ambiguity.is_ambiguous &&
+    !isHistoricalOrConditionalCustomerCalculationRequest(input.text)) {
+    const owned: CommerceStateEvent[] = [];
+    for (const candidate of input.semantic_frame.entities.slice(0, 8)) {
+      if (candidate.confidence < 0.75) continue;
+      const names = [candidate.name, candidate.category_hint, candidate.entity_ref]
+        .filter((value): value is string => typeof value === "string" && value.length >= 2);
+      if (!names.some((name) => input.text.toLowerCase().includes(name.toLowerCase()))) continue;
+      const targets = state.entities.filter((entity) =>
+        entity.status !== "cancelled" && entity.status !== "deferred" &&
+        (entity.category === candidate.category_hint || names.includes(entity.category))
+      );
+      if (targets.length !== 1) continue;
+      for (const [key, value] of Object.entries(candidate.constraints).slice(0, 8)) {
+        if (!/^[a-z][a-z0-9_]{1,60}$/i.test(key) ||
+          /(?:price|stock|availability|suitability|warranty|policy|verified|quote|payment|order)/i.test(key) ||
+          value === null || typeof value === "object" ||
+          (typeof value === "string" && value.length > 160)) continue;
+        owned.push({ type: "SET_ENTITY_CONSTRAINT", entity_id: targets[0].entity_id,
+          key, value, provenance: { source_type: "customer",
+            source_message_id: input.source_message_id, recorded_at: input.occurred_at ?? null } });
+      }
+    }
+    if (owned.length) state = reduceCommerceState(state, owned);
+  }
+  // A condition may precede the clause that first creates its entity. Bind
+  // only the scoped customer observation after all clauses have been reduced.
+  // The extractor is idempotent and refuses ambiguous or unrelated targets.
+  if (!isHistoricalOrConditionalCustomerCalculationRequest(input.text)) {
+    const scoped = deriveScopedRoomSizeEvents(input, state);
+    if (scoped.length) state = reduceCommerceState(state, scoped);
+  }
+  const focus = input.trusted_product_topic_focus;
+  if (focus && validateTrustedProductTopicFocus(input, state).valid &&
+    state.entities.filter((entity) => entity.category === focus.topic &&
+      entity.status !== "deferred" && entity.status !== "cancelled").length === 1) {
+    state = reduceCommerceState(state, [{ type: "SET_CONTEXT", topic: focus.topic }]);
+  }
+  return focus ? state : restoreExplicitReturnTopic(state, input.text);
+}
+
+/** Customer statements can be acknowledged ahead of a KB conflict without
+ * treating them as verified merchant facts or exposing storage field names. */
+export function acknowledgeCurrentCustomerDimensions(
+  state: ConversationCommerceState,
+  language: CommerceLanguage,
+): string | null {
+  const relevant = state.entities.filter((entity) =>
+    entity.category === state.current_topic &&
+    entity.status !== "cancelled" && entity.status !== "deferred"
+  );
+  if (relevant.length !== 1) return null;
+  const facts = Object.entries(relevant[0].constraints)
+    .filter(([key, value]) => /^max_(width|height|depth)_mm$/.test(key) &&
+      typeof value === "number" && Number.isFinite(value) && value > 0)
+    .slice(0, 3).map(([key, value]) => {
+      const dimension = key.split("_")[1];
+      const label = language === "en"
+        ? dimension : language === "zh-CN"
+        ? ({ width: "宽", height: "高", depth: "深" } as Record<string, string>)[dimension]
+        : ({ width: "闊", height: "高", depth: "深" } as Record<string, string>)[dimension];
+      return language === "en" ? `maximum ${label} ${value} mm` : `最${label} ${value} mm`;
+    });
+  if (!facts.length) return null;
+  return language === "en" ? `I’ve noted your stated condition: ${facts.join(", ")}. `
+    : language === "zh-CN" ? `已记下你提供的条件：${facts.join("、")}。`
+    : `已記低你提供嘅條件：${facts.join("、")}。`;
 }
 
 function resolveContextualTurn(
@@ -2559,6 +2714,7 @@ export async function runCommerceStateRuntime(
   if (
     isReadOnlyMemoryOrCurrentStateRecall(text, input.semantic_frame) &&
     !input.trusted_product_topic_focus &&
+    !/(?:講返|说回|講回|返去|回到|back to|return to|about that)/i.test(text) &&
     !detectExplicitCalculationRequest(text) &&
     contextualDecision.route !== "product_guidance" &&
     customerJourney.status !== "advance"

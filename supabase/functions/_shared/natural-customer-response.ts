@@ -246,6 +246,25 @@ export function arbitrateAnaphoricProductFollowUp(
   const visitors = scopedProductHistory(newestFirstHistory, scope).filter((row) =>
     row.role === "visitor" && row.content.trim().length > 0
   ).slice(0, 8);
+  // An explicit return to a prior item crosses a newer category-only turn.
+  // Resolve only when the bounded customer history contains exactly one
+  // non-deferred model; competing models still require clarification.
+  if (/(?:講返|讲回|回到|返回|back\s+to|return\s+to)/iu.test(normalized)) {
+    const priorModels = visitors.flatMap((row, offset) =>
+      INACTIVE_REFERENT.test(row.content) ? [] : exactProductIdentifiers(row.content)
+        .map((model) => ({ model, offset, topic: inferredProductTopic(row.content) }))
+    );
+    const distinct = [...new Set(priorModels.map((item) => item.model))];
+    if (distinct.length === 1) {
+      const prior = priorModels.find((item) => item.model === distinct[0])!;
+      return {
+        kind: "resolved", intent: productFactualIntent(prior.model, facts),
+        grounded_question: `${prior.model} ${normalized}`,
+        source_turn_offset: prior.offset, resolved_topic: prior.topic,
+        resolution_strategy: "PER_TOPIC_REFERENT_HISTORY",
+      };
+    }
+  }
   const perTopic = arbitratePerTopicProductReferent(normalized, facts, visitors);
   if (perTopic) return perTopic;
   let focusBarrier = false;

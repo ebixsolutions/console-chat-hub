@@ -4,6 +4,7 @@ import { getRequest } from '@tanstack/react-start/server'
 import { createClient } from '@supabase/supabase-js'
 import type { Database } from './types'
 import { resolveAuthoritativeSupabaseBinding } from './runtime-authority.mjs'
+import { verifiedSupabaseUserId } from './verified-user'
 
 
 
@@ -63,20 +64,15 @@ export const requireSupabaseAuth = createMiddleware({ type: 'function' }).server
       }
     );
 
-    const { data, error } = await supabase.auth.getClaims(token);
-    if (error || !data?.claims) {
-      throw new Error('Unauthorized: Invalid token');
-    }
-
-    if (!data.claims.sub) {
-      throw new Error('Unauthorized: No user ID found in token');
-    }
+    // Match the Widget Live AI Test's authoritative getUser verification.
+    // The token is still sent to PostgREST, where RLS and membership checks
+    // remain in force. A JWT payload alone never authorizes a company role.
+    const userId = await verifiedSupabaseUserId(supabase.auth, token);
 
     return next({
       context: {
         supabase,
-        userId: data.claims.sub,
-        claims: data.claims,
+        userId,
       },
     });
   },

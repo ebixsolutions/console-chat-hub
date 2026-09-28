@@ -14,19 +14,26 @@ export interface B2LifecyclePlan {
 export function resolveEntityLifecyclePlan(text: string, state: ConversationCommerceState):
   { kind: "mutation"; plans: B2LifecyclePlan[] } | { kind: "ambiguous" } | { kind: "none" } {
   const normalized = text.trim().toLowerCase();
-  const aliases = (part: string) => [...new Set(HOME_APPLIANCE_CATEGORIES.filter((spec) =>
-    spec.aliases.some((alias) => alias.trim().length >= 2 && part.includes(alias.toLowerCase()))
-  ).map((spec) => spec.key))];
-  const lifecycle = /暫時唔|暫時不|暂时不|稍後先|稍后再|hold off|defer|取消|唔要|不要|cancel\b/i;
+  const aliases = (part: string) => [...new Set([
+    ...HOME_APPLIANCE_CATEGORIES.filter((spec) =>
+      spec.aliases.some((alias) => alias.trim().length >= 2 && part.includes(alias.toLowerCase()))
+    ).map((spec) => spec.key),
+    ...state.entities.filter((entity) =>
+      [entity.category, entity.model, entity.attributes.product_name]
+        .some((value) => typeof value === "string" && value.trim().length >= 2 &&
+          part.includes(value.trim().toLowerCase()))
+    ).map((entity) => entity.category),
+  ])];
+  const lifecycle = /暫時唔|暫時不|暂时不|暫緩|暂缓|先擺低|先放低|稍後先|稍后再|hold off|defer|pause|取消|唔要|不要|cancel\b/i;
   if (!lifecycle.test(normalized)) return { kind: "none" };
-  if (/[？?]/.test(normalized) || /^(?:你仲記唔記得|係咪|有冇|是否|is |was |did )/i.test(normalized)) return { kind: "none" };
+  if (/^(?:你仲記唔記得|係咪|有冇|是否|is |was |did )/i.test(normalized)) return { kind: "none" };
   const named = aliases(normalized);
   if (!named.length && !/兩樣都|两样都|both\b|暫時唔換|暫時不換|暂时不换/i.test(normalized)) return { kind: "none" };
   // Room-scoped cancellation and service/installation actions keep their
   // existing entity/field resolution contract, never become category lifecycle.
-  if (/(?:客廳|客厅|睡房|大房|細房|细房|bedroom|living room|排水|檢查|检查|送貨|送货|delivery|闊度|宽度|高度|深度|尺寸|width|height|depth)/i.test(normalized)) return { kind: "none" };
+  if (/(?:排水|檢查|检查|送貨|送货|delivery|闊度|宽度|高度|深度|尺寸|width|height|depth)/i.test(normalized)) return { kind: "none" };
   const clauses = normalized.split(/[，,；;。]|(?=先搞)|(?=先處理)|(?=先处理)/).map((s) => s.trim()).filter(Boolean);
-  const lifecycleClauses = clauses.filter((part) => lifecycle.test(part));
+  const lifecycleClauses = clauses.filter((part) => lifecycle.test(part) && !/[?？]/.test(part));
   const focusClauses = clauses.filter((part) => /(?:先搞|先處理|先处理|focus on)/i.test(part) && !lifecycle.test(part));
   const focusKeys = [...new Set(focusClauses.flatMap(aliases))];
   if (focusKeys.length > 1) return { kind: "ambiguous" };

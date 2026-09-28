@@ -5,6 +5,7 @@ import type {
 } from "./commerce-state-contract.ts";
 import { isCurrentRequirementsRecap, isReadOnlyMemoryOrCurrentStateRecall } from "./commerce-state-authority.ts";
 import type { CanonicalConversationMemory } from "./conversation-long-memory.ts";
+import { industryEntityLabel } from "./industry-runtime-adapter.ts";
 
 export type RecallFact =
   | "quantity"
@@ -530,7 +531,9 @@ function parseQuery(
     };
   }
   const owner = any(q, OWNER), question = /[?？]|呢$/.test(q) || any(q, ASK);
-  const summary = hasField(q, "summary");
+  const summary = hasField(q, "summary") ||
+    (isCurrentRequirementsRecap(q) &&
+      /(?:兩句|两句|two sentences|(?:講返|说回|講回).{0,40}(?:要求|需求|需要))/i.test(q));
   let facts = (Object.keys(FIELDS) as RecallFact[]).filter((f) =>
     hasField(q, f)
   );
@@ -1687,7 +1690,8 @@ export function prepareConversationRecall(
 ) {
   const decision = resolveConversationRecall(input);
   const reply = decision.handled
-    ? renderCurrentAcRequirements(input, decision, language) ??
+    ? renderTwoSentenceRecap(input, decision, language) ??
+      renderCurrentAcRequirements(input, decision, language) ??
       renderConversationRecall(decision, language)
     : decision.reason === "AMBIGUOUS"
     ? recallClarification(language)
@@ -1719,6 +1723,44 @@ export function prepareConversationRecall(
       : [],
   };
   return { decision, reply, metadata };
+}
+
+function renderTwoSentenceRecap(
+  input: ConversationRecallInput,
+  decision: ConversationRecallDecision,
+  language: string,
+): string | null {
+  if (!decision.handled || decision.fact_type !== "summary" ||
+    !/(?:兩句|两句|two sentences)/i.test(input.question) || !input.commerce) return null;
+  const state = input.commerce.state;
+  const label = (entity: CommerceEntity) => industryEntityLabel(entity.entity_id, language === "en" ? "en" : language === "zh-CN" ? "zh-CN" : "zh-TW") ??
+    (typeof entity.attributes.product_name === "string" ? entity.attributes.product_name : entity.category.replace(/_/g, " "));
+  const facts = (entity: CommerceEntity) => {
+    const sizes = entity.attributes.room_sizes;
+    const rooms = sizes && typeof sizes === "object" && !Array.isArray(sizes)
+      ? Object.entries(sizes).filter(([, v]) => typeof v === "string")
+        .map(([scope, v]) => `${({ study: "書房", small_bedroom: "細房", large_bedroom: "大房", living_room: "客廳" } as Record<string, string>)[scope] ?? scope.replace(/_/g, " ")}${v}`)
+      : [];
+    const widths = Object.entries(entity.constraints)
+      .filter(([key, value]) => key === "max_width_mm" && typeof value === "number")
+      .map(([, value]) => language === "en" ? `maximum width ${value} mm` : `最闊${value} mm`);
+    return [...rooms, ...widths].slice(0, 4);
+  };
+  const active = state.entities.filter((e) => e.status !== "deferred" && e.status !== "cancelled");
+  const deferred = state.entities.filter((e) => e.status === "deferred");
+  if (!active.length && !deferred.length) return null;
+  const describe = (e: CommerceEntity) => [label(e), ...facts(e)].join("，");
+  if (language === "en") {
+    return `Your current requirements are ${active.map(describe).join("; ") || "not yet specified"}; ${deferred.map((e) => `${describe(e)} is paused`).join("; ") || "no other item is paused"}. Suitability and any missing product facts still need current evidence, and no order or payment is confirmed.`;
+  }
+  const first = language === "zh-CN" ? "目前已记录" : "而家記低咗";
+  const paused = language === "zh-CN" ? "暂缓" : "暫緩";
+  const activeText = active.map(describe).join("；") || (language === "zh-CN" ? "尚无进行中的项目" : "暫時冇進行中嘅項目");
+  const deferredText = deferred.length ? `；${deferred.map(describe).join("、")}已${paused}` : "";
+  const second = language === "zh-CN"
+    ? "适用性仍需现行资料核对，未确认订单或付款。"
+    : "適用性仲要按現行資料核對，亦未確認訂單或付款。";
+  return `${first}${activeText}${deferredText}。${second}`;
 }
 
 function renderCurrentAcRequirements(

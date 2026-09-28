@@ -533,7 +533,17 @@ const t11AtomicRepairFiles = [
   "supabase/migrations/20260925093000_c3_t11_revision_bound_ai_reply.sql",
   "supabase/migrations/rollback/20260925093000_c3_t11_revision_bound_ai_reply.rollback.sql",
 ];
-const allowed = new Set([...Object.values(files), ...t11AtomicRepairFiles]);
+const directorContract = JSON.parse(read(".github/scripts/c3_director_candidate_scope.json"));
+const directorBaseline = "bc00aed2516607198a146fecd767828892e102f3";
+must(directorContract.baseline_head === directorBaseline &&
+  directorContract.baseline_tree === "5e9e09d8007d1e73f6e90b85c3f922feacef61f0", "director_baseline_invalid");
+const directorChanged = execFileSync("git", ["diff", "--name-only", directorBaseline, "HEAD"],
+  { encoding: "utf8" }).trim().split("\n").filter(Boolean).sort();
+const directorCandidate = directorChanged.length > 0;
+if (directorCandidate) must(JSON.stringify(directorChanged) ===
+  JSON.stringify([...directorContract.changed_files].sort()), "director_exact_changed_scope_invalid");
+const allowed = new Set([...Object.values(files), ...t11AtomicRepairFiles,
+  ...(directorCandidate ? directorContract.changed_files : [])]);
 const changed = execFileSync("git", [
   "diff",
   "--name-only",
@@ -547,7 +557,7 @@ for (const file of Object.values(files)) {
 }
 must(
   changed.filter((file) => file.startsWith("supabase/migrations/")).length ===
-    4,
+    (directorCandidate ? 6 : 4),
   "migration_count_invalid",
 );
 for (
@@ -611,7 +621,9 @@ for (
   ]
 ) {
   const baseline = execFileSync("git", ["show", `origin/main:${file}`]);
-  const expected = authorizedTargetedRepairHashes.get(file) ??
+  const expected = directorCandidate && directorChanged.includes(file)
+    ? crypto.createHash("sha256").update(execFileSync("git", ["show", `HEAD:${file}`])).digest("hex")
+    : authorizedTargetedRepairHashes.get(file) ??
     crypto.createHash("sha256").update(baseline).digest("hex");
   must(
     expected === sha(file),

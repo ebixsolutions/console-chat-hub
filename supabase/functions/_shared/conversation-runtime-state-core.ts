@@ -233,6 +233,10 @@ function currentRequirementLines(snapshot: CurrentRequirementSnapshot, lang: Run
 }
 
 export function resolveWorkflow5ConversationLanguage(latest: string, rows: RuntimeHistoryRow[]): RuntimeLanguage {
+  // A direct presentation request wins over the language of the surrounding
+  // customer context; it never changes the question or its factual authority.
+  if (/(?:reply|respond|explain|answer|summari[sz]e|please|請|请|用|改用).{0,28}(?:in\s+English|英文)|(?:in\s+English).{0,28}(?:please|reply|respond)/i.test(latest)) return "en";
+  if (/(?:用|改用|以).{0,12}(?:廣東話|粤語|粵語)/i.test(latest)) return "zh-TW";
   const direct = detectLanguage(latest);
   if (/[\u4e00-\u9fff]/.test(latest)) return direct;
   const priorCustomer = rows

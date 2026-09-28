@@ -101,6 +101,19 @@ Deno.test("C2 cancelled entity is excluded", () => {
   s.entities.push({ entity_id:"old", category:"aircon", quantity:3, status:"cancelled", attributes:{}, constraints:{}, provenance:{source_type:"customer"} });
   assert(buildC2HandoffPackage(packageInput({ commerce_state:s })).active_entities.length === 0, "cancelled revived");
 });
+Deno.test("Director handoff keeps scoped customer facts and deferred context distinct from merchant claims", () => {
+  const s = state();
+  s.entities.push(
+    { entity_id:"booking-a", category:"booking", quantity:3, status:"researching", attributes:{ nights:3 }, constraints:{}, provenance:{source_type:"customer",source_message_id:"a"} },
+    { entity_id:"parking-b", category:"parking", quantity:1, status:"deferred", attributes:{}, constraints:{ max_width_mm:610 }, provenance:{source_type:"customer",source_message_id:"b"} },
+  );
+  s.latest_corrections=["booking nights 2 to 3"];
+  const pkg=buildC2HandoffPackage(packageInput({ commerce_state:s }));
+  assert(pkg.active_entities.length===1 && pkg.deferred_entities?.length===1,"deferred entity lost or reactivated");
+  assert(pkg.current_customer_facts?.some((fact)=>fact.key==="nights" && fact.value===3 && fact.authority==="CUSTOMER_FACT"),"customer fact omitted");
+  assert(pkg.active_entities[0].attributes?.nights===3 && pkg.deferred_entities?.[0].constraints && pkg.latest_corrections.length===1,"context incomplete");
+  assert(pkg.current_authoritative_kb_facts.length===0 && !pkg.confirmed_facts.some((fact)=>fact.key==="suitability"),"unverified suitability promoted");
+});
 Deno.test("C2 active entities remain isolated", () => {
   const s = state();
   s.entities.push(

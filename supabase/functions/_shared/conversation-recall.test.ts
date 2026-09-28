@@ -1,5 +1,6 @@
 import {
   type ConversationRecallInput,
+  prepareConversationRecall,
   recallClarification,
   renderConversationRecall,
   resolveConversationRecall,
@@ -590,6 +591,19 @@ Deno.test("C3 Cantonese and English requirement-recap paraphrases use structured
     const { reply } = answer(question);
     assert(reply.includes("### Active Entities") && !reply.includes("washer-front"), `${question}:${reply}`);
   }
+});
+Deno.test("C3 two-sentence Cantonese recap presents known corrected and deferred state", () => {
+  const input = recallFixture("可唔可以用廣東話兩句講返我而家嘅要求？");
+  input.commerce!.state.entities[0].attributes.room_sizes = { study: "105平方呎" };
+  input.commerce!.state.entities[1].category = "refrigerator";
+  input.commerce!.state.entities[1].constraints.max_width_mm = 610;
+  input.commerce!.state.latest_corrections = ["書房 95 → 105 平方呎"];
+  const result = prepareConversationRecall(input, "zh-TW");
+  assert(result.reply, JSON.stringify(result));
+  assert(result.decision.handled && result.reply.includes("105平方呎") &&
+    result.reply.includes("610 mm") && result.reply.includes("暫緩"), JSON.stringify(result));
+  assert(!result.reply.includes("95") && !result.reply.includes("請提供型號"), result.reply);
+  assert(result.reply.split("。").filter(Boolean).length === 2, result.reply);
 });
 Deno.test("C3 renderer never invents unsupported decision", () =>
   assert(
