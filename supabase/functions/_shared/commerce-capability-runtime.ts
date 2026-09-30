@@ -269,3 +269,30 @@ export function buildCapabilityAwarePreorderNextStep(
   if (caps.digital_fulfilment) return "下一步要確認最終價格同訂單資料，再安排付款同數碼交付。";
   return "下一步要確認最終價格同訂單資料，再安排付款。";
 }
+
+/** Render conversational requirements only; external fulfilment requires its own authority. */
+export function renderCanonicalRequirement(entity: CommerceEntity, language: string): string {
+  const l = language === "en" ? 2 : language === "zh-CN" ? 1 : 0;
+  const name = typeof entity.attributes.product_name === "string" ? entity.attributes.product_name : entity.model ?? entity.category.replace(/_/g, " ");
+  const unit = typeof entity.attributes.unit === "string" ? entity.attributes.unit : "items";
+  const translated: Record<string, [string,string]> = {seats:["席","席"],seat:["席","席"],sessions:["節","节"],session:["節","节"],units:["個","个"],unit:["個","个"],items:["個","个"]};
+  const count = l === 2 ? `${entity.quantity} ${entity.quantity===1?unit.replace(/s$/, ""):unit}` : `${entity.quantity}${translated[unit]?.[l] ?? unit}`;
+  const date = typeof entity.attributes.requested_date === "string" ? entity.attributes.requested_date : null;
+  const dateText = date ? [ `，要求日期 ${date}`, `，要求日期 ${date}`, ` on ${date}` ][l] : "";
+  const inactive = entity.status === "deferred" ? ["，已暫緩","，已暂缓"," (deferred)"][l] : entity.status === "cancelled" ? ["，已取消","，已取消"," (cancelled)"][l] : "";
+  return `${name}${l===2?", ":"，"}${count}${dateText}${inactive}`;
+}
+
+export function renderRequirementQualification(state: ConversationCommerceState, language: string): string {
+  const l = language === "en" ? 2 : language === "zh-CN" ? 1 : 0;
+  const active = state.entities.filter(e=>!["deferred","cancelled"].includes(e.status));
+  const booking = active.some(e=>e.attributes.capabilities && typeof e.attributes.capabilities === "object" &&
+    (e.attributes.capabilities as Record<string,unknown>).requires_booking === true && !state.conversion.confirmed_entity_ids.includes(e.entity_id));
+  if (booking) return ["預約要求仍需職員確認，未成為已確認預約。","预约要求仍需职员确认，尚未成为已确认预约。","The requested booking still needs staff confirmation; it is not a confirmed booking."][l];
+  const site = active.some(e=>e.category === "air_conditioner" || e.attributes.capabilities && typeof e.attributes.capabilities === "object" &&
+    (e.attributes.capabilities as Record<string,unknown>).requires_site_check === true);
+  if (site) return ["適用性仍要按現行資料及現場條件核對。","适用性仍需按现行资料及现场条件核对。","Suitability still needs current evidence and the relevant site checks."][l];
+  if (state.conversion.order_status === "none" && state.conversion.payment_status === "none")
+    return ["呢啲只係今次要求嘅記錄，未建立訂單或付款。","这些只是本次要求的记录，尚未建立订单或付款。","These are the requirements for this request; no order or payment has been created."][l];
+  return ["訂單狀態","订单状态","Order status"][l]+`: ${state.conversion.order_status}; `+["付款狀態","付款状态","payment status"][l]+`: ${state.conversion.payment_status}.`;
+}

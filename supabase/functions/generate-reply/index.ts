@@ -167,7 +167,9 @@ import {
   isCanonicalConversationMemory,
   composeBoundedGenerationEnvelope,
   type MemoryHistoryRow,
+  type LongMemoryDbClient,
   refreshConversationLongMemory,
+  reconcileDeliveredMemoryReply,
   verifyCommittedRoomCorrectionMemory,
   verifyCommittedLifecycleMemory,
 } from "../_shared/conversation-long-memory.ts";
@@ -696,7 +698,8 @@ async function commitAiReplyWithControlGate(
       | "b2_block"
       | "b2_indeterminate"
       | "rpc_error"
-      | "unexpected_result";
+      | "unexpected_result"
+      | "memory_resolution_failed";
   }
 > {
   if (!source_message_id) {
@@ -761,6 +764,13 @@ async function commitAiReplyWithControlGate(
 
   const { data, error } = b2.value;
 
+  const finishDelivered = async (receipt: {ok:true;message_id:string|null;idempotent:boolean}) => {
+    if (!receipt.message_id) return {ok:false as const,result:"unexpected_result" as const};
+    const reconciled = await reconcileDeliveredMemoryReply(supabaseAdmin as unknown as LongMemoryDbClient, {
+      conversation_id, source_message_id, reply_message_id:receipt.message_id,
+    });
+    return reconciled ? receipt : {ok:false as const,result:"memory_resolution_failed" as const};
+  };
   const recoverAmbiguousAcknowledgement = async () => {
     const receipt = await readExactAiReplyCommit(supabaseAdmin, {
       conversation_id,
@@ -772,11 +782,11 @@ async function commitAiReplyWithControlGate(
       idempotency_key: attemptedEvidence?.b2_idempotency_key as string | undefined,
     });
     return receipt.status === "committed"
-      ? {
+      ? await finishDelivered({
         ok: true as const,
         message_id: receipt.value.message_id,
         idempotent: true,
-      }
+      })
       : null;
   };
 
@@ -798,21 +808,13 @@ async function commitAiReplyWithControlGate(
         return await recoverAmbiguousAcknowledgement() ??
           { ok: false, result: "unexpected_result" };
       }
-      return {
-        ok: true,
-        message_id: payload.message_id,
-        idempotent: false,
-      };
+      return await finishDelivered({ok:true, message_id:payload.message_id, idempotent:false});
     case "idempotent":
       if (typeof payload.message_id !== "string") {
         return await recoverAmbiguousAcknowledgement() ??
           { ok: false, result: "unexpected_result" };
       }
-      return {
-        ok: true,
-        message_id: payload.message_id,
-        idempotent: true,
-      };
+      return await finishDelivered({ok:true, message_id:payload.message_id, idempotent:true});
     case "human_control":
     case "resolved":
     case "invalid_source_message":
@@ -4552,6 +4554,7 @@ async function orchestrationGenerateReply(
   const _c3ServicePlan: ServiceDialoguePlan = planConversationService(
     applyServiceRuntimeDerivation({
       question: _productFactualRequest,
+      committed_source_message_id: _c3CommerceSnapshot?.source_message_id === _h1SourceMessageId ? _h1SourceMessageId : undefined,
       language: _visitorLang,
       recall:
         requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent) &&

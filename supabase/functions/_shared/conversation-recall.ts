@@ -5,6 +5,7 @@ import type {
 } from "./commerce-state-contract.ts";
 import { isCurrentRequirementsRecap, isReadOnlyMemoryOrCurrentStateRecall } from "./commerce-state-authority.ts";
 import type { CanonicalConversationMemory } from "./conversation-long-memory.ts";
+import { renderCanonicalRequirement, renderRequirementQualification } from "./commerce-capability-runtime.ts";
 import { industryEntityLabel } from "./industry-runtime-adapter.ts";
 
 export type RecallFact =
@@ -1759,17 +1760,15 @@ function renderTwoSentenceRecap(
   const active = state.entities.filter((e) => e.status !== "deferred" && e.status !== "cancelled");
   const deferred = state.entities.filter((e) => e.status === "deferred");
   if (!active.length && !deferred.length) return null;
-  const describe = (e: CommerceEntity) => [label(e), ...facts(e)].join("，");
+  const describe = (e: CommerceEntity) => e.entity_id.startsWith("generic:") ? renderCanonicalRequirement(e,language) : [label(e), ...facts(e)].join("，");
   if (language === "en") {
-    return `Your current requirements are ${active.map(describe).join("; ") || "not yet specified"}; ${deferred.map((e) => `${describe(e)} is paused`).join("; ") || "no other item is paused"}. Suitability and any missing product facts still need current evidence, and no order or payment is confirmed.`;
+    return `Your current requirements are ${[...active,...deferred].map(describe).join("; ") || "not yet specified"}. ${renderRequirementQualification(state,language)}`;
   }
   const first = language === "zh-CN" ? "目前已记录" : "而家記低咗";
   const paused = language === "zh-CN" ? "暂缓" : "暫緩";
   const activeText = active.map(describe).join("；") || (language === "zh-CN" ? "尚无进行中的项目" : "暫時冇進行中嘅項目");
-  const deferredText = deferred.length ? `；${deferred.map(describe).join("、")}已${paused}` : "";
-  const second = language === "zh-CN"
-    ? "适用性仍需现行资料核对，未确认订单或付款。"
-    : "適用性仲要按現行資料核對，亦未確認訂單或付款。";
+  const deferredText = deferred.length ? `；${deferred.map(e=>describe(e)+(e.entity_id.startsWith("generic:")?"":`已${paused}`)).join("、")}` : "";
+  const second = renderRequirementQualification(state,language);
   return `${first}${activeText}${deferredText}。${second}`;
 }
 

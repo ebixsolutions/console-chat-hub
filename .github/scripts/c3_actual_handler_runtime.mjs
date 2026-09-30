@@ -42,7 +42,7 @@ try {
     WHERE n.nspname='public' AND c.relname='handoff_event' AND NOT t.tgisinternal ORDER BY tgname`)).rows;
   const catalog = async () => (await db.query(`SELECT p.proname,md5(pg_get_functiondef(p.oid)) AS hash,pg_get_userbyid(p.proowner) AS owner,p.prosecdef,p.proconfig,p.proacl::text AS acl
     FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
-    WHERE n.nspname='public' AND p.proname IN ('commit_ai_reply_tx','c2_populate_handoff_package_tg','c3_enrich_handoff_from_memory_tg') ORDER BY p.proname`)).rows;
+    WHERE n.nspname='public' AND p.proname IN ('commit_ai_reply_tx','c2_populate_handoff_package_tg','c3_enrich_handoff_from_memory_tg','c3_commit_conversation_memory_tx') ORDER BY p.proname`)).rows;
   for (const file of migrationFiles) {
     if(file.endsWith("20260930090000_c3_handoff_grounded_facts.sql")) {acceptedHandoff=await catalog();acceptedTriggers=await triggers();}
     await db.exec(read(file).replace(/CREATE EXTENSION IF NOT EXISTS pgcrypto;/gi, ""));
@@ -50,12 +50,12 @@ try {
   const forwardCatalog=await catalog();
   for (const fn of forwardCatalog) {
     assert.equal(fn.owner,"postgres");assert.equal(fn.prosecdef,true);
-    assert.deepEqual(fn.proconfig,fn.proname === "c3_enrich_handoff_from_memory_tg" ? ['search_path=""'] : ["search_path=public, pg_temp"]);
+    assert.deepEqual(fn.proconfig,["c3_enrich_handoff_from_memory_tg","c3_commit_conversation_memory_tx"].includes(fn.proname) ? ['search_path=""'] : ["search_path=public, pg_temp"]);
     assert.equal(fn.acl,acceptedHandoff.find(x=>x.proname===fn.proname).acl);
   }
   assert.equal(forwardCatalog.find(x=>x.proname==="commit_ai_reply_tx").hash,"f3ba6240d2453729ce073b7e87ed665c");
   assert.deepEqual(await triggers(),acceptedTriggers);assert.deepEqual(await ledger(),acceptedLedger);
-  assert.deepEqual(forwardCatalog.filter(x=>x.proname!=="c3_enrich_handoff_from_memory_tg"),acceptedHandoff.filter(x=>x.proname!=="c3_enrich_handoff_from_memory_tg"));
+  assert.deepEqual(forwardCatalog.filter(x=>!["c3_enrich_handoff_from_memory_tg","c3_commit_conversation_memory_tx"].includes(x.proname)),acceptedHandoff.filter(x=>!["c3_enrich_handoff_from_memory_tg","c3_commit_conversation_memory_tx"].includes(x.proname)));
   // Existing R1 RPC readback in the repository, not a fabricated test handoff.
   const handoffSQL = read("sql/c3-nonproduction/06_director_handoff_runtime_test.sql");
   await db.exec(handoffSQL.slice(handoffSQL.indexOf("CREATE OR REPLACE FUNCTION public.explicit_handoff_tx"), handoffSQL.indexOf("CREATE TEMP TABLE c3_before")));
@@ -76,10 +76,10 @@ try {
       const body = JSON.parse((await Array.fromAsync(req)).map((part) => part.toString()).join("") || "{}");
       if (url.pathname === "/api/v1/rag/context-search") {
         assert.equal(body.company_id,34,"synthetic upstream tenant binding");
-        const found=/CW-SUL70BA|ZZ-KL88|CN-314|BK-827/i.test(body.query ?? "");
-        const model=(body.query ?? "").match(/CW-SUL70BA|ZZ-KL88|CN-314|BK-827/i)?.[0] ?? "CW-SUL70BA";
-        const policy=/CN-314|BK-827/.test(model);
-        const content = model === "CN-314" ? "product model: CN-314\nbilling policy: Seat charges are calculated monthly; changes require account administrator approval" : model === "BK-827" ? "product model: BK-827\nbooking policy: Requested dates require staff confirmation before a booking is confirmed" : fixtureText.replaceAll("CW-SUL70BA",model);
+        const found=/CW-SUL70BA|ZZ-KL88|CN-314|BK-827|CN-638|BK-941/i.test(body.query ?? "");
+        const model=(body.query ?? "").match(/CW-SUL70BA|ZZ-KL88|CN-314|BK-827|CN-638|BK-941/i)?.[0] ?? "CW-SUL70BA";
+        const policy=/CN-314|BK-827|CN-638|BK-941/.test(model);
+        const content = /^CN-/.test(model) ? `product model: ${model}\nbilling policy: Seat charges are calculated monthly; changes require account administrator approval` : /^BK-/.test(model) ? `product model: ${model}\nbooking policy: Requested dates require staff confirmation before a booking is confirmed` : fixtureText.replaceAll("CW-SUL70BA",model);
         const selected=found ? [{ document_id:kbDoc,title:`Synthetic ${model}`,source_type:policy?"policy":"product",document_score:0.99,summary:null,
           evidence:[{chunk_id:kbChunk,content,score:0.99,chunk_type:"full_content"}],
           authority:{tenant_id:"34",publication_state:"published",currentness:"current",entity_ids:[model],regions:["HK"],language:"zh-HK",version:"fixture-1",version_rank:1,updated_at:"2026-09-30T00:00:00Z",source_priority:1,claims:[]} }] : [];
@@ -170,7 +170,7 @@ try {
       const before=(await db.query("SELECT count(*)::int AS n FROM messages WHERE conversation_id=$1 AND role='assistant'",[id])).rows[0].n;
       const response=await fetch(`http://127.0.0.1:${port}`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({conversation_id:id,source_message_id:source})});
       const outcome=await response.json();
-      const rows=(await db.query("SELECT content,metadata FROM messages WHERE conversation_id=$1 AND role='assistant' ORDER BY created_at,id",[id])).rows;
+      const rows=(await db.query("SELECT id,content,metadata FROM messages WHERE conversation_id=$1 AND role='assistant' ORDER BY created_at,id",[id])).rows;
       const semanticAfter=(await db.query("SELECT revision,state FROM conversation_commerce_state WHERE conversation_id=$1",[id])).rows;
       const memoryAfter=(await db.query("SELECT revision,memory FROM conversation_memory_state WHERE conversation_id=$1",[id])).rows;
       if(outcome.response_route === "c3_historical_conditional_calculation") {
@@ -185,7 +185,25 @@ try {
         const afterReplay=await counts();assert.deepEqual(afterReplay,beforeReplay,"R1 replay duplicated event/reply");
         replay={status:duplicate.status,outcome:await duplicate.json(),before:beforeReplay,after:afterReplay};
       }
-      outputs.push({source,customer:content,status:response.status,outcome,replies:rows.slice(before),semanticAfter,memoryAfter,replay});
+      const memoryEvents=(await db.query("SELECT source_message_id,applied_revision,commerce_state_revision,memory_hash FROM conversation_memory_state_event WHERE conversation_id=$1 ORDER BY applied_revision",[id])).rows;
+      outputs.push({source,customer:content,status:response.status,outcome,replies:rows.slice(before),semanticAfter,memoryAfter,memoryEvents,replay});
+      if(outcome.response_route === "canonical_kb_direct_answer" && /policy/i.test(content)) {
+        sameTurnPolicy(outputs.at(-1));
+        const stored=(await db.query("SELECT * FROM conversation_memory_state WHERE conversation_id=$1",[id])).rows[0];
+        const params=[id,company,source,stored.commerce_state_revision,stored.revision,JSON.stringify({...stored.memory,memory_revision:stored.revision+1,current_goal:"fabricated business mutation"}),stored.markdown_projection,stored.updated_from_turn];
+        const invalid=(await db.query("SELECT c3_commit_conversation_memory_tx($1,$2,$3,$4,$5,$6::jsonb,$7,$8) AS result",params)).rows[0].result;
+        assert.equal(invalid.result,"source_message_replay_conflict","same-source path permitted business mutation");
+        const forged=structuredClone(stored.memory);forged.memory_revision=stored.revision+1;
+        forged.question_lifecycle.find(q=>q.source_message_id===source).resolution_source_message_id=randomUUID();params[5]=JSON.stringify(forged);
+        assert.equal((await db.query("SELECT c3_commit_conversation_memory_tx($1,$2,$3,$4,$5,$6::jsonb,$7,$8) AS result",params)).rows[0].result.result,"lifecycle_reply_binding_invalid");
+        const resurrect=structuredClone(stored.memory);resurrect.memory_revision=stored.revision+1;
+        resurrect.question_lifecycle.find(q=>q.source_message_id===source).status="pending";params[5]=JSON.stringify(resurrect);
+        assert.equal((await db.query("SELECT c3_commit_conversation_memory_tx($1,$2,$3,$4,$5,$6::jsonb,$7,$8) AS result",params)).rows[0].result.result,"lifecycle_reply_binding_invalid","answered policy resurrected");
+        params[5]=JSON.stringify(stored.memory);params[4]=stored.revision-1;
+        const replayed=(await db.query("SELECT c3_commit_conversation_memory_tx($1,$2,$3,$4,$5,$6::jsonb,$7,$8) AS result",params)).rows[0].result;
+        assert.equal(replayed.idempotent,true,"finalised Memory replay not idempotent");
+        assert.deepEqual((await db.query("SELECT * FROM conversation_memory_state WHERE conversation_id=$1",[id])).rows[0],stored,"negative/replay test mutated canonical memory");
+      }
     }
     const state=(await db.query("SELECT status,assigned_agent_id FROM conversations WHERE id=$1",[id])).rows[0];
     const commerce=(await db.query("SELECT * FROM conversation_commerce_state WHERE conversation_id=$1",[id])).rows;
@@ -245,6 +263,48 @@ try {
   }
   const unspecified=await conversation(["假設機價 HK$8,123，幫我試算三部幾多？"]);
   assert.match(unspecified.outputs[0].replies[0].content,/單價|總額/);
+  function sameTurnPolicy(turn) {
+    assert.equal(turn.status,200);assert.equal(turn.replies.length,1);
+    const memory=turn.memoryAfter[0].memory;
+    const item=memory.question_lifecycle.find(q=>q.source_message_id===turn.source);
+    assert.ok(item,"current policy question not persisted");assert.equal(item.status,"resolved","policy closes a turn late");
+    assert.equal(item.resolution,"canonical_kb_direct_answer");assert.equal(item.resolution_source_message_id,turn.replies[0].id);
+    assert.ok(!memory.open_questions.includes(item.text));assert.ok(!memory.handoff_relevant_state.open_questions.includes(item.text));
+    assert.equal(memory.source_message_id,turn.source);
+    assert.equal(turn.memoryEvents.at(-1).source_message_id,turn.source);
+    assert.equal(turn.memoryEvents.at(-1).applied_revision,memory.memory_revision);
+  }
+  function acknowledgement(c,indices) {
+    for(const i of indices) {
+      const t=c.outputs[i],reply=t.replies[0];
+      assert.equal(t.status,200);assert.ok(reply);
+      assert.equal(reply.metadata.service_action,"state_acknowledgement",t.customer);
+      assert.ok(!reply.metadata.missing_slots.includes("customer_goal"),"parsed goal still missing");
+      assert.doesNotMatch(reply.content,/Got it:|keep this detail|verify anything still uncertain|收到，你提到|我會按呢個條件整理/i);
+      assert.ok(!reply.content.includes(t.customer));
+      const committed=t.semanticAfter[0].state.entities.filter(e=>e.provenance.source_message_id===t.source);
+      assert.ok(committed.length);for(const e of committed){assert.ok(reply.content.includes(e.attributes.product_name));assert.ok(reply.content.includes(String(e.quantity)));if(e.attributes.requested_date)assert.ok(reply.content.includes(e.attributes.requested_date));}
+    }
+  }
+  function summaryParity(c) {
+    const outer=JSON.parse(c.handoff[0].ai_summary),p=outer.structured_package;
+    const sections=Object.fromEntries(outer.summary_markdown.split(/^### /gm).filter(Boolean).map(section=>{const at=section.indexOf("\n");return [section.slice(0,at),section.slice(at+1).trim()];}));
+    assert.equal(sections["Customer Goal"],p.current_customer_goal);
+    assert.notEqual(sections["Customer Goal"],p.handoff_request_text,"R1 replaced business goal");
+    for(const e of p.active_entities)assert.ok(p.current_customer_goal.includes(e.attributes.product_name??e.model??e.category),"human goal lacks active canonical entity");
+    for(const [bucket,status] of [["active_entities","Active"],["deferred_entities","Deferred"],["cancelled_entities","Cancelled"]])for(const e of p[bucket]) {
+      const name=e.attributes.product_name??e.model??e.category;assert.ok(sections["Current State"].includes(`${status}: ${name}`));
+      assert.ok(sections["Current State"].includes(String(e.quantity)));if(e.attributes.requested_date)assert.ok(sections["Current State"].includes(e.attributes.requested_date));
+    }
+    for(const x of p.latest_corrections)assert.ok(sections["Latest Correction"].includes(x));
+    const expected=[...new Set([...p.open_questions,...p.pending_actions])].sort();
+    assert.deepEqual(sections.Pending==="- —"?[]:sections.Pending.split("\n").map(x=>x.slice(2)).sort(),expected);
+    for(const q of p.question_lifecycle.filter(q=>q.status==="resolved"))assert.ok(!sections.Pending.includes(q.text));
+    assert.equal(sections["Handoff Reason"],p.handoff_reason);assert.equal(sections["Handoff Request"],p.handoff_request_text);
+    assert.equal(sections["Recommended Next Action"],p.recommended_next_human_action);
+    for(const [key,value] of Object.entries(p.transaction_state))assert.ok(sections["Current State"].includes(`${key[0].toUpperCase()+key.slice(1)}: ${value}`));
+    return {conversation_id:c.id,structured_package:p,summary_sections:sections,parity:true};
+  }
   function governed(c,turn) {
     assert.equal(c.handoff.length,1);assert.equal(c.handoff[0].source_message_id,c.outputs[turn].source);
     assert.equal(c.outputs.at(-1).replies.length,0);assert.equal(c.outputs.at(-1).outcome.skipped,"human_handling");
@@ -271,6 +331,8 @@ try {
     "用廣東話兩句總結我而家嘅要求。","我想真人客服接手。","還有一個問題。"]);
   console.log("SAAS",saas.outputs.map(t=>[t.customer,t.replies.map(x=>x.content)]));
   const sp=governed(saas,7);
+  acknowledgement(saas,[0,1,2]);sameTurnPolicy(saas.outputs[3]);
+  assert.doesNotMatch(saas.outputs[6].replies[0].content,/適用性|适用性|suitability|site assessment|installation/i);
   assert.ok(sp.active_entities.some(e=>e.category==="subscription"&&e.quantity===9));
   assert.ok(sp.deferred_entities.some(e=>e.category==="addon"&&e.quantity===1));
   assert.match(saas.outputs[3].replies[0].content,/monthly/);
@@ -286,6 +348,9 @@ try {
     "用廣東話兩句總結我而家嘅要求。","我想轉真人接手。","接手後再問一句。"]);
   console.log("BOOKING",booking.outputs.map(t=>[t.customer,t.replies.map(x=>x.content)]));
   const bp=governed(booking,6);
+  acknowledgement(booking,[0,1,2,3]);sameTurnPolicy(booking.outputs[4]);
+  assert.doesNotMatch(booking.outputs[5].replies[0].content,/適用性|适用性|suitability|site assessment|installation/i);
+  assert.match(booking.outputs[5].replies[0].content,/職員確認/);
   assert.match(booking.outputs[3].replies[0].content,/2026-11-06/);
   assert.doesNotMatch(booking.outputs[3].replies[0].content,/Which date|邊.*日期/);
   assert.ok(bp.active_entities.some(e=>e.category==="booking"&&e.quantity===3&&e.attributes.requested_date==="2026-11-06"));
@@ -368,6 +433,14 @@ try {
   assert.ok(variedPack.latest_corrections.some(c=>c.includes("117")&&c.includes("123")),"varied correction lost from structured package");
   assert.equal(variedPack.generated_from_source_message_id,varied.outputs[5].source);
   assert.equal(variedPack.active_entities.find(e=>e.category==="air_conditioner").attributes.room_sizes.study,"123平方呎");
+  const immediateSaas=await conversation(["I need 4 seats of CN-638 subscription.","I need 2 NX-781 add-on.","Change CN-638 subscription to 6 seats.","Defer NX-781 add-on.","What is the CN-638 billing policy?","I want a human agent.","One more question."]);
+  const immediateBooking=await conversation(["I need 4 sessions of BK-941 booking on 2026-12-12.","I need 2 PK-382 parking.","Defer PK-382 parking. Change BK-941 booking to 5 sessions.","Change BK-941 booking date to 2026-12-14.","What is the BK-941 booking policy?","I want a human agent.","One more question."]);
+  for(const c of [immediateSaas,immediateBooking]) {
+    acknowledgement(c,c===immediateSaas?[0,1,2]:[0,1,2,3]);sameTurnPolicy(c.outputs[4]);
+    const p=governed(c,5);assert.ok(!p.open_questions.some(q=>/policy/i.test(q)));assert.ok(p.question_lifecycle.find(q=>q.source_message_id===c.outputs[4].source)?.status==="resolved");
+    assert.equal(c.outputs[6].replies.length,0);
+  }
+  const summaryReadback=[saas,booking,dialogue,varied,immediateSaas,immediateBooking].map(summaryParity);
   const r=await conversation(["你好，可以幫我嗎？","我想真人客服接手，唔好再問需求。","我仲有一個問題。"]);
   assert.equal(r.handoff.length,1);
   assert.equal(r.handoff[0].source_message_id,r.outputs[1].source);
@@ -388,7 +461,7 @@ try {
   await db.exec(read("supabase/migrations/rollback/20260930090000_c3_handoff_grounded_facts.rollback.sql"));
   assert.deepEqual(await catalog(),acceptedHandoff,"rollback changed the accepted function/security identity");
   assert.deepEqual(await triggers(),acceptedTriggers);assert.deepEqual(await ledger(),acceptedLedger);
-  fs.writeFileSync(process.env.C3_TEST_RESULT ?? "/tmp/c3-actual-handler-result.json",JSON.stringify({coverage:"actual_handler_local_sql_integration",limitations:["local transport adapter, not hosted PostgREST/Widget","pgcrypto digest backed by PostgreSQL built-in sha256","synthetic tenant, no production traffic"],results,faults,forwardCatalog,rollbackCatalog:await catalog(),triggerBindings:await triggers(),migrationLedger:await ledger(),assertions:{social_state_hygiene:true,question_lifecycle:true,typed_money_persistence_and_recall:true,generic_saas:true,generic_booking:true,real_r1_sql_package_and_suppression:true,r1_replay_idempotent:true,b2_source_binding:true,no_duplicate_reply:true,no_thinking:true,no_terminal_failure:true,no_transaction_promotion:true,migration_forward:true,migration_rollback:true,catalog_owner_security_search_path_acl:true,commit_ai_reply_tx_unchanged:true,trigger_binding_preserved:true,migration_ledger_preserved:true}},null,2));
+  fs.writeFileSync(process.env.C3_TEST_RESULT ?? "/tmp/c3-actual-handler-result.json",JSON.stringify({coverage:"actual_handler_local_sql_integration",limitations:["local transport adapter, not hosted PostgREST/Widget","pgcrypto digest backed by PostgreSQL built-in sha256","synthetic tenant, no production traffic"],results,faults,summaryReadback,forwardCatalog,rollbackCatalog:await catalog(),triggerBindings:await triggers(),migrationLedger:await ledger(),assertions:{generic_state_acknowledgement_not_meta:true,no_false_customer_goal_missing:true,same_turn_question_resolution:true,no_cross_domain_recap_language:true,handoff_summary_structured_parity:true,immediate_post_KB_R1_has_no_stale_question:true,memory_finalisation_business_mutation_rejected:true,memory_finalisation_reply_binding_rejected:true,memory_finalisation_replay_idempotent:true,memory_resolved_question_resurrection_rejected:true,social_state_hygiene:true,question_lifecycle:true,typed_money_persistence_and_recall:true,generic_saas:true,generic_booking:true,real_r1_sql_package_and_suppression:true,r1_replay_idempotent:true,b2_source_binding:true,no_duplicate_reply:true,no_thinking:true,no_terminal_failure:true,no_transaction_promotion:true,migration_forward:true,migration_rollback:true,catalog_owner_security_search_path_acl:true,commit_ai_reply_tx_unchanged:true,trigger_binding_preserved:true,migration_ledger_preserved:true}},null,2));
   console.log(`actual_handler_local_sql_integration PASS: ${results.length} conversations; first R1 real SQL event/source binding/package; next-turn suppression`);
 } catch(error) { console.error(error.message,JSON.stringify(faults));process.exitCode=1; }
 finally { child?.kill(); if(server) await new Promise((resolve)=>server.close(resolve));await db.close(); }

@@ -25,3 +25,18 @@ Deno.test("COMPONENT: all typed money roles/bases remain historical and source-b
   eq(deriveTypedCustomerMoneyFacts("HKD 17 and HKD 28 delivery").facts.map(f=>f.role),["amount","amount"]);
   eq(deriveTypedCustomerCalculation({question:"假設每部 HK$10.01，三部加整單 HK$0，試算幾多？"}).result,30.03);
 });
+
+Deno.test("COMPONENT: state acknowledgement uses typed committed requirement and booking qualification",async()=>{
+  const {planConversationService,renderServicePlanReply}=await import("./conversation-service-planner.ts");
+  const state=createEmptyConversationCommerceState();
+  const base={entity_id:"generic:booking:rb-682",category:"booking",brand:null,model:null,quantity:8,status:"tentative" as const,
+    attributes:{product_name:"RB-682 consultation",unit:"sessions",requested_date:"2027-01-03",capabilities:{requires_booking:true}},constraints:{},
+    provenance:{source_message_id:"source",source_type:"customer_message",updated_at:"2026-09-30T00:00:00Z"}};
+  state.entities=[base as typeof state.entities[number]];
+  const plan=planConversationService({question:"Please note eight sessions for my consultation.",language:"en",recall:{handled:false,reason:"NOT_A_RECALL_QUERY"},memory:null,commerce:state,committed_source_message_id:"source"});
+  eq(plan.action,"state_acknowledgement");eq(plan.missing_slots,[]);
+  const reply=renderServicePlanReply(plan,null)!;
+  if(!reply.includes("RB-682 consultation, 8 sessions on 2027-01-03")||!reply.includes("staff confirmation")||/Got it:|keep this detail/.test(reply))throw new Error(reply);
+  const uncommitted=planConversationService({...{question:"Please note eight sessions for my consultation.",language:"en" as const,recall:{handled:false,reason:"NOT_A_RECALL_QUERY" as const},memory:null,commerce:state},committed_source_message_id:"different-source"});
+  if(uncommitted.action==="state_acknowledgement")throw new Error("uncommitted input rendered as canonical change");
+});

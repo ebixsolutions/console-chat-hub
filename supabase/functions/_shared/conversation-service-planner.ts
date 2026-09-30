@@ -6,7 +6,8 @@
  * useful dialogue action.  It is deliberately deterministic so the same facts
  * cannot acquire a different meaning during natural-language rendering.
  */
-import type { ConversationCommerceState } from "./commerce-state-contract.ts";
+import { renderCanonicalRequirement, renderRequirementQualification } from "./commerce-capability-runtime.ts";
+import type { CommerceEntity, ConversationCommerceState } from "./commerce-state-contract.ts";
 import type { CanonicalConversationMemory } from "./conversation-long-memory.ts";
 import { exactProductIdentifiers, isProductOperationFailure, isProductSupportProblem } from "./natural-customer-response.ts";
 import { deriveTypedCustomerMoneyFacts } from "./customer-money-facts.ts";
@@ -20,6 +21,7 @@ export type ServiceKnowledgeState =
   | "conflict"
   | "tool_failure";
 export type ServiceDialogueAction =
+  | "state_acknowledgement"
   | "direct_answer"
   | "historical_calculation"
   | "shorten_previous_answer"
@@ -56,6 +58,8 @@ export interface ServiceDialoguePlan {
   language: ServiceLanguage;
   action: ServiceDialogueAction;
   customer_goal: string;
+  committed_requirements?: CommerceEntity[];
+  committed_commerce?: ConversationCommerceState;
   known_facts: Array<{
     name: string;
     label: string;
@@ -112,6 +116,7 @@ export interface ServiceCalculationTerm {
 
 export interface ServicePlanInput {
   question: string;
+  committed_source_message_id?: string;
   language: ServiceLanguage;
   recall: ServiceRecallDecision;
   memory: CanonicalConversationMemory | null;
@@ -342,6 +347,7 @@ function factSatisfiesSlot(
     room_size_or_dimensions: /:room_size(?:\n|$)|dimensions/,
     region: /region|market/,
     applicable_date: /delivery_preference|date/,
+    customer_goal: /current_intent|customer_goal|entity:/,
     intended_use: /current_intent|customer_goal/,
     budget_range: /budget/,
   };
@@ -591,6 +597,11 @@ export function planConversationService(
         "no_completed_action_without_runtime_evidence",
       ],
     };
+  }
+  const committed = input.commerce?.entities.filter(entity=>entity.entity_id.startsWith("generic:") &&
+    entity.provenance.source_message_id === input.committed_source_message_id) ?? [];
+  if (committed.length && input.committed_source_message_id && !/[?？]/.test(question)) {
+    return {...base, action:"state_acknowledgement", committed_requirements:committed, committed_commerce:input.commerce!};
   }
   const target = clarificationTarget ?? "customer_goal";
   if (factSatisfiesSlot(facts, target)) {
@@ -849,6 +860,14 @@ export function renderServicePlanReply(
 ): string | null {
   const l = planLanguageIndex(plan, recentMessages);
   if (plan.action === "direct_answer") return recallReply;
+  if (plan.action === "state_acknowledgement" && plan.committed_requirements?.length && plan.committed_commerce) {
+    const details = plan.committed_requirements.map(e=>renderCanonicalRequirement(e,plan.language)).join(l===2?"; ":"；");
+    const inactive = plan.committed_commerce.entities.filter(e=>["deferred","cancelled"].includes(e.status) && !plan.committed_requirements!.some(x=>x.entity_id===e.entity_id));
+    const retained = inactive.length ? (l===2?"; ":"；")+inactive.map(e=>renderCanonicalRequirement(e,plan.language)).join(l===2?"; ":"；") : "";
+    const prefix = ["今次要求已記錄：","本次要求已记录：","Noted for this request: "][l];
+    const hasBooking = plan.committed_commerce.entities.some(e=>!["deferred","cancelled"].includes(e.status) && typeof e.attributes.capabilities === "object" && e.attributes.capabilities && (e.attributes.capabilities as Record<string,unknown>).requires_booking === true);
+    return prefix+details+retained+(l===2?".":"。")+(hasBooking?" "+renderRequirementQualification(plan.committed_commerce,plan.language):"");
+  }
   if (/產品頁|产品页/i.test(plan.customer_turn ?? "") &&
     /機價|机价/i.test(plan.customer_turn ?? "") &&
     /包安裝|包安装/i.test(plan.customer_turn ?? "")) {

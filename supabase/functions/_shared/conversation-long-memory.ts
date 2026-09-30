@@ -1,5 +1,6 @@
 import { resolveConversationRecall, renderConversationRecall } from "./conversation-recall.ts";
 import type { ConversationCommerceState } from "./commerce-state-contract.ts";
+import { classifyHandoffIntent } from "./handoff-intent.ts";
 import { classifySocialTurn } from "./natural-customer-response.ts";
 import { industryEntityLabel } from "./industry-runtime-adapter.ts";
 import { deriveTypedCustomerMoneyFacts } from "./customer-money-facts.ts";
@@ -613,7 +614,15 @@ export function buildCanonicalConversationMemory(args: {
   const open = uniqueStrings(lifecycle.filter(item=>item.status === "pending").map(item=>item.text),MAX_OPEN);
   const genericEntities = (args.commerce_state?.entities ?? []).filter(e=>e.entity_id.startsWith("generic:"));
   const genericGoal = genericEntities.length ? genericEntities.map(e=>`${e.attributes.product_name ?? e.category}: ${e.quantity} ${e.attributes.unit ?? "units"}${["cancelled","deferred"].includes(e.status)?` (${e.status})`:""}${e.attributes.requested_date?`, requested date ${e.attributes.requested_date}`:""}`).join("; ") : null;
-  const businessGoal = genericGoal || clean(args.commerce_state?.current_intent,800) || prior?.current_goal || runtime.first_customer_turn || null;
+  const entityGoal = !genericEntities.length && args.commerce_state?.entities.length ? args.commerce_state.entities.map(entity=> {
+    const label=industryEntityLabel(entity.entity_id,"en") ?? entity.category.replace(/_/g," ");
+    const rooms=record(entity.attributes.room_sizes);
+    const requirements=rooms?Object.entries(rooms).map(([room,size])=>`${room.replace(/_/g," ")} ${size}`).join(", "):"";
+    const width=typeof entity.constraints.max_width_mm === "number"?`, maximum width ${entity.constraints.max_width_mm} mm`:"";
+    return `${entity.model?entity.model+" ":""}${label}: ${entity.quantity} units${requirements?", "+requirements:""}${width}${["deferred","cancelled"].includes(entity.status)?` (${entity.status})`:""}`;
+  }).join("; "):null;
+  const fallbackGoal=prior?.current_goal || clean(args.commerce_state?.current_intent,800) || runtime.first_customer_turn || null;
+  const businessGoal = genericGoal || entityGoal || (fallbackGoal && !classifyHandoffIntent(fallbackGoal).explicit_request ? fallbackGoal : null);
   const runtimeRegions = [
     ...(runtime.current_requirements.current_market
       ? [{ region: runtime.current_requirements.current_market, temporal_scope: "current" as const }]
@@ -985,4 +994,49 @@ export async function refreshConversationLongMemory(client: LongMemoryDbClient, 
       { ok: false, reason: result || "memory_commit_unknown" };
   }
   return { ok: true, memory, markdown, revision: Number(data.current_revision ?? data.applied_revision), idempotent: Boolean(data.idempotent) };
+}
+
+/** Finalise only the delivered question lifecycle through the existing revision-bound RPC. */
+export async function reconcileDeliveredMemoryReply(client: LongMemoryDbClient, args: {
+  conversation_id:string; source_message_id:string; reply_message_id:string;
+}): Promise<boolean> {
+  const {data:reply,error:replyError} = await client.from("messages").select("id,role,content,metadata")
+    .eq("id",args.reply_message_id).eq("conversation_id",args.conversation_id).maybeSingle();
+  if(replyError || !reply || reply.role!=="assistant" || reply.metadata?.source_message_id!==args.source_message_id ||
+    reply.metadata?.control_commit!=="ai" || reply.metadata?.b2_gate_contract!=="executeB2PersistenceGate:allow_after_revalidation") return false;
+  // Read-only recap/calculation do not introduce a semantic question or mutate memory.
+  if(reply.metadata.recap_read_only===true || reply.metadata.transaction_mutation==="NONE" || classifySocialTurn(String(reply.content)) || reply.metadata.response_route==="natural_greeting" || reply.metadata.response_route==="natural_social_acknowledgement" || reply.metadata.response_route==="natural_conversation_closure") return true;
+  if(reply.metadata.response_route === "conversation_closure") {
+    const {data:social,error:socialError}=await client.from("messages").select("id,role,content").eq("id",args.source_message_id).eq("conversation_id",args.conversation_id).maybeSingle();
+    if(!socialError && social?.role==="visitor" && classifySocialTurn(String(social.content))) return true;
+  }
+  const {data:stored,error} = await client.from("conversation_memory_state").select("*")
+    .eq("conversation_id",args.conversation_id).eq("company_id",reply.metadata.b2_expected_company_id).maybeSingle();
+  if(error) return false;
+  if(!stored) return true; // Social-only and pure read-only turns have no business memory.
+  if(!isCanonicalConversationMemory(stored.memory) || stored.source_message_id!==args.source_message_id ||
+    stored.memory.memory_revision!==Number(stored.revision)) return false;
+  const {data:source,error:sourceError} = await client.from("messages").select("id,role,content")
+    .eq("id",args.source_message_id).eq("conversation_id",args.conversation_id).maybeSingle();
+  const {data:commerce,error:commerceError}=await client.from("conversation_commerce_state").select("revision,state")
+    .eq("conversation_id",args.conversation_id).eq("company_id",stored.company_id).maybeSingle();
+  if(sourceError || !source || commerceError || (commerce?.revision??null)!==stored.commerce_state_revision) return false;
+  const prior: CanonicalConversationMemory=stored.memory;
+  const lifecycle=questionLifecycle([reply,source],commerce?.state??null,prior);
+  const open=uniqueStrings(lifecycle.filter(item=>item.status==="pending").map(item=>item.text),MAX_OPEN);
+  const professional=prior.question_lifecycle?.filter(item=>item.resolution?.includes("professional")).map(item=>item.text)??[];
+  const pending=uniqueStrings([...prior.pending_actions.filter(item=>!professional.includes(item)),...lifecycle.filter(item=>item.status==="pending"&&item.resolution?.includes("professional")).map(item=>item.text)],MAX_ACTIONS);
+  if(sameCanonicalJson(lifecycle,prior.question_lifecycle??[]) && sameCanonicalJson(open,prior.open_questions) && sameCanonicalJson(pending,prior.pending_actions)) return true;
+  const memory={...prior,memory_revision:Number(stored.revision)+1,question_lifecycle:lifecycle,open_questions:open,pending_actions:pending,
+    handoff_relevant_state:{...prior.handoff_relevant_state,open_questions:open.slice(0,6),pending_actions:pending.slice(0,6)}};
+  const markdown=buildConversationMemoryMarkdown(memory);
+  const result=await client.rpc("c3_commit_conversation_memory_tx",{
+    p_conversation_id:args.conversation_id,p_company_id:stored.company_id,p_source_message_id:args.source_message_id,
+    p_expected_commerce_revision:stored.commerce_state_revision,p_expected_memory_revision:Number(stored.revision),
+    p_memory:memory,p_markdown_projection:markdown,p_updated_from_turn:memory.updated_from_turn,
+  });
+  const receipt=await readExactConversationMemoryCommit(client,{conversation_id:args.conversation_id,company_id:stored.company_id,
+    source_message_id:args.source_message_id,revision:memory.memory_revision,commerce_state_revision:stored.commerce_state_revision,memory,markdown_projection:markdown});
+  // A lost RPC acknowledgement is recovered only by the exact revision/hash readback.
+  return receipt.status==="committed";
 }
