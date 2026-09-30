@@ -743,8 +743,8 @@ Deno.test("C3 COMPONENT recap accepts resolved KB source only with the current r
  i.memory!.question_lifecycle=[{source_message_id:"kb-question-source",text:"policy question",status:"resolved",entity_id:null,resolution_source_message_id:"kb-answer-source"}];
  assert(resolveConversationRecall(i).handled);
  i.memory!.question_lifecycle[0].status="pending";assert(!resolveConversationRecall(i).handled);
- i.memory!.question_lifecycle[0].status="resolved";i.memory!.commerce_state_revision--;assert(!resolveConversationRecall(i).handled);
- i.memory!.commerce_state_revision++;i.memory!.company_id="other-company";assert(!resolveConversationRecall(i).handled);
+ i.memory!.question_lifecycle[0].status="resolved";i.memory!.commerce_state_revision=i.commerce!.revision-1;assert(!resolveConversationRecall(i).handled);
+ i.memory!.commerce_state_revision=i.commerce!.revision;i.memory!.company_id="other-company";assert(!resolveConversationRecall(i).handled);
 });
 Deno.test("C3 COMPONENT absent-state recap requires an explicit verified-read receipt and valid scope",()=>{
  const i=recallFixture("What do I currently have noted?");i.memory=null;i.commerce=null;
