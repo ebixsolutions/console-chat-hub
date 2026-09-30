@@ -1823,5 +1823,6 @@ function renderCustomerRecap(value: unknown, language: string): string {
   }
   const future=regions.filter(r=>r?.temporal_scope==="future").flatMap(r=>regionNames[String(r?.region)]?.[l]??[]);
   const futureText=future.length ? future.join(l===2?", ":"、")+["只屬未來討論，唔係目前已確認交易。","仅属未来讨论，并非目前已确认交易。"," is a future discussion only, not a confirmed current transaction."][l] : "";
-  return [first, qualification,futureText].filter(Boolean).join(l === 2 ? " " : "").slice(0, 4096);
+  const qualifier=futureText && qualification ? qualification.replace(/[.。]$/,"")+(l===2?"; ":"；")+futureText : qualification || futureText;
+  return [first, qualifier].filter(Boolean).join(l === 2 ? " " : "").slice(0, 4096);
 }
