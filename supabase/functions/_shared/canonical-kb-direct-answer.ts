@@ -6,6 +6,7 @@ export interface CanonicalKbDirectAnswer {
   kind: "product_record" | "price" | "price_unknown" | "specification" | "policy";
   reply: string;
   evidence_chunks: KBFullChunk[];
+  structured_facts?: Array<{ field: string; value: string | number; model: string; document_id: string; chunk_id: string }>;
   price_fact?: { model: string; value: number; currency: "HKD"; document_id: string; chunk_id: string; full_content: string };
 }
 
@@ -155,6 +156,7 @@ export function resolveCanonicalKbDirectAnswer(input: {
   request: string;
   selection: CanonicalGroundingResult;
   language: Language;
+  customer_context?: { model: string; sunlight?: unknown };
 }): CanonicalKbDirectAnswer | null {
   const { selection, language } = input;
   if (!selection.ok || !selection.document ||
@@ -187,8 +189,25 @@ export function resolveCanonicalKbDirectAnswer(input: {
       return field !== null && exactKbModelIds(field).includes(model);
     });
   if (!identityVerified) return null;
-  const evidence = (kind: CanonicalKbDirectAnswer["kind"], reply: string, chunk: KBFullChunk): CanonicalKbDirectAnswer =>
-    ({ kind, reply, evidence_chunks: [chunk] });
+  const evidence = (kind: CanonicalKbDirectAnswer["kind"], reply: string, chunk: KBFullChunk): CanonicalKbDirectAnswer => {
+    if (input.customer_context?.model === model && input.customer_context.sunlight === "strong_afternoon_sun" &&
+      classifyProductFactualQuery(request)?.facts.includes("suitability")) {
+      reply = language === "en"
+        ? reply.replace("Sun exposure and other room conditions would help assess it.", "You have already described strong afternoon sun. That cooling load needs to be considered with the manufacturer's applicable room area and a site assessment; horsepower alone cannot guarantee suitability.")
+        : reply.replace(/亦要睇日照等條件。|日照等条件也需考虑。/u, language === "zh-CN"
+          ? "你已说明下午日晒较强；下一步是结合厂方适用面积和现场评估，不能只按匹数保证够用。"
+          : "你已提到下午日照強；下一步係連同廠方適用面積及現場評估，唔會單靠匹數保證夠用。");
+    }
+    const fields: Array<[string, string | number | null]> = [
+      ["model", model],
+      ["horsepower", labelledValue(chunk.content, /匹數|匹数|horsepower/i)],
+      ["features", labelledValue(chunk.content, /功能|features?/i)],
+    ];
+    return { kind, reply, evidence_chunks: [chunk], structured_facts: chunk.chunk_id
+      ? fields.filter(([, value]) => value !== null).map(([field, value]) => ({
+        field, value: value!, model, document_id: chunk.document_id, chunk_id: chunk.chunk_id!,
+      })) : [] };
+  };
   const priceEvidence = chunks.map((chunk) => ({ chunk, price: currentKbSellingPrice(chunk.content) }))
     .find(({ price }) => price !== null);
   const priceFact = priceEvidence?.price !== null && priceEvidence?.price !== undefined &&
@@ -251,7 +270,8 @@ export function resolveCanonicalKbDirectAnswer(input: {
     const requestedFacts = new Set(factual.facts);
 
     if (requestedFacts.size > 1) {
-      const room = request.match(/\b\d{1,4}\s*(?:平方[呎尺]|[呎尺]|sq\.?\s*ft|square\s*feet)/iu)?.[0] ?? null;
+      const rawRoom = request.match(/\b\d{1,4}\s*(?:平方[呎尺]|[呎尺]|sq\.?\s*ft|square\s*feet)/iu)?.[0] ?? null;
+      const room = language === "en" ? rawRoom?.replace(/平方[呎尺]|[呎尺]/u, " sq ft") ?? null : rawRoom;
       const includeProductDetail = requestedFacts.has("features") || requestedFacts.has("model_info");
       const includePrice = requestedFacts.has("price") || requestedFacts.has("suitability");
       const parts: string[] = [];
@@ -338,7 +358,8 @@ export function resolveCanonicalKbDirectAnswer(input: {
     }
     if (factual.fact === "suitability") {
       if (!summary && language !== "en") return null;
-      const room = request.match(/\b\d{1,4}\s*(?:平方[呎尺]|[呎尺]|sq\.?\s*ft|square\s*feet)/iu)?.[0] ?? null;
+      const rawRoom = request.match(/\b\d{1,4}\s*(?:平方[呎尺]|[呎尺]|sq\.?\s*ft|square\s*feet)/iu)?.[0] ?? null;
+      const room = language === "en" ? rawRoom?.replace(/平方[呎尺]|[呎尺]/u, " sq ft") ?? null : rawRoom;
       const reply = language === "en"
         ? `${product}${englishSummary ? ` is listed as a ${englishSummary}` : " has a current product record"}.${displayPrice ? ` The product record lists a selling price of ${displayPrice}.` : ""} The current product information does not directly state a suitable room area, so I cannot confirm whether it is sufficient${room ? ` for ${room}` : " for that room"}. Sun exposure and other room conditions would help assess it.`
         : language === "zh-CN"

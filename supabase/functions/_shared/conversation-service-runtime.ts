@@ -1,3 +1,4 @@
+import { deriveTypedCustomerMoneyFacts } from "./customer-money-facts.ts";
 import type { ConversationCommerceState } from "./commerce-state-contract.ts";
 import type {
   ServiceCalculationTerm,
@@ -32,18 +33,14 @@ export interface TypedCustomerCalculation {
 const CALCULATION_REQUEST = /(?:試算|试算|假設|假设|計算|计算|加埋|合共|總共|总共|一共|總數|总数|計下|计下|算下|計幾錢|计多少钱|算幾錢|算多少钱|calculate|estimate|total|altogether|how much)/i;
 const HISTORICAL_OR_CONDITIONAL = /(?:舊|旧|之前|以前|歷史|历史|假設|假设|如果|若果|若按|按你提供|historical|previous|earlier|conditional|hypothetical|\bif\b|\bassuming\b)/i;
 const MONEY_TOKEN = /\b(HKD|USD|TWD)\b\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)|((?:HK|US|NT)\$|\$)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)|([0-9][0-9,]*(?:\.[0-9]{1,2})?)\s*(HKD|USD|TWD)\b/gi;
-const PER_UNIT = /(?:每\s*(?:部|件|個|个|台|份|位|張|张|晚|夜|日|天|次|堂|節|节|場|场|session|night|day|booking|unit|item|piece|seat)|per\s+(?:unit|item|piece|session|night|day|booking|seat)|(?:×|x|\*)\s*[1-9][0-9]{0,3}\s*$)/i;
-const PER_ORDER = /(?:每\s*(?:單|单|張單|张单|order)|整\s*(?:單|单)|per\s+order|one[- ]?off|一次性)/i;
-const ADD_ON = /(?:再加|加上|加埋|另外加|加多|另加|plus|add(?:ed)?\s+(?:an?\s+)?(?:additional\s+)?(?:amount|fee|charge|adjustment)?|and\s+add)/i;
-const SUBTOTAL_COMPONENT = /(?:subtotal|sub-total|adjustment|小計|小计|總額|总额|合計|合计|amount due|grand total)/i;
 
 function calcClean(value: unknown, limit = 2400): string {
   return String(value ?? "").normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, limit);
 }
 function quantityValue(raw: string): number | null {
-  const map: Record<string, number> = { "一": 1, "二": 2, "兩": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10 };
+  const map: Record<string, number> = { "一": 1, "二": 2, "兩": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
   if (/^\d{1,4}$/.test(raw)) return Number(raw);
-  return map[raw] ?? null;
+  return map[raw.toLowerCase()] ?? null;
 }
 export function isReadOnlyCustomerCalculationRequest(text: string): boolean {
   const value = calcClean(text);
@@ -62,30 +59,19 @@ export function deriveTypedCustomerCalculation(input: {
 }): TypedCustomerCalculation {
   const question = calcClean(input.question);
   if (!isReadOnlyCustomerCalculationRequest(question)) return { terms: [], status: "not_requested" };
-  const pieces = question.replace(/([0-9]),(?=[0-9])/g, "$1∯").split(/[，,；;。\n]+/).map((item) => calcClean(item.replace(/∯/g, ",")));
-  const terms: TypedCustomerCalculationTerm[] = [];
-  for (const piece of pieces.filter((item) => /\d/.test(item))) {
-    MONEY_TOKEN.lastIndex = 0;
-    const matches = [...piece.matchAll(MONEY_TOKEN)];
-    MONEY_TOKEN.lastIndex = 0;
-    if (!matches.length) continue;
-    const perUnit = PER_UNIT.test(piece);
-    const perOrder = PER_ORDER.test(piece) || ADD_ON.test(piece) || SUBTOTAL_COMPONENT.test(piece);
-    if (!perUnit && !perOrder) return { terms: [], status: "missing_explicit_basis" };
-    for (const match of matches) {
-      const marker = (match[1] ?? match[3] ?? match[6] ?? "HKD").toUpperCase();
-      const raw = match[2] ?? match[4] ?? match[5];
-      const amount = Number(raw?.replace(/,/g, ""));
-      if (!Number.isFinite(amount) || amount <= 0) continue;
-      terms.push({ label: perUnit ? "historical unit amount" : ADD_ON.test(piece) ? "customer-supplied adjustment" : "customer-supplied amount",
-        amount, currency: marker.includes("US") ? "USD" : marker.includes("TWD") || marker.includes("NT$") ? "TWD" : "HKD",
-        charge_basis: perUnit ? "per_unit" : "per_order", source: "customer_message",
-        ...(input.current_source_message_id ? { source_message_id: input.current_source_message_id } : {}) });
-    }
+  const money = deriveTypedCustomerMoneyFacts(question);
+  if (money.facts.some((fact) => fact.charge_basis === "unspecified")) {
+    return { terms: [], status: "missing_explicit_basis" };
   }
+  const terms: TypedCustomerCalculationTerm[] = money.facts.map((fact) => ({
+    label: fact.labels[2], amount: fact.amount, currency: fact.currency,
+    charge_basis: fact.charge_basis as "per_unit" | "per_order",
+    source: "customer_message",
+    ...(input.current_source_message_id ? { source_message_id: input.current_source_message_id } : {}),
+  }));
   if (!terms.length) return { terms: [], status: "no_typed_amounts" };
   if (new Set(terms.map((term) => term.currency)).size > 1) return { terms: [], status: "mixed_currency" };
-  const qtyMatch = question.match(/(?:共|總共|总共|數量|数量|qty|quantity)?\s*(一|二|兩|两|三|四|五|六|七|八|九|十|\d{1,4})\s*(?:部|台|件|個|个|份|位|晚|夜|日|天|次|unit|units|item|items|session|sessions|night|nights)/i);
+  const qtyMatch = question.match(/(?:共|總共|总共|數量|数量|qty|quantity)?\s*(一|二|兩|两|三|四|五|六|七|八|九|十|one|two|three|four|five|six|seven|eight|nine|ten|\d{1,4})\s*(?:部|台|件|個|个|份|位|晚|夜|日|天|次|unit|units|item|items|session|sessions|night|nights)/i);
   const explicit = qtyMatch ? quantityValue(qtyMatch[1]) : null;
   const fallback = Number.isInteger(input.fallback_quantity) && Number(input.fallback_quantity) > 0 ? Number(input.fallback_quantity) : null;
   const quantity = explicit ?? fallback ?? undefined;

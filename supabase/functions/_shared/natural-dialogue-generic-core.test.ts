@@ -155,7 +155,7 @@ Deno.test("real failed dialogue reducer class keeps entity constraints and corre
   assert(state.latest_corrections.length > 0 && !JSON.stringify(ac[0].attributes).includes("95平方呎"), "old value revived");
 });
 
-Deno.test("frozen natural dialogue inputs progress through ten turns with human control after first R1", () => {
+Deno.test("COMPONENT simulation of reducer and R1 predicate; no runtime handoff or persistence coverage", () => {
   const turns = [
     "早晨，我間書房大約95呎，想揀部窗口冷氣。見到樂聲 CW-SUL70BA，呢款係幾多匹，同埋有咩主要功能？",
     "咁嗰部擺喺95呎書房夠唔夠？個窗下午幾曬。",

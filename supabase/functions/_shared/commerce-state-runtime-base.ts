@@ -22,6 +22,7 @@ import {
   isConversationCommerceState,
 } from "./commerce-state-contract.ts";
 import { retainedRoomSizes, roomSizeCorrection } from "./conversation-long-memory.ts";
+import { exactProductIdentifiers } from "./natural-customer-response.ts";
 import {
   type CommerceStateEvent,
   type CommerceTurnEntityHint,
@@ -769,6 +770,9 @@ export function buildCommerceEntityHints(texts: string[]): CommerceTurnEntityHin
     const categories = detectCategories(text);
     if (categories.length) {
       const rooms = detectRooms(text);
+      const models = exactProductIdentifiers(text);
+      const model = categories.length === 1 && rooms.length <= 1 && models.length === 1
+        ? models[0] : null;
       for (const category of categories) {
         const scopes = rooms.length ? rooms : [null];
         for (const room of scopes) {
@@ -777,7 +781,8 @@ export function buildCommerceEntityHints(texts: string[]): CommerceTurnEntityHin
           hints.set(entityId, {
             entity_id: entityId,
             category: category.key,
-            aliases: [...category.aliases, ...(room ? room.aliases : [])],
+            model,
+            aliases: [...category.aliases, ...(room ? room.aliases : []), ...(model ? [model] : [])],
           });
         }
       }
@@ -994,7 +999,7 @@ function establishesDurableProductResearch(text: string): boolean {
   ) return false;
   if (detectExplicitEntityCreationSignal(t)) return true;
   if (dimensionConstraintCancellation(t) || parseSpaceScopedCommerceQuantity(t) !== null) return true;
-  return /(?:想問|想问|問埋|问埋|想要|想揀|想选|want to choose|want to select|我位得|位置|限制|上限|樓下|楼下|以下|接受|照舊|照旧|三門|三门|前置式|\d+\s*kg|買咩|买什么|邊款|哪款|recommend|advice|considering)/i.test(t);
+  return /(?:想問|想问|問埋|问埋|想要|想揀|想选|想睇|想看|want to (?:choose|select|look at)|我位得|位置|限制|上限|樓下|楼下|以下|接受|照舊|照旧|三門|三门|前置式|\d+\s*kg|買咩|买什么|邊款|哪款|recommend|advice|considering)/i.test(t);
 }
 
 function detectEntityReactivation(text: string): boolean {
@@ -1760,8 +1765,39 @@ function deriveScopedRoomSizeEvents(
     ...(correction || observations.some((fact) => {
       const scope = roomScope(fact.label);
       return scope && before?.[scope] && before[scope] !== fact.value;
-    }) ? [{ type: "ADD_CORRECTION" as const, correction: clean(declarative) }] : []),
+    }) ? [{ type: "ADD_CORRECTION" as const, correction: observations.map((fact) => {
+        const scope = roomScope(fact.label);
+        return scope && before?.[scope] && before[scope] !== fact.value
+          ? `${scope} area: change from ${before[scope]} to ${fact.value}` : "";
+      }).filter(Boolean).join("; ") || clean(declarative) }] : []),
   ];
+}
+
+function enrichExplicitCustomerFacts(input: CommerceRuntimeInput, state: ConversationCommerceState, hints: CommerceTurnEntityHint[]): ConversationCommerceState {
+  let reduced = state;
+  // Customer-owned, explicitly stated facts bind only to one active product.
+  const active = reduced.entities.filter((entity) => !["cancelled", "deferred"].includes(entity.status));
+  const categories = detectCategories(input.text);
+  const modelHints = hints.filter((hint) => hint.model && clean(input.text).toUpperCase().includes(hint.model.toUpperCase()));
+  const named = active.filter((entity) => categories.some((category) => category.key === entity.category));
+  const provenance = { source_type: "customer" as const, source_message_id: input.source_message_id, recorded_at: input.occurred_at ?? null };
+  if (categories.length === 1 && named.length === 1 && new Set(modelHints.map((hint) => hint.model)).size === 1 && !named[0].model) {
+    reduced = reduceCommerceState(reduced, [{ type: "UPDATE_ENTITY", entity_id: named[0].entity_id, patch: { model: modelHints[0].model }, provenance }]);
+  }
+  const ac = active.filter((entity) => entity.category === "air_conditioner");
+  if (ac.length === 1 && (categories.length === 1 && categories[0].key === "air_conditioner" || !categories.length && reduced.current_topic === "air_conditioner")) {
+    const facts: CommerceStateEvent[] = [];
+    if (/窗口(?:冷氣|機|机)|window\s+(?:unit|air)/iu.test(input.text)) facts.push({type:"SET_ENTITY_ATTRIBUTE",entity_id:ac[0].entity_id,key:"installation_type",value:"window_unit",provenance});
+    if (/西斜|西曬|西晒|下午.{0,6}(?:曬|晒|日照)|afternoon\s+sun|west[- ]?facing/iu.test(input.text)) facts.push({type:"SET_ENTITY_ATTRIBUTE",entity_id:ac[0].entity_id,key:"sunlight",value:"strong_afternoon_sun",provenance});
+    if (facts.length) reduced = reduceCommerceState(reduced,facts);
+  }
+  const fridge = active.filter((entity) => entity.category === "refrigerator");
+  if (fridge.length === 1 && categories.length === 1 && categories[0].key === "refrigerator") {
+    const doors = input.text.match(/(單|单|雙|双|三|四|[1-4])門|([1-4])[- ]?doors?/iu);
+    const count = doors ? ({單:1,单:1,雙:2,双:2,三:3,四:4} as Record<string,number>)[doors[1]] ?? Number(doors[1] ?? doors[2]) : null;
+    if (count) reduced = reduceCommerceState(reduced,[{type:"SET_ENTITY_ATTRIBUTE",entity_id:fridge[0].entity_id,key:"door_count",value:count,provenance}]);
+  }
+  return reduced;
 }
 
 function reduceSingleTurn(
@@ -1880,7 +1916,8 @@ function reduceSingleTurn(
   const industryEvent: CommerceStateEvent[] = input.industry_identifier
     ? [{ type: "SET_CONTEXT", language: input.language, industry: input.industry_identifier }]
     : [];
-  const reduced = reduceCommerceState(previous, [...industryEvent, ...journey.events, ...semanticEvents, ...derived, ...runtimeEvents]);
+  let reduced = reduceCommerceState(previous, [...industryEvent, ...journey.events, ...semanticEvents, ...derived, ...runtimeEvents]);
+  reduced = enrichExplicitCustomerFacts(input,reduced,hints);
   const guard = enforceQuotationNotOrderEvents(clean(input.text), reduced);
   return guard.length ? reduceCommerceState(reduced, guard) : reduced;
 }
@@ -1937,7 +1974,7 @@ export function reduceTurn(
       const scoped = deriveScopedRoomSizeEvents(input, whole);
       if (scoped.length) whole = reduceCommerceState(whole, scoped);
     }
-    return restoreExplicitReturnTopic(whole, input.text);
+    return restoreExplicitReturnTopic(enrichExplicitCustomerFacts(input,whole,rawHints), input.text);
   }
   let state = previous;
   for (const [index, clause] of clauses.entries()) {
@@ -2004,6 +2041,7 @@ export function reduceTurn(
       entity.status !== "deferred" && entity.status !== "cancelled").length === 1) {
     state = reduceCommerceState(state, [{ type: "SET_CONTEXT", topic: focus.topic }]);
   }
+  state = enrichExplicitCustomerFacts(input,state,rawHints);
   return focus ? state : restoreExplicitReturnTopic(state, input.text);
 }
 

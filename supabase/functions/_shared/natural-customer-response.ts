@@ -76,11 +76,11 @@ function productFactualFacets(text: string): ProductFactualFacet[] {
     ],
     [
       "model_info",
-      /(?:型號|型号|model|產品資料|产品资料|product\s+(?:information|details))/i,
+      /(?:型號|型号|model|產品資料|产品资料|可靠資料|可靠资料|product\s+(?:information|details))/i,
     ],
     [
       "suitability",
-      /(?:適合|适合|適唔適合|适不适合|夠用|够用|夠唔夠|够不够|啱用|合用|合唔合適|合不合适|suitab|enough|work\s+for|fit\s+(?:in|for)|appropriate\s+for)/i,
+      /(?:適合|适合|適唔適合|适不适合|夠用|够用|夠唔夠|够不够|啱用|合用|合唔合適|合不合适|評估|评估|assess|suitab|enough|work\s+for|fit\s+(?:in|for)|appropriate\s+for)/i,
     ],
   ];
   return matchers.filter(([, pattern]) => pattern.test(text)).map(([fact]) =>
@@ -141,7 +141,7 @@ const PRODUCT_ANAPHOR =
 const PRODUCT_CONTEXT_SWITCH =
   /(?:轉(?:去|睇|問)|转(?:去|看|问)|講返|讲回|switch(?:ing)?\s+to|move(?:ing)?\s+to|back\s+to)\s*(?:另一|另一个|another|the)?\s*(?:產品|产品|product|category)?|(?:雪櫃|冰箱|refrigerator|fridge|洗衣機|洗衣机|washer|washing\s+machine|電視|电视|television|\bTV\b|焗爐|烤箱|oven)/iu;
 const INACTIVE_REFERENT =
-  /(?:取消|唔要|不要|刪除|删除|暫緩|暂缓|遲啲先|迟点再|cancel(?:led)?|defer(?:red)?|no\s+longer|not\s+that)/iu;
+  /(?:取消|唔要|不要|刪除|删除|先擺低|先放低|暫時唔跟|暫時唔搞|暫緩|暂缓|遲啲先|迟点再|cancel(?:led)?|defer(?:red)?|no\s+longer|not\s+that)/iu;
 
 const PRODUCT_TOPIC_PATTERNS: ReadonlyArray<readonly [string, RegExp]> = [
   ["air_conditioner", /(?:冷氣(?:機)?|冷气(?:机)?|空調|空调|air\s*conditioner|\bAC\b)/iu],
@@ -232,7 +232,11 @@ export function arbitrateAnaphoricProductFollowUp(
   newestFirstHistory: ProductFollowUpHistoryMessage[],
   scope?: ProductFollowUpScope,
 ): ProductFollowUpArbitration {
-  const normalized = text.normalize("NFKC").trim();
+  const original = text.normalize("NFKC").trim();
+  const clauses = original.split(/[。;；]/).map((clause) => clause.trim()).filter(Boolean);
+  const normalized = clauses.length > 1 && /講返|讲回|back\s+to|return\s+to/iu.test(original)
+    ? clauses.filter((clause) => !(INACTIVE_REFERENT.test(clause) && explicitProductTopics(clause).length === 1)).join("。")
+    : original;
   if (
     !PRODUCT_ANAPHOR.test(normalized) || isProductSupportProblem(normalized)
   ) {
@@ -245,7 +249,7 @@ export function arbitrateAnaphoricProductFollowUp(
 
   const visitors = scopedProductHistory(newestFirstHistory, scope).filter((row) =>
     row.role === "visitor" && row.content.trim().length > 0
-  ).slice(0, 8);
+  ).filter((row, index) => index !== 0 || row.content.normalize("NFKC").trim() !== original).slice(0, 8);
   // A named category has its own chronological active/inactive ledger. Check
   // it before an explicit return can bind a model from older history.
   const perTopic = arbitratePerTopicProductReferent(normalized, facts, visitors);
@@ -487,6 +491,12 @@ export function classifyNaturalCustomerIntent(
   // greeting-only response or fall through to generic clarification.
   const meaningful = stripLeadingGreeting(normalized) || normalized;
 
+  // Only a whole, goal-free help request belongs to the opening response.
+  // Tasks and explicit human requests must continue through their own routes.
+  if (/^(?:(?:請|请|麻煩|麻烦)?(?:你)?(?:可以|可唔可以|能|能否|可否)?(?:幫|帮)(?:下|一下)?(?:我|忙)(?:嗎|吗|嘛)?|(?:我)?(?:想|需要)(?:你)?(?:幫忙|帮忙|幫手|帮手)|(?:can|could|would)\s+you\s+help(?:\s+me)?(?:\s+please)?|(?:i\s+)?need\s+(?:some\s+)?help)[\s?？!！.。]*$/iu.test(meaningful)) {
+    return { kind: "greeting", product: null };
+  }
+
   if (
     /^(?:(?:你(?:哋|們|们)?|店內|店内|呢度|這裡|这里)\s*)?(?:有冇|有無|有沒有|有没有|是否有)\s*[?？!！.。]*$/iu
       .test(meaningful) ||
@@ -496,7 +506,8 @@ export function classifyNaturalCustomerIntent(
     return { kind: "product_availability", product: null };
   }
 
-  const availabilityProduct = extractAvailabilityProduct(meaningful);
+  const availabilityProduct = /(?:有冇|有沒有|有没有)\s*(?:啲|一些)?(?:方向|建議|建议)/iu.test(meaningful)
+    ? null : extractAvailabilityProduct(meaningful);
   if (availabilityProduct) {
     return { kind: "product_availability", product: availabilityProduct };
   }

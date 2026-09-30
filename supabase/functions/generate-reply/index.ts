@@ -3039,6 +3039,8 @@ const S0_LLM_FAILURE_SAFE_TEXT: Record<string, string> = {
 };
 
 function detectVisitorLanguage(text: string): "zh-TW" | "zh-CN" | "en" {
+  if (/(?:reply|respond|explain|answer|summari[sz]e|please|請|请|用|改用).{0,28}(?:in\s+English|英文)/i.test(text)) return "en";
+  if (/(?:用|改用|以).{0,12}(?:廣東話|粤語|粵語)/i.test(text)) return "zh-TW";
   if (!text) return "zh-TW";
   if (!/[\u4e00-\u9fff]/.test(text)) return "en";
   const zhCnIndicators = [
@@ -4140,10 +4142,8 @@ async function orchestrationGenerateReply(
     _pr5HistoryRows ?? [],
     _pr5VisitorTurnCount ?? 0,
   );
-  const _priorGroundedTransform = resolvePriorGroundedTransform(
-    _h1LastMsg,
-    _pr5HistoryRows ?? [],
-  );
+  const _priorGroundedTransform = requiresCurrentMerchantEvidence(classifyNaturalCustomerIntent(_h1LastMsg))
+    ? null : resolvePriorGroundedTransform(_h1LastMsg, _pr5HistoryRows ?? []);
   const _conversationContinuityBlock = buildCanonicalContinuityBlock(
     _pr5HistoryRows ?? [],
   );
@@ -4264,9 +4264,10 @@ async function orchestrationGenerateReply(
   // Route the bounded state writer before KB arbitration on such mixed turns;
   // the KB still owns every external product or policy claim.
   const _customerOwnedDelta = !isHistoricalOrConditionalCustomerCalculationRequest(_h1LastMsg) &&
-    /(?:想|需要|最多|上限|大約|大概|其實|更正|改咗|改為|先擺低|暫緩|暫時唔|prefer|preference|need|want|maximum|at most|actually|correct|defer|pause)/i.test(_h1LastMsg);
+    /(?:想|需要|最多|上限|大約|大概|其實|更正|改咗|改為|先擺低|暫緩|暫時唔|prefer|preference|need|want|maximum|at most|actually|correct|defer|pause|\d+\s*(?:呎|平方呎)|下午.{0,6}(?:曬|晒|日照)|afternoon\s+sun)/i.test(_h1LastMsg);
   // ===== TASK A3.1: multilingual universal semantic interpreter =====
-  // LLM proposes a schema-constrained, language-neutral semantic frame only.
+  // The compatibility interpreter proposes a language-neutral semantic frame.
+  // callModel currently executes the network-free deterministic adapter.
   // It never writes commerce state and never supplies external product/policy facts.
   let _a3SemanticFrame: CommerceSemanticFrame | null = null;
   if (
@@ -4423,7 +4424,7 @@ async function orchestrationGenerateReply(
           _c3Memory, memoryHistory,
         ).block;
       }
-      const memoryOutcome = _c3PreMemoryResolution.skip_memory_refresh
+      const memoryOutcome = _c3PreMemoryResolution.skip_memory_refresh && !_explicitHandoffRequested
         ? null
         : await refreshConversationLongMemory(
           supabaseAdmin as unknown as Parameters<
@@ -4769,7 +4770,8 @@ async function orchestrationGenerateReply(
     (_a3Commerce?.reason === "explicit_address_correction_applied"
       ? null
       : _a3Commerce?.reply ?? null);
-  if (_c3CommerceReply && !_explicitHandoffRequested) {
+  if (_c3CommerceReply && !_explicitHandoffRequested &&
+    !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent)) {
     const commerceReply = _a3Commerce?.reason ===
         "previous_quote_not_authoritative_for_current_price"
       ? historicalQuoteValidityReply(_visitorLang)
@@ -5987,6 +5989,15 @@ async function orchestrationGenerateReply(
       request: _productFactualRequest,
       selection: _groundingSelection,
       language: _visitorLang,
+      customer_context: (() => {
+        const entities = (_c3CommerceSnapshot?.state.entities ?? []).filter((entity) =>
+          !["cancelled", "deferred"].includes(entity.status) && entity.model &&
+          _effectiveNaturalCustomerIntent.kind === "product_factual_query" &&
+          entity.model === _effectiveNaturalCustomerIntent.product);
+        return entities.length === 1
+          ? { model: entities[0].model!, sunlight: entities[0].attributes.sunlight }
+          : undefined;
+      })(),
     });
     _canonicalKbTenantId = _kbTenantResult.scope.singaporeTenantId;
     _kbDone = true;
@@ -6188,6 +6199,10 @@ async function orchestrationGenerateReply(
           reference_authority: referenceAuthorityMetadata(_c1AuthorityDecision),
           response_route: route,
           answer_kind: _canonicalKbDirectAnswer.kind,
+          authoritative_kb_facts: (_canonicalKbDirectAnswer.structured_facts ?? []).map((fact) => ({
+            ...fact, authority: "CURRENT_KB", currentness_at_answer: "current",
+            source_message_id, tenant_id: _canonicalKbTenantId,
+          })),
           product_follow_up_arbitration:
             _productFollowUpArbitration.kind === "resolved"
               ? {

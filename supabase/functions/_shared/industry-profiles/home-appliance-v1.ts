@@ -158,17 +158,17 @@ const HOME_APPLIANCE_JOURNEY_POLICIES: Record<string, HomeApplianceJourneyPolicy
     decision_outputs: ["sizing_decision", "suitable_models"],
     prompts: {
       "zh-TW": {
-        room_sizes: "我會按兩間房同客廳逐個空間幫你揀冷氣。下一步需要細房、大房同客廳各自嘅平方呎面積。",
-        installation_type: "三個空間面積已分開記低。下一步要確認各位置係窗口位、分體位，定係其他安裝方式？",
+        room_sizes: "需要冷氣嘅空間各有幾多平方呎？",
+        installation_type: "各位置係窗口位、分體位，定係其他安裝方式？",
         sunlight: "面積同安裝方式會分開考慮。仲要確認邊個空間有較強下午日照或西斜？",
       },
       "zh-CN": {
-        room_sizes: "我会按两间房和客厅逐个空间帮你选择。请先告诉我小房、大房和客厅各自多少平方英尺？",
-        installation_type: "三个空间的面积已经分开记录。下一步请确认各位置是窗口位、分体位，还是其他安装方式？",
+        room_sizes: "需要冷气的空间各有多少平方英尺？",
+        installation_type: "各位置是窗口位、分体位，还是其他安装方式？",
         sunlight: "面积和安装方式会分开考虑。还要确认哪个空间有较强下午日晒或西晒？",
       },
       en: {
-        room_sizes: "I’ll size the two bedrooms and living room separately. What is the area of each space?",
+        room_sizes: "What is the area of each space that needs an AC?",
         installation_type: "I have the room areas separately. Are these window openings, split-unit positions, or another installation type?",
         sunlight: "I’ll consider the areas and installation type separately. Which spaces get strong afternoon or west-facing sun?",
       },
@@ -195,9 +195,9 @@ const HOME_APPLIANCE_JOURNEY_POLICIES: Record<string, HomeApplianceJourneyPolicy
 function journeyObservations(text: string): string[] {
   const values: string[] = [];
   if (hasTwoBedroomLivingContext(text)) values.push("space_plan");
-  if (/(?:細房|小房|大房|客廳|客厅|living room|bedroom).{0,14}\d{2,4}\s*(?:平方呎|平方英尺|sq\.?\s*ft|ft²|呎)|\d{2,4}\s*(?:平方呎|平方英尺|sq\.?\s*ft|ft²|呎).{0,14}(?:房|客廳|客厅|living room|bedroom)/iu.test(text)) values.push("room_sizes");
+  if (/(?:細房|小房|大房|書房|书房|客廳|客厅|living room|bedroom|study).{0,14}\d{2,4}\s*(?:平方呎|平方英尺|sq\.?\s*ft|ft²|呎)|\d{2,4}\s*(?:平方呎|平方英尺|sq\.?\s*ft|ft²|呎).{0,14}(?:房|客廳|客厅|living room|bedroom|study)/iu.test(text)) values.push("room_sizes");
   if (/(?:窗口位|窗口機|窗口机|分體位|分体位|分體機|分体机|window\s*(?:opening|unit|air)|split[- ]?unit|installation\s*type)/iu.test(text)) values.push("installation_type");
-  if (/(?:西斜|西曬|西晒|下午日照|下午日曬|下午日晒|afternoon\s+sun|west[- ]?facing)/iu.test(text)) values.push("sunlight");
+  if (/(?:西斜|西曬|西晒|下午.{0,6}(?:日照|曬|晒)|afternoon\s+sun|west[- ]?facing)/iu.test(text)) values.push("sunlight");
   if (/(?:闊|宽|高|深|width|height|depth).{0,12}\d{2,4}\s*(?:mm|毫米)/iu.test(text)) values.push("dimensions");
   if (/(?:容量|公升|升|litres?|liters?|\d+\s*l\b|幾多人|几个人|people)/iu.test(text)) values.push("capacity");
   return [...new Set(values)];
@@ -232,6 +232,20 @@ export function homeApplianceCustomerJourneySignal(input: {
   const policy = HOME_APPLIANCE_JOURNEY_POLICIES[category];
   if (!policy) return null;
   const observed = journeyObservations(text);
+  const fridge = input.state.entities.filter((entity) => entity.category === "refrigerator" && !["cancelled", "deferred"].includes(entity.status));
+  const dimensionValues: Record<string, number> = {};
+  if (category === "refrigerator") {
+    for (const [key, words] of [["width", "闊|寬|宽|width"], ["height", "高|height"], ["depth", "深|depth"]]) {
+      const priorValue = fridge.length === 1 ? fridge[0].constraints[`max_${key}_mm`] : undefined;
+      const raw = text.match(new RegExp(`(?:${words}).{0,12}?(\\d{2,4})\\s*(?:mm|毫米)`, "iu"))?.[1] ??
+        text.match(new RegExp(`(\\d{2,4})\\s*(?:mm|毫米)\\s*(?:${words})`, "iu"))?.[1];
+      const value = raw ? Number(raw) : Number(priorValue);
+      if (Number.isFinite(value) && value > 0) dimensionValues[key] = value;
+    }
+    const index = observed.indexOf("dimensions");
+    if (index >= 0) observed.splice(index, 1);
+    if (Object.keys(dimensionValues).length === 3) observed.push("dimensions");
+  }
   if (!isJourneyStart(text) && !observed.length) return null;
   const collected = [...new Set([...(prior?.goal.category === category ? prior.goal.collected : []), ...observed])];
   const operationalMissing = policy.required.filter((item) => !collected.includes(item));
@@ -244,7 +258,16 @@ export function homeApplianceCustomerJourneySignal(input: {
     collected,
     missing,
     response_intent: next ? "request_highest_value_missing_information" : "advance_decision",
-    reply: next ? policy.prompts[input.language][next] : policy.ready[input.language],
+    reply: category === "refrigerator" && next === "dimensions" && Object.keys(dimensionValues).length
+      ? (() => {
+        const names: Record<string, [string,string,string]> = {width:["闊度","宽度","width"],height:["高度","高度","height"],depth:["深度","深度","depth"]};
+        const l = input.language === "en" ? 2 : input.language === "zh-CN" ? 1 : 0;
+        const provided = Object.entries(dimensionValues).map(([key,value]) => `${names[key][l]} ${value} mm`).join(", ");
+        const missing = ["width","height","depth"].filter((key) => !(key in dimensionValues)).map((key) => names[key][l]).join(l === 2 ? " and " : "同");
+        return l === 2 ? `I have ${provided}. What are the limits for ${missing}?` : l === 1
+          ? `已知${provided}。${missing}的上限分别是多少？` : `已知${provided}。${missing}上限各係幾高／幾深？`;
+      })()
+      : next ? policy.prompts[input.language][next] : policy.ready[input.language],
     category_source: explicit.length === 1 ? "explicit" : "active_goal",
   };
 }

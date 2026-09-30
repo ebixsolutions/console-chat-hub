@@ -9,6 +9,7 @@
 import type { ConversationCommerceState } from "./commerce-state-contract.ts";
 import type { CanonicalConversationMemory } from "./conversation-long-memory.ts";
 import { exactProductIdentifiers, isProductOperationFailure, isProductSupportProblem } from "./natural-customer-response.ts";
+import { deriveTypedCustomerMoneyFacts } from "./customer-money-facts.ts";
 
 export type ServiceLanguage = "zh-TW" | "zh-CN" | "en";
 export type ServiceKnowledgeState =
@@ -420,7 +421,11 @@ function classifyCustomerIssue(question: string): ServiceIssueKind | null {
   }
   if (
     /(?:delivery|delivered|dispatch|shipment|tracking|parcel|package|lost in transit|arriv|collection|courier|送貨|送货|配送|派送|物流|包裹|到貨|到货|取件)/i
-      .test(text)
+      .test(text) &&
+    // A historical delivery charge is a money fact, not a delivery incident.
+    (!deriveTypedCustomerMoneyFacts(text).historical ||
+      !deriveTypedCustomerMoneyFacts(text).facts.length ||
+      /(?:problem|issue|late|delay|missing|lost|not arrived|hasn.t arrived|問題|问题|遲到|延誤|延误|未到|唔到|未收到|投訴|投诉)/i.test(text))
   ) {
     return "delivery_or_collection";
   }
@@ -725,18 +730,21 @@ function renderContextualServiceReply(
         "Budget matters, and Gree, Midea or Panasonic are options. No brand is mandatory yet.",
       ][languageIndex];
     }
-    if (/\b5788\b|\b5,788\b/i.test(turn) && /550/.test(turn)) {
+    const money = deriveTypedCustomerMoneyFacts(turn);
+    if (money.facts.length && money.historical) {
+      const details = money.facts.map((fact) => {
+        const label = fact.labels[languageIndex];
+        const basis = fact.charge_basis === "per_unit"
+          ? ["每部", "每部", "per unit"][languageIndex]
+          : fact.charge_basis === "per_order"
+          ? ["整單", "整单", "per order"][languageIndex]
+          : ["收費單位未指明", "收费单位未指明", "charge basis unspecified"][languageIndex];
+        return `${label} ${fact.currency} ${fact.amount.toLocaleString("en-US")} (${basis})`;
+      }).join("；");
       return [
-        "記低你轉述嘅舊數字：機價 HKD 5,788，安裝同鋁架各 HKD 550；未當作現價。",
-        "已记下你转述的旧数字：机价 HKD 5,788，安装和铝架各 HKD 550；不当作现价。",
-        "I have your earlier figures: HKD 5,788 for the unit, plus HKD 550 each for installation and the bracket. These are historical figures.",
-      ][languageIndex];
-    }
-    if (/\b5600\b|\b5,600\b/i.test(turn) && /(?:兩部|两部)/.test(turn)) {
-      return [
-        "記低你轉述嘅兩部舊價：每部 HKD 5,600；要再核實適用型號，唔會當現價。",
-        "已记下你转述的两部旧价：每部 HKD 5,600；适用型号还需核实，不当作现价。",
-        "I have the earlier two-unit figure of HKD 5,600 each. The applicable model and current price still need checking.",
+        `你提供嘅歷史／假設數字係：${details}；只供過往／假設情境整理，並無商戶現行承諾。`,
+        `你提供的历史／假设数字是：${details}；只用于过去／假设情境整理，并无商户现行承诺。`,
+        `Your historical/conditional figures are: ${details}. These are not current prices.`,
       ][languageIndex];
     }
     if (/一部\s*1匹.*一部\s*1\.5匹/.test(turn)) {
@@ -764,6 +772,18 @@ function renderContextualServiceReply(
   }
 
   if (genericTarget) {
+    if (plan.knowledge_state === "not_needed") {
+      const facts = plan.known_facts.filter((fact) => !["current_intent", "customer_goal", "quotation_status", "order_status"].includes(fact.name));
+      if (facts.length) {
+        const detail = facts.slice(0, 6).map((fact) => `${fact.label}：${fact.value}`).join("；");
+        return [
+          `目前資料係：${detail}。你想我幫你跟進邊一部分？`,
+          `目前资料是：${detail}。你想我帮你跟进哪一部分？`,
+          `Here is the information you have provided: ${detail}. Which part would you like help with?`,
+        ][languageIndex];
+      }
+      return labels[plan.clarification_target ?? "customer_goal"]?.[languageIndex] ?? labels.customer_goal[languageIndex];
+    }
     if (/(?:產品頁|产品页).{0,24}(?:機價|机价).{0,24}(?:包安裝|包安装)/i.test(turn)) {
       return [
         "產品頁有機價，唔代表已包安裝；要睇頁面有冇明確列出安裝服務同費用。",
@@ -912,7 +932,7 @@ export function renderServicePlanReply(
     return [
       `按你提供並已標明收費單位的舊數字：${expression}。這只是歷史條件試算，不是現行正式報價。`,
       `按你提供并已标明收费单位的旧数字：${expression}。这只是历史条件试算，不是当前正式报价。`,
-      `Using only the historical amounts with an explicit charge basis: ${expression}. This is a conditional historical calculation, not a current quotation.`,
+      `Using only the historical amounts with an explicit charge basis: ${expression}. This is a conditional historical calculation using your figures only, not a current merchant offer.`,
     ][l];
   }
   if (plan.action === "shorten_previous_answer") {

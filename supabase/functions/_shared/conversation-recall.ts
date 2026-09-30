@@ -1739,12 +1739,20 @@ function renderTwoSentenceRecap(
     const sizes = entity.attributes.room_sizes;
     const rooms = sizes && typeof sizes === "object" && !Array.isArray(sizes)
       ? Object.entries(sizes).filter(([, v]) => typeof v === "string")
-        .map(([scope, v]) => `${({ study: "書房", small_bedroom: "細房", large_bedroom: "大房", living_room: "客廳" } as Record<string, string>)[scope] ?? scope.replace(/_/g, " ")}${v}`)
+        .map(([scope, v]) => language === "en"
+          ? `${scope.replace(/_/g," ")} ${String(v).replace(/平方[呎尺]|[呎尺]/u," sq ft")}`
+          : `${({ study: "書房", small_bedroom: "細房", large_bedroom: "大房", living_room: "客廳" } as Record<string, string>)[scope] ?? scope.replace(/_/g, " ")}${v}`)
       : [];
     const widths = Object.entries(entity.constraints)
       .filter(([key, value]) => key === "max_width_mm" && typeof value === "number")
       .map(([, value]) => language === "en" ? `maximum width ${value} mm` : `最闊${value} mm`);
-    return [...rooms, ...widths].slice(0, 4);
+    const l = language === "en" ? 2 : language === "zh-CN" ? 1 : 0;
+    const detail: string[] = [];
+    if (entity.model) detail.push(entity.model);
+    if (entity.attributes.sunlight === "strong_afternoon_sun") detail.push(["下午日照強","下午日晒较强","strong afternoon sun"][l]);
+    if (entity.attributes.installation_type === "window_unit") detail.push(["窗口機","窗口机","window unit"][l]);
+    if (Number.isInteger(entity.attributes.door_count)) detail.push(l === 2 ? `${entity.attributes.door_count} doors` : `${entity.attributes.door_count}門`);
+    return [...rooms, ...widths, ...detail].slice(0, 8);
   };
   const active = state.entities.filter((e) => e.status !== "deferred" && e.status !== "cancelled");
   const deferred = state.entities.filter((e) => e.status === "deferred");
@@ -1793,10 +1801,6 @@ function renderCurrentAcRequirements(
       (entity.attributes.scoped_customer_updates as Array<Record<string, unknown>>)
         .some((row) => row.scope === scope && row.attribute === "quantity" && row.value === 1)
     );
-  const researched = [...new Set(messages.flatMap((text) =>
-    /(?:細房|细房|冷氣|冷气).{0,25}CW-SUL70BA|CW-SUL70BA.{0,25}(?:冷氣|冷气|細房|细房)/i.test(text)
-      ? ["CW-SUL70BA"] : []
-  ))];
   return [
     `現時冷氣要求：細房${sizes.small_bedroom}、大房${sizes.large_bedroom}、客廳${sizes.living_room}。`,
     hasWindow ? "三個位置都有窗口位，現有都係窗口機。" : "",
@@ -1804,8 +1808,8 @@ function renderCurrentAcRequirements(
     allocated && entity.quantity === 3
       ? "客廳一部、兩間房各一部，共三部；目前只係選購要求，未落單。"
       : `目前選購數量共${entity.quantity}部，具體分配仍要確認。`,
-    researched.length === 1
-      ? "細房研究緊 CW-SUL70BA；80平方呎是否適用仍未有足夠資料確認。"
+    entity.model
+      ? `目前研究緊 ${entity.model}；各空間是否適用仍要按現行資料核對。`
       : "適用型號同匹數仍要按現行資料核對。",
   ].filter(Boolean).join(" ");
 }
