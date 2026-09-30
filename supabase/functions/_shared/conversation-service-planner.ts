@@ -347,7 +347,6 @@ function factSatisfiesSlot(
     room_size_or_dimensions: /:room_size(?:\n|$)|dimensions/,
     region: /region|market/,
     applicable_date: /delivery_preference|date/,
-    customer_goal: /current_intent|customer_goal|entity:/,
     intended_use: /current_intent|customer_goal/,
     budget_range: /budget/,
   };
