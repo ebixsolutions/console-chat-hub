@@ -863,7 +863,7 @@ export function renderServicePlanReply(
     const details = plan.committed_requirements.map(e=>renderCanonicalRequirement(e,plan.language)).join(l===2?"; ":"；");
     const inactive = plan.committed_commerce.entities.filter(e=>["deferred","cancelled"].includes(e.status) && !plan.committed_requirements!.some(x=>x.entity_id===e.entity_id));
     const retained = inactive.length ? (l===2?"; ":"；")+inactive.map(e=>renderCanonicalRequirement(e,plan.language)).join(l===2?"; ":"；") : "";
-    const prefix = ["今次要求已記錄：","本次要求已记录：","Noted for this request: "][l];
+    const prefix = ["今次要求已記錄：","本次要求已记录：","I've noted "][l];
     const hasBooking = plan.committed_commerce.entities.some(e=>!["deferred","cancelled"].includes(e.status) && typeof e.attributes.capabilities === "object" && e.attributes.capabilities && (e.attributes.capabilities as Record<string,unknown>).requires_booking === true);
     return prefix+details+retained+(l===2?".":"。")+(hasBooking?" "+renderRequirementQualification(plan.committed_commerce,plan.language):"");
   }

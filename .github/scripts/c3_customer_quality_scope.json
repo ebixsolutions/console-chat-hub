@@ -1,16 +1,14 @@
 {
-  "baseline_head": "4b47bb2eac2f2403bb1bbb947e81bb4d9cbdbac6",
-  "baseline_tree": "18866091177e2ef3c16d1637338cde1aa000f7a8",
+  "baseline_head": "cb3895efd1f2dd4a1c5b4f43cdf0a4e5fea0771e",
+  "baseline_tree": "43878e7f2f8a8aa811d350bb0f57a72ddad2a193",
   "changed_files": [
     ".github/scripts/c3_customer_quality_scope.json",
     ".github/scripts/c3_customer_quality_final_gate.mjs",
     ".github/scripts/c3_actual_handler_runtime.mjs",
-    "supabase/functions/_shared/commerce-state-authority.ts",
+    "supabase/functions/_shared/commerce-capability-runtime.ts",
     "supabase/functions/_shared/conversation-recall.ts",
     "supabase/functions/_shared/conversation-recall.test.ts",
-    "supabase/functions/_shared/commerce-state-runtime-base.ts",
-    "supabase/functions/generate-reply/index.ts",
-    "supabase/functions/_shared/conversation-long-memory.test.ts",
-    "supabase/functions/_shared/commerce-capability-runtime.ts"
+    "supabase/functions/_shared/conversation-service-planner.ts",
+    "supabase/functions/_shared/customer-quality-state.test.ts"
   ]
 }

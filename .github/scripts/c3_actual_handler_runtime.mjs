@@ -283,7 +283,7 @@ try {
       assert.doesNotMatch(reply.content,/Got it:|keep this detail|verify anything still uncertain|收到，你提到|我會按呢個條件整理/i);
       assert.ok(!reply.content.includes(t.customer));
       const committed=t.semanticAfter[0].state.entities.filter(e=>e.provenance.source_message_id===t.source);
-      assert.ok(committed.length);for(const e of committed){assert.ok(reply.content.includes(e.attributes.product_name));assert.ok(reply.content.includes(String(e.quantity)));if(e.attributes.requested_date)assert.ok(reply.content.includes(e.attributes.requested_date));}
+      assert.ok(committed.length);for(const e of committed){assert.ok(reply.content.includes(e.attributes.capabilities?.requires_booking===true?e.attributes.product_name.replace(/\s+booking$/i,""):e.attributes.product_name));assert.ok(reply.content.includes(String(e.quantity)));if(e.attributes.requested_date)assert.ok(reply.content.includes(new Intl.DateTimeFormat("en-GB",{day:"numeric",month:"long",year:"numeric",timeZone:"UTC"}).format(new Date(e.attributes.requested_date+"T00:00:00Z"))));}
     }
   }
   function summaryParity(c) {
@@ -448,6 +448,13 @@ try {
   // Customer-visible recap assertions run through the actual handler and SQL,
   // with natural customer messages only; no desired intent or control injected.
   const recapReadback=[];
+  function naturalEnglish(reply) {
+    assert.doesNotMatch(reply,/###|\{[^}]*\}|entity_id|funnel_stage|quotation_status|order_status|source_message_id|memory_revision/);
+    assert.doesNotMatch(reply,/request for[^.]*\bnoted\b|\bat\s+\d+[^.]*requested for[^.]*noted/i);
+    assert.ok((reply.match(/\brequest(?:ed)?\b/gi)??[]).length<=1,'repeated request construction: '+reply);
+    assert.doesNotMatch(reply,/requested for \d{4}-\d{2}-\d{2}/);
+  }
+
   function naturalRecap(c,index,needles=[],forbidden=[]) {
     const t=c.outputs[index];assert.equal(t.status,200);assert.equal(t.replies.length,1);
     assert.equal(t.outcome.response_route,"canonical_memory_recall");
@@ -456,6 +463,7 @@ try {
     for(const value of needles)assert.ok(r.content.includes(value),r.content);for(const value of forbidden)assert.ok(!r.content.includes(value),r.content);
     assert.deepEqual(t.semanticAfter,t.semanticBefore,"recap mutated Commerce");assert.deepEqual(t.memoryAfter,t.memoryBefore,"recap mutated Memory");
     assert.equal(r.metadata.source_message_id,t.source);assert.equal(r.metadata.b2_source_message_id,t.source);assert.equal(r.metadata.b2_expected_company_id,company);
+    if(!/[一-龿]/.test(r.content))naturalEnglish(r.content);
     recapReadback.push({conversation_id:c.id,source_message_id:t.source,customer:t.customer,reply:r.content,read_only:true,source_company_binding:true});
   }
   naturalRecap(saas,6,["CN-314 subscription","9 seats","is paused"],["7 seats"]);
@@ -464,9 +472,24 @@ try {
   const recapSimple=await conversation(["I need MT-692 subscription for 8 seats.","用廣東話總結一下而家個情況。","What do I currently have noted? Please answer in English.","Remind me what we have agreed so far.","幫我講返目前要求。"]);
   naturalRecap(recapSimple,1,["8席"]);naturalRecap(recapSimple,2,["MT-692 subscription at 8 seats"]);naturalRecap(recapSimple,3,["8 seats"]);naturalRecap(recapSimple,4,["8席"]);
   const recapBooking=await conversation(["I need 5 sessions of VM-846 booking on 2026-12-09.","I need 2 JC-258 parking.","Defer JC-258 parking. Change VM-846 booking to 7 sessions.","Summarize where we are now.","而家記低咗啲咩？"]);
-  naturalRecap(recapBooking,3,["7 sessions","2026-12-09","is paused","staff confirmation"],["5 sessions"]);naturalRecap(recapBooking,4,["7節","暫緩","職員確認"],["5節"]);
+  naturalRecap(recapBooking,3,["7 VM-846 sessions","9 December 2026","is paused","staff confirmation"],["5 VM-846 sessions"]);naturalRecap(recapBooking,4,["7節","暫緩","職員確認"],["5節"]);
   const recapCancelled=await conversation(["I need 6 seats of NR-429 subscription.","I also need KL-795 add-on for 4 units.","Cancel KL-795 add-on.","Give me a quick recap of my current setup."]);
   naturalRecap(recapCancelled,3,["6 seats","has been cancelled"]);
+  // New values and natural messages execute interpretation -> B2 -> real SQL -> visible reply.
+  const englishSaas=await conversation(["I need UG-573 subscription for 11 seats.","Give me a quick summary of my request.","I also need LC-829 add-on for 4 units.","Change UG-573 subscription to 19 seats. Defer LC-829 add-on.","What do you currently have noted for me?","Cancel LC-829 add-on.","Where are we with my current request? Give me a quick summary."]);
+  naturalRecap(englishSaas,1,["UG-573 subscription at 11 seats","No order or payment has been created."],["paused"]);
+  naturalRecap(englishSaas,4,["UG-573 subscription at 19 seats","LC-829 add-on for 4 units is paused","No order or payment has been created."],["11 seats"]);
+  naturalRecap(englishSaas,6,["19 seats","has been cancelled"],["is paused","11 seats"]);
+  const englishBooking=await conversation(["I need 8 sessions of DP-647 booking on 2027-02-13.","I need 3 JV-295 parking.","Change DP-647 booking to 9 sessions. Defer JV-295 parking.","Change DP-647 booking date to 2027-02-21.","Remind me of my booking details. Give me a short summary.","而家記低咗啲咩？用廣東話簡單講返。"]);
+  naturalRecap(englishBooking,4,["9 DP-647 sessions on 21 February 2027","JV-295 parking for 3 is paused","staff confirmation and is not confirmed yet"],["8 DP-647","13 February 2027","2027-02-21"]);
+  naturalRecap(englishBooking,5,["9節","2027-02-21","暫緩","職員確認"],["8節","2027-02-13"]);
+  const bookingState=englishBooking.outputs[4].semanticAfter[0].state;
+  assert.equal(bookingState.entities.find(e=>e.category==='booking').attributes.requested_date,'2027-02-21');
+  assert.equal(bookingState.entities.find(e=>e.category==='booking').quantity,9);
+  assert.equal(bookingState.conversion.order_status,'none');assert.equal(bookingState.conversion.payment_status,'none');
+  assert.deepEqual(bookingState.conversion.confirmed_entity_ids,[]);
+  for(const c of [englishSaas,englishBooking])for(const t of c.outputs)if(t.replies[0]&&!/[一-龿]/.test(t.replies[0].content))naturalEnglish(t.replies[0].content);
+  const englishRealizationReadback={classes:{A:englishSaas.outputs[4].source,B:englishBooking.outputs[4].source,C:englishSaas.outputs[1].source,D:englishSaas.outputs[4].source,E:englishBooking.outputs[4].source,F:englishSaas.outputs[6].source,G:englishSaas.outputs[1].source,H:englishBooking.outputs[4].source},customer_visible_internal_heading_count:0,raw_json_count:0,internal_schema_key_count:0,structural_construction_guards:true};
   const recapEmpty=await conversation(["Hi","What do I currently have noted?"]);
   naturalRecap(recapEmpty,1,["haven't recorded any specific requirements"]);
   const emptyTurn=recapEmpty.outputs[1];assert.equal(emptyTurn.status,200);assert.equal(emptyTurn.replies.length,1);assert.doesNotMatch(emptyTurn.replies[0].content,/###|\{|entity_id|核實|verif|current information/i);
@@ -548,7 +571,7 @@ try {
   await db.exec(read("supabase/migrations/rollback/20260930090000_c3_handoff_grounded_facts.rollback.sql"));
   assert.deepEqual(await catalog(),acceptedHandoff,"rollback changed the accepted function/security identity");
   assert.deepEqual(await triggers(),acceptedTriggers);assert.deepEqual(await ledger(),acceptedLedger);
-  fs.writeFileSync(process.env.C3_TEST_RESULT ?? "/tmp/c3-actual-handler-result.json",JSON.stringify({coverage:"actual_handler_local_sql_integration",limitations:["local transport adapter, not hosted PostgREST/Widget","pgcrypto digest backed by PostgreSQL built-in sha256","synthetic tenant, no production traffic"],results,faults,recapReadback,summaryReadback,handoffSemanticReadback,forwardCatalog,rollbackCatalog:await catalog(),triggerBindings:await triggers(),migrationLedger:await ledger(),assertions:{customer_recap_natural_no_internal_representation:true,customer_recap_unseen_bilingual_shared_semantics:true,customer_recap_read_only_source_company_binding:true,handoff_request_not_business_goal:true,handoff_request_not_active_constraint:true,handoff_request_not_current_topic_without_business_goal:true,business_goal_preserved_across_r1:true,actionable_pending_drives_human_next_action:true,generic_next_action_only_when_no_actionable_pending:true,generic_state_acknowledgement_not_meta:true,no_false_customer_goal_missing:true,same_turn_question_resolution:true,no_cross_domain_recap_language:true,handoff_summary_structured_parity:true,immediate_post_KB_R1_has_no_stale_question:true,memory_finalisation_business_mutation_rejected:true,memory_finalisation_reply_binding_rejected:true,memory_finalisation_replay_idempotent:true,memory_resolved_question_resurrection_rejected:true,social_state_hygiene:true,question_lifecycle:true,typed_money_persistence_and_recall:true,generic_saas:true,generic_booking:true,real_r1_sql_package_and_suppression:true,r1_replay_idempotent:true,b2_source_binding:true,no_duplicate_reply:true,no_thinking:true,no_terminal_failure:true,no_transaction_promotion:true,migration_forward:true,migration_rollback:true,catalog_owner_security_search_path_acl:true,commit_ai_reply_tx_unchanged:true,trigger_binding_preserved:true,migration_ledger_preserved:true}},null,2));
+  fs.writeFileSync(process.env.C3_TEST_RESULT ?? "/tmp/c3-actual-handler-result.json",JSON.stringify({coverage:"actual_handler_local_sql_integration",limitations:["local transport adapter, not hosted PostgREST/Widget","pgcrypto digest backed by PostgreSQL built-in sha256","synthetic tenant, no production traffic"],results,faults,recapReadback,englishRealizationReadback,summaryReadback,handoffSemanticReadback,forwardCatalog,rollbackCatalog:await catalog(),triggerBindings:await triggers(),migrationLedger:await ledger(),assertions:{shared_english_realization_compositional_grammar:true,customer_recap_natural_no_internal_representation:true,customer_recap_unseen_bilingual_shared_semantics:true,customer_recap_read_only_source_company_binding:true,handoff_request_not_business_goal:true,handoff_request_not_active_constraint:true,handoff_request_not_current_topic_without_business_goal:true,business_goal_preserved_across_r1:true,actionable_pending_drives_human_next_action:true,generic_next_action_only_when_no_actionable_pending:true,generic_state_acknowledgement_not_meta:true,no_false_customer_goal_missing:true,same_turn_question_resolution:true,no_cross_domain_recap_language:true,handoff_summary_structured_parity:true,immediate_post_KB_R1_has_no_stale_question:true,memory_finalisation_business_mutation_rejected:true,memory_finalisation_reply_binding_rejected:true,memory_finalisation_replay_idempotent:true,memory_resolved_question_resurrection_rejected:true,social_state_hygiene:true,question_lifecycle:true,typed_money_persistence_and_recall:true,generic_saas:true,generic_booking:true,real_r1_sql_package_and_suppression:true,r1_replay_idempotent:true,b2_source_binding:true,no_duplicate_reply:true,no_thinking:true,no_terminal_failure:true,no_transaction_promotion:true,migration_forward:true,migration_rollback:true,catalog_owner_security_search_path_acl:true,commit_ai_reply_tx_unchanged:true,trigger_binding_preserved:true,migration_ledger_preserved:true}},null,2));
   console.log(`actual_handler_local_sql_integration PASS: ${results.length} conversations; first R1 real SQL event/source binding/package; next-turn suppression`);
 } catch(error) { console.error(error.message,JSON.stringify(faults));process.exitCode=1; }
 finally { child?.kill(); if(server) await new Promise((resolve)=>server.close(resolve));await db.close(); }

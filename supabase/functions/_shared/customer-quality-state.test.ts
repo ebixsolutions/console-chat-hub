@@ -4,6 +4,7 @@ import { createEmptyConversationCommerceState } from "./commerce-state-contract.
 import { classifySocialTurn } from "./natural-customer-response.ts";
 import { deriveTypedCustomerCalculation } from "./conversation-service-runtime.ts";
 import { deriveTypedCustomerMoneyFacts } from "./customer-money-facts.ts";
+import { renderCanonicalRequirement } from "./commerce-capability-runtime.ts";
 import { isCurrentRequirementsRecap } from "./commerce-state-authority.ts";
 const eq=(a:unknown,b:unknown)=>{if(JSON.stringify(a)!==JSON.stringify(b))throw new Error(JSON.stringify({a,b}));};
 const build=(rows:Array<{id:string,role:string,content:string,metadata?:Record<string,unknown>}>)=>buildCanonicalConversationMemory({conversation_id:"conversation",company_id:"tenant",source_message_id:rows[0].id,commerce_state_revision:0,commerce_state:createEmptyConversationCommerceState(),newest_first:rows,visitor_turn_count:1,source_created_at:"2026-09-30T00:00:00Z",next_memory_revision:1});
@@ -41,7 +42,19 @@ Deno.test("COMPONENT: state acknowledgement uses typed committed requirement and
   const plan=planConversationService({question:"Please note eight sessions for my consultation.",language:"en",recall:{handled:false,reason:"NOT_A_RECALL_QUERY"},memory:null,commerce:state,committed_source_message_id:"source"});
   eq(plan.action,"state_acknowledgement");eq(plan.missing_slots,[]);
   const reply=renderServicePlanReply(plan,null)!;
-  if(!reply.includes("RB-682 consultation, 8 sessions on 2027-01-03")||!reply.includes("staff confirmation")||/Got it:|keep this detail/.test(reply))throw new Error(reply);
+  if(!reply.includes("8 RB-682 consultation sessions on 3 January 2027")||!reply.includes("staff confirmation")||/Got it:|keep this detail/.test(reply))throw new Error(reply);
   const uncommitted=planConversationService({...{question:"Please note eight sessions for my consultation.",language:"en" as const,recall:{handled:false,reason:"NOT_A_RECALL_QUERY" as const},memory:null,commerce:state},committed_source_message_id:"different-source"});
   if(uncommitted.action==="state_acknowledgement")throw new Error("uncommitted input rendered as canonical change");
+});
+
+Deno.test("COMPONENT: English clause renders typed units and validated dates without state mutation",()=>{
+  const state=createEmptyConversationCommerceState();
+  const entity={entity_id:"generic:kt-938",category:"booking",model:null,brand:null,quantity:1,status:"tentative" as const,attributes:{product_name:"KT-938 booking",unit:"sessions",requested_date:"2028-02-29",capabilities:{requires_booking:true}},constraints:{},provenance:{source_message_id:"source",source_type:"customer" as const}};
+  for(const [quantity,unit,date,expected] of [[1,"sessions","2028-02-29","1 KT-938 session on 29 February 2028"],[13,"session","2027-08-05","13 KT-938 sessions on 5 August 2027"],[2,"passes","2027-02-30","2 KT-938 passes on 2027-02-30"]] as const){
+    const e={...entity,quantity,attributes:{...entity.attributes,unit,requested_date:date}};const before=JSON.stringify(e);
+    eq(renderCanonicalRequirement(e,"en"),expected);eq(JSON.stringify(e),before);
+  }
+  eq(renderCanonicalRequirement(entity,"zh-TW"),"KT-938 booking，1節，要求日期 2028-02-29");
+  eq(renderCanonicalRequirement({...entity,category:"parking",attributes:{product_name:"HB-362 parking"},quantity:7,status:"deferred"},"en"),"HB-362 parking for 7 is paused");
+  eq(state.conversion.order_status,"none");
 });

@@ -6,6 +6,7 @@ import type {
 import { isCurrentRequirementsRecap, isReadOnlyMemoryOrCurrentStateRecall } from "./commerce-state-authority.ts";
 import type { CanonicalConversationMemory } from "./conversation-long-memory.ts";
 import { industryEntityLabel } from "./industry-runtime-adapter.ts";
+import { renderEnglishRequirement } from "./commerce-capability-runtime.ts";
 
 export type RecallFact =
   | "quantity"
@@ -1763,8 +1764,9 @@ function renderCustomerRecap(value: unknown, language: string): string {
     if (e.attributes.sunlight === "strong_afternoon_sun") facts.push(["下午日照強", "下午日晒较强", "strong afternoon sun"][l]);
     if (e.attributes.installation_type === "window_unit") facts.push(["窗口機", "窗口机", "window unit"][l]);
     if (Number.isInteger(e.attributes.door_count)) facts.push(l === 2 ? `${e.attributes.door_count} doors` : `${e.attributes.door_count}門`);
+    if (l === 2) return renderEnglishRequirement(e,label(e)) + (facts.length ? ", "+facts.join(", ") : "");
     const date = typeof e.attributes.requested_date === "string" ? display(e.attributes.requested_date) : null;
-    const details = `${label(e)}${l === 2 ? " at " : " "}${count}${date ? [ `，要求日期 ${date}`, `，要求日期 ${date}`, ` requested for ${date}` ][l] : ""}${facts.length ? `${l === 2 ? ", " : "，"}${facts.join(l === 2 ? ", " : "、")}` : ""}`;
+    const details = `${label(e)} ${count}${date ? [ `，要求日期 ${date}`, `，要求日期 ${date}` ][l] : ""}${facts.length ? `，${facts.join("、")}` : ""}`;
     const lifecycle = e.status === "deferred" ? ["已暫緩", "已暂缓", " is paused"][l]
       : e.status === "cancelled" ? ["已取消", "已取消", " has been cancelled"][l] : "";
     return details + lifecycle;
@@ -1784,7 +1786,7 @@ function renderCustomerRecap(value: unknown, language: string): string {
   }) : [];
   const retainedText=retained.length ? ["而家記低咗","目前已记录","I have noted " ][l]+retained.join(l===2?"; ":"；")+(l===2?".":"。") : "";
   const first = l === 2
-    ? [active.length ? `I have your request for ${active.map(describe).join("; ")} noted.` : "",
+    ? [active.length ? `I've noted ${active.map(describe).join("; ")}.` : "",
         inactive.length ? inactive.map(describe).join("; ") + "." : "",
         !entities.length ? retainedText || "I haven't recorded any specific requirements yet." : ""].filter(Boolean).join(" ")
     : entities.length ? ["而家記低咗", "目前已记录"][l] + entities.map(describe).join("；") + "。"
@@ -1792,13 +1794,13 @@ function renderCustomerRecap(value: unknown, language: string): string {
   const confirmed = Array.isArray(v.confirmed_entity_ids) ? v.confirmed_entity_ids : [];
   const pendingBooking = active.some(e => object(e.attributes.capabilities)?.requires_booking === true && !confirmed.includes(e.entity_id));
   let qualification = "";
-  if (pendingBooking) qualification = ["預約要求仍需職員確認，未成為已確認預約。", "预约要求仍需职员确认，尚未成为已确认预约。", "The booking still needs staff confirmation; it has not been confirmed."][l];
+  if (pendingBooking) qualification = ["預約要求仍需職員確認，未成為已確認預約。", "预约要求仍需职员确认，尚未成为已确认预约。", "The booking still needs staff confirmation and is not confirmed yet."][l];
   else if (active.some(e => e.category === "air_conditioner" || object(e.attributes.capabilities)?.requires_site_check === true)) qualification = ["適用性仍要按現行資料及現場條件核對。", "适用性仍需按现行资料及现场条件核对。", "Suitability still needs current evidence and the relevant site checks."][l];
   else if (entities.length) {
     const transaction = object(v.transaction) ?? {};
     const order = transaction.order_status ?? transaction.order;
     const payment = transaction.payment_status ?? transaction.payment;
-    if (order === "none" && payment === "none") qualification = ["目前只係記錄緊你嘅要求，未建立訂單或付款。", "目前只是记录你的要求，尚未建立订单或付款。", "Nothing has been ordered or paid for yet."][l];
+    if (order === "none" && payment === "none") qualification = ["目前只係記錄緊你嘅要求，未建立訂單或付款。", "目前只是记录你的要求，尚未建立订单或付款。", "No order or payment has been created."][l];
     else {
       const orders: Record<string, [string, string, string]> = {
         none: ["未建立訂單", "尚未建立订单", "no order has been placed"],

@@ -273,7 +273,30 @@ export function buildCapabilityAwarePreorderNextStep(
 }
 
 /** Render conversational requirements only; external fulfilment requires its own authority. */
+export function renderEnglishRequirement(entity: CommerceEntity, displayName?: string): string {
+  const name = displayName ?? (typeof entity.attributes.product_name === "string" ? entity.attributes.product_name : entity.model ?? entity.category.replace(/_/g, " "));
+  const storedUnit = typeof entity.attributes.unit === "string" ? entity.attributes.unit.trim() : "";
+  const singulars: Record<string,string> = {seats:"seat",sessions:"session",units:"unit",items:"item",boxes:"box",pieces:"piece",bottles:"bottle",packs:"pack",bags:"bag",pairs:"pair",sets:"set",nights:"night",lessons:"lesson"};
+  const singular = singulars[storedUnit] ?? storedUnit;
+  const unit = entity.quantity === 1 ? singular : Object.values(singulars).includes(singular) ? Object.entries(singulars).find(([,v])=>v===singular)![0] : storedUnit;
+  const rawDate = typeof entity.attributes.requested_date === "string" ? entity.attributes.requested_date : null;
+  let date = rawDate;
+  if (rawDate && /^\d{4}-\d{2}-\d{2}$/.test(rawDate)) {
+    const value = new Date(rawDate+"T00:00:00Z");
+    if (Number.isFinite(value.getTime()) && value.toISOString().slice(0,10) === rawDate)
+      date = new Intl.DateTimeFormat("en-GB",{day:"numeric",month:"long",year:"numeric",timeZone:"UTC"}).format(value);
+  }
+  const count = `${entity.quantity}${unit ? " "+unit : ""}`;
+  const booking = entity.attributes.capabilities && typeof entity.attributes.capabilities === "object" && (entity.attributes.capabilities as Record<string,unknown>).requires_booking === true;
+  const core = booking && unit
+    ? `${entity.quantity} ${name.replace(/\s+booking$/i,"")} ${unit}`
+    : `${name}${entity.status === "deferred" || entity.status === "cancelled" || entity.category !== "subscription" ? " for " : " at "}${count}`;
+  const lifecycle = entity.status === "deferred" ? " is paused" : entity.status === "cancelled" ? " has been cancelled" : "";
+  return core + (date ? " on "+date : "") + lifecycle;
+}
+
 export function renderCanonicalRequirement(entity: CommerceEntity, language: string): string {
+  if (language === "en") return renderEnglishRequirement(entity);
   const l = language === "en" ? 2 : language === "zh-CN" ? 1 : 0;
   const name = typeof entity.attributes.product_name === "string" ? entity.attributes.product_name : entity.model ?? entity.category.replace(/_/g, " ");
   const unit = typeof entity.attributes.unit === "string" ? entity.attributes.unit : "items";
@@ -290,11 +313,11 @@ export function renderRequirementQualification(state: ConversationCommerceState,
   const active = state.entities.filter(e=>!["deferred","cancelled"].includes(e.status));
   const booking = active.some(e=>e.attributes.capabilities && typeof e.attributes.capabilities === "object" &&
     (e.attributes.capabilities as Record<string,unknown>).requires_booking === true && !state.conversion.confirmed_entity_ids.includes(e.entity_id));
-  if (booking) return ["預約要求仍需職員確認，未成為已確認預約。","预约要求仍需职员确认，尚未成为已确认预约。","The requested booking still needs staff confirmation; it is not a confirmed booking."][l];
+  if (booking) return ["預約要求仍需職員確認，未成為已確認預約。","预约要求仍需职员确认，尚未成为已确认预约。","The booking still needs staff confirmation and is not confirmed yet."][l];
   const site = active.some(e=>e.category === "air_conditioner" || e.attributes.capabilities && typeof e.attributes.capabilities === "object" &&
     (e.attributes.capabilities as Record<string,unknown>).requires_site_check === true);
   if (site) return ["適用性仍要按現行資料及現場條件核對。","适用性仍需按现行资料及现场条件核对。","Suitability still needs current evidence and the relevant site checks."][l];
   if (state.conversion.order_status === "none" && state.conversion.payment_status === "none")
-    return ["呢啲只係今次要求嘅記錄，未建立訂單或付款。","这些只是本次要求的记录，尚未建立订单或付款。","These are the requirements for this request; no order or payment has been created."][l];
+    return ["呢啲只係今次要求嘅記錄，未建立訂單或付款。","这些只是本次要求的记录，尚未建立订单或付款。","No order or payment has been created."][l];
   return ["訂單狀態","订单状态","Order status"][l]+`: ${state.conversion.order_status}; `+["付款狀態","付款状态","payment status"][l]+`: ${state.conversion.payment_status}.`;
 }

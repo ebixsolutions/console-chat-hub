@@ -26,8 +26,8 @@ function run(command,args,label){
 try{
   const scope=JSON.parse(fs.readFileSync(path.join(root,'.github/scripts/c3_customer_quality_scope.json')));
   check('candidate_head_tree_and_baseline',()=>{
-    assert.equal(scope.baseline_head,'4b47bb2eac2f2403bb1bbb947e81bb4d9cbdbac6');
-    assert.equal(scope.baseline_tree,'18866091177e2ef3c16d1637338cde1aa000f7a8');
+    assert.equal(scope.baseline_head,'cb3895efd1f2dd4a1c5b4f43cdf0a4e5fea0771e');
+    assert.equal(scope.baseline_tree,'43878e7f2f8a8aa811d350bb0f57a72ddad2a193');
     assert.equal(git('rev-parse',scope.baseline_head+'^{tree}'),scope.baseline_tree);
     assert.equal(git('merge-base',scope.baseline_head,'HEAD'),scope.baseline_head);
     assert.equal(git('branch','--show-current'),'director/ai-abc-c3-long-memory-final-cutover');
@@ -51,18 +51,18 @@ try{
     for(const file of ['supabase/functions/_shared/commerce-state-contract.ts','supabase/functions/_shared/commerce-state-reducer.ts','supabase/functions/_shared/deterministic-runtime-router.ts','supabase/functions/receive-widget-message/index.ts','src/integrations/supabase/auth-middleware.ts','supabase/migrations/20260925093000_c3_t11_revision_bound_ai_reply.sql','supabase/migrations/20260928100000_c3_director_handoff_context.sql']){
       const bytes=fs.readFileSync(path.join(root,file));assert.deepEqual(bytes,rawGit('show',scope.baseline_head+':'+file));report.frozen_hashes[file]=sha(bytes);
     }
-    // Hosted recap quality repair includes the shared selector and its noun/mutation boundary.
-    // Preserve every other byte of the accepted authority contract.
-    const authority='supabase/functions/_shared/commerce-state-authority.ts';
-    const stripRecap=text=>{for(const name of ['export function isCurrentRequirementsRecap(', 'function explicitCustomerMutation(']){const start=text.indexOf(name);assert.ok(start>=0);const end=text.indexOf('\n}',start)+2;assert.ok(end>start);text=text.slice(0,start)+text.slice(end);}return text;};
-    assert.equal(stripRecap(fs.readFileSync(path.join(root,authority),'utf8')),stripRecap(rawGit('show',scope.baseline_head+':'+authority).toString('utf8')),'unrelated authority bytes changed');
-    const runtimeBase='supabase/functions/_shared/commerce-state-runtime-base.ts';
-    const oldReceipt='    const reply = language === "en"';
-    const newReceipt='    const reply = lifecycleVerified.plans[0].action === "cancelled"\n      ? (language === "en" ? `${target} is cancelled.` : `${target}已取消。`)\n      : language === "en"';
-    assert.equal(fs.readFileSync(path.join(root,runtimeBase),'utf8').replace(newReceipt,oldReceipt),rawGit('show',scope.baseline_head+':'+runtimeBase).toString('utf8'),'only the causally proven cancellation receipt may change');
+    // This closure changes realization only. State, routing, quantity extraction and B2 stay frozen.
+    for(const file of ['supabase/functions/_shared/commerce-state-authority.ts','supabase/functions/_shared/commerce-state-runtime-base.ts','supabase/functions/generate-reply/index.ts','.github/scripts/c3_backend_deployment_request.mjs'])
+      assert.deepEqual(fs.readFileSync(path.join(root,file)),rawGit('show',scope.baseline_head+':'+file),file);
     const capability='supabase/functions/_shared/commerce-capability-runtime.ts';
-    const stripQuantity=text=>{const start=text.indexOf('export function extractGenericCommerceEntity('),end=text.indexOf('\n}',start)+2;assert.ok(start>=0&&end>start);return text.slice(0,start)+text.slice(end);};
-    assert.equal(stripQuantity(fs.readFileSync(path.join(root,capability),'utf8')),stripQuantity(rawGit('show',scope.baseline_head+':'+capability).toString('utf8')),'only the hosted-proven generic quantity binding may change');
+    const marker='/** Render conversational requirements only; external fulfilment requires its own authority. */';
+    const capBefore=rawGit('show',scope.baseline_head+':'+capability).toString('utf8'),capAfter=fs.readFileSync(path.join(root,capability),'utf8');
+    assert.equal(capBefore.slice(0,capBefore.indexOf(marker)),capAfter.slice(0,capAfter.indexOf(marker)),'quantity/capability interpretation changed');
+    const planner='supabase/functions/_shared/conversation-service-planner.ts';
+    assert.equal(fs.readFileSync(path.join(root,planner),'utf8').replace('"I\'ve noted "','"Noted for this request: "'),rawGit('show',scope.baseline_head+':'+planner).toString('utf8'),'planner changed outside English acknowledgement prefix');
+    const recall='supabase/functions/_shared/conversation-recall.ts',recapMarker='function renderCustomerRecap(';
+    const recallBefore=rawGit('show',scope.baseline_head+':'+recall).toString('utf8'),recallAfter=fs.readFileSync(path.join(root,recall),'utf8').replace('import { renderEnglishRequirement } from "./commerce-capability-runtime.ts";\n','');
+    assert.equal(recallBefore.slice(0,recallBefore.indexOf(recapMarker)),recallAfter.slice(0,recallAfter.indexOf(recapMarker)),'recall authority changed');
     for(const frozen of ['supabase/functions/_shared/pre-send-conversion-supervisor.ts','supabase/functions/_shared/b2-response-persistence-gate.ts']){
       if(fs.existsSync(path.join(root,frozen)))assert.equal(fs.readFileSync(path.join(root,frozen),'utf8'),rawGit('show',scope.baseline_head+':'+frozen).toString('utf8'),'B2 must remain byte-identical');
     }
@@ -88,7 +88,7 @@ try{
   const deno=path.join(process.env.C3_TEST_TOOLS??'','node_modules/.bin/deno');assert.ok(fs.existsSync(deno),'pinned C3_TEST_TOOLS required');
   const componentFiles=['customer-quality-state','customer-money-facts','natural-customer-response','conversation-service-runtime','conversation-service-planner','conversation-long-memory','conversation-recall','conversation-recall.integration','conversation-resolution-contract','pre-send-conversion-supervisor','canonical-kb-direct-answer','natural-dialogue-generic-core'].map(name=>'supabase/functions/_shared/'+name+'.test.ts');
   const componentLog=run(deno,['test','--no-lock','--cached-only','--allow-read','--allow-env',...componentFiles],'component_regressions_only');
-  report.component_count=Number(componentLog.match(/ok \| (\d+) passed \| 0 failed/)?.[1]);assert.ok(report.component_count>=380);
+  report.component_count=Number(componentLog.match(/ok \| (\d+) passed \| 0 failed/)?.[1]);assert.ok(report.component_count>=408);
   run('node',['--test','.github/scripts/c3_backend_deployment_request.test.mjs'],'deployment_request_positive_and_negative_contracts');
   check('runtime_closure_jwt_import_map_and_committed_content',()=>{
     const request=backendDeploymentRequest(root,'local-contract-only');assert.equal(request.verify_jwt,true);assert.equal(request.import_map_path,'');
@@ -109,6 +109,8 @@ try{
   });
   check('customer_facing_recap_closure',()=>{
     assert.ok(report.runtime.recapReadback.length>=10);
+    assert.deepEqual(Object.keys(report.runtime.englishRealizationReadback.classes).sort(),['A','B','C','D','E','F','G','H']);
+    assert.equal(report.runtime.assertions.shared_english_realization_compositional_grammar,true);
     for(const key of ['customer_recap_natural_no_internal_representation','customer_recap_unseen_bilingual_shared_semantics','customer_recap_read_only_source_company_binding'])assert.equal(report.runtime.assertions[key],true,key);
   });
   run(deno,['check','--no-lock','--cached-only','supabase/functions/generate-reply/index.ts'],'deno_check');
