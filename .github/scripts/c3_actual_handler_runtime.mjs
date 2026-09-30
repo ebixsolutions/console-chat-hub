@@ -461,11 +461,11 @@ try {
   naturalRecap(saas,6,["CN-314 subscription","9 seats","is paused"],["7 seats"]);
   naturalRecap(saas,7,["9席","暫緩"],["7席"]);
   naturalRecap(booking,5,["3節","2026-11-06","暫緩","職員確認"],["2026-11-04","2節"]);
-  const recapSimple=await conversation(["I need 8 seats of MT-692 subscription.","用廣東話總結一下而家個情況。","What do I currently have noted? Please answer in English.","Remind me what we have agreed so far.","幫我講返目前要求。"]);
+  const recapSimple=await conversation(["I need MT-692 subscription for 8 seats.","用廣東話總結一下而家個情況。","What do I currently have noted? Please answer in English.","Remind me what we have agreed so far.","幫我講返目前要求。"]);
   naturalRecap(recapSimple,1,["8席"]);naturalRecap(recapSimple,2,["MT-692 subscription at 8 seats"]);naturalRecap(recapSimple,3,["8 seats"]);naturalRecap(recapSimple,4,["8席"]);
   const recapBooking=await conversation(["I need 5 sessions of VM-846 booking on 2026-12-09.","I need 2 JC-258 parking.","Defer JC-258 parking. Change VM-846 booking to 7 sessions.","Summarize where we are now.","而家記低咗啲咩？"]);
   naturalRecap(recapBooking,3,["7 sessions","2026-12-09","is paused","staff confirmation"],["5 sessions"]);naturalRecap(recapBooking,4,["7節","暫緩","職員確認"],["5節"]);
-  const recapCancelled=await conversation(["I need 6 seats of NR-429 subscription.","I need 4 KL-795 add-on.","Cancel KL-795 add-on.","Give me a quick recap of my current setup."]);
+  const recapCancelled=await conversation(["I need 6 seats of NR-429 subscription.","I also need KL-795 add-on for 4 units.","Cancel KL-795 add-on.","Give me a quick recap of my current setup."]);
   naturalRecap(recapCancelled,3,["6 seats","has been cancelled"]);
   const recapEmpty=await conversation(["Hi","What do I currently have noted?"]);
   naturalRecap(recapEmpty,1,["haven't recorded any specific requirements"]);

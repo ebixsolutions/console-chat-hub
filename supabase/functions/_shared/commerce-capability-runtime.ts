@@ -139,7 +139,9 @@ export function extractGenericCommerceEntity(text: string): GenericEntityExtract
 
   const action = "(?:我要|我想要|想買|想买|要買|要买|買|买|需要|訂購|订购|訂|订|預訂|预订|預約|预约|另外加|再加|加多|新增|I\\s+(?:want|need)|want|need|buy|order|pre[- ]?order|book|reserve|add)";
   const zhOrUnit = new RegExp(`${action}\\s*(${COUNT_TOKEN})\\s*(${GENERIC_UNIT})?\\s*([^，。！？,.!?;；]{1,60})`, "i");
-  const match = t.match(zhOrUnit);
+  const quantityAfterName = new RegExp(`${action}\\s+([^，。！？,.!?;；]{1,60}?)\\s+(?:for|with)\\s+(${COUNT_TOKEN})\\s*(${GENERIC_UNIT})(?![a-z])`, "i");
+  const after = t.match(quantityAfterName);
+  const match = t.match(zhOrUnit) ?? (after ? [after[0], after[2], after[3], after[1]] : null);
   if (!match?.[1] || !match?.[3]) return null;
 
   const quantity = countValue(match[1]);

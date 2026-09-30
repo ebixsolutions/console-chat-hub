@@ -17,6 +17,7 @@ import {
   buildCanonicalConversationMemory,
   type CanonicalConversationMemory,
 } from "./conversation-long-memory.ts";
+import { extractGenericCommerceEntity } from "./commerce-capability-runtime.ts";
 
 function assert(value: unknown, message = "assertion failed"): asserts value {
   if (!value) throw new Error(message);
@@ -737,6 +738,12 @@ Deno.test("C3 original quantity is not substituted after correction", () => {
 
 
 const internalRecap = /###|(?:funnel_stage|quotation_status|order_status|payment_status|entity_id|commerce_state_revision|memory_revision|source_message_id)|\{[^}]*\}/;
+Deno.test("C3 COMPONENT typed generic quantities bind before or after the named request, never a currency amount",()=>{
+ for(const [text,quantity,unit,name] of [["I need PJ-274 subscription for 13 seats.",13,"seats","PJ-274 subscription"],["I also need MR-691 add-on with 7 units.",7,"units","MR-691 add-on"],["I need 4 sessions of BK-395 booking.",4,"sessions","BK-395 booking"]] as const){
+   const e=extractGenericCommerceEntity(text);assert(e?.quantity===quantity && e.unit===unit && e.display_name===name,JSON.stringify(e));
+ }
+ for(const text of ["I need PJ-274 subscription for HKD 731.","I need MR-691 add-on for 284 dollars."]){assert(extractGenericCommerceEntity(text)===null,"currency became entity quantity");}
+});
 Deno.test("C3 COMPONENT recap accepts resolved KB source only with the current revision and matching company",()=>{
  const i=recallFixture("Summarize our current requirements");
  i.memory!.source_message_id="kb-question-source";

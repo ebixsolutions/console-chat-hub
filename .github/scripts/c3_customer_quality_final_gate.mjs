@@ -60,6 +60,9 @@ try{
     const oldReceipt='    const reply = language === "en"';
     const newReceipt='    const reply = lifecycleVerified.plans[0].action === "cancelled"\n      ? (language === "en" ? `${target} is cancelled.` : `${target}已取消。`)\n      : language === "en"';
     assert.equal(fs.readFileSync(path.join(root,runtimeBase),'utf8').replace(newReceipt,oldReceipt),rawGit('show',scope.baseline_head+':'+runtimeBase).toString('utf8'),'only the causally proven cancellation receipt may change');
+    const capability='supabase/functions/_shared/commerce-capability-runtime.ts';
+    const stripQuantity=text=>{const start=text.indexOf('export function extractGenericCommerceEntity('),end=text.indexOf('\n}',start)+2;assert.ok(start>=0&&end>start);return text.slice(0,start)+text.slice(end);};
+    assert.equal(stripQuantity(fs.readFileSync(path.join(root,capability),'utf8')),stripQuantity(rawGit('show',scope.baseline_head+':'+capability).toString('utf8')),'only the hosted-proven generic quantity binding may change');
     for(const frozen of ['supabase/functions/_shared/pre-send-conversion-supervisor.ts','supabase/functions/_shared/b2-response-persistence-gate.ts']){
       if(fs.existsSync(path.join(root,frozen)))assert.equal(fs.readFileSync(path.join(root,frozen),'utf8'),rawGit('show',scope.baseline_head+':'+frozen).toString('utf8'),'B2 must remain byte-identical');
     }
