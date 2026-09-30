@@ -48,7 +48,7 @@ try{
   });
   check('frozen_source_and_security_function_drift',()=>{
     report.frozen_hashes={};
-    for(const file of ['supabase/functions/_shared/commerce-state-contract.ts','supabase/functions/_shared/commerce-state-reducer.ts','supabase/functions/_shared/commerce-state-authority.ts','supabase/functions/_shared/reference-authority.ts','supabase/functions/_shared/deterministic-runtime-router.ts','supabase/functions/receive-widget-message/index.ts','src/integrations/supabase/auth-middleware.ts','supabase/migrations/20260925093000_c3_t11_revision_bound_ai_reply.sql','supabase/migrations/20260928100000_c3_director_handoff_context.sql','supabase/migrations/rollback/20260930090000_c3_handoff_grounded_facts.rollback.sql']){
+    for(const file of ['supabase/functions/_shared/commerce-state-contract.ts','supabase/functions/_shared/commerce-state-reducer.ts','supabase/functions/_shared/commerce-state-authority.ts','supabase/functions/_shared/deterministic-runtime-router.ts','supabase/functions/receive-widget-message/index.ts','src/integrations/supabase/auth-middleware.ts','supabase/migrations/20260925093000_c3_t11_revision_bound_ai_reply.sql','supabase/migrations/20260928100000_c3_director_handoff_context.sql','supabase/migrations/rollback/20260930090000_c3_handoff_grounded_facts.rollback.sql']){
       const bytes=fs.readFileSync(path.join(root,file));assert.deepEqual(bytes,rawGit('show',scope.baseline_head+':'+file));report.frozen_hashes[file]=sha(bytes);
     }
     const file='supabase/functions/_shared/pre-send-conversion-supervisor.ts';
