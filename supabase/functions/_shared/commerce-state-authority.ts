@@ -333,6 +333,9 @@ export function isCurrentRequirementsRecap(question: string): boolean {
   const externalFact = /\b(?:price|cost|stock|warranty|policy|specifications?|availability)\b|售價|售价|庫存|库存|保養|保养|政策|規格|规格/i.test(text);
   if (externalFact) return false;
   const summarize = /\b(?:recap|summary|summari[sz]e)\b|總結|总结|整理/u.test(text.toLowerCase());
+  // A request for one recorded field is a fact recall, not an overall recap.
+  const targetedFact = /\b(?:quantity|count|how many|horsepower|room size|address|recipient|phone|brand|date)\b|匹數|匹数|幾匹|几匹|面積|面积|地址|收件人|聯絡|联络|品牌|日期|幾部|几部/i.test(text);
+  if (targetedFact && !summarize) return false;
   const recall = /\b(?:remind|remember)\b|(?:講|讲|說|说)(?:返|回)|記低|记低|記錄|记录/i.test(text);
   const inquiry = /\bwhat\b|咩|甚麼|什么|係點|系点|是怎樣|是怎样/i.test(text);
   const scope = /\b(?:my|our|we|i|current|currently|latest|now)\b|\bso far\b|我|而家|現在|现在|目前|最新/i.test(text);

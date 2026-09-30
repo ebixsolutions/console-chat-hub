@@ -195,7 +195,11 @@ Deno.test("Markdown is a projection of structured transaction state", () => {
   assert(markdown.includes(`- Payment: ${memory.transaction_summary.payment}`), "projection mismatch");
 });
 Deno.test("Markdown does not invent optional identifiers", () => assert(!/order id|ltv|crm tier/i.test(buildConversationMemoryMarkdown(build())), "optional fact invented"));
-Deno.test("memory-specific summary uses structured projection", () => assert(resolveStructuredMemoryResponse("Summarize our current requirements", build())?.includes("### Transaction State"), "summary unavailable"));
+Deno.test("memory-specific summary renders naturally while internal structured projection remains available", () => {
+  const memory=build(),reply=resolveStructuredMemoryResponse("Summarize our current requirements", memory);
+  assert(reply && !/###|\{[^}]*\}|entity_id|payment_status/.test(reply), "customer recap exposes the internal projection");
+  assert(buildConversationMemoryMarkdown(memory).includes("### Transaction State"), "internal projection unavailable");
+});
 Deno.test("ordinary requests do not trigger memory shortcut", () => equal(resolveStructuredMemoryResponse("What is the price?", build()), null, "false shortcut"));
 
 Deno.test("recent raw window is turn bounded", () => {

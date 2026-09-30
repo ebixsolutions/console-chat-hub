@@ -9,6 +9,7 @@
     "supabase/functions/_shared/conversation-recall.ts",
     "supabase/functions/_shared/conversation-recall.test.ts",
     "supabase/functions/_shared/commerce-state-runtime-base.ts",
-    "supabase/functions/generate-reply/index.ts"
+    "supabase/functions/generate-reply/index.ts",
+    "supabase/functions/_shared/conversation-long-memory.test.ts"
   ]
 }
