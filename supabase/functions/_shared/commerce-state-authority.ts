@@ -204,7 +204,7 @@ function questionLooksLikeCustomerState(question: string): boolean {
 
 function explicitCustomerMutation(question: string): boolean {
   const text = clean(question);
-  return /(?:更正|改(?:做|成|為|为|返)|變成|变成|加多|再加|新增|另外加|唔係.+?(?:改|而係|而系)|不是.+?(?:改|而是)|而家要|現在要|现在要|目前要)\s*(?:[一二兩两三四五六七八九十]|\d{1,4})?\s*(?:部|台|件|個|个|套)?/i.test(text) ||
+  return /(?:更正|改(?:做|成|為|为|返)|變成|变成|加多|再加|新增|另外加|唔係.+?(?:改|而係|而系)|不是.+?(?:改|而是)|(?:而家要|現在要|现在要|目前要)(?!求))\s*(?:[一二兩两三四五六七八九十]|\d{1,4})?\s*(?:部|台|件|個|个|套)?/i.test(text) ||
     /(?:取消|移除|刪除|删除)\s*(?:其中|呢|這|这|嗰|那|一|[一二兩两三四五六七八九十]|\d)/i.test(text) ||
     /\b(?:change|set|make)\b.{0,24}\bto\b|\badd\b(?:\s+(?:another|one|two|three|\d+))?|\b(?:please\s+)?(?:cancel|remove)\b/i.test(text);
 }
@@ -327,7 +327,17 @@ export function isReadOnlyMemoryOrCurrentStateRecall(
 export function isCurrentRequirementsRecap(question: string): boolean {
   const text = clean(question);
   if (!text || explicitCustomerMutation(text)) return false;
-  return /(?:而家|現在|现在|目前|最新).{0,18}(?:要求|需求|需要).{0,12}(?:係點|系点|是甚麼|是什么|有咩|有哪些|\?|？)|(?:要求|需求|需要).{0,12}(?:係點|系点|是甚麼|是什么|有咩|有哪些|\?|？)|(?:recap|summari[sz]e|summary|what(?:'s| is)).{0,40}(?:current|latest|my).{0,30}(?:requirements?|needs?|requests?)|(?:current|latest)\s+(?:requirements?|needs?|requests?)\s*(?:summary|recap|\?|$)/i.test(text);
+  // Compose recall intent from operation, ownership/time and recorded-state
+  // concepts. One contract serves routing, read-only persistence and rendering;
+  // no full customer utterance or fixture-specific entity is a dispatch key.
+  const externalFact = /\b(?:price|cost|stock|warranty|policy|specifications?|availability)\b|售價|售价|庫存|库存|保養|保养|政策|規格|规格/i.test(text);
+  if (externalFact) return false;
+  const summarize = /\b(?:recap|summary|summari[sz]e)\b|總結|总结|整理/u.test(text.toLowerCase());
+  const recall = /\b(?:remind|remember)\b|(?:講|讲|說|说)(?:返|回)|記低|记低|記錄|记录/i.test(text);
+  const inquiry = /\bwhat\b|咩|甚麼|什么|係點|系点|是怎樣|是怎样/i.test(text);
+  const scope = /\b(?:my|our|we|i|current|currently|latest|now)\b|\bso far\b|我|而家|現在|现在|目前|最新/i.test(text);
+  const recordedState = /\b(?:requirements?|requests?|needs?|setup|noted|recorded|agreed)\b|要求|需求|需要|情況|情况|記低|记低|記錄|记录/i.test(text);
+  return scope && (summarize || ((recall || inquiry) && recordedState));
 }
 
 /**

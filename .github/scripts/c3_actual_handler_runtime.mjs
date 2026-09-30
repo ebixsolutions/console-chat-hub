@@ -186,7 +186,7 @@ try {
         replay={status:duplicate.status,outcome:await duplicate.json(),before:beforeReplay,after:afterReplay};
       }
       const memoryEvents=(await db.query("SELECT source_message_id,applied_revision,commerce_state_revision,memory_hash FROM conversation_memory_state_event WHERE conversation_id=$1 ORDER BY applied_revision",[id])).rows;
-      outputs.push({source,customer:content,status:response.status,outcome,replies:rows.slice(before),semanticAfter,memoryAfter,memoryEvents,replay});
+      outputs.push({source,customer:content,status:response.status,outcome,replies:rows.slice(before),semanticBefore,memoryBefore,semanticAfter,memoryAfter,memoryEvents,replay});
       if(outcome.response_route === "canonical_kb_direct_answer" && /policy/i.test(content)) {
         sameTurnPolicy(outputs.at(-1));
         const stored=(await db.query("SELECT * FROM conversation_memory_state WHERE conversation_id=$1",[id])).rows[0];
@@ -445,6 +445,32 @@ try {
     const p=governed(c,5);assert.ok(!p.open_questions.some(q=>/policy/i.test(q)));assert.ok(p.question_lifecycle.find(q=>q.source_message_id===c.outputs[4].source)?.status==="resolved");
     assert.equal(c.outputs[6].replies.length,0);
   }
+  // Customer-visible recap assertions run through the actual handler and SQL,
+  // with natural customer messages only; no desired intent or control injected.
+  const recapReadback=[];
+  function naturalRecap(c,index,needles=[],forbidden=[]) {
+    const t=c.outputs[index];assert.equal(t.status,200);assert.equal(t.replies.length,1);
+    assert.equal(t.outcome.response_route,"canonical_memory_recall");
+    const r=t.replies[0];assert.equal(r.metadata.recall_authority,"CANONICAL_COMMERCE_STATE");assert.equal(r.metadata.recall_fact_type,"summary");
+    assert.doesNotMatch(r.content,/###|\{[^}]*\}|funnel_stage|quotation_status|order_status|payment_status|entity_id|commerce_state_revision|memory_revision|source_message_id|__THINKING__/);
+    for(const value of needles)assert.ok(r.content.includes(value),r.content);for(const value of forbidden)assert.ok(!r.content.includes(value),r.content);
+    assert.deepEqual(t.semanticAfter,t.semanticBefore,"recap mutated Commerce");assert.deepEqual(t.memoryAfter,t.memoryBefore,"recap mutated Memory");
+    assert.equal(r.metadata.source_message_id,t.source);assert.equal(r.metadata.b2_source_message_id,t.source);assert.equal(r.metadata.b2_expected_company_id,company);
+    recapReadback.push({conversation_id:c.id,source_message_id:t.source,customer:t.customer,reply:r.content,read_only:true,source_company_binding:true});
+  }
+  naturalRecap(saas,6,["CN-314 subscription","9 seats","is paused"],["7 seats"]);
+  naturalRecap(saas,7,["9席","暫緩"],["7席"]);
+  naturalRecap(booking,5,["3節","2026-11-06","暫緩","職員確認"],["2026-11-04","2節"]);
+  const recapSimple=await conversation(["I need 8 seats of MT-692 subscription.","用廣東話總結一下而家個情況。","What do I currently have noted? Please answer in English.","Remind me what we have agreed so far.","幫我講返目前要求。"]);
+  naturalRecap(recapSimple,1,["8席"]);naturalRecap(recapSimple,2,["MT-692 subscription at 8 seats"]);naturalRecap(recapSimple,3,["8 seats"]);naturalRecap(recapSimple,4,["8席"]);
+  const recapBooking=await conversation(["I need 5 sessions of VM-846 booking on 2026-12-09.","I need 2 JC-258 parking.","Defer JC-258 parking. Change VM-846 booking to 7 sessions.","Summarize where we are now.","而家記低咗啲咩？"]);
+  naturalRecap(recapBooking,3,["7 sessions","2026-12-09","is paused","staff confirmation"],["5 sessions"]);naturalRecap(recapBooking,4,["7節","暫緩","職員確認"],["5節"]);
+  const recapCancelled=await conversation(["I need 6 seats of NR-429 subscription.","I need 4 KL-795 add-on.","Cancel KL-795 add-on.","Give me a quick recap of my current setup."]);
+  naturalRecap(recapCancelled,3,["6 seats","has been cancelled"]);
+  const recapEmpty=await conversation(["Hi","What do I currently have noted?"]);
+  naturalRecap(recapEmpty,1,["haven't recorded any specific requirements"]);
+  const emptyTurn=recapEmpty.outputs[1];assert.equal(emptyTurn.status,200);assert.equal(emptyTurn.replies.length,1);assert.doesNotMatch(emptyTurn.replies[0].content,/###|\{|entity_id|核實|verif|current information/i);
+  assert.deepEqual(emptyTurn.semanticAfter,emptyTurn.semanticBefore);assert.deepEqual(emptyTurn.memoryAfter,emptyTurn.memoryBefore);
   const summaryReadback=[saas,booking,dialogue,varied,immediateSaas,immediateBooking].map(summaryParity);
   const r=await conversation(["你好，可以幫我嗎？","我想真人客服接手，唔好再問需求。","我仲有一個問題。"]);
   assert.equal(r.handoff.length,1);
@@ -522,7 +548,7 @@ try {
   await db.exec(read("supabase/migrations/rollback/20260930090000_c3_handoff_grounded_facts.rollback.sql"));
   assert.deepEqual(await catalog(),acceptedHandoff,"rollback changed the accepted function/security identity");
   assert.deepEqual(await triggers(),acceptedTriggers);assert.deepEqual(await ledger(),acceptedLedger);
-  fs.writeFileSync(process.env.C3_TEST_RESULT ?? "/tmp/c3-actual-handler-result.json",JSON.stringify({coverage:"actual_handler_local_sql_integration",limitations:["local transport adapter, not hosted PostgREST/Widget","pgcrypto digest backed by PostgreSQL built-in sha256","synthetic tenant, no production traffic"],results,faults,summaryReadback,handoffSemanticReadback,forwardCatalog,rollbackCatalog:await catalog(),triggerBindings:await triggers(),migrationLedger:await ledger(),assertions:{handoff_request_not_business_goal:true,handoff_request_not_active_constraint:true,handoff_request_not_current_topic_without_business_goal:true,business_goal_preserved_across_r1:true,actionable_pending_drives_human_next_action:true,generic_next_action_only_when_no_actionable_pending:true,generic_state_acknowledgement_not_meta:true,no_false_customer_goal_missing:true,same_turn_question_resolution:true,no_cross_domain_recap_language:true,handoff_summary_structured_parity:true,immediate_post_KB_R1_has_no_stale_question:true,memory_finalisation_business_mutation_rejected:true,memory_finalisation_reply_binding_rejected:true,memory_finalisation_replay_idempotent:true,memory_resolved_question_resurrection_rejected:true,social_state_hygiene:true,question_lifecycle:true,typed_money_persistence_and_recall:true,generic_saas:true,generic_booking:true,real_r1_sql_package_and_suppression:true,r1_replay_idempotent:true,b2_source_binding:true,no_duplicate_reply:true,no_thinking:true,no_terminal_failure:true,no_transaction_promotion:true,migration_forward:true,migration_rollback:true,catalog_owner_security_search_path_acl:true,commit_ai_reply_tx_unchanged:true,trigger_binding_preserved:true,migration_ledger_preserved:true}},null,2));
+  fs.writeFileSync(process.env.C3_TEST_RESULT ?? "/tmp/c3-actual-handler-result.json",JSON.stringify({coverage:"actual_handler_local_sql_integration",limitations:["local transport adapter, not hosted PostgREST/Widget","pgcrypto digest backed by PostgreSQL built-in sha256","synthetic tenant, no production traffic"],results,faults,recapReadback,summaryReadback,handoffSemanticReadback,forwardCatalog,rollbackCatalog:await catalog(),triggerBindings:await triggers(),migrationLedger:await ledger(),assertions:{customer_recap_natural_no_internal_representation:true,customer_recap_unseen_bilingual_shared_semantics:true,customer_recap_read_only_source_company_binding:true,handoff_request_not_business_goal:true,handoff_request_not_active_constraint:true,handoff_request_not_current_topic_without_business_goal:true,business_goal_preserved_across_r1:true,actionable_pending_drives_human_next_action:true,generic_next_action_only_when_no_actionable_pending:true,generic_state_acknowledgement_not_meta:true,no_false_customer_goal_missing:true,same_turn_question_resolution:true,no_cross_domain_recap_language:true,handoff_summary_structured_parity:true,immediate_post_KB_R1_has_no_stale_question:true,memory_finalisation_business_mutation_rejected:true,memory_finalisation_reply_binding_rejected:true,memory_finalisation_replay_idempotent:true,memory_resolved_question_resurrection_rejected:true,social_state_hygiene:true,question_lifecycle:true,typed_money_persistence_and_recall:true,generic_saas:true,generic_booking:true,real_r1_sql_package_and_suppression:true,r1_replay_idempotent:true,b2_source_binding:true,no_duplicate_reply:true,no_thinking:true,no_terminal_failure:true,no_transaction_promotion:true,migration_forward:true,migration_rollback:true,catalog_owner_security_search_path_acl:true,commit_ai_reply_tx_unchanged:true,trigger_binding_preserved:true,migration_ledger_preserved:true}},null,2));
   console.log(`actual_handler_local_sql_integration PASS: ${results.length} conversations; first R1 real SQL event/source binding/package; next-turn suppression`);
 } catch(error) { console.error(error.message,JSON.stringify(faults));process.exitCode=1; }
 finally { child?.kill(); if(server) await new Promise((resolve)=>server.close(resolve));await db.close(); }

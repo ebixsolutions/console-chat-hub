@@ -4316,6 +4316,7 @@ async function orchestrationGenerateReply(
   let _a3Commerce: CommerceRuntimeOutcome | null = null;
   let _c3Memory: CanonicalConversationMemory | null = null;
   let _c3MemoryContext = "";
+  let _c3EmptyStateVerified = false;
   let _c3ReadOnlyMemoryHash: string | null = null;
   let _c3ReadOnlyMemorySource: string | null = null;
   let _c3CommerceSnapshot: RecallCommerceSnapshot | null = null;
@@ -4377,7 +4378,7 @@ async function orchestrationGenerateReply(
   // authority and cannot bypass the existing B2 response-persistence gate.
   if (_criticalE2ExpectedTenantId) {
     try {
-      const [{ data: persistedMemory }, { data: commerceRow }] = await Promise
+      const [{ data: persistedMemory, error: memoryReadError }, { data: commerceRow, error: commerceReadError }] = await Promise
         .all([
           supabaseAdmin.from("conversation_memory_state")
             .select("conversation_id,company_id,revision,source_message_id,commerce_state_revision,memory,memory_hash")
@@ -4392,6 +4393,8 @@ async function orchestrationGenerateReply(
             .eq("company_id", _criticalE2ExpectedTenantId)
             .maybeSingle(),
         ]);
+      _c3EmptyStateVerified = _a3Commerce?.reason === "read_only_current_requirements_recap" &&
+        !memoryReadError && !commerceReadError && !persistedMemory && !commerceRow;
       let memoryHistory = (_pr5HistoryRows ?? []) as MemoryHistoryRow[];
       if (!persistedMemory && (_pr5VisitorTurnCount ?? 0) > 50) {
         const { data: rebuildRows } = await supabaseAdmin.from("messages")
@@ -4525,6 +4528,7 @@ async function orchestrationGenerateReply(
     question: _productFactualRequest,
     memory: _c3Memory,
     commerce: _c3CommerceSnapshot,
+    empty_state_verified: _c3EmptyStateVerified,
     explicit_handoff: _explicitHandoffRequested,
     referents: _a3SemanticFrame?.referents ?? [],
     recent_questions: ((_pr5HistoryRows ?? []) as MemoryHistoryRow[])

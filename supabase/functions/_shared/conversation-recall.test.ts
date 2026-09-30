@@ -579,17 +579,17 @@ Deno.test("C3 unconfirmed delivery not promoted", () => {
   const { reply } = answer("送貨狀態？");
   assert(reply.includes("尚未確認") && !reply.includes("已安排送貨"));
 });
-Deno.test("C3 summary uses bounded structured projection", () => {
+Deno.test("C3 COMPONENT summary keeps structured evidence and renders customer language", () => {
   const { reply } = answer("Summarize our current requirements");
   assert(
-    reply.includes("### Transaction State") && !reply.includes("8000") &&
+    !reply.includes("###") && !reply.includes("8000") &&
       !reply.includes("5600"),
   );
 });
 Deno.test("C3 Cantonese and English requirement-recap paraphrases use structured recall", () => {
   for (const question of ["而家我冷氣要求係點？", "Can you recap my current air conditioner requirements?"]) {
     const { reply } = answer(question);
-    assert(reply.includes("### Active Entities") && !reply.includes("washer-front"), `${question}:${reply}`);
+    assert(!reply.includes("###") && !reply.includes("washer-front") && !reply.includes("entity_id"), `${question}:${reply}`);
   }
 });
 Deno.test("C3 two-sentence Cantonese recap presents known corrected and deferred state", () => {
@@ -734,3 +734,57 @@ Deno.test("C3 original quantity is not substituted after correction", () => {
   const d = resolveConversationRecall(i);
   assert(!d.handled && d.reason === "AMBIGUOUS");
 });
+
+
+const internalRecap = /###|(?:funnel_stage|quotation_status|order_status|payment_status|entity_id|commerce_state_revision|memory_revision|source_message_id)|\{[^}]*\}/;
+Deno.test("C3 COMPONENT recap accepts resolved KB source only with the current revision and matching company",()=>{
+ const i=recallFixture("Summarize our current requirements");
+ i.memory!.source_message_id="kb-question-source";
+ i.memory!.question_lifecycle=[{source_message_id:"kb-question-source",text:"policy question",status:"resolved",entity_id:null,resolution_source_message_id:"kb-answer-source"}];
+ assert(resolveConversationRecall(i).handled);
+ i.memory!.question_lifecycle[0].status="pending";assert(!resolveConversationRecall(i).handled);
+ i.memory!.question_lifecycle[0].status="resolved";i.memory!.commerce_state_revision--;assert(!resolveConversationRecall(i).handled);
+ i.memory!.commerce_state_revision++;i.memory!.company_id="other-company";assert(!resolveConversationRecall(i).handled);
+});
+Deno.test("C3 COMPONENT absent-state recap requires an explicit verified-read receipt and valid scope",()=>{
+ const i=recallFixture("What do I currently have noted?");i.memory=null;i.commerce=null;
+ assert(!resolveConversationRecall(i).handled);
+ i.empty_state_verified=true;const r=prepareConversationRecall(i,"en");
+ assert(r.decision.handled && r.reply?.includes("haven't recorded any specific requirements"));
+ i.company_id="";assert(!resolveConversationRecall(i).handled);
+});
+Deno.test("C3 COMPONENT semantic recap paraphrases share one read-only contract; external facts and mutations retain priority", () => {
+  for (const q of ["What do I currently have noted?", "Summarize where we are now.", "Give me a quick recap of my current setup.", "What are my current requirements?", "Remind me what we have agreed so far.", "而家記低咗啲咩？", "幫我講返目前要求。", "總結一下而家個情況。"]){
+    const input=recallFixture(q), result=prepareConversationRecall(input, /[一-龿]/.test(q)?"zh-TW":"en");
+    assert(result.decision.handled && result.decision.fact_type==="summary", JSON.stringify({q,result}));
+    assert(result.reply && !internalRecap.test(result.reply), JSON.stringify({q,result}));
+  }
+  for(const q of ["Change my current request to 5 units.","目前要5部冷氣。","而家要3個選項。","Cancel my current setup.","Summarize the current stock policy.","What is the current price?"]){
+    const d=resolveConversationRecall(recallFixture(q));assert(!d.handled || d.fact_type!=="summary",JSON.stringify({q,d}));
+  }
+});
+for (const [name,language,configure,expected] of [
+  ["R1 English active corrected SaaS and deferred add-on","en",(i:ConversationRecallInput)=>{
+    const s=i.commerce!.state;s.entities[0]={...s.entities[0],entity_id:"generic:qp-491-subscription",category:"subscription",quantity:12,attributes:{product_name:"QP-491 subscription",unit:"seats"}};
+    s.entities[1]={...s.entities[1],entity_id:"generic:zx-682-add-on",category:"addon",attributes:{product_name:"ZX-682 add-on",unit:"items"}};
+  },["QP-491 subscription at 12 seats","ZX-682 add-on at 1 item is paused"]],
+  ["R2 Cantonese equivalent","zh-TW",(i:ConversationRecallInput)=>{i.commerce!.state.entities[0].attributes.room_sizes={study:"137平方呎"};},["137平方呎","暫緩"]],
+  ["R3 requested Booking remains unconfirmed","en",(i:ConversationRecallInput)=>{i.commerce!.state.entities[0]={...i.commerce!.state.entities[0],category:"booking",quantity:5,attributes:{product_name:"BM-673 booking",unit:"sessions",requested_date:"2026-12-18",capabilities:{requires_booking:true}}};},["5 sessions requested for 2026-12-18","still needs staff confirmation"]],
+  ["R4 simple one entity","en",(i:ConversationRecallInput)=>{i.commerce!.state.entities=i.commerce!.state.entities.slice(0,1);},["2 items"]],
+  ["R5 no active entity or business goal","en",(i:ConversationRecallInput)=>{i.commerce!.state.entities=[];i.memory!.active_entities=[];i.memory!.current_goal=null;},["haven't recorded any specific requirements"]],
+  ["R6 A to B to A current recap","en",(i:ConversationRecallInput)=>{i.memory!.current_topic="washer";},["2 items","is paused"]],
+  ["R7 latest correction only","en",(i:ConversationRecallInput)=>{i.commerce!.state.entities[0].quantity=17;i.commerce!.state.latest_corrections=["2 items to 17 items"];},["17 items"]],
+  ["R8 cancelled item never active","en",(i:ConversationRecallInput)=>{i.commerce!.state.entities[1].status="cancelled";},["has been cancelled"]],
+  ["R9 English despite Cantonese stored language","en",(i:ConversationRecallInput)=>{i.commerce!.state.entities[0].attributes={product_name:"KT-296 subscription",unit:"seats"};},["KT-296 subscription at 2 seats"]],
+  ["R10 Cantonese despite English stored language","zh-TW",(i:ConversationRecallInput)=>{i.commerce!.state.language="en";i.commerce!.state.entities[0].attributes={product_name:"KT-296 subscription",unit:"seats"};},["而家記低咗","2席"]],
+] as const){
+ Deno.test("C3 COMPONENT shared natural recap "+name,()=>{
+  const i=recallFixture("Summarize our current requirements");configure(i);const before=JSON.stringify(i);
+  const r=prepareConversationRecall(i,language);assert(r.decision.handled && r.decision.authority==="CANONICAL_COMMERCE_STATE",JSON.stringify(r));
+  assert(r.reply && !internalRecap.test(r.reply),JSON.stringify(r));for(const value of expected)assert(r.reply.includes(value),r.reply);
+  assert(JSON.stringify(i)===before,"recap mutated structured input");
+  assert(r.metadata.commerce_state_revision===i.commerce!.revision && r.decision.provenance.company_id===i.company_id && r.decision.provenance.source_message_id===i.source_message_id,"scope/revision lost");
+  if(name.startsWith("R7"))assert(!r.reply.includes("2 items"),r.reply);
+  if(language==="en")assert(!/[一-龿]/.test(r.reply),r.reply);
+ });
+}

@@ -5,7 +5,6 @@ import type {
 } from "./commerce-state-contract.ts";
 import { isCurrentRequirementsRecap, isReadOnlyMemoryOrCurrentStateRecall } from "./commerce-state-authority.ts";
 import type { CanonicalConversationMemory } from "./conversation-long-memory.ts";
-import { renderCanonicalRequirement, renderRequirementQualification } from "./commerce-capability-runtime.ts";
 import { industryEntityLabel } from "./industry-runtime-adapter.ts";
 
 export type RecallFact =
@@ -83,6 +82,8 @@ export interface ConversationRecallInput extends RecallScope {
   referents?: Array<{ ref: string; confidence: number; source?: string }>;
   recent_questions?: string[];
   explicit_handoff?: boolean;
+  /** True only after both scoped DB reads succeed and return no row. */
+  empty_state_verified?: boolean;
 }
 
 // A single declarative fact vocabulary, shared by query classification and key matching.
@@ -532,9 +533,7 @@ function parseQuery(
     };
   }
   const owner = any(q, OWNER), question = /[?？]|呢$/.test(q) || any(q, ASK);
-  const summary = hasField(q, "summary") ||
-    (isCurrentRequirementsRecap(q) &&
-      /(?:兩句|两句|two sentences|(?:講返|说回|講回).{0,40}(?:要求|需求|需要))/i.test(q));
+  const summary = hasField(q, "summary") || isCurrentRequirementsRecap(q);
   let facts = (Object.keys(FIELDS) as RecallFact[]).filter((f) =>
     hasField(q, f)
   );
@@ -1228,7 +1227,9 @@ export function resolveConversationRecall(
       m.conversation_id !== input.conversation_id ||
       (m.source_message_id !== input.source_message_id &&
         !(isCurrentRequirementsRecap(input.question) && c &&
-          m.source_message_id === c.source_message_id &&
+          (m.source_message_id === c.source_message_id || (m.question_lifecycle ?? []).some(q =>
+            q.source_message_id === m.source_message_id && q.status === "resolved" &&
+            Boolean(q.resolution_source_message_id))) &&
           m.source_message_id !== input.source_message_id &&
           m.commerce_state_revision === c.revision)) ||
       !Number.isInteger(m.memory_revision) || m.memory_revision < 1)
@@ -1359,6 +1360,12 @@ export function resolveConversationRecall(
       continue;
     }
     if (f === "summary") {
+      if (!m && !c && input.empty_state_verified === true) {
+        evidence.push({ fact_type: f, state_path: "current_state.absent", value: { goal: null, entity_details: [] },
+          authority: "CANONICAL_COMMERCE_STATE", entity_id: null, region: null,
+          evidence_source_message_id: input.source_message_id, temporal_scope: "current", source_kind: "scoped_persisted_state_absence" });
+        continue;
+      }
       if (!m) return fail("AMBIGUOUS", "MEMORY_UNAVAILABLE", facts);
       const rawSummaryEntities = c ? (selected.length ? selected.filter((entity) => isCurrentEntity(entity)) : c.state.entities.filter((entity) => isCurrentEntity(entity))) : [];
       const aggregateCategories = new Set(rawSummaryEntities.filter((entity) => entity.entity_id.endsWith(":unscoped")).map((entity) => entity.category));
@@ -1380,6 +1387,18 @@ export function resolveConversationRecall(
               entity_id: e.entity_id,
               quantity: e.quantity,
             })),
+          // Rich, authority-bound values stay internal. The only visible
+          // projection is the shared natural recap composer below.
+          entity_details: c
+            ? [...summaryEntities, ...c.state.entities.filter(e => ["deferred", "cancelled"].includes(e.status))]
+            : m.active_entities.map(e => ({
+              entity_id: e.entity_id, category: e.type, quantity: e.quantity,
+              status: e.transaction_state.confirmed === true ? "confirmed" : "tentative",
+              model: e.model, brand: e.brand, attributes: e.current_requirements,
+              constraints: {}, provenance: { source_type: "customer" },
+            })),
+          confirmed_entity_ids: c?.state.conversion.confirmed_entity_ids ?? [],
+          pending_actions: m.pending_actions,
           transaction,
           preferences: m.customer_preferences,
           constraints: m.active_constraints,
@@ -1586,23 +1605,7 @@ export function renderConversationRecall(
       continue;
     }
     if (e.fact_type === "summary") {
-      const v = object(e.value)!;
-      lines.push(
-        "### Current Goal",
-        display(v.goal ?? "—"),
-        "### Active Entities",
-        display(v.entities),
-        "### Transaction State",
-        display(v.transaction),
-        "### Customer Preferences",
-        display(v.preferences),
-        "### Customer Constraints",
-        display(v.constraints),
-        "### Market Scope",
-        displayRegions(v.regions, l),
-        "### Customer Facts",
-        display(v.customer_facts),
-      );
+      lines.push(renderCustomerRecap(e.value, language));
       continue;
     }
     const retainedCorrectionQuantity = e.fact_type === "quantity" &&
@@ -1691,9 +1694,7 @@ export function prepareConversationRecall(
 ) {
   const decision = resolveConversationRecall(input);
   const reply = decision.handled
-    ? renderTwoSentenceRecap(input, decision, language) ??
-      renderCurrentAcRequirements(input, decision, language) ??
-      renderConversationRecall(decision, language)
+    ? renderConversationRecall(decision, language)
     : decision.reason === "AMBIGUOUS"
     ? recallClarification(language)
     : null;
@@ -1726,91 +1727,86 @@ export function prepareConversationRecall(
   return { decision, reply, metadata };
 }
 
-function renderTwoSentenceRecap(
-  input: ConversationRecallInput,
-  decision: ConversationRecallDecision,
-  language: string,
-): string | null {
-  if (!decision.handled || decision.fact_type !== "summary" ||
-    !/(?:兩句|两句|two sentences)/i.test(input.question) || !input.commerce) return null;
-  const state = input.commerce.state;
-  const label = (entity: CommerceEntity) => industryEntityLabel(entity.entity_id, language === "en" ? "en" : language === "zh-CN" ? "zh-CN" : "zh-TW") ??
-    (typeof entity.attributes.product_name === "string" ? entity.attributes.product_name : entity.category.replace(/_/g, " "));
-  const facts = (entity: CommerceEntity) => {
-    const sizes = entity.attributes.room_sizes;
-    const rooms = sizes && typeof sizes === "object" && !Array.isArray(sizes)
-      ? Object.entries(sizes).filter(([, v]) => typeof v === "string")
-        .map(([scope, v]) => language === "en"
-          ? `${scope.replace(/_/g," ")} ${String(v).replace(/平方[呎尺]|[呎尺]/u," sq ft")}`
-          : `${({ study: "書房", small_bedroom: "細房", large_bedroom: "大房", living_room: "客廳" } as Record<string, string>)[scope] ?? scope.replace(/_/g, " ")}${v}`)
-      : [];
-    const widths = Object.entries(entity.constraints)
-      .filter(([key, value]) => key === "max_width_mm" && typeof value === "number")
-      .map(([, value]) => language === "en" ? `maximum width ${value} mm` : `最闊${value} mm`);
-    const l = language === "en" ? 2 : language === "zh-CN" ? 1 : 0;
-    const detail: string[] = [];
-    if (entity.entity_id.startsWith("generic:")) detail.push(language === "en" ? `${entity.quantity} ${entity.attributes.unit ?? "items"}` : `數量${entity.quantity}`);
-    if (typeof entity.attributes.requested_date === "string") detail.push(entity.attributes.requested_date);
-    if (entity.model) detail.push(entity.model);
-    if (entity.attributes.sunlight === "strong_afternoon_sun") detail.push(["下午日照強","下午日晒较强","strong afternoon sun"][l]);
-    if (entity.attributes.installation_type === "window_unit") detail.push(["窗口機","窗口机","window unit"][l]);
-    if (Number.isInteger(entity.attributes.door_count)) detail.push(l === 2 ? `${entity.attributes.door_count} doors` : `${entity.attributes.door_count}門`);
-    return [...rooms, ...widths, ...detail].slice(0, 8);
+/** The single customer-facing boundary for typed summary evidence.
+ * It renders current values and lifecycle, never an internal Markdown/JSON
+ * projection, historical corrections, or the wording that requested recall.
+ */
+function renderCustomerRecap(value: unknown, language: string): string {
+  const v = object(value) ?? {};
+  const l = language === "en" ? 2 : language === "zh-CN" ? 1 : 0;
+  const entities = (Array.isArray(v.entity_details) ? v.entity_details : []) as CommerceEntity[];
+  const active = entities.filter(e => !["deferred", "cancelled"].includes(e.status));
+  const label = (e: CommerceEntity) => typeof e.attributes.product_name === "string"
+    ? display(e.attributes.product_name)
+    : industryEntityLabel(e.entity_id, l === 2 ? "en" : l === 1 ? "zh-CN" : "zh-TW")
+      ?? (e.model ? display(e.model) : display(e.category.replace(/_/g, " ")));
+  const unitLabels: Record<string, [string, string]> = {
+    seat: ["席", "席"], seats: ["席", "席"], session: ["節", "节"], sessions: ["節", "节"],
+    item: ["個", "个"], items: ["個", "个"], unit: ["個", "个"], units: ["個", "个"],
   };
-  const active = state.entities.filter((e) => e.status !== "deferred" && e.status !== "cancelled");
-  const deferred = state.entities.filter((e) => e.status === "deferred");
-  if (!active.length && !deferred.length) return null;
-  const describe = (e: CommerceEntity) => e.entity_id.startsWith("generic:") ? renderCanonicalRequirement(e,language) : [label(e), ...facts(e)].join("，");
-  if (language === "en") {
-    return `Your current requirements are ${[...active,...deferred].map(describe).join("; ") || "not yet specified"}. ${renderRequirementQualification(state,language)}`;
+  const rooms: Record<string, [string, string, string]> = {
+    study: ["書房", "书房", "study"], small_bedroom: ["細房", "小卧室", "small bedroom"],
+    large_bedroom: ["大房", "大卧室", "large bedroom"], living_room: ["客廳", "客厅", "living room"],
+  };
+  const describe = (e: CommerceEntity): string => {
+    const unit = typeof e.attributes.unit === "string" ? e.attributes.unit : "items";
+    const count = l === 2 ? `${e.quantity} ${e.quantity === 1 ? unit.replace(/s$/, "") : unit}`
+      : `${e.quantity}${unitLabels[unit]?.[l] ?? display(unit)}`;
+    const facts: string[] = [];
+    const sizes = object(e.attributes.room_sizes);
+    for (const [room, size] of Object.entries(sizes ?? {})) {
+      if (typeof size !== "string") continue;
+      facts.push(`${rooms[room]?.[l] ?? room.replace(/_/g, " ")}${l === 2 ? " " : ""}${l === 2 ? display(size).replace(/平方[呎尺]|[呎尺]/u, " sq ft") : display(size)}`);
+    }
+    if (typeof e.constraints.max_width_mm === "number") facts.push(l === 2 ? `maximum width ${e.constraints.max_width_mm} mm` : `最闊${e.constraints.max_width_mm} mm`);
+    if (e.model && !label(e).includes(e.model)) facts.push(display(e.model));
+    if (e.attributes.sunlight === "strong_afternoon_sun") facts.push(["下午日照強", "下午日晒较强", "strong afternoon sun"][l]);
+    if (e.attributes.installation_type === "window_unit") facts.push(["窗口機", "窗口机", "window unit"][l]);
+    if (Number.isInteger(e.attributes.door_count)) facts.push(l === 2 ? `${e.attributes.door_count} doors` : `${e.attributes.door_count}門`);
+    const date = typeof e.attributes.requested_date === "string" ? display(e.attributes.requested_date) : null;
+    const details = `${label(e)}${l === 2 ? " at " : " "}${count}${date ? [ `，要求日期 ${date}`, `，要求日期 ${date}`, ` requested for ${date}` ][l] : ""}${facts.length ? `${l === 2 ? ", " : "，"}${facts.join(l === 2 ? ", " : "、")}` : ""}`;
+    const lifecycle = e.status === "deferred" ? ["已暫緩", "已暂缓", " is paused"][l]
+      : e.status === "cancelled" ? ["已取消", "已取消", " has been cancelled"][l] : "";
+    return details + lifecycle;
+  };
+  const inactive = entities.filter(e => ["deferred", "cancelled"].includes(e.status));
+  const first = l === 2
+    ? [active.length ? `I have your request for ${active.map(describe).join("; ")} noted.` : "",
+        inactive.length ? inactive.map(describe).join("; ") + "." : "",
+        !entities.length ? "I haven't recorded any specific requirements yet." : ""].filter(Boolean).join(" ")
+    : entities.length ? ["而家記低咗", "目前已记录"][l] + entities.map(describe).join("；") + "。"
+    : ["暫時未記低任何具體要求。", "暂时没有记录具体要求。"][l];
+  const confirmed = Array.isArray(v.confirmed_entity_ids) ? v.confirmed_entity_ids : [];
+  const pendingBooking = active.some(e => object(e.attributes.capabilities)?.requires_booking === true && !confirmed.includes(e.entity_id));
+  let qualification = "";
+  if (pendingBooking) qualification = ["預約要求仍需職員確認，未成為已確認預約。", "预约要求仍需职员确认，尚未成为已确认预约。", "The booking still needs staff confirmation; it has not been confirmed."][l];
+  else if (active.some(e => e.category === "air_conditioner" || object(e.attributes.capabilities)?.requires_site_check === true)) qualification = ["適用性仍要按現行資料及現場條件核對。", "适用性仍需按现行资料及现场条件核对。", "Suitability still needs current evidence and the relevant site checks."][l];
+  else if (entities.length) {
+    const transaction = object(v.transaction) ?? {};
+    const order = transaction.order_status ?? transaction.order;
+    const payment = transaction.payment_status ?? transaction.payment;
+    if (order === "none" && payment === "none") qualification = ["目前只係記錄緊你嘅要求，未建立訂單或付款。", "目前只是记录你的要求，尚未建立订单或付款。", "Nothing has been ordered or paid for yet."][l];
+    else {
+      const orders: Record<string, [string, string, string]> = {
+        none: ["未建立訂單", "尚未建立订单", "no order has been placed"],
+        draft: ["訂單仍未確認", "订单尚未确认", "the order is not confirmed"],
+        pending_confirmation: ["訂單仍待確認", "订单仍待确认", "the order is awaiting confirmation"],
+        confirmed: ["訂單已確認", "订单已确认", "the order is confirmed"],
+        completed: ["訂單已完成", "订单已完成", "the order is completed"],
+        cancelled: ["訂單已取消", "订单已取消", "the order is cancelled"],
+      };
+      const payments: Record<string, [string, string, string]> = {
+        none: ["未有付款記錄", "没有付款记录", "no payment has been recorded"],
+        pending_quote: ["付款金額仍待核實", "付款金额仍待核实", "payment is awaiting a verified amount"],
+        pending_payment: ["仍待付款", "仍待付款", "payment is pending"],
+        paid: ["已有已收款記錄", "已有收款记录", "payment is recorded as paid"],
+        failed: ["付款未成功", "付款未成功", "payment was unsuccessful"],
+        refunded: ["已有退款記錄", "已有退款记录", "a refund is recorded"],
+        partially_refunded: ["已有部分退款記錄", "已有部分退款记录", "a partial refund is recorded"],
+      };
+      qualification = [orders[String(order)]?.[l], payments[String(payment)]?.[l]].filter(Boolean).join(l === 2 ? "; " : "，");
+      if (qualification) qualification += l === 2 ? "." : "。";
+    }
   }
-  const first = language === "zh-CN" ? "目前已记录" : "而家記低咗";
-  const paused = language === "zh-CN" ? "暂缓" : "暫緩";
-  const activeText = active.map(describe).join("；") || (language === "zh-CN" ? "尚无进行中的项目" : "暫時冇進行中嘅項目");
-  const deferredText = deferred.length ? `；${deferred.map(e=>describe(e)+(e.entity_id.startsWith("generic:")?"":`已${paused}`)).join("、")}` : "";
-  const second = renderRequirementQualification(state,language);
-  return `${first}${activeText}${deferredText}。${second}`;
-}
-
-function renderCurrentAcRequirements(
-  input: ConversationRecallInput,
-  decision: ConversationRecallDecision,
-  language: string,
-): string | null {
-  if (!decision.handled || decision.fact_type !== "summary" ||
-    language !== "zh-TW" ||
-    !/(?:冷氣|冷气|空調|空调)/i.test(input.question)) return null;
-  const active = input.commerce?.state.entities.filter((entity) =>
-    entity.category === "air_conditioner" &&
-    entity.status !== "cancelled" && entity.status !== "deferred"
-  ) ?? [];
-  if (active.length !== 1) return null;
-  const entity = active[0];
-  const sizes = object(entity.attributes.room_sizes);
-  if (!sizes || typeof sizes.small_bedroom !== "string" ||
-    typeof sizes.large_bedroom !== "string" ||
-    typeof sizes.living_room !== "string") return null;
-  const messages = input.recent_questions ?? [];
-  const goal = object(entity.attributes.customer_goal);
-  const collected = Array.isArray(goal?.collected) ? goal.collected : [];
-  const hasWindow = collected.includes("installation_type") &&
-    messages.some((text) => /(?:三個位|全部|都).{0,20}(?:窗口位|窗口機)/i.test(text));
-  const hasSun = collected.includes("sunlight") &&
-    messages.some((text) => /(?:客廳|客厅|個廳|个厅).{0,20}(?:西斜|西曬|西晒)/i.test(text));
-  const allocated = Array.isArray(entity.attributes.scoped_customer_updates) &&
-    ["living_room", "bedroom_1", "bedroom_2"].every((scope) =>
-      (entity.attributes.scoped_customer_updates as Array<Record<string, unknown>>)
-        .some((row) => row.scope === scope && row.attribute === "quantity" && row.value === 1)
-    );
-  return [
-    `現時冷氣要求：細房${sizes.small_bedroom}、大房${sizes.large_bedroom}、客廳${sizes.living_room}。`,
-    hasWindow ? "三個位置都有窗口位，現有都係窗口機。" : "",
-    hasSun ? "客廳下午西斜。" : "",
-    allocated && entity.quantity === 3
-      ? "客廳一部、兩間房各一部，共三部；目前只係選購要求，未落單。"
-      : `目前選購數量共${entity.quantity}部，具體分配仍要確認。`,
-    entity.model
-      ? `目前研究緊 ${entity.model}；各空間是否適用仍要按現行資料核對。`
-      : "適用型號同匹數仍要按現行資料核對。",
-  ].filter(Boolean).join(" ");
+  return [first, qualification].filter(Boolean).join(l === 2 ? " " : "").slice(0, 4096);
 }

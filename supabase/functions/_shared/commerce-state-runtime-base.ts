@@ -2895,7 +2895,9 @@ export async function runCommerceStateRuntime(
   if (lifecycleVerified.valid) {
     const focus = lifecycleVerified.plans[0].focus_category;
     const target = lifecycleVerified.plans.map((plan) => plan.target_category === "refrigerator" ? "雪櫃" : plan.target_category === "air_conditioner" ? "冷氣" : plan.target_category).join("同");
-    const reply = language === "en"
+    const reply = lifecycleVerified.plans[0].action === "cancelled"
+      ? (language === "en" ? `${target} is cancelled.` : `${target}已取消。`)
+      : language === "en"
       ? `Okay, ${target} is ${lifecycleVerified.plans[0].action === "deferred" ? "paused" : "cancelled"}. ${focus ? `We can continue with ${focus}; its requirements remain in place.` : "The other product requirements remain in place."}`
       : `好，${target}${lifecycleVerified.plans[0].action === "deferred" ? "先暫停" : "已取消"}；${focus ? `而家繼續處理${focus === "air_conditioner" ? "冷氣" : focus === "refrigerator" ? "雪櫃" : focus}，之前嘅要求同數量會保留。` : "其他產品嘅要求同數量會保留。"}`;
     return {
