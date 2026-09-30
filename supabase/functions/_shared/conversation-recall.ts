@@ -1770,12 +1770,25 @@ function renderCustomerRecap(value: unknown, language: string): string {
     return details + lifecycle;
   };
   const inactive = entities.filter(e => ["deferred", "cancelled"].includes(e.status));
+  const regions=(Array.isArray(v.regions)?v.regions:[]).map(object).filter(r=>r!==null);
+  const regionNames:Record<string,[string,string,string]>={hong_kong:["香港","香港","Hong Kong"],taiwan:["台灣","台湾","Taiwan"],macau:["澳門","澳门","Macau"],singapore:["新加坡","新加坡","Singapore"]};
+  const retained = !entities.length ? (Array.isArray(v.customer_facts)?v.customer_facts:[]).map(object).flatMap(f=>{
+    if(!f || !["customer","canonical_commerce"].includes(String(f.authority)) || regions.some(r=>r?.region===f.region && r.temporal_scope==="future"))return [];
+    const region=regionNames[String(f.region)]?.[l];
+    const prefix=region ? region+(l===2?": ":" "):"";
+    if(f.key==="quantity" && typeof f.value==="number")return [prefix+["要求數量","要求数量","requested quantity " ][l]+f.value];
+    if(f.key==="horsepower" && Array.isArray(f.value) && f.value.every(x=>typeof x==="string"))return [prefix+f.value.map(x=>l===2?String(x).replace(/匹/g," hp"):String(x)).join(l===2?", ":"、")];
+    if(f.key==="room_size" && Array.isArray(f.value))return f.value.flatMap(x=>{const row=object(x);return row && typeof row.label==="string" && typeof row.value==="string" ? [prefix+display(row.label)+" "+display(row.value)] : [];});
+    if(f.key==="brand_required" && typeof f.value==="boolean")return [prefix+(f.value?["你要求指定品牌","你要求指定品牌","you require a specific brand"]:["你冇限定品牌","你没有限定品牌","you do not require a specific brand"])[l]];
+    return [];
+  }) : [];
+  const retainedText=retained.length ? ["而家記低咗","目前已记录","I have noted " ][l]+retained.join(l===2?"; ":"；")+(l===2?".":"。") : "";
   const first = l === 2
     ? [active.length ? `I have your request for ${active.map(describe).join("; ")} noted.` : "",
         inactive.length ? inactive.map(describe).join("; ") + "." : "",
-        !entities.length ? "I haven't recorded any specific requirements yet." : ""].filter(Boolean).join(" ")
+        !entities.length ? retainedText || "I haven't recorded any specific requirements yet." : ""].filter(Boolean).join(" ")
     : entities.length ? ["而家記低咗", "目前已记录"][l] + entities.map(describe).join("；") + "。"
-    : ["暫時未記低任何具體要求。", "暂时没有记录具体要求。"][l];
+    : retainedText || ["暫時未記低任何具體要求。", "暂时没有记录具体要求。"][l];
   const confirmed = Array.isArray(v.confirmed_entity_ids) ? v.confirmed_entity_ids : [];
   const pendingBooking = active.some(e => object(e.attributes.capabilities)?.requires_booking === true && !confirmed.includes(e.entity_id));
   let qualification = "";
@@ -1808,5 +1821,7 @@ function renderCustomerRecap(value: unknown, language: string): string {
       if (qualification) qualification += l === 2 ? "." : "。";
     }
   }
-  return [first, qualification].filter(Boolean).join(l === 2 ? " " : "").slice(0, 4096);
+  const future=regions.filter(r=>r?.temporal_scope==="future").flatMap(r=>regionNames[String(r?.region)]?.[l]??[]);
+  const futureText=future.length ? future.join(l===2?", ":"、")+["只屬未來討論，唔係目前已確認交易。","仅属未来讨论，并非目前已确认交易。"," is a future discussion only, not a confirmed current transaction."][l] : "";
+  return [first, qualification,futureText].filter(Boolean).join(l === 2 ? " " : "").slice(0, 4096);
 }
