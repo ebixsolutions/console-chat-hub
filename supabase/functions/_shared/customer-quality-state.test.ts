@@ -4,8 +4,13 @@ import { createEmptyConversationCommerceState } from "./commerce-state-contract.
 import { classifySocialTurn } from "./natural-customer-response.ts";
 import { deriveTypedCustomerCalculation } from "./conversation-service-runtime.ts";
 import { deriveTypedCustomerMoneyFacts } from "./customer-money-facts.ts";
+import { isCurrentRequirementsRecap } from "./commerce-state-authority.ts";
 const eq=(a:unknown,b:unknown)=>{if(JSON.stringify(a)!==JSON.stringify(b))throw new Error(JSON.stringify({a,b}));};
 const build=(rows:Array<{id:string,role:string,content:string,metadata?:Record<string,unknown>}>)=>buildCanonicalConversationMemory({conversation_id:"conversation",company_id:"tenant",source_message_id:rows[0].id,commerce_state_revision:0,commerce_state:createEmptyConversationCommerceState(),newest_first:rows,visitor_turn_count:1,source_created_at:"2026-09-30T00:00:00Z",next_memory_revision:1});
+Deno.test("COMPONENT: requirement/request recap synonyms preserve the explicit mutation guard",()=>{
+  for(const text of ["Please recap my current request in English.","Summarise my request.","What is my latest request?","Current request recap","Recap my current requirements","Summary of my needs"]){eq(isCurrentRequirementsRecap(text),true);}
+  for(const text of ["Recap my current request and change the booking to 7 sessions.","What is the current billing policy?","I need 12 seats of a subscription."]){eq(isCurrentRequirementsRecap(text),false);}
+});
 Deno.test("COMPONENT: social-only history cannot become a business goal, topic or queue",()=>{
   for(const content of ["你好","你好，可以幫我嗎？","早晨，可唔可以幫我？","Hi","Hello, could you help me please?","Thanks","明白","OK"]){const m=build([{id:"social",role:"visitor",content}]);eq(m.current_goal,null);eq(m.current_topic,null);eq(m.open_questions,[]);}
   for(const text of ["你好，我想查訂單","Hi, I need help choosing an AC","你好，我想轉真人"])eq(classifySocialTurn(text),null);

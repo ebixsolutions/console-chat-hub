@@ -327,7 +327,7 @@ export function isReadOnlyMemoryOrCurrentStateRecall(
 export function isCurrentRequirementsRecap(question: string): boolean {
   const text = clean(question);
   if (!text || explicitCustomerMutation(text)) return false;
-  return /(?:而家|現在|现在|目前|最新).{0,18}(?:要求|需求|需要).{0,12}(?:係點|系点|是甚麼|是什么|有咩|有哪些|\?|？)|(?:要求|需求|需要).{0,12}(?:係點|系点|是甚麼|是什么|有咩|有哪些|\?|？)|(?:recap|summari[sz]e|summary|what(?:'s| is)).{0,40}(?:current|latest|my).{0,30}(?:requirements?|needs?)|(?:current|latest)\s+(?:requirements?|needs?)\s*(?:summary|recap|\?|$)/i.test(text);
+  return /(?:而家|現在|现在|目前|最新).{0,18}(?:要求|需求|需要).{0,12}(?:係點|系点|是甚麼|是什么|有咩|有哪些|\?|？)|(?:要求|需求|需要).{0,12}(?:係點|系点|是甚麼|是什么|有咩|有哪些|\?|？)|(?:recap|summari[sz]e|summary|what(?:'s| is)).{0,40}(?:current|latest|my).{0,30}(?:requirements?|needs?|requests?)|(?:current|latest)\s+(?:requirements?|needs?|requests?)\s*(?:summary|recap|\?|$)/i.test(text);
 }
 
 /**

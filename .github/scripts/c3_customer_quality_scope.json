@@ -1,11 +1,11 @@
 {
-  "baseline_head": "d39907d1233f0511e287468268522b22230f08da",
-  "baseline_tree": "1283db01bf1cd3ede296571936737dfc569f5b89",
+  "baseline_head": "753bd20b5ad5124b2f9822aec82ba648aebe388e",
+  "baseline_tree": "eacb4829f564987ad7b43131578a49d12195cdce",
   "changed_files": [
     ".github/scripts/c3_actual_handler_runtime.mjs",
     ".github/scripts/c3_customer_quality_final_gate.mjs",
     ".github/scripts/c3_customer_quality_scope.json",
-    "supabase/functions/_shared/conversation-long-memory.ts",
-    "supabase/migrations/20260930090000_c3_handoff_grounded_facts.sql"
+    "supabase/functions/_shared/commerce-state-authority.ts",
+    "supabase/functions/_shared/customer-quality-state.test.ts"
   ]
 }

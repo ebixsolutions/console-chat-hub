@@ -26,8 +26,8 @@ function run(command,args,label){
 try{
   const scope=JSON.parse(fs.readFileSync(path.join(root,'.github/scripts/c3_customer_quality_scope.json')));
   check('candidate_head_tree_and_baseline',()=>{
-    assert.equal(scope.baseline_head,'d39907d1233f0511e287468268522b22230f08da');
-    assert.equal(scope.baseline_tree,'1283db01bf1cd3ede296571936737dfc569f5b89');
+    assert.equal(scope.baseline_head,'753bd20b5ad5124b2f9822aec82ba648aebe388e');
+    assert.equal(scope.baseline_tree,'eacb4829f564987ad7b43131578a49d12195cdce');
     assert.equal(git('rev-parse',scope.baseline_head+'^{tree}'),scope.baseline_tree);
     assert.equal(git('merge-base',scope.baseline_head,'HEAD'),scope.baseline_head);
     assert.equal(git('branch','--show-current'),'director/ai-abc-c3-long-memory-final-cutover');
@@ -48,9 +48,14 @@ try{
   });
   check('frozen_source_and_security_function_drift',()=>{
     report.frozen_hashes={};
-    for(const file of ['supabase/functions/_shared/commerce-state-contract.ts','supabase/functions/_shared/commerce-state-reducer.ts','supabase/functions/_shared/commerce-state-authority.ts','supabase/functions/_shared/deterministic-runtime-router.ts','supabase/functions/receive-widget-message/index.ts','src/integrations/supabase/auth-middleware.ts','supabase/migrations/20260925093000_c3_t11_revision_bound_ai_reply.sql','supabase/migrations/20260928100000_c3_director_handoff_context.sql']){
+    for(const file of ['supabase/functions/_shared/commerce-state-contract.ts','supabase/functions/_shared/commerce-state-reducer.ts','supabase/functions/_shared/deterministic-runtime-router.ts','supabase/functions/receive-widget-message/index.ts','src/integrations/supabase/auth-middleware.ts','supabase/migrations/20260925093000_c3_t11_revision_bound_ai_reply.sql','supabase/migrations/20260928100000_c3_director_handoff_context.sql']){
       const bytes=fs.readFileSync(path.join(root,file));assert.deepEqual(bytes,rawGit('show',scope.baseline_head+':'+file));report.frozen_hashes[file]=sha(bytes);
     }
+    // Hosted HA3 proved only the request/requirements recap selector needs repair.
+    // Preserve every other byte of the accepted authority contract.
+    const authority='supabase/functions/_shared/commerce-state-authority.ts';
+    const stripRecap=text=>{const start=text.indexOf('export function isCurrentRequirementsRecap(');assert.ok(start>=0);const end=text.indexOf('\n}',start)+2;assert.ok(end>start);return text.slice(0,start)+text.slice(end);};
+    assert.equal(stripRecap(fs.readFileSync(path.join(root,authority),'utf8')),stripRecap(rawGit('show',scope.baseline_head+':'+authority).toString('utf8')),'unrelated authority bytes changed');
     const file='supabase/functions/_shared/pre-send-conversion-supervisor.ts';
     const before=rawGit('show',scope.baseline_head+':'+file).toString('utf8'),after=fs.readFileSync(path.join(root,file),'utf8');
     const section=(text,name)=>{const at=text.indexOf('function '+name+'(');assert.ok(at>=0,name);const end=text.indexOf('\nfunction ',at+1);return text.slice(at,end<0?text.length:end);};
@@ -73,7 +78,7 @@ try{
   const deno=path.join(process.env.C3_TEST_TOOLS??'','node_modules/.bin/deno');assert.ok(fs.existsSync(deno),'pinned C3_TEST_TOOLS required');
   const componentFiles=['customer-quality-state','customer-money-facts','natural-customer-response','conversation-service-runtime','conversation-service-planner','conversation-long-memory','conversation-recall','conversation-recall.integration','conversation-resolution-contract','pre-send-conversion-supervisor','canonical-kb-direct-answer','natural-dialogue-generic-core'].map(name=>'supabase/functions/_shared/'+name+'.test.ts');
   const componentLog=run(deno,['test','--no-lock','--cached-only','--allow-read','--allow-env',...componentFiles],'component_regressions_only');
-  report.component_count=Number(componentLog.match(/ok \| (\d+) passed \| 0 failed/)?.[1]);assert.ok(report.component_count>=379);
+  report.component_count=Number(componentLog.match(/ok \| (\d+) passed \| 0 failed/)?.[1]);assert.ok(report.component_count>=380);
   run('node',['--test','.github/scripts/c3_backend_deployment_request.test.mjs'],'deployment_request_positive_and_negative_contracts');
   check('runtime_closure_jwt_import_map_and_committed_content',()=>{
     const request=backendDeploymentRequest(root,'local-contract-only');assert.equal(request.verify_jwt,true);assert.equal(request.import_map_path,'');

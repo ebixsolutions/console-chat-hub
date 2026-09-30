@@ -328,16 +328,21 @@ try {
     "I need 7 seats of CN-314 subscription.","I need 1 NX-529 add-on.",
     "Change CN-314 subscription to 9 seats.","What is the CN-314 billing policy? Please answer in English.",
     "Defer NX-529 add-on. Back to CN-314 subscription.","Thanks",
+    "Please recap my current request in English.",
     "用廣東話兩句總結我而家嘅要求。","我想真人客服接手。","還有一個問題。"]);
   console.log("SAAS",saas.outputs.map(t=>[t.customer,t.replies.map(x=>x.content)]));
-  const sp=governed(saas,7);
+  const sp=governed(saas,8);
   acknowledgement(saas,[0,1,2]);sameTurnPolicy(saas.outputs[3]);
-  assert.doesNotMatch(saas.outputs[6].replies[0].content,/適用性|适用性|suitability|site assessment|installation/i);
+  assert.equal(saas.outputs[6].outcome.response_route,"canonical_memory_recall","English request recap must use source/revision-bound canonical recap");
+  assert.doesNotMatch(saas.outputs[6].replies[0].content,/[\u3400-\u9fff]/,"English request recap changed language");
+  assert.deepEqual(saas.outputs[6].semanticAfter,saas.outputs[6].semanticBefore,"English request recap mutated Commerce");
+  assert.deepEqual(saas.outputs[6].memoryAfter,saas.outputs[6].memoryBefore,"English request recap mutated Memory");
+  assert.doesNotMatch(saas.outputs[7].replies[0].content,/適用性|适用性|suitability|site assessment|installation/i);
   assert.ok(sp.active_entities.some(e=>e.category==="subscription"&&e.quantity===9));
   assert.ok(sp.deferred_entities.some(e=>e.category==="addon"&&e.quantity===1));
   assert.match(saas.outputs[3].replies[0].content,/monthly/);
   assert.equal(saas.outputs[3].outcome.response_route,"canonical_kb_direct_answer");
-  assert.match(saas.outputs[6].replies[0].content,/9/);
+  assert.match(saas.outputs[7].replies[0].content,/9/);
   assert.deepEqual(saas.outputs[5].semanticAfter,saas.outputs[4].semanticAfter,"social acknowledgement changed commerce");
   assert.deepEqual(saas.outputs[5].memoryAfter,saas.outputs[4].memoryAfter,"social acknowledgement changed memory");
   assert.ok(!sp.open_questions.some(q=>/billing|recap|summary|總結|Thanks/i.test(q)));
