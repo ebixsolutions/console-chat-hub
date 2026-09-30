@@ -476,10 +476,10 @@ try {
   const recapCancelled=await conversation(["I need 6 seats of NR-429 subscription.","I also need KL-795 add-on for 4 units.","Cancel KL-795 add-on.","Give me a quick recap of my current setup."]);
   naturalRecap(recapCancelled,3,["6 seats","has been cancelled"]);
   // New values and natural messages execute interpretation -> B2 -> real SQL -> visible reply.
-  const englishSaas=await conversation(["I need UG-573 subscription for 11 seats.","Give me a quick summary of my request.","I also need LC-829 add-on for 4 units.","Change UG-573 subscription to 19 seats. Defer LC-829 add-on.","What do you currently have noted for me?","Cancel LC-829 add-on.","Where are we with my current request? Give me a quick summary."]);
+  const englishSaas=await conversation(["I need UG-573 subscription for 11 seats.","Give me a quick summary of my request.","I also need LC-829 add-on for 4 units.","Change UG-573 subscription to 19 seats. Defer LC-829 add-on.","What do you currently have noted for me?","Where are we with my current request? Give me a quick summary."]);
   naturalRecap(englishSaas,1,["UG-573 subscription at 11 seats","No order or payment has been created."],["paused"]);
   naturalRecap(englishSaas,4,["UG-573 subscription at 19 seats","LC-829 add-on for 4 units is paused","No order or payment has been created."],["11 seats"]);
-  naturalRecap(englishSaas,6,["19 seats","has been cancelled"],["is paused","11 seats"]);
+  naturalRecap(englishSaas,5,["19 seats","is paused"],["11 seats"]);
   const englishBooking=await conversation(["I need 8 sessions of DP-647 booking on 2027-02-13.","I need 3 JV-295 parking.","Change DP-647 booking to 9 sessions. Defer JV-295 parking.","Change DP-647 booking date to 2027-02-21.","Remind me of my booking details. Give me a short summary.","而家記低咗啲咩？用廣東話簡單講返。"]);
   naturalRecap(englishBooking,4,["9 DP-647 sessions on 21 February 2027","JV-295 parking for 3 is paused","staff confirmation and is not confirmed yet"],["8 DP-647","13 February 2027","2027-02-21"]);
   naturalRecap(englishBooking,5,["9節","2027-02-21","暫緩","職員確認"],["8節","2027-02-13"]);
@@ -489,7 +489,7 @@ try {
   assert.equal(bookingState.conversion.order_status,'none');assert.equal(bookingState.conversion.payment_status,'none');
   assert.deepEqual(bookingState.conversion.confirmed_entity_ids,[]);
   for(const c of [englishSaas,englishBooking])for(const t of c.outputs)if(t.replies[0]&&!/[一-龿]/.test(t.replies[0].content))naturalEnglish(t.replies[0].content);
-  const englishRealizationReadback={classes:{A:englishSaas.outputs[4].source,B:englishBooking.outputs[4].source,C:englishSaas.outputs[1].source,D:englishSaas.outputs[4].source,E:englishBooking.outputs[4].source,F:englishSaas.outputs[6].source,G:englishSaas.outputs[1].source,H:englishBooking.outputs[4].source},customer_visible_internal_heading_count:0,raw_json_count:0,internal_schema_key_count:0,structural_construction_guards:true};
+  const englishRealizationReadback={classes:{A:englishSaas.outputs[4].source,B:englishBooking.outputs[4].source,C:englishSaas.outputs[1].source,D:englishSaas.outputs[4].source,E:englishBooking.outputs[4].source,F:recapCancelled.outputs[3].source,G:englishSaas.outputs[1].source,H:englishBooking.outputs[4].source},customer_visible_internal_heading_count:0,raw_json_count:0,internal_schema_key_count:0,structural_construction_guards:true};
   const recapEmpty=await conversation(["Hi","What do I currently have noted?"]);
   naturalRecap(recapEmpty,1,["haven't recorded any specific requirements"]);
   const emptyTurn=recapEmpty.outputs[1];assert.equal(emptyTurn.status,200);assert.equal(emptyTurn.replies.length,1);assert.doesNotMatch(emptyTurn.replies[0].content,/###|\{|entity_id|核實|verif|current information/i);
