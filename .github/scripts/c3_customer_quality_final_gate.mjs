@@ -26,8 +26,8 @@ function run(command,args,label){
 try{
   const scope=JSON.parse(fs.readFileSync(path.join(root,'.github/scripts/c3_customer_quality_scope.json')));
   check('candidate_head_tree_and_baseline',()=>{
-    assert.equal(scope.baseline_head,'61f5ee9db8181cf03efb36c07d4afaba848a1d89');
-    assert.equal(scope.baseline_tree,'803770e4db517495b20783021a4183b2999e9ef0');
+    assert.equal(scope.baseline_head,'d39907d1233f0511e287468268522b22230f08da');
+    assert.equal(scope.baseline_tree,'1283db01bf1cd3ede296571936737dfc569f5b89');
     assert.equal(git('rev-parse',scope.baseline_head+'^{tree}'),scope.baseline_tree);
     assert.equal(git('merge-base',scope.baseline_head,'HEAD'),scope.baseline_head);
     assert.equal(git('branch','--show-current'),'director/ai-abc-c3-long-memory-final-cutover');
@@ -61,15 +61,19 @@ try{
     const rollback='supabase/migrations/rollback/20260930090000_c3_handoff_grounded_facts.rollback.sql';
     const before=rawGit('show',scope.baseline_head+':'+rollback).toString('utf8');
     const after=fs.readFileSync(path.join(root,rollback),'utf8');
-    assert.ok(after.startsWith(before),'original accepted handoff rollback changed');
+    assert.equal(after,before,'accepted rollback changed');
     const memoryOriginal=rawGit('show',scope.baseline_head+':supabase/migrations/20260915040000_ai_abc_c3_director_runtime_closure.sql').toString('utf8');
     const definition=memoryOriginal.slice(memoryOriginal.indexOf('CREATE OR REPLACE FUNCTION public.c3_commit_conversation_memory_tx('),memoryOriginal.indexOf('-- C2 remains authoritative')).trim();
-    assert.equal(after.slice(before.length).trim(),'-- Restore the exact original Memory RPC as well.\n'+definition);
+    assert.equal(after.slice(after.indexOf('-- Restore the exact original Memory RPC as well.')).trim(),'-- Restore the exact original Memory RPC as well.\n'+definition);
+    const forward='supabase/migrations/20260930090000_c3_handoff_grounded_facts.sql';
+    const originalForward=rawGit('show',scope.baseline_head+':'+forward).toString('utf8'),newForward=fs.readFileSync(path.join(root,forward),'utf8');
+    const memoryRpc=text=>text.slice(text.indexOf('-- Extend the existing Memory authority'));
+    assert.equal(memoryRpc(newForward),memoryRpc(originalForward),'accepted Memory finalisation RPC changed');
   });
   const deno=path.join(process.env.C3_TEST_TOOLS??'','node_modules/.bin/deno');assert.ok(fs.existsSync(deno),'pinned C3_TEST_TOOLS required');
   const componentFiles=['customer-quality-state','customer-money-facts','natural-customer-response','conversation-service-runtime','conversation-service-planner','conversation-long-memory','conversation-recall','conversation-recall.integration','conversation-resolution-contract','pre-send-conversion-supervisor','canonical-kb-direct-answer','natural-dialogue-generic-core'].map(name=>'supabase/functions/_shared/'+name+'.test.ts');
   const componentLog=run(deno,['test','--no-lock','--cached-only','--allow-read','--allow-env',...componentFiles],'component_regressions_only');
-  report.component_count=Number(componentLog.match(/ok \| (\d+) passed \| 0 failed/)?.[1]);assert.ok(report.component_count>=378);
+  report.component_count=Number(componentLog.match(/ok \| (\d+) passed \| 0 failed/)?.[1]);assert.ok(report.component_count>=379);
   run('node',['--test','.github/scripts/c3_backend_deployment_request.test.mjs'],'deployment_request_positive_and_negative_contracts');
   check('runtime_closure_jwt_import_map_and_committed_content',()=>{
     const request=backendDeploymentRequest(root,'local-contract-only');assert.equal(request.verify_jwt,true);assert.equal(request.import_map_path,'');
@@ -83,6 +87,10 @@ try{
     for(const key of ['generic_state_acknowledgement_not_meta','no_false_customer_goal_missing','same_turn_question_resolution','no_cross_domain_recap_language','handoff_summary_structured_parity','immediate_post_KB_R1_has_no_stale_question'])assert.equal(report.runtime.assertions[key],true,key);
     assert.equal(report.runtime.summaryReadback.length,6);
     assert.ok(report.runtime.results.length>=26);
+  });
+  check('handoff_semantic_and_actionability_contracts',()=>{
+    for(const key of ['handoff_request_not_business_goal','handoff_request_not_active_constraint','handoff_request_not_current_topic_without_business_goal','business_goal_preserved_across_r1','actionable_pending_drives_human_next_action','generic_next_action_only_when_no_actionable_pending'])assert.equal(report.runtime.assertions[key],true,key);
+    for(const key of ['H1','H2','H3','H4'])assert.equal(report.runtime.handoffSemanticReadback[key].length,2,key);
   });
   run(deno,['check','--no-lock','--cached-only','supabase/functions/generate-reply/index.ts'],'deno_check');
   run(path.join(root,'node_modules/.bin/tsc'),['--noEmit'],'repository_typescript');

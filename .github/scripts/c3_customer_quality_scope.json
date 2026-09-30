@@ -1,17 +1,11 @@
 {
-  "baseline_head": "61f5ee9db8181cf03efb36c07d4afaba848a1d89",
-  "baseline_tree": "803770e4db517495b20783021a4183b2999e9ef0",
+  "baseline_head": "d39907d1233f0511e287468268522b22230f08da",
+  "baseline_tree": "1283db01bf1cd3ede296571936737dfc569f5b89",
   "changed_files": [
     ".github/scripts/c3_actual_handler_runtime.mjs",
     ".github/scripts/c3_customer_quality_final_gate.mjs",
     ".github/scripts/c3_customer_quality_scope.json",
-    "supabase/functions/_shared/commerce-capability-runtime.ts",
     "supabase/functions/_shared/conversation-long-memory.ts",
-    "supabase/functions/_shared/conversation-recall.ts",
-    "supabase/functions/_shared/conversation-service-planner.ts",
-    "supabase/functions/_shared/customer-quality-state.test.ts",
-    "supabase/functions/generate-reply/index.ts",
-    "supabase/migrations/20260930090000_c3_handoff_grounded_facts.sql",
-    "supabase/migrations/rollback/20260930090000_c3_handoff_grounded_facts.rollback.sql"
+    "supabase/migrations/20260930090000_c3_handoff_grounded_facts.sql"
   ]
 }

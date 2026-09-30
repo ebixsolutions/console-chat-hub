@@ -587,6 +587,23 @@ function questionLifecycle(rows: MemoryHistoryRow[], state: ConversationCommerce
   return [...items.values()].slice(-24);
 }
 
+/** Business projection only: never grants R1 authority or changes its classifier.
+ * Drop the transfer directive and its collection-control clauses, retaining any
+ * separate business clauses for the existing canonical reducers/projection.
+ */
+function businessMessageText(value: unknown): string {
+  const text=clean(value,1600);
+  const isControl=(clause:string)=> {
+    const intent=classifyHandoffIntent(clause);
+    return intent.explicit_request || intent.category==="mention_only" &&
+      /(?:我想|請|请|麻煩|麻烦|唔該|接手|轉接|转接|speak|talk|transfer|connect)/i.test(clause);
+  };
+  if(!text || !isControl(text)) return text;
+  return text.split(/[，,。;；!！\n]|(?<!\d)\.(?!\d)/).map(clause=>clause.trim()).filter(clause=>
+    clause && !isControl(clause) && !/(?:唔好|不要|别|別|stop|do not|don't).{0,16}(?:再問|再问|問需求|问需求|ask|question)|(?:no more|不要|唔要).{0,8}(?:AI|機器人|机器人)/i.test(clause)
+  ).join("; ");
+}
+
 export function buildCanonicalConversationMemory(args: {
   pending_lifecycle_reply?: B2TrustedLifecycleCommit | null;
   previous?: CanonicalConversationMemory | null;
@@ -600,11 +617,13 @@ export function buildCanonicalConversationMemory(args: {
   source_created_at: string;
   next_memory_revision: number;
 }): CanonicalConversationMemory {
-  const businessRows = args.newest_first.filter(row=>!CUSTOMER_ROLES.has(String(row.role ?? "")) || !classifySocialTurn(clean(row.content,1600)));
+  const businessRows = args.newest_first.map(row=>CUSTOMER_ROLES.has(String(row.role ?? ""))
+    ? {...row,content:businessMessageText(row.content)} : row)
+    .filter(row=>!CUSTOMER_ROLES.has(String(row.role ?? "")) || clean(row.content) && !classifySocialTurn(clean(row.content,1600)));
   const runtime = projectConversationRuntimeState(businessRows);
   const commerce = projectCommerce(args.commerce_state);
-  const retained = retainedCustomerFacts(args.newest_first,args.commerce_state);
-  const retainedRegions = retainedCustomerRegions(args.newest_first);
+  const retained = retainedCustomerFacts(businessRows,args.commerce_state);
+  const retainedRegions = retainedCustomerRegions(businessRows);
   const prior = args.previous &&
       args.previous.conversation_id === args.conversation_id &&
       args.previous.company_id === args.company_id
@@ -621,7 +640,7 @@ export function buildCanonicalConversationMemory(args: {
     const width=typeof entity.constraints.max_width_mm === "number"?`, maximum width ${entity.constraints.max_width_mm} mm`:"";
     return `${entity.model?entity.model+" ":""}${label}: ${entity.quantity} units${requirements?", "+requirements:""}${width}${["deferred","cancelled"].includes(entity.status)?` (${entity.status})`:""}`;
   }).join("; "):null;
-  const fallbackGoal=prior?.current_goal || clean(args.commerce_state?.current_intent,800) || runtime.first_customer_turn || null;
+  const fallbackGoal=businessMessageText(prior?.current_goal) || businessMessageText(args.commerce_state?.current_intent) || runtime.first_customer_turn || null;
   const businessGoal = genericGoal || entityGoal || (fallbackGoal && !classifyHandoffIntent(fallbackGoal).explicit_request ? fallbackGoal : null);
   const runtimeRegions = [
     ...(runtime.current_requirements.current_market
@@ -739,14 +758,14 @@ export function buildCanonicalConversationMemory(args: {
       ...(currentDeliveryPreferenceFact ? [currentDeliveryPreferenceFact] : []),
     ], MAX_FACTS),
     customer_preferences: uniqueStrings([
-      ...customerPreferences(args.newest_first),
+      ...customerPreferences(businessRows),
       ...(prior?.customer_preferences ?? []),
     ], MAX_FACTS),
     active_constraints: uniqueStrings([
       ...runtime.active_constraints,
       ...Object.entries(args.commerce_state?.customer_constraints ?? {}).map(([key, value]) => `${key}:${JSON.stringify(value)}`),
       ...(prior?.active_constraints ?? []),
-    ], MAX_CONSTRAINTS),
+    ].map(businessMessageText), MAX_CONSTRAINTS),
     current_regions: currentRegions.length ? currentRegions : (prior?.current_regions ?? []).slice(0, MAX_REGIONS),
     transaction_summary: commerce.transaction_summary,
     historical_facts: stableFacts([...(prior?.historical_facts ?? []), ...commerce.historical_facts, ...retained.historical], MAX_HISTORY),
@@ -759,7 +778,9 @@ export function buildCanonicalConversationMemory(args: {
     open_questions: open,
     pending_actions: uniqueStrings([...commerce.pending_actions,...lifecycle.filter(item=>item.status === "pending" && item.resolution?.includes("professional")).map(item=>item.text)],MAX_ACTIONS),
     prior_topics: uniqueStrings([...runtime.prior_topics.slice().reverse(), ...(prior?.prior_topics ?? [])], MAX_TOPICS).reverse(),
-    current_topic: clean(args.commerce_state?.current_topic, 300) || runtime.current_topic || prior?.current_topic || null,
+    current_topic: !businessMessageText(args.newest_first.find(row=>row.id===args.source_message_id)?.content)
+      ? businessMessageText(prior?.current_topic) || businessMessageText(args.commerce_state?.current_topic) || runtime.current_topic || null
+      : businessMessageText(args.commerce_state?.current_topic) || runtime.current_topic || businessMessageText(prior?.current_topic) || null,
     grounded_reference_lineage: lineage(args.newest_first).length ? lineage(args.newest_first) : (prior?.grounded_reference_lineage ?? []).slice(0, MAX_LINEAGE),
     handoff_relevant_state: {
       current_goal: businessGoal,

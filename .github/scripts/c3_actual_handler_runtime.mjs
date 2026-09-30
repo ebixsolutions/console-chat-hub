@@ -448,6 +448,62 @@ try {
   assert.equal(r.outputs[2].replies.length,0);
   assert.equal(r.outputs[2].outcome.skipped,"human_handling");
   assert.ok(JSON.parse(r.handoff[0].ai_summary).structured_package);
+  function noBusinessHandoff(c) {
+    assert.deepEqual(c.outputs[0].memoryAfter,[]);assert.deepEqual(c.outputs[0].semanticAfter,[]);
+    assert.equal(c.handoff.length,1);assert.equal(c.handoff[0].source_message_id,c.outputs[1].source);
+    const m=c.memory[0].memory,outer=JSON.parse(c.handoff[0].ai_summary),p=outer.structured_package;
+    assert.equal(m.current_goal,null);assert.equal(m.handoff_relevant_state.current_goal,null);assert.equal(m.current_topic,null);
+    assert.deepEqual(m.active_constraints,[]);assert.deepEqual(m.active_entities,[]);assert.deepEqual(m.current_customer_facts,[]);
+    assert.deepEqual(m.open_questions,[]);assert.deepEqual(m.pending_actions,[]);
+    assert.equal(p.current_customer_goal,null);assert.equal(p.handoff_request_text,c.outputs[1].customer);
+    assert.equal(p.handoff_reason_code,"explicit_customer_request");assert.equal(p.handoff_authority,"R1");
+    assert.deepEqual(p.active_entities,[]);assert.deepEqual(p.open_questions,[]);assert.deepEqual(p.pending_actions,[]);
+    assert.ok(outer.summary_markdown.includes("### Customer Goal\nNo business request captured before handoff."));
+    assert.ok(outer.summary_markdown.includes("### Handoff Request\n"+c.outputs[1].customer));
+    assert.ok(c.outputs[1].replay);assert.deepEqual(c.outputs[1].replay.before,c.outputs[1].replay.after);
+    assert.equal(c.outputs[2].replies.length,0);assert.equal(c.outputs[2].outcome.skipped,"human_handling");
+    assert.deepEqual(c.outputs[2].memoryAfter,c.outputs[1].memoryAfter,"human follow-up polluted business memory");
+    return {conversation_id:c.id,memory:m,package:p,summary_markdown:outer.summary_markdown};
+  }
+  const englishNoBusiness=await conversation(["Hello, could you help me please?","I want a human agent.","One more question."]);
+  const H1=[r,englishNoBusiness].map(noBusinessHandoff);
+  function preservedBusiness(c,r1turn) {
+    const before=c.outputs[r1turn-1].memoryAfter[0].memory,after=c.outputs[r1turn].memoryAfter[0].memory;
+    const p=JSON.parse(c.handoff[0].ai_summary).structured_package;
+    assert.ok(before.current_goal);assert.equal(after.current_goal,before.current_goal);assert.equal(p.current_customer_goal,before.current_goal);
+    assert.equal(after.current_topic,before.current_topic);assert.deepEqual(after.active_constraints,before.active_constraints);
+    assert.deepEqual(after.active_entities,before.active_entities);assert.deepEqual(after.pending_actions,before.pending_actions);
+    assert.equal(p.handoff_request_text,c.outputs[r1turn].customer);assert.notEqual(p.current_customer_goal,p.handoff_request_text);
+    assert.ok(!after.active_constraints.includes(c.outputs[r1turn].customer));
+    return {conversation_id:c.id,prior_goal:before.current_goal,current_goal:after.current_goal,prior_topic:before.current_topic,current_topic:after.current_topic,handoff_request:p.handoff_request_text};
+  }
+  const H2=[preservedBusiness(saas,7),preservedBusiness(immediateSaas,5)];
+  const genericAction="Review the current request and confirm the next authorized action.";
+  function pendingAction(c) {
+    const outer=JSON.parse(c.handoff[0].ai_summary),p=outer.structured_package;
+    const e=p.active_entities.find(e=>e.attributes.capabilities?.requires_booking===true);
+    assert.ok(e);assert.ok(p.pending_actions.some(x=>x.includes(e.attributes.product_name)&&/staff confirmation/.test(x)));
+    assert.notEqual(p.recommended_next_human_action,genericAction);
+    assert.ok(p.recommended_next_human_action.includes(e.attributes.product_name));
+    assert.ok(p.recommended_next_human_action.includes(String(e.quantity)));
+    assert.ok(p.recommended_next_human_action.includes(e.attributes.requested_date));
+    assert.match(p.recommended_next_human_action,/with staff.*before marking the booking confirmed/i);
+    const parity=summaryParity(c);assert.equal(parity.summary_sections["Recommended Next Action"],p.recommended_next_human_action);
+    assert.ok(parity.summary_sections.Pending.includes("staff confirmation"));
+    return {conversation_id:c.id,pending_actions:p.pending_actions,active_booking:e,recommended_next_human_action:p.recommended_next_human_action,summary_sections:parity.summary_sections};
+  }
+  const H3=[booking,immediateBooking].map(pendingAction);
+  const H4=[saas,immediateSaas].map(c=> {
+    const p=JSON.parse(c.handoff[0].ai_summary).structured_package;
+    assert.deepEqual(p.open_questions,[]);assert.deepEqual(p.pending_actions,[]);assert.deepEqual(p.safety_or_professional_requirements,[]);
+    assert.equal(p.recommended_next_human_action,genericAction);
+    return {conversation_id:c.id,open_questions:p.open_questions,pending_actions:p.pending_actions,safety_or_professional_requirements:p.safety_or_professional_requirements,recommended_next_human_action:p.recommended_next_human_action};
+  });
+  for(const c of results.filter(c=>c.handoff.length)) {
+    const p=JSON.parse(c.handoff[0].ai_summary).structured_package;
+    if(p.pending_actions.length||p.open_questions.length||p.safety_or_professional_requirements.length)assert.notEqual(p.recommended_next_human_action,genericAction);
+  }
+  const handoffSemanticReadback={H1,H2,H3,H4};
   for (const conversation of results) for (const turn of conversation.outputs) {
     assert.equal(turn.status,200);
     assert.equal(turn.outcome.success,true);
@@ -461,7 +517,7 @@ try {
   await db.exec(read("supabase/migrations/rollback/20260930090000_c3_handoff_grounded_facts.rollback.sql"));
   assert.deepEqual(await catalog(),acceptedHandoff,"rollback changed the accepted function/security identity");
   assert.deepEqual(await triggers(),acceptedTriggers);assert.deepEqual(await ledger(),acceptedLedger);
-  fs.writeFileSync(process.env.C3_TEST_RESULT ?? "/tmp/c3-actual-handler-result.json",JSON.stringify({coverage:"actual_handler_local_sql_integration",limitations:["local transport adapter, not hosted PostgREST/Widget","pgcrypto digest backed by PostgreSQL built-in sha256","synthetic tenant, no production traffic"],results,faults,summaryReadback,forwardCatalog,rollbackCatalog:await catalog(),triggerBindings:await triggers(),migrationLedger:await ledger(),assertions:{generic_state_acknowledgement_not_meta:true,no_false_customer_goal_missing:true,same_turn_question_resolution:true,no_cross_domain_recap_language:true,handoff_summary_structured_parity:true,immediate_post_KB_R1_has_no_stale_question:true,memory_finalisation_business_mutation_rejected:true,memory_finalisation_reply_binding_rejected:true,memory_finalisation_replay_idempotent:true,memory_resolved_question_resurrection_rejected:true,social_state_hygiene:true,question_lifecycle:true,typed_money_persistence_and_recall:true,generic_saas:true,generic_booking:true,real_r1_sql_package_and_suppression:true,r1_replay_idempotent:true,b2_source_binding:true,no_duplicate_reply:true,no_thinking:true,no_terminal_failure:true,no_transaction_promotion:true,migration_forward:true,migration_rollback:true,catalog_owner_security_search_path_acl:true,commit_ai_reply_tx_unchanged:true,trigger_binding_preserved:true,migration_ledger_preserved:true}},null,2));
+  fs.writeFileSync(process.env.C3_TEST_RESULT ?? "/tmp/c3-actual-handler-result.json",JSON.stringify({coverage:"actual_handler_local_sql_integration",limitations:["local transport adapter, not hosted PostgREST/Widget","pgcrypto digest backed by PostgreSQL built-in sha256","synthetic tenant, no production traffic"],results,faults,summaryReadback,handoffSemanticReadback,forwardCatalog,rollbackCatalog:await catalog(),triggerBindings:await triggers(),migrationLedger:await ledger(),assertions:{handoff_request_not_business_goal:true,handoff_request_not_active_constraint:true,handoff_request_not_current_topic_without_business_goal:true,business_goal_preserved_across_r1:true,actionable_pending_drives_human_next_action:true,generic_next_action_only_when_no_actionable_pending:true,generic_state_acknowledgement_not_meta:true,no_false_customer_goal_missing:true,same_turn_question_resolution:true,no_cross_domain_recap_language:true,handoff_summary_structured_parity:true,immediate_post_KB_R1_has_no_stale_question:true,memory_finalisation_business_mutation_rejected:true,memory_finalisation_reply_binding_rejected:true,memory_finalisation_replay_idempotent:true,memory_resolved_question_resurrection_rejected:true,social_state_hygiene:true,question_lifecycle:true,typed_money_persistence_and_recall:true,generic_saas:true,generic_booking:true,real_r1_sql_package_and_suppression:true,r1_replay_idempotent:true,b2_source_binding:true,no_duplicate_reply:true,no_thinking:true,no_terminal_failure:true,no_transaction_promotion:true,migration_forward:true,migration_rollback:true,catalog_owner_security_search_path_acl:true,commit_ai_reply_tx_unchanged:true,trigger_binding_preserved:true,migration_ledger_preserved:true}},null,2));
   console.log(`actual_handler_local_sql_integration PASS: ${results.length} conversations; first R1 real SQL event/source binding/package; next-turn suppression`);
 } catch(error) { console.error(error.message,JSON.stringify(faults));process.exitCode=1; }
 finally { child?.kill(); if(server) await new Promise((resolve)=>server.close(resolve));await db.close(); }

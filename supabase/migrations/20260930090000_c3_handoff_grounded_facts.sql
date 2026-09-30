@@ -17,6 +17,8 @@ DECLARE
   v_corrections_text text;
   v_pending_text text;
   v_summary text;
+  v_next_action text;
+  v_booking jsonb;
 BEGIN
   IF NEW.handoff_type IS DISTINCT FROM 'ai_to_agent' OR NEW.ai_summary IS NULL THEN RETURN NEW; END IF;
   BEGIN v_outer := NEW.ai_summary::jsonb; EXCEPTION WHEN others THEN RETURN NEW; END;
@@ -92,8 +94,46 @@ BEGIN
     FROM jsonb_array_elements_text(coalesce(v_package->'latest_corrections','[]'::jsonb)) WITH ORDINALITY x(correction,n);
   SELECT string_agg('- ' || item,E'\n' ORDER BY item) INTO v_pending_text
     FROM (SELECT DISTINCT item FROM jsonb_array_elements_text(coalesce(v_package->'open_questions','[]'::jsonb) || coalesce(v_package->'pending_actions','[]'::jsonb)) x(item)) pending;
+  -- The final package owns next-action priority; never reuse a pre-enrichment fallback.
+  IF jsonb_array_length(coalesce(v_package->'safety_or_professional_requirements','[]'::jsonb))>0 THEN
+    SELECT 'Address the safety/professional requirement: ' || string_agg(item,'; ' ORDER BY n)
+      INTO v_next_action FROM jsonb_array_elements_text(v_package->'safety_or_professional_requirements') WITH ORDINALITY x(item,n);
+  ELSIF jsonb_array_length(coalesce(v_package->'pending_actions','[]'::jsonb))>0 THEN
+    SELECT e INTO v_booking FROM jsonb_array_elements(coalesce(v_package->'active_entities','[]'::jsonb)) e
+      WHERE e->'attributes'->'capabilities'->>'requires_booking'='true'
+        AND EXISTS(SELECT 1 FROM jsonb_array_elements_text(v_package->'pending_actions') x(action)
+          WHERE position(coalesce(e->'attributes'->>'product_name',e->>'model',e->>'category') IN action)>0
+            AND action ILIKE '%staff confirmation%')
+      ORDER BY e->>'entity_id' LIMIT 1;
+    IF v_booking IS NOT NULL THEN
+      v_next_action := 'Confirm the requested ' || coalesce(v_booking->'attributes'->>'product_name',v_booking->>'model',v_booking->>'category') ||
+        ' details with staff (' || coalesce(v_booking->>'quantity','0') || ' ' || coalesce(v_booking->'attributes'->>'unit','sessions') ||
+        CASE WHEN v_booking->'attributes'->>'requested_date' IS NOT NULL THEN ', requested date ' || (v_booking->'attributes'->>'requested_date') ELSE '' END ||
+        ') before marking the booking confirmed.';
+    ELSE
+      SELECT 'Confirm: ' || string_agg(item,'; ' ORDER BY n) INTO v_next_action
+        FROM jsonb_array_elements_text(v_package->'pending_actions') WITH ORDINALITY x(item,n);
+    END IF;
+  ELSIF jsonb_array_length(coalesce(v_package->'open_questions','[]'::jsonb))>0 THEN
+    SELECT 'Resolve the outstanding question: ' || string_agg(item,'; ' ORDER BY n) INTO v_next_action
+      FROM jsonb_array_elements_text(v_package->'open_questions') WITH ORDINALITY x(item,n);
+  ELSE
+    SELECT e INTO v_booking FROM jsonb_array_elements(coalesce(v_package->'active_entities','[]'::jsonb)) e
+      WHERE e->'attributes'->'capabilities'->>'requires_booking'='true' AND e->>'status' IS DISTINCT FROM 'confirmed'
+      ORDER BY e->>'entity_id' LIMIT 1;
+    IF v_booking IS NOT NULL THEN
+      v_next_action := 'Confirm the requested ' || coalesce(v_booking->'attributes'->>'product_name',v_booking->>'model',v_booking->>'category') ||
+        ' booking details with staff before marking the booking confirmed.';
+    ELSIF v_package->'transaction_state'->>'quotation'='draft' OR v_package->'transaction_state'->>'order' IN ('draft','pending')
+      OR v_package->'transaction_state'->>'payment'='pending' THEN
+      v_next_action := 'Verify the pending transaction details and customer authorization before progressing any quotation, order or payment.';
+    ELSE
+      v_next_action := 'Review the current request and confirm the next authorized action.';
+    END IF;
+  END IF;
+  v_package := jsonb_set(v_package,'{recommended_next_human_action}',to_jsonb(v_next_action),true);
   v_summary := concat_ws(E'\n',
-    '### Customer Goal',coalesce(v_package->>'current_customer_goal','—'),'',
+    '### Customer Goal',coalesce(v_package->>'current_customer_goal','No business request captured before handoff.'),'',
     '### Current State',coalesce(v_state_text,'- —'),
     '- Quotation: ' || coalesce(v_package->'transaction_state'->>'quotation','unknown'),
     '- Order: ' || coalesce(v_package->'transaction_state'->>'order','unknown'),
