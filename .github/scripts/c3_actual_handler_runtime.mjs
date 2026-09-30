@@ -335,8 +335,8 @@ try {
   acknowledgement(saas,[0,1,2]);sameTurnPolicy(saas.outputs[3]);
   assert.equal(saas.outputs[6].outcome.response_route,"canonical_memory_recall","English request recap must use source/revision-bound canonical recap");
   assert.doesNotMatch(saas.outputs[6].replies[0].content,/[\u3400-\u9fff]/,"English request recap changed language");
-  assert.deepEqual(saas.outputs[6].semanticAfter,saas.outputs[6].semanticBefore,"English request recap mutated Commerce");
-  assert.deepEqual(saas.outputs[6].memoryAfter,saas.outputs[6].memoryBefore,"English request recap mutated Memory");
+  assert.deepEqual(saas.outputs[6].semanticAfter,saas.outputs[5].semanticAfter,"English request recap mutated Commerce");
+  assert.deepEqual(saas.outputs[6].memoryAfter,saas.outputs[5].memoryAfter,"English request recap mutated Memory");
   assert.doesNotMatch(saas.outputs[7].replies[0].content,/適用性|适用性|suitability|site assessment|installation/i);
   assert.ok(sp.active_entities.some(e=>e.category==="subscription"&&e.quantity===9));
   assert.ok(sp.deferred_entities.some(e=>e.category==="addon"&&e.quantity===1));
@@ -482,7 +482,7 @@ try {
     assert.ok(!after.active_constraints.includes(c.outputs[r1turn].customer));
     return {conversation_id:c.id,prior_goal:before.current_goal,current_goal:after.current_goal,prior_topic:before.current_topic,current_topic:after.current_topic,handoff_request:p.handoff_request_text};
   }
-  const H2=[preservedBusiness(saas,7),preservedBusiness(immediateSaas,5)];
+  const H2=[preservedBusiness(saas,8),preservedBusiness(immediateSaas,5)];
   const genericAction="Review the current request and confirm the next authorized action.";
   function pendingAction(c) {
     const outer=JSON.parse(c.handoff[0].ai_summary),p=outer.structured_package;
