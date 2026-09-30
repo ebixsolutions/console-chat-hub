@@ -1209,7 +1209,7 @@ export function resolveConversationRecall(
   const requestedAmounts = (input.question.match(/\d[\d,]*(?:\.\d+)?/g) ?? []).map((v) => Number(v.replace(/,/g, "")));
   const retainedHistoricalAmount = (m?.historical_facts ?? []).some((fact) => {
     const value = object(fact.value);
-    return fact.authority === "historical" && /quote/i.test(fact.key) &&
+    return fact.authority === "historical" && (/quote/i.test(fact.key) || /^money:/.test(fact.key) && value?.reusable_as_current === false && value?.authority === "customer_historical_or_hypothetical") &&
       typeof value?.amount === "number" && requestedAmounts.includes(value.amount);
   });
   const historicalValidityReadback = retainedHistoricalAmount &&
@@ -1332,7 +1332,7 @@ export function resolveConversationRecall(
       const retainedOld = (m?.historical_facts ?? []).filter((fact) => {
         const value = object(fact.value);
         const amount = typeof value?.amount === "number" ? value.amount : null;
-        return fact.authority === "historical" && /quote/i.test(fact.key) &&
+        return fact.authority === "historical" && (/quote/i.test(fact.key) || /^money:/.test(fact.key) && value?.reusable_as_current === false && value?.authority === "customer_historical_or_hypothetical") &&
           (!amounts.length || (amount !== null && amounts.includes(amount)));
       });
       if ((!old.length && !retainedOld.length) || current) {
@@ -1748,6 +1748,8 @@ function renderTwoSentenceRecap(
       .map(([, value]) => language === "en" ? `maximum width ${value} mm` : `最闊${value} mm`);
     const l = language === "en" ? 2 : language === "zh-CN" ? 1 : 0;
     const detail: string[] = [];
+    if (entity.entity_id.startsWith("generic:")) detail.push(language === "en" ? `${entity.quantity} ${entity.attributes.unit ?? "items"}` : `數量${entity.quantity}`);
+    if (typeof entity.attributes.requested_date === "string") detail.push(entity.attributes.requested_date);
     if (entity.model) detail.push(entity.model);
     if (entity.attributes.sunlight === "strong_afternoon_sun") detail.push(["下午日照強","下午日晒较强","strong afternoon sun"][l]);
     if (entity.attributes.installation_type === "window_unit") detail.push(["窗口機","窗口机","window unit"][l]);

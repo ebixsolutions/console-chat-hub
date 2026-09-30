@@ -55,6 +55,8 @@ import {
 import {
   arbitrateAnaphoricProductFollowUp,
   classifyNaturalCustomerIntent,
+  classifySocialTurn,
+  renderSocialTurn,
   type NaturalCustomerIntent,
   renderNaturalImmediateResponse,
   renderNaturalNoCurrentEvidence,
@@ -3326,11 +3328,12 @@ async function persistNaturalImmediateResponse(
   sourceMessageId: string | null,
   intent: NaturalCustomerIntent,
   language: "zh-TW" | "zh-CN" | "en",
+  socialText?: string,
 ): Promise<Response | null> {
   // Product guidance can establish durable Commerce entities/constraints.
   // It therefore renders only after the shared Commerce writer has run.
   if (intent.kind === "product_guidance") return null;
-  const content = renderNaturalImmediateResponse(intent, language);
+  const content = socialText ? renderSocialTurn(socialText,language) : renderNaturalImmediateResponse(intent, language);
   if (!content) return null;
   const responseRoute = intent.kind === "greeting"
     ? "natural_greeting"
@@ -4240,6 +4243,12 @@ async function orchestrationGenerateReply(
     if (_criticalE2Response) return _criticalE2Response;
   }
   const _naturalCustomerIntent = classifyNaturalCustomerIntent(_h1LastMsg);
+  // Safety/control checks above and B2 persistence still apply. A whole social
+  // turn must never reach a semantic state writer or replace the business goal.
+  if (!_explicitHandoffRequested && classifySocialTurn(_h1LastMsg)) {
+    return (await persistNaturalImmediateResponse(supabaseAdmin,conversation_id,_h1SourceMessageId,
+      {kind:"greeting",product:null},_visitorLang,_h1LastMsg))!;
+  }
   const _productFollowUpArbitration = arbitrateAnaphoricProductFollowUp(
     _h1LastMsg,
     ((_pr5HistoryRows ?? []) as MemoryHistoryRow[]).map((row) => ({
@@ -4330,6 +4339,7 @@ async function orchestrationGenerateReply(
             : "zh-TW",
           occurred_at: sourceVisitorMessage.created_at ?? null,
           history: (_pr5HistoryRows ?? []).map((row: MemoryHistoryRow) => ({
+            id: row.id,
             role: String((row as { role?: unknown }).role ?? ""),
             content: String((row as { content?: unknown }).content ?? ""),
           })),
@@ -4667,6 +4677,7 @@ async function orchestrationGenerateReply(
         source_message_id: _h1SourceMessageId,
         commerce_revision: _a3Commerce.revision,
         source_message_content: _h1LastMsg, reply: _c3PlannedReply,
+        recent_messages: _c3RecentServiceMessages,
       }) : null;
     const serviceMetadata = {
       ..._c3Recall.metadata,
@@ -4700,6 +4711,7 @@ async function orchestrationGenerateReply(
         current_price_authority: customerCalculationProof.current_price_authority,
         transaction_mutation: customerCalculationProof.transaction_mutation,
         calculation_result: customerCalculationProof.result,
+        calculation_inputs: customerCalculationProof.inputs,
       } : {}),
       natural_response_contract: _naturalGuidanceReply
         ? "c3-natural-customer-response-v2"

@@ -8,6 +8,7 @@ export type ProductFactualFacet =
   | "suitability"
   | "price"
   | "specification"
+  | "policy"
   | "model_info";
 
 export type NaturalCustomerIntent =
@@ -64,6 +65,7 @@ export function classifyProductFactualQuery(
 
 function productFactualFacets(text: string): ProductFactualFacet[] {
   const matchers: Array<[ProductFactualFacet, RegExp]> = [
+    ["policy", /(?:billing|booking|cancellation|return|warranty)\s+policy|付款政策|預約政策|预约政策|取消政策|保養政策|保修政策|退貨政策|退货政策/i],
     ["features", /(?:功能|feature|特點|特点|特色)/i],
     [
       "horsepower",
@@ -443,13 +445,13 @@ function extractGuidanceProduct(text: string): string | null {
   );
   if (english) return cleanProductLabel(english[1]);
   const englishSelection = text.match(
-    /(?:how\s+(?:should|can|do)\s+i\s+)?(?:choose|select|pick|shop\s+for)\s+(?:an?|the|some)?\s*([^,.!?]{1,48}?)(?=\s+for\s+(?:two|three|the|my|our|a|an|\d)|[,.!?]|$)/i,
+    /(?:how\s+(?:should|can|do)\s+i\s+)?(?:choos(?:e|ing)|select(?:ing)?|pick(?:ing)?|shop\s+for)\s+(?:an?|the|some)?\s*([^,.!?]{1,48}?)(?=\s+for\s+(?:two|three|the|my|our|a|an|\d)|[,.!?]|$)/i,
   );
   return cleanProductLabel(englishSelection?.[1]);
 }
 
 function looksLikeProductGuidance(text: string): boolean {
-  return /(?:買咩|买什么|揀邊|选哪|點(?:樣)?揀|怎樣選|怎样选|如何選|如何选|怎么选|點選|邊款|哪款|邊種|哪种|幾大|几大|幾多匹|几匹|合適|合适|推薦|推荐|建議|建议|what\s+should\s+i\s+(?:buy|choose|get)|how\s+(?:should|can|do)\s+i\s+(?:choose|select|pick)|which\s+(?:model|size|option)|recommend|advi[cs]e)/iu
+  return /(?:買咩|买什么|揀邊|选哪|點(?:樣)?揀|怎樣選|怎样选|如何選|如何选|怎么选|點選|邊款|哪款|邊種|哪种|幾大|几大|幾多匹|几匹|合適|合适|推薦|推荐|建議|建议|what\s+should\s+i\s+(?:buy|choose|get)|how\s+(?:should|can|do)\s+i\s+(?:choose|select|pick)|which\s+(?:model|size|option)|help(?:\s+me)?\s+(?:with\s+)?(?:choos(?:e|ing)|select(?:ing)?|pick(?:ing)?)|recommend|advi[cs]e)/iu
     .test(
       text,
     );
@@ -563,6 +565,20 @@ export function requiresCurrentMerchantEvidence(
     intent.kind === "product_factual_query";
 }
 
+/** Whole social turns carry no business goal or transaction semantics. */
+export function classifySocialTurn(text: string): "opening" | "acknowledgement" | null {
+  const value = text.normalize("NFKC").trim();
+  if (/^(?:thanks(?:\s+(?:you|a lot))?|thank\s+you|ok(?:ay)?|got\s+it|understood|明白(?:了|啦)?|知道了|收到|好(?:的|呀|啊)?|多謝(?:你)?|謝謝(?:你)?|谢谢(?:你)?)[\s!！.。?？]*$/iu.test(value)) return "acknowledgement";
+  return classifyNaturalCustomerIntent(value).kind === "greeting" ? "opening" : null;
+}
+
+export function renderSocialTurn(text: string, language: NaturalResponseLanguage): string | null {
+  const kind = classifySocialTurn(text);
+  if (!kind) return null;
+  if (kind === "opening") return renderNaturalImmediateResponse({kind:"greeting",product:null},language);
+  return language === "en" ? "You're welcome. I'm here if you need anything else." : language === "zh-CN" ? "好的，有需要可以再问我。" : "好，有需要可以再問我。";
+}
+
 export function renderNaturalImmediateResponse(
   intent: NaturalCustomerIntent,
   language: NaturalResponseLanguage,
@@ -591,7 +607,7 @@ export function renderNaturalImmediateResponse(
     return "你好！有咩可以幫你？";
   }
   if (intent.kind === "product_guidance") {
-    if (intent.product && /冷氣|冷气|air\s*condition/i.test(intent.product)) {
+    if (intent.product && /冷氣|冷气|air\s*condition|\bAC\b/i.test(intent.product)) {
       if (language === "en") {
         return "I can help size the AC. What is each room's area, does it get strong afternoon sun, and are you considering window or split units?";
       }

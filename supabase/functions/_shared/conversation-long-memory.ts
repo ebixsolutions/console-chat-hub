@@ -1,5 +1,8 @@
 import { resolveConversationRecall, renderConversationRecall } from "./conversation-recall.ts";
 import type { ConversationCommerceState } from "./commerce-state-contract.ts";
+import { classifySocialTurn } from "./natural-customer-response.ts";
+import { industryEntityLabel } from "./industry-runtime-adapter.ts";
+import { deriveTypedCustomerMoneyFacts } from "./customer-money-facts.ts";
 import { sameCanonicalJson } from "./canonical-json.ts";
 import { type B2TrustedCorrectionCommit, type B2TrustedLifecycleCommit, verifyEntityLifecycleTransition } from "./b2-journey-progress-contract.ts";
 import {
@@ -122,7 +125,13 @@ export interface ConversationMemoryEntity {
   transaction_state: Record<string, unknown>;
 }
 
+export interface MemoryQuestionLifecycle {
+  source_message_id: string; text: string; status: "pending" | "resolved" | "superseded";
+  entity_id: string | null; resolution_source_message_id?: string | null; resolution?: string;
+}
+
 export interface CanonicalConversationMemory {
+  question_lifecycle?: MemoryQuestionLifecycle[];
   /** Server-derived receipt kept in the existing bounded memory row for same-source reply retry. */
   pending_lifecycle_reply?: B2TrustedLifecycleCommit;
   version: typeof CONVERSATION_MEMORY_VERSION;
@@ -296,7 +305,7 @@ export function roomSizeCorrection(text: string): { label: string; old_value: st
 }
 
 /** Deterministic customer-owned C3 facts, projected oldest-to-newest. */
-function retainedCustomerFacts(rows: MemoryHistoryRow[]): {
+function retainedCustomerFacts(rows: MemoryHistoryRow[], state: ConversationCommerceState | null): {
   current: ConversationMemoryFact[];
   historical: ConversationMemoryFact[];
   superseded: ConversationMemoryFact[];
@@ -312,7 +321,17 @@ function retainedCustomerFacts(rows: MemoryHistoryRow[]): {
   for (const row of [...rows].reverse()) {
     if (!CUSTOMER_ROLES.has(String(row.role ?? "").toLowerCase())) continue;
     const text = clean(row.content, 1000);
-    if (!text || /[?？]/.test(text)) continue;
+    if (!text) continue;
+    const money = deriveTypedCustomerMoneyFacts(text);
+    if (money.historical) for (const [index,fact] of money.facts.entries()) {
+      const matches=(state?.entities ?? []).filter(entity=>[entity.model,entity.attributes.product_name,entity.category.replace(/_/g," "),industryEntityLabel(entity.entity_id,"zh-TW"),industryEntityLabel(entity.entity_id,"en")]
+        .some(name=>typeof name === "string" && text.toLowerCase().includes(name.toLowerCase())));
+      const target=matches.length===1 ? matches[0] : null;
+      add(historical, `money:${row.id}:${index}`, {...fact, semantic_role:fact.role,
+        authority:"customer_historical_or_hypothetical",reusable_as_current:false,
+        category:target?.category ?? null}, row,target?.entity_id ?? null);
+    }
+    if (/[?？]/.test(text)) continue;
     const region = /(?:香港|hong\s*kong|\bhk\b)/i.test(text) ? "hong_kong"
       : /(?:台灣|台湾|taiwan)/i.test(text) ? "taiwan"
       : /(?:澳門|澳门|macau|macao)/i.test(text) ? "macau"
@@ -379,8 +398,6 @@ function retainedCustomerFacts(rows: MemoryHistoryRow[]): {
     if (horsepowerFacts.length) add(current, "horsepower", horsepowerFacts, row);
     if (/(?:品牌)\s*(?:不是|並非|并非|唔係)\s*(?:必須|必须)|(?:品牌不限|不指定品牌|no\s+brand\s+(?:is\s+)?(?:required|mandatory))|(?:[\p{L}\p{N}-]+[、,，]){1,}[\p{L}\p{N}-]+(?:都得|均可|皆可|any\s+(?:is|are)\s+fine)/iu.test(text)) add(current, "brand_required", false, row);
     if (/(?:偏好|希望|prefer).{0,30}(?:送貨|送货|delivery)|(?:送貨|送货|delivery).{0,30}(?:偏好|希望|prefer)/i.test(text)) add(current, "delivery_preference", text, row);
-    const oldQuote = text.match(/(?:港幣|港币|HKD|HK\$)\s*([0-9][0-9,]*(?:\.\d+)?)/i);
-    if (oldQuote?.[1] && /(?:以前|之前|舊|旧|歷史|历史|口頭報價|口头报价|previous|historical|old)/i.test(text)) add(historical, "historical_quote", { amount: Number(oldQuote[1].replace(/,/g, "")), currency: "HKD", reusable_as_current: false }, row);
   }
   return { current: stableFacts(current, MAX_FACTS), historical: stableFacts(historical, MAX_HISTORY), superseded: stableFacts(superseded, MAX_HISTORY) };
 }
@@ -496,6 +513,9 @@ function projectCommerce(
     historical_facts: stableFacts(historical, MAX_HISTORY),
     cancelled_or_superseded: stableFacts(cancelled, MAX_HISTORY),
     pending_actions: uniqueStrings([
+      ...state.entities.filter(e=>e.entity_id.startsWith("generic:") && !["deferred","cancelled"].includes(e.status) &&
+        record(e.attributes.capabilities)?.requires_booking === true && !state.conversion.confirmed_entity_ids.includes(e.entity_id))
+        .map(e=>`${e.attributes.product_name ?? e.category}: requested booking needs staff confirmation`),
       ...state.unresolved_items,
       ...state.installation.pending_checks,
       state.conversion.next_best_action,
@@ -507,12 +527,63 @@ function fitMemory(memory: CanonicalConversationMemory): CanonicalConversationMe
   let fitted = memory;
   const size = () => JSON.stringify(fitted).length;
   if (size() <= C3_MEMORY_JSON_CHAR_BUDGET) return fitted;
-  fitted = { ...fitted, historical_facts: fitted.historical_facts.slice(-8), prior_topics: fitted.prior_topics.slice(-6) };
+  fitted = { ...fitted, question_lifecycle: fitted.question_lifecycle?.slice(-12).map(item=>({...item,text:item.text.slice(0,400)})), historical_facts: fitted.historical_facts.slice(-8), prior_topics: fitted.prior_topics.slice(-6) };
   if (size() <= C3_MEMORY_JSON_CHAR_BUDGET) return fitted;
   fitted = { ...fitted, current_customer_facts: fitted.current_customer_facts.slice(-8), grounded_reference_lineage: fitted.grounded_reference_lineage.slice(0, 6) };
   if (size() <= C3_MEMORY_JSON_CHAR_BUDGET) return fitted;
   fitted = { ...fitted, open_questions: fitted.open_questions.slice(0, 6), pending_actions: fitted.pending_actions.slice(0, 6), active_constraints: fitted.active_constraints.slice(0, 6) };
   return fitted;
+}
+
+/** Existing memory projection owns unresolved lifecycle; transcript questions are not a queue. */
+function questionLifecycle(rows: MemoryHistoryRow[], state: ConversationCommerceState | null,
+  prior: CanonicalConversationMemory | null): MemoryQuestionLifecycle[] {
+  const items = new Map((prior?.question_lifecycle ?? []).map(item=>[item.source_message_id,{...item}]));
+  const entities = state?.entities ?? [];
+  for (const row of [...rows].reverse()) {
+    const content=clean(row.content,1600);
+    const meta = record(row.metadata);
+    if (CUSTOMER_ROLES.has(String(row.role ?? "")) && row.id && !classifySocialTurn(content) &&
+      /[?？]|(?:what|how|why|can|could|幾多|有冇|夠唔夠)/i.test(content) && !items.has(row.id)) {
+      const matches = entities.filter(entity=>[entity.model,entity.attributes.product_name,entity.category.replace(/_/g," "),industryEntityLabel(entity.entity_id,"zh-TW"),industryEntityLabel(entity.entity_id,"en")]
+        .some(name=>typeof name === "string" && content.toLowerCase().includes(name.toLowerCase())));
+      items.set(row.id,{source_message_id:row.id,text:content,status:"pending",entity_id:matches.length===1?matches[0].entity_id:null});
+    }
+    if (row.role !== "assistant" || !meta || meta.control_commit !== "ai" || typeof meta.source_message_id !== "string") continue;
+    let item = items.get(meta.source_message_id);
+    const clarification = /^(?:targeted_clarification|partial_answer_then_question|offer_handoff_or_reframe|customer_issue_next_step)$/.test(String(meta.service_action)) && /[?？]$/.test(content.trim());
+    const site = meta.response_route === "canonical_kb_direct_answer" && /cannot confirm|未能確認|不能确认/i.test(content) && /suitable room|適用面積|适用面积|site assessment|現場評估/i.test(content);
+    const missingCustomerDecision = meta.response_route === "product_guidance" && /[?？]$/.test(content);
+    if (!item && (clarification || site || missingCustomerDecision)) {
+      const source=rows.find(row=>row.id===meta.source_message_id && CUSTOMER_ROLES.has(String(row.role)));
+      if (!source || classifySocialTurn(clean(source.content))) continue;
+      const matches=entities.filter(entity=>[entity.model,entity.attributes.product_name,entity.category.replace(/_/g," "),industryEntityLabel(entity.entity_id,"zh-TW"),industryEntityLabel(entity.entity_id,"en")]
+        .some(name=>typeof name === "string" && clean(source.content).toLowerCase().includes(name.toLowerCase())));
+      item={source_message_id:meta.source_message_id,text:clean(source.content,1600),status:"pending",entity_id:matches.length===1?matches[0].entity_id:null};
+      items.set(item.source_message_id,item);
+    }
+    if (!item) continue;
+    item.status = clarification || site || missingCustomerDecision || meta.degraded === true ? "pending" : "resolved";
+    item.resolution_source_message_id = row.id ?? null;
+    item.resolution = site ? "professional/site confirmation pending" : clarification || missingCustomerDecision ? "customer information required" : String(meta.response_route ?? "delivered_answer");
+    if (site) {
+      const target=entities.filter(entity=>entity.model && content.includes(entity.model));
+      if(target.length===1) item.entity_id=target[0].entity_id;
+      for (const old of items.values()) if(old.source_message_id!==item.source_message_id && old.status==="pending" &&
+        old.entity_id===item.entity_id && old.resolution?.includes("professional")) {
+        old.status="superseded";old.resolution="later scoped assessment request";old.resolution_source_message_id=item.source_message_id;
+      }
+      item.text = `${target[0]?.model ?? "Product"} suitability and site assessment need authoritative professional confirmation`;
+    } else if (missingCustomerDecision || clarification) {
+      item.text=content.split(/(?<=[。.!])/).filter(Boolean).at(-1)?.trim() ?? content;
+    }
+  }
+  for (const item of items.values()) if (item.status === "pending" && item.entity_id &&
+    entities.some(entity=>entity.entity_id===item.entity_id && ["cancelled","deferred"].includes(entity.status))) {
+    item.status="superseded";item.resolution="entity inactive";
+    item.resolution_source_message_id=entities.find(entity=>entity.entity_id===item.entity_id)?.provenance.source_message_id ?? null;
+  }
+  return [...items.values()].slice(-24);
 }
 
 export function buildCanonicalConversationMemory(args: {
@@ -528,15 +599,21 @@ export function buildCanonicalConversationMemory(args: {
   source_created_at: string;
   next_memory_revision: number;
 }): CanonicalConversationMemory {
-  const runtime = projectConversationRuntimeState(args.newest_first);
+  const businessRows = args.newest_first.filter(row=>!CUSTOMER_ROLES.has(String(row.role ?? "")) || !classifySocialTurn(clean(row.content,1600)));
+  const runtime = projectConversationRuntimeState(businessRows);
   const commerce = projectCommerce(args.commerce_state);
-  const retained = retainedCustomerFacts(args.newest_first);
+  const retained = retainedCustomerFacts(args.newest_first,args.commerce_state);
   const retainedRegions = retainedCustomerRegions(args.newest_first);
   const prior = args.previous &&
       args.previous.conversation_id === args.conversation_id &&
       args.previous.company_id === args.company_id
     ? args.previous
     : null;
+  const lifecycle = questionLifecycle(businessRows,args.commerce_state,prior);
+  const open = uniqueStrings(lifecycle.filter(item=>item.status === "pending").map(item=>item.text),MAX_OPEN);
+  const genericEntities = (args.commerce_state?.entities ?? []).filter(e=>e.entity_id.startsWith("generic:"));
+  const genericGoal = genericEntities.length ? genericEntities.map(e=>`${e.attributes.product_name ?? e.category}: ${e.quantity} ${e.attributes.unit ?? "units"}${["cancelled","deferred"].includes(e.status)?` (${e.status})`:""}${e.attributes.requested_date?`, requested date ${e.attributes.requested_date}`:""}`).join("; ") : null;
+  const businessGoal = genericGoal || clean(args.commerce_state?.current_intent,800) || prior?.current_goal || runtime.first_customer_turn || null;
   const runtimeRegions = [
     ...(runtime.current_requirements.current_market
       ? [{ region: runtime.current_requirements.current_market, temporal_scope: "current" as const }]
@@ -618,6 +695,9 @@ export function buildCanonicalConversationMemory(args: {
   const requirementFacts: ConversationMemoryFact[] = Object.entries(runtime.current_requirements)
     .filter(([, value]) => value !== null && (!Array.isArray(value) || value.length > 0))
     .map(([key, value]) => ({ key, value, authority: "customer", source_message_id: args.source_message_id }));
+  const canonicalEntityFacts: ConversationMemoryFact[] = (args.commerce_state?.entities ?? []).filter(e=>!['deferred','cancelled'].includes(e.status)).flatMap(e=>[
+    {key:`entity:${e.entity_id}:quantity`,value:e.quantity,authority:"canonical_commerce" as const,entity_id:e.entity_id,source_message_id:e.provenance.source_message_id},
+    ...(typeof e.attributes.requested_date === "string" ? [{key:`entity:${e.entity_id}:requested_date`,value:e.attributes.requested_date,authority:"customer" as const,entity_id:e.entity_id,source_message_id:e.provenance.source_message_id}] : [])]);
   const memory: CanonicalConversationMemory = {
     version: CONVERSATION_MEMORY_VERSION,
     memory_revision: args.next_memory_revision,
@@ -625,7 +705,8 @@ export function buildCanonicalConversationMemory(args: {
     company_id: args.company_id,
     source_message_id: args.source_message_id,
     commerce_state_revision: args.commerce_state_revision,
-    current_goal: clean(args.commerce_state?.current_intent, 800) || runtime.current_intent || prior?.current_goal || runtime.first_customer_turn,
+    current_goal: businessGoal,
+    question_lifecycle: lifecycle,
     active_entities: commerce.active_entities,
     latest_corrections: uniqueStrings([
       ...runtime.latest_corrections,
@@ -634,11 +715,12 @@ export function buildCanonicalConversationMemory(args: {
     ], MAX_CORRECTIONS),
     current_customer_facts: stableFacts([
       ...(prior?.current_customer_facts ?? []).filter((fact) =>
-        !addressKeys.has(clean(fact.key, 120)) &&
+        !fact.key.startsWith("entity:") && !addressKeys.has(clean(fact.key, 120)) &&
         !(currentDeliveryPreferenceFact &&
           deliveryPreferenceKeys.has(clean(fact.key, 120)))
       ),
       ...requirementFacts,
+      ...canonicalEntityFacts,
       ...retained.current.filter((fact) =>
         !addressKeys.has(clean(fact.key, 120)) &&
         !(currentDeliveryPreferenceFact &&
@@ -665,16 +747,16 @@ export function buildCanonicalConversationMemory(args: {
       ...commerce.cancelled_or_superseded,
       ...retained.superseded,
     ], MAX_HISTORY),
-    open_questions: uniqueStrings([...runtime.unresolved_questions, ...(args.commerce_state?.unresolved_items ?? [])], MAX_OPEN),
-    pending_actions: commerce.pending_actions,
+    open_questions: open,
+    pending_actions: uniqueStrings([...commerce.pending_actions,...lifecycle.filter(item=>item.status === "pending" && item.resolution?.includes("professional")).map(item=>item.text)],MAX_ACTIONS),
     prior_topics: uniqueStrings([...runtime.prior_topics.slice().reverse(), ...(prior?.prior_topics ?? [])], MAX_TOPICS).reverse(),
     current_topic: clean(args.commerce_state?.current_topic, 300) || runtime.current_topic || prior?.current_topic || null,
     grounded_reference_lineage: lineage(args.newest_first).length ? lineage(args.newest_first) : (prior?.grounded_reference_lineage ?? []).slice(0, MAX_LINEAGE),
     handoff_relevant_state: {
-      current_goal: clean(args.commerce_state?.current_intent, 800) || runtime.current_intent || prior?.current_goal || null,
+      current_goal: businessGoal,
       active_entity_ids: commerce.active_entities.map((entity) => entity.entity_id),
-      open_questions: uniqueStrings([...runtime.unresolved_questions, ...(args.commerce_state?.unresolved_items ?? [])], 6),
-      pending_actions: commerce.pending_actions.slice(0, 6),
+      open_questions: open.slice(0,6),
+      pending_actions: uniqueStrings([...commerce.pending_actions,...lifecycle.filter(item=>item.status === "pending" && item.resolution?.includes("professional")).map(item=>item.text)],6),
     },
     updated_from_turn: Math.max(0, args.visitor_turn_count),
     updated_at: args.source_created_at,

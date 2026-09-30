@@ -93,6 +93,7 @@ export interface B2TrustedCustomerCalculation {
   source_message_id: string;
   commerce_revision: number;
   response_binding: string;
+  source_history?: Array<{id:string;role:string;content:string}>;
 }
 
 async function calculationResponseBinding(reply: string): Promise<string> {
@@ -103,18 +104,20 @@ async function calculationResponseBinding(reply: string): Promise<string> {
 export async function buildB2TrustedCustomerCalculation(input: {
   conversation_id: string; company_id: string; source_message_id: string;
   commerce_revision: number; source_message_content: string; reply: string;
+  recent_messages?: Array<{id?:string|null;role:string;content:string}>;
 }): Promise<B2TrustedCustomerCalculation | null> {
   if (!isHistoricalOrConditionalCustomerCalculationRequest(input.source_message_content)) return null;
   const parsed = deriveTypedCustomerCalculation({
     question: input.source_message_content,
     current_source_message_id: input.source_message_id,
+    recent_messages: input.recent_messages,
   });
   if (parsed.status !== "ready" || !parsed.terms.length) return null;
   const quantity = parsed.quantity ?? 1;
   const inputs = parsed.terms.map((term) => ({ amount: term.amount, currency: term.currency,
     multiplier: term.charge_basis === "per_unit" ? quantity : 1,
     charge_basis: term.charge_basis, source_message_id: term.source_message_id ?? input.source_message_id }));
-  const result = inputs.reduce((sum, term) => sum + term.amount * term.multiplier, 0);
+  const result = Math.round(inputs.reduce((sum, term) => sum + term.amount * term.multiplier, 0)*100)/100;
   return { contract: "customer-supplied-read-only-calculation-v1",
     calculation_type: "historical_or_conditional",
     arithmetic_operation: inputs.some((term) => term.multiplier > 1) ? "multiply_then_add" : "addition",
@@ -123,7 +126,9 @@ export async function buildB2TrustedCustomerCalculation(input: {
     current_price_authority: "NONE", transaction_mutation: "NONE",
     conversation_id: input.conversation_id, company_id: input.company_id,
     source_message_id: input.source_message_id, commerce_revision: input.commerce_revision,
-    response_binding: await calculationResponseBinding(input.reply) };
+    response_binding: await calculationResponseBinding(input.reply),
+    source_history: (input.recent_messages ?? []).filter((row): row is {id:string;role:string;content:string}=>
+      typeof row.id === "string" && inputs.some(term=>term.source_message_id === row.id && row.id !== input.source_message_id)) };
 }
 
 export interface B2TrustedReadOnlyRecap {
@@ -273,7 +278,7 @@ function isTrustedCustomerCalculation(input: B2EvaluationInput, draft: string): 
     m.calculation_authority !== p.authority || m.current_price_authority !== "NONE" ||
     m.transaction_mutation !== "NONE" || m.calculation_type !== p.calculation_type ||
     !isHistoricalOrConditionalCustomerCalculationRequest(s.source_message_content ?? "")) return false;
-  const parsed = deriveTypedCustomerCalculation({question: s.source_message_content ?? "", current_source_message_id: s.source_message_id});
+  const parsed = deriveTypedCustomerCalculation({question: s.source_message_content ?? "", current_source_message_id: s.source_message_id,recent_messages:p.source_history});
   if (parsed.status !== "ready" || parsed.terms.length !== p.inputs.length) return false;
   const quantity = parsed.quantity ?? 1;
   const expected = parsed.terms.map((term) => ({amount: term.amount, currency: term.currency,
@@ -283,9 +288,9 @@ function isTrustedCustomerCalculation(input: B2EvaluationInput, draft: string): 
   if (JSON.stringify(expected) !== JSON.stringify(p.inputs) || p.quantity !== quantity ||
     p.currency !== parsed.terms[0].currency ||
     p.arithmetic_operation !== operation ||
-    p.result !== expected.reduce((sum, term) => sum + term.amount * term.multiplier, 0)) return false;
-  const amounts = [...draft.matchAll(/\d[\d,]*/g)].map((match) => Number(match[0].replace(/,/g, "")));
-  if (![...new Set(expected.map((term) => term.amount)), p.result].every((amount) => amounts.includes(amount))) return false;
+    p.result !== Math.round(expected.reduce((sum, term) => sum + term.amount * term.multiplier, 0)*100)/100) return false;
+  const amounts = [...draft.matchAll(/\d[\d,]*(?:\.\d{1,2})?/g)].map((match) => Number(match[0].replace(/,/g, "")));
+  if (![...new Set(expected.map((term) => term.amount).filter(amount=>amount!==0)), p.result].every((amount) => amounts.includes(amount))) return false;
   if (!/(?:歷史|历史|舊|旧|條件|条件|試算|试算|hypothetical|historical|conditional|calculation)/i.test(draft)) return false;
   const promotedText = draft.replace(/(?:不是|並非|唔代表|不代表|不等於|not\s+(?:a\s+)?(?:current|formal|official)?\s*(?:quotation|quote|order|payment)).{0,28}(?:現行|現時|目前|current|formal|official)?\s*(?:正式)?\s*(?:報價|报价|quotation|quote|訂單|订单|order|付款|payment)/gi, "");
   if (CURRENT_PRICE_CLAIM.test(promotedText) || /(?:正式報價|正式报价|報價已確認|报价已确认|已報價|已报价|落單|下單|下单|訂單|订单|預訂|预订|預約|预约|付款|支付|購買|购买|quotation\s+(?:issued|created|confirmed)|place an order|order\s+(?:confirmed|created|placed)|purchase(?:d)?|payment\s+(?:processed|completed)|pay now|booked|reservation\s+confirmed)/i.test(promotedText)) return false;
@@ -1494,6 +1499,18 @@ export async function executeB2PersistenceGate<T>(
     input.source_message_id,
   );
   if (!initial.ok) return { committed: false, decision: initial.decision };
+  const validateCalculationSources = async (): Promise<boolean> => {
+    const history = input.trusted_customer_calculation?.source_history ?? [];
+    if (history.length > 4) return false;
+    for (const row of history) {
+      if (row.role !== "visitor" || row.id === input.source_message_id) return false;
+      const readback = await input.client.from("messages").select("id,content,role")
+        .eq("conversation_id",input.conversation_id).eq("id",row.id).eq("role","visitor").maybeSingle();
+      if (readback.error || !readback.data || clean((readback.data as {content?:unknown}).content) !== clean(row.content)) return false;
+    }
+    return true;
+  };
+  if (!await validateCalculationSources()) return {committed:false,decision:{decision:"block",code:"CUSTOMER_CALCULATION_SOURCE_HISTORY_MISMATCH"},snapshot:initial.snapshot};
 
   if (
     input.expected_commerce_state_revision !== undefined &&
@@ -1581,6 +1598,7 @@ export async function executeB2PersistenceGate<T>(
     return { committed: false, decision: { decision: "block", code: "CUSTOMER_CALCULATION_RESPONSE_BINDING_MISMATCH" }, snapshot: revalidated.snapshot };
   }
 
+  if (!await validateCalculationSources()) return {committed:false,decision:{decision:"block",code:"CUSTOMER_CALCULATION_SOURCE_HISTORY_MISMATCH"},snapshot:revalidated.snapshot};
   const value = await input.commit(revalidated.snapshot);
   return { committed: true, decision, snapshot: revalidated.snapshot, value };
 }

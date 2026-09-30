@@ -133,7 +133,7 @@ Deno.test("C3 mixed currency blocks the whole calculation", () => {
 Deno.test("C3 missing basis or quantity cannot silently default", () => {
   const noBasis = run("用舊數字試算：舊機價 HKD 5,600，安裝 HKD 550");
   assertEquals(noBasis.runtime.calculation_status, "missing_explicit_basis");
-  assertMatch(noBasis.reply, /每部／每件.*整單/);
+  assertMatch(noBasis.reply, /單價.*整批總額/);
   const stateWithoutQuantity = structuredClone(commerce);
   stateWithoutQuantity.entities = [];
   const runtime = deriveServiceRuntimeInputs({

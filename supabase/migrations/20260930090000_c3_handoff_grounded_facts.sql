@@ -29,12 +29,12 @@ BEGIN
   IF v_package->>'commerce_state_revision' IS NOT NULL
      AND v_memory.commerce_state_revision IS DISTINCT FROM (v_package->>'commerce_state_revision')::bigint THEN RETURN NEW; END IF;
   v_package := jsonb_set(v_package,'{customer_preferences}',coalesce(v_memory.memory->'customer_preferences','[]'::jsonb),true);
-  IF jsonb_array_length(coalesce(v_package->'open_questions','[]'::jsonb))=0 THEN
-    v_package := jsonb_set(v_package,'{open_questions}',coalesce(v_memory.memory->'open_questions','[]'::jsonb),true);
-  END IF;
-  IF jsonb_array_length(coalesce(v_package->'pending_actions','[]'::jsonb))=0 THEN
-    v_package := jsonb_set(v_package,'{pending_actions}',coalesce(v_memory.memory->'pending_actions','[]'::jsonb),true);
-  END IF;
+  v_package := jsonb_set(v_package,'{open_questions}',coalesce(v_memory.memory->'open_questions','[]'::jsonb),true);
+  v_package := jsonb_set(v_package,'{pending_actions}',coalesce(v_memory.memory->'pending_actions','[]'::jsonb),true);
+  v_package := jsonb_set(v_package,'{current_customer_goal}',coalesce(v_memory.memory->'current_goal','null'::jsonb),true);
+  v_package := jsonb_set(v_package,'{current_customer_facts}',coalesce(v_memory.memory->'current_customer_facts','[]'::jsonb),true);
+  v_package := jsonb_set(v_package,'{historical_customer_facts}',coalesce(v_memory.memory->'historical_facts','[]'::jsonb),true);
+  v_package := jsonb_set(v_package,'{question_lifecycle}',coalesce(v_memory.memory->'question_lifecycle','[]'::jsonb),true);
   v_package := jsonb_set(v_package,'{conversation_memory_lineage}',jsonb_build_object(
     'version',v_memory.memory->>'version','memory_revision',v_memory.memory->'memory_revision',
     'source_message_id',v_memory.source_message_id,'commerce_state_revision',v_memory.commerce_state_revision

@@ -44,6 +44,7 @@ function countValue(raw: string): number | null {
 
 function trimCandidate(raw: string): string {
   return clean(raw, 80)
+    .replace(/\s+(?:on|for)\s+20\d{2}-\d{2}-\d{2}.*$/i, "")
     .replace(/(?:請|请)?(?:報價|报价|幾錢|几钱|多少錢|多少钱|price|quote|quotation|total|合共|總共|总共).*$/i, "")
     .replace(/(?:星期[一二三四五六日天]|週[一二三四五六日天]|周[一二三四五六日天]|monday|tuesday|wednesday|thursday|friday|saturday|sunday)/gi, " ")
     .replace(/(?:HK\$|HKD|US\$|USD|NT\$|TWD|\$)\s*[0-9].*$/i, "")
@@ -54,6 +55,7 @@ function trimCandidate(raw: string): string {
 
 function canonicalGenericName(raw: string): string {
   let value = trimCandidate(raw)
+    .replace(/^(?:of|for)\s+/i, "")
     .replace(/^(?:黑色|白色|紅色|红色|藍色|蓝色|綠色|绿色|黃色|黄色|粉紅|粉红|紫色|灰色|black|white|red|blue|green|yellow|pink|purple|grey|gray)\s*/i, "")
     .replace(/^(?:small|medium|large|xl|xxl|xs)\s+/i, "")
     .replace(/^(?:size\s*[xsml0-9-]+)\s+/i, "")
@@ -95,7 +97,7 @@ function extractVariant(text: string): Record<string, string> {
 
 function inferKind(text: string, unit: string | null, quantity: number): CommerceKind {
   const t = clean(text).toLowerCase();
-  if (/(?:下載|下载|電子版|电子版|digital|download|software|license|licence|ebook|e-book|activation key|啟用碼|激活码)/i.test(t)) return "digital_good";
+  if (/(?:訂閱|订阅|subscription|下載|下载|電子版|电子版|digital|download|software|license|licence|ebook|e-book|activation key|啟用碼|激活码)/i.test(t)) return "digital_good";
   if (/(?:預約|预约|appointment|book(?:ing)?|reserve|reservation|服務|服务|剪髮|剪发|療程|疗程|consultation|session|lesson|class)/i.test(t)
       || /^(?:位|席|次|堂|課|课|sessions?|lessons?|seats?)$/i.test(unit ?? "")) return "service";
   if (quantity >= 20 && /(?:批發|批发|MOQ|minimum order|wholesale|報價|报价|quotation|quote)/i.test(t)) return "b2b_product";
@@ -150,11 +152,15 @@ export function extractGenericCommerceEntity(text: string): GenericEntityExtract
 
   const kind = inferKind(t, unit, quantity);
   const capabilities = inferCommerceCapabilities(t, kind);
-  const category = kind === "service" ? "service"
+  const role = /訂閱|订阅|subscription/i.test(canonicalName) ? "subscription"
+    : /add[- ]?on|加購|加购/i.test(canonicalName) ? "addon"
+    : /parking|泊車|停车/i.test(canonicalName) ? "parking"
+    : /booking|預約|预约/i.test(canonicalName) ? "booking" : null;
+  const category = role ?? (kind === "service" ? "service"
     : kind === "digital_good" ? "digital_good"
     : kind === "b2b_product" ? "b2b_product"
-    : "generic_product";
-  const aliases = [...new Set([canonicalName, rawName].map((x) => clean(x, 80)).filter(Boolean))];
+    : "generic_product");
+  const aliases = [...new Set([canonicalName, rawName, ...(role ? [role] : [])].map((x) => clean(x, 80)).filter(Boolean))];
 
   return {
     entity_id: `generic:${slug}`,

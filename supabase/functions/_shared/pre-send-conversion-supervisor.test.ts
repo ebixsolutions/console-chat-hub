@@ -1275,7 +1275,7 @@ Deno.test("C3 explicit human requests bypass canonical clarification and reach g
     "if (_c3PlannedReply && !_explicitHandoffRequested)",
   );
   const guardedCommerceCommit = source.indexOf(
-    "if (_c3CommerceReply && !_explicitHandoffRequested)",
+    "if (_c3CommerceReply && !_explicitHandoffRequested &&",
   );
   const governedR1 = source.indexOf(
     "const r1Response = await persistExplicitR1IfRequested",
@@ -1298,7 +1298,7 @@ Deno.test("C3 explicit human requests bypass canonical clarification and reach g
   ]) assert(successContract.includes(marker), `R1 success contract missing: ${marker}`);
 });
 
-Deno.test("C3 explicit handoff persistence is B2-supervised and source-idempotent", async () => {
+Deno.test("COMPONENT: mocked explicit handoff callback is B2-supervised and source-idempotent", async () => {
   const persistedSources = new Set<string>();
   let handoffEvents = 0;
   const persist = async () => {
@@ -1364,4 +1364,13 @@ Deno.test("B2 accepts deterministic no-change summary after exact authoritative 
     "allow",
     "projection readback B2 decision",
   );
+});
+
+Deno.test("COMPONENT: recalled calculation requires the original visitor message DB readback",async()=>{
+  const source="用返頭先個送貨費，加兩部每部 HK$4,111，合共幾多？";
+  const reply="按歷史數字：HK$4,111 × 2 + HK$385 = HK$8,607；不是現行報價。";
+  const proof=await buildB2TrustedCustomerCalculation({conversation_id:CONVERSATION_ID,company_id:COMPANY_ID,source_message_id:SOURCE_ID,commerce_revision:9,source_message_content:source,reply,recent_messages:[{id:"prior-source",role:"visitor",content:"之前機價 HK$6,247，送貨 HK$385。"}]});
+  assert(proof,"recalled typed proof absent");let writes=0;
+  const verdict=await executeB2PersistenceGate({client:new MockClient({state:createEmptyConversationCommerceState(),revision:9,sourceContent:source}),conversation_id:CONVERSATION_ID,source_message_id:SOURCE_ID,proposed_response:reply,persistence_kind:"ai_reply",trusted_customer_calculation:proof,commit:async()=>{writes++;return "forbidden";}});
+  assertEquals(verdict.decision.code,"CUSTOMER_CALCULATION_SOURCE_HISTORY_MISMATCH","mismatched original DB text must fail closed");assertEquals(writes,0,"unbound history reached commit");
 });

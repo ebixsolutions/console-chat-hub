@@ -33,15 +33,28 @@ try {
     "supabase/migrations/20260909173000_task_a1_universal_commerce_state.sql", "supabase/migrations/20260915000000_ai_abc_c2_director_closure_handoff.sql",
     "supabase/migrations/20260915040000_ai_abc_c3_director_runtime_closure.sql", "supabase/migrations/20260917062606_c3_deterministic_commerce_fts_governance.sql",
     "supabase/migrations/20260925093000_c3_t11_revision_bound_ai_reply.sql", "supabase/migrations/20260928100000_c3_director_handoff_context.sql", "supabase/migrations/20260930090000_c3_handoff_grounded_facts.sql"];
-  let acceptedHandoff;
+  let acceptedHandoff, acceptedTriggers;
+  await db.exec("CREATE SCHEMA supabase_migrations; CREATE TABLE supabase_migrations.schema_migrations(version text primary key,name text); INSERT INTO supabase_migrations.schema_migrations VALUES('local-baseline','isolated ledger sentinel')");
+  const ledger = async ()=>(await db.query("SELECT * FROM supabase_migrations.schema_migrations ORDER BY version")).rows;
+  const acceptedLedger=await ledger();
+  const triggers = async ()=>(await db.query(`SELECT tgname,pg_get_triggerdef(t.oid) AS definition FROM pg_trigger t
+    JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace
+    WHERE n.nspname='public' AND c.relname='handoff_event' AND NOT t.tgisinternal ORDER BY tgname`)).rows;
   const catalog = async () => (await db.query(`SELECT p.proname,md5(pg_get_functiondef(p.oid)) AS hash,pg_get_userbyid(p.proowner) AS owner,p.prosecdef,p.proconfig,p.proacl::text AS acl
     FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
     WHERE n.nspname='public' AND p.proname IN ('commit_ai_reply_tx','c2_populate_handoff_package_tg','c3_enrich_handoff_from_memory_tg') ORDER BY p.proname`)).rows;
   for (const file of migrationFiles) {
-    if(file.endsWith("20260930090000_c3_handoff_grounded_facts.sql")) acceptedHandoff=await catalog();
+    if(file.endsWith("20260930090000_c3_handoff_grounded_facts.sql")) {acceptedHandoff=await catalog();acceptedTriggers=await triggers();}
     await db.exec(read(file).replace(/CREATE EXTENSION IF NOT EXISTS pgcrypto;/gi, ""));
   }
   const forwardCatalog=await catalog();
+  for (const fn of forwardCatalog) {
+    assert.equal(fn.owner,"postgres");assert.equal(fn.prosecdef,true);
+    assert.deepEqual(fn.proconfig,fn.proname === "c3_enrich_handoff_from_memory_tg" ? ['search_path=""'] : ["search_path=public, pg_temp"]);
+    assert.equal(fn.acl,acceptedHandoff.find(x=>x.proname===fn.proname).acl);
+  }
+  assert.equal(forwardCatalog.find(x=>x.proname==="commit_ai_reply_tx").hash,"f3ba6240d2453729ce073b7e87ed665c");
+  assert.deepEqual(await triggers(),acceptedTriggers);assert.deepEqual(await ledger(),acceptedLedger);
   assert.deepEqual(forwardCatalog.filter(x=>x.proname!=="c3_enrich_handoff_from_memory_tg"),acceptedHandoff.filter(x=>x.proname!=="c3_enrich_handoff_from_memory_tg"));
   // Existing R1 RPC readback in the repository, not a fabricated test handoff.
   const handoffSQL = read("sql/c3-nonproduction/06_director_handoff_runtime_test.sql");
@@ -63,10 +76,12 @@ try {
       const body = JSON.parse((await Array.fromAsync(req)).map((part) => part.toString()).join("") || "{}");
       if (url.pathname === "/api/v1/rag/context-search") {
         assert.equal(body.company_id,34,"synthetic upstream tenant binding");
-        const found=/CW-SUL70BA|ZZ-KL88/i.test(body.query ?? "");
-        const model=/ZZ-KL88/.test(body.query) ? "ZZ-KL88" : "CW-SUL70BA";
-        const selected=found ? [{ document_id:kbDoc,title:`Synthetic ${model}`,source_type:"product",document_score:0.99,summary:null,
-          evidence:[{chunk_id:kbChunk,content:fixtureText.replaceAll("CW-SUL70BA",model),score:0.99,chunk_type:"full_content"}],
+        const found=/CW-SUL70BA|ZZ-KL88|CN-314|BK-827/i.test(body.query ?? "");
+        const model=(body.query ?? "").match(/CW-SUL70BA|ZZ-KL88|CN-314|BK-827/i)?.[0] ?? "CW-SUL70BA";
+        const policy=/CN-314|BK-827/.test(model);
+        const content = model === "CN-314" ? "product model: CN-314\nbilling policy: Seat charges are calculated monthly; changes require account administrator approval" : model === "BK-827" ? "product model: BK-827\nbooking policy: Requested dates require staff confirmation before a booking is confirmed" : fixtureText.replaceAll("CW-SUL70BA",model);
+        const selected=found ? [{ document_id:kbDoc,title:`Synthetic ${model}`,source_type:policy?"policy":"product",document_score:0.99,summary:null,
+          evidence:[{chunk_id:kbChunk,content,score:0.99,chunk_type:"full_content"}],
           authority:{tenant_id:"34",publication_state:"published",currentness:"current",entity_ids:[model],regions:["HK"],language:"zh-HK",version:"fixture-1",version_rank:1,updated_at:"2026-09-30T00:00:00Z",source_priority:1,claims:[]} }] : [];
         res.writeHead(200,{"content-type":"application/json"});res.end(JSON.stringify({success:true,context_found:found,selected_documents:selected,citations:[]}));return;
       }
@@ -162,7 +177,15 @@ try {
         assert.deepEqual(semanticAfter,semanticBefore,"historical calculation mutated commerce");
         assert.deepEqual(memoryAfter,memoryBefore,"historical calculation mutated semantic memory");
       }
-      outputs.push({source,customer:content,status:response.status,outcome,replies:rows.slice(before),semanticAfter,memoryAfter});
+      let replay=null;
+      if(outcome.handoff_persisted === true) {
+        const counts=async()=> (await db.query("SELECT (SELECT count(*) FROM handoff_event WHERE conversation_id=$1)::int AS handoffs,(SELECT count(*) FROM messages WHERE conversation_id=$1 AND role='assistant')::int AS assistants",[id])).rows[0];
+        const beforeReplay=await counts();
+        const duplicate=await fetch(`http://127.0.0.1:${port}`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({conversation_id:id,source_message_id:source})});
+        const afterReplay=await counts();assert.deepEqual(afterReplay,beforeReplay,"R1 replay duplicated event/reply");
+        replay={status:duplicate.status,outcome:await duplicate.json(),before:beforeReplay,after:afterReplay};
+      }
+      outputs.push({source,customer:content,status:response.status,outcome,replies:rows.slice(before),semanticAfter,memoryAfter,replay});
     }
     const state=(await db.query("SELECT status,assigned_agent_id FROM conversations WHERE id=$1",[id])).rows[0];
     const commerce=(await db.query("SELECT * FROM conversation_commerce_state WHERE conversation_id=$1",[id])).rows;
@@ -172,11 +195,22 @@ try {
     fs.writeFileSync(process.env.C3_TEST_RESULT ?? "/tmp/c3-actual-handler-result.json",JSON.stringify({results,faults},null,2));
     return result;
   }
-  for(const greeting of ["你好，可以幫我嗎？","早晨，可唔可以幫我？","Hello, could you help me please?"]) {
+  for(const greeting of ["你好","你好，可以幫我嗎？","早晨，可唔可以幫我？","Hi","Hello, could you help me please?","Thanks","明白","OK"]) {
     const r=await conversation([greeting]);
     assert.equal(r.outputs[0].replies.length,1);
-    assert.match(r.outputs[0].replies[0].content,/有咩可以幫|How can I help/i);
+    assert.match(r.outputs[0].replies[0].content,/有咩可以幫|How can I help|welcome|anything else|有需要/i);
+    assert.equal(r.commerce.length,0,"social turn created commerce state");
+    assert.equal(r.memory.length,0,"social turn created business memory");
     assert.doesNotMatch(r.outputs[0].replies[0].content,/核實|範圍|日期|verifi/i);
+  }
+  for(const text of ["你好，我想查訂單","Hi, I need help choosing an AC"]) {
+    const task=await conversation([text]);
+    assert.notEqual(task.outputs[0].outcome.response_route,"natural_greeting");
+    assert.equal(task.memory.length,1,"concrete task failed to establish business memory");
+    assert.ok(task.memory[0].memory.current_goal);
+    assert.doesNotMatch(task.outputs[0].replies[0].content,/How can I help|有咩可以幫/);
+    if(text.includes("訂單")) assert.match(task.outputs[0].replies[0].content,/訂單或參考編號/);
+    else assert.match(task.outputs[0].replies[0].content,/room.*area/i);
   }
   for(const [text,total] of [
     ["如果按舊價，每部 HK$4,750，三部再加 HK$960 送貨費，試算幾多？唔係現行報價。", "15,210"],
@@ -199,6 +233,71 @@ try {
     if(text.includes("送貨")) assert.match(reply,/送貨.{0,12}385/);
     else assert.match(reply,/9,312/);
   }
+  const money=await conversation(["之前機價 HK$6,247，送貨 HK$385。","用返頭先個送貨費，加兩部每部 HK$4,111，合共幾多？"]);
+  assert.match(money.outputs[1].replies[0].content,/8,607/);
+  const historical=money.memory[0].memory.historical_facts;
+  assert.ok(historical.some(f=>f.value.amount===6247&&f.value.semantic_role==="unit_price"));
+  assert.ok(historical.some(f=>f.value.amount===385&&f.value.semantic_role==="delivery"&&f.source_message_id===money.outputs[0].source));
+  assert.ok(historical.every(f=>f.value.reusable_as_current===false));
+  for(const [text,total] of [["假設每部 HK$1,399.95，三部加整單 HK$0 送貨，試算幾多？","4,199.85"],["假設兩部合共 HK$5,617.25，再加整單 HK$18.50，合共幾多？","5,635.75"]]) {
+    const decimal=await conversation([text]);assert.match(decimal.outputs[0].replies[0].content,new RegExp(total.replace(/\./g,"\\.")));
+    assert.doesNotMatch(decimal.outputs[0].replies[0].content,/0 \+/);
+  }
+  const unspecified=await conversation(["假設機價 HK$8,123，幫我試算三部幾多？"]);
+  assert.match(unspecified.outputs[0].replies[0].content,/單價|總額/);
+  function governed(c,turn) {
+    assert.equal(c.handoff.length,1);assert.equal(c.handoff[0].source_message_id,c.outputs[turn].source);
+    assert.equal(c.outputs.at(-1).replies.length,0);assert.equal(c.outputs.at(-1).outcome.skipped,"human_handling");
+    const p=JSON.parse(c.handoff[0].ai_summary).structured_package;
+    assert.equal(p.generated_from_source_message_id,c.outputs[turn].source);
+    assert.equal(p.conversation_memory_lineage.source_message_id,c.outputs[turn].source);
+    assert.ok(p.current_authoritative_kb_facts.length);assert.ok(p.citations.length);
+    assert.ok(p.latest_corrections.length);assert.ok(p.handoff_reason);
+    assert.ok(p.current_customer_facts.length);assert.ok(p.current_customer_goal);
+    assert.equal(p.conversation_memory_lineage.commerce_state_revision,p.commerce_state_revision);
+    assert.ok(c.outputs[turn].replay,"actual R1 replay not exercised");
+    for (const fact of p.current_authoritative_kb_facts) {
+      assert.ok(c.outputs.some(row=>row.source===fact.source_message_id && row.replies.some(reply=>reply.metadata.citation_lineage?.authority_decision==="USE_CURRENT_KB")));
+      assert.ok(p.citations.some(citation=>citation.document_id===fact.document_id&&citation.chunk_id===fact.chunk_id));
+    }
+    assert.equal(c.commerce[0].state.conversion.order_status,"none");
+    assert.equal(c.commerce[0].state.conversion.payment_status,"none");
+    return p;
+  }
+  const saas=await conversation([
+    "I need 7 seats of CN-314 subscription.","I need 1 NX-529 add-on.",
+    "Change CN-314 subscription to 9 seats.","What is the CN-314 billing policy? Please answer in English.",
+    "Defer NX-529 add-on. Back to CN-314 subscription.","Thanks",
+    "用廣東話兩句總結我而家嘅要求。","我想真人客服接手。","還有一個問題。"]);
+  console.log("SAAS",saas.outputs.map(t=>[t.customer,t.replies.map(x=>x.content)]));
+  const sp=governed(saas,7);
+  assert.ok(sp.active_entities.some(e=>e.category==="subscription"&&e.quantity===9));
+  assert.ok(sp.deferred_entities.some(e=>e.category==="addon"&&e.quantity===1));
+  assert.match(saas.outputs[3].replies[0].content,/monthly/);
+  assert.equal(saas.outputs[3].outcome.response_route,"canonical_kb_direct_answer");
+  assert.match(saas.outputs[6].replies[0].content,/9/);
+  assert.deepEqual(saas.outputs[5].semanticAfter,saas.outputs[4].semanticAfter,"social acknowledgement changed commerce");
+  assert.deepEqual(saas.outputs[5].memoryAfter,saas.outputs[4].memoryAfter,"social acknowledgement changed memory");
+  assert.ok(!sp.open_questions.some(q=>/billing|recap|summary|總結|Thanks/i.test(q)));
+  const booking=await conversation([
+    "I need 2 sessions of BK-827 booking on 2026-11-04.","I need 1 PK-692 parking.",
+    "Defer PK-692 parking. Change BK-827 booking to 3 sessions.",
+    "Change BK-827 booking date to 2026-11-06.","What is the BK-827 booking policy?",
+    "用廣東話兩句總結我而家嘅要求。","我想轉真人接手。","接手後再問一句。"]);
+  console.log("BOOKING",booking.outputs.map(t=>[t.customer,t.replies.map(x=>x.content)]));
+  const bp=governed(booking,6);
+  assert.match(booking.outputs[3].replies[0].content,/2026-11-06/);
+  assert.doesNotMatch(booking.outputs[3].replies[0].content,/Which date|邊.*日期/);
+  assert.ok(bp.active_entities.some(e=>e.category==="booking"&&e.quantity===3&&e.attributes.requested_date==="2026-11-06"));
+  assert.ok(bp.deferred_entities.some(e=>e.category==="parking"&&e.quantity===1));
+  assert.equal(booking.outputs[4].outcome.response_route,"canonical_kb_direct_answer");
+  assert.equal(booking.commerce[0].state.delivery.confirmed,false);
+  const scoped=booking.outputs[2].semanticAfter[0];
+  assert.equal(scoped.revision,booking.outputs[1].semanticAfter[0].revision+1,"compound mutation not one atomic revision");
+  assert.equal(scoped.state.entities.find(e=>e.category==="booking").quantity,3);
+  assert.equal(scoped.state.entities.find(e=>e.category==="parking").status,"deferred");
+  assert.ok(bp.pending_actions.some(q=>/staff confirmation/i.test(q)));
+  assert.ok(!bp.open_questions.some(q=>/policy|recap|summary|總結/i.test(q)));
   const dialogue=await conversation([
     "早晨，我間書房大約95呎，想揀部窗口冷氣。見到 CW-SUL70BA，呢款係幾多匹，同埋有咩主要功能？",
     "咁嗰部擺喺95呎書房夠唔夠？個窗下午幾曬。",
@@ -224,6 +323,9 @@ try {
   assert.ok(pack.latest_corrections.length,"structured corrections empty");
   assert.ok(pack.current_authoritative_kb_facts.length,"structured KB facts empty");
   assert.ok(pack.citations.length,"structured citations empty");
+  assert.ok(pack.open_questions.every(q=>!/試算|recap|總結|MOONCOOL|幾多匹|historical/i.test(q)),"completed questions retained as open");
+  assert.ok(pack.open_questions.every(q=>!/高度|深度|refrigerator/i.test(q)),"deferred entity question remains active");
+  assert.ok(pack.pending_actions.some(q=>/site|professional/i.test(q)),"site assessment lost");
   assert.equal(pack.generated_from_source_message_id,dialogue.outputs[8].source);
   assert.equal(pack.conversation_memory_lineage.source_message_id,dialogue.outputs[8].source);
   assert.equal(pack.conversation_memory_lineage.commerce_state_revision,pack.commerce_state_revision);
@@ -285,7 +387,8 @@ try {
   assert.equal(faults.length,0,JSON.stringify(faults));
   await db.exec(read("supabase/migrations/rollback/20260930090000_c3_handoff_grounded_facts.rollback.sql"));
   assert.deepEqual(await catalog(),acceptedHandoff,"rollback changed the accepted function/security identity");
-  fs.writeFileSync(process.env.C3_TEST_RESULT ?? "/tmp/c3-actual-handler-result.json",JSON.stringify({coverage:"actual_handler_local_sql_integration",limitations:["local transport adapter, not hosted PostgREST/Widget","pgcrypto digest backed by PostgreSQL built-in sha256","synthetic tenant, no production traffic"],results,faults,forwardCatalog,rollbackCatalog:await catalog()},null,2));
+  assert.deepEqual(await triggers(),acceptedTriggers);assert.deepEqual(await ledger(),acceptedLedger);
+  fs.writeFileSync(process.env.C3_TEST_RESULT ?? "/tmp/c3-actual-handler-result.json",JSON.stringify({coverage:"actual_handler_local_sql_integration",limitations:["local transport adapter, not hosted PostgREST/Widget","pgcrypto digest backed by PostgreSQL built-in sha256","synthetic tenant, no production traffic"],results,faults,forwardCatalog,rollbackCatalog:await catalog(),triggerBindings:await triggers(),migrationLedger:await ledger(),assertions:{social_state_hygiene:true,question_lifecycle:true,typed_money_persistence_and_recall:true,generic_saas:true,generic_booking:true,real_r1_sql_package_and_suppression:true,r1_replay_idempotent:true,b2_source_binding:true,no_duplicate_reply:true,no_thinking:true,no_terminal_failure:true,no_transaction_promotion:true,migration_forward:true,migration_rollback:true,catalog_owner_security_search_path_acl:true,commit_ai_reply_tx_unchanged:true,trigger_binding_preserved:true,migration_ledger_preserved:true}},null,2));
   console.log(`actual_handler_local_sql_integration PASS: ${results.length} conversations; first R1 real SQL event/source binding/package; next-turn suppression`);
 } catch(error) { console.error(error.message,JSON.stringify(faults));process.exitCode=1; }
 finally { child?.kill(); if(server) await new Promise((resolve)=>server.close(resolve));await db.close(); }

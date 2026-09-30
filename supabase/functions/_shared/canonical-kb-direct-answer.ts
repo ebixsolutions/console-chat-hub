@@ -35,7 +35,7 @@ function separatedFieldStarts(text: string): boolean {
   return !embedded || embedded.index === 0;
 }
 
-function labelledValue(content: string, labels: RegExp): string | null {
+function labelledValue(content: string, labels: RegExp, policy = false): string | null {
   const line = content.normalize("NFKC");
   let match = new RegExp(`(?:^|[\\s|;,])(?:${labels.source})\\s*[:=]\\s*`, "iu").exec(line);
   if (!match) {
@@ -55,7 +55,7 @@ function labelledValue(content: string, labels: RegExp): string | null {
   if (separatedFieldStarts(line.slice(start))) return null;
   let end = Math.min(line.length, start + 500);
   for (let i = start; i < end; i++) {
-    if (/[\n\r|;,]/u.test(line[i])) { end = i; break; }
+    if ((policy ? /[\n\r|]/u : /[\n\r|;,]/u).test(line[i])) { end = i; break; }
     if (i > start && /\s/u.test(line[i - 1]) && separatedFieldStarts(line.slice(i))) {
       end = i - 1;
       break;
@@ -69,7 +69,7 @@ function labelledValue(content: string, labels: RegExp): string | null {
   }
   const value = line.slice(start, end).trim();
   return value && !/^(?:unknown|n\/a|未提供|待定)$/i.test(value)
-    ? value.slice(0, 90)
+    ? value.slice(0, policy ? 500 : 90)
     : null;
 }
 
@@ -202,6 +202,7 @@ export function resolveCanonicalKbDirectAnswer(input: {
       ["model", model],
       ["horsepower", labelledValue(chunk.content, /匹數|匹数|horsepower/i)],
       ["features", labelledValue(chunk.content, /功能|features?/i)],
+      ["policy", labelledValue(chunk.content, /billing\s+policy|booking\s+policy|cancellation\s+policy|付款政策|預約政策|预约政策|取消政策/i, true)],
     ];
     return { kind, reply, evidence_chunks: [chunk], structured_facts: chunk.chunk_id
       ? fields.filter(([, value]) => value !== null).map(([field, value]) => ({
@@ -383,11 +384,11 @@ export function resolveCanonicalKbDirectAnswer(input: {
     }
   }
 
-  const policyField = request.match(/(?:退貨政策|退货政策|保養政策|保修政策|return\s+policy|warranty\s+policy)/i)?.[0];
+  const policyField = request.match(/(?:退貨政策|退货政策|保養政策|保修政策|付款政策|預約政策|预约政策|取消政策|(?:billing|booking|cancellation|return|warranty)\s+policy)/i)?.[0];
   if (policyField) {
     for (const chunk of chunks) {
       if (!/policy|政策|條款|条款/i.test(chunk.source_type)) continue;
-      const value = labelledValue(chunk.content, new RegExp(policyField.replace(/\s+/g, "\\s+"), "i"));
+      const value = labelledValue(chunk.content, new RegExp(policyField.replace(/\s+/g, "\\s+"), "i"), true);
       if (value) return evidence("policy", language === "en"
         ? `The current policy for ${model} states: ${value}.`
         : `現行資料列出 ${model} 嘅${policyField}：${value}。`, chunk);

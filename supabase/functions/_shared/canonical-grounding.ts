@@ -114,6 +114,7 @@ function namedTargetTokens(text: string): string[] {
 function topicTokens(text: string): string[] {
   const topics: string[] = [];
   const rules: Array<[string, RegExp]> = [
+    ["policy", /(?:billing|booking|cancellation|return|warranty)\s+policy|付款政策|預約政策|预约政策|取消政策|退貨政策|退货政策|保養政策|保修政策/i],
     ["warranty", /(?:warranty|保養|保修)/i],
     ["delivery", /(?:delivery|shipping|送貨|送货|物流|派送)/i],
     ["returns", /(?:refund|return|退款|退貨|退货|換貨|换货)/i],

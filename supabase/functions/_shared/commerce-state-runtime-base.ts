@@ -94,6 +94,7 @@ export interface CommerceStateDbClient {
 }
 
 export interface CommerceHistoryTurn {
+  id?: string | null;
   role: string;
   content: string;
 }
@@ -850,7 +851,7 @@ function countTokenValue(raw: string): number | null {
 
 export function detectQuantityCorrectionSignal(text: string): boolean {
   const t = clean(text);
-  return /(?:更正|改(?:做|成|為|为|返)?|變成|变成|唔係.+?(?:而係|係|系)|不是.+?(?:而是|是)|不係.+?(?:而係|係)|actually|change(?:\s+it)?\s+to|make\s+it)/i.test(t);
+  return /(?:更正|改(?:做|成|為|为|返)?|變成|变成|唔係.+?(?:而係|係|系)|不是.+?(?:而是|是)|不係.+?(?:而係|係)|actually|change\s+(?:[^.!?。！？]{1,80}\s+)?to|make\s+it)/i.test(t);
 }
 
 function parseCount(text: string): number | null {
@@ -1781,6 +1782,15 @@ function enrichExplicitCustomerFacts(input: CommerceRuntimeInput, state: Convers
   const modelHints = hints.filter((hint) => hint.model && clean(input.text).toUpperCase().includes(hint.model.toUpperCase()));
   const named = active.filter((entity) => categories.some((category) => category.key === entity.category));
   const provenance = { source_type: "customer" as const, source_message_id: input.source_message_id, recorded_at: input.occurred_at ?? null };
+  const generic = active.filter(entity=>entity.entity_id.startsWith("generic:") &&
+    [entity.attributes.product_name,entity.category].some(name=>typeof name === "string" && input.text.toLowerCase().includes(name.toLowerCase())));
+  const date = input.text.match(/\b20\d{2}-\d{2}-\d{2}\b/)?.[0];
+  if(generic.length===1 && date && !/[?？]|should|could|can|what|幾時|係咪/i.test(input.text)) {
+    const previousDate = generic[0].attributes.requested_date;
+    reduced=reduceCommerceState(reduced,[{type:"SET_ENTITY_ATTRIBUTE",entity_id:generic[0].entity_id,key:"requested_date",value:date,provenance},
+      ...(typeof previousDate === "string" && previousDate !== date ? [{type:"ADD_CORRECTION" as const,
+        correction:`${generic[0].attributes.product_name ?? generic[0].category} requested date: change from ${previousDate} to ${date}`}] : [])]);
+  }
   if (categories.length === 1 && named.length === 1 && new Set(modelHints.map((hint) => hint.model)).size === 1 && !named[0].model) {
     reduced = reduceCommerceState(reduced, [{ type: "UPDATE_ENTITY", entity_id: named[0].entity_id, patch: { model: modelHints[0].model }, provenance }]);
   }
@@ -1946,7 +1956,7 @@ function restoreExplicitReturnTopic(
  * A factual question is never allowed to veto the preceding customer-owned
  * operations. An unresolved lifecycle target rejects the whole event set.
  */
-export function reduceTurn(
+function reduceTurnOperations(
   previous: ConversationCommerceState,
   input: CommerceRuntimeInput,
   rawHints: CommerceTurnEntityHint[],
@@ -2043,6 +2053,22 @@ export function reduceTurn(
   }
   state = enrichExplicitCustomerFacts(input,state,rawHints);
   return focus ? state : restoreExplicitReturnTopic(state, input.text);
+}
+
+/** Keep a concrete before/after ledger for generic replacements; raw imperatives are not values. */
+export function reduceTurn(previous: ConversationCommerceState,input: CommerceRuntimeInput,hints: CommerceTurnEntityHint[]): ConversationCommerceState {
+  let state = reduceTurnOperations(previous,input,hints);
+  if (detectQuantityCorrectionSignal(input.text)) {
+    for (const entity of state.entities.filter(e=>e.entity_id.startsWith("generic:"))) {
+      const old=previous.entities.find(e=>e.entity_id===entity.entity_id);
+      if (!old || old.quantity===entity.quantity) continue;
+      const unit=String(entity.attributes.unit ?? "units");
+      state={...state,latest_corrections:state.latest_corrections.filter(entry=>entry !== input.text &&
+        !(input.text.includes(entry) && /change/i.test(entry) && entry.includes(String(entity.attributes.product_name))))};
+      state=reduceCommerceState(state,[{type:"ADD_CORRECTION",correction:`${entity.attributes.product_name} quantity: change from ${old.quantity} ${unit} to ${entity.quantity} ${unit}`}]);
+    }
+  }
+  return state;
 }
 
 /** Customer statements can be acknowledged ahead of a KB conflict without
@@ -2672,6 +2698,39 @@ export async function runCommerceStateRuntime(
       revision: contextualBefore.revision, persist_result: "read_only",
       reason: "read_only_current_requirements_recap", route: "commerce_state_answer" };
   }
+  // A historical/conditional calculation over values supplied in this turn
+  // is read-only: derive a bounded answer from the source message and return
+  // before any Commerce persistence call.
+  if (isHistoricalOrConditionalCustomerCalculationRequest(text)) {
+    const loaded = await loadCommerceState(db, input.conversation_id);
+    const typed = deriveTypedCustomerCalculation({
+      question: text,
+      current_source_message_id: input.source_message_id,
+      recent_messages: input.history,
+    });
+    if (typed.status === "ready" && typed.terms.length) {
+      const quantity = typed.quantity ?? 1;
+      const perUnit = typed.terms.filter((term) => term.charge_basis === "per_unit")
+        .reduce((sum, term) => sum + term.amount, 0);
+      const perOrder = typed.terms.filter((term) => term.charge_basis === "per_order")
+        .reduce((sum, term) => sum + term.amount, 0);
+      const result = Math.round((perUnit * quantity + perOrder) * 100) / 100;
+      return {
+        authority: "CONVERSATION_STATE", reply: null,
+        revision: loaded.revision, persist_result: "read_only",
+        reason: "read_only_customer_calculation",
+        route: "commerce_state_answer",
+        calculation: {
+          expression: `${perUnit} × ${quantity} + ${perOrder}`,
+          result, currency: typed.terms[0].currency,
+        },
+      };
+    }
+    return { authority: "CONVERSATION_STATE", reply: null, revision: loaded.revision,
+      persist_result: "read_only", reason: "read_only_customer_calculation", route: "commerce_state_answer" };
+  }
+
+
   if (resolveEntityLifecyclePlan(text, contextualBefore.state).kind === "ambiguous") {
     return { authority: "CONVERSATION_STATE", reply: language === "en"
       ? "Which product should I pause? Please name the product category."
@@ -2810,34 +2869,6 @@ export async function runCommerceStateRuntime(
     };
   }
 
-  // A historical/conditional calculation over values supplied in this turn
-  // is read-only: derive a bounded answer from the source message and return
-  // before any Commerce persistence call.
-  if (isHistoricalOrConditionalCustomerCalculationRequest(text)) {
-    const loaded = await loadCommerceState(db, input.conversation_id);
-    const typed = deriveTypedCustomerCalculation({
-      question: text,
-      current_source_message_id: input.source_message_id,
-    });
-    if (typed.status === "ready" && typed.terms.length) {
-      const quantity = typed.quantity ?? 1;
-      const perUnit = typed.terms.filter((term) => term.charge_basis === "per_unit")
-        .reduce((sum, term) => sum + term.amount, 0);
-      const perOrder = typed.terms.filter((term) => term.charge_basis === "per_order")
-        .reduce((sum, term) => sum + term.amount, 0);
-      const result = perUnit * quantity + perOrder;
-      return {
-        authority: "CONVERSATION_STATE", reply: null,
-        revision: loaded.revision, persist_result: "read_only",
-        reason: "read_only_customer_calculation",
-        route: "commerce_state_answer",
-        calculation: {
-          expression: `${perUnit} × ${quantity} + ${perOrder}`,
-          result, currency: typed.terms[0].currency,
-        },
-      };
-    }
-  }
 
   const historyTexts = (input.history ?? []).filter((turn) => turn.role === "visitor" || turn.role === "user" || turn.role === "customer").slice(0, MAX_HISTORY_TURNS).map((turn) => clean(turn.content));
   const conversationTexts = [text, ...historyTexts];

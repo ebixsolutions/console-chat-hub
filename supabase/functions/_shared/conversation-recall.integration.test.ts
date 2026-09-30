@@ -1579,7 +1579,7 @@ Deno.test("C3 source audit recall precedes commerce reply, context shortcuts and
   );
   const start = source.indexOf("const _c3Recall = prepareConversationRecall(");
   const commerceReplyMarker =
-    "if (_c3CommerceReply && !_explicitHandoffRequested)";
+    "if (_c3CommerceReply && !_explicitHandoffRequested &&";
   assert(start > source.indexOf("refreshConversationLongMemory("));
   for (
     const marker of [

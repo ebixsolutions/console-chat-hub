@@ -19,15 +19,21 @@ export function backendDeploymentRequest(root, projectId) {
   // deployment root let automatic discovery change import_map=false to true.
   const request = { project_id: projectId, name: "generate-reply", entrypoint_path: "generate-reply/index.ts",
     verify_jwt: true, import_map_path: "", files };
-  assertBackendRequest(request);
+  assertBackendRequest(request, root);
   return request;
 }
 
-export function assertBackendRequest(request) {
-  if (request.name !== "generate-reply" || request.verify_jwt !== true || request.import_map_path !== "" ||
+export function assertBackendRequest(request, root = path.resolve(import.meta.dirname, "../..")) {
+  if (request.import_map === true || request.name !== "generate-reply" || request.verify_jwt !== true || request.import_map_path !== "" ||
       request.entrypoint_path !== "generate-reply/index.ts" || !request.files.length ||
       request.files.some((file) => /(?:^|\/)(?:deno\.jsonc?|import_map\.json)$/.test(file.name)) ||
       new Set(request.files.map((file) => file.name)).size !== request.files.length) {
     throw new Error("unsafe_backend_deployment_request");
+  }
+  const required = runtimeDependencyClosure({root,entrypoints:["supabase/functions/generate-reply/index.ts"]});
+  const actual = request.files.map(file=>`supabase/functions/${file.name}`).sort();
+  if (JSON.stringify(actual) !== JSON.stringify(required) || request.files.some(file=>
+    file.content !== fs.readFileSync(path.join(root,"supabase/functions",file.name),"utf8"))) {
+    throw new Error("backend_runtime_closure_or_content_mismatch");
   }
 }

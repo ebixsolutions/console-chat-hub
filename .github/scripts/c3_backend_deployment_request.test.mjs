@@ -18,4 +18,9 @@ test("compiler config stays in source; deployment has exact runtime closure and 
   assert.throws(() => assertBackendRequest({ ...request, files: [...request.files, { name: "deno.json", content: "{}" }] }));
   assert.throws(() => assertBackendRequest({ ...request, import_map_path: "file:///tmp/v200/source/deno.json" }));
   assert.throws(() => assertBackendRequest({ ...request, verify_jwt: false }));
+  assert.throws(() => assertBackendRequest({ ...request, import_map: true }));
+  assert.throws(() => assertBackendRequest({ ...request, entrypoint_path: "other/index.ts" }));
+  assert.throws(() => assertBackendRequest({ ...request, files: request.files.slice(1) }));
+  assert.throws(() => assertBackendRequest({ ...request, files: [...request.files,{name:"unrelated/index.ts",content:""}] }));
+  assert.throws(() => assertBackendRequest({ ...request, files: request.files.map((file,index)=>index ? file : {...file,content:file.content+"\n// drift"}) }));
 });

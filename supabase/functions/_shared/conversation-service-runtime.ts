@@ -31,7 +31,7 @@ export interface TypedCustomerCalculation {
 }
 
 const CALCULATION_REQUEST = /(?:試算|试算|假設|假设|計算|计算|加埋|合共|總共|总共|一共|總數|总数|計下|计下|算下|計幾錢|计多少钱|算幾錢|算多少钱|calculate|estimate|total|altogether|how much)/i;
-const HISTORICAL_OR_CONDITIONAL = /(?:舊|旧|之前|以前|歷史|历史|假設|假设|如果|若果|若按|按你提供|historical|previous|earlier|conditional|hypothetical|\bif\b|\bassuming\b)/i;
+const HISTORICAL_OR_CONDITIONAL = /(?:舊|旧|之前|以前|頭先|刚才|剛才|用返|歷史|历史|假設|假设|如果|若果|若按|按你提供|historical|previous|earlier|conditional|hypothetical|\bif\b|\bassuming\b)/i;
 const MONEY_TOKEN = /\b(HKD|USD|TWD)\b\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)|((?:HK|US|NT)\$|\$)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)|([0-9][0-9,]*(?:\.[0-9]{1,2})?)\s*(HKD|USD|TWD)\b/gi;
 
 function calcClean(value: unknown, limit = 2400): string {
@@ -60,15 +60,35 @@ export function deriveTypedCustomerCalculation(input: {
   const question = calcClean(input.question);
   if (!isReadOnlyCustomerCalculationRequest(question)) return { terms: [], status: "not_requested" };
   const money = deriveTypedCustomerMoneyFacts(question);
+  const roleReference = /(?:用返|頭先|之前|earlier|previous|use).{0,24}(?:送貨費|送货费|delivery fee|installation fee|安裝費|安装费)/i.exec(question)?.[0];
+  const recalled: TypedCustomerCalculationTerm[] = [];
+  if (roleReference) {
+    const role = /送貨|送货|delivery/i.test(roleReference) ? "delivery" : "installation";
+    for (const row of input.recent_messages ?? []) {
+      if (!/^(?:visitor|customer|user)$/.test(row.role) || row.id === input.current_source_message_id || row.content === input.question) continue;
+      const prior = deriveTypedCustomerMoneyFacts(row.content);
+      if (!prior.historical) continue;
+      const matching = prior.facts.filter(f=>f.role===role);
+      if (!matching.length) continue;
+      if (matching.length !== 1 || !row.id) return {terms:[],status:"missing_explicit_basis"};
+      const fact = matching[0];
+      const basis = fact.charge_basis === "unspecified" && /加|plus|add/i.test(question)
+        ? "per_order" : fact.charge_basis === "total" ? "per_order" : fact.charge_basis;
+      if (basis === "unspecified") return {terms:[],status:"missing_explicit_basis"};
+      recalled.push({label:fact.labels[2],amount:fact.amount,currency:fact.currency,charge_basis:basis,source:"customer_message",source_message_id:row.id});
+      break;
+    }
+    if (!recalled.length) return {terms:[],status:"no_typed_amounts"};
+  }
   if (money.facts.some((fact) => fact.charge_basis === "unspecified")) {
     return { terms: [], status: "missing_explicit_basis" };
   }
-  const terms: TypedCustomerCalculationTerm[] = money.facts.map((fact) => ({
+  const terms: TypedCustomerCalculationTerm[] = [...money.facts.map((fact) => ({
     label: fact.labels[2], amount: fact.amount, currency: fact.currency,
-    charge_basis: fact.charge_basis as "per_unit" | "per_order",
-    source: "customer_message",
+    charge_basis: (fact.charge_basis === "total" ? "per_order" : fact.charge_basis) as "per_unit" | "per_order",
+    source: "customer_message" as const,
     ...(input.current_source_message_id ? { source_message_id: input.current_source_message_id } : {}),
-  }));
+  })),...recalled];
   if (!terms.length) return { terms: [], status: "no_typed_amounts" };
   if (new Set(terms.map((term) => term.currency)).size > 1) return { terms: [], status: "mixed_currency" };
   const qtyMatch = question.match(/(?:共|總共|总共|數量|数量|qty|quantity)?\s*(一|二|兩|两|三|四|五|六|七|八|九|十|one|two|three|four|five|six|seven|eight|nine|ten|\d{1,4})\s*(?:部|台|件|個|个|份|位|晚|夜|日|天|次|unit|units|item|items|session|sessions|night|nights)/i);
@@ -81,7 +101,7 @@ export function deriveTypedCustomerCalculation(input: {
     current_price_authority: "NONE", transaction_mutation: "NONE",
     arithmetic_operation: terms.some((term) => term.charge_basis === "per_unit") ? "multiply_then_add" : "addition",
     currency: terms[0].currency,
-    result: terms.reduce((sum, term) => sum + term.amount * (term.charge_basis === "per_unit" ? quantity ?? 1 : 1), 0) };
+    result: Math.round(terms.reduce((sum, term) => sum + term.amount * (term.charge_basis === "per_unit" ? quantity ?? 1 : 1), 0) * 100) / 100 };
 }
 
 export interface TrustedServiceEntitlement {

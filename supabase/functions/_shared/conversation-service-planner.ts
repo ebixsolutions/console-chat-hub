@@ -35,6 +35,7 @@ export type ServiceDialogueAction =
 export type ServiceIssueKind =
   | "account_access"
   | "order_change"
+  | "order_status_lookup"
   | "refund_or_product_quality"
   | "delivery_or_collection"
   | "stock_or_store_availability"
@@ -216,6 +217,7 @@ function knownFacts(input: ServicePlanInput) {
         !["cancelled", "deferred"].includes(item.status)
       )
     ) {
+      add(`entity:${entity.entity_id}:requested_date`, "Requested date", entity.attributes.requested_date,"CUSTOMER_PROVIDED");
       add(
         `entity:${entity.entity_id}:quantity`,
         "數量",
@@ -288,13 +290,14 @@ function historicalCalculation(
       "assuming",
       "if",
       "舊",
+      "頭先", "用返", "earlier", "previous",
       "旧",
       "historical",
       "estimate",
     ])
   ) return null;
   const terms = (input.calculation_terms ?? []).filter((term) =>
-    Number.isFinite(term.amount) && term.amount > 0 && clean(term.label) &&
+    Number.isFinite(term.amount) && term.amount >= 0 && clean(term.label) &&
     clean(term.currency)
   );
   if (terms.length < 1) return null;
@@ -323,7 +326,7 @@ function historicalCalculation(
     quantity,
     per_unit_total: perUnit,
     per_order_total: perOrder,
-    total: perUnit * quantity + perOrder,
+    total: Math.round((perUnit * quantity + perOrder)*100)/100,
     currency: [...currencies][0],
     historical_only: true,
   };
@@ -393,6 +396,7 @@ function buildKbQuery(question: string, input: ServicePlanInput): string {
 function classifyCustomerIssue(question: string): ServiceIssueKind | null {
   const text = clean(question, 2400);
   const productProblem = isProductSupportProblem(text);
+  if (/(?:查|查看|查詢|查询|核對|核对).{0,10}(?:訂單|订单)|(?:check|track|look up).{0,24}\border\b|\border\s+status\b/i.test(text)) return "order_status_lookup";
   if (text.length < 24 && !productProblem) return null;
   if (isProductOperationFailure(text)) return "product_operation_failure";
   if (
@@ -590,7 +594,7 @@ export function planConversationService(
   }
   const target = clarificationTarget ?? "customer_goal";
   if (factSatisfiesSlot(facts, target)) {
-    return { ...base, action: "partial_answer_then_question" };
+    return { ...base, action: "partial_answer_then_question", missing_slots: [], clarification_target: null };
   }
   return {
     ...base,
@@ -663,9 +667,9 @@ const labels: Record<string, [string, string, string]> = {
     "These amounts use different currencies. Please confirm one currency; I cannot add them directly.",
   ],
   calculation_charge_basis: [
-    "請確認每個金額是每部／每件收費，還是整單收費。",
-    "请确认每个金额是每部／每件收费，还是整单收费。",
-    "Please confirm whether each amount is per unit or per order.",
+    "呢個金額係單價，定係整批總額？",
+    "这个金额是单价，还是整批总额？",
+    "Is this amount a unit price or the total for the whole batch?",
   ],
 };
 
@@ -738,6 +742,8 @@ function renderContextualServiceReply(
           ? ["每部", "每部", "per unit"][languageIndex]
           : fact.charge_basis === "per_order"
           ? ["整單", "整单", "per order"][languageIndex]
+          : fact.charge_basis === "total"
+          ? ["合共", "合共", "total"][languageIndex]
           : ["收費單位未指明", "收费单位未指明", "charge basis unspecified"][languageIndex];
         return `${label} ${fact.currency} ${fact.amount.toLocaleString("en-US")} (${basis})`;
       }).join("；");
@@ -864,6 +870,17 @@ export function renderServicePlanReply(
     return renderContextualServiceReply(plan, l);
   }
   if (plan.action === "customer_issue_next_step" && plan.issue_kind) {
+    if (plan.issue_kind === "order_status_lookup") {
+      const provided = [plan.customer_turn ?? "", ...recentMessages.filter(row=>/visitor|customer|user/.test(row.role)).map(row=>row.content)]
+        .map(text=>text.match(/(?:訂單|订单|參考編號|参考编号|order|reference|ref)\s*(?:number|no\.?|#|:|：)?\s*([A-Z0-9][A-Z0-9-]{3,})/i)?.[1]).find(ref=>ref && /\d/.test(ref));
+      return provided
+        ? [
+          `我記低咗參考編號 ${provided}；目前我未能讀取即時訂單狀態，呢個需要客服核對。`,
+          `已记录参考编号 ${provided}；目前我无法读取实时订单状态，需要客服核对。`,
+          `I have reference ${provided}. I cannot read the live order status here; support needs to check it.`,
+        ][l]
+        : ["可以幫你整理查詢；目前我未能讀取即時訂單狀態。你有訂單或參考編號嗎？", "可以帮你整理查询；目前我无法读取实时订单状态。你有订单或参考编号吗？", "I can help with the enquiry, but I cannot read the live order status here. What is the order or reference number?"][l];
+    }
     if (plan.issue_kind === "product_operation_failure") {
       const models = exactProductIdentifiers(plan.customer_turn ?? "");
       const subject = models.length === 1 ? models[0] : null;
@@ -873,7 +890,7 @@ export function renderServicePlanReply(
         ? `你提到${subject ? ` ${subject} ` : "产品"}无法开机。尝试开机时有显示灯或错误提示吗？`
         : `你提到${subject ? ` ${subject} ` : "部機"}開唔到機。試開機時有冇燈號或錯誤提示？`;
     }
-    const responses: Record<Exclude<ServiceIssueKind, "product_operation_failure">, [string, string, string]> = {
+    const responses: Record<Exclude<ServiceIssueKind, "product_operation_failure" | "order_status_lookup">, [string, string, string]> = {
       account_access: [
         "我明白你遇到帳戶登入或重設問題。目前我看不到帳戶或電郵派送狀態；請先檢查垃圾郵件，並提供電郵網域（毋須提供完整地址或密碼），以便核對下一步。",
         "我明白你遇到账户登录或重置问题。目前我看不到账户或邮件发送状态；请先检查垃圾邮件，并提供邮箱域名（无需提供完整地址或密码），以便核对下一步。",
@@ -919,20 +936,16 @@ export function renderServicePlanReply(
       term.charge_basis === "per_order"
     );
     const money = (amount: number) => `${c.currency === "HKD" ? "HK$" : c.currency === "USD" ? "US$" : c.currency} ${formatMoney(amount)}`;
-    const unitExpression = perUnit.length
+    const unitExpression = perUnit.some(term=>term.amount !== 0)
       ? `(${perUnit.map((term) => money(term.amount)).join(" + ")}) × ${c.quantity}`
-      : "0";
-    const orderExpression = perOrder.length
-      ? ` + ${
-        perOrder.map((term) => money(term.amount))
-          .join(" + ")
-      }`
       : "";
-    const expression = `${unitExpression}${orderExpression} = ${money(c.total)}`;
+    const expression = [unitExpression,...perOrder.filter(term=>term.amount !== 0).map(term=>money(term.amount))]
+      .filter(Boolean).join(" + ") || money(0);
+    const equation = `${expression} = ${money(c.total)}`;
     return [
-      `按你提供並已標明收費單位的舊數字：${expression}。這只是歷史條件試算，不是現行正式報價。`,
-      `按你提供并已标明收费单位的旧数字：${expression}。这只是历史条件试算，不是当前正式报价。`,
-      `Using only the historical amounts with an explicit charge basis: ${expression}. This is a conditional historical calculation using your figures only, not a current merchant offer.`,
+      `按你提供並已標明收費單位的舊數字：${equation}。這只是歷史條件試算，不是現行正式報價。`,
+      `按你提供并已标明收费单位的旧数字：${equation}。这只是历史条件试算，不是当前正式报价。`,
+      `Using only the historical amounts with an explicit charge basis: ${equation}. This is a conditional historical calculation using your figures only, not a current merchant offer.`,
     ][l];
   }
   if (plan.action === "shorten_previous_answer") {

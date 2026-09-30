@@ -32,13 +32,13 @@ export function resolveEntityLifecyclePlan(text: string, state: ConversationComm
   // Room-scoped cancellation and service/installation actions keep their
   // existing entity/field resolution contract, never become category lifecycle.
   if (/(?:排水|檢查|检查|送貨|送货|delivery|闊度|宽度|高度|深度|尺寸|width|height|depth)/i.test(normalized)) return { kind: "none" };
-  const clauses = normalized.split(/[，,；;。]|(?=先搞)|(?=先處理)|(?=先处理)/).map((s) => s.trim()).filter(Boolean);
+  const clauses = normalized.split(/[，,；;。]|\.(?=\s|$)|(?=先搞)|(?=先處理)|(?=先处理)/).map((s) => s.trim()).filter(Boolean);
   const lifecycleClauses = clauses.filter((part) => lifecycle.test(part) && !/[?？]/.test(part));
   // A question such as "我要唔要考慮？" contains a negated verb, but does not
   // authorize a lifecycle mutation. Preserve a separate imperative clause if
   // the turn also asks a question.
   if (!lifecycleClauses.length) return { kind: "none" };
-  const focusClauses = clauses.filter((part) => /(?:先搞|先處理|先处理|focus on)/i.test(part) && !lifecycle.test(part));
+  const focusClauses = clauses.filter((part) => /(?:先搞|先處理|先处理|focus on|back to|return to)/i.test(part) && !lifecycle.test(part));
   const focusKeys = [...new Set(focusClauses.flatMap(aliases))];
   if (focusKeys.length > 1) return { kind: "ambiguous" };
   const plans: B2LifecyclePlan[] = [];
