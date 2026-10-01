@@ -26,8 +26,8 @@ function run(command,args,label){
 try{
   const scope=JSON.parse(fs.readFileSync(path.join(root,'.github/scripts/c3_customer_quality_scope.json')));
   check('candidate_head_tree_and_baseline',()=>{
-    assert.equal(scope.baseline_head,'c849ae6c63490c8eff5035a6906d9f20ed8e60c6');
-    assert.equal(scope.baseline_tree,'925e64997507bd8565d6db075296136f1eec165b');
+    assert.equal(scope.baseline_head,'d6e9feae6ee29b8d7c39a23f566fa8d050abddc0');
+    assert.equal(scope.baseline_tree,'27ecac03454a9e914ad1796e6481210003cba158');
     assert.equal(git('rev-parse',scope.baseline_head+'^{tree}'),scope.baseline_tree);
     assert.equal(git('merge-base',scope.baseline_head,'HEAD'),scope.baseline_head);
     assert.equal(git('branch','--show-current'),'director/ai-abc-c3-long-memory-final-cutover');
@@ -51,26 +51,10 @@ try{
     for(const file of ['supabase/functions/_shared/commerce-state-contract.ts','supabase/functions/_shared/commerce-state-reducer.ts','supabase/functions/_shared/deterministic-runtime-router.ts','supabase/functions/receive-widget-message/index.ts','src/integrations/supabase/auth-middleware.ts','supabase/migrations/20260925093000_c3_t11_revision_bound_ai_reply.sql','supabase/migrations/20260928100000_c3_director_handoff_context.sql']){
       const bytes=fs.readFileSync(path.join(root,file));assert.deepEqual(bytes,rawGit('show',scope.baseline_head+':'+file));report.frozen_hashes[file]=sha(bytes);
     }
-    // Director unfreezes only the demonstrated lifecycle call chain.
-    const permitted=new Set(['_shared/b2-journey-progress-contract.ts','_shared/commerce-state-runtime-base.ts','_shared/conversation-long-memory.ts','_shared/pre-send-conversion-supervisor.ts']);
-    for(const file of backendDeploymentRequest(root,'frozen-source-only').files)if(!permitted.has(file.name))assert.equal(file.content,rawGit('show',scope.baseline_head+':supabase/functions/'+file.name).toString('utf8'),file.name);
-    const strip=(text,names)=>{for(const name of names){const at=text.indexOf(name);assert.ok(at>=0,name);const close=text.slice(at).match(/\n}(?=\r?\n|$)/);assert.ok(close,name);const end=at+close.index+2;text=text.slice(0,at)+text.slice(end);}return text;};
-    const runtime='supabase/functions/_shared/commerce-state-runtime-base.ts';
-    assert.equal(strip(fs.readFileSync(path.join(root,runtime),'utf8').replace('retainedRoomSizes, roomSizeCorrection, isCanonicalConversationMemory','retainedRoomSizes, roomSizeCorrection').replace('  renderCanonicalRequirement,\n','').replace('import { resumeCommittedLifecycleReply } from "./revision-bound-reply.ts";\n',''),['function reduceSingleTurn(','function reduceTurnOperations(','export async function runCommerceStateRuntime(']),strip(rawGit('show',scope.baseline_head+':'+runtime).toString('utf8'),['function reduceSingleTurn(','function reduceTurnOperations(','export async function runCommerceStateRuntime(']),'unrelated Commerce runtime changed');
-    const memory='supabase/functions/_shared/conversation-long-memory.ts';
-    const memoryAfter=fs.readFileSync(path.join(root,memory),'utf8').replace('import { isConversationCommerceState, type ConversationCommerceState }','import type { ConversationCommerceState }').replace('verifyEntityLifecycleTransition, resolveEntityLifecyclePlan }','verifyEntityLifecycleTransition }');
-    assert.equal(strip(memoryAfter,['export async function reconcileDeliveredMemoryReply(']),strip(rawGit('show',scope.baseline_head+':'+memory).toString('utf8'),['export async function reconcileDeliveredMemoryReply(']),'Memory architecture/question lifecycle changed');
-    const contract='supabase/functions/_shared/b2-journey-progress-contract.ts';
-    const contractAfter=fs.readFileSync(path.join(root,contract),'utf8').replace('  /** Present when category alone does not identify one canonical entity. */\n  target_entity_id?: string;\n','');
-    assert.equal(strip(contractAfter,['export function resolveEntityLifecyclePlan(','export function verifyEntityLifecycleTransition(']),strip(rawGit('show',scope.baseline_head+':'+contract).toString('utf8'),['export function resolveEntityLifecyclePlan(','export function verifyEntityLifecycleTransition(']),'unrelated B2 contracts changed');
-    for(const frozen of ['supabase/functions/_shared/b2-response-persistence-gate.ts']){
-      if(fs.existsSync(path.join(root,frozen)))assert.equal(fs.readFileSync(path.join(root,frozen),'utf8'),rawGit('show',scope.baseline_head+':'+frozen).toString('utf8'),'B2 must remain byte-identical');
-    }
-    const file='supabase/functions/_shared/pre-send-conversion-supervisor.ts';
-    const before=rawGit('show',scope.baseline_head+':'+file).toString('utf8'),after=fs.readFileSync(path.join(root,file),'utf8');
-    assert.equal(after.replace('  if (inactive.some(e => !p.memory.cancelled_or_superseded.some(f => f.entity_id === e.entity_id && f.value === e.status && f.source_message_id === e.provenance.source_message_id))) return false;\n','').replace('  // A canonical portfolio may consist entirely of deferred/cancelled entities.\n  // Their inactive facts and exact proof bindings are validated below.\n  if (!s.state.entities.length || !active.every((e) =>','  if (!active.length || !active.every((e) =>'),before,'only inactive-portfolio eligibility may change; every B2 binding remains frozen');
-    const section=(text,name)=>{const at=text.indexOf('function '+name+'(');assert.ok(at>=0,name);const end=text.indexOf('\nfunction ',at+1);return text.slice(at,end<0?text.length:end);};
-    for(const name of ['evaluateCurrentKbSellingPrice','evaluateQuoteReality','evaluateTransactionReality','evaluateKnownContext','evaluateCorrections'])assert.equal(section(after,name),section(before,name),name);
+    const verifier='supabase/functions/_shared/pre-send-conversion-supervisor.ts';
+    for(const file of backendDeploymentRequest(root,'frozen-source-only').files)if(file.name!=='_shared/pre-send-conversion-supervisor.ts')assert.equal(file.content,rawGit('show',scope.baseline_head+':supabase/functions/'+file.name).toString('utf8'),file.name);
+    const strip=text=>{const at=text.indexOf('function evaluateCancellation(');assert.ok(at>=0);const close=text.slice(at).match(/\n}(?=\r?\n|$)/);assert.ok(close);return text.slice(0,at)+text.slice(at+close.index+2);};
+    assert.equal(strip(fs.readFileSync(path.join(root,verifier),'utf8')),strip(rawGit('show',scope.baseline_head+':'+verifier).toString('utf8')),'only entity-scoped cancellation verifier may change; all other B2 contracts frozen');
     assert.equal(git('diff','--name-only',scope.baseline_head,'HEAD','--','src','supabase/functions/receive-widget-message','supabase/functions/agent-assist'),'');
   });
   check('rollback_preserves_original_handoff_and_restores_memory_rpc',()=>{
@@ -91,7 +75,7 @@ try{
   const dependencyArgs=fs.existsSync(testConfig)?['--config',testConfig]:[];
   const componentFiles=['customer-quality-state','customer-money-facts','natural-customer-response','conversation-service-runtime','conversation-service-planner','conversation-long-memory','conversation-recall','conversation-recall.integration','conversation-resolution-contract','pre-send-conversion-supervisor','canonical-kb-direct-answer','natural-dialogue-generic-core'].map(name=>'supabase/functions/_shared/'+name+'.test.ts');
   const componentLog=run(deno,['test','--no-lock','--cached-only',...dependencyArgs,'--allow-read','--allow-env',...componentFiles],'component_regressions_only');
-  report.component_count=Number(componentLog.match(/ok \| (\d+) passed \| 0 failed/)?.[1]);assert.ok(report.component_count>=409);
+  report.component_count=Number(componentLog.match(/ok \| (\d+) passed \| 0 failed/)?.[1]);assert.ok(report.component_count>=410);
   run('node',['--test','.github/scripts/c3_backend_deployment_request.test.mjs'],'deployment_request_positive_and_negative_contracts');
   check('runtime_closure_jwt_import_map_and_committed_content',()=>{
     const request=backendDeploymentRequest(root,'local-contract-only');assert.equal(request.verify_jwt,true);assert.equal(request.import_map_path,'');
@@ -115,6 +99,7 @@ try{
     assert.deepEqual(Object.keys(report.runtime.englishRealizationReadback.classes).sort(),['A','B','C','D','E','F','G','H']);
     assert.equal(report.runtime.assertions.shared_english_realization_compositional_grammar,true);
     assert.equal(report.runtime.assertions.deferred_explicit_cancel_lifecycle_full_chain,true);
+    assert.equal(report.runtime.assertions.entity_scoped_negation_aware_cancellation_verifier,true);
     assert.deepEqual(Object.keys(report.runtime.lifecycleReadback.cases).sort(),['A','B','C','D','E','F','G','H','I','J']);
     for(const key of ['customer_recap_natural_no_internal_representation','customer_recap_unseen_bilingual_shared_semantics','customer_recap_read_only_source_company_binding'])assert.equal(report.runtime.assertions[key],true,key);
   });

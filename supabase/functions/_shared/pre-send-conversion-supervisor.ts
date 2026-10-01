@@ -1149,31 +1149,61 @@ function evaluateCorrections(text: string, state: ConversationCommerceState): B2
 }
 
 function evaluateCancellation(text: string, state: ConversationCommerceState): B2Decision | null {
-  const candidate = lower(text);
-  const activeLanguage = RESTORE_OR_ACTIVE.test(text);
-  if (!activeLanguage) return null;
+  if (!RESTORE_OR_ACTIVE.test(text)) return null;
+  const cancelledEntities = state.entities.filter(entity => entity.status === "cancelled");
+  const activeEntities = state.entities.filter(entity => entity.status !== "cancelled" && entity.status !== "deferred");
+  // Evaluate a predicate's own relation, not the Cartesian product of all
+  // activation words and all cancelled names in the response. Exact canonical
+  // identifiers outrank category aliases; ambiguous references fail closed.
+  const clauses = text.split(/([。.!?;；\n,，]|\b(?:and|but)\b|但(?:係|是)?)/i);
+  let inherited: {start:number;end:number;ids:string[]} | undefined;
+  let coordinatedObject=false;
+  for (let clauseIndex=0;clauseIndex<clauses.length;clauseIndex+=2) {
+    const clause=clauses[clauseIndex];
+    if(!clause.trim())continue;
+    if(clauseIndex>0 && /[。.!?;；\n]/.test(clauses[clauseIndex-1])){inherited=undefined;coordinatedObject=false;}
+    const candidate = lower(clause);
+    const mentions: Array<{start:number;end:number;ids:string[]}> = [];
+    for (const entity of state.entities) {
+      const aliases = [...new Set(entityAliases(entity).flatMap(alias => [alias, ...(alias.match(/\b(?=[a-z0-9_-]*[a-z])(?=[a-z0-9_-]*\d)[a-z0-9]+(?:[-_][a-z0-9]+)*\b/gi) ?? [])]))];
+      for (const alias of aliases) {
+        let start = candidate.indexOf(alias);
+        while (start >= 0) {
+          const end = start + alias.length;
+          if (!/^[a-z0-9]/i.test(alias) || !/[a-z0-9]/i.test(candidate[start-1] ?? "") && !/[a-z0-9]/i.test(candidate[end] ?? "")) {
+            const existing=mentions.find(m=>m.start===start && m.end===end);
+            if(existing)existing.ids.push(entity.entity_id);else mentions.push({start,end,ids:[entity.entity_id]});
+          }
+          start = candidate.indexOf(alias,end);
+        }
+      }
+    }
+    const references=mentions.filter(m=>!mentions.some(other=>other.start<=m.start && other.end>=m.end && other.end-other.start>m.end-m.start)).sort((a,b)=>a.start-b.start);
+    if(coordinatedObject && references.length===1 && candidate.slice(0,references[0].start).trim()==="" && candidate.slice(references[0].end).trim()==="") {
+      const cancelled=references[0].ids.filter(id=>cancelledEntities.some(e=>e.entity_id===id));
+      if(cancelled.length)return {decision:references[0].ids.length===1?"block":"indeterminate",code:references[0].ids.length===1?"CANCELLED_ENTITY_RESTORATION":"AMBIGUOUS_CANCELLED_ENTITY_REFERENCE",detail:cancelled.join(",")};
+    }
+    const predicates=[...clause.matchAll(new RegExp(RESTORE_OR_ACTIVE.source,"gi"))];
+    for (const predicate of predicates) {
+      const start=predicate.index!,end=start+predicate[0].length;
+      if (/^[a-z]/i.test(predicate[0]) && /[a-z]/i.test(clause[start-1] ?? "")) continue; // inactive/unconfirmed
+      const overlap=references.find(m=>m.start<end && m.end>start);
+      const before=references.filter(m=>m.end<=start).at(-1),after=references.find(m=>m.start>=end);
+      const objectVerb=/^(?:restore|reinstate|put|add|proceed|continue|keep|include|安排|重新加入|加返|放返|保留|繼續|继续|照舊|照旧|會處理|会处理)/i.test(predicate[0]);
+      const reference=overlap ?? (objectVerb ? after ?? before : before ?? after) ?? inherited;
+      const prefix=clause.slice(Math.max(reference && reference.end<=start ? reference.end : 0,start-40),start);
+      const negated=/(?:\b(?:not|never|no|without)\b(?!\s+only\b)|\b\w+n['’]t\b|唔|未|冇|沒有|没有|不|無|无)[^.;。；]*$/i.test(prefix);
+      const keptInactive=/^(?:keep|include|保留)/i.test(predicate[0]) && reference && reference.start>=end && /(?:\b(?:cancelled|canceled|removed|deferred|paused|excluded)\b|\bnot\s+(?:active|included)|取消|暫緩|暂缓)/i.test(clause.slice(reference.end));
+      if (negated || keptInactive) {coordinatedObject=false;continue;}
+      coordinatedObject=objectVerb;
 
-  const cancelledEntities = state.entities.filter((entity) => entity.status === "cancelled");
-  const activeEntities = state.entities.filter(
-    (entity) => entity.status !== "cancelled" && entity.status !== "deferred",
-  );
-  const mentionedCancelled = cancelledEntities.filter((entity) =>
-    entityAliases(entity).some((alias) => candidate.includes(alias)),
-  );
-  if (mentionedCancelled.length > 0) {
-    return { decision: "block", code: "CANCELLED_ENTITY_RESTORATION" };
-  }
-  const pronoun =
-    /(?:the one|that one|it\b|removed one|cancelled one|嗰個|果個|該項|该项|取消嗰|取消的|移除嗰|移除的)/i.test(
-      text,
-    );
-  if (pronoun && cancelledEntities.length > 0) {
-    return activeEntities.length === 0
-      ? { decision: "block", code: "CANCELLED_ENTITY_INDIRECT_RESTORATION" }
-      : {
-          decision: "indeterminate",
-          code: "AMBIGUOUS_CANCELLED_ENTITY_REFERENCE",
-        };
+      const cancelled=reference?.ids.filter(id=>cancelledEntities.some(e=>e.entity_id===id)) ?? [];
+      if(cancelled.length) return {decision:reference!.ids.length===1?"block":"indeterminate",code:reference!.ids.length===1?"CANCELLED_ENTITY_RESTORATION":"AMBIGUOUS_CANCELLED_ENTITY_REFERENCE",detail:cancelled.join(",")};
+      if (!reference && /(?:the one|that one|\bit\b|removed one|cancelled one|嗰個|果個|該項|该项|取消嗰|取消的|移除嗰|移除的)/i.test(clause) && cancelledEntities.length) {
+        return activeEntities.length===0 ? {decision:"block",code:"CANCELLED_ENTITY_INDIRECT_RESTORATION"} : {decision:"indeterminate",code:"AMBIGUOUS_CANCELLED_ENTITY_REFERENCE"};
+      }
+    }
+    if(references.length)inherited={...references.at(-1)!,start:0,end:0};
   }
 
   const cancelledQuote = state.quotes.some(

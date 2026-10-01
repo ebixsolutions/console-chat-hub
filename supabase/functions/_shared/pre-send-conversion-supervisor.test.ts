@@ -1374,3 +1374,25 @@ Deno.test("COMPONENT: recalled calculation requires the original visitor message
   const verdict=await executeB2PersistenceGate({client:new MockClient({state:createEmptyConversationCommerceState(),revision:9,sourceContent:source}),conversation_id:CONVERSATION_ID,source_message_id:SOURCE_ID,proposed_response:reply,persistence_kind:"ai_reply",trusted_customer_calculation:proof,commit:async()=>{writes++;return "forbidden";}});
   assertEquals(verdict.decision.code,"CUSTOMER_CALCULATION_SOURCE_HISTORY_MISMATCH","mismatched original DB text must fail closed");assertEquals(writes,0,"unbound history reached commit");
 });
+
+Deno.test("COMPONENT: cancellation predicates bind one canonical entity, clause and affirmative polarity", () => {
+  const state=createEmptyConversationCommerceState();
+  state.entities=[['aa','RV-713 add-on','cancelled','addon'],['bb','YK-482 booking','tentative','booking'],['cc','CN-856 add-on','cancelled','addon']].map(([id,name,status,category])=>({entity_id:id,category,status,quantity:3,brand:null,model:null,attributes:{product_name:name},constraints:{},provenance:{source_type:'customer',source_message_id:SOURCE_ID}})) as typeof state.entities;
+  const allow=[
+    'RV-713 is cancelled. YK-482 is not confirmed yet.',
+    'RV-713 remains cancelled. YK-482 still needs staff confirmation.',
+    'YK-482 is active. RV-713 is cancelled.',
+    'RV-713 is not active.', 'RV-713 has not been restored.',
+    'RV-713 is not included.', 'RV-713 has not been reinstated.',
+    'RV-713 has not been added back.', 'Keep RV-713 cancelled.', 'Keep RV-713 not active.',
+    'RV-713 已取消；YK-482 預約仍需職員確認，尚未確認。',
+    'RV-713 is cancelled, and YK-482 remains in the request.',
+    'RV-713 is cancelled; YK-482 is confirmed.',
+    'RV-713 is cancelled and YK-482 is active.',
+    'RV-713 is cancelled; YK-482 is not active.',
+  ];
+  for(const reply of allow){const d=decision(reply,state);assert(d.code!=='CANCELLED_ENTITY_RESTORATION' && d.code!=='AMBIGUOUS_CANCELLED_ENTITY_REFERENCE',JSON.stringify({reply,d}));}
+  const block=['Restore RV-713.','Reinstate RV-713.','Put RV-713 back in the request.','Add RV-713 back.','RV-713 is active again.','Continue with RV-713; YK-482 remains pending.','Keep RV-713 included.','RV-713 remains in the active request.','加返 RV-713。','RV-713 繼續處理。','Do not restore YK-482; restore RV-713.','Restore YK-482 and RV-713.','RV-713 is not active but is active again.'];
+  for(const reply of block){const d=decision(reply,state);assertEquals(d.code,'CANCELLED_ENTITY_RESTORATION',JSON.stringify({reply,d}));assertEquals(d.detail,'aa','predicate bound to wrong entity');}
+  const d=decision('RV-713 remains cancelled. Restore CN-856.',state);assertEquals(d.code,'CANCELLED_ENTITY_RESTORATION','R9');assertEquals(d.detail,'cc','R9 must identify only restored C');
+});
