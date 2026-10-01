@@ -1963,6 +1963,8 @@ function reduceTurnOperations(
   input: CommerceRuntimeInput,
   rawHints: CommerceTurnEntityHint[],
 ): ConversationCommerceState {
+  // Resolve conflicting lifecycle clauses before reducing any one of them.
+  if (resolveEntityLifecyclePlan(input.text, previous).kind === "ambiguous") return previous;
   const segmented = input.text.replace(/\.\s+/g, "。").replace(/,(?=\s*[^\d])/g, "，");
   const clauses = (segmented.match(/[^，；;。!?！？]+[!?！？]?/g) ?? [])
     .map((part) => part.trim()).filter(Boolean);

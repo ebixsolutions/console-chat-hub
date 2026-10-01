@@ -45,7 +45,7 @@ export function resolveEntityLifecyclePlan(text: string, state: ConversationComm
   // authorize a lifecycle mutation. Preserve a separate imperative clause if
   // the turn also asks a question.
   if (!lifecycleClauses.length) return { kind: "none" };
-  if (!named.length && !/兩樣都|两样都|both\b|暫時唔換|暫時不換|暂时不换/i.test(normalized)) return ambiguous();
+  if (!named.length && !/兩樣都|两样都|both\b|暫時唔換|暫時不換|暂时不换/i.test(normalized)) return identifiers(normalized).length || /\b(?:cancel|defer|pause)\b/i.test(normalized) ? ambiguous() : {kind:"none"};
   const focusClauses = clauses.filter((part) => /(?:先搞|先處理|先处理|focus on|back to|return to)/i.test(part) && !lifecycle.test(part));
   const focusKeys = [...new Set(focusClauses.flatMap(aliases))];
   if (focusKeys.length > 1) return ambiguous();
