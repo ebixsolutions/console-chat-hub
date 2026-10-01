@@ -9,6 +9,7 @@
     "supabase/functions/_shared/commerce-state-authority.ts",
     "supabase/functions/_shared/commerce-state-runtime-base.ts",
     "supabase/functions/_shared/contextual-customer-update.test.ts",
+    "supabase/functions/_shared/conversation-long-memory.ts",
     "supabase/functions/_shared/conversation-recall.integration.test.ts",
     "supabase/functions/_shared/conversation-recall.ts",
     "supabase/functions/_shared/pre-send-conversion-supervisor.test.ts",

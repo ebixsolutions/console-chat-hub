@@ -2,6 +2,7 @@ import { resolveConversationRecall, renderConversationRecall } from "./conversat
 import { isConversationCommerceState, type ConversationCommerceState } from "./commerce-state-contract.ts";
 import { classifyHandoffIntent } from "./handoff-intent.ts";
 import { classifySocialTurn } from "./natural-customer-response.ts";
+import { isCurrentRequirementsRecap } from "./commerce-state-authority.ts";
 import { industryEntityLabel } from "./industry-runtime-adapter.ts";
 import { deriveTypedCustomerMoneyFacts } from "./customer-money-facts.ts";
 import { sameCanonicalJson } from "./canonical-json.ts";
@@ -1035,6 +1036,39 @@ export async function reconcileDeliveredMemoryReply(client: LongMemoryDbClient, 
     .eq("conversation_id",args.conversation_id).eq("company_id",reply.metadata.b2_expected_company_id).maybeSingle();
   if(error) return false;
   if(!stored) return true; // Social-only and pure read-only turns have no business memory.
+  // Unknown-scope recap clarification acknowledges unchanged canonical state,
+  // not a new Memory source. Metadata identifies the class; persisted source
+  // and a fresh canonical resolver decision independently prove it.
+  if(reply.metadata.response_route==="canonical_memory_clarification" &&
+    reply.metadata.recall_reason==="ENTITY_REFERENCE_AMBIGUOUS" &&
+    reply.metadata.clarification_target==="specific_product_or_item" &&
+    reply.metadata.service_action==="partial_answer_then_question") {
+    const {data:source,error:sourceError}=await client.from("messages").select("id,conversation_id,role,content")
+      .eq("id",args.source_message_id).eq("conversation_id",args.conversation_id).maybeSingle();
+    const {data:commerce,error:commerceError}=await client.from("conversation_commerce_state").select("conversation_id,company_id,source_message_id,revision,state")
+      .eq("conversation_id",args.conversation_id).eq("company_id",reply.metadata.b2_expected_company_id).maybeSingle();
+    if(sourceError || commerceError || !source || source.id!==args.source_message_id ||
+      source.conversation_id!==args.conversation_id || !CUSTOMER_ROLES.has(String(source.role)) ||
+      !isCurrentRequirementsRecap(String(source.content)) || !commerce || !isConversationCommerceState(commerce.state) ||
+      commerce.conversation_id!==args.conversation_id || commerce.company_id!==reply.metadata.b2_expected_company_id ||
+      !Number.isInteger(Number(commerce.revision)) || Number(commerce.revision)<0 ||
+      reply.metadata.b2_expected_revision!==Number(commerce.revision) || !isCanonicalConversationMemory(stored.memory) ||
+      stored.company_id!==reply.metadata.b2_expected_company_id || stored.conversation_id!==args.conversation_id ||
+      stored.memory.company_id!==stored.company_id || stored.memory.conversation_id!==args.conversation_id ||
+      stored.memory.source_message_id!==stored.source_message_id ||
+      stored.memory.memory_revision!==Number(stored.revision) ||
+      stored.memory.commerce_state_revision!==Number(commerce.revision) ||
+      Number(stored.commerce_state_revision)!==Number(commerce.revision) ||
+      reply.metadata.conversation_memory_revision!==Number(stored.revision)) return false;
+    const decision=resolveConversationRecall({
+      conversation_id:args.conversation_id,company_id:stored.company_id,source_message_id:args.source_message_id,
+      question:String(source.content),memory:stored.memory,
+      commerce:{conversation_id:commerce.conversation_id,company_id:commerce.company_id,
+        source_message_id:commerce.source_message_id,revision:Number(commerce.revision),state:commerce.state},
+    });
+    return !decision.handled && decision.reason==="AMBIGUOUS" &&
+      decision.detail==="ENTITY_REFERENCE_AMBIGUOUS" && decision.requested_facts.includes("summary");
+  }
   // Read-only lifecycle clarification/repetition intentionally keeps the last
   // canonical Memory source. Revalidate the actual customer command and current
   // scoped Commerce/Memory revisions before acknowledging its delivered reply.

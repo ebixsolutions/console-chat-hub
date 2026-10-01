@@ -31,7 +31,7 @@ import {
 } from "./commerce-state-authority.ts";
 import type { CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 import { planConversationService, renderTargetedServiceQuestion } from "./conversation-service-planner.ts";
-import { buildCanonicalConversationMemory } from "./conversation-long-memory.ts";
+import { buildCanonicalConversationMemory, reconcileDeliveredMemoryReply } from "./conversation-long-memory.ts";
 import { resolveCanonicalCommerceResolution } from "./conversation-resolution-contract.ts";
 
 function assert(v: unknown, m = "assertion failed"): asserts v {
@@ -2841,4 +2841,70 @@ Deno.test("explicit_recap_intent_is_independent_of_entity_scope", async () => {
   const stale = structuredClone(input); stale.memory!.commerce_state_revision = input.commerce!.revision - 1;
   const rejected = prepareConversationRecall({ ...stale, question: "Recap ZX-731." }, "en");
   assert(!rejected.decision.handled && rejected.decision.detail === "MEMORY_SCOPE_OR_SOURCE_MISMATCH", JSON.stringify(rejected));
+});
+
+Deno.test("H-R6 read-only unknown-scope reconciliation revalidates positive replay and N1-N12", async () => {
+  const input = recallFixture("Recap LM-902.");
+  const commerce = { ...input.commerce!, source_message_id: "prior-semantic-source" };
+  commerce.state.entities[0].model = "ZX-731";
+  const memory = buildCanonicalConversationMemory({ conversation_id: input.conversation_id,
+    company_id: input.company_id, source_message_id: commerce.source_message_id,
+    commerce_state_revision: commerce.revision, commerce_state: commerce.state,
+    newest_first: [], visitor_turn_count: 1, source_created_at: "2026-10-01T00:00:00Z", next_memory_revision: 1 });
+  const baseline = {
+    source: { id: input.source_message_id, conversation_id: input.conversation_id, role: "visitor", content: input.question },
+    reply: { id: "delivered-reply", role: "assistant", content: "Which product or item do you mean?", metadata: {
+      source_message_id: input.source_message_id, control_commit: "ai", b2_gate_contract: "executeB2PersistenceGate:allow_after_revalidation",
+      b2_expected_company_id: input.company_id, b2_expected_revision: commerce.revision, conversation_memory_revision: memory.memory_revision,
+      response_route: "canonical_memory_clarification", recall_reason: "ENTITY_REFERENCE_AMBIGUOUS",
+      clarification_target: "specific_product_or_item", service_action: "partial_answer_then_question",
+    } },
+    stored: { company_id: input.company_id, conversation_id: input.conversation_id, source_message_id: commerce.source_message_id,
+      revision: memory.memory_revision, commerce_state_revision: commerce.revision, memory },
+    commerce,
+  };
+  const decision = resolveConversationRecall({ ...input, memory, commerce });
+  assert(!decision.handled && decision.reason === "AMBIGUOUS" && decision.detail === "ENTITY_REFERENCE_AMBIGUOUS" && decision.requested_facts.includes("summary"), JSON.stringify(decision));
+  async function check(rows: typeof baseline, expected: boolean, label: string) {
+    let rpcCalls = 0;
+    const before = JSON.stringify(rows);
+    const client = {
+      from: (table: string) => {
+        const filters: Record<string, unknown> = {};
+        const query = { select: (_columns: string) => query, eq: (key: string, value: unknown) => { filters[key] = value; return query; },
+          maybeSingle: async () => ({ data: table === "messages" ? filters.id === rows.reply.id ? rows.reply : rows.source
+            : table === "conversation_memory_state" ? rows.stored : rows.commerce, error: null }) };
+        return query;
+      },
+      rpc: async () => { rpcCalls++; return { data: null, error: null }; },
+    };
+    const reconciled = await reconcileDeliveredMemoryReply(client, { conversation_id: input.conversation_id,
+      source_message_id: input.source_message_id, reply_message_id: rows.reply.id });
+    assert(reconciled === expected, label + ": " + reconciled);
+    assert(rpcCalls === 0 && JSON.stringify(rows) === before, label + ": reconciliation mutated canonical state");
+    console.log(label + "|" + (expected ? "ACK_READ_ONLY" : "FAIL_CLOSED") + "|RPC=0");
+  }
+  await check(structuredClone(baseline), true, "H-R6-positive");
+  await check(structuredClone(baseline), true, "H-R6-replay");
+  const negatives: Array<[string, (rows: typeof baseline) => void]> = [
+    ["N1", r => { r.reply.metadata.response_route = "other"; }],
+    ["N2", r => { r.reply.metadata.recall_reason = "MEMORY_UNAVAILABLE"; }],
+    ["N3", r => { r.reply.metadata.clarification_target = "other"; }],
+    ["N4", r => { r.reply.metadata.b2_expected_revision++; }],
+    ["N5", r => { r.reply.metadata.conversation_memory_revision++; }],
+    ["N6", r => { r.stored.memory.company_id = "other-company"; }],
+    ["N7", r => { r.stored.memory.conversation_id = "other-conversation"; }],
+    ["N8", r => { (r.stored.memory as { version: string }).version = "invalid"; }],
+    ["N9", r => { r.source.content = "Recap ZX-731."; }],
+    ["N10", r => { r.source.content = "How many AC units do I currently have?"; }],
+    ["N11", r => { r.source.content = "Cancel LM-902 and recap it."; }],
+    ["N12", r => { r.source.content = "Recap LM-902 current price."; }],
+    ["N12-warranty", r => { r.source.content = "Summarize LM-902 warranty."; }],
+    ["B2-binding", r => { r.reply.metadata.b2_gate_contract = "unproven"; }],
+    ["source-conversation", r => { r.source.conversation_id = "other-conversation"; }],
+    ["source-role", r => { r.source.role = "assistant"; }],
+    ["commerce-company", r => { r.commerce.company_id = "other-company"; }],
+    ["memory-source-integrity", r => { r.stored.memory.source_message_id = "other-source"; }],
+  ];
+  for (const [label, mutate] of negatives) { const rows = structuredClone(baseline); mutate(rows); await check(rows, false, label); }
 });

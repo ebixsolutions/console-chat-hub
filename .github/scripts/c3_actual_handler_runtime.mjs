@@ -17,6 +17,7 @@ assert.equal(JSON.parse(fs.readFileSync(path.join(tools,"node_modules/@electric-
 assert.equal(JSON.parse(fs.readFileSync(path.join(tools,"node_modules/deno/package.json"),"utf8")).version,"2.9.6");
 const db = new PGlite();
 const faults = [];
+const rpcCalls = [];
 let failNextReplyCommit=false;
 const expectedCommitFailures=[];
 let child;
@@ -91,6 +92,7 @@ try {
       let result;
       if (route.startsWith("rpc/")) {
         const fn = route.slice(4);
+        rpcCalls.push(fn);
         if(fn==='commit_ai_reply_tx' && failNextReplyCommit){failNextReplyCommit=false;res.writeHead(503,{'content-type':'application/json'});res.end(JSON.stringify({code:'C3_TEST_TRANSPORT_FAILURE',message:'one isolated reply-commit transport failure'}));return;}
         const args = Object.entries(body).map(([key, value]) => `${qid(key)} := ${bind(typeof value === "object" && value !== null ? JSON.stringify(value) : value)}`);
         const query = `SELECT * FROM public.${qid(fn)}(${args.join(",")})`;
@@ -172,6 +174,7 @@ try {
       const memoryBefore=(await db.query("SELECT revision,memory FROM conversation_memory_state WHERE conversation_id=$1",[id])).rows;
       const eventCounts=async()=> (await db.query("SELECT (SELECT count(*) FROM conversation_commerce_state_event WHERE conversation_id=$1)::int AS commerce,(SELECT count(*) FROM conversation_memory_state_event WHERE conversation_id=$1)::int AS memory",[id])).rows[0];
       const eventCountsBefore=await eventCounts();
+      const rpcBefore=rpcCalls.length;
       const before=(await db.query("SELECT count(*)::int AS n FROM messages WHERE conversation_id=$1 AND role='assistant'",[id])).rows[0].n;
       if(options.failCancelCommit && /^Cancel\b/i.test(content))failNextReplyCommit=true;
       let response=await fetch(`http://127.0.0.1:${port}`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({conversation_id:id,source_message_id:source})});
@@ -204,6 +207,17 @@ try {
         lifecycleReplay={status:duplicate.status,outcome:replayOutcome,before:beforeReplay,after:afterReplay};
       }
       let replay=null;
+      let unknownScopeReplay=null;
+      if(options.replayUnknownScope && rows.at(-1)?.metadata.recall_reason==='ENTITY_REFERENCE_AMBIGUOUS') {
+        const snapshot=async()=>({commerce:(await db.query("SELECT * FROM conversation_commerce_state WHERE conversation_id=$1",[id])).rows,memory:(await db.query("SELECT * FROM conversation_memory_state WHERE conversation_id=$1",[id])).rows,commerceEvents:(await db.query("SELECT * FROM conversation_commerce_state_event WHERE conversation_id=$1 ORDER BY applied_revision",[id])).rows,memoryEvents:(await db.query("SELECT * FROM conversation_memory_state_event WHERE conversation_id=$1 ORDER BY applied_revision",[id])).rows,replies:(await db.query("SELECT * FROM messages WHERE conversation_id=$1 AND role='assistant' ORDER BY created_at,id",[id])).rows});
+        const beforeReplay=await snapshot(),rpcReplayBefore=rpcCalls.length;
+        const duplicate=await fetch(`http://127.0.0.1:${port}`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({conversation_id:id,source_message_id:source})});
+        const replayOutcome=await duplicate.json(),afterReplay=await snapshot();
+        assert.equal(duplicate.status,200,JSON.stringify(replayOutcome));assert.equal(replayOutcome.success,true);assert.equal(replayOutcome.idempotent,true);
+        assert.deepEqual(afterReplay,beforeReplay,'unknown-scope replay changed canonical rows/events/replies');
+        assert.ok(!rpcCalls.slice(rpcReplayBefore).some(fn=>fn==='c3_commit_conversation_memory_tx'||fn==='upsert_conversation_commerce_state_v1'));
+        unknownScopeReplay={status:duplicate.status,outcome:replayOutcome,before:beforeReplay,after:afterReplay,rpcCalls:rpcCalls.slice(rpcReplayBefore)};
+      }
       if(outcome.handoff_persisted === true) {
         const counts=async()=> (await db.query("SELECT (SELECT count(*) FROM handoff_event WHERE conversation_id=$1)::int AS handoffs,(SELECT count(*) FROM messages WHERE conversation_id=$1 AND role='assistant')::int AS assistants",[id])).rows[0];
         const beforeReplay=await counts();
@@ -212,7 +226,7 @@ try {
         replay={status:duplicate.status,outcome:await duplicate.json(),before:beforeReplay,after:afterReplay};
       }
       const memoryEvents=(await db.query("SELECT source_message_id,applied_revision,commerce_state_revision,memory_hash FROM conversation_memory_state_event WHERE conversation_id=$1 ORDER BY applied_revision",[id])).rows;
-      outputs.push({source,customer:content,status:response.status,outcome,replies:rows.slice(before),semanticBefore,memoryBefore,semanticAfter,memoryAfter,memoryEvents,eventCountsBefore,eventCountsAfter:await eventCounts(),replay,lifecycleReplay});
+      outputs.push({source,customer:content,status:response.status,outcome,replies:rows.slice(before),semanticBefore,memoryBefore,semanticAfter,memoryAfter,memoryEvents,eventCountsBefore,eventCountsAfter:await eventCounts(),rpcCalls:rpcCalls.slice(rpcBefore),replay,lifecycleReplay,unknownScopeReplay});
       if(outcome.response_route === "canonical_kb_direct_answer" && /policy/i.test(content)) {
         sameTurnPolicy(outputs.at(-1));
         const stored=(await db.query("SELECT * FROM conversation_memory_state WHERE conversation_id=$1",[id])).rows[0];
@@ -517,6 +531,21 @@ try {
   assert.equal(explicitTurn.replies[0].metadata.terminal_failure_recovery,undefined);
   assert.equal(explicitTurn.semanticAfter[0].state.conversion.order_status,"none");
   assert.equal(explicitTurn.semanticAfter[0].state.conversion.payment_status,"none");
+  const unknownScope=await conversation(["I need PM-638 booking for 8 sessions on 2027-06-17.","Recap LM-902."],{replayUnknownScope:true});
+  const unknownTurn=unknownScope.outputs[1],unknownReply=unknownTurn.replies[0];
+  assert.equal(unknownTurn.status,200);assert.equal(unknownTurn.outcome.success,true);assert.equal(unknownTurn.replies.length,1);
+  assert.equal(unknownTurn.outcome.response_route,'canonical_memory_clarification');
+  assert.equal(unknownReply.metadata.recall_reason,'ENTITY_REFERENCE_AMBIGUOUS');
+  assert.equal(unknownReply.metadata.clarification_target,'specific_product_or_item');
+  assert.equal(unknownReply.metadata.b2_gate_contract,'executeB2PersistenceGate:allow_after_revalidation');
+  assert.equal(unknownReply.metadata.source_message_id,unknownTurn.source);
+  assert.equal(unknownReply.metadata.recap_read_only,undefined);assert.equal(unknownReply.metadata.recall_authority,null);assert.equal(unknownReply.metadata.recall_fact_type,null);
+  assert.equal(unknownReply.metadata.terminal_failure_recovery,undefined);
+  assert.deepEqual(unknownTurn.semanticAfter,unknownTurn.semanticBefore);assert.deepEqual(unknownTurn.memoryAfter,unknownTurn.memoryBefore);
+  assert.deepEqual(unknownTurn.eventCountsAfter,unknownTurn.eventCountsBefore);
+  assert.equal(unknownTurn.memoryAfter[0].memory.source_message_id,unknownScope.outputs[0].source);
+  assert.ok(!unknownTurn.rpcCalls.some(fn=>fn==='c3_commit_conversation_memory_tx'||fn==='upsert_conversation_commerce_state_v1'));
+  assert.equal(unknownTurn.unknownScopeReplay.outcome.idempotent,true);
   const bookingState=englishBooking.outputs[4].semanticAfter[0].state;
   assert.equal(bookingState.entities.find(e=>e.category==='booking').attributes.requested_date,'2027-02-21');
   assert.equal(bookingState.entities.find(e=>e.category==='booking').quantity,9);
@@ -655,7 +684,7 @@ try {
   await db.exec(read("supabase/migrations/rollback/20260930090000_c3_handoff_grounded_facts.rollback.sql"));
   assert.deepEqual(await catalog(),acceptedHandoff,"rollback changed the accepted function/security identity");
   assert.deepEqual(await triggers(),acceptedTriggers);assert.deepEqual(await ledger(),acceptedLedger);
-  fs.writeFileSync(process.env.C3_TEST_RESULT ?? "/tmp/c3-actual-handler-result.json",JSON.stringify({coverage:"actual_handler_local_sql_integration",limitations:["local transport adapter, not hosted PostgREST/Widget","pgcrypto digest backed by PostgreSQL built-in sha256","synthetic tenant, no production traffic"],results,faults,lifecycleReadback,b2CancellationReadback,recapReadback,englishRealizationReadback,summaryReadback,handoffSemanticReadback,forwardCatalog,rollbackCatalog:await catalog(),triggerBindings:await triggers(),migrationLedger:await ledger(),assertions:{explicit_scoped_recap_actual_handler_read_only:true,entity_scoped_negation_aware_cancellation_verifier:true,deferred_explicit_cancel_lifecycle_full_chain:true,shared_english_realization_compositional_grammar:true,customer_recap_natural_no_internal_representation:true,customer_recap_unseen_bilingual_shared_semantics:true,customer_recap_read_only_source_company_binding:true,handoff_request_not_business_goal:true,handoff_request_not_active_constraint:true,handoff_request_not_current_topic_without_business_goal:true,business_goal_preserved_across_r1:true,actionable_pending_drives_human_next_action:true,generic_next_action_only_when_no_actionable_pending:true,generic_state_acknowledgement_not_meta:true,no_false_customer_goal_missing:true,same_turn_question_resolution:true,no_cross_domain_recap_language:true,handoff_summary_structured_parity:true,immediate_post_KB_R1_has_no_stale_question:true,memory_finalisation_business_mutation_rejected:true,memory_finalisation_reply_binding_rejected:true,memory_finalisation_replay_idempotent:true,memory_resolved_question_resurrection_rejected:true,social_state_hygiene:true,question_lifecycle:true,typed_money_persistence_and_recall:true,generic_saas:true,generic_booking:true,real_r1_sql_package_and_suppression:true,r1_replay_idempotent:true,b2_source_binding:true,no_duplicate_reply:true,no_thinking:true,no_terminal_failure:true,no_transaction_promotion:true,migration_forward:true,migration_rollback:true,catalog_owner_security_search_path_acl:true,commit_ai_reply_tx_unchanged:true,trigger_binding_preserved:true,migration_ledger_preserved:true}},null,2));
+  fs.writeFileSync(process.env.C3_TEST_RESULT ?? "/tmp/c3-actual-handler-result.json",JSON.stringify({coverage:"actual_handler_local_sql_integration",limitations:["local transport adapter, not hosted PostgREST/Widget","pgcrypto digest backed by PostgreSQL built-in sha256","synthetic tenant, no production traffic"],results,faults,lifecycleReadback,b2CancellationReadback,recapReadback,englishRealizationReadback,summaryReadback,handoffSemanticReadback,forwardCatalog,rollbackCatalog:await catalog(),triggerBindings:await triggers(),migrationLedger:await ledger(),assertions:{read_only_unknown_scope_clarification_reconciles_without_memory_mutation:true,explicit_scoped_recap_actual_handler_read_only:true,entity_scoped_negation_aware_cancellation_verifier:true,deferred_explicit_cancel_lifecycle_full_chain:true,shared_english_realization_compositional_grammar:true,customer_recap_natural_no_internal_representation:true,customer_recap_unseen_bilingual_shared_semantics:true,customer_recap_read_only_source_company_binding:true,handoff_request_not_business_goal:true,handoff_request_not_active_constraint:true,handoff_request_not_current_topic_without_business_goal:true,business_goal_preserved_across_r1:true,actionable_pending_drives_human_next_action:true,generic_next_action_only_when_no_actionable_pending:true,generic_state_acknowledgement_not_meta:true,no_false_customer_goal_missing:true,same_turn_question_resolution:true,no_cross_domain_recap_language:true,handoff_summary_structured_parity:true,immediate_post_KB_R1_has_no_stale_question:true,memory_finalisation_business_mutation_rejected:true,memory_finalisation_reply_binding_rejected:true,memory_finalisation_replay_idempotent:true,memory_resolved_question_resurrection_rejected:true,social_state_hygiene:true,question_lifecycle:true,typed_money_persistence_and_recall:true,generic_saas:true,generic_booking:true,real_r1_sql_package_and_suppression:true,r1_replay_idempotent:true,b2_source_binding:true,no_duplicate_reply:true,no_thinking:true,no_terminal_failure:true,no_transaction_promotion:true,migration_forward:true,migration_rollback:true,catalog_owner_security_search_path_acl:true,commit_ai_reply_tx_unchanged:true,trigger_binding_preserved:true,migration_ledger_preserved:true}},null,2));
   console.log(`actual_handler_local_sql_integration PASS: ${results.length} conversations; first R1 real SQL event/source binding/package; next-turn suppression`);
 } catch(error) { console.error(error.stack,JSON.stringify(faults));process.exitCode=1; }
 finally { child?.kill(); if(server) await new Promise((resolve)=>server.close(resolve));await db.close(); }

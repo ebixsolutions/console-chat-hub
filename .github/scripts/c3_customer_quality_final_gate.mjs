@@ -52,7 +52,12 @@ try{
       const bytes=fs.readFileSync(path.join(root,file));assert.deepEqual(bytes,rawGit('show',scope.baseline_head+':'+file));report.frozen_hashes[file]=sha(bytes);
     }
     const verifier='supabase/functions/_shared/pre-send-conversion-supervisor.ts';
-    for(const file of backendDeploymentRequest(root,'frozen-source-only').files)if(!['_shared/conversation-recall.ts','_shared/commerce-state-runtime-base.ts','_shared/commerce-state-authority.ts'].includes(file.name))assert.equal(file.content,rawGit('show','cb9e9d1f817f72a5ab0ab6574d0a28c4bc1b12df:supabase/functions/'+file.name).toString('utf8'),file.name);
+    for(const file of backendDeploymentRequest(root,'frozen-source-only').files)if(!['_shared/conversation-recall.ts','_shared/commerce-state-runtime-base.ts','_shared/commerce-state-authority.ts','_shared/conversation-long-memory.ts'].includes(file.name))assert.equal(file.content,rawGit('show','cb9e9d1f817f72a5ab0ab6574d0a28c4bc1b12df:supabase/functions/'+file.name).toString('utf8'),file.name);
+    const memoryFile='supabase/functions/_shared/conversation-long-memory.ts';
+    const withoutUnknownScopeBranch=fs.readFileSync(path.join(root,memoryFile),'utf8')
+      .replace('import { isCurrentRequirementsRecap } from "./commerce-state-authority.ts";\n','')
+      .replace(/  \/\/ Unknown-scope recap clarification[\s\S]*?(?=  \/\/ Read-only lifecycle clarification)/,'');
+    assert.equal(withoutUnknownScopeBranch,rawGit('show','2ae1bdb7f2e0ce4f01fb80aaf211d7d4ca0c7c8a:'+memoryFile).toString('utf8'),'generic source guard and all existing reconciliation paths remain byte-identical');
     const strip=text=>{const at=text.indexOf('function evaluateCancellation(');assert.ok(at>=0);const close=text.slice(at).match(/\n}(?=\r?\n|$)/);assert.ok(close);return text.slice(0,at)+text.slice(at+close.index+2);};
     assert.equal(strip(fs.readFileSync(path.join(root,verifier),'utf8')),strip(rawGit('show',scope.baseline_head+':'+verifier).toString('utf8')),'only entity-scoped cancellation verifier may change; all other B2 contracts frozen');
     assert.equal(git('diff','--name-only',scope.baseline_head,'HEAD','--','src','supabase/functions/receive-widget-message','supabase/functions/agent-assist'),'');
@@ -104,6 +109,10 @@ try{
     for(const key of ['customer_recap_natural_no_internal_representation','customer_recap_unseen_bilingual_shared_semantics','customer_recap_read_only_source_company_binding'])assert.equal(report.runtime.assertions[key],true,key);
   });
   check('entity_scoped_vs_global_recap_partition',()=>{assert.ok(componentLog.includes('entity-scoped_vs_global_recap_partition') && componentLog.includes('ok |'));});
+  check('read_only_unknown_scope_clarification_reconciles_without_memory_mutation',()=>{
+    assert.equal(report.runtime.assertions.read_only_unknown_scope_clarification_reconciles_without_memory_mutation,true);
+    assert.ok(componentLog.includes('H-R6-positive|ACK_READ_ONLY|RPC=0') && componentLog.includes('N12|FAIL_CLOSED|RPC=0'));
+  });
   run(deno,['check','--no-lock','--cached-only',...dependencyArgs,'supabase/functions/generate-reply/index.ts'],'deno_check');
   run(path.join(root,'node_modules/.bin/tsc'),['--noEmit'],'repository_typescript');
   const route='src/routeTree.gen.ts',routeBytes=fs.readFileSync(path.join(root,route));
