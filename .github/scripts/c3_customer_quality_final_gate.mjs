@@ -54,7 +54,7 @@ try{
     // Director unfreezes only the demonstrated lifecycle call chain.
     const permitted=new Set(['_shared/b2-journey-progress-contract.ts','_shared/commerce-state-runtime-base.ts','_shared/conversation-long-memory.ts','_shared/pre-send-conversion-supervisor.ts']);
     for(const file of backendDeploymentRequest(root,'frozen-source-only').files)if(!permitted.has(file.name))assert.equal(file.content,rawGit('show',scope.baseline_head+':supabase/functions/'+file.name).toString('utf8'),file.name);
-    const strip=(text,names)=>{for(const name of names){const at=text.indexOf(name);assert.ok(at>=0,name);const end=text.indexOf('\n}',at)+2;assert.ok(end>at,name);text=text.slice(0,at)+text.slice(end);}return text;};
+    const strip=(text,names)=>{for(const name of names){const at=text.indexOf(name);assert.ok(at>=0,name);const close=text.slice(at).match(/\n}(?=\r?\n|$)/);assert.ok(close,name);const end=at+close.index+2;text=text.slice(0,at)+text.slice(end);}return text;};
     const runtime='supabase/functions/_shared/commerce-state-runtime-base.ts';
     assert.equal(strip(fs.readFileSync(path.join(root,runtime),'utf8').replace('retainedRoomSizes, roomSizeCorrection, isCanonicalConversationMemory','retainedRoomSizes, roomSizeCorrection').replace('  renderCanonicalRequirement,\n','').replace('import { resumeCommittedLifecycleReply } from "./revision-bound-reply.ts";\n',''),['function reduceSingleTurn(','export async function runCommerceStateRuntime(']),strip(rawGit('show',scope.baseline_head+':'+runtime).toString('utf8'),['function reduceSingleTurn(','export async function runCommerceStateRuntime(']),'unrelated Commerce runtime changed');
     const memory='supabase/functions/_shared/conversation-long-memory.ts';
