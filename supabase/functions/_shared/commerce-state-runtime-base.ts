@@ -21,7 +21,7 @@ import {
   createEmptyConversationCommerceState,
   isConversationCommerceState,
 } from "./commerce-state-contract.ts";
-import { retainedRoomSizes, roomSizeCorrection } from "./conversation-long-memory.ts";
+import { retainedRoomSizes, roomSizeCorrection, isCanonicalConversationMemory } from "./conversation-long-memory.ts";
 import { exactProductIdentifiers } from "./natural-customer-response.ts";
 import {
   type CommerceStateEvent,
@@ -46,7 +46,9 @@ import {
   buildCapabilityAwarePreorderNextStep,
   buildGenericCommerceEntityHints,
   genericEntityLabelFromId,
+  renderCanonicalRequirement,
 } from "./commerce-capability-runtime.ts";
+import { resumeCommittedLifecycleReply } from "./revision-bound-reply.ts";
 import type { CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 import {
   mergeCommerceEntityHints,
@@ -1820,8 +1822,8 @@ function reduceSingleTurn(
   if (lifecycle.kind === "mutation") {
     const events: CommerceStateEvent[] = lifecycle.plans.map((plan) => ({
       type: "SET_ENTITY_STATUS",
-      entity_id: previous.entities.find((entity) => entity.category === plan.target_category &&
-        entity.status !== "cancelled" && entity.status !== "deferred")!.entity_id,
+      entity_id: previous.entities.find((entity) => (plan.target_entity_id ? entity.entity_id===plan.target_entity_id : entity.category===plan.target_category) &&
+        (plan.action === "cancelled" || entity.status !== "cancelled"))!.entity_id,
       status: plan.action,
       provenance: { source_type: "customer", source_message_id: input.source_message_id, recorded_at: input.occurred_at ?? null },
     }));
@@ -2731,12 +2733,30 @@ export async function runCommerceStateRuntime(
   }
 
 
-  if (resolveEntityLifecyclePlan(text, contextualBefore.state).kind === "ambiguous") {
+  const lifecycleIntent = resolveEntityLifecyclePlan(text, contextualBefore.state);
+  if (lifecycleIntent.kind === "ambiguous") {
+    const cancel=lifecycleIntent.action === "cancelled";
     return { authority: "CONVERSATION_STATE", reply: language === "en"
-      ? "Which product should I pause? Please name the product category."
-      : "想暫緩邊一類產品？請講明係冷氣定雪櫃。",
+      ? (cancel ? "Which product should I cancel? Please name the product." : "Which product should I pause? Please name the product category.")
+      : (cancel ? "想取消邊項產品？請講明產品名稱。" : "想暫緩邊項產品？請講明產品名稱。"),
       revision: contextualBefore.revision, persist_result: "read_only",
       reason: "ambiguous_lifecycle_target", route: "commerce_state_answer" };
+  }
+  // Repeating the same final lifecycle instruction is a source-bound read-only
+  // acknowledgement. Preserve the original mutation provenance and revisions.
+  if (lifecycleIntent.kind === "mutation" && lifecycleIntent.plans.every(plan=>
+    contextualBefore.state.entities.some(entity=>(plan.target_entity_id?entity.entity_id===plan.target_entity_id:entity.category===plan.target_category) && entity.status===plan.action)) && !lifecycleIntent.plans.some(plan=>plan.focus_category && plan.focus_category!==contextualBefore.state.current_topic)) {
+    // Preserve the existing exact-source durable reply receipt on replay. A
+    // later customer turn remains a read-only lifecycle acknowledgement.
+    const {data:stored,error:memoryError}=await db.from("conversation_memory_state").select("company_id,memory").eq("conversation_id",input.conversation_id).maybeSingle();
+    const {data:commerce,error:commerceError}=await db.from("conversation_commerce_state").select("company_id,source_message_id,revision,state").eq("conversation_id",input.conversation_id).maybeSingle();
+    if(!memoryError && !commerceError && isRecord(stored) && stored.company_id===input.company_id && isCanonicalConversationMemory(stored.memory) && isRecord(commerce) && typeof commerce.company_id==="string" && isConversationCommerceState(commerce.state)) {
+      const receipt=resumeCommittedLifecycleReply({conversation_id:input.conversation_id,company_id:input.company_id,source_message_id:input.source_message_id,memory:stored.memory,commerce:{company_id:commerce.company_id,source_message_id:typeof commerce.source_message_id==="string"?commerce.source_message_id:null,revision:Number(commerce.revision),state:commerce.state}});
+      if(receipt)return {authority:"CONVERSATION_STATE",reply:receipt.reply,revision:receipt.committed_revision,persist_result:"success",reason:"authoritative_scoped_lifecycle_applied",route:"commerce_state_answer",trusted_lifecycle_commit:receipt};
+    }
+    const names=lifecycleIntent.plans.map(plan=>contextualBefore.state.entities.find(entity=>plan.target_entity_id?entity.entity_id===plan.target_entity_id:entity.category===plan.target_category)!).map(entity=>typeof entity.attributes.product_name === "string" ? entity.attributes.product_name : entity.model ?? entity.category.replace(/_/g," "));
+    const cancelled=lifecycleIntent.plans.every(plan=>plan.action==="cancelled");
+    return {authority:"CONVERSATION_STATE",reply:language==="en"?names.join("; ")+(cancelled?" has already been cancelled.":" remains paused."):names.join("、")+(cancelled?"已取消。":"仍然暫緩。"),revision:contextualBefore.revision,persist_result:"read_only",reason:"read_only_lifecycle_already_applied",route:"commerce_state_answer"};
   }
   const contextualDecision = resolveContextualTurn(input, contextualBefore.state);
   const customerJourney = resolveCustomerJourneyTurn(input, contextualBefore.state);
@@ -2895,7 +2915,8 @@ export async function runCommerceStateRuntime(
   if (lifecycleVerified.valid) {
     const focus = lifecycleVerified.plans[0].focus_category;
     const target = lifecycleVerified.plans.map((plan) => plan.target_category === "refrigerator" ? "雪櫃" : plan.target_category === "air_conditioner" ? "冷氣" : plan.target_category).join("同");
-    const reply = lifecycleVerified.plans[0].action === "cancelled"
+    const genericEnglish = language === "en" && lifecycleVerified.targetIds.every(id=>state.entities.find(e=>e.entity_id===id)?.entity_id.startsWith("generic:"));
+    const reply = genericEnglish ? lifecycleVerified.targetIds.map(id=>renderCanonicalRequirement(state.entities.find(e=>e.entity_id===id)!,language)).join("; ")+"." : lifecycleVerified.plans[0].action === "cancelled"
       ? (language === "en" ? `${target} is cancelled.` : `${target}已取消。`)
       : language === "en"
       ? `Okay, ${target} is ${lifecycleVerified.plans[0].action === "deferred" ? "paused" : "cancelled"}. ${focus ? `We can continue with ${focus}; its requirements remain in place.` : "The other product requirements remain in place."}`

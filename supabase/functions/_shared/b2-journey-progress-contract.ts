@@ -7,13 +7,21 @@ import { HOME_APPLIANCE_CATEGORIES } from "./industry-profiles/home-appliance-v1
 export interface B2LifecyclePlan {
   action: "deferred" | "cancelled";
   target_category: string;
+  /** Present when category alone does not identify one canonical entity. */
+  target_entity_id?: string;
   focus_category: string | null;
 }
 
 /** Lifecycle and focus are separate clauses. An unbound lifecycle verb is never inferred from history. */
 export function resolveEntityLifecyclePlan(text: string, state: ConversationCommerceState):
-  { kind: "mutation"; plans: B2LifecyclePlan[] } | { kind: "ambiguous" } | { kind: "none" } {
+  { kind: "mutation"; plans: B2LifecyclePlan[] } | { kind: "ambiguous"; action: "deferred" | "cancelled" } | { kind: "none" } {
   const normalized = text.trim().toLowerCase();
+  const operation = (part: string): "deferred" | "cancelled" => /取消|唔要|不要|cancel\b/i.test(part) && !/暫時唔|暫時不|暂时不/i.test(part) ? "cancelled" : "deferred";
+  const ambiguous = () => ({kind:"ambiguous" as const,action:operation(normalized)});
+  const identityValues = (entity: ConversationCommerceState["entities"][number]) => [entity.model,entity.attributes.product_name,entity.attributes.sku].filter((v):v is string=>typeof v==="string" && v.trim().length>=2).map(v=>v.trim().toLowerCase());
+  // Identifier tokens are data references, not a catalogue of customer phrases.
+  const identifiers = (part: string): string[] => part.match(/\b(?=[a-z0-9_-]*[a-z])(?=[a-z0-9_-]*\d)[a-z0-9]+(?:[-_][a-z0-9]+)*\b/gi) ?? [];
+
   const aliases = (part: string) => [...new Set([
     ...HOME_APPLIANCE_CATEGORIES.filter((spec) =>
       spec.aliases.some((alias) => alias.trim().length >= 2 && part.includes(alias.toLowerCase()))
@@ -21,14 +29,13 @@ export function resolveEntityLifecyclePlan(text: string, state: ConversationComm
     ...state.entities.filter((entity) =>
       [entity.category, entity.model, entity.attributes.product_name]
         .some((value) => typeof value === "string" && value.trim().length >= 2 &&
-          part.includes(value.trim().toLowerCase()))
+          part.includes(value.trim().toLowerCase())) || identifiers(part).some(id=>identityValues(entity).some(value=>identifiers(value).includes(id)))
     ).map((entity) => entity.category),
   ])];
   const lifecycle = /暫時唔|暫時不|暂时不|暫緩|暂缓|先擺低|先放低|稍後先|稍后再|hold off|defer|pause|取消|唔要|不要|cancel\b/i;
   if (!lifecycle.test(normalized)) return { kind: "none" };
   if (/^(?:你仲記唔記得|係咪|有冇|是否|is |was |did )/i.test(normalized)) return { kind: "none" };
   const named = aliases(normalized);
-  if (!named.length && !/兩樣都|两样都|both\b|暫時唔換|暫時不換|暂时不换/i.test(normalized)) return { kind: "none" };
   // Room-scoped cancellation and service/installation actions keep their
   // existing entity/field resolution contract, never become category lifecycle.
   if (/(?:排水|檢查|检查|送貨|送货|delivery|闊度|宽度|高度|深度|尺寸|width|height|depth)/i.test(normalized)) return { kind: "none" };
@@ -38,9 +45,10 @@ export function resolveEntityLifecyclePlan(text: string, state: ConversationComm
   // authorize a lifecycle mutation. Preserve a separate imperative clause if
   // the turn also asks a question.
   if (!lifecycleClauses.length) return { kind: "none" };
+  if (!named.length && !/兩樣都|两样都|both\b|暫時唔換|暫時不換|暂时不换/i.test(normalized)) return ambiguous();
   const focusClauses = clauses.filter((part) => /(?:先搞|先處理|先处理|focus on|back to|return to)/i.test(part) && !lifecycle.test(part));
   const focusKeys = [...new Set(focusClauses.flatMap(aliases))];
-  if (focusKeys.length > 1) return { kind: "ambiguous" };
+  if (focusKeys.length > 1) return ambiguous();
   const plans: B2LifecyclePlan[] = [];
   for (const [index, part] of lifecycleClauses.entries()) {
     if (/^(?:先)?取消[。.!]?$/i.test(part) && index > 0 && plans.length === 1) {
@@ -52,21 +60,27 @@ export function resolveEntityLifecyclePlan(text: string, state: ConversationComm
       keys = [...new Set(state.entities.filter((entity) =>
         entity.status !== "deferred" && entity.status !== "cancelled"
       ).map((entity) => entity.category))];
-      if (keys.length !== 2) return { kind: "ambiguous" };
+      if (keys.length !== 2) return ambiguous();
     }
-    if (keys.length !== 1 && !/兩樣都|两样都|both\b/i.test(part)) return { kind: "ambiguous" };
+    if (keys.length !== 1 && !/兩樣都|两样都|both\b/i.test(part)) return ambiguous();
     for (const key of keys) {
-      if (plans.some((plan) => plan.target_category === key)) return { kind: "ambiguous" };
-      plans.push({ target_category: key, action: /取消|唔要|不要|cancel\b/i.test(part) && !/暫時唔|暫時不|暂时不/i.test(part) ? "cancelled" : "deferred", focus_category: focusKeys[0] ?? null });
+      if (plans.some((plan) => plan.target_category === key)) return ambiguous();
+      const action=operation(part), explicitIds=identifiers(part);
+      const namedEntities=state.entities.filter(entity=>identityValues(entity).some(value=>part.includes(value)) || explicitIds.some(id=>identityValues(entity).some(value=>identifiers(value).includes(id))));
+      if(explicitIds.length && explicitIds.some(id=>!namedEntities.some(entity=>identityValues(entity).some(value=>identifiers(value).includes(id)))))return ambiguous();
+      const candidates=(namedEntities.length?namedEntities:state.entities.filter(entity=>entity.category===key)).filter(entity=>entity.category===key && (action==="cancelled" || entity.status!=="cancelled"));
+      if(candidates.length!==1)return ambiguous();
+      const target=candidates[0];
+      plans.push({target_category:key,action,focus_category:focusKeys[0]??null,...(state.entities.filter(entity=>entity.category===key).length>1?{target_entity_id:target.entity_id}:{})});
     }
   }
   if (!plans.length || plans.some((plan) =>
-    state.entities.filter((entity) => entity.category === plan.target_category &&
-      entity.status !== "deferred" && entity.status !== "cancelled").length !== 1 ||
+    state.entities.filter((entity) => (plan.target_entity_id ? entity.entity_id===plan.target_entity_id : entity.category===plan.target_category) &&
+      (plan.action === "cancelled" || entity.status !== "cancelled")).length !== 1 ||
     (plan.focus_category !== null && (plan.focus_category === plan.target_category ||
       state.entities.filter((entity) => entity.category === plan.focus_category &&
         entity.status !== "deferred" && entity.status !== "cancelled").length !== 1))
-  )) return { kind: "ambiguous" };
+  )) return ambiguous();
   return { kind: "mutation", plans };
 }
 
@@ -95,8 +109,8 @@ export function verifyEntityLifecycleTransition(
     JSON.stringify(b2JourneyTransactionBoundary(before)) !== JSON.stringify(b2JourneyTransactionBoundary(after))) return { valid: false };
   const targetIds: string[] = [];
   for (const plan of resolved.plans) {
-    const old = before.entities.find((entity) => entity.category === plan.target_category &&
-      entity.status !== "cancelled" && entity.status !== "deferred");
+    const old = before.entities.find((entity) => (plan.target_entity_id ? entity.entity_id===plan.target_entity_id : entity.category===plan.target_category) &&
+      (plan.action === "cancelled" || entity.status !== "cancelled"));
     if (!old) return { valid: false };
     targetIds.push(old.entity_id);
   }

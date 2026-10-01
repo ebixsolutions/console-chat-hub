@@ -187,10 +187,13 @@ function isTrustedReadOnlyRecap(input: B2EvaluationInput, draft: string): boolea
     clean(p.reply) !== draft ||
     /(?:已更新|已更正|已記低|已記錄|saved|updated|changed|recorded)/i.test(draft)) return false;
   const active = s.state.entities.filter((e) => e.status !== "cancelled" && e.status !== "deferred");
-  if (!active.length || !active.every((e) =>
+  // A canonical portfolio may consist entirely of deferred/cancelled entities.
+  // Their inactive facts and exact proof bindings are validated below.
+  if (!s.state.entities.length || !active.every((e) =>
     p.memory.active_entities.some((me) => me.entity_id === e.entity_id && me.quantity === e.quantity)
   )) return false;
   const inactive = s.state.entities.filter((e) => e.status === "cancelled" || e.status === "deferred");
+  if (inactive.some(e => !p.memory.cancelled_or_superseded.some(f => f.entity_id === e.entity_id && f.value === e.status && f.source_message_id === e.provenance.source_message_id))) return false;
   if (inactive.some((e) => new RegExp(`(?:${e.category === "refrigerator" ? "雪櫃|冰箱|refrigerator" : e.category}).{0,18}(?:而家|現在|目前|current|active|繼續處理|仍要)`, "i").test(draft))) return false;
   for (const entity of active) {
     const sizes = entity.attributes.room_sizes;

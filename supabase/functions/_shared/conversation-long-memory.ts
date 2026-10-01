@@ -1,11 +1,11 @@
 import { resolveConversationRecall, renderConversationRecall } from "./conversation-recall.ts";
-import type { ConversationCommerceState } from "./commerce-state-contract.ts";
+import { isConversationCommerceState, type ConversationCommerceState } from "./commerce-state-contract.ts";
 import { classifyHandoffIntent } from "./handoff-intent.ts";
 import { classifySocialTurn } from "./natural-customer-response.ts";
 import { industryEntityLabel } from "./industry-runtime-adapter.ts";
 import { deriveTypedCustomerMoneyFacts } from "./customer-money-facts.ts";
 import { sameCanonicalJson } from "./canonical-json.ts";
-import { type B2TrustedCorrectionCommit, type B2TrustedLifecycleCommit, verifyEntityLifecycleTransition } from "./b2-journey-progress-contract.ts";
+import { type B2TrustedCorrectionCommit, type B2TrustedLifecycleCommit, verifyEntityLifecycleTransition, resolveEntityLifecyclePlan } from "./b2-journey-progress-contract.ts";
 import {
   projectConversationRuntimeState,
   type RuntimeHistoryRow,
@@ -1035,6 +1035,24 @@ export async function reconcileDeliveredMemoryReply(client: LongMemoryDbClient, 
     .eq("conversation_id",args.conversation_id).eq("company_id",reply.metadata.b2_expected_company_id).maybeSingle();
   if(error) return false;
   if(!stored) return true; // Social-only and pure read-only turns have no business memory.
+  // Read-only lifecycle clarification/repetition intentionally keeps the last
+  // canonical Memory source. Revalidate the actual customer command and current
+  // scoped Commerce/Memory revisions before acknowledging its delivered reply.
+  if(reply.metadata.response_route==="commerce_state_answer" &&
+    ["ambiguous_lifecycle_target","read_only_lifecycle_already_applied"].includes(String(reply.metadata.commerce_reason)) &&
+    reply.metadata.commerce_state_persist_result==="read_only" &&
+    reply.metadata.commerce_state_persistence_classification==="NO_SEMANTIC_CHANGE") {
+    const {data:source,error:sourceError}=await client.from("messages").select("id,role,content").eq("id",args.source_message_id).eq("conversation_id",args.conversation_id).maybeSingle();
+    const {data:commerce,error:commerceError}=await client.from("conversation_commerce_state").select("revision,state").eq("conversation_id",args.conversation_id).eq("company_id",reply.metadata.b2_expected_company_id).maybeSingle();
+    if(sourceError || commerceError || source?.role!=="visitor" || !commerce || !isConversationCommerceState(commerce.state) || !isCanonicalConversationMemory(stored.memory) ||
+      stored.memory.company_id!==stored.company_id || stored.memory.conversation_id!==args.conversation_id ||
+      stored.memory.memory_revision!==Number(stored.revision) || stored.memory.commerce_state_revision!==Number(commerce.revision) ||
+      Number(stored.commerce_state_revision)!==Number(commerce.revision) || Number(reply.metadata.b2_expected_revision)!==Number(commerce.revision))return false;
+    const currentState:ConversationCommerceState=commerce.state;
+    const plan=resolveEntityLifecyclePlan(String(source.content),currentState);
+    if(reply.metadata.commerce_reason==="ambiguous_lifecycle_target")return plan.kind==="ambiguous";
+    return plan.kind==="mutation" && plan.plans.every(p=>currentState.entities.some(e=>(p.target_entity_id?e.entity_id===p.target_entity_id:e.category===p.target_category) && e.status===p.action)) && !plan.plans.some(p=>p.focus_category && p.focus_category!==currentState.current_topic);
+  }
   if(!isCanonicalConversationMemory(stored.memory) || stored.source_message_id!==args.source_message_id ||
     stored.memory.memory_revision!==Number(stored.revision)) return false;
   const {data:source,error:sourceError} = await client.from("messages").select("id,role,content")

@@ -17,6 +17,8 @@ assert.equal(JSON.parse(fs.readFileSync(path.join(tools,"node_modules/@electric-
 assert.equal(JSON.parse(fs.readFileSync(path.join(tools,"node_modules/deno/package.json"),"utf8")).version,"2.9.6");
 const db = new PGlite();
 const faults = [];
+let failNextReplyCommit=false;
+const expectedCommitFailures=[];
 let child;
 let server;
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
@@ -76,9 +78,9 @@ try {
       const body = JSON.parse((await Array.fromAsync(req)).map((part) => part.toString()).join("") || "{}");
       if (url.pathname === "/api/v1/rag/context-search") {
         assert.equal(body.company_id,34,"synthetic upstream tenant binding");
-        const found=/CW-SUL70BA|ZZ-KL88|CN-314|BK-827|CN-638|BK-941/i.test(body.query ?? "");
-        const model=(body.query ?? "").match(/CW-SUL70BA|ZZ-KL88|CN-314|BK-827|CN-638|BK-941/i)?.[0] ?? "CW-SUL70BA";
-        const policy=/CN-314|BK-827|CN-638|BK-941/.test(model);
+        const found=/CW-SUL70BA|ZZ-KL88|CN-314|BK-827|CN-638|BK-941|BK-682/i.test(body.query ?? "");
+        const model=(body.query ?? "").match(/CW-SUL70BA|ZZ-KL88|CN-314|BK-827|CN-638|BK-941|BK-682/i)?.[0] ?? "CW-SUL70BA";
+        const policy=/CN-314|BK-827|CN-638|BK-941|BK-682/.test(model);
         const content = /^CN-/.test(model) ? `product model: ${model}\nbilling policy: Seat charges are calculated monthly; changes require account administrator approval` : /^BK-/.test(model) ? `product model: ${model}\nbooking policy: Requested dates require staff confirmation before a booking is confirmed` : fixtureText.replaceAll("CW-SUL70BA",model);
         const selected=found ? [{ document_id:kbDoc,title:`Synthetic ${model}`,source_type:policy?"policy":"product",document_score:0.99,summary:null,
           evidence:[{chunk_id:kbChunk,content,score:0.99,chunk_type:"full_content"}],
@@ -89,6 +91,7 @@ try {
       let result;
       if (route.startsWith("rpc/")) {
         const fn = route.slice(4);
+        if(fn==='commit_ai_reply_tx' && failNextReplyCommit){failNextReplyCommit=false;res.writeHead(503,{'content-type':'application/json'});res.end(JSON.stringify({code:'C3_TEST_TRANSPORT_FAILURE',message:'one isolated reply-commit transport failure'}));return;}
         const args = Object.entries(body).map(([key, value]) => `${qid(key)} := ${bind(typeof value === "object" && value !== null ? JSON.stringify(value) : value)}`);
         const query = `SELECT * FROM public.${qid(fn)}(${args.join(",")})`;
         const rows = (await db.query(query, params)).rows;
@@ -154,11 +157,11 @@ try {
   const dbURL = `http://127.0.0.1:${server.address().port}`;
   const port = 18763;
   const log = fs.openSync(process.env.C3_TEST_LOG ?? "/tmp/c3-actual-handler.log", "w");
-  child = spawn(path.join(tools,"node_modules/.bin/deno"), ["run","--no-lock","--cached-only","--allow-env","--allow-net=127.0.0.1", ".github/scripts/c3_actual_handler_entry.ts"], {
+  child = spawn(path.join(tools,"node_modules/.bin/deno"), ["run","--no-lock","--cached-only",...(fs.existsSync(path.join(tools,"deno.json"))?["--config",path.join(tools,"deno.json")]:[]),"--allow-env","--allow-net=127.0.0.1", ".github/scripts/c3_actual_handler_entry.ts"], {
     cwd: root, env: {PATH:process.env.PATH,DENO_DIR:process.env.DENO_DIR, SUPABASE_URL:dbURL,SUPABASE_SECRET_KEY:"local-synthetic-test-only",C3_TEST_HANDLER_PORT:String(port),KB_SINGAPORE_BASE_URL:dbURL,KB_SINGAPORE_TENANT_MAP_JSON:JSON.stringify({[company]:"34"}),KB_SINGAPORE_TENANT_API_KEYS_JSON:JSON.stringify({"34":"local-synthetic-key-only"})}, stdio:["ignore",log,log] });
   await new Promise((resolve,reject) => { const started = Date.now(); const poll = async () => { if (child.exitCode !== null) return reject(new Error("actual_handler_start_failed")); try { await fetch(`http://127.0.0.1:${port}`, {method:"OPTIONS"});resolve(); } catch { if (Date.now()-started>20000) reject(new Error("handler_start_timeout"));else setTimeout(poll,100); } };poll(); });
   const results = [];
-  async function conversation(turns) {
+  async function conversation(turns,options={}) {
     const id = randomUUID();
     await db.query("INSERT INTO conversations(id,company_id,status) VALUES($1,$2,'open')",[id,company]);
     const outputs=[];
@@ -168,14 +171,35 @@ try {
       const semanticBefore=(await db.query("SELECT revision,state FROM conversation_commerce_state WHERE conversation_id=$1",[id])).rows;
       const memoryBefore=(await db.query("SELECT revision,memory FROM conversation_memory_state WHERE conversation_id=$1",[id])).rows;
       const before=(await db.query("SELECT count(*)::int AS n FROM messages WHERE conversation_id=$1 AND role='assistant'",[id])).rows[0].n;
-      const response=await fetch(`http://127.0.0.1:${port}`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({conversation_id:id,source_message_id:source})});
-      const outcome=await response.json();
+      if(options.failCancelCommit && /^Cancel\b/i.test(content))failNextReplyCommit=true;
+      let response=await fetch(`http://127.0.0.1:${port}`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({conversation_id:id,source_message_id:source})});
+      let outcome=await response.json();
+      if(options.failCancelCommit && /^Cancel\b/i.test(content)) {
+        assert.equal(response.status,409);assert.equal(outcome.error,'commerce_state_runtime_rpc_error');
+        const snapshot=async()=>({commerce:(await db.query("SELECT * FROM conversation_commerce_state WHERE conversation_id=$1",[id])).rows,memory:(await db.query("SELECT * FROM conversation_memory_state WHERE conversation_id=$1",[id])).rows,events:(await db.query("SELECT * FROM conversation_memory_state_event WHERE conversation_id=$1 ORDER BY applied_revision",[id])).rows});
+        const failed=await snapshot();assert.equal(failed.commerce[0].revision,failed.memory[0].commerce_state_revision);assert.equal(failed.memory[0].source_message_id,source);
+        const target=failed.commerce[0].state.entities.find(e=>e.status==='cancelled');assert.ok(target);assert.ok(!failed.memory[0].memory.active_entities.some(e=>e.entity_id===target.entity_id));assert.ok(failed.memory[0].memory.cancelled_or_superseded.some(f=>f.entity_id===target.entity_id && f.value==='cancelled'));
+        assert.equal((await db.query("SELECT count(*)::int AS n FROM messages WHERE conversation_id=$1 AND role='assistant'",[id])).rows[0].n,before);
+        const errorOutcome=outcome;
+        response=await fetch(`http://127.0.0.1:${port}`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({conversation_id:id,source_message_id:source})});outcome=await response.json();
+        assert.equal(response.status,200,JSON.stringify(outcome));assert.equal(outcome.success,true);const recovered=await snapshot();assert.deepEqual(recovered.commerce,failed.commerce,'reply retry duplicated Commerce mutation');const business=m=>{const copy=structuredClone(m);delete copy.memory_revision;delete copy.question_lifecycle;return copy;};assert.deepEqual(business(recovered.memory[0].memory),business(failed.memory[0].memory),'reply retry changed business memory');assert.equal(recovered.events.length,failed.events.length);assert.equal(new Set(recovered.events.map(e=>e.source_message_id)).size,recovered.events.length);assert.equal(recovered.memory[0].commerce_state_revision,recovered.commerce[0].revision);
+        expectedCommitFailures.push({conversation_id:id,source_message_id:source,failure:errorOutcome,failed,recovered,no_partial_divergence:true});
+      }
       const rows=(await db.query("SELECT id,content,metadata FROM messages WHERE conversation_id=$1 AND role='assistant' ORDER BY created_at,id",[id])).rows;
       const semanticAfter=(await db.query("SELECT revision,state FROM conversation_commerce_state WHERE conversation_id=$1",[id])).rows;
       const memoryAfter=(await db.query("SELECT revision,memory FROM conversation_memory_state WHERE conversation_id=$1",[id])).rows;
       if(outcome.response_route === "c3_historical_conditional_calculation") {
         assert.deepEqual(semanticAfter,semanticBefore,"historical calculation mutated commerce");
         assert.deepEqual(memoryAfter,memoryBefore,"historical calculation mutated semantic memory");
+      }
+      let lifecycleReplay=null;
+      if(/^Cancel\b/i.test(content) && outcome.success===true && semanticAfter[0]?.state.entities.some(e=>e.status==='cancelled')) {
+        const snapshot=async()=>({commerce:(await db.query("SELECT * FROM conversation_commerce_state WHERE conversation_id=$1",[id])).rows,memory:(await db.query("SELECT * FROM conversation_memory_state WHERE conversation_id=$1",[id])).rows,events:(await db.query("SELECT * FROM conversation_memory_state_event WHERE conversation_id=$1 ORDER BY applied_revision",[id])).rows,replies:(await db.query("SELECT * FROM messages WHERE conversation_id=$1 AND role='assistant' ORDER BY created_at,id",[id])).rows});
+        const beforeReplay=await snapshot();
+        const duplicate=await fetch(`http://127.0.0.1:${port}`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({conversation_id:id,source_message_id:source})});
+        const replayOutcome=await duplicate.json(),afterReplay=await snapshot();
+        assert.equal(duplicate.status,200,JSON.stringify(replayOutcome));assert.equal(replayOutcome.success,true);assert.deepEqual(afterReplay,beforeReplay,"cancel source replay duplicated semantic event/reply");
+        lifecycleReplay={status:duplicate.status,outcome:replayOutcome,before:beforeReplay,after:afterReplay};
       }
       let replay=null;
       if(outcome.handoff_persisted === true) {
@@ -186,7 +210,7 @@ try {
         replay={status:duplicate.status,outcome:await duplicate.json(),before:beforeReplay,after:afterReplay};
       }
       const memoryEvents=(await db.query("SELECT source_message_id,applied_revision,commerce_state_revision,memory_hash FROM conversation_memory_state_event WHERE conversation_id=$1 ORDER BY applied_revision",[id])).rows;
-      outputs.push({source,customer:content,status:response.status,outcome,replies:rows.slice(before),semanticBefore,memoryBefore,semanticAfter,memoryAfter,memoryEvents,replay});
+      outputs.push({source,customer:content,status:response.status,outcome,replies:rows.slice(before),semanticBefore,memoryBefore,semanticAfter,memoryAfter,memoryEvents,replay,lifecycleReplay});
       if(outcome.response_route === "canonical_kb_direct_answer" && /policy/i.test(content)) {
         sameTurnPolicy(outputs.at(-1));
         const stored=(await db.query("SELECT * FROM conversation_memory_state WHERE conversation_id=$1",[id])).rows[0];
@@ -557,6 +581,48 @@ try {
     const p=JSON.parse(c.handoff[0].ai_summary).structured_package;
     if(p.pending_actions.length||p.open_questions.length||p.safety_or_professional_requirements.length)assert.notEqual(p.recommended_next_human_action,genericAction);
   }
+
+  // Narrow lifecycle closure: actual natural input, handler, B2, SQL and readback.
+  const lifecycleReadback={cases:{},original:null,r1:null};
+  function cancelled(c,index,name) {
+    const t=c.outputs[index];assert.equal(t.status,200);assert.equal(t.outcome.success,true);
+    assert.notEqual(t.outcome.error,'commerce_state_runtime_memory_resolution_failed');
+    assert.notEqual(t.replies[0]?.metadata.commerce_reason,'ambiguous_lifecycle_target');
+    const before=t.semanticBefore[0].state,after=t.semanticAfter[0].state;
+    const target=after.entities.find(e=>e.attributes.product_name===name);assert.ok(target,name);
+    assert.equal(target.status,'cancelled');assert.equal(target.provenance.source_message_id,t.source);
+    assert.ok(after.conversion.cancelled_entity_ids.includes(target.entity_id));assert.ok(!after.conversion.tentative_entity_ids.includes(target.entity_id));
+    assert.equal(after.entities.length,before.entities.length);
+    assert.deepEqual(after.entities.filter(e=>e.entity_id!==target.entity_id),before.entities.filter(e=>e.entity_id!==target.entity_id));
+    assert.equal(after.conversion.order_status,before.conversion.order_status);assert.equal(after.conversion.payment_status,before.conversion.payment_status);
+    const memory=t.memoryAfter[0];assert.equal(memory.memory.commerce_state_revision,t.semanticAfter[0].revision);assert.equal(memory.memory.source_message_id,t.source);
+    assert.ok(!memory.memory.active_entities.some(e=>e.entity_id===target.entity_id));
+    assert.ok(JSON.stringify(memory.memory.cancelled_or_superseded).includes(target.entity_id));
+    assert.match(t.replies[0].content,/cancelled/i);assert.doesNotMatch(t.replies[0].content,/Which product|should I pause/i);
+    assert.equal(t.replies[0].metadata.source_message_id,t.source);assert.ok(t.lifecycleReplay);
+    return {conversation_id:c.id,source_message_id:t.source,target,commerce:t.semanticAfter,memory:t.memoryAfter,replay:t.lifecycleReplay,reply:t.replies[0].content};
+  }
+  const original=await conversation(['I need UG-573 subscription for 11 seats.','Give me a quick summary of my request.','I also need LC-829 add-on for 4 units.','Change UG-573 subscription to 19 seats. Defer LC-829 add-on.','What do you currently have noted for me?','Cancel LC-829 add-on.','Give me a quick summary of my request.']);
+  lifecycleReadback.original=cancelled(original,5,'LC-829 add-on');naturalRecap(original,6,['19 seats','has been cancelled'],['is paused']);
+  const A=await conversation(['I need QH-482 subscription for 13 seats.','Defer QH-482 subscription.','Cancel QH-482 subscription.']);lifecycleReadback.cases.A=cancelled(A,2,'QH-482 subscription');
+  const B=await conversation(['I need 6 sessions of BK-682 booking on 2027-03-17.','I also need TP-736 add-on for 9 units.','Defer TP-736 add-on.','Cancel TP-736 add-on.','I want a human agent.','One more question.']);lifecycleReadback.cases.B=cancelled(B,3,'TP-736 add-on');
+  const C=await conversation(['I need WD-384 subscription for 17 seats.','Cancel WD-384 subscription.']);lifecycleReadback.cases.C=cancelled(C,1,'WD-384 subscription');
+  const D=await conversation(['I need QM-291 subscription for 23 seats.','Defer QM-291 subscription.','What do I currently have noted?','Cancel QM-291 subscription.']);naturalRecap(D,2,['is paused']);lifecycleReadback.cases.D=cancelled(D,3,'QM-291 subscription');
+  const E=await conversation(['I need BK-682 booking for 3 sessions.','Defer BK-682 booking.','What is the BK-682 booking policy?','Cancel BK-682 booking.']);assert.equal(E.outputs[2].outcome.response_route,'canonical_kb_direct_answer');assert.deepEqual(E.outputs[2].semanticBefore,E.outputs[2].semanticAfter);lifecycleReadback.cases.E=cancelled(E,3,'BK-682 booking');
+  const F=await conversation(['I need SX-572 add-on for 8 units.','I also need ZT-893 add-on for 5 units.','Defer ZT-893 add-on.','Cancel ZT-893 add-on.']);lifecycleReadback.cases.F=cancelled(F,3,'ZT-893 add-on');
+  const G=await conversation(['I need MK-419 subscription for 16 seats.','I also need PH-862 add-on for 7 units.','Defer MK-419 subscription.','Defer PH-862 add-on.','Cancel it.']);
+  function readOnly(c,index,reason) {const t=c.outputs[index];assert.equal(t.status,200);assert.equal(t.outcome.success,true);assert.deepEqual(t.semanticBefore,t.semanticAfter);assert.deepEqual(t.memoryBefore,t.memoryAfter);assert.equal(t.replies[0].metadata.commerce_reason,reason);return {conversation_id:c.id,source_message_id:t.source,reply:t.replies[0].content,commerce:t.semanticAfter,memory:t.memoryAfter};}
+  lifecycleReadback.cases.G=readOnly(G,4,'ambiguous_lifecycle_target');assert.match(G.outputs[4].replies[0].content,/cancel/i);assert.doesNotMatch(G.outputs[4].replies[0].content,/pause/);
+  const H=await conversation(['I need NF-718 subscription for 29 seats.','Defer NF-718 subscription.','Cancel ZZ-907 subscription.']);lifecycleReadback.cases.H=readOnly(H,2,'ambiguous_lifecycle_target');assert.equal(H.commerce[0].state.entities.length,1);
+  const I=await conversation(['I need VH-526 subscription for 31 seats.','Defer VH-526 subscription.','Keep VH-526 subscription deferred.']);lifecycleReadback.cases.I=readOnly(I,2,'read_only_lifecycle_already_applied');assert.equal(I.commerce[0].state.entities[0].status,'deferred');assert.deepEqual(I.commerce[0].state.conversion.cancelled_entity_ids,[]);
+  const J=await conversation(['I need RL-935 subscription for 37 seats.','Defer RL-935 subscription.','Cancel RL-935 subscription.','Cancel RL-935 subscription.']);const first=cancelled(J,2,'RL-935 subscription');lifecycleReadback.cases.J={first,repeat:readOnly(J,3,'read_only_lifecycle_already_applied')};assert.deepEqual(J.outputs[3].memoryEvents,J.outputs[2].memoryEvents);assert.deepEqual(J.outputs[3].semanticAfter,J.outputs[2].semanticAfter);
+  const atomic=await conversation(['I need WX-638 subscription for 41 seats.','Defer WX-638 subscription.','Cancel WX-638 subscription.'],{failCancelCommit:true});lifecycleReadback.atomicity={state:cancelled(atomic,2,'WX-638 subscription'),faults:expectedCommitFailures};
+  assert.equal(B.handoff.length,1);assert.equal(B.handoff[0].source_message_id,B.outputs[4].source);assert.equal(B.outputs[5].replies.length,0);assert.equal(B.outputs[5].outcome.skipped,'human_handling');
+  const lifecyclePackage=JSON.parse(B.handoff[0].ai_summary).structured_package;
+  assert.ok(!JSON.stringify(lifecyclePackage.active_entities).includes('TP-736'));assert.ok(JSON.stringify(lifecyclePackage.cancelled_entities).includes('TP-736'));
+  assert.ok(lifecyclePackage.current_customer_goal);assert.match(lifecyclePackage.recommended_next_human_action,/BK-682/);assert.match(lifecyclePackage.recommended_next_human_action,/staff/);assert.ok(!JSON.stringify(lifecyclePackage.pending_actions).includes('TP-736'));
+  lifecycleReadback.r1={conversation_id:B.id,event:B.handoff[0],package:lifecyclePackage,source_message_id:B.outputs[4].source,next_AI_replies:B.outputs[5].replies.length,replay:B.outputs[4].replay};
+
   const handoffSemanticReadback={H1,H2,H3,H4};
   for (const conversation of results) for (const turn of conversation.outputs) {
     assert.equal(turn.status,200);
@@ -571,7 +637,7 @@ try {
   await db.exec(read("supabase/migrations/rollback/20260930090000_c3_handoff_grounded_facts.rollback.sql"));
   assert.deepEqual(await catalog(),acceptedHandoff,"rollback changed the accepted function/security identity");
   assert.deepEqual(await triggers(),acceptedTriggers);assert.deepEqual(await ledger(),acceptedLedger);
-  fs.writeFileSync(process.env.C3_TEST_RESULT ?? "/tmp/c3-actual-handler-result.json",JSON.stringify({coverage:"actual_handler_local_sql_integration",limitations:["local transport adapter, not hosted PostgREST/Widget","pgcrypto digest backed by PostgreSQL built-in sha256","synthetic tenant, no production traffic"],results,faults,recapReadback,englishRealizationReadback,summaryReadback,handoffSemanticReadback,forwardCatalog,rollbackCatalog:await catalog(),triggerBindings:await triggers(),migrationLedger:await ledger(),assertions:{shared_english_realization_compositional_grammar:true,customer_recap_natural_no_internal_representation:true,customer_recap_unseen_bilingual_shared_semantics:true,customer_recap_read_only_source_company_binding:true,handoff_request_not_business_goal:true,handoff_request_not_active_constraint:true,handoff_request_not_current_topic_without_business_goal:true,business_goal_preserved_across_r1:true,actionable_pending_drives_human_next_action:true,generic_next_action_only_when_no_actionable_pending:true,generic_state_acknowledgement_not_meta:true,no_false_customer_goal_missing:true,same_turn_question_resolution:true,no_cross_domain_recap_language:true,handoff_summary_structured_parity:true,immediate_post_KB_R1_has_no_stale_question:true,memory_finalisation_business_mutation_rejected:true,memory_finalisation_reply_binding_rejected:true,memory_finalisation_replay_idempotent:true,memory_resolved_question_resurrection_rejected:true,social_state_hygiene:true,question_lifecycle:true,typed_money_persistence_and_recall:true,generic_saas:true,generic_booking:true,real_r1_sql_package_and_suppression:true,r1_replay_idempotent:true,b2_source_binding:true,no_duplicate_reply:true,no_thinking:true,no_terminal_failure:true,no_transaction_promotion:true,migration_forward:true,migration_rollback:true,catalog_owner_security_search_path_acl:true,commit_ai_reply_tx_unchanged:true,trigger_binding_preserved:true,migration_ledger_preserved:true}},null,2));
+  fs.writeFileSync(process.env.C3_TEST_RESULT ?? "/tmp/c3-actual-handler-result.json",JSON.stringify({coverage:"actual_handler_local_sql_integration",limitations:["local transport adapter, not hosted PostgREST/Widget","pgcrypto digest backed by PostgreSQL built-in sha256","synthetic tenant, no production traffic"],results,faults,lifecycleReadback,recapReadback,englishRealizationReadback,summaryReadback,handoffSemanticReadback,forwardCatalog,rollbackCatalog:await catalog(),triggerBindings:await triggers(),migrationLedger:await ledger(),assertions:{deferred_explicit_cancel_lifecycle_full_chain:true,shared_english_realization_compositional_grammar:true,customer_recap_natural_no_internal_representation:true,customer_recap_unseen_bilingual_shared_semantics:true,customer_recap_read_only_source_company_binding:true,handoff_request_not_business_goal:true,handoff_request_not_active_constraint:true,handoff_request_not_current_topic_without_business_goal:true,business_goal_preserved_across_r1:true,actionable_pending_drives_human_next_action:true,generic_next_action_only_when_no_actionable_pending:true,generic_state_acknowledgement_not_meta:true,no_false_customer_goal_missing:true,same_turn_question_resolution:true,no_cross_domain_recap_language:true,handoff_summary_structured_parity:true,immediate_post_KB_R1_has_no_stale_question:true,memory_finalisation_business_mutation_rejected:true,memory_finalisation_reply_binding_rejected:true,memory_finalisation_replay_idempotent:true,memory_resolved_question_resurrection_rejected:true,social_state_hygiene:true,question_lifecycle:true,typed_money_persistence_and_recall:true,generic_saas:true,generic_booking:true,real_r1_sql_package_and_suppression:true,r1_replay_idempotent:true,b2_source_binding:true,no_duplicate_reply:true,no_thinking:true,no_terminal_failure:true,no_transaction_promotion:true,migration_forward:true,migration_rollback:true,catalog_owner_security_search_path_acl:true,commit_ai_reply_tx_unchanged:true,trigger_binding_preserved:true,migration_ledger_preserved:true}},null,2));
   console.log(`actual_handler_local_sql_integration PASS: ${results.length} conversations; first R1 real SQL event/source binding/package; next-turn suppression`);
 } catch(error) { console.error(error.stack,JSON.stringify(faults));process.exitCode=1; }
 finally { child?.kill(); if(server) await new Promise((resolve)=>server.close(resolve));await db.close(); }

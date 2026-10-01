@@ -58,3 +58,24 @@ Deno.test("COMPONENT: English clause renders typed units and validated dates wit
   eq(renderCanonicalRequirement({...entity,category:"parking",attributes:{product_name:"HB-362 parking"},quantity:7,status:"deferred"},"en"),"HB-362 parking for 7 is paused");
   eq(state.conversion.order_status,"none");
 });
+
+Deno.test("COMPONENT: lifecycle identity survives defer; canonical reducer and verifier remain scoped",async()=>{
+  const {resolveEntityLifecyclePlan,verifyEntityLifecycleTransition}=await import("./b2-journey-progress-contract.ts");
+  const {reduceTurn}=await import("./commerce-state-runtime-base.ts");
+  const {reduceCommerceState}=await import("./commerce-state-reducer.ts");
+  let state=createEmptyConversationCommerceState();
+  const entity=(id:string,name:string,quantity:number)=>({entity_id:id,category:"addon",quantity,status:"tentative" as const,attributes:{product_name:name,unit:"units"},constraints:{},provenance:{source_type:"customer" as const,source_message_id:"initial"}});
+  state=reduceCommerceState(state,[{type:"ADD_ENTITY",entity:entity("generic:mx-381","MX-381 add-on",7)},{type:"ADD_ENTITY",entity:entity("generic:jt-629","JT-629 add-on",3)}]);
+  const input=(text:string,source:string)=>({conversation_id:"test",company_id:"tenant",source_message_id:source,text,language:"en" as const,history:[]});
+  const deferred=reduceTurn(state,input("Defer JT-629 add-on.","defer-source"),[]);
+  eq(deferred.entities[1].status,"deferred");eq(deferred.entities[0],state.entities[0]);
+  const plan=resolveEntityLifecyclePlan("Cancel JT-629.",deferred);eq(plan.kind,"mutation");
+  const cancelled=reduceTurn(deferred,input("Cancel JT-629.","cancel-source"),[]);
+  eq(cancelled.entities[1].status,"cancelled");eq(cancelled.entities[1].provenance.source_message_id,"cancel-source");eq(cancelled.entities[0],state.entities[0]);eq(cancelled.conversion.cancelled_entity_ids,["generic:jt-629"]);
+  eq(verifyEntityLifecycleTransition("Cancel JT-629.",deferred,cancelled,"cancel-source").valid,true);
+  eq(resolveEntityLifecyclePlan("Cancel ZZ-907 add-on.",deferred).kind,"ambiguous");
+  eq(resolveEntityLifecyclePlan("Cancel it.",deferred).kind,"ambiguous");
+  eq(resolveEntityLifecyclePlan("Keep JT-629 add-on deferred.",deferred).kind,"mutation");
+  const forged=structuredClone(cancelled);forged.entities[0].quantity=42;
+  eq(verifyEntityLifecycleTransition("Cancel JT-629.",deferred,forged,"cancel-source").valid,false);
+});
