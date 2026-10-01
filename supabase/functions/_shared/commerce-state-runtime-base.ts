@@ -413,6 +413,16 @@ export function validateTrustedProductTopicFocus(
   return { valid: true };
 }
 
+/** Project only validated source-bound research identity onto the existing unique entity. */
+function trustedResearchFocusEvents(input: CommerceRuntimeInput, state: ConversationCommerceState): CommerceStateEvent[] {
+  const focus = input.trusted_product_topic_focus;
+  if (!focus || !validateTrustedProductTopicFocus(input, state).valid) return [];
+  const entity = state.entities.find(e => e.category === focus.topic && e.status !== "cancelled" && e.status !== "deferred")!;
+  return [{ type: "SET_CONTEXT", topic: focus.topic },
+    { type: "UPDATE_ENTITY", entity_id: entity.entity_id, patch: { model: clean(focus.product).toUpperCase() },
+      provenance: { source_type: "customer", source_message_id: input.source_message_id, recorded_at: input.occurred_at ?? null } }];
+}
+
 function resolveAttributeQueryCategory(input: CommerceRuntimeInput): {
   category: string | null;
   ambiguous: boolean;
@@ -1331,7 +1341,7 @@ function deriveA3RuntimeEvents(
 
   const trustedTopicFocus = input.trusted_product_topic_focus;
   if (trustedTopicFocus && validateTrustedProductTopicFocus(input, previous).valid) {
-    events.push({ type: "SET_CONTEXT", topic: trustedTopicFocus.topic });
+    events.push(...trustedResearchFocusEvents(input, previous));
   }
 
   // The semantic adapter owns entity mutation when its frame is authoritative,
@@ -1837,10 +1847,7 @@ function reduceSingleTurn(
     looksInterrogative(input.text) &&
     validateTrustedProductTopicFocus(input, previous).valid
   ) {
-    return reduceCommerceState(previous, [{
-      type: "SET_CONTEXT",
-      topic: input.trusted_product_topic_focus.topic,
-    }]);
+    return reduceCommerceState(previous, trustedResearchFocusEvents(input, previous));
   }
   // READ_ONLY_CURRENT_STATE_QUERY (and other factual interrogatives) emits no
   // state events. Persistence may still record this source-message revision,
@@ -2053,7 +2060,7 @@ function reduceTurnOperations(
   if (focus && validateTrustedProductTopicFocus(input, state).valid &&
     state.entities.filter((entity) => entity.category === focus.topic &&
       entity.status !== "deferred" && entity.status !== "cancelled").length === 1) {
-    state = reduceCommerceState(state, [{ type: "SET_CONTEXT", topic: focus.topic }]);
+    state = reduceCommerceState(state, trustedResearchFocusEvents(input, state));
   }
   state = enrichExplicitCustomerFacts(input,state,rawHints);
   return focus ? state : restoreExplicitReturnTopic(state, input.text);

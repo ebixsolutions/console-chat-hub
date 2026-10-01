@@ -24,6 +24,7 @@ import {
 } from "./commerce-state-runtime.ts";
 import { createEmptyConversationCommerceState } from "./commerce-state-contract.ts";
 import {
+  isCurrentRequirementsRecap,
   isDeliveryScheduleCurrentFactQuery,
   isReadOnlyCurrentStateAggregateQuery,
   isReadOnlyMemoryOrCurrentStateRecall,
@@ -2764,4 +2765,80 @@ Deno.test("C3 pending technician aggregates distinguish global scope from entity
   assert(ambiguous.outcome?.reason === "read_only_current_state_aggregate_query_unresolved");
   assert(ambiguous.outcome?.reply?.includes("邊件產品或邊項安裝"));
   assert(ambiguous.rpcCalls === 0 && JSON.stringify(ambiguous.persisted) === ambiguous.before);
+});
+
+Deno.test("entity-scoped_vs_global_recap_partition", () => {
+  for (const status of ["deferred", "cancelled"] as const) {
+    const input = recallFixture();
+    const state = input.commerce!.state;
+    const a = state.entities[0], b = state.entities[1];
+    a.model = "ZX-731"; a.attributes.product_name = "ZX-731 cooling";
+    b.model = "QY-864"; b.status = status; b.constraints.max_width_mm = 617;
+    input.recent_questions = ["Tell me about QY-864"];
+    const before = JSON.stringify(input);
+    for (const question of ["What are my AC requirements?", "而家我冷氣要求係點？", "Recap ZX-731 cooling."]) {
+      const answer = prepareConversationRecall({ ...input, question }, question.includes("冷氣") ? "zh-TW" : "en");
+      assert(answer.decision.handled && answer.reply?.includes("ZX-731") && !answer.reply.includes("QY-864") && !answer.reply.includes("617"), JSON.stringify(answer));
+      if (answer.decision.handled) {
+        const v = answer.decision.value as { entity_details: Array<{ entity_id: string }>; transaction: unknown };
+        assert(v.entity_details.length === 1 && v.entity_details[0].entity_id === a.entity_id && v.transaction === null, "cross entity scoped facts");
+      }
+    }
+    for (const question of ["What do I currently have noted?", "Give me a recap of everything.", "而家我有咩記低？"]) {
+      const answer = prepareConversationRecall({ ...input, question }, "en");
+      assert(answer.decision.handled && answer.reply?.includes("ZX-731") && answer.reply.includes("QY-864") && answer.reply.includes(status === "deferred" ? "paused" : "cancelled"), JSON.stringify(answer));
+      assert((answer.decision.value as { selection_provenance: string }).selection_provenance === "global", "sole active fallback claimed explicit scope");
+    }
+    assert(JSON.stringify(input) === before, "recap mutated source state");
+    const ambiguousState = structuredClone(state);
+    ambiguousState.entities.push({ ...structuredClone(a), entity_id: "other-ac", model: "WR-529", attributes: { product_name: "WR-529 cooling" } });
+    const ambiguous = prepareConversationRecall({ ...input, question: "What are my AC requirements?", commerce: { ...input.commerce!, state: ambiguousState } }, "en");
+    assert(!ambiguous.decision.handled && ambiguous.decision.reason === "AMBIGUOUS", "ambiguous category silently chose entity");
+    delete a.model;
+    delete a.attributes.product_name;
+    const noModel = prepareConversationRecall({ ...input, question: "What are my AC requirements?" }, "en");
+    assert(noModel.decision.handled && !noModel.reply?.includes("ZX-731"), "invented model");
+  }
+});
+
+Deno.test("explicit_recap_intent_is_independent_of_entity_scope", async () => {
+  for (const text of ["Recap the ZX-731 booking.", "Summarize the premium plan.", "整理返 ZX-731 預約。", "What do I currently have noted?"]) {
+    assert(isCurrentRequirementsRecap(text), text);
+    const state = createEmptyConversationCommerceState();
+    const before = JSON.stringify(state);
+    let calls = 0;
+    const db: CommerceStateDbClient = {
+      from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { revision: 9, state }, error: null }) }) }) }),
+      rpc: async () => { calls++; return { data: null, error: null }; },
+    };
+    const runtime = await runCommerceStateRuntime(db, { text,
+      company_id: "tenant", conversation_id: "conversation", source_message_id: "source", language: "en" });
+    assert(runtime?.reason === "read_only_current_requirements_recap" && runtime.persist_result === "read_only" && calls === 0, JSON.stringify(runtime));
+    assert(JSON.stringify(state) === before, "classifier mutated state");
+  }
+  for (const text of ["Recap ZX-731 warranty.", "Recap ZX-731 current price.", "Recap current stock.", "Cancel ZX-731 and recap it.", "Change ZX-731 to 9 sessions and recap it."]) {
+    assert(!isCurrentRequirementsRecap(text), text);
+  }
+  const input = recallFixture();
+  const a = input.commerce!.state.entities[0], b = input.commerce!.state.entities[1];
+  a.model = "ZX-731"; a.attributes.product_name = "premium plan";
+  b.model = "QY-864"; b.status = "cancelled";
+  // Reproduce Hosted source mismatch: retained Memory is bound to committed Commerce,
+  // while this new read-only turn has a different source message.
+  input.memory!.source_message_id = input.commerce!.source_message_id;
+  input.memory!.commerce_state_revision = input.commerce!.revision;
+  input.source_message_id = "new-recap-turn";
+  const before = JSON.stringify(input);
+  for (const question of ["Recap the ZX-731 booking.", "Summarize the premium plan.", "整理返 ZX-731 預約。"] ) {
+    const answer = prepareConversationRecall({ ...input, question }, "en");
+    assert(answer.decision.handled && answer.reply?.includes("ZX-731") && !answer.reply.includes("QY-864"), JSON.stringify(answer));
+  }
+  const global = prepareConversationRecall({ ...input, question: "What do I currently have noted?" }, "en");
+  assert(global.decision.handled && global.reply?.includes("QY-864"), JSON.stringify(global));
+  const unknown = prepareConversationRecall({ ...input, question: "Recap LM-902." }, "en");
+  assert(!unknown.decision.handled && unknown.decision.reason === "AMBIGUOUS", JSON.stringify(unknown));
+  assert(JSON.stringify(input) === before, "recap mutated canonical state");
+  const stale = structuredClone(input); stale.memory!.commerce_state_revision = input.commerce!.revision - 1;
+  const rejected = prepareConversationRecall({ ...stale, question: "Recap ZX-731." }, "en");
+  assert(!rejected.decision.handled && rejected.decision.detail === "MEMORY_SCOPE_OR_SOURCE_MISMATCH", JSON.stringify(rejected));
 });

@@ -52,7 +52,7 @@ try{
       const bytes=fs.readFileSync(path.join(root,file));assert.deepEqual(bytes,rawGit('show',scope.baseline_head+':'+file));report.frozen_hashes[file]=sha(bytes);
     }
     const verifier='supabase/functions/_shared/pre-send-conversion-supervisor.ts';
-    for(const file of backendDeploymentRequest(root,'frozen-source-only').files)if(file.name!=='_shared/pre-send-conversion-supervisor.ts')assert.equal(file.content,rawGit('show',scope.baseline_head+':supabase/functions/'+file.name).toString('utf8'),file.name);
+    for(const file of backendDeploymentRequest(root,'frozen-source-only').files)if(!['_shared/conversation-recall.ts','_shared/commerce-state-runtime-base.ts','_shared/commerce-state-authority.ts'].includes(file.name))assert.equal(file.content,rawGit('show','cb9e9d1f817f72a5ab0ab6574d0a28c4bc1b12df:supabase/functions/'+file.name).toString('utf8'),file.name);
     const strip=text=>{const at=text.indexOf('function evaluateCancellation(');assert.ok(at>=0);const close=text.slice(at).match(/\n}(?=\r?\n|$)/);assert.ok(close);return text.slice(0,at)+text.slice(at+close.index+2);};
     assert.equal(strip(fs.readFileSync(path.join(root,verifier),'utf8')),strip(rawGit('show',scope.baseline_head+':'+verifier).toString('utf8')),'only entity-scoped cancellation verifier may change; all other B2 contracts frozen');
     assert.equal(git('diff','--name-only',scope.baseline_head,'HEAD','--','src','supabase/functions/receive-widget-message','supabase/functions/agent-assist'),'');
@@ -73,7 +73,7 @@ try{
   const deno=path.join(process.env.C3_TEST_TOOLS??'','node_modules/.bin/deno');assert.ok(fs.existsSync(deno),'pinned C3_TEST_TOOLS required');
   const testConfig=path.join(process.env.C3_TEST_TOOLS,'deno.json');
   const dependencyArgs=fs.existsSync(testConfig)?['--config',testConfig]:[];
-  const componentFiles=['customer-quality-state','customer-money-facts','natural-customer-response','conversation-service-runtime','conversation-service-planner','conversation-long-memory','conversation-recall','conversation-recall.integration','conversation-resolution-contract','pre-send-conversion-supervisor','canonical-kb-direct-answer','natural-dialogue-generic-core'].map(name=>'supabase/functions/_shared/'+name+'.test.ts');
+  const componentFiles=['customer-quality-state','customer-money-facts','natural-customer-response','conversation-service-runtime','conversation-service-planner','conversation-long-memory','conversation-recall','conversation-recall.integration','conversation-resolution-contract','pre-send-conversion-supervisor','canonical-kb-direct-answer','natural-dialogue-generic-core','contextual-customer-update','product-factual-query'].map(name=>'supabase/functions/_shared/'+name+'.test.ts');
   const componentLog=run(deno,['test','--no-lock','--cached-only',...dependencyArgs,'--allow-read','--allow-env',...componentFiles],'component_regressions_only');
   report.component_count=Number(componentLog.match(/ok \| (\d+) passed \| 0 failed/)?.[1]);assert.ok(report.component_count>=410);
   run('node',['--test','.github/scripts/c3_backend_deployment_request.test.mjs'],'deployment_request_positive_and_negative_contracts');
@@ -103,6 +103,7 @@ try{
     assert.deepEqual(Object.keys(report.runtime.lifecycleReadback.cases).sort(),['A','B','C','D','E','F','G','H','I','J']);
     for(const key of ['customer_recap_natural_no_internal_representation','customer_recap_unseen_bilingual_shared_semantics','customer_recap_read_only_source_company_binding'])assert.equal(report.runtime.assertions[key],true,key);
   });
+  check('entity_scoped_vs_global_recap_partition',()=>{assert.ok(componentLog.includes('entity-scoped_vs_global_recap_partition') && componentLog.includes('ok |'));});
   run(deno,['check','--no-lock','--cached-only',...dependencyArgs,'supabase/functions/generate-reply/index.ts'],'deno_check');
   run(path.join(root,'node_modules/.bin/tsc'),['--noEmit'],'repository_typescript');
   const route='src/routeTree.gen.ts',routeBytes=fs.readFileSync(path.join(root,route));

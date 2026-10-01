@@ -327,8 +327,8 @@ export function isReadOnlyMemoryOrCurrentStateRecall(
 export function isCurrentRequirementsRecap(question: string): boolean {
   const text = clean(question);
   if (!text || explicitCustomerMutation(text)) return false;
-  // Compose recall intent from operation, ownership/time and recorded-state
-  // concepts. One contract serves routing, read-only persistence and rendering;
+  // Recap operation and canonical entity scope are independent. An explicit
+  // summary speech act supplies read-only intent without ownership/time words;
   // no full customer utterance or fixture-specific entity is a dispatch key.
   const externalFact = /\b(?:price|cost|stock|warranty|policy|specifications?|availability)\b|售價|售价|庫存|库存|保養|保养|政策|規格|规格/i.test(text);
   if (externalFact) return false;
@@ -340,7 +340,7 @@ export function isCurrentRequirementsRecap(question: string): boolean {
   const inquiry = /\bwhat\b|咩|甚麼|什么|係點|系点|是怎樣|是怎样/i.test(text);
   const scope = /\b(?:my|our|we|i|current|currently|latest|now)\b|\bso far\b|我|而家|現在|现在|目前|最新/i.test(text);
   const recordedState = /\b(?:requirements?|requests?|needs?|setup|noted|recorded|agreed)\b|要求|需求|需要|情況|情况|記低|记低|記錄|记录/i.test(text);
-  return scope && (summarize || ((recall || inquiry) && recordedState));
+  return summarize || (scope && (recall || inquiry) && recordedState);
 }
 
 /**

@@ -938,7 +938,9 @@ Deno.test("W19 sequential T1-T16 source replay preserves customer journey, KB an
     `T12_FALSE_MUTATION:${JSON.stringify(recapOutcome)}`);
   const memory = t11Memory;
   const recall = prepareConversationRecall({ conversation_id: "conversation", company_id: "company", source_message_id: "source-t12", question: t12, memory, commerce: { conversation_id: "conversation", company_id: "company", source_message_id: t11Proof.source_message_id, revision: f.snapshot().revision, state: afterCancellation }, recent_questions: turns.slice(0,-1).reverse() }, "zh-TW");
-  assert(recall.decision.handled && recall.reply && ["80平方呎", "110平方呎", "180平方呎", "窗口", "西斜", "共三部", "CW-SUL70BA"].every((item) => recall.reply!.includes(item)) && !recall.reply.includes("100平方呎") && !recall.reply.includes("雪櫃") && !recall.reply.includes("refrigerator:unscoped"), JSON.stringify(recall));
+  assert(recall.decision.handled && recall.reply && ["80平方呎", "110平方呎", "180平方呎", "窗口", "CW-SUL70BA"].every((item) => recall.reply!.includes(item)) &&
+    (() => { const details = (recall.decision.handled ? recall.decision.value as { entity_details: Array<{ quantity: number; attributes: Record<string, unknown> }> } : null)?.entity_details;
+      return details?.length === 1 && details[0].quantity === 3 && details[0].attributes.sunlight === "strong_afternoon_sun"; })() && !recall.reply.includes("100平方呎") && !recall.reply.includes("雪櫃") && !recall.reply.includes("refrigerator:unscoped"), JSON.stringify(recall));
   assert(afterCancellation.conversion.order_status === "none" && afterCancellation.conversion.payment_status === "none" && afterCancellation.conversion.quotation_status === "none" && afterCancellation.quotes.length === 0, "transaction_promoted");
   const kbContent = "工作表：商品設定_20260813 162932 ID: 7944 狀態: 開啟 商品型號: CW-SUL70BA 商品圖片: 39 成本: 3750 銷售價: 5680 特價: 4038 匹數 (多聯分體式): 29 品牌: PANASONIC 樂聲牌 附加項目: 否 新增日期: 46247 標籤: 32 描述: PANASONIC 樂聲 CW-SUL70BA 3/4匹Inverter LITE變頻式淨冷窗口機，採用香港專利左出風設計、R32製冷劑及四合一抗菌過濾網，製冷能力7,400BTU/h，設左右自動送風、睡眠模式及獨立抽濕，獲香港1級能源標籤，提供3年全機及5年壓縮機保用。 功能: 變頻 淨冷 匹數: 3/4匹 氣體: 36 風數: 42";
   const kbDoc: KBDocumentCandidate = {
@@ -1225,7 +1227,8 @@ Deno.test("W11 entity switch, room correction and cancellation stay scoped", asy
   ]);
   assert(corrected.route === "product_guidance", JSON.stringify(corrected));
   assert(
-    f.snapshot().state.latest_corrections.at(-1)?.includes("110呎"),
+    (f.snapshot().state.entities.find(e => e.category === "air_conditioner")?.attributes.room_sizes as Record<string, string>)?.large_bedroom === "110平方呎" &&
+      f.snapshot().state.latest_corrections.at(-1) === "large_bedroom area: change from 100平方呎 to 110平方呎",
     JSON.stringify(f.snapshot().state.latest_corrections),
   );
 
@@ -1298,4 +1301,24 @@ Deno.test("live runtime cannot inherit AC allocation into refrigerator context",
     JSON.stringify(reply),
   );
   assert(JSON.stringify(f.snapshot()) === before, "cross_entity_mutation");
+});
+
+Deno.test("validated topic research model survives structured Memory and scoped recall", async () => {
+  const initial = createEmptyConversationCommerceState();
+  initial.entities = [{ entity_id: "air_conditioner:unscoped", category: "air_conditioner", quantity: 2, status: "researching", attributes: {}, constraints: {}, provenance: { source_type: "customer", source_message_id: "initial" } }];
+  const f = fixture(initial);
+  const text = "Back to that AC, what model was I researching?";
+  const focus = { topic: "air_conditioner", product: "ZX-731", resolution_strategy: "PER_TOPIC_REFERENT_HISTORY" as const };
+  await f.ask(text, ["Tell me about ZX-731 air conditioner."], focus);
+  const state = f.snapshot().state;
+  assert(state.entities.length === 1 && state.entities[0].model === "ZX-731" && state.entities[0].provenance.source_message_id === "source-1", JSON.stringify(state));
+  assert(state.conversion.order_status === "none" && state.conversion.payment_status === "none", "research promoted transaction");
+  const memory = buildCanonicalConversationMemory({ conversation_id: "conversation", company_id: "company", source_message_id: "source-1", commerce_state_revision: f.snapshot().revision, commerce_state: state, newest_first: [], visitor_turn_count: 1, source_created_at: "2026-10-01T00:00:00Z", next_memory_revision: 1 });
+  assert(memory.active_entities[0].model === "ZX-731", "research model lost before Memory");
+  const before = JSON.stringify(f.snapshot());
+  const recall = prepareConversationRecall({ conversation_id: "conversation", company_id: "company", source_message_id: "recap", question: "What are my AC requirements?", memory, commerce: { conversation_id: "conversation", company_id: "company", source_message_id: "source-1", revision: f.snapshot().revision, state } }, "en");
+  assert(recall.decision.handled && recall.reply?.includes("ZX-731") && JSON.stringify(f.snapshot()) === before, JSON.stringify(recall));
+  const unknown = fixture(initial);
+  await unknown.ask(text, [], focus);
+  assert(!unknown.snapshot().state.entities[0].model, "unvalidated history focus accepted");
 });

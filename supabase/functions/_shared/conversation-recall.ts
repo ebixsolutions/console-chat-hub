@@ -693,6 +693,8 @@ function entityAliases(e: CommerceEntity): string[] {
   const values = [
     e.entity_id,
     e.category,
+    e.category.replace(/_/g, " "),
+    ...(["en", "zh-TW", "zh-CN"] as const).map(language => industryEntityLabel(e.entity_id, language)),
     e.brand,
     e.model,
     ...["name", "product_name", "display_name", "original_name", "sku"].map(
@@ -741,6 +743,34 @@ function selectEntities(
     !["cancelled", "deferred"].includes(e.status)
   );
   return active.length === 1 ? active : [];
+}
+
+/** Current-turn scope is authoritative; fallback focus never turns a global recap into a scoped one. */
+function summarySelection(input: ConversationRecallInput, entities: CommerceEntity[]): {
+  provenance: "explicit_identity" | "explicit_category" | "trusted_referent" | "global";
+  entities: CommerceEntity[];
+} {
+  const identity = entities.filter(e => any(input.question, [e.entity_id, e.model,
+    ...["product_name", "display_name", "original_name", "sku"].map(k => e.attributes[k])]
+    .filter((v): v is string => typeof v === "string" && v.length > 0)));
+  if (identity.length) return { provenance: "explicit_identity", entities: identity };
+  // An explicitly named but unknown identifier cannot fall back to a portfolio recap.
+  // This is identifier syntax, independent of category, tenant and fixture values.
+  const identifiers = input.question.match(/\b(?=[a-z0-9-]*[a-z])(?=[a-z0-9-]*\d)[a-z][a-z0-9]*(?:-[a-z0-9]+)+\b/gi) ?? [];
+  if (identifiers.length) return { provenance: "explicit_identity", entities: [] };
+  const explicit = entities.filter(e => any(input.question, entityAliases(e)));
+  if (explicit.length) {
+    // A canonical aggregate owns its category; subordinate room projections are not competing purchase goals.
+    const categories = new Set(explicit.filter(e => e.entity_id.endsWith(":unscoped")).map(e => e.category));
+    return { provenance: "explicit_category", entities: explicit.filter(e => e.entity_id.endsWith(":unscoped") || !categories.has(e.category)) };
+  }
+  if (/(?:\bit\b|\bthat\b|\bthis\b|嗰|呢|這|这)/iu.test(input.question)) {
+    const hinted = entities.filter(e => (input.referents ?? []).some(r =>
+      r.confidence >= 0.85 && !!r.source && r.source !== "unknown" &&
+      entityAliases(e).some(a => keyNorm(a) === keyNorm(r.ref))));
+    if (hinted.length) return { provenance: "trusted_referent", entities: hinted };
+  }
+  return { provenance: "global", entities };
 }
 
 function isCurrentEntity(entity: CommerceEntity): boolean {
@@ -1368,7 +1398,10 @@ export function resolveConversationRecall(
         continue;
       }
       if (!m) return fail("AMBIGUOUS", "MEMORY_UNAVAILABLE", facts);
-      const rawSummaryEntities = c ? (selected.length ? selected.filter((entity) => isCurrentEntity(entity)) : c.state.entities.filter((entity) => isCurrentEntity(entity))) : [];
+      const scope = summarySelection(input, c?.state.entities ?? []);
+      if (scope.provenance !== "global" && (scope.entities.length === 0 || new Set(scope.entities.map(e => e.category)).size !== scope.entities.length)) return fail("AMBIGUOUS", "ENTITY_REFERENCE_AMBIGUOUS", facts);
+      const scopedIds = new Set(scope.entities.map(e => e.entity_id));
+      const rawSummaryEntities = c ? scope.entities.filter(isCurrentEntity) : [];
       const aggregateCategories = new Set(rawSummaryEntities.filter((entity) => entity.entity_id.endsWith(":unscoped")).map((entity) => entity.category));
       const summaryEntities = rawSummaryEntities.filter((entity) => entity.entity_id.endsWith(":unscoped") || !aggregateCategories.has(entity.category));
       const transaction = c ? {
@@ -1381,7 +1414,7 @@ export function resolveConversationRecall(
         fact_type: f,
         state_path: "current_memory_projection",
         value: {
-          goal: m.current_goal,
+          goal: scope.provenance === "global" ? m.current_goal : null,
           entities: c
             ? summaryEntities.map((e) => ({ entity_id: e.entity_id, quantity: e.quantity }))
             : m.active_entities.map((e) => ({
@@ -1391,20 +1424,21 @@ export function resolveConversationRecall(
           // Rich, authority-bound values stay internal. The only visible
           // projection is the shared natural recap composer below.
           entity_details: c
-            ? [...summaryEntities, ...c.state.entities.filter(e => ["deferred", "cancelled"].includes(e.status))]
+            ? [...summaryEntities, ...scope.entities.filter(e => ["deferred", "cancelled"].includes(e.status))]
             : m.active_entities.map(e => ({
               entity_id: e.entity_id, category: e.type, quantity: e.quantity,
               status: e.transaction_state.confirmed === true ? "confirmed" : "tentative",
               model: e.model, brand: e.brand, attributes: e.current_requirements,
               constraints: {}, provenance: { source_type: "customer" },
             })),
-          confirmed_entity_ids: c?.state.conversion.confirmed_entity_ids ?? [],
-          pending_actions: m.pending_actions,
-          transaction,
-          preferences: m.customer_preferences,
-          constraints: m.active_constraints,
-          regions: m.current_regions,
-          customer_facts: m.current_customer_facts,
+          selection_provenance: scope.provenance,
+          confirmed_entity_ids: (c?.state.conversion.confirmed_entity_ids ?? []).filter(id => scope.provenance === "global" || scopedIds.has(id)),
+          pending_actions: scope.provenance === "global" ? m.pending_actions : [],
+          transaction: scope.provenance === "global" ? transaction : null,
+          preferences: scope.provenance === "global" ? m.customer_preferences : [],
+          constraints: scope.provenance === "global" ? m.active_constraints : [],
+          regions: scope.provenance === "global" ? m.current_regions : [],
+          customer_facts: scope.provenance === "global" ? m.current_customer_facts : [],
         },
         authority: c ? "CANONICAL_COMMERCE_STATE" : "CURRENT_CUSTOMER_MEMORY",
         entity_id: null,

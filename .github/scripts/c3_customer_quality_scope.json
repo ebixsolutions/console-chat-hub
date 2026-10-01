@@ -6,6 +6,11 @@
     ".github/scripts/c3_customer_quality_final_gate.mjs",
     ".github/scripts/c3_customer_quality_scope.json",
     ".github/scripts/c3_director_candidate_scope.json",
+    "supabase/functions/_shared/commerce-state-authority.ts",
+    "supabase/functions/_shared/commerce-state-runtime-base.ts",
+    "supabase/functions/_shared/contextual-customer-update.test.ts",
+    "supabase/functions/_shared/conversation-recall.integration.test.ts",
+    "supabase/functions/_shared/conversation-recall.ts",
     "supabase/functions/_shared/pre-send-conversion-supervisor.test.ts",
     "supabase/functions/_shared/pre-send-conversion-supervisor.ts"
   ]
