@@ -15,6 +15,7 @@
     "supabase/functions/_shared/conversation-recall.integration.test.ts",
     "supabase/functions/_shared/conversation-recall.ts",
     "supabase/functions/_shared/pre-send-conversion-supervisor.test.ts",
-    "supabase/functions/_shared/pre-send-conversion-supervisor.ts"
+    "supabase/functions/_shared/pre-send-conversion-supervisor.ts",
+    "supabase/functions/_shared/t12-round2-production-shaped.test.ts"
   ]
 }

@@ -117,9 +117,27 @@ Deno.test("Round 2: actual T11 receipt cannot intercept later read-only T12", as
   assert(recall.decision.handled && recall.decision.fact_type === "summary" && recall.reply,
     "current recap unresolved");
   const reply = recall.reply;
-  for (const required of ["80平方呎", "110平方呎", "180平方呎", "窗口位",
-    "西斜", "共三部", "CW-SUL70BA"]) assert(reply.includes(required), `recap missing ${required}`);
+  // Captured canonical state owns these facts; transcript-only details are not evidence.
+  const authoritativeFacts = ["80平方呎", "110平方呎", "180平方呎", "共三部"];
+  for (const required of authoritativeFacts) {
+    assert(reply.includes(required), `recap missing ${required}`);
+  }
   assert(!reply.includes("100平方呎") && !reply.includes("雪櫃"), "stale/cancelled contamination");
+  const withoutRecentQuestions = prepareConversationRecall({
+    conversation_id: f.conversation_id, company_id: f.company_id,
+    source_message_id: f.source_message_id, question: f.source_message_content,
+    memory: f.memory.memory, commerce,
+  }, "zh-TW");
+  assert(withoutRecentQuestions.decision.handled &&
+    withoutRecentQuestions.decision.fact_type === "summary" && withoutRecentQuestions.reply,
+    "canonical recap requires transcript history");
+  for (const required of authoritativeFacts) {
+    assert(withoutRecentQuestions.reply.includes(required),
+      `canonical recap without recent questions missing ${required}`);
+  }
+  assert(!withoutRecentQuestions.reply.includes("100平方呎") &&
+    !withoutRecentQuestions.reply.includes("雪櫃"),
+    "canonical recap without recent questions has stale/cancelled contamination");
   const proof = await buildB2ReadOnlyRecapProof({
     conversation_id: f.conversation_id, company_id: f.company_id,
     source_message_id: f.source_message_id, commerce_revision: 9,
