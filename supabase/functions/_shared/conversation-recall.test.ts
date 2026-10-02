@@ -454,6 +454,46 @@ Deno.test("C3 rejects commerce tenant mismatch", () => {
   const d = resolveConversationRecall(i);
   assert(!d.handled && d.reason === "AMBIGUOUS");
 });
+
+Deno.test("C3 retained persisted Memory lineage is recap-only and fails closed", () => {
+  const input = recallFixture("Give me a recap of everything.");
+  const memory = input.memory!, commerce = input.commerce!;
+  memory.source_message_id = "retained-semantic-source";
+  commerce.source_message_id = "earlier-commerce-source";
+  memory.question_lifecycle = [];
+  const proof = {
+    contract: "persisted-memory-readback-v1" as const,
+    conversation_id: input.conversation_id, company_id: input.company_id,
+    source_message_id: memory.source_message_id, memory_revision: memory.memory_revision,
+    commerce_state_revision: commerce.revision, memory_hash: "a".repeat(64),
+  };
+  const valid = { ...input, trusted_persisted_memory_readback: proof };
+  const before = JSON.stringify(valid);
+  const recap = prepareConversationRecall(valid, "en");
+  assert(recap.decision.handled && recap.decision.fact_type === "summary" && recap.reply,
+    "verified retained Memory did not resolve summary");
+  assert(JSON.stringify(valid) === before, "recall mutated retained state");
+  for (const [name, change] of [
+    ["omitted", { trusted_persisted_memory_readback: null }],
+    ["contract", { trusted_persisted_memory_readback: { ...proof, contract: "invalid" as typeof proof.contract } }],
+    ["company", { trusted_persisted_memory_readback: { ...proof, company_id: "wrong" } }],
+    ["conversation", { trusted_persisted_memory_readback: { ...proof, conversation_id: "wrong" } }],
+    ["source", { trusted_persisted_memory_readback: { ...proof, source_message_id: "wrong" } }],
+    ["memory_revision", { trusted_persisted_memory_readback: { ...proof, memory_revision: proof.memory_revision + 1 } }],
+    ["commerce_revision", { trusted_persisted_memory_readback: { ...proof, commerce_state_revision: proof.commerce_state_revision + 1 } }],
+    ["stale_memory", { memory: { ...memory, commerce_state_revision: commerce.revision - 1 } }],
+    ["source_empty", { memory: { ...memory, source_message_id: "" }, trusted_persisted_memory_readback: { ...proof, source_message_id: "" } }],
+    ["hash", { trusted_persisted_memory_readback: { ...proof, memory_hash: "invalid" } }],
+    ["non_recap", { question: "How many air conditioners?" }],
+  ] as const) {
+    const rejected = resolveConversationRecall({ ...valid, ...change });
+    assert(!rejected.handled && rejected.reason === "AMBIGUOUS", `lineage ${name} accepted`);
+  }
+  // The prior Commerce-source path continues to work without the new private proof.
+  memory.source_message_id = commerce.source_message_id;
+  const existing = resolveConversationRecall(input);
+  assert(existing.handled && existing.fact_type === "summary", "existing source path regressed");
+});
 Deno.test("C3 canonical quantity wins over stale memory and correction", () => {
   const { d } = answer("冷氣幾部？", (i) => {
     i.memory!.active_entities[0].quantity = 99;
@@ -738,6 +778,36 @@ Deno.test("C3 original quantity is not substituted after correction", () => {
 
 
 const internalRecap = /###|(?:funnel_stage|quotation_status|order_status|payment_status|entity_id|commerce_state_revision|memory_revision|source_message_id)|\{[^}]*\}/;
+for (const [language, items, quote, order, payment, booking, site] of [
+  ["zh-TW", "項目：", "報價階段：草擬中", "未建立訂單", "未有付款記錄", "預約要求仍需職員確認", "適用性仍要"],
+  ["zh-CN", "项目：", "报价阶段：草拟中", "尚未建立订单", "没有付款记录", "预约要求仍需职员确认", "适用性仍需"],
+  ["en", "Items:", "Quotation stage: draft", "Order: no order has been placed", "no payment has been recorded", "booking still needs staff confirmation", "Suitability still needs"],
+] as const) {
+  Deno.test("C3 COMPLETE global recap independent sections " + language, () => {
+    const i = recallFixture("Summarize our current requirements");
+    i.commerce!.state.entities[0].attributes.capabilities = { requires_booking: true, requires_site_check: true };
+    const before = JSON.stringify(i);
+    const r = prepareConversationRecall(i, language);
+    assert(r.decision.handled && r.reply, JSON.stringify(r));
+    for (const section of [items, quote, order, payment, booking, site]) assert(r.reply.includes(section), r.reply);
+    assert(r.reply.includes(language === "en" ? "is paused" : language === "zh-CN" ? "已暂缓" : "已暫緩"), r.reply);
+    assert(!internalRecap.test(r.reply) && r.reply.length <= 4096, r.reply);
+    assert(JSON.stringify(i) === before, "global recap changed authoritative state");
+  });
+}
+Deno.test("C3 COMPLETE scoped recap excludes portfolio transaction and unrelated inactive entities", () => {
+  for (const [question, referents] of [
+    ["Recap ac-wall.", []],
+    ["Recap aircon.", []],
+    ["Recap it.", [{ ref: "ac-wall", confidence: 1, source: "canonical_commerce" }]],
+  ] as const) {
+    const i = recallFixture(question);
+    i.referents = [...referents];
+    const r = prepareConversationRecall(i, "en");
+    assert(r.decision.handled && r.reply, JSON.stringify(r));
+    assert(!/Items:|Quotation|Order:|Payment:|washer|paused/i.test(r.reply), r.reply);
+  }
+});
 Deno.test("C3 COMPONENT typed generic quantities bind before or after the named request, never a currency amount",()=>{
  for(const [text,quantity,unit,name] of [["I need PJ-274 subscription for 13 seats.",13,"seats","PJ-274 subscription"],["I also need MR-691 add-on with 7 units.",7,"units","MR-691 add-on"],["I need 4 sessions of BK-395 booking.",4,"sessions","BK-395 booking"]] as const){
    const e=extractGenericCommerceEntity(text);assert(e?.quantity===quantity && e.unit===unit && e.display_name===name,JSON.stringify(e));

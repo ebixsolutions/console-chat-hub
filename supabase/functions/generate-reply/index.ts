@@ -1,6 +1,7 @@
 import {
   prepareConversationRecall,
   type RecallCommerceSnapshot,
+  type TrustedPersistedMemoryReadback,
 } from "../_shared/conversation-recall.ts";
 import {
   applyServiceTone,
@@ -4319,6 +4320,7 @@ async function orchestrationGenerateReply(
   let _c3EmptyStateVerified = false;
   let _c3ReadOnlyMemoryHash: string | null = null;
   let _c3ReadOnlyMemorySource: string | null = null;
+  let _c3TrustedPersistedMemoryReadback: TrustedPersistedMemoryReadback | null = null;
   let _c3CommerceSnapshot: RecallCommerceSnapshot | null = null;
   if (
     _criticalE2ExpectedTenantId &&
@@ -4429,12 +4431,25 @@ async function orchestrationGenerateReply(
         persistedMemory.company_id === _criticalE2ExpectedTenantId &&
         persistedMemory.memory.conversation_id === conversation_id &&
         persistedMemory.memory.company_id === _criticalE2ExpectedTenantId &&
+        typeof persistedMemory.source_message_id === "string" &&
+        persistedMemory.source_message_id.trim().length > 0 &&
+        persistedMemory.source_message_id === persistedMemory.memory.source_message_id &&
+        typeof persistedMemory.memory_hash === "string" &&
+        /^[a-f0-9]{64}$/i.test(persistedMemory.memory_hash) &&
         Number(persistedMemory.revision) === persistedMemory.memory.memory_revision &&
         Number(persistedMemory.commerce_state_revision) === Number(commerceRow.revision) &&
         persistedMemory.memory.commerce_state_revision === Number(commerceRow.revision)) {
         _c3Memory = persistedMemory.memory;
         _c3ReadOnlyMemoryHash = String(persistedMemory.memory_hash ?? "");
         _c3ReadOnlyMemorySource = String(persistedMemory.source_message_id ?? "");
+        _c3TrustedPersistedMemoryReadback = {
+          contract: "persisted-memory-readback-v1",
+          conversation_id, company_id: _criticalE2ExpectedTenantId,
+          source_message_id: persistedMemory.source_message_id,
+          memory_revision: persistedMemory.memory.memory_revision,
+          commerce_state_revision: Number(commerceRow.revision),
+          memory_hash: persistedMemory.memory_hash,
+        };
         _c3MemoryContext = buildBoundedConversationContext(
           _c3Memory, memoryHistory,
         ).block;
@@ -4528,6 +4543,7 @@ async function orchestrationGenerateReply(
     question: _productFactualRequest,
     memory: _c3Memory,
     commerce: _c3CommerceSnapshot,
+    trusted_persisted_memory_readback: _c3TrustedPersistedMemoryReadback,
     empty_state_verified: _c3EmptyStateVerified,
     explicit_handoff: _explicitHandoffRequested,
     referents: _a3SemanticFrame?.referents ?? [],

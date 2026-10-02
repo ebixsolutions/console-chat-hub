@@ -6,6 +6,7 @@
     ".github/scripts/c3_actual_handler_runtime.mjs",
     ".github/scripts/c3_backend_deployment_request.mjs",
     ".github/scripts/c3_backend_deployment_request.test.mjs",
+    ".github/scripts/c3_canonical_103_source_replay.ts",
     ".github/scripts/c3_customer_quality_final_gate.mjs",
     ".github/scripts/c3_customer_quality_scope.json",
     ".github/scripts/c3_director_candidate_scope.json",

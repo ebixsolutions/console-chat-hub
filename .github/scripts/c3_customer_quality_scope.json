@@ -3,6 +3,7 @@
   "baseline_tree": "27ecac03454a9e914ad1796e6481210003cba158",
   "changed_files": [
     ".github/scripts/c3_actual_handler_runtime.mjs",
+    ".github/scripts/c3_canonical_103_source_replay.ts",
     ".github/scripts/c3_customer_quality_final_gate.mjs",
     ".github/scripts/c3_customer_quality_scope.json",
     ".github/scripts/c3_director_candidate_scope.json",
@@ -14,10 +15,12 @@
     "supabase/functions/_shared/contextual-customer-update.test.ts",
     "supabase/functions/_shared/conversation-long-memory.ts",
     "supabase/functions/_shared/conversation-recall.integration.test.ts",
+    "supabase/functions/_shared/conversation-recall.test.ts",
     "supabase/functions/_shared/conversation-recall.ts",
     "supabase/functions/_shared/industry-runtime-adapter.ts",
     "supabase/functions/_shared/pre-send-conversion-supervisor.test.ts",
     "supabase/functions/_shared/pre-send-conversion-supervisor.ts",
-    "supabase/functions/_shared/t12-round2-production-shaped.test.ts"
+    "supabase/functions/_shared/t12-round2-production-shaped.test.ts",
+    "supabase/functions/generate-reply/index.ts"
   ]
 }

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   prepareConversationRecall,
   type RecallCommerceSnapshot,
+  type ConversationRecallInput,
 } from "../../supabase/functions/_shared/conversation-recall.ts";
 import {
   buildCommerceEntityHints,
@@ -21,10 +22,12 @@ import {
 } from "../../supabase/functions/_shared/conversation-long-memory.ts";
 import {
   buildB2AuthoritativeReadbackProof,
+  buildB2ReadOnlyRecapProof,
   classifyCommerceStatePersistenceResult,
   classifyB2AuthoritativePersistence,
   evaluateB2BeforeCommit,
 } from "../../supabase/functions/_shared/pre-send-conversion-supervisor.ts";
+import { canonicalJson } from "../../supabase/functions/_shared/canonical-json.ts";
 import {
   isCanonicalReadOnlyCommerceReason,
   resolveCanonicalCommerceResolution,
@@ -246,6 +249,8 @@ for (let index = 0; index < fixture.turns.length; index++) {
   const beforeState = JSON.stringify(state);
   const beforeRevision = revision;
   const beforeRpcCalls = rpcCalls;
+  const beforeMemory = canonicalJson(memory);
+  const beforeMemoryRevision = memory?.memory_revision ?? null;
   let outcome;
   try {
     outcome = await runCommerceStateRuntime(db, {
@@ -317,19 +322,60 @@ for (let index = 0; index < fixture.turns.length; index++) {
     revision,
     state,
   };
-  const recall = prepareConversationRecall(
-    {
+  // Simulates the server's validated retained row; hash binds replay JSON only.
+  const retainedMemoryReadback = outcome?.reason === "read_only_current_requirements_recap" && memory
+    ? { contract: "persisted-memory-readback-v1" as const,
+      conversation_id: conversationId, company_id: companyId,
+      source_message_id: memory.source_message_id, memory_revision: memory.memory_revision,
+      commerce_state_revision: revision,
+      memory_hash: createHash("sha256").update(canonicalJson(memory)).digest("hex") }
+    : null;
+  const recallInput: ConversationRecallInput = {
       conversation_id: conversationId,
       company_id: companyId,
       source_message_id: id,
       question: text,
       memory,
       commerce,
+      trusted_persisted_memory_readback: retainedMemoryReadback,
       referents: frame?.referents ?? [],
       recent_questions: history.slice(1, 13).map((row) => String(row.content ?? "")),
-    },
-    "zh-TW",
-  );
+    };
+  const recall = prepareConversationRecall(recallInput, "zh-TW");
+  if (turn === 91) {
+    assert(memory && retainedMemoryReadback && memory.source_message_id === sourceId(89) &&
+      commerce.source_message_id === sourceId(88) && revision === 27 &&
+      memory.commerce_state_revision === revision, "turn_91_retained_lineage_fixture_changed");
+    const p = retainedMemoryReadback;
+    for (const [name, change] of [
+      ["omitted", { trusted_persisted_memory_readback: null }],
+      ["conversation", { trusted_persisted_memory_readback: { ...p, conversation_id: "wrong" } }],
+      ["company", { trusted_persisted_memory_readback: { ...p, company_id: "wrong" } }],
+      ["source", { trusted_persisted_memory_readback: { ...p, source_message_id: "wrong" } }],
+      ["memory_revision", { trusted_persisted_memory_readback: { ...p, memory_revision: p.memory_revision + 1 } }],
+      ["commerce_revision", { trusted_persisted_memory_readback: { ...p, commerce_state_revision: revision + 1 } }],
+      ["stale_memory", { memory: { ...memory, commerce_state_revision: revision - 1 } }],
+      ["invalid_source", { memory: { ...memory, source_message_id: "" }, trusted_persisted_memory_readback: { ...p, source_message_id: "" } }],
+      ["hash", { trusted_persisted_memory_readback: { ...p, memory_hash: "invalid" } }],
+    ] as const) {
+      const negative = prepareConversationRecall({ ...recallInput, ...change }, "zh-TW");
+      assert(!negative.decision.handled && negative.decision.reason === "AMBIGUOUS" &&
+        negative.decision.detail === "MEMORY_SCOPE_OR_SOURCE_MISMATCH",
+        `turn_91_lineage_negative_${name}_accepted`);
+    }
+    console.log("TURN91_RETAINED_LINEAGE|source=89|commerce_source=88|revision=27|negatives=REJECTED");
+    const conversion = state.conversion;
+    const quotationText: Record<string, string> = { none: "未建立", draft: "草擬中", pending_verification: "待核實", verified: "已核實", accepted: "已接受", expired: "已過期", cancelled: "已取消" };
+    const orderText: Record<string, string> = { none: "未建立訂單", draft: "訂單仍未確認", pending_confirmation: "訂單仍待確認", confirmed: "訂單已確認", completed: "訂單已完成", cancelled: "訂單已取消" };
+    const paymentText: Record<string, string> = { none: "未有付款記錄", pending_quote: "付款金額仍待核實", pending_payment: "仍待付款", paid: "已有已收款記錄", failed: "付款未成功", refunded: "已有退款記錄", partially_refunded: "已有部分退款記錄" };
+    assert(recall.reply?.includes("報價階段：" + quotationText[conversion.quotation_status]) &&
+      recall.reply.includes(orderText[conversion.order_status]) &&
+      recall.reply.includes("付款：" + paymentText[conversion.payment_status]),
+      "turn_91_transaction_summary_disagrees_with_canonical_conversion");
+    assert(!["confirmed", "completed"].includes(conversion.order_status) && conversion.payment_status !== "paid",
+      "turn_91_nonconfirmed_nonpaid_fixture_changed");
+    console.log(`TURN91_TRANSACTION_TRUTH|quotation=${conversion.quotation_status}|order=${conversion.order_status}|payment=${conversion.payment_status}|PASS`);
+  }
   const servicePlan = planConversationService({
     question: text,
     language: "zh-TW",
@@ -357,8 +403,11 @@ for (let index = 0; index < fixture.turns.length; index++) {
   const authoritativeRuntimeReply = resolution.bypass_service_plan && outcome?.reply
     ? outcome.reply
     : null;
-  const reply = authoritativeRuntimeReply ?? naturalGuidanceReply ?? serviceReply ?? outcome?.reply ?? recall.reply ?? "";
-  const route = authoritativeRuntimeReply
+  const groundedReadOnlyRecap = outcome?.reason === "read_only_current_requirements_recap" &&
+    recall.decision.handled && recall.decision.fact_type === "summary";
+  const reply = groundedReadOnlyRecap ? recall.reply ?? ""
+    : authoritativeRuntimeReply ?? naturalGuidanceReply ?? serviceReply ?? outcome?.reply ?? recall.reply ?? "";
+  const route = groundedReadOnlyRecap ? "canonical_memory_recall" : authoritativeRuntimeReply
     ? outcome!.route
     : naturalGuidanceReply
       ? "product_guidance"
@@ -385,6 +434,15 @@ for (let index = 0; index < fixture.turns.length; index++) {
         /(?:面積|日照|窗口|安裝)/.test(reply),
         "turn_1_useful_sizing_question_missing",
       );
+    } else if (outcome?.reason === "read_only_current_requirements_recap") {
+      assert(outcome.persist_result === "read_only" && outcome.route === "commerce_state_answer" &&
+        outcome.reply === null && !resolution.bypass_service_plan &&
+        resolution.skip_memory_refresh && resolution.no_semantic_change,
+        `turn_${turn}_read_only_recap_ownership_invalid`);
+      assert(memory && groundedReadOnlyRecap && recall.reply && reply === recall.reply &&
+        route === "canonical_memory_recall", `turn_${turn}_canonical_recap_not_selected`);
+      assert(!/window_opening_check|installation_site_check|air_conditioner|state_path|pending_actions/i.test(reply),
+        `turn_${turn}_recap_internal_code_leak`);
     } else {
       assert(Boolean(outcome?.reply), `turn_${turn}_captured_envelope_missing_runtime_reply:${JSON.stringify(outcome)}`);
       assert(resolution.bypass_service_plan, `turn_${turn}_clarification_precedence_regression`);
@@ -418,7 +476,21 @@ for (let index = 0; index < fixture.turns.length; index++) {
   }
   if (reply) {
     const selectedOutcome = authoritativeRuntimeReply ? outcome : null;
-    const metadata = authoritativeRuntimeReply
+    // Replay-local binding only; this is not PostgreSQL jsonb::text byte parity.
+    const recapProof = groundedReadOnlyRecap && memory ? await buildB2ReadOnlyRecapProof({
+      conversation_id: conversationId, company_id: companyId, source_message_id: id,
+      commerce_revision: revision, commerce_state: state,
+      memory_revision: memory.memory_revision,
+      memory_hash: createHash("sha256").update(canonicalJson(memory)).digest("hex"),
+      memory_source_message_id: memory.source_message_id, memory, reply,
+    }) : null;
+    const metadata = recapProof ? {
+      ...recall.metadata, response_route: "canonical_memory_recall", recap_read_only: true,
+      commerce_state_persist_result: "read_only",
+      commerce_state_persistence_classification: "NO_SEMANTIC_CHANGE",
+      recap_commerce_hash: recapProof.commerce_hash, recap_memory_hash: recapProof.memory_hash,
+      recap_response_hash: recapProof.response_hash,
+    } : authoritativeRuntimeReply
       ? {
         response_route: selectedOutcome!.route,
         commerce_authority: selectedOutcome!.authority,
@@ -427,18 +499,73 @@ for (let index = 0; index < fixture.turns.length; index++) {
         commerce_state_persistence_classification:
           classifyCommerceStatePersistenceResult(selectedOutcome!.persist_result),
         commerce_reason: selectedOutcome!.reason,
+        contextual_decision: selectedOutcome!.contextual_decision ?? null,
         commerce_state_path: selectedOutcome!.state_path ?? null,
         commerce_state_readback_proof: selectedOutcome!.state_path
           ? buildB2AuthoritativeReadbackProof(state, selectedOutcome!.state_path)
           : null,
       }
       : null;
-    const b2 = evaluateB2BeforeCommit({
+    const b2Input = {
       proposed_response: reply,
-      persistence_kind: "ai_reply",
-      snapshot: { conversation_id: conversationId, company_id: companyId, source_message_id: id, commerce_state_revision: revision, commerce_state_source_message_id: stateSourceMessageId, state },
+      persistence_kind: "ai_reply" as const,
+      snapshot: { conversation_id: conversationId, company_id: companyId, source_message_id: id, source_message_content: text, commerce_state_revision: revision, commerce_state_source_message_id: stateSourceMessageId, state },
       metadata,
-    });
+      trusted_read_only_recap: recapProof,
+      trusted_journey_progress: selectedOutcome?.trusted_journey_progress ?? null,
+      trusted_correction_commit: selectedOutcome?.trusted_correction_commit ?? null,
+      trusted_lifecycle_commit: selectedOutcome?.trusted_lifecycle_commit ?? null,
+      trusted_targeted_clarification: selectedOutcome?.reason === "contextual_targeted_clarification" &&
+          selectedOutcome.persist_result === "read_only" && selectedOutcome.contextual_decision
+        ? { reply: selectedOutcome.reply ?? "", revision: selectedOutcome.revision,
+          contextual_decision: selectedOutcome.contextual_decision }
+        : null,
+    };
+    const stateBeforeB2 = JSON.stringify(state);
+    const b2 = evaluateB2BeforeCommit(b2Input);
+    if (groundedReadOnlyRecap) {
+      assert(recapProof && b2.decision === "allow" && b2.code === "B2_ALLOW_AUTHORITATIVE_READ_ONLY_RECAP",
+        `turn_${turn}_recap_b2_${b2.code}`);
+      assert(beforeState === JSON.stringify(state) && beforeRevision === revision &&
+        beforeRpcCalls === rpcCalls && beforeMemory === canonicalJson(memory) &&
+        beforeMemoryRevision === memory?.memory_revision, `turn_${turn}_recap_mutated_state`);
+      for (const [name, change] of [
+        ["omitted", { trusted_read_only_recap: null }],
+        ["wrong_source", { trusted_read_only_recap: { ...recapProof, source_message_id: "wrong" } }],
+        ["wrong_company", { trusted_read_only_recap: { ...recapProof, company_id: "wrong" } }],
+        ["wrong_revision", { trusted_read_only_recap: { ...recapProof, commerce_revision: revision + 1 } }],
+        ["reply_substitution", { proposed_response: `${reply} substituted` }],
+        ["memory_revision", { trusted_read_only_recap: { ...recapProof, memory_revision: recapProof.memory_revision + 1 } }],
+        ["memory_hash", { trusted_read_only_recap: { ...recapProof, memory_hash: "wrong" } }],
+        ["memory_substitution", { trusted_read_only_recap: { ...recapProof,
+          memory: { ...recapProof.memory, company_id: "wrong" } } }],
+      ] as const) {
+        assert(evaluateB2BeforeCommit({ ...b2Input, ...change }).decision === "block",
+          `turn_${turn}_recap_negative_${name}_allowed`);
+      }
+      console.log(`TURN${turn}_RECAP_PARITY|owner=canonical_memory_recall|B2=ALLOW|negatives=BLOCK|state=UNCHANGED`);
+    }
+    if (turn === 2) {
+      const proof = selectedOutcome?.trusted_journey_progress;
+      assert(authoritativeRuntimeReply && proof && proof.company_id === companyId &&
+        proof.source_message_id === id && proof.source_text === text &&
+        proof.committed_revision === revision && proof.reply === reply,
+        "turn_2_runtime_journey_proof_binding_invalid");
+      assert(b2.decision === "allow" && b2.code === "B2_ALLOW_JOURNEY_PROGRESS_AFTER_ACCEPTED_UPDATE",
+        "turn_2_trusted_journey_not_authorized");
+      for (const [name, change] of [
+        ["omitted", { trusted_journey_progress: null }],
+        ["wrong_source", { trusted_journey_progress: { ...proof, source_message_id: "wrong-source" } }],
+        ["wrong_company", { trusted_journey_progress: { ...proof, company_id: "wrong-company" } }],
+        ["wrong_revision", { trusted_journey_progress: { ...proof, committed_revision: revision + 1 } }],
+        ["substituted_reply", { proposed_response: `${reply} substituted` }],
+      ] as const) {
+        const negative = evaluateB2BeforeCommit({ ...b2Input, ...change });
+        assert(negative.decision === "block", `turn_2_journey_negative_${name}_allowed`);
+      }
+      console.log("TURN2_B2_PROOF_PARITY|exact=ALLOW|omitted/source/company/revision/reply=BLOCK");
+    }
+    assert(JSON.stringify(state) === stateBeforeB2, `turn_${turn}_b2_mutated_state`);
     assert(b2.decision === "allow", `turn_${turn}_b2_${b2.decision}:${b2.code}:${state.latest_corrections.at(-1) ?? "none"}`);
   }
   if (
@@ -464,6 +591,7 @@ for (let index = 0; index < fixture.turns.length; index++) {
         conversation_id: conversationId,
         company_id: companyId,
         source_message_id: id,
+        source_message_content: text,
         commerce_state_revision: revision,
         commerce_state_source_message_id: stateSourceMessageId,
         state,

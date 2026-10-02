@@ -85,6 +85,34 @@ export interface ConversationRecallInput extends RecallScope {
   explicit_handoff?: boolean;
   /** True only after both scoped DB reads succeed and return no row. */
   empty_state_verified?: boolean;
+  /** Private server-derived DB lineage only; never customer/request metadata or transcript facts. */
+  trusted_persisted_memory_readback?: TrustedPersistedMemoryReadback | null;
+}
+
+export interface TrustedPersistedMemoryReadback {
+  contract: "persisted-memory-readback-v1";
+  conversation_id: string;
+  company_id: string;
+  source_message_id: string;
+  memory_revision: number;
+  commerce_state_revision: number;
+  memory_hash: string;
+}
+
+function hasTrustedPersistedMemoryReadback(input: ConversationRecallInput): boolean {
+  const p = input.trusted_persisted_memory_readback, m = input.memory, c = input.commerce;
+  return Boolean(p && m && c && p.contract === "persisted-memory-readback-v1" &&
+    p.conversation_id === input.conversation_id && p.company_id === input.company_id &&
+    m.conversation_id === input.conversation_id && m.company_id === input.company_id &&
+    c.conversation_id === input.conversation_id && c.company_id === input.company_id &&
+    typeof m.source_message_id === "string" && m.source_message_id.trim().length > 0 &&
+    p.source_message_id === m.source_message_id &&
+    Number.isInteger(p.memory_revision) && p.memory_revision > 0 &&
+    p.memory_revision === m.memory_revision &&
+    Number.isInteger(p.commerce_state_revision) && p.commerce_state_revision >= 0 &&
+    p.commerce_state_revision === m.commerce_state_revision &&
+    m.commerce_state_revision === c.revision &&
+    typeof p.memory_hash === "string" && /^[a-f0-9]{64}$/i.test(p.memory_hash));
 }
 
 // A single declarative fact vocabulary, shared by query classification and key matching.
@@ -1260,7 +1288,7 @@ export function resolveConversationRecall(
         !(isCurrentRequirementsRecap(input.question) && c &&
           (m.source_message_id === c.source_message_id || (m.question_lifecycle ?? []).some(q =>
             q.source_message_id === m.source_message_id && q.status === "resolved" &&
-            Boolean(q.resolution_source_message_id))) &&
+            Boolean(q.resolution_source_message_id)) || hasTrustedPersistedMemoryReadback(input)) &&
           m.source_message_id !== input.source_message_id &&
           m.commerce_state_revision === c.revision)) ||
       !Number.isInteger(m.memory_revision) || m.memory_revision < 1)
@@ -1827,16 +1855,19 @@ function renderCustomerRecap(value: unknown, language: string): string {
     : entities.length ? ["而家記低咗", "目前已记录"][l] + entities.map(describe).join("；") + "。"
     : retainedText || ["暫時未記低任何具體要求。", "暂时没有记录具体要求。"][l];
   const confirmed = Array.isArray(v.confirmed_entity_ids) ? v.confirmed_entity_ids : [];
+  const global = v.selection_provenance === "global";
+  const items = global && entities.length ? ["項目：", "项目：", "Items: "][l] + first : first;
   const pendingBooking = active.some(e => object(e.attributes.capabilities)?.requires_booking === true && !confirmed.includes(e.entity_id));
-  let qualification = "";
-  if (pendingBooking) qualification = ["預約要求仍需職員確認，未成為已確認預約。", "预约要求仍需职员确认，尚未成为已确认预约。", "The booking still needs staff confirmation and is not confirmed yet."][l];
-  else if (active.some(e => e.category === "air_conditioner" || object(e.attributes.capabilities)?.requires_site_check === true)) qualification = ["適用性仍要按現行資料及現場條件核對。", "适用性仍需按现行资料及现场条件核对。", "Suitability still needs current evidence and the relevant site checks."][l];
-  else if (entities.length) {
-    const transaction = object(v.transaction) ?? {};
+  const qualifications: string[] = [];
+  if (pendingBooking) qualifications.push(["預約要求仍需職員確認，未成為已確認預約。", "预约要求仍需职员确认，尚未成为已确认预约。", "The booking still needs staff confirmation and is not confirmed yet."][l]);
+  if (active.some(e => e.category === "air_conditioner" || object(e.attributes.capabilities)?.requires_site_check === true)) qualifications.push(["適用性仍要按現行資料及現場條件核對。", "适用性仍需按现行资料及现场条件核对。", "Suitability still needs current evidence and the relevant site checks."][l]);
+  // Only the global projection owns portfolio transaction status. Operational
+  // qualifications never suppress it, and scoped projections never inherit it.
+  let transactionText = "";
+  const transaction = global ? object(v.transaction) : null;
+  if (transaction) {
     const order = transaction.order_status ?? transaction.order;
     const payment = transaction.payment_status ?? transaction.payment;
-    if (order === "none" && payment === "none") qualification = ["目前只係記錄緊你嘅要求，未建立訂單或付款。", "目前只是记录你的要求，尚未建立订单或付款。", "No order or payment has been created."][l];
-    else {
       const orders: Record<string, [string, string, string]> = {
         none: ["未建立訂單", "尚未建立订单", "no order has been placed"],
         draft: ["訂單仍未確認", "订单尚未确认", "the order is not confirmed"],
@@ -1854,12 +1885,24 @@ function renderCustomerRecap(value: unknown, language: string): string {
         refunded: ["已有退款記錄", "已有退款记录", "a refund is recorded"],
         partially_refunded: ["已有部分退款記錄", "已有部分退款记录", "a partial refund is recorded"],
       };
-      qualification = [orders[String(order)]?.[l], payments[String(payment)]?.[l]].filter(Boolean).join(l === 2 ? "; " : "，");
-      if (qualification) qualification += l === 2 ? "." : "。";
-    }
+      const quotation = transaction.quotation_status ?? transaction.quotation;
+      const quotationText = STATUS_TEXT[String(quotation)]
+        ? ["報價階段：", "报价阶段：", "Quotation stage: "][l] + STATUS_TEXT[String(quotation)][l] +
+          (["none", "draft", "pending_confirmation"].includes(String(order))
+            ? ["，唔係已確認訂單", "，不是已确认订单", "; not a confirmed order"][l] : "")
+        : "";
+      transactionText = [
+        quotationText,
+        orders[String(order)] ? (l === 2 ? "Order: " : "") + orders[String(order)][l] : "",
+        payments[String(payment)] ? ["付款：", "付款：", "Payment: "][l] + payments[String(payment)][l] : "",
+      ].filter(Boolean).join(l === 2 ? "; " : "，");
+      if (transactionText) transactionText += l === 2 ? "." : "。";
   }
   const future=regions.filter(r=>r?.temporal_scope==="future").flatMap(r=>regionNames[String(r?.region)]?.[l]??[]);
   const futureText=future.length ? future.join(l===2?", ":"、")+["只屬未來討論，唔係目前已確認交易。","仅属未来讨论，并非目前已确认交易。"," is a future discussion only, not a confirmed current transaction."][l] : "";
-  const qualifier=futureText && qualification ? qualification.replace(/[.。]$/,"")+(l===2?"; ":"；")+futureText : qualification || futureText;
-  return [first, qualifier].filter(Boolean).join(l === 2 ? " " : "").slice(0, 4096);
+  const sections = [transactionText, ...qualifications, futureText].filter(Boolean);
+  const details = sections.length
+    ? sections.map(section => section.replace(/[.。]$/, "")).join(l === 2 ? "; " : "；") + (l === 2 ? "." : "。")
+    : "";
+  return [items, details].filter(Boolean).join(l === 2 ? " " : "").slice(0, 4096);
 }
