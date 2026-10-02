@@ -145,3 +145,12 @@ export function industryEntityLabel(entityId: string, language: IndustryLanguage
     ? `${room.label.en} ${category.label.en}`
     : `${room.label[language]}${category.label[language]}`;
 }
+
+/** Fallback realization only: a canonical explicit unit remains the caller's authority. */
+export function industryEntityQuantityUnit(
+  entityId: string, language: IndustryLanguage, quantity: number,
+): string | null {
+  const categoryKey = entityId.split(":")[0];
+  if (!HOME_APPLIANCE_CATEGORIES.some((category) => category.key === categoryKey)) return null;
+  return language === "en" ? (quantity === 1 ? "unit" : "units") : "部";
+}

@@ -5,7 +5,7 @@ import type {
 } from "./commerce-state-contract.ts";
 import { isCurrentRequirementsRecap, isReadOnlyMemoryOrCurrentStateRecall } from "./commerce-state-authority.ts";
 import type { CanonicalConversationMemory } from "./conversation-long-memory.ts";
-import { industryEntityLabel } from "./industry-runtime-adapter.ts";
+import { industryEntityLabel, industryEntityQuantityUnit } from "./industry-runtime-adapter.ts";
 import { renderEnglishRequirement } from "./commerce-capability-runtime.ts";
 
 export type RecallFact =
@@ -1784,7 +1784,8 @@ function renderCustomerRecap(value: unknown, language: string): string {
     large_bedroom: ["大房", "大卧室", "large bedroom"], living_room: ["客廳", "客厅", "living room"],
   };
   const describe = (e: CommerceEntity): string => {
-    const unit = typeof e.attributes.unit === "string" ? e.attributes.unit : "items";
+    const unit = typeof e.attributes.unit === "string" ? e.attributes.unit
+      : industryEntityQuantityUnit(e.category, l === 2 ? "en" : l === 1 ? "zh-CN" : "zh-TW", e.quantity) ?? "items";
     const count = l === 2 ? `${e.quantity} ${e.quantity === 1 ? unit.replace(/s$/, "") : unit}`
       : `${e.quantity}${unitLabels[unit]?.[l] ?? display(unit)}`;
     const facts: string[] = [];

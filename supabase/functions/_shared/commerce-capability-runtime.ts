@@ -1,5 +1,6 @@
 import type { CommerceEntity, ConversationCommerceState } from "./commerce-state-contract.ts";
 import type { CommerceTurnEntityHint } from "./commerce-state-reducer.ts";
+import { industryEntityQuantityUnit } from "./industry-runtime-adapter.ts";
 
 export type CommerceKind = "physical_product" | "digital_good" | "service" | "b2b_product" | "unknown";
 
@@ -275,7 +276,8 @@ export function buildCapabilityAwarePreorderNextStep(
 /** Render conversational requirements only; external fulfilment requires its own authority. */
 export function renderEnglishRequirement(entity: CommerceEntity, displayName?: string): string {
   const name = displayName ?? (typeof entity.attributes.product_name === "string" ? entity.attributes.product_name : entity.model ?? entity.category.replace(/_/g, " "));
-  const storedUnit = typeof entity.attributes.unit === "string" ? entity.attributes.unit.trim() : "";
+  const storedUnit = typeof entity.attributes.unit === "string" ? entity.attributes.unit.trim()
+    : industryEntityQuantityUnit(entity.category, "en", entity.quantity) ?? "";
   const singulars: Record<string,string> = {seats:"seat",sessions:"session",units:"unit",items:"item",boxes:"box",pieces:"piece",bottles:"bottle",packs:"pack",bags:"bag",pairs:"pair",sets:"set",nights:"night",lessons:"lesson"};
   const singular = singulars[storedUnit] ?? storedUnit;
   const unit = entity.quantity === 1 ? singular : Object.values(singulars).includes(singular) ? Object.entries(singulars).find(([,v])=>v===singular)![0] : storedUnit;
@@ -299,7 +301,8 @@ export function renderCanonicalRequirement(entity: CommerceEntity, language: str
   if (language === "en") return renderEnglishRequirement(entity);
   const l = language === "en" ? 2 : language === "zh-CN" ? 1 : 0;
   const name = typeof entity.attributes.product_name === "string" ? entity.attributes.product_name : entity.model ?? entity.category.replace(/_/g, " ");
-  const unit = typeof entity.attributes.unit === "string" ? entity.attributes.unit : "items";
+  const unit = typeof entity.attributes.unit === "string" ? entity.attributes.unit
+    : industryEntityQuantityUnit(entity.category, language === "zh-CN" ? "zh-CN" : "zh-TW", entity.quantity) ?? "items";
   const translated: Record<string, [string,string]> = {seats:["席","席"],seat:["席","席"],sessions:["節","节"],session:["節","节"],units:["個","个"],unit:["個","个"],items:["個","个"]};
   const count = l === 2 ? `${entity.quantity} ${entity.quantity===1?unit.replace(/s$/, ""):unit}` : `${entity.quantity}${translated[unit]?.[l] ?? unit}`;
   const date = typeof entity.attributes.requested_date === "string" ? entity.attributes.requested_date : null;

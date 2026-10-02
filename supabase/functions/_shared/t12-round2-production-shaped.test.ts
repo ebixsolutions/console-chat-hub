@@ -6,6 +6,8 @@ import { bindAuthorizedReply, hasUnresolvedLifecycleReplyForSource,
   resumeCommittedLifecycleReply } from "./revision-bound-reply.ts";
 import type { ConversationCommerceState } from "./commerce-state-contract.ts";
 import type { CanonicalConversationMemory } from "./conversation-long-memory.ts";
+import { renderCanonicalRequirement, renderEnglishRequirement } from "./commerce-capability-runtime.ts";
+import { industryEntityQuantityUnit } from "./industry-runtime-adapter.ts";
 
 function assert(value: unknown, message: string): asserts value {
   if (!value) throw new Error(message);
@@ -18,6 +20,19 @@ type Fixture = {
   memory: { revision: number; source_message_id: string;
     commerce_state_revision: number; memory_hash: string; memory: CanonicalConversationMemory };
 };
+
+function assertCanonicalApplianceQuantity(
+  recall: ReturnType<typeof prepareConversationRecall>, category: string, quantity: number,
+): void {
+  assert(recall.decision.handled && recall.decision.fact_type === "summary" && recall.reply,
+    "canonical summary unresolved");
+  const value = recall.decision.value as { entity_details: Array<{ category: string; quantity: number }> };
+  assert(value.entity_details.some((entity) => entity.category === category && entity.quantity === quantity),
+    "summary lost authoritative category/quantity evidence");
+  const chineseQuantity = quantity === 3 ? /(?:3|三)\s*部/u : /(?:2|兩|两|二)\s*部/u;
+  assert(chineseQuantity.test(recall.reply), "recap lacks natural appliance counter");
+  assert(!/(?:3|三|2|兩|两|二)\s*[個个]/u.test(recall.reply), "recap uses generic appliance counter");
+}
 
 class Readback implements B2DatabaseClient {
   reads: string[] = [];
@@ -118,7 +133,8 @@ Deno.test("Round 2: actual T11 receipt cannot intercept later read-only T12", as
     "current recap unresolved");
   const reply = recall.reply;
   // Captured canonical state owns these facts; transcript-only details are not evidence.
-  const authoritativeFacts = ["80平方呎", "110平方呎", "180平方呎", "共三部"];
+  const authoritativeFacts = ["80平方呎", "110平方呎", "180平方呎"];
+  assertCanonicalApplianceQuantity(recall, "air_conditioner", 3);
   for (const required of authoritativeFacts) {
     assert(reply.includes(required), `recap missing ${required}`);
   }
@@ -131,6 +147,7 @@ Deno.test("Round 2: actual T11 receipt cannot intercept later read-only T12", as
   assert(withoutRecentQuestions.decision.handled &&
     withoutRecentQuestions.decision.fact_type === "summary" && withoutRecentQuestions.reply,
     "canonical recap requires transcript history");
+  assertCanonicalApplianceQuantity(withoutRecentQuestions, "air_conditioner", 3);
   for (const required of authoritativeFacts) {
     assert(withoutRecentQuestions.reply.includes(required),
       `canonical recap without recent questions missing ${required}`);
@@ -197,4 +214,63 @@ Deno.test("Round 2: actual T11 receipt cannot intercept later read-only T12", as
     assert(!blocked.result.committed && blocked.rpc === "NOT_REACHED", name);
   }
   console.log("T12-R2|first=stale-lifecycle-receipt-cross-source|recap=read_only|commerce=9→9|memory=11→11|B2_ALLOW_AUTHORITATIVE_READ_ONLY_RECAP|RPC=success|negatives=PASS");
+});
+
+Deno.test("canonical quantity realization shares industry fallback and preserves explicit units", async () => {
+  const fixture = JSON.parse(await Deno.readTextFile(new URL(
+    "./fixtures/t12-round2-production-shaped.json", import.meta.url,
+  ))) as Fixture;
+  const makeEntity = (category: string, quantity: number, unit?: string) => ({
+    ...structuredClone(fixture.commerce.state.entities[0]),
+    entity_id: `${category}:unscoped`, category, quantity,
+    attributes: unit === undefined ? {} : { unit }, constraints: {},
+  });
+  const recapFor = (entity: ReturnType<typeof makeEntity>, language: string) => {
+    const state = structuredClone(fixture.commerce.state);
+    state.entities = [entity];
+    return prepareConversationRecall({
+      conversation_id: fixture.conversation_id, company_id: fixture.company_id,
+      source_message_id: fixture.source_message_id, question: "Give me a recap of everything.",
+      memory: fixture.memory.memory,
+      commerce: { ...fixture.commerce, state, conversation_id: fixture.conversation_id,
+        company_id: fixture.company_id },
+    }, language);
+  };
+  const appliance = makeEntity("washing_machine", 2);
+  const before = JSON.stringify(appliance);
+  for (const language of ["zh-TW", "zh-CN"] as const) {
+    assertCanonicalApplianceQuantity(recapFor(appliance, language), "washing_machine", 2);
+    assert(/2部/u.test(renderCanonicalRequirement(appliance, language)), "sibling Chinese counter");
+  }
+  const english = recapFor(appliance, "en");
+  assert(english.decision.handled && english.reply?.includes("2 units"), "English recap appliance unit");
+  assert(renderEnglishRequirement(appliance).includes("2 units"), "English requirement appliance unit");
+  assert(renderCanonicalRequirement(appliance, "en").includes("2 units"), "canonical English appliance unit");
+  assert(industryEntityQuantityUnit("washing_machine:unseen", "en", 1) === "unit", "singular industry unit");
+  assert(industryEntityQuantityUnit("unknown_category", "zh-TW", 2) === null, "unknown category must retain fallback");
+  assert(JSON.stringify(appliance) === before, "rendering mutated canonical entity");
+  for (const [category, quantity, unit] of [
+    ["booking", 7, "sessions"], ["subscription", 19, "seats"],
+    ["generic_product", 4, "boxes"], ["washing_machine", 4, "boxes"],
+  ] as const) {
+    const entity = makeEntity(category, quantity, unit);
+    const original = JSON.stringify(entity);
+    const englishReply = recapFor(entity, "en");
+    assert(englishReply.decision.handled && englishReply.reply?.includes(`${quantity} ${unit}`),
+      `${category}: explicit recap unit lost`);
+    assert(renderEnglishRequirement(entity).includes(`${quantity} ${unit}`),
+      `${category}: explicit English unit lost`);
+    for (const language of ["zh-TW", "zh-CN"] as const) {
+      const recall = recapFor(entity, language);
+      const rendered = renderCanonicalRequirement(entity, language);
+      const explicitCounter = unit === "sessions" ? (language === "zh-CN" ? "节" : "節")
+        : unit === "seats" ? "席" : unit;
+      assert(recall.decision.handled && recall.reply &&
+        recall.reply.includes(`${quantity}${explicitCounter}`) &&
+        rendered.includes(`${quantity}${explicitCounter}`) &&
+        !recall.reply.includes(`${quantity}部`) && !rendered.includes(`${quantity}部`),
+        `${category}: explicit unit overridden`);
+    }
+    assert(JSON.stringify(entity) === original, "explicit-unit rendering mutated entity");
+  }
 });
