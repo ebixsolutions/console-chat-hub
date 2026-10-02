@@ -418,9 +418,12 @@ must(
 for (const marker of [
   "const _explicitHandoffRequested = isHandoffIntent(_h1LastMsg)",
   "if (_c3PlannedReply && !_explicitHandoffRequested)",
-  "if (_c3CommerceReply && !_explicitHandoffRequested)",
   'response_route: "explicit_handoff"',
 ]) must(generate.includes(marker), `explicit_handoff_precedence_missing:${marker}`);
+must(
+  /if\s*\(\s*_c3CommerceReply\s*&&\s*!_explicitHandoffRequested\s*&&\s*!requiresCurrentMerchantEvidence\(\s*_effectiveNaturalCustomerIntent\s*\)\s*\)\s*\{/.test(generate),
+  "explicit_handoff_precedence_missing:commerce_reply_guard",
+);
 
 for (
   const marker of [
@@ -555,10 +558,20 @@ for (const file of changed) {
 for (const file of Object.values(files)) {
   must(changed.includes(file), `expected_change_missing:${file}`);
 }
+const changedMigrationPaths = changed
+  .filter((file) => file.startsWith("supabase/migrations/"))
+  .sort();
+const expectedMigrationPaths = [...new Set([
+  files.migration,
+  files.deterministicMigration,
+  ...t11AtomicRepairFiles.filter((file) => file.startsWith("supabase/migrations/")),
+  ...(directorCandidate
+    ? directorContract.changed_files.filter((file) => file.startsWith("supabase/migrations/"))
+    : []),
+])].sort();
 must(
-  changed.filter((file) => file.startsWith("supabase/migrations/")).length ===
-    (directorCandidate ? 6 : 4),
-  "migration_count_invalid",
+  JSON.stringify(changedMigrationPaths) === JSON.stringify(expectedMigrationPaths),
+  "migration_scope_invalid",
 );
 for (
   const forbidden of [

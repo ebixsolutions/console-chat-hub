@@ -6,6 +6,8 @@
     ".github/scripts/c3_customer_quality_final_gate.mjs",
     ".github/scripts/c3_customer_quality_scope.json",
     ".github/scripts/c3_director_candidate_scope.json",
+    ".github/scripts/c3_edge_runtime_parity.test.mjs",
+    ".github/scripts/task_ai_abc_c3_final_gate.mjs",
     "supabase/functions/_shared/commerce-state-authority.ts",
     "supabase/functions/_shared/commerce-state-runtime-base.ts",
     "supabase/functions/_shared/contextual-customer-update.test.ts",

@@ -11,6 +11,16 @@ import {
 } from "./c3_edge_runtime_parity.mjs";
 
 const root = process.cwd();
+// Machine-derived from the accepted 086e77a generate-reply dependency closure.
+const ACCEPTED_RUNTIME_FILE_SET_SHA256 =
+  "da7da6b9d9bd5b9716ced54417c1801728d35aa1010f59f5a1c3d0520c968118";
+const runtimeFileSetDigest = (files) => crypto.createHash("sha256")
+  .update([...files].sort().join("\n") + "\n").digest("hex");
+const assertAcceptedRuntimeFileSet = (files) => assert.equal(
+  runtimeFileSetDigest(files),
+  ACCEPTED_RUNTIME_FILE_SET_SHA256,
+  "runtime expected file-set identity drift",
+);
 const sourceOnlyAdapter = "supabase/functions/_shared/deterministic-kb-client.ts";
 const expectedRoot = buildRuntimeParityReport({
   root,
@@ -28,19 +38,27 @@ const report = buildRuntimeParityReport({
 });
 assertRuntimeParity(report);
 assert.equal(report.root, GENERATE_REPLY_RUNTIME_ROOT);
-assert.equal(report.runtime_expected_files.length, 63);
+assertAcceptedRuntimeFileSet(report.runtime_expected_files);
 assert.equal(
   new Set(report.runtime_expected_files).size,
   report.runtime_expected_files.length,
 );
 assert(report.runtime_expected_files.includes(GENERATE_REPLY_RUNTIME_ROOT));
-assert.equal(report.runtime_actual_files.length, 63);
+assert.deepEqual(report.runtime_actual_files, report.runtime_expected_files);
 assert.equal(report.missing_count, 0);
 assert.equal(report.extra_count, 0);
 assert.equal(report.mismatch_count, 0);
 assert.equal(report.duplicate_actual_count, 0);
 assert.equal(report.deterministic_kb_client.runtime_reachable, false);
 assert.equal(report.deterministic_kb_client.source_scope, true);
+
+// Identity must reject missing, extra, and same-count substituted paths.
+const fakeRuntimePath = "supabase/functions/_shared/unauthorized-runtime.ts";
+for (const files of [
+  report.runtime_expected_files.slice(1),
+  [...report.runtime_expected_files, fakeRuntimePath],
+  [fakeRuntimePath, ...report.runtime_expected_files.slice(1)],
+]) assert.throws(() => assertAcceptedRuntimeFileSet(files), /file-set identity drift/u);
 
 // Omitting a real transitive dependency must fail.
 const missingReport = buildRuntimeParityReport({
@@ -133,6 +151,8 @@ process.stdout.write(JSON.stringify({
   root: report.root,
   runtime_expected_files: report.runtime_expected_files,
   runtime_actual_files: report.runtime_actual_files,
+  runtime_file_set_sha256: runtimeFileSetDigest(report.runtime_expected_files),
+  runtime_file_count: report.runtime_expected_files.length,
   source_scope_files: report.source_scope_files,
   missing: report.missing_count,
   extra: report.extra_count,

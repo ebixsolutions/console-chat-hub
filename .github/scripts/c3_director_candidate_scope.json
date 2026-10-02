@@ -10,6 +10,7 @@
     ".github/scripts/c3_customer_quality_scope.json",
     ".github/scripts/c3_director_candidate_scope.json",
     ".github/scripts/c3_director_generic_core_final_gate.mjs",
+    ".github/scripts/c3_edge_runtime_parity.test.mjs",
     ".github/scripts/task_ai_abc_c3_final_gate.mjs",
     ".github/workflows/task-ai-abc-c3-final-gate.yml",
     "sql/c3-nonproduction/00_repository_baseline.sql",
