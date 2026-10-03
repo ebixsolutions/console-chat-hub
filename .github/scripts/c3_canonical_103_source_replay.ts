@@ -250,7 +250,7 @@ for (let index = 0; index < fixture.turns.length; index++) {
   const beforeRevision = revision;
   const beforeRpcCalls = rpcCalls;
   const beforeMemory = canonicalJson(memory);
-  const beforeMemoryRevision = memory?.memory_revision ?? null;
+  const beforeMemoryRevision: number | null = memory?.memory_revision ?? null;
   let outcome;
   try {
     outcome = await runCommerceStateRuntime(db, {
