@@ -25,7 +25,12 @@ export type CommerceStateEvent =
   | { type: "REMOVE_ENTITY_CONSTRAINT"; entity_id: string; key: string; provenance: CommerceProvenance }
   | { type: "ADD_QUOTE"; quote: CommerceQuote }
   | { type: "SET_QUOTE_VALIDITY"; quote_id: string; validity_status: CommerceQuote["validity_status"] }
-  | { type: "SET_DELIVERY"; patch: Partial<ConversationCommerceState["delivery"]>; provenance: CommerceProvenance }
+  | {
+    type: "SET_DELIVERY";
+    patch: Partial<ConversationCommerceState["delivery"]>;
+    provenance: CommerceProvenance;
+    address_update?: AddressMutation;
+  }
   | { type: "UPSERT_INSTALLATION_ITEM"; item: CommerceInstallationItem }
   | { type: "SET_SITE_CONDITION"; key: string; value: unknown }
   | { type: "SET_PENDING_CHECKS"; checks: string[] }
@@ -59,6 +64,20 @@ export interface CommerceTurnInterpretationInput {
 
 const MAX_CORRECTIONS = 50;
 const MAX_UNRESOLVED = 100;
+
+export type AddressMutation =
+  | {
+    operation: "FULL_REPLACE";
+    previous: null;
+    current: string;
+    preserve_unmentioned_components: false;
+  }
+  | {
+    operation: "SCOPED_COMPONENT_UPDATE";
+    previous: string;
+    current: string;
+    preserve_unmentioned_components: true;
+  };
 
 function clone<T>(value: T): T {
   return structuredClone(value);
@@ -218,7 +237,15 @@ export function reduceCommerceState(
         break;
       }
       case "SET_DELIVERY": {
-        next.delivery = { ...next.delivery, ...clone(event.patch), provenance: clone(event.provenance) };
+        const address = event.address_update
+          ? applyAddressReplacementCorrection(next.delivery.address, event.address_update)
+          : undefined;
+        next.delivery = {
+          ...next.delivery,
+          ...clone(event.patch),
+          ...(address ? { address } : {}),
+          provenance: clone(event.provenance),
+        };
         break;
       }
       case "UPSERT_INSTALLATION_ITEM": {
@@ -307,14 +334,16 @@ function parseSmallCount(raw: string): number | null {
 }
 
 function parseExplicitQuantity(text: string): number | null {
-  const m = text.match(/(?:qty|quantity|數量|数量|共|總共|总共|要|需要|買|买|訂|订|改做|改成|change to)\s*(?:係|是|=|:|：)?\s*([一二兩两三四五六七八九十]|\d{1,4})\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚|night|nights|pcs?|pieces?|units?|items?)?/i)
+  const m = text.match(/(?:qty|quantity|數量|数量|共|總共|总共)\s*(?:係|是|=|:|：)?\s*([一二兩两三四五六七八九十]|\d{1,4})(?!門|门)/i)
+    ?? text.match(/(?:要|需要|買|买|訂|订|改做|改成|change to)\s*(?:係|是|=|:|：)?\s*([一二兩两三四五六七八九十]|\d{1,4})\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚|night|nights|pcs?|pieces?|units?|items?)/i)
     ?? text.match(/([一二兩两三四五六七八九十]|\d{1,4})\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚|night|nights|pcs?|pieces?|units?|items?)\b/i);
   return m?.[1] ? parseSmallCount(m[1]) : null;
 }
 
 function parseMoney(text: string): { amount: number; currency: string } | null {
   const m = text.match(/(?:HK\$|US\$|NT\$|TWD\s*|USD\s*|HKD\s*|\$)\s*([0-9][0-9,]*(?:\.\d{1,2})?)/i)
-    ?? text.match(/(?:價|价|報價|报价|quote|quoted|price)\s*(?:係|是|為|为|=|:|：)?\s*([0-9][0-9,]*(?:\.\d{1,2})?)/i);
+    ?? text.match(/(?:價|价|報價|报价|quote|quoted|price)\s*(?:係|是|為|为|=|:|：)?\s*([0-9][0-9,]*(?:\.\d{1,2})?)/i)
+    ?? text.match(/(?:話|说|said|told).{0,36}?([1-9][0-9]{2,6}(?:\.[0-9]{1,2})?)\s*(?:一部|每部|per\s+unit|each)/i);
   if (!m?.[1]) return null;
   const amount = Number(m[1].replace(/,/g, ""));
   if (!Number.isFinite(amount)) return null;
@@ -326,39 +355,188 @@ function parseMoney(text: string): { amount: number; currency: string } | null {
 }
 
 function detectEntityStatus(text: string): CommerceEntityStatus | null {
-  if (/(?:取消|唔要|不要|不買|不买|唔買|cancel(?:led)?|remove it|drop it)/i.test(text)) return "cancelled";
+  if (/(?:取消|唔要|不要|不買|不买|唔買|唔裝|不裝|不装|cancel(?:led)?|remove it|drop it|not install|won't install|do not install)/i.test(text)) return "cancelled";
   if (/(?:暫時唔|暫時不|暂时不|稍後先|稍后再|defer|later|hold off)/i.test(text)) return "deferred";
   if (/(?:確認要|确认要|確定要|确定要|就要|confirmed?|keep it|take it)/i.test(text)) return "confirmed";
+  if (/(?:恢復|恢复|加返|要返|裝返|装返|都係(?:要|買|买|裝|装)|都要(?:買|买|裝|装)|裝埋|装埋|重新(?:加入|安裝|安装)|reactivate|restore|add (?:it|that|the .+?) back|include (?:it|that|the .+?)|go ahead with)/i.test(text)) return "tentative";
   if (/(?:考慮|考虑|睇下|看看|研究|research|consider)/i.test(text)) return "researching";
   return null;
 }
 
 function detectFunnel(text: string): { funnel_stage?: CommerceFunnelStage; quotation_status?: CommerceQuotationStatus; order_status?: CommerceOrderStatus; payment_status?: CommercePaymentStatus } | null {
-  if (/(?:已付款|已付|paid\b)/i.test(text)) return { funnel_stage: "order_confirmed", order_status: "confirmed", payment_status: "paid" };
-  if (/(?:正式落單|正式下单|confirm(?:ed)? order|order confirmed)/i.test(text)) return { funnel_stage: "order_confirmed", order_status: "confirmed" };
-  if (/(?:未正式落單|未正式下单|唔係正式落單|不是正式下单|not (?:a )?confirmed order|quotation only|只係報價|只是报价)/i.test(text)) {
+  // A negated transaction phrase contains the same positive words. Classify
+  // the bounded negation first so a quotation never confirms an order.
+  if (/(?:未\s*(?:confirm|確認|确认).{0,16}(?:正式)?(?:order|落單|落单|下單|下单)|未正式落單|未正式下单|唔好.{0,12}當.{0,8}(?:正式)?(?:order|落單|落单|訂單|订单)|唔係正式落單|不是正式下单|not (?:a )?confirmed order|quotation\s*(?:only|咋|而已)|quote\s*only|(?:只係|只是|淨係|净是)?\s*(?:報價|报价)\s*(?:咋|啫|而已|only)?)/i.test(text)) {
     return { funnel_stage: "quotation", quotation_status: "draft", order_status: "draft", payment_status: "pending_quote" };
   }
+  if (/(?:已付款|已付|paid\b)/i.test(text)) return { funnel_stage: "order_confirmed", order_status: "confirmed", payment_status: "paid" };
+  if (/(?:正式落單|正式下单|confirm(?:ed)? order|order confirmed)/i.test(text)) return { funnel_stage: "order_confirmed", order_status: "confirmed" };
   if (/(?:準備落單|准备下单|ready to order|準備下單|准备落单)/i.test(text)) return { funnel_stage: "checkout_ready", order_status: "pending_confirmation" };
   if (/(?:報價|报价|quotation|quote)/i.test(text)) return { funnel_stage: "quotation", quotation_status: "draft" };
   return null;
 }
 
 function correctionText(text: string): string | null {
-  if (/(?:更正|改返|改成|最新|記住|记住|唔係|不是|actually|i meant|correction)/i.test(text)) return text;
+  if (parseAddressReplacementCorrection(text)) return text;
+  if (/(?:更正|改返|改成|記住最新|记住最新|actually|i meant|correction)/i.test(text)) return text;
+  if (/(?:唔係|唔系|不是|不係).{1,120}(?:而係|而系|而是)/i.test(text)) return text;
+  if (
+    /(?:唔係|唔系|不是|不係|actually|i meant)/i.test(text) &&
+    /(?:取消|唔要|不要|唔裝|不裝|不装|暫緩|暂缓|defer|cancel|remove)/i.test(text)
+  ) return text;
   return null;
+}
+
+export function parseAddressReplacementCorrection(
+  value: string,
+): AddressMutation | null {
+  const text = clean(value, 500);
+  const trimPart = (part: string) =>
+    clean(part, 180)
+      .replace(/^[,，:：;；\s]+|[,，。.!！?？;；\s]+$/g, "")
+      .replace(
+        /[,，;；]?\s*(?:我(?:打|講|说|寫|写)錯(?:咗|左|了)?|係我錯|是我錯|是我错|i\s+(?:was|am)\s+wrong|my\s+mistake|sorry)\s*$/i,
+        "",
+      )
+      .replace(/[,，。.!！?？;；\s]+$/g, "");
+  const addressContext = /(?:地址|送貨地址|送货地址|收貨地址|收货地址|送貨地點|送货地点|delivery address|delivery location)/i;
+  const addressValue = /(?:邨|村|苑|座|樓|楼|層|层|室|街|道|路|號|号|大廈|大厦|中心|building|block|floor|room|road|street|avenue)/i;
+
+  const paired = text.match(
+    /^(?:(?:更正|修正|correction)\s*)?(?:(?:地址|送貨地址|送货地址|收貨地址|收货地址|delivery address)\s*[:：,，]?\s*)?(?:唔係|唔系|不是|不係|not)\s*(.+?)\s*[,，;；]?\s*(?:而)?(?:係|系|是|but\s+(?:it\s+is\s+)?|instead\s+it\s+is\s+)\s*(.+)$/i,
+  );
+  if (paired) {
+    const previous = trimPart(paired[1] ?? "");
+    const current = trimPart(paired[2] ?? "");
+    if (
+      previous && current && previous !== current &&
+      (addressContext.test(text) || addressValue.test(previous) || addressValue.test(current))
+    ) {
+      return {
+        operation: "SCOPED_COMPONENT_UPDATE",
+        previous,
+        current,
+        preserve_unmentioned_components: true,
+      };
+    }
+  }
+
+  const fromTo = text.match(
+    /^(?:(?:地址|送貨地址|送货地址|收貨地址|收货地址|送貨地點|送货地点|delivery address|delivery location)\s*)?(?:由|from)\s*(.+?)\s*(?:更正為|更正为|改為|改为|改成|to)\s*(.+)$/i,
+  ) ?? text.match(
+    /^(?:change|correct)\s+(?:(?:the|my)\s+)?(?:address|delivery address|delivery location)\s+from\s+(.+?)\s+to\s+(.+)$/i,
+  );
+  if (fromTo) {
+    const previous = trimPart(fromTo[1] ?? "");
+    const current = trimPart(fromTo[2] ?? "");
+    if (previous && current && previous !== current) {
+      return {
+        operation: "SCOPED_COMPONENT_UPDATE",
+        previous,
+        current,
+        preserve_unmentioned_components: true,
+      };
+    }
+  }
+
+  const replacement = text.match(
+    /^(?:更正|改(?:為|为|成|做|返)?|變成|变成|change(?:\s+it)?\s+to|make\s+it)\s*(?:(?:地址|送貨地址|送货地址|收貨地址|收货地址|delivery address)\s*)?(?:為|为|是|係|=|:|：)?\s*(.+)$/i,
+  );
+  const current = trimPart(replacement?.[1] ?? "");
+  if (current && (addressContext.test(text) || addressValue.test(current))) {
+    return {
+      operation: "FULL_REPLACE",
+      previous: null,
+      current,
+      preserve_unmentioned_components: false,
+    };
+  }
+  const fieldFirst = text.match(
+    /^(?:地址|送貨地址|送货地址|收貨地址|收货地址|送貨地點|送货地点|delivery address|delivery location)\s*(?:更正為|更正为|改為|改为|改成|改做|change(?:d)?\s+to|correct(?:ed)?\s+to)\s*(.+)$/i,
+  ) ?? text.match(
+    /^(?:change|correct)\s+(?:(?:the|my)\s+)?(?:address|delivery address|delivery location)\s+to\s+(.+)$/i,
+  );
+  const fieldCurrent = trimPart(fieldFirst?.[1] ?? "");
+  if (fieldCurrent) {
+    return {
+      operation: "FULL_REPLACE",
+      previous: null,
+      current: fieldCurrent,
+      preserve_unmentioned_components: false,
+    };
+  }
+  return null;
+}
+
+/**
+ * Applies a scoped address correction without discarding unaffected address
+ * components. Overlap removal prevents `A座12樓 -> B座12樓12樓` when the
+ * customer repeats a suffix already present in the durable address.
+ */
+export function applyAddressReplacementCorrection(
+  previousAddress: string | null | undefined,
+  correction: AddressMutation,
+): string {
+  const prior = clean(previousAddress, 300);
+  const oldPart = clean(correction.previous, 180);
+  const current = clean(correction.current, 180);
+  if (correction.operation === "FULL_REPLACE") return current;
+  if (!prior || !oldPart) return prior;
+  const index = prior.toLocaleLowerCase().indexOf(oldPart.toLocaleLowerCase());
+  if (index < 0) return prior;
+  const prefix = prior.slice(0, index);
+  let suffix = prior.slice(index + oldPart.length);
+  const maxOverlap = Math.min(current.length, suffix.length);
+  for (let size = maxOverlap; size > 0; size -= 1) {
+    if (
+      current.slice(-size).toLocaleLowerCase() ===
+        suffix.slice(0, size).toLocaleLowerCase()
+    ) {
+      suffix = suffix.slice(size);
+      break;
+    }
+  }
+  return clean(`${prefix}${current}${suffix}`, 300);
+}
+
+/**
+ * Extracts an explicit customer delivery-day preference without treating a
+ * question, policy enquiry, or cancellation as mutation authority.  Elliptical
+ * turns such as "星期六做首選" require a delivery context supplied by the
+ * caller; self-contained delivery statements do not.
+ */
+export function extractDeliveryPreference(
+  value: string,
+  hasDeliveryContext = false,
+): string | null {
+  const text = clean(value, 500);
+  if (!text || /[?？]/.test(text)) return null;
+  if (/(?:政策|規則|规则|可唔可以改|能不能改|可否更改|reschedul(?:e|ing)\s+policy|change\s+policy)/i.test(text)) {
+    return null;
+  }
+  const dates = [...text.matchAll(
+    /(星期[一二三四五六日天]|週[一二三四五六日天]|周[一二三四五六日天]|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d{4}-\d{2}-\d{2})/gi,
+  )].map((match) => match[1]);
+  const date = dates.at(-1);
+  if (!date) return null;
+  const directDelivery = /(?:送貨|送货|配送|派送|delivery|deliver|appointment|預約|预约)/i.test(text);
+  const preferenceMutation = /(?:最好|首選|首选|優先|优先|偏好|希望|安排|定(?:喺|在|於|于)?|改(?:做|成|為|为)|prefer(?:red)?|make\s+it|set\s+it)/i.test(text);
+  const cancellation = /(?:取消|唔要|不要|撤銷|撤销|cancel|remove)/i.test(text);
+  if (cancellation && dates.length === 1 && !preferenceMutation) return null;
+  return directDelivery || (hasDeliveryContext && preferenceMutation) ? date : null;
 }
 
 function explicitDeliveryPatch(text: string): Partial<ConversationCommerceState["delivery"]> | null {
   const patch: Partial<ConversationCommerceState["delivery"]> = {};
-  const phone = text.match(/(?:電話|电话|phone|contact)\s*(?:係|是|=|:|：)?\s*([+\d][\d\s-]{6,20})/i);
+  const phone = text.match(/(?:電話|电话|phone|contact)[^\d+]{0,40}([+\d][\d\s-]{6,20})/i);
   if (phone?.[1]) patch.recipient_phone = phone[1].replace(/\s+/g, " ").trim();
   const recipient = text.match(/(?:收貨人|收货人|recipient)\s*(?:係|是|=|:|：)?\s*([^，。,.!?！？]{1,40})/i);
   if (recipient?.[1]) patch.recipient_name = recipient[1].trim();
+  const replacement = parseAddressReplacementCorrection(text);
   const address = text.match(/(?:地址|送貨地址|送货地址|delivery address)\s*(?:係|是|=|:|：)?\s*([^。!?！？]{3,180})/i);
-  if (address?.[1]) patch.address = address[1].trim();
-  const date = text.match(/(?:送貨|送货|delivery|deliver|appointment|預約|预约).{0,20}(星期[一二三四五六日天]|週[一二三四五六日天]|周[一二三四五六日天]|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d{4}-\d{2}-\d{2})/i);
-  if (date?.[1]) patch.preferred_date = date[1];
+  if (!replacement && address?.[1]) patch.address = address[1].trim();
+  const preferredDate = extractDeliveryPreference(text);
+  if (preferredDate) patch.preferred_date = preferredDate;
   return Object.keys(patch).length ? patch : null;
 }
 
@@ -387,7 +565,7 @@ export function deriveCommerceEventsFromCustomerTurn(input: CommerceTurnInterpre
   const money = parseMoney(text);
   if (money) {
     const entityId = mentioned.length === 1 ? mentioned[0].entity_id : null;
-    const historical = /(?:之前|上次|舊價|旧价|歷史|历史|previous|historical|last time)/i.test(text);
+    const historical = /(?:之前|之後.+?(?:話|说|said|told)|上次|舊價|旧价|歷史|历史|previous|historical|last time|(?:同事|小姐|先生).{0,20}(?:話|说|said|told))/i.test(text);
     const explicitlyUnverified = /(?:唔肯定|不確定|不确定|未confirm|未確認|未确认|unverified|not sure)/i.test(text);
     events.push({
       type: "ADD_QUOTE",
@@ -407,6 +585,15 @@ export function deriveCommerceEventsFromCustomerTurn(input: CommerceTurnInterpre
 
   const delivery = explicitDeliveryPatch(text);
   if (delivery) events.push({ type: "SET_DELIVERY", patch: delivery, provenance: p });
+  const addressUpdate = parseAddressReplacementCorrection(text);
+  if (addressUpdate) {
+    events.push({
+      type: "SET_DELIVERY",
+      patch: {},
+      address_update: addressUpdate,
+      provenance: p,
+    });
+  }
 
   const conversion = detectFunnel(text);
   if (conversion) events.push({ type: "SET_CONVERSION", patch: conversion });

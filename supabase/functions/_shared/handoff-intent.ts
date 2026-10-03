@@ -215,6 +215,8 @@ const PRESENT_REQUEST_MARKERS = [
   "幫我接",
   "帮我接",
   "我要",
+  "我想轉",
+  "我想转",
   "我想要",
   "我需要",
   "轉我",
@@ -251,12 +253,23 @@ function matches(haystackLower: string, raw: string, terms: string[]): string[] 
   return hit;
 }
 
+function hasScopedHandoffNegation(raw: string): boolean {
+  return raw.split(/[，,。.!！?？;；]+/).some((clause) => {
+    const lower = clause.toLowerCase();
+    const mentionsHuman = matches(lower, clause, [
+      ...HUMAN_TERMS_ZH,
+      ...HUMAN_TERMS_EN,
+    ]).length > 0;
+    return mentionsHuman && matches(lower, clause, NEGATION_MARKERS).length > 0;
+  });
+}
+
 /**
  * Canonical classifier. Category precedence is deliberate and conservative:
  * negation > conditional/future > reference/report > informational question >
  * explicit present request > bare mention.
  */
-export function classifyHandoffIntent(text: string): HandoffIntentClassification {
+function classifyHandoffClause(text: string): HandoffIntentClassification {
   const raw = normalize(text);
   const lower = raw.toLowerCase();
   const language = detectHandoffLanguageHint(raw);
@@ -278,7 +291,10 @@ export function classifyHandoffIntent(text: string): HandoffIntentClassification
 
   if (!mentions) return base;
 
-  if (matches(lower, raw, NEGATION_MARKERS).length > 0) {
+  // Negation is authoritative only when it occurs in the same clause as the
+  // human-handoff mention. A separate instruction such as "不要當作已完成"
+  // must not cancel an explicit "我要真人客服" request.
+  if (hasScopedHandoffNegation(raw)) {
     return { ...base, category: "negated_request", pure_handoff_negation: true };
   }
 
@@ -302,6 +318,19 @@ export function classifyHandoffIntent(text: string): HandoffIntentClassification
   }
 
   return { ...base, category: "mention_only" };
+}
+
+export function classifyHandoffIntent(text: string): HandoffIntentClassification {
+  const language = detectHandoffLanguageHint(text);
+  const clauses = text.split(/[，,。.!！;；\n]+/).map((part) => part.trim()).filter(Boolean);
+  const decisions = (clauses.length ? clauses : [text]).map(classifyHandoffClause);
+  const explicit = decisions.find((decision) => decision.explicit_request);
+  const negated = decisions.find((decision) => decision.pure_handoff_negation);
+  if (explicit && negated) return { ...negated, language };
+  if (explicit) return { ...explicit, language };
+  if (negated) return { ...negated, language };
+  const mentioned = decisions.find((decision) => decision.mentions_human_handoff);
+  return mentioned ? { ...mentioned, language } : classifyHandoffClause(text);
 }
 
 /** Backwards-compatible boolean gate: R1 eligibility only. */

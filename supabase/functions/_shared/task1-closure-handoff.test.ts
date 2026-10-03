@@ -19,6 +19,8 @@ a(classifyHandoffIntent("不用真人客服。").kind==="negated","zh_true_human
 a(classifyHandoffIntent("I don't want AI, I want a human now.").kind==="explicit_now","en_no_ai_but_human_now");
 a(classifyHandoffIntent("Don't connect me to a human agent.").kind==="negated","en_true_handoff_negation");
 a(classifyHandoffIntent("真人客服幾點有人？").kind==="question_about_human_support","support_info_question_preserved");
+a(classifyHandoffIntent("我想轉真人客服。因為你剛才無總結到訂閱嘅要求").kind==="explicit_now","explicit_request_with_prior_reference");
+a(classifyHandoffIntent("先暫緩個訂閱，但我而家想轉真人客服").kind==="explicit_now","mixed_defer_handoff");
 a(classifyConversationClosure("沒有了").kind==="no_more_help","no_more_help");
 a(classifyConversationClosure("很滿意，沒有其他問題").kind==="positive_no_more_help","positive_no_more_help");
 a(classifyConversationClosure("沒有型號").kind==="none","missing_model_not_closure");

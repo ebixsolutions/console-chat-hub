@@ -7,11 +7,15 @@
  * Safety:
  * - evidence only; never invent policy
  * - no DB writes / no handoff persistence
- * - governed LLM router is the only provider call site
- * - provider failure => unavailable
+ * - network-free deterministic router is the only classification boundary
+ * - deterministic failure => unavailable
  * - does not produce policy_match_confidence
  */
-import { callModel, parseJsonObject, resolveGenerationMaxTokens } from "./llm-router.ts";
+import {
+  callModel,
+  parseJsonObject,
+  resolveGenerationMaxTokens,
+} from "./deterministic-runtime-router.ts";
 
 export type PolicyAssessmentStatus =
   | "compliant"
@@ -65,16 +69,24 @@ const POLICY_RESPONSE_SCHEMA: Record<string, unknown> = {
   required: ["status", "summary"],
 };
 
-export function mapPolicyStatusToR4State(status: PolicyAssessmentStatus): R4PolicyMatchState {
+export function mapPolicyStatusToR4State(
+  status: PolicyAssessmentStatus,
+): R4PolicyMatchState {
   switch (status) {
-    case "compliant": return "confident_match";
-    case "warning": return "partial_match";
-    case "violation": return "conflict";
-    case "insufficient_evidence": return "no_match";
+    case "compliant":
+      return "confident_match";
+    case "warning":
+      return "partial_match";
+    case "violation":
+      return "conflict";
+    case "insufficient_evidence":
+      return "no_match";
   }
 }
 
-function cleanPolicyEvidence(items: PolicyEvidenceItem[]): PolicyEvidenceItem[] {
+function cleanPolicyEvidence(
+  items: PolicyEvidenceItem[],
+): PolicyEvidenceItem[] {
   return items
     .filter((item) =>
       typeof item.label === "string" &&
@@ -96,6 +108,7 @@ export async function assessPolicyEvidenceForR4(
   content: string,
   items: PolicyEvidenceItem[],
   context: R4PolicyRouterContext,
+  options?: { signal?: AbortSignal },
 ): Promise<R4PolicyAssessment | undefined> {
   const evidence = cleanPolicyEvidence(items);
   if (evidence.length === 0) return undefined;
@@ -107,10 +120,12 @@ export async function assessPolicyEvidenceForR4(
   const result = await callModel({
     purpose: "generation",
     system:
-      'Assess policy compliance based ONLY on the provided sources. Do NOT invent rules not in the sources. ' +
+      "Assess policy compliance based ONLY on the provided sources. Do NOT invent rules not in the sources. " +
       'If sources lack relevant policy, set status to "insufficient_evidence". ' +
-      'Return ONLY JSON with status and summary.',
-    user: `Text to check:\n${content.slice(0, 2000)}\n\nPolicy sources:\n${block}`,
+      "Return ONLY JSON with status and summary.",
+    user: `Text to check:\n${
+      content.slice(0, 2000)
+    }\n\nPolicy sources:\n${block}`,
     maxTokens: resolveGenerationMaxTokens(),
     operationId: context.operation_id,
     companyId: context.company_id,
@@ -118,6 +133,7 @@ export async function assessPolicyEvidenceForR4(
     tag: "generate-reply-r4-policy",
     responseFormat: "json",
     responseSchema: POLICY_RESPONSE_SCHEMA,
+    signal: options?.signal,
   });
 
   if (!result.ok) {

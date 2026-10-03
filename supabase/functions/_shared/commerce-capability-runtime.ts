@@ -1,5 +1,6 @@
 import type { CommerceEntity, ConversationCommerceState } from "./commerce-state-contract.ts";
 import type { CommerceTurnEntityHint } from "./commerce-state-reducer.ts";
+import { industryEntityQuantityUnit } from "./industry-runtime-adapter.ts";
 
 export type CommerceKind = "physical_product" | "digital_good" | "service" | "b2b_product" | "unknown";
 
@@ -44,6 +45,7 @@ function countValue(raw: string): number | null {
 
 function trimCandidate(raw: string): string {
   return clean(raw, 80)
+    .replace(/\s+(?:on|for)\s+20\d{2}-\d{2}-\d{2}.*$/i, "")
     .replace(/(?:請|请)?(?:報價|报价|幾錢|几钱|多少錢|多少钱|price|quote|quotation|total|合共|總共|总共).*$/i, "")
     .replace(/(?:星期[一二三四五六日天]|週[一二三四五六日天]|周[一二三四五六日天]|monday|tuesday|wednesday|thursday|friday|saturday|sunday)/gi, " ")
     .replace(/(?:HK\$|HKD|US\$|USD|NT\$|TWD|\$)\s*[0-9].*$/i, "")
@@ -54,6 +56,7 @@ function trimCandidate(raw: string): string {
 
 function canonicalGenericName(raw: string): string {
   let value = trimCandidate(raw)
+    .replace(/^(?:of|for)\s+/i, "")
     .replace(/^(?:黑色|白色|紅色|红色|藍色|蓝色|綠色|绿色|黃色|黄色|粉紅|粉红|紫色|灰色|black|white|red|blue|green|yellow|pink|purple|grey|gray)\s*/i, "")
     .replace(/^(?:small|medium|large|xl|xxl|xs)\s+/i, "")
     .replace(/^(?:size\s*[xsml0-9-]+)\s+/i, "")
@@ -95,7 +98,7 @@ function extractVariant(text: string): Record<string, string> {
 
 function inferKind(text: string, unit: string | null, quantity: number): CommerceKind {
   const t = clean(text).toLowerCase();
-  if (/(?:下載|下载|電子版|电子版|digital|download|software|license|licence|ebook|e-book|activation key|啟用碼|激活码)/i.test(t)) return "digital_good";
+  if (/(?:訂閱|订阅|subscription|下載|下载|電子版|电子版|digital|download|software|license|licence|ebook|e-book|activation key|啟用碼|激活码)/i.test(t)) return "digital_good";
   if (/(?:預約|预约|appointment|book(?:ing)?|reserve|reservation|服務|服务|剪髮|剪发|療程|疗程|consultation|session|lesson|class)/i.test(t)
       || /^(?:位|席|次|堂|課|课|sessions?|lessons?|seats?)$/i.test(unit ?? "")) return "service";
   if (quantity >= 20 && /(?:批發|批发|MOQ|minimum order|wholesale|報價|报价|quotation|quote)/i.test(t)) return "b2b_product";
@@ -137,7 +140,9 @@ export function extractGenericCommerceEntity(text: string): GenericEntityExtract
 
   const action = "(?:我要|我想要|想買|想买|要買|要买|買|买|需要|訂購|订购|訂|订|預訂|预订|預約|预约|另外加|再加|加多|新增|I\\s+(?:want|need)|want|need|buy|order|pre[- ]?order|book|reserve|add)";
   const zhOrUnit = new RegExp(`${action}\\s*(${COUNT_TOKEN})\\s*(${GENERIC_UNIT})?\\s*([^，。！？,.!?;；]{1,60})`, "i");
-  const match = t.match(zhOrUnit);
+  const quantityAfterName = new RegExp(`${action}\\s+([^，。！？,.!?;；]{1,60}?)\\s+(?:for|with)\\s+(${COUNT_TOKEN})\\s*(${GENERIC_UNIT})(?![a-z])`, "i");
+  const after = t.match(quantityAfterName);
+  const match = t.match(zhOrUnit) ?? (after ? [after[0], after[2], after[3], after[1]] : null);
   if (!match?.[1] || !match?.[3]) return null;
 
   const quantity = countValue(match[1]);
@@ -150,11 +155,15 @@ export function extractGenericCommerceEntity(text: string): GenericEntityExtract
 
   const kind = inferKind(t, unit, quantity);
   const capabilities = inferCommerceCapabilities(t, kind);
-  const category = kind === "service" ? "service"
+  const role = /訂閱|订阅|subscription/i.test(canonicalName) ? "subscription"
+    : /add[- ]?on|加購|加购/i.test(canonicalName) ? "addon"
+    : /parking|泊車|停车/i.test(canonicalName) ? "parking"
+    : /booking|預約|预约/i.test(canonicalName) ? "booking" : null;
+  const category = role ?? (kind === "service" ? "service"
     : kind === "digital_good" ? "digital_good"
     : kind === "b2b_product" ? "b2b_product"
-    : "generic_product";
-  const aliases = [...new Set([canonicalName, rawName].map((x) => clean(x, 80)).filter(Boolean))];
+    : "generic_product");
+  const aliases = [...new Set([canonicalName, rawName, ...(role ? [role] : [])].map((x) => clean(x, 80)).filter(Boolean))];
 
   return {
     entity_id: `generic:${slug}`,
@@ -262,4 +271,56 @@ export function buildCapabilityAwarePreorderNextStep(
   if (caps.requires_delivery) return "下一步要確認最終價格同訂單資料、送貨安排，再安排付款。";
   if (caps.digital_fulfilment) return "下一步要確認最終價格同訂單資料，再安排付款同數碼交付。";
   return "下一步要確認最終價格同訂單資料，再安排付款。";
+}
+
+/** Render conversational requirements only; external fulfilment requires its own authority. */
+export function renderEnglishRequirement(entity: CommerceEntity, displayName?: string): string {
+  const name = displayName ?? (typeof entity.attributes.product_name === "string" ? entity.attributes.product_name : entity.model ?? entity.category.replace(/_/g, " "));
+  const storedUnit = typeof entity.attributes.unit === "string" ? entity.attributes.unit.trim()
+    : industryEntityQuantityUnit(entity.category, "en", entity.quantity) ?? "";
+  const singulars: Record<string,string> = {seats:"seat",sessions:"session",units:"unit",items:"item",boxes:"box",pieces:"piece",bottles:"bottle",packs:"pack",bags:"bag",pairs:"pair",sets:"set",nights:"night",lessons:"lesson"};
+  const singular = singulars[storedUnit] ?? storedUnit;
+  const unit = entity.quantity === 1 ? singular : Object.values(singulars).includes(singular) ? Object.entries(singulars).find(([,v])=>v===singular)![0] : storedUnit;
+  const rawDate = typeof entity.attributes.requested_date === "string" ? entity.attributes.requested_date : null;
+  let date = rawDate;
+  if (rawDate && /^\d{4}-\d{2}-\d{2}$/.test(rawDate)) {
+    const value = new Date(rawDate+"T00:00:00Z");
+    if (Number.isFinite(value.getTime()) && value.toISOString().slice(0,10) === rawDate)
+      date = new Intl.DateTimeFormat("en-GB",{day:"numeric",month:"long",year:"numeric",timeZone:"UTC"}).format(value);
+  }
+  const count = `${entity.quantity}${unit ? " "+unit : ""}`;
+  const booking = entity.attributes.capabilities && typeof entity.attributes.capabilities === "object" && (entity.attributes.capabilities as Record<string,unknown>).requires_booking === true;
+  const core = booking && unit
+    ? `${entity.quantity} ${name.replace(/\s+booking$/i,"")} ${unit}`
+    : `${name}${entity.status === "deferred" || entity.status === "cancelled" || entity.category !== "subscription" ? " for " : " at "}${count}`;
+  const lifecycle = entity.status === "deferred" ? " is paused" : entity.status === "cancelled" ? " has been cancelled" : "";
+  return core + (date ? " on "+date : "") + lifecycle;
+}
+
+export function renderCanonicalRequirement(entity: CommerceEntity, language: string): string {
+  if (language === "en") return renderEnglishRequirement(entity);
+  const l = language === "en" ? 2 : language === "zh-CN" ? 1 : 0;
+  const name = typeof entity.attributes.product_name === "string" ? entity.attributes.product_name : entity.model ?? entity.category.replace(/_/g, " ");
+  const unit = typeof entity.attributes.unit === "string" ? entity.attributes.unit
+    : industryEntityQuantityUnit(entity.category, language === "zh-CN" ? "zh-CN" : "zh-TW", entity.quantity) ?? "items";
+  const translated: Record<string, [string,string]> = {seats:["席","席"],seat:["席","席"],sessions:["節","节"],session:["節","节"],units:["個","个"],unit:["個","个"],items:["個","个"]};
+  const count = l === 2 ? `${entity.quantity} ${entity.quantity===1?unit.replace(/s$/, ""):unit}` : `${entity.quantity}${translated[unit]?.[l] ?? unit}`;
+  const date = typeof entity.attributes.requested_date === "string" ? entity.attributes.requested_date : null;
+  const dateText = date ? [ `，要求日期 ${date}`, `，要求日期 ${date}`, ` on ${date}` ][l] : "";
+  const inactive = entity.status === "deferred" ? ["，已暫緩","，已暂缓"," (deferred)"][l] : entity.status === "cancelled" ? ["，已取消","，已取消"," (cancelled)"][l] : "";
+  return `${name}${l===2?", ":"，"}${count}${dateText}${inactive}`;
+}
+
+export function renderRequirementQualification(state: ConversationCommerceState, language: string): string {
+  const l = language === "en" ? 2 : language === "zh-CN" ? 1 : 0;
+  const active = state.entities.filter(e=>!["deferred","cancelled"].includes(e.status));
+  const booking = active.some(e=>e.attributes.capabilities && typeof e.attributes.capabilities === "object" &&
+    (e.attributes.capabilities as Record<string,unknown>).requires_booking === true && !state.conversion.confirmed_entity_ids.includes(e.entity_id));
+  if (booking) return ["預約要求仍需職員確認，未成為已確認預約。","预约要求仍需职员确认，尚未成为已确认预约。","The booking still needs staff confirmation and is not confirmed yet."][l];
+  const site = active.some(e=>e.category === "air_conditioner" || e.attributes.capabilities && typeof e.attributes.capabilities === "object" &&
+    (e.attributes.capabilities as Record<string,unknown>).requires_site_check === true);
+  if (site) return ["適用性仍要按現行資料及現場條件核對。","适用性仍需按现行资料及现场条件核对。","Suitability still needs current evidence and the relevant site checks."][l];
+  if (state.conversion.order_status === "none" && state.conversion.payment_status === "none")
+    return ["呢啲只係今次要求嘅記錄，未建立訂單或付款。","这些只是本次要求的记录，尚未建立订单或付款。","No order or payment has been created."][l];
+  return ["訂單狀態","订单状态","Order status"][l]+`: ${state.conversion.order_status}; `+["付款狀態","付款状态","payment status"][l]+`: ${state.conversion.payment_status}.`;
 }

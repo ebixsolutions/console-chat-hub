@@ -1,0 +1,57 @@
+{
+  "schema_version": "c3-real-case-derived-review-preparation-1.0.0",
+  "status": "REVIEW_PREPARATION",
+  "evaluation_type": "REAL_CASE_DERIVED_INTERIM",
+  "dataset_sha256": "61dab2ed87a2e20052b6c8512fa4649682106cc4e147f3cc8a247a4a7475f454",
+  "rubric_sha256": "69e6a444e35aab437d42f9461f22d854720ea75bd3652a1c68d845901f673c00",
+  "selected_case_ids": [
+    "c3-derived-001",
+    "c3-derived-006",
+    "c3-derived-011",
+    "c3-derived-016",
+    "c3-derived-021",
+    "c3-derived-026",
+    "c3-derived-031",
+    "c3-derived-036",
+    "c3-derived-041",
+    "c3-derived-046",
+    "c3-derived-051",
+    "c3-derived-056",
+    "c3-derived-061",
+    "c3-derived-066",
+    "c3-derived-071",
+    "c3-derived-076",
+    "c3-derived-081",
+    "c3-derived-086",
+    "c3-derived-091",
+    "c3-derived-096"
+  ],
+  "minimum_independent_human_reviewers": 2,
+  "minimum_review_records_after_responses_exist": 40,
+  "actual_response_count": 0,
+  "actual_reviewer_count": 0,
+  "actual_review_record_count": 0,
+  "blindness": {
+    "model_identity_hidden": true,
+    "grader_scores_hidden": true,
+    "other_reviewers_hidden": true,
+    "expected_results_hidden": true,
+    "oracle_labels_hidden": true
+  },
+  "form_template": {
+    "required_bindings": [
+      "reviewer_provenance",
+      "case_sha256",
+      "response_sha256",
+      "rubric_sha256",
+      "timestamp"
+    ],
+    "required_assessment": [
+      "six_dimension_scores",
+      "reason",
+      "p0_labels",
+      "recommendation"
+    ],
+    "scores_or_reviews_prepopulated": false
+  }
+}

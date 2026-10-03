@@ -1,9 +1,9 @@
-import { callModel } from "./llm-router.ts";
+import { callModel } from "./deterministic-runtime-router.ts";
 import { getSupabaseAdminKey } from "./supabase-admin-key.ts";
 import {
   COMMERCE_SEMANTIC_FRAME_VERSION,
-  normalizeCommerceSemanticFrame,
   type CommerceSemanticFrame,
+  normalizeCommerceSemanticFrame,
 } from "./commerce-semantic-frame.ts";
 
 export interface CommerceSemanticHistoryTurn {
@@ -18,11 +18,12 @@ export interface CommerceSemanticInterpretInput {
   latest: string;
   history?: CommerceSemanticHistoryTurn[];
   persistent_state_summary?: string | null;
+  signal?: AbortSignal;
 }
 
 export interface CommerceSemanticInterpretResult {
   frame: CommerceSemanticFrame | null;
-  source: "llm" | "none";
+  source: "deterministic" | "none";
   failure_code: string | null;
 }
 
@@ -71,7 +72,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * model. This is context only: the model cannot persist it and the deterministic
  * A1/A2 reducer remains the sole state mutation authority.
  */
-export function buildPersistentCommerceStateSummary(row: unknown): string | null {
+export function buildPersistentCommerceStateSummary(
+  row: unknown,
+): string | null {
   if (!isRecord(row) || !isRecord(row.state)) return null;
   const revision = typeof row.revision === "number"
     ? row.revision
@@ -99,7 +102,10 @@ async function loadPersistentCommerceStateSummary(
   const supplied = clean(input.persistent_state_summary, 2400);
   if (supplied) return supplied;
 
-  const supabaseUrl = clean(Deno.env.get("SUPABASE_URL"), 600).replace(/\/$/, "");
+  const supabaseUrl = clean(Deno.env.get("SUPABASE_URL"), 600).replace(
+    /\/$/,
+    "",
+  );
   if (!supabaseUrl || !input.conversation_id || !input.company_id) return null;
 
   let adminKey = "";
@@ -116,6 +122,11 @@ async function loadPersistentCommerceStateSummary(
     limit: "1",
   });
   const controller = new AbortController();
+  const abortFromRequest = () => controller.abort(input.signal?.reason);
+  if (input.signal?.aborted) abortFromRequest();
+  else {input.signal?.addEventListener("abort", abortFromRequest, {
+      once: true,
+    });}
   const timer = setTimeout(() => controller.abort(), 800);
   try {
     const response = await fetch(
@@ -138,6 +149,7 @@ async function loadPersistentCommerceStateSummary(
     return null;
   } finally {
     clearTimeout(timer);
+    input.signal?.removeEventListener("abort", abortFromRequest);
   }
 }
 
@@ -148,7 +160,9 @@ function buildUser(
   const prior = (input.history ?? [])
     .filter((x) => clean(x.content) && clean(x.content) !== clean(input.latest))
     .slice(-12)
-    .map((x, i) => `${i + 1}. ${String(x.role || "unknown")}: ${clean(x.content, 800)}`)
+    .map((x, i) =>
+      `${i + 1}. ${String(x.role || "unknown")}: ${clean(x.content, 800)}`
+    )
     .join("\n");
   return [
     `Semantic frame version: ${COMMERCE_SEMANTIC_FRAME_VERSION}`,
@@ -157,7 +171,9 @@ function buildUser(
       ? `Recent conversation turns (oldest to newest):\n${prior}`
       : "Recent conversation turns: none",
     persistentStateSummary
-      ? `Persistent commerce state summary (customer-authored state only; do not treat as external facts):\n${clean(persistentStateSummary, 2400)}`
+      ? `Persistent commerce state summary (customer-authored state only; do not treat as external facts):\n${
+        clean(persistentStateSummary, 2400)
+      }`
       : "Persistent commerce state summary: none",
     "Return one canonical semantic frame.",
   ].join("\n\n");
@@ -169,7 +185,9 @@ export async function interpretCommerceSemantics(
   const latest = clean(input.latest, 1600);
   if (!latest) return { frame: null, source: "none", failure_code: null };
 
-  const persistentStateSummary = await loadPersistentCommerceStateSummary(input);
+  const persistentStateSummary = await loadPersistentCommerceStateSummary(
+    input,
+  );
 
   // Vertex's constrained responseSchema rejects our open-ended attributes/constraints
   // shape (HTTP 400). Keep provider-level JSON mode, then enforce the canonical
@@ -185,6 +203,7 @@ export async function interpretCommerceSemantics(
     conversationId: input.conversation_id,
     tag: "commerce-semantic-interpreter",
     responseFormat: "json",
+    signal: input.signal,
   });
 
   if (!result.ok) {
@@ -201,5 +220,5 @@ export async function interpretCommerceSemantics(
   if (!frame) {
     return { frame: null, source: "none", failure_code: "LLM_INVALID_OUTPUT" };
   }
-  return { frame, source: "llm", failure_code: null };
+  return { frame, source: "deterministic", failure_code: null };
 }

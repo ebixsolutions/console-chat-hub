@@ -40,19 +40,19 @@ export interface LlmUsage {
 
 export type LlmResult =
   | {
-      ok: true;
-      text: string;
-      model: string;
-      usage: LlmUsage;
-      request_id: string;
-    }
+    ok: true;
+    text: string;
+    model: string;
+    usage: LlmUsage;
+    request_id: string;
+  }
   | {
-      ok: false;
-      code: LlmFailureCode;
-      status?: number;
-      request_id: string;
-      usage: LlmUsage;
-    };
+    ok: false;
+    code: LlmFailureCode;
+    status?: number;
+    request_id: string;
+    usage: LlmUsage;
+  };
 
 export type ModelPurpose = "evaluation" | "assist" | "generation";
 
@@ -84,6 +84,8 @@ export interface LlmCall {
    * Providers without thinking controls ignore this field.
    */
   thinkingBudget?: number;
+  /** Request-scoped cancellation used by the C3 terminal-response budget. */
+  signal?: AbortSignal;
 }
 
 type ProviderId = "vertex" | "anthropic";
@@ -106,7 +108,10 @@ const REDACTIONS: Array<[RegExp, string]> = [
   [/[\w.+-]+@[\w-]+\.[\w.-]+/g, "[EMAIL]"],
   [/\+?\d[\d\s\-()]{6,}\d/g, "[PHONE]"],
   [/\b(?:\d[ -]*?){13,19}\b/g, "[CARD]"],
-  [/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "[UUID]"],
+  [
+    /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
+    "[UUID]",
+  ],
   [/\bsk-[A-Za-z0-9_-]{10,}\b/g, "[SECRET]"],
   [/\bBearer\s+[A-Za-z0-9._-]{10,}\b/gi, "[SECRET]"],
 ];
@@ -144,7 +149,11 @@ function resolveProvider(): ProviderId {
   const raw = (Deno.env.get("LLM_PROVIDER") ?? "").trim().toLowerCase();
   // Only these two are supported; anything else is a configuration error and is
   // reported as such rather than silently falling back to another provider.
-  return raw === "anthropic" ? "anthropic" : raw === "vertex" ? "vertex" : ("" as ProviderId);
+  return raw === "anthropic"
+    ? "anthropic"
+    : raw === "vertex"
+    ? "vertex"
+    : ("" as ProviderId);
 }
 
 async function recordUsage(
@@ -186,6 +195,20 @@ async function recordUsage(
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+function bindExternalAbort(
+  controller: AbortController,
+  signal: AbortSignal | undefined,
+): () => void {
+  if (!signal) return () => undefined;
+  const abort = () => controller.abort(signal.reason);
+  if (signal.aborted) {
+    abort();
+    return () => undefined;
+  }
+  signal.addEventListener("abort", abort, { once: true });
+  return () => signal.removeEventListener("abort", abort);
+}
+
 export const GROUNDING_VERIFIER_MAX_TOKENS = 2048;
 
 export const GENERATION_MAX_TOKENS_DEFAULT = 2048;
@@ -195,8 +218,13 @@ export const GENERATION_MAX_TOKENS_MAX = 8192;
 export function resolveGenerationMaxTokens(): number {
   const raw = (Deno.env.get("LLM_MAX_OUTPUT_TOKENS_GENERATION") ?? "").trim();
   const parsed = Number.parseInt(raw, 10);
-  const candidate = Number.isFinite(parsed) && parsed > 0 ? parsed : GENERATION_MAX_TOKENS_DEFAULT;
-  return Math.max(GENERATION_MAX_TOKENS_MIN, Math.min(GENERATION_MAX_TOKENS_MAX, candidate));
+  const candidate = Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : GENERATION_MAX_TOKENS_DEFAULT;
+  return Math.max(
+    GENERATION_MAX_TOKENS_MIN,
+    Math.min(GENERATION_MAX_TOKENS_MAX, candidate),
+  );
 }
 
 interface ProviderRequest {
@@ -252,10 +280,10 @@ function anthropicAdapter(
       };
       const text = Array.isArray(obj.content)
         ? obj.content
-            .filter((b) => b?.type === "text" && typeof b.text === "string")
-            .map((b) => b.text as string)
-            .join("")
-            .trim()
+          .filter((b) => b?.type === "text" && typeof b.text === "string")
+          .map((b) => b.text as string)
+          .join("")
+          .trim()
         : "";
       return {
         text,
@@ -290,7 +318,8 @@ function vertexAdapter(
   responseSchema: Record<string, unknown> | undefined,
   thinkingBudget: number | undefined,
 ): ProviderAdapter {
-  const url = `https://${region}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${region}/publishers/google/models/${model}:generateContent`;
+  const url =
+    `https://${region}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${region}/publishers/google/models/${model}:generateContent`;
 
   return {
     id: "vertex",
@@ -378,15 +407,19 @@ export function extractCustomerConversationEvidence(input: string): string {
   return raw.slice(0, 3000);
 }
 
-export function extractGroundingBlock(system: string): ParsedGroundingBlock | null {
+export function extractGroundingBlock(
+  system: string,
+): ParsedGroundingBlock | null {
   const transformRules = "Prior Grounded Answer transform rules:";
   const transformMarker = "Prior Grounded Answer Evidence:\n";
   if (system.includes(transformRules)) {
     const transformIndex = system.lastIndexOf(transformMarker);
     if (transformIndex >= 0) {
-      const prior = system.slice(transformIndex + transformMarker.length).trim();
+      const prior = system.slice(transformIndex + transformMarker.length)
+        .trim();
       if (prior) {
-        const operationsLine = system.match(/^- Operations:\s*(.+)$/m)?.[1] ?? "";
+        const operationsLine = system.match(/^- Operations:\s*(.+)$/m)?.[1] ??
+          "";
         const transformOperations = operationsLine
           .split("+")
           .map((x) => x.trim())
@@ -425,12 +458,15 @@ export function buildVerifierEvidenceAliases(grounding: ParsedGroundingBlock): {
 } {
   let next = 0;
   const allowed: string[] = [];
-  const aliased = grounding.evidence_text.replace(/\[chunk:([^\]\s]+)\]/g, () => {
-    next += 1;
-    const alias = `E${next}`;
-    allowed.push(alias);
-    return `[chunk:${alias}]`;
-  });
+  const aliased = grounding.evidence_text.replace(
+    /\[chunk:([^\]\s]+)\]/g,
+    () => {
+      next += 1;
+      const alias = `E${next}`;
+      allowed.push(alias);
+      return `[chunk:${alias}]`;
+    },
+  );
   return { evidence_text: aliased, allowed_ids: allowed };
 }
 
@@ -450,20 +486,20 @@ export function validateExactFactGrounding(
       };
     }
   }
-  const evidenceNorm = canonicalExactToken(`${evidenceText}\n${conversationEvidenceText}`);
+  const evidenceNorm = canonicalExactToken(
+    `${evidenceText}\n${conversationEvidenceText}`,
+  );
   const unsupported = new Set<string>();
   for (const match of answer.matchAll(EXACT_FACT_TOKEN_RE)) {
     const token = canonicalExactToken(match[0] ?? "");
     if (!token || /^\d$/.test(token)) continue;
     if (!evidenceNorm.includes(token)) unsupported.add(token);
   }
-  return unsupported.size === 0
-    ? { ok: true }
-    : {
-        ok: false,
-        reason: "unsupported_exact_fact",
-        unsupported_tokens: [...unsupported],
-      };
+  return unsupported.size === 0 ? { ok: true } : {
+    ok: false,
+    reason: "unsupported_exact_fact",
+    unsupported_tokens: [...unsupported],
+  };
 }
 
 export function parseGroundingVerifierDecision(
@@ -548,11 +584,14 @@ async function verifyGroundedGeneration(
     grounding.authority === "PRIOR_GROUNDED_ANSWER"
       ? "The authoritative evidence is a previously verified grounded answer. Judge whether product, company, policy, price, date, duration, eligibility, availability, procedure, jurisdiction, model/specification or other external factual claims remain supported by that evidence."
       : "The authoritative evidence is the supplied current Knowledge Base evidence. Product, company, policy, price, date, duration, eligibility, availability, procedure, jurisdiction, model/specification and other external factual claims must be supported by that authoritative evidence.",
-    grounding.authority === "PRIOR_GROUNDED_ANSWER" && grounding.transform_operations.length
-      ? `Requested transform operations: ${grounding.transform_operations.join(" + ")}.`
+    grounding.authority === "PRIOR_GROUNDED_ANSWER" &&
+      grounding.transform_operations.length
+      ? `Requested transform operations: ${
+        grounding.transform_operations.join(" + ")
+      }.`
       : "",
     grounding.authority === "PRIOR_GROUNDED_ANSWER" &&
-    grounding.transform_operations.includes("TRANSLATE")
+      grounding.transform_operations.includes("TRANSLATE")
       ? "For TRANSLATE, compare semantic meaning across languages rather than surface-word overlap. Direct translations of the same names, product categories, units, and relationships are supported when they preserve the source meaning; do not reject a faithful translation merely because its words differ from the source language."
       : "",
     "Conversation Context C1 is a separate, non-authoritative evidence class. It may support only facts explicitly supplied by the customer or already present as conversational state, including preferences, requested features, quantities/SKU counts, customer-provided order/reference ids, prior requests, and faithful recap/acknowledgement of those facts.",
@@ -626,6 +665,7 @@ async function verifyGroundedGeneration(
     conversationId: call.conversationId,
     tag: `${call.tag}-grounding-verifier`,
     responseFormat: "json",
+    signal: call.signal,
   };
   const verifierUsage: LlmUsage = {
     input_tokens: 0,
@@ -637,8 +677,10 @@ async function verifyGroundedGeneration(
   let lastStatus = 0;
 
   for (let attempt = 1; attempt <= 2; attempt++) {
+    if (call.signal?.aborted) break;
     verifierUsage.attempts = attempt;
     const controller = new AbortController();
+    const unbindExternalAbort = bindExternalAbort(controller, call.signal);
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const req = await verifierAdapter.buildRequest();
@@ -650,7 +692,7 @@ async function verifyGroundedGeneration(
       });
       lastStatus = res.status;
       if (res.status === 429 || res.status >= 500) {
-        if (attempt < 2) {
+        if (!call.signal?.aborted && attempt < 2) {
           await sleep(BASE_BACKOFF_MS * 2 ** (attempt - 1));
           continue;
         }
@@ -670,7 +712,10 @@ async function verifyGroundedGeneration(
       verifierUsage.latency_ms = Date.now() - verifierStarted;
       if (!parsed.text || parsed.finish_reason === "MAX_TOKENS") break;
 
-      const decision = parseGroundingVerifierDecision(parsed.text, allowedVerifierIds);
+      const decision = parseGroundingVerifierDecision(
+        parsed.text,
+        allowedVerifierIds,
+      );
       if (!decision) {
         const parsedShape = parseJsonObjectLoose(parsed.text);
         log(call.tag, {
@@ -679,18 +724,16 @@ async function verifyGroundedGeneration(
           attempt,
           keys: parsedShape ? Object.keys(parsedShape).slice(0, 12) : [],
           grounded_type: parsedShape ? typeof parsedShape.grounded : "missing",
-          unsupported_claims_type:
-            parsedShape == null
-              ? "missing"
-              : Array.isArray(parsedShape.unsupported_claims)
-                ? "array"
-                : typeof parsedShape.unsupported_claims,
-          evidence_chunk_ids_type:
-            parsedShape == null
-              ? "missing"
-              : Array.isArray(parsedShape.evidence_chunk_ids)
-                ? "array"
-                : typeof parsedShape.evidence_chunk_ids,
+          unsupported_claims_type: parsedShape == null
+            ? "missing"
+            : Array.isArray(parsedShape.unsupported_claims)
+            ? "array"
+            : typeof parsedShape.unsupported_claims,
+          evidence_chunk_ids_type: parsedShape == null
+            ? "missing"
+            : Array.isArray(parsedShape.evidence_chunk_ids)
+            ? "array"
+            : typeof parsedShape.evidence_chunk_ids,
           finish_reason: parsed.finish_reason ?? null,
           block_reason: parsed.block_reason ?? null,
           output_tokens: parsed.output_tokens,
@@ -704,7 +747,7 @@ async function verifyGroundedGeneration(
           verifierUsage,
           "GROUNDING_VERIFIER_INVALID_OUTPUT",
         );
-        if (attempt < 2) {
+        if (!call.signal?.aborted && attempt < 2) {
           log(call.tag, {
             event: "grounding_verifier_invalid_output_retry",
             request_id: call.operationId,
@@ -737,13 +780,14 @@ async function verifyGroundedGeneration(
       return { ok: true };
     } catch (error) {
       const aborted = error instanceof Error && error.name === "AbortError";
-      if (!aborted && attempt < 2) {
+      if (!call.signal?.aborted && !aborted && attempt < 2) {
         await sleep(BASE_BACKOFF_MS * 2 ** (attempt - 1));
         continue;
       }
       break;
     } finally {
       clearTimeout(timer);
+      unbindExternalAbort();
     }
   }
 
@@ -772,7 +816,9 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
 
   const provider = resolveProvider();
   const model = Deno.env.get(MODEL_ENV[call.purpose]);
-  const timeoutMs = Number(Deno.env.get("LLM_TIMEOUT_MS") ?? DEFAULT_TIMEOUT_MS);
+  const timeoutMs = Number(
+    Deno.env.get("LLM_TIMEOUT_MS") ?? DEFAULT_TIMEOUT_MS,
+  );
 
   const nonEmpty = (v: string | undefined) => !!v && v.trim().length > 0;
 
@@ -784,7 +830,15 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
       provider: providerLabel,
       purpose: call.purpose,
     });
-    await recordUsage(call, providerLabel, modelLabel, "failed", 0, usage, "LLM_CONFIG_MISSING");
+    await recordUsage(
+      call,
+      providerLabel,
+      modelLabel,
+      "failed",
+      0,
+      usage,
+      "LLM_CONFIG_MISSING",
+    );
     return {
       ok: false as const,
       code: "LLM_CONFIG_MISSING" as const,
@@ -811,7 +865,15 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
     if (looksLikeInjection(call.user)) {
       usage.latency_ms = Date.now() - started;
       log(call.tag, { event: "input_blocked", request_id: requestId });
-      await recordUsage(call, provider, model!, "blocked", 0, usage, "LLM_INPUT_BLOCKED");
+      await recordUsage(
+        call,
+        provider,
+        model!,
+        "blocked",
+        0,
+        usage,
+        "LLM_INPUT_BLOCKED",
+      );
       return {
         ok: false,
         code: "LLM_INPUT_BLOCKED",
@@ -839,7 +901,15 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
     if (looksLikeInjection(call.user)) {
       usage.latency_ms = Date.now() - started;
       log(call.tag, { event: "input_blocked", request_id: requestId });
-      await recordUsage(call, provider, model!, "blocked", 0, usage, "LLM_INPUT_BLOCKED");
+      await recordUsage(
+        call,
+        provider,
+        model!,
+        "blocked",
+        0,
+        usage,
+        "LLM_INPUT_BLOCKED",
+      );
       return {
         ok: false,
         code: "LLM_INPUT_BLOCKED",
@@ -860,8 +930,13 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
   let lastStatus: number | undefined;
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    if (call.signal?.aborted) {
+      lastCode = "LLM_TIMEOUT";
+      break;
+    }
     usage.attempts = attempt;
     const controller = new AbortController();
+    const unbindExternalAbort = bindExternalAbort(controller, call.signal);
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     const attemptStart = Date.now();
 
@@ -886,7 +961,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
           code: lastCode,
           ms: Date.now() - attemptStart,
         });
-        if (attempt < MAX_ATTEMPTS) {
+        if (!call.signal?.aborted && attempt < MAX_ATTEMPTS) {
           await sleep(BASE_BACKOFF_MS * 2 ** (attempt - 1));
           continue;
         }
@@ -903,7 +978,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
           attempt,
           status: res.status,
         });
-        if (attempt < MAX_ATTEMPTS) {
+        if (!call.signal?.aborted && attempt < MAX_ATTEMPTS) {
           await sleep(BASE_BACKOFF_MS * 2 ** (attempt - 1));
           continue;
         }
@@ -987,7 +1062,8 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
             attempt,
             reason: groundingDecision.reason,
           });
-          const groundingErrorCode = `LLM_OUTPUT_UNGROUNDED:${groundingDecision.reason}`;
+          const groundingErrorCode =
+            `LLM_OUTPUT_UNGROUNDED:${groundingDecision.reason}`;
           await recordUsage(
             call,
             adapter.id,
@@ -1019,7 +1095,14 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
         ms: usage.latency_ms,
         grounding_verified: grounding !== null,
       });
-      await recordUsage(call, adapter.id, adapter.model, "success", res.status, usage);
+      await recordUsage(
+        call,
+        adapter.id,
+        adapter.model,
+        "success",
+        res.status,
+        usage,
+      );
       return {
         ok: true,
         text: parsed.text,
@@ -1029,6 +1112,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
       };
     } finally {
       clearTimeout(timer);
+      unbindExternalAbort();
     }
   }
 

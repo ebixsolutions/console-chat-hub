@@ -44,7 +44,7 @@ export interface CanonicalRetrievalQuery {
 const CUSTOMER = new Set(["visitor", "customer", "user"]);
 const ASSISTANT = new Set(["assistant", "ai", "human_agent"]);
 const EXPLICIT_CORRECTION = /(我講錯|我说错|我說錯|我要更正|我想更正|更正一下[：:]?|更正[：:]|其實係|其实是|改返|改成|actually[,\s]+i meant|i meant|correction\s*[:：])/i;
-const CONTRAST_CORRECTION = /(唔係[^，。,.!?！？]{1,80}[，,]\s*係|不是[^，。,.!?！？]{1,80}[，,]\s*(?:而)?是|not .+ but .+)/i;
+const CONTRAST_CORRECTION = /(唔係[^，。,.!?！？]{1,80}[，,]\s*(?:應該)?係|不是[^，。,.!?！？]{1,80}[，,]\s*(?:應該|而)?是|not .+ but .+)/i;
 const LATEST_VALUE_CORRECTION = /(?:記住|记住)?\s*(?:最新|目前|現在|现在)\s*(?:係|是|為|为)?\s*[^，。,.!?！？]{1,50}(?:，|,)\s*(?:唔係|不是|而不是|not)\s*[^，。,.!?！？]{1,50}/i;
 
 function isCorrectionText(text: string): boolean {
@@ -233,6 +233,10 @@ function currentRequirementLines(snapshot: CurrentRequirementSnapshot, lang: Run
 }
 
 export function resolveWorkflow5ConversationLanguage(latest: string, rows: RuntimeHistoryRow[]): RuntimeLanguage {
+  // A direct presentation request wins over the language of the surrounding
+  // customer context; it never changes the question or its factual authority.
+  if (/(?:reply|respond|explain|answer|summari[sz]e|please|請|请|用|改用).{0,28}(?:in\s+English|英文)|(?:in\s+English).{0,28}(?:please|reply|respond)/i.test(latest)) return "en";
+  if (/(?:用|改用|以).{0,12}(?:廣東話|粤語|粵語)/i.test(latest)) return "zh-TW";
   const direct = detectLanguage(latest);
   if (/[\u4e00-\u9fff]/.test(latest)) return direct;
   const priorCustomer = rows

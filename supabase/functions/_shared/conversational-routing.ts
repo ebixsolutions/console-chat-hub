@@ -19,7 +19,12 @@ export type ConversationalRoute =
       reason: "semantic_intent_underspecified";
     };
 
-const GREETING = /^(hi|hello|hey|你好|您好|嗨|哈囉|哈啰|早安|午安|晚安|good\s*(morning|afternoon|evening))[\s!！。.？?，,~～]*$/i;
+const GREETING_TOKEN = "(?:hi|hello|hey|你好|您好|嗨|哈囉|哈啰|早晨|早安|午安|晚安|good\\s*(?:morning|afternoon|evening))";
+const GREETING_SEPARATOR = "[\\s\\p{P}~～]+";
+const GREETING = new RegExp(
+  String.raw`^${GREETING_TOKEN}(?:${GREETING_SEPARATOR}${GREETING_TOKEN})*[\s\p{P}~～]*$`,
+  "iu",
+);
 const THANKS = /^(thanks|thank you|thx|謝謝|谢谢|多謝|多谢)[\s!！。.？?，,~～]*$/i;
 const ACK = /^(ok|okay|好的|好|明白|收到|嗯|唔該|唔该)[\s!！。.？?，,~～]*$/i;
 
@@ -205,4 +210,3 @@ export const UNDERSPECIFIED_CLARIFICATION: Record<"zh-TW" | "zh-CN" | "en", stri
   "zh-CN": "好的，我帮你跟进 🙂 可以说明一下具体是哪一项，或现在遇到什么情况吗？",
   en: "Sure, I can help with that 🙂 Could you tell me which one it is, or what's happening right now?",
 };
-

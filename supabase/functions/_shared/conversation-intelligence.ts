@@ -48,7 +48,7 @@ function detectLanguage(text: string): "zh-TW" | "zh-CN" | "en" {
   return /[转们为这没请]/.test(text) ? "zh-CN" : "zh-TW";
 }
 
-export function classifyHandoffIntent(text: string): HandoffIntentClassification {
+function classifyHandoffClause(text: string): HandoffIntentClassification {
   const t = text.normalize("NFKC").trim();
   const language = detectLanguage(t);
   const hasHuman = HUMAN_ZH.test(t) || HUMAN_EN.test(t);
@@ -81,6 +81,22 @@ export function classifyHandoffIntent(text: string): HandoffIntentClassification
     return { kind: "explicit_now", explicit_request: true, pure_negation: false, language, reason: "unambiguous_present_handoff_request" };
   }
   return { kind: "none", explicit_request: false, pure_negation: false, language, reason: "human_support_mentioned_without_explicit_request" };
+}
+
+export function classifyHandoffIntent(text: string): HandoffIntentClassification {
+  const language = detectLanguage(text);
+  // Scope negation, prior references and conditions to the human-support
+  // clause. A different clause describing the customer's problem cannot veto
+  // an explicit request to transfer now.
+  const clauses = text.split(/[，,。.!！;；\n]+/).map((part) => part.trim()).filter(Boolean);
+  const decisions = (clauses.length ? clauses : [text]).map(classifyHandoffClause);
+  const explicit = decisions.find((decision) => decision.explicit_request);
+  const negated = decisions.find((decision) => decision.pure_negation);
+  if (explicit && negated) return { ...negated, language, reason: "conflicting_handoff_instructions" };
+  if (explicit) return { ...explicit, language };
+  if (negated) return { ...negated, language };
+  const mentioned = decisions.find((decision) => decision.kind !== "none");
+  return mentioned ? { ...mentioned, language } : classifyHandoffClause(text);
 }
 
 const TRIVIAL = /^(hi|hello|hey|你好|嗨|哈囉|早安|午安|晚安|ok|okay|好的|好|嗯|謝謝|谢谢|thanks|thank you)[!！。.？?，,\s]*$/i;
