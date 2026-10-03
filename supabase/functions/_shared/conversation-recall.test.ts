@@ -866,10 +866,10 @@ for (const [name,language,configure,expected] of [
   },["QP-491 subscription at 12 seats","ZX-682 add-on for 1 item is paused"]],
   ["R2 Cantonese equivalent","zh-TW",(i:ConversationRecallInput)=>{i.commerce!.state.entities[0].attributes.room_sizes={study:"137平方呎"};},["137平方呎","暫緩"]],
   ["R3 requested Booking remains unconfirmed","en",(i:ConversationRecallInput)=>{i.commerce!.state.entities[0]={...i.commerce!.state.entities[0],category:"booking",quantity:5,attributes:{product_name:"BM-673 booking",unit:"sessions",requested_date:"2026-12-18",capabilities:{requires_booking:true}}};},["5 BM-673 sessions on 18 December 2026","still needs staff confirmation"]],
-  ["R4 simple one entity","en",(i:ConversationRecallInput)=>{i.commerce!.state.entities=i.commerce!.state.entities.slice(0,1);},["aircon for 2"]],
+  ["R4 simple one entity","en",(i:ConversationRecallInput)=>{i.commerce!.state.entities=i.commerce!.state.entities.slice(0,1);},["air conditioner for 2 units"]],
   ["R5 no active entity or business goal","en",(i:ConversationRecallInput)=>{i.commerce!.state.entities=[];i.memory!.active_entities=[];i.memory!.current_goal=null;},["haven't recorded any specific requirements"]],
-  ["R6 A to B to A current recap","en",(i:ConversationRecallInput)=>{i.memory!.current_topic="washer";},["aircon for 2","is paused"]],
-  ["R7 latest correction only","en",(i:ConversationRecallInput)=>{i.commerce!.state.entities[0].quantity=17;i.commerce!.state.latest_corrections=["2 items to 17 items"];},["aircon for 17"]],
+  ["R6 A to B to A current recap","en",(i:ConversationRecallInput)=>{i.memory!.current_topic="washer";},["air conditioner for 2 units","is paused"]],
+  ["R7 latest correction only","en",(i:ConversationRecallInput)=>{i.commerce!.state.entities[0].quantity=17;i.commerce!.state.latest_corrections=["2 items to 17 items"];},["air conditioner for 17 units"]],
   ["R8 cancelled item never active","en",(i:ConversationRecallInput)=>{i.commerce!.state.entities[1].status="cancelled";},["has been cancelled"]],
   ["R9 English despite Cantonese stored language","en",(i:ConversationRecallInput)=>{i.commerce!.state.entities[0].attributes={product_name:"KT-296 subscription",unit:"seats"};},["KT-296 subscription for 2 seats"]],
   ["R10 Cantonese despite English stored language","zh-TW",(i:ConversationRecallInput)=>{i.commerce!.state.language="en";i.commerce!.state.entities[0].attributes={product_name:"KT-296 subscription",unit:"seats"};},["而家記低咗","2席"]],
@@ -880,7 +880,7 @@ for (const [name,language,configure,expected] of [
   assert(r.reply && !internalRecap.test(r.reply),JSON.stringify(r));for(const value of expected)assert(r.reply.includes(value),r.reply);
   assert(JSON.stringify(i)===before,"recap mutated structured input");
   assert(r.metadata.commerce_state_revision===i.commerce!.revision && r.decision.provenance.company_id===i.company_id && r.decision.provenance.source_message_id===i.source_message_id,"scope/revision lost");
-  if(name.startsWith("R7"))assert(!r.reply.includes("aircon for 2"),r.reply);
+  if(name.startsWith("R7"))assert(!r.reply.includes("air conditioner for 2 units"),r.reply);
   if(language==="en")assert(!/[一-龿]/.test(r.reply),r.reply);
  });
 }
