@@ -51,6 +51,12 @@ function assert(value: unknown, message: string): asserts value {
   if (!value) throw new Error(message);
 }
 
+function memoryRevisionOf(
+  value: CanonicalConversationMemory | null,
+): number | null {
+  return value === null ? null : value.memory_revision;
+}
+
 const fixture = JSON.parse(
   Deno.readTextFileSync(new URL("./c3_canonical_103_turns.json", import.meta.url)),
 ) as {
@@ -250,7 +256,7 @@ for (let index = 0; index < fixture.turns.length; index++) {
   const beforeRevision = revision;
   const beforeRpcCalls = rpcCalls;
   const beforeMemory = canonicalJson(memory);
-  const beforeMemoryRevision: number | null = memory?.memory_revision ?? null;
+  const beforeMemoryRevision: number | null = memoryRevisionOf(memory);
   let outcome;
   try {
     outcome = await runCommerceStateRuntime(db, {
@@ -312,7 +318,7 @@ for (let index = 0; index < fixture.turns.length; index++) {
       newest_first: history,
       visitor_turn_count: turn,
       source_created_at: turnTimestamp(turn),
-      next_memory_revision: (memory?.memory_revision ?? 0) + 1,
+      next_memory_revision: (memoryRevisionOf(memory) ?? 0) + 1,
     });
   }
   const commerce: RecallCommerceSnapshot = {
@@ -528,7 +534,7 @@ for (let index = 0; index < fixture.turns.length; index++) {
         `turn_${turn}_recap_b2_${b2.code}`);
       assert(beforeState === JSON.stringify(state) && beforeRevision === revision &&
         beforeRpcCalls === rpcCalls && beforeMemory === canonicalJson(memory) &&
-        beforeMemoryRevision === memory?.memory_revision, `turn_${turn}_recap_mutated_state`);
+        beforeMemoryRevision === memoryRevisionOf(memory), `turn_${turn}_recap_mutated_state`);
       for (const [name, change] of [
         ["omitted", { trusted_read_only_recap: null }],
         ["wrong_source", { trusted_read_only_recap: { ...recapProof, source_message_id: "wrong" } }],
