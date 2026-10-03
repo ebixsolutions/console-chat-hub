@@ -1462,6 +1462,7 @@ export function resolveConversationRecall(
           selection_provenance: scope.provenance,
           confirmed_entity_ids: (c?.state.conversion.confirmed_entity_ids ?? []).filter(id => scope.provenance === "global" || scopedIds.has(id)),
           pending_actions: scope.provenance === "global" ? m.pending_actions : [],
+          operational_pending_checks: scope.provenance === "global" ? c?.state.installation.pending_checks ?? [] : [],
           transaction: scope.provenance === "global" ? transaction : null,
           preferences: scope.provenance === "global" ? m.customer_preferences : [],
           constraints: scope.provenance === "global" ? m.active_constraints : [],
@@ -1802,6 +1803,8 @@ function renderCustomerRecap(value: unknown, language: string): string {
   const label = (e: CommerceEntity) => typeof e.attributes.product_name === "string"
     ? display(e.attributes.product_name)
     : industryEntityLabel(e.entity_id, l === 2 ? "en" : l === 1 ? "zh-CN" : "zh-TW")
+      ?? industryEntityLabel(e.category, l === 2 ? "en" : l === 1 ? "zh-CN" : "zh-TW")
+      ?? (typeof e.attributes.name === "string" ? display(e.attributes.name) : null)
       ?? (e.model ? display(e.model) : display(e.category.replace(/_/g, " ")));
   const unitLabels: Record<string, [string, string]> = {
     seat: ["席", "席"], seats: ["席", "席"], session: ["節", "节"], sessions: ["節", "节"],
@@ -1860,7 +1863,8 @@ function renderCustomerRecap(value: unknown, language: string): string {
   const pendingBooking = active.some(e => object(e.attributes.capabilities)?.requires_booking === true && !confirmed.includes(e.entity_id));
   const qualifications: string[] = [];
   if (pendingBooking) qualifications.push(["預約要求仍需職員確認，未成為已確認預約。", "预约要求仍需职员确认，尚未成为已确认预约。", "The booking still needs staff confirmation and is not confirmed yet."][l]);
-  if (active.some(e => e.category === "air_conditioner" || object(e.attributes.capabilities)?.requires_site_check === true)) qualifications.push(["適用性仍要按現行資料及現場條件核對。", "适用性仍需按现行资料及现场条件核对。", "Suitability still needs current evidence and the relevant site checks."][l]);
+  if (active.some(e => e.category === "air_conditioner" || object(e.attributes.capabilities)?.requires_site_check === true) ||
+    global && Array.isArray(v.operational_pending_checks) && v.operational_pending_checks.length > 0) qualifications.push(["適用性仍要按現行資料及現場條件核對。", "适用性仍需按现行资料及现场条件核对。", "Suitability still needs current evidence and the relevant site checks."][l]);
   // Only the global projection owns portfolio transaction status. Operational
   // qualifications never suppress it, and scoped projections never inherit it.
   let transactionText = "";

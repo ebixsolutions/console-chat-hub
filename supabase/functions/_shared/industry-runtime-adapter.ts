@@ -137,7 +137,8 @@ export function resolveIndustryRuntime(input: {
 
 export function industryEntityLabel(entityId: string, language: IndustryLanguage): string | null {
   const [categoryKey, roomKey] = entityId.split(":");
-  const category = HOME_APPLIANCE_CATEGORIES.find((item) => item.key === categoryKey);
+  const category = HOME_APPLIANCE_CATEGORIES.find((item) => item.key === categoryKey ||
+    item.aliases.some(alias => clean(alias).toLowerCase() === clean(categoryKey).toLowerCase()));
   if (!category) return null;
   const room = HOME_APPLIANCE_ROOMS.find((item) => item.key === roomKey);
   if (!room) return category.label[language];
@@ -151,6 +152,7 @@ export function industryEntityQuantityUnit(
   entityId: string, language: IndustryLanguage, quantity: number,
 ): string | null {
   const categoryKey = entityId.split(":")[0];
-  if (!HOME_APPLIANCE_CATEGORIES.some((category) => category.key === categoryKey)) return null;
+  if (!HOME_APPLIANCE_CATEGORIES.some((category) => category.key === categoryKey ||
+    category.aliases.some(alias => clean(alias).toLowerCase() === clean(categoryKey).toLowerCase()))) return null;
   return language === "en" ? (quantity === 1 ? "unit" : "units") : "部";
 }

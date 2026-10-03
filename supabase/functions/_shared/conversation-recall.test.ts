@@ -778,6 +778,25 @@ Deno.test("C3 original quantity is not substituted after correction", () => {
 
 
 const internalRecap = /###|(?:funnel_stage|quotation_status|order_status|payment_status|entity_id|commerce_state_revision|memory_revision|source_message_id)|\{[^}]*\}/;
+for (const language of ["zh-TW", "zh-CN", "en"]) {
+  Deno.test("C3 HOSTED category aliases and stored global operational checks " + language, () => {
+    const i = recallFixture("Summarize our current requirements");
+    i.commerce!.state.installation.pending_checks = ["Installation feasibility requires a site check"];
+    const before = JSON.stringify(i);
+    const r = prepareConversationRecall(i, language);
+    assert(r.decision.handled && r.reply, JSON.stringify(r));
+    assert(!/aircon|washer|ac-wall|washer-front/.test(r.reply), r.reply);
+    assert(r.reply.includes(language === "en" ? "air conditioner" : language === "zh-CN" ? "空调" : "冷氣機"), r.reply);
+    assert(r.reply.includes(language === "en" ? "2 units" : "2部"), r.reply);
+    assert(r.reply.includes(language === "en" ? "site checks" : language === "zh-CN" ? "现场条件" : "現場條件"), r.reply);
+    assert(!internalRecap.test(r.reply) && JSON.stringify(i) === before, r.reply);
+    const scoped = prepareConversationRecall({ ...i, question: "Recap washer-front." }, language);
+    assert(scoped.decision.handled && scoped.reply && !/site checks|现场条件|現場條件/.test(scoped.reply), JSON.stringify(scoped));
+    i.commerce!.state.entities[0].attributes.unit = "seats";
+    const explicit = prepareConversationRecall(i, language);
+    assert(explicit.reply?.includes(language === "en" ? "2 seats" : "2席"), JSON.stringify(explicit));
+  });
+}
 for (const [language, items, quote, order, payment, booking, site] of [
   ["zh-TW", "項目：", "報價階段：草擬中", "未建立訂單", "未有付款記錄", "預約要求仍需職員確認", "適用性仍要"],
   ["zh-CN", "项目：", "报价阶段：草拟中", "尚未建立订单", "没有付款记录", "预约要求仍需职员确认", "适用性仍需"],
