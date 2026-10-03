@@ -39,7 +39,6 @@ for (const file of scope) {
 for (const file of [
   "supabase/functions/_shared/commerce-state-contract.ts",
   "supabase/functions/_shared/commerce-state-reducer.ts",
-  "supabase/functions/_shared/commerce-state-authority.ts",
   "supabase/functions/receive-widget-message/index.ts",
   "supabase/functions/agent-assist/index.ts",
 ]) {
