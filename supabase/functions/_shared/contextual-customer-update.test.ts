@@ -1322,3 +1322,19 @@ Deno.test("validated topic research model survives structured Memory and scoped 
   await unknown.ask(text, [], focus);
   assert(!unknown.snapshot().state.entities[0].model, "unvalidated history focus accepted");
 });
+
+Deno.test("hosted compound shopping start retains enumerated room areas and skips known questions", async () => {
+  const f = fixture();
+  const text = "我想換冷氣，兩間房同客廳，細房80呎、大房100呎、客廳180呎，全部窗口位，大房下午曬，原本都有窗口機。想先睇合適款式，未落單。";
+  const reply = await f.ask(text);
+  const state = f.snapshot().state;
+  assert(state.entities.length === 1, "compound start created ambiguous entities");
+  const ac = state.entities[0];
+  assert(JSON.stringify(ac.attributes.room_sizes) === JSON.stringify({ small_bedroom: "80平方呎", large_bedroom: "100平方呎", living_room: "180平方呎" }), JSON.stringify(state));
+  assert(ac.attributes.installation_type === "window_unit" && ac.attributes.sunlight === "strong_afternoon_sun", "compatible conditions dropped");
+  assert(reply.reply?.includes("西斜") && !/需要.*平方呎|各自.*面積/.test(reply.reply), JSON.stringify(reply));
+  assert(state.conversion.order_status === "none" && state.conversion.payment_status === "none", "shopping start promoted transaction");
+  const partial = fixture();
+  const next = await partial.ask("我想換冷氣，兩間房同客廳，細房80呎、大房100呎、客廳180呎。");
+  assert(/窗口|安裝/.test(next.reply ?? "") && !/需要.*平方呎/.test(next.reply ?? ""), JSON.stringify(next));
+});

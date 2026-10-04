@@ -272,7 +272,7 @@ export function retainedRoomSizes(text: string): Array<{
     value: string;
   }> = [];
   const groupCounts = new Map<string, number>();
-  for (const clause of text.split(/[，,。;；]/)) {
+  for (const clause of text.split(/[，,。;；]|、(?=\s*(?:細房|细房|小房|大房|客廳|客厅|書房|书房|living\s+room|study|(?:small|large)\s+bedroom))/i)) {
     const label = clause.match(
         /([^，,。;；]{0,20}?(?:客廳|客厅|兩間房|两间房|房間|房间|間房|间房|細房|细房|大房|睡房|書房|书房|廳|厅|living\s+room|study|bedrooms?|rooms?))/i,
     )?.[1]?.trim();

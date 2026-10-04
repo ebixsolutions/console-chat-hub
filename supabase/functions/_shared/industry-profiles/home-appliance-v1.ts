@@ -291,7 +291,8 @@ export function homeApplianceContextualCandidate(input: {
   const language = input.language;
   const sizingQuestion = /(?:想問|想问|請教|请教|想了解|想換|想换|點揀|点揀|如何選|如何选|應該點揀|应该怎么选|how|help|replace).{0,40}(?:匹數|匹数|冷氣|冷气|空調|空调|air\s*condition)|(?:冷氣|冷气|空調|空调|air\s*condition).{0,40}(?:點揀|点揀|如何選|如何选|應該|应该|choose|select|sizing|capacity)/iu.test(text)
     && !/(?:一\s*部|兩\s*部|两\s*部|\d+\s*部)/i.test(text);
-  if (topic === "air_conditioner" && explicit.length === 1 && sizingQuestion && currentRoomContext) {
+  if (topic === "air_conditioner" && explicit.length === 1 && sizingQuestion && currentRoomContext &&
+    !journeyObservations(text).some((fact) => fact !== "space_plan")) {
     return {
       topic, topic_source: "explicit", action: "enquiry", values: [],
       context_sufficient: true,
