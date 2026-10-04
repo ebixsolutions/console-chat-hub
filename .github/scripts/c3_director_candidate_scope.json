@@ -50,6 +50,8 @@
     "supabase/functions/_shared/natural-dialogue-generic-core.test.ts",
     "supabase/functions/_shared/pre-send-conversion-supervisor.test.ts",
     "supabase/functions/_shared/pre-send-conversion-supervisor.ts",
+    "supabase/functions/_shared/product-factual-query.test.ts",
+    "supabase/functions/_shared/product-kb-semantic-contract.ts",
     "supabase/functions/_shared/t12-round2-production-shaped.test.ts",
     "supabase/functions/_shared/task1-closure-handoff.test.ts",
     "supabase/functions/_shared/task3-3-round1-closure_test.ts",

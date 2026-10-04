@@ -732,3 +732,18 @@ Deno.test("hosted compound product question retrieves exact model without room-q
     assert(!wrongTenant.ok || (!wrongTenant.document && wrongTenant.evidence.length === 0), "focused model retrieval bypassed tenant authority");
   }
 });
+
+Deno.test("hosted published product description does not need a literal facet heading", () => {
+  const question = "細房我見到樂聲 CW-SUL70BA，呢款係幾多匹、有咩主要功能？80呎用落合唔合適？";
+  const contract = productKbSemanticContract(classifyNaturalCustomerIntent(question), "air_conditioner", question)!;
+  const target = deriveCurrentGroundingTarget(question, contract.query, contract.entity_ids, contract.topic_ids, true);
+  assert(target.topic_ids.join() === "product_facts", JSON.stringify(target));
+  const plainText = "商品型號: CW-SUL70BA 品牌: PANASONIC 樂聲牌 描述: PANASONIC 樂聲 CW-SUL70BA 3/4匹Inverter LITE變頻式淨冷窗口機，採用香港專利左出風設計、R32製冷劑及四合一抗菌過濾網，製冷能力7,400BTU/h，設左右自動送風、睡眠模式及獨立抽濕，獲香港1級能源標籤，提供3年全機及5年壓縮機保用。";
+  const plain = { ...document, chunks: document.chunks.map(c => ({ ...c, content: plainText })), llm_context: { ...document.llm_context, full_content_evidence: document.llm_context.full_content_evidence.map(e => ({ ...e, content: plainText })) } };
+  const selection = selectCanonicalGrounding([plain], { requestText: contract.query, currentTurnText: question, minScore: 0.45, requirePublished: true, expectedTenantId: "34", expectedEntityIds: target.entity_ids, expectedTopicIds: target.topic_ids, requiresCurrentKb: true });
+  assert(selection.ok && selection.document && selection.authority_decision.decision === "USE_CURRENT_KB", JSON.stringify(selection));
+  const answer = resolveCanonicalKbDirectAnswer({ request: question, selection, language: "zh-TW" });
+  assert(answer?.reply.includes("3/4匹") && answer.reply.includes("CW-SUL70BA"), JSON.stringify(answer));
+  const transaction = deriveCurrentGroundingTarget("CW-SUL70BA order status?", contract.query, contract.entity_ids, contract.topic_ids, true);
+  assert(transaction.topic_ids.includes("order_status"), "product family overrode transaction target");
+});

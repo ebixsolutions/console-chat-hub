@@ -159,11 +159,21 @@ export function deriveCurrentGroundingTarget(
   const explicitEntities = namedTargetTokens(currentTurnText);
   const explicitTopics = topicTokens(currentTurnText);
   const retrievalTopics = topicTokens(retrievalText);
+  // A resolved exact-model fact request uses the product evidence family.
+  // Customer wording such as "features" is an answer facet, not a requirement
+  // that the published product description literally repeat that label.
+  // Control/transaction topics retain their explicit target precedence.
+  const exactProductFactFamily = fallbackTopicIds.length === 1 &&
+    fallbackTopicIds[0] === "product_facts" && fallbackEntityIds.length === 1 &&
+    modelTokens(fallbackEntityIds[0].toUpperCase()).length === 1 &&
+    explicitTopics.every((topic) => ["price", "features", "specification", "warranty"].includes(topic));
   return {
     entity_ids: explicitEntities.length
       ? explicitEntities
       : unique(fallbackEntityIds),
-    topic_ids: explicitTopics.length
+    topic_ids: exactProductFactFamily
+      ? ["product_facts"]
+      : explicitTopics.length
       ? explicitTopics
       : unique([...fallbackTopicIds, ...retrievalTopics]),
     region: detectExplicitJurisdiction(currentTurnText) ?? null,
