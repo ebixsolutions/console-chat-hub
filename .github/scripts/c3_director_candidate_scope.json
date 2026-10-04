@@ -36,6 +36,7 @@
     "supabase/functions/_shared/conversation-recall.test.ts",
     "supabase/functions/_shared/conversation-recall.ts",
     "supabase/functions/_shared/conversation-runtime-state-core.ts",
+    "supabase/functions/_shared/conversation-service-planner.test.ts",
     "supabase/functions/_shared/conversation-service-planner.ts",
     "supabase/functions/_shared/conversation-service-runtime.test.ts",
     "supabase/functions/_shared/conversation-service-runtime.ts",

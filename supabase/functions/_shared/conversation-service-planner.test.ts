@@ -115,7 +115,7 @@ Deno.test("C3 deterministic 112-case regression does not claim held-out quality"
       assert(response.trim().length > 0 && response.length <= 1600, `${family.id}:response`);
       assert(!/(canonical|equal authority|source revision|persistence gate|安全核實流程)/i.test(response), `${family.id}:internal_terms`);
       if (family.id === "historical_calculation") {
-        assert(response.includes("13,400") && /不是|not a current/.test(response), response);
+        assert(response.includes("13,400") && /不是|唔代表現行正式報價|not a current/.test(response), response);
       }
       if (family.id === "explicit_handoff") {
         assert(!/(已轉交|已转交|handed)/i.test(response), "false_handoff_confirmation");

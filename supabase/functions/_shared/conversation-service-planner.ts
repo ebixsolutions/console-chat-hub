@@ -961,7 +961,7 @@ export function renderServicePlanReply(
       .filter(Boolean).join(" + ") || money(0);
     const equation = `${expression} = ${money(c.total)}`;
     return [
-      `按你提供嘅歷史金額（每部收費 × 部數，另加每單收費，如有）：${equation}。呢個只係歷史條件試算，唔係現價或正式報價。`,
+      `按你提供嘅歷史金額（每部收費 × 部數，另加每單收費，如有）：${equation}。呢個只係歷史條件試算，唔代表現行正式報價或現價。`,
       `按你提供并已标明收费单位的旧数字：${equation}。这只是历史条件试算，不是当前正式报价。`,
       `Using only the historical amounts with an explicit charge basis: ${equation}. This is a conditional historical calculation using your figures only, not a current merchant offer.`,
     ][l];

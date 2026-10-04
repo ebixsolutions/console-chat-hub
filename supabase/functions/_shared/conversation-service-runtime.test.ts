@@ -126,7 +126,7 @@ Deno.test("exact T13 production-shaped Commerce and service path is read-only", 
   assertEquals(plan.calculation?.total, 12850);
   assertMatch(response, /HK\$ 12,850/);
   assertMatch(response, /歷史條件試算/);
-  assertMatch(response, /不是現行正式報價/);
+  assertMatch(response, /(?:不是|唔代表)現行正式報價/);
 });
 
 Deno.test("C3 real caller adapter derives typed per-unit and per-order calculation", () => {
@@ -136,7 +136,7 @@ Deno.test("C3 real caller adapter derives typed per-unit and per-order calculati
   assertEquals(value.runtime.calculation_status, "ready");
   assertEquals(value.plan.calculation?.total, 12850);
   assertMatch(value.reply, /HK\$ 12,850/);
-  assertMatch(value.reply, /不是現行正式報價/);
+  assertMatch(value.reply, /(?:不是|唔代表)現行正式報價/);
 });
 
 Deno.test("C3 mixed currency blocks the whole calculation", () => {
