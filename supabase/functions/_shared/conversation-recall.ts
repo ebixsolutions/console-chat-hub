@@ -1,3 +1,4 @@
+import { customerRequestedQuantity } from "./customer-journey-orchestration.ts";
 /** C3: deterministic, read-only fact ownership routing. No KB, model or state writes. */
 import type {
   CommerceEntity,
@@ -1044,7 +1045,7 @@ function canonicalCandidates(
   if (f === "quantity") {
     for (
       const e of selected.filter((e) =>
-        !["cancelled", "deferred"].includes(e.status)
+        !["cancelled", "deferred"].includes(e.status) && customerRequestedQuantity(e) !== null
       )
     ) add(`entities.${s.entities.indexOf(e)}.quantity`, e.quantity, e);
   }
@@ -1444,7 +1445,7 @@ export function resolveConversationRecall(
         value: {
           goal: scope.provenance === "global" ? m.current_goal : null,
           entities: c
-            ? summaryEntities.map((e) => ({ entity_id: e.entity_id, quantity: e.quantity }))
+            ? summaryEntities.map((e) => ({ entity_id: e.entity_id, quantity: customerRequestedQuantity(e) }))
             : m.active_entities.map((e) => ({
               entity_id: e.entity_id,
               quantity: e.quantity,
@@ -1817,7 +1818,7 @@ function renderCustomerRecap(value: unknown, language: string): string {
   const describe = (e: CommerceEntity): string => {
     const unit = typeof e.attributes.unit === "string" ? e.attributes.unit
       : industryEntityQuantityUnit(e.category, l === 2 ? "en" : l === 1 ? "zh-CN" : "zh-TW", e.quantity) ?? "items";
-    const count = l === 2 ? `${e.quantity} ${e.quantity === 1 ? unit.replace(/s$/, "") : unit}`
+    const count = customerRequestedQuantity(e) === null ? ["機數待確認", "数量待确认", "quantity not yet confirmed"][l] : l === 2 ? `${e.quantity} ${e.quantity === 1 ? unit.replace(/s$/, "") : unit}`
       : `${e.quantity}${unitLabels[unit]?.[l] ?? display(unit)}`;
     const facts: string[] = [];
     const sizes = object(e.attributes.room_sizes);
@@ -1827,6 +1828,9 @@ function renderCustomerRecap(value: unknown, language: string): string {
     }
     if (typeof e.constraints.max_width_mm === "number") facts.push(l === 2 ? `maximum width ${e.constraints.max_width_mm} mm` : `最闊${e.constraints.max_width_mm} mm`);
     if (e.model && !label(e).includes(e.model)) facts.push(display(e.model));
+    for (const [room, sun] of Object.entries(object(e.attributes.room_sunlight) ?? {})) {
+      if (sun === "strong_afternoon_sun") facts.push(`${rooms[room]?.[l] ?? room.replace(/_/g," ")} ${["下午日照強", "下午日晒较强", "has strong afternoon sun"][l]}`);
+    }
     if (e.attributes.sunlight === "strong_afternoon_sun") facts.push(["下午日照強", "下午日晒较强", "strong afternoon sun"][l]);
     if (e.attributes.installation_type === "window_unit") facts.push(["窗口機", "窗口机", "window unit"][l]);
     if (Number.isInteger(e.attributes.door_count)) facts.push(l === 2 ? `${e.attributes.door_count} doors` : `${e.attributes.door_count}門`);

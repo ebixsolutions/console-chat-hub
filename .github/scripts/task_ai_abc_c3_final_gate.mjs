@@ -679,6 +679,7 @@ process.stdout.write(
     result: "PASS",
   })}\n`,
 );
+runDeno(["test", "--no-lock", "supabase/functions/_shared/customer-response-provenance.test.ts"]);
 runDeno(["test", "--no-lock", files.unit, files.terminalTest]);
 runDeno(["test", "--no-lock", "--allow-read", "supabase/functions/_shared/revision-bound-reply.test.ts"]);
 runDeno(["test", "--no-lock", "--allow-read", "supabase/functions/_shared/t12-round2-production-shaped.test.ts"]);

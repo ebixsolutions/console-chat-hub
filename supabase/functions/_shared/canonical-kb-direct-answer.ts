@@ -3,7 +3,7 @@ import type { KBFullChunk } from "./deterministic-kb-client.ts";
 import { classifyProductFactualQuery } from "./natural-customer-response.ts";
 
 export interface CanonicalKbDirectAnswer {
-  kind: "product_record" | "price" | "price_unknown" | "specification" | "policy";
+  kind: "product_record" | "stock_unknown" | "price" | "price_unknown" | "specification" | "policy";
   reply: string;
   evidence_chunks: KBFullChunk[];
   structured_facts?: Array<{ field: string; value: string | number; model: string; document_id: string; chunk_id: string }>;
@@ -193,8 +193,8 @@ export function resolveCanonicalKbDirectAnswer(input: {
     if (input.customer_context?.model === model && input.customer_context.sunlight === "strong_afternoon_sun" &&
       classifyProductFactualQuery(request)?.facts.includes("suitability")) {
       reply = language === "en"
-        ? reply.replace("Sun exposure and other room conditions would help assess it.", "You have already described strong afternoon sun. That cooling load needs to be considered with the manufacturer's applicable room area and a site assessment; horsepower alone cannot guarantee suitability.")
-        : reply.replace(/亦要睇日照等條件。|日照等条件也需考虑。/u, language === "zh-CN"
+        ? reply.replace("Suitability needs the manufacturer’s applicable area guidance and a site assessment.", "You have already described strong afternoon sun. That cooling load needs to be considered with the manufacturer's applicable room area and a site assessment; horsepower alone cannot guarantee suitability.")
+        : reply.replace(/需要廠方適用面積資料同現場評估。|需要厂方适用面积资料和现场评估。/u, language === "zh-CN"
           ? "你已说明下午日晒较强；下一步是结合厂方适用面积和现场评估，不能只按匹数保证够用。"
           : "你已提到下午日照強；下一步係連同廠方適用面積及現場評估，唔會單靠匹數保證夠用。");
     }
@@ -226,10 +226,10 @@ export function resolveCanonicalKbDirectAnswer(input: {
       : language === "zh-CN"
       ? `我找到 ${model} 的产品记录，但现有资料未确认实时库存数量；购买前需要再核实现货。`
       : `我搵到 ${model} 嘅產品記錄，但現有資料未確認即時庫存數量；購買前需要再核實現貨。`;
-    return evidence("product_record", reply, chunks[0]);
+    return evidence("stock_unknown", reply, chunks[0]);
   }
 
-  if (/(?:售價|售价|賣幾錢|卖几钱|價錢|价钱|price|how\s+much)/i.test(request)) {
+  if (/(?:售價|售价|賣幾錢|卖几钱|價錢|价钱|price|how\s+much)/i.test(request) && (classifyProductFactualQuery(request)?.facts.length ?? 1) <= 1) {
     if (!productRecord) return null;
     if (priceFact && displayPrice && priceEvidence) {
       return { ...evidence("price", language === "en"
@@ -284,13 +284,16 @@ export function resolveCanonicalKbDirectAnswer(input: {
       const rawRoom = request.match(/\b\d{1,4}\s*(?:平方[呎尺]|[呎尺]|sq\.?\s*ft|square\s*feet)/iu)?.[0] ?? null;
       const room = language === "en" ? rawRoom?.replace(/平方[呎尺]|[呎尺]/u, " sq ft") ?? null : rawRoom;
       const includeProductDetail = requestedFacts.has("features") || requestedFacts.has("model_info");
-      const includePrice = requestedFacts.has("price") || requestedFacts.has("suitability");
+      const includePrice = requestedFacts.has("price");
+      const detailSummary = requestedFacts.has("horsepower") && horsepower
+        ? summary?.replace(new RegExp(`${horsepower.replace("/", "\\/")}\\s*(?:匹|HP)\\s*`, "iu"), "").trim() ?? null : summary;
+      const detailEnglish = englishProductDescription(detailSummary);
       const parts: string[] = [];
       if (language === "en") {
         if (includeProductDetail) {
-          if (englishSummary || englishProductFeatures(safeFeatures)) {
+          if (detailEnglish || englishProductFeatures(safeFeatures)) {
             const translatedFeatures = englishProductFeatures(safeFeatures);
-            parts.push(`The current product record describes ${product}${englishSummary ? ` as ${englishSummary}` : ""}${translatedFeatures ? `; its listed features are ${translatedFeatures}` : ""}.`);
+            parts.push(`The current product record describes ${product}${detailEnglish ? ` as ${detailEnglish}` : ""}${translatedFeatures ? `; its listed features are ${translatedFeatures}` : ""}.`);
           } else parts.push(`The current product record does not provide verifiable English feature details for ${product}.`);
         }
         if (requestedFacts.has("horsepower")) {
@@ -304,12 +307,12 @@ export function resolveCanonicalKbDirectAnswer(input: {
             : `The current product information does not state a verifiable selling price.`);
         }
         if (requestedFacts.has("suitability")) {
-          parts.push(`The current product information does not directly state a suitable room area, so I cannot confirm whether it is sufficient${room ? ` for ${room}` : " for that room"}. Sun exposure and other room conditions would help assess it.`);
+          parts.push(`The current product information does not directly state a suitable room area, so I cannot confirm whether it is sufficient${room ? ` for ${room}` : " for that room"}. Suitability needs the manufacturer’s applicable area guidance and a site assessment.`);
         }
       } else if (language === "zh-CN") {
         if (includeProductDetail) {
-          parts.push(summary || safeFeatures
-            ? `现行产品资料列出 ${product}${summary ? `：${summary}` : ""}${safeFeatures ? `；功能：${safeFeatures}` : ""}。`
+          parts.push(detailSummary || safeFeatures
+            ? `现行产品资料列出 ${product}${detailSummary ? `：${detailSummary}` : ""}${safeFeatures ? `；功能：${safeFeatures}` : ""}。`
             : `现有产品资料未有列出 ${product} 的可核实功能。`);
         }
         if (requestedFacts.has("horsepower")) parts.push(horsepower
@@ -318,11 +321,11 @@ export function resolveCanonicalKbDirectAnswer(input: {
         if (includePrice) parts.push(displayPrice
           ? `产品资料售价为 ${displayPrice}。`
           : "现有产品资料未有列出可核实售价。");
-        if (requestedFacts.has("suitability")) parts.push(`现有产品资料未直接列出适用面积，所以不能确认${room ? `${room}房间` : "这个房间"}是否够用；日照等条件也需考虑。`);
+        if (requestedFacts.has("suitability")) parts.push(`现有产品资料未直接列出适用面积，所以不能确认${room ? `${room}房间` : "这个房间"}是否够用；需要厂方适用面积资料和现场评估。`);
       } else {
         if (includeProductDetail) {
-          parts.push(summary || safeFeatures
-            ? `現行產品資料列出 ${product}${summary ? `：${summary}` : ""}${safeFeatures ? `；功能：${safeFeatures}` : ""}。`
+          parts.push(detailSummary || safeFeatures
+            ? `現行產品資料列出 ${product}${detailSummary ? `：${detailSummary}` : ""}${safeFeatures ? `；功能：${safeFeatures}` : ""}。`
             : `現有產品資料未有列出 ${product} 嘅可核實功能。`);
         }
         if (requestedFacts.has("horsepower")) parts.push(horsepower
@@ -331,7 +334,7 @@ export function resolveCanonicalKbDirectAnswer(input: {
         if (includePrice) parts.push(displayPrice
           ? `產品資料售價為 ${displayPrice}。`
           : "現有產品資料未有列出可核實售價。");
-        if (requestedFacts.has("suitability")) parts.push(`現有產品資料未有直接列出適用面積，所以未能確認${room ? `${room}房` : "呢間房"}夠唔夠用；亦要睇日照等條件。`);
+        if (requestedFacts.has("suitability")) parts.push(`現有產品資料未有直接列出適用面積，所以未能確認${room ? `${room}房` : "呢間房"}夠唔夠用；需要廠方適用面積資料同現場評估。`);
       }
       if (!parts.length) return null;
       const kind: CanonicalKbDirectAnswer["kind"] = includePrice && priceFact
@@ -372,12 +375,11 @@ export function resolveCanonicalKbDirectAnswer(input: {
       const rawRoom = request.match(/\b\d{1,4}\s*(?:平方[呎尺]|[呎尺]|sq\.?\s*ft|square\s*feet)/iu)?.[0] ?? null;
       const room = language === "en" ? rawRoom?.replace(/平方[呎尺]|[呎尺]/u, " sq ft") ?? null : rawRoom;
       const reply = language === "en"
-        ? `${product}${englishSummary ? ` is listed as a ${englishSummary}` : " has a current product record"}.${displayPrice ? ` The product record lists a selling price of ${displayPrice}.` : ""} The current product information does not directly state a suitable room area, so I cannot confirm whether it is sufficient${room ? ` for ${room}` : " for that room"}. Sun exposure and other room conditions would help assess it.`
+        ? `${product}${englishSummary ? ` is listed as a ${englishSummary}` : " has a current product record"}. The current product information does not directly state a suitable room area, so I cannot confirm whether it is sufficient${room ? ` for ${room}` : " for that room"}. Suitability needs the manufacturer’s applicable area guidance and a site assessment.`
         : language === "zh-CN"
-        ? `${product} 是${summary}。${displayPrice ? `产品资料售价为 ${displayPrice}。` : ""}现有产品资料未直接列出适用面积，所以不能确认${room ? `${room}房间` : "这个房间"}是否够用；日照等条件也需考虑。`
-        : `${product} 係${summary}。${displayPrice ? `產品資料售價為 ${displayPrice}。` : ""}現有產品資料未有直接列出適用面積，所以未能確認${room ? `${room}房` : "呢間房"}夠唔夠用；亦要睇日照等條件。`;
-      return { ...evidence(priceFact ? "price" : "product_record", reply, selected),
-        ...(priceFact ? { price_fact: priceFact } : {}) };
+        ? `${product} 是${summary}。现有产品资料未直接列出适用面积，所以不能确认${room ? `${room}房间` : "这个房间"}是否够用；需要厂方适用面积资料和现场评估。`
+        : `${product} 係${summary}。現有產品資料未有直接列出適用面積，所以未能確認${room ? `${room}房` : "呢間房"}夠唔夠用；需要廠方適用面積資料同現場評估。`;
+      return evidence("product_record", reply, selected);
     }
   }
 

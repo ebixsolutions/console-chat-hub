@@ -174,9 +174,9 @@ const HOME_APPLIANCE_JOURNEY_POLICIES: Record<string, HomeApplianceJourneyPolicy
       },
     },
     ready: {
-      "zh-TW": "西斜會增加實際冷氣負荷，我會連同各房面積同窗口安裝條件一齊考慮；唔會單憑西斜直接保證匹數。下一步係逐個空間核對有現行資料支持嘅型號同適用範圍。",
-      "zh-CN": "西晒会增加实际冷气负荷，我会连同各房面积和窗口安装条件一起考虑；不会只凭西晒直接保证匹数。下一步是逐个空间核对有现行资料支持的型号和适用范围。",
-      en: "West-facing afternoon sun can increase the cooling load, so I’ll consider it together with each room’s area and installation conditions rather than guarantee horsepower from sunlight alone. The next step is to compare models with current evidence for each space.",
+      "zh-TW": "西斜會增加實際冷氣負荷，我會連同各房面積同窗口安裝條件一齊考慮；唔會單憑西斜直接保證匹數。現有條件仲未足以確認型號適用性。各窗口位可放機嘅闊度同高度各係幾多？",
+      "zh-CN": "西晒会增加实际冷气负荷，我会连同各房面积和窗口安装条件一起考虑；不会只凭西晒直接保证匹数。现有条件还不足以确认型号适用性。各窗口位可放机器的宽度和高度分别是多少？",
+      en: "West-facing afternoon sun can increase the cooling load, so I’ll consider it together with each room’s area and installation conditions rather than guarantee horsepower from sunlight alone. These conditions alone cannot confirm model suitability. What are the usable width and height of each window opening?",
     },
   },
   refrigerator: {

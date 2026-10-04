@@ -1,3 +1,4 @@
+import type { CommerceEntity } from "./commerce-state-contract.ts";
 import type { ConversationCommerceState } from "./commerce-state-contract.ts";
 import type { CommerceStateEvent } from "./commerce-state-reducer.ts";
 
@@ -200,7 +201,7 @@ export function planCustomerJourney(input: {
         category: signal.category,
         quantity: 1,
         status: "researching",
-        attributes: { [GOAL_ATTRIBUTE]: goal },
+        attributes: { [GOAL_ATTRIBUTE]: goal, quantity_basis: "system_default" },
         constraints: {},
         provenance,
       },
@@ -220,4 +221,9 @@ export function planCustomerJourney(input: {
 
 export function customerJourneyGoalAttribute(): string {
   return GOAL_ATTRIBUTE;
+}
+
+/** Default container counts are not customer-requested machine quantities. */
+export function customerRequestedQuantity(entity: CommerceEntity): number | null {
+  return entity.attributes.quantity_basis === "system_default" ? null : entity.quantity;
 }

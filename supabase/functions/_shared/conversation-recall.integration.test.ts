@@ -415,7 +415,7 @@ const canonicalTurns1To17 = [
   "咁我而家實際買幾多部冷氣？",
 ] as const;
 
-Deno.test("C3 exact canonical T006 recalls aggregate quantity from prior room allocation", () => {
+Deno.test("C3 exact canonical T006 leaves unallocated room-plan machine quantity unconfirmed", () => {
   let state = createEmptyConversationCommerceState();
   for (let index = 0; index < 6; index++) {
     const text = canonicalTurns1To17[index];
@@ -450,9 +450,8 @@ Deno.test("C3 exact canonical T006 recalls aggregate quantity from prior room al
     },
   };
   const route = prepareConversationRecall(input, "zh-TW");
-  assert(route.decision.handled, JSON.stringify(route.decision));
-  assert(route.decision.value === 3, JSON.stringify(route.decision));
-  assert(route.reply?.includes("3 部"), route.reply ?? "missing reply");
+  assert(!route.decision.handled && route.decision.detail === "MISSING_QUANTITY", JSON.stringify(route.decision));
+  assert(state.entities[0].attributes.quantity_basis === "system_default", "room count promoted to machine requirement");
 });
 Deno.test("C3 quantity recall remains unknown without an explicit scoped count", () => {
   const input = recallFixture("我而家要幾多部冷氣？");

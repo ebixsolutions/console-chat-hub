@@ -1,3 +1,4 @@
+import { customerRequestedQuantity } from "./customer-journey-orchestration.ts";
 import type { CommerceEntity, ConversationCommerceState } from "./commerce-state-contract.ts";
 import type { CommerceTurnEntityHint } from "./commerce-state-reducer.ts";
 import { industryEntityQuantityUnit } from "./industry-runtime-adapter.ts";
@@ -288,7 +289,7 @@ export function renderEnglishRequirement(entity: CommerceEntity, displayName?: s
     if (Number.isFinite(value.getTime()) && value.toISOString().slice(0,10) === rawDate)
       date = new Intl.DateTimeFormat("en-GB",{day:"numeric",month:"long",year:"numeric",timeZone:"UTC"}).format(value);
   }
-  const count = `${entity.quantity}${unit ? " "+unit : ""}`;
+  const count = customerRequestedQuantity(entity) === null ? "quantity not yet confirmed" : `${entity.quantity}${unit ? " "+unit : ""}`;
   const booking = entity.attributes.capabilities && typeof entity.attributes.capabilities === "object" && (entity.attributes.capabilities as Record<string,unknown>).requires_booking === true;
   const core = booking && unit
     ? `${entity.quantity} ${name.replace(/\s+booking$/i,"")} ${unit}`

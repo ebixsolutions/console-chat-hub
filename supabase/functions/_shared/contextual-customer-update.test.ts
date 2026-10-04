@@ -940,7 +940,7 @@ Deno.test("W19 sequential T1-T16 source replay preserves customer journey, KB an
   const recall = prepareConversationRecall({ conversation_id: "conversation", company_id: "company", source_message_id: "source-t12", question: t12, memory, commerce: { conversation_id: "conversation", company_id: "company", source_message_id: t11Proof.source_message_id, revision: f.snapshot().revision, state: afterCancellation }, recent_questions: turns.slice(0,-1).reverse() }, "zh-TW");
   assert(recall.decision.handled && recall.reply && ["80平方呎", "110平方呎", "180平方呎", "窗口", "CW-SUL70BA"].every((item) => recall.reply!.includes(item)) &&
     (() => { const details = (recall.decision.handled ? recall.decision.value as { entity_details: Array<{ quantity: number; attributes: Record<string, unknown> }> } : null)?.entity_details;
-      return details?.length === 1 && details[0].quantity === 3 && details[0].attributes.sunlight === "strong_afternoon_sun"; })() && !recall.reply.includes("100平方呎") && !recall.reply.includes("雪櫃") && !recall.reply.includes("refrigerator:unscoped"), JSON.stringify(recall));
+      return details?.length === 1 && details[0].quantity === 3 && (details[0].attributes.room_sunlight as Record<string,string>)?.living_room === "strong_afternoon_sun"; })() && !recall.reply.includes("100平方呎") && !recall.reply.includes("雪櫃") && !recall.reply.includes("refrigerator:unscoped"), JSON.stringify(recall));
   assert(afterCancellation.conversion.order_status === "none" && afterCancellation.conversion.payment_status === "none" && afterCancellation.conversion.quotation_status === "none" && afterCancellation.quotes.length === 0, "transaction_promoted");
   const kbContent = "工作表：商品設定_20260813 162932 ID: 7944 狀態: 開啟 商品型號: CW-SUL70BA 商品圖片: 39 成本: 3750 銷售價: 5680 特價: 4038 匹數 (多聯分體式): 29 品牌: PANASONIC 樂聲牌 附加項目: 否 新增日期: 46247 標籤: 32 描述: PANASONIC 樂聲 CW-SUL70BA 3/4匹Inverter LITE變頻式淨冷窗口機，採用香港專利左出風設計、R32製冷劑及四合一抗菌過濾網，製冷能力7,400BTU/h，設左右自動送風、睡眠模式及獨立抽濕，獲香港1級能源標籤，提供3年全機及5年壓縮機保用。 功能: 變頻 淨冷 匹數: 3/4匹 氣體: 36 風數: 42";
   const kbDoc: KBDocumentCandidate = {
@@ -1331,7 +1331,7 @@ Deno.test("hosted compound shopping start retains enumerated room areas and skip
   assert(state.entities.length === 1, "compound start created ambiguous entities");
   const ac = state.entities[0];
   assert(JSON.stringify(ac.attributes.room_sizes) === JSON.stringify({ small_bedroom: "80平方呎", large_bedroom: "100平方呎", living_room: "180平方呎" }), JSON.stringify(state));
-  assert(ac.attributes.installation_type === "window_unit" && ac.attributes.sunlight === "strong_afternoon_sun", "compatible conditions dropped");
+  assert(ac.attributes.installation_type === "window_unit" && (ac.attributes.room_sunlight as Record<string,string>)?.large_bedroom === "strong_afternoon_sun" && ac.attributes.sunlight === undefined, "compatible conditions dropped");
   assert(reply.reply?.includes("西斜") && !/需要.*平方呎|各自.*面積/.test(reply.reply), JSON.stringify(reply));
   assert(state.conversion.order_status === "none" && state.conversion.payment_status === "none", "shopping start promoted transaction");
   const partial = fixture();

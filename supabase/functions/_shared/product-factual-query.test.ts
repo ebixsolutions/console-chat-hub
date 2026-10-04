@@ -63,13 +63,12 @@ Deno.test("W9 multi-intent product facts retain every compatible facet", () => {
   assert(selection.ok && answer && citation, "missing_grounded_composite");
   assert(
     answer.reply ===
-      "現行產品資料列出 PANASONIC 樂聲牌 CW-SUL70BA：3/4匹Inverter LITE變頻式淨冷窗口機；功能：變頻 淨冷。 PANASONIC 樂聲牌 CW-SUL70BA 嘅匹數係 3/4匹。 產品資料售價為 HK$5,680。 現有產品資料未有直接列出適用面積，所以未能確認80呎房夠唔夠用；亦要睇日照等條件。",
+      "現行產品資料列出 PANASONIC 樂聲牌 CW-SUL70BA：Inverter LITE變頻式淨冷窗口機；功能：變頻 淨冷。 PANASONIC 樂聲牌 CW-SUL70BA 嘅匹數係 3/4匹。 現有產品資料未有直接列出適用面積，所以未能確認80呎房夠唔夠用；需要廠方適用面積資料同現場評估。",
     answer.reply,
   );
   assert(
-    answer.price_fact?.value === 5680 &&
-      answer.price_fact.model === "CW-SUL70BA",
-    "price_proof_lost",
+    answer.price_fact === undefined && !/HK\$|售價/.test(answer.reply),
+    "unrequested_price_exposed",
   );
   assert(
     citation.citation_lineage.selected_document_id === documentId &&
@@ -203,7 +202,7 @@ Deno.test("W17 T9 restores AC referent after refrigerator and answers model plus
   const { intent, selection, answer, citation } = routeAndAnswer(arbitration.grounded_question);
   assert(intent.kind === "product_factual_query" && intent.product === "CW-SUL70BA" && intent.facts.includes("model_info") && intent.facts.includes("horsepower"), JSON.stringify(intent));
   assert(selection.ok && answer && citation, "T9:grounded_answer_missing");
-  assert(answer.reply === "現行產品資料列出 PANASONIC 樂聲牌 CW-SUL70BA：3/4匹Inverter LITE變頻式淨冷窗口機；功能：變頻 淨冷。 PANASONIC 樂聲牌 CW-SUL70BA 嘅匹數係 3/4匹。", answer.reply);
+  assert(answer.reply === "現行產品資料列出 PANASONIC 樂聲牌 CW-SUL70BA：Inverter LITE變頻式淨冷窗口機；功能：變頻 淨冷。 PANASONIC 樂聲牌 CW-SUL70BA 嘅匹數係 3/4匹。", answer.reply);
   assert(arbitration.resolved_topic === "air_conditioner" && arbitration.resolution_strategy === "PER_TOPIC_REFERENT_HISTORY" && citation.citation_lineage.selected_document_id === documentId && citation.citation_lineage.evidence_chunk_ids[0] === chunkId, JSON.stringify({ arbitration, citation }));
   console.log(`W17-T9|CURRENT_KB_REQUIRED|canonical_kb_direct_answer|${answer.reply}`);
 });
@@ -327,7 +326,8 @@ function routeAndAnswer(
     memory: null,
     commerce: null,
   });
-  const target = deriveCurrentGroundingTarget(question);
+  const semantic = productKbSemanticContract(classifyNaturalCustomerIntent(question), null, question);
+  const target = deriveCurrentGroundingTarget(question, semantic?.query ?? question, semantic?.entity_ids ?? [], semantic?.topic_ids ?? []);
   const selection = selectCanonicalGrounding(documents, {
     minScore: 0.45,
     requirePublished: true,
@@ -410,58 +410,12 @@ for (
     );
     if (id === "P1" || id === "P4") {
       assert(
-        answer.reply.includes("5,680") &&
+        !answer.reply.includes("5,680") &&
           /未有直接列出適用面積|does not directly state a suitable room area/i
             .test(answer.reply),
         `${id}:partial_answer:${answer.reply}`,
       );
-      const fact = answer.price_fact;
-      assert(fact?.value === 5680, `${id}:price_fact`);
-      const proof: B2KbPriceProof = {
-        field: "selling_price",
-        value: fact.value,
-        currency: "HKD",
-        model: fact.model,
-        document_id: fact.document_id,
-        chunk_id: fact.chunk_id,
-        tenant_id: "34",
-        company_id: "3d6e17b5-ec79-4f75-aa7f-eaa824ff8493",
-        currentness: "current",
-        authority_decision: "USE_CURRENT_KB",
-        request: question,
-        full_content: fact.full_content,
-      };
-      const {
-        request: _request,
-        full_content: _content,
-        company_id: _company,
-        ...publicProof
-      } = proof;
-      const verdict = evaluateB2BeforeCommit({
-        proposed_response: answer.reply,
-        persistence_kind: "ai_reply",
-        trusted_kb_price_proof: proof,
-        snapshot: {
-          conversation_id: "fixture-conversation",
-          company_id: proof.company_id,
-          source_message_id: "fixture-source",
-          commerce_state_revision: 0,
-          commerce_state_source_message_id: null,
-          state: createEmptyConversationCommerceState(),
-        },
-        metadata: {
-          ...citation,
-          response_route: "canonical_kb_direct_answer",
-          answer_kind: answer.kind,
-          kb_fact_proof: publicProof,
-          reference_authority: selection.authority_decision,
-        },
-      });
-      assert(
-        verdict.decision === "allow" &&
-          verdict.code === "B2_ALLOW_CURRENT_KB_SELLING_PRICE",
-        `${id}:B2:${JSON.stringify(verdict)}`,
-      );
+      assert(answer.price_fact === undefined, `${id}:unrequested_price_proof`);
     }
     console.log(
       `${id}|${plan.action}|canonical_kb_direct_answer|${answer.reply}`,
@@ -503,7 +457,7 @@ for (
         /does not directly state a suitable room area|未有直接列出適用面積/u
           .test(answer.reply) &&
           answer.reply.includes(language === "en" ? "80 sq ft" : "80呎") &&
-          answer.reply.includes("HK$5,680"),
+          !answer.reply.includes("HK$5,680"),
         `${id}:unknown_or_number_changed:${answer.reply}`,
       );
     }
@@ -557,7 +511,7 @@ Deno.test("English brand identity keeps only grounded Latin prefix across brands
       english.answer?.reply.startsWith(expected) &&
         !/[\p{Script=Han}]/u.test(english.answer.reply) &&
         english.answer.reply.includes("3/4 HP") &&
-        english.answer.reply.includes("HK$5,680") &&
+        !english.answer.reply.includes("HK$5,680") &&
         english.answer.reply.includes("80 sq ft") &&
         english.citation?.citation_lineage.evidence_chunk_ids[0] === chunkId,
       `english_brand_or_evidence:${field}:${english.answer?.reply}`,
@@ -565,7 +519,7 @@ Deno.test("English brand identity keeps only grounded Latin prefix across brands
     assert(
       chinese.answer?.reply.startsWith(`${field} CW-SUL70BA`) &&
         chinese.answer.reply.includes("3/4匹") &&
-        chinese.answer.reply.includes("HK$5,680"),
+        !chinese.answer.reply.includes("HK$5,680"),
       `chinese_brand_changed:${field}:${chinese.answer?.reply}`,
     );
   }
@@ -595,7 +549,7 @@ Deno.test("E7/E8 variant descriptions are bounded by evidence and cannot promote
   );
   assert(
     alt.answer?.reply.includes("1.5 HP") &&
-      alt.answer.reply.includes("HK$7,290") &&
+      !alt.answer.reply.includes("HK$7,290") &&
       alt.answer.reply.includes("80 sq ft") &&
       !/3750|4038|變頻|淨冷|窗口機/.test(alt.answer.reply),
     `E7:numeric_or_language_change:${alt.answer?.reply}`,
@@ -768,4 +722,13 @@ Deno.test("hosted published product description does not need a literal facet he
   assert(answer?.reply.includes("3/4匹") && answer.reply.includes("CW-SUL70BA"), JSON.stringify(answer));
   const transaction = deriveCurrentGroundingTarget("CW-SUL70BA order status?", contract.query, contract.entity_ids, contract.topic_ids, true);
   assert(transaction.topic_ids.includes("order_status"), "product family overrode transaction target");
+});
+
+Deno.test("requested price plus horsepower retains both facets and exact authority", () => {
+  for (const [question, language] of [["CW-SUL70BA 係幾多匹，售價幾多？", "zh-TW"], ["What horsepower and price does CW-SUL70BA have?", "en"]] as const) {
+    const {answer,citation,selection}=routeAndAnswer(question,language);
+    assert(answer?.price_fact?.value === 5680 && answer.price_fact.model === "CW-SUL70BA", JSON.stringify({question,answer,selection}));
+    assert(answer.reply.includes("HK$5,680") && (answer.reply.match(/3\/4(?:匹| HP)/g)??[]).length === 1, "requested facets duplicated/lost");
+    assert(citation?.citation_lineage.selected_document_id === documentId, "price lineage lost");
+  }
 });

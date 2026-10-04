@@ -1,3 +1,4 @@
+import { customerRequestedQuantity } from "./customer-journey-orchestration.ts";
 import { resolveConversationRecall, renderConversationRecall } from "./conversation-recall.ts";
 import { isConversationCommerceState, type ConversationCommerceState } from "./commerce-state-contract.ts";
 import { classifyHandoffIntent } from "./handoff-intent.ts";
@@ -467,7 +468,7 @@ function projectCommerce(
       type: clean(entity.category, 120) || "unknown",
       brand: clean(entity.brand, 120) || null,
       model: clean(entity.model, 120) || null,
-      quantity: Number.isFinite(entity.quantity) ? entity.quantity : null,
+      quantity: customerRequestedQuantity(entity),
       status: "active" as const,
       region: clean(entity.attributes?.region, 80) || null,
       current_requirements: { ...entity.attributes, ...entity.constraints },
@@ -555,8 +556,9 @@ function questionLifecycle(rows: MemoryHistoryRow[], state: ConversationCommerce
     let item = items.get(meta.source_message_id);
     const clarification = /^(?:targeted_clarification|partial_answer_then_question|offer_handoff_or_reframe|customer_issue_next_step)$/.test(String(meta.service_action)) && /[?？]$/.test(content.trim());
     const site = meta.response_route === "canonical_kb_direct_answer" && /cannot confirm|未能確認|不能确认/i.test(content) && /suitable room|適用面積|适用面积|site assessment|現場評估/i.test(content);
+    const stockUnknown = meta.response_route === "canonical_kb_direct_answer" && meta.answer_kind === "stock_unknown";
     const missingCustomerDecision = meta.response_route === "product_guidance" && /[?？]$/.test(content);
-    if (!item && (clarification || site || missingCustomerDecision)) {
+    if (!item && (clarification || site || stockUnknown || missingCustomerDecision)) {
       const source=rows.find(row=>row.id===meta.source_message_id && CUSTOMER_ROLES.has(String(row.role)));
       if (!source || classifySocialTurn(clean(source.content))) continue;
       const matches=entities.filter(entity=>[entity.model,entity.attributes.product_name,entity.category.replace(/_/g," "),industryEntityLabel(entity.entity_id,"zh-TW"),industryEntityLabel(entity.entity_id,"en")]
@@ -565,9 +567,9 @@ function questionLifecycle(rows: MemoryHistoryRow[], state: ConversationCommerce
       items.set(item.source_message_id,item);
     }
     if (!item) continue;
-    item.status = clarification || site || missingCustomerDecision || meta.degraded === true ? "pending" : "resolved";
+    item.status = clarification || site || stockUnknown || missingCustomerDecision || meta.degraded === true ? "pending" : "resolved";
     item.resolution_source_message_id = row.id ?? null;
-    item.resolution = site ? "professional/site confirmation pending" : clarification || missingCustomerDecision ? "customer information required" : String(meta.response_route ?? "delivered_answer");
+    item.resolution = stockUnknown ? "merchant stock confirmation pending" : site ? "professional/site confirmation pending" : clarification || missingCustomerDecision ? "customer information required" : String(meta.response_route ?? "delivered_answer");
     if (site) {
       const target=entities.filter(entity=>entity.model && content.includes(entity.model));
       if(target.length===1) item.entity_id=target[0].entity_id;
@@ -576,6 +578,10 @@ function questionLifecycle(rows: MemoryHistoryRow[], state: ConversationCommerce
         old.status="superseded";old.resolution="later scoped assessment request";old.resolution_source_message_id=item.source_message_id;
       }
       item.text = `${target[0]?.model ?? "Product"} suitability and site assessment need authoritative professional confirmation`;
+    } else if (stockUnknown) {
+      const target=entities.filter(entity=>entity.model && content.includes(entity.model));
+      if (target.length === 1) item.entity_id=target[0].entity_id;
+      item.text = `${target[0]?.model ?? "Product"} live stock quantity needs merchant confirmation`;
     } else if (missingCustomerDecision || clarification) {
       item.text=content.split(/(?<=[。.!])/).filter(Boolean).at(-1)?.trim() ?? content;
     }
@@ -639,7 +645,7 @@ export function buildCanonicalConversationMemory(args: {
     const rooms=record(entity.attributes.room_sizes);
     const requirements=rooms?Object.entries(rooms).map(([room,size])=>`${room.replace(/_/g," ")} ${size}`).join(", "):"";
     const width=typeof entity.constraints.max_width_mm === "number"?`, maximum width ${entity.constraints.max_width_mm} mm`:"";
-    return `${entity.model?entity.model+" ":""}${label}: ${entity.quantity} units${requirements?", "+requirements:""}${width}${["deferred","cancelled"].includes(entity.status)?` (${entity.status})`:""}`;
+    return `${entity.model?entity.model+" ":""}${label}: ${customerRequestedQuantity(entity) === null ? "quantity not yet confirmed" : `${entity.quantity} units`}${requirements?", "+requirements:""}${width}${record(entity.attributes.room_sunlight) ? ", afternoon sun: " + Object.keys(record(entity.attributes.room_sunlight)!).map(room=>room.replace(/_/g," ")).join(", ") : entity.attributes.sunlight === "strong_afternoon_sun" ? ", afternoon sun (scope unspecified)" : ""}${entity.attributes.installation_type === "window_unit" ? ", window units" : ""}${["deferred","cancelled"].includes(entity.status)?` (${entity.status})`:""}`;
   }).join("; "):null;
   const fallbackGoal=businessMessageText(prior?.current_goal) || businessMessageText(args.commerce_state?.current_intent) || runtime.first_customer_turn || null;
   const businessGoal = genericGoal || entityGoal || (fallbackGoal && !classifyHandoffIntent(fallbackGoal).explicit_request ? fallbackGoal : null);
@@ -725,7 +731,7 @@ export function buildCanonicalConversationMemory(args: {
     .filter(([, value]) => value !== null && (!Array.isArray(value) || value.length > 0))
     .map(([key, value]) => ({ key, value, authority: "customer", source_message_id: args.source_message_id }));
   const canonicalEntityFacts: ConversationMemoryFact[] = (args.commerce_state?.entities ?? []).filter(e=>!['deferred','cancelled'].includes(e.status)).flatMap(e=>[
-    {key:`entity:${e.entity_id}:quantity`,value:e.quantity,authority:"canonical_commerce" as const,entity_id:e.entity_id,source_message_id:e.provenance.source_message_id},
+    ...(customerRequestedQuantity(e) === null ? [] : [{key:`entity:${e.entity_id}:quantity`,value:e.quantity,authority:"canonical_commerce" as const,entity_id:e.entity_id,source_message_id:e.provenance.source_message_id}]),
     ...(typeof e.attributes.requested_date === "string" ? [{key:`entity:${e.entity_id}:requested_date`,value:e.attributes.requested_date,authority:"customer" as const,entity_id:e.entity_id,source_message_id:e.provenance.source_message_id}] : [])]);
   const memory: CanonicalConversationMemory = {
     version: CONVERSATION_MEMORY_VERSION,

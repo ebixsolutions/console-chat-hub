@@ -62,6 +62,7 @@ import type { ContextualDecision } from "./contextual-customer-update.ts";
 import {
   activeCustomerGoal,
   planCustomerJourney,
+  customerRequestedQuantity,
   type CustomerJourneyPlan,
 } from "./customer-journey-orchestration.ts";
 import {
@@ -867,7 +868,7 @@ export function detectQuantityCorrectionSignal(text: string): boolean {
 }
 
 function parseCount(text: string): number | null {
-  const t = clean(text);
+  const t = clean(text).replace(/(?:[一二兩两三四五六七八九十]|\d{1,2})\s*(?:間|间)\s*(?:睡房|臥室|卧室|房間|房间|客房|房)/giu, "");
   if (!t) return null;
 
   const correctionPatterns = [
@@ -965,15 +966,15 @@ function isAllocationBreakdown(text: string): boolean {
 
 /**
  * A room counter is not itself a product-unit counter.  For room-scoped
- * appliances, however, an explicit allocation such as "two rooms plus a
- * living room" is authoritative evidence for the requested aggregate.  Keep
+ * appliances, an explicit "one in each space" allocation is evidence
+ * for the requested aggregate; room counts alone are not.  Keep
  * this separate from parseCount so isolated room sizes/counts never become a
  * product quantity, and require both a recognised commerce category and at
  * least one explicitly counted room group.
  */
 export function parseSpaceScopedCommerceQuantity(text: string): number | null {
   const t = clean(text);
-  if (!t || detectCategories(t).length === 0) return null;
+  if (!t || detectCategories(t).length === 0 || !/(?:各|每).{0,8}(?:一|1)\s*(?:部|台)|one\s+(?:unit|AC|air conditioner)\s+(?:in|for)\s+each/iu.test(t)) return null;
 
   const countedRoom = t.match(
     /([一二兩两三四五六七八九十]|\d{1,2})\s*(?:間|间)\s*(?:睡房|臥室|卧室|房間|房间|客房|房)/i,
@@ -1096,7 +1097,7 @@ function explicitBookingConfirmation(text: string): boolean {
 }
 
 function quotationOnlySignal(text: string): boolean {
-  return /(?:報價|报价|quotation|quote|未落單|未下单|未正式|唔係落單|不是下单|先問價|先问价)/i.test(text);
+  return /(?:報價|报价|quotation|quote|先問價|先问价)/i.test(text);
 }
 
 function explicitQuotationOnlySignal(text: string): boolean {
@@ -1444,6 +1445,15 @@ function deriveA3RuntimeEvents(
     events.push({ type: "SET_CUSTOMER_CONSTRAINT", key: "brand_required", value: false });
   }
 
+  // Explicit machine/spec allocations provide their own total; never carry
+  // forward a room-plan default or treat the first allocation as the total.
+  const specifiedUnits = [...text.matchAll(/([一二兩两三四五六七八九十]|\d{1,4})\s*(?:部|台)\s*\d+(?:\.\d+)?\s*匹/giu)];
+  const allocationTarget = previous.entities.filter(e=>e.category === "air_conditioner" && !["cancelled","deferred"].includes(e.status));
+  if (correction && specifiedUnits.length > 1 && allocationTarget.length === 1) {
+    events.push({type:"SET_ENTITY_QUANTITY",entity_id:allocationTarget[0].entity_id,
+      quantity:specifiedUnits.reduce((sum,m)=>sum+(countTokenValue(m[1]) ?? 0),0),provenance});
+  }
+
   if (
     correction && !allocationBreakdown && quantity !== null &&
     mentioned.length === 0
@@ -1514,7 +1524,11 @@ function deriveA3RuntimeEvents(
       // stay read-only so downstream clarification remains fail-closed.
       if (semanticAuthoritative && !existing && !canMaterializeSemanticScope) continue;
       events.push({ type: "SET_ENTITY_STATUS", entity_id: hint.entity_id, status: "cancelled", provenance });
-      if (!existing && aggregate && aggregate.quantity > 0) {
+      if (!existing && aggregate && aggregate.quantity > 0 && (
+        aggregate.attributes.quantity_basis == null ||
+        Boolean((aggregate.attributes.room_allocation as Record<string,unknown> ?? {})[hint.entity_id.split(":")[1]]) ||
+        (Array.isArray(aggregate.attributes.scoped_customer_updates) && aggregate.attributes.scoped_customer_updates.some((v: {scope?:string;attribute?:string})=>v.attribute === "quantity" && v.scope === hint.entity_id.split(":")[1]))
+      )) {
         events.push({
           type: "SET_ENTITY_QUANTITY",
           entity_id: aggregate.entity_id,
@@ -1527,7 +1541,11 @@ function deriveA3RuntimeEvents(
     if (deferred) {
       if (semanticAuthoritative && !existing && !canMaterializeSemanticScope) continue;
       events.push({ type: "SET_ENTITY_STATUS", entity_id: hint.entity_id, status: "deferred", provenance });
-      if (!existing && aggregate && aggregate.quantity > 0) {
+      if (!existing && aggregate && aggregate.quantity > 0 && (
+        aggregate.attributes.quantity_basis == null ||
+        Boolean((aggregate.attributes.room_allocation as Record<string,unknown> ?? {})[hint.entity_id.split(":")[1]]) ||
+        (Array.isArray(aggregate.attributes.scoped_customer_updates) && aggregate.attributes.scoped_customer_updates.some((v: {scope?:string;attribute?:string})=>v.attribute === "quantity" && v.scope === hint.entity_id.split(":")[1]))
+      )) {
         events.push({
           type: "SET_ENTITY_QUANTITY",
           entity_id: aggregate.entity_id,
@@ -1810,7 +1828,29 @@ function enrichExplicitCustomerFacts(input: CommerceRuntimeInput, state: Convers
   if (ac.length === 1 && (categories.length === 1 && categories[0].key === "air_conditioner" || !categories.length && reduced.current_topic === "air_conditioner")) {
     const facts: CommerceStateEvent[] = [];
     if (/窗口(?:冷氣|機|机)|window\s+(?:unit|air)/iu.test(input.text)) facts.push({type:"SET_ENTITY_ATTRIBUTE",entity_id:ac[0].entity_id,key:"installation_type",value:"window_unit",provenance});
-    if (/西斜|西曬|西晒|下午.{0,6}(?:曬|晒|日照)|afternoon\s+sun|west[- ]?facing/iu.test(input.text)) facts.push({type:"SET_ENTITY_ATTRIBUTE",entity_id:ac[0].entity_id,key:"sunlight",value:"strong_afternoon_sun",provenance});
+    const sunPattern = /西斜|西曬|西晒|下午.{0,6}(?:曬|晒|日照)|afternoon\s+sun|west[- ]?facing/iu;
+    if (sunPattern.test(input.text)) {
+      const sunlight = { ...(ac[0].attributes.room_sunlight as Record<string, string> ?? {}) };
+      for (const clause of input.text.split(/[，,。;；]/u)) {
+        if (!sunPattern.test(clause)) continue;
+        const scope = roomScope(clause);
+        const all = /全部|所有|all\s+(?:rooms|spaces)/iu.test(clause);
+        if (scope && !all) sunlight[scope] = "strong_afternoon_sun";
+        else if (all) for (const room of Object.keys(ac[0].attributes.room_sizes as Record<string, unknown> ?? {})) sunlight[room] = "strong_afternoon_sun";
+        else facts.push({type:"SET_ENTITY_ATTRIBUTE",entity_id:ac[0].entity_id,key:"sunlight",value:"strong_afternoon_sun",provenance});
+      }
+      if (Object.keys(sunlight).length) facts.push({type:"SET_ENTITY_ATTRIBUTE",entity_id:ac[0].entity_id,key:"room_sunlight",value:sunlight,provenance});
+    }
+    const eachSpace = /(?:各|每).{0,8}(?:一|1)\s*(?:部|台)/iu.test(input.text);
+    const roomAllocation = eachSpace && Object.keys(ac[0].attributes.room_sizes as object ?? {}).length > 0
+      ? Object.fromEntries(Object.keys(ac[0].attributes.room_sizes as object).map(room=>[room,1])) : null;
+    const requestedQuantity = roomAllocation ? Object.keys(roomAllocation).length : parseSpaceScopedCommerceQuantity(input.text) ?? parseCount(input.text);
+    if (roomAllocation && !looksInterrogative(input.text)) facts.push(
+      {type:"SET_ENTITY_QUANTITY",entity_id:ac[0].entity_id,quantity:Object.keys(roomAllocation).length,provenance},
+      {type:"SET_ENTITY_ATTRIBUTE",entity_id:ac[0].entity_id,key:"room_allocation",value:roomAllocation,provenance});
+    if (requestedQuantity !== null && !/[?？]|純粹|以前|歷史|historical|previous/iu.test(input.text)) {
+      facts.push({type:"SET_ENTITY_ATTRIBUTE",entity_id:ac[0].entity_id,key:"quantity_basis",value:"customer_explicit",provenance});
+    }
     if (facts.length) reduced = reduceCommerceState(reduced,facts);
   }
   const fridge = active.filter((entity) => entity.category === "refrigerator");
@@ -1935,7 +1975,18 @@ function reduceSingleTurn(
   const industryEvent: CommerceStateEvent[] = input.industry_identifier
     ? [{ type: "SET_CONTEXT", language: input.language, industry: input.industry_identifier }]
     : [];
-  let reduced = reduceCommerceState(previous, [...industryEvent, ...journey.events, ...semanticEvents, ...derived, ...runtimeEvents]);
+  const machineQuantity = parseSpaceScopedCommerceQuantity(input.text) ?? parseCount(input.text);
+  const quantityEvents = [...industryEvent, ...journey.events, ...semanticEvents, ...derived, ...runtimeEvents].filter(event => {
+    // A room count describes spatial scope, never machine count. The frozen
+    // generic reducer still supports room-based products in their own domain.
+    if (event.type !== "SET_ENTITY_QUANTITY" || machineQuantity !== null) return true;
+    const target = previous.entities.find(e=>e.entity_id === event.entity_id);
+    return !(target?.category === "air_conditioner" || journey.goal?.category === "air_conditioner");
+  }).map(event => {
+    if (event.type !== "ENSURE_ENTITY" || event.entity.category !== "air_conditioner" || machineQuantity !== null) return event;
+    return {...event, entity: {...event.entity, attributes: {...event.entity.attributes, quantity_basis: "system_default"}}};
+  });
+  let reduced = reduceCommerceState(previous, quantityEvents);
   reduced = enrichExplicitCustomerFacts(input,reduced,hints);
   const guard = enforceQuotationNotOrderEvents(clean(input.text), reduced);
   return guard.length ? reduceCommerceState(reduced, guard) : reduced;
@@ -2446,7 +2497,7 @@ export function buildTransactionSummary(
     });
     const horsepower = clean(entity.attributes.horsepower, 80);
     const details = [horsepower, ...constraints].filter(Boolean);
-    return `${entityLabel(entity.entity_id, language)} x${entity.quantity} (${statusLabel(entity.status, language)}${details.length ? `；${details.join("、")}` : ""})`;
+    return `${entityLabel(entity.entity_id, language)} ${customerRequestedQuantity(entity) === null ? (language === "en" ? "quantity not yet confirmed" : language === "zh-CN" ? "数量待确认" : "機數待確認") : `x${entity.quantity}`} (${statusLabel(entity.status, language)}${details.length ? `；${details.join("、")}` : ""})`;
   };
   lines.push(`${t.items[language]}: ${active.length ? active.map(renderEntity).join("、") : t.none[language]}`);
   if (inactive.length) lines.push(`${t.removed[language]}: ${inactive.map((e) => `${entityLabel(e.entity_id, language)} (${statusLabel(e.status, language)})`).join("、")}`);
@@ -2475,6 +2526,7 @@ export function buildTransactionSummary(
 function buildQuantityAnswer(state: ConversationCommerceState, language: CommerceLanguage): string | null {
   const active = state.entities.filter((e) => e.status !== "cancelled" && e.status !== "deferred");
   if (!active.length) return null;
+  if (active.some(e=>customerRequestedQuantity(e) === null)) return language === "en" ? "The requested quantity is not yet confirmed." : language === "zh-CN" ? "所需数量尚未确认。" : "所需機數仲未確認。";
   const total = active.reduce((sum, e) => sum + e.quantity, 0);
   const breakdown = active.map((e) => `${entityLabel(e.entity_id, language)} x${e.quantity}`).join("、");
   if (language === "en") return `You currently have ${total} unit(s) in total: ${breakdown}.`;
@@ -2487,6 +2539,7 @@ function buildKnownStateAnswer(language: CommerceLanguage, statePath: string, va
     const index = Number(statePath.split(".")[1]);
     const entity = Number.isInteger(index) ? state.entities[index] : null;
     if (entity && entity.status !== "cancelled" && entity.status !== "deferred") {
+      if (customerRequestedQuantity(entity) === null) return language === "en" ? "The requested quantity is not yet confirmed." : language === "zh-CN" ? "所需数量尚未确认。" : "所需機數仲未確認。";
       const quantity = typeof value === "number" ? value : entity.quantity;
       const label = entityLabel(entity.entity_id, language);
       if (language === "en") return `Your current ${label} quantity is ${quantity}.`;
