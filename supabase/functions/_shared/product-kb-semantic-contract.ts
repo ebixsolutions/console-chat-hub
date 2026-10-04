@@ -1,4 +1,4 @@
-import type { NaturalCustomerIntent } from "./natural-customer-response.ts";
+import { exactProductIdentifiers, type NaturalCustomerIntent } from "./natural-customer-response.ts";
 
 type FactualIntent = Extract<NaturalCustomerIntent, { kind: "product_factual_query" }>;
 
@@ -21,11 +21,16 @@ export function productKbSemanticContract(
   const referent = intent.product.normalize("NFKC").trim();
   const facets = [...new Set(intent.facts)];
   const normalizedQuestion = customerQuestion.normalize("NFKC").trim();
+  const identifiers = exactProductIdentifiers(referent);
+  const exactModel = identifiers.length === 1 && identifiers[0].toUpperCase() === referent.toUpperCase();
   return {
     referent,
     category,
     facets,
-    query: [referent, category, ...facets, normalizedQuestion].filter(Boolean).join(" ").slice(0, 500),
+    // Retrieve the resolved model without customer-room details or classifier
+    // labels diluting lexical relevance. Facets and the original question
+    // remain separate inputs to the unchanged authority and answer gates.
+    query: exactModel ? referent : [referent, category, ...facets, normalizedQuestion].filter(Boolean).join(" ").slice(0, 500),
     entity_ids: [referent],
     // This is an evidence family, not a service classifier label. The entity
     // is still required independently, so another product cannot satisfy it.

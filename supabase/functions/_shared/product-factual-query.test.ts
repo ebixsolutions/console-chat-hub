@@ -716,3 +716,19 @@ Deno.test("product-factual route bypasses the generic memory and clarification s
     "generic_clarification_preempted",
   );
 });
+
+Deno.test("hosted compound product question retrieves exact model without room-query dilution", () => {
+  for (const question of [
+    "細房我見到樂聲 CW-SUL70BA，呢款係幾多匹、有咩主要功能？80呎用落合唔合適？",
+    "For the CW-SUL70BA we discussed, what horsepower is it, and is it suitable for the 80 sq ft bedroom?",
+  ]) {
+    const intent = classifyNaturalCustomerIntent(question);
+    const contract = productKbSemanticContract(intent, "air_conditioner", question);
+    assert(contract?.query === "CW-SUL70BA" && contract.entity_ids.join() === "CW-SUL70BA" && contract.facets.length > 0, JSON.stringify(contract));
+    const target = deriveCurrentGroundingTarget(question, contract.query, contract.entity_ids, contract.topic_ids, true);
+    const selected = selectCanonicalGrounding([document], { requestText: contract.query, currentTurnText: question, minScore: 0.45, requirePublished: true, expectedTenantId: "34", expectedEntityIds: target.entity_ids, expectedTopicIds: target.topic_ids, requiresCurrentKb: true });
+    assert(selected.ok && selected.authority_decision.decision === "USE_CURRENT_KB", JSON.stringify(selected));
+    const wrongTenant = selectCanonicalGrounding([document], { requestText: contract.query, currentTurnText: question, minScore: 0.45, requirePublished: true, expectedTenantId: "35", expectedEntityIds: target.entity_ids, expectedTopicIds: target.topic_ids, requiresCurrentKb: true });
+    assert(!wrongTenant.ok || (!wrongTenant.document && wrongTenant.evidence.length === 0), "focused model retrieval bypassed tenant authority");
+  }
+});
