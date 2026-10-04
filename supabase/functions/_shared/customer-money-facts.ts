@@ -18,8 +18,9 @@ export function deriveTypedCustomerMoneyFacts(text: string): {
   facts: CustomerMoneyFact[];
   historical: boolean;
 } {
-  const value = text.normalize("NFKC").replace(/港幣|港币|港元/g,"HKD ").replace(/美元/g,"USD ").replace(/台幣|台币/g,"TWD ");
-  const historical = /(?:舊|旧).{0,8}(?:價|价|報價|报价)|歷史|历史|假設|假设|之前|頭先|头先|用返|剛才|刚才|當時|当时|historical|earlier|previous|old\s+price|hypothetical|suppos|assum|\bif\b/i.test(value);
+  const value = text.normalize("NFKC").replace(/港幣|港币|港元/g,"HKD ").replace(/美元/g,"USD ").replace(/台幣|台币/g,"TWD ")
+    .replace(/([0-9][0-9,]*(?:\.[0-9]{1,2})?)\s*蚊/g, "HKD $1");
+  const historical = /(?:舊|旧).{0,8}(?:價|价|報價|报价)|歷史|历史|假設|假设|之前|以前|頭先|头先|用返|剛才|刚才|當時|当时|historical|earlier|previous|old\s+price|hypothetical|suppos|assum|\bif\b/i.test(value);
   // Split at semantic charge boundaries, preserving thousands separators.
   const clauses = value.replace(/(\d),(?=\d)/g, "$1∯")
     .split(/[，,；;。\n]+|(?=再加|加上|另外加|加多|另加|\bplus\b|\band\s+add\b)/i)

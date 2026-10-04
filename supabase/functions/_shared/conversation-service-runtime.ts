@@ -32,7 +32,6 @@ export interface TypedCustomerCalculation {
 
 const CALCULATION_REQUEST = /(?:試算|试算|假設|假设|計算|计算|加埋|合共|總共|总共|一共|總數|总数|計下|计下|算下|計幾錢|计多少钱|算幾錢|算多少钱|calculate|estimate|total|altogether|how much)/i;
 const HISTORICAL_OR_CONDITIONAL = /(?:舊|旧|之前|以前|頭先|刚才|剛才|用返|歷史|历史|假設|假设|如果|若果|若按|按你提供|historical|previous|earlier|conditional|hypothetical|\bif\b|\bassuming\b)/i;
-const MONEY_TOKEN = /\b(HKD|USD|TWD)\b\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)|((?:HK|US|NT)\$|\$)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)|([0-9][0-9,]*(?:\.[0-9]{1,2})?)\s*(HKD|USD|TWD)\b/gi;
 
 function calcClean(value: unknown, limit = 2400): string {
   return String(value ?? "").normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, limit);
@@ -44,9 +43,9 @@ function quantityValue(raw: string): number | null {
 }
 export function isReadOnlyCustomerCalculationRequest(text: string): boolean {
   const value = calcClean(text);
-  MONEY_TOKEN.lastIndex = 0;
-  const hasMoney = MONEY_TOKEN.test(value);
-  MONEY_TOKEN.lastIndex = 0;
+  // Use the same typed money parser as calculation/planning/Memory so local
+  // currency wording cannot fall through to quantity recall.
+  const hasMoney = deriveTypedCustomerMoneyFacts(value).facts.length > 0;
   return CALCULATION_REQUEST.test(value) && hasMoney && HISTORICAL_OR_CONDITIONAL.test(value) &&
     !/(?:落單|下單|下单|付款|支付|購買|购买|訂購|订购|正式報價|正式报价|place an order|checkout|pay now|purchase now|book now)/i.test(value);
 }

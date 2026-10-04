@@ -1338,3 +1338,11 @@ Deno.test("hosted compound shopping start retains enumerated room areas and skip
   const next = await partial.ask("我想換冷氣，兩間房同客廳，細房80呎、大房100呎、客廳180呎。");
   assert(/窗口|安裝/.test(next.reply ?? "") && !/需要.*平方呎/.test(next.reply ?? ""), JSON.stringify(next));
 });
+
+Deno.test("hosted Cantonese historical calculation never rebinds canonical Commerce", async () => {
+  const f = fixture(stateWith(["air_conditioner"]));
+  const before = JSON.stringify(f.snapshot());
+  const result = await f.ask("我以前買冷氣每部係5680蚊，純粹按以前個價計，兩部合共幾多錢？");
+  assert(result.reason === "read_only_customer_calculation" && result.persist_result === "read_only", JSON.stringify(result));
+  assert(JSON.stringify(f.snapshot()) === before, "historical arithmetic mutated Commerce");
+});

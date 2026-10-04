@@ -38,3 +38,14 @@ Deno.test("COMPONENT: unspecified goal is distinct from unavailable knowledge; c
   const reply=renderServicePlanReply(plan,null) ?? "";
   if(/現行資料|核實|日期/.test(reply))throw new Error(reply);
 });
+
+Deno.test("hosted Cantonese historical amount uses explicit unit basis and source-bound arithmetic", () => {
+  const question = "我以前買冷氣每部係5680蚊，純粹按以前個價計，兩部合共幾多錢？";
+  const parsed = deriveTypedCustomerCalculation({ question, current_source_message_id: "historical-source" });
+  equal(parsed.status, "ready"); equal(parsed.result, 11360); equal(parsed.quantity, 2);
+  equal(parsed.current_price_authority, "NONE"); equal(parsed.transaction_mutation, "NONE");
+  equal(parsed.terms.map(t => [t.amount,t.currency,t.charge_basis,t.source_message_id]), [[5680,"HKD","per_unit","historical-source"]]);
+  equal(deriveTypedCustomerMoneyFacts(question).historical, true);
+  equal(deriveTypedCustomerCalculation({question:"以前每部5680蚊，幫我落單買兩部。"}).status, "not_requested");
+  equal(deriveTypedCustomerCalculation({question:"以前每部USD 100，再加整單50蚊送貨，兩部合共幾多？"}).status, "mixed_currency");
+});
