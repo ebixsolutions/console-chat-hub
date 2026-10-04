@@ -1848,7 +1848,7 @@ function enrichExplicitCustomerFacts(input: CommerceRuntimeInput, state: Convers
     if (roomAllocation && !looksInterrogative(input.text)) facts.push(
       {type:"SET_ENTITY_QUANTITY",entity_id:ac[0].entity_id,quantity:Object.keys(roomAllocation).length,provenance},
       {type:"SET_ENTITY_ATTRIBUTE",entity_id:ac[0].entity_id,key:"room_allocation",value:roomAllocation,provenance});
-    if (requestedQuantity !== null && !/[?？]|純粹|以前|歷史|historical|previous/iu.test(input.text)) {
+    if (requestedQuantity !== null && ac[0].attributes.quantity_basis === "system_default" && !looksInterrogative(input.text) && !/純粹|以前|歷史|historical|previous|唔好.{0,30}講/iu.test(input.text)) {
       facts.push({type:"SET_ENTITY_ATTRIBUTE",entity_id:ac[0].entity_id,key:"quantity_basis",value:"customer_explicit",provenance});
     }
     if (facts.length) reduced = reduceCommerceState(reduced,facts);

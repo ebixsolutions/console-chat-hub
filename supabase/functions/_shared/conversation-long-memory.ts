@@ -111,7 +111,7 @@ export function verifyCommittedLifecycleMemory(input: {
       item.key === `entity:${entity.entity_id}` && item.value === entity.status);
     return entity.status === "cancelled" || entity.status === "deferred"
       ? active.length === 0 && inactive.length === 1
-      : active.length === 1 && active[0].quantity === customerRequestedQuantity(entity) &&
+      : active.length === 1 && active[0].quantity === entity.quantity &&
         sameCanonicalJson(active[0].current_requirements,
           { ...entity.attributes, ...entity.constraints });
   });
@@ -121,7 +121,9 @@ export interface ConversationMemoryEntity {
   type: string;
   brand: string | null;
   model: string | null;
+  /** Canonical entity/container count. Purchase quantity is separate. */
   quantity: number | null;
+  requested_quantity?: number | null;
   status: "active";
   region: string | null;
   current_requirements: Record<string, unknown>;
@@ -468,7 +470,8 @@ function projectCommerce(
       type: clean(entity.category, 120) || "unknown",
       brand: clean(entity.brand, 120) || null,
       model: clean(entity.model, 120) || null,
-      quantity: customerRequestedQuantity(entity),
+      quantity: Number.isFinite(entity.quantity) ? entity.quantity : null,
+      requested_quantity: customerRequestedQuantity(entity),
       status: "active" as const,
       region: clean(entity.attributes?.region, 80) || null,
       current_requirements: { ...entity.attributes, ...entity.constraints },
