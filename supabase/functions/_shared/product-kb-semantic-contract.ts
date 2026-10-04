@@ -17,9 +17,10 @@ export function productKbSemanticContract(
   category: string | null,
   customerQuestion: string,
 ): ProductKbSemanticContract | null {
-  if (intent.kind !== "product_factual_query" || !intent.product || !intent.facts.length) return null;
+  if ((intent.kind !== "product_factual_query" && intent.kind !== "product_availability") || !intent.product) return null;
+  if (intent.kind === "product_factual_query" && !intent.facts.length) return null;
   const referent = intent.product.normalize("NFKC").trim();
-  const facets = [...new Set(intent.facts)];
+  const facets = intent.kind === "product_factual_query" ? [...new Set(intent.facts)] : [];
   const normalizedQuestion = customerQuestion.normalize("NFKC").trim();
   const identifiers = exactProductIdentifiers(referent);
   const exactModel = identifiers.length === 1 && identifiers[0].toUpperCase() === referent.toUpperCase();

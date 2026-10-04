@@ -38,6 +38,19 @@ Deno.test("hosted stock-count queries require merchant evidence rather than cust
   assert(!requiresCurrentMerchantEvidence(classifyNaturalCustomerIntent("我頭先話要幾多部冷氣？")), "customer quantity recall changed");
 });
 
+Deno.test("hosted stock unknown preserves the exact current product record without claiming a stock count", () => {
+  const question = "CW-SUL70BA 依家有幾多部現貨？";
+  const intent = classifyNaturalCustomerIntent(question);
+  const contract = productKbSemanticContract(intent, null, question);
+  assert(contract?.query === "CW-SUL70BA", "stock retrieval diluted exact model");
+  const target = deriveCurrentGroundingTarget(question, contract.query, contract.entity_ids, contract.topic_ids);
+  const selection = selectCanonicalGrounding([document], { requestText: contract.query, currentTurnText: question, minScore: 0.45, requirePublished: true, expectedTenantId: "34", expectedEntityIds: target.entity_ids, expectedTopicIds: target.topic_ids, requiresCurrentKb: true });
+  assert(selection.ok, "current product authority rejected");
+  const answer = resolveCanonicalKbDirectAnswer({ request: question, selection, language: "zh-TW" });
+  assert(answer && /產品記錄/.test(answer.reply) && /未確認即時庫存數量/.test(answer.reply), "stock unknown lost known record");
+  assert(!/1 部|搵唔到|有現貨/.test(answer.reply), "stock fabricated or known record denied");
+});
+
 Deno.test("W9 multi-intent product facts retain every compatible facet", () => {
   const question =
     "細房我見到 CW-SUL70BA，佢有咩功能、係幾多匹？80呎用落夠唔夠？";

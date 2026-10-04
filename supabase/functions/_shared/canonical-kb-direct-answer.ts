@@ -219,6 +219,16 @@ export function resolveCanonicalKbDirectAnswer(input: {
     : null;
   const displayPrice = priceFact ? `HK$${priceFact.value.toLocaleString("en-US")}` : null;
 
+  if (/(?:現貨|现货|庫存|库存|in stock)/i.test(request)) {
+    if (!productRecord) return null;
+    const reply = language === "en"
+      ? `I found a product record for ${model}, but it does not establish the live stock quantity. The current stock needs to be checked before purchase.`
+      : language === "zh-CN"
+      ? `我找到 ${model} 的产品记录，但现有资料未确认实时库存数量；购买前需要再核实现货。`
+      : `我搵到 ${model} 嘅產品記錄，但現有資料未確認即時庫存數量；購買前需要再核實現貨。`;
+    return evidence("product_record", reply, chunks[0]);
+  }
+
   if (/(?:售價|售价|賣幾錢|卖几钱|價錢|价钱|price|how\s+much)/i.test(request)) {
     if (!productRecord) return null;
     if (priceFact && displayPrice && priceEvidence) {
