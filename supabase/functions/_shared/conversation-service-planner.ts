@@ -295,7 +295,7 @@ function historicalCalculation(
       "assuming",
       "if",
       "舊",
-      "頭先", "用返", "earlier", "previous",
+      "頭先", "用返", "以前", "之前", "earlier", "previous",
       "旧",
       "historical",
       "estimate",

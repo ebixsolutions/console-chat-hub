@@ -25,6 +25,22 @@ const assertMatch = (actual: string, expected: RegExp) => {
   }
 };
 
+Deno.test("C3 hosted Cantonese historical calculation takes precedence over quantity recall", () => {
+  const question = "我以前買冷氣每部係5680蚊，純粹按以前個價計，兩部合共幾多錢？";
+  const inputs = deriveServiceRuntimeInputs({
+    question, current_source_message_id: "historical-source",
+    commerce: null, expected_conversation_id: "conversation",
+    expected_company_id: "company",
+  });
+  const plan = planConversationService(applyServiceRuntimeDerivation({
+    question, language: "zh-TW", commerce: null, memory: null,
+    recall: { handled: true, fact_type: "quantity" },
+  }, inputs));
+  assertEquals(plan.action, "historical_calculation");
+  assertEquals(plan.calculation?.total, 11360);
+  assertMatch(renderServicePlanReply(plan, "數量 (air_conditioner): 1 部", []) ?? "", /11,?360/);
+});
+
 const commerce = createEmptyConversationCommerceState();
 commerce.current_intent = "按舊資料試算兩部冷氣";
 commerce.entities.push({
