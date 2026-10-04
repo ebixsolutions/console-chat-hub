@@ -56,6 +56,20 @@ function build(options: {
 }
 
 Deno.test("C3 memory schema validates versioned memory", () => assert(isCanonicalConversationMemory(build()), "valid memory rejected"));
+
+Deno.test("unbound suitability questions cannot supersede one another through null entity scope", () => {
+  const prior = build();
+  const old = { source_message_id: "earlier", text: "Product suitability needs confirmation", status: "pending" as const,
+    entity_id: null, resolution: "professional/site confirmation pending", resolution_source_message_id: "earlier-reply" };
+  prior.question_lifecycle = [old];
+  const next = build({ previous: prior, memoryRevision: 2, rows: [
+    { id: "english-reply", role: "assistant", content: "I cannot confirm a suitable room area.",
+      metadata: { control_commit: "ai", source_message_id: MID, response_route: "canonical_kb_direct_answer" } },
+    { id: MID, role: "visitor", content: "Can you confirm whether CW-SUL70BA is suitable for 80 sq ft?" },
+  ] });
+  equal(next.question_lifecycle?.find(q => q.source_message_id === "earlier"), old, "unbound earlier lifecycle changed");
+  equal(next.question_lifecycle?.find(q => q.source_message_id === MID)?.resolution_source_message_id, "english-reply", "new reply binding");
+});
 Deno.test("C3 memory rejects an unknown version", () => assert(!isCanonicalConversationMemory({ ...build(), version: "future" }), "future version accepted"));
 Deno.test("C3 memory rejects revision zero", () => assert(!isCanonicalConversationMemory({ ...build(), memory_revision: 0 }), "zero revision accepted"));
 Deno.test("C3 memory is tenant bound", () => equal(build().company_id, COID, "company binding"));

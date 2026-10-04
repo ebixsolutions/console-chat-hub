@@ -571,7 +571,7 @@ function questionLifecycle(rows: MemoryHistoryRow[], state: ConversationCommerce
     if (site) {
       const target=entities.filter(entity=>entity.model && content.includes(entity.model));
       if(target.length===1) item.entity_id=target[0].entity_id;
-      for (const old of items.values()) if(old.source_message_id!==item.source_message_id && old.status==="pending" &&
+      for (const old of items.values()) if(item.entity_id!==null && old.source_message_id!==item.source_message_id && old.status==="pending" &&
         old.entity_id===item.entity_id && old.resolution?.includes("professional")) {
         old.status="superseded";old.resolution="later scoped assessment request";old.resolution_source_message_id=item.source_message_id;
       }
