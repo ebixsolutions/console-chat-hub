@@ -508,6 +508,14 @@ export function classifyNaturalCustomerIntent(
     return { kind: "product_availability", product: null };
   }
 
+  // Merchant stock counts are not the customer's retained purchase quantity.
+  // Bind the product before generic quantity recall in both Edge consumers.
+  if (/(?:幾多|几多|多少|how many|how much).{0,24}(?:現貨|现货|庫存|库存|in stock)|(?:現貨|现货|庫存|库存|stock).{0,24}(?:幾多|几多|多少|how many|how much)/i.test(meaningful)) {
+    const models = exactProductIdentifiers(meaningful);
+    const product = models.length === 1 ? models[0] : cleanProductLabel(meaningful.split(/(?:依家|而家|現在|现在|有幾多|有几多|有多少)/u)[0]);
+    return { kind: "product_availability", product };
+  }
+
   const availabilityProduct = /(?:有冇|有沒有|有没有)\s*(?:啲|一些)?(?:方向|建議|建议)/iu.test(meaningful)
     ? null : extractAvailabilityProduct(meaningful);
   if (availabilityProduct) {

@@ -29,6 +29,15 @@ const assert: (condition: unknown, detail: string) => asserts condition = (
   if (!condition) throw new Error(detail);
 };
 
+Deno.test("hosted stock-count queries require merchant evidence rather than customer quantity recall", () => {
+  for (const question of ["CW-SUL70BA 依家有幾多部現貨？", "How many CW-SUL70BA units are in stock?", "CW-SUL70BA 的庫存有多少？"]) {
+    const intent = classifyNaturalCustomerIntent(question);
+    assert(intent.kind === "product_availability" && intent.product === "CW-SUL70BA", "stock query lost model");
+    assert(requiresCurrentMerchantEvidence(intent), "stock query allowed customer state authority");
+  }
+  assert(!requiresCurrentMerchantEvidence(classifyNaturalCustomerIntent("我頭先話要幾多部冷氣？")), "customer quantity recall changed");
+});
+
 Deno.test("W9 multi-intent product facts retain every compatible facet", () => {
   const question =
     "細房我見到 CW-SUL70BA，佢有咩功能、係幾多匹？80呎用落夠唔夠？";
