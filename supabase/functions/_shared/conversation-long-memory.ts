@@ -111,7 +111,7 @@ export function verifyCommittedLifecycleMemory(input: {
       item.key === `entity:${entity.entity_id}` && item.value === entity.status);
     return entity.status === "cancelled" || entity.status === "deferred"
       ? active.length === 0 && inactive.length === 1
-      : active.length === 1 && active[0].quantity === entity.quantity &&
+      : active.length === 1 && active[0].quantity === customerRequestedQuantity(entity) &&
         sameCanonicalJson(active[0].current_requirements,
           { ...entity.attributes, ...entity.constraints });
   });

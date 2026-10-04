@@ -1,7 +1,7 @@
 import {createEmptyConversationCommerceState} from './commerce-state-contract.ts';
 import {reduceTurn} from './commerce-state-runtime-base.ts';
 import {customerRequestedQuantity} from './customer-journey-orchestration.ts';
-import {buildCanonicalConversationMemory} from './conversation-long-memory.ts';
+import {buildCanonicalConversationMemory,verifyCommittedLifecycleMemory} from './conversation-long-memory.ts';
 import {resolveConversationRecall,renderConversationRecall} from './conversation-recall.ts';
 const assert=(v:unknown,m:string)=>{if(!v)throw new Error(m)};
 const scope={conversation_id:'conversation',company_id:'company',source_message_id:'source',language:'zh-TW' as const};
@@ -42,4 +42,21 @@ Deno.test('F4 delivered stock unknown remains pending with source and entity bin
  const q=m.question_lifecycle?.find(q=>q.source_message_id==='question');
  assert(q?.status==='pending' && q.entity_id===s.entities[0].entity_id && q.resolution_source_message_id==='answer','unknown stock incorrectly resolved');
  assert(m.open_questions.some(q=>q.includes('live stock quantity')),'handoff stock obligation lost');
+});
+
+Deno.test('F0 lifecycle parity uses exact requested quantity while rejecting altered Memory',async()=>{
+ const {verifyEntityLifecycleTransition,b2JourneyTransactionBoundary}=await import('./b2-journey-progress-contract.ts');
+ const before=stateFor(base);
+ before.entities.push({entity_id:'refrigerator:unscoped',category:'refrigerator',quantity:1,status:'researching',attributes:{quantity_basis:'system_default'},constraints:{max_width_mm:595},provenance:{source_type:'customer',source_message_id:'fridge'}});
+ const text='雪櫃暫時唔換住，先搞冷氣。';
+ const after=reduceTurn(before,{...scope,text},[]);
+ const transition=verifyEntityLifecycleTransition(text,before,after,scope.source_message_id);
+ assert(transition.valid,'lifecycle transition invalid');
+ if(!transition.valid)throw Error('invalid transition');
+ const receipt={contract:'entity-lifecycle-commit-v1' as const,company_id:scope.company_id,source_message_id:scope.source_message_id,source_text:text,previous_revision:0,committed_revision:1,plans:transition.plans,target_entity_ids:transition.targetIds,previous_state:before,committed_state:after,reply:'雪櫃已暫緩。',transaction_before:b2JourneyTransactionBoundary(before),transaction_after:b2JourneyTransactionBoundary(after)};
+ const memory=memoryFor(after);const commerce={...scope,revision:1,state:after};
+ assert(verifyCommittedLifecycleMemory({memory,receipt,commerce}),'legitimate unknown quantity parity rejected');
+ const altered=structuredClone(memory);altered.active_entities[0].quantity=1;
+ assert(!verifyCommittedLifecycleMemory({memory:altered,receipt,commerce}),'default promoted through lifecycle parity');
+ assert(!verifyCommittedLifecycleMemory({memory,receipt,commerce:{...commerce,revision:2}}),'revision mismatch accepted');
 });
