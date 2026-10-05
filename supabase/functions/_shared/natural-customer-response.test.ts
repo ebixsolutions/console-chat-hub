@@ -16,6 +16,19 @@ import {
 } from "./commerce-state-contract.ts";
 import type { CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 
+Deno.test("Phase1 shopping with a supplied identifier does not reopen product discovery", () => {
+  for (const input of ["我想買3盒茉莉花茶，SKU: JT-Z9。未落單。", "I want to buy 2 cotton shirts SKU: CS-W4."]) {
+    const intent=classifyNaturalCustomerIntent(input);
+    if(intent.kind!=="product_shopping") throw Error("actual shopping classifier not exercised: "+JSON.stringify(intent));
+    for(const language of ["zh-TW","zh-CN","en"] as const) {
+      const reply=renderNaturalImmediateResponse(intent,language)??"";
+      const model=exactProductIdentifiers(input)[0];
+      if(!reply.includes(model) || /邊款|哪一款|Which.*model|已查|已安排|已落單|order placed|stock checked|[?？]/i.test(reply)) throw Error(reply);
+      if(!/未|待|需|still need/.test(reply)) throw Error("merchant unknown was lost: "+reply);
+    }
+  }
+});
+
 const assert: (value: unknown, message: string) => asserts value = (
   value,
   message,

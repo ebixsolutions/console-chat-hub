@@ -668,6 +668,17 @@ export function renderNaturalImmediateResponse(
   }
   if (intent.kind !== "product_shopping") return null;
 
+  // A supplied identifier is already a referent; it is not merchant evidence.
+  const supplied = exactProductIdentifiers(intent.product ?? "");
+  if (supplied.length) {
+    const identifiers = supplied.join(language === "en" ? ", " : "、");
+    return language === "en"
+      ? `You want to buy ${identifiers}. Current product information and live availability still need merchant verification.`
+      : language === "zh-CN"
+      ? `明白，你想选购 ${identifiers}；当前产品资料及实时供应情况仍需商家核实。`
+      : `明白，你想選購 ${identifiers}；現行產品資料及即時供應情況仍待商家核實。`;
+  }
+
   if (language === "en") {
     return intent.product
       ? `Sure. Which ${intent.product} model are you looking for? If you have not decided yet, I can first check whether the store has relevant product information.`

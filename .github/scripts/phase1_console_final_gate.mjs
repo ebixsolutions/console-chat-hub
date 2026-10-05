@@ -101,6 +101,8 @@ async function verifyActualEntrypoint(e, head, tree) {
   check(!/item not confirmed|項目未確認|generic_product|窗口|window|professional|專業/.test(generic.reply.content), "generic item does not inherit household unknown or professional requirement");
   check(generic.before.state_hash === generic.after.state_hash && generic.before.revision === generic.after.revision && JSON.stringify(generic.before.state) === JSON.stringify(generic.after.state), "generic realization preserves authoritative state");
   check(read(generic.raw_reply_path).includes(generic.reply.content), "generic actual hosted persisted text observation");
+  check(generic.setup_reply.content.includes(entity.model ?? entity.attributes.sku) && !/邊款|哪一款|Which.*model|已查|已安排|已落單|order placed|stock checked|[?？]/i.test(generic.setup_reply.content), "supplied shopping identifier is acknowledged without rediscovery or completed promise");
+  check(read(generic.raw_setup_path).includes(generic.setup_reply.content), "actual shopping acknowledgement persisted");
   check(e.validation.b2_projection.exit_code === 0 && read(e.validation.b2_projection.log_path).includes("2 passed"), "focused missing/provided classification and contextual B2 regressions");
   check(e.production.generate_reply.version === 201 && e.production.generate_reply.ezbr_sha256 === "b60a8df3b01a5a74eca5709f4e95929cf90ee432f6c266415e0fd00f77456d32", "production unchanged");
   for (const name of ["A2", "C3"]) check(e.ci[name].head_sha === head && e.ci[name].conclusion === "success", `new HEAD exact ${name}`);
