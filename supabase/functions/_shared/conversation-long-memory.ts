@@ -559,7 +559,8 @@ function questionLifecycle(rows: MemoryHistoryRow[], state: ConversationCommerce
     let item = items.get(meta.source_message_id);
     const clarification = /^(?:targeted_clarification|partial_answer_then_question|offer_handoff_or_reframe|customer_issue_next_step)$/.test(String(meta.service_action)) && /[?？]$/.test(content.trim());
     const site = meta.response_route === "canonical_kb_direct_answer" && /cannot confirm|未能確認|不能确认/i.test(content) && /suitable room|適用面積|适用面积|site assessment|現場評估/i.test(content);
-    const stockUnknown = meta.response_route === "canonical_kb_direct_answer" && meta.answer_kind === "stock_unknown";
+    const stockUnknown = meta.response_route === "canonical_kb_direct_answer" && (meta.answer_kind === "stock_unknown" ||
+      Array.isArray(meta.unresolved_fact_fields) && meta.unresolved_fact_fields.includes("stock"));
     const missingCustomerDecision = meta.response_route === "product_guidance" && /[?？]$/.test(content);
     if (!item && (clarification || site || stockUnknown || missingCustomerDecision)) {
       const source=rows.find(row=>row.id===meta.source_message_id && CUSTOMER_ROLES.has(String(row.role)));
@@ -582,9 +583,11 @@ function questionLifecycle(rows: MemoryHistoryRow[], state: ConversationCommerce
       }
       item.text = `${target[0]?.model ?? "Product"} suitability and site assessment need authoritative professional confirmation`;
     } else if (stockUnknown) {
-      const target=entities.filter(entity=>entity.model && content.includes(entity.model));
+      const facts=Array.isArray(meta.authoritative_kb_facts)?meta.authoritative_kb_facts:[];
+      const sku=facts.find(f=>record(f)?.authority==="CURRENT_KB" && record(f)?.currentness_at_answer==="current")?.model;
+      const target=entities.filter(entity=>[entity.model,entity.attributes.sku].some(id=>typeof id==="string" && (id===sku || content.includes(id))));
       if (target.length === 1) item.entity_id=target[0].entity_id;
-      item.text = `${target[0]?.model ?? "Product"} live stock quantity needs merchant confirmation`;
+      item.text = `${sku ?? target[0]?.model ?? target[0]?.attributes.sku ?? "Product"} live stock quantity needs merchant confirmation`;
     } else if (missingCustomerDecision || clarification) {
       item.text=content.split(/(?<=[。.!])/).filter(Boolean).at(-1)?.trim() ?? content;
     }
@@ -642,7 +645,7 @@ export function buildCanonicalConversationMemory(args: {
   const lifecycle = questionLifecycle(businessRows,args.commerce_state,prior);
   const open = uniqueStrings(lifecycle.filter(item=>item.status === "pending").map(item=>item.text),MAX_OPEN);
   const genericEntities = (args.commerce_state?.entities ?? []).filter(e=>e.entity_id.startsWith("generic:"));
-  const genericGoal = genericEntities.length ? genericEntities.map(e=>`${e.attributes.product_name ?? e.category}: ${e.quantity} ${e.attributes.unit ?? "units"}${["cancelled","deferred"].includes(e.status)?` (${e.status})`:""}${e.attributes.requested_date?`, requested date ${e.attributes.requested_date}`:""}`).join("; ") : null;
+  const genericGoal = genericEntities.length ? genericEntities.map(e=>`${e.attributes.product_name ?? e.category}: ${e.quantity} ${e.attributes.unit ?? "units"}${["cancelled","deferred"].includes(e.status)?` (${args.commerce_state?.language==="en"?e.status:e.status==="deferred"?"已暫緩":"已取消"})`:""}${e.attributes.requested_date?`, requested date ${e.attributes.requested_date}`:""}`).join("; ") : null;
   const entityGoal = !genericEntities.length && args.commerce_state?.entities.length ? args.commerce_state.entities.map(entity=> {
     const label=industryEntityLabel(entity.entity_id,"en") ?? entity.category.replace(/_/g," ");
     const rooms=record(entity.attributes.room_sizes);

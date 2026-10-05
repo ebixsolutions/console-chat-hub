@@ -175,6 +175,7 @@ Deno.test("Phase1 generic labelled facts survive unknown stock with exact source
       const {resolved,selection} = answer(question,[fixture]);
       assert(resolved && resolved.reply.includes(`${grams} g`) && /庫存|库存/.test(resolved.reply), JSON.stringify({question,resolved,selection}));
       assert(resolved.structured_facts?.some(f=>f.field==='weight' && f.value===`${grams} g` && f.model===model && f.document_id===documentId && f.chunk_id===chunkId), "answered field lost before Summary");
+      assert(resolved.unresolved_fact_fields?.includes("stock"), "mixed answer lost typed unresolved stock field");
       assert(!/已查|已安排|已落單|[?？]/.test(resolved.reply), "invented action or irrelevant missing field");
     }
     const changedSource=source.replace(`${grams} g`,`${grams+17} g`);

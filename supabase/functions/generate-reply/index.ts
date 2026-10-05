@@ -6234,6 +6234,7 @@ async function orchestrationGenerateReply(
           reference_authority: referenceAuthorityMetadata(_c1AuthorityDecision),
           response_route: route,
           answer_kind: _canonicalKbDirectAnswer.kind,
+          unresolved_fact_fields: _canonicalKbDirectAnswer.unresolved_fact_fields ?? [],
           kb_retrieval_request: ragResult?.query_text_preview ?? null,
           authoritative_kb_facts: (_canonicalKbDirectAnswer.structured_facts ?? []).map((fact) => ({
             ...fact, authority: "CURRENT_KB", currentness_at_answer: "current",

@@ -237,6 +237,7 @@ Deno.test("Phase1 actual compatibility correction preserves a scoped generic qua
  const after=reduceTurn(before,input,hints);
  assert(after.entities.length===2 && after.entities[0].quantity===4 && after.entities[1].quantity===2,`quantity assignment lost, duplicated or crossed entity: ${JSON.stringify(after.entities)}`);
  assert(after.entities[0].provenance.source_message_id==='quantity-update' && after.conversion.order_status==='none' && after.quotes.length===0,"assignment source or transaction truth lost");
+ assert(after.entities[0].attributes.quantity_basis==='customer_explicit',"customer quantity provenance lost before deferred Summary");
  for(const text of ["TEA-Z99 嘅數量改為4盒。","TEA-R21 或 TEA-G32 嘅數量改為4盒。","TEA-R21 嘅數量可唔可以改為4盒？"]){
   const untouched=reduceTurn(before,{...input,text,semantic_frame:null},hints);
   assert(untouched.entities[0].quantity===3 && untouched.entities[1].quantity===2,"unknown, ambiguous or question assignment mutated");

@@ -37,6 +37,8 @@ const allowed = [
   "supabase/functions/_shared/canonical-kb-direct-answer.ts",
   "supabase/functions/_shared/canonical-kb-direct-answer.test.ts",
   "supabase/functions/_shared/conversation-runtime-state-core.ts",
+  "supabase/functions/_shared/conversation-long-memory.ts",
+  "supabase/functions/_shared/conversation-long-memory.test.ts",
   "supabase/functions/_shared/natural-dialogue-generic-core.test.ts",
   "supabase/functions/_shared/pre-send-conversion-supervisor.test.ts",
   "supabase/functions/_shared/pre-send-conversion-supervisor.ts",
@@ -137,6 +139,7 @@ async function verifyActualEntrypoint(e, head, tree) {
   check(service.handoff.conversation_id===service.conversation_id && service.queue.conversation_id===service.conversation_id && service.queue.company_id===e.ids.company && service.queue.state==="waiting", "fresh generic same-ticket real handoff");
   const genericSummary=projectTicketSummary(service.handoff.ai_summary,service.conversation_id,e.ids.company);
   check(genericSummary && JSON.stringify(genericSummary).includes(service.sku) && JSON.stringify(genericSummary).includes(service.weight) && JSON.stringify(genericSummary).includes(`${service.quantity} 盒`), "fresh generic persisted Summary retains trusted identity, quantity and KB fact");
+  check(service.validation.memory.exit_code===0 && genericSummary.find(s=>s.title==="真人需跟進")?.lines.some(line=>line.includes(service.sku)&&line.includes("stock")) && genericSummary.find(s=>s.title==="已暫緩")?.lines.some(line=>line.includes(service.other_sku)&&line.includes("2 盒")), "generic mixed unresolved stock and deferred confirmed quantity remain actionable in Summary");
   check(service.validation.facts.exit_code===0 && service.validation.language.exit_code===0 && read(service.validation.facts.log_path).includes("10 passed"), "direct generic authority and language regressions");
   if (!e.ui || e.ui.blocker) {
     console.log(JSON.stringify({ result: "STOP", head, tree, assertions, blocker: e.ui?.blocker ?? "Director-controlled Chrome actions not observed", summary_visible: "UNVERIFIED", takeover: "UNVERIFIED", suppression: "UNVERIFIED", human_reply: "UNVERIFIED" }));
@@ -184,7 +187,7 @@ try {
   const b2Source = "supabase/functions/_shared/pre-send-conversion-supervisor.ts";
   const variantAliases = '    color: ["color", "colour", "顏色", "颜色"],\n    version: ["version", "edition", "版本"],\n    size: ["size", "尺碼", "尺码"],\n    region: ["region", "market", "地區", "地区"],\n';
   check(read(b2Source).replace(missingDescriptorGuard, "").replace(variantAliases, "").replace("function evaluateKnownContext(text: string, state: ConversationCommerceState, readOnlyProjection: boolean = false): B2Decision | null {", "function evaluateKnownContext(text: string, state: ConversationCommerceState): B2Decision | null {").replace('evaluateKnownContext(draft, state, input.metadata?.commerce_state_persistence_classification !== "COMMITTED" && !input.trusted_journey_progress)', "evaluateKnownContext(draft, state)") === execFileSync("git", ["show", `${baseline}:${b2Source}`], {encoding:"utf8"}), "B2 rules frozen except missing descriptor/provided variant classification");
-  const reopened = new Set([b2Source, "supabase/functions/_shared/conversation-service-planner.ts", "supabase/functions/_shared/natural-customer-response.ts", "supabase/functions/generate-reply/index.ts", "supabase/functions/_shared/canonical-kb-direct-answer.ts", "supabase/functions/_shared/conversation-runtime-state-core.ts", "supabase/functions/_shared/commerce-state-reducer.ts", "supabase/functions/_shared/commerce-state-runtime-base.ts"]);
+  const reopened = new Set([b2Source, "supabase/functions/_shared/conversation-long-memory.ts", "supabase/functions/_shared/conversation-service-planner.ts", "supabase/functions/_shared/natural-customer-response.ts", "supabase/functions/generate-reply/index.ts", "supabase/functions/_shared/canonical-kb-direct-answer.ts", "supabase/functions/_shared/conversation-runtime-state-core.ts", "supabase/functions/_shared/commerce-state-reducer.ts", "supabase/functions/_shared/commerce-state-runtime-base.ts"]);
   for (const file of closure.files ?? closure)
     check(
       reopened.has(file) || sha(readFileSync(file)) === sha(execFileSync("git", ["show", `${baseline}:${file}`])),

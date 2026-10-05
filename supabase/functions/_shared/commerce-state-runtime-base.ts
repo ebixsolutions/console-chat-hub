@@ -1815,6 +1815,13 @@ function enrichExplicitCustomerFacts(input: CommerceRuntimeInput, state: Convers
   const generic = active.filter(entity=>entity.entity_id.startsWith("generic:") &&
     [entity.attributes.product_name,entity.category].some(name=>typeof name === "string" && input.text.toLowerCase().includes(name.toLowerCase())));
   const date = input.text.match(/\b20\d{2}-\d{2}-\d{2}\b/)?.[0];
+  const explicitQuantity=parseCount(input.text);
+  if (generic.length===1 && explicitQuantity!==null && generic[0].quantity===explicitQuantity &&
+    generic[0].provenance.source_message_id===input.source_message_id && !looksInterrogative(input.text) &&
+    !isHistoricalOrConditionalCustomerCalculationRequest(input.text)) {
+    reduced=reduceCommerceState(reduced,[{type:"SET_ENTITY_ATTRIBUTE",entity_id:generic[0].entity_id,
+      key:"quantity_basis",value:"customer_explicit",provenance}]);
+  }
   if(generic.length===1 && date && !/[?？]|should|could|can|what|幾時|係咪/i.test(input.text)) {
     const previousDate = generic[0].attributes.requested_date;
     reduced=reduceCommerceState(reduced,[{type:"SET_ENTITY_ATTRIBUTE",entity_id:generic[0].entity_id,key:"requested_date",value:date,provenance},

@@ -57,6 +57,16 @@ function build(options: {
 
 Deno.test("C3 memory schema validates versioned memory", () => assert(isCanonicalConversationMemory(build()), "valid memory rejected"));
 
+Deno.test("Phase1 mixed factual answer retains merchant-owned stock unknown in handoff memory", () => {
+ const rows:MemoryHistoryRow[]=[{id:"answer",role:"assistant",content:"TEA-R21 嘅重量：200 g。現貨仍需商家核實。",metadata:{control_commit:"ai",source_message_id:MID,response_route:"canonical_kb_direct_answer",answer_kind:"specification",unresolved_fact_fields:["stock"],authoritative_kb_facts:[{model:"TEA-R21",field:"weight",value:"200 g",authority:"CURRENT_KB",currentness_at_answer:"current"}]}},{id:MID,role:"visitor",content:"TEA-R21 嘅重量係幾多？有冇現貨？"}];
+ const pending=build({rows});
+ assert(pending.open_questions.some(q=>q.includes("TEA-R21") && q.includes("stock")),"mixed answer incorrectly resolves live stock");
+ const later=build({previous:pending,memoryRevision:2,rows:[{id:"later-answer",role:"assistant",content:"重量：200 g",metadata:{control_commit:"ai",source_message_id:"later",response_route:"canonical_kb_direct_answer",answer_kind:"specification",unresolved_fact_fields:[]}},{id:"later",role:"visitor",content:"TEA-R21 的重量是多少？"}]});
+ assert(later.open_questions.some(q=>q.includes("stock")),"unrelated fact answer erased merchant-owned pending question");
+ const known=build({rows:rows.map(r=>r.role==="assistant"?{...r,metadata:{...(r.metadata as Record<string,unknown>),unresolved_fact_fields:[]}}:r)});
+ assert(!known.open_questions.some(q=>q.includes("stock")),"stock unknown fabricated without authoritative answer marker");
+});
+
 Deno.test("unbound suitability questions cannot supersede one another through null entity scope", () => {
   const prior = build();
   const old = { source_message_id: "earlier", text: "Product suitability needs confirmation", status: "pending" as const,

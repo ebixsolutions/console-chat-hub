@@ -7,6 +7,7 @@ export interface CanonicalKbDirectAnswer {
   reply: string;
   evidence_chunks: KBFullChunk[];
   structured_facts?: Array<{ field: string; value: string | number; model: string; document_id: string; chunk_id: string }>;
+  unresolved_fact_fields?: Array<"stock">;
   price_fact?: { model: string; value: number; currency: "HKD"; document_id: string; chunk_id: string; full_content: string };
 }
 
@@ -211,7 +212,7 @@ export function resolveCanonicalKbDirectAnswer(input: {
       ["policy", labelledValue(chunk.content, /billing\s+policy|booking\s+policy|cancellation\s+policy|付款政策|預約政策|预约政策|取消政策/i, true)],
       ...requestedFields,
     ];
-    return { kind, reply, evidence_chunks: [chunk], structured_facts: chunk.chunk_id
+    return { kind, reply, evidence_chunks: [chunk], unresolved_fact_fields: stockRequested ? ["stock"] : [], structured_facts: chunk.chunk_id
       ? fields.filter(([, value]) => value !== null).map(([field, value]) => ({
         field, value: value!, model, document_id: chunk.document_id, chunk_id: chunk.chunk_id!,
       })) : [] };
