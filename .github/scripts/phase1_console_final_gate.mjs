@@ -3,6 +3,7 @@
 // Usage: node .github/scripts/phase1_console_final_gate.mjs --head SHA --tree SHA --evidence /absolute/observed.json
 // --source-only validates the committed source boundary only, never Demo Ready.
 import assert from "node:assert/strict";
+import { APPLICATION_HEAD, APPLICATION_TREE, VALIDATION_FILES, verifySuppression, verifyDelivery, verifyHistoricalControl } from "./phase1_human_control_evidence.mjs";
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -57,7 +58,8 @@ const check = (condition, label) => {
   assert.ok(condition, label);
   assertions++;
 };
-async function verifyActualEntrypoint(e, head, tree) {
+async function verifyActualEntrypoint(e, head, tree, validatorHead, validatorTree) {
+  check(e.application?.head === head && e.application?.tree === tree && e.validator?.head === validatorHead && e.validator?.tree === validatorTree, "application and validator exact identities separate");
   check(e.project_id === project && e.head === head && e.tree === tree, "entrypoint exact candidate");
   check(e.binding.project_id === project && e.binding.mock_auth === false, "real nonproduction binding");
   const html = read(e.binding.served_html);
@@ -149,14 +151,30 @@ async function verifyActualEntrypoint(e, head, tree) {
   for (const key of ["login", "customer_chat", "summary_visible", "takeover_clicked", "human_reply_sent"])
     check(e.ui[key]?.observed === true && e.ui[key].evidence_path && readFileSync(e.ui[key].evidence_path).length > 0, `actual UI: ${key}`);
   check(e.ui.takeover_clicked.channel === "console_control" && e.ui.human_reply_sent.channel === "console_composer", "intended UI controls");
-  const before = e.before_suppression, after = e.after_suppression, last = e.after_reply;
-  for (const s of [before, after, last]) check(s.conversation.id === e.ids.conversation && s.conversation.company_id === e.ids.company && s.conversation.status === "pending" && s.conversation.assigned_agent_id === e.ids.agent && s.queue[0].state === "assigned" && s.assignment.filter(a => a.is_active && a.agent_id === e.ids.agent).length === 1, "authoritative assigned human control");
-  check(after.messages.filter(m => m.id === e.ids.suppressed_visitor && m.role === "visitor").length === 1 && e.suppressed.body.skipped === "human_handling", "one stored visitor and AI suppression");
-  const ai = s => JSON.stringify(s.messages.filter(m => m.role === "assistant").map(m => m.id).sort());
-  check(ai(before) === ai(after) && ai(after) === ai(last) && JSON.stringify(before.commerce) === JSON.stringify(after.commerce) && JSON.stringify(after.commerce) === JSON.stringify(last.commerce), "no AI reply or semantic mutation");
-  check(last.messages.filter(m => m.id === e.ids.human_reply && m.role === "agent" && m.sender_id === e.ids.agent).length === 1 && e.customer_poll.body.data.messages.filter(m => m.id === e.ids.human_reply).length === 1 && e.retry_once.body.data.message_id === e.retry_twice.body.data.message_id, "human reply reaches customer once and retry deduplicates");
+  const control = e.human_control;
+  check(Boolean(control), "endpoint-aware human-control evidence required");
+  verifyHistoricalControl({waiting:control.waiting,current:control.current,ids:e.ids,project,ui:e.ui});
+  assertions++;
+  for (const key of ["generic_summary_visible", "customer_received"]) {
+    const item = e.ui[key];
+    check(item.observed === true && readFileSync(item.evidence_path).length > 0 && item.head === head && item.tree === tree && item.company_id === e.ids.company,
+      `actual bound UI: ${key}`);
+  }
+  check(e.ui.generic_summary_visible.conversation_id === service.conversation_id, "generic Summary UI is its own ticket");
+  if (control.receipt === null || control.customer_poll === null || control.after_probe === null) {
+    console.log(JSON.stringify({result:"STOP", application:{head,tree}, validator:{head:validatorHead,tree:validatorTree}, assertions,
+      blocker:"One supplemental Widget ingress receipt and existing-human customer polling receipt must be captured in the existing authorized customer Chrome session",
+      actual_director_ui_completed:true, historical_receipt:"NOT_CAPTURED"}));
+    process.exit(2);
+  }
+  verifySuppression({receipt:control.receipt,before:control.before_probe,after:control.after_probe,ids:e.ids,project});
+  assertions++;
+  verifyDelivery({receipt:control.customer_poll,snapshot:control.after_probe,ids:e.ids,project,ui:e.ui});
+  assertions++;
+  check(e.retry_once.body.data.message_id === e.retry_twice.body.data.message_id && e.retry_conflict.status === 409,
+    "retained same-request retry identity and conflict safeguards");
   check(e.tenant_safety.foreign_read.status === 200 && e.tenant_safety.foreign_read.body.length === 0 && e.tenant_safety.foreign_takeover.status === 404 && e.tenant_safety.foreign_reply.status === 404, "tenant isolation preserved");
-  console.log(JSON.stringify({ result: "PASS", head, tree, assertions, status: "READY — PHASE 1 DEMO READY / ACTUAL ENTRYPOINT VERIFIED" }));
+  console.log(JSON.stringify({ result: "PASS", application:{head,tree}, validator:{head:validatorHead,tree:validatorTree}, assertions, status: "READY — PHASE 1 DEMO READY / ACTUAL ENTRYPOINT VERIFIED" }));
 }
 try {
   const head = git("rev-parse", "HEAD"),
@@ -167,13 +185,19 @@ try {
     git("rev-parse", `${baseline}^{tree}`) === "4093aa1fb6cad926e3909e996db75913e278e458",
     "accepted baseline tree",
   );
-  check(git("merge-base", baseline, "HEAD") === baseline, "same C3 ancestry");
+  check(git("merge-base", baseline, APPLICATION_HEAD) === baseline, "same C3 application ancestry");
+  check(git("rev-parse", `${APPLICATION_HEAD}^{tree}`) === APPLICATION_TREE, "frozen B0 application tree");
+  check(git("merge-base", APPLICATION_HEAD, head) === APPLICATION_HEAD, "validator descends from B0");
+  const validatorChanged = git("diff", "--name-only", APPLICATION_HEAD, head).split("\n").filter(Boolean);
+  check(validatorChanged.every(file => VALIDATION_FILES.includes(file)), "validation-only successor: all other application files unchanged");
+  for (const file of git("ls-tree", "-r", "--name-only", APPLICATION_HEAD).split("\n").filter(file => !VALIDATION_FILES.includes(file)))
+    check(sha(readFileSync(file)) === sha(execFileSync("git", ["show", `${APPLICATION_HEAD}:${file}`])), `B0 application file frozen: ${file}`);
   const sourceOffenders = git("status", "--porcelain", "--untracked-files=all")
     .split("\n")
     .filter((line) => line && !(process.env.CI && line === "?? supabase/.temp/cli-latest"));
   check(sourceOffenders.length === 0, `clean committed candidate: ${JSON.stringify(sourceOffenders)}`);
   check(
-    JSON.stringify(git("diff", "--name-only", baseline, "HEAD").split("\n").sort()) ===
+    JSON.stringify(git("diff", "--name-only", baseline, APPLICATION_HEAD).split("\n").sort()) ===
       JSON.stringify(allowed),
     "exact directly implicated file scope",
   );
@@ -198,11 +222,14 @@ try {
     "fixed nonproduction Console binding",
   );
   execFileSync(process.execPath, ["tests/phase1/console-summary.test.mjs"], { stdio: "inherit" });
+  execFileSync(process.execPath, ["--test", "tests/phase1/human-control-evidence.test.mjs"], { stdio: "inherit" });
   if (process.argv.includes("--source-only")) {
     console.log(
       JSON.stringify({
         result: "PASS",
         scope: "source_only_not_demo_ready",
+        application:{head:APPLICATION_HEAD,tree:APPLICATION_TREE},
+        validator:{head,tree},
         head,
         tree,
         assertions,
@@ -212,8 +239,9 @@ try {
     check(process.argv.includes("--evidence"), "runtime evidence required");
     const e = JSON.parse(read(arg("--evidence"))),
       ids = e.ids;
+    check(e.schema === "phase1-entrypoint-closure-v1", "current endpoint-aware evidence schema required; historical API-only records are not current closure");
     if (e.schema === "phase1-entrypoint-closure-v1") {
-      await verifyActualEntrypoint(e, head, tree);
+      await verifyActualEntrypoint(e, APPLICATION_HEAD, APPLICATION_TREE, head, tree);
       process.exit(0);
     }
     check(e.project_id === project, "nonproduction runtime identity");

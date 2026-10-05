@@ -152,6 +152,45 @@ env:
     }
 
 jobs:
+  c3-validation-scope:
+    runs-on: ubuntu-24.04
+    outputs:
+      validator_only: ${{ steps.scope.outputs.validator_only }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: scope
+        name: Classify application versus validation-only successor
+        run: |
+          node --input-type=module <<'JS'
+          import {execFileSync} from 'node:child_process';
+          import {appendFileSync} from 'node:fs';
+          import {APPLICATION_HEAD,APPLICATION_TREE,VALIDATION_FILES} from './.github/scripts/phase1_human_control_evidence.mjs';
+          const git=(...args)=>execFileSync('git',args,{encoding:'utf8'}).trim();
+          const changed=git('diff','--name-only',APPLICATION_HEAD,'HEAD').split('\n').filter(Boolean);
+          const only=git('rev-parse',APPLICATION_HEAD+'^{tree}')===APPLICATION_TREE && git('merge-base',APPLICATION_HEAD,'HEAD')===APPLICATION_HEAD && changed.length>0 && changed.every(p=>VALIDATION_FILES.includes(p));
+          appendFileSync(process.env.GITHUB_OUTPUT,'validator_only='+only+'\n');
+          console.log(JSON.stringify({application_head:APPLICATION_HEAD,validator_head:git('rev-parse','HEAD'),validator_only:only,changed}));
+          JS
+  c3-phase1-human-control-validator:
+    needs: c3-validation-scope
+    if: github.event_name == 'push' && needs.c3-validation-scope.outputs.validator_only == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      - name: Endpoint-aware contract and collector regressions
+        run: node --test tests/phase1/human-control-evidence.test.mjs
+      - name: Frozen application and validator source boundary
+        run: node .github/scripts/phase1_console_final_gate.mjs --head "$GITHUB_SHA" --tree "$(git rev-parse 'HEAD^{tree}')" --source-only
+
   c3-nonproduction-external-quality:
     if: >-
       github.event_name == 'workflow_dispatch' &&
@@ -205,8 +244,9 @@ jobs:
           retention-days: 30
 
   c3-validation-preflight-offline:
+    needs: c3-validation-scope
     if: >-
-      github.event_name == 'push' ||
+      (github.event_name == 'push' && needs.c3-validation-scope.outputs.validator_only != 'true') ||
       (github.event_name == 'workflow_dispatch' && inputs.mode == 'preflight_offline')
     runs-on: ubuntu-24.04
     timeout-minutes: 15

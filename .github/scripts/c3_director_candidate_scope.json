@@ -13,6 +13,7 @@
     ".github/scripts/c3_director_generic_core_final_gate.mjs",
     ".github/scripts/c3_edge_runtime_parity.test.mjs",
     ".github/scripts/phase1_console_final_gate.mjs",
+    ".github/scripts/phase1_human_control_evidence.mjs",
     ".github/scripts/task_ai_abc_c3_final_gate.mjs",
     ".github/workflows/task-ai-abc-c3-final-gate.yml",
     "sql/c3-nonproduction/00_repository_baseline.sql",
@@ -89,6 +90,8 @@
     "tests/e2e/c3_widget_isolated_setup.sh",
     "tests/edge/verified-widget-auth.test.ts",
     "tests/phase1/console-summary.test.mjs",
+    "tests/phase1/customer-control-collector.cjs",
+    "tests/phase1/human-control-evidence.test.mjs",
     "tests/phase1/persisted-handoff.fixture.json",
     "vite.config.ts"
   ]
