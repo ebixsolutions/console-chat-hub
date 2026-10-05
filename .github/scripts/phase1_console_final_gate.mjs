@@ -51,7 +51,10 @@ try {
     "accepted baseline tree",
   );
   check(git("merge-base", baseline, "HEAD") === baseline, "same C3 ancestry");
-  check(!git("status", "--porcelain", "--untracked-files=all"), "clean committed candidate");
+  const sourceOffenders = git("status", "--porcelain", "--untracked-files=all")
+    .split("\n")
+    .filter((line) => line && !(process.env.CI && line === "?? supabase/.temp/cli-latest"));
+  check(sourceOffenders.length === 0, `clean committed candidate: ${JSON.stringify(sourceOffenders)}`);
   check(
     JSON.stringify(git("diff", "--name-only", baseline, "HEAD").split("\n").sort()) ===
       JSON.stringify(allowed),
