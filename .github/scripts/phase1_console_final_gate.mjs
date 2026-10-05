@@ -32,6 +32,7 @@ const allowed = [
   "supabase/functions/_shared/conversation-service-planner.ts",
   "supabase/functions/_shared/conversation-service-planner.test.ts",
   "supabase/functions/_shared/pre-send-conversion-supervisor.test.ts",
+  "supabase/functions/_shared/pre-send-conversion-supervisor.ts",
   "supabase/functions/_shared/natural-customer-response.ts",
   "supabase/functions/_shared/natural-customer-response.test.ts",
   "tests/phase1/console-summary.test.mjs",
@@ -93,6 +94,14 @@ async function verifyActualEntrypoint(e, head, tree) {
   check(/闊度|高度/.test(reply) && !/已查庫存|已安排|已報價|已轉交/.test(reply), "S4 useful unresolved check without completed promises");
   check(contextual.before.state_hash === contextual.after.state_hash && contextual.before.revision === contextual.after.revision && JSON.stringify(contextual.before.state) === JSON.stringify(contextual.after.state), "S4 renderer leaves authoritative semantic state unchanged");
   check(read(contextual.raw_reply_path).includes(reply), "S4 actual hosted persisted text observation");
+  const generic = e.generic_projection;
+  check(generic.head === head && generic.tree === tree && generic.reply_id === generic.reply.id, "generic successor persisted reply binding");
+  const entity = generic.before.state.entities.find(x => x.attributes.product_name);
+  check(entity && generic.reply.content.includes(entity.attributes.product_name) && generic.reply.content.includes(entity.model ?? entity.attributes.sku), "generic trusted name and exact SKU are visible");
+  check(!/item not confirmed|項目未確認|generic_product|窗口|window|professional|專業/.test(generic.reply.content), "generic item does not inherit household unknown or professional requirement");
+  check(generic.before.state_hash === generic.after.state_hash && generic.before.revision === generic.after.revision && JSON.stringify(generic.before.state) === JSON.stringify(generic.after.state), "generic realization preserves authoritative state");
+  check(read(generic.raw_reply_path).includes(generic.reply.content), "generic actual hosted persisted text observation");
+  check(e.validation.b2_projection.exit_code === 0 && read(e.validation.b2_projection.log_path).includes("2 passed"), "focused missing/provided classification and contextual B2 regressions");
   check(e.production.generate_reply.version === 201 && e.production.generate_reply.ezbr_sha256 === "b60a8df3b01a5a74eca5709f4e95929cf90ee432f6c266415e0fd00f77456d32", "production unchanged");
   for (const name of ["A2", "C3"]) check(e.ci[name].head_sha === head && e.ci[name].conclusion === "success", `new HEAD exact ${name}`);
   for (const name of ["production_build", "nonproduction_build", "typecheck", "summary", "social", "service"]) check(e.validation[name].exit_code === 0, `focused validation: ${name}`);
@@ -140,7 +149,11 @@ try {
   });
   // Only the observed S4/S5 service projection and clarification consumers
   // are reopened. Their focused regressions and deployed parity are required.
-  const reopened = new Set(["supabase/functions/_shared/conversation-service-planner.ts", "supabase/functions/_shared/natural-customer-response.ts", "supabase/functions/generate-reply/index.ts"]);
+  const missingDescriptorGuard = "      // A missing-slot identifier is a planning descriptor, not a provided value.\n      if (/\\.attributes\\.customer_goal\\.missing\\.\\d+$/.test(fact.path)) continue;\n";
+  const b2Source = "supabase/functions/_shared/pre-send-conversion-supervisor.ts";
+  const variantAliases = '    color: ["color", "colour", "顏色", "颜色"],\n    version: ["version", "edition", "版本"],\n    size: ["size", "尺碼", "尺码"],\n    region: ["region", "market", "地區", "地区"],\n';
+  check(read(b2Source).replace(missingDescriptorGuard, "").replace(variantAliases, "") === execFileSync("git", ["show", `${baseline}:${b2Source}`], {encoding:"utf8"}), "B2 rules frozen except missing descriptor/provided variant classification");
+  const reopened = new Set([b2Source, "supabase/functions/_shared/conversation-service-planner.ts", "supabase/functions/_shared/natural-customer-response.ts", "supabase/functions/generate-reply/index.ts"]);
   for (const file of closure.files ?? closure)
     check(
       reopened.has(file) || sha(readFileSync(file)) === sha(execFileSync("git", ["show", `${baseline}:${file}`])),

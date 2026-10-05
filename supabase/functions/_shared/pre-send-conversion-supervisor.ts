@@ -382,6 +382,10 @@ function aliasesForKey(key: string): string[] {
     room_sizes: ["room sizes", "room areas", "房間面積", "房间面积", "各空間面積", "各空间面积"],
     installation_type: ["installation type", "installation arrangement", "安裝方式", "安装方式", "窗口位", "分體位", "分体位"],
     model: ["model", "model number", "型號", "型号"],
+    color: ["color", "colour", "顏色", "颜色"],
+    version: ["version", "edition", "版本"],
+    size: ["size", "尺碼", "尺码"],
+    region: ["region", "market", "地區", "地区"],
     amount: ["amount", "price", "quote", "價錢", "价钱", "報價", "报价"],
     currency: ["currency", "幣別", "币别", "貨幣", "货币"],
     quote_type: ["quote type", "quotation type", "報價類型", "报价类型"],
@@ -829,6 +833,8 @@ function evaluateKnownContext(text: string, state: ConversationCommerceState): B
     .filter((clause) => QUESTION.test(clause));
   for (const clause of questionClauses) {
     for (const fact of collectKnownCommerceFacts(state)) {
+      // A missing-slot identifier is a planning descriptor, not a provided value.
+      if (/\.attributes\.customer_goal\.missing\.\d+$/.test(fact.path)) continue;
       if (fact.aliases.some((alias) => clause.includes(alias))) {
         return {
           decision: "block",

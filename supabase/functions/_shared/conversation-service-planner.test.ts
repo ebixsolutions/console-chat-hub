@@ -8,6 +8,7 @@ import {
   type ServiceLanguage,
 } from "./conversation-service-planner.ts";
 import type { ConversationCommerceState } from "./commerce-state-contract.ts";
+import { extractGenericCommerceEntity } from "./commerce-capability-runtime.ts";
 
 const assert: (value: unknown, message: string) => asserts value = (value, message) => {
   if (!value) throw new Error(message);
@@ -349,4 +350,59 @@ Deno.test("Phase1 unknown typed category stays neutral and customer literals sta
   assert(reply.includes("Do not buy air_conditioner; SKU_AC-17; 595 mm"),"customer negation, SKU, value and unit preserved exact");
   assert(!/查詢項目|送貨地址|收件人/.test(reply),"known schema labels localized");
   assert(JSON.stringify(plan)===before,"plan not rewritten");
+});
+
+// Frozen before implementation: legal inputs to the actual shared planner/renderer.
+// These component contrasts do not claim end-to-end intent recognition or held-out scoring.
+function genericContext(missing: string[], language: ServiceLanguage = "en") {
+  const extracted = extractGenericCommerceEntity("I want 3 boxes jasmine tea SKU: JT-Z9.");
+  assert(extracted, "existing generic commerce adapter supports the fixture");
+  const state = structuredClone(commerce);
+  state.current_topic = extracted.category;
+  state.current_intent = "select_product";
+  state.delivery = {confirmed:false};
+  state.entities = [{entity_id:extracted.entity_id,category:extracted.category,model:extracted.sku,
+    quantity:extracted.quantity,status:"researching",provenance:{source_type:"customer",source_message_id:"g3-source"},
+    constraints:{},attributes:{product_name:extracted.display_name,unit:extracted.unit,variant:extracted.variant,
+      quantity_basis:"customer_explicit",capabilities:extracted.capabilities,
+      customer_goal:{category:extracted.category,objective:"select_product",journey_stage:"research",collected:["product_name","sku"],missing,response_intent:"request_highest_value_missing_information",source_message_id:"g3-source"}}}];
+  return planConversationService({question:language === "en"?"Can you check this?":"幫我睇睇呢個。",language,commerce:state,memory:null,recall:{handled:false,reason:"NOT_A_RECALL_QUERY"}});
+}
+
+Deno.test("Phase1 generic naming uses trusted entity name and exact SKU, not household taxonomy", () => {
+  for(const language of ["zh-TW","en"] as const) {
+    const plan=genericContext([],language),before=JSON.stringify(plan);
+    const text=renderServicePlanReply(plan,null) ?? "";
+    assert(text.includes("jasmine tea") && text.includes("JT-Z9"),"trusted name and exact SKU preserved: "+text);
+    assert(!/item not confirmed|項目未確認|generic_product|window|窗口|professional|專業/.test(text),"no false unknown or appliance/professional inheritance");
+    assert(JSON.stringify(plan)===before,"canonical state and plan unchanged");
+  }
+});
+
+Deno.test("Phase1 missing information follows its owner and does not re-ask supplied or pending slots", () => {
+  const cases=[
+    {missing:"color",named:/colou?r/,purpose:/variant|options/,owner:"customer"},
+    {missing:"version",named:/version|edition/,purpose:/evidence|information|options/,owner:"customer"},
+    {missing:"region",named:/region|market/,purpose:/policy|applicable|information/,owner:"customer"},
+    {missing:"stock",named:/stock/,purpose:/merchant|live|inventory/,owner:"merchant"},
+  ];
+  for(const c of cases){
+    const plan=genericContext([c.missing]),before=JSON.stringify(plan),reply=renderServicePlanReply(plan,null)??"";
+    if(c.owner==="customer") assert(plan.clarification_target===c.missing && plan.missing_slots.includes(c.missing),"plan metadata names the actual missing field");
+    assert(c.named.test(reply)&&c.purpose.test(reply),"missing field and decision purpose: "+c.missing);
+    assert(!/professional|window|width|height|measure/.test(reply),"owner is not a site professional: "+c.missing);
+    assert(c.owner==="customer" ? /\?/.test(reply) : !/\?/.test(reply),"only customer-owned gaps ask the customer");
+    const repeated=renderServicePlanReply(plan,null,[{role:"assistant",content:reply}])??"";
+    assert(!/\?/.test(repeated),"same missing slot is not re-asked without new information");
+    assert(JSON.stringify(plan)===before,"read-only owner projection");
+    if(c.owner==="customer") {
+      plan.question_lifecycle=[{source_message_id:"earlier",text:"The "+c.missing+" question remains pending",entity_id:plan.committed_commerce!.entities[0].entity_id,status:"pending"}];
+      assert(!/\?/.test(renderServicePlanReply(plan,null)??""),"existing scoped lifecycle prevents rediscovery outside recent turns");
+    }
+  }
+  const known=genericContext(["color"]);
+  known.committed_commerce!.entities[0].attributes.variant={color:"blue"};
+  const refreshed=planConversationService({question:"Can you check this?",language:"en",commerce:known.committed_commerce!,memory:null,recall:{handled:false,reason:"NOT_A_RECALL_QUERY"}});
+  const reply=renderServicePlanReply(refreshed,null)??"";
+  assert(reply.includes("blue") && !/\?/.test(reply),"supplied variant remains known, stale missing is not re-asked");
 });

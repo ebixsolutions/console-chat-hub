@@ -1416,3 +1416,23 @@ Deno.test("Phase1 localized pending-check statements pass unchanged B2 without k
     }
   }
 });
+
+Deno.test("Phase1 generic contextual owner questions pass B2 and preserve state", () => {
+  for(const product of ["jasmine tea","cotton shirt"]) for(const language of ["zh-TW","en"] as const) for(const missing of ["color","stock"]) {
+    const state=createEmptyConversationCommerceState();
+    state.language=language;state.current_topic="generic_product";state.current_intent="select_product";
+    state.entities=[{entity_id:"generic_product:one",category:"generic_product",model:"TEST-SKU-G5",quantity:3,status:"researching",attributes:{product_name:product,quantity_basis:"customer_explicit",customer_goal:{category:"generic_product",objective:"select_product",journey_stage:"research",collected:["product_name","sku"],missing:[missing],response_intent:"request_highest_value_missing_information",source_message_id:"g5-source"}},constraints:{},provenance:{source_type:"customer",source_message_id:"g5-source"}}];
+    const question=language==="en"?"Can you check this?":"幫我睇睇呢個。";
+    const before=JSON.stringify(state),plan=planConversationService({question,language,commerce:state,memory:null,recall:{handled:false,reason:"NOT_A_RECALL_QUERY"}});
+    const reply=renderServicePlanReply(plan,null)!;
+    const decision=evaluateB2BeforeCommit({proposed_response:reply,persistence_kind:"ai_reply",snapshot:{conversation_id:"fixture-conversation",company_id:"fixture-company",source_message_id:"g5-next",source_message_content:question,commerce_state_revision:1,commerce_state_source_message_id:"g5-source",state}});
+    assert(decision.decision==="allow",`${language} ${missing}: ${decision.code}: ${decision.detail}: ${reply}`);
+    assert(reply.includes(product)&&reply.includes("TEST-SKU-G5")&&!/generic_product|窗口|professional/.test(reply),"generic context and provenance lost");
+    assert(JSON.stringify(state)===before,"read-only generic realization");
+    if(missing==="color") {
+      state.entities[0].attributes.variant={color:"blue"};
+      const blocked=evaluateB2BeforeCommit({proposed_response:language==="en"?"Which color do you need?":"你想要邊個顏色？",persistence_kind:"ai_reply",snapshot:{conversation_id:"fixture-conversation",company_id:"fixture-company",source_message_id:"g5-next",source_message_content:question,commerce_state_revision:1,commerce_state_source_message_id:"g5-source",state}});
+      assert(blocked.code==="KNOWN_CONTEXT_RECONFIRMATION","actual supplied color still cannot be re-asked");
+    }
+  }
+});

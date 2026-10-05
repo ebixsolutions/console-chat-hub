@@ -63,6 +63,7 @@ export interface ServiceDialoguePlan {
   customer_goal: string;
   committed_requirements?: CommerceEntity[];
   committed_commerce?: ConversationCommerceState;
+  question_lifecycle?: CanonicalConversationMemory["question_lifecycle"];
   known_facts: Array<{
     name: string;
     label: string;
@@ -239,6 +240,13 @@ function knownFacts(input: ServicePlanInput) {
           add(`entity:${entity.entity_id}:room_size:${room}`, `${SERVICE_ROOM_LABELS[room]?.[l] ?? HOME_APPLIANCE_ROOMS.find(r => r.key === room)?.label[input.language] ?? ["空間", "空间", "Space"][l]}${["面積", "面积", " area"][l]}`, size, "CUSTOMER_PROVIDED");
       }
       add(`entity:${entity.entity_id}:requested_date`, "Requested date", entity.attributes.requested_date,"CUSTOMER_PROVIDED");
+      add(`entity:${entity.entity_id}:product_name`, "Item", entity.attributes.product_name, "CUSTOMER_PROVIDED");
+      add(`entity:${entity.entity_id}:sku`, "SKU", entity.attributes.sku, "CUSTOMER_PROVIDED");
+      const variant = entity.attributes.variant;
+      if (variant && typeof variant === "object" && !Array.isArray(variant)) {
+        for (const field of ["color", "version", "size", "region"])
+          add(`entity:${entity.entity_id}:${field}`, field, (variant as Record<string, unknown>)[field], "CUSTOMER_PROVIDED");
+      }
       add(
         `entity:${entity.entity_id}:quantity`,
         "數量",
@@ -496,6 +504,7 @@ export function planConversationService(
     ),
     known_facts: facts,
     committed_commerce: input.commerce ?? undefined,
+    question_lifecycle: input.memory?.question_lifecycle,
     missing_slots: [] as string[],
     clarification_target: null as string | null,
     clarification_previously_asked: (input.clarification_attempts ?? 0) > 0,
@@ -619,6 +628,8 @@ export function planConversationService(
   if (committed.length && input.committed_source_message_id && !/[?？]/.test(question)) {
     return {...base, action:"state_acknowledgement", committed_requirements:committed, committed_commerce:input.commerce!};
   }
+  const customerGap = contextualCustomerGap(input.commerce);
+  if (customerGap && !clarificationTarget) return {...base, action:"partial_answer_then_question", missing_slots:[customerGap.field], clarification_target:customerGap.field};
   const target = clarificationTarget ?? "customer_goal";
   if (factSatisfiesSlot(facts, target)) {
     return { ...base, action: "partial_answer_then_question", missing_slots: [], clarification_target: null };
@@ -707,7 +718,7 @@ function contextualFacts(plan: ServiceDialoguePlan, language: ServiceLanguage): 
   const active = state?.entities.filter(e => !["deferred", "cancelled"].includes(e.status)) ?? [];
   const goal = state ? activeCustomerGoal(state) : null;
   const categoryKey = (value: string | null | undefined) => HOME_APPLIANCE_CATEGORIES.find(c =>
-    c.key === value || c.aliases.some(alias => alias.toLowerCase() === value?.toLowerCase()))?.key;
+    c.key === value || c.aliases.some(alias => alias.toLowerCase() === value?.toLowerCase()))?.key ?? clean(value);
   const category = categoryKey(goal?.goal.category ?? state?.current_topic);
   const labels: Record<string, [string, string, string]> = {
     current_topic: ["查詢項目", "查询项目", "Item"],
@@ -720,8 +731,16 @@ function contextualFacts(plan: ServiceDialoguePlan, language: ServiceLanguage): 
     room_size: ["使用面積", "使用面积", "Area"],
     horsepower: ["所需匹數", "所需匹数", "Required horsepower"],
     requested_date: ["希望日期", "希望日期", "Requested date"],
+    product_name: ["項目", "项目", "Item"], sku: ["SKU", "SKU", "SKU"],
+    color: ["顏色", "颜色", "Color"], version: ["版本", "版本", "Version"],
+    region: ["適用地區", "适用地区", "Region"], size: ["尺寸", "尺寸", "Size"],
   };
   const l = language === "en" ? 2 : language === "zh-CN" ? 1 : 0;
+  const selected = active.find(e => e.entity_id === goal?.entity_id) ??
+    (active.filter(e => categoryKey(e.category) === category).length === 1 ? active.find(e => categoryKey(e.category) === category) : undefined);
+  const topicName = HOME_APPLIANCE_CATEGORIES.find(c => c.key === category)?.label[language] ??
+    (clean(selected?.attributes.product_name) || clean(selected?.model) || clean(selected?.attributes.sku));
+  const seen = new Set<string>();
   return plan.known_facts.flatMap(fact => {
     if (["current_intent", "customer_goal", "quotation_status", "order_status"].includes(fact.name)) return [];
     // Prefer the current entity fields over prose memory copies of requirements.
@@ -734,8 +753,7 @@ function contextualFacts(plan: ServiceDialoguePlan, language: ServiceLanguage): 
     let label = labels[fact.name]?.[l];
     let value = fact.value;
     if (fact.name === "current_topic") {
-      const definition = HOME_APPLIANCE_CATEGORIES.find(c => c.key === categoryKey(fact.value));
-      value = definition?.label[language] ?? ["項目未確認", "项目未确认", "item not confirmed"][l];
+      value = topicName || ["項目未確認", "项目未确认", "item not confirmed"][l];
     }
     if (entity) {
       const field = fact.name.slice(`entity:${entity.entity_id}:`.length);
@@ -747,8 +765,80 @@ function contextualFacts(plan: ServiceDialoguePlan, language: ServiceLanguage): 
     }
     // Unknown schema fields receive a neutral label, never a raw internal key.
     label ??= ["你提供的資料", "你提供的资料", "Provided detail"][l];
+    if (entity && ["product_name", "model", "sku"].includes(fact.name.slice(`entity:${entity.entity_id}:`.length)) && seen.has(value)) return [];
+    seen.add(value);
     return [`${label}${l === 2 ? ": " : "："}${value}`];
   }).slice(0, 6);
+}
+
+const CONTEXTUAL_CUSTOMER_SLOTS = [
+    { keys:["color","colour","variant_color"], field:"color", match:/顏色|颜色|colou?r/i,
+      label:["顏色","颜色","color"], purpose:["定位相應款式","定位相应款式","identify the relevant variant options"] },
+    { keys:["version","edition","variant_version"], field:"version", match:/版本|version|edition/i,
+      label:["版本","版本","version"], purpose:["核對相應版本資料","核对相应版本资料","locate the matching version information"] },
+    { keys:["region","market","applicable_region"], field:"region", match:/地區|地区|region|market/i,
+      label:["適用地區","适用地区","region"], purpose:["核對適用資料及政策","核对适用资料及政策","find applicable information and policy"] },
+    { keys:["size","variant_size"], field:"size", match:/尺碼|尺码|size/i,
+      label:["尺碼","尺码","size"], purpose:["定位相應款式","定位相应款式","identify the relevant variant options"] },
+  ];
+
+function contextualCustomerGap(state: ConversationCommerceState | null | undefined) {
+  if (!state) return null;
+  const current = activeCustomerGoal(state);
+  if (!current) return null;
+  const entity = state.entities.find(e => e.entity_id === current.entity_id)!;
+  const variant = entity.attributes.variant as Record<string, unknown> | undefined;
+  return CONTEXTUAL_CUSTOMER_SLOTS.find(slot => current.goal.missing.some(k => slot.keys.includes(k)) &&
+    !slot.keys.some(k => current.goal.collected.includes(k)) &&
+    !clean(variant?.[slot.field] ?? entity.attributes[slot.field] ?? state.customer_constraints[slot.field])) ?? null;
+}
+
+/** Read existing goal slots and question lifecycle; this projection stores no new state. */
+function contextualMissingContinuation(plan: ServiceDialoguePlan, l: number, recent: Array<{role: string; content: string}>): string | null {
+  const state = plan.committed_commerce;
+  const current = state && activeCustomerGoal(state);
+  if (!current?.goal.missing.length) return null;
+  const entity = state!.entities.find(e => e.entity_id === current.entity_id)!;
+  const variant = entity.attributes.variant as Record<string, unknown> | undefined;
+
+  for (const missing of current.goal.missing) {
+    const slot = CONTEXTUAL_CUSTOMER_SLOTS.find(s => s.keys.includes(missing));
+    if (!slot) continue;
+    const supplied = clean(variant?.[slot.field] ?? entity.attributes[slot.field] ?? state!.customer_constraints[slot.field]);
+    if (supplied || slot.keys.some(k => current.goal.collected.includes(k))) continue;
+    const asked = (plan.clarification_previously_asked && slot.keys.includes(plan.clarification_target ?? "")) ||
+      recent.some(m => m.role === "assistant" && /[?？]/.test(m.content) && slot.match.test(m.content)) ||
+      plan.question_lifecycle?.some(q => q.status !== "superseded" && q.entity_id === current.entity_id && slot.match.test(q.text));
+    return asked ? [
+      `${slot.label[l]}仍未確認；有呢項資料後先可以${slot.purpose[l]}，唔會重複問同一缺項。`,
+      `${slot.label[l]}仍未确认；有这项资料后才能${slot.purpose[l]}，不会重复问同一缺项。`,
+      `The ${slot.label[l]} is still unconfirmed. It is needed to ${slot.purpose[l]}; I will not repeat the same question.`,
+    ][l] : [
+      `你想要邊個${slot.label[l]}？呢項資料用嚟${slot.purpose[l]}。`,
+      `你想要哪个${slot.label[l]}？这项资料用于${slot.purpose[l]}。`,
+      `Which ${slot.label[l]} do you need? That will help ${slot.purpose[l]}.`,
+    ][l];
+  }
+  if (current.goal.missing.some(k => ["stock","current_stock","stock_confirmation","live_stock"].includes(k))) return [
+    "即時庫存仍要由商家嘅庫存資料核實，現時未能確認有貨。",
+    "实时库存仍需由商家的库存资料核实，目前无法确认有货。",
+    "Live stock still needs merchant inventory confirmation; availability is not confirmed.",
+  ][l];
+  const capabilities = entity.attributes.capabilities as Record<string, unknown> | undefined;
+  if (current.goal.missing.some(k => ["site_check","site_safety","professional_confirmation"].includes(k)) ||
+      capabilities?.requires_site_check === true) return [
+    "現場適用性及安全仍需專業人員核實；現有資料未足以確認。",
+    "现场适用性及安全仍需专业人员核实；现有资料不足以确认。",
+    "Site suitability and safety still need professional confirmation; the current information cannot establish them.",
+  ][l];
+  const unresolved = current.goal.missing.filter(k => !CONTEXTUAL_CUSTOMER_SLOTS.some(s => s.keys.includes(k)));
+  if (!unresolved.length) return null;
+  if (unresolved.some(k => ["suitable_models","product_information","policy","sizing_decision"].includes(k))) return [
+    "未確認嘅產品或政策資料仍要由適用嘅已發布資料核實；現時未能確認。",
+    "未确认的产品或政策资料仍需由适用的已发布资料核实，目前无法确认。",
+    "The unresolved product or policy information still needs applicable published evidence; it is not confirmed.",
+  ][l];
+  return ["仍有未確認資料；現有資料不足以決定下一步，需先核對具體缺項。","仍有未确认资料；现有资料不足以决定下一步，需先核对具体缺项。","Some information remains unresolved. The specific missing requirement must be identified before deciding the next step."][l];
 }
 
 function contextualContinuation(plan: ServiceDialoguePlan, l: number, recent: Array<{role: string; content: string}>): string {
@@ -781,15 +871,12 @@ function contextualContinuation(plan: ServiceDialoguePlan, l: number, recent: Ar
       "To check whether a unit will fit, I still need the usable width and height of each opening. Do you have those measurements? Suitability still needs product evidence and professional confirmation.",
     ][l]);
   }
-  if (goal?.goal.missing.length) return prefix + [
-    "你嘅要求已清楚；未確認嘅部分仍要按產品資料或由專業人員核對，暫時未能確認適用性。",
-    "你的要求已明确；未确认的部分仍需按产品资料或由专业人员核对，目前无法确认适用性。",
-    "Your requirements are clear. The unresolved details still need product evidence or a professional check; suitability is not confirmed.",
-  ][l];
+  const missing = contextualMissingContinuation(plan, l, recent);
+  if (missing) return prefix + missing;
   if (goalText) return prefix + [
-    "我可以按以上資料繼續整理；涉及產品或服務適用性仍待核實。",
-    "可以按以上资料继续整理；产品或服务适用性仍待核实。",
-    "I can continue with these details; product or service suitability remains unverified.",
+    "可以按以上已知資料繼續。",
+    "可以按以上已知资料继续。",
+    "We can continue with the known details above.",
   ][l];
   return plan.clarification_previously_asked ? [
     "跟進方向仍未確認；可以補充你想處理嘅具體問題。",
@@ -813,8 +900,8 @@ function renderContextualServiceReply(
       .test(turn);
   const questionIntent =
     /[?？]|(?:有冇|有沒有|有没有|係咪|是不是|幾(?!勁)|几(?!乎)|邊|哪|咩|什么|點|怎么|如何|可唔可以|能不能|記唔記得|记不记得|do |does |did |is |are |can |could |what |which |when |where |how )/i
-      .test(turn);
-  const genericTarget = !plan.clarification_target ||
+      .test(turn) || /(?:幫|帮).{0,8}(?:睇|看|核對|核对)|(?:睇|看).{0,4}(?:呢|這|这)|(?:take|have).{0,8}look|(?:check|review|look at).{0,8}(?:this|it|these)/i.test(turn);
+  const genericTarget = CONTEXTUAL_CUSTOMER_SLOTS.some(slot => slot.field === plan.clarification_target) || !plan.clarification_target ||
     ["customer_goal", "specific_item_or_time"].includes(
       plan.clarification_target,
     );
@@ -995,7 +1082,7 @@ export function renderServicePlanReply(
     ["targeted_clarification", "partial_answer_then_question"].includes(
       plan.action,
     ) &&
-    (!plan.clarification_target ||
+    (CONTEXTUAL_CUSTOMER_SLOTS.some(slot => slot.field === plan.clarification_target) || !plan.clarification_target ||
       ["customer_goal", "specific_item_or_time"].includes(
         plan.clarification_target,
       ))
