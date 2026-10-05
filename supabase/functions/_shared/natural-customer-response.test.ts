@@ -25,6 +25,7 @@ Deno.test("Phase1 shopping with a supplied identifier does not reopen product di
       const model=exactProductIdentifiers(input)[0];
       if(!reply.includes(model) || /邊款|哪一款|Which.*model|已查|已安排|已落單|order placed|stock checked|[?？]/i.test(reply)) throw Error(reply);
       if(!/未|待|需|still need/.test(reply)) throw Error("merchant unknown was lost: "+reply);
+      if(/product information|產品資料|产品资料/.test(reply)) throw Error("intent-only renderer cannot declare KB information unavailable: "+reply);
     }
   }
 });

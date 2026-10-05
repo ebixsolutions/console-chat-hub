@@ -673,10 +673,10 @@ export function renderNaturalImmediateResponse(
   if (supplied.length) {
     const identifiers = supplied.join(language === "en" ? ", " : "、");
     return language === "en"
-      ? `You want to buy ${identifiers}. Current product information and live availability still need merchant verification.`
+      ? `You want to buy ${identifiers}. Live availability still needs merchant verification.`
       : language === "zh-CN"
-      ? `明白，你想选购 ${identifiers}；当前产品资料及实时供应情况仍需商家核实。`
-      : `明白，你想選購 ${identifiers}；現行產品資料及即時供應情況仍待商家核實。`;
+      ? `明白，你想选购 ${identifiers}；实时供应情况仍需商家核实。`
+      : `明白，你想選購 ${identifiers}；即時供應情況仍需商家核實。`;
   }
 
   if (language === "en") {
