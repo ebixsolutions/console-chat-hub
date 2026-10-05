@@ -322,7 +322,10 @@ Deno.test("Phase1 contextual projection uses schema locale, goal and pending che
         assert(reply.includes("large bedroom area: 110平方呎") && reply.includes("small bedroom area: 80平方呎"), "room identities preserved");
         assert(!/查詢項目|面積：|型號：/.test(reply), "no Chinese labels in English");
       } else assert(reply.includes(language === "zh-CN" ? "空调" : "冷氣機"), "industry locale category label");
-      if(["repair","after_sales"].includes(objective)) assert(!/choose|replace|選購|揀合適|更換/.test(reply), "repair goal is not shopping");
+      if(["repair","after_sales"].includes(objective)) {
+        assert(!/choose|replace|選購|揀合適|更換/.test(reply), "repair goal is not shopping");
+        assert(!/窗口位|window.opening/.test(reply), "shopping-only window fit check does not override repair goal");
+      }
       const history = [{role:"assistant",content:language === "en" ? "What are the width and height of each window opening?" : "各窗口位可放機嘅闊度同高度各係幾多？"}];
       const followup = renderServicePlanReply(plan,null,history) ?? "";
       assert(!/[?？]/.test(followup), "pending already-asked measurements not re-asked as new");

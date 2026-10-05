@@ -766,7 +766,10 @@ function contextualContinuation(plan: ServiceDialoguePlan, l: number, recent: Ar
     (objective && !/^[a-z]+(?:_[a-z]+)*$/.test(objective) ? objective : "");
   const prefix = goalText ? goalText + (l === 2 ? ". " : "。") : "";
   // A persisted pending check is not a completed check or a new discovery goal.
-  if (state?.installation.pending_checks.includes("window_opening_check")) {
+  const category = goal?.goal.category ?? state?.current_topic;
+  const selectingAC = HOME_APPLIANCE_CATEGORIES.find(c => c.key === "air_conditioner")?.aliases
+    .some(alias => alias.toLowerCase() === category?.toLowerCase()) || category === "air_conditioner";
+  if (selectingAC && objective && ["select_product", "replace_existing_appliance", "compare_products"].includes(objective) && state?.installation.pending_checks.includes("window_opening_check")) {
     const alreadyAsked = plan.clarification_previously_asked || recent.some(m => m.role === "assistant" && /(?:窗口|window)/i.test(m.content) && /(?:闊|宽|高度|width|height)/i.test(m.content));
     return prefix + (alreadyAsked ? [
       "窗口位闊度同高度仍未有資料；有尺寸後先可以核對放機限制，型號適用性仍要產品資料及專業確認。",
