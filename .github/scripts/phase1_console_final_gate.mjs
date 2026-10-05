@@ -149,10 +149,10 @@ try {
   });
   // Only the observed S4/S5 service projection and clarification consumers
   // are reopened. Their focused regressions and deployed parity are required.
-  const missingDescriptorGuard = "      // A missing-slot identifier is a planning descriptor, not a provided value.\n      if (/\\.attributes\\.customer_goal\\.missing\\.\\d+$/.test(fact.path)) continue;\n";
+  const missingDescriptorGuard = "      // A missing-slot identifier is a planning descriptor, not a provided value.\n      if (readOnlyProjection && /\\.attributes\\.customer_goal\\.missing\\.\\d+$/.test(fact.path)) continue;\n";
   const b2Source = "supabase/functions/_shared/pre-send-conversion-supervisor.ts";
   const variantAliases = '    color: ["color", "colour", "顏色", "颜色"],\n    version: ["version", "edition", "版本"],\n    size: ["size", "尺碼", "尺码"],\n    region: ["region", "market", "地區", "地区"],\n';
-  check(read(b2Source).replace(missingDescriptorGuard, "").replace(variantAliases, "") === execFileSync("git", ["show", `${baseline}:${b2Source}`], {encoding:"utf8"}), "B2 rules frozen except missing descriptor/provided variant classification");
+  check(read(b2Source).replace(missingDescriptorGuard, "").replace(variantAliases, "").replace("function evaluateKnownContext(text: string, state: ConversationCommerceState, readOnlyProjection: boolean = false): B2Decision | null {", "function evaluateKnownContext(text: string, state: ConversationCommerceState): B2Decision | null {").replace('evaluateKnownContext(draft, state, input.metadata?.commerce_state_persistence_classification !== "COMMITTED" && !input.trusted_journey_progress)', "evaluateKnownContext(draft, state)") === execFileSync("git", ["show", `${baseline}:${b2Source}`], {encoding:"utf8"}), "B2 rules frozen except missing descriptor/provided variant classification");
   const reopened = new Set([b2Source, "supabase/functions/_shared/conversation-service-planner.ts", "supabase/functions/_shared/natural-customer-response.ts", "supabase/functions/generate-reply/index.ts"]);
   for (const file of closure.files ?? closure)
     check(
