@@ -223,8 +223,10 @@ function knownFacts(input: ServicePlanInput) {
         !["cancelled", "deferred"].includes(item.status)
       )
     ) {
-      if (entity.attributes.room_sizes || entity.attributes.room_sunlight || Object.keys(entity.constraints).length) {
-        add(`entity:${entity.entity_id}:requirements`, "目前需求", renderCanonicalRequirement(entity, input.language), "CUSTOMER_PROVIDED");
+      const rooms: Record<string, string> = { small_bedroom: "細房", large_bedroom: "大房", living_room: "客廳", study: "書房" };
+      if (entity.attributes.room_sizes && typeof entity.attributes.room_sizes === "object") {
+        for (const [room, size] of Object.entries(entity.attributes.room_sizes))
+          add(`entity:${entity.entity_id}:room_size:${room}`, `${rooms[room] ?? room}面積`, size, "CUSTOMER_PROVIDED");
       }
       add(`entity:${entity.entity_id}:requested_date`, "Requested date", entity.attributes.requested_date,"CUSTOMER_PROVIDED");
       add(

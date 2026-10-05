@@ -79,7 +79,7 @@ async function verifyActualEntrypoint(e, head, tree) {
     check(text.includes(t), `current Demo Summary: ${t}`);
   check(!/system_default|commerce_state_revision|resolver|B2/.test(text), "Summary excludes internals");
   for (const f of e.deployed_sources) check(f.sha256 === sha(readFileSync(f.repo_path)), `exact live source: ${f.repo_path}`);
-  check(e.runtime.generate_reply.version === 35 && e.runtime.generate_reply.status === "ACTIVE", "corrected live v35");
+  check(e.runtime.generate_reply.version === 36 && e.runtime.generate_reply.status === "ACTIVE", "corrected live v36");
   check(e.production.generate_reply.version === 201 && e.production.generate_reply.ezbr_sha256 === "b60a8df3b01a5a74eca5709f4e95929cf90ee432f6c266415e0fd00f77456d32", "production unchanged");
   for (const name of ["A2", "C3"]) check(e.ci[name].head_sha === head && e.ci[name].conclusion === "success", `new HEAD exact ${name}`);
   for (const name of ["production_build", "nonproduction_build", "typecheck", "summary", "social", "service"]) check(e.validation[name].exit_code === 0, `focused validation: ${name}`);
