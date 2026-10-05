@@ -62,6 +62,7 @@
     "supabase/functions/_shared/handoff-intent.ts",
     "supabase/functions/_shared/industry-profiles/home-appliance-v1.ts",
     "supabase/functions/_shared/industry-runtime-adapter.ts",
+    "supabase/functions/_shared/natural-customer-response.test.ts",
     "supabase/functions/_shared/natural-customer-response.ts",
     "supabase/functions/_shared/natural-dialogue-generic-core.test.ts",
     "supabase/functions/_shared/pre-send-conversion-supervisor.test.ts",
