@@ -1392,9 +1392,9 @@ jobs:
           set -euo pipefail
           git worktree add --detach "$RUNNER_TEMP/c3-final-gate-checkout" "$GITHUB_SHA"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/c3-final-gate-checkout/node_modules"
+          (cd "$RUNNER_TEMP/c3-final-gate-checkout" && node .github/scripts/phase1_console_final_gate.mjs --head "$GITHUB_SHA" --tree "$(git rev-parse HEAD^{tree})" --source-only)
           (cd "$RUNNER_TEMP/c3-final-gate-checkout" && node .github/scripts/task_ai_abc_c3_final_gate.mjs) | tee "$RUNNER_TEMP/c3-source-final-gate.log"
           grep -q 'C3_FINAL_GATE|result=PASS|scope=preproduction_machine_source' "$RUNNER_TEMP/c3-source-final-gate.log"
-          (cd "$RUNNER_TEMP/c3-final-gate-checkout" && node .github/scripts/phase1_console_final_gate.mjs --head "$GITHUB_SHA" --tree "$(git rev-parse HEAD^{tree})" --source-only)
           echo C3_PRISTINE_SOURCE_FINAL_GATE=PASS
 
   c3-durable-recovery-execution:
