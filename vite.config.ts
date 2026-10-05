@@ -9,31 +9,40 @@ import { mcpPlugin } from "@lovable.dev/mcp-js/stacks/tanstack/vite";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import type { ConfigEnv } from "vite";
+import { resolveConsoleEnvironment } from "./vite.preview-environment.mjs";
+
+export default async (environment: ConfigEnv) => {
 
 const isolatedBrowserAuth = process.env.C3_ISOLATED_BROWSER_AUTH === "local-only";
 if (isolatedBrowserAuth && process.env.NODE_ENV === "production") {
   throw new Error("Isolated browser Auth binding is forbidden in a production build");
 }
 
-const consoleEnvironment = process.env.C3_CONSOLE_ENV;
+const consoleEnvironment = resolveConsoleEnvironment(environment, process.env);
 if (consoleEnvironment && !["production", "nonproduction"].includes(consoleEnvironment)) {
   throw new Error("Unknown C3 Console environment");
 }
 const nonproductionConsole = consoleEnvironment === "nonproduction";
+const previewRouteTree = fileURLToPath(new URL("./.tanstack/c3-preview-routeTree.gen.ts", import.meta.url));
 if (nonproductionConsole && isolatedBrowserAuth) {
   throw new Error("Nonproduction Console cannot use isolated mock Auth");
 }
 const buildIdentity = nonproductionConsole
   ? `${execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim()} / ${execFileSync("git", ["rev-parse", "HEAD^{tree}"], { encoding: "utf8" }).trim()}${execFileSync("git", ["status", "--porcelain"], { encoding: "utf8" }).trim() ? " / WORKTREE MODIFIED" : ""}`
   : "";
+const demoHtml = `<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><title>C3 Phase 1 Demo</title><body><h1>NONPRODUCTION</h1><p>nbtowfuvvfqpxqydyoby</p><p>${buildIdentity}</p><p>按右下角聊天按鈕開始；真人接手請開啟 <a href="/console/conversations">Chat Console</a>。</p><script src="/widget/chat.js" data-channel-id="f6000000-0000-4000-8000-000000000130" data-api-base="https://nbtowfuvvfqpxqydyoby.supabase.co/functions/v1" defer></script></body></html>`;
 const tlsCert = process.env.C3_DEMO_TLS_CERT;
 const tlsKey = process.env.C3_DEMO_TLS_KEY;
 if ((tlsCert || tlsKey) && (!nonproductionConsole || !tlsCert || !tlsKey)) {
   throw new Error("Demo TLS requires nonproduction and both certificate paths");
 }
 
-export default defineConfig({
+return defineConfig({
   tanstackStart: {
+    // Start needs its route crawler. Keep Preview's generated output in the
+    // existing ignored build cache, rather than rewriting frozen source.
+    router: nonproductionConsole ? { generatedRouteTree: previewRouteTree } : undefined,
     // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
     // nitro/vite builds from this
     server: { entry: "server" },
@@ -47,8 +56,13 @@ export default defineConfig({
         server.middlewares.use((req: any, res: any, next: any) => {
           if (req.url !== "/phase1-demo") return next();
           res.setHeader("Content-Type", "text/html; charset=utf-8");
-          res.end(`<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><title>C3 Phase 1 Demo</title><body><h1>NONPRODUCTION</h1><p>nbtowfuvvfqpxqydyoby</p><p>${buildIdentity}</p><p>按右下角聊天按鈕開始；真人接手請開啟 <a href="/console/conversations">Chat Console</a>。</p><script src="/widget/chat.js" data-channel-id="f6000000-0000-4000-8000-000000000130" data-api-base="https://nbtowfuvvfqpxqydyoby.supabase.co/functions/v1" defer></script></body></html>`);
+          res.end(demoHtml);
         });
+      },
+      generateBundle(this: any) {
+        // The hosted Preview can serve a development build instead of the
+        // sandbox dev process. Reuse exactly the same existing Widget page.
+        this.emitFile({ type: "asset", fileName: "phase1-demo/index.html", source: demoHtml });
       },
     }] : [])],
     // Test-only external Auth boundary. The production binding module and
@@ -56,6 +70,7 @@ export default defineConfig({
     resolve: nonproductionConsole
       ? {
           alias: [
+            { find: /^(?:.*\/)?routeTree\.gen(?:\.ts)?$/, replacement: previewRouteTree },
             {
               find: /^(?:.*\/)?runtime-authority\.mjs$/,
               replacement: fileURLToPath(
@@ -79,4 +94,5 @@ export default defineConfig({
           }
         : undefined,
   },
-});
+})(environment);
+};
