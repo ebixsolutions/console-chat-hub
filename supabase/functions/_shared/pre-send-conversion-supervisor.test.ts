@@ -1396,3 +1396,23 @@ Deno.test("COMPONENT: cancellation predicates bind one canonical entity, clause 
   for(const reply of block){const d=decision(reply,state);assertEquals(d.code,'CANCELLED_ENTITY_RESTORATION',JSON.stringify({reply,d}));assertEquals(d.detail,'aa','predicate bound to wrong entity');}
   const d=decision('RV-713 remains cancelled. Restore CN-856.',state);assertEquals(d.code,'CANCELLED_ENTITY_RESTORATION','R9');assertEquals(d.detail,'cc','R9 must identify only restored C');
 });
+
+
+Deno.test("Phase1 localized pending-check statements pass unchanged B2 without known-field re-asks", () => {
+  for (const language of ["zh-TW", "zh-CN", "en"] as const) {
+    const state=createEmptyConversationCommerceState();
+    state.language=language;state.current_topic="air_conditioner";state.current_intent="select_product";
+    state.entities=[{entity_id:"air_conditioner:unscoped",category:"air_conditioner",model:"CW-SUL70BA",quantity:1,status:"researching",attributes:{quantity_basis:"system_default",installation_type:"window_unit",room_sizes:{small_bedroom:"80平方呎",large_bedroom:"110平方呎"},customer_goal:{category:"air_conditioner",objective:"select_product",journey_stage:"sizing_guidance",collected:["room_sizes","installation_type"],missing:["sizing_decision"],response_intent:"advance_decision",source_message_id:"source-1"}},constraints:{},provenance:{source_type:"customer",source_message_id:"source-1"}}];
+    state.installation.pending_checks=["window_opening_check"];
+    const question=language==="en"?"Could you take a look?":"可以幫我睇下嗎？";
+    const plan=planConversationService({question,language,commerce:state,memory:null,recall:{handled:false,reason:"NOT_A_RECALL_QUERY"}});
+    for(const recent of [[],[{role:"assistant",content:language==="en"?"What are the width and height of each window opening?":"各窗口位可放機嘅闊度同高度各係幾多？"}]]) {
+      const reply=renderServicePlanReply(plan,null,recent)!;
+      const before=JSON.stringify(state);
+      const result=evaluateB2BeforeCommit({proposed_response:reply,persistence_kind:"ai_reply",snapshot:{conversation_id:"fixture-conversation",company_id:"fixture-company",source_message_id:"source-2",source_message_content:question,commerce_state_revision:1,commerce_state_source_message_id:"source-1",state}});
+      assert(result.decision==="allow",`${language}: ${result.code}: ${result.detail}: ${reply}`);
+      assert(JSON.stringify(state)===before,"renderer/B2 changed canonical state");
+      assert(reply.includes("CW-SUL70BA") && reply.includes("80平方呎") && !reply.includes("查詢項目：air_conditioner"),"customer context lost");
+    }
+  }
+});

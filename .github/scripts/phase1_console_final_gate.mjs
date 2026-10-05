@@ -31,6 +31,7 @@ const allowed = [
   "supabase/functions/generate-reply/index.ts",
   "supabase/functions/_shared/conversation-service-planner.ts",
   "supabase/functions/_shared/conversation-service-planner.test.ts",
+  "supabase/functions/_shared/pre-send-conversion-supervisor.test.ts",
   "supabase/functions/_shared/natural-customer-response.ts",
   "supabase/functions/_shared/natural-customer-response.test.ts",
   "tests/phase1/console-summary.test.mjs",

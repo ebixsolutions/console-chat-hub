@@ -156,6 +156,14 @@ const has = (text: string, values: string[]) =>
     text.toLocaleLowerCase().includes(value.toLocaleLowerCase())
   );
 
+// Locale names for the existing canonical room-size keys used below.
+const SERVICE_ROOM_LABELS: Record<string, [string, string, string]> = {
+  small_bedroom: ["細房", "小卧室", "small bedroom"],
+  large_bedroom: ["大房", "大卧室", "large bedroom"],
+  living_room: ["客廳", "客厅", "living room"],
+  study: ["書房", "书房", "study"],
+};
+
 function knownFacts(input: ServicePlanInput) {
   const facts: ServiceDialoguePlan["known_facts"] = [];
   const add = (
@@ -225,10 +233,10 @@ function knownFacts(input: ServicePlanInput) {
         !["cancelled", "deferred"].includes(item.status)
       )
     ) {
-      const rooms: Record<string, string> = { small_bedroom: "細房", large_bedroom: "大房", living_room: "客廳", study: "書房" };
+      const l = input.language === "en" ? 2 : input.language === "zh-CN" ? 1 : 0;
       if (entity.attributes.room_sizes && typeof entity.attributes.room_sizes === "object") {
         for (const [room, size] of Object.entries(entity.attributes.room_sizes))
-          add(`entity:${entity.entity_id}:room_size:${room}`, `${rooms[room] ?? room}面積`, size, "CUSTOMER_PROVIDED");
+          add(`entity:${entity.entity_id}:room_size:${room}`, `${SERVICE_ROOM_LABELS[room]?.[l] ?? HOME_APPLIANCE_ROOMS.find(r => r.key === room)?.label[input.language] ?? ["空間", "空间", "Space"][l]}${["面積", "面积", " area"][l]}`, size, "CUSTOMER_PROVIDED");
       }
       add(`entity:${entity.entity_id}:requested_date`, "Requested date", entity.attributes.requested_date,"CUSTOMER_PROVIDED");
       add(
@@ -732,8 +740,9 @@ function contextualFacts(plan: ServiceDialoguePlan, language: ServiceLanguage): 
     if (entity) {
       const field = fact.name.slice(`entity:${entity.entity_id}:`.length);
       if (field.startsWith("room_size:")) {
-        const room = HOME_APPLIANCE_ROOMS.find(r => r.key === field.slice("room_size:".length));
-        label = room ? room.label[language] + ["面積", "面积", " area"][l] : ["空間面積", "空间面积", "Space area"][l];
+        const roomKey = field.slice("room_size:".length);
+        const roomName = SERVICE_ROOM_LABELS[roomKey]?.[l] ?? HOME_APPLIANCE_ROOMS.find(r => r.key === roomKey)?.label[language];
+        label = roomName ? roomName + ["面積", "面积", " area"][l] : ["空間面積", "空间面积", "Space area"][l];
       } else label = labels[field]?.[l];
     }
     // Unknown schema fields receive a neutral label, never a raw internal key.
@@ -760,12 +769,12 @@ function contextualContinuation(plan: ServiceDialoguePlan, l: number, recent: Ar
   if (state?.installation.pending_checks.includes("window_opening_check")) {
     const alreadyAsked = plan.clarification_previously_asked || recent.some(m => m.role === "assistant" && /(?:窗口|window)/i.test(m.content) && /(?:闊|宽|高度|width|height)/i.test(m.content));
     return prefix + (alreadyAsked ? [
-      "窗口位闊度同高度仍未有資料；有尺寸後先可以核對放機限制，型號是否適用仍要產品資料及專業確認。",
-      "窗口位置的宽度和高度仍未提供；有尺寸后才能核对放置限制，型号是否适用仍需产品资料及专业确认。",
+      "窗口位闊度同高度仍未有資料；有尺寸後先可以核對放機限制，型號適用性仍要產品資料及專業確認。",
+      "窗口位置的宽度和高度仍未提供；有尺寸后才能核对放置限制，型号适用性仍需产品资料及专业确认。",
       "The window-opening width and height are still missing. Those measurements are needed to check fit; product evidence and professional confirmation are still needed for suitability.",
     ][l] : [
-      "要核對窗口位可唔可以放得落，仲欠各位置可用嘅闊度同高度。你有呢啲尺寸嗎？型號是否適用仍要產品資料及專業確認。",
-      "要核对窗口位置是否放得下，还缺各位置可用的宽度和高度。你有这些尺寸吗？型号是否适用仍需产品资料及专业确认。",
+      "要核對窗口位可唔可以放得落，仲欠各位置可用嘅闊度同高度。你有呢啲尺寸嗎？型號適用性仍要產品資料及專業確認。",
+      "要核对放置限制，还缺各位置可用的宽度和高度。你有这些尺寸吗？型号适用性仍需产品资料及专业确认。",
       "To check whether a unit will fit, I still need the usable width and height of each opening. Do you have those measurements? Suitability still needs product evidence and professional confirmation.",
     ][l]);
   }
@@ -775,8 +784,8 @@ function contextualContinuation(plan: ServiceDialoguePlan, l: number, recent: Ar
     "Your requirements are clear. The unresolved details still need product evidence or a professional check; suitability is not confirmed.",
   ][l];
   if (goalText) return prefix + [
-    "我可以按以上資料繼續整理；涉及產品或服務是否適用嘅部分仍待核實。",
-    "可以按以上资料继续整理；产品或服务是否适用仍待核实。",
+    "我可以按以上資料繼續整理；涉及產品或服務適用性仍待核實。",
+    "可以按以上资料继续整理；产品或服务适用性仍待核实。",
     "I can continue with these details; product or service suitability remains unverified.",
   ][l];
   return plan.clarification_previously_asked ? [
@@ -897,7 +906,7 @@ function renderContextualServiceReply(
         const detail = facts.join(languageIndex === 2 ? "; " : "；");
         const introduction = detail ? [
           `目前資料係：${detail}。`, `目前资料是：${detail}。`,
-          `Here is what you have provided: ${detail}. `,
+          `Your current details: ${detail}. `,
         ][languageIndex] : "";
         return introduction + contextualContinuation(plan, languageIndex, recentMessages);
       }

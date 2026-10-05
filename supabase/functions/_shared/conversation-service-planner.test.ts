@@ -319,6 +319,7 @@ Deno.test("Phase1 contextual projection uses schema locale, goal and pending che
       assert(!/已查庫存|已安排|已報價|已轉交|stock checked|technician booked|quote issued|transferred/.test(reply), "no completed business promise");
       if(language === "en") {
         assert(/air conditioner/.test(reply) && /Living room area:|living room area:/i.test(reply), "English display names and field labels");
+        assert(reply.includes("large bedroom area: 110平方呎") && reply.includes("small bedroom area: 80平方呎"), "room identities preserved");
         assert(!/查詢項目|面積：|型號：/.test(reply), "no Chinese labels in English");
       } else assert(reply.includes(language === "zh-CN" ? "空调" : "冷氣機"), "industry locale category label");
       if(["repair","after_sales"].includes(objective)) assert(!/choose|replace|選購|揀合適|更換/.test(reply), "repair goal is not shopping");
