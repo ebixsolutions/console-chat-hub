@@ -1905,9 +1905,27 @@ function reduceSingleTurn(
   }
   const journey = resolveCustomerJourneyTurn(input, previous);
   const calculationTurn = !input.trusted_product_topic_focus && detectExplicitCalculationRequest(input.text);
-  const resolvedHints = calculationTurn
+  const proposedHints = calculationTurn
     ? []
     : materializeRoomOnlyReferenceHints(input.text, previous, rawHints, input.history ?? []);
+  // A correction's schema identifier refers to an existing customer entity.
+  // A compatibility hint ID is not authority to create a second SKU entity.
+  const boundHints = proposedHints.map(hint => {
+    if (!input.semantic_frame?.customer_correction) return hint;
+    const identifiers = [hint.model, hint.attributes?.sku, hint.attributes?.product_name, ...(hint.aliases ?? [])]
+      .filter((v): v is string => typeof v === "string" && v.length > 1).map(v=>v.toLowerCase());
+    const matches = previous.entities.filter(entity => [entity.model, entity.attributes.sku, entity.attributes.product_name]
+      .some(v=>typeof v === "string" && identifiers.includes(v.toLowerCase())));
+    if (matches.length !== 1) return hint;
+    const entity=matches[0];
+    return {...hint,entity_id:entity.entity_id,category:entity.category,model:entity.model,
+      attributes:{...hint.attributes,...entity.attributes}};
+  });
+  const resolvedHints = [...boundHints.reduce((map,hint) => {
+    const existing=map.get(hint.entity_id);
+    map.set(hint.entity_id,existing ? {...existing,aliases:[...new Set([...(existing.aliases??[]),...(hint.aliases??[])])]} : hint);
+    return map;
+  },new Map<string,CommerceTurnEntityHint>()).values()];
   const hints = calculationTurn
     ? []
     : filterGhostUnscopedHints(input.text, previous, resolvedHints);

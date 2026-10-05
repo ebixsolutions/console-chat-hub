@@ -1,5 +1,6 @@
 import { callModel } from "./deterministic-runtime-router.ts";
 import { normalizeCommerceSemanticFrame } from "./commerce-semantic-frame.ts";
+import { mergeCommerceEntityHints, semanticFrameToEntityHints } from "./commerce-semantic-adapter.ts";
 import { classifyHandoffIntent as classifyR1 } from "./conversation-intelligence.ts";
 import { classifyHandoffIntent as classifyGate } from "./handoff-intent.ts";
 import { arbitrateAnaphoricProductFollowUp } from "./natural-customer-response.ts";
@@ -231,10 +232,10 @@ Deno.test("Phase1 actual compatibility correction preserves a scoped generic qua
  const result=await callModel({purpose:"generation",system:"commerce semantic interpreter",user:`Latest customer turn: ${text}`,maxTokens:2048,operationId:"component",companyId:"tenant-a",conversationId:"conversation-a",tag:"commerce-semantic",responseFormat:"json"});
  assert(result.ok,"adapter did not return");const frame=normalizeCommerceSemanticFrame(JSON.parse(result.text));
  assert(frame,"adapter frame invalid");
- const hints=buildCommerceEntityHints(["我想買3盒茉莉花茶，SKU: TEA-R21。","我想買2盒桂花茶，SKU: TEA-G32。"]);
+ const hints=mergeCommerceEntityHints(semanticFrameToEntityHints(frame),buildCommerceEntityHints([text,"我想買2盒桂花茶，SKU: TEA-G32。","我想買3盒茉莉花茶，SKU: TEA-R21。"]));
  const input={conversation_id:"conversation-a",company_id:"tenant-a",source_message_id:"quantity-update",text,language:"zh-TW" as const,semantic_frame:frame};
  const after=reduceTurn(before,input,hints);
- assert(after.entities[0].quantity===4 && after.entities[1].quantity===2,"quantity assignment lost or crossed entity");
+ assert(after.entities.length===2 && after.entities[0].quantity===4 && after.entities[1].quantity===2,`quantity assignment lost, duplicated or crossed entity: ${JSON.stringify(after.entities)}`);
  assert(after.entities[0].provenance.source_message_id==='quantity-update' && after.conversion.order_status==='none' && after.quotes.length===0,"assignment source or transaction truth lost");
  for(const text of ["TEA-Z99 嘅數量改為4盒。","TEA-R21 或 TEA-G32 嘅數量改為4盒。","TEA-R21 嘅數量可唔可以改為4盒？"]){
   const untouched=reduceTurn(before,{...input,text,semantic_frame:null},hints);

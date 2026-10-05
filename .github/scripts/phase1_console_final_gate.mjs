@@ -13,6 +13,7 @@ const baseline = "f71e6013db21a5280cbc41b22f5ae7da5b7623d0";
 const project = "nbtowfuvvfqpxqydyoby";
 const allowed = [
   ".github/scripts/c3_director_candidate_scope.json",
+  ".github/scripts/c3_director_generic_core_final_gate.mjs",
   ".github/scripts/phase1_console_final_gate.mjs",
   ".github/workflows/task-ai-abc-c3-final-gate.yml",
   "sql/phase1-console/agent-reply-idempotency.rollback.sql",

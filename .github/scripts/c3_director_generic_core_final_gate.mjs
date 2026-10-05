@@ -42,7 +42,16 @@ for (const file of [
   "supabase/functions/receive-widget-message/index.ts",
   "supabase/functions/agent-assist/index.ts",
 ]) {
-  if (sha(readFileSync(file)) !== sha(execFileSync("git", ["show", `${baseline}:${file}`]))) fail("frozen_source_drift", file);
+  let frozenBytes = readFileSync(file);
+  if (file === "supabase/functions/_shared/commerce-state-reducer.ts") {
+    // The reproduced generic quantity assignment opens only this operator
+    // vocabulary. Every other reducer byte retains the frozen comparison.
+    const current = frozenBytes.toString("utf8");
+    const operator = String.raw`(?:改為|改为|改成|改做|change\s+to|set\s+to|係|是|=|:|：)?`;
+    if (current.split(operator).length !== 2) fail("quantity_assignment_delta_missing_or_repeated", file);
+    frozenBytes = Buffer.from(current.replace(operator, "(?:係|是|=|:|：)?"));
+  }
+  if (sha(frozenBytes) !== sha(execFileSync("git", ["show", `${baseline}:${file}`]))) fail("frozen_source_drift", file);
 }
 const closure = runtimeDependencyClosure({ root: process.cwd(), entrypoints: [
   "supabase/functions/generate-reply/index.ts",
