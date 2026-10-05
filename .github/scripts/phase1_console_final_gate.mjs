@@ -79,7 +79,19 @@ async function verifyActualEntrypoint(e, head, tree) {
     check(text.includes(t), `current Demo Summary: ${t}`);
   check(!/system_default|commerce_state_revision|resolver|B2/.test(text), "Summary excludes internals");
   for (const f of e.deployed_sources) check(f.sha256 === sha(readFileSync(f.repo_path)), `exact live source: ${f.repo_path}`);
-  check(e.runtime.generate_reply.version === 36 && e.runtime.generate_reply.status === "ACTIVE", "corrected live v36");
+  const target = JSON.parse(read(e.target_manifest_path));
+  check(target.head === head && target.tree === tree && target.project_id === project, "actual successor deployment target identity");
+  for (const name of ["generate_reply", "agent_assist"]) {
+    const actual = e.runtime[name], expected = target.runtime[name];
+    check(actual.status === "ACTIVE" && actual.version === expected.version && actual.ezbr_sha256 === expected.ezbr_sha256 && actual.verify_jwt === true && actual.import_map === false, `successor runtime source/config identity: ${name}`);
+  }
+  const contextual = e.readable_projection;
+  check(contextual.head === head && contextual.tree === tree && contextual.reply_id === e.cases.context.reply.id, "S4 successor persisted reply binding");
+  const reply = e.cases.context.reply.content;
+  check(reply.includes("冷氣機") && !/(?:查詢項目：air_conditioner|select_product|window_opening_check)/.test(reply) && !/你想我幫你跟進邊一部分/.test(reply), "S4 localized goal-aware customer text");
+  check(/闊度|高度/.test(reply) && !/已查庫存|已安排|已報價|已轉交/.test(reply), "S4 useful unresolved check without completed promises");
+  check(contextual.before.state_hash === contextual.after.state_hash && contextual.before.revision === contextual.after.revision && JSON.stringify(contextual.before.state) === JSON.stringify(contextual.after.state), "S4 renderer leaves authoritative semantic state unchanged");
+  check(read(contextual.raw_reply_path).includes(reply), "S4 actual hosted persisted text observation");
   check(e.production.generate_reply.version === 201 && e.production.generate_reply.ezbr_sha256 === "b60a8df3b01a5a74eca5709f4e95929cf90ee432f6c266415e0fd00f77456d32", "production unchanged");
   for (const name of ["A2", "C3"]) check(e.ci[name].head_sha === head && e.ci[name].conclusion === "success", `new HEAD exact ${name}`);
   for (const name of ["production_build", "nonproduction_build", "typecheck", "summary", "social", "service"]) check(e.validation[name].exit_code === 0, `focused validation: ${name}`);

@@ -11,7 +11,9 @@ import type { CommerceEntity, ConversationCommerceState } from "./commerce-state
 import type { CanonicalConversationMemory } from "./conversation-long-memory.ts";
 import { exactProductIdentifiers, isProductOperationFailure, isProductSupportProblem } from "./natural-customer-response.ts";
 import { deriveTypedCustomerMoneyFacts } from "./customer-money-facts.ts";
-import { customerRequestedQuantity } from "./customer-journey-orchestration.ts";
+import { activeCustomerGoal, customerRequestedQuantity } from "./customer-journey-orchestration.ts";
+
+import { HOME_APPLIANCE_CATEGORIES, HOME_APPLIANCE_ROOMS } from "./industry-profiles/home-appliance-v1.ts";
 
 export type ServiceLanguage = "zh-TW" | "zh-CN" | "en";
 export type ServiceKnowledgeState =
@@ -485,6 +487,7 @@ export function planConversationService(
       240,
     ),
     known_facts: facts,
+    committed_commerce: input.commerce ?? undefined,
     missing_slots: [] as string[],
     clarification_target: null as string | null,
     clarification_previously_asked: (input.clarification_attempts ?? 0) > 0,
@@ -689,9 +692,108 @@ const labels: Record<string, [string, string, string]> = {
   ],
 };
 
+/** Presentation only: typed fields use the existing industry locale contract.
+ * Customer text, identifiers, numbers and units are never globally rewritten. */
+function contextualFacts(plan: ServiceDialoguePlan, language: ServiceLanguage): string[] {
+  const state = plan.committed_commerce;
+  const active = state?.entities.filter(e => !["deferred", "cancelled"].includes(e.status)) ?? [];
+  const goal = state ? activeCustomerGoal(state) : null;
+  const categoryKey = (value: string | null | undefined) => HOME_APPLIANCE_CATEGORIES.find(c =>
+    c.key === value || c.aliases.some(alias => alias.toLowerCase() === value?.toLowerCase()))?.key;
+  const category = categoryKey(goal?.goal.category ?? state?.current_topic);
+  const labels: Record<string, [string, string, string]> = {
+    current_topic: ["查詢項目", "查询项目", "Item"],
+    delivery_address: ["送貨地址", "送货地址", "Delivery address"],
+    recipient_name: ["收件人", "收件人", "Recipient"],
+    delivery_preference: ["希望送貨日期", "希望送货日期", "Preferred delivery date"],
+    customer_preference: ["偏好", "偏好", "Preference"],
+    customer_constraint: ["重要限制", "重要限制", "Constraint"],
+    model: ["型號", "型号", "Model"], quantity: ["數量", "数量", "Quantity"],
+    room_size: ["使用面積", "使用面积", "Area"],
+    horsepower: ["所需匹數", "所需匹数", "Required horsepower"],
+    requested_date: ["希望日期", "希望日期", "Requested date"],
+  };
+  const l = language === "en" ? 2 : language === "zh-CN" ? 1 : 0;
+  return plan.known_facts.flatMap(fact => {
+    if (["current_intent", "customer_goal", "quotation_status", "order_status"].includes(fact.name)) return [];
+    // Prefer the current entity fields over prose memory copies of requirements.
+    if (active.length && fact.authority === "CURRENT_CUSTOMER_MEMORY" && !["customer_preference", "customer_constraint"].includes(fact.name)) return [];
+    const entity = active.find(e => fact.name.startsWith(`entity:${e.entity_id}:`));
+    if (fact.name.startsWith("entity:") && state && (!entity || (category && categoryKey(entity.category) !== category))) return [];
+    if (fact.name.startsWith("delivery") || fact.name === "recipient_name") {
+      if (!/(?:送貨|送货|delivery|收件|recipient)/i.test(plan.customer_goal + " " + (plan.customer_turn ?? ""))) return [];
+    }
+    let label = labels[fact.name]?.[l];
+    let value = fact.value;
+    if (fact.name === "current_topic") {
+      const definition = HOME_APPLIANCE_CATEGORIES.find(c => c.key === categoryKey(fact.value));
+      value = definition?.label[language] ?? ["項目未確認", "项目未确认", "item not confirmed"][l];
+    }
+    if (entity) {
+      const field = fact.name.slice(`entity:${entity.entity_id}:`.length);
+      if (field.startsWith("room_size:")) {
+        const room = HOME_APPLIANCE_ROOMS.find(r => r.key === field.slice("room_size:".length));
+        label = room ? room.label[language] + ["面積", "面积", " area"][l] : ["空間面積", "空间面积", "Space area"][l];
+      } else label = labels[field]?.[l];
+    }
+    // Unknown schema fields receive a neutral label, never a raw internal key.
+    label ??= ["你提供的資料", "你提供的资料", "Provided detail"][l];
+    return [`${label}${l === 2 ? ": " : "："}${value}`];
+  }).slice(0, 6);
+}
+
+function contextualContinuation(plan: ServiceDialoguePlan, l: number, recent: Array<{role: string; content: string}>): string {
+  const state = plan.committed_commerce;
+  const goal = state ? activeCustomerGoal(state) : null;
+  const objectives: Record<string, [string, string, string]> = {
+    select_product: ["你想揀合適產品", "你想选择合适产品", "You want to choose a suitable product"],
+    replace_existing_appliance: ["你想更換現有產品", "你想更换现有产品", "You want to replace your existing product"],
+    compare_products: ["你想比較產品", "你想比较产品", "You want to compare products"],
+    repair: ["你想處理維修", "你想处理维修", "You need help with a repair"],
+    after_sales: ["你想跟進售後問題", "你想跟进售后问题", "You need after-sales support"],
+  };
+  const objective = goal?.goal.objective ?? state?.current_intent;
+  const goalText = objective && objectives[objective]?.[l] ||
+    (objective && !/^[a-z]+(?:_[a-z]+)*$/.test(objective) ? objective : "");
+  const prefix = goalText ? goalText + (l === 2 ? ". " : "。") : "";
+  // A persisted pending check is not a completed check or a new discovery goal.
+  if (state?.installation.pending_checks.includes("window_opening_check")) {
+    const alreadyAsked = plan.clarification_previously_asked || recent.some(m => m.role === "assistant" && /(?:窗口|window)/i.test(m.content) && /(?:闊|宽|高度|width|height)/i.test(m.content));
+    return prefix + (alreadyAsked ? [
+      "窗口位闊度同高度仍未有資料；有尺寸後先可以核對放機限制，型號是否適用仍要產品資料及專業確認。",
+      "窗口位置的宽度和高度仍未提供；有尺寸后才能核对放置限制，型号是否适用仍需产品资料及专业确认。",
+      "The window-opening width and height are still missing. Those measurements are needed to check fit; product evidence and professional confirmation are still needed for suitability.",
+    ][l] : [
+      "要核對窗口位可唔可以放得落，仲欠各位置可用嘅闊度同高度。你有呢啲尺寸嗎？型號是否適用仍要產品資料及專業確認。",
+      "要核对窗口位置是否放得下，还缺各位置可用的宽度和高度。你有这些尺寸吗？型号是否适用仍需产品资料及专业确认。",
+      "To check whether a unit will fit, I still need the usable width and height of each opening. Do you have those measurements? Suitability still needs product evidence and professional confirmation.",
+    ][l]);
+  }
+  if (goal?.goal.missing.length) return prefix + [
+    "你嘅要求已清楚；未確認嘅部分仍要按產品資料或由專業人員核對，暫時未能確認適用性。",
+    "你的要求已明确；未确认的部分仍需按产品资料或由专业人员核对，目前无法确认适用性。",
+    "Your requirements are clear. The unresolved details still need product evidence or a professional check; suitability is not confirmed.",
+  ][l];
+  if (goalText) return prefix + [
+    "我可以按以上資料繼續整理；涉及產品或服務是否適用嘅部分仍待核實。",
+    "可以按以上资料继续整理；产品或服务是否适用仍待核实。",
+    "I can continue with these details; product or service suitability remains unverified.",
+  ][l];
+  return plan.clarification_previously_asked ? [
+    "跟進方向仍未確認；可以補充你想處理嘅具體問題。",
+    "跟进方向仍未确认；可以补充你想处理的具体问题。",
+    "The next step is still unclear; please add the specific issue you need help with.",
+  ][l] : [
+    "你想核對產品資料，定係跟進使用問題？",
+    "你想核对产品资料，还是跟进使用问题？",
+    "Would you like to check product information or get help with a usage issue?",
+  ][l];
+}
+
 function renderContextualServiceReply(
   plan: ServiceDialoguePlan,
   languageIndex: number,
+  recentMessages: Array<{ role: string; content: string }> = [],
 ): string {
   const turn = clean(plan.customer_turn || plan.customer_goal, 320);
   const summaryIntent =
@@ -706,12 +808,7 @@ function renderContextualServiceReply(
     );
 
   if (summaryIntent && plan.known_facts.length) {
-    const safeFacts = plan.known_facts.filter((fact) =>
-      !["current_intent", "customer_goal", "quotation_status", "order_status"]
-        .includes(fact.name)
-    );
-    const facts = (safeFacts.length ? safeFacts : plan.known_facts).slice(0, 6)
-      .map((fact) => `${fact.label}：${fact.value}`).join("；");
+    const facts = contextualFacts(plan, languageIndex === 2 ? "en" : languageIndex === 1 ? "zh-CN" : "zh-TW").join(languageIndex === 2 ? "; " : "；");
     return [
       `目前資料係：${facts}。其餘未確定細節仍要再核實。`,
       `目前资料是：${facts}。其余未确定细节仍需核实。`,
@@ -795,14 +892,14 @@ function renderContextualServiceReply(
 
   if (genericTarget) {
     if (plan.knowledge_state === "not_needed") {
-      const facts = plan.known_facts.filter((fact) => !["current_intent", "customer_goal", "quotation_status", "order_status"].includes(fact.name));
-      if (facts.length) {
-        const detail = facts.slice(0, 6).map((fact) => `${fact.label}：${fact.value}`).join("；");
-        return [
-          `目前資料係：${detail}。你想我幫你跟進邊一部分？`,
-          `目前资料是：${detail}。你想我帮你跟进哪一部分？`,
-          `Here is the information you have provided: ${detail}. Which part would you like help with?`,
-        ][languageIndex];
+      const facts = contextualFacts(plan, languageIndex === 2 ? "en" : languageIndex === 1 ? "zh-CN" : "zh-TW");
+      if (facts.length || plan.committed_commerce?.current_intent) {
+        const detail = facts.join(languageIndex === 2 ? "; " : "；");
+        const introduction = detail ? [
+          `目前資料係：${detail}。`, `目前资料是：${detail}。`,
+          `Here is what you have provided: ${detail}. `,
+        ][languageIndex] : "";
+        return introduction + contextualContinuation(plan, languageIndex, recentMessages);
       }
       return labels[plan.clarification_target ?? "customer_goal"]?.[languageIndex] ?? labels.customer_goal[languageIndex];
     }
@@ -891,7 +988,7 @@ export function renderServicePlanReply(
         plan.clarification_target,
       ))
   ) {
-    return renderContextualServiceReply(plan, l);
+    return renderContextualServiceReply(plan, l, recentMessages);
   }
   if (plan.action === "customer_issue_next_step" && plan.issue_kind) {
     if (plan.issue_kind === "order_status_lookup") {

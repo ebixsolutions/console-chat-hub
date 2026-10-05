@@ -288,3 +288,61 @@ Deno.test("S4 contextual help reads canonical model and never promotes default q
   state.entities[0].quantity = 3;
   assert(planConversationService({ question: "可以幫我睇下嗎？", language: "zh-TW", recall: { handled: false, reason: "NOT_A_RECALL_QUERY" }, commerce: state, memory: null }).known_facts.some(f => f.name.endsWith(":quantity") && f.value === "3"), "explicit quantity lost");
 });
+
+
+Deno.test("Phase1 contextual projection uses schema locale, goal and pending checks without mutation", () => {
+  for (const language of languages) {
+    for (const objective of ["select_product", "replace_existing_appliance", "repair", "after_sales"]) {
+      const state = structuredClone(commerce);
+      state.language = language;
+      state.current_topic = "air_conditioner";
+      state.current_intent = objective;
+      state.entities = [{...state.entities[0], entity_id:"air_conditioner:unscoped", category:"air_conditioner", model:"SKU_air_conditioner-CW-SUL70BA", attributes:{
+        quantity_basis:"system_default", room_sizes:{living_room:"180平方呎",large_bedroom:"110平方呎",small_bedroom:"80平方呎"},
+        customer_goal:{category:"air_conditioner",objective,journey_stage:"sizing_guidance",collected:["room_sizes"],missing:["sizing_decision"],response_intent:"advance_decision",source_message_id:"source-1"}
+      }}];
+      state.entities.push({...state.entities[0],entity_id:"refrigerator:unscoped",category:"refrigerator",status:"deferred",model:"DEFERRED-SKU"});
+      state.installation.pending_checks = ["window_opening_check"];
+      const question = language === "en" ? "Could you take a look?" : "可以幫我睇下嗎？";
+      const input = {question,language,commerce:state,memory:null,recall:{handled:false,reason:"NOT_A_RECALL_QUERY" as const}};
+      const before = JSON.stringify(input);
+      const plan = planConversationService(input);
+      const planBefore = JSON.stringify(plan);
+      const reply = renderServicePlanReply(plan,null) ?? "";
+      assert(reply.includes("SKU_air_conditioner-CW-SUL70BA"), "exact SKU retained, not globally replaced");
+      for (const area of ["180平方呎","110平方呎","80平方呎"]) assert(reply.includes(area), "current room fact retained");
+      assert(!reply.includes("DEFERRED-SKU"), "deferred facts not active");
+      assert(!/(?:Item|查詢項目|查询项目)[：:]\s*air_conditioner/.test(reply), "typed category code hidden");
+      assert(!/select_product|replace_existing_appliance|sizing_decision|window_opening_check/.test(reply), "internal objective/pending codes hidden");
+      assert(!/數量：1|Quantity: 1|買.*1部/.test(reply), "system default is not confirmed quantity");
+      assert(!/你想我幫你跟進邊一部分|Which part would you like help/.test(reply), "known goal is not reopened");
+      assert(!/已查庫存|已安排|已報價|已轉交|stock checked|technician booked|quote issued|transferred/.test(reply), "no completed business promise");
+      if(language === "en") {
+        assert(/air conditioner/.test(reply) && /Living room area:|living room area:/i.test(reply), "English display names and field labels");
+        assert(!/查詢項目|面積：|型號：/.test(reply), "no Chinese labels in English");
+      } else assert(reply.includes(language === "zh-CN" ? "空调" : "冷氣機"), "industry locale category label");
+      if(["repair","after_sales"].includes(objective)) assert(!/choose|replace|選購|揀合適|更換/.test(reply), "repair goal is not shopping");
+      const history = [{role:"assistant",content:language === "en" ? "What are the width and height of each window opening?" : "各窗口位可放機嘅闊度同高度各係幾多？"}];
+      const followup = renderServicePlanReply(plan,null,history) ?? "";
+      assert(!/[?？]/.test(followup), "pending already-asked measurements not re-asked as new");
+      assert(JSON.stringify(input) === before && JSON.stringify(plan) === planBefore,"renderer/planner did not mutate input or canonical state");
+    }
+  }
+});
+
+Deno.test("Phase1 unknown typed category stays neutral and customer literals stay exact", () => {
+  const state = structuredClone(commerce);
+  state.current_topic = "unknown_internal_category";
+  state.current_intent = null;
+  state.entities=[];
+  const plan=planConversationService({question:"Can you help with this?",language:"en",commerce:state,
+    memory:null,recall:{handled:false,reason:"NOT_A_RECALL_QUERY"}});
+  // A free-text preference has no typed category contract: preserve its negation and exact literal.
+  plan.known_facts.push({name:"customer_preference",label:"偏好",value:"Do not buy air_conditioner; SKU_AC-17; 595 mm",authority:"CURRENT_CUSTOMER_MEMORY",status:"provided"});
+  const before=JSON.stringify(plan);
+  const reply=renderServicePlanReply(plan,null) ?? "";
+  assert(reply.includes("item not confirmed") && !reply.includes("unknown_internal_category"),"unknown category is neutral");
+  assert(reply.includes("Do not buy air_conditioner; SKU_AC-17; 595 mm"),"customer negation, SKU, value and unit preserved exact");
+  assert(!/查詢項目|送貨地址|收件人/.test(reply),"known schema labels localized");
+  assert(JSON.stringify(plan)===before,"plan not rewritten");
+});
