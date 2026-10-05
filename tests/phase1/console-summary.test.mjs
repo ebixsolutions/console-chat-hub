@@ -106,6 +106,15 @@ try {
     assert.deepEqual(projected.find(s => s.title === "目前需求").lines, [expected]);
     assert.ok(!JSON.stringify(projected).includes("選購"));
   }
+  const named = structuredClone(envelope);
+  named.structured_package.active_entities=[{entity_id:'generic:one',category:'generic_product',quantity:3,attributes:{product_name:'茉莉花茶',sku:'TEA-R21',unit:'盒'}}];
+  named.structured_package.current_customer_facts=[{key:'entity:generic:one:quantity',entity_id:'generic:one',value:3,authority:'canonical_commerce',source_message_id:'source-one'}];
+  assert.deepEqual(projectTicketSummary(named,p.conversation_id,p.company_id).find(s=>s.title==='目前需求').lines,['茉莉花茶 TEA-R21：3 盒（客人確認）']);
+  named.structured_package.current_customer_facts[0].entity_id='generic:other';
+  assert.ok(projectTicketSummary(named,p.conversation_id,p.company_id).find(s=>s.title==='目前需求').lines[0].includes('數量未確認'));
+  named.structured_package.active_entities[0].attributes.quantity_basis='system_default';
+  named.structured_package.current_customer_facts[0].entity_id='generic:one';
+  assert.ok(projectTicketSummary(named,p.conversation_id,p.company_id).find(s=>s.title==='目前需求').lines[0].includes('數量未確認'));
   const deferred = structuredClone(envelope);
   deferred.structured_package.active_entities.push({ category: "paper", status: "deferred", quantity: 12, attributes: { quantity_basis: "customer_explicit", unit: "包" } });
   assert.ok(!JSON.stringify(projectTicketSummary(deferred, p.conversation_id, p.company_id).find(s => s.title === "目前需求")).includes("paper"));

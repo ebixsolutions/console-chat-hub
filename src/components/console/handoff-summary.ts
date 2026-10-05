@@ -27,6 +27,13 @@ const labels: Record<string, string> = {
   features: "功能",
   horsepower: "匹數",
   model: "型號",
+  weight: "重量",
+  dimension: "尺寸",
+  capacity: "容量",
+  power: "功率",
+  voltage: "電壓",
+  noise: "噪音",
+  policy: "條款",
 };
 const text = (x: unknown): string =>
   typeof x === "string" ? x.slice(0, 2000) : typeof x === "number" ? String(x) : "";
@@ -61,12 +68,16 @@ export function projectTicketSummary(
     rows(items).flatMap((e) => {
       const a = obj(e.attributes) ?? {},
         constraints = obj(e.constraints) ?? {};
+      const requested = rows(p.current_customer_facts).find(f =>
+        f.key === `entity:${text(e.entity_id)}:quantity` && f.entity_id === e.entity_id &&
+        f.authority === "canonical_commerce" && text(f.source_message_id) &&
+        typeof f.value === "number" && f.value === e.quantity);
       const quantity =
-        a.quantity_basis === "customer_explicit" && typeof e.quantity === "number"
+        a.quantity_basis !== "system_default" && (a.quantity_basis === "customer_explicit" || requested) && typeof e.quantity === "number"
           ? `${e.quantity}${text(a.unit) ? " " + human(a.unit) : ""}（客人確認）`
           : "數量未確認";
       const result = [
-        `${human(e.category)}${text(e.model) ? " " + text(e.model) : ""}：${quantity}`,
+        `${text(a.product_name) || human(e.category)}${text(e.model) || text(a.sku) ? " " + (text(e.model) || text(a.sku)) : ""}：${quantity}`,
       ];
       for (const [key, v] of Object.entries(obj(a.room_sizes) ?? {}))
         if (text(v)) result.push(`${human(key)}：${text(v)}`);

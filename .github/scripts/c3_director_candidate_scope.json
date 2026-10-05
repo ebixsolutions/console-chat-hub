@@ -37,6 +37,7 @@
     "src/routes/login.tsx",
     "supabase/functions/_shared/b2-journey-progress-contract.ts",
     "supabase/functions/_shared/canonical-grounding.ts",
+    "supabase/functions/_shared/canonical-kb-direct-answer.test.ts",
     "supabase/functions/_shared/canonical-kb-direct-answer.ts",
     "supabase/functions/_shared/commerce-capability-runtime.ts",
     "supabase/functions/_shared/commerce-state-authority.ts",

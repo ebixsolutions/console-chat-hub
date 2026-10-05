@@ -1,4 +1,5 @@
 import { classifyCanonicalConversationTurn, type ConversationOperation, type EvidenceAuthority } from "./conversation-semantic-contract.ts";
+import { exactProductIdentifiers } from "./natural-customer-response.ts";
 
 export type RuntimeHistoryRow = { role?: string; content?: string | null; created_at?: string | null; metadata?: unknown };
 export type RuntimeLanguage = "zh-TW" | "zh-CN" | "en";
@@ -245,6 +246,9 @@ export function resolveWorkflow5ConversationLanguage(latest: string, rows: Runti
     .filter((text) => text && text !== latest)
     .slice(0, 6);
   const zh = priorCustomer.map(detectLanguage).filter((x) => x !== "en");
+  // A schema-recognized identifier supplies identity, not a language request.
+  const identifiers = exactProductIdentifiers(latest);
+  if (identifiers.length === 1 && identifiers[0].toUpperCase() === latest.trim().toUpperCase() && priorCustomer.length) return detectLanguage(priorCustomer[0]);
   if (direct === "en" && latest.length <= 120 && zh.length >= 2) return zh[0];
   return direct;
 }

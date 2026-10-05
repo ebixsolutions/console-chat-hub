@@ -31,6 +31,10 @@ const allowed = [
   "supabase/functions/generate-reply/index.ts",
   "supabase/functions/_shared/conversation-service-planner.ts",
   "supabase/functions/_shared/conversation-service-planner.test.ts",
+  "supabase/functions/_shared/canonical-kb-direct-answer.ts",
+  "supabase/functions/_shared/canonical-kb-direct-answer.test.ts",
+  "supabase/functions/_shared/conversation-runtime-state-core.ts",
+  "supabase/functions/_shared/natural-dialogue-generic-core.test.ts",
   "supabase/functions/_shared/pre-send-conversion-supervisor.test.ts",
   "supabase/functions/_shared/pre-send-conversion-supervisor.ts",
   "supabase/functions/_shared/natural-customer-response.ts",
@@ -88,14 +92,15 @@ async function verifyActualEntrypoint(e, head, tree) {
     check(actual.status === "ACTIVE" && actual.version === expected.version && actual.ezbr_sha256 === expected.ezbr_sha256 && actual.verify_jwt === true && actual.import_map === false, `successor runtime source/config identity: ${name}`);
   }
   const contextual = e.readable_projection;
-  check(contextual.head === head && contextual.tree === tree && contextual.reply_id === e.cases.context.reply.id, "S4 successor persisted reply binding");
+  const compatibleProjection = observation => git("merge-base", observation.head, head) === observation.head && git("rev-parse", `${observation.head}^{tree}`) === observation.tree && execFileSync("git", ["show", `${observation.head}:supabase/functions/_shared/conversation-service-planner.ts`], {encoding:"utf8"}) === read("supabase/functions/_shared/conversation-service-planner.ts");
+  check(compatibleProjection(contextual) && contextual.reply_id === e.cases.context.reply.id, "S4 persisted reply binding and preserved exact renderer source");
   const reply = e.cases.context.reply.content;
   check(reply.includes("冷氣機") && !/(?:查詢項目：air_conditioner|select_product|window_opening_check)/.test(reply) && !/你想我幫你跟進邊一部分/.test(reply), "S4 localized goal-aware customer text");
   check(/闊度|高度/.test(reply) && !/已查庫存|已安排|已報價|已轉交/.test(reply), "S4 useful unresolved check without completed promises");
   check(contextual.before.state_hash === contextual.after.state_hash && contextual.before.revision === contextual.after.revision && JSON.stringify(contextual.before.state) === JSON.stringify(contextual.after.state), "S4 renderer leaves authoritative semantic state unchanged");
   check(read(contextual.raw_reply_path).includes(reply), "S4 actual hosted persisted text observation");
   const generic = e.generic_projection;
-  check(generic.head === head && generic.tree === tree && generic.reply_id === generic.reply.id, "generic successor persisted reply binding");
+  check(compatibleProjection(generic) && generic.reply_id === generic.reply.id && execFileSync("git", ["show", `${generic.head}:supabase/functions/_shared/natural-customer-response.ts`], {encoding:"utf8"}) === read("supabase/functions/_shared/natural-customer-response.ts"), "generic persisted reply binding and unchanged projection sources");
   const entity = generic.before.state.entities.find(x => x.attributes.product_name);
   check(entity && generic.reply.content.includes(entity.attributes.product_name) && generic.reply.content.includes(entity.model ?? entity.attributes.sku), "generic trusted name and exact SKU are visible");
   check(!/item not confirmed|項目未確認|generic_product|窗口|window|professional|專業/.test(generic.reply.content), "generic item does not inherit household unknown or professional requirement");
@@ -109,6 +114,25 @@ async function verifyActualEntrypoint(e, head, tree) {
   for (const name of ["production_build", "nonproduction_build", "typecheck", "summary", "social", "service"]) check(e.validation[name].exit_code === 0, `focused validation: ${name}`);
   check(e.retained_demo.company_id === e.ids.company && e.retained_demo.conversation_id === e.ids.conversation && e.retained_demo.exclude_training === true && e.retained_demo.cleanup_path, "retained Director Demo inventory and lifecycle");
   check(e.cleanup.disposable_remaining === 0, "scoped disposable cleanup");
+  const service = e.generic_service_e2e;
+  check(service.head === head && service.tree === tree, "generic KB journey exact source");
+  const turns = service.turns;
+  check(turns.clarify.reply.metadata.response_route === "product_referent_clarification" && turns.answer.input === service.sku, "generic minimum necessary identity clarification");
+  for (const turn of Object.values(turns)) check(turn.conversation_id === service.conversation_id && turn.ingress.status === 200 && turn.poll_status === 200 && read(turn.raw_path).includes(turn.reply.content), "continuous actual ingress, stored reply and polling");
+  for (const name of ["answer", "mixed", "other"]) {
+    const turn = turns[name], meta = turn.reply.metadata;
+    const fact = meta.authoritative_kb_facts.find(f=>f.field === "weight");
+    const returned = service.returned_evidence.find(c=>c.id === fact?.chunk_id);
+    check(meta.kb_retrieval_request !== turns.clarify.input && meta.kb_retrieval_request.includes(fact.model) && meta.citations.some(c=>c.chunk_id===fact.chunk_id && c.document_id===fact.document_id), "generic requery request and actual document/chunk lineage");
+    check(returned && returned.document_id===fact.document_id && returned.chunk_text.includes(fact.value) && turn.reply.content.includes(fact.value), "generic actual returned evidence supports the answered fact");
+    check(meta.reference_authority.provenance.tenant_id===service.tenant_id && fact.authority==="CURRENT_KB" && fact.currentness_at_answer==="current", "generic company/current published authority");
+  }
+  check(/庫存|库存/.test(turns.mixed.reply.content) && turns.mixed.reply.content.includes(service.weight), "known specification retained alongside live-stock unknown");
+  check(service.state_after_requirements.state.entities.some(x=>x.attributes.sku===service.sku && x.quantity===service.quantity) && service.state_after_requirements.revision>service.state_before_requirements.revision, "natural customer requirements actually persist");
+  check(service.handoff.conversation_id===service.conversation_id && service.queue.conversation_id===service.conversation_id && service.queue.company_id===e.ids.company && service.queue.state==="waiting", "fresh generic same-ticket real handoff");
+  const genericSummary=projectTicketSummary(service.handoff.ai_summary,service.conversation_id,e.ids.company);
+  check(genericSummary && JSON.stringify(genericSummary).includes(service.sku) && JSON.stringify(genericSummary).includes(service.weight) && JSON.stringify(genericSummary).includes(`${service.quantity} 盒`), "fresh generic persisted Summary retains trusted identity, quantity and KB fact");
+  check(service.validation.facts.exit_code===0 && service.validation.language.exit_code===0 && read(service.validation.facts.log_path).includes("10 passed"), "direct generic authority and language regressions");
   if (!e.ui || e.ui.blocker) {
     console.log(JSON.stringify({ result: "STOP", head, tree, assertions, blocker: e.ui?.blocker ?? "Director-controlled Chrome actions not observed", summary_visible: "UNVERIFIED", takeover: "UNVERIFIED", suppression: "UNVERIFIED", human_reply: "UNVERIFIED" }));
     process.exit(2);
@@ -155,7 +179,7 @@ try {
   const b2Source = "supabase/functions/_shared/pre-send-conversion-supervisor.ts";
   const variantAliases = '    color: ["color", "colour", "顏色", "颜色"],\n    version: ["version", "edition", "版本"],\n    size: ["size", "尺碼", "尺码"],\n    region: ["region", "market", "地區", "地区"],\n';
   check(read(b2Source).replace(missingDescriptorGuard, "").replace(variantAliases, "").replace("function evaluateKnownContext(text: string, state: ConversationCommerceState, readOnlyProjection: boolean = false): B2Decision | null {", "function evaluateKnownContext(text: string, state: ConversationCommerceState): B2Decision | null {").replace('evaluateKnownContext(draft, state, input.metadata?.commerce_state_persistence_classification !== "COMMITTED" && !input.trusted_journey_progress)', "evaluateKnownContext(draft, state)") === execFileSync("git", ["show", `${baseline}:${b2Source}`], {encoding:"utf8"}), "B2 rules frozen except missing descriptor/provided variant classification");
-  const reopened = new Set([b2Source, "supabase/functions/_shared/conversation-service-planner.ts", "supabase/functions/_shared/natural-customer-response.ts", "supabase/functions/generate-reply/index.ts"]);
+  const reopened = new Set([b2Source, "supabase/functions/_shared/conversation-service-planner.ts", "supabase/functions/_shared/natural-customer-response.ts", "supabase/functions/generate-reply/index.ts", "supabase/functions/_shared/canonical-kb-direct-answer.ts", "supabase/functions/_shared/conversation-runtime-state-core.ts"]);
   for (const file of closure.files ?? closure)
     check(
       reopened.has(file) || sha(readFileSync(file)) === sha(execFileSync("git", ["show", `${baseline}:${file}`])),

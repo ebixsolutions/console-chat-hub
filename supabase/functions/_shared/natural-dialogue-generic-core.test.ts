@@ -30,6 +30,10 @@ Deno.test("explicit handoff wins over a separate prior-reference or defer clause
 });
 
 Deno.test("explicit language directives retain customer language intent", () => {
+  for (const sku of ["TEA-R21", "SHIRT-X82"]) {
+    assert(resolveWorkflow5ConversationLanguage(sku, [{role:"visitor",content:"呢款產品嘅重量係幾多？"}]) === "zh-TW", "identifier changed customer language");
+    assert(resolveWorkflow5ConversationLanguage(sku, [{role:"visitor",content:"What is the product weight?"}]) === "en", "identifier lost English context");
+  }
   assert(resolveWorkflow5ConversationLanguage(
     "書房改咗105呎；please explain briefly in English how I should assess it.",
     [],

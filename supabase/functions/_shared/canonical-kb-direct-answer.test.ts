@@ -165,3 +165,23 @@ Deno.test("selected A1/A2 Full Content and actual citation pass B2 without a Com
     console.log("grounded B2:", request, verdict.code);
   }
 });
+
+Deno.test("Phase1 generic labelled facts survive unknown stock with exact source-bound handoff facts", () => {
+  for (const [model, name, grams] of [["TEA-R21", "茉莉花茶", 200], ["SHIRT-X82", "棉質襯衣", 315]] as const) {
+    const source = `商品型號: ${model} | 描述: ${name} | 重量: ${grams} g`;
+    const fixture: KBDocumentCandidate = {...doc, title:`${name} ${model}`, authority:{...doc.authority!,entity_ids:[model]},
+      chunks:[{...chunk,content:source,title:`${name} ${model}`}], llm_context:{...doc.llm_context,full_content_evidence:[{...doc.llm_context.full_content_evidence[0],content:source}]}};
+    for (const question of [`${model} 嘅重量係幾多？有冇現貨？`, `${model} 的重量是多少？庫存有多少？`]) {
+      const {resolved,selection} = answer(question,[fixture]);
+      assert(resolved && resolved.reply.includes(`${grams} g`) && /庫存|库存/.test(resolved.reply), JSON.stringify({question,resolved,selection}));
+      assert(resolved.structured_facts?.some(f=>f.field==='weight' && f.value===`${grams} g` && f.model===model && f.document_id===documentId && f.chunk_id===chunkId), "answered field lost before Summary");
+      assert(!/已查|已安排|已落單|[?？]/.test(resolved.reply), "invented action or irrelevant missing field");
+    }
+    const changedSource=source.replace(`${grams} g`,`${grams+17} g`);
+    const changed: KBDocumentCandidate = {...fixture,chunks:[{...fixture.chunks[0],content:changedSource}],llm_context:{...fixture.llm_context,full_content_evidence:[{...fixture.llm_context.full_content_evidence[0],content:changedSource}]}};
+    assert(answer(`${model} 嘅重量係幾多？`,[changed]).resolved?.reply.includes(`${grams+17} g`),"answer ignored changed evidence");
+    assert(answer(`${model} 嘅尺寸係幾多？`,[fixture]).resolved===null,"missing specification fabricated");
+    const en = resolveCanonicalKbDirectAnswer({request:`${model} 嘅重量係幾多？`,selection:answer(`${model} 嘅重量係幾多？`,[fixture]).selection,language:'en'});
+    assert(en?.reply.includes('weight') && !en.reply.includes('重量'),'internal localized field passed into English reply');
+  }
+});

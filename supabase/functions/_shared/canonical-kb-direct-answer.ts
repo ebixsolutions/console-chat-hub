@@ -189,7 +189,13 @@ export function resolveCanonicalKbDirectAnswer(input: {
       return field !== null && exactKbModelIds(field).includes(model);
     });
   if (!identityVerified) return null;
-  const evidence = (kind: CanonicalKbDirectAnswer["kind"], reply: string, chunk: KBFullChunk): CanonicalKbDirectAnswer => {
+  const stockRequested = /(?:現貨|现货|庫存|库存|in stock)/i.test(request);
+  const stockNote = language === "en"
+    ? "The current product record does not establish live stock; availability still needs merchant confirmation."
+    : language === "zh-CN" ? "现行产品资料未确认实时库存；现货仍需商家核实。"
+    : "現行產品資料未確認即時庫存；現貨仍需商家核實。";
+  const evidence = (kind: CanonicalKbDirectAnswer["kind"], reply: string, chunk: KBFullChunk, requestedFields: Array<[string, string]> = []): CanonicalKbDirectAnswer => {
+    if (stockRequested && kind !== "stock_unknown") reply += ` ${stockNote}`;
     if (input.customer_context?.model === model && input.customer_context.sunlight === "strong_afternoon_sun" &&
       classifyProductFactualQuery(request)?.facts.includes("suitability")) {
       reply = language === "en"
@@ -203,6 +209,7 @@ export function resolveCanonicalKbDirectAnswer(input: {
       ["horsepower", labelledValue(chunk.content, /匹數|匹数|horsepower/i)],
       ["features", labelledValue(chunk.content, /功能|features?/i)],
       ["policy", labelledValue(chunk.content, /billing\s+policy|booking\s+policy|cancellation\s+policy|付款政策|預約政策|预约政策|取消政策/i, true)],
+      ...requestedFields,
     ];
     return { kind, reply, evidence_chunks: [chunk], structured_facts: chunk.chunk_id
       ? fields.filter(([, value]) => value !== null).map(([field, value]) => ({
@@ -219,7 +226,7 @@ export function resolveCanonicalKbDirectAnswer(input: {
     : null;
   const displayPrice = priceFact ? `HK$${priceFact.value.toLocaleString("en-US")}` : null;
 
-  if (/(?:現貨|现货|庫存|库存|in stock)/i.test(request)) {
+  if (stockRequested && !classifyProductFactualQuery(request)) {
     if (!productRecord) return null;
     const reply = language === "en"
       ? `I found a product record for ${model}, but it does not establish the live stock quantity. The current stock needs to be checked before purchase.`
@@ -245,7 +252,7 @@ export function resolveCanonicalKbDirectAnswer(input: {
       : `我搵到 ${model} 嘅產品記錄，但資料冇可核實嘅售價。`, chunks[0]);
   }
 
-  if (/(?:有沒有|有没有|有冇|有無|有无|do\s+you\s+(?:have|carry)|available)/i.test(request)) {
+  if (/(?:有沒有|有没有|有冇|有無|有无|do\s+you\s+(?:have|carry)|available)/i.test(request) && !classifyProductFactualQuery(request)) {
     if (!productRecord) return null;
     const selected = priceEvidence?.chunk ?? chunks[0];
     const brand = labelledValue(selected.content, /品牌|brand/i);
@@ -388,11 +395,19 @@ export function resolveCanonicalKbDirectAnswer(input: {
   // existing route rather than synthesizing a product sheet.
   const specField = request.match(/(?:的|嘅|\s)(尺寸|重量|功率|電壓|电压|噪音|容量|dimension|weight|power|voltage|capacity)(?:\s|係|是|幾|几|多少|\?|？|$)/i)?.[1];
   if (specField) {
+    const fields: Record<string, [string, string]> = {
+      尺寸: ["dimension", "尺寸"], dimension: ["dimension", "尺寸"],
+      重量: ["weight", "重量"], weight: ["weight", "重量"],
+      功率: ["power", "功率"], power: ["power", "功率"],
+      電壓: ["voltage", "電壓"], 电压: ["voltage", "電壓"], voltage: ["voltage", "電壓"],
+      噪音: ["noise", "噪音"], 容量: ["capacity", "容量"], capacity: ["capacity", "容量"],
+    };
+    const [field, display] = fields[specField.toLowerCase()];
     for (const chunk of chunks) {
       const value = labelledValue(chunk.content, new RegExp(specField, "i"));
       if (value) return evidence("specification", language === "en"
-        ? `${model}: ${specField} ${value} (current product record).`
-        : `${model} 嘅${specField}：${value}（現行產品資料）。`, chunk);
+        ? `${model}: ${field} ${value} (current product record).`
+        : `${model} 嘅${display}：${value}（現行產品資料）。`, chunk, [[field, value]]);
     }
   }
 
@@ -403,7 +418,7 @@ export function resolveCanonicalKbDirectAnswer(input: {
       const value = labelledValue(chunk.content, new RegExp(policyField.replace(/\s+/g, "\\s+"), "i"), true);
       if (value) return evidence("policy", language === "en"
         ? `The current policy for ${model} states: ${value}.`
-        : `現行資料列出 ${model} 嘅${policyField}：${value}。`, chunk);
+        : `現行資料列出 ${model} 嘅${policyField}：${value}。`, chunk, [["policy", value]]);
     }
   }
   return null;
