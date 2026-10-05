@@ -7,6 +7,8 @@
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 import { mcpPlugin } from "@lovable.dev/mcp-js/stacks/tanstack/vite";
 import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 
 const isolatedBrowserAuth = process.env.C3_ISOLATED_BROWSER_AUTH === "local-only";
 if (isolatedBrowserAuth && process.env.NODE_ENV === "production") {
@@ -21,6 +23,14 @@ const nonproductionConsole = consoleEnvironment === "nonproduction";
 if (nonproductionConsole && isolatedBrowserAuth) {
   throw new Error("Nonproduction Console cannot use isolated mock Auth");
 }
+const buildIdentity = nonproductionConsole
+  ? `${execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim()} / ${execFileSync("git", ["rev-parse", "HEAD^{tree}"], { encoding: "utf8" }).trim()}${execFileSync("git", ["status", "--porcelain"], { encoding: "utf8" }).trim() ? " / WORKTREE MODIFIED" : ""}`
+  : "";
+const tlsCert = process.env.C3_DEMO_TLS_CERT;
+const tlsKey = process.env.C3_DEMO_TLS_KEY;
+if ((tlsCert || tlsKey) && (!nonproductionConsole || !tlsCert || !tlsKey)) {
+  throw new Error("Demo TLS requires nonproduction and both certificate paths");
+}
 
 export default defineConfig({
   tanstackStart: {
@@ -29,7 +39,18 @@ export default defineConfig({
     server: { entry: "server" },
   },
   vite: {
-    plugins: [mcpPlugin()],
+    define: { "import.meta.env.VITE_C3_BUILD_IDENTITY": JSON.stringify(buildIdentity) },
+    server: tlsCert && tlsKey ? { https: { cert: readFileSync(tlsCert), key: readFileSync(tlsKey) } } : undefined,
+    plugins: [mcpPlugin(), ...(nonproductionConsole ? [{
+      name: "c3-nonproduction-customer-entrypoint",
+      configureServer(server: any) {
+        server.middlewares.use((req: any, res: any, next: any) => {
+          if (req.url !== "/phase1-demo") return next();
+          res.setHeader("Content-Type", "text/html; charset=utf-8");
+          res.end(`<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><title>C3 Phase 1 Demo</title><body><h1>NONPRODUCTION</h1><p>nbtowfuvvfqpxqydyoby</p><p>${buildIdentity}</p><p>按右下角聊天按鈕開始；真人接手請開啟 <a href="/console/conversations">Chat Console</a>。</p><script src="/widget/chat.js" data-channel-id="f6000000-0000-4000-8000-000000000130" data-api-base="https://nbtowfuvvfqpxqydyoby.supabase.co/functions/v1" defer></script></body></html>`);
+        });
+      },
+    }] : [])],
     // Test-only external Auth boundary. The production binding module and
     // application source are unchanged; this alias requires explicit dev mode.
     resolve: nonproductionConsole

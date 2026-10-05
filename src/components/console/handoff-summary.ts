@@ -63,8 +63,8 @@ export function projectTicketSummary(
         constraints = obj(e.constraints) ?? {};
       const quantity =
         a.quantity_basis === "customer_explicit" && typeof e.quantity === "number"
-          ? `${e.quantity} 部（客人確認）`
-          : "機數待確認";
+          ? `${e.quantity}${text(a.unit) ? " " + human(a.unit) : ""}（客人確認）`
+          : "數量未確認";
       const result = [
         `${human(e.category)}${text(e.model) ? " " + text(e.model) : ""}：${quantity}`,
       ];
@@ -80,15 +80,12 @@ export function projectTicketSummary(
   const active = rows(p.active_entities).filter(
     (e) => !["deferred", "cancelled"].includes(text(e.status)),
   );
-  const goal = active
-    .map((e) => human(e.category))
-    .filter(Boolean)
-    .join("、");
   const transaction = obj(p.transaction_state) ?? {};
   const sections: TicketSummary = [
     {
       title: "客人目標",
-      lines: [goal ? `跟進${goal}選購及尚待核實事項` : human(p.current_customer_goal)],
+      lines: text(p.current_customer_goal) && p.current_customer_goal !== "unknown"
+        ? [human(p.current_customer_goal)] : ["目標未確認"],
     },
     { title: "目前需求", lines: entityLines(active) },
     { title: "已暫緩", lines: entityLines(p.deferred_entities) },
@@ -136,7 +133,7 @@ export function projectTicketSummary(
             v.reusable_as_current === false &&
             typeof v.amount === "number"
             ? [
-                `歷史${v.role === "unit_price" ? "每部金額" : "金額"}：${text(v.currency)} ${v.amount}；不可作現行報價`,
+                `歷史${v.role === "unit_price" ? "單位金額" : "金額"}：${text(v.currency)} ${v.amount}；不可作現行報價`,
               ]
             : [];
         }),

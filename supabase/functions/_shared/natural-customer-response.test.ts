@@ -1,5 +1,6 @@
 import {
   classifyNaturalCustomerIntent,
+  arbitrateAnaphoricProductFollowUp,
   exactProductIdentifiers,
   renderNaturalImmediateResponse,
   renderNaturalNoCurrentEvidence,
@@ -432,4 +433,20 @@ Deno.test("C3 production-parity semantic ASK_FACT still persists and scopes prod
       ?.status === "deferred",
     JSON.stringify(state.entities),
   );
+});
+
+Deno.test("S5 a minimal model clarification answer preserves the pending KB question", () => {
+  const scope = { conversation_id: "same", company_id: "tenant" };
+  const history = [
+    { role: "visitor", content: "CW-SUL70BA", ...scope },
+    { role: "assistant", content: "你指邊個現行產品或型號？", ...scope },
+    { role: "visitor", content: "呢款係幾多匹？", ...scope },
+  ];
+  const result = arbitrateAnaphoricProductFollowUp("CW-SUL70BA", history, scope);
+  assert(result.kind === "resolved" && result.intent.fact === "horsepower" && result.grounded_question.includes("CW-SUL70BA"), JSON.stringify(result));
+  for (const value of ["CW-SUL70BA，雪櫃暫時唔跟", "CW-SUL70BA，我想搵真人", "CW-SUL70BA 同 ZX-OTHER99"]) {
+    assert(arbitrateAnaphoricProductFollowUp(value, history, scope).kind === "not_applicable", value);
+  }
+  assert(arbitrateAnaphoricProductFollowUp("CW-SUL70BA", history.map(r => ({ ...r, company_id: "foreign" })), scope).kind === "not_applicable", "cross-tenant clarification consumed");
+  assert(arbitrateAnaphoricProductFollowUp("CW-SUL70BA", history.slice(0,1), scope).kind === "not_applicable", "invented pending question");
 });

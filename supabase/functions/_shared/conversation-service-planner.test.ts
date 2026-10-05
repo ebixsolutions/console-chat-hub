@@ -271,3 +271,19 @@ Deno.test("C3 repeated clarification selects a new strategy without automatic ha
   const reply = renderTargetedServiceQuestion(plan, "zh-TW");
   assert(reply.includes("尚未執行轉交") && !reply.includes("已轉交"), reply);
 });
+
+Deno.test("S4 contextual help reads canonical model and never promotes default quantity", () => {
+  const state = structuredClone(commerce);
+  state.entities[0].model = "CW-SUL70BA";
+  delete state.entities[0].attributes.model;
+  state.entities[0].quantity = 1;
+  state.entities[0].attributes.quantity_basis = "system_default";
+  const plan = planConversationService({ question: "可以幫我睇下嗎？", language: "zh-TW", recall: { handled: false, reason: "NOT_A_RECALL_QUERY" }, commerce: state, memory: null });
+  assert(plan.known_facts.some(f => f.name.endsWith(":model") && f.value === "CW-SUL70BA"), "canonical model lost");
+  assert(!plan.known_facts.some(f => f.name.endsWith(":quantity")), "default quantity promoted");
+  const reply = renderServicePlanReply(plan, null) ?? "";
+  assert(reply.includes("CW-SUL70BA") && !reply.includes("數量：1"), reply);
+  state.entities[0].attributes.quantity_basis = "customer_explicit";
+  state.entities[0].quantity = 3;
+  assert(planConversationService({ question: "可以幫我睇下嗎？", language: "zh-TW", recall: { handled: false, reason: "NOT_A_RECALL_QUERY" }, commerce: state, memory: null }).known_facts.some(f => f.name.endsWith(":quantity") && f.value === "3"), "explicit quantity lost");
+});

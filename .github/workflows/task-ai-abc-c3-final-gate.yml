@@ -1371,6 +1371,8 @@ jobs:
           (cd "$RUNNER_TEMP/c3-deno-checkout" && deno test --no-lock supabase/functions/_shared/deterministic-commerce-engine.test.ts)
           (cd "$RUNNER_TEMP/c3-deno-checkout" && deno test --no-lock --allow-read --node-modules-dir=auto \
             supabase/functions/_shared/conversation-service-runtime.test.ts \
+            supabase/functions/_shared/natural-customer-response.test.ts \
+            supabase/functions/_shared/customer-money-facts.test.ts \
             supabase/functions/_shared/conversation-service-planner.test.ts \
             supabase/functions/_shared/pre-send-conversion-supervisor.test.ts \
             supabase/functions/_shared/contextual-customer-update.test.ts \

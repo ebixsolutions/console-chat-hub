@@ -235,6 +235,26 @@ export function arbitrateAnaphoricProductFollowUp(
   scope?: ProductFollowUpScope,
 ): ProductFollowUpArbitration {
   const original = text.normalize("NFKC").trim();
+  // A minimal answer to our last model clarification keeps the pending factual
+  // question. This is query binding only: it supplies no merchant fact or state.
+  const models = exactProductIdentifiers(original);
+  if (models.length === 1 && !productFactualFacets(original).length) {
+    const remainder = original.toUpperCase().replace(models[0].toUpperCase(), "").trim();
+    if (/^(?:(?:我指|係|是|就係|就是|the\s+model\s+is|i\s+mean)\s*)?(?:嗰款|呢款|that\s+one)?[。.!！\s]*$/iu.test(remainder)) {
+      const history = scopedProductHistory(newestFirstHistory, scope)
+        .filter((row, index) => index !== 0 || row.role !== "visitor" || row.content.normalize("NFKC").trim() !== original);
+      const last = history[0], previous = history[1];
+      if (last?.role === "assistant" && previous?.role === "visitor" &&
+          /^(?:你指邊個(?:現行產品或)?型號|你指的是哪個|你指的是哪个|Which (?:current product or model|model) do you mean)/iu.test(last.content.trim())) {
+        const pendingFacts = productFactualFacets(previous.content);
+        if (pendingFacts.length && PRODUCT_ANAPHOR.test(previous.content)) {
+          return { kind: "resolved", intent: productFactualIntent(models[0], pendingFacts),
+            grounded_question: `${models[0]} ${previous.content}`, source_turn_offset: 1,
+            resolved_topic: inferredProductTopic(previous.content), resolution_strategy: "RECENT_GLOBAL_REFERENT" };
+        }
+      }
+    }
+  }
   const clauses = original.split(/[。;；]/).map((clause) => clause.trim()).filter(Boolean);
   const normalized = clauses.length > 1 && /講返|讲回|back\s+to|return\s+to/iu.test(original)
     ? clauses.filter((clause) => !(INACTIVE_REFERENT.test(clause) && explicitProductTopics(clause).length === 1)).join("。")

@@ -91,8 +91,24 @@ try {
   assert.ok(
     projectTicketSummary(quantity, p.conversation_id, p.company_id)
       .find((s) => s.title === "目前需求")
-      .lines.includes("冷氣：3 部（客人確認）"),
+      .lines.includes("冷氣：3（客人確認）"),
   );
+  for (const [goal, category, count, attributes, expected] of [
+    ["冷氣維修及售後檢查", "air_conditioner", null, {}, "冷氣：數量未確認"],
+    ["補充紙張", "paper", 12, { quantity_basis: "customer_explicit", unit: "包" }, "paper：12 包（客人確認）"],
+    ["核對文件", "document", null, {}, "document：數量未確認"],
+  ]) {
+    const generic = structuredClone(envelope);
+    generic.structured_package.current_customer_goal = goal;
+    generic.structured_package.active_entities = [{ category, quantity: count, attributes }];
+    const projected = projectTicketSummary(generic, p.conversation_id, p.company_id);
+    assert.deepEqual(projected.find(s => s.title === "客人目標").lines, [goal]);
+    assert.deepEqual(projected.find(s => s.title === "目前需求").lines, [expected]);
+    assert.ok(!JSON.stringify(projected).includes("選購"));
+  }
+  const deferred = structuredClone(envelope);
+  deferred.structured_package.active_entities.push({ category: "paper", status: "deferred", quantity: 12, attributes: { quantity_basis: "customer_explicit", unit: "包" } });
+  assert.ok(!JSON.stringify(projectTicketSummary(deferred, p.conversation_id, p.company_id).find(s => s.title === "目前需求")).includes("paper"));
   for (const bad of ["https://example.com", "https://nrfxhqabwblzxoushgnm.supabase.co"])
     assert.throws(() => nonproduction.assertAuthoritativeSupabaseRuntime(bad));
   assert.equal(

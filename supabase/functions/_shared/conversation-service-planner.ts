@@ -11,6 +11,7 @@ import type { CommerceEntity, ConversationCommerceState } from "./commerce-state
 import type { CanonicalConversationMemory } from "./conversation-long-memory.ts";
 import { exactProductIdentifiers, isProductOperationFailure, isProductSupportProblem } from "./natural-customer-response.ts";
 import { deriveTypedCustomerMoneyFacts } from "./customer-money-facts.ts";
+import { customerRequestedQuantity } from "./customer-journey-orchestration.ts";
 
 export type ServiceLanguage = "zh-TW" | "zh-CN" | "en";
 export type ServiceKnowledgeState =
@@ -222,17 +223,20 @@ function knownFacts(input: ServicePlanInput) {
         !["cancelled", "deferred"].includes(item.status)
       )
     ) {
+      if (entity.attributes.room_sizes || entity.attributes.room_sunlight || Object.keys(entity.constraints).length) {
+        add(`entity:${entity.entity_id}:requirements`, "目前需求", renderCanonicalRequirement(entity, input.language), "CUSTOMER_PROVIDED");
+      }
       add(`entity:${entity.entity_id}:requested_date`, "Requested date", entity.attributes.requested_date,"CUSTOMER_PROVIDED");
       add(
         `entity:${entity.entity_id}:quantity`,
         "數量",
-        entity.quantity,
+        customerRequestedQuantity(entity),
         "CANONICAL_COMMERCE_STATE",
       );
       add(
         `entity:${entity.entity_id}:model`,
         "型號",
-        entity.attributes.model,
+        entity.model ?? entity.attributes.model,
         "CUSTOMER_PROVIDED",
       );
       add(

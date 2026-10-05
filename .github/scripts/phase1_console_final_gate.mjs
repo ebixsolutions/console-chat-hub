@@ -28,6 +28,11 @@ const allowed = [
   "src/routes/_authenticated/console.tsx",
   "src/routes/login.tsx",
   "supabase/functions/agent-send-reply/index.ts",
+  "supabase/functions/generate-reply/index.ts",
+  "supabase/functions/_shared/conversation-service-planner.ts",
+  "supabase/functions/_shared/conversation-service-planner.test.ts",
+  "supabase/functions/_shared/natural-customer-response.ts",
+  "supabase/functions/_shared/natural-customer-response.test.ts",
   "tests/phase1/console-summary.test.mjs",
   "tests/phase1/persisted-handoff.fixture.json",
   "vite.config.ts",
@@ -41,6 +46,62 @@ const check = (condition, label) => {
   assert.ok(condition, label);
   assertions++;
 };
+async function verifyActualEntrypoint(e, head, tree) {
+  check(e.project_id === project && e.head === head && e.tree === tree, "entrypoint exact candidate");
+  check(e.binding.project_id === project && e.binding.mock_auth === false, "real nonproduction binding");
+  const html = read(e.binding.served_html);
+  check(html.includes("NONPRODUCTION") && html.includes(project) && html.includes(head) && html.includes(tree) && !html.includes("WORKTREE MODIFIED"), "served customer build identity");
+  check(html.includes('/widget/chat.js') && html.includes(`${project}.supabase.co/functions/v1`), "existing real customer Widget");
+  for (const target of ["browser", "ssr", "auth", "reads_writes", "ingress", "generate", "takeover", "reply"])
+    check(e.binding.authority[target] === project, `entrypoint authority: ${target}`);
+  for (const caseName of ["hello_zh", "hello_en", "help_zh", "help_cantonese", "help_en"]) {
+    const c = e.cases[caseName], m = c.reply.metadata;
+    check(c.ingress.status === 200 && c.poll_status === 200, `${caseName} real ingress and polling`);
+    check(m.response_route === "natural_greeting" && m.handoff_required === false && m.commerce_state_persistence_classification === "NO_SEMANTIC_CHANGE", `${caseName} natural opening and no transaction mutation`);
+    check(!/現行資料|日期|適用範圍|待核實|no.match/i.test(c.reply.content), `${caseName} useful greeting`);
+  }
+  check(e.cases.fact.reply.content.includes("3/4匹") && e.cases.fact.reply.metadata.citations.length > 0, "S3 grounded factual answer");
+  check(e.cases.guidance.reply.metadata.natural_intent === "product_guidance" && /room|area/i.test(e.cases.guidance.reply.content), "S3 business intent retained");
+  check((e.cases.context.reply.content.includes("CW-SUL70BA") || e.cases.context.reply.content.includes("80平方呎")) && !/數量：1|重新.*型號|提供.*型號/.test(e.cases.context.reply.content), "S4 known context and quantity provenance");
+  check(e.cases.clarify.reply.metadata.response_route === "product_referent_clarification", "S5 minimum useful clarification");
+  const answered = e.cases.requery;
+  check(answered.input === "CW-SUL70BA" && answered.reply.content.includes("3/4") && answered.reply.metadata.citations.length > 0, "S5 new information yields grounded answer");
+  check(e.retrieval.request.includes("CW-SUL70BA") && e.retrieval.request !== e.cases.clarify.input && e.retrieval.returned_chunk.id === answered.reply.metadata.citations[0].chunk_id && e.retrieval.returned_chunk.chunk_text.includes("3/4匹"), "S5 actual changed retrieval and returned evidence");
+  check(e.retrieval.observation_path && read(e.retrieval.observation_path).includes(e.retrieval.request), "S5 retrieval request observation");
+  check(e.cases.unknown.reply.metadata.response_route === "kb_no_current_evidence" && !/提供.*型號|日期|適用範圍/.test(e.cases.unknown.reply.content), "S6 honest known-model unknown");
+  check(e.handoff.conversation_id === e.ids.conversation && e.queue.conversation_id === e.ids.conversation && e.queue.company_id === e.ids.company && e.queue.state === "waiting", "S7 same-ticket real handoff");
+  const compiled = await transform(read("src/components/console/handoff-summary.ts"), { loader: "ts", format: "esm" });
+  const { projectTicketSummary } = await import("data:text/javascript;base64," + Buffer.from(compiled.code).toString("base64"));
+  const summary = projectTicketSummary(e.handoff.ai_summary, e.ids.conversation, e.ids.company);
+  check(summary !== null, "same-company canonical Summary");
+  const text = JSON.stringify(summary);
+  for (const t of ["110平方呎", "80平方呎", "180平方呎", "下午西曬", "595", "已暫緩", "3/4匹", "4000", "不是現價", "未建立", "stock"])
+    check(text.includes(t), `current Demo Summary: ${t}`);
+  check(!/system_default|commerce_state_revision|resolver|B2/.test(text), "Summary excludes internals");
+  for (const f of e.deployed_sources) check(f.sha256 === sha(readFileSync(f.repo_path)), `exact live source: ${f.repo_path}`);
+  check(e.runtime.generate_reply.version === 35 && e.runtime.generate_reply.status === "ACTIVE", "corrected live v35");
+  check(e.production.generate_reply.version === 201 && e.production.generate_reply.ezbr_sha256 === "b60a8df3b01a5a74eca5709f4e95929cf90ee432f6c266415e0fd00f77456d32", "production unchanged");
+  for (const name of ["A2", "C3"]) check(e.ci[name].head_sha === head && e.ci[name].conclusion === "success", `new HEAD exact ${name}`);
+  for (const name of ["production_build", "nonproduction_build", "typecheck", "summary", "social", "service"]) check(e.validation[name].exit_code === 0, `focused validation: ${name}`);
+  check(e.retained_demo.company_id === e.ids.company && e.retained_demo.conversation_id === e.ids.conversation && e.retained_demo.exclude_training === true && e.retained_demo.cleanup_path, "retained Director Demo inventory and lifecycle");
+  check(e.cleanup.disposable_remaining === 0, "scoped disposable cleanup");
+  if (!e.ui || e.ui.blocker) {
+    console.log(JSON.stringify({ result: "STOP", head, tree, assertions, blocker: e.ui?.blocker ?? "Director-controlled Chrome actions not observed", summary_visible: "UNVERIFIED", takeover: "UNVERIFIED", suppression: "UNVERIFIED", human_reply: "UNVERIFIED" }));
+    process.exit(2);
+  }
+  check(e.ui.project_id === project && e.ui.conversation_id === e.ids.conversation && e.ui.company_id === e.ids.company, "actual UI same-ticket tenant");
+  for (const key of ["login", "customer_chat", "summary_visible", "takeover_clicked", "human_reply_sent"])
+    check(e.ui[key]?.observed === true && e.ui[key].evidence_path && readFileSync(e.ui[key].evidence_path).length > 0, `actual UI: ${key}`);
+  check(e.ui.takeover_clicked.channel === "console_control" && e.ui.human_reply_sent.channel === "console_composer", "intended UI controls");
+  const before = e.before_suppression, after = e.after_suppression, last = e.after_reply;
+  for (const s of [before, after, last]) check(s.conversation.id === e.ids.conversation && s.conversation.company_id === e.ids.company && s.conversation.status === "pending" && s.conversation.assigned_agent_id === e.ids.agent && s.queue[0].state === "assigned" && s.assignment.filter(a => a.is_active && a.agent_id === e.ids.agent).length === 1, "authoritative assigned human control");
+  check(after.messages.filter(m => m.id === e.ids.suppressed_visitor && m.role === "visitor").length === 1 && e.suppressed.body.skipped === "human_handling", "one stored visitor and AI suppression");
+  const ai = s => JSON.stringify(s.messages.filter(m => m.role === "assistant").map(m => m.id).sort());
+  check(ai(before) === ai(after) && ai(after) === ai(last) && JSON.stringify(before.commerce) === JSON.stringify(after.commerce) && JSON.stringify(after.commerce) === JSON.stringify(last.commerce), "no AI reply or semantic mutation");
+  check(last.messages.filter(m => m.id === e.ids.human_reply && m.role === "agent" && m.sender_id === e.ids.agent).length === 1 && e.customer_poll.body.data.messages.filter(m => m.id === e.ids.human_reply).length === 1 && e.retry_once.body.data.message_id === e.retry_twice.body.data.message_id, "human reply reaches customer once and retry deduplicates");
+  check(e.tenant_safety.foreign_read.status === 200 && e.tenant_safety.foreign_read.body.length === 0 && e.tenant_safety.foreign_takeover.status === 404 && e.tenant_safety.foreign_reply.status === 404, "tenant isolation preserved");
+  console.log(JSON.stringify({ result: "PASS", head, tree, assertions, status: "READY — PHASE 1 DEMO READY / ACTUAL ENTRYPOINT VERIFIED" }));
+}
 try {
   const head = git("rev-parse", "HEAD"),
     tree = git("rev-parse", "HEAD^{tree}");
@@ -64,9 +125,12 @@ try {
     root: process.cwd(),
     entrypoints: ["supabase/functions/generate-reply/index.ts"],
   });
+  // Only the observed S4/S5 service projection and clarification consumers
+  // are reopened. Their focused regressions and deployed parity are required.
+  const reopened = new Set(["supabase/functions/_shared/conversation-service-planner.ts", "supabase/functions/_shared/natural-customer-response.ts", "supabase/functions/generate-reply/index.ts"]);
   for (const file of closure.files ?? closure)
     check(
-      sha(readFileSync(file)) === sha(execFileSync("git", ["show", `${baseline}:${file}`])),
+      reopened.has(file) || sha(readFileSync(file)) === sha(execFileSync("git", ["show", `${baseline}:${file}`])),
       `frozen generate source: ${file}`,
     );
   check(
@@ -88,6 +152,10 @@ try {
     check(process.argv.includes("--evidence"), "runtime evidence required");
     const e = JSON.parse(read(arg("--evidence"))),
       ids = e.ids;
+    if (e.schema === "phase1-entrypoint-closure-v1") {
+      await verifyActualEntrypoint(e, head, tree);
+      process.exit(0);
+    }
     check(e.project_id === project, "nonproduction runtime identity");
     check(e.head === head && e.tree === tree, "observations bound to exact candidate");
     check(
