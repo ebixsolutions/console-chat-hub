@@ -31,6 +31,8 @@ const allowed = [
   "supabase/functions/generate-reply/index.ts",
   "supabase/functions/_shared/conversation-service-planner.ts",
   "supabase/functions/_shared/conversation-service-planner.test.ts",
+  "supabase/functions/_shared/commerce-state-reducer.ts",
+  "supabase/functions/_shared/commerce-state-runtime-base.ts",
   "supabase/functions/_shared/canonical-kb-direct-answer.ts",
   "supabase/functions/_shared/canonical-kb-direct-answer.test.ts",
   "supabase/functions/_shared/conversation-runtime-state-core.ts",
@@ -129,6 +131,8 @@ async function verifyActualEntrypoint(e, head, tree) {
   }
   check(/庫存|库存/.test(turns.mixed.reply.content) && turns.mixed.reply.content.includes(service.weight), "known specification retained alongside live-stock unknown");
   check(service.state_after_requirements.state.entities.some(x=>x.attributes.sku===service.sku && x.quantity===service.quantity) && service.state_after_requirements.revision>service.state_before_requirements.revision, "natural customer requirements actually persist");
+  check(service.validation.correction.exit_code === 0 && service.state_after_requirements.state.entities.some(x=>x.attributes.sku===service.other_sku && x.quantity===2 && x.status==="deferred"), "generic local correction preserves other entity and scoped defer");
+  check(JSON.stringify(service.state_after_readonly.state)===JSON.stringify(service.state_after_requirements.state) && service.state_after_readonly.revision===service.state_after_requirements.revision, "generic factual readback and handoff preserve Commerce semantics");
   check(service.handoff.conversation_id===service.conversation_id && service.queue.conversation_id===service.conversation_id && service.queue.company_id===e.ids.company && service.queue.state==="waiting", "fresh generic same-ticket real handoff");
   const genericSummary=projectTicketSummary(service.handoff.ai_summary,service.conversation_id,e.ids.company);
   check(genericSummary && JSON.stringify(genericSummary).includes(service.sku) && JSON.stringify(genericSummary).includes(service.weight) && JSON.stringify(genericSummary).includes(`${service.quantity} 盒`), "fresh generic persisted Summary retains trusted identity, quantity and KB fact");
@@ -179,7 +183,7 @@ try {
   const b2Source = "supabase/functions/_shared/pre-send-conversion-supervisor.ts";
   const variantAliases = '    color: ["color", "colour", "顏色", "颜色"],\n    version: ["version", "edition", "版本"],\n    size: ["size", "尺碼", "尺码"],\n    region: ["region", "market", "地區", "地区"],\n';
   check(read(b2Source).replace(missingDescriptorGuard, "").replace(variantAliases, "").replace("function evaluateKnownContext(text: string, state: ConversationCommerceState, readOnlyProjection: boolean = false): B2Decision | null {", "function evaluateKnownContext(text: string, state: ConversationCommerceState): B2Decision | null {").replace('evaluateKnownContext(draft, state, input.metadata?.commerce_state_persistence_classification !== "COMMITTED" && !input.trusted_journey_progress)', "evaluateKnownContext(draft, state)") === execFileSync("git", ["show", `${baseline}:${b2Source}`], {encoding:"utf8"}), "B2 rules frozen except missing descriptor/provided variant classification");
-  const reopened = new Set([b2Source, "supabase/functions/_shared/conversation-service-planner.ts", "supabase/functions/_shared/natural-customer-response.ts", "supabase/functions/generate-reply/index.ts", "supabase/functions/_shared/canonical-kb-direct-answer.ts", "supabase/functions/_shared/conversation-runtime-state-core.ts"]);
+  const reopened = new Set([b2Source, "supabase/functions/_shared/conversation-service-planner.ts", "supabase/functions/_shared/natural-customer-response.ts", "supabase/functions/generate-reply/index.ts", "supabase/functions/_shared/canonical-kb-direct-answer.ts", "supabase/functions/_shared/conversation-runtime-state-core.ts", "supabase/functions/_shared/commerce-state-reducer.ts", "supabase/functions/_shared/commerce-state-runtime-base.ts"]);
   for (const file of closure.files ?? closure)
     check(
       reopened.has(file) || sha(readFileSync(file)) === sha(execFileSync("git", ["show", `${baseline}:${file}`])),

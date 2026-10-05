@@ -1,3 +1,5 @@
+import { callModel } from "./deterministic-runtime-router.ts";
+import { normalizeCommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 import { classifyHandoffIntent as classifyR1 } from "./conversation-intelligence.ts";
 import { classifyHandoffIntent as classifyGate } from "./handoff-intent.ts";
 import { arbitrateAnaphoricProductFollowUp } from "./natural-customer-response.ts";
@@ -220,4 +222,22 @@ Deno.test("COMPONENT simulation of reducer and R1 predicate; no runtime handoff 
   assert(fridge?.constraints.max_width_mm === 610 && fridge.status === "deferred", "deferred refrigerator state lost");
   assert(state.conversion.order_status === "none" && state.conversion.payment_status === "none", "research promoted to transaction");
   assert(handoffs === 1 && underHumanControl, "R1 control was duplicated or bypassed");
+});
+
+Deno.test("Phase1 actual compatibility correction preserves a scoped generic quantity assignment", async () => {
+ const before=sampleState([["generic_product",3],["generic_product",2]]);
+ for(const [i,name,sku] of [[0,"茉莉花茶","TEA-R21"],[1,"桂花茶","TEA-G32"]] as const){before.entities[i].entity_id=`generic:${name}`;before.entities[i].attributes={product_name:name,sku,unit:"盒"};}
+ const text="更正：茉莉花茶 SKU: TEA-R21 嘅數量改為4盒。";
+ const result=await callModel({purpose:"generation",system:"commerce semantic interpreter",user:`Latest customer turn: ${text}`,maxTokens:2048,operationId:"component",companyId:"tenant-a",conversationId:"conversation-a",tag:"commerce-semantic",responseFormat:"json"});
+ assert(result.ok,"adapter did not return");const frame=normalizeCommerceSemanticFrame(JSON.parse(result.text));
+ assert(frame,"adapter frame invalid");
+ const hints=buildCommerceEntityHints(["我想買3盒茉莉花茶，SKU: TEA-R21。","我想買2盒桂花茶，SKU: TEA-G32。"]);
+ const input={conversation_id:"conversation-a",company_id:"tenant-a",source_message_id:"quantity-update",text,language:"zh-TW" as const,semantic_frame:frame};
+ const after=reduceTurn(before,input,hints);
+ assert(after.entities[0].quantity===4 && after.entities[1].quantity===2,"quantity assignment lost or crossed entity");
+ assert(after.entities[0].provenance.source_message_id==='quantity-update' && after.conversion.order_status==='none' && after.quotes.length===0,"assignment source or transaction truth lost");
+ for(const text of ["TEA-Z99 嘅數量改為4盒。","TEA-R21 或 TEA-G32 嘅數量改為4盒。","TEA-R21 嘅數量可唔可以改為4盒？"]){
+  const untouched=reduceTurn(before,{...input,text,semantic_frame:null},hints);
+  assert(untouched.entities[0].quantity===3 && untouched.entities[1].quantity===2,"unknown, ambiguous or question assignment mutated");
+ }
 });

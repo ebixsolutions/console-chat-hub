@@ -41,6 +41,7 @@
     "supabase/functions/_shared/canonical-kb-direct-answer.ts",
     "supabase/functions/_shared/commerce-capability-runtime.ts",
     "supabase/functions/_shared/commerce-state-authority.ts",
+    "supabase/functions/_shared/commerce-state-reducer.ts",
     "supabase/functions/_shared/commerce-state-runtime-base.ts",
     "supabase/functions/_shared/contextual-customer-update.test.ts",
     "supabase/functions/_shared/conversation-intelligence.ts",

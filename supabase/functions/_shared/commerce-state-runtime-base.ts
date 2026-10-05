@@ -1913,10 +1913,14 @@ function reduceSingleTurn(
     : filterGhostUnscopedHints(input.text, previous, resolvedHints);
   const mentioned = calculationTurn ? [] : hintsMentionedInTurn(input.text, hints);
   const bookingWithoutDelivery = mentioned.some(hintRequiresBookingWithoutDelivery);
-  const semanticAuthoritative = !calculationTurn && Boolean(input.semantic_frame && input.semantic_frame.confidence >= 0.72);
-  const semanticEventsRaw = semanticAuthoritative
+  const semanticProposed = !calculationTurn && Boolean(input.semantic_frame && input.semantic_frame.confidence >= 0.72);
+  const semanticEventsRaw = semanticProposed
     ? semanticFrameToStateEvents(input.semantic_frame, previous, hints, input.source_message_id, input.occurred_at ?? null)
     : [];
+  // Identity-only correction frames contain no corrected value. They cannot
+  // suppress an explicitly scoped deterministic customer assignment.
+  const semanticAuthoritative = semanticProposed && (!input.semantic_frame?.customer_correction ||
+    semanticEventsRaw.some(event => event.type !== "SET_CONTEXT" && event.type !== "ENSURE_ENTITY"));
   let semanticEvents = bookingWithoutDelivery
     ? semanticEventsRaw.filter((event) => event.type !== "SET_DELIVERY")
     : semanticEventsRaw;
@@ -2976,7 +2980,11 @@ export async function runCommerceStateRuntime(
     : { valid: false } as const;
   if (lifecycleVerified.valid) {
     const focus = lifecycleVerified.plans[0].focus_category;
-    const target = lifecycleVerified.plans.map((plan) => plan.target_category === "refrigerator" ? "雪櫃" : plan.target_category === "air_conditioner" ? "冷氣" : plan.target_category).join("同");
+    const target = lifecycleVerified.targetIds.map(id => {
+      const entity = state.entities.find(e => e.entity_id === id)!;
+      if (typeof entity.attributes.product_name === "string") return entity.attributes.product_name;
+      return entity.category === "refrigerator" ? "雪櫃" : entity.category === "air_conditioner" ? "冷氣" : industryEntityLabel(id, language) ?? entity.model ?? "產品";
+    }).join("同");
     const genericEnglish = language === "en" && lifecycleVerified.targetIds.every(id=>state.entities.find(e=>e.entity_id===id)?.entity_id.startsWith("generic:"));
     const reply = genericEnglish ? lifecycleVerified.targetIds.map(id=>renderCanonicalRequirement(state.entities.find(e=>e.entity_id===id)!,language)).join("; ")+"." : lifecycleVerified.plans[0].action === "cancelled"
       ? (language === "en" ? `${target} is cancelled.` : `${target}已取消。`)
