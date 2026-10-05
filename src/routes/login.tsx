@@ -118,6 +118,8 @@ function LoginPage() {
         <CardHeader>
           <CardTitle>{mode === "signin" ? "Sign in" : "Create account"}</CardTitle>
           <CardDescription>Access your support console</CardDescription>
+          {resolveAuthoritativeSupabaseBinding().projectId === "nbtowfuvvfqpxqydyoby" &&
+            <p role="status">NONPRODUCTION · nbtowfuvvfqpxqydyoby</p>}
         </CardHeader>
         <CardContent className="space-y-4">
           <form onSubmit={handleEmail} className="space-y-4">

@@ -1380,6 +1380,10 @@ jobs:
           git worktree add --detach "$RUNNER_TEMP/c3-build-checkout" "$GITHUB_SHA"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/c3-build-checkout/node_modules"
           (cd "$RUNNER_TEMP/c3-build-checkout" && npm run build)
+          (cd "$RUNNER_TEMP/c3-build-checkout" && npx tsc --noEmit)
+          (cd "$RUNNER_TEMP/c3-build-checkout" && node tests/phase1/console-summary.test.mjs)
+          (cd "$RUNNER_TEMP/c3-build-checkout" && C3_CONSOLE_ENV=nonproduction npm run build)
+          (cd "$RUNNER_TEMP/c3-deno-checkout" && deno check --no-lock --node-modules-dir=auto supabase/functions/agent-send-reply/index.ts supabase/functions/take-over-conversation/index.ts)
           c3_source_clean after_build 1
           echo C3_NONPRODUCTION_REGRESSION=PASS
       - name: Run pristine C3 source final gate
@@ -1390,6 +1394,7 @@ jobs:
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/c3-final-gate-checkout/node_modules"
           (cd "$RUNNER_TEMP/c3-final-gate-checkout" && node .github/scripts/task_ai_abc_c3_final_gate.mjs) | tee "$RUNNER_TEMP/c3-source-final-gate.log"
           grep -q 'C3_FINAL_GATE|result=PASS|scope=preproduction_machine_source' "$RUNNER_TEMP/c3-source-final-gate.log"
+          (cd "$RUNNER_TEMP/c3-final-gate-checkout" && node .github/scripts/phase1_console_final_gate.mjs --head "$GITHUB_SHA" --tree "$(git rev-parse HEAD^{tree})" --source-only)
           echo C3_PRISTINE_SOURCE_FINAL_GATE=PASS
 
   c3-durable-recovery-execution:

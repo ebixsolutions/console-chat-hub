@@ -17,6 +17,11 @@ Deno.serve(async (req) => {
     const conversation_id = body?.conversation_id;
     const content = typeof body?.content === "string" ? body.content.trim() : "";
 
+    const client_request_id = body?.client_request_id;
+    if (typeof client_request_id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(client_request_id)) {
+      return json({ error: "Valid client_request_id required" }, 400);
+    }
+
     if (!conversation_id) return json({ error: "conversation_id required" }, 400);
     if (!content) return json({ error: "Message content is required" }, 400);
     if (content.length > 4000) return json({ error: "Message too long (max 4000 chars)" }, 400);
@@ -42,6 +47,7 @@ Deno.serve(async (req) => {
         p_agent_id: agent.id,
         p_content: content,
         p_agent_name: agent.display_name ?? null,
+        p_client_request_id: client_request_id,
       },
     );
 
@@ -67,6 +73,13 @@ Deno.serve(async (req) => {
                 : null,
           },
         });
+
+      case "request_id_conflict":
+        return json({ error: "Reply request identity conflicts", error_type: "request_id_conflict" }, 409);
+      case "membership_required":
+        return json({ error: "Active company membership required" }, 403);
+      case "invalid_request_id":
+        return json({ error: "Valid client_request_id required" }, 400);
 
       case "resolved":
         return json(

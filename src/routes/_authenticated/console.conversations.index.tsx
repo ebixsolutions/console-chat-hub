@@ -1,3 +1,4 @@
+import { ReplyRequest } from "@/components/console/reply-request";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -11,6 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { feedbackService } from "@/lib/api/feedback.service";
+import { TicketHandoffSummary } from "@/components/console/TicketHandoffSummary";
 import { AgentToolPanel } from "@/components/console/AgentToolPanel";
 import { useConsoleLang } from "@/hooks/useEffectiveRole";
 import { CRMPanel, RIGHT_COPY, buildBoundedContext, computeContextRevisionKey } from "@/components/console/CRMPanel";
@@ -624,10 +626,17 @@ function SinglePageInbox() {
     }
     return true;
   }
+  const replyRequest = useRef(new ReplyRequest());
+  async function invokeReply(conversationId:string,content:string) {
+    const body=replyRequest.current.body(conversationId,content);
+    const ok=await callEF("agent-send-reply",body);
+    if(ok)replyRequest.current.confirmed(body.client_request_id);
+    return ok;
+  }
   async function sendReply() {
     if (!selectedId || !reply.trim()) return;
     setSending(true);
-    const ok = await callEF("agent-send-reply", { conversation_id: selectedId, content: reply.trim() });
+    const ok = await invokeReply(selectedId, reply.trim());
     setSending(false);
     if (ok) {
       setReply("");
@@ -659,7 +668,7 @@ function SinglePageInbox() {
       toast.error("Take over failed. Message not sent.");
       return;
     }
-    const sendOk = await callEF("agent-send-reply", { conversation_id: selectedId, content: reply.trim() });
+    const sendOk = await invokeReply(selectedId, reply.trim());
     setSending(false);
     setSendGuardOpen(false);
     if (sendOk) {
@@ -1540,7 +1549,9 @@ function SinglePageInbox() {
           />
         </div>
         {selectedId && selectedConv && (
-          <div style={{ flex: 1, overflow: "hidden" }}>
+          <div style={{ flex: 1, overflowY: "auto" }}>
+            <>
+            <TicketHandoffSummary conversationId={selectedId} />
             <AgentToolPanel
               conversationId={selectedId}
               convStatus={selectedConv.status}
@@ -1556,6 +1567,7 @@ function SinglePageInbox() {
                 }
               }}
             />
+            </>
           </div>
         )}
       </div>
