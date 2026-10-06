@@ -85,6 +85,19 @@ try:
  ids=[int(next(x for x in output.splitlines() if x.isdigit())) for output in [left,right]];assert ids[0]!=ids[1]
  replies=[json.loads(next(x for x in output.splitlines() if x.startswith('{'))) for output in [left,right]];assert replies[0]['result']=='claimed' and replies[1]['result']=='none',replies;assert replies[0]['conversation_id']==ordinary_conv
  ev.append(dict(name='real normal claim SKIP LOCKED competition / fixture excluded',result='PASS',backend_pids=ids,barrier=barrier,replies=replies))
+ run(f"INSERT INTO channel_config(id,company_id,name,channel_type) VALUES('{uid(6)}','{co}','C3-UAT-alternative','web_widget');INSERT INTO conversations(id,company_id,channel_config_id,visitor_session_id,status) VALUES('{uid(5)}','{co}','{ch}','{vs}','pending');")
+ yes('isolated conversation retains actual queue without live-test flags',f"SELECT EXISTS(SELECT 1 FROM human_support_queue WHERE conversation_id='{uid(5)}' AND state='waiting') AND (SELECT metadata_source='{{}}'::jsonb FROM conversations WHERE id='{uid(5)}')")
+ run(f"UPDATE conversations SET channel_config_id='{uid(6)}' WHERE id='{uid(5)}';")
+ yes('learning exclusion survives channel change',f"SELECT c3_uat_learning_excluded('{uid(5)}')")
+ run(f"UPDATE feedback_request SET conversation_id='{ordinary_conv}' WHERE conversation_id='{conv}';",reject='Synthetic conversation reassignment denied')
+ # Another legal local tenant is never allowed to address the fixture tenant.
+ run(f"INSERT INTO agent_profile(user_id,display_name,email,role,status) VALUES('{uid(910)}','Control admin','ordinary-native@example.invalid','admin','active');INSERT INTO company_membership(company_id,user_id,role,is_active) VALUES('{ordinary_co}','{uid(910)}','admin',true);")
+ run(actor(910,f"SELECT c3_uat_schedule_feedback('{conv}')"),reject='Conversation outside trusted tenant')
+ run(actor(910,"SELECT c3_uat_save_feedback_config('{}')"),reject='Isolated registry required')
+ run(f"INSERT INTO company_membership(company_id,user_id,role,is_active) VALUES('{ordinary_co}','{uid(10)}','admin',true);")
+ run(actor(10,"SELECT c3_uat_save_feedback_config('{}')"),reject='Trusted active single tenant required')
+ run(f"DELETE FROM company_membership WHERE company_id='{ordinary_co}' AND user_id='{uid(10)}';")
+ ev.append(dict(name='trusted cross tenant and ambiguous membership rejected',result='PASS'))
  # Full current canonical lineage, deferred enqueue and all learning-trigger paths.
  bh='a'*64;att=uid(20);evaluation=uid(21)
  make_eval(conv,co,att,evaluation,uid(10))
@@ -93,11 +106,19 @@ try:
  yes('all real downstream learning sinks remain empty',f"SELECT NOT EXISTS(SELECT 1 FROM hf3_learning_case WHERE conversation_id='{conv}') AND NOT EXISTS(SELECT 1 FROM evaluation_training_outbox WHERE evaluation_id='{evaluation}')")
  run(f"INSERT INTO hf3_learning_case(company_id,conversation_id,evaluation_id) VALUES('{co}','{conv}','{evaluation}');INSERT INTO evaluation_training_outbox(evaluation_id,company_id,delivery_idempotency_key,source_deployment,evaluation_contract_version) SELECT id,company_id,id::text,source_deployment,evaluation_contract_version FROM conversation_evaluation WHERE id='{evaluation}';")
  yes('direct sink insertion excluded',f"SELECT NOT EXISTS(SELECT 1 FROM hf3_learning_case WHERE conversation_id='{conv}') AND NOT EXISTS(SELECT 1 FROM evaluation_training_outbox WHERE evaluation_id='{evaluation}')")
+ run(f"INSERT INTO conversations(id,company_id,channel_config_id,visitor_session_id,status) VALUES('{uid(7)}','{co}','{ch}','{vs}','resolved');")
+ run(actor(10,f"SELECT c3_uat_schedule_feedback('{uid(7)}')"))
  run(actor(10,"SELECT c3_uat_save_feedback_config('{\"is_active\":false}')"))
+ yes('disable cancels only isolated pending jobs',f"SELECT (SELECT status='skipped' FROM feedback_request WHERE conversation_id='{uid(7)}') AND (SELECT status='pending' FROM feedback_request WHERE conversation_id='{ordinary_conv}')")
  # Responded records remain intact; fresh pending requests are cancelled only while pending.
  yes('disable preserves responded record',f"SELECT status='responded' FROM feedback_request WHERE conversation_id='{conv}'")
  run((root/'sql/c3_uat_isolation_guarded_rollback.sql').read_text(),reject='Isolation rows still retained')
- ev.append(dict(name='elapsed-time delivery/token recovery',result='NOT_RUN',reason='Real 24h due time not elapsed; no clock change/backdating; not a runtime PASS'))
+ # Retained fixtures reject rollback; exact local-ID cleanup preserves ordinary control.
+ run(f"DELETE FROM ce_discrepancy WHERE evaluation_id='{evaluation}';DELETE FROM ce_training_link WHERE evaluation_id='{evaluation}';DELETE FROM evaluation_training_outbox WHERE evaluation_id='{evaluation}';DELETE FROM hf3_learning_case WHERE conversation_id='{conv}';DELETE FROM conversation_evaluation WHERE id='{evaluation}';DELETE FROM ce_bundle_snapshot WHERE attempt_id='{att}';DELETE FROM conversation_evaluation_attempt WHERE id='{att}';DELETE FROM handoff_event WHERE conversation_id='{conv}';DELETE FROM feedback_request WHERE conversation_id IN ('{conv}','{uid(7)}');DELETE FROM human_support_queue WHERE conversation_id='{uid(5)}';DELETE FROM conversations WHERE id IN ('{conv}','{uid(5)}','{uid(7)}');DELETE FROM visitor_session WHERE id='{vs}';DELETE FROM c3_uat_feedback_config WHERE company_id='{co}';DELETE FROM c3_uat_channel_scope WHERE company_id='{co}';DELETE FROM channel_config WHERE id IN ('{ch}','{uid(6)}');DELETE FROM company_membership WHERE company_id='{co}';DELETE FROM agent_profile WHERE user_id IN ('{uid(10)}','{uid(11)}','{uid(12)}','{uid(13)}');DELETE FROM auth.users WHERE id IN ('{uid(10)}','{uid(11)}','{uid(12)}','{uid(13)}');DELETE FROM company WHERE id='{co}';")
+ yes('exact-ID fixture cleanup keeps nonfixture data',f"SELECT NOT EXISTS(SELECT 1 FROM c3_uat_conversation_scope) AND NOT EXISTS(SELECT 1 FROM c3_uat_channel_scope) AND NOT EXISTS(SELECT 1 FROM c3_uat_feedback_config) AND EXISTS(SELECT 1 FROM conversations WHERE id='{ordinary_conv}') AND EXISTS(SELECT 1 FROM conversation_evaluation WHERE id='{ordinary_eval}')")
+ run(rollback_settings+(root/'sql/c3_uat_isolation_guarded_rollback.sql').read_text())
+ yes('rollback after precise cleanup preserves ordinary evaluation',f"SELECT to_regclass('public.c3_uat_channel_scope') IS NULL AND EXISTS(SELECT 1 FROM conversation_evaluation WHERE id='{ordinary_eval}')")
+ ev.append(dict(name='elapsed-time delivery/token recovery' ,result='NOT_RUN',reason='Real 24h due time not elapsed; no clock change/backdating; not a runtime PASS'))
  status='PASS_SAFETY_SUBSET';exitcode=0
 except Exception as e:status='FAIL';exitcode=1;ev.append(dict(name='native execution failure',result='FAIL',error=str(e),trace=traceback.format_exc()))
 finally:
