@@ -35,6 +35,15 @@ import {verifyProductionSource, PROFILE_PATH} from './c3_unified_production_sour
 const unifiedProduction = fs.existsSync(PROFILE_PATH);
 const unifiedEvidence = unifiedProduction ? verifyProductionSource({expectedIdentity:{head:process.env.GITHUB_SHA || execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),tree:execFileSync('git',['rev-parse','HEAD^{tree}'],{encoding:'utf8'}).trim()}}) : null;
 const unifiedProfile = unifiedProduction ? JSON.parse(read(PROFILE_PATH)) : null;
+// Current governed source acceptance is separate from the immutable historical
+// offline contract. Source validity never establishes hosted/runtime acceptance.
+if (unifiedProduction && process.env.C3_GATE_PHASE === 'preproduction') {
+  run('node', ['.github/scripts/c3_unified_production_source_gate.test.mjs']);
+  console.log(JSON.stringify({...unifiedEvidence, current_live_capture:'NOT_VERIFIED_BY_SOURCE_CI', production_ready:false}));
+  console.log('C3_CURRENT_SOURCE_GATE|result=SOURCE_VALIDATED|hosted=NOT_TESTED|uat_start_allowed=false');
+  process.exit(0);
+}
+
 const files = {
   recall: "supabase/functions/_shared/conversation-recall.ts",
   recallUnit: "supabase/functions/_shared/conversation-recall.test.ts",

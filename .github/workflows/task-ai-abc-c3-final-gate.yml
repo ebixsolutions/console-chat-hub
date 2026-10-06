@@ -836,6 +836,10 @@ jobs:
           set -euo pipefail; eval "$C3_ASSERT_LIB"
           git ls-files --others --exclude-standard | LC_ALL=C sort > "$RUNNER_TEMP/before-cli"
           c3_source_clean before_cli_setup 0
+          if test -f .github/scripts/c3_unified_production_profile.json; then
+            echo C3_UNIFIED_SOURCE_PROFILE=true >> "$GITHUB_ENV"
+            for name in C3_LIVE_BASELINE_READBACK C3_SCHEMA_READ_ONLY_TRACE C3_MIGRATION_HISTORY_COMPATIBILITY C3_MIGRATION_RUNTIME_REHEARSAL C3_RECOVERY_INTERIM_BASELINE C3_CURRENT_LIVE_DURABLE_CAPTURE; do echo "$name=NOT_RUN_SOURCE_CI" >> "$GITHUB_ENV"; done
+          fi
       - uses: denoland/setup-deno@v2
         with: {deno-version: v2.9.6}
       - uses: supabase/setup-cli@v1
@@ -851,6 +855,7 @@ jobs:
         with: {node-version: '22', cache: npm}
       - run: npm ci
       - name: Download verified live snapshot outside checkout
+        if: env.C3_UNIFIED_SOURCE_PROFILE != 'true'
         uses: actions/download-artifact@v4
         with:
           name: C3-current-live-v108-v43-recovery-baseline
@@ -1490,8 +1495,14 @@ jobs:
           (cd "$RUNNER_TEMP/c3-final-gate-checkout" && node .github/scripts/phase1_console_final_gate.mjs --head "$GITHUB_SHA" --tree "$(git rev-parse HEAD^{tree})" --source-only)
           fi
           (cd "$RUNNER_TEMP/c3-final-gate-checkout" && node .github/scripts/task_ai_abc_c3_final_gate.mjs) | tee "$RUNNER_TEMP/c3-source-final-gate.log"
-          grep -q 'C3_FINAL_GATE|result=PASS|scope=preproduction_machine_source' "$RUNNER_TEMP/c3-source-final-gate.log"
-          echo C3_PRISTINE_SOURCE_FINAL_GATE=PASS
+
+          if test -f .github/scripts/c3_unified_production_profile.json; then
+            grep -q 'C3_CURRENT_SOURCE_GATE|result=SOURCE_VALIDATED|hosted=NOT_TESTED|uat_start_allowed=false' "$RUNNER_TEMP/c3-source-final-gate.log"
+            echo C3_PRISTINE_CURRENT_SOURCE_GATE=SOURCE_VALIDATED
+          else
+            grep -q 'C3_FINAL_GATE|result=PASS|scope=preproduction_machine_source' "$RUNNER_TEMP/c3-source-final-gate.log"
+            echo C3_PRISTINE_SOURCE_FINAL_GATE=PASS
+          fi
 
   c3-durable-recovery-execution:
     if: >-
