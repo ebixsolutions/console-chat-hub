@@ -1484,7 +1484,11 @@ jobs:
           set -euo pipefail
           git worktree add --detach "$RUNNER_TEMP/c3-final-gate-checkout" "$GITHUB_SHA"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/c3-final-gate-checkout/node_modules"
+          if test -f .github/scripts/c3_unified_production_profile.json; then
+            (cd "$RUNNER_TEMP/c3-final-gate-checkout" && node .github/scripts/c3_unified_production_source_gate.test.mjs && node .github/scripts/c3_unified_production_source_gate.mjs)
+          else
           (cd "$RUNNER_TEMP/c3-final-gate-checkout" && node .github/scripts/phase1_console_final_gate.mjs --head "$GITHUB_SHA" --tree "$(git rev-parse HEAD^{tree})" --source-only)
+          fi
           (cd "$RUNNER_TEMP/c3-final-gate-checkout" && node .github/scripts/task_ai_abc_c3_final_gate.mjs) | tee "$RUNNER_TEMP/c3-source-final-gate.log"
           grep -q 'C3_FINAL_GATE|result=PASS|scope=preproduction_machine_source' "$RUNNER_TEMP/c3-source-final-gate.log"
           echo C3_PRISTINE_SOURCE_FINAL_GATE=PASS
