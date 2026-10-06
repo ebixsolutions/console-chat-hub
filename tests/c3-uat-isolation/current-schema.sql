@@ -231,6 +231,9 @@ CREATE INDEX idx_messages_sender_id ON public.messages USING btree (sender_id) W
 CREATE INDEX idx_messages_thinking_sentinel ON public.messages USING btree (conversation_id, content) WHERE (content = '__THINKING__'::text);
 CREATE UNIQUE INDEX messages_widget_client_message_id_uq ON public.messages USING btree (conversation_id, ((metadata ->> 'client_message_id'::text))) WHERE ((role = 'visitor'::text) AND (COALESCE((metadata ->> 'client_message_id'::text), ''::text) <> ''::text) AND (COALESCE(is_recalled, false) = false));
 CREATE INDEX idx_visitor_session_token ON public.visitor_session USING btree (session_token);
+CREATE INDEX conversation_commerce_state_company_updated_idx ON public.conversation_commerce_state USING btree (company_id, updated_at DESC);
+CREATE INDEX conversation_memory_state_company_updated_idx ON public.conversation_memory_state USING btree (company_id, updated_at DESC);
+CREATE INDEX conversation_memory_state_source_message_idx ON public.conversation_memory_state USING btree (source_message_id);
 ALTER TABLE public."ce_bundle_snapshot" ADD CONSTRAINT "ce_bundle_snapshot_attempt_id_fkey" FOREIGN KEY (attempt_id) REFERENCES conversation_evaluation_attempt(id) ON DELETE CASCADE;
 ALTER TABLE public."ce_discrepancy" ADD CONSTRAINT "ce_discrepancy_evaluation_id_fkey" FOREIGN KEY (evaluation_id) REFERENCES conversation_evaluation(id) ON DELETE CASCADE;
 ALTER TABLE public."ce_evaluation_job" ADD CONSTRAINT "ce_evaluation_job_conversation_id_fkey" FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE;
@@ -1462,6 +1465,98 @@ AS $function$
       and cm.is_active
   );
 $function$;
+CREATE OR REPLACE FUNCTION public.c3_enforce_conversation_memory_lineage_tg()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO ''
+AS $function$
+DECLARE
+  v_conversation_company uuid;
+  v_message_conversation uuid;
+  v_message_role text;
+BEGIN
+  SELECT c.company_id INTO v_conversation_company
+  FROM public.conversations c WHERE c.id = NEW.conversation_id;
+  IF NOT FOUND OR v_conversation_company IS NULL OR v_conversation_company IS DISTINCT FROM NEW.company_id THEN
+    RAISE EXCEPTION 'C3_MEMORY_TENANT_MISMATCH' USING ERRCODE = 'P0001';
+  END IF;
+  SELECT m.conversation_id, m.role INTO v_message_conversation, v_message_role
+  FROM public.messages m WHERE m.id = NEW.source_message_id;
+  IF NOT FOUND OR v_message_conversation IS DISTINCT FROM NEW.conversation_id
+     OR lower(coalesce(v_message_role,'')) NOT IN ('visitor','customer','user') THEN
+    RAISE EXCEPTION 'C3_MEMORY_SOURCE_MISMATCH' USING ERRCODE = 'P0001';
+  END IF;
+  IF NEW.memory->>'conversation_id' IS DISTINCT FROM NEW.conversation_id::text
+     OR NEW.memory->>'company_id' IS DISTINCT FROM NEW.company_id::text
+     OR NEW.memory->>'source_message_id' IS DISTINCT FROM NEW.source_message_id::text
+     OR (NEW.memory->>'memory_revision')::bigint IS DISTINCT FROM NEW.revision
+     OR (CASE WHEN NEW.commerce_state_revision IS NULL
+          THEN NEW.memory->>'commerce_state_revision' IS NOT NULL
+          ELSE (NEW.memory->>'commerce_state_revision')::bigint IS DISTINCT FROM NEW.commerce_state_revision END) THEN
+    RAISE EXCEPTION 'C3_MEMORY_LINEAGE_INVALID' USING ERRCODE = 'P0001';
+  END IF;
+  NEW.memory_hash := encode(extensions.digest(NEW.memory::text, 'sha256'), 'hex');
+  NEW.updated_at := now();
+  RETURN NEW;
+END;
+$function$;
+CREATE OR REPLACE FUNCTION public.enforce_conversation_commerce_state_lineage_v1()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO ''
+AS $function$
+declare
+  v_company_id uuid;
+  v_message_conversation_id uuid;
+  v_message_role text;
+  v_hash text;
+begin
+  select c.company_id
+    into v_company_id
+  from public.conversations c
+  where c.id = new.conversation_id;
+
+  if v_company_id is null then
+    raise exception 'commerce_state_conversation_company_unresolved';
+  end if;
+
+  if new.company_id is distinct from v_company_id then
+    raise exception 'commerce_state_tenant_mismatch';
+  end if;
+
+  select m.conversation_id, m.role
+    into v_message_conversation_id, v_message_role
+  from public.messages m
+  where m.id = new.source_message_id;
+
+  if v_message_conversation_id is null then
+    raise exception 'commerce_state_source_message_not_found';
+  end if;
+
+  if v_message_conversation_id is distinct from new.conversation_id then
+    raise exception 'commerce_state_source_message_mismatch';
+  end if;
+
+  if lower(coalesce(v_message_role, '')) not in ('visitor', 'customer', 'user') then
+    raise exception 'commerce_state_source_message_not_customer';
+  end if;
+
+  if jsonb_typeof(new.state) is distinct from 'object' then
+    raise exception 'commerce_state_invalid_state';
+  end if;
+
+  if new.state->>'version' is distinct from 'commerce-state-1.0.0' then
+    raise exception 'commerce_state_version_mismatch';
+  end if;
+
+  v_hash := encode(extensions.digest(new.state::text, 'sha256'), 'hex');
+  new.state_hash := v_hash;
+  new.updated_at := now();
+  return new;
+end
+$function$;
 REVOKE ALL ON FUNCTION public.ce_trigger_snapshot_hash_v1(uuid) FROM PUBLIC,anon,authenticated,service_role;
 GRANT EXECUTE ON FUNCTION public.ce_trigger_snapshot_hash_v1(uuid) TO "postgres";
 GRANT EXECUTE ON FUNCTION public.ce_trigger_snapshot_hash_v1(uuid) TO "service_role";
@@ -1605,6 +1700,10 @@ REVOKE ALL ON FUNCTION public.is_company_member(uuid,uuid) FROM PUBLIC,anon,auth
 GRANT EXECUTE ON FUNCTION public.is_company_member(uuid,uuid) TO "postgres";
 GRANT EXECUTE ON FUNCTION public.is_company_member(uuid,uuid) TO "service_role";
 GRANT EXECUTE ON FUNCTION public.is_company_member(uuid,uuid) TO "authenticated";
+REVOKE ALL ON FUNCTION public.c3_enforce_conversation_memory_lineage_tg() FROM PUBLIC,anon,authenticated,service_role;
+GRANT EXECUTE ON FUNCTION public.c3_enforce_conversation_memory_lineage_tg() TO "postgres";
+REVOKE ALL ON FUNCTION public.enforce_conversation_commerce_state_lineage_v1() FROM PUBLIC,anon,authenticated,service_role;
+GRANT EXECUTE ON FUNCTION public.enforce_conversation_commerce_state_lineage_v1() TO "postgres";
 ALTER TABLE public."agent_profile" ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public."agent_profile" FROM PUBLIC,anon,authenticated,service_role;
 GRANT SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER ON public."agent_profile" TO "postgres";
@@ -1772,10 +1871,28 @@ GRANT SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER ON public."visitor
 GRANT SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER ON public."visitor_session" TO "anon";
 GRANT SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER ON public."visitor_session" TO "authenticated";
 GRANT SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER ON public."visitor_session" TO "service_role";
+ALTER TABLE public."widget_config" ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public."widget_config" FROM PUBLIC,anon,authenticated,service_role;
+GRANT SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER ON public."widget_config" TO "postgres";
+GRANT SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER ON public."widget_config" TO "anon";
+GRANT SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER ON public."widget_config" TO "authenticated";
+GRANT SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER ON public."widget_config" TO "service_role";
+ALTER TABLE public."ce_automation_runtime" ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public."ce_automation_runtime" FROM PUBLIC,anon,authenticated,service_role;
+GRANT SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER ON public."ce_automation_runtime" TO "postgres";
+GRANT SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER ON public."ce_automation_runtime" TO "service_role";
+CREATE TRIGGER trg_conversation_commerce_state_lineage BEFORE INSERT OR UPDATE ON public.conversation_commerce_state FOR EACH ROW EXECUTE FUNCTION enforce_conversation_commerce_state_lineage_v1();
+ALTER TABLE public."conversation_commerce_state" ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public."conversation_commerce_state" FROM PUBLIC,anon,authenticated,service_role;
+GRANT SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER ON public."conversation_commerce_state" TO "postgres";
+GRANT SELECT ON public."conversation_commerce_state" TO "authenticated";
+GRANT SELECT ON public."conversation_commerce_state" TO "service_role";
+CREATE TRIGGER c3_conversation_memory_lineage_before_write BEFORE INSERT OR UPDATE ON public.conversation_memory_state FOR EACH ROW EXECUTE FUNCTION c3_enforce_conversation_memory_lineage_tg();
+ALTER TABLE public."conversation_memory_state" ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public."conversation_memory_state" FROM PUBLIC,anon,authenticated,service_role;
+GRANT SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER ON public."conversation_memory_state" TO "postgres";
+GRANT SELECT ON public."conversation_memory_state" TO "authenticated";
+GRANT SELECT ON public."conversation_memory_state" TO "service_role";
 CREATE POLICY "agent_profile_select" ON public."agent_profile" FOR SELECT TO "authenticated" USING ((EXISTS ( SELECT 1
    FROM ((company_membership target_cm
      JOIN company_membership caller_cm ON (((caller_cm.company_id = target_cm.company_id) AND (caller_cm.user_id = auth.uid()) AND (caller_cm.is_active = true))))
@@ -1838,6 +1955,27 @@ CREATE POLICY "feedback_request_write_admin" ON public."feedback_request" FOR AL
 CREATE POLICY "visitor_session_select_staff" ON public."visitor_session" FOR SELECT TO "authenticated" USING ((EXISTS ( SELECT 1
    FROM channel_config cc
   WHERE ((cc.id = visitor_session.channel_config_id) AND (cc.company_id IS NOT NULL) AND is_company_member(cc.company_id, auth.uid())))));
+CREATE POLICY "task3_server_only_deny" ON public."ce_automation_runtime" FOR ALL TO PUBLIC USING (false) WITH CHECK (false);
+CREATE POLICY "conversation_commerce_state_select_staff" ON public."conversation_commerce_state" FOR SELECT TO "authenticated" USING (((company_id IS NOT NULL) AND is_company_member(company_id, auth.uid())));
+CREATE POLICY "conversation_memory_state_select_staff" ON public."conversation_memory_state" FOR SELECT TO "authenticated" USING (((company_id IS NOT NULL) AND is_company_member(company_id, auth.uid())));
+CREATE POLICY "widget_config_read" ON public."widget_config" FOR SELECT TO "authenticated" USING ((EXISTS ( SELECT 1
+   FROM ((channel_config cc
+     JOIN company_membership cm ON ((cm.company_id = cc.company_id)))
+     JOIN company co ON (((co.id = cm.company_id) AND (co.is_active = true))))
+  WHERE ((cc.widget_config_id = widget_config.id) AND (cc.company_id IS NOT NULL) AND (cm.user_id = auth.uid()) AND (cm.is_active = true) AND ((cm.role)::text = ANY (ARRAY['admin'::text, 'supervisor'::text]))))));
+CREATE POLICY "widget_config_write_admin" ON public."widget_config" FOR UPDATE TO "authenticated" USING (((EXISTS ( SELECT 1
+   FROM ((channel_config cc
+     JOIN company_membership cm ON (((cm.company_id = cc.company_id) AND (cm.user_id = auth.uid()) AND (cm.is_active = true))))
+     JOIN company co ON (((co.id = cm.company_id) AND (co.is_active = true))))
+  WHERE ((cc.widget_config_id = widget_config.id) AND (cc.company_id IS NOT NULL) AND ((cm.role)::text = 'admin'::text)))) AND (NOT (EXISTS ( SELECT 1
+   FROM channel_config other_cc
+  WHERE ((other_cc.widget_config_id = widget_config.id) AND ((other_cc.company_id IS NULL) OR (NOT is_company_member(other_cc.company_id, auth.uid()))))))))) WITH CHECK (((EXISTS ( SELECT 1
+   FROM ((channel_config cc
+     JOIN company_membership cm ON (((cm.company_id = cc.company_id) AND (cm.user_id = auth.uid()) AND (cm.is_active = true))))
+     JOIN company co ON (((co.id = cm.company_id) AND (co.is_active = true))))
+  WHERE ((cc.widget_config_id = widget_config.id) AND (cc.company_id IS NOT NULL) AND ((cm.role)::text = 'admin'::text)))) AND (NOT (EXISTS ( SELECT 1
+   FROM channel_config other_cc
+  WHERE ((other_cc.widget_config_id = widget_config.id) AND ((other_cc.company_id IS NULL) OR (NOT is_company_member(other_cc.company_id, auth.uid())))))))));
 GRANT UPDATE ("priority") ON public."conversations" TO "authenticated";
 GRANT UPDATE ("tags") ON public."conversations" TO "authenticated";
 GRANT UPDATE ("updated_at") ON public."conversations" TO "authenticated";
