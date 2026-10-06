@@ -17,7 +17,12 @@ Deno.serve(async (req) => {
     const conversation_id = body?.conversation_id;
     const content = typeof body?.content === "string" ? body.content.trim() : "";
 
-    const client_request_id = body?.client_request_id;
+    // Legacy published clients have no stable operation UUID. Accept their
+    // normal envelope using a fresh server UUID, but make no cross-request
+    // exactly-once claim for them. New clients always retain their supplied ID.
+    // Both paths use the new FIVE-argument transaction; never fall back to four.
+    const legacy_request = !Object.prototype.hasOwnProperty.call(body, "client_request_id");
+    const client_request_id = legacy_request ? crypto.randomUUID() : body.client_request_id;
     if (typeof client_request_id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(client_request_id)) {
       return json({ error: "Valid client_request_id required" }, 400);
     }
@@ -76,6 +81,8 @@ Deno.serve(async (req) => {
 
       case "request_id_conflict":
         return json({ error: "Reply request identity conflicts", error_type: "request_id_conflict" }, 409);
+      case "tenant_unresolved":
+        return json({ error: "Conversation tenant unavailable" }, 409);
       case "membership_required":
         return json({ error: "Active company membership required" }, 403);
       case "invalid_request_id":
