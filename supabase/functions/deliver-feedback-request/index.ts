@@ -1,3 +1,4 @@
+import { validateAgent, resolveAgentCompanyScope } from "../_shared/agent.ts";
 import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { corsHeaders, json } from "../_shared/cors.ts";
@@ -30,12 +31,18 @@ async function sha256Hex(input: string): Promise<string> {
     .join("");
 }
 
-function feedbackBaseUrl(): string | null {
-  const raw = Deno.env.get("PUBLIC_APP_BASE_URL")?.trim() ?? "";
+function feedbackBaseUrl(fixture: boolean): string | null {
+  const raw = Deno.env.get(fixture ? "C3_UAT_FEEDBACK_BASE_URL" : "PUBLIC_APP_BASE_URL")?.trim() ?? "";
   if (!raw) return null;
+  if (!fixture) return raw.replace(/\/+$/, "");
   try {
     const url = new URL(raw);
     if (url.protocol !== "https:") return null;
+    if (fixture && (
+      url.username || url.password || url.search || url.hash || url.port ||
+      url.pathname !== "/" ||
+      url.hostname !== "4dbf593e-577e-4af4-a553-460441c34473.lovableproject.com"
+    )) return null;
     return url.toString().replace(/\/+$/, "");
   } catch {
     return null;
@@ -46,14 +53,24 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   if (req.method !== "POST") return json({ success: false, error: "method_not_allowed" }, 405);
 
+  const body = await req.clone().json().catch(() => ({}));
+  let fixtureCompany: string | null = null;
+  if (body.mode === 'c3_fixture') {
+    const actor = await validateAgent(req);
+    if (actor instanceof Response) return actor;
+    const scope = await resolveAgentCompanyScope(actor.supabaseAdmin, actor.agent);
+    if (scope instanceof Response) return scope;
+    if (!['admin','supervisor'].includes(scope.companyRole)) return json({error:'forbidden'},403);
+    fixtureCompany = scope.companyId;
+  }
   const expected = Deno.env.get("FEEDBACK_DELIVERY_INTERNAL_TOKEN")?.trim() ?? "";
   const actual = req.headers.get("X-Feedback-Delivery-Token")?.trim() ?? "";
-  if (!expected || !actual || !constantTimeEqual(expected, actual)) {
+  if (!fixtureCompany && (!expected || !actual || !constantTimeEqual(expected, actual))) {
     return json({ success: false, error: "unauthorized" }, 401);
   }
 
-  const baseUrl = feedbackBaseUrl();
-  if (!baseUrl) return json({ success: false, error: "public_app_base_url_not_configured" }, 503);
+  const baseUrl = feedbackBaseUrl(fixtureCompany !== null);
+  if (!baseUrl) return json({ success: false, error: fixtureCompany ? "c3_uat_feedback_base_url_not_configured" : "public_app_base_url_not_configured" }, 503);
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")?.trim() ?? "";
   let serviceRole = "";
@@ -70,7 +87,7 @@ Deno.serve(async (req) => {
   const summary = { processed: 0, delivered: 0, skipped: 0, failed: 0 };
 
   for (let i = 0; i < MAX_BATCH; i++) {
-    const { data: claim, error: claimError } = await admin.rpc("claim_feedback_delivery_tx", {});
+    const { data: claim, error: claimError } = fixtureCompany ? await admin.rpc("c3_uat_claim_feedback_delivery", { p_company_id: fixtureCompany }) : await admin.rpc("claim_feedback_delivery_tx", {});
     if (claimError) {
       console.error("[deliver-feedback-request] claim failed", claimError.code);
       return json({ success: false, error: "claim_failed", ...summary }, 500);

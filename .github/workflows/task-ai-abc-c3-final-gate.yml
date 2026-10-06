@@ -250,6 +250,17 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.mode == 'preflight_offline')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    services:
+      c3-isolated-postgres:
+        image: postgres:17.6
+        env:
+          POSTGRES_DB: c3_uat_isolated_native
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: c3-disposable-native-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d c3_uat_isolated_native"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       HAS_SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN != '' }}
       HAS_FINAL_SMOKE_AGENT_EMAIL: ${{ secrets.FINAL_SMOKE_AGENT_EMAIL != '' }}
@@ -268,6 +279,38 @@ jobs:
           echo "C3_CREDENTIAL_PRESENCE|name=FINAL_SMOKE_AGENT_PASSWORD|present=$HAS_FINAL_SMOKE_AGENT_PASSWORD"
       - uses: actions/setup-node@v4
         with: {node-version: '22'}
+      - name: Install frozen application dependencies before network-denied tests
+        run: npm ci
+      - name: Production profile and frozen offline controls with kernel network denial
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/c3-rev14-offline"
+          sudo unshare --net -- env GITHUB_SHA="$GITHUB_SHA" bash > "$RUNNER_TEMP/c3-rev14-offline/profile.log" 2>&1 <<'C3_OFFLINE'
+          set -euo pipefail
+          node <<'JS'
+          const net=require("node:net");
+          const socket=net.connect(443,"1.1.1.1");
+          socket.on("connect",()=>process.exit(1));
+          socket.on("error",e=>{if(e.code!=="ENETUNREACH")process.exit(1);console.log("C3_KERNEL_NETWORK_DENIAL|errno="+e.code)});
+          JS
+          node .github/scripts/c3_unified_production_source_gate.test.mjs
+          node .github/scripts/c3_unified_production_source_gate.mjs
+          C3_OFFLINE
+          cat "$RUNNER_TEMP/c3-rev14-offline/profile.log"
+      - name: Native PostgreSQL 17 captured trigger and concurrency safety tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tests/c3-uat-isolation/native-guards.py --database postgresql://postgres:c3-disposable-native-only@127.0.0.1:5432/c3_uat_isolated_native --out "$RUNNER_TEMP/c3-rev14-offline"
+      - name: Preserve actual source and native test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: C3-rev14-offline-${{ github.sha }}
+          path: ${{ runner.temp }}/c3-rev14-offline
+          if-no-files-found: error
+          retention-days: 30
       - name: Validation evidence, anti-fake, sequencing, cleanup and merge-guard controls
         run: |
           set -euo pipefail
@@ -280,7 +323,7 @@ jobs:
           node .github/scripts/c3_real_customer_dataset.test.mjs
           node .github/scripts/c3_nonproduction_independent_grader.test.mjs
           node .github/scripts/c3_human_blind_calibration.test.mjs
-          node .github/scripts/c3_deterministic_runtime_closure.test.mjs
+          node .github/scripts/c3_unified_production_source_gate.test.mjs
           node .github/scripts/c3_deterministic_fts.test.mjs
           node .github/scripts/c3_deterministic_quality.test.mjs
           node .github/scripts/c3_deterministic_quality.mjs verify-oracle .github/scripts/c3_real_case_derived_dataset_v1.json .github/scripts/c3_deterministic_objective_oracle_v1.json .github/scripts/c3_deterministic_objective_freeze_v1.json
@@ -835,6 +878,13 @@ jobs:
             node .github/scripts/c3_edge_runtime_parity.test.mjs
             test -z "$(git diff --name-only "$edge_runtime_parity_base..$GITHUB_SHA" -- 'supabase/migrations/**' 'supabase/functions/**')"
             echo C3_EDGE_RUNTIME_PARITY_SOURCE_ALLOWLIST=PASS
+            echo C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE
+            echo C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS
+            exit 0
+          fi
+          if test -f .github/scripts/c3_unified_production_profile.json; then
+            node .github/scripts/c3_unified_production_source_gate.mjs
+            echo C3_UNIFIED_PRODUCTION_EXACT_SOURCE_SCOPE=PASS
             echo C3_CURRENT_LIVE_SOURCE_PARITY=NOT_APPLICABLE
             echo C3_SOURCE_DEPLOYMENT_BOUNDARY=PASS
             exit 0

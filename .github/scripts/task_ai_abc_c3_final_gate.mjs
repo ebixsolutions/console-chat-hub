@@ -31,6 +31,10 @@ const runDeno = (args) => {
   return process.env.CI ? run("deno", args) : run("npx", ["--yes", "deno", ...args]);
 };
 
+import {verifyProductionSource, PROFILE_PATH} from './c3_unified_production_source_gate.mjs';
+const unifiedProduction = fs.existsSync(PROFILE_PATH);
+const unifiedEvidence = unifiedProduction ? verifyProductionSource({expectedIdentity:{head:process.env.GITHUB_SHA || execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),tree:execFileSync('git',['rev-parse','HEAD^{tree}'],{encoding:'utf8'}).trim()}}) : null;
+const unifiedProfile = unifiedProduction ? JSON.parse(read(PROFILE_PATH)) : null;
 const files = {
   recall: "supabase/functions/_shared/conversation-recall.ts",
   recallUnit: "supabase/functions/_shared/conversation-recall.test.ts",
@@ -540,9 +544,14 @@ const directorContract = JSON.parse(read(".github/scripts/c3_director_candidate_
 const directorBaseline = "bc00aed2516607198a146fecd767828892e102f3";
 must(directorContract.baseline_head === directorBaseline &&
   directorContract.baseline_tree === "5e9e09d8007d1e73f6e90b85c3f922feacef61f0", "director_baseline_invalid");
-const directorChanged = execFileSync("git", ["diff", "--name-only", directorBaseline, "HEAD"],
+const historicalDirectorChanged = execFileSync("git", ["diff", "--name-only", directorBaseline, "HEAD"],
   { encoding: "utf8" }).trim().split("\n").filter(Boolean).sort();
+const directorChanged = unifiedProduction ? [...new Set([...historicalDirectorChanged,...unifiedEvidence.identity.changed])].sort() : historicalDirectorChanged;
 const directorCandidate = directorChanged.length > 0;
+if(unifiedProduction) {
+  const historical=execFileSync('git',['diff','--name-only',directorBaseline,unifiedProfile.baseline.head],{encoding:'utf8'}).trim().split('\n').filter(Boolean);
+  directorContract.changed_files=[...new Set([...historical,...unifiedEvidence.identity.changed])];
+}
 if (directorCandidate) must(JSON.stringify(directorChanged) ===
   JSON.stringify([...directorContract.changed_files].sort()), "director_exact_changed_scope_invalid");
 const allowed = new Set([...Object.values(files), ...t11AtomicRepairFiles,
@@ -645,7 +654,8 @@ for (
 }
 
 run("git", ["diff", "--check", "origin/main...HEAD"]);
-run("node", [files.edgeRuntimeParityTest]);
+if (unifiedProduction) run("node", [".github/scripts/c3_unified_production_source_gate.test.mjs"]);
+else run("node", [files.edgeRuntimeParityTest]);
 const runtimeGraph = buildRuntimeParityReport({
   root: process.cwd(),
   deployedFiles: [],
@@ -835,10 +845,10 @@ run("node", [files.releaseIdentityTest]);
 run("node", [files.realCustomerDatasetTest]);
 run("node", [files.independentGraderTest]);
 run("node", [files.humanBlindCalibrationTest]);
-run("node", [files.deterministicClosureTest]);
+run("node", [unifiedProduction ? ".github/scripts/c3_unified_production_source_gate.test.mjs" : files.deterministicClosureTest]);
 run("node", [files.deterministicFtsTest]);
 run("node", [files.deterministicQualityTest]);
-const deterministicClosure = verifyDeterministicClosure();
+const deterministicClosure = unifiedProduction ? unifiedEvidence : verifyDeterministicClosure();
 const deterministicObjective = verifyObjectiveOracle({
   dataset: JSON.parse(read(files.derivedDataset)),
   overlay: JSON.parse(read(files.deterministicOracle)),

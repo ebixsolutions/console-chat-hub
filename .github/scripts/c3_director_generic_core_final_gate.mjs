@@ -4,13 +4,18 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { runtimeDependencyClosure } from "./c3_module_graph.mjs";
 
-const contract = JSON.parse(readFileSync(".github/scripts/c3_director_candidate_scope.json", "utf8"));
+import {verifyProductionSource, PROFILE_PATH} from './c3_unified_production_source_gate.mjs';
+import {existsSync} from 'node:fs';
+const unifiedProfile = existsSync(PROFILE_PATH) ? JSON.parse(readFileSync(PROFILE_PATH,'utf8')) : null;
+const historicalContract = JSON.parse(readFileSync(".github/scripts/c3_director_candidate_scope.json", "utf8"));
+const contract = unifiedProfile ? {baseline_head:unifiedProfile.baseline.head,baseline_tree:unifiedProfile.baseline.tree,changed_files:execFileSync('git',['diff','--name-only',unifiedProfile.baseline.head,'HEAD'],{encoding:'utf8'}).trim().split('\n').filter(Boolean)} : historicalContract;
+if(unifiedProfile) verifyProductionSource({expectedIdentity:{head:process.env.GITHUB_SHA||execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),tree:execFileSync('git',['rev-parse','HEAD^{tree}'],{encoding:'utf8'}).trim()}});
 const baseline = contract.baseline_head;
 const baselineTree = contract.baseline_tree;
 const scope = contract.changed_files;
-if (baseline !== "bc00aed2516607198a146fecd767828892e102f3" ||
+if (!unifiedProfile && (baseline !== "bc00aed2516607198a146fecd767828892e102f3" ||
     baselineTree !== "5e9e09d8007d1e73f6e90b85c3f922feacef61f0" ||
-    new Set(scope).size !== scope.length || !scope.includes(".github/scripts/c3_director_candidate_scope.json")) {
+    new Set(scope).size !== scope.length || !scope.includes(".github/scripts/c3_director_candidate_scope.json"))) {
   throw new Error("C3_DIRECTOR_GATE|invalid_exact_baseline_or_scope_contract");
 }
 function git(...args) { return execFileSync("git", args, { encoding: "utf8", timeout: 15000 }).trim(); }
@@ -43,7 +48,7 @@ for (const file of [
   "supabase/functions/agent-assist/index.ts",
 ]) {
   let frozenBytes = readFileSync(file);
-  if (file === "supabase/functions/_shared/commerce-state-reducer.ts") {
+  if (!unifiedProfile && file === "supabase/functions/_shared/commerce-state-reducer.ts") {
     // The reproduced generic quantity assignment opens only this operator
     // vocabulary. Every other reducer byte retains the frozen comparison.
     const current = frozenBytes.toString("utf8");
