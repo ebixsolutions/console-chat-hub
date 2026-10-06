@@ -1475,7 +1475,7 @@ jobs:
           (cd "$RUNNER_TEMP/c3-build-checkout" && npx tsc --noEmit)
           (cd "$RUNNER_TEMP/c3-build-checkout" && node tests/phase1/console-summary.test.mjs)
           (cd "$RUNNER_TEMP/c3-build-checkout" && C3_CONSOLE_ENV=nonproduction npm run build)
-          (cd "$RUNNER_TEMP/c3-deno-checkout" && deno check --no-lock --node-modules-dir=auto supabase/functions/agent-send-reply/index.ts supabase/functions/take-over-conversation/index.ts)
+          (cd "$RUNNER_TEMP/c3-deno-checkout" && deno check --no-lock --node-modules-dir=auto supabase/functions/agent-send-reply/index.ts supabase/functions/take-over-conversation/index.ts supabase/functions/deliver-feedback-request/index.ts)
           c3_source_clean after_build 1
           echo C3_NONPRODUCTION_REGRESSION=PASS
       - name: Run pristine C3 source final gate
