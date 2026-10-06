@@ -49,11 +49,11 @@ async function authorized(
     const { data } = await admin
       .from("company_membership").select("role")
       .eq("company_id", companyId).eq("user_id", userId).eq("is_active", true);
-    return (data ?? []).some((r) => EVALUATE_ROLES.has(String(r.role).toLowerCase()));
+    return (data ?? []).some((r: { role: string }) => EVALUATE_ROLES.has(String(r.role).toLowerCase()));
   }
 
   const { data } = await admin.from("user_roles").select("role").eq("user_id", userId);
-  return (data ?? []).some((r) => EVALUATE_ROLES.has(String(r.role).toLowerCase()));
+  return (data ?? []).some((r: { role: string }) => EVALUATE_ROLES.has(String(r.role).toLowerCase()));
 }
 
 Deno.serve(async (req) => {

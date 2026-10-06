@@ -118,8 +118,8 @@ function LoginPage() {
         <CardHeader>
           <CardTitle>{mode === "signin" ? "Sign in" : "Create account"}</CardTitle>
           <CardDescription>Access your support console</CardDescription>
-          {resolveAuthoritativeSupabaseBinding().projectId === "nbtowfuvvfqpxqydyoby" &&
-            <p role="status">NONPRODUCTION · nbtowfuvvfqpxqydyoby · {import.meta.env.VITE_C3_BUILD_IDENTITY}</p>}
+          {
+            <p role="status">{resolveAuthoritativeSupabaseBinding().projectId === "nrfxhqabwblzxoushgnm" ? "PRODUCTION" : "NONPRODUCTION"} · {resolveAuthoritativeSupabaseBinding().projectId} · {import.meta.env.VITE_C3_BUILD_IDENTITY}</p>}
         </CardHeader>
         <CardContent className="space-y-4">
           <form onSubmit={handleEmail} className="space-y-4">

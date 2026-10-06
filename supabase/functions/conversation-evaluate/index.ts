@@ -299,7 +299,7 @@ async function resolveEvaluationScope(
     .select("role")
     .eq("user_id", userId);
   if (roleErr) return { ok: false, error: "internal_error", detail: "local_role_lookup_failed" };
-  const roles = (rolesRows ?? []).map((r: { role: string }) => String(r.role));
+  const roles: string[] = (rolesRows ?? []).map((r: { role: string }) => String(r.role));
   if (!roles.some((r) => EVALUATE_ROLES.has(r))) {
     return { ok: false, error: "forbidden", detail: "role_not_permitted" };
   }

@@ -376,8 +376,8 @@ function ConsoleLayout() {
         color: "#1a1a1a",
       }}
     >
-      {resolveAuthoritativeSupabaseBinding().projectId === "nbtowfuvvfqpxqydyoby" &&
-        <div role="status" style={{ background: "#fef3c7", padding: "3px 12px" }}>NONPRODUCTION · nbtowfuvvfqpxqydyoby · {import.meta.env.VITE_C3_BUILD_IDENTITY}</div>}
+      {
+        <div role="status" style={{ background: "#fef3c7", padding: "3px 12px" }}>{resolveAuthoritativeSupabaseBinding().projectId === "nrfxhqabwblzxoushgnm" ? "PRODUCTION" : "NONPRODUCTION"} · {resolveAuthoritativeSupabaseBinding().projectId} · {import.meta.env.VITE_C3_BUILD_IDENTITY}</div>}
       <div
         style={{
           height: LANGBAR_H,

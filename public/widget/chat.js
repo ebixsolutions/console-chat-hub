@@ -67,6 +67,44 @@
   var pollRequestSeq = 0;
   var catchUpPending = false;
   var activePollRequest = null;
+  var queueEstimate = null;
+  var queueEstimateTimer = null;
+
+  // Server deadlines only: never turn a client ETA into a new deadline.
+  function parseQueueEstimate(snapshot, monotonicNow) {
+    if (!snapshot || snapshot.state !== "waiting" || !Number.isFinite(monotonicNow) ||
+        !Number.isInteger(snapshot.estimated_wait_minutes) || snapshot.estimated_wait_minutes <= 0 ||
+        !/^[0-9a-f]{32}$/.test(snapshot.estimate_basis || "")) return null;
+    var timestamps = [snapshot.estimate_generated_at, snapshot.estimate_deadline, snapshot.server_now];
+    if (timestamps.some(function (value) {
+      return typeof value !== "string" || !/(Z|[+-]\d{2}:?\d{2})$/.test(value);
+    })) return null;
+    var generated = Date.parse(timestamps[0]);
+    var deadline = Date.parse(timestamps[1]);
+    var serverNow = Date.parse(timestamps[2]);
+    if (![generated, deadline, serverNow].every(Number.isFinite) ||
+        deadline < generated || generated > serverNow) return null;
+    return { basis: snapshot.estimate_basis, deadline: deadline,
+      target: monotonicNow + Math.max(0, deadline - serverNow) };
+  }
+
+  function stopQueueEstimateTimer() {
+    if (queueEstimateTimer !== null) clearTimeout(queueEstimateTimer);
+    queueEstimateTimer = null;
+  }
+
+  function renderQueueEstimate() {
+    stopQueueEstimateTimer();
+    var timer = panel && panel.querySelector("#nx-queue-countdown");
+    if (!timer || !queueEstimate || queueEstimate.conversationId !== state.conversationId) return;
+    var seconds = Math.max(0, Math.ceil((queueEstimate.target - performance.now()) / 1000));
+    timer.textContent = seconds > 0
+      ? " Estimated time remaining: " + Math.floor(seconds / 60) + ":" + String(seconds % 60).padStart(2, "0") + "."
+      : " The estimated wait has elapsed; you are still in the queue. A team member will join when available.";
+    if (seconds > 0 && !document.hidden && pollActive) {
+      queueEstimateTimer = setTimeout(renderQueueEstimate, 1000);
+    }
+  }
 
   function saveSession() {
     try {
@@ -1293,6 +1331,7 @@
   }
 
   function applyHumanSupportState(humanSupport) {
+    stopQueueEstimateTimer();
     if (!panel) return;
     var el = panel.querySelector("#nx-human-state");
     if (!el) return;
@@ -1327,11 +1366,29 @@
       else queueText += " Estimated wait time is not available yet.";
       queueText += " You can continue sending messages here.";
       el.textContent = queueText;
+      var estimate = parseQueueEstimate(humanSupport, performance.now());
+      if (estimate) {
+        if (queueEstimate && queueEstimate.conversationId === state.conversationId &&
+            queueEstimate.basis === estimate.basis && queueEstimate.deadline === estimate.deadline) {
+          estimate.target = Math.min(estimate.target, queueEstimate.target);
+        }
+        estimate.conversationId = state.conversationId;
+        queueEstimate = estimate;
+        var countdown = document.createElement("span");
+        countdown.id = "nx-queue-countdown";
+        countdown.setAttribute("role", "timer");
+        countdown.setAttribute("aria-live", "off");
+        el.appendChild(countdown);
+        renderQueueEstimate();
+      } else {
+        queueEstimate = null;
+      }
       updateTicket(state.conversationId, "human_needed", null);
       return;
     }
 
     if (value === "assigned") {
+      queueEstimate = null;
       state.handoffRequested = true;
       hideTyping();
       state.thinkingStartTime = null;
@@ -1344,6 +1401,7 @@
     }
 
     state.handoffRequested = false;
+    queueEstimate = null;
   }
 
   function showResolvedBanner(messages) {
@@ -1428,12 +1486,14 @@
   function startPolling() {
     if (pollActive) return;
     pollActive = true;
+    renderQueueEstimate();
     pollStep = 0;
     catchUpPending = false;
     schedulePoll();
   }
 
   function stopPolling() {
+    stopQueueEstimateTimer();
     pollActive = false;
     if (pollTimer) {
       clearTimeout(pollTimer);
@@ -1444,6 +1504,7 @@
 
   function invalidatePollingContext() {
     stopPolling();
+    queueEstimate = null;
     pollGeneration++;
     catchUpPending = false;
     pollStep = 0;
@@ -1857,6 +1918,7 @@
 
   document.addEventListener("visibilitychange", function () {
     if (document.hidden) {
+      stopQueueEstimateTimer();
       if (pollTimer) {
         clearTimeout(pollTimer);
         pollTimer = null;
@@ -1867,6 +1929,7 @@
       state.sessionToken &&
       state.conversationId
     ) {
+      renderQueueEstimate();
       pollStep = 0;
       if (activePollRequest) {
         catchUpPending = true;

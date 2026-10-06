@@ -7,10 +7,10 @@
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 import { mcpPlugin } from "@lovable.dev/mcp-js/stacks/tanstack/vite";
 import { fileURLToPath } from "node:url";
-import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import type { ConfigEnv } from "vite";
 import { resolveConsoleEnvironment } from "./vite.preview-environment.mjs";
+import { candidateIdentity, candidateIdentityPlugin } from "./vite.candidate-identity.mjs";
 
 export default async (environment: ConfigEnv) => {
 
@@ -28,9 +28,8 @@ const previewRouteTree = fileURLToPath(new URL("./.tanstack/c3-preview-routeTree
 if (nonproductionConsole && isolatedBrowserAuth) {
   throw new Error("Nonproduction Console cannot use isolated mock Auth");
 }
-const buildIdentity = nonproductionConsole
-  ? `${execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim()} / ${execFileSync("git", ["rev-parse", "HEAD^{tree}"], { encoding: "utf8" }).trim()}${execFileSync("git", ["status", "--porcelain"], { encoding: "utf8" }).trim() ? " / WORKTREE MODIFIED" : ""}`
-  : "";
+const identity = candidateIdentity(nonproductionConsole);
+const buildIdentity = `${identity.head} / ${identity.tree}${identity.modified ? " / WORKTREE MODIFIED" : ""}`;
 const demoHtml = `<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><title>C3 Phase 1 Demo</title><body><h1>NONPRODUCTION</h1><p>nbtowfuvvfqpxqydyoby</p><p>${buildIdentity}</p><p>按右下角聊天按鈕開始；真人接手請開啟 <a href="/console/conversations">Chat Console</a>。</p><script src="/widget/chat.js" data-channel-id="f6000000-0000-4000-8000-000000000130" data-api-base="https://nbtowfuvvfqpxqydyoby.supabase.co/functions/v1" defer></script></body></html>`;
 const tlsCert = process.env.C3_DEMO_TLS_CERT;
 const tlsKey = process.env.C3_DEMO_TLS_KEY;
@@ -42,15 +41,15 @@ return defineConfig({
   tanstackStart: {
     // Start needs its route crawler. Keep Preview's generated output in the
     // existing ignored build cache, rather than rewriting frozen source.
-    router: nonproductionConsole ? { generatedRouteTree: previewRouteTree } : undefined,
+    router: { generatedRouteTree: previewRouteTree },
     // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
     // nitro/vite builds from this
     server: { entry: "server" },
   },
   vite: {
-    define: { "import.meta.env.VITE_C3_BUILD_IDENTITY": JSON.stringify(buildIdentity) },
+    define: { "import.meta.env.VITE_C3_BUILD_IDENTITY": JSON.stringify(buildIdentity), "import.meta.env.VITE_C3_CANDIDATE": JSON.stringify(identity) },
     server: tlsCert && tlsKey ? { https: { cert: readFileSync(tlsCert), key: readFileSync(tlsKey) } } : undefined,
-    plugins: [mcpPlugin(), ...(nonproductionConsole ? [{
+    plugins: [mcpPlugin(), candidateIdentityPlugin(identity), ...(nonproductionConsole ? [{
       name: "c3-nonproduction-customer-entrypoint",
       configureServer(server: any) {
         server.middlewares.use((req: any, res: any, next: any) => {
