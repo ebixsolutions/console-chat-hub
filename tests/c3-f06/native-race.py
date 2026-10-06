@@ -60,24 +60,25 @@ try:
     assert r.returncode==0,r.stderr
     empty_url=urllib.parse.urlunparse(u._replace(path='/'+rollback_db))
     run((root/'sql/f06-local-race-fixtures.sql').read_text())
+    run(f"INSERT INTO auth.users(id,email) VALUES('{uid(11)}','synthetic11@example.invalid'); INSERT INTO public.agent_profile(id,user_id,display_name,email,status) VALUES('{uid(11)}','{uid(11)}','Other Agent','synthetic11@example.invalid','active'); INSERT INTO public.company_membership(company_id,user_id,role) VALUES('{uid(1)}','{uid(11)}','agent');")
     assert sql("SELECT md5(pg_get_functiondef('public.agent_send_reply_tx(uuid,uuid,text,text)'::regprocedure))")=='2491450055223f90ff932b0faf64c560'
     x,y=race(70,'Race','Race'); assert x['message_id']==y['message_id'] and y['replayed']
     x,y=race(71,'Payload-A','Payload-B'); assert [x['result'],y['result']]==['success','request_id_conflict']
     for role in ['anon','authenticated','service_role']:
-        for verb in ['SELECT * FROM public.c3_agent_reply_request','DELETE FROM public.c3_agent_reply_request','UPDATE public.c3_agent_reply_request SET created_at=now()']:
+        for verb in ['SELECT * FROM public.c3_agent_reply_request','INSERT INTO public.c3_agent_reply_request DEFAULT VALUES','DELETE FROM public.c3_agent_reply_request','UPDATE public.c3_agent_reply_request SET created_at=now()']:
             r=run('SET ROLE '+role+'; '+verb,fail=True); assert r.returncode and 'permission denied' in r.stderr
         if role!='service_role':
             r=run('SET ROLE '+role+'; '+call(80),fail=True); assert r.returncode and 'permission denied' in r.stderr
     r=run('SET ROLE service_role; '+call(70)); assert replies(r.stdout)[0]['replayed']
-    evidence.append({'case':'actual_role_acl','roles':['anon','authenticated','service_role'],'direct_receipt_read_update_delete':'denied','service_rpc':'allowed'})
-    for n,state in [(72,"status='open'"),(73,"assigned_agent_id=NULL")]:
+    evidence.append({'case':'actual_role_acl','roles':['anon','authenticated','service_role'],'direct_receipt_read_insert_update_delete':'denied','service_rpc':'allowed'})
+    for n,state in [(72,"status='open'"),(73,f"assigned_agent_id='{uid(11)}'")]:
         sql(f"UPDATE public.conversations SET status='pending',assigned_agent_id='{uid(10)}' WHERE id='{uid(20)}'")
         first=spawn(f"BEGIN; SELECT id FROM public.conversations WHERE id='{uid(20)}' FOR UPDATE; UPDATE public.conversations SET {state} WHERE id='{uid(20)}'; SELECT pg_sleep(3); COMMIT;",'control')
         barrier=observe(lambda d:any(x['name']=='c3f06_control' and x['wait']=='PgSleep' for x in d))
         second=spawn(call(n,'After control'), 'send')
         locks=observe(lambda d:any(x['name']=='c3f06_send' and x['blockers'] for x in d))
         finish(first); reply=replies(finish(second))[0]
-        assert reply['result']==('human_control_required' if n==72 else 'takeover_required'); assert counts(n)=={'message':0,'audit':0,'receipt':0}
+        assert reply['result']==('human_control_required' if n==72 else 'owned_by_another_agent'); assert counts(n)=={'message':0,'audit':0,'receipt':0}
         evidence.append({'case':'AI_return' if n==72 else 'transfer','barrier':barrier,'locks':locks,'reply':reply,'counts':counts(n)})
     rollback_attempt('Receipts exist')
     rollback_attempt('Missing or mismatched captured five-argument definition hash',"SELECT set_config('c3.f06_expected_definition_md5','drift',false);")
