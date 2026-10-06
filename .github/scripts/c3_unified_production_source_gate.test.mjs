@@ -18,6 +18,14 @@ try{
  fs.appendFileSync(path.join(fixture,victim),'\nexport const tenantBypass=true;\n');reject('tenant / grounding frozen source changed',()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/frozen_runtime_drift/);fs.writeFileSync(path.join(fixture,victim),original);
  const provider='supabase/functions/_shared/llm-router.ts';const providerBytes=fs.readFileSync(path.join(fixture,provider));fs.appendFileSync(path.join(fixture,provider),'\nconst illegal="https://api.openai.com/v1";');reject('illegal provider endpoint source',()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/frozen_runtime_drift/);fs.writeFileSync(path.join(fixture,provider),providerBytes);
  const worker='supabase/functions/deliver-feedback-request/index.ts';const workerBytes=fs.readFileSync(path.join(fixture,worker));fs.appendFileSync(path.join(fixture,worker),'\nfetch("https://api.openai.com/v1");');reject('worker direct provider bypass',()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/worker_direct_external_fetch/);fs.writeFileSync(path.join(fixture,worker),workerBytes);
+ const workerText=workerBytes.toString();
+ assert(workerText.includes('const actor = await validateAgent(req);'));
+ fs.writeFileSync(path.join(fixture,worker),workerText.replace('const actor = await validateAgent(req);','const actor = requestBody.actor;'));
+ reject('worker trusted actor bypass rejected',()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/conditional_worker_integrity/);fs.writeFileSync(path.join(fixture,worker),workerBytes);
+ fs.writeFileSync(path.join(fixture,worker),workerText.replace('const scope = await resolveAgentCompanyScope(actor.supabaseAdmin, actor.agent);','const scope = {companyId: requestBody.company_id};'));
+ reject('worker client tenant spoof rejected',()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/conditional_worker_integrity/);fs.writeFileSync(path.join(fixture,worker),workerBytes);
+ fs.writeFileSync(path.join(fixture,worker),workerText+'\nconst hardcodedSuccess={success:true,delivered:1};');
+ reject('worker hardcoded success addition rejected',()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/conditional_worker_integrity/);fs.writeFileSync(path.join(fixture,worker),workerBytes);
  const frozen=Object.keys(profile.frozen_evidence_sha256)[0];fs.appendFileSync(path.join(fixture,frozen),'\n// altered\n');reject('frozen offline checker changed',()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/frozen_evidence_drift/);
  for(const status of ['SKIPPED','BLOCKED'])reject(status+' cannot count as PASS',()=>verifyChildEvidence([{status,exit_code:0,evidence:[path.join(root,PROFILE_PATH)]}]),/child_not_pass/);
  reject('child nonzero cannot be ignored',()=>verifyChildEvidence([{status:'PASS',exit_code:1,evidence:[path.join(root,PROFILE_PATH)]}]),/child_exit_ignored/);

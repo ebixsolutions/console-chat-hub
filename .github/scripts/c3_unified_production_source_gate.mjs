@@ -79,6 +79,7 @@ export function verifyProductionSource({root=process.cwd(),profile=JSON.parse(fs
  const worker=fs.readFileSync(path.join(root,'supabase/functions/deliver-feedback-request/index.ts'),'utf8');
  const ast=ts.createSourceFile('worker.ts',worker,ts.ScriptTarget.Latest,true);
  const scan=n=>{if(ts.isCallExpression(n)&&ts.isIdentifier(n.expression)&&n.expression.text==='fetch')throw Error('worker_direct_external_fetch');ts.forEachChild(n,scan)};scan(ast);
+ must(profile.conditional_worker_sha256==='56b02b24abd5b64748f5931e9cf9b0b1df05fb920b852ebe4b8bd51c71a793de' && sha(Buffer.from(worker))===profile.conditional_worker_sha256,'conditional_worker_integrity');
  const identity=sourceOnly?null:verifyIdentity(root,profile,expectedIdentity);
  return {status:'SOURCE_VALIDATED',mode:profile.mode,contract:profile.contract,authorization:profile.authorization,backend:profile.backend,identity,files,closure_sha256:sha(JSON.stringify(files)),hosted_runtime:'NOT_TESTED',uat_start_allowed:false};
 }

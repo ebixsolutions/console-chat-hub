@@ -224,5 +224,6 @@
     "tests/c3-uat-isolation/native-guards.py",
     "tests/c3-uat-isolation/current-schema.sql",
     "src/routes/_authenticated/console.feedback-settings.tsx"
-  ]
+  ],
+  "conditional_worker_sha256": "56b02b24abd5b64748f5931e9cf9b0b1df05fb920b852ebe4b8bd51c71a793de"
 }
