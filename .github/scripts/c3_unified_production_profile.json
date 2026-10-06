@@ -223,7 +223,15 @@
     "sql/c3_uat_isolation_guarded_rollback.sql",
     "tests/c3-uat-isolation/native-guards.py",
     "tests/c3-uat-isolation/current-schema.sql",
-    "src/routes/_authenticated/console.feedback-settings.tsx"
+    "src/routes/_authenticated/console.feedback-settings.tsx",
+    "src/integrations/supabase/previewAuthStorage.ts"
   ],
-  "conditional_worker_sha256": "56b02b24abd5b64748f5931e9cf9b0b1df05fb920b852ebe4b8bd51c71a793de"
+  "conditional_worker_sha256": "56b02b24abd5b64748f5931e9cf9b0b1df05fb920b852ebe4b8bd51c71a793de",
+  "normalized_preview_sha256": {
+    ".env": "047c87aec28e50e4d73d0cecda8ad176d7134ba8f59007193264dd24ab7127ef",
+    "package.json": "6473a2cbc24d9c214e21c580c5f95f8c417fb84f1d1977172805362ff907ac5e",
+    "bun.lock": "12465e6c8461f7f2af835059015a1dca3ff8ba1c2b47a2d53aa0a954aba3d5bc",
+    "src/routes/__root.tsx": "4b6417326c1e05bcddcd72ff5a11b4b01fd12922f1018d8f0867d60bef2e898e",
+    "src/integrations/supabase/previewAuthStorage.ts": "c11f61a80071f876a237b06f902f5e278283044e7202d28b33b8341b9fceafa2"
+  }
 }

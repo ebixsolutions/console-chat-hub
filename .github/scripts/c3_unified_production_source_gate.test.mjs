@@ -12,7 +12,11 @@ reject('stale identity',()=>verifyIdentity(root,profile,{head:'0'.repeat(40),tre
 reject('unresolved dynamic import',()=>imports('await import(pathFromRequest);','unsafe.ts'),/dynamic_import_unresolved/);
 const fixture=fs.mkdtempSync(path.join(os.tmpdir(),'c3-production-controls-'));
 try{
- for(const f of [...profile.runtime_files,...Object.keys(profile.frozen_evidence_sha256)]){const dest=path.join(fixture,f);fs.mkdirSync(path.dirname(dest),{recursive:true});fs.copyFileSync(path.join(root,f),dest);}
+ for(const f of [...profile.runtime_files,...Object.keys(profile.frozen_evidence_sha256),...Object.keys(profile.normalized_preview_sha256)]){const dest=path.join(fixture,f);fs.mkdirSync(path.dirname(dest),{recursive:true});fs.copyFileSync(path.join(root,f),dest);}
+ for(const f of Object.keys(profile.normalized_preview_sha256)) {
+  const original=fs.readFileSync(path.join(fixture,f));fs.appendFileSync(path.join(fixture,f),'\n// unapproved preview drift\n');
+  reject('normalized preview binding drift '+f,()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/preview_binding_drift/);fs.writeFileSync(path.join(fixture,f),original);
+ }
  const victim=profile.runtime_files.find(f=>f.endsWith('/kb-client.ts'));const original=fs.readFileSync(path.join(fixture,victim));fs.unlinkSync(path.join(fixture,victim));
  reject('missing dependency',()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/dependency_missing/);fs.writeFileSync(path.join(fixture,victim),original);
  fs.appendFileSync(path.join(fixture,victim),'\nexport const tenantBypass=true;\n');reject('tenant / grounding frozen source changed',()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/frozen_runtime_drift/);fs.writeFileSync(path.join(fixture,victim),original);
