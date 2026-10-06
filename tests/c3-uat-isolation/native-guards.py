@@ -4,7 +4,7 @@ p=argparse.ArgumentParser();p.add_argument('--database',required=True);p.add_arg
 if u.hostname not in ('127.0.0.1','localhost') or u.path!='/c3_uat_isolated_native':raise SystemExit('Only disposable local named database permitted')
 root=pathlib.Path.cwd();ev=[];commands=[];out=pathlib.Path(a.out);out.mkdir(parents=True,exist_ok=True)
 def run(q,name='observer',reject=None):
- r=subprocess.run(['psql',a.database,'-X','-qAt','-v','ON_ERROR_STOP=1','-c',q],capture_output=True,text=True,env={**os.environ,'PGAPPNAME':'c3uat_'+name},timeout=25);commands.append(dict(sql=q,name=name,exit_code=r.returncode,stdout=r.stdout,stderr=r.stderr))
+ r=subprocess.run(['psql',a.database,'-X','-qAt','-v','ON_ERROR_STOP=1',],input=q,capture_output=True,text=True,env={**os.environ,'PGAPPNAME':'c3uat_'+name},timeout=25);commands.append(dict(sql=q,name=name,exit_code=r.returncode,stdout=r.stdout,stderr=r.stderr))
  if reject is not None:assert r.returncode!=0 and reject in r.stderr,r.stderr
  else:assert r.returncode==0,r.stderr
  return r.stdout.strip()

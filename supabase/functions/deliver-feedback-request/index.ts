@@ -34,7 +34,6 @@ async function sha256Hex(input: string): Promise<string> {
 function feedbackBaseUrl(fixture: boolean): string | null {
   const raw = Deno.env.get(fixture ? "C3_UAT_FEEDBACK_BASE_URL" : "PUBLIC_APP_BASE_URL")?.trim() ?? "";
   if (!raw) return null;
-  if (!fixture) return raw.replace(/\/+$/, "");
   try {
     const url = new URL(raw);
     if (url.protocol !== "https:") return null;
