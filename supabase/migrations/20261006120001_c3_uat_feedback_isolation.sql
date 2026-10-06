@@ -14,7 +14,7 @@ CREATE TABLE public.c3_uat_feedback_config (
  delay_minutes integer NOT NULL DEFAULT 1440 CHECK(delay_minutes BETWEEN 1440 AND 43200),
  trigger_event text NOT NULL DEFAULT 'conversation_resolved' CHECK(trigger_event='conversation_resolved'),
  config jsonb NOT NULL DEFAULT '{"channels_enabled":["website_widget"],"rating_type":"stars_1_5"}'::jsonb,
- CHECK(coalesce(config->'channels_enabled'='["website_widget"]'::jsonb AND config->>'rating_type' IN ('stars_1_5','nps','survey'),false))
+ CHECK(coalesce(config->'channels_enabled'='["website_widget"]'::jsonb AND config->>'rating_type' IN ('stars_1_5','csat','nps','thumbs','ces','survey'),false))
 );
 ALTER TABLE public.c3_uat_feedback_config ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.c3_uat_feedback_config FROM PUBLIC,anon,authenticated,service_role;

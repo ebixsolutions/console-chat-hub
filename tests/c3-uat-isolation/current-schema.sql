@@ -103,7 +103,6 @@ ALTER TABLE public."company" ADD CONSTRAINT "company_slug_key" UNIQUE (slug);
 ALTER TABLE public."company_membership" ADD CONSTRAINT "company_membership_company_id_user_id_role_key" UNIQUE (company_id, user_id, role);
 ALTER TABLE public."company_membership" ADD CONSTRAINT "company_membership_pkey" PRIMARY KEY (id);
 ALTER TABLE public."conversation_assignment" ADD CONSTRAINT "conversation_assignment_pkey" PRIMARY KEY (id);
-ALTER TABLE public."conversation_assignment" ADD CONSTRAINT "enforce_assignment_invariant_a" TRIGGER DEFERRABLE INITIALLY DEFERRED;
 ALTER TABLE public."conversation_evaluation" ADD CONSTRAINT "ce_review_consistency_check" CHECK ((((review_status = 'pending'::text) AND (reviewed_by IS NULL) AND (reviewed_at IS NULL)) OR ((review_status <> 'pending'::text) AND (reviewed_by IS NOT NULL) AND (reviewed_at IS NOT NULL))));
 ALTER TABLE public."conversation_evaluation" ADD CONSTRAINT "ce_review_status_check" CHECK ((review_status = ANY (ARRAY['pending'::text, 'accepted'::text, 'rejected'::text])));
 ALTER TABLE public."conversation_evaluation" ADD CONSTRAINT "conversation_evaluation_accuracy_score_check" CHECK (((accuracy_score >= (0)::numeric) AND (accuracy_score <= (100)::numeric)));
@@ -125,7 +124,6 @@ ALTER TABLE public."conversation_evaluation" ADD CONSTRAINT "conversation_evalua
 ALTER TABLE public."conversation_evaluation" ADD CONSTRAINT "conversation_evaluation_source_deployment_check" CHECK ((source_deployment ~ '^[A-Za-z0-9._:-]{1,128}$'::text));
 ALTER TABLE public."conversation_evaluation" ADD CONSTRAINT "conversation_evaluation_tone_score_check" CHECK (((tone_score >= (0)::numeric) AND (tone_score <= (100)::numeric)));
 ALTER TABLE public."conversation_evaluation" ADD CONSTRAINT "severity_score_consistent" CHECK ((((severity = 'critical'::text) AND (overall_score < (60)::numeric)) OR ((severity = 'high'::text) AND (overall_score >= (60)::numeric) AND (overall_score < (70)::numeric)) OR ((severity = 'medium'::text) AND (overall_score >= (70)::numeric) AND (overall_score < (80)::numeric)) OR ((severity = 'low'::text) AND (overall_score >= (80)::numeric))));
-ALTER TABLE public."conversation_evaluation" ADD CONSTRAINT "trg_pr6_enqueue_canonical_evaluation" TRIGGER DEFERRABLE INITIALLY DEFERRED;
 ALTER TABLE public."conversation_evaluation_attempt" ADD CONSTRAINT "conversation_evaluation_attem_evaluation_contract_version_check" CHECK ((length(btrim(evaluation_contract_version)) > 0));
 ALTER TABLE public."conversation_evaluation_attempt" ADD CONSTRAINT "conversation_evaluation_attempt_initiated_by_kind_check" CHECK ((initiated_by_kind = ANY (ARRAY['user'::text, 'automation'::text])));
 ALTER TABLE public."conversation_evaluation_attempt" ADD CONSTRAINT "conversation_evaluation_attempt_input_snapshot_hash_check" CHECK ((input_snapshot_hash ~ '^[0-9a-f]{64}$'::text));
@@ -139,7 +137,6 @@ ALTER TABLE public."conversation_evaluation_attempt" ADD CONSTRAINT "conversatio
 ALTER TABLE public."conversations" ADD CONSTRAINT "conversations_pkey" PRIMARY KEY (id);
 ALTER TABLE public."conversations" ADD CONSTRAINT "conversations_priority_check" CHECK ((priority = ANY (ARRAY['low'::text, 'normal'::text, 'high'::text, 'urgent'::text])));
 ALTER TABLE public."conversations" ADD CONSTRAINT "conversations_status_check" CHECK ((status = ANY (ARRAY['open'::text, 'pending'::text, 'resolved'::text, 'unresolved'::text, 'transferred'::text])));
-ALTER TABLE public."conversations" ADD CONSTRAINT "enforce_assignment_invariant_c" TRIGGER DEFERRABLE INITIALLY DEFERRED;
 ALTER TABLE public."evaluation_training_outbox" ADD CONSTRAINT "evaluation_training_outbox_delivery_idempotency_key_key" UNIQUE (delivery_idempotency_key);
 ALTER TABLE public."evaluation_training_outbox" ADD CONSTRAINT "evaluation_training_outbox_evaluation_contract_version_check" CHECK ((length(btrim(evaluation_contract_version)) > 0));
 ALTER TABLE public."evaluation_training_outbox" ADD CONSTRAINT "evaluation_training_outbox_pkey" PRIMARY KEY (id);

@@ -57,6 +57,10 @@ try:
   run(f"INSERT INTO auth.users VALUES('{uid(n)}','c3-{n}@example.invalid');INSERT INTO agent_profile(user_id,display_name,email,role,status) VALUES('{uid(n)}','C3-{n}','c3-{n}@example.invalid','{'viewer' if role=='qa' else role}','active');INSERT INTO company_membership(company_id,user_id,role,is_active) VALUES('{co}','{uid(n)}','{role}',true);")
  for role in ['anon','authenticated','service_role']:run(f'SET ROLE {role}; SELECT * FROM c3_uat_channel_scope;',reject='permission denied')
  run(actor(10,"SELECT c3_uat_save_feedback_config('{\"is_active\":true,\"delay_minutes\":1440}'::jsonb);"))
+ for rating in ['stars_1_5','csat','nps','thumbs','ces','survey']:
+  run(actor(10,"SELECT c3_uat_save_feedback_config('"+json.dumps({'config':{'channels_enabled':['website_widget'],'rating_type':rating}})+"')"))
+ run(actor(10,"SELECT c3_uat_save_feedback_config('{\"config\":{\"channels_enabled\":[\"website_widget\"],\"rating_type\":\"stars_1_5\"}}')"))
+ ev.append(dict(name='all six existing rating types retain valid isolated configuration',result='PASS'))
  for n in [10,11,13]:yes('config legal role '+str(n),actor(n,"SELECT (c3_uat_feedback_config_context()->>'isolated')::boolean"))
  for n in [12,13]:run(actor(n,"SELECT c3_uat_save_feedback_config('{}')"),reject='Trusted role required')
  run(actor(10,"SELECT c3_uat_save_feedback_config('{\"company_id\":\"00000000-0000-0000-0000-000000000000\"}')"),reject='Config scope spoof denied')

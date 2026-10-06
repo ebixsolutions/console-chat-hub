@@ -222,6 +222,7 @@
     "supabase/migrations/20261006120001_c3_uat_feedback_isolation.sql",
     "sql/c3_uat_isolation_guarded_rollback.sql",
     "tests/c3-uat-isolation/native-guards.py",
-    "tests/c3-uat-isolation/current-schema.sql"
+    "tests/c3-uat-isolation/current-schema.sql",
+    "src/routes/_authenticated/console.feedback-settings.tsx"
   ]
 }
