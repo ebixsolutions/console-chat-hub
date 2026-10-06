@@ -68,3 +68,19 @@ test('actual Vite config uses production browser/SSR and Widget binding for norm
     }
   } finally {for(const k of keys) {if(previous[k]===undefined)delete process.env[k];else process.env[k]=previous[k];}}
 });
+
+test('all targets import the crawler tree handled by Start client pruning',async()=> {
+  const saved=process.env.C3_CONSOLE_ENV;
+  try {
+    for (const target of ['production','nonproduction']) {
+      process.env.C3_CONSOLE_ENV=target;
+      for (const configuration of [dev,{command:'build',mode:'development'},build]) {
+        const loaded=await loadConfigFromFile(configuration,fileURLToPath(new URL('../../vite.config.ts',import.meta.url)));
+        const aliases=loaded.config.resolve.alias;
+        const matches=aliases.filter(a=>a.find instanceof RegExp && a.find.test('./routeTree.gen'));
+        assert.equal(matches.length,1);
+        assert.equal(matches[0].replacement,fileURLToPath(new URL('../../.tanstack/c3-preview-routeTree.gen.ts',import.meta.url)));
+      }
+    }
+  } finally {if(saved===undefined)delete process.env.C3_CONSOLE_ENV;else process.env.C3_CONSOLE_ENV=saved;}
+});

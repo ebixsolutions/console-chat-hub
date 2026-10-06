@@ -64,34 +64,20 @@ return defineConfig({
         this.emitFile({ type: "asset", fileName: "phase1-demo/index.html", source: demoHtml });
       },
     }] : [])],
-    // Test-only external Auth boundary. The production binding module and
-    // application source are unchanged; this alias requires explicit dev mode.
-    resolve: nonproductionConsole
-      ? {
-          alias: [
-            { find: /^(?:.*\/)?routeTree\.gen(?:\.ts)?$/, replacement: previewRouteTree },
-            {
-              find: /^(?:.*\/)?runtime-authority\.mjs$/,
-              replacement: fileURLToPath(
-                new URL("./src/integrations/supabase/nonproduction-authority.mjs", import.meta.url),
-              ),
-            },
-          ],
-        }
-      : isolatedBrowserAuth
-        ? {
-            alias: [
-              {
-                // Match the entire import specifier. A suffix-only regex leaves
-                // "./" in front of the absolute replacement and breaks SSR loading.
-                find: /^(?:.*\/)?runtime-authority\.mjs$/,
-                replacement: fileURLToPath(
-                  new URL("./tests/e2e/c3_local_auth_authority.mjs", import.meta.url),
-                ),
-              },
-            ],
-          }
-        : undefined,
+    // Start's client-tree plugin handles only generatedRouteTree. Every target
+    // must import that same file so SSR metadata and server-only pruning agree.
+    resolve: {
+      alias: [
+        { find: /^(?:.*\/)?routeTree\.gen(?:\.ts)?$/, replacement: previewRouteTree },
+        ...(nonproductionConsole ? [{
+          find: /^(?:.*\/)?runtime-authority\.mjs$/,
+          replacement: fileURLToPath(new URL("./src/integrations/supabase/nonproduction-authority.mjs", import.meta.url)),
+        }] : isolatedBrowserAuth ? [{
+          find: /^(?:.*\/)?runtime-authority\.mjs$/,
+          replacement: fileURLToPath(new URL("./tests/e2e/c3_local_auth_authority.mjs", import.meta.url)),
+        }] : []),
+      ],
+    },
   },
 })(environment);
 };
