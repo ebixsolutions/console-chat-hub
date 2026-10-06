@@ -88,7 +88,7 @@ import {
   callModel,
   type LlmFailureCode,
   resolveGenerationMaxTokens,
-} from "../_shared/deterministic-runtime-router.ts";
+} from "../_shared/llm-router.ts";
 import {
   buildCustomerAdvisoryContext,
   buildCustomerContextAcknowledgement,
@@ -4279,7 +4279,7 @@ async function orchestrationGenerateReply(
     /(?:想|需要|最多|上限|大約|大概|其實|更正|改咗|改為|先擺低|暫緩|暫時唔|prefer|preference|need|want|maximum|at most|actually|correct|defer|pause|\d+\s*(?:呎|平方呎)|下午.{0,6}(?:曬|晒|日照)|afternoon\s+sun)/i.test(_h1LastMsg);
   // ===== TASK A3.1: multilingual universal semantic interpreter =====
   // The compatibility interpreter proposes a language-neutral semantic frame.
-  // callModel currently executes the network-free deterministic adapter.
+  // Production semantics use the existing approved LLM router and its bounded policy.
   // It never writes commerce state and never supplies external product/policy facts.
   let _a3SemanticFrame: CommerceSemanticFrame | null = null;
   if (

@@ -7,15 +7,15 @@
  * Safety:
  * - evidence only; never invent policy
  * - no DB writes / no handoff persistence
- * - network-free deterministic router is the only classification boundary
- * - deterministic failure => unavailable
+ * - existing governed production router is the only classification boundary
+ * - provider failure => unavailable
  * - does not produce policy_match_confidence
  */
 import {
   callModel,
   parseJsonObject,
   resolveGenerationMaxTokens,
-} from "./deterministic-runtime-router.ts";
+} from "./llm-router.ts";
 
 export type PolicyAssessmentStatus =
   | "compliant"

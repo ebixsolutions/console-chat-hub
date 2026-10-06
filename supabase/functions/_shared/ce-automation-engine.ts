@@ -7,7 +7,7 @@
  */
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2.45.0";
 import { getSupabaseAdminKey } from "./supabase-admin-key.ts";
-import { callModel, parseJsonObject, redact, toCeErrorCode } from "./deterministic-runtime-router.ts";
+import { callModel, parseJsonObject, redact, toCeErrorCode } from "./llm-router.ts";
 import {
   ceEvaluatorProviderPolicy,
   ceSignalsProviderPolicy,

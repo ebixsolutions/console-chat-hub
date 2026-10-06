@@ -8,7 +8,7 @@ import {
   resolveTenantScope,
   type KBFullChunk,
   type KBRagResponse,
-} from "./deterministic-kb-client.ts";
+} from "./kb-client.ts";
 import { selectCanonicalGrounding } from "./canonical-grounding.ts";
 
 export interface GroundingCompany {

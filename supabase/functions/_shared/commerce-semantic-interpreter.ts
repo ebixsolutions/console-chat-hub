@@ -1,4 +1,4 @@
-import { callModel } from "./deterministic-runtime-router.ts";
+import { callModel } from "./llm-router.ts";
 import { getSupabaseAdminKey } from "./supabase-admin-key.ts";
 import {
   COMMERCE_SEMANTIC_FRAME_VERSION,
