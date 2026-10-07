@@ -4632,7 +4632,7 @@ async function orchestrationGenerateReply(
   // A product clarification may coexist with customer-owned changes. Commit
   // those changes and refresh bounded context before emitting an AI reply.
   // Explicit R1 is handled by its control transaction farther below.
-  if (!_explicitHandoffRequested) {
+  if (!_explicitHandoffRequested && _c3ServicePlan.knowledge_state !== "lookup_required") {
     const immediate = await persistNaturalImmediateResponse(
       supabaseAdmin, conversation_id, _h1SourceMessageId,
       _effectiveNaturalCustomerIntent, _visitorLang,
@@ -4643,6 +4643,7 @@ async function orchestrationGenerateReply(
 
   const _c3IsGroundedReadOnlyRecap = _a3Commerce?.reason ===
       "read_only_current_requirements_recap" &&
+    _c3ServicePlan.knowledge_state !== "lookup_required" &&
     _c3Recall.decision.handled && _c3Recall.decision.fact_type === "summary" &&
     Boolean(_c3Memory && _c3CommerceSnapshot && _c3ReadOnlyMemoryHash);
   const _c3PlannedReply = _c3IsGroundedReadOnlyRecap
@@ -5513,7 +5514,7 @@ async function orchestrationGenerateReply(
         : null,
       _h1LastMsg,
     );
-    const userQuery = _productKbContract?.query || _c3ServicePlan.kb_query || _semanticRetrieval.query;
+    const userQuery = _c3ServicePlan.kb_query || _productKbContract?.query || _semanticRetrieval.query;
     ragResult = !userQuery
       ? {
         success: true,

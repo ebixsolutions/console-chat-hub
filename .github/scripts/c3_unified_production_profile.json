@@ -24,6 +24,7 @@
     "supabase/functions/_shared/agent.ts",
     "supabase/functions/_shared/authoritative-commit-readback.ts",
     "supabase/functions/_shared/b2-journey-progress-contract.ts",
+    "supabase/functions/_shared/bounded-decision-context.ts",
     "supabase/functions/_shared/canonical-grounding.ts",
     "supabase/functions/_shared/canonical-json.ts",
     "supabase/functions/_shared/canonical-kb-direct-answer.ts",
@@ -258,7 +259,9 @@
     "supabase/functions/_shared/service-semantic-routing.ts",
     "supabase/functions/_shared/service-semantic-routing.test.ts",
     "supabase/functions/generate-reply/index.ts",
-    "supabase/functions/_shared/product-factual-query.test.ts"
+    "supabase/functions/_shared/product-factual-query.test.ts",
+    "supabase/functions/_shared/bounded-decision-context.ts",
+    "supabase/functions/_shared/commerce-semantic-frame.ts"
   ],
   "conditional_worker_sha256": "56b02b24abd5b64748f5931e9cf9b0b1df05fb920b852ebe4b8bd51c71a793de",
   "normalized_preview_sha256": {
@@ -306,14 +309,16 @@
     "src/components/console/CRMPanel.tsx": "357dc6f7fe24434d12fde6bc369ac33232b88fb995183925dd4c748f9b9636f5",
     "src/routes/_authenticated/console.widget-preview.tsx": "cb2b77b0487c15cf376c53ed4b781e450c4dc469357840a80d106ad1b6c2e428",
     "public/widget/chat.js": "77a09fb46fd3f19d0e77a75fe2a31767200c3d2264bc3aee7ffa3fc30b5c7676",
-    "supabase/functions/_shared/commerce-semantic-interpreter.ts": "1ea97cfdb1f4bee9fa8c583e75378e69e0dcb6741d00d4074e7d4e40c2adfd0e",
-    "supabase/functions/_shared/conversation-service-planner.ts": "6a0e9101a2911cc1691d7706e8406cbfe0c6e163d661a8232e853ff884cab61c",
+    "supabase/functions/_shared/commerce-semantic-interpreter.ts": "3c81b9ff6af878adbfc067443fdb5e34af658f681c7916b77641e8cdaf40590d",
+    "supabase/functions/_shared/conversation-service-planner.ts": "57a654e6b56b011d173ded4060ff981c4e0c7fe591945593930dec3151f18a39",
     "supabase/functions/_shared/natural-customer-response.ts": "5f26399789280d169d29673e118ff1c637cf81202c3a68cc5489fa038363883b",
     "supabase/functions/_shared/natural-customer-response.test.ts": "4ca3524c97c510783bd136acaaca250a17c06d8bdda5b054af8920333b6b68ab",
-    "supabase/functions/_shared/service-semantic-routing.ts": "917f9cc85706d79a68936299e039e813d2af57cb035a64ecdc2be323c12614d6",
-    "supabase/functions/_shared/service-semantic-routing.test.ts": "400a31cc2642fb8e3ab4e1b2ebcfe9f44790094452fe682f26390a9f298fc0c6",
-    "supabase/functions/generate-reply/index.ts": "d203a7836b7ebd6da9ce6a6ad7bd82b2dd7efe08c0f89b4246ecc636c64f110f",
+    "supabase/functions/_shared/service-semantic-routing.ts": "9849a2f71eecd111e4af3099f614115ffc7ff190dd5077874d0970084d4c141f",
+    "supabase/functions/_shared/service-semantic-routing.test.ts": "08d05d6f1f01436dd77141c7997021383001322b4dac12c1fd97779fce201bd9",
+    "supabase/functions/generate-reply/index.ts": "e32ec9d79e2f2bfafbfe344a45cc6e5a602fe0bef7d63389e2eaca446fbb006d",
     "supabase/functions/widget-live-ai-test/index.ts": "cfb0342651abcf3781cd722ebcddce4c5c05573612303e816899dfa897a111a5",
-    "supabase/functions/_shared/product-factual-query.test.ts": "20ea440d0b3e7fd037451da56b347614b2e0eb5d4f4f514f10c0779fce0bdf0f"
+    "supabase/functions/_shared/product-factual-query.test.ts": "20ea440d0b3e7fd037451da56b347614b2e0eb5d4f4f514f10c0779fce0bdf0f",
+    "supabase/functions/_shared/bounded-decision-context.ts": "f93b59b56469f4a79518374f2cb3b73fab8d09028ce2b3c5c6cbb1c6c90f01f1",
+    "supabase/functions/_shared/commerce-semantic-frame.ts": "fe5fbc5f0b4806001f39b7162890ad6d06e08a63ccc06406111e275675207a05"
   }
 }

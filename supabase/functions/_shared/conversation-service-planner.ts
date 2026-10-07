@@ -14,6 +14,7 @@ import { deriveTypedCustomerMoneyFacts } from "./customer-money-facts.ts";
 import { activeCustomerGoal, customerRequestedQuantity } from "./customer-journey-orchestration.ts";
 import type { CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 import { requiresSemanticKnowledge, scopedServiceKnowledgeQuery } from "./service-semantic-routing.ts";
+import { DecisionContextLimitError } from "./bounded-decision-context.ts";
 
 import { HOME_APPLIANCE_CATEGORIES, HOME_APPLIANCE_ROOMS } from "./industry-profiles/home-appliance-v1.ts";
 
@@ -531,8 +532,10 @@ export function planConversationService(
     recall_detail: clean(input.recall.detail, 100) || undefined,
   };
   if (input.explicit_handoff) return { ...base, action: "explicit_handoff" };
-
+  const semanticMerchantRead = requiresSemanticKnowledge(input.semantic_frame);
+  const merchantReadRequired = input.recall.reason === "CURRENT_KB_REQUIRED" || semanticMerchantRead;
   if (
+    !semanticMerchantRead &&
     input.calculation_status &&
     !["not_requested", "ready"].includes(input.calculation_status)
   ) {
@@ -552,7 +555,7 @@ export function planConversationService(
     };
   }
 
-  const calculation = historicalCalculation(question, input);
+  const calculation = semanticMerchantRead ? null : historicalCalculation(question, input);
   if (calculation) {
     return {
       ...base,
@@ -564,19 +567,26 @@ export function planConversationService(
       ],
     };
   }
-  if (has(question, ["短啲", "短一點", "短一点", "shorten", "more concise"])) {
+  if (!semanticMerchantRead && has(question, ["短啲", "短一點", "短一点", "shorten", "more concise"])) {
     return { ...base, action: "shorten_previous_answer" };
   }
   if (
-    has(question, ["checklist", "清單", "清单", "付款前", "落單前", "下单前"])
+    !semanticMerchantRead && has(question, ["checklist", "清單", "清单", "付款前", "落單前", "下单前"])
   ) {
     return { ...base, action: "current_state_checklist" };
   }
-  if (input.recall.handled) return { ...base, action: "direct_answer" };
+  if (input.recall.handled && !merchantReadRequired) return { ...base, action: "direct_answer" };
   if (input.semantic_frame?.ambiguity.is_ambiguous && !input.recall.handled) {
     return { ...base, action: "targeted_clarification", missing_slots: ["specific_product_or_item"], clarification_target: "specific_product_or_item" };
   }
-  if (input.recall.reason === "CURRENT_KB_REQUIRED" || requiresSemanticKnowledge(input.semantic_frame)) {
+  if (merchantReadRequired) {
+    let query: string;
+    try { query = buildKbQuery(question, input); }
+    catch (error) {
+      if (!(error instanceof DecisionContextLimitError)) throw error;
+      return { ...base, action:"offer_handoff_or_reframe", knowledge_state:"tool_failure",
+        safe_assumptions:[...base.safe_assumptions,"query_context_limit"], kb_query:null };
+    }
     const missingTarget = factSatisfiesSlot(facts, clarificationTarget)
       ? null
       : clarificationTarget;
@@ -584,7 +594,7 @@ export function planConversationService(
       ...base,
       action: repeated ? "bounded_kb_refinement" : "published_kb_lookup",
       knowledge_state: "lookup_required",
-      kb_query: buildKbQuery(question, input),
+      kb_query: query,
       clarification_target: missingTarget,
       missing_slots: missingTarget ? [missingTarget] : [],
     };
@@ -903,6 +913,11 @@ export function renderServicePlanReply(
   recentMessages: Array<{ role: string; content: string }> = [],
 ): string | null {
   const l = planLanguageIndex(plan, recentMessages);
+  if (plan.safe_assumptions.includes("query_context_limit")) return [
+    "今次查詢未能完整保留所有必要條件，所以我未核實到適合的選項。可以先選最重要的要求逐項核對，或者選擇真人客服協助。",
+    "本次查询无法完整保留所有必要条件，所以我尚未核实适合的选项。可以先选择最重要的要求逐项核对，或者选择人工客服协助。",
+    "I couldn't check all the necessary requirements in one lookup, so I haven't verified a suitable option. We can check the most important requirement first, or you can choose human support.",
+  ][l];
   if (["published_kb_lookup", "bounded_kb_refinement"].includes(plan.action)) return null;
   if (plan.action === "direct_answer") return recallReply;
   if (plan.action === "state_acknowledgement" && plan.committed_requirements?.length && plan.committed_commerce) {

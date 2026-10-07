@@ -1,3 +1,4 @@
+import { decisionContextSchema, DecisionContextLimitError, normalizeDecisionContext, type DecisionValue } from "./bounded-decision-context.ts";
 export const COMMERCE_SEMANTIC_FRAME_VERSION = "commerce-semantic-1.0.0" as const;
 
 export type CommerceSemanticOperation =
@@ -91,8 +92,8 @@ export interface CommerceSemanticEntity {
   model: string | null;
   quantity: number | null;
   unit: string | null;
-  attributes: Record<string, string | number | boolean | null>;
-  constraints: Record<string, string | number | boolean | null>;
+  attributes: Record<string, DecisionValue>;
+  constraints: Record<string, DecisionValue>;
   capabilities: CommerceSemanticCapabilities;
   confidence: number;
 }
@@ -167,8 +168,8 @@ export const COMMERCE_SEMANTIC_RESPONSE_SCHEMA: Record<string, unknown> = {
           model: { type: ["string", "null"] },
           quantity: { type: ["number", "null"], minimum: 0 },
           unit: { type: ["string", "null"] },
-          attributes: { type: "object", additionalProperties: { type: ["string", "number", "boolean", "null"] } },
-          constraints: { type: "object", additionalProperties: { type: ["string", "number", "boolean", "null"] } },
+          attributes: { type: "object", additionalProperties: decisionContextSchema() },
+          constraints: { type: "object", additionalProperties: decisionContextSchema() },
           capabilities: {
             type: "object",
             properties: {
@@ -249,19 +250,6 @@ function clampConfidence(value: unknown): number {
   return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0;
 }
 
-function primitiveMap(value: unknown): Record<string, string | number | boolean | null> {
-  if (!isRecord(value)) return {};
-  const out: Record<string, string | number | boolean | null> = {};
-  for (const [key, raw] of Object.entries(value).slice(0, 40)) {
-    const k = clean(key, 80);
-    if (!k) continue;
-    if (raw === null || typeof raw === "string" || typeof raw === "number" || typeof raw === "boolean") {
-      out[k] = typeof raw === "string" ? clean(raw, 300) : raw;
-    }
-  }
-  return out;
-}
-
 function bool(value: unknown): boolean { return value === true; }
 
 function normalizeCapabilities(raw: unknown): CommerceSemanticCapabilities {
@@ -315,6 +303,9 @@ export function normalizeCommerceSemanticFrame(value: unknown): CommerceSemantic
     if (!name) continue;
     const q = raw.quantity === null ? null : Number(raw.quantity);
     const quantity = q === null || !Number.isFinite(q) || q < 0 ? null : q;
+    let attributes: Record<string, DecisionValue>, constraints: Record<string, DecisionValue>;
+    try { attributes = normalizeDecisionContext(raw.attributes); constraints = normalizeDecisionContext(raw.constraints); }
+    catch (error) { if (error instanceof DecisionContextLimitError) return null; throw error; }
     entities.push({
       entity_ref: clean(raw.entity_ref, 120) || `semantic:${entities.length + 1}`,
       name,
@@ -324,8 +315,8 @@ export function normalizeCommerceSemanticFrame(value: unknown): CommerceSemantic
       model: raw.model === null ? null : clean(raw.model, 120) || null,
       quantity,
       unit: raw.unit === null ? null : clean(raw.unit, 60) || null,
-      attributes: primitiveMap(raw.attributes),
-      constraints: primitiveMap(raw.constraints),
+      attributes,
+      constraints,
       capabilities: normalizeCapabilities(raw.capabilities),
       confidence: clampConfidence(raw.confidence),
     });
