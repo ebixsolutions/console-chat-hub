@@ -42,6 +42,7 @@ import {
   type WidgetLauncherIcon,
 } from "@/lib/api/config.service";
 import { supabase } from "@/integrations/supabase/client";
+import { mergeWidgetMessages } from "@/lib/widget-message-merge";
 
 export const Route = createFileRoute(
   "/_authenticated/console/widget-preview",
@@ -803,6 +804,8 @@ function PreviewWidget({
   });
   const [historyLoading, setHistoryLoading] = useState(false);
   const actionAreaRef = useRef<HTMLDivElement | null>(null);
+  const conversationEpoch = useRef(0);
+  const replyInFlight = useRef(false);
   const [humanState, setHumanState] = useState<
     "none" | "waiting" | "assigned"
   >("none");
@@ -824,6 +827,8 @@ function PreviewWidget({
   );
 
   useEffect(() => {
+    conversationEpoch.current += 1;
+    replyInFlight.current = false;
     setInput("");
     setTyping(false);
     setHumanState("none");
@@ -845,8 +850,7 @@ function PreviewWidget({
 
   const applyServerMessages = (rows: LiveAiMessage[] | undefined) => {
     if (!Array.isArray(rows)) return;
-    setMessages(
-      rows.map((row) => ({
+    const mapped: PreviewMessage[] = rows.map((row) => ({
         id: row.id,
         role: row.role,
         content: row.content,
@@ -860,20 +864,26 @@ function PreviewWidget({
                   : null,
               ].filter(Boolean).join(" · ")
             : undefined,
-      })),
-    );
+      }));
+    setMessages((previous) => mergeWidgetMessages(previous, mapped));
   };
 
-  const loadLiveConversation = async (conversationId: string) => {
+  const loadLiveConversation = async (conversationId: string, switching = false) => {
+    const epoch = switching ? ++conversationEpoch.current : conversationEpoch.current;
     const { data, error } = await supabase.functions.invoke(
       "widget-live-ai-test",
       { body: { action: "load", test_conversation_id: conversationId } },
     );
-    if (error || !data || data.success !== true) {
-      window.localStorage.removeItem("widget_live_test_conversation_id");
-      setTestConversationId(null);
-      setMessages([]);
+    if (epoch !== conversationEpoch.current) return;
+    if (error || !data || data.success !== true || data.conversation_id !== conversationId) {
+      if (switching) appendLiveFailure("", safeLiveError(error, null));
       return;
+    }
+    if (switching) {
+      setMessages([]);
+      setInput("");
+      setTyping(false);
+      replyInFlight.current = false;
     }
     setTestConversationId(data.conversation_id);
     window.localStorage.setItem("widget_live_test_conversation_id", data.conversation_id);
@@ -980,6 +990,8 @@ function PreviewWidget({
   };
 
   const runLiveAi = async (text: string) => {
+    const epoch = conversationEpoch.current;
+    replyInFlight.current = true;
     setTyping(true);
 
     try {
@@ -996,6 +1008,7 @@ function PreviewWidget({
         },
       );
 
+      if (epoch !== conversationEpoch.current) return;
       const payload =
         (data ?? null) as LiveAiResponse | LiveAiFailure | null;
 
@@ -1006,7 +1019,7 @@ function PreviewWidget({
       ) {
         if (testConversationId) {
           const recovered = await loadLiveConversation(testConversationId);
-          if (recovered?.humanControl) return;
+          if (epoch !== conversationEpoch.current || recovered?.humanControl) return;
         }
         appendLiveFailure(
           text,
@@ -1032,12 +1045,16 @@ function PreviewWidget({
       applyServerMessages(result.messages);
       void loadLiveHistory();
     } catch (error) {
+      if (epoch !== conversationEpoch.current) return;
       appendLiveFailure(
         text,
         safeLiveError(error, null),
       );
     } finally {
-      setTyping(false);
+      if (epoch === conversationEpoch.current) {
+        replyInFlight.current = false;
+        setTyping(false);
+      }
     }
   };
 
@@ -1064,7 +1081,7 @@ function PreviewWidget({
   };
 
   const send = () => {
-    if (typing || !input.trim() || (mode === "live" && humanState !== "none")) return;
+    if (typing || replyInFlight.current || !input.trim() || (mode === "live" && humanState !== "none")) return;
 
     const text = input.trim();
     setInput("");
@@ -1086,6 +1103,8 @@ function PreviewWidget({
   };
 
   const startNewConversation = () => {
+    conversationEpoch.current += 1;
+    replyInFlight.current = false;
     if (mode === "live") {
       setTestConversationId(null);
       window.localStorage.removeItem("widget_live_test_conversation_id");
@@ -1219,6 +1238,7 @@ function PreviewWidget({
         {messages.map((message) => (
           <div
             key={message.id}
+            data-message-id={message.id}
             className={
               message.role === "visitor"
                 ? "ml-auto max-w-[82%] rounded-2xl rounded-br-md px-3 py-2 text-sm text-white"
@@ -1281,7 +1301,7 @@ function PreviewWidget({
                   type="button"
                   onClick={() => {
                     setHistoryOpen(false);
-                    void loadLiveConversation(session.conversation_id);
+                    void loadLiveConversation(session.conversation_id, true);
                   }}
                   className={
                     session.conversation_id === testConversationId
