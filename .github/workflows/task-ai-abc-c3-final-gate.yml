@@ -861,6 +861,13 @@ jobs:
       - uses: actions/setup-node@v4
         with: {node-version: '22', cache: npm}
       - run: npm ci
+      - name: Rev1.5 generic service and canonical read-only regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno test --no-lock --no-check --allow-env --allow-read supabase/functions/_shared/service-semantic-routing.test.ts supabase/functions/_shared/natural-customer-response.test.ts supabase/functions/_shared/conversation-service-planner.test.ts supabase/functions/_shared/conversation-service-runtime.test.ts
+          node --test tests/c3-widget-live-auth/handler.test.mjs src/lib/widget-message-merge.test.mjs
+          node --check public/widget/chat.js
       - name: Download verified live snapshot outside checkout
         if: env.C3_UNIFIED_SOURCE_PROFILE != 'true'
         uses: actions/download-artifact@v4

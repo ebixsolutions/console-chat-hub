@@ -2,7 +2,7 @@
   "mode": "UNIFIED_PRODUCTION_GOVERNED",
   "contract": "C3-FINAL-DEMO-LAUNCH-UAT-20261006-v1",
   "authorization": "C3-A773-CONSOLIDATED-REPAIR-AUTH-20261006-v1",
-  "revision": "rev1.4-CONSOLIDATED-REPAIR-AUTH",
+  "revision": "rev1.5-UNIFIED-GENERIC-SERVICE-AND-FULL-UAT",
   "backend": "nrfxhqabwblzxoushgnm",
   "baseline": {
     "head": "a7738e378176cb34103c2c3f3a48efc5b2b2830b",
@@ -89,6 +89,7 @@
     "supabase/functions/_shared/return-to-ai-control.ts",
     "supabase/functions/_shared/revision-bound-reply.ts",
     "supabase/functions/_shared/runtime-signal-lifecycle.ts",
+    "supabase/functions/_shared/service-semantic-routing.ts",
     "supabase/functions/_shared/supabase-admin-key.ts",
     "supabase/functions/_shared/supabase-cors.ts",
     "supabase/functions/_shared/transaction-closure-handoff.ts",
@@ -248,7 +249,15 @@
     "tests/c3-widget-live-auth/handler.test.mjs",
     "tests/e2e/c3_widget_isolated_setup.sh",
     "sql/c3-nonproduction/08_widget_auth_isolation_context.sql",
-    "tests/e2e/c3_widget_isolated_auth.mjs"
+    "tests/e2e/c3_widget_isolated_auth.mjs",
+    "src/components/console/CRMPanel.tsx",
+    "public/widget/chat.js",
+    "supabase/functions/_shared/commerce-semantic-interpreter.ts",
+    "supabase/functions/_shared/natural-customer-response.ts",
+    "supabase/functions/_shared/natural-customer-response.test.ts",
+    "supabase/functions/_shared/service-semantic-routing.ts",
+    "supabase/functions/_shared/service-semantic-routing.test.ts",
+    "supabase/functions/generate-reply/index.ts"
   ],
   "conditional_worker_sha256": "56b02b24abd5b64748f5931e9cf9b0b1df05fb920b852ebe4b8bd51c71a793de",
   "normalized_preview_sha256": {
@@ -291,5 +300,18 @@
     "slug": "widget-live-ai-test",
     "verify_jwt": true,
     "new_ddl_authorized": false
+  },
+  "authorized_unified_generic_service_repair_sha256": {
+    "src/components/console/CRMPanel.tsx": "357dc6f7fe24434d12fde6bc369ac33232b88fb995183925dd4c748f9b9636f5",
+    "src/routes/_authenticated/console.widget-preview.tsx": "d8eb7036b2749e9da89a96f61aba85cb686fa72dc502991b1d50413b833a0470",
+    "public/widget/chat.js": "77a09fb46fd3f19d0e77a75fe2a31767200c3d2264bc3aee7ffa3fc30b5c7676",
+    "supabase/functions/_shared/commerce-semantic-interpreter.ts": "1ea97cfdb1f4bee9fa8c583e75378e69e0dcb6741d00d4074e7d4e40c2adfd0e",
+    "supabase/functions/_shared/conversation-service-planner.ts": "6a0e9101a2911cc1691d7706e8406cbfe0c6e163d661a8232e853ff884cab61c",
+    "supabase/functions/_shared/natural-customer-response.ts": "5f26399789280d169d29673e118ff1c637cf81202c3a68cc5489fa038363883b",
+    "supabase/functions/_shared/natural-customer-response.test.ts": "4ca3524c97c510783bd136acaaca250a17c06d8bdda5b054af8920333b6b68ab",
+    "supabase/functions/_shared/service-semantic-routing.ts": "917f9cc85706d79a68936299e039e813d2af57cb035a64ecdc2be323c12614d6",
+    "supabase/functions/_shared/service-semantic-routing.test.ts": "400a31cc2642fb8e3ab4e1b2ebcfe9f44790094452fe682f26390a9f298fc0c6",
+    "supabase/functions/generate-reply/index.ts": "d203a7836b7ebd6da9ce6a6ad7bd82b2dd7efe08c0f89b4246ecc636c64f110f",
+    "supabase/functions/widget-live-ai-test/index.ts": "cfb0342651abcf3781cd722ebcddce4c5c05573612303e816899dfa897a111a5"
   }
 }

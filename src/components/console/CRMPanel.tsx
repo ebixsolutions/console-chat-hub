@@ -452,7 +452,7 @@ export function CRMPanel({
           ? lang === "zh" ? "權限不足" : "Permission denied"
           : kbConnState === "unavailable"
             ? lang === "zh" ? "無法存取" : "Unavailable"
-            : lang === "zh" ? "就緒" : "Ready";
+            : lang === "zh" ? "尚未核實" : "Not verified";
 
   const TABS = [
     { key: "customer", label: rc("customerTab") },

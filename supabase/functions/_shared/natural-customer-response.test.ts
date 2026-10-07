@@ -21,11 +21,9 @@ Deno.test("Phase1 shopping with a supplied identifier does not reopen product di
     const intent=classifyNaturalCustomerIntent(input);
     if(intent.kind!=="product_shopping") throw Error("actual shopping classifier not exercised: "+JSON.stringify(intent));
     for(const language of ["zh-TW","zh-CN","en"] as const) {
-      const reply=renderNaturalImmediateResponse(intent,language)??"";
-      const model=exactProductIdentifiers(input)[0];
-      if(!reply.includes(model) || /邊款|哪一款|Which.*model|已查|已安排|已落單|order placed|stock checked|[?？]/i.test(reply)) throw Error(reply);
-      if(!/未|待|需|still need/.test(reply)) throw Error("merchant unknown was lost: "+reply);
-      if(/product information|產品資料|产品资料/.test(reply)) throw Error("intent-only renderer cannot declare KB information unavailable: "+reply);
+      if (renderNaturalImmediateResponse(intent,language) !== null) throw Error("shopping prematurely rendered before KB read");
+      if (!requiresCurrentMerchantEvidence(intent)) throw Error("shopping must route through merchant evidence");
+      if (!exactProductIdentifiers(input).length) throw Error("exact model lost");
     }
   }
 });
@@ -109,11 +107,11 @@ Deno.test("W9 shared product-guidance semantics do not require an exact model", 
     assert(intent.kind === "product_guidance", `${text}:${JSON.stringify(intent)}`);
     if (expectedProduct) assert(intent.product === expectedProduct, `${text}:product:${intent.product}`);
     const reply = renderNaturalImmediateResponse(intent, language) ?? "";
-    assert(reply.length > 0 && !/完整型號|產品頁|适用地区|product page|region/i.test(reply), `${text}:reply:${reply}`);
+    assert(reply === "" && requiresCurrentMerchantEvidence(intent), `${text}:guidance must reach scoped KB before clarification:${reply}`);
   }
   const ac = classifyNaturalCustomerIntent("Hello，想幫屋企換冷氣，兩間房連個廳，想知應該點揀。");
   const reply = renderNaturalImmediateResponse(ac, "zh-TW") ?? "";
-  assert(/兩間房|客廳/.test(reply) && /面積/.test(reply) && /日照/.test(reply) && /窗口|安裝/.test(reply), reply);
+  assert(reply === "" && requiresCurrentMerchantEvidence(ac), "guidance must not return fixed room/sun/installation questions");
 });
 
 Deno.test("C3 natural-response 8 killer contract preserves shared precedence", () => {
@@ -257,6 +255,11 @@ Deno.test("C3 20-case customer demo natural-response gate", () => {
     const reply = intent.kind === "product_availability"
       ? renderNaturalNoCurrentEvidence(intent, row.language)
       : renderNaturalImmediateResponse(intent, row.language);
+    if (intent.kind === "product_shopping" && intent.product) {
+      assert(reply === null && requiresCurrentMerchantEvidence(intent), `T${index + 1}:shopping lookup required`);
+      naturalAcceptable += 1;
+      continue;
+    }
     assert(reply && reply.trim().length > 0, `T${index + 1}:empty`);
     assert(!forbidden.test(reply), `T${index + 1}:machine:${reply}`);
     assert(
@@ -286,7 +289,7 @@ Deno.test("C3 mixed greeting product guidance stays natural without hiding the c
   assert(intent.kind === "product_guidance", JSON.stringify(intent));
   assert(intent.product === "冷氣", JSON.stringify(intent));
   const reply = renderNaturalImmediateResponse(intent, "zh-TW") ?? "";
-  assert(/冷氣/.test(reply) && /用途|尺寸|空間|安裝/.test(reply), reply);
+  assert(reply === "" && requiresCurrentMerchantEvidence(intent), "mixed guidance must continue state writer and scoped lookup");
   assert(!forbidden.test(reply), reply);
 });
 

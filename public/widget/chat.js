@@ -586,7 +586,7 @@
     sendBtn.addEventListener("click", handleSend);
 
     inputEl.addEventListener("keydown", function (e) {
-      if (e.key === "Enter" && !e.shiftKey) {
+      if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
         e.preventDefault();
         handleSend();
       }
@@ -1735,6 +1735,7 @@
         var data = res.body.data;
         state.sessionToken = stored.token;
         state.conversationId = stored.convId;
+        restorePendingTextDraft();
         saveSession();
         saveTicket(state.conversationId, state.sessionToken);
         state.messages = [];
@@ -1822,6 +1823,7 @@
         setPanelVisible(true);
 
         if (state.sessionToken && state.conversationId) {
+          restorePendingTextDraft();
           startPolling();
           return;
         }
@@ -1852,8 +1854,22 @@
     closeEmojiPanel();
   }
 
+  var textSendInFlight = false;
+  function pendingTextKey(conversationId) {
+    return "nx_pending_text:" + channelId + ":" + conversationId;
+  }
+  function readPendingText(conversationId) {
+    try {
+      var saved = JSON.parse(localStorage.getItem(pendingTextKey(conversationId)) || "null");
+      return saved && typeof saved.id === "string" && typeof saved.text === "string" ? saved : null;
+    } catch (_) { return null; }
+  }
+  function restorePendingTextDraft() {
+    var pending = state.conversationId && readPendingText(state.conversationId);
+    if (pending && inputEl) inputEl.value = pending.text;
+  }
   function handleSend() {
-    if (!inputEl) return;
+    if (!inputEl || textSendInFlight) return;
     var text = inputEl.value.trim();
 
     if (!text || !state.conversationId || !state.sessionToken) return;
@@ -1863,6 +1879,17 @@
       return;
     }
 
+    var sendingConversation = state.conversationId;
+    var sendingGeneration = pollGeneration;
+    var pending = readPendingText(sendingConversation);
+    if (pending && pending.text !== text) {
+      inputEl.value = pending.text;
+      alert("The previous delivery is unresolved. Retry that message or start a new conversation.");
+      return;
+    }
+    pending = pending || { id: createClientMessageId(), text: text };
+    try { localStorage.setItem(pendingTextKey(sendingConversation), JSON.stringify(pending)); } catch (_) {}
+    textSendInFlight = true;
     hideTags();
     sendBtn.disabled = true;
     sendBtn.textContent = "\u2026";
@@ -1876,20 +1903,28 @@
         conversation_id: state.conversationId,
         session_token: state.sessionToken,
         content: text,
+        client_message_id: pending.id,
       }),
+      signal: AbortSignal.timeout(30000),
     })
       .then(function (res) {
+        if (sendingConversation !== state.conversationId || sendingGeneration !== pollGeneration) return;
         if (!res.ok || !res.body || !res.body.success) {
+          inputEl.value = text;
           appendMessageObj({
             id: "err-" + Date.now(),
             role: "system",
             content:
-              (res.body && res.body.error) || "Failed to send.",
+              "Delivery could not be confirmed. Retry uses the same message ID.",
             created_at: new Date().toISOString(),
           });
+        } else {
+          try { localStorage.removeItem(pendingTextKey(sendingConversation)); } catch (_) {}
         }
       })
       .catch(function () {
+        if (sendingConversation !== state.conversationId || sendingGeneration !== pollGeneration) return;
+        inputEl.value = text;
         appendMessageObj({
           id: "err-" + Date.now(),
           role: "system",
@@ -1898,6 +1933,8 @@
         });
       })
       .then(function () {
+        textSendInFlight = false;
+        if (sendingConversation !== state.conversationId || sendingGeneration !== pollGeneration) return;
         sendBtn.disabled = false;
         sendBtn.textContent = "Send";
         state.fallbackShownForConversation = false;

@@ -23,7 +23,7 @@ export interface CommerceSemanticInterpretInput {
 
 export interface CommerceSemanticInterpretResult {
   frame: CommerceSemanticFrame | null;
-  source: "deterministic" | "none";
+  source: "semantic_model" | "none";
   failure_code: string | null;
 }
 
@@ -55,6 +55,9 @@ Core rules:
 11. Unknown industries and unseen vocabulary are expected; never fall back to an industry list or synonym dictionary.
 12. Never invent add-ons/options/fees. Only include them when customer-authored context explicitly identifies them or persistent customer-authored state already contains them.
 13. If confidence is below 0.62, set ambiguity.is_ambiguous=true and operation=NO_STATE_CHANGE.
+14. Use intent explore_options, recommend_options or compare_options for category exploration, recommendations or comparison, even without a question mark or a model. Put the requested published selection criteria/options in requested_facts. Do not demand a model before looking up a category.
+15. A supplemental constraint, corrected requirement or resolved referent continues the latest unresolved customer request. Preserve its requested_facts when a new published read is needed. Do not treat a customer supplying a requested detail as a fresh greeting, a completed action, or a reason to ask the same detail again.
+16. Separate customer-owned requirements from merchant facts. An unfamiliar service, rental, digital good or subscription uses the same rules. Never infer completed payment, booking or delivery from confirmation of requirements.
 Return JSON only.`;
 
 function clean(value: unknown, max = 3000): string {
@@ -158,8 +161,9 @@ function buildUser(
   persistentStateSummary: string | null,
 ): string {
   const prior = (input.history ?? [])
-    .filter((x) => clean(x.content) && clean(x.content) !== clean(input.latest))
-    .slice(-12)
+    .filter((x, index) => clean(x.content) && !(index === 0 && clean(x.content) === clean(input.latest)))
+    .slice(0, 12)
+    .reverse()
     .map((x, i) =>
       `${i + 1}. ${String(x.role || "unknown")}: ${clean(x.content, 800)}`
     )
@@ -220,5 +224,5 @@ export async function interpretCommerceSemantics(
   if (!frame) {
     return { frame: null, source: "none", failure_code: "LLM_INVALID_OUTPUT" };
   }
-  return { frame, source: "deterministic", failure_code: null };
+  return { frame, source: "semantic_model", failure_code: null };
 }

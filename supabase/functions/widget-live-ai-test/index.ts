@@ -358,6 +358,9 @@ return async (req: Request) => {
       return json(req, {
         success: true,
         mode: "persistent_live_ai_test",
+        isolation_ready: true,
+        company_id: resolved.companyId,
+        channel_id: resolved.channelId,
         history: await listOwnedTestHistory(admin, authData.user.id, resolved),
       });
     }
@@ -435,7 +438,7 @@ return async (req: Request) => {
       conversation_id:conversationId,session_token:session.session_token,
     });
     for (let attempt=0; sent.ai_reply_pending && attempt<12; attempt++) {
-      if (poll.messages?.some((m:any)=>m.role !== "visitor" && m.metadata?.source_message_id === sent.message_id) || poll.human_support?.state !== "none") break;
+      if (poll.messages?.some((m:any)=>m.role !== "visitor" && m.metadata?.source_message_id === sent.message_id) || (poll.human_support?.state && poll.human_support.state !== "none")) break;
       await new Promise(resolve=>setTimeout(resolve,1000));
       poll = await widgetRequest(supabaseUrl,serviceKey,tokenMatch[1],origin,"widget-poll-messages",{conversation_id:conversationId,session_token:session.session_token});
     }
@@ -453,7 +456,7 @@ return async (req: Request) => {
       human_control:
         HUMAN_CONTROL_STATUSES.has(String(state?.status ?? "")) ||
         Boolean(state?.assigned_agent_id),
-      handoff_persisted: poll.human_support?.state !== "none",
+      handoff_persisted: (poll.human_support?.state && poll.human_support.state !== "none"),
       human_support: poll.human_support,
       ai_generating: poll.ai_generating,
       idempotent: sent.idempotent === true,

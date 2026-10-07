@@ -590,7 +590,9 @@ export function requiresCurrentMerchantEvidence(
 ): boolean {
   // Product-specific facts must use the same current, tenant-scoped KB gate.
   return intent.kind === "product_availability" ||
-    intent.kind === "product_factual_query";
+    intent.kind === "product_factual_query" ||
+    intent.kind === "product_guidance" ||
+    (intent.kind === "product_shopping" && Boolean(intent.product));
 }
 
 /** Whole social turns carry no business goal or transaction semantics. */
@@ -634,38 +636,10 @@ export function renderNaturalImmediateResponse(
     if (language === "zh-CN") return "你好！有什么可以帮你？";
     return "你好！有咩可以幫你？";
   }
-  if (intent.kind === "product_guidance") {
-    if (intent.product && /冷氣|冷气|air\s*condition|\bAC\b/i.test(intent.product)) {
-      if (language === "en") {
-        return "I can help size the AC. What is each room's area, does it get strong afternoon sun, and are you considering window or split units?";
-      }
-      if (language === "zh-CN") {
-        return intent.two_bedrooms_and_living_room
-          ? "两间房和客厅都要考虑冷气匹数。各有多少平方呎？有西晒吗？窗口位适合窗口机还是分体机？"
-          : "可以帮你估算冷气匹数。空间各有多少平方呎？有西晒吗？是窗口机还是分体机？";
-      }
-      return intent.two_bedrooms_and_living_room
-        ? "兩間房同客廳三個空間要分別估冷氣匹數。你提供各自面積、日照情況同窗口／安裝方式，我就可以幫你縮窄選擇。"
-        : "可以幫你估冷氣匹數。你提供空間面積、日照情況同窗口／安裝方式，我就可以幫你縮窄選擇。";
-    }
-    if (language === "en") {
-      return intent.product
-        ? `Sure — I can help narrow down the right ${intent.product}. Tell me the intended use, relevant size or space, and any budget or installation limits, and I’ll work from those details.`
-        : "Sure — I can help narrow down the right option. Tell me the intended use, relevant size or space, and any budget or installation limits.";
-    }
-    if (language === "zh-CN") {
-      return intent.product
-        ? `可以，我可以帮你筛选合适的${
-          chineseProductPrefix(intent.product)
-        }。告诉我用途、相关尺寸或空间，以及预算或安装限制，我会按这些资料帮你整理。`
-        : "可以，我可以帮你筛选合适的选择。告诉我用途、相关尺寸或空间，以及预算或安装限制。";
-    }
-    return intent.product
-      ? `可以，我可以幫你揀合適嘅${
-        chineseProductPrefix(intent.product)
-      }。你話我知用途、相關尺寸或空間，同埋預算或安裝限制，我會按呢啲資料幫你整理。`
-      : "可以，我可以幫你揀合適嘅選擇。你話我知用途、相關尺寸或空間，同埋預算或安裝限制。";
-  }
+  // A category is sufficient for a scoped first read. Specific models and
+  // customer constraints can refine that read after actual retrieval.
+  if (intent.kind === "product_guidance" ||
+    (intent.kind === "product_shopping" && intent.product)) return null;
   if (intent.kind !== "product_shopping") return null;
 
   // A supplied identifier is already a referent; it is not merchant evidence.

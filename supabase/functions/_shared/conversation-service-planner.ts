@@ -12,6 +12,8 @@ import type { CanonicalConversationMemory } from "./conversation-long-memory.ts"
 import { exactProductIdentifiers, isProductOperationFailure, isProductSupportProblem } from "./natural-customer-response.ts";
 import { deriveTypedCustomerMoneyFacts } from "./customer-money-facts.ts";
 import { activeCustomerGoal, customerRequestedQuantity } from "./customer-journey-orchestration.ts";
+import type { CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
+import { requiresSemanticKnowledge, scopedServiceKnowledgeQuery } from "./service-semantic-routing.ts";
 
 import { HOME_APPLIANCE_CATEGORIES, HOME_APPLIANCE_ROOMS } from "./industry-profiles/home-appliance-v1.ts";
 
@@ -120,6 +122,7 @@ export interface ServiceCalculationTerm {
 
 export interface ServicePlanInput {
   question: string;
+  semantic_frame?: CommerceSemanticFrame | null;
   committed_source_message_id?: string;
   language: ServiceLanguage;
   recall: ServiceRecallDecision;
@@ -403,18 +406,7 @@ function requestedSlot(question: string): string | null {
 }
 
 function buildKbQuery(question: string, input: ServicePlanInput): string {
-  const parts = [
-    input.commerce?.current_topic,
-    ...((input.commerce?.entities ?? []).filter((item) =>
-      !["cancelled", "deferred"].includes(item.status)
-    ).map((item) =>
-      [item.attributes.model, item.attributes.name, item.category].filter(
-        Boolean,
-      ).join(" ")
-    )),
-    question,
-  ].map((value) => clean(value, 160)).filter(Boolean);
-  return [...new Set(parts)].join(" ").slice(0, 500);
+  return scopedServiceKnowledgeQuery(question, input.semantic_frame, input.commerce);
 }
 
 /**
@@ -581,7 +573,10 @@ export function planConversationService(
     return { ...base, action: "current_state_checklist" };
   }
   if (input.recall.handled) return { ...base, action: "direct_answer" };
-  if (input.recall.reason === "CURRENT_KB_REQUIRED") {
+  if (input.semantic_frame?.ambiguity.is_ambiguous && !input.recall.handled) {
+    return { ...base, action: "targeted_clarification", missing_slots: ["specific_product_or_item"], clarification_target: "specific_product_or_item" };
+  }
+  if (input.recall.reason === "CURRENT_KB_REQUIRED" || requiresSemanticKnowledge(input.semantic_frame)) {
     const missingTarget = factSatisfiesSlot(facts, clarificationTarget)
       ? null
       : clarificationTarget;
@@ -874,9 +869,9 @@ function contextualContinuation(plan: ServiceDialoguePlan, l: number, recent: Ar
   const missing = contextualMissingContinuation(plan, l, recent);
   if (missing) return prefix + missing;
   if (goalText) return prefix + [
-    "可以按以上已知資料繼續。",
-    "可以按以上已知资料继续。",
-    "We can continue with the known details above.",
+    "相關商戶資料仍需核實。",
+    "相关商户资料仍需核实。",
+    "Merchant information still requires verification.",
   ][l];
   return plan.clarification_previously_asked ? [
     "跟進方向仍未確認；可以補充你想處理嘅具體問題。",
@@ -894,164 +889,12 @@ function renderContextualServiceReply(
   languageIndex: number,
   recentMessages: Array<{ role: string; content: string }> = [],
 ): string {
-  const turn = clean(plan.customer_turn || plan.customer_goal, 320);
-  const summaryIntent =
-    /(?:總結|总结|講一次|讲一次|列一次|讀返|读返|而家有咩|现在有什么|目前需求|準備報價|准备报价|what (?:do i|are we)|summari[sz]e|list (?:it|them))/i
-      .test(turn);
-  const questionIntent =
-    /[?？]|(?:有冇|有沒有|有没有|係咪|是不是|幾(?!勁)|几(?!乎)|邊|哪|咩|什么|點|怎么|如何|可唔可以|能不能|記唔記得|记不记得|do |does |did |is |are |can |could |what |which |when |where |how )/i
-      .test(turn) || /(?:幫|帮).{0,8}(?:睇|看|核對|核对)|(?:睇|看).{0,4}(?:呢|這|这)|(?:take|have).{0,8}look|(?:check|review|look at).{0,8}(?:this|it|these)/i.test(turn);
-  const genericTarget = CONTEXTUAL_CUSTOMER_SLOTS.some(slot => slot.field === plan.clarification_target) || !plan.clarification_target ||
-    ["customer_goal", "specific_item_or_time"].includes(
-      plan.clarification_target,
-    );
-
-  if (summaryIntent && plan.known_facts.length) {
-    const facts = contextualFacts(plan, languageIndex === 2 ? "en" : languageIndex === 1 ? "zh-CN" : "zh-TW").join(languageIndex === 2 ? "; " : "；");
-    return [
-      `目前資料係：${facts}。其餘未確定細節仍要再核實。`,
-      `目前资料是：${facts}。其余未确定细节仍需核实。`,
-      `Here is the current information: ${facts}. Any remaining uncertain detail still needs verification.`,
-    ][languageIndex];
-  }
-
-  if (!questionIntent && genericTarget) {
-    if (/雪櫃|雪柜/i.test(turn) && /三門|三门/i.test(turn) && /\d+\s*mm/i.test(turn)) {
-      const width = turn.match(/\d+\s*mm/i)?.[0] ?? "";
-      return [
-        `雪櫃想要三門、闊度唔超過${width}，我會同冷氣要求分開記。`,
-        `雪柜想要三门、宽度不超过${width}，我会与冷气要求分开记录。`,
-        `For the refrigerator: three doors and no wider than ${width}. I’ll keep it separate from the AC requirements.`,
-      ][languageIndex];
-    }
-    if (/(?:兩間房|两间房)/i.test(turn) && /\d+\s*呎/.test(turn)) {
-      const sizes = [...turn.matchAll(/\d+\s*呎/g)].map((match) => match[0]);
-      return [
-        `兩間房${sizes[0] ?? ""}、${sizes[1] ?? ""}，客廳${sizes[2] ?? "未提供尺寸"}；窗口位嘅安裝尺寸仍要量清楚。`,
-        `两间房${sizes[0] ?? ""}、${sizes[1] ?? ""}，客厅${sizes[2] ?? "未提供尺寸"}；窗口安装尺寸仍需测量。`,
-        `I have ${sizes.join(", ")} for the rooms. The window openings still need measurement before sizing the AC units.`,
-      ][languageIndex];
-    }
-    if (/西斜|西晒|west.facing/i.test(turn)) {
-      return [
-        "下午西斜我記低咗；揀冷氣匹數時要連房間面積同日照一齊考慮。",
-        "下午西晒已记录；挑选冷气匹数时要结合房间面积和日照。",
-        "I’ve noted the strong afternoon sun. Room size and sun exposure both matter when choosing AC capacity.",
-      ][languageIndex];
-    }
-    if (/(?:格力|美的|Panasonic)/i.test(turn) && /(?:唔想太貴|预算|預算)/i.test(turn)) {
-      return [
-        "明白，想控制預算，格力、美的或 Panasonic 都可以考慮；暫時冇指定必須買邊個品牌。",
-        "明白，想控制预算，格力、美的或 Panasonic 都可以考虑；目前没有指定必须购买某个品牌。",
-        "Budget matters, and Gree, Midea or Panasonic are options. No brand is mandatory yet.",
-      ][languageIndex];
-    }
-    const money = deriveTypedCustomerMoneyFacts(turn);
-    if (money.facts.length && money.historical) {
-      const details = money.facts.map((fact) => {
-        const label = fact.labels[languageIndex];
-        const basis = fact.charge_basis === "per_unit"
-          ? ["每部", "每部", "per unit"][languageIndex]
-          : fact.charge_basis === "per_order"
-          ? ["整單", "整单", "per order"][languageIndex]
-          : fact.charge_basis === "total"
-          ? ["合共", "合共", "total"][languageIndex]
-          : ["收費單位未指明", "收费单位未指明", "charge basis unspecified"][languageIndex];
-        return `${label} ${fact.currency} ${fact.amount.toLocaleString("en-US")} (${basis})`;
-      }).join("；");
-      return [
-        `你提供嘅歷史／假設數字係：${details}；只供過往／假設情境整理，並無商戶現行承諾。`,
-        `你提供的历史／假设数字是：${details}；只用于过去／假设情境整理，并无商户现行承诺。`,
-        `Your historical/conditional figures are: ${details}. These are not current prices.`,
-      ][languageIndex];
-    }
-    if (/一部\s*1匹.*一部\s*1\.5匹/.test(turn)) {
-      return [
-        "冷氣匹數改為一部 1 匹、一部 1.5 匹；我會按呢個組合整理。",
-        "冷气匹数改为一部 1 匹、一部 1.5 匹；我会按这个组合整理。",
-        "I have the AC mix as one 1 HP unit and one 1.5 HP unit.",
-      ][languageIndex];
-    }
-    if (/(?:機價|机价|安裝|安装).{0,20}(?:分開|分开)/i.test(turn)) {
-      return [
-        "係，機價同安裝係分開核對嘅項目；產品頁未寫明嘅話，唔能夠假設已包安裝。",
-        "对，机价和安装是分开核对的项目；产品页没写明，就不能假设包含安装。",
-        "Yes, the product price and installation are separate items to check. A product page does not imply installation is included unless it says so.",
-      ][languageIndex];
-    }
-    // A state update needs a customer-visible acknowledgement of the actual
-    // detail. A generic promise loses the customer's room, product or price.
-    const detail = turn.replace(/^[，,。\s]+|[。.!！\s]+$/g, "").slice(0, 100);
-    return [
-      `明白，${detail}。`,
-      `明白，${detail}。`,
-      `Understood: ${detail}.`,
-    ][languageIndex];
-  }
-
-  if (genericTarget) {
-    if (plan.knowledge_state === "not_needed") {
-      const facts = contextualFacts(plan, languageIndex === 2 ? "en" : languageIndex === 1 ? "zh-CN" : "zh-TW");
-      if (facts.length || plan.committed_commerce?.current_intent) {
-        const detail = facts.join(languageIndex === 2 ? "; " : "；");
-        const introduction = detail ? [
-          `目前資料係：${detail}。`, `目前资料是：${detail}。`,
-          `Your current details: ${detail}. `,
-        ][languageIndex] : "";
-        return introduction + contextualContinuation(plan, languageIndex, recentMessages);
-      }
-      return labels[plan.clarification_target ?? "customer_goal"]?.[languageIndex] ?? labels.customer_goal[languageIndex];
-    }
-    if (/(?:產品頁|产品页).{0,24}(?:機價|机价).{0,24}(?:包安裝|包安装)/i.test(turn)) {
-      return [
-        "產品頁有機價，唔代表已包安裝；要睇頁面有冇明確列出安裝服務同費用。",
-        "产品页有机价，不代表包含安装；要看页面是否明确列出安装服务及费用。",
-        "A product price does not imply installation is included. Check whether the product page explicitly lists installation and its charge.",
-      ][languageIndex];
-    }
-    if (/(?:有冇|有沒有|有没有|現貨|现货)/i.test(turn) &&
-      /(?:冷氣|冷气|雪櫃|雪柜|洗衣機|洗衣机|Panasonic|變頻|变频)/i.test(turn)) {
-      const context = clean(turn.match(/(?:有冇|有沒有|有没有)\s*([^。？?]{2,70})/i)?.[1] ??
-        (/Panasonic/i.test(turn) ? "Panasonic" : /1匹/.test(turn) ? "1匹窗口變頻冷氣" : "呢款產品"), 70);
-      return [
-        `我未有可核實嘅店內商品或庫存資料，暫時不能確認有冇${context}；亦唔會當作有現貨。`,
-        `我没有可核实的店内商品或库存资料，暂时无法确认是否有${context}；也不会当作有现货。`,
-        `I cannot verify current store listings or stock for ${context}, so I cannot confirm availability.`,
-      ][languageIndex];
-    }
-    const usefulScope = /(?:送貨|送货|delivery|日期|星期|when)/i.test(turn)
-      ? [
-        "型號／項目、地區同日期",
-        "型号／项目、地区和日期",
-        "item/model, region, and date",
-      ]
-      : /(?:產品|产品|型號|型号|品牌|雪櫃|雪柜|冷氣|冷气|洗衣機|洗衣机|product|model|brand)/i
-          .test(turn)
-      ? [
-        "完整型號、產品頁同適用地區",
-        "完整型号、产品页和适用地区",
-        "exact model, product page, and applicable region",
-      ]
-      : [
-        "相關項目、適用範圍同日期",
-        "相关项目、适用范围和日期",
-        "the relevant item, scope, and date",
-      ];
-    return [
-      `呢項我暫時未有可核實嘅現行資料直接答你。提供${
-        usefulScope[0]
-      }後，可以按該範圍核對；現時仍待核實。`,
-      `这项我暂时没有可核实的当前资料直接回答。提供${
-        usefulScope[1]
-      }后，可以按该范围核对；目前仍待核实。`,
-      `I do not yet have a verifiable current answer for this. With ${
-        usefulScope[2]
-      }, it can be checked in that scope; I will not treat it as confirmed before verification.`,
-    ][languageIndex];
-  }
-
-  return labels[plan.clarification_target!]?.[languageIndex] ??
-    labels.customer_goal[languageIndex];
+  // Customer-authored state can support a recap, never a merchant answer.
+  const facts = contextualFacts(plan, languageIndex === 2 ? "en" : languageIndex === 1 ? "zh-CN" : "zh-TW");
+  const target = plan.clarification_target;
+  if (target && !["customer_goal", "specific_item_or_time"].includes(target) && !CONTEXTUAL_CUSTOMER_SLOTS.some(slot => slot.field === target) && labels[target]) return labels[target][languageIndex];
+  const continuation = contextualContinuation(plan, languageIndex, recentMessages);
+  return facts.length ? facts.join(languageIndex === 2 ? "; " : "；") + (languageIndex === 2 ? ". " : "。") + continuation : continuation;
 }
 
 export function renderServicePlanReply(
@@ -1060,6 +903,7 @@ export function renderServicePlanReply(
   recentMessages: Array<{ role: string; content: string }> = [],
 ): string | null {
   const l = planLanguageIndex(plan, recentMessages);
+  if (["published_kb_lookup", "bounded_kb_refinement"].includes(plan.action)) return null;
   if (plan.action === "direct_answer") return recallReply;
   if (plan.action === "state_acknowledgement" && plan.committed_requirements?.length && plan.committed_commerce) {
     const details = plan.committed_requirements.map(e=>renderCanonicalRequirement(e,plan.language)).join(l===2?"; ":"；");
@@ -1069,15 +913,7 @@ export function renderServicePlanReply(
     const hasBooking = plan.committed_commerce.entities.some(e=>!["deferred","cancelled"].includes(e.status) && typeof e.attributes.capabilities === "object" && e.attributes.capabilities && (e.attributes.capabilities as Record<string,unknown>).requires_booking === true);
     return prefix+details+retained+(l===2?".":"。")+(hasBooking?" "+renderRequirementQualification(plan.committed_commerce,plan.language):"");
   }
-  if (/產品頁|产品页/i.test(plan.customer_turn ?? "") &&
-    /機價|机价/i.test(plan.customer_turn ?? "") &&
-    /包安裝|包安装/i.test(plan.customer_turn ?? "")) {
-    return [
-      "產品頁有機價，唔代表已包安裝；要睇頁面有冇明確列出安裝服務同費用。",
-      "产品页有机价，不代表包含安装；要看页面是否明确列出安装服务及费用。",
-      "A product price does not imply installation is included. Check whether the page explicitly lists installation and its charge.",
-    ][l];
-  }
+
   if (
     ["targeted_clarification", "partial_answer_then_question"].includes(
       plan.action,

@@ -3335,7 +3335,8 @@ async function persistNaturalImmediateResponse(
 ): Promise<Response | null> {
   // Product guidance can establish durable Commerce entities/constraints.
   // It therefore renders only after the shared Commerce writer has run.
-  if (intent.kind === "product_guidance") return null;
+  if (intent.kind === "product_guidance" ||
+    (intent.kind === "product_shopping" && intent.product)) return null;
   const content = socialText ? renderSocialTurn(socialText,language) : renderNaturalImmediateResponse(intent, language);
   if (!content) return null;
   const responseRoute = intent.kind === "greeting"
@@ -4282,14 +4283,7 @@ async function orchestrationGenerateReply(
   // Production semantics use the existing approved LLM router and its bounded policy.
   // It never writes commerce state and never supplies external product/policy facts.
   let _a3SemanticFrame: CommerceSemanticFrame | null = null;
-  if (
-    _criticalE2ExpectedTenantId &&
-    (!requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent) || _customerOwnedDelta ||
-      isHistoricalOrConditionalCustomerCalculationRequest(_h1LastMsg) ||
-      (_productFollowUpArbitration.kind === "resolved" &&
-        _productFollowUpArbitration.resolution_strategy === "PER_TOPIC_REFERENT_HISTORY" &&
-        Boolean(_productFollowUpArbitration.resolved_topic)))
-  ) {
+  if (_criticalE2ExpectedTenantId) {
     try {
       const semanticResult = await interpretCommerceSemantics({
         company_id: _criticalE2ExpectedTenantId,
@@ -4324,7 +4318,7 @@ async function orchestrationGenerateReply(
   let _c3CommerceSnapshot: RecallCommerceSnapshot | null = null;
   if (
     _criticalE2ExpectedTenantId &&
-    (!requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent) || _customerOwnedDelta ||
+    (!requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent) || _customerOwnedDelta || Boolean(_a3SemanticFrame) ||
       (_productFollowUpArbitration.kind === "resolved" &&
         _productFollowUpArbitration.resolution_strategy === "PER_TOPIC_REFERENT_HISTORY" &&
         Boolean(_productFollowUpArbitration.resolved_topic)))
@@ -4574,6 +4568,7 @@ async function orchestrationGenerateReply(
   const _c3ServicePlan: ServiceDialoguePlan = planConversationService(
     applyServiceRuntimeDerivation({
       question: _productFactualRequest,
+      semantic_frame: _a3SemanticFrame,
       committed_source_message_id: _c3CommerceSnapshot?.source_message_id === _h1SourceMessageId ? _h1SourceMessageId : undefined,
       language: _visitorLang,
       recall:
@@ -4644,13 +4639,8 @@ async function orchestrationGenerateReply(
     );
     if (immediate) return immediate;
   }
-  const _naturalGuidanceReply = _effectiveNaturalCustomerIntent.kind ===
-      "product_guidance"
-    ? renderNaturalImmediateResponse(
-      _effectiveNaturalCustomerIntent,
-      _visitorLang,
-    )
-    : null;
+  const _naturalGuidanceReply: string | null = null;
+
   const _c3IsGroundedReadOnlyRecap = _a3Commerce?.reason ===
       "read_only_current_requirements_recap" &&
     _c3Recall.decision.handled && _c3Recall.decision.fact_type === "summary" &&
@@ -4806,6 +4796,7 @@ async function orchestrationGenerateReply(
       ? null
       : _a3Commerce?.reply ?? null);
   if (_c3CommerceReply && !_explicitHandoffRequested &&
+    _c3ServicePlan.knowledge_state !== "lookup_required" &&
     !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent)) {
     const commerceReply = _a3Commerce?.reason ===
         "previous_quote_not_authoritative_for_current_price"
@@ -4914,6 +4905,7 @@ async function orchestrationGenerateReply(
   );
   if (
     _canonicalTurn.operation === "CUSTOMER_CONTEXT_UPDATE" &&
+    _c3ServicePlan.knowledge_state !== "lookup_required" &&
     !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent)
   ) {
     const acknowledgement =
@@ -4973,6 +4965,7 @@ async function orchestrationGenerateReply(
   const _turnClassification = classifyConversationTurn(_h1LastMsg);
   if (
     !_w5ShortTopicHint &&
+    _c3ServicePlan.knowledge_state !== "lookup_required" &&
     !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent) &&
     _turnClassification.should_clarify_before_kb &&
     !isHandoffIntent(_h1LastMsg) && _criticalLocalRisk?.level !== "high"
@@ -5230,6 +5223,7 @@ async function orchestrationGenerateReply(
       : null;
   if (
     _positiveRecoveryAcknowledgement &&
+    _c3ServicePlan.knowledge_state !== "lookup_required" &&
     !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent)
   ) {
     const committed = await commitAiReplyWithControlGate(
@@ -5276,6 +5270,7 @@ async function orchestrationGenerateReply(
     );
   }
   const _conversationMemoryReply =
+    _c3ServicePlan.knowledge_state !== "lookup_required" &&
     !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent) &&
       !_c3Recall.decision.handled &&
       _c3Recall.decision.reason === "NOT_A_RECALL_QUERY" &&

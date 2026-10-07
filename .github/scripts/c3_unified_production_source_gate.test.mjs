@@ -12,7 +12,7 @@ reject('stale identity',()=>verifyIdentity(root,profile,{head:'0'.repeat(40),tre
 reject('unresolved dynamic import',()=>imports('await import(pathFromRequest);','unsafe.ts'),/dynamic_import_unresolved/);
 const fixture=fs.mkdtempSync(path.join(os.tmpdir(),'c3-production-controls-'));
 try{
- for(const f of [...profile.runtime_files,...Object.keys(profile.frozen_evidence_sha256),...Object.keys(profile.normalized_preview_sha256),...Object.keys(profile.widget_reply_stability_sha256),...Object.keys(profile.authorized_widget_auth_repair_sha256),...Object.keys(profile.authorized_memory_reply_repair_sha256),...Object.keys(profile.authorized_preview_activation_sha256)]){const dest=path.join(fixture,f);fs.mkdirSync(path.dirname(dest),{recursive:true});fs.copyFileSync(path.join(root,f),dest);}
+ for(const f of [...profile.runtime_files,...Object.keys(profile.frozen_evidence_sha256),...Object.keys(profile.normalized_preview_sha256),...Object.keys(profile.widget_reply_stability_sha256),...Object.keys(profile.authorized_widget_auth_repair_sha256),...Object.keys(profile.authorized_unified_generic_service_repair_sha256),...Object.keys(profile.authorized_memory_reply_repair_sha256),...Object.keys(profile.authorized_preview_activation_sha256)]){const dest=path.join(fixture,f);fs.mkdirSync(path.dirname(dest),{recursive:true});fs.copyFileSync(path.join(root,f),dest);}
  for(const f of Object.keys(profile.normalized_preview_sha256)) {
   const original=fs.readFileSync(path.join(fixture,f));fs.appendFileSync(path.join(fixture,f),'\n// unapproved preview drift\n');
   reject('normalized preview binding drift '+f,()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/preview_binding_drift/);fs.writeFileSync(path.join(fixture,f),original);
@@ -22,6 +22,12 @@ try{
  for(const f of Object.keys(profile.authorized_preview_activation_sha256)){const original=fs.readFileSync(path.join(fixture,f));fs.appendFileSync(path.join(fixture,f),'\n// unapproved identity bypass');reject('preview activation source drift '+f,()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/preview_activation_source_drift/);fs.writeFileSync(path.join(fixture,f),original);}
  reject('pending SQL falsely authorized',()=>verifyProductionSource({root:fixture,profile:{...profile,memory_reply_sql_production_authorized:true},sourceOnly:true}),/memory_reply_sql_authority_masquerade/);
  for(const f of Object.keys(profile.authorized_widget_auth_repair_sha256)){const original=fs.readFileSync(path.join(fixture,f));fs.appendFileSync(path.join(fixture,f),'\n// unauthorized auth change');reject('Widget auth drift '+f,()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/widget_(?:auth|stability)_source_drift/);fs.writeFileSync(path.join(fixture,f),original);}
+ reject('generic repair profile cannot authorize different bytes',()=>verifyProductionSource({root:fixture,profile:{...profile,authorized_unified_generic_service_repair_sha256:{}},sourceOnly:true}),/generic_repair_scope_drift/);
+ for(const f of Object.keys(profile.authorized_unified_generic_service_repair_sha256)) {
+  const original=fs.readFileSync(path.join(fixture,f));fs.appendFileSync(path.join(fixture,f),'\n// unapproved generic service drift');
+  reject('generic repair source drift '+f,()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/(?:generic_repair_source_drift|widget_(?:stability|auth)_source_drift|memory_reply_source_drift)/);
+  fs.writeFileSync(path.join(fixture,f),original);
+ }
  const victim=profile.runtime_files.find(f=>f.endsWith('/kb-client.ts'));const original=fs.readFileSync(path.join(fixture,victim));fs.unlinkSync(path.join(fixture,victim));
  reject('missing dependency',()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/dependency_missing/);fs.writeFileSync(path.join(fixture,victim),original);
  fs.appendFileSync(path.join(fixture,victim),'\nexport const tenantBypass=true;\n');reject('tenant / grounding frozen source changed',()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/frozen_runtime_drift/);fs.writeFileSync(path.join(fixture,victim),original);
