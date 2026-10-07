@@ -34,5 +34,14 @@ test('same content with different IDs is two legitimate turns',()=>{
  assert.equal(mergeWidgetMessages([v],[{...v,id:'v2'}]).length,2);
 });
 test('empty IDs and invalid runtime roles cannot create unstable keys',()=>{
- const old=[v];assert.equal(mergeWidgetMessages(old,[{...v,id:''},{...a,role:'system'}]),old);
+ const old=[v];assert.equal(mergeWidgetMessages(old,[{...v,id:''},{...a,role:'untrusted'}]),old);
+});
+
+test('human replies and system events retain identity and arrive once',()=>{
+ const human={id:'h1',role:'agent',content:'Help is here'};
+ const system={id:'s1',role:'system',content:'Agent joined'};
+ const result=mergeWidgetMessages([v,a],[human,system,human]);
+ assert.deepEqual(result.map(x=>x.id),['v1','a1','h1','s1']);
+ assert.equal(result[0],v); assert.equal(result[1],a);
+ assert.equal(mergeWidgetMessages(result,[{...human},{...system}]),result);
 });

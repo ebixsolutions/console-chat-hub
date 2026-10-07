@@ -296,6 +296,8 @@ jobs:
           JS
           node .github/scripts/c3_unified_production_source_gate.test.mjs
           node .github/scripts/c3_unified_production_source_gate.mjs
+          node tests/c3-widget-live-auth/handler.test.mjs
+          node --test src/lib/widget-message-merge.test.mjs
           C3_OFFLINE
           cat "$RUNNER_TEMP/c3-rev14-offline/profile.log"
       - name: Native PostgreSQL 17 captured trigger and concurrency safety tests

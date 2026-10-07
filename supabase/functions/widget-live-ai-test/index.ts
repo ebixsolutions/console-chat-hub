@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
 import { supabaseCorsHeaders } from "../_shared/supabase-cors.ts";
 
 const MAX_QUERY_LENGTH = 500;
@@ -22,7 +23,7 @@ function isAllowedConsoleOrigin(raw: string): boolean {
       url.protocol !== "https:" &&
       !(url.protocol === "http:" && ["localhost", "127.0.0.1"].includes(url.hostname))
     ) return false;
-    if (raw === PRODUCTION_ORIGIN) return true;
+    if (raw === PRODUCTION_ORIGIN || raw === "https://preview--console-chat-hub.lovable.app") return true;
     if (["localhost", "127.0.0.1"].includes(url.hostname)) return true;
     const projectHost = `${PROJECT_ID}.lovableproject.com`;
     if (url.hostname === projectHost) return true;
@@ -61,7 +62,7 @@ async function resolveTestScope(
   admin: QueryClient,
   userId: string,
 ): Promise<
-  | { ok: true; companyId: string | null; scopeMode: "canonical" | "pre_activation" }
+  | { ok: true; companyId: string; scopeMode: "canonical" }
   | { ok: false; status: number; error: string }
 > {
   const { data: memberships, error: membershipError } = await admin
@@ -69,10 +70,10 @@ async function resolveTestScope(
     .select("company_id, role, is_active")
     .eq("user_id", userId);
   if (membershipError) {
-    return { ok: false, status: 500, error: "company_membership_lookup_failed" };
+    return { ok: false, status: 500, error: "company_membership_lookup_failed", provider: membershipError } as any;
   }
 
-  const rows = memberships ?? [];
+  const rows = (memberships ?? []).filter((row: any) => row.is_active === true);
   const companyIds = [...new Set(rows.map((r: any) => String(r.company_id)))];
   if (companyIds.length > 1) {
     return { ok: false, status: 409, error: "company_membership_ambiguous" };
@@ -91,28 +92,14 @@ async function resolveTestScope(
       .select("id,is_active")
       .eq("id", companyId)
       .maybeSingle();
-    if (companyError) return { ok: false, status: 500, error: "company_lookup_failed" };
+    if (companyError) return { ok: false, status: 500, error: "company_lookup_failed", provider: companyError } as any;
     if (!company || company.is_active !== true) {
       return { ok: false, status: 403, error: "company_inactive" };
     }
     return { ok: true, companyId, scopeMode: "canonical" };
   }
 
-  const { data: roles, error: roleError } = await admin
-    .from("user_roles")
-    .select("role")
-    .eq("user_id", userId);
-  if (roleError) return { ok: false, status: 500, error: "role_lookup_failed" };
-  if (!(roles ?? []).some((r: any) => ALLOWED_ROLES.has(String(r.role)))) {
-    return { ok: false, status: 403, error: "forbidden" };
-  }
-  if (Deno.env.get("KB_PREACTIVATION_ENABLED") !== "true") {
-    return { ok: false, status: 503, error: "kb_preactivation_disabled" };
-  }
-  if (!Deno.env.get("KB_PREACTIVATION_TENANT_ID")?.trim()) {
-    return { ok: false, status: 503, error: "kb_preactivation_config_missing" };
-  }
-  return { ok: true, companyId: null, scopeMode: "pre_activation" };
+  return { ok: false, status: 403, error: "forbidden" };
 }
 
 function isTestConversationOwned(metadataSource: unknown, userId: string): boolean {
@@ -120,8 +107,8 @@ function isTestConversationOwned(metadataSource: unknown, userId: string): boole
     return false;
   }
   const m = metadataSource as Record<string, unknown>;
-  return m.source === "widget_live_test" &&
-    m.widget_live_test === true &&
+  return m.source === "c3_uat_widget" &&
+    m.synthetic === true &&
     m.owner_user_id === userId &&
     m.exclude_training === true;
 }
@@ -130,6 +117,7 @@ async function loadOwnedTestConversation(
   admin: QueryClient,
   conversationId: string,
   userId: string,
+  scope: { companyId: string; channelId: string },
 ): Promise<
   | { ok: true; conversation: Record<string, any> }
   | { ok: false; status: number; error: string }
@@ -141,6 +129,8 @@ async function loadOwnedTestConversation(
     .from("conversations")
     .select("id,status,assigned_agent_id,company_id,channel_config_id,visitor_session_id,metadata_source,created_at,updated_at")
     .eq("id", conversationId)
+    .eq("company_id", scope.companyId)
+    .eq("channel_config_id", scope.channelId)
     .maybeSingle();
   if (error) return { ok: false, status: 500, error: "test_conversation_lookup_failed" };
   if (!data || !isTestConversationOwned(data.metadata_source, userId)) {
@@ -159,10 +149,10 @@ async function loadTestMessages(admin: QueryClient, conversationId: string) {
     .limit(200);
   if (error) throw new Error("test_messages_lookup_failed");
   return (data ?? [])
-    .filter((m: any) => m.role === "visitor" || m.role === "assistant")
+    .filter((m: any) => ["visitor","assistant","agent","system"].includes(m.role))
     .map((m: any) => ({
       id: String(m.id),
-      role: m.role === "visitor" ? "visitor" as const : "assistant" as const,
+      role: m.role,
       content: String(m.content ?? ""),
       created_at: typeof m.created_at === "string" ? m.created_at : null,
       metadata:
@@ -175,15 +165,25 @@ async function loadTestMessages(admin: QueryClient, conversationId: string) {
 async function createTestConversation(
   admin: QueryClient,
   userId: string,
-  resolved: { companyId: string | null; scopeMode: "canonical" | "pre_activation" },
+  resolved: { companyId: string; channelId: string; scopeMode: "canonical" },
+  clientMessageId: string,
 ): Promise<
   | { ok: true; conversationId: string }
   | { ok: false; status: number; error: string }
 > {
+  const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(`${userId}:${resolved.channelId}:${clientMessageId}`)));
+  const hex = [...bytes].map(b=>b.toString(16).padStart(2,"0")).join("").slice(0,32);
+  const conversationId = `${hex.slice(0,8)}-${hex.slice(8,12)}-5${hex.slice(13,16)}-a${hex.slice(17,20)}-${hex.slice(20)}`;
+  const existing = await loadOwnedTestConversation(admin,conversationId,userId,resolved);
+  if (existing.ok) return {ok:true,conversationId};
+  if (existing.status !== 404) return existing;
+  const {count,error: countError} = await admin.from("conversations").select("id",{count:"exact",head:true}).eq("metadata_source->>source","c3_uat_widget");
+  if (countError || typeof count !== "number") return {ok:false,status:503,error:"fixture_budget_unavailable"};
+  if (count >= 200) return {ok:false,status:409,error:"fixture_budget_exhausted"};
   const sessionToken = `preview-test.${crypto.randomUUID()}.${crypto.randomUUID().replace(/-/g, "")}`;
   const visitorMetadata = {
     name: "Widget Live Test",
-    source: "widget_live_test",
+    source: "c3_uat_widget",
     test_mode: true,
     owner_user_id: userId,
     exclude_training: true,
@@ -197,7 +197,7 @@ async function createTestConversation(
       visitor_fingerprint: `widget-live-test:${userId}`,
       visitor_metadata: visitorMetadata,
       last_seen_at: new Date().toISOString(),
-      channel_config_id: null,
+      channel_config_id: resolved.channelId,
     })
     .select("id")
     .single();
@@ -207,8 +207,8 @@ async function createTestConversation(
   }
 
   const metadataSource = {
-    source: "widget_live_test",
-    widget_live_test: true,
+    source: "c3_uat_widget",
+    synthetic: true,
     owner_user_id: userId,
     exclude_training: true,
     scope_mode: resolved.scopeMode,
@@ -218,12 +218,13 @@ async function createTestConversation(
   const { data: conversation, error: conversationError } = await admin
     .from("conversations")
     .insert({
+      id: conversationId,
       visitor_session_id: session.id,
-      channel_config_id: null,
+      channel_config_id: resolved.channelId,
       company_id: resolved.companyId,
       status: "open",
       priority: "normal",
-      tags: ["widget_live_test", "exclude_training"],
+      tags: ["c3_uat", "synthetic", "exclude_training"],
       metadata_source: metadataSource,
       language: null,
     })
@@ -232,15 +233,19 @@ async function createTestConversation(
 
   if (conversationError || !conversation?.id) {
     await admin.from("visitor_session").delete().eq("id", session.id);
+    const raced = await loadOwnedTestConversation(admin,conversationId,userId,resolved);
+    if (raced.ok) return {ok:true,conversationId};
     return { ok: false, status: 500, error: "test_conversation_create_failed" };
   }
   return { ok: true, conversationId: String(conversation.id) };
 }
 
-async function listOwnedTestHistory(admin: QueryClient, userId: string) {
+async function listOwnedTestHistory(admin: QueryClient, userId: string, scope: {companyId: string; channelId: string}) {
   const { data, error } = await admin
     .from("conversations")
     .select("id,created_at,updated_at,metadata_source")
+    .eq("company_id", scope.companyId)
+    .eq("channel_config_id", scope.channelId)
     .order("updated_at", { ascending: false })
     .limit(100);
   if (error) throw new Error("test_history_lookup_failed");
@@ -260,64 +265,20 @@ async function listOwnedTestHistory(admin: QueryClient, userId: string) {
   return out;
 }
 
-async function invokeCanonicalGenerateReply(
-  supabaseUrl: string,
-  serviceKey: string,
-  conversationId: string,
-  sourceMessageId: string,
-): Promise<{ ok: true; payload: Record<string, unknown> } | { ok: false; status: number; error: string }> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30000);
-  try {
-    const response = await fetch(
-      `${supabaseUrl.replace(/\/+$/, "")}/functions/v1/generate-reply`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${serviceKey}`,
-          apikey: serviceKey,
-        },
-        body: JSON.stringify({
-          conversation_id: conversationId,
-          source_message_id: sourceMessageId,
-        }),
-        signal: controller.signal,
-      },
-    );
-    let payload: Record<string, unknown> = {};
-    try {
-      const parsed = await response.json();
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        payload = parsed as Record<string, unknown>;
-      }
-    } catch {
-      // Keep opaque upstream body out of browser responses.
-    }
-    if (!response.ok) {
-      return {
-        ok: false,
-        status: response.status,
-        error: typeof payload.error === "string"
-          ? payload.error.slice(0, 120)
-          : `generate_reply_http_${response.status}`,
-      };
-    }
-    return { ok: true, payload };
-  } catch (error) {
-    return {
-      ok: false,
-      status: error instanceof DOMException && error.name === "AbortError" ? 504 : 502,
-      error: error instanceof DOMException && error.name === "AbortError"
-        ? "generate_reply_timeout"
-        : "generate_reply_unavailable",
-    };
-  } finally {
-    clearTimeout(timeout);
-  }
+async function widgetRequest(url: string, key: string, token: string, origin: string, slug: string, body: unknown) {
+  const response = await fetch(`${url}/functions/v1/${slug}`, {
+    method:"POST", headers:{"Content-Type":"application/json", Authorization:`Bearer ${token}`, apikey:key, Origin:origin},
+    body:JSON.stringify(body), signal:AbortSignal.timeout(30000),
+  });
+  const payload = await response.json().catch(()=>null);
+  if (!response.ok || payload?.success !== true) throw new Error("canonical_widget_request_failed");
+  return payload.data;
 }
 
-Deno.serve(async (req) => {
+export function createWidgetLiveHandler(deps = { createClient, getAdminKey: getSupabaseAdminKey, env: (name: string) => Deno.env.get(name), log: (event: unknown) => console.error(JSON.stringify(event)) }) {
+return async (req: Request) => {
+  const correlationId = crypto.randomUUID();
+  const diagnostic = (stage: string, provider: any, status: number) => deps.log({ endpoint: "widget-live-ai-test", stage, provider_code: typeof provider?.code === "string" && (/^(?:PGRST[0-9]{3}|[0-9A-Z]{5})$/.test(provider.code) || ["bad_jwt","jwt_expired","user_not_found","session_not_found","ADMIN_KEY_MISSING"].includes(provider.code)) ? provider.code : "unclassified", http_class: `${Math.floor(status / 100)}xx`, provider_http_class: Number.isInteger(provider?.status) && provider.status>=100 && provider.status<600 ? `${Math.floor(provider.status/100)}xx` : "unavailable", project_ref: "nrfxhqabwblzxoushgnm", correlation_id: correlationId });
   if (req.method === "OPTIONS") {
     const origin = req.headers.get("Origin") ?? "";
     if (!isAllowedConsoleOrigin(origin)) return new Response(null, { status: 403 });
@@ -340,7 +301,7 @@ Deno.serve(async (req) => {
     }
     for (const forbidden of [
       "company_id", "companyId", "tenant_id", "tenantId",
-      "api_key", "apiKey", "channel_id", "conversation_id",
+      "api_key", "apiKey", "channel_id", "channelId", "channel_config_id", "conversation_id", "user_id", "userId",
     ]) {
       if ((body as Record<string, unknown>)[forbidden] !== undefined) {
         return json(req, {
@@ -351,26 +312,40 @@ Deno.serve(async (req) => {
       }
     }
 
-    const supabaseUrl = Deno.env.get("SUPABASE_URL");
-    const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
-    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-    if (!supabaseUrl || !anonKey || !serviceKey) {
-      return json(req, { success: false, error: "server_config_missing" }, 500);
-    }
-
-    const auth = createClient(supabaseUrl, anonKey, {
-      global: { headers: { Authorization: req.headers.get("Authorization") ?? "" } },
+    const tokenMatch = /^Bearer\s+(\S+)$/i.exec(req.headers.get("Authorization") ?? "");
+    if (!tokenMatch) { diagnostic("auth_header", null, 401); return json(req, { success: false, error: "unauthorized", correlation_id: correlationId }, 401); }
+    const supabaseUrl = deps.env("SUPABASE_URL");
+    const anonKey = deps.env("SUPABASE_ANON_KEY");
+    let serviceKey: string;
+    try { serviceKey = deps.getAdminKey(); } catch { diagnostic("admin_config", {code:"ADMIN_KEY_MISSING"}, 500); return json(req, {success:false,error:"server_config_missing",correlation_id:correlationId},500); }
+    if (supabaseUrl !== "https://nrfxhqabwblzxoushgnm.supabase.co" || !anonKey || !serviceKey) return json(req, {success:false,error:"server_config_missing"},500);
+    const auth = deps.createClient(supabaseUrl, anonKey, {
+      global: { headers: { Authorization: `Bearer ${tokenMatch[1]}` } },
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
     });
-    const { data: authData, error: authError } = await auth.auth.getUser();
-    if (authError || !authData.user) {
-      return json(req, { success: false, error: "unauthorized" }, 401);
+    const { data: authData, error: authError } = await auth.auth.getUser(tokenMatch[1]);
+    if (authError || !authData?.user?.id) {
+      diagnostic("auth_validation", authError, 401);
+      return json(req, { success: false, error: "unauthorized", correlation_id: correlationId }, 401);
     }
-
-    const admin = createClient(supabaseUrl, serviceKey);
-    const resolved = await resolveTestScope(admin, authData.user.id);
-    if (!resolved.ok) {
-      return json(req, { success: false, error: resolved.error }, resolved.status);
+    const admin = deps.createClient(supabaseUrl, serviceKey, { auth: {persistSession:false,autoRefreshToken:false,detectSessionInUrl:false} });
+    const membership = await resolveTestScope(admin, authData.user.id);
+    if (!membership.ok) {
+      diagnostic("membership_validation", (membership as any).provider, membership.status);
+      return json(req, {success:false,error:membership.error,correlation_id:correlationId},membership.status);
     }
+    // The installed authenticated RPC and its config channel FK prove B12 registration.
+    // Never infer isolation from a browser flag, channel name or arbitrary metadata.
+    const {data: isolation, error: isolationError} = await auth.rpc("c3_uat_feedback_config_context");
+    const config = isolation?.config;
+    if (isolationError || isolation?.isolated !== true || !config || config.company_id !== membership.companyId || !isUuid(config.channel_id)) {
+      if ((body as any).action === "history" && !isolationError) return json(req,{success:true,mode:"persistent_live_ai_test",history:[],isolation_ready:false});
+      diagnostic("synthetic_scope", isolationError, 503);
+      return json(req,{success:false,error:"synthetic_scope_not_ready",correlation_id:correlationId},503);
+    }
+    const resolved = {companyId: String(membership.companyId), channelId: String(config.channel_id), scopeMode: "canonical" as const};
+    const {data: channel,error: channelError} = await admin.from("channel_config").select("id,company_id,is_active,channel_type,allowed_origins").eq("id",resolved.channelId).eq("company_id",resolved.companyId).maybeSingle();
+    if (channelError || !channel || channel.is_active !== true || channel.channel_type !== "web_widget" || !Array.isArray(channel.allowed_origins) || !channel.allowed_origins.includes(origin)) return json(req,{success:false,error:"synthetic_channel_unavailable"},503);
 
     const action = typeof (body as Record<string, unknown>).action === "string"
       ? String((body as Record<string, unknown>).action)
@@ -380,7 +355,7 @@ Deno.serve(async (req) => {
       return json(req, {
         success: true,
         mode: "persistent_live_ai_test",
-        history: await listOwnedTestHistory(admin, authData.user.id),
+        history: await listOwnedTestHistory(admin, authData.user.id, resolved),
       });
     }
 
@@ -394,8 +369,12 @@ Deno.serve(async (req) => {
         admin,
         requestedConversationId,
         authData.user.id,
+        resolved,
       );
       if (!owned.ok) return json(req, { success: false, error: owned.error }, owned.status);
+      const {data: session,error: sessionError} = await admin.from("visitor_session").select("session_token").eq("id",owned.conversation.visitor_session_id).eq("channel_config_id",resolved.channelId).maybeSingle();
+      if (sessionError || !session?.session_token) return json(req,{success:false,error:"test_session_lookup_failed"},500);
+      const poll = await widgetRequest(supabaseUrl,serviceKey,tokenMatch[1],origin,"widget-poll-messages",{conversation_id:requestedConversationId,session_token:session.session_token});
       return json(req, {
         success: true,
         mode: "persistent_live_ai_test",
@@ -406,7 +385,9 @@ Deno.serve(async (req) => {
         human_control:
           HUMAN_CONTROL_STATUSES.has(String(owned.conversation.status)) ||
           Boolean(owned.conversation.assigned_agent_id),
-        messages: await loadTestMessages(admin, requestedConversationId),
+        messages: poll.messages ?? [],
+        human_support: poll.human_support,
+        ai_generating: poll.ai_generating,
       });
     }
 
@@ -421,86 +402,43 @@ Deno.serve(async (req) => {
       return json(req, { success: false, error: "invalid_query" }, 400);
     }
 
+    if (!isUuid((body as any).client_message_id)) return json(req,{success:false,error:"invalid_client_message_id"},400);
     let conversationId = requestedConversationId;
     if (conversationId) {
-      const owned = await loadOwnedTestConversation(admin, conversationId, authData.user.id);
+      const owned = await loadOwnedTestConversation(admin, conversationId, authData.user.id, resolved);
       if (!owned.ok) return json(req, { success: false, error: owned.error }, owned.status);
       if (owned.conversation.status === "resolved" || owned.conversation.status === "closed") {
         return json(req, { success: false, error: "test_conversation_resolved" }, 409);
       }
-      if (
-        HUMAN_CONTROL_STATUSES.has(String(owned.conversation.status)) ||
-        owned.conversation.assigned_agent_id
-      ) {
-        return json(req, {
-          success: false,
-          error: "test_conversation_under_human_control",
-          conversation_id: conversationId,
-        }, 409);
-      }
+
     } else {
-      const created = await createTestConversation(admin, authData.user.id, resolved);
+      const created = await createTestConversation(admin, authData.user.id, resolved, String((body as any).client_message_id));
       if (!created.ok) return json(req, { success: false, error: created.error }, created.status);
       conversationId = created.conversationId;
     }
 
-    const { data: visitorMessage, error: visitorError } = await admin
-      .from("messages")
-      .insert({
-        conversation_id: conversationId,
-        role: "visitor",
-        content: query,
-        status: "delivered",
-        metadata: {
-          widget_live_test: true,
-          source: "widget_preview",
-          owner_user_id: authData.user.id,
-          exclude_training: true,
-        },
-      })
-      .select("id")
-      .single();
-
-    if (visitorError || !visitorMessage?.id) {
-      return json(req, { success: false, error: "test_visitor_message_create_failed" }, 500);
+    // Use the ordinary visitor transaction/poll path, including queue and AI suppression.
+    const owned = await loadOwnedTestConversation(admin, conversationId, authData.user.id, resolved);
+    if (!owned.ok) return json(req,{success:false,error:owned.error},owned.status);
+    const {data: session, error: sessionError} = await admin.from("visitor_session").select("session_token")
+      .eq("id", owned.conversation.visitor_session_id).eq("channel_config_id", resolved.channelId).maybeSingle();
+    if (sessionError || !session?.session_token) return json(req,{success:false,error:"test_session_lookup_failed"},500);
+    const clientMessageId = (body as any).client_message_id;
+    if (!isUuid(clientMessageId)) return json(req,{success:false,error:"invalid_client_message_id"},400);
+    const sent = await widgetRequest(supabaseUrl, serviceKey, tokenMatch[1], origin, "receive-widget-message", {
+      conversation_id:conversationId, session_token:session.session_token, content:query, client_message_id:clientMessageId,
+    });
+    let poll = await widgetRequest(supabaseUrl,serviceKey,tokenMatch[1],origin,"widget-poll-messages",{
+      conversation_id:conversationId,session_token:session.session_token,
+    });
+    for (let attempt=0; sent.ai_reply_pending && attempt<12; attempt++) {
+      if (poll.messages?.some((m:any)=>m.role !== "visitor" && m.metadata?.source_message_id === sent.message_id) || poll.human_support?.state !== "none") break;
+      await new Promise(resolve=>setTimeout(resolve,1000));
+      poll = await widgetRequest(supabaseUrl,serviceKey,tokenMatch[1],origin,"widget-poll-messages",{conversation_id:conversationId,session_token:session.session_token});
     }
-
-    await admin
-      .from("conversations")
-      .update({
-        updated_at: new Date().toISOString(),
-        language: /[\u4e00-\u9fff]/.test(query) ? "zh" : "en",
-      })
-      .eq("id", conversationId);
-
-    const generation = await invokeCanonicalGenerateReply(
-      supabaseUrl,
-      serviceKey,
-      conversationId,
-      String(visitorMessage.id),
-    );
-
-    const messages = await loadTestMessages(admin, conversationId);
-    const { data: state } = await admin
-      .from("conversations")
-      .select("status,assigned_agent_id,updated_at")
-      .eq("id", conversationId)
-      .maybeSingle();
-
-    if (!generation.ok) {
-      return json(req, {
-        success: false,
-        error: generation.error,
-        conversation_id: conversationId,
-        conversation_status: state?.status ?? null,
-        assigned_agent_id: state?.assigned_agent_id ?? null,
-        human_control:
-          HUMAN_CONTROL_STATUSES.has(String(state?.status ?? "")) ||
-          Boolean(state?.assigned_agent_id),
-        messages,
-      }, generation.status);
-    }
-
+    const messages = poll.messages ?? [];
+    const {data: state,error: stateError} = await admin.from("conversations").select("status,assigned_agent_id").eq("id",conversationId).eq("company_id",resolved.companyId).eq("channel_config_id",resolved.channelId).maybeSingle();
+    if (stateError || !state) return json(req,{success:false,error:"test_conversation_lookup_failed"},500);
     const latestAssistant = [...messages].reverse().find((m) => m.role === "assistant");
     return json(req, {
       success: true,
@@ -512,22 +450,18 @@ Deno.serve(async (req) => {
       human_control:
         HUMAN_CONTROL_STATUSES.has(String(state?.status ?? "")) ||
         Boolean(state?.assigned_agent_id),
-      handoff_persisted:
-        generation.payload.handoff_persisted === true ||
-        generation.payload.escalation_rule === "R1" ||
-        generation.payload.escalation_rule === "S0",
-      escalation_rule:
-        typeof generation.payload.escalation_rule === "string"
-          ? generation.payload.escalation_rule
-          : null,
+      handoff_persisted: poll.human_support?.state !== "none",
+      human_support: poll.human_support,
+      ai_generating: poll.ai_generating,
+      idempotent: sent.idempotent === true,
       answer: latestAssistant?.content ?? "",
       messages,
     });
   } catch (e) {
-    console.error(
-      "[widget-live-ai-test] unexpected",
-      e instanceof Error ? e.message : "unknown_error",
-    );
+    diagnostic("unexpected", null, 500);
     return json(req, { success: false, error: "internal_error" }, 500);
   }
-});
+};
+}
+
+Deno.serve(createWidgetLiveHandler());

@@ -180,7 +180,7 @@ const COPY = {
 
 type LiveAiMessage = {
   id: string;
-  role: "visitor" | "assistant";
+  role: "visitor" | "assistant" | "agent" | "system";
   content: string;
   created_at?: string | null;
   metadata?: Record<string, unknown> | null;
@@ -763,11 +763,20 @@ function ThemeCard({
 
 type PreviewMessage = {
   id: string;
-  role: "visitor" | "assistant";
+  role: "visitor" | "assistant" | "agent" | "system";
   content: string;
   meta?: string;
   isError?: boolean;
 };
+
+async function invokeLiveWidget(body: Record<string, unknown>) {
+  // Await Supabase's session initialization lock before invoking the protected Edge route.
+  const {data, error} = await supabase.auth.getSession();
+  if (error || !data.session?.access_token) return {data:null,error:new Error("Sign in before using Live AI Test")};
+  return supabase.functions.invoke("widget-live-ai-test", {
+    body, headers: {Authorization: `Bearer ${data.session.access_token}`},
+  });
+}
 
 function PreviewWidget({
   lang,
@@ -802,6 +811,14 @@ function PreviewWidget({
     if (typeof window === "undefined") return null;
     return window.localStorage.getItem("widget_live_test_conversation_id");
   });
+  const [queue, setQueue] = useState<{queue_position?: number | null; estimated_wait_minutes?: number | null; estimate_deadline?: string | null; server_now?: string | null} | null>(null);
+  const [clock, setClock] = useState(Date.now());
+  const [queueClockOffset, setQueueClockOffset] = useState(0);
+  const applyQueue = (snapshot: typeof queue) => {
+    setQueue(snapshot);
+    const serverNow = Date.parse(snapshot?.server_now ?? "");
+    setQueueClockOffset(Number.isFinite(serverNow) ? serverNow - Date.now() : 0);
+  };
   const [historyLoading, setHistoryLoading] = useState(false);
   const actionAreaRef = useRef<HTMLDivElement | null>(null);
   const conversationEpoch = useRef(0);
@@ -809,6 +826,11 @@ function PreviewWidget({
   const [humanState, setHumanState] = useState<
     "none" | "waiting" | "assigned"
   >("none");
+  useEffect(() => {
+    if (mode !== "live" || humanState !== "waiting") return;
+    const timer = setInterval(() => setClock(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [mode, humanState]);
   const simulationTimer =
     useRef<ReturnType<typeof setTimeout> | null>(null);
   const handoffTimer =
@@ -855,6 +877,7 @@ function PreviewWidget({
         role: row.role,
         content: row.content,
         meta:
+          row.role === "agent" ? (lang === "zh" ? "真人客服" : "Human agent") : row.role === "system" ? "System" :
           row.role === "assistant" && row.metadata
             ? [
                 row.metadata.grounded === true ? "grounded" : "clarification",
@@ -870,10 +893,7 @@ function PreviewWidget({
 
   const loadLiveConversation = async (conversationId: string, switching = false) => {
     const epoch = switching ? ++conversationEpoch.current : conversationEpoch.current;
-    const { data, error } = await supabase.functions.invoke(
-      "widget-live-ai-test",
-      { body: { action: "load", test_conversation_id: conversationId } },
-    );
+    const { data, error } = await invokeLiveWidget({ action: "load", test_conversation_id: conversationId });
     if (epoch !== conversationEpoch.current) return;
     if (error || !data || data.success !== true || data.conversation_id !== conversationId) {
       if (switching) appendLiveFailure("", safeLiveError(error, null));
@@ -893,16 +913,15 @@ function PreviewWidget({
       Boolean(data.assigned_agent_id);
     setHumanState(underHumanControl ? (data.assigned_agent_id ? "assigned" : "waiting") : "none");
     applyServerMessages(data.messages);
+    applyQueue(data.human_support ?? null);
+    if (!replyInFlight.current) setTyping(data.ai_generating === true);
     return { humanControl: underHumanControl };
   };
 
   const loadLiveHistory = async () => {
     setHistoryLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke(
-        "widget-live-ai-test",
-        { body: { action: "history" } },
-      );
+      const { data, error } = await invokeLiveWidget({ action: "history" });
       if (!error && data?.success === true && Array.isArray(data.history)) {
         setHistory(data.history as LiveAiHistoryItem[]);
       }
@@ -913,8 +932,13 @@ function PreviewWidget({
 
   useEffect(() => {
     if (mode !== "live" || !testConversationId) return;
-    void loadLiveConversation(testConversationId);
-  }, [mode]);
+    let active = true;
+    let inFlight = false;
+    const poll = async () => { if (!active || inFlight) return; inFlight = true; try { await loadLiveConversation(testConversationId); } finally { inFlight = false; } };
+    void poll();
+    const timer = setInterval(() => void poll(), 2000);
+    return () => { active = false; clearInterval(timer); };
+  }, [mode, testConversationId]);
 
   useEffect(() => {
     if (mode !== "live") return;
@@ -995,18 +1019,14 @@ function PreviewWidget({
     setTyping(true);
 
     try {
-      const { data, error } = await supabase.functions.invoke(
-        "widget-live-ai-test",
-        {
-          body: {
+      const { data, error } = await invokeLiveWidget({
             action: "send",
+            client_message_id: crypto.randomUUID(),
             query: text,
             ...(testConversationId
               ? { test_conversation_id: testConversationId }
               : {}),
-          },
-        },
-      );
+      });
 
       if (epoch !== conversationEpoch.current) return;
       const payload =
@@ -1043,6 +1063,7 @@ function PreviewWidget({
         Boolean(result.assigned_agent_id) || result.handoff_persisted === true;
       setHumanState(underHumanControl ? (result.assigned_agent_id ? "assigned" : "waiting") : "none");
       applyServerMessages(result.messages);
+      applyQueue((result as LiveAiResponse & {human_support?: typeof queue}).human_support ?? null);
       void loadLiveHistory();
     } catch (error) {
       if (epoch !== conversationEpoch.current) return;
@@ -1196,6 +1217,13 @@ function PreviewWidget({
         </button>
       </div>
 
+      {mode === "live" && humanState === "waiting" && queue && (
+        <div className="border-b bg-amber-50 px-4 py-2 text-xs" aria-live="polite">
+          {lang === "zh" ? "排隊位置" : "Queue position"}: {queue.queue_position ?? "—"}
+          {" · "}{lang === "zh" ? "預計等候分鐘" : "Estimated minutes"}: {queue.estimated_wait_minutes ?? "—"}
+          {queue.estimate_deadline && Number.isFinite(Date.parse(queue.estimate_deadline)) && <> · {Math.max(0, Math.ceil((Date.parse(queue.estimate_deadline) - clock - queueClockOffset) / 1000))}s</>}
+        </div>
+      )}
       {humanState !== "none" && (
         <div
           className={

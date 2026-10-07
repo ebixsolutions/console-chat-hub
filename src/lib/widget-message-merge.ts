@@ -1,6 +1,6 @@
 export type WidgetMessage = {
   id: string;
-  role: "visitor" | "assistant";
+  role: "visitor" | "assistant" | "agent" | "system";
   content: string;
   meta?: string;
   isError?: boolean;
@@ -15,7 +15,7 @@ export function mergeWidgetMessages<T extends WidgetMessage>(
   const positions = new Map(result.map((row, index) => [row.id, index]));
   let changed = false;
   for (const row of incoming) {
-    if (!row.id || (row.role !== "visitor" && row.role !== "assistant")) continue;
+    if (!row.id || !["visitor", "assistant", "agent", "system"].includes(row.role)) continue;
     const index = positions.get(row.id);
     if (index === undefined) {
       positions.set(row.id, result.length);

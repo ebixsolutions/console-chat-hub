@@ -243,7 +243,9 @@
     "vite.candidate-identity.d.mts",
     "vite.config.ts",
     "tests/c3-candidate-identity/candidate-identity.test.mjs",
-    ".github/scripts/c3_candidate_identity_build_check.mjs"
+    ".github/scripts/c3_candidate_identity_build_check.mjs",
+    "supabase/functions/widget-live-ai-test/index.ts",
+    "tests/c3-widget-live-auth/handler.test.mjs"
   ],
   "conditional_worker_sha256": "56b02b24abd5b64748f5931e9cf9b0b1df05fb920b852ebe4b8bd51c71a793de",
   "normalized_preview_sha256": {
@@ -270,5 +272,18 @@
     "vite.config.ts": "33345ac9e52bd90de275e020a9f1226a178a5ee13a77d990b5c79ec293335f0a",
     "tests/c3-candidate-identity/candidate-identity.test.mjs": "11adab520ff5e2e8761453b9a8c772e76d4e1028c15687ae6fb254ce69081eda",
     ".github/scripts/c3_candidate_identity_build_check.mjs": "f1cf53c562e537a57402c3119adc7868d530d0958a9b99471bb21e289aa03a11"
+  },
+  "authorized_widget_auth_repair_sha256": {
+    "src/routes/_authenticated/console.widget-preview.tsx": "15b7c579bbd91742106d6b81c4d76d193e467dd2f92390c4f07fe61bb8f84a5b",
+    "src/lib/widget-message-merge.ts": "114bff85b5f2f467ca94da2b353f343d1611c5e09ab9fb833601380c5a78d067",
+    "src/lib/widget-message-merge.test.mjs": "b219435b17ebb2a872d2e3a84547c3e6f0f58c71c1484451d0f64c80c81b705a",
+    "supabase/functions/widget-live-ai-test/index.ts": "c0c2c1ec48fd9ac88fc7b94da671291467bba766abb8046f3a626ef849c3295a",
+    "tests/c3-widget-live-auth/handler.test.mjs": "901a98e0aa220c50be8250098e4d9d40b5794ac41317923cdccb12eaab7aad88"
+  },
+  "widget_auth_addendum": {
+    "date": "2026-10-07",
+    "slug": "widget-live-ai-test",
+    "verify_jwt": true,
+    "new_ddl_authorized": false
   }
 }
