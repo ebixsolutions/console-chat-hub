@@ -78,6 +78,7 @@
     "supabase/functions/_shared/kb-auth.ts",
     "supabase/functions/_shared/kb-client.ts",
     "supabase/functions/_shared/llm-router.ts",
+    "supabase/functions/_shared/memory-reply-lifecycle-readback.ts",
     "supabase/functions/_shared/natural-customer-response.ts",
     "supabase/functions/_shared/nonproduction-secret.ts",
     "supabase/functions/_shared/pre-activation-scope.ts",
@@ -227,7 +228,17 @@
     "src/integrations/supabase/previewAuthStorage.ts",
     "src/routes/_authenticated/console.widget-preview.tsx",
     "src/lib/widget-message-merge.ts",
-    "src/lib/widget-message-merge.test.mjs"
+    "src/lib/widget-message-merge.test.mjs",
+    "supabase/functions/_shared/conversation-long-memory.ts",
+    "supabase/functions/_shared/conversation-service-planner.ts",
+    "supabase/functions/_shared/memory-reply-lifecycle-readback.ts",
+    "sql/c3_memory_reply_lineage_proposed.sql",
+    "sql/c3_memory_reply_lineage_guarded_rollback_proposed.sql",
+    "tests/c3-memory-reply-lineage/captured-memory-functions.sql",
+    "tests/c3-memory-reply-lineage/memory-reply-caller.test.ts",
+    "tests/c3-memory-reply-lineage/memory-reply-lifecycle-readback.test.ts",
+    "tests/c3-memory-reply-lineage/minimal-memory-schema.sql",
+    "tests/c3-memory-reply-lineage/native-guards.py"
   ],
   "conditional_worker_sha256": "56b02b24abd5b64748f5931e9cf9b0b1df05fb920b852ebe4b8bd51c71a793de",
   "normalized_preview_sha256": {
@@ -241,5 +252,11 @@
     "src/routes/_authenticated/console.widget-preview.tsx": "66a6cfb1473b7598b08aea5f7840626b926c4e1f64d6ec336b42a0e20a9758de",
     "src/lib/widget-message-merge.ts": "48dc0350ecccf6649b4b96901f9a35faa4f267e63c05d34d001538cacb40f65a",
     "src/lib/widget-message-merge.test.mjs": "750df02df775fde86181fbf0cc956373dcdf7b551cd9a7ec2cafb2763fe79340"
-  }
+  },
+  "authorized_memory_reply_repair_sha256": {
+    "supabase/functions/_shared/conversation-long-memory.ts": "e407f0973a73d093ca515386952e3edfe2353430adb40afe4c13eb1cbbd8b594",
+    "supabase/functions/_shared/conversation-service-planner.ts": "c44dd2a449a5a1a72e5b98603cdca4762123ff57dd72eb612c1ad5557896f2c3",
+    "supabase/functions/_shared/memory-reply-lifecycle-readback.ts": "c4db46a3bffeac99879ed66f19b187189b47504ce95628b8d57d8408e3fe7062"
+  },
+  "memory_reply_sql_production_authorized": false
 }

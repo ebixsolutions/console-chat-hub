@@ -303,6 +303,11 @@ jobs:
         run: |
           set -euo pipefail
           python tests/c3-uat-isolation/native-guards.py --database postgresql://postgres:c3-disposable-native-only@127.0.0.1:5432/c3_uat_isolated_native --out "$RUNNER_TEMP/c3-rev14-offline"
+      - name: Native distinct Memory reply receipt two-connection safety (no production)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tests/c3-memory-reply-lineage/native-guards.py --database postgresql://postgres:c3-disposable-native-only@127.0.0.1:5432/c3_uat_isolated_native --out "$RUNNER_TEMP/c3-rev14-offline"
       - name: Preserve actual source and native test evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -1424,6 +1429,12 @@ jobs:
           print('C3_DETERMINISTIC_LEGACY_DEPENDENCY_REMOVAL=PASS')
           print('C3_DEPLOYMENT_ALLOWLIST=generate-reply,agent-assist')
           PY
+      - name: Bounded Memory receipt and service rendering regressions
+        run: |
+          set -euo pipefail
+          deno check supabase/functions/_shared/conversation-long-memory.ts supabase/functions/_shared/memory-reply-lifecycle-readback.ts supabase/functions/_shared/conversation-service-planner.ts
+          deno test --no-check tests/c3-memory-reply-lineage/*.test.ts supabase/functions/_shared/conversation-long-memory.test.ts supabase/functions/_shared/conversation-service-planner.test.ts
+          deno test --no-check --filter 'H-R6 read-only unknown-scope reconciliation' supabase/functions/_shared/conversation-recall.integration.test.ts
       - name: Non-production A-H recovery control-flow regression
         shell: bash
         run: |

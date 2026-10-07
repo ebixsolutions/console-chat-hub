@@ -753,7 +753,7 @@ function contextualFacts(plan: ServiceDialoguePlan, language: ServiceLanguage): 
     let label = labels[fact.name]?.[l];
     let value = fact.value;
     if (fact.name === "current_topic") {
-      value = topicName || ["項目未確認", "项目未确认", "item not confirmed"][l];
+      return [topicName || ["仲未確認你指邊項產品", "还未确认你指哪项产品", "item not confirmed yet"][l]];
     }
     if (entity) {
       const field = fact.name.slice(`entity:${entity.entity_id}:`.length);
@@ -983,9 +983,9 @@ function renderContextualServiceReply(
     // detail. A generic promise loses the customer's room, product or price.
     const detail = turn.replace(/^[，,。\s]+|[。.!！\s]+$/g, "").slice(0, 100);
     return [
-      `收到，你提到「${detail}」。我會按呢個條件整理；未確定嘅細節會再核實。`,
-      `收到，你提到「${detail}」。我会按这个条件整理；未确定的细节会再核实。`,
-      `Got it: “${detail}.” I’ll keep this detail in mind and verify anything still uncertain.`,
+      `明白，${detail}。`,
+      `明白，${detail}。`,
+      `Understood: ${detail}.`,
     ][languageIndex];
   }
 
