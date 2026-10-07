@@ -29,6 +29,8 @@ export function scopedServiceKnowledgeQuery(
   const clean = (text: string) => text.normalize("NFKC").replace(/\s+/g," ").trim();
   const readEntity = (e: typeof entities[number]) => ({
     subject: e.model ?? e.attributes.model ?? e.attributes.product_name ?? e.attributes.name ?? e.category,
+    unit: typeof e.attributes.unit === "string" ? clean(e.attributes.unit) : null,
+    quantity: e.attributes.quantity_basis === "customer_explicit" ? e.quantity : null,
     constraints: normalizeDecisionContext(e.constraints),
     attributes: normalizeDecisionContext(e.attributes.semantic_attributes),
   });
@@ -49,7 +51,8 @@ export function scopedServiceKnowledgeQuery(
     current: current.map(e => {
       const candidates = entities.filter(p => matches(p,e));
       const previous = candidates.length === 1 ? candidates[0] : null;
-      return {subject: e.model ?? e.name, unit:e.unit,
+      return {subject: e.model ?? e.name, unit:e.unit ?? previous?.attributes.unit ?? null,
+        quantity:e.quantity ?? (previous?.attributes.quantity_basis === "customer_explicit" ? previous.quantity : null),
         constraints:mergeDecisionContext(previous?.constraints,e.constraints),
         attributes:mergeDecisionContext(previous?.attributes.semantic_attributes,e.attributes)};
     }),

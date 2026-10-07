@@ -178,3 +178,17 @@ Deno.test("normalized credential keys are excluded while false remains a require
  const result=normalizeDecisionContext({"ｔｏｋｅｎ":"sensitive",requires_stairs:false});
  assert(!JSON.stringify(result).includes("sensitive") && result.requires_stairs===false,"normalized private key leaked or requirement lost");
 });
+
+Deno.test("persisted entity unit and explicit quantity survive an unspecified follow-up without promoting defaults",()=>{
+ const state=createEmptyConversationCommerceState();state.current_topic="studio rental";
+ state.entities=[{entity_id:"generic:studio",category:"studio rental",quantity:8,status:"researching",attributes:{product_name:"Atrium studio",unit:"people",quantity_basis:"customer_explicit"},constraints:{requires_stairs:false},provenance:{source_type:"customer",source_message_id:"old"}}];
+ const prior=JSON.parse(scopedServiceKnowledgeQuery("Which option fits?",null,state)).prior[0];
+ assert(prior.unit==="people"&&prior.quantity===8,"persisted unit/explicit quantity dropped");
+ const semantic=frame("studio rental");semantic.entities=[frameEntity()];
+ const current=JSON.parse(scopedServiceKnowledgeQuery("Which option fits?",semantic,state)).current[0];
+ assert(current.unit==="people"&&current.quantity===8,"unspecified follow-up lost supplied unit/quantity");
+ state.entities[0].attributes.quantity_basis="system_default";
+ assert(JSON.parse(scopedServiceKnowledgeQuery("Which option fits?",null,state)).prior[0].quantity===null,"system default promoted to customer requirement");
+ semantic.entities[0].quantity=4;semantic.entities[0].unit="people";
+ assert(JSON.parse(scopedServiceKnowledgeQuery("Actually four people",semantic,state)).current[0].quantity===4,"explicit latest quantity correction lost");
+});
