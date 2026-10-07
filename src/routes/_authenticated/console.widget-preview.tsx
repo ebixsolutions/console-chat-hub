@@ -968,6 +968,8 @@ function PreviewWidget({
       if (ready && Array.isArray(data.history)) {
         setHistory(data.history as LiveAiHistoryItem[]);
       }
+    } catch {
+      if (epoch === conversationEpoch.current) setScopeReady(false);
     } finally {
       if (epoch === conversationEpoch.current) setHistoryLoading(false);
     }
@@ -1364,7 +1366,16 @@ function PreviewWidget({
       </div>
 
       <div className="border-t bg-white p-3">
-        {mode === "live" && !scopeReady && <p role="status" className="mb-2 text-xs text-slate-500">{lang === "zh" ? "正在核實隔離測試範圍；KB 存取尚未確認。" : "Verifying isolated test scope; KB access is not yet confirmed."}</p>}
+        {mode === "live" && !scopeReady && (
+          <div className="mb-2 text-xs text-slate-500">
+            <p role={historyLoading ? "status" : "alert"}>
+              {historyLoading
+                ? (lang === "zh" ? "正在核實隔離測試範圍；KB 存取尚未確認。" : "Verifying isolated test scope; KB access is not yet confirmed.")
+                : (lang === "zh" ? "暫時無法連接此測試 channel。請選擇獲准使用的 channel，或請管理員核對設定。KB 存取尚未確認。" : "This test channel is unavailable. Select an authorized channel or ask an administrator to check its settings. KB access is not yet confirmed.")}
+            </p>
+            {!historyLoading && storageKey && <button type="button" className="mt-1 underline" onClick={() => void loadLiveHistory()}>{lang === "zh" ? "重試連線" : "Retry connection"}</button>}
+          </div>
+        )}
         {liveFailure && <p role="alert" className="mb-2 text-xs text-red-600">{liveFailure}</p>}
         {historyOpen && (
           <div className="mb-2 rounded-xl border bg-slate-50 p-2">
