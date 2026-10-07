@@ -126,6 +126,7 @@ try {
   const historyBody = await history.json();
   assert(history.status === 200 && historyBody.success === true &&
     Array.isArray(historyBody.history), `Live AI Test shared Auth path failed: HTTP ${history.status}`);
+  assert(historyBody.isolation_ready === false && historyBody.history.length === 0, "unregistered local fixture scope must remain read-only and empty");
   const invalid = await replayConfig("invalid-local-token");
   const invalidBody = await invalid.text();
   assert(invalid.status >= 400 && !invalidBody.includes("C3 owned channel"),

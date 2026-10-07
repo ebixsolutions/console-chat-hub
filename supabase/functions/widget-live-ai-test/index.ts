@@ -65,12 +65,12 @@ async function resolveTestScope(
   | { ok: true; companyId: string; scopeMode: "canonical" }
   | { ok: false; status: number; error: string }
 > {
-  const { data: memberships, error: membershipError } = await admin
+  const { data: memberships, error: membershipError, status: membershipStatus } = await admin
     .from("company_membership")
     .select("company_id, role, is_active")
     .eq("user_id", userId);
   if (membershipError) {
-    return { ok: false, status: 500, error: "company_membership_lookup_failed", provider: membershipError } as any;
+    return { ok: false, status: 500, error: "company_membership_lookup_failed", provider: {code:membershipError.code,status:membershipStatus} } as any;
   }
 
   const rows = (memberships ?? []).filter((row: any) => row.is_active === true);
@@ -87,12 +87,12 @@ async function resolveTestScope(
     if (!activeRoles.some((role: string) => ALLOWED_ROLES.has(role))) {
       return { ok: false, status: 403, error: "forbidden" };
     }
-    const { data: company, error: companyError } = await admin
+    const { data: company, error: companyError, status: companyStatus } = await admin
       .from("company")
       .select("id,is_active")
       .eq("id", companyId)
       .maybeSingle();
-    if (companyError) return { ok: false, status: 500, error: "company_lookup_failed", provider: companyError } as any;
+    if (companyError) return { ok: false, status: 500, error: "company_lookup_failed", provider: {code:companyError.code,status:companyStatus} } as any;
     if (!company || company.is_active !== true) {
       return { ok: false, status: 403, error: "company_inactive" };
     }
@@ -278,7 +278,7 @@ async function widgetRequest(url: string, key: string, token: string, origin: st
 export function createWidgetLiveHandler(deps = { createClient, getAdminKey: getSupabaseAdminKey, env: (name: string) => Deno.env.get(name), log: (event: unknown) => console.error(JSON.stringify(event)) }) {
 return async (req: Request) => {
   const correlationId = crypto.randomUUID();
-  const diagnostic = (stage: string, provider: any, status: number) => deps.log({ endpoint: "widget-live-ai-test", stage, provider_code: typeof provider?.code === "string" && (/^(?:PGRST[0-9]{3}|[0-9A-Z]{5})$/.test(provider.code) || ["bad_jwt","jwt_expired","user_not_found","session_not_found","ADMIN_KEY_MISSING"].includes(provider.code)) ? provider.code : "unclassified", http_class: `${Math.floor(status / 100)}xx`, provider_http_class: Number.isInteger(provider?.status) && provider.status>=100 && provider.status<600 ? `${Math.floor(provider.status/100)}xx` : "unavailable", project_ref: "nrfxhqabwblzxoushgnm", correlation_id: correlationId });
+  const diagnostic = (stage: string, provider: any, status: number) => deps.log({ endpoint: "widget-live-ai-test", stage, provider_code: typeof provider?.code === "string" && (/^(?:PGRST[0-9]{3}|[0-9A-Z]{5})$/.test(provider.code) || ["bad_jwt","jwt_expired","user_not_found","session_not_found","ADMIN_KEY_MISSING"].includes(provider.code)) ? provider.code : "unclassified", http_class: `${Math.floor(status / 100)}xx`, provider_http_class: Number.isInteger(provider?.status) && provider.status>=100 && provider.status<600 ? `${Math.floor(provider.status/100)}xx` : "unavailable", provider_error_class: ["AuthApiError", "AuthSessionMissingError", "AuthRetryableFetchError"].includes(provider?.name) ? provider.name : "unclassified", project_ref: deps.env("SUPABASE_URL") === "https://nrfxhqabwblzxoushgnm.supabase.co" ? "nrfxhqabwblzxoushgnm" : "local_or_unverified_environment", correlation_id: correlationId });
   if (req.method === "OPTIONS") {
     const origin = req.headers.get("Origin") ?? "";
     if (!isAllowedConsoleOrigin(origin)) return new Response(null, { status: 403 });
@@ -318,7 +318,10 @@ return async (req: Request) => {
     const anonKey = deps.env("SUPABASE_ANON_KEY");
     let serviceKey: string;
     try { serviceKey = deps.getAdminKey(); } catch { diagnostic("admin_config", {code:"ADMIN_KEY_MISSING"}, 500); return json(req, {success:false,error:"server_config_missing",correlation_id:correlationId},500); }
-    if (supabaseUrl !== "https://nrfxhqabwblzxoushgnm.supabase.co" || !anonKey || !serviceKey) return json(req, {success:false,error:"server_config_missing"},500);
+    // Existing disposable Docker Auth CI only; never a hosted backend alternative.
+    const nativeLocal = deps.env("C3_NATIVE_ISOLATED_AUTH") === "local-only" &&
+      ["http://kong:8000", "http://127.0.0.1:54321", "http://localhost:54321"].includes(supabaseUrl ?? "");
+    if ((!nativeLocal && supabaseUrl !== "https://nrfxhqabwblzxoushgnm.supabase.co") || !supabaseUrl || !anonKey || !serviceKey) return json(req, {success:false,error:"server_config_missing"},500);
     const auth = deps.createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: `Bearer ${tokenMatch[1]}` } },
       auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },

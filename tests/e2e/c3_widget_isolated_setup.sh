@@ -6,7 +6,8 @@ test -z "${SUPABASE_ACCESS_TOKEN:-}"
 LOCAL_ROOT="$RUNNER_TEMP/c3-isolated-auth"
 mkdir -p "$LOCAL_ROOT/supabase"
 printf '%s\n' 'project_id = "c3-director-isolated-auth"' > "$LOCAL_ROOT/supabase/config.toml"
-ln -s "$GITHUB_WORKSPACE/supabase/functions" "$LOCAL_ROOT/supabase/functions"
+cp -a "$GITHUB_WORKSPACE/supabase/functions" "$LOCAL_ROOT/supabase/functions"
+printf '%s\n' 'C3_NATIVE_ISOLATED_AUTH=local-only' > "$LOCAL_ROOT/native.env"
 timeout 900s bash -c 'cd "$1" && supabase start' _ "$LOCAL_ROOT"
 timeout 20s bash -c 'cd "$1" && supabase status -o env' _ "$LOCAL_ROOT" > "$LOCAL_ROOT/local.env"
 set -a
@@ -27,4 +28,11 @@ timeout 30s psql "$C3_LOCAL_AUTH_DB_URL" -X -v ON_ERROR_STOP=1 \
 # The repository pre-migration bootstrap omits this existing live column.
 timeout 15s psql "$C3_LOCAL_AUTH_DB_URL" -X -v ON_ERROR_STOP=1 \
   -c "ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS metadata_source jsonb NOT NULL DEFAULT '{}'::jsonb"
+# Install the exact approved context definitions only in this disposable local DB.
+timeout 30s psql "$C3_LOCAL_AUTH_DB_URL" -X -v ON_ERROR_STOP=1 \
+  -f sql/c3-nonproduction/08_widget_auth_isolation_context.sql
+# Explicit local env file; JWT verification remains enabled. No remote project link.
+timeout 900s bash -c 'cd "$1" && exec supabase functions serve widget-live-ai-test --env-file "$2"' _ "$LOCAL_ROOT" "$LOCAL_ROOT/native.env" > "$LOCAL_ROOT/edge.log" 2>&1 &
+C3_NATIVE_EDGE_PID=$!
+trap 'kill "$C3_NATIVE_EDGE_PID" 2>/dev/null || true' EXIT
 timeout 300s node tests/e2e/c3_widget_isolated_auth.mjs

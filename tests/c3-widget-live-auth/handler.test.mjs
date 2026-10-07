@@ -18,7 +18,7 @@ async function check(name, options={}, expected=200, body={action:'history'}) {
  const memberships=options.ambiguous?[row,{...row,company_id:channel}]:[row];
  const client={from(table){const chain={singleRow:false,select(){return this},eq(k,v){calls.push([table,k,v]);return this},order(){return this},limit(){return this},maybeSingle(){this.singleRow=true;return this},then(resolve){
  let data=table==='company_membership'?memberships:table==='company'?{id:company,is_active:options.companyActive??true}:table==='channel_config'?{id:channel,company_id:company,is_active:true,channel_type:'web_widget',allowed_origins:['https://preview--console-chat-hub.lovable.app']}:table==='conversations'?(this.singleRow?{...conversation,metadata_source:options.foreignOwner?{...conversation.metadata_source,owner_user_id:channel}:conversation.metadata_source}:[]):table==='visitor_session'?{session_token:'synthetic-session-token-with-32-characters'}:[];
- resolve({data,error:table==='company_membership'&&options.providerError?{code:'PGRST301',message:secret}:null});
+ resolve({data,status:options.providerError?401:200,error:table==='company_membership'&&options.providerError?{code:'PGRST301',message:secret}:null});
  }};return chain;}};
  const env={SUPABASE_SECRET_KEY:secret,SUPABASE_URL:'https://nrfxhqabwblzxoushgnm.supabase.co',SUPABASE_ANON_KEY:'public-key',...(options.env??{})};
  globalThis.Deno={env:{get:k=>env[k]}};
@@ -33,6 +33,7 @@ async function check(name, options={}, expected=200, body={action:'history'}) {
  const responseText=await response.text(); assert.equal(response.status,expected,responseText);
  assert(!responseText.includes(secret));assert(!JSON.stringify(logs).includes(secret));assert(!JSON.stringify(logs).includes(token));
  if(expected===200&&options.isolated!==false && body.action==='history') {assert(calls.some(c=>c[0]==='conversations'&&c[1]==='company_id'&&c[2]===company));assert(calls.some(c=>c[0]==='conversations'&&c[1]==='channel_config_id'&&c[2]===channel));}
+ if(options.providerError)assert.equal(logs[0].provider_http_class,'4xx');
  if(body.action==='send'&&expected===200){assert(requests.some(r=>r.url.endsWith('receive-widget-message'))); assert(!requests.some(r=>r.url.endsWith('generate-reply'))); assert.equal(requests[0].body.client_message_id,body.client_message_id);assert.equal(requests[0].body.conversation_id,company);}
  if(body.action==='load'&&expected===200){assert(requests.some(r=>r.url.endsWith('widget-poll-messages')));const payload=JSON.parse(responseText);assert.equal(payload.messages[0].role,'agent');assert.equal(payload.human_support.queue_position,2);}
  globalThis.fetch=originalFetch;
@@ -45,6 +46,11 @@ await check('inactive company',{companyActive:false},403);await check('ambiguous
 await check('tenant injection',{},400,{action:'history',company_id:channel});await check('user injection',{},400,{action:'history',user_id:user});
 await check('admin key missing',{missingKey:true},500);
 await check('modern key');await check('service fallback',{env:{SUPABASE_SECRET_KEY:undefined,SUPABASE_SERVICE_ROLE_KEY:secret}});await check('plural compatibility',{env:{SUPABASE_SECRET_KEY:undefined,SUPABASE_SECRET_KEYS:JSON.stringify({default:secret})}});
+await check('wrong hosted project rejected',{env:{SUPABASE_URL:'https://unapproved.supabase.co'}},500);
+await check('loopback requires server native marker',{env:{SUPABASE_URL:'http://127.0.0.1:54321'}},500);
+await check('browser native marker cannot change backend',{env:{SUPABASE_URL:'http://127.0.0.1:54321'}},500,{action:'history',C3_NATIVE_ISOLATED_AUTH:'local-only'});
+await check('explicit disposable native backend',{env:{SUPABASE_URL:'http://127.0.0.1:54321',C3_NATIVE_ISOLATED_AUTH:'local-only'}});
+await check('native marker cannot authorize other hosted project',{env:{SUPABASE_URL:'https://unapproved.supabase.co',C3_NATIVE_ISOLATED_AUTH:'local-only'}},500);
 await check('provider error safe diagnostics',{providerError:true},500);
 await check('no registered scope cannot send',{isolated:false},503,{action:'send',query:'test',client_message_id:company});
 await Promise.all([check('concurrent history A'),check('concurrent history B')]);

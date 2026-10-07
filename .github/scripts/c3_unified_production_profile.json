@@ -245,7 +245,10 @@
     "tests/c3-candidate-identity/candidate-identity.test.mjs",
     ".github/scripts/c3_candidate_identity_build_check.mjs",
     "supabase/functions/widget-live-ai-test/index.ts",
-    "tests/c3-widget-live-auth/handler.test.mjs"
+    "tests/c3-widget-live-auth/handler.test.mjs",
+    "tests/e2e/c3_widget_isolated_setup.sh",
+    "sql/c3-nonproduction/08_widget_auth_isolation_context.sql",
+    "tests/e2e/c3_widget_isolated_auth.mjs"
   ],
   "conditional_worker_sha256": "56b02b24abd5b64748f5931e9cf9b0b1df05fb920b852ebe4b8bd51c71a793de",
   "normalized_preview_sha256": {
@@ -277,8 +280,11 @@
     "src/routes/_authenticated/console.widget-preview.tsx": "15b7c579bbd91742106d6b81c4d76d193e467dd2f92390c4f07fe61bb8f84a5b",
     "src/lib/widget-message-merge.ts": "114bff85b5f2f467ca94da2b353f343d1611c5e09ab9fb833601380c5a78d067",
     "src/lib/widget-message-merge.test.mjs": "b219435b17ebb2a872d2e3a84547c3e6f0f58c71c1484451d0f64c80c81b705a",
-    "supabase/functions/widget-live-ai-test/index.ts": "c0c2c1ec48fd9ac88fc7b94da671291467bba766abb8046f3a626ef849c3295a",
-    "tests/c3-widget-live-auth/handler.test.mjs": "901a98e0aa220c50be8250098e4d9d40b5794ac41317923cdccb12eaab7aad88"
+    "supabase/functions/widget-live-ai-test/index.ts": "45322339028802d0709a835232e3fafc5254da3ce8fb7eca11e46b986d4a5784",
+    "tests/c3-widget-live-auth/handler.test.mjs": "825f107c680d555e2a7a3868ab8da0f62135debc712345d012c3517ba5642e5d",
+    "tests/e2e/c3_widget_isolated_setup.sh": "32a8553cb76447398d4ff19275875aaecd12e5b738c621c85b75b548d09449b5",
+    "sql/c3-nonproduction/08_widget_auth_isolation_context.sql": "95e55961f090324f110f1684cb5df08da7a733ca339ea59101e4722552d8c8e9",
+    "tests/e2e/c3_widget_isolated_auth.mjs": "71da546bc91c6bec9b95411ee10366ea0788d5fd2192f062c08a73de2d483ec6"
   },
   "widget_auth_addendum": {
     "date": "2026-10-07",
