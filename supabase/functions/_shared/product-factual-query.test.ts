@@ -677,12 +677,14 @@ Deno.test("product-factual route bypasses the generic memory and clarification s
       ),
     "recall_preempted",
   );
+  const memoryGuard = source.match(/const _conversationMemoryReply =([\s\S]*?)\?\s*resolveConversationMemoryResponse/)?.[1] ?? "";
   assert(
-    /const _conversationMemoryReply =\s*!requiresCurrentMerchantEvidence\(\s*_effectiveNaturalCustomerIntent,?\s*\)/
-      .test(
-        source,
-      ),
+    /!requiresCurrentMerchantEvidence\(\s*_effectiveNaturalCustomerIntent,?\s*\)/.test(memoryGuard),
     "memory_preempted",
+  );
+  assert(
+    /_c3ServicePlan\.knowledge_state !== "lookup_required"/.test(memoryGuard),
+    "semantic_lookup_memory_preempted",
   );
   assert(
     /!requiresCurrentMerchantEvidence\(\s*_effectiveNaturalCustomerIntent,?\s*\)\s*&&\s*_turnClassification\.should_clarify_before_kb/

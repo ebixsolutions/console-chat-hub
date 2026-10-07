@@ -257,7 +257,8 @@
     "supabase/functions/_shared/natural-customer-response.test.ts",
     "supabase/functions/_shared/service-semantic-routing.ts",
     "supabase/functions/_shared/service-semantic-routing.test.ts",
-    "supabase/functions/generate-reply/index.ts"
+    "supabase/functions/generate-reply/index.ts",
+    "supabase/functions/_shared/product-factual-query.test.ts"
   ],
   "conditional_worker_sha256": "56b02b24abd5b64748f5931e9cf9b0b1df05fb920b852ebe4b8bd51c71a793de",
   "normalized_preview_sha256": {
@@ -312,6 +313,7 @@
     "supabase/functions/_shared/service-semantic-routing.ts": "917f9cc85706d79a68936299e039e813d2af57cb035a64ecdc2be323c12614d6",
     "supabase/functions/_shared/service-semantic-routing.test.ts": "400a31cc2642fb8e3ab4e1b2ebcfe9f44790094452fe682f26390a9f298fc0c6",
     "supabase/functions/generate-reply/index.ts": "d203a7836b7ebd6da9ce6a6ad7bd82b2dd7efe08c0f89b4246ecc636c64f110f",
-    "supabase/functions/widget-live-ai-test/index.ts": "cfb0342651abcf3781cd722ebcddce4c5c05573612303e816899dfa897a111a5"
+    "supabase/functions/widget-live-ai-test/index.ts": "cfb0342651abcf3781cd722ebcddce4c5c05573612303e816899dfa897a111a5",
+    "supabase/functions/_shared/product-factual-query.test.ts": "20ea440d0b3e7fd037451da56b347614b2e0eb5d4f4f514f10c0779fce0bdf0f"
   }
 }
