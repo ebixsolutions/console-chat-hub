@@ -52,6 +52,9 @@ test('source mutation matters; ordering, mtimes, excluded secrets/caches/runtime
  fs.writeFileSync(path.join(dir,'.env'),'SENTINEL_PRIVATE');fs.writeFileSync(path.join(dir,'src/credentials.json'),'SENTINEL_PRIVATE');
  fs.symlinkSync(os.tmpdir(),path.join(dir,'src/outside'));
  assert.equal(sourceFingerprint(dir).sourceSha256,a);
+ fs.writeFileSync(path.join(dir,'src/session-transport.ts'),'export const guard=1;');
+ const auth=sourceFingerprint(dir).sourceSha256;assert.notEqual(auth,a);
+ fs.writeFileSync(path.join(dir,'src/session-transport.ts'),'export const guard=2;');assert.notEqual(sourceFingerprint(dir).sourceSha256,auth);
  fs.writeFileSync(path.join(dir,'src/app.ts'),'export const app=2;');assert.notEqual(sourceFingerprint(dir).sourceSha256,a);
  }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });

@@ -265,10 +265,10 @@
   },
   "memory_reply_sql_production_authorized": false,
   "authorized_preview_activation_sha256": {
-    "vite.candidate-identity.mjs": "8bcf50619a377160d7d62ecbb16eda68ac88530cbcd9ba14f7c57e614c72e7f9",
+    "vite.candidate-identity.mjs": "c257b0d375c055361a6c3c3ff18f85366590c1f505f29bd2d059100a31598066",
     "vite.candidate-identity.d.mts": "18c6a612edf22deef4d41fc26216b2e1d856e8cd7a925fffe9c981b8dc8c93ee",
     "vite.config.ts": "33345ac9e52bd90de275e020a9f1226a178a5ee13a77d990b5c79ec293335f0a",
-    "tests/c3-candidate-identity/candidate-identity.test.mjs": "437c1ccf276a30c71e7cc868933cf0b29d718d95a00a31217290d4315f7889ae",
+    "tests/c3-candidate-identity/candidate-identity.test.mjs": "11adab520ff5e2e8761453b9a8c772e76d4e1028c15687ae6fb254ce69081eda",
     ".github/scripts/c3_candidate_identity_build_check.mjs": "f1cf53c562e537a57402c3119adc7868d530d0958a9b99471bb21e289aa03a11"
   }
 }

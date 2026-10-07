@@ -16,7 +16,8 @@ const CONFIG = ['package.json', 'package-lock.json', 'bun.lock', 'index.html',
   'vite.candidate-identity.mjs', 'vite.candidate-identity.d.mts'];
 const OMIT = /^(?:node_modules|dist|build|\.output|\.git|\.tanstack|\.cache|coverage|cache|sessions?|runtime-data|secrets?)$/i;
 const SOURCE = /\.(?:tsx?|jsx?|mjs|mts|cts|css|json|html|svg|png|jpe?g|webp|ico|woff2?|ttf|txt)$/i;
-const SECRET = /(?:^|[./_-])(?:secret|credentials?|private[-_]?key|session)(?:[./_-]|$)|\.test\.|\.spec\./i;
+const PRIVATE_DATA = /(?:^|\/)(?:credentials?|secrets?|session)(?:[-_.].*)?\.(?:json|txt)$/i;
+const TEST_SOURCE = /\.test\.|\.spec\./i;
 export function sourceFingerprint(root = fileURLToPath(new URL('.', import.meta.url))) {
   root = resolve(root);
   const files = [];
@@ -27,7 +28,7 @@ export function sourceFingerprint(root = fileURLToPath(new URL('.', import.meta.
     if (stat.isDirectory()) {
       if (OMIT.test(file.split('/').at(-1))) return;
       for (const name of readdirSync(abs).sort()) visit(file + '/' + name);
-    } else if (stat.isFile() && !SECRET.test(file) && (SOURCE.test(file) || CONFIG.includes(file))) files.push(file);
+    } else if (stat.isFile() && !PRIVATE_DATA.test(file) && !TEST_SOURCE.test(file) && (SOURCE.test(file) || CONFIG.includes(file))) files.push(file);
   };
   for (const file of [...ROOTS, ...CONFIG]) visit(file);
   const paths = [...new Set(files)].sort();
