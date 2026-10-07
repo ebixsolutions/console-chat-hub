@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
 import type { ConfigEnv } from "vite";
 import { resolveConsoleEnvironment } from "./vite.preview-environment.mjs";
-import { candidateIdentity, candidateIdentityPlugin } from "./vite.candidate-identity.mjs";
+import { candidateIdentity, candidateIdentityPlugin, renderCandidateIdentity } from "./vite.candidate-identity.mjs";
 
 export default async (environment: ConfigEnv) => {
 
@@ -29,7 +29,7 @@ if (nonproductionConsole && isolatedBrowserAuth) {
   throw new Error("Nonproduction Console cannot use isolated mock Auth");
 }
 const identity = candidateIdentity(nonproductionConsole);
-const buildIdentity = `${identity.head} / ${identity.tree}${identity.modified ? " / WORKTREE MODIFIED" : ""}`;
+const buildIdentity = renderCandidateIdentity(identity);
 const demoHtml = `<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><title>C3 Phase 1 Demo</title><body><h1>NONPRODUCTION</h1><p>nbtowfuvvfqpxqydyoby</p><p>${buildIdentity}</p><p>按右下角聊天按鈕開始；真人接手請開啟 <a href="/console/conversations">Chat Console</a>。</p><script src="/widget/chat.js" data-channel-id="f6000000-0000-4000-8000-000000000130" data-api-base="https://nbtowfuvvfqpxqydyoby.supabase.co/functions/v1" defer></script></body></html>`;
 const tlsCert = process.env.C3_DEMO_TLS_CERT;
 const tlsKey = process.env.C3_DEMO_TLS_KEY;

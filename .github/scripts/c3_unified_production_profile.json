@@ -238,7 +238,12 @@
     "tests/c3-memory-reply-lineage/memory-reply-caller.test.ts",
     "tests/c3-memory-reply-lineage/memory-reply-lifecycle-readback.test.ts",
     "tests/c3-memory-reply-lineage/minimal-memory-schema.sql",
-    "tests/c3-memory-reply-lineage/native-guards.py"
+    "tests/c3-memory-reply-lineage/native-guards.py",
+    "vite.candidate-identity.mjs",
+    "vite.candidate-identity.d.mts",
+    "vite.config.ts",
+    "tests/c3-candidate-identity/candidate-identity.test.mjs",
+    ".github/scripts/c3_candidate_identity_build_check.mjs"
   ],
   "conditional_worker_sha256": "56b02b24abd5b64748f5931e9cf9b0b1df05fb920b852ebe4b8bd51c71a793de",
   "normalized_preview_sha256": {
@@ -258,5 +263,12 @@
     "supabase/functions/_shared/conversation-service-planner.ts": "c44dd2a449a5a1a72e5b98603cdca4762123ff57dd72eb612c1ad5557896f2c3",
     "supabase/functions/_shared/memory-reply-lifecycle-readback.ts": "c4db46a3bffeac99879ed66f19b187189b47504ce95628b8d57d8408e3fe7062"
   },
-  "memory_reply_sql_production_authorized": false
+  "memory_reply_sql_production_authorized": false,
+  "authorized_preview_activation_sha256": {
+    "vite.candidate-identity.mjs": "8bcf50619a377160d7d62ecbb16eda68ac88530cbcd9ba14f7c57e614c72e7f9",
+    "vite.candidate-identity.d.mts": "18c6a612edf22deef4d41fc26216b2e1d856e8cd7a925fffe9c981b8dc8c93ee",
+    "vite.config.ts": "33345ac9e52bd90de275e020a9f1226a178a5ee13a77d990b5c79ec293335f0a",
+    "tests/c3-candidate-identity/candidate-identity.test.mjs": "437c1ccf276a30c71e7cc868933cf0b29d718d95a00a31217290d4315f7889ae",
+    ".github/scripts/c3_candidate_identity_build_check.mjs": "f1cf53c562e537a57402c3119adc7868d530d0958a9b99471bb21e289aa03a11"
+  }
 }

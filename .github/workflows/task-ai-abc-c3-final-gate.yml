@@ -2012,3 +2012,7 @@ jobs:
           timeout 300s "$RUNNER_TEMP/c3-playwright/node_modules/.bin/playwright" install chromium --with-deps
       - name: Execute one mandatory source and isolated runtime final gate
         run: node .github/scripts/c3_director_generic_core_final_gate.mjs
+      - name: Verify candidate identity in git and actual no-git Preview build copies
+        run: |
+          node --test tests/c3-candidate-identity/candidate-identity.test.mjs
+          node .github/scripts/c3_candidate_identity_build_check.mjs
