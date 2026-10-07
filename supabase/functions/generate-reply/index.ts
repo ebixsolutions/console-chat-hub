@@ -4632,7 +4632,7 @@ async function orchestrationGenerateReply(
   // A product clarification may coexist with customer-owned changes. Commit
   // those changes and refresh bounded context before emitting an AI reply.
   // Explicit R1 is handled by its control transaction farther below.
-  if (!_explicitHandoffRequested && _c3ServicePlan.knowledge_state !== "lookup_required") {
+  if (!_explicitHandoffRequested && _c3ServicePlan.knowledge_state !== "lookup_required" && !_c3ServicePlan.safe_assumptions.includes("query_context_limit")) {
     const immediate = await persistNaturalImmediateResponse(
       supabaseAdmin, conversation_id, _h1SourceMessageId,
       _effectiveNaturalCustomerIntent, _visitorLang,
@@ -4643,12 +4643,12 @@ async function orchestrationGenerateReply(
 
   const _c3IsGroundedReadOnlyRecap = _a3Commerce?.reason ===
       "read_only_current_requirements_recap" &&
-    _c3ServicePlan.knowledge_state !== "lookup_required" &&
+    _c3ServicePlan.knowledge_state !== "lookup_required" && !_c3ServicePlan.safe_assumptions.includes("query_context_limit") &&
     _c3Recall.decision.handled && _c3Recall.decision.fact_type === "summary" &&
     Boolean(_c3Memory && _c3CommerceSnapshot && _c3ReadOnlyMemoryHash);
   const _c3PlannedReply = _c3IsGroundedReadOnlyRecap
     ? _c3Recall.reply
-    : _c3Resolution.bypass_service_plan
+    : _c3Resolution.bypass_service_plan && !_c3ServicePlan.safe_assumptions.includes("query_context_limit")
     ? null
     : _naturalGuidanceReply ?? applyServiceTone(
       _c3ServicePlan,
@@ -4797,7 +4797,7 @@ async function orchestrationGenerateReply(
       ? null
       : _a3Commerce?.reply ?? null);
   if (_c3CommerceReply && !_explicitHandoffRequested &&
-    _c3ServicePlan.knowledge_state !== "lookup_required" &&
+    _c3ServicePlan.knowledge_state !== "lookup_required" && !_c3ServicePlan.safe_assumptions.includes("query_context_limit") &&
     !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent)) {
     const commerceReply = _a3Commerce?.reason ===
         "previous_quote_not_authoritative_for_current_price"
@@ -4906,7 +4906,7 @@ async function orchestrationGenerateReply(
   );
   if (
     _canonicalTurn.operation === "CUSTOMER_CONTEXT_UPDATE" &&
-    _c3ServicePlan.knowledge_state !== "lookup_required" &&
+    _c3ServicePlan.knowledge_state !== "lookup_required" && !_c3ServicePlan.safe_assumptions.includes("query_context_limit") &&
     !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent)
   ) {
     const acknowledgement =
@@ -4966,7 +4966,7 @@ async function orchestrationGenerateReply(
   const _turnClassification = classifyConversationTurn(_h1LastMsg);
   if (
     !_w5ShortTopicHint &&
-    _c3ServicePlan.knowledge_state !== "lookup_required" &&
+    _c3ServicePlan.knowledge_state !== "lookup_required" && !_c3ServicePlan.safe_assumptions.includes("query_context_limit") &&
     !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent) &&
     _turnClassification.should_clarify_before_kb &&
     !isHandoffIntent(_h1LastMsg) && _criticalLocalRisk?.level !== "high"
@@ -5224,7 +5224,7 @@ async function orchestrationGenerateReply(
       : null;
   if (
     _positiveRecoveryAcknowledgement &&
-    _c3ServicePlan.knowledge_state !== "lookup_required" &&
+    _c3ServicePlan.knowledge_state !== "lookup_required" && !_c3ServicePlan.safe_assumptions.includes("query_context_limit") &&
     !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent)
   ) {
     const committed = await commitAiReplyWithControlGate(
@@ -5271,7 +5271,7 @@ async function orchestrationGenerateReply(
     );
   }
   const _conversationMemoryReply =
-    _c3ServicePlan.knowledge_state !== "lookup_required" &&
+    _c3ServicePlan.knowledge_state !== "lookup_required" && !_c3ServicePlan.safe_assumptions.includes("query_context_limit") &&
     !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent) &&
       !_c3Recall.decision.handled &&
       _c3Recall.decision.reason === "NOT_A_RECALL_QUERY" &&

@@ -192,3 +192,11 @@ Deno.test("persisted entity unit and explicit quantity survive an unspecified fo
  semantic.entities[0].quantity=4;semantic.entities[0].unit="people";
  assert(JSON.parse(scopedServiceKnowledgeQuery("Actually four people",semantic,state)).current[0].quantity===4,"explicit latest quantity correction lost");
 });
+
+Deno.test("query overflow cannot enter any earlier local shortcut in the real generator call chain",async()=>{
+ const caller=await Deno.readTextFile(new URL("../generate-reply/index.ts",import.meta.url));
+ const guards=[...caller.matchAll(/_c3ServicePlan\.knowledge_state !== "lookup_required"/g)];
+ assert(guards.length===7,"unexpected local shortcut inventory");
+ for(const guard of guards)assert(caller.slice(guard.index!,guard.index!+230).includes('_c3ServicePlan.safe_assumptions.includes("query_context_limit")'),"local shortcut can swallow explicit context overflow");
+ assert(caller.includes('_c3Resolution.bypass_service_plan && !_c3ServicePlan.safe_assumptions.includes("query_context_limit")'),"canonical acknowledgment can swallow the truthful overflow response");
+});
