@@ -871,6 +871,8 @@ jobs:
         run: |
           set -euo pipefail
           deno test --no-lock --no-check --node-modules-dir=auto --allow-env --allow-read supabase/functions/_shared/service-semantic-routing.test.ts supabase/functions/_shared/natural-customer-response.test.ts supabase/functions/_shared/conversation-service-planner.test.ts supabase/functions/_shared/conversation-service-runtime.test.ts
+          # Deno auto resolution must not replace the frozen npm build graph.
+          npm ci
           node --test tests/c3-widget-live-auth/handler.test.mjs src/lib/widget-message-merge.test.mjs
           node --check public/widget/chat.js
       - name: Download verified live snapshot outside checkout
