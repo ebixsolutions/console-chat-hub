@@ -333,7 +333,7 @@
     "supabase/functions/_shared/commerce-semantic-frame.ts": "fe5fbc5f0b4806001f39b7162890ad6d06e08a63ccc06406111e275675207a05"
   },
   "authorized_f13_f14_repair_sha256": {
-    ".github/workflows/task-ai-abc-c3-final-gate.yml": "1ea4352ab76aae6845134ebaaa27d85ff585960eb26f4c61778bb1edb3b3b89f",
+    ".github/workflows/task-ai-abc-c3-final-gate.yml": "f8dedc866b106bfaada15f2533701d4e78101776c16dcae265a015a42730e3ab",
     "src/components/console/handoff-summary.ts": "89fa4c36c568ec779908379506f34c1e6a2d73fedbb1338bc08a95b217027c56",
     "supabase/functions/_shared/commerce-semantic-interpreter.ts": "9f5cbd7f395b0d1bde32fcafa01fedef7138869c316d11e9379b4e58e9e2e674",
     "supabase/functions/_shared/commerce-state-authority.ts": "e4065488d305cc86448d15dec7726aa2a34412186abb284ac4588cfd16f40884",
