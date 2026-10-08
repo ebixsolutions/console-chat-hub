@@ -4,7 +4,7 @@ import type {
   CommerceEntity,
   ConversationCommerceState,
 } from "./commerce-state-contract.ts";
-import { isCurrentRequirementsRecap, isReadOnlyMemoryOrCurrentStateRecall } from "./commerce-state-authority.ts";
+import { isCurrentRequirementsRecap, isReadOnlyMemoryOrCurrentStateRecall, withoutExcludedLookups } from "./commerce-state-authority.ts";
 import type { CanonicalConversationMemory } from "./conversation-long-memory.ts";
 import { industryEntityLabel, industryEntityQuantityUnit } from "./industry-runtime-adapter.ts";
 import { renderEnglishRequirement } from "./commerce-capability-runtime.ts";
@@ -567,6 +567,7 @@ function parseQuery(
   let facts = (Object.keys(FIELDS) as RecallFact[]).filter((f) =>
     hasField(q, f)
   );
+  if (summary) facts = ["summary"];
   if (!facts.length && isReadOnlyMemoryOrCurrentStateRecall(q)) {
     facts = [
       /(?:狀態|状态|status|係咪取消|是否取消|仲要|仍然要|still active|cancelled|canceled)/i.test(q)
@@ -606,7 +607,7 @@ function parseQuery(
     "現價多少",
     "現時售價",
   ]);
-  const external = any(q, EXTERNAL);
+  const external = any(withoutExcludedLookups(q), EXTERNAL);
   if (
     exclusion && !validity &&
     !any(q, ["stock", "warranty", "policy", "official", "庫存", "保養", "官方"])
@@ -1852,7 +1853,9 @@ function renderCustomerRecap(value: unknown, language: string): string {
     if(f.key==="horsepower" && Array.isArray(f.value) && f.value.every(x=>typeof x==="string"))return [prefix+f.value.map(x=>l===2?String(x).replace(/匹/g," hp"):String(x)).join(l===2?", ":"、")];
     if(f.key==="room_size" && Array.isArray(f.value))return f.value.flatMap(x=>{const row=object(x);return row && typeof row.label==="string" && typeof row.value==="string" ? [prefix+display(row.label)+" "+display(row.value)] : [];});
     if(f.key==="brand_required" && typeof f.value==="boolean")return [prefix+(f.value?["你要求指定品牌","你要求指定品牌","you require a specific brand"]:["你冇限定品牌","你没有限定品牌","you do not require a specific brand"])[l]];
-    return [];
+    const names: Record<string, [string,string,string]> = {product_count:["商品數量","商品数量","product count"],staff_count:["人手","人手","staff count"],app_interest:["App 需要","App 需要","app needed"],current_market:["目前市場","目前市场","current market"],desired_features:["需要功能","需要功能","required features"],future_markets:["未來市場","未来市场","future markets"]};
+    const value = f.value === null ? ["未確認","未确认","unknown"][l] : typeof f.value === "boolean" ? (f.value ? ["需要","需要","yes"][l] : ["不需要","不需要","no"][l]) : typeof f.value === "string" ? regionNames[f.value]?.[l] ?? display(f.value) : JSON.stringify(f.value);
+    return value === undefined ? [] : [prefix+(names[String(f.key)]?.[l] ?? display(String(f.key)))+": "+value];
   }) : [];
   const retainedText=retained.length ? ["而家記低咗","目前已记录","I have noted " ][l]+retained.join(l===2?"; ":"；")+(l===2?".":"。") : "";
   const first = l === 2

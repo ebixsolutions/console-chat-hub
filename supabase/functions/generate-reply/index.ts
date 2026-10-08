@@ -115,6 +115,7 @@ import {
   selectCanonicalGrounding,
 } from "../_shared/canonical-grounding.ts";
 import type { ReferenceAuthorityDecision } from "../_shared/commerce-state-authority.ts";
+import { isCurrentRequirementsRecap } from "../_shared/commerce-state-authority.ts";
 import { buildCitationMetadata } from "../_shared/citation-lineage.ts";
 import {
   type CanonicalKbDirectAnswer,
@@ -4283,7 +4284,7 @@ async function orchestrationGenerateReply(
   // Production semantics use the existing approved LLM router and its bounded policy.
   // It never writes commerce state and never supplies external product/policy facts.
   let _a3SemanticFrame: CommerceSemanticFrame | null = null;
-  if (_criticalE2ExpectedTenantId) {
+  if (_criticalE2ExpectedTenantId && !isCurrentRequirementsRecap(_h1LastMsg)) {
     try {
       const semanticResult = await interpretCommerceSemantics({
         company_id: _criticalE2ExpectedTenantId,
@@ -4297,6 +4298,10 @@ async function orchestrationGenerateReply(
         signal: requestSignal,
       });
       _a3SemanticFrame = semanticResult.frame;
+      if (semanticResult.failure_code) console.warn(JSON.stringify({
+        event: "semantic_interpretation_rejected", code: semanticResult.failure_code,
+        stage: semanticResult.failure_stage, request_id: semanticResult.request_id,
+      }));
     } catch (error) {
       console.error(
         "[generate-reply] A3.1 semantic interpreter fallback",

@@ -34,10 +34,18 @@ const labels: Record<string, string> = {
   voltage: "電壓",
   noise: "噪音",
   policy: "條款",
+  product_count: "商品數量",
+  staff_count: "人手",
+  app_interest: "App 需要",
+  current_market: "目前市場",
+  hong_kong: "香港",
+  desired_features: "需要功能",
+  future_markets: "未來市場",
 };
 const text = (x: unknown): string =>
   typeof x === "string" ? x.slice(0, 2000) : typeof x === "number" ? String(x) : "";
 const human = (x: unknown): string => labels[text(x)] ?? text(x).replaceAll("_", " ");
+const factValue = (x: unknown): string => x === null ? "未確認" : typeof x === "boolean" ? (x ? "是" : "否") : Array.isArray(x) ? x.map(factValue).join("、") : obj(x) ? JSON.stringify(x) : human(x);
 const strings = (x: unknown): string[] =>
   Array.isArray(x) ? x.filter((v): v is string => typeof v === "string").map(human) : [];
 export type TicketSummary = { title: string; lines: string[] }[];
@@ -99,6 +107,9 @@ export function projectTicketSummary(
         ? [human(p.current_customer_goal)] : ["目標未確認"],
     },
     { title: "目前需求", lines: entityLines(active) },
+    { title: "客人提供的資料", lines: rows(p.current_customer_facts)
+      .filter(f => ["customer", "canonical_commerce"].includes(text(f.authority)) && text(f.source_message_id) && Object.hasOwn(f, "value") && !text(f.key).startsWith("entity:"))
+      .map(f => `${human(f.key)}：${factValue(f.value)}（客人提供，非商家核實）`) },
     { title: "已暫緩", lines: entityLines(p.deferred_entities) },
     { title: "已取消", lines: entityLines(p.cancelled_entities) },
     { title: "最新更正", lines: strings(p.latest_corrections) },

@@ -178,7 +178,8 @@ function knownFacts(input: ServicePlanInput) {
     authority: string,
     status: ServiceDialoguePlan["known_facts"][number]["status"] = "provided",
   ) => {
-    const rendered = clean(value);
+    // Unknown remains in typed decision context, not a supplied/confirmed fact.
+    const rendered = typeof value === "string" ? clean(value) : value === null || value === undefined ? "" : JSON.stringify(value);
     if (
       rendered &&
       !facts.some((item) => item.name === name && item.value === rendered)

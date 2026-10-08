@@ -1,3 +1,5 @@
+import "./f13-llm-failure.test.ts";
+import "./f13-f14-root-cause.test.ts";
 import { normalizeCommerceSemanticFrame, type CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 import { createEmptyConversationCommerceState } from "./commerce-state-contract.ts";
 import { planConversationService, renderServicePlanReply, renderTargetedServiceQuestion } from "./conversation-service-planner.ts";

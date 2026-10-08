@@ -203,7 +203,7 @@ function questionLooksLikeCustomerState(question: string): boolean {
 }
 
 function explicitCustomerMutation(question: string): boolean {
-  const text = clean(question);
+  const text = clean(question).replace(/(?:已(?:提供(?:同|及|和))?)?更正過|previously corrected/gi, "");
   return /(?:更正|改(?:做|成|為|为|返)|變成|变成|加多|再加|新增|另外加|唔係.+?(?:改|而係|而系)|不是.+?(?:改|而是)|(?:而家要|現在要|现在要|目前要)(?!求))\s*(?:[一二兩两三四五六七八九十]|\d{1,4})?\s*(?:部|台|件|個|个|套)?/i.test(text) ||
     /(?:取消|移除|刪除|删除)\s*(?:其中|呢|這|这|嗰|那|一|[一二兩两三四五六七八九十]|\d)/i.test(text) ||
     /\b(?:change|set|make)\b.{0,24}\bto\b|\badd\b(?:\s+(?:another|one|two|three|\d+))?|\b(?:please\s+)?(?:cancel|remove)\b/i.test(text);
@@ -324,13 +324,21 @@ export function isReadOnlyMemoryOrCurrentStateRecall(
 }
 
 /** A question asking for the currently retained requirements supplies no new fact. */
+export function withoutExcludedLookups(question: string): string {
+  // Only discard an explicit instruction NOT to perform a lookup. A negative
+  // customer fact and an actual question about a negative condition remain data.
+  return question.split(/[，,。;；\n]|\bbut\b|但(?:係|是)?|\band(?=\s+(?:check|query|look up)\b)|同埋(?=查)/i).filter(clause =>
+    !/(?:唔查|不要查|不查|不用查|毋須查|do not (?:look up|check|query)|don't (?:look up|check|query)|no (?:lookup|lookups))/i.test(clause)
+  ).join("; ");
+}
+
 export function isCurrentRequirementsRecap(question: string): boolean {
   const text = clean(question);
   if (!text || explicitCustomerMutation(text)) return false;
   // Recap operation and canonical entity scope are independent. An explicit
   // summary speech act supplies read-only intent without ownership/time words;
   // no full customer utterance or fixture-specific entity is a dispatch key.
-  const externalFact = /\b(?:price|cost|stock|warranty|policy|specifications?|availability)\b|售價|售价|庫存|库存|保養|保养|政策|規格|规格/i.test(text);
+  const externalFact = /\b(?:price|cost|stock|warranty|policy|specifications?|availability)\b|售價|售价|庫存|库存|保養|保养|政策|規格|规格/i.test(withoutExcludedLookups(text));
   if (externalFact) return false;
   const summarize = /\b(?:recap|summary|summari[sz]e)\b|總結|总结|整理/u.test(text.toLowerCase());
   // A request for one recorded field is a fact recall, not an overall recap.

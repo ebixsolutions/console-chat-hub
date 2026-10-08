@@ -261,7 +261,18 @@
     "supabase/functions/generate-reply/index.ts",
     "supabase/functions/_shared/product-factual-query.test.ts",
     "supabase/functions/_shared/bounded-decision-context.ts",
-    "supabase/functions/_shared/commerce-semantic-frame.ts"
+    "supabase/functions/_shared/commerce-semantic-frame.ts",
+    "src/components/console/handoff-summary.ts",
+    "supabase/functions/_shared/commerce-state-authority.ts",
+    "supabase/functions/_shared/conversation-recall.ts",
+    "supabase/functions/_shared/conversation-runtime-state-core.ts",
+    "supabase/functions/_shared/llm-router.ts",
+    "supabase/functions/_shared/f13-f14-root-cause.test.ts",
+    "supabase/functions/_shared/f13-llm-failure.test.ts",
+    "sql/c3_f13_f14_handoff_projection_proposed.sql",
+    "sql/c3_f13_f14_handoff_projection_rollback_proposed.sql",
+    "tests/c3-f13-f14/captured-handoff-functions.sql",
+    "tests/c3-f13-f14/native-projection.py"
   ],
   "conditional_worker_sha256": "56b02b24abd5b64748f5931e9cf9b0b1df05fb920b852ebe4b8bd51c71a793de",
   "normalized_preview_sha256": {
@@ -320,5 +331,28 @@
     "supabase/functions/_shared/product-factual-query.test.ts": "20ea440d0b3e7fd037451da56b347614b2e0eb5d4f4f514f10c0779fce0bdf0f",
     "supabase/functions/_shared/bounded-decision-context.ts": "f93b59b56469f4a79518374f2cb3b73fab8d09028ce2b3c5c6cbb1c6c90f01f1",
     "supabase/functions/_shared/commerce-semantic-frame.ts": "fe5fbc5f0b4806001f39b7162890ad6d06e08a63ccc06406111e275675207a05"
-  }
+  },
+  "authorized_f13_f14_repair_sha256": {
+    ".github/workflows/task-ai-abc-c3-final-gate.yml": "1ea4352ab76aae6845134ebaaa27d85ff585960eb26f4c61778bb1edb3b3b89f",
+    "src/components/console/handoff-summary.ts": "89fa4c36c568ec779908379506f34c1e6a2d73fedbb1338bc08a95b217027c56",
+    "supabase/functions/_shared/commerce-semantic-interpreter.ts": "9f5cbd7f395b0d1bde32fcafa01fedef7138869c316d11e9379b4e58e9e2e674",
+    "supabase/functions/_shared/commerce-state-authority.ts": "e4065488d305cc86448d15dec7726aa2a34412186abb284ac4588cfd16f40884",
+    "supabase/functions/_shared/conversation-long-memory.ts": "ba8c59c3331a14a7e28d9537d476534bb447b9bd6fd182e124ed5d2b7bc43d1b",
+    "supabase/functions/_shared/conversation-recall.ts": "4fd4c88081fbc10d165b3d3cae398daef0848e0d6c1d2532f38787451472674d",
+    "supabase/functions/_shared/conversation-runtime-state-core.ts": "27f6c4181f015faa917ca2dd2bd78062670ac1c525759a6b0c98a6d8b214ee38",
+    "supabase/functions/_shared/conversation-service-planner.ts": "060f683fec577e1e9cefb1a51c3e47e626d0636e2b8c42da74889050d14b30cc",
+    "supabase/functions/_shared/llm-router.ts": "99b62f4a982a9d134f925c1a2af81b7664cb23788753bd15ff079b62e8c0afc7",
+    "supabase/functions/_shared/service-semantic-routing.test.ts": "2e4a68d193afc5660590b76e7576461984322e46c48d1a89deb9d024e0ceddff",
+    "supabase/functions/generate-reply/index.ts": "e1908d3c1b66a813d37501cac6b9338676248696a81dc8d9101222a69ac7fd14",
+    "supabase/functions/_shared/f13-f14-root-cause.test.ts": "c62c864f4bf4ead25e3a7800533b2b0b2e00af68d870da31fc5527bfd4222933",
+    "supabase/functions/_shared/f13-llm-failure.test.ts": "9a3220ab07ed2c8d1e03ea5d31ef8b1ea114fa55b2bd77464db6eaa43b17dc84",
+    "sql/c3_f13_f14_handoff_projection_proposed.sql": "8c30e27ba723273f173cbcfdb6599dc6381009165adc46782c61403a8fff78f4",
+    "sql/c3_f13_f14_handoff_projection_rollback_proposed.sql": "8afe7a25d16bbd2305bcf82a4bdbef3873eff0b1a54a6748eccf76862f7f266b",
+    "tests/c3-f13-f14/captured-handoff-functions.sql": "781f859a8c9d500ef3c0c933705497b4f4532d5e1ca199b492fe13f2c71c7692",
+    "tests/c3-f13-f14/native-projection.py": "3b8e35c13ef309d72693ca6903cedb230b2b81953d0baef55ecbdaede7898816",
+    ".github/scripts/c3_unified_production_source_gate.test.mjs": "eed06c231da8fc76c5bb48a413c1e453d8fe79704d5b6fa94499da6333a7b44a"
+  },
+  "f13_f14_sql_production_authorized": false,
+  "f13_f14_deployment_authorized": false,
+  "f13_f14_authorization_document_sha256": "88a4a3f739df9573507fd1e3d90c714774f97feba8b08530f41892e1d0ebfcad"
 }

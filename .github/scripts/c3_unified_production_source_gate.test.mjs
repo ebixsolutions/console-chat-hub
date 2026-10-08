@@ -12,7 +12,8 @@ reject('stale identity',()=>verifyIdentity(root,profile,{head:'0'.repeat(40),tre
 reject('unresolved dynamic import',()=>imports('await import(pathFromRequest);','unsafe.ts'),/dynamic_import_unresolved/);
 const fixture=fs.mkdtempSync(path.join(os.tmpdir(),'c3-production-controls-'));
 try{
- for(const f of [...profile.runtime_files,...Object.keys(profile.frozen_evidence_sha256),...Object.keys(profile.normalized_preview_sha256),...Object.keys(profile.widget_reply_stability_sha256),...Object.keys(profile.authorized_widget_auth_repair_sha256),...Object.keys(profile.authorized_unified_generic_service_repair_sha256),...Object.keys(profile.authorized_memory_reply_repair_sha256),...Object.keys(profile.authorized_preview_activation_sha256)]){const dest=path.join(fixture,f);fs.mkdirSync(path.dirname(dest),{recursive:true});fs.copyFileSync(path.join(root,f),dest);}
+ for(const f of [...profile.runtime_files,...Object.keys(profile.frozen_evidence_sha256),...Object.keys(profile.normalized_preview_sha256),...Object.keys(profile.widget_reply_stability_sha256),...Object.keys(profile.authorized_widget_auth_repair_sha256),...Object.keys(profile.authorized_unified_generic_service_repair_sha256),...Object.keys(profile.authorized_f13_f14_repair_sha256),...Object.keys(profile.authorized_memory_reply_repair_sha256),...Object.keys(profile.authorized_preview_activation_sha256)]){const dest=path.join(fixture,f);fs.mkdirSync(path.dirname(dest),{recursive:true});fs.copyFileSync(path.join(root,f),dest);}
+ for(const f of Object.keys(profile.authorized_f13_f14_repair_sha256)){fs.mkdirSync(path.dirname(path.join(fixture,f)),{recursive:true});fs.copyFileSync(path.join(root,f),path.join(fixture,f));}
  for(const f of Object.keys(profile.normalized_preview_sha256)) {
   const original=fs.readFileSync(path.join(fixture,f));fs.appendFileSync(path.join(fixture,f),'\n// unapproved preview drift\n');
   reject('normalized preview binding drift '+f,()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/preview_binding_drift/);fs.writeFileSync(path.join(fixture,f),original);
@@ -28,6 +29,8 @@ try{
   reject('generic repair source drift '+f,()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/(?:generic_repair_source_drift|widget_(?:stability|auth)_source_drift|memory_reply_source_drift)/);
   fs.writeFileSync(path.join(fixture,f),original);
  }
+ reject('F13/F14 SQL permission cannot be invented',()=>verifyProductionSource({root:fixture,profile:{...profile,f13_f14_sql_production_authorized:true},sourceOnly:true}),/f13_f14_production_authority_masquerade/);
+ reject('F13/F14 scope cannot be changed',()=>verifyProductionSource({root:fixture,profile:{...profile,authorized_f13_f14_repair_sha256:{}},sourceOnly:true}),/f13_f14_scope_drift/);
  const victim=profile.runtime_files.find(f=>f.endsWith('/kb-client.ts'));const original=fs.readFileSync(path.join(fixture,victim));fs.unlinkSync(path.join(fixture,victim));
  reject('missing dependency',()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/dependency_missing/);fs.writeFileSync(path.join(fixture,victim),original);
  fs.appendFileSync(path.join(fixture,victim),'\nexport const tenantBypass=true;\n');reject('tenant / grounding frozen source changed',()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/frozen_runtime_drift/);fs.writeFileSync(path.join(fixture,victim),original);

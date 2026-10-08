@@ -50,6 +50,7 @@ export type LlmResult =
     ok: false;
     code: LlmFailureCode;
     status?: number;
+    invalid_output_reason?: "response_json" | "response_schema" | "empty" | "truncated";
     request_id: string;
     usage: LlmUsage;
   };
@@ -277,6 +278,7 @@ function anthropicAdapter(
       const obj = body as {
         content?: Array<{ type?: string; text?: string }>;
         usage?: { input_tokens?: number; output_tokens?: number };
+        stop_reason?: string;
       };
       const text = Array.isArray(obj.content)
         ? obj.content
@@ -289,7 +291,7 @@ function anthropicAdapter(
         text,
         input_tokens: Number(obj.usage?.input_tokens ?? 0),
         output_tokens: Number(obj.usage?.output_tokens ?? 0),
-        finish_reason: null,
+        finish_reason: obj.stop_reason === "max_tokens" ? "MAX_TOKENS" : obj.stop_reason ?? null,
         block_reason: null,
       };
     },
@@ -928,6 +930,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
 
   let lastCode: LlmFailureCode = "LLM_NETWORK";
   let lastStatus: number | undefined;
+  let invalidOutputReason: "response_json" | "response_schema" | "empty" | "truncated" | undefined;
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     if (call.signal?.aborted) {
@@ -968,6 +971,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
         break;
       }
 
+      lastStatus = res.status;
       if (res.status === 429 || res.status >= 500) {
         lastCode = "LLM_NON_2XX";
         lastStatus = res.status;
@@ -1002,6 +1006,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
         body = await res.json();
       } catch {
         lastCode = "LLM_INVALID_OUTPUT";
+        invalidOutputReason = "response_json";
         log(call.tag, {
           event: "parse_failed",
           request_id: requestId,
@@ -1011,12 +1016,22 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
         break;
       }
 
-      const parsed = adapter.parseResponse(body);
+      let parsed: ReturnType<ProviderAdapter["parseResponse"]>;
+      try {
+        if (!body || typeof body !== "object" || Array.isArray(body)) throw Error("invalid_envelope");
+        parsed = adapter.parseResponse(body);
+      } catch {
+        lastCode = "LLM_INVALID_OUTPUT";
+        invalidOutputReason = "response_schema";
+        log(call.tag, {event:"provider_schema_invalid",request_id:requestId,provider:adapter.id,attempt,status:res.status});
+        break;
+      }
       usage.input_tokens = parsed.input_tokens;
       usage.output_tokens = parsed.output_tokens;
 
       if (!parsed.text) {
         lastCode = "LLM_INVALID_OUTPUT";
+        invalidOutputReason = "empty";
         log(call.tag, {
           event: "empty_output",
           request_id: requestId,
@@ -1030,6 +1045,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
 
       if (parsed.finish_reason === "MAX_TOKENS") {
         lastCode = "LLM_INVALID_OUTPUT";
+        invalidOutputReason = "truncated";
         log(call.tag, {
           event: "truncated_output",
           request_id: requestId,
@@ -1137,6 +1153,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
     ok: false,
     code: lastCode,
     status: lastStatus,
+    invalid_output_reason: invalidOutputReason,
     request_id: requestId,
     usage,
   };
