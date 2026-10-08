@@ -200,3 +200,13 @@ Deno.test("query overflow cannot enter any earlier local shortcut in the real ge
  for(const guard of guards)assert(caller.slice(guard.index!,guard.index!+230).includes('_c3ServicePlan.safe_assumptions.includes("query_context_limit")'),"local shortcut can swallow explicit context overflow");
  assert(caller.includes('_c3Resolution.bypass_service_plan && !_c3ServicePlan.safe_assumptions.includes("query_context_limit")'),"canonical acknowledgment can swallow the truthful overflow response");
 });
+
+Deno.test("customer-owned non-questions reach their B2 context commit before product clarification", () => {
+  const source = Deno.readTextFileSync(new URL("../generate-reply/index.ts", import.meta.url));
+  const context = source.indexOf('_canonicalTurn.operation === "CUSTOMER_CONTEXT_UPDATE"');
+  const planned = source.indexOf("const _c3PlannedReply");
+  assert(context > source.indexOf("refreshConversationLongMemory(") && context < planned, "customer context preempted by product clarification");
+  const branch = source.slice(context, planned);
+  assert(branch.includes('_c3ServicePlan.knowledge_state !== "lookup_required"') && branch.includes('safe_assumptions.includes("query_context_limit")') && branch.includes("requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent)"), "merchant fact or overflow bypass");
+  assert(branch.includes("commitAiReplyWithControlGate(") && !/\.insert\(|\.rpc\(/.test(branch), "customer context bypassed B2");
+});
