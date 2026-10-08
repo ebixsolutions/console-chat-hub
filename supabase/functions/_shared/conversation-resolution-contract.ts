@@ -135,3 +135,16 @@ export function resolveCanonicalCommerceResolution(input: {
     no_semantic_change: resolvedReply && noSemanticChange,
   };
 }
+
+/** Canonical read-only intent wins over lexical update hints such as "my needs".
+ * A mixed assertion was already excluded from recap by the shared classifier. */
+export function shouldRefreshCanonicalMemory(input: {
+  outcome: CommerceRuntimeOutcome | null;
+  explicit_handoff: boolean;
+  customer_owned_delta: boolean;
+  semantic_fact_delta: boolean;
+}): boolean {
+  if (input.outcome?.reason === "read_only_current_requirements_recap") return false;
+  const resolution = resolveCanonicalCommerceResolution({outcome:input.outcome,authoritative_address_correction:false});
+  return !resolution.skip_memory_refresh || input.explicit_handoff || input.customer_owned_delta || input.semantic_fact_delta;
+}

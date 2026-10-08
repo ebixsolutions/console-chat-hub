@@ -348,7 +348,7 @@
     "supabase/functions/_shared/conversation-service-planner.ts": "060f683fec577e1e9cefb1a51c3e47e626d0636e2b8c42da74889050d14b30cc",
     "supabase/functions/_shared/llm-router.ts": "99b62f4a982a9d134f925c1a2af81b7664cb23788753bd15ff079b62e8c0afc7",
     "supabase/functions/_shared/service-semantic-routing.test.ts": "2e4a68d193afc5660590b76e7576461984322e46c48d1a89deb9d024e0ceddff",
-    "supabase/functions/generate-reply/index.ts": "7457a8996cce7784a89e53f1ce87d4388c39489d2a1fcdabb8d659246cc0da06",
+    "supabase/functions/generate-reply/index.ts": "534ddecd77b4662716658fd6b09c5916a33d7693d10b44210633cb11bec3f07a",
     "supabase/functions/_shared/f13-f14-root-cause.test.ts": "a0f3d56e521df2b70fd4027de75336b0084311fa8dd786d28d7c091377934b99",
     "supabase/functions/_shared/f13-llm-failure.test.ts": "9a3220ab07ed2c8d1e03ea5d31ef8b1ea114fa55b2bd77464db6eaa43b17dc84",
     "sql/c3_f13_f14_handoff_projection_proposed.sql": "b5a060c4b107a20fe57ed0ad00309765386ccd46533a28a952ac4c845e4dfed9",
@@ -357,11 +357,11 @@
     "tests/c3-f13-f14/native-projection.py": "556b256e3a07b6ad3c19e4bfd945a026210fc1c84e18648c930ad98a16721fd6",
     ".github/scripts/c3_unified_production_source_gate.test.mjs": "eed06c231da8fc76c5bb48a413c1e453d8fe79704d5b6fa94499da6333a7b44a",
     "supabase/functions/_shared/commerce-state-runtime-base.ts": "5df9b7d9301aed079145ea87ef343a7d2de9743c7f295f44c3a23458303896d6",
-    "supabase/functions/_shared/conversation-resolution-contract.ts": "34911c6a4f2e7c240ab19530e822947d09247872c5bcc93c8b3af3a0c8f4f780",
+    "supabase/functions/_shared/conversation-resolution-contract.ts": "56e62a58ef4c1528e870d272244ac696bd548a95cafb7b8023bdc4c8beb4bb2f",
     "supabase/functions/_shared/handoff-intent.ts": "40c6fdd391dbc68d0edcd8568b4bd5e38478c93f581f5c74455c2e5f7c5e2295",
     "supabase/functions/_shared/conversation-intelligence.ts": "5c6e2b0973df9c41dee0fb9a324b661ce7835946e129210d37071519d5e41658",
     "supabase/functions/_shared/commerce-semantic-frame.ts": "31d35d9876169db873410e6eda8ef7831f05bf814d45f1654711aec7c1c6632c",
-    "supabase/functions/_shared/f13-runtime-recovery.test.ts": "5f165d68e69f99cf3ffbab2877c2523ce7beac22d2a06db359937fc981c2f925"
+    "supabase/functions/_shared/f13-runtime-recovery.test.ts": "1ebbfadcc004d9bafe9ac137a0ba8b226bf54710bd4eb6cef7aa1a0efedd49b3"
   },
   "f13_f14_sql_production_authorized": false,
   "f13_f14_deployment_authorized": false,

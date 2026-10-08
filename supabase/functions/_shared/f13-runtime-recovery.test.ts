@@ -1,4 +1,5 @@
 /** Isolated runtime regression, provider transport intercepted. Not production acceptance/Quality95. */
+import { shouldRefreshCanonicalMemory } from './conversation-resolution-contract.ts';
 import { isCurrentRequirementsRecap, customerBusinessText } from './commerce-state-authority.ts';
 import { classifyHandoffIntent as routeHandoff } from './conversation-intelligence.ts';
 import { classifyHandoffIntent } from './handoff-intent.ts';
@@ -31,6 +32,7 @@ Deno.test('actual saved F13 and mixed R1 failures: initial facts, correction, co
  const db:any={from:()=>({select:()=>({eq:()=>({maybeSingle:async()=>({data:{revision:2,state},error:null})})})}),rpc:async()=>{writes++;throw Error('recap state mutation')}};
  const out=await runCommerceStateRuntime(db,{conversation_id:'conversation',company_id:'company',source_message_id:'recap',text:recap,language:'zh-TW'});
  assert(out?.reason==='read_only_current_requirements_recap'&&writes===0,'recap persisted Commerce');
+ assert(!shouldRefreshCanonicalMemory({outcome:out,explicit_handoff:false,customer_owned_delta:true,semantic_fact_delta:false}),'lexical needs/correction hint overrode read-only Memory intent');
  const input=recallFixture(recap);input.memory={...memory,conversation_id:input.conversation_id,company_id:input.company_id,source_message_id:input.source_message_id,commerce_state_revision:input.commerce!.revision};input.commerce!.state=state;
  const reply=prepareConversationRecall(input,'zh-TW');
  assert(reply.decision.handled&&reply.reply?.includes('275')&&reply.reply.includes('人手: 3')&&reply.reply.includes('香港')&&reply.reply.includes('不需要')&&!reply.reply.includes('240'),JSON.stringify(reply));

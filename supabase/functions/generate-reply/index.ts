@@ -202,7 +202,7 @@ import {
   executeB2PersistenceGate,
 } from "../_shared/pre-send-conversion-supervisor.ts";
 import type { B2TrustedCorrectionCommit, B2TrustedJourneyProgress, B2TrustedLifecycleCommit } from "../_shared/b2-journey-progress-contract.ts";
-import { resolveCanonicalCommerceResolution } from "../_shared/conversation-resolution-contract.ts";
+import { resolveCanonicalCommerceResolution, shouldRefreshCanonicalMemory } from "../_shared/conversation-resolution-contract.ts";
 import { readExactAiReplyCommit } from "../_shared/authoritative-commit-readback.ts";
 import {
   createClient,
@@ -4465,7 +4465,7 @@ async function orchestrationGenerateReply(
           _c3Memory, memoryHistory,
         ).block;
       }
-      const memoryOutcome = _c3PreMemoryResolution.skip_memory_refresh && !_explicitHandoffRequested && !_customerOwnedDelta && !(_a3SemanticFrame?.customer_facts?.length)
+      const memoryOutcome = !shouldRefreshCanonicalMemory({outcome:_a3Commerce,explicit_handoff:_explicitHandoffRequested,customer_owned_delta:_customerOwnedDelta,semantic_fact_delta:Boolean(_a3SemanticFrame?.customer_facts?.length)})
         ? null
         : await refreshConversationLongMemory(
           supabaseAdmin as unknown as Parameters<
