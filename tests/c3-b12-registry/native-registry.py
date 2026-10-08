@@ -66,7 +66,7 @@ try:
  assert 'C3_UAT_EVALUATION_EXCLUDED' in commands[-1]['stderr'];checks.append(dict(name='exact synthetic sink rejection code',result='PASS'))
  yes('synthetic evaluation guard has zero spill',f"SELECT count(*)=0 FROM b12_evaluation_sink WHERE conversation_id='{syn}'")
  # Reaper must preserve even expired synthetic leases while reclaiming legitimate expired work.
- run(f"UPDATE ce_evaluation_job SET status='running',lease_until=now()-interval '1 minute',lease_owner='native' WHERE id='{uid(100)}';UPDATE ce_evaluation_job SET lease_until=now()-interval '1 minute' WHERE conversation_id='{normal}' AND status='running'")
+ run(f"UPDATE ce_evaluation_job SET status='running',lease_expires_at=now()-interval '1 minute',lease_owner='native' WHERE id='{uid(100)}';UPDATE ce_evaluation_job SET lease_expires_at=now()-interval '1 minute' WHERE conversation_id='{normal}' AND status='running'")
  expired=run(f"SELECT to_jsonb(j) FROM ce_evaluation_job j WHERE id='{uid(100)}'")
  run('SELECT ce_reap_expired_jobs_v1()')
  assert run(f"SELECT to_jsonb(j) FROM ce_evaluation_job j WHERE id='{uid(100)}'")==expired

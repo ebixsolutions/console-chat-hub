@@ -468,6 +468,8 @@ export async function processEvaluationJob(
         .find(
           (m) => !m.is_recalled && ["visitor", "customer", "user"].includes(m.role.toLowerCase()),
         );
+    const boundaryScope=await verifyEvaluationJobScope(admin,job);
+    if(boundaryScope) return {ok:false,code:boundaryScope};
       const grounding = await fetchGrounding({
         conversationId: job.conversation_id,
         messageId: lastCustomer?.id,
@@ -574,6 +576,8 @@ export async function processEvaluationJob(
     if (initResult !== "initiated") throw new Error(initResult || "initiate_rejected");
     const attemptId = String(initData.attempt_id);
 
+    const boundaryScope=await verifyEvaluationJobScope(admin,job);
+    if(boundaryScope) return {ok:false,code:boundaryScope};
     const settled = await Promise.all(
       CE_DIMENSIONS.map((d) =>
         runEvaluator(
@@ -708,6 +712,8 @@ export async function processEvaluationJob(
       }
     }
 
+    const completionScope=await verifyEvaluationJobScope(admin,job);
+    if(completionScope) return {ok:false,code:completionScope};
     const complete = local
       ? await admin.rpc("complete_local_evaluation_v1", {
           p_attempt_id: attemptId,
