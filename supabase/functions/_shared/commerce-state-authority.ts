@@ -889,4 +889,3 @@ export function customerBusinessText(value: unknown): string {
     clause && !isControl(clause) && !/(?:唔好|不要|别|別|stop|do not|don't).{0,16}(?:再問|再问|問需求|问需求|ask|question)|(?:no more|不要|唔要).{0,8}(?:AI|機器人|机器人)/i.test(clause)
   ).join("; ");
 }
-

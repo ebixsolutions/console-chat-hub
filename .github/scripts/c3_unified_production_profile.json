@@ -338,7 +338,7 @@
     ".github/workflows/task-ai-abc-c3-final-gate.yml": "18583c9ee69f259d2d32757630745eb48356c9ea873724aeb51b8064fa95e7e7",
     "src/components/console/handoff-summary.ts": "89fa4c36c568ec779908379506f34c1e6a2d73fedbb1338bc08a95b217027c56",
     "supabase/functions/_shared/commerce-semantic-interpreter.ts": "9f5cbd7f395b0d1bde32fcafa01fedef7138869c316d11e9379b4e58e9e2e674",
-    "supabase/functions/_shared/commerce-state-authority.ts": "131fe1f8169bab2ad841952aa4a54c5063f234f8d7aaf77171201e283a977570",
+    "supabase/functions/_shared/commerce-state-authority.ts": "341ec42da620629e8b74e7b88d54395d48317a180613c988aeb8589fea5afcd1",
     "supabase/functions/_shared/conversation-long-memory.ts": "7dd9380fab1bbcea0a1be0c0af7b784e5dc5b16bde1d8626c53776e19219a4ed",
     "supabase/functions/_shared/conversation-recall.ts": "4fd4c88081fbc10d165b3d3cae398daef0848e0d6c1d2532f38787451472674d",
     "supabase/functions/_shared/conversation-runtime-state-core.ts": "27f6c4181f015faa917ca2dd2bd78062670ac1c525759a6b0c98a6d8b214ee38",
