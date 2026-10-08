@@ -30,6 +30,7 @@ jobs:
           python tests/c3-b12-registry/build-payloads.py "$RUNNER_TEMP/b12/payloads"
           cd "$RUNNER_TEMP/b12/payloads/ce-evaluation-worker-target"
           deno check --no-lock --node-modules-dir=none ce-evaluation-worker/index.ts ../ce-evaluation-control-target/ce-evaluation-control/index.ts ../conversation-evaluate-target/functions/conversation-evaluate/index.ts
+          deno check --no-lock --node-modules-dir=none ../ce-evaluation-worker-rollback/ce-evaluation-worker/index.ts ../ce-evaluation-control-rollback/ce-evaluation-control/index.ts ../conversation-evaluate-rollback/functions/conversation-evaluate/index.ts
           cp "$C3_REPO_ROOT/supabase/functions/_shared/ce-registry-isolation.test.ts" _shared/ce-registry-isolation.test.ts
           deno test --no-lock --allow-read --allow-env --node-modules-dir=none _shared/ce-registry-isolation.test.ts
           cd "$C3_REPO_ROOT"

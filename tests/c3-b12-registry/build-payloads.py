@@ -6,7 +6,7 @@ for row in json.loads((Path(__file__).with_name('deployment-source-manifest.json
  slug=row['slug'];before=[];target=[]
  for f in row['sources']:
   b=subprocess.check_output(['git','cat-file','blob',f['before_or_dependency_git_blob']],cwd=R) if f['before_or_dependency_git_blob'] else b''
-  if f['existing_before']:before.append(dict(name=f['name'],content=b.decode()))
+  if f['existing_before'] or f.get('rollback_dependency'):before.append(dict(name=f['name'],content=b.decode()))
   source=R/'supabase'/f['name'] if f['name'].startswith('functions/') else R/'supabase/functions'/f['name']
   b=source.read_bytes() if f['target_from_source'] else b
   assert hashlib.sha256(b).hexdigest()==f['sha256'],f['name']
