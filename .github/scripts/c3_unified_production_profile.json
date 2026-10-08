@@ -30,6 +30,7 @@
     "supabase/functions/_shared/canonical-kb-direct-answer.ts",
     "supabase/functions/_shared/ce-contract.ts",
     "supabase/functions/_shared/ce-conversion-reality.ts",
+    "supabase/functions/_shared/ce-evaluation-scope.ts",
     "supabase/functions/_shared/ce-grounding.ts",
     "supabase/functions/_shared/ce-provider-response.ts",
     "supabase/functions/_shared/citation-lineage.ts",
@@ -291,7 +292,9 @@
     "tests/c3-b12-registry/captured-sink-dependency.json",
     "tests/c3-b12-registry/captured-company-helper.json",
     "tests/c3-b12-registry/build-payloads.py",
-    "tests/c3-b12-registry/deployment-source-manifest.json"
+    "tests/c3-b12-registry/deployment-source-manifest.json",
+    "supabase/functions/_shared/ce-evaluation-scope.ts",
+    "supabase/functions/conversation-evaluate/index.ts"
   ],
   "conditional_worker_sha256": "56b02b24abd5b64748f5931e9cf9b0b1df05fb920b852ebe4b8bd51c71a793de",
   "normalized_preview_sha256": {
@@ -381,21 +384,23 @@
   "f13_f14_deployment_authorized": false,
   "f13_f14_authorization_document_sha256": "88a4a3f739df9573507fd1e3d90c714774f97feba8b08530f41892e1d0ebfcad",
   "authorized_b12_registry_repair_sha256": {
-    ".github/workflows/c3-b12-registry-isolation.yml": "06b6d69ba1d06718bddf61e4c2dd2d44882c0642eeb60572b308dc077aa89c1c",
-    "supabase/functions/_shared/ce-automation-engine.ts": "99a20dcf4a0f1e9071260fab57ce7b60801b49d8eb5fc617896e66448c567c80",
+    ".github/workflows/c3-b12-registry-isolation.yml": "cf9182bc86068460f32e7226e767a468550159d15e26ca186ee7347a247a4b32",
+    "supabase/functions/_shared/ce-automation-engine.ts": "00882832370e770ba23bd41ac9bcb3f7b6078dc5a4f2728bb54f250a3a2a3f6a",
     "supabase/functions/ce-evaluation-worker/index.ts": "4ced4c0bd7ee05e1a11b401a964226f13ca9e5f9446c4b20b06da881ec4a5f5d",
-    "supabase/functions/ce-evaluation-control/index.ts": "0bf5be09acc6ea5ebb4d8fc80eb4716c8b417c6d8d462cc40c6fe60ecf3fe412",
+    "supabase/functions/ce-evaluation-control/index.ts": "d7e95c6594d828cf438394ba2bce199520ab775d40695e358a7ac4a0a4be01d8",
     "supabase/functions/_shared/ce-registry-isolation.test.ts": "57e47471b894585db8ae02bb225fff6a5400e8b50616521a83ba0c275ff9672f",
     "sql/c3_b12_registry_isolation_forward_proposed.sql": "809c29c40ff48e8b0ccfa025748e5a10f9db9dc7d413f5b1866bd1a9e8ce6bb1",
     "sql/c3_b12_registry_isolation_rollback_proposed.sql": "c64d00fb7d958dad18b7ed795ebd1015a993d77e287d6bb4984a1986e9b3d743",
     "tests/c3-b12-registry/captured-functions.json": "bcd824a2e0b47da18d06025c5382e9f672dabe19ade6e058a7e91434d23807b1",
     "tests/c3-b12-registry/target-functions.json": "b2ed8031b341748804d9dfe65a1a755b4fbb2987bcfb0c3ec0269473d5d17a5e",
-    "tests/c3-b12-registry/native-registry.py": "991026a97d78bd63e50583977a78311b4dade17a30ead5c97e0dba3f6365c77c",
+    "tests/c3-b12-registry/native-registry.py": "a1f4d318e27d26fcd906b27ad7be04a2fd9a4459432907826dea147ec8fdf4a2",
     ".github/scripts/c3_unified_production_source_gate.test.mjs": "36c4e870115a2d1ccb4e9af6db20e2dcc604979fbf6ea99bab9cea173b6358e0",
     "tests/c3-b12-registry/captured-sink-dependency.json": "dca7f844a53ecf00cf26a4b9b09a84544a09d8faf9739e6d95a65d1918bf004a",
     "tests/c3-b12-registry/captured-company-helper.json": "5ffd477ceb8c400f77de8e99f12c7bc7a8d386ca40a6f81e7eec17744fc5e8eb",
-    "tests/c3-b12-registry/build-payloads.py": "5d23d4a7693337770213c4295f4597f2031300d9b2b127b0095e548277e84583",
-    "tests/c3-b12-registry/deployment-source-manifest.json": "72a9b33978ac564d0c5282b7f8c9d653e2c75ce5159fdfb50d7e17e42dd63547"
+    "tests/c3-b12-registry/build-payloads.py": "54cc31b936c817ae35cddbe83d16c96733abfe3b5c3becfee2652c4210c455df",
+    "tests/c3-b12-registry/deployment-source-manifest.json": "4bdf11e2ac7d8048c1e9d1ffe73a7a70b42d8a04549313c15d0e58f094321d38",
+    "supabase/functions/_shared/ce-evaluation-scope.ts": "8f1ef878a90fb55eb66aa2a732035bc151e77d12a0a4deabf6c22c4f4c7cfd7e",
+    "supabase/functions/conversation-evaluate/index.ts": "123d8fde288929e3a2d05606dca28ffa719219d5f57444b33867ce2e432e3203"
   },
   "b12_sql_production_authorized": false,
   "b12_deployment_authorized": false

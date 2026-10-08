@@ -1,3 +1,4 @@
+import { verifyEvaluationEligibility } from "../_shared/ce-evaluation-scope.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.45.0";
 import {
   ensureCurrentMethodology,
@@ -85,8 +86,8 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const scope=await admin.rpc("ce_conversation_evaluable_v1",{p_conversation_id:conversationId});
-    if(scope.error || scope.data!==true) return json(req,409,{error:"evaluation_scope_excluded_or_unavailable"});
+    const scopeError=await verifyEvaluationEligibility(admin,conversationId);
+    if(scopeError) return json(req,409,{error:"evaluation_scope_excluded_or_unavailable"});
     await ensureCurrentMethodology(admin);
     const { data: enqueue, error: enqueueErr } = await admin.rpc(
       "ce_enqueue_current_snapshot_v1",

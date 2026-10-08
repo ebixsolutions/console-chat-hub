@@ -66,6 +66,15 @@ try:
  x=spawn(f"BEGIN;SELECT ce_claim_specific_job_v1((SELECT id FROM ce_evaluation_job WHERE conversation_id='{other}' LIMIT 1),'holder');SELECT pg_sleep(1.4);COMMIT;",'holder');observe('holder',"wait_event='PgSleep'")
  y=spawn(f"INSERT INTO c3_uat_conversation_scope VALUES('{other}','{co}','{ch}','{uid(6)}')",'registryWriter');observe('registryWriter',"wait_event_type='Lock'");done(x);done(y);checks.append(dict(name='real registry writer/claim lock race linearized',result='PASS'))
  yes('late registry recognized by subsequent eligibility',f"SELECT NOT ce_conversation_evaluable_v1('{other}')")
+ # Opposite lock order: a registry writer commits first; blocked claim must see that committed scope.
+ late=uid(7)
+ run(f"INSERT INTO conversations(id,company_id,channel_config_id) VALUES('{late}','{co}','{ch}');INSERT INTO ce_evaluation_state(conversation_id,company_id,revision) VALUES('{late}','{co}',1);INSERT INTO messages(id,conversation_id,role,content) VALUES('{uid(30)}','{late}','visitor','legitimate question'),('{uid(31)}','{late}','assistant','normal answer')")
+ late_job=run(f"SELECT id FROM ce_evaluation_job WHERE conversation_id='{late}'")
+ late_before=run(f"SELECT to_jsonb(j) FROM ce_evaluation_job j WHERE id='{late_job}'")
+ x=spawn(f"BEGIN;INSERT INTO c3_uat_conversation_scope VALUES('{late}','{co}','{ch}','{uid(6)}');SELECT pg_sleep(1.4);COMMIT;",'registryFirst');observe('registryFirst',"wait_event='PgSleep'")
+ y=spawn(f"SELECT ce_claim_specific_job_v1('{late_job}','waiter')",'claimAfterWriter');observe('claimAfterWriter',"wait_event_type='Lock'");done(x);result=done(y);assert 'conversation_not_evaluable' in result,result
+ assert run(f"SELECT to_jsonb(j) FROM ce_evaluation_job j WHERE id='{late_job}'")==late_before
+ checks.append(dict(name='writer-first real concurrency: committed registry observed / job unchanged',result='PASS'))
  # Preserve normal learning/training, refuse registered synthetic and historical evaluation links.
  run(f"INSERT INTO hf3_learning_case VALUES('{normal}'),('{syn}');INSERT INTO evaluation_training_outbox VALUES('{uid(200)}'),('{uid(201)}')")
  yes('normal learning preserved / synthetic zero spill',f"SELECT count(*)=1 AND bool_and(conversation_id='{normal}') FROM hf3_learning_case")

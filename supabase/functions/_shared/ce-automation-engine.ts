@@ -1,3 +1,4 @@
+import { verifyEvaluationEligibility } from "./ce-evaluation-scope.ts";
 /**
  * PR29 Task 2 — shared automatic Conversation Evaluation engine.
  *
@@ -377,9 +378,7 @@ export async function verifyEvaluationJobScope(admin: Db, job: AutomationJob): P
     if((conv.data.company_id && channelCompany && conv.data.company_id!==channelCompany) || (company??null)!==(job.company_id??null)) return "EVALUATION_JOB_TENANT_MISMATCH";
     // Existing service-role-only SECURITY DEFINER RPC evaluates the authoritative
     // registry; service clients have no direct permission to inspect that registry.
-    const scope=await admin.rpc("ce_conversation_evaluable_v1",{p_conversation_id:job.conversation_id});
-    if(scope.error || typeof scope.data!=="boolean") return "EVALUATION_SCOPE_UNAVAILABLE";
-    return scope.data===true?null:"EVALUATION_SCOPE_EXCLUDED";
+    return await verifyEvaluationEligibility(admin,job.conversation_id);
   } catch { return "EVALUATION_SCOPE_UNAVAILABLE"; }
 }
 
