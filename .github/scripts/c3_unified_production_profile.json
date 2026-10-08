@@ -346,9 +346,9 @@
     "supabase/functions/generate-reply/index.ts": "e1908d3c1b66a813d37501cac6b9338676248696a81dc8d9101222a69ac7fd14",
     "supabase/functions/_shared/f13-f14-root-cause.test.ts": "c62c864f4bf4ead25e3a7800533b2b0b2e00af68d870da31fc5527bfd4222933",
     "supabase/functions/_shared/f13-llm-failure.test.ts": "9a3220ab07ed2c8d1e03ea5d31ef8b1ea114fa55b2bd77464db6eaa43b17dc84",
-    "sql/c3_f13_f14_handoff_projection_proposed.sql": "8c30e27ba723273f173cbcfdb6599dc6381009165adc46782c61403a8fff78f4",
-    "sql/c3_f13_f14_handoff_projection_rollback_proposed.sql": "8afe7a25d16bbd2305bcf82a4bdbef3873eff0b1a54a6748eccf76862f7f266b",
-    "tests/c3-f13-f14/captured-handoff-functions.sql": "781f859a8c9d500ef3c0c933705497b4f4532d5e1ca199b492fe13f2c71c7692",
+    "sql/c3_f13_f14_handoff_projection_proposed.sql": "b5a060c4b107a20fe57ed0ad00309765386ccd46533a28a952ac4c845e4dfed9",
+    "sql/c3_f13_f14_handoff_projection_rollback_proposed.sql": "562cc5a13723696b7c2ac8d0b5200c41fabf6aceada226835ba4e0ee6dbc0d09",
+    "tests/c3-f13-f14/captured-handoff-functions.sql": "6218241834db96acab20b672e0b8ede880a0615394273db2f4cdaa1051eb52e3",
     "tests/c3-f13-f14/native-projection.py": "3b8e35c13ef309d72693ca6903cedb230b2b81953d0baef55ecbdaede7898816",
     ".github/scripts/c3_unified_production_source_gate.test.mjs": "eed06c231da8fc76c5bb48a413c1e453d8fe79704d5b6fa94499da6333a7b44a"
   },

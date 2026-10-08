@@ -209,7 +209,7 @@ BEGIN
   )::text;
   RETURN NEW;
 END;
-$function$
+$function$;
 
 CREATE OR REPLACE FUNCTION public.c3_enrich_handoff_from_memory_tg()
  RETURNS trigger
@@ -251,4 +251,4 @@ BEGIN
   NEW.ai_summary := jsonb_set(v_outer,'{structured_package}',v_package,true)::text;
   RETURN NEW;
 END;
-$function$
+$function$;

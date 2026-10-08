@@ -97,6 +97,6 @@ BEGIN
   NEW.ai_summary := jsonb_set(v_outer,'{structured_package}',v_package,true)::text;
   RETURN NEW;
 END;
-$function$
+$function$;
 
 COMMIT;
