@@ -26,6 +26,8 @@ jobs:
         run: python tests/c3-b12-registry/native-registry.py --database postgresql://postgres:b12-isolated-only@127.0.0.1:5432/postgres --out "$RUNNER_TEMP/b12"
       - name: Worker scope boundary and runtime type check
         run: |
+          python tests/c3-b12-registry/build-payloads.py "$RUNNER_TEMP/b12/payloads"
+          deno check --no-lock --node-modules-dir=manual --config supabase/functions/deno.json "$RUNNER_TEMP/b12/payloads/ce-evaluation-worker-target/ce-evaluation-worker/index.ts" "$RUNNER_TEMP/b12/payloads/ce-evaluation-control-target/ce-evaluation-control/index.ts"
           deno test --no-lock --allow-read --allow-env --node-modules-dir=manual supabase/functions/_shared/ce-registry-isolation.test.ts
           deno check --no-lock --node-modules-dir=manual supabase/functions/ce-evaluation-worker/index.ts supabase/functions/ce-evaluation-control/index.ts
           npx tsc --noEmit --project tsconfig.json

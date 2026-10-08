@@ -39,7 +39,7 @@ try:
  yes('metadata spoof alone cannot exclude unregistered normal',f"SELECT ce_conversation_evaluable_v1('{normal}')")
  yes('normal dispatch creates job / synthetic dispatch creates none',f"SELECT count(*)=0 FROM ce_evaluation_job WHERE conversation_id='{syn}'")
  yes('normal dispatch preserved',f"SELECT count(*)=2 FROM ce_evaluation_job WHERE conversation_id IN('{normal}','{other}')")
- for n in range(11):run(f"INSERT INTO ce_evaluation_job(id,job_key,conversation_id,company_id,snapshot_hash,evaluation_fingerprint,expected_revision,source,status,attempts) VALUES('{uid(100+n)}','{str(n).zfill(64)}','{syn}','{co}','{str(n).zfill(64)}',repeat('a',64),1,'ce_dwell','queued',1)")
+ for n in range(11):run(f"INSERT INTO ce_evaluation_job(id,job_key,conversation_id,company_id,snapshot_hash,evaluation_fingerprint,expected_revision,source,priority,status,attempts) VALUES('{uid(100+n)}','{str(n).zfill(64)}','{syn}','{co}','{str(n).zfill(64)}',repeat('a',64),1,'ce_dwell',70,'queued',1)")
  # Actual native evaluation rows, with real required columns, before late registry insertion.
  for ident,conv in [(200,normal),(201,other)]:
   run(f"INSERT INTO conversation_evaluation(id,attempt_id,conversation_id,evaluation_contract_version,input_snapshot_hash,accuracy_score,policy_score,tone_score,sales_score,context_score,hallucination_risk_score,overall_score,severity,training_eligible,model_version,prompt_version,kb_snapshot_id,policy_snapshot_id,source_deployment,evaluated_by,company_id) VALUES('{uid(ident)}','{uid(300)}','{conv}','native',repeat('b',64),50,50,50,50,50,0,50,'none',true,'native','native','native','native','native','{uid(301)}','{co}')")
@@ -47,13 +47,17 @@ try:
  yes('direct snapshot enqueue excluded',f"SELECT ce_enqueue_current_snapshot_v1('{syn}','manual',now())->>'result'",'conversation_not_evaluable')
  yes('direct lower enqueue excluded',f"SELECT ce_enqueue_evaluation_v1('{syn}',repeat('c',64),repeat('a',64),1,'manual',now())->>'result'",'conversation_not_evaluable')
  for n in range(11):yes('existing synthetic specific claim '+str(n),f"SELECT ce_claim_specific_job_v1('{uid(100+n)}','native')->>'result'",'conversation_not_evaluable')
+ yes('normal enqueue stale CAS preserved',f"SELECT ce_enqueue_evaluation_v1('{normal}',repeat('b',64),repeat('a',64),99,'manual',now())->>'result'",'stale_revision')
+ yes('normal enqueue idempotent retry',f"SELECT ce_enqueue_evaluation_v1('{normal}',repeat('b',64),repeat('a',64),1,'manual',now())->>'result'",'already_queued')
+ yes('synthetic canonical attempt initialization blocked',f"SELECT ce_automation_initiate_canonical_v1('{syn}','native',repeat('b',64),'native','native','native','{{}}'::jsonb,repeat('a',64),'native','native')->>'result'",'conversation_not_evaluable')
+ yes('synthetic attempt sink empty',f"SELECT count(*)=0 FROM conversation_evaluation_attempt WHERE conversation_id='{syn}'")
  # Truly overlapping database connections; the second blocks on the advisory claim lock.
  x=spawn("BEGIN; SELECT id FROM ce_claim_evaluation_jobs_v1('a',1);SELECT pg_sleep(1.4);COMMIT;",'claimA');observe('claimA',"wait_event='PgSleep'")
  y=spawn("BEGIN;SELECT id FROM ce_claim_evaluation_jobs_v1('b',1);COMMIT;",'claimB');observe('claimB',"wait_event_type='Lock'");done(x);done(y);checks.append(dict(name='real two-connection claim overlap and lock wait',result='PASS'))
  yes('normal jobs exactly once / attempts one',f"SELECT count(*)=2 AND min(attempts)=1 AND max(attempts)=1 FROM ce_evaluation_job WHERE conversation_id IN('{normal}','{other}') AND status='running'")
  assert run(f"SELECT jsonb_agg(to_jsonb(j) ORDER BY id) FROM ce_evaluation_job j WHERE conversation_id='{syn}'")==frozen;checks.append(dict(name='all11 synthetic full rows/status/attempts/lease unchanged',result='PASS'))
  # Cross-tenant job must never be claimed, regardless of otherwise legitimate conversation.
- run(f"INSERT INTO ce_evaluation_job(id,job_key,conversation_id,company_id,snapshot_hash,evaluation_fingerprint,expected_revision,source,status,attempts) VALUES('{uid(130)}',repeat('d',64),'{normal}','{uid(999)}',repeat('d',64),repeat('a',64),1,'manual','queued',1)")
+ run(f"INSERT INTO ce_evaluation_job(id,job_key,conversation_id,company_id,snapshot_hash,evaluation_fingerprint,expected_revision,source,priority,status,attempts) VALUES('{uid(130)}',repeat('d',64),'{normal}','{uid(999)}',repeat('d',64),repeat('a',64),1,'manual',100,'queued',1)")
  yes('cross tenant specific rejection',f"SELECT ce_claim_specific_job_v1('{uid(130)}','foreign')->>'result'",'tenant_mismatch')
  yes('cross tenant stays queued unchanged',f"SELECT attempts=1 AND status='queued' AND lease_owner IS NULL FROM ce_evaluation_job WHERE id='{uid(130)}'")
  # Registry INSERT is truly blocked while claim transaction holds SHARE; no sequential concurrency claim.

@@ -289,7 +289,9 @@
     "tests/c3-b12-registry/target-functions.json",
     "tests/c3-b12-registry/native-registry.py",
     "tests/c3-b12-registry/captured-sink-dependency.json",
-    "tests/c3-b12-registry/captured-company-helper.json"
+    "tests/c3-b12-registry/captured-company-helper.json",
+    "tests/c3-b12-registry/build-payloads.py",
+    "tests/c3-b12-registry/deployment-source-manifest.json"
   ],
   "conditional_worker_sha256": "56b02b24abd5b64748f5931e9cf9b0b1df05fb920b852ebe4b8bd51c71a793de",
   "normalized_preview_sha256": {
@@ -379,7 +381,7 @@
   "f13_f14_deployment_authorized": false,
   "f13_f14_authorization_document_sha256": "88a4a3f739df9573507fd1e3d90c714774f97feba8b08530f41892e1d0ebfcad",
   "authorized_b12_registry_repair_sha256": {
-    ".github/workflows/c3-b12-registry-isolation.yml": "032ec075acc7f61c71010467380d584493a0234fd4e6ef2a477096660e93bf27",
+    ".github/workflows/c3-b12-registry-isolation.yml": "06b6d69ba1d06718bddf61e4c2dd2d44882c0642eeb60572b308dc077aa89c1c",
     "supabase/functions/_shared/ce-automation-engine.ts": "99a20dcf4a0f1e9071260fab57ce7b60801b49d8eb5fc617896e66448c567c80",
     "supabase/functions/ce-evaluation-worker/index.ts": "4ced4c0bd7ee05e1a11b401a964226f13ca9e5f9446c4b20b06da881ec4a5f5d",
     "supabase/functions/ce-evaluation-control/index.ts": "0bf5be09acc6ea5ebb4d8fc80eb4716c8b417c6d8d462cc40c6fe60ecf3fe412",
@@ -388,10 +390,12 @@
     "sql/c3_b12_registry_isolation_rollback_proposed.sql": "c64d00fb7d958dad18b7ed795ebd1015a993d77e287d6bb4984a1986e9b3d743",
     "tests/c3-b12-registry/captured-functions.json": "bcd824a2e0b47da18d06025c5382e9f672dabe19ade6e058a7e91434d23807b1",
     "tests/c3-b12-registry/target-functions.json": "b2ed8031b341748804d9dfe65a1a755b4fbb2987bcfb0c3ec0269473d5d17a5e",
-    "tests/c3-b12-registry/native-registry.py": "96698b86d0f1e5026b0cc502739910b60e0dbf31eb75b2c1acbfeef05fd0f5d9",
+    "tests/c3-b12-registry/native-registry.py": "646f837cb7337c290a25ac7e59709edba8653de7c32081275fb7913aea7412dd",
     ".github/scripts/c3_unified_production_source_gate.test.mjs": "36c4e870115a2d1ccb4e9af6db20e2dcc604979fbf6ea99bab9cea173b6358e0",
     "tests/c3-b12-registry/captured-sink-dependency.json": "dca7f844a53ecf00cf26a4b9b09a84544a09d8faf9739e6d95a65d1918bf004a",
-    "tests/c3-b12-registry/captured-company-helper.json": "5ffd477ceb8c400f77de8e99f12c7bc7a8d386ca40a6f81e7eec17744fc5e8eb"
+    "tests/c3-b12-registry/captured-company-helper.json": "5ffd477ceb8c400f77de8e99f12c7bc7a8d386ca40a6f81e7eec17744fc5e8eb",
+    "tests/c3-b12-registry/build-payloads.py": "5d23d4a7693337770213c4295f4597f2031300d9b2b127b0095e548277e84583",
+    "tests/c3-b12-registry/deployment-source-manifest.json": "72a9b33978ac564d0c5282b7f8c9d653e2c75ce5159fdfb50d7e17e42dd63547"
   },
   "b12_sql_production_authorized": false,
   "b12_deployment_authorized": false
