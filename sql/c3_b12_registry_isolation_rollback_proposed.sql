@@ -22,7 +22,7 @@ CREATE OR REPLACE FUNCTION public.ce_conversation_evaluable_v1(p_conversation_id
  LANGUAGE sql
  STABLE SECURITY DEFINER
  SET search_path TO ''
-AS $function$;
+AS $function$
   SELECT CASE WHEN EXISTS (SELECT 1 FROM public.conversations c WHERE c.id = p_conversation_id AND COALESCE(c.metadata_source->>'source','') = 'widget_live_test' AND COALESCE((c.metadata_source->>'widget_live_test')::boolean,false) = true AND COALESCE((c.metadata_source->>'exclude_training')::boolean,false) = true) THEN false ELSE (count(*) FILTER (WHERE NOT COALESCE(m.is_recalled,false) AND lower(m.role) IN ('visitor','customer','user')) > 0 AND count(*) FILTER (WHERE NOT COALESCE(m.is_recalled,false) AND lower(m.role) IN ('assistant','ai','bot')) > 0) END FROM public.messages m WHERE m.conversation_id = p_conversation_id AND COALESCE(m.content,'') IS DISTINCT FROM '__THINKING__'
 $function$;
 
@@ -45,7 +45,7 @@ CREATE OR REPLACE FUNCTION public.ce_claim_specific_job_v1(p_job_id uuid, p_work
  LANGUAGE plpgsql
  SECURITY DEFINER
  SET search_path TO ''
-AS $function$;
+AS $function$
 declare
   v_cfg public.ce_automation_runtime;
   v_job public.ce_evaluation_job;
@@ -90,7 +90,7 @@ CREATE OR REPLACE FUNCTION public.c3_uat_evaluation_learning_guard()
  LANGUAGE plpgsql
  SECURITY DEFINER
  SET search_path TO ''
-AS $function$;
+AS $function$
 BEGIN
  IF public.c3_uat_learning_excluded(NEW.conversation_id) THEN NEW.training_eligible:=false; END IF;
  RETURN NEW;
