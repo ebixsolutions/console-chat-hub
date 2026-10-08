@@ -1604,6 +1604,10 @@ Deno.test("C3 source audit recall precedes commerce reply, context shortcuts and
   );
   const plannedReply = source.indexOf("const _c3PlannedReply", start);
   assert(resolvedAddress > start && resolvedAddress < plannedReply, "post-commit address correction must clear stale clarification before reply planning");
+  const contextUpdate = source.indexOf('_canonicalTurn.operation === "CUSTOMER_CONTEXT_UPDATE"', start);
+  assert(contextUpdate > resolvedAddress && contextUpdate < plannedReply, "customer-owned statements must not be preempted by product clarification");
+  const contextCommit = source.slice(contextUpdate, plannedReply);
+  assert(contextCommit.includes('_c3ServicePlan.knowledge_state !== "lookup_required"') && contextCommit.includes("requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent)") && contextCommit.includes("commitAiReplyWithControlGate("), "context update lost KB authority or B2 commit guard");
   const resolvedReadOnly = source.indexOf(
     "const _c3Resolution = resolveCanonicalCommerceResolution",
     start,

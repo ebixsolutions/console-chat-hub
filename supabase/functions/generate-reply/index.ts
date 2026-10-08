@@ -4639,6 +4639,75 @@ async function orchestrationGenerateReply(
     );
     if (immediate) return immediate;
   }
+  // Customer-authored updates do not require a product identity. Commit them
+  // before a service-plan fallback can turn a non-question into clarification.
+  // Mixed merchant-fact requests still require current KB evidence below.
+  const _criticalLocalRisk = classifyLocalTopicRisk(_h1LastMsg);
+  const _canonicalTurn = classifyCanonicalConversationTurn(
+    _h1LastMsg,
+    _pr5HistoryRows ?? [],
+    { explicit_handoff: isHandoffIntent(_h1LastMsg) },
+  );
+  if (
+    _canonicalTurn.operation === "CUSTOMER_CONTEXT_UPDATE" &&
+    _c3ServicePlan.knowledge_state !== "lookup_required" && !_c3ServicePlan.safe_assumptions.includes("query_context_limit") &&
+    !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent)
+  ) {
+    const acknowledgement =
+      _canonicalTurn.reason === "customer_context_requirements_request"
+        ? buildCustomerContextRequirementsResponse(
+          _canonicalTurn.language,
+          _pr5HistoryRows ?? [],
+        )
+        : buildCustomerContextAcknowledgement(_canonicalTurn.language);
+    const contextCommit = await commitAiReplyWithControlGate(
+      supabaseAdmin,
+      conversation_id,
+      source_message_id,
+      acknowledgement,
+      {
+        response_route: "customer_context_update",
+        escalation_action: "continue_ai",
+        handoff_required: false,
+        reason_code: _canonicalTurn.reason,
+      },
+    );
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+    if (contextCommit.ok) {
+      return new Response(
+        JSON.stringify({
+          success: true,
+          reply: acknowledgement,
+          response_route: "customer_context_update",
+          handoff_required: false,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    if (
+      ["human_control", "resolved", "superseded_source"].includes(
+        contextCommit.result,
+      )
+    ) {
+      return new Response(
+        JSON.stringify({ success: true, skipped: contextCommit.result }),
+        {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
+      );
+    }
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: `context_update_commit_${contextCommit.result}`,
+      }),
+      {
+        status: 409,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
+  }
+
   const _naturalGuidanceReply: string | null = null;
 
   const _c3IsGroundedReadOnlyRecap = _a3Commerce?.reason ===
@@ -4891,71 +4960,6 @@ async function orchestrationGenerateReply(
       JSON.stringify({
         success: false,
         error: `commerce_state_runtime_${commerceCommit.result}`,
-      }),
-      {
-        status: 409,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      },
-    );
-  }
-  const _criticalLocalRisk = classifyLocalTopicRisk(_h1LastMsg);
-  const _canonicalTurn = classifyCanonicalConversationTurn(
-    _h1LastMsg,
-    _pr5HistoryRows ?? [],
-    { explicit_handoff: isHandoffIntent(_h1LastMsg) },
-  );
-  if (
-    _canonicalTurn.operation === "CUSTOMER_CONTEXT_UPDATE" &&
-    _c3ServicePlan.knowledge_state !== "lookup_required" && !_c3ServicePlan.safe_assumptions.includes("query_context_limit") &&
-    !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent)
-  ) {
-    const acknowledgement =
-      _canonicalTurn.reason === "customer_context_requirements_request"
-        ? buildCustomerContextRequirementsResponse(
-          _canonicalTurn.language,
-          _pr5HistoryRows ?? [],
-        )
-        : buildCustomerContextAcknowledgement(_canonicalTurn.language);
-    const contextCommit = await commitAiReplyWithControlGate(
-      supabaseAdmin,
-      conversation_id,
-      source_message_id,
-      acknowledgement,
-      {
-        response_route: "customer_context_update",
-        escalation_action: "continue_ai",
-        handoff_required: false,
-        reason_code: _canonicalTurn.reason,
-      },
-    );
-    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-    if (contextCommit.ok) {
-      return new Response(
-        JSON.stringify({
-          success: true,
-          reply: acknowledgement,
-          response_route: "customer_context_update",
-          handoff_required: false,
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    }
-    if (
-      ["human_control", "resolved", "superseded_source"].includes(
-        contextCommit.result,
-      )
-    ) {
-      return new Response(
-        JSON.stringify({ success: true, skipped: contextCommit.result }),
-        {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        },
-      );
-    }
-    return new Response(
-      JSON.stringify({
-        success: false,
-        error: `context_update_commit_${contextCommit.result}`,
       }),
       {
         status: 409,
