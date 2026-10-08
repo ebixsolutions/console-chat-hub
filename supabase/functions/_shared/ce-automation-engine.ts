@@ -358,16 +358,44 @@ export interface AutomationJob {
   max_attempts: number;
 }
 
+/** Server-derived scope gate. Never invoke failure/status mutation for rejected work. */
+export async function verifyEvaluationJobScope(admin: Db, job: AutomationJob): Promise<string | null> {
+  try {
+    const saved = await admin.from("ce_evaluation_job").select("id,conversation_id,company_id,snapshot_hash,evaluation_fingerprint,expected_revision").eq("id",job.id).maybeSingle();
+    if(saved.error || !saved.data) return "EVALUATION_JOB_SCOPE_UNAVAILABLE";
+    if(saved.data.conversation_id!==job.conversation_id || (saved.data.company_id??null)!==(job.company_id??null)) return "EVALUATION_JOB_TENANT_MISMATCH";
+    if(saved.data.snapshot_hash!==job.snapshot_hash || saved.data.evaluation_fingerprint!==job.evaluation_fingerprint || saved.data.expected_revision!==job.expected_revision) return "EVALUATION_JOB_REVISION_MISMATCH";
+    const conv = await admin.from("conversations").select("company_id,channel_config_id").eq("id",job.conversation_id).maybeSingle();
+    if(conv.error || !conv.data) return "EVALUATION_CONVERSATION_SCOPE_UNAVAILABLE";
+    let channelCompany=null;
+    if(conv.data.channel_config_id){
+      const ch=await admin.from("channel_config").select("company_id").eq("id",conv.data.channel_config_id).maybeSingle();
+      if(ch.error || !ch.data) return "EVALUATION_CHANNEL_SCOPE_UNAVAILABLE";
+      channelCompany=ch.data.company_id;
+    }
+    const company=conv.data.company_id??channelCompany;
+    if((conv.data.company_id && channelCompany && conv.data.company_id!==channelCompany) || (company??null)!==(job.company_id??null)) return "EVALUATION_JOB_TENANT_MISMATCH";
+    // Existing service-role-only SECURITY DEFINER RPC evaluates the authoritative
+    // registry; service clients have no direct permission to inspect that registry.
+    const scope=await admin.rpc("ce_conversation_evaluable_v1",{p_conversation_id:job.conversation_id});
+    if(scope.error || typeof scope.data!=="boolean") return "EVALUATION_SCOPE_UNAVAILABLE";
+    return scope.data===true?null:"EVALUATION_SCOPE_EXCLUDED";
+  } catch { return "EVALUATION_SCOPE_UNAVAILABLE"; }
+}
+
 export async function processEvaluationJob(
   admin: Db,
   job: AutomationJob,
 ): Promise<{ ok: boolean; code?: string; evaluationId?: string; freshness?: string }> {
+  const scopeError=await verifyEvaluationJobScope(admin,job);
+  if(scopeError) return {ok:false,code:scopeError};
   const operationId = `auto:${job.id}:${crypto.randomUUID()}`;
   const contractVersion = Deno.env.get("CE_CONTRACT_VERSION") ?? "";
   const sourceDeployment = Deno.env.get("CE_SOURCE_DEPLOYMENT") ?? AUTOMATION_SOURCE_DEPLOYMENT;
   const model = Deno.env.get("LLM_MODEL_EVALUATION") ?? "";
 
   try {
+    await ensureCurrentMethodology(admin);
     const { data: conv, error: convErr } = await admin
       .from("conversations")
       .select(

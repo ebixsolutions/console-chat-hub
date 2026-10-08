@@ -1,0 +1,35 @@
+name: C3 B12 Registry Isolation
+on:
+  push:
+    branches: [director/ai-abc-c3-long-memory-final-cutover]
+permissions:
+  contents: read
+jobs:
+  native-and-worker:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17
+        env: {POSTGRES_USER: postgres, POSTGRES_PASSWORD: b12-isolated-only, POSTGRES_DB: postgres}
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - uses: denoland/setup-deno@v2
+        with: {deno-version: '2.5.0'}
+      - run: npm ci
+      - name: Actual PostgreSQL native and multi-connection regression
+        run: python tests/c3-b12-registry/native-registry.py --database postgresql://postgres:b12-isolated-only@127.0.0.1:5432/postgres --out "$RUNNER_TEMP/b12"
+      - name: Worker scope boundary and runtime type check
+        run: |
+          deno test --no-lock --allow-read --allow-env --node-modules-dir=manual supabase/functions/_shared/ce-registry-isolation.test.ts
+          deno check --no-lock --node-modules-dir=manual supabase/functions/ce-evaluation-worker/index.ts supabase/functions/ce-evaluation-control/index.ts
+          npx tsc --noEmit --project tsconfig.json
+          npm run build
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: 'C3-B12-${{ github.sha }}', path: '${{ runner.temp }}/b12'}

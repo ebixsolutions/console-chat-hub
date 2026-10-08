@@ -277,7 +277,17 @@
     "supabase/functions/_shared/conversation-resolution-contract.ts",
     "supabase/functions/_shared/handoff-intent.ts",
     "supabase/functions/_shared/conversation-intelligence.ts",
-    "supabase/functions/_shared/f13-runtime-recovery.test.ts"
+    "supabase/functions/_shared/f13-runtime-recovery.test.ts",
+    ".github/workflows/c3-b12-registry-isolation.yml",
+    "supabase/functions/_shared/ce-automation-engine.ts",
+    "supabase/functions/ce-evaluation-worker/index.ts",
+    "supabase/functions/ce-evaluation-control/index.ts",
+    "supabase/functions/_shared/ce-registry-isolation.test.ts",
+    "sql/c3_b12_registry_isolation_forward_proposed.sql",
+    "sql/c3_b12_registry_isolation_rollback_proposed.sql",
+    "tests/c3-b12-registry/captured-functions.json",
+    "tests/c3-b12-registry/target-functions.json",
+    "tests/c3-b12-registry/native-registry.py"
   ],
   "conditional_worker_sha256": "56b02b24abd5b64748f5931e9cf9b0b1df05fb920b852ebe4b8bd51c71a793de",
   "normalized_preview_sha256": {
@@ -365,5 +375,19 @@
   },
   "f13_f14_sql_production_authorized": false,
   "f13_f14_deployment_authorized": false,
-  "f13_f14_authorization_document_sha256": "88a4a3f739df9573507fd1e3d90c714774f97feba8b08530f41892e1d0ebfcad"
+  "f13_f14_authorization_document_sha256": "88a4a3f739df9573507fd1e3d90c714774f97feba8b08530f41892e1d0ebfcad",
+  "authorized_b12_registry_repair_sha256": {
+    ".github/workflows/c3-b12-registry-isolation.yml": "032ec075acc7f61c71010467380d584493a0234fd4e6ef2a477096660e93bf27",
+    "supabase/functions/_shared/ce-automation-engine.ts": "5a708c2fd13cd57c644579a74bb05633c2d69885e3d17b3ddaf1460827df2faa",
+    "supabase/functions/ce-evaluation-worker/index.ts": "4ced4c0bd7ee05e1a11b401a964226f13ca9e5f9446c4b20b06da881ec4a5f5d",
+    "supabase/functions/ce-evaluation-control/index.ts": "0bf5be09acc6ea5ebb4d8fc80eb4716c8b417c6d8d462cc40c6fe60ecf3fe412",
+    "supabase/functions/_shared/ce-registry-isolation.test.ts": "57e47471b894585db8ae02bb225fff6a5400e8b50616521a83ba0c275ff9672f",
+    "sql/c3_b12_registry_isolation_forward_proposed.sql": "b9f9ef268e82d45b9460cd2ddf0c105d811ee21118fafc5908e66569734e108f",
+    "sql/c3_b12_registry_isolation_rollback_proposed.sql": "86441dbc10b074f1295f8d9f802df0778fbe68a85b01dacde83ae1e6391e5a25",
+    "tests/c3-b12-registry/captured-functions.json": "bcd824a2e0b47da18d06025c5382e9f672dabe19ade6e058a7e91434d23807b1",
+    "tests/c3-b12-registry/target-functions.json": "d163d5cd5365c1ab58c998620d74e66b456fb131592f1ea22aa1652c52252809",
+    "tests/c3-b12-registry/native-registry.py": "632c83375e5f1cda285ae72476027ad2d400b0012f8e7ae2cc56b09a910afa34"
+  },
+  "b12_sql_production_authorized": false,
+  "b12_deployment_authorized": false
 }
