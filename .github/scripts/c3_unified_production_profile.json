@@ -340,7 +340,7 @@
   "authorized_f13_f14_repair_sha256": {
     ".github/workflows/task-ai-abc-c3-final-gate.yml": "ee9fdf57c2749b5d222f37a6c3de33772fa755f5e099328d462fb81c4c9075c0",
     "src/components/console/handoff-summary.ts": "128abe76c086c03efabe51985628b6f3061b482566072f9e4d0d0cea8e255f13",
-    "supabase/functions/_shared/commerce-semantic-interpreter.ts": "ded9d65fe07e5b7f4a00b8dd95fdf7de9bb3ccd5db0a5687fa6702ef196f9160",
+    "supabase/functions/_shared/commerce-semantic-interpreter.ts": "79c1efa7d92791c93e10b514c7576fc1bc5f315e9663a7e45c2a7677e2ec66a1",
     "supabase/functions/_shared/commerce-state-authority.ts": "9c722eab711a65a7e3f6bbe5d744d1c7c54d2940880b8c7c9183d3adc023aa3a",
     "supabase/functions/_shared/conversation-long-memory.ts": "c621da19845996cdc8e2644694d9cc7523fa3b4b196dcd12cb33f04213bc35d8",
     "supabase/functions/_shared/conversation-recall.ts": "281fbccaa51198a1651a28f9500a3336a0031a6e503484e9ce82a6b1c5f2af3b",
@@ -361,7 +361,7 @@
     "supabase/functions/_shared/handoff-intent.ts": "40c6fdd391dbc68d0edcd8568b4bd5e38478c93f581f5c74455c2e5f7c5e2295",
     "supabase/functions/_shared/conversation-intelligence.ts": "5c6e2b0973df9c41dee0fb9a324b661ce7835946e129210d37071519d5e41658",
     "supabase/functions/_shared/commerce-semantic-frame.ts": "31d35d9876169db873410e6eda8ef7831f05bf814d45f1654711aec7c1c6632c",
-    "supabase/functions/_shared/f13-runtime-recovery.test.ts": "1ebbfadcc004d9bafe9ac137a0ba8b226bf54710bd4eb6cef7aa1a0efedd49b3"
+    "supabase/functions/_shared/f13-runtime-recovery.test.ts": "cb501231e9de70d10224c5c44ff60b83099b1c386961a5c1ae8b5fcae5d19160"
   },
   "f13_f14_sql_production_authorized": false,
   "f13_f14_deployment_authorized": false,

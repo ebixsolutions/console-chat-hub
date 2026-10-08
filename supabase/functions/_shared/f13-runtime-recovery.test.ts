@@ -8,7 +8,7 @@ import { createEmptyConversationCommerceState } from './commerce-state-contract.
 import { prepareConversationRecall } from './conversation-recall.ts';
 import { recallFixture } from './conversation-recall.test.ts';
 import { runCommerceStateRuntime } from './commerce-state-runtime.ts';
-import { interpretCommerceSemantics } from './commerce-semantic-interpreter.ts';
+import { interpretCommerceSemantics, buildPersistentCommerceStateSummary } from './commerce-semantic-interpreter.ts';
 import { normalizeCommerceSemanticFrame } from './commerce-semantic-frame.ts';
 import { projectTicketSummary } from '../../../src/components/console/handoff-summary.ts';
 const assert=(x:unknown,m:string)=>{if(!x)throw Error(m)};
@@ -88,4 +88,10 @@ Deno.test('novel customer fact corrections retain old values as history; active-
  assert(next.cancelled_or_superseded.some(f=>f.key==='superseded_renewal'&&f.value===false&&f.source_message_id==='first'),'old false revived or lineage lost');
  let rejected=false;try{build([rows('New background','limit')],null,Array.from({length:17},(_,i)=>({key:`field_${i}`,value:i,authority:'customer',source_message_id:'limit'})))}catch{rejected=true}
  assert(rejected,'fact limit silently dropped an active customer requirement');
+});
+
+Deno.test('semantic current-turn delta sees source-bound canonical background facts, not only empty Commerce',()=>{
+ const summary=buildPersistentCommerceStateSummary({revision:2,state:createEmptyConversationCommerceState()},{memory:{current_customer_facts:[{key:"subscription_seats",value:{amount:0,unit:"users"},source_message_id:"actual-first"},{key:"auto_renew",value:false,source_message_id:"actual-correction"},{key:"appointment_date",value:null,source_message_id:"actual-first"}]}});
+ const x=JSON.parse(summary!);assert(x.current_customer_facts[1].value===false&&x.current_customer_facts[2].value===null&&x.current_customer_facts[0].value.unit==="users",String(summary));
+ assert(x.current_customer_facts[1].source_message_id==="actual-correction",'snapshot source lineage lost');
 });

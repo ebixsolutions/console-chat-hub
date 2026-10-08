@@ -35,7 +35,7 @@ Do not answer the customer. Do not invent product facts, prices, availability, p
 Do not assume an industry taxonomy. Interpret unfamiliar products/services compositionally from the customer's words and context.
 Wire contract: operation and confidence are required. Include only THIS turn's changes, references, questions and ambiguity. Omit unchanged/default fields. The server supplies the canonical version, empty arrays, nulls and unknown lifecycle defaults.
 Optional fields: language, intent, topic, entities, referents, customer_facts, customer_correction, additive, explicit_negations, requested_facts, transaction_state, payment_state, booking_state, fulfillment_state, ambiguity.
-customer_facts is at most 16 records in an array of {key,value} for newly asserted CUSTOMER background/needs, not merchant evidence. Keep meaningful field names, quantities with units, false, zero, null/unknown, exclusions and nested constraints. Never include a fact solely recalled from prior context. A background catalogue count/team/market/interface is a customer fact, not an item to buy or cancel. Control/handoff/recap instructions are not facts or entities.
+customer_facts is at most 16 records in an array of {key,value} for newly asserted CUSTOMER background/needs, not merchant evidence. Keep meaningful field names, quantities with units, false, zero, null/unknown, exclusions and nested constraints. Reuse the exact retained key from persistent current_customer_facts when correcting the same field; never emit an old value as a second current fact under a synonym. Never include a fact solely recalled from prior context. A background catalogue count/team/market/interface is a customer fact, not an item to buy or cancel. Control/handoff/recap instructions are not facts or entities.
 An entity needs name, kind, confidence; include entity_ref, category_hint, sku, model, quantity, unit, attributes, constraints and capabilities only when actually supplied/needed. capabilities contains ONLY requested true flags, never merchant support. Omission is not a customer denial; retain explicit false in attributes/constraints/customer_facts.
 Allowed operation: ADD_ITEM, SET_QUANTITY, UPDATE_ITEM, REMOVE_ITEM, CANCEL_ITEM, RESERVE, REQUEST_QUOTE, ASK_FACT, ASK_CALCULATION, CONFIRM, DEFER, NO_STATE_CHANGE.
 Allowed kind: physical_product, digital_good, service, rental, subscription, ticket, custom_item, b2b_product, unknown.
@@ -81,14 +81,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  */
 export function buildPersistentCommerceStateSummary(
   row: unknown,
+  memoryRow?: unknown,
 ): string | null {
-  if (!isRecord(row) || !isRecord(row.state)) return null;
+  if ((!isRecord(row) || !isRecord(row.state)) && (!isRecord(memoryRow) || !isRecord(memoryRow.memory))) return null;
+  row = isRecord(row) && isRecord(row.state) ? row : {revision:0,state:{}};
+  if (!isRecord(row)) return null;
   const revision = typeof row.revision === "number"
     ? row.revision
     : Number(row.revision ?? 0);
   const bounded = {
     revision: Number.isFinite(revision) && revision >= 0 ? revision : 0,
     state: row.state,
+    ...(isRecord(memoryRow) && isRecord(memoryRow.memory) && Array.isArray(memoryRow.memory.current_customer_facts)
+      ? {current_customer_facts: memoryRow.memory.current_customer_facts.map((fact:unknown)=>isRecord(fact)?{key:fact.key,value:fact.value,source_message_id:fact.source_message_id}:fact)} : {}),
   };
   try {
     const summary = JSON.stringify(bounded);
@@ -138,22 +143,17 @@ async function loadPersistentCommerceStateSummary(
     });}
   const timer = setTimeout(() => controller.abort(), 800);
   try {
-    const response = await fetch(
-      `${supabaseUrl}/rest/v1/conversation_commerce_state?${params.toString()}`,
-      {
-        method: "GET",
-        headers: {
-          apikey: adminKey,
-          Authorization: `Bearer ${adminKey}`,
-          Accept: "application/json",
-        },
-        signal: controller.signal,
-      },
-    );
-    if (!response.ok) return null;
-    const payload: unknown = await response.json();
-    if (!Array.isArray(payload) || payload.length === 0) return null;
-    return buildPersistentCommerceStateSummary(payload[0]);
+    const memoryParams = new URLSearchParams({select:"memory",conversation_id:`eq.${input.conversation_id}`,company_id:`eq.${input.company_id}`,limit:"1"});
+    const options = {method:"GET",headers:{apikey:adminKey,Authorization:`Bearer ${adminKey}`,Accept:"application/json"},signal:controller.signal};
+    // Parallel, read-only and identically tenant scoped within the existing timeout.
+    const [response,memoryResponse] = await Promise.all([
+      fetch(`${supabaseUrl}/rest/v1/conversation_commerce_state?${params.toString()}`,options),
+      fetch(`${supabaseUrl}/rest/v1/conversation_memory_state?${memoryParams.toString()}`,options),
+    ]);
+    if(!response.ok || !memoryResponse.ok) return JSON.stringify({context_incomplete:true});
+    const [payload,memoryPayload]:unknown[] = await Promise.all([response.json(),memoryResponse.json()]);
+    if(!Array.isArray(payload) || !Array.isArray(memoryPayload)) return JSON.stringify({context_incomplete:true});
+    return buildPersistentCommerceStateSummary(payload[0],memoryPayload[0]);
   } catch {
     return null;
   } finally {
