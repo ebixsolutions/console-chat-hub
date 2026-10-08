@@ -198,6 +198,10 @@ const PRESENT_REQUEST_MARKERS = [
   "马上",
   "請直接",
   "请直接",
+  "請安排",
+  "请安排",
+  "安排真人",
+  "安排人工",
   "請轉",
   "请转",
   "要轉",
@@ -234,6 +238,25 @@ const PRESENT_REQUEST_MARKERS = [
   "let me speak",
   "let me talk",
 ];
+
+const HUMAN_ZH = /(真人|人工|客服)/;
+const HUMAN_EN = /\b(human|live agent|human agent|real person|support agent|customer service)\b/i;
+const NEG_HUMAN_ZH = /(?:唔好|不要|不需要|唔需要|不想|唔想|唔使|不用|毋須|毋需|別|别|未需要|未要|而家未|現在未|现在未|唔係要|不是要|並非要|并非要|未叫|冇叫|没有叫|沒有叫|禁止|不准|唔准).{0,8}(?:轉|转|接|搵|找|聯絡|联系|要|需要)?\s*(?:真人|人工|客服(?:人員|人员)?)|(?:真人|人工|客服(?:人員|人员)?).{0,8}(?:唔好|不要|唔使|不用|毋須|毋需|未需要|未要|禁止|不准|唔准)/;
+const NEG_HUMAN_EN = /\b(?:don't|do not|didn't|did not|not asking|not ask|no need|don't need|do not need|not yet|never)\b.{0,28}\b(?:connect|transfer|put|speak|want|need)?\b.{0,12}\b(?:human|live agent|human agent|real person|support agent|customer service)\b|\b(?:human|live agent|human agent|real person|support agent|customer service)\b.{0,20}\b(?:not needed|not required|no need|not yet)\b/i;
+const AI_REJECT_HUMAN_REQUEST_ZH = /(?:唔好|不要|唔使|不用|毋須|毋需)\s*(?:AI|人工智能|機器人|机器人|bot).{0,24}(?:(?:我)?(?:而家|現在|现在|即刻|立即)?(?:要|想要|需要).{0,8}(?:真人|人工|客服(?:人員|人员)?)|(?:請|请|麻煩|麻烦|幫我|帮我).{0,10}(?:轉|转|接|搵|找|聯絡|联系).{0,8}(?:真人|人工|客服(?:人員|人员)?))/i;
+const AI_REJECT_HUMAN_REQUEST_EN = /\b(?:don't|do not|no longer want|stop using)\b.{0,16}\b(?:ai|bot|robot|automation)\b.{0,40}\b(?:i want|i need|please connect|please transfer|connect me|transfer me|let me speak to)\b.{0,16}\b(?:a\s+)?(?:human|live agent|human agent|real person|customer service)\b/i;
+const CONDITIONAL_ZH = /(如果|若果|如果.*先|先至|才|除非|答唔到|答不到|查唔到|查不到)/;
+const CONDITIONAL_EN = /\b(if|only if|unless|in case)\b/i;
+const FUTURE_ZH = /(之後|之后|遲啲|迟点|遲些|稍後|稍后|日後|以后|以後|到時|到时|再考慮|再考虑|可能)/;
+const FUTURE_EN = /\b(later|afterwards|after that|eventually|maybe later|might later|in the future)\b/i;
+const REFERENCE_ZH = /(你頭先|你刚才|你剛才|你之前|頭先話|刚才说|剛才說|提過|提过|講過|讲过|所謂|所谓|引用)/;
+const REFERENCE_EN = /\b(you said|you mentioned|earlier|previously|before|quote|quoted)\b/i;
+const QUESTION_ZH = /(係咪|是不是|是否|幾點|几点|幾時|何時|多久|幾耐|邊個|哪个|點樣|怎样|怎樣|可以嗎|可唔可以).*(真人|人工|客服)|(真人|人工|客服).*(係咪|是不是|是否|幾點|几点|幾時|何時|多久|幾耐|邊個|哪个|點樣|怎样|怎樣|可以嗎|可唔可以)/;
+const QUESTION_EN = /\b(when|what|who|where|how|hours|available|open|close|can i|could i)\b.*\b(human|agent|customer service|support)\b|\b(human|agent|customer service|support)\b.*\b(when|what|who|where|how|hours|available|open|close)\b/i;
+const HYPOTHETICAL_ZH = /(假如|假設|假设|例如|譬如|可唔可以轉|可不可以转|如果我要|如果想)/;
+const HYPOTHETICAL_EN = /\b(hypothetically|suppose|what if|could i|would i be able to)\b/i;
+const EXPLICIT_ZH = /(?:而家|現在|现在|即刻|立即).{0,8}(轉|转|接|搵|找|聯絡|联系).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:請|请|麻煩|麻烦|幫我|帮我).{0,10}(轉|转|接|搵|找|聯絡|联系).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:我要|我想|我需要|想要|需要).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:我)?(?:而家|現在|现在|即刻|立即).{0,4}(?:要|想要|需要).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:我)?(?:而家|現在|现在|即刻|立即)?(?:正式|明確|明确|確定|确定)(?:要|要求|想要|需要).{0,8}(真人|人工|客服(?:人員|人员)?)/;
+const EXPLICIT_EN = /\b(please\s+)?(connect|transfer|put|let)\s+me\s+(to|through to)\s+(a\s+)?(human|live agent|human agent|real person|customer service)|\b(i want|i need|let me speak to|i want to speak to|i need to speak to|connect me to)\s+(a\s+)?(human|live agent|human agent|real person|customer service)(\s+now)?\b/i;
 
 function normalize(text: string): string {
   return (text ?? "").normalize("NFKC").trim();
@@ -278,7 +301,7 @@ function classifyHandoffClause(text: string): HandoffIntentClassification {
     ...matches(lower, raw, HUMAN_TERMS_ZH),
     ...matches(lower, raw, HUMAN_TERMS_EN),
   ];
-  const mentions = mentionTerms.length > 0;
+  const mentions = mentionTerms.length > 0 || HUMAN_ZH.test(raw) || HUMAN_EN.test(raw);
 
   const base: HandoffIntentClassification = {
     category: "no_mention",
@@ -291,39 +314,36 @@ function classifyHandoffClause(text: string): HandoffIntentClassification {
 
   if (!mentions) return base;
 
-  // Negation is authoritative only when it occurs in the same clause as the
-  // human-handoff mention. A separate instruction such as "不要當作已完成"
-  // must not cancel an explicit "我要真人客服" request.
-  if (hasScopedHandoffNegation(raw)) {
-    return { ...base, category: "negated_request", pure_handoff_negation: true };
-  }
-
-  if (matches(lower, raw, CONDITIONAL_MARKERS).length > 0) {
-    return { ...base, category: "conditional_or_future" };
-  }
-
-  if (matches(lower, raw, REFERENCE_MARKERS).length > 0) {
-    return { ...base, category: "reference_or_report" };
-  }
-
-  const isQuestion = /[?？]$/.test(raw) || matches(lower, raw, QUESTION_MARKERS).length > 0;
-  const hasPresentRequest = matches(lower, raw, PRESENT_REQUEST_MARKERS).length > 0;
-
-  if (isQuestion && !hasPresentRequest) {
-    return { ...base, category: "informational_question" };
-  }
-
-  if (hasPresentRequest) {
-    return { ...base, category: "explicit_request", explicit_request: true };
-  }
-
+  if (AI_REJECT_HUMAN_REQUEST_ZH.test(raw) || AI_REJECT_HUMAN_REQUEST_EN.test(raw))
+    return {...base,category:"explicit_request",explicit_request:true};
+  const handoffText = raw.replace(/(?:不需要|不要|唔需要|唔要)\s*(?:手機|手机|mobile\s*)?(?:App|付款|訂單|订单)|(?:do not|don't) (?:need|want|pay for) (?:an? )?(?:app|payment|order)/gi, "");
+  if (NEG_HUMAN_ZH.test(handoffText) || NEG_HUMAN_EN.test(handoffText))
+    return {...base,category:"negated_request",pure_handoff_negation:true};
+  if (CONDITIONAL_ZH.test(raw) || CONDITIONAL_EN.test(raw) || FUTURE_ZH.test(raw) || FUTURE_EN.test(raw) || HYPOTHETICAL_ZH.test(raw) || HYPOTHETICAL_EN.test(raw))
+    return {...base,category:"conditional_or_future"};
+  if (REFERENCE_ZH.test(raw) || REFERENCE_EN.test(raw))
+    return {...base,category:"reference_or_report"};
+  if (QUESTION_ZH.test(raw) || QUESTION_EN.test(raw))
+    return {...base,category:"informational_question"};
+  const request = EXPLICIT_ZH.test(raw) || EXPLICIT_EN.test(raw) ||
+    /(?:請|请|麻煩|麻烦|幫我|帮我|現在|现在|而家)?(?:安排|聯絡|联系).{0,12}(?:真人|人工|客服).{0,12}(?:接手|轉接|转接|協助|协助)|(?:please )?(?:arrange|contact).{0,20}(?:human|live agent).{0,20}(?:take over|help|support)/i.test(raw);
+  if (request) return {...base,category:"explicit_request",explicit_request:true};
   return { ...base, category: "mention_only" };
+}
+
+/** Shared clause boundaries for routing and business projection. */
+export function splitHandoffClauses(text: string): string[] {
+  return text.split(/[，,。!！;；\n]+|(?<!\d)\.(?!\d)|(?:並|并|而且|同時|同时)(?=.{0,12}(?:真人|人工))|\b(?:and|but)\s+(?=(?:please|transfer|connect|I (?:want|need))\b)/i).map((part) => part.trim()).filter(Boolean);
 }
 
 export function classifyHandoffIntent(text: string): HandoffIntentClassification {
   const language = detectHandoffLanguageHint(text);
-  const clauses = text.split(/[，,。.!！;；\n]+/).map((part) => part.trim()).filter(Boolean);
+  const clauses = splitHandoffClauses(text);
   const decisions = (clauses.length ? clauses : [text]).map(classifyHandoffClause);
+  // A conditional antecedent governs the request in the same sentence, even
+  // when punctuation separates the antecedent from its consequent.
+  if (/^(?:如果|假如|萬一|万一|倘若|if\b|in case\b)/i.test(text.trim()) && !/[。.!！]\s*(?:請|请|現在|现在|而家|please|now|I want)/i.test(text))
+    return {...(decisions.find(d=>d.mentions_human_handoff) ?? classifyHandoffClause(text)),language,category:"conditional_or_future",explicit_request:false,pure_handoff_negation:false};
   const explicit = decisions.find((decision) => decision.explicit_request);
   const negated = decisions.find((decision) => decision.pure_handoff_negation);
   if (explicit && negated) return { ...negated, language };

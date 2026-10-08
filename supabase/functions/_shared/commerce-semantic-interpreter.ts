@@ -33,16 +33,14 @@ const SYSTEM = `You are a multilingual commerce semantic interpreter.
 Your job is ONLY to understand the customer's commerce meaning and return one JSON object matching the canonical commerce semantic frame.
 Do not answer the customer. Do not invent product facts, prices, availability, policies, T&C, delivery rules or company facts.
 Do not assume an industry taxonomy. Interpret unfamiliar products/services compositionally from the customer's words and context.
-Required JSON fields: version, language, operation, intent, topic, entities, referents, customer_correction, additive, explicit_negations, requested_facts, transaction_state, payment_state, booking_state, fulfillment_state, ambiguity, confidence.
-Each entity must contain: entity_ref, name, kind, category_hint, sku, model, quantity, unit, attributes, constraints, capabilities, confidence.
-ambiguity must contain: is_ambiguous, reasons, clarification_question.
-Allowed operation values: ADD_ITEM, SET_QUANTITY, UPDATE_ITEM, REMOVE_ITEM, CANCEL_ITEM, RESERVE, REQUEST_QUOTE, ASK_FACT, ASK_CALCULATION, CONFIRM, DEFER, NO_STATE_CHANGE.
-Allowed kind values: physical_product, digital_good, service, rental, subscription, ticket, custom_item, b2b_product, unknown.
-Allowed transaction_state values: none, draft, pending_confirmation, confirmed, completed, cancelled, unknown.
-Allowed payment_state values: none, pending_quote, pending_payment, paid, failed, refunded, partially_refunded, unknown.
-Allowed booking_state values: none, requested, pending, booked, completed, cancelled, unknown.
-Allowed fulfillment_state values: none, requested, pending, scheduled, in_progress, fulfilled, cancelled, unknown.
-Capabilities must contain booleans: requires_delivery, supports_pickup, requires_installation, requires_booking, requires_quote, requires_site_check, digital_fulfilment, recurring_billing, rental_return, customization.
+Wire contract: operation and confidence are required. Include only THIS turn's changes, references, questions and ambiguity. Omit unchanged/default fields. The server supplies the canonical version, empty arrays, nulls and unknown lifecycle defaults.
+Optional fields: language, intent, topic, entities, referents, customer_facts, customer_correction, additive, explicit_negations, requested_facts, transaction_state, payment_state, booking_state, fulfillment_state, ambiguity.
+customer_facts is at most 16 records in an array of {key,value} for newly asserted CUSTOMER background/needs, not merchant evidence. Keep meaningful field names, quantities with units, false, zero, null/unknown, exclusions and nested constraints. Never include a fact solely recalled from prior context. A background catalogue count/team/market/interface is a customer fact, not an item to buy or cancel. Control/handoff/recap instructions are not facts or entities.
+An entity needs name, kind, confidence; include entity_ref, category_hint, sku, model, quantity, unit, attributes, constraints and capabilities only when actually supplied/needed. capabilities contains ONLY requested true flags, never merchant support. Omission is not a customer denial; retain explicit false in attributes/constraints/customer_facts.
+Allowed operation: ADD_ITEM, SET_QUANTITY, UPDATE_ITEM, REMOVE_ITEM, CANCEL_ITEM, RESERVE, REQUEST_QUOTE, ASK_FACT, ASK_CALCULATION, CONFIRM, DEFER, NO_STATE_CHANGE.
+Allowed kind: physical_product, digital_good, service, rental, subscription, ticket, custom_item, b2b_product, unknown.
+Lifecycle values use none/unknown unless exact customer evidence: transaction draft/pending_confirmation/confirmed/completed/cancelled; payment pending_quote/pending_payment/paid/failed/refunded/partially_refunded; booking requested/pending/booked/completed/cancelled; fulfillment requested/pending/scheduled/in_progress/fulfilled/cancelled.
+ambiguity when needed: {is_ambiguous:true,reasons:[short reason],clarification_question:short question}. Do not repeat complete history/state, unchanged entities or resolved fields. Never make up provenance; the server binds the actual latest visitor message.
 Core rules:
 1. Resolve ellipsis, pronouns and short follow-ups from recent customer context and persistent state only when confidence is sufficient. If two or more plausible referents/meanings remain, set ambiguity.is_ambiguous=true, explain concise reasons, provide a clarification_question, use NO_STATE_CHANGE and do not propose a mutation.
 2. Keep semantics language-neutral even though language records the customer's input language.
@@ -187,7 +185,7 @@ function buildUser(
         clean(persistentStateSummary, 2400)
       }`
       : "Persistent commerce state summary: none",
-    "Return one canonical semantic frame.",
+    "Return one compact current-turn delta, not a state snapshot.",
   ].join("\n\n");
 }
 
@@ -196,6 +194,8 @@ export async function interpretCommerceSemantics(
 ): Promise<CommerceSemanticInterpretResult> {
   const latest = clean(input.latest, 1600);
   if (!latest) return { frame: null, source: "none", failure_code: null };
+  if (String(input.latest).normalize("NFKC").replace(/\s+/g," ").trim().length > 1600)
+    return {frame:null,source:"none",failure_code:"SEMANTIC_INPUT_LIMIT",failure_stage:"input_limit"};
 
   const persistentStateSummary = await loadPersistentCommerceStateSummary(
     input,

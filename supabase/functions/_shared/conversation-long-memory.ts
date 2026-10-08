@@ -537,9 +537,10 @@ function fitMemory(memory: CanonicalConversationMemory): CanonicalConversationMe
   if (size() <= C3_MEMORY_JSON_CHAR_BUDGET) return fitted;
   fitted = { ...fitted, question_lifecycle: fitted.question_lifecycle?.slice(-12).map(item=>({...item,text:item.text.slice(0,400)})), historical_facts: fitted.historical_facts.slice(-8), prior_topics: fitted.prior_topics.slice(-6) };
   if (size() <= C3_MEMORY_JSON_CHAR_BUDGET) return fitted;
-  fitted = { ...fitted, current_customer_facts: fitted.current_customer_facts.slice(-8), grounded_reference_lineage: fitted.grounded_reference_lineage.slice(0, 6) };
+  fitted = { ...fitted, grounded_reference_lineage: fitted.grounded_reference_lineage.slice(0, 6) };
   if (size() <= C3_MEMORY_JSON_CHAR_BUDGET) return fitted;
   fitted = { ...fitted, open_questions: fitted.open_questions.slice(0, 6), pending_actions: fitted.pending_actions.slice(0, 6), active_constraints: fitted.active_constraints.slice(0, 6) };
+  if (size() > C3_MEMORY_JSON_CHAR_BUDGET) throw new Error("C3_CURRENT_FACTS_EXCEED_MEMORY_BUDGET");
   return fitted;
 }
 
@@ -618,6 +619,7 @@ function questionLifecycle(rows: MemoryHistoryRow[], state: ConversationCommerce
  */
 
 export function buildCanonicalConversationMemory(args: {
+  customer_fact_delta?: ConversationMemoryFact[];
   pending_lifecycle_reply?: B2TrustedLifecycleCommit | null;
   previous?: CanonicalConversationMemory | null;
   conversation_id: string;
@@ -655,8 +657,10 @@ export function buildCanonicalConversationMemory(args: {
     return `${entity.model?entity.model+" ":""}${label}: ${customerRequestedQuantity(entity) === null ? "quantity not yet confirmed" : `${entity.quantity} units`}${requirements?", "+requirements:""}${width}${record(entity.attributes.room_sunlight) ? ", afternoon sun: " + Object.keys(record(entity.attributes.room_sunlight)!).map(room=>room.replace(/_/g," ")).join(", ") : entity.attributes.sunlight === "strong_afternoon_sun" ? ", afternoon sun (scope unspecified)" : ""}${entity.attributes.installation_type === "window_unit" ? ", window units" : ""}${["deferred","cancelled"].includes(entity.status)?` (${entity.status})`:""}`;
   }).join("; "):null;
   const fallbackGoal=businessMessageText(prior?.current_goal) || businessMessageText(args.commerce_state?.current_intent) || runtime.first_customer_turn || null;
-  const goalFacts = stableFacts([...(prior?.current_customer_facts ?? []).filter(f => Object.hasOwn(runtime.current_requirements,f.key)), ...requirements.current.map(f => ({...f,authority:"customer" as const}))],MAX_FACTS);
-  const requirementGoal = goalFacts.length ? goalFacts.map(fact => `${fact.key}: ${JSON.stringify(fact.value)}`).join("; ") : null;
+  const goalFacts = stableFacts([...(prior?.current_customer_facts ?? []), ...(args.customer_fact_delta ?? []), ...(prior?.current_customer_facts ?? []).filter(f => Object.hasOwn(runtime.current_requirements,f.key)), ...requirements.current.map(f => ({...f,authority:"customer" as const}))],MAX_FACTS);
+  const factLabels: Record<string,string> = {product_count:"商品數量",staff_count:"人手",app_interest:"需要 App",current_market:"目前市場",preferred_interface:"使用介面",desired_features:"需要功能",future_markets:"未來市場"};
+  const factValue = (value:unknown):string => value===false?"否":value===true?"是":value===null?"未確認":Array.isArray(value)?value.map(factValue).join("、"):typeof value==="object"?JSON.stringify(value):String(value)==="hong_kong"?"香港":String(value)==="web"?"網頁版":String(value);
+  const requirementGoal = goalFacts.length ? goalFacts.map(fact => `${factLabels[fact.key] ?? fact.key.replaceAll("_"," ")}: ${factValue(fact.value)}`).join("; ") : null;
   const businessGoal = genericGoal || entityGoal || requirementGoal || (fallbackGoal && !classifyHandoffIntent(fallbackGoal).explicit_request ? fallbackGoal : null);
   const runtimeRegions = [
     ...(runtime.current_requirements.current_market
@@ -761,6 +765,7 @@ export function buildCanonicalConversationMemory(args: {
         !(currentDeliveryPreferenceFact &&
           deliveryPreferenceKeys.has(clean(fact.key, 120)))
       ),
+      ...(args.customer_fact_delta ?? []).map(f=>({...f,authority:"customer" as const,source_message_id:args.source_message_id})),
       ...requirementFacts,
       ...canonicalEntityFacts,
       ...retained.current.filter((fact) =>
@@ -770,7 +775,7 @@ export function buildCanonicalConversationMemory(args: {
       ),
       ...(currentAddressFact ? [currentAddressFact] : []),
       ...(currentDeliveryPreferenceFact ? [currentDeliveryPreferenceFact] : []),
-    ], MAX_FACTS),
+    ], Number.MAX_SAFE_INTEGER),
     customer_preferences: uniqueStrings([
       ...customerPreferences(businessRows),
       ...(prior?.customer_preferences ?? []),
@@ -785,6 +790,7 @@ export function buildCanonicalConversationMemory(args: {
     historical_facts: stableFacts([...(prior?.historical_facts ?? []), ...commerce.historical_facts, ...retained.historical], MAX_HISTORY),
     cancelled_or_superseded: stableFacts([
       ...(prior?.cancelled_or_superseded ?? []),
+      ...(prior?.current_customer_facts ?? []).filter(old=>(args.customer_fact_delta ?? []).some(f=>f.key===old.key && !sameCanonicalJson(f.value,old.value))).map(f=>({...f,key:`superseded_${f.key}`})),
       ...supersededPriorAddresses,
       ...commerce.cancelled_or_superseded,
       ...retained.superseded,
@@ -806,6 +812,7 @@ export function buildCanonicalConversationMemory(args: {
     updated_from_turn: Math.max(0, args.visitor_turn_count),
     updated_at: args.source_created_at,
   };
+  if (memory.current_customer_facts.length > MAX_FACTS) throw new Error("C3_CURRENT_FACTS_LIMIT");
   const fitted = fitMemory(memory);
   if (args.pending_lifecycle_reply) {
     fitted.pending_lifecycle_reply = structuredClone(args.pending_lifecycle_reply);
@@ -921,6 +928,7 @@ export function composeBoundedGenerationEnvelope(args: {
 }
 
 export async function refreshConversationLongMemory(client: LongMemoryDbClient, args: {
+  customer_fact_delta?: ConversationMemoryFact[];
   pending_lifecycle_reply?: B2TrustedLifecycleCommit | null;
   conversation_id: string;
   company_id: string;

@@ -1500,6 +1500,7 @@ jobs:
             supabase/functions/_shared/contextual-customer-update.test.ts \
             supabase/functions/_shared/product-factual-query.test.ts \
             supabase/functions/_shared/conversation-recall.integration.test.ts)
+          (cd "$RUNNER_TEMP/c3-deno-checkout" && deno test --no-lock --allow-read --allow-env --node-modules-dir=auto supabase/functions/_shared/f13-runtime-recovery.test.ts supabase/functions/_shared/f13-f14-root-cause.test.ts supabase/functions/_shared/f13-llm-failure.test.ts)
           c3_source_clean after_deno 1
           git worktree add --detach "$RUNNER_TEMP/c3-build-checkout" "$GITHUB_SHA"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/c3-build-checkout/node_modules"

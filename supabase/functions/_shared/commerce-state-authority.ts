@@ -1,4 +1,4 @@
-import { classifyHandoffIntent } from "./handoff-intent.ts";
+import { classifyHandoffIntent, splitHandoffClauses } from "./handoff-intent.ts";
 import type { ConversationCommerceState } from "./commerce-state-contract.ts";
 
 export type CommerceAnswerAuthority =
@@ -204,7 +204,7 @@ function questionLooksLikeCustomerState(question: string): boolean {
 }
 
 function explicitCustomerMutation(question: string): boolean {
-  const text = clean(question).replace(/(?:已(?:提供(?:同|及|和))?)?更正過|previously corrected/gi, "");
+  const text = clean(question).replace(/(?:已(?:提供(?:同|及|和))?)?更正(?:過|後|后|完)|previously corrected/gi, "").replace(/(?:不要|唔好|不需|不用|do not|don't)\s*(?:新增或更改|新增|更改|更正|改變|改变|add or change|add|change)(?:任何)?(?:要求|需求|資料|资料|anything|requirements?)?/gi, "");
   return /(?:更正|改(?:做|成|為|为|返)|變成|变成|加多|再加|新增|另外加|唔係.+?(?:改|而係|而系)|不是.+?(?:改|而是)|(?:而家要|現在要|现在要|目前要)(?!求))\s*(?:[一二兩两三四五六七八九十]|\d{1,4})?\s*(?:部|台|件|個|个|套)?/i.test(text) ||
     /(?:取消|移除|刪除|删除)\s*(?:其中|呢|這|这|嗰|那|一|[一二兩两三四五六七八九十]|\d)/i.test(text) ||
     /\b(?:change|set|make)\b.{0,24}\bto\b|\badd\b(?:\s+(?:another|one|two|three|\d+))?|\b(?:please\s+)?(?:cancel|remove)\b/i.test(text);
@@ -336,6 +336,10 @@ export function withoutExcludedLookups(question: string): string {
 export function isCurrentRequirementsRecap(question: string): boolean {
   const text = clean(question);
   if (!text || explicitCustomerMutation(text)) return false;
+  // A summary verb can introduce new background. Actual supplied values and
+  // affirmative needs win over recap wording; enumeration of field names does not.
+  const supplied = /\d+\s*(?:件|個|个|位|人|部|台|products?\b|items?\b|seats?\b|users?\b|colleagues?\b)|(?:先用|先使用|改用|prefer|we (?:need|want)|i (?:need|want|have))|(?:不需要|唔需要|do not need|don't need)\s*(?:手機|手机|mobile\s*)?app/i.test(text);
+  if (supplied) return false;
   // Recap operation and canonical entity scope are independent. An explicit
   // summary speech act supplies read-only intent without ownership/time words;
   // no full customer utterance or fixture-specific entity is a dispatch key.
@@ -885,7 +889,14 @@ export function customerBusinessText(value: unknown): string {
       /(?:交畀|交給|交给|轉交|转交|接手|轉接|转接|transfer|connect)/i.test(clause);
   };
   if(!text || !isControl(text)) return text;
-  return text.split(/[，,。;；!！\n]|(?<!\d)\.(?!\d)/).map(clause=>clause.trim()).filter(clause=>
-    clause && !isControl(clause) && !/(?:唔好|不要|别|別|stop|do not|don't).{0,16}(?:再問|再问|問需求|问需求|ask|question)|(?:no more|不要|唔要).{0,8}(?:AI|機器人|机器人)/i.test(clause)
+  return splitHandoffClauses(text).map(clause=> {
+    clause=clause.trim();
+    if (!classifyHandoffIntent(clause).explicit_request) return clause;
+    // Remove the transfer speech act, not its customer's business prefix/suffix.
+    const request = /(?:請|请|麻煩|麻烦|幫我|帮我|我要|我想|我需要|而家|現在|现在)(?:直接)?(?:安排|轉接|转接|轉|转|接|搵|找|聯絡|联系|要)?[^，,。;；]{0,10}?(?:真人|人工|客服)(?:客服|人員|人员)?(?:接手|協助|协助)?|(?:please\s+)?(?:transfer me|connect me|put me through|i (?:want|need|would like))[^,.;]{0,16}?(?:human(?: agent| support)?|live agent|support agent|customer service agent|real person)/i.exec(clause);
+    if(!request) return "";
+    return (clause.slice(0,request.index)+" "+clause.slice(request.index+request[0].length)).trim();
+  }).filter(clause=>
+    clause && !isControl(clause) && !/(?:交給他|交给他|交畀佢|pass (?:it|them|this|on)|不要把舊|不要把旧|do not (?:use|revive) the old)/i.test(clause) && !/(?:唔好|不要|别|別|stop|do not|don't).{0,16}(?:再問|再问|問需求|问需求|ask|question)|(?:no more|不要|唔要).{0,8}(?:AI|機器人|机器人)/i.test(clause)
   ).join("; ");
 }

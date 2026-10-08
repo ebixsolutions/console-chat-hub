@@ -21,7 +21,7 @@ try:
  assert run("SELECT md5(pg_get_functiondef('c3_enrich_handoff_from_memory_tg()'::regprocedure))")=='a44aa47ee66fd7ec5b79b4c8731816c2'
  run((base/'sql/c3_f13_f14_handoff_projection_proposed.sql').read_text())
  run('CREATE TRIGGER projection BEFORE INSERT ON handoffs FOR EACH ROW EXECUTE FUNCTION c3_enrich_handoff_from_memory_tg();')
- facts=[dict(key=k,value=v,authority='customer',source_message_id=oldsource) for k,v in [('product_count',275),('staff_count',3),('current_market','hong_kong'),('app_interest',False),('deposit',0),('availability',None)]]
+ facts=[dict(key=k,value=v,authority='customer',source_message_id=oldsource) for k,v in [('product_count',275),('staff_count',3),('current_market','hong_kong'),('app_interest',False),('deposit',0),('availability',None),('preferred_interface','web')]]
  memory=dict(conversation_id=conv,company_id=co,source_message_id=source,memory_revision=6,commerce_state_revision=3,current_goal='Latest customer requirements',current_customer_facts=facts,latest_corrections=['count corrected'],open_questions=[],pending_actions=[],question_lifecycle=[],customer_preferences=[],historical_facts=[],cancelled_or_superseded=[dict(key='product_count',value=240)])
  run(f"INSERT INTO conversations VALUES('{conv}','{co}');INSERT INTO messages VALUES('{source}','{conv}','visitor'),('{oldsource}','{conv}','visitor');INSERT INTO conversation_commerce_state VALUES('{conv}','{co}',3);INSERT INTO conversation_memory_state VALUES('{conv}','{co}',6,'{source}',3,{literal(memory)},'projection');")
  package=dict(schema_version='c2-handoff-1.0.0',conversation_id=conv,company_id=co,generated_from_source_message_id=source,commerce_state_revision=3,current_customer_goal='stale 240',confirmed_facts=[],open_questions=['obsolete product question'],pending_actions=[],transaction_state=dict(payment='none'),recommended_next_human_action='Review latest customer request')
@@ -29,8 +29,9 @@ try:
   e=dict(schema_version='c2-handoff-1.0.0',structured_package=p,summary_markdown='stale 240')
   return json.loads(run(f"INSERT INTO handoffs(conversation_id,handoff_type,ai_summary,handoff_reason) VALUES('{conv}','ai_to_agent',{literal(e)}::text,'customer requested human') RETURNING ai_summary;"))
  e=insert(package);actual=e['structured_package'];assert actual['current_customer_facts']==facts and actual['open_questions']==[]
+ assert any(f['key']=='preferred_interface' and f['value']=='web' for f in actual['current_customer_facts'])
  assert actual['current_customer_goal']=='Latest customer requirements' and 'stale 240' not in e['summary_markdown']
- assert 'false' in e['summary_markdown'] and 'null' in e['summary_markdown'] and len(actual['confirmed_facts'])==6
+ assert 'false' in e['summary_markdown'] and 'null' in e['summary_markdown'] and len(actual['confirmed_facts'])==7
  assert all(f['verification']=='customer_provided_not_merchant_verified' for f in actual['confirmed_facts'])
  for patch in [dict(company_id=uid(99)),dict(generated_from_source_message_id=uid(99)),dict(commerce_state_revision=2)]:
   assert 'current_customer_facts' not in insert({**package,**patch})['structured_package'],'mismatched snapshot enriched'

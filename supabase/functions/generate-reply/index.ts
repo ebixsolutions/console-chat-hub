@@ -4284,6 +4284,7 @@ async function orchestrationGenerateReply(
   // Production semantics use the existing approved LLM router and its bounded policy.
   // It never writes commerce state and never supplies external product/policy facts.
   let _a3SemanticFrame: CommerceSemanticFrame | null = null;
+  let _semanticFailure: string | null = null;
   const _semanticBusinessText = customerBusinessText(_h1LastMsg);
   if (_criticalE2ExpectedTenantId && _semanticBusinessText && !isCurrentRequirementsRecap(_semanticBusinessText)) {
     try {
@@ -4299,24 +4300,34 @@ async function orchestrationGenerateReply(
         signal: requestSignal,
       });
       _a3SemanticFrame = semanticResult.frame;
+      _semanticFailure = semanticResult.failure_code;
       if (semanticResult.failure_code) console.warn(JSON.stringify({
         event: "semantic_interpretation_rejected", code: semanticResult.failure_code,
         stage: semanticResult.failure_stage, request_id: semanticResult.request_id,
       }));
     } catch (error) {
+      _semanticFailure = "SEMANTIC_INTERPRETER_UNAVAILABLE";
       console.error(
-        "[generate-reply] A3.1 semantic interpreter fallback",
+        "[generate-reply] A3.1 semantic interpreter rejected",
         error instanceof Error ? error.name : "unknown_error",
       );
     }
   }
 
+  if (_semanticFailure) {
+    // Reject before every Commerce/Memory mutation and R1 enrichment. The visitor
+    // message remains durable; never claim its facts were saved after truncation.
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+    return new Response(JSON.stringify({success:false,error:"semantic_interpretation_failed",code:_semanticFailure,retryable:true}),
+      {status:503,headers:{...corsHeaders,"Content-Type":"application/json"}});
+  }
   // ===== TASK A3: persistent commerce state runtime =====
   // Runs AFTER the critical E2 safety branch and BEFORE CUSTOMER_CONTEXT_UPDATE,
   // generic clarification, conversation-memory shortcut and KB retrieval.
   let _a3Commerce: CommerceRuntimeOutcome | null = null;
   let _c3Memory: CanonicalConversationMemory | null = null;
   let _c3MemoryContext = "";
+  let _c3MemoryFailure: string | null = null;
   let _c3EmptyStateVerified = false;
   let _c3ReadOnlyMemoryHash: string | null = null;
   let _c3ReadOnlyMemorySource: string | null = null;
@@ -4454,7 +4465,7 @@ async function orchestrationGenerateReply(
           _c3Memory, memoryHistory,
         ).block;
       }
-      const memoryOutcome = _c3PreMemoryResolution.skip_memory_refresh && !_explicitHandoffRequested
+      const memoryOutcome = _c3PreMemoryResolution.skip_memory_refresh && !_explicitHandoffRequested && !_customerOwnedDelta && !(_a3SemanticFrame?.customer_facts?.length)
         ? null
         : await refreshConversationLongMemory(
           supabaseAdmin as unknown as Parameters<
@@ -4471,6 +4482,7 @@ async function orchestrationGenerateReply(
               ? null
               : Number(commerceRow.revision),
             commerce_state: commerceState,
+            customer_fact_delta: (_a3SemanticFrame?.customer_facts ?? []).map(f=>({...f,authority:"customer" as const,source_message_id:_h1SourceMessageId})),
             pending_lifecycle_reply: _a3Commerce?.trusted_lifecycle_commit ?? null,
             newest_first: memoryHistory,
             visitor_turn_count: _pr5VisitorTurnCount ?? 0,
@@ -4483,17 +4495,24 @@ async function orchestrationGenerateReply(
           (_pr5HistoryRows ?? []) as MemoryHistoryRow[],
         ).block;
       } else if (memoryOutcome) {
+        _c3MemoryFailure = memoryOutcome.reason;
         console.warn("[generate-reply] C3 bounded memory degraded", {
           conversation_id,
           reason: memoryOutcome.reason,
         });
       }
     } catch (memoryError) {
+      _c3MemoryFailure = "canonical_memory_unavailable";
       console.error(
         "[generate-reply] C3 memory refresh failed safely",
         memoryError instanceof Error ? memoryError.name : "unknown_error",
       );
     }
+  }
+  if (_c3MemoryFailure) {
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+    return new Response(JSON.stringify({success:false,error:"canonical_memory_commit_failed",retryable:true}),
+      {status:503,headers:{...corsHeaders,"Content-Type":"application/json"}});
   }
   // C3 fact ownership routing: after E2/A3 and durable memory, before commerce
   // If Commerce and Memory already committed this exact source on a prior
@@ -4533,6 +4552,11 @@ async function orchestrationGenerateReply(
         ? "lifecycle_reply_stale_revalidate"
         : "lifecycle_reply_receipt_unavailable",
     }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+  if (_c3MemoryFailure) {
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+    return new Response(JSON.stringify({success:false,error:"canonical_memory_commit_failed",retryable:true}),
+      {status:503,headers:{...corsHeaders,"Content-Type":"application/json"}});
   }
   // C3 fact ownership routing: after E2/A3 and durable memory, before commerce
   // reply shortcuts, context clarification and current-KB/C1 resolution.
@@ -4655,7 +4679,7 @@ async function orchestrationGenerateReply(
     { explicit_handoff: isHandoffIntent(_h1LastMsg) },
   );
   if (
-    _canonicalTurn.operation === "CUSTOMER_CONTEXT_UPDATE" &&
+    !_explicitHandoffRequested && _canonicalTurn.operation === "CUSTOMER_CONTEXT_UPDATE" &&
     _c3ServicePlan.knowledge_state !== "lookup_required" && !_c3ServicePlan.safe_assumptions.includes("query_context_limit") &&
     !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent)
   ) {

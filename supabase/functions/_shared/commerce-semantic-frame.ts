@@ -109,6 +109,7 @@ export interface CommerceSemanticFrame {
   language: string;
   operation: CommerceSemanticOperation;
   intent: string;
+  customer_facts?: {key:string;value:DecisionValue}[];
   topic: string | null;
   entities: CommerceSemanticEntity[];
   referents: CommerceSemanticReferent[];
@@ -294,14 +295,25 @@ export function normalizeCommerceSemanticFrame(value: unknown): CommerceSemantic
   const rawOperation = clean(value.operation, 40) as CommerceSemanticOperation;
   if (!OPERATIONS.has(rawOperation)) return null;
 
+  if (typeof value.confidence !== "number" || !Number.isFinite(value.confidence) || value.confidence<0 || value.confidence>1) return null;
+  // No sliced partial state proposal. An oversized/malformed wire delta is rejected.
+  for (const key of ["entities","referents","customer_facts","requested_facts","explicit_negations"]) {
+    if (value[key] !== undefined && (!Array.isArray(value[key]) || value[key].length > (key==="customer_facts"?16:["requested_facts","explicit_negations"].includes(key)?20:12))) return null;
+  }
+  const customerFacts: {key:string;value:DecisionValue}[] = [];
+  for (const raw of Array.isArray(value.customer_facts)?value.customer_facts:[]) {
+    if (!isRecord(raw) || typeof raw.key!=="string" || !raw.key.trim() || raw.key.length>120 || !Object.hasOwn(raw,"value") || raw.value===undefined) return null;
+    try {customerFacts.push({key:raw.key,value:normalizeDecisionContext({fact:raw.value}).fact});}
+    catch (error) {if(error instanceof DecisionContextLimitError) return null;throw error;}
+  }
   const entities: CommerceSemanticEntity[] = [];
   for (const raw of Array.isArray(value.entities) ? value.entities.slice(0, 12) : []) {
-    if (!isRecord(raw)) continue;
+    if (!isRecord(raw)) return null;
     const kind = clean(raw.kind, 40) as CommerceSemanticKind;
-    if (!KINDS.has(kind)) continue;
+    if (!KINDS.has(kind)) return null;
     const name = clean(raw.name, 200);
-    if (!name) continue;
-    const q = raw.quantity === null ? null : Number(raw.quantity);
+    if (!name) return null;
+    const q = raw.quantity == null ? null : Number(raw.quantity);
     const quantity = q === null || !Number.isFinite(q) || q < 0 ? null : q;
     let attributes: Record<string, DecisionValue>, constraints: Record<string, DecisionValue>;
     try { attributes = normalizeDecisionContext(raw.attributes); constraints = normalizeDecisionContext(raw.constraints); }
@@ -341,6 +353,7 @@ export function normalizeCommerceSemanticFrame(value: unknown): CommerceSemantic
     language: clean(value.language, 40) || "und",
     operation,
     intent: clean(value.intent, 160) || "unknown",
+    customer_facts: customerFacts,
     topic: value.topic === null ? null : clean(value.topic, 160) || null,
     entities,
     referents,
