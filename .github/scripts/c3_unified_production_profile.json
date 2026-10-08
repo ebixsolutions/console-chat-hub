@@ -390,7 +390,7 @@
     "sql/c3_b12_registry_isolation_rollback_proposed.sql": "c64d00fb7d958dad18b7ed795ebd1015a993d77e287d6bb4984a1986e9b3d743",
     "tests/c3-b12-registry/captured-functions.json": "bcd824a2e0b47da18d06025c5382e9f672dabe19ade6e058a7e91434d23807b1",
     "tests/c3-b12-registry/target-functions.json": "b2ed8031b341748804d9dfe65a1a755b4fbb2987bcfb0c3ec0269473d5d17a5e",
-    "tests/c3-b12-registry/native-registry.py": "646f837cb7337c290a25ac7e59709edba8653de7c32081275fb7913aea7412dd",
+    "tests/c3-b12-registry/native-registry.py": "991026a97d78bd63e50583977a78311b4dade17a30ead5c97e0dba3f6365c77c",
     ".github/scripts/c3_unified_production_source_gate.test.mjs": "36c4e870115a2d1ccb4e9af6db20e2dcc604979fbf6ea99bab9cea173b6358e0",
     "tests/c3-b12-registry/captured-sink-dependency.json": "dca7f844a53ecf00cf26a4b9b09a84544a09d8faf9739e6d95a65d1918bf004a",
     "tests/c3-b12-registry/captured-company-helper.json": "5ffd477ceb8c400f77de8e99f12c7bc7a8d386ca40a6f81e7eec17744fc5e8eb",

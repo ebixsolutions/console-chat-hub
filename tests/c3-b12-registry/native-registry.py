@@ -49,7 +49,9 @@ try:
  for n in range(11):yes('existing synthetic specific claim '+str(n),f"SELECT ce_claim_specific_job_v1('{uid(100+n)}','native')->>'result'",'conversation_not_evaluable')
  yes('normal enqueue stale CAS preserved',f"SELECT ce_enqueue_evaluation_v1('{normal}',repeat('b',64),repeat('a',64),99,'manual',now())->>'result'",'stale_revision')
  yes('normal enqueue idempotent retry',f"SELECT ce_enqueue_evaluation_v1('{normal}',repeat('b',64),repeat('a',64),1,'manual',now())->>'result'",'already_queued')
- yes('synthetic canonical attempt initialization blocked',f"SELECT ce_automation_initiate_canonical_v1('{syn}','native',repeat('b',64),'native','native','native','{{}}'::jsonb,repeat('a',64),'native','native')->>'result'",'conversation_not_evaluable')
+ run(f"UPDATE ce_evaluation_job SET status='running' WHERE id='{uid(100)}'")
+ yes('synthetic canonical attempt initialization blocked',f"SELECT ce_automation_initiate_canonical_v1('{uid(100)}','native',repeat('b',64),'native','native','native','{{}}'::jsonb,repeat('a',64),'native','native')->>'result'",'conversation_not_evaluable')
+ run(f"UPDATE ce_evaluation_job SET status='queued' WHERE id='{uid(100)}'")
  yes('synthetic attempt sink empty',f"SELECT count(*)=0 FROM conversation_evaluation_attempt WHERE conversation_id='{syn}'")
  # Truly overlapping database connections; the second blocks on the advisory claim lock.
  x=spawn("BEGIN; SELECT id FROM ce_claim_evaluation_jobs_v1('a',1);SELECT pg_sleep(1.4);COMMIT;",'claimA');observe('claimA',"wait_event='PgSleep'")
