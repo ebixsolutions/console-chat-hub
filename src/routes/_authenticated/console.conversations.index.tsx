@@ -1,3 +1,4 @@
+import { B12VerificationDialog } from "@/components/console/B12VerificationDialog";
 import { ReplyRequest } from "@/components/console/reply-request";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
@@ -939,6 +940,7 @@ function SinglePageInbox() {
         }}
       >
         <div style={{ padding: "10px 12px", borderBottom: "0.5px solid #e8e6e0", flexShrink: 0 }}>
+          <B12VerificationDialog />
           <div style={{ display: "flex", gap: 12, fontSize: 10.5, color: "#555" }}>
             <span>
               <b style={{ color: "#991b1b" }}>{stats.pending_human}</b> Pending
