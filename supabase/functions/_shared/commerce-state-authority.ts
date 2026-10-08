@@ -1,3 +1,4 @@
+import { classifyHandoffIntent } from "./handoff-intent.ts";
 import type { ConversationCommerceState } from "./commerce-state-contract.ts";
 
 export type CommerceAnswerAuthority =
@@ -875,3 +876,17 @@ export function resolveReferenceAuthority(
     },
   };
 }
+
+export function customerBusinessText(value: unknown): string {
+  const text=String(value ?? "").trim();
+  const isControl=(clause:string)=> {
+    const intent=classifyHandoffIntent(clause);
+    return intent.explicit_request || /(?:交畀|交給|交给|轉交|转交|轉接|转接|transfer|connect).{0,80}(?:客服|真人|人工|human|agent|support)/i.test(clause) || intent.category==="mention_only" &&
+      /(?:交畀|交給|交给|轉交|转交|接手|轉接|转接|transfer|connect)/i.test(clause);
+  };
+  if(!text || !isControl(text)) return text;
+  return text.split(/[，,。;；!！\n]|(?<!\d)\.(?!\d)/).map(clause=>clause.trim()).filter(clause=>
+    clause && !isControl(clause) && !/(?:唔好|不要|别|別|stop|do not|don't).{0,16}(?:再問|再问|問需求|问需求|ask|question)|(?:no more|不要|唔要).{0,8}(?:AI|機器人|机器人)/i.test(clause)
+  ).join("; ");
+}
+

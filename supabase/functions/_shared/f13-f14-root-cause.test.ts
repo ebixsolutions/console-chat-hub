@@ -1,6 +1,6 @@
 /** Source regressions only: never claims production acceptance or Quality95. */
 import { deriveRequirementFacts, deriveCurrentRequirementSnapshot } from './conversation-runtime-state-core.ts';
-import { isCurrentRequirementsRecap } from './commerce-state-authority.ts';
+import { customerBusinessText, isCurrentRequirementsRecap } from './commerce-state-authority.ts';
 import { buildCanonicalConversationMemory } from './conversation-long-memory.ts';
 import { createEmptyConversationCommerceState } from './commerce-state-contract.ts';
 import { prepareConversationRecall } from './conversation-recall.ts';
@@ -50,4 +50,15 @@ Deno.test('F14 persisted Summary renders false, zero, unknown and source-bound c
  const text=JSON.stringify(summary);assert(text.includes('275') && text.includes('人手：3') && text.includes('App 需要：否') && text.includes('deposit：0') && text.includes('availability：未確認') && !text.includes('240'),text);
  assert(!summary?.some(s=>s.title==='已核實產品資料'),'customer requirements promoted to KB');
  assert(projectTicketSummary(envelope,'conversation','wrong-company')===null,'cross-tenant Summary accepted');
+});
+
+Deno.test('F13 handoff controls are not new Commerce corrections; real mixed facts survive',async()=>{
+ const control='我想轉接真人，請將我已提供同更正過嘅資料交畀客服，唔好再問產品。';
+ assert(customerBusinessText(control)==='', 'control became customer data');
+ assert(customerBusinessText('我想轉接真人；改為37件商品')==='改為37件商品','mixed correction lost');
+ assert(customerBusinessText('請問真人客服政策？')==='請問真人客服政策？','merchant question stripped');
+ let writes=0; const state=createEmptyConversationCommerceState();
+ const db:any={from:()=>({select:()=>({eq:()=>({maybeSingle:async()=>({data:{revision:7,state},error:null})})})}),rpc:async()=>{writes++;throw Error('handoff mutated Commerce')}};
+ const outcome=await runCommerceStateRuntime(db,{conversation_id:'conversation',company_id:'company',source_message_id:'handoff',text:control,language:'zh-TW'});
+ assert(outcome?.persist_result==='read_only' && outcome.revision===7 && writes===0,'handoff mutated committed state');
 });

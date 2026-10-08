@@ -115,7 +115,7 @@ import {
   selectCanonicalGrounding,
 } from "../_shared/canonical-grounding.ts";
 import type { ReferenceAuthorityDecision } from "../_shared/commerce-state-authority.ts";
-import { isCurrentRequirementsRecap } from "../_shared/commerce-state-authority.ts";
+import { customerBusinessText, isCurrentRequirementsRecap } from "../_shared/commerce-state-authority.ts";
 import { buildCitationMetadata } from "../_shared/citation-lineage.ts";
 import {
   type CanonicalKbDirectAnswer,
@@ -4284,13 +4284,14 @@ async function orchestrationGenerateReply(
   // Production semantics use the existing approved LLM router and its bounded policy.
   // It never writes commerce state and never supplies external product/policy facts.
   let _a3SemanticFrame: CommerceSemanticFrame | null = null;
-  if (_criticalE2ExpectedTenantId && !isCurrentRequirementsRecap(_h1LastMsg)) {
+  const _semanticBusinessText = customerBusinessText(_h1LastMsg);
+  if (_criticalE2ExpectedTenantId && _semanticBusinessText && !isCurrentRequirementsRecap(_semanticBusinessText)) {
     try {
       const semanticResult = await interpretCommerceSemantics({
         company_id: _criticalE2ExpectedTenantId,
         conversation_id,
         source_message_id: _h1SourceMessageId,
-        latest: _h1LastMsg,
+        latest: _semanticBusinessText,
         history: (_pr5HistoryRows ?? []).map((row: MemoryHistoryRow) => ({
           role: String((row as { role?: unknown }).role ?? ""),
           content: String((row as { content?: unknown }).content ?? ""),

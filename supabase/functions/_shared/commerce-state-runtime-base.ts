@@ -37,6 +37,7 @@ import {
   type CommerceDimensionAttribute,
   inferCommerceDimensionAttribute,
   isCurrentRequirementsRecap,
+  customerBusinessText,
   isReadOnlyCurrentStateAggregateQuery,
   isReadOnlyMemoryOrCurrentStateRecall,
   parseCommerceDimensionMeasurement,
@@ -2777,8 +2778,9 @@ export async function runCommerceStateRuntime(
   db: CommerceStateDbClient,
   input: CommerceRuntimeInput,
 ): Promise<CommerceRuntimeOutcome | null> {
-  const text = clean(input.text);
-  if (!text || !input.conversation_id || !input.company_id || !input.source_message_id) return null;
+  const originalText = clean(input.text);
+  const text = customerBusinessText(originalText);
+  if (!originalText || !input.conversation_id || !input.company_id || !input.source_message_id) return null;
 
   const language = input.language;
 
@@ -2786,6 +2788,10 @@ export async function runCommerceStateRuntime(
   // inference, so ambiguity is read-only and a unique update can win the
   // shared reply precedence without a phrase-specific generate-reply branch.
   const contextualBefore = await loadCommerceState(db, input.conversation_id);
+  if (!text) return { authority: "CONVERSATION_STATE", reply: null,
+    revision: contextualBefore.revision, persist_result: "read_only",
+    reason: "read_only_handoff_control", route: "commerce_state_answer" };
+  input = { ...input, text };
   if (isCurrentRequirementsRecap(text)) {
     return { authority: "CONVERSATION_STATE", reply: null,
       revision: contextualBefore.revision, persist_result: "read_only",

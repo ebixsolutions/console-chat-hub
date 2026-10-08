@@ -3,7 +3,7 @@ import { resolveConversationRecall, renderConversationRecall } from "./conversat
 import { isConversationCommerceState, type ConversationCommerceState } from "./commerce-state-contract.ts";
 import { classifyHandoffIntent } from "./handoff-intent.ts";
 import { classifySocialTurn } from "./natural-customer-response.ts";
-import { isCurrentRequirementsRecap } from "./commerce-state-authority.ts";
+import { customerBusinessText as businessMessageText, isCurrentRequirementsRecap } from "./commerce-state-authority.ts";
 import { industryEntityLabel } from "./industry-runtime-adapter.ts";
 import { deriveTypedCustomerMoneyFacts } from "./customer-money-facts.ts";
 import { sameCanonicalJson } from "./canonical-json.ts";
@@ -616,18 +616,6 @@ function questionLifecycle(rows: MemoryHistoryRow[], state: ConversationCommerce
  * Drop the transfer directive and its collection-control clauses, retaining any
  * separate business clauses for the existing canonical reducers/projection.
  */
-function businessMessageText(value: unknown): string {
-  const text=clean(value,1600);
-  const isControl=(clause:string)=> {
-    const intent=classifyHandoffIntent(clause);
-    return intent.explicit_request || intent.category==="mention_only" &&
-      /(?:我想|請|请|麻煩|麻烦|唔該|接手|轉接|转接|speak|talk|transfer|connect)/i.test(clause);
-  };
-  if(!text || !isControl(text)) return text;
-  return text.split(/[，,。;；!！\n]|(?<!\d)\.(?!\d)/).map(clause=>clause.trim()).filter(clause=>
-    clause && !isControl(clause) && !/(?:唔好|不要|别|別|stop|do not|don't).{0,16}(?:再問|再问|問需求|问需求|ask|question)|(?:no more|不要|唔要).{0,8}(?:AI|機器人|机器人)/i.test(clause)
-  ).join("; ");
-}
 
 export function buildCanonicalConversationMemory(args: {
   pending_lifecycle_reply?: B2TrustedLifecycleCommit | null;
