@@ -40,6 +40,58 @@ type OutboxRow = {
   last_attempt_at: string | null;
 };
 
+type EvalRow = {
+  id: string;
+  conversation_id: string;
+  company_id: string | null;
+  evaluation_contract_version: string;
+  input_snapshot_hash: string;
+  bundle_hash: string;
+  accuracy_score: number | null;
+  policy_score: number | null;
+  tone_score: number | null;
+  sales_score: number | null;
+  context_score: number | null;
+  hallucination_risk_score: number | null;
+  hallucination_quality_score: number | null;
+  overall_score: number | null;
+  severity: string | null;
+  has_verified_human_response: boolean | null;
+  model_version: string | null;
+  prompt_version: string | null;
+  kb_snapshot_id: string | null;
+  policy_snapshot_id: string | null;
+  source_deployment: string | null;
+  review_status: string | null;
+  created_at: string;
+  attempt_id?: string;
+};
+
+type SnapshotRow = {
+  attempt_id: string;
+  conversation_id: string;
+  company_id: string;
+  bundle_hash: string;
+  transcript_hash: string;
+  evaluation_contract_version: string;
+  model_version: string | null;
+  prompt_version: string | null;
+  kb_snapshot_id: string | null;
+  policy_snapshot_id: string | null;
+  normalized_transcript: string;
+  evaluated_ai_reply: string;
+  verified_human_response: string | null;
+  grounding_manifest: unknown;
+  truncation_manifest: unknown;
+  redaction_applied: boolean;
+  created_at: string;
+};
+
+// The client is created without a Database generic, so query rows arrive as
+// GenericStringError. Cast through unknown to the row contracts above.
+// deno-lint-ignore no-explicit-any
+type AdminClient = any;
+
 function json(body: Record<string, unknown>, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -139,9 +191,11 @@ async function loadPayload(
     .eq("id", row.evaluation_id)
     .maybeSingle();
 
-  if (evalErr || !evaluation) {
+  const evalRow = evaluation as unknown as EvalRow | null;
+  if (evalErr || !evalRow) {
     return { ok: false, error: "evaluation_missing" };
   }
+  const evaluation: EvalRow = evalRow;
   if (!evaluation.company_id || !row.company_id) {
     return { ok: false, error: "company_identity_missing" };
   }
