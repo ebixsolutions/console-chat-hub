@@ -179,7 +179,7 @@ async function loadPayload(
   | { ok: true; payload: Record<string, unknown> }
   | { ok: false; error: string }
 > {
-  const { data: evaluation, error: evalErr } = await admin
+  const { data: evaluationRaw, error: evalErr } = await admin
     .from("conversation_evaluation")
     .select(
       "id, conversation_id, company_id, evaluation_contract_version, input_snapshot_hash, bundle_hash, " +
@@ -191,7 +191,7 @@ async function loadPayload(
     .eq("id", row.evaluation_id)
     .maybeSingle();
 
-  const evalRow = evaluation as unknown as EvalRow | null;
+  const evalRow = evaluationRaw as unknown as EvalRow | null;
   if (evalErr || !evalRow) {
     return { ok: false, error: "evaluation_missing" };
   }
@@ -222,7 +222,7 @@ async function loadPayload(
   }
 
   const expectedTypes = ["accuracy", "context", "hallucination", "policy", "sales", "tone"];
-  const actualTypes = details.map((d) => String(d.evaluator_type)).sort();
+  const actualTypes = details.map((d: { evaluator_type: string }) => String(d.evaluator_type)).sort();
   if (JSON.stringify(actualTypes) !== JSON.stringify(expectedTypes)) {
     return { ok: false, error: "evaluation_details_contract_mismatch" };
   }
