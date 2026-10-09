@@ -40,6 +40,58 @@ type OutboxRow = {
   last_attempt_at: string | null;
 };
 
+type EvalRow = {
+  id: string;
+  conversation_id: string;
+  company_id: string | null;
+  evaluation_contract_version: string;
+  input_snapshot_hash: string;
+  bundle_hash: string;
+  accuracy_score: number | null;
+  policy_score: number | null;
+  tone_score: number | null;
+  sales_score: number | null;
+  context_score: number | null;
+  hallucination_risk_score: number | null;
+  hallucination_quality_score: number | null;
+  overall_score: number | null;
+  severity: string | null;
+  has_verified_human_response: boolean | null;
+  model_version: string | null;
+  prompt_version: string | null;
+  kb_snapshot_id: string | null;
+  policy_snapshot_id: string | null;
+  source_deployment: string | null;
+  review_status: string | null;
+  created_at: string;
+  attempt_id?: string;
+};
+
+type SnapshotRow = {
+  attempt_id: string;
+  conversation_id: string;
+  company_id: string;
+  bundle_hash: string;
+  transcript_hash: string;
+  evaluation_contract_version: string;
+  model_version: string | null;
+  prompt_version: string | null;
+  kb_snapshot_id: string | null;
+  policy_snapshot_id: string | null;
+  normalized_transcript: string;
+  evaluated_ai_reply: string;
+  verified_human_response: string | null;
+  grounding_manifest: unknown;
+  truncation_manifest: unknown;
+  redaction_applied: boolean;
+  created_at: string;
+};
+
+// The client is created without a Database generic, so query rows arrive as
+// GenericStringError. Cast through unknown to the row contracts above.
+// deno-lint-ignore no-explicit-any
+type AdminClient = any;
+
 function json(body: Record<string, unknown>, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -121,13 +173,13 @@ function compactError(code: string): string {
 }
 
 async function loadPayload(
-  admin: ReturnType<typeof createClient>,
+  admin: AdminClient,
   row: OutboxRow,
 ): Promise<
   | { ok: true; payload: Record<string, unknown> }
   | { ok: false; error: string }
 > {
-  const { data: evaluation, error: evalErr } = await admin
+  const { data: evaluationRaw, error: evalErr } = await admin
     .from("conversation_evaluation")
     .select(
       "id, conversation_id, company_id, evaluation_contract_version, input_snapshot_hash, bundle_hash, " +
@@ -139,9 +191,11 @@ async function loadPayload(
     .eq("id", row.evaluation_id)
     .maybeSingle();
 
-  if (evalErr || !evaluation) {
+  const evalRow = evaluationRaw as unknown as EvalRow | null;
+  if (evalErr || !evalRow) {
     return { ok: false, error: "evaluation_missing" };
   }
+  const evaluation: EvalRow = evalRow;
   if (!evaluation.company_id || !row.company_id) {
     return { ok: false, error: "company_identity_missing" };
   }
@@ -168,7 +222,7 @@ async function loadPayload(
   }
 
   const expectedTypes = ["accuracy", "context", "hallucination", "policy", "sales", "tone"];
-  const actualTypes = details.map((d) => String(d.evaluator_type)).sort();
+  const actualTypes = details.map((d: { evaluator_type: string }) => String(d.evaluator_type)).sort();
   if (JSON.stringify(actualTypes) !== JSON.stringify(expectedTypes)) {
     return { ok: false, error: "evaluation_details_contract_mismatch" };
   }
@@ -186,7 +240,7 @@ async function loadPayload(
 
   // Older SELECT schemas may not expose attempt_id on evaluation above. Resolve
   // it explicitly, rather than silently sending a non-replayable payload.
-  let canonicalSnapshot = snapshot;
+  let canonicalSnapshot = snapshot as unknown as SnapshotRow | null;
   if (snapshotErr || !canonicalSnapshot) {
     const { data: evalAttempt, error: attemptErr } = await admin
       .from("conversation_evaluation")
@@ -209,7 +263,7 @@ async function loadPayload(
     if (retrySnapshotErr || !retrySnapshot) {
       return { ok: false, error: "evaluation_snapshot_missing" };
     }
-    canonicalSnapshot = retrySnapshot;
+    canonicalSnapshot = retrySnapshot as unknown as SnapshotRow;
   }
 
   if (canonicalSnapshot.redaction_applied !== true) {
@@ -272,7 +326,7 @@ async function loadPayload(
 }
 
 async function markFailure(
-  admin: ReturnType<typeof createClient>,
+  admin: AdminClient,
   row: OutboxRow,
   attempts: number,
   code: string,
@@ -352,7 +406,7 @@ Deno.serve(async (req) => {
     skipped_race: 0,
   };
 
-  for (const candidate of (pending ?? []) as OutboxRow[]) {
+  for (const candidate of (pending ?? []) as unknown as OutboxRow[]) {
     const nextAttempt = Number(candidate.delivery_attempts ?? 0) + 1;
     const now = new Date().toISOString();
 
@@ -387,7 +441,7 @@ Deno.serve(async (req) => {
     }
     summary.claimed++;
 
-    const row = claimed as OutboxRow;
+    const row = claimed as unknown as OutboxRow;
     const built = await loadPayload(admin, row);
     if (!built.ok) {
       await markFailure(admin, row, nextAttempt, built.error);
