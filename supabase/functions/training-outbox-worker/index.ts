@@ -173,7 +173,7 @@ function compactError(code: string): string {
 }
 
 async function loadPayload(
-  admin: ReturnType<typeof createClient>,
+  admin: AdminClient,
   row: OutboxRow,
 ): Promise<
   | { ok: true; payload: Record<string, unknown> }
@@ -240,7 +240,7 @@ async function loadPayload(
 
   // Older SELECT schemas may not expose attempt_id on evaluation above. Resolve
   // it explicitly, rather than silently sending a non-replayable payload.
-  let canonicalSnapshot = snapshot;
+  let canonicalSnapshot = snapshot as unknown as SnapshotRow | null;
   if (snapshotErr || !canonicalSnapshot) {
     const { data: evalAttempt, error: attemptErr } = await admin
       .from("conversation_evaluation")
@@ -263,7 +263,7 @@ async function loadPayload(
     if (retrySnapshotErr || !retrySnapshot) {
       return { ok: false, error: "evaluation_snapshot_missing" };
     }
-    canonicalSnapshot = retrySnapshot;
+    canonicalSnapshot = retrySnapshot as unknown as SnapshotRow;
   }
 
   if (canonicalSnapshot.redaction_applied !== true) {
