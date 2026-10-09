@@ -346,9 +346,9 @@ Deno.serve(async (req) => {
     parsed.ok && parsed.contextFound && parsed.selectedDocumentId === documentId;
   const sameDocumentEvidence =
     parsed.ok && parsed.contextFound
-      ? (parsed.llmContext?.full_content_evidence ?? [])
-          .filter((item: { document_id: string }) => item.document_id === documentId)
-          .map((item: { content: string }) => item.content)
+      ? parsed.llmContext.full_content_evidence
+          .filter((item) => item.document_id === documentId)
+          .map((item) => item.content)
       : [];
   const hasFullContent = sameDocumentEvidence.length > 0;
 

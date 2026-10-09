@@ -105,12 +105,6 @@ export type ParsedAggregationResponse =
       chunks: AggregationChunk[];
       citations: AggregationCitation[];
       documents: AggregationDocumentCandidate[];
-      // Optional passthrough fields present on the upstream aggregation
-      // response; declared for consumers that read them directly.
-      selectedDocumentId?: string;
-      llmContext?: {
-        full_content_evidence: Array<{ document_id: string; content: string }>;
-      };
     }
   | { ok: false; error_code: string };
 
