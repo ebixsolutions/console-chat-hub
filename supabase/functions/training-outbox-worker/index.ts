@@ -326,7 +326,7 @@ async function loadPayload(
 }
 
 async function markFailure(
-  admin: ReturnType<typeof createClient>,
+  admin: AdminClient,
   row: OutboxRow,
   attempts: number,
   code: string,
@@ -406,7 +406,7 @@ Deno.serve(async (req) => {
     skipped_race: 0,
   };
 
-  for (const candidate of (pending ?? []) as OutboxRow[]) {
+  for (const candidate of (pending ?? []) as unknown as OutboxRow[]) {
     const nextAttempt = Number(candidate.delivery_attempts ?? 0) + 1;
     const now = new Date().toISOString();
 
@@ -441,7 +441,7 @@ Deno.serve(async (req) => {
     }
     summary.claimed++;
 
-    const row = claimed as OutboxRow;
+    const row = claimed as unknown as OutboxRow;
     const built = await loadPayload(admin, row);
     if (!built.ok) {
       await markFailure(admin, row, nextAttempt, built.error);
