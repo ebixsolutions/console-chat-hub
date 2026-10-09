@@ -1,0 +1,12 @@
+{
+  "project_id": "nrfxhqabwblzxoushgnm",
+  "name": "c3-b12-worker-once",
+  "verify_jwt": true,
+  "entrypoint_path": "index.mjs",
+  "files": [
+    {
+      "name": "index.mjs",
+      "content": "// Deployed only during approved cleanup of the new executor, never the Worker.\nDeno.serve(()=>Response.json({state:'DISABLED',worker_send_attempts:0},{status:410}));\n"
+    }
+  ]
+}

@@ -1,79 +1,61 @@
-import { useEffect, useRef, useState } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { verifyB12Identity, verificationBody, invokeB12Negative } from "@/lib/api/ce-verification-client";
-import { B12_SCOPE, B12_RUN, VerificationJournal, negativeResponseMatches, type Journal, type Endpoint } from "@/lib/ce-evaluation-execution";
-
-const endpoints: Endpoint[] = ["ce-evaluation-control", "conversation-evaluate"];
-export function B12VerificationDialog() {
-  const [open, setOpen] = useState(false);
-  const [scope, setScope] = useState<Awaited<ReturnType<typeof verifyB12Identity>> | null>(null);
-  const [journal, setJournal] = useState<Journal>({});
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [controlSafetyConfirmed, setControlSafetyConfirmed] = useState(false);
-  const flight = useRef(false);
-  const generation = useRef(0);
-  useEffect(() => {
-    const epoch = ++generation.current; setScope(null); setControlSafetyConfirmed(false);
-    if (open) {
-      try { setJournal(new VerificationJournal(window.localStorage).read()); setError(null); }
-      catch { setError("Journal unavailable. STOP; no request is permitted."); return; }
-      void verifyB12Identity().then(s => { if (epoch === generation.current) setScope(s); })
-        .catch(() => { if (epoch === generation.current) setError("Exact authenticated scope unavailable. No request sent."); });
+import {useEffect,useRef,useState} from 'react';
+import {Dialog,DialogContent,DialogHeader,DialogTitle,DialogDescription} from '@/components/ui/dialog';
+import {Button} from '@/components/ui/button';
+import {verifyB12Identity} from '@/lib/api/ce-verification-client';
+import {B12_SCOPE,B12_RUN} from '@/lib/ce-evaluation-execution';
+import {createWorkerOperations} from '@/lib/api/b12-worker-operations-client';
+import {OPS_SCOPE,successfulDryRun,type OpsReceipt} from '@/lib/api/b12-worker-operations.mjs';
+export function B12VerificationDialog(){
+  const [open,setOpen]=useState(false),[busy,setBusy]=useState(false),[identity,setIdentity]=useState(false);
+  const [error,setError]=useState<string|null>(null),[dryRun,setDryRun]=useState<OpsReceipt|null>(null),[receipt,setReceipt]=useState<OpsReceipt|null>(null);
+  const [ready,setReady]=useState(false),[armConfirmed,setArmConfirmed]=useState(false);
+  const ops=useRef<ReturnType<typeof createWorkerOperations>|null>(null),epoch=useRef(0),flight=useRef(false);
+  useEffect(()=>{
+    const generation=++epoch.current;setIdentity(false);setReady(false);setArmConfirmed(false);setDryRun(null);
+    ops.current?.invalidate();
+    if(open){
+      try{if(!ops.current)ops.current=createWorkerOperations(window.localStorage);setError(null);}
+      catch{setError('Local evidence unavailable. No requests permitted.');return;}
+      // Read-only identity check. No invoke on mount/open/close/rerender.
+      void verifyB12Identity().then(()=>{if(generation===epoch.current)setIdentity(true);})
+        .catch(()=>{if(generation===epoch.current)setError('Exact authenticated identity unavailable. No request sent.');});
     }
-    return () => { generation.current++; };
-  }, [open]);
-  async function send(endpoint: Endpoint) {
-    if (flight.current || !scope || error) return;
-    const epoch = generation.current; flight.current = true; setBusy(true);
-    const store = new VerificationJournal(window.localStorage);
-    let started = false;
-    try {
-      const current = store.read();
-      if (endpoint === "conversation-evaluate" && (!controlSafetyConfirmed || !current["ce-evaluation-control"]?.receipt ||
-        !(current["ce-evaluation-control"]!.receipt as { responseContractMatched?: boolean }).responseContractMatched)) throw new Error("Control safety readback must be confirmed first.");
-      const exactScope = await verifyB12Identity();
-      if (epoch !== generation.current) return;
-      const startedAt = new Date().toISOString();
-      setJournal(store.start(endpoint)); started = true; // Persist before network. Unknown outcomes remain spent.
-      let response;
-      try { response = await invokeB12Negative(endpoint); }
-      catch { response = { status: null, kind: "unknown" as const, body: null, classification: "transport_unknown", requestId: "NOT_AVAILABLE", operationId: "NOT_AVAILABLE" }; }
-      const receipt = { run: B12_RUN, endpoint, version: endpoint === "ce-evaluation-control" ? 15 : 26,
-        scope: exactScope, request: verificationBody(endpoint), startedAt, endedAt: new Date().toISOString(), response,
-        responseContractMatched: negativeResponseMatches(endpoint, response), acceptance: "REQUIRES_AUTHORITATIVE_BEFORE_AFTER_READBACK" };
-      const completed = store.complete(endpoint, receipt);
-      if (epoch === generation.current) setJournal(completed);
-    } catch (e) {
-      if (epoch === generation.current) setError(`${started ? "Spent; outcome or receipt unavailable. STOP. " : "No request sent. "}${e instanceof Error ? e.message : "Unknown failure"}`);
-    } finally { flight.current = false; if (epoch === generation.current) setBusy(false); }
+    return()=>{epoch.current++;ops.current?.invalidate();};
+  },[open]);
+  async function send(mode:'dry-run'|'execute'){
+    if(flight.current||!identity||error||!ops.current)return;
+    if(mode==='execute'&&(!ready||!armConfirmed||!successfulDryRun(dryRun)))return;
+    flight.current=true;setBusy(true);const generation=epoch.current;
+    try{const result=await ops.current.run(mode);if(generation!==epoch.current)return;
+      if(!result){setError('Request unavailable or already attempted. Do not retry.');return;}
+      if(mode==='dry-run')setDryRun(result);else setReceipt(result);
+      if(result.state==='STOP'||result.state==='UNKNOWN')setError('Stopped or unknown outcome. Preserve ledger; do not retry.');
+    }finally{flight.current=false;if(generation===epoch.current)setBusy(false);}
   }
-  const controlReceipt = journal["ce-evaluation-control"]?.receipt as { responseContractMatched?: boolean } | undefined;
-  function exportJson() {
-    const url = URL.createObjectURL(new Blob([JSON.stringify({ run: B12_RUN, journal }, null, 2)], { type: "application/json" }));
-    const a = document.createElement("a"); a.href = url; a.download = "B12-client-receipts.json"; a.click(); URL.revokeObjectURL(url);
-  }
+  function exportJson(){const data={run:B12_RUN,consumers:'PASS_FROZEN',dryRun,receipt};
+    const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));
+    const a=document.createElement('a');a.href=url;a.download='B12-worker-operations-receipt.json';a.click();URL.revokeObjectURL(url);}
   return <>
-    <Button variant="outline" onClick={() => setOpen(true)}>B12 verification</Button>
-    <Dialog open={open} onOpenChange={value => { if (!flight.current) setOpen(value); }}>
+    <Button variant="outline" onClick={()=>setOpen(true)}>B12 verification</Button>
+    <Dialog open={open} onOpenChange={value=>{if(!flight.current)setOpen(value);}}>
       <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
-        <DialogHeader><DialogTitle>B12 bounded verification</DialogTitle>
-          <DialogDescription>Only explicit clicks send requests. One retained tab; no retries. Unknown outcomes consume allowance.</DialogDescription></DialogHeader>
-        <p>Fixed ticket: {B12_SCOPE.ticket}</p>
-        <p>Transcript readiness is not server eligibility. Scope: {scope ? "Exact synthetic Admin/company/channel/backend verified" : "Not verified"}</p>
-        <pre data-testid="b12-scope" className="text-xs whitespace-pre-wrap">{JSON.stringify(scope, null, 2)}</pre>
-        <p>Historical Control: 2 spent, both NOT_ACCEPTED; historical excess: 1. Incident ceiling: 3. New Control allowance: 1. Manual allowance: 1.</p>
-        {error && <p role="alert">{error}</p>}
-        {endpoints.map(endpoint => <section key={endpoint} className="border rounded p-3 space-y-2">
-          <p>{endpoint} — remaining: {journal[endpoint] ? 0 : 1}</p>
-          <pre className="text-xs whitespace-pre-wrap">{JSON.stringify(verificationBody(endpoint))}</pre>
-          <Button disabled={!scope || busy || !!error || !!journal[endpoint] || (endpoint === "conversation-evaluate" && !controlSafetyConfirmed)}
-            onClick={() => void send(endpoint)}>{endpoint === "ce-evaluation-control" ? "Send Control negative once" : "Send Manual negative once"}</Button>
-        </section>)}
-        {controlReceipt?.responseContractMatched && <label className="flex gap-2"><input type="checkbox" checked={controlSafetyConfirmed} disabled={busy}
-          onChange={e => setControlSafetyConfirmed(e.target.checked)} />Authoritative fresh Control before/after readback and request ledger are unchanged; safe to send Manual.</label>}
-        <pre data-testid="b12-receipts" className="text-xs whitespace-pre-wrap break-all">{JSON.stringify({ run: B12_RUN, journal }, null, 2)}</pre>
+        <DialogHeader><DialogTitle>B12 remaining Worker verification</DialogTitle>
+          <DialogDescription>Explicit single requests only. Permanent server ledger decides whether Worker can run. No retry after timeout or unknown result.</DialogDescription></DialogHeader>
+        <p>Control / Manual / Inbox receipt: PASS_FROZEN. Control remaining 0; Manual remaining 0.</p>
+        <Button disabled>Control frozen</Button><Button disabled>Manual frozen</Button>
+        <p>Fixed ticket: {B12_SCOPE.ticket}. Exact synthetic Admin scope: {identity?'verified':'unavailable'}.</p>
+        <pre className="text-xs whitespace-pre-wrap">{JSON.stringify(OPS_SCOPE,null,2)}</pre>
+        {error&&<p role="alert">{error}</p>}
+        <Button disabled={!identity||busy||!!error||!ops.current?.can('dry-run')} onClick={()=>void send('dry-run')}>Send dry-run once</Button>
+        <pre data-testid="b12-worker-dry-run" className="text-xs whitespace-pre-wrap break-all">{JSON.stringify(dryRun,null,2)}</pre>
+        {successfulDryRun(dryRun)&&<>
+          <label className="flex gap-2"><input type="checkbox" disabled={busy} checked={ready} onChange={e=>setReady(e.target.checked)}/>Execute is prepared; tell Work before arming. Do not send yet.</label>
+          <label className="flex gap-2"><input type="checkbox" disabled={busy||!ready} checked={armConfirmed} onChange={e=>setArmConfirmed(e.target.checked)}/>Work confirmed fresh ARM and its 60-second deadline; I am inside that window.</label>
+        </>}
+        <Button disabled={!identity||busy||!!error||!ready||!armConfirmed||!successfulDryRun(dryRun)||!ops.current?.can('execute')}
+          onClick={()=>void send('execute')}>Send execute once within confirmed window</Button>
+        <pre data-testid="b12-worker-receipt" className="text-xs whitespace-pre-wrap break-all">{JSON.stringify(receipt,null,2)}</pre>
+        <p>Matching response still requires Work's full data readback, ledger, correlation and safe tombstone closure.</p>
         <Button variant="outline" onClick={exportJson}>Export sanitized JSON</Button>
       </DialogContent>
     </Dialog>
