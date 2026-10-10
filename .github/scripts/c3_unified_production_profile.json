@@ -294,7 +294,8 @@
     "tests/c3-b12-registry/build-payloads.py",
     "tests/c3-b12-registry/deployment-source-manifest.json",
     "supabase/functions/_shared/ce-evaluation-scope.ts",
-    "supabase/functions/conversation-evaluate/index.ts"
+    "supabase/functions/conversation-evaluate/index.ts",
+    "tests/section15/compound-handoff.test.mjs"
   ],
   "conditional_worker_sha256": "56b02b24abd5b64748f5931e9cf9b0b1df05fb920b852ebe4b8bd51c71a793de",
   "normalized_preview_sha256": {
@@ -403,5 +404,21 @@
     "supabase/functions/conversation-evaluate/index.ts": "123d8fde288929e3a2d05606dca28ffa719219d5f57444b33867ce2e432e3203"
   },
   "b12_sql_production_authorized": false,
-  "b12_deployment_authorized": false
+  "b12_deployment_authorized": false,
+  "accepted_demo_checkpoint": {
+    "head": "d70a659cd91ce99aef28ef794e78723248c9c639",
+    "tree": "abae6c0f0475ab0fd632e9b89278e8203e3970a8"
+  },
+  "accepted_demo_env_sha256": {
+    ".env": "36e61f9ca901649c92508d3cfd6491a2a0748401f8043bec2efc047716497f33",
+    "src/integrations/supabase/runtime-authority.mjs": "c20dfc393cc32de0d8ab9e626e0a449495378eee6594c99299ae425046786759",
+    "package.json": "d5cfd6a2c1787ad935e96ce647dcc68cd1f671f2eef2c109be91138bf2f67028",
+    "bun.lock": "c83b835e57f4b012f29998a54c0246d342930a13f0857dec495a5639bed7f08d"
+  },
+  "authorized_section15_repair_sha256": {
+    "supabase/functions/_shared/handoff-intent.ts": "03e7513ddaf51d9c86363b122477b1bd79e58c7be388a8ba133d71bc62445759",
+    "supabase/functions/generate-reply/index.ts": "848288d54e5c5df00af69c1bc8839412c51e88fa24eb8c95430203ddbcfd537e",
+    "tests/section15/compound-handoff.test.mjs": "68d849eb80591ec45836065c1cb45641b3495b5c92b819f24341ae033b6fe863"
+  },
+  "section15_deployment_authorized": false
 }
