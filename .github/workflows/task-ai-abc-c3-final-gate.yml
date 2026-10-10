@@ -1449,7 +1449,7 @@ jobs:
         run: |
           set -euo pipefail
           deno check --no-lock supabase/functions/_shared/conversation-long-memory.ts supabase/functions/_shared/memory-reply-lifecycle-readback.ts supabase/functions/_shared/conversation-service-planner.ts
-          deno test --no-lock --no-check tests/c3-memory-reply-lineage/*.test.ts supabase/functions/_shared/conversation-long-memory.test.ts supabase/functions/_shared/conversation-service-planner.test.ts
+          deno test --no-lock --no-check tests/c3-memory-reply-lineage/*.test.ts supabase/functions/_shared/conversation-long-memory.test.ts supabase/functions/_shared/conversation-service-planner.test.ts tests/section15/handoff-service.test.ts
           deno test --no-lock --no-check --filter 'H-R6 read-only unknown-scope reconciliation' supabase/functions/_shared/conversation-recall.integration.test.ts
       - name: Non-production A-H recovery control-flow regression
         shell: bash

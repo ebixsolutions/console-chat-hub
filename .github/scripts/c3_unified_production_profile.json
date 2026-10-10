@@ -295,7 +295,8 @@
     "tests/c3-b12-registry/deployment-source-manifest.json",
     "supabase/functions/_shared/ce-evaluation-scope.ts",
     "supabase/functions/conversation-evaluate/index.ts",
-    "tests/section15/compound-handoff.test.mjs"
+    "tests/section15/compound-handoff.test.mjs",
+    "tests/section15/handoff-service.test.ts"
   ],
   "conditional_worker_sha256": "56b02b24abd5b64748f5931e9cf9b0b1df05fb920b852ebe4b8bd51c71a793de",
   "normalized_preview_sha256": {
@@ -418,7 +419,9 @@
   "authorized_section15_repair_sha256": {
     "supabase/functions/_shared/handoff-intent.ts": "03e7513ddaf51d9c86363b122477b1bd79e58c7be388a8ba133d71bc62445759",
     "supabase/functions/generate-reply/index.ts": "848288d54e5c5df00af69c1bc8839412c51e88fa24eb8c95430203ddbcfd537e",
-    "tests/section15/compound-handoff.test.mjs": "68d849eb80591ec45836065c1cb45641b3495b5c92b819f24341ae033b6fe863"
+    "tests/section15/compound-handoff.test.mjs": "68d849eb80591ec45836065c1cb45641b3495b5c92b819f24341ae033b6fe863",
+    "supabase/functions/_shared/conversation-service-planner.ts": "4529265a12e4a8cf7beefd9734819b7f5bd4c67c285341de03d235780560f95b",
+    "tests/section15/handoff-service.test.ts": "2a184244d11888c2a7a066e61b2f25ddd0d82066824a625899ef015f519d273a"
   },
   "section15_deployment_authorized": false
 }

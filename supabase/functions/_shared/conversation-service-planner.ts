@@ -15,6 +15,7 @@ import { activeCustomerGoal, customerRequestedQuantity } from "./customer-journe
 import type { CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 import { requiresSemanticKnowledge, scopedServiceKnowledgeQuery } from "./service-semantic-routing.ts";
 import { DecisionContextLimitError } from "./bounded-decision-context.ts";
+import { classifyHandoffIntent, type HandoffIntentCategory } from "./handoff-intent.ts";
 
 import { HOME_APPLIANCE_CATEGORIES, HOME_APPLIANCE_ROOMS } from "./industry-profiles/home-appliance-v1.ts";
 
@@ -28,6 +29,7 @@ export type ServiceKnowledgeState =
   | "tool_failure";
 export type ServiceDialogueAction =
   | "state_acknowledgement"
+  | "handoff_context_acknowledgement"
   | "direct_answer"
   | "historical_calculation"
   | "shorten_previous_answer"
@@ -80,6 +82,7 @@ export interface ServiceDialoguePlan {
   knowledge_state: ServiceKnowledgeState;
   kb_query: string | null;
   handoff_requested: boolean;
+  handoff_context?: HandoffIntentCategory;
   safe_assumptions: string[];
   emotion_trace?: { kind: string; intensity: string; source: string };
   entitlement_trace?: {
@@ -487,7 +490,17 @@ export function planConversationService(
   );
   const facts = knownFacts(input);
   const clarificationTarget = requestedSlot(question);
-  const repeated = (input.clarification_attempts ?? 0) >= 2 ||
+  // Canonical memory can contain a pending question even when legacy history
+  // counters do not recognise the service route that emitted it.
+  const pendingQuestion = input.memory?.question_lifecycle?.some(item =>
+    item.status === "pending" && Boolean(clean(item.text)) && (
+      clean(item.text).normalize("NFKC") === clean(
+        labels[clarificationTarget ?? "customer_goal"]?.[input.language === "en" ? 2 : input.language === "zh-CN" ? 1 : 0],
+      ).normalize("NFKC") ||
+      (!clarificationTarget && (input.recent_messages ?? []).some(row => row.role === "assistant" &&
+        clean(row.content).normalize("NFKC").includes(clean(item.text).normalize("NFKC"))))
+    ));
+  const repeated = pendingQuestion || (input.clarification_attempts ?? 0) >= 2 ||
     input.exact_same_intent_repeated === true;
   const base = {
     version: "c3-service-plan-1.1.0" as const,
@@ -501,7 +514,7 @@ export function planConversationService(
     question_lifecycle: input.memory?.question_lifecycle,
     missing_slots: [] as string[],
     clarification_target: null as string | null,
-    clarification_previously_asked: (input.clarification_attempts ?? 0) > 0,
+    clarification_previously_asked: pendingQuestion || (input.clarification_attempts ?? 0) > 0,
     knowledge_state: "not_needed" as ServiceKnowledgeState,
     kb_query: null as string | null,
     handoff_requested: input.explicit_handoff === true,
@@ -577,6 +590,16 @@ export function planConversationService(
     return { ...base, action: "current_state_checklist" };
   }
   if (input.recall.handled && !merchantReadRequired) return { ...base, action: "direct_answer" };
+  // A non-query control statement is not a missing product requirement.
+  // Reuse the canonical intent classification; mixed KB requests and actual
+  // customer-state operations retain their existing authoritative routes.
+  const handoffContext = classifyHandoffIntent(question);
+  if (!merchantReadRequired && input.recall.detail === "CUSTOMER_STATEMENT_NOT_QUERY" &&
+      (!input.semantic_frame || input.semantic_frame.operation === "NO_STATE_CHANGE") &&
+      !handoffContext.explicit_request &&
+      ["negated_request", "conditional_or_future", "reference_or_report", "mention_only"].includes(handoffContext.category)) {
+    return { ...base, action: "handoff_context_acknowledgement", handoff_context: handoffContext.category };
+  }
   if (input.semantic_frame?.ambiguity.is_ambiguous && !input.recall.handled) {
     return { ...base, action: "targeted_clarification", missing_slots: ["specific_product_or_item"], clarification_target: "specific_product_or_item" };
   }
@@ -637,6 +660,7 @@ export function planConversationService(
   const customerGap = contextualCustomerGap(input.commerce);
   if (customerGap && !clarificationTarget) return {...base, action:"partial_answer_then_question", missing_slots:[customerGap.field], clarification_target:customerGap.field};
   const target = clarificationTarget ?? "customer_goal";
+  if (repeated) return { ...base, action: "offer_handoff_or_reframe", missing_slots: [target], clarification_target: target };
   if (factSatisfiesSlot(facts, target)) {
     return { ...base, action: "partial_answer_then_question", missing_slots: [], clarification_target: null };
   }
@@ -921,6 +945,18 @@ export function renderServicePlanReply(
   ][l];
   if (["published_kb_lookup", "bounded_kb_refinement"].includes(plan.action)) return null;
   if (plan.action === "direct_answer") return recallReply;
+  if (plan.action === "handoff_context_acknowledgement") {
+    // This only describes this turn's control decision, never a saved future
+    // schedule, completed handoff, or change to the customer's business facts.
+    const prefix = plan.handoff_context === "reference_or_report"
+      ? ["呢段引用唔會當作你而家要求轉交真人客服。", "这段引用不会当作你现在要求转交人工客服。", "That reference is not a request to transfer you now."]
+      : plan.handoff_context === "negated_request"
+      ? ["收到，今次唔會因為呢句話轉交真人客服。", "收到，本次不会因为这句话转交人工客服。", "Understood; this statement will not trigger a human handoff."]
+      : plan.handoff_context === "conditional_or_future"
+      ? ["收到，呢個係有條件或稍後先考慮嘅轉交，今次唔會當作即時要求；亦未有安排日後自動轉交。", "收到，这是有条件或稍后再考虑的转交，本次不会当作即时要求；也未安排以后自动转交。", "Understood; this is conditional or for later, not an immediate handoff request. No future automatic transfer has been scheduled."]
+      : ["呢句未有明確要求而家轉交真人客服，今次未執行轉交；亦未有安排日後自動轉交。", "这句话没有明确要求现在转交人工客服，本次未执行转交；也未安排以后自动转交。", "This statement does not explicitly request a transfer now. No handoff or future automatic transfer has been arranged."];
+    return prefix[l];
+  }
   if (plan.action === "state_acknowledgement" && plan.committed_requirements?.length && plan.committed_commerce) {
     const details = plan.committed_requirements.map(e=>renderCanonicalRequirement(e,plan.language)).join(l===2?"; ":"；");
     const inactive = plan.committed_commerce.entities.filter(e=>["deferred","cancelled"].includes(e.status) && !plan.committed_requirements!.some(x=>x.entity_id===e.entity_id));
