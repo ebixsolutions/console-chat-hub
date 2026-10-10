@@ -12,7 +12,7 @@
     },
     {
       "name": "c3_enrich_handoff_from_memory_tg",
-      "md5": "35c84607adf0928f13eadc06566db56e",
+      "md5": "6ae4c78d456133a5e25241f93b992b96",
       "owner": "postgres",
       "acl": "{postgres=X/postgres}",
       "security": true,

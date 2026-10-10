@@ -141,6 +141,11 @@ try:
  invoke();check('foreign_kb_tenant_denied',envelope()['structured_package']['handoff_context']['grounded_answer_history']==[]);pristine()
  for m in receipt['messages']:
   if m['role']=='assistant' and m['metadata'] is not None:run(f"UPDATE public.messages SET metadata={literal(m['metadata'])} WHERE id='{m['id']}';")
+ # A historical reply with altered text cannot retain an original B2 proof.
+ run("UPDATE public.messages SET content=content || ' forged' WHERE role='assistant';")
+ invoke();check('historical_response_and_idempotency_hash_mismatch_denied',envelope()['structured_package']['handoff_context']['grounded_answer_history']==[]);pristine()
+ for m in receipt['messages']:
+  if m['role']=='assistant' and m['metadata'] is not None:run(f"UPDATE public.messages SET content={string(m['content'])} WHERE id='{m['id']}';")
  # True two-connection retry, using the unchanged actual R1 row lock/idempotency.
  with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:results=list(pool.map(lambda _:invoke(),range(2)))
  check('two_connection_exactly_once_atomicity',sorted(x['result'] for x in results)==['already_handled','success'] and run('SELECT count(*) FROM public.handoff_event;')=='1');pristine()

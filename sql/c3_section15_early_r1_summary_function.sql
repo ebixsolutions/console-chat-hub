@@ -71,7 +71,7 @@ BEGIN
          OR v_memory.memory->>'memory_revision' IS DISTINCT FROM v_memory.revision::text
          OR v_memory.memory->>'commerce_state_revision' IS DISTINCT FROM v_memory.commerce_state_revision::text
          OR v_memory.commerce_state_revision IS DISTINCT FROM
-           CASE WHEN v_has_commerce THEN v_commerce.revision ELSE NULL END
+           (CASE WHEN v_has_commerce THEN v_commerce.revision ELSE NULL END)
          OR NOT EXISTS (SELECT 1 FROM public.messages s WHERE s.id=v_memory.source_message_id
            AND s.conversation_id=NEW.conversation_id AND s.role='visitor'
            AND NOT coalesce(s.is_recalled,false)
@@ -101,6 +101,10 @@ BEGIN
       'company_id',v_company_id,'source_message_id',q.id,'assistant_message_id',s.id,
       'question',q.content,'answer',s.content,'answered_at',s.created_at,
       'tenant_id',s.metadata->'reference_authority'->'provenance'->>'tenant_id',
+      'b2_proof',jsonb_build_object('company_id',s.metadata->>'b2_expected_company_id',
+        'source_message_id',s.metadata->>'b2_source_message_id',
+        'revision',s.metadata->'b2_expected_revision','response_hash',s.metadata->>'b2_response_hash',
+        'idempotency_key',s.metadata->>'b2_idempotency_key'),
       'kb_fact_proof',s.metadata->'kb_fact_proof',
       'authoritative_kb_facts',coalesce(s.metadata->'authoritative_kb_facts','[]'::jsonb),
       'citations',s.metadata->'citations','citation_lineage',s.metadata->'citation_lineage',
@@ -116,7 +120,11 @@ BEGIN
       AND s.metadata->>'b2_source_message_id'=q.id::text
       AND s.metadata->>'b2_commit_source'='commit_ai_reply_tx'
       AND s.metadata->>'b2_gate_contract'='executeB2PersistenceGate:allow_after_revalidation'
-      AND nullif(s.metadata->>'b2_idempotency_key','') IS NOT NULL
+      AND s.metadata->>'b2_expected_revision' ~ '^(0|[1-9][0-9]{0,17})$'
+      AND s.metadata->>'b2_response_hash'=encode(extensions.digest(convert_to(s.content,'UTF8'),'sha256'),'hex')
+      AND s.metadata->>'b2_idempotency_key'=encode(extensions.digest(convert_to(
+        v_company_id::text || ':' || NEW.conversation_id::text || ':' || q.id::text || ':' ||
+        (s.metadata->>'b2_expected_revision') || ':' || (s.metadata->>'b2_response_hash'), 'UTF8'),'sha256'),'hex')
       AND s.metadata->>'rag_api_status'='success'
       AND s.metadata->'reference_authority'->>'selected_authority_class'='CURRENT_KB'
       AND s.metadata->'reference_authority'->>'decision'='USE_CURRENT_KB'
