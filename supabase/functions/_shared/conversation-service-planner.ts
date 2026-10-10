@@ -594,8 +594,15 @@ export function planConversationService(
   // Reuse the canonical intent classification; mixed KB requests and actual
   // customer-state operations retain their existing authoritative routes.
   const handoffContext = classifyHandoffIntent(question);
+  // DEFER can describe a future human-service preference without any Commerce
+  // target or committed mutation. Do not convert that control statement into
+  // a missing product question; real state/fact deferrals keep their own route.
+  const uncommittedControlDeferral = input.semantic_frame?.operation === "DEFER" &&
+    !input.commerce && !input.committed_source_message_id &&
+    !input.semantic_frame.customer_facts?.length &&
+    !input.semantic_frame.customer_correction && !input.semantic_frame.additive;
   if (!merchantReadRequired && input.recall.detail === "CUSTOMER_STATEMENT_NOT_QUERY" &&
-      (!input.semantic_frame || input.semantic_frame.operation === "NO_STATE_CHANGE") &&
+      (!input.semantic_frame || input.semantic_frame.operation === "NO_STATE_CHANGE" || uncommittedControlDeferral) &&
       !handoffContext.explicit_request &&
       ["negated_request", "conditional_or_future", "reference_or_report", "mention_only"].includes(handoffContext.category)) {
     return { ...base, action: "handoff_context_acknowledgement", handoff_context: handoffContext.category };
