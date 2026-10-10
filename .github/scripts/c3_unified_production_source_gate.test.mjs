@@ -37,6 +37,12 @@ try{
   const original=fs.readFileSync(path.join(fixture,f));fs.appendFileSync(path.join(fixture,f),'\n// unauthorized Section15 drift');
   reject('Section15 exact source drift '+f,()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/section15_source_drift/);fs.writeFileSync(path.join(fixture,f),original);
  }
+ const workflow='.github/workflows/task-ai-abc-c3-final-gate.yml';const workflowBytes=fs.readFileSync(path.join(fixture,workflow));
+ fs.appendFileSync(path.join(fixture,workflow),'\n# unauthorized CI source drift');
+ reject('CI lockfile repair permits only exact workflow bytes',()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/section15_validation_drift/);fs.writeFileSync(path.join(fixture,workflow),workflowBytes);
+ const memoryStep=workflowBytes.toString().split('      - name: Bounded Memory receipt and service rendering regressions')[1].split('      - name:')[0];
+ assert.equal((memoryStep.match(/deno (?:check|test) --no-lock /g)||[]).length,3);
+ tests.push({name:'all Memory regression Deno commands avoid tracked lockfile writes',result:'PASS'});
  const authority='src/integrations/supabase/runtime-authority.mjs';const authorityBytes=fs.readFileSync(path.join(fixture,authority));
  fs.appendFileSync(path.join(fixture,authority),'\n// unauthorized authority change');
  reject('accepted Demo runtime authority drift',()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/accepted_demo_env_source_drift/);fs.writeFileSync(path.join(fixture,authority),authorityBytes);
