@@ -1458,6 +1458,10 @@ jobs:
           deno test --no-lock --no-check --filter 'H-R6 read-only unknown-scope reconciliation' supabase/functions/_shared/conversation-recall.integration.test.ts
       - name: Section15 early R1 Summary consumer compatibility
         run: deno test --no-lock --allow-read --node-modules-dir=manual tests/section15/early-r1-summary.test.ts
+      - name: Section15 human-service routing and guarded persistence regressions
+        run: |
+          node --experimental-strip-types --test tests/section15/human-service-routing.test.mjs
+          deno test --no-lock --no-check --allow-read --node-modules-dir=manual supabase/functions/_shared/pre-send-conversion-supervisor.test.ts
       - name: Non-production A-H recovery control-flow regression
         shell: bash
         run: |

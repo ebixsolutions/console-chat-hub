@@ -15,7 +15,7 @@ import { activeCustomerGoal, customerRequestedQuantity } from "./customer-journe
 import type { CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 import { requiresSemanticKnowledge, scopedServiceKnowledgeQuery } from "./service-semantic-routing.ts";
 import { DecisionContextLimitError } from "./bounded-decision-context.ts";
-import { classifyHandoffIntent, type HandoffIntentCategory } from "./handoff-intent.ts";
+import { classifyHandoffIntent, classifyHumanServiceDiscussion, type HandoffIntentCategory } from "./handoff-intent.ts";
 
 import { HOME_APPLIANCE_CATEGORIES, HOME_APPLIANCE_ROOMS } from "./industry-profiles/home-appliance-v1.ts";
 
@@ -83,6 +83,7 @@ export interface ServiceDialoguePlan {
   kb_query: string | null;
   handoff_requested: boolean;
   handoff_context?: HandoffIntentCategory;
+  human_service_process_question?: boolean;
   safe_assumptions: string[];
   emotion_trace?: { kind: string; intensity: string; source: string };
   entitlement_trace?: {
@@ -546,8 +547,20 @@ export function planConversationService(
     recall_detail: clean(input.recall.detail, 100) || undefined,
   };
   if (input.explicit_handoff) return { ...base, action: "explicit_handoff" };
+  const serviceDiscussion = classifyHumanServiceDiscussion(question);
+  // Raw, bounded service control precedes recall and historical Commerce slots.
+  // It is read-only: this does not commit the optional semantic interpretation.
+  const readOnlyControlFrame = !input.semantic_frame || input.semantic_frame.operation === "NO_STATE_CHANGE" ||
+    (input.semantic_frame.operation === "DEFER" && !input.commerce && !input.committed_source_message_id &&
+      !input.semantic_frame.customer_facts?.length && !input.semantic_frame.customer_correction && !input.semantic_frame.additive);
+  if (serviceDiscussion.kind === "control_or_process" && readOnlyControlFrame && input.recall.reason !== "CURRENT_KB_REQUIRED") return {
+    ...base, action: "handoff_context_acknowledgement",
+    handoff_context: serviceDiscussion.handoff.category,
+    human_service_process_question: serviceDiscussion.process_question,
+    handoff_requested: false,
+  };
   const semanticMerchantRead = requiresSemanticKnowledge(input.semantic_frame);
-  const merchantReadRequired = input.recall.reason === "CURRENT_KB_REQUIRED" || semanticMerchantRead;
+  const merchantReadRequired = serviceDiscussion.kind === "merchant_evidence" || input.recall.reason === "CURRENT_KB_REQUIRED" || semanticMerchantRead;
   if (
     !semanticMerchantRead &&
     input.calculation_status &&
@@ -962,7 +975,12 @@ export function renderServicePlanReply(
       : plan.handoff_context === "conditional_or_future"
       ? ["收到，呢個係有條件或稍後先考慮嘅轉交，今次唔會當作即時要求；亦未有安排日後自動轉交。", "收到，这是有条件或稍后再考虑的转交，本次不会当作即时要求；也未安排以后自动转交。", "Understood; this is conditional or for later, not an immediate handoff request. No future automatic transfer has been scheduled."]
       : ["呢句未有明確要求而家轉交真人客服，今次未執行轉交；亦未有安排日後自動轉交。", "这句话没有明确要求现在转交人工客服，本次未执行转交；也未安排以后自动转交。", "This statement does not explicitly request a transfer now. No handoff or future automatic transfer has been arranged."];
-    return prefix[l];
+    const process = [
+      "如果之後想真人跟進，可以喺同一對話明確提出轉真人要求；接手前會保留同票對話內容供跟進。呢句流程查詢本身唔會執行轉交。我未核實到客服當值時間、是否即時有人或等候時間，唔會承諾即時接通。",
+      "如果以后需要人工跟进，可以在同一对话明确提出转人工的要求；接手前会保留同一工单的对话内容供跟进。这个流程问题本身不会执行转交。我尚未核实客服服务时间、是否立即有人或等待时间，不能承诺立即接通。",
+      "If you later want human support, explicitly request a transfer in this conversation. The same ticket keeps the conversation context for follow-up. Asking about the process does not itself transfer you. I have not verified staffing, service hours or waiting time and cannot promise an immediate connection.",
+    ];
+    return prefix[l] + (plan.human_service_process_question ? " " + process[l] : "");
   }
   if (plan.action === "state_acknowledgement" && plan.committed_requirements?.length && plan.committed_commerce) {
     const details = plan.committed_requirements.map(e=>renderCanonicalRequirement(e,plan.language)).join(l===2?"; ":"；");

@@ -3,6 +3,7 @@ import {
   type RecallCommerceSnapshot,
   type TrustedPersistedMemoryReadback,
 } from "../_shared/conversation-recall.ts";
+import { classifyHumanServiceDiscussion } from "../_shared/handoff-intent.ts";
 import {
   applyServiceTone,
   buildServicePlanPromptBlock,
@@ -3409,6 +3410,44 @@ async function persistNaturalImmediateResponse(
   );
 }
 
+/** Read-only service control/process response, using the original B2 commit.
+ * No semantic Memory/Commerce writer, retrieval, scheduling or handoff RPC.
+ */
+async function persistHumanServiceDiscussion(
+  supabaseAdmin: SupabaseAdminClient,
+  conversationId: string,
+  sourceMessageId: string | null,
+  question: string,
+  language: "zh-TW" | "zh-CN" | "en",
+): Promise<Response | null> {
+  const discussion = classifyHumanServiceDiscussion(question);
+  if (discussion.kind !== "control_or_process") return null;
+  const plan = planConversationService({ question, language, memory: null, commerce: null,
+    recall: { handled: false, reason: "NOT_A_RECALL_QUERY", detail: "HUMAN_SERVICE_DISCUSSION" } });
+  const content = renderServicePlanReply(plan, null);
+  if (!content || plan.action !== "handoff_context_acknowledgement") return null;
+  const committed = await commitAiReplyWithControlGate(supabaseAdmin, conversationId, sourceMessageId, content, {
+    response_route: "human_service_control_or_process",
+    service_plan_version: plan.version,
+    handoff_intent_category: discussion.handoff.category,
+    human_service_process_question: discussion.process_question,
+    factual_grounding_required: false,
+    commerce_state_persist_result: "read_only",
+    commerce_state_persistence_classification: "NO_SEMANTIC_CHANGE",
+    handoff_required: false,
+  });
+  await cleanupThinking(supabaseAdmin, conversationId, sourceMessageId);
+  if (!committed.ok) {
+    const skipped = ["human_control", "resolved", "superseded_source", "source_already_replied"].includes(committed.result);
+    return new Response(JSON.stringify(skipped ? { success: true, skipped: committed.result } :
+      { success: false, error: `human_service_commit_${committed.result}` }),
+      { status: skipped ? 200 : 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+  return new Response(JSON.stringify({ success: true, reply: content, response_route: "human_service_control_or_process",
+    handoff_required: false, idempotent: committed.idempotent }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+}
+
 async function handleKBFallback(
   supabaseAdmin: SupabaseAdminClient,
   conversation_id: string,
@@ -4224,7 +4263,8 @@ async function orchestrationGenerateReply(
       ? conversation.company_id
       : undefined;
   const _criticalE2ThreatSignal = classifyAuthoritativeThreat(_h1LastMsg);
-  if (isE2LiveActivationEnabled(Deno.env) && _criticalE2ThreatSignal) {
+  if (isE2LiveActivationEnabled(Deno.env) && (_criticalE2ThreatSignal ||
+    resolveAuthoritativeComplianceReview(_criticalE2ExpectedTenantId))) {
     const _criticalE2Response = await evaluateAndPersistRequiredRulesLive(
       supabaseAdmin,
       {
@@ -4293,6 +4333,16 @@ async function orchestrationGenerateReply(
       _h1LastMsg,
     );
     if (earlyR1) return earlyR1;
+  }
+  // Only a whole, validated service-control/process turn can take this route.
+  // Genuine factual/mixed turns continue through semantic interpretation and
+  // CURRENT KB. High-risk E1 turns retain the original governed call chain.
+  if (!_explicitHandoffRequested && !(isE1LiveActivationEnabled(Deno.env) &&
+    classifyLocalTopicRisk(_h1LastMsg)?.level === "high" && flags.ENABLE_KB)) {
+    const serviceDiscussionReply = await persistHumanServiceDiscussion(
+      supabaseAdmin, conversation_id, _h1SourceMessageId, _h1LastMsg, _visitorLang,
+    );
+    if (serviceDiscussionReply) return serviceDiscussionReply;
   }
   const _naturalCustomerIntent = classifyNaturalCustomerIntent(_h1LastMsg);
   // Safety/control checks above and B2 persistence still apply. A whole social
