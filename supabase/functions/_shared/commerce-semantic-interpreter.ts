@@ -239,7 +239,7 @@ async function loadPersistentCommerceStateSummary(
     }
     return buildPersistentCommerceStateSummary(payload[0], memoryPayload[0]);
   } catch {
-    return null;
+    return JSON.stringify({ context_incomplete: true });
   } finally {
     clearTimeout(timer);
     input.signal?.removeEventListener("abort", abortFromRequest);
