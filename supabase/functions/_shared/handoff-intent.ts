@@ -258,6 +258,20 @@ const HYPOTHETICAL_EN = /\b(hypothetically|suppose|what if|could i|would i be ab
 const EXPLICIT_ZH = /(?:而家|現在|现在|即刻|立即).{0,8}(轉|转|接|搵|找|聯絡|联系).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:請|请|麻煩|麻烦|幫我|帮我).{0,10}(轉|转|接|搵|找|聯絡|联系).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:我要|我想|我需要|想要|需要).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:我)?(?:而家|現在|现在|即刻|立即).{0,4}(?:要|想要|需要).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:我)?(?:而家|現在|现在|即刻|立即)?(?:正式|明確|明确|確定|确定)(?:要|要求|想要|需要).{0,8}(真人|人工|客服(?:人員|人员)?)/;
 const EXPLICIT_EN = /\b(please\s+)?(connect|transfer|put|let)\s+me\s+(to|through to)\s+(a\s+)?(human|live agent|human agent|real person|customer service)|\b(i want|i need|let me speak to|i want to speak to|i need to speak to|connect me to)\s+(a\s+)?(human|live agent|human agent|real person|customer service)(\s+now)?\b/i;
 
+// Imperatives in a coordinated customer request can become a new clause after
+// "and / 並".  A bare imperative ("轉真人客服跟進") is still an explicit request,
+// even when a preceding clause asks for a correction or recap.  Keep this
+// anchored so descriptions of a transfer are not mistaken for commands.
+const DIRECT_HANDOFF_IMPERATIVE_ZH = /^(?:(?:請|请|麻煩|麻烦|唔該|唔该)\s*)?(?:(?:幫我|帮我|替我|直接|而家|現在|现在|即刻|立即)\s*){0,2}(?:轉交|转交|轉|转|接|搵|找|聯絡|联系|交畀|交俾|交給|交给|安排)\s*(?:我|呢單|這單|这单|個案|案件|問題|问题)?\s*(?:去|畀|俾|給|给|到)?\s*(?:真人|人工|客服(?:人員|人员)?)/;
+const FIRST_PERSON_HANDOFF_ACTION_ZH = /^(?:我想|我希望|我要|我需要|想|希望)\s*(?:轉交|转交|轉|转|接|搵|找|聯絡|联系|安排|交畀|交俾|交給|交给)\s*(?:去|畀|俾|給|给|到)?\s*(?:真人|人工|客服(?:人員|人员)?)/;
+const DIRECT_HANDOFF_IMPERATIVE_EN = /^(?:please\s+)?(?:(?:now|immediately)\s+)?(?:transfer|connect|route|put|hand\s*off|send)\s+(?:(?:me|this\s+(?:conversation|chat|request|issue)|the\s+(?:conversation|chat|request|issue))\s+)?(?:over\s+)?(?:to|through\s+to)\s+(?:a\s+|an\s+)?(?:human|live agent|human agent|real person|customer service|support agent)\b/i;
+// Quoted/reported imperatives describe someone's words, not a fresh request.
+const QUOTED_ONLY_HANDOFF = /^(?:「[^」]*」|『[^』]*』|“[^”]*”|"[^"]*"|'[^']*')\s*[。.!！?？]?$/;
+const ATTRIBUTED_QUOTE_ZH = /^(?:客人|顧客|顾客|用戶|用户|佢|他|她|同事).{0,8}(?:話|话|說|说|表示|提到)\s*[：:]?\s*[「『“"]/;
+const ATTRIBUTED_QUOTE_EN = /^(?:the\s+)?(?:customer|user|client|he|she|they)\s+(?:said|asked|wrote|mentioned)\s*[:：]?\s*["“]/i;
+const REPORTED_INTRO_ZH = /^(?:客人|顧客|顾客|用戶|用户|佢|他|她|同事).{0,8}(?:話|话|說|说|表示|提到)\s*[，,：:]/;
+const REPORTED_INTRO_EN = /^(?:the\s+)?(?:customer|user|client|he|she|they)\s+(?:said|asked|wrote|mentioned)\s*[:,]/i;
+
 function normalize(text: string): string {
   return (text ?? "").normalize("NFKC").trim();
 }
@@ -314,6 +328,9 @@ function classifyHandoffClause(text: string): HandoffIntentClassification {
 
   if (!mentions) return base;
 
+  if (QUOTED_ONLY_HANDOFF.test(raw) || ATTRIBUTED_QUOTE_ZH.test(raw) || ATTRIBUTED_QUOTE_EN.test(raw))
+    return { ...base, category: "reference_or_report" };
+
   if (AI_REJECT_HUMAN_REQUEST_ZH.test(raw) || AI_REJECT_HUMAN_REQUEST_EN.test(raw))
     return {...base,category:"explicit_request",explicit_request:true};
   const handoffText = raw.replace(/(?:不需要|不要|唔需要|唔要)\s*(?:手機|手机|mobile\s*)?(?:App|付款|訂單|订单)|(?:do not|don't) (?:need|want|pay for) (?:an? )?(?:app|payment|order)/gi, "");
@@ -326,6 +343,8 @@ function classifyHandoffClause(text: string): HandoffIntentClassification {
   if (QUESTION_ZH.test(raw) || QUESTION_EN.test(raw))
     return {...base,category:"informational_question"};
   const request = EXPLICIT_ZH.test(raw) || EXPLICIT_EN.test(raw) ||
+    DIRECT_HANDOFF_IMPERATIVE_ZH.test(raw) || FIRST_PERSON_HANDOFF_ACTION_ZH.test(raw) ||
+    DIRECT_HANDOFF_IMPERATIVE_EN.test(raw) ||
     /(?:請|请|麻煩|麻烦|幫我|帮我|現在|现在|而家)?(?:安排|聯絡|联系).{0,12}(?:真人|人工|客服).{0,12}(?:接手|轉接|转接|協助|协助)|(?:please )?(?:arrange|contact).{0,20}(?:human|live agent).{0,20}(?:take over|help|support)/i.test(raw);
   if (request) return {...base,category:"explicit_request",explicit_request:true};
   return { ...base, category: "mention_only" };
@@ -338,11 +357,17 @@ export function splitHandoffClauses(text: string): string[] {
 
 export function classifyHandoffIntent(text: string): HandoffIntentClassification {
   const language = detectHandoffLanguageHint(text);
+  // A reported instruction remains reported even if its attribution and the
+  // quoted imperative are separated by punctuation.
+  if (REPORTED_INTRO_ZH.test(text.trim()) || REPORTED_INTRO_EN.test(text.trim())) {
+    const reported = classifyHandoffClause(text);
+    return { ...reported, language, category: "reference_or_report", explicit_request: false };
+  }
   const clauses = splitHandoffClauses(text);
   const decisions = (clauses.length ? clauses : [text]).map(classifyHandoffClause);
   // A conditional antecedent governs the request in the same sentence, even
   // when punctuation separates the antecedent from its consequent.
-  if (/^(?:如果|假如|萬一|万一|倘若|if\b|in case\b)/i.test(text.trim()) && !/[。.!！]\s*(?:請|请|現在|现在|而家|please|now|I want)/i.test(text))
+  if (/^(?:如果|假如|假設|假设|若果|萬一|万一|倘若|除非|if\b|in case\b)/i.test(text.trim()) && !/[。.!！]\s*(?:請|请|現在|现在|而家|please|now|I want)/i.test(text))
     return {...(decisions.find(d=>d.mentions_human_handoff) ?? classifyHandoffClause(text)),language,category:"conditional_or_future",explicit_request:false,pure_handoff_negation:false};
   const explicit = decisions.find((decision) => decision.explicit_request);
   const negated = decisions.find((decision) => decision.pure_handoff_negation);

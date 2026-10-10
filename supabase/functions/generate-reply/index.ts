@@ -4247,6 +4247,26 @@ async function orchestrationGenerateReply(
     );
     if (_criticalE2Response) return _criticalE2Response;
   }
+  // Section15: an authenticated, source-bound explicit request for a human
+  // takes the existing B2-supervised R1 control transaction BEFORE optional
+  // commerce semantic LLM interpretation.  E2 has already run above, and an
+  // enabled high-risk E1 retains its established precedence.  The latest raw
+  // customer correction is in the durable visitor message and handoff history;
+  // this branch does NOT claim an unperformed Commerce/Memory commit.
+  if (_explicitHandoffRequested) {
+    const _preSemanticR1DeferredForE1 = isE1LiveActivationEnabled(Deno.env) &&
+      classifyLocalTopicRisk(_h1LastMsg)?.level === "high" &&
+      flags.ENABLE_KB && !isGreetingOrTrivial(_h1LastMsg);
+    if (!_preSemanticR1DeferredForE1) {
+      const earlyR1 = await persistExplicitR1IfRequested(
+        supabaseAdmin,
+        conversation_id,
+        source_message_id,
+        _h1LastMsg,
+      );
+      if (earlyR1) return earlyR1;
+    }
+  }
   const _naturalCustomerIntent = classifyNaturalCustomerIntent(_h1LastMsg);
   // Safety/control checks above and B2 persistence still apply. A whole social
   // turn must never reach a semantic state writer or replace the business goal.
