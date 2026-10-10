@@ -46,10 +46,14 @@ const controls = [
   ['That quoted human agent request is not my request now.', false],
   ['Do not transfer me to a human', false],
   ['How does human support work?', true],
+  ['我需要真人客服流程資料', true],
+  ['我想了解真人客服處理流程', true],
 ];
 const evidence = ['真人客服係咪24小時？', '人工客服什么时候上班？', '真人客服有冇人當值？',
   'What are human support hours?', 'Is a human agent available now?', 'What is the human support SLA?',
-  '人工客服服务时间是什么？', '真人客服收費幾多？'];
+  '人工客服服务时间是什么？', '真人客服收費幾多？', '我想知道真人客服服務時間',
+  '我要真人客服嘅服務時間', '我想知道人工客服服务时间', 'I want human support hours',
+  'I need human support availability'];
 const business = ['如果之後要真人客服，CW-SUL70BA 價錢幾多？', '唔好轉真人客服，幫我查最新運費',
   'How much does CW-SUL70BA cost, and how does human support work?',
   '假设转人工客服，先查询产品库存', '唔好轉真人客服，總結我之前嘅要求',
@@ -59,7 +63,8 @@ const business = ['如果之後要真人客服，CW-SUL70BA 價錢幾多？', '�
   '真人客服流程係點同埋保險賠償點申請？'];
 const immediate = ['請轉真人客服', '麻煩更正回收要求，簡單總結前文，並轉真人客服跟進。',
   'Please summarize my order; please connect me to a human agent', '请转人工客服',
-  '剛才不是要轉真人。請轉真人客服', '唔好自動轉真人；我而家要真人客服'];
+  '剛才不是要轉真人。請轉真人客服', '唔好自動轉真人；我而家要真人客服',
+  '我想知道真人客服服務時間；請轉真人客服', '請幫我轉真人客服，想了解服務時間'];
 
 for (const [question, process] of controls) test(`control/process source-runtime: ${question}`, async () => {
   const discussion = classifyHumanServiceDiscussion(question);

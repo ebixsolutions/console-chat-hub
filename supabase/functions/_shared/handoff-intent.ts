@@ -80,7 +80,7 @@ export function classifyHumanServiceDiscussion(input: string): HumanServiceDiscu
   // works'. Unknown words retain the semantic path, rather than being dropped.
   const remainder = text.toLowerCase()
     .replace(/\b(?:human|live|support|customer|service|agent|representative|real|person|transfer|connect|handoff|request|asks?|asking|quoted?|quotation|reported|speech|conversation|previous|old|earlier|said|mentioned|that|this|the|a|an|i|me|my|you|your|is|was|are|am|do|does|did|not|no|don't|please|to|for|of|in|if|suppose|assuming|hypothetically|later|future|now|need|want|would|could|can|only|how|what|happens|usually|process|workflow|work|works|it|and|but)\b/gi, "")
-    .replace(/真人客服|人工客服|客服人員|客服人员|真人|人工|剛才|刚才|頭先|头先|之前|舊對話|旧对话|嗰句|那句話|那句话|客人|客戶|客户|引用|引述|唔係|不是|並非|并非|唔好|不要|不需要|唔使|不用|唔識答|唔识答|未解決|未解决|一直|如果|假設|假设|假如|若果|通常|日後|日后|以後|以后|之後|之后|遲啲|迟点|聽日|听日|明天|下次|稍後|稍后|而家|現在|现在|轉交|转交|跟進|跟进|接手|可唔可以|可以|需要|要求|安排|處理|处理|流程|點樣|点样|怎樣|怎样|怎麼|怎么|如何|講清楚|讲清楚|可能|考慮|考虑|轉|转|搵|找|幫|帮|請|请|我|你|佢|他|這|这|的|係|是|話|话|說|说|要|再|先|等|點|点|唔/g, "")
+    .replace(/真人客服|人工客服|客服人員|客服人员|真人|人工|剛才|刚才|頭先|头先|之前|舊對話|旧对话|嗰句|那句話|那句话|客人|客戶|客户|引用|引述|唔係|不是|並非|并非|唔好|不要|不需要|唔使|不用|唔識答|唔识答|未解決|未解决|一直|如果|假設|假设|假如|若果|通常|日後|日后|以後|以后|之後|之后|遲啲|迟点|聽日|听日|明天|下次|稍後|稍后|而家|現在|现在|轉交|转交|跟進|跟进|接手|可唔可以|可以|需要|要求|安排|處理|处理|流程|點樣|点样|怎樣|怎样|怎麼|怎么|如何|講清楚|讲清楚|資料|资料|資訊|资讯|信息|知道|了解|問|问|想|可能|考慮|考虑|轉|转|搵|找|幫|帮|請|请|我|你|佢|他|這|这|的|係|是|話|话|說|说|要|再|先|等|點|点|唔/g, "")
     .replace(/[\s\p{P}\p{S}]/gu, "");
   if (remainder) return result("business_or_mixed");
   if (process || handoff.category !== "mention_only") return result("control_or_process", process);
@@ -390,7 +390,12 @@ function classifyHandoffClause(text: string): HandoffIntentClassification {
     return {...base,category:"conditional_or_future"};
   if (REFERENCE_ZH.test(raw) || REFERENCE_EN.test(raw))
     return {...base,category:"reference_or_report"};
-  if (QUESTION_ZH.test(raw) || QUESTION_EN.test(raw))
+  // Asking for information ABOUT human support is not asking for a human.
+  // Direct transfer/contact actions retain their existing interpretation; a
+  // separately explicit clause is classified independently below.
+  const asksServiceInformation = /(?:想知道|想了解|想問|想问|查詢|查询|介紹|介绍).{0,12}(?:真人|人工|客服)|(?:我要|我想|我需要).{0,8}(?:真人客服|人工客服)(?:嘅|的)?(?:服務時間|服务时间|流程|資料|资料|資訊|资讯)|\b(?:i want|i need)\s+(?:a\s+)?(?:human support|human agent)(?:'s)?\s+(?:information|hours|availability|process|workflow)\b/i.test(raw);
+  const directContactAction = /(?:轉|转|接駁|接驳|聯絡|联系|搵|找).{0,8}(?:真人|人工|客服)|\b(?:transfer|connect|contact|speak to|talk to).{0,16}\b(?:human|agent)\b/i.test(raw);
+  if ((!directContactAction && asksServiceInformation) || QUESTION_ZH.test(raw) || QUESTION_EN.test(raw))
     return {...base,category:"informational_question"};
   const request = EXPLICIT_ZH.test(raw) || EXPLICIT_EN.test(raw) ||
     DIRECT_HANDOFF_IMPERATIVE_ZH.test(raw) || FIRST_PERSON_HANDOFF_ACTION_ZH.test(raw) ||
