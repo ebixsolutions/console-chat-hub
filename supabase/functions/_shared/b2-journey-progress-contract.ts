@@ -3,6 +3,7 @@ import type { ScopedCustomerValue } from "./contextual-customer-update.ts";
 import { sameCanonicalJson } from "./canonical-json.ts";
 import type { CustomerJourneyResponseIntent } from "./customer-journey-orchestration.ts";
 import { HOME_APPLIANCE_CATEGORIES } from "./industry-profiles/home-appliance-v1.ts";
+import { requirementMutationText } from "./commerce-state-authority.ts";
 
 export interface B2LifecyclePlan {
   action: "deferred" | "cancelled";
@@ -15,7 +16,7 @@ export interface B2LifecyclePlan {
 /** Lifecycle and focus are separate clauses. An unbound lifecycle verb is never inferred from history. */
 export function resolveEntityLifecyclePlan(text: string, state: ConversationCommerceState):
   { kind: "mutation"; plans: B2LifecyclePlan[] } | { kind: "ambiguous"; action: "deferred" | "cancelled" } | { kind: "none" } {
-  const normalized = text.trim().toLowerCase();
+  const normalized = requirementMutationText(text).trim().toLowerCase();
   const operation = (part: string): "deferred" | "cancelled" => /取消|唔要|不要|cancel\b/i.test(part) && !/暫時唔|暫時不|暂时不/i.test(part) ? "cancelled" : "deferred";
   const ambiguous = () => ({kind:"ambiguous" as const,action:operation(normalized)});
   const identityValues = (entity: ConversationCommerceState["entities"][number]) => [entity.model,entity.attributes.product_name,entity.attributes.sku].filter((v):v is string=>typeof v==="string" && v.trim().length>=2).map(v=>v.trim().toLowerCase());

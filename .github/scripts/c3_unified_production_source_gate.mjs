@@ -27,6 +27,7 @@ const WIDGET_REPLY_STABILITY={"src/routes/_authenticated/console.widget-preview.
 const MEMORY_REPLY_REPAIR={"supabase/functions/_shared/conversation-long-memory.ts": "e407f0973a73d093ca515386952e3edfe2353430adb40afe4c13eb1cbbd8b594", "supabase/functions/_shared/conversation-service-planner.ts": "c44dd2a449a5a1a72e5b98603cdca4762123ff57dd72eb612c1ad5557896f2c3", "supabase/functions/_shared/memory-reply-lifecycle-readback.ts": "c4db46a3bffeac99879ed66f19b187189b47504ce95628b8d57d8408e3fe7062"};
 const PREVIEW_ACTIVATION={"vite.candidate-identity.mjs": "c257b0d375c055361a6c3c3ff18f85366590c1f505f29bd2d059100a31598066", "vite.candidate-identity.d.mts": "18c6a612edf22deef4d41fc26216b2e1d856e8cd7a925fffe9c981b8dc8c93ee", "vite.config.ts": "33345ac9e52bd90de275e020a9f1226a178a5ee13a77d990b5c79ec293335f0a", "tests/c3-candidate-identity/candidate-identity.test.mjs": "11adab520ff5e2e8761453b9a8c772e76d4e1028c15687ae6fb254ce69081eda", ".github/scripts/c3_candidate_identity_build_check.mjs": "f1cf53c562e537a57402c3119adc7868d530d0958a9b99471bb21e289aa03a11"};
 const WIDGET_AUTH_REPAIR={"src/routes/_authenticated/console.widget-preview.tsx": "15b7c579bbd91742106d6b81c4d76d193e467dd2f92390c4f07fe61bb8f84a5b", "src/lib/widget-message-merge.ts": "114bff85b5f2f467ca94da2b353f343d1611c5e09ab9fb833601380c5a78d067", "src/lib/widget-message-merge.test.mjs": "b219435b17ebb2a872d2e3a84547c3e6f0f58c71c1484451d0f64c80c81b705a", "supabase/functions/widget-live-ai-test/index.ts": "45322339028802d0709a835232e3fafc5254da3ce8fb7eca11e46b986d4a5784", "tests/c3-widget-live-auth/handler.test.mjs": "825f107c680d555e2a7a3868ab8da0f62135debc712345d012c3517ba5642e5d", "tests/e2e/c3_widget_isolated_setup.sh": "32a8553cb76447398d4ff19275875aaecd12e5b738c621c85b75b548d09449b5", "sql/c3-nonproduction/08_widget_auth_isolation_context.sql": "95e55961f090324f110f1684cb5df08da7a733ca339ea59101e4722552d8c8e9", "tests/e2e/c3_widget_isolated_auth.mjs": "71da546bc91c6bec9b95411ee10366ea0788d5fd2192f062c08a73de2d483ec6"};
+const QUALITY95_REPAIR={".github/scripts/c3_unified_production_source_gate.test.mjs":"27c814871f188fb084a388464bf27b6569c3677ac4635282a699f7b1353c95cc",".github/workflows/task-ai-abc-c3-final-gate.yml":"edf6e07fb226636b44a8e38daf01f361e05ef4a51f6009c1b4a47a959c73ef9a","supabase/functions/_shared/b2-journey-progress-contract.ts":"5d5fd7807df024160ca9c3ebeca61ff0bae4c62f8cef73f317fafae434451d29","supabase/functions/_shared/canonical-kb-direct-answer.ts":"120d0e8f4a6eb2273d21bb7c621aec6ffe803cacfb7eb3a4eff0f182b2104d41","supabase/functions/_shared/commerce-semantic-adapter.ts":"553abf039af853014f9dbc2c89c86f02f78c1e339176b1423c409cf28050e7ca","supabase/functions/_shared/commerce-semantic-frame.ts":"fa6efe39bd84e77eac32b820e72c6375b11e4e92c499a981bffa3963c1feae16","supabase/functions/_shared/commerce-semantic-interpreter.ts":"23dbfafc52671d1da6d86c223237369cdaad1baac54ccef3c638b7358ef088de","supabase/functions/_shared/commerce-state-authority.ts":"06a532a71885f0a8f7b6d1a3cd2c16b047b61912f6091366bda87ba8544640ae","supabase/functions/_shared/commerce-state-runtime-base.ts":"2ab0d89697f9ba940407ee02dcc7db4d858dc7fd38f8dc4eda17f710e45fb648","supabase/functions/_shared/conversation-long-memory.ts":"27102c323642dadde8ea3a212a964192e68199137d4887a1a00b062ff978851b","supabase/functions/_shared/f13-runtime-recovery.test.ts":"f71f2fa247664c3d4842f8557b8da7e63a546b6b1ae4b176d3a2030ba276291b","supabase/functions/_shared/generation-terminal-guard.ts":"f338a0db458cf85e95d8e30941c9b63ef61e454ab5e6f934ffadcbc8f5ca7404","supabase/functions/_shared/handoff-intent.ts":"577d7992cf020bdc2c20d69b9f94e8c79acafca4454a9e2c6975be66ba3b9e5a","supabase/functions/_shared/natural-customer-response.ts":"261d36b9ded97eb4438bb0a89cfb25ae9fbbd80693688b88b544af4792f8a7d4","supabase/functions/generate-reply/index.ts":"47b1496ed973e3ff79d9138a692216ee7f608f58d715c79fb892c4c5f6a10d02","tests/quality95/frozen-inputs.json":"dc5d57ce3cb4dfd4de03d944a54e0dae42d1def62761fc985c3758cdd1beac52","tests/quality95/retained-failures.test.ts":"b77fc596c63b21cad134cc86777b50b8e3b7684e2cd4610b0f9a411cd70e0a18"};
 export const PROFILE_PATH='.github/scripts/c3_unified_production_profile.json';
 export function imports(source,file){
  const node=ts.createSourceFile(file,source,ts.ScriptTarget.Latest,true);
@@ -58,7 +59,7 @@ export function productionClosure(root,profile){
  }
  const files=[...seen.keys()].sort();
  must(JSON.stringify(files)===JSON.stringify(profile.runtime_files),'exact_closure_mismatch');
- for(const [f,h] of Object.entries(profile.frozen_runtime_sha256))must(seen.get(f)===(SECTION15_REPAIR[f]??B12_REGISTRY_REPAIR[f]??F13_F14_REPAIR[f]??GENERIC_SERVICE_REPAIR[f]??MEMORY_REPLY_REPAIR[f]??h),'frozen_runtime_drift:'+f);
+ for(const [f,h] of Object.entries(profile.frozen_runtime_sha256))must(seen.get(f)===(QUALITY95_REPAIR[f]??SECTION15_REPAIR[f]??B12_REGISTRY_REPAIR[f]??F13_F14_REPAIR[f]??GENERIC_SERVICE_REPAIR[f]??MEMORY_REPLY_REPAIR[f]??h),'frozen_runtime_drift:'+f);
  for(const f of ['supabase/functions/_shared/llm-router.ts','supabase/functions/_shared/kb-client.ts','supabase/functions/_shared/conversation-long-memory.ts','supabase/functions/_shared/transaction-closure-handoff.ts','supabase/functions/_shared/pre-send-conversion-supervisor.ts'])must(seen.has(f),'governance_dependency_missing:'+f);
  for(const f of files)must(!f.endsWith('/deterministic-runtime-router.ts'),'offline_provider_substitute:'+f);
  return files.map(file=>({file,sha256:seen.get(file)}));
@@ -71,18 +72,18 @@ export function verifyIdentity(root,profile,expected){
  must(git(root,'rev-parse',ACCEPTED_DEMO.head+'^{tree}')===ACCEPTED_DEMO.tree,'accepted_demo_tree_drift');
  must(git(root,'merge-base',ACCEPTED_DEMO.head,'HEAD')===ACCEPTED_DEMO.head,'accepted_demo_lineage');
  const successor=git(root,'diff','--name-only',ACCEPTED_DEMO.head,'HEAD').split('\n').filter(Boolean);
- for(const f of successor)must([...Object.keys(SECTION15_REPAIR),...SECTION15_VALIDATION_FILES].includes(f),'section15_successor_scope:'+f);
+ for(const f of successor)must([...Object.keys(SECTION15_REPAIR),...SECTION15_VALIDATION_FILES,...Object.keys(QUALITY95_REPAIR)].includes(f),'section15_successor_scope:'+f);
  const accepted=git(root,'diff','--name-only',profile.baseline.head,ACCEPTED_DEMO.head).split('\n').filter(Boolean);
  const changed=git(root,'diff','--name-only',profile.baseline.head,'HEAD').split('\n').filter(Boolean);
  for(const f of changed)must(profile.authorized_changes.includes(f)||(accepted.includes(f)&&sha(execFileSync('git',['show','HEAD:'+f],{cwd:root}))===sha(execFileSync('git',['show',ACCEPTED_DEMO.head+':'+f],{cwd:root}))),'source_scope:'+f);
- for(const f of [...new Set([...profile.runtime_files,...Object.keys(profile.frozen_evidence_sha256),...Object.keys(NORMALIZED_PREVIEW),...Object.keys(WIDGET_REPLY_STABILITY),...Object.keys(WIDGET_AUTH_REPAIR),...Object.keys(MEMORY_REPLY_REPAIR),...Object.keys(PREVIEW_ACTIVATION),...Object.keys(GENERIC_SERVICE_REPAIR),...Object.keys(F13_F14_REPAIR),...Object.keys(B12_REGISTRY_REPAIR),...Object.keys(SECTION15_REPAIR),...Object.keys(ACCEPTED_DEMO_ENV),...accepted,PROFILE_PATH])]){
+ for(const f of [...new Set([...profile.runtime_files,...Object.keys(profile.frozen_evidence_sha256),...Object.keys(NORMALIZED_PREVIEW),...Object.keys(WIDGET_REPLY_STABILITY),...Object.keys(WIDGET_AUTH_REPAIR),...Object.keys(MEMORY_REPLY_REPAIR),...Object.keys(PREVIEW_ACTIVATION),...Object.keys(GENERIC_SERVICE_REPAIR),...Object.keys(F13_F14_REPAIR),...Object.keys(B12_REGISTRY_REPAIR),...Object.keys(SECTION15_REPAIR),...Object.keys(ACCEPTED_DEMO_ENV),...Object.keys(QUALITY95_REPAIR),...accepted,PROFILE_PATH])]){
   must(fs.readFileSync(path.join(root,f)).equals(execFileSync('git',['show','HEAD:'+f],{cwd:root})),'uncommitted_source:'+f);
  }
  return {head,tree,changed};
 }
 export function verifyProductionSource({root=process.cwd(),profile=JSON.parse(fs.readFileSync(path.join(root,PROFILE_PATH))),expectedIdentity,sourceOnly=false}={}){
  must(JSON.stringify(profile.entrypoints)===JSON.stringify(APPROVED_ENTRYPOINTS),'entrypoint_scope_drift');
- must(JSON.stringify(profile.authorized_changes)===JSON.stringify(APPROVED_CHANGES),'authorization_scope_drift');
+ must(JSON.stringify(profile.authorized_changes)===JSON.stringify([...new Set([...APPROVED_CHANGES,...Object.keys(QUALITY95_REPAIR)])].sort()),'authorization_scope_drift');
  must(JSON.stringify(profile.external_imports)===JSON.stringify(APPROVED_EXTERNALS),'external_scope_drift');
  must(JSON.stringify(Object.keys(profile.frozen_evidence_sha256))===JSON.stringify(FROZEN_EVIDENCE),'frozen_evidence_scope_drift');
  must(profile.baseline.head==='a7738e378176cb34103c2c3f3a48efc5b2b2830b'&&profile.baseline.tree==='a65da0ee7fa3165cd157ff1ec859aa00ecdb3515','baseline_identity_drift');
@@ -94,29 +95,32 @@ export function verifyProductionSource({root=process.cwd(),profile=JSON.parse(fs
  must(JSON.stringify(profile.accepted_demo_checkpoint)===JSON.stringify(ACCEPTED_DEMO),'accepted_demo_profile_drift');
  must(JSON.stringify(profile.accepted_demo_env_sha256)===JSON.stringify(ACCEPTED_DEMO_ENV),'accepted_demo_env_profile_drift');
  for(const [f,h] of Object.entries(NORMALIZED_PREVIEW))must(fs.existsSync(path.join(root,f))&&sha(fs.readFileSync(path.join(root,f)))===(ACCEPTED_DEMO_ENV[f]??h),'preview_binding_drift:'+f);
- for(const [f,h] of Object.entries(ACCEPTED_DEMO_ENV))must(sha(fs.readFileSync(path.join(root,f)))===h,'accepted_demo_env_source_drift:'+f);
+ for(const [f,h] of Object.entries(ACCEPTED_DEMO_ENV))must(sha(fs.readFileSync(path.join(root,f)))===(QUALITY95_REPAIR[f]??h),'accepted_demo_env_source_drift:'+f);
  must(JSON.stringify(profile.authorized_section15_repair_sha256)===JSON.stringify(SECTION15_REPAIR),'section15_scope_drift');
  must(profile.section15_deployment_authorized===false,'section15_production_authority_masquerade');
- for(const [f,h] of Object.entries(SECTION15_REPAIR))must(sha(fs.readFileSync(path.join(root,f)))===h,'section15_source_drift:'+f);
- for(const [f,h] of Object.entries(SECTION15_VALIDATION_SHA256))must(sha(fs.readFileSync(path.join(root,f)))===h,'section15_validation_drift:'+f);
+ for(const [f,h] of Object.entries(SECTION15_REPAIR))must(sha(fs.readFileSync(path.join(root,f)))===(QUALITY95_REPAIR[f]??h),'section15_source_drift:'+f);
+ for(const [f,h] of Object.entries(SECTION15_VALIDATION_SHA256))must(sha(fs.readFileSync(path.join(root,f)))===(QUALITY95_REPAIR[f]??h),'section15_validation_drift:'+f);
  must(JSON.stringify(profile.widget_reply_stability_sha256)===JSON.stringify(WIDGET_REPLY_STABILITY),'widget_stability_profile_drift');
- for(const [f,h] of Object.entries(WIDGET_REPLY_STABILITY))must(fs.existsSync(path.join(root,f))&&sha(fs.readFileSync(path.join(root,f)))===(F13_F14_REPAIR[f]??GENERIC_SERVICE_REPAIR[f]??WIDGET_AUTH_REPAIR[f]??h),'widget_stability_source_drift:'+f);
+ for(const [f,h] of Object.entries(WIDGET_REPLY_STABILITY))must(fs.existsSync(path.join(root,f))&&sha(fs.readFileSync(path.join(root,f)))===(QUALITY95_REPAIR[f]??F13_F14_REPAIR[f]??GENERIC_SERVICE_REPAIR[f]??WIDGET_AUTH_REPAIR[f]??h),'widget_stability_source_drift:'+f);
  must(JSON.stringify(profile.authorized_widget_auth_repair_sha256)===JSON.stringify(WIDGET_AUTH_REPAIR),'widget_auth_profile_drift');
- for(const [f,h] of Object.entries(WIDGET_AUTH_REPAIR))must(sha(fs.readFileSync(path.join(root,f)))===(F13_F14_REPAIR[f]??GENERIC_SERVICE_REPAIR[f]??h),'widget_auth_source_drift:'+f);
+ for(const [f,h] of Object.entries(WIDGET_AUTH_REPAIR))must(sha(fs.readFileSync(path.join(root,f)))===(QUALITY95_REPAIR[f]??F13_F14_REPAIR[f]??GENERIC_SERVICE_REPAIR[f]??h),'widget_auth_source_drift:'+f);
  must(JSON.stringify(profile.authorized_memory_reply_repair_sha256)===JSON.stringify(MEMORY_REPLY_REPAIR),'memory_reply_profile_drift');
  must(profile.memory_reply_sql_production_authorized===false,'memory_reply_sql_authority_masquerade');
- for(const [f,h] of Object.entries(MEMORY_REPLY_REPAIR))must(sha(fs.readFileSync(path.join(root,f)))===(SECTION15_REPAIR[f]??F13_F14_REPAIR[f]??GENERIC_SERVICE_REPAIR[f]??h),'memory_reply_source_drift:'+f);
+ for(const [f,h] of Object.entries(MEMORY_REPLY_REPAIR))must(sha(fs.readFileSync(path.join(root,f)))===(QUALITY95_REPAIR[f]??SECTION15_REPAIR[f]??F13_F14_REPAIR[f]??GENERIC_SERVICE_REPAIR[f]??h),'memory_reply_source_drift:'+f);
  must(JSON.stringify(profile.authorized_preview_activation_sha256)===JSON.stringify(PREVIEW_ACTIVATION),'preview_activation_profile_drift');
- for(const [f,h] of Object.entries(PREVIEW_ACTIVATION))must(sha(fs.readFileSync(path.join(root,f)))===h,'preview_activation_source_drift:'+f);
+ for(const [f,h] of Object.entries(PREVIEW_ACTIVATION))must(sha(fs.readFileSync(path.join(root,f)))===(QUALITY95_REPAIR[f]??h),'preview_activation_source_drift:'+f);
  must(profile.revision==='rev1.5-UNIFIED-GENERIC-SERVICE-AND-FULL-UAT','generic_repair_revision');
  must(JSON.stringify(profile.authorized_unified_generic_service_repair_sha256)===JSON.stringify(GENERIC_SERVICE_REPAIR),'generic_repair_scope_drift');
- for(const [f,h] of Object.entries(GENERIC_SERVICE_REPAIR))must(sha(fs.readFileSync(path.join(root,f)))===(SECTION15_REPAIR[f]??F13_F14_REPAIR[f]??h),'generic_repair_source_drift:'+f);
+ for(const [f,h] of Object.entries(GENERIC_SERVICE_REPAIR))must(sha(fs.readFileSync(path.join(root,f)))===(QUALITY95_REPAIR[f]??SECTION15_REPAIR[f]??F13_F14_REPAIR[f]??h),'generic_repair_source_drift:'+f);
  must(JSON.stringify(profile.authorized_f13_f14_repair_sha256)===JSON.stringify(F13_F14_REPAIR),'f13_f14_scope_drift');
- for(const [f,h] of Object.entries(F13_F14_REPAIR))if(!profile.runtime_files.includes(f))must(sha(fs.readFileSync(path.join(root,f)))===(SECTION15_REPAIR[f]??SECTION15_VALIDATION_SHA256[f]??B12_REGISTRY_REPAIR[f]??h),'f13_f14_source_drift:'+f);
+ for(const [f,h] of Object.entries(F13_F14_REPAIR))if(!profile.runtime_files.includes(f))must(sha(fs.readFileSync(path.join(root,f)))===(QUALITY95_REPAIR[f]??SECTION15_REPAIR[f]??SECTION15_VALIDATION_SHA256[f]??B12_REGISTRY_REPAIR[f]??h),'f13_f14_source_drift:'+f);
  must(JSON.stringify(profile.authorized_b12_registry_repair_sha256)===JSON.stringify(B12_REGISTRY_REPAIR),'b12_scope_drift');
- for(const [f,h] of Object.entries(B12_REGISTRY_REPAIR))must(sha(fs.readFileSync(path.join(root,f)))===(SECTION15_VALIDATION_SHA256[f]??h),'b12_source_drift:'+f);
+ for(const [f,h] of Object.entries(B12_REGISTRY_REPAIR))must(sha(fs.readFileSync(path.join(root,f)))===(QUALITY95_REPAIR[f]??SECTION15_VALIDATION_SHA256[f]??h),'b12_source_drift:'+f);
  must(profile.b12_sql_production_authorized===false&&profile.b12_deployment_authorized===false,'b12_production_authority_masquerade');
  must(profile.f13_f14_sql_production_authorized===false&&profile.f13_f14_deployment_authorized===false,'f13_f14_production_authority_masquerade');
+ must(JSON.stringify(profile.authorized_quality95_failure_repair_sha256)===JSON.stringify(QUALITY95_REPAIR),'quality95_repair_scope_drift');
+ must(profile.quality95_production_deployment_authorized===false&&profile.quality95_extra_traffic_authorized===false,'quality95_production_authority_masquerade');
+ for(const [f,h] of Object.entries(QUALITY95_REPAIR))must(sha(fs.readFileSync(path.join(root,f)))===h,'quality95_source_drift:'+f);
  const files=productionClosure(root,profile);
  if(!sourceOnly){
   const expectedFrozen=profile.runtime_files.filter(f=>f!=='supabase/functions/_shared/ce-evaluation-scope.ts'&&f!=='supabase/functions/deliver-feedback-request/index.ts'&&f!=='supabase/functions/_shared/memory-reply-lifecycle-readback.ts'&&f!=='supabase/functions/_shared/service-semantic-routing.ts'&&f!=='supabase/functions/_shared/bounded-decision-context.ts');

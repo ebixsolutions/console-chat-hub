@@ -4469,12 +4469,16 @@ async function orchestrationGenerateReply(
               : null,
         },
       );
+      if (_a3Commerce && !["success", "read_only", "no_semantic_change", "source_message_already_applied"].includes(_a3Commerce.persist_result)) {
+        throw new Error(`commerce_state_commit_${_a3Commerce.persist_result}`);
+      }
     } catch (commerceError) {
       console.error(
-        "[generate-reply] A3 commerce state runtime failed (non-blocking):",
+        "[generate-reply] A3 commerce state runtime failed closed:",
         commerceError,
       );
-      _a3Commerce = null;
+      return new Response(JSON.stringify({success:false,error:"commerce_state_unavailable",retryable:false}),
+        {status:503,headers:{...corsHeaders,"Content-Type":"application/json"}});
     }
   }
   const _c3PreMemoryResolution = resolveCanonicalCommerceResolution({

@@ -1,6 +1,13 @@
 import { classifyHandoffIntent, splitHandoffClauses } from "./handoff-intent.ts";
 import type { ConversationCommerceState } from "./commerce-state-contract.ts";
 
+/** A superseded numeric requirement is not an item cancellation. Only this
+ * mutation projection changes; durable visitor text keeps the entire correction. */
+export function requirementMutationText(text: string): string {
+  if (!/(?:更正|改做|改成|改為|改为|correct|change|replace|update)/i.test(text)) return text;
+  return text.replace(/(?<![\p{L}\p{N}_-])(?:原(?:本)?|舊|旧|old|previous)?\s*\d+(?:\.\d+)?\s*(?:港元|毫米|mm|HKD|平方呎|元)?\s*(?:已(?:經|经)?)?(?:取消|不再適用|不再适用|cancel(?:led|ed)?|no longer applies)/giu, " ");
+}
+
 export type CommerceAnswerAuthority =
   | "CONVERSATION_STATE"
   | "DETERMINISTIC_CALCULATION"

@@ -58,6 +58,11 @@ export function isRecoverableTerminalError(error: unknown): boolean {
     "Internal KB processing error",
     "citation_lineage_unavailable",
     "prior_grounded_transform_lineage_unavailable",
+    "semantic_interpretation_failed",
+    "canonical_memory_commit_failed",
+    "canonical_memory_unavailable",
+    "canonical_memory_limits_exceeded",
+    "commerce_state_unavailable",
   ].includes(error) ||
     /(?:^|_)b2_(?:block|indeterminate)$|^b2_supervision_(?:blocked|indeterminate)$/
       .test(error);

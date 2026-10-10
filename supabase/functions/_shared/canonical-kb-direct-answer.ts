@@ -237,7 +237,7 @@ export function resolveCanonicalKbDirectAnswer(input: {
     return evidence("stock_unknown", reply, chunks[0]);
   }
 
-  if (/(?:售價|售价|賣幾錢|卖几钱|價錢|价钱|price|how\s+much)/i.test(request) && (classifyProductFactualQuery(request)?.facts.length ?? 1) <= 1) {
+  if (classifyProductFactualQuery(request)?.facts.includes("price") && (classifyProductFactualQuery(request)?.facts.length ?? 1) <= 1) {
     if (!productRecord) return null;
     if (priceFact && displayPrice && priceEvidence) {
       return { ...evidence("price", language === "en"

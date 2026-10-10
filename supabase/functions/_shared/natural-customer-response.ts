@@ -71,7 +71,7 @@ function productFactualFacets(text: string): ProductFactualFacet[] {
       "horsepower",
       /(?:幾多匹|几多匹|多少匹|幾匹|几匹|匹數|匹数|horsepower|\bHP\b)/i,
     ],
-    ["price", /(?:售價|售价|幾錢|几钱|價錢|价钱|price|how\s+much)/i],
+    ["price", /(?:售價|售价|幾錢|几钱|價錢|价钱|價格|价格|標價|标价|標示價|标示价|price|how\s+much)/i],
     [
       "specification",
       /(?:規格|规格|specs?|尺寸|dimension|capacity|容量|重量|weight|功率|power|電壓|电压|voltage|噪音)/i,

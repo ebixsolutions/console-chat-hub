@@ -38,6 +38,7 @@ import {
   inferCommerceDimensionAttribute,
   isCurrentRequirementsRecap,
   customerBusinessText,
+  requirementMutationText,
   isReadOnlyCurrentStateAggregateQuery,
   isReadOnlyMemoryOrCurrentStateRecall,
   parseCommerceDimensionMeasurement,
@@ -1301,11 +1302,15 @@ export async function loadCommerceState(
   conversation_id: string,
 ): Promise<LoadedCommerceState> {
   const { data, error } = await db.from("conversation_commerce_state").select("revision, state").eq("conversation_id", conversation_id).maybeSingle();
-  if (error || !isRecord(data)) return { state: createEmptyConversationCommerceState(), revision: 0 };
+  if (error) throw new Error("commerce_state_read_failed");
+  if (data === null || data === undefined) return { state: createEmptyConversationCommerceState(), revision: 0 };
+  if (!isRecord(data) || !isConversationCommerceState(data["state"])) {
+    throw new Error("commerce_state_invalid_snapshot");
+  }
   const revision = typeof data["revision"] === "number" ? data["revision"] : Number(data["revision"] ?? 0);
   const state = data["state"];
   return {
-    state: isConversationCommerceState(state) ? state : createEmptyConversationCommerceState(),
+    state: state as ConversationCommerceState,
     revision: Number.isFinite(revision) && revision > 0 ? revision : 0,
   };
 }
@@ -1835,7 +1840,7 @@ function enrichExplicitCustomerFacts(input: CommerceRuntimeInput, state: Convers
   const ac = active.filter((entity) => entity.category === "air_conditioner");
   if (ac.length === 1 && (categories.length === 1 && categories[0].key === "air_conditioner" || !categories.length && reduced.current_topic === "air_conditioner")) {
     const facts: CommerceStateEvent[] = [];
-    if (/窗口(?:冷氣|機|机)|window\s+(?:unit|air)/iu.test(input.text)) facts.push({type:"SET_ENTITY_ATTRIBUTE",entity_id:ac[0].entity_id,key:"installation_type",value:"window_unit",provenance});
+    if (/窗口(?:式|冷氣|機|机)|window\s+(?:unit|air)/iu.test(input.text)) facts.push({type:"SET_ENTITY_ATTRIBUTE",entity_id:ac[0].entity_id,key:"installation_type",value:"window_unit",provenance});
     const sunPattern = /西斜|西曬|西晒|下午.{0,6}(?:曬|晒|日照)|afternoon\s+sun|west[- ]?facing/iu;
     if (sunPattern.test(input.text)) {
       const sunlight = { ...(ac[0].attributes.room_sunlight as Record<string, string> ?? {}) };
@@ -1945,8 +1950,8 @@ function reduceSingleTurn(
     : [];
   // Identity-only correction frames contain no corrected value. They cannot
   // suppress an explicitly scoped deterministic customer assignment.
-  const semanticAuthoritative = semanticProposed && (!input.semantic_frame?.customer_correction ||
-    semanticEventsRaw.some(event => event.type !== "SET_CONTEXT" && event.type !== "ENSURE_ENTITY"));
+  const semanticAuthoritative = semanticProposed &&
+    semanticEventsRaw.some(event => event.type !== "SET_CONTEXT" && event.type !== "ENSURE_ENTITY");
   let semanticEvents = bookingWithoutDelivery
     ? semanticEventsRaw.filter((event) => event.type !== "SET_DELIVERY")
     : semanticEventsRaw;
@@ -2016,7 +2021,12 @@ function reduceSingleTurn(
     if (event.type !== "ENSURE_ENTITY" || event.entity.category !== "air_conditioner" || machineQuantity !== null) return event;
     return {...event, entity: {...event.entity, attributes: {...event.entity.attributes, quantity_basis: "system_default"}}};
   });
-  let reduced = reduceCommerceState(previous, quantityEvents);
+  // An authorized materialization must precede field updates. Unknown targets
+  // still throw; no proposed mutation is silently dropped or guessed.
+  let reduced = reduceCommerceState(previous, [
+    ...quantityEvents.filter(event => event.type === "ENSURE_ENTITY" || event.type === "ADD_ENTITY"),
+    ...quantityEvents.filter(event => event.type !== "ENSURE_ENTITY" && event.type !== "ADD_ENTITY"),
+  ]);
   reduced = enrichExplicitCustomerFacts(input,reduced,hints);
   const guard = enforceQuotationNotOrderEvents(clean(input.text), reduced);
   return guard.length ? reduceCommerceState(reduced, guard) : reduced;
@@ -2779,7 +2789,7 @@ export async function runCommerceStateRuntime(
   input: CommerceRuntimeInput,
 ): Promise<CommerceRuntimeOutcome | null> {
   const originalText = clean(input.text);
-  const text = customerBusinessText(originalText);
+  const text = customerBusinessText(requirementMutationText(originalText));
   if (!originalText || !input.conversation_id || !input.company_id || !input.source_message_id) return null;
 
   const language = input.language;
@@ -3005,6 +3015,12 @@ export async function runCommerceStateRuntime(
     : input;
 
   const persisted = await persistCommerceTurn(db, runtimeInput, hints);
+  if (!["success", "no_semantic_change", "source_message_already_applied"].includes(persisted.result)) {
+    // A proposed reducer snapshot is not authority until its CAS commit succeeds.
+    // Preserve the failed receipt without returning an uncommitted acknowledgement.
+    return { authority: "CONVERSATION_STATE", reply: null, revision: persisted.previous_revision,
+      persist_result: persisted.result, reason: "commerce_state_commit_failed", route: "commerce_state_answer" };
+  }
   const state = persisted.state;
   const lifecycleVerified = persisted.result === "success"
     ? verifyEntityLifecycleTransition(text, persisted.previous_state, state, input.source_message_id)

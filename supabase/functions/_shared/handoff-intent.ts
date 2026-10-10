@@ -289,9 +289,9 @@ const PRESENT_REQUEST_MARKERS = [
   "let me talk",
 ];
 
-const HUMAN_ZH = /(真人|人工|客服)/;
+const HUMAN_ZH = /(真人|人工|客服|職員|职员)/;
 const HUMAN_EN = /\b(human|live agent|human agent|real person|support agent|customer service)\b/i;
-const NEG_HUMAN_ZH = /(?:取消|撤回|唔好|不要|不需要|唔需要|不想|唔想|唔使|不用|毋須|毋需|別|别|未需要|未要|而家未|現在未|现在未|唔係(?:而家|現在|现在)?(?:要求|要)|不是(?:現在|现在)?(?:要求|要)|並非(?:現在|现在)?(?:要求|要)|并非(?:現在|现在)?(?:要求|要)|未叫|冇叫|没有叫|沒有叫|禁止|不准|唔准).{0,8}(?:轉|转|接|搵|找|聯絡|联系|要|需要)?\s*(?:真人|人工|客服(?:人員|人员)?)|(?:真人|人工|客服(?:人員|人员)?).{0,8}(?:唔好|不要|唔使|不用|毋須|毋需|未需要|未要|禁止|不准|唔准)/;
+const NEG_HUMAN_ZH = /(?:取消|撤回|唔好|不要|不需要|唔需要|不想|唔想|唔使|不用|毋須|毋需|別|别|未需要|未要|而家未|現在未|现在未|唔係(?:而家|現在|现在)?(?:要求|要)|不是(?:現在|现在)?(?:要求|要)|並非(?:現在|现在)?(?:要求|要)|并非(?:現在|现在)?(?:要求|要)|未叫|冇叫|没有叫|沒有叫|禁止|不准|唔准).{0,8}(?:轉|转|接|搵|找|聯絡|联系|要|需要)?\s*(?:真人|人工|職員|职员|客服(?:人員|人员)?)|(?:真人|人工|職員|职员|客服(?:人員|人员)?).{0,8}(?:唔好|不要|唔使|不用|毋須|毋需|未需要|未要|禁止|不准|唔准)/;
 const NEG_HUMAN_EN = /\b(?:cancel|withdraw|revoke|don't|do not|didn't|did not|not asking|not ask|no need|don't need|do not need|not yet|never)\b.{0,28}\b(?:connect|transfer|put|speak|want|need)?\b.{0,12}\b(?:human|live agent|human agent|real person|support agent|customer service)\b|\b(?:human|live agent|human agent|real person|support agent|customer service)\b.{0,20}\b(?:not needed|not required|no need|not yet)\b/i;
 const AI_REJECT_HUMAN_REQUEST_ZH = /(?:唔好|不要|唔使|不用|毋須|毋需)\s*(?:AI|人工智能|機器人|机器人|bot).{0,24}(?:(?:我)?(?:而家|現在|现在|即刻|立即)?(?:要|想要|需要).{0,8}(?:真人|人工|客服(?:人員|人员)?)|(?:請|请|麻煩|麻烦|幫我|帮我).{0,10}(?:轉|转|接|搵|找|聯絡|联系).{0,8}(?:真人|人工|客服(?:人員|人员)?))/i;
 const AI_REJECT_HUMAN_REQUEST_EN = /\b(?:don't|do not|no longer want|stop using)\b.{0,16}\b(?:ai|bot|robot|automation)\b.{0,40}\b(?:i want|i need|please connect|please transfer|connect me|transfer me|let me speak to)\b.{0,16}\b(?:a\s+)?(?:human|live agent|human agent|real person|customer service)\b/i;
@@ -301,7 +301,7 @@ const FUTURE_ZH = /(之後|之后|遲啲|迟点|遲些|稍後|稍后|日後|以�
 const FUTURE_EN = /\b(later|afterwards|after that|eventually|maybe later|might later|in the future|tomorrow|next (?:week|month|day|time|year))\b/i;
 const REFERENCE_ZH = /(你頭先|你刚才|你剛才|你之前|頭先話|刚才说|剛才說|提過|提过|講過|讲过|所謂|所谓|引用)/;
 const REFERENCE_EN = /\b(you said|you mentioned|earlier|previously|before|quote|quoted)\b/i;
-const QUESTION_ZH = /(係咪|是不是|是否|幾點|几点|幾時|何時|多久|幾耐|邊個|哪个|點樣|怎样|怎樣|可以嗎|可唔可以).*(真人|人工|客服)|(真人|人工|客服).*(係咪|是不是|是否|幾點|几点|幾時|何時|多久|幾耐|邊個|哪个|點樣|怎样|怎樣|可以嗎|可唔可以)/;
+const QUESTION_ZH = /(係咪|是不是|是否|幾點|几点|幾時|何時|多久|幾耐|邊個|哪个|點樣|怎样|怎樣|可以嗎|可唔可以).*(真人|人工|職員|职员|客服)|(真人|人工|職員|职员|客服).*(係咪|是不是|是否|幾點|几点|幾時|何時|多久|幾耐|邊個|哪个|點樣|怎样|怎樣|可以嗎|可唔可以)/;
 const QUESTION_EN = /\b(when|what|who|where|how|hours|available|open|close|can i|could i)\b.*\b(human|agent|customer service|support)\b|\b(human|agent|customer service|support)\b.*\b(when|what|who|where|how|hours|available|open|close)\b/i;
 const HYPOTHETICAL_ZH = /(假如|假設|假设|例如|譬如|可唔可以轉|可不可以转|如果我要|如果想)/;
 const HYPOTHETICAL_EN = /\b(hypothetically|suppose|imagine|assuming|what if|could i|would i be able to)\b/i;
@@ -317,9 +317,9 @@ const FIRST_PERSON_HANDOFF_ACTION_ZH = /^(?:我想|我希望|我要|我需要|�
 const DIRECT_HANDOFF_IMPERATIVE_EN = /^(?:please\s+)?(?:(?:now|immediately)\s+)?(?:transfer|connect|route|put|hand\s*off|send)\s+(?:(?:me|this\s+(?:conversation|chat|request|issue)|the\s+(?:conversation|chat|request|issue))\s+)?(?:over\s+)?(?:to|through\s+to)\s+(?:a\s+|an\s+)?(?:human|live agent|human agent|real person|customer service|support agent)\b/i;
 // Quoted/reported imperatives describe someone's words, not a fresh request.
 const QUOTED_ONLY_HANDOFF = /^(?:「[^」]*」|『[^』]*』|“[^”]*”|"[^"]*"|'[^']*')\s*[。.!！?？]?$/;
-const ATTRIBUTED_QUOTE_ZH = /^(?:客人|顧客|顾客|用戶|用户|佢|他|她|同事).{0,8}(?:話|话|說|说|表示|提到)\s*[：:]?\s*[「『“"]/;
+const ATTRIBUTED_QUOTE_ZH = /^(?:客人|顧客|顾客|用戶|用户|職員|职员|佢|他|她|同事).{0,8}(?:話|话|說|说|表示|提到)\s*[：:]?\s*[「『“"]/;
 const ATTRIBUTED_QUOTE_EN = /^(?:(?:the|my|a)\s+)?(?:customer|user|client|friend|colleague|he|she|they)\s+(?:said|asked|wrote|mentioned)\s*[:：]?\s*["“]/i;
-const REPORTED_INTRO_ZH = /^(?:客人|顧客|顾客|用戶|用户|佢|他|她|同事).{0,8}(?:話|话|說|说|表示|提到)\s*[，,：:]/;
+const REPORTED_INTRO_ZH = /^(?:客人|顧客|顾客|用戶|用户|職員|职员|佢|他|她|同事).{0,8}(?:話|话|說|说|表示|提到)\s*[，,：:]/;
 const REPORTED_INTRO_EN = /^(?:(?:the|my|a)\s+)?(?:customer|user|client|friend|colleague|he|she|they)\s+(?:said|asked|wrote|mentioned)\s*[:,]/i;
 
 function normalize(text: string): string {
@@ -395,12 +395,19 @@ function classifyHandoffClause(text: string): HandoffIntentClassification {
   // separately explicit clause is classified independently below.
   const asksServiceInformation = /(?:想知道|想了解|想問|想问|查詢|查询|介紹|介绍).{0,12}(?:真人|人工|客服)|(?:我要|我想|我需要).{0,8}(?:真人客服|人工客服)(?:嘅|的)?(?:服務時間|服务时间|流程|資料|资料|資訊|资讯)|\b(?:i want|i need)\s+(?:a\s+)?(?:human support|human agent)(?:'s)?\s+(?:information|hours|availability|process|workflow)\b/i.test(raw);
   const directContactAction = /(?:轉|转|接駁|接驳|聯絡|联系|搵|找).{0,8}(?:真人|人工|客服)|\b(?:transfer|connect|contact|speak to|talk to).{0,16}\b(?:human|agent)\b/i.test(raw);
+  if (!directContactAction && /(?:請|请|想|要).{0,8}(?:介紹|介绍|解釋|解释|總結|总结|了解).{0,12}(?:真人|人工|客服).{0,12}(?:流程|時間|时间|渠道)|\b(?:explain|describe|summari[sz]e)\b.{0,30}\b(?:human|support)\b.{0,20}\b(?:process|workflow|hours)\b/i.test(raw))
+    return {...base,category:"informational_question"};
   if ((!directContactAction && asksServiceInformation) || QUESTION_ZH.test(raw) || QUESTION_EN.test(raw))
     return {...base,category:"informational_question"};
   const request = EXPLICIT_ZH.test(raw) || EXPLICIT_EN.test(raw) ||
     DIRECT_HANDOFF_IMPERATIVE_ZH.test(raw) || FIRST_PERSON_HANDOFF_ACTION_ZH.test(raw) ||
     DIRECT_HANDOFF_IMPERATIVE_EN.test(raw) ||
-    /(?:請|请|麻煩|麻烦|幫我|帮我|現在|现在|而家)?(?:安排|聯絡|联系).{0,12}(?:真人|人工|客服).{0,12}(?:接手|轉接|转接|協助|协助)|(?:please )?(?:arrange|contact).{0,20}(?:human|live agent).{0,20}(?:take over|help|support)/i.test(raw);
+    /(?:請|请|麻煩|麻烦|幫我|帮我|現在|现在|而家)?(?:安排|聯絡|联系).{0,12}(?:真人|人工|客服).{0,12}(?:接手|轉接|转接|協助|协助)|(?:please )?(?:arrange|contact).{0,20}(?:human|live agent).{0,20}(?:take over|help|support)/i.test(raw) ||
+    // Action-object grammar accepts the case/enquiry as the transfer object,
+    // and a human as its recipient; neither a bare staff mention nor a request
+    // for support information authorizes R1.
+    /(?:請|请|麻煩|麻烦|唔該|唔该).{0,20}(?:由)?(?:真人|人工|客服(?:人員|人员)?).{0,8}(?:接手|處理|处理)|(?:然後|然后|再|並|并)\s*(?:轉|转|轉交|转交).{0,6}(?:真人|人工|客服)|(?:我想|我要|我需要).{0,4}(?:同|與|与)(?:職員|职员).{0,6}(?:直接傾|直接谈|直接談|傾|交談|交谈)/i.test(raw) ||
+    /\b(?:please\s+)?(?:transfer|connect|hand\s+over)\s+(?:this|the|my|our)\s+[^.!?;]{1,80}\s+to\s+(?:a\s+)?(?:human(?:\s+support)?\s+agent|live\s+agent|real\s+person)\b/i.test(raw);
   if (request) return {...base,category:"explicit_request",explicit_request:true};
   return { ...base, category: "mention_only" };
 }

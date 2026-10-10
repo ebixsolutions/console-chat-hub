@@ -62,13 +62,13 @@ Deno.test('120-turn Memory retains corrected requirements and novel cross-topic 
  const after=build([rows(recap,'recap'),...h],memory);
  assert(after.current_customer_facts.every(f=>f.source_message_id!=='recap'),'recap laundered provenance');
 });
-Deno.test('compact semantic transport uses unchanged budget, current-turn delta and rejects truncation/overflow before state authority',async()=>{
+Deno.test('compact semantic transport uses bounded complete-delta budget, current-turn delta and rejects truncation/overflow before state authority',async()=>{
  const names=['LLM_PROVIDER','LLM_MODEL_EVALUATION','ANTHROPIC_API_KEY','SUPABASE_URL'];const saved=names.map(n=>Deno.env.get(n));const fetchBefore=globalThis.fetch;
  try {
   Deno.env.set('LLM_PROVIDER','anthropic');Deno.env.set('LLM_MODEL_EVALUATION','isolated-test-model');Deno.env.set('ANTHROPIC_API_KEY','isolated-fake-key');Deno.env.delete('SUPABASE_URL');
   let calls=0;
   globalThis.fetch=async(_url,init)=>{
-   calls++;const request=JSON.parse(String(init?.body));assert(request.max_tokens===1800,'budget changed');assert(request.system.includes('Omit unchanged/default fields'),'full snapshot still required');
+   calls++;const request=JSON.parse(String(init?.body));assert(request.max_tokens===4096,'budget changed');assert(request.system.includes('Omit unchanged/default fields'),'full snapshot still required');
    return new Response(JSON.stringify({content:[{type:'text',text:JSON.stringify({operation:'NO_STATE_CHANGE',confidence:0.96,customer_facts:[{key:'auto_renew',value:false},{key:'seats',value:{amount:0,unit:'users'}},{key:'appointment_date',value:null}]})}],stop_reason:'end_turn',usage:{output_tokens:100}}));
   };
   const input={company_id:'isolated-company',conversation_id:'isolated-conversation',source_message_id:'isolated-source',latest:'No automatic renewal; zero users; appointment date is unknown.',history:Array.from({length:120},(_,i)=>({role:'visitor',content:`Past topic ${i}`}))};
@@ -86,7 +86,7 @@ Deno.test('novel customer fact corrections retain old values as history; active-
  const next=build([rows('Correction: automatic renewal is now requested.','change')],first,[{key:'renewal',value:true,authority:'customer',source_message_id:'change'}]);
  assert(next.current_customer_facts.some(f=>f.key==='renewal'&&f.value===true&&f.source_message_id==='change'),'new value/source not retained');
  assert(next.cancelled_or_superseded.some(f=>f.key==='superseded_renewal'&&f.value===false&&f.source_message_id==='first'),'old false revived or lineage lost');
- let rejected=false;try{build([rows('New background','limit')],null,Array.from({length:17},(_,i)=>({key:`field_${i}`,value:i,authority:'customer',source_message_id:'limit'})))}catch{rejected=true}
+ let rejected=false;try{build([rows('New background','limit')],null,Array.from({length:41},(_,i)=>({key:`field_${i}`,value:i,authority:'customer',source_message_id:'limit'})))}catch{rejected=true}
  assert(rejected,'fact limit silently dropped an active customer requirement');
 });
 

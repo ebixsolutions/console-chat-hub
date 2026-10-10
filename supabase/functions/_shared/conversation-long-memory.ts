@@ -29,6 +29,9 @@ export const C3_RECENT_RAW_TURN_LIMIT = 12;
 
 const MAX_CORRECTIONS = 8;
 const MAX_FACTS = 16;
+// Active customer values cannot be evicted merely because the dialogue spans
+// several objects. The unchanged 16,384-character envelope remains enforced.
+export const MAX_CURRENT_CUSTOMER_FACTS = 40;
 const MAX_CONSTRAINTS = 12;
 const MAX_REGIONS = 8;
 const MAX_HISTORY = 16;
@@ -812,7 +815,7 @@ export function buildCanonicalConversationMemory(args: {
     updated_from_turn: Math.max(0, args.visitor_turn_count),
     updated_at: args.source_created_at,
   };
-  if (memory.current_customer_facts.length > MAX_FACTS) throw new Error("C3_CURRENT_FACTS_LIMIT");
+  if (memory.current_customer_facts.length > MAX_CURRENT_CUSTOMER_FACTS) throw new Error("C3_CURRENT_FACTS_LIMIT");
   const fitted = fitMemory(memory);
   if (args.pending_lifecycle_reply) {
     fitted.pending_lifecycle_reply = structuredClone(args.pending_lifecycle_reply);
