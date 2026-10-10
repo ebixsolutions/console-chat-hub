@@ -474,7 +474,7 @@
     "supabase/functions/_shared/commerce-semantic-frame.ts": "fa6efe39bd84e77eac32b820e72c6375b11e4e92c499a981bffa3963c1feae16",
     "supabase/functions/_shared/commerce-semantic-interpreter.ts": "74b469ea156cb48da6593e87b35a1036703e13a311bf3c29336eda5e1e7c74c2",
     "supabase/functions/_shared/commerce-state-authority.ts": "06a532a71885f0a8f7b6d1a3cd2c16b047b61912f6091366bda87ba8544640ae",
-    "supabase/functions/_shared/commerce-state-runtime-base.ts": "2ab0d89697f9ba940407ee02dcc7db4d858dc7fd38f8dc4eda17f710e45fb648",
+    "supabase/functions/_shared/commerce-state-runtime-base.ts": "35310a5d8d969d969398c11b88cd57b1162c229a763ef09f3611656e56f7ebea",
     "supabase/functions/_shared/conversation-long-memory.ts": "27102c323642dadde8ea3a212a964192e68199137d4887a1a00b062ff978851b",
     "supabase/functions/_shared/f13-runtime-recovery.test.ts": "f71f2fa247664c3d4842f8557b8da7e63a546b6b1ae4b176d3a2030ba276291b",
     "supabase/functions/_shared/generation-terminal-guard.ts": "f338a0db458cf85e95d8e30941c9b63ef61e454ab5e6f934ffadcbc8f5ca7404",
@@ -482,7 +482,7 @@
     "supabase/functions/_shared/natural-customer-response.ts": "261d36b9ded97eb4438bb0a89cfb25ae9fbbd80693688b88b544af4792f8a7d4",
     "supabase/functions/generate-reply/index.ts": "47b1496ed973e3ff79d9138a692216ee7f608f58d715c79fb892c4c5f6a10d02",
     "tests/quality95/frozen-inputs.json": "dc5d57ce3cb4dfd4de03d944a54e0dae42d1def62761fc985c3758cdd1beac52",
-    "tests/quality95/retained-failures.test.ts": "b77fc596c63b21cad134cc86777b50b8e3b7684e2cd4610b0f9a411cd70e0a18"
+    "tests/quality95/retained-failures.test.ts": "8c683536531aad681faddbe356b4df90788a03e7f35c400aa30226c04d6dff4b"
   },
   "quality95_production_deployment_authorized": false,
   "quality95_extra_traffic_authorized": false,

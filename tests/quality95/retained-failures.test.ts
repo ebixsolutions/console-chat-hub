@@ -10,6 +10,7 @@ import {
   normalizeCommerceSemanticFrame,
 } from "../../supabase/functions/_shared/commerce-semantic-frame.ts";
 import {
+  mergeCommerceEntityHints,
   semanticFrameToEntityHints,
   semanticFrameToStateEvents,
 } from "../../supabase/functions/_shared/commerce-semantic-adapter.ts";
@@ -340,6 +341,7 @@ Deno.test(
           kind: "physical_product",
           category_hint: "air_conditioner",
           confidence: 0.9,
+          attributes: { customer_window_style: "窗口式" },
         },
       ],
       requested_facts: ["selection_criteria"],
@@ -354,11 +356,11 @@ Deno.test(
         language: "zh-TW",
         semantic_frame: frame,
       },
-      [{
+      mergeCommerceEntityHints(semanticFrameToEntityHints(frame), [{
         entity_id: "air_conditioner:unscoped",
         category: "air_conditioner",
         aliases: ["冷氣"],
-      }],
+      }]),
     );
     assert(
       result.result === "success" && commits === 1,
@@ -366,8 +368,16 @@ Deno.test(
     );
     assert(
       state.entities.length === 1 &&
-        state.entities[0].attributes.installation_type === "window_unit",
-      "supplied window style lost",
+        (state.entities[0].attributes.semantic_attributes as Record<
+            string,
+            unknown
+          >)?.customer_window_style === "窗口式",
+      "supplied field lost: " +
+        JSON.stringify({
+          state,
+          frame,
+          hints: semanticFrameToEntityHints(frame),
+        }),
     );
   },
 );

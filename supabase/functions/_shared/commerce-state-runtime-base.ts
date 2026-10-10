@@ -1840,7 +1840,7 @@ function enrichExplicitCustomerFacts(input: CommerceRuntimeInput, state: Convers
   const ac = active.filter((entity) => entity.category === "air_conditioner");
   if (ac.length === 1 && (categories.length === 1 && categories[0].key === "air_conditioner" || !categories.length && reduced.current_topic === "air_conditioner")) {
     const facts: CommerceStateEvent[] = [];
-    if (/窗口(?:式|冷氣|機|机)|window\s+(?:unit|air)/iu.test(input.text)) facts.push({type:"SET_ENTITY_ATTRIBUTE",entity_id:ac[0].entity_id,key:"installation_type",value:"window_unit",provenance});
+    if (/窗口(?:冷氣|機|机)|window\s+(?:unit|air)/iu.test(input.text)) facts.push({type:"SET_ENTITY_ATTRIBUTE",entity_id:ac[0].entity_id,key:"installation_type",value:"window_unit",provenance});
     const sunPattern = /西斜|西曬|西晒|下午.{0,6}(?:曬|晒|日照)|afternoon\s+sun|west[- ]?facing/iu;
     if (sunPattern.test(input.text)) {
       const sunlight = { ...(ac[0].attributes.room_sunlight as Record<string, string> ?? {}) };
@@ -2018,6 +2018,18 @@ function reduceSingleTurn(
     const target = previous.entities.find(e=>e.entity_id === event.entity_id);
     return !(target?.category === "air_conditioner" || journey.goal?.category === "air_conditioner");
   }).map(event => {
+    if (event.type === "ENSURE_ENTITY" || event.type === "ADD_ENTITY") {
+      const entityId = event.entity.entity_id;
+      const scoped = boundHints.filter(hint => hint.entity_id === entityId);
+      if (scoped.length === 1) {
+        // A journey may create the same entity before the generic hint event.
+        // Carry its validated typed customer requirements into that authorized
+        // creation; never guess a referent or promote them to merchant evidence.
+        event = {...event, entity: {...event.entity,
+          attributes: {...scoped[0].attributes, ...event.entity.attributes},
+          constraints: {...scoped[0].constraints, ...event.entity.constraints}}};
+      }
+    }
     if (event.type !== "ENSURE_ENTITY" || event.entity.category !== "air_conditioner" || machineQuantity !== null) return event;
     return {...event, entity: {...event.entity, attributes: {...event.entity.attributes, quantity_basis: "system_default"}}};
   });
