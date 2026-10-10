@@ -47,6 +47,7 @@ const labels: Record<string, string> = {
 };
 const text = (x: unknown): string =>
   typeof x === "string" ? x.slice(0, 2000) : typeof x === "number" ? String(x) : "";
+const originalText = (x: unknown): string => typeof x === "string" ? x : "";
 const human = (x: unknown): string => labels[text(x)] ?? text(x).replaceAll("_", " ");
 const factValue = (x: unknown): string => x === null ? "未確認" : typeof x === "boolean" ? (x ? "是" : "否") : Array.isArray(x) ? x.map(factValue).join("、") : obj(x) ? JSON.stringify(x) : human(x);
 const strings = (x: unknown): string[] =>
@@ -75,6 +76,17 @@ export function projectTicketSummary(
     p.company_id !== companyId
   )
     return null;
+  const context = obj(p.handoff_context), request = obj(context?.current_request);
+  const snapshot = obj(context?.memory_snapshot), priorMemory = obj(snapshot?.memory);
+  if (context && (context.version !== "c3-early-r1-context-1.0.0" ||
+    context.conversation_id !== conversationId || context.company_id !== companyId ||
+    request?.source_message_id !== p.generated_from_source_message_id ||
+    typeof request?.interpretation_committed !== "boolean" || !text(request?.content) ||
+    (snapshot && (priorMemory?.conversation_id !== conversationId ||
+      priorMemory?.company_id !== companyId ||
+      priorMemory?.source_message_id !== snapshot.source_message_id ||
+      priorMemory?.memory_revision !== snapshot.revision)))) return null;
+  const previous = snapshot?.applicability === "prior_committed_snapshot" ? priorMemory : null;
   const entityLines = (items: unknown) =>
     rows(items).flatMap((e) => {
       const a = obj(e.attributes) ?? {},
@@ -106,7 +118,8 @@ export function projectTicketSummary(
   const sections: TicketSummary = [
     {
       title: "客人目標",
-      lines: text(p.current_customer_goal) && p.current_customer_goal !== "unknown"
+      lines: context && request?.interpretation_committed === false ? [originalText(request.content)]
+        : text(p.current_customer_goal) && p.current_customer_goal !== "unknown"
         ? [human(p.current_customer_goal)] : ["目標未確認"],
     },
     { title: "目前需求", lines: entityLines(active) },
@@ -139,7 +152,8 @@ export function projectTicketSummary(
       ],
     },
     {
-      title: "交易狀態",
+      title: context && request?.interpretation_committed === false
+        ? "最後已提交交易狀態（需按最新要求核實）" : "交易狀態",
       lines: [
         ["quotation", "報價"],
         ["order", "訂單"],
@@ -164,5 +178,37 @@ export function projectTicketSummary(
         }),
     },
   ];
+  if (context) {
+    sections.splice(1, 0, {
+      title: "最新要求的處理狀態",
+      lines: [request?.interpretation_committed === true ? "最新理解已保存。"
+        : "原文已保存；最新更正／取消尚未套用至已提交資料，需真人先確認。"],
+    });
+    if (previous) sections.push(
+      { title: "先前已提交的客人資料（不是最新更正後的需求）", lines: [
+        ...(text(previous.current_goal) ? [`先前目標：${text(previous.current_goal)}`] : []),
+        ...rows(previous.current_customer_facts)
+          .filter(f => ["customer", "canonical_commerce"].includes(text(f.authority)) &&
+            text(f.source_message_id) && Object.hasOwn(f, "value"))
+          .map(f => `${human(f.key)}：${factValue(f.value)}（客人提供，非商家核實）`),
+        ...strings(previous.latest_corrections).map(v => `先前已保存更正：${v}`),
+      ] },
+      { title: "先前待確認／跟進（需重新核實是否適用）", lines: [
+        ...strings(previous.open_questions), ...strings(previous.pending_actions),
+      ] },
+    );
+    sections.push(
+      { title: "先前有 KB 依據的答覆（歷史紀錄，不能作目前需求的依據）",
+        lines: rows(context.grounded_answer_history)
+          .filter(f => f.company_id === companyId && text(f.source_message_id) &&
+            text(f.assistant_message_id) && text(f.tenant_id) &&
+            f.applicability === "historical_answer_not_current_authority" && f.reusable_as_current === false)
+          .map(f => `先前問題：${originalText(f.question)}\n當時答覆：${originalText(f.answer)}`) },
+      { title: "先前對話原文（不是已核實事實／目前需求）",
+        lines: rows(context.prior_turns).filter(t => text(t.message_id) &&
+          ["visitor", "assistant", "agent"].includes(text(t.role)))
+          .map(t => `${t.role === "visitor" ? "客人" : t.role === "agent" ? "客服" : "AI"}：${originalText(t.content)}`) },
+    );
+  }
   return sections.filter((s) => s.lines.length > 0);
 }

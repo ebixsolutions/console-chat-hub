@@ -315,6 +315,11 @@ jobs:
         run: |
           set -euo pipefail
           python tests/c3-f13-f14/native-projection.py --database postgresql://postgres:c3-disposable-native-only@127.0.0.1:5432/c3_uat_isolated_native --out "$RUNNER_TEMP/c3-rev14-offline"
+      - name: Section15 early R1 actual captured transaction Summary and exact rollback (no production)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tests/section15/early-r1-native.py --database postgresql://postgres:c3-disposable-native-only@127.0.0.1:5432/c3_uat_isolated_native --out "$RUNNER_TEMP/c3-rev14-offline/section15"
       - name: Preserve actual source and native test evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -1451,6 +1456,8 @@ jobs:
           deno check --no-lock supabase/functions/_shared/conversation-long-memory.ts supabase/functions/_shared/memory-reply-lifecycle-readback.ts supabase/functions/_shared/conversation-service-planner.ts
           deno test --no-lock --no-check tests/c3-memory-reply-lineage/*.test.ts supabase/functions/_shared/conversation-long-memory.test.ts supabase/functions/_shared/conversation-service-planner.test.ts tests/section15/handoff-service.test.ts
           deno test --no-lock --no-check --filter 'H-R6 read-only unknown-scope reconciliation' supabase/functions/_shared/conversation-recall.integration.test.ts
+      - name: Section15 early R1 Summary consumer compatibility
+        run: deno test --no-lock --allow-read --node-modules-dir=auto tests/section15/early-r1-summary.test.ts
       - name: Non-production A-H recovery control-flow regression
         shell: bash
         run: |
