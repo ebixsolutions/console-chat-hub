@@ -1457,7 +1457,7 @@ jobs:
           deno test --no-lock --no-check tests/c3-memory-reply-lineage/*.test.ts supabase/functions/_shared/conversation-long-memory.test.ts supabase/functions/_shared/conversation-service-planner.test.ts tests/section15/handoff-service.test.ts
           deno test --no-lock --no-check --filter 'H-R6 read-only unknown-scope reconciliation' supabase/functions/_shared/conversation-recall.integration.test.ts
       - name: Section15 early R1 Summary consumer compatibility
-        run: deno test --no-lock --allow-read --node-modules-dir=auto tests/section15/early-r1-summary.test.ts
+        run: deno test --no-lock --allow-read --node-modules-dir=manual tests/section15/early-r1-summary.test.ts
       - name: Non-production A-H recovery control-flow regression
         shell: bash
         run: |
