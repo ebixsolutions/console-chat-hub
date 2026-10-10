@@ -72,15 +72,15 @@ export function classifyHumanServiceDiscussion(input: string): HumanServiceDiscu
   const controlContinuation = /(?:唔係|不是|唔好|不要|並非|并非|唔使|不用|而家|現在|现在|引用|舊對話|旧对话|要求|轉交|转交|安排|處理|处理|\bnot\b|\brequest\b|\bquote\b|\bnow\b|\blater\b|\bprocess\b|\bhandoff\b|\bhow\b|\bwhat happens\b|通常)/i;
   const clauses = text.split(/[，,。!?！？;；\n]+|\b(?:and|but)\b/i).map(s => s.trim()).filter(Boolean);
   if (clauses.some(clause => !serviceSubject.test(clause) &&
-    !controlContinuation.test(clause) && !/^(?:如果|假設|假设|假如|若果|若|if|suppose|assuming|通常|可以點|可以点)/i.test(clause))) {
+    !controlContinuation.test(clause) && !/^(?:如果|假設|假设|假如|若果|若|明天|下次|等聽日|等听日|if|suppose|imagine|assuming|tomorrow|next|通常|可以點|可以点)/i.test(clause))) {
     return result("business_or_mixed");
   }
   // A closed control/process vocabulary is deliberately conservative: a new
   // business object in the SAME clause must not disappear behind 'how support
   // works'. Unknown words retain the semantic path, rather than being dropped.
   const remainder = text.toLowerCase()
-    .replace(/\b(?:human|live|support|customer|service|agent|representative|real|person|transfer|connect|handoff|request|asks?|asking|quoted?|quotation|reported|speech|conversation|previous|old|earlier|said|mentioned|that|this|the|a|an|i|me|my|you|your|is|was|are|am|do|does|did|not|no|don't|please|to|for|of|in|if|suppose|assuming|hypothetically|later|future|now|need|want|would|could|can|only|how|what|happens|usually|process|workflow|work|works|it|and|but)\b/gi, "")
-    .replace(/真人客服|人工客服|客服人員|客服人员|真人|人工|剛才|刚才|頭先|头先|之前|舊對話|旧对话|嗰句|那句話|那句话|客人|客戶|客户|引用|引述|唔係|不是|並非|并非|唔好|不要|不需要|唔使|不用|唔識答|唔识答|未解決|未解决|一直|如果|假設|假设|假如|若果|通常|日後|日后|以後|以后|之後|之后|遲啲|迟点|聽日|听日|明天|下次|稍後|稍后|而家|現在|现在|轉交|转交|跟進|跟进|接手|可唔可以|可以|需要|要求|安排|處理|处理|流程|點樣|点样|怎樣|怎样|怎麼|怎么|如何|講清楚|讲清楚|資料|资料|資訊|资讯|信息|知道|了解|問|问|想|可能|考慮|考虑|轉|转|搵|找|幫|帮|請|请|我|你|佢|他|這|这|的|係|是|話|话|說|说|要|再|先|等|點|点|唔/g, "")
+    .replace(/\b(?:human|live|support|customer|service|agent|representative|real|person|friend|colleague|he|she|they|cancel|withdraw|revoke|tomorrow|next|week|month|day|time|year|imagine|assuming|fails?|failed|unresolved|resolved|problem|issue|transfer|connect|handoff|request|asks?|asking|quoted?|quotation|reported|speech|conversation|previous|old|earlier|said|wrote|mentioned|that|this|the|a|an|i|me|my|you|your|is|was|are|am|do|does|did|not|no|don't|please|to|for|of|in|if|suppose|assuming|hypothetically|later|future|now|need|want|would|could|can|only|how|what|happens|usually|process|workflow|work|works|it|and|but)\b/gi, "")
+    .replace(/真人客服|人工客服|客服人員|客服人员|真人|人工|剛才|刚才|頭先|头先|之前|舊對話|旧对话|嗰句|那句話|那句话|客人|客戶|客户|引用|引述|唔係|不是|並非|并非|唔好|不要|不需要|唔使|不用|唔識答|唔识答|未解決|未解决|一直|如果|假設|假设|假如|若果|通常|日後|日后|以後|以后|之後|之后|取消|撤回|遲啲|迟点|聽日|听日|明天|下次|稍後|稍后|而家|現在|现在|轉交|转交|跟進|跟进|接手|可唔可以|可以|需要|要求|安排|處理|处理|流程|點樣|点样|怎樣|怎样|怎麼|怎么|如何|講清楚|讲清楚|資料|资料|資訊|资讯|信息|知道|了解|問|问|想|可能|考慮|考虑|轉|转|搵|找|幫|帮|請|请|我|你|佢|他|這|这|的|係|是|話|话|說|说|要|再|先|等|點|点|唔/g, "")
     .replace(/[\s\p{P}\p{S}]/gu, "");
   if (remainder) return result("business_or_mixed");
   if (process || handoff.category !== "mention_only") return result("control_or_process", process);
@@ -291,20 +291,20 @@ const PRESENT_REQUEST_MARKERS = [
 
 const HUMAN_ZH = /(真人|人工|客服)/;
 const HUMAN_EN = /\b(human|live agent|human agent|real person|support agent|customer service)\b/i;
-const NEG_HUMAN_ZH = /(?:唔好|不要|不需要|唔需要|不想|唔想|唔使|不用|毋須|毋需|別|别|未需要|未要|而家未|現在未|现在未|唔係(?:而家|現在|现在)?(?:要求|要)|不是(?:現在|现在)?(?:要求|要)|並非(?:現在|现在)?(?:要求|要)|并非(?:現在|现在)?(?:要求|要)|未叫|冇叫|没有叫|沒有叫|禁止|不准|唔准).{0,8}(?:轉|转|接|搵|找|聯絡|联系|要|需要)?\s*(?:真人|人工|客服(?:人員|人员)?)|(?:真人|人工|客服(?:人員|人员)?).{0,8}(?:唔好|不要|唔使|不用|毋須|毋需|未需要|未要|禁止|不准|唔准)/;
-const NEG_HUMAN_EN = /\b(?:don't|do not|didn't|did not|not asking|not ask|no need|don't need|do not need|not yet|never)\b.{0,28}\b(?:connect|transfer|put|speak|want|need)?\b.{0,12}\b(?:human|live agent|human agent|real person|support agent|customer service)\b|\b(?:human|live agent|human agent|real person|support agent|customer service)\b.{0,20}\b(?:not needed|not required|no need|not yet)\b/i;
+const NEG_HUMAN_ZH = /(?:取消|撤回|唔好|不要|不需要|唔需要|不想|唔想|唔使|不用|毋須|毋需|別|别|未需要|未要|而家未|現在未|现在未|唔係(?:而家|現在|现在)?(?:要求|要)|不是(?:現在|现在)?(?:要求|要)|並非(?:現在|现在)?(?:要求|要)|并非(?:現在|现在)?(?:要求|要)|未叫|冇叫|没有叫|沒有叫|禁止|不准|唔准).{0,8}(?:轉|转|接|搵|找|聯絡|联系|要|需要)?\s*(?:真人|人工|客服(?:人員|人员)?)|(?:真人|人工|客服(?:人員|人员)?).{0,8}(?:唔好|不要|唔使|不用|毋須|毋需|未需要|未要|禁止|不准|唔准)/;
+const NEG_HUMAN_EN = /\b(?:cancel|withdraw|revoke|don't|do not|didn't|did not|not asking|not ask|no need|don't need|do not need|not yet|never)\b.{0,28}\b(?:connect|transfer|put|speak|want|need)?\b.{0,12}\b(?:human|live agent|human agent|real person|support agent|customer service)\b|\b(?:human|live agent|human agent|real person|support agent|customer service)\b.{0,20}\b(?:not needed|not required|no need|not yet)\b/i;
 const AI_REJECT_HUMAN_REQUEST_ZH = /(?:唔好|不要|唔使|不用|毋須|毋需)\s*(?:AI|人工智能|機器人|机器人|bot).{0,24}(?:(?:我)?(?:而家|現在|现在|即刻|立即)?(?:要|想要|需要).{0,8}(?:真人|人工|客服(?:人員|人员)?)|(?:請|请|麻煩|麻烦|幫我|帮我).{0,10}(?:轉|转|接|搵|找|聯絡|联系).{0,8}(?:真人|人工|客服(?:人員|人员)?))/i;
 const AI_REJECT_HUMAN_REQUEST_EN = /\b(?:don't|do not|no longer want|stop using)\b.{0,16}\b(?:ai|bot|robot|automation)\b.{0,40}\b(?:i want|i need|please connect|please transfer|connect me|transfer me|let me speak to)\b.{0,16}\b(?:a\s+)?(?:human|live agent|human agent|real person|customer service)\b/i;
 const CONDITIONAL_ZH = /(如果|若果|如果.*先|先至|才|除非|答唔到|答不到|查唔到|查不到)/;
 const CONDITIONAL_EN = /\b(if|only if|unless|in case)\b/i;
 const FUTURE_ZH = /(之後|之后|遲啲|迟点|遲些|稍後|稍后|日後|以后|以後|到時|到时|聽日|听日|明天|下次|再考慮|再考虑|可能)/;
-const FUTURE_EN = /\b(later|afterwards|after that|eventually|maybe later|might later|in the future)\b/i;
+const FUTURE_EN = /\b(later|afterwards|after that|eventually|maybe later|might later|in the future|tomorrow|next (?:week|month|day|time|year))\b/i;
 const REFERENCE_ZH = /(你頭先|你刚才|你剛才|你之前|頭先話|刚才说|剛才說|提過|提过|講過|讲过|所謂|所谓|引用)/;
 const REFERENCE_EN = /\b(you said|you mentioned|earlier|previously|before|quote|quoted)\b/i;
 const QUESTION_ZH = /(係咪|是不是|是否|幾點|几点|幾時|何時|多久|幾耐|邊個|哪个|點樣|怎样|怎樣|可以嗎|可唔可以).*(真人|人工|客服)|(真人|人工|客服).*(係咪|是不是|是否|幾點|几点|幾時|何時|多久|幾耐|邊個|哪个|點樣|怎样|怎樣|可以嗎|可唔可以)/;
 const QUESTION_EN = /\b(when|what|who|where|how|hours|available|open|close|can i|could i)\b.*\b(human|agent|customer service|support)\b|\b(human|agent|customer service|support)\b.*\b(when|what|who|where|how|hours|available|open|close)\b/i;
 const HYPOTHETICAL_ZH = /(假如|假設|假设|例如|譬如|可唔可以轉|可不可以转|如果我要|如果想)/;
-const HYPOTHETICAL_EN = /\b(hypothetically|suppose|what if|could i|would i be able to)\b/i;
+const HYPOTHETICAL_EN = /\b(hypothetically|suppose|imagine|assuming|what if|could i|would i be able to)\b/i;
 const EXPLICIT_ZH = /(?:而家|現在|现在|即刻|立即).{0,8}(轉|转|接|搵|找|聯絡|联系).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:請|请|麻煩|麻烦|幫我|帮我).{0,10}(轉|转|接|搵|找|聯絡|联系).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:我要|我想|我需要|想要|需要).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:我)?(?:而家|現在|现在|即刻|立即).{0,4}(?:要|想要|需要).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:我)?(?:而家|現在|现在|即刻|立即)?(?:正式|明確|明确|確定|确定)(?:要|要求|想要|需要).{0,8}(真人|人工|客服(?:人員|人员)?)/;
 const EXPLICIT_EN = /\b(please\s+)?(connect|transfer|put|let)\s+me\s+(to|through to)\s+(a\s+)?(human|live agent|human agent|real person|customer service)|\b(i want|i need|let me speak to|i want to speak to|i need to speak to|connect me to)\s+(a\s+)?(human|live agent|human agent|real person|customer service)(\s+now)?\b/i;
 
@@ -318,9 +318,9 @@ const DIRECT_HANDOFF_IMPERATIVE_EN = /^(?:please\s+)?(?:(?:now|immediately)\s+)?
 // Quoted/reported imperatives describe someone's words, not a fresh request.
 const QUOTED_ONLY_HANDOFF = /^(?:「[^」]*」|『[^』]*』|“[^”]*”|"[^"]*"|'[^']*')\s*[。.!！?？]?$/;
 const ATTRIBUTED_QUOTE_ZH = /^(?:客人|顧客|顾客|用戶|用户|佢|他|她|同事).{0,8}(?:話|话|說|说|表示|提到)\s*[：:]?\s*[「『“"]/;
-const ATTRIBUTED_QUOTE_EN = /^(?:the\s+)?(?:customer|user|client|he|she|they)\s+(?:said|asked|wrote|mentioned)\s*[:：]?\s*["“]/i;
+const ATTRIBUTED_QUOTE_EN = /^(?:(?:the|my|a)\s+)?(?:customer|user|client|friend|colleague|he|she|they)\s+(?:said|asked|wrote|mentioned)\s*[:：]?\s*["“]/i;
 const REPORTED_INTRO_ZH = /^(?:客人|顧客|顾客|用戶|用户|佢|他|她|同事).{0,8}(?:話|话|說|说|表示|提到)\s*[，,：:]/;
-const REPORTED_INTRO_EN = /^(?:the\s+)?(?:customer|user|client|he|she|they)\s+(?:said|asked|wrote|mentioned)\s*[:,]/i;
+const REPORTED_INTRO_EN = /^(?:(?:the|my|a)\s+)?(?:customer|user|client|friend|colleague|he|she|they)\s+(?:said|asked|wrote|mentioned)\s*[:,]/i;
 
 function normalize(text: string): string {
   return (text ?? "").normalize("NFKC").trim();
@@ -412,6 +412,24 @@ export function splitHandoffClauses(text: string): string[] {
 
 export function classifyHandoffIntent(text: string): HandoffIntentClassification {
   const language = detectHandoffLanguageHint(text);
+  // Quoted commands are data, including third-party quotations whose author
+  // is not in the bounded reported-speech lexicon. Never execute their verbs.
+  // Apostrophes inside English words are not quotation delimiters.
+  let quotedHuman = false;
+  const unquoted = text.replace(/「[^」]*」|『[^』]*』|“[^”]*”|"[^"]*"|‘[^’]*’|(?<!\w)'[^']*'(?!\w)/g, quote => {
+    if (HUMAN_ZH.test(quote) || HUMAN_EN.test(quote)) quotedHuman = true;
+    return " ";
+  });
+  if (quotedHuman) {
+    if (!HUMAN_ZH.test(unquoted) && !HUMAN_EN.test(unquoted)) {
+      return { ...classifyHandoffClause(text), language, category: "reference_or_report",
+        explicit_request: false, pure_handoff_negation: false };
+    }
+    // Recognised reported introductions retain the existing fresh first-person
+    // override. Other attributions classify only the remaining live clauses.
+    if (!REPORTED_INTRO_ZH.test(text.trim()) && !REPORTED_INTRO_EN.test(text.trim()))
+      return classifyHandoffIntent(unquoted);
+  }
   // A reported instruction remains reported even if its attribution and the
   // quoted imperative are separated by punctuation.
   if (REPORTED_INTRO_ZH.test(text.trim()) || REPORTED_INTRO_EN.test(text.trim())) {
@@ -433,7 +451,7 @@ export function classifyHandoffIntent(text: string): HandoffIntentClassification
   const decisions = (clauses.length ? clauses : [text]).map(classifyHandoffClause);
   // A conditional antecedent governs the request in the same sentence, even
   // when punctuation separates the antecedent from its consequent.
-  if (/^(?:如果|假如|假設|假设|若果|萬一|万一|倘若|除非|if\b|in case\b)/i.test(text.trim()) && !/[。.!！]\s*(?:請|请|現在|现在|而家|please|now|I want)/i.test(text))
+  if (/^(?:如果|假如|假設|假设|若果|萬一|万一|倘若|除非|if\b|in case\b|suppose\b|imagine\b|assuming\b|hypothetically\b|tomorrow\b|next (?:week|month|day|time|year)\b|明天|下次|等聽日|等听日|之後|之后|遲啲|迟点)/i.test(text.trim()) && !/[。.!！]\s*(?:請|请|現在|现在|而家|please|now|I want)/i.test(text))
     return {...(decisions.find(d=>d.mentions_human_handoff) ?? classifyHandoffClause(text)),language,category:"conditional_or_future",explicit_request:false,pure_handoff_negation:false};
   const explicit = decisions.find((decision) => decision.explicit_request);
   const negated = decisions.find((decision) => decision.pure_handoff_negation);

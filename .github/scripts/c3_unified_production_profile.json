@@ -434,7 +434,7 @@
     "bun.lock": "c83b835e57f4b012f29998a54c0246d342930a13f0857dec495a5639bed7f08d"
   },
   "authorized_section15_repair_sha256": {
-    "supabase/functions/_shared/handoff-intent.ts": "dbf55a98974e156a0ef140495ad79d772a27f3b86f1e750e8fbce6595904efb0",
+    "supabase/functions/_shared/handoff-intent.ts": "ceca2af81097691f236fc118b7c67c106c5608d855bd9027f665747f4a09b21d",
     "supabase/functions/generate-reply/index.ts": "60d5bf1dae17872bbc55f4f8851b94c52ffb7bb8c641302566b2df9ae31a8297",
     "tests/section15/compound-handoff.test.mjs": "68d849eb80591ec45836065c1cb45641b3495b5c92b819f24341ae033b6fe863",
     "supabase/functions/_shared/conversation-service-planner.ts": "2c72fc2e666689ae26a481f7a4b165fcfd974e942171aebff22429c3c17a3bbe",
@@ -456,7 +456,7 @@
     "tests/section15/early-r1-runtime.fixture.json": "15805f12cbb438726aee9992b3e8441cfadb4fc96edc383016cc735f22199a8f",
     "tests/section15/early-r1-summary.test.ts": "6e6e5fbc0cbddbba8536496b50f55e6f5e116dd8d4def1bc0904bf6fcf8a6073",
     "tests/section15/early-r1-company-dependencies.json": "ea598c04fd1e7f09e13a2fd342d00678c934a79c2c5f1272ad2dc4ccbbcebaf4",
-    "tests/section15/human-service-routing.test.mjs": "aaeca337485a530b5d22c32bc8dc0901deeed0a016836048defa7800b7ce1163"
+    "tests/section15/human-service-routing.test.mjs": "5833511af6b6b43bb3a1efcc5c6102de6e11b9841988a025031391baf5c74d02"
   },
   "section15_deployment_authorized": false
 }

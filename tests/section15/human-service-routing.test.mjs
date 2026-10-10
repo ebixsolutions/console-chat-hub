@@ -66,6 +66,36 @@ const immediate = ['請轉真人客服', '麻煩更正回收要求，簡單總�
   '剛才不是要轉真人。請轉真人客服', '唔好自動轉真人；我而家要真人客服',
   '我想知道真人客服服務時間；請轉真人客服', '請幫我轉真人客服，想了解服務時間'];
 
+// Full control polarity, temporal scope and attribution matrix. This uses the
+// same canonical classifier consumed by both runtime paths and the Widget.
+const additionalControls = [
+  '我想取消轉真人客服', '我要撤回轉真人客服要求', '我要取消转人工客服',
+  'Please cancel the request to transfer me to a human', 'Cancel my human support handoff',
+  'I need a human agent tomorrow', 'Next week, please connect me to a human agent',
+  'I want human support next time', '明天，請轉真人客服', '等聽日，請轉真人客服',
+  'My friend said: "Please connect me to a human"',
+  'A colleague wrote: "I need a human agent"', '佢話「請轉真人客服」',
+  'My friend said: "Please connect me to a human"; how does human support work?',
+  'Imagine this fails, please connect me to a human',
+  'Assuming this fails, transfer me to a human agent',
+  '如果唔識答，請轉真人客服', 'If this fails, please transfer me to a human agent',
+];
+for (const question of additionalControls) test(`canonical non-immediate control scope: ${question}`, () => {
+  assert.equal(classifyHandoffIntent(question).explicit_request, false);
+  assert.equal(classifyHumanServiceDiscussion(question).kind, 'control_or_process');
+  const plan=planConversationService({...defaults,question});
+  assert.equal(plan.action,'handoff_context_acknowledgement');
+  assert.equal(plan.handoff_requested,false);
+});
+for (const question of [
+  'My friend said: "Please connect me to a human". I need a human agent now',
+  'If this fails, transfer to a human agent. Please connect me to a human now',
+  '我想取消轉真人客服。請轉真人客服',
+]) test(`separately renewed immediate request: ${question}`, () => {
+  assert.equal(classifyHandoffIntent(question).explicit_request,true);
+  assert.equal(classifyHumanServiceDiscussion(question).kind,'immediate');
+});
+
 for (const [question, process] of controls) test(`control/process source-runtime: ${question}`, async () => {
   const discussion = classifyHumanServiceDiscussion(question);
   assert.equal(discussion.kind, 'control_or_process');
