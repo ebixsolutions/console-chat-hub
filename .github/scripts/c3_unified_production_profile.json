@@ -467,7 +467,7 @@
   "section15_deployment_authorized": false,
   "authorized_quality95_failure_repair_sha256": {
     ".github/scripts/c3_unified_production_source_gate.test.mjs": "27c814871f188fb084a388464bf27b6569c3677ac4635282a699f7b1353c95cc",
-    ".github/workflows/task-ai-abc-c3-final-gate.yml": "edf6e07fb226636b44a8e38daf01f361e05ef4a51f6009c1b4a47a959c73ef9a",
+    ".github/workflows/task-ai-abc-c3-final-gate.yml": "71fd75506eb0f541ad71c2a12cfd7832296f585b76909e98fb04d2ab00160564",
     "supabase/functions/_shared/b2-journey-progress-contract.ts": "5d5fd7807df024160ca9c3ebeca61ff0bae4c62f8cef73f317fafae434451d29",
     "supabase/functions/_shared/canonical-kb-direct-answer.ts": "120d0e8f4a6eb2273d21bb7c621aec6ffe803cacfb7eb3a4eff0f182b2104d41",
     "supabase/functions/_shared/commerce-semantic-adapter.ts": "553abf039af853014f9dbc2c89c86f02f78c1e339176b1423c409cf28050e7ca",
