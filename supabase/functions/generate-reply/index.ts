@@ -4257,15 +4257,42 @@ async function orchestrationGenerateReply(
     const _preSemanticR1DeferredForE1 = isE1LiveActivationEnabled(Deno.env) &&
       classifyLocalTopicRisk(_h1LastMsg)?.level === "high" &&
       flags.ENABLE_KB && !isGreetingOrTrivial(_h1LastMsg);
-    if (!_preSemanticR1DeferredForE1) {
-      const earlyR1 = await persistExplicitR1IfRequested(
+    if (_preSemanticR1DeferredForE1) {
+      // E1 outranks R1. A verified local high-risk topic with RAG not yet
+      // checked is already an accepted E1 authority signal; do not require an
+      // unrelated semantic-model success before this guarded decision.
+      const earlyE1 = await evaluateAndPersistRequiredRulesLive(
         supabaseAdmin,
-        conversation_id,
-        source_message_id,
-        _h1LastMsg,
+        {
+          conversation_id,
+          source_message_id,
+          latest_message_content: _h1LastMsg,
+          conversation_status: conversation.status,
+          assigned_agent_id: conversation.assigned_agent_id ?? null,
+          greeting_or_trivial: false,
+          visitor_language: _visitorLang,
+          expected_tenant_id: _criticalE2ExpectedTenantId,
+          rag_match_state: "not_checked",
+          topic_risk_level: "high",
+          verified_local_risk_classification: true,
+          turn_count: _pr5History.turn_count,
+          consecutive_no_answer: _pr5History.consecutive_no_answer,
+          clarification_attempts: _pr5History.clarification_attempts,
+          exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
+          threat_flag: _criticalE2ThreatSignal,
+          compliance_jurisdiction_requires_human_review:
+            resolveAuthoritativeComplianceReview(_criticalE2ExpectedTenantId),
+        },
       );
-      if (earlyR1) return earlyR1;
+      if (earlyE1) return earlyE1;
     }
+    const earlyR1 = await persistExplicitR1IfRequested(
+      supabaseAdmin,
+      conversation_id,
+      source_message_id,
+      _h1LastMsg,
+    );
+    if (earlyR1) return earlyR1;
   }
   const _naturalCustomerIntent = classifyNaturalCustomerIntent(_h1LastMsg);
   // Safety/control checks above and B2 persistence still apply. A whole social

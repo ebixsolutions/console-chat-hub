@@ -360,6 +360,17 @@ export function classifyHandoffIntent(text: string): HandoffIntentClassification
   // A reported instruction remains reported even if its attribution and the
   // quoted imperative are separated by punctuation.
   if (REPORTED_INTRO_ZH.test(text.trim()) || REPORTED_INTRO_EN.test(text.trim())) {
+    const reportedClauses = splitHandoffClauses(text);
+    // A first-person, present-tense request AFTER the attributed quotation is
+    // a new customer instruction; the quotation itself must never trigger R1.
+    const quotedClauseEnd = classifyHandoffClause(reportedClauses[0] ?? "").mentions_human_handoff ? 1 : 2;
+    const fresh = reportedClauses.slice(quotedClauseEnd).map((clause) =>
+      clause.replace(/^(?:(?:但係|但|不過|另外|but|and)\s*)+/i, "").trim()
+    ).find((clause) =>
+      /^(?:我(?:而家|現在|现在|即刻)?(?:要|想|需要)|(?:而家|現在|现在)我(?:要|想|需要)|I\s+(?:want|need))/i.test(clause) &&
+      classifyHandoffClause(clause).explicit_request
+    );
+    if (fresh) return { ...classifyHandoffClause(fresh), language };
     const reported = classifyHandoffClause(text);
     return { ...reported, language, category: "reference_or_report", explicit_request: false };
   }

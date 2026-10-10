@@ -17,6 +17,8 @@ const positives = [
   'please transfer me to a human',
   'Summarize my booking; please connect me to a human agent',
   'Transfer this conversation to a human agent',
+  '客人話，請轉真人客服；但我而家要真人客服',
+  'The customer said: please transfer to a human; but I need a human',
 ];
 const negatives = [
   '唔好轉真人，幫我再講清楚',
@@ -34,6 +36,7 @@ const negatives = [
   'Do not transfer me to a human',
   'The customer said: "Please transfer me to a human"',
   '"Please transfer me to a human"',
+  '客人話，請轉真人客服；但我想問下服務時間',
 ];
 for (const sentence of positives) test(`explicit R1: ${sentence}`, () => {
   const result=classifyHandoffIntent(sentence);
@@ -58,4 +61,6 @@ test('orchestration early R1 must follow E2 and precede semantic LLM, through B2
   assert.ok(p.indexOf('await executeB2RpcPersistence(')>0);
   assert.ok(p.indexOf('supabaseAdmin.rpc("explicit_handoff_tx"')>0);
   assert.match(handler.slice(early,r1),/isE1LiveActivationEnabled\(Deno\.env\)/);
+  assert.match(handler.slice(early,r1),/rag_match_state:\s*"not_checked"/);
+  assert.match(handler.slice(early,r1),/verified_local_risk_classification:\s*true/);
 });
