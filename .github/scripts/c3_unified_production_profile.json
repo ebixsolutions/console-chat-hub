@@ -513,7 +513,7 @@
   "quality95_repair_source_baseline": "167c9d4c9928134ca448f5873ab33c61e74b5623",
   "authorized_model_accounting_repair_sha256": {
     ".github/scripts/c3_unified_production_source_gate.test.mjs": "a8302e049d1209135172a7a414805d8c6ff43a7719f4b7e11af6b8d1ec2b3124",
-    ".github/workflows/task-ai-abc-c3-final-gate.yml": "316d0ca52515509b75b508639daa4ddcb15a7ce63b378186b716d73efb1d030b",
+    ".github/workflows/task-ai-abc-c3-final-gate.yml": "575746f4e84f34414ba208626aa37d506446865d7853da35397222af6abf8a0a",
     "integrations/singapore-kb/shared_attempt_guard.py": "33a7fec74566670d4120043c6ba405703f5463693b641d00df861fad8fb86034",
     "sql/c3-model-accounting/rollback.sql": "e23b206a574dc3d17683425dfe8afecba9e1dc9e7114d6be6b9b405d8b3c6e2e",
     "supabase/config.toml": "144c9cbb203537c5f5c6a411f0d4498956ab4f7a4bf6326c9f1b726d57adb21e",
