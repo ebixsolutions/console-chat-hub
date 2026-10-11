@@ -1,3 +1,4 @@
+import {withMockAccounting} from "../../../tests/model-accounting/provider-fixture.ts";
 /** Isolated runtime regression, provider transport intercepted. Not production acceptance/Quality95. */
 import { shouldRefreshCanonicalMemory } from './conversation-resolution-contract.ts';
 import { isCurrentRequirementsRecap, customerBusinessText } from './commerce-state-authority.ts';
@@ -63,17 +64,17 @@ Deno.test('120-turn Memory retains corrected requirements and novel cross-topic 
  assert(after.current_customer_facts.every(f=>f.source_message_id!=='recap'),'recap laundered provenance');
 });
 Deno.test('compact semantic transport uses bounded complete-delta budget, current-turn delta and rejects truncation/overflow before state authority',async()=>{
- const names=['LLM_PROVIDER','LLM_MODEL_EVALUATION','ANTHROPIC_API_KEY','SUPABASE_URL'];const saved=names.map(n=>Deno.env.get(n));const fetchBefore=globalThis.fetch;
+ const names=['LLM_PROVIDER','LLM_MODEL_EVALUATION','ANTHROPIC_API_KEY','SUPABASE_URL','SUPABASE_SERVICE_ROLE_KEY','SUPABASE_SECRET_KEY'];const saved=names.map(n=>Deno.env.get(n));const fetchBefore=globalThis.fetch;
  try {
-  Deno.env.set('LLM_PROVIDER','anthropic');Deno.env.set('LLM_MODEL_EVALUATION','isolated-test-model');Deno.env.set('ANTHROPIC_API_KEY','isolated-fake-key');Deno.env.delete('SUPABASE_URL');
+  Deno.env.set('LLM_PROVIDER','anthropic');Deno.env.set('LLM_MODEL_EVALUATION','isolated-test-model');Deno.env.set('ANTHROPIC_API_KEY','isolated-fake-key');Deno.env.set('SUPABASE_URL','http://accounting.mock');Deno.env.set('SUPABASE_SERVICE_ROLE_KEY','mock-service-key');Deno.env.set('SUPABASE_SECRET_KEY','mock-service-key');
   let calls=0;
-  globalThis.fetch=async(_url,init)=>{
+  globalThis.fetch=withMockAccounting(async(_url,init)=>{
    calls++;const request=JSON.parse(String(init?.body));assert(request.max_tokens===4096,'budget changed');assert(request.system.includes('Omit unchanged/default fields'),'full snapshot still required');
    return new Response(JSON.stringify({content:[{type:'text',text:JSON.stringify({operation:'NO_STATE_CHANGE',confidence:0.96,customer_facts:[{key:'auto_renew',value:false},{key:'seats',value:{amount:0,unit:'users'}},{key:'appointment_date',value:null}]})}],stop_reason:'end_turn',usage:{output_tokens:100}}));
-  };
+  });
   const input={company_id:'isolated-company',conversation_id:'isolated-conversation',source_message_id:'isolated-source',latest:'No automatic renewal; zero users; appointment date is unknown.',history:Array.from({length:120},(_,i)=>({role:'visitor',content:`Past topic ${i}`}))};
   const result=await interpretCommerceSemantics(input);assert(result.frame?.customer_facts?.[0].value===false&&result.frame.customer_facts[2].value===null&&calls===1,JSON.stringify(result));
-  globalThis.fetch=async()=>new Response(JSON.stringify({content:[{type:'text',text:'{"operation":"NO_STATE_CHANGE","confidence":0.9}'}],stop_reason:'max_tokens',usage:{output_tokens:1783}}));
+  globalThis.fetch=withMockAccounting(async()=>new Response(JSON.stringify({content:[{type:'text',text:'{"operation":"NO_STATE_CHANGE","confidence":0.9}'}],stop_reason:'max_tokens',usage:{output_tokens:1783}})));
   const truncated=await interpretCommerceSemantics(input);assert(!truncated.frame&&truncated.failure_stage==='truncated','truncated valid-looking JSON accepted');
   globalThis.fetch=async()=>{throw Error('oversized input reached model')};
   const oversized=await interpretCommerceSemantics({...input,latest:'x'.repeat(1601)});assert(oversized.failure_code==='SEMANTIC_INPUT_LIMIT','input silently clipped');

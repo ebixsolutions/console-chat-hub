@@ -1,3 +1,4 @@
+import { prepareRemoteRetrieval, remoteAccountingSecret } from "./remote-model-accounting.ts";
 // supabase/functions/_shared/kb-client.ts
 // Canonical Singapore KB adapter + secure pre-activation scope.
 //
@@ -504,6 +505,13 @@ export async function fetchKBRag(
     };
   }
 
+  let accountingHeaders: Record<string,string>;
+  try {
+    accountingHeaders = await prepareRemoteRetrieval(scope.aiCompanyId, scope.singaporeTenantId,
+      remoteAccountingSecret(credential, endpointCfg), endpointCfg.ragUrl, fetch, opts?.signal);
+  } catch {
+    return { success:false,chunks:[],citations:[],documents:[],error_code:"KB_DOWNSTREAM_ACCOUNTING_UNPROVEN" };
+  }
   const controller = new AbortController();
   const abortFromRequest = () => controller.abort(opts?.signal?.reason);
   if (opts?.signal?.aborted) abortFromRequest();
@@ -517,10 +525,12 @@ export async function fetchKBRag(
   let response: Response;
   try {
     response = await fetch(endpointCfg.ragUrl, {
+      redirect: "error",
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         ...singaporeCredentialHeaders(credential, endpointCfg),
+        ...accountingHeaders,
       },
       body: JSON.stringify({
         query,

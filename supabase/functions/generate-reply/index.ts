@@ -489,6 +489,8 @@ function routerFailureToS0(code: LlmFailureCode): string {
       return "LLM_INPUT_BLOCKED";
     case "LLM_INVALID_OUTPUT":
       return "LLM_INVALID_OUTPUT";
+    case "LLM_ACCOUNTING_DENIED":
+      return "LLM_ACCOUNTING_DENIED";
     case "LLM_GROUNDING_REJECTED":
       return "LLM_GROUNDING_REJECTED";
   }

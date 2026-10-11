@@ -1513,6 +1513,10 @@ jobs:
             supabase/functions/_shared/product-factual-query.test.ts \
             supabase/functions/_shared/conversation-recall.integration.test.ts)
           (cd "$RUNNER_TEMP/c3-deno-checkout" && deno test --no-lock --allow-read --allow-env --node-modules-dir=auto supabase/functions/_shared/f13-runtime-recovery.test.ts supabase/functions/_shared/f13-f14-root-cause.test.ts supabase/functions/_shared/f13-llm-failure.test.ts)
+          (cd "$RUNNER_TEMP/c3-deno-checkout" && deno check --no-lock --node-modules-dir=auto supabase/functions/model-attempt-accounting/index.ts supabase/functions/customer360-coach-sync/index.ts supabase/functions/ce-evaluation-worker/index.ts supabase/functions/ce-evaluation-control/index.ts supabase/functions/kb-search-proxy/index.ts supabase/functions/conversation-evaluate/index.ts)
+          (cd "$RUNNER_TEMP/c3-deno-checkout" && deno test --no-lock --allow-env --allow-read --node-modules-dir=auto tests/model-accounting/accounting.test.ts tests/model-accounting/router.test.ts tests/model-accounting/callback.test.ts)
+          python3 tests/model-accounting/remote-python.test.py
+          node tests/model-accounting/source-coverage.test.mjs
           c3_source_clean after_deno 1
           git worktree add --detach "$RUNNER_TEMP/c3-build-checkout" "$GITHUB_SHA"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/c3-build-checkout/node_modules"
@@ -2039,6 +2043,19 @@ jobs:
           test ! -e node_modules/playwright
           ln -s "$RUNNER_TEMP/c3-playwright/node_modules/playwright" node_modules/playwright
           timeout 300s "$RUNNER_TEMP/c3-playwright/node_modules/.bin/playwright" install chromium --with-deps
+      - name: Shared model accounting native PostgreSQL concurrency and security
+        run: |
+          set -euo pipefail
+          psql "$C3_ISOLATED_DB_URL" -X -v ON_ERROR_STOP=1 -c 'CREATE DATABASE c3modelaccounting'
+          export C3_ACCOUNTING_TEST_DB_URL=postgres://postgres:c3-isolated-only@127.0.0.1:5432/c3modelaccounting
+          python3 tests/model-accounting/native-postgres.py | tee "$RUNNER_TEMP/c3-model-accounting-native.json"
+      - name: Preserve actual accounting database assertions
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: c3-model-accounting-${{ github.sha }}
+          path: ${{ runner.temp }}/c3-model-accounting-native.json
+          if-no-files-found: error
       - name: Execute one mandatory source and isolated runtime final gate
         run: node .github/scripts/c3_director_generic_core_final_gate.mjs
       - name: Verify candidate identity in git and actual no-git Preview build copies

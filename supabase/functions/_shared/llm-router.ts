@@ -1,3 +1,4 @@
+import { accountedModelFetch, ModelAccountingError } from "./model-attempt-accounting.ts";
 /**
  * Governed model router — the single provider call site for Edge Functions.
  *
@@ -29,7 +30,8 @@ export type LlmFailureCode =
   | "LLM_NETWORK"
   | "LLM_NON_2XX"
   | "LLM_INVALID_OUTPUT"
-  | "LLM_GROUNDING_REJECTED";
+  | "LLM_GROUNDING_REJECTED"
+  | "LLM_ACCOUNTING_DENIED";
 
 export interface LlmUsage {
   input_tokens: number;
@@ -680,18 +682,21 @@ async function verifyGroundedGeneration(
 
   for (let attempt = 1; attempt <= 2; attempt++) {
     if (call.signal?.aborted) break;
-    verifierUsage.attempts = attempt;
+
     const controller = new AbortController();
     const unbindExternalAbort = bindExternalAbort(controller, call.signal);
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const req = await verifierAdapter.buildRequest();
-      const res = await fetch(req.url, {
+      const res = await accountedModelFetch(serviceClient(), {
+        companyId: call.companyId, conversationId: call.conversationId, operationId: call.operationId,
+        provider: verifierAdapter.id, purpose: "evaluation", slot: "grounding-verifier", attempt, request: req.body,
+      }, req.url, {
         method: "POST",
         headers: req.headers,
         body: req.body,
         signal: controller.signal,
-      });
+      }, fetch, () => { verifierUsage.attempts++; });
       lastStatus = res.status;
       if (res.status === 429 || res.status >= 500) {
         if (!call.signal?.aborted && attempt < 2) {
@@ -781,6 +786,7 @@ async function verifyGroundedGeneration(
       }
       return { ok: true };
     } catch (error) {
+      if (error instanceof ModelAccountingError) return { ok: false, reason: "model_accounting_denied" };
       const aborted = error instanceof Error && error.name === "AbortError";
       if (!call.signal?.aborted && !aborted && attempt < 2) {
         await sleep(BASE_BACKOFF_MS * 2 ** (attempt - 1));
@@ -937,7 +943,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
       lastCode = "LLM_TIMEOUT";
       break;
     }
-    usage.attempts = attempt;
+
     const controller = new AbortController();
     const unbindExternalAbort = bindExternalAbort(controller, call.signal);
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -947,13 +953,17 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
       let res: Response;
       try {
         const req = await adapter.buildRequest();
-        res = await fetch(req.url, {
+        res = await accountedModelFetch(serviceClient(), {
+          companyId: call.companyId, conversationId: call.conversationId, operationId: call.operationId,
+          provider: adapter.id, purpose: call.purpose, slot: call.tag, attempt, request: req.body,
+        }, req.url, {
           method: "POST",
           headers: req.headers,
           body: req.body,
           signal: controller.signal,
-        });
+        }, fetch, () => { usage.attempts++; });
       } catch (e) {
+        if (e instanceof ModelAccountingError) { lastCode = "LLM_ACCOUNTING_DENIED"; break; }
         const aborted = e instanceof Error && e.name === "AbortError";
         lastCode = aborted ? "LLM_TIMEOUT" : "LLM_NETWORK";
         log(call.tag, {
@@ -1062,7 +1072,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
           : null;
       if (grounding) {
         const groundingDecision = await verifyGroundedGeneration(
-          call,
+          { ...call, operationId: `${call.operationId}:generation-attempt:${attempt}` },
           provider,
           parsed.text,
           grounding,
@@ -1091,7 +1101,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
           );
           return {
             ok: false,
-            code: "LLM_GROUNDING_REJECTED",
+            code: groundingDecision.reason === "model_accounting_denied" ? "LLM_ACCOUNTING_DENIED" : "LLM_GROUNDING_REJECTED",
             status: res.status,
             request_id: requestId,
             usage,
@@ -1173,6 +1183,8 @@ export function toCeErrorCode(code: LlmFailureCode): string {
       return "CE_PROVIDER_NON_2XX";
     case "LLM_INVALID_OUTPUT":
       return "CE_PROVIDER_INVALID_OUTPUT";
+    case "LLM_ACCOUNTING_DENIED":
+      return "CE_MODEL_ACCOUNTING_DENIED";
     case "LLM_GROUNDING_REJECTED":
       return "CE_PROVIDER_INVALID_OUTPUT";
     case "LLM_INPUT_BLOCKED":
