@@ -2,7 +2,7 @@ import type {
   KBDocumentCandidate,
   KBFullChunk,
   KBLLMContextEvidence,
-} from "./kb-client.ts";
+} from "./deterministic-kb-client.ts";
 import { detectExplicitJurisdiction } from "./conversation-runtime-state.ts";
 import {
   type ReferenceAuthorityDecision,
@@ -114,6 +114,7 @@ function namedTargetTokens(text: string): string[] {
 function topicTokens(text: string): string[] {
   const topics: string[] = [];
   const rules: Array<[string, RegExp]> = [
+    ["policy", /(?:billing|booking|cancellation|return|warranty)\s+policy|付款政策|預約政策|预约政策|取消政策|退貨政策|退货政策|保養政策|保修政策/i],
     ["warranty", /(?:warranty|保養|保修)/i],
     ["delivery", /(?:delivery|shipping|送貨|送货|物流|派送)/i],
     ["returns", /(?:refund|return|退款|退貨|退货|換貨|换货)/i],
@@ -158,11 +159,21 @@ export function deriveCurrentGroundingTarget(
   const explicitEntities = namedTargetTokens(currentTurnText);
   const explicitTopics = topicTokens(currentTurnText);
   const retrievalTopics = topicTokens(retrievalText);
+  // A resolved exact-model fact request uses the product evidence family.
+  // Customer wording such as "features" is an answer facet, not a requirement
+  // that the published product description literally repeat that label.
+  // Control/transaction topics retain their explicit target precedence.
+  const exactProductFactFamily = fallbackTopicIds.length === 1 &&
+    fallbackTopicIds[0] === "product_facts" && fallbackEntityIds.length === 1 &&
+    modelTokens(fallbackEntityIds[0].toUpperCase()).length === 1 &&
+    explicitTopics.every((topic) => ["price", "features", "specification", "warranty"].includes(topic));
   return {
     entity_ids: explicitEntities.length
       ? explicitEntities
       : unique(fallbackEntityIds),
-    topic_ids: explicitTopics.length
+    topic_ids: exactProductFactFamily
+      ? ["product_facts"]
+      : explicitTopics.length
       ? explicitTopics
       : unique([...fallbackTopicIds, ...retrievalTopics]),
     region: detectExplicitJurisdiction(currentTurnText) ?? null,
@@ -473,6 +484,7 @@ export function selectCanonicalGrounding(
           ...namedTargetTokens(candidateText(document)),
         ]),
         topic_ids: unique([
+          ...(document.source_type.toLowerCase() === "product" ? ["product_facts"] : []),
           ...(metadata?.claims ?? []).map((claim) => claim.key),
           ...topicTokens(candidateText(document)),
           ...namedTargetTokens(candidateText(document)),

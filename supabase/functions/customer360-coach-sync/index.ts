@@ -1,3 +1,4 @@
+import { prepareRemoteRetrieval } from "../_shared/remote-model-accounting.ts";
 // Workflow 5 / Task 5.3 — Customer360 ↔ SU CoachAI canonical sync
 // Internal-only. Server-resolved tenant/customer identity. Replay-safe.
 // Sends only sanitized Customer360 signals; never raw PII/order/payment/auth data.
@@ -315,6 +316,9 @@ Deno.serve(async (req) => {
     return jsonNoCors(503, { error: "coach_sync_config_invalid" });
   }
 
+  let accountingHeaders: Record<string,string>;
+  try { accountingHeaders=await prepareRemoteRetrieval(companyId,companyId,coachToken,parsedCoachUrl.toString(),fetch,undefined,"coach_sync"); }
+  catch { return jsonNoCors(503,{error:"coach_downstream_accounting_unproven"}); }
   const ctrl = new AbortController();
   const timeout = setTimeout(() => ctrl.abort(), 10000);
   let coachResp: Response;
@@ -322,10 +326,12 @@ Deno.serve(async (req) => {
   try {
     coachResp = await fetch(parsedCoachUrl.toString(), {
       method: "POST",
+      redirect: "error",
       headers: {
         "Authorization": `Bearer ${coachToken}`,
         "Content-Type": "application/json",
         "X-AI-Company-ID": companyId,
+        ...accountingHeaders,
       },
       body: JSON.stringify({
         operation: "sync_customer_coaching_context",

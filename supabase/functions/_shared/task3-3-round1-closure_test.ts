@@ -48,6 +48,16 @@ Deno.test("R1: pure negation is reported for auditing", () => {
   assert(!isPureHandoffNegation("transfer me to a human"));
 });
 
+Deno.test("R1: unrelated context and defer cannot veto an explicit human request", () => {
+  for (const text of [
+    "我想轉真人客服接手。主要係你剛才冇總結到已講嘅要求，雪櫃暫時唔跟。",
+    "先暫緩個訂閱，但我而家想轉真人客服。",
+  ]) assert(isExplicitHandoffRequest(text), text);
+  assert(!isExplicitHandoffRequest("唔使轉真人，請繼續答我"));
+  assert(!isExplicitHandoffRequest("你頭先話真人客服幾點有人？"));
+  assert(!isExplicitHandoffRequest("不要轉真人客服，但我而家要轉真人"));
+});
+
 Deno.test("Answerability: retrieval score alone cannot authorise an answer", () => {
   const result = assessAnswerability({
     question: "How much is the refund fee for damaged items?",

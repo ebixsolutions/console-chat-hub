@@ -1,3 +1,4 @@
+import { ReplyRequest } from "@/components/console/reply-request";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -13,6 +14,7 @@ import { feedbackService } from "@/lib/api/feedback.service";
 import { useCurrentRole } from "@/hooks/useCurrentRole";
 import { LoadingState, PermissionDenied } from "@/components/console/PageStates";
 import { useConsoleLang } from "@/hooks/useEffectiveRole";
+import { TicketHandoffSummary } from "@/components/console/TicketHandoffSummary";
 import { AgentToolPanel } from "@/components/console/AgentToolPanel";
 import { CRMPanel, RIGHT_COPY, buildBoundedContext, computeContextRevisionKey } from "@/components/console/CRMPanel";
 import { MessageAttachment, isAttachmentMessage, type AttachmentMeta } from "@/components/console/MessageAttachment";
@@ -229,11 +231,18 @@ function ConversationDetailContent() {
     return true;
   }
 
+  const replyRequest = useRef(new ReplyRequest());
+  async function invokeReply(conversationId:string,content:string) {
+    const body=replyRequest.current.body(conversationId,content);
+    const ok=await callEF("agent-send-reply",body);
+    if(ok)replyRequest.current.confirmed(body.client_request_id);
+    return ok;
+  }
   async function sendReply() {
     const content = reply.trim();
     if (!content) return;
     setSending(true);
-    const ok = await callEF("agent-send-reply", { conversation_id: id, content });
+    const ok = await invokeReply(id, content);
     setSending(false);
     if (ok) {
       setReply("");
@@ -275,7 +284,7 @@ function ConversationDetailContent() {
       toast.error("Take over failed. Message not sent.");
       return;
     }
-    const sendOk = await callEF("agent-send-reply", { conversation_id: id, content });
+    const sendOk = await invokeReply(id, content);
     setSending(false);
     setSendGuardOpen(false);
     if (sendOk) {
@@ -654,8 +663,10 @@ function ConversationDetailContent() {
             }}
           />
         </div>
-        <div style={{ flex: 1, overflow: "hidden" }}>
-          <AgentToolPanel
+        <div style={{ flex: 1, overflowY: "auto" }}>
+          <>
+            <TicketHandoffSummary conversationId={id} />
+            <AgentToolPanel
             conversationId={id}
             convStatus={conv.status}
             draftText={reply}
@@ -671,6 +682,7 @@ function ConversationDetailContent() {
             }}
             autoLoadHandoffContext={conv.status === "pending" || Boolean(conv.assigned_agent_id)}
           />
+          </>
         </div>
       </div>
 

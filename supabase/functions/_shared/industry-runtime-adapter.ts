@@ -1,4 +1,7 @@
 import type { CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
+import type { ConversationCommerceState } from "./commerce-state-contract.ts";
+import type { ContextualCandidate } from "./contextual-customer-update.ts";
+import type { CustomerJourneySignal } from "./customer-journey-orchestration.ts";
 import type { CommerceTurnEntityHint } from "./commerce-state-reducer.ts";
 import { createIndustryRegistry, type IndustryProfile } from "./industry-agent-registry.ts";
 import { validateIndustrySchemaValues } from "./industry-schema.ts";
@@ -6,11 +9,45 @@ import {
   HOME_APPLIANCE_CATEGORIES,
   HOME_APPLIANCE_PROFILE_V1,
   HOME_APPLIANCE_ROOMS,
+  homeApplianceCustomerJourneySignal,
+  homeApplianceContextualCandidate,
 } from "./industry-profiles/home-appliance-v1.ts";
 
 export type IndustryLanguage = "zh-TW" | "zh-CN" | "en";
 
 export const INDUSTRY_AGENT_REGISTRY = createIndustryRegistry([HOME_APPLIANCE_PROFILE_V1]);
+
+export function resolveIndustryContextualCandidate(input: {
+  text: string;
+  history: readonly string[];
+  state: ConversationCommerceState;
+  language: IndustryLanguage;
+}): ContextualCandidate | null {
+  const profile = resolveIndustryRuntime({
+    texts: [input.text, ...input.history],
+    industry_identifier: input.state.current_industry,
+  }).profile;
+  if (profile && profile.id !== HOME_APPLIANCE_PROFILE_V1.id) return null;
+  const candidate = homeApplianceContextualCandidate(input);
+  // A room-only phrase without a selected profile can request clarification,
+  // but cannot authoritatively bind to an unknown product or service domain.
+  return !profile && candidate?.action === "scoped_update"
+    ? { ...candidate, context_sufficient: false }
+    : candidate;
+}
+
+export function resolveIndustryCustomerJourney(input: {
+  text: string;
+  state: ConversationCommerceState;
+  language: IndustryLanguage;
+}): CustomerJourneySignal | null {
+  const profile = resolveIndustryRuntime({
+    texts: [input.text],
+    industry_identifier: input.state.current_industry,
+  }).profile;
+  if (profile && profile.id !== HOME_APPLIANCE_PROFILE_V1.id) return null;
+  return homeApplianceCustomerJourneySignal(input);
+}
 
 export interface IndustryRuntimeResolution {
   industry_id: string | null;
@@ -100,11 +137,22 @@ export function resolveIndustryRuntime(input: {
 
 export function industryEntityLabel(entityId: string, language: IndustryLanguage): string | null {
   const [categoryKey, roomKey] = entityId.split(":");
-  const category = HOME_APPLIANCE_CATEGORIES.find((item) => item.key === categoryKey);
+  const category = HOME_APPLIANCE_CATEGORIES.find((item) => item.key === categoryKey ||
+    item.aliases.some(alias => clean(alias).toLowerCase() === clean(categoryKey).toLowerCase()));
   if (!category) return null;
   const room = HOME_APPLIANCE_ROOMS.find((item) => item.key === roomKey);
   if (!room) return category.label[language];
   return language === "en"
     ? `${room.label.en} ${category.label.en}`
     : `${room.label[language]}${category.label[language]}`;
+}
+
+/** Fallback realization only: a canonical explicit unit remains the caller's authority. */
+export function industryEntityQuantityUnit(
+  entityId: string, language: IndustryLanguage, quantity: number,
+): string | null {
+  const categoryKey = entityId.split(":")[0];
+  if (!HOME_APPLIANCE_CATEGORIES.some((category) => category.key === categoryKey ||
+    category.aliases.some(alias => clean(alias).toLowerCase() === clean(categoryKey).toLowerCase()))) return null;
+  return language === "en" ? (quantity === 1 ? "unit" : "units") : "部";
 }

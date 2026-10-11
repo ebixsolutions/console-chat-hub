@@ -1,3 +1,4 @@
+import { verifyEvaluationEligibility } from "../_shared/ce-evaluation-scope.ts";
 /**
  * conversation-evaluate — the only callable surface for Conversation Evaluation.
  *
@@ -299,7 +300,7 @@ async function resolveEvaluationScope(
     .select("role")
     .eq("user_id", userId);
   if (roleErr) return { ok: false, error: "internal_error", detail: "local_role_lookup_failed" };
-  const roles = (rolesRows ?? []).map((r: { role: string }) => String(r.role));
+  const roles: string[] = (rolesRows ?? []).map((r: { role: string }) => String(r.role));
   if (!roles.some((r) => EVALUATE_ROLES.has(r))) {
     return { ok: false, error: "forbidden", detail: "role_not_permitted" };
   }
@@ -723,6 +724,9 @@ async function handleEvaluate(
     return fail("forbidden", req, operationId, "role_not_permitted");
   }
 
+  const eligibilityError = await verifyEvaluationEligibility(admin, conversationId);
+  if (eligibilityError) return fail("conflict", req, operationId, eligibilityError);
+
   const { data: msgs, error: msgErr } = await admin
     .from("messages")
     .select(
@@ -752,6 +756,8 @@ async function handleEvaluate(
       .find(
         (m) => !m.is_recalled && ["visitor", "customer", "user"].includes(m.role.toLowerCase()),
       );
+  const groundingEligibilityError = await verifyEvaluationEligibility(admin, conversationId);
+  if (groundingEligibilityError) return fail("conflict", req, operationId, groundingEligibilityError);
     const grounding = await fetchGrounding({
       conversationId,
       messageId: lastCustomer?.id,
@@ -952,6 +958,8 @@ async function handleEvaluate(
     attemptId = init.attempt_id as string;
   }
 
+  const modelEligibilityError = await verifyEvaluationEligibility(admin, conversationId);
+  if (modelEligibilityError) return fail("conflict", req, operationId, modelEligibilityError);
   const settled = await Promise.all(
     CE_DIMENSIONS.map((d) =>
       runEvaluator(

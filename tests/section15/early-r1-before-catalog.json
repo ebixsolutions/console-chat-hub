@@ -1,0 +1,216 @@
+{
+  "tables": [
+    {
+      "acl": "{postgres=arwdDxtm/postgres,anon=ardDxtm/postgres,authenticated=ardDxtm/postgres,service_role=arwdDxtm/postgres}",
+      "rls": true,
+      "owner": "postgres",
+      "table": "conversations",
+      "force_rls": false
+    },
+    {
+      "acl": "{postgres=arwdDxtm/postgres,anon=arwdDxtm/postgres,authenticated=arwdDxtm/postgres,service_role=arwdDxtm/postgres}",
+      "rls": true,
+      "owner": "postgres",
+      "table": "handoff_event",
+      "force_rls": false
+    },
+    {
+      "acl": "{postgres=arwdDxtm/postgres,anon=arwdDxtm/postgres,authenticated=arwdDxtm/postgres,service_role=arwdDxtm/postgres}",
+      "rls": true,
+      "owner": "postgres",
+      "table": "messages",
+      "force_rls": false
+    },
+    {
+      "acl": "{postgres=arwdDxtm/postgres,authenticated=r/postgres,service_role=r/postgres}",
+      "rls": true,
+      "owner": "postgres",
+      "table": "conversation_commerce_state",
+      "force_rls": false
+    },
+    {
+      "acl": "{postgres=arwdDxtm/postgres,authenticated=r/postgres,service_role=r/postgres}",
+      "rls": true,
+      "owner": "postgres",
+      "table": "conversation_memory_state",
+      "force_rls": false
+    }
+  ],
+  "columns": [
+    {
+      "type": "uuid",
+      "table": "conversation_commerce_state",
+      "column": "conversation_id"
+    },
+    {
+      "type": "uuid",
+      "table": "conversation_commerce_state",
+      "column": "company_id"
+    },
+    {
+      "type": "bigint",
+      "table": "conversation_commerce_state",
+      "column": "revision"
+    },
+    {
+      "type": "uuid",
+      "table": "conversation_commerce_state",
+      "column": "source_message_id"
+    },
+    {
+      "type": "jsonb",
+      "table": "conversation_commerce_state",
+      "column": "state"
+    },
+    {
+      "type": "text",
+      "table": "conversation_commerce_state",
+      "column": "state_hash"
+    },
+    {
+      "type": "timestamp with time zone",
+      "table": "conversation_commerce_state",
+      "column": "created_at"
+    },
+    {
+      "type": "timestamp with time zone",
+      "table": "conversation_commerce_state",
+      "column": "updated_at"
+    },
+    {
+      "type": "uuid",
+      "table": "conversation_memory_state",
+      "column": "conversation_id"
+    },
+    {
+      "type": "uuid",
+      "table": "conversation_memory_state",
+      "column": "company_id"
+    },
+    {
+      "type": "bigint",
+      "table": "conversation_memory_state",
+      "column": "revision"
+    },
+    {
+      "type": "uuid",
+      "table": "conversation_memory_state",
+      "column": "source_message_id"
+    },
+    {
+      "type": "bigint",
+      "table": "conversation_memory_state",
+      "column": "commerce_state_revision"
+    },
+    {
+      "type": "jsonb",
+      "table": "conversation_memory_state",
+      "column": "memory"
+    },
+    {
+      "type": "text",
+      "table": "conversation_memory_state",
+      "column": "markdown_projection"
+    },
+    {
+      "type": "text",
+      "table": "conversation_memory_state",
+      "column": "memory_hash"
+    },
+    {
+      "type": "bigint",
+      "table": "conversation_memory_state",
+      "column": "updated_from_turn"
+    },
+    {
+      "type": "timestamp with time zone",
+      "table": "conversation_memory_state",
+      "column": "created_at"
+    },
+    {
+      "type": "timestamp with time zone",
+      "table": "conversation_memory_state",
+      "column": "updated_at"
+    },
+    {
+      "type": "uuid",
+      "table": "handoff_event",
+      "column": "id"
+    },
+    {
+      "type": "uuid",
+      "table": "handoff_event",
+      "column": "conversation_id"
+    },
+    {
+      "type": "text",
+      "table": "handoff_event",
+      "column": "handoff_reason"
+    },
+    {
+      "type": "text",
+      "table": "handoff_event",
+      "column": "handoff_type"
+    },
+    {
+      "type": "uuid",
+      "table": "handoff_event",
+      "column": "from_agent_id"
+    },
+    {
+      "type": "uuid",
+      "table": "handoff_event",
+      "column": "to_agent_id"
+    },
+    {
+      "type": "text",
+      "table": "handoff_event",
+      "column": "ai_summary"
+    },
+    {
+      "type": "timestamp with time zone",
+      "table": "handoff_event",
+      "column": "created_at"
+    },
+    {
+      "type": "uuid",
+      "table": "handoff_event",
+      "column": "source_message_id"
+    },
+    {
+      "type": "text",
+      "table": "handoff_event",
+      "column": "branch_tag"
+    },
+    {
+      "type": "text",
+      "table": "handoff_event",
+      "column": "escalation_rule"
+    },
+    {
+      "type": "text",
+      "table": "handoff_event",
+      "column": "safe_reply_content"
+    }
+  ],
+  "triggers": [
+    {
+      "name": "c2_handoff_package_before_insert",
+      "enabled": "O",
+      "function": "c2_populate_handoff_package_tg()",
+      "definition": "CREATE TRIGGER c2_handoff_package_before_insert BEFORE INSERT ON public.handoff_event FOR EACH ROW EXECUTE FUNCTION c2_populate_handoff_package_tg()"
+    },
+    {
+      "name": "c3_enrich_handoff_from_memory_before_insert",
+      "enabled": "O",
+      "function": "c3_enrich_handoff_from_memory_tg()",
+      "definition": "CREATE TRIGGER c3_enrich_handoff_from_memory_before_insert BEFORE INSERT ON public.handoff_event FOR EACH ROW EXECUTE FUNCTION c3_enrich_handoff_from_memory_tg()"
+    },
+    {
+      "name": "trg_hf3_handoff_refresh",
+      "enabled": "O",
+      "function": "hf3_handoff_refresh_trigger()",
+      "definition": "CREATE TRIGGER trg_hf3_handoff_refresh AFTER INSERT OR UPDATE OF escalation_rule, handoff_reason ON public.handoff_event FOR EACH ROW EXECUTE FUNCTION hf3_handoff_refresh_trigger()"
+    }
+  ]
+}

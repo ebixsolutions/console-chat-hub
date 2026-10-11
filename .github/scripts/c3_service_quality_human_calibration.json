@@ -1,0 +1,48 @@
+{
+  "version": "c3-service-quality-human-calibration-2026-09-16.3",
+  "status": "AWAITING_HUMAN_CALIBRATION",
+  "reviews_embedded": false,
+  "review_artifact_policy": {
+    "artifact_schema": "c3-human-calibration-review-artifact-1.0.0",
+    "candidate_binding_required": [
+      "head",
+      "tree",
+      "release_id",
+      "generate_reply_manifest_sha256",
+      "agent_assist_manifest_sha256",
+      "sample_manifest_sha256",
+      "rubric_sha256"
+    ],
+    "immutable_raw_reviews": true,
+    "runtime_candidate_must_not_be_modified_to_record_reviews": true
+  },
+  "sampling_plan": {
+    "minimum_distinct_samples": 20,
+    "unit": "full_conversation_context_plus_actual_response_or_action",
+    "blinded": true,
+    "minimum_distinct_reviewers": 2,
+    "required_cross_coverage": [
+      "emotion+verified_entitlement+handoff",
+      "emotion+self_claimed_entitlement",
+      "unknown_entitlement+handoff",
+      "correction+memory",
+      "kb_no_match_or_failure+next_step"
+    ],
+    "required_review_fields": [
+      "sample_id",
+      "reviewer.source",
+      "reviewer.reviewer_id",
+      "reviewer.provenance",
+      "reviewed_at",
+      "blinded",
+      "context_sha256",
+      "response_sha256",
+      "six_dimension_scores_and_reasons"
+    ]
+  },
+  "completion_semantics": {
+    "collection_completed": "All required distinct candidate-bound samples have valid external human reviews.",
+    "calibration_pass": "Collection completed, rubric thresholds met, and major disagreement resolved or absent.",
+    "status_string_alone_is_never_sufficient": true
+  }
+}

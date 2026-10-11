@@ -1,3 +1,9 @@
+import {
+  decisionContextSchema,
+  DecisionContextLimitError,
+  normalizeDecisionContext,
+  type DecisionValue,
+} from "./bounded-decision-context.ts";
 export const COMMERCE_SEMANTIC_FRAME_VERSION = "commerce-semantic-1.0.0" as const;
 
 export type CommerceSemanticOperation =
@@ -26,13 +32,7 @@ export type CommerceSemanticKind =
   | "unknown";
 
 export type CommerceSemanticTransactionState =
-  | "none"
-  | "draft"
-  | "pending_confirmation"
-  | "confirmed"
-  | "completed"
-  | "cancelled"
-  | "unknown";
+  "none" | "draft" | "pending_confirmation" | "confirmed" | "completed" | "cancelled" | "unknown";
 
 export type CommerceSemanticPaymentState =
   | "none"
@@ -45,13 +45,7 @@ export type CommerceSemanticPaymentState =
   | "unknown";
 
 export type CommerceSemanticBookingState =
-  | "none"
-  | "requested"
-  | "pending"
-  | "booked"
-  | "completed"
-  | "cancelled"
-  | "unknown";
+  "none" | "requested" | "pending" | "booked" | "completed" | "cancelled" | "unknown";
 
 export type CommerceSemanticFulfillmentState =
   | "none"
@@ -91,8 +85,8 @@ export interface CommerceSemanticEntity {
   model: string | null;
   quantity: number | null;
   unit: string | null;
-  attributes: Record<string, string | number | boolean | null>;
-  constraints: Record<string, string | number | boolean | null>;
+  attributes: Record<string, DecisionValue>;
+  constraints: Record<string, DecisionValue>;
   capabilities: CommerceSemanticCapabilities;
   confidence: number;
 }
@@ -108,6 +102,7 @@ export interface CommerceSemanticFrame {
   language: string;
   operation: CommerceSemanticOperation;
   intent: string;
+  customer_facts?: { key: string; value: DecisionValue }[];
   topic: string | null;
   entities: CommerceSemanticEntity[];
   referents: CommerceSemanticReferent[];
@@ -124,25 +119,67 @@ export interface CommerceSemanticFrame {
 }
 
 const OPERATIONS = new Set<CommerceSemanticOperation>([
-  "ADD_ITEM", "SET_QUANTITY", "UPDATE_ITEM", "REMOVE_ITEM", "CANCEL_ITEM",
-  "RESERVE", "REQUEST_QUOTE", "ASK_FACT", "ASK_CALCULATION", "CONFIRM",
-  "DEFER", "NO_STATE_CHANGE",
+  "ADD_ITEM",
+  "SET_QUANTITY",
+  "UPDATE_ITEM",
+  "REMOVE_ITEM",
+  "CANCEL_ITEM",
+  "RESERVE",
+  "REQUEST_QUOTE",
+  "ASK_FACT",
+  "ASK_CALCULATION",
+  "CONFIRM",
+  "DEFER",
+  "NO_STATE_CHANGE",
 ]);
 const KINDS = new Set<CommerceSemanticKind>([
-  "physical_product", "digital_good", "service", "rental", "subscription",
-  "ticket", "custom_item", "b2b_product", "unknown",
+  "physical_product",
+  "digital_good",
+  "service",
+  "rental",
+  "subscription",
+  "ticket",
+  "custom_item",
+  "b2b_product",
+  "unknown",
 ]);
 const TRANSACTION_STATES = new Set<CommerceSemanticTransactionState>([
-  "none", "draft", "pending_confirmation", "confirmed", "completed", "cancelled", "unknown",
+  "none",
+  "draft",
+  "pending_confirmation",
+  "confirmed",
+  "completed",
+  "cancelled",
+  "unknown",
 ]);
 const PAYMENT_STATES = new Set<CommerceSemanticPaymentState>([
-  "none", "pending_quote", "pending_payment", "paid", "failed", "refunded", "partially_refunded", "unknown",
+  "none",
+  "pending_quote",
+  "pending_payment",
+  "paid",
+  "failed",
+  "refunded",
+  "partially_refunded",
+  "unknown",
 ]);
 const BOOKING_STATES = new Set<CommerceSemanticBookingState>([
-  "none", "requested", "pending", "booked", "completed", "cancelled", "unknown",
+  "none",
+  "requested",
+  "pending",
+  "booked",
+  "completed",
+  "cancelled",
+  "unknown",
 ]);
 const FULFILLMENT_STATES = new Set<CommerceSemanticFulfillmentState>([
-  "none", "requested", "pending", "scheduled", "in_progress", "fulfilled", "cancelled", "unknown",
+  "none",
+  "requested",
+  "pending",
+  "scheduled",
+  "in_progress",
+  "fulfilled",
+  "cancelled",
+  "unknown",
 ]);
 
 export const COMMERCE_SEMANTIC_RESPONSE_SCHEMA: Record<string, unknown> = {
@@ -167,8 +204,8 @@ export const COMMERCE_SEMANTIC_RESPONSE_SCHEMA: Record<string, unknown> = {
           model: { type: ["string", "null"] },
           quantity: { type: ["number", "null"], minimum: 0 },
           unit: { type: ["string", "null"] },
-          attributes: { type: "object", additionalProperties: { type: ["string", "number", "boolean", "null"] } },
-          constraints: { type: "object", additionalProperties: { type: ["string", "number", "boolean", "null"] } },
+          attributes: { type: "object", additionalProperties: decisionContextSchema() },
+          constraints: { type: "object", additionalProperties: decisionContextSchema() },
           capabilities: {
             type: "object",
             properties: {
@@ -184,16 +221,33 @@ export const COMMERCE_SEMANTIC_RESPONSE_SCHEMA: Record<string, unknown> = {
               customization: { type: "boolean" },
             },
             required: [
-              "requires_delivery", "supports_pickup", "requires_installation",
-              "requires_booking", "requires_quote", "requires_site_check",
-              "digital_fulfilment", "recurring_billing", "rental_return", "customization",
+              "requires_delivery",
+              "supports_pickup",
+              "requires_installation",
+              "requires_booking",
+              "requires_quote",
+              "requires_site_check",
+              "digital_fulfilment",
+              "recurring_billing",
+              "rental_return",
+              "customization",
             ],
           },
           confidence: { type: "number", minimum: 0, maximum: 1 },
         },
         required: [
-          "entity_ref", "name", "kind", "category_hint", "sku", "model",
-          "quantity", "unit", "attributes", "constraints", "capabilities", "confidence",
+          "entity_ref",
+          "name",
+          "kind",
+          "category_hint",
+          "sku",
+          "model",
+          "quantity",
+          "unit",
+          "attributes",
+          "constraints",
+          "capabilities",
+          "confidence",
         ],
       },
     },
@@ -204,7 +258,10 @@ export const COMMERCE_SEMANTIC_RESPONSE_SCHEMA: Record<string, unknown> = {
         type: "object",
         properties: {
           ref: { type: "string" },
-          source: { type: "string", enum: ["current_turn", "prior_turn", "persistent_state", "unknown"] },
+          source: {
+            type: "string",
+            enum: ["current_turn", "prior_turn", "persistent_state", "unknown"],
+          },
           confidence: { type: "number", minimum: 0, maximum: 1 },
         },
         required: ["ref", "source", "confidence"],
@@ -230,9 +287,23 @@ export const COMMERCE_SEMANTIC_RESPONSE_SCHEMA: Record<string, unknown> = {
     confidence: { type: "number", minimum: 0, maximum: 1 },
   },
   required: [
-    "version", "language", "operation", "intent", "topic", "entities", "referents",
-    "customer_correction", "additive", "explicit_negations", "requested_facts",
-    "transaction_state", "payment_state", "booking_state", "fulfillment_state", "ambiguity", "confidence",
+    "version",
+    "language",
+    "operation",
+    "intent",
+    "topic",
+    "entities",
+    "referents",
+    "customer_correction",
+    "additive",
+    "explicit_negations",
+    "requested_facts",
+    "transaction_state",
+    "payment_state",
+    "booking_state",
+    "fulfillment_state",
+    "ambiguity",
+    "confidence",
   ],
 };
 
@@ -240,8 +311,143 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+/** Closed provider wire schema: dynamic typed properties are encoded as JSON
+ * strings, then decoded under the unchanged canonical limits and validator. */
+export const COMMERCE_SEMANTIC_WIRE_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  required: ["operation", "confidence"],
+  properties: {
+    operation: { type: "string", enum: [...OPERATIONS] },
+    confidence: { type: "number" },
+    language: { type: "string" },
+    intent: { type: "string" },
+    topic: { type: "string", nullable: true },
+    customer_correction: { type: "boolean" },
+    additive: { type: "boolean" },
+    transaction_state: { type: "string", enum: [...TRANSACTION_STATES] },
+    payment_state: { type: "string", enum: [...PAYMENT_STATES] },
+    booking_state: { type: "string", enum: [...BOOKING_STATES] },
+    fulfillment_state: { type: "string", enum: [...FULFILLMENT_STATES] },
+    requested_facts: { type: "array", items: { type: "string" }, maxItems: 20 },
+    explicit_negations: { type: "array", items: { type: "string" }, maxItems: 20 },
+    customer_facts: {
+      type: "array",
+      maxItems: 16,
+      items: {
+        type: "object",
+        required: ["key", "value_json"],
+        properties: { key: { type: "string" }, value_json: { type: "string" } },
+      },
+    },
+    referents: {
+      type: "array",
+      maxItems: 12,
+      items: {
+        type: "object",
+        required: ["ref", "source", "confidence"],
+        properties: {
+          ref: { type: "string" },
+          source: {
+            type: "string",
+            enum: ["current_turn", "prior_turn", "persistent_state", "unknown"],
+          },
+          confidence: { type: "number" },
+        },
+      },
+    },
+    ambiguity: {
+      type: "object",
+      properties: {
+        is_ambiguous: { type: "boolean" },
+        reasons: { type: "array", items: { type: "string" }, maxItems: 12 },
+        clarification_question: { type: "string", nullable: true },
+      },
+    },
+    entities: {
+      type: "array",
+      maxItems: 12,
+      items: {
+        type: "object",
+        required: ["name", "kind", "confidence"],
+        properties: {
+          name: { type: "string" },
+          kind: { type: "string", enum: [...KINDS] },
+          confidence: { type: "number" },
+          entity_ref: { type: "string" },
+          category_hint: { type: "string", nullable: true },
+          sku: { type: "string", nullable: true },
+          model: { type: "string", nullable: true },
+          quantity: { type: "number", nullable: true },
+          unit: { type: "string", nullable: true },
+          attributes_json: { type: "string" },
+          constraints_json: { type: "string" },
+          capabilities: {
+            type: "object",
+            properties: Object.fromEntries(
+              [
+                "requires_delivery",
+                "supports_pickup",
+                "requires_installation",
+                "requires_booking",
+                "requires_quote",
+                "requires_site_check",
+                "digital_fulfilment",
+                "recurring_billing",
+                "rental_return",
+                "customization",
+              ].map((key) => [key, { type: "boolean" }]),
+            ),
+          },
+        },
+      },
+    },
+  },
+};
+
+export function decodeCommerceSemanticWire(value: unknown): unknown {
+  if (!isRecord(value)) return null;
+  const decode = (raw: unknown): unknown => {
+    if (typeof raw !== "string" || raw.length > 12_000)
+      throw new Error("semantic_wire_value_invalid");
+    return JSON.parse(raw);
+  };
+  try {
+    return {
+      ...value,
+      ...(Array.isArray(value.entities)
+        ? {
+            entities: value.entities.map((entity) => {
+              if (!isRecord(entity)) return entity;
+              const out = { ...entity };
+              for (const key of ["attributes", "constraints"])
+                if (Object.hasOwn(entity, key + "_json")) {
+                  const decoded = decode(entity[key + "_json"]);
+                  if (!isRecord(decoded)) throw new Error("semantic_wire_object_invalid");
+                  out[key] = decoded;
+                }
+              return out;
+            }),
+          }
+        : {}),
+      ...(Array.isArray(value.customer_facts)
+        ? {
+            customer_facts: value.customer_facts.map((fact) =>
+              isRecord(fact) && Object.hasOwn(fact, "value_json")
+                ? { ...fact, value: decode(fact.value_json) }
+                : fact,
+            ),
+          }
+        : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
 function clean(value: unknown, max = 300): string {
-  return typeof value === "string" ? value.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max) : "";
+  return typeof value === "string"
+    ? value.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max)
+    : "";
 }
 
 function clampConfidence(value: unknown): number {
@@ -249,20 +455,9 @@ function clampConfidence(value: unknown): number {
   return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0;
 }
 
-function primitiveMap(value: unknown): Record<string, string | number | boolean | null> {
-  if (!isRecord(value)) return {};
-  const out: Record<string, string | number | boolean | null> = {};
-  for (const [key, raw] of Object.entries(value).slice(0, 40)) {
-    const k = clean(key, 80);
-    if (!k) continue;
-    if (raw === null || typeof raw === "string" || typeof raw === "number" || typeof raw === "boolean") {
-      out[k] = typeof raw === "string" ? clean(raw, 300) : raw;
-    }
-  }
-  return out;
+function bool(value: unknown): boolean {
+  return value === true;
 }
-
-function bool(value: unknown): boolean { return value === true; }
 
 function normalizeCapabilities(raw: unknown): CommerceSemanticCapabilities {
   const r = isRecord(raw) ? raw : {};
@@ -288,16 +483,17 @@ function enumValue<T extends string>(value: unknown, allowed: Set<T>, fallback: 
 function normalizeAmbiguity(value: unknown, confidence: number): CommerceSemanticAmbiguity {
   const raw = isRecord(value) ? value : {};
   const reasons = (Array.isArray(raw.reasons) ? raw.reasons : [])
-    .map((x) => clean(x, 200)).filter(Boolean).slice(0, 12);
+    .map((x) => clean(x, 200))
+    .filter(Boolean)
+    .slice(0, 12);
   const lowConfidence = confidence < 0.62;
   const explicitAmbiguous = raw.is_ambiguous === true;
   if (lowConfidence && !reasons.includes("low_confidence")) reasons.push("low_confidence");
   return {
     is_ambiguous: explicitAmbiguous || lowConfidence,
     reasons,
-    clarification_question: raw.clarification_question === null
-      ? null
-      : clean(raw.clarification_question, 400) || null,
+    clarification_question:
+      raw.clarification_question === null ? null : clean(raw.clarification_question, 400) || null,
   };
 }
 
@@ -306,15 +502,71 @@ export function normalizeCommerceSemanticFrame(value: unknown): CommerceSemantic
   const rawOperation = clean(value.operation, 40) as CommerceSemanticOperation;
   if (!OPERATIONS.has(rawOperation)) return null;
 
+  if (
+    typeof value.confidence !== "number" ||
+    !Number.isFinite(value.confidence) ||
+    value.confidence < 0 ||
+    value.confidence > 1
+  )
+    return null;
+  // No sliced partial state proposal. An oversized/malformed wire delta is rejected.
+  for (const key of [
+    "entities",
+    "referents",
+    "customer_facts",
+    "requested_facts",
+    "explicit_negations",
+  ]) {
+    if (
+      value[key] !== undefined &&
+      (!Array.isArray(value[key]) ||
+        value[key].length >
+          (key === "customer_facts"
+            ? 16
+            : ["requested_facts", "explicit_negations"].includes(key)
+              ? 20
+              : 12))
+    )
+      return null;
+  }
+  const customerFacts: { key: string; value: DecisionValue }[] = [];
+  for (const raw of Array.isArray(value.customer_facts) ? value.customer_facts : []) {
+    if (
+      !isRecord(raw) ||
+      typeof raw.key !== "string" ||
+      !raw.key.trim() ||
+      raw.key.length > 120 ||
+      !Object.hasOwn(raw, "value") ||
+      raw.value === undefined
+    )
+      return null;
+    try {
+      customerFacts.push({
+        key: raw.key,
+        value: normalizeDecisionContext({ fact: raw.value }).fact,
+      });
+    } catch (error) {
+      if (error instanceof DecisionContextLimitError) return null;
+      throw error;
+    }
+  }
   const entities: CommerceSemanticEntity[] = [];
   for (const raw of Array.isArray(value.entities) ? value.entities.slice(0, 12) : []) {
-    if (!isRecord(raw)) continue;
+    if (!isRecord(raw)) return null;
     const kind = clean(raw.kind, 40) as CommerceSemanticKind;
-    if (!KINDS.has(kind)) continue;
+    if (!KINDS.has(kind)) return null;
     const name = clean(raw.name, 200);
-    if (!name) continue;
-    const q = raw.quantity === null ? null : Number(raw.quantity);
+    if (!name) return null;
+    const q = raw.quantity == null ? null : Number(raw.quantity);
     const quantity = q === null || !Number.isFinite(q) || q < 0 ? null : q;
+    let attributes: Record<string, DecisionValue>, constraints: Record<string, DecisionValue>;
+    try {
+      attributes = normalizeDecisionContext(raw.attributes);
+      constraints = normalizeDecisionContext(raw.constraints);
+    } catch (error) {
+      if (error instanceof DecisionContextLimitError) return null;
+      throw error;
+    }
     entities.push({
       entity_ref: clean(raw.entity_ref, 120) || `semantic:${entities.length + 1}`,
       name,
@@ -324,8 +576,8 @@ export function normalizeCommerceSemanticFrame(value: unknown): CommerceSemantic
       model: raw.model === null ? null : clean(raw.model, 120) || null,
       quantity,
       unit: raw.unit === null ? null : clean(raw.unit, 60) || null,
-      attributes: primitiveMap(raw.attributes),
-      constraints: primitiveMap(raw.constraints),
+      attributes,
+      constraints,
       capabilities: normalizeCapabilities(raw.capabilities),
       confidence: clampConfidence(raw.confidence),
     });
@@ -343,20 +595,29 @@ export function normalizeCommerceSemanticFrame(value: unknown): CommerceSemantic
 
   const confidence = clampConfidence(value.confidence);
   const ambiguity = normalizeAmbiguity(value.ambiguity, confidence);
-  const operation: CommerceSemanticOperation = ambiguity.is_ambiguous ? "NO_STATE_CHANGE" : rawOperation;
+  const operation: CommerceSemanticOperation = ambiguity.is_ambiguous
+    ? "NO_STATE_CHANGE"
+    : rawOperation;
 
   return {
     version: COMMERCE_SEMANTIC_FRAME_VERSION,
     language: clean(value.language, 40) || "und",
     operation,
     intent: clean(value.intent, 160) || "unknown",
+    customer_facts: customerFacts,
     topic: value.topic === null ? null : clean(value.topic, 160) || null,
     entities,
     referents,
     customer_correction: value.customer_correction === true,
     additive: value.additive === true,
-    explicit_negations: (Array.isArray(value.explicit_negations) ? value.explicit_negations : []).map((x) => clean(x, 200)).filter(Boolean).slice(0, 20),
-    requested_facts: (Array.isArray(value.requested_facts) ? value.requested_facts : []).map((x) => clean(x, 200)).filter(Boolean).slice(0, 20),
+    explicit_negations: (Array.isArray(value.explicit_negations) ? value.explicit_negations : [])
+      .map((x) => clean(x, 200))
+      .filter(Boolean)
+      .slice(0, 20),
+    requested_facts: (Array.isArray(value.requested_facts) ? value.requested_facts : [])
+      .map((x) => clean(x, 200))
+      .filter(Boolean)
+      .slice(0, 20),
     transaction_state: enumValue(value.transaction_state, TRANSACTION_STATES, "unknown"),
     payment_state: enumValue(value.payment_state, PAYMENT_STATES, "unknown"),
     booking_state: enumValue(value.booking_state, BOOKING_STATES, "unknown"),

@@ -1,0 +1,19 @@
+{
+  "schema_version": "c3-production-failure-envelope-v1",
+  "candidate_head": "028e87f3402ccae0606ee7594f30c8fcc9c737e8",
+  "candidate_tree": "71400c120ca0cb065e45c64cb48a78374adae85e",
+  "frozen": true,
+  "failures": [
+    { "turn": 1, "text": "Hi，想問冷氣，兩間房加個廳，唔知買咩匹數好。", "production_failure": "canonical_memory_clarification", "required_contract": "natural_product_guidance_after_state_writer" },
+    { "turn": 13, "text": "咁兩部連安裝同架，按我頭先提供嘅舊報價計幾錢？", "production_failure": "known_calculation_dead_end", "required_contract": "historical_conditional_calculation" },
+    { "turn": 20, "text": "幫我簡單講一次我而家要咩。", "production_failure": "machine_style_summary", "required_contract": "natural_transaction_summary" },
+    { "turn": 30, "text": "成單而家有咩？", "production_failure": "machine_style_summary", "required_contract": "natural_transaction_summary" },
+    { "turn": 56, "text": "雪櫃限制呢？", "production_failure": "cross_entity_contamination", "required_contract": "scoped_constraint_recall" },
+    { "turn": 60, "text": "有咩仲未confirm？", "production_failure": "known_pending_dead_end", "required_contract": "pending_check_aggregate" },
+    { "turn": 65, "text": "我依家總共係睇緊咩電器？", "production_failure": "known_entity_list_dead_end", "required_contract": "entity_portfolio_recall" },
+    { "turn": 67, "text": "所以真正準備報價嘅係咩？", "production_failure": "quote_ready_dead_end", "required_contract": "active_entity_scope_recall" },
+    { "turn": 74, "text": "咁目前有邊個價係有來源？", "production_failure": "unrelated_constraint_answer", "required_contract": "quote_provenance_recall" },
+    { "turn": 90, "text": "最終幾部？", "production_failure": "internal_entity_key_leak", "required_contract": "natural_known_quantity_recall" },
+    { "turn": 91, "text": "我準備攞最終報價，幫我總結全部。", "production_failure": "internal_pending_code_leak", "required_contract": "natural_complete_summary" }
+  ]
+}

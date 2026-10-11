@@ -1,4 +1,4 @@
-import type { KBFullChunk } from "./kb-client.ts";
+import type { KBFullChunk } from "./deterministic-kb-client.ts";
 import type { CurrentGroundingTarget } from "./canonical-grounding.ts";
 import type { ReferenceAuthorityDecision } from "./commerce-state-authority.ts";
 
