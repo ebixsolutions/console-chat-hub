@@ -75,11 +75,11 @@ export function verifyIdentity(root,profile,expected){
  must(git(root,'rev-parse',ACCEPTED_DEMO.head+'^{tree}')===ACCEPTED_DEMO.tree,'accepted_demo_tree_drift');
  must(git(root,'merge-base',ACCEPTED_DEMO.head,'HEAD')===ACCEPTED_DEMO.head,'accepted_demo_lineage');
  const successor=git(root,'diff','--name-only',ACCEPTED_DEMO.head,'HEAD').split('\n').filter(Boolean);
- for(const f of successor)must([...Object.keys(SECTION15_REPAIR),...SECTION15_VALIDATION_FILES,...Object.keys(QUALITY95_REPAIR)].includes(f),'section15_successor_scope:'+f);
+ for(const f of successor)must([...Object.keys(SECTION15_REPAIR),...SECTION15_VALIDATION_FILES,...Object.keys(QUALITY95_REPAIR),...Object.keys(MODEL_ACCOUNTING_REPAIR)].includes(f),'section15_successor_scope:'+f);
  const accepted=git(root,'diff','--name-only',profile.baseline.head,ACCEPTED_DEMO.head).split('\n').filter(Boolean);
  const changed=git(root,'diff','--name-only',profile.baseline.head,'HEAD').split('\n').filter(Boolean);
  for(const f of changed)must(profile.authorized_changes.includes(f)||(accepted.includes(f)&&sha(execFileSync('git',['show','HEAD:'+f],{cwd:root}))===sha(execFileSync('git',['show',ACCEPTED_DEMO.head+':'+f],{cwd:root}))),'source_scope:'+f);
- for(const f of [...new Set([...profile.runtime_files,...Object.keys(profile.frozen_evidence_sha256),...Object.keys(NORMALIZED_PREVIEW),...Object.keys(WIDGET_REPLY_STABILITY),...Object.keys(WIDGET_AUTH_REPAIR),...Object.keys(MEMORY_REPLY_REPAIR),...Object.keys(PREVIEW_ACTIVATION),...Object.keys(GENERIC_SERVICE_REPAIR),...Object.keys(F13_F14_REPAIR),...Object.keys(B12_REGISTRY_REPAIR),...Object.keys(SECTION15_REPAIR),...Object.keys(ACCEPTED_DEMO_ENV),...Object.keys(QUALITY95_REPAIR),...accepted,PROFILE_PATH])]){
+ for(const f of [...new Set([...profile.runtime_files,...Object.keys(profile.frozen_evidence_sha256),...Object.keys(NORMALIZED_PREVIEW),...Object.keys(WIDGET_REPLY_STABILITY),...Object.keys(WIDGET_AUTH_REPAIR),...Object.keys(MEMORY_REPLY_REPAIR),...Object.keys(PREVIEW_ACTIVATION),...Object.keys(GENERIC_SERVICE_REPAIR),...Object.keys(F13_F14_REPAIR),...Object.keys(B12_REGISTRY_REPAIR),...Object.keys(SECTION15_REPAIR),...Object.keys(ACCEPTED_DEMO_ENV),...Object.keys(QUALITY95_REPAIR),...Object.keys(MODEL_ACCOUNTING_REPAIR),...accepted,PROFILE_PATH])]){
   must(fs.readFileSync(path.join(root,f)).equals(execFileSync('git',['show','HEAD:'+f],{cwd:root})),'uncommitted_source:'+f);
  }
  return {head,tree,changed};
